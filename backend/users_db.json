@@ -1,0 +1,50 @@
+{
+    "admin_user_id_100": {
+        "user_id": "admin_user_id_100",
+        "email": "admin@example.com",
+        "phone": "13800000000",
+        "password_hash": "3b4828cfc1297bd9695a87511a2cd2bde655aa77121077aba093fb7fa3b76855",
+        "salt": "novara_default_salt_998",
+        "username": "管理员"
+    },
+    "59713653-244b-47cc-8378-46a7e3ee8d7c": {
+        "user_id": "59713653-244b-47cc-8378-46a7e3ee8d7c",
+        "email": null,
+        "phone": "13999999999",
+        "password_hash": "a12558714a20b6fe6e80b4a92d9370466402d203d84e1be2169722e351e29971",
+        "salt": "0c15d8c5722d9f45dbd1f675b6352538",
+        "username": "9999"
+    },
+    "e3a7bca3-685a-4f7a-84a3-d5ffc8e31951": {
+        "user_id": "e3a7bca3-685a-4f7a-84a3-d5ffc8e31951",
+        "email": null,
+        "phone": "13777777777",
+        "password_hash": "b8c54428c97984d4e6183fd1ac65ddc7e7ed5668bac08a792cfc57c52e891499",
+        "salt": "7caba4102a7a91d6da0833363a908a12",
+        "username": "7777"
+    },
+    "a042cc37-6291-482f-bfff-01c87f92391b": {
+        "user_id": "a042cc37-6291-482f-bfff-01c87f92391b",
+        "email": null,
+        "phone": "13888888888",
+        "password_hash": "2c9a200ec98045c9a7b3ba31977ddcf13fe6e13e3273b8f2749e3edbaf624e30",
+        "salt": "97c524ff35e9b2e36d20b70620de5d8d",
+        "username": "8888"
+    },
+    "ed5deab6-d342-4625-8102-90f87edaac7f": {
+        "user_id": "ed5deab6-d342-4625-8102-90f87edaac7f",
+        "email": null,
+        "phone": "17276442806",
+        "password_hash": "a238a0940c87227e3c87b65721aba848639286c6c93c99e254bffabeae1deeb0",
+        "salt": "298bb9744dedfdbf818611716bdf00c1",
+        "username": "2806"
+    },
+    "bc0741fd-9ab6-4490-8db4-a894809deefe": {
+        "user_id": "bc0741fd-9ab6-4490-8db4-a894809deefe",
+        "email": "e2e_test@demo.com",
+        "phone": null,
+        "password_hash": "c9b026fa9ea86ff00e476579f9ba08de24b9cfe5d382e20f1e8f5c936949c502",
+        "salt": "47388e67ce7c3ad1b9bdc04d8adff12d",
+        "username": "e2e_test"
+    }
+}

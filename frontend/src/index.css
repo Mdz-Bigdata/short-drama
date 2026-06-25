@@ -1,0 +1,264 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
+
+:root {
+  --bg-dark: #090e16;
+  --bg-darker: #05080c;
+  --bg-card: rgba(13, 20, 35, 0.45);
+  --bg-popover: rgba(18, 28, 48, 0.95);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --border-active: rgba(0, 242, 254, 0.4);
+  
+  --neon-cyan: #00f2fe;
+  --neon-blue: #0072ff;
+  --neon-red: #ff3366;
+  --neon-amber: #f59e0b;
+  --neon-green: #10b981;
+  --novara-gold: #fbc02d;
+  
+  --text-main: #f1f5f9;
+  --text-muted: #64748b;
+  --text-dim: #94a3b8;
+  
+  font-family: 'Outfit', 'Noto Sans SC', sans-serif;
+  color-scheme: dark;
+  background-color: var(--bg-dark);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: radial-gradient(circle at 50% -20%, #112240 0%, var(--bg-dark) 100%);
+  color: var(--text-main);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* 顶部导航条 */
+.top-nav {
+  height: 64px;
+  border-bottom: 1px solid var(--border-color);
+  padding: 0 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(5, 8, 12, 0.4);
+  backdrop-filter: blur(10px);
+}
+
+/* 创意多行输入大卡片 */
+.creative-input-card {
+  background: rgba(10, 16, 28, 0.5);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  padding: 20px;
+  max-width: 900px;
+  margin: 0 auto;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+  transition: border-color 0.3s;
+}
+
+.creative-input-card:focus-within {
+  border-color: var(--border-active);
+  box-shadow: 0 20px 50px rgba(0, 242, 254, 0.05);
+}
+
+.creative-textarea {
+  width: 100%;
+  min-height: 100px;
+  background: transparent;
+  border: none;
+  resize: none;
+  color: var(--text-main);
+  font-size: 1.05rem;
+  outline: none;
+  line-height: 1.6;
+  font-family: inherit;
+}
+
+/* 胶囊控制按钮 */
+.capsule-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 99px;
+  padding: 6px 16px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.capsule-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.capsule-btn.active {
+  background: rgba(0, 242, 254, 0.1);
+  border-color: var(--neon-cyan);
+  color: var(--neon-cyan);
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.2);
+}
+
+/* 热门 Skills 卡片横列 */
+.skills-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 16px;
+  max-width: 900px;
+  margin: 24px auto 0 auto;
+}
+
+.skill-card {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skill-card:hover {
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(0, 242, 254, 0.2);
+  transform: translateY(-2px);
+}
+
+/* 磨砂气泡窗 (Popover) */
+.popover-window {
+  position: absolute;
+  background: var(--bg-popover);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  z-index: 50;
+  padding: 16px;
+  width: 380px;
+}
+
+.popover-tab-btn {
+  background: transparent;
+  border: none;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.popover-tab-btn.active {
+  color: var(--neon-cyan);
+  border-bottom-color: var(--neon-cyan);
+  font-weight: 600;
+}
+
+.model-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  margin-top: 6px;
+  transition: background 0.2s;
+}
+
+.model-list-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.model-list-item.selected {
+  background: rgba(0, 242, 254, 0.08);
+  border: 1px solid rgba(0, 242, 254, 0.2);
+}
+
+/* 核心工作台双栏布局 */
+.workbench-layout {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  height: calc(100vh - 64px);
+  overflow: hidden;
+}
+
+.asset-viewer {
+  flex: 1;
+  padding: 30px;
+  overflow-y: auto;
+  background: var(--bg-darker);
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-sidebar {
+  width: 380px;
+  border-left: 1px solid var(--border-color);
+  background: rgba(10, 16, 28, 0.3);
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* 对话气泡 */
+.chat-bubble {
+  padding: 14px;
+  border-radius: 12px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-bottom: 16px;
+  max-width: 85%;
+}
+
+.chat-bubble.user {
+  background: rgba(0, 114, 255, 0.15);
+  border: 1px solid rgba(0, 114, 255, 0.25);
+  color: var(--text-main);
+  align-self: flex-end;
+  margin-left: auto;
+}
+
+.chat-bubble.ai {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  align-self: flex-start;
+  margin-right: auto;
+}
+
+/* 动画效果 */
+@keyframes ping {
+  75%, 100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+.loading-spinner {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 3px solid rgba(0, 242, 254, 0.12);
+  border-top-color: var(--neon-cyan);
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
