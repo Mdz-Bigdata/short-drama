@@ -3,10 +3,10 @@ import logging
 import os
 import random
 import re
-import urllib3
 from typing import Dict, Any, List
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from app.platform.runtime_models import runtime_model_registry
+from app.platform.runtime_skills import runtime_skill_registry
 
 logger = logging.getLogger("app.core.model_gateway")
 
@@ -145,7 +145,7 @@ class ModelGateway:
                 except Exception as e:
                     logger.error(f"[ModelGateway] 读取配置文件 {path} 失败: {str(e)}")
 
-        # 4. 判断并装配最终属性：.env/环境优先，若为空或为占位符则补充 config.json 内容
+        # 4. 非敏感配置可由 config.json 补充；所有 API key 只允许来自服务端环境变量。
         def get_valid_value(env_val, json_section, json_key, default_val):
             # 判断环境变量是否有效（非空且非占位符）
             if env_val and isinstance(env_val, str) and not env_val.startswith("YOUR_") and env_val.strip():
@@ -157,11 +157,16 @@ class ModelGateway:
                     return json_val
             return default_val
 
-        self.deepseek_key = get_valid_value(env_deepseek_key, "deepseek", "api_key", env_deepseek_key or "YOUR_DEEPSEEK_API_KEY")
+        def get_secret(env_val, placeholder):
+            if env_val and isinstance(env_val, str) and not env_val.startswith("YOUR_") and env_val.strip():
+                return env_val
+            return placeholder
+
+        self.deepseek_key = get_secret(env_deepseek_key, "YOUR_DEEPSEEK_API_KEY")
         self.deepseek_base_url = get_valid_value(env_deepseek_url, "deepseek", "base_url", env_deepseek_url or "https://api.deepseek.com/v1")
         self.deepseek_model_name = get_valid_value(env_deepseek_model, "deepseek", "model_name", env_deepseek_model or "deepseek-chat")
 
-        self.seedance_key = get_valid_value(env_seedance_key, "seedance", "api_key", env_seedance_key or "YOUR_SEEDANCE_API_KEY")
+        self.seedance_key = get_secret(env_seedance_key, "YOUR_SEEDANCE_API_KEY")
         self.seedance_base_url = get_valid_value(env_seedance_url, "seedance", "base_url", env_seedance_url or "https://api.seedance.ai/v1")
         self.seedance_model_name = get_valid_value(env_seedance_model, "seedance", "model_name", env_seedance_model or "seedance-llm")
         # Seedream 文生图模型 + 尺寸 (与 Seedance 图生视频同属火山 Ark，统一风格)
@@ -214,15 +219,15 @@ class ModelGateway:
         self.seedance_prompt_opt = (os.getenv("SEEDANCE_PROMPT_OPT", "1").strip() not in ("0", "false", "False", ""))
         self._sd2_opt_prompt_cache = None
 
-        self.qwen_key = get_valid_value(env_qwen_key, "qwen", "api_key", env_qwen_key or "YOUR_QWEN_API_KEY")
+        self.qwen_key = get_secret(env_qwen_key, "YOUR_QWEN_API_KEY")
         self.qwen_base_url = get_valid_value(env_qwen_url, "qwen", "base_url", env_qwen_url or "https://dashscope.aliyuncs.com/compatible-mode/v1")
         self.qwen_model_name = get_valid_value(env_qwen_model, "qwen", "model_name", env_qwen_model or "qwen-turbo")
 
-        self.gemini_key = get_valid_value(env_gemini_key, "gemini", "api_key", env_gemini_key or "YOUR_GEMINI_API_KEY")
+        self.gemini_key = get_secret(env_gemini_key, "YOUR_GEMINI_API_KEY")
         self.gemini_base_url = get_valid_value(env_gemini_url, "gemini", "base_url", env_gemini_url or "https://generativelanguage.googleapis.com")
         self.gemini_model_name = get_valid_value(env_gemini_model, "gemini", "model_name", env_gemini_model or "gemini-3.1-pro-image")
 
-        self.agnes_key = get_valid_value(env_agnes_key, "agnes", "api_key", env_agnes_key or "YOUR_AGNES_API_KEY")
+        self.agnes_key = get_secret(env_agnes_key, "YOUR_AGNES_API_KEY")
         self.agnes_base_url = get_valid_value(env_agnes_url, "agnes", "base_url", env_agnes_url or "https://apihub.agnes-ai.com/v1")
         self.agnes_model_name = get_valid_value(env_agnes_model, "agnes", "model_name", env_agnes_model or "agnes-2.0-flash")
         # Agnes 网关的文生图与图生视频模型 ID (经实测可用，可用环境变量覆盖)
@@ -241,6 +246,9 @@ class ModelGateway:
         self._broken_threshold = 2
         self._broken_cooldown = 45      # 基础冷却秒数 (半开重试间隔，按失败次数线性放大)
         self._broken_cooldown_max = 600  # 冷却上限秒数
+        # TLS certificate verification is mandatory. A custom CA bundle may be
+        # supplied for enterprise proxies; certificate verification cannot be bypassed.
+        self.tls_verify = os.getenv("PROVIDER_CA_BUNDLE") or True
 
     @staticmethod
     def _host_of(base_url: str) -> str:
@@ -384,7 +392,7 @@ class ModelGateway:
             attempts = 2
             for attempt in range(attempts):
                 try:
-                    r = requests.post(url, json=payload, headers=headers, timeout=timeout, proxies=self._proxies_for(base_url), verify=False)
+                    r = requests.post(url, json=payload, headers=headers, timeout=timeout, proxies=self._proxies_for(base_url), verify=self.tls_verify)
                     if r.status_code == 200:
                         self._note_host_ok(base_url)
                         return r.json()["choices"][0]["message"]["content"]
@@ -418,7 +426,7 @@ class ModelGateway:
             attempts = 2
             for attempt in range(attempts):
                 try:
-                    r = requests.post(url, json=payload, headers=headers, timeout=timeout, proxies=self._proxies_for(base_url), verify=False)
+                    r = requests.post(url, json=payload, headers=headers, timeout=timeout, proxies=self._proxies_for(base_url), verify=self.tls_verify)
                     if r.status_code == 200:
                         data = r.json().get("data", [{}])
                         if data:
@@ -533,18 +541,30 @@ class ModelGateway:
         return None
 
     def _load_sd2_optimizer_prompt(self) -> str:
-        """读取 Seedance 2.0 提示词优化器 (sd2-pe) 系统提示词。"""
+        """Load sd25-pe first, falling back to the bundled older optimizer."""
         if self._sd2_opt_prompt_cache is not None:
             return self._sd2_opt_prompt_cache
-        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                            "skills", "seedance2-prompt-optimizer", "SKILL.md")
+        from pathlib import Path
+
+        backend_root = Path(__file__).resolve().parents[2]
+        configured = (os.getenv("SD25_PE_SKILL_PATH") or "").strip()
+        candidates = []
+        if configured:
+            candidates.append(Path(configured).expanduser() / "SKILL.md")
+        candidates.extend([
+            Path.home() / "Desktop" / "sd25-pe" / "SKILL.md",
+            backend_root / "skills" / "sd25-pe" / "SKILL.md",
+            backend_root / "skills" / "seedance2-prompt-optimizer" / "SKILL.md",
+        ])
         text = ""
-        try:
-            if os.path.exists(path):
-                with open(path, "r", encoding="utf-8") as f:
-                    text = f.read()
-        except Exception as e:
-            logger.warning(f"[ModelGateway] 读取 sd2-pe 优化器失败: {str(e)[:120]}")
+        for path in candidates:
+            try:
+                if path.is_file():
+                    text = path.read_text(encoding="utf-8")
+                    logger.info(f"[ModelGateway] 已载入视频提示词编译 Skill: {path.parent.name}")
+                    break
+            except OSError as exc:
+                logger.warning(f"[ModelGateway] 视频提示词 Skill 读取失败: {type(exc).__name__}")
         self._sd2_opt_prompt_cache = text
         return text
 
@@ -572,11 +592,12 @@ class ModelGateway:
         sys_prompt = (
             sd2 + "\n\n## 当前调用约定\n"
             f"- 任务模式：{mode_hint}。{asset_hint}\n"
-            "- 这是单镜头、单一连续动作的简单视频，走路径 A 一段式，不要分镜、不要绝对秒数。\n"
+            "- 这是单镜头、单一连续动作的简单视频；保持素材逐份职责、主体映射、事件开始/结束状态与对白账本。\n"
+            "- 画幅、总时长、分辨率、帧率和声音开关属于接口参数，不写入 Prompt。\n"
             "- 直接只输出优化后提示词那一段工程化中文提示词正文本身，"
             "不要输出优化问题/相关原则/任何标题/解释/Markdown，不要加引号或代码块。"
         )
-        user_prompt = f"请把下面这段视频提示词按 Seedance 2.0 路径A工程化重写：\n{raw_prompt}"
+        user_prompt = f"请按已加载的 Seedance 2.5 Prompt Optimizer 规则编译下面的视频提示词：\n{raw_prompt}"
         for key, b_url, model_id in candidates:
             txt = self._http_chat(key, b_url, model_id, sys_prompt, user_prompt, timeout=40)
             if txt and txt.strip():
@@ -600,7 +621,8 @@ class ModelGateway:
                    first_frame: str = None, last_frame: str = None,
                    ref_images: list = None, ref_videos: list = None, ref_audios: list = None,
                    resolution: str = "720p", duration: int = 5, ratio: str = "9:16",
-                   style_caption: str = None, max_wait: int = 360):
+                   style_caption: str = None, max_wait: int = 360,
+                   model_name: str | None = None):
         """火山 Ark (Seedance 2.0) 异步生视频：遵循 Ark contents/generations/tasks 协议，支持
         文生视频 / 图生视频-首帧 / 图生视频-首尾帧 / 多模态参考(图0-9 视频0-3 音频0-3) 全部能力。
 
@@ -634,7 +656,7 @@ class ModelGateway:
                 content.append({"type": "audio_url", "audio_url": {"url": u}, "role": "reference_audio"})
             # Seedance 2.0 顶层参数：分辨率/时长/比例为独立字段；成片不打可见水印
             body = {
-                "model": self.seedance_model_name,
+                "model": model_name or self.seedance_model_name,
                 "content": content,
                 "resolution": resolution,
                 # Seedance 2.0 单次时长合法区间 4~15s，钳制避免分段出现越界值(如 3s)被 400 拒
@@ -648,7 +670,7 @@ class ModelGateway:
             create_attempts = 2
             for attempt in range(create_attempts):
                 try:
-                    r = requests.post(base + "/contents/generations/tasks", json=body, headers=headers, timeout=40, proxies=proxies, verify=False)
+                    r = requests.post(base + "/contents/generations/tasks", json=body, headers=headers, timeout=40, proxies=proxies, verify=self.tls_verify)
                     break
                 except (requests.exceptions.SSLError, requests.exceptions.ConnectionError,
                         requests.exceptions.Timeout, requests.exceptions.ChunkedEncodingError) as ce:
@@ -673,7 +695,7 @@ class ModelGateway:
                 time.sleep(interval)
                 waited += interval
                 try:
-                    poll = requests.get(base + f"/contents/generations/tasks/{task_id}", headers=headers, timeout=30, proxies=proxies, verify=False).json()
+                    poll = requests.get(base + f"/contents/generations/tasks/{task_id}", headers=headers, timeout=30, proxies=proxies, verify=self.tls_verify).json()
                 except Exception as pe:
                     # 轮询抖动：任务正在服务端生成，稍后重试；连续多次才认输，且不调用 _mark_host_broken (创建已证明可达)
                     poll_errs += 1
@@ -841,6 +863,10 @@ class ModelGateway:
         调用大语言模型 (在线或离线动态智能故事生成算法)
         基于配置的导演风格与运镜风格，动态组合 36运镜、8种站位和 16种环境构图
         """
+        # Project-wide enabled Markdown Skills are an atomic runtime snapshot.
+        # They remain lower-authority creative guidance and are never executable.
+        system_prompt = runtime_skill_registry.apply(system_prompt)
+
         # 组装用户内容 (含对话微调指引)
         full_user_content = user_prompt
         if user_instruction:
@@ -848,6 +874,25 @@ class ModelGateway:
                 f"\n\n【用户最新对话修改/微调指引】：\n{user_instruction}\n"
                 f"请严格根据上文已生成的资产和这一最新指引对后续内容进行修改或重构，并确保符合所有编剧导演法则（无心理描写红线、双轨节奏等）。"
             )
+
+        # 数据库里启用的动态模型优先。模型 ID、Base URL 和解密密钥均来自
+        # 运行时注册表，生产代码不维护供应商的远端模型清单。
+        runtime = runtime_model_registry.resolve(model, "text")
+        if runtime:
+            text = self._http_chat(
+                runtime.api_key,
+                runtime.base_url,
+                model,
+                system_prompt,
+                full_user_content,
+            )
+            if text:
+                logger.info(
+                    "[ModelGateway] 动态文本模型生成成功 (provider=%s, model=%s)",
+                    runtime.provider,
+                    model,
+                )
+                return self._strip_model_preamble(text)
 
         # 1. 在线调用：构建多 provider 降级链 (所选优先 -> Agnes -> deepseek -> qwen -> gemini)
         #    所选 provider 在可直连环境(如国内)优先生效；不可达时自动降级到其它已配置有效的真实模型
@@ -1172,7 +1217,7 @@ class ModelGateway:
 
         return enhanced
 
-    def generate_image(self, model: str, prompt: str, ref_images: list = None):
+    def generate_image(self, model: str, prompt: str, ref_images: list = None, size: str = None):
         """
         调用文生图大模型，返回 (图片URL, 实际使用的 provider 名)。
         统一优先 Seedance/火山 Ark Seedream，保证与后续 Seedance 图生视频同源、风格画质一致。
@@ -1180,6 +1225,36 @@ class ModelGateway:
         降级链：所选/seedance 优先 -> Agnes -> gemini -> 离线兜底图。
         """
         prompt = self._enhancePromptWithRules(prompt)
+        runtime = runtime_model_registry.resolve(model, "image")
+        if runtime:
+            reference_urls = [
+                url for url in (ref_images or [])
+                if isinstance(url, str) and url.startswith("http")
+            ][:9]
+            extra: dict[str, object] = {"n": 1, "size": size or "1024x1024"}
+            if runtime.provider in {"volcengine", "seedance"}:
+                extra = {
+                    "response_format": "url",
+                    "size": size or self.seedance_image_size,
+                    "watermark": self.seedance_image_watermark,
+                }
+                if reference_urls:
+                    extra["image"] = reference_urls
+            url = self._http_image(
+                runtime.api_key,
+                runtime.base_url,
+                model,
+                prompt,
+                extra=extra,
+            )
+            if url:
+                logger.info(
+                    "[ModelGateway] 动态图像模型生成成功 (provider=%s, model=%s)",
+                    runtime.provider,
+                    model,
+                )
+                return url, runtime.provider
+
         primary = self._detect_provider(model, default="seedance")
         # 各 provider 对应的文生图模型 ID (seedance 用 Seedream 文生图模型，而非视频模型)
         image_model = {
@@ -1204,13 +1279,13 @@ class ModelGateway:
             # watermark 必须为 True：Ark 图生视频靠该 AI 标记识别"火山自产 AI 图"放行，
             # 关闭会导致写实人脸首帧被判「疑似真人」而 400 拒绝 (本文件多处注释亦载明须"带 AI 标记")。
             if name == "seedance":
-                extra = {"response_format": "url", "size": self.seedance_image_size,
+                extra = {"response_format": "url", "size": size or self.seedance_image_size,
                          "watermark": self.seedance_image_watermark}
                 if ref:
                     # Seedream image 字段传入角色三视图作主体参考，锁定人物一致性
                     extra["image"] = ref[:9]
             else:
-                extra = {"n": 1, "size": "1024x1024"}
+                extra = {"n": 1, "size": size or "1024x1024"}
             # 火山 Seedream 用原始提示词(含 DEID 过审);其它网关(Agnes/Gemini)用清洗后干净写实提示词避免内容审核 400
             use_prompt = prompt if name == "seedance" else self._sanitize_prompt_for_agnes(prompt)
             url = self._http_image(key, b_url, image_model[name], use_prompt, extra=extra)
@@ -1262,9 +1337,11 @@ class ModelGateway:
         "multiple different persons, watermark, text, logo)"
     )
 
-    def generate_character_sheet(self, model: str, name: str, char_desc: str, dir_style: str = "cyberpunk", genre: str = "general") -> str:
+    def generate_character_sheet(self, model: str, name: str, char_desc: str,
+                                 dir_style: str = "cyberpunk", genre: str = "general",
+                                 ref_images: list = None) -> str:
         """
-        生成角色三视图设定图(角色视觉锚点，解决跨镜头人物一致性)。
+        生成角色五视图设定图(角色视觉锚点，解决跨镜头人物一致性)。
         方法论遵循《AI漫剧三视图生成全流程》图解：人物设定卡 → 比例统一 → 结构先定 → 细节后补，
         5 个标准视角(正面/侧面/背面/45度/3-4视角)，并对照规避"五官漂移/服装走样/背景不一/手部崩塌/配色不稳"五大问题。
         genre：剧情题材(来自 get_genre)，锁定符合时代背景的服饰造型(如修仙/武侠须古装)。
@@ -1286,22 +1363,19 @@ class ModelGateway:
         # 退化为纯文本，前端只剩文字看不到图)。三视图一致性"方法论"只喂给上游 LLM(阶段3 sys_prompt)，
         # 此处只给图像模型干净可执行的画面描述。
         era_clause = f" The character must wear period-accurate costume — {era_costume}." if era_costume else ""
+        from app.core.storyboard_quality import build_five_view_prompt
         prompt = (
-            f"A full-body character turnaround reference sheet of one single fictional character named {name}, "
-            f"showing the exact same person in five standard views arranged side by side from left to right: "
-            f"front view, side view, back view, 45-degree angle view, and three-quarter front view; "
-            f"all five views standing in a neutral straight pose on the same horizontal baseline at equal height, "
-            f"neutral expression, both hands naturally visible. "
-            f"Character: {char_desc}.{era_clause} "
-            f"Visual style: {style_word}, photorealistic, live-action, cinematic, highly detailed, sharp focus, 35mm film. "
-            f"Clean pure white studio background, even soft studio lighting, no dramatic shadows, no extra characters. "
-            f"Keep identical face, facial features, eye distance, eye color, hairstyle, hair color, parting, skin tone, "
-            f"signature marks, outfit style and material, accessories, body shape and a realistic 7.5 head-to-body ratio "
-            f"across all five views; one fixed consistent color scheme that does not drift. "
-            f"{self.SHEET_PROBLEM_NEGATIVE}"
+            build_five_view_prompt(name, f"{char_desc}.{era_clause}", style_word)
+            + " photorealistic, live-action, cinematic, highly detailed, sharp focus, 35mm film. "
+            + self.SHEET_PROBLEM_NEGATIVE
         )
-        url, _ = self.generate_image(model, prompt)
-        logger.info(f"[ModelGateway] 角色三视图生成 ({name}, genre={genre}): {(url or '无')[:60]}...")
+        url, _ = self.generate_image(
+            model,
+            prompt,
+            ref_images=ref_images,
+            size=os.getenv("CHARACTER_SHEET_SIZE", "2560x1440"),
+        )
+        logger.info(f"[ModelGateway] 角色五视图生成 ({name}, genre={genre}): {(url or '无')[:60]}...")
         return url
 
 
@@ -1392,6 +1466,73 @@ class ModelGateway:
         全部失败后再执行文生视频(不传首帧)作为终极兜底，确保每镜必出真实片且绝不刷屏报错。
         """
         prompt = self._enhancePromptWithRules(prompt)
+        runtime = runtime_model_registry.resolve(model, "video")
+
+        # MiniMax H3 is a first-class video provider. It supports frame anchoring
+        # (text / first / last / first+last) and Ref2VA mixed references. The
+        # request is created and polled server-side so API keys never reach the UI.
+        model_key = (model or "").lower().replace("_", "-")
+        is_minimax = bool(runtime and runtime.provider == "minimax")
+        if is_minimax or "minimax" in model_key or model_key in {"h3", "minimax-h3"}:
+            try:
+                from app.core.providers.minimax_h3 import MiniMaxH3Client
+                from app.schema.production import H3VideoRequest
+
+                h3_images = list(ref_images or [])
+                h3_first = image_url
+                h3_last = last_frame
+                # Ref2VA video/audio and FL2VA anchors are distinct H3 modes.
+                # When motion/audio references are supplied, preserve the image
+                # as an ordinary subject/scene reference instead of claiming it
+                # is an exact first-frame anchor.
+                if ref_videos or ref_audios:
+                    if h3_first:
+                        h3_images.insert(0, h3_first)
+                    if h3_last:
+                        h3_images.append(h3_last)
+                    h3_first = None
+                    h3_last = None
+                request = H3VideoRequest(
+                    model=model,
+                    prompt=prompt,
+                    first_frame=h3_first,
+                    last_frame=h3_last,
+                    reference_images=list(dict.fromkeys(h3_images))[:9],
+                    reference_videos=list(dict.fromkeys(ref_videos or []))[:3],
+                    reference_audios=list(dict.fromkeys(ref_audios or []))[:3],
+                    duration_seconds=max(4, min(15, int(duration or 6))),
+                    resolution=os.getenv("MINIMAX_H3_RESOLUTION", "1080p"),
+                    aspect_ratio=os.getenv("MINIMAX_H3_ASPECT_RATIO", "9:16"),
+                    native_audio=os.getenv("MINIMAX_H3_NATIVE_AUDIO", "1") not in {"0", "false", "False"},
+                )
+                endpoint = None
+                runtime_key = None
+                if runtime and runtime.provider == "minimax":
+                    runtime_key = runtime.api_key
+                    configured_base = runtime.base_url.rstrip("/")
+                    endpoint = (
+                        configured_base
+                        if configured_base.endswith("/video_generation")
+                        else configured_base + "/v2/video_generation"
+                    )
+                client = MiniMaxH3Client(api_key=runtime_key, endpoint=endpoint)
+                try:
+                    result = client.create_video(request)
+                    if result.video_url:
+                        return result.video_url
+                    if result.task_id:
+                        result = client.wait_for_video(
+                            result.task_id,
+                            timeout_seconds=float(os.getenv("MINIMAX_H3_WAIT_SECONDS", "900")),
+                            poll_interval_seconds=float(os.getenv("MINIMAX_H3_POLL_SECONDS", "5")),
+                        )
+                        if result.video_url:
+                            return result.video_url
+                finally:
+                    client.close()
+                logger.warning("[ModelGateway] MiniMax H3 completed without a downloadable video URL; trying fallback")
+            except Exception as exc:
+                logger.warning(f"[ModelGateway] MiniMax H3 unavailable; trying configured fallback: {type(exc).__name__}")
         # 判定 Seedance 2.0 任务模式 (用于提示词优化器的模式提示)
         if last_frame:
             mode = "first_last_frame"
@@ -1405,7 +1546,8 @@ class ModelGateway:
         primary = self._detect_provider(model, default="seedance")
         # 降级队列：文生图同源优先，依次尝试，避免重复
         order = []
-        for p in [prefer_provider, "seedance", primary, "agnes"]:
+        runtime_provider = runtime.provider if runtime else None
+        for p in [prefer_provider, runtime_provider, "seedance", primary, "agnes"]:
             if p and p in ("seedance", "agnes") and p not in order:
                 order.append(p)
 
@@ -1418,7 +1560,11 @@ class ModelGateway:
         #    Ark 首尾帧图生视频逻辑【完整保留】；若 Ark 因账号未授权/网络不可达而失败，
         #    会静默返回 None 并无缝落到 Agnes(接受任意写实人脸首帧) 继续图生视频，绝不刷屏报错。
         for name in order:
-            key, b_url, _ = self._provider_creds(name)
+            if runtime and name == runtime.provider:
+                key, b_url, video_model = runtime.api_key, runtime.base_url, model
+            else:
+                key, b_url, _ = self._provider_creds(name)
+                video_model = self.seedance_model_name
             if not self._is_valid_key(key):
                 continue
 
@@ -1429,7 +1575,7 @@ class ModelGateway:
                 url = self._ark_video(key, b_url, opt_prompt,
                                       first_frame=image_url, last_frame=last_frame,
                                       ref_images=ref_images, ref_videos=ref_videos, ref_audios=ref_audios,
-                                      duration=duration)
+                                      duration=duration, model_name=video_model)
                 if url:
                     logger.info(f"[ModelGateway] Seedance 图生视频成功 (mode={mode}): {url[:60]}...")
                     return url
@@ -1444,13 +1590,24 @@ class ModelGateway:
         # 2. 终极兜底：带首帧图生视频均不可用时，降级为文生视频(不传首帧，必出片)。
         logger.info("[ModelGateway] 带首帧图生视频暂不可用，降级为文生视频兜底")
         for name in order:
-            key, b_url, _ = self._provider_creds(name)
+            if runtime and name == runtime.provider:
+                key, b_url, video_model = runtime.api_key, runtime.base_url, model
+            else:
+                key, b_url, _ = self._provider_creds(name)
+                video_model = self.seedance_model_name
             if not self._is_valid_key(key):
                 continue
             if name == "seedance":
                 if opt_prompt is None:
                     opt_prompt = self.optimize_video_prompt(prompt, mode=mode)
-                url = self._ark_video(key, b_url, opt_prompt, first_frame=None, duration=duration)
+                url = self._ark_video(
+                    key,
+                    b_url,
+                    opt_prompt,
+                    first_frame=None,
+                    duration=duration,
+                    model_name=video_model,
+                )
                 if url:
                     logger.info(f"[ModelGateway] Seedance 文生视频兜底成功: {url[:60]}...")
                     return url

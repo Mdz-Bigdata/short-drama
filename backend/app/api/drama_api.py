@@ -3,7 +3,8 @@ from typing import List, Dict, Any, Optional
 from app.schema.drama import DramaCreateRequest, DramaTaskResponse
 from app.service.drama_service import DramaService
 from app.repository.task_repo import TaskRepository
-from app.api.auth_api import get_current_user
+from app.api.auth_api import get_current_user, require_admin
+from app.core.video_quality import VideoQualityMeasurements
 
 # 创建 API 路由，全局挂载登录身份校验依赖
 router = APIRouter(prefix="/api/drama", tags=["AI短剧制作"], dependencies=[Depends(get_current_user)])
@@ -159,6 +160,15 @@ async def chat_with_agent(task_id: str, payload: Dict[str, str]):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"对话处理失败: {str(e)}")
 
+
+@router.post("/{task_id}/quality/video", response_model=DramaTaskResponse)
+def submit_video_quality(task_id: str, measurements: VideoQualityMeasurements):
+    """提交真实多模态或人工复核证据；只有通过后任务才标记 completed。"""
+    try:
+        return service.submit_video_quality(task_id, measurements)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
 @router.post("/{task_id}/update_config", response_model=DramaTaskResponse)
 def update_task_config(task_id: str, req: DramaCreateRequest):
     """
@@ -177,7 +187,8 @@ async def import_new_skill(
     import_type: str = Form(..., description="导入类型: github, clawhub, npx, zip"),
     url: Optional[str] = Form(None, description="GitHub或Clawhub链接"),
     package_name: Optional[str] = Form(None, description="NPX包名"),
-    file: Optional[UploadFile] = File(None, description="上传的ZIP技能包文件")
+    file: Optional[UploadFile] = File(None, description="上传的ZIP技能包文件"),
+    _admin: dict = Depends(require_admin),
 ):
     """
     导入并添加外部自定义 Skill 技能包
@@ -196,7 +207,7 @@ def get_imported_skills():
     return service.get_all_skills()
 
 @router.delete("/skills/{skill_name}")
-def delete_imported_skill(skill_name: str):
+def delete_imported_skill(skill_name: str, _admin: dict = Depends(require_admin)):
     """
     删除指定的已导入 Skill 技能包
     """
@@ -254,21 +265,21 @@ async def seedance2_video_route(payload: Dict[str, Any]):
 @router.post("/parse_script")
 async def parse_script_file_route(file: UploadFile = File(..., description="上传的剧本文件")):
     """
-    手动上传剧本文件解析接口，支持 .txt, .md, .docx, .pdf。
+    手动上传剧本文件解析接口，支持 .txt, .md, .docx, .pdf, .fdx。
     """
     try:
-        file_bytes = await file.read()
-        content = service.parse_script_file(file.filename, file_bytes)
+        maximum = 20 * 1024 * 1024
+        file_bytes = await file.read(maximum + 1)
+        if len(file_bytes) > maximum:
+            raise ValueError("剧本文件不能超过 20MB")
+        safe_name = file.filename or "script.txt"
+        content = service.parse_script_file(safe_name, file_bytes)
         return {
             "status": "success",
-            "filename": file.filename,
+            "filename": safe_name,
             "content": content
         }
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"解析剧本文件失败: {str(e)}")
-
-
-
-

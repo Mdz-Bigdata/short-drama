@@ -1,0 +1,1 @@
+"""Safe source ingestion package."""

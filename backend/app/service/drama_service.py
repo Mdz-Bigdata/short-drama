@@ -5,13 +5,33 @@ import asyncio
 import re
 import io
 import os
+import hashlib
 from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger("app.service.drama_service")
 from app.repository.task_repo import TaskRepository
 from app.core.model_gateway import ModelGateway
 from app.core import media_compositor
+from app.core.storyboard_assets import compose_nine_grid, split_five_view_sheet
+from app.core.storyboard_quality import build_nine_grid_prompt, validate_storyboard_continuity
+from app.core.continuity import ContinuityState, plan_transition
+from app.core.image_quality import validate_five_view_images
+from app.core.video_quality import VideoQualityMeasurements, evaluate_video_quality
 from app.schema.drama import DramaCreateRequest
+from app.schema.production import NineGridStoryboard, StoryAssetCatalog, StoryboardPanel
+
+
+def _bounded_shot_duration(value: object, default: float = 2.0) -> float:
+    match = re.search(r"\d+(?:\.\d+)?", str(value or ""))
+    parsed = float(match.group()) if match else default
+    return max(0.5, min(15.0, parsed))
+
+
+def _safe_skill_name(value: str) -> str:
+    name = re.sub(r"[^\w.-]+", "-", value or "", flags=re.UNICODE).strip(".-")
+    if not name or not re.fullmatch(r"[\w.-]{1,120}", name, flags=re.UNICODE):
+        raise ValueError("Skill 名称无效")
+    return name
 
 def extract_character_info(director_outline: str) -> tuple:
     """
@@ -276,11 +296,11 @@ def parse_shot_dialogue(cell: str, char1_name: str, char2_name: str,
                 g = "female"
             else:
                 g = guess_gender(speaker)
-            out.append((line, g, detect_emotion(line)))
+            out.append((line, g, detect_emotion(line), speaker))
     else:
         clean = re.sub(r'[^：:]{1,8}[：:]', '', cell).strip().strip('“”"\'（）()')
         if len(re.findall(r'[一-龥]', clean)) >= 1:
-            out.append((clean, char1_gender, detect_emotion(clean)))
+            out.append((clean, char1_gender, detect_emotion(clean), char1_name or "主角"))
     return out
 
 
@@ -483,10 +503,10 @@ class DramaService:
             
         return (
             "🪝 **[HOOK 拦截器触发] `PostAgentCallHook`**\n"
-            "#### ⚖️ 一致性自检报告 (前置校验)\n"
+            "#### ⚠️ 一致性质检未完成（禁止视为通过）\n"
             "| 检查维面 | 质检内容 | 状态得分 | 状态 |\n"
             "| :--- | :--- | :--- | :--- |\n"
-            "| 规范核验 | 检查生成的资产规范与模型一致性 | 95.0% | ✅ PASS |"
+            "| 规范核验 | 质检模型未返回可验证报告，需重试或人工复核 | 0.0% | ❌ UNVERIFIED |"
         )
 
 
@@ -733,10 +753,10 @@ class DramaService:
             task["assets"]["3"] = res
             task["assets"]["3_raw"] = res
 
-            # 为主角与反派各生成一张「三视图设定图」作为人物视觉锚点，解决跨镜头人物一致性。
-            # 后续阶段5每个镜头都会引用对应角色三视图，锁定脸型/发型/服装/体型。
+            # 为每名角色生成严格有序的五视图设定图，并物理拆成五个独立视图资产。
+            # 后续镜头引用同一角色五视图，锁定脸型/发型/服装/体型。
             sheets = {}
-            characters = []  # 结构化罗列：所有角色的 {name, role, desc, sheet}
+            characters = []
             try:
                 def _clean_desc(t):
                     t = re.sub(r'^\*\*[^*]+\*\*[:：]?\s*', '', (t or "").strip())
@@ -746,7 +766,7 @@ class DramaService:
 
                 # 1) 主角/反派优先固定在前 (与下游配音/镜头的角色位映射保持一致)
                 parsed = parse_characters(res, {"主角": char1_desc, "反派": char2_desc})
-                # 2) 解析【全部】角色卡，主角/反派之外的配角一并罗列并各出三视图
+                # 2) 解析【全部】角色卡，主角/反派之外的配角一并罗列并各出五视图
                 all_chars = parse_all_characters(res)
                 ordered = []  # [(name, role, desc)]
                 seen = set()
@@ -758,23 +778,51 @@ class DramaService:
                     if cname and cname not in seen:
                         ordered.append((cname, "配角", _clean_desc(cdesc)))
                         seen.add(cname)
-                # 限制最多 6 个角色出三视图，避免单阶段图生调用过多过慢 (可用 MAX_CHARACTER_SHEETS 调整)
+                # 限制最多 6 个角色出五视图，避免单阶段图生调用过多过慢 (可用 MAX_CHARACTER_SHEETS 调整)
                 max_sheets = int(os.getenv("MAX_CHARACTER_SHEETS", "6"))
                 for cname, role, cdesc in ordered[:max_sheets]:
-                    # 已授权真人演员优先：配置了可信素材库授权素材时直接用作视觉锚点，跳过三视图生成。
+                    # 已授权演员素材作为身份参考，但仍生成统一五视图，不允许用单张脸替代五视图。
                     auth_face = self.gateway.resolve_authorized_face(cname, role)
-                    if auth_face:
-                        sheets[cname] = auth_face
-                        logger.info(f"[Stage3] 角色「{cname}」({role}) 使用可信素材库授权真人素材作锚点")
-                    else:
-                        sheet_url = self.gateway.generate_character_sheet(config["image_model"], cname, cdesc, dir_style, genre=genre)
-                        if sheet_url:
-                            sheets[cname] = sheet_url
-                    characters.append({"name": cname, "role": role, "desc": cdesc, "sheet": sheets.get(cname)})
+                    sheet_url = self.gateway.generate_character_sheet(
+                        config["image_model"], cname, cdesc, dir_style, genre=genre,
+                        ref_images=[auth_face] if auth_face else None,
+                    )
+                    if not sheet_url:
+                        raise RuntimeError(f"角色「{cname}」五视图生成失败")
+                    sheets[cname] = sheet_url
+                    view_digest = hashlib.sha256(f"{cname}|{sheet_url}".encode("utf-8")).hexdigest()[:16]
+                    view_dir = os.path.join(media_compositor.MEDIA_DIR, "character_views", view_digest)
+                    view_paths = split_five_view_sheet(sheet_url, view_dir)
+                    five_view_quality = validate_five_view_images(view_paths)
+                    if not five_view_quality.passed:
+                        raise RuntimeError(
+                            f"角色「{cname}」五视图质检失败："
+                            + "；".join(issue.message for issue in five_view_quality.issues)
+                        )
+                    view_names = ["front", "front_three_quarter", "profile", "rear_three_quarter", "back"]
+                    views = [
+                        {
+                            "view": view_name,
+                            "image_url": media_compositor.public_url(
+                                os.path.relpath(str(path), media_compositor.MEDIA_DIR).replace(os.sep, "/")
+                            ),
+                        }
+                        for view_name, path in zip(view_names, view_paths)
+                    ]
+                    characters.append({
+                        "name": cname,
+                        "role": role,
+                        "desc": cdesc,
+                        "sheet": sheet_url,
+                        "sheet_type": "ordered_five_view_turnaround",
+                        "views": views,
+                        "five_view_quality": five_view_quality.model_dump(),
+                    })
             except Exception as e:
-                logger.warning(f"[Stage3] 角色三视图生成异常: {str(e)[:140]}")
+                logger.error(f"[Stage3] 角色五视图生成异常: {type(e).__name__}")
+                raise
             task["assets"]["3_sheets"] = sheets
-            # 结构化角色清单(名字+身份+特征+三视图)，供前端阶段3罗列所有人物信息
+            # 结构化角色清单(名字+身份+特征+五视图)，供前端阶段3罗列与下游逐镜复用
             task["assets"]["3_characters"] = characters
 
             task["logs"]["3"] = self.run_real_consistency_check(3, "角色设计师造型", task["assets"], config, title)
@@ -811,16 +859,16 @@ class DramaService:
                 f"【电影级武打镜头设计指南(力学受力反馈/五镜动作链/防越轴/慢动作卡点)如下】：\n{action_guide}\n\n"
                 f"【情节与镜头连贯性提示词(六锚点/连续性圣经/承接上一镜/逐镜单动作)如下】：\n{shot_continuity}\n\n"
                 f"【连续性与180度轴线防跳轴规范如下】：\n{continuity_guide}\n\n"
-                "请特别注意：为了控制最终合片时长在 1分钟到3分钟 (60s ~ 180s) 之间，"
-                "请根据剧本的节奏生成恰好 10 到 15 个连续的分镜镜头，覆盖完整情节。并在分镜表中填写时长字段（如 6s, 8s, 10s）。"
+                "请特别注意：输出恰好9个连续镜头，作为单张3×3九宫格分镜；每格必须提供新叙事信息。"
+                "九镜覆盖完整情节，按地点建立→人物关系→关键情绪递进，并填写时长（8-15秒）。"
             )
-            user_prompt = f"请基于以下编剧剧本设计 10-15 镜头分镜表，覆盖完整剧情，不要断开：\n\n【剧本】：\n" + task["assets"].get("2", "")
+            user_prompt = f"请基于以下编剧剧本设计恰好9镜的精准九宫格分镜表，覆盖完整剧情，不要断开：\n\n【剧本】：\n" + task["assets"].get("2", "")
             res = self.gateway.call_llm(config["llm_model"], sys_prompt, user_prompt, title, dir_style, shot_style, user_instruction=guidance)
             
             shot_1_mov = "Extreme Close-up Dolly" if shot_style == "cinematic" else "Slow Dolly In"
             shot_3_mov = "Dolly Zoom" if shot_style == "cinematic" else "Lateral Tracking"
             fallback_shots = []
-            for i in range(1, 11):
+            for i in range(1, 10):
                 fallback_shots.append({
                     "shot_id": i,
                     "size": "MS",
@@ -831,6 +879,95 @@ class DramaService:
                 })
             
             shots = parse_storyboard_table(res, fallback_shots)
+            shots = list(shots or [])[:9]
+            while len(shots) < 9:
+                shots.append(fallback_shots[len(shots)])
+            for index, shot in enumerate(shots, start=1):
+                shot["shot_id"] = index
+                shot["scene"] = shot.get("scene") or "继承本场戏场景圣经"
+                shot["props"] = shot.get("props") or ["按剧本锁定的关键道具"]
+                if isinstance(shot["props"], str):
+                    shot["props"] = [shot["props"]]
+                shot["effects"] = shot.get("effects") or ["自然环境动态，无额外特效"]
+                if isinstance(shot["effects"], str):
+                    shot["effects"] = [shot["effects"]]
+                shot["expression"] = shot.get("expression") or "与本镜触发事件对应的可观察微表情与呼吸变化"
+                shot["continuity_in"] = "建立空间与人物关系" if index == 1 else "承接上一格最后动作、视线和屏幕方向"
+                shot["continuity_out"] = "锁定人物朝向、道具归属、情绪强度、光向与色温"
+                purpose_text = f"{shot.get('desc', '')} {shot.get('dialogue', '')}"
+                if any(word in purpose_text for word in ("证据", "真相", "反转", "揭露")):
+                    shot["shot_purpose"] = "reversal"
+                elif any(word in purpose_text for word in ("线索", "发现", "细节")):
+                    shot["shot_purpose"] = "clue"
+                elif any(word in purpose_text for word in ("恐惧", "悬疑", "窥视", "隐藏")):
+                    shot["shot_purpose"] = "suspense"
+                elif any(word in purpose_text for word in ("愤怒", "对峙", "争吵", "打斗", "冲突")):
+                    shot["shot_purpose"] = "tension"
+                elif any(word in purpose_text for word in ("震惊", "爆炸", "切黑")):
+                    shot["shot_purpose"] = "shock"
+                elif any(word in purpose_text for word in ("眼泪", "悲伤", "温柔", "微笑", "崩溃")):
+                    shot["shot_purpose"] = "emotion"
+                else:
+                    shot["shot_purpose"] = "information"
+
+            board = NineGridStoryboard(
+                title=title,
+                rhythm_profile=(
+                    "romance" if genre in {"romance", "retro_romance"}
+                    else "suspense" if genre == "mystery"
+                    else "horror" if genre == "horror"
+                    else "comedy" if genre == "comedy"
+                    else "action" if genre in {"military", "sports", "wuxia", "xianxia"}
+                    else "confrontation"
+                ),
+                assets=StoryAssetCatalog(
+                    characters=[c.get("name") for c in task["assets"].get("3_characters", []) if c.get("name")] or [char1_name, char2_name],
+                    scenes=["本场戏场景圣经"],
+                    props=["按剧本锁定的关键道具"],
+                    effects=["自然环境动态与剧情特效"],
+                ),
+                panels=[
+                    StoryboardPanel(
+                        index=shot["shot_id"],
+                        characters=[
+                            name for name in (char1_name, char2_name)
+                            if name and (name in (shot.get("desc") or "") or len((char1_name, char2_name)) == 1)
+                        ] or [char1_name or char2_name or "当前镜头角色"],
+                        shot_size=shot.get("size") or "中景",
+                        camera_angle=shot.get("angle") or "遵守180度轴线的平视机位",
+                        camera_movement=shot.get("motion") or "固定镜头",
+                        camera_reason="服务当前镜头的叙事目的、信息揭示和情绪强度，不做无动机炫技",
+                        lens_mm=50,
+                        aperture="T2.8",
+                        composition="主体落在三分线，前中后景层次清楚，关键道具与负空间承担叙事功能",
+                        action_axis="沿场景圣经指定轴线，人物不越180度轴线",
+                        eyeline="说话人与聆听者视线方向、高度和出入画位置连续",
+                        shot_purpose=shot["shot_purpose"],
+                        story_beat=f"第{shot['shot_id']}个因果/情绪信息单元",
+                        duration_seconds=_bounded_shot_duration(shot.get("duration")),
+                        subject_action=shot.get("desc") or f"第{shot['shot_id']}格剧情动作",
+                        expression=shot["expression"],
+                        scene=shot["scene"],
+                        props=shot["props"],
+                        effects=shot["effects"],
+                        dialogue=shot.get("dialogue") or "",
+                        sound=shot.get("sound") or "环境声与动作声连续",
+                        lighting="继承场景圣经的主光方向、色温、时间和天气，人物脸部保持自然层次",
+                        edit_in="承接上一格动作、视线或声音桥，在叙事信息可读后切入",
+                        edit_out="在动作接触、视线落点、情绪转折或对白收音点切出",
+                        generation_mode="first_last_frame",
+                        blocking="保持人物左右关系、视线匹配与关键道具位置，不越180度轴线",
+                        start_state=shot["continuity_in"],
+                        end_state=shot["continuity_out"],
+                        continuity_in=shot["continuity_in"],
+                        continuity_out=shot["continuity_out"],
+                    )
+                    for shot in shots
+                ],
+            )
+            continuity_report = validate_storyboard_continuity(board.panels)
+            if not continuity_report.passed:
+                raise RuntimeError("九宫格分镜连续性质检未通过")
             
             # 为每个 Shot 生成初版一致性分镜预览图
             char_sheets = task["assets"].get("3_sheets") or {}
@@ -869,9 +1006,23 @@ class DramaService:
                 except Exception as e:
                     logger.warning(f"分镜 {shot.get('shot_id')} 生图失败: {e}")
                     shot["image_url"] = None
+
+            panel_images = [shot.get("image_url") for shot in shots]
+            if len(panel_images) != 9 or not all(panel_images):
+                raise RuntimeError("九宫格必须由9张有效分镜图组成，当前分镜图生成不完整")
+            board_digest = hashlib.sha256("|".join(panel_images).encode("utf-8")).hexdigest()[:16]
+            board_path = os.path.join(media_compositor.MEDIA_DIR, "storyboards", f"grid_{board_digest}.png")
+            compose_nine_grid(panel_images, board_path)
+            board_url = media_compositor.public_url(
+                os.path.relpath(board_path, media_compositor.MEDIA_DIR).replace(os.sep, "/")
+            )
             
             task["assets"]["4"] = shots
             task["assets"]["4_raw"] = res
+            task["assets"]["4_grid"] = board_url
+            task["assets"]["4_grid_prompt"] = build_nine_grid_prompt(board)
+            task["assets"]["4_storyboard"] = board.model_dump(mode="json")
+            task["assets"]["4_quality"] = continuity_report.model_dump()
             
             task["logs"]["4"] = self.run_real_consistency_check(4, "分镜师分镜拆解", task["assets"], config, title)
 
@@ -1050,8 +1201,11 @@ class DramaService:
                 seg_lines = parse_shot_dialogue(dialogue, char1_name, char2_name, char1_gender, char2_gender)
                 voice_path = None
                 if seg_lines:
-                    _vu, voice_path = media_compositor.synthesize_dialogue_track(
-                        seg_lines, tag=f"voice_{task_id[:8]}_s{len(shot_assets)}")
+                    _vu, voice_path = media_compositor.synthesize_preferred_dialogue_track(
+                        seg_lines,
+                        tts_model=config["tts_model"],
+                        tag=f"voice_{task_id[:8]}_s{len(shot_assets)}",
+                    )
                 vid_url = media_compositor.attach_audio_to_clip(
                     vid_url, voice_path, bgm=True, tag=f"shotav_{task_id[:8]}_s{shot_id}")
 
@@ -1061,9 +1215,24 @@ class DramaService:
                     "motion": motion,
                     "desc": desc,
                     "dialogue": dialogue,
+                    "duration": duration,
                     "image_url": img_url,
                     "video_url": vid_url,
-                    "voice_path": voice_path
+                    "voice_path": voice_path,
+                    "continuity_state": ContinuityState(
+                        characters=[name for name in (char1_name, char2_name) if name and name in desc] or [char1_name],
+                        scene=shot.get("scene") or "本场戏场景圣经",
+                        screen_direction=(
+                            "left_to_right" if any(word in desc for word in ("向右", "从左向右"))
+                            else "right_to_left" if any(word in desc for word in ("向左", "从右向左"))
+                            else "neutral"
+                        ),
+                        action=desc,
+                        emotion=shot.get("expression") or detect_emotion(desc),
+                        props={prop: "按上一镜连续性锁定" for prop in (shot.get("props") or ["无关键道具"])},
+                        lighting=f"{dir_style}统一主光方向与色温",
+                        audio_bed=shot.get("sound") or "连续环境声",
+                    ).model_dump(),
                 })
                 
             task["assets"]["5"] = shot_assets
@@ -1091,29 +1260,59 @@ class DramaService:
                         if cached and os.path.exists(cached):
                             vpath = cached
                         else:
-                            _u, vpath = media_compositor.synthesize_dialogue_track(
-                                seg_lines, tag=f"voice_{task_id[:8]}_s{len(shot_voices)}")
+                            _u, vpath = media_compositor.synthesize_preferred_dialogue_track(
+                                seg_lines,
+                                tts_model=config["tts_model"],
+                                tag=f"voice_{task_id[:8]}_s{len(shot_voices)}",
+                            )
                         shot_voices.append(vpath)
                         if vpath:
                             voiced_count += 1
-                        all_segments.extend([(t, g) for t, g, _e in seg_lines])
+                        all_segments.extend([(seg[0], seg[1]) for seg in seg_lines])
                     else:
                         shot_voices.append(None)
 
             # 全局兜底：若无任何逐镜台词，用主线台词合成一条，避免全片无人声
             audio_url, audio_path = None, None
             if not any(shot_voices) and speech:
-                audio_url, audio_path = media_compositor.synthesize_dialogue_track(
-                    [(speech, char1_gender, detect_emotion(speech))], tag=f"voice_{task_id[:8]}_g")
+                audio_url, audio_path = media_compositor.synthesize_preferred_dialogue_track(
+                    [(speech, char1_gender, detect_emotion(speech))],
+                    tts_model=config["tts_model"],
+                    tag=f"voice_{task_id[:8]}_g",
+                )
             if not audio_url and not any(shot_voices):
                 audio_url = self.gateway.generate_tts(config["tts_model"], "young-man", speech)
                 audio_path = None
 
             voiced = "、".join(f"{t}({'男声' if g=='male' else '女声'})" for t, g in all_segments[:4])
+            estimated_duration = 0
+            for shot in shots6 if isinstance(shots6, list) else []:
+                duration_value = str(shot.get("duration", "8") if isinstance(shot, dict) else "8")
+                match = re.search(r"\d+(?:\.\d+)?", duration_value)
+                estimated_duration += float(match.group()) if match else 8
+            estimated_duration = max(12, min(600, estimated_duration or len(shots6) * 8 or 60))
+            bgm_url, bgm_path = None, None
+            sfx_url, sfx_path = None, None
+            if "eleven" in (config.get("tts_model") or "").lower():
+                bgm_url, bgm_path = media_compositor.synthesize_elevenlabs_music(
+                    f"{dir_style} {genre} short drama cinematic score, emotion arc with restrained opening, rising tension, clear climax and gentle resolution, instrumental only, leave space for dialogue",
+                    estimated_duration,
+                    tag=f"eleven_bgm_{task_id[:8]}",
+                )
+                sfx_url, sfx_path = media_compositor.synthesize_elevenlabs_sfx(
+                    "cinematic short drama room tone and environmental ambience, subtle cloth movement, footsteps and natural space, no music, no speech",
+                    duration_seconds=min(22, estimated_duration),
+                    tag=f"eleven_sfx_{task_id[:8]}",
+                )
+
             task["assets"]["6"] = {
                 "audio_url": audio_url,
                 "audio_path": audio_path,
                 "shot_voices": shot_voices,
+                "bgm_url": bgm_url,
+                "bgm_path": bgm_path,
+                "sfx_url": sfx_url,
+                "sfx_path": sfx_path,
                 "tts_text": voiced,
                 "voice_profile": (f"逐镜情绪配音 ({voiced_count}/{len(shot_voices)} 镜有台词，按时间轴对齐)"
                                   if voiced_count else ("占位音频" if not audio_path else "全局兜底配音"))
@@ -1127,10 +1326,11 @@ class DramaService:
             shots5 = task["assets"].get("5") or []
             shot_voices_all = (task["assets"].get("6") or {}).get("shot_voices") or []
             # 镜头视频/字幕/逐镜配音三者按同一顺序锁步对齐 (仅纳入有视频的镜头)，确保画/字/声同步
-            shot_clips, subtitles, shot_voices = [], [], []
+            shot_clips, subtitles, shot_voices, included_shots = [], [], [], []
             for idx, s in enumerate(shots5):
                 if not isinstance(s, dict) or not s.get("video_url"):
                     continue
+                included_shots.append(s)
                 shot_clips.append(s.get("video_url"))
                 # 字幕：优先各镜头台词，回退到画面描述简述
                 txt = (s.get("dialogue") or "").strip()
@@ -1140,6 +1340,31 @@ class DramaService:
                 subtitles.append(txt)
                 shot_voices.append(shot_voices_all[idx] if idx < len(shot_voices_all) else None)
             audio_path = (task["assets"].get("6") or {}).get("audio_path")
+            bgm_path = (task["assets"].get("6") or {}).get("bgm_path")
+            sfx_path = (task["assets"].get("6") or {}).get("sfx_path")
+            transition_reports = []
+            transition_specs = []
+            for previous_shot, current_shot in zip(included_shots, included_shots[1:]):
+                previous_state = previous_shot.get("continuity_state") if isinstance(previous_shot, dict) else None
+                current_state = current_shot.get("continuity_state") if isinstance(current_shot, dict) else None
+                if not previous_state or not current_state:
+                    transition_specs.append({"type": "crossfade", "duration": 0.22})
+                    transition_reports.append({"accepted": True, "score": 0.75, "reasons": ["缺少旧任务结构化状态，使用保守短叠化。"]})
+                    continue
+                plan = plan_transition(
+                    ContinuityState.model_validate(previous_state),
+                    ContinuityState.model_validate(current_state),
+                )
+                transition_reports.append(plan.model_dump())
+                if not plan.accepted:
+                    raise RuntimeError(
+                        f"镜头 {previous_shot.get('shot_id')}→{current_shot.get('shot_id')} 连续性质检失败："
+                        + "；".join(plan.reasons)
+                    )
+                transition_specs.append({
+                    "type": plan.video_transition,
+                    "duration": plan.duration_seconds,
+                })
 
             # 片头标题：取选题名 (去除"请帮我生成"等口令冗余)
             film_title = re.sub(r'^(请帮我?|帮我?)?(生成|制作|来)?(一个|一部)?', '', title).strip() or title
@@ -1148,7 +1373,10 @@ class DramaService:
             composed_url = media_compositor.compose_film(
                 shot_clips, subtitles, audio_path,
                 tag=f"film_{task_id[:8]}", title=film_title, bgm=True,
-                shot_voices=shot_voices if any(shot_voices) else None
+                shot_voices=shot_voices if any(shot_voices) else None,
+                bgm_path=bgm_path,
+                sfx_path=sfx_path,
+                transition_plans=transition_specs,
             )
 
             compose_mode = "ffmpeg 片头标题卡+多镜头拼接+字幕+多角色配音+BGM 真实合成"
@@ -1168,6 +1396,7 @@ class DramaService:
             task["assets"]["7"] = {
                 "final_video_url": final_vid,
                 "shot_clips": shot_clips,
+                "transition_quality": transition_reports,
                 "compose_mode": compose_mode,
                 "aspect_ratio": "9:16 (竖屏 720x1280)",
                 "subtitles": "已烧录中文字幕" if composed_url else "内置流光特效字幕"
@@ -1190,7 +1419,8 @@ class DramaService:
             task["short_link"] = f"https://short-drama.volces.com/s/{tpl.get('short_link', 'general_revenge_king')}"
             task["pr_content"] = f"🔥 抖音爆款大字标题：{pr_title}\n📌 黄金引流文案：‘{pr_body}’"
             
-            task["status"] = "completed"
+            quality_gate = (task["assets"].get("7") or {}).get("quality_gate") or {}
+            task["status"] = "completed" if quality_gate.get("passed") is True else "awaiting_quality_review"
             task["assets"]["8"] = {
                 "short_link": task["short_link"],
                 "pr_content": task["pr_content"],
@@ -1201,6 +1431,30 @@ class DramaService:
 
         # 每次成功执行一个阶段，就清除单次会话指令，保证下个阶段如果是自动生成的，不会继承上阶段的微调指令
         config["guidance_instruction"] = ""
+        self.repo.save_task(task_id, task)
+        return task
+
+    def submit_video_quality(
+        self,
+        task_id: str,
+        measurements: VideoQualityMeasurements,
+    ) -> Dict[str, Any]:
+        """Persist an evidence-backed final decision; unreviewed films never become completed."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            raise ValueError("任务不存在")
+        final_url = ((task.get("assets") or {}).get("7") or {}).get("final_video_url") or task.get("video_url")
+        if not final_url:
+            raise ValueError("尚无最终视频，不能提交质量验收")
+        report = evaluate_video_quality(measurements)
+        stage_assets = task.setdefault("assets", {}).setdefault("7", {})
+        stage_assets["quality_gate"] = report.model_dump()
+        if report.passed:
+            task["status"] = "completed"
+            task.pop("fail_reason", None)
+        else:
+            task["status"] = "quality_failed"
+            task["fail_reason"] = "成片质量门禁未通过：" + "、".join(report.failed_dimensions)
         self.repo.save_task(task_id, task)
         return task
 
@@ -1382,7 +1636,11 @@ class DramaService:
                         seg_lines.append((clean, char1_gender, detect_emotion(clean)))
                         disp_lines.append(clean)
                 if seg_lines:
-                    _u, voice_path = media_compositor.synthesize_dialogue_track(seg_lines, tag=f"ep{ep_index}s{idx}_{task_id[:6]}")
+                    _u, voice_path = media_compositor.synthesize_preferred_dialogue_track(
+                        seg_lines,
+                        tts_model=config["tts_model"],
+                        tag=f"ep{ep_index}s{idx}_{task_id[:6]}",
+                    )
                     sub_text = "  ".join(disp_lines)[:40]
 
             shot_assets.append({
@@ -1496,9 +1754,11 @@ class DramaService:
         import shutil
         import zipfile
         import json
+        from pathlib import Path
+        from urllib.parse import urlparse
         
         # 确立 skills 保存目录
-        skills_dir = "/Users/mindezhi/short-drama/backend/skills"
+        skills_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "skills")
         if not os.path.exists(skills_dir):
             os.makedirs(skills_dir)
             
@@ -1509,13 +1769,24 @@ class DramaService:
         if import_type == "zip":
             if not file:
                 raise ValueError("未上传任何 ZIP 技能文件包")
-            filename = file.filename
-            name_without_ext = os.path.splitext(filename)[0]
-            skill_name = name_without_ext
+            display_filename = Path(file.filename or "skill.zip").name
+            name_without_ext = os.path.splitext(display_filename)[0]
+            skill_name = _safe_skill_name(name_without_ext)
             
-            temp_zip_path = os.path.join(skills_dir, filename)
+            temp_zip_path = os.path.join(skills_dir, f".import-{uuid.uuid4().hex}.zip")
+            maximum_archive_bytes = 50 * 1024 * 1024
+            written = 0
             with open(temp_zip_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+                while True:
+                    chunk = file.file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > maximum_archive_bytes:
+                        buffer.close()
+                        os.remove(temp_zip_path)
+                        raise ValueError("ZIP 技能包不能超过 50MB")
+                    buffer.write(chunk)
                 
             target_extract_dir = os.path.join(skills_dir, skill_name)
             if os.path.exists(target_extract_dir):
@@ -1524,25 +1795,50 @@ class DramaService:
             
             try:
                 with zipfile.ZipFile(temp_zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(target_extract_dir)
+                    members = zip_ref.infolist()
+                    if len(members) > 2000:
+                        raise ValueError("ZIP 文件数量超过 2000 个安全上限")
+                    total_size = sum(member.file_size for member in members)
+                    if total_size > 200 * 1024 * 1024:
+                        raise ValueError("ZIP 解压后超过 200MB 安全上限")
+                    target_root = Path(target_extract_dir).resolve()
+                    for member in members:
+                        member_path = (target_root / member.filename).resolve()
+                        if member_path != target_root and target_root not in member_path.parents:
+                            raise ValueError("ZIP 包含路径穿越条目")
+                        unix_mode = (member.external_attr >> 16) & 0o170000
+                        if unix_mode == 0o120000:
+                            raise ValueError("ZIP 不允许包含符号链接")
+                    zip_ref.extractall(target_root)
                 logger.info(f"[SkillImporter] 成功解压 ZIP 技能包: {skill_name}")
             except Exception as e:
+                shutil.rmtree(target_extract_dir, ignore_errors=True)
                 logger.error(f"[SkillImporter] 解压 ZIP 失败: {str(e)}")
                 raise ValueError(f"解压 ZIP 失败: {str(e)}")
             finally:
                 if os.path.exists(temp_zip_path):
                     os.remove(temp_zip_path)
             
-            skill_desc = f"本地上传的技能包 ({filename})"
+            skill_desc = f"本地上传的技能包 ({display_filename})"
 
         # 2. 从 GitHub / Clawhub 链接导入
         elif import_type in ["github", "clawhub"]:
             if not url:
                 raise ValueError("链接不能为空")
-            repo_name = url.split('/')[-1]
+            parsed_url = urlparse(url)
+            allowed_hosts = {
+                host.strip().lower()
+                for host in os.getenv("ALLOWED_SKILL_GIT_HOSTS", "github.com,gitee.com").split(",")
+                if host.strip()
+            }
+            if parsed_url.scheme != "https" or (parsed_url.hostname or "").lower() not in allowed_hosts:
+                raise ValueError("Skill 仓库只允许来自配置白名单中的 HTTPS Git 主机")
+            if parsed_url.username or parsed_url.password:
+                raise ValueError("Skill 仓库 URL 不允许内嵌凭证")
+            repo_name = parsed_url.path.rstrip('/').split('/')[-1]
             if repo_name.endswith('.git'):
                 repo_name = repo_name[:-4]
-            skill_name = repo_name
+            skill_name = _safe_skill_name(repo_name)
             
             target_repo_dir = os.path.join(skills_dir, skill_name)
             if os.path.exists(target_repo_dir):
@@ -1554,12 +1850,12 @@ class DramaService:
                     import subprocess
                     subprocess.run(
                         [git_path, "clone", "--depth", "1", url, target_repo_dir], 
-                        check=True, timeout=12, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                        check=True, timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                     )
                     logger.info(f"[SkillImporter] 成功 Git 克隆技能仓库: {skill_name}")
                 except Exception as e:
-                    logger.warning(f"[SkillImporter] Git 克隆失败，生成仿真结构: {str(e)}")
-                    os.makedirs(target_repo_dir)
+                    logger.warning(f"[SkillImporter] Git 克隆失败: {type(e).__name__}")
+                    raise ValueError("Git Skill 克隆失败") from e
             else:
                 os.makedirs(target_repo_dir)
                 
@@ -1572,24 +1868,16 @@ class DramaService:
         elif import_type == "npx":
             if not package_name:
                 raise ValueError("NPX 技能包名不能为空")
-            skill_name = package_name.replace('/', '_').replace('@', '')
+            if not re.fullmatch(r"(?:@[a-z0-9._-]+/)?[a-z0-9._-]+", package_name, flags=re.IGNORECASE):
+                raise ValueError("NPX 技能包名格式无效")
+            skill_name = _safe_skill_name(package_name.replace('/', '_').replace('@', ''))
             target_npx_dir = os.path.join(skills_dir, skill_name)
             if os.path.exists(target_npx_dir):
                 shutil.rmtree(target_npx_dir)
             os.makedirs(target_npx_dir)
             
-            npx_path = shutil.which("npx")
-            if npx_path:
-                try:
-                    import subprocess
-                    subprocess.run(
-                        [npx_path, "-y", package_name, "--help"], 
-                        check=True, timeout=8, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                    )
-                    logger.info(f"[SkillImporter] NPX 探测校验包成功: {package_name}")
-                except Exception as e:
-                    logger.warning(f"[SkillImporter] NPX 运行失败: {str(e)}")
-            
+            # Register metadata only. Running arbitrary NPX package code inside
+            # the API process would be remote code execution.
             with open(os.path.join(target_npx_dir, "metadata.json"), "w", encoding="utf-8") as f:
                 json.dump({"name": skill_name, "package": package_name, "type": "npx"}, f, ensure_ascii=False, indent=4)
                 
@@ -1626,19 +1914,49 @@ class DramaService:
 
     def get_all_skills(self) -> List[Dict[str, Any]]:
         """
-        读取本地 skills 目录下的 registry.json，获取所有已导入的技能包列表
+        返回本地可执行 Skills 与 13 个已审计能力源；sd25-pe 默认从 ~/Desktop/sd25-pe 读取。
         """
-        import os
         import json
-        registry_path = "/Users/mindezhi/short-drama/backend/skills/registry.json"
-        if not os.path.exists(registry_path):
-            return []
-        try:
-            with open(registry_path, "r", encoding="utf-8") as f:
-                registry = json.load(f)
-                return list(registry.values())
-        except Exception:
-            return []
+        from pathlib import Path
+        from app.core.capability_manifest import UPSTREAM_CAPABILITIES
+        from app.core.skill_registry import SkillRegistry
+
+        backend_root = Path(__file__).resolve().parents[2]
+        skills_dir = backend_root / "skills"
+        sd25 = Path(os.getenv("SD25_PE_SKILL_PATH") or (Path.home() / "Desktop" / "sd25-pe"))
+        discovered = SkillRegistry([skills_dir, sd25]).list()
+        result = [
+            {
+                "name": item.name,
+                "description": item.description or f"本地 {item.kind} Skill",
+                "type": item.kind,
+                "path": str(item.path),
+                "active": True,
+            }
+            for item in discovered
+        ]
+
+        registry_path = skills_dir / "registry.json"
+        if registry_path.is_file():
+            try:
+                imported = json.loads(registry_path.read_text(encoding="utf-8"))
+                if isinstance(imported, dict):
+                    result.extend(value for value in imported.values() if isinstance(value, dict))
+            except (OSError, json.JSONDecodeError):
+                pass
+
+        known = {str(item.get("name") or item.get("id")) for item in result}
+        for source in UPSTREAM_CAPABILITIES:
+            if source["id"] in known:
+                continue
+            result.append({
+                "name": source["id"],
+                "description": "、".join(source["capabilities"]),
+                "type": "audited-capability-source",
+                "source": source["source"],
+                "active": True,
+            })
+        return result
 
     def delete_skill_logic(self, skill_name: str) -> Dict[str, Any]:
         """
@@ -1648,11 +1966,17 @@ class DramaService:
         import shutil
         import json
 
-        skills_dir = "/Users/mindezhi/short-drama/backend/skills"
+        skills_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "skills")
         registry_path = os.path.join(skills_dir, "registry.json")
         
         # 1. 物理删除技能包目录
         target_dir = os.path.join(skills_dir, skill_name)
+        if not re.fullmatch(r"[\w.-]+", skill_name or "", flags=re.UNICODE):
+            raise ValueError("Skill 名称无效")
+        root_real = os.path.realpath(skills_dir)
+        target_real = os.path.realpath(target_dir)
+        if not target_real.startswith(root_real + os.sep):
+            raise ValueError("Skill 路径越界")
         if os.path.exists(target_dir):
             shutil.rmtree(target_dir)
             logger.info(f"[SkillImporter] 成功物理删除技能包目录: {target_dir}")
@@ -1694,46 +2018,11 @@ class DramaService:
 
     def parse_script_file(self, file_name: str, file_bytes: bytes) -> str:
         """
-        手动解析上传的剧本文件 (.txt, .md, .docx, .pdf) 并返回纯文本内容。
+        手动解析上传的剧本文件并返回纯文本内容与安全摄取一致的规范化文本。
         """
-        ext = os.path.splitext(file_name.lower())[1]
-        
-        if ext in [".txt", ".md"]:
-            # 尝试 utf-8 其次 gbk 解码
-            try:
-                return file_bytes.decode("utf-8")
-            except UnicodeDecodeError:
-                try:
-                    return file_bytes.decode("gbk")
-                except UnicodeDecodeError:
-                    return file_bytes.decode("utf-8", errors="ignore")
-                    
-        elif ext == ".docx":
-            try:
-                import docx
-                doc = docx.Document(io.BytesIO(file_bytes))
-                paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-                return "\n".join(paragraphs)
-            except Exception as e:
-                logger.error(f"解析 docx 失败: {str(e)}")
-                raise ValueError(f"解析 Word 剧本失败: {str(e)}")
-                
-        elif ext == ".pdf":
-            try:
-                import pypdf
-                reader = pypdf.PdfReader(io.BytesIO(file_bytes))
-                text_pages = []
-                for page in reader.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text_pages.append(page_text)
-                return "\n".join(text_pages)
-            except Exception as e:
-                logger.error(f"解析 pdf 失败: {str(e)}")
-                raise ValueError(f"解析 PDF 剧本失败: {str(e)}")
-                
-        else:
-            raise ValueError(f"不支持的剧本文件格式: {ext}。仅支持 .txt, .md, .docx, .pdf。")
+        from app.ingest.parsers import SourceIngestor
+
+        return SourceIngestor().ingest(file_name, file_bytes).text
 
     def get_shanyin_screenplay_skill(self) -> str:
         """
@@ -1748,7 +2037,3 @@ class DramaService:
             except Exception as e:
                 logger.error(f"[ShanyinSkill] 读取山音编剧技能文件失败: {str(e)}")
         return ""
-
-
-
-

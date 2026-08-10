@@ -14,7 +14,7 @@ export interface TaskResponse {
   taskId: string;
   currentStage: number;
   stageName: string;
-  status: 'idle' | 'running' | 'paused' | 'completed' | 'failed';
+  status: 'idle' | 'running' | 'paused' | 'completed' | 'failed' | 'awaiting_quality_review' | 'quality_failed';
   config: {
     titleSuggestion: string;
     directorStyle: string;
@@ -27,6 +27,9 @@ export interface TaskResponse {
     episodeCount?: number;
   };
   assets: {
+    // Provider/stage payloads are intentionally heterogeneous and validated by
+    // the backend contracts before rendering.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     [key: string]: any;
   };
   logs: {

@@ -76,16 +76,31 @@ short-drama/
 | **SEEDANCE_MODEL_NAME** | `doubao-seedance-2-0-260128` | 图生视频大模型（主渲染引擎） |
 | **SEEDANCE_IMAGE_MODEL_NAME** | `doubao-seedream-4-0-250828` | 文生图大模型（底片渲染引擎） |
 | **SEEDANCE_IMAGE_SIZE** | `1440x2560` | 文生图尺寸（9:16 竖屏高分辨率） |
-| **DEEPSEEK_API_KEY** | `sk-xxxxxxxxxxxxxxxxxxxxxxxx` | DeepSeek API 密钥（用于驱动 Agent 链逻辑） |
+| **DEEPSEEK_API_KEY** | 通过环境变量注入 | DeepSeek API 密钥（用于驱动 Agent 链逻辑） |
 | **DEEPSEEK_BASE_URL** | `https://api.deepseek.com/v1` | DeepSeek API 接入端点 |
 | **DEEPSEEK_MODEL_NAME** | `deepseek-v4-pro` | 语言大模型名称 |
 | **ALIBABA_CLOUD_ACCESS_KEY_ID** | `LTAIxxxxxxxxxxxxxx` | 阿里云短信 AccessKey ID |
 | **ALIBABA_CLOUD_ACCESS_KEY_SECRET**| `xxxxxxxxxxxxxxxxxxxxxxxxxx` | 阿里云短信 AccessKey Secret |
 | **ALIBABA_CLOUD_SMS_SIGN_NAME** | `伊胜雪网络科技` | 验证短信签名 |
 | **ALIBABA_CLOUD_SMS_TEMPLATE_CODE**| `SMS_501585017` | 验证短信模板 ID |
+| **MINIMAX_API_KEY** | 仅服务端环境变量 | MiniMax H3 视频生成密钥 |
+| **MINIMAX_H3_ENDPOINT** | `https://api.minimaxi.com/v2/video_generation` | MiniMax H3 创建任务端点 |
+| **MINIMAX_H3_STATUS_URL_TEMPLATE** | 同 API 主机的 `/v1/query/video_generation?task_id={task_id}` | 异步任务查询端点，可覆盖 |
+| **MINIMAX_FILES_URL** | 同 API 主机的 `/v1/files/retrieve` | 根据 `file_id` 解析最终下载地址，可覆盖 |
+| **ELEVENLABS_API_KEY** | 仅服务端环境变量 | 配音、多人对话、音效、音乐、语音识别与配音翻译 |
+| **ELEVENLABS_VOICE_MAP** | `{"角色名":"voice_id"}` | 固定每个角色的声音身份 |
+| **SD25_PE_SKILL_PATH** | `/absolute/path/to/sd25-pe` | 指向完整 `sd25-pe/SKILL.md` 的目录；默认 `~/Desktop/sd25-pe` |
+| **AUTH_SIGNING_SECRET** | 至少 32 位随机值 | 会话签名；生产环境必填，禁止复用供应商密钥 |
+| **COOKIE_SECURE** | 生产 HTTPS 环境设为 `1` | 只允许浏览器通过 HTTPS 发送登录 Cookie |
+| **DATABASE_URL** | `postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama` | 用户、全局能力、元素、会员、订单和账本的 PostgreSQL 数据源 |
+| **MODEL_CONFIG_MASTER_KEY** | Fernet 密钥，由部署密钥管理器注入 | 加密管理员在模型配置中心保存的供应商 API Key；生产环境必填 |
+| **BOOTSTRAP_ADMIN** | 本地开发 `1`，生产默认 `0` | 仅在配置登录名不存在时初始化管理员 |
+| **BOOTSTRAP_ADMIN_LOGIN** | `admin@short-drama` | 本地默认管理员登录名 |
+| **BOOTSTRAP_ADMIN_PASSWORD** | 本地开发默认 `admin@123` | 首次登录必须修改；生产环境禁止使用该默认值 |
+| **PAYMENT_WEBHOOK_SECRET** | 至少 32 位随机值 | 微信/支付宝回调信封的 HMAC 验签密钥 |
 
 > [!WARNING]
-> 敏感的密钥（如 API Key）均通过 `.env` 环境变量文件进行读取。禁止将带有明文 Key 的代码提交到公共仓库。
+> 敏感密钥只允许来自服务端环境变量或模型配置中心。模型配置中心的 Key 使用服务端主密钥加密后写入 PostgreSQL，浏览器、列表接口、日志和 `localStorage` 都不会收到或保存明文。禁止将带有明文 Key 的代码提交到公共仓库。
 
 ### 4. 本地快速启动
 
@@ -104,6 +119,18 @@ short-drama/
 3. **优雅关闭**：当需要停止开发调试时，在运行终端中按下 **[Enter] 键** 或 **[Ctrl+C]**，脚本将捕获退出信号，自动、干净地杀死全部关联的前后端后台子进程。
 
 #### 方式 B：手动分步启动
+
+##### PostgreSQL 初始化（首次）
+
+PostgreSQL 16 运行后创建数据库，并执行幂等的表结构、能力、会员计划和管理员引导：
+
+```bash
+/opt/homebrew/opt/postgresql@16/bin/createdb -h localhost -U postgres short-drama
+DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama' \
+  backend/.venv/bin/python scripts/bootstrap_admin.py
+```
+
+本地开发默认管理员为 `admin@short-drama`，默认密码为 `admin@123`，配置位于服务端 `backend/.env`。密码在 PostgreSQL 中只保存 scrypt 哈希，首次登录自动进入用户中心并要求修改。生产环境检测到这个公开默认密码会拒绝启动，必须关闭自动引导或通过部署密钥管理器注入独立强密码。
 
 ##### 后端 (FastAPI) 启动：
 1. 进入 backend 目录，创建虚拟环境：
@@ -136,6 +163,48 @@ short-drama/
 *   **后端 API 备用文档 (ReDoc)**：[http://localhost:8000/redoc](http://localhost:8000/redoc)
 *   **媒体文件静态资源根路径**：[http://localhost:8000/media/](http://localhost:8000/media/)
 
+### 6. 工业化生产 API
+
+所有 `/api/production/*` 路由都要求登录，密钥不会下发给浏览器。
+
+| 路由 | 能力 |
+| :--- | :--- |
+| `GET /api/production/capabilities` | 查询 13 个来源、已发现 Skill、创作预设和供应商配置状态 |
+| `GET /api/production/presets` | 查询 17 个可调用创作/提示词编译模式 |
+| `POST /api/production/presets/{id}/compile` | 编译带五视图、九宫格、素材职责、首尾帧、表演和连续性硬约束的方案 |
+| `POST /api/production/sd25/compile` | 执行本地 sd25-pe 的生成/编辑/延长、音频单改、编辑后延长有序步骤、素材职责、关键帧、九宫格与白模 Prompt 编译 |
+| `GET /api/production/shotcraft/catalog` | 查询锁定的 Video Shotcraft 152 卡 / 209 样式目录与音效统计 |
+| `POST /api/production/shotcraft/compile` | 将 Shotcraft 卡片和样式编译为统一镜头计划，不执行上游脚本 |
+| `POST /api/production/storyboards/compile` | 校验并编译严格 3×3 九宫格分镜 |
+| `POST /api/production/video/minimax-h3` | H3 文本、首帧、尾帧、首尾帧、多图和多模态参考视频 |
+| `POST /api/production/audio/*` | ElevenLabs TTS/Dialogue（含时间戳）、SFX、Music、Video-to-Music、STT 和 legacy Dubbing |
+| `POST /api/production/performance/plan` | 生成动机、触发、视线、呼吸、微表情、身体、声音与权力转移的表演节拍 |
+| `POST /api/production/audio/mix/plan` | 生成带对白闪避、响度和峰值门禁的可编辑混音计划 |
+| `POST /api/production/quality/video/decision` | 对真实多模态/人工评分执行失败关闭的成片质量门禁 |
+| `POST /api/drama/{task_id}/quality/video` | 将验收证据写入任务；仅通过后任务状态变为 `completed` |
+
+角色阶段会生成一张有序五视图设定板并物理拆成五个视图；分镜阶段强制产出九张独立镜头图和一张物理 3×3 九宫格。长视频合成会根据场景、轴线、动作、道具、灯光和声音状态选择动作匹配、硬切、短叠化、声音桥或转黑，未通过连续性门禁的镜头禁止合成。
+
+工作室平台 API 使用 `/api/studio/*`：包含 SQLite 项目、TXT/Markdown/DOCX/PDF/FDX 来源摄取、证据化故事图、版本谱系、下游过期、追加式人工审核、主线/Freezone 双轨画布、Director World 空间调度、原子任务租约与取消、分币种成本账本、带 SHA-256 的项目归档往返、资产就绪、SRT/ASS/Jianying-compatible 导出以及作用域外部 Agent Key。外部自动化使用 `/api/agent/*`，凭据只允许访问绑定项目和显式授权的 scope。
+
+产品平台 API 使用 PostgreSQL：`/api/platform/*` 提供 13 个来源、66 项能力的全局开关和 `/command` 白名单调用；`/api/elements/*` 提供演员、道具、场景、特效独立元素库及安全图片上传/重新生成请求；`/api/users/*` 与 `/api/admin/users/*` 提供个人资料、改密和角色/状态管理；`/api/billing/*` 提供会员计划、积分账本、订单、沙箱支付和签名幂等回调。微信/支付宝真实结算在商户证书未配置时失败关闭，不会把浏览器跳转当作付款成功。
+
+全局模型配置中心使用 `/api/model-configurations/*`。管理员可在文本、图像、视频、音频四类中选择供应商，填写官方 Base URL 和 API Key；服务端通过供应商模型枚举接口实时获取模型，自动将文本模型区分为纯文本/多模态，并将 ElevenLabs 音频能力归为 ASR、TTS、BGM/音效和音乐。前后端均不内置可选模型 ID 清单；供应商没有开放可枚举接口时会明确失败，不伪造候选模型。保存前会重新发现并验证所选 ID，保存后启用项进入全局运行时路由，支持逐模型禁用、连接测试和任务当前模型选择。连接测试只校验鉴权、模型枚举和选择有效性，不提交付费生成任务。
+
+动态配置 API：
+
+| 路由 | 作用 |
+| :--- | :--- |
+| `GET /api/model-configurations/providers` | 获取四分类与供应商协议元数据（不含模型 ID） |
+| `GET /api/model-configurations` | 获取已保存配置、启用项和分类统计（不返回 Key） |
+| `POST /api/model-configurations/discover` | 使用当前 Base URL/Key 动态发现并归类模型 |
+| `POST /api/model-configurations/test` | 重新发现并验证选择，不执行付费推理 |
+| `POST /api/model-configurations` | 加密保存已验证的模型配置并全局生效 |
+| `PATCH /api/model-configurations/{id}` | 启用或禁用整组供应商配置 |
+| `PATCH /api/model-configurations/{id}/models/{entry_id}` | 启用或禁用单个动态模型 |
+
+实现依据的当前官方接口：[MiniMax API 概览](https://platform.minimaxi.com/docs/api-reference/api-overview)、[ElevenLabs 鉴权](https://elevenlabs.io/docs/api-reference/authentication)、[TTS 与时间戳](https://elevenlabs.io/docs/api-reference/text-to-speech/convert-with-timestamps)、[多人对话时间戳](https://elevenlabs.io/docs/api-reference/text-to-dialogue/convert-with-timestamps)、[Video-to-Music](https://elevenlabs.io/docs/api-reference/music/video-to-music)、[FastAPI 多文件路由](https://fastapi.tiangolo.com/tutorial/bigger-applications/)、[Pydantic 校验器](https://pydantic.dev/docs/validation/latest/concepts/validators/) 与 [Python sqlite3](https://docs.python.org/3/library/sqlite3.html)。
+
 ---
 
 ## 二、AI 短剧制作知识库与工作流导航
@@ -149,7 +218,7 @@ short-drama/
 | 1 | [短剧题材类型总结.md](短剧题材类型总结.md) | 题材库、爆款公式、商业价值矩阵 | 选题立项阶段 |
 | 2 | [画质风格类型总结.md](画质风格类型总结.md) | 画风设计、调色调色板、光影、技术参数 | 制定视觉基调阶段 |
 | 3 | [AI短剧注意事项与关键元素.md](AI短剧注意事项与关键元素.md) | 剧本结构、商业模式、避坑清单、全流程总览 | 贯穿全盘把控阶段 |
-| 4 | [AI短剧三视图解决人物一致性提示词模板.md](AI短剧三视图解决人物一致性提示词模板.md) | 三视图法、角色锁定卡、提示词渲染模板 | 锁定主角人物形象时 |
+| 4 | [AI短剧三视图解决人物一致性提示词模板.md](AI短剧三视图解决人物一致性提示词模板.md) | 已升级为五视图法、角色锁定卡、提示词渲染模板 | 锁定人物形象时 |
 | 5 | [AI短剧连续性设计指南.md](AI短剧连续性设计指南.md) | 跨镜头角色/背景/光影连续性、首尾帧衔接 | 多镜头过渡与拼接阶段 |
 | 6 | [AI短剧表演细节与提示词指南.md](AI短剧表演细节与提示词指南.md) | 表演与表情、口型对齐、肢体与手部精细度 | 渲染表演与音视频对齐阶段 |
 | 7 | [AI短剧与漫剧导演级拍摄分镜完全指南.md](AI短剧与漫剧导演级拍摄分镜完全指南.md) | 36种高级运镜设计、景别布局、镜头视角 | 镜头剧本与画面构图设计时 |
@@ -205,7 +274,7 @@ short-drama/
 ```text
 【选题策划】          【视觉基调】         【前期锁定】                【生成渲染】                  【合成与质检】
     │                  │                   │                          │                            │
- [1]题材 ───▶ [2]画质风格 ───▶ ┌── [4]角色三视图锁定 ─┐ ───▶ [6]表演细节/动作/口型/手部控制 ───▶ [5]连续性(首尾帧过渡)
+ [1]题材 ───▶ [2]画质风格 ───▶ ┌── [4]角色五视图锁定 ─┐ ───▶ [6]表演细节/动作/口型/手部控制 ───▶ [5]连续性(首尾帧过渡)
                                ├── [6]声音音色设计 ──┤       [7]运镜镜头语言设计              │   后期插帧/调色/导出
                                └── [3]剧本分镜脚本 ──┘                                        ▼
                                                                                    [8]一致性检查清单全程过滤
@@ -215,7 +284,7 @@ short-drama/
 1.  **选题立项**：匹配爆款公式及受众爽点，定义内容方向 `[主用文档 1]`
 2.  **视觉基调设定**：确定画风色彩、画面纵横比及特定物理参数 `[主用文档 2 + 全局基准]`
 3.  **剧本与脚本**：输出镜号级分镜脚本，细化每一镜的起止状态描述 `[主用文档 3]`
-4.  **角色一致性锁定**：渲染标准三视图，分配种子(Seed)与特征锁定卡 `[主用文档 4 + 8]`
+4.  **角色一致性锁定**：渲染标准有序五视图，分配种子(Seed)与特征锁定卡 `[主用文档 4 + 8]`
 5.  **声音设计**：基于 TTS 或音色克隆技术生成分镜干声音频文件 `[主用文档 6]`
 6.  **设计镜头语言**：确定每镜的景别、光影与站位 `[主用文档 7]`
 7.  **生成身体动作**：剥离面部多余特征，专注于角色姿态与肢体渲染 `[主用文档 6]`
@@ -232,7 +301,7 @@ short-drama/
 | 遇到的具体问题 | 优先查阅路径 |
 | :--- | :--- |
 | **画面缺乏电影感**，类似“会动的 PPT” | 查阅 [7] 运镜完全指南 §一/§六 及 [2] 画风文档 |
-| **镜头切换时人物服饰、脸部出现漂移** | 查阅 [4] 三视图模板 及 [6] 表演指南 §10 |
+| **镜头切换时人物服饰、脸部出现漂移** | 查阅 [4] 五视图锁定模板及 [6] 表演指南 §10 |
 | **多镜头拼接在一起割裂，产生跳轴与视觉跳变** | 查阅 [5] 连续性设计指南（全篇） |
 | **角色表情极其僵硬，口型与配音完全对不上** | 查阅 [6] 表演指南 §3/§4/§9 |
 | **手指畸形、物品穿模** | 查阅 [6] 表演指南 §12（手部策略规避） |
@@ -404,7 +473,7 @@ short-drama/
 3.  **基调与引擎配置**：选择画面纵横比（默认竖屏 9:16），并在右侧控制栏为本次任务配置底层引擎（推荐 LLM 选用 DeepSeek-v4-pro 处理逻辑，Video 引擎选用火山 Seedance 处理视觉）。点击“开始生成”。
 
 ### 阶段二：Agent 监控与断点干预 (核心操作)
-1.  **自动化推理**：系统将自动执行流水线的前 4 个阶段（选题 -> 剧本编写 -> 角色三视图锁定 -> 分镜设计）。此时，您可在“流控大盘”喝着咖啡实时观看 AI 的推理输出。
+1.  **自动化推理**：系统将自动执行流水线的前 4 个阶段（选题 -> 剧本编写 -> 角色五视图锁定 -> 九宫格分镜设计）。此时，您可在“流控大盘”观看 AI 的生成状态。
 2.  **暂停与精修**：当系统运行到“视觉渲染前”的关键检查点时，强烈建议您点击控制台上的 **“暂停并编辑”**。
 3.  **人工介入修改**：系统将弹出一个可视化的分镜编辑器。您可以亲自审查 AI 设定的机位、动作与台词。如果觉得某句台词不够有张力，或希望将某个镜头的景别由 `Medium Shot (中景)` 强制改为 `Extreme Close-up (大特写)`，可直接在输入框内修改。确认修改完美后，点击“保存并继续”。
 

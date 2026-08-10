@@ -7,6 +7,12 @@ import {
   Upload
 } from 'lucide-react';
 import { type TaskConfig, type TaskResponse } from './types';
+import { CapabilityCenter } from './features/platform/CapabilityCenter';
+import { ElementLibraryPage, type ElementKind } from './features/elements/ElementLibraryPage';
+import { UserCenterPage } from './features/account/UserCenterPage';
+import { BillingCenterPage } from './features/billing/BillingCenterPage';
+import { ModelConfigurationCenter, type ModelCategory } from './features/models/ModelConfigurationCenter';
+import { ProjectSkillManager } from './features/skills/ProjectSkillManager';
 
 // 定义 Agent 节点常数
 const AGENT_STAGES = [
@@ -19,49 +25,6 @@ const AGENT_STAGES = [
   { id: 7, name: '合成发布 (Composer & Publisher)', icon: Layers, desc: '视听合流压制与内置特效字幕' },
   { id: 8, name: '宣发 Agent (PR Agent)', icon: Share2, desc: '生成引流封面大字及高完播率文案' },
 ];
-interface ModelItem {
-  id: string;
-  name: string;
-  desc: string;
-  isRecommended?: boolean;
-}
-
-const LLM_MODELS: ModelItem[] = [
-  { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', desc: '极速响应，智能选题与对白', isRecommended: true },
-  { id: 'deepseek-v4-pro', name: 'deepseek-v4-pro', desc: '深度思考，逻辑强悍' },
-  { id: 'doubao-seed-2-0-pro-260215', name: '豆包 Seed 2.0 Pro', desc: '多模态爽剧大模型 (260215)' },
-  { id: 'qwen-turbo', name: 'qwen-turbo', desc: '通义千问，高口语化拟真' },
-  { id: 'agnes-1.5-flash', name: 'Agnes 1.5 Flash', desc: 'Agnes 1.5 极速文本生成' },
-  { id: 'agnes-2.0-flash', name: 'Agnes 2.0 Flash', desc: 'Agnes 2.0 智能多模态大模型' }
-];
-
-const VIDEO_MODELS: ModelItem[] = [
-  { id: 'doubao-seedance-2-0-260128', name: '豆包 Seedance 2.0', desc: '火山旗舰图生视频模型 (260128)', isRecommended: true },
-  { id: 'doubao-seedance-2-0-fast-260128', name: '豆包 Seedance 2.0 Fast', desc: '火山极速图生视频模型 (260128)' },
-  { id: 'doubao-seedance-1-5-pro-251215', name: '豆包 Seedance 1.5 Pro', desc: '火山专业视频模型 (251215', isRecommended: true },
-  { id: 'doubao-seedance-1-0-pro-250528', name: '豆包 Seedance 1.0 Pro', desc: '火山专业视频模型 (250528)' },
-  { id: 'happyhorse', name: 'happyhorse', desc: '运镜平滑视频生成模型' },
-  { id: 'agnes-video-v2.0', name: 'agnes-video-v2.0', desc: '大动态多帧视频模型' }
-
-];
-
-const IMAGE_MODELS: ModelItem[] = [
-  { id: 'doubao-seedream-5-0-260128', name: '豆包 Seedream 5.0', desc: '火山旗舰文生图模型 (260128)', isRecommended: true },
-  { id: 'doubao-seedream-4-5-251128', name: '豆包 Seedream 4.5', desc: '火山旗舰文生图模型 (251128)' },
-  { id: 'doubao-seedream-4-0-250828', name: '豆包 Seedream 4.0', desc: '火山文生图模型 (250828)' },
-  { id: 'gpt-image2', name: 'gpt-image2', desc: '电影画幅底片渲染' },
-  { id: 'gemini-3.1-pro-image', name: 'gemini-3.1-pro-image', desc: '极佳画面细节生图' },
-  { id: 'gemini-3.1-flash-image', name: 'gemini-3.1-flash-image', desc: '快速多帧画画生成' },
-  { id: 'agnes-image-2.1-flash', name: 'agnes-image-2.1-flash', desc: '高效率多帧生图' },
-  { id: 'agnes-image-2.0-flash', name: 'agnes-image-2.0-flash', desc: '平滑色彩渐变' }
-];
-
-const TTS_MODELS: ModelItem[] = [
-  { id: 'ElevenLabs', name: 'ElevenLabs', desc: '全球最领先配音', isRecommended: true },
-  { id: 'Bert-VITS2', name: 'Bert-VITS2', desc: '口型拟真稳定' },
-  { id: 'EmotiVoice', name: 'EmotiVoice', desc: '丰富情感标签' }
-];
-
 interface ChatMessage {
   id: string;
   sender: 'user' | 'ai';
@@ -70,11 +33,64 @@ interface ChatMessage {
   isSystem?: boolean;
 }
 
+interface CurrentUser {
+  user_id: string;
+  username: string;
+  email?: string | null;
+  phone?: string | null;
+  role?: 'admin' | 'editor' | 'user';
+  status?: 'active' | 'suspended';
+  must_change_password?: boolean;
+}
+
+interface EpisodeItem {
+  index: number;
+  title: string;
+  status: 'idle' | 'running' | 'completed' | 'failed';
+  videoUrl?: string | null;
+}
+
+interface ImportedSkill {
+  name: string;
+  description?: string;
+  type?: string;
+  path?: string;
+  source?: string;
+}
+
+interface RecommendedTemplate {
+  id: string;
+  title: string;
+  desc: string;
+  prompt: string;
+}
+
+interface CharacterCard {
+  name: string;
+  role?: string;
+  desc?: string;
+  sheet?: string;
+  views?: Array<{ view: string; image_url: string }>;
+}
+
+interface ProductionShot {
+  shot_id?: number;
+  size?: string;
+  motion?: string;
+  desc?: string;
+  image_url?: string;
+  video_url?: string;
+}
+
+let messageSequence = 0;
+const nextMessageId = () => `message-${++messageSequence}`;
+
 export default function App() {
   // 用户身份认证状态
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [authChecked, setAuthChecked] = useState<boolean>(false);
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
+  const [activePortal, setActivePortal] = useState<'home' | 'user' | 'billing' | ElementKind>('home');
 
   // 统一的网络请求拦截器，确保附带 HttpOnly Cookie 并在 401 时拦截至登录态
   const apiFetch = async (url: string, options: RequestInit = {}) => {
@@ -102,7 +118,7 @@ export default function App() {
   const [codeCountdown, setCodeCountdown] = useState<number>(0);
   const [mockVerificationCode, setMockVerificationCode] = useState<string>('');
 
-  // 模拟发送验证码，带 60 秒倒计时，并在前端显示回显
+  // 发送验证码并启动 60 秒倒计时；生产环境永不回显验证码。
   const handleSendVerificationCode = async () => {
     const loginId = authForm.loginId.trim();
     if (!loginId) {
@@ -122,8 +138,11 @@ export default function App() {
       
       if (res.ok) {
         const data = await res.json();
-        setMockVerificationCode(data.code);
-        setAuthSuccess(`验证码发送成功！您的模拟验证码是：${data.code}`);
+        const developmentCode = typeof data.development_code === 'string' ? data.development_code : '';
+        setMockVerificationCode(developmentCode);
+        setAuthSuccess(developmentCode
+          ? `验证码发送成功（本地开发码：${developmentCode}）`
+          : '验证码发送成功，请查看短信或邮件。');
         setCodeCountdown(60);
         const timer = setInterval(() => {
           setCodeCountdown(prev => {
@@ -138,7 +157,7 @@ export default function App() {
         const err = await res.json();
         setAuthError(err.detail || '验证码发送失败');
       }
-    } catch (e) {
+    } catch {
       setAuthError('无法连接至后端，请先确保后端运行中。');
     }
   };
@@ -165,6 +184,7 @@ export default function App() {
         if (res.ok) {
           const data = await res.json();
           setCurrentUser(data.user);
+          if (data.user.must_change_password) setActivePortal('user');
           setAuthForm({ loginId: '', password: '', email: '', phone: '', code: '' });
           fetchHistoryTasks();
           fetchImportedSkills();
@@ -187,6 +207,7 @@ export default function App() {
         if (res.ok) {
           const data = await res.json();
           setCurrentUser(data.user);
+          if (data.user.must_change_password) setActivePortal('user');
           setAuthForm({ loginId: '', password: '', email: '', phone: '', code: '' });
           setMockVerificationCode('');
           fetchHistoryTasks();
@@ -200,8 +221,8 @@ export default function App() {
           setAuthError('邮箱与手机号至少需填写一项');
           return;
         }
-        if (!authForm.password || authForm.password.length < 6) {
-          setAuthError('密码长度不能少于 6 位');
+        if (!authForm.password || authForm.password.length < 10) {
+          setAuthError('密码长度不能少于 10 位');
           return;
         }
         
@@ -228,7 +249,7 @@ export default function App() {
           setAuthError(err.detail || '注册失败，手机号或邮箱可能已被占用');
         }
       }
-    } catch (err) {
+    } catch {
       setAuthError('连接服务器失败，请确认后端已正常启动。');
     }
   };
@@ -250,35 +271,15 @@ export default function App() {
     }
   };
 
-  // 校验登录状态的 me 接口请求
-  const checkLoginStatus = async () => {
-    try {
-      const res = await fetch('http://localhost:8000/api/auth/me', {
-        method: 'GET',
-        credentials: 'include'
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setCurrentUser(data.user);
-        fetchHistoryTasks();
-        fetchImportedSkills();
-      }
-    } catch (e) {
-      console.error('会话状态未激活');
-    } finally {
-      setAuthChecked(true);
-    }
-  };
-
   // 配置状态
   const [config, setConfig] = useState<TaskConfig>({
     titleSuggestion: '',
     directorStyle: 'cyberpunk',
     shotStyle: 'cinematic',
-    llmModel: 'deepseek-v4-flash',
-    imageModel: 'doubao-seedream-5-0-260128',
-    videoModel: 'doubao-seedance-2-0-260128',
-    ttsModel: 'ElevenLabs',
+    llmModel: '',
+    imageModel: '',
+    videoModel: '',
+    ttsModel: '',
     oneClick: false,
     episodeCount: 3
   });
@@ -287,7 +288,6 @@ export default function App() {
   const [taskId, setTaskId] = useState<string>('');
   const [taskData, setTaskData] = useState<TaskResponse | null>(null);
   const taskDataRef = useRef<TaskResponse | null>(null);
-  taskDataRef.current = taskData;
   const [uploadedScript, setUploadedScript] = useState<File | null>(null);
   const [scriptContent, setScriptContent] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -297,8 +297,9 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string>('');
   
   // 气泡控制
-  const [activePopover, setActivePopover] = useState<'none' | 'model' | 'skill' | 'element' | 'sidebarModel' | 'sidebarSkill'>('none');
-  const [modelTab, setModelTab] = useState<'text' | 'image' | 'video' | 'voice'>('video');
+  const [activePopover, setActivePopover] = useState<'none' | 'skill' | 'element' | 'sidebarSkill'>('none');
+  const [showModelConfiguration, setShowModelConfiguration] = useState(false);
+  const [showProjectSkillManager, setShowProjectSkillManager] = useState(false);
   
   // 对话流状态
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -311,7 +312,7 @@ export default function App() {
   const [newProjectShotStyle, setNewProjectShotStyle] = useState<string>('cinematic');
   const [newProjectOneClick, setNewProjectOneClick] = useState<boolean>(true); // 成片方式：true=一键成片 / false=分步引导
   const [newProjectEpisodes, setNewProjectEpisodes] = useState<number>(3); // 一次性生成的剧本集数
-  const [episodes, setEpisodes] = useState<any[]>([]); // 分集制作清单 (逐集出片)
+  const [episodes, setEpisodes] = useState<EpisodeItem[]>([]); // 分集制作清单 (逐集出片)
   const [episodesBusy, setEpisodesBusy] = useState<boolean>(false);
   const [showSkillsGrid, setShowSkillsGrid] = useState<boolean>(true);
 
@@ -321,8 +322,8 @@ export default function App() {
   const [importSkillUrl, setImportSkillUrl] = useState<string>('');
   const [importSkillPackage, setImportSkillPackage] = useState<string>('');
   const [importSkillFile, setImportSkillFile] = useState<File | null>(null);
-  const [importedSkills, setImportedSkills] = useState<any[]>([]);
-  const [recommendedTemplates, setRecommendedTemplates] = useState<any[]>([
+  const [importedSkills, setImportedSkills] = useState<ImportedSkill[]>([]);
+  const [recommendedTemplates, setRecommendedTemplates] = useState<RecommendedTemplate[]>([
     { id: '1', title: '⚔️ 国风新武侠决战', desc: '无极剑宗传人突围逆袭破强敌', prompt: '请帮我生成一个武侠决战短剧，走完整个流程。' },
     { id: '2', title: '🚗 智能车载科技爽剧', desc: '火山方舟大模型反击资本垄断', prompt: '请生成一个车载科技中控发布会短剧，走完流程。' },
     { id: '3', title: '🐺 欧美狼人出海短剧', desc: 'Rejected Mate & Silver Wolf Queen', prompt: '请帮我生成一个欧美狼人出海短剧，走完流程。' },
@@ -330,29 +331,36 @@ export default function App() {
     { id: '5', title: '⚡ 废柴弟子逆天成魔', desc: '清虚仙尊欲剥仙骨，魔皇血脉觉醒', prompt: '请帮我生成一个废柴弟子成魔修仙短剧，走完流程。' },
     { id: '6', title: '⚖️ 金牌律师正义反扑', desc: '行贿伪证当庭拆穿，豪门大少收押', prompt: '请帮我生成一个金牌律师庭审翻盘短剧，走完流程。' }
   ]);
-  const [disabledModels, setDisabledModels] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('disabled_models');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  useEffect(() => {
-    localStorage.setItem('disabled_models', JSON.stringify(disabledModels));
-  }, [disabledModels]);
-  
-  const pollIntervalRef = useRef<any>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
-  // 挂载时检查一次会话登录态，成功后再拉取任务和Skills
   useEffect(() => {
-    checkLoginStatus();
-  }, []);
+    taskDataRef.current = taskData;
+  }, [taskData]);
+
+  // 挂载时检查一次会话登录态，成功后再拉取任务和Skills。
+  useEffect(() => {
+    let active = true;
+    void fetch('http://localhost:8000/api/auth/session', {
+      method: 'GET', credentials: 'include'
+    }).then(async res => {
+      if (res.ok && active) {
+        const data = await res.json();
+        if (data.authenticated && data.user) {
+          setCurrentUser(data.user);
+          if (data.user.must_change_password) setActivePortal('user');
+          void fetchHistoryTasks();
+          void fetchImportedSkills();
+        }
+      }
+    }).catch(() => undefined).finally(() => {
+      if (active) setAuthChecked(true);
+    });
+    return () => { active = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- one-time session bootstrap
 
   // 获取所有已导入的技能列表
-  const fetchImportedSkills = async () => {
+  async function fetchImportedSkills() {
     try {
       const res = await apiFetch('http://localhost:8000/api/drama/skills');
       if (res.ok) {
@@ -362,7 +370,7 @@ export default function App() {
     } catch (e) {
       console.error('加载导入Skills失败', e);
     }
-  };
+  }
 
   // 触发 E2E 技能导入 API
   const handleImportSkill = async () => {
@@ -411,7 +419,7 @@ export default function App() {
         const err = await res.json();
         alert(`导入失败: ${err.detail || '接口解析错误'}`);
       }
-    } catch (e) {
+    } catch {
       alert('无法连接至后端，请先确保后端启动运行中。');
     }
   };
@@ -435,7 +443,7 @@ export default function App() {
         const err = await res.json();
         alert(`删除失败: ${err.detail || '接口错误'}`);
       }
-    } catch (e) {
+    } catch {
       alert('删除失败，无法连接至后端。');
     }
   };
@@ -463,16 +471,9 @@ export default function App() {
         const err = await res.json();
         alert(`删除失败: ${err.detail || '接口解析错误'}`);
       }
-    } catch (e) {
+    } catch {
       alert('物理删除失败，无法连接至后端。');
     }
-  };
-
-  // 切换模型的禁启用状态
-  const toggleModelStatus = (modelId: string) => {
-    setDisabledModels(prev => 
-      prev.includes(modelId) ? prev.filter(id => id !== modelId) : [...prev, modelId]
-    );
   };
 
   // 处理手动剧本文件上传
@@ -497,7 +498,7 @@ export default function App() {
         const err = await res.json();
         setErrorMessage(err.detail || '解析剧本文件失败，请确保格式正确。');
       }
-    } catch (err) {
+    } catch {
       setErrorMessage('无法连接至后端解析剧本，请检查服务。');
     }
   };
@@ -521,12 +522,12 @@ export default function App() {
         clearInterval(pollIntervalRef.current);
       }
     };
-  }, [isPolling, taskId]);
+  }, [isPolling, taskId]); // eslint-disable-line react-hooks/exhaustive-deps -- polling callback reads current refs
 
-  // 大厅定时轮询拉取所有任务 (当不在工作台内时)
+  // 登录后在大厅定时轮询拉取所有任务 (当不在工作台内时)
   useEffect(() => {
-    let interval: any = null;
-    if (!taskId) {
+    let interval: ReturnType<typeof setInterval> | null = null;
+    if (currentUser && !taskId) {
       interval = setInterval(() => {
         fetchHistoryTasks();
       }, 1500);
@@ -534,7 +535,7 @@ export default function App() {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [taskId]);
+  }, [currentUser, taskId]); // eslint-disable-line react-hooks/exhaustive-deps -- lobby refresh follows authentication and selected task
 
   // 聊天自动滚动到底部
   useEffect(() => {
@@ -542,7 +543,7 @@ export default function App() {
   }, [chatMessages, taskData]);
 
   // 拉取历史列表
-  const fetchHistoryTasks = async () => {
+  async function fetchHistoryTasks() {
     try {
       const res = await apiFetch('http://localhost:8000/api/drama/list');
       if (res.ok) {
@@ -552,10 +553,10 @@ export default function App() {
     } catch (e) {
       console.error('加载历史任务失败', e);
     }
-  };
+  }
 
   // 拉取单条任务状态并联动更新聊天气泡
-  const fetchTaskStatus = async (id: string) => {
+  async function fetchTaskStatus(id: string) {
     try {
       const res = await apiFetch(`http://localhost:8000/api/drama/${id}/status`);
       if (res.ok) {
@@ -571,7 +572,7 @@ export default function App() {
           setChatMessages(prev => [
             ...prev,
             {
-              id: Math.random().toString(),
+              id: nextMessageId(),
               sender: 'ai',
               text: `⚙️ **【${currentStageInfo?.name} 已完成】**\n\n该阶段资产已成功生成并校验完毕。您可直接在左侧看板查阅该步骤的高保真输出。`,
               stage: data.currentStage
@@ -587,9 +588,18 @@ export default function App() {
             setChatMessages(prev => [
               ...prev,
               {
-                id: Math.random().toString(),
+                id: nextMessageId(),
                 sender: 'ai',
                 text: `🎉 **【短剧生成大功告成】**\n\n8大智能体已顺利完成全部工序，最终 9:16 H.264 格式高清成片及社交引爆 PR 文案已封装完毕！您现在可以点击右上角“导出”进行下载和发布。`
+              }
+            ]);
+          } else if (data.status === 'awaiting_quality_review') {
+            setChatMessages(prev => [
+              ...prev,
+              {
+                id: `quality-review-${data.taskId}`,
+                sender: 'ai',
+                text: '🛡️ **【成片已生成，等待终审】**\n\n人物身份、解剖、表情、真人感、镜头连续、对白情绪与口型必须提交真实多模态或人工验收；未通过前不会标记成片完成。'
               }
             ]);
           }
@@ -599,7 +609,7 @@ export default function App() {
       console.error('获取状态失败', e);
       setIsPolling(false);
     }
-  };
+  }
 
   // 初始化创建短剧任务
   const initDramaProject = async (text: string) => {
@@ -670,7 +680,7 @@ export default function App() {
         const err = await res.json();
         setErrorMessage(err.detail || '创建任务失败');
       }
-    } catch (e) {
+    } catch {
       setErrorMessage('无法连接至后端，请先在终端运行 `./start.sh` 启动系统。');
     }
   };
@@ -685,7 +695,7 @@ export default function App() {
     setChatMessages(prev => [
       ...prev,
       {
-        id: Math.random().toString(),
+        id: nextMessageId(),
         sender: 'ai',
         text: `⏳ **【${stageInfo?.name} 正在生成中...】**`
       }
@@ -721,7 +731,7 @@ export default function App() {
         const eps = data.episodes || [];
         setEpisodes(eps);
         // 有正在制作的集则继续轮询
-        if (eps.some((e: any) => e.status === 'running')) {
+        if (eps.some((episode: EpisodeItem) => episode.status === 'running')) {
           setTimeout(() => fetchEpisodes(tid), 8000);
         }
       }
@@ -739,7 +749,7 @@ export default function App() {
         const err = await res.json();
         setErrorMessage(err.detail || '分集失败 (请先完成阶段1-2剧本)');
       }
-    } catch (e) {
+    } catch {
       setErrorMessage('分集请求失败');
     } finally {
       setEpisodesBusy(false);
@@ -757,7 +767,7 @@ export default function App() {
         const err = await res.json();
         setErrorMessage(err.detail || `第${idx}集制作启动失败`);
       }
-    } catch (e) {
+    } catch {
       setErrorMessage(`第${idx}集制作请求失败`);
     }
   };
@@ -769,7 +779,7 @@ export default function App() {
     setTaskData(prev => prev ? { ...prev, status: 'running' } : null);
     setChatMessages(prev => [
       ...prev,
-      { id: Math.random().toString(), sender: 'ai', text: '🚀 一键成片启动！8大智能体正在后台连续执行生成，请稍候...' }
+      { id: nextMessageId(), sender: 'ai', text: '🚀 一键成片启动！8大智能体正在后台连续执行生成，请稍候...' }
     ]);
     try {
       await apiFetch(`http://localhost:8000/api/drama/${taskId}/run_all`, {
@@ -794,7 +804,7 @@ export default function App() {
         setIsPolling(false);
         setChatMessages(prev => [
           ...prev,
-          { id: Math.random().toString(), sender: 'ai', text: '⏸️ 任务已成功暂停，断点已保存。您可随时点击恢复继续。' }
+          { id: nextMessageId(), sender: 'ai', text: '⏸️ 任务已成功暂停，断点已保存。您可随时点击恢复继续。' }
         ]);
       }
     } catch (e) {
@@ -809,7 +819,7 @@ export default function App() {
     setTaskData(prev => prev ? { ...prev, status: 'running' } : null);
     setChatMessages(prev => [
       ...prev,
-      { id: Math.random().toString(), sender: 'ai', text: '▶️ 正在从断点恢复生成...' }
+      { id: nextMessageId(), sender: 'ai', text: '▶️ 正在从断点恢复生成...' }
     ]);
     try {
       await apiFetch(`http://localhost:8000/api/drama/${taskId}/resume`, {
@@ -830,10 +840,10 @@ export default function App() {
     // 添加用户发送的文本气泡
     setChatMessages(prev => [
       ...prev,
-      { id: Math.random().toString(), sender: 'user', text: text }
+      { id: nextMessageId(), sender: 'user', text: text }
     ]);
     
-    const pendingId = Math.random().toString();
+    const pendingId = nextMessageId();
     setChatMessages(prev => [
       ...prev,
       { id: pendingId, sender: 'ai', text: '⚙️ **【收到您的指令】**\n正在根据您的对话指引调整并生成短剧，请稍候...' }
@@ -857,7 +867,7 @@ export default function App() {
           return [
             ...filtered,
             {
-              id: Math.random().toString(),
+              id: nextMessageId(),
               sender: 'ai',
               text: `✅ **【指引调整已生效】**\n\n已根据您的指示 “*${text}*” 对 **${currentStageInfo?.name || '当前阶段'}** 进行了内容重塑！您可以立即在左侧面板查阅更新后的剧作资产与 100+ 项质检 Hook 报告。`,
               stage: data.currentStage
@@ -870,7 +880,7 @@ export default function App() {
         setErrorMessage(err.detail || '发送指令失败');
         setChatMessages(prev => prev.filter(m => m.id !== pendingId));
       }
-    } catch (e) {
+    } catch {
       setErrorMessage('发送消息失败，请检查后端网络连接。');
       setChatMessages(prev => prev.filter(m => m.id !== pendingId));
     }
@@ -891,10 +901,10 @@ export default function App() {
         titleSuggestion: task.config.titleSuggestion || '',
         directorStyle: task.config.directorStyle || 'cyberpunk',
         shotStyle: task.config.shotStyle || 'cinematic',
-        llmModel: task.config.llmModel || 'deepseek-v4-flash',
-        imageModel: task.config.imageModel || 'seedance',
-        videoModel: task.config.videoModel || 'seedance2.0',
-        ttsModel: task.config.ttsModel || 'ElevenLabs',
+        llmModel: task.config.llmModel || '',
+        imageModel: task.config.imageModel || '',
+        videoModel: task.config.videoModel || '',
+        ttsModel: task.config.ttsModel || '',
         oneClick: task.config.oneClick || false,
         episodeCount: task.config.episodeCount || 3
       });
@@ -1001,7 +1011,7 @@ export default function App() {
           setChatMessages(prev => [
             ...prev,
             {
-              id: Math.random().toString(),
+              id: nextMessageId(),
               sender: 'ai',
               text: `🚀 **【一键成片启动】**\n8 大智能体正在后台连续生成《${newProjectName}》(${newProjectEpisodes} 集剧本)，请稍候，进度会实时刷新。`,
               stage: 1
@@ -1018,7 +1028,7 @@ export default function App() {
             setChatMessages(prev => [
               ...prev,
               {
-                id: Math.random().toString(),
+                id: nextMessageId(),
                 sender: 'ai',
                 text: '⚙️ **【总导演策划已完成】**\n主旋律及角色 DNA 档案已建档。点击下方按钮即可进入 **编剧剧本创作 (Phase 2)**。',
                 stage: 1
@@ -1032,7 +1042,7 @@ export default function App() {
         const err = await res.json();
         setErrorMessage(err.detail || '创建项目失败');
       }
-    } catch (e) {
+    } catch {
       setErrorMessage('无法连接至后端，请先确保后端运行中。');
     }
   };
@@ -1072,7 +1082,7 @@ export default function App() {
         <div style={{ position: 'absolute', width: '300px', height: '300px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(0,242,254,0.12) 0%, transparent 70%)', top: '-10%', left: '-5%', filter: 'blur(30px)' }} />
         <div style={{ position: 'absolute', width: '400px', height: '400px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(255,51,102,0.08) 0%, transparent 70%)', bottom: '-10%', right: '-5%', filter: 'blur(40px)' }} />
 
-        {/* 模拟验证码弹窗回显气泡，极大优化演示体验 */}
+        {/* 仅 AUTH_EXPOSE_MOCK_CODE=1 的本地开发环境显示；生产环境无此字段。 */}
         {mockVerificationCode && (
           <div className="glass-panel" style={{
             position: 'absolute',
@@ -1247,7 +1257,7 @@ export default function App() {
                   <input
                     type="password"
                     required
-                    placeholder="设置登录密码，不少于6位"
+                    placeholder="设置登录密码，不少于10位"
                     value={authForm.password}
                     onChange={e => setAuthForm({ ...authForm, password: e.target.value })}
                     style={{ width: '100%', padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', outline: 'none' }}
@@ -1281,15 +1291,26 @@ export default function App() {
             </button>
           </form>
 
-          {/* 友情演示提示 */}
+          {/* 安全提示 */}
           <div style={{ marginTop: '20px', borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: '14px', fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <div>💡 **演示超级账号：**</div>
-            <div>- 邮箱/手机: `admin@example.com` 或 `13800000000`</div>
-            <div>- 密码: `admin123`</div>
+            <div>🔐 本地默认管理员：<strong>admin@short-drama</strong></div>
+            <div>登录配置位于后端 `.env`；首次登录必须修改。生产环境禁止使用开发默认密码。</div>
           </div>
         </div>
       </div>
     );
+  }
+
+  if (currentUser && activePortal === 'user') {
+    return <UserCenterPage onBack={() => setActivePortal('home')} onUserChange={setCurrentUser} />;
+  }
+
+  if (currentUser && activePortal === 'billing') {
+    return <BillingCenterPage onBack={() => setActivePortal('home')} />;
+  }
+
+  if (currentUser && ['actor', 'prop', 'scene', 'effect'].includes(activePortal)) {
+    return <ElementLibraryPage initialKind={activePortal as ElementKind} onBack={() => setActivePortal('home')} />;
   }
 
   return (
@@ -1340,6 +1361,12 @@ export default function App() {
                   <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>
                     {currentUser.email || currentUser.phone || '未绑定账号'}
                   </div>
+                  <button className="account-menu-action" onClick={() => { setActivePortal('user'); setShowUserMenu(false); }}>
+                    用户中心
+                  </button>
+                  <button className="account-menu-action" onClick={() => { setActivePortal('billing'); setShowUserMenu(false); }}>
+                    会员与支付
+                  </button>
                   <button
                     onClick={handleLogout}
                     style={{
@@ -1400,22 +1427,43 @@ export default function App() {
                   {/* 模型选择按钮 */}
                   <button 
                     type="button" 
-                    className={`capsule-btn ${activePopover === 'model' ? 'active' : ''}`}
-                    onClick={() => setActivePopover(activePopover === 'model' ? 'none' : 'model')}
+                    className={`capsule-btn ${showModelConfiguration ? 'active' : ''}`}
+                    onClick={() => { setActivePopover('none'); setShowModelConfiguration(true); }}
                   >
-                    <Cpu size={14} /> 模型: {config.videoModel}
+                    <Cpu size={14} /> 模型: {config.videoModel || '未配置'}
                   </button>
 
                   {/* Skill 选择按钮 */}
                   <button 
                     type="button" 
-                    className={`capsule-btn ${activePopover === 'skill' ? 'active' : ''}`}
-                    onClick={() => setActivePopover(activePopover === 'skill' ? 'none' : 'skill')}
+                    className={`capsule-btn ${showProjectSkillManager ? 'active' : ''}`}
+                    onClick={() => { setActivePopover('none'); setShowProjectSkillManager(true); }}
                   >
-                    <Sliders size={14} /> Skill: {config.shotStyle === 'cinematic' ? '36运镜系统' : '普通分镜'}
+                    <Sliders size={14} /> Skill: 项目管理
                   </button>
 
-                  <button type="button" className="capsule-btn"><Folder size={14} /> 元素</button>
+                  <button
+                    type="button"
+                    className={`capsule-btn ${activePopover === 'element' ? 'active' : ''}`}
+                    onClick={() => setActivePopover(activePopover === 'element' ? 'none' : 'element')}
+                    aria-haspopup="menu"
+                    aria-expanded={activePopover === 'element'}
+                  ><Folder size={14} /> 元素</button>
+
+                  {activePopover === 'element' && (
+                    <div className="element-menu" role="menu" aria-label="选择元素类型">
+                      {([
+                        ['actor', '演员', '五视图与表演身份锚点'],
+                        ['prop', '道具', '归属、位置和状态连续性'],
+                        ['scene', '场景', '空间、时段、天气和灯光'],
+                        ['effect', '特效', '时间、目标和结束状态'],
+                      ] as Array<[ElementKind, string, string]>).map(([value, label, hint]) => (
+                        <button key={value} type="button" role="menuitem" onClick={() => { setActivePortal(value); setActivePopover('none'); }}>
+                          <span>{label}</span><small>{hint}</small><ChevronRight size={15} />
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   <button 
                     type="button" 
@@ -1444,93 +1492,9 @@ export default function App() {
                     type="file" 
                     ref={fileInputRef} 
                     style={{ display: 'none' }} 
-                    accept=".txt,.md,.docx,.pdf"
+                    accept=".txt,.md,.docx,.pdf,.fdx"
                     onChange={handleScriptUpload}
                   />
-
-                  {activePopover === 'model' && (() => {
-                    const currentModelList = modelTab === 'text' ? LLM_MODELS :
-                                             modelTab === 'video' ? VIDEO_MODELS :
-                                             modelTab === 'image' ? IMAGE_MODELS : TTS_MODELS;
-                    const currentConfigKey = modelTab === 'text' ? 'llmModel' :
-                                             modelTab === 'video' ? 'videoModel' :
-                                             modelTab === 'image' ? 'imageModel' : 'ttsModel';
-                    return (
-                      <div className="popover-window" style={{ bottom: '45px', left: '0', width: '300px' }}>
-                        <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.06)', marginBottom: '10px' }}>
-                          <button type="button" onClick={() => setModelTab('text')} className={`popover-tab-btn ${modelTab === 'text' ? 'active' : ''}`}>文本</button>
-                          <button type="button" onClick={() => setModelTab('video')} className={`popover-tab-btn ${modelTab === 'video' ? 'active' : ''}`}>视频</button>
-                          <button type="button" onClick={() => setModelTab('image')} className={`popover-tab-btn ${modelTab === 'image' ? 'active' : ''}`}>图片</button>
-                          <button type="button" onClick={() => setModelTab('voice')} className={`popover-tab-btn ${modelTab === 'voice' ? 'active' : ''}`}>配音</button>
-                        </div>
-
-                        <div style={{ maxHeight: '240px', overflowY: 'auto' }}>
-                          {currentModelList.map(m => {
-                            const isSelected = config[currentConfigKey as keyof TaskConfig] === m.id;
-                            const isDisabled = disabledModels.includes(m.id);
-                            return (
-                              <div 
-                                key={m.id}
-                                onClick={() => {
-                                  if (isDisabled) {
-                                    alert(`模型 "${m.name}" 已被禁用。请先点击右侧“启用”开关。`);
-                                    return;
-                                  }
-                                  setConfig({ ...config, [currentConfigKey]: m.id });
-                                }}
-                                className={`model-list-item ${isSelected ? 'selected' : ''}`}
-                                style={{ 
-                                  display: 'flex', 
-                                  justifyContent: 'space-between', 
-                                  alignItems: 'center', 
-                                  opacity: isDisabled ? 0.45 : 1,
-                                  cursor: isDisabled ? 'not-allowed' : 'pointer',
-                                  transition: 'all 0.2s',
-                                  paddingRight: '8px'
-                                }}
-                              >
-                                <div style={{ flex: 1, minWidth: 0, paddingRight: '8px' }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                    <strong style={{ fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                      {m.name}
-                                    </strong>
-                                    {m.isRecommended && (
-                                      <span style={{ fontSize: '0.6rem', padding: '1px 4px', background: 'var(--neon-cyan)', color: '#000', borderRadius: '4px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
-                                        推荐
-                                      </span>
-                                    )}
-                                  </div>
-                                  <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem', display: 'block', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    {m.desc}
-                                  </span>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleModelStatus(m.id);
-                                  }}
-                                  style={{
-                                    background: isDisabled ? 'rgba(0, 242, 254, 0.08)' : 'rgba(239, 68, 68, 0.08)',
-                                    border: isDisabled ? '1px solid rgba(0, 242, 254, 0.2)' : '1px solid rgba(239, 68, 68, 0.2)',
-                                    color: isDisabled ? 'var(--neon-cyan)' : 'var(--neon-red)',
-                                    padding: '2px 8px',
-                                    borderRadius: '4px',
-                                    fontSize: '0.65rem',
-                                    cursor: 'pointer',
-                                    fontWeight: 600,
-                                    whiteSpace: 'nowrap'
-                                  }}
-                                >
-                                  {isDisabled ? '启用' : '禁用'}
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })()}
 
                   {/* Skill 选择气泡弹窗 */}
                   {activePopover === 'skill' && (
@@ -1632,10 +1596,10 @@ export default function App() {
                 </span>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                   <button 
-                    onClick={() => setShowImportSkillModal(true)} 
+                    onClick={() => setShowProjectSkillManager(true)}
                     style={{ background: 'rgba(0, 242, 254, 0.08)', border: '1px solid rgba(0, 242, 254, 0.3)', color: 'var(--neon-cyan)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', padding: '2px 8px', borderRadius: '4px' }}
                   >
-                    + 导入外部Skill
+                    + 管理项目 Skill
                   </button>
                   <button 
                     onClick={() => setShowSkillsGrid(false)} 
@@ -1692,6 +1656,8 @@ export default function App() {
             </div>
           )}
 
+          <CapabilityCenter role={currentUser?.role} />
+
           {/* 历史任务/断点大厅 (大卡片) */}
           <div style={{ maxWidth: '900px', width: '100%', margin: '40px auto 0 auto' }}>
             <h3 style={{ fontSize: '1.2rem', fontWeight: 500, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1702,6 +1668,8 @@ export default function App() {
                 const isRunning = task.status === 'running';
                 const isCompleted = task.status === 'completed';
                 const isIdle = task.status === 'idle' || task.status === 'paused';
+                const isReview = task.status === 'awaiting_quality_review';
+                const isQualityFailed = task.status === 'quality_failed';
                 
                 // 状态名及色彩对齐
                 let statusLabel = "IDLE";
@@ -1712,6 +1680,12 @@ export default function App() {
                 } else if (isCompleted) {
                   statusLabel = "COMPLETED";
                   statusColor = "var(--neon-green)";
+                } else if (isReview) {
+                  statusLabel = "QUALITY REVIEW";
+                  statusColor = "var(--neon-amber)";
+                } else if (isQualityFailed) {
+                  statusLabel = "QUALITY FAILED";
+                  statusColor = "var(--neon-red)";
                 }
 
                 // 进度百分比
@@ -2043,7 +2017,7 @@ export default function App() {
                             </div>
                           ) : (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                              {episodes.map((ep: any) => (
+                              {episodes.map((ep: EpisodeItem) => (
                                 <div key={ep.index} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: '#0a1017', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
                                   <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-light)', minWidth: '52px' }}>第{ep.index}集</span>
                                   <span style={{ flex: 1, fontSize: '0.76rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ep.title}</span>
@@ -2071,24 +2045,24 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* 3: 角色三视图设定图 + 五维 DNA 设定文本 */}
+                  {/* 3: 角色五视图设定图 + 五维 DNA 设定文本 */}
                   {activeTabStage === 3 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                      {/* 全部人物角色：姓名 + 身份 + 特征信息 + 三视图 (正面/背面/侧面/45°/3-4视角)，跨镜头一致性锚点 */}
+                      {/* 全部人物角色：姓名 + 身份 + 特征信息 + 有序五视图，跨镜头一致性锚点 */}
                       {(() => {
                         const structured = Array.isArray(taskData.assets["3_characters"]) ? taskData.assets["3_characters"] : null;
                         const sheets = taskData.assets["3_sheets"] || {};
                         const cards = structured && structured.length > 0
                           ? structured
-                          : Object.entries(sheets).map(([name, sheet]: [string, any]) => ({ name, role: '', desc: '', sheet }));
+                          : Object.entries(sheets).map(([name, sheet]) => ({ name, role: '', desc: '', sheet: String(sheet) }));
                         if (!cards || cards.length === 0) return null;
                         return (
                           <div>
                             <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--neon-cyan)', marginBottom: '10px' }}>
-                              🎭 全部人物角色 ({cards.length}) · 信息特征 + 三视图设定图 (正面 · 背面 · 侧面 · 45° · 3/4 视角)
+                              🎭 全部人物角色 ({cards.length}) · 五视图设定图 (正面 · 正面3/4 · 侧面 · 背面3/4 · 背面)
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '14px' }}>
-                              {cards.map((c: any, i: number) => {
+                              {(cards as CharacterCard[]).map((c: CharacterCard, i: number) => {
                                 const url = c.sheet;
                                 return (
                                   <div key={`${c.name}-${i}`} className="glass-panel" style={{ background: '#05080c', border: '1px solid rgba(0, 242, 254, 0.18)', borderRadius: '12px', padding: '10px' }}>
@@ -2100,10 +2074,19 @@ export default function App() {
                                     </div>
                                     {typeof url === 'string' && url.startsWith('http') ? (
                                       <a href={url} target="_blank" rel="noreferrer">
-                                        <img src={url} alt={`${c.name} 三视图`} style={{ width: '100%', borderRadius: '8px', objectFit: 'contain', background: '#fff', border: '1px solid rgba(0, 242, 254, 0.25)' }} />
+                                        <img src={url} alt={`${c.name} 五视图`} style={{ width: '100%', borderRadius: '8px', objectFit: 'contain', background: '#fff', border: '1px solid rgba(0, 242, 254, 0.25)' }} />
                                       </a>
                                     ) : (
-                                      <div style={{ width: '100%', height: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '1px dashed var(--text-muted)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>三视图生成中...</div>
+                                      <div style={{ width: '100%', height: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '1px dashed var(--text-muted)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>五视图生成中...</div>
+                                    )}
+                                    {Array.isArray(c.views) && c.views.length === 5 && (
+                                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px', marginTop: '8px' }}>
+                                        {c.views.map((view: { view: string; image_url: string }) => (
+                                          <a href={view.image_url} target="_blank" rel="noreferrer" key={view.view} title={view.view}>
+                                            <img src={view.image_url} alt={`${c.name} ${view.view}`} style={{ width: '100%', aspectRatio: '1/2', objectFit: 'cover', borderRadius: '4px', border: '1px solid rgba(0, 242, 254, 0.2)' }} />
+                                          </a>
+                                        ))}
+                                      </div>
                                     )}
                                     {c.desc && (
                                       <div style={{ marginTop: '8px', fontSize: '0.74rem', lineHeight: '1.5', color: 'var(--text-muted)', maxHeight: '88px', overflow: 'auto' }}>{c.desc}</div>
@@ -2125,9 +2108,19 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* 4: 九列分镜表 */}
+                  {/* 4: 精准九宫格分镜 + 明细表 */}
                   {activeTabStage === 4 && (
-                    <div style={{ overflowX: 'auto' }}>
+                    <div style={{ overflowX: 'auto', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                      {taskData.assets["4_grid"] && (
+                        <div>
+                          <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--neon-cyan)', marginBottom: '10px' }}>
+                            🎬 3×3 九宫格分镜 · 从左到右、从上到下
+                          </div>
+                          <a href={taskData.assets["4_grid"]} target="_blank" rel="noreferrer">
+                            <img src={taskData.assets["4_grid"]} alt="3×3 九宫格分镜" style={{ width: 'min(100%, 540px)', display: 'block', margin: '0 auto', borderRadius: '10px', border: '1px solid rgba(0, 242, 254, 0.35)', background: '#000' }} />
+                          </a>
+                        </div>
+                      )}
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                         <thead>
                           <tr style={{ background: 'rgba(0, 242, 254, 0.08)', borderBottom: '1px solid var(--neon-cyan)' }}>
@@ -2139,7 +2132,7 @@ export default function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {taskData.assets["4"].map((shot: any) => (
+                          {taskData.assets["4"].map((shot: ProductionShot) => (
                             <tr key={shot.shot_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
                               <td style={{ padding: '12px', fontWeight: 600 }}>Shot {shot.shot_id}</td>
                               <td style={{ padding: '12px' }}>
@@ -2169,7 +2162,7 @@ export default function App() {
                       {taskData.assets["5"] ? (
                         Array.isArray(taskData.assets["5"]) ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', maxHeight: '500px', overflowY: 'auto', paddingRight: '8px' }}>
-                            {taskData.assets["5"].map((shot: any, idx: number) => (
+                            {taskData.assets["5"].map((shot: ProductionShot, idx: number) => (
                               <div key={idx} className="glass-panel" style={{ background: '#05080c', border: '1px solid rgba(0, 242, 254, 0.15)', padding: '16px', borderRadius: '12px' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
                                   <span style={{ fontWeight: 600, color: 'var(--neon-cyan)', fontSize: '0.9rem' }}>镜头 {shot.shot_id || (idx + 1)} ({shot.size || 'MS'} | {shot.motion || 'Dolly In'})</span>
@@ -2313,6 +2306,15 @@ export default function App() {
                           </button>
                         ) : (
                           activeTabStage === taskData.currentStage && taskData.status !== 'completed' ? (
+                            taskData.status === 'awaiting_quality_review' ? (
+                              <span style={{ fontSize: '0.75rem', color: 'var(--neon-amber)', fontWeight: 600 }}>
+                                🛡️ 等待真实多模态/人工质量验收
+                              </span>
+                            ) : taskData.status === 'quality_failed' ? (
+                              <span style={{ fontSize: '0.75rem', color: 'var(--neon-red)', fontWeight: 600 }}>
+                                ✕ 质量门禁未通过，请按报告定向重生成
+                              </span>
+                            ) :
                             taskData.status === 'running' ? (
                               <button 
                                 type="button"
@@ -2456,91 +2458,6 @@ export default function App() {
             {/* 对话底部输入框 */}
             <div style={{ padding: '16px', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '10px', position: 'relative' }}>
               
-              {/* 侧边栏模型选择气泡弹窗 */}
-              {activePopover === 'sidebarModel' && (() => {
-                const currentModelList = modelTab === 'text' ? LLM_MODELS :
-                                         modelTab === 'video' ? VIDEO_MODELS :
-                                         modelTab === 'image' ? IMAGE_MODELS : TTS_MODELS;
-                const currentConfigKey = modelTab === 'text' ? 'llmModel' :
-                                         modelTab === 'video' ? 'videoModel' :
-                                         modelTab === 'image' ? 'imageModel' : 'ttsModel';
-                return (
-                  <div className="popover-window" style={{ bottom: '85px', left: '16px', right: '16px', width: 'auto', zIndex: 100 }}>
-                    <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.06)', marginBottom: '10px' }}>
-                      <button type="button" onClick={() => setModelTab('text')} className={`popover-tab-btn ${modelTab === 'text' ? 'active' : ''}`}>文本</button>
-                      <button type="button" onClick={() => setModelTab('video')} className={`popover-tab-btn ${modelTab === 'video' ? 'active' : ''}`}>视频</button>
-                      <button type="button" onClick={() => setModelTab('image')} className={`popover-tab-btn ${modelTab === 'image' ? 'active' : ''}`}>图片</button>
-                      <button type="button" onClick={() => setModelTab('voice')} className={`popover-tab-btn ${modelTab === 'voice' ? 'active' : ''}`}>配音</button>
-                    </div>
-
-                    <div style={{ maxHeight: '240px', overflowY: 'auto' }}>
-                      {currentModelList.map(m => {
-                        const isSelected = config[currentConfigKey as keyof TaskConfig] === m.id;
-                        const isDisabled = disabledModels.includes(m.id);
-                        return (
-                          <div 
-                            key={m.id}
-                            onClick={() => {
-                              if (isDisabled) {
-                                alert(`模型 "${m.name}" 已被禁用。请先点击右侧“启用”开关。`);
-                                return;
-                              }
-                              updateConfigAndSync({ [currentConfigKey]: m.id });
-                            }}
-                            className={`model-list-item ${isSelected ? 'selected' : ''}`}
-                            style={{ 
-                              display: 'flex', 
-                              justifyContent: 'space-between', 
-                              alignItems: 'center', 
-                              opacity: isDisabled ? 0.45 : 1,
-                              cursor: isDisabled ? 'not-allowed' : 'pointer',
-                              transition: 'all 0.2s',
-                              paddingRight: '8px'
-                            }}
-                          >
-                            <div style={{ flex: 1, minWidth: 0, paddingRight: '8px' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <strong style={{ fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {m.name}
-                                </strong>
-                                {m.isRecommended && (
-                                  <span style={{ fontSize: '0.6rem', padding: '1px 4px', background: 'var(--neon-cyan)', color: '#000', borderRadius: '4px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
-                                    推荐
-                                  </span>
-                                )}
-                              </div>
-                              <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem', display: 'block', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {m.desc}
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleModelStatus(m.id);
-                              }}
-                              style={{
-                                background: isDisabled ? 'rgba(0, 242, 254, 0.08)' : 'rgba(239, 68, 68, 0.08)',
-                                border: isDisabled ? '1px solid rgba(0, 242, 254, 0.2)' : '1px solid rgba(239, 68, 68, 0.2)',
-                                color: isDisabled ? 'var(--neon-cyan)' : 'var(--neon-red)',
-                                padding: '2px 8px',
-                                borderRadius: '4px',
-                                fontSize: '0.65rem',
-                                cursor: 'pointer',
-                                fontWeight: 600,
-                                whiteSpace: 'nowrap'
-                              }}
-                            >
-                              {isDisabled ? '启用' : '禁用'}
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })()}
-
               {/* 侧边栏 Skill 选择气泡弹窗 */}
               {activePopover === 'sidebarSkill' && (
                 <div className="popover-window" style={{ bottom: '85px', left: '16px', right: '16px', width: 'auto', zIndex: 100 }}>
@@ -2616,19 +2533,19 @@ export default function App() {
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button 
                   type="button"
-                  className={`capsule-btn ${activePopover === 'sidebarModel' ? 'active' : ''}`}
+                  className={`capsule-btn ${showModelConfiguration ? 'active' : ''}`}
                   style={{ padding: '4px 10px', fontSize: '0.7rem' }}
-                  onClick={() => setActivePopover(activePopover === 'sidebarModel' ? 'none' : 'sidebarModel')}
+                  onClick={() => { setActivePopover('none'); setShowModelConfiguration(true); }}
                 >
-                  模型: {config.llmModel} / {config.videoModel}
+                  模型: {config.llmModel || '未配置'} / {config.videoModel || '未配置'}
                 </button>
                 <button 
                   type="button"
-                  className={`capsule-btn ${activePopover === 'sidebarSkill' ? 'active' : ''}`}
+                  className={`capsule-btn ${showProjectSkillManager ? 'active' : ''}`}
                   style={{ padding: '4px 10px', fontSize: '0.7rem' }}
-                  onClick={() => setActivePopover(activePopover === 'sidebarSkill' ? 'none' : 'sidebarSkill')}
+                  onClick={() => { setActivePopover('none'); setShowProjectSkillManager(true); }}
                 >
-                  Skill: {config.shotStyle === 'cinematic' ? '36运镜' : '标准'}
+                  Skill: 项目管理
                 </button>
               </div>
 
@@ -2659,6 +2576,28 @@ export default function App() {
 
         </div>
       )}
+
+      <ModelConfigurationCenter
+        open={showModelConfiguration}
+        role={currentUser?.role}
+        mustChangePassword={currentUser?.must_change_password}
+        onClose={() => setShowModelConfiguration(false)}
+        onSelect={(category: ModelCategory, modelId: string) => {
+          const configKey = ({
+            text: 'llmModel', image: 'imageModel', video: 'videoModel', audio: 'ttsModel',
+          } as const)[category];
+          if (taskId) updateConfigAndSync({ [configKey]: modelId });
+          else setConfig(current => ({ ...current, [configKey]: modelId }));
+          setShowModelConfiguration(false);
+        }}
+      />
+
+      <ProjectSkillManager
+        open={showProjectSkillManager}
+        role={currentUser?.role}
+        mustChangePassword={currentUser?.must_change_password}
+        onClose={() => setShowProjectSkillManager(false)}
+      />
 
       {/* 磨砂玻璃 导入外部 Skill 弹窗 */}
       {showImportSkillModal && (

@@ -1,0 +1,1179 @@
+{
+  "cards": [
+    {
+      "category": "interaction",
+      "name": "ai-stream-response",
+      "styles": [
+        "ai-stream-response"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "assemble-then-type-flyin",
+      "styles": [
+        "assemble-then-type-flyin"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "aurora-bloom-bg-flip",
+      "styles": [
+        "aurora-bloom-bg-flip"
+      ]
+    },
+    {
+      "category": "interaction",
+      "name": "autolayout-gap-dial",
+      "styles": [
+        "autolayout-gap-dial"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "avatar-bracket-carousel",
+      "styles": [
+        "avatar-bracket-carousel"
+      ]
+    },
+    {
+      "category": "data",
+      "name": "avatar-grid-radial-build-colorize",
+      "styles": [
+        "avatar-grid-radial-build-colorize"
+      ]
+    },
+    {
+      "category": "camera",
+      "name": "basic-3d-scene",
+      "styles": [
+        "basic-3d-scene"
+      ]
+    },
+    {
+      "category": "rhythm",
+      "name": "beat-cut-moves",
+      "styles": [
+        "beat-cut-accelerando",
+        "paparazzi-flash"
+      ]
+    },
+    {
+      "category": "rhythm",
+      "name": "beat-step-list-theme-cycle",
+      "styles": [
+        "beat-step-list-theme-cycle"
+      ]
+    },
+    {
+      "category": "data",
+      "name": "before-after-slider-scrub",
+      "styles": [
+        "before-after-slider-scrub"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "bezier-source-converge-merge",
+      "styles": [
+        "bezier-source-converge-merge"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "blur-slide",
+      "styles": [
+        "blur-slide"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "bottom-push-stack-wipe",
+      "styles": [
+        "bottom-push-stack-wipe"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "brace-expand",
+      "styles": [
+        "brace-expand"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "brand-frame-snap",
+      "styles": [
+        "brand-frame-snap"
+      ]
+    },
+    {
+      "category": "opening",
+      "name": "brand-ink-open",
+      "styles": [
+        "brand-ink-open"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "bubble-swarm-takeover",
+      "styles": [
+        "bubble-swarm-takeover"
+      ]
+    },
+    {
+      "category": "interaction",
+      "name": "canvas-materialize-moves",
+      "styles": [
+        "panel-to-canvas",
+        "diagram-cascade"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "card-flip-reveal",
+      "styles": [
+        "card-flip-reveal"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "card-flock-tumble",
+      "styles": [
+        "card-flock-tumble"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "card-stack",
+      "styles": [
+        "card-stack"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "carousel-3d",
+      "styles": [
+        "carousel-3d"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "cel-flash-stomp",
+      "styles": [
+        "cel-flash-stomp"
+      ]
+    },
+    {
+      "category": "data",
+      "name": "chart-live-moves",
+      "styles": [
+        "oscilloscope-stream",
+        "unit-dot-swarm-regroup",
+        "axis-rescale-shock"
+      ]
+    },
+    {
+      "category": "interaction",
+      "name": "chip-grid-single-select-blackout",
+      "styles": [
+        "chip-grid-single-select-blackout"
+      ]
+    },
+    {
+      "category": "interaction",
+      "name": "chip-lift-to-user-pill",
+      "styles": [
+        "chip-lift-to-user-pill"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "circle-match-iris",
+      "styles": [
+        "circle-match-iris"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "cloner-depth-echo",
+      "styles": [
+        "cloner-depth-echo"
+      ]
+    },
+    {
+      "category": "interaction",
+      "name": "collab-cursor-moves",
+      "styles": [
+        "dialogue-duet",
+        "cast-ensemble"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "color-block-step-wipe",
+      "styles": [
+        "color-block-step-wipe"
+      ]
+    },
+    {
+      "category": "interaction",
+      "name": "command-palette-summon",
+      "styles": [
+        "command-palette-summon"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "countdown-arc-scatter",
+      "styles": [
+        "countdown-arc-scatter"
+      ]
+    },
+    {
+      "category": "data",
+      "name": "counter-confetti",
+      "styles": [
+        "counter-confetti"
+      ]
+    },
+    {
+      "category": "opening",
+      "name": "crane-rise-reveal",
+      "styles": [
+        "crane-rise-reveal"
+      ]
+    },
+    {
+      "category": "camera",
+      "name": "crash-zoom-punch",
+      "styles": [
+        "crash-zoom-punch"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "cube-navigation",
+      "styles": [
+        "cube-navigation"
+      ]
+    },
+    {
+      "category": "camera",
+      "name": "cursor-flyover",
+      "styles": [
+        "cursor-flyover"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "dashboard-glow-highlight-pill",
+      "styles": [
+        "dashboard-glow-highlight-pill"
+      ]
+    },
+    {
+      "category": "opening",
+      "name": "dataviz-landscape-open",
+      "styles": [
+        "dataviz-landscape-open"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "deck-deal-flyin",
+      "styles": [
+        "deck-deal-flyin"
+      ]
+    },
+    {
+      "category": "camera",
+      "name": "depth-layer-moves",
+      "styles": [
+        "multiplane",
+        "dolly-zoom"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "doc-park-left-pill-deal",
+      "styles": [
+        "doc-park-left-pill-deal"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "document-typewriter-reveal",
+      "styles": [
+        "document-typewriter-reveal"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "draw-svg-trace",
+      "styles": [
+        "draw-svg-trace"
+      ]
+    },
+    {
+      "category": "outro",
+      "name": "edit-hook-moves",
+      "styles": [
+        "logo-sting-button"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "element-body-moves",
+      "styles": [
+        "axial-stretch",
+        "contact-shadow-lift"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "floating-glossy-label-pills",
+      "styles": [
+        "floating-glossy-label-pills"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "flying-words",
+      "styles": [
+        "flying-words"
+      ]
+    },
+    {
+      "category": "opening",
+      "name": "fracture",
+      "styles": [
+        "fracture"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "fui-hud-moves",
+      "styles": [
+        "line-unfold-panel",
+        "reticle-lock-on"
+      ]
+    },
+    {
+      "category": "data",
+      "name": "gauge-readout-moves",
+      "styles": [
+        "needle-sweep-selftest",
+        "tape-scroll-fixed-pointer"
+      ]
+    },
+    {
+      "category": "interaction",
+      "name": "glass-pill-dictation-typing",
+      "styles": [
+        "glass-pill-dictation-typing"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "glitch-cycle",
+      "styles": [
+        "glitch-cycle"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "glow-flyline-moves",
+      "styles": [
+        "glow-orb-ambient",
+        "flyline-arc",
+        "orb-flyline-relay"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "gradient-transition",
+      "styles": [
+        "gradient-transition"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "gradient-word-sweep",
+      "styles": [
+        "gradient-word-sweep"
+      ]
+    },
+    {
+      "category": "outro",
+      "name": "grain-dissolve",
+      "styles": [
+        "grain-dissolve"
+      ]
+    },
+    {
+      "category": "camera",
+      "name": "graze-face-tour",
+      "styles": [
+        "graze-face-tour"
+      ]
+    },
+    {
+      "category": "interaction",
+      "name": "hashtag-to-pill-materialize",
+      "styles": [
+        "hashtag-to-pill-materialize"
+      ]
+    },
+    {
+      "category": "data",
+      "name": "hatch-depth",
+      "styles": [
+        "hatch-depth"
+      ]
+    },
+    {
+      "category": "opening",
+      "name": "icon-field-colorize",
+      "styles": [
+        "icon-field-colorize"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "icon-performance-moves",
+      "styles": [
+        "pop-burst-confirm",
+        "attention-bounce"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "impact-feedback",
+      "styles": [
+        "hit-counter",
+        "anime-impact"
+      ]
+    },
+    {
+      "category": "interaction",
+      "name": "input-trigger-moves",
+      "styles": [
+        "cursor-performance",
+        "keycap-smash-cut"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "integration-hub-map",
+      "styles": [
+        "integration-hub-map"
+      ]
+    },
+    {
+      "category": "opening",
+      "name": "letterspace-materialize",
+      "styles": [
+        "letterspace-materialize"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "light-play-moves",
+      "styles": [
+        "spotlight-sweep",
+        "sheen-sweep",
+        "halation-bloom"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "line-boil",
+      "styles": [
+        "line-boil"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "line-carry-transition",
+      "styles": [
+        "line-carry-transition"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "list-reveal",
+      "styles": [
+        "list-reveal"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "list-stack-press",
+      "styles": [
+        "list-stack-press"
+      ]
+    },
+    {
+      "category": "outro",
+      "name": "logo-shrink-wordmark-lockup",
+      "styles": [
+        "logo-shrink-wordmark-lockup"
+      ]
+    },
+    {
+      "category": "opening",
+      "name": "magician-card-flourish",
+      "styles": [
+        "magician-card-flourish"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "marker-underline-title",
+      "styles": [
+        "marker-underline-title"
+      ]
+    },
+    {
+      "category": "rhythm",
+      "name": "montage-rhythm-moves",
+      "styles": [
+        "drop-blackout-slam",
+        "wright-triple-cut",
+        "domino-cascade"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "morph-from-primitive",
+      "styles": [
+        "morph-from-primitive"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "mosaic-reframe",
+      "styles": [
+        "mosaic-reframe"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "neon-frame-forerun",
+      "styles": [
+        "neon-frame-forerun"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "neon-frame-orbit-drop",
+      "styles": [
+        "neon-frame-orbit-drop"
+      ]
+    },
+    {
+      "category": "outro",
+      "name": "neon-triple-marquee",
+      "styles": [
+        "neon-triple-marquee"
+      ]
+    },
+    {
+      "category": "data",
+      "name": "odometer-digit-roll",
+      "styles": [
+        "odometer-digit-roll"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "outline-word-fill",
+      "styles": [
+        "outline-word-fill"
+      ]
+    },
+    {
+      "category": "outro",
+      "name": "outro-group-photo-launch",
+      "styles": [
+        "outro-group-photo-launch"
+      ]
+    },
+    {
+      "category": "camera",
+      "name": "overhead-camera-moves",
+      "styles": [
+        "tilt-reveal",
+        "overhead-tabletop-drop"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "page-turn-transitions",
+      "styles": [
+        "cube-rotate",
+        "barn-door-split"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "page-waterfall-wall",
+      "styles": [
+        "page-waterfall-wall"
+      ]
+    },
+    {
+      "category": "rhythm",
+      "name": "panel-grid-moves",
+      "styles": [
+        "grid-flash-mosaic",
+        "flip-grid-reflow",
+        "comic-panel-split"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "paper-craft-moves",
+      "styles": [
+        "masking-tape-slap",
+        "popup-book-rise"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "paper-plane-messenger",
+      "styles": [
+        "paper-plane-messenger"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "paper-title-card",
+      "styles": [
+        "paper-title-card"
+      ]
+    },
+    {
+      "category": "data",
+      "name": "particle-celebrate-hits",
+      "styles": [
+        "confetti-crossfire",
+        "counter-tick-sparks"
+      ]
+    },
+    {
+      "category": "data",
+      "name": "particle-sand-fill",
+      "styles": [
+        "particle-sand-fill"
+      ]
+    },
+    {
+      "category": "interaction",
+      "name": "picker-carousel-feature-cycle",
+      "styles": [
+        "picker-carousel-feature-cycle"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "pill-chip-slot-cycle-handled",
+      "styles": [
+        "pill-chip-slot-cycle-handled"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "pill-slot-cycle",
+      "styles": [
+        "pill-slot-cycle"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "print-texture-transitions",
+      "styles": [
+        "ink-bleed-reveal"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "product-card-progressive-assemble",
+      "styles": [
+        "product-card-progressive-assemble"
+      ]
+    },
+    {
+      "category": "rhythm",
+      "name": "quad-split-parallel-scenes",
+      "styles": [
+        "quad-split-parallel-scenes"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "radial-ripple-phone-chips",
+      "styles": [
+        "radial-ripple-phone-chips"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "radial-wave",
+      "styles": [
+        "radial-wave"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "research-card-stack-scroll",
+      "styles": [
+        "research-card-stack-scroll"
+      ]
+    },
+    {
+      "category": "rhythm",
+      "name": "rhythm-interrupt-moves",
+      "styles": [
+        "jump-cut-punch-in",
+        "strobe-black-frames"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "riso-print-hits",
+      "styles": [
+        "misregistration-hit",
+        "beat-pump"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "row-embed",
+      "styles": [
+        "row-embed"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "runway-ground-skim",
+      "styles": [
+        "runway-ground-skim"
+      ]
+    },
+    {
+      "category": "rhythm",
+      "name": "sakuga-timing-shift",
+      "styles": [
+        "sakuga-timing-shift"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "scan-bracket-sweep",
+      "styles": [
+        "scan-bracket-sweep"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "scanline-annotate-focus",
+      "styles": [
+        "scanline-annotate-focus"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "scanline-assemble-flyin",
+      "styles": [
+        "scanline-assemble-flyin"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "scramble",
+      "styles": [
+        "scramble"
+      ]
+    },
+    {
+      "category": "data",
+      "name": "scroll-brake-moves",
+      "styles": [
+        "changelog-scroll-brake",
+        "brake-reticle-lock"
+      ]
+    },
+    {
+      "category": "interaction",
+      "name": "segmented-thumb-hero",
+      "styles": [
+        "segmented-thumb-hero"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "shot-transitions",
+      "styles": [
+        "flash-cut",
+        "shot-transitions-4",
+        "shot-transitions-5",
+        "shot-transitions-6",
+        "whip-pan",
+        "mask-wipe"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "skeleton-reveal",
+      "styles": [
+        "skeleton-reveal"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "slam-entrance-moves",
+      "styles": [
+        "kanada-perspective-snap",
+        "score-slam",
+        "impact-burst-kit"
+      ]
+    },
+    {
+      "category": "rhythm",
+      "name": "smear-multiples",
+      "styles": [
+        "smear-multiples"
+      ]
+    },
+    {
+      "category": "camera",
+      "name": "space-camera-moves",
+      "styles": [
+        "exploded-view",
+        "drone-dive-landing"
+      ]
+    },
+    {
+      "category": "rhythm",
+      "name": "spectrum-morph-ui",
+      "styles": [
+        "spectrum-morph-ui"
+      ]
+    },
+    {
+      "category": "rhythm",
+      "name": "speed-ramp-freeze",
+      "styles": [
+        "speed-ramp",
+        "freeze-annotate"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "split-flap-title",
+      "styles": [
+        "split-flap-title"
+      ]
+    },
+    {
+      "category": "opening",
+      "name": "spotlight-hero-card",
+      "styles": [
+        "spotlight-hero-card"
+      ]
+    },
+    {
+      "category": "effects",
+      "name": "spotlight-sweep-moves",
+      "styles": [
+        "glow-wake-sleep-panel",
+        "slide-spotlight-pan",
+        "corner-spotlight-reveal"
+      ]
+    },
+    {
+      "category": "camera",
+      "name": "steep-tilt-glide",
+      "styles": [
+        "steep-tilt-glide"
+      ]
+    },
+    {
+      "category": "opening",
+      "name": "stroke-segment-build",
+      "styles": [
+        "stroke-segment-build"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "svg-shape-morph",
+      "styles": [
+        "svg-shape-morph"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "tear-streak-transitions",
+      "styles": [
+        "glitch-displace"
+      ]
+    },
+    {
+      "category": "camera",
+      "name": "tension-camera-moves",
+      "styles": [
+        "bullet-time-freeze-orbit",
+        "dutch-roll-to-level",
+        "slow-push-in",
+        "pull-back-isolation"
+      ]
+    },
+    {
+      "category": "camera",
+      "name": "terminal-3d",
+      "styles": [
+        "terminal-3d"
+      ]
+    },
+    {
+      "category": "opening",
+      "name": "text-as-mask",
+      "styles": [
+        "text-as-mask"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "text-column-converge",
+      "styles": [
+        "text-column-converge"
+      ]
+    },
+    {
+      "category": "interaction",
+      "name": "theme-switch-moves",
+      "styles": [
+        "theme-sweep-toggle",
+        "palette-theme-ripple"
+      ]
+    },
+    {
+      "category": "data",
+      "name": "timeline-travel",
+      "styles": [
+        "timeline-travel"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "title-demote-to-label",
+      "styles": [
+        "title-demote-to-label"
+      ]
+    },
+    {
+      "category": "rhythm",
+      "name": "trailer-grammar-moves",
+      "styles": [
+        "trailer-bumper",
+        "card-footage-cadence",
+        "smash-cut"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "transition-hidden-cut",
+      "styles": [
+        "invisible-cut",
+        "versus-slam",
+        "light-leak-burn"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "transition-travel",
+      "styles": [
+        "shared-element-morph",
+        "letterform-zoom"
+      ]
+    },
+    {
+      "category": "interaction",
+      "name": "type-and-filter",
+      "styles": [
+        "type-and-filter"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "type-assembly-moves",
+      "styles": [
+        "split-text-stagger",
+        "drift-assembly",
+        "tracking-expand",
+        "text-on-path"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "type-entrance-moves",
+      "styles": [
+        "scramble-decode",
+        "letter-drop-physics"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "type-rhythm-sync",
+      "styles": [
+        "font-weight-pump",
+        "karaoke-fill-sync"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "typewriter-moves",
+      "styles": [
+        "terminal-typewriter",
+        "error-retype"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "typing-code-block",
+      "styles": [
+        "typing-code-block"
+      ]
+    },
+    {
+      "category": "outro",
+      "name": "ui-strip-away-outro",
+      "styles": [
+        "ui-strip-away-outro"
+      ]
+    },
+    {
+      "category": "outro",
+      "name": "ui-to-brand-morph",
+      "styles": [
+        "icon-flip-bloom",
+        "input-morph-assemble"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "value-stagger-gradient",
+      "styles": [
+        "value-stagger-gradient"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "vertical-word-roll-blur-cycle",
+      "styles": [
+        "vertical-word-roll-blur-cycle"
+      ]
+    },
+    {
+      "category": "interaction",
+      "name": "voice-waveform-live",
+      "styles": [
+        "voice-waveform-live"
+      ]
+    },
+    {
+      "category": "ui-entrance",
+      "name": "wall-reveal-moves",
+      "styles": [
+        "bento-light-up",
+        "grid-wave-flip",
+        "wireframe-draw-on"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "white-flash-logo-simplify-cut",
+      "styles": [
+        "white-flash-logo-simplify-cut"
+      ]
+    },
+    {
+      "category": "transition",
+      "name": "wipe-transitions",
+      "styles": [
+        "clock-wipe",
+        "blinds-slice"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "word-relay-filmstrip",
+      "styles": [
+        "word-relay-filmstrip"
+      ]
+    },
+    {
+      "category": "typography",
+      "name": "word-relay-geometry",
+      "styles": [
+        "word-relay-geometry"
+      ]
+    }
+  ],
+  "categories": {
+    "camera": {
+      "en": "Camera & Space",
+      "zh": "运镜与空间"
+    },
+    "data": {
+      "en": "Data & Metrics",
+      "zh": "数据与指标"
+    },
+    "effects": {
+      "en": "Light & Emphasis",
+      "zh": "光效与强调"
+    },
+    "interaction": {
+      "en": "Interaction & Feature Demo",
+      "zh": "交互与功能演示"
+    },
+    "opening": {
+      "en": "Opening & Brand",
+      "zh": "开场与品牌"
+    },
+    "outro": {
+      "en": "Outro",
+      "zh": "收尾"
+    },
+    "rhythm": {
+      "en": "Rhythm & Montage",
+      "zh": "节奏与蒙太奇"
+    },
+    "transition": {
+      "en": "Transitions",
+      "zh": "转场"
+    },
+    "typography": {
+      "en": "Typography & Title Cards",
+      "zh": "文字与字卡"
+    },
+    "ui-entrance": {
+      "en": "UI Entrance & Showcase",
+      "zh": "界面登场与陈列"
+    }
+  },
+  "library_revision": "bdd94be16d60fa8f",
+  "reviewed_commit": "41ee360d82f4",
+  "source": "https://github.com/Vincentwei1021/video-shotcraft",
+  "stats": {
+    "cardCount": 152,
+    "mediaCount": 209,
+    "newest": "2026-08-07T04:03:34.000Z",
+    "previewCount": 209,
+    "sfxCategoryCount": 16,
+    "sfxCount": 149,
+    "styleCount": 209
+  }
+}

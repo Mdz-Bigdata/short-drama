@@ -2,33 +2,50 @@
 import os
 import hmac
 import hashlib
-import random
+import secrets
+import time
 import re
 import logging
 from typing import Optional, Dict, Tuple, Any
-from app.repository.user_repo import UserRepository
+from app.repository.user_repo import UserRepository, verify_password
 
 logger = logging.getLogger("app.service.auth_service")
 
-# 模拟发送的验证码保存内存字典 { "login_id": "code" }
-MOCK_CODES_DB: Dict[str, str] = {}
+# Only a keyed digest is retained; plaintext codes are never stored.
+MOCK_CODES_DB: Dict[str, Dict[str, Any]] = {}
+_CODE_SEND_AT: Dict[str, float] = {}
+_DEV_SESSION_SECRET = secrets.token_bytes(32)
 
-# HMAC 签名密钥 (生产环境推荐从环境变量读取，在此处我们做自适应读取与默认配置)
-SIGNING_SECRET = "novara_secure_session_secret_key_889"
+
+def _session_secret() -> bytes:
+    configured = (os.getenv("AUTH_SIGNING_SECRET") or "").strip()
+    if configured:
+        if len(configured) < 32:
+            raise RuntimeError("AUTH_SIGNING_SECRET must contain at least 32 characters")
+        return configured.encode("utf-8")
+    if (os.getenv("ENVIRONMENT") or "development").lower() in {"prod", "production"}:
+        raise RuntimeError("AUTH_SIGNING_SECRET is required in production")
+    return _DEV_SESSION_SECRET
+
+
+def _code_digest(login_id: str, code: str) -> str:
+    return hmac.new(_session_secret(), f"{login_id}\0{code}".encode("utf-8"), hashlib.sha256).hexdigest()
 
 class AuthService:
     """
     用户登录注册与身份签名业务服务类 (Service)
     """
-    def __init__(self):
-        self.user_repo = UserRepository()
+    def __init__(self, user_repo: UserRepository | None = None):
+        self.user_repo = user_repo or UserRepository()
 
     def generate_token(self, user_id: str) -> str:
         """
         根据用户 ID 生成带 HMAC-SHA256 签名的防篡改 Token，用于 HttpOnly Cookie 存储
         """
-        signature = hmac.new(SIGNING_SECRET.encode('utf-8'), user_id.encode('utf-8'), hashlib.sha256).hexdigest()
-        return f"{user_id}.{signature}"
+        issued_at = str(int(time.time()))
+        payload = f"{user_id}.{issued_at}"
+        signature = hmac.new(_session_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        return f"{payload}.{signature}"
 
     def verify_token(self, token: str) -> Optional[str]:
         """
@@ -38,15 +55,20 @@ class AuthService:
             return None
         try:
             parts = token.split(".")
-            if len(parts) != 2:
+            if len(parts) != 3:
                 return None
-            user_id, signature = parts
-            expected_sig = hmac.new(SIGNING_SECRET.encode('utf-8'), user_id.encode('utf-8'), hashlib.sha256).hexdigest()
-            if hmac.compare_digest(signature.encode('utf-8'), expected_sig.encode('utf-8')):
+            user_id, issued_at_text, signature = parts
+            issued_at = int(issued_at_text)
+            ttl = max(300, min(2_592_000, int(os.getenv("AUTH_SESSION_TTL_SECONDS", "86400"))))
+            now = int(time.time())
+            if issued_at > now + 60 or now - issued_at > ttl:
+                return None
+            payload = f"{user_id}.{issued_at_text}"
+            expected_sig = hmac.new(_session_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+            if hmac.compare_digest(signature, expected_sig):
                 return user_id
-        except Exception as e:
-            logger.error(f"[AuthService] 验证 Token 发生未知错误: {str(e)}")
-        return None
+        except (ValueError, TypeError, RuntimeError):
+            return None
 
     def _send_ali_sms(self, phone: str, code: str) -> bool:
         """
@@ -89,7 +111,7 @@ class AuthService:
                 logger.error(f"[AuthService] 阿里云短信发送失败，错误码: {response.body.code}, 消息: {response.body.message}")
                 return False
         except Exception as e:
-            logger.error(f"[AuthService] 调用阿里云短信接口发生异常: {str(e)}")
+            logger.error(f"[AuthService] 调用阿里云短信接口发生异常: {type(e).__name__}")
             return False
 
     def send_verification_code(self, login_id: str) -> Tuple[bool, str]:
@@ -100,24 +122,36 @@ class AuthService:
         login_id_clean = login_id.strip()
         if not login_id_clean:
             return False, ""
+        now = time.monotonic()
+        cooldown = max(10, min(300, int(os.getenv("AUTH_CODE_COOLDOWN_SECONDS", "60"))))
+        if now - _CODE_SEND_AT.get(login_id_clean, 0) < cooldown:
+            return False, ""
+        _CODE_SEND_AT[login_id_clean] = now
             
-        # 生成 6 位随机验证码
-        code = f"{random.randint(100000, 999999)}"
-        MOCK_CODES_DB[login_id_clean] = code
+        # Cryptographically strong six-digit code with a short expiry.
+        code = f"{secrets.randbelow(900000) + 100000}"
         
         # 判断是否是手机号
         is_phone = re.match(r"^1[3-9]\d{9}$", login_id_clean) is not None
         sms_sent = False
         
         if is_phone:
-            logger.info(f"[AuthService] 检测到手机号 {login_id_clean}，正在尝试调用阿里云短信...")
             sms_sent = self._send_ali_sms(login_id_clean, code)
-            
-        if not sms_sent:
-            # 降级或模拟逻辑
-            logger.info(f"\n[MOCK MESSAGE SERVICE] (已触发降级或模拟模式) 已向帐号 {login_id_clean} 发送验证码：{code}\n")
-            
-        return True, code
+
+        mock_enabled = os.getenv("AUTH_MOCK_CODES", "0") == "1" and (
+            os.getenv("ENVIRONMENT") or "development"
+        ).lower() not in {"prod", "production"}
+        if not sms_sent and not mock_enabled:
+            return False, ""
+
+        ttl = max(60, min(900, int(os.getenv("AUTH_CODE_TTL_SECONDS", "300"))))
+        MOCK_CODES_DB[login_id_clean] = {
+            "digest": _code_digest(login_id_clean, code),
+            "expires_at": int(time.time()) + ttl,
+            "attempts": 0,
+        }
+        expose = mock_enabled and os.getenv("AUTH_EXPOSE_MOCK_CODE", "0") == "1"
+        return True, code if expose else ""
 
 
     def register(self, email: Optional[str], phone: Optional[str], password_plain: str) -> Dict[str, Any]:
@@ -156,13 +190,18 @@ class AuthService:
             
         if not user:
             raise ValueError("账号或密码错误")
+        if (
+            user.get("user_id") == "admin_user_id_100"
+            and user.get("email") == "admin@example.com"
+            and os.getenv("AUTH_ALLOW_LEGACY_ADMIN", "0") != "1"
+        ):
+            raise ValueError("内置演示管理员已禁用，请注册独立账号")
             
-        # 验证密码哈希
-        salt = user["salt"]
-        expected_hash = hashlib.sha256((password_plain + salt).encode('utf-8')).hexdigest()
-        
-        if not hmac.compare_digest(user["password_hash"].encode('utf-8'), expected_hash.encode('utf-8')):
+        encoded = str(user.get("password_hash") or "")
+        if not verify_password(password_plain, encoded, user.get("salt")):
             raise ValueError("账号或密码错误")
+        if not encoded.startswith("scrypt$"):
+            self.user_repo.upgrade_password(user["user_id"], password_plain)
             
         return {
             "user_id": user["user_id"],
@@ -175,19 +214,7 @@ class AuthService:
         """
         手机/邮箱验证码登录。如果手机/邮箱尚未注册，系统会自动为其创建新用户 (快捷登录注册一体化)
         """
-        login_id_clean = login_id.strip()
-        code_clean = code.strip()
-        
-        if not login_id_clean or not code_clean:
-            raise ValueError("参数不能为空")
-            
-        # 校验验证码
-        saved_code = MOCK_CODES_DB.get(login_id_clean)
-        if not saved_code or saved_code != code_clean:
-            raise ValueError("验证码不正确或已过期")
-            
-        # 消耗验证码 (防止重复使用)
-        MOCK_CODES_DB.pop(login_id_clean, None)
+        login_id_clean = self.consume_verification_code(login_id, code)
         
         # 判断是邮箱还是手机，并查找用户
         user = None
@@ -211,3 +238,23 @@ class AuthService:
             "email": user["email"],
             "phone": user["phone"]
         }
+
+    def consume_verification_code(self, login_id: str, code: str) -> str:
+        """Validate and consume a one-time login code without choosing persistence."""
+        login_id_clean = login_id.strip()
+        code_clean = code.strip()
+        if not login_id_clean or not code_clean:
+            raise ValueError("参数不能为空")
+        saved = MOCK_CODES_DB.get(login_id_clean)
+        if not saved or int(saved.get("expires_at", 0)) < int(time.time()):
+            MOCK_CODES_DB.pop(login_id_clean, None)
+            raise ValueError("验证码不正确或已过期")
+        saved["attempts"] = int(saved.get("attempts", 0)) + 1
+        if saved["attempts"] > 5:
+            MOCK_CODES_DB.pop(login_id_clean, None)
+            raise ValueError("验证码不正确或已过期")
+        supplied = _code_digest(login_id_clean, code_clean)
+        if not hmac.compare_digest(str(saved.get("digest") or ""), supplied):
+            raise ValueError("验证码不正确或已过期")
+        MOCK_CODES_DB.pop(login_id_clean, None)
+        return login_id_clean

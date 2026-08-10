@@ -11,8 +11,12 @@ import re
 import shutil
 import logging
 import hashlib
+import ipaddress
+import json
+import socket
 import subprocess
 from typing import List, Optional, Tuple
+from urllib.parse import urljoin, urlparse
 
 logger = logging.getLogger("app.core.media_compositor")
 
@@ -176,6 +180,125 @@ def synthesize_dialogue_track(segments, tag: str = "voice") -> Tuple[Optional[st
         return None, None
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def _save_provider_audio(audio: bytes, tag: str, extension: str = "mp3") -> Tuple[Optional[str], Optional[str]]:
+    """Atomically persist provider audio without ever logging credentials or request bodies."""
+    if not audio:
+        return None, None
+    _ensure_dir()
+    digest = hashlib.sha256(audio).hexdigest()[:20]
+    filename = f"{tag}_{digest}.{extension}"
+    path = os.path.join(MEDIA_DIR, filename)
+    if not os.path.exists(path):
+        temporary = path + ".tmp"
+        with open(temporary, "wb") as stream:
+            stream.write(audio)
+        os.replace(temporary, path)
+    return public_url(filename), path
+
+
+def synthesize_elevenlabs_dialogue_track(segments, tag: str = "eleven_voice") -> Tuple[Optional[str], Optional[str]]:
+    """Generate an emotion-aware multi-speaker track through Text-to-Dialogue."""
+    if not os.getenv("ELEVENLABS_API_KEY"):
+        return None, None
+    female_voice = (os.getenv("ELEVENLABS_VOICE_FEMALE_ID") or "").strip()
+    male_voice = (os.getenv("ELEVENLABS_VOICE_MALE_ID") or "").strip()
+    if not female_voice or not male_voice:
+        logger.warning("[Compositor] ElevenLabs voice IDs are not configured; using local TTS fallback")
+        return None, None
+    try:
+        from app.core.providers.elevenlabs import DialogueLine, ElevenLabsClient
+
+        try:
+            voice_map = json.loads(os.getenv("ELEVENLABS_VOICE_MAP", "{}"))
+            if not isinstance(voice_map, dict):
+                voice_map = {}
+        except json.JSONDecodeError:
+            voice_map = {}
+        lines = []
+        for segment in segments or []:
+            text = re.sub(r"\s+", " ", (segment[0] or "")).strip()
+            if not text:
+                continue
+            gender = segment[1] if len(segment) > 1 else "female"
+            emotion = segment[2] if len(segment) > 2 else "neutral"
+            speaker = segment[3] if len(segment) > 3 else ""
+            lines.append(DialogueLine(
+                voice_id=str(voice_map.get(speaker) or (male_voice if gender == "male" else female_voice)),
+                text=text,
+                emotion=emotion,
+            ))
+        if not lines:
+            return None, None
+        client = ElevenLabsClient()
+        try:
+            return _save_provider_audio(client.create_dialogue(lines), tag)
+        finally:
+            client.close()
+    except Exception as exc:
+        logger.warning(f"[Compositor] ElevenLabs dialogue unavailable; using fallback: {type(exc).__name__}")
+        return None, None
+
+
+def synthesize_preferred_dialogue_track(
+    segments,
+    *,
+    tts_model: str,
+    tag: str = "voice",
+) -> Tuple[Optional[str], Optional[str]]:
+    """Use ElevenLabs when selected/configured, then fall back to the local renderer."""
+    if "eleven" in (tts_model or "").lower():
+        url, path = synthesize_elevenlabs_dialogue_track(segments, tag=f"eleven_{tag}")
+        if path:
+            return url, path
+    return synthesize_dialogue_track(segments, tag=tag)
+
+
+def synthesize_elevenlabs_music(
+    prompt: str,
+    duration_seconds: float,
+    tag: str = "eleven_bgm",
+) -> Tuple[Optional[str], Optional[str]]:
+    if not os.getenv("ELEVENLABS_API_KEY"):
+        return None, None
+    try:
+        from app.core.providers.elevenlabs import ElevenLabsClient
+
+        client = ElevenLabsClient()
+        try:
+            audio = client.compose_music(
+                prompt,
+                duration_seconds=max(3, min(600, duration_seconds)),
+                instrumental=True,
+            )
+            return _save_provider_audio(audio, tag)
+        finally:
+            client.close()
+    except Exception as exc:
+        logger.warning(f"[Compositor] ElevenLabs music unavailable; using fallback: {type(exc).__name__}")
+        return None, None
+
+
+def synthesize_elevenlabs_sfx(
+    prompt: str,
+    duration_seconds: float = 12,
+    tag: str = "eleven_sfx",
+) -> Tuple[Optional[str], Optional[str]]:
+    if not os.getenv("ELEVENLABS_API_KEY"):
+        return None, None
+    try:
+        from app.core.providers.elevenlabs import ElevenLabsClient
+
+        client = ElevenLabsClient()
+        try:
+            audio = client.sound_effect(prompt, duration_seconds=max(0.5, min(22, duration_seconds)))
+            return _save_provider_audio(audio, tag)
+        finally:
+            client.close()
+    except Exception as exc:
+        logger.warning(f"[Compositor] ElevenLabs SFX unavailable: {type(exc).__name__}")
+        return None, None
 
 
 def _render_subtitle_png(text: str, out_path: str) -> bool:
@@ -348,42 +471,78 @@ def _probe_duration(path: str) -> Optional[float]:
         return None
 
 
-_network_broken = False
+def _local_media_source(url: str) -> Optional[str]:
+    """Resolve only this app's /media URLs, with traversal protection."""
+    if not url or "/media/" not in url:
+        return None
+    parsed = urlparse(url)
+    if parsed.hostname not in {None, "localhost", "127.0.0.1", "::1"}:
+        return None
+    relative = parsed.path.split("/media/", 1)[-1].lstrip("/")
+    root = os.path.realpath(MEDIA_DIR)
+    candidate = os.path.realpath(os.path.join(root, relative))
+    if candidate == root or not candidate.startswith(root + os.sep):
+        return None
+    return candidate
+
+
+def _validate_public_media_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("remote media must use HTTPS")
+    if parsed.username or parsed.password:
+        raise ValueError("credentials in media URLs are forbidden")
+    for address in socket.getaddrinfo(parsed.hostname, parsed.port or 443, type=socket.SOCK_STREAM):
+        if not ipaddress.ip_address(address[4][0]).is_global:
+            raise ValueError("private or local media hosts are forbidden")
 
 
 def _download(url: str, dst: str, timeout: int = 90, retries: int = 3) -> bool:
-    global _network_broken
     # 本机自产片段(如分镜拼接产物 http://localhost:8000/media/xxx.mp4)直接从磁盘拷贝，
     # 不走 HTTP 回环：避免合成时依赖服务端口可达、省去一次自我下载往返，也更快更稳。
-    if url and "/media/" in url:
-        local = os.path.join(MEDIA_DIR, url.split("/media/")[-1].split("?")[0])
+    local = _local_media_source(url)
+    if local:
         if os.path.isfile(local) and os.path.getsize(local) > 1024:
             try:
-                import shutil
                 shutil.copyfile(local, dst)
                 return True
             except Exception as e:
-                logger.warning(f"[Compositor] 本地片段拷贝失败，回退HTTP {url[:50]}: {str(e)[:80]}")
-    if _network_broken:
-        return False
+                logger.warning(f"[Compositor] 本地片段拷贝失败: {type(e).__name__}")
+                return False
+    maximum_bytes = int(os.getenv("MAX_REMOTE_VIDEO_BYTES", str(2 * 1024 * 1024 * 1024)))
     import time
     for attempt in range(retries):
         try:
             import requests
-            r = requests.get(url, timeout=timeout, stream=True, proxies={"http": None, "https": None})
-            if r.status_code == 200:
+            current = url
+            for _ in range(4):
+                _validate_public_media_url(current)
+                r = requests.get(
+                    current, timeout=timeout, stream=True, allow_redirects=False,
+                    proxies={"http": None, "https": None},
+                )
+                if r.status_code in {301, 302, 303, 307, 308}:
+                    location = r.headers.get("location")
+                    if not location:
+                        raise ValueError("redirect missing location")
+                    current = urljoin(current, location)
+                    continue
+                r.raise_for_status()
+                total = 0
                 with open(dst, "wb") as f:
-                    for chunk in r.iter_content(8192):
+                    for chunk in r.iter_content(1024 * 1024):
+                        if not chunk:
+                            continue
+                        total += len(chunk)
+                        if total > maximum_bytes:
+                            raise ValueError("remote video exceeds configured size limit")
                         f.write(chunk)
-                if os.path.getsize(dst) > 1024:
-                    return True
+                return os.path.getsize(dst) > 1024
+            raise ValueError("too many media redirects")
         except Exception as e:
-            logger.warning(f"[Compositor] 下载片段失败(第{attempt+1}次) {url[:50]}: {str(e)[:100]}")
-            err_str = str(e).lower()
-            if any(k in err_str for k in ["connection", "timeout", "max retries", "ssl"]):
-                logger.info("[Compositor] 检测到可能存在的物理网络下载故障，启用快速下载短路机制。")
-                _network_broken = True
-                return False
+            if os.path.exists(dst):
+                os.remove(dst)
+            logger.warning(f"[Compositor] 下载片段失败(第{attempt+1}次): {type(e).__name__}")
         if attempt < retries - 1:
             time.sleep(2)
     return False
@@ -398,7 +557,7 @@ def attach_audio_to_clip(video_url: str, voice_path: Optional[str] = None,
     - 无配音也无 BGM、或任一环节失败时，原样返回传入的 video_url (绝不中断主流程)。
     """
     ff = _ffmpeg()
-    if not ff or not video_url or not video_url.startswith("http") or ".mp4" not in video_url:
+    if not ff or not video_url or not video_url.startswith("http"):
         return video_url
     _ensure_dir()
     h = hashlib.md5(f"{video_url}|{voice_path}|{bgm}".encode("utf-8")).hexdigest()[:16]
@@ -448,9 +607,114 @@ def attach_audio_to_clip(video_url: str, voice_path: Optional[str] = None,
         shutil.rmtree(work, ignore_errors=True)
 
 
+def _join_video_segments(
+    segment_paths: List[str],
+    output_path: str,
+    *,
+    transition_specs: Optional[List[dict]] = None,
+) -> List[float]:
+    """Join normalized clips with explicit overlap transitions.
+
+    Returns the effective overlap before each segment after the first. A tiny
+    overlap is used for match/hard cuts to keep one filter graph and stable A/V
+    timing while avoiding an obvious dissolve.
+    """
+    ff = _ffmpeg()
+    if not ff or not segment_paths:
+        raise ValueError("ffmpeg and at least one segment are required")
+    if len(segment_paths) == 1:
+        shutil.copyfile(segment_paths[0], output_path)
+        return []
+    specs = list(transition_specs or [])
+    while len(specs) < len(segment_paths) - 1:
+        specs.append({"type": "crossfade", "duration": 0.22})
+    specs = specs[: len(segment_paths) - 1]
+    type_map = {
+        "hard_cut": ("fade", 0.04),
+        "match_cut": ("fade", 0.08),
+        "crossfade": ("fade", None),
+        "dip_to_black": ("fadeblack", None),
+        "neutral_bridge": ("fadeblack", None),
+    }
+    durations = [_probe_duration(path) or 1.0 for path in segment_paths]
+    cmd = [ff, "-y"]
+    for path in segment_paths:
+        cmd.extend(["-i", path])
+    filters = [f"[{index}:v]settb=AVTB,setpts=PTS-STARTPTS[v{index}]" for index in range(len(segment_paths))]
+    effective: List[float] = []
+    running_duration = durations[0]
+    previous_label = "v0"
+    for index, spec in enumerate(specs, start=1):
+        transition_type = str(spec.get("type") or "crossfade")
+        ff_transition, forced_duration = type_map.get(transition_type, ("fade", None))
+        requested = float(spec.get("duration") or 0.22)
+        overlap = forced_duration if forced_duration is not None else requested
+        overlap = max(0.04, min(overlap, durations[index] * 0.45, running_duration * 0.45, 1.0))
+        offset = max(0.0, running_duration - overlap)
+        output_label = f"x{index}"
+        filters.append(
+            f"[{previous_label}][v{index}]xfade=transition={ff_transition}:duration={overlap:.3f}:offset={offset:.3f}[{output_label}]"
+        )
+        running_duration += durations[index] - overlap
+        effective.append(round(overlap, 3))
+        previous_label = output_label
+    cmd.extend([
+        "-filter_complex", ";".join(filters),
+        "-map", f"[{previous_label}]", "-an", "-r", "30",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", output_path,
+    ])
+    subprocess.run(cmd, check=True, timeout=240, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return effective
+
+
+def _append_master_mix_filters(
+    filters: List[str],
+    voice_labels: List[str],
+    bgm_label: Optional[str],
+    sfx_label: Optional[str],
+) -> str:
+    """Append dialogue ducking and EBU-style delivery mastering to a filter graph."""
+    mix_inputs: List[str] = []
+    dialogue_base: Optional[str] = None
+    if voice_labels:
+        if len(voice_labels) == 1:
+            filters.append(f"{voice_labels[0]}anull[dialoguebase]")
+        else:
+            filters.append(
+                f"{''.join(voice_labels)}amix=inputs={len(voice_labels)}:duration=longest:normalize=0[dialoguebase]"
+            )
+        dialogue_base = "[dialoguebase]"
+
+    if bgm_label and dialogue_base:
+        filters.append(f"{dialogue_base}asplit=2[dialogue][duckkey]")
+        filters.append(
+            f"{bgm_label}[duckkey]sidechaincompress=threshold=0.04:ratio=8:attack=20:release=350:makeup=1[bgmduck]"
+        )
+        mix_inputs.extend(["[dialogue]", "[bgmduck]"])
+    else:
+        if dialogue_base:
+            mix_inputs.append(dialogue_base)
+        if bgm_label:
+            mix_inputs.append(bgm_label)
+    if sfx_label:
+        mix_inputs.append(sfx_label)
+    if not mix_inputs:
+        raise ValueError("master mix requires at least one audio input")
+    if len(mix_inputs) == 1:
+        filters.append(f"{mix_inputs[0]}anull[premaster]")
+    else:
+        filters.append(
+            f"{''.join(mix_inputs)}amix=inputs={len(mix_inputs)}:duration=longest:normalize=0[premaster]"
+        )
+    filters.append("[premaster]loudnorm=I=-16:TP=-1:LRA=11,alimiter=limit=0.891251[aout]")
+    return "[aout]"
+
+
 def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: Optional[str],
                  tag: str = "film", title: Optional[str] = None, bgm: bool = True,
-                 shot_voices: List = None) -> Optional[str]:
+                 shot_voices: List = None, bgm_path: Optional[str] = None,
+                 sfx_path: Optional[str] = None,
+                 transition_plans: Optional[List[dict]] = None) -> Optional[str]:
     """
     将多镜头视频合成为一条带片头标题卡、字幕、配音与 BGM 的竖屏成片/单集。
     - shot_video_urls: 各镜头视频直链 (http mp4)
@@ -462,12 +726,12 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
     返回成片对外 URL；任一关键环节失败返回 None。
     """
     ff = _ffmpeg()
-    clips = [u for u in (shot_video_urls or []) if u and u.startswith("http") and ".mp4" in u]
+    clips = [u for u in (shot_video_urls or []) if u and isinstance(u, str) and u.startswith("http")]
     if not ff or not clips:
         logger.warning("[Compositor] 成片合成不可用 (缺 ffmpeg 或无有效视频片段)")
         return None
     _ensure_dir()
-    h = hashlib.md5(("|".join(clips) + "|" + "|".join(subtitles or []) + f"|{title}|{bgm}|{bool(shot_voices)}").encode("utf-8")).hexdigest()[:16]
+    h = hashlib.md5(("|".join(clips) + "|" + "|".join(subtitles or []) + f"|{title}|{bgm}|{bool(shot_voices)}|{bgm_path}|{sfx_path}").encode("utf-8")).hexdigest()[:16]
     work = os.path.join(MEDIA_DIR, f"_work_{tag}_{h}")
     os.makedirs(work, exist_ok=True)
     try:
@@ -526,21 +790,22 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
             logger.warning("[Compositor] 无可用片段，成片合成失败")
             return None
 
-        # 拼接 (统一重编码，规避不同来源参数差异导致的拼接失败)
-        list_txt = os.path.join(work, "list.txt")
-        with open(list_txt, "w", encoding="utf-8") as f:
-            for s in seg_files:
-                f.write(f"file '{s}'\n")
+        # 相邻镜头使用动作匹配/短叠化/转黑等显式转场，避免硬拼接。
+        specs = list(transition_plans or [])
+        if title_dur:
+            specs.insert(0, {"type": "crossfade", "duration": 0.35})
         concat = os.path.join(work, "concat.mp4")
-        subprocess.run([ff, "-y", "-f", "concat", "-safe", "0", "-i", list_txt,
-                        "-r", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p", concat],
-                       check=True, timeout=180, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        transition_overlaps = _join_video_segments(seg_files, concat, transition_specs=specs)
 
         vdur = _probe_duration(concat) or 0.0
         final = os.path.join(MEDIA_DIR, f"{tag}_{h}.mp4")
 
         bgm_wav = os.path.join(work, "bgm.wav")
-        has_bgm = bgm and vdur > 0 and _make_bgm(vdur, bgm_wav)
+        if bgm_path and os.path.exists(bgm_path):
+            bgm_wav = bgm_path
+            has_bgm = True
+        else:
+            has_bgm = bgm and vdur > 0 and _make_bgm(vdur, bgm_wav)
 
         # 逐镜配音按时间轴对齐 (优先)；否则用整条全局配音
         per_shot_voices = [(t, v) for (t, v) in timeline if v]
@@ -552,7 +817,9 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
             # 计算每段在时间轴上的起点，把该段配音 adelay 到对应时刻
             cum = 0.0
             offsets = []
-            for dur, voice in timeline:
+            for timeline_index, (dur, voice) in enumerate(timeline):
+                if timeline_index > 0 and timeline_index - 1 < len(transition_overlaps):
+                    cum = max(0.0, cum - transition_overlaps[timeline_index - 1])
                 if voice:
                     offsets.append((voice, cum))
                 cum += dur
@@ -571,19 +838,21 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
 
         bgm_label = None
         if has_bgm:
-            cmd += ["-i", bgm_wav]
+            cmd += ["-stream_loop", "-1", "-i", bgm_wav]
             filters.append(f"[{idx}:a]volume=0.16[bgm]")
             bgm_label = "[bgm]"
             idx += 1
 
-        all_labels = voice_labels + ([bgm_label] if bgm_label else [])
+        sfx_label = None
+        if sfx_path and os.path.exists(sfx_path):
+            cmd += ["-stream_loop", "-1", "-i", sfx_path]
+            filters.append(f"[{idx}:a]volume=0.22[sfx]")
+            sfx_label = "[sfx]"
+            idx += 1
+
+        all_labels = voice_labels + ([bgm_label] if bgm_label else []) + ([sfx_label] if sfx_label else [])
         if all_labels:
-            if len(all_labels) == 1:
-                filters[-1] = filters[-1].rsplit("[", 1)[0] + "[aout]"
-                out_label = "[aout]"
-            else:
-                filters.append(f"{''.join(all_labels)}amix=inputs={len(all_labels)}:duration=longest:normalize=0[aout]")
-                out_label = "[aout]"
+            out_label = _append_master_mix_filters(filters, voice_labels, bgm_label, sfx_label)
             fc = ";".join(filters)
             cmd += ["-filter_complex", fc, "-map", "0:v:0", "-map", out_label,
                     "-c:v", "copy", "-c:a", "aac", "-t", f"{vdur:.3f}", final]

@@ -11,7 +11,7 @@ class RegisterRequest(BaseModel):
     """
     email: Optional[str] = Field(None, description="注册绑定的邮箱")
     phone: Optional[str] = Field(None, description="注册绑定的手机号")
-    password: str = Field(..., min_length=6, description="密码，最少 6 位字符")
+    password: str = Field(..., min_length=10, max_length=256, description="密码，最少 10 位字符")
 
     @field_validator("email")
     @classmethod
@@ -41,4 +41,3 @@ class CodeLoginRequest(BaseModel):
     """
     login_id: str = Field(..., description="登录所用的邮箱或手机号")
     code: str = Field(..., description="接收到的 6 位验证码")
-
