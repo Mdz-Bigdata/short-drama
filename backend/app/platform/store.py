@@ -254,14 +254,20 @@ class PlatformStore:
         catalog = capability_command_catalog()
         async with self.sessions() as session:
             for item in catalog:
+                persisted = {
+                    key: item[key]
+                    for key in (
+                        "source_id", "capability_id", "source_url", "label", "command", "entrypoint"
+                    )
+                }
                 setting = await session.get(CapabilitySetting, (item["source_id"], item["capability_id"]))
                 if setting:
-                    setting.source_url = item["source_url"]
-                    setting.label = item["label"]
-                    setting.command = item["command"]
-                    setting.entrypoint = item["entrypoint"]
+                    setting.source_url = persisted["source_url"]
+                    setting.label = persisted["label"]
+                    setting.command = persisted["command"]
+                    setting.entrypoint = persisted["entrypoint"]
                 else:
-                    session.add(CapabilitySetting(**item, enabled=True))
+                    session.add(CapabilitySetting(**persisted, enabled=True))
             await session.commit()
 
     async def list_capabilities(self) -> list[CapabilitySetting]:
@@ -651,6 +657,49 @@ class PlatformStore:
             ))
             await session.commit()
             return entry
+
+    async def delete_configured_model(
+        self, configuration_id: str, entry_id: str, *, actor_id: str
+    ) -> dict:
+        """Delete one saved model and remove the credential container when it becomes empty."""
+        async with self.sessions() as session:
+            configuration = await session.scalar(
+                select(ModelProviderConfiguration)
+                .options(selectinload(ModelProviderConfiguration.models))
+                .where(ModelProviderConfiguration.id == configuration_id)
+            )
+            if not configuration:
+                raise ValueError("模型配置不存在")
+            entry = next((item for item in configuration.models if item.id == entry_id), None)
+            if entry is None:
+                raise ValueError("模型不存在")
+
+            result = {
+                "entry_id": entry.id,
+                "model_id": entry.model_id,
+                "category": entry.category,
+                "was_enabled": bool(configuration.enabled and entry.enabled),
+                "configuration_deleted": len(configuration.models) == 1,
+            }
+            session.add(AuditEvent(
+                actor_id=actor_id,
+                action="configured_model.delete",
+                resource_type="configured_model",
+                resource_id=entry.id,
+                details={
+                    "configuration_id": configuration.id,
+                    "model_id": entry.model_id,
+                    "category": entry.category,
+                    "configuration_deleted": result["configuration_deleted"],
+                },
+            ))
+            if result["configuration_deleted"]:
+                await session.delete(configuration)
+            else:
+                await session.delete(entry)
+                configuration.updated_by = actor_id
+            await session.commit()
+            return result
 
     async def create_element(
         self, *, owner_id: str, kind: str, name: str, description: str = "", metadata: dict | None = None

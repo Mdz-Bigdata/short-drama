@@ -21,6 +21,20 @@ class StoryboardAssetTests(unittest.TestCase):
             with Image.open(output) as board:
                 self.assertEqual(board.size, (548, 968))
 
+    def test_compose_nine_grid_leaves_unused_cells_blank(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sources = []
+            for index in range(3):
+                path = root / f"panel-{index}.png"
+                Image.new("RGB", (60, 100), (20, 40, 60)).save(path)
+                sources.append(str(path))
+            output = root / "partial-board.png"
+            compose_nine_grid(sources, output, cell_size=(60, 100), gutter=2)
+            with Image.open(output) as board:
+                self.assertEqual(board.size, (184, 304))
+                self.assertEqual(board.getpixel((30, 250)), (255, 255, 255))
+
     def test_split_five_view_sheet_returns_five_equal_crops(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

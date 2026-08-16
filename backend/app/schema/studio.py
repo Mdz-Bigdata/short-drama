@@ -239,6 +239,20 @@ class CanvasPromoteRequest(BaseModel):
     expected_version: Annotated[int, Field(ge=1)]
 
 
+class CanvasDuplicateRequest(BaseModel):
+    expected_version: Annotated[int, Field(ge=1)]
+    operation_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,119}$")]
+    node_ids: Annotated[list[str], Field(min_length=1, max_length=200)]
+    offset_x: Annotated[float, Field(ge=-100_000, le=100_000)] = 48
+    offset_y: Annotated[float, Field(ge=-100_000, le=100_000)] = 48
+
+    @model_validator(mode="after")
+    def unique_nodes(self) -> "CanvasDuplicateRequest":
+        if len(self.node_ids) != len(set(self.node_ids)):
+            raise ValueError("canvas duplicate node_ids must be unique")
+        return self
+
+
 class Vec3(BaseModel):
     x: Annotated[float, Field(ge=-100_000, le=100_000)]
     y: Annotated[float, Field(ge=-100_000, le=100_000)]

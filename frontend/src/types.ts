@@ -6,6 +6,7 @@ export interface TaskConfig {
   imageModel: string;
   videoModel: string;
   ttsModel: string;
+  videoReferenceMode: 'auto' | 'first_frame' | 'first_last_frame' | 'multi_reference' | 'multimodal';
   oneClick: boolean;
   episodeCount: number;
 }
@@ -23,6 +24,7 @@ export interface TaskResponse {
     imageModel: string;
     videoModel: string;
     ttsModel: string;
+    videoReferenceMode?: 'auto' | 'first_frame' | 'first_last_frame' | 'multi_reference' | 'multimodal';
     oneClick: boolean;
     episodeCount?: number;
   };

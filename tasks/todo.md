@@ -5,11 +5,15 @@ Each task is intended to be one focused, reviewable increment. A task is complet
 ## Current verified increment
 
 - [x] Executable sd25-pe generation/edit/extension compiler with multimodal, keyframe, nine-grid, blockout, dialogue-ledger, unused-material, and parameter-separation rules.
+- [x] Fully integrate script-to-video-prompts with sd25-pe through one typed, source-bound production pipeline and safe multi-format exports.
 - [x] Owner-scoped SQLite project/artifact/job/audit foundation with optimistic versions, staleness, idempotency, attempts, provider task IDs, and cost reservation.
 - [x] Safe TXT/Markdown/DOCX/PDF/FDX ingestion, evidence spans, hashes, and deterministic story graph.
 - [x] Mandatory five-view asset readiness and metadata-complete exact 3×3 storyboard contract.
 - [x] Motivation-first performance planning and fail-closed identity/anatomy/expression/realism/continuity/dialogue/lip-sync QA.
 - [x] ElevenLabs timed TTS/dialogue, SFX, music, video-to-music, STT, dubbing, plus ducked/loudness-limited final mix.
+- [x] ElevenLabs Base URL normalization accepts either the API root or a full `/v1/sound-generation` endpoint; provider errors and failure evidence redact labeled and bare secret forms.
+- [x] Explicit video reference routing for first frame, first+last frame, multi-image, and multimodal image/video/audio inputs, including safe accepted-tail inline frames.
+- [x] Source-hash-bound novel triage, resumable episode intake, consent-aware voice direction, pre-spend readiness, failure evidence, production analytics, and lineage-safe Freezone subgraph duplication.
 - [x] SRT/ASS/Jianying-compatible interchange and scoped/revocable external Agent API.
 - [ ] Full-product parity items are still listed in `tasks/implementation-status.md`; do not infer completion from the 13-source implementation report.
 

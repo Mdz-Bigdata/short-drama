@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import hashlib
 from typing import Any
 
 from app.export.delivery import CaptionCue, DeliveryExporter
 from app.ingest.parsers import SourceIngestor
-from app.repository.studio_repo import StudioRepository
+from app.repository.studio_repo import ConcurrencyError, StudioRepository
 from app.schema.studio import (
     ArtifactCreateRequest,
     ArtifactKind,
@@ -19,6 +20,7 @@ from app.schema.studio import (
     ProjectCreate,
     AgentKeyCreateRequest,
     CanvasPromoteRequest,
+    CanvasDuplicateRequest,
     CanvasPutRequest,
     CostEventRequest,
     DirectorWorldPutRequest,
@@ -170,6 +172,76 @@ class StudioService:
             target_kind=request.target_kind,
             expected_version=request.expected_version,
         ).model_dump(mode="json")
+
+    def duplicate_canvas_nodes(
+        self, project_id: str, owner_id: str, request: CanvasDuplicateRequest
+    ) -> dict[str, Any]:
+        canvas = self.repository.get_canvas(project_id, owner_id)
+        if not canvas or canvas.version != request.expected_version:
+            latest = canvas.version if canvas else 0
+            raise ConcurrencyError(
+                f"canvas version conflict: expected {request.expected_version}, latest is {latest}"
+            )
+        by_id = {node.id: node for node in canvas.nodes}
+        missing = [node_id for node_id in request.node_ids if node_id not in by_id]
+        if missing:
+            raise ValueError(f"canvas nodes do not exist: {', '.join(missing)}")
+
+        def duplicate_id(kind: str, source_id: str) -> str:
+            digest = hashlib.sha256(
+                f"{request.operation_id}:{kind}:{source_id}".encode("utf-8")
+            ).hexdigest()[:24]
+            return f"dup:{digest}"
+
+        mapping = {node_id: duplicate_id("node", node_id) for node_id in request.node_ids}
+        existing_ids = {node.id for node in canvas.nodes}
+        if existing_ids & set(mapping.values()):
+            raise ValueError("canvas duplicate operation_id has already been applied")
+        duplicates = []
+        for source_id in request.node_ids:
+            source = by_id[source_id]
+            payload = dict(source.payload)
+            payload["duplicated_from"] = source.id
+            payload["duplicate_operation_id"] = request.operation_id
+            duplicates.append(source.model_copy(update={
+                "id": mapping[source_id],
+                "x": source.x + request.offset_x,
+                "y": source.y + request.offset_y,
+                "payload": payload,
+            }))
+
+        selected = set(request.node_ids)
+        duplicate_edges = [
+            edge.model_copy(update={
+                "id": duplicate_id("edge", edge.id),
+                "source": mapping[edge.source],
+                "target": mapping[edge.target],
+                "payload": {**edge.payload, "duplicated_from": edge.id},
+            })
+            for edge in canvas.edges
+            if edge.source in selected and edge.target in selected
+        ]
+        put = CanvasPutRequest(
+            expected_version=canvas.version,
+            nodes=[*canvas.nodes, *duplicates],
+            edges=[*canvas.edges, *duplicate_edges],
+        )
+        return self.repository.put_canvas(project_id, owner_id, put).model_dump(mode="json")
+
+    def canvas_outline(self, project_id: str, owner_id: str) -> dict[str, Any]:
+        canvas = self.repository.get_canvas(project_id, owner_id)
+        if not canvas:
+            return {"project_id": project_id, "version": 0, "tracks": {"mainline": [], "freezone": []}}
+        tracks: dict[str, list[dict[str, Any]]] = {"mainline": [], "freezone": []}
+        for node in sorted(canvas.nodes, key=lambda item: (item.track, item.y, item.x, item.id)):
+            tracks[node.track].append({
+                "id": node.id,
+                "kind": node.kind,
+                "artifact_id": node.artifact_id,
+                "label": str(node.payload.get("label") or node.payload.get("title") or node.id)[:200],
+                "position": {"x": node.x, "y": node.y},
+            })
+        return {"project_id": project_id, "version": canvas.version, "tracks": tracks}
 
     def put_director_world(
         self, project_id: str, owner_id: str, request: DirectorWorldPutRequest

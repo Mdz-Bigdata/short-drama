@@ -9,12 +9,19 @@ interface Ability {
   label: string;
   command: string;
   entrypoint: string;
+  implementation_status: 'implemented' | 'provider-dependent' | 'interchange-only' | 'unverified';
+  evidence: string;
   enabled: boolean;
 }
 
 interface CapabilitySource {
   source_id: string;
   source_url: string;
+  reviewed_commit: string;
+  reviewed_at: string;
+  license_observation: string;
+  code_treatment: 'attributed-adaptation' | 'clean-room' | 'api-interoperability';
+  attribution: string;
   enabled_count: number;
   abilities: Ability[];
 }
@@ -159,6 +166,11 @@ export function CapabilityCenter({ role = 'user' }: CapabilityCenterProps) {
                     <a href={source.source_url} target="_blank" rel="noreferrer" className="source-link">
                       查看能力来源 <ExternalLink size={12} />
                     </a>
+                    <div className="source-provenance">
+                      <span>审计 {source.reviewed_at} · {source.reviewed_commit.slice(0, 7)}</span>
+                      <span>{source.code_treatment} · {source.license_observation}</span>
+                      {source.attribution && <span>{source.attribution}</span>}
+                    </div>
                     {source.abilities.map(ability => {
                       const key = `${source.source_id}:${ability.id}`;
                       return (
@@ -167,6 +179,14 @@ export function CapabilityCenter({ role = 'user' }: CapabilityCenterProps) {
                             <strong>{ability.label}</strong>
                             <code>{ability.command}</code>
                             <small>{ability.entrypoint}</small>
+                            <small className={`implementation-status ${ability.implementation_status}`}>
+                              {ability.implementation_status === 'provider-dependent'
+                                ? '已实现 · 需配置服务商'
+                                : ability.implementation_status === 'interchange-only'
+                                  ? '部分实现 · 仅交换格式，未验证原生导入'
+                                  : '已实现'}
+                              {ability.evidence ? ` · ${ability.evidence}` : ''}
+                            </small>
                           </div>
                           <button
                             type="button"

@@ -51,6 +51,17 @@ class RuntimeModelRegistry:
         with self._lock:
             return tuple(item for item in self._configurations if item.category == category)
 
+    def first_for_category(self, category: str) -> RuntimeModelConfiguration | None:
+        """Return the deterministic global fallback for an enabled model category."""
+        with self._lock:
+            return next(
+                (
+                    item for item in self._configurations
+                    if item.category == category and item.model_ids
+                ),
+                None,
+            )
+
 
 runtime_model_registry = RuntimeModelRegistry()
 

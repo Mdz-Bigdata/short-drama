@@ -48,7 +48,7 @@ class ModelDiscoveryRequest(BaseModel):
 
 
 class ModelTestRequest(ModelDiscoveryRequest):
-    selected_model_ids: list[str] = Field(min_length=1, max_length=50)
+    selected_model_ids: list[str] = Field(min_length=1)
 
     @field_validator("selected_model_ids")
     @classmethod

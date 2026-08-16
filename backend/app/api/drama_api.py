@@ -5,6 +5,7 @@ from app.service.drama_service import DramaService
 from app.repository.task_repo import TaskRepository
 from app.api.auth_api import get_current_user, require_admin
 from app.core.video_quality import VideoQualityMeasurements
+from app.schema.agent_council import CouncilReleaseEvidence
 
 # 创建 API 路由，全局挂载登录身份校验依赖
 router = APIRouter(prefix="/api/drama", tags=["AI短剧制作"], dependencies=[Depends(get_current_user)])
@@ -163,11 +164,21 @@ async def chat_with_agent(task_id: str, payload: Dict[str, str]):
 
 @router.post("/{task_id}/quality/video", response_model=DramaTaskResponse)
 def submit_video_quality(task_id: str, measurements: VideoQualityMeasurements):
-    """提交真实多模态或人工复核证据；只有通过后任务才标记 completed。"""
+    """提交成片多模态或人工复核证据；通过后进入八 Agent 终审。"""
     try:
         return service.submit_video_quality(task_id, measurements)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{task_id}/quality/council", response_model=DramaTaskResponse)
+def submit_council_release(task_id: str, evidence: CouncilReleaseEvidence):
+    """提交八 Agent 全量交付证据；只有视频门禁和委员会门禁均通过才完成。"""
+    try:
+        return service.submit_council_release(task_id, evidence)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
 
 @router.post("/{task_id}/update_config", response_model=DramaTaskResponse)
 def update_task_config(task_id: str, req: DramaCreateRequest):

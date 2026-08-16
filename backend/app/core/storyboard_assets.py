@@ -86,16 +86,16 @@ def compose_nine_grid(
     cell_size: tuple[int, int] = (356, 636),
     gutter: int = 6,
 ) -> Path:
-    """Create one guaranteed 3x3 board; no model can merge or omit cells."""
-    if len(sources) != 9:
-        raise ValueError("an exact nine-grid requires exactly nine images")
+    """Create one 3x3 board; unused cells stay blank instead of duplicating beats."""
+    if not 1 <= len(sources) <= 9:
+        raise ValueError("a nine-grid page requires between one and nine real images")
     cell_width, cell_height = cell_size
     if cell_width <= 0 or cell_height <= 0 or not 0 <= gutter <= 32:
         raise ValueError("invalid grid geometry")
     canvas = Image.new(
         "RGB",
         (cell_width * 3 + gutter * 2, cell_height * 3 + gutter * 2),
-        "black",
+        "white",
     )
     for index, source in enumerate(sources):
         image = _open_image(source)

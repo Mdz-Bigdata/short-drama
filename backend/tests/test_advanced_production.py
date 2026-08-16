@@ -6,6 +6,7 @@ from app.audio.mix_plan import AudioMixPlanner
 from app.core.capability_manifest import capability_implementation_report
 from app.core.performance import PerformancePlanner
 from app.core.providers.capabilities import ProviderCapabilityRegistry
+from app.core.providers.elevenlabs_capabilities import ELEVENLABS_CAPABILITIES
 from app.schema.advanced import (
     AudioMixRequest,
     AudioTrack,
@@ -57,10 +58,30 @@ class ProviderNegotiationTests(unittest.TestCase):
         capabilities = registry.list()
         self.assertIn("minimax_h3", capabilities)
         self.assertEqual(
+            set(capabilities["minimax_audio"].operations),
+            {"tts", "music_generation", "music_cover"},
+        )
+        for provider in ("seedance", "kling", "grok", "happyhorse", "ltx_2_3"):
+            self.assertIn(provider, capabilities)
+        self.assertEqual(
             set(capabilities["elevenlabs"].operations),
             {
                 "tts", "tts_with_timestamps", "dialogue", "dialogue_with_timestamps",
                 "sound_effect", "music", "video_to_music", "speech_to_text", "dubbing",
+                "voices_list", "speech_engine_list", "speech_engine_create",
+                "voice_changer", "voice_design", "audio_isolation", "forced_alignment",
+                "pronunciation_dictionary_list", "pronunciation_dictionary_create",
+                "audio_native",
+            },
+        )
+        self.assertEqual(len(ELEVENLABS_CAPABILITIES), 14)
+        self.assertEqual(
+            {item.id for item in ELEVENLABS_CAPABILITIES},
+            {
+                "text_to_speech", "speech_to_text", "music", "speech_engine", "voices",
+                "text_to_dialogue", "voice_changer", "voice_design", "sound_effects",
+                "audio_isolation", "dubbing", "forced_alignment",
+                "pronunciation_dictionaries", "audio_native",
             },
         )
         request = H3VideoRequest(
@@ -112,9 +133,19 @@ class AdvancedApiContractTests(unittest.TestCase):
         paths = {route.path for route in router.routes}
         self.assertTrue({
             "/api/production/providers",
+            "/api/production/video/route",
             "/api/production/performance/plan",
             "/api/production/audio/mix/plan",
             "/api/production/capabilities/report",
+            "/api/production/preproduction/novel-analyze",
+            "/api/production/preproduction/episodes/index",
+            "/api/production/preproduction/voice/plan",
+            "/api/production/readiness/evaluate",
+            "/api/production/failures/normalize",
+            "/api/production/analytics/summarize",
+            "/api/production/audio/minimax/tts",
+            "/api/production/audio/minimax/music",
+            "/api/production/audio/minimax/music-cover",
         }.issubset(paths))
 
 

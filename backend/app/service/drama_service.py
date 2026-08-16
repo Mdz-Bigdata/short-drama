@@ -3,22 +3,33 @@ import logging
 import uuid
 import asyncio
 import re
-import io
 import os
 import hashlib
+from collections import OrderedDict
 from typing import Dict, Any, Optional, List
 
-logger = logging.getLogger("app.service.drama_service")
 from app.repository.task_repo import TaskRepository
 from app.core.model_gateway import ModelGateway
 from app.core import media_compositor
 from app.core.storyboard_assets import compose_nine_grid, split_five_view_sheet
 from app.core.storyboard_quality import build_nine_grid_prompt, validate_storyboard_continuity
+from app.core.shot_motion_contract import (
+    ShotMotionContract,
+    assert_prompt_pair_consistent,
+    compile_motion_prompt,
+    compile_storyboard_image_prompt,
+)
 from app.core.continuity import ContinuityState, plan_transition
 from app.core.image_quality import validate_five_view_images
 from app.core.video_quality import VideoQualityMeasurements, evaluate_video_quality
+from app.core.video_references import VideoGenerationIntent, plan_video_references
+from app.core.agent_council import AgentCouncilCompiler
 from app.schema.drama import DramaCreateRequest
 from app.schema.production import NineGridStoryboard, StoryAssetCatalog, StoryboardPanel
+from app.schema.agent_council import AgentRole, CouncilCompileRequest, CouncilReleaseEvidence
+
+
+logger = logging.getLogger("app.service.drama_service")
 
 
 def _bounded_shot_duration(value: object, default: float = 2.0) -> float:
@@ -47,7 +58,7 @@ def extract_character_info(director_outline: str) -> tuple:
         
     # 非角色名黑名单：导演大纲/角色卡里大量加粗项是“元信息/属性标签/结构条目”而非人物名，
     # 必须过滤，否则会把 导演备注/画面/台词/题材/核心冲突/三幕结构/面部/发型… 误当成角色名，
-    # 进而污染下游：给非角色生成三视图、配音性别误判、镜头提示词张冠李戴。
+    # 进而污染下游：给非角色生成五视图、配音性别误判、镜头提示词张冠李戴。
     NON_CHARACTER_LABELS = (
         "题材", "平台", "卖点", "爽点", "虐点", "笑点", "hook", "钩子", "冲突", "结构",
         "三幕", "开端", "发展", "高潮", "结局", "主旋律", "节奏", "时长", "导演", "备注",
@@ -140,7 +151,7 @@ def parse_characters(res: str, fallback_chars: dict) -> dict:
 
 def parse_all_characters(res: str) -> "OrderedDict":
     """解析角色设计师输出，提取【全部】角色 -> 有序 {角色名: 该角色完整描述特征}。
-    用于阶段3罗列所有人物信息+特征并各生成一张三视图 (不再只限主角/反派两人)。
+    用于阶段3罗列所有人物信息+特征并各生成一张五视图 (不再只限主角/反派两人)。
     以「角色身份标签 + 人名」的标题行(含 #、加粗或以角色标签起头)作为新角色卡起点，
     后续行并入该角色描述，避免把正文里偶现的人名误切成新角色。"""
     from collections import OrderedDict
@@ -266,6 +277,35 @@ def detect_emotion(text: str) -> str:
     return "neutral"
 
 
+def dialogue_delivery_profile(text: str, emotion: str) -> dict:
+    """Compile observable voice direction without changing the verbatim line."""
+    profiles = {
+        "neutral": (285, 1.00, "句间0.3-0.5秒，长句中段保留一次自然换气", "语义关键词"),
+        "angry": (330, 1.10, "短促碎停顿，命中重音后立即收束", "指责或权力词"),
+        "shout": (350, 1.15, "少停顿，爆发后保留0.3秒呼气尾巴", "爆发词"),
+        "cold": (235, 0.92, "关键词前停半拍，句尾不拖腔", "威胁或否定词"),
+        "sad": (210, 0.86, "句中0.2秒换气，句尾0.4-0.6秒留白", "失去或请求词"),
+        "tense": (325, 1.08, "不规则0.15-0.25秒碎停顿", "危险与行动词"),
+        "happy": (315, 1.05, "轻快短停顿，音高有自然起伏", "结果与称赞词"),
+        "tender": (245, 0.94, "轻柔换气，关键词后停0.2秒", "称呼与承诺词"),
+    }
+    cpm, speed, pause, stress = profiles.get(emotion, profiles["neutral"])
+    han_count = len(re.findall(r"[一-龥]", text or ""))
+    estimated_seconds = round(max(0.35, han_count / max(1, cpm) * 60), 3)
+    return {
+        "verbatim_text": text,
+        "emotion": emotion,
+        "emotion_intensity": "high" if emotion in {"shout", "angry"} else "medium",
+        "characters_per_minute": cpm,
+        "speed": speed,
+        "pause": pause,
+        "stress": stress,
+        "breath": "起句前自然吸气；句末闭口0.2秒并保留呼气",
+        "estimated_seconds": estimated_seconds,
+        "max_15_han_characters_passed": han_count <= 15,
+    }
+
+
 # 非角色发声体，配音时跳过 (不为音效/旁白标记等生成人声)
 SKIP_SPEAKERS = ("音效", "环境音", "背景音", "特效音", "音乐", "声音", "bgm", "ost")
 
@@ -384,6 +424,42 @@ class DramaService:
     def __init__(self):
         self.repo = TaskRepository()
         self.gateway = ModelGateway()
+        self.agent_council = AgentCouncilCompiler()
+
+    def _ensure_agent_council(self, task: Dict[str, Any]) -> dict:
+        """Return the typed eight-agent plan, compiling it for legacy tasks when needed."""
+        assets = task.setdefault("assets", {})
+        existing = assets.get("agent_council")
+        if isinstance(existing, dict) and existing.get("agents"):
+            return existing
+        config = task.get("config") or {}
+        title = str(config.get("title_suggestion") or "未命名短剧")
+        request = CouncilCompileRequest(
+            title=title[:300],
+            premise=str(config.get("script_content") or title)[:20_000],
+            genre=self.gateway.get_genre(title),
+            audience="18-35 岁移动端短剧观众",
+            platform="douyin",
+            format="live_action",
+            episode_count=max(1, min(120, int(config.get("episode_count") or 3))),
+            episode_duration_seconds=90,
+            output_language="zh-CN",
+            visual_style=str(config.get("director_style") or "写实电影感"),
+            action_intensity=(
+                "high" if self.gateway.get_genre(title) in {"military", "sports", "wuxia", "xianxia"}
+                else "medium"
+            ),
+        )
+        compiled = self.agent_council.compile(request).model_dump(mode="json")
+        assets["agent_council"] = compiled
+        return compiled
+
+    def _agent_role_prompt(self, task: Dict[str, Any], role: AgentRole) -> str:
+        plan = self._ensure_agent_council(task)
+        for agent in plan.get("agents", []):
+            if agent.get("role") == role.value:
+                return str(agent.get("system_prompt") or "")
+        raise RuntimeError(f"八 Agent 计划缺少角色：{role.value}")
 
     def read_md_file(self, filename: str) -> str:
         # 支持在项目根目录查找
@@ -569,6 +645,7 @@ class DramaService:
                 "image_model": req.image_model,
                 "video_model": req.video_model,
                 "tts_model": req.tts_model,
+                "video_reference_mode": req.video_reference_mode,
                 "one_click": req.one_click,
                 "episode_count": max(1, min(12, int(getattr(req, "episode_count", 3) or 3))),
                 "guidance_instruction": "",
@@ -582,6 +659,7 @@ class DramaService:
             "short_link": None,
             "pr_content": None
         }
+        self._ensure_agent_council(task_data)
         self.repo.save_task(task_id, task_data)
         return task_data
 
@@ -651,6 +729,8 @@ class DramaService:
             genre_summary = self.read_md_file("短剧题材类型总结.md")
             narrative_structure = self.read_md_file("AI漫剧短剧剧本黄金叙事结构.md")
             sys_prompt = (
+                self._agent_role_prompt(task, AgentRole.EXECUTIVE_DIRECTOR)
+                + "\n\n"
                 "Role: AI 短剧总导演智能体 (Executive Director Agent)\n"
                 "Methodology: 遵循山音超级导演大师视听定调理论，分析6个维度，确立爽剧主旋律，"
                 "锁定首首2秒黄金Hook（如 Pattern Interrupt 模式打破或 Curiosity Gap 好奇心缺口），"
@@ -698,6 +778,8 @@ class DramaService:
                 continuity_guide = self.read_md_file("AI短剧连续性设计指南.md")
                 narrative_structure = self.read_md_file("AI漫剧短剧剧本黄金叙事结构.md")
                 sys_prompt = (
+                    self._agent_role_prompt(task, AgentRole.WRITER)
+                    + "\n\n"
                     "Role: AI 专业短剧编剧智能体 (Writer Agent)\n"
                     "Methodology: 遵循山音超级编剧大师核心理念。只写摄影机能拍到的画面和能听到的声音，"
                     "杜绝任何心理描写和括号暗示（如'（她内心很紧张）'），对话高度口语化。\n"
@@ -737,16 +819,18 @@ class DramaService:
         elif stage == 3:
             # 阶段 3：角色设计师 (Character Designer)
             task["stage_name"] = "角色设计师造型"
-            sheet_template = self.read_md_file("AI短剧三视图解决人物一致性提示词模板.md")
+            sheet_template = self.read_md_file("AI短剧五视图解决人物一致性提示词模板.md")
             performance_guide = self.read_md_file("AI短剧表演细节与提示词指南.md")
             sys_prompt = (
+                self._agent_role_prompt(task, AgentRole.CHARACTER_DESIGNER)
+                + "\n\n"
                 "Role: AI 角色设计师智能体 (Character Designer Agent)\n"
                 "Methodology: 设计主角和反派的详细五维 DNA 角色卡（面部、发型、体型、服饰、情绪），"
                 "锁定特征（服装与发型等）以保跨镜头多帧渲染的一致性，不能写任何心理词汇。\n\n"
-                f"【三视图一致性角色卡设定规则与示例】：\n{sheet_template}\n\n"
+                f"【五视图一致性角色卡设定规则与示例】：\n{sheet_template}\n\n"
                 f"【角色表情细节与身体微动作描述规范】：\n{performance_guide}\n"
             )
-            user_prompt = f"请为短剧角色进行 DNA 性格造型锁定：\n\n【导演方案】：\n" + task["assets"].get("1", "")
+            user_prompt = "请为短剧角色进行 DNA 性格造型锁定：\n\n【导演方案】：\n" + task["assets"].get("1", "")
             res = self.gateway.call_llm(config["llm_model"], sys_prompt, user_prompt, title, dir_style, shot_style, user_instruction=guidance)
             
             # 直接将生成的全动态角色 DNA 设定文本存入 assets，消除预设角色构建框架
@@ -839,6 +923,8 @@ class DramaService:
             action_guide = self.read_md_file("AI短剧电影级武打镜头设计指南.md")[:5000]
             scene_design = self.read_md_file("场景设计提示词.md")[:5000]
             sys_prompt = (
+                self._agent_role_prompt(task, AgentRole.STORYBOARD_ARTIST)
+                + "\n\n"
                 "Role: AI 分镜师智能体 (Storyboard Artist Agent)\n"
                 "Methodology: 将剧本转化为分镜清单 (Shot List)。结合《导演拍摄分镜指南》，"
                 "运用36运镜、8种站位和16种空间构图，以及 88种运镜提示词进行拆解。输出一个标准的 Markdown 分镜表，"
@@ -860,9 +946,10 @@ class DramaService:
                 f"【情节与镜头连贯性提示词(六锚点/连续性圣经/承接上一镜/逐镜单动作)如下】：\n{shot_continuity}\n\n"
                 f"【连续性与180度轴线防跳轴规范如下】：\n{continuity_guide}\n\n"
                 "请特别注意：输出恰好9个连续镜头，作为单张3×3九宫格分镜；每格必须提供新叙事信息。"
-                "九镜覆盖完整情节，按地点建立→人物关系→关键情绪递进，并填写时长（8-15秒）。"
+                "九镜覆盖完整情节，按地点建立→人物关系→关键情绪递进；普通镜头1.5-4秒，"
+                "高风险动作镜头1.5-2.5秒，只有有明确情绪动机的长镜头才可延长且不超过8秒。"
             )
-            user_prompt = f"请基于以下编剧剧本设计恰好9镜的精准九宫格分镜表，覆盖完整剧情，不要断开：\n\n【剧本】：\n" + task["assets"].get("2", "")
+            user_prompt = "请基于以下编剧剧本设计恰好9镜的精准九宫格分镜表，覆盖完整剧情，不要断开：\n\n【剧本】：\n" + task["assets"].get("2", "")
             res = self.gateway.call_llm(config["llm_model"], sys_prompt, user_prompt, title, dir_style, shot_style, user_instruction=guidance)
             
             shot_1_mov = "Extreme Close-up Dolly" if shot_style == "cinematic" else "Slow Dolly In"
@@ -875,7 +962,7 @@ class DramaService:
                     "motion": "Slow Dolly In" if i % 2 == 0 else "Establishing Shot",
                     "desc": f"{char1_name}与{char2_name}在{dir_style}下的剧情推进分镜 {i}。",
                     "dialogue": "",
-                    "duration": "8s"
+                    "duration": "2.5s"
                 })
             
             shots = parse_storyboard_table(res, fallback_shots)
@@ -955,7 +1042,7 @@ class DramaService:
                         lighting="继承场景圣经的主光方向、色温、时间和天气，人物脸部保持自然层次",
                         edit_in="承接上一格动作、视线或声音桥，在叙事信息可读后切入",
                         edit_out="在动作接触、视线落点、情绪转折或对白收音点切出",
-                        generation_mode="first_last_frame",
+                        generation_mode="auto",
                         blocking="保持人物左右关系、视线匹配与关键道具位置，不越180度轴线",
                         start_state=shot["continuity_in"],
                         end_state=shot["continuity_out"],
@@ -973,10 +1060,10 @@ class DramaService:
             char_sheets = task["assets"].get("3_sheets") or {}
             for shot in shots:
                 desc = shot.get("desc", "")
-                size = shot.get("size", "MS")
-                motion = shot.get("motion", "Dolly In")
+                panel = board.panels[int(shot["shot_id"]) - 1]
+                contract = ShotMotionContract.from_panel(panel)
                 
-                # 提取参与人物并绑定三视图
+                # 提取参与人物并绑定五视图
                 ref_sheets = []
                 char_prompt = ""
                 if char1_name and char1_name in desc:
@@ -992,11 +1079,15 @@ class DramaService:
                 
                 lock_pos = self.gateway.SHEET_LOCK_POSITIVE if ref_sheets else ""
                 lock_neg = self.gateway.SHEET_LOCK_NEGATIVE if ref_sheets else ""
-                # 首帧底片必须【写实实拍】：此图会被 Stage5 直接当作图生视频首帧，若用草图/概念画
-                # 会让成片变成动画卡通。故统一用 photorealistic live-action 电影剧照，杜绝动画风。
+                compiled_image_prompt = compile_storyboard_image_prompt(
+                    contract,
+                    visual_style=(
+                        "Photorealistic live-action cinematic film still, real human actors, "
+                        f"35mm film, 9:16 vertical aspect ratio, {dir_style} lighting style"
+                    ),
+                )
                 img_prompt = (
-                    f"{lock_pos}。Photorealistic live-action cinematic film still, {size}, {motion}, {desc}{char_prompt}, "
-                    f"under {dir_style} lighting style, real human actors, 35mm film, 9:16 vertical aspect ratio, "
+                    f"{lock_pos}。{compiled_image_prompt.prompt}{char_prompt}。"
                     f"strict consistent character features{self.gateway.DEID_POSITIVE}{self.gateway.SCENE_STABILITY_POSITIVE}。"
                     f"{lock_neg}{self.gateway.DEID_NEGATIVE}{self.gateway.SCENE_STABILITY_NEGATIVE}{self.gateway.EMOTION_FACE_NEGATIVE}"
                 )
@@ -1006,6 +1097,13 @@ class DramaService:
                 except Exception as e:
                     logger.warning(f"分镜 {shot.get('shot_id')} 生图失败: {e}")
                     shot["image_url"] = None
+                bound_contract = contract.model_copy(update={
+                    "storyboard_image": shot["image_url"],
+                    "reference_images": ref_sheets,
+                })
+                shot["motion_contract"] = bound_contract.model_dump(mode="json")
+                shot["contract_fingerprint"] = bound_contract.contract_fingerprint
+                shot["storyboard_prompt"] = compiled_image_prompt.prompt
 
             panel_images = [shot.get("image_url") for shot in shots]
             if len(panel_images) != 9 or not all(panel_images):
@@ -1029,11 +1127,12 @@ class DramaService:
         elif stage == 5:
             # 阶段 5：视觉总监 (Visual Director)
             task["stage_name"] = "视觉总监多镜头多帧生成"
-            
-            # 读取画质风格总结、连续性设计指南与分镜完全指南
+
+            # 视觉规范、Agent 契约与模块化负面词都来自同一委员会计划。
             visual_style_doc = self.read_md_file("画质风格类型总结.md")
-            continuity_doc = self.read_md_file("AI短剧连续性设计指南.md")
-            director_guide = self.read_md_file("AI短剧与漫剧导演级拍摄分镜完全指南.md")
+            visual_agent_brief = self._agent_role_prompt(task, AgentRole.VISUAL_DIRECTOR)
+            council_plan = self._ensure_agent_council(task)
+            negative_prompt_modules = list(council_plan.get("negative_prompt_modules") or [])
             
             shots = task["assets"].get("4", [])
             if not isinstance(shots, list):
@@ -1048,7 +1147,7 @@ class DramaService:
                     {"shot_id": 3, "size": "FS", "motion": shot_3_mov, "desc": f"{char1_name}出示底牌进行正义反扑，{char2_name}震惊后退。"}
                 ]
                 
-            # 角色三视图锚点 (来自阶段3)
+            # 角色五视图锚点 (来自阶段3)
             char_sheets = task["assets"].get("3_sheets") or {}
 
             # 逐镜预览音轨用：角色性别 (台词配音男女声分配)
@@ -1056,6 +1155,49 @@ class DramaService:
             char2_gender = "male" if guess_gender(char2_name) == "male" else "female"
 
             shot_assets = []
+            requested_reference_mode = config.get("video_reference_mode") or "auto"
+
+            def _generate_motion_video(
+                *,
+                prompt_text: str,
+                first_frame: str | None,
+                last_frame: str | None,
+                sequence_images: list[str],
+                identity_images: list[str],
+                motion_videos: list[str],
+                timing_audios: list[str],
+                seconds: int,
+                intent: VideoGenerationIntent,
+            ) -> tuple[str | None, dict]:
+                plan = plan_video_references(
+                    requested_reference_mode,
+                    model=config["video_model"],
+                    first_frame=first_frame,
+                    last_frame=last_frame,
+                    sequence_images=sequence_images,
+                    reference_images=identity_images,
+                    reference_videos=motion_videos,
+                    reference_audios=timing_audios,
+                    intent=intent,
+                )
+                if plan.provider_status != "integrated":
+                    raise RuntimeError(
+                        f"视频模型族 {plan.provider_family} 的自动路由已完成，"
+                        f"但当前状态为 {plan.provider_status}，禁止冒充其他供应商提交"
+                    )
+                url = self.gateway.generate_video(
+                    config["video_model"],
+                    plan.first_frame,
+                    prompt_text,
+                    prefer_provider="seedance",
+                    last_frame=plan.last_frame,
+                    ref_images=plan.reference_images,
+                    ref_videos=plan.reference_videos,
+                    ref_audios=plan.reference_audios,
+                    duration=seconds,
+                )
+                return url, plan.model_dump(mode="json")
+
             # 处理全部分镜镜头，确保合片时长达到 1min ~ 3min
             for shot in shots:
                 shot_id = shot.get("shot_id", len(shot_assets) + 1)
@@ -1076,41 +1218,7 @@ class DramaService:
                 else:
                     duration = max(5, min(12, int(len(desc) / 8) + 2))
 
-                # 动作场景自动识别与提示词增强 (基于电影级动作力学反馈法则)
-                is_action_shot = False
-                action_kws = ["打斗", "武打", "格斗", "对决", "出拳", "重拳", "踢", "劈", "斩", "刺", "挡", "防御", "受击", "飞出", "兵器", "兵刃", "剑", "刀", "枪", "拳", "掌", "杀", "扇", "击中", "撕", "厮杀",
-                              "fight", "clash", "punch", "kick", "strike", "sword", "blade", "slash", "weapon", "combat", "dodge", "impact", "recoil"]
-                if any(kw in desc.lower() for kw in action_kws) or any(kw in (motion or "").lower() for kw in action_kws):
-                    is_action_shot = True
-
-                enhanced_desc = desc
-                enhanced_motion = motion
-                action_physics_prompt = ""
-                
-                if is_action_shot:
-                    # 1. 动作镜头黄金运镜术语自动升级
-                    if any(kw in desc.lower() for kw in ["击中", "打中", "撞击", "扇", "重击", "轰", "connect", "impact", "hit", "clash"]):
-                        enhanced_motion = "whip zoom into the contact point, high-speed camera motion, sudden camera shake on impact"
-                    elif any(kw in desc.lower() for kw in ["飞出", "倒退", "滑行", "踉跄", "跌", "倒地", "撞翻", "recoil", "knocked", "slide", "fall"]):
-                        enhanced_motion = "handheld camera tracking, raw documentary style, dynamic screen shake"
-                    elif any(kw in desc.lower() for kw in ["对峙", "蓄力", "剑气", "出招", "大招", "parry", "charge", "aura", "bullet time"]):
-                        enhanced_motion = "dolly zoom effect, rapid camera pull back, bullet time style, 360-degree orbit shot, slow-motion parry sparks"
-                    else:
-                        enhanced_motion = f"{motion}, dynamic action movement, slight camera shake"
-
-                    # 2. 注入三维力学与物理反馈 (蓄力/对撞/反弹)
-                    if any(kw in desc.lower() for kw in ["出拳", "掌", "踢", "劈", "砍", "斩", "刺", "出击", "招", "攻击", "attack", "strike", "punch", "kick", "slash", "charge"]):
-                        action_physics_prompt = "shoulders tense, body weight shifts downward, feet stomping the ground, concrete dust and pebbles rising, clothes blowing backward due to kinetic wind, strong rim lighting, volumetric dust"
-                    elif any(kw in desc.lower() for kw in ["打中", "击中", "撞击", "交相", "相碰", "相撞", "碰", "格挡", "connect", "impact", "clash", "hit", "parry"]):
-                        action_physics_prompt = "fist connects with jaw, intense orange sparks ejecting from steel collision, parry embers suspended in slow-motion, physics-based particle dispersal, physical impact frame flashing, sweat and water droplets flying off in spray"
-                    elif any(kw in desc.lower() for kw in ["退", "倒飞", "飞出", "撞翻", "倒地", "滑行", "踉跄", "slide", "fall", "knocked", "recoil"]):
-                        action_physics_prompt = "character slides backward on wet ground, leaving deep tracks, body compression under force, concrete debris and volumetric dust collapsing and exploding in background"
-                    else:
-                        action_physics_prompt = "kinetic air blast dispersing nearby dust, dynamic smoke trails curling around limbs, volumetric light rays piercing through heavy rain, high-contrast action tone"
-
-                    enhanced_desc = f"{desc}, {action_physics_prompt}"
-
-                # 融合角色特征五维 DNA 并绑定三视图
+                # 融合角色特征五维 DNA 并绑定五视图
                 char_prompt = ""
                 ref_sheets = []
                 if char1_name and char1_name in desc:
@@ -1126,9 +1234,36 @@ class DramaService:
 
                 lock_pos = self.gateway.SHEET_LOCK_POSITIVE if ref_sheets else ""
                 lock_neg = self.gateway.SHEET_LOCK_NEGATIVE if ref_sheets else ""
+                raw_contract = shot.get("motion_contract")
+                if raw_contract:
+                    contract = ShotMotionContract.model_validate(raw_contract)
+                else:
+                    stored_board = NineGridStoryboard.model_validate(task["assets"]["4_storyboard"])
+                    contract = ShotMotionContract.from_panel(stored_board.panels[int(shot_id) - 1])
+                stored_fingerprint = shot.get("contract_fingerprint")
+                if stored_fingerprint and stored_fingerprint != contract.contract_fingerprint:
+                    raise RuntimeError(
+                        f"镜头{shot_id}的契约指纹已失效，必须重新生成分镜图片和运镜计划"
+                    )
+                if (
+                    (desc and desc != contract.subject_action)
+                    or (motion and motion != contract.camera_movement)
+                    or (size and size != contract.shot_size)
+                ):
+                    raise RuntimeError(
+                        f"镜头{shot_id}的分镜明细与运镜契约发生漂移，必须重新编译该镜头"
+                    )
+                compiled_image = compile_storyboard_image_prompt(
+                    contract,
+                    visual_style=(
+                        f"{visual_style_doc[:1000]}；{dir_style} lighting style；"
+                        "photorealistic live-action movie quality；9:16 vertical aspect ratio"
+                    ),
+                )
+                compiled_motion = compile_motion_prompt(contract)
+                assert_prompt_pair_consistent(compiled_image, compiled_motion)
                 img_prompt = (
-                    f"{lock_pos}。{visual_style_doc[:1000]}。Short drama scene, {size}, {enhanced_motion}, {enhanced_desc}{char_prompt}, "
-                    f"under {dir_style} lighting style, movie quality, 9:16 vertical aspect ratio, "
+                    f"{lock_pos}。{compiled_image.prompt}{char_prompt}。"
                     f"strict consistent character features{self.gateway.DEID_POSITIVE}{self.gateway.SCENE_STABILITY_POSITIVE}。"
                     f"{lock_neg}{self.gateway.DEID_NEGATIVE}{self.gateway.SCENE_STABILITY_NEGATIVE}{self.gateway.EMOTION_FACE_NEGATIVE}"
                 )
@@ -1143,65 +1278,82 @@ class DramaService:
                             authorized_first = _a
                             break
 
-                # 首帧优先级：授权真人素材 > Stage4 预览底片 > 现生成
-                img_url = authorized_first or shot.get("image_url")
+                # 已批准的 Stage4 分镜是镜头契约的首帧；授权素材仅作为缺图时的回退。
+                img_url = shot.get("image_url") or authorized_first
                 if not img_url:
-                    img_url, img_provider = self.gateway.generate_image(config["image_model"], img_prompt, ref_images=ref_sheets)
-
-                # 时长突破 5s 逻辑：多组图片分段视频拼接
-                if duration > 5:
-                    p1_desc, p2_desc = self.split_shot_action(desc, title)
-                    
-                    # 动作分镜头引入精准时间戳时序控制，防止 AI 动作时序漂移
-                    if is_action_shot:
-                        enhanced_p1 = f"[0:00-0:02] {p1_desc}, {action_physics_prompt}, dynamic motion capture"
-                        enhanced_p2 = f"[0:02-{duration:.1f}s] {p2_desc}, {action_physics_prompt}, dynamic motion capture"
-                        enhanced_p2_img = f"{p2_desc}, {action_physics_prompt}"
-                    else:
-                        enhanced_p1 = p1_desc
-                        enhanced_p2 = p2_desc
-                        enhanced_p2_img = p2_desc
-
-                    # 1. 生成前半段
-                    img_url_1 = img_url
-                    vid_prompt_1 = f"{carry_lead}Video animation of {enhanced_p1}. Keep character facial features, clothing, and scene backdrop fully consistent with starting frame. No morphing.{continuity_suffix}"
-                    vid_url_1 = self.gateway.generate_video(config["video_model"], img_url_1, vid_prompt_1, prefer_provider="seedance", duration=5)
-                    
-                    # 2. 生成后半段首帧图片并驱动后半段
-                    carry_frame = media_compositor.extract_last_frame_b64(vid_url_1) or img_url_1
-                    img_prompt_2 = (
-                        f"{lock_pos}。Short drama scene, {size}, {enhanced_motion}, {enhanced_p2_img}{char_prompt}, "
-                        f"under {dir_style} lighting style, movie quality, 9:16 vertical aspect ratio, "
-                        f"strict consistent character features{self.gateway.DEID_POSITIVE}{self.gateway.SCENE_STABILITY_POSITIVE}。"
-                        f"{lock_neg}{self.gateway.DEID_NEGATIVE}{self.gateway.SCENE_STABILITY_NEGATIVE}{self.gateway.EMOTION_FACE_NEGATIVE}"
+                    img_url, _ = self.gateway.generate_image(
+                        config["image_model"], img_prompt, ref_images=ref_sheets,
                     )
-                    # 图生图以提取过渡帧
-                    img_url_2, _ = self.gateway.generate_image(config["image_model"], img_prompt_2, ref_images=ref_sheets)
-                    
-                    vid_prompt_2 = f"{self.gateway.CONTINUITY_CARRY}. Video animation of {enhanced_p2}. Keep character facial features and clothing fully consistent with starting frame. No morphing.{continuity_suffix}"
-                    vid_url_2 = self.gateway.generate_video(config["video_model"], img_url_2, vid_prompt_2, prefer_provider="seedance", duration=duration - 5)
-                    
-                    # 3. 物理拼接
-                    vid_url = self.concatenate_video_clips([vid_url_1, vid_url_2], f"shot_{shot_id}") or vid_url_1
-                else:
-                    if is_action_shot:
-                        enhanced_vid_p = f"[0:00-{duration:.1f}s] {enhanced_desc}, dynamic movement, physical collision"
-                    else:
-                        enhanced_vid_p = desc
-                    vid_prompt = (
-                        f"{carry_lead}Video animation of {enhanced_vid_p}. Keep character {char1_name} and {char2_name} face features, "
-                        f"clothing, and scene backdrop fully consistent with the starting frame image. "
-                        f"No facial morphing, clean movement.{continuity_suffix}"
+                contract = contract.model_copy(update={
+                    "storyboard_image": img_url,
+                    "reference_images": ref_sheets,
+                })
+
+                end_state_markers = (
+                    "完成", "到位", "落座", "关闭", "完全", "停在", "抓住", "递给",
+                    "交付", "切黑", "最终", "结束于", "comes to rest", "fully closes",
+                )
+                exact_end_required = (
+                    requested_reference_mode == "first_last_frame"
+                    or any(marker in contract.end_state for marker in end_state_markers)
+                )
+                target_frame = None
+                if exact_end_required:
+                    compiled_end = compile_storyboard_image_prompt(
+                        contract,
+                        visual_style=(
+                            f"{visual_style_doc[:1000]}；{dir_style} lighting style；"
+                            "photorealistic live-action movie quality；9:16 vertical aspect ratio"
+                        ),
+                        frame_state="end",
                     )
-                    vid_url = self.gateway.generate_video(config["video_model"], img_url, vid_prompt, prefer_provider="seedance", duration=duration)
+                    end_prompt = (
+                        f"{lock_pos}。{compiled_end.prompt}{char_prompt}。"
+                        f"{lock_neg}{self.gateway.DEID_NEGATIVE}"
+                        f"{self.gateway.SCENE_STABILITY_NEGATIVE}{self.gateway.EMOTION_FACE_NEGATIVE}"
+                    )
+                    target_frame, _ = self.gateway.generate_image(
+                        config["image_model"], end_prompt, ref_images=[img_url, *ref_sheets],
+                    )
+
+                sequence_images = list(shot.get("sequence_images") or [])
+                motion_refs = list(shot.get("reference_videos") or [])
+                timing_refs = list(shot.get("reference_audios") or [])
+                contract = contract.model_copy(update={
+                    "storyboard_image": img_url,
+                    "reference_images": ref_sheets,
+                    "reference_videos": motion_refs,
+                    "reference_audios": timing_refs,
+                })
+                intent = VideoGenerationIntent(
+                    exact_end_frame_required=exact_end_required,
+                    narrative_image_sequence=bool(sequence_images),
+                    identity_consistency_required=bool(ref_sheets),
+                    motion_reference_required=bool(motion_refs),
+                    audio_rhythm_required=bool(timing_refs),
+                    multi_shot_output=bool(shot.get("multi_shot_output")),
+                )
+                vid_prompt = f"{carry_lead}{compiled_motion.prompt}{continuity_suffix}"
+                vid_url, route_decision = _generate_motion_video(
+                    prompt_text=vid_prompt,
+                    first_frame=img_url,
+                    last_frame=target_frame,
+                    sequence_images=sequence_images,
+                    identity_images=ref_sheets,
+                    motion_videos=motion_refs,
+                    timing_audios=timing_refs,
+                    seconds=duration,
+                    intent=intent,
+                )
+                used_reference_modes = [route_decision["mode"]]
 
                 # 为逐镜预览片段挂上音轨：合成本镜台词配音 + 轻量氛围 BGM，mux 进视频。
                 # 让步骤5预览视频自带声音、播放器静音键可点开 (无台词镜仅加氛围 BGM 保证音轨存在)。
                 # voice_path 一并存入资产，供步骤6成片复用，避免重复配音。
                 seg_lines = parse_shot_dialogue(dialogue, char1_name, char2_name, char1_gender, char2_gender)
-                voice_path = None
+                voice_url, voice_path = None, None
                 if seg_lines:
-                    _vu, voice_path = media_compositor.synthesize_preferred_dialogue_track(
+                    voice_url, voice_path = media_compositor.synthesize_preferred_dialogue_track(
                         seg_lines,
                         tts_model=config["tts_model"],
                         tag=f"voice_{task_id[:8]}_s{len(shot_assets)}",
@@ -1217,8 +1369,20 @@ class DramaService:
                     "dialogue": dialogue,
                     "duration": duration,
                     "image_url": img_url,
+                    "end_frame_url": target_frame,
                     "video_url": vid_url,
+                    "voice_url": voice_url,
                     "voice_path": voice_path,
+                    "video_reference_mode_requested": requested_reference_mode,
+                    "video_reference_modes_used": used_reference_modes,
+                    "video_route_decision": route_decision,
+                    "motion_prompt": compiled_motion.prompt,
+                    "motion_contract": contract.model_dump(mode="json"),
+                    "contract_fingerprint": contract.contract_fingerprint,
+                    "artifact_fingerprint": contract.artifact_fingerprint,
+                    "agent_role": AgentRole.VISUAL_DIRECTOR.value,
+                    "agent_policy": visual_agent_brief,
+                    "negative_prompt_modules": negative_prompt_modules,
                     "continuity_state": ContinuityState(
                         characters=[name for name in (char1_name, char2_name) if name and name in desc] or [char1_name],
                         scene=shot.get("scene") or "本场戏场景圣经",
@@ -1250,12 +1414,22 @@ class DramaService:
             # 优先复用步骤5预览阶段已合成的逐镜配音 (voice_path)，避免重复 TTS
             shot_voices = []
             all_segments = []
+            dialogue_directions = []
             voiced_count = 0
             if isinstance(shots6, list):
                 for s in shots6:
                     cell = (s.get("dialogue") or "") if isinstance(s, dict) else ""
                     seg_lines = parse_shot_dialogue(cell, char1_name, char2_name, char1_gender, char2_gender)
                     if seg_lines:
+                        dialogue_directions.extend([
+                            {
+                                "shot_id": s.get("shot_id") if isinstance(s, dict) else len(shot_voices) + 1,
+                                "speaker": seg[3],
+                                "voice_identity": f"{seg[3]}:locked_voice_id",
+                                **dialogue_delivery_profile(seg[0], seg[2]),
+                            }
+                            for seg in seg_lines
+                        ])
                         cached = s.get("voice_path") if isinstance(s, dict) else None
                         if cached and os.path.exists(cached):
                             vpath = cached
@@ -1314,6 +1488,18 @@ class DramaService:
                 "sfx_url": sfx_url,
                 "sfx_path": sfx_path,
                 "tts_text": voiced,
+                "agent_role": AgentRole.AUDIO_DIRECTOR.value,
+                "agent_policy": self._agent_role_prompt(task, AgentRole.AUDIO_DIRECTOR),
+                "dialogue_directions": dialogue_directions,
+                "elevenlabs_job_plan": {
+                    "credentials": "server_environment_only",
+                    "tts_endpoint": "/v1/text-to-speech/{voice_id}",
+                    "dialogue_endpoint": "/v1/text-to-dialogue",
+                    "sound_effect_endpoint": "/v1/sound-generation",
+                    "music_endpoint": "/v1/music",
+                    "voice_identity_locked": True,
+                    "verbatim_dialogue_required": True,
+                },
                 "voice_profile": (f"逐镜情绪配音 ({voiced_count}/{len(shot_voices)} 镜有台词，按时间轴对齐)"
                                   if voiced_count else ("占位音频" if not audio_path else "全局兜底配音"))
             }
@@ -1398,8 +1584,12 @@ class DramaService:
                 "shot_clips": shot_clips,
                 "transition_quality": transition_reports,
                 "compose_mode": compose_mode,
-                "aspect_ratio": "9:16 (竖屏 720x1280)",
-                "subtitles": "已烧录中文字幕" if composed_url else "内置流光特效字幕"
+                "agent_role": AgentRole.COMPOSER_PUBLISHER.value,
+                "agent_policy": self._agent_role_prompt(task, AgentRole.COMPOSER_PUBLISHER),
+                "delivery_profile": self._ensure_agent_council(task).get("delivery"),
+                "aspect_ratio": self._ensure_agent_council(task).get("delivery", {}).get("aspect_ratio"),
+                "subtitles": "已烧录中文字幕" if composed_url else "内置流光特效字幕",
+                "release_state": "awaiting_evidence_backed_quality_and_human_review",
             }
             
             task["logs"]["7"] = self.run_real_consistency_check(7, "合成发布渲染合流", task["assets"], config, title)
@@ -1407,12 +1597,19 @@ class DramaService:
         elif stage == 8:
             # 阶段 8：宣发 Agent (PR Agent)
             task["stage_name"] = "宣发Agent引流"
+            highlight_guide = self.read_md_file("影视剧高光时刻识别方案.md")[:6000]
+            platform_guide = self.read_md_file("AI短剧注意事项与关键元素.md")[:5000]
             sys_prompt = (
+                self._agent_role_prompt(task, AgentRole.PR_AGENT)
+                + "\n\n"
                 "Role: AI 宣发智能体 (PR & Marketing Agent)\n"
                 "Methodology: 遵循 seedance-social-hook 爆款引流理论。撰写适合 TikTok/抖音 的大字封面标题"
                 "及满足“模式打破”与“好奇心缺口”的高完播率引流文案。"
+                "所有宣传主张必须来自正片或已批准剧本的真实高光，不得制造不存在的剧情。\n\n"
+                f"【高光识别、强度和观众行为标签规范】：\n{highlight_guide}\n\n"
+                f"【平台、AI标识、版权、投放与指标规范】：\n{platform_guide}\n"
             )
-            user_prompt = f"请为短剧制作爆款标题和宣发文案：\n\n【导演策划大纲】：\n" + task["assets"].get("1", "")
+            user_prompt = "请为短剧制作爆款标题和宣发文案：\n\n【导演策划大纲】：\n" + task["assets"].get("1", "")
             res = self.gateway.call_llm(config["llm_model"], sys_prompt, user_prompt, title, dir_style, shot_style, user_instruction=guidance)
             
             pr_title, pr_body = parse_pr_info(res, title, "被无赖逼至绝境，他休假归来，一铁拳打碎黑暗！爽点爆裂！")
@@ -1420,11 +1617,24 @@ class DramaService:
             task["pr_content"] = f"🔥 抖音爆款大字标题：{pr_title}\n📌 黄金引流文案：‘{pr_body}’"
             
             quality_gate = (task["assets"].get("7") or {}).get("quality_gate") or {}
-            task["status"] = "completed" if quality_gate.get("passed") is True else "awaiting_quality_review"
+            task["status"] = (
+                "awaiting_council_review"
+                if quality_gate.get("passed") is True
+                else "awaiting_quality_review"
+            )
             task["assets"]["8"] = {
                 "short_link": task["short_link"],
                 "pr_content": task["pr_content"],
-                "raw_pr": res
+                "raw_pr": res,
+                "agent_role": AgentRole.PR_AGENT.value,
+                "agent_policy": self._agent_role_prompt(task, AgentRole.PR_AGENT),
+                "source_of_truth": "approved_script_and_final_highlights_only",
+                "campaign_kpis": {
+                    "three_second_retention_target": 0.70,
+                    "completion_rate_target": 0.40,
+                    "next_episode_click_target": 0.30,
+                    "paid_conversion_target": 0.05,
+                },
             }
             
             task["logs"]["8"] = self.run_real_consistency_check(8, "宣发Agent引流", task["assets"], config, title)
@@ -1450,11 +1660,36 @@ class DramaService:
         stage_assets = task.setdefault("assets", {}).setdefault("7", {})
         stage_assets["quality_gate"] = report.model_dump()
         if report.passed:
-            task["status"] = "completed"
+            task["status"] = "awaiting_council_review"
             task.pop("fail_reason", None)
         else:
             task["status"] = "quality_failed"
             task["fail_reason"] = "成片质量门禁未通过：" + "、".join(report.failed_dimensions)
+        self.repo.save_task(task_id, task)
+        return task
+
+    def submit_council_release(
+        self,
+        task_id: str,
+        evidence: CouncilReleaseEvidence,
+    ) -> Dict[str, Any]:
+        """Complete a task only after both media quality and all-eight-agent gates pass."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            raise ValueError("任务不存在")
+        video_gate = ((task.get("assets") or {}).get("7") or {}).get("quality_gate") or {}
+        if video_gate.get("passed") is not True:
+            raise ValueError("成片视频质量门禁尚未通过，不能执行八 Agent 发布终审")
+        compiler = getattr(self, "agent_council", None) or AgentCouncilCompiler()
+        report = compiler.evaluate_release(evidence)
+        stage_assets = task.setdefault("assets", {}).setdefault("8", {})
+        stage_assets["council_release_gate"] = report.model_dump(mode="json")
+        if report.releasable:
+            task["status"] = "completed"
+            task.pop("fail_reason", None)
+        else:
+            task["status"] = "council_quality_failed"
+            task["fail_reason"] = "八 Agent 发布门禁未通过：" + "、".join(report.blocking_codes)
         self.repo.save_task(task_id, task)
         return task
 
@@ -1495,7 +1730,7 @@ class DramaService:
             await asyncio.sleep(1.0)
 
     # ==================================================================================
-    # 多集连续剧引擎：完整剧本 -> 分集 -> 逐集制作 (尾帧链式衔接 + 三视图人物锁定 + 跨集连贯)
+    # 多集连续剧引擎：完整剧本 -> 分集 -> 逐集制作 (尾帧链式衔接 + 五视图人物锁定 + 跨集连贯)
     # ==================================================================================
     def plan_episodes(self, task_id: str) -> Dict[str, Any]:
         """把已生成的完整剧本(阶段2)切分为多集，写入 task['episodes']。需先完成阶段1-3。"""
@@ -1522,7 +1757,7 @@ class DramaService:
         return await asyncio.to_thread(self._produce_episode_blocking, task_id, ep_index)
 
     def _produce_episode_blocking(self, task_id: str, ep_index: int) -> Dict[str, Any]:
-        """逐集制作核心：分镜 -> 尾帧链式逐镜生成(三视图锁人物) -> 情绪配音 -> 合成单集(2.5-3min)。"""
+        """逐集制作核心：分镜 -> 尾帧链式逐镜生成(五视图锁人物) -> 情绪配音 -> 合成单集(2.5-3min)。"""
         task = self.repo.get_task(task_id)
         if not task:
             raise ValueError("任务不存在")
@@ -1578,7 +1813,7 @@ class DramaService:
         for idx, shot in enumerate(shots):
             desc = shot.get("desc", "")
             dialogue = shot.get("dialogue", "")
-            # 首帧来源：需要重新锚定(每集首镜/每REANCHOR镜/无carry) -> 三视图底片；否则用上一镜尾帧链接
+            # 首帧来源：需要重新锚定(每集首镜/每REANCHOR镜/无carry) -> 五视图底片；否则用上一镜尾帧链接
             need_anchor = (carry is None) or (idx % REANCHOR == 0)
             ref_sheets = []
             if char1_name and char1_name in desc and char_sheets.get(char1_name):
@@ -1914,7 +2149,7 @@ class DramaService:
 
     def get_all_skills(self) -> List[Dict[str, Any]]:
         """
-        返回本地可执行 Skills 与 13 个已审计能力源；sd25-pe 默认从 ~/Desktop/sd25-pe 读取。
+        返回本地可执行 Skills 与 13 个已审计能力源；sd25-pe 默认优先从 ~/.agents/skills/sd25-pe 读取。
         """
         import json
         from pathlib import Path
@@ -1923,8 +2158,13 @@ class DramaService:
 
         backend_root = Path(__file__).resolve().parents[2]
         skills_dir = backend_root / "skills"
-        sd25 = Path(os.getenv("SD25_PE_SKILL_PATH") or (Path.home() / "Desktop" / "sd25-pe"))
-        discovered = SkillRegistry([skills_dir, sd25]).list()
+        configured_sd25 = (os.getenv("SD25_PE_SKILL_PATH") or "").strip()
+        sd25_roots = (
+            [Path(configured_sd25).expanduser()]
+            if configured_sd25
+            else [Path.home() / ".agents" / "skills" / "sd25-pe", Path.home() / "Desktop" / "sd25-pe"]
+        )
+        discovered = SkillRegistry([skills_dir, *sd25_roots]).list()
         result = [
             {
                 "name": item.name,

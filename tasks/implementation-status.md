@@ -1,6 +1,6 @@
 # Production implementation status
 
-Date: 2026-08-09
+Date: 2026-08-15
 
 ## Implemented and executable
 
@@ -8,7 +8,11 @@ Date: 2026-08-09
 - Ordered character five-view generation, physical five-way splitting, and deterministic image preflight checks.
 - Exactly nine detailed storyboard panels and a physically composed 3×3 board. Every panel includes characters, purpose, beat, duration, lens/aperture, camera motivation, composition, blocking, axis, eyeline, action, performance, scene, props, effects, light, sound, edit-in/out, generation mode, and continuity boundaries.
 - MiniMax H3 adapter for text, first frame, last frame, first+last frame, multi-image, video, audio, and mixed reference modes, plus fail-fast capability negotiation, async status polling, and final `file_id` download resolution.
+- Structured H3 reference bindings with stable slot/order, media role, priority, SHA-256 and provenance; structured and legacy arrays cannot be mixed silently.
+- Source-hash-bound long-novel indexing/reproducible sampling, resumable multi-episode byte slices, output/prompt language contracts, and consent-aware voice reference planning.
+- Fail-closed pre-spend readiness, redacted structured failure evidence, acceptance/retry/cost/latency analytics, and lineage-safe Freezone outline/subgraph duplication.
 - An executable `sd25-pe` compiler for generation/edit/extension, audio-only edits, ordered edit-then-extension workflows, multimodal responsibilities, missing/unused-material enforcement, dialogue ledgers, exact first/last-frame sentences, exact nine-grid references, and coarse/fine blockout routing. Generation parameters remain outside the prompt as required by the local skill.
+- A first-class `script-to-video-prompts` clean-room pipeline for safe TXT/Markdown/DOCX/PDF/FDX intake, typed screenplay parsing, evidence-bound character/costume/five-view profiles, scene/light/color bibles, one exact 3x3 board per scene, immutable image/motion prompt pairs, SD25 compilation, consistency gates, automatic video-reference routing, and safe JSON/Markdown/CSV/XLSX/HTML exports.
 - ElevenLabs TTS, timed TTS, multi-speaker dialogue, timed dialogue, SFX, music, video-to-music, STT, and legacy dubbing adapters; per-character casting and alignment metadata can feed the editable timeline.
 - Motivation-first performance plans covering trigger, containment, emotional leakage, decision, release, gaze, breath, face, body, voice, camera support, power shift, identity locks, and negative constraints.
 - Continuity-state transition planning, FFmpeg xfade composition, overlap-corrected dialogue timing, BGM side-chain ducking, `-16 LUFS` normalization, and true-peak limiting.
@@ -23,17 +27,17 @@ Date: 2026-08-09
 - Project-scoped external Agent keys with least-privilege scopes, one-time plaintext return, digest-only storage, revocation, and cross-project rejection.
 - Thirteen-source machine-readable implementation report and a frontend capability/provider panel.
 - PostgreSQL 16 product tables for users, global capability settings, actor/prop/scene/effect elements, memberships, orders, webhook events, append-only billing ledgers, and platform audit events. The live `short-drama` database was created and initialized through the requested asyncpg URL.
-- All 66 declared abilities across the 13 sources are seeded with unique allowlisted `/commands`, authenticated resolution/invocation, globally persisted state, administrator-only switches, and an expandable frontend control center.
+- All 81 declared abilities across the 13 sources are seeded with unique allowlisted `/commands`, authenticated resolution/invocation, globally persisted state, administrator-only switches, and an expandable frontend control center with reviewed commit/license provenance and per-ability implementation evidence/status.
 - Dedicated actor/prop/scene/effect UI pages and APIs support create, update, safe raster upload, detail/list, non-spending regeneration queues, and actor readiness only after the exact ordered five views.
 - User center, forced password change, admin user pagination/role/status controls, last-admin protection, three membership plans, wallet/order views, sandbox purchase, and transactional signed/idempotent webhook processing.
 - The requested local bootstrap identity (`admin@short-drama`) and development password (`admin@123`) are server-configured, idempotent, scrypt-hashed in PostgreSQL, and force a first-login password change. Production startup rejects this public default and requires an independent strong bootstrap secret.
 - Server-only provider secrets (environment or encrypted PostgreSQL configuration), TLS verification, SSRF-resistant media downloads, skill ZIP guards, no arbitrary NPX execution, scrypt passwords, expiring HMAC sessions, origin enforcement, and API security headers.
-- PostgreSQL-backed global model configuration for text, image, video and audio; provider/Base URL/API Key forms dynamically enumerate remote models, group text multimodal models and ElevenLabs ASR/TTS/BGM/music capabilities, encrypt secrets at rest, support connection tests and global per-model switches, and route enabled selections into the runtime provider layer without a hard-coded browser/backend catalog.
+- PostgreSQL-backed global model configuration for text, image, video and audio; provider/Base URL/API Key forms dynamically enumerate remote models, merge ElevenLabs' 13 current documented audio models across ASR/TTS/STS/TTV/SFX/music, keep catalog fallback separate from strict credential validation, encrypt secrets at rest, support connection tests and global per-model switches, and route enabled selections into the runtime provider layer.
 - PostgreSQL-backed project Markdown Skill management is callable from both `Skill` buttons: administrators can create, upload `.md`, safely import a bounded ZIP containing one `SKILL.md`, edit, save/cancel, enable, and disable. Every Skill has a version, SHA-256 digest, audit trail and `/skill.<slug>` command; enabled content refreshes an atomic runtime snapshot and is appended to every text-model system prompt without a restart. Imported content is guidance only and is never executed.
 
 ## Verification boundary
 
-Automated verification currently passes 101 backend tests and 8 browser-component tests, plus ESLint, TypeScript/Vite production build, production dependency audit, a live PostgreSQL smoke, and headless-browser login/user-center/element/capability/model-configuration/project-Skill journeys with zero console errors. Provider tests use fakes and local deterministic fixtures. They intentionally do not submit paid MiniMax, ElevenLabs or other provider jobs. A real-provider canary requires rotated credentials and an explicit cost budget. Generative quality cannot be guaranteed mathematically; identity, acting, lip-sync, continuity, and final-edit acceptance still require real multimodal measurements or signed human review through the fail-closed quality gate.
+Automated verification uses provider fakes and local deterministic fixtures and intentionally does not submit paid MiniMax, ElevenLabs or other provider jobs. The previously recorded live PostgreSQL smoke and headless-browser journeys predate this 81-record catalog increment and must be rerun after deployment bootstrap before being attributed to this revision. A real-provider canary requires rotated credentials and an explicit cost budget. Generative quality cannot be guaranteed mathematically; identity, acting, lip-sync, continuity, and final-edit acceptance still require real multimodal measurements or signed human review through the fail-closed quality gate.
 
 ## Not yet equivalent to all 13 complete upstream products
 

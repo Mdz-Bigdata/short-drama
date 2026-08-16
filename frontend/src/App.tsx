@@ -13,6 +13,7 @@ import { UserCenterPage } from './features/account/UserCenterPage';
 import { BillingCenterPage } from './features/billing/BillingCenterPage';
 import { ModelConfigurationCenter, type ModelCategory } from './features/models/ModelConfigurationCenter';
 import { ProjectSkillManager } from './features/skills/ProjectSkillManager';
+import { API_BASE } from './api/client';
 
 // 定义 Agent 节点常数
 const AGENT_STAGES = [
@@ -73,13 +74,28 @@ interface CharacterCard {
   views?: Array<{ view: string; image_url: string }>;
 }
 
+type GlobalModelDefaults = Record<ModelCategory, string>;
+
+const EMPTY_GLOBAL_MODEL_DEFAULTS: GlobalModelDefaults = {
+  text: '', image: '', video: '', audio: '',
+};
+
 interface ProductionShot {
   shot_id?: number;
   size?: string;
   motion?: string;
   desc?: string;
   image_url?: string;
+  end_frame_url?: string;
   video_url?: string;
+  contract_fingerprint?: string;
+  video_route_decision?: {
+    mode?: string;
+    provider_family?: string;
+    reasons?: string[];
+    fallbacks?: string[];
+    unused_assets?: string[];
+  };
 }
 
 let messageSequence = 0;
@@ -98,6 +114,8 @@ export default function App() {
     const response = await fetch(url, options);
     if (response.status === 401) {
       setCurrentUser(null);
+      setHasEnabledGlobalModel(false);
+      setGlobalModelDefaults(EMPTY_GLOBAL_MODEL_DEFAULTS);
       setAuthChecked(true);
       throw new Error('未登录或登录已过期');
     }
@@ -184,9 +202,12 @@ export default function App() {
         if (res.ok) {
           const data = await res.json();
           setCurrentUser(data.user);
+          void refreshModelConfigurationStatus();
           if (data.user.must_change_password) setActivePortal('user');
           setAuthForm({ loginId: '', password: '', email: '', phone: '', code: '' });
+          // eslint-disable-next-line react-hooks/immutability -- stable function declaration is hoisted within App
           fetchHistoryTasks();
+          // eslint-disable-next-line react-hooks/immutability -- stable function declaration is hoisted within App
           fetchImportedSkills();
         } else {
           const err = await res.json();
@@ -207,6 +228,7 @@ export default function App() {
         if (res.ok) {
           const data = await res.json();
           setCurrentUser(data.user);
+          void refreshModelConfigurationStatus();
           if (data.user.must_change_password) setActivePortal('user');
           setAuthForm({ loginId: '', password: '', email: '', phone: '', code: '' });
           setMockVerificationCode('');
@@ -263,6 +285,8 @@ export default function App() {
       });
       if (res.ok) {
         setCurrentUser(null);
+        setHasEnabledGlobalModel(false);
+        setGlobalModelDefaults(EMPTY_GLOBAL_MODEL_DEFAULTS);
         setTaskId('');
         setTaskData(null);
       }
@@ -280,6 +304,7 @@ export default function App() {
     imageModel: '',
     videoModel: '',
     ttsModel: '',
+    videoReferenceMode: 'auto',
     oneClick: false,
     episodeCount: 3
   });
@@ -299,6 +324,8 @@ export default function App() {
   // 气泡控制
   const [activePopover, setActivePopover] = useState<'none' | 'skill' | 'element' | 'sidebarSkill'>('none');
   const [showModelConfiguration, setShowModelConfiguration] = useState(false);
+  const [hasEnabledGlobalModel, setHasEnabledGlobalModel] = useState(false);
+  const [globalModelDefaults, setGlobalModelDefaults] = useState<GlobalModelDefaults>(EMPTY_GLOBAL_MODEL_DEFAULTS);
   const [showProjectSkillManager, setShowProjectSkillManager] = useState(false);
   
   // 对话流状态
@@ -334,6 +361,48 @@ export default function App() {
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
+  async function refreshModelConfigurationStatus() {
+    try {
+      const response = await fetch(`${API_BASE}/api/model-configurations`, {
+        method: 'GET', credentials: 'include'
+      });
+      if (!response.ok) return;
+      const data = await response.json() as {
+        summary?: Partial<Record<ModelCategory, number>>;
+        global_status?: {
+          configured: boolean;
+          enabled_model_ids: Partial<Record<ModelCategory, string[]>>;
+          default_model_ids: Partial<Record<ModelCategory, string | null>>;
+        };
+      };
+      const configured = data.global_status?.configured ?? Object.values(data.summary ?? {}).some(count => (count ?? 0) > 0);
+      const defaults = data.global_status?.default_model_ids;
+      const nextDefaults: GlobalModelDefaults = {
+        text: defaults?.text ?? '',
+        image: defaults?.image ?? '',
+        video: defaults?.video ?? '',
+        audio: defaults?.audio ?? '',
+      };
+      const enabledModelIds = data.global_status?.enabled_model_ids;
+      const selectGlobalModel = (current: string, category: ModelCategory) => {
+        const enabled = enabledModelIds?.[category] ?? [];
+        if (!current) return nextDefaults[category];
+        return enabled.length > 0 && !enabled.includes(current) ? nextDefaults[category] : current;
+      };
+      setHasEnabledGlobalModel(configured);
+      setGlobalModelDefaults(nextDefaults);
+      setConfig(current => ({
+        ...current,
+        llmModel: selectGlobalModel(current.llmModel, 'text'),
+        imageModel: selectGlobalModel(current.imageModel, 'image'),
+        videoModel: selectGlobalModel(current.videoModel, 'video'),
+        ttsModel: selectGlobalModel(current.ttsModel, 'audio'),
+      }));
+    } catch {
+      // 保留当前状态，短暂网络故障不应把已配置误报为未配置。
+    }
+  }
+
   useEffect(() => {
     taskDataRef.current = taskData;
   }, [taskData]);
@@ -348,6 +417,7 @@ export default function App() {
         const data = await res.json();
         if (data.authenticated && data.user) {
           setCurrentUser(data.user);
+          void refreshModelConfigurationStatus();
           if (data.user.must_change_password) setActivePortal('user');
           void fetchHistoryTasks();
           void fetchImportedSkills();
@@ -510,6 +580,7 @@ export default function App() {
   useEffect(() => {
     if (isPolling && taskId) {
       pollIntervalRef.current = setInterval(() => {
+        // eslint-disable-next-line react-hooks/immutability -- polling uses the hoisted task refresh function
         fetchTaskStatus(taskId);
       }, 1500);
     } else {
@@ -901,10 +972,11 @@ export default function App() {
         titleSuggestion: task.config.titleSuggestion || '',
         directorStyle: task.config.directorStyle || 'cyberpunk',
         shotStyle: task.config.shotStyle || 'cinematic',
-        llmModel: task.config.llmModel || '',
-        imageModel: task.config.imageModel || '',
-        videoModel: task.config.videoModel || '',
-        ttsModel: task.config.ttsModel || '',
+        llmModel: task.config.llmModel || globalModelDefaults.text,
+        imageModel: task.config.imageModel || globalModelDefaults.image,
+        videoModel: task.config.videoModel || globalModelDefaults.video,
+        ttsModel: task.config.ttsModel || globalModelDefaults.audio,
+        videoReferenceMode: task.config.videoReferenceMode || 'auto',
         oneClick: task.config.oneClick || false,
         episodeCount: task.config.episodeCount || 3
       });
@@ -988,6 +1060,7 @@ export default function App() {
       imageModel: config.imageModel,
       videoModel: config.videoModel,
       ttsModel: config.ttsModel,
+      videoReferenceMode: config.videoReferenceMode,
       episodeCount: newProjectEpisodes, // 一次性生成的剧本集数 (视频按集逐集制作)
       oneClick: newProjectOneClick // 由新建弹窗的「成片方式」选择决定：一键成片 / 分步引导
     };
@@ -1430,7 +1503,7 @@ export default function App() {
                     className={`capsule-btn ${showModelConfiguration ? 'active' : ''}`}
                     onClick={() => { setActivePopover('none'); setShowModelConfiguration(true); }}
                   >
-                    <Cpu size={14} /> 模型: {config.videoModel || '未配置'}
+                    <Cpu size={14} /> 模型: {hasEnabledGlobalModel ? '已配置' : '未配置'}
                   </button>
 
                   {/* Skill 选择按钮 */}
@@ -1880,6 +1953,21 @@ export default function App() {
                       </select>
                     </div>
                   </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>运镜视频参考方式</label>
+                    <select
+                      value={config.videoReferenceMode}
+                      onChange={e => void updateConfigAndSync({ videoReferenceMode: e.target.value as TaskConfig['videoReferenceMode'] })}
+                      style={{ width: '100%', padding: '10px', background: '#0a1017', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem' }}
+                    >
+                      <option value="auto">模型自动判断（镜头意图 + 素材 + 能力）</option>
+                      <option value="first_frame">首帧驱动</option>
+                      <option value="first_last_frame">首尾帧驱动</option>
+                      <option value="multi_reference">多图参考（角色/场景/道具/特效）</option>
+                      <option value="multimodal">多模态参考（图像/视频/音频）</option>
+                    </select>
+                    <small style={{ display: 'block', marginTop: '6px', color: 'var(--text-muted)' }}>自动模式先读取分镜的首尾状态和多图/多模态意图，再与所选模型能力协商；不会静默丢弃不兼容素材。</small>
+                  </div>
                 </div>
 
                 {/* 成片方式 + 集数 (item 3 两种成片方式 / item 6 选择指定集数) */}
@@ -2148,7 +2236,10 @@ export default function App() {
                               </td>
                               <td style={{ padding: '12px' }}><span style={{ padding: '2px 6px', background: 'rgba(255,255,255,0.04)', borderRadius: '4px' }}>{shot.size}</span></td>
                               <td style={{ padding: '12px', color: 'var(--neon-cyan)' }}>{shot.motion}</td>
-                              <td style={{ padding: '12px' }}>{shot.desc}</td>
+                              <td style={{ padding: '12px' }}>
+                                <div>{shot.desc}</div>
+                                {shot.contract_fingerprint && <code style={{ display: 'block', marginTop: '6px', color: 'var(--text-muted)', fontSize: '0.68rem' }}>契约 {shot.contract_fingerprint.slice(0, 12)}</code>}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -2168,6 +2259,15 @@ export default function App() {
                                   <span style={{ fontWeight: 600, color: 'var(--neon-cyan)', fontSize: '0.9rem' }}>镜头 {shot.shot_id || (idx + 1)} ({shot.size || 'MS'} | {shot.motion || 'Dolly In'})</span>
                                   <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>描述: {shot.desc || '分镜画面'}</span>
                                 </div>
+                                {shot.video_route_decision && (
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px', fontSize: '0.72rem' }}>
+                                    <span style={{ padding: '4px 8px', borderRadius: '999px', background: 'rgba(0,242,254,0.1)', color: 'var(--neon-cyan)' }}>
+                                      自动路由：{shot.video_route_decision.mode} · {shot.video_route_decision.provider_family}
+                                    </span>
+                                    {shot.contract_fingerprint && <code style={{ color: 'var(--text-muted)', padding: '4px 0' }}>契约 {shot.contract_fingerprint.slice(0, 12)}</code>}
+                                    {shot.video_route_decision.reasons?.[0] && <span style={{ color: 'var(--text-muted)', padding: '4px 0' }}>{shot.video_route_decision.reasons[0]}</span>}
+                                  </div>
+                                )}
                                 <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '16px' }}>
                                   <div>
                                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>图生视频动态画面 ({taskData.config.videoModel || config.videoModel})</span>
@@ -2537,7 +2637,7 @@ export default function App() {
                   style={{ padding: '4px 10px', fontSize: '0.7rem' }}
                   onClick={() => { setActivePopover('none'); setShowModelConfiguration(true); }}
                 >
-                  模型: {config.llmModel || '未配置'} / {config.videoModel || '未配置'}
+                  模型: {hasEnabledGlobalModel ? '已配置' : '未配置'}
                 </button>
                 <button 
                   type="button"
@@ -2581,7 +2681,8 @@ export default function App() {
         open={showModelConfiguration}
         role={currentUser?.role}
         mustChangePassword={currentUser?.must_change_password}
-        onClose={() => setShowModelConfiguration(false)}
+        onClose={() => { setShowModelConfiguration(false); void refreshModelConfigurationStatus(); }}
+        onConfigurationChange={() => { void refreshModelConfigurationStatus(); }}
         onSelect={(category: ModelCategory, modelId: string) => {
           const configKey = ({
             text: 'llmModel', image: 'imageModel', video: 'videoModel', audio: 'ttsModel',

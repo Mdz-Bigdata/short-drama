@@ -36,7 +36,9 @@ def build_nine_grid_prompt(board: NineGridStoryboard) -> str:
     assets = board.assets
     lines = [
         f"生成《{board.title}》的单张3×3九宫格电影分镜图。",
-        "严格三行三列、九格等大、边界清晰，按照从左到右、从上到下读取；禁止合并格子、禁止缺格、禁止重复格。",
+        f"这是第{board.page_number}/{board.total_pages}页；严格三行三列、九格等大、边界清晰，"
+        f"按照从左到右、从上到下读取。本页只有{len(board.panels)}个真实拍点，"
+        f"其余{board.empty_slots}格保持纯留白；禁止合并格子、重复、镜像或补造拍点。",
         "每格只呈现一个新的叙事信息或情绪强度；先建立地点，再建立人物关系，最后靠近关键情绪；默认远景→中景→近景，但以叙事目的优先。",
         f"【节奏类型】{board.rhythm_profile}。对峙使用慢→快→慢并在爆点后停顿；反转先稳定铺垫、证据加速、反应停留；"
         "悬疑慢揭细节并延迟真相；动作先建立空间再快切并慢放关键击打；喜剧保留反应停顿；线索须尽早出现。",
@@ -50,6 +52,7 @@ def build_nine_grid_prompt(board: NineGridStoryboard) -> str:
     ]
     for panel in board.panels:
         mode_label = {
+            "auto": "模型自动判断",
             "text": "文本",
             "first_frame": "首帧",
             "last_frame": "尾帧",
@@ -69,6 +72,8 @@ def build_nine_grid_prompt(board: NineGridStoryboard) -> str:
             f"入格连续性：{panel.continuity_in or '建立镜头'}；"
             f"出格连续性：{panel.continuity_out}。"
         )
+    for index in range(len(board.panels) + 1, 10):
+        lines.append(f"第{index}格｜纯留白空格；不得复制、延伸或补造任何叙事拍点。")
     lines.append(
         "不要在画面内生成镜号、说明文字或字幕；用清晰分隔线表达九宫格结构。"
     )

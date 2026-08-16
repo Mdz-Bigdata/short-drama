@@ -7,6 +7,7 @@ from app.schema.production import (
     Sd25Asset,
     Sd25CompileRequest,
     Sd25DialogueEntry,
+    Sd25MissingAsset,
     NineGridStoryboard,
     StoryAssetCatalog,
 )
@@ -263,6 +264,55 @@ class Sd25PromptCompilerTests(unittest.TestCase):
                     )
                 ],
             )
+
+    def test_ordered_keyframes_locked_parameters_and_missing_asset_advice(self):
+        request = Sd25CompileRequest(
+            goal="从门边走到窗边，中途拿起信封。",
+            first_frame_ref="@图片1",
+            last_frame_ref="@图片3",
+            keyframe_refs=["@图片1", "@图片2", "@图片3"],
+            assets=[
+                Sd25Asset(
+                    ref=f"@图片{index}", media_type="image", role="keyframe",
+                    subject=f"状态{index}", observations=f"第{index}个状态", required=True,
+                )
+                for index in range(1, 4)
+            ],
+            missing_assets=[
+                Sd25MissingAsset(ref="@音频1", intended_role="林夏的参考音色")
+            ],
+            parameters={"aspect_ratio": "9:16", "duration_seconds": 8},
+        )
+        result = self.compiler.compile(request)
+
+        self.assertEqual(result.mode, "generation_keyframes")
+        self.assertIn("以@图片1、@图片2、@图片3的顺序作为关键帧", result.prompt)
+        self.assertNotIn("@音频1", result.prompt)
+        self.assertNotIn("aspect_ratio", result.parameters)
+        self.assertEqual(result.parameters["duration_seconds"], 8)
+        self.assertTrue(any(message.startswith("参数提示：") for message in result.warnings))
+        self.assertTrue(any(message.startswith("补充建议：") for message in result.warnings))
+
+    def test_edit_can_explicitly_delete_all_unspecified_subjects(self):
+        request = Sd25CompileRequest(
+            goal="只保留透明雨伞。",
+            task="edit",
+            edit_scope="visual",
+            edit_scope_closure="delete_unspecified",
+            source_video_ref="@视频1",
+            assets=[
+                Sd25Asset(
+                    ref="@视频1", media_type="video", role="source", subject="母版",
+                    observations="雨夜街道", duration_seconds=8, required=True,
+                )
+            ],
+        )
+        result = self.compiler.compile(request)
+        self.assertIn("除以上明确保留对象外，删除@视频1中的其他可见主体", result.prompt)
+
+    def test_provider_parameters_reject_credentials(self):
+        with self.assertRaises(ValidationError):
+            Sd25CompileRequest(goal="生成一段视频", parameters={"api_key": "must-not-pass"})
 
 
 if __name__ == "__main__":

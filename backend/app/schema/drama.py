@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Optional, Dict, Any, Literal
 
 def to_camel(string: str) -> str:
     """
@@ -13,9 +13,7 @@ class DramaBaseSchema(BaseModel):
     """
     短剧基础校验 Schema，支持驼峰命名转换
     """
-    class Config:
-        alias_generator = to_camel
-        populate_by_name = True
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 class DramaCreateRequest(DramaBaseSchema):
     """
@@ -28,6 +26,9 @@ class DramaCreateRequest(DramaBaseSchema):
     image_model: str = Field("seedance", description="选用的文生图大模型")
     video_model: str = Field("seedance2.0", description="选用的视频生成大模型")
     tts_model: str = Field("ElevenLabs", description="选用的语音配音大模型")
+    video_reference_mode: Literal["auto", "first_frame", "first_last_frame", "multi_reference", "multimodal"] = Field(
+        "auto", description="运镜视频的参考输入模式"
+    )
     one_click: bool = Field(False, description="是否一键成片模式")
     episode_count: int = Field(3, description="一次性生成的剧本集数 (1-12)，视频按集逐集制作", ge=1, le=12)
     script_content: Optional[str] = Field(None, description="手动上传的剧本文件内容")
@@ -44,6 +45,9 @@ class DramaConfigSchema(DramaBaseSchema):
     image_model: str = Field("seedance", description="选用的文生图大模型")
     video_model: str = Field("seedance2.0", description="选用的视频生成大模型")
     tts_model: str = Field("ElevenLabs", description="选用的语音配音大模型")
+    video_reference_mode: Literal["auto", "first_frame", "first_last_frame", "multi_reference", "multimodal"] = Field(
+        "auto", description="运镜视频的参考输入模式"
+    )
     one_click: bool = Field(False, description="是否一键成片模式")
     episode_count: int = Field(3, description="一次性生成的剧本集数 (1-12)，视频按集逐集制作", ge=1, le=12)
     script_content: Optional[str] = Field(None, description="手动上传的剧本文件内容")

@@ -1,0 +1,142 @@
+[
+  {
+    "id": "minimax-h3-skills",
+    "url": "https://github.com/MiniMax-AI/MiniMax-H3/tree/main/skills",
+    "reviewed_commit": "6da473b48daf91e5aebfb56451f8a0b116348df5",
+    "reviewed_at": "2026-08-15",
+    "license_observation": "No root repository license observed for the reviewed skills; model and API terms are separate.",
+    "code_treatment": "api-interoperability",
+    "attribution": "MiniMax-AI/MiniMax-H3",
+    "capability_ids": ["h3-prompt", "video-modes", "multi-reference", "3d-animation", "brand-promo", "coop-intro", "handdrawn-live", "product-ad", "music-video", "paper-collage", "papercraft"]
+  },
+  {
+    "id": "drama-skills",
+    "url": "https://github.com/worldwonderer/drama-skills",
+    "reviewed_commit": "bc040191458da3d5b6eaa7068da67527ae3c912f",
+    "reviewed_at": "2026-08-15",
+    "license_observation": "MIT.",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "worldwonderer/drama-skills",
+    "capability_ids": ["script-analysis", "novel-triage", "episode-intake", "voice-direction", "language-contract", "character-bible", "storyboard", "prompt-generation", "continuity-qa"]
+  },
+  {
+    "id": "facial-expression-prompting",
+    "url": "https://github.com/zhouwei713/facial-expression-prompting",
+    "reviewed_commit": "a3236cc9b8972ce3dab998c438bfbb51542a411b",
+    "reviewed_at": "2026-08-15",
+    "license_observation": "MIT.",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "zhouwei713/facial-expression-prompting",
+    "capability_ids": ["facial-action", "micro-expression", "emotion-progression", "performance-qa"]
+  },
+  {
+    "id": "visual-skills",
+    "url": "https://github.com/smixs/visual-skills",
+    "reviewed_commit": "3c554715b5eb30f54de78fac3c0df4a7105e4955",
+    "reviewed_at": "2026-08-15",
+    "license_observation": "CC BY 4.0.",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "Serge Shima — https://github.com/smixs/visual-skills",
+    "capability_ids": ["cinematography", "composition", "lighting", "visual-continuity", "visual-qa"]
+  },
+  {
+    "id": "dramaclaw",
+    "url": "https://github.com/dramaclaw/dramaclaw",
+    "reviewed_commit": "5ae9c3f9d1bddb1c2581d7fc6b63dfa51de45ffb",
+    "reviewed_at": "2026-08-15",
+    "license_observation": "Elastic License 2.0.",
+    "code_treatment": "clean-room",
+    "attribution": "DramaClaw capability reference",
+    "capability_ids": ["agent-workflow", "project-orchestration", "asset-management", "provider-integration", "freezone-canvas"]
+  },
+  {
+    "id": "instant-video",
+    "url": "https://github.com/briefness/InstantVideo",
+    "reviewed_commit": "079e276c17a18bec6f4b35ff3f6888a29dd50a0c",
+    "reviewed_at": "2026-08-15",
+    "license_observation": "MIT.",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "briefness/InstantVideo",
+    "capability_ids": ["rapid-generation", "task-workflow", "readiness", "failure-evidence", "analytics", "assembly", "export"]
+  },
+  {
+    "id": "video-shotcraft",
+    "url": "https://github.com/Vincentwei1021/video-shotcraft",
+    "reviewed_commit": "0d6f0b57f0d4d6700761644c07f7ef03c3e50234",
+    "reviewed_at": "2026-08-15",
+    "license_observation": "Apache-2.0; bundled media requires a separate rights audit.",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "Vincentwei1021/video-shotcraft",
+    "capability_ids": ["shot-grammar", "camera-movement", "storyboard-planning", "prompt-craft", "jianying-export"]
+  },
+  {
+    "id": "fast-movie-ai",
+    "url": "https://gitee.com/yc_open/FastMovieAI",
+    "reviewed_commit": "31c324c3bcce36121e7d6c21df830fceb259d82c",
+    "reviewed_at": "2026-08-15",
+    "license_observation": "Apache-2.0 at the reviewed root.",
+    "code_treatment": "clean-room",
+    "attribution": "yc_open/FastMovieAI capability reference",
+    "capability_ids": ["script-to-movie", "assets", "voice", "composition", "project-ui"]
+  },
+  {
+    "id": "arcreel",
+    "url": "https://github.com/ArcReel/ArcReel",
+    "reviewed_commit": "8f9cd890e6b04eb1fdacd9c0a8ed563cea7e6ff6",
+    "reviewed_at": "2026-08-15",
+    "license_observation": "AGPL-3.0 with NOTICE/additional terms.",
+    "code_treatment": "clean-room",
+    "attribution": "ArcReel capability reference",
+    "capability_ids": ["story-graph", "shot-generation", "reference-management", "render-workflow", "timeline"]
+  },
+  {
+    "id": "script-to-shot-engine",
+    "url": "https://github.com/jiayushi1-ux/script-to-shot-engine",
+    "reviewed_commit": "e139226e935e035cfc95c716834a2398dd6a1019",
+    "reviewed_at": "2026-08-15",
+    "license_observation": "No root license observed at the reviewed commit.",
+    "code_treatment": "clean-room",
+    "attribution": "jiayushi1-ux/script-to-shot-engine capability reference",
+    "capability_ids": ["script-parsing", "shot-decomposition", "structured-output", "duration-camera"]
+  },
+  {
+    "id": "script-to-video-prompts",
+    "url": "https://github.com/Morris1029/script-to-video-prompts",
+    "reviewed_commit": "0616b73917d06a669c571ac2e7ec9c2b33424af9",
+    "reviewed_at": "2026-08-15",
+    "license_observation": "README states MIT but no root license was observed at the reviewed commit.",
+    "code_treatment": "clean-room",
+    "attribution": "Morris1029/script-to-video-prompts capability reference",
+    "capability_ids": [
+      "safe-multiformat-ingestion",
+      "script-element-parsing",
+      "character-costume-five-view-profiles",
+      "scene-light-color-analysis",
+      "exact-nine-grid-shot-prompts",
+      "cross-shot-consistency-checks",
+      "sd25-prompt-optimization",
+      "automatic-video-reference-routing",
+      "safe-multiformat-export"
+    ]
+  },
+  {
+    "id": "video-agent-skills",
+    "url": "https://github.com/towardsyoung/video-agent-skills",
+    "reviewed_commit": "916b1f826ed4fef1c50019d9412d8563ee010d34",
+    "reviewed_at": "2026-08-15",
+    "license_observation": "No root license observed at the reviewed commit.",
+    "code_treatment": "clean-room",
+    "attribution": "towardsyoung/video-agent-skills capability reference",
+    "capability_ids": ["routing", "pre-production", "generation", "editing", "quality-control"]
+  },
+  {
+    "id": "short-drama-skills",
+    "url": "https://github.com/YvonneMovingon/short-drama-skills",
+    "reviewed_commit": "6d632fd7d790cfa45ccf81916bf0e26efd7744c7",
+    "reviewed_at": "2026-08-15",
+    "license_observation": "MIT.",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "YvonneMovingon/short-drama-skills",
+    "capability_ids": ["narrative-breakdown", "power-shift-dialogue", "detailed-action", "episode-continuity", "prompt-polish", "high-impact", "slow-emotion"]
+  }
+]

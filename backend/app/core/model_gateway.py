@@ -3,7 +3,7 @@ import logging
 import os
 import random
 import re
-from typing import Dict, Any, List
+from typing import Dict
 
 from app.platform.runtime_models import runtime_model_registry
 from app.platform.runtime_skills import runtime_skill_registry
@@ -467,7 +467,8 @@ class ModelGateway:
         对 Agnes 偶发的「Internal generation failed」终态失败做【整次重试】(最多 2 次)，显著提高出片成功率。"""
         if self._is_host_broken(base_url):
             return None
-        import requests, time
+        import requests
+        import time
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         base = base_url.rstrip('/')
         gen_attempts = 2
@@ -552,6 +553,7 @@ class ModelGateway:
         if configured:
             candidates.append(Path(configured).expanduser() / "SKILL.md")
         candidates.extend([
+            Path.home() / ".agents" / "skills" / "sd25-pe" / "SKILL.md",
             Path.home() / "Desktop" / "sd25-pe" / "SKILL.md",
             backend_root / "skills" / "sd25-pe" / "SKILL.md",
             backend_root / "skills" / "seedance2-prompt-optimizer" / "SKILL.md",
@@ -636,7 +638,8 @@ class ModelGateway:
         if self._is_host_broken(base_url):
             return None
         try:
-            import requests, time
+            import requests
+            import time
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             base = base_url.rstrip('/')
             sc = style_caption or self.DEFAULT_STYLE_CAPTION
@@ -722,7 +725,6 @@ class ModelGateway:
             logger.debug(f"[ModelGateway] Ark 视频生成超时 ({max_wait}s)")
         except Exception as e:
             logger.debug(f"[ModelGateway] Ark 视频接口不可达(将自动降级): {str(e)[:160]}")
-            err_str = str(e).lower()
             if isinstance(e, requests.exceptions.ConnectionError):  # SSL/连接失败=主机不可达；读超时(ReadTimeout)不算
                 # 仅熔断 Ark 这一个域名，不影响其它厂商，也不阻断本次的文生视频自愈兜底
                 self._mark_host_broken(base_url)
@@ -805,7 +807,6 @@ class ModelGateway:
                 action = parts[1][:10].strip()
 
         # 3. 对话指引微调重命名或修改指令解析 (例如“把主角改名叫阿星”、“反派改成王梅”)
-        instruction_lower = instruction.lower()
         if instruction:
             rename_match1 = re.search(r'(?:把主角|将主角|主角)(?:改名(?:叫|为)|改为|换成|叫做|是)\s*([\u4e00-\u9fa5\w]+)', instruction)
             if rename_match1:
@@ -878,6 +879,10 @@ class ModelGateway:
         # 数据库里启用的动态模型优先。模型 ID、Base URL 和解密密钥均来自
         # 运行时注册表，生产代码不维护供应商的远端模型清单。
         runtime = runtime_model_registry.resolve(model, "text")
+        if runtime is None and not (model or "").strip():
+            runtime = runtime_model_registry.first_for_category("text")
+            if runtime:
+                model = runtime.model_ids[0]
         if runtime:
             text = self._http_chat(
                 runtime.api_key,
@@ -964,18 +969,18 @@ class ModelGateway:
         
         # 动态对白配音文本，包含模式打破 (Pattern Interrupt) 元素
         speech_char2 = "你不过是个无权无势的底层小人物，也配站在这里？！"
-        speech_char1 = f"睁大眼看清楚，这才是我的底牌！今日，属于我的一切我都会拿回来！"
+        speech_char1 = "睁大眼看清楚，这才是我的底牌！今日，属于我的一切我都会拿回来！"
         
         # 根据题材匹配特定台词与语调
         if genre == "xianxia":
-            speech_char2 = f"萧凡，你已全身筋脉尽碎，交出魔骨，仙门容不得你！"
-            speech_char1 = f"清虚老儿！你们道貌岸然剥我仙骨，今日我便一剑踏平你这仙山！"
+            speech_char2 = "萧凡，你已全身筋脉尽碎，交出魔骨，仙门容不得你！"
+            speech_char1 = "清虚老儿！你们道貌岸然剥我仙骨，今日我便一剑踏平你这仙山！"
         elif genre == "romance":
-            speech_char2 = f"顾安然，你只是个被扫地出门的养女，这设计稿你不配署名！"
-            speech_char1 = f"陆霆骁是我的底气，但没有他，我也能让你们身败名裂！"
+            speech_char2 = "顾安然，你只是个被扫地出门的养女，这设计稿你不配署名！"
+            speech_char1 = "陆霆骁是我的底气，但没有他，我也能让你们身败名裂！"
         elif genre == "horror":
-            speech_char2 = f"林九，半夜扎纸铺不迎活客？今天我就砸了你这纸人店！"
-            speech_char1 = f"人有归路，鬼有黄泉。赵虎，这副大木黑漆棺，是留给你的！"
+            speech_char2 = "林九，半夜扎纸铺不迎活客？今天我就砸了你这纸人店！"
+            speech_char1 = "人有归路，鬼有黄泉。赵虎，这副大木黑漆棺，是留给你的！"
 
         # 针对不同智能体阶段，返回纯动态的生成结果
         if "编剧" in system_prompt or "writer-agent" in system_prompt:
@@ -1052,14 +1057,14 @@ class ModelGateway:
         elif "宣发" in system_prompt or "pr-agent" in system_prompt:
             # 宣发引流文本
             pr_title = f"{creative_title}：隐藏大佬的暴爽翻盘！"
-            pr_body = f"太爽了！前妻/恶毒总监当众撕毁签字合同，逼迫主角净身出户！殊不知主角就是身家千亿的龙王/总裁，一通电话全省财阀大雨中跪迎！逆袭风暴点爆全场，点击免费看全集！💥"
+            pr_body = "太爽了！前妻/恶毒总监当众撕毁签字合同，逼迫主角净身出户！殊不知主角就是身家千亿的龙王/总裁，一通电话全省财阀大雨中跪迎！逆袭风暴点爆全场，点击免费看全集！💥"
             
             if genre == "xianxia":
-                pr_title = f"《仙骨已碎，剑开天门！》"
-                pr_body = f"虚伪仙尊强挖去我的魔骨给义子？他没想到我竟然唤醒了体内的九幽魔皇元神，当着全天下宗门弟子的面一剑震碎仙山！热血仙侠狂暴反扑！点击免费看大结局！"
+                pr_title = "《仙骨已碎，剑开天门！》"
+                pr_body = "虚伪仙尊强挖去我的魔骨给义子？他没想到我竟然唤醒了体内的九幽魔皇元神，当着全天下宗门弟子的面一剑震碎仙山！热血仙侠狂暴反扑！点击免费看大结局！"
             elif genre == "horror":
-                pr_title = f"《深夜纸人抬棺：民俗禁忌起！》"
-                pr_body = f"深夜恶霸强行抢夺扎纸铺的玉佛，少掌柜默默摇动三清铜铃，满屋纸扎童男童女瞬间走下货架列队抬棺！惊悚重重，点击免费看爆爽灵异大戏！💥"
+                pr_title = "《深夜纸人抬棺：民俗禁忌起！》"
+                pr_body = "深夜恶霸强行抢夺扎纸铺的玉佛，少掌柜默默摇动三清铜铃，满屋纸扎童男童女瞬间走下货架列队抬棺！惊悚重重，点击免费看爆爽灵异大戏！💥"
                 
             return f"""【封面大字PR标题】
 🔥 《{pr_title}》
@@ -1087,7 +1092,7 @@ class ModelGateway:
                    "癫狂", "羞辱", "厮杀", "杀", "死", "尸", "拳", "踹", "扇", "撕"]:
             p = p.replace(kw, "")
         p = re.sub(r'\s+', ' ', p).strip(" ，,。.；;")
-        # Agnes 对超长提示词(如嵌 3000 字三视图模板)易判违规，截断到稳妥长度，保留前部核心描述
+        # Agnes 对超长提示词(如嵌 3000 字五视图模板)易判违规，截断到稳妥长度，保留前部核心描述
         if len(p) > 600:
             p = p[:600]
         return p
@@ -1127,12 +1132,10 @@ class ModelGateway:
             )
         }
 
-        hasExpression = False
         for expKey, (keywords, facialDesc) in expressionMap.items():
             if any(kw in lowerPrompt for kw in keywords):
                 if facialDesc not in enhanced:
                     enhanced += f", {facialDesc}"
-                    hasExpression = True
                     break
 
         # 2. 电影级色彩与调色矩阵 (色彩基调智能判断)
@@ -1221,11 +1224,15 @@ class ModelGateway:
         """
         调用文生图大模型，返回 (图片URL, 实际使用的 provider 名)。
         统一优先 Seedance/火山 Ark Seedream，保证与后续 Seedance 图生视频同源、风格画质一致。
-        ref_images：角色三视图等参考图 URL 列表 (Seedream 通过 image 字段做主体参考，锁定人物一致性)。
+        ref_images：角色五视图等参考图 URL 列表 (Seedream 通过 image 字段做主体参考，锁定人物一致性)。
         降级链：所选/seedance 优先 -> Agnes -> gemini -> 离线兜底图。
         """
         prompt = self._enhancePromptWithRules(prompt)
         runtime = runtime_model_registry.resolve(model, "image")
+        if runtime is None and not (model or "").strip():
+            runtime = runtime_model_registry.first_for_category("image")
+            if runtime:
+                model = runtime.model_ids[0]
         if runtime:
             reference_urls = [
                 url for url in (ref_images or [])
@@ -1282,7 +1289,7 @@ class ModelGateway:
                 extra = {"response_format": "url", "size": size or self.seedance_image_size,
                          "watermark": self.seedance_image_watermark}
                 if ref:
-                    # Seedream image 字段传入角色三视图作主体参考，锁定人物一致性
+                    # Seedream image 字段传入角色五视图作主体参考，锁定人物一致性
                     extra["image"] = ref[:9]
             else:
                 extra = {"n": 1, "size": size or "1024x1024"}
@@ -1313,7 +1320,7 @@ class ModelGateway:
                 logger.error(f"读取md文件 {filename} 失败: {str(e)}")
         return ""
 
-    # 题材 -> 时代服饰硬约束：确保三视图人物造型契合剧情时代背景
+    # 题材 -> 时代服饰硬约束：确保五视图人物造型契合剧情时代背景
     # (如修仙/武侠/宫斗必须古装，绝不能出现现代服饰)，从 get_genre 的题材分类推导。
     GENRE_ERA_COSTUME = {
         "xianxia": "古代仙侠时代背景，角色必须身着古装（道袍/汉服/广袖仙袍/云纹长袍），古典发髻发饰，"
@@ -1326,10 +1333,10 @@ class ModelGateway:
         "overseas_us": "欧美时代背景，角色为欧美人物造型与对应服饰",
     }
 
-    # 三视图五大常见问题对照负面约束 (源自《AI漫剧三视图生成全流程》图解 §7)：
-    # 五官漂移 / 服装走样 / 背景不一 / 手部崩塌 / 配色不稳。在三视图生成时强力规避。
+    # 五视图五大常见问题对照负面约束：
+    # 五官漂移 / 服装走样 / 背景不一 / 手部崩塌 / 配色不稳。在五视图生成时强力规避。
     SHEET_PROBLEM_NEGATIVE = (
-        "(严格规避三视图五大常见问题——"
+        "(严格规避五视图五大常见问题——"
         "①五官漂移：多视角间五官形状/比例不一；②服装走样：褶皱、配件位置在各视角紊乱不符；"
         "③背景不一：各视角背景不统一；④手部崩塌：手指数量/姿态错误、多指畸形；⑤配色不稳：颜色偏差、风格不统一。"
         "no face drift, inconsistent facial features across views, changing outfit details between views, "
@@ -1342,8 +1349,9 @@ class ModelGateway:
                                  ref_images: list = None) -> str:
         """
         生成角色五视图设定图(角色视觉锚点，解决跨镜头人物一致性)。
-        方法论遵循《AI漫剧三视图生成全流程》图解：人物设定卡 → 比例统一 → 结构先定 → 细节后补，
-        5 个标准视角(正面/侧面/背面/45度/3-4视角)，并对照规避"五官漂移/服装走样/背景不一/手部崩塌/配色不稳"五大问题。
+        方法论遵循项目五视图人物设定板规范：人物设定卡 → 比例统一 → 结构先定 → 细节后补，
+        5 个标准视角严格按正面/正面四分之三/标准侧面/背面四分之三/背面的顺序输出，
+        并对照规避"五官漂移/服装走样/背景不一/手部崩塌/配色不稳"五大问题。
         genre：剧情题材(来自 get_genre)，锁定符合时代背景的服饰造型(如修仙/武侠须古装)。
         """
         # 时代服饰约束优先：题材若属古装/年代/欧美类，强制对应时代造型；否则按导演视听风格取风格词
@@ -1357,10 +1365,10 @@ class ModelGateway:
         if era_costume:
             style_word = "符合时代背景的写实影视质感"
 
-        # 干净的描述式三视图提示词(英文为主、跨 provider 通用)：直接描述要画的画面本身。
+        # 干净的描述式五视图提示词(英文为主、跨 provider 通用)：直接描述要画的画面本身。
         # 关键修复：绝不把 markdown 文档模板 / README 引用 / 中文元指令塞进文生图模型——
-        # 那会被 Agnes 内容审核判 content_policy_violation 拒(Ark SSL 不可达时三视图会全失败、
-        # 退化为纯文本，前端只剩文字看不到图)。三视图一致性"方法论"只喂给上游 LLM(阶段3 sys_prompt)，
+        # 那会被 Agnes 内容审核判 content_policy_violation 拒(Ark SSL 不可达时五视图会全失败、
+        # 退化为纯文本，前端只剩文字看不到图)。五视图一致性"方法论"只喂给上游 LLM(阶段3 sys_prompt)，
         # 此处只给图像模型干净可执行的画面描述。
         era_clause = f" The character must wear period-accurate costume — {era_costume}." if era_costume else ""
         from app.core.storyboard_quality import build_five_view_prompt
@@ -1381,7 +1389,7 @@ class ModelGateway:
 
     # 镜头一致性强化：正向锁定词 + 负面约束词 (供分镜底片生成时拼接)
     SHEET_LOCK_POSITIVE = (
-        "严格参考角色三视图，保持同一个人物身份、同一张脸、同一个发型、同一个发色、"
+        "严格参考角色五视图和角色状态卡，保持同一个人物身份、同一张脸、同一个发型、同一个发色、"
         "同一套服装、同一个体型、同一个年龄感和同样的标志性配饰"
     )
     SHEET_LOCK_NEGATIVE = (
@@ -1467,6 +1475,10 @@ class ModelGateway:
         """
         prompt = self._enhancePromptWithRules(prompt)
         runtime = runtime_model_registry.resolve(model, "video")
+        if runtime is None and not (model or "").strip():
+            runtime = runtime_model_registry.first_for_category("video")
+            if runtime:
+                model = runtime.model_ids[0]
 
         # MiniMax H3 is a first-class video provider. It supports frame anchoring
         # (text / first / last / first+last) and Ref2VA mixed references. The
@@ -1485,7 +1497,7 @@ class ModelGateway:
                 # When motion/audio references are supplied, preserve the image
                 # as an ordinary subject/scene reference instead of claiming it
                 # is an exact first-frame anchor.
-                if ref_videos or ref_audios:
+                if h3_images or ref_videos or ref_audios:
                     if h3_first:
                         h3_images.insert(0, h3_first)
                     if h3_last:

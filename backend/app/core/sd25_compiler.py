@@ -30,7 +30,7 @@ class Sd25PromptCompiler:
             "voice": "只采用音色、语速和情绪，不覆盖文字台词",
             "music": "只用于音乐结构和情绪，不作为对白或环境声",
             "sound": "只用于声明的声音来源",
-            "keyframe": "只定义声明的边界状态",
+            "keyframe": "只定义声明的关键状态，不替换未声明的主体、场景或风格",
             "source": "作为唯一母版，保留原始时间线",
         }
         return f"{asset.ref}用于{asset.subject}的{asset.observations}；{exclusions[asset.role]}。"
@@ -41,8 +41,34 @@ class Sd25PromptCompiler:
             request.first_frame_ref, request.last_frame_ref, request.source_video_ref,
             request.storyboard_ref, request.blockout_ref,
         ) if ref}
+        anchored.update(request.keyframe_refs)
         anchored.update(entry.audio_ref for entry in request.dialogue if entry.audio_ref)
         return anchored | {asset.ref for asset in request.assets if asset.required}
+
+    @staticmethod
+    def _parameters_for(
+        request: Sd25CompileRequest,
+        mode: str,
+    ) -> tuple[dict[str, str | int | float | bool], list[str]]:
+        parameters = dict(request.parameters)
+        locked: list[str] = []
+        if mode == "edit":
+            locked = [key for key in ("aspect_ratio", "duration_seconds") if key in parameters]
+        elif mode.startswith("extend_"):
+            locked = [key for key in ("aspect_ratio",) if key in parameters]
+        elif mode in {
+            "generation_first_frame", "generation_first_last_frame", "generation_keyframes"
+        }:
+            locked = [key for key in ("aspect_ratio",) if key in parameters]
+        for key in locked:
+            parameters.pop(key, None)
+        warnings = []
+        if locked:
+            warnings.append(
+                "参数提示：当前任务会由输入素材锁定"
+                f"{'、'.join(locked)}；这些冲突参数已从可提交参数中移除。"
+            )
+        return parameters, warnings
 
     @staticmethod
     def _dialogue_lines(request: Sd25CompileRequest) -> list[str]:
@@ -74,16 +100,18 @@ class Sd25PromptCompiler:
             )
             used_asset_refs = [asset.ref for asset in used]
             unused_asset_refs = [asset.ref for asset in unused]
-            parameters = dict(request.parameters)
+            edit_parameters, edit_warnings = self._parameters_for(request, "edit")
+            extend_mode = f"extend_{request.extension_direction}"
+            extend_parameters, extend_warnings = self._parameters_for(request, extend_mode)
             steps = [
                 Sd25CompileStep(
                     mode="edit", prompt=edit_prompt, used_assets=used_asset_refs,
-                    unused_assets=unused_asset_refs, parameters=parameters,
+                    unused_assets=unused_asset_refs, parameters=edit_parameters,
                 ),
                 Sd25CompileStep(
-                    mode=f"extend_{request.extension_direction}", prompt=extend_prompt,
+                    mode=extend_mode, prompt=extend_prompt,
                     used_assets=used_asset_refs, unused_assets=unused_asset_refs,
-                    parameters=parameters,
+                    parameters=extend_parameters,
                 ),
             ]
             prompt = (
@@ -91,15 +119,28 @@ class Sd25PromptCompiler:
                 f"{edit_prompt}\n\n第二步：延长第一步验收通过的输出\n{extend_prompt}"
             )
             mode = "edit_then_extend"
+            parameters = extend_parameters
+            warnings = list(dict.fromkeys(edit_warnings + extend_warnings))
         else:
             prompt, mode = self._compile_generation(request, used, unused)
+
+        if request.task != "edit_then_extend":
+            parameters, warnings = self._parameters_for(request, mode)
+        if request.missing_assets:
+            missing = "；".join(
+                f"{asset.ref}（原定用于{asset.intended_role}）" for asset in request.missing_assets
+            )
+            warnings.append(
+                f"补充建议：未提供或无法读取{missing}；当前 Prompt 已删除这些引用，补充后可重新绑定。"
+            )
 
         return Sd25CompileResult(
             mode=mode,
             prompt=prompt,
             used_assets=[asset.ref for asset in used],
             unused_assets=[asset.ref for asset in unused],
-            parameters=dict(request.parameters),
+            parameters=parameters,
+            warnings=warnings,
             steps=steps,
         )
 
@@ -131,10 +172,29 @@ class Sd25PromptCompiler:
                 f"该尾帧定义视频结束时的构图、主体位置、姿态、道具状态、场景和镜头方向：{asset.observations}。",
             ])
 
+        if request.keyframe_refs:
+            parts.extend([
+                "", "【有序关键帧】",
+                f"以{'、'.join(request.keyframe_refs)}的顺序作为关键帧。",
+            ])
+            for index, ref in enumerate(request.keyframe_refs, start=1):
+                if ref in {request.first_frame_ref, request.last_frame_ref}:
+                    continue
+                asset = next(asset for asset in request.assets if asset.ref == ref)
+                parts.append(
+                    f"{ref}定义第{index}个关键帧：{asset.observations}；作为过程中的可见状态锚点，"
+                    "不要求静态停留或逐像素复刻。"
+                )
+            parts.append(
+                f"画面依次经过{'、'.join(request.keyframe_refs)}定义的状态，各阶段之间使用连续动作自然过渡。"
+            )
+
         if request.storyboard_ref and request.storyboard:
             parts.extend([
                 "", "【九宫格分镜结构】",
-                f"{request.storyboard_ref}提供9格宫格分镜的镜头顺序和大致构图，按照从左到右、从上到下的顺序读取；"
+                f"{request.storyboard_ref}提供3×3九格展示页，其中有"
+                f"{len(request.storyboard.panels)}个真实镜头、{request.storyboard.empty_slots}个留白格；"
+                "按照从左到右、从上到下读取，不得把留白格补造成镜头；"
                 "不采用图中的线稿画风、文字标注或占位人物。",
             ])
             for panel in request.storyboard.panels:
@@ -173,6 +233,8 @@ class Sd25PromptCompiler:
             mode = "generation_storyboard"
         elif request.blockout_ref:
             mode = f"generation_blockout_{request.blockout_granularity}"
+        elif request.keyframe_refs:
+            mode = "generation_keyframes"
         elif request.first_frame_ref and request.last_frame_ref:
             mode = "generation_first_last_frame"
         elif request.first_frame_ref:
@@ -213,7 +275,11 @@ class Sd25PromptCompiler:
             "", "【编辑对象与范围】",
             request.goal.strip(),
             *scope_lines,
-            f"除以上明确修改对象外，{source}中其他可见人物、道具和背景元素保持原样，不参与替换或删除。",
+            (
+                f"除以上明确保留对象外，删除{source}中的其他可见主体；不新增未指定对象。"
+                if request.edit_scope_closure == "delete_unspecified"
+                else f"除以上明确修改对象外，{source}中其他可见人物、道具和背景元素保持原样，不参与替换或删除。"
+            ),
             "", "【时间线继承】",
             f"目标对象继承{source}中对应对象每次出现、运动、遮挡和离开的时点、路径与速度变化；其他动作、镜头、口型和事件顺序保持原样。",
         ]

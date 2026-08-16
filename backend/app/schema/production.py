@@ -2,9 +2,48 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import re
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+
+
+_DATA_IMAGE_RE = re.compile(
+    r"^data:image/(?P<subtype>png|jpeg|webp);base64,(?P<payload>[A-Za-z0-9+/]+={0,2})$",
+    re.IGNORECASE,
+)
+_MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+def _validate_remote_media(value: object, *, allow_inline_image: bool = False) -> str:
+    """Accept provider-fetchable HTTP(S) media and bounded image tail frames.
+
+    Tail-frame extraction intentionally returns an inline image. Keeping this
+    validation here prevents local paths, arbitrary data URIs, credentials, and
+    unbounded payloads from crossing a provider boundary.
+    """
+    text = str(value or "").strip()
+    if allow_inline_image and text.lower().startswith("data:image/"):
+        match = _DATA_IMAGE_RE.fullmatch(text)
+        if not match:
+            raise ValueError("inline frame must be a base64 PNG, JPEG, or WebP data URI")
+        try:
+            decoded = base64.b64decode(match.group("payload"), validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("inline frame contains invalid base64") from exc
+        if not decoded or len(decoded) > _MAX_INLINE_IMAGE_BYTES:
+            raise ValueError("inline frame must contain 1 byte to 10 MiB of image data")
+        return text
+
+    parsed = urlsplit(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("media must use an absolute HTTP(S) URL")
+    if parsed.username or parsed.password:
+        raise ValueError("media URL cannot contain credentials")
+    return text
 
 
 FiveViewName = Literal[
@@ -64,7 +103,7 @@ class StoryboardPanel(BaseModel):
     eyeline: Annotated[str, Field(min_length=2, max_length=500)]
     shot_purpose: Literal["information", "emotion", "suspense", "tension", "reversal", "shock", "clue"] = "information"
     story_beat: Annotated[str, Field(min_length=1, max_length=500)] = "推进当前信息"
-    duration_seconds: Annotated[float, Field(ge=0.5, le=15)] = 2.0
+    duration_seconds: Annotated[float, Field(ge=0.5, le=300)] = 2.0
     subject_action: Annotated[str, Field(min_length=2, max_length=2000)]
     expression: Annotated[str, Field(min_length=2, max_length=1000)]
     scene: Annotated[str, Field(min_length=1, max_length=500)]
@@ -75,7 +114,7 @@ class StoryboardPanel(BaseModel):
     lighting: Annotated[str, Field(min_length=2, max_length=800)]
     edit_in: Annotated[str, Field(min_length=2, max_length=500)]
     edit_out: Annotated[str, Field(min_length=2, max_length=500)]
-    generation_mode: Literal["text", "first_frame", "last_frame", "first_last_frame", "reference"]
+    generation_mode: Literal["auto", "text", "first_frame", "last_frame", "first_last_frame", "reference"]
     blocking: Annotated[str, Field(min_length=1, max_length=800)] = "遵守场景圣经与180度轴线"
     start_state: Annotated[str, Field(min_length=1, max_length=1000)] = "承接上一格结束状态"
     end_state: Annotated[str, Field(min_length=1, max_length=1000)] = "形成下一格可承接的可见状态"
@@ -85,41 +124,113 @@ class StoryboardPanel(BaseModel):
 
 class NineGridStoryboard(BaseModel):
     title: Annotated[str, Field(min_length=1, max_length=200)]
+    scene_number: Annotated[int, Field(ge=1, le=10_000)] = 1
+    page_number: Annotated[int, Field(ge=1, le=1_000)] = 1
+    total_pages: Annotated[int, Field(ge=1, le=1_000)] = 1
     rows: Literal[3] = 3
     columns: Literal[3] = 3
     reading_order: Literal["left_to_right_top_to_bottom"] = "left_to_right_top_to_bottom"
     rhythm_profile: Literal["romance", "confrontation", "reversal", "suspense", "horror", "comedy", "clue", "action"] = "confrontation"
     assets: StoryAssetCatalog
-    panels: Annotated[list[StoryboardPanel], Field(min_length=9, max_length=9)]
+    panels: Annotated[list[StoryboardPanel], Field(min_length=1, max_length=9)]
 
     @model_validator(mode="after")
     def validate_panel_indices(self) -> "NineGridStoryboard":
         actual = [panel.index for panel in self.panels]
-        if actual != list(range(1, 10)):
-            raise ValueError("nine-grid panels must be ordered exactly from 1 through 9")
+        if actual != list(range(1, len(self.panels) + 1)):
+            raise ValueError("used nine-grid panels must be sequential from slot 1")
+        if self.page_number > self.total_pages:
+            raise ValueError("page_number cannot exceed total_pages")
+        return self
+
+    @computed_field
+    @property
+    def empty_slots(self) -> int:
+        return 9 - len(self.panels)
+
+
+H3ReferenceRole = Literal[
+    "identity", "scene", "prop", "effect", "style", "motion", "camera",
+    "rhythm", "voice", "music", "sound",
+]
+
+
+class H3ReferenceBinding(BaseModel):
+    """Stable, auditable reference semantics independent from array position."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    slot_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{1,119}$")]
+    order: Annotated[int, Field(ge=1, le=12)]
+    media_type: Literal["image", "video", "audio"]
+    uri: str
+    role: H3ReferenceRole
+    priority: Annotated[int, Field(ge=1, le=100)] = 50
+    content_sha256: Annotated[str, Field(pattern=r"^[a-fA-F0-9]{64}$")]
+    provenance: Annotated[str, Field(min_length=1, max_length=1000)]
+
+    @model_validator(mode="after")
+    def validate_uri(self) -> "H3ReferenceBinding":
+        self.uri = _validate_remote_media(self.uri, allow_inline_image=self.media_type == "image")
         return self
 
 
 class H3VideoRequest(BaseModel):
     prompt: Annotated[str, Field(min_length=1, max_length=20000)]
     model: Annotated[str, Field(min_length=1, max_length=120)] = "MiniMax-H3"
-    first_frame: AnyHttpUrl | None = None
-    last_frame: AnyHttpUrl | None = None
-    reference_images: Annotated[list[AnyHttpUrl], Field(max_length=9)] = Field(default_factory=list)
-    reference_videos: Annotated[list[AnyHttpUrl], Field(max_length=3)] = Field(default_factory=list)
-    reference_audios: Annotated[list[AnyHttpUrl], Field(max_length=3)] = Field(default_factory=list)
+    first_frame: str | None = None
+    last_frame: str | None = None
+    reference_images: Annotated[list[str], Field(max_length=9)] = Field(default_factory=list)
+    reference_videos: Annotated[list[str], Field(max_length=3)] = Field(default_factory=list)
+    reference_audios: Annotated[list[str], Field(max_length=3)] = Field(default_factory=list)
+    reference_bindings: Annotated[list[H3ReferenceBinding], Field(max_length=12)] = Field(default_factory=list)
     duration_seconds: Annotated[int, Field(ge=4, le=15)] = 6
     resolution: Literal["720p", "1080p", "2k"] = "1080p"
     aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
     native_audio: bool = True
     seed: Annotated[int | None, Field(ge=0, le=2147483647)] = None
 
+    @field_validator("first_frame", "last_frame", mode="before")
+    @classmethod
+    def validate_frame_locator(cls, value: object) -> str | None:
+        return None if value is None else _validate_remote_media(value, allow_inline_image=True)
+
+    @field_validator("reference_images", mode="before")
+    @classmethod
+    def validate_image_locators(cls, value: object) -> list[str]:
+        return [_validate_remote_media(item, allow_inline_image=True) for item in list(value or [])]
+
+    @field_validator("reference_videos", "reference_audios", mode="before")
+    @classmethod
+    def validate_av_locators(cls, value: object) -> list[str]:
+        return [_validate_remote_media(item) for item in list(value or [])]
+
     @model_validator(mode="after")
     def validate_references(self) -> "H3VideoRequest":
+        if self.reference_bindings and (
+            self.reference_images or self.reference_videos or self.reference_audios
+        ):
+            raise ValueError("structured and legacy H3 reference inputs cannot be mixed")
+        if self.reference_bindings:
+            slot_ids = [binding.slot_id for binding in self.reference_bindings]
+            orders = [binding.order for binding in self.reference_bindings]
+            if len(slot_ids) != len(set(slot_ids)):
+                raise ValueError("H3 reference slot_id values must be unique")
+            if orders != list(range(1, len(orders) + 1)):
+                raise ValueError("H3 structured reference order must be contiguous and start at 1")
+            counts = {
+                kind: sum(binding.media_type == kind for binding in self.reference_bindings)
+                for kind in ("image", "video", "audio")
+            }
+            if counts["image"] > 9 or counts["video"] > 3 or counts["audio"] > 3:
+                raise ValueError("H3 structured references exceed image/video/audio limits")
+            if counts["audio"] and not (counts["image"] or counts["video"]):
+                raise ValueError("reference audio requires at least one image or video reference")
         mixed_count = (
             len(self.reference_images)
             + len(self.reference_videos)
             + len(self.reference_audios)
+            + len(self.reference_bindings)
         )
         if mixed_count > 12:
             raise ValueError("H3 accepts at most 12 mixed reference files")
@@ -127,7 +238,9 @@ class H3VideoRequest(BaseModel):
             self.reference_images or self.reference_videos or self.first_frame or self.last_frame
         ):
             raise ValueError("reference audio requires at least one image or video reference")
-        if (self.reference_videos or self.reference_audios) and (self.first_frame or self.last_frame):
+        if (
+            self.reference_images or self.reference_videos or self.reference_audios or self.reference_bindings
+        ) and (self.first_frame or self.last_frame):
             raise ValueError(
                 "H3 frame anchoring and Ref2VA video/audio references are separate generation modes"
             )
@@ -138,7 +251,7 @@ class H3VideoRequest(BaseModel):
     def inferred_mode(self) -> Literal[
         "text", "first_frame", "last_frame", "first_last_frame", "reference"
     ]:
-        if self.reference_images or self.reference_videos or self.reference_audios:
+        if self.reference_images or self.reference_videos or self.reference_audios or self.reference_bindings:
             return "reference"
         if self.first_frame and self.last_frame:
             return "first_last_frame"
@@ -149,12 +262,22 @@ class H3VideoRequest(BaseModel):
         return "text"
 
 
+class PronunciationDictionaryLocator(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pronunciation_dictionary_id: Annotated[str, Field(min_length=1, max_length=200)]
+    version_id: Annotated[str, Field(min_length=1, max_length=200)]
+
+
 class TTSRequest(BaseModel):
     text: Annotated[str, Field(min_length=1, max_length=10000)]
     voice_id: Annotated[str, Field(min_length=1, max_length=200)]
     emotion: Annotated[str, Field(max_length=80)] = "neutral"
     speed: Annotated[float, Field(ge=0.7, le=1.2)] = 1.0
     model_id: str = "eleven_multilingual_v2"
+    pronunciation_dictionary_locators: Annotated[
+        list[PronunciationDictionaryLocator], Field(max_length=3)
+    ] = Field(default_factory=list)
 
 
 class DialogueLineRequest(BaseModel):
@@ -239,16 +362,26 @@ class Sd25DialogueEntry(BaseModel):
     audio_ref: Annotated[str | None, Field(pattern=r"^@(?:音频|Audio)\s?\d+$")] = None
 
 
+class Sd25MissingAsset(BaseModel):
+    """A declared but inaccessible reference that must not enter prompt text."""
+
+    ref: Annotated[str, Field(pattern=r"^@(?:图片|视频|音频|Image|Video|Audio)\s?\d+$")]
+    intended_role: Annotated[str, Field(min_length=1, max_length=500)]
+
+
 class Sd25CompileRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     goal: Annotated[str, Field(min_length=1, max_length=30000)]
     task: Literal["generation", "edit", "extend", "edit_then_extend"] = "generation"
     edit_scope: Literal["visual", "audio", "both"] = "both"
+    edit_scope_closure: Literal["preserve_unspecified", "delete_unspecified"] = "preserve_unspecified"
     assets: Annotated[list[Sd25Asset], Field(max_length=50)] = Field(default_factory=list)
+    missing_assets: Annotated[list[Sd25MissingAsset], Field(max_length=50)] = Field(default_factory=list)
     dialogue: Annotated[list[Sd25DialogueEntry], Field(max_length=100)] = Field(default_factory=list)
     first_frame_ref: str | None = None
     last_frame_ref: str | None = None
+    keyframe_refs: Annotated[list[str], Field(max_length=30)] = Field(default_factory=list)
     source_video_ref: str | None = None
     extension_direction: Literal["before", "after"] | None = None
     storyboard_ref: str | None = None
@@ -265,6 +398,8 @@ class Sd25CompileRequest(BaseModel):
         for key, parameter in value.items():
             if not key or len(key) > 80 or not key.replace("_", "").isalnum():
                 raise ValueError("sd25 parameter names must be short alphanumeric snake_case names")
+            if any(marker in key.lower() for marker in ("api_key", "apikey", "secret", "token", "authorization")):
+                raise ValueError("sd25 provider parameters may not contain credentials or secrets")
             if isinstance(parameter, str) and len(parameter) > 500:
                 raise ValueError("sd25 string parameters may contain at most 500 characters")
         return value
@@ -274,6 +409,9 @@ class Sd25CompileRequest(BaseModel):
         refs = [asset.ref for asset in self.assets]
         if len(refs) != len(set(refs)):
             raise ValueError("each sd25 asset reference must be unique")
+        missing_refs = [asset.ref for asset in self.missing_assets]
+        if len(missing_refs) != len(set(missing_refs)) or set(refs) & set(missing_refs):
+            raise ValueError("missing sd25 references must be unique and cannot also be available")
         images = [asset for asset in self.assets if asset.media_type == "image"]
         videos = [asset for asset in self.assets if asset.media_type == "video"]
         audios = [asset for asset in self.assets if asset.media_type == "audio"]
@@ -292,6 +430,17 @@ class Sd25CompileRequest(BaseModel):
         for frame_ref in (self.first_frame_ref, self.last_frame_ref):
             if frame_ref and (frame_ref not in by_ref or by_ref[frame_ref].media_type != "image"):
                 raise ValueError("first and last frame references must point to provided images")
+        if len(self.keyframe_refs) != len(set(self.keyframe_refs)):
+            raise ValueError("ordered keyframe references must be unique")
+        for frame_ref in self.keyframe_refs:
+            if frame_ref not in by_ref or by_ref[frame_ref].media_type != "image":
+                raise ValueError("ordered keyframes must point to provided images")
+        if self.keyframe_refs and len(self.keyframe_refs) < 2:
+            raise ValueError("ordered keyframe generation requires at least two images")
+        if self.first_frame_ref and self.keyframe_refs and self.keyframe_refs[0] != self.first_frame_ref:
+            raise ValueError("the first ordered keyframe must equal first_frame_ref")
+        if self.last_frame_ref and self.keyframe_refs and self.keyframe_refs[-1] != self.last_frame_ref:
+            raise ValueError("the last ordered keyframe must equal last_frame_ref")
         if self.task in {"edit", "edit_then_extend"}:
             source = by_ref.get(self.source_video_ref or "")
             if not source or source.media_type != "video":
@@ -316,6 +465,8 @@ class Sd25CompileRequest(BaseModel):
                 raise ValueError("blockout reference must point to a provided video")
         if self.storyboard_ref and self.blockout_ref:
             raise ValueError("storyboard and blockout are separate primary structure references")
+        if self.keyframe_refs and (self.storyboard_ref or self.blockout_ref):
+            raise ValueError("ordered keyframes, storyboard and blockout are separate structure references")
         return self
 
 

@@ -25,8 +25,8 @@ MEDIA_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path
 # 对外访问基地址 (本地应用)
 PUBLIC_BASE_URL = os.getenv("MEDIA_PUBLIC_BASE_URL", "http://localhost:8000/media")
 
-# 输出竖屏画幅
-OUT_W, OUT_H = 720, 1280
+# 输出竖屏母版。供应商预览可低分辨率，但最终合成统一为平台标准 FHD。
+OUT_W, OUT_H = 1080, 1920
 # 片头标题卡时长(秒)
 TITLE_DUR = 2.6
 # 男声音高比例 (基于 Tingting 女声降调模拟男声；say 输出固定 22050Hz)
@@ -302,7 +302,7 @@ def synthesize_elevenlabs_sfx(
 
 
 def _render_subtitle_png(text: str, out_path: str) -> bool:
-    """用 PIL 把中文字幕渲染为 720x1280 透明 PNG (底部居中，带半透明底框与描边)。"""
+    """用 PIL 把中文字幕渲染为 1080x1920 透明 PNG，并避开平台底部 UI。"""
     font_path = _font_path()
     if not font_path:
         return False
@@ -320,7 +320,7 @@ def _render_subtitle_png(text: str, out_path: str) -> bool:
                         lines.append(cur)
                     cur = ""
                     continue
-                if d.textlength(cur + ch, font=font) > OUT_W - 80 and cur:
+                if (len(cur) >= 16 or d.textlength(cur + ch, font=font) > OUT_W - 120) and cur:
                     lines.append(cur)
                     cur = ch
                 else:
@@ -335,7 +335,8 @@ def _render_subtitle_png(text: str, out_path: str) -> bool:
             return True
         lh = 60
         total = lh * len(lines)
-        y0 = OUT_H - 170 - total
+        bottom_ui_safe = max(250, int(OUT_H * 0.13))
+        y0 = OUT_H - bottom_ui_safe - total
         for i, ln in enumerate(lines):
             w = d.textlength(ln, font=font)
             x = (OUT_W - w) / 2
@@ -369,7 +370,8 @@ def _render_title_png(title: str, out_path: str, subtitle: str = "AI 短剧 · �
             lines, cur = [], ""
             for ch in t:
                 if d.textlength(cur + ch, font=font) > maxw and cur:
-                    lines.append(cur); cur = ch
+                    lines.append(cur)
+                    cur = ch
                 else:
                     cur += ch
             if cur:
@@ -443,7 +445,7 @@ def extract_last_frame_b64(video_url_or_path: str) -> Optional[str]:
             if not _download(video_url_or_path, src):
                 return None
         frame = os.path.join(work, "last.jpg")
-        # 取最后一帧并缩到 720 宽 (控制 base64 体积)
+        # 取最后一帧并缩到 720 宽（仅作参考输入，控制 base64 体积）。
         subprocess.run([ff, "-y", "-sseof", "-0.2", "-i", src, "-vf", "scale=720:-2", "-frames:v", "1", frame],
                        check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if not os.path.exists(frame):

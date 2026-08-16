@@ -2,6 +2,8 @@
 
 This project uses original, clean-room application code to implement interoperable short-drama production behavior. It does not vendor the reviewed AGPL, Elastic-2.0, unlicensed, or model-weight code. Before redistributing copied upstream assets or code, review the exact upstream revision and its current license.
 
+Exact reviewed revisions, dates, capability IDs, license observations, and attribution strings are stored in `backend/app/data/upstream_sources.json` and rendered in the capability center.
+
 | Reference | Reviewed license observation | Treatment |
 |---|---|---|
 | MiniMax-AI/MiniMax-H3 | Model/community terms; no root repository LICENSE observed at the reviewed revision | API interoperability and original prompt contracts only |
