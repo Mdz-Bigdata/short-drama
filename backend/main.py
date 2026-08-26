@@ -1,12 +1,21 @@
 # -*- coding: utf-8 -*-
 # ruff: noqa: E402
 import os
+import logging
 import uvicorn
 from pathlib import Path
 from dotenv import load_dotenv
 
 # Load the server-only environment before importing routers and provider services.
 load_dotenv(Path(__file__).resolve().parent / ".env", override=False)
+
+# Application loggers emit structured task events through the root handler.
+# Provider secrets and request bodies are intentionally never included.
+_log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+logging.basicConfig(
+    level=_log_level,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -26,6 +35,7 @@ from app.api.user_api import router as user_router
 from app.core.media_compositor import MEDIA_DIR
 from app.platform.bootstrap import initialize_platform
 from app.platform.dependencies import get_model_secret_cipher, get_platform_store
+from app.platform.request_limits import ElementUploadGuardMiddleware
 from app.platform.runtime_models import hydrate_runtime_model_registry
 from app.platform.runtime_skills import hydrate_runtime_skill_registry
 
@@ -40,6 +50,8 @@ _allowed_origins = [
         "ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
     ).split(",") if item.strip()
 ]
+
+app.add_middleware(ElementUploadGuardMiddleware)
 
 # 允许跨域请求 CORS (由于需要带凭证Cookie，allow_origins不能使用"*")
 app.add_middleware(

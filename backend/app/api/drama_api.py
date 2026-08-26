@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Form, File, UploadFile, Depends
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Form, File, UploadFile, Depends, Request
+from fastapi.responses import JSONResponse
 from typing import List, Dict, Any, Optional
 from app.schema.drama import DramaCreateRequest, DramaTaskResponse
 from app.service.drama_service import DramaService
@@ -6,30 +7,78 @@ from app.repository.task_repo import TaskRepository
 from app.api.auth_api import get_current_user, require_admin
 from app.core.video_quality import VideoQualityMeasurements
 from app.schema.agent_council import CouncilReleaseEvidence
+from app.schema.writer_dashboard import WriterDashboardResponse
+from app.schema.character_dashboard import CharacterDashboardResponse
 
-# 创建 API 路由，全局挂载登录身份校验依赖
-router = APIRouter(prefix="/api/drama", tags=["AI短剧制作"], dependencies=[Depends(get_current_user)])
 service = DramaService()
 repo = TaskRepository()
 
+
+def require_owned_drama_task(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Enforce per-task ownership for every route containing a task_id."""
+    task_id = request.path_params.get("task_id")
+    if not task_id:
+        return current_user
+
+    task = service.repo.get_task(str(task_id))
+    if not task:
+        # Fail closed: a transient repository read failure must never let the
+        # handler perform a second, unauthorised read that happens to succeed.
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    if current_user.get("role") == "admin":
+        return current_user
+
+    user_id = str(current_user.get("user_id") or "")
+    owner_user_id = str(task.get("owner_user_id") or "")
+    if not user_id or not owner_user_id or user_id != owner_user_id:
+        # Hide task existence from users who do not own it.
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return current_user
+
+
+# 登录校验与任务归属校验在同一路由边界内统一执行。
+router = APIRouter(
+    prefix="/api/drama",
+    tags=["AI短剧制作"],
+    dependencies=[Depends(require_owned_drama_task)],
+)
+
 @router.post("/create", response_model=DramaTaskResponse)
-def create_new_task(req: DramaCreateRequest):
+def create_new_task(req: DramaCreateRequest, current_user: dict = Depends(get_current_user)):
     """
     新建一个 AI 短剧任务。
     如果是一键成片，则初始化后可直接一键生成。
     """
     try:
-        task_data = service.create_task(req)
+        task_data = service.create_task(req, owner_user_id=current_user.get("user_id"))
         return task_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"创建任务失败: {str(e)}")
 
 @router.get("/list", response_model=List[DramaTaskResponse])
-def get_all_tasks():
+def get_all_tasks(current_user: dict = Depends(get_current_user)):
     """
     获取所有的短剧生成任务列表历史
     """
-    return repo.list_all_tasks()
+    tasks = service.repo.list_all_tasks()
+    if current_user.get("role") != "admin":
+        user_id = str(current_user.get("user_id") or "")
+        tasks = (
+            [
+                task for task in tasks
+                if isinstance(task, dict) and str(task.get("owner_user_id") or "") == user_id
+            ]
+            if user_id else []
+        )
+    return [
+        service.get_task_status(str(task.get("task_id"))) or task
+        for task in tasks
+        if isinstance(task, dict) and task.get("task_id")
+    ]
 
 @router.get("/{task_id}/status", response_model=DramaTaskResponse)
 def get_task_status(task_id: str):
@@ -40,6 +89,52 @@ def get_task_status(task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return task
+
+
+@router.get("/{task_id}/writer-dashboard/export")
+def export_writer_dashboard(task_id: str):
+    """Download the normalized Writer Agent dashboard as versioned JSON."""
+    dashboard = service.get_writer_dashboard(task_id)
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return JSONResponse(
+        content=dashboard.model_dump(mode="json", by_alias=True),
+        headers={"Content-Disposition": 'attachment; filename="writer-dashboard.json"'},
+    )
+
+
+@router.get("/{task_id}/writer-dashboard", response_model=WriterDashboardResponse)
+def get_writer_dashboard(task_id: str):
+    """Return the Writer Agent timeline, episodes, statistics and relationship graph contract."""
+    dashboard = service.get_writer_dashboard(task_id)
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
+
+
+@router.get("/{task_id}/character-dashboard/export")
+def export_character_dashboard(task_id: str):
+    """Download the normalized Character Designer five-view contract as JSON."""
+    dashboard = service.get_character_dashboard(task_id)
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return JSONResponse(
+        content=dashboard.model_dump(mode="json", by_alias=True),
+        headers={
+            "Content-Disposition": 'attachment; filename="character-dashboard.json"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.get("/{task_id}/character-dashboard", response_model=CharacterDashboardResponse)
+def get_character_dashboard(task_id: str):
+    """Return the Character Designer cards, fixed five-view slots and quality state."""
+    dashboard = service.get_character_dashboard(task_id)
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
 
 @router.post("/{task_id}/next", response_model=DramaTaskResponse)
 async def run_next_stage(task_id: str, current_stage: int):
@@ -144,6 +239,29 @@ def produce_episode_route(task_id: str, ep_index: int, background_tasks: Backgro
     ep["status"] = "running"
     repo.save_task(task_id, task)
     return {"status": "running", "episode": ep_index, "message": f"第{ep_index}集已开始后台制作，请轮询 /episodes 查看进度"}
+
+@router.post("/{task_id}/assistant")
+async def assistant_chat(task_id: str, payload: Dict[str, str]):
+    """
+    自然语言流程助手：意图识别 (执行下一步/重跑阶段N/暂停/查询进度/微调/答疑)，
+    执行类动作后台异步启动并立即返回；前端轮询 /status 的 stageProgress 展示调用过程与进度条。
+    """
+    message = payload.get("message", "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="消息内容不能为空")
+    try:
+        result = await service.assistant_message(task_id, message)
+        return {
+            "reply": result["reply"],
+            "action": result["action"],
+            "stage": result["stage"],
+            "task": DramaTaskResponse(**result["task"]).model_dump(by_alias=True),
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"对话处理失败: {str(e)}")
+
 
 @router.post("/{task_id}/chat", response_model=DramaTaskResponse)
 async def chat_with_agent(task_id: str, payload: Dict[str, str]):

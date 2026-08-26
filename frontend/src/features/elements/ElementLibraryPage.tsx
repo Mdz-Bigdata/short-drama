@@ -1,26 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Boxes, Camera, ImagePlus, LoaderCircle, Plus, RefreshCw, Upload } from 'lucide-react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { ArrowLeft, Boxes, Camera, ImagePlus, LoaderCircle, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
 
 import { API_BASE, apiRequest } from '../../api/client';
+import { findPoster, type ElementItem, type ElementKind } from './elementTypes';
+import './ElementLibraryPage.css';
 
 
-export type ElementKind = 'actor' | 'prop' | 'scene' | 'effect';
+export type { ElementKind } from './elementTypes';
 
-interface ElementFile {
-  id: string;
-  slot: string;
-  url: string;
-}
-
-interface ElementItem {
-  id: string;
-  kind: ElementKind;
-  name: string;
-  description: string;
-  status: string;
-  version: number;
-  files: ElementFile[];
-}
+const Element3DWorkspace = lazy(() => import('./three/Element3DWorkspace'));
 
 interface ElementResponse {
   items: ElementItem[];
@@ -30,6 +18,17 @@ interface ElementResponse {
 interface Props {
   initialKind: ElementKind;
   onBack: () => void;
+}
+
+interface PendingUpload {
+  type: 'image' | 'model';
+  file: File;
+  slot: string;
+  workflowId: number;
+  target?: {
+    id: string;
+    kind: ElementKind;
+  };
 }
 
 
@@ -54,24 +53,63 @@ export function ElementLibraryPage({ initialKind, onBack }: Props) {
   const [items, setItems] = useState<ElementItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [uploadTarget, setUploadTarget] = useState<string>('');
   const [uploadSlot, setUploadSlot] = useState('reference');
-  const fileInput = useRef<HTMLInputElement>(null);
+  const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
+  const [selectedId, setSelectedId] = useState('');
+  const imageInput = useRef<HTMLInputElement>(null);
+  const modelInput = useRef<HTMLInputElement>(null);
+  const toolbarImageButton = useRef<HTMLButtonElement>(null);
+  const toolbarCreateButton = useRef<HTMLButtonElement>(null);
+  const createForm = useRef<HTMLElement>(null);
+  const nameInput = useRef<HTMLInputElement>(null);
+  const kindRef = useRef<ElementKind>(initialKind);
+  const loadSequence = useRef(0);
+  const uploadWorkflow = useRef(0);
+  const creatingRef = useRef(false);
+  const busyRef = useRef('');
+
+  const setCreateInFlight = (value: boolean) => {
+    creatingRef.current = value;
+    setCreating(value);
+  };
+
+  const startMutation = (key: string) => {
+    if (busyRef.current) return false;
+    busyRef.current = key;
+    setBusy(key);
+    setNotice('');
+    return true;
+  };
+
+  const finishMutation = (key: string) => {
+    if (busyRef.current !== key) return;
+    busyRef.current = '';
+    setBusy(current => current === key ? '' : current);
+  };
 
   const load = async (targetKind = kind) => {
+    if (targetKind !== kindRef.current) return;
+    const sequence = ++loadSequence.current;
     setLoading(true);
     setError('');
+    setNotice('');
     try {
       const data = await apiRequest<ElementResponse>(`/api/elements?kind=${targetKind}&page=1&page_size=50`);
+      if (sequence !== loadSequence.current || targetKind !== kindRef.current) return;
       setItems(data.items);
+      setSelectedId(current => data.items.some(item => item.id === current) ? current : (data.items[0]?.id ?? ''));
     } catch (err) {
+      if (sequence !== loadSequence.current || targetKind !== kindRef.current) return;
       setError(err instanceof Error ? err.message : '元素库加载失败');
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current && targetKind === kindRef.current) setLoading(false);
     }
   };
 
@@ -80,64 +118,327 @@ export function ElementLibraryPage({ initialKind, onBack }: Props) {
     return () => window.clearTimeout(handle);
   }, [kind]); // eslint-disable-line react-hooks/exhaustive-deps -- reload when the concrete element route changes
 
+  useEffect(() => {
+    if (!showForm) return;
+    const handle = window.setTimeout(() => {
+      createForm.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      nameInput.current?.focus({ preventScroll: true });
+    }, 0);
+    return () => window.clearTimeout(handle);
+  }, [showForm]);
+
   const selectKind = (next: ElementKind) => {
+    if (next === kindRef.current) return;
+    kindRef.current = next;
+    loadSequence.current += 1;
     setKind(next);
+    setItems([]);
+    setLoading(true);
     setShowForm(false);
+    uploadWorkflow.current += 1;
+    setError('');
+    setNotice('');
+    setName('');
+    setDescription('');
     setUploadTarget('');
+    setPendingUpload(null);
+    setSelectedId('');
     setUploadSlot(next === 'actor' ? 'front' : 'reference');
   };
 
-  const addElement = async () => {
-    if (!name.trim()) return;
-    setBusy('create');
-    setError('');
-    try {
-      await apiRequest('/api/elements', {
-        method: 'POST',
-        body: JSON.stringify({ kind, name: name.trim(), description: description.trim(), metadata: {} }),
-      });
-      setName('');
-      setDescription('');
-      setShowForm(false);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '添加失败');
-    } finally {
-      setBusy('');
+  const sendUpload = async (pending: PendingUpload, target: string, targetKind: ElementKind) => {
+    const form = new FormData();
+    if (pending.type === 'image') {
+      form.append('slot', targetKind === 'actor' ? pending.slot : 'reference');
     }
+    form.append('file', pending.file);
+    const endpoint = pending.type === 'model'
+      ? `/api/elements/${target}/model`
+      : `/api/elements/${target}/files`;
+    await apiRequest(endpoint, { method: 'POST', body: form });
   };
 
-  const beginUpload = (elementId?: string) => {
-    const target = elementId || items[0]?.id;
-    if (!target) {
-      setShowForm(true);
-      setError('请先添加一个元素，再上传参考图。');
+  const closeCreateForm = () => {
+    uploadWorkflow.current += 1;
+    setError('');
+    setName('');
+    setDescription('');
+    setPendingUpload(null);
+    setShowForm(false);
+  };
+
+  const discardPendingUpload = () => {
+    if (creatingRef.current || busyRef.current) return;
+    if (pendingUpload?.target) {
+      closeCreateForm();
       return;
     }
-    setUploadTarget(target);
-    fileInput.current?.click();
+    uploadWorkflow.current += 1;
+    setPendingUpload(null);
+    setError('');
   };
 
-  const uploadFile = async (file?: File) => {
-    if (!file || !uploadTarget) return;
-    const form = new FormData();
-    form.append('slot', kind === 'actor' ? uploadSlot : `reference-${Date.now()}`);
-    form.append('file', file);
-    setBusy(`upload:${uploadTarget}`);
+  const isCurrentUploadWorkflow = (pending: PendingUpload) => (
+    pending.workflowId === uploadWorkflow.current
+    && (!pending.target || pending.target.kind === kindRef.current)
+  );
+
+  const addElement = async () => {
+    if (!name.trim() || creatingRef.current || busyRef.current) return;
+    const targetKind = kindRef.current;
+    const uploadAfterCreate = pendingUpload;
+    const createWorkflowId = uploadAfterCreate?.workflowId ?? ++uploadWorkflow.current;
+    const createWorkflowIsCurrent = () => (
+      createWorkflowId === uploadWorkflow.current && targetKind === kindRef.current
+    );
+    if (!startMutation('create')) return;
+    setCreateInFlight(true);
+    setError('');
+    let created: ElementItem;
+    try {
+      created = await apiRequest<ElementItem>('/api/elements', {
+        method: 'POST',
+        body: JSON.stringify({ kind: targetKind, name: name.trim(), description: description.trim(), metadata: {} }),
+      });
+    } catch (err) {
+      if (createWorkflowIsCurrent()) setError(err instanceof Error ? err.message : '添加失败');
+      finishMutation('create');
+      setCreateInFlight(false);
+      return;
+    }
+
+    const uploadAttempt = uploadAfterCreate ? {
+      ...uploadAfterCreate,
+      target: { id: created.id, kind: targetKind },
+    } : null;
+
+    if (createWorkflowIsCurrent()) {
+      setSelectedId(created.id);
+      setUploadTarget(created.id);
+      if (uploadAttempt) setPendingUpload(uploadAttempt);
+    }
+
+    if (!uploadAttempt) {
+      if (createWorkflowIsCurrent()) {
+        closeCreateForm();
+        await load(targetKind);
+      }
+      finishMutation('create');
+      setCreateInFlight(false);
+      return;
+    }
+
+    if (!isCurrentUploadWorkflow(uploadAttempt)) {
+      finishMutation('create');
+      setCreateInFlight(false);
+      return;
+    }
+
+    let uploadError = '';
+    try {
+      await sendUpload(uploadAttempt, created.id, targetKind);
+    } catch (err) {
+      const fallback = uploadAttempt.type === 'model' ? '3D 模型上传失败' : '参考图上传失败';
+      uploadError = err instanceof Error ? err.message : fallback;
+    }
+
+    if (isCurrentUploadWorkflow(uploadAttempt)) {
+      if (uploadError) {
+        await load(targetKind);
+        if (!isCurrentUploadWorkflow(uploadAttempt)) {
+          finishMutation('create');
+          setCreateInFlight(false);
+          return;
+        }
+        setPendingUpload(uploadAttempt);
+        setShowForm(true);
+        setError(`${kindMeta[targetKind].label}已创建，但${uploadError}`);
+      } else {
+        closeCreateForm();
+        await load(targetKind);
+      }
+    }
+    finishMutation('create');
+    setCreateInFlight(false);
+  };
+
+  const retryPendingFileUpload = async () => {
+    const uploadAttempt = pendingUpload;
+    const target = uploadAttempt?.target;
+    if (!uploadAttempt || !target || !isCurrentUploadWorkflow(uploadAttempt) || creatingRef.current || busyRef.current) return;
+    if (!startMutation('create')) return;
+    setCreateInFlight(true);
     setError('');
     try {
-      await apiRequest(`/api/elements/${uploadTarget}/files`, { method: 'POST', body: form });
-      await load();
+      await sendUpload(uploadAttempt, target.id, target.kind);
+      if (isCurrentUploadWorkflow(uploadAttempt)) {
+        closeCreateForm();
+        await load(target.kind);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '上传失败');
+      if (isCurrentUploadWorkflow(uploadAttempt)) {
+        const fallback = uploadAttempt.type === 'model' ? '3D 模型上传失败' : '参考图上传失败';
+        setError(err instanceof Error ? err.message : fallback);
+      }
     } finally {
-      setBusy('');
-      if (fileInput.current) fileInput.current.value = '';
+      finishMutation('create');
+      setCreateInFlight(false);
+    }
+  };
+
+  const beginImageUpload = (elementId?: string) => {
+    if (creatingRef.current || busyRef.current) return;
+    const target = elementId || ((kind === 'scene' || kind === 'prop') ? selectedId : '') || items[0]?.id;
+    setUploadTarget(target);
+    if (target) setSelectedId(target);
+    setError('');
+    imageInput.current?.click();
+  };
+
+  const beginModelUpload = (elementId?: string) => {
+    if (creatingRef.current || busyRef.current) return;
+    const target = elementId || selectedId || items[0]?.id;
+    setUploadTarget(target);
+    if (target) setSelectedId(target);
+    setError('');
+    modelInput.current?.click();
+  };
+
+  const uploadSelectedFile = async (type: PendingUpload['type'], file?: File) => {
+    if (!file || creatingRef.current || busyRef.current) return;
+    const workflowId = ++uploadWorkflow.current;
+    const target = uploadTarget;
+    const targetKind = kindRef.current;
+    const replacesTrackedUpload = Boolean(pendingUpload?.target);
+    const uploadAttempt: PendingUpload = {
+      type,
+      file,
+      slot: uploadSlot,
+      workflowId,
+      ...(target ? { target: { id: target, kind: targetKind } } : {}),
+    };
+    if (!target) {
+      setPendingUpload(uploadAttempt);
+      setShowForm(true);
+      setError('');
+      return;
+    }
+
+    if (replacesTrackedUpload) {
+      setPendingUpload(uploadAttempt);
+      setShowForm(true);
+    }
+
+    const busyKey = `${type === 'model' ? 'model' : 'upload'}:${target}`;
+    if (!startMutation(busyKey)) return;
+    setError('');
+    try {
+      await sendUpload(uploadAttempt, target, targetKind);
+      if (isCurrentUploadWorkflow(uploadAttempt)) {
+        if (replacesTrackedUpload) closeCreateForm();
+        await load(targetKind);
+      }
+    } catch (err) {
+      if (isCurrentUploadWorkflow(uploadAttempt)) {
+        const fallback = type === 'model' ? '3D 模型上传失败' : '上传失败';
+        setError(err instanceof Error ? err.message : fallback);
+      }
+    } finally {
+      finishMutation(busyKey);
+    }
+  };
+
+  /*
+   * Each chosen file owns an immutable workflow id and optional target. Older
+   * async completions may finish on the server, but can no longer rebuild UI
+   * state or pair a newer File with an older asset after tab switches.
+   */
+
+  const toggleCreateForm = () => {
+    if (creatingRef.current || busyRef.current) return;
+    setError('');
+    if (showForm) {
+      closeCreateForm();
+      return;
+    }
+    uploadWorkflow.current += 1;
+    setPendingUpload(null);
+    setShowForm(true);
+  };
+
+  const openCreateForm = () => {
+    if (creatingRef.current || busyRef.current) return;
+    setError('');
+    if (showForm) {
+      createForm.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      nameInput.current?.focus({ preventScroll: true });
+      return;
+    }
+    uploadWorkflow.current += 1;
+    setName('');
+    setDescription('');
+    setPendingUpload(null);
+    setShowForm(true);
+  };
+
+  const deleteElement = async (item: ElementItem) => {
+    if (creatingRef.current || busyRef.current) return;
+    const label = kindMeta[item.kind].label;
+    if (!window.confirm(`确定删除${label}资产“${item.name}”吗？关联的参考图与 3D 模型也会一并删除，此操作不可撤销。`)) return;
+    const targetKind = kindRef.current;
+    const busyKey = `delete:${item.id}`;
+    if (!startMutation(busyKey)) return;
+    setError('');
+    try {
+      await apiRequest(`/api/elements/${item.id}`, { method: 'DELETE' });
+      if (targetKind !== kindRef.current) return;
+      setItems(current => current.filter(entry => entry.id !== item.id));
+      setSelectedId(current => current === item.id ? '' : current);
+      setUploadTarget(current => current === item.id ? '' : current);
+      if (pendingUpload?.target?.id === item.id) closeCreateForm();
+      await load(targetKind);
+      if (targetKind === kindRef.current) {
+        setNotice(`已删除${label}资产“${item.name}”。`);
+        window.setTimeout(() => toolbarCreateButton.current?.focus(), 0);
+      }
+    } catch (err) {
+      if (targetKind === kindRef.current) setError(err instanceof Error ? err.message : `删除${label}资产失败`);
+    } finally {
+      finishMutation(busyKey);
+    }
+  };
+
+  const deleteReference = async (item: ElementItem) => {
+    if (creatingRef.current || busyRef.current) return;
+    const poster = findPoster(item);
+    if (!poster) return;
+    if (!window.confirm(`确定删除“${item.name}”的参考图吗？此操作不可撤销。`)) return;
+    const targetKind = kindRef.current;
+    const busyKey = `delete-file:${poster.id}`;
+    if (!startMutation(busyKey)) return;
+    setError('');
+    try {
+      await apiRequest(`/api/elements/${item.id}/files/${poster.id}`, { method: 'DELETE' });
+      if (targetKind !== kindRef.current) return;
+      setItems(current => current.map(entry => entry.id === item.id
+        ? { ...entry, files: entry.files.filter(file => file.id !== poster.id) }
+        : entry));
+      await load(targetKind);
+      if (targetKind === kindRef.current) {
+        setNotice(`已删除“${item.name}”的参考图。`);
+        window.setTimeout(() => toolbarImageButton.current?.focus(), 0);
+      }
+    } catch (err) {
+      if (targetKind === kindRef.current) setError(err instanceof Error ? err.message : '删除参考图失败');
+    } finally {
+      finishMutation(busyKey);
     }
   };
 
   const regenerate = async (item: ElementItem) => {
-    setBusy(`regenerate:${item.id}`);
+    if (creatingRef.current || busyRef.current) return;
+    const busyKey = `regenerate:${item.id}`;
+    if (!startMutation(busyKey)) return;
     setError('');
     try {
       await apiRequest(`/api/elements/${item.id}/regenerate`, {
@@ -147,12 +448,15 @@ export function ElementLibraryPage({ initialKind, onBack }: Props) {
     } catch (err) {
       setError(err instanceof Error ? err.message : '重新生成请求失败');
     } finally {
-      setBusy('');
+      finishMutation(busyKey);
     }
   };
 
+  const spatialKind = kind === 'scene' || kind === 'prop';
+  const retryUploadTarget = pendingUpload?.target?.kind === kind ? pendingUpload.target.id : '';
+
   return (
-    <main className="portal-page">
+    <main className="portal-page element-library-page">
       <header className="portal-header">
         <button type="button" className="back-button" onClick={onBack}><ArrowLeft size={18} /> 返回创作台</button>
         <div>
@@ -181,30 +485,105 @@ export function ElementLibraryPage({ initialKind, onBack }: Props) {
         <div>
           {kind === 'actor' && (
             <label className="slot-select">上传视图
-              <select value={uploadSlot} onChange={event => setUploadSlot(event.target.value)}>
+              <select value={uploadSlot} onChange={event => setUploadSlot(event.target.value)} disabled={Boolean(busy)}>
                 {actorSlots.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
             </label>
           )}
-          <button type="button" className="secondary-action" onClick={() => beginUpload()}><Upload size={16} /> 上传</button>
-          <button type="button" className="primary-action" onClick={() => setShowForm(value => !value)}><Plus size={16} /> 添加{kindMeta[kind].label}</button>
-          <input ref={fileInput} hidden type="file" accept=".png,.jpg,.jpeg,.webp" onChange={event => void uploadFile(event.target.files?.[0])} />
+          {spatialKind ? (
+            <>
+              <button ref={toolbarImageButton} type="button" className="secondary-action" onClick={() => beginImageUpload()} disabled={Boolean(busy)}><ImagePlus size={16} /> 上传参考图</button>
+              <button type="button" className="secondary-action model-upload-action" onClick={() => beginModelUpload()} disabled={Boolean(busy)}><Upload size={16} /> 上传 3D 模型</button>
+            </>
+          ) : (
+            <button ref={toolbarImageButton} type="button" className="secondary-action" onClick={() => beginImageUpload()} disabled={Boolean(busy)}><Upload size={16} /> 上传</button>
+          )}
+          <button ref={toolbarCreateButton} type="button" className="primary-action" onClick={toggleCreateForm} disabled={Boolean(busy)}><Plus size={16} /> 添加{kindMeta[kind].label}</button>
+          <input
+            ref={imageInput}
+            hidden
+            type="file"
+            accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
+            onChange={event => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              void uploadSelectedFile('image', file);
+            }}
+          />
+          <input
+            ref={modelInput}
+            hidden
+            type="file"
+            accept=".glb,model/gltf-binary"
+            onChange={event => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              void uploadSelectedFile('model', file);
+            }}
+          />
         </div>
       </section>
 
       {showForm && (
-        <section className="element-create-form">
-          <label>名称<input value={name} onChange={event => setName(event.target.value)} placeholder={`输入${kindMeta[kind].label}名称`} /></label>
-          <label>描述<textarea value={description} onChange={event => setDescription(event.target.value)} placeholder="身份、状态、材质、空间或效果约束" /></label>
-          <button type="button" className="primary-action" onClick={() => void addElement()} disabled={!name.trim() || busy === 'create'}>
-            {busy === 'create' ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} 保存元素
+        <section className="element-create-form" ref={createForm} aria-label={`添加${kindMeta[kind].label}`}>
+          {pendingUpload && (
+            <div className="pending-element-upload" role="status" aria-live="polite">
+              <span className={`pending-upload-icon ${pendingUpload.type}`} aria-hidden="true">
+                {pendingUpload.type === 'model' ? <Boxes size={18} /> : <ImagePlus size={18} />}
+              </span>
+              <span>
+                <strong>
+                  {retryUploadTarget
+                    ? `${kindMeta[kind].label}已创建，${pendingUpload.type === 'model' ? '3D 模型' : '参考图'}等待重试`
+                    : pendingUpload.type === 'model' ? '3D 模型已就绪' : '参考图已就绪'}
+                </strong>
+                <small>{pendingUpload.file.name} · {(pendingUpload.file.size / 1024).toFixed(1)} KB</small>
+              </span>
+              <button
+                type="button"
+                onClick={discardPendingUpload}
+                disabled={Boolean(busy)}
+              >{retryUploadTarget ? '放弃重试' : '移除'}</button>
+            </div>
+          )}
+          <label>名称<input ref={nameInput} value={name} onChange={event => setName(event.target.value)} placeholder={`输入${kindMeta[kind].label}名称`} disabled={Boolean(busy)} /></label>
+          <label>描述<textarea value={description} onChange={event => setDescription(event.target.value)} placeholder="身份、状态、材质、空间或效果约束" disabled={Boolean(busy)} /></label>
+          <button
+            type="button"
+            className="primary-action"
+            onClick={() => void (retryUploadTarget ? retryPendingFileUpload() : addElement())}
+            disabled={Boolean(busy) || (!retryUploadTarget && !name.trim())}
+          >
+            {creating ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}
+            {retryUploadTarget && pendingUpload
+              ? ` 重试上传${pendingUpload.type === 'model' ? ' 3D 模型' : '参考图'}`
+              : pendingUpload
+                ? ` 保存并上传${pendingUpload.type === 'model' ? ' 3D 模型' : '参考图'}`
+                : ' 保存元素'}
           </button>
         </section>
       )}
 
       {error && <div className="inline-error" role="alert">{error}</div>}
+      {notice && <div className="element-success" role="status" aria-live="polite">{notice}</div>}
       {loading ? (
         <div className="empty-library"><LoaderCircle className="spin" /> 正在加载{kindMeta[kind].label}库…</div>
+      ) : spatialKind ? (
+        <Suspense fallback={<div className="empty-library"><LoaderCircle className="spin" /> 正在启动 3D 资产工作台…</div>}>
+          <Element3DWorkspace
+            kind={kind}
+            items={items}
+            selectedId={selectedId}
+            busy={creating ? 'create' : busy}
+            onSelect={setSelectedId}
+            onCreate={openCreateForm}
+            onUploadModel={beginModelUpload}
+            onUploadPoster={beginImageUpload}
+            onRegenerate={item => { void regenerate(item); }}
+            onDelete={item => { void deleteElement(item); }}
+            onDeletePoster={item => { void deleteReference(item); }}
+          />
+        </Suspense>
       ) : items.length === 0 ? (
         <div className="empty-library"><ImagePlus size={44} /><strong>还没有{kindMeta[kind].label}元素</strong><span>点击“添加{kindMeta[kind].label}”建立版本化资产，再上传参考图。</span></div>
       ) : (
@@ -212,7 +591,7 @@ export function ElementLibraryPage({ initialKind, onBack }: Props) {
           {items.map(item => (
             <article className="element-card" key={item.id}>
               <div className="element-preview">
-                {item.files[0] ? <img src={`${API_BASE}${item.files[0].url}`} alt={`${item.name} ${item.files[0].slot}`} /> : <Camera size={34} />}
+                {findPoster(item)?.url ? <img src={`${API_BASE}${findPoster(item)?.url}`} alt={`${item.name} 参考图`} /> : <Camera size={34} />}
                 <span className={`status-badge ${item.status}`}>{item.status === 'ready' ? '已就绪' : '待完善'}</span>
               </div>
               <div className="element-card-body">
@@ -220,8 +599,34 @@ export function ElementLibraryPage({ initialKind, onBack }: Props) {
                 <p>{item.description || kindMeta[kind].hint}</p>
                 {kind === 'actor' && <small>五视图 {item.files.length}/5</small>}
                 <div className="element-actions">
-                  <button type="button" onClick={() => beginUpload(item.id)}><Upload size={14} /> 添加上传</button>
-                  <button type="button" onClick={() => void regenerate(item)} disabled={busy === `regenerate:${item.id}`}><RefreshCw size={14} /> 重新生成</button>
+                  <button type="button" onClick={() => beginImageUpload(item.id)} disabled={creating || Boolean(busy)}><Upload size={14} /> 添加上传</button>
+                  <button type="button" onClick={() => void regenerate(item)} disabled={creating || Boolean(busy)}><RefreshCw size={14} /> 重新生成</button>
+                  {findPoster(item) && (
+                    <button
+                      type="button"
+                      className="element-delete-action"
+                      onClick={() => void deleteReference(item)}
+                      disabled={creating || Boolean(busy)}
+                      aria-label={busy === `delete-file:${findPoster(item)?.id}`
+                        ? `正在删除“${item.name}”的参考图`
+                        : `删除“${item.name}”的参考图`}
+                    >
+                      {busy === `delete-file:${findPoster(item)?.id}` ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}
+                      {busy === `delete-file:${findPoster(item)?.id}` ? '正在删除参考图' : '删除参考图'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="element-delete-action"
+                    onClick={() => void deleteElement(item)}
+                    disabled={creating || Boolean(busy)}
+                    aria-label={busy === `delete:${item.id}`
+                      ? `正在删除${kindMeta[item.kind].label}资产“${item.name}”`
+                      : `删除${kindMeta[item.kind].label}资产“${item.name}”`}
+                  >
+                    {busy === `delete:${item.id}` ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}
+                    {busy === `delete:${item.id}` ? '正在删除资产' : '删除资产'}
+                  </button>
                 </div>
               </div>
             </article>

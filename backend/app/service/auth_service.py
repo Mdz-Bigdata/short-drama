@@ -31,6 +31,27 @@ def _session_secret() -> bytes:
 def _code_digest(login_id: str, code: str) -> str:
     return hmac.new(_session_secret(), f"{login_id}\0{code}".encode("utf-8"), hashlib.sha256).hexdigest()
 
+
+def verify_session_token(token: str) -> Optional[str]:
+    """Validate a signed session cookie without constructing a repository."""
+    if not token:
+        return None
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        user_id, issued_at_text, signature = parts
+        issued_at = int(issued_at_text)
+        ttl = max(300, min(2_592_000, int(os.getenv("AUTH_SESSION_TTL_SECONDS", "86400"))))
+        now = int(time.time())
+        if issued_at > now + 60 or now - issued_at > ttl:
+            return None
+        payload = f"{user_id}.{issued_at_text}"
+        expected_sig = hmac.new(_session_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        return user_id if hmac.compare_digest(signature, expected_sig) else None
+    except (ValueError, TypeError, RuntimeError):
+        return None
+
 class AuthService:
     """
     用户登录注册与身份签名业务服务类 (Service)
@@ -51,24 +72,7 @@ class AuthService:
         """
         验证 Token 签名是否合法，如果合法返回解析出的 user_id，否则返回 None
         """
-        if not token:
-            return None
-        try:
-            parts = token.split(".")
-            if len(parts) != 3:
-                return None
-            user_id, issued_at_text, signature = parts
-            issued_at = int(issued_at_text)
-            ttl = max(300, min(2_592_000, int(os.getenv("AUTH_SESSION_TTL_SECONDS", "86400"))))
-            now = int(time.time())
-            if issued_at > now + 60 or now - issued_at > ttl:
-                return None
-            payload = f"{user_id}.{issued_at_text}"
-            expected_sig = hmac.new(_session_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
-            if hmac.compare_digest(signature, expected_sig):
-                return user_id
-        except (ValueError, TypeError, RuntimeError):
-            return None
+        return verify_session_token(token)
 
     def _send_ali_sms(self, phone: str, code: str) -> bool:
         """

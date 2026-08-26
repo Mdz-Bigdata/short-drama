@@ -1,0 +1,46 @@
+.agent-stage-tabs {
+  --agent-stage-tab-background: rgba(255, 255, 255, 0.04);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+}
+
+.agent-stage-tab,
+.agent-stage-tab:hover,
+.agent-stage-tab.is-active {
+  min-height: 26px;
+  padding: 4px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: var(--agent-stage-tab-background);
+  font: inherit;
+  font-size: 0.7rem;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.agent-stage-tab svg { width: 10px; height: 10px; }
+.agent-stage-tab:hover { color: #ffffff; border-color: rgba(255, 255, 255, 0.2); }
+.agent-stage-tab.is-active {
+  color: var(--neon-cyan);
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.2);
+}
+.agent-stage-tab:focus-visible { outline: 3px solid rgba(0, 242, 254, 0.22); outline-offset: 2px; }
+
+@media (max-width: 900px) {
+  .agent-stage-tabs {
+    max-width: 100%;
+    padding-bottom: 4px;
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+}

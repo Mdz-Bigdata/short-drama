@@ -1,0 +1,988 @@
+.museum-experience {
+  --museum-accent: #5a7a4a;
+  --museum-bg: #12110f;
+  --museum-panel: rgba(31, 29, 25, 0.92);
+  --museum-panel-soft: rgba(42, 39, 33, 0.72);
+  --museum-line: rgba(215, 191, 148, 0.18);
+  --museum-line-strong: rgba(215, 191, 148, 0.34);
+  --museum-ink: #eee8dc;
+  --museum-muted: #a49d90;
+  --museum-gold: #c9a56a;
+  position: relative;
+  isolation: isolate;
+  min-height: 760px;
+  overflow: hidden;
+  border: 1px solid var(--museum-line);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 52% 26%, color-mix(in srgb, var(--museum-accent) 26%, transparent), transparent 34%),
+    linear-gradient(145deg, #191714 0%, var(--museum-bg) 48%, #0d0c0b 100%);
+  color: var(--museum-ink);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.26);
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.museum-experience::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  opacity: 0.34;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: linear-gradient(to bottom, black, transparent 82%);
+}
+
+.museum-experience *,
+.museum-experience *::before,
+.museum-experience *::after {
+  box-sizing: border-box;
+}
+
+.museum-experience button,
+.museum-experience a {
+  font: inherit;
+}
+
+.museum-experience button {
+  color: inherit;
+}
+
+.museum-experience button:focus-visible,
+.museum-experience a:focus-visible {
+  outline: 2px solid var(--museum-gold);
+  outline-offset: 3px;
+}
+
+.museum-experience .museum-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 92px;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--museum-line);
+  background: rgba(14, 13, 11, 0.62);
+  backdrop-filter: blur(18px);
+}
+
+.museum-experience .museum-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.museum-experience .museum-brand img {
+  width: 54px;
+  height: 54px;
+  flex: 0 0 auto;
+  border: 1px solid var(--museum-line-strong);
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow: 0 0 34px color-mix(in srgb, var(--museum-accent) 48%, transparent);
+}
+
+.museum-experience .museum-brand p,
+.museum-experience .museum-brand h1 {
+  margin: 0;
+}
+
+.museum-experience .museum-brand p {
+  margin-bottom: 4px;
+  color: var(--museum-gold);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+}
+
+.museum-experience .museum-brand h1 {
+  overflow: hidden;
+  color: #f4efe7;
+  font-family: "Songti SC", "STSong", Georgia, serif;
+  font-size: clamp(19px, 2vw, 27px);
+  font-weight: 560;
+  letter-spacing: 0.05em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.museum-experience .museum-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding-left: 20px;
+  border-left: 1px solid var(--museum-line);
+}
+
+.museum-experience .museum-header-meta strong {
+  color: var(--museum-gold);
+  font-family: Georgia, serif;
+  font-size: 34px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.museum-experience .museum-header-meta span {
+  color: var(--museum-muted);
+  font-size: 11px;
+  line-height: 1.55;
+  letter-spacing: 0.06em;
+}
+
+.museum-experience .museum-header-meta a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 4px;
+  color: var(--museum-gold);
+  font-size: 9px;
+  text-decoration: none;
+}
+
+.museum-experience .museum-header-meta a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.museum-experience .museum-layout {
+  display: grid;
+  grid-template-columns: 286px minmax(430px, 1fr) 338px;
+  gap: 16px;
+  padding: 16px;
+}
+
+.museum-experience .museum-left-rail,
+.museum-experience .museum-insights {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.museum-experience .museum-section-kicker {
+  display: block;
+  color: var(--museum-gold);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.museum-experience .museum-catalog,
+.museum-experience .museum-plaque,
+.museum-experience .museum-panel,
+.museum-experience .museum-stage {
+  border: 1px solid var(--museum-line);
+  border-radius: 16px;
+  background: var(--museum-panel);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  backdrop-filter: blur(18px);
+}
+
+.museum-experience .museum-catalog {
+  overflow: hidden;
+  padding: 15px 10px 10px;
+}
+
+.museum-experience .museum-catalog > .museum-section-kicker {
+  padding: 0 8px 12px;
+}
+
+.museum-experience .museum-catalog > button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 23px 43px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 61px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+}
+
+.museum-experience .museum-catalog > button:hover {
+  border-color: var(--museum-line);
+  background: rgba(255, 255, 255, 0.035);
+  transform: translateX(2px);
+}
+
+.museum-experience .museum-catalog > button.is-active {
+  border-color: color-mix(in srgb, var(--museum-accent) 70%, var(--museum-line));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--museum-accent) 24%, transparent), transparent);
+}
+
+.museum-experience .museum-catalog-index {
+  color: #736d63;
+  font-family: Georgia, serif;
+  font-size: 10px;
+}
+
+.museum-experience .museum-catalog > button.is-active .museum-catalog-index {
+  color: var(--museum-gold);
+}
+
+.museum-experience .museum-thumbnail {
+  display: block;
+  position: relative;
+  width: 43px;
+  height: 43px;
+  overflow: hidden;
+  border: 1px solid var(--museum-line);
+  border-radius: 9px;
+  background: #292620;
+}
+
+.museum-experience .museum-thumbnail img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  filter: saturate(0.78) contrast(1.04);
+  transition: filter 180ms ease, transform 260ms ease;
+}
+
+.museum-experience button:hover .museum-thumbnail img,
+.museum-experience button.is-active .museum-thumbnail img {
+  filter: saturate(1) contrast(1.08);
+  transform: scale(1.05);
+}
+
+.museum-experience .museum-catalog-copy {
+  display: block;
+  min-width: 0;
+}
+
+.museum-experience .museum-catalog-copy strong,
+.museum-experience .museum-catalog-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.museum-experience .museum-catalog-copy strong {
+  margin-bottom: 4px;
+  color: #eee9df;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.museum-experience .museum-catalog-copy small {
+  color: var(--museum-muted);
+  font-size: 10px;
+}
+
+.museum-experience .museum-era {
+  padding: 4px 6px;
+  border: 1px solid var(--museum-line);
+  border-radius: 999px;
+  color: #b9b1a4;
+  font-size: 9px;
+}
+
+.museum-experience .museum-plaque {
+  position: relative;
+  overflow: hidden;
+  padding: 18px;
+}
+
+.museum-experience .museum-plaque::after {
+  position: absolute;
+  right: -26px;
+  bottom: -42px;
+  width: 130px;
+  height: 130px;
+  border: 1px solid color-mix(in srgb, var(--museum-accent) 50%, transparent);
+  border-radius: 50%;
+  content: "";
+  opacity: 0.32;
+}
+
+.museum-experience .museum-plaque h2 {
+  margin: 13px 0 4px;
+  color: #f6f0e6;
+  font-family: "Songti SC", "STSong", Georgia, serif;
+  font-size: 26px;
+  font-weight: 560;
+}
+
+.museum-experience .museum-plaque-type {
+  margin: 0 0 14px;
+  color: color-mix(in srgb, var(--museum-accent) 72%, #e8d7b9);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.museum-experience .museum-plaque-intro {
+  position: relative;
+  z-index: 1;
+  margin: 0 0 15px;
+  color: #c4bdb1;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 13px;
+  line-height: 1.85;
+}
+
+.museum-experience .museum-plaque dl,
+.museum-experience .museum-plaque dd {
+  margin: 0;
+}
+
+.museum-experience .museum-plaque dl {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+}
+
+.museum-experience .museum-plaque dl > div {
+  display: grid;
+  grid-template-columns: 47px minmax(0, 1fr);
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--museum-line);
+}
+
+.museum-experience .museum-plaque dt {
+  color: #777065;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.museum-experience .museum-plaque dd {
+  color: #bdb5a9;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.museum-experience .museum-plaque dd em {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 1px 5px;
+  border: 1px solid rgba(186, 103, 75, 0.42);
+  border-radius: 999px;
+  color: #d68b72;
+  font-size: 9px;
+  font-style: normal;
+}
+
+.museum-experience .museum-stage {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  padding: 12px;
+  background:
+    linear-gradient(180deg, rgba(36, 33, 28, 0.94), rgba(18, 17, 15, 0.96));
+}
+
+.museum-experience .museum-stage-heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 49px;
+  padding: 2px 8px 11px;
+}
+
+.museum-experience .museum-stage-heading span {
+  padding: 5px 8px;
+  border: 1px solid var(--museum-line-strong);
+  border-radius: 999px;
+  color: var(--museum-gold);
+  font-size: 10px;
+}
+
+.museum-experience .museum-stage-heading strong {
+  overflow: hidden;
+  color: #f3eee5;
+  font-family: "Songti SC", "STSong", Georgia, serif;
+  font-size: 18px;
+  font-weight: 560;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.museum-experience .museum-stage-heading small {
+  color: #827b70;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.museum-experience .museum-canvas-shell {
+  position: relative;
+  height: clamp(530px, 63vh, 760px);
+  min-height: 480px;
+  overflow: hidden;
+  border: 1px solid var(--museum-line);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 50% 43%, color-mix(in srgb, var(--museum-accent) 17%, #24211d), #12110f 67%);
+}
+
+.museum-experience .museum-canvas-shell::before,
+.museum-experience .museum-canvas-shell::after {
+  position: absolute;
+  z-index: 2;
+  width: 42px;
+  height: 42px;
+  border-color: rgba(213, 182, 128, 0.38);
+  pointer-events: none;
+  content: "";
+}
+
+.museum-experience .museum-canvas-shell::before {
+  top: 12px;
+  left: 12px;
+  border-top: 1px solid;
+  border-left: 1px solid;
+}
+
+.museum-experience .museum-canvas-shell::after {
+  right: 12px;
+  bottom: 12px;
+  border-right: 1px solid;
+  border-bottom: 1px solid;
+}
+
+.museum-experience .museum-canvas,
+.museum-experience .museum-canvas canvas {
+  width: 100% !important;
+  height: 100% !important;
+  touch-action: none;
+}
+
+.museum-experience .museum-stage-number {
+  position: absolute;
+  z-index: 3;
+  right: 18px;
+  bottom: 16px;
+  color: rgba(224, 211, 187, 0.46);
+  font-family: Georgia, serif;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+}
+
+.museum-experience .museum-stage-fallback {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #171512;
+}
+
+.museum-experience .museum-stage-fallback > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.26;
+  filter: grayscale(0.25) blur(2px) saturate(0.7);
+  transform: scale(1.04);
+}
+
+.museum-experience .museum-stage-fallback > div {
+  position: relative;
+  z-index: 1;
+  width: min(360px, calc(100% - 44px));
+  padding: 24px;
+  border: 1px solid var(--museum-line-strong);
+  border-radius: 14px;
+  background: rgba(17, 15, 13, 0.82);
+  text-align: center;
+  backdrop-filter: blur(12px);
+}
+
+.museum-experience .museum-stage-fallback strong {
+  display: block;
+  margin: 10px 0 7px;
+  color: #f0eadf;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 17px;
+}
+
+.museum-experience .museum-stage-fallback p {
+  margin: 0;
+  color: var(--museum-muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.museum-experience .museum-loader {
+  display: inline-block;
+  width: 29px;
+  height: 29px;
+  border: 2px solid rgba(201, 165, 106, 0.18);
+  border-top-color: var(--museum-gold);
+  border-radius: 50%;
+  animation: museum-experience-spin 900ms linear infinite;
+}
+
+.museum-experience .museum-stage-tools {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 4px 4px;
+}
+
+.museum-experience .museum-stage-tools button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--museum-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.025);
+  color: #aaa297;
+  cursor: pointer;
+  font-size: 10px;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.museum-experience .museum-stage-tools button:hover:not(:disabled),
+.museum-experience .museum-stage-tools button.is-active {
+  border-color: var(--museum-line-strong);
+  background: rgba(201, 165, 106, 0.08);
+  color: var(--museum-gold);
+}
+
+.museum-experience .museum-stage-tools button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.museum-experience .museum-stage-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: 8px 0 0;
+  color: #716b62;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+.museum-experience .museum-insights {
+  max-height: calc(clamp(530px, 63vh, 760px) + 116px);
+  overflow: auto;
+  scrollbar-color: rgba(201, 165, 106, 0.34) transparent;
+  scrollbar-width: thin;
+}
+
+.museum-experience .museum-panel {
+  flex: 0 0 auto;
+  padding: 16px;
+}
+
+.museum-experience .museum-detail-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.museum-experience .museum-detail-panel > header > button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--museum-line);
+  border-radius: 50%;
+  background: transparent;
+  color: #827b70;
+  cursor: pointer;
+}
+
+.museum-experience .museum-detail-panel > header > button.is-favorite {
+  border-color: rgba(198, 109, 92, 0.45);
+  color: #d17f6d;
+}
+
+.museum-experience .museum-detail-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 15px 0 13px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.museum-experience .museum-detail-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-height: 31px;
+  padding: 0 9px;
+  border: 1px solid var(--museum-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.02);
+  color: #9d968b;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.museum-experience .museum-detail-tabs button.is-active {
+  border-color: color-mix(in srgb, var(--museum-accent) 64%, var(--museum-line));
+  background: color-mix(in srgb, var(--museum-accent) 18%, transparent);
+  color: #e8e0d4;
+}
+
+.museum-experience .museum-detail-tabs i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: 0 0 9px currentColor;
+}
+
+.museum-experience .museum-detail-copy {
+  position: relative;
+  overflow: hidden;
+  padding: 16px;
+  border: 1px solid var(--museum-line);
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--museum-accent) 15%, transparent), transparent 58%),
+    rgba(255, 255, 255, 0.018);
+}
+
+.museum-experience .museum-detail-copy span {
+  color: var(--museum-gold);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.museum-experience .museum-detail-copy h3 {
+  margin: 5px 0 9px;
+  color: #efe9de;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 19px;
+  font-weight: 560;
+}
+
+.museum-experience .museum-detail-copy p,
+.museum-experience .museum-story-panel p,
+.museum-experience .museum-question p,
+.museum-experience .museum-source-panel p {
+  color: #aaa297;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 11px;
+  line-height: 1.8;
+}
+
+.museum-experience .museum-detail-copy p {
+  margin: 0;
+}
+
+.museum-experience .museum-story-panel p {
+  margin: 13px 0 0;
+  padding-left: 12px;
+  border-left: 1px solid color-mix(in srgb, var(--museum-accent) 62%, var(--museum-line));
+}
+
+.museum-experience .museum-question {
+  border-bottom: 1px solid var(--museum-line);
+}
+
+.museum-experience .museum-question:last-child {
+  border-bottom: 0;
+}
+
+.museum-experience .museum-question > button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border: 0;
+  background: transparent;
+  color: #c6beb2;
+  cursor: pointer;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.museum-experience .museum-question > button svg {
+  flex: 0 0 auto;
+  color: #736d63;
+  transition: transform 180ms ease;
+}
+
+.museum-experience .museum-question.is-open > button svg {
+  color: var(--museum-gold);
+  transform: rotate(180deg);
+}
+
+.museum-experience .museum-question p {
+  margin: -2px 0 13px;
+  padding: 0 8px 0 12px;
+  border-left: 1px solid var(--museum-line-strong);
+}
+
+.museum-experience .museum-source-panel p {
+  margin: 12px 0 9px;
+}
+
+.museum-experience .museum-source-panel a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--museum-gold);
+  font-size: 10px;
+  text-decoration: none;
+}
+
+.museum-experience .museum-source-panel a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.museum-experience .museum-mobile-switcher {
+  display: none;
+}
+
+.museum-experience .museum-toast {
+  position: fixed;
+  z-index: 100;
+  bottom: 24px;
+  left: 50%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: transparent;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.museum-experience .museum-toast:not(:empty) {
+  padding: 10px 16px;
+  border: 1px solid var(--museum-line-strong);
+  background: rgba(24, 22, 19, 0.95);
+  color: #e9e2d6;
+  box-shadow: 0 14px 42px rgba(0, 0, 0, 0.34);
+  font-size: 11px;
+}
+
+@keyframes museum-experience-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 1400px) {
+  .museum-experience .museum-layout {
+    grid-template-columns: 240px minmax(390px, 1fr) 292px;
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .museum-experience .museum-catalog > button {
+    grid-template-columns: 20px 39px minmax(0, 1fr);
+  }
+
+  .museum-experience .museum-thumbnail {
+    width: 39px;
+    height: 39px;
+  }
+
+  .museum-experience .museum-era {
+    display: none;
+  }
+}
+
+@media (max-width: 1120px) {
+  .museum-experience .museum-layout {
+    grid-template-columns: 236px minmax(0, 1fr);
+  }
+
+  .museum-experience .museum-left-rail {
+    grid-row: span 2;
+  }
+
+  .museum-experience .museum-insights {
+    display: grid;
+    grid-column: 2;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: none;
+    overflow: visible;
+  }
+
+  .museum-experience .museum-detail-panel,
+  .museum-experience .museum-story-panel {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 760px) {
+  .museum-experience {
+    min-height: 620px;
+    border-radius: 18px;
+  }
+
+  .museum-experience .museum-header {
+    min-height: 76px;
+    padding: 12px 14px;
+  }
+
+  .museum-experience .museum-brand {
+    gap: 10px;
+  }
+
+  .museum-experience .museum-brand img {
+    width: 42px;
+    height: 42px;
+  }
+
+  .museum-experience .museum-brand p {
+    font-size: 8px;
+    letter-spacing: 0.13em;
+  }
+
+  .museum-experience .museum-brand h1 {
+    max-width: 68vw;
+    font-size: 16px;
+  }
+
+  .museum-experience .museum-header-meta {
+    display: none;
+  }
+
+  .museum-experience .museum-mobile-switcher {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 11px 12px 3px;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+
+  .museum-experience .museum-mobile-switcher > button {
+    display: grid;
+    min-width: 89px;
+    grid-template-columns: 32px minmax(0, 1fr);
+    align-items: center;
+    gap: 0 7px;
+    padding: 6px;
+    border: 1px solid var(--museum-line);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.018);
+    cursor: pointer;
+    scroll-snap-align: start;
+    text-align: left;
+  }
+
+  .museum-experience .museum-mobile-switcher > button.is-active {
+    border-color: color-mix(in srgb, var(--museum-accent) 70%, var(--museum-line));
+    background: color-mix(in srgb, var(--museum-accent) 16%, transparent);
+  }
+
+  .museum-experience .museum-mobile-switcher .museum-thumbnail {
+    width: 32px;
+    height: 32px;
+    grid-row: span 2;
+  }
+
+  .museum-experience .museum-mobile-switcher strong,
+  .museum-experience .museum-mobile-switcher small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .museum-experience .museum-mobile-switcher strong {
+    font-size: 10px;
+  }
+
+  .museum-experience .museum-mobile-switcher small {
+    color: var(--museum-muted);
+    font-size: 8px;
+  }
+
+  .museum-experience .museum-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .museum-experience .museum-left-rail {
+    display: contents;
+  }
+
+  .museum-experience .museum-catalog {
+    display: none;
+  }
+
+  .museum-experience .museum-stage {
+    order: 1;
+    padding: 8px;
+  }
+
+  .museum-experience .museum-plaque {
+    order: 2;
+  }
+
+  .museum-experience .museum-insights {
+    display: flex;
+    order: 3;
+  }
+
+  .museum-experience .museum-stage-heading {
+    grid-template-columns: auto minmax(0, 1fr);
+    min-height: 43px;
+  }
+
+  .museum-experience .museum-stage-heading small {
+    display: none;
+  }
+
+  .museum-experience .museum-canvas-shell {
+    height: min(64vh, 500px);
+    min-height: 390px;
+  }
+
+  .museum-experience .museum-stage-tools {
+    gap: 5px;
+  }
+
+  .museum-experience .museum-stage-tools button {
+    min-height: 36px;
+    padding: 0 9px;
+    font-size: 9px;
+  }
+
+  .museum-experience .museum-stage-hint {
+    line-height: 1.5;
+    text-align: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .museum-experience *,
+  .museum-experience *::before,
+  .museum-experience *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

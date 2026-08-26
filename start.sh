@@ -16,6 +16,15 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # 无颜色
 
+# 子服务日志同时打印到当前终端并写入日志文件；前缀便于并发输出时快速定位来源。
+stream_log() {
+    local prefix="$1"
+    local log_file="$2"
+    while IFS= read -r line; do
+        printf '%s %s\n' "$prefix" "$line"
+    done | tee -a "$log_file"
+}
+
 echo -e "${CYAN}==================================================================${NC}"
 echo -e "${CYAN}        AI SHORT DRAMA 8-AGENT FACTORY - 一键启动管理引擎          ${NC}"
 echo -e "${CYAN}==================================================================${NC}"
@@ -30,8 +39,9 @@ echo -e "${YELLOW}[2/4] 启动 FastAPI 后端服务...${NC}"
 if [ -d "$BACKEND_DIR/.venv" ]; then
     cd "$BACKEND_DIR"
     source .venv/bin/activate
-    # 后端服务挂载在后台，并将日志写出到 backend.log
-    python main.py > "$WORKSPACE_DIR/backend.log" 2>&1 &
+    # Python 使用无缓冲模式，任务阶段、模型调用和异常日志会实时双写终端与 backend.log。
+    : > "$WORKSPACE_DIR/backend.log"
+    python -u main.py > >(stream_log "[BACKEND]" "$WORKSPACE_DIR/backend.log") 2>&1 &
     BACKEND_PID=$!
     echo -e "${GREEN}✔ 后端服务已在后台启动 (PID: $BACKEND_PID)。日志位置: backend.log${NC}"
 else
@@ -43,8 +53,9 @@ fi
 echo -e "${YELLOW}[3/4] 启动 Vite 前端服务...${NC}"
 if [ -d "$FRONTEND_DIR/node_modules" ]; then
     cd "$FRONTEND_DIR"
-    # 前端服务挂载在后台，并将日志写出到 frontend.log
-    npm run dev > "$WORKSPACE_DIR/frontend.log" 2>&1 &
+    # Vite 日志同样实时双写，并使用独立前缀避免与后端输出混淆。
+    : > "$WORKSPACE_DIR/frontend.log"
+    npm run dev > >(stream_log "[FRONTEND]" "$WORKSPACE_DIR/frontend.log") 2>&1 &
     FRONTEND_PID=$!
     echo -e "${GREEN}✔ 前端服务已在后台启动 (PID: $FRONTEND_PID)。日志位置: frontend.log${NC}"
 else

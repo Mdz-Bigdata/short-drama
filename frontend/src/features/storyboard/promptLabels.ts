@@ -1,0 +1,35 @@
+const LABELS: Record<string, string> = {
+  project_name: '项目名称', episode: '集数', scene_number: '场次', shot_number: '镜头编号',
+  duration_seconds: '总时长', aspect_ratio: '画面比例', fps: '目标帧率', grid_spec: '宫格规格',
+  grid_capacity: '宫格容量', max_total_beats: '最大拍点数', name: '名称', identity: '身份',
+  age_impression: '年龄感', appearance: '外貌', costume: '服装', accessories: '配饰',
+  physical_state: '身体状态', psychological_state: '心理状态', time: '时间', location: '地点',
+  weather: '天气', spatial_structure: '空间结构', props: '关键道具', environmental_sound: '环境声音',
+  kind: '类型', speaker: '说话者', exact_text: '精确原文', start_seconds: '开始时间',
+  keyframe_seconds: '关键帧时间', end_seconds: '结束时间', visual_style: '画面风格',
+  era_and_region: '时代与地域', art_direction: '美术方向', rendering_texture: '渲染质感',
+  authenticity: '真实性要求', overall_atmosphere: '总体氛围', exclusions: '通用排除项',
+  face_anchor: '面部识别锚点', body_anchor: '体态锚点', costume_anchor: '服装锚点',
+  accessory_anchor: '配饰锚点', wound_and_stain_anchor: '伤痕与污渍', scene_structure: '场景结构',
+  prop_positions: '道具位置', key_light_direction: '主光方向', camera_axis: '摄影机轴线',
+  screen_direction: '屏幕方向', spatial_orientation: '空间方位', base_content: '基础画面内容',
+  composition: '基础构图', shot_size: '基础景别', lens: '镜头焦段', camera_angle: '摄影机角度',
+  camera_height: '摄影机高度', depth_of_field: '景深', spatial_layers: '空间层次', primary_color: '主色',
+  secondary_color: '辅助色', accent_color: '点缀色', color_temperature: '色温', saturation: '饱和度',
+  brightness: '明度', contrast: '对比度', blacks_and_highlights: '黑位与高光', skin_tone_strategy: '肤色策略',
+  grading_reference: '参考调色方向', start_state: '开始状态', change_reason: '变化原因',
+  peak_state: '峰值状态', end_state: '结束状态', subject_direction: '主体运动方向',
+  subject_trajectory: '主体运动轨迹', force_source: '主要力量来源', speed_curve: '速度曲线',
+  center_of_gravity: '身体重心变化', visual_flow: '画面视觉动线', secondary_motion: '次级运动',
+  inertia_and_follow_through: '惯性与后续反应', motion_blur: '动态模糊', stable_regions: '稳定区域',
+  movement_type: '运镜类型', start_position: '摄影机起始位置', end_position: '摄影机结束位置',
+  path: '摄影机路径', direction: '运镜方向', subject_following: '主体跟随方式',
+  composition_change: '构图变化', focus_change: '焦点变化', stability: '镜头稳定性',
+  forbidden_behaviors: '禁止的摄影机行为', adjacent_shot: '相邻镜头', transition_type: '转场类型',
+  visual_handoff: '视觉承接点', audio_handoff: '声音承接点', included_in_shot_duration: '计入镜头时长',
+  initial_state: '初始状态', initial_position: '初始位置', allowed_motion: '允许运动',
+};
+
+export function promptLabel(key: string) {
+  return LABELS[key] || key.replaceAll('_', ' ');
+}

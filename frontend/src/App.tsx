@@ -1,18 +1,26 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Film, Play, Pause, ChevronRight, 
   UserCheck, ClipboardList, Video, Music, Share2, 
   Layers, HardDrive, Cpu, Monitor, Sliders, 
   Send, X, ArrowUp, Folder, ArrowRight, User,
-  Upload
+  Upload, Bot
 } from 'lucide-react';
-import { type TaskConfig, type TaskResponse } from './types';
+import { normalizeVideoReferenceMode, type TaskConfig, type TaskResponse, type StageProgress } from './types';
 import { CapabilityCenter } from './features/platform/CapabilityCenter';
 import { ElementLibraryPage, type ElementKind } from './features/elements/ElementLibraryPage';
 import { UserCenterPage } from './features/account/UserCenterPage';
 import { BillingCenterPage } from './features/billing/BillingCenterPage';
 import { ModelConfigurationCenter, type ModelCategory } from './features/models/ModelConfigurationCenter';
 import { ProjectSkillManager } from './features/skills/ProjectSkillManager';
+import { StoryboardWorkspace, type StoryboardShot } from './features/storyboard/StoryboardWorkspace';
+import { AgentStageTabs } from './features/workbench/AgentStageTabs';
+import { getScriptDisplayName } from './features/workbench/scriptTitle';
+import { VideoReferenceModeSelect } from './features/workbench/VideoReferenceModeSelect';
+import { NOVARA_AGENT_NAME } from './features/workbench/agentBrand';
+import { DirectorPlanningPage } from './features/director/DirectorPlanningPage';
+import { WriterAgentPageContainer } from './features/writer/WriterAgentPageContainer';
+import { CharacterDesignerPageContainer } from './features/character/CharacterDesignerPageContainer';
 import { API_BASE } from './api/client';
 
 // 定义 Agent 节点常数
@@ -72,6 +80,310 @@ interface CharacterCard {
   desc?: string;
   sheet?: string;
   views?: Array<{ view: string; image_url: string }>;
+}
+
+// 阶段3角色 DNA 锁定包结构化产物 (assets["3_dna"])：项目基准 + 假设 + 风险 + 角色档案/状态卡/视图锚点
+interface DnaColor { name?: string; hex?: string }
+interface DnaAnchor { view?: string; detail?: string }
+interface DnaState {
+  state_id?: string; title?: string; dna?: string; hair?: string; body?: string;
+  clothing?: string; accessories?: string; style?: string; anchors?: DnaAnchor[];
+}
+interface DnaCharacter {
+  character_id?: string; name?: string; identity?: string; voice_id?: string;
+  colors?: DnaColor[]; states?: DnaState[];
+}
+interface DnaRisk { item?: string; status?: string; note?: string }
+interface CharacterDnaBreakdown {
+  project?: { genre?: string; platform?: string; delivery_spec?: string; constraints?: string };
+  assumptions?: string[];
+  risks?: DnaRisk[];
+  characters?: DnaCharacter[];
+}
+
+const DNA_FIELD_LABELS: Array<[keyof DnaState, string]> = [
+  ['dna', '身份 DNA'], ['hair', '发型'], ['body', '体型'], ['clothing', '服装'], ['accessories', '配饰'], ['style', '视觉风格'],
+];
+
+// 单个角色资产卡：五视图 + 主色/声音 + 状态卡切换 + 视图锚点表
+function DnaCharacterCard({ dna, card }: { dna: DnaCharacter; card?: CharacterCard }) {
+  const states = Array.isArray(dna.states) ? dna.states : [];
+  const [stateIdx, setStateIdx] = useState(0);
+  const active = states[Math.min(stateIdx, Math.max(states.length - 1, 0))];
+  const colors = Array.isArray(dna.colors) ? dna.colors.filter(c => c && c.hex) : [];
+  return (
+    <div className="glass-panel" style={{ background: '#05080c', border: '1px solid rgba(0, 242, 254, 0.18)', borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      {/* 角色头部：姓名 / UID / 身份 / 声音 / 主色 */}
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-light)' }}>{dna.name}</span>
+          {dna.character_id && (
+            <span style={{ fontSize: '0.64rem', padding: '1px 7px', borderRadius: '4px', background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', border: '1px solid var(--border-color)', fontFamily: 'monospace' }}>{dna.character_id}</span>
+          )}
+          {card?.role && (
+            <span style={{ fontSize: '0.68rem', padding: '1px 7px', borderRadius: '999px', background: 'rgba(0, 242, 254, 0.14)', color: 'var(--neon-cyan)', border: '1px solid rgba(0, 242, 254, 0.3)' }}>{card.role}</span>
+          )}
+          {dna.voice_id && (
+            <span style={{ fontSize: '0.66rem', padding: '1px 8px', borderRadius: '999px', background: 'rgba(167, 139, 250, 0.12)', color: '#a78bfa', border: '1px solid rgba(167, 139, 250, 0.35)' }}>🎤 {dna.voice_id}</span>
+          )}
+        </div>
+        {dna.identity && (
+          <div style={{ marginTop: '5px', fontSize: '0.76rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>{dna.identity}</div>
+        )}
+        {colors.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.66rem', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>主色</span>
+            {colors.map((color, i) => (
+              <span key={`${color.hex}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                <span style={{ width: '14px', height: '14px', borderRadius: '50%', background: color.hex, border: '1px solid rgba(255,255,255,0.25)', display: 'inline-block' }} />
+                {color.name} <span style={{ fontFamily: 'monospace' }}>{color.hex}</span>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 五视图资产 (点击缩略图切换) */}
+      <CharacterFiveViewViewer name={String(dna.name || card?.name || '')} views={card?.views} sheet={card?.sheet} />
+
+      {/* 状态卡切换：不同年龄/身份/换装状态 */}
+      {states.length > 0 && (
+        <div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
+            {states.map((st, i) => {
+              const on = i === Math.min(stateIdx, states.length - 1);
+              return (
+                <button key={st.state_id || i} type="button" onClick={() => setStateIdx(i)}
+                  style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '0.7rem', cursor: 'pointer', background: on ? 'rgba(0, 242, 254, 0.15)' : 'transparent', color: on ? 'var(--neon-cyan)' : 'var(--text-muted)', border: on ? '1px solid rgba(0, 242, 254, 0.5)' : '1px solid var(--border-color)' }}>
+                  {st.title || st.state_id}
+                </button>
+              );
+            })}
+          </div>
+          {active && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {DNA_FIELD_LABELS.map(([field, label]) => {
+                const value = active[field];
+                if (!value || typeof value !== 'string') return null;
+                return (
+                  <div key={field} style={{ display: 'flex', gap: '10px', fontSize: '0.74rem', lineHeight: '1.6', padding: '6px 10px', background: '#0a1017', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                    <span style={{ flexShrink: 0, width: '58px', color: 'var(--neon-cyan)' }}>{label}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{value}</span>
+                  </div>
+                );
+              })}
+              {Array.isArray(active.anchors) && active.anchors.length > 0 && (
+                <div style={{ marginTop: '4px', overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+                    <thead>
+                      <tr style={{ background: 'rgba(0, 242, 254, 0.08)', borderBottom: '1px solid var(--neon-cyan)' }}>
+                        <th style={{ padding: '6px 8px', textAlign: 'left', whiteSpace: 'nowrap' }}>视图</th>
+                        <th style={{ padding: '6px 8px', textAlign: 'left' }}>可见身份锚点</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {active.anchors.map((anchor, i) => (
+                        <tr key={anchor.view || i} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                          <td style={{ padding: '6px 8px', whiteSpace: 'nowrap', fontWeight: 600, verticalAlign: 'top' }}>{anchor.view}</td>
+                          <td style={{ padding: '6px 8px', lineHeight: '1.6', color: 'var(--text-muted)' }}>{anchor.detail}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 角色资产图总面板：交付基准 + 角色资产卡 + BLOCKED 风险 + 关键假设
+function CharacterDnaAssetPanel({ dna, cards }: { dna: CharacterDnaBreakdown; cards: CharacterCard[] }) {
+  const project = dna.project || {};
+  const characters = Array.isArray(dna.characters) ? dna.characters : [];
+  const risks = Array.isArray(dna.risks) ? dna.risks : [];
+  const assumptions = Array.isArray(dna.assumptions) ? dna.assumptions : [];
+  const findCard = (name?: string) => {
+    if (!name) return undefined;
+    return cards.find(c => c.name === name)
+      || cards.find(c => String(c.name).includes(name) || name.includes(String(c.name)));
+  };
+  const riskColor = (status?: string) => {
+    const s = String(status || '').toUpperCase();
+    if (s.includes('PASS')) return '#3ddc84';
+    if (s.includes('PENDING')) return '#ffb020';
+    return '#ff4d6d';
+  };
+  const projectChips: Array<[string, string | undefined]> = [
+    ['类型', project.genre], ['平台/受众', project.platform], ['交付基准', project.delivery_spec], ['关键约束', project.constraints],
+  ];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {/* 项目交付基准 */}
+      {projectChips.some(([, v]) => v) && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+          {projectChips.map(([label, value]) => value ? (
+            <span key={label} style={{ fontSize: '0.72rem', padding: '4px 10px', borderRadius: '8px', background: '#0a1017', color: 'var(--text-muted)', border: '1px solid var(--border-color)' }}>
+              <span style={{ color: 'var(--neon-cyan)', marginRight: '6px' }}>{label}</span>{value}
+            </span>
+          ) : null)}
+        </div>
+      )}
+
+      {/* 角色资产卡 */}
+      {characters.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '14px' }}>
+          {characters.map((ch, i) => (
+            <DnaCharacterCard key={ch.character_id || ch.name || i} dna={ch} card={findCard(ch.name)} />
+          ))}
+        </div>
+      )}
+
+      {/* 未解决风险 / BLOCKED 项 */}
+      {risks.length > 0 && (
+        <div style={{ background: '#05080c', padding: '16px 18px', borderRadius: '12px', border: '1px solid rgba(255, 176, 32, 0.25)' }}>
+          <div style={{ fontSize: '0.88rem', fontWeight: 600, color: '#ffb020', marginBottom: '10px' }}>⚠️ 未解决风险 / BLOCKED 项 ({risks.length})</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {risks.map((risk, i) => (
+              <div key={risk.item || i} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '7px 10px', background: '#0a1017', borderRadius: '8px', border: '1px solid var(--border-color)', fontSize: '0.75rem' }}>
+                <span style={{ flexShrink: 0, fontSize: '0.64rem', padding: '1px 8px', borderRadius: '4px', fontWeight: 700, color: riskColor(risk.status), background: `${riskColor(risk.status)}1a`, border: `1px solid ${riskColor(risk.status)}55` }}>{risk.status || 'BLOCKED'}</span>
+                <span style={{ flexShrink: 0, fontWeight: 600, color: 'var(--text-light)' }}>{risk.item}</span>
+                <span style={{ color: 'var(--text-muted)', lineHeight: '1.55' }}>{risk.note}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 关键假设 */}
+      {assumptions.length > 0 && (
+        <details style={{ background: '#05080c', padding: '14px 18px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+          <summary style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--neon-cyan)', cursor: 'pointer' }}>📌 关键假设 ({assumptions.length})</summary>
+          <ol style={{ margin: '10px 0 0', paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+            {assumptions.map((assumption, i) => (
+              <li key={i} style={{ fontSize: '0.76rem', lineHeight: '1.65', color: 'var(--text-muted)' }}>{assumption}</li>
+            ))}
+          </ol>
+        </details>
+      )}
+    </div>
+  );
+}
+
+// 阶段执行进度卡：滚动百分比进度条 + 每一步调用过程 (对话面板内实时渲染)
+function StageProgressPanel({ progress }: { progress: StageProgress }) {
+  const label = progress.stage_label || progress.stageLabel || `阶段${progress.stage}`;
+  const pct = Math.max(0, Math.min(100, Math.round(progress.percent || 0)));
+  const isError = progress.status === 'error';
+  const accent = isError ? '#ff4d6d' : progress.status === 'success' ? '#3ddc84' : 'var(--neon-cyan)';
+  const calls = Array.isArray(progress.calls) ? progress.calls : [];
+  const shownCalls = calls.slice(-8);
+  return (
+    <div style={{ padding: '12px 14px', background: '#0a1017', border: `1px solid ${isError ? 'rgba(255, 77, 109, 0.45)' : 'rgba(0, 242, 254, 0.25)'}`, borderRadius: '10px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-light)' }}>
+          ⚙️ Stage {progress.stage} · {label}
+        </span>
+        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: accent, fontVariantNumeric: 'tabular-nums' }}>{pct}%</span>
+      </div>
+      <div style={{ height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '999px', overflow: 'hidden', margin: '8px 0 10px' }}>
+        <div style={{ width: `${pct}%`, height: '100%', borderRadius: '999px', background: `linear-gradient(90deg, #0072ff, ${isError ? '#ff4d6d' : '#00f2fe'})`, boxShadow: `0 0 8px ${accent}`, transition: 'width 0.8s ease' }} />
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        {calls.length > shownCalls.length && (
+          <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>… 前 {calls.length - shownCalls.length} 步已完成</div>
+        )}
+        {shownCalls.map((call, i) => (
+          <div key={`${call.name}-${i}`} style={{ display: 'flex', alignItems: 'flex-start', gap: '6px', fontSize: '0.72rem', lineHeight: '1.5', color: call.status === 'running' ? 'var(--text-light)' : call.status === 'error' ? '#ff4d6d' : 'var(--text-muted)' }}>
+            <span style={{ flexShrink: 0 }}>{call.status === 'running' ? '⏳' : call.status === 'error' ? '❌' : '✅'}</span>
+            <span>{call.name}</span>
+            {(call.duration_ms ?? call.durationMs) !== undefined && (
+              <span style={{ marginLeft: 'auto', color: 'var(--text-dim)', fontVariantNumeric: 'tabular-nums' }}>
+                {Math.max(0, call.duration_ms ?? call.durationMs ?? 0)}ms
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+      {(progress.elapsed_ms ?? progress.elapsedMs) !== undefined && (
+        <div style={{ marginTop: '8px', textAlign: 'right', color: 'var(--text-dim)', fontSize: '0.66rem', fontVariantNumeric: 'tabular-nums' }}>
+          累计耗时 {Math.max(0, progress.elapsed_ms ?? progress.elapsedMs ?? 0)}ms
+        </div>
+      )}
+      {isError && progress.error && (
+        <div style={{ marginTop: '8px', fontSize: '0.74rem', lineHeight: '1.6', color: '#ff4d6d', background: 'rgba(255, 77, 109, 0.08)', border: '1px solid rgba(255, 77, 109, 0.3)', borderRadius: '6px', padding: '8px 10px' }}>
+          {progress.error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 五视图角度标签：固定人物关键视觉信息 (0° / 45° / 90° / 135° / 180°)
+const FIVE_VIEW_LABELS: Record<string, string> = {
+  front: '正面 · 0°',
+  front_three_quarter: '正面3/4 · 45°',
+  profile: '侧面 · 90°',
+  rear_three_quarter: '背面3/4 · 135°',
+  back: '背面 · 180°',
+};
+
+// 数字演员卡片式五视图查看器：一张大图 + 底部缩略图条，点击缩略图切换主图
+function CharacterFiveViewViewer({ name, views, sheet }: { name: string; views?: Array<{ view: string; image_url: string }>; sheet?: string }) {
+  const [selected, setSelected] = useState(0);
+  const list = Array.isArray(views) ? views.filter(v => v && typeof v.image_url === 'string' && v.image_url) : [];
+
+  if (list.length === 0) {
+    if (typeof sheet === 'string' && sheet.startsWith('http')) {
+      return (
+        <a href={sheet} target="_blank" rel="noreferrer">
+          <img src={sheet} alt={`${name} 五视图`} style={{ width: '100%', borderRadius: '8px', objectFit: 'contain', background: '#fff', border: '1px solid rgba(0, 242, 254, 0.25)' }} />
+        </a>
+      );
+    }
+    return (
+      <div style={{ width: '100%', height: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '1px dashed var(--text-muted)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>五视图生成中...</div>
+    );
+  }
+
+  const current = list[Math.min(selected, list.length - 1)];
+  const currentLabel = FIVE_VIEW_LABELS[current.view] || current.view;
+  return (
+    <div>
+      <a href={current.image_url} target="_blank" rel="noreferrer" title={`${name} · ${currentLabel} (点击查看原图)`} style={{ position: 'relative', display: 'block' }}>
+        <img src={current.image_url} alt={`${name} ${currentLabel}`} style={{ width: '100%', height: '280px', borderRadius: '8px', objectFit: 'contain', background: '#fff', border: '1px solid rgba(0, 242, 254, 0.25)', display: 'block' }} />
+        <span style={{ position: 'absolute', left: '8px', bottom: '8px', padding: '2px 8px', borderRadius: '999px', fontSize: '0.68rem', background: 'rgba(5, 8, 12, 0.72)', color: 'var(--neon-cyan)', border: '1px solid rgba(0, 242, 254, 0.3)' }}>{currentLabel}</span>
+      </a>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${list.length}, 1fr)`, gap: '6px', marginTop: '8px' }}>
+        {list.map((view, idx) => {
+          const active = idx === Math.min(selected, list.length - 1);
+          return (
+            <button
+              key={view.view || idx}
+              type="button"
+              onClick={() => setSelected(idx)}
+              title={FIVE_VIEW_LABELS[view.view] || view.view}
+              style={{
+                padding: 0,
+                cursor: 'pointer',
+                borderRadius: '6px',
+                overflow: 'hidden',
+                background: '#fff',
+                border: active ? '2px solid var(--neon-cyan)' : '1px solid rgba(255,255,255,0.14)',
+                boxShadow: active ? '0 0 8px rgba(0, 242, 254, 0.35)' : 'none',
+                opacity: active ? 1 : 0.72,
+              }}
+            >
+              <img src={view.image_url} alt={`${name} ${FIVE_VIEW_LABELS[view.view] || view.view}`} style={{ width: '100%', aspectRatio: '3/4', objectFit: 'cover', objectPosition: 'top', display: 'block' }} />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 type GlobalModelDefaults = Record<ModelCategory, string>;
@@ -312,6 +624,10 @@ export default function App() {
   // 界面交互状态
   const [taskId, setTaskId] = useState<string>('');
   const [taskData, setTaskData] = useState<TaskResponse | null>(null);
+  const scriptDisplayName = useMemo(() => getScriptDisplayName(
+    taskData?.config,
+    taskData?.assets["2"] ?? taskData?.config.scriptContent,
+  ), [taskData]);
   const taskDataRef = useRef<TaskResponse | null>(null);
   const [uploadedScript, setUploadedScript] = useState<File | null>(null);
   const [scriptContent, setScriptContent] = useState<string>('');
@@ -319,6 +635,9 @@ export default function App() {
   const [activeTabStage, setActiveTabStage] = useState<number>(1);
   const [historyTasks, setHistoryTasks] = useState<TaskResponse[]>([]);
   const [isPolling, setIsPolling] = useState<boolean>(false);
+  // 阶段执行进度快照 (用于检测 running -> success/error 转变，驱动对话面板状态气泡)
+  const progressRef = useRef<{ stage: number; status: string } | null>(null);
+  const failNotifiedRef = useRef<string>('');
   const [errorMessage, setErrorMessage] = useState<string>('');
   
   // 气泡控制
@@ -636,19 +955,55 @@ export default function App() {
         setTaskData(data);
         taskDataRef.current = data;
         
-        // 当 stage 发生变化时，追加入 AI 的进度对话气泡
+        // 阶段推进时联动左侧看板标签页 (阶段开始即切换，进度卡展示执行过程)
         if (data.currentStage > prevStage) {
           setActiveTabStage(data.currentStage);
-          const currentStageInfo = AGENT_STAGES.find(s => s.id === data.currentStage);
-          setChatMessages(prev => [
-            ...prev,
-            {
-              id: nextMessageId(),
-              sender: 'ai',
-              text: `⚙️ **【${currentStageInfo?.name} 已完成】**\n\n该阶段资产已成功生成并校验完毕。您可直接在左侧看板查阅该步骤的高保真输出。`,
-              stage: data.currentStage
+        }
+
+        // 基于 stageProgress 的 running -> success/error 转变，推送成功/异常状态气泡
+        const sp = data.stageProgress;
+        const prevSp = progressRef.current;
+        if (sp) {
+          if (prevSp && prevSp.status === 'running') {
+            const stageDone = (sp.stage === prevSp.stage && sp.status === 'success') || sp.stage > prevSp.stage;
+            if (stageDone) {
+              const doneStage = sp.stage > prevSp.stage ? prevSp.stage : sp.stage;
+              const doneName = AGENT_STAGES.find(s => s.id === doneStage)?.name || `阶段${doneStage}`;
+              const nextStage = doneStage + 1;
+              const nextName = AGENT_STAGES.find(s => s.id === nextStage)?.name || '';
+              setChatMessages(prev => [
+                ...prev,
+                {
+                  id: nextMessageId(),
+                  sender: 'ai',
+                  stage: doneStage,
+                  text: `✅ **【第 ${doneStage} 阶段 · ${doneName} 执行完成】** (100%)\n\n资产已生成并通过质检，可在左侧看板查看。${nextStage <= 8 ? `\n\n👉 下一步：第 ${nextStage} 阶段《${nextName}》— 回复「继续」即可执行，或直接说出修改意见。` : '\n\n🎉 全部阶段执行完毕！'}`
+                }
+              ]);
+            } else if (sp.stage === prevSp.stage && sp.status === 'error') {
+              setChatMessages(prev => [
+                ...prev,
+                {
+                  id: nextMessageId(),
+                  sender: 'ai',
+                  text: `❌ **【第 ${sp.stage} 阶段执行异常】**\n\n${sp.error || data.failReason || '未知错误'}\n\n您可以回复「重跑第 ${sp.stage} 阶段」重试，或先说出修改意见再重跑。`
+                }
+              ]);
+              setIsPolling(false);
             }
-          ]);
+          }
+          progressRef.current = { stage: sp.stage, status: sp.status };
+        }
+
+        // 兜底：任务被标记 failed 但上面没捕捉到转变 (如后台一键成片中途失败)
+        if (data.status === 'failed' && data.failReason && failNotifiedRef.current !== `${data.taskId}:${data.failReason}`) {
+          failNotifiedRef.current = `${data.taskId}:${data.failReason}`;
+          if (!sp || sp.status !== 'error' || !prevSp || prevSp.status !== 'running') {
+            setChatMessages(prev => [
+              ...prev,
+              { id: nextMessageId(), sender: 'ai', text: `❌ **【任务执行失败】**\n\n${data.failReason}\n\n回复「重跑第 ${data.currentStage} 阶段」可重试。` }
+            ]);
+          }
         }
 
         // 状态判定
@@ -917,34 +1272,34 @@ export default function App() {
     const pendingId = nextMessageId();
     setChatMessages(prev => [
       ...prev,
-      { id: pendingId, sender: 'ai', text: '⚙️ **【收到您的指令】**\n正在根据您的对话指引调整并生成短剧，请稍候...' }
+      { id: pendingId, sender: 'ai', text: '🧠 正在理解您的指令...' }
     ]);
-    
+
     try {
-      const res = await apiFetch(`http://localhost:8000/api/drama/${taskId}/chat`, {
+      const res = await apiFetch(`http://localhost:8000/api/drama/${taskId}/assistant`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text })
       });
       if (res.ok) {
-        const data: TaskResponse = await res.json();
-        setTaskData(data);
-        setActiveTabStage(data.currentStage > 0 ? data.currentStage : 1);
-        
-        // 移除等待气泡并追加成功调整气泡
-        setChatMessages(prev => {
-          const filtered = prev.filter(m => m.id !== pendingId);
-          const currentStageInfo = AGENT_STAGES.find(s => s.id === data.currentStage);
-          return [
-            ...filtered,
-            {
-              id: nextMessageId(),
-              sender: 'ai',
-              text: `✅ **【指引调整已生效】**\n\n已根据您的指示 “*${text}*” 对 **${currentStageInfo?.name || '当前阶段'}** 进行了内容重塑！您可以立即在左侧面板查阅更新后的剧作资产与 100+ 项质检 Hook 报告。`,
-              stage: data.currentStage
-            }
-          ];
-        });
+        const data: { reply: string; action: string; stage: number | null; task: TaskResponse } = await res.json();
+        setTaskData(data.task);
+        taskDataRef.current = data.task;
+
+        // 替换等待气泡为助手回复
+        setChatMessages(prev => [
+          ...prev.filter(m => m.id !== pendingId),
+          { id: nextMessageId(), sender: 'ai', text: data.reply }
+        ]);
+
+        // 执行类动作：切换看板标签并开启轮询，进度卡实时展示调用过程与百分比
+        if (data.action === 'run_stage' || data.action === 'run_all') {
+          if (data.stage) setActiveTabStage(data.stage);
+          if (data.task.stageProgress) {
+            progressRef.current = { stage: data.task.stageProgress.stage, status: data.task.stageProgress.status };
+          }
+          setIsPolling(true);
+        }
         fetchHistoryTasks();
       } else {
         const err = await res.json();
@@ -970,22 +1325,25 @@ export default function App() {
     if (task.config) {
       setConfig({
         titleSuggestion: task.config.titleSuggestion || '',
+        scriptName: task.config.scriptName,
+        scriptContent: task.config.scriptContent,
         directorStyle: task.config.directorStyle || 'cyberpunk',
         shotStyle: task.config.shotStyle || 'cinematic',
         llmModel: task.config.llmModel || globalModelDefaults.text,
         imageModel: task.config.imageModel || globalModelDefaults.image,
         videoModel: task.config.videoModel || globalModelDefaults.video,
         ttsModel: task.config.ttsModel || globalModelDefaults.audio,
-        videoReferenceMode: task.config.videoReferenceMode || 'auto',
+        videoReferenceMode: normalizeVideoReferenceMode(task.config.videoReferenceMode),
         oneClick: task.config.oneClick || false,
         episodeCount: task.config.episodeCount || 3
       });
     }
     
-    // 初始化已有消息
+    // 初始化已有消息 + 自然语言操作引导
     setChatMessages([
-      { id: 'init', sender: 'ai', text: `📁 已经为您加载项目: **${task.config.titleSuggestion}**。当前进度为第 ${task.currentStage}/8 步 (${task.stageName})。` }
+      { id: 'init', sender: 'ai', text: `📁 已经为您加载项目: **${task.config.titleSuggestion}**。当前进度为第 ${task.currentStage}/8 步 (${task.stageName})。\n\n💬 您可以直接用自然语言指挥我：\n· 「继续」— 执行下一阶段\n· 「一键成片」— 自动跑完剩余阶段\n· 「重跑第 N 阶段」— 重新生成某一环节\n· 「进度」— 查询当前执行状态\n· 直接说出修改意见 — 我会按您的指引重塑当前阶段\n\n执行过程中会实时展示每一步调用过程与进度百分比。` }
     ]);
+    progressRef.current = task.stageProgress ? { stage: task.stageProgress.stage, status: task.stageProgress.status } : null;
   };
 
   // 统一的配置同步方法，如果在工作台内，还会自动向后端请求更新配置以应用在下一步执行中
@@ -1953,21 +2311,10 @@ export default function App() {
                       </select>
                     </div>
                   </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>运镜视频参考方式</label>
-                    <select
-                      value={config.videoReferenceMode}
-                      onChange={e => void updateConfigAndSync({ videoReferenceMode: e.target.value as TaskConfig['videoReferenceMode'] })}
-                      style={{ width: '100%', padding: '10px', background: '#0a1017', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem' }}
-                    >
-                      <option value="auto">模型自动判断（镜头意图 + 素材 + 能力）</option>
-                      <option value="first_frame">首帧驱动</option>
-                      <option value="first_last_frame">首尾帧驱动</option>
-                      <option value="multi_reference">多图参考（角色/场景/道具/特效）</option>
-                      <option value="multimodal">多模态参考（图像/视频/音频）</option>
-                    </select>
-                    <small style={{ display: 'block', marginTop: '6px', color: 'var(--text-muted)' }}>自动模式先读取分镜的首尾状态和多图/多模态意图，再与所选模型能力协商；不会静默丢弃不兼容素材。</small>
-                  </div>
+                  <VideoReferenceModeSelect
+                    value={config.videoReferenceMode}
+                    onChange={videoReferenceMode => void updateConfigAndSync({ videoReferenceMode })}
+                  />
                 </div>
 
                 {/* 成片方式 + 集数 (item 3 两种成片方式 / item 6 选择指定集数) */}
@@ -2021,33 +2368,70 @@ export default function App() {
       ) : (
         
         // 2. 已进入项目：双栏工作区大厅 (截图 3)
-        <div className="workbench-layout">
+        <div className={`workbench-layout ${activeTabStage === 4 && taskData?.assets["4"] ? 'storyboard-mode' : ''}`}>
           
           {/* 左侧：核心资产产出看版 (70% 宽) */}
           <div className="asset-viewer">
             
             {/* 顶部二级导航条 */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px', marginBottom: '20px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div className="asset-stage-nav">
+              <div className="asset-stage-nav__identity">
                 <Film size={22} color="var(--neon-cyan)" />
-                <h2 style={{ fontSize: '1.2rem', fontWeight: 600 }}>
-                  {taskData?.config.titleSuggestion ? `《${taskData.config.titleSuggestion}》` : "AI短剧制作"} - 看板展示大厅
+                <h2>
+                  《{scriptDisplayName}》 - 看板展示大厅
                 </h2>
               </div>
-              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                <button className={`capsule-btn ${activeTabStage === 1 ? 'active' : ''}`} onClick={() => setActiveTabStage(1)}><Film size={12} /> 1.总导演</button>
-                <button className={`capsule-btn ${activeTabStage === 2 ? 'active' : ''}`} onClick={() => setActiveTabStage(2)}><ClipboardList size={12} /> 2.编剧</button>
-                <button className={`capsule-btn ${activeTabStage === 3 ? 'active' : ''}`} onClick={() => setActiveTabStage(3)}><UserCheck size={12} /> 3.角色</button>
-                <button className={`capsule-btn ${activeTabStage === 4 ? 'active' : ''}`} onClick={() => setActiveTabStage(4)}><Sliders size={12} /> 4.分镜</button>
-                <button className={`capsule-btn ${activeTabStage === 5 ? 'active' : ''}`} onClick={() => setActiveTabStage(5)}><Video size={12} /> 5.视觉</button>
-                <button className={`capsule-btn ${activeTabStage === 6 ? 'active' : ''}`} onClick={() => setActiveTabStage(6)}><Music size={12} /> 6.音频</button>
-                <button className={`capsule-btn ${activeTabStage === 7 ? 'active' : ''}`} onClick={() => setActiveTabStage(7)}><Layers size={12} /> 7.合成</button>
-                <button className={`capsule-btn ${activeTabStage === 8 ? 'active' : ''}`} onClick={() => setActiveTabStage(8)}><Share2 size={12} /> 8.宣发</button>
-              </div>
+              <AgentStageTabs activeStage={activeTabStage} onChange={setActiveTabStage} />
             </div>
 
             {/* 当选择的阶段尚无资产时，展示 Novara Slate */}
-            {!taskData?.assets[activeTabStage.toString()] ? (
+            {activeTabStage === 4 && taskData?.assets["4"] ? (
+              <StoryboardWorkspace
+                title={taskData.config.titleSuggestion}
+                shots={taskData.assets["4"] as StoryboardShot[]}
+                gridUrl={taskData.assets["4_grid"] as string | undefined}
+                prompt={taskData.assets["4_grid_prompt"] as string | undefined}
+                promptDetail={taskData.assets["4_prompt_detail"]}
+                onRefresh={() => { void fetchTaskStatus(taskId); }}
+                onRegenerate={() => { void sendChatInstruction('重跑第 4 阶段'); }}
+                onContinue={() => setActiveTabStage(5)}
+              />
+            ) : activeTabStage === 1 ? (
+              <DirectorPlanningPage
+                title={taskData?.config.titleSuggestion}
+                directorStyle={taskData?.config.directorStyle}
+                shotStyle={taskData?.config.shotStyle}
+                asset={taskData?.assets["1"]}
+              />
+            ) : activeTabStage === 2 ? (
+              <WriterAgentPageContainer
+                taskId={taskId}
+                refreshKey={`${taskData?.currentStage}:${taskData?.status}:${Boolean(taskData?.assets["2_writer_dashboard"])}`}
+                displayTitle={scriptDisplayName}
+                title={taskData?.config.titleSuggestion}
+                fallbackBreakdown={taskData?.assets["2_breakdown"]}
+                fallbackScript={taskData?.assets["2"]}
+                requestedEpisodeCount={taskData?.config.episodeCount || 0}
+                episodes={episodes}
+                episodesBusy={episodesBusy}
+                onPlanEpisodes={() => { void handlePlanEpisodes(); }}
+                onProduceEpisode={(episodeIndex) => { void handleProduceEpisode(episodeIndex); }}
+              />
+            ) : activeTabStage === 3 ? (
+              <CharacterDesignerPageContainer
+                key={taskId}
+                taskId={taskId}
+                refreshKey={`${taskData?.currentStage}:${taskData?.status}:${Boolean(taskData?.assets["3_character_dashboard"])}`}
+                title={taskData?.config.titleSuggestion}
+                fallbackCharacters={taskData?.assets["3_characters"]}
+                fallbackSheets={taskData?.assets["3_sheets"]}
+                fallbackDna={taskData?.assets["3_dna"]}
+                fallbackRaw={taskData?.assets["3"]}
+                onRefresh={() => { void fetchTaskStatus(taskId); }}
+                onRegenerate={() => { void sendChatInstruction('重跑第 3 阶段'); }}
+                onContinue={() => setActiveTabStage(4)}
+              />
+            ) : !taskData?.assets[activeTabStage.toString()] ? (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', opacity: 0.65 }}>
                 <img 
                   src="https://portal.volccdn.com/obj/volcfe/cloud-universal-doc/upload_5a2661e94d2474b95a54475798558b66.mp4" 
@@ -2069,80 +2453,29 @@ export default function App() {
                     <span style={{ fontWeight: 600 }}>Stage {activeTabStage} 阶段资产预览</span>
                   </div>
 
-                  {/* 1: 总导演策划方案 */}
-                  {activeTabStage === 1 && (
-                    <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.7', fontSize: '0.95rem', background: '#05080c', padding: '20px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                      {taskData.assets["1"]}
-                    </div>
-                  )}
-
-                  {/* 2: 编剧剧本创作 */}
-                  {activeTabStage === 2 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                      <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.7', fontSize: '0.95rem', background: '#05080c', padding: '20px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                        {taskData.assets["2"]}
-                      </div>
-
-                      {/* 分集制作：剧本一次生成多集，视频逐集制作 (item 6) */}
-                      {taskData.assets["2"] && (
-                        <div style={{ background: '#05080c', padding: '16px 20px', borderRadius: '12px', border: '1px solid rgba(0, 242, 254, 0.18)' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-                            <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--neon-cyan)' }}>
-                              🎬 分集制作 (视频逐集出片)
-                            </div>
-                            <button
-                              onClick={handlePlanEpisodes}
-                              disabled={episodesBusy}
-                              className="capsule-btn"
-                              style={{ padding: '6px 14px', fontSize: '0.78rem', opacity: episodesBusy ? 0.6 : 1 }}
-                            >
-                              {episodesBusy ? '分集中...' : (episodes.length > 0 ? '🔄 重新分集' : '📑 一键分集')}
-                            </button>
-                          </div>
-                          {episodes.length === 0 ? (
-                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                              点击「一键分集」把完整剧本切分为多集，然后可逐集制作 2.5-3 分钟成片。
-                            </div>
-                          ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                              {episodes.map((ep: EpisodeItem) => (
-                                <div key={ep.index} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: '#0a1017', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                                  <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-light)', minWidth: '52px' }}>第{ep.index}集</span>
-                                  <span style={{ flex: 1, fontSize: '0.76rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ep.title}</span>
-                                  <span style={{ fontSize: '0.7rem', padding: '1px 8px', borderRadius: '999px', border: '1px solid var(--border-color)', color: ep.status === 'completed' ? '#3ddc84' : ep.status === 'running' ? '#ffb020' : 'var(--text-muted)' }}>
-                                    {ep.status === 'completed' ? '✓ 已完成' : ep.status === 'running' ? '制作中…' : '待制作'}
-                                  </span>
-                                  {ep.status === 'completed' && ep.videoUrl ? (
-                                    <a href={ep.videoUrl} target="_blank" rel="noreferrer" className="capsule-btn" style={{ padding: '4px 12px', fontSize: '0.74rem' }}>▶ 播放</a>
-                                  ) : (
-                                    <button
-                                      onClick={() => handleProduceEpisode(ep.index)}
-                                      disabled={ep.status === 'running'}
-                                      className="capsule-btn"
-                                      style={{ padding: '4px 12px', fontSize: '0.74rem', opacity: ep.status === 'running' ? 0.6 : 1 }}
-                                    >
-                                      {ep.status === 'running' ? '⏳' : '🎬 制作本集'}
-                                    </button>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
                   {/* 3: 角色五视图设定图 + 五维 DNA 设定文本 */}
                   {activeTabStage === 3 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                      {/* 全部人物角色：姓名 + 身份 + 特征信息 + 有序五视图，跨镜头一致性锚点 */}
                       {(() => {
                         const structured = Array.isArray(taskData.assets["3_characters"]) ? taskData.assets["3_characters"] : null;
                         const sheets = taskData.assets["3_sheets"] || {};
-                        const cards = structured && structured.length > 0
+                        const cards: CharacterCard[] = structured && structured.length > 0
                           ? structured
                           : Object.entries(sheets).map(([name, sheet]) => ({ name, role: '', desc: '', sheet: String(sheet) }));
+                        const dna = taskData.assets["3_dna"];
+                        const hasDna = dna && typeof dna === 'object' && Array.isArray((dna as CharacterDnaBreakdown).characters) && (dna as CharacterDnaBreakdown).characters!.length > 0;
+
+                        // 优先渲染图文一体的「角色资产图」(DNA 结构化 + 五视图)，无结构化数据时回退为五视图卡片
+                        if (hasDna) {
+                          return (
+                            <div>
+                              <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--neon-cyan)', marginBottom: '12px' }}>
+                                🎭 角色资产图 · DNA 锁定包 ({(dna as CharacterDnaBreakdown).characters!.length} characters) · 五视图 (正面 · 正面3/4 · 侧面 · 背面3/4 · 背面)
+                              </div>
+                              <CharacterDnaAssetPanel dna={dna as CharacterDnaBreakdown} cards={cards} />
+                            </div>
+                          );
+                        }
                         if (!cards || cards.length === 0) return null;
                         return (
                           <div>
@@ -2150,7 +2483,7 @@ export default function App() {
                               🎭 全部人物角色 ({cards.length}) · 五视图设定图 (正面 · 正面3/4 · 侧面 · 背面3/4 · 背面)
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '14px' }}>
-                              {(cards as CharacterCard[]).map((c: CharacterCard, i: number) => {
+                              {cards.map((c: CharacterCard, i: number) => {
                                 const url = c.sheet;
                                 return (
                                   <div key={`${c.name}-${i}`} className="glass-panel" style={{ background: '#05080c', border: '1px solid rgba(0, 242, 254, 0.18)', borderRadius: '12px', padding: '10px' }}>
@@ -2160,22 +2493,7 @@ export default function App() {
                                         <span style={{ fontSize: '0.68rem', padding: '1px 7px', borderRadius: '999px', background: 'rgba(0, 242, 254, 0.14)', color: 'var(--neon-cyan)', border: '1px solid rgba(0, 242, 254, 0.3)' }}>{c.role}</span>
                                       )}
                                     </div>
-                                    {typeof url === 'string' && url.startsWith('http') ? (
-                                      <a href={url} target="_blank" rel="noreferrer">
-                                        <img src={url} alt={`${c.name} 五视图`} style={{ width: '100%', borderRadius: '8px', objectFit: 'contain', background: '#fff', border: '1px solid rgba(0, 242, 254, 0.25)' }} />
-                                      </a>
-                                    ) : (
-                                      <div style={{ width: '100%', height: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '1px dashed var(--text-muted)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>五视图生成中...</div>
-                                    )}
-                                    {Array.isArray(c.views) && c.views.length === 5 && (
-                                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px', marginTop: '8px' }}>
-                                        {c.views.map((view: { view: string; image_url: string }) => (
-                                          <a href={view.image_url} target="_blank" rel="noreferrer" key={view.view} title={view.view}>
-                                            <img src={view.image_url} alt={`${c.name} ${view.view}`} style={{ width: '100%', aspectRatio: '1/2', objectFit: 'cover', borderRadius: '4px', border: '1px solid rgba(0, 242, 254, 0.2)' }} />
-                                          </a>
-                                        ))}
-                                      </div>
-                                    )}
+                                    <CharacterFiveViewViewer name={String(c.name)} views={c.views} sheet={url} />
                                     {c.desc && (
                                       <div style={{ marginTop: '8px', fontSize: '0.74rem', lineHeight: '1.5', color: 'var(--text-muted)', maxHeight: '88px', overflow: 'auto' }}>{c.desc}</div>
                                     )}
@@ -2186,13 +2504,25 @@ export default function App() {
                           </div>
                         );
                       })()}
-                      {/* 五维 DNA 设定文本 */}
-                      <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.7', fontSize: '0.95rem', background: '#05080c', padding: '20px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                        {typeof taskData.assets["3"] === 'string'
-                          ? taskData.assets["3"]
-                          : Object.entries(taskData.assets["3"] || {}).map(([key, val]) => `【${key}】:\n${val}`).join('\n\n')
-                        }
-                      </div>
+                      {/* DNA 锁定包原文：结构化资产图已覆盖信息，原文折叠保留供核对 */}
+                      {taskData.assets["3_dna"] ? (
+                        <details style={{ background: '#05080c', padding: '14px 20px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                          <summary style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--neon-cyan)', cursor: 'pointer' }}>📄 查看角色 DNA 锁定包原文</summary>
+                          <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.7', fontSize: '0.85rem', marginTop: '12px', color: 'var(--text-muted)' }}>
+                            {typeof taskData.assets["3"] === 'string'
+                              ? taskData.assets["3"]
+                              : Object.entries(taskData.assets["3"] || {}).map(([key, val]) => `【${key}】:\n${val}`).join('\n\n')
+                            }
+                          </div>
+                        </details>
+                      ) : (
+                        <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.7', fontSize: '0.95rem', background: '#05080c', padding: '20px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.03)' }}>
+                          {typeof taskData.assets["3"] === 'string'
+                            ? taskData.assets["3"]
+                            : Object.entries(taskData.assets["3"] || {}).map(([key, val]) => `【${key}】:\n${val}`).join('\n\n')
+                          }
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -2489,14 +2819,17 @@ export default function App() {
           <div className="chat-sidebar">
             
             {/* 顶栏 */}
-            <div style={{ height: '56px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 16px' }}>
-              <span style={{ fontWeight: 600 }}>对话</span>
+            <div className="chat-sidebar__header">
+              <span>
+                {activeTabStage === 4 && <Bot aria-hidden="true" />}
+                {activeTabStage === 4 ? NOVARA_AGENT_NAME : '对话'}
+              </span>
               <button 
                 onClick={() => {
                   setTaskId('');
                   setTaskData(null);
                 }} 
-                style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+                aria-label="关闭项目工作台"
               >
                 <X size={18} />
               </button>
@@ -2511,7 +2844,7 @@ export default function App() {
                   {msg.sender === 'ai' ? (
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.04)', paddingBottom: '4px' }}>
-                        <span style={{ fontSize: '0.7rem', padding: '1px 6px', background: 'linear-gradient(90deg, #00f2fe, #0072ff)', color: '#fff', borderRadius: '4px', fontWeight: 'bold' }}>Novara AI</span>
+                        <span className="chat-agent-badge">{NOVARA_AGENT_NAME}</span>
                       </div>
                       
                       <div style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</div>
@@ -2552,6 +2885,17 @@ export default function App() {
 
                 </div>
               ))}
+
+              {/* 阶段执行实时进度卡：调用过程 + 滚动百分比 */}
+              {taskData?.stageProgress && taskData.stageProgress.status === 'running' && taskData.status === 'running' && (
+                <div className="chat-bubble ai">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.04)', paddingBottom: '4px' }}>
+                    <span className="chat-agent-badge">{NOVARA_AGENT_NAME}</span>
+                    <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>正在执行 · 实时调用过程</span>
+                  </div>
+                  <StageProgressPanel progress={taskData.stageProgress} />
+                </div>
+              )}
               <div ref={chatEndRef} />
             </div>
 
@@ -2653,6 +2997,7 @@ export default function App() {
                 <input 
                   type="text" 
                   placeholder="发送消息..." 
+                  aria-label={`发送给 ${NOVARA_AGENT_NAME} 的消息`}
                   value={chatInput}
                   onChange={e => setChatInput(e.target.value)}
                   onKeyDown={e => {
@@ -2665,6 +3010,7 @@ export default function App() {
                 <button 
                   onClick={() => sendChatInstruction(chatInput)}
                   className="cyber-btn" 
+                  aria-label="发送消息"
                   style={{ width: '36px', height: '36px', borderRadius: '50%', padding: '0' }}
                 >
                   <Send size={14} />

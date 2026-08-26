@@ -116,6 +116,8 @@ class StoryboardDirectorCompiler:
                 "aspect_ratio": request.aspect_ratio,
                 "fps": request.fps,
                 "grid_spec": request.grid_spec,
+                "grid_capacity": 9,
+                "max_total_beats": request.max_total_beats,
             },
             "narrative_goal": request.narrative_goal,
             "script_text": request.script_text,
@@ -531,6 +533,75 @@ class StoryboardDirectorCompiler:
                     request.color.primary_color.strip(),
                 )),
                 detail="摄影轴线、主光方向和基础色彩已明确锁定。",
+            ),
+            ContinuityCheckItem(
+                code="identity_costume_stain_locked",
+                passed=all((
+                    request.continuity.face_anchor.strip(),
+                    request.continuity.body_anchor.strip(),
+                    request.continuity.costume_anchor.strip(),
+                    request.continuity.wound_and_stain_anchor.strip(),
+                )),
+                detail="人物身份、体态、服装、伤痕和污渍均已锁定。",
+            ),
+            ContinuityCheckItem(
+                code="scene_props_continuous",
+                passed=bool(request.continuity.scene_structure.strip())
+                and bool(request.continuity.prop_positions.strip()),
+                detail="场景结构与道具初始位置、运动范围已明确。",
+            ),
+            ContinuityCheckItem(
+                code="physical_dynamics_defined",
+                passed=all((
+                    request.dynamics.force_source.strip(),
+                    request.dynamics.speed_curve.strip(),
+                    request.dynamics.center_of_gravity.strip(),
+                    request.dynamics.inertia_and_follow_through.strip(),
+                )),
+                detail="动作力量、速度、重心、惯性与收势符合连续物理过程。",
+            ),
+            ContinuityCheckItem(
+                code="camera_motion_color_continuous",
+                passed=all((
+                    request.camera.path.strip(),
+                    request.camera.speed_curve.strip(),
+                    request.color.change_reason.strip(),
+                    request.color.end_state.strip(),
+                )),
+                detail="主体动势、摄影机路径与色调变化均有连续轨迹和明确来源。",
+            ),
+            ContinuityCheckItem(
+                code="transitions_explicit",
+                passed=all((
+                    request.transitions.entry.visual_handoff.strip(),
+                    request.transitions.internal_linkage.strip(),
+                    request.transitions.exit.visual_handoff.strip(),
+                )),
+                detail="入场、拍点内部衔接和出场转场均已定义视觉与声音交接。",
+            ),
+            ContinuityCheckItem(
+                code="video_keyframe_endpoints_locked",
+                passed=all(
+                    segment.start_keyframe == segment.from_beat
+                    and segment.end_keyframe == segment.to_beat
+                    for segment in segments
+                ),
+                detail="每段视频起止状态与对应相邻分镜关键帧一致。",
+            ),
+            ContinuityCheckItem(
+                code="video_no_extra_content",
+                passed=all("新增人物道具动作或特效" in segment.exclusions for segment in segments),
+                detail="视频排除项禁止添加分镜之外的人物、道具、动作或特效。",
+            ),
+            ContinuityCheckItem(
+                code="grid_story_order_preserved",
+                passed=all(
+                    page.reading_order == "left_to_right_top_to_bottom"
+                    and [cell.beat_index for cell in page.cells if not cell.empty]
+                    == sorted(cell.beat_index for cell in page.cells if not cell.empty)
+                    for page in pages
+                ),
+                detail="宫格按拍点顺序从左到右、从上到下排列，没有改变故事顺序。",
             ),
         ]
         if len(beats) == 1:

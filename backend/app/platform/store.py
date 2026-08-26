@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import os
 import re
 import secrets
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
@@ -48,6 +51,25 @@ MAX_ENABLED_SKILLS = 12
 MAX_ENABLED_SKILL_BYTES = 96 * 1024
 
 
+def _configured_limit(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+MAX_ELEMENT_ASSETS_PER_OWNER = _configured_limit(
+    "ELEMENT_ASSET_COUNT_QUOTA", 1_000, minimum=10, maximum=100_000
+)
+MAX_ELEMENT_STORAGE_BYTES = _configured_limit(
+    "ELEMENT_STORAGE_QUOTA_BYTES", 5 * 1024**3, minimum=50 * 1024**2, maximum=1024**5
+)
+MAX_GLOBAL_ELEMENT_STORAGE_BYTES = _configured_limit(
+    "ELEMENT_GLOBAL_STORAGE_QUOTA_BYTES", 20 * 1024**3, minimum=1024**3, maximum=1024**5
+)
+
+
 @dataclass(frozen=True)
 class ResolvedCommand:
     source_id: str
@@ -65,6 +87,87 @@ class WalletSnapshot:
     entries: Sequence[LedgerEntry]
 
 
+@dataclass(frozen=True)
+class StoredElementFileResult:
+    element: ElementAsset
+    replaced_storage_path: str | None
+
+
+@dataclass(frozen=True)
+class DeletedElementFileRecord:
+    id: str
+    element_id: str
+    slot: str
+    storage_path: str
+    mime_type: str
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class DeletedElementFileResult:
+    element: ElementAsset
+    deleted_file: DeletedElementFileRecord
+
+
+@dataclass(frozen=True)
+class DeletedElementResult:
+    element_id: str
+    deleted_files: tuple[DeletedElementFileRecord, ...]
+
+
+DeletionStorageHook = Callable[
+    [tuple[DeletedElementFileRecord, ...]],
+    Awaitable[dict[str, object] | None],
+]
+
+
+class StorageMutationCommittedWithError(BaseException):
+    """Carries a committed result through context-exit/cancellation failures."""
+
+    def __init__(
+        self,
+        result: StoredElementFileResult | DeletedElementFileResult | DeletedElementResult,
+        original_error: BaseException,
+    ):
+        super().__init__("storage mutation committed before a later error")
+        self.result = result
+        self.original_error = original_error
+
+
+def _deleted_element_file_record(item: ElementFile) -> DeletedElementFileRecord:
+    return DeletedElementFileRecord(
+        id=item.id,
+        element_id=item.element_id,
+        slot=item.slot,
+        storage_path=item.storage_path,
+        mime_type=item.mime_type,
+        size_bytes=item.size_bytes,
+    )
+
+
+async def _commit_deletion_with_cancellation_boundary(session) -> bool:
+    """Commit exactly once and report cancellation only after its outcome is known.
+
+    Shielding avoids the unsafe state where the filesystem has already been
+    quarantined but request cancellation leaves the database commit outcome
+    ambiguous. Repeated cancellation requests are deferred until the commit
+    task has either succeeded or failed.
+    """
+
+    commit_task = asyncio.create_task(session.commit())
+    cancellation_requested = False
+    while not commit_task.done():
+        try:
+            await asyncio.shield(commit_task)
+        except asyncio.CancelledError:
+            cancellation_requested = True
+            if commit_task.done():
+                break
+            continue
+    commit_task.result()
+    return cancellation_requested
+
+
 class PlatformStore:
     def __init__(self, database_url: str, *, echo: bool = False):
         if not database_url.startswith(("postgresql+asyncpg://", "sqlite+aiosqlite://")):
@@ -78,6 +181,21 @@ class PlatformStore:
 
     async def close(self) -> None:
         await self.engine.dispose()
+
+    async def _lock_element_storage_budget(self, session) -> None:
+        if self.engine.dialect.name == "postgresql":
+            # Serializes the global quota calculation across every account and
+            # process without introducing a migration-only sentinel row.
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_id)"),
+                {"lock_id": 6_002_829_067_579_314_753},
+            )
+        else:
+            # SQLite is a local-development boundary. This remains a no-op lock
+            # there, while SQLite itself serializes the eventual write commit.
+            await session.scalar(
+                select(PlatformUser.id).order_by(PlatformUser.id).limit(1).with_for_update()
+            )
 
     async def create_user(
         self,
@@ -709,6 +827,16 @@ class PlatformStore:
         if not name.strip():
             raise ValueError("元素名称不能为空")
         async with self.sessions() as session:
+            locked_owner = await session.scalar(
+                select(PlatformUser.id).where(PlatformUser.id == owner_id).with_for_update()
+            )
+            if not locked_owner:
+                raise ValueError("用户不存在")
+            existing_count = int(await session.scalar(
+                select(func.count()).select_from(ElementAsset).where(ElementAsset.owner_id == owner_id)
+            ) or 0)
+            if existing_count >= MAX_ELEMENT_ASSETS_PER_OWNER:
+                raise ValueError(f"元素数量已达到 {MAX_ELEMENT_ASSETS_PER_OWNER} 项配额")
             element = ElementAsset(
                 owner_id=owner_id,
                 kind=kind,
@@ -776,48 +904,249 @@ class PlatformStore:
         mime_type: str,
         size_bytes: int,
         sha256: str,
-    ) -> ElementAsset:
-        async with self.sessions() as session:
-            element = await session.scalar(
-                select(ElementAsset).options(selectinload(ElementAsset.files)).where(ElementAsset.id == element_id)
-            )
-            if not element or element.owner_id != owner_id:
-                raise ValueError("元素不存在")
-            if element.kind == "actor":
-                if slot not in ACTOR_VIEW_SLOTS:
-                    raise ValueError("演员图片必须使用规定的五视图槽位")
-                position = ACTOR_VIEW_SLOTS.index(slot)
-            else:
-                if not re.fullmatch(r"[a-z0-9_-]{1,64}", slot):
-                    raise ValueError("文件槽位无效")
-                position = len(element.files)
-            existing = next((item for item in element.files if item.slot == slot), None)
-            if existing:
-                existing.storage_path = storage_path
-                existing.mime_type = mime_type
-                existing.size_bytes = size_bytes
-                existing.sha256 = sha256
-                existing.position = position
-            else:
-                session.add(ElementFile(
-                    element_id=element.id,
-                    slot=slot,
-                    position=position,
-                    storage_path=storage_path,
-                    mime_type=mime_type,
-                    size_bytes=size_bytes,
-                    sha256=sha256,
+        model_metadata: dict | None = None,
+        before_commit: DeletionStorageHook | None = None,
+    ) -> StoredElementFileResult:
+        result: StoredElementFileResult | None = None
+        cancellation_requested = False
+        try:
+            async with self.sessions() as session:
+                await self._lock_element_storage_budget(session)
+                locked_owner = await session.scalar(
+                    select(PlatformUser.id).where(PlatformUser.id == owner_id).with_for_update()
+                )
+                if not locked_owner:
+                    raise ValueError("用户不存在")
+                element = await session.scalar(
+                    select(ElementAsset).options(selectinload(ElementAsset.files))
+                    .where(ElementAsset.id == element_id)
+                    .with_for_update()
+                )
+                if not element or element.owner_id != owner_id:
+                    raise ValueError("元素不存在")
+                is_3d_model = mime_type == "model/gltf-binary"
+                if is_3d_model and (element.kind not in {"prop", "scene"} or slot != "model_glb"):
+                    raise ValueError("3D 模型只允许绑定到场景或道具的 model_glb 槽位")
+                if slot == "model_glb" and not is_3d_model:
+                    raise ValueError("model_glb 槽位只接受 GLB 3D 模型")
+                if element.kind == "actor":
+                    if slot not in ACTOR_VIEW_SLOTS:
+                        raise ValueError("演员图片必须使用规定的五视图槽位")
+                    position = ACTOR_VIEW_SLOTS.index(slot)
+                else:
+                    if not re.fullmatch(r"[a-z0-9_-]{1,64}", slot):
+                        raise ValueError("文件槽位无效")
+                    position = len(element.files)
+                existing = next((item for item in element.files if item.slot == slot), None)
+                owner_usage = int(await session.scalar(
+                    select(func.coalesce(func.sum(ElementFile.size_bytes), 0))
+                    .select_from(ElementFile)
+                    .join(ElementAsset, ElementFile.element_id == ElementAsset.id)
+                    .where(ElementAsset.owner_id == owner_id)
+                ) or 0)
+                projected_usage = owner_usage - (existing.size_bytes if existing else 0) + size_bytes
+                if size_bytes < 0 or projected_usage > MAX_ELEMENT_STORAGE_BYTES:
+                    raise ValueError("元素资产存储空间已达到账号配额")
+                global_usage = int(await session.scalar(
+                    select(func.coalesce(func.sum(ElementFile.size_bytes), 0)).select_from(ElementFile)
+                ) or 0)
+                projected_global_usage = global_usage - (existing.size_bytes if existing else 0) + size_bytes
+                if projected_global_usage > MAX_GLOBAL_ELEMENT_STORAGE_BYTES:
+                    raise ValueError("元素资产已达到服务全局存储配额")
+                replaced_storage_path = existing.storage_path if existing else None
+                replaced_file = _deleted_element_file_record(existing) if existing else None
+                if existing:
+                    existing.storage_path = storage_path
+                    existing.mime_type = mime_type
+                    existing.size_bytes = size_bytes
+                    existing.sha256 = sha256
+                    existing.position = position
+                else:
+                    element.files.append(ElementFile(
+                        element_id=element.id,
+                        slot=slot,
+                        position=position,
+                        storage_path=storage_path,
+                        mime_type=mime_type,
+                        size_bytes=size_bytes,
+                        sha256=sha256,
+                    ))
+                element.version += 1
+                if is_3d_model and model_metadata is not None:
+                    element.metadata_json = {**(element.metadata_json or {}), "model3d": model_metadata}
+                slots = {item.slot for item in element.files}
+                slots.add(slot)
+                element.status = "ready" if (
+                    element.kind != "actor" or slots == set(ACTOR_VIEW_SLOTS)
+                ) else "draft"
+                storage_cleanup = (
+                    await before_commit((replaced_file,))
+                    if before_commit is not None and replaced_file is not None
+                    else None
+                )
+                audit_details: dict[str, object] = {
+                    "slot": slot,
+                    "mime_type": mime_type,
+                    "size_bytes": size_bytes,
+                    "replaced": existing is not None,
+                }
+                if storage_cleanup:
+                    audit_details["storage_cleanup"] = storage_cleanup
+                session.add(AuditEvent(
+                    actor_id=owner_id,
+                    action="element.file.upload",
+                    resource_type="element",
+                    resource_id=element.id,
+                    details=audit_details,
                 ))
-            element.version += 1
-            slots = {item.slot for item in element.files}
-            slots.add(slot)
-            element.status = "ready" if (
-                element.kind != "actor" or slots == set(ACTOR_VIEW_SLOTS)
-            ) else "draft"
-            await session.commit()
-            loaded = await self._loaded_element(session, element.id)
-            assert loaded is not None
-            return loaded
+                cancellation_requested = await _commit_deletion_with_cancellation_boundary(session)
+                result = StoredElementFileResult(
+                    element=element,
+                    replaced_storage_path=replaced_storage_path,
+                )
+        except BaseException as exc:
+            if result is not None:
+                raise StorageMutationCommittedWithError(result, exc) from exc
+            raise
+        assert result is not None
+        if cancellation_requested:
+            raise StorageMutationCommittedWithError(result, asyncio.CancelledError())
+        return result
+
+    async def delete_element_file(
+        self,
+        element_id: str,
+        file_id: str,
+        owner_id: str,
+        *,
+        before_commit: DeletionStorageHook | None = None,
+    ) -> DeletedElementFileResult:
+        result: DeletedElementFileResult | None = None
+        cancellation_requested = False
+        try:
+            async with self.sessions() as session:
+                element = await session.scalar(
+                    select(ElementAsset)
+                    .options(selectinload(ElementAsset.files))
+                    .where(
+                        ElementAsset.id == element_id,
+                        ElementAsset.owner_id == owner_id,
+                    )
+                    .with_for_update()
+                )
+                if not element:
+                    raise ValueError("元素不存在")
+                target = next((item for item in element.files if item.id == file_id), None)
+                if target is None:
+                    raise ValueError("元素文件不存在")
+
+                deleted_file = _deleted_element_file_record(target)
+                element.files.remove(target)
+                if element.kind == "actor":
+                    for item in element.files:
+                        item.position = ACTOR_VIEW_SLOTS.index(item.slot)
+                else:
+                    for position, item in enumerate(element.files):
+                        item.position = position
+                if target.slot == "model_glb":
+                    metadata = dict(element.metadata_json or {})
+                    metadata.pop("model3d", None)
+                    element.metadata_json = metadata
+                slots = {item.slot for item in element.files}
+                if element.kind == "actor":
+                    element.status = "ready" if slots == set(ACTOR_VIEW_SLOTS) else "draft"
+                else:
+                    element.status = "ready" if element.files else "draft"
+                element.version += 1
+                storage_cleanup = (
+                    await before_commit((deleted_file,))
+                    if before_commit is not None
+                    else None
+                )
+                audit_details: dict[str, object] = {
+                    "file_id": target.id,
+                    "slot": target.slot,
+                    "mime_type": target.mime_type,
+                    "size_bytes": target.size_bytes,
+                }
+                if storage_cleanup:
+                    audit_details["storage_cleanup"] = storage_cleanup
+                session.add(AuditEvent(
+                    actor_id=owner_id,
+                    action="element.file.delete",
+                    resource_type="element",
+                    resource_id=element.id,
+                    details=audit_details,
+                ))
+                cancellation_requested = await _commit_deletion_with_cancellation_boundary(session)
+                result = DeletedElementFileResult(element=element, deleted_file=deleted_file)
+        except BaseException as exc:
+            if result is not None:
+                raise StorageMutationCommittedWithError(result, exc) from exc
+            raise
+        assert result is not None
+        if cancellation_requested:
+            raise StorageMutationCommittedWithError(result, asyncio.CancelledError())
+        return result
+
+    async def delete_element(
+        self,
+        element_id: str,
+        owner_id: str,
+        *,
+        before_commit: DeletionStorageHook | None = None,
+    ) -> DeletedElementResult:
+        result: DeletedElementResult | None = None
+        cancellation_requested = False
+        try:
+            async with self.sessions() as session:
+                element = await session.scalar(
+                    select(ElementAsset)
+                    .options(selectinload(ElementAsset.files))
+                    .where(
+                        ElementAsset.id == element_id,
+                        ElementAsset.owner_id == owner_id,
+                    )
+                    .with_for_update()
+                )
+                if not element:
+                    raise ValueError("元素不存在")
+
+                deleted_files = tuple(_deleted_element_file_record(item) for item in element.files)
+                await session.execute(
+                    delete(RegenerationRequest).where(RegenerationRequest.element_id == element.id)
+                )
+                await session.delete(element)
+                storage_cleanup = (
+                    await before_commit(deleted_files)
+                    if before_commit is not None
+                    else None
+                )
+                audit_details: dict[str, object] = {
+                    "kind": element.kind,
+                    "name": element.name,
+                    "file_count": len(deleted_files),
+                    "size_bytes": sum(item.size_bytes for item in deleted_files),
+                }
+                if storage_cleanup:
+                    audit_details["storage_cleanup"] = storage_cleanup
+                session.add(AuditEvent(
+                    actor_id=owner_id,
+                    action="element.delete",
+                    resource_type="element",
+                    resource_id=element.id,
+                    details=audit_details,
+                ))
+                cancellation_requested = await _commit_deletion_with_cancellation_boundary(session)
+                result = DeletedElementResult(element_id=element_id, deleted_files=deleted_files)
+        except BaseException as exc:
+            if result is not None:
+                raise StorageMutationCommittedWithError(result, exc) from exc
+            raise
+        assert result is not None
+        if cancellation_requested:
+            raise StorageMutationCommittedWithError(result, asyncio.CancelledError())
+        return result
 
     async def request_regeneration(self, element_id: str, owner_id: str, prompt: str) -> RegenerationRequest:
         async with self.sessions() as session:

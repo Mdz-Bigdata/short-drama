@@ -2,10 +2,13 @@
 import logging
 import uuid
 import asyncio
+import json
 import re
 import os
 import hashlib
+import time
 from collections import OrderedDict
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 
 from app.repository.task_repo import TaskRepository
@@ -22,14 +25,30 @@ from app.core.shot_motion_contract import (
 from app.core.continuity import ContinuityState, plan_transition
 from app.core.image_quality import validate_five_view_images
 from app.core.video_quality import VideoQualityMeasurements, evaluate_video_quality
-from app.core.video_references import VideoGenerationIntent, plan_video_references
+from app.core.video_references import (
+    VideoGenerationIntent,
+    normalize_video_reference_mode,
+    plan_video_references,
+)
 from app.core.agent_council import AgentCouncilCompiler
+from app.core.workflow_prompts import STORYBOARD_SCRIPT_PROMPT, build_video_batch_prompt
+from app.core.storyboard_prompt_detail import compile_storyboard_prompt_detail
+from app.core.writer_dashboard import compile_writer_dashboard
+from app.core.character_dashboard import compile_character_dashboard
 from app.schema.drama import DramaCreateRequest
 from app.schema.production import NineGridStoryboard, StoryAssetCatalog, StoryboardPanel
 from app.schema.agent_council import AgentRole, CouncilCompileRequest, CouncilReleaseEvidence
+from app.schema.writer_dashboard import WriterDashboardResponse
+from app.schema.character_dashboard import CharacterDashboardResponse
 
 
 logger = logging.getLogger("app.service.drama_service")
+
+_LOG_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)\b(authorization|xi-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret)\b"
+    r"\s*[:=]\s*(?:Bearer\s+)?[^\s,;]+"
+)
+_LOG_BARE_SECRET = re.compile(r"(?i)\b(?:sk|ark)[_-][A-Za-z0-9_-]{16,}\b")
 
 
 def _bounded_shot_duration(value: object, default: float = 2.0) -> float:
@@ -121,64 +140,121 @@ def extract_speech(script: str) -> str:
         return lines[0].strip()
     return "既然如此，我今日便要了断于此！"
 
+_CHARACTER_ROLE_LABELS = (
+    "核心角色", "对手角色", "反派对手", "大反派", "男配角", "女配角",
+    "主角", "男主", "女主", "反派", "男配", "女配", "配角", "角色卡", "角色",
+)
+_CHARACTER_NAME_RESERVED = {
+    "主角", "男主", "女主", "反派", "对手", "配角", "男配", "女配", "核心角色", "对手角色",
+    "角色", "角色卡", "角色档案", "角色设定", "角色设计", "角色方案", "角色清单",
+    "角色总表", "人物总表", "总表", "清单", "列表", "章节标题", "人物关系", "五视图",
+}
+_CHARACTER_NAME_METADATA = (
+    "总表", "目录", "章节", "标题", "清单", "列表", "方案", "设计", "设定", "档案", "卡片", "UID",
+)
+_CHARACTER_NAME_PATTERN = r"[㐀-鿿][㐀-鿿·]{1,7}"
+_CHARACTER_ROLE_PATTERN = "|".join(re.escape(label) for label in _CHARACTER_ROLE_LABELS)
+
+
+def _valid_character_name(value: object) -> Optional[str]:
+    """只接受可作为制作资产键的真实中文角色名。"""
+    name = str(value or "").strip().strip("·：:|｜ ")
+    if not re.fullmatch(_CHARACTER_NAME_PATTERN, name):
+        return None
+    if name in _CHARACTER_NAME_RESERVED or any(token in name.upper() for token in _CHARACTER_NAME_METADATA):
+        return None
+    return name
+
+
+def _canonical_character_role(value: str) -> str:
+    role = (value or "").strip()
+    if role in {"核心角色", "主角", "男主", "女主"}:
+        return "主角"
+    if role in {"对手角色", "反派对手", "大反派", "反派"}:
+        return "反派"
+    return "配角"
+
+
+def _character_card_header(line: str) -> Optional[tuple[str, str, int]]:
+    """识别严格锚定的角色卡标题，拒绝表格、章节名和类型标签。"""
+    raw = (line or "").strip()
+    if not raw or raw.startswith("|"):
+        return None
+    heading = re.match(r"^#{1,6}\s+", raw)
+    heading_level = len(heading.group(0).split()[0]) if heading else 0
+    whole_bold = bool(re.fullmatch(r"(?:[-*+]\s*)?\*\*.+\*\*\s*", raw))
+    plain_role = bool(re.match(rf"^(?:[-*+]\s*)?(?:\*\*)?(?:{_CHARACTER_ROLE_PATTERN})", raw))
+    if not (heading or whole_bold or plain_role):
+        return None
+
+    title = raw[heading.end():] if heading else raw
+    title = re.sub(r"^[-*+]\s+", "", title).strip().replace("**", "")
+    direct = re.fullmatch(
+        rf"[^㐀-鿿]{{0,20}}(?P<role>{_CHARACTER_ROLE_PATTERN})"
+        rf"\s*(?:[（(][^）)\n]{{0,16}}[）)])?\s*[:：|｜]\s*"
+        rf"(?P<name>{_CHARACTER_NAME_PATTERN})(?:\s*[（(][^）)\n]{{0,80}}[）)])?\s*",
+        title,
+    )
+    if not direct:
+        direct = re.fullmatch(
+            rf"[^㐀-鿿]{{0,20}}角色卡\s*[|｜]\s*(?P<role>{_CHARACTER_ROLE_PATTERN})"
+            rf"\s*[|｜]\s*(?P<name>{_CHARACTER_NAME_PATTERN})\s*",
+            title,
+        )
+    if not direct:
+        return None
+    name = _valid_character_name(direct.group("name"))
+    if not name:
+        return None
+    return _canonical_character_role(direct.group("role")), name, heading_level
+
+
+def _parse_character_cards(res: str) -> "OrderedDict[str, dict]":
+    cards: "OrderedDict[str, dict]" = OrderedDict()
+    current: Optional[str] = None
+    current_heading_level = 0
+    for line in (res or "").splitlines():
+        header = _character_card_header(line)
+        if header:
+            role, name, current_heading_level = header
+            cards.setdefault(name, {"role": role, "description": ""})
+            current = name
+            continue
+        heading = re.match(r"^\s*(#{1,6})\s+", line)
+        if heading and current and current_heading_level and len(heading.group(1)) <= current_heading_level:
+            current = None
+            current_heading_level = 0
+            continue
+        if current and line.strip():
+            cards[current]["description"] += line.strip() + "\n"
+    return cards
+
+
 def parse_characters(res: str, fallback_chars: dict) -> dict:
-    """
-    辅助方法：解析角色设计师输出，拆分为界面支持的主角与反派卡片
-    """
-    chars = {}
-    lines = res.split('\n')
-    current_char = None
-    for line in lines:
-        if "**" in line:
-            name_match = re.search(r'\*\*([^*]+)\*\*', line)
-            if name_match:
-                current_char = name_match.group(1).strip()
-                chars[current_char] = ""
-        elif current_char and line.strip():
-            chars[current_char] += line + "\n"
-            
-    keys = list(chars.keys())
-    result = {}
-    if len(keys) >= 2:
-        result["主角"] = f"**{keys[0]}**:\n" + chars[keys[0]].strip()
-        result["反派"] = f"**{keys[1]}**:\n" + chars[keys[1]].strip()
-    elif len(keys) == 1:
-        result["主角"] = f"**{keys[0]}**:\n" + chars[keys[0]].strip()
-        result["反派"] = fallback_chars["反派"]
-    else:
-        result = fallback_chars
+    """解析主角/反派卡片；只信任严格锚定的角色卡标题。"""
+    cards = _parse_character_cards(res)
+    by_role: dict[str, tuple[str, dict]] = {}
+    for name, card in cards.items():
+        by_role.setdefault(card["role"], (name, card))
+    ordered = list(cards.items())
+    protagonist = by_role.get("主角") or (ordered[0] if ordered else None)
+    antagonist = by_role.get("反派")
+    if antagonist is None:
+        antagonist = next((item for item in ordered if not protagonist or item[0] != protagonist[0]), None)
+    result = dict(fallback_chars)
+    if protagonist:
+        result["主角"] = f"**{protagonist[0]}**:\n" + protagonist[1]["description"].strip()
+    if antagonist:
+        result["反派"] = f"**{antagonist[0]}**:\n" + antagonist[1]["description"].strip()
     return result
 
 def parse_all_characters(res: str) -> "OrderedDict":
-    """解析角色设计师输出，提取【全部】角色 -> 有序 {角色名: 该角色完整描述特征}。
-    用于阶段3罗列所有人物信息+特征并各生成一张五视图 (不再只限主角/反派两人)。
-    以「角色身份标签 + 人名」的标题行(含 #、加粗或以角色标签起头)作为新角色卡起点，
-    后续行并入该角色描述，避免把正文里偶现的人名误切成新角色。"""
-    from collections import OrderedDict
-    chars = OrderedDict()
-    if not res:
-        return chars
-    role_pat = re.compile(
-        r'(?:核心角色|主角|男主|女主|对手角色|反派对手|大反派|反派|男配角|女配角|男配|女配|配角|角色)'
-        r'\s*[（(]?[^：:）)]{0,8}[）)]?\s*[:：]?\s*([一-龥][一-龥·]{1,6})')
-    current = None
-    for line in res.split('\n'):
-        stripped = line.lstrip()
-        is_header = (stripped.startswith('#') or '**' in line
-                     or re.match(r'^\s*(?:核心角色|主角|男主|女主|对手角色|反派对手|大反派|反派|男配|女配|配角|角色)', line))
-        m = role_pat.search(line) if is_header else None
-        if m:
-            name = m.group(1).strip('·')
-            # 过滤把“角色方案/角色设计/角色设定…”这类结构标题误当成人名
-            _NON_NAME = ("方案", "设计", "造型", "设定", "清单", "列表", "介绍", "信息",
-                         "特征", "大纲", "锁定", "卡片", "卡", "DNA", "档案", "维度", "定位")
-            if 2 <= len(name) <= 8 and not any(name.startswith(w) or name.endswith(w) for w in _NON_NAME):
-                current = name
-                chars.setdefault(current, "")
-                continue
-        if current and line.strip():
-            chars[current] += line.strip() + "\n"
-    return chars
+    """提取全部严格锚定的角色卡，并按文档出现顺序返回。"""
+    return OrderedDict(
+        (name, card["description"].strip())
+        for name, card in _parse_character_cards(res).items()
+    )
+
 
 def parse_storyboard_table(markdown_table: str, fallback_shots: list) -> list:
     """
@@ -215,24 +291,59 @@ def parse_storyboard_table(markdown_table: str, fallback_shots: list) -> list:
                 shot_id = int(shot_id_str.group()) if shot_id_str else len(shots) + 1
 
                 size = "MS"
+                angle = ""
                 motion = "Dolly In"
                 desc = ""
                 dialogue = ""
+                sound = ""
+                duration = ""
+                narrative_purpose = ""
+                characters: list[str] = []
+                scene_id = ""
+                scene = ""
                 if len(parts) >= 5:
                     size = _clean_cell(parts[1])
+                    angle = _clean_cell(parts[2])
                     motion = _clean_cell(parts[3])
                     desc = _clean_cell(parts[4])
                     if len(parts) >= 6:
                         dialogue = _clean_cell(parts[5])
+                    if len(parts) >= 7:
+                        sound = _clean_cell(parts[6])
+                    if len(parts) >= 8:
+                        duration = _clean_cell(parts[7])
+                    if len(parts) >= 9:
+                        narrative_purpose = _clean_cell(parts[8])
+                    if len(parts) >= 10:
+                        characters = [
+                            item.strip()
+                            for item in re.split(r"[，,、/]", _clean_cell(parts[9]))
+                            if item.strip()
+                        ]
+                    if len(parts) >= 11:
+                        raw_scene = _clean_cell(parts[10])
+                        scene_match = re.match(r"^(E\d+S\d+)\s*[-—:：]?\s*(.*)$", raw_scene, flags=re.I)
+                        if scene_match:
+                            scene_id = scene_match.group(1).upper()
+                            scene = scene_match.group(2).strip() or scene_id
+                        else:
+                            scene = raw_scene
                 else:
                     desc = _clean_cell(" | ".join(parts[1:]))
 
                 shots.append({
                     "shot_id": shot_id,
                     "size": size,
+                    "angle": angle,
                     "motion": motion,
                     "desc": desc,
-                    "dialogue": dialogue
+                    "dialogue": dialogue,
+                    "sound": sound,
+                    "duration": duration,
+                    "narrative_purpose": narrative_purpose,
+                    "characters": characters,
+                    "scene_id": scene_id,
+                    "scene": scene,
                 })
             except Exception:
                 continue
@@ -342,6 +453,27 @@ def parse_shot_dialogue(cell: str, char1_name: str, char2_name: str,
         if len(re.findall(r'[一-龥]', clean)) >= 1:
             out.append((clean, char1_gender, detect_emotion(clean), char1_name or "主角"))
     return out
+
+
+def extract_json_object(text: str) -> Optional[dict]:
+    """从 LLM 输出中提取第一个 JSON 对象：优先 ```json 代码块，其次首个 { 到末尾 } 的片段。"""
+    if not text or not text.strip():
+        return None
+    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
+    candidates = []
+    if fence:
+        candidates.append(fence.group(1))
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end > start:
+        candidates.append(text[start:end + 1])
+    for candidate in candidates:
+        try:
+            obj = json.loads(candidate)
+            if isinstance(obj, dict):
+                return obj
+        except (ValueError, TypeError):
+            continue
+    return None
 
 
 def split_episodes(script: str) -> list:
@@ -627,13 +759,18 @@ class DramaService:
             "prompt_optimized": bool(optimize),
         }
 
-    def create_task(self, req: DramaCreateRequest) -> Dict[str, Any]:
+    def create_task(
+        self,
+        req: DramaCreateRequest,
+        owner_user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         初始化创建一个短剧生成任务，生成唯一的 taskId，并将初始状态写入仓储
         """
         task_id = str(uuid.uuid4())
         task_data = {
             "task_id": task_id,
+            "owner_user_id": str(owner_user_id) if owner_user_id else None,
             "current_stage": 0,
             "stage_name": "初始化选题",
             "status": "idle",
@@ -667,7 +804,47 @@ class DramaService:
         """
         获取任务当前状态与所有已生成的中间资产 (用于断点续传)
         """
-        return self.repo.get_task(task_id)
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        assets = task.get("assets") or {}
+        board_payload = assets.get("4_storyboard")
+        if isinstance(board_payload, dict) and not assets.get("4_prompt_detail"):
+            try:
+                board = NineGridStoryboard.model_validate(board_payload)
+                profiles = {
+                    str(item.get("name")): str(item.get("desc") or "")
+                    for item in (assets.get("3_characters") or [])
+                    if isinstance(item, dict) and item.get("name")
+                }
+                detail = compile_storyboard_prompt_detail(
+                    board,
+                    script_text=str(assets.get("2") or "\n".join(
+                        str(item.get("desc") or "") for item in (assets.get("4") or [])
+                        if isinstance(item, dict)
+                    )),
+                    visual_style=f"{(task.get('config') or {}).get('director_style') or '真人电影写实'}，精品短剧画风，大师级构图",
+                    episode="第1集",
+                    character_profiles=profiles,
+                )
+                assets["4_prompt_detail"] = detail.model_dump(mode="json")
+            except Exception as exc:
+                logger.warning("分镜提示词详情兼容编译失败: %s", type(exc).__name__)
+        return task
+
+    def get_writer_dashboard(self, task_id: str) -> Optional[WriterDashboardResponse]:
+        """Compile the current Writer Agent assets into the stable dashboard contract."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        return compile_writer_dashboard(task)
+
+    def get_character_dashboard(self, task_id: str) -> Optional[CharacterDashboardResponse]:
+        """Compile persisted Stage 3 assets into the stable five-view contract."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        return compile_character_dashboard(task)
 
     def pause_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -695,8 +872,217 @@ class DramaService:
         """
         执行特定步骤 (异步包装)。真实大模型调用是阻塞式 I/O (文本/图片/视频轮询可达数分钟)，
         故放入线程池执行，避免阻塞 FastAPI 事件循环导致前端状态轮询无响应。
+        执行异常时把异常信息写入 stage_progress 并标记任务 failed，供前端对话面板抛错展示。
         """
-        return await asyncio.to_thread(self._execute_stage_blocking, task_id, stage)
+        try:
+            return await asyncio.to_thread(self._execute_stage_blocking, task_id, stage)
+        except Exception as e:
+            failed = self.repo.get_task(task_id)
+            if failed:
+                safe_error = self._safe_error_text(f"{type(e).__name__}: {e}")
+                self._progress_fail(failed, safe_error)
+                failed["status"] = "failed"
+                failed["fail_reason"] = f"阶段{stage}失败: {safe_error[:200]}"
+                self.repo.save_task(task_id, failed)
+            raise
+
+    # ---------------- 阶段执行进度上报 (供前端对话面板进度条/调用过程展示轮询) ----------------
+    STAGE_LABELS = {
+        1: "总导演策划", 2: "编剧剧本创作", 3: "角色设计师造型", 4: "分镜师分镜拆解",
+        5: "视觉总监多镜头多帧生成", 6: "音频总监配音音效", 7: "合成发布渲染合流", 8: "宣发Agent引流",
+    }
+
+    def _progress_save(self, task: Dict[str, Any]):
+        self.repo.save_task(task["task_id"], task)
+
+    @staticmethod
+    def _progress_timestamp() -> tuple[str, float]:
+        now_epoch = time.time()
+        return datetime.fromtimestamp(now_epoch, timezone.utc).isoformat(timespec="milliseconds"), now_epoch
+
+    @staticmethod
+    def _safe_error_text(error: object, limit: int = 260) -> str:
+        text = " ".join(str(error or "未知异常").replace("\x00", "").split())
+        text = _LOG_SECRET_ASSIGNMENT.sub(lambda match: f"{match.group(1)}=[REDACTED]", text)
+        text = _LOG_BARE_SECRET.sub("[REDACTED]", text)
+        return text[:limit]
+
+    @staticmethod
+    def _close_running_progress_calls(sp: Dict[str, Any], completed_at: str, completed_epoch: float, status: str):
+        for call in sp.get("calls", []):
+            if call.get("status") == "running":
+                call["status"] = status
+                call["completed_at"] = completed_at
+                call["duration_ms"] = max(0, round((completed_epoch - float(call.get("started_epoch") or completed_epoch)) * 1000))
+
+    @staticmethod
+    def _emit_task_progress(task: Dict[str, Any], event: str, **fields: Any):
+        sp = task.get("stage_progress") or {}
+        payload = {
+            "event": event,
+            "timestamp": sp.get("updated_at"),
+            "task_id": task.get("task_id"),
+            "stage": sp.get("stage"),
+            "stage_label": sp.get("stage_label"),
+            "status": sp.get("status"),
+            "percent": sp.get("percent"),
+            "step": sp.get("label"),
+            "elapsed_ms": sp.get("elapsed_ms", 0),
+            **fields,
+        }
+        logger.info(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+    def _progress_begin(self, task: Dict[str, Any], stage: int):
+        """阶段开始：重置进度条与调用过程列表。"""
+        timestamp, epoch = self._progress_timestamp()
+        task["stage_progress"] = {
+            "stage": stage,
+            "stage_label": self.STAGE_LABELS.get(stage, f"阶段{stage}"),
+            "percent": 3,
+            "label": "初始化阶段上下文",
+            "status": "running",
+            "error": None,
+            "started_at": timestamp,
+            "started_epoch": epoch,
+            "updated_at": timestamp,
+            "elapsed_ms": 0,
+            "calls": [{
+                "name": "初始化阶段上下文",
+                "status": "running",
+                "started_at": timestamp,
+                "started_epoch": epoch,
+            }],
+        }
+        self._progress_save(task)
+        self._emit_task_progress(task, "task_stage_started", step_index=1)
+
+    def _progress_step(self, task: Dict[str, Any], percent: int, label: str):
+        """进入一个新的调用步骤：上一步标记完成，追加新调用记录并推进百分比。"""
+        sp = task.get("stage_progress")
+        if not isinstance(sp, dict):
+            return
+        timestamp, epoch = self._progress_timestamp()
+        self._close_running_progress_calls(sp, timestamp, epoch, "done")
+        sp.setdefault("calls", []).append({
+            "name": label,
+            "status": "running",
+            "started_at": timestamp,
+            "started_epoch": epoch,
+        })
+        sp["percent"] = max(int(sp.get("percent", 0)), min(99, int(percent)))
+        sp["label"] = label
+        sp["updated_at"] = timestamp
+        sp["elapsed_ms"] = max(0, round((epoch - float(sp.get("started_epoch") or epoch)) * 1000))
+        self._progress_save(task)
+        self._emit_task_progress(task, "task_stage_progress", step_index=len(sp["calls"]))
+
+    def _progress_done(self, task: Dict[str, Any]):
+        sp = task.get("stage_progress")
+        if not isinstance(sp, dict):
+            return
+        timestamp, epoch = self._progress_timestamp()
+        self._close_running_progress_calls(sp, timestamp, epoch, "done")
+        sp["percent"] = 100
+        sp["label"] = "阶段执行完成"
+        sp["status"] = "success"
+        sp["updated_at"] = timestamp
+        sp["completed_at"] = timestamp
+        sp["elapsed_ms"] = max(0, round((epoch - float(sp.get("started_epoch") or epoch)) * 1000))
+        self._emit_task_progress(task, "task_stage_completed", step_count=len(sp.get("calls", [])))
+
+    def _progress_fail(self, task: Dict[str, Any], error: str):
+        sp = task.get("stage_progress")
+        if not isinstance(sp, dict):
+            return
+        error = self._safe_error_text(error)
+        timestamp, epoch = self._progress_timestamp()
+        self._close_running_progress_calls(sp, timestamp, epoch, "error")
+        sp["status"] = "error"
+        sp["label"] = "阶段执行异常"
+        sp["error"] = error
+        sp["updated_at"] = timestamp
+        sp["completed_at"] = timestamp
+        sp["elapsed_ms"] = max(0, round((epoch - float(sp.get("started_epoch") or epoch)) * 1000))
+        self._emit_task_progress(task, "task_stage_failed", error=error[:260])
+
+    def _extract_script_breakdown(self, config: Dict[str, Any], title: str, dir_style: str,
+                                  shot_style: str, script: str, director_plan: str = "") -> Optional[Dict[str, Any]]:
+        """
+        阶段2后置步骤：把完整剧本结构化为「剧本大纲 + 场景明细 + 事件时间轴 + 人物关系图谱」，
+        供看板编剧页渲染。失败不阻断主流程，返回 None。
+        """
+        if not script or not script.strip():
+            return None
+        sys_prompt = (
+            "你是短剧制片系统的剧本结构化分析器。阅读给定剧本，只输出一个合法 JSON 对象（UTF-8，"
+            "不要输出 markdown 代码块之外的任何解释文字），字段如下：\n"
+            "{\n"
+            '  "overview": {"synopsis": "150-250字剧情概述", "genre": "题材类型(如 现代都市励志)",'
+            ' "theme": "一句话主题", "world_setting": "世界观与时代背景设定，100-200字"},\n'
+            '  "scenes": [{"scene_id": "E{集数}S{场景序号，两位数}，如 E1S01", "duration": "预估时长如 8s",'
+            ' "content": "该场景可见画面与动作概述，2-4句", "characters": ["出场角色名"]}],\n'
+            '  "timeline": [{"phase": "故事开始|进展纠葛|危机|高潮|结局 之一", "title": "事件短标题",'
+            ' "desc": "2-3句事件描述", "points": ["该事件的叙事作用要点，2-3条"]}],\n'
+            '  "relationships": [{"from": "角色A", "to": "角色B", "relation": "2-4字关系动词，如 欺骗/驱赶/背叛/扶持"}],\n'
+            '  "roles": [{"name": "角色名", "position": "女主角|男主角|反派|男配角|女配角|其它角色"}]\n'
+            "}\n"
+            "要求：scenes 覆盖剧本全部场景并按剧情顺序排列；timeline 提炼 5-8 个关键节点按时间顺序；"
+            "relationships 只保留剧情中真实发生的关系；角色名必须与剧本中的称呼完全一致。"
+        )
+        user_prompt = f"【短剧标题】：{title}\n\n【剧本原文】：\n{script}"
+        if director_plan:
+            user_prompt += f"\n\n【导演策划大纲(辅助参考)】：\n{director_plan}"
+        try:
+            res = self.gateway.call_llm(config["llm_model"], sys_prompt, user_prompt, title, dir_style, shot_style)
+            breakdown = extract_json_object(res)
+            if not breakdown:
+                logger.warning("[Stage2] 剧本结构化分析未解析出 JSON，跳过看板结构化渲染")
+            return breakdown
+        except Exception as e:
+            logger.warning(f"[Stage2] 剧本结构化分析失败(不阻断主流程): {type(e).__name__}")
+            return None
+
+    def _extract_character_dna_breakdown(self, config: Dict[str, Any], title: str, dir_style: str,
+                                         shot_style: str, dna_text: str) -> Optional[Dict[str, Any]]:
+        """
+        阶段3后置步骤：把「角色 DNA 性格造型锁定包」markdown 结构化为 JSON，
+        供看板角色资产图页面图文渲染。失败不阻断主流程，返回 None。
+        """
+        if not dna_text or not dna_text.strip():
+            return None
+        sys_prompt = (
+            "你是短剧制片系统的角色资产结构化分析器。阅读给定的「角色 DNA 性格造型锁定包」文档，"
+            "只输出一个合法 JSON 对象（不要输出 JSON 之外的任何解释文字），字段如下：\n"
+            "{\n"
+            '  "project": {"genre": "类型定位", "platform": "平台/受众", "delivery_spec": "交付基准(如 1080×1920, 9:16, 30fps)",'
+            ' "constraints": "关键约束一句话"},\n'
+            '  "assumptions": ["关键假设，每条一句话"],\n'
+            '  "risks": [{"item": "风险项名称", "status": "BLOCKED|PENDING|PASS", "note": "一句话说明"}],\n'
+            '  "characters": [{\n'
+            '    "character_id": "如 char_001", "name": "角色名", "identity": "身份(可含多个状态,用/分隔)",\n'
+            '    "voice_id": "声音ID(如 VC_xxx)，无则空字符串",\n'
+            '    "colors": [{"name": "主色名(如 青灰)", "hex": "#8A9BA8"}],\n'
+            '    "states": [{\n'
+            '      "state_id": "如 modern / beggar_child", "title": "状态中文名(如 现代博士状态)",\n'
+            '      "dna": "身份DNA一段话", "hair": "发型", "body": "体型", "clothing": "服装",\n'
+            '      "accessories": "配饰", "style": "视觉风格",\n'
+            '      "anchors": [{"view": "正面|正面四分之三|标准侧面|背面四分之三|背面", "detail": "该视图可见身份锚点"}]\n'
+            "    }]\n"
+            "  }]\n"
+            "}\n"
+            "要求：忠实提取原文信息不要虚构；hex 色值必须是文档中出现的；"
+            "states 覆盖每个角色的全部状态卡；anchors 按五视图顺序排列。"
+        )
+        user_prompt = f"【短剧标题】：{title}\n\n【角色 DNA 锁定包原文】：\n{dna_text}"
+        try:
+            res = self.gateway.call_llm(config["llm_model"], sys_prompt, user_prompt, title, dir_style, shot_style)
+            breakdown = extract_json_object(res)
+            if not breakdown:
+                logger.warning("[Stage3] 角色 DNA 结构化分析未解析出 JSON，跳过角色资产图渲染")
+            return breakdown
+        except Exception as e:
+            logger.warning(f"[Stage3] 角色 DNA 结构化分析失败(不阻断主流程): {type(e).__name__}")
+            return None
 
     def _execute_stage_blocking(self, task_id: str, stage: int) -> Dict[str, Any]:
         """
@@ -708,6 +1094,7 @@ class DramaService:
 
         task["status"] = "running"
         task["current_stage"] = stage
+        self._progress_begin(task, stage)
         config = task["config"]
         title = config["title_suggestion"]
 
@@ -750,8 +1137,10 @@ class DramaService:
                 )
             else:
                 user_prompt = f"请为短剧《{title}》做导演方案定调与三幕大纲规划。"
-                
+
+            self._progress_step(task, 25, "调用 LLM · 总导演定调与三幕大纲规划")
             res = self.gateway.call_llm(config["llm_model"], sys_prompt, user_prompt, title, dir_style, shot_style, user_instruction=guidance)
+            self._progress_step(task, 85, "剧本一致性质检自检")
             task["assets"]["1"] = res
             
             task["logs"]["1"] = self.run_real_consistency_check(1, "总导演策划", task["assets"], config, title)
@@ -764,6 +1153,10 @@ class DramaService:
             if script_content:
                 # 若提供了手动剧本，则直接使用上传的剧本内容，跳过大模型创作
                 task["assets"]["2"] = script_content
+                self._progress_step(task, 40, "载入手动剧本并做结构化分析 (大纲/时间轴/人物关系)")
+                task["assets"]["2_breakdown"] = self._extract_script_breakdown(
+                    config, title, dir_style, shot_style, script_content, task["assets"].get("1", "")
+                )
                 task["logs"]["2"] = (
                     f"🪝 **[已跳过编剧生成]** 检测到手动上传的剧本《{script_name}》，已自动采用该剧本作为分镜依据。\n"
                     "#### ⚖️ 剧本一致性质检自检报告 (前置剧本校验)\n"
@@ -811,10 +1204,21 @@ class DramaService:
                 )
 
                 user_prompt = f"请基于导演策划大纲为短剧《{title}》编写完整的分集剧本：\n\n【导演策划】：\n" + task["assets"].get("1", "")
+                self._progress_step(task, 15, "调用 LLM · 分集剧本创作")
                 res = self.gateway.call_llm(config["llm_model"], sys_prompt, user_prompt, title, dir_style, shot_style, user_instruction=guidance)
                 task["assets"]["2"] = res
-                
+                self._progress_step(task, 70, "剧本结构化分析 (大纲/时间轴/人物关系)")
+                task["assets"]["2_breakdown"] = self._extract_script_breakdown(
+                    config, title, dir_style, shot_style, res, task["assets"].get("1", "")
+                )
+
+                self._progress_step(task, 90, "剧本一致性质检自检")
                 task["logs"]["2"] = self.run_real_consistency_check(2, "编剧剧本创作", task["assets"], config, title)
+
+            self._progress_step(task, 96, "编译 Writer Dashboard 时间轴与人物关系契约")
+            task["assets"]["2_writer_dashboard"] = compile_writer_dashboard(task).model_dump(
+                mode="json", by_alias=True
+            )
 
         elif stage == 3:
             # 阶段 3：角色设计师 (Character Designer)
@@ -831,11 +1235,19 @@ class DramaService:
                 f"【角色表情细节与身体微动作描述规范】：\n{performance_guide}\n"
             )
             user_prompt = "请为短剧角色进行 DNA 性格造型锁定：\n\n【导演方案】：\n" + task["assets"].get("1", "")
+            self._progress_step(task, 10, "调用 LLM · 角色 DNA 锁定包生成")
             res = self.gateway.call_llm(config["llm_model"], sys_prompt, user_prompt, title, dir_style, shot_style, user_instruction=guidance)
             
             # 直接将生成的全动态角色 DNA 设定文本存入 assets，消除预设角色构建框架
             task["assets"]["3"] = res
             task["assets"]["3_raw"] = res
+
+            # 先结构化再生成资产：3_dna.characters 是角色名单的权威来源，
+            # 只在结构化结果没有可用角色时才回退到严格锚定的 Markdown 角色卡标题。
+            self._progress_step(task, 15, "角色 DNA 锁定包结构化提取")
+            task["assets"]["3_dna"] = self._extract_character_dna_breakdown(
+                config, title, dir_style, shot_style, res
+            )
 
             # 为每名角色生成严格有序的五视图设定图，并物理拆成五个独立视图资产。
             # 后续镜头引用同一角色五视图，锁定脸型/发型/服装/体型。
@@ -848,60 +1260,156 @@ class DramaService:
                     t = re.sub(r'\s+', ' ', t)
                     return t.strip()[:320]
 
-                # 1) 主角/反派优先固定在前 (与下游配音/镜头的角色位映射保持一致)
-                parsed = parse_characters(res, {"主角": char1_desc, "反派": char2_desc})
-                # 2) 解析【全部】角色卡，主角/反派之外的配角一并罗列并各出五视图
-                all_chars = parse_all_characters(res)
+                def _structured_role(item, cname):
+                    role_text = str(item.get("role") or item.get("position") or item.get("identity") or "")
+                    if any(label in role_text for label in ("反派", "对手", "大反派")) or cname == char2_name:
+                        return "反派"
+                    if any(label in role_text for label in ("主角", "男主", "女主", "核心")) or cname == char1_name:
+                        return "主角"
+                    return "配角"
+
+                def _structured_desc(item):
+                    details = [item.get("description"), item.get("desc"), item.get("identity")]
+                    states = item.get("states")
+                    if isinstance(states, list):
+                        for state in states[:3]:
+                            if not isinstance(state, dict):
+                                continue
+                            details.extend(
+                                state.get(key)
+                                for key in ("dna", "hair", "body", "clothing", "accessories", "style")
+                            )
+                    return _clean_desc("；".join(str(value) for value in details if value))
+
                 ordered = []  # [(name, role, desc)]
                 seen = set()
-                for cname, role in ((char1_name, "主角"), (char2_name, "反派")):
-                    if cname and cname not in seen:
-                        ordered.append((cname, role, _clean_desc(parsed.get(role, "")) or (char1_desc if role == "主角" else char2_desc)))
+                dna = task["assets"].get("3_dna")
+                dna_characters = dna.get("characters") if isinstance(dna, dict) else None
+                if isinstance(dna_characters, list):
+                    for item in dna_characters:
+                        if not isinstance(item, dict):
+                            continue
+                        cname = _valid_character_name(item.get("name"))
+                        if not cname or cname in seen:
+                            continue
+                        role = _structured_role(item, cname)
+                        fallback_desc = char1_desc if role == "主角" else char2_desc if role == "反派" else ""
+                        ordered.append((cname, role, _structured_desc(item) or fallback_desc))
                         seen.add(cname)
-                for cname, cdesc in all_chars.items():
-                    if cname and cname not in seen:
-                        ordered.append((cname, "配角", _clean_desc(cdesc)))
+
+                if not ordered:
+                    cards = _parse_character_cards(res)
+                    for cname, card in cards.items():
+                        if cname in seen:
+                            continue
+                        role = card["role"]
+                        fallback_desc = char1_desc if role == "主角" else char2_desc if role == "反派" else ""
+                        ordered.append((cname, role, _clean_desc(card["description"]) or fallback_desc))
                         seen.add(cname)
-                # 限制最多 6 个角色出五视图，避免单阶段图生调用过多过慢 (可用 MAX_CHARACTER_SHEETS 调整)
-                max_sheets = int(os.getenv("MAX_CHARACTER_SHEETS", "6"))
-                for cname, role, cdesc in ordered[:max_sheets]:
-                    # 已授权演员素材作为身份参考，但仍生成统一五视图，不允许用单张脸替代五视图。
-                    auth_face = self.gateway.resolve_authorized_face(cname, role)
-                    sheet_url = self.gateway.generate_character_sheet(
-                        config["image_model"], cname, cdesc, dir_style, genre=genre,
-                        ref_images=[auth_face] if auth_face else None,
+
+                if not ordered:
+                    task["assets"]["3_sheets"] = sheets
+                    task["assets"]["3_characters"] = characters
+                    task["assets"]["3_character_dashboard"] = compile_character_dashboard(task).model_dump(
+                        mode="json", by_alias=True
                     )
-                    if not sheet_url:
-                        raise RuntimeError(f"角色「{cname}」五视图生成失败")
-                    sheets[cname] = sheet_url
-                    view_digest = hashlib.sha256(f"{cname}|{sheet_url}".encode("utf-8")).hexdigest()[:16]
-                    view_dir = os.path.join(media_compositor.MEDIA_DIR, "character_views", view_digest)
-                    view_paths = split_five_view_sheet(sheet_url, view_dir)
-                    five_view_quality = validate_five_view_images(view_paths)
-                    if not five_view_quality.passed:
-                        raise RuntimeError(
-                            f"角色「{cname}」五视图质检失败："
-                            + "；".join(issue.message for issue in five_view_quality.issues)
+                    self.repo.save_task(task_id, task)
+                    raise RuntimeError("角色 DNA 中未提取出有效角色名")
+                # 限制最多 6 个角色出五视图，避免单阶段图生调用过多过慢 (可用 MAX_CHARACTER_SHEETS 调整)
+                max_sheets = max(1, min(20, int(os.getenv("MAX_CHARACTER_SHEETS", "6"))))
+                selected_characters = ordered[:max_sheets]
+                sheet_total = len(selected_characters)
+
+                def _persist_character_assets():
+                    task["assets"]["3_sheets"] = sheets
+                    task["assets"]["3_characters"] = characters
+                    task["assets"]["3_character_dashboard"] = compile_character_dashboard(task).model_dump(
+                        mode="json", by_alias=True
+                    )
+                    self.repo.save_task(task_id, task)
+
+                # 初始快照使前端在首张图生较慢时也能展示 DNA 和等待状态。
+                _persist_character_assets()
+                for sheet_no, (cname, role, cdesc) in enumerate(selected_characters, start=1):
+                    self._progress_step(
+                        task,
+                        18 + int(68 * (sheet_no - 1) / sheet_total),
+                        f"生成「{cname}」五视图设定图 ({sheet_no}/{sheet_total})",
+                    )
+                    sheet_url = None
+                    views = []
+                    five_view_quality = None
+                    record_persisted = False
+                    failure_phase = "generation_error"
+                    try:
+                        # 已授权演员素材作为身份参考，但仍生成统一五视图，不允许用单张脸替代五视图。
+                        auth_face = self.gateway.resolve_authorized_face(cname, role)
+                        sheet_url = self.gateway.generate_character_sheet(
+                            config["image_model"], cname, cdesc, dir_style, genre=genre,
+                            ref_images=[auth_face] if auth_face else None,
                         )
-                    view_names = ["front", "front_three_quarter", "profile", "rear_three_quarter", "back"]
-                    views = [
-                        {
-                            "view": view_name,
-                            "image_url": media_compositor.public_url(
-                                os.path.relpath(str(path), media_compositor.MEDIA_DIR).replace(os.sep, "/")
-                            ),
+                        if not sheet_url:
+                            raise RuntimeError(f"角色「{cname}」五视图生成失败")
+                        sheets[cname] = sheet_url
+
+                        failure_phase = "split_error"
+                        view_digest = hashlib.sha256(f"{cname}|{sheet_url}".encode("utf-8")).hexdigest()[:16]
+                        view_dir = os.path.join(media_compositor.MEDIA_DIR, "character_views", view_digest)
+                        view_paths = split_five_view_sheet(sheet_url, view_dir)
+                        view_names = ["front", "front_three_quarter", "profile", "rear_three_quarter", "back"]
+                        views = [
+                            {
+                                "view": view_name,
+                                "image_url": media_compositor.public_url(
+                                    os.path.relpath(str(path), media_compositor.MEDIA_DIR).replace(os.sep, "/")
+                                ),
+                            }
+                            for view_name, path in zip(view_names, view_paths)
+                        ]
+
+                        failure_phase = "quality_error"
+                        five_view_quality = validate_five_view_images(view_paths)
+                        record = {
+                            "name": cname,
+                            "role": role,
+                            "desc": cdesc,
+                            "sheet": sheet_url,
+                            "sheet_type": "ordered_five_view_turnaround",
+                            "views": views,
+                            "five_view_quality": five_view_quality.model_dump(),
                         }
-                        for view_name, path in zip(view_names, view_paths)
-                    ]
-                    characters.append({
-                        "name": cname,
-                        "role": role,
-                        "desc": cdesc,
-                        "sheet": sheet_url,
-                        "sheet_type": "ordered_five_view_turnaround",
-                        "views": views,
-                        "five_view_quality": five_view_quality.model_dump(),
-                    })
+                        characters.append(record)
+                        _persist_character_assets()
+                        record_persisted = True
+                        if not five_view_quality.passed:
+                            raise RuntimeError(
+                                f"角色「{cname}」五视图质检失败："
+                                + "；".join(issue.message for issue in five_view_quality.issues)
+                            )
+                    except Exception as char_error:
+                        if not record_persisted:
+                            safe_message = self._safe_error_text(char_error)
+                            failed_quality = {
+                                "passed": False,
+                                "entropy": [],
+                                "palette_similarity": 0,
+                                "unique_view_hashes": 0,
+                                "issues": [{
+                                    "code": failure_phase,
+                                    "message": safe_message or f"角色「{cname}」五视图生成失败",
+                                }],
+                            }
+                            characters.append({
+                                "name": cname,
+                                "role": role,
+                                "desc": cdesc,
+                                "sheet": sheet_url,
+                                "sheet_type": "ordered_five_view_turnaround",
+                                "views": views,
+                                "five_view_quality": failed_quality,
+                            })
+                            _persist_character_assets()
+                        raise
             except Exception as e:
                 logger.error(f"[Stage3] 角色五视图生成异常: {type(e).__name__}")
                 raise
@@ -909,11 +1417,18 @@ class DramaService:
             # 结构化角色清单(名字+身份+特征+五视图)，供前端阶段3罗列与下游逐镜复用
             task["assets"]["3_characters"] = characters
 
+            self._progress_step(task, 95, "角色造型一致性质检自检")
             task["logs"]["3"] = self.run_real_consistency_check(3, "角色设计师造型", task["assets"], config, title)
+
+            self._progress_step(task, 97, "编译 Character Designer 五视图资产契约")
+            task["assets"]["3_character_dashboard"] = compile_character_dashboard(task).model_dump(
+                mode="json", by_alias=True
+            )
 
         elif stage == 4:
             # 阶段 4：分镜师 (Storyboard Artist)
             task["stage_name"] = "分镜师分镜拆解"
+            self._progress_step(task, 15, "调用 LLM · 15秒切片分镜拆解与九宫格规划")
             # 多指南叠加易撑爆上下文(Agnes-flash 等小模型会挂起/超时)，各取核心前段截断，
             # 既保留方法论又把总量控制在安全范围(直连 deepseek-v4-pro 时可调大或取消截断)。
             director_guide = self.read_md_file("AI短剧与漫剧导演级拍摄分镜完全指南.md")[:8000]
@@ -924,6 +1439,8 @@ class DramaService:
             scene_design = self.read_md_file("场景设计提示词.md")[:5000]
             sys_prompt = (
                 self._agent_role_prompt(task, AgentRole.STORYBOARD_ARTIST)
+                + "\n\n"
+                + STORYBOARD_SCRIPT_PROMPT
                 + "\n\n"
                 "Role: AI 分镜师智能体 (Storyboard Artist Agent)\n"
                 "Methodology: 将剧本转化为分镜清单 (Shot List)。结合《导演拍摄分镜指南》，"
@@ -945,6 +1462,9 @@ class DramaService:
                 f"【电影级武打镜头设计指南(力学受力反馈/五镜动作链/防越轴/慢动作卡点)如下】：\n{action_guide}\n\n"
                 f"【情节与镜头连贯性提示词(六锚点/连续性圣经/承接上一镜/逐镜单动作)如下】：\n{shot_continuity}\n\n"
                 f"【连续性与180度轴线防跳轴规范如下】：\n{continuity_guide}\n\n"
+                "【本阶段输出覆盖规则】：上述补充提示词中的拆镜、时长、八要素、入镜角色与场景标识规则全部生效；"
+                "为适配本阶段的严格九宫格产线，本次只选取因果连续、信息密度最高的恰好9镜。"
+                "Markdown表格列必须严格保持：镜号 | 景别 | 机位角度 | 运镜 | 画面内容 | 台词对白 | 声音 | 时长 | 叙事目的 | 入镜角色 | 场景标识。\n"
                 "请特别注意：输出恰好9个连续镜头，作为单张3×3九宫格分镜；每格必须提供新叙事信息。"
                 "九镜覆盖完整情节，按地点建立→人物关系→关键情绪递进；普通镜头1.5-4秒，"
                 "高风险动作镜头1.5-2.5秒，只有有明确情绪动机的长镜头才可延长且不超过8秒。"
@@ -1120,6 +1640,18 @@ class DramaService:
             task["assets"]["4_grid"] = board_url
             task["assets"]["4_grid_prompt"] = build_nine_grid_prompt(board)
             task["assets"]["4_storyboard"] = board.model_dump(mode="json")
+            character_profiles = {
+                str(item.get("name")): str(item.get("desc") or "")
+                for item in (task["assets"].get("3_characters") or [])
+                if isinstance(item, dict) and item.get("name")
+            }
+            task["assets"]["4_prompt_detail"] = compile_storyboard_prompt_detail(
+                board,
+                script_text=str(task["assets"].get("2") or "\n".join(shot.get("desc", "") for shot in shots)),
+                visual_style=f"{dir_style}，真人电视剧风格，精品短剧画风，大师级构图",
+                episode="第1集",
+                character_profiles=character_profiles,
+            ).model_dump(mode="json")
             task["assets"]["4_quality"] = continuity_report.model_dump()
             
             task["logs"]["4"] = self.run_real_consistency_check(4, "分镜师分镜拆解", task["assets"], config, title)
@@ -1127,6 +1659,7 @@ class DramaService:
         elif stage == 5:
             # 阶段 5：视觉总监 (Visual Director)
             task["stage_name"] = "视觉总监多镜头多帧生成"
+            self._progress_step(task, 8, "准备镜头运动契约与角色五视图参考")
 
             # 视觉规范、Agent 契约与模块化负面词都来自同一委员会计划。
             visual_style_doc = self.read_md_file("画质风格类型总结.md")
@@ -1155,7 +1688,12 @@ class DramaService:
             char2_gender = "male" if guess_gender(char2_name) == "male" else "female"
 
             shot_assets = []
-            requested_reference_mode = config.get("video_reference_mode") or "auto"
+            requested_reference_mode = normalize_video_reference_mode(
+                config.get("video_reference_mode")
+            )
+            # Historical projects may still contain the removed first_frame value.
+            # Persist the migration before generation so later runs remain deterministic.
+            config["video_reference_mode"] = requested_reference_mode
 
             def _generate_motion_video(
                 *,
@@ -1199,7 +1737,12 @@ class DramaService:
                 return url, plan.model_dump(mode="json")
 
             # 处理全部分镜镜头，确保合片时长达到 1min ~ 3min
-            for shot in shots:
+            for shot_no, shot in enumerate(shots, start=1):
+                self._progress_step(
+                    task,
+                    10 + int(85 * (shot_no - 1) / max(len(shots), 1)),
+                    f"图生视频 · 镜头 {shot_no}/{len(shots)}",
+                )
                 shot_id = shot.get("shot_id", len(shot_assets) + 1)
                 size = shot.get("size", "MS")
                 motion = shot.get("motion", "Dolly In")
@@ -1333,7 +1876,24 @@ class DramaService:
                     audio_rhythm_required=bool(timing_refs),
                     multi_shot_output=bool(shot.get("multi_shot_output")),
                 )
-                vid_prompt = f"{carry_lead}{compiled_motion.prompt}{continuity_suffix}"
+                spatial_relationship = (
+                    f"{contract.scene}。固定空间参照与调度：{contract.blocking}。"
+                    f"本批次开始状态：{contract.start_state}。人物朝向与视线关系：{contract.eyeline}。"
+                    f"关键道具位置：{'、'.join(contract.props) if contract.props else '无关键道具'}。"
+                )
+                dialogue_line = f"。原文台词保持不变：{dialogue}" if dialogue else ""
+                timeline = (
+                    f"0-{duration}秒，{size}，{motion}，{carry_lead}{compiled_motion.prompt}。"
+                    f"画面动作与表演：{desc}{dialogue_line}。{continuity_suffix}"
+                )
+                vid_prompt = build_video_batch_prompt(
+                    batch_index=shot_no,
+                    visual_style=f"{dir_style}，真人实拍电影感",
+                    duration_seconds=duration,
+                    spatial_relationship=spatial_relationship,
+                    timeline=timeline,
+                    sound=shot.get("sound") or contract.sound,
+                )
                 vid_url, route_decision = _generate_motion_video(
                     prompt_text=vid_prompt,
                     first_frame=img_url,
@@ -1347,8 +1907,8 @@ class DramaService:
                 )
                 used_reference_modes = [route_decision["mode"]]
 
-                # 为逐镜预览片段挂上音轨：合成本镜台词配音 + 轻量氛围 BGM，mux 进视频。
-                # 让步骤5预览视频自带声音、播放器静音键可点开 (无台词镜仅加氛围 BGM 保证音轨存在)。
+                # 为逐镜预览片段仅挂载原文台词配音，不自动添加音乐；这与视频提示词的
+                # “只生成音效，禁止生成音乐”约束保持一致。最终成片配乐仍由后续音频阶段处理。
                 # voice_path 一并存入资产，供步骤6成片复用，避免重复配音。
                 seg_lines = parse_shot_dialogue(dialogue, char1_name, char2_name, char1_gender, char2_gender)
                 voice_url, voice_path = None, None
@@ -1359,7 +1919,7 @@ class DramaService:
                         tag=f"voice_{task_id[:8]}_s{len(shot_assets)}",
                     )
                 vid_url = media_compositor.attach_audio_to_clip(
-                    vid_url, voice_path, bgm=True, tag=f"shotav_{task_id[:8]}_s{shot_id}")
+                    vid_url, voice_path, bgm=False, tag=f"shotav_{task_id[:8]}_s{shot_id}")
 
                 shot_assets.append({
                     "shot_id": shot_id,
@@ -1376,7 +1936,8 @@ class DramaService:
                     "video_reference_mode_requested": requested_reference_mode,
                     "video_reference_modes_used": used_reference_modes,
                     "video_route_decision": route_decision,
-                    "motion_prompt": compiled_motion.prompt,
+                    "motion_prompt": vid_prompt,
+                    "contract_motion_prompt": compiled_motion.prompt,
                     "motion_contract": contract.model_dump(mode="json"),
                     "contract_fingerprint": contract.contract_fingerprint,
                     "artifact_fingerprint": contract.artifact_fingerprint,
@@ -1406,6 +1967,7 @@ class DramaService:
         elif stage == 6:
             # 阶段 6：音频总监 (Audio Director) —— 按角色性别分配男女声逐句配音
             task["stage_name"] = "音频总监配音音效"
+            self._progress_step(task, 12, "多角色台词解析与 TTS 配音合成")
             shots6 = task["assets"].get("5") or []
             char1_gender = "male" if guess_gender(char1_name) == "male" else "female"
             char2_gender = "male" if guess_gender(char2_name) == "male" else "female"
@@ -1458,6 +2020,7 @@ class DramaService:
                 audio_url = self.gateway.generate_tts(config["tts_model"], "young-man", speech)
                 audio_path = None
 
+            self._progress_step(task, 70, "合成 BGM 与环境音效")
             voiced = "、".join(f"{t}({'男声' if g=='male' else '女声'})" for t, g in all_segments[:4])
             estimated_duration = 0
             for shot in shots6 if isinstance(shots6, list) else []:
@@ -1509,6 +2072,7 @@ class DramaService:
         elif stage == 7:
             # 阶段 7：合成发布 (Composer & Publisher)
             task["stage_name"] = "合成发布渲染合流"
+            self._progress_step(task, 15, "视听合流 · 转场衔接与压制渲染")
             shots5 = task["assets"].get("5") or []
             shot_voices_all = (task["assets"].get("6") or {}).get("shot_voices") or []
             # 镜头视频/字幕/逐镜配音三者按同一顺序锁步对齐 (仅纳入有视频的镜头)，确保画/字/声同步
@@ -1597,6 +2161,7 @@ class DramaService:
         elif stage == 8:
             # 阶段 8：宣发 Agent (PR Agent)
             task["stage_name"] = "宣发Agent引流"
+            self._progress_step(task, 25, "调用 LLM · 爆款标题与高完播率宣发文案")
             highlight_guide = self.read_md_file("影视剧高光时刻识别方案.md")[:6000]
             platform_guide = self.read_md_file("AI短剧注意事项与关键元素.md")[:5000]
             sys_prompt = (
@@ -1641,6 +2206,7 @@ class DramaService:
 
         # 每次成功执行一个阶段，就清除单次会话指令，保证下个阶段如果是自动生成的，不会继承上阶段的微调指令
         config["guidance_instruction"] = ""
+        self._progress_done(task)
         self.repo.save_task(task_id, task)
         return task
 
@@ -1749,6 +2315,9 @@ class DramaService:
         ]
         task["total_episodes"] = len(eps)
         task["current_episode"] = 0
+        task["assets"]["2_writer_dashboard"] = compile_writer_dashboard(task).model_dump(
+            mode="json", by_alias=True
+        )
         self.repo.save_task(task_id, task)
         return task
 
@@ -1919,6 +2488,135 @@ class DramaService:
         logger.info(f"[Task {task_id}] 第{ep_index}集制作完成，镜头数={len(clips)}，成片={ep.get('video_url')}")
         return task
 
+    # ---------------- 自然语言流程助手：意图识别 + 分步引导 + 后台执行 ----------------
+
+    _CN_DIGITS = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8}
+
+    def _next_step_hint(self, task: Dict[str, Any]) -> str:
+        """基于当前进度生成引导式下一步提示。"""
+        cur = int(task.get("current_stage", 0) or 0)
+        status = task.get("status", "idle")
+        sp = task.get("stage_progress") or {}
+        if status == "running" and sp.get("status") == "running":
+            return (f"当前正在执行第 {sp.get('stage', cur)} 阶段《{sp.get('stage_label', task.get('stage_name', ''))}》"
+                    f"（{sp.get('percent', 0)}% · {sp.get('label', '')}），完成后我会提示您。您也可以说「暂停」。")
+        if status == "failed":
+            reason = task.get("fail_reason") or (task.get("stage_progress") or {}).get("error") or "未知原因"
+            return f"⚠️ 上次执行在第 {cur} 阶段失败：{reason}。回复「重跑第 {cur} 阶段」可重新执行，或先说出修改意见再重跑。"
+        if cur >= 8:
+            return "全部 8 个阶段已完成 🎉 您可以点击右上角「导出」下载成片，或说「重跑第 N 阶段」重塑某一环节。"
+        nxt = cur + 1
+        return (f"当前已完成第 {cur}/8 阶段。下一步：第 {nxt} 阶段《{self.STAGE_LABELS.get(nxt, '')}》"
+                f"— 回复「继续」即可执行；也可以直接说出调整意见（如“把反派改得更狠”），我会重塑当前阶段。")
+
+    def _assistant_answer(self, task: Dict[str, Any], question: str) -> str:
+        """针对用户提问的自然语言答疑（带任务上下文），失败时退化为状态说明。"""
+        config = task["config"]
+        title = config.get("title_suggestion", "")
+        context = (
+            f"短剧标题：{title}；当前进度：第 {task.get('current_stage', 0)}/8 阶段（{task.get('stage_name', '')}）；"
+            f"任务状态：{task.get('status')}；已产出资产键：{', '.join(sorted((task.get('assets') or {}).keys())) or '无'}。"
+            f"八大阶段依次为：" + "、".join(f"{k}.{v}" for k, v in self.STAGE_LABELS.items()) + "。"
+        )
+        sys_prompt = (
+            "你是 AI 短剧制作平台的流程助手。基于给定的任务上下文，用简体中文简洁回答用户问题（不超过200字），"
+            "并在结尾用一句话给出下一步操作建议（如：回复「继续」执行下一阶段 / 说出修改意见我会重塑当前阶段）。"
+            "不要编造尚未生成的内容。"
+        )
+        try:
+            return self.gateway.call_llm(
+                config["llm_model"], sys_prompt, f"【任务上下文】{context}\n\n【用户问题】{question}",
+                title, config.get("director_style", "cyberpunk"), config.get("shot_style", "cinematic"),
+            ).strip()
+        except Exception:
+            return f"目前{context}\n\n{self._next_step_hint(task)}"
+
+    async def assistant_message(self, task_id: str, message: str) -> Dict[str, Any]:
+        """
+        自然语言对话入口：识别意图（执行/重跑/暂停/查询/微调/答疑），
+        执行类动作后台异步启动并立即返回，前端通过 /status 轮询 stage_progress 展示进度条与调用过程。
+        返回 {"reply", "action", "stage", "task"}。
+        """
+        task = self.repo.get_task(task_id)
+        if not task:
+            raise ValueError("任务不存在")
+        msg = (message or "").strip()
+        task.setdefault("chat_history", []).append({"sender": "user", "text": msg})
+
+        cur = int(task.get("current_stage", 0) or 0)
+        status = task.get("status", "idle")
+        # 单阶段执行完成后任务 status 可能停留在 running（历史行为），以 stage_progress 为准判定“真正在跑”
+        sp = task.get("stage_progress") or {}
+        actively_running = status == "running" and sp.get("status") == "running"
+        action, stage_target = "none", None
+
+        async def _run_stage_background(stage: int):
+            try:
+                await self.execute_stage(task_id, stage)
+            except Exception as e:
+                # execute_stage 已把异常写入 stage_progress 并标记 failed，这里只兜底日志
+                logger.error(f"[Assistant] 后台执行阶段{stage}失败: {str(e)[:200]}")
+
+        def _launch(stage: int):
+            task["status"] = "running"
+            self._progress_begin(task, stage)
+            self.repo.save_task(task_id, task)
+            asyncio.create_task(_run_stage_background(stage))
+
+        # 解析「重跑/重新生成第N阶段」
+        rerun_match = (re.search(r'重(?:新)?(?:跑|生成|执行|做|来)[^0-9一二三四五六七八]*(?:第)?\s*([1-8一二三四五六七八])\s*(?:阶段|步|环节)?', msg)
+                       or re.search(r'(?:第)?\s*([1-8一二三四五六七八])\s*(?:阶段|步|环节)[^，。]*重(?:新)?(?:跑|生成|执行|做)', msg))
+
+        if "暂停" in msg:
+            self.pause_task(task_id)
+            task = self.repo.get_task(task_id)
+            reply = "⏸️ 已暂停任务，断点已保存。回复「继续」可从断点恢复执行。"
+        elif actively_running:
+            reply = "⏳ 当前有阶段正在执行中，请先等待完成（下方进度条实时展示调用过程），或说「暂停」中断。\n\n" + self._next_step_hint(task)
+        elif rerun_match:
+            raw = rerun_match.group(1)
+            stage_target = self._CN_DIGITS.get(raw, None) or int(raw)
+            if stage_target > max(cur, 1):
+                reply = f"第 {stage_target} 阶段还未执行到（当前第 {cur}/8 阶段），请先回复「继续」按顺序推进。"
+                stage_target = None
+            else:
+                _launch(stage_target)
+                action = "run_stage"
+                reply = (f"🔄 已开始重跑第 {stage_target} 阶段《{self.STAGE_LABELS.get(stage_target, '')}》。"
+                         f"下方进度条将实时展示每一步调用过程，完成或异常我都会告知您。")
+        elif any(k in msg for k in ("一键成片", "一键生成", "全部生成", "自动跑完", "开始生成")):
+            task["status"] = "running"
+            self.repo.save_task(task_id, task)
+            asyncio.create_task(self.execute_all_stages(task_id))
+            action = "run_all"
+            reply = "🚀 一键成片已启动！8 大智能体将连续执行剩余阶段，每个阶段的调用过程与进度百分比都会在下方实时滚动展示。"
+        elif any(k in msg for k in ("下一步", "继续", "开始吧", "执行", "推进")) and len(msg) <= 12:
+            if cur >= 8:
+                reply = "全部 8 个阶段均已完成 🎉 可以点击右上角「导出」，或说「重跑第 N 阶段」重塑某一环节。"
+            else:
+                stage_target = cur + 1
+                _launch(stage_target)
+                action = "run_stage"
+                reply = (f"▶️ 已启动第 {stage_target} 阶段《{self.STAGE_LABELS.get(stage_target, '')}》执行。"
+                         f"我会实时展示调用过程与进度百分比，完成后引导您进入下一步。")
+        elif any(k in msg for k in ("进度", "状态", "到哪", "怎么样了", "查询")) and len(msg) <= 16:
+            reply = "📊 " + self._next_step_hint(task)
+        elif msg.endswith(("？", "?")) or re.match(r'^(什么|为什么|怎么|如何|能不能|可以|是否|哪|介绍|解释)', msg):
+            reply = self._assistant_answer(task, msg)
+        else:
+            # 默认视为创作微调指令：记录 guidance 并重塑当前阶段
+            task["config"]["guidance_instruction"] = msg
+            stage_target = cur if cur > 0 else 1
+            _launch(stage_target)
+            action = "run_stage"
+            reply = (f"✍️ 已记录您的调整意见：「{msg[:60]}」，正在按该指引重塑第 {stage_target} 阶段"
+                     f"《{self.STAGE_LABELS.get(stage_target, '')}》。下方进度条实时展示调用过程。")
+
+        task = self.repo.get_task(task_id) or task
+        task.setdefault("chat_history", []).append({"sender": "ai", "text": reply})
+        self.repo.save_task(task_id, task)
+        return {"reply": reply, "action": action, "stage": stage_target, "task": task}
+
     async def chat_instruction(self, task_id: str, message: str) -> Dict[str, Any]:
         """
         核心方法：处理用户的对话引导指令，应用到当前的短剧生成环节中
@@ -1976,6 +2674,9 @@ class DramaService:
         task["config"]["image_model"] = req.image_model
         task["config"]["video_model"] = req.video_model
         task["config"]["tts_model"] = req.tts_model
+        task["config"]["video_reference_mode"] = req.video_reference_mode
+        task["config"]["one_click"] = req.one_click
+        task["config"]["episode_count"] = req.episode_count
         task["config"]["title_suggestion"] = req.title_suggestion
         
         self.repo.save_task(task_id, task)

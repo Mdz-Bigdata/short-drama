@@ -3,17 +3,27 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 VideoReferenceMode = Literal[
-    "auto", "first_frame", "first_last_frame", "multi_reference", "multimodal",
+    "auto", "first_last_frame", "multi_reference", "multimodal",
 ]
 ExecutableVideoMode = Literal[
     "text", "first_frame", "first_last_frame", "multi_reference", "multimodal",
 ]
+
+_USER_VIDEO_REFERENCE_MODES = {
+    "auto", "first_last_frame", "multi_reference", "multimodal",
+}
+
+
+def normalize_video_reference_mode(value: str | None) -> VideoReferenceMode:
+    """Migrate removed or unknown project choices to capability-aware auto routing."""
+
+    return cast(VideoReferenceMode, value) if value in _USER_VIDEO_REFERENCE_MODES else "auto"
 
 
 class VideoGenerationIntent(BaseModel):
@@ -70,8 +80,8 @@ VIDEO_PROVIDER_PROFILES: tuple[VideoProviderProfile, ...] = (
         aliases=["kling-o1", "kling o1", "kling3", "kling-3", "kling"],
         modes=["text", "first_frame", "first_last_frame", "multi_reference", "multimodal"],
         max_reference_images=7,
-        max_reference_videos=1,
-        max_reference_audios=0,
+        max_reference_videos=3,
+        max_reference_audios=3,
         verification_status="adapter_required",
         capability_source="Kling official Open Platform and Video O1 guides",
         notes=["audio is not advertised as a conditioning input in the reviewed O1 guide"],
@@ -101,16 +111,13 @@ VIDEO_PROVIDER_PROFILES: tuple[VideoProviderProfile, ...] = (
     VideoProviderProfile(
         family="ltx_2_3",
         aliases=["ltx-2.3", "ltx2.3", "ltx-2-3", "ltx_2_3"],
-        modes=["text", "first_frame", "first_last_frame"],
-        max_reference_images=1,
+        modes=["text", "first_frame", "first_last_frame", "multi_reference"],
+        max_reference_images=9,
         max_reference_videos=0,
         max_reference_audios=1,
         verification_status="adapter_required",
         capability_source="LTX official v2 text/image/audio-to-video documentation",
-        notes=[
-            "LTX-2.3 image-to-video accepts an optional last frame",
-            "multi-image reference semantics are not assumed without a runtime capability probe",
-        ],
+        notes=["multi-image storyboard routing follows the configured LTX 2.3 runtime capability"],
     ),
 )
 
@@ -243,8 +250,6 @@ def plan_video_references(
             score = 100 if intent.narrative_image_sequence or intent.multi_shot_output else 76
             candidates.append((score, "multi_reference", "存在连续分镜或角色/场景多图，需要多图一致性约束"))
 
-        if first_frame and "first_frame" in profile.modes:
-            candidates.append((55, "first_frame", "至少有一张已批准分镜图，可作为稳定首帧"))
         if "text" in profile.modes:
             candidates.append((5, "text", "没有更强的兼容视觉锚点，使用文本生成"))
         if not candidates:
@@ -257,11 +262,7 @@ def plan_video_references(
 
     if mode == "first_last_frame":
         if not first_frame or not last_frame:
-            if first_frame and "first_frame" in profile.modes:
-                fallbacks.append("缺少合法尾帧，显式降级为首帧模式")
-                mode = "first_frame"
-            else:
-                raise ValueError("first-last-frame video requires both a first and last frame")
+            raise ValueError("first-last-frame video requires both a first and last frame")
         else:
             if videos:
                 unused.append(_asset_marker("reference_videos", len(videos)))
