@@ -18,6 +18,15 @@ class StaleTaskWriteError(RuntimeError):
     """Raised when an old task snapshot tries to overwrite a newer script revision."""
 
 
+class TaskStoreUnavailableError(RuntimeError):
+    """Raised when the task database exists but cannot be read or parsed.
+
+    This must never be confused with an empty database: treating an unreadable
+    file as ``{}`` lets the very next write replace every stored task with a
+    single-task snapshot.
+    """
+
+
 def _script_revision(task: object) -> int:
     if not isinstance(task, dict):
         return 0
@@ -37,15 +46,32 @@ class TaskRepository:
 
     def _read_db(self) -> Dict[str, Any]:
         try:
-            data = json.loads(self.db_path.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
-        except (OSError, json.JSONDecodeError):
+            raw = self.db_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            # A missing database is genuinely empty; anything else is a fault.
             return {}
+        except OSError as exc:
+            raise TaskStoreUnavailableError(f"任务库读取失败: {exc.strerror or exc}") from exc
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise TaskStoreUnavailableError("任务库内容已损坏，拒绝在此状态下写入") from exc
+        if not isinstance(data, dict):
+            raise TaskStoreUnavailableError("任务库格式异常，拒绝在此状态下写入")
+        return data
 
     def _write_db(self, data: Dict[str, Any]) -> None:
         temporary = self.db_path.with_suffix(self.db_path.suffix + ".tmp")
-        temporary.write_text(json.dumps(data, ensure_ascii=False, indent=4), encoding="utf-8")
-        os.replace(temporary, self.db_path)
+        try:
+            temporary.write_text(json.dumps(data, ensure_ascii=False, indent=4), encoding="utf-8")
+            os.replace(temporary, self.db_path)
+        except BaseException:
+            # A partial temp file (ENOSPC, interrupt) must not be left behind.
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+            raise
 
     def save_task(self, task_id: str, task_data: Dict[str, Any]) -> None:
         with _WRITE_LOCK:

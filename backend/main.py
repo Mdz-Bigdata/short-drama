@@ -34,6 +34,7 @@ from app.api.platform_api import router as platform_router
 from app.api.model_configuration_api import router as model_configuration_router
 from app.api.user_api import router as user_router
 from app.core.media_compositor import MEDIA_DIR
+from app.repository.task_repo import TaskStoreUnavailableError
 from app.platform.bootstrap import initialize_platform
 from app.platform.dependencies import get_model_secret_cipher, get_platform_store
 from app.platform.request_limits import ElementUploadGuardMiddleware, ScriptUpdateGuardMiddleware
@@ -95,6 +96,16 @@ async def _security_boundary(request: Request, call_next):
     if (os.getenv("ENVIRONMENT") or "development").lower() in {"prod", "production"}:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
+
+@app.exception_handler(TaskStoreUnavailableError)
+async def _task_store_unavailable(request: Request, exc: TaskStoreUnavailableError):
+    """Report a broken task store honestly instead of as a missing project."""
+    logging.getLogger("app.main").error("任务库不可用: %s", exc)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "任务库暂时不可用，已阻止写入以避免数据丢失，请检查服务端存储后重试"},
+    )
+
 
 # 挂载本地生成媒体的静态访问路由 (TTS 配音、合成成片)
 os.makedirs(MEDIA_DIR, exist_ok=True)

@@ -53,8 +53,10 @@ describe('App polling pauses while the tab is hidden', () => {
 
     await waitFor(() => expect(listCalls()).toBeGreaterThan(0));
 
-    // Visible: the lobby keeps refreshing.
+    // Idle lobby (nothing running): refreshes slowly, not every 1.5s.
     await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
+    expect(listCalls()).toBe(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(16_000); });
     const whileVisible = listCalls();
     expect(whileVisible).toBeGreaterThan(1);
 

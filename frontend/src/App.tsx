@@ -1002,6 +1002,10 @@ export default function App() {
   }, [isPolling, taskId]); // eslint-disable-line react-hooks/exhaustive-deps -- polling callback reads current refs
 
   // 登录后在大厅定时轮询拉取所有任务 (当不在工作台内时)
+  // Derive a STABLE boolean: fetchHistoryTasks replaces historyTasks with a new
+  // array every tick, so depending on the array itself would reset the timer on
+  // every response.
+  const hasRunningTask = historyTasks.some(task => task.status === 'running');
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
     const stop = () => {
@@ -1011,7 +1015,9 @@ export default function App() {
     const start = () => {
       stop();
       if (!currentUser || taskId || document.hidden) return;
-      interval = setInterval(() => { fetchHistoryTasks(); }, 1500);
+      // The listing ships every task with all of its assets, so only poll fast
+      // while something is actually progressing.
+      interval = setInterval(() => { fetchHistoryTasks(); }, hasRunningTask ? 1500 : 15000);
     };
     const onVisibilityChange = () => {
       if (document.hidden) {
@@ -1028,7 +1034,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       stop();
     };
-  }, [currentUser, taskId]); // eslint-disable-line react-hooks/exhaustive-deps -- lobby refresh follows authentication and selected task
+  }, [currentUser, taskId, hasRunningTask]); // eslint-disable-line react-hooks/exhaustive-deps -- lobby refresh follows authentication, selected task and whether work is in flight
 
   // 聊天自动滚动到底部
   useEffect(() => {
