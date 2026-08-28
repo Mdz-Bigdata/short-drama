@@ -114,3 +114,69 @@ describe('CharacterDesignerPage asset tab placement and actor naming', () => {
     expect(screen.getByRole('heading', { level: 1, name: '拍摄场地' })).toBeTruthy();
   });
 });
+
+describe('CharacterDesignerPage screenplay actor extraction', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  function mockFetch(importBody: Record<string, unknown>) {
+    return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes('/production-assets/')) {
+        return { ok: true, json: async () => importBody } as Response;
+      }
+      expect(init?.method ?? 'GET').toBe('GET');
+      return { ok: true, json: async () => ({ items: [], page: 1, page_size: 1, total: 0 }) } as Response;
+    });
+  }
+
+  it('imports the screenplay cast and reports how many arrived with images', async () => {
+    const user = userEvent.setup();
+    const fetchMock = mockFetch({ created: 3, skipped: 1, with_image: 2 });
+    const handlers = actions();
+    render(<CharacterDesignerPage dashboard={dashboard} taskId="task-9" {...handlers} />);
+
+    await user.click(screen.getByRole('button', { name: /从剧本提取演员/ }));
+
+    expect(await screen.findByText(/已从剧本提取 3 位演员，其中 2 位带参考图，跳过 1 位已存在演员。/)).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/drama/task-9/production-assets/actor/import',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    // A successful import must refresh the dashboard so new actors show up.
+    expect(handlers.onRefresh).toHaveBeenCalled();
+  });
+
+  it('explains an image-free import instead of implying failure', async () => {
+    const user = userEvent.setup();
+    mockFetch({ created: 2, skipped: 0, with_image: 0 });
+    render(<CharacterDesignerPage dashboard={dashboard} taskId="task-9" {...actions()} />);
+
+    await user.click(screen.getByRole('button', { name: /从剧本提取演员/ }));
+
+    expect(await screen.findByText(/已从剧本提取 2 位演员，暂无参考图，可上传或重新生成。/)).toBeTruthy();
+  });
+
+  it('surfaces a failed extraction without clearing the workspace', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      if (String(input).includes('/production-assets/')) {
+        return { ok: false, status: 500, json: async () => ({ detail: 'boom' }) } as Response;
+      }
+      return { ok: true, json: async () => ({ items: [], page: 1, page_size: 1, total: 0 }) } as Response;
+    });
+    render(<CharacterDesignerPage dashboard={dashboard} taskId="task-9" {...actions()} />);
+
+    await user.click(screen.getByRole('button', { name: /从剧本提取演员/ }));
+
+    expect(await screen.findByText(/从剧本提取演员失败/)).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: '沈砚之' })).toBeTruthy();
+  });
+
+  it('hides the extraction action when the page has no task context', () => {
+    render(<CharacterDesignerPage dashboard={dashboard} {...actions()} />);
+    expect(screen.queryByRole('button', { name: /从剧本提取演员/ })).toBeNull();
+  });
+});

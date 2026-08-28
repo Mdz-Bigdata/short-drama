@@ -155,10 +155,88 @@ def _extract_labelled(kind: str, scenes: list[dict[str, Any]], script: str) -> l
     return [{"name": name, "description": description} for name, description in found.items()]
 
 
+def _actor_image(character: dict[str, Any]) -> str:
+    """Prefer the front five-view render, then the approved turnaround sheet."""
+    views = character.get("views")
+    if isinstance(views, list):
+        for wanted in ("front", "front_three_quarter", "profile"):
+            for view in views:
+                if not isinstance(view, dict):
+                    continue
+                if str(view.get("view") or "").strip() == wanted:
+                    url = str(view.get("image_url") or "").strip()
+                    if url:
+                        return url
+        for view in views:
+            if isinstance(view, dict):
+                url = str(view.get("image_url") or "").strip()
+                if url:
+                    return url
+    return str(character.get("sheet") or "").strip()
+
+
+def _extract_actors(
+    characters: list[dict[str, Any]],
+    roles: list[dict[str, Any]],
+    scenes: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    """Approved character assets first, then any role the screenplay names."""
+    found: dict[str, dict[str, str]] = {}
+
+    for character in characters:
+        name = _clean(character.get("name"))[:_MAX_NAME_LENGTH]
+        if not name or name in found:
+            continue
+        role = _clean(character.get("role"))
+        description = _clean(character.get("desc"))[:_MAX_DESCRIPTION_LENGTH]
+        found[name] = {
+            "name": name,
+            "description": description or role,
+            "image_url": _actor_image(character),
+        }
+
+    for role in roles:
+        name = _clean(role.get("name"))[:_MAX_NAME_LENGTH]
+        if not name or name in found:
+            continue
+        found[name] = {
+            "name": name,
+            "description": _clean(role.get("position")) or "剧情角色",
+            "image_url": "",
+        }
+
+    for scene in scenes:
+        for raw_name in scene.get("characters") or []:
+            name = _clean(raw_name)[:_MAX_NAME_LENGTH]
+            if not name or name in found or len(found) >= _MAX_ASSETS_PER_KIND:
+                continue
+            found[name] = {"name": name, "description": "剧情角色", "image_url": ""}
+
+    return list(found.values())[:_MAX_ASSETS_PER_KIND]
+
+
+def _scene_images(shots: list[dict[str, Any]]) -> dict[str, str]:
+    """Map a scene identifier or name to the first storyboard frame it produced."""
+    images: dict[str, str] = {}
+    for shot in shots:
+        if not isinstance(shot, dict):
+            continue
+        url = str(shot.get("image_url") or "").strip()
+        if not url:
+            continue
+        for raw_key in (shot.get("scene_id"), shot.get("sceneId"), shot.get("scene")):
+            key = _clean(raw_key)
+            # `继承本场戏场景圣经` is a template placeholder, not a scene name.
+            if not key or "继承" in key:
+                continue
+            images.setdefault(key, url)
+    return images
+
+
 def extract_production_assets(task: dict[str, Any], kind: str) -> list[dict[str, str]]:
-    """Return the `{name, description}` assets of one kind named by the screenplay."""
-    if kind not in {"scene", "prop", "costume", "effect"}:
-        raise ValueError("仅支持提取 scene、prop、costume 或 effect 资产")
+    """Return the `{name, description, image_url}` assets the screenplay names."""
+    if kind not in {"actor", "scene", "prop", "costume", "effect"}:
+        raise ValueError("仅支持提取 actor、scene、prop、costume 或 effect 资产")
     assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
     config = task.get("config") if isinstance(task.get("config"), dict) else {}
     breakdown = assets.get("2_breakdown") if isinstance(assets.get("2_breakdown"), dict) else {}
@@ -169,6 +247,23 @@ def extract_production_assets(task: dict[str, Any], kind: str) -> list[dict[str,
     ]
     script = "\n".join(part for part in script_parts if part)
 
+    if kind == "actor":
+        return _extract_actors(
+            [item for item in (assets.get("3_characters") or []) if isinstance(item, dict)],
+            [item for item in (breakdown.get("roles") or []) if isinstance(item, dict)],
+            scenes,
+        )
+
     if kind == "scene":
-        return _extract_locations(scenes, script)
-    return _extract_labelled(kind, scenes, script)
+        located = _extract_locations(scenes, script)
+        images = _scene_images(
+            [item for item in (assets.get("4") or []) if isinstance(item, dict)]
+        )
+        return [
+            {**item, "image_url": images.get(item["name"], "")}
+            for item in located
+        ]
+
+    # Props, costumes and effects are named in prose; the screenplay carries no
+    # image for them, so the user uploads or regenerates one afterwards.
+    return [{**item, "image_url": ""} for item in _extract_labelled(kind, scenes, script)]

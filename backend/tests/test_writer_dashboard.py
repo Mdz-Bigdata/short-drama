@@ -934,10 +934,50 @@ class ProductionAssetExtractionApiTests(unittest.TestCase):
             props = self.client.get("/api/drama/writer-task-1/production-assets/prop")
             costumes = self.client.get("/api/drama/writer-task-1/production-assets/costume")
             effects = self.client.get("/api/drama/writer-task-1/production-assets/effect")
-            unsupported = self.client.get("/api/drama/writer-task-1/production-assets/actor")
+            unsupported = self.client.get("/api/drama/writer-task-1/production-assets/music")
 
         self.assertIn("建康城外乱葬岗", [item["name"] for item in scenes.json()["items"]])
         self.assertIn("金属钢笔", [item["name"] for item in props.json()["items"]])
         self.assertIn("粗麻短褐", [item["name"] for item in costumes.json()["items"]])
         self.assertIn("泥浆飞溅", [item["name"] for item in effects.json()["items"]])
         self.assertEqual(unsupported.status_code, 404)
+
+    def test_actor_extraction_includes_descriptions_and_reference_images(self):
+        task = _task()
+        task["assets"]["3_characters"] = [
+            {
+                "name": "沈砚之",
+                "role": "男主角",
+                "desc": "28岁男性，椭圆脸，戴银丝半框眼镜。",
+                "sheet": "https://cdn.example/sheet.png",
+                "views": [
+                    {"view": "front", "image_url": "http://localhost:8000/media/character_views/x/1_front.png"},
+                ],
+            },
+            {"name": "王景略", "role": "权臣", "desc": "45-50岁男性，方颌长脸。", "views": []},
+        ]
+        self.repo.save_task("writer-task-1", task)
+
+        with patch.object(drama_api, "service", self.service):
+            response = self.client.get("/api/drama/writer-task-1/production-assets/actor")
+
+        items = {item["name"]: item for item in response.json()["items"]}
+        self.assertIn("沈砚之", items)
+        self.assertIn("银丝半框眼镜", items["沈砚之"]["description"])
+        self.assertTrue(items["沈砚之"]["image_url"].endswith("1_front.png"))
+        # A character without any render still imports, just without an image.
+        self.assertEqual(items["王景略"]["image_url"], "")
+        # Roles named only by the writer breakdown are still offered.
+        self.assertIn("周教授", items)
+
+    def test_actor_extraction_falls_back_to_breakdown_roles_and_scene_cast(self):
+        task = _task()
+        task["assets"].pop("3_characters", None)
+        self.repo.save_task("writer-task-1", task)
+
+        with patch.object(drama_api, "service", self.service):
+            response = self.client.get("/api/drama/writer-task-1/production-assets/actor")
+
+        names = [item["name"] for item in response.json()["items"]]
+        self.assertIn("林夏", names)
+        self.assertIn("周教授", names)

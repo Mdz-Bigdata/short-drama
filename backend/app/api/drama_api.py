@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import os
 from urllib.parse import quote, unquote, urlparse
 
@@ -13,8 +14,11 @@ from app.core.media_compositor import MEDIA_DIR
 from app.core.production_asset_extractor import extract_production_assets
 from app.core.storyboard_assets import compose_nine_grid, fetch_remote_image_bytes
 from app.core.writer_dashboard import compile_writer_dashboard
+from app.api.element_api import _persist_element_file
 from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore
+from app.platform.uploads import validate_image_upload
+from starlette.concurrency import run_in_threadpool
 from app.core.video_quality import VideoQualityMeasurements
 from app.schema.agent_council import CouncilReleaseEvidence
 from app.schema.writer_dashboard import (
@@ -28,6 +32,7 @@ from app.schema.writer_dashboard import (
 )
 from app.schema.character_dashboard import CharacterDashboardResponse
 
+logger = logging.getLogger("app.api.drama_api")
 service = DramaService()
 repo = TaskRepository()
 
@@ -130,7 +135,66 @@ def get_writer_dashboard(task_id: str):
     return dashboard
 
 
-_EXTRACTABLE_ASSET_KINDS = {"scene", "prop", "costume", "effect"}
+_EXTRACTABLE_ASSET_KINDS = {"actor", "scene", "prop", "costume", "effect"}
+_IMAGE_SUFFIX_BY_MIME = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+
+
+def _local_media_bytes(path: str) -> Optional[bytes]:
+    """Read a /media/... file without leaving the media root."""
+    media_root = os.path.realpath(MEDIA_DIR)
+    absolute = os.path.realpath(os.path.join(media_root, unquote(path[len("/media/"):])))
+    if not absolute.startswith(media_root + os.sep) or not os.path.isfile(absolute):
+        return None
+    with open(absolute, "rb") as handle:
+        return handle.read()
+
+
+def _extracted_image_bytes(url: str) -> Optional[bytes]:
+    """Fetch one screenplay-derived reference image, local or remote."""
+    parsed = urlparse(url)
+    if parsed.path.startswith("/media/"):
+        return _local_media_bytes(parsed.path)
+    if parsed.scheme in {"http", "https"}:
+        try:
+            return fetch_remote_image_bytes(url)
+        except Exception:
+            return None
+    return None
+
+
+async def _attach_extracted_image(
+    *,
+    element_id: str,
+    owner_id: str,
+    kind: str,
+    url: str,
+    store: PlatformStore,
+) -> bool:
+    """Best-effort: a missing image must never fail the whole import."""
+    try:
+        content = await run_in_threadpool(_extracted_image_bytes, url)
+        if not content:
+            return False
+        suffix = os.path.splitext(urlparse(url).path)[1].lower()
+        if suffix == ".jpeg":
+            suffix = ".jpg"
+        if suffix not in _IMAGE_SUFFIX_BY_MIME.values():
+            suffix = ".png"
+        mime = next(key for key, value in _IMAGE_SUFFIX_BY_MIME.items() if value == suffix)
+        validated = validate_image_upload(f"reference{suffix}", mime, content)
+        await _persist_element_file(
+            element_id=element_id,
+            owner_id=owner_id,
+            slot="front" if kind == "actor" else "reference",
+            suffix=suffix,
+            mime=validated,
+            content=content,
+            store=store,
+        )
+        return True
+    except Exception:
+        logger.warning("提取资产参考图附加失败: element=%s kind=%s", element_id, kind)
+        return False
 
 
 @router.get("/{task_id}/production-assets/{kind}")
@@ -167,6 +231,7 @@ async def import_production_assets(
     known = {str(item.name).strip() for item in existing}
     created: list[dict] = []
     skipped = 0
+    with_image = 0
     for candidate in candidates:
         name = candidate["name"].strip()
         if not name or name in known:
@@ -186,9 +251,27 @@ async def import_production_assets(
                 break
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         known.add(name)
-        created.append({"id": element.id, "name": element.name})
+        attached = False
+        image_url = str(candidate.get("image_url") or "").strip()
+        if image_url:
+            attached = await _attach_extracted_image(
+                element_id=element.id,
+                owner_id=current_user["user_id"],
+                kind=kind,
+                url=image_url,
+                store=store,
+            )
+            if attached:
+                with_image += 1
+        created.append({"id": element.id, "name": element.name, "image": attached})
 
-    return {"kind": kind, "created": len(created), "skipped": skipped, "items": created}
+    return {
+        "kind": kind,
+        "created": len(created),
+        "skipped": skipped,
+        "with_image": with_image,
+        "items": created,
+    }
 
 
 @router.get("/{task_id}/script-documents", response_model=ScriptLibraryResponse)

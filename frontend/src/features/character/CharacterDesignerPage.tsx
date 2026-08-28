@@ -1,6 +1,7 @@
 import {
   ArrowRight,
   Download,
+  FileSearch,
   RefreshCcw,
   UserRoundPlus,
   WandSparkles,
@@ -28,6 +29,12 @@ const nonActorAssetKinds = ['scene', 'prop', 'costume', 'effect'] as const satis
 interface ElementCountResponse {
   items: unknown[];
   total: number;
+}
+
+interface ActorExtractionResult {
+  created: number;
+  skipped: number;
+  with_image?: number;
 }
 
 export function CharacterDesignerPage({
@@ -59,6 +66,8 @@ export function CharacterDesignerPage({
   const assetCountGenerations = useRef<Partial<Record<ElementKind, number>>>({});
   const [projectDetail, setProjectDetail] = useState<[string, string] | null>(null);
   const [overviewDetail, setOverviewDetail] = useState<CharacterOverviewDetail | null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [extractNotice, setExtractNotice] = useState('');
   const character = dashboard.characters.find(item => item.characterId === selectedId) || dashboard.characters[0];
   const projectDetails = [
     ['类型', dashboard.project.genre],
@@ -112,6 +121,34 @@ export function CharacterDesignerPage({
     onRefresh();
     void synchronizeAssetCounts();
   };
+
+  /** Mine the screenplay for its cast and file each actor into the asset库. */
+  const importActorsFromScript = async () => {
+    if (!taskId || extracting) return;
+    setExtracting(true);
+    setExtractNotice('');
+    try {
+      const result = await apiRequest<ActorExtractionResult>(
+        `/api/drama/${encodeURIComponent(taskId)}/production-assets/actor/import`,
+        { method: 'POST', body: JSON.stringify({}) },
+      );
+      const images = Number(result.with_image || 0);
+      setExtractNotice(result.created > 0
+        ? `已从剧本提取 ${result.created} 位演员`
+          + (images ? `，其中 ${images} 位带参考图` : '，暂无参考图，可上传或重新生成')
+          + (result.skipped ? `，跳过 ${result.skipped} 位已存在演员` : '')
+          + '。'
+        : result.skipped > 0
+          ? `剧本中的 ${result.skipped} 位演员已全部存在于资产库。`
+          : '剧本中尚未识别到可提取的演员，可先完成编剧阶段或手动添加。');
+      onRefresh();
+      void synchronizeAssetCounts();
+    } catch {
+      setExtractNotice('从剧本提取演员失败，请确认后端服务可用后重试。');
+    } finally {
+      setExtracting(false);
+    }
+  };
   const selectAssetKind = (kind: ElementKind) => {
     setActiveAssetKind(kind);
     setProjectDetail(null);
@@ -149,6 +186,11 @@ export function CharacterDesignerPage({
           </p>
         </div>
         <div className="character-designer__actions" aria-label="角色设计工作流操作">
+          {activeAssetKind === 'actor' && taskId && (
+            <button type="button" onClick={() => { void importActorsFromScript(); }} disabled={extracting}>
+              <FileSearch size={16} aria-hidden="true" /> {extracting ? '提取中…' : '从剧本提取演员'}
+            </button>
+          )}
           <button type="button" onClick={refresh} disabled={refreshing}>
             <RefreshCcw size={16} className={refreshing ? 'is-spinning' : ''} aria-hidden="true" />
             {refreshing ? '同步中' : '刷新'}
@@ -166,6 +208,7 @@ export function CharacterDesignerPage({
       </header>
 
       {syncMessage && <p className="character-designer__sync-message" role="status">{syncMessage}</p>}
+      {extractNotice && <p className="character-designer__sync-message" role="status">{extractNotice}</p>}
 
       {activeAssetKind === 'actor' ? (
         <section

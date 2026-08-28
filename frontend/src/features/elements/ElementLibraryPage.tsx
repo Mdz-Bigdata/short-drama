@@ -27,6 +27,7 @@ interface ExtractionResult {
   kind: ElementKind;
   created: number;
   skipped: number;
+  with_image?: number;
 }
 
 interface PendingUpload {
@@ -411,8 +412,12 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
       if (targetKind !== kindRef.current) return;
       await load(targetKind);
       if (targetKind !== kindRef.current) return;
+      const images = Number(result.with_image || 0);
       setNotice(result.created > 0
-        ? `已从剧本提取 ${result.created} 个${label}资产${result.skipped ? `，跳过 ${result.skipped} 个已存在项` : ''}。`
+        ? `已从剧本提取 ${result.created} 个${label}资产`
+          + (images ? `，其中 ${images} 个带参考图` : '，暂无参考图，可上传或重新生成')
+          + (result.skipped ? `，跳过 ${result.skipped} 个已存在项` : '')
+          + '。'
         : result.skipped > 0
           ? `剧本中的 ${result.skipped} 个${label}已全部存在于资产库。`
           : `剧本中尚未标注${label}信息，可手动添加或补充剧本后重试。`);
@@ -576,7 +581,7 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
           ) : (
             <button ref={toolbarImageButton} type="button" className="secondary-action" onClick={() => beginImageUpload()} disabled={Boolean(busy)}><Upload size={16} /> 上传</button>
           )}
-          {taskId && kind !== 'actor' && (
+          {taskId && (
             <button
               type="button"
               className="secondary-action"
