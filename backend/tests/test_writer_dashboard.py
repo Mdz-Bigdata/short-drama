@@ -1055,3 +1055,74 @@ class TaskListingCostTests(unittest.TestCase):
         self.assertNotIn("logs", summary)
         # They remain available per project through the status route.
         self.assertIn("2_breakdown", single["assets"])
+
+
+class TaskStatusRevalidationTests(unittest.TestCase):
+    """The workbench polls /status every 1.5s; unchanged polls must be free."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.repo = TaskRepository(str(Path(self.temp.name) / "tasks.json"))
+        task = _task()
+        task["current_stage"] = 2
+        task["stage_name"] = "专业编剧剧本创作"
+        task["logs"] = {"2": "剧本已生成"}
+        self.repo.save_task("writer-task-1", task)
+        self.service = DramaService()
+        self.service.repo = self.repo
+        app.dependency_overrides[get_current_user] = lambda: {
+            "user_id": "writer-user",
+            "role": "admin",
+        }
+        self.client = TestClient(
+            _ClientAddressApp(app, (f"etag-{self._testMethodName}", 50000)),
+            cookies={"auth_token": auth_service.generate_token("writer-user")},
+        )
+
+    def tearDown(self):
+        self.client.close()
+        app.dependency_overrides.pop(get_current_user, None)
+        self.temp.cleanup()
+
+    def test_an_unchanged_task_revalidates_to_an_empty_304(self):
+        with patch.object(drama_api, "service", self.service):
+            first = self.client.get("/api/drama/writer-task-1/status")
+            etag = first.headers["etag"]
+            repeat = self.client.get(
+                "/api/drama/writer-task-1/status",
+                headers={"If-None-Match": etag},
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertIn("2_breakdown", first.json()["assets"])
+        self.assertEqual(first.headers["cache-control"], "private, no-cache")
+        self.assertEqual(repeat.status_code, 304)
+        self.assertEqual(repeat.content, b"")
+        self.assertEqual(repeat.headers["etag"], etag)
+
+    def test_a_changed_task_gets_a_new_etag_and_the_full_body(self):
+        with patch.object(drama_api, "service", self.service):
+            first = self.client.get("/api/drama/writer-task-1/status")
+            stale_etag = first.headers["etag"]
+
+            changed = self.repo.get_task("writer-task-1")
+            changed["status"] = "running"
+            self.repo.save_task("writer-task-1", changed)
+
+            after = self.client.get(
+                "/api/drama/writer-task-1/status",
+                headers={"If-None-Match": stale_etag},
+            )
+
+        # A stale validator must never be answered with 304.
+        self.assertEqual(after.status_code, 200)
+        self.assertNotEqual(after.headers["etag"], stale_etag)
+        self.assertEqual(after.json()["status"], "running")
+
+    def test_the_response_is_not_cached_across_accounts(self):
+        with patch.object(drama_api, "service", self.service):
+            response = self.client.get("/api/drama/writer-task-1/status")
+
+        # A shared cache must not replay one account's project to another.
+        self.assertIn("private", response.headers["cache-control"])
+        self.assertEqual(response.headers["vary"], "Cookie")

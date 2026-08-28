@@ -1,4 +1,5 @@
 import hashlib
+import json
 import logging
 import os
 from urllib.parse import quote, unquote, urlparse
@@ -107,14 +108,27 @@ def get_all_tasks(current_user: dict = Depends(get_current_user)):
     return [task for task in tasks if isinstance(task, dict) and task.get("task_id")]
 
 @router.get("/{task_id}/status", response_model=DramaTaskResponse)
-def get_task_status(task_id: str):
-    """
-    获取单条任务的状态 (提供断点续传的中间结果)
+def get_task_status(task_id: str, request: Request):
+    """Return one task with every generated asset, revalidated by ETag.
+
+    The workbench polls this every 1.5s while a stage runs, but a stage takes
+    far longer than one tick, so most polls carry an unchanged body of several
+    hundred kilobytes. Tagging the payload lets the browser revalidate and get
+    an empty 304 whenever nothing has moved.
     """
     task = service.get_task_status(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    return task
+
+    payload = DramaTaskResponse.model_validate(task).model_dump(mode="json", by_alias=True)
+    body = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    etag = f'W/"{hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]}"'
+    # Revalidate on every poll, but skip the body when the task has not moved.
+    headers = {"ETag": etag, "Cache-Control": "private, no-cache", "Vary": "Cookie"}
+
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    return JSONResponse(content=payload, headers=headers)
 
 
 @router.get("/{task_id}/writer-dashboard/export")
