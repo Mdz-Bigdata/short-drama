@@ -49,7 +49,15 @@ const items: ElementItem[] = [
     status: 'draft',
     version: 1,
     metadata: {},
-    files: [],
+    files: [{
+      id: 'scene-2-poster',
+      slot: 'reference',
+      mime_type: 'image/png',
+      media_kind: 'image',
+      size_bytes: 1_024,
+      sha256: 'scene-2-poster-sha',
+      url: '/media/elements/scene-2.png',
+    }],
     model3d: null,
   },
 ];
@@ -82,7 +90,7 @@ describe('Element3DWorkspace', () => {
     expect(screen.getByText('结构校验通过')).toBeTruthy();
     expect(screen.getByText('建议将 Web 展示模型优化到 5 MB 以下')).toBeTruthy();
 
-    await userEvent.click(screen.getByRole('button', { name: /旧车站月台/ }));
+    await userEvent.click(screen.getByRole('button', { name: '查看场景资产“旧车站月台”' }));
     expect(onSelect).toHaveBeenCalledWith('scene-2');
     rerender(
       <Element3DWorkspace
@@ -124,5 +132,33 @@ describe('Element3DWorkspace', () => {
 
     expect(await screen.findByRole('region', { name: 'prop 文物数字展厅' })).toBeTruthy();
     expect(screen.queryByRole('img', { name: '雨夜巷口 模型画布' })).toBeNull();
+  });
+
+  it('deletes a card reference image from its trash button without selecting or deleting the asset', async () => {
+    const propItems = items.map(item => ({ ...item, kind: 'prop' as const }));
+    const onSelect = vi.fn();
+    const onDelete = vi.fn();
+    const onDeletePoster = vi.fn();
+    render(
+      <Element3DWorkspace
+        kind="prop"
+        items={propItems}
+        selectedId="scene-1"
+        busy=""
+        onSelect={onSelect}
+        onCreate={vi.fn()}
+        onUploadModel={vi.fn()}
+        onUploadPoster={vi.fn()}
+        onRegenerate={vi.fn()}
+        onDelete={onDelete}
+        onDeletePoster={onDeletePoster}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: '删除“旧车站月台”的参考图' }));
+
+    expect(onDeletePoster).toHaveBeenCalledWith(propItems[1]);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onDelete).not.toHaveBeenCalled();
   });
 });

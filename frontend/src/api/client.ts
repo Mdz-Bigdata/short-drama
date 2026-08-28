@@ -10,6 +10,39 @@ export class ApiError extends Error {
   }
 }
 
+/** True when a request failed because the session is gone, not because the
+ *  backend is down. The two need different messages and different recovery. */
+export function isUnauthorized(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401;
+}
+
+type UnauthorizedListener = () => void;
+
+const unauthorizedListeners = new Set<UnauthorizedListener>();
+
+/**
+ * Subscribe to session expiry.
+ *
+ * Feature components share `apiRequest`, so without this every one of them
+ * would swallow a 401 on its own and leave the user staring at a workbench
+ * whose panels silently never load. The app shell listens here and returns
+ * the user to the login gate instead.
+ */
+export function onUnauthorized(listener: UnauthorizedListener): () => void {
+  unauthorizedListeners.add(listener);
+  return () => unauthorizedListeners.delete(listener);
+}
+
+function notifyUnauthorized() {
+  for (const listener of [...unauthorizedListeners]) {
+    try {
+      listener();
+    } catch {
+      // One bad listener must not stop the others from resetting their state.
+    }
+  }
+}
+
 
 export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const hasJsonBody = options.body !== undefined && !(options.body instanceof FormData);
@@ -26,6 +59,7 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
     } catch {
       // Preserve the generic safe error when the server did not return JSON.
     }
+    if (response.status === 401) notifyUnauthorized();
     throw new ApiError(detail, response.status);
   }
   return response.json() as Promise<T>;

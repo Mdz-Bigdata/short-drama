@@ -1,7 +1,7 @@
 import { RefreshCcw, ServerCrash, WandSparkles } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
-import { API_BASE, apiRequest } from '../../api/client';
+import { API_BASE, apiRequest, isUnauthorized } from '../../api/client';
 import type { ElementKind } from '../elements/elementTypes';
 import { CharacterDesignerPage } from './CharacterDesignerPage';
 import {
@@ -83,9 +83,11 @@ export function CharacterDesignerPageContainer({
       if (error instanceof DOMException && error.name === 'AbortError') return;
       setDashboard(null);
       setLoadingState('error');
-      setSyncMessage(fallback.characters.length
-        ? '角色看板服务暂不可用，当前显示任务内嵌资产；旧版整板图仅作参考。'
-        : '角色看板服务暂不可用，请检查后端服务后重试。');
+      setSyncMessage(isUnauthorized(error)
+        ? '登录状态已过期，请重新登录后继续。'
+        : fallback.characters.length
+          ? '角色看板服务暂不可用，当前显示任务内嵌资产；旧版整板图仅作参考。'
+          : '角色看板服务暂不可用，请检查后端服务后重试。');
     });
     return () => controller.abort();
   }, [fallback.characters.length, refreshKey, requestVersion, taskId]);

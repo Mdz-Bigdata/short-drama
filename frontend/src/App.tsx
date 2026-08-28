@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
   Film, Play, Pause, ChevronRight, 
   UserCheck, ClipboardList, Video, Music, Share2, 
@@ -22,7 +22,7 @@ import { DirectorPlanningPage } from './features/director/DirectorPlanningPage';
 import { WriterAgentPageContainer } from './features/writer/WriterAgentPageContainer';
 import type { WriterDashboardResponse } from './features/writer/types';
 import { CharacterDesignerPageContainer } from './features/character/CharacterDesignerPageContainer';
-import { API_BASE } from './api/client';
+import { API_BASE, onUnauthorized } from './api/client';
 
 // 定义 Agent 节点常数
 const AGENT_STAGES = [
@@ -468,15 +468,23 @@ export default function App() {
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
   const [activePortal, setActivePortal] = useState<'home' | 'user' | 'billing' | ElementKind>('home');
 
+  // 会话失效后统一回到登录态，避免工作台面板各自吞掉 401 空转重试。
+  const resetToSignedOut = useCallback(() => {
+    setCurrentUser(null);
+    setHasEnabledGlobalModel(false);
+    setGlobalModelDefaults(EMPTY_GLOBAL_MODEL_DEFAULTS);
+    setAuthChecked(true);
+  }, []);
+
+  // 功能面板共用 api/client 的 apiRequest，它在 401 时广播到这里。
+  useEffect(() => onUnauthorized(resetToSignedOut), [resetToSignedOut]);
+
   // 统一的网络请求拦截器，确保附带 HttpOnly Cookie 并在 401 时拦截至登录态
   const apiFetch = async (url: string, options: RequestInit = {}) => {
     options.credentials = 'include';
     const response = await fetch(url, options);
     if (response.status === 401) {
-      setCurrentUser(null);
-      setHasEnabledGlobalModel(false);
-      setGlobalModelDefaults(EMPTY_GLOBAL_MODEL_DEFAULTS);
-      setAuthChecked(true);
+      resetToSignedOut();
       throw new Error('未登录或登录已过期');
     }
     return response;
@@ -565,9 +573,7 @@ export default function App() {
           void refreshModelConfigurationStatus();
           if (data.user.must_change_password) setActivePortal('user');
           setAuthForm({ loginId: '', password: '', email: '', phone: '', code: '' });
-          // eslint-disable-next-line react-hooks/immutability -- stable function declaration is hoisted within App
           fetchHistoryTasks();
-          // eslint-disable-next-line react-hooks/immutability -- stable function declaration is hoisted within App
           fetchImportedSkills();
         } else {
           const err = await res.json();
@@ -956,7 +962,6 @@ export default function App() {
   useEffect(() => {
     if (isPolling && taskId) {
       pollIntervalRef.current = setInterval(() => {
-        // eslint-disable-next-line react-hooks/immutability -- polling uses the hoisted task refresh function
         fetchTaskStatus(taskId);
       }, 1500);
     } else {
@@ -995,7 +1000,9 @@ export default function App() {
       const res = await apiFetch('http://localhost:8000/api/drama/list');
       if (res.ok) {
         const data = await res.json();
-        setHistoryTasks(data);
+        // A non-array body (error envelope, proxy page) must not crash the
+        // whole workbench when the history list is rendered.
+        setHistoryTasks(Array.isArray(data) ? data : []);
       }
     } catch (e) {
       console.error('加载历史任务失败', e);

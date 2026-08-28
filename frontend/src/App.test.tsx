@@ -274,3 +274,53 @@ describe('App model configuration status', () => {
     expect(screen.queryByRole('link', { name: '播放' })).toBeNull();
   });
 });
+
+describe('App session expiry from a feature panel', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('returns to the login gate when a shared apiRequest call reports 401', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    // Only the feature-panel call expires; the shell's own endpoints stay healthy,
+    // which is exactly what a mid-session cookie expiry looks like.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/api/elements')) return {
+        ok: false,
+        status: 401,
+        json: async () => ({ detail: '会话已过期，请重新登录' }),
+      } as Response;
+      if (url.endsWith('/api/auth/session')) return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          authenticated: true,
+          user: { user_id: 'admin-1', username: 'admin', role: 'admin', must_change_password: false },
+        }),
+      } as Response;
+      if (url.endsWith('/api/model-configurations')) return {
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [], globalDefaults: {} }),
+      } as Response;
+      return { ok: true, status: 200, json: async () => ({ items: [], total: 0 }) } as Response;
+    });
+
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '立即登录' })).toBeNull();
+    });
+
+    const { apiRequest } = await import('./api/client');
+    await apiRequest('/api/elements?kind=scene').catch(() => {});
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '立即登录' })).toBeTruthy();
+    });
+  });
+});

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import { API_BASE, ApiError, apiRequest } from '../../api/client';
+import { API_BASE, ApiError, apiRequest, isUnauthorized } from '../../api/client';
 import { normalizeScriptTitle } from '../workbench/scriptTitle';
 import { WriterAgentPage } from './WriterAgentPage';
 import type { WriterDashboardResponse, WriterEpisode, WriterRelationship } from './types';
@@ -83,7 +83,9 @@ export function WriterAgentPageContainer({
     }).catch(error => {
       if (error instanceof DOMException && error.name === 'AbortError') return;
       setDashboardState(null);
-      setSyncError('后端编剧看板暂不可用，当前显示任务内嵌资产。');
+      setSyncError(isUnauthorized(error)
+        ? '登录状态已过期，请重新登录后继续。'
+        : '后端编剧看板暂不可用，当前显示任务内嵌资产。');
     });
     return () => controller.abort();
   }, [taskId, refreshKey]);
@@ -149,7 +151,7 @@ export function WriterAgentPageContainer({
       setDashboardState({ taskId, data });
       setSyncError('');
     } catch (error) {
-      const message = error instanceof ApiError && error.status === 401
+      const message = isUnauthorized(error)
         ? '登录状态已过期，请重新登录后再保存人物关系。'
         : '人物关系保存失败，请确认后端服务可用后重试。';
       setSyncError(message);

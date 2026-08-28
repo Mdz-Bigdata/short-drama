@@ -11,6 +11,7 @@ import {
   type ScriptDocument,
   type ScriptDocumentDetail,
 } from './scriptLibraryApi';
+import { isUnauthorized } from '../../api/client';
 
 const MAX_DOCUMENT_BYTES = 2 * 1024 * 1024;
 
@@ -55,9 +56,11 @@ export function ScriptLibrary({ taskId }: { taskId: string }) {
       if (sequence !== loadSequence.current) return;
       setDocuments(data.documents);
       setError('');
-    } catch {
+    } catch (loadError) {
       if (sequence !== loadSequence.current) return;
-      setError('剧本文库加载失败，请确认后端服务可用后重试。');
+      setError(isUnauthorized(loadError)
+        ? '登录状态已过期，请重新登录后继续。'
+        : '剧本文库加载失败，请确认后端服务可用后重试。');
     } finally {
       if (sequence === loadSequence.current) setLoading(false);
     }

@@ -113,24 +113,45 @@ export default function Element3DWorkspace({
             <div className="asset-rail-empty"><Database size={28} /><span>{items.length ? '没有匹配资产' : `还没有${label}资产`}</span></div>
           ) : visibleItems.map((item, index) => {
             const itemPoster = findPoster(item);
+            const deletingPoster = Boolean(itemPoster && busy === `delete-file:${itemPoster.id}`);
             return (
-              <button
+              <div
                 key={item.id}
-                type="button"
-                className={selected?.id === item.id ? 'active' : ''}
-                aria-current={selected?.id === item.id ? 'true' : undefined}
-                onClick={() => onSelect(item.id)}
+                className={`asset-rail-item${selected?.id === item.id ? ' active' : ''}`}
               >
-                <span className="asset-index">{String(index + 1).padStart(2, '0')}</span>
-                <span className="asset-rail-thumb">
-                  {itemPoster?.url ? <img src={`${API_BASE}${itemPoster.url}`} alt="" /> : <KindIcon size={22} />}
-                </span>
-                <span className="asset-rail-copy">
-                  <strong>{item.name}</strong>
-                  <small>v{item.version} · {item.model3d ? 'GLB READY' : item.files.length ? '2D ONLY' : 'EMPTY'}</small>
-                </span>
-                <i className={item.model3d ? 'has-model' : ''}>{item.model3d ? '3D' : '2D'}</i>
-              </button>
+                <button
+                  type="button"
+                  className="asset-rail-select"
+                  aria-current={selected?.id === item.id ? 'true' : undefined}
+                  aria-label={`查看${label}资产“${item.name}”`}
+                  onClick={() => onSelect(item.id)}
+                >
+                  <span className="asset-index">{String(index + 1).padStart(2, '0')}</span>
+                  <span className="asset-rail-thumb">
+                    {itemPoster?.url ? <img src={`${API_BASE}${itemPoster.url}`} alt="" /> : <KindIcon size={22} />}
+                  </span>
+                  <span className="asset-rail-copy">
+                    <strong>{item.name}</strong>
+                    <small>v{item.version} · {item.model3d ? 'GLB READY' : item.files.length ? '2D ONLY' : 'EMPTY'}</small>
+                  </span>
+                  <i className={item.model3d ? 'has-model' : ''}>{item.model3d ? '3D' : '2D'}</i>
+                </button>
+                {itemPoster && (
+                  <button
+                    type="button"
+                    className="asset-rail-delete"
+                    onClick={() => onDeletePoster(item)}
+                    disabled={locked}
+                    aria-busy={deletingPoster}
+                    aria-label={deletingPoster
+                      ? `正在删除“${item.name}”的参考图`
+                      : `删除“${item.name}”的参考图`}
+                    title="删除参考图"
+                  >
+                    {deletingPoster ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}
+                  </button>
+                )}
+              </div>
             );
           })}
         </div>
