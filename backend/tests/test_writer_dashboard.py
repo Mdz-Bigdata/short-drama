@@ -981,3 +981,61 @@ class ProductionAssetExtractionApiTests(unittest.TestCase):
         names = [item["name"] for item in response.json()["items"]]
         self.assertIn("林夏", names)
         self.assertIn("周教授", names)
+
+
+class TaskListingCostTests(unittest.TestCase):
+    """The lobby polls the task list every 1.5s; it must not re-read per task."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.repo = TaskRepository(str(Path(self.temp.name) / "tasks.json"))
+        for index in range(1, 7):
+            task = _task()
+            task["task_id"] = f"writer-task-{index}"
+            # The listing endpoint serializes through DramaTaskResponse.
+            task["current_stage"] = 2
+            task["stage_name"] = "专业编剧剧本创作"
+            task["logs"] = {"2": "剧本已生成"}
+            self.repo.save_task(f"writer-task-{index}", task)
+        self.service = DramaService()
+        self.service.repo = self.repo
+        app.dependency_overrides[get_current_user] = lambda: {
+            "user_id": "writer-user",
+            "role": "admin",
+        }
+        self.client = TestClient(
+            _ClientAddressApp(app, (f"listing-{self._testMethodName}", 50000)),
+            cookies={"auth_token": auth_service.generate_token("writer-user")},
+        )
+
+    def tearDown(self):
+        self.client.close()
+        app.dependency_overrides.pop(get_current_user, None)
+        self.temp.cleanup()
+
+    def test_listing_reads_the_task_database_once_regardless_of_task_count(self):
+        reads = []
+        original = TaskRepository._read_db
+
+        def counting(repo_self):
+            reads.append(1)
+            return original(repo_self)
+
+        with patch.object(drama_api, "service", self.service), \
+             patch.object(TaskRepository, "_read_db", counting):
+            response = self.client.get("/api/drama/list")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(response.json()), 6)
+        # One read for the listing itself; no additional read per task.
+        self.assertEqual(len(reads), 1, f"expected a single database read, got {len(reads)}")
+
+    def test_listing_still_returns_the_hydrated_task_payload(self):
+        with patch.object(drama_api, "service", self.service):
+            listed = self.client.get("/api/drama/list").json()
+            single = self.client.get("/api/drama/writer-task-1/status").json()
+
+        by_id = {item["taskId"]: item for item in listed}
+        self.assertIn("writer-task-1", by_id)
+        # A listed task must carry the same assets as fetching it on its own.
+        self.assertEqual(by_id["writer-task-1"]["assets"].keys(), single["assets"].keys())

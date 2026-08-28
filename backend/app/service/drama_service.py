@@ -852,6 +852,15 @@ class DramaService:
         task = self.repo.get_task(task_id)
         if not task:
             return None
+        return self.hydrate_task_status(task)
+
+    def hydrate_task_status(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """Fill in compatibility assets on an already-loaded task.
+
+        Listing endpoints hold every task in memory already; going back through
+        ``get_task_status`` would re-read and re-parse the whole task database
+        once per task, which is the dominant cost of the polled task list.
+        """
         assets = task.get("assets") or {}
         board_payload = assets.get("4_storyboard")
         if isinstance(board_payload, dict) and not assets.get("4_prompt_detail"):

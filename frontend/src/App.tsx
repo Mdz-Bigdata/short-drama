@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
 import { 
   Film, Play, Pause, ChevronRight, 
   UserCheck, ClipboardList, Video, Music, Share2, 
@@ -8,20 +8,30 @@ import {
 } from 'lucide-react';
 import { normalizeVideoReferenceMode, type TaskConfig, type TaskResponse, type StageProgress } from './types';
 import { CapabilityCenter } from './features/platform/CapabilityCenter';
-import { ElementLibraryPage, type ElementKind } from './features/elements/ElementLibraryPage';
-import { UserCenterPage } from './features/account/UserCenterPage';
-import { BillingCenterPage } from './features/billing/BillingCenterPage';
-import { ModelConfigurationCenter, type ModelCategory } from './features/models/ModelConfigurationCenter';
-import { ProjectSkillManager } from './features/skills/ProjectSkillManager';
-import { StoryboardWorkspace, type StoryboardShot } from './features/storyboard/StoryboardWorkspace';
+import type { ElementKind } from './features/elements/elementTypes';
+import type { ModelCategory } from './features/models/ModelConfigurationCenter';
+import type { StoryboardShot } from './features/storyboard/StoryboardWorkspace';
 import { AgentStageTabs } from './features/workbench/AgentStageTabs';
 import { getScriptDisplayName } from './features/workbench/scriptTitle';
 import { VideoReferenceModeSelect } from './features/workbench/VideoReferenceModeSelect';
 import { NOVARA_AGENT_NAME } from './features/workbench/agentBrand';
-import { DirectorPlanningPage } from './features/director/DirectorPlanningPage';
-import { WriterAgentPageContainer } from './features/writer/WriterAgentPageContainer';
 import type { WriterDashboardResponse } from './features/writer/types';
-import { CharacterDesignerPageContainer } from './features/character/CharacterDesignerPageContainer';
+
+// Every screen below sits behind navigation (a portal, a workbench stage or a
+// modal), so it is loaded on demand instead of shipping in the first bundle.
+const ElementLibraryPage = lazy(() => import('./features/elements/ElementLibraryPage').then(m => ({ default: m.ElementLibraryPage })));
+const UserCenterPage = lazy(() => import('./features/account/UserCenterPage').then(m => ({ default: m.UserCenterPage })));
+const BillingCenterPage = lazy(() => import('./features/billing/BillingCenterPage').then(m => ({ default: m.BillingCenterPage })));
+const ModelConfigurationCenter = lazy(() => import('./features/models/ModelConfigurationCenter').then(m => ({ default: m.ModelConfigurationCenter })));
+const ProjectSkillManager = lazy(() => import('./features/skills/ProjectSkillManager').then(m => ({ default: m.ProjectSkillManager })));
+const StoryboardWorkspace = lazy(() => import('./features/storyboard/StoryboardWorkspace').then(m => ({ default: m.StoryboardWorkspace })));
+const DirectorPlanningPage = lazy(() => import('./features/director/DirectorPlanningPage').then(m => ({ default: m.DirectorPlanningPage })));
+const WriterAgentPageContainer = lazy(() => import('./features/writer/WriterAgentPageContainer').then(m => ({ default: m.WriterAgentPageContainer })));
+const CharacterDesignerPageContainer = lazy(() => import('./features/character/CharacterDesignerPageContainer').then(m => ({ default: m.CharacterDesignerPageContainer })));
+
+function StageFallback() {
+  return <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--text-muted)', padding: '40px' }}>正在载入…</div>;
+}
 import { API_BASE, onUnauthorized } from './api/client';
 
 // 定义 Agent 节点常数
@@ -1823,15 +1833,15 @@ export default function App() {
   }
 
   if (currentUser && activePortal === 'user') {
-    return <UserCenterPage onBack={() => setActivePortal('home')} onUserChange={setCurrentUser} />;
+    return <Suspense fallback={<StageFallback />}><UserCenterPage onBack={() => setActivePortal('home')} onUserChange={setCurrentUser} /></Suspense>;
   }
 
   if (currentUser && activePortal === 'billing') {
-    return <BillingCenterPage onBack={() => setActivePortal('home')} />;
+    return <Suspense fallback={<StageFallback />}><BillingCenterPage onBack={() => setActivePortal('home')} /></Suspense>;
   }
 
   if (currentUser && ['actor', 'scene', 'prop', 'costume', 'effect'].includes(activePortal)) {
-    return <ElementLibraryPage initialKind={activePortal as ElementKind} onBack={() => setActivePortal('home')} />;
+    return <Suspense fallback={<StageFallback />}><ElementLibraryPage initialKind={activePortal as ElementKind} onBack={() => setActivePortal('home')} /></Suspense>;
   }
 
   return (
@@ -2476,6 +2486,7 @@ export default function App() {
             </div>
 
             {/* 当选择的阶段尚无资产时，展示 Novara Slate */}
+            <Suspense fallback={<StageFallback />}>
             {activeTabStage === 4 && taskData?.assets["4"] ? (
               <StoryboardWorkspace
                 title={taskData.config.titleSuggestion}
@@ -2909,6 +2920,7 @@ export default function App() {
               </div>
 
             )}
+            </Suspense>
 
           </div>
 
@@ -3120,7 +3132,7 @@ export default function App() {
         </div>
       )}
 
-      <ModelConfigurationCenter
+      {showModelConfiguration && <Suspense fallback={null}><ModelConfigurationCenter
         open={showModelConfiguration}
         role={currentUser?.role}
         mustChangePassword={currentUser?.must_change_password}
@@ -3134,14 +3146,14 @@ export default function App() {
           else setConfig(current => ({ ...current, [configKey]: modelId }));
           setShowModelConfiguration(false);
         }}
-      />
+      /></Suspense>}
 
-      <ProjectSkillManager
+      {showProjectSkillManager && <Suspense fallback={null}><ProjectSkillManager
         open={showProjectSkillManager}
         role={currentUser?.role}
         mustChangePassword={currentUser?.must_change_password}
         onClose={() => setShowProjectSkillManager(false)}
-      />
+      /></Suspense>}
 
       {/* 磨砂玻璃 导入外部 Skill 弹窗 */}
       {showImportSkillModal && (

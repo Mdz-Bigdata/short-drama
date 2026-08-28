@@ -97,8 +97,10 @@ def get_all_tasks(current_user: dict = Depends(get_current_user)):
             ]
             if user_id else []
         )
+    # Hydrate the tasks already loaded above; re-reading each one by id would
+    # parse the whole task database once per task on every poll.
     return [
-        service.get_task_status(str(task.get("task_id"))) or task
+        service.hydrate_task_status(task)
         for task in tasks
         if isinstance(task, dict) and task.get("task_id")
     ]
