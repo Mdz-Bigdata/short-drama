@@ -53,6 +53,13 @@ export function findPoster(item: ElementItem): ElementFile | undefined {
   return item.files.find(file => file.media_kind === 'image' && Boolean(file.url));
 }
 
+/** The image stored for one specific five-view slot, if it has been uploaded. */
+export function findViewImage(item: ElementItem, slot: string): ElementFile | undefined {
+  return item.files.find(
+    file => file.media_kind === 'image' && file.slot === slot && Boolean(file.url),
+  );
+}
+
 export function formatFileSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   if (bytes < 1024) return `${bytes} B`;

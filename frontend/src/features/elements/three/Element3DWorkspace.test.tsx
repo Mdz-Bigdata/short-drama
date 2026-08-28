@@ -134,7 +134,7 @@ describe('Element3DWorkspace', () => {
     expect(screen.queryByRole('img', { name: '雨夜巷口 模型画布' })).toBeNull();
   });
 
-  it('deletes a card reference image from its trash button without selecting or deleting the asset', async () => {
+  it('deletes the whole asset from the rail bin without selecting it', async () => {
     const propItems = items.map(item => ({ ...item, kind: 'prop' as const }));
     const onSelect = vi.fn();
     const onDelete = vi.fn();
@@ -155,10 +155,34 @@ describe('Element3DWorkspace', () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: '删除“旧车站月台”的参考图' }));
+    await userEvent.click(screen.getByRole('button', { name: '删除道具资产“旧车站月台”' }));
 
-    expect(onDeletePoster).toHaveBeenCalledWith(propItems[1]);
+    // The bin removes the entry it sits on, not just that entry's image.
+    expect(onDelete).toHaveBeenCalledWith(propItems[1]);
+    expect(onDeletePoster).not.toHaveBeenCalled();
     expect(onSelect).not.toHaveBeenCalled();
-    expect(onDelete).not.toHaveBeenCalled();
+  });
+
+  it('offers the rail bin even for an asset that has no reference image', async () => {
+    const bare = [{ ...items[0], id: 'bare-1', name: '空道具', kind: 'prop' as const, files: [], model3d: null }];
+    const onDelete = vi.fn();
+    render(
+      <Element3DWorkspace
+        kind="prop"
+        items={bare}
+        selectedId="bare-1"
+        busy=""
+        onSelect={vi.fn()}
+        onCreate={vi.fn()}
+        onUploadModel={vi.fn()}
+        onUploadPoster={vi.fn()}
+        onRegenerate={vi.fn()}
+        onDelete={onDelete}
+        onDeletePoster={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: '删除道具资产“空道具”' }));
+    expect(onDelete).toHaveBeenCalledWith(bare[0]);
   });
 });

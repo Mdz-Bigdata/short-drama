@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Boxes, Camera, FileSearch, ImagePlus, LoaderCircle, Pencil, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
 
 import { API_BASE, apiRequest } from '../../api/client';
-import { findPoster, type ElementItem, type ElementKind } from './elementTypes';
+import { findPoster, findViewImage, type ElementFile, type ElementItem, type ElementKind } from './elementTypes';
 import './ElementLibraryPage.css';
 
 
@@ -58,6 +58,10 @@ const actorSlots = [
   ['back', '背面'],
 ];
 
+function actorSlotLabel(slot: string): string {
+  return actorSlots.find(([value]) => value === slot)?.[1] || '正面';
+}
+
 
 export function ElementLibraryPage({ initialKind, onBack, embedded = false, taskId, onCountChange }: Props) {
   const [kind, setKind] = useState<ElementKind>(initialKind);
@@ -72,7 +76,7 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [uploadTarget, setUploadTarget] = useState<string>('');
-  const [uploadSlot, setUploadSlot] = useState('reference');
+  const [uploadSlot, setUploadSlot] = useState(initialKind === 'actor' ? 'front' : 'reference');
   const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
   const [selectedId, setSelectedId] = useState('');
   const imageInput = useRef<HTMLInputElement>(null);
@@ -483,11 +487,9 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
     }
   };
 
-  const deleteReference = async (item: ElementItem) => {
+  const deleteReference = async (item: ElementItem, poster: ElementFile, label = '参考图') => {
     if (creatingRef.current || busyRef.current) return;
-    const poster = findPoster(item);
-    if (!poster) return;
-    if (!window.confirm(`确定删除“${item.name}”的参考图吗？此操作不可撤销。`)) return;
+    if (!window.confirm(`确定删除“${item.name}”的${label}吗？此操作不可撤销。`)) return;
     const targetKind = kindRef.current;
     const busyKey = `delete-file:${poster.id}`;
     if (!startMutation(busyKey)) return;
@@ -500,11 +502,11 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
         : entry));
       await load(targetKind);
       if (targetKind === kindRef.current) {
-        setNotice(`已删除“${item.name}”的参考图。`);
+        setNotice(`已删除“${item.name}”的${label}。`);
         window.setTimeout(() => toolbarImageButton.current?.focus(), 0);
       }
     } catch (err) {
-      if (targetKind === kindRef.current) setError(err instanceof Error ? err.message : '删除参考图失败');
+      if (targetKind === kindRef.current) setError(err instanceof Error ? err.message : `删除${label}失败`);
     } finally {
       finishMutation(busyKey);
     }
@@ -676,17 +678,32 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
             onUploadPoster={beginImageUpload}
             onRegenerate={item => { void regenerate(item); }}
             onDelete={item => { void deleteElement(item); }}
-            onDeletePoster={item => { void deleteReference(item); }}
+            onDeletePoster={item => {
+              const poster = findPoster(item);
+              if (poster) void deleteReference(item, poster);
+            }}
           />
         </Suspense>
       ) : items.length === 0 ? (
         <div className="empty-library"><ImagePlus size={44} /><strong>还没有{kindMeta[kind].label}元素</strong><span>点击“添加{kindMeta[kind].label}”建立版本化资产，再上传参考图。</span></div>
       ) : (
         <div className="element-card-grid">
-          {items.map(item => (
+          {items.map(item => {
+            // The actor slot selector doubles as the preview switch: whichever
+            // five-view slot it names is the image every card shows.
+            const previewFile = kind === 'actor' ? findViewImage(item, uploadSlot) : findPoster(item);
+            const previewLabel = kind === 'actor' ? `${actorSlotLabel(uploadSlot)}视图` : '参考图';
+            return (
             <article className="element-card" key={item.id}>
               <div className="element-preview">
-                {findPoster(item)?.url ? <img src={`${API_BASE}${findPoster(item)?.url}`} alt={`${item.name} 参考图`} /> : <Camera size={34} />}
+                {previewFile?.url
+                  ? <img src={`${API_BASE}${previewFile.url}`} alt={`${item.name} ${previewLabel}`} />
+                  : (
+                    <span className="element-preview__missing">
+                      <Camera size={34} aria-hidden="true" />
+                      {kind === 'actor' && <small>{previewLabel}未上传</small>}
+                    </span>
+                  )}
                 <span className={`status-badge ${item.status}`}>{item.status === 'ready' ? '已就绪' : '待完善'}</span>
               </div>
               <div className="element-card-body">
@@ -704,18 +721,18 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
                     <Pencil size={14} /> {busy === `rename:${item.id}` ? '重命名中' : '重命名'}
                   </button>
                   <button type="button" onClick={() => void regenerate(item)} disabled={creating || Boolean(busy)}><RefreshCw size={14} /> 重新生成</button>
-                  {findPoster(item) && (
+                  {previewFile && (
                     <button
                       type="button"
                       className="element-delete-action"
-                      onClick={() => void deleteReference(item)}
+                      onClick={() => void deleteReference(item, previewFile, previewLabel)}
                       disabled={creating || Boolean(busy)}
-                      aria-label={busy === `delete-file:${findPoster(item)?.id}`
-                        ? `正在删除“${item.name}”的参考图`
-                        : `删除“${item.name}”的参考图`}
+                      aria-label={busy === `delete-file:${previewFile.id}`
+                        ? `正在删除“${item.name}”的${previewLabel}`
+                        : `删除“${item.name}”的${previewLabel}`}
                     >
-                      {busy === `delete-file:${findPoster(item)?.id}` ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}
-                      {busy === `delete-file:${findPoster(item)?.id}` ? '正在删除参考图' : '删除参考图'}
+                      {busy === `delete-file:${previewFile.id}` ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}
+                      {busy === `delete-file:${previewFile.id}` ? `正在删除${previewLabel}` : `删除${previewLabel}`}
                     </button>
                   )}
                   <button
@@ -733,7 +750,8 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
                 </div>
               </div>
             </article>
-          ))}
+            );
+          })}
         </div>
       )}
     </Root>

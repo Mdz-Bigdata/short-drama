@@ -113,7 +113,9 @@ export default function Element3DWorkspace({
             <div className="asset-rail-empty"><Database size={28} /><span>{items.length ? '没有匹配资产' : `还没有${label}资产`}</span></div>
           ) : visibleItems.map((item, index) => {
             const itemPoster = findPoster(item);
-            const deletingPoster = Boolean(itemPoster && busy === `delete-file:${itemPoster.id}`);
+            // The rail's bin removes the whole asset — the entry it sits on —
+            // not just that asset's reference image.
+            const deletingAsset = busy === `delete:${item.id}`;
             return (
               <div
                 key={item.id}
@@ -136,21 +138,19 @@ export default function Element3DWorkspace({
                   </span>
                   <i className={item.model3d ? 'has-model' : ''}>{item.model3d ? '3D' : '2D'}</i>
                 </button>
-                {itemPoster && (
-                  <button
-                    type="button"
-                    className="asset-rail-delete"
-                    onClick={() => onDeletePoster(item)}
-                    disabled={locked}
-                    aria-busy={deletingPoster}
-                    aria-label={deletingPoster
-                      ? `正在删除“${item.name}”的参考图`
-                      : `删除“${item.name}”的参考图`}
-                    title="删除参考图"
-                  >
-                    {deletingPoster ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="asset-rail-delete"
+                  onClick={() => onDelete(item)}
+                  disabled={locked}
+                  aria-busy={deletingAsset}
+                  aria-label={deletingAsset
+                    ? `正在删除${label}资产“${item.name}”`
+                    : `删除${label}资产“${item.name}”`}
+                  title={`删除${label}资产`}
+                >
+                  {deletingAsset ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}
+                </button>
               </div>
             );
           })}

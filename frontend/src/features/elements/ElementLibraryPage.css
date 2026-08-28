@@ -939,3 +939,13 @@
   .asset-rail-item,
   .asset-rail-delete { transition: none; }
 }
+
+/* 演员卡按所选五视图预览；缺失视图给出明确占位 */
+.element-preview__missing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted, #6b7f93);
+}
+.element-preview__missing small { font-size: 0.72rem; letter-spacing: 0.04em; }

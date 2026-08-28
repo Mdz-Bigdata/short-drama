@@ -179,9 +179,9 @@ describe('ElementLibraryPage', () => {
 
     render(<ElementLibraryPage initialKind="actor" onBack={() => undefined} />);
 
-    expect(await screen.findByRole('button', { name: '删除“沈知微”的参考图' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '删除“沈知微”的正面视图' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '删除演员资产“沈知微”' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '删除“陆行远”的参考图' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '删除“陆行远”的正面视图' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '删除演员资产“陆行远”' })).toBeTruthy();
   });
 
@@ -655,5 +655,52 @@ describe('ElementLibraryPage', () => {
     expect(screen.getByRole('heading', { name: /场景元素库/ })).toBeTruthy();
     expect(screen.queryByText('过期演员结果')).toBeNull();
     expect(screen.getAllByText('当前场景').length).toBeGreaterThan(0);
+  });
+});
+
+describe('actor five-view preview switching', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('shows the image of whichever view the slot selector names', async () => {
+    const actor = {
+      id: 'actor-views',
+      kind: 'actor' as const,
+      name: '沈砚之',
+      description: '',
+      status: 'draft',
+      version: 2,
+      metadata: {},
+      files: [
+        { id: 'f-front', slot: 'front', mime_type: 'image/png', media_kind: 'image' as const, size_bytes: 1, sha256: 'a', url: '/media/elements/front.png' },
+        { id: 'f-profile', slot: 'profile', mime_type: 'image/png', media_kind: 'image' as const, size_bytes: 1, sha256: 'b', url: '/media/elements/profile.png' },
+      ],
+      model3d: null,
+    };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [actor], page: 1, page_size: 50, total: 1 }),
+    } as Response);
+
+    render(<ElementLibraryPage initialKind="actor" onBack={() => undefined} />);
+
+    // Opens on 正面 and shows the front render.
+    const front = await screen.findByRole('img', { name: '沈砚之 正面视图' });
+    expect((front as HTMLImageElement).src).toContain('/media/elements/front.png');
+
+    // Switching the selector swaps every card to that view's image.
+    await userEvent.selectOptions(screen.getByLabelText(/上传视图/), 'profile');
+    const profile = await screen.findByRole('img', { name: '沈砚之 侧面视图' });
+    expect((profile as HTMLImageElement).src).toContain('/media/elements/profile.png');
+    expect(screen.queryByRole('img', { name: '沈砚之 正面视图' })).toBeNull();
+    expect(screen.getByRole('button', { name: '删除“沈砚之”的侧面视图' })).toBeTruthy();
+
+    // A view with no upload states that plainly instead of faking a fallback.
+    await userEvent.selectOptions(screen.getByLabelText(/上传视图/), 'back');
+    expect(screen.queryByRole('img', { name: /沈砚之/ })).toBeNull();
+    expect(screen.getByText('背面视图未上传')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /删除“沈砚之”的背面视图/ })).toBeNull();
   });
 });
