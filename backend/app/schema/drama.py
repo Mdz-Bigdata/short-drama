@@ -115,6 +115,23 @@ class DramaConfigSchema(DramaBaseSchema):
     script_content: Optional[str] = Field(None, description="手动上传的剧本文件内容")
     script_name: Optional[str] = Field(None, description="手动上传的剧本文件名")
 
+class DramaTaskSummary(DramaBaseSchema):
+    """Lightweight task row for the polled project list.
+
+    The lobby renders only the id, stage, status and title, while a full
+    DramaTaskResponse carries every generated asset — over a megabyte per poll
+    once a few projects exist. Listing endpoints use this instead.
+    """
+    task_id: str = Field(..., description="任务唯一 ID")
+    current_stage: int = Field(..., description="当前所处步骤阶段 (0-9)")
+    stage_name: str = Field(..., description="当前阶段名称")
+    status: str = Field(..., description="状态: idle, running, paused, completed, failed")
+    config: DramaConfigSchema = Field(..., description="创建时所用的参数配置")
+    video_url: Optional[str] = Field(None, description="最终合成视频的播放链接")
+    stage_progress: Optional[Dict[str, Any]] = Field(None, description="当前阶段执行进度")
+    fail_reason: Optional[str] = Field(None, description="任务失败原因 (status=failed 时)")
+
+
 class DramaTaskResponse(DramaBaseSchema):
     """
     短剧任务状态响应 Schema

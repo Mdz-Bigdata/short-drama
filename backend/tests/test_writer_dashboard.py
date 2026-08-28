@@ -1038,12 +1038,20 @@ class TaskListingCostTests(unittest.TestCase):
         self.assertEqual(len(list_calls), 1)
         self.assertEqual(get_calls, [], f"unexpected per-task fetches: {get_calls}")
 
-    def test_listing_still_returns_the_hydrated_task_payload(self):
+    def test_listing_returns_summaries_and_leaves_assets_to_the_status_route(self):
         with patch.object(drama_api, "service", self.service):
             listed = self.client.get("/api/drama/list").json()
             single = self.client.get("/api/drama/writer-task-1/status").json()
 
         by_id = {item["taskId"]: item for item in listed}
         self.assertIn("writer-task-1", by_id)
-        # A listed task must carry the same assets as fetching it on its own.
-        self.assertEqual(by_id["writer-task-1"]["assets"].keys(), single["assets"].keys())
+        summary = by_id["writer-task-1"]
+        # Everything the lobby renders is present...
+        for field in ("taskId", "currentStage", "stageName", "status", "config"):
+            self.assertIn(field, summary)
+        self.assertEqual(summary["config"]["titleSuggestion"], "十二小时")
+        # ...but the bulky generated assets are not shipped on every poll.
+        self.assertNotIn("assets", summary)
+        self.assertNotIn("logs", summary)
+        # They remain available per project through the status route.
+        self.assertIn("2_breakdown", single["assets"])

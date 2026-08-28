@@ -6,7 +6,7 @@ import {
   Send, X, ArrowUp, Folder, ArrowRight, User,
   Upload, Bot
 } from 'lucide-react';
-import { normalizeVideoReferenceMode, type TaskConfig, type TaskResponse, type StageProgress } from './types';
+import { normalizeVideoReferenceMode, type TaskConfig, type TaskResponse, type TaskSummary, type StageProgress } from './types';
 import { CapabilityCenter } from './features/platform/CapabilityCenter';
 import type { ElementKind } from './features/elements/elementTypes';
 import type { ModelCategory } from './features/models/ModelConfigurationCenter';
@@ -438,7 +438,7 @@ export default function App() {
   const [activeTabStage, setActiveTabStage] = useState<number>(1);
   // 从编剧统计跳到角色 agent 时，预选中的资产 Tab（数字演员 / 拍摄场地）
   const [characterAssetKind, setCharacterAssetKind] = useState<ElementKind>('actor');
-  const [historyTasks, setHistoryTasks] = useState<TaskResponse[]>([]);
+  const [historyTasks, setHistoryTasks] = useState<TaskSummary[]>([]);
   const [isPolling, setIsPolling] = useState<boolean>(false);
   // 阶段执行进度快照 (用于检测 running -> success/error 转变，驱动对话面板状态气泡)
   const progressRef = useRef<{ stage: number; status: string } | null>(null);
@@ -1188,9 +1188,12 @@ export default function App() {
   };
 
   // 载入已有项目
-  const handleLoadTask = (task: TaskResponse) => {
+  const handleLoadTask = (task: TaskSummary) => {
     setTaskId(task.taskId);
-    setTaskData(task);
+    // The lobby row carries no assets; show the shell immediately and pull the
+    // full project (scripts, storyboards, logs) right after.
+    setTaskData({ ...task, assets: {}, logs: {} });
+    void fetchTaskStatus(task.taskId);
     setActiveTabStage(task.currentStage > 0 ? task.currentStage : 1);
     setIsPolling(task.status === 'running');
     episodeRequestGenerationRef.current += 1;

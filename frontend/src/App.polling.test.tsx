@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import App from './App';
@@ -69,5 +70,63 @@ describe('App polling pauses while the tab is hidden', () => {
     // Visible again: refresh immediately rather than waiting out the interval.
     await act(async () => { setHidden(false); });
     expect(listCalls()).toBeGreaterThan(atHide);
+  });
+});
+
+describe('opening a project from the lobby summary', () => {
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('fetches the full task because the list row carries no assets', async () => {
+    const summary = {
+      taskId: 'task-42',
+      currentStage: 2,
+      stageName: '专业编剧剧本创作',
+      status: 'idle',
+      config: { titleSuggestion: '雾港谜案', directorStyle: 'realistic', shotStyle: 'cinematic' },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/session')) return {
+        ok: true, status: 200,
+        json: async () => ({
+          authenticated: true,
+          user: { user_id: 'a1', username: 'admin', role: 'admin', must_change_password: false },
+        }),
+      } as Response;
+      if (url.endsWith('/api/model-configurations')) return {
+        ok: true, status: 200, json: async () => ({ items: [], globalDefaults: {} }),
+      } as Response;
+      if (url.includes('/api/drama/list')) return {
+        ok: true, status: 200, json: async () => [summary],
+      } as Response;
+      if (url.includes('/api/drama/task-42/status')) return {
+        ok: true, status: 200,
+        json: async () => ({ ...summary, assets: { '2': '完整剧本正文' }, logs: {} }),
+      } as Response;
+      return { ok: true, status: 200, json: async () => ({ items: [], total: 0 }) } as Response;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+    const card = await screen.findByText('雾港谜案');
+    await userEvent.click(card);
+
+    // Opening the project must go get what the summary deliberately omits.
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(call =>
+        String(call[0]).includes('/api/drama/task-42/status'))).toBe(true);
+    });
   });
 });

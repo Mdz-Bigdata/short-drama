@@ -6,7 +6,12 @@ from urllib.parse import quote, unquote, urlparse
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Form, File, UploadFile, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from typing import List, Dict, Any, Optional
-from app.schema.drama import DramaCreateRequest, DramaTaskResponse, ScriptUpdateRequest
+from app.schema.drama import (
+    DramaCreateRequest,
+    DramaTaskResponse,
+    DramaTaskSummary,
+    ScriptUpdateRequest,
+)
 from app.service.drama_service import DramaService, ScriptUpdateConflictError
 from app.repository.task_repo import TaskRepository
 from app.api.auth_api import get_current_user, require_admin
@@ -82,10 +87,12 @@ def create_new_task(req: DramaCreateRequest, current_user: dict = Depends(get_cu
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"创建任务失败: {str(e)}")
 
-@router.get("/list", response_model=List[DramaTaskResponse])
+@router.get("/list", response_model=List[DramaTaskSummary])
 def get_all_tasks(current_user: dict = Depends(get_current_user)):
-    """
-    获取所有的短剧生成任务列表历史
+    """List the caller's projects for the lobby.
+
+    Returns summaries only: the generated assets are the bulk of a task and the
+    list is polled, so they are fetched per project through /{task_id}/status.
     """
     tasks = service.repo.list_all_tasks()
     if current_user.get("role") != "admin":
@@ -97,13 +104,7 @@ def get_all_tasks(current_user: dict = Depends(get_current_user)):
             ]
             if user_id else []
         )
-    # Hydrate the tasks already loaded above; re-reading each one by id would
-    # parse the whole task database once per task on every poll.
-    return [
-        service.hydrate_task_status(task)
-        for task in tasks
-        if isinstance(task, dict) and task.get("task_id")
-    ]
+    return [task for task in tasks if isinstance(task, dict) and task.get("task_id")]
 
 @router.get("/{task_id}/status", response_model=DramaTaskResponse)
 def get_task_status(task_id: str):

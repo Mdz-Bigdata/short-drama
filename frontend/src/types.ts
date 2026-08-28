@@ -50,6 +50,10 @@ export interface StageProgress {
   elapsed_ms?: number;
 }
 
+/** What GET /api/drama/list returns: the lobby row without generated assets.
+ *  A project's assets are fetched per project through /{task_id}/status. */
+export type TaskSummary = Omit<TaskResponse, 'assets' | 'logs'>;
+
 export interface TaskResponse {
   taskId: string;
   currentStage: number;
