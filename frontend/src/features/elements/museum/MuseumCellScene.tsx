@@ -12,8 +12,10 @@ import {
   type Object3D,
   type Texture,
 } from 'three';
-import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+// three-stdlib's loaders are API-identical to three/examples but do not embed
+// `new URL` decoder fallbacks, which made Vite ship a duplicate ~1.3MB draco
+// runtime in dist.
+import { DRACOLoader, GLTFLoader } from 'three-stdlib';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 
 import {

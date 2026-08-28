@@ -3,7 +3,9 @@ import { Bounds, Center, Grid, OrbitControls, PerformanceMonitor, useBounds } fr
 import { Canvas, useThree } from '@react-three/fiber';
 import { Box, Gauge, Grid3X3, Maximize2, Pause, Play, RotateCcw } from 'lucide-react';
 import type { Object3D } from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+// three-stdlib's loaders are API-identical but do not embed `new URL` decoder
+// fallbacks, which made Vite ship a duplicate ~1.3MB draco runtime in dist.
+import { GLTFLoader } from 'three-stdlib';
 
 import { API_BASE } from '../../../api/client';
 import { disposeModelResources } from './disposeModelResources';
