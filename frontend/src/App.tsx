@@ -968,34 +968,65 @@ export default function App() {
 
 
 
-  // 轮询监控后台当前任务
+  // 轮询监控后台当前任务。后台标签页不轮询：任务列表响应可达 1 MB 以上，
+  // 隐藏时轮询纯属浪费带宽与电量，重新可见时立即补一次。
   useEffect(() => {
-    if (isPolling && taskId) {
-      pollIntervalRef.current = setInterval(() => {
-        fetchTaskStatus(taskId);
-      }, 1500);
-    } else {
+    const shouldPoll = () => isPolling && taskId && !document.hidden;
+
+    const start = () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (!shouldPoll()) return;
+      pollIntervalRef.current = setInterval(() => { fetchTaskStatus(taskId); }, 1500);
+    };
+    const stop = () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
-    }
+    };
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        stop();
+        return;
+      }
+      if (isPolling && taskId) fetchTaskStatus(taskId);
+      start();
+    };
+
+    start();
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-      }
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      stop();
     };
   }, [isPolling, taskId]); // eslint-disable-line react-hooks/exhaustive-deps -- polling callback reads current refs
 
   // 登录后在大厅定时轮询拉取所有任务 (当不在工作台内时)
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
-    if (currentUser && !taskId) {
-      interval = setInterval(() => {
-        fetchHistoryTasks();
-      }, 1500);
-    }
-    return () => {
+    const stop = () => {
       if (interval) clearInterval(interval);
+      interval = null;
+    };
+    const start = () => {
+      stop();
+      if (!currentUser || taskId || document.hidden) return;
+      interval = setInterval(() => { fetchHistoryTasks(); }, 1500);
+    };
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        stop();
+        return;
+      }
+      if (currentUser && !taskId) fetchHistoryTasks();
+      start();
+    };
+
+    start();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      stop();
     };
   }, [currentUser, taskId]); // eslint-disable-line react-hooks/exhaustive-deps -- lobby refresh follows authentication and selected task
 
