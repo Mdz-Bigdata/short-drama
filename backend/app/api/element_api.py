@@ -24,7 +24,24 @@ from app.schema.platform import ElementCreateRequest, ElementKind, ElementUpdate
 
 router = APIRouter(prefix="/api/elements", tags=["演员道具场景特效元素库"])
 logger = logging.getLogger(__name__)
-ELEMENT_MEDIA_ROOT = Path(MEDIA_DIR) / "elements"
+
+
+def _private_image_storage_root() -> Path:
+    root = Path(os.getenv(
+        "ELEMENT_IMAGE_STORAGE_DIR",
+        str(Path(MEDIA_DIR).parent / "runtime" / "element_images"),
+    )).expanduser().resolve()
+    public_media_root = Path(MEDIA_DIR).resolve()
+    if root == public_media_root or public_media_root in root.parents:
+        raise RuntimeError("ELEMENT_IMAGE_STORAGE_DIR must be outside the public media directory")
+    return root
+
+
+# New reference images are never written beneath the public /media mount.  Keep
+# the legacy root read-only so existing database rows can still be served by the
+# authenticated content endpoint while installations migrate their files.
+ELEMENT_MEDIA_ROOT = _private_image_storage_root()
+LEGACY_ELEMENT_MEDIA_ROOT = Path(MEDIA_DIR) / "elements"
 ELEMENT_MODEL_ROOT = Path(os.getenv(
     "ELEMENT_MODEL_STORAGE_DIR",
     str(Path(MEDIA_DIR).parent / "runtime" / "element_models"),
@@ -47,8 +64,7 @@ ELEMENT_STORAGE_MAX_USED_PERCENT = _integer_setting(
 )
 
 
-def _file(item) -> dict:
-    relative = item.storage_path.replace(os.sep, "/")
+def _file(element_id: str, element_version: int, item) -> dict:
     is_model = item.mime_type == "model/gltf-binary"
     return {
         "id": item.id,
@@ -56,7 +72,11 @@ def _file(item) -> dict:
         "mime_type": item.mime_type,
         "size_bytes": item.size_bytes,
         "sha256": item.sha256,
-        "url": None if is_model else f"/media/elements/{relative}",
+        "url": (
+            None
+            if is_model
+            else f"/api/elements/{element_id}/files/{item.id}/content?v={element_version}"
+        ),
         "media_kind": "model" if is_model else "image",
     }
 
@@ -90,7 +110,7 @@ def _element(item) -> dict:
         "status": item.status,
         "version": item.version,
         "metadata": item.metadata_json,
-        "files": [_file(file) for file in item.files],
+        "files": [_file(item.id, item.version, file) for file in item.files],
         "model3d": _model3d(item),
         "created_at": item.created_at,
         "updated_at": item.updated_at,
@@ -212,6 +232,34 @@ def _safe_owned_media_path(
     return absolute
 
 
+def _owned_reference_path(
+    relative_path: Path | str,
+    owner_id: str,
+    element_id: str,
+) -> tuple[Path, Path]:
+    """Resolve a private image, falling back to the authenticated legacy root."""
+    candidates: list[tuple[Path, Path]] = []
+    for root in (ELEMENT_MEDIA_ROOT, LEGACY_ELEMENT_MEDIA_ROOT):
+        resolved_root = root.resolve()
+        if any(existing_root == resolved_root for _, existing_root in candidates):
+            continue
+        try:
+            candidate = _safe_owned_media_path(
+                relative_path,
+                resolved_root,
+                owner_id,
+                element_id,
+            )
+        except HTTPException:
+            continue
+        candidates.append((candidate, resolved_root))
+        if candidate.is_file():
+            return candidate, resolved_root
+    if not candidates:
+        raise HTTPException(status_code=422, detail="无效存储路径")
+    return candidates[0]
+
+
 def _remove_file(path: Path) -> bool:
     try:
         path.unlink(missing_ok=True)
@@ -307,18 +355,21 @@ class _DeletionQuarantine:
         missing_ids: list[str] = []
         try:
             for item in files:
-                storage_root = (
-                    ELEMENT_MODEL_ROOT
-                    if item.mime_type == "model/gltf-binary"
-                    else ELEMENT_MEDIA_ROOT
-                )
                 try:
-                    original = _safe_owned_media_path(
-                        item.storage_path,
-                        storage_root,
-                        self.owner_id,
-                        self.element_id,
-                    )
+                    if item.mime_type == "model/gltf-binary":
+                        storage_root = ELEMENT_MODEL_ROOT.resolve()
+                        original = _safe_owned_media_path(
+                            item.storage_path,
+                            storage_root,
+                            self.owner_id,
+                            self.element_id,
+                        )
+                    else:
+                        original, storage_root = _owned_reference_path(
+                            item.storage_path,
+                            self.owner_id,
+                            self.element_id,
+                        )
                 except HTTPException:
                     skipped_ids.append(item.id)
                     logger.warning(
@@ -494,6 +545,44 @@ async def delete_element_file(
         raise
     quarantine.purge()
     return _element(deleted.element)
+
+
+@router.get("/{element_id}/files/{file_id}/content")
+async def get_element_file_content(
+    element_id: str,
+    file_id: str,
+    version: int = Query(..., alias="v", ge=1),
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    element = await store.get_element(element_id, user["user_id"])
+    if not element:
+        raise HTTPException(status_code=404, detail="元素不存在")
+    if version != element.version:
+        raise HTTPException(status_code=404, detail="参考图版本已更新")
+    reference = next((entry for entry in element.files if entry.id == file_id), None)
+    if not reference or reference.mime_type not in {"image/png", "image/jpeg", "image/webp"}:
+        raise HTTPException(status_code=404, detail="参考图不存在")
+    try:
+        absolute, _ = _owned_reference_path(
+            reference.storage_path,
+            user["user_id"],
+            element_id,
+        )
+    except HTTPException as exc:
+        raise HTTPException(status_code=404, detail="参考图文件不存在") from exc
+    if not absolute.is_file():
+        raise HTTPException(status_code=404, detail="参考图文件不存在")
+    return FileResponse(
+        absolute,
+        media_type=reference.mime_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "ETag": f'"{reference.sha256}"',
+            "Vary": "Cookie",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.delete("/{element_id}")

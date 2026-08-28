@@ -200,6 +200,84 @@
   font-size: 0.72rem;
 }
 
+.character-asset-tabs {
+  position: sticky;
+  z-index: 8;
+  top: -1.25rem;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(7.5rem, 1fr));
+  gap: 0.35rem;
+  margin: 0 0 1rem;
+  padding: 0.38rem;
+  overflow-x: auto;
+  background: rgba(4, 9, 16, 0.92);
+  border: 1px solid var(--character-line);
+  border-radius: 0.72rem;
+  box-shadow: 0 0.9rem 2.25rem rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(1rem);
+  scrollbar-width: thin;
+}
+
+.character-asset-tabs button {
+  min-width: 0;
+  min-height: 2.7rem;
+  padding: 0.55rem 0.7rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0.48rem;
+  transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.character-asset-tabs button:hover {
+  color: var(--text-main);
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.character-asset-tabs button.is-active {
+  color: #071116;
+  background: linear-gradient(135deg, #7df7ff, var(--neon-cyan));
+  border-color: rgba(125, 247, 255, 0.7);
+  box-shadow: 0 0 1.15rem rgba(0, 242, 254, 0.16);
+}
+
+.character-asset-tabs button span {
+  overflow: hidden;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.character-asset-tabs button small {
+  min-width: 1.6rem;
+  padding: 0.12rem 0.3rem;
+  color: inherit;
+  background: rgba(148, 163, 184, 0.09);
+  border-radius: 999px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.58rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.character-asset-tabs button.is-active small {
+  background: rgba(5, 16, 21, 0.13);
+}
+
+.character-asset-panel {
+  min-width: 0;
+}
+
+.character-asset-panel--library {
+  margin-top: 1rem;
+}
+
 .character-designer__overview {
   display: grid;
   grid-template-columns: repeat(3, minmax(8rem, 0.7fr)) minmax(15rem, 1.7fr);
@@ -1696,6 +1774,16 @@
 
   .character-designer__actions button {
     width: 100%;
+  }
+
+  .character-asset-tabs {
+    top: -0.75rem;
+    display: flex;
+    margin-inline: -0.2rem;
+  }
+
+  .character-asset-tabs button {
+    flex: 0 0 8.5rem;
   }
 
   .character-designer__overview {

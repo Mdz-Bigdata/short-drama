@@ -43,7 +43,7 @@ ACTOR_VIEW_SLOTS = (
     "rear_three_quarter",
     "back",
 )
-ELEMENT_KINDS = {"actor", "prop", "scene", "effect"}
+ELEMENT_KINDS = {"actor", "prop", "scene", "costume", "effect"}
 PAYMENT_PROVIDERS = {"sandbox", "wechat", "alipay"}
 PROJECT_SKILL_SOURCE_TYPES = {"created", "markdown_upload", "skill_package"}
 MAX_PROJECT_SKILL_BYTES = 128 * 1024
@@ -823,7 +823,7 @@ class PlatformStore:
         self, *, owner_id: str, kind: str, name: str, description: str = "", metadata: dict | None = None
     ) -> ElementAsset:
         if kind not in ELEMENT_KINDS:
-            raise ValueError("元素类型必须是 actor、prop、scene 或 effect")
+            raise ValueError("元素类型必须是 actor、prop、scene、costume 或 effect")
         if not name.strip():
             raise ValueError("元素名称不能为空")
         async with self.sessions() as session:

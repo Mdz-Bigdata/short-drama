@@ -2,6 +2,7 @@ import { RefreshCcw, ServerCrash, WandSparkles } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { API_BASE, apiRequest } from '../../api/client';
+import type { ElementKind } from '../elements/elementTypes';
 import { CharacterDesignerPage } from './CharacterDesignerPage';
 import {
   buildLegacyCharacterDashboard,
@@ -39,6 +40,7 @@ export function CharacterDesignerPageContainer({
   fallbackSheets,
   fallbackDna,
   fallbackRaw,
+  initialAssetKind,
   onRefresh,
   onRegenerate,
   onContinue,
@@ -50,6 +52,7 @@ export function CharacterDesignerPageContainer({
   fallbackSheets?: unknown;
   fallbackDna?: unknown;
   fallbackRaw?: unknown;
+  initialAssetKind?: ElementKind;
   onRefresh: () => void;
   onRegenerate: () => void;
   onContinue: () => void;
@@ -150,6 +153,8 @@ export function CharacterDesignerPageContainer({
       syncMessage={syncMessage || (loadingState === 'loading' ? '正在同步后端角色看板…' : '')}
       refreshing={loadingState === 'loading'}
       exporting={exporting}
+      initialAssetKind={initialAssetKind}
+      taskId={taskId}
       onRefresh={refresh}
       onRegenerate={onRegenerate}
       onExport={() => { void exportDashboard(); }}

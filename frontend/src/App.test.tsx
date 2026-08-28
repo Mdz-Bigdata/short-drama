@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import App from './App';
@@ -97,5 +98,179 @@ describe('App model configuration status', () => {
     render(<App />);
 
     expect(await screen.findByRole('button', { name: /模型: 未配置/ })).toBeTruthy();
+  });
+
+  it('replaces the episode snapshot hash when a later plan fetch returns another script version', async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const sourceHashA = 'a'.repeat(64);
+    const sourceHashB = 'b'.repeat(64);
+    const task = {
+      taskId: 'versioned-writer-task',
+      currentStage: 2,
+      stageName: '编剧剧本创作',
+      status: 'idle' as const,
+      config: {
+        titleSuggestion: '跨标签版本项目',
+        scriptName: '跨标签版本项目.md',
+        scriptContent: 'B 版本正文',
+        directorStyle: 'realistic',
+        shotStyle: 'cinematic',
+        llmModel: 'writer-model',
+        imageModel: 'image-model',
+        videoModel: 'video-model',
+        ttsModel: 'audio-model',
+        oneClick: false,
+        episodeCount: 1,
+      },
+      assets: { '2': 'B 版本正文' },
+      logs: {},
+    };
+    const writerDashboard = {
+      schemaVersion: 'writer-dashboard.v1',
+      taskId: task.taskId,
+      sourceHash: sourceHashB,
+      title: '跨标签版本项目',
+      state: 'READY',
+      overview: { synopsis: 'B 版本故事', genre: '悬疑', theme: '版本', worldSetting: '都市' },
+      stats: {
+        totalEpisodes: 1,
+        sceneCount: 1,
+        characterCount: 1,
+        mainEventCount: 1,
+        relationshipCount: 0,
+        totalDurationSeconds: 60,
+        tone: '悬疑',
+      },
+      scenes: [{
+        sceneId: 'E1S01',
+        episodeIndex: 1,
+        sceneIndex: 1,
+        startSeconds: 0,
+        durationSeconds: 60,
+        durationLabel: '1分钟',
+        content: 'B 版本场景',
+        characters: ['林夏'],
+        keyEventIndex: 0,
+      }],
+      timeline: [{
+        eventId: 'event-b',
+        order: 1,
+        phase: '故事开始',
+        title: 'B 版本事件',
+        desc: 'B 版本事件描述',
+        points: [],
+        sceneId: 'E1S01',
+        startSeconds: 0,
+      }],
+      roles: [{ name: '林夏', position: '主角' }],
+      relationships: [],
+      episodes: [{
+        index: 1,
+        title: 'B 服务端分集',
+        sceneCount: 1,
+        durationSeconds: 60,
+        status: 'idle',
+        videoUrl: null,
+      }],
+      script: 'B 版本正文',
+      scriptFileName: '跨标签版本项目.md',
+    };
+    let episodeFetchCount = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/session')) return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          authenticated: true,
+          user: { user_id: 'admin-1', username: 'admin', role: 'admin', must_change_password: false },
+        }),
+      } as Response;
+      if (url.endsWith('/api/model-configurations')) return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          items: [],
+          summary: { text: 1, image: 1, video: 1, audio: 1 },
+          global_status: {
+            configured: true,
+            enabled_total: 4,
+            enabled_model_ids: { text: ['writer-model'], image: ['image-model'], video: ['video-model'], audio: ['audio-model'] },
+            default_model_ids: { text: 'writer-model', image: 'image-model', video: 'video-model', audio: 'audio-model' },
+          },
+        }),
+      } as Response;
+      if (url.endsWith('/api/drama/list')) return {
+        ok: true,
+        status: 200,
+        json: async () => [task],
+      } as Response;
+      if (url.endsWith('/api/drama/skills')) return {
+        ok: true,
+        status: 200,
+        json: async () => [],
+      } as Response;
+      if (url.endsWith(`/api/drama/${task.taskId}/writer-dashboard`)) return {
+        ok: true,
+        status: 200,
+        json: async () => writerDashboard,
+      } as Response;
+      if (url.endsWith(`/api/drama/${task.taskId}/episodes/plan`) && init?.method === 'POST') return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+      } as Response;
+      if (url.endsWith(`/api/drama/${task.taskId}/episodes`)) {
+        episodeFetchCount += 1;
+        if (episodeFetchCount === 1) return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            sourceHash: sourceHashA,
+            episodes: [{ index: 1, title: 'A 标签旧分集', status: 'completed', videoUrl: 'https://example.test/a.mp4' }],
+          }),
+        } as Response;
+        if (episodeFetchCount === 2) return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            sourceHash: sourceHashB,
+            episodes: [{ index: 1, title: 'B 标签轮询分集', status: 'completed', videoUrl: 'https://example.test/b.mp4' }],
+          }),
+        } as Response;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            sourceHash: 'not-a-valid-source-hash',
+            episodes: [{ index: 1, title: '无版本分集不应合并', status: 'completed', videoUrl: 'https://example.test/unversioned.mp4' }],
+          }),
+        } as Response;
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+
+    render(<App />);
+    await user.click(await screen.findByText('跨标签版本项目'));
+
+    expect(await screen.findByRole('heading', { name: '跨标签版本项目' })).toBeTruthy();
+    await waitFor(() => expect(episodeFetchCount).toBe(1));
+    expect(screen.queryByText('A 标签旧分集')).toBeNull();
+    expect(screen.getByText('B 服务端分集')).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: '重新分集' }));
+    expect(await screen.findByText('B 标签轮询分集')).toBeTruthy();
+    expect(screen.queryByText('B 服务端分集')).toBeNull();
+    expect(screen.getByRole('link', { name: '播放' }).getAttribute('href')).toBe('https://example.test/b.mp4');
+
+    await user.click(screen.getByRole('button', { name: '重新分集' }));
+    await waitFor(() => expect(episodeFetchCount).toBe(3));
+    expect(screen.queryByText('无版本分集不应合并')).toBeNull();
+    expect(screen.getByText('B 服务端分集')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: '播放' })).toBeNull();
   });
 });

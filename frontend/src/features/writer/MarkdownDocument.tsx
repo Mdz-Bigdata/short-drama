@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 import './MarkdownDocument.css';
-import { parseMarkdownBlocks, type MarkdownBlock } from './markdownParser';
+import { MARKDOWN_RENDER_BUDGETS, parseMarkdownBlocks, type MarkdownBlock } from './markdownParser';
 
 export interface MarkdownDocumentProps {
   source: string;
@@ -22,7 +22,7 @@ function TextContent({ source }: { source: string }) {
     if (!listItems.length) return;
     output.push(
       <ul key={`list-${output.length}`}>
-        {listItems.map((item, index) => <li key={`${item}-${index}`}>{cleanInline(item)}</li>)}
+        {listItems.map((item, index) => <li data-markdown-line key={`${item}-${index}`}>{cleanInline(item)}</li>)}
       </ul>,
     );
     listItems = [];
@@ -37,15 +37,15 @@ function TextContent({ source }: { source: string }) {
     }
     flushList();
     if (!line.trim()) {
-      output.push(<span className="writer-markdown-document__space" key={`space-${index}`} aria-hidden="true" />);
+      output.push(<span className="writer-markdown-document__space" data-markdown-line key={`space-${index}`} aria-hidden="true" />);
     } else if (heading) {
-      output.push(<h3 key={`heading-${index}`}>{cleanInline(heading[2])}</h3>);
+      output.push(<h3 data-markdown-line key={`heading-${index}`}>{cleanInline(heading[2])}</h3>);
     } else if (/^\s*---+\s*$/.test(line)) {
-      output.push(<hr key={`rule-${index}`} />);
+      output.push(<hr data-markdown-line key={`rule-${index}`} />);
     } else if (line.trim().startsWith('>')) {
-      output.push(<blockquote key={`quote-${index}`}>{cleanInline(line.trim().slice(1))}</blockquote>);
+      output.push(<blockquote data-markdown-line key={`quote-${index}`}>{cleanInline(line.trim().slice(1))}</blockquote>);
     } else {
-      output.push(<p key={`paragraph-${index}`}>{cleanInline(line)}</p>);
+      output.push(<p data-markdown-line key={`paragraph-${index}`}>{cleanInline(line)}</p>);
     }
   });
   flushList();
@@ -53,7 +53,8 @@ function TextContent({ source }: { source: string }) {
 }
 
 export function MarkdownBlocks({ blocks }: { blocks: MarkdownBlock[] }) {
-  return blocks.map((block, blockIndex) => {
+  const bounded = boundMarkdownBlocks(blocks);
+  return <>{bounded.blocks.map((block, blockIndex) => {
     if (block.kind === 'text') {
       return <TextContent source={block.source} key={`text-${blockIndex}`} />;
     }
@@ -80,9 +81,20 @@ export function MarkdownBlocks({ blocks }: { blocks: MarkdownBlock[] }) {
             )}
           </tbody>
         </table>
+        {(block.omittedRows || 0) > 0 && (
+          <p className="writer-markdown-document__table-notice" role="status">
+            为保持页面流畅，其余 {block.omittedRows?.toLocaleString('zh-CN')} 行已省略。
+          </p>
+        )}
       </div>
     );
-  });
+  })}
+  {bounded.truncated && (
+    <p className="writer-markdown-document__limit-notice" role="status">
+      为保持页面流畅，仅显示文档前段，剩余内容已省略。
+      {bounded.omissionSummary ? `（${bounded.omissionSummary}）` : ''}
+    </p>
+  )}</>;
 }
 
 export function MarkdownDocument({ source, ariaLabel = 'Markdown 文档', className = '' }: MarkdownDocumentProps) {
@@ -94,4 +106,131 @@ export function MarkdownDocument({ source, ariaLabel = 'Markdown 文档', classN
         : <p className="writer-markdown-document__empty">暂无可显示内容。</p>}
     </div>
   );
+}
+
+interface BoundedMarkdownBlocks {
+  blocks: MarkdownBlock[];
+  truncated: boolean;
+  omissionSummary: string;
+}
+
+function boundMarkdownBlocks(blocks: MarkdownBlock[]): BoundedMarkdownBlocks {
+  const visibleBlocks: MarkdownBlock[] = [];
+  let remainingTextLines = MARKDOWN_RENDER_BUDGETS.maxTextLines;
+  let remainingTableCells = MARKDOWN_RENDER_BUDGETS.maxTableCells;
+  let remainingContentUnits = MARKDOWN_RENDER_BUDGETS.maxContentUnits;
+  let omittedTextLines = 0;
+  let omittedTableRows = 0;
+  let omittedBlocks = 0;
+
+  for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
+    const block = blocks[blockIndex];
+    if (visibleBlocks.length >= MARKDOWN_RENDER_BUDGETS.maxBlocks || remainingContentUnits <= 0) {
+      omittedBlocks += blocks.length - blockIndex;
+      break;
+    }
+
+    if (block.kind === 'text') {
+      const lineLimit = Math.min(remainingTextLines, remainingContentUnits);
+      const prefix = takeTextLinePrefix(block.source, lineLimit);
+      if (prefix.renderedLines > 0) {
+        visibleBlocks.push({ kind: 'text', source: prefix.source });
+        remainingTextLines -= prefix.renderedLines;
+        remainingContentUnits -= prefix.renderedLines;
+      }
+      omittedTextLines += prefix.omittedLines;
+      if (prefix.omittedLines > 0) {
+        omittedBlocks += blocks.length - blockIndex - 1;
+        break;
+      }
+      continue;
+    }
+
+    const availableCells = Math.min(remainingTableCells, remainingContentUnits);
+    if (block.headers.length > availableCells) {
+      omittedBlocks += blocks.length - blockIndex;
+      break;
+    }
+
+    let usedCells = block.headers.length;
+    let visibleRowCount = 0;
+    while (
+      visibleRowCount < block.rows.length
+      && usedCells + block.rows[visibleRowCount].length <= availableCells
+    ) {
+      usedCells += block.rows[visibleRowCount].length;
+      visibleRowCount += 1;
+    }
+    const rowsOmittedByRender = block.rows.length - visibleRowCount;
+    visibleBlocks.push({
+      ...block,
+      rows: block.rows.slice(0, visibleRowCount),
+      omittedRows: (block.omittedRows || 0) + rowsOmittedByRender || undefined,
+    });
+    remainingTableCells -= usedCells;
+    remainingContentUnits -= usedCells;
+    omittedTableRows += rowsOmittedByRender;
+    if (rowsOmittedByRender > 0) {
+      omittedBlocks += blocks.length - blockIndex - 1;
+      break;
+    }
+  }
+
+  const summary = [
+    omittedTextLines > 0 ? `${omittedTextLines.toLocaleString('zh-CN')} 行文本` : '',
+    omittedTableRows > 0 ? `${omittedTableRows.toLocaleString('zh-CN')} 行表格` : '',
+    omittedBlocks > 0 ? `${omittedBlocks.toLocaleString('zh-CN')} 个后续区块` : '',
+  ].filter(Boolean).join('、');
+
+  return {
+    blocks: visibleBlocks,
+    truncated: omittedTextLines > 0 || omittedTableRows > 0 || omittedBlocks > 0,
+    omissionSummary: summary,
+  };
+}
+
+function takeTextLinePrefix(source: string, maxLines: number): {
+  source: string;
+  renderedLines: number;
+  omittedLines: number;
+} {
+  if (!source) return { source: '', renderedLines: 0, omittedLines: 0 };
+  if (maxLines <= 0) {
+    return { source: '', renderedLines: 0, omittedLines: countLines(source) };
+  }
+
+  let searchFrom = 0;
+  for (let lineNumber = 1; lineNumber <= maxLines; lineNumber += 1) {
+    const newline = source.indexOf('\n', searchFrom);
+    if (newline === -1) {
+      return { source, renderedLines: lineNumber, omittedLines: 0 };
+    }
+    if (lineNumber === maxLines) {
+      const remainderStart = newline + 1;
+      if (remainderStart >= source.length) {
+        return { source: source.slice(0, newline), renderedLines: lineNumber, omittedLines: 0 };
+      }
+      return {
+        source: source.slice(0, newline),
+        renderedLines: lineNumber,
+        omittedLines: countLines(source, remainderStart),
+      };
+    }
+    searchFrom = newline + 1;
+  }
+
+  return { source, renderedLines: 1, omittedLines: 0 };
+}
+
+function countLines(source: string, start = 0): number {
+  if (start >= source.length) return 0;
+  let count = 1;
+  let cursor = start;
+  while (cursor < source.length) {
+    const newline = source.indexOf('\n', cursor);
+    if (newline === -1) break;
+    count += 1;
+    cursor = newline + 1;
+  }
+  return count;
 }

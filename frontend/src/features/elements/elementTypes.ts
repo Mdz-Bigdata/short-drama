@@ -1,4 +1,4 @@
-export type ElementKind = 'actor' | 'prop' | 'scene' | 'effect';
+export type ElementKind = 'actor' | 'scene' | 'prop' | 'costume' | 'effect';
 
 export interface ElementFile {
   id: string;

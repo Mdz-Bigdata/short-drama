@@ -1,12 +1,19 @@
 import { Clock3 } from 'lucide-react';
 
+import { stripMarkdown, summarizeSceneDetail, summarizeSceneEvent } from './textSummary';
 import type { WriterScene, WriterTimelineEvent } from './types';
 
 const ROW_SIZE = 10;
 
-function compact(value?: string, limit = 16) {
-  const text = String(value || '').replace(/\s+/g, ' ').trim();
-  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+function clip(value: string, limit: number) {
+  return value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
+}
+
+/** Timeline titles may be short LLM labels or whole raw scene bodies. */
+function eventTitle(value: unknown, limit = 26) {
+  const plain = stripMarkdown(value);
+  if (!plain) return '';
+  return plain.length <= limit ? plain : summarizeSceneEvent(plain, limit);
 }
 
 function chunks<T>(items: T[], size: number) {
@@ -25,25 +32,36 @@ export function WriterTimeline({
   if (mode === 'line') {
     const events: WriterTimelineEvent[] = timeline.length > 0
       ? timeline
-      : scenes.map((scene, index) => ({ phase: scene.scene_id || `场景 ${index + 1}`, title: compact(scene.content, 22), desc: scene.duration }));
+      : scenes.map((scene, index) => ({
+        phase: scene.scene_id || `场景 ${index + 1}`,
+        title: scene.content,
+        desc: scene.duration,
+      }));
 
     if (events.length === 0) return <div className="writer-empty">剧本结构化完成后，关键事件时间线将在这里生成。</div>;
 
     return (
       <ol className="writer-event-line" aria-label="剧情关键事件时间线">
-        {events.map((event, index) => (
-          <li key={`${event.phase}-${event.title}-${index}`}>
-            <div className="writer-event-line__rail"><span>{String(index + 1).padStart(2, '0')}</span></div>
-            <article>
-              <div><span>{event.phase || '剧情节点'}</span><time>节点 {index + 1}</time></div>
-              <h3>{event.title || `事件 ${index + 1}`}</h3>
-              {event.desc && <p>{event.desc}</p>}
-              {Array.isArray(event.points) && event.points.length > 0 && (
-                <ul>{event.points.map((point, pointIndex) => <li key={`${point}-${pointIndex}`}>{point}</li>)}</ul>
-              )}
-            </article>
-          </li>
-        ))}
+        {events.map((event, index) => {
+          const title = eventTitle(event.title) || `事件 ${index + 1}`;
+          const rawDesc = stripMarkdown(event.desc);
+          const desc = rawDesc && rawDesc !== title
+            ? clip(rawDesc, 110)
+            : summarizeSceneDetail(event.title, 110);
+          return (
+            <li key={`${event.phase}-${title}-${index}`}>
+              <div className="writer-event-line__rail"><span>{String(index + 1).padStart(2, '0')}</span></div>
+              <article>
+                <div><span>{event.phase || '剧情节点'}</span><time>节点 {index + 1}</time></div>
+                <h3>{title}</h3>
+                {desc && desc !== title && <p>{desc}</p>}
+                {Array.isArray(event.points) && event.points.length > 0 && (
+                  <ul>{event.points.map((point, pointIndex) => <li key={`${point}-${pointIndex}`}>{clip(stripMarkdown(point), 60)}</li>)}</ul>
+                )}
+              </article>
+            </li>
+          );
+        })}
       </ol>
     );
   }
@@ -76,7 +94,9 @@ export function WriterTimeline({
               <article className={`writer-axis__beat ${major ? 'is-major' : ''} ${index % 2 === 0 ? 'is-top' : 'is-bottom'}`} key={`${scene.scene_id}-${index}`}>
                 <div className="writer-axis__content">
                   <span>{major ? event?.phase || '关键节点' : scene.duration || '场景'}</span>
-                  <strong>{major ? event?.title || compact(scene.content) : compact(scene.content)}</strong>
+                  <strong>
+                    {(major ? eventTitle(event?.title, 18) : '') || summarizeSceneEvent(scene.content, 18) || `场景 ${index + 1}`}
+                  </strong>
                   <small>{scene.scene_id || `S${index + 1}`}</small>
                 </div>
                 <span className="writer-axis__marker" aria-hidden="true" />

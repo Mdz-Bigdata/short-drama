@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # ruff: noqa: E402
 import os
+import posixpath
 import logging
 import uvicorn
 from pathlib import Path
@@ -35,7 +36,7 @@ from app.api.user_api import router as user_router
 from app.core.media_compositor import MEDIA_DIR
 from app.platform.bootstrap import initialize_platform
 from app.platform.dependencies import get_model_secret_cipher, get_platform_store
-from app.platform.request_limits import ElementUploadGuardMiddleware
+from app.platform.request_limits import ElementUploadGuardMiddleware, ScriptUpdateGuardMiddleware
 from app.platform.runtime_models import hydrate_runtime_model_registry
 from app.platform.runtime_skills import hydrate_runtime_skill_registry
 
@@ -52,6 +53,7 @@ _allowed_origins = [
 ]
 
 app.add_middleware(ElementUploadGuardMiddleware)
+app.add_middleware(ScriptUpdateGuardMiddleware)
 
 # 允许跨域请求 CORS (由于需要带凭证Cookie，allow_origins不能使用"*")
 app.add_middleware(
@@ -66,9 +68,25 @@ app.add_middleware(
 @app.middleware("http")
 async def _security_boundary(request: Request, call_next):
     origin = request.headers.get("origin")
+    # StaticFiles normalizes duplicate slashes and dot segments before opening
+    # a file. Apply the same normalization to the percent-decoded ASGI path so
+    # legacy private element images cannot bypass this boundary.
+    normalized_path = posixpath.normpath(
+        "/" + request.url.path.replace("\\", "/").lstrip("/")
+    )
+    normalized_path_key = normalized_path.casefold()
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and origin and origin not in _allowed_origins:
-        return JSONResponse(status_code=403, content={"detail": "请求来源不受信任"})
-    response = await call_next(request)
+        response = JSONResponse(status_code=403, content={"detail": "请求来源不受信任"})
+    elif (
+        normalized_path_key == "/media/elements"
+        or normalized_path_key.startswith("/media/elements/")
+    ):
+        # Element reference images are account-private. Keep the general
+        # /media mount for generated audio/video, but never let its static
+        # handler bypass the authenticated element file endpoint.
+        response = JSONResponse(status_code=404, content={"detail": "Not Found"})
+    else:
+        response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"

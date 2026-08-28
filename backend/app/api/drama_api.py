@@ -1,13 +1,31 @@
+import hashlib
+import os
+from urllib.parse import quote, unquote, urlparse
+
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Form, File, UploadFile, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from typing import List, Dict, Any, Optional
-from app.schema.drama import DramaCreateRequest, DramaTaskResponse
-from app.service.drama_service import DramaService
+from app.schema.drama import DramaCreateRequest, DramaTaskResponse, ScriptUpdateRequest
+from app.service.drama_service import DramaService, ScriptUpdateConflictError
 from app.repository.task_repo import TaskRepository
 from app.api.auth_api import get_current_user, require_admin
+from app.core.media_compositor import MEDIA_DIR
+from app.core.production_asset_extractor import extract_production_assets
+from app.core.storyboard_assets import compose_nine_grid, fetch_remote_image_bytes
+from app.core.writer_dashboard import compile_writer_dashboard
+from app.platform.dependencies import get_platform_store
+from app.platform.store import PlatformStore
 from app.core.video_quality import VideoQualityMeasurements
 from app.schema.agent_council import CouncilReleaseEvidence
-from app.schema.writer_dashboard import WriterDashboardResponse
+from app.schema.writer_dashboard import (
+    ScriptDocument,
+    ScriptDocumentCreateRequest,
+    ScriptDocumentDetail,
+    ScriptDocumentUpdateRequest,
+    ScriptLibraryResponse,
+    WriterDashboardResponse,
+    WriterRelationshipUpdateRequest,
+)
 from app.schema.character_dashboard import CharacterDashboardResponse
 
 service = DramaService()
@@ -112,6 +130,282 @@ def get_writer_dashboard(task_id: str):
     return dashboard
 
 
+_EXTRACTABLE_ASSET_KINDS = {"scene", "prop", "costume", "effect"}
+
+
+@router.get("/{task_id}/production-assets/{kind}")
+def preview_production_assets(task_id: str, kind: str):
+    """Preview the shooting assets of one kind that the screenplay names."""
+    if kind not in _EXTRACTABLE_ASSET_KINDS:
+        raise HTTPException(status_code=404, detail="不支持的资产类型")
+    task = service.repo.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    assets = extract_production_assets(task, kind)
+    return {"kind": kind, "items": assets, "total": len(assets)}
+
+
+@router.post("/{task_id}/production-assets/{kind}/import")
+async def import_production_assets(
+    task_id: str,
+    kind: str,
+    current_user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """Import screenplay-derived shooting assets into the user's element library."""
+    if kind not in _EXTRACTABLE_ASSET_KINDS:
+        raise HTTPException(status_code=404, detail="不支持的资产类型")
+    task = service.repo.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    candidates = extract_production_assets(task, kind)
+    if not candidates:
+        return {"kind": kind, "created": 0, "skipped": 0, "items": []}
+
+    existing, _ = await store.list_elements(current_user["user_id"], kind, 1, 100)
+    known = {str(item.name).strip() for item in existing}
+    created: list[dict] = []
+    skipped = 0
+    for candidate in candidates:
+        name = candidate["name"].strip()
+        if not name or name in known:
+            skipped += 1
+            continue
+        try:
+            element = await store.create_element(
+                owner_id=current_user["user_id"],
+                kind=kind,
+                name=name,
+                description=candidate["description"],
+                metadata={"source": "screenplay-extraction", "task_id": task_id},
+            )
+        except ValueError as exc:
+            # Quota exhaustion stops the import; everything already created stays.
+            if created:
+                break
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        known.add(name)
+        created.append({"id": element.id, "name": element.name})
+
+    return {"kind": kind, "created": len(created), "skipped": skipped, "items": created}
+
+
+@router.get("/{task_id}/script-documents", response_model=ScriptLibraryResponse)
+def list_script_documents(task_id: str):
+    """List the project's screenplay library (.txt / .md reference documents)."""
+    documents = service.list_script_documents(task_id)
+    if documents is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return ScriptLibraryResponse(documents=documents, total=len(documents))
+
+
+@router.post("/{task_id}/script-documents", response_model=ScriptDocument, status_code=201)
+def create_script_document(task_id: str, req: ScriptDocumentCreateRequest):
+    """Add one screenplay document to the project's library."""
+    try:
+        document = service.create_script_document(task_id, name=req.name, content=req.content)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if document is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return document
+
+
+@router.get("/{task_id}/script-documents/{document_id}", response_model=ScriptDocumentDetail)
+def get_script_document(task_id: str, document_id: str):
+    """Read one screenplay document, including its full text."""
+    document = service.get_script_document(task_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="剧本文件不存在")
+    return document
+
+
+@router.patch("/{task_id}/script-documents/{document_id}", response_model=ScriptDocumentDetail)
+def update_script_document(task_id: str, document_id: str, req: ScriptDocumentUpdateRequest):
+    """Rename or rewrite one screenplay document."""
+    if req.name is None and req.content is None:
+        raise HTTPException(status_code=422, detail="请至少提供文件名或内容")
+    try:
+        document = service.update_script_document(
+            task_id, document_id, name=req.name, content=req.content
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if document is None:
+        raise HTTPException(status_code=404, detail="剧本文件不存在")
+    return document
+
+
+@router.delete("/{task_id}/script-documents/{document_id}")
+def delete_script_document(task_id: str, document_id: str):
+    """Permanently remove one screenplay document from the library."""
+    removed = service.delete_script_document(task_id, document_id)
+    if removed is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if not removed:
+        raise HTTPException(status_code=404, detail="剧本文件不存在")
+    return {"deleted": True, "id": document_id}
+
+
+@router.put("/{task_id}/relationships", response_model=WriterDashboardResponse)
+def update_writer_relationships(task_id: str, req: WriterRelationshipUpdateRequest):
+    """Replace the character relationship list with a user-edited version."""
+    relationships = [
+        item.model_dump(mode="json", by_alias=True)
+        for item in req.relationships
+        if item.from_.strip() and item.to.strip() and item.from_.strip() != item.to.strip()
+    ]
+    dashboard = service.update_relationships(task_id, relationships)
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
+
+
+_STORYBOARD_IMAGE_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+
+
+def _storyboard_attachment(url: str, filename_base: str):
+    """Serve a task-owned storyboard image URL as a file download."""
+    parsed = urlparse(url)
+    extension = os.path.splitext(parsed.path)[1].lower()
+    if extension not in _STORYBOARD_IMAGE_TYPES:
+        extension = ".png"
+    media_type = _STORYBOARD_IMAGE_TYPES[extension]
+    filename = f"{filename_base}{extension}"
+    disposition = f"attachment; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}"
+
+    if parsed.path.startswith("/media/") and parsed.scheme in {"http", "https", ""}:
+        media_root = os.path.realpath(MEDIA_DIR)
+        local_path = os.path.realpath(
+            os.path.join(media_root, unquote(parsed.path[len("/media/"):]))
+        )
+        if not local_path.startswith(media_root + os.sep) or not os.path.isfile(local_path):
+            raise HTTPException(status_code=404, detail="分镜图文件不存在")
+        return FileResponse(
+            local_path,
+            media_type=media_type,
+            headers={"Content-Disposition": disposition},
+        )
+
+    if parsed.scheme in {"http", "https"}:
+        try:
+            payload = fetch_remote_image_bytes(url)
+        except Exception:
+            raise HTTPException(status_code=502, detail="分镜图下载失败，请稍后重试")
+        return Response(
+            content=payload,
+            media_type=media_type,
+            headers={"Content-Disposition": disposition},
+        )
+    raise HTTPException(status_code=404, detail="分镜图地址无效")
+
+
+def _scene_grid_attachment(shots: list, scene_id: str):
+    """Compose and serve one scene's own 3x3 board so the file matches its name."""
+    sources = [
+        str(entry.get("image_url")).strip()
+        for entry in shots
+        if isinstance(entry, dict) and str(entry.get("image_url") or "").strip()
+    ][:9]
+    if not sources:
+        raise HTTPException(status_code=404, detail="该分镜场景尚未生成图片")
+    safe_scene = "".join(ch for ch in scene_id if ch.isalnum() or ch in "-_")[:40] or "scene"
+    digest = hashlib.sha256("\n".join(sources).encode("utf-8")).hexdigest()[:16]
+    target_path = os.path.join(MEDIA_DIR, "storyboards", f"scene_{safe_scene}_{digest}.png")
+    if not os.path.isfile(target_path):
+        try:
+            compose_nine_grid(sources, target_path)
+        except Exception:
+            raise HTTPException(status_code=502, detail="分镜场景合成失败，请稍后重试")
+    filename = f"storyboard-{safe_scene}.png"
+    disposition = f"attachment; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}"
+    return FileResponse(
+        target_path,
+        media_type="image/png",
+        headers={"Content-Disposition": disposition},
+    )
+
+
+@router.get("/{task_id}/storyboard/download")
+def download_storyboard_image(
+    task_id: str,
+    target: str = "grid",
+    shot: int = -1,
+    scene: str = "",
+):
+    """Download the whole board, one scene's own board, or a single frame."""
+    task = service.repo.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
+
+    if target == "grid":
+        grid_url = assets.get("4_grid")
+        if not isinstance(grid_url, str) or not grid_url.strip():
+            raise HTTPException(status_code=404, detail="分镜合成图尚未生成")
+        return _storyboard_attachment(grid_url.strip(), "storyboard-grid")
+
+    if target == "scene":
+        scene_id = scene.strip()
+        if not scene_id:
+            raise HTTPException(status_code=404, detail="缺少分镜场景标识")
+        shots = assets.get("4")
+        if not isinstance(shots, list):
+            raise HTTPException(status_code=404, detail="分镜画格不存在")
+        scene_shots = [
+            entry for entry in shots
+            if isinstance(entry, dict)
+            and str(entry.get("scene_id") or entry.get("sceneId") or "").strip() == scene_id
+        ]
+        if not scene_shots:
+            raise HTTPException(status_code=404, detail="该分镜场景不存在")
+        return _scene_grid_attachment(scene_shots, scene_id)
+
+    if target != "shot":
+        raise HTTPException(status_code=404, detail="不支持的下载目标")
+    shots = assets.get("4")
+    if not isinstance(shots, list) or not 0 <= shot < len(shots):
+        raise HTTPException(status_code=404, detail="分镜画格不存在")
+    entry = shots[shot] if isinstance(shots[shot], dict) else {}
+    image_url = entry.get("image_url")
+    if not isinstance(image_url, str) or not image_url.strip():
+        raise HTTPException(status_code=404, detail="该分镜画格尚未生成图片")
+    scene_id = str(entry.get("scene_id") or entry.get("sceneId") or "scene").strip() or "scene"
+    safe_scene = "".join(ch for ch in scene_id if ch.isalnum() or ch in "-_")[:40] or "scene"
+    return _storyboard_attachment(image_url.strip(), f"storyboard-{safe_scene}-{shot + 1:02d}")
+
+
+@router.patch("/{task_id}/script", response_model=WriterDashboardResponse)
+def update_script(
+    task_id: str,
+    request: ScriptUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Save an edited .md/.txt screenplay and return its rebuilt dashboard."""
+    try:
+        dashboard = service.update_script(
+            task_id,
+            content=request.content,
+            file_name=request.file_name,
+            expected_source_hash=request.expected_source_hash,
+            confirm_invalidate=request.confirm_invalidate,
+            owner_user_id=str(current_user.get("user_id") or ""),
+            is_admin=current_user.get("role") == "admin",
+        )
+    except ScriptUpdateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
+
+
 @router.get("/{task_id}/character-dashboard/export")
 def export_character_dashboard(task_id: str):
     """Download the normalized Character Designer five-view contract as JSON."""
@@ -193,7 +487,8 @@ def plan_episodes_route(task_id: str):
     """把已生成的完整剧本(阶段2)切分为多集，返回分集清单。需先完成阶段1-3。"""
     try:
         task = service.plan_episodes(task_id)
-        return {"status": "success", "totalEpisodes": task.get("total_episodes", 0),
+        return {"status": "success", "sourceHash": compile_writer_dashboard(task).source_hash,
+                "totalEpisodes": task.get("total_episodes", 0),
                 "episodes": [{"index": e["index"], "title": e["title"], "status": e["status"]}
                              for e in task.get("episodes", [])]}
     except ValueError as ve:
@@ -209,6 +504,7 @@ def list_episodes_route(task_id: str):
         raise HTTPException(status_code=404, detail="任务不存在")
     eps = task.get("episodes", []) or []
     return {
+        "sourceHash": compile_writer_dashboard(task).source_hash,
         "totalEpisodes": task.get("total_episodes", len(eps)),
         "currentEpisode": task.get("current_episode", 0),
         "episodes": [{"index": e.get("index"), "title": e.get("title"), "status": e.get("status"),

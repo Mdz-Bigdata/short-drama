@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Boxes, Camera, ImagePlus, LoaderCircle, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
+import { ArrowLeft, Boxes, Camera, FileSearch, ImagePlus, LoaderCircle, Pencil, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
 
 import { API_BASE, apiRequest } from '../../api/client';
 import { findPoster, type ElementItem, type ElementKind } from './elementTypes';
@@ -17,7 +17,16 @@ interface ElementResponse {
 
 interface Props {
   initialKind: ElementKind;
-  onBack: () => void;
+  onBack?: () => void;
+  embedded?: boolean;
+  taskId?: string;
+  onCountChange?: (kind: ElementKind, total: number) => void;
+}
+
+interface ExtractionResult {
+  kind: ElementKind;
+  created: number;
+  skipped: number;
 }
 
 interface PendingUpload {
@@ -34,8 +43,9 @@ interface PendingUpload {
 
 const kindMeta: Record<ElementKind, { label: string; hint: string }> = {
   actor: { label: '演员', hint: '演员必须完成正面、正面 3/4、侧面、背面 3/4、背面五视图' },
-  prop: { label: '道具', hint: '记录归属、位置、状态、材质与跨镜头连续性' },
   scene: { label: '场景', hint: '记录空间布局、时段、天气、灯光与机位锚点' },
+  prop: { label: '道具', hint: '记录归属、位置、状态、材质与跨镜头连续性' },
+  costume: { label: '服装', hint: '记录角色、造型状态、材质、换装节点与镜头连续性' },
   effect: { label: '特效', hint: '记录作用目标、时间、影响区域与结束状态' },
 };
 
@@ -48,9 +58,10 @@ const actorSlots = [
 ];
 
 
-export function ElementLibraryPage({ initialKind, onBack }: Props) {
+export function ElementLibraryPage({ initialKind, onBack, embedded = false, taskId, onCountChange }: Props) {
   const [kind, setKind] = useState<ElementKind>(initialKind);
   const [items, setItems] = useState<ElementItem[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [creating, setCreating] = useState(false);
@@ -103,7 +114,10 @@ export function ElementLibraryPage({ initialKind, onBack }: Props) {
     try {
       const data = await apiRequest<ElementResponse>(`/api/elements?kind=${targetKind}&page=1&page_size=50`);
       if (sequence !== loadSequence.current || targetKind !== kindRef.current) return;
+      const nextTotal = Number.isFinite(data.total) ? data.total : data.items.length;
       setItems(data.items);
+      setTotal(nextTotal);
+      onCountChange?.(targetKind, nextTotal);
       setSelectedId(current => data.items.some(item => item.id === current) ? current : (data.items[0]?.id ?? ''));
     } catch (err) {
       if (sequence !== loadSequence.current || targetKind !== kindRef.current) return;
@@ -133,6 +147,7 @@ export function ElementLibraryPage({ initialKind, onBack }: Props) {
     loadSequence.current += 1;
     setKind(next);
     setItems([]);
+    setTotal(0);
     setLoading(true);
     setShowForm(false);
     uploadWorkflow.current += 1;
@@ -381,6 +396,61 @@ export function ElementLibraryPage({ initialKind, onBack }: Props) {
     setShowForm(true);
   };
 
+  /** Mine the project's screenplay for this kind and add what it names. */
+  const importFromScript = async () => {
+    if (!taskId || creatingRef.current || busyRef.current) return;
+    const targetKind = kindRef.current;
+    const label = kindMeta[targetKind].label;
+    if (!startMutation('extract')) return;
+    setError('');
+    try {
+      const result = await apiRequest<ExtractionResult>(
+        `/api/drama/${encodeURIComponent(taskId)}/production-assets/${targetKind}/import`,
+        { method: 'POST', body: JSON.stringify({}) },
+      );
+      if (targetKind !== kindRef.current) return;
+      await load(targetKind);
+      if (targetKind !== kindRef.current) return;
+      setNotice(result.created > 0
+        ? `已从剧本提取 ${result.created} 个${label}资产${result.skipped ? `，跳过 ${result.skipped} 个已存在项` : ''}。`
+        : result.skipped > 0
+          ? `剧本中的 ${result.skipped} 个${label}已全部存在于资产库。`
+          : `剧本中尚未标注${label}信息，可手动添加或补充剧本后重试。`);
+    } catch (err) {
+      if (targetKind === kindRef.current) {
+        setError(err instanceof Error ? err.message : `从剧本提取${label}失败`);
+      }
+    } finally {
+      finishMutation('extract');
+    }
+  };
+
+  const renameElement = async (item: ElementItem) => {
+    if (creatingRef.current || busyRef.current) return;
+    const label = kindMeta[item.kind].label;
+    const nextName = window.prompt(`重命名${label}资产`, item.name);
+    if (nextName === null) return;
+    const trimmed = nextName.trim();
+    if (!trimmed || trimmed === item.name) return;
+    const targetKind = kindRef.current;
+    const busyKey = `rename:${item.id}`;
+    if (!startMutation(busyKey)) return;
+    setError('');
+    try {
+      await apiRequest(`/api/elements/${item.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (targetKind !== kindRef.current) return;
+      await load(targetKind);
+      if (targetKind === kindRef.current) setNotice(`已重命名为“${trimmed}”。`);
+    } catch (err) {
+      if (targetKind === kindRef.current) setError(err instanceof Error ? err.message : `重命名${label}资产失败`);
+    } finally {
+      finishMutation(busyKey);
+    }
+  };
+
   const deleteElement = async (item: ElementItem) => {
     if (creatingRef.current || busyRef.current) return;
     const label = kindMeta[item.kind].label;
@@ -454,34 +524,42 @@ export function ElementLibraryPage({ initialKind, onBack }: Props) {
 
   const spatialKind = kind === 'scene' || kind === 'prop';
   const retryUploadTarget = pendingUpload?.target?.kind === kind ? pendingUpload.target.id : '';
+  const Root = embedded ? 'section' : 'main';
 
   return (
-    <main className="portal-page element-library-page">
-      <header className="portal-header">
-        <button type="button" className="back-button" onClick={onBack}><ArrowLeft size={18} /> 返回创作台</button>
-        <div>
-          <span className="eyebrow">ELEMENT LIBRARY</span>
-          <h1>{kindMeta[kind].label}元素库</h1>
-          <p>{kindMeta[kind].hint}</p>
-        </div>
-        <Boxes size={34} className="portal-mark" />
-      </header>
+    <Root
+      className={`${embedded ? '' : 'portal-page ' }element-library-page${embedded ? ' element-library-page--embedded' : ''}`}
+      {...(embedded ? { role: 'region', 'aria-label': `${kindMeta[kind].label}资产工作区` } : {})}
+    >
+      {!embedded && (
+        <header className="portal-header">
+          <button type="button" className="back-button" onClick={onBack}><ArrowLeft size={18} /> 返回创作台</button>
+          <div>
+            <span className="eyebrow">ELEMENT LIBRARY</span>
+            <h1>{kindMeta[kind].label}元素库</h1>
+            <p>{kindMeta[kind].hint}</p>
+          </div>
+          <Boxes size={34} className="portal-mark" />
+        </header>
+      )}
 
-      <div className="element-tabs" role="tablist" aria-label="元素类型">
-        {(Object.keys(kindMeta) as ElementKind[]).map(value => (
-          <button
-            key={value}
-            type="button"
-            role="tab"
-            aria-selected={kind === value}
-            className={kind === value ? 'active' : ''}
-            onClick={() => selectKind(value)}
-          >{kindMeta[value].label}</button>
-        ))}
-      </div>
+      {!embedded && (
+        <div className="element-tabs" role="tablist" aria-label="元素类型">
+          {(Object.keys(kindMeta) as ElementKind[]).map(value => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={kind === value}
+              className={kind === value ? 'active' : ''}
+              onClick={() => selectKind(value)}
+            >{kindMeta[value].label}</button>
+          ))}
+        </div>
+      )}
 
       <section className="element-toolbar">
-        <div><strong>{items.length}</strong><span> 个{kindMeta[kind].label}元素</span></div>
+        <div><strong>{total}</strong><span> 个{kindMeta[kind].label}元素</span></div>
         <div>
           {kind === 'actor' && (
             <label className="slot-select">上传视图
@@ -498,6 +576,16 @@ export function ElementLibraryPage({ initialKind, onBack }: Props) {
           ) : (
             <button ref={toolbarImageButton} type="button" className="secondary-action" onClick={() => beginImageUpload()} disabled={Boolean(busy)}><Upload size={16} /> 上传</button>
           )}
+          {taskId && kind !== 'actor' && (
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => { void importFromScript(); }}
+              disabled={Boolean(busy)}
+            >
+              <FileSearch size={16} /> {busy === 'extract' ? '提取中…' : '从剧本提取'}
+            </button>
+          )}
           <button ref={toolbarCreateButton} type="button" className="primary-action" onClick={toggleCreateForm} disabled={Boolean(busy)}><Plus size={16} /> 添加{kindMeta[kind].label}</button>
           <input
             ref={imageInput}
@@ -510,17 +598,19 @@ export function ElementLibraryPage({ initialKind, onBack }: Props) {
               void uploadSelectedFile('image', file);
             }}
           />
-          <input
-            ref={modelInput}
-            hidden
-            type="file"
-            accept=".glb,model/gltf-binary"
-            onChange={event => {
-              const file = event.target.files?.[0];
-              event.target.value = '';
-              void uploadSelectedFile('model', file);
-            }}
-          />
+          {spatialKind && (
+            <input
+              ref={modelInput}
+              hidden
+              type="file"
+              accept=".glb,model/gltf-binary"
+              onChange={event => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                void uploadSelectedFile('model', file);
+              }}
+            />
+          )}
         </div>
       </section>
 
@@ -600,6 +690,14 @@ export function ElementLibraryPage({ initialKind, onBack }: Props) {
                 {kind === 'actor' && <small>五视图 {item.files.length}/5</small>}
                 <div className="element-actions">
                   <button type="button" onClick={() => beginImageUpload(item.id)} disabled={creating || Boolean(busy)}><Upload size={14} /> 添加上传</button>
+                  <button
+                    type="button"
+                    onClick={() => void renameElement(item)}
+                    disabled={creating || Boolean(busy)}
+                    aria-label={`重命名${kindMeta[item.kind].label}资产“${item.name}”`}
+                  >
+                    <Pencil size={14} /> {busy === `rename:${item.id}` ? '重命名中' : '重命名'}
+                  </button>
                   <button type="button" onClick={() => void regenerate(item)} disabled={creating || Boolean(busy)}><RefreshCw size={14} /> 重新生成</button>
                   {findPoster(item) && (
                     <button
@@ -633,6 +731,6 @@ export function ElementLibraryPage({ initialKind, onBack }: Props) {
           ))}
         </div>
       )}
-    </main>
+    </Root>
   );
 }

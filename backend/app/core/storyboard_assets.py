@@ -60,6 +60,11 @@ def _download_image(url: str) -> bytes:
     raise ValueError("too many image redirects")
 
 
+def fetch_remote_image_bytes(url: str) -> bytes:
+    """Download a validated remote storyboard image for re-serving to the user."""
+    return _download_image(url)
+
+
 def _open_image(source: str | Path) -> Image.Image:
     value = str(source)
     if value.startswith("data:image/"):

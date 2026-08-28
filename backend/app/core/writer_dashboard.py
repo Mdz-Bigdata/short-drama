@@ -36,10 +36,20 @@ _MAX_DASHBOARD_SECONDS = 604800
 _MAX_INFERRED_CHARACTERS = 100
 _MAX_INFERRED_CHARACTERS_PER_SCENE = 32
 _MAX_INFERRED_RELATIONSHIPS = 5000
+_MAX_SCRIPT_BYTES = 2 * 1024 * 1024
 
 
 def _text(value: Any, limit: int) -> str:
     return " ".join(str(value or "").replace("\x00", "").split())[:limit]
+
+
+def _script_text(value: Any) -> str:
+    """Preserve every valid script byte accepted by the update contract."""
+    text = str(value or "").replace("\x00", "")
+    encoded = text.encode("utf-8", errors="replace")
+    if len(encoded) <= _MAX_SCRIPT_BYTES:
+        return text
+    return encoded[:_MAX_SCRIPT_BYTES].decode("utf-8", errors="ignore")
 
 
 def _bounded_int(value: Any, *, minimum: int = 0, maximum: int = 200) -> int:
@@ -228,14 +238,19 @@ def _normalize_relationships(value: Any) -> list[WriterDashboardRelationship]:
     for item in value[:5000]:
         if not isinstance(item, dict):
             continue
-        source = _text(item.get("from"), 80)
+        source = _text(item.get("from") if "from" in item else item.get("from_"), 80)
         target = _text(item.get("to"), 80)
         relation = _text(item.get("relation"), 120) or "剧情关联"
         key = (source, target, relation)
         if not source or not target or source == target or key in seen:
             continue
         seen.add(key)
-        result.append(WriterDashboardRelationship(from_=source, to=target, relation=relation))
+        result.append(WriterDashboardRelationship(
+            from_=source,
+            to=target,
+            relation=relation,
+            bidirectional=item.get("bidirectional") is True,
+        ))
     return result
 
 
@@ -280,6 +295,7 @@ def _infer_relationships_from_scenes(scenes: list[dict[str, Any]]) -> list[Write
             from_=source,
             to=target,
             relation=f"同场互动 · {count} 场",
+            bidirectional=True,
         )
         for (source, target), count in pair_counts.items()
     ]
@@ -307,7 +323,7 @@ def compile_writer_dashboard(task: dict[str, Any]) -> WriterDashboardResponse:
     assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
     breakdown = assets.get("2_breakdown") if isinstance(assets.get("2_breakdown"), dict) else {}
     overview_raw = breakdown.get("overview") if isinstance(breakdown.get("overview"), dict) else {}
-    script = str(assets.get("2") or config.get("script_content") or "").replace("\x00", "")[:2_000_000]
+    script = _script_text(assets.get("2") or config.get("script_content") or "")
     scenes_payload = _normalize_scenes(breakdown.get("scenes"), script)
     relationships = _normalize_relationships(breakdown.get("relationships"))
     if not relationships:
@@ -358,7 +374,14 @@ def compile_writer_dashboard(task: dict[str, Any]) -> WriterDashboardResponse:
     )
     state = "READY" if script and scenes and timeline and roles else "INCOMPLETE" if script else "WAITING"
     source_hash = hashlib.sha256(json.dumps(
-        {"script": script, "breakdown": breakdown}, ensure_ascii=False, sort_keys=True, default=str,
+        {
+            "script": script,
+            "breakdown": breakdown,
+            "script_file_name": _text(config.get("script_name"), 255),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
     ).encode("utf-8")).hexdigest()
     stats = WriterDashboardStats(
         total_episodes=total_episodes,
@@ -382,4 +405,5 @@ def compile_writer_dashboard(task: dict[str, Any]) -> WriterDashboardResponse:
         relationships=relationships,
         episodes=episodes,
         script=script,
+        script_file_name=_text(config.get("script_name"), 255) or None,
     )

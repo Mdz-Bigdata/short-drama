@@ -82,6 +82,7 @@ export interface WriterDashboardResponse {
   relationships: WriterRelationship[];
   episodes: WriterEpisode[];
   script: string;
+  scriptFileName?: string | null;
 }
 
 export function normalizeWriterBreakdown(value: unknown): WriterBreakdown {

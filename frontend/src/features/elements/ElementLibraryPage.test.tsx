@@ -20,12 +20,12 @@ describe('ElementLibraryPage', () => {
     Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
   });
 
-  it('provides all four concrete pages and add/upload/regenerate actions', async () => {
+  it('provides all five concrete pages and keeps costume assets image-only', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
       json: async () => ({ items: [], page: 1, page_size: 24, total: 0 }),
     } as Response);
-    render(<ElementLibraryPage initialKind="actor" onBack={() => undefined} />);
+    const { container } = render(<ElementLibraryPage initialKind="actor" onBack={() => undefined} />);
 
     expect(await screen.findByRole('heading', { name: /演员元素库/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: '添加演员' })).toBeTruthy();
@@ -34,6 +34,60 @@ describe('ElementLibraryPage', () => {
     expect(await screen.findByRole('heading', { name: /场景元素库/ })).toBeTruthy();
     expect(screen.getAllByRole('button', { name: '添加场景' }).length).toBeGreaterThan(0);
     expect(await screen.findByRole('region', { name: '场景 3D 资产工作台' })).toBeTruthy();
+
+    await userEvent.click(screen.getByRole('tab', { name: '服装' }));
+    expect(await screen.findByRole('heading', { name: /服装元素库/ })).toBeTruthy();
+    expect(screen.getAllByRole('tab')).toHaveLength(5);
+    expect(screen.getByRole('button', { name: '添加服装' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '上传' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '上传 3D 模型' })).toBeNull();
+    expect(container.querySelector('input[accept*=".glb"]')).toBeNull();
+  });
+
+  it('embeds one asset page without duplicate portal chrome and reports server totals after mutations', async () => {
+    const createdCostume = {
+      id: 'costume-1', kind: 'costume' as const, name: '雨夜巡警制服', description: '防雨长外套', status: 'draft',
+      version: 1, metadata: {}, files: [], model3d: null,
+    };
+    let created = false;
+    const onCountChange = vi.fn();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = String(input);
+      if (url.endsWith('/api/elements') && options?.method === 'POST') {
+        created = true;
+        return { ok: true, json: async () => createdCostume } as Response;
+      }
+      if (url.includes('/api/elements?kind=costume')) {
+        return {
+          ok: true,
+          json: async () => ({ items: created ? [createdCostume] : [], page: 1, page_size: 50, total: created ? 1 : 0 }),
+        } as Response;
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    const { container } = render(
+      <ElementLibraryPage
+        initialKind="costume"
+        embedded
+        onCountChange={onCountChange}
+      />,
+    );
+
+    expect(await screen.findByText('还没有服装元素')).toBeTruthy();
+    expect(container.querySelector('main')).toBeNull();
+    expect(screen.queryByRole('button', { name: /返回创作台/ })).toBeNull();
+    expect(screen.queryByRole('tablist', { name: '元素类型' })).toBeNull();
+    expect(screen.getByRole('region', { name: '服装资产工作区' })).toBeTruthy();
+    await waitFor(() => expect(onCountChange).toHaveBeenCalledWith('costume', 0));
+
+    await userEvent.click(screen.getByRole('button', { name: '添加服装' }));
+    await userEvent.type(screen.getByPlaceholderText('输入服装名称'), '雨夜巡警制服');
+    await userEvent.click(screen.getByRole('button', { name: '保存元素' }));
+
+    expect((await screen.findAllByText('雨夜巡警制服')).length).toBeGreaterThan(0);
+    await waitFor(() => expect(onCountChange).toHaveBeenCalledWith('costume', 1));
+    expect(screen.getByText('1')).toBeTruthy();
   });
 
   it('reveals and focuses the create form when the empty scene stage adds its first asset', async () => {

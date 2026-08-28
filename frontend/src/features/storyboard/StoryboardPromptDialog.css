@@ -84,7 +84,24 @@
 .prompt-detail__subgroup { margin-top: 1.125rem; }
 .prompt-detail__subgroup h3 { margin-bottom: 0.625rem; color: #d4e0e9; font-size: 0.9rem; }
 .prompt-detail__subgroup > p { line-height: 1.7; }
-.prompt-detail__card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(18.75rem, 1fr)); gap: 0.75rem; }
+/* 出场角色等卡片列表：完整展示每张卡片，超出宽度时支持左右滑动查看 */
+.prompt-detail__card-grid {
+  display: flex;
+  gap: 0.75rem;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 242, 254, 0.26) transparent;
+}
+.prompt-detail__card-grid > .prompt-detail__fields {
+  flex: 0 0 auto;
+  width: min(22rem, 88%);
+  scroll-snap-align: start;
+}
+.prompt-detail__card-grid > .prompt-detail__fields:only-child { width: 100%; }
+.prompt-detail__card-grid .prompt-detail__field { grid-template-columns: 5.5rem minmax(0, 1fr); }
 .prompt-detail__dialogue { margin-top: 0.625rem; padding: 0.625rem 0.875rem; display: grid; grid-template-columns: 1.75rem minmax(0, 1fr); gap: 0.625rem; border-radius: 0.5rem; background: rgba(148, 163, 184, 0.05); }
 .prompt-detail__dialogue > span { width: 1.75rem; height: 1.75rem; display: grid; place-items: center; color: #051015; border-radius: 50%; background: var(--storyboard-cyan, #00f2fe); font-size: 0.75rem; }
 .prompt-detail__dialogue .prompt-detail__field { grid-template-columns: 6.875rem minmax(0, 1fr); }

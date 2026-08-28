@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 
-ElementKind = Literal["actor", "prop", "scene", "effect"]
+ElementKind = Literal["actor", "prop", "scene", "costume", "effect"]
 ModelCategory = Literal["text", "image", "video", "audio"]
 
 

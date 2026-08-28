@@ -7,10 +7,24 @@ import json
 import os
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 
 _WRITE_LOCK = threading.RLock()
+_ResultT = TypeVar("_ResultT")
+
+
+class StaleTaskWriteError(RuntimeError):
+    """Raised when an old task snapshot tries to overwrite a newer script revision."""
+
+
+def _script_revision(task: object) -> int:
+    if not isinstance(task, dict):
+        return 0
+    try:
+        return max(0, int(task.get("script_revision", 0) or 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0
 
 
 class TaskRepository:
@@ -36,8 +50,29 @@ class TaskRepository:
     def save_task(self, task_id: str, task_data: Dict[str, Any]) -> None:
         with _WRITE_LOCK:
             db = self._read_db()
+            current = db.get(task_id)
+            current_revision = _script_revision(current)
+            incoming_revision = _script_revision(task_data)
+            if current_revision > incoming_revision:
+                raise StaleTaskWriteError("任务剧本已更新，拒绝旧快照覆盖")
             db[task_id] = task_data
             self._write_db(db)
+
+    def mutate_task(
+        self,
+        task_id: str,
+        mutation: Callable[[Dict[str, Any]], _ResultT],
+    ) -> Optional[_ResultT]:
+        """Read, mutate and persist one task while holding the repository write lock."""
+        with _WRITE_LOCK:
+            db = self._read_db()
+            task = db.get(task_id)
+            if not isinstance(task, dict):
+                return None
+            result = mutation(task)
+            db[task_id] = task
+            self._write_db(db)
+            return result
 
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         return self._read_db().get(task_id)

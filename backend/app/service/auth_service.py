@@ -6,6 +6,7 @@ import secrets
 import time
 import re
 import logging
+from pathlib import Path
 from typing import Optional, Dict, Tuple, Any
 from app.repository.user_repo import UserRepository, verify_password
 
@@ -14,7 +15,41 @@ logger = logging.getLogger("app.service.auth_service")
 # Only a keyed digest is retained; plaintext codes are never stored.
 MOCK_CODES_DB: Dict[str, Dict[str, Any]] = {}
 _CODE_SEND_AT: Dict[str, float] = {}
-_DEV_SESSION_SECRET = secrets.token_bytes(32)
+_DEV_SECRET_FILE = Path(__file__).resolve().parents[2] / ".dev_session_secret"
+
+
+def _load_dev_session_secret() -> bytes:
+    """Persist the development signing secret across uvicorn reloads.
+
+    Without this, every code reload regenerated the in-memory secret and
+    silently invalidated all active sessions, so the frontend started
+    receiving 401 responses until the user logged in again. Production still
+    requires AUTH_SIGNING_SECRET and never touches this file.
+    """
+    try:
+        existing = _DEV_SECRET_FILE.read_text(encoding="utf-8").strip()
+        if re.fullmatch(r"[0-9a-f]{64}", existing):
+            return existing.encode("utf-8")
+    except OSError:
+        pass
+    secret = secrets.token_hex(32)
+    try:
+        descriptor = os.open(str(_DEV_SECRET_FILE), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(secret)
+    except FileExistsError:
+        try:
+            existing = _DEV_SECRET_FILE.read_text(encoding="utf-8").strip()
+            if re.fullmatch(r"[0-9a-f]{64}", existing):
+                return existing.encode("utf-8")
+        except OSError:
+            pass
+    except OSError:
+        logger.warning("[AuthService] 无法持久化开发会话密钥，将退化为进程内密钥")
+    return secret.encode("utf-8")
+
+
+_DEV_SESSION_SECRET = _load_dev_session_secret()
 
 
 def _session_secret() -> bytes:

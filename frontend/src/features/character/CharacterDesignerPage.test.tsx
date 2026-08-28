@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -102,14 +102,122 @@ const actions = () => ({
 });
 
 describe('CharacterDesignerPage', () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('synchronizes every non-actor asset count on the initial actor page load', async () => {
+    const totals = { scene: 6, prop: 8, costume: 2, effect: 4 } as const;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = new URL(String(input));
+      const kind = url.searchParams.get('kind') as keyof typeof totals;
+      expect(url.searchParams.get('page')).toBe('1');
+      expect(url.searchParams.get('page_size')).toBe('1');
+      return {
+        ok: true,
+        json: async () => ({ items: [], page: 1, page_size: 1, total: totals[kind] }),
+      } as Response;
+    });
+
+    render(<CharacterDesignerPage dashboard={interactiveDashboard} {...actions()} />);
+
+    const assetTabs = screen.getByRole('tablist', { name: '角色资产类型' });
+    expect(within(assetTabs).getByRole('tab', { name: /数字演员.*2 个资产/ })).toBeTruthy();
+    expect(await within(assetTabs).findByRole('tab', { name: /拍摄场地.*6 个资产/ })).toBeTruthy();
+    expect(within(assetTabs).getByRole('tab', { name: /拍摄道具.*8 个资产/ })).toBeTruthy();
+    expect(within(assetTabs).getByRole('tab', { name: /服装.*2 个资产/ })).toBeTruthy();
+    expect(within(assetTabs).getByRole('tab', { name: /特效.*4 个资产/ })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('keeps a failed asset count unsynchronized without hiding successful totals', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const kind = new URL(String(input)).searchParams.get('kind');
+      if (kind === 'costume') throw new Error('costume service unavailable');
+      return {
+        ok: true,
+        json: async () => ({ items: [], page: 1, page_size: 1, total: kind === 'scene' ? 3 : 7 }),
+      } as Response;
+    });
+
+    render(<CharacterDesignerPage dashboard={interactiveDashboard} {...actions()} />);
+
+    const assetTabs = screen.getByRole('tablist', { name: '角色资产类型' });
+    expect(await within(assetTabs).findByRole('tab', { name: /拍摄场地.*3 个资产/ })).toBeTruthy();
+    expect(within(assetTabs).getByRole('tab', { name: /拍摄道具.*7 个资产/ })).toBeTruthy();
+    expect(within(assetTabs).getByRole('tab', { name: /服装.*尚未同步/ })).toBeTruthy();
+    expect(within(assetTabs).getByRole('tab', { name: /特效.*7 个资产/ })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 2, name: '五视图工作区' })).toBeTruthy();
+  });
+
+  it('refreshes the dashboard and all non-actor counts from the refresh action', async () => {
+    const user = userEvent.setup();
+    const callCounts = new Map<string, number>();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const kind = new URL(String(input)).searchParams.get('kind') || '';
+      const callCount = (callCounts.get(kind) || 0) + 1;
+      callCounts.set(kind, callCount);
+      const base = { scene: 1, prop: 2, costume: 3, effect: 4 }[kind] || 0;
+      return {
+        ok: true,
+        json: async () => ({ items: [], page: 1, page_size: 1, total: base + (callCount - 1) * 10 }),
+      } as Response;
+    });
+    const actionHandlers = actions();
+
+    render(<CharacterDesignerPage dashboard={interactiveDashboard} {...actionHandlers} />);
+
+    const assetTabs = screen.getByRole('tablist', { name: '角色资产类型' });
+    expect(await within(assetTabs).findByRole('tab', { name: /特效.*4 个资产/ })).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: '刷新' }));
+
+    expect(actionHandlers.onRefresh).toHaveBeenCalledTimes(1);
+    expect(await within(assetTabs).findByRole('tab', { name: /拍摄场地.*11 个资产/ })).toBeTruthy();
+    expect(within(assetTabs).getByRole('tab', { name: /拍摄道具.*12 个资产/ })).toBeTruthy();
+    expect(within(assetTabs).getByRole('tab', { name: /服装.*13 个资产/ })).toBeTruthy();
+    expect(within(assetTabs).getByRole('tab', { name: /特效.*14 个资产/ })).toBeTruthy();
+    await waitFor(() => expect([...callCounts.values()]).toEqual([2, 2, 2, 2]));
+  });
+
+  it('does not let a late initial count overwrite a newer embedded-library count', async () => {
+    const user = userEvent.setup();
+    let resolveInitialScene: ((response: Response) => void) | undefined;
+    const initialScene = new Promise<Response>(resolve => { resolveInitialScene = resolve; });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = new URL(String(input));
+      const kind = url.searchParams.get('kind');
+      if (kind === 'scene' && url.searchParams.get('page_size') === '1') return initialScene;
+      const total = kind === 'scene' ? 1 : 0;
+      return {
+        ok: true,
+        json: async () => ({ items: [], page: 1, page_size: 50, total }),
+      } as Response;
+    });
+
+    render(<CharacterDesignerPage dashboard={interactiveDashboard} {...actions()} />);
+    const assetTabs = screen.getByRole('tablist', { name: '角色资产类型' });
+    await user.click(within(assetTabs).getByRole('tab', { name: /拍摄场地/ }));
+
+    expect(await within(assetTabs).findByRole('tab', { name: /拍摄场地.*1 个资产/ })).toBeTruthy();
+    resolveInitialScene?.({
+      ok: true,
+      json: async () => ({ items: [], page: 1, page_size: 1, total: 0 }),
+    } as Response);
+
+    await waitFor(() => {
+      expect(within(assetTabs).getByRole('tab', { name: /拍摄场地.*1 个资产/ })).toBeTruthy();
+    });
+    expect(within(assetTabs).queryByRole('tab', { name: /拍摄场地.*0 个资产/ })).toBeNull();
+  });
 
   it('renders the canonical five slots and supports keyboard tab navigation', async () => {
     const user = userEvent.setup();
     render(<CharacterDesignerPage dashboard={dashboard} {...actions()} />);
 
     expect(screen.getByRole('heading', { level: 1, name: '沈知微' })).toBeTruthy();
-    const tabs = screen.getAllByRole('tab');
+    const tabs = within(screen.getByRole('tablist', { name: '沈知微 五视图角度' })).getAllByRole('tab');
     expect(tabs).toHaveLength(5);
     expect(tabs.map(tab => tab.textContent)).toEqual([
       '正面0°',
@@ -122,7 +230,7 @@ describe('CharacterDesignerPage', () => {
     tabs[0].focus();
     await user.keyboard('{ArrowRight}{ArrowRight}');
     expect(tabs[2].getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByRole('tabpanel').textContent).toContain('标准侧面');
+    expect(screen.getByRole('tabpanel', { name: '标准侧面90°' }).textContent).toContain('标准侧面');
     expect(screen.getByText('背部视角尚未生成')).toBeTruthy();
 
     await user.click(screen.getByRole('button', { name: '查看角色总数 1 详情' }));
@@ -234,7 +342,7 @@ describe('CharacterDesignerPage', () => {
     expect(screen.getAllByText('待质量审核').length).toBeGreaterThan(0);
     expect(screen.getByText(/尚未拆分并通过五视图质检/)).toBeTruthy();
     expect(screen.getByLabelText('五视图已完成 0 / 5')).toBeTruthy();
-    const tabs = screen.getAllByRole('tab');
+    const tabs = within(screen.getByRole('tablist', { name: '陆行远 五视图角度' })).getAllByRole('tab');
     tabs.forEach(tab => expect(within(tab).queryByRole('img')).toBeNull());
 
     await user.click(screen.getByRole('button', { name: '查看陆行远整板参考图大图' }));
@@ -292,6 +400,50 @@ describe('CharacterDesignerPage', () => {
 
     expect(screen.getByRole('img', { name: '沈知微 正面 0度' }).getAttribute('src'))
       .toBe('https://img.test/shen-front-recovered.png');
+  });
+
+  it('keeps the actor workspace and adds synchronized scene, prop, costume and effect pages', async () => {
+    const user = userEvent.setup();
+    const requestedKinds: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      const kind = new URL(url).searchParams.get('kind') || '';
+      requestedKinds.push(kind);
+      const item = kind === 'scene' ? {
+        id: 'scene-1', kind: 'scene', name: '雨夜码头', description: '湿滑地面与冷色路灯', status: 'draft',
+        version: 1, metadata: {}, files: [], model3d: null,
+      } : null;
+      return {
+        ok: true,
+        json: async () => ({ items: item ? [item] : [], page: 1, page_size: 50, total: item ? 1 : 0 }),
+      } as Response;
+    });
+
+    render(<CharacterDesignerPage dashboard={interactiveDashboard} {...actions()} />);
+
+    const assetTabs = screen.getByRole('tablist', { name: '角色资产类型' });
+    expect(within(assetTabs).getAllByRole('tab')).toHaveLength(5);
+    expect(within(assetTabs).getByRole('tab', { name: /数字演员.*2/ }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('heading', { level: 2, name: '五视图工作区' })).toBeTruthy();
+
+    await user.click(within(assetTabs).getByRole('tab', { name: /拍摄场地/ }));
+    expect(await screen.findByRole('region', { name: '场景资产工作区' })).toBeTruthy();
+    expect((await screen.findAllByText('雨夜码头')).length).toBeGreaterThan(0);
+    expect(within(assetTabs).getByRole('tab', { name: /拍摄场地.*1/ })).toBeTruthy();
+    expect(screen.queryByRole('tablist', { name: '元素类型' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /返回创作台/ })).toBeNull();
+
+    const sceneTab = within(assetTabs).getByRole('tab', { name: /拍摄场地/ });
+    sceneTab.focus();
+    await user.keyboard('{ArrowRight}{ArrowRight}');
+    expect(within(assetTabs).getByRole('tab', { name: /服装/ }).getAttribute('aria-selected')).toBe('true');
+    expect(await screen.findByRole('region', { name: '服装资产工作区' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '上传 3D 模型' })).toBeNull();
+    expect(requestedKinds).toEqual(expect.arrayContaining(['scene', 'prop', 'costume']));
+
+    await user.click(within(assetTabs).getByRole('tab', { name: /数字演员/ }));
+    expect(screen.getByRole('heading', { level: 2, name: '五视图工作区' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: '沈知微' })).toBeTruthy();
   });
 
   it('exposes complete long-form details and makes the character card a keyboard-scrollable region', async () => {

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import shutil
 import struct
 import tempfile
 import unittest
@@ -12,7 +13,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.element_api import (
+    ELEMENT_MEDIA_ROOT,
     ELEMENT_MODEL_ROOT,
+    LEGACY_ELEMENT_MEDIA_ROOT,
     delete_element as delete_element_endpoint,
     delete_element_file as delete_element_file_endpoint,
 )
@@ -126,9 +129,9 @@ class PlatformApiTests(unittest.TestCase):
         self.assertEqual(invoked.json()["status"], "accepted")
         self.assertEqual(invoked.json()["payload"], "hello")
 
-    def test_all_four_element_pages_support_add_upload_and_regenerate(self):
+    def test_all_five_element_pages_support_add_upload_and_regenerate(self):
         cookie = self._cookie(self.user.id)
-        for kind in ("actor", "prop", "scene", "effect"):
+        for kind in ("actor", "prop", "scene", "costume", "effect"):
             created = self.client.post(
                 "/api/elements",
                 json={"kind": kind, "name": f"{kind}-sample", "description": "fixture"},
@@ -157,6 +160,102 @@ class PlatformApiTests(unittest.TestCase):
             )
             self.assertEqual(regenerated.status_code, 200)
             self.assertFalse(regenerated.json()["paid_submission_approved"])
+
+    def test_reference_images_are_private_versioned_and_never_public_static_media(self):
+        owner_cookie = self._cookie(self.user.id)
+        stranger_cookie = self._cookie(self.admin.id)
+        image_root = Path(self.temp.name) / "private-reference-images"
+        outside = Path(self.temp.name) / "outside-reference.png"
+        outside.write_bytes(b"outside")
+
+        with patch("app.api.element_api.ELEMENT_MEDIA_ROOT", image_root):
+            element = self.client.post(
+                "/api/elements",
+                json={"kind": "prop", "name": "私有参考图"},
+                cookies=owner_cookie,
+            ).json()
+            uploaded = self.client.post(
+                f"/api/elements/{element['id']}/files",
+                data={"slot": "reference"},
+                files={"file": ("reference.png", b"\x89PNG\r\n\x1a\nprivate", "image/png")},
+                cookies=owner_cookie,
+            )
+            self.assertEqual(uploaded.status_code, 200, uploaded.text)
+            payload = uploaded.json()
+            image_file = payload["files"][0]
+            protected_url = image_file["url"]
+            self.assertEqual(
+                protected_url,
+                f"/api/elements/{element['id']}/files/{image_file['id']}/content?v={payload['version']}",
+            )
+
+            self.assertEqual(self.client.get(protected_url).status_code, 401)
+            self.assertEqual(
+                self.client.get(protected_url, cookies=stranger_cookie).status_code,
+                404,
+            )
+            served = self.client.get(protected_url, cookies=owner_cookie)
+            self.assertEqual(served.status_code, 200, served.text)
+            self.assertEqual(served.content, b"\x89PNG\r\n\x1a\nprivate")
+            self.assertEqual(served.headers["content-type"], "image/png")
+            self.assertEqual(served.headers["cache-control"], "private, no-store")
+            self.assertEqual(served.headers["vary"], "Cookie")
+            self.assertEqual(served.headers["x-content-type-options"], "nosniff")
+
+            updated = self.client.patch(
+                f"/api/elements/{element['id']}",
+                json={"description": "版本已更新"},
+                cookies=owner_cookie,
+            )
+            self.assertEqual(updated.status_code, 200, updated.text)
+            self.assertEqual(self.client.get(protected_url, cookies=owner_cookie).status_code, 404)
+
+            unsafe_result = asyncio.run(self.store.add_element_file(
+                element_id=element["id"],
+                owner_id=self.user.id,
+                slot="unsafe",
+                storage_path=str(outside),
+                mime_type="image/png",
+                size_bytes=outside.stat().st_size,
+                sha256="unsafe-fixture",
+            ))
+            unsafe_file = next(item for item in unsafe_result.element.files if item.slot == "unsafe")
+            unsafe_url = (
+                f"/api/elements/{element['id']}/files/{unsafe_file.id}/content"
+                f"?v={unsafe_result.element.version}"
+            )
+            self.assertEqual(self.client.get(unsafe_url, cookies=owner_cookie).status_code, 404)
+
+        legacy_directory = Path(MEDIA_DIR) / "elements" / f"static-route-test-{element['id']}"
+        legacy_file = legacy_directory / "legacy.png"
+        ordinary_media_file = Path(MEDIA_DIR) / f"static-route-control-{element['id']}.mp4"
+        legacy_file.parent.mkdir(parents=True, exist_ok=True)
+        legacy_file.write_bytes(b"must-not-be-public")
+        ordinary_media_file.write_bytes(b"ordinary-media-remains-available")
+        try:
+            relative = f"{legacy_directory.name}/{legacy_file.name}"
+            blocked_paths = (
+                f"/media/elements/{relative}",
+                f"/media/Elements/{relative}",
+                f"/media/ELEMENTS/{relative}",
+                f"/media//elements/{relative}",
+                f"/media//eLeMeNtS/{relative}",
+                f"/media///elements/{relative}",
+                f"/media/%2e/elements/{relative}",
+                f"/media/%2e/Elements/{relative}",
+                f"/media/x/%2e%2e/elements/{relative}",
+                f"/media/x/%2e%2e/ElEmEnTs/{relative}",
+                f"/media/%2f/elements/{relative}",
+            )
+            for blocked_path in blocked_paths:
+                with self.subTest(blocked_path=blocked_path):
+                    self.assertEqual(self.client.get(blocked_path).status_code, 404)
+            ordinary_response = self.client.get(f"/media/{ordinary_media_file.name}")
+            self.assertEqual(ordinary_response.status_code, 200, ordinary_response.text)
+            self.assertEqual(ordinary_response.content, b"ordinary-media-remains-available")
+        finally:
+            shutil.rmtree(legacy_directory, ignore_errors=True)
+            ordinary_media_file.unlink(missing_ok=True)
 
     def test_scene_and_prop_models_are_validated_stored_and_served_to_the_owner(self):
         cookie = self._cookie(self.user.id)
@@ -228,9 +327,72 @@ class PlatformApiTests(unittest.TestCase):
             )
             self.assertEqual(rejected.status_code, 422)
 
+            costume = self.client.post(
+                "/api/elements", json={"kind": "costume", "name": "服装"}, cookies=cookie
+            ).json()
+            costume_rejected = self.client.post(
+                f"/api/elements/{costume['id']}/model",
+                files={"file": ("costume.glb", model, "model/gltf-binary")},
+                cookies=cookie,
+            )
+            self.assertEqual(costume_rejected.status_code, 422)
+
+    def test_legacy_public_tree_reference_is_only_read_through_authenticated_endpoint(self):
+        owner_cookie = self._cookie(self.user.id)
+        stranger_cookie = self._cookie(self.admin.id)
+        element = self.client.post(
+            "/api/elements",
+            json={"kind": "scene", "name": "旧版参考图"},
+            cookies=owner_cookie,
+        ).json()
+        relative_path = Path(self.user.id) / element["id"] / "legacy.png"
+        absolute_path = LEGACY_ELEMENT_MEDIA_ROOT / relative_path
+        absolute_path.parent.mkdir(parents=True, exist_ok=True)
+        absolute_path.write_bytes(b"\x89PNG\r\n\x1a\nlegacy-private")
+        try:
+            stored = asyncio.run(self.store.add_element_file(
+                element_id=element["id"],
+                owner_id=self.user.id,
+                slot="reference",
+                storage_path=str(relative_path),
+                mime_type="image/png",
+                size_bytes=absolute_path.stat().st_size,
+                sha256="legacy-private-fixture",
+            ))
+            reference = next(item for item in stored.element.files if item.slot == "reference")
+            protected_url = (
+                f"/api/elements/{element['id']}/files/{reference.id}/content"
+                f"?v={stored.element.version}"
+            )
+
+            self.assertEqual(self.client.get(protected_url).status_code, 401)
+            self.assertEqual(
+                self.client.get(protected_url, cookies=stranger_cookie).status_code,
+                404,
+            )
+            served = self.client.get(protected_url, cookies=owner_cookie)
+            self.assertEqual(served.status_code, 200, served.text)
+            self.assertEqual(served.content, b"\x89PNG\r\n\x1a\nlegacy-private")
+            static_path = f"/media//elements/{relative_path.as_posix()}"
+            self.assertEqual(self.client.get(static_path).status_code, 404)
+            deleted = self.client.delete(
+                f"/api/elements/{element['id']}/files/{reference.id}",
+                cookies=owner_cookie,
+            )
+            self.assertEqual(deleted.status_code, 200, deleted.text)
+            self.assertFalse(absolute_path.exists())
+        finally:
+            shutil.rmtree(absolute_path.parent, ignore_errors=True)
+
     def test_default_model_storage_is_outside_the_public_media_tree(self):
         media_root = Path(MEDIA_DIR).resolve()
         private_root = ELEMENT_MODEL_ROOT.resolve()
+        self.assertNotEqual(private_root, media_root)
+        self.assertNotIn(media_root, private_root.parents)
+
+    def test_default_reference_image_storage_is_outside_the_public_media_tree(self):
+        media_root = Path(MEDIA_DIR).resolve()
+        private_root = ELEMENT_MEDIA_ROOT.resolve()
         self.assertNotEqual(private_root, media_root)
         self.assertNotIn(media_root, private_root.parents)
 

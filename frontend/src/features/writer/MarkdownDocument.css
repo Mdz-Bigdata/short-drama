@@ -31,6 +31,20 @@
 .writer-markdown-document__space { min-height: 0.3rem; }
 .writer-markdown-document__empty { color: #8293a4; text-align: center; }
 
+.writer-markdown-document__limit-notice,
+.writer-markdown-document__table-notice {
+  margin: 0;
+  padding: 0.65rem 0.8rem;
+  color: #f0c88a;
+  border: 1px solid rgba(240, 200, 138, 0.24);
+  background: rgba(240, 200, 138, 0.06);
+  font-size: 0.72rem;
+}
+
+.writer-markdown-document__table-notice {
+  border-width: 1px 0 0;
+}
+
 .writer-markdown-table-scroll {
   max-width: 100%;
   overflow-x: auto;

@@ -61,6 +61,23 @@ class WriterDashboardRelationship(DramaBaseSchema):
     from_: str = Field(..., min_length=1, max_length=80)
     to: str = Field(..., min_length=1, max_length=80)
     relation: str = Field("剧情关联", max_length=120)
+    bidirectional: bool = False
+
+
+class WriterRelationshipUpdateRequest(DramaBaseSchema):
+    """User-authored replacement for the character relationship list."""
+    relationships: list[WriterDashboardRelationship] = Field(default_factory=list, max_length=500)
+
+
+class ScriptDocumentCreateRequest(DramaBaseSchema):
+    """A user-managed screenplay reference document (.txt / .md)."""
+    name: str = Field(..., min_length=1, max_length=255)
+    content: str = Field(..., min_length=1, max_length=2 * 1024 * 1024)
+
+
+class ScriptDocumentUpdateRequest(DramaBaseSchema):
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    content: Optional[str] = Field(None, min_length=1, max_length=2 * 1024 * 1024)
 
 
 class WriterDashboardEpisode(DramaBaseSchema):
@@ -85,4 +102,22 @@ class WriterDashboardResponse(DramaBaseSchema):
     roles: list[WriterDashboardRole] = Field(default_factory=list, max_length=500)
     relationships: list[WriterDashboardRelationship] = Field(default_factory=list, max_length=5000)
     episodes: list[WriterDashboardEpisode] = Field(default_factory=list, max_length=200)
-    script: str = Field("", max_length=2_000_000)
+    script: str = Field("", max_length=2 * 1024 * 1024)
+    script_file_name: Optional[str] = Field(None, max_length=255)
+
+
+class ScriptDocument(DramaBaseSchema):
+    """One stored screenplay document in the project's script library."""
+    id: str = Field(..., min_length=1, max_length=64)
+    name: str = Field(..., min_length=1, max_length=255)
+    size_bytes: int = Field(0, ge=0)
+    updated_at: str = Field("", max_length=64)
+
+
+class ScriptDocumentDetail(ScriptDocument):
+    content: str = Field("", max_length=2 * 1024 * 1024)
+
+
+class ScriptLibraryResponse(DramaBaseSchema):
+    documents: list[ScriptDocument] = Field(default_factory=list, max_length=500)
+    total: int = Field(0, ge=0)

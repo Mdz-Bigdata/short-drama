@@ -7,11 +7,12 @@ import re
 import os
 import hashlib
 import time
+from copy import deepcopy
 from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 
-from app.repository.task_repo import TaskRepository
+from app.repository.task_repo import StaleTaskWriteError, TaskRepository
 from app.core.model_gateway import ModelGateway
 from app.core import media_compositor
 from app.core.storyboard_assets import compose_nine_grid, split_five_view_sheet
@@ -42,6 +43,23 @@ from app.schema.writer_dashboard import WriterDashboardResponse
 from app.schema.character_dashboard import CharacterDashboardResponse
 
 
+class ScriptUpdateConflictError(RuntimeError):
+    """The screenplay changed or has active derivatives that require confirmation."""
+
+
+class ScriptUpdateTaskNotFoundError(LookupError):
+    """The task is missing or does not belong to the editor."""
+
+
+class _ClaimedStageExecutionError(RuntimeError):
+    """Carry the revision actually claimed by the worker with its provider failure."""
+
+    def __init__(self, claimed_revision: int, cause: Exception) -> None:
+        super().__init__(str(cause))
+        self.claimed_revision = claimed_revision
+        self.cause = cause
+
+
 logger = logging.getLogger("app.service.drama_service")
 
 _LOG_SECRET_ASSIGNMENT = re.compile(
@@ -49,6 +67,17 @@ _LOG_SECRET_ASSIGNMENT = re.compile(
     r"\s*[:=]\s*(?:Bearer\s+)?[^\s,;]+"
 )
 _LOG_BARE_SECRET = re.compile(r"(?i)\b(?:sk|ark)[_-][A-Za-z0-9_-]{16,}\b")
+_SCRIPT_ARCHIVE_MAX_TOTAL_BYTES = 128 * 1024 * 1024
+_SCRIPT_ARCHIVE_MAX_ENTRIES = 256
+
+
+def _task_script_revision(task: object) -> int:
+    if not isinstance(task, dict):
+        return 0
+    try:
+        return max(0, int(task.get("script_revision", 0) or 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0
 
 
 def _bounded_shot_duration(value: object, default: float = 2.0) -> float:
@@ -476,7 +505,7 @@ def extract_json_object(text: str) -> Optional[dict]:
     return None
 
 
-def split_episodes(script: str) -> list:
+def split_episodes(script: str, *, max_episodes: int = 200) -> list:
     """
     将编剧输出的完整分集剧本按「第N集 / 第N幕 / Episode N」切分为多集。
     返回 [{"index":1, "title":"...", "script":"..."}, ...]；无法切分时整体作为 1 集。
@@ -485,15 +514,29 @@ def split_episodes(script: str) -> list:
         return []
     # 匹配集数标题行
     pattern = re.compile(r'(?:^|\n)\s*(?:#+\s*)?(?:【?\s*)?(?:第\s*([0-9一二三四五六七八九十]+)\s*集|Episode\s*([0-9]+)|第\s*([0-9一二三四五六七八九十]+)\s*幕)[^\n]*', re.IGNORECASE)
-    marks = list(pattern.finditer(script))
+    marks = []
+    for match in pattern.finditer(script):
+        marks.append(match)
+        if len(marks) >= max(1, min(200, max_episodes)):
+            break
     episodes = []
-    if len(marks) >= 2:
+    if marks:
         for i, m in enumerate(marks):
             start = m.start()
             end = marks[i + 1].start() if i + 1 < len(marks) else len(script)
             seg = script[start:end].strip()
             title_line = seg.split('\n', 1)[0].strip(' #【】*')
-            episodes.append({"index": i + 1, "title": title_line[:40], "script": seg})
+            title = re.sub(
+                r"^(?:第\s*[0-9一二三四五六七八九十]+\s*(?:集|幕)|Episode\s*[0-9]+)\s*[】]?[：:\-—]?\s*",
+                "",
+                title_line,
+                flags=re.IGNORECASE,
+            ).strip()
+            episodes.append({
+                "index": i + 1,
+                "title": (title or f"第{i + 1}集")[:40],
+                "script": seg,
+            })
     else:
         episodes.append({"index": 1, "title": "第1集", "script": script.strip()})
     return episodes
@@ -557,6 +600,8 @@ class DramaService:
         self.repo = TaskRepository()
         self.gateway = ModelGateway()
         self.agent_council = AgentCouncilCompiler()
+        self.script_archive_max_total_bytes = _SCRIPT_ARCHIVE_MAX_TOTAL_BYTES
+        self.script_archive_max_entries = _SCRIPT_ARCHIVE_MAX_ENTRIES
 
     def _ensure_agent_council(self, task: Dict[str, Any]) -> dict:
         """Return the typed eight-agent plan, compiling it for legacy tasks when needed."""
@@ -839,6 +884,360 @@ class DramaService:
             return None
         return compile_writer_dashboard(task)
 
+    _MAX_SCRIPT_DOCUMENTS = 500
+    _MAX_SCRIPT_DOCUMENT_BYTES = 2 * 1024 * 1024
+
+    @staticmethod
+    def _script_document_name(value: str) -> str:
+        """Keep a plain, extension-bearing file name with no path components."""
+        cleaned = str(value or "").replace("\x00", "").strip()
+        cleaned = cleaned.replace("\\", "/").split("/")[-1]
+        cleaned = re.sub(r'[<>:"|?*\r\n\t]', "", cleaned).strip(" .")[:255]
+        if not cleaned:
+            cleaned = "script.txt"
+        if not cleaned.lower().endswith((".txt", ".md")):
+            cleaned = f"{cleaned}.txt"
+        return cleaned
+
+    @staticmethod
+    def _script_documents(task: Dict[str, Any]) -> List[Dict[str, Any]]:
+        assets = task.get("assets")
+        if not isinstance(assets, dict):
+            assets = {}
+            task["assets"] = assets
+        documents = assets.get("2_documents")
+        if not isinstance(documents, list):
+            documents = []
+            assets["2_documents"] = documents
+        return documents
+
+    @staticmethod
+    def _script_document_summary(document: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": str(document.get("id") or ""),
+            "name": str(document.get("name") or ""),
+            "size_bytes": len(str(document.get("content") or "").encode("utf-8")),
+            "updated_at": str(document.get("updated_at") or ""),
+        }
+
+    def list_script_documents(self, task_id: str) -> Optional[List[Dict[str, Any]]]:
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        documents = self._script_documents(task)
+        return [self._script_document_summary(item) for item in documents if isinstance(item, dict)]
+
+    def get_script_document(self, task_id: str, document_id: str) -> Optional[Dict[str, Any]]:
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        for document in self._script_documents(task):
+            if isinstance(document, dict) and str(document.get("id")) == document_id:
+                return {
+                    **self._script_document_summary(document),
+                    "content": str(document.get("content") or ""),
+                }
+        return None
+
+    def create_script_document(
+        self,
+        task_id: str,
+        *,
+        name: str,
+        content: str,
+    ) -> Optional[Dict[str, Any]]:
+        safe_name = self._script_document_name(name)
+        safe_content = str(content or "").replace("\x00", "")
+        if len(safe_content.encode("utf-8")) > self._MAX_SCRIPT_DOCUMENT_BYTES:
+            raise ValueError("剧本文件不能超过 2 MB")
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+        def mutation(task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            documents = self._script_documents(task)
+            if len(documents) >= self._MAX_SCRIPT_DOCUMENTS:
+                raise ValueError("剧本文库已达到 500 个文件上限")
+            document = {
+                "id": uuid.uuid4().hex,
+                "name": safe_name,
+                "content": safe_content,
+                "updated_at": timestamp,
+            }
+            documents.append(document)
+            return document
+
+        document = self.repo.mutate_task(task_id, mutation)
+        return self._script_document_summary(document) if document else None
+
+    def update_script_document(
+        self,
+        task_id: str,
+        document_id: str,
+        *,
+        name: Optional[str] = None,
+        content: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        safe_name = self._script_document_name(name) if name is not None else None
+        safe_content = str(content).replace("\x00", "") if content is not None else None
+        if safe_content is not None and len(safe_content.encode("utf-8")) > self._MAX_SCRIPT_DOCUMENT_BYTES:
+            raise ValueError("剧本文件不能超过 2 MB")
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+        def mutation(task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            for document in self._script_documents(task):
+                if not isinstance(document, dict) or str(document.get("id")) != document_id:
+                    continue
+                if safe_name is not None:
+                    document["name"] = safe_name
+                if safe_content is not None:
+                    document["content"] = safe_content
+                document["updated_at"] = timestamp
+                return document
+            return None
+
+        document = self.repo.mutate_task(task_id, mutation)
+        if not document:
+            return None
+        return {**self._script_document_summary(document), "content": str(document.get("content") or "")}
+
+    def delete_script_document(self, task_id: str, document_id: str) -> Optional[bool]:
+        def mutation(task: Dict[str, Any]) -> bool:
+            documents = self._script_documents(task)
+            remaining = [
+                item for item in documents
+                if not (isinstance(item, dict) and str(item.get("id")) == document_id)
+            ]
+            removed = len(remaining) != len(documents)
+            task["assets"]["2_documents"] = remaining
+            return removed
+
+        return self.repo.mutate_task(task_id, mutation)
+
+    def update_relationships(
+        self,
+        task_id: str,
+        relationships: List[Dict[str, Any]],
+    ) -> Optional[WriterDashboardResponse]:
+        """Atomically replace the user-editable character relationship list."""
+
+        def mutation(task: Dict[str, Any]) -> Dict[str, Any]:
+            assets = task.get("assets")
+            if not isinstance(assets, dict):
+                assets = {}
+                task["assets"] = assets
+            breakdown = assets.get("2_breakdown")
+            if not isinstance(breakdown, dict):
+                breakdown = {}
+            breakdown["relationships"] = relationships
+            assets["2_breakdown"] = breakdown
+            return task
+
+        task = self.repo.mutate_task(task_id, mutation)
+        if not task:
+            return None
+        return compile_writer_dashboard(task)
+
+    def update_script(
+        self,
+        task_id: str,
+        *,
+        content: str,
+        file_name: Optional[str] = None,
+        expected_source_hash: str,
+        confirm_invalidate: bool = False,
+        owner_user_id: Optional[str] = None,
+        is_admin: bool = False,
+    ) -> Optional[WriterDashboardResponse]:
+        """Atomically apply a user-authored screenplay revision without calling an LLM.
+
+        A changed screenplay invalidates every later production stage. Existing media
+        is never silently discarded: projects with derived work require explicit
+        confirmation and their previous active state is retained until explicit deletion.
+        """
+
+        def stage_key(value: object, *, minimum: int) -> bool:
+            match = re.match(r"^([0-9]+)(?:$|_)", str(value))
+            return bool(match and minimum <= int(match.group(1)) <= 8)
+
+        def mutate(task: Dict[str, Any]) -> WriterDashboardResponse:
+            if not is_admin:
+                owner = str(task.get("owner_user_id") or "")
+                if not owner_user_id or owner != str(owner_user_id):
+                    raise ScriptUpdateTaskNotFoundError("任务不存在")
+
+            current_dashboard = compile_writer_dashboard(task)
+            if current_dashboard.source_hash != expected_source_hash.lower():
+                raise ScriptUpdateConflictError("剧本已在其他页面更新，请刷新后再保存")
+
+            assets = task.setdefault("assets", {})
+            config = task.setdefault("config", {})
+            old_content = str(assets.get("2") or "")
+            old_file_name = str(config.get("script_name") or "")
+            next_file_name = file_name if file_name is not None else old_file_name
+            content_changed = content != old_content
+            file_name_changed = next_file_name != old_file_name
+            if not content_changed and not file_name_changed:
+                return current_dashboard
+
+            episodes = task.get("episodes") if isinstance(task.get("episodes"), list) else []
+            stage_progress = task.get("stage_progress")
+            actively_running = (
+                task.get("status") == "running"
+                or (
+                    isinstance(stage_progress, dict)
+                    and stage_progress.get("status") == "running"
+                )
+            ) or any(
+                isinstance(episode, dict) and episode.get("status") == "running"
+                for episode in episodes
+            )
+            if actively_running:
+                raise ScriptUpdateConflictError(
+                    "项目仍有生成任务运行，请等待当前生成结束后再修改剧本"
+                )
+
+            downstream_asset_keys = [key for key in assets if stage_key(key, minimum=3)]
+            logs = task.setdefault("logs", {})
+            downstream_log_keys = [key for key in logs if stage_key(key, minimum=3)]
+            has_produced_episodes = any(
+                isinstance(episode, dict)
+                and (
+                    episode.get("status") not in {None, "idle"}
+                    or bool(episode.get("shots"))
+                    or bool(episode.get("video_url"))
+                    or bool(episode.get("summary"))
+                )
+                for episode in episodes
+            )
+            has_outputs = any(task.get(key) for key in ("video_url", "short_link", "pr_content"))
+            try:
+                current_stage = int(task.get("current_stage", 0) or 0)
+            except (TypeError, ValueError, OverflowError):
+                current_stage = 0
+            has_later_stage = current_stage > 2
+            requires_archive = content_changed and bool(
+                downstream_asset_keys
+                or downstream_log_keys
+                or has_produced_episodes
+                or has_outputs
+                or has_later_stage
+                or task.get("status") == "completed"
+            )
+            if requires_archive and not confirm_invalidate:
+                raise ScriptUpdateConflictError(
+                    "应用新剧本会归档当前角色、分镜或成片；确认后可安全创建新版本"
+                )
+
+            if requires_archive:
+                archive = {
+                    "archive_id": uuid.uuid4().hex,
+                    "source_hash": current_dashboard.source_hash,
+                    "archived_at": datetime.now(timezone.utc).isoformat(),
+                    "script_file_name": old_file_name or None,
+                    "assets": {
+                        key: deepcopy(value)
+                        for key, value in assets.items()
+                        if key in {"2", "2_breakdown"} or key in downstream_asset_keys
+                    },
+                    "logs": {
+                        key: deepcopy(value)
+                        for key, value in logs.items()
+                        if stage_key(key, minimum=2)
+                    },
+                    "episodes": deepcopy(episodes),
+                    "workflow": {
+                        "current_stage": task.get("current_stage"),
+                        "stage_name": task.get("stage_name"),
+                        "status": task.get("status"),
+                        "video_url": task.get("video_url"),
+                        "short_link": task.get("short_link"),
+                        "pr_content": task.get("pr_content"),
+                    },
+                }
+                archives = task.get("script_archives")
+                if not isinstance(archives, list):
+                    archives = []
+                archive["payload_bytes"] = len(
+                    json.dumps(archive, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                )
+                candidate_archives = [*archives, archive]
+                archive_total_bytes = len(
+                    json.dumps(
+                        candidate_archives,
+                        ensure_ascii=False,
+                        indent=4,
+                    ).encode("utf-8")
+                )
+                if len(candidate_archives) > self.script_archive_max_entries:
+                    raise ScriptUpdateConflictError(
+                        "剧本历史归档容量上限已达到，当前剧本和下游资产均未修改；"
+                        "请先导出并删除不再需要的项目历史后重试"
+                    )
+                if archive_total_bytes > self.script_archive_max_total_bytes:
+                    raise ScriptUpdateConflictError(
+                        "剧本历史归档容量上限已达到，当前剧本和下游资产均未修改；"
+                        "请先导出并删除不再需要的项目历史后重试"
+                    )
+                task["script_archives"] = candidate_archives
+                task["script_archive_retention"] = {
+                    "policy": "bounded_reject_before_write",
+                    "max_entries": self.script_archive_max_entries,
+                    "max_total_bytes": self.script_archive_max_total_bytes,
+                    "current_entries": len(candidate_archives),
+                    "current_total_bytes": archive_total_bytes,
+                    "on_limit": "reject_with_409",
+                }
+
+            if content_changed:
+                for key in [*downstream_asset_keys, "2_breakdown", "2_writer_dashboard"]:
+                    assets.pop(key, None)
+                for key in list(logs):
+                    if stage_key(key, minimum=2):
+                        logs.pop(key, None)
+
+                parsed_episodes = split_episodes(content, max_episodes=12)
+                task["episodes"] = [
+                    {
+                        "index": episode["index"],
+                        "title": episode["title"],
+                        "script": episode["script"],
+                        "status": "idle",
+                        "shots": [],
+                        "video_url": None,
+                        "summary": "",
+                    }
+                    for episode in parsed_episodes
+                ]
+                task["total_episodes"] = len(parsed_episodes)
+                config["episode_count"] = len(parsed_episodes)
+                task["current_episode"] = 0
+                task["current_stage"] = 2
+                task["stage_name"] = "编剧剧本创作"
+                task["status"] = "idle"
+                task["stage_progress"] = None
+                task["fail_reason"] = None
+                task["video_url"] = None
+                task["short_link"] = None
+                task["pr_content"] = None
+
+            assets["2"] = content
+            config["script_content"] = content
+            if file_name is not None:
+                config["script_name"] = file_name
+            try:
+                script_revision = int(task.get("script_revision", 0) or 0)
+            except (TypeError, ValueError, OverflowError):
+                script_revision = 0
+            task["script_revision"] = max(0, script_revision) + 1
+
+            dashboard = compile_writer_dashboard(task)
+            assets["2_writer_dashboard"] = dashboard.model_dump(mode="json", by_alias=True)
+            return dashboard
+
+        try:
+            return self.repo.mutate_task(task_id, mutate)
+        except ScriptUpdateTaskNotFoundError:
+            return None
+
     def get_character_dashboard(self, task_id: str) -> Optional[CharacterDashboardResponse]:
         """Compile persisted Stage 3 assets into the stable five-view contract."""
         task = self.repo.get_task(task_id)
@@ -875,16 +1274,68 @@ class DramaService:
         执行异常时把异常信息写入 stage_progress 并标记任务 failed，供前端对话面板抛错展示。
         """
         try:
-            return await asyncio.to_thread(self._execute_stage_blocking, task_id, stage)
-        except Exception as e:
-            failed = self.repo.get_task(task_id)
-            if failed:
-                safe_error = self._safe_error_text(f"{type(e).__name__}: {e}")
-                self._progress_fail(failed, safe_error)
-                failed["status"] = "failed"
-                failed["fail_reason"] = f"阶段{stage}失败: {safe_error[:200]}"
-                self.repo.save_task(task_id, failed)
+            return await asyncio.to_thread(self._execute_claimed_stage_blocking, task_id, stage)
+        except _ClaimedStageExecutionError as execution_error:
+            claimed_revision = execution_error.claimed_revision
+            safe_error = self._safe_error_text(
+                f"{type(execution_error.cause).__name__}: {execution_error.cause}"
+            )
+
+            def mark_claimed_revision_failed(task: Dict[str, Any]) -> bool:
+                if _task_script_revision(task) != claimed_revision:
+                    raise StaleTaskWriteError(
+                        "任务剧本已更新，忽略旧版本阶段结果"
+                    )
+                self._progress_fail(task, safe_error)
+                task["status"] = "failed"
+                task["fail_reason"] = f"阶段{stage}失败: {safe_error[:200]}"
+                return True
+
+            try:
+                self.repo.mutate_task(task_id, mark_claimed_revision_failed)
+            except StaleTaskWriteError:
+                logger.info(
+                    "[Task %s] 阶段 %s 执行期间剧本已更新，忽略旧任务异常",
+                    task_id,
+                    stage,
+                )
+                raise
+            raise execution_error.cause
+        except StaleTaskWriteError:
+            logger.info(
+                "[Task %s] 阶段 %s 的旧剧本快照已失效，忽略旧任务结果",
+                task_id,
+                stage,
+            )
             raise
+
+    def _claim_stage_task(self, task_id: str, stage: int) -> Dict[str, Any]:
+        """Atomically mark and return the exact script revision a worker will execute."""
+
+        def claim(task: Dict[str, Any]) -> Dict[str, Any]:
+            task["status"] = "running"
+            task["current_stage"] = stage
+            return task
+
+        claimed_task = self.repo.mutate_task(task_id, claim)
+        if claimed_task is None:
+            raise ValueError("任务不存在")
+        return claimed_task
+
+    def _execute_claimed_stage_blocking(self, task_id: str, stage: int) -> Dict[str, Any]:
+        """Claim a revision in the worker thread and attach it to any provider failure."""
+        claimed_task = self._claim_stage_task(task_id, stage)
+        claimed_revision = _task_script_revision(claimed_task)
+        try:
+            return self._execute_stage_blocking(
+                task_id,
+                stage,
+                _claimed_task=claimed_task,
+            )
+        except StaleTaskWriteError:
+            raise
+        except Exception as exc:
+            raise _ClaimedStageExecutionError(claimed_revision, exc) from exc
 
     # ---------------- 阶段执行进度上报 (供前端对话面板进度条/调用过程展示轮询) ----------------
     STAGE_LABELS = {
@@ -1084,13 +1535,17 @@ class DramaService:
             logger.warning(f"[Stage3] 角色 DNA 结构化分析失败(不阻断主流程): {type(e).__name__}")
             return None
 
-    def _execute_stage_blocking(self, task_id: str, stage: int) -> Dict[str, Any]:
+    def _execute_stage_blocking(
+        self,
+        task_id: str,
+        stage: int,
+        *,
+        _claimed_task: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """
         执行特定步骤，基于 LLM 的生成结果并应用 Hooks 校验 (同步阻塞实现)
         """
-        task = self.repo.get_task(task_id)
-        if not task:
-            raise ValueError("任务不存在")
+        task = _claimed_task or self._claim_stage_task(task_id, stage)
 
         task["status"] = "running"
         task["current_stage"] = stage
@@ -2284,6 +2739,12 @@ class DramaService:
             logger.info(f"[Task {task_id}] 正在执行一键成片 - 进度 {stage}/8 (阶段: {current_task.get('stage_name', '')})")
             try:
                 await self.execute_stage(task_id, stage)
+            except StaleTaskWriteError:
+                logger.info(
+                    "[Task %s] 一键成片的旧剧本版本已被替换，停止旧流程",
+                    task_id,
+                )
+                return
             except Exception as e:
                 # 任一阶段异常立即落库为 failed，避免任务永久卡在 running 变成孤儿；可经 /resume 断点续跑
                 logger.error(f"[Task {task_id}] 阶段 {stage} 执行异常，标记为 failed: {str(e)[:200]}")

@@ -17,3 +17,5 @@ __pycache__/
 *.sqlite3-wal
 *.log
 .DS_Store
+backend/.dev_session_secret
+.dev_session_secret

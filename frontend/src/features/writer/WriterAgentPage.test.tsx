@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -240,6 +240,165 @@ describe('WriterAgentPage', () => {
     expect(document.activeElement).toBe(openButton);
   });
 
+  it('imports Markdown and text files into an editable screenplay draft', async () => {
+    const user = userEvent.setup();
+    const onSaveScript = vi.fn().mockResolvedValue(undefined);
+    render(<WriterAgentPage title="十二小时" breakdown={breakdown} onSaveScript={onSaveScript} />);
+
+    await user.click(screen.getByRole('button', { name: '分页阅读完整剧本' }));
+    const dialog = screen.getByRole('dialog', { name: '十二小时 · 完整剧本' });
+    const fileInput = within(dialog).getByLabelText('打开 Markdown 或文本文件') as HTMLInputElement;
+
+    expect(fileInput.accept).toContain('.md');
+    expect(fileInput.accept).toContain('.txt');
+    await user.upload(fileInput, new File(['# 新剧本\n\n林夏：倒计时开始。'], '十二小时.md', { type: 'text/markdown' }));
+
+    const editor = within(dialog).getByRole('textbox', { name: '剧本内容' }) as HTMLTextAreaElement;
+    expect(editor.value).toContain('林夏：倒计时开始。');
+    await user.click(within(dialog).getByRole('button', { name: '保存剧本' }));
+    expect(onSaveScript).toHaveBeenCalledWith('# 新剧本\n\n林夏：倒计时开始。', '十二小时.md', '');
+    expect(await within(dialog).findByText('已保存')).toBeTruthy();
+  });
+
+  it('keeps the later file selection when an earlier file read finishes last', async () => {
+    const user = userEvent.setup();
+    let resolveSlow!: (value: ArrayBuffer) => void;
+    let resolveFast!: (value: ArrayBuffer) => void;
+    const slowRead = new Promise<ArrayBuffer>(resolve => { resolveSlow = resolve; });
+    const fastRead = new Promise<ArrayBuffer>(resolve => { resolveFast = resolve; });
+    const slowFile = new File([], '先选慢文件.md', { type: 'text/markdown' });
+    const fastFile = new File([], '后选快文件.md', { type: 'text/markdown' });
+    Object.defineProperty(slowFile, 'arrayBuffer', { configurable: true, value: () => slowRead });
+    Object.defineProperty(fastFile, 'arrayBuffer', { configurable: true, value: () => fastRead });
+
+    render(<WriterAgentPage title="十二小时" breakdown={breakdown} script="项目原稿" onSaveScript={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: '分页阅读完整剧本' }));
+    const dialog = screen.getByRole('dialog', { name: '十二小时 · 完整剧本' });
+    const fileInput = within(dialog).getByLabelText('打开 Markdown 或文本文件');
+
+    fireEvent.change(fileInput, { target: { files: [slowFile] } });
+    fireEvent.change(fileInput, { target: { files: [fastFile] } });
+    await act(async () => {
+      resolveFast(new TextEncoder().encode('# 后选文件\n\n最终内容').buffer as ArrayBuffer);
+      await fastRead;
+    });
+
+    const editor = await within(dialog).findByRole('textbox', { name: '剧本内容' }) as HTMLTextAreaElement;
+    expect(editor.value).toBe('# 后选文件\n\n最终内容');
+    expect(within(dialog).getByText(/后选快文件\.md/)).toBeTruthy();
+
+    await act(async () => {
+      resolveSlow(new TextEncoder().encode('# 先选文件\n\n不应覆盖').buffer as ArrayBuffer);
+      await slowRead;
+    });
+    expect(editor.value).toBe('# 后选文件\n\n最终内容');
+    expect(within(dialog).queryByText(/先选慢文件\.md/)).toBeNull();
+  });
+
+  it('edits an existing screenplay and switches back to the paged preview', async () => {
+    const user = userEvent.setup();
+    const onSaveScript = vi.fn().mockResolvedValue(undefined);
+    render(<WriterAgentPage title="十二小时" breakdown={breakdown} script="旧版正文" onSaveScript={onSaveScript} />);
+
+    await user.click(screen.getByRole('button', { name: '分页阅读完整剧本' }));
+    const dialog = screen.getByRole('dialog', { name: '十二小时 · 完整剧本' });
+    await user.click(within(dialog).getByRole('button', { name: '编辑剧本' }));
+    const editor = within(dialog).getByRole('textbox', { name: '剧本内容' });
+    await user.clear(editor);
+    await user.type(editor, '# 修订版{Enter}{Enter}新的结局');
+    await user.click(within(dialog).getByRole('button', { name: '预览剧本' }));
+
+    expect(within(dialog).getByRole('heading', { name: '修订版' })).toBeTruthy();
+    await user.click(within(dialog).getByRole('button', { name: '编辑剧本' }));
+    await user.click(within(dialog).getByRole('button', { name: '保存剧本' }));
+    expect(onSaveScript).toHaveBeenCalledWith('# 修订版\n\n新的结局', '十二小时.md', '');
+  });
+
+  it('only saves dirty drafts and preserves edits typed while a save is in flight', async () => {
+    const user = userEvent.setup();
+    let finishSave: ((sourceHash: string) => void) | undefined;
+    const pendingSave = new Promise<string>(resolve => { finishSave = resolve; });
+    const initialSourceHash = 'a'.repeat(64);
+    const savedSourceHash = 'c'.repeat(64);
+    const onSaveScript = vi.fn()
+      .mockReturnValueOnce(pendingSave)
+      .mockResolvedValueOnce('d'.repeat(64));
+    render(
+      <WriterAgentPage
+        title="十二小时"
+        breakdown={breakdown}
+        script="旧版正文"
+        scriptSourceHash={initialSourceHash}
+        onSaveScript={onSaveScript}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: '分页阅读完整剧本' }));
+    const dialog = screen.getByRole('dialog', { name: '十二小时 · 完整剧本' });
+    const saveButton = within(dialog).getByRole('button', { name: '保存剧本' });
+    expect(saveButton.hasAttribute('disabled')).toBe(true);
+    await user.keyboard('{Control>}s{/Control}');
+    expect(onSaveScript).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole('button', { name: '编辑剧本' }));
+    const editor = within(dialog).getByRole('textbox', { name: '剧本内容' }) as HTMLTextAreaElement;
+    await user.clear(editor);
+    await user.type(editor, '第一次修订');
+    await user.click(saveButton);
+    expect(onSaveScript).toHaveBeenCalledWith('第一次修订', '十二小时.md', initialSourceHash);
+
+    await user.type(editor, '，保存期间继续输入');
+    expect(saveButton.hasAttribute('disabled')).toBe(true);
+    expect(within(dialog).getByText('保存中')).toBeTruthy();
+    await user.keyboard('{Control>}s{/Control}');
+    expect(onSaveScript).toHaveBeenCalledTimes(1);
+    finishSave?.(savedSourceHash);
+
+    expect(await within(dialog).findByText(/未保存/)).toBeTruthy();
+    expect(editor.value).toBe('第一次修订，保存期间继续输入');
+    await waitFor(() => expect(saveButton.hasAttribute('disabled')).toBe(false));
+    await user.click(saveButton);
+    expect(onSaveScript).toHaveBeenLastCalledWith(
+      '第一次修订，保存期间继续输入',
+      '十二小时.md',
+      savedSourceHash,
+    );
+  });
+
+  it('asks before closing an unsaved screenplay draft', async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, 'confirm')
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    render(<WriterAgentPage title="十二小时" breakdown={breakdown} script="旧版正文" onSaveScript={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: '分页阅读完整剧本' }));
+    const dialog = screen.getByRole('dialog', { name: '十二小时 · 完整剧本' });
+    await user.click(within(dialog).getByRole('button', { name: '编辑剧本' }));
+    await user.type(within(dialog).getByRole('textbox', { name: '剧本内容' }), '，尚未保存');
+
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('dialog', { name: '十二小时 · 完整剧本' })).toBeTruthy();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: '十二小时 · 完整剧本' })).toBeNull();
+    expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects unsupported screenplay file formats without replacing the draft', async () => {
+    const user = userEvent.setup({ applyAccept: false });
+    render(<WriterAgentPage title="十二小时" breakdown={breakdown} script="保留的正文" />);
+
+    await user.click(screen.getByRole('button', { name: '分页阅读完整剧本' }));
+    const dialog = screen.getByRole('dialog', { name: '十二小时 · 完整剧本' });
+    await user.upload(
+      within(dialog).getByLabelText('打开 Markdown 或文本文件'),
+      new File(['不能导入'], 'screenplay.pdf', { type: 'application/pdf' }),
+    );
+
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('仅支持 .md 或 .txt 文件');
+    expect(within(dialog).getByText('保留的正文')).toBeTruthy();
+  });
+
   it('renders Markdown pipe tables as semantic horizontally scrollable multidimensional tables', async () => {
     const user = userEvent.setup();
     const tableScript = [
@@ -252,6 +411,7 @@ describe('WriterAgentPage', () => {
 
     render(<WriterAgentPage title="角色圣经" breakdown={breakdown} script={tableScript} />);
     await user.click(screen.getByRole('button', { name: '分页阅读完整剧本' }));
+    await user.click(screen.getByRole('button', { name: '下一页' }));
 
     const table = screen.getByRole('table', { name: '角色总表' });
     expect(table.closest('.writer-markdown-table-scroll')).toBeTruthy();

@@ -13,8 +13,19 @@ function declarationsFor(selector: string) {
 }
 
 describe('Writer timeline visual contract', () => {
-  it('renders event titles and body copy at the requested compact 12px size', () => {
-    expect(declarationsFor('.writer-event-line h3')).toMatch(/font-size\s*:\s*12px\s*;/);
-    expect(declarationsFor('.writer-event-line p')).toMatch(/font-size\s*:\s*12px\s*;/);
+  it('renders event cards with readable font sizes and clamped body copy', () => {
+    const heading = declarationsFor('.writer-event-line h3');
+    expect(heading).toMatch(/font-size\s*:\s*0\.82rem\s*;/);
+    expect(heading).toMatch(/-webkit-line-clamp\s*:\s*2\s*;/);
+
+    const body = declarationsFor('.writer-event-line p');
+    expect(body).toMatch(/font-size\s*:\s*0\.72rem\s*;/);
+    expect(body).toMatch(/-webkit-line-clamp\s*:\s*3\s*;/);
+  });
+
+  it('keeps axis beat titles readable and clamped to two lines', () => {
+    const beatTitle = declarationsFor('.writer-axis__content strong');
+    expect(beatTitle).toMatch(/font-size\s*:\s*0\.73rem\s*;/);
+    expect(beatTitle).toMatch(/-webkit-line-clamp\s*:\s*2\s*;/);
   });
 });

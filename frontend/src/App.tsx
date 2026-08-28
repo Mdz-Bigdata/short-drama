@@ -20,6 +20,7 @@ import { VideoReferenceModeSelect } from './features/workbench/VideoReferenceMod
 import { NOVARA_AGENT_NAME } from './features/workbench/agentBrand';
 import { DirectorPlanningPage } from './features/director/DirectorPlanningPage';
 import { WriterAgentPageContainer } from './features/writer/WriterAgentPageContainer';
+import type { WriterDashboardResponse } from './features/writer/types';
 import { CharacterDesignerPageContainer } from './features/character/CharacterDesignerPageContainer';
 import { API_BASE } from './api/client';
 
@@ -57,6 +58,53 @@ interface EpisodeItem {
   title: string;
   status: 'idle' | 'running' | 'completed' | 'failed';
   videoUrl?: string | null;
+}
+
+interface EpisodeCollectionState {
+  taskId: string;
+  sourceHash: string;
+  items: EpisodeItem[];
+}
+
+function normalizeEpisodeSourceHash(value: unknown) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return /^[a-f\d]{64}$/.test(normalized) ? normalized : '';
+}
+
+function stageKeyAtLeast(value: string, minimum: number) {
+  const match = value.match(/^([0-9]+)(?:$|_)/);
+  return Boolean(match && Number(match[1]) >= minimum && Number(match[1]) <= 8);
+}
+
+function applyWriterDashboardToTask(
+  task: TaskResponse,
+  dashboard: WriterDashboardResponse,
+): TaskResponse {
+  const assets = Object.fromEntries(Object.entries(task.assets).filter(([key]) => (
+    !stageKeyAtLeast(key, 3) && key !== '2_breakdown' && key !== '2_writer_dashboard'
+  )));
+  assets['2'] = dashboard.script;
+  assets['2_writer_dashboard'] = dashboard;
+  const logs = Object.fromEntries(Object.entries(task.logs).filter(([key]) => !stageKeyAtLeast(key, 2)));
+  return {
+    ...task,
+    currentStage: 2,
+    stageName: '编剧剧本创作',
+    status: 'idle',
+    config: {
+      ...task.config,
+      scriptContent: dashboard.script,
+      scriptName: dashboard.scriptFileName || task.config.scriptName,
+      episodeCount: dashboard.stats.totalEpisodes,
+    },
+    assets,
+    logs,
+    videoUrl: undefined,
+    shortLink: undefined,
+    prContent: undefined,
+    stageProgress: null,
+    failReason: null,
+  };
 }
 
 interface ImportedSkill {
@@ -633,6 +681,8 @@ export default function App() {
   const [scriptContent, setScriptContent] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTabStage, setActiveTabStage] = useState<number>(1);
+  // 从编剧统计跳到角色 agent 时，预选中的资产 Tab（数字演员 / 拍摄场地）
+  const [characterAssetKind, setCharacterAssetKind] = useState<ElementKind>('actor');
   const [historyTasks, setHistoryTasks] = useState<TaskResponse[]>([]);
   const [isPolling, setIsPolling] = useState<boolean>(false);
   // 阶段执行进度快照 (用于检测 running -> success/error 转变，驱动对话面板状态气泡)
@@ -658,7 +708,13 @@ export default function App() {
   const [newProjectShotStyle, setNewProjectShotStyle] = useState<string>('cinematic');
   const [newProjectOneClick, setNewProjectOneClick] = useState<boolean>(true); // 成片方式：true=一键成片 / false=分步引导
   const [newProjectEpisodes, setNewProjectEpisodes] = useState<number>(3); // 一次性生成的剧本集数
-  const [episodes, setEpisodes] = useState<EpisodeItem[]>([]); // 分集制作清单 (逐集出片)
+  const [episodeState, setEpisodeState] = useState<EpisodeCollectionState>({
+    taskId: '',
+    sourceHash: '',
+    items: [],
+  }); // 分集制作清单与其所属剧本版本
+  const episodes = episodeState.taskId === taskId ? episodeState.items : [];
+  const episodesSourceHash = episodeState.taskId === taskId ? episodeState.sourceHash : '';
   const [episodesBusy, setEpisodesBusy] = useState<boolean>(false);
   const [showSkillsGrid, setShowSkillsGrid] = useState<boolean>(true);
 
@@ -678,6 +734,7 @@ export default function App() {
     { id: '6', title: '⚖️ 金牌律师正义反扑', desc: '行贿伪证当庭拆穿，豪门大少收押', prompt: '请帮我生成一个金牌律师庭审翻盘短剧，走完流程。' }
   ]);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const episodeRequestGenerationRef = useRef(0);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   async function refreshModelConfigurationStatus() {
@@ -1150,12 +1207,17 @@ export default function App() {
 
   // —— 分集制作 (item 6: 剧本一次多集，视频逐集制作) ——
   const fetchEpisodes = async (tid: string) => {
+    const requestGeneration = episodeRequestGenerationRef.current;
     try {
       const res = await apiFetch(`http://localhost:8000/api/drama/${tid}/episodes`);
       if (res.ok) {
         const data = await res.json();
         const eps = data.episodes || [];
-        setEpisodes(eps);
+        const sourceHash = normalizeEpisodeSourceHash(data.sourceHash);
+        if (requestGeneration !== episodeRequestGenerationRef.current) return;
+        setEpisodeState(current => current.taskId === tid
+          ? { taskId: tid, sourceHash, items: eps }
+          : current);
         // 有正在制作的集则继续轮询
         if (eps.some((episode: EpisodeItem) => episode.status === 'running')) {
           setTimeout(() => fetchEpisodes(tid), 8000);
@@ -1187,7 +1249,14 @@ export default function App() {
     try {
       const res = await apiFetch(`http://localhost:8000/api/drama/${taskId}/episodes/${idx}/produce`, { method: 'POST' });
       if (res.ok) {
-        setEpisodes(prev => prev.map(e => e.index === idx ? { ...e, status: 'running' } : e));
+        setEpisodeState(current => current.taskId === taskId
+          ? {
+            ...current,
+            items: current.items.map(episode => episode.index === idx
+              ? { ...episode, status: 'running' }
+              : episode),
+          }
+          : current);
         setTimeout(() => fetchEpisodes(taskId), 5000);
       } else {
         const err = await res.json();
@@ -1196,6 +1265,19 @@ export default function App() {
     } catch {
       setErrorMessage(`第${idx}集制作请求失败`);
     }
+  };
+
+  const handleWriterScriptSaved = (dashboard: WriterDashboardResponse) => {
+    if (taskDataRef.current?.taskId !== taskId) return;
+    episodeRequestGenerationRef.current += 1;
+    setEpisodeState({
+      taskId,
+      sourceHash: normalizeEpisodeSourceHash(dashboard.sourceHash),
+      items: dashboard.episodes.map(episode => ({ ...episode })),
+    });
+    setTaskData(current => current && current.taskId === taskId
+      ? applyWriterDashboardToTask(current, dashboard)
+      : current);
   };
 
   // 一键生成全片
@@ -1318,7 +1400,8 @@ export default function App() {
     setTaskData(task);
     setActiveTabStage(task.currentStage > 0 ? task.currentStage : 1);
     setIsPolling(task.status === 'running');
-    setEpisodes([]);
+    episodeRequestGenerationRef.current += 1;
+    setEpisodeState({ taskId: task.taskId, sourceHash: '', items: [] });
     fetchEpisodes(task.taskId); // 载入已有的分集制作清单
 
     // 同步配置状态，以便工作台侧边栏能够高亮匹配该项目的实际模型配置
@@ -1740,7 +1823,7 @@ export default function App() {
     return <BillingCenterPage onBack={() => setActivePortal('home')} />;
   }
 
-  if (currentUser && ['actor', 'prop', 'scene', 'effect'].includes(activePortal)) {
+  if (currentUser && ['actor', 'scene', 'prop', 'costume', 'effect'].includes(activePortal)) {
     return <ElementLibraryPage initialKind={activePortal as ElementKind} onBack={() => setActivePortal('home')} />;
   }
 
@@ -1885,8 +1968,9 @@ export default function App() {
                     <div className="element-menu" role="menu" aria-label="选择元素类型">
                       {([
                         ['actor', '演员', '五视图与表演身份锚点'],
-                        ['prop', '道具', '归属、位置和状态连续性'],
                         ['scene', '场景', '空间、时段、天气和灯光'],
+                        ['prop', '道具', '归属、位置和状态连续性'],
+                        ['costume', '服装', '角色状态、材质与换装连续性'],
                         ['effect', '特效', '时间、目标和结束状态'],
                       ] as Array<[ElementKind, string, string]>).map(([value, label, hint]) => (
                         <button key={value} type="button" role="menuitem" onClick={() => { setActivePortal(value); setActivePopover('none'); }}>
@@ -2389,6 +2473,7 @@ export default function App() {
               <StoryboardWorkspace
                 title={taskData.config.titleSuggestion}
                 shots={taskData.assets["4"] as StoryboardShot[]}
+                taskId={taskId}
                 gridUrl={taskData.assets["4_grid"] as string | undefined}
                 prompt={taskData.assets["4_grid_prompt"] as string | undefined}
                 promptDetail={taskData.assets["4_prompt_detail"]}
@@ -2413,14 +2498,19 @@ export default function App() {
                 fallbackScript={taskData?.assets["2"]}
                 requestedEpisodeCount={taskData?.config.episodeCount || 0}
                 episodes={episodes}
+                episodesSourceHash={episodesSourceHash}
                 episodesBusy={episodesBusy}
                 onPlanEpisodes={() => { void handlePlanEpisodes(); }}
                 onProduceEpisode={(episodeIndex) => { void handleProduceEpisode(episodeIndex); }}
+                onScriptSaved={handleWriterScriptSaved}
+                onOpenScenes={() => { setCharacterAssetKind('scene'); setActiveTabStage(3); }}
+                onOpenActors={() => { setCharacterAssetKind('actor'); setActiveTabStage(3); }}
               />
             ) : activeTabStage === 3 ? (
               <CharacterDesignerPageContainer
-                key={taskId}
+                key={`${taskId}:${characterAssetKind}`}
                 taskId={taskId}
+                initialAssetKind={characterAssetKind}
                 refreshKey={`${taskData?.currentStage}:${taskData?.status}:${Boolean(taskData?.assets["3_character_dashboard"])}`}
                 title={taskData?.config.titleSuggestion}
                 fallbackCharacters={taskData?.assets["3_characters"]}

@@ -5,6 +5,61 @@
   padding-inline: clamp(14px, 2.5vw, 40px);
 }
 
+.element-library-page--embedded {
+  width: 100%;
+  min-height: 34rem;
+  padding: 0;
+  color: var(--text-main);
+  background: transparent;
+}
+
+.element-library-page--embedded .element-toolbar,
+.element-library-page--embedded .element-create-form,
+.element-library-page--embedded > .inline-error,
+.element-library-page--embedded > .element-success,
+.element-library-page--embedded .empty-library,
+.element-library-page--embedded .element-card-grid,
+.element-library-page--embedded .element-3d-module {
+  width: 100%;
+  max-width: none;
+}
+
+.element-library-page--embedded .element-toolbar {
+  margin: 0 0 1rem;
+  padding: 0.8rem 0.9rem;
+  background: rgba(7, 14, 24, 0.78);
+  border: 1px solid rgba(118, 237, 255, 0.14);
+  border-radius: 0.62rem;
+}
+
+.element-library-page--embedded .empty-library {
+  min-height: 25rem;
+  background:
+    radial-gradient(circle at 50% 40%, rgba(0, 190, 255, 0.08), transparent 17rem),
+    rgba(5, 10, 18, 0.58);
+  border-color: rgba(118, 237, 255, 0.2);
+}
+
+.element-library-page--embedded .element-card {
+  background: linear-gradient(180deg, rgba(11, 21, 35, 0.94), rgba(6, 12, 21, 0.96));
+  border-color: rgba(118, 237, 255, 0.14);
+  box-shadow: 0 1rem 2.5rem rgba(0, 0, 0, 0.24);
+}
+
+.element-library-page--embedded .element-preview {
+  background:
+    radial-gradient(circle at 50% 35%, rgba(0, 178, 255, 0.18), transparent 12rem),
+    linear-gradient(145deg, #142438, #070c15);
+}
+
+.element-library-page--embedded button:focus-visible,
+.element-library-page--embedded input:focus-visible,
+.element-library-page--embedded textarea:focus-visible,
+.element-library-page--embedded select:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 2px;
+}
+
 .element-library-page .portal-header,
 .element-library-page .element-toolbar,
 .element-library-page .element-create-form,
@@ -809,6 +864,10 @@
 @media (max-width: 640px) {
   .element-library-page { padding-inline: 10px; }
   .element-library-page .portal-header { gap: 12px; }
+  .element-library-page--embedded { padding-inline: 0; }
+  .element-library-page--embedded .element-toolbar {
+    align-items: stretch;
+  }
   .element-3d-workspace {
     grid-template-columns: 1fr;
     grid-template-rows: auto 500px auto;

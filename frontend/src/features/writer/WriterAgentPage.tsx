@@ -1,15 +1,33 @@
 import { useMemo, useState } from 'react';
-import { BookOpenText, Check, Download, Film, ListTree, Network, RefreshCw, TimerReset } from 'lucide-react';
+import {
+  BookOpen,
+  BookOpenText,
+  Check,
+  Download,
+  Film,
+  LayoutDashboard,
+  ListTree,
+  Network,
+  RefreshCw,
+  TableProperties,
+  TimerReset,
+} from 'lucide-react';
 
 import { CharacterRelationshipGraph } from './CharacterRelationshipGraph';
+import { EpisodeScenesDialog } from './EpisodeScenesDialog';
+import { EpisodeTextDialog } from './EpisodeTextDialog';
 import { ScreenplayReader } from './ScreenplayReader';
+import { ScriptLibrary } from './ScriptLibrary';
+import { ScriptOutline } from './ScriptOutline';
 import { WriterTimeline } from './WriterTimeline';
+import { summarizeEpisodeTitle } from './textSummary';
 import {
   normalizeWriterBreakdown,
   relationshipsFromScenes,
   sceneEpisode,
   type WriterDashboardStats,
   type WriterEpisode,
+  type WriterRelationship,
   type WriterScene,
 } from './types';
 import './WriterAgentPage.css';
@@ -89,8 +107,11 @@ function durationSecondsLabel(seconds?: number) {
 
 export function WriterAgentPage({
   title,
+  taskId,
   breakdown: breakdownInput,
   script,
+  scriptFileName,
+  scriptSourceHash,
   requestedEpisodeCount = 0,
   episodes = [],
   episodesBusy = false,
@@ -98,10 +119,17 @@ export function WriterAgentPage({
   onExport,
   onPlanEpisodes,
   onProduceEpisode,
+  onSaveScript,
+  onSaveRelationships,
+  onOpenScenes,
+  onOpenActors,
 }: {
   title?: string;
+  taskId?: string;
   breakdown?: unknown;
   script?: unknown;
+  scriptFileName?: string;
+  scriptSourceHash?: string;
   requestedEpisodeCount?: number;
   episodes?: WriterEpisode[];
   episodesBusy?: boolean;
@@ -109,9 +137,21 @@ export function WriterAgentPage({
   onExport?: () => void | Promise<void>;
   onPlanEpisodes?: () => void;
   onProduceEpisode?: (index: number) => void;
+  onSaveScript?: (
+    content: string,
+    fileName: string,
+    baseSourceHash: string,
+  ) => string | void | Promise<string | void>;
+  onSaveRelationships?: (relationships: WriterRelationship[]) => Promise<void>;
+  onOpenScenes?: () => void;
+  onOpenActors?: () => void;
 }) {
   const [timelineMode, setTimelineMode] = useState<'axis' | 'line'>('axis');
   const [readerOpen, setReaderOpen] = useState(false);
+  const [view, setView] = useState<'board' | 'outline' | 'library'>('board');
+  const [episodeTextTarget, setEpisodeTextTarget] = useState<{ episode?: number } | null>(null);
+  const [sceneDialogEpisode, setSceneDialogEpisode] = useState<number | null>(null);
+  const [episodePage, setEpisodePage] = useState(0);
   const breakdown = useMemo(() => normalizeWriterBreakdown(breakdownInput), [breakdownInput]);
   const scenes = breakdown.scenes || [];
   const timeline = breakdown.timeline || [];
@@ -143,10 +183,41 @@ export function WriterAgentPage({
       title: episode?.title || episodeScenes[0]?.content || `第 ${number} 集剧本`,
     };
   });
-  const stats = [
-    { label: '总集数', value: serverStats?.totalEpisodes || episodeTotal || '—', note: source ? '完整剧本已载入' : '等待剧本' },
-    { label: '场景', value: serverStats?.sceneCount || scenes.length || '—', note: `${serverStats?.mainEventCount ?? timeline.length} 个主线事件` },
-    { label: '角色', value: serverStats?.characterCount || characterNames.size || '—', note: `${serverStats?.relationshipCount || displayedRelationships.length} 条人物关系` },
+  const EPISODES_PER_PAGE = 9;
+  const episodePageCount = Math.max(1, Math.ceil(episodeCards.length / EPISODES_PER_PAGE));
+  const activeEpisodePage = Math.min(episodePage, episodePageCount - 1);
+  const visibleEpisodeCards = episodeCards.slice(
+    activeEpisodePage * EPISODES_PER_PAGE,
+    (activeEpisodePage + 1) * EPISODES_PER_PAGE,
+  );
+  const stats: Array<{
+    label: string;
+    value: string | number;
+    note: string;
+    onOpen?: () => void;
+    hint?: string;
+  }> = [
+    {
+      label: '总集数',
+      value: serverStats?.totalEpisodes || episodeTotal || '—',
+      note: source ? '完整剧本已载入' : '等待剧本',
+      onOpen: source ? () => setEpisodeTextTarget({}) : undefined,
+      hint: '按集查看剧本文本',
+    },
+    {
+      label: '场景',
+      value: serverStats?.sceneCount || scenes.length || '—',
+      note: `${serverStats?.mainEventCount ?? timeline.length} 个主线事件`,
+      onOpen: onOpenScenes,
+      hint: '查看拍摄场地资产',
+    },
+    {
+      label: '角色',
+      value: serverStats?.characterCount || characterNames.size || '—',
+      note: `${serverStats?.relationshipCount || displayedRelationships.length} 条人物关系`,
+      onOpen: onOpenActors,
+      hint: '查看数字演员',
+    },
     { label: '预估时长', value: serverStats ? durationSecondsLabel(serverStats.totalDurationSeconds) : durationLabel(scenes), note: '依据场景时长汇总' },
     { label: '剧本基调', value: serverStats?.tone || breakdown.overview?.genre || '待分析', note: breakdown.overview?.theme || '主题提炼中' },
   ];
@@ -175,10 +246,73 @@ export function WriterAgentPage({
         </div>
       </header>
 
+      <nav className="writer-view-tabs" aria-label="编剧页面视图">
+        <button
+          type="button"
+          className={view === 'board' ? 'is-active' : ''}
+          aria-pressed={view === 'board'}
+          onClick={() => setView('board')}
+        >
+          <LayoutDashboard aria-hidden="true" /> 创作看板
+        </button>
+        <button
+          type="button"
+          className={view === 'outline' ? 'is-active' : ''}
+          aria-pressed={view === 'outline'}
+          onClick={() => setView('outline')}
+        >
+          <TableProperties aria-hidden="true" /> 剧本大纲
+        </button>
+        {taskId && (
+          <button
+            type="button"
+            className={view === 'library' ? 'is-active' : ''}
+            aria-pressed={view === 'library'}
+            onClick={() => setView('library')}
+          >
+            <BookOpen aria-hidden="true" /> 剧本文库
+          </button>
+        )}
+      </nav>
+
       <dl className="writer-stats">
-        {stats.map(stat => <div key={stat.label}><dt>{stat.label}</dt><dd>{stat.value}</dd><small>{stat.note}</small></div>)}
+        {stats.map(stat => (
+          <div key={stat.label}>
+            <dt>{stat.label}</dt>
+            <dd>
+              {stat.onOpen ? (
+                <button
+                  type="button"
+                  className="writer-stat-link"
+                  onClick={stat.onOpen}
+                  title={stat.hint}
+                  aria-label={`${stat.label} ${stat.value}，${stat.hint || '查看详情'}`}
+                >
+                  {stat.value}
+                </button>
+              ) : stat.value}
+            </dd>
+            <small>{stat.note}</small>
+          </div>
+        ))}
       </dl>
 
+      {view === 'library' && taskId ? (
+        <section className="writer-section" aria-labelledby="writer-library-title">
+          <div className="writer-section__heading">
+            <div><span>01</span><div><small>SCRIPT LIBRARY</small><h2 id="writer-library-title">剧本文库</h2></div></div>
+          </div>
+          <ScriptLibrary taskId={taskId} />
+        </section>
+      ) : view === 'outline' ? (
+        <section className="writer-section writer-outline-section" aria-labelledby="writer-outline-title">
+          <div className="writer-section__heading">
+            <div><span>01</span><div><small>SCRIPT BREAKDOWN</small><h2 id="writer-outline-title">剧本大纲</h2></div></div>
+          </div>
+          <ScriptOutline scenes={scenes} />
+        </section>
+      ) : (
+      <>
       {(synopsis || overviewDetails.length > 0) && (
         <section className="writer-overview" aria-labelledby="writer-logline-title">
           <div className="writer-overview__label" aria-hidden="true">
@@ -225,26 +359,83 @@ export function WriterAgentPage({
           {onPlanEpisodes && <button className="writer-outline-button" type="button" onClick={onPlanEpisodes} disabled={episodesBusy}><RefreshCw aria-hidden="true" /> {episodesBusy ? '分集中…' : episodes.length ? '重新分集' : '一键分集'}</button>}
         </div>
         {episodeCards.length > 0 ? (
-          <div className="writer-episodes">
-            {episodeCards.map(card => (
-              <article key={card.number}>
-                <div><span>第 {card.number} 集</span><strong>{String(card.title).replace(/\s+/g, ' ').slice(0, 34)}</strong></div>
-                <dl><div><dt>场景</dt><dd>{card.episode?.sceneCount || card.scenes.length || '—'}</dd></div><div><dt>时长</dt><dd>{card.episode?.durationSeconds ? durationSecondsLabel(card.episode.durationSeconds) : durationLabel(card.scenes)}</dd></div></dl>
-                <footer>
-                  <span className={`is-${card.episode?.status || 'idle'}`}>{card.episode?.status === 'completed' ? '已完成' : card.episode?.status === 'running' ? '制作中' : card.episode?.status === 'failed' ? '失败' : '待制作'}</span>
-                  {card.episode?.status === 'completed' && card.episode.videoUrl
-                    ? <a href={card.episode.videoUrl} target="_blank" rel="noreferrer"><Film aria-hidden="true" />播放</a>
-                    : onProduceEpisode && <button type="button" disabled={card.episode?.status === 'running'} onClick={() => onProduceEpisode(card.number)}><Film aria-hidden="true" />制作本集</button>}
-                </footer>
-              </article>
-            ))}
-          </div>
+          <>
+            <div className="writer-episodes">
+              {visibleEpisodeCards.map(card => {
+                const sceneCount = card.episode?.sceneCount || card.scenes.length || 0;
+                return (
+                  <article key={card.number}>
+                    <div>
+                      <span>第 {card.number} 集</span>
+                      <button
+                        type="button"
+                        className="writer-episodes__title"
+                        disabled={!source}
+                        title={source ? '查看本集剧本文本' : undefined}
+                        onClick={() => setEpisodeTextTarget({ episode: card.number })}
+                      >
+                        {summarizeEpisodeTitle(card.title) || `第 ${card.number} 集剧本`}
+                      </button>
+                    </div>
+                    <dl>
+                      <div>
+                        <dt>场景</dt>
+                        <dd>
+                          {sceneCount > 0 ? (
+                            <button
+                              type="button"
+                              className="writer-stat-link"
+                              title="查看本集全部场景信息"
+                              aria-label={`查看第 ${card.number} 集的 ${sceneCount} 个场景`}
+                              onClick={() => setSceneDialogEpisode(card.number)}
+                            >
+                              {sceneCount}
+                            </button>
+                          ) : '—'}
+                        </dd>
+                      </div>
+                      <div><dt>时长</dt><dd>{card.episode?.durationSeconds ? durationSecondsLabel(card.episode.durationSeconds) : durationLabel(card.scenes)}</dd></div>
+                    </dl>
+                    <footer>
+                      <span className={`is-${card.episode?.status || 'idle'}`}>{card.episode?.status === 'completed' ? '已完成' : card.episode?.status === 'running' ? '制作中' : card.episode?.status === 'failed' ? '失败' : '待制作'}</span>
+                      {card.episode?.status === 'completed' && card.episode.videoUrl
+                        ? <a href={card.episode.videoUrl} target="_blank" rel="noreferrer"><Film aria-hidden="true" />播放</a>
+                        : onProduceEpisode && <button type="button" disabled={card.episode?.status === 'running'} onClick={() => onProduceEpisode(card.number)}><Film aria-hidden="true" />制作本集</button>}
+                    </footer>
+                  </article>
+                );
+              })}
+            </div>
+            {episodePageCount > 1 && (
+              <nav className="writer-episodes__pagination" aria-label="分集概览分页">
+                <button
+                  type="button"
+                  disabled={activeEpisodePage === 0}
+                  onClick={() => setEpisodePage(activeEpisodePage - 1)}
+                >
+                  上一页
+                </button>
+                <span>{activeEpisodePage + 1} / {episodePageCount} 页 · 共 {episodeCards.length} 集</span>
+                <button
+                  type="button"
+                  disabled={activeEpisodePage >= episodePageCount - 1}
+                  onClick={() => setEpisodePage(activeEpisodePage + 1)}
+                >
+                  下一页
+                </button>
+              </nav>
+            )}
+          </>
         ) : <div className="writer-empty">生成剧本后，分集概览将在这里按集展开。</div>}
       </section>
 
       <section className="writer-section" aria-labelledby="writer-relationships-title">
         <div className="writer-section__heading"><div><span>03</span><div><small>CHARACTER NETWORK</small><h2 id="writer-relationships-title">人物关系图谱</h2></div></div><Network aria-hidden="true" /></div>
-        <CharacterRelationshipGraph roles={roles} relationships={displayedRelationships} />
+        <CharacterRelationshipGraph
+          roles={roles}
+          relationships={displayedRelationships}
+          onSaveRelationships={onSaveRelationships}
+        />
       </section>
 
       <section className="writer-section writer-script" aria-labelledby="writer-script-title">
@@ -254,22 +445,45 @@ export function WriterAgentPage({
             className="writer-script__book-button"
             type="button"
             aria-label="分页阅读完整剧本"
-            disabled={!source}
             onClick={() => setReaderOpen(true)}
           >
             <BookOpenText aria-hidden="true" />
           </button>
         </div>
-        {source ? (
-          <div className="writer-script__launch">
-            <div><span>SCREENPLAY ARCHIVE</span><strong>{source.length.toLocaleString('zh-CN')} 字符</strong><small>支持页码、方向键翻页与 Markdown 多维表格</small></div>
-            <button type="button" onClick={() => setReaderOpen(true)}><BookOpenText aria-hidden="true" /> 打开分页阅读器</button>
-          </div>
-        ) : <div className="writer-empty">编剧 Agent 完成创作后，完整剧本将在这里归档。</div>}
+        <div className="writer-script__launch">
+          <div><span>SCREENPLAY ARCHIVE</span><strong>{source.length.toLocaleString('zh-CN')} 字符</strong><small>支持 .md / .txt 导入、项目内编辑、分页阅读与 Markdown 多维表格</small></div>
+          <button type="button" onClick={() => setReaderOpen(true)}><BookOpenText aria-hidden="true" /> {source ? '打开剧本工作台' : '导入或编辑剧本'}</button>
+        </div>
       </section>
+      </>
+      )}
 
-      {readerOpen && source && (
-        <ScreenplayReader title={title || '未命名短剧'} script={source} onClose={() => setReaderOpen(false)} />
+      {episodeTextTarget && (
+        <EpisodeTextDialog
+          title={title || '未命名短剧'}
+          script={source}
+          initialEpisode={episodeTextTarget.episode}
+          onClose={() => setEpisodeTextTarget(null)}
+        />
+      )}
+
+      {sceneDialogEpisode !== null && (
+        <EpisodeScenesDialog
+          episodeNumber={sceneDialogEpisode}
+          scenes={scenes}
+          onClose={() => setSceneDialogEpisode(null)}
+        />
+      )}
+
+      {readerOpen && (
+        <ScreenplayReader
+          title={title || '未命名短剧'}
+          script={source}
+          initialFileName={scriptFileName}
+          sourceHash={scriptSourceHash}
+          onClose={() => setReaderOpen(false)}
+          onSave={onSaveScript}
+        />
       )}
     </main>
   );

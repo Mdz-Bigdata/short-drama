@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, Dict, Any, Literal
 
 
@@ -41,6 +41,60 @@ class DramaCreateRequest(DramaBaseSchema):
     episode_count: int = Field(3, description="一次性生成的剧本集数 (1-12)，视频按集逐集制作", ge=1, le=12)
     script_content: Optional[str] = Field(None, description="手动上传的剧本文件内容")
     script_name: Optional[str] = Field(None, description="手动上传的剧本文件名")
+
+
+class ScriptUpdateRequest(DramaBaseSchema):
+    """Persist a manually edited Markdown or plain-text screenplay."""
+
+    content: str = Field(..., description="完整剧本文本", min_length=1)
+    file_name: Optional[str] = Field(
+        None,
+        description="可选的原始 .md/.txt 文件名",
+        max_length=255,
+    )
+    expected_source_hash: str = Field(
+        ...,
+        description="编辑器加载时的剧本资源哈希，用于防止旧标签页覆盖新版本",
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-fA-F]{64}$",
+    )
+    confirm_invalidate: bool = Field(
+        False,
+        description="确认归档并使当前剧本的下游制作资产失效",
+    )
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("剧本内容不能包含空字节")
+        if any(ord(char) < 32 and char not in "\n\r\t" for char in value):
+            raise ValueError("剧本内容包含不支持的控制字符")
+        if not value.strip():
+            raise ValueError("剧本内容不能为空")
+        if len(value.encode("utf-8")) > 2 * 1024 * 1024:
+            raise ValueError("剧本内容不能超过 2 MiB")
+        return value
+
+    @field_validator("file_name")
+    @classmethod
+    def validate_file_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if (
+            not cleaned
+            or "/" in cleaned
+            or "\\" in cleaned
+            or any(ord(char) < 32 for char in cleaned)
+        ):
+            raise ValueError("剧本文件名无效")
+        suffix = cleaned.rsplit(".", 1)[-1].lower() if "." in cleaned else ""
+        if suffix not in {"md", "txt"}:
+            raise ValueError("剧本文件仅支持 .md 或 .txt")
+        return cleaned
+
 
 class DramaConfigSchema(DramaBaseSchema):
     """
