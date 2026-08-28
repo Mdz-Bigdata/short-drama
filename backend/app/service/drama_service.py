@@ -7,6 +7,7 @@ import re
 import os
 import hashlib
 import time
+from pathlib import Path
 from copy import deepcopy
 from collections import OrderedDict
 from datetime import datetime, timezone
@@ -639,16 +640,22 @@ class DramaService:
         raise RuntimeError(f"八 Agent 计划缺少角色：{role.value}")
 
     def read_md_file(self, filename: str) -> str:
-        # 支持在项目根目录查找
-        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), filename)
-        if not os.path.exists(path):
-            path = os.path.join("/Users/mindezhi/short-drama", filename)
+        """Load one prompt document from the repository root.
+
+        The prompt .md files live beside the backend/ directory, so the root is
+        three levels above this module. DRAMA_PROMPT_ROOT overrides it for
+        deployments that ship the prompts elsewhere.
+        """
+        root = os.getenv("DRAMA_PROMPT_ROOT") or str(Path(__file__).resolve().parents[3])
+        path = os.path.join(root, filename)
         if os.path.exists(path):
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     return f.read()
             except Exception as e:
                 logger.error(f"读取md文件 {filename} 失败: {str(e)}")
+        else:
+            logger.warning("提示词文件不存在: %s", path)
         return ""
 
     def split_shot_action(self, desc: str, creative_title: str) -> tuple:
@@ -3439,7 +3446,10 @@ class DramaService:
         """
         读取本地山音超级编剧大师集成版技能包的最核心段落 (前600行) 作为Prompt系统注入
         """
-        skill_path = "/Users/mindezhi/short-drama/backend/skills/shanyin-screenwriting-master/山音超级编剧大师集成版（Gemini及其他AI工具通用）.md"
+        skill_path = os.path.join(
+            str(Path(__file__).resolve().parents[2] / "skills" / "shanyin-screenwriting-master"),
+            "山音超级编剧大师集成版（Gemini及其他AI工具通用）.md",
+        )
         if os.path.exists(skill_path):
             try:
                 with open(skill_path, "r", encoding="utf-8") as f:

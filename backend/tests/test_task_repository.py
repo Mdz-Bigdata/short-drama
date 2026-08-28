@@ -71,3 +71,32 @@ class TaskStoreFailureTests(unittest.TestCase):
         self.assertFalse(temporary.exists())
         # The original database survived the failed write.
         self.assertIn("task-0", self.repo.list_all_tasks()[0]["task_id"])
+
+
+class PromptFileResolutionTests(unittest.TestCase):
+    """Prompt documents must resolve from the repo, not a developer's home."""
+
+    def test_prompts_resolve_without_any_hardcoded_absolute_path(self):
+        from app.service import drama_service as module
+
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("/Users/mindezhi", source)
+
+        service = module.DramaService()
+        content = service.read_md_file("AI短剧注意事项与关键元素.md")
+        self.assertTrue(content.strip(), "a shipped prompt document should be readable")
+
+    def test_prompt_root_can_be_overridden_and_missing_files_are_safe(self):
+        from app.service.drama_service import DramaService
+
+        service = DramaService()
+        with tempfile.TemporaryDirectory() as elsewhere:
+            (Path(elsewhere) / "custom.md").write_text("覆盖后的提示词", encoding="utf-8")
+            with patch.dict("os.environ", {"DRAMA_PROMPT_ROOT": elsewhere}):
+                self.assertEqual(service.read_md_file("custom.md"), "覆盖后的提示词")
+                self.assertEqual(service.read_md_file("absent.md"), "")
+
+    def test_the_duplicate_prompt_reader_is_gone_from_the_model_gateway(self):
+        from app.core import model_gateway
+
+        self.assertFalse(hasattr(model_gateway.ModelGateway, "read_md_file"))

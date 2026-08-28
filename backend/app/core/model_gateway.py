@@ -1307,18 +1307,6 @@ class ModelGateway:
                      "(降级为 Seedance 文生视频，不使用任何占位图)")
         return None, None
 
-    def read_md_file(self, filename: str) -> str:
-        # 支持在项目根目录查找
-        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), filename)
-        if not os.path.exists(path):
-            path = os.path.join("/Users/mindezhi/short-drama", filename)
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return f.read()
-            except Exception as e:
-                logger.error(f"读取md文件 {filename} 失败: {str(e)}")
-        return ""
 
     # 题材 -> 时代服饰硬约束：确保五视图人物造型契合剧情时代背景
     # (如修仙/武侠/宫斗必须古装，绝不能出现现代服饰)，从 get_genre 的题材分类推导。
