@@ -1013,22 +1013,30 @@ class TaskListingCostTests(unittest.TestCase):
         app.dependency_overrides.pop(get_current_user, None)
         self.temp.cleanup()
 
-    def test_listing_reads_the_task_database_once_regardless_of_task_count(self):
-        reads = []
-        original = TaskRepository._read_db
+    def test_listing_issues_no_per_task_fetches(self):
+        list_calls = []
+        get_calls = []
+        original_list = TaskRepository.list_all_tasks
+        original_get = TaskRepository.get_task
 
-        def counting(repo_self):
-            reads.append(1)
-            return original(repo_self)
+        def counting_list(repo_self):
+            list_calls.append(1)
+            return original_list(repo_self)
+
+        def counting_get(repo_self, task_id):
+            get_calls.append(task_id)
+            return original_get(repo_self, task_id)
 
         with patch.object(drama_api, "service", self.service), \
-             patch.object(TaskRepository, "_read_db", counting):
+             patch.object(TaskRepository, "list_all_tasks", counting_list), \
+             patch.object(TaskRepository, "get_task", counting_get):
             response = self.client.get("/api/drama/list")
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(len(response.json()), 6)
-        # One read for the listing itself; no additional read per task.
-        self.assertEqual(len(reads), 1, f"expected a single database read, got {len(reads)}")
+        # One bulk listing; hydration must not go back to the store per task.
+        self.assertEqual(len(list_calls), 1)
+        self.assertEqual(get_calls, [], f"unexpected per-task fetches: {get_calls}")
 
     def test_listing_still_returns_the_hydrated_task_payload(self):
         with patch.object(drama_api, "service", self.service):
