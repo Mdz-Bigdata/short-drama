@@ -1,9 +1,17 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import App from './App';
+
+
+const appStylesheet = [
+  readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8'),
+  readFileSync(resolve(process.cwd(), 'src/features/workbench/StageFivePreview.css'), 'utf8'),
+].join('\n');
 
 
 describe('App model configuration status', () => {
@@ -322,5 +330,113 @@ describe('App session expiry from a feature panel', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '立即登录' })).toBeTruthy();
     });
+  });
+});
+
+describe('App stage asset preview layout', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('gives Stage 5 a large viewport and lets its only ready medium fill the preview', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const taskSummary = {
+      taskId: 'compact-stage-five',
+      currentStage: 5,
+      stageName: '视觉总监多镜头多帧生成',
+      status: 'idle' as const,
+      config: {
+        titleSuggestion: '紧凑视觉预览',
+        directorStyle: 'realistic',
+        shotStyle: 'cinematic',
+        llmModel: 'writer-model',
+        imageModel: 'image-model',
+        videoModel: 'video-model',
+        ttsModel: 'audio-model',
+        oneClick: false,
+        episodeCount: 1,
+      },
+    };
+    const fullTask = {
+      ...taskSummary,
+      assets: {
+        '5': [{
+          shot_id: 1,
+          size: 'MS',
+          motion: 'Locked',
+          desc: '双人对峙镜头',
+          video_url: 'https://example.test/shot-1.mp4',
+        }],
+      },
+      logs: { '5': 'Stage 5 质检通过' },
+    };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/session')) return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          authenticated: true,
+          user: { user_id: 'admin-1', username: 'admin', role: 'admin', must_change_password: false },
+        }),
+      } as Response;
+      if (url.endsWith('/api/model-configurations')) return {
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [], globalDefaults: {} }),
+      } as Response;
+      if (url.endsWith('/api/drama/list')) return {
+        ok: true,
+        status: 200,
+        json: async () => [taskSummary],
+      } as Response;
+      if (url.endsWith('/api/drama/skills')) return {
+        ok: true,
+        status: 200,
+        json: async () => [],
+      } as Response;
+      if (url.endsWith(`/api/drama/${taskSummary.taskId}/status`)) return {
+        ok: true,
+        status: 200,
+        json: async () => fullTask,
+      } as Response;
+      if (url.endsWith(`/api/drama/${taskSummary.taskId}/episodes`)) return {
+        ok: true,
+        status: 200,
+        json: async () => ({ sourceHash: '', episodes: [] }),
+      } as Response;
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const stylesheet = document.createElement('style');
+    stylesheet.textContent = appStylesheet;
+    document.head.append(stylesheet);
+
+    try {
+      render(<App />);
+      await userEvent.click(await screen.findByText('紧凑视觉预览'));
+
+      const preview = await screen.findByRole('region', { name: 'Stage 5 阶段资产预览' });
+      const shotList = within(preview).getByRole('region', { name: 'Stage 5 镜头资产列表' });
+      const shot = within(shotList).getByRole('article', { name: '镜头 1 视觉资产' });
+      const videoPane = within(shot).getByRole('region', { name: '镜头 1 图生视频动态画面' });
+      const video = videoPane.querySelector('video');
+      const mediaGrid = videoPane.closest('.stage-five-media-grid');
+
+      expect(video).not.toBeNull();
+      expect(getComputedStyle(preview).flexGrow).toBe('0');
+      expect(getComputedStyle(preview.parentElement as Element).flexGrow).toBe('0');
+      expect(parseFloat(getComputedStyle(preview).minHeight)).toBeGreaterThanOrEqual(608);
+      expect(parseFloat(getComputedStyle(shotList).height)).toBeGreaterThanOrEqual(512);
+      expect(mediaGrid).not.toBeNull();
+      expect(getComputedStyle(mediaGrid as Element).gridTemplateColumns).toBe('minmax(0, 1fr)');
+      expect(within(shot).getByText('首帧图片仍在生成，已优先放大可用视频。')).toBeTruthy();
+      expect(screen.getByText('Stage 5 质检通过')).toBeTruthy();
+    } finally {
+      stylesheet.remove();
+    }
   });
 });

@@ -809,6 +809,20 @@ body {
   flex-direction: column;
 }
 
+/* Stage 5–8 previews should follow their media height. Letting either wrapper
+   grow to fill the fixed workbench creates a large, empty slab before QA. */
+.stage-asset-stack {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.stage-asset-preview {
+  flex: 0 0 auto;
+  background: rgba(0, 0, 0, 0.2);
+}
+
 .asset-stage-nav {
   flex: none;
   min-height: 52px;
