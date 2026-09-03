@@ -173,11 +173,33 @@
 .storyboard-scene-card__status.is-complete { color: var(--storyboard-green); }
 .storyboard-scene-card__title { overflow: hidden; color: #91a4b6; font-size: 0.75rem; text-overflow: ellipsis; white-space: nowrap; }
 .storyboard-scene-card__count { color: #71869a; font-size: 0.75rem; }
+/* 选中的卡片放开单行截断，就地展开完整场景描述（截断处的「…」即由此可读全文）。 */
+.storyboard-scene-card.is-selected .storyboard-scene-card__title {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  line-height: 1.5;
+}
+.storyboard-scene-card__status.is-generating { color: var(--storyboard-cyan); }
+
+/* 未解锁的集：上一集未完成前，卡片只做展示，不响应切换。 */
+.storyboard-scene-card.is-locked { opacity: 0.45; cursor: not-allowed; }
+.storyboard-scene-card.is-locked:hover { border-color: var(--storyboard-line); background: transparent; }
+.storyboard-scene-card__lock-hint { color: #6b7d8f; font-size: 0.68rem; }
 
 .storyboard-main { min-width: 0; min-height: 0; padding: 1.75rem clamp(1.375rem, 4vw, 4.375rem) 3rem; overflow: auto; background: rgba(5, 9, 15, 0.56); scrollbar-color: rgba(0, 242, 254, 0.25) transparent; scrollbar-width: thin; }
 .storyboard-main-toolbar { margin-bottom: 1.375rem; display: flex; align-items: center; justify-content: space-between; gap: 1.25rem; }
 .storyboard-main-toolbar h2 { color: var(--storyboard-text); font-size: 1.23rem; line-height: 1.3; letter-spacing: -0.02em; }
 .storyboard-main-toolbar p { margin-top: 0.3rem; display: flex; align-items: center; gap: 0.55rem; color: var(--storyboard-muted); font-size: 0.8rem; }
+/* 选中场景的完整描述：主区域宽度充裕，按段落排版不截断。 */
+.storyboard-main-toolbar p.storyboard-scene-summary {
+  display: block;
+  max-width: 68ch;
+  margin-top: 0.5rem;
+  color: #91a4b6;
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
 .storyboard-main-toolbar p strong { color: var(--storyboard-cyan); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 .storyboard-prompt { max-width: 61.25rem; margin: 0 auto 1.125rem; padding: 0.875rem 1rem; border: 1px solid var(--storyboard-line); border-radius: 0.5rem; background: var(--storyboard-surface); }
@@ -274,6 +296,7 @@
 }
 
 .storyboard-footer > div { display: flex; align-items: center; gap: 1rem; color: var(--storyboard-muted); font-size: 0.74rem; }
+.storyboard-footer__gate-hint { color: #8ea2b5; font-size: 0.74rem; }
 .storyboard-footer > div strong { color: #bbcad7; font-weight: 600; }
 .storyboard-footer > button {
   min-height: 2.75rem;

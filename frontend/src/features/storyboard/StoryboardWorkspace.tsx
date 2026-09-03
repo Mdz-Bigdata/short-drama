@@ -19,10 +19,41 @@ export interface StoryboardShot {
   sceneId?: string;
 }
 
+// 后端 assets["4_scene_boards"] 中单个场景九宫格的生成状态（覆盖剧本明细全部场景）。
+export interface SceneBoardStatus {
+  status?: 'pending' | 'generating' | 'done' | 'failed';
+  shots_total?: number;
+  shots_done?: number;
+  episode?: number;
+}
+
+// 后端 assets["4_progress"] 中单集的契约进度：total 来自剧本明细，不是已生成数。
+export interface StoryboardProgressEpisode {
+  number?: number;
+  total?: number;
+  done?: number;
+  complete?: boolean;
+}
+
+export interface StoryboardProgress {
+  current_episode?: number;
+  episodes?: StoryboardProgressEpisode[];
+}
+
+// 剧本大纲 assets["2_breakdown"].scenes 中分镜关心的最小字段。
+export interface BreakdownSceneRef {
+  scene_id?: string;
+  sceneId?: string;
+  content?: string;
+}
+
+type SceneDisplayState = 'done' | 'generating' | 'pending';
+
 interface StoryboardScene {
   id: string;
   title: string;
   shots: StoryboardShot[];
+  boardStatus?: SceneBoardStatus['status'];
 }
 
 interface StoryboardWorkspaceProps {
@@ -32,6 +63,9 @@ interface StoryboardWorkspaceProps {
   gridUrl?: string;
   prompt?: string;
   promptDetail?: StoryboardPromptDetail;
+  sceneBoards?: Record<string, SceneBoardStatus>;
+  progress?: StoryboardProgress;
+  breakdownScenes?: BreakdownSceneRef[];
   onRefresh: () => void;
   onRegenerate: () => void;
   onContinue?: () => void;
@@ -42,20 +76,58 @@ function sceneCode(shot: StoryboardShot, fallbackIndex: number) {
   return shot.scene_id || shot.sceneId || `E1S${String(Math.floor(fallbackIndex / 9) + 1).padStart(2, '0')}`;
 }
 
-function buildScenes(shots: StoryboardShot[]): StoryboardScene[] {
+function shotSceneTitle(shot: StoryboardShot) {
+  const rawTitle = shot.scene?.trim();
+  return rawTitle && !/继承.*场景圣经/.test(rawTitle) ? rawTitle : '';
+}
+
+// 剧本大纲/后端场景板存在时，以「期望清单」为骨架：未生成的场景也渲染出来（待创作）。
+// 两者都缺席时保持既有的「从 shots 反推」行为，旧任务不受影响。
+function buildScenes(
+  shots: StoryboardShot[],
+  sceneBoards?: Record<string, SceneBoardStatus>,
+  breakdownScenes?: BreakdownSceneRef[],
+): StoryboardScene[] {
   const byId = new Map<string, StoryboardScene>();
+
+  // 1) 期望清单骨架：剧本大纲顺序优先，场景板中额外的编号按集/编号补在其后。
+  // (手工构造的畸形资产按缺席处理，不许崩。)
+  (Array.isArray(breakdownScenes) ? breakdownScenes : []).forEach(scene => {
+    if (!scene || typeof scene !== 'object') return;
+    const id = String(scene.scene_id || scene.sceneId || '').trim();
+    if (!id || byId.has(id)) return;
+    byId.set(id, { id, title: scene.content?.trim() || '连续场景', shots: [], boardStatus: sceneBoards?.[id]?.status });
+  });
+  Object.keys(sceneBoards || {})
+    .filter(id => id && !byId.has(id))
+    .sort((left, right) => sceneEpisodeNumber(left) - sceneEpisodeNumber(right) || left.localeCompare(right))
+    .forEach(id => {
+      byId.set(id, { id, title: '连续场景', shots: [], boardStatus: sceneBoards?.[id]?.status });
+    });
+
+  // 2) 已生成 shots 按 scene_id 挂进骨架；骨架外的编号按既有逻辑补一张卡。
   shots.forEach((shot, index) => {
     const id = sceneCode(shot, index);
     const existing = byId.get(id);
     if (existing) {
       existing.shots.push(shot);
+      if (existing.title === '连续场景') {
+        const title = shotSceneTitle(shot);
+        if (title) existing.title = title;
+      }
       return;
     }
-    const rawTitle = shot.scene?.trim();
-    const title = rawTitle && !/继承.*场景圣经/.test(rawTitle) ? rawTitle : '连续场景';
-    byId.set(id, { id, title, shots: [shot] });
+    byId.set(id, { id, title: shotSceneTitle(shot) || '连续场景', shots: [shot], boardStatus: sceneBoards?.[id]?.status });
   });
   return [...byId.values()];
+}
+
+// 场景卡三态：契约状态优先；无契约时沿用「九格图齐 = 已完成」的推导。
+function sceneDisplayState(scene: StoryboardScene): SceneDisplayState {
+  if (scene.boardStatus === 'done') return 'done';
+  if (scene.boardStatus === 'generating') return 'generating';
+  // pending / failed / 无契约：九格图齐视为已完成，其余一律回到「待创作」。
+  return scene.shots.length > 0 && scene.shots.every(shot => Boolean(shot.image_url)) ? 'done' : 'pending';
 }
 
 interface StoryboardEpisodeGroup {
@@ -125,13 +197,30 @@ export function StoryboardWorkspace({
   gridUrl,
   prompt,
   promptDetail,
+  sceneBoards,
+  progress,
+  breakdownScenes,
   onRefresh,
   onRegenerate,
   onContinue,
 }: StoryboardWorkspaceProps) {
   const normalizedShots = useMemo(() => (Array.isArray(shots) ? shots : []), [shots]);
-  const scenes = useMemo(() => buildScenes(normalizedShots), [normalizedShots]);
+  const scenes = useMemo(
+    () => buildScenes(normalizedShots, sceneBoards, breakdownScenes),
+    [normalizedShots, sceneBoards, breakdownScenes],
+  );
   const episodeGroups = useMemo(() => buildEpisodeGroups(scenes), [scenes]);
+  // 仅当后端逐场分镜契约(4_scene_boards / 4_progress)存在时才启用「一集一集制作」的锁定与门禁；
+  // 旧任务只有 2_breakdown 而无契约键(后端也不对其做阶段完成度判定)，必须照常可用可继续。
+  const gatingEnabled = Boolean(sceneBoards || progress);
+  // 契约可能被手工构造成畸形(episodes 不是数组/含空项)：按缺席处理而不是崩溃，门禁回落到场景卡推导。
+  const progressEpisodes = useMemo<StoryboardProgressEpisode[]>(
+    () => (Array.isArray(progress?.episodes)
+      ? progress.episodes.filter((episode): episode is StoryboardProgressEpisode =>
+          Boolean(episode) && typeof episode === 'object')
+      : []),
+    [progress],
+  );
   const [selectedSceneId, setSelectedSceneId] = useState<string>(() => scenes[0]?.id || '');
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
   const [showPrompt, setShowPrompt] = useState(false);
@@ -140,7 +229,47 @@ export function StoryboardWorkspace({
   const [collapsedEpisodes, setCollapsedEpisodes] = useState<ReadonlySet<number>>(new Set());
   const selectedScene = scenes.find(scene => scene.id === selectedSceneId) || scenes[0];
   const selectedEpisodeNumber = selectedScene ? sceneEpisodeNumber(selectedScene.id) : 1;
-  const completedScenes = scenes.filter(scene => scene.shots.length > 0 && scene.shots.every(shot => Boolean(shot.image_url))).length;
+  const completedScenes = scenes.filter(scene => sceneDisplayState(scene) === 'done').length;
+
+  // 单集的 done/total：4_progress 契约数字优先，缺席时按场景卡状态推导。
+  // 两个来源都在场却互相矛盾时宁严勿松：done 取更小、total 取更大、complete 需双方同时成立。
+  const episodeStats = (episodeNumber: number) => {
+    const contract = progressEpisodes.find(episode => episode.number === episodeNumber);
+    const group = episodeGroups.find(candidate => candidate.number === episodeNumber);
+    const derivedDone = group ? group.scenes.filter(scene => sceneDisplayState(scene) === 'done').length : 0;
+    const derivedTotal = group ? group.scenes.length : 0;
+    const contractDone = typeof contract?.done === 'number' ? contract.done : undefined;
+    const contractTotal = typeof contract?.total === 'number' ? contract.total : undefined;
+    const done = contractDone === undefined ? derivedDone : group ? Math.min(contractDone, derivedDone) : contractDone;
+    const total = contractTotal === undefined ? derivedTotal : group ? Math.max(contractTotal, derivedTotal) : contractTotal;
+    const derivedComplete = derivedTotal > 0 && derivedDone >= derivedTotal;
+    const complete = group
+      ? (contract?.complete ?? true) === true && derivedComplete
+      : contract?.complete === true;
+    return { done, total, complete };
+  };
+
+  // 门禁基准集：4_progress.current_episode 与「第一个未完成的集」取更早者(宁严勿松)。
+  const contractCurrentEpisode =
+    typeof progress?.current_episode === 'number' && Number.isFinite(progress.current_episode)
+      ? progress.current_episode
+      : undefined;
+  const derivedCurrentEpisode = episodeGroups.find(group => !episodeStats(group.number).complete)?.number;
+  const currentEpisodeCandidates = [contractCurrentEpisode, derivedCurrentEpisode]
+    .filter((value): value is number => typeof value === 'number');
+  const currentEpisodeNumber = gatingEnabled
+    ? currentEpisodeCandidates.length > 0
+      ? Math.min(...currentEpisodeCandidates)
+      : episodeGroups[episodeGroups.length - 1]?.number ?? 1
+    : 1;
+  // 严格顺序：当前集之后的集一律锁定，待上一集完成后才可进入。
+  const lockedEpisodes = gatingEnabled
+    ? new Set(episodeGroups.map(group => group.number).filter(number => number > currentEpisodeNumber))
+    : new Set<number>();
+  const currentStats = episodeStats(currentEpisodeNumber);
+  const previousStats = episodeStats(currentEpisodeNumber - 1);
+  // 当前集全部场景 done（或其已完成的前一集）才放行「继续视觉制作」。
+  const continueUnlocked = !gatingEnabled || currentStats.complete || previousStats.complete;
 
   const toggleEpisode = (number: number) => {
     setCollapsedEpisodes(current => {
@@ -235,7 +364,8 @@ export function StoryboardWorkspace({
           <div className="storyboard-scene-list">
             {episodeGroups.map(group => {
               const expanded = !collapsedEpisodes.has(group.number);
-              const completeCount = group.scenes.filter(scene => scene.shots.length > 0 && scene.shots.every(shot => Boolean(shot.image_url))).length;
+              const groupStats = episodeStats(group.number);
+              const episodeLocked = lockedEpisodes.has(group.number);
               return (
                 <div className="storyboard-episode-group" key={group.number}>
                   <button
@@ -246,32 +376,41 @@ export function StoryboardWorkspace({
                   >
                     <ChevronDown aria-hidden="true" className={expanded ? '' : 'is-collapsed'} />
                     <strong>第 {group.number} 集</strong>
-                    <span>{completeCount}/{group.scenes.length} 个分镜场景</span>
+                    <span>{groupStats.done}/{groupStats.total} 个分镜场景</span>
                   </button>
                   {expanded && group.scenes.map(scene => {
                     const isSelected = scene.id === selectedScene.id;
-                    const isComplete = scene.shots.every(shot => Boolean(shot.image_url));
+                    const state = sceneDisplayState(scene);
+                    const board = sceneBoards?.[scene.id];
                     return (
                       <button
                         key={scene.id}
                         type="button"
-                        className={`storyboard-scene-card ${isSelected ? 'is-selected' : ''}`}
+                        className={`storyboard-scene-card ${isSelected ? 'is-selected' : ''} ${episodeLocked ? 'is-locked' : ''}`}
                         onClick={() => {
+                          // 锁定集的场景卡不切换：上一集未完成前不允许进入。
+                          if (episodeLocked) return;
                           setSelectedSceneId(scene.id);
                           setSelectedFrameIndex(0);
                         }}
                         aria-pressed={isSelected}
+                        aria-disabled={episodeLocked || undefined}
                       >
                         <span className="storyboard-scene-card__topline">
                           <strong>{scene.id}</strong>
                           <span className="storyboard-scene-card__format">3 × 3</span>
-                          <span className={`storyboard-scene-card__status ${isComplete ? 'is-complete' : ''}`}>
-                            {isComplete ? <CheckCircle2 aria-hidden="true" /> : <span aria-hidden="true">◌</span>}
-                            {isComplete ? '已完成' : '待创作'}
+                          <span className={`storyboard-scene-card__status ${state === 'done' ? 'is-complete' : ''} ${state === 'generating' ? 'is-generating' : ''}`}>
+                            {state === 'done' ? <CheckCircle2 aria-hidden="true" /> : <span aria-hidden="true">◌</span>}
+                            {state === 'done' ? '已完成' : state === 'generating' ? '生成中' : '待创作'}
                           </span>
                         </span>
-                        <span className="storyboard-scene-card__title">{scene.title}</span>
-                        <span className="storyboard-scene-card__count">{scene.shots.length} 个连续瞬间</span>
+                        <span className="storyboard-scene-card__title" title={scene.title}>{scene.title}</span>
+                        <span className="storyboard-scene-card__count">
+                          {scene.shots.length > 0 || !board
+                            ? `${scene.shots.length} 个连续瞬间`
+                            : `${board.shots_done ?? 0}/${board.shots_total ?? GRID_SLOTS} 个画格`}
+                        </span>
+                        {episodeLocked && <span className="storyboard-scene-card__lock-hint">待上一集完成</span>}
                       </button>
                     );
                   })}
@@ -286,6 +425,10 @@ export function StoryboardWorkspace({
             <div>
               <h2>{selectedScene.id} 时序分镜</h2>
               <p><strong>3×3</strong><span aria-hidden="true">·</span>{selectedScene.shots.length} 个连续瞬间</p>
+              {/* 侧栏卡片受宽度所限只能单行截断，这里给出剧本大纲的完整场景描述。 */}
+              {selectedScene.title && selectedScene.title !== '连续场景' && (
+                <p className="storyboard-scene-summary">{selectedScene.title}</p>
+              )}
             </div>
             <div className="storyboard-main-actions">
               <DownloadAction
@@ -361,7 +504,12 @@ export function StoryboardWorkspace({
           <strong>{completedScenes}/{scenes.length} 个分镜场景已完成</strong>
           <span>{shots.filter(shot => Boolean(shot.image_url)).length}/{shots.length} 个画格已生成</span>
         </div>
-        <button type="button" onClick={onContinue} disabled={!onContinue}>
+        {!continueUnlocked && (
+          <span className="storyboard-footer__gate-hint">
+            第 {currentEpisodeNumber} 集分镜 {currentStats.done}/{currentStats.total}，全部完成后可继续
+          </span>
+        )}
+        <button type="button" onClick={onContinue} disabled={!onContinue || !continueUnlocked}>
           确认分镜，继续视觉制作 <ArrowRight aria-hidden="true" />
         </button>
       </footer>

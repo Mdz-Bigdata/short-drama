@@ -10,8 +10,9 @@ import { normalizeVideoReferenceMode, type TaskConfig, type TaskResponse, type T
 import { CapabilityCenter } from './features/platform/CapabilityCenter';
 import type { ElementKind } from './features/elements/elementTypes';
 import type { ModelCategory } from './features/models/ModelConfigurationCenter';
-import type { StoryboardShot } from './features/storyboard/StoryboardWorkspace';
+import type { BreakdownSceneRef, SceneBoardStatus, StoryboardProgress, StoryboardShot } from './features/storyboard/StoryboardWorkspace';
 import { AgentStageTabs } from './features/workbench/AgentStageTabs';
+import { StageFivePreview } from './features/workbench/StageFivePreview';
 import { getScriptDisplayName } from './features/workbench/scriptTitle';
 import { VideoReferenceModeSelect } from './features/workbench/VideoReferenceModeSelect';
 import { NOVARA_AGENT_NAME } from './features/workbench/agentBrand';
@@ -74,6 +75,19 @@ interface EpisodeCollectionState {
   taskId: string;
   sourceHash: string;
   items: EpisodeItem[];
+}
+
+const EPISODE_COUNT_MIN = 1;
+const EPISODE_COUNT_MAX = 150;
+// 下拉常用档位：小体量逐集递增，长剧按 10 集一档一直排到 150 集
+const EPISODE_COUNT_PRESETS = [
+  1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 24, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150,
+];
+
+function clampEpisodeCount(value: string | number) {
+  const parsed = typeof value === 'number' ? value : parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return EPISODE_COUNT_MIN;
+  return Math.min(EPISODE_COUNT_MAX, Math.max(EPISODE_COUNT_MIN, Math.trunc(parsed)));
 }
 
 function normalizeEpisodeSourceHash(value: unknown) {
@@ -188,24 +202,6 @@ type GlobalModelDefaults = Record<ModelCategory, string>;
 const EMPTY_GLOBAL_MODEL_DEFAULTS: GlobalModelDefaults = {
   text: '', image: '', video: '', audio: '',
 };
-
-interface ProductionShot {
-  shot_id?: number;
-  size?: string;
-  motion?: string;
-  desc?: string;
-  image_url?: string;
-  end_frame_url?: string;
-  video_url?: string;
-  contract_fingerprint?: string;
-  video_route_decision?: {
-    mode?: string;
-    provider_family?: string;
-    reasons?: string[];
-    fallbacks?: string[];
-    unused_assets?: string[];
-  };
-}
 
 let messageSequence = 0;
 const nextMessageId = () => `message-${++messageSequence}`;
@@ -430,6 +426,9 @@ export default function App() {
   const scriptDisplayName = useMemo(() => getScriptDisplayName(
     taskData?.config,
     taskData?.assets["2"] ?? taskData?.config.scriptContent,
+    // The compiled dashboard carries the analysed drama name, so the header shows
+    // the screenplay's title instead of the chat prompt the project was created from.
+    (taskData?.assets["2_writer_dashboard"] as { title?: string } | undefined)?.title,
   ), [taskData]);
   const taskDataRef = useRef<TaskResponse | null>(null);
   const [uploadedScript, setUploadedScript] = useState<File | null>(null);
@@ -463,6 +462,7 @@ export default function App() {
   const [newProjectShotStyle, setNewProjectShotStyle] = useState<string>('cinematic');
   const [newProjectOneClick, setNewProjectOneClick] = useState<boolean>(true); // 成片方式：true=一键成片 / false=分步引导
   const [newProjectEpisodes, setNewProjectEpisodes] = useState<number>(3); // 一次性生成的剧本集数
+  const [newProjectEpisodesCustom, setNewProjectEpisodesCustom] = useState<boolean>(false); // 集数改为手动填写
   const [episodeState, setEpisodeState] = useState<EpisodeCollectionState>({
     taskId: '',
     sourceHash: '',
@@ -1298,7 +1298,7 @@ export default function App() {
       videoModel: config.videoModel,
       ttsModel: config.ttsModel,
       videoReferenceMode: config.videoReferenceMode,
-      episodeCount: newProjectEpisodes, // 一次性生成的剧本集数 (视频按集逐集制作)
+      episodeCount: clampEpisodeCount(newProjectEpisodes), // 一次性生成的剧本集数 (视频按集逐集制作)
       oneClick: newProjectOneClick // 由新建弹窗的「成片方式」选择决定：一键成片 / 分步引导
     };
 
@@ -2213,14 +2213,33 @@ export default function App() {
                   <div>
                     <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>剧本集数 (一次生成，视频逐集制作)</label>
                     <select
-                      value={newProjectEpisodes}
-                      onChange={e => setNewProjectEpisodes(parseInt(e.target.value, 10))}
+                      value={newProjectEpisodesCustom ? 'custom' : String(newProjectEpisodes)}
+                      onChange={e => {
+                        if (e.target.value === 'custom') {
+                          setNewProjectEpisodesCustom(true); // 切到手动填写，保留当前集数作为初始值
+                          return;
+                        }
+                        setNewProjectEpisodesCustom(false);
+                        setNewProjectEpisodes(parseInt(e.target.value, 10));
+                      }}
                       style={{ width: '100%', padding: '10px', background: '#0a1017', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem' }}
                     >
-                      {[1, 2, 3, 4, 5, 6, 8, 10, 12].map(n => (
+                      {EPISODE_COUNT_PRESETS.map(n => (
                         <option key={n} value={n}>{n} 集</option>
                       ))}
+                      <option value="custom">✏️ 手动填写集数…</option>
                     </select>
+                    {newProjectEpisodesCustom && (
+                      <input
+                        type="number"
+                        min={EPISODE_COUNT_MIN}
+                        max={EPISODE_COUNT_MAX}
+                        value={newProjectEpisodes}
+                        onChange={e => setNewProjectEpisodes(clampEpisodeCount(e.target.value))}
+                        placeholder={`${EPISODE_COUNT_MIN}-${EPISODE_COUNT_MAX} 集`}
+                        style={{ width: '100%', marginTop: '8px', padding: '10px', background: '#0a1017', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem' }}
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -2274,6 +2293,9 @@ export default function App() {
                 gridUrl={taskData.assets["4_grid"] as string | undefined}
                 prompt={taskData.assets["4_grid_prompt"] as string | undefined}
                 promptDetail={taskData.assets["4_prompt_detail"]}
+                sceneBoards={taskData.assets["4_scene_boards"] as Record<string, SceneBoardStatus> | undefined}
+                progress={taskData.assets["4_progress"] as StoryboardProgress | undefined}
+                breakdownScenes={(taskData.assets["2_breakdown"] as { scenes?: BreakdownSceneRef[] } | undefined)?.scenes}
                 onRefresh={() => { void fetchTaskStatus(taskId); }}
                 onRegenerate={() => { void sendChatInstruction('重跑第 4 阶段'); }}
                 onContinue={() => setActiveTabStage(5)}
@@ -2332,9 +2354,13 @@ export default function App() {
             ) : (
               
               // 步骤资产高保真呈现
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <div className="stage-asset-stack">
                 
-                <div className="glass-panel" style={{ flex: 1, background: 'rgba(0,0,0,0.2)' }}>
+                <div
+                  className={`glass-panel stage-asset-preview${activeTabStage === 5 ? ' stage-asset-preview--visual' : ''}`}
+                  role="region"
+                  aria-label={`Stage ${activeTabStage} 阶段资产预览`}
+                >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', marginBottom: '16px' }}>
                     <Monitor size={18} color="var(--neon-cyan)" />
                     <span style={{ fontWeight: 600 }}>Stage {activeTabStage} 阶段资产预览</span>
@@ -2342,72 +2368,11 @@ export default function App() {
 
                   {/* 5: 视觉总监生成 */}
                   {activeTabStage === 5 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                      {taskData.assets["5"] ? (
-                        Array.isArray(taskData.assets["5"]) ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', maxHeight: '500px', overflowY: 'auto', paddingRight: '8px' }}>
-                            {taskData.assets["5"].map((shot: ProductionShot, idx: number) => (
-                              <div key={idx} className="glass-panel" style={{ background: '#05080c', border: '1px solid rgba(0, 242, 254, 0.15)', padding: '16px', borderRadius: '12px' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
-                                  <span style={{ fontWeight: 600, color: 'var(--neon-cyan)', fontSize: '0.9rem' }}>镜头 {shot.shot_id || (idx + 1)} ({shot.size || 'MS'} | {shot.motion || 'Dolly In'})</span>
-                                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>描述: {shot.desc || '分镜画面'}</span>
-                                </div>
-                                {shot.video_route_decision && (
-                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px', fontSize: '0.72rem' }}>
-                                    <span style={{ padding: '4px 8px', borderRadius: '999px', background: 'rgba(0,242,254,0.1)', color: 'var(--neon-cyan)' }}>
-                                      自动路由：{shot.video_route_decision.mode} · {shot.video_route_decision.provider_family}
-                                    </span>
-                                    {shot.contract_fingerprint && <code style={{ color: 'var(--text-muted)', padding: '4px 0' }}>契约 {shot.contract_fingerprint.slice(0, 12)}</code>}
-                                    {shot.video_route_decision.reasons?.[0] && <span style={{ color: 'var(--text-muted)', padding: '4px 0' }}>{shot.video_route_decision.reasons[0]}</span>}
-                                  </div>
-                                )}
-                                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '16px' }}>
-                                  <div>
-                                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>图生视频动态画面 ({taskData.config.videoModel || config.videoModel})</span>
-                                    {shot.video_url ? (
-                                      <video src={shot.video_url} controls loop style={{ width: '100%', borderRadius: '8px', border: '1px solid var(--neon-cyan)' }} />
-                                    ) : (
-                                      <div style={{ width: '100%', height: '150px', background: 'rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '1px dashed var(--text-muted)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>视频生成中...</div>
-                                    )}
-                                  </div>
-                                  <div>
-                                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>文生图底片首帧 ({taskData.config.imageModel || config.imageModel})</span>
-                                    {shot.image_url ? (
-                                      <img src={shot.image_url} style={{ width: '100%', borderRadius: '8px', objectFit: 'cover' }} alt={`镜头 ${shot.shot_id || (idx + 1)}`} />
-                                    ) : (
-                                      <div style={{ width: '100%', height: '150px', background: 'rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '1px dashed var(--text-muted)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>图片生成中...</div>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '20px' }}>
-                            <div>
-                              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>图生视频动态渲染片段 ({taskData.config.videoModel || config.videoModel})</span>
-                              {taskData.assets["5"].video_url ? (
-                                <video src={taskData.assets["5"].video_url} controls loop style={{ width: '100%', borderRadius: '12px', border: '1px solid var(--neon-cyan)' }} />
-                              ) : (
-                                <div style={{ width: '100%', height: '200px', background: 'rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '12px', border: '1px dashed var(--text-muted)', color: 'var(--text-muted)' }}>视频生成中...</div>
-                              )}
-                            </div>
-                            <div>
-                              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>首帧文生图高精度底片 ({taskData.config.imageModel || config.imageModel})</span>
-                              {taskData.assets["5"].image_url ? (
-                                <img src={taskData.assets["5"].image_url} style={{ width: '100%', borderRadius: '12px', objectFit: 'cover' }} alt="首帧" />
-                              ) : (
-                                <div style={{ width: '100%', height: '200px', background: 'rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '12px', border: '1px dashed var(--text-muted)', color: 'var(--text-muted)' }}>图片生成中...</div>
-                              )}
-                            </div>
-                          </div>
-                        )
-                      ) : (
-                        <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                          暂无视觉片段资产。请先运行此阶段以生成底片与视频。
-                        </div>
-                      )}
-                    </div>
+                    <StageFivePreview
+                      asset={taskData.assets["5"]}
+                      videoModel={taskData.config.videoModel || config.videoModel}
+                      imageModel={taskData.config.imageModel || config.imageModel}
+                    />
                   )}
 
                   {/* 6: 音频总监生成 */}
