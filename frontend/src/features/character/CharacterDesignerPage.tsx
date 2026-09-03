@@ -37,6 +37,13 @@ interface ActorExtractionResult {
   with_image?: number;
 }
 
+interface ProductionAssetSyncResult {
+  created: number;
+  skipped: number;
+  with_image?: number;
+  kinds?: Partial<Record<(typeof nonActorAssetKinds)[number], number>>;
+}
+
 export function CharacterDesignerPage({
   dashboard,
   syncMessage,
@@ -68,6 +75,10 @@ export function CharacterDesignerPage({
   const [overviewDetail, setOverviewDetail] = useState<CharacterOverviewDetail | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [extractNotice, setExtractNotice] = useState('');
+  const [assetSyncNotice, setAssetSyncNotice] = useState('');
+  const [assetGenerationToken, setAssetGenerationToken] = useState(0);
+  const [assetGenerationBusy, setAssetGenerationBusy] = useState(false);
+  const synchronizedTaskId = useRef('');
   const character = dashboard.characters.find(item => item.characterId === selectedId) || dashboard.characters[0];
   const projectDetails = [
     ['类型', dashboard.project.genre],
@@ -117,6 +128,34 @@ export function CharacterDesignerPage({
     };
   }, [synchronizeAssetCounts]);
 
+  useEffect(() => {
+    if (!taskId || synchronizedTaskId.current === taskId) return;
+    synchronizedTaskId.current = taskId;
+    let cancelled = false;
+
+    const synchronizeProductionAssets = async () => {
+      try {
+        const result = await apiRequest<ProductionAssetSyncResult>(
+          `/api/drama/${encodeURIComponent(taskId)}/production-assets/sync`,
+          { method: 'POST', body: JSON.stringify({}) },
+        );
+        if (cancelled) return;
+        setAssetSyncNotice(result.created > 0
+          ? `已根据剧本同步 ${result.created} 项拍摄资产。`
+          : result.skipped > 0
+            ? '剧本中的拍摄资产已全部存在于资产库。'
+            : '剧本中暂未识别到场地、道具、服装或特效资产。');
+        await synchronizeAssetCounts();
+      } catch {
+        if (!cancelled) {
+          setAssetSyncNotice('拍摄资产自动同步失败，可进入对应分类手动从剧本提取。');
+        }
+      }
+    };
+    void synchronizeProductionAssets();
+    return () => { cancelled = true; };
+  }, [taskId, synchronizeAssetCounts]);
+
   const refresh = () => {
     onRefresh();
     void synchronizeAssetCounts();
@@ -151,8 +190,17 @@ export function CharacterDesignerPage({
   };
   const selectAssetKind = (kind: ElementKind) => {
     setActiveAssetKind(kind);
+    setAssetGenerationBusy(false);
     setProjectDetail(null);
     setOverviewDetail(null);
+  };
+
+  const regenerateActiveAssets = () => {
+    if (activeAssetKind === 'actor') {
+      onRegenerate();
+      return;
+    }
+    if (!assetGenerationBusy) setAssetGenerationToken(current => current + 1);
   };
 
   return (
@@ -198,8 +246,16 @@ export function CharacterDesignerPage({
           <button type="button" onClick={onExport} disabled={exporting}>
             <Download size={16} aria-hidden="true" /> {exporting ? '导出中' : '导出 JSON'}
           </button>
-          <button type="button" className="is-accent" onClick={onRegenerate}>
-            <WandSparkles size={16} aria-hidden="true" /> 重新生成
+          <button
+            type="button"
+            className="is-accent"
+            onClick={regenerateActiveAssets}
+            disabled={activeAssetKind !== 'actor' && assetGenerationBusy}
+          >
+            <WandSparkles size={16} aria-hidden="true" />
+            {activeAssetKind === 'actor'
+              ? '重新生成'
+              : assetGenerationBusy ? '图片生成中…' : '生成缺失图片'}
           </button>
           <button type="button" className="is-primary" onClick={onContinue}>
             进入分镜师 <ArrowRight size={16} aria-hidden="true" />
@@ -208,6 +264,7 @@ export function CharacterDesignerPage({
       </header>
 
       {syncMessage && <p className="character-designer__sync-message" role="status">{syncMessage}</p>}
+      {assetSyncNotice && <p className="character-designer__sync-message" role="status">{assetSyncNotice}</p>}
       {extractNotice && <p className="character-designer__sync-message" role="status">{extractNotice}</p>}
 
       {activeAssetKind === 'actor' ? (
@@ -292,6 +349,8 @@ export function CharacterDesignerPage({
             initialKind={activeAssetKind}
             embedded
             taskId={taskId}
+            regenerateAllToken={assetGenerationToken}
+            onGenerationStateChange={setAssetGenerationBusy}
             onCountChange={(kind, total) => {
               assetCountGenerations.current[kind] = (assetCountGenerations.current[kind] || 0) + 1;
               setAssetCounts(current => current[kind] === total ? current : { ...current, [kind]: total });

@@ -75,7 +75,13 @@ export function CharacterLibrary({
           placeholder="搜索角色、身份、职能"
         />
       </label>
-      <div className="character-library__list" aria-live="polite">
+      <div
+        className="character-library__list"
+        role="region"
+        aria-label="角色列表，可上下滚动"
+        aria-live="polite"
+        tabIndex={0}
+      >
         {filtered.map((character, index) => {
           const selected = character.characterId === selectedId;
           const thumbnail = character.views.find(view => view.key === 'front' && view.imageUrl)?.imageUrl || character.sheetUrl;
@@ -125,7 +131,9 @@ function DefinitionRow({ label, value }: { label: string; value?: string }) {
 
 export function CharacterInspector({ character }: { character: CharacterDashboardCharacter }) {
   const [stateId, setStateId] = useState('');
+  const [themeSelection, setThemeSelection] = useState({ characterId: character.characterId, index: 0 });
   const [showFullProfile, setShowFullProfile] = useState(false);
+  const activeColorIndex = themeSelection.characterId === character.characterId ? themeSelection.index : 0;
   const activeState = character.states.find(state => state.stateId === stateId) || character.states[0];
   const available = character.views.filter(view => view.available).length;
 
@@ -165,13 +173,20 @@ export function CharacterInspector({ character }: { character: CharacterDashboar
 
       {character.colors.length > 0 && (
         <section className="character-inspector__palette" aria-labelledby="character-palette-title">
-          <h3 id="character-palette-title">主色锁定</h3>
-          <div>
+          <h3 id="character-palette-title">主题锁定</h3>
+          <div aria-label={`${character.name} 主题色`}>
             {character.colors.map((color, index) => (
-              <span key={`${color.hex}-${index}`}>
+              <button
+                type="button"
+                key={`${color.hex}-${index}`}
+                className={activeColorIndex === index ? 'is-active' : ''}
+                aria-label={`选择主题色${color.name || color.hex}`}
+                aria-pressed={activeColorIndex === index}
+                onClick={() => setThemeSelection({ characterId: character.characterId, index })}
+              >
                 <i style={{ '--character-swatch': color.hex || '#64748b' } as CSSProperties} aria-hidden="true" />
                 {color.name || color.hex}
-              </span>
+              </button>
             ))}
           </div>
         </section>

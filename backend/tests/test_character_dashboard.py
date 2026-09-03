@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -371,6 +372,7 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
             task_id = created["task_id"]
             task = service.repo.get_task(task_id)
             task["assets"]["1"] = "核心角色：沈知微\n对手角色：陆行远"
+            task["assets"]["2"] = "沈知微：你终于来了。"
             service.repo.save_task(task_id, task)
 
             raw = """
@@ -417,9 +419,198 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
             self.assertEqual([item["name"] for item in result["assets"]["3_characters"]], generated_names)
             self.assertNotIn("文本假名", result["assets"]["3_sheets"])
 
+    def test_stage_three_generates_every_structured_character_without_a_six_actor_default_cap(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {}, clear=True):
+            service = DramaService()
+            service.repo = TaskRepository(str(Path(temp) / "tasks.json"))
+            created = service.create_task(DramaCreateRequest(
+                title_suggestion="群像权谋",
+                llm_model="test-llm",
+                image_model="test-image",
+            ))
+            task_id = created["task_id"]
+            task = service.repo.get_task(task_id)
+            task["assets"]["2"] = "群像人物依次进入主线。"
+            service.repo.save_task(task_id, task)
+            names = ["沈砚", "谢云谣", "贺兰霆", "太后萧氏", "萧景言", "裴九川", "秋嬷嬷"]
+            dna = {
+                "characters": [
+                    {"name": name, "role": "剧情角色", "identity": f"{name}的剧本身份"}
+                    for name in names
+                ],
+            }
+            quality = FiveViewQualityReport(
+                passed=True,
+                entropy=[6.0] * 5,
+                palette_similarity=0.9,
+                unique_view_hashes=5,
+                issues=[],
+            )
+            view_paths = [Path(temp) / f"{view}.png" for view in FIVE_VIEW_ORDER]
+            generated_names: list[str] = []
+
+            def generate_sheet(model, name, *args, **kwargs):
+                generated_names.append(name)
+                return f"https://cdn.example/{name}/sheet.png"
+
+            with (
+                patch.object(service, "read_md_file", return_value="guide"),
+                patch.object(service.gateway, "call_llm", return_value="角色锁定包"),
+                patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
+                patch.object(service.gateway, "resolve_authorized_face", return_value=None),
+                patch.object(service.gateway, "generate_character_sheet", side_effect=generate_sheet),
+                patch("app.service.drama_service.split_five_view_sheet", return_value=view_paths),
+                patch("app.service.drama_service.validate_five_view_images", return_value=quality),
+                patch.object(service, "run_real_consistency_check", return_value="PASS"),
+            ):
+                result = service._execute_stage_blocking(task_id, 3)
+
+            self.assertEqual(generated_names, names)
+            self.assertEqual(
+                [item["name"] for item in result["assets"]["3_characters"]],
+                names,
+            )
+            self.assertEqual(result["assets"]["3_character_dashboard"]["stats"]["readyCount"], 7)
+
+    def test_stage_three_retries_one_character_without_blocking_the_remaining_cast(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(
+            os.environ,
+            {"CHARACTER_SHEET_MAX_ATTEMPTS": "2", "MAX_CHARACTER_SHEETS": "20"},
+            clear=False,
+        ):
+            service = DramaService()
+            service.repo = TaskRepository(str(Path(temp) / "tasks.json"))
+            created = service.create_task(DramaCreateRequest(
+                title_suggestion="渡口",
+                llm_model="test-llm",
+                image_model="test-image",
+            ))
+            task_id = created["task_id"]
+            task = service.repo.get_task(task_id)
+            task["assets"]["2"] = "沈知微与陆行远在渡口追查线索。"
+            service.repo.save_task(task_id, task)
+            names = ["沈知微", "陆行远", "周教授"]
+            dna = {
+                "characters": [
+                    {"name": name, "role": "剧情角色", "identity": f"{name}身份"}
+                    for name in names
+                ],
+            }
+            quality = FiveViewQualityReport(
+                passed=True,
+                entropy=[6.0] * 5,
+                palette_similarity=0.9,
+                unique_view_hashes=5,
+                issues=[],
+            )
+            view_paths = [Path(temp) / f"{view}.png" for view in FIVE_VIEW_ORDER]
+            attempts: dict[str, int] = {}
+            call_order: list[str] = []
+
+            def generate_sheet(model, name, *args, **kwargs):
+                call_order.append(name)
+                attempts[name] = attempts.get(name, 0) + 1
+                if name == "陆行远" and attempts[name] == 1:
+                    raise RuntimeError("temporary image provider failure")
+                return f"https://cdn.example/{name}/sheet.png"
+
+            with (
+                patch.object(service, "read_md_file", return_value="guide"),
+                patch.object(service.gateway, "call_llm", return_value="角色锁定包"),
+                patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
+                patch.object(service.gateway, "resolve_authorized_face", return_value=None),
+                patch.object(service.gateway, "generate_character_sheet", side_effect=generate_sheet),
+                patch("app.service.drama_service.split_five_view_sheet", return_value=view_paths),
+                patch("app.service.drama_service.validate_five_view_images", return_value=quality),
+                patch.object(service, "run_real_consistency_check", return_value="PASS"),
+            ):
+                result = service._execute_stage_blocking(task_id, 3)
+
+            self.assertEqual(call_order, ["沈知微", "陆行远", "陆行远", "周教授"])
+            self.assertEqual(
+                [item["name"] for item in result["assets"]["3_characters"]],
+                names,
+            )
+            self.assertTrue(all(item["five_view_quality"]["passed"] for item in result["assets"]["3_characters"]))
+
+    def test_stage_three_resumes_from_passed_five_views_and_only_generates_missing_roles(self):
+        with tempfile.TemporaryDirectory() as temp:
+            service = DramaService()
+            service.repo = TaskRepository(str(Path(temp) / "tasks.json"))
+            created = service.create_task(DramaCreateRequest(
+                title_suggestion="旧项目修复",
+                llm_model="test-llm",
+                image_model="test-image",
+            ))
+            task_id = created["task_id"]
+            task = service.repo.get_task(task_id)
+            task["assets"]["2"] = "旧项目剧本已完成。"
+            service.repo.save_task(task_id, task)
+            names = ["沈砚", "谢云谣", "贺兰霆"]
+            dna = {
+                "characters": [
+                    {"name": name, "role": "剧情角色", "identity": f"{name}身份"}
+                    for name in names
+                ],
+            }
+            task = service.repo.get_task(task_id)
+            task["assets"]["3_dna"] = dna
+            task["assets"]["3_characters"] = [{
+                "name": "沈砚",
+                "role": "主角",
+                "desc": "既有角色 DNA",
+                "sheet": "https://cdn.example/沈砚/existing.png",
+                "sheet_type": "ordered_five_view_turnaround",
+                "views": [
+                    {"view": view, "image_url": f"/media/沈砚/{view}.png"}
+                    for view in FIVE_VIEW_ORDER
+                ],
+                "five_view_quality": {
+                    "passed": True, "entropy": [6.0] * 5,
+                    "palette_similarity": 0.9, "unique_view_hashes": 5, "issues": [],
+                },
+            }]
+            service.repo.save_task(task_id, task)
+            quality = FiveViewQualityReport(
+                passed=True,
+                entropy=[6.0] * 5,
+                palette_similarity=0.9,
+                unique_view_hashes=5,
+                issues=[],
+            )
+            view_paths = [Path(temp) / f"{view}.png" for view in FIVE_VIEW_ORDER]
+            generated_names = []
+
+            def generate_sheet(model, name, *args, **kwargs):
+                generated_names.append(name)
+                return f"https://cdn.example/{name}/sheet.png"
+
+            with (
+                patch.object(service, "read_md_file", return_value="guide"),
+                patch.object(service.gateway, "call_llm", return_value="角色锁定包"),
+                patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
+                patch.object(service.gateway, "resolve_authorized_face", return_value=None),
+                patch.object(service.gateway, "generate_character_sheet", side_effect=generate_sheet),
+                patch("app.service.drama_service.split_five_view_sheet", return_value=view_paths),
+                patch("app.service.drama_service.validate_five_view_images", return_value=quality),
+                patch.object(service, "run_real_consistency_check", return_value="PASS"),
+            ):
+                result = service._execute_stage_blocking(task_id, 3)
+
+            self.assertEqual(generated_names, ["谢云谣", "贺兰霆"])
+            self.assertEqual(
+                result["assets"]["3_characters"][0]["sheet"],
+                "https://cdn.example/沈砚/existing.png",
+            )
+            self.assertEqual(result["assets"]["3_character_dashboard"]["stats"]["readyCount"], 3)
+
     def test_stage_three_persists_completed_and_failed_characters_before_raising(self):
         for failure_mode in ("generation", "quality"):
-            with self.subTest(failure_mode=failure_mode), tempfile.TemporaryDirectory() as temp:
+            with (
+                self.subTest(failure_mode=failure_mode),
+                tempfile.TemporaryDirectory() as temp,
+                patch.dict(os.environ, {"CHARACTER_SHEET_MAX_ATTEMPTS": "1"}, clear=False),
+            ):
                 service = DramaService()
                 service.repo = TaskRepository(str(Path(temp) / "tasks.json"))
                 created = service.create_task(DramaCreateRequest(
@@ -430,12 +621,14 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 task_id = created["task_id"]
                 task = service.repo.get_task(task_id)
                 task["assets"]["1"] = "核心角色：沈知微\n对手角色：陆行远"
+                task["assets"]["2"] = "沈知微：必须查清真相。"
                 service.repo.save_task(task_id, task)
 
                 dna = {
                     "characters": [
                         {"name": "沈知微", "role": "主角", "identity": "学生"},
                         {"name": "陆行远", "role": "反派", "identity": "商人"},
+                        {"name": "周教授", "role": "配角", "identity": "证人"},
                     ],
                 }
                 passed_quality = FiveViewQualityReport(
@@ -462,6 +655,7 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 quality_results = [passed_quality]
                 if failure_mode == "quality":
                     quality_results.append(failed_quality)
+                quality_results.append(passed_quality)
 
                 with (
                     patch.object(service, "read_md_file", return_value="guide"),
@@ -480,19 +674,20 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 self.assertEqual(persisted["status"], "failed")
                 self.assertEqual(
                     [item["name"] for item in persisted["assets"]["3_characters"]],
-                    ["沈知微", "陆行远"],
+                    ["沈知微", "陆行远", "周教授"],
                 )
-                first, second = persisted["assets"]["3_characters"]
+                first, second, third = persisted["assets"]["3_characters"]
                 self.assertTrue(first["five_view_quality"]["passed"])
                 self.assertFalse(second["five_view_quality"]["passed"])
                 self.assertTrue(second["five_view_quality"]["issues"])
+                self.assertTrue(third["five_view_quality"]["passed"])
                 dashboard = persisted["assets"]["3_character_dashboard"]
-                self.assertEqual(dashboard["stats"]["readyCount"], 1)
+                self.assertEqual(dashboard["stats"]["readyCount"], 2)
                 self.assertEqual(dashboard["stats"]["failedCount"], 1)
                 self.assertEqual(dashboard["state"], "INCOMPLETE")
                 self.assertEqual(
                     [item["assetState"] for item in dashboard["characters"]],
-                    ["READY", "FAILED"],
+                    ["READY", "FAILED", "READY"],
                 )
 
 

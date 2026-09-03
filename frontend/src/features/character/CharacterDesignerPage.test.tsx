@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CharacterDesignerPage } from './CharacterDesignerPage';
+import { CharacterInspector, CharacterLibrary } from './CharacterDesignerPanels';
 import {
   buildLegacyCharacterDashboard,
   normalizeCharacterDashboard,
@@ -64,6 +65,10 @@ const interactiveDashboard = normalizeCharacterDashboard({
       role: '女主角',
       identity: '十九岁的侦探学徒',
       description: '深蓝学生装，行动谨慎。',
+      colors: [
+        { name: '明夷', hex: '#E3AA1B' },
+        { name: '玄黑', hex: '#1C1B19' },
+      ],
       states: [{ stateId: 'base', title: '基础造型', dna: '敏锐克制', clothing: '深蓝学生装' }],
       assetState: 'READY',
       views: dashboard.viewContract.views.map(view => ({
@@ -107,6 +112,54 @@ describe('CharacterDesignerPage', () => {
     vi.restoreAllMocks();
   });
 
+  it('exposes the full character list as a keyboard-focusable vertical scroll region', () => {
+    render(
+      <CharacterLibrary
+        characters={interactiveDashboard.characters}
+        selectedId="character-shen-zhiwei"
+        onSelect={vi.fn()}
+      />,
+    );
+
+    const list = screen.getByRole('region', { name: '角色列表，可上下滚动' });
+    expect(list.getAttribute('tabindex')).toBe('0');
+    expect(within(list).getAllByRole('button')).toHaveLength(2);
+  });
+
+  it('switches both theme-lock controls and exposes the selected theme', async () => {
+    const user = userEvent.setup();
+    render(<CharacterInspector character={interactiveDashboard.characters[0]} />);
+
+    const mingyi = screen.getByRole('button', { name: '选择主题色明夷' });
+    const xuanhei = screen.getByRole('button', { name: '选择主题色玄黑' });
+    expect(mingyi.getAttribute('aria-pressed')).toBe('true');
+    expect(xuanhei.getAttribute('aria-pressed')).toBe('false');
+
+    await user.click(xuanhei);
+    expect(mingyi.getAttribute('aria-pressed')).toBe('false');
+    expect(xuanhei.getAttribute('aria-pressed')).toBe('true');
+
+    await user.click(mingyi);
+    expect(mingyi.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('resets the selected theme when the inspected character changes', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<CharacterInspector character={interactiveDashboard.characters[0]} />);
+
+    await user.click(screen.getByRole('button', { name: '选择主题色玄黑' }));
+    rerender(
+      <CharacterInspector
+        character={{
+          ...interactiveDashboard.characters[1],
+          colors: [{ name: '雾灰', hex: '#727B86' }],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '选择主题色雾灰' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
   it('synchronizes every non-actor asset count on the initial actor page load', async () => {
     const totals = { scene: 6, prop: 8, costume: 2, effect: 4 } as const;
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
@@ -129,6 +182,42 @@ describe('CharacterDesignerPage', () => {
     expect(within(assetTabs).getByRole('tab', { name: /服装.*2 个资产/ })).toBeTruthy();
     expect(within(assetTabs).getByRole('tab', { name: /特效.*4 个资产/ })).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('syncs every screenplay production asset category before refreshing their counts', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/drama/task-assets/production-assets/sync')) {
+        expect(init?.method).toBe('POST');
+        return {
+          ok: true,
+          json: async () => ({
+            created: 9,
+            skipped: 0,
+            kinds: { scene: 3, prop: 3, costume: 1, effect: 2 },
+          }),
+        } as Response;
+      }
+      const kind = new URL(url).searchParams.get('kind');
+      const totals = { scene: 3, prop: 3, costume: 1, effect: 2 } as const;
+      return {
+        ok: true,
+        json: async () => ({ items: [], page: 1, page_size: 1, total: totals[kind as keyof typeof totals] || 0 }),
+      } as Response;
+    });
+
+    render(<CharacterDesignerPage dashboard={interactiveDashboard} taskId="task-assets" {...actions()} />);
+
+    expect(await screen.findByText(/已根据剧本同步 9 项拍摄资产/)).toBeTruthy();
+    const assetTabs = screen.getByRole('tablist', { name: '角色资产类型' });
+    expect(within(assetTabs).getByRole('tab', { name: /拍摄场地.*3 个资产/ })).toBeTruthy();
+    expect(within(assetTabs).getByRole('tab', { name: /拍摄道具.*3 个资产/ })).toBeTruthy();
+    expect(within(assetTabs).getByRole('tab', { name: /服装.*1 个资产/ })).toBeTruthy();
+    expect(within(assetTabs).getByRole('tab', { name: /特效.*2 个资产/ })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/drama/task-assets/production-assets/sync',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 
   it('keeps a failed asset count unsynchronized without hiding successful totals', async () => {
@@ -444,6 +533,40 @@ describe('CharacterDesignerPage', () => {
     await user.click(within(assetTabs).getByRole('tab', { name: /数字演员/ }));
     expect(screen.getByRole('heading', { level: 2, name: '五视图工作区' })).toBeTruthy();
     expect(screen.getByRole('heading', { level: 1, name: '沈知微' })).toBeTruthy();
+  });
+
+  it('uses the top action to fill missing images for the active non-actor category', async () => {
+    const actionHandlers = actions();
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = String(input);
+      if (url.endsWith('/api/elements/generation-jobs') && options?.method === 'POST') {
+        expect(JSON.parse(String(options.body))).toEqual({ kind: 'scene', task_id: null });
+        return {
+          ok: true,
+          json: async () => ({
+            id: 'scene-job', kind: 'scene', status: 'completed', total: 0,
+            processed: 0, succeeded: 0, failed: 0, remaining: 0, errors: [],
+          }),
+        } as Response;
+      }
+      if (url.includes('/api/elements?kind=')) {
+        return { ok: true, json: async () => ({ items: [], total: 0 }) } as Response;
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const user = userEvent.setup();
+    render(<CharacterDesignerPage dashboard={interactiveDashboard} {...actionHandlers} />);
+
+    const assetTabs = screen.getByRole('tablist', { name: '角色资产类型' });
+    await user.click(within(assetTabs).getByRole('tab', { name: /拍摄场地/ }));
+    expect(await screen.findByRole('region', { name: '场景资产工作区' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '生成缺失图片' }));
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) => (
+      String(url).endsWith('/api/elements/generation-jobs') && init?.method === 'POST'
+    ))).toBe(true));
+    expect(actionHandlers.onRegenerate).not.toHaveBeenCalled();
+    expect(await screen.findByText('场景资产的参考图已全部完整，无需重复生成。')).toBeTruthy();
   });
 
   it('exposes complete long-form details and makes the character card a keyboard-scrollable region', async () => {
