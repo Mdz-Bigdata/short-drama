@@ -3,6 +3,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -13,8 +14,9 @@ from app.core.writer_dashboard import compile_writer_dashboard, parse_duration_s
 from app.repository.task_repo import TaskRepository
 from app.repository.task_repo import StaleTaskWriteError
 from app.platform.request_limits import SCRIPT_UPDATE_REQUEST_MAX_BYTES
+from app.platform.dependencies import get_platform_store
 from app.schema.drama import ScriptUpdateRequest
-from app.service.drama_service import DramaService
+from app.service.drama_service import DramaService, StagePrerequisiteError
 from main import app
 
 
@@ -250,6 +252,90 @@ class WriterDashboardApiTests(unittest.TestCase):
         self.assertTrue(stored[0]["bidirectional"])
         # The rest of the breakdown must survive a relationship-only edit.
         self.assertEqual(payload["stats"]["sceneCount"], 2)
+
+    def test_stage_five_is_rejected_before_claim_when_stage_four_contract_is_incomplete(self):
+        task = self.repo.get_task("writer-task-1")
+        task["current_stage"] = 4
+        task["status"] = "idle"
+        task["assets"]["4"] = [{
+            "shot_id": 1,
+            "size": "MS",
+            "motion": "Dolly In",
+            "desc": "雨夜对峙",
+        }]
+        task["assets"].pop("4_storyboard", None)
+        self.repo.save_task("writer-task-1", task)
+
+        with patch.object(drama_api, "service", self.service):
+            response = self.client.post(
+                "/api/drama/writer-task-1/next?current_stage=5",
+            )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("第4阶段尚未完整完成", response.json()["detail"])
+        self.assertIn("4_storyboard", response.json()["detail"])
+        stored = self.repo.get_task("writer-task-1")
+        self.assertEqual(stored["current_stage"], 4)
+        self.assertEqual(stored["status"], "idle")
+        self.assertNotEqual((stored.get("stage_progress") or {}).get("stage"), 5)
+
+    def test_every_downstream_stage_requires_the_previous_stage_output(self):
+        for stage in range(2, 9):
+            with self.subTest(stage=stage):
+                with self.assertRaisesRegex(StagePrerequisiteError, f"第{stage - 1}阶段尚未完整完成"):
+                    self.service._assert_stage_prerequisites({"assets": {}}, stage)
+
+    def test_assistant_does_not_announce_or_mark_a_blocked_next_stage_as_started(self):
+        task = self.repo.get_task("writer-task-1")
+        task["current_stage"] = 4
+        task["status"] = "idle"
+        task["assets"]["4"] = [{"shot_id": 1, "desc": "雨夜对峙"}]
+        task["assets"].pop("4_storyboard", None)
+        self.repo.save_task("writer-task-1", task)
+
+        with self.assertRaises(StagePrerequisiteError):
+            asyncio.run(self.service.assistant_message("writer-task-1", "继续"))
+
+        stored = self.repo.get_task("writer-task-1")
+        self.assertEqual(stored["current_stage"], 4)
+        self.assertEqual(stored["status"], "idle")
+        self.assertNotEqual((stored.get("stage_progress") or {}).get("stage"), 5)
+
+    def test_claiming_a_stage_discards_orphaned_outputs_from_later_stages(self):
+        task = self.repo.get_task("writer-task-1")
+        task["current_stage"] = 6
+        task["status"] = "interrupted"
+        task["fail_reason"] = "服务重启导致后台任务中断"
+        task["assets"].update({
+            "3": "角色锁定包",
+            "3_sheets": {"林夏": "sheet.png"},
+            "3_character_dashboard": {"state": "READY"},
+            "5": [{"video_url": "stale-shot.mp4"}],
+            "6": {"audio_url": "stale-audio.mp3"},
+        })
+        task["logs"] = {"5": "STALE", "6": "STALE"}
+        task["video_url"] = "stale-final.mp4"
+        task["short_link"] = "https://stale.invalid"
+        task["pr_content"] = "过期宣发"
+        task["stage_completions"] = {
+            "3": {"status": "success"},
+            "5": {"status": "success"},
+            "6": {"status": "success"},
+        }
+        self.repo.save_task("writer-task-1", task)
+
+        claimed = self.service._claim_stage_task("writer-task-1", 4)
+
+        self.assertEqual(claimed["current_stage"], 4)
+        self.assertIsNone(claimed["fail_reason"])
+        self.assertNotIn("5", claimed["assets"])
+        self.assertNotIn("6", claimed["assets"])
+        self.assertNotIn("5", claimed["logs"])
+        self.assertNotIn("6", claimed["logs"])
+        self.assertEqual(set(claimed["stage_completions"]), {"3"})
+        self.assertIsNone(claimed["video_url"])
+        self.assertIsNone(claimed["short_link"])
+        self.assertIsNone(claimed["pr_content"])
 
     def test_relationship_update_rejects_invalid_payloads(self):
         with patch.object(drama_api, "service", self.service):
@@ -942,6 +1028,127 @@ class ProductionAssetExtractionApiTests(unittest.TestCase):
         self.assertIn("泥浆飞溅", [item["name"] for item in effects.json()["items"]])
         self.assertEqual(unsupported.status_code, 404)
 
+    def test_preview_prefers_the_structured_production_asset_catalog(self):
+        task = _task()
+        task["assets"]["2_breakdown"]["production_assets"] = {
+            "scenes": [
+                {"name": "祭坛边柴堆引火区", "description": "深夜，雪中祭火"},
+                {"name": "含元殿", "description": "清晨朝会内景"},
+            ],
+            "props": [
+                {"name": "火把", "description": "裴无咎持有的木柄火把"},
+                {"name": "浇满灯油的干柴", "description": "沿祭坛码放"},
+            ],
+            "costumes": [{"name": "玄黑官袍", "description": "主体1夜戏服装"}],
+            "effects": [
+                {"name": "祭火蔓延", "description": "火舌沿柴枝爬向主体2"},
+                {"name": "雪落火焰白汽", "description": "雪片落火后形成白汽与火星"},
+            ],
+        }
+        self.repo.save_task("writer-task-1", task)
+
+        with patch.object(drama_api, "service", self.service):
+            scenes = self.client.get("/api/drama/writer-task-1/production-assets/scene").json()["items"]
+            props = self.client.get("/api/drama/writer-task-1/production-assets/prop").json()["items"]
+            costumes = self.client.get("/api/drama/writer-task-1/production-assets/costume").json()["items"]
+            effects = self.client.get("/api/drama/writer-task-1/production-assets/effect").json()["items"]
+
+        self.assertEqual([item["name"] for item in scenes], ["祭坛边柴堆引火区", "含元殿"])
+        self.assertEqual([item["name"] for item in props], ["火把", "浇满灯油的干柴"])
+        self.assertEqual([item["name"] for item in costumes], ["玄黑官袍"])
+        self.assertEqual([item["name"] for item in effects], ["祭火蔓延", "雪落火焰白汽"])
+
+    def test_preview_recognizes_plain_stage_two_scene_headings(self):
+        task = _task()
+        task["assets"].pop("2_breakdown", None)
+        task["assets"]["2"] = (
+            "第1集 血碑\n\n"
+            "场景1：太常寺天文台 夜 内景\n"
+            "镜头：中近景 缓推\n沈砚跪在青石阶上。\n\n"
+            "场景2：含元殿 晨 内景\n"
+            "镜头：中景 固定\n群臣立于丹墀两侧。\n"
+        )
+        self.repo.save_task("writer-task-1", task)
+
+        with patch.object(drama_api, "service", self.service):
+            response = self.client.get("/api/drama/writer-task-1/production-assets/scene")
+
+        self.assertEqual(
+            [item["name"] for item in response.json()["items"]],
+            ["太常寺天文台", "含元殿"],
+        )
+
+    def test_legacy_project_gets_a_persisted_complete_production_catalog(self):
+        response = """{
+          "scenes": [{"name": "雨夜办公室", "description": "夜，内景"}],
+          "props": [{"name": "匿名录音带", "description": "林夏收到的证物"}],
+          "costumes": [{"name": "深色风衣", "description": "林夏雨夜造型"}],
+          "effects": [{"name": "窗外暴雨", "description": "雨线与玻璃水痕"}]
+        }"""
+
+        with patch.object(self.service.gateway, "call_llm", return_value=response):
+            catalog = self.service.ensure_production_asset_catalog("writer-task-1")
+
+        self.assertEqual([item["name"] for item in catalog["props"]], ["匿名录音带"])
+        persisted = self.repo.get_task("writer-task-1")
+        self.assertEqual(
+            persisted["assets"]["2_breakdown"]["production_assets"],
+            catalog,
+        )
+
+    def test_stage_two_breakdown_contract_requires_every_production_asset_category(self):
+        contract = self.service._breakdown_contract(15, "test-video")
+
+        for field in ('"scenes"', '"props"', '"costumes"', '"effects"'):
+            self.assertIn(field, contract)
+        self.assertIn("production_assets", contract)
+
+    def test_bulk_sync_imports_all_non_actor_categories_idempotently(self):
+        task = _task()
+        task["assets"]["2_breakdown"]["production_assets"] = {
+            "scenes": [{"name": "祭坛边柴堆引火区", "description": "雪夜外景"}],
+            "props": [
+                {"name": "火把", "description": "木柄火把"},
+                {"name": "灯油干柴", "description": "祭坛边码放"},
+            ],
+            "costumes": [{"name": "玄黑官袍", "description": "裴无咎造型"}],
+            "effects": [{"name": "祭火蔓延", "description": "火舌与雪汽"}],
+        }
+        self.repo.save_task("writer-task-1", task)
+
+        class MemoryElementStore:
+            def __init__(self):
+                self.items = []
+
+            async def list_elements(self, owner_id, kind, page, page_size):
+                found = [item for item in self.items if item.kind == kind]
+                return found, len(found)
+
+            async def create_element(self, *, owner_id, kind, name, description, metadata):
+                item = SimpleNamespace(
+                    id=f"{kind}-{len(self.items) + 1}", kind=kind, name=name,
+                    description=description, metadata_json=metadata,
+                )
+                self.items.append(item)
+                return item
+
+        store = MemoryElementStore()
+        app.dependency_overrides[get_platform_store] = lambda: store
+        try:
+            with patch.object(drama_api, "service", self.service):
+                first = self.client.post("/api/drama/writer-task-1/production-assets/sync")
+                second = self.client.post("/api/drama/writer-task-1/production-assets/sync")
+        finally:
+            app.dependency_overrides.pop(get_platform_store, None)
+
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["created"], 5)
+        self.assertEqual(first.json()["kinds"], {
+            "scene": 1, "prop": 2, "costume": 1, "effect": 1,
+        })
+        self.assertEqual(second.json()["created"], 0)
+        self.assertEqual(second.json()["skipped"], 5)
+
     def test_actor_extraction_includes_descriptions_and_reference_images(self):
         task = _task()
         task["assets"]["3_characters"] = [
@@ -1126,3 +1333,258 @@ class TaskStatusRevalidationTests(unittest.TestCase):
         # A shared cache must not replay one account's project to another.
         self.assertIn("private", response.headers["cache-control"])
         self.assertEqual(response.headers["vary"], "Cookie")
+
+
+class CharacterExtractionTests(unittest.TestCase):
+    """Production labels share the "名称：内容" shape with dialogue lines."""
+
+    def test_structural_labels_never_become_characters(self):
+        task = _task()
+        # A screenplay written to the house format carries these label rows.
+        task["assets"]["2"] = (
+            "第1集 匿名录音\n"
+            "场景1：雨夜办公室\n"
+            "双轨节奏：情节推进 / 情感压抑\n"
+            "时长预估：90 秒\n"
+            "陈九：你隐瞒了什么？\n"
+            "小六：我什么都没说。\n"
+        )
+        task["assets"].pop("2_breakdown")
+
+        dashboard = compile_writer_dashboard(task)
+        names = {role.name for role in dashboard.roles}
+
+        self.assertIn("陈九", names)
+        self.assertIn("小六", names)
+        self.assertNotIn("双轨节奏", names)
+        self.assertNotIn("时长预估", names)
+        for edge in dashboard.relationships:
+            self.assertNotIn("双轨节奏", (edge.from_, edge.to))
+
+    def test_a_label_supplied_by_the_model_is_dropped_too(self):
+        task = _task()
+        task["assets"]["2_breakdown"]["scenes"][0]["characters"] = ["陈九", "双轨节奏"]
+        task["assets"]["2_breakdown"]["roles"] = [{"name": "情绪钩子", "position": "反派"}]
+        task["assets"]["2_breakdown"]["relationships"] = [
+            {"from": "陈九", "to": "双轨节奏", "relation": "对峙"},
+            {"from": "陈九", "to": "小六", "relation": "主仆"},
+        ]
+
+        dashboard = compile_writer_dashboard(task)
+
+        self.assertNotIn("情绪钩子", {role.name for role in dashboard.roles})
+        self.assertEqual(
+            [(edge.from_, edge.to, edge.relation) for edge in dashboard.relationships],
+            [("陈九", "小六", "主仆")],
+        )
+
+    def test_a_co_occurrence_graph_is_flagged_as_inferred(self):
+        task = _task()
+        task["assets"]["2_breakdown"].pop("relationships")
+
+        dashboard = compile_writer_dashboard(task)
+
+        self.assertTrue(dashboard.relationships_inferred)
+        self.assertTrue(all("同场互动" in edge.relation for edge in dashboard.relationships))
+
+    def test_analysed_relations_are_not_flagged(self):
+        self.assertFalse(compile_writer_dashboard(_task()).relationships_inferred)
+
+
+class StorySynopsisFallbackTests(unittest.TestCase):
+    """Without a breakdown the brief used to show the raw file head."""
+
+    def test_the_metadata_banner_is_not_used_as_the_synopsis(self):
+        task = _task()
+        task["assets"].pop("2_breakdown")
+        task["assets"]["2"] = (
+            "《流氓天子》分集剧本\n"
+            "【series_bible / 世界观与人物档案】\n"
+            "输入来源：总导演策划大纲 (director_constitution / highlight_map)\n"
+            "- 全剧30集，首季试水；每集90-150秒。\n"
+            "核心角色：陈九、小六、沈崇\n"
+            "陈九本是市井混混，一夜之间被认作失落的皇子，被迫在朝堂与街市之间求生。\n"
+        )
+
+        synopsis = compile_writer_dashboard(task).overview.synopsis
+
+        self.assertIn("陈九本是市井混混", synopsis)
+        self.assertNotIn("series_bible", synopsis)
+        self.assertNotIn("输入来源", synopsis)
+        self.assertNotIn("director_constitution", synopsis)
+
+    def test_a_declared_synopsis_line_wins(self):
+        task = _task()
+        task["assets"].pop("2_breakdown")
+        task["assets"]["2"] = "【档案】\n故事梗概：陈九在一夜之间从混混变成皇子。\n场景1：市井长街\n"
+
+        self.assertEqual(
+            compile_writer_dashboard(task).overview.synopsis,
+            "陈九在一夜之间从混混变成皇子。",
+        )
+
+
+class RelationshipAnalysisTests(unittest.TestCase):
+    """Repairing a co-occurrence graph must yield real dramatic relations."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.repo = TaskRepository(str(Path(self.temp.name) / "tasks.json"))
+        task = _task()
+        task["assets"]["2_breakdown"].pop("relationships")
+        task["assets"]["2_breakdown"].pop("roles")
+        self.repo.save_task("writer-task-1", task)
+        self.service = DramaService()
+        self.service.repo = self.repo
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _stub_gateway(self, response: str):
+        class _Gateway:
+            def __init__(self):
+                self.calls = []
+
+            def call_llm(self, *args, **kwargs):
+                self.calls.append(args)
+                return response
+
+        gateway = _Gateway()
+        self.service.gateway = gateway
+        return gateway
+
+    def test_analysis_replaces_the_inferred_edges_and_persists(self):
+        self._stub_gateway(
+            '{"roles": [{"name": "林夏", "position": "女主角"}],'
+            ' "relationships": [{"from": "林夏", "to": "周教授", "relation": "师徒反目",'
+            ' "bidirectional": false}]}'
+        )
+
+        dashboard = self.service.analyze_relationships("writer-task-1")
+
+        self.assertFalse(dashboard.relationships_inferred)
+        self.assertEqual(
+            [(edge.from_, edge.to, edge.relation) for edge in dashboard.relationships],
+            [("林夏", "周教授", "师徒反目")],
+        )
+        stored = self.repo.get_task("writer-task-1")["assets"]["2_breakdown"]
+        self.assertEqual(stored["relationships"][0]["relation"], "师徒反目")
+        self.assertEqual(stored["roles"][0]["position"], "女主角")
+
+    def test_richer_stage_two_casting_is_never_overwritten(self):
+        task = self.repo.get_task("writer-task-1")
+        task["assets"]["2_breakdown"]["roles"] = [{"name": "林夏", "position": "女主角"}]
+        self.repo.save_task("writer-task-1", task)
+        self._stub_gateway(
+            '{"roles": [{"name": "林夏", "position": "其它角色"}],'
+            ' "relationships": [{"from": "林夏", "to": "周教授", "relation": "师徒反目"}]}'
+        )
+
+        self.service.analyze_relationships("writer-task-1")
+
+        stored = self.repo.get_task("writer-task-1")["assets"]["2_breakdown"]
+        self.assertEqual(stored["roles"], [{"name": "林夏", "position": "女主角"}])
+
+    def test_an_unusable_model_reply_is_reported_not_persisted(self):
+        self._stub_gateway("模型今天不想输出 JSON")
+
+        with self.assertRaises(ValueError):
+            self.service.analyze_relationships("writer-task-1")
+
+        self.assertNotIn("relationships", self.repo.get_task("writer-task-1")["assets"]["2_breakdown"])
+
+    def test_a_project_without_a_script_is_rejected(self):
+        task = self.repo.get_task("writer-task-1")
+        task["assets"]["2"] = ""
+        task["config"]["script_content"] = ""
+        self.repo.save_task("writer-task-1", task)
+        self._stub_gateway("{}")
+
+        with self.assertRaises(ValueError):
+            self.service.analyze_relationships("writer-task-1")
+
+    def test_a_missing_task_is_not_an_error(self):
+        self._stub_gateway("{}")
+        self.assertIsNone(self.service.analyze_relationships("no-such-task"))
+
+
+class DramaTitleResolutionTests(unittest.TestCase):
+    """A project is created from a chat prompt; the prompt is not the drama's name."""
+
+    def test_a_creation_request_is_never_shown_as_a_title(self):
+        from app.core.writer_dashboard import is_instruction_like
+
+        for prompt in (
+            "请帮我生成一个古装权谋短剧",
+            "帮我写一部甜宠短剧",
+            "我想要一个悬疑短剧",
+            "给我来一部战神归来",
+            "生成一个都市爽剧剧本",
+        ):
+            self.assertTrue(is_instruction_like(prompt), prompt)
+
+    def test_a_real_drama_name_is_not_mistaken_for_a_request(self):
+        from app.core.writer_dashboard import is_instruction_like
+
+        for name in ("流氓天子", "乱葬坑里有人醒", "十二小时", "赘婿归来", "长安一片月"):
+            self.assertFalse(is_instruction_like(name), name)
+
+    def test_the_screenplay_headline_supplies_the_name(self):
+        from app.core.writer_dashboard import script_title
+
+        self.assertEqual(script_title("《流氓天子》分集剧本\n【series_bible】\n第1集 市井"), "流氓天子")
+        self.assertEqual(script_title("剧名：乱葬坑里有人醒\n第1集"), "乱葬坑里有人醒")
+        self.assertEqual(script_title("**片名：长安一片月**\n第1集"), "长安一片月")
+
+    def test_a_guideline_reference_is_not_taken_as_the_name(self):
+        from app.core.writer_dashboard import script_title
+
+        script = "参考《AI漫剧短剧剧本黄金叙事结构》撰写\n《流氓天子》分集剧本\n第1集 市井"
+        self.assertEqual(script_title(script), "流氓天子")
+
+    def test_the_dashboard_prefers_the_analysed_title_over_the_prompt(self):
+        task = _task()
+        task["config"]["title_suggestion"] = "请帮我生成一个古装权谋短剧"
+        task["assets"]["2_breakdown"]["overview"]["title"] = "流氓天子"
+
+        dashboard = compile_writer_dashboard(task)
+
+        self.assertEqual(dashboard.title, "流氓天子")
+        self.assertEqual(dashboard.overview.title, "流氓天子")
+
+    def test_the_screenplay_is_used_when_the_analysis_has_no_title(self):
+        task = _task()
+        task["config"]["title_suggestion"] = "请帮我生成一个古装权谋短剧"
+        task["assets"]["2"] = "《流氓天子》分集剧本\n第1集 市井无赖\n陈九：台词。"
+
+        self.assertEqual(compile_writer_dashboard(task).title, "流氓天子")
+
+    def test_a_prompt_with_no_other_source_falls_back_to_a_placeholder(self):
+        task = _task()
+        task["config"]["title_suggestion"] = "请帮我生成一个古装权谋短剧"
+        task["assets"]["2"] = "第1集 市井无赖\n陈九：台词。"
+        task["assets"]["2_breakdown"]["overview"].pop("title", None)
+
+        # Better an honest placeholder than the user's own request as a title.
+        self.assertEqual(compile_writer_dashboard(task).title, "未命名短剧")
+
+    def test_a_deliberate_project_name_is_still_respected(self):
+        task = _task()
+        task["config"]["title_suggestion"] = "乱葬坑里有人醒"
+        task["assets"]["2"] = "第1集 苏醒\n沈砚之：台词。"
+        task["assets"]["2_breakdown"]["overview"].pop("title", None)
+
+        self.assertEqual(compile_writer_dashboard(task).title, "乱葬坑里有人醒")
+
+    def test_an_analysed_title_that_is_itself_a_request_is_rejected(self):
+        task = _task()
+        task["config"]["title_suggestion"] = "乱葬坑里有人醒"
+        task["assets"]["2_breakdown"]["overview"]["title"] = "请帮我生成一个古装权谋短剧"
+
+        self.assertEqual(compile_writer_dashboard(task).title, "乱葬坑里有人醒")
+
+    def test_book_title_marks_are_stripped_from_the_analysed_name(self):
+        task = _task()
+        task["assets"]["2_breakdown"]["overview"]["title"] = "《流氓天子》"
+
+        self.assertEqual(compile_writer_dashboard(task).title, "流氓天子")

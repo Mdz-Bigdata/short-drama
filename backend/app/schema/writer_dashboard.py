@@ -13,6 +13,7 @@ WriterEpisodeStatus = Literal["idle", "running", "completed", "failed"]
 
 
 class WriterOverview(DramaBaseSchema):
+    title: str = Field("", max_length=60, description="作品名（由结构化分析得出，不含书名号）")
     synopsis: str = Field("", max_length=4000)
     genre: str = Field("", max_length=120)
     theme: str = Field("", max_length=500)
@@ -21,6 +22,14 @@ class WriterOverview(DramaBaseSchema):
 
 class WriterDashboardStats(DramaBaseSchema):
     total_episodes: int = Field(0, ge=0, le=200)
+    scripted_episodes: int = Field(
+        0, ge=0, le=200,
+        description="剧本正文里实际写出的集数；小于 total_episodes 说明生成被截断",
+    )
+    missing_episodes: list[int] = Field(
+        default_factory=list, max_length=200,
+        description="剧本正文里缺失的集号；前端据此高亮断层并一键补写，而不是让用户比对集数差",
+    )
     scene_count: int = Field(0, ge=0, le=5000)
     character_count: int = Field(0, ge=0, le=500)
     main_event_count: int = Field(0, ge=0, le=500)
@@ -101,6 +110,10 @@ class WriterDashboardResponse(DramaBaseSchema):
     timeline: list[WriterDashboardEvent] = Field(default_factory=list, max_length=500)
     roles: list[WriterDashboardRole] = Field(default_factory=list, max_length=500)
     relationships: list[WriterDashboardRelationship] = Field(default_factory=list, max_length=5000)
+    relationships_inferred: bool = Field(
+        False,
+        description="关系图谱是否为同场共现推断（尚未做人物关系语义分析）",
+    )
     episodes: list[WriterDashboardEpisode] = Field(default_factory=list, max_length=200)
     script: str = Field("", max_length=2 * 1024 * 1024)
     script_file_name: Optional[str] = Field(None, max_length=255)
