@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ElementLibraryPage } from './ElementLibraryPage';
@@ -10,6 +12,36 @@ function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>(settle => { resolve = settle; });
   return { promise, resolve };
+}
+
+
+const elementLibraryStylesheet = readFileSync(
+  resolve(process.cwd(), 'src/features/elements/ElementLibraryPage.css'),
+  'utf8',
+);
+
+
+function makeSpatialAsset(kind: 'scene' | 'prop', index: number) {
+  const label = kind === 'scene' ? '场景' : '道具';
+  return {
+    id: `${kind}-${index}`,
+    kind,
+    name: `${label}${String(index).padStart(2, '0')}`,
+    description: `${label}${index}的空间、材质与连续性描述`,
+    status: 'ready',
+    version: 2,
+    metadata: {},
+    files: [{
+      id: `${kind}-${index}-reference`,
+      slot: 'reference',
+      mime_type: 'image/png',
+      media_kind: 'image' as const,
+      size_bytes: 2048,
+      sha256: `${kind}-${index}-sha`,
+      url: `/media/elements/${kind}-${index}.png`,
+    }],
+    model3d: null,
+  };
 }
 
 
@@ -33,7 +65,9 @@ describe('ElementLibraryPage', () => {
     await userEvent.click(screen.getByRole('tab', { name: '场景' }));
     expect(await screen.findByRole('heading', { name: /场景元素库/ })).toBeTruthy();
     expect(screen.getAllByRole('button', { name: '添加场景' }).length).toBeGreaterThan(0);
-    expect(await screen.findByRole('region', { name: '场景 3D 资产工作台' })).toBeTruthy();
+    const workspace = await screen.findByRole('region', { name: '场景 3D 资产工作台' });
+    const scrollList = within(workspace).getByRole('region', { name: '场景资产列表，可上下滚动' });
+    expect(scrollList.getAttribute('tabindex')).toBe('0');
 
     await userEvent.click(screen.getByRole('tab', { name: '服装' }));
     expect(await screen.findByRole('heading', { name: /服装元素库/ })).toBeTruthy();
@@ -42,6 +76,146 @@ describe('ElementLibraryPage', () => {
     expect(screen.getByRole('button', { name: '上传' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: '上传 3D 模型' })).toBeNull();
     expect(container.querySelector('input[accept*=".glb"]')).toBeNull();
+  });
+
+  it('gives every effect card an accessible effect name and its related description', async () => {
+    const effect = {
+      id: 'effect-lightning',
+      kind: 'effect' as const,
+      name: '雷光贯穿石阶',
+      description: '一道冷白雷光劈落，碎石与青蓝电弧向四周迸散，持续约一秒后熄灭。',
+      status: 'ready',
+      version: 2,
+      metadata: {},
+      files: [{
+        id: 'effect-lightning-reference', slot: 'reference', mime_type: 'image/png', media_kind: 'image' as const,
+        size_bytes: 4096, sha256: 'effect-lightning-sha', url: '/media/elements/effect-lightning.png',
+      }],
+      model3d: null,
+    };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [effect], page: 1, page_size: 50, total: 1 }),
+    } as Response);
+
+    render(<ElementLibraryPage initialKind="effect" embedded />);
+
+    const card = await screen.findByRole('article', { name: '特效资产“雷光贯穿石阶”' });
+    expect(within(card).getByRole('heading', { name: '雷光贯穿石阶' })).toBeTruthy();
+    expect(within(card).getByText(effect.description)).toBeTruthy();
+  });
+
+  it('opens a complete costume panorama and zooms around the clicked detail position', async () => {
+    const costume = {
+      id: 'costume-black-robe',
+      kind: 'costume' as const,
+      name: '玄黑官袍大氅',
+      description: '玄黑提花官袍配宽肩大氅，银线暗纹沿衣襟延伸，展示完整正面轮廓与下摆。',
+      status: 'ready',
+      version: 3,
+      metadata: {},
+      files: [{
+        id: 'costume-black-robe-reference', slot: 'reference', mime_type: 'image/png', media_kind: 'image' as const,
+        size_bytes: 8192, sha256: 'costume-black-robe-sha', url: '/media/elements/costume-black-robe.png',
+      }],
+      model3d: null,
+    };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [costume], page: 1, page_size: 50, total: 1 }),
+    } as Response);
+    const stylesheet = document.createElement('style');
+    stylesheet.textContent = elementLibraryStylesheet;
+    document.head.append(stylesheet);
+
+    try {
+      render(<ElementLibraryPage initialKind="costume" embedded />);
+
+      const card = await screen.findByRole('article', { name: '服装资产“玄黑官袍大氅”' });
+      expect(within(card).getByText(costume.description)).toBeTruthy();
+      const openButton = within(card).getByRole('button', { name: '查看服装资产“玄黑官袍大氅”全景图' });
+      const cardImage = within(openButton).getByRole('img', { name: '玄黑官袍大氅 参考图' });
+      expect(getComputedStyle(cardImage).objectFit).toBe('contain');
+
+      await userEvent.click(openButton);
+      const dialog = screen.getByRole('dialog', { name: '玄黑官袍大氅 · 服装全景细节' });
+      expect(within(dialog).getByText(costume.description)).toBeTruthy();
+      expect(within(dialog).getByRole('status', { name: '当前缩放比例' }).textContent).toBe('1.0×');
+
+      const detailStage = within(dialog).getByRole('button', { name: '点击服装全景图局部放大' });
+      vi.spyOn(detailStage, 'getBoundingClientRect').mockReturnValue({
+        x: 0, y: 0, left: 0, top: 0, right: 1000, bottom: 500, width: 1000, height: 500,
+        toJSON: () => ({}),
+      });
+      fireEvent.click(detailStage, { clientX: 250, clientY: 375 });
+
+      expect(within(dialog).getByRole('status', { name: '当前缩放比例' }).textContent).toBe('1.5×');
+      expect(within(dialog).getByText('观察位置 X 25% · Y 75%')).toBeTruthy();
+      const detailImage = within(detailStage).getByRole('img', { name: '玄黑官袍大氅 服装全景图' });
+      expect(detailImage.style.transform).toBe('scale(1.5)');
+      expect(detailImage.style.transformOrigin).toBe('25% 75%');
+
+      await userEvent.keyboard('{Escape}');
+      expect(screen.queryByRole('dialog', { name: '玄黑官袍大氅 · 服装全景细节' })).toBeNull();
+      await waitFor(() => expect(document.activeElement).toBe(openButton));
+    } finally {
+      stylesheet.remove();
+    }
+  });
+
+  it.each([
+    ['scene' as const, '场景', '太常寺天文台', '夜，内景，青石阶、星盘与司天仪'],
+    ['prop' as const, '道具', '竹筒', '绑于腰间，内藏密信，筒身有旧铜扣'],
+  ])('shows the selected %s reference image and description in the center stage', async (kind, label, name, description) => {
+    const asset = {
+      ...makeSpatialAsset(kind, 1),
+      name,
+      description,
+    };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [asset], page: 1, page_size: 50, total: 1 }),
+    } as Response);
+
+    render(<ElementLibraryPage initialKind={kind} onBack={() => undefined} />);
+
+    const preview = await screen.findByRole('region', { name: `${label}资产“${name}”参考预览` });
+    expect(within(preview).getByRole('img', { name: `${name} 参考图` })).toBeTruthy();
+    expect(within(preview).getByText(description)).toBeTruthy();
+  });
+
+  it.each([
+    ['scene' as const, '场景', 25],
+    ['prop' as const, '道具', 29],
+  ])('keeps all %s assets in a bounded vertical scroll rail', async (kind, label, count) => {
+    const assets = Array.from({ length: count }, (_, index) => makeSpatialAsset(kind, index + 1));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: assets, page: 1, page_size: 50, total: count }),
+    } as Response);
+    const stylesheet = document.createElement('style');
+    stylesheet.textContent = elementLibraryStylesheet;
+    document.head.append(stylesheet);
+
+    try {
+      render(<ElementLibraryPage initialKind={kind} onBack={() => undefined} />);
+
+      const workspace = await screen.findByRole('region', { name: `${label} 3D 资产工作台` });
+      const scrollList = within(workspace).getByRole('region', { name: `${label}资产列表，可上下滚动` });
+      expect(within(scrollList).getAllByRole('button', { name: new RegExp(`查看${label}资产`) })).toHaveLength(count);
+      expect(within(scrollList).getByRole('button', { name: `查看${label}资产“${label}${count}”` })).toBeTruthy();
+
+      const rail = scrollList.closest('.asset-rail');
+      const firstItem = scrollList.querySelector('.asset-rail-item');
+      expect(rail).not.toBeNull();
+      expect(firstItem).not.toBeNull();
+      expect(getComputedStyle(rail as Element).minHeight).toBe('0px');
+      expect(getComputedStyle(rail as Element).overflow).toBe('hidden');
+      expect(getComputedStyle(scrollList).overflowY).toBe('auto');
+      expect(getComputedStyle(firstItem as Element).flexShrink).toBe('0');
+    } finally {
+      stylesheet.remove();
+    }
   });
 
   it('embeds one asset page without duplicate portal chrome and reports server totals after mutations', async () => {
@@ -88,6 +262,125 @@ describe('ElementLibraryPage', () => {
     expect((await screen.findAllByText('雨夜巡警制服')).length).toBeGreaterThan(0);
     await waitFor(() => expect(onCountChange).toHaveBeenCalledWith('costume', 1));
     expect(screen.getByText('1')).toBeTruthy();
+  });
+
+  it('replaces an empty card with the generated private reference image', async () => {
+    const emptyCostume = {
+      id: 'costume-empty', kind: 'costume' as const, name: '太后朝服', description: '绯红凤袍与金线云纹',
+      status: 'draft', version: 1, metadata: {}, files: [], model3d: null,
+    };
+    const generatedCostume = {
+      ...emptyCostume,
+      status: 'ready',
+      version: 2,
+      files: [{
+        id: 'costume-reference', slot: 'reference', mime_type: 'image/png', media_kind: 'image' as const,
+        size_bytes: 2048, sha256: 'generated-sha',
+        url: '/api/elements/costume-empty/files/costume-reference/content?v=2',
+      }],
+    };
+    let generated = false;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = String(input);
+      if (url.endsWith('/api/elements/costume-empty/regenerate') && options?.method === 'POST') {
+        generated = true;
+        return { ok: true, json: async () => generatedCostume } as Response;
+      }
+      if (url.includes('/api/elements?kind=costume')) {
+        return {
+          ok: true,
+          json: async () => ({ items: [generated ? generatedCostume : emptyCostume], total: 1 }),
+        } as Response;
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    render(<ElementLibraryPage initialKind="costume" onBack={() => undefined} />);
+
+    expect((await screen.findAllByText('太后朝服')).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('img', { name: '太后朝服 参考图' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: '重新生成' }));
+
+    expect(await screen.findByRole('img', { name: '太后朝服 参考图' })).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toContain('已重新生成“太后朝服”的参考图');
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/elements?kind=costume'))).toHaveLength(2);
+  });
+
+  it('runs a category generation job and reloads every missing reference image', async () => {
+    const emptyEffect = {
+      id: 'effect-empty', kind: 'effect' as const, name: '铁门缓缓开启', description: '门轴摩擦扬尘',
+      status: 'draft', version: 1, metadata: { task_id: 'task-effects' }, files: [], model3d: null,
+    };
+    const readyEffect = {
+      ...emptyEffect,
+      status: 'ready',
+      version: 2,
+      files: [{
+        id: 'effect-reference', slot: 'reference', mime_type: 'image/png', media_kind: 'image' as const,
+        size_bytes: 4096, sha256: 'effect-sha',
+        url: '/api/elements/effect-empty/files/effect-reference/content?v=2',
+      }],
+    };
+    let completed = false;
+    const onGenerationStateChange = vi.fn();
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = String(input);
+      if (url.endsWith('/api/elements/generation-jobs') && options?.method === 'POST') {
+        expect(JSON.parse(String(options.body))).toEqual({ kind: 'effect', task_id: 'task-effects' });
+        return {
+          ok: true,
+          json: async () => ({
+            id: 'generation-job-1', kind: 'effect', status: 'queued', total: 1,
+            processed: 0, succeeded: 0, failed: 0, remaining: 1, errors: [],
+          }),
+        } as Response;
+      }
+      if (url.endsWith('/api/elements/generation-jobs/generation-job-1')) {
+        completed = true;
+        return {
+          ok: true,
+          json: async () => ({
+            id: 'generation-job-1', kind: 'effect', status: 'completed', total: 1,
+            processed: 1, succeeded: 1, failed: 0, remaining: 0, errors: [],
+          }),
+        } as Response;
+      }
+      if (url.includes('/api/elements?kind=effect')) {
+        return {
+          ok: true,
+          json: async () => ({ items: [completed ? readyEffect : emptyEffect], total: 1 }),
+        } as Response;
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const { rerender } = render(
+      <ElementLibraryPage
+        initialKind="effect"
+        embedded
+        taskId="task-effects"
+        regenerateAllToken={0}
+        onGenerationStateChange={onGenerationStateChange}
+      />,
+    );
+    expect((await screen.findAllByText('铁门缓缓开启')).length).toBeGreaterThan(0);
+
+    rerender(
+      <ElementLibraryPage
+        initialKind="effect"
+        embedded
+        taskId="task-effects"
+        regenerateAllToken={1}
+        onGenerationStateChange={onGenerationStateChange}
+      />,
+    );
+
+    expect(await screen.findByRole('img', { name: '铁门缓缓开启 参考图' })).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toContain('1 项特效参考图已生成完整');
+    expect(onGenerationStateChange).toHaveBeenCalledWith(true);
+    expect(onGenerationStateChange).toHaveBeenLastCalledWith(false);
+    expect(fetchMock.mock.calls.some(([url, init]) => (
+      String(url).endsWith('/api/elements/generation-jobs') && init?.method === 'POST'
+    ))).toBe(true);
   });
 
   it('reveals and focuses the create form when the empty scene stage adds its first asset', async () => {
@@ -655,6 +948,155 @@ describe('ElementLibraryPage', () => {
     expect(screen.getByRole('heading', { name: /场景元素库/ })).toBeTruthy();
     expect(screen.queryByText('过期演员结果')).toBeNull();
     expect(screen.getAllByText('当前场景').length).toBeGreaterThan(0);
+  });
+});
+
+describe('asset image viewer across all five kinds', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  const makeListResponse = (items: unknown[]) => ({
+    ok: true,
+    json: async () => ({ items, page: 1, page_size: 50, total: items.length }),
+  } as Response);
+
+  it('opens the actor view image in the viewer labelled 数字演员 and supports keyboard reopen', async () => {
+    const actor = {
+      id: 'actor-viewer',
+      kind: 'actor' as const,
+      name: '沈砚之',
+      description: '玄衣束发，左眉有旧疤',
+      status: 'ready',
+      version: 2,
+      metadata: {},
+      files: [{
+        id: 'actor-front', slot: 'front', mime_type: 'image/png', media_kind: 'image' as const,
+        size_bytes: 1024, sha256: 'actor-front-sha', url: '/media/elements/actor-front.png',
+      }],
+      model3d: null,
+    };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(makeListResponse([actor]));
+
+    render(<ElementLibraryPage initialKind="actor" onBack={() => undefined} />);
+
+    const openButton = await screen.findByRole('button', { name: '查看数字演员“沈砚之”的正面视图' });
+    await userEvent.click(openButton);
+
+    const dialog = screen.getByRole('dialog', { name: '沈砚之 · 数字演员全景细节' });
+    // 逐图放大：弹层描述标注当前查看的是哪一张五视图。
+    expect(within(dialog).getByText(/正面视图/)).toBeTruthy();
+    expect(within(dialog).getByText(/左眉有旧疤/)).toBeTruthy();
+
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: '沈砚之 · 数字演员全景细节' })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(openButton));
+
+    // 键盘可达：入口是原生按钮，Enter 直接开启。
+    await userEvent.keyboard('{Enter}');
+    expect(screen.getByRole('dialog', { name: '沈砚之 · 数字演员全景细节' })).toBeTruthy();
+  });
+
+  it('hides the actor viewer entry for a five-view slot with no upload', async () => {
+    const actor = {
+      id: 'actor-partial',
+      kind: 'actor' as const,
+      name: '陆行远',
+      description: '',
+      status: 'draft',
+      version: 1,
+      metadata: {},
+      files: [{
+        id: 'actor-partial-front', slot: 'front', mime_type: 'image/png', media_kind: 'image' as const,
+        size_bytes: 512, sha256: 'actor-partial-sha', url: '/media/elements/actor-partial-front.png',
+      }],
+      model3d: null,
+    };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(makeListResponse([actor]));
+
+    render(<ElementLibraryPage initialKind="actor" onBack={() => undefined} />);
+
+    expect(await screen.findByRole('button', { name: '查看数字演员“陆行远”的正面视图' })).toBeTruthy();
+    await userEvent.selectOptions(screen.getByLabelText(/上传视图/), 'back');
+    expect(screen.getByText('背面视图未上传')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /查看数字演员/ })).toBeNull();
+  });
+
+  it('opens the scene reference from the centre stage with the 拍摄场地 label via keyboard', async () => {
+    const scene = {
+      ...makeSpatialAsset('scene', 1),
+      name: '金銮殿',
+      description: '晨光透过藻井，蟠龙金柱与丹陛台阶',
+    };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(makeListResponse([scene]));
+
+    render(<ElementLibraryPage initialKind="scene" onBack={() => undefined} />);
+
+    const openButton = await screen.findByRole('button', { name: '查看拍摄场地“金銮殿”全景图' });
+    openButton.focus();
+    await userEvent.keyboard('{Enter}');
+
+    const dialog = screen.getByRole('dialog', { name: '金銮殿 · 拍摄场地全景细节' });
+    expect(within(dialog).getByText(scene.description)).toBeTruthy();
+    expect(within(dialog).getByRole('img', { name: '金銮殿 拍摄场地全景图' })).toBeTruthy();
+
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: '金銮殿 · 拍摄场地全景细节' })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(openButton));
+  });
+
+  it('opens the prop reference with the 拍摄道具 label and offers no entry without an image', async () => {
+    const withImage = {
+      ...makeSpatialAsset('prop', 1),
+      name: '青铜司南',
+      description: '掌心大小，盘面刻二十八宿',
+    };
+    const withoutImage = { ...makeSpatialAsset('prop', 2), name: '无图令牌', files: [] };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(makeListResponse([withImage, withoutImage]));
+
+    render(<ElementLibraryPage initialKind="prop" onBack={() => undefined} />);
+
+    const openButton = await screen.findByRole('button', { name: '查看拍摄道具“青铜司南”全景图' });
+    await userEvent.click(openButton);
+    const dialog = screen.getByRole('dialog', { name: '青铜司南 · 拍摄道具全景细节' });
+    expect(within(dialog).getByText(withImage.description)).toBeTruthy();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(document.activeElement).toBe(openButton));
+
+    // 无参考图的资产只有上传引导，不出现放大入口。
+    await userEvent.click(screen.getByRole('button', { name: '查看道具资产“无图令牌”' }));
+    expect(await screen.findByText(/无图令牌 尚无参考图或 3D 模型/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /查看拍摄道具“无图令牌”/ })).toBeNull();
+  });
+
+  it('opens the effect detail image in the viewer labelled 特效', async () => {
+    const effect = {
+      id: 'effect-viewer',
+      kind: 'effect' as const,
+      name: '火折子爆燃',
+      description: '橙红火舌腾起半尺，火星向四周迸散',
+      status: 'ready',
+      version: 1,
+      metadata: {},
+      files: [{
+        id: 'effect-viewer-reference', slot: 'reference', mime_type: 'image/png', media_kind: 'image' as const,
+        size_bytes: 2048, sha256: 'effect-viewer-sha', url: '/media/elements/effect-viewer.png',
+      }],
+      model3d: null,
+    };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(makeListResponse([effect]));
+
+    render(<ElementLibraryPage initialKind="effect" embedded />);
+
+    const openButton = await screen.findByRole('button', { name: '查看特效资产“火折子爆燃”细节图' });
+    await userEvent.click(openButton);
+
+    const dialog = screen.getByRole('dialog', { name: '火折子爆燃 · 特效全景细节' });
+    expect(within(dialog).getByText(effect.description)).toBeTruthy();
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: '火折子爆燃 · 特效全景细节' })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(openButton));
   });
 });
 

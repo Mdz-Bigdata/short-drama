@@ -10,6 +10,7 @@ import {
   LockKeyhole,
   LoaderCircle,
   Map,
+  Maximize2,
   Package,
   Plus,
   RefreshCw,
@@ -37,6 +38,7 @@ interface Props {
   onRegenerate: (item: ElementItem) => void;
   onDelete: (item: ElementItem) => void;
   onDeletePoster: (item: ElementItem) => void;
+  onInspectPoster: (item: ElementItem) => void;
 }
 
 
@@ -52,6 +54,7 @@ export default function Element3DWorkspace({
   onRegenerate,
   onDelete,
   onDeletePoster,
+  onInspectPoster,
 }: Props) {
   const [view, setView] = useState<'project' | 'museum'>('project');
   const [query, setQuery] = useState('');
@@ -65,6 +68,11 @@ export default function Element3DWorkspace({
   const model = selected?.model3d;
   const stats = model?.stats ?? {};
   const label = kind === 'scene' ? '场景' : '道具';
+  // 放大查看器沿用制片口径命名，与查看器标题里的类别一致。
+  const viewerLabel = kind === 'scene' ? '拍摄场地' : '拍摄道具';
+  const selectedDescription = selected?.description || (kind === 'scene'
+    ? '补充空间布局、光线、时段与机位锚点。'
+    : '补充材质、尺寸、状态与跨镜头连续性。');
   const locked = Boolean(busy);
   const KindIcon = kind === 'scene' ? Map : Package;
 
@@ -108,7 +116,12 @@ export default function Element3DWorkspace({
           <input value={query} onChange={event => setQuery(event.target.value)} placeholder={`搜索${label}、描述…`} />
         </label>
 
-        <div className="asset-rail-list">
+        <div
+          className="asset-rail-list"
+          role="region"
+          aria-label={`${label}资产列表，可上下滚动`}
+          tabIndex={0}
+        >
           {visibleItems.length === 0 ? (
             <div className="asset-rail-empty"><Database size={28} /><span>{items.length ? '没有匹配资产' : `还没有${label}资产`}</span></div>
           ) : visibleItems.map((item, index) => {
@@ -178,12 +191,44 @@ export default function Element3DWorkspace({
           <Suspense fallback={<div className="model-fetch-state" role="status"><Layers3 className="spin" /> 正在启动 3D 引擎…</div>}>
             <ElementModelViewport name={selected.name} contentUrl={model.contentUrl} posterUrl={poster?.url ?? undefined} />
           </Suspense>
+        ) : poster?.url ? (
+          <section
+            className="asset-reference-preview"
+            role="region"
+            aria-label={`${label}资产“${selected.name}”参考预览`}
+          >
+            <div className="asset-reference-preview__media">
+              <button
+                type="button"
+                className="asset-reference-preview__open"
+                aria-label={`查看${viewerLabel}“${selected.name}”全景图`}
+                onClick={() => onInspectPoster(selected)}
+              >
+                <img src={`${API_BASE}${poster.url}`} alt={`${selected.name} 参考图`} />
+                <span className="element-preview__open-hint"><Maximize2 aria-hidden="true" /> 点击查看全景细节</span>
+              </button>
+              <span>2D REFERENCE</span>
+            </div>
+            <div className="asset-reference-preview__details">
+              <div>
+                <span>{label}参考资产 · VERSION {String(selected.version).padStart(2, '0')}</span>
+                <h3>{selected.name}</h3>
+                <p>{selectedDescription}</p>
+              </div>
+              <button type="button" onClick={() => onUploadModel(selected.id)} disabled={locked}><Upload size={16} /> 上传 3D 模型</button>
+            </div>
+          </section>
         ) : (
           <div className="asset-stage-empty">
-            {poster?.url ? <img src={`${API_BASE}${poster.url}`} alt={`${selected.name} 参考图`} /> : <Box size={68} />}
-            <strong>{selected.name} 尚未绑定 3D 模型</strong>
-            <span>上传自包含、核心无扩展的 glTF 2.0 GLB；服务端会检查引用与复杂度预算。</span>
-            <button type="button" onClick={() => onUploadModel(selected.id)} disabled={locked}><Upload size={16} /> 上传 3D 模型</button>
+            <Box size={68} />
+            <strong>{selected.name} 尚无参考图或 3D 模型</strong>
+            <span>先上传对应的{label}参考图；如需空间检查，可继续导入自包含的 glTF 2.0 GLB。</span>
+            <button
+              type="button"
+              aria-label={`为“${selected.name}”上传参考图`}
+              onClick={() => onUploadPoster(selected.id)}
+              disabled={locked}
+            ><ImagePlus size={16} /> 上传参考图</button>
           </div>
         )}
       </div>
@@ -196,7 +241,7 @@ export default function Element3DWorkspace({
               <div><h2>{selected.name}</h2><span>VERSION {String(selected.version).padStart(2, '0')}</span></div>
               <span className={`status-badge ${selected.status}`}>{model ? '3D 已就绪' : '待导入模型'}</span>
             </div>
-            <p className="inspector-description">{selected.description || (kind === 'scene' ? '补充空间布局、光线、时段与机位锚点。' : '补充材质、尺寸、状态与跨镜头连续性。')}</p>
+            <p className="inspector-description">{selectedDescription}</p>
 
             <div className="inspector-section-title"><Layers3 size={14} /> 模型统计</div>
             <div className="model-stat-grid">

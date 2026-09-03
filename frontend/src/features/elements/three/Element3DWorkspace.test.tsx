@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -66,7 +66,7 @@ afterEach(cleanup);
 
 
 describe('Element3DWorkspace', () => {
-  it('renders one selected model, server stats and a graceful missing-model state', async () => {
+  it('renders one selected model, server stats and the selected reference preview', async () => {
     const onSelect = vi.fn();
     const { rerender } = render(
       <Element3DWorkspace
@@ -81,6 +81,7 @@ describe('Element3DWorkspace', () => {
         onRegenerate={vi.fn()}
         onDelete={vi.fn()}
         onDeletePoster={vi.fn()}
+        onInspectPoster={vi.fn()}
       />,
     );
 
@@ -105,9 +106,12 @@ describe('Element3DWorkspace', () => {
         onRegenerate={vi.fn()}
         onDelete={vi.fn()}
         onDeletePoster={vi.fn()}
+        onInspectPoster={vi.fn()}
       />,
     );
-    expect(screen.getByText('旧车站月台 尚未绑定 3D 模型')).toBeTruthy();
+    const preview = screen.getByRole('region', { name: '场景资产“旧车站月台”参考预览' });
+    expect(within(preview).getByRole('img', { name: '旧车站月台 参考图' })).toBeTruthy();
+    expect(within(preview).getByText('清晨薄雾')).toBeTruthy();
   });
 
   it('opens the integrated museum without mounting the private project viewer at the same time', async () => {
@@ -124,6 +128,7 @@ describe('Element3DWorkspace', () => {
         onRegenerate={vi.fn()}
         onDelete={vi.fn()}
         onDeletePoster={vi.fn()}
+        onInspectPoster={vi.fn()}
       />,
     );
 
@@ -152,6 +157,7 @@ describe('Element3DWorkspace', () => {
         onRegenerate={vi.fn()}
         onDelete={onDelete}
         onDeletePoster={onDeletePoster}
+        onInspectPoster={vi.fn()}
       />,
     );
 
@@ -179,6 +185,7 @@ describe('Element3DWorkspace', () => {
         onRegenerate={vi.fn()}
         onDelete={onDelete}
         onDeletePoster={vi.fn()}
+        onInspectPoster={vi.fn()}
       />,
     );
 

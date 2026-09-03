@@ -254,8 +254,10 @@
 }
 
 .asset-rail {
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   border-right: 1px solid var(--asset-line);
 }
 
@@ -325,16 +327,23 @@
   min-height: 0;
   padding: 0 10px 12px;
   display: flex;
-  flex: 1;
+  flex: 1 1 0;
   flex-direction: column;
   gap: 5px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(118, 237, 255, 0.34) rgba(255, 255, 255, 0.035);
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  touch-action: pan-y;
 }
 
 .asset-rail-item {
   position: relative;
   width: 100%;
   min-height: 66px;
+  flex: 0 0 auto;
   color: #9db1c3;
   border: 1px solid transparent;
   border-radius: 9px;
@@ -641,6 +650,145 @@
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
 }
 
+.asset-reference-preview {
+  position: relative;
+  z-index: 3;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 64px clamp(18px, 3vw, 38px) 24px;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.asset-reference-preview__media {
+  position: relative;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(118, 237, 255, 0.18);
+  border-radius: 14px;
+  background:
+    linear-gradient(45deg, rgba(118, 237, 255, 0.025) 25%, transparent 25%, transparent 75%, rgba(118, 237, 255, 0.025) 75%),
+    linear-gradient(45deg, rgba(118, 237, 255, 0.025) 25%, #050a12 25%, #050a12 75%, rgba(118, 237, 255, 0.025) 75%);
+  background-position: 0 0, 10px 10px;
+  background-size: 20px 20px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.36);
+}
+
+.asset-reference-preview__media img {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: block;
+  object-fit: contain;
+}
+
+.asset-reference-preview__media > span {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 5px 7px;
+  color: rgba(214, 246, 255, 0.78);
+  border: 1px solid rgba(118, 237, 255, 0.2);
+  border-radius: 5px;
+  background: rgba(3, 8, 14, 0.76);
+  backdrop-filter: blur(8px);
+  font-size: 0.5rem;
+  letter-spacing: 0.12em;
+}
+
+/* 拍摄场地/道具中央参考图与服装/特效同构：点击打开全景查看器 */
+.asset-reference-preview__open {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  color: #d9f8ff;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.asset-reference-preview__open img {
+  transition: transform 180ms ease, filter 180ms ease;
+}
+
+.asset-reference-preview__open:hover img,
+.asset-reference-preview__open:focus-visible img {
+  transform: scale(1.015);
+  filter: brightness(1.06);
+}
+
+.asset-reference-preview__open ~ span { pointer-events: none; }
+
+.asset-reference-preview__details {
+  min-width: 0;
+  padding: 14px 16px;
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid rgba(118, 237, 255, 0.13);
+  border-radius: 11px;
+  background: rgba(7, 15, 25, 0.9);
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.24);
+}
+
+.asset-reference-preview__details > div {
+  min-width: 0;
+}
+
+.asset-reference-preview__details span {
+  display: block;
+  color: #66869d;
+  font-size: 0.54rem;
+  letter-spacing: 0.12em;
+}
+
+.asset-reference-preview__details h3 {
+  margin: 4px 0 3px;
+  color: #eaf8ff;
+  font-size: 0.92rem;
+}
+
+.asset-reference-preview__details p {
+  max-width: 620px;
+  margin: 0;
+  overflow: hidden;
+  color: #809aae;
+  font-size: 0.68rem;
+  line-height: 1.55;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-reference-preview__details button {
+  padding: 9px 12px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  align-items: center;
+  color: #06131d;
+  border: 1px solid var(--asset-cyan);
+  border-radius: 7px;
+  background: var(--asset-cyan);
+  cursor: pointer;
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.asset-reference-preview__details button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .model-canvas-loader {
   min-width: 150px;
   padding: 9px 13px;
@@ -902,7 +1050,7 @@
   }
   .asset-rail-heading { padding-block: 12px; }
   .asset-search { margin-block: 9px; }
-  .asset-rail-list { flex-direction: row; overflow-x: auto; }
+  .asset-rail-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; touch-action: pan-x; }
   .asset-rail-item { min-width: 220px; }
   .asset-rail-actions { position: absolute; top: 7px; right: 10px; width: 205px; border: 0; }
   .asset-rail-heading { padding-right: 220px; }
@@ -940,6 +1088,14 @@
   .asset-rail-delete { transition: none; }
 }
 
+/* 数字演员卡沿用裁切式预览，仅叠加与服装/特效同构的放大入口 */
+.element-card--actor .element-preview__open img { object-fit: cover; }
+
+.element-card--actor .element-preview .status-badge {
+  z-index: 2;
+  pointer-events: none;
+}
+
 /* 演员卡按所选五视图预览；缺失视图给出明确占位 */
 .element-preview__missing {
   display: flex;
@@ -949,3 +1105,121 @@
   color: var(--text-muted, #6b7f93);
 }
 .element-preview__missing small { font-size: 0.72rem; letter-spacing: 0.04em; }
+
+/* Costume/effect references are review assets: preserve the complete frame in
+   the card, then open a dedicated detail viewer instead of cropping to cover. */
+.element-card--costume,
+.element-card--effect {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.element-preview--panorama {
+  height: auto;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+}
+
+.element-preview__open {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  color: #d9f8ff;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.element-preview__open img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  transition: transform 180ms ease, filter 180ms ease;
+}
+
+.element-preview__open:hover img,
+.element-preview__open:focus-visible img {
+  transform: scale(1.015);
+  filter: brightness(1.06);
+}
+
+.element-preview__open-hint {
+  position: absolute;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  padding: 0.42rem 0.58rem;
+  display: inline-flex;
+  gap: 0.38rem;
+  align-items: center;
+  color: #dffaff;
+  border: 1px solid rgba(118, 237, 255, 0.26);
+  border-radius: 0.45rem;
+  background: rgba(2, 8, 14, 0.78);
+  backdrop-filter: blur(0.5rem);
+  font-size: 0.65rem;
+  pointer-events: none;
+}
+
+.element-preview__open-hint svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--asset-cyan);
+}
+
+.element-preview--panorama .status-badge {
+  z-index: 2;
+  pointer-events: none;
+}
+
+.element-card-summary {
+  min-width: 0;
+  padding: 0.85rem 1rem 0.8rem;
+  border-top: 1px solid rgba(118, 237, 255, 0.1);
+  background: rgba(4, 10, 18, 0.52);
+}
+
+.element-card-summary > div {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.element-card-summary h2 {
+  min-width: 0;
+  color: #f1f7fb;
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.element-card-summary > div > span {
+  flex: 0 0 auto;
+  color: #7c9aae;
+  font-size: 0.68rem;
+}
+
+.element-card-summary p {
+  margin: 0.42rem 0 0;
+  color: #819caf;
+  font-size: 0.73rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.element-card-body--actions-only {
+  padding-top: 0.3rem;
+}
+
+.element-card-body--actions-only .element-actions {
+  flex-wrap: wrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .element-preview__open img,
+  .asset-reference-preview__open img { transition: none; }
+}

@@ -1,7 +1,8 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Boxes, Camera, FileSearch, ImagePlus, LoaderCircle, Pencil, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
+import { ArrowLeft, Boxes, Camera, FileSearch, ImagePlus, LoaderCircle, Maximize2, Pencil, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
 
 import { API_BASE, apiRequest } from '../../api/client';
+import AssetImageViewer, { type AssetImageViewerAsset } from './AssetImageViewer';
 import { findPoster, findViewImage, type ElementFile, type ElementItem, type ElementKind } from './elementTypes';
 import './ElementLibraryPage.css';
 
@@ -21,6 +22,8 @@ interface Props {
   embedded?: boolean;
   taskId?: string;
   onCountChange?: (kind: ElementKind, total: number) => void;
+  regenerateAllToken?: number;
+  onGenerationStateChange?: (generating: boolean) => void;
 }
 
 interface ExtractionResult {
@@ -28,6 +31,18 @@ interface ExtractionResult {
   created: number;
   skipped: number;
   with_image?: number;
+}
+
+interface GenerationJob {
+  id: string;
+  kind: ElementKind;
+  status: 'queued' | 'running' | 'completed' | 'partial' | 'failed';
+  total: number;
+  processed: number;
+  succeeded: number;
+  failed: number;
+  remaining: number;
+  errors: Array<{ element_id: string; name: string; detail: string }>;
 }
 
 interface PendingUpload {
@@ -63,7 +78,15 @@ function actorSlotLabel(slot: string): string {
 }
 
 
-export function ElementLibraryPage({ initialKind, onBack, embedded = false, taskId, onCountChange }: Props) {
+export function ElementLibraryPage({
+  initialKind,
+  onBack,
+  embedded = false,
+  taskId,
+  onCountChange,
+  regenerateAllToken = 0,
+  onGenerationStateChange,
+}: Props) {
   const [kind, setKind] = useState<ElementKind>(initialKind);
   const [items, setItems] = useState<ElementItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -79,6 +102,7 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
   const [uploadSlot, setUploadSlot] = useState(initialKind === 'actor' ? 'front' : 'reference');
   const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
   const [selectedId, setSelectedId] = useState('');
+  const [imageViewerAsset, setImageViewerAsset] = useState<AssetImageViewerAsset | null>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const modelInput = useRef<HTMLInputElement>(null);
   const toolbarImageButton = useRef<HTMLButtonElement>(null);
@@ -90,6 +114,8 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
   const uploadWorkflow = useRef(0);
   const creatingRef = useRef(false);
   const busyRef = useRef('');
+  const generationSequence = useRef(0);
+  const lastRegenerateAllToken = useRef(regenerateAllToken);
 
   const setCreateInFlight = (value: boolean) => {
     creatingRef.current = value;
@@ -163,6 +189,7 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
     setUploadTarget('');
     setPendingUpload(null);
     setSelectedId('');
+    setImageViewerAsset(null);
     setUploadSlot(next === 'actor' ? 'front' : 'reference');
   };
 
@@ -434,6 +461,59 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
     }
   };
 
+  const regenerateAllMissing = async () => {
+    const targetKind = kindRef.current;
+    if (targetKind === 'actor' || creatingRef.current || busyRef.current) return;
+    const label = kindMeta[targetKind].label;
+    const busyKey = 'generate-all';
+    if (!startMutation(busyKey)) return;
+    const sequence = ++generationSequence.current;
+    onGenerationStateChange?.(true);
+    setError('');
+    setNotice(`正在检查${label}资产的缺失参考图…`);
+    try {
+      let job = await apiRequest<GenerationJob>('/api/elements/generation-jobs', {
+        method: 'POST',
+        body: JSON.stringify({ kind: targetKind, task_id: taskId || null }),
+      });
+      while (job.status === 'queued' || job.status === 'running') {
+        if (sequence !== generationSequence.current || targetKind !== kindRef.current) return;
+        setNotice(`正在生成${label}参考图：${job.processed}/${job.total}，剩余 ${job.remaining} 项…`);
+        job = await apiRequest<GenerationJob>(`/api/elements/generation-jobs/${encodeURIComponent(job.id)}`);
+        if (job.status === 'queued' || job.status === 'running') {
+          await new Promise(resolve => window.setTimeout(resolve, 1_200));
+        }
+      }
+      if (sequence !== generationSequence.current || targetKind !== kindRef.current) return;
+      await load(targetKind);
+      if (sequence !== generationSequence.current || targetKind !== kindRef.current) return;
+      if (job.failed > 0) {
+        setError(`${job.succeeded} 项${label}参考图生成成功，${job.failed} 项失败；可再次点击补全失败项。`);
+      } else if (job.total === 0) {
+        setNotice(`${label}资产的参考图已全部完整，无需重复生成。`);
+      } else {
+        setNotice(`${job.succeeded} 项${label}参考图已生成完整。`);
+      }
+    } catch (err) {
+      if (sequence === generationSequence.current && targetKind === kindRef.current) {
+        setError(err instanceof Error ? err.message : `批量生成${label}参考图失败`);
+      }
+    } finally {
+      if (sequence === generationSequence.current) onGenerationStateChange?.(false);
+      finishMutation(busyKey);
+    }
+  };
+
+  useEffect(() => {
+    if (regenerateAllToken === lastRegenerateAllToken.current) return;
+    lastRegenerateAllToken.current = regenerateAllToken;
+    void regenerateAllMissing();
+  }, [regenerateAllToken]); // eslint-disable-line react-hooks/exhaustive-deps -- token deliberately starts one generation run
+
+  useEffect(() => () => {
+    generationSequence.current += 1;
+  }, []);
+
   const renameElement = async (item: ElementItem) => {
     if (creatingRef.current || busyRef.current) return;
     const label = kindMeta[item.kind].label;
@@ -518,10 +598,21 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
     if (!startMutation(busyKey)) return;
     setError('');
     try {
-      await apiRequest(`/api/elements/${item.id}/regenerate`, {
+      const regenerated = await apiRequest<ElementItem | { status: string }>(`/api/elements/${item.id}/regenerate`, {
         method: 'POST',
         body: JSON.stringify({ prompt: `保持 ${item.name} 的身份、状态和视觉锚点，重新生成当前版本` }),
       });
+      if (item.kind === 'actor') {
+        setNotice(`“${item.name}”的五视图重新生成请求已提交。`);
+        return;
+      }
+      const targetKind = kindRef.current;
+      if (targetKind !== item.kind) return;
+      if ('id' in regenerated) {
+        setItems(current => current.map(entry => entry.id === item.id ? regenerated : entry));
+      }
+      await load(targetKind);
+      if (targetKind === kindRef.current) setNotice(`已重新生成“${item.name}”的参考图。`);
     } catch (err) {
       setError(err instanceof Error ? err.message : '重新生成请求失败');
     } finally {
@@ -682,6 +773,17 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
               const poster = findPoster(item);
               if (poster) void deleteReference(item, poster);
             }}
+            onInspectPoster={item => {
+              // 与服装/特效同构：有参考图才提供放大查看入口。
+              const poster = findPoster(item);
+              if (!poster?.url) return;
+              setImageViewerAsset({
+                kind: item.kind,
+                name: item.name,
+                description: item.description || kindMeta[item.kind].hint,
+                imageUrl: `${API_BASE}${poster.url}`,
+              });
+            }}
           />
         </Suspense>
       ) : items.length === 0 ? (
@@ -693,11 +795,40 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
             // five-view slot it names is the image every card shows.
             const previewFile = kind === 'actor' ? findViewImage(item, uploadSlot) : findPoster(item);
             const previewLabel = kind === 'actor' ? `${actorSlotLabel(uploadSlot)}视图` : '参考图';
+            const descriptionText = item.description || kindMeta[kind].hint;
+            // 服装/特效沿用全景卡布局；数字演员保持原卡面，仅叠加放大入口。
+            const panoramaLayout = item.kind === 'costume' || item.kind === 'effect';
+            const imageUrl = previewFile?.url ? `${API_BASE}${previewFile.url}` : '';
+            const openViewerLabel = item.kind === 'costume'
+              ? `查看服装资产“${item.name}”全景图`
+              : item.kind === 'effect'
+                ? `查看特效资产“${item.name}”细节图`
+                : `查看数字演员“${item.name}”的${previewLabel}`;
             return (
-            <article className="element-card" key={item.id}>
-              <div className="element-preview">
+            <article
+              className={`element-card element-card--${item.kind}`}
+              aria-label={`${kindMeta[item.kind].label}资产“${item.name}”`}
+              key={item.id}
+            >
+              <div className={`element-preview${panoramaLayout ? ' element-preview--panorama' : ''}`}>
                 {previewFile?.url
-                  ? <img src={`${API_BASE}${previewFile.url}`} alt={`${item.name} ${previewLabel}`} />
+                  ? (
+                    <button
+                      type="button"
+                      className="element-preview__open"
+                      aria-label={openViewerLabel}
+                      onClick={() => setImageViewerAsset({
+                        kind: item.kind,
+                        name: item.name,
+                        // 数字演员按当前五视图逐图放大，标注正在查看的视图。
+                        description: item.kind === 'actor' ? `${previewLabel} · ${descriptionText}` : descriptionText,
+                        imageUrl,
+                      })}
+                    >
+                      <img src={imageUrl} alt={`${item.name} ${previewLabel}`} />
+                      <span className="element-preview__open-hint"><Maximize2 aria-hidden="true" /> 点击查看全景细节</span>
+                    </button>
+                  )
                   : (
                     <span className="element-preview__missing">
                       <Camera size={34} aria-hidden="true" />
@@ -706,9 +837,19 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
                   )}
                 <span className={`status-badge ${item.status}`}>{item.status === 'ready' ? '已就绪' : '待完善'}</span>
               </div>
-              <div className="element-card-body">
-                <div><h2>{item.name}</h2><span>v{item.version}</span></div>
-                <p>{item.description || kindMeta[kind].hint}</p>
+              {panoramaLayout && (
+                <div className="element-card-summary">
+                  <div><h2>{item.name}</h2><span>v{item.version}</span></div>
+                  <p>{descriptionText}</p>
+                </div>
+              )}
+              <div className={`element-card-body${panoramaLayout ? ' element-card-body--actions-only' : ''}`}>
+                {!panoramaLayout && (
+                  <>
+                    <div><h2>{item.name}</h2><span>v{item.version}</span></div>
+                    <p>{descriptionText}</p>
+                  </>
+                )}
                 {kind === 'actor' && <small>五视图 {item.files.length}/5</small>}
                 <div className="element-actions">
                   <button type="button" onClick={() => beginImageUpload(item.id)} disabled={creating || Boolean(busy)}><Upload size={14} /> 添加上传</button>
@@ -753,6 +894,9 @@ export function ElementLibraryPage({ initialKind, onBack, embedded = false, task
             );
           })}
         </div>
+      )}
+      {imageViewerAsset && (
+        <AssetImageViewer asset={imageViewerAsset} onClose={() => setImageViewerAsset(null)} />
       )}
     </Root>
   );
