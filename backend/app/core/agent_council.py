@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+from functools import lru_cache
 from pathlib import Path
-from typing import Final
+from typing import Final, Sequence
 
 from app.schema.agent_council import (
     ALL_AGENT_ROLES,
+    POST_WRITER_ROLES,
     AgentBlueprint,
     AgentHandoff,
     AgentRole,
@@ -126,31 +129,38 @@ _ROLE_GATES: Final[dict[AgentRole, tuple[str, ...]]] = {
         "每个角色/状态独立交付严格五视图，顺序不得改变且通过完整性检查。",
         "脸、发际线、体型、服装层次、配饰、伤痕与标志道具可量化且可复用。",
         "角色之间在脸型、发型、服装主色和声纹上可区分。",
+        "五视图负面词只取通用/面部/手部肢体/身份造型/服化道/材质模块，不发时序词，不盲目堆叠。",
     ),
     AgentRole.STORYBOARD_ARTIST: (
         "每页为严格3×3九宫格，逐格包含角色、场景、道具、特效与完整镜头字段。",
         "每镜只推进一个动作/信息/情绪节拍，并承接上一镜首尾状态。",
         "轴线、视线、左右站位、光向、道具归属和声音桥连续；动作戏拆成出招/受击/环境反馈。",
+        "九宫格负面词只取通用/面部/手部肢体/身份造型/多人群演/场景光影/镜头语言/表演模块，静图不发时序词，不盲目堆叠。",
     ),
     AgentRole.VISUAL_DIRECTOR: (
         "分镜图提示词与运镜提示词来自同一 ShotMotionContract，指纹一致。",
         "首尾帧、多图/宫格、多模态模式由素材与供应商能力自动选择，缺失能力必须失败关闭。",
         "负面词按人物/手部/多人/场景/材质/时序/题材模块选择，不盲目堆叠。",
+        "图像侧与视频侧分别编译负面词，只有视频侧发时序连续性模块，机位约束沿用上游镜头契约不重复压制。",
     ),
     AgentRole.AUDIO_DIRECTOR: (
         "同一角色固定 voice_id/声纹；逐句记录语速、情绪、停顿、重音、呼吸与时长。",
         "对白、环境、动作、情绪、Foley、BGM 均在同一时间轴，撞击音效帧级对齐。",
         "ElevenLabs 密钥仅从服务端环境读取；SFX 使用 /v1/sound-generation，音乐与配音使用各自端点。",
+        "语音与音乐接口没有负面词通道，排除项必须写进正向提示词：BGM 只出器乐并为对白留声位，环境音效不含音乐与人声；"
+        "本角色的负面词只保留时序与表演两个模块，用于核验口型时序与念白表演，不得把画面负面词发给音频模型。",
     ),
     AgentRole.COMPOSER_PUBLISHER: (
         "音画、字幕、口型、镜头契约与转场连续性全部通过，未验收素材不得发布。",
         "输出分辨率/帧率/编码/字幕安全区按目标平台统一，不混用互斥基准。",
         "保留提示词、模型、seed、素材授权、版本、问题与审批记录，支持单镜重做。",
+        "为每个入选镜头归档其负面词模块台账并逐条核对，缺记录即判归档不完整；成片只核验通用画质/时序/文字水印三项，不盲目堆叠。",
     ),
     AgentRole.PR_AGENT: (
         "宣传素材只能取自正片真实高光，不得夸大或诱导。",
         "每个平台独立交付封面、标题、预告、简介、标签、AI标识与版权说明。",
         "用3秒留存、完播、下一集点击、转化、分享和ROI做A/B闭环。",
+        "宣发当前不生成画面，负面词只保留身份造型与文字水印两项用于物料核验；新增封面或预告生成前不得扩用画面负面词。",
     ),
 }
 
@@ -228,9 +238,13 @@ CAPABILITIES: Final[tuple[CapabilityRecord, ...]] = (
     _cap("visual_style", "画质、载体、色彩、光影与材质风格", (_C.VISUAL_DIRECTOR, _C.EXECUTIVE_DIRECTOR),
          ("画质风格类型总结.md", "AI短剧与漫剧导演级拍摄分镜完全指南.md"),
          "按题材/载体选择唯一视觉基线并锁定色板、LUT、主光、镜头质感和材质。", "validate_visual_contract", ("style_palette_lighting_lock",)),
-    _cap("negative_prompt_router", "模块化负面提示词", (_C.VISUAL_DIRECTOR,),
+    # 编剧之后的六个角色共同持有：出图出视频的角色负责编译执行，
+    # 音频/合成/宣发角色负责按同一模块清单做核验与归档，口径不分叉。
+    _cap("negative_prompt_router", "模块化负面提示词", POST_WRITER_ROLES,
          ("AI影视剧负面提示词.md", "短剧情绪与面部表情提示词库.md"),
-         "按任务与题材选择通用/脸/手/多人/服装/场景/材质/时序/表演模块，保留优先级。", "validate_visual_contract", ("negative_prompt_plan",)),
+         "按本角色实际产出形态从通用/脸/手/多人/服装/场景/镜头/材质/时序/表演/题材模块中筛选并保留优先级；"
+         "调用图像与视频模型的角色负责把选中模块编译进提示词，不调用生成模型的角色只按同一清单核验与归档，"
+         "任何角色都不得把全量词表一次性堆满。", "validate_visual_contract", ("negative_prompt_plan",)),
     _cap("reference_generation", "多图、首尾帧与多模态视频路由", (_C.VISUAL_DIRECTOR, _C.STORYBOARD_ARTIST),
          ("AI短剧五视图解决人物一致性提示词模板.md", "AI短剧连续性设计指南.md", "SKILL.md"),
          "根据硬结尾、连续图片、动作视频、音频节奏和供应商能力自动选择模式；不静默丢参考。", "validate_video_route_contract", ("video_route_plans", "reference_binding_plan")),
@@ -305,11 +319,137 @@ def _delivery_profile(platform: str) -> DeliveryProfile:
     )
 
 
-def _negative_modules(request: CouncilCompileRequest) -> list[str]:
-    modules = [
+# 负面词模块词表：id 对照《AI影视剧负面提示词.md》的章节，
+# negative_prompt_router 的可执行策略(通用/脸/手/多人/服装/场景/材质/时序/表演/题材)逐项落到这里。
+NEGATIVE_MODULE_LABELS: Final[dict[str, str]] = {
+    "common_quality": "通用画质(一)",
+    "face_anatomy": "面部结构(二·1)",
+    "hands_body": "手部与肢体(二·2/3)",
+    "identity_outfit": "身份与造型一致性(二·4/四)",
+    "multi_person_crowd": "双人多人群演(三)",
+    "costume_hair_props": "服装发型饰品道具(四)",
+    "scene_layout_lighting": "场景美术与光影(五/七)",
+    "camera_language": "镜头语言与摄影(六)",
+    "material_texture": "质感与材质(八)",
+    "temporal_continuity": "文生视频时序连续性(九)",
+    "performance_acting": "剧情演绎与表演(十)",
+    "text_watermark": "文字水印logo(一·关键压制项)",
+    "period_costume_architecture": "古装历史仙侠补充(十一)",
+    "suspense_horror_visibility": "悬疑惊悚犯罪补充(十三)",
+    "scifi_material_ui": "科幻赛博未来补充(十四)",
+    "action_physics": "战争动作打斗补充(十五)",
+    "weapon_contact": "兵器接触受力(十五)",
+    "crowd_limb_separation": "群戏肢体粘连分离(三/十五)",
+}
+
+# 模块 → 可直接拼进生成提示词的负面词串。词条从《AI影视剧负面提示词.md》对应章节精选，
+# 每模块只保留压制力最强的少数词(知识源 §17.3 关键压制项优先级)；多模块叠加后仍要能
+# 活过 Agnes 网关的截断预算——绝不整章搬运(知识源使用原则 1「不要一次性把负面词堆满」)。
+NEGATIVE_MODULE_WORDS: Final[dict[str, str]] = {
+    "common_quality": "worst quality, blurry, bad anatomy, deformed",                      # §一
+    "face_anatomy": "deformed face, asymmetrical face, dead eyes",                         # §二·1
+    "hands_body": "bad hands, extra fingers, fused fingers, extra limbs",                  # §二·2/3
+    "identity_outfit": "identity drift, face drift, changing outfit, clone face",          # §二·4/§九
+    "multi_person_crowd": "duplicate people, merged bodies, tangled limbs",                # §三
+    "costume_hair_props": "costume flicker, hair clipping, prop flicker, floating weapon", # §四
+    "scene_layout_lighting": "warped background, inconsistent lighting direction, flat lighting",  # §五/§七
+    "camera_language": "broken shot continuity, wrong eyeline match, random zoom",         # §六
+    "material_texture": "plastic skin, waxy skin, CGI look, 3d render",                    # §八
+    "temporal_continuity": "frame flicker, temporal inconsistency, character drift, sliding feet",  # §九
+    "performance_acting": "overacting, stiff acting, broken lip sync, expression drift",   # §十
+    "text_watermark": "text, subtitles, watermark, logo",                                  # §一·关键压制项
+    "period_costume_architecture": "modern hairstyle, zipper, modern props, cosplay look", # §十一
+    "suspense_horror_visibility": "muddy darkness, unreadable shadows, cheesy blood",      # §十三
+    "scifi_material_ui": "cheap sci-fi, fake hologram, floating meaningless interface",    # §十四
+    "action_physics": "frozen action, no-impact fight, foot sliding, floating debris",     # §十五
+    "weapon_contact": "soft weapon, rubber weapon, melted weapon, incorrect grip",         # §十五
+    "crowd_limb_separation": "body clipping, intersecting limbs, fused characters",        # §三/§十五
+}
+
+
+def compile_negative_prompt(modules: list[str], *, budget: int = 420) -> str:
+    """把角色配药单编译成可拼进生成提示词的负面词串，形如 ``(避免：a, b, c)``。
+
+    词条按模块顺序展开并跨模块去重；超出预算时按整模块丢弃(不截半个词条)，
+    宁可少压一个模块也不给模型半句负面词。空配药单返回空串，调用方零成本拼接。
+    括号包裹与既有 SHEET_LOCK_NEGATIVE 等常量同构，Agnes 网关的负面块清洗按同一规则处理。
+    """
+    seen: set[str] = set()
+    words: list[str] = []
+    length = 0
+    for module in modules:
+        chunk = NEGATIVE_MODULE_WORDS.get(module, "")
+        if not chunk:
+            continue
+        fresh = [w.strip() for w in chunk.split(",") if w.strip() and w.strip() not in seen]
+        if not fresh:
+            continue
+        added = sum(len(w) + 2 for w in fresh)
+        if length + added > budget:
+            continue
+        seen.update(fresh)
+        words.extend(fresh)
+        length += added
+    if not words:
+        return ""
+    return "(避免：" + ", ".join(words) + ")"
+
+
+_NEGATIVE_BASE_MODULES: Final[tuple[str, ...]] = (
+    "common_quality", "face_anatomy", "hands_body", "identity_outfit",
+    "multi_person_crowd", "costume_hair_props", "scene_layout_lighting",
+    "camera_language", "material_texture", "temporal_continuity",
+    "performance_acting", "text_watermark",
+)
+
+# 每个下游角色按自己真正调用的生成接口筛模块，不是复制全量词表。
+# 依据：知识源 §17.2「不同任务的推荐组合」与各角色在流水线里的实际产出形态。
+_ROLE_NEGATIVE_MODULES: Final[dict[AgentRole, tuple[str, ...]]] = {
+    # 五视图是静态设定图、全片身份锚点：压五官漂移/手部崩塌/服装走样/配色不稳，不发时序词。
+    AgentRole.CHARACTER_DESIGNER: (
         "common_quality", "face_anatomy", "hands_body", "identity_outfit",
-        "scene_layout_lighting", "temporal_continuity", "text_watermark",
-    ]
+        "costume_hair_props", "material_texture", "text_watermark",
+    ),
+    # 九宫格同样是静图，但要处理群像、机位与场景圣经，仍不发时序词。
+    AgentRole.STORYBOARD_ARTIST: (
+        "common_quality", "face_anatomy", "hands_body", "identity_outfit",
+        "multi_person_crowd", "scene_layout_lighting", "camera_language",
+        "performance_acting", "text_watermark",
+    ),
+    # 唯一同时出图与出视频的角色，时序连续性必发；机位由上游 ShotMotionContract 锁定，
+    # 本阶段不再重复压制镜头语言。
+    AgentRole.VISUAL_DIRECTOR: (
+        "common_quality", "face_anatomy", "hands_body", "identity_outfit",
+        "multi_person_crowd", "costume_hair_props", "scene_layout_lighting",
+        "material_texture", "temporal_continuity", "performance_acting", "text_watermark",
+    ),
+    # TTS/音乐/音效接口只接受一个正向字符串，没有负面词通道：
+    # 音频总监只保留与口型时序、念白表演真正相关的两项，作为核验口径而非画面约束。
+    AgentRole.AUDIO_DIRECTOR: ("temporal_continuity", "performance_acting"),
+    # 合成发布不调用任何生成模型：这三项是它在母版与转场上的核验与归档口径。
+    AgentRole.COMPOSER_PUBLISHER: ("common_quality", "temporal_continuity", "text_watermark"),
+    # 宣发当前不产出画面，只在封面与物料描述上沿用同一身份与错字水印边界。
+    AgentRole.PR_AGENT: ("identity_outfit", "text_watermark"),
+}
+
+# 题材与高动作追加项只发给真正能对画面动手的角色。
+_ROLE_GENRE_NEGATIVE_MODULES: Final[dict[str, tuple[AgentRole, ...]]] = {
+    "period_costume_architecture": (
+        AgentRole.CHARACTER_DESIGNER, AgentRole.STORYBOARD_ARTIST, AgentRole.VISUAL_DIRECTOR,
+    ),
+    "suspense_horror_visibility": (AgentRole.STORYBOARD_ARTIST, AgentRole.VISUAL_DIRECTOR),
+    "scifi_material_ui": (
+        AgentRole.CHARACTER_DESIGNER, AgentRole.STORYBOARD_ARTIST, AgentRole.VISUAL_DIRECTOR,
+    ),
+    "action_physics": (AgentRole.STORYBOARD_ARTIST, AgentRole.VISUAL_DIRECTOR),
+    "weapon_contact": (AgentRole.STORYBOARD_ARTIST, AgentRole.VISUAL_DIRECTOR),
+    "crowd_limb_separation": (AgentRole.STORYBOARD_ARTIST, AgentRole.VISUAL_DIRECTOR),
+}
+
+
+def _negative_modules(request: CouncilCompileRequest) -> list[str]:
+    """全局词表：本次项目允许使用的负面词模块全集(扁平清单，兼容既有调用方)。"""
+    modules = list(_NEGATIVE_BASE_MODULES)
     genre = request.genre.lower()
     if any(word in genre for word in ("古", "宫", "武侠", "仙侠", "period", "wuxia", "xianxia")):
         modules.append("period_costume_architecture")
@@ -320,6 +460,22 @@ def _negative_modules(request: CouncilCompileRequest) -> list[str]:
     if request.action_intensity == "high":
         modules.extend(["action_physics", "weapon_contact", "crowd_limb_separation"])
     return modules
+
+
+def _negative_modules_by_role(catalog: list[str]) -> dict[AgentRole, list[str]]:
+    """把全局词表按角色职责筛成配药单，编剧之后的六个角色各一份。"""
+    available = set(catalog)
+    by_role: dict[AgentRole, list[str]] = {}
+    for role in POST_WRITER_ROLES:
+        selected = [module for module in _ROLE_NEGATIVE_MODULES[role] if module in available]
+        selected.extend(
+            module for module in catalog
+            if module in _ROLE_GENRE_NEGATIVE_MODULES
+            and role in _ROLE_GENRE_NEGATIVE_MODULES[module]
+            and module not in selected
+        )
+        by_role[role] = selected
+    return by_role
 
 
 def _source_records() -> list[KnowledgeSourceRecord]:
@@ -355,12 +511,23 @@ def _role_prompt(
     request: CouncilCompileRequest,
     delivery: DeliveryProfile,
     constitution: ProductionConstitution,
+    negative_modules: list[str] | None = None,
 ) -> str:
     name_zh, name_en = _ROLE_NAMES[role]
     capabilities = _role_capabilities(role)
     policies = "\n".join(f"- [{item.id}] {item.executable_policy}" for item in capabilities)
     outputs = "、".join(_ROLE_OUTPUTS[role])
     gates = "\n".join(f"- {gate}" for gate in _ROLE_GATES[role])
+    # 只有编剧之后的角色带负面词小节；总导演与编剧的提示词保持原样。
+    negative_section = ""
+    if negative_modules:
+        rendered = "\n".join(
+            f"- {module}（{NEGATIVE_MODULE_LABELS.get(module, module)}）" for module in negative_modules
+        )
+        negative_section = (
+            f"本角色负面提示词模块（来自《AI影视剧负面提示词.md》，按本角色产出形态筛选而成，"
+            f"不得再自行扩用未列出的模块，也不得一次性堆满全部词条）：\n{rendered}\n"
+        )
     return (
         f"Role: {name_zh} ({name_en})\n"
         f"项目：《{request.title}》；题材={request.genre}；受众={request.audience}；平台={request.platform}；"
@@ -375,6 +542,7 @@ def _role_prompt(
         "执行 S/A/B/C 问题分级门禁。\n"
         f"本角色可执行能力：\n{policies}\n"
         f"必须交付的结构化 artifact_id：{outputs}。\n"
+        + negative_section +
         f"本阶段验收：\n{gates}\n"
         "输出必须显式列出输入来源、假设、结构化交付物、未解决风险、交接对象和验收结论；"
         "缺少关键输入时标记 BLOCKED，不得伪造已生成、已授权或已验收。"
@@ -455,6 +623,9 @@ class AgentCouncilCompiler:
             shot_duration_seconds=(1.5, 4.0) if vertical else (3.0, 6.0),
         )
         source_records = _source_records()
+        # 先算全局词表，再按角色筛配药单，"分档 ⊆ 全局"在构造时天然成立。
+        negative_catalog = _negative_modules(request)
+        negative_by_role = _negative_modules_by_role(negative_catalog)
         agents: list[AgentBlueprint] = []
         previous_outputs: list[str] = ["creator_brief", "premise", "platform_constraints"]
         for stage, role in enumerate(ALL_AGENT_ROLES, start=1):
@@ -472,7 +643,9 @@ class AgentCouncilCompiler:
                 required_outputs=outputs,
                 quality_gates=list(_ROLE_GATES[role]),
                 handoff_to=([ALL_AGENT_ROLES[stage]] if stage < len(ALL_AGENT_ROLES) else [AgentRole.EXECUTIVE_DIRECTOR]),
-                system_prompt=_role_prompt(role, request, delivery, constitution),
+                system_prompt=_role_prompt(
+                    role, request, delivery, constitution, negative_by_role.get(role),
+                ),
             ))
             previous_outputs = outputs
 
@@ -485,7 +658,8 @@ class AgentCouncilCompiler:
             request=request,
             delivery=delivery,
             constitution=constitution,
-            negative_prompt_modules=_negative_modules(request),
+            negative_prompt_modules=negative_catalog,
+            negative_prompt_by_role=negative_by_role,
             agents=agents,
             handoffs=_handoffs(),
             source_records=source_records,

@@ -3,7 +3,7 @@ import logging
 import os
 import random
 import re
-from typing import Dict
+from typing import Dict, Optional
 
 from app.platform.runtime_models import runtime_model_registry
 from app.platform.runtime_skills import runtime_skill_registry
@@ -366,7 +366,7 @@ class ModelGateway:
             return "deepseek"
         return default
 
-    def _http_chat(self, api_key: str, base_url: str, api_model: str, system_prompt: str, user_content: str, timeout: int = 180):
+    def _http_chat(self, api_key: str, base_url: str, api_model: str, system_prompt: str, user_content: str, timeout: int = 180, max_tokens: Optional[int] = None):
         """底层 OpenAI 兼容 /chat/completions 调用，成功返回文本，失败返回 None"""
         if self._is_host_broken(base_url):
             return None
@@ -382,7 +382,8 @@ class ModelGateway:
                 "temperature": 0.7,
                 # 约束最大输出，避免模型(如 deepseek-v4-pro)在超长剧本上失控生成、
                 # 连接被字节间慢吐拖垮 (曾观测到单次调用挂起 15 分钟后 "Response ended prematurely")。
-                "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "8000")),
+                # 调用方可以按批次上调这个预算：长剧本靠分批调用扩容，而不是靠单次超长输出。
+                "max_tokens": int(max_tokens or os.getenv("LLM_MAX_TOKENS", "8000")),
             }
             url = base_url.rstrip('/') + "/chat/completions"
             # 部分端点(如本网络位置的火山 Ark / DeepSeek)会在 TLS 握手阶段被定向 RST(SSL UNEXPECTED_EOF)。
@@ -859,7 +860,7 @@ class ModelGateway:
         t = re.sub(r'^\s*(?:-{3,}|={3,})\s*', '', t).lstrip()
         return t or text
 
-    def call_llm(self, model: str, system_prompt: str, user_prompt: str, creative_title: str, director_style: str = "cyberpunk", shot_style: str = "cinematic", user_instruction: str = "") -> str:
+    def call_llm(self, model: str, system_prompt: str, user_prompt: str, creative_title: str, director_style: str = "cyberpunk", shot_style: str = "cinematic", user_instruction: str = "", max_tokens: Optional[int] = None) -> str:
         """
         调用大语言模型 (在线或离线动态智能故事生成算法)
         基于配置的导演风格与运镜风格，动态组合 36运镜、8种站位和 16种环境构图
@@ -890,6 +891,7 @@ class ModelGateway:
                 model,
                 system_prompt,
                 full_user_content,
+                max_tokens=max_tokens,
             )
             if text:
                 logger.info(
@@ -914,7 +916,7 @@ class ModelGateway:
                 continue
             if not self._is_valid_key(key):
                 continue
-            text = self._http_chat(key, b_url, api_model, system_prompt, full_user_content)
+            text = self._http_chat(key, b_url, api_model, system_prompt, full_user_content, max_tokens=max_tokens)
             if text:
                 text = self._strip_model_preamble(text)
                 logger.info(f"[ModelGateway] 文本生成成功 (provider={name}, model={api_model})")
@@ -1334,7 +1336,7 @@ class ModelGateway:
 
     def generate_character_sheet(self, model: str, name: str, char_desc: str,
                                  dir_style: str = "cyberpunk", genre: str = "general",
-                                 ref_images: list = None) -> str:
+                                 ref_images: list = None, extra_negative: str = "") -> str:
         """
         生成角色五视图设定图(角色视觉锚点，解决跨镜头人物一致性)。
         方法论遵循项目五视图人物设定板规范：人物设定卡 → 比例统一 → 结构先定 → 细节后补，
@@ -1360,10 +1362,13 @@ class ModelGateway:
         # 此处只给图像模型干净可执行的画面描述。
         era_clause = f" The character must wear period-accurate costume — {era_costume}." if era_costume else ""
         from app.core.storyboard_quality import build_five_view_prompt
+        # extra_negative：角色设计师配药单编译出的模块化负面词(agent_council.compile_negative_prompt)，
+        # 拼在五视图问题负面串之后；空串零成本。
         prompt = (
             build_five_view_prompt(name, f"{char_desc}.{era_clause}", style_word)
             + " photorealistic, live-action, cinematic, highly detailed, sharp focus, 35mm film. "
             + self.SHEET_PROBLEM_NEGATIVE
+            + (extra_negative or "")
         )
         url, _ = self.generate_image(
             model,
@@ -1439,6 +1444,15 @@ class ModelGateway:
     CONTINUITY_CARRY = (
         "directly continues from the final frame of the previous shot, matching action and screen direction, "
         "承接上一镜最后一帧、动作与站位无缝衔接"
+    )
+
+    # 复制人防治：多角色同框时模型常把主角复刻成外形一致的"分身"站在旁边。
+    # 该约束来自分镜提示词技能 (skills/shot-design-master) 的收尾串。
+    CLONE_NEGATIVE = (
+        "，视频全程禁止出现外形、着装、配饰完全一致的人物，禁止生成同款分身、双胞胎效果，"
+        "同一画面中仅保留单个对应人物，不出现人物重复复刻 "
+        "(no duplicated character, no twin, no clone, no repeated identical person, "
+        "single instance per character)"
     )
 
     # 情绪与面部表情：正向微表情已由分镜文本承载，此处补防崩坏负面 (短剧情绪与面部表情提示词库.md §1/§8)

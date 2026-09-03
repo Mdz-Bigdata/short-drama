@@ -20,6 +20,9 @@ class AgentRole(str, Enum):
 
 
 ALL_AGENT_ROLES: tuple[AgentRole, ...] = tuple(AgentRole)
+# 负面提示词的作用域：编剧之后的全部角色 (stage 3-8)。
+# 总导演与编剧只产出文本，画面/成片层的负面词不进入它们的契约。
+POST_WRITER_ROLES: tuple[AgentRole, ...] = ALL_AGENT_ROLES[2:]
 CORE_SCORE_DIMENSIONS: tuple[str, ...] = (
     "story", "character", "continuity", "storyboard",
     "visual", "audio", "delivery", "compliance",
@@ -39,7 +42,7 @@ class CouncilCompileRequest(BaseModel):
         "douyin", "kuaishou", "wechat_channels", "bilibili", "tiktok", "reelshort", "other"
     ] = "douyin"
     format: Literal["live_action", "animation", "motion_comic", "hybrid"] = "live_action"
-    episode_count: Annotated[int, Field(ge=1, le=120)] = 3
+    episode_count: Annotated[int, Field(ge=1, le=150)] = 3
     episode_duration_seconds: Annotated[int, Field(ge=15, le=900)] = 90
     output_language: Annotated[str, Field(min_length=2, max_length=40)] = "zh-CN"
     visual_style: Annotated[str, Field(min_length=1, max_length=2000)] = "写实电影感"
@@ -128,7 +131,13 @@ class CouncilPlan(BaseModel):
     request: CouncilCompileRequest
     delivery: DeliveryProfile
     constitution: ProductionConstitution
+    # 全局词表：本项目允许使用的负面词模块全集，老调用方按扁平清单消费。
     negative_prompt_modules: list[str]
+    # 配药单：编剧之后每个角色按自己的产出形态从词表中筛出的子集。
+    # 键用 AgentRole 而非 str，输入侧写错角色名直接校验失败；
+    # model_dump(mode="json") 会把键序列化成 "character_designer" 这类字符串，
+    # 因此 drama_service 可以直接按 role.value 查表。
+    negative_prompt_by_role: dict[AgentRole, list[str]]
     agents: Annotated[list[AgentBlueprint], Field(min_length=8, max_length=8)]
     handoffs: Annotated[list[AgentHandoff], Field(min_length=7)]
     source_records: Annotated[list[KnowledgeSourceRecord], Field(min_length=1)]
@@ -144,6 +153,29 @@ class CouncilPlan(BaseModel):
             raise ValueError("every supplied knowledge source must map to executable capabilities")
         if not bool(self.coverage.get("all_capabilities_owned")):
             raise ValueError("every capability must have at least one owning agent")
+
+        # 负面词必须覆盖编剧之后的每一个角色，缺一个即视为漏配。
+        missing = [role.value for role in POST_WRITER_ROLES if not self.negative_prompt_by_role.get(role)]
+        if missing:
+            raise ValueError(f"negative prompt modules must cover every post-writer role: {missing}")
+        # 负面词是画面/成片层约束，不得污染总导演与编剧的文本阶段。
+        upstream = sorted(
+            role.value for role in (AgentRole.EXECUTIVE_DIRECTOR, AgentRole.WRITER)
+            if role in self.negative_prompt_by_role
+        )
+        if upstream:
+            raise ValueError(f"negative prompt modules must not be routed to pre-production roles: {upstream}")
+        # 配药单只能从词表里筛，不得凭空造词。
+        catalog = set(self.negative_prompt_modules)
+        unknown = sorted({m for mods in self.negative_prompt_by_role.values() for m in mods} - catalog)
+        if unknown:
+            raise ValueError(f"role-scoped negative modules must come from the global catalog: {unknown}")
+        # 知识源第一条使用原则：不要一次性把所有负面词堆满，应按场景筛选。
+        piled = sorted(
+            role.value for role, mods in self.negative_prompt_by_role.items() if set(mods) == catalog
+        )
+        if piled:
+            raise ValueError(f"role-scoped negative modules must be filtered, not the full catalog: {piled}")
         return self
 
 
