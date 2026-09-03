@@ -151,6 +151,70 @@ class VideoRouteRequest(BaseModel):
     intent: VideoGenerationIntent = Field(default_factory=VideoGenerationIntent)
 
 
+# 每个分镜都必须能被所选视频模型**一次**生成出来，所以镜头时长上限由模型决定。
+# 这张表按「版本」而不是按「族」解析：seedance2.0 与 seedance2.5 同属 seedance 族，
+# 单次生成上限却是 15s 与 30s，VIDEO_PROVIDER_PROFILES 的族粒度区分不了它们。
+# 未登记的模型走保守默认值——切得偏碎只是多几个镜头，切得偏长会让生成请求直接失败。
+DEFAULT_MAX_SHOT_SECONDS = 10
+# H3VideoRequest declares duration_seconds ge=4 (schema/production.py), and
+# providers/capabilities.py records min_duration_seconds=4 for minimax_h3, so a
+# shorter shot would be rejected at submission. 4s is the strictest known floor.
+MIN_SHOT_SECONDS = 4
+VIDEO_MODEL_MAX_SHOT_SECONDS: tuple[tuple[str, int], ...] = (
+    # Seedance：2.5 起支持 30s，2.x 之前维持 15s。
+    ("seedance2.5", 30),
+    ("seedance-2.5", 30),
+    ("seedance2.0", 15),
+    ("seedance-2.0", 15),
+    ("seedance2", 15),
+    ("seedance", 15),
+    # MiniMax H3 / 海螺系：与 providers/capabilities.py 的 max_duration_seconds 保持一致。
+    ("minimax-h3", 15),
+    ("minimax h3", 15),
+    ("hailuo", 15),
+    ("h3", 15),
+)
+
+
+def _normalize_model_token(value: str) -> str:
+    return re.sub(r"[\s_.]+", "-", (value or "").strip().lower())
+
+
+def max_shot_seconds(model: str) -> int:
+    """Longest single clip the selected video model can generate, in seconds.
+
+    Matched longest-alias-first on the normalized id so ``seedance2.5`` resolves to
+    its own 30s entry instead of the generic 15s ``seedance`` one.
+    """
+    normalized = _normalize_model_token(model)
+    if not normalized:
+        return DEFAULT_MAX_SHOT_SECONDS
+    ranked = sorted(
+        VIDEO_MODEL_MAX_SHOT_SECONDS,
+        key=lambda item: len(_normalize_model_token(item[0])),
+        reverse=True,
+    )
+    for alias, seconds in ranked:
+        if _normalize_model_token(alias) in normalized:
+            return seconds
+    return DEFAULT_MAX_SHOT_SECONDS
+
+
+def split_shot_seconds(duration_seconds: int, model: str) -> list[int]:
+    """Cut one over-long shot into clips the model can actually render.
+
+    Returns the per-clip seconds, preserving the original total so an episode's
+    runtime never changes just because the shot had to be divided.
+    """
+    cap = max_shot_seconds(model)
+    total = max(0, int(duration_seconds or 0))
+    if total <= cap:
+        return [total] if total else []
+    parts = -(-total // cap)  # ceil
+    base, remainder = divmod(total, parts)
+    return [base + (1 if index < remainder else 0) for index in range(parts)]
+
+
 def _unique(values: list[str] | None, limit: int) -> list[str]:
     return list(dict.fromkeys(value for value in (values or []) if value))[:limit]
 

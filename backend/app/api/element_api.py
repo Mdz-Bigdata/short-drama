@@ -1,29 +1,47 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
+import io
 import json
 import logging
 import os
 import shutil
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
+from PIL import Image, UnidentifiedImageError
 from starlette.concurrency import run_in_threadpool
 
 from app.api.auth_api import get_current_user
 from app.core.media_compositor import MEDIA_DIR
+from app.core.model_gateway import ModelGateway
+from app.core.storyboard_assets import MAX_REMOTE_IMAGE_BYTES, fetch_remote_image_bytes
 from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore, StorageMutationCommittedWithError
 from app.platform.uploads import UploadValidationError, inspect_glb_upload, validate_image_upload
-from app.schema.platform import ElementCreateRequest, ElementKind, ElementUpdateRequest, RegenerateElementRequest
+from app.repository.task_repo import TaskRepository, TaskStoreUnavailableError
+from app.schema.platform import (
+    BulkRegenerateElementsRequest,
+    ElementCreateRequest,
+    ElementKind,
+    ElementUpdateRequest,
+    RegenerateElementRequest,
+)
 
 
 router = APIRouter(prefix="/api/elements", tags=["演员道具场景特效元素库"])
 logger = logging.getLogger(__name__)
+element_image_gateway = ModelGateway()
+element_task_repository = TaskRepository()
+
+_NON_ACTOR_KINDS = {"scene", "prop", "costume", "effect"}
+_generation_jobs: dict[str, dict[str, object]] = {}
 
 
 def _private_image_storage_root() -> Path:
@@ -62,6 +80,113 @@ ELEMENT_STORAGE_MIN_FREE_BYTES = _integer_setting(
 ELEMENT_STORAGE_MAX_USED_PERCENT = _integer_setting(
     "ELEMENT_STORAGE_MAX_USED_PERCENT", 98, minimum=80, maximum=99
 )
+ELEMENT_IMAGE_GENERATION_CONCURRENCY = _integer_setting(
+    "ELEMENT_IMAGE_GENERATION_CONCURRENCY", 3, minimum=1, maximum=4
+)
+
+
+_GENERATION_KIND_PROMPTS = {
+    "scene": (
+        "生成一张影视拍摄场景参考图。完整展现空间结构、出入口、地面、墙体、纵深、主要光源和"
+        "剧本指定的时段天气，采用可实际搭建和拍摄的写实电影美术设计。画面是单一宽幅场景定妆照，"
+        "不出现抢眼人物，不做拼贴，不裁断关键建筑。"
+    ),
+    "prop": (
+        "生成一张影视道具定妆参考图。只展示一个完整、可制作的核心道具及其剧本状态，清楚呈现"
+        "比例、轮廓、材质、颜色、磨损和关键结构，三分之四视角，简洁中性背景，不出现手和人物，"
+        "不做拼贴，不裁断物体。"
+    ),
+    "costume": (
+        "生成一张影视服装造型参考图。画面主体只能是悬空陈列的中空立体服装，以隐形支撑塑造"
+        "真实穿着体积与自然垂坠；无人物、无模特、无人体模型、无人台、无头部、无脸、无皮肤、"
+        "无手脚。完整呈现领口、上装、下装、袖口、下摆、鞋履、材质、纹样、配饰及剧情状态，"
+        "正面三分之四全身视角，中性影棚背景，不做拼贴，不裁断服装。"
+    ),
+    "effect": (
+        "生成一张影视视觉特效定帧参考图，画面唯一视觉主体必须是特效现象本身，不是道具，"
+        "不是场景，也不是普通环境空镜。准确表现剧本指定特效的形态、尺度、颜色、能量层次、"
+        "粒子或流体结构、运动方向、触发点、扩散边界及光影交互；仅保留判断尺度所需的极少中性"
+        "环境参照，写实可合成，无人物，无独立陈列物品，单一完整画面，不做拼贴。"
+    ),
+}
+
+
+def _element_metadata(item) -> dict:
+    return item.metadata_json if isinstance(item.metadata_json, dict) else {}
+
+
+async def _element_generation_context(item, owner_id: str) -> tuple[str, str]:
+    """Resolve the project's selected image model and style without trusting foreign task ids."""
+    task_id = str(_element_metadata(item).get("task_id") or "").strip()
+    if not task_id:
+        return "", ""
+    try:
+        task = await run_in_threadpool(element_task_repository.get_task, task_id)
+    except TaskStoreUnavailableError:
+        logger.warning("资产参考图生成时任务库不可用，改用默认图像模型", extra={"task_id": task_id})
+        return "", ""
+    if not task or str(task.get("owner_user_id") or "") != owner_id:
+        return "", ""
+    config = task.get("config") if isinstance(task.get("config"), dict) else {}
+    style_parts = [
+        str(config.get("director_style") or "").strip(),
+        str(config.get("shot_style") or "").strip(),
+        str(config.get("genre") or "").strip(),
+    ]
+    return str(config.get("image_model") or "").strip(), "，".join(part for part in style_parts if part)
+
+
+def _element_reference_prompt(item, extra_prompt: str, project_style: str) -> str:
+    kind_instruction = _GENERATION_KIND_PROMPTS.get(str(item.kind), "")
+    prompt = (
+        f"{kind_instruction}\n"
+        f"资产名称：{str(item.name).strip()}\n"
+        f"剧本依据：{str(item.description or '').strip() or '按资产名称建立清晰、完整、可复用的影视参考设计'}\n"
+    )
+    if project_style:
+        prompt += f"项目视觉基准：{project_style}\n"
+    if extra_prompt.strip():
+        prompt += f"本次补充要求：{extra_prompt.strip()}\n"
+    return (
+        prompt
+        + "统一要求：主体完整位于画面安全区，结构清晰，透视正确，材质真实，细节丰富，高清写实电影质感；"
+        "严禁任何文字、标签、字幕、水印、Logo、边框、九宫格、接触表和重复物体。"
+    )
+
+
+def _load_generated_image_bytes(url: str) -> bytes:
+    value = str(url or "").strip()
+    if value.startswith("data:image/"):
+        try:
+            encoded = value.split(",", 1)[1]
+            content = base64.b64decode(encoded, validate=True)
+        except (IndexError, ValueError) as exc:
+            raise ValueError("图像模型返回了无效的 data URI") from exc
+        if len(content) > MAX_REMOTE_IMAGE_BYTES:
+            raise ValueError("生成图片超过 30 MB")
+        return content
+    if value.startswith(("https://", "http://")):
+        return fetch_remote_image_bytes(value)
+    raise ValueError("图像模型没有返回可下载的 HTTP(S) 图片地址")
+
+
+def _validated_generated_image(content: bytes) -> tuple[str, str]:
+    signatures = (
+        (b"\x89PNG\r\n\x1a\n", ".png", "image/png"),
+        (b"\xff\xd8\xff", ".jpg", "image/jpeg"),
+        (b"RIFF", ".webp", "image/webp"),
+    )
+    detected = next((entry for entry in signatures if content.startswith(entry[0])), None)
+    if detected is None:
+        raise ValueError("图像模型返回的文件不是受支持的 PNG、JPEG 或 WebP 图片")
+    _, suffix, mime = detected
+    validate_image_upload(f"generated{suffix}", mime, content, max_bytes=MAX_REMOTE_IMAGE_BYTES)
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            image.verify()
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as exc:
+        raise ValueError("图像模型返回的图片已损坏") from exc
+    return suffix, mime
 
 
 def _file(element_id: str, element_version: int, item) -> dict:
@@ -697,6 +822,210 @@ async def get_element_model_content(
     )
 
 
+async def _generate_non_actor_reference(
+    *,
+    item,
+    owner_id: str,
+    store: PlatformStore,
+    extra_prompt: str = "",
+) -> dict:
+    if str(item.kind) not in _NON_ACTOR_KINDS:
+        raise HTTPException(status_code=422, detail="数字演员五视图请在角色设计工作区生成")
+    image_model, project_style = await _element_generation_context(item, owner_id)
+    prompt = _element_reference_prompt(item, extra_prompt, project_style)
+    try:
+        generated_url, provider = await run_in_threadpool(
+            element_image_gateway.generate_image,
+            image_model,
+            prompt,
+        )
+        if not generated_url:
+            raise RuntimeError("所有已配置图像模型均未返回图片")
+        content = await run_in_threadpool(_load_generated_image_bytes, generated_url)
+        suffix, mime = await run_in_threadpool(_validated_generated_image, content)
+    except HTTPException:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.warning(
+            "资产参考图生成失败: element=%s kind=%s provider=%s error=%s",
+            item.id,
+            item.kind,
+            locals().get("provider"),
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="参考图生成失败，图像模型未返回可验证的图片；请检查模型配置后重试",
+        ) from exc
+    return await _persist_element_file(
+        element_id=item.id,
+        owner_id=owner_id,
+        slot="reference",
+        suffix=suffix,
+        mime=mime,
+        content=content,
+        store=store,
+    )
+
+
+def _public_generation_job(job: dict[str, object]) -> dict[str, object]:
+    return {
+        "id": job["id"],
+        "kind": job["kind"],
+        "task_id": job.get("task_id"),
+        "status": job["status"],
+        "total": job["total"],
+        "processed": job["processed"],
+        "succeeded": job["succeeded"],
+        "failed": job["failed"],
+        "remaining": job["remaining"],
+        "errors": list(job.get("errors") or []),
+        "created_at": job["created_at"],
+        "updated_at": job["updated_at"],
+    }
+
+
+def _prune_generation_jobs() -> None:
+    if len(_generation_jobs) < 200:
+        return
+    completed = sorted(
+        (
+            job for job in _generation_jobs.values()
+            if job.get("status") in {"completed", "partial", "failed"}
+        ),
+        key=lambda job: float(job.get("updated_at") or 0),
+    )
+    for job in completed[: max(0, len(_generation_jobs) - 150)]:
+        _generation_jobs.pop(str(job["id"]), None)
+
+
+async def _run_generation_job(
+    job_id: str,
+    items: list,
+    *,
+    owner_id: str,
+    store: PlatformStore,
+) -> None:
+    job = _generation_jobs.get(job_id)
+    if not job:
+        return
+    job["status"] = "running"
+    job["updated_at"] = time.time()
+    semaphore = asyncio.Semaphore(ELEMENT_IMAGE_GENERATION_CONCURRENCY)
+    replace_existing = bool(job.get("replace_existing"))
+
+    async def generate_one(item) -> None:
+        async with semaphore:
+            try:
+                current = await store.get_element(item.id, owner_id)
+                if not current:
+                    raise ValueError("资产不存在")
+                if any(file.mime_type.startswith("image/") for file in current.files) and not replace_existing:
+                    job["succeeded"] = int(job["succeeded"]) + 1
+                else:
+                    await _generate_non_actor_reference(
+                        item=current,
+                        owner_id=owner_id,
+                        store=store,
+                        extra_prompt="按剧本资产描述生成可直接用于本项目的完整参考图",
+                    )
+                    job["succeeded"] = int(job["succeeded"]) + 1
+            except (Exception, asyncio.CancelledError) as exc:
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                job["failed"] = int(job["failed"]) + 1
+                errors = job.get("errors")
+                if isinstance(errors, list) and len(errors) < 20:
+                    detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+                    errors.append({"element_id": item.id, "name": item.name, "detail": str(detail)[:300]})
+            finally:
+                job["processed"] = int(job["succeeded"]) + int(job["failed"])
+                job["remaining"] = max(0, int(job["total"]) - int(job["processed"]))
+                job["updated_at"] = time.time()
+
+    try:
+        await asyncio.gather(*(generate_one(item) for item in items))
+    except asyncio.CancelledError:
+        job["status"] = "partial" if int(job["succeeded"]) else "failed"
+        job["updated_at"] = time.time()
+        raise
+    else:
+        job["status"] = "completed" if int(job["failed"]) == 0 else "partial"
+        job["updated_at"] = time.time()
+
+
+@router.post("/generation-jobs", status_code=202)
+async def start_element_generation_job(
+    request: BulkRegenerateElementsRequest,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    if request.kind not in _NON_ACTOR_KINDS:
+        raise HTTPException(status_code=422, detail="批量参考图生成仅支持场景、道具、服装和特效")
+    owner_id = user["user_id"]
+    items, _ = await store.list_elements(owner_id, request.kind, 1, 100)
+    task_id = str(request.task_id or "").strip()
+    candidates = [
+        item for item in items
+        if (not task_id or str(_element_metadata(item).get("task_id") or "") == task_id)
+        and (
+            request.replace_existing
+            or not any(file.mime_type.startswith("image/") for file in item.files)
+        )
+    ]
+    for existing in _generation_jobs.values():
+        if (
+            existing.get("owner_id") == owner_id
+            and existing.get("kind") == request.kind
+            and existing.get("task_id") == (task_id or None)
+            and bool(existing.get("replace_existing")) == request.replace_existing
+            and existing.get("status") in {"queued", "running"}
+        ):
+            return _public_generation_job(existing)
+
+    _prune_generation_jobs()
+    now = time.time()
+    job_id = str(uuid.uuid4())
+    job: dict[str, object] = {
+        "id": job_id,
+        "owner_id": owner_id,
+        "kind": request.kind,
+        "task_id": task_id or None,
+        "replace_existing": request.replace_existing,
+        "status": "queued" if candidates else "completed",
+        "total": len(candidates),
+        "processed": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "remaining": len(candidates),
+        "errors": [],
+        "created_at": now,
+        "updated_at": now,
+    }
+    _generation_jobs[job_id] = job
+    if candidates:
+        background_tasks.add_task(
+            _run_generation_job,
+            job_id,
+            candidates,
+            owner_id=owner_id,
+            store=store,
+        )
+    return _public_generation_job(job)
+
+
+@router.get("/generation-jobs/{job_id}")
+async def get_element_generation_job(
+    job_id: str,
+    user: dict = Depends(get_current_user),
+):
+    job = _generation_jobs.get(job_id)
+    if not job or job.get("owner_id") != user["user_id"]:
+        raise HTTPException(status_code=404, detail="图片生成任务不存在")
+    return _public_generation_job(job)
+
+
 @router.post("/{element_id}/regenerate")
 async def regenerate_element(
     element_id: str,
@@ -704,6 +1033,16 @@ async def regenerate_element(
     user: dict = Depends(get_current_user),
     store: PlatformStore = Depends(get_platform_store),
 ):
+    element = await store.get_element(element_id, user["user_id"])
+    if not element:
+        raise HTTPException(status_code=404, detail="元素不存在")
+    if str(element.kind) in _NON_ACTOR_KINDS:
+        return await _generate_non_actor_reference(
+            item=element,
+            owner_id=user["user_id"],
+            store=store,
+            extra_prompt=request.prompt,
+        )
     try:
         job = await store.request_regeneration(element_id, user["user_id"], request.prompt)
         return {

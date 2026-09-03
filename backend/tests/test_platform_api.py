@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import shutil
@@ -24,6 +25,11 @@ from app.core.media_compositor import MEDIA_DIR
 from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore
 from main import app
+
+
+VALID_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 def _glb(document: dict, binary: bytes = b"") -> bytes:
@@ -131,35 +137,287 @@ class PlatformApiTests(unittest.TestCase):
 
     def test_all_five_element_pages_support_add_upload_and_regenerate(self):
         cookie = self._cookie(self.user.id)
-        for kind in ("actor", "prop", "scene", "costume", "effect"):
+        with (
+            patch(
+                "app.api.element_api.element_image_gateway.generate_image",
+                return_value=("https://assets.example.test/generated.png", "seedance"),
+            ),
+            patch("app.api.element_api.fetch_remote_image_bytes", return_value=VALID_PNG),
+            patch("app.api.element_api.ELEMENT_MEDIA_ROOT", Path(self.temp.name) / "generated-elements"),
+        ):
+            for kind in ("actor", "prop", "scene", "costume", "effect"):
+                created = self.client.post(
+                    "/api/elements",
+                    json={"kind": kind, "name": f"{kind}-sample", "description": "fixture"},
+                    cookies=cookie,
+                )
+                self.assertEqual(created.status_code, 200, created.text)
+                element_id = created.json()["id"]
+                listed = self.client.get(f"/api/elements?kind={kind}", cookies=cookie)
+                self.assertEqual(listed.status_code, 200)
+                self.assertEqual(listed.json()["total"], 1)
+
+                slot = "front" if kind == "actor" else "reference"
+                uploaded = self.client.post(
+                    f"/api/elements/{element_id}/files",
+                    data={"slot": slot},
+                    files={"file": ("image.png", b"\x89PNG\r\n\x1a\nfixture", "image/png")},
+                    cookies=cookie,
+                )
+                self.assertEqual(uploaded.status_code, 200, uploaded.text)
+                self.assertEqual(len(uploaded.json()["files"]), 1)
+
+                regenerated = self.client.post(
+                    f"/api/elements/{element_id}/regenerate",
+                    json={"prompt": "保持身份与风格，仅优化细节"},
+                    cookies=cookie,
+                )
+                self.assertEqual(regenerated.status_code, 200, regenerated.text)
+                if kind == "actor":
+                    self.assertFalse(regenerated.json()["paid_submission_approved"])
+                else:
+                    self.assertEqual(regenerated.json()["status"], "ready")
+                    self.assertEqual(regenerated.json()["files"][0]["slot"], "reference")
+
+    def test_non_actor_regeneration_generates_valid_private_reference_image(self):
+        cookie = self._cookie(self.user.id)
+        element = self.client.post(
+            "/api/elements",
+            json={
+                "kind": "scene",
+                "name": "雨夜宫门",
+                "description": "深夜外景，宫门大开，雨后青石地面反光",
+            },
+            cookies=cookie,
+        ).json()
+        image_root = Path(self.temp.name) / "generated-reference-images"
+
+        with (
+            patch(
+                "app.api.element_api.element_image_gateway.generate_image",
+                return_value=("https://assets.example.test/rain-gate.png", "seedance"),
+            ) as generate_image,
+            patch("app.api.element_api.fetch_remote_image_bytes", return_value=VALID_PNG),
+            patch("app.api.element_api.ELEMENT_MEDIA_ROOT", image_root),
+        ):
+            response = self.client.post(
+                f"/api/elements/{element['id']}/regenerate",
+                json={"prompt": "保持古装悬疑短剧的低照度青橙电影质感"},
+                cookies=cookie,
+            )
+            generated = response.json()
+            private_image = self.client.get(generated["files"][0]["url"], cookies=cookie)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(generated["status"], "ready")
+        self.assertEqual(len(generated["files"]), 1)
+        self.assertEqual(generated["files"][0]["slot"], "reference")
+        prompt = generate_image.call_args.args[1]
+        self.assertIn("雨夜宫门", prompt)
+        self.assertIn("宫门大开", prompt)
+        self.assertIn("低照度青橙", prompt)
+        self.assertEqual(private_image.status_code, 200, private_image.text)
+        self.assertEqual(private_image.content, VALID_PNG)
+
+    def test_costume_and_effect_prompts_enforce_their_visual_asset_boundaries(self):
+        cookie = self._cookie(self.user.id)
+        costume = self.client.post(
+            "/api/elements",
+            json={"kind": "costume", "name": "玄黑官袍大氅", "description": "玄黑织金官袍与落地大氅"},
+            cookies=cookie,
+        ).json()
+        effect = self.client.post(
+            "/api/elements",
+            json={"kind": "effect", "name": "祭火爆燃", "description": "琥珀火舌沿浸油柴枝迅速蔓延"},
+            cookies=cookie,
+        ).json()
+        prompts: list[str] = []
+
+        def generate_image(_model, prompt):
+            prompts.append(prompt)
+            return "https://assets.example.test/reference.png", "seedream"
+
+        with (
+            patch("app.api.element_api.element_image_gateway.generate_image", side_effect=generate_image),
+            patch("app.api.element_api.fetch_remote_image_bytes", return_value=VALID_PNG),
+            patch("app.api.element_api.ELEMENT_MEDIA_ROOT", Path(self.temp.name) / "boundary-images"),
+        ):
+            for element in (costume, effect):
+                response = self.client.post(
+                    f"/api/elements/{element['id']}/regenerate",
+                    json={"prompt": "严格遵循资产类别"},
+                    cookies=cookie,
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+
+        costume_prompt, effect_prompt = prompts
+        self.assertIn("玄黑官袍大氅", costume_prompt)
+        self.assertIn("无人物", costume_prompt)
+        self.assertIn("无模特", costume_prompt)
+        self.assertIn("无人体模型", costume_prompt)
+        self.assertIn("中空立体服装", costume_prompt)
+        self.assertIn("祭火爆燃", effect_prompt)
+        self.assertIn("特效现象本身", effect_prompt)
+        self.assertIn("不是道具", effect_prompt)
+        self.assertIn("不是场景", effect_prompt)
+
+    def test_bulk_generation_can_replace_existing_reference_images_when_explicitly_requested(self):
+        cookie = self._cookie(self.user.id)
+        element = self.client.post(
+            "/api/elements",
+            json={
+                "kind": "costume",
+                "name": "赭红凤袍",
+                "description": "赭红缂丝凤纹礼服",
+                "metadata": {"task_id": "task-costume-refresh"},
+            },
+            cookies=cookie,
+        ).json()
+        uploaded = self.client.post(
+            f"/api/elements/{element['id']}/files",
+            data={"slot": "reference"},
+            files={"file": ("old.png", VALID_PNG, "image/png")},
+            cookies=cookie,
+        )
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+
+        with (
+            patch(
+                "app.api.element_api.element_image_gateway.generate_image",
+                return_value=("https://assets.example.test/new-costume.png", "seedream"),
+            ) as generate_image,
+            patch("app.api.element_api.fetch_remote_image_bytes", return_value=VALID_PNG),
+            patch("app.api.element_api.ELEMENT_MEDIA_ROOT", Path(self.temp.name) / "replacement-images"),
+        ):
+            started = self.client.post(
+                "/api/elements/generation-jobs",
+                json={
+                    "kind": "costume",
+                    "task_id": "task-costume-refresh",
+                    "replace_existing": True,
+                },
+                cookies=cookie,
+            )
+            job = self.client.get(
+                f"/api/elements/generation-jobs/{started.json()['id']}",
+                cookies=cookie,
+            )
+
+        self.assertEqual(started.status_code, 202, started.text)
+        self.assertEqual(job.json()["status"], "completed")
+        self.assertEqual(job.json()["total"], 1)
+        self.assertEqual(generate_image.call_count, 1)
+
+    def test_generation_failure_does_not_expose_signed_image_url(self):
+        cookie = self._cookie(self.user.id)
+        element = self.client.post(
+            "/api/elements",
+            json={"kind": "prop", "name": "御玺", "description": "白玉印玺"},
+            cookies=cookie,
+        ).json()
+        signed_url = "https://assets.example.test/imperial-seal.png?token=do-not-leak"
+        with (
+            patch(
+                "app.api.element_api.element_image_gateway.generate_image",
+                return_value=(signed_url, "seedance"),
+            ),
+            patch(
+                "app.api.element_api.fetch_remote_image_bytes",
+                side_effect=ValueError(f"download failed: {signed_url}"),
+            ),
+        ):
+            response = self.client.post(
+                f"/api/elements/{element['id']}/regenerate",
+                json={"prompt": "生成完整道具参考图"},
+                cookies=cookie,
+            )
+
+        self.assertEqual(response.status_code, 502, response.text)
+        self.assertNotIn("do-not-leak", response.text)
+        self.assertNotIn("assets.example.test", response.text)
+
+    def test_bulk_generation_completes_every_missing_asset_and_reports_progress(self):
+        cookie = self._cookie(self.user.id)
+        for name in ("宫门", "冷宫废井", "太常寺前院"):
             created = self.client.post(
                 "/api/elements",
-                json={"kind": kind, "name": f"{kind}-sample", "description": "fixture"},
+                json={
+                    "kind": "scene",
+                    "name": name,
+                    "description": f"{name}的剧本场景描述",
+                    "metadata": {"source": "screenplay-extraction", "task_id": "task-fixture"},
+                },
                 cookies=cookie,
             )
             self.assertEqual(created.status_code, 200, created.text)
-            element_id = created.json()["id"]
-            listed = self.client.get(f"/api/elements?kind={kind}", cookies=cookie)
-            self.assertEqual(listed.status_code, 200)
-            self.assertEqual(listed.json()["total"], 1)
 
-            slot = "front" if kind == "actor" else "reference"
-            uploaded = self.client.post(
-                f"/api/elements/{element_id}/files",
-                data={"slot": slot},
-                files={"file": ("image.png", b"\x89PNG\r\n\x1a\nfixture", "image/png")},
+        image_root = Path(self.temp.name) / "bulk-reference-images"
+        with (
+            patch(
+                "app.api.element_api.element_image_gateway.generate_image",
+                return_value=("https://assets.example.test/scene.png", "seedance"),
+            ) as generate_image,
+            patch("app.api.element_api.fetch_remote_image_bytes", return_value=VALID_PNG),
+            patch("app.api.element_api.ELEMENT_MEDIA_ROOT", image_root),
+        ):
+            started = self.client.post(
+                "/api/elements/generation-jobs",
+                json={"kind": "scene", "task_id": "task-fixture"},
                 cookies=cookie,
             )
-            self.assertEqual(uploaded.status_code, 200, uploaded.text)
-            self.assertEqual(len(uploaded.json()["files"]), 1)
-
-            regenerated = self.client.post(
-                f"/api/elements/{element_id}/regenerate",
-                json={"prompt": "保持身份与风格，仅优化细节"},
+            self.assertEqual(started.status_code, 202, started.text)
+            job = self.client.get(
+                f"/api/elements/generation-jobs/{started.json()['id']}",
                 cookies=cookie,
             )
-            self.assertEqual(regenerated.status_code, 200)
-            self.assertFalse(regenerated.json()["paid_submission_approved"])
+
+        self.assertEqual(job.status_code, 200, job.text)
+        self.assertEqual(job.json()["status"], "completed")
+        self.assertEqual(job.json()["total"], 3)
+        self.assertEqual(job.json()["succeeded"], 3)
+        self.assertEqual(job.json()["failed"], 0)
+        self.assertEqual(job.json()["remaining"], 0)
+        self.assertEqual(generate_image.call_count, 3)
+        listed = self.client.get("/api/elements?kind=scene&page=1&page_size=50", cookies=cookie).json()
+        self.assertEqual(sum(bool(item["files"]) for item in listed["items"]), 3)
+
+    def test_bulk_generation_continues_after_one_asset_fails(self):
+        cookie = self._cookie(self.user.id)
+        for name in ("可生成场景", "故障场景"):
+            response = self.client.post(
+                "/api/elements",
+                json={"kind": "scene", "name": name, "description": name},
+                cookies=cookie,
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+
+        def generate_image(_model, prompt):
+            if "故障场景" in prompt:
+                raise RuntimeError("provider unavailable")
+            return "https://assets.example.test/scene.png", "seedance"
+
+        with (
+            patch("app.api.element_api.element_image_gateway.generate_image", side_effect=generate_image),
+            patch("app.api.element_api.fetch_remote_image_bytes", return_value=VALID_PNG),
+            patch("app.api.element_api.ELEMENT_MEDIA_ROOT", Path(self.temp.name) / "partial-generation"),
+        ):
+            started = self.client.post(
+                "/api/elements/generation-jobs",
+                json={"kind": "scene"},
+                cookies=cookie,
+            )
+            job = self.client.get(
+                f"/api/elements/generation-jobs/{started.json()['id']}",
+                cookies=cookie,
+            )
+
+        self.assertEqual(job.status_code, 200, job.text)
+        self.assertEqual(job.json()["status"], "partial")
+        self.assertEqual(job.json()["processed"], 2)
+        self.assertEqual(job.json()["succeeded"], 1)
+        self.assertEqual(job.json()["failed"], 1)
+        self.assertEqual(job.json()["remaining"], 0)
+        self.assertEqual(job.json()["errors"][0]["name"], "故障场景")
 
     def test_reference_images_are_private_versioned_and_never_public_static_media(self):
         owner_cookie = self._cookie(self.user.id)

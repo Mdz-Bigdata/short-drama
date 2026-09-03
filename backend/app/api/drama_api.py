@@ -13,7 +13,7 @@ from app.schema.drama import (
     DramaTaskSummary,
     ScriptUpdateRequest,
 )
-from app.service.drama_service import DramaService, ScriptUpdateConflictError
+from app.service.drama_service import DramaService, ScriptUpdateConflictError, StagePrerequisiteError
 from app.repository.task_repo import TaskRepository
 from app.api.auth_api import get_current_user, require_admin
 from app.core.media_compositor import MEDIA_DIR
@@ -214,6 +214,65 @@ async def _attach_extracted_image(
         return False
 
 
+async def _import_production_asset_candidates(
+    *,
+    task_id: str,
+    kind: str,
+    candidates: List[Dict[str, str]],
+    owner_id: str,
+    store: PlatformStore,
+) -> Dict[str, Any]:
+    """Idempotently file one extracted asset category into the element library."""
+    if not candidates:
+        return {"kind": kind, "created": 0, "skipped": 0, "with_image": 0, "items": []}
+
+    existing, _ = await store.list_elements(owner_id, kind, 1, 100)
+    known = {str(item.name).strip() for item in existing}
+    created: List[Dict[str, Any]] = []
+    skipped = 0
+    with_image = 0
+    for candidate in candidates:
+        name = str(candidate.get("name") or "").strip()
+        if not name or name in known:
+            skipped += 1
+            continue
+        try:
+            element = await store.create_element(
+                owner_id=owner_id,
+                kind=kind,
+                name=name,
+                description=str(candidate.get("description") or ""),
+                metadata={"source": "screenplay-extraction", "task_id": task_id},
+            )
+        except ValueError as exc:
+            # Quota exhaustion stops this category; assets already created stay.
+            if created:
+                break
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        known.add(name)
+        attached = False
+        image_url = str(candidate.get("image_url") or "").strip()
+        if image_url:
+            attached = await _attach_extracted_image(
+                element_id=element.id,
+                owner_id=owner_id,
+                kind=kind,
+                url=image_url,
+                store=store,
+            )
+            if attached:
+                with_image += 1
+        created.append({"id": element.id, "name": element.name, "image": attached})
+
+    return {
+        "kind": kind,
+        "created": len(created),
+        "skipped": skipped,
+        "with_image": with_image,
+        "items": created,
+    }
+
+
 @router.get("/{task_id}/production-assets/{kind}")
 def preview_production_assets(task_id: str, kind: str):
     """Preview the shooting assets of one kind that the screenplay names."""
@@ -240,54 +299,57 @@ async def import_production_assets(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    candidates = extract_production_assets(task, kind)
-    if not candidates:
-        return {"kind": kind, "created": 0, "skipped": 0, "items": []}
+    return await _import_production_asset_candidates(
+        task_id=task_id,
+        kind=kind,
+        candidates=extract_production_assets(task, kind),
+        owner_id=current_user["user_id"],
+        store=store,
+    )
 
-    existing, _ = await store.list_elements(current_user["user_id"], kind, 1, 100)
-    known = {str(item.name).strip() for item in existing}
-    created: list[dict] = []
-    skipped = 0
-    with_image = 0
-    for candidate in candidates:
-        name = candidate["name"].strip()
-        if not name or name in known:
-            skipped += 1
-            continue
-        try:
-            element = await store.create_element(
-                owner_id=current_user["user_id"],
-                kind=kind,
-                name=name,
-                description=candidate["description"],
-                metadata={"source": "screenplay-extraction", "task_id": task_id},
-            )
-        except ValueError as exc:
-            # Quota exhaustion stops the import; everything already created stays.
-            if created:
-                break
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        known.add(name)
-        attached = False
-        image_url = str(candidate.get("image_url") or "").strip()
-        if image_url:
-            attached = await _attach_extracted_image(
-                element_id=element.id,
-                owner_id=current_user["user_id"],
-                kind=kind,
-                url=image_url,
-                store=store,
-            )
-            if attached:
-                with_image += 1
-        created.append({"id": element.id, "name": element.name, "image": attached})
+
+@router.post("/{task_id}/production-assets/sync")
+async def sync_production_assets(
+    task_id: str,
+    current_user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """Extract and idempotently synchronize all non-actor shooting assets."""
+    try:
+        catalog = await run_in_threadpool(service.ensure_production_asset_catalog, task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("拍摄资产目录同步失败: task_id=%s", task_id)
+        raise HTTPException(status_code=502, detail="拍摄资产分析服务暂不可用，请稍后重试") from exc
+    if catalog is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # Reload after the repair pass so the shared extractor sees the persisted
+    # structured catalog and keeps preview/import behavior identical.
+    task = service.repo.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    by_kind: Dict[str, Dict[str, Any]] = {}
+    for kind in ("scene", "prop", "costume", "effect"):
+        by_kind[kind] = await _import_production_asset_candidates(
+            task_id=task_id,
+            kind=kind,
+            candidates=extract_production_assets(task, kind),
+            owner_id=current_user["user_id"],
+            store=store,
+        )
 
     return {
-        "kind": kind,
-        "created": len(created),
-        "skipped": skipped,
-        "with_image": with_image,
-        "items": created,
+        "created": sum(result["created"] for result in by_kind.values()),
+        "skipped": sum(result["skipped"] for result in by_kind.values()),
+        "with_image": sum(result["with_image"] for result in by_kind.values()),
+        "kinds": {
+            kind: result["created"] + result["skipped"]
+            for kind, result in by_kind.items()
+        },
+        "results": by_kind,
     }
 
 
@@ -357,6 +419,36 @@ def update_writer_relationships(task_id: str, req: WriterRelationshipUpdateReque
         if item.from_.strip() and item.to.strip() and item.from_.strip() != item.to.strip()
     ]
     dashboard = service.update_relationships(task_id, relationships)
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
+
+
+@router.post("/{task_id}/script/continue", response_model=WriterDashboardResponse)
+def continue_writer_script(task_id: str):
+    """Append the episodes a truncated screenplay is still missing."""
+    try:
+        dashboard = service.continue_script(task_id)
+    except (ValueError, ScriptUpdateConflictError) as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    except Exception:
+        logger.exception("[Writer] 剧本补写失败 task_id=%s", task_id)
+        raise HTTPException(status_code=502, detail="剧本补写服务暂不可用，请稍后重试")
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
+
+
+@router.post("/{task_id}/relationships/analyze", response_model=WriterDashboardResponse)
+def analyze_writer_relationships(task_id: str):
+    """Re-derive real character relations from the screenplay with one LLM pass."""
+    try:
+        dashboard = service.analyze_relationships(task_id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    except Exception:
+        logger.exception("[Writer] 人物关系分析失败 task_id=%s", task_id)
+        raise HTTPException(status_code=502, detail="人物关系分析服务暂不可用，请稍后重试")
     if not dashboard:
         raise HTTPException(status_code=404, detail="任务不存在")
     return dashboard
@@ -538,6 +630,8 @@ async def run_next_stage(task_id: str, current_stage: int):
     try:
         updated_task = await service.execute_stage(task_id, current_stage)
         return updated_task
+    except StagePrerequisiteError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:
@@ -653,6 +747,8 @@ async def assistant_chat(task_id: str, payload: Dict[str, str]):
             "stage": result["stage"],
             "task": DramaTaskResponse(**result["task"]).model_dump(by_alias=True),
         }
+    except StagePrerequisiteError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:

@@ -29,6 +29,15 @@ _SCENE_BIBLE_HEADING = re.compile(
     r"^#{0,6}\s*场景圣经\s*[:：]\s*(.+)$",
     re.MULTILINE,
 )
+_PLAIN_SCENE_HEADING = re.compile(
+    r"^\s*#{0,6}\s*(?:\*\*)?(?:场景|SCENE)\s*[0-9零一二三四五六七八九十]*\s*[:：]\s*"
+    r"(.{2,100}?)(?:\*\*)?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_SCENE_CONTEXT_SUFFIX = re.compile(
+    r"(?:\s+|[/／|｜·]+)(?:凌晨|清晨|早晨|晨|上午|中午|午后|下午|黄昏|傍晚|"
+    r"深夜|夜晚|夜|白天|日|昼|内景|外景|内|外)\s*$"
+)
 _LIST_ITEM = re.compile(r"^\s*[-*•]\s*(.+)$")
 _MAX_ASSETS_PER_KIND = 60
 _MAX_NAME_LENGTH = 60
@@ -107,9 +116,15 @@ def _extract_locations(scenes: list[dict[str, Any]], script: str) -> list[dict[s
             return
         # `建康城外乱葬岗 / 夜 / 暴雨初歇` -> name is the place, rest is context.
         segments = [segment for segment in (_clean(part) for part in heading.split("/")) if segment]
-        name = (segments[0] if segments else heading)[:_MAX_NAME_LENGTH]
+        name = segments[0] if segments else heading
         name = re.sub(r"^(?:场景|SCENE)\s*[0-9零一二三四五六七八九十]*\s*[:：]?\s*", "", name).strip()
         name = _SCENE_CODE_PREFIX.sub("", name).strip()
+        # Stage 2 emits headings such as `场景1：太常寺天文台 夜 内景`.
+        # Strip only well-known time/interior markers from the tail; the place
+        # itself remains exact and usable as an asset-library name.
+        while _SCENE_CONTEXT_SUFFIX.search(name):
+            name = _SCENE_CONTEXT_SUFFIX.sub("", name).strip()
+        name = name[:_MAX_NAME_LENGTH]
         if not name:
             return
         detail = "；".join(segments[1:]) if len(segments) > 1 else ""
@@ -128,6 +143,8 @@ def _extract_locations(scenes: list[dict[str, Any]], script: str) -> list[dict[s
         if heading:
             record(heading.group(1), content)
     for match in _SCENE_HEADING.finditer(script or ""):
+        record(match.group(1), "")
+    for match in _PLAIN_SCENE_HEADING.finditer(script or ""):
         record(match.group(1), "")
 
     return [
@@ -152,6 +169,39 @@ def _extract_labelled(kind: str, scenes: list[dict[str, Any]], script: str) -> l
                     if not name or name in found:
                         continue
                     found[name] = entry[:_MAX_DESCRIPTION_LENGTH]
+    return [{"name": name, "description": description} for name, description in found.items()]
+
+
+_STRUCTURED_CATALOG_KEYS = {
+    "scene": "scenes",
+    "prop": "props",
+    "costume": "costumes",
+    "effect": "effects",
+}
+
+
+def _extract_structured_catalog(breakdown: dict[str, Any], kind: str) -> list[dict[str, str]]:
+    """Read the Writer Agent's explicit production catalog when available."""
+    catalog = breakdown.get("production_assets")
+    if not isinstance(catalog, dict):
+        return []
+    raw_items = catalog.get(_STRUCTURED_CATALOG_KEYS[kind])
+    if not isinstance(raw_items, list):
+        return []
+
+    found: dict[str, str] = {}
+    for raw_item in raw_items:
+        if isinstance(raw_item, dict):
+            name = _clean(raw_item.get("name"))[:_MAX_NAME_LENGTH]
+            description = _clean(raw_item.get("description"))[:_MAX_DESCRIPTION_LENGTH]
+        else:
+            name = _clean(raw_item)[:_MAX_NAME_LENGTH]
+            description = ""
+        if not name or name in found:
+            continue
+        found[name] = description
+        if len(found) >= _MAX_ASSETS_PER_KIND:
+            break
     return [{"name": name, "description": description} for name, description in found.items()]
 
 
@@ -254,8 +304,10 @@ def extract_production_assets(task: dict[str, Any], kind: str) -> list[dict[str,
             scenes,
         )
 
+    structured = _extract_structured_catalog(breakdown, kind)
+
     if kind == "scene":
-        located = _extract_locations(scenes, script)
+        located = structured or _extract_locations(scenes, script)
         images = _scene_images(
             [item for item in (assets.get("4") or []) if isinstance(item, dict)]
         )
@@ -266,4 +318,7 @@ def extract_production_assets(task: dict[str, Any], kind: str) -> list[dict[str,
 
     # Props, costumes and effects are named in prose; the screenplay carries no
     # image for them, so the user uploads or regenerates one afterwards.
-    return [{**item, "image_url": ""} for item in _extract_labelled(kind, scenes, script)]
+    return [
+        {**item, "image_url": ""}
+        for item in (structured or _extract_labelled(kind, scenes, script))
+    ]

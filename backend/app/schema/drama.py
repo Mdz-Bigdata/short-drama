@@ -38,7 +38,7 @@ class DramaCreateRequest(DramaBaseSchema):
         "auto", description="运镜视频的参考输入模式（自动、首尾帧、多图/宫格或多模态参考）"
     )
     one_click: bool = Field(False, description="是否一键成片模式")
-    episode_count: int = Field(3, description="一次性生成的剧本集数 (1-12)，视频按集逐集制作", ge=1, le=12)
+    episode_count: int = Field(3, description="一次性生成的剧本集数 (1-150)，视频按集逐集制作", ge=1, le=150)
     script_content: Optional[str] = Field(None, description="手动上传的剧本文件内容")
     script_name: Optional[str] = Field(None, description="手动上传的剧本文件名")
 
@@ -111,7 +111,7 @@ class DramaConfigSchema(DramaBaseSchema):
         "auto", description="运镜视频的参考输入模式；响应兼容历史 first_frame 项目"
     )
     one_click: bool = Field(False, description="是否一键成片模式")
-    episode_count: int = Field(3, description="一次性生成的剧本集数 (1-12)，视频按集逐集制作", ge=1, le=12)
+    episode_count: int = Field(3, description="一次性生成的剧本集数 (1-150)，视频按集逐集制作", ge=1, le=150)
     script_content: Optional[str] = Field(None, description="手动上传的剧本文件内容")
     script_name: Optional[str] = Field(None, description="手动上传的剧本文件名")
 

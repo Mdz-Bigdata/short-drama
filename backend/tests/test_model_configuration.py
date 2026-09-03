@@ -602,6 +602,7 @@ class RuntimeModelRoutingTests(unittest.TestCase):
             "remote-runtime-model",
             "system",
             "user",
+            max_tokens=None,
         )
 
     def test_empty_text_selection_uses_the_enabled_global_default(self):
@@ -625,6 +626,7 @@ class RuntimeModelRoutingTests(unittest.TestCase):
             "global-default-writer",
             "system",
             "user",
+            max_tokens=None,
         )
 
 

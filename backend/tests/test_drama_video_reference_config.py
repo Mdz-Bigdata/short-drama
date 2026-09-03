@@ -70,6 +70,18 @@ class DramaVideoReferenceConfigTests(unittest.TestCase):
         self.assertTrue(task["config"]["one_click"])
         self.assertEqual(task["config"]["episode_count"], 6)
 
+    def test_long_form_episode_counts_are_accepted_up_to_150(self):
+        service = DramaService.__new__(DramaService)
+        service.repo = _MemoryRepo()
+
+        task = service.update_task_config("task-1", _request(episodeCount=150))
+
+        self.assertEqual(task["config"]["episode_count"], 150)
+
+    def test_episode_count_beyond_the_ceiling_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            _request(episodeCount=151)
+
 
 if __name__ == "__main__":
     unittest.main()

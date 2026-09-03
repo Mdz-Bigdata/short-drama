@@ -137,12 +137,29 @@ async def _initialize_postgresql_platform():
     await hydrate_runtime_model_registry(get_platform_store(), get_model_secret_cipher())
     await hydrate_runtime_skill_registry(get_platform_store())
 
+def _recover_orphan_task_state(task: dict) -> bool:
+    """Normalize a persisted running task after a process restart."""
+    if task.get("status") != "running" or not task.get("task_id"):
+        return False
+
+    progress = task.get("stage_progress")
+    if isinstance(progress, dict) and progress.get("status") == "success":
+        # A stage can finish while the historical task-level status remains
+        # running. It is complete and merely waiting for the next stage.
+        task["status"] = "idle"
+        task["fail_reason"] = None
+    else:
+        task["status"] = "interrupted"
+        task["fail_reason"] = "服务重启导致后台任务中断，可点击恢复(/resume)从断点续跑"
+    return True
+
+
 @app.on_event("startup")
 def _recover_orphan_tasks():
     """
     服务启动时回收孤儿任务 (防孤儿)：一键成片走 FastAPI BackgroundTasks，
-    若服务在生成途中重启/崩溃，任务会永久卡在 running。启动时把这些残留 running
-    重置为 interrupted —— 前端可见且不再"假装在跑"，可通过 /resume 从断点续跑。
+    若服务在生成途中重启/崩溃，任务会永久卡在 running。启动时把真正未完成的运行态
+    重置为 interrupted；阶段进度已经成功的任务恢复为 idle，等待下一阶段。
     """
     import logging
     log = logging.getLogger("main")
@@ -151,13 +168,11 @@ def _recover_orphan_tasks():
         repo = TaskRepository()
         n = 0
         for t in repo.list_all_tasks():
-            if isinstance(t, dict) and t.get("status") == "running" and t.get("task_id"):
-                t["status"] = "interrupted"
-                t["fail_reason"] = "服务重启导致后台任务中断，可点击恢复(/resume)从断点续跑"
+            if isinstance(t, dict) and _recover_orphan_task_state(t):
                 repo.save_task(t["task_id"], t)
                 n += 1
         if n:
-            log.warning(f"[启动恢复] 已回收 {n} 个中断的运行中任务 -> interrupted (可 /resume 续跑)")
+            log.warning(f"[启动恢复] 已规范化 {n} 个残留 running 任务的状态")
     except Exception as e:
         log.error(f"[启动恢复] 孤儿任务回收失败: {str(e)[:160]}")
 

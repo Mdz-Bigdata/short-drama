@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from textwrap import dedent
 
+from app.core.video_references import MIN_SHOT_SECONDS
+
 
 STORYBOARD_SCRIPT_PROMPT = dedent(
     """
@@ -181,13 +183,22 @@ def build_video_batch_prompt(
     spatial_relationship: str,
     timeline: str,
     sound: str = "",
+    max_duration_seconds: int = 15,
 ) -> str:
-    """Compile one standalone provider prompt that obeys the video contract."""
+    """Compile one standalone provider prompt that obeys the video contract.
+
+    ``max_duration_seconds`` is the selected video model's single-clip ceiling
+    (see ``video_references.max_shot_seconds``); a hard-coded 15 would reject the
+    30s clips Seedance 2.5 can render.
+    """
 
     if batch_index < 1:
         raise ValueError("batch_index must be positive")
-    if not 5 <= duration_seconds <= 15:
-        raise ValueError("video batch duration must be between 5 and 15 seconds")
+    ceiling = max(MIN_SHOT_SECONDS, int(max_duration_seconds or 15))
+    if not MIN_SHOT_SECONDS <= duration_seconds <= ceiling:
+        raise ValueError(
+            f"video batch duration must be between {MIN_SHOT_SECONDS} and {ceiling} seconds"
+        )
     spatial_relationship = " ".join(spatial_relationship.split())
     timeline = " ".join(timeline.split())
     if not spatial_relationship or not timeline:

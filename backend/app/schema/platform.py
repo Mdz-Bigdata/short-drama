@@ -81,6 +81,12 @@ class RegenerateElementRequest(BaseModel):
     prompt: str = Field(default="", max_length=4000)
 
 
+class BulkRegenerateElementsRequest(BaseModel):
+    kind: ElementKind
+    task_id: str | None = Field(default=None, max_length=160)
+    replace_existing: bool = False
+
+
 class ProfileUpdateRequest(BaseModel):
     display_name: str | None = Field(default=None, max_length=120)
     phone: str | None = Field(default=None, max_length=32)
