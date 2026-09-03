@@ -60,6 +60,8 @@ export interface WriterEpisode {
 
 export interface WriterDashboardStats {
   totalEpisodes: number;
+  /** Episodes actually present in the screenplay text; short of totalEpisodes means truncated. */
+  scriptedEpisodes?: number;
   sceneCount: number;
   characterCount: number;
   mainEventCount: number;
@@ -80,6 +82,8 @@ export interface WriterDashboardResponse {
   timeline: WriterTimelineEvent[];
   roles: WriterRole[];
   relationships: WriterRelationship[];
+  /** True while the graph is only same-scene co-occurrence, not analysed relations. */
+  relationshipsInferred?: boolean;
   episodes: WriterEpisode[];
   script: string;
   scriptFileName?: string | null;

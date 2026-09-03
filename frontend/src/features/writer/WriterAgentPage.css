@@ -67,15 +67,24 @@
 
 .writer-overview {
   position: relative;
-  padding: 2rem;
+  padding: 2.35rem 2rem 2.6rem;
   display: grid;
   grid-template-columns: 9.5rem minmax(0, 1fr);
   gap: 2rem;
   overflow: hidden;
   border-bottom: 1px solid var(--writer-line);
-  background: #060c12;
+  background:
+    radial-gradient(58rem 26rem at 12% -30%, rgba(54, 220, 229, 0.09), transparent 62%),
+    radial-gradient(42rem 22rem at 96% 118%, rgba(240, 138, 104, 0.08), transparent 60%),
+    #060c12;
 }
-.writer-overview::before { position: absolute; inset: 0 auto 0 0; width: 2px; content: ''; background: var(--writer-cyan); }
+.writer-overview::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  content: '';
+  background: linear-gradient(180deg, var(--writer-cyan), rgba(54, 220, 229, 0.05) 48%, var(--writer-coral-strong));
+}
 .writer-overview::after {
   position: absolute;
   right: -5rem;
@@ -86,22 +95,107 @@
   border-radius: 50%;
   content: '';
   pointer-events: none;
+  box-shadow: 0 0 0 1px rgba(54, 220, 229, 0.05) inset, 0 0 6rem rgba(54, 220, 229, 0.06);
 }
 .writer-overview__label { min-width: 0; padding: 0.25rem 2rem 0 0; display: flex; flex-direction: column; border-right: 1px solid var(--writer-line); }
 .writer-overview__label > span { white-space: nowrap; }
-.writer-overview__label > strong { margin-top: auto; color: rgba(240, 138, 104, 0.72); font: 650 2.4rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -0.08em; }
+.writer-overview__label > strong {
+  margin-top: auto;
+  font: 650 3.1rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: -0.09em;
+  background: linear-gradient(150deg, rgba(240, 138, 104, 0.92), rgba(240, 138, 104, 0.14));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
 .writer-overview__content { position: relative; z-index: 1; min-width: 0; }
 .writer-overview__content > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
 .writer-overview__content header small { display: block; margin-bottom: 0.65rem; font-size: 0.56rem; }
-.writer-overview__content h2 { font-size: 1.35rem; font-weight: 650; letter-spacing: -0.02em; }
-.writer-overview__content > header > span { padding: 0.35rem 0.6rem; color: #7d91a3; border: 1px solid var(--writer-line); font: 650 0.58rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.08em; white-space: nowrap; }
-.writer-overview__synopsis { max-width: 78ch; margin-top: 1.25rem; padding-left: 1rem; color: #d7e2e8; border-left: 2px solid var(--writer-coral-strong); font-size: 0.9rem; line-height: 1.9; text-wrap: pretty; }
-.writer-overview__details { margin-top: 1.5rem; display: grid; grid-template-columns: minmax(8rem, 0.7fr) minmax(12rem, 1fr) minmax(15rem, 1.35fr); gap: 0.75rem; }
-.writer-overview__details > div { min-width: 0; padding: 0.9rem 1rem; border: 1px solid var(--writer-line); background: var(--writer-surface); }
-.writer-overview__details dt { margin-bottom: 0.55rem; color: #718599; font: 700 0.58rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.11em; }
-.writer-overview__details dd { color: #b9c8d2; font-size: 0.74rem; line-height: 1.65; overflow-wrap: anywhere; }
+.writer-overview__content h2 { font-size: 1.5rem; font-weight: 650; letter-spacing: -0.02em; }
+.writer-overview__content > header > span {
+  padding: 0.35rem 0.6rem;
+  color: #7d91a3;
+  border: 1px solid var(--writer-line);
+  border-radius: 999px;
+  background: rgba(11, 20, 28, 0.75);
+  font: 650 0.58rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+/* Story brief: a large opening line, then quieter supporting prose. */
+.writer-overview__synopsis { position: relative; max-width: 74ch; margin-top: 1.5rem; padding-left: 1.35rem; }
+.writer-overview__synopsis::before {
+  position: absolute;
+  inset: 0.35rem auto 0.35rem 0;
+  width: 2px;
+  content: '';
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--writer-coral-strong), rgba(240, 138, 104, 0.08));
+}
+.writer-overview__synopsis p { color: #9db0be; font-size: 0.82rem; line-height: 1.95; text-wrap: pretty; }
+.writer-overview__synopsis p + p { margin-top: 0.75rem; }
+.writer-overview__lead {
+  color: #e6eef3 !important;
+  font-size: 1.02rem !important;
+  font-weight: 550;
+  line-height: 1.78 !important;
+  letter-spacing: -0.006em;
+}
+
+.writer-overview__details { margin-top: 1.75rem; display: grid; grid-template-columns: minmax(8rem, 0.7fr) minmax(12rem, 1fr) minmax(15rem, 1.35fr); gap: 0.75rem; }
+.writer-overview__details > div {
+  position: relative;
+  min-width: 0;
+  padding: 1rem 1.1rem 1.05rem;
+  overflow: hidden;
+  border: 1px solid var(--writer-line);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(13, 23, 32, 0.9), var(--writer-surface));
+  transition: border-color 0.18s ease, transform 0.18s ease;
+}
+.writer-overview__details > div::before {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  content: '';
+  background: linear-gradient(90deg, var(--writer-cyan), transparent 72%);
+  opacity: 0.55;
+}
+.writer-overview__details > div:hover { transform: translateY(-2px); border-color: rgba(54, 220, 229, 0.32); }
+.writer-overview__details dt {
+  margin-bottom: 0.6rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #8ea3b5;
+  font: 700 0.58rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.11em;
+}
+.writer-overview__details dt > span { color: rgba(54, 220, 229, 0.65); font-size: 0.55rem; }
+.writer-overview__details dd { color: #c2d0da; font-size: 0.78rem; line-height: 1.72; overflow-wrap: anywhere; }
 .writer-overview__details .is-theme dd { color: #efb29f; }
 .writer-overview__details .is-world dd { color: #9fb2c1; }
+.writer-overview__details .is-theme::before { background: linear-gradient(90deg, var(--writer-coral-strong), transparent 72%); }
+
+/* The graph falls back to same-scene co-occurrence until relations are analysed. */
+.writer-relationships__notice {
+  margin: 0;
+  padding: 0.85rem 2rem;
+  color: #93a7b8;
+  border-bottom: 1px solid var(--writer-line);
+  background: rgba(240, 138, 104, 0.06);
+  font-size: 0.75rem;
+  line-height: 1.7;
+}
+.writer-relationships__notice strong { color: #efb29f; font-weight: 650; }
+
+@media (max-width: 900px) {
+  .writer-overview { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
+  .writer-overview__label { padding: 0 0 1rem; flex-direction: row; align-items: baseline; justify-content: space-between; border-right: 0; border-bottom: 1px solid var(--writer-line); }
+  .writer-overview__label > strong { margin-top: 0; font-size: 2rem; }
+  .writer-overview__details { grid-template-columns: minmax(0, 1fr); }
+}
 
 .writer-section { border-bottom: 1px solid var(--writer-line); }
 .writer-section:last-child { border-bottom: 0; }
@@ -603,6 +697,8 @@
   vertical-align: 1px;
 }
 .writer-outline__tag.is-narration { color: var(--writer-coral-strong); border-color: rgba(240, 138, 104, 0.4); background: rgba(240, 138, 104, 0.08); }
+.writer-outline__tag.is-monologue { color: #c9a6f5; border-color: rgba(178, 132, 240, 0.45); background: rgba(178, 132, 240, 0.1); }
+.writer-outline__cue { margin-right: 4px; color: #8fa3b0; font-size: 0.72rem; }
 .writer-outline__roles { min-width: 96px; color: #c4d0d9; }
 
 /* ---- 分集剧本 txt 阅读弹窗 ---- */
@@ -809,3 +905,13 @@
   .script-library__list > li { padding: 12px 20px; flex-wrap: wrap; }
   .script-library__paper, .script-library__editor { padding: 20px; }
 }
+
+/* A section heading can carry more than one action (e.g. 补写缺失集数 + 重新分集). */
+.writer-section__actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; justify-content: flex-end; }
+.writer-outline-button.is-primary {
+  color: #08131a;
+  border-color: transparent;
+  background: linear-gradient(120deg, var(--writer-cyan), #7ae7cf);
+}
+.writer-outline-button.is-primary:hover { color: #040c12; border-color: transparent; filter: brightness(1.08); }
+.writer-outline-button.is-primary:disabled { filter: none; }

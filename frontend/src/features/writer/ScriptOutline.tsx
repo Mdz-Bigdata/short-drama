@@ -23,8 +23,22 @@ function sceneDuration(scene: WriterScene): string {
   return '—';
 }
 
+const TAG_VARIANT: Record<SceneDialogueLine['kind'], string> = {
+  台词: '',
+  旁白: ' is-narration',
+  内心独白: ' is-monologue',
+};
+
 function buildRows(scenes: WriterScene[]): OutlineRow[] {
   const shotCounters = new Map<number, number>();
+  // 单场景 characters 常有缺漏，用全剧角色并集做说话人识别更稳。
+  const allSpeakers = new Set<string>();
+  scenes.forEach(scene => {
+    (scene.characters || []).forEach(name => {
+      const trimmed = String(name).trim();
+      if (trimmed) allSpeakers.add(trimmed);
+    });
+  });
   return scenes.map((scene, index) => {
     const episode = sceneEpisode(scene);
     const shotIndex = (shotCounters.get(episode) || 0) + 1;
@@ -36,7 +50,7 @@ function buildRows(scenes: WriterScene[]): OutlineRow[] {
       shotIndex,
       duration: sceneDuration(scene),
       content: String(scene.content || '').replace(/\*\*/g, '').trim() || '—',
-      dialogues: extractSceneDialogues(scene),
+      dialogues: extractSceneDialogues(scene, allSpeakers),
       characters: (scene.characters || []).map(name => String(name).trim()).filter(Boolean),
     };
   });
@@ -79,10 +93,11 @@ export function ScriptOutline({ scenes }: { scenes: WriterScene[] }) {
                 <td className="writer-outline__dialogue">
                   {row.dialogues.length ? row.dialogues.map((line, lineIndex) => (
                     <p key={lineIndex}>
-                      <span className={`writer-outline__tag ${line.kind === '旁白' ? 'is-narration' : ''}`}>
+                      <span className={`writer-outline__tag${TAG_VARIANT[line.kind]}`}>
                         {line.kind}
                       </span>
                       {line.speaker && <strong>{line.speaker}</strong>}
+                      {line.cue && <span className="writer-outline__cue">（{line.cue}）</span>}
                       <span className="writer-outline__line">{line.text}</span>
                     </p>
                   )) : '—'}

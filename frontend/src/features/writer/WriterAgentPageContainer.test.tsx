@@ -226,6 +226,165 @@ describe('WriterAgentPageContainer', () => {
     ));
   });
 
+  it('repairs a co-occurrence graph through the relationship analysis endpoint', async () => {
+    const user = userEvent.setup();
+    const inferred = {
+      ...dashboard,
+      relationshipsInferred: true,
+      relationships: [{ from: '林夏', to: '周教授', relation: '同场互动 · 1 场', bidirectional: true }],
+    };
+    const analysed = {
+      ...dashboard,
+      relationshipsInferred: false,
+      relationships: [{ from: '林夏', to: '周教授', relation: '师徒反目', bidirectional: false }],
+    };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => inferred } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => analysed } as Response);
+
+    render(
+      <WriterAgentPageContainer
+        taskId="writer-task-1"
+        episodes={[]}
+        episodesBusy={false}
+        onPlanEpisodes={vi.fn()}
+        onProduceEpisode={vi.fn()}
+      />,
+    );
+
+    const analyze = await screen.findByRole('button', { name: /AI 分析人物关系/ });
+    expect(screen.getByText(/同场共现统计/)).toBeTruthy();
+
+    await user.click(analyze);
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenNthCalledWith(
+      2,
+      'http://localhost:8000/api/drama/writer-task-1/relationships/analyze',
+      expect.objectContaining({ method: 'POST' }),
+    ));
+    await waitFor(() => expect(screen.getAllByText(/师徒反目/).length).toBeGreaterThan(0));
+    expect(screen.queryByText(/同场共现统计/)).toBeNull();
+  });
+
+  it('surfaces a refused analysis without dropping the existing graph', async () => {
+    const user = userEvent.setup();
+    const inferred = {
+      ...dashboard,
+      relationshipsInferred: true,
+      relationships: [{ from: '林夏', to: '周教授', relation: '同场互动 · 1 场', bidirectional: true }],
+    };
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => inferred } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        json: async () => ({ detail: '剧本尚未生成，无法分析人物关系' }),
+      } as Response);
+
+    render(
+      <WriterAgentPageContainer
+        taskId="writer-task-1"
+        episodes={[]}
+        episodesBusy={false}
+        onPlanEpisodes={vi.fn()}
+        onProduceEpisode={vi.fn()}
+      />,
+    );
+
+    await user.click(await screen.findByRole('button', { name: /AI 分析人物关系/ }));
+
+    expect((await screen.findByRole('status')).textContent).toContain('剧本尚未生成');
+    expect(screen.getByRole('button', { name: /AI 分析人物关系/ })).toBeTruthy();
+  });
+
+  it('fills in the missing episodes of a truncated screenplay', async () => {
+    const user = userEvent.setup();
+    const truncated = {
+      ...dashboard,
+      stats: { ...dashboard.stats, totalEpisodes: 30, scriptedEpisodes: 15 },
+    };
+    const completed = {
+      ...dashboard,
+      stats: { ...dashboard.stats, totalEpisodes: 30, scriptedEpisodes: 30 },
+    };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => truncated } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => completed } as Response);
+
+    render(
+      <WriterAgentPageContainer
+        taskId="writer-task-1"
+        episodes={[]}
+        episodesBusy={false}
+        onPlanEpisodes={vi.fn()}
+        onProduceEpisode={vi.fn()}
+      />,
+    );
+
+    const button = await screen.findByRole('button', { name: '补写缺失的 15 集' });
+    expect(screen.getByText('剧本正文仅 15 集，尚缺 15 集')).toBeTruthy();
+
+    await user.click(button);
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenNthCalledWith(
+      2,
+      'http://localhost:8000/api/drama/writer-task-1/script/continue',
+      expect.objectContaining({ method: 'POST' }),
+    ));
+    await waitFor(() => expect(screen.getByText('完整剧本已载入')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /补写缺失的/ })).toBeNull();
+  });
+
+  it('offers no continuation button once the screenplay is complete', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ ...dashboard, stats: { ...dashboard.stats, totalEpisodes: 2, scriptedEpisodes: 2 } }),
+    } as Response);
+
+    render(
+      <WriterAgentPageContainer
+        taskId="writer-task-1"
+        episodes={[]}
+        episodesBusy={false}
+        onPlanEpisodes={vi.fn()}
+        onProduceEpisode={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByRole('heading', { name: '十二小时' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /补写缺失的/ })).toBeNull();
+  });
+
+  it('keeps the finished episodes when a continuation is refused', async () => {
+    const user = userEvent.setup();
+    const truncated = {
+      ...dashboard,
+      stats: { ...dashboard.stats, totalEpisodes: 30, scriptedEpisodes: 15 },
+    };
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => truncated } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        json: async () => ({ detail: '剧本已包含全部 30 集，无需补写' }),
+      } as Response);
+
+    render(
+      <WriterAgentPageContainer
+        taskId="writer-task-1"
+        episodes={[]}
+        episodesBusy={false}
+        onPlanEpisodes={vi.fn()}
+        onProduceEpisode={vi.fn()}
+      />,
+    );
+
+    await user.click(await screen.findByRole('button', { name: '补写缺失的 15 集' }));
+
+    expect((await screen.findByRole('status')).textContent).toContain('无需补写');
+    expect(screen.getByText('剧本正文仅 15 集，尚缺 15 集')).toBeTruthy();
+  });
+
   it('saves a dirty draft against its original version after the dashboard refreshes', async () => {
     const user = userEvent.setup();
     const remoteDashboard = {

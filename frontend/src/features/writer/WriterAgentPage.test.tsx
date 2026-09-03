@@ -65,6 +65,51 @@ describe('WriterAgentPage', () => {
     expect(screen.getByText('识别角色后，这里会生成以主角为中心的人物关系图谱。')).toBeTruthy();
   });
 
+  it('says how far the screenplay actually got when it falls short of the plan', () => {
+    render(
+      <WriterAgentPage
+        title="流氓天子"
+        breakdown={breakdown}
+        script="第1集 市井无赖"
+        serverStats={{
+          totalEpisodes: 30,
+          scriptedEpisodes: 15,
+          sceneCount: 30,
+          characterCount: 8,
+          mainEventCount: 6,
+          relationshipCount: 12,
+          totalDurationSeconds: 3300,
+          tone: '古装权谋',
+        }}
+      />,
+    );
+
+    expect(screen.getByText('剧本正文仅 15 集，尚缺 15 集')).toBeTruthy();
+    expect(screen.queryByText('完整剧本已载入')).toBeNull();
+  });
+
+  it('reports a complete screenplay without a shortfall note', () => {
+    render(
+      <WriterAgentPage
+        title="流氓天子"
+        breakdown={breakdown}
+        script="第1集 市井无赖"
+        serverStats={{
+          totalEpisodes: 30,
+          scriptedEpisodes: 30,
+          sceneCount: 240,
+          characterCount: 8,
+          mainEventCount: 6,
+          relationshipCount: 12,
+          totalDurationSeconds: 3300,
+          tone: '古装权谋',
+        }}
+      />,
+    );
+
+    expect(screen.getByText('完整剧本已载入')).toBeTruthy();
+  });
+
   it('presents the story overview as labeled genre, theme and world-setting details', () => {
     render(
       <WriterAgentPage

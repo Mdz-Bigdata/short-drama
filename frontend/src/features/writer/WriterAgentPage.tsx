@@ -8,7 +8,9 @@ import {
   LayoutDashboard,
   ListTree,
   Network,
+  PenLine,
   RefreshCw,
+  Sparkles,
   TableProperties,
   TimerReset,
 } from 'lucide-react';
@@ -79,6 +81,22 @@ function cleanStorySynopsis(value: unknown) {
   return cleanOverviewText(cutoff >= 0 ? summary.slice(0, cutoff) : summary);
 }
 
+function splitSynopsis(value: string, sentencesPerParagraph = 2, maxParagraphs = 5) {
+  if (!value) return [];
+  // Keep the slices verbatim: joined back together they must equal the input.
+  const sentences = value.match(/[^。！？!?]+[。！？!?]*/g) || [value];
+  const paragraphs: string[] = [];
+  for (let index = 0; index < sentences.length; index += sentencesPerParagraph) {
+    paragraphs.push(sentences.slice(index, index + sentencesPerParagraph).join(''));
+  }
+  if (paragraphs.length <= maxParagraphs) return paragraphs;
+  // Never drop prose - fold the overflow into the last visible paragraph.
+  return [
+    ...paragraphs.slice(0, maxParagraphs - 1),
+    paragraphs.slice(maxParagraphs - 1).join(''),
+  ];
+}
+
 function sceneDurationSeconds(scene: WriterScene) {
   if (Number.isFinite(scene.durationSeconds) && Number(scene.durationSeconds) > 0) {
     return Number(scene.durationSeconds);
@@ -121,6 +139,9 @@ export function WriterAgentPage({
   onProduceEpisode,
   onSaveScript,
   onSaveRelationships,
+  onAnalyzeRelationships,
+  onContinueScript,
+  relationshipsInferred = false,
   onOpenScenes,
   onOpenActors,
 }: {
@@ -143,6 +164,9 @@ export function WriterAgentPage({
     baseSourceHash: string,
   ) => string | void | Promise<string | void>;
   onSaveRelationships?: (relationships: WriterRelationship[]) => Promise<void>;
+  onAnalyzeRelationships?: () => Promise<void>;
+  onContinueScript?: () => Promise<void>;
+  relationshipsInferred?: boolean;
   onOpenScenes?: () => void;
   onOpenActors?: () => void;
 }) {
@@ -152,6 +176,8 @@ export function WriterAgentPage({
   const [episodeTextTarget, setEpisodeTextTarget] = useState<{ episode?: number } | null>(null);
   const [sceneDialogEpisode, setSceneDialogEpisode] = useState<number | null>(null);
   const [episodePage, setEpisodePage] = useState(0);
+  const [relationshipsAnalyzing, setRelationshipsAnalyzing] = useState(false);
+  const [scriptContinuing, setScriptContinuing] = useState(false);
   const breakdown = useMemo(() => normalizeWriterBreakdown(breakdownInput), [breakdownInput]);
   const scenes = breakdown.scenes || [];
   const timeline = breakdown.timeline || [];
@@ -159,12 +185,18 @@ export function WriterAgentPage({
   const relationships = breakdown.relationships || [];
   const overview = breakdown.overview;
   const synopsis = cleanStorySynopsis(overview?.synopsis);
+  const synopsisParagraphs = splitSynopsis(synopsis);
   const overviewDetails = [
     { label: '题材', value: cleanOverviewText(overview?.genre), className: 'is-genre' },
     { label: '核心主题', value: cleanOverviewText(overview?.theme), className: 'is-theme' },
     { label: '世界设定', value: cleanOverviewText(overview?.world_setting || overview?.worldSetting), className: 'is-world' },
   ].filter(item => item.value);
   const displayedRelationships = relationships.length ? relationships : relationshipsFromScenes(scenes);
+  // Co-occurrence edges state only that two names share a scene, so the graph is
+  // flagged until a real analysis (or a manual edit) replaces them.
+  const graphIsInferred = relationshipsInferred
+    || !relationships.length
+    || relationships.every(edge => /^同场互动(?:\s|·|$)/.test(String(edge.relation || '')));
   const source = assetToText(script);
   const sceneEpisodes = scenes.map(sceneEpisode);
   const episodeTotal = Math.max(requestedEpisodeCount, episodes.length, ...sceneEpisodes, source ? 1 : 0);
@@ -190,6 +222,12 @@ export function WriterAgentPage({
     activeEpisodePage * EPISODES_PER_PAGE,
     (activeEpisodePage + 1) * EPISODES_PER_PAGE,
   );
+  const scriptedEpisodes = serverStats?.scriptedEpisodes || 0;
+  const plannedEpisodes = serverStats?.totalEpisodes || episodeTotal;
+  // Episodes the plan calls for that the screenplay never got to.
+  const missingEpisodeCount = scriptedEpisodes && plannedEpisodes > scriptedEpisodes
+    ? plannedEpisodes - scriptedEpisodes
+    : 0;
   const stats: Array<{
     label: string;
     value: string | number;
@@ -200,7 +238,13 @@ export function WriterAgentPage({
     {
       label: '总集数',
       value: serverStats?.totalEpisodes || episodeTotal || '—',
-      note: source ? '完整剧本已载入' : '等待剧本',
+      // A short script used to hide behind the requested count: the card said 30
+      // while the screenplay only carried 15 episodes of text.
+      note: !source
+        ? '等待剧本'
+        : missingEpisodeCount
+          ? `剧本正文仅 ${scriptedEpisodes} 集，尚缺 ${missingEpisodeCount} 集`
+          : '完整剧本已载入',
       onOpen: source ? () => setEpisodeTextTarget({}) : undefined,
       hint: '按集查看剧本文本',
     },
@@ -313,7 +357,7 @@ export function WriterAgentPage({
         </section>
       ) : (
       <>
-      {(synopsis || overviewDetails.length > 0) && (
+      {(synopsisParagraphs.length > 0 || overviewDetails.length > 0) && (
         <section className="writer-overview" aria-labelledby="writer-logline-title">
           <div className="writer-overview__label" aria-hidden="true">
             <span>STORY OVERVIEW</span>
@@ -327,12 +371,20 @@ export function WriterAgentPage({
               </div>
               <span>编剧结构提要</span>
             </header>
-            {synopsis && <p className="writer-overview__synopsis">{synopsis}</p>}
+            {synopsisParagraphs.length > 0 && (
+              <div className="writer-overview__synopsis">
+                {synopsisParagraphs.map((paragraph, index) => (
+                  <p className={index === 0 ? 'writer-overview__lead' : undefined} key={index}>
+                    {paragraph}
+                  </p>
+                ))}
+              </div>
+            )}
             {overviewDetails.length > 0 && (
               <dl className="writer-overview__details">
-                {overviewDetails.map(item => (
+                {overviewDetails.map((item, index) => (
                   <div className={item.className} key={item.label}>
-                    <dt>{item.label}</dt>
+                    <dt><span aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>{item.label}</dt>
                     <dd>{item.value}</dd>
                   </div>
                 ))}
@@ -356,7 +408,24 @@ export function WriterAgentPage({
       <section className="writer-section" aria-labelledby="writer-episodes-title">
         <div className="writer-section__heading">
           <div><span>02</span><div><small>EPISODE MAP</small><h2 id="writer-episodes-title">分集概览</h2></div></div>
-          {onPlanEpisodes && <button className="writer-outline-button" type="button" onClick={onPlanEpisodes} disabled={episodesBusy}><RefreshCw aria-hidden="true" /> {episodesBusy ? '分集中…' : episodes.length ? '重新分集' : '一键分集'}</button>}
+          <div className="writer-section__actions">
+            {missingEpisodeCount > 0 && onContinueScript && (
+              <button
+                className="writer-outline-button is-primary"
+                type="button"
+                disabled={scriptContinuing}
+                onClick={() => {
+                  setScriptContinuing(true);
+                  void onContinueScript()
+                    .catch(() => undefined)
+                    .finally(() => setScriptContinuing(false));
+                }}
+              >
+                <PenLine aria-hidden="true" /> {scriptContinuing ? '补写中…' : `补写缺失的 ${missingEpisodeCount} 集`}
+              </button>
+            )}
+            {onPlanEpisodes && <button className="writer-outline-button" type="button" onClick={onPlanEpisodes} disabled={episodesBusy}><RefreshCw aria-hidden="true" /> {episodesBusy ? '分集中…' : episodes.length ? '重新分集' : '一键分集'}</button>}
+          </div>
         </div>
         {episodeCards.length > 0 ? (
           <>
@@ -430,7 +499,32 @@ export function WriterAgentPage({
       </section>
 
       <section className="writer-section" aria-labelledby="writer-relationships-title">
-        <div className="writer-section__heading"><div><span>03</span><div><small>CHARACTER NETWORK</small><h2 id="writer-relationships-title">人物关系图谱</h2></div></div><Network aria-hidden="true" /></div>
+        <div className="writer-section__heading">
+          <div><span>03</span><div><small>CHARACTER NETWORK</small><h2 id="writer-relationships-title">人物关系图谱</h2></div></div>
+          {graphIsInferred && onAnalyzeRelationships ? (
+            <button
+              className="writer-outline-button"
+              type="button"
+              disabled={relationshipsAnalyzing}
+              onClick={() => {
+                setRelationshipsAnalyzing(true);
+                void onAnalyzeRelationships()
+                  .catch(() => undefined)
+                  .finally(() => setRelationshipsAnalyzing(false));
+              }}
+            >
+              <Sparkles aria-hidden="true" /> {relationshipsAnalyzing ? '分析中…' : 'AI 分析人物关系'}
+            </button>
+          ) : <Network aria-hidden="true" />}
+        </div>
+        {graphIsInferred && (
+          <p className="writer-relationships__notice">
+            当前连线只是<strong>同场共现统计</strong>，并非人物之间的真实关系。
+            {onAnalyzeRelationships
+              ? '点击「AI 分析人物关系」按剧本重新识别君臣、父子、主仆、背叛等具体关系，也可直接手动编辑每条连线。'
+              : '可直接手动编辑每条连线，补全君臣、父子、主仆、背叛等具体关系。'}
+          </p>
+        )}
         <CharacterRelationshipGraph
           roles={roles}
           relationships={displayedRelationships}

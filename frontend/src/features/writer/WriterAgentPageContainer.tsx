@@ -159,6 +159,47 @@ export function WriterAgentPageContainer({
     }
   };
 
+  const analyzeRelationships = async () => {
+    try {
+      const data = await apiRequest<WriterDashboardResponse>(
+        `/api/drama/${encodeURIComponent(taskId)}/relationships/analyze`,
+        { method: 'POST' },
+      );
+      setDashboardState({ taskId, data });
+      setSyncError('');
+    } catch (error) {
+      const message = isUnauthorized(error)
+        ? '登录状态已过期，请重新登录后再分析人物关系。'
+        : error instanceof ApiError && error.status === 409
+          ? error.message
+          : '人物关系分析失败，请稍后重试。';
+      setSyncError(message);
+      throw new Error(message, { cause: error });
+    }
+  };
+
+  const continueScript = async () => {
+    try {
+      const data = await apiRequest<WriterDashboardResponse>(
+        `/api/drama/${encodeURIComponent(taskId)}/script/continue`,
+        { method: 'POST' },
+      );
+      setDashboardState({ taskId, data });
+      // Deliberately NOT onScriptSaved: that path treats the screenplay as replaced
+      // and drops every stage>=3 asset from the workbench. Appending episodes leaves
+      // the finished episodes' characters, storyboards and videos valid.
+      setSyncError('');
+    } catch (error) {
+      const message = isUnauthorized(error)
+        ? '登录状态已过期，请重新登录后再补写剧本。'
+        : error instanceof ApiError && error.status === 409
+          ? error.message
+          : '剧本补写失败，已生成的集数未受影响，请稍后重试。';
+      setSyncError(message);
+      throw new Error(message, { cause: error });
+    }
+  };
+
   const saveScript = async (content: string, fileName: string, baseSourceHash: string) => {
     if (!dashboard) {
       throw new Error('无法确认剧本版本，请恢复后端连接并刷新页面后再保存。');
@@ -227,6 +268,9 @@ export function WriterAgentPageContainer({
         onProduceEpisode={onProduceEpisode}
         onSaveScript={saveScript}
         onSaveRelationships={taskId ? saveRelationships : undefined}
+        onAnalyzeRelationships={taskId ? analyzeRelationships : undefined}
+        onContinueScript={taskId ? continueScript : undefined}
+        relationshipsInferred={dashboard?.relationshipsInferred === true}
         onOpenScenes={onOpenScenes}
         onOpenActors={onOpenActors}
       />
