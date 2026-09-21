@@ -12,6 +12,8 @@ export interface TaskConfig {
   scriptName?: string;
   scriptContent?: string;
   directorStyle: string;
+  /** 全片风格锁：每一镜的图与视频提示词都按它编译 (backend app/core/style_packs.py)。 */
+  stylePack?: string;
   shotStyle: string;
   llmModel: string;
   imageModel: string;
@@ -50,6 +52,31 @@ export interface StageProgress {
   elapsed_ms?: number;
 }
 
+export interface WorkflowSnapshot {
+  stages: Array<{
+    stage: number;
+    label: string;
+    state: 'complete' | 'running' | 'pending';
+    missing: string[];
+    guidance: string;
+  }>;
+  next_stage: number | null;
+  active_stage: number | null;
+  completed_stages: number[];
+  production_complete: boolean;
+  release_ready: boolean;
+  mode: 'running' | 'ready' | 'paused' | 'blocked' | 'review' | 'completed';
+  hint: string;
+  actions: Array<{ kind: string; label: string; message: string; stage?: number }>;
+  event_id: string;
+}
+
+export interface TaskChatEntry {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 /** What GET /api/drama/list returns: the lobby row without generated assets.
  *  A project's assets are fetched per project through /{task_id}/status. */
 export type TaskSummary = Omit<TaskResponse, 'assets' | 'logs'>;
@@ -58,12 +85,13 @@ export interface TaskResponse {
   taskId: string;
   currentStage: number;
   stageName: string;
-  status: 'idle' | 'running' | 'paused' | 'completed' | 'failed' | 'awaiting_quality_review' | 'quality_failed';
+  status: 'idle' | 'running' | 'paused' | 'stopped' | 'completed' | 'failed' | 'interrupted' | 'awaiting_quality_review' | 'quality_failed' | 'awaiting_council_review' | 'council_quality_failed';
   config: {
     titleSuggestion: string;
     scriptName?: string;
     scriptContent?: string;
     directorStyle: string;
+    stylePack?: string;
     shotStyle: string;
     llmModel: string;
     imageModel: string;
@@ -87,4 +115,6 @@ export interface TaskResponse {
   prContent?: string;
   stageProgress?: StageProgress | null;
   failReason?: string | null;
+  workflow?: WorkflowSnapshot;
+  chatHistory?: TaskChatEntry[];
 }

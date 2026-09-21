@@ -26,6 +26,7 @@ from app.api.drama_api import router as drama_router
 from app.api.auth_api import router as auth_router
 from app.api.production_api import router as production_router
 from app.api.project_skill_api import router as project_skill_router
+from app.api.director_desk_api import router as director_desk_router
 from app.api.studio_api import router as studio_router
 from app.api.agent_api import router as agent_router
 from app.api.billing_api import router as billing_router
@@ -123,6 +124,7 @@ app.include_router(element_router)
 app.include_router(user_router)
 app.include_router(billing_router)
 app.include_router(project_skill_router)
+app.include_router(director_desk_router)
 
 
 @app.on_event("startup")
@@ -139,8 +141,17 @@ async def _initialize_postgresql_platform():
 
 def _recover_orphan_task_state(task: dict) -> bool:
     """Normalize a persisted running task after a process restart."""
-    if task.get("status") != "running" or not task.get("task_id"):
+    control = task.get("workflow_control") or {}
+    if not task.get("task_id") or (task.get("status") != "running" and not control.get("active")):
         return False
+
+    if isinstance(task.get("workflow_control"), dict):
+        task["workflow_control"]["active"] = False
+    if task.get("status") != "running":
+        return True
+    if control.get("pause_requested"):
+        task["status"] = "stopped" if control.get("stop_requested") else "paused"
+        return True
 
     progress = task.get("stage_progress")
     if isinstance(progress, dict) and progress.get("status") == "success":
@@ -168,9 +179,9 @@ def _recover_orphan_tasks():
         repo = TaskRepository()
         n = 0
         for t in repo.list_all_tasks():
-            if isinstance(t, dict) and _recover_orphan_task_state(t):
-                repo.save_task(t["task_id"], t)
-                n += 1
+            if isinstance(t, dict) and (t.get("status") == "running" or (t.get("workflow_control") or {}).get("active")):
+                if repo.mutate_task(t["task_id"], _recover_orphan_task_state):
+                    n += 1
         if n:
             log.warning(f"[启动恢复] 已规范化 {n} 个残留 running 任务的状态")
     except Exception as e:

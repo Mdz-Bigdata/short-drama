@@ -275,6 +275,61 @@ class ModelDiscoveryTests(unittest.IsolatedAsyncioTestCase):
                 base_url="https://api.minimaxi.com", api_key="invalid-looking-key",
             )
 
+    async def test_documented_video_catalogs_load_without_an_enumeration_endpoint(self):
+        discovery = ModelDiscoveryClient(transport=httpx.MockTransport(lambda _: httpx.Response(404)))
+        for provider, base_url, expected in (
+            ("fal", "https://queue.fal.run", "alibaba/happy-horse/v1.1"),
+            ("ltx", "https://api.ltx.io", "ltx-2-3-pro"),
+            ("kling", "https://api-singapore.klingai.com", "kling-v2-1"),
+        ):
+            with self.subTest(provider=provider):
+                result = await discovery.discover(
+                    category="video", provider=provider, base_url=base_url,
+                    api_key="server-side-key", allow_catalog_fallback=True,
+                )
+                self.assertIn(expected, {item.model_id for item in result.models})
+                self.assertTrue(all(item.category == "video" for item in result.models))
+                self.assertFalse(result.credential_verified)
+                self.assertEqual(result.source_endpoint, f"{provider}:documented-model-catalog")
+                self.assertTrue(any("首次生成时验证" in warning for warning in result.warnings))
+
+        with self.assertRaisesRegex(ValueError, "未提供可枚举"):
+            await discovery.discover(
+                category="video", provider="ltx", base_url="https://api.ltx.io", api_key="server-side-key",
+            )
+
+    async def test_xai_video_discovery_keeps_only_video_models(self):
+        requested_paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested_paths.append(request.url.path)
+            self.assertEqual(request.headers["authorization"], "Bearer xai-secret")
+            if request.url.path != "/v1/models":
+                return httpx.Response(404)
+            return httpx.Response(200, json={"data": [
+                {"id": "grok-imagine-video-1.5"}, {"id": "grok-4"}, {"id": "grok-imagine-image"},
+            ]})
+
+        discovery = ModelDiscoveryClient(transport=httpx.MockTransport(handler))
+        result = await discovery.discover(
+            category="video", provider="xai", base_url="https://api.x.ai", api_key="xai-secret",
+        )
+
+        self.assertIn("/v1/models", requested_paths)
+        self.assertEqual({item.model_id for item in result.models}, {"grok-imagine-video-1.5"})
+        self.assertTrue(result.credential_verified)
+
+    async def test_new_video_provider_hosts_are_pinned(self):
+        discovery = ModelDiscoveryClient(transport=httpx.MockTransport(lambda _: httpx.Response(404)))
+        for provider, wrong_url in (
+            ("xai", "https://api.openai.com"), ("fal", "https://api.x.ai"), ("ltx", "https://queue.fal.run"),
+        ):
+            with self.subTest(provider=provider):
+                with self.assertRaisesRegex(ValueError, "官方域名"):
+                    await discovery.discover(
+                        category="video", provider=provider, base_url=wrong_url, api_key="server-side-key",
+                    )
+
     def test_minimax_provider_label_is_canonical(self):
         video_group = next(item for item in provider_options() if item["category"] == "video")
         minimax = next(item for item in video_group["providers"] if item["id"] == "minimax")

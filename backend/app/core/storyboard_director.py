@@ -11,6 +11,8 @@ import json
 import re
 from decimal import Decimal, ROUND_HALF_UP
 
+from app.core.frame_position import render_frame_positions
+from app.core.transition_catalog import describe_transition, normalize_transition_type
 from app.schema.storyboard_director import (
     ContinuityCheckItem,
     StoryboardDirectorRequest,
@@ -25,6 +27,17 @@ from app.schema.storyboard_director import (
 
 
 _BRACKET_DIALOGUE = re.compile(r"^【([^】]{1,120})】\s*(.*)$")
+# A landmark only anchors left/right when it states a bearing AND a distance from
+# the character ("西偏西南约15米"); a bare place ("路边") lets the frame mirror.
+LANDMARK_BEARING = re.compile(r"[东南西北]|[左右]|前方|后方|正前|正后|背后|面前|对面|侧方|身旁|身侧")
+LANDMARK_DISTANCE = re.compile(
+    r"(?:\d+(?:\.\d+)?|[一二两三四五六七八九十百半]+)\s*(?:米|m(?![a-z])|厘米|cm|公分|步|尺|丈|臂)"
+    r"|贴身|一臂|伸手可及"
+)
+
+
+def landmark_is_anchored(relative_position: str) -> bool:
+    return bool(LANDMARK_BEARING.search(relative_position) and LANDMARK_DISTANCE.search(relative_position))
 _INLINE_DIALOGUE = re.compile(r"^([A-Za-z\u4e00-\u9fff·][A-Za-z0-9\u4e00-\u9fff· ._-]{0,60})[：:]\s*(.+)$")
 _UPPER_CHARACTER = re.compile(r"^[A-Z][A-Z0-9 ._'’-]{0,50}(?:\s*\([^)]*\))?$")
 _SCENE_LINE = re.compile(
@@ -124,6 +137,11 @@ class StoryboardDirectorCompiler:
             "characters": [item.model_dump(mode="json") for item in request.characters],
             "scene_and_props": request.scene.model_dump(mode="json"),
             "verbatim_dialogue": [item.model_dump(mode="json") for item in request.timed_dialogue],
+            "timed_sounds": [item.model_dump(mode="json") for item in request.timed_sounds],
+            "sound_design": request.sound_design.model_dump(mode="json"),
+            "damage_timeline": [item.model_dump(mode="json") for item in request.damage_timeline],
+            # 没有群演就整块不出现，不留空段落。
+            **({"extras_and_crowd": request.extras.model_dump(mode="json")} if request.extras else {}),
             "global_visual_rules": request.global_visual.model_dump(mode="json"),
             "continuity_locks": request.continuity.model_dump(mode="json"),
             "shot_visual_design": request.shot_visual.model_dump(mode="json"),
@@ -195,6 +213,48 @@ class StoryboardDirectorCompiler:
                 if sentence:
                     events.append(StoryEvent(kind="action", text=sentence))
         return events
+
+    @staticmethod
+    def _landmarks(request: StoryboardDirectorRequest) -> str:
+        return "；".join(
+            f"{item.name}：{item.relative_position}（{item.form_and_count}）"
+            for item in request.scene.landmarks
+        )
+
+    @staticmethod
+    def _damage_until(request: StoryboardDirectorRequest, seconds: float) -> str:
+        return "；".join(
+            f"{entry.seconds:g}秒{entry.subject}：{entry.change}"
+            for entry in request.damage_timeline
+            if entry.seconds <= seconds
+        )
+
+    @staticmethod
+    def _damage_between(request: StoryboardDirectorRequest, start: float, end: float) -> str:
+        return "；".join(
+            f"{entry.seconds:g}秒{entry.subject}：{entry.change}"
+            for entry in request.damage_timeline
+            if start < entry.seconds <= end
+        )
+
+    @staticmethod
+    def _sounds_between(request: StoryboardDirectorRequest, start: float, end: float) -> str:
+        return "；".join(
+            f"{sound.start_seconds:g}-{sound.end_seconds:g}秒{sound.description}"
+            for sound in request.timed_sounds
+            if sound.start_seconds < end and sound.end_seconds > start
+        )
+
+    @staticmethod
+    def _extras_line(request: StoryboardDirectorRequest) -> str:
+        extras = request.extras
+        if extras is None:
+            return ""
+        return (
+            f"【{extras.label}】初始分布：{extras.initial_distribution}；运动参数：{extras.motion_parameters}；"
+            f"受击反馈：{extras.hit_reaction_rules}；群体时序：个体错开{extras.stagger_seconds:g}秒，"
+            f"禁止全部同步运动或同步爆发；{extras.reference_note}。\n"
+        )
 
     @staticmethod
     def _weights(events: list[StoryEvent]) -> list[Decimal]:
@@ -317,7 +377,11 @@ class StoryboardDirectorCompiler:
                     if offset == 0 else f"只新增本拍事件：{event.text}"
                 ),
                 verbatim_line=verbatim,
-                environmental_sound=request.scene.environmental_sound,
+                environmental_sound=_clip(
+                    request.scene.environmental_sound
+                    + (f"；时间点音效：{cues}" if (cues := self._sounds_between(request, float(start), float(end))) else ""),
+                    500,
+                ),
                 linkage=(
                     request.transitions.internal_linkage
                     if offset < len(events) - 1 else request.transitions.exit.visual_handoff
@@ -330,32 +394,45 @@ class StoryboardDirectorCompiler:
     def _still_prompt(
         request: StoryboardDirectorRequest, beat: StoryboardTimeBeat, total_beats: int
     ) -> StillFramePrompt:
+        compiler = StoryboardDirectorCompiler
+        landmarks = compiler._landmarks(request)
+        damage_so_far = compiler._damage_until(request, beat.keyframe_seconds)
         characters = "；".join(
             f"{item.name}：{item.appearance}；服装{item.costume}；配饰{item.accessories}；"
             f"身体状态{item.physical_state}；心理状态{item.psychological_state}"
             for item in request.characters
-        )
+        ) or "空镜，无人物，不生成面孔、肢体或人物服装"
         prompt = (
             f"镜头{request.shot_number}第{beat.index}/{total_beats}个关键拍点，"
             f"关键帧时间{beat.keyframe_seconds:g}秒，动作阶段{beat.action_phase}。"
             "只生成一张独立完整画面，不提前呈现下一拍结果。\n"
             f"【当前帧核心画面】{beat.keyframe_state}；核心事件：{beat.core_event}。\n"
             f"【角色与表演】{characters}；当前姿态：{beat.character_pose}。\n"
-            f"【空间与道具】{request.scene.spatial_structure}；{request.continuity.prop_positions}。\n"
+            f"【空间与道具】{request.scene.spatial_structure}；{request.continuity.prop_positions}；"
+            f"地标（相对角色方位与距离）：{landmarks or '按场景结构锁定，位置、形态、数量不变'}；"
+            f"地面{request.scene.ground_material}；{request.scene.initial_environment_state}；"
+            f"{request.continuity.mirror_lock}。\n"
+            + compiler._extras_line(request) +
             f"【画面动势】{beat.subject_dynamics}；次级运动：{beat.secondary_dynamics}；"
             f"动态模糊：{request.dynamics.motion_blur}；稳定区域：{request.dynamics.stable_regions}。\n"
             f"【构图与摄影】{request.shot_visual.shot_size}，{request.shot_visual.lens}，"
             f"{request.shot_visual.camera_angle}，{request.shot_visual.camera_height}，"
             f"{request.shot_visual.depth_of_field}；{request.shot_visual.composition}；"
-            f"{request.shot_visual.spatial_layers}。\n"
-            f"【光影与色调】主光{request.continuity.key_light_direction}；{beat.color_state}；"
+            f"{request.shot_visual.spatial_layers}；"
+            f"画面坐标：{render_frame_positions(request.shot_visual.frame_positions) or '按构图描述锁定站位与朝向'}。\n"
+            f"【光影与色调】主光{request.continuity.key_light_direction}；光比{request.color.light_ratio}；{beat.color_state}；"
             f"主色{request.color.primary_color}，辅助色{request.color.secondary_color}，"
             f"点缀色{request.color.accent_color}，{request.color.color_temperature}。\n"
             f"【相对上一拍变化】{beat.change_from_previous}。\n"
             f"【连续性锁定】面部{request.continuity.face_anchor}；体态{request.continuity.body_anchor}；"
             f"服装{request.continuity.costume_anchor}；场景{request.continuity.scene_structure}；"
             f"轴线{request.continuity.camera_axis}；屏幕方向{request.continuity.screen_direction}。\n"
+            f"【污损状态】初始：{request.continuity.wound_and_stain_anchor}；"
+            f"截至{beat.keyframe_seconds:g}秒已发生：{damage_so_far or '无变化'}；"
+            f"{request.continuity.damage_closure}。\n"
             f"【台词表演依据】{beat.verbatim_line or '无'}；不得把台词生成在画面中。\n"
+            f"【参考素材】{request.global_visual.reference_image_policy}；"
+            f"{request.global_visual.reference_video_policy}。\n"
             f"【排除】{'、'.join(request.global_visual.exclusions)}。"
         )
         return StillFramePrompt(
@@ -375,12 +452,32 @@ class StoryboardDirectorCompiler:
             "镜头漂移", "角色变脸", "服装变化", "肢体畸形", "背景跳动", "速度突变",
             "瞬移", "穿模", "物体闪现", "肢体重置", "新增人物道具动作或特效",
         ]
+        compiler = StoryboardDirectorCompiler
+        landmarks = compiler._landmarks(request)
+        frame_positions = render_frame_positions(request.shot_visual.frame_positions)
         for index, (start, end) in enumerate(zip(beats, beats[1:], strict=False), start=1):
             duration = round(end.keyframe_seconds - start.keyframe_seconds, 3)
             dialogue = "｜".join(filter(None, (start.verbatim_line, end.verbatim_line))) or "无"
+            damage_before = compiler._damage_until(request, start.keyframe_seconds)
+            damage_within = compiler._damage_between(request, start.keyframe_seconds, end.keyframe_seconds)
+            cues = compiler._sounds_between(request, start.keyframe_seconds, end.keyframe_seconds)
+            entry = request.transitions.entry
+            exit_edge = request.transitions.exit
+            transition_lines = ""
+            if index == 1:
+                transition_lines += (
+                    f"【转场·入】{describe_transition(entry.transition_type)}；来自{entry.adjacent_shot}；"
+                    f"视觉承接：{entry.visual_handoff}；声音承接：{entry.audio_handoff}。\n"
+                )
+            if index == len(beats) - 1:
+                transition_lines += (
+                    f"【转场·出】{describe_transition(exit_edge.transition_type)}；交给{exit_edge.adjacent_shot}；"
+                    f"视觉交接：{exit_edge.visual_handoff}；声音交接：{exit_edge.audio_handoff}。\n"
+                )
             prompt = (
                 f"视频片段{index}：连续瞬间{start.index}→连续瞬间{end.index}，"
                 f"{start.keyframe_seconds:g}秒至{end.keyframe_seconds:g}秒，时长{duration:g}秒。\n"
+                + transition_lines +
                 f"【起始状态】严格继承关键帧{start.index}：{start.keyframe_state}；{start.end_state}。\n"
                 f"【结束状态】准确到达关键帧{end.index}：{end.keyframe_state}。\n"
                 f"【主体运动】从“{start.core_event}”自然发展到“{end.core_event}”；"
@@ -393,13 +490,24 @@ class StoryboardDirectorCompiler:
                 f"路径{request.camera.path}；方向{request.camera.direction}；速度{request.camera.speed_curve}；"
                 f"跟随{request.camera.subject_following}；对焦{request.camera.focus_change}；"
                 f"稳定性{request.camera.stability}。\n"
+                f"【空间锚定】地标（相对角色方位与距离）：{landmarks or '按场景结构锁定，位置、形态、数量不变'}；"
+                f"画面坐标：{frame_positions or '保持首帧站位与屏幕朝向'}；"
+                f"地面{request.scene.ground_material}；{request.continuity.mirror_lock}。\n"
+                + compiler._extras_line(request) +
                 f"【色调变化】从“{start.color_state}”连续过渡到“{end.color_state}”，"
                 f"只由“{request.color.change_reason}”驱动。\n"
+                f"【污损时间表】本段起始污损：{damage_before or request.continuity.wound_and_stain_anchor}；"
+                f"本段内变化：{damage_within or '无'}；{request.continuity.damage_closure}。\n"
                 f"【声音与台词】逐字台词/旁白：{dialogue}；环境声：{request.scene.environmental_sound}；"
+                f"时间点音效：{cues or '无'}；音效分层：近—{request.sound_design.near}；中—{request.sound_design.mid}；"
+                f"远—{request.sound_design.far}；音乐进入点：{request.sound_design.music_entry}；"
+                f"静音设计：{request.sound_design.silence}；{request.scene.sound_policy}；"
                 "台词不得改写、缩写、补写或交换说话者。\n"
                 f"【强制连续性】角色、服装、伤痕污渍、场景结构、道具、光向、摄影轴线和"
                 f"屏幕方向全部锁定；后一状态必须从前一状态连续到达；禁止行为："
                 f"{request.camera.forbidden_behaviors}。若模型自由发挥冲突，以关键帧和本契约为最高优先级。\n"
+                f"【参考素材】{request.global_visual.reference_image_policy}；"
+                f"{request.global_visual.reference_video_policy}。\n"
                 f"【排除】{'、'.join(exclusions)}。"
             )
             segments.append(VideoSegmentPrompt(
@@ -571,6 +679,15 @@ class StoryboardDirectorCompiler:
                 detail="主体动势、摄影机路径与色调变化均有连续轨迹和明确来源。",
             ),
             ContinuityCheckItem(
+                code="transition_types_in_catalog",
+                passed=all(
+                    normalize_transition_type(edge.transition_type)[1]
+                    for edge in (request.transitions.entry, request.transitions.exit)
+                ),
+                severity="warning",
+                detail="入场与出场转场均使用转场词典中的剪辑类型（硬切/淡入淡出/叠化/闪白/划像/推拉/匹配剪辑/蒙太奇/声音先行）。",
+            ),
+            ContinuityCheckItem(
                 code="transitions_explicit",
                 passed=all((
                     request.transitions.entry.visual_handoff.strip(),
@@ -604,6 +721,64 @@ class StoryboardDirectorCompiler:
                 detail="宫格按拍点顺序从左到右、从上到下排列，没有改变故事顺序。",
             ),
         ]
+        unanchored = [
+            item.name for item in request.scene.landmarks
+            if not landmark_is_anchored(item.relative_position)
+        ]
+        checks.extend([
+            ContinuityCheckItem(
+                code="frame_positions_in_screen_coordinates",
+                passed=bool(request.shot_visual.frame_positions),
+                severity="warning",
+                detail=(
+                    "人物站位已写成画面区域、深度层与屏幕朝向。"
+                    if request.shot_visual.frame_positions
+                    else "未声明画面坐标；站位请写成画面区域 + 深度层 + 屏幕朝向，避免左右翻转。"
+                ),
+            ),
+            ContinuityCheckItem(
+                code="landmarks_relative_to_character",
+                passed=not unanchored,
+                severity="warning",
+                detail=(
+                    f"地标{'、'.join(unanchored)}缺少相对角色的方位或距离，画面容易左右镜像颠倒。"
+                    if unanchored
+                    else "地标均写清相对角色的方位与距离。"
+                    if request.scene.landmarks
+                    else "本镜未声明固定地标；如有固定地标请写清相对角色的方位与距离。"
+                ),
+            ),
+            ContinuityCheckItem(
+                code="damage_timeline_closed",
+                passed=bool(request.continuity.damage_closure.strip()),
+                detail="污损变化全部按时间表发生；时间表之外禁止新增裂口、血迹或污渍。",
+            ),
+            ContinuityCheckItem(
+                code="timed_sounds_inside_shot",
+                passed=all(sound.end_seconds <= request.duration_seconds for sound in request.timed_sounds)
+                and bool(request.scene.sound_policy.strip()),
+                detail="时间点音效均位于镜头时长内；只生成同期音效，不添加背景音乐。",
+            ),
+            ContinuityCheckItem(
+                code="reference_material_scoped",
+                passed=bool(request.global_visual.reference_image_policy.strip())
+                and bool(request.global_visual.reference_video_policy.strip()),
+                detail="参考图片只取外形材质、参考视频只锁外观，不照搬姿势或复刻旧动作。",
+            ),
+        ])
+        checks.extend(request.spatial_checks)
+        checks.extend(request.transition_checks)
+        if request.extras is not None:
+            checks.append(ContinuityCheckItem(
+                code="crowd_motion_staggered",
+                passed=request.extras.stagger_seconds > 0,
+                severity="warning",
+                detail=(
+                    f"{request.extras.label}个体错开{request.extras.stagger_seconds:g}秒。"
+                    if request.extras.stagger_seconds > 0
+                    else f"{request.extras.label}未设置个体错开时间，容易全部同步运动。"
+                ),
+            ))
         if len(beats) == 1:
             checks.append(ContinuityCheckItem(
                 code="single_beat_no_connector",

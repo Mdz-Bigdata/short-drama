@@ -1,0 +1,21 @@
+{
+  "source": "https://github.com/irenerachel/fight-prompt-director",
+  "reviewed_commit": "fee4387b4c53a4b282efa67e143ac9b54d964150",
+  "reviewed_at": "2026-09-03",
+  "license_observation": "MIT. Copyright (c) 2026 fight-prompt-director contributors.",
+  "treatment": "Vendored verbatim under the MIT license. The upstream LICENSE ships unmodified next to this file and the copyright notice is preserved; no upstream wording was rewritten or re-attributed.",
+  "vendored_upstream_files": [
+    "LICENSE",
+    "SKILL.md",
+    "references/fight-design.md",
+    "references/camera-guide.md",
+    "references/diagnostics.md"
+  ],
+  "executed_upstream_files": [],
+  "notes": [
+    "The five vendored files were verified byte-identical to the reviewed commit on 2026-09-03. Upstream README.md is not vendored.",
+    "Nothing in this package is imported or executed as code; it is Markdown read by app/core/skill_registry.py and surfaced through GET /api/drama/skills.",
+    "The fight material that reaches the stage-4 storyboard prompt is project-authored (backend/skills/shot-design-master/references/performance-action.md §3.15/§3.16 and choreography-beats.md); this package is the attributed upstream reference behind the speed tiers, the three intensity plans and the quantified beat counts.",
+    "Registered in backend/app/data/upstream_sources.json and backend/app/core/capability_manifest.py as source id fight-prompt-director."
+  ]
+}

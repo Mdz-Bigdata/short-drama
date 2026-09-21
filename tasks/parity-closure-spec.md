@@ -95,7 +95,8 @@ Acceptance criteria:
    A requested edit-then-extension is compiled into two ordered prompts rather than
    one ambiguous prompt.
 2. Every material receives one declared responsibility; used and unused materials
-   are explicit. Missing referenced materials fail before provider submission.
+   are explicit. Inaccessible references remain verbatim in compiled prompts without
+   invented observations; provider readiness still fails until required media is attached.
 3. Edit has exactly one master, closed visual/audio scope, and timeline inheritance.
    Audio-only edits preserve picture, phoneme timing, and synchronization.
 4. Extension inherits boundary picture, audio, motion, topology, identity, and state.

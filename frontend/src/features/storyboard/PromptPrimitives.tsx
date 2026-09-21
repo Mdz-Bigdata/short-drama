@@ -38,14 +38,14 @@ function displayValue(value: PromptValue, label: string): ReactNode {
   return String(value);
 }
 
-export function PromptFields({ value, omit = [] }: { value?: Record<string, PromptValue>; omit?: string[] }) {
+export function PromptFields({ value, omit = [], className = '' }: { value?: Record<string, PromptValue>; omit?: string[]; className?: string }) {
   if (!value) return <p className="prompt-detail__muted">未生成该部分信息。</p>;
   return (
-    <dl className="prompt-detail__fields">
+    <dl className={`prompt-detail__fields ${className}`.trim()}>
       {Object.entries(value).filter(([key]) => !omit.includes(key)).map(([key, field]) => {
         const label = promptLabel(key);
         return (
-          <div className="prompt-detail__field" key={key}>
+          <div className="prompt-detail__field" key={key} data-field={key}>
             <dt>{label}</dt>
             <dd>{displayValue(field, label)}</dd>
           </div>

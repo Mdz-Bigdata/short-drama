@@ -13,13 +13,13 @@ const STRATEGIES = [
     key: 'first-last',
     title: '首尾帧生视频',
     description: '上传首帧与尾帧，精确锁定开始、结束画面并补全中间动画。',
-    models: 'Seedance 2 / 2.5 · MiniMax H3 · Kling',
+    models: 'Seedance 2 / 2.5 · MiniMax H3 · Kling · Grok · LTX 2.3',
   },
   {
     key: 'multi-grid',
     title: '多图 / 宫格生视频',
     description: '读取连续分镜或宫格中的多镜头叙事关系，生成连贯过渡。',
-    models: 'Grok · HappyHorse · Seedance 2 / 2.5 · MiniMax H3 · Kling · LTX 2.3',
+    models: 'Grok · HappyHorse · Seedance 2 / 2.5 · MiniMax H3 · Kling',
   },
   {
     key: 'multimodal',

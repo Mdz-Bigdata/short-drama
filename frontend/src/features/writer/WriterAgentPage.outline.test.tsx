@@ -54,6 +54,45 @@ describe('WriterAgentPage script outline view', () => {
     vi.restoreAllMocks();
   });
 
+  it('marks the exact missing episodes between existing shots and offers explicit repair', async () => {
+    const user = userEvent.setup();
+    const onContinueScript = vi.fn().mockResolvedValue(undefined);
+    render(<WriterAgentPage
+      breakdown={{ scenes: [
+        { scene_id: 'E15S06', content: '保留第十五集镜头', characters: ['林夏'] },
+        { scene_id: 'E25S01', content: '保留第二十五集镜头', characters: ['林夏'] },
+      ] }}
+      script="第15集\n林夏：原文。\n第25集\n林夏：后续。"
+      serverStats={{ totalEpisodes: 25, scriptedEpisodes: 16, missingEpisodes: [16, 17, 18, 19, 20, 21, 22, 23, 24], sceneCount: 2, characterCount: 1, mainEventCount: 0, relationshipCount: 0, totalDurationSeconds: 0, tone: '' }}
+      onContinueScript={onContinueScript}
+    />);
+    await user.click(screen.getByRole('button', { name: '剧本大纲' }));
+    expect(onContinueScript).not.toHaveBeenCalled();
+    const table = screen.getByRole('table');
+    const rows = within(table).getAllByRole('row');
+    const before = rows.findIndex(row => row.textContent?.includes('E15S06'));
+    const gap = rows.findIndex(row => row.textContent?.includes('第 16–24 集正文缺失'));
+    const after = rows.findIndex(row => row.textContent?.includes('E25S01'));
+    expect(gap).toBe(before + 1);
+    expect(after).toBe(gap + 1);
+    expect(within(table).queryByText('E16S01')).toBeNull();
+    await user.click(screen.getByRole('button', { name: '补写缺失的 9 集' }));
+    expect(onContinueScript).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not silently hide a missing final episode or fabricate shots for it', async () => {
+    const user = userEvent.setup();
+    render(<WriterAgentPage
+      breakdown={breakdown}
+      script={script}
+      serverStats={{ totalEpisodes: 3, scriptedEpisodes: 2, missingEpisodes: [3], sceneCount: 3, characterCount: 2, mainEventCount: 1, relationshipCount: 1, totalDurationSeconds: 30, tone: '' }}
+    />);
+    await user.click(screen.getByRole('button', { name: '剧本大纲' }));
+    const rows = within(screen.getByRole('table')).getAllByRole('row');
+    expect(rows.at(-1)?.textContent).toContain('第 3 集正文缺失');
+    expect(screen.queryByText('E3S01')).toBeNull();
+  });
+
   it('switches to a picture-free script outline table with scenes, durations, dialogue and roles', async () => {
     const user = userEvent.setup();
     render(

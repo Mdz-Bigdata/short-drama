@@ -112,6 +112,89 @@ describe('CharacterDesignerPage', () => {
     vi.restoreAllMocks();
   });
 
+  it('refuses to leave stage 3 while the five-view assets are unfinished', async () => {
+    const handlers = actions();
+    render(<CharacterDesignerPage dashboard={dashboard} taskId="character-task-1" {...handlers} />);
+
+    const advance = screen.getByRole('button', { name: /进入分镜师/ });
+    expect(advance.hasAttribute('disabled')).toBe(true);
+    await userEvent.click(advance);
+    expect(handlers.onContinue).not.toHaveBeenCalled();
+    // 灰按钮不解释自己等于没解释：门禁原因要写出来。
+    const reason = screen.getByRole('status', { name: '进入分镜师的资产门禁' });
+    expect(reason.textContent).toContain('0/1');
+    expect(reason.textContent).toContain('全部生成完成后才能进入分镜师');
+  });
+
+  it('lets a READY cast move on to the storyboard agent', async () => {
+    const handlers = actions();
+    const ready = normalizeCharacterDashboard({
+      ...dashboard,
+      state: 'READY',
+      characters: dashboard.characters.map(character => ({
+        ...character,
+        assetState: 'READY',
+        views: dashboard.viewContract.views.map(view => ({
+          key: view.key, order: view.order, imageUrl: `https://img.test/${view.key}.png`, available: true,
+        })),
+        quality: { passed: true, uniqueViewHashes: 5, issues: [] },
+      })),
+    });
+    render(<CharacterDesignerPage dashboard={ready} taskId="character-task-1" {...handlers} />);
+
+    expect(screen.queryByRole('status', { name: '进入分镜师的资产门禁' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /进入分镜师/ }));
+    expect(handlers.onContinue).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds a READY cast at stage 3 until every scene, prop, costume and effect has a reference image', async () => {
+    const handlers = actions();
+    const ready = normalizeCharacterDashboard({
+      ...dashboard,
+      state: 'READY',
+      characters: dashboard.characters.map(character => ({
+        ...character,
+        assetState: 'READY',
+        views: dashboard.viewContract.views.map(view => ({
+          key: view.key, order: view.order, imageUrl: `https://img.test/${view.key}.png`, available: true,
+        })),
+        quality: { passed: true, uniqueViewHashes: 5, issues: [] },
+      })),
+    });
+    let complete = false;
+    const readiness = () => ({
+      complete,
+      kinds: {
+        actor: { label: '数字演员', total: 1, ready: 1, missing: [] },
+        scene: { label: '拍摄场地', total: 2, ready: complete ? 2 : 1, missing: complete ? [] : ['长安城门'] },
+        prop: { label: '拍摄道具', total: 1, ready: 1, missing: [] },
+      },
+    });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      if (url.endsWith('/production-assets/sync')) {
+        return { ok: true, json: async () => ({ created: 0, skipped: 3, readiness: readiness() }) } as Response;
+      }
+      if (url.endsWith('/production-assets/readiness')) {
+        return { ok: true, json: async () => readiness() } as Response;
+      }
+      return { ok: true, json: async () => ({ items: [], page: 1, page_size: 1, total: 0 }) } as Response;
+    });
+
+    render(<CharacterDesignerPage dashboard={ready} taskId="character-task-1" {...handlers} />);
+
+    const reason = await screen.findByRole('status', { name: '进入分镜师的资产门禁' });
+    expect(reason.textContent).toContain('拍摄场地 1/2');
+    expect(reason.textContent).toContain('长安城门');
+    expect(screen.getByRole('button', { name: /进入分镜师/ }).hasAttribute('disabled')).toBe(true);
+
+    complete = true;
+    await userEvent.click(screen.getByRole('button', { name: /刷新/ }));
+    await waitFor(() => expect(screen.queryByRole('status', { name: '进入分镜师的资产门禁' })).toBeNull());
+    await userEvent.click(screen.getByRole('button', { name: /进入分镜师/ }));
+    expect(handlers.onContinue).toHaveBeenCalledTimes(1);
+  });
+
   it('exposes the full character list as a keyboard-focusable vertical scroll region', () => {
     render(
       <CharacterLibrary

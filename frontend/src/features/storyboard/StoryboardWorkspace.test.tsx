@@ -9,6 +9,7 @@ import {
   type StoryboardProgress,
   type StoryboardShot,
 } from './StoryboardWorkspace';
+import type { StoryboardPromptDetail } from './storyboardPromptTypes';
 
 const shots: StoryboardShot[] = [
   { shot_id: 1, scene_id: 'E1S01', image_url: 'https://img.test/shot-1.png', size: 'MS', motion: 'Dolly In' },
@@ -29,6 +30,58 @@ function renderWorkspace() {
     />,
   );
 }
+
+describe('StoryboardWorkspace scene-specific prompts', () => {
+  afterEach(cleanup);
+
+  const firstDetail: StoryboardPromptDetail = {
+    project_name: '测试剧本', episode: '第1集', scene_number: 1, shot_number: 'E1S01',
+    duration_seconds: 10, aspect_ratio: '9:16', fps: 24, grid_spec: '3x3',
+    foundation: { script_text: '第一场青石阶对峙', narrative_goal: '沈砚发现血痕' },
+    beats: [], still_prompts: [], video_segments: [], grid_pages: [], continuity_checks: [],
+  };
+
+  it('opens the selected scene’s own prompt and never leaks another scene’s global prompt', async () => {
+    const user = userEvent.setup();
+    render(
+      <StoryboardWorkspace
+        title="测试剧本" shots={[]}
+        breakdownScenes={[{ scene_id: 'E1S01' }, { scene_id: 'E1S02' }, { scene_id: 'E1S03' }]}
+        sceneBoards={{ E1S01: { prompt_detail: firstDetail }, E1S02: { grid_prompt: '第二场黑鹰落在窗边' }, E1S03: {} }}
+        promptDetail={{ ...firstDetail, shot_number: 'E1S99', foundation: { script_text: '另一场的错误内容' } }}
+        prompt="另一场的错误原始提示词"
+        onRefresh={vi.fn()} onRegenerate={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: '查看提示词' }));
+    expect(screen.getByText('第一场青石阶对峙')).toBeTruthy();
+    expect(screen.queryByText('另一场的错误内容')).toBeNull();
+    await user.click(screen.getByRole('button', { name: '关闭宫格提示词' }));
+    await user.click(screen.getByText('E1S02'));
+    await user.click(screen.getByRole('button', { name: '查看提示词' }));
+    expect(screen.getByText('第二场黑鹰落在窗边')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '关闭宫格提示词' }));
+    await user.click(screen.getByText('E1S03'));
+    await user.click(screen.getByRole('button', { name: '查看提示词' }));
+    expect(screen.getByText(/E1S03 的提示词尚未生成/)).toBeTruthy();
+    expect(screen.queryByText('另一场的错误原始提示词')).toBeNull();
+  });
+
+  it('allows a matching legacy global prompt only for the scene it belongs to', async () => {
+    const user = userEvent.setup();
+    render(
+      <StoryboardWorkspace title="测试剧本" shots={[]} promptDetail={firstDetail}
+        breakdownScenes={[{ scene_id: 'E1S01' }, { scene_id: 'E1S02' }]}
+        onRefresh={vi.fn()} onRegenerate={vi.fn()} />,
+    );
+    await user.click(screen.getByRole('button', { name: '查看提示词' }));
+    expect(screen.getByText('第一场青石阶对峙')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '关闭宫格提示词' }));
+    await user.click(screen.getByText('E1S02'));
+    await user.click(screen.getByRole('button', { name: '查看提示词' }));
+    expect(screen.getByText(/E1S02 的提示词尚未生成/)).toBeTruthy();
+  });
+});
 
 describe('StoryboardWorkspace downloads', () => {
   beforeEach(() => {

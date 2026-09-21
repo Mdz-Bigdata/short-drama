@@ -30,9 +30,11 @@ class CreativePresetRegistryTests(unittest.TestCase):
         }
         self.assertTrue(expected.issubset({preset.id for preset in self.registry.list()}))
 
-    def test_manifest_contains_all_thirteen_requested_sources(self):
-        self.assertEqual(len(UPSTREAM_CAPABILITIES), 13)
-        self.assertIn("short-drama-skills", {source["id"] for source in UPSTREAM_CAPABILITIES})
+    def test_manifest_contains_every_requested_source(self):
+        self.assertEqual(len(UPSTREAM_CAPABILITIES), 18)
+        ids = {source["id"] for source in UPSTREAM_CAPABILITIES}
+        self.assertIn("short-drama-skills", ids)
+        self.assertIn("fight-prompt-director", ids)
 
     def test_compiler_injects_non_optional_production_contracts(self):
         compiled = self.registry.compile(
@@ -51,6 +53,18 @@ class CreativePresetRegistryTests(unittest.TestCase):
     def test_unknown_preset_is_rejected(self):
         with self.assertRaises(KeyError):
             self.registry.compile("../../unknown", "内容")
+
+
+
+class TensionLockPresetTests(unittest.TestCase):
+    def test_tension_lock_preset_compiles_the_restraint_rules(self):
+        from app.core.creative_presets import CreativePresetRegistry
+
+        compiled = CreativePresetRegistry().compile("tension-lock", "深夜工业区，两人对峙。")
+        self.assertEqual(compiled.source_id, "first-party")
+        self.assertIn("镜头默认静止锁帧", compiled.prompt)
+        self.assertIn("暗部占七成以上", compiled.prompt)
+        self.assertIn("写指节发白", compiled.prompt)
 
 
 if __name__ == "__main__":

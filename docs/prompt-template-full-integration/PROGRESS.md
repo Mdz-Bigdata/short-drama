@@ -15,7 +15,7 @@
 - Added a clean-room project compiler that produces one exact 3x3 board per
   scene and compiles every panel through the immutable image/motion contract and
   the SD25 prompt compiler.
-- Added ordered keyframes, missing-reference advice, explicit edit scope closure,
+- Added ordered keyframes, inaccessible-reference fidelity, explicit edit scope closure,
   and task-locked provider-parameter removal to the SD25 compiler.
 - Added automatic first/last-frame, multi-image, and multimodal reference routing
   per shot without submitting a provider job.

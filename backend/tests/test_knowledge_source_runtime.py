@@ -129,7 +129,8 @@ class NegativePromptModulesReachGenerationTests(unittest.TestCase):
             "extra_negative=designer_negative",
             "{storyboard_negative}",
             "{visual_negative_image}",
-            "{visual_negative_video}",
+            # 视频侧的角色负面词现在作为风格锁编译器的 extra_negatives 进入提示词。
+            "extra_negatives=[visual_negative_video]",
             "{episode_negative_image}",
         ):
             self.assertIn(marker, source, f"负面词接线点丢失：{marker}")

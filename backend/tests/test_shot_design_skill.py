@@ -13,7 +13,8 @@ from app.core.shot_design_skill import (
 )
 from app.core.skill_registry import SkillRegistry
 from app.core.video_references import MIN_SHOT_SECONDS, max_shot_seconds
-from app.core.workflow_prompts import build_video_batch_prompt
+from app.core.style_packs import CINEMATIC_REALISM
+from app.core.video_prompt_engine import ShotPromptInput, compile_shot_prompt
 
 
 class SkillPackageTests(unittest.TestCase):
@@ -100,44 +101,44 @@ class SkillLoadingTests(unittest.TestCase):
 class ClipCeilingWiringTests(unittest.TestCase):
     """The skill documents per-model caps; the code must enforce the same ones."""
 
-    def test_a_thirty_second_clip_is_accepted_for_a_thirty_second_model(self):
-        prompt = build_video_batch_prompt(
-            batch_index=1,
-            visual_style="古装权谋",
-            duration_seconds=30,
-            spatial_relationship="祭坛边柴堆引火区，主体1立于画面左侧，主体2立于画面右侧。",
-            timeline="0-30秒，中景，缓慢横移，两人隔火对峙。",
-            max_duration_seconds=max_shot_seconds("seedance2.5"),
+    @staticmethod
+    def _shot(seconds: int, **overrides) -> ShotPromptInput:
+        values = dict(
+            shot_index=1, duration_seconds=seconds, shot_size="中景", camera_movement="缓慢横移",
+            subject_action="两人隔火对峙", scene="祭坛边柴堆引火区", blocking="主体1立于画面左侧，主体2立于画面右侧",
+            start_state="两人隔火站定", end_state="火势升高，两人对视",
+        )
+        values.update(overrides)
+        return ShotPromptInput(**values)
+
+    def _compile(self, seconds: int, model: str, **overrides):
+        return compile_shot_prompt(
+            CINEMATIC_REALISM, self._shot(seconds, **overrides),
+            model=model, max_duration_seconds=max_shot_seconds(model),
         )
 
-        self.assertIn("预计时长：30秒", prompt)
+    def test_a_thirty_second_clip_is_accepted_for_a_thirty_second_model(self):
+        compiled = self._compile(30, "seedance2.5")
+
+        self.assertIn("整段30秒单镜连续画面", compiled.text)
 
     def test_the_same_clip_is_refused_for_a_fifteen_second_model(self):
         with self.assertRaises(ValueError) as caught:
-            build_video_batch_prompt(
-                batch_index=1,
-                visual_style="古装权谋",
-                duration_seconds=30,
-                spatial_relationship="祭坛边柴堆引火区，主体1立于画面左侧。",
-                timeline="0-30秒，中景，缓慢横移。",
-                max_duration_seconds=max_shot_seconds("seedance2.0"),
-            )
+            self._compile(30, "seedance2.0")
 
         self.assertIn("15", str(caught.exception))
 
     def test_the_default_ceiling_preserves_the_previous_contract(self):
         with self.assertRaises(ValueError):
-            build_video_batch_prompt(
-                batch_index=1, visual_style="x", duration_seconds=16,
-                spatial_relationship="祭坛边，主体1立于画面左侧。", timeline="0-16秒，中景。",
-            )
+            compile_shot_prompt(CINEMATIC_REALISM, self._shot(16), model="seedance2.0")
 
     def test_a_clip_below_the_floor_is_refused(self):
         with self.assertRaises(ValueError):
-            build_video_batch_prompt(
-                batch_index=1, visual_style="x", duration_seconds=MIN_SHOT_SECONDS - 1,
-                spatial_relationship="祭坛边，主体1立于画面左侧。", timeline="0-3秒，中景。",
-            )
+            self._compile(MIN_SHOT_SECONDS - 1, "seedance2.5")
+
+    def test_a_clip_prompt_may_not_point_back_at_a_batch_the_model_never_saw(self):
+        with self.assertRaises(ValueError):
+            self._compile(6, "seedance2.5", blocking="同上")
 
 
 class StoryboardStageWiringTests(unittest.TestCase):

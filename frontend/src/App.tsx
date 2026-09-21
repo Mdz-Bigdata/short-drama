@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense, type CSSProperties } from 'react';
 import { 
   Film, Play, Pause, ChevronRight, 
-  UserCheck, ClipboardList, Video, Music, Share2, 
-  Layers, HardDrive, Cpu, Monitor, Sliders, 
-  Send, X, ArrowUp, Folder, ArrowRight, User,
+  Music,
+  HardDrive, Cpu, Monitor, Sliders,
+  X, ArrowUp, Folder, ArrowRight, User,
   Upload, Bot
 } from 'lucide-react';
 import { normalizeVideoReferenceMode, type TaskConfig, type TaskResponse, type TaskSummary, type StageProgress } from './types';
@@ -16,6 +16,11 @@ import { StageFivePreview } from './features/workbench/StageFivePreview';
 import { getScriptDisplayName } from './features/workbench/scriptTitle';
 import { VideoReferenceModeSelect } from './features/workbench/VideoReferenceModeSelect';
 import { NOVARA_AGENT_NAME } from './features/workbench/agentBrand';
+import { WorkbenchResizeHandle } from './features/workbench/WorkbenchResizeHandle';
+import { appendWorkflowHint, canAcceptTaskResponse, mergeWorkflowHistory, restoreWorkflowHistory, shouldPollWorkflow, workflowBoardStage, workflowIntroMessage, type WorkflowChatMessage } from './features/workbench/workflowMessages';
+import { WorkflowActions } from './features/workbench/WorkflowGuide';
+import { ChatComposer } from './features/workbench/ChatComposer';
+import { ChatHistory } from './features/workbench/ChatHistory';
 import type { WriterDashboardResponse } from './features/writer/types';
 
 // Every screen below sits behind navigation (a portal, a workbench stage or a
@@ -35,24 +40,7 @@ function StageFallback() {
 }
 import { API_BASE, onUnauthorized } from './api/client';
 
-// 定义 Agent 节点常数
-const AGENT_STAGES = [
-  { id: 1, name: '总导演 (Executive Director)', icon: Film, desc: '确立主旋律与故事爽点大纲' },
-  { id: 2, name: '专业编剧 (Writer Agent)', icon: ClipboardList, desc: '撰写双轨节奏剧本与口语化台词' },
-  { id: 3, name: '角色设计师 (Character Designer)', icon: UserCheck, desc: '设计人物五维 DNA 档案' },
-  { id: 4, name: '专业分镜师 (Storyboard Artist)', icon: Sliders, desc: '拆解 15 秒切片与 36 运镜系统' },
-  { id: 5, name: '视觉总监 (Visual Director)', icon: Video, desc: '调用文生图/图生视频及多帧校验' },
-  { id: 6, name: '音频总监 (Audio Director)', icon: Music, desc: '合成多角色 TTS 配音及音画对齐' },
-  { id: 7, name: '合成发布 (Composer & Publisher)', icon: Layers, desc: '视听合流压制与内置特效字幕' },
-  { id: 8, name: '宣发 Agent (PR Agent)', icon: Share2, desc: '生成引流封面大字及高完播率文案' },
-];
-interface ChatMessage {
-  id: string;
-  sender: 'user' | 'ai';
-  text: string;
-  stage?: number;
-  isSystem?: boolean;
-}
+type ChatMessage = WorkflowChatMessage;
 
 interface CurrentUser {
   user_id: string;
@@ -128,6 +116,7 @@ function applyWriterDashboardToTask(
     prContent: undefined,
     stageProgress: null,
     failReason: null,
+    workflow: undefined,
   };
 }
 
@@ -421,7 +410,14 @@ export default function App() {
   });
 
   // 界面交互状态
-  const [taskId, setTaskId] = useState<string>('');
+  const [taskId, setTaskIdState] = useState<string>('');
+  const selectedTaskIdRef = useRef('');
+  const selectionVersionRef = useRef(0);
+  const setTaskId = (id: string) => {
+    ++selectionVersionRef.current;
+    selectedTaskIdRef.current = id;
+    setTaskIdState(id);
+  };
   const [taskData, setTaskData] = useState<TaskResponse | null>(null);
   const scriptDisplayName = useMemo(() => getScriptDisplayName(
     taskData?.config,
@@ -441,7 +437,10 @@ export default function App() {
   const [isPolling, setIsPolling] = useState<boolean>(false);
   // 阶段执行进度快照 (用于检测 running -> success/error 转变，驱动对话面板状态气泡)
   const progressRef = useRef<{ stage: number; status: string } | null>(null);
-  const failNotifiedRef = useRef<string>('');
+  const statusRequestRef = useRef(0);
+  const appliedStatusRequestRef = useRef(0);
+  const restoreChatRef = useRef<string | null>(null);
+  const chatRequestRef = useRef<{ taskId: string } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
   
   // 气泡控制
@@ -454,11 +453,13 @@ export default function App() {
   // 对话流状态
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState<string>('');
+  const [chatSending, setChatSending] = useState(false);
 
   // 新项目创建模态窗及 Skills 区状态
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [newProjectName, setNewProjectName] = useState<string>('');
   const [newProjectDirectorStyle, setNewProjectDirectorStyle] = useState<string>('cyberpunk');
+  const [newProjectStylePack, setNewProjectStylePack] = useState<string>('cinematic_realism');
   const [newProjectShotStyle, setNewProjectShotStyle] = useState<string>('cinematic');
   const [newProjectOneClick, setNewProjectOneClick] = useState<boolean>(true); // 成片方式：true=一键成片 / false=分步引导
   const [newProjectEpisodes, setNewProjectEpisodes] = useState<number>(3); // 一次性生成的剧本集数
@@ -490,7 +491,9 @@ export default function App() {
   ]);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const episodeRequestGenerationRef = useRef(0);
-  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const workbenchRef = useRef<HTMLDivElement | null>(null);
+  const chatSidebarRef = useRef<HTMLDivElement | null>(null);
+  const [chatSidebarWidth, setChatSidebarWidth] = useState<number | null>(null);
 
   async function refreshModelConfigurationStatus() {
     try {
@@ -775,11 +778,6 @@ export default function App() {
     };
   }, [currentUser, taskId, hasRunningTask]); // eslint-disable-line react-hooks/exhaustive-deps -- lobby refresh follows authentication, selected task and whether work is in flight
 
-  // 聊天自动滚动到底部
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages, taskData]);
-
   // 拉取历史列表
   async function fetchHistoryTasks() {
     try {
@@ -797,93 +795,88 @@ export default function App() {
 
   // 拉取单条任务状态并联动更新聊天气泡
   async function fetchTaskStatus(id: string) {
+    const request = ++statusRequestRef.current;
+    const selection = selectionVersionRef.current;
     try {
       const res = await apiFetch(`http://localhost:8000/api/drama/${id}/status`);
       if (res.ok) {
         const data: TaskResponse = await res.json();
-        const prevStage = taskDataRef.current?.currentStage || 0;
+        if (request < appliedStatusRequestRef.current || selection !== selectionVersionRef.current || !canAcceptTaskResponse(selectedTaskIdRef.current, data.taskId)) return;
+        appliedStatusRequestRef.current = request;
+        const previous = taskDataRef.current;
+        const prevStage = previous ? workflowBoardStage(previous) : 0;
+        const stage = workflowBoardStage(data);
         setTaskData(data);
         taskDataRef.current = data;
-        
-        // 阶段推进时联动左侧看板标签页 (阶段开始即切换，进度卡展示执行过程)
-        if (data.currentStage > prevStage) {
-          setActiveTabStage(data.currentStage);
+
+        // 阶段推进时联动左侧看板标签页：正在执行的阶段即时展示执行过程，
+        // 阶段完成后跟随服务端指定的下一步 (总导演策划完成即进入编剧 Agent)。
+        // 只前进不回退，用户手动翻看历史阶段时不会被拽走。
+        if (stage > prevStage) {
+          setActiveTabStage(stage);
         }
 
-        // 基于 stageProgress 的 running -> success/error 转变，推送成功/异常状态气泡
+        // The server distinguishes a completed run from a completed stage (for
+        // example, one finished episode is not the entire storyboard stage).
         const sp = data.stageProgress;
         const prevSp = progressRef.current;
-        if (sp) {
-          if (prevSp && prevSp.status === 'running') {
-            const stageDone = (sp.stage === prevSp.stage && sp.status === 'success') || sp.stage > prevSp.stage;
-            if (stageDone) {
-              const doneStage = sp.stage > prevSp.stage ? prevSp.stage : sp.stage;
-              const doneName = AGENT_STAGES.find(s => s.id === doneStage)?.name || `阶段${doneStage}`;
-              const nextStage = doneStage + 1;
-              const nextName = AGENT_STAGES.find(s => s.id === nextStage)?.name || '';
-              setChatMessages(prev => [
-                ...prev,
-                {
-                  id: nextMessageId(),
-                  sender: 'ai',
-                  stage: doneStage,
-                  text: `✅ **【第 ${doneStage} 阶段 · ${doneName} 执行完成】** (100%)\n\n资产已生成并通过质检，可在左侧看板查看。${nextStage <= 8 ? `\n\n👉 下一步：第 ${nextStage} 阶段《${nextName}》— 回复「继续」即可执行，或直接说出修改意见。` : '\n\n🎉 全部阶段执行完毕！'}`
-                }
-              ]);
-            } else if (sp.stage === prevSp.stage && sp.status === 'error') {
-              setChatMessages(prev => [
-                ...prev,
-                {
-                  id: nextMessageId(),
-                  sender: 'ai',
-                  text: `❌ **【第 ${sp.stage} 阶段执行异常】**\n\n${sp.error || data.failReason || '未知错误'}\n\n您可以回复「重跑第 ${sp.stage} 阶段」重试，或先说出修改意见再重跑。`
-                }
-              ]);
-              setIsPolling(false);
-            }
-          }
-          progressRef.current = { stage: sp.stage, status: sp.status };
-        }
-
-        // 兜底：任务被标记 failed 但上面没捕捉到转变 (如后台一键成片中途失败)
-        if (data.status === 'failed' && data.failReason && failNotifiedRef.current !== `${data.taskId}:${data.failReason}`) {
-          failNotifiedRef.current = `${data.taskId}:${data.failReason}`;
-          if (!sp || sp.status !== 'error' || !prevSp || prevSp.status !== 'running') {
-            setChatMessages(prev => [
-              ...prev,
-              { id: nextMessageId(), sender: 'ai', text: `❌ **【任务执行失败】**\n\n${data.failReason}\n\n回复「重跑第 ${data.currentStage} 阶段」可重试。` }
-            ]);
-          }
-        }
-
-        // 状态判定
-        if (data.status !== 'running') {
-          setIsPolling(false);
-          fetchHistoryTasks();
-          if (data.status === 'completed') {
-            setChatMessages(prev => [
-              ...prev,
-              {
-                id: nextMessageId(),
-                sender: 'ai',
-                text: `🎉 **【短剧生成大功告成】**\n\n8大智能体已顺利完成全部工序，最终 9:16 H.264 格式高清成片及社交引爆 PR 文案已封装完毕！您现在可以点击右上角“导出”进行下载和发布。`
-              }
-            ]);
-          } else if (data.status === 'awaiting_quality_review') {
-            setChatMessages(prev => [
-              ...prev,
-              {
-                id: `quality-review-${data.taskId}`,
-                sender: 'ai',
-                text: '🛡️ **【成片已生成，等待终审】**\n\n人物身份、解剖、表情、真人感、镜头连续、对白情绪与口型必须提交真实多模态或人工验收；未通过前不会标记成片完成。'
-              }
-            ]);
-          }
-        }
+        const restore = restoreChatRef.current === id;
+        if (restore) restoreChatRef.current = null;
+        const showHint = restore || data.workflow?.mode !== 'running' || !prevSp || sp?.stage !== prevSp.stage;
+        setChatMessages(prev => {
+          const restored = restore ? restoreWorkflowHistory(data) : null;
+          // 打开一个还没有对话记录的项目（老项目、或刚创建就刷新）时，先交代
+          // 八个 Agent 的整条流程和当前位置，用户不会从半路醒来。
+          const intro = restored && !restored.length ? workflowIntroMessage(data) : null;
+          const messages = restored ? (intro ? [intro] : restored) : mergeWorkflowHistory(prev, data);
+          // Durable transitions include stages completed between two polls.
+          // Do not repeat the same transition as a second live hint bubble.
+          const receivedHistory = !restore && messages.length > prev.length;
+          return showHint && !receivedHistory ? appendWorkflowHint(messages, data) : messages;
+        });
+        progressRef.current = sp ? { stage: sp.stage, status: sp.status } : null;
+        setIsPolling(shouldPollWorkflow(data));
+        if (!shouldPollWorkflow(data)) fetchHistoryTasks();
       }
     } catch (e) {
+      if (request < appliedStatusRequestRef.current || selection !== selectionVersionRef.current || selectedTaskIdRef.current !== id) return;
       console.error('获取状态失败', e);
       setIsPolling(false);
+      setErrorMessage('流程状态暂时同步失败。请发送「进度」重新查询；不会自动跳到下一阶段。');
+    }
+  }
+
+  async function startCreatedWorkflow(createdTask: TaskResponse, oneClick: boolean) {
+    const selection = selectionVersionRef.current;
+    const requestToken = { taskId: createdTask.taskId };
+    chatRequestRef.current = requestToken;
+    setChatSending(true);
+    try {
+      const response = await apiFetch(`http://localhost:8000/api/drama/${createdTask.taskId}/assistant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: oneClick ? '一键成片' : '继续' }),
+      });
+      const result = await response.json();
+      if (chatRequestRef.current !== requestToken || selection !== selectionVersionRef.current || !canAcceptTaskResponse(selectedTaskIdRef.current, createdTask.taskId)) return;
+      if (!response.ok) {
+        setErrorMessage(result.detail || '项目已创建，但流程尚未启动。请发送「进度」查看。');
+        return;
+      }
+      const updated: TaskResponse = result.task;
+      appliedStatusRequestRef.current = ++statusRequestRef.current;
+      setTaskData(updated);
+      taskDataRef.current = updated;
+      progressRef.current = updated.stageProgress ? { stage: updated.stageProgress.stage, status: updated.stageProgress.status } : null;
+      setIsPolling(shouldPollWorkflow(updated));
+      setChatMessages(prev => updated.chatHistory?.length
+        ? mergeWorkflowHistory(prev.filter(message => message.id !== '2'), updated)
+        : [...prev.filter(message => message.id !== '2'), { id: nextMessageId(), sender: 'ai', text: result.reply }]);
+    } finally {
+      if (chatRequestRef.current === requestToken) {
+        chatRequestRef.current = null;
+        if (selection === selectionVersionRef.current) setChatSending(false);
+      }
     }
   }
 
@@ -914,9 +907,7 @@ export default function App() {
     // 初始化聊天流
     setChatMessages([
       { id: '1', sender: 'user', text: displayMsg },
-      { id: '2', sender: 'ai', text: uploadedScript 
-        ? '🎬 **【总导演 Agent 启动】**\n正在为您定调与策划您上传的剧本，请稍候...'
-        : '🎬 **【总导演 Agent 启动】**\n正在为您规划短剧框架与角色 DNA，请稍候...' }
+      { id: '2', sender: 'ai', text: '正在创建项目。创建后，我会从总导演开始，按顺序陪您完成八大 Agent 流程。' }
     ]);
 
     try {
@@ -929,28 +920,11 @@ export default function App() {
         const data: TaskResponse = await res.json();
         setTaskId(data.taskId);
         setTaskData(data);
+        taskDataRef.current = data;
         setUploadedScript(null);
         setScriptContent('');
         setActiveTabStage(1);
-        setIsPolling(true);
-        
-        // 自动触发下一步
-        const nextRes = await apiFetch(`http://localhost:8000/api/drama/${data.taskId}/next?current_stage=1`, {
-          method: 'POST'
-        });
-        if (nextRes.ok) {
-          const nextData = await nextRes.json();
-          setTaskData(nextData);
-          setChatMessages(prev => [
-            ...prev,
-            {
-              id: '3',
-              sender: 'ai',
-              text: '⚙️ **【总导演策划已完成】**\n主旋律及角色 DNA 档案已建档。点击下方按钮即可进入 **编剧剧本创作 (Phase 2)**。',
-              stage: 1
-            }
-          ]);
-        }
+        await startCreatedWorkflow(data, currentConfig.oneClick);
         fetchHistoryTasks();
       } else {
         const err = await res.json();
@@ -963,39 +937,8 @@ export default function App() {
 
   // 步骤式单步生成
   const handleNextStage = async () => {
-    if (!taskData) return;
-    const nextStage = taskData.currentStage + 1;
-    if (nextStage > 8) return;
-    
-    const stageInfo = AGENT_STAGES.find(s => s.id === nextStage);
-    setChatMessages(prev => [
-      ...prev,
-      {
-        id: nextMessageId(),
-        sender: 'ai',
-        text: `⏳ **【${stageInfo?.name} 正在生成中...】**`
-      }
-    ]);
-    
-    setTaskData({ ...taskData, status: 'running', currentStage: nextStage });
-    setIsPolling(true);
-
-    try {
-      const res = await apiFetch(`http://localhost:8000/api/drama/${taskId}/next?current_stage=${nextStage}`, {
-        method: 'POST'
-      });
-      if (res.ok) {
-        const data: TaskResponse = await res.json();
-        setTaskData(data);
-        setActiveTabStage(nextStage);
-        fetchHistoryTasks();
-      } else {
-        setIsPolling(false);
-      }
-    } catch (e) {
-      console.error(e);
-      setIsPolling(false);
-    }
+    if (!taskData?.workflow || taskData.workflow.next_stage === null || taskData.workflow.mode === 'running') return;
+    await sendChatInstruction('继续');
   };
 
   // —— 分集制作 (item 6: 剧本一次多集，视频逐集制作) ——
@@ -1071,77 +1014,25 @@ export default function App() {
     setTaskData(current => current && current.taskId === taskId
       ? applyWriterDashboardToTask(current, dashboard)
       : current);
-  };
-
-  // 一键生成全片
-  const handleRunAll = async () => {
-    if (!taskId) return;
-    setIsPolling(true);
-    setTaskData(prev => prev ? { ...prev, status: 'running' } : null);
-    setChatMessages(prev => [
-      ...prev,
-      { id: nextMessageId(), sender: 'ai', text: '🚀 一键成片启动！8大智能体正在后台连续执行生成，请稍候...' }
-    ]);
-    try {
-      await apiFetch(`http://localhost:8000/api/drama/${taskId}/run_all`, {
-        method: 'POST'
-      });
-    } catch (e) {
-      console.error(e);
-      setIsPolling(false);
-    }
-  };
-
-  // 暂停
-  const handlePause = async () => {
-    if (!taskId) return;
-    try {
-      const res = await apiFetch(`http://localhost:8000/api/drama/${taskId}/pause`, {
-        method: 'POST'
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setTaskData(data);
-        setIsPolling(false);
-        setChatMessages(prev => [
-          ...prev,
-          { id: nextMessageId(), sender: 'ai', text: '⏸️ 任务已成功暂停，断点已保存。您可随时点击恢复继续。' }
-        ]);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // 恢复一键成片
-  const handleResume = async () => {
-    if (!taskId) return;
-    setIsPolling(true);
-    setTaskData(prev => prev ? { ...prev, status: 'running' } : null);
-    setChatMessages(prev => [
-      ...prev,
-      { id: nextMessageId(), sender: 'ai', text: '▶️ 正在从断点恢复生成...' }
-    ]);
-    try {
-      await apiFetch(`http://localhost:8000/api/drama/${taskId}/resume`, {
-        method: 'POST'
-      });
-    } catch (e) {
-      console.error(e);
-      setIsPolling(false);
-    }
+    void fetchTaskStatus(taskId);
   };
 
   // 发送对话指引微调或生成
   const sendChatInstruction = async (text: string) => {
-    if (!text.trim()) return;
+    if (!text.trim() || text.trim() === '/' || !taskId || chatRequestRef.current?.taskId === taskId) return;
+    const requestTaskId = taskId;
+    const selection = selectionVersionRef.current;
+    const requestToken = { taskId: requestTaskId };
+    chatRequestRef.current = requestToken;
+    setChatSending(true);
     setErrorMessage('');
     setChatInput('');
+    const userMessageId = nextMessageId();
     
     // 添加用户发送的文本气泡
     setChatMessages(prev => [
       ...prev,
-      { id: nextMessageId(), sender: 'user', text: text }
+      { id: userMessageId, sender: 'user', text: text }
     ]);
     
     const pendingId = nextMessageId();
@@ -1151,21 +1042,28 @@ export default function App() {
     ]);
 
     try {
-      const res = await apiFetch(`http://localhost:8000/api/drama/${taskId}/assistant`, {
+      const res = await apiFetch(`http://localhost:8000/api/drama/${requestTaskId}/assistant`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text })
       });
       if (res.ok) {
         const data: { reply: string; action: string; stage: number | null; task: TaskResponse } = await res.json();
+        if (chatRequestRef.current !== requestToken || selection !== selectionVersionRef.current || !canAcceptTaskResponse(selectedTaskIdRef.current, data.task.taskId)) return;
+        appliedStatusRequestRef.current = ++statusRequestRef.current;
+        restoreChatRef.current = null;
         setTaskData(data.task);
         taskDataRef.current = data.task;
 
         // 替换等待气泡为助手回复
-        setChatMessages(prev => [
-          ...prev.filter(m => m.id !== pendingId),
-          { id: nextMessageId(), sender: 'ai', text: data.reply }
-        ]);
+        setChatMessages(prev => {
+          const withoutPending = prev.filter(m => m.id !== pendingId);
+          if (!data.task.chatHistory?.length) return [
+            ...withoutPending,
+            { id: nextMessageId(), sender: 'ai', text: data.reply },
+          ];
+          return mergeWorkflowHistory(withoutPending.filter(m => m.id !== userMessageId), data.task);
+        });
 
         // 执行类动作：切换看板标签并开启轮询，进度卡实时展示调用过程与百分比
         if (data.action === 'run_stage' || data.action === 'run_all') {
@@ -1173,23 +1071,34 @@ export default function App() {
           if (data.task.stageProgress) {
             progressRef.current = { stage: data.task.stageProgress.stage, status: data.task.stageProgress.status };
           }
-          setIsPolling(true);
         }
+        setIsPolling(shouldPollWorkflow(data.task));
         fetchHistoryTasks();
       } else {
         const err = await res.json();
+        if (chatRequestRef.current !== requestToken || selection !== selectionVersionRef.current || selectedTaskIdRef.current !== requestTaskId) return;
         setErrorMessage(err.detail || '发送指令失败');
         setChatMessages(prev => prev.filter(m => m.id !== pendingId));
       }
     } catch {
+      if (chatRequestRef.current !== requestToken || selection !== selectionVersionRef.current || selectedTaskIdRef.current !== requestTaskId) return;
       setErrorMessage('发送消息失败，请检查后端网络连接。');
       setChatMessages(prev => prev.filter(m => m.id !== pendingId));
+    } finally {
+      if (chatRequestRef.current === requestToken) {
+        chatRequestRef.current = null;
+        if (selection === selectionVersionRef.current && selectedTaskIdRef.current === requestTaskId) setChatSending(false);
+      }
     }
   };
 
   // 载入已有项目
   const handleLoadTask = (task: TaskSummary) => {
     setTaskId(task.taskId);
+    restoreChatRef.current = task.taskId;
+    chatRequestRef.current = null;
+    setChatSending(false);
+    taskDataRef.current = { ...task, assets: {}, logs: {} };
     // The lobby row carries no assets; show the shell immediately and pull the
     // full project (scripts, storyboards, logs) right after.
     setTaskData({ ...task, assets: {}, logs: {} });
@@ -1218,9 +1127,10 @@ export default function App() {
       });
     }
     
-    // 初始化已有消息 + 自然语言操作引导
+    // The summary intentionally omits assets. Do not infer completion or the
+    // next stage until the full authoritative workflow and history arrive.
     setChatMessages([
-      { id: 'init', sender: 'ai', text: `📁 已经为您加载项目: **${task.config.titleSuggestion}**。当前进度为第 ${task.currentStage}/8 步 (${task.stageName})。\n\n💬 您可以直接用自然语言指挥我：\n· 「继续」— 执行下一阶段\n· 「一键成片」— 自动跑完剩余阶段\n· 「重跑第 N 阶段」— 重新生成某一环节\n· 「进度」— 查询当前执行状态\n· 直接说出修改意见 — 我会按您的指引重塑当前阶段\n\n执行过程中会实时展示每一步调用过程与进度百分比。` }
+      { id: 'loading-history', sender: 'ai', text: `正在为您恢复《${task.config.titleSuggestion}》的对话和八大 Agent 流程进度…` }
     ]);
     progressRef.current = task.stageProgress ? { stage: task.stageProgress.stage, status: task.stageProgress.status } : null;
   };
@@ -1286,12 +1196,13 @@ export default function App() {
     // 初始化工作台聊天提示
     setChatMessages([
       { id: '1', sender: 'user', text: newProjectName },
-      { id: '2', sender: 'ai', text: '🎬 **【总导演 Agent 启动】**\n正在为您规划短剧框架与角色 DNA，请稍候...' }
+      { id: '2', sender: 'ai', text: '正在创建项目。创建后，我会从总导演开始，按顺序陪您完成八大 Agent 流程。' }
     ]);
 
     const currentConfig = {
       titleSuggestion: newProjectName,
       directorStyle: newProjectDirectorStyle,
+      stylePack: newProjectStylePack,
       shotStyle: newProjectShotStyle,
       llmModel: config.llmModel,
       imageModel: config.imageModel,
@@ -1312,40 +1223,9 @@ export default function App() {
         const data: TaskResponse = await res.json();
         setTaskId(data.taskId);
         setTaskData(data);
+        taskDataRef.current = data;
         setActiveTabStage(1);
-        setIsPolling(true);
-
-        if (newProjectOneClick) {
-          // ⚡ 一键成片：后台连续执行全部 8 步，前端轮询进度
-          await apiFetch(`http://localhost:8000/api/drama/${data.taskId}/run_all`, { method: 'POST' });
-          setChatMessages(prev => [
-            ...prev,
-            {
-              id: nextMessageId(),
-              sender: 'ai',
-              text: `🚀 **【一键成片启动】**\n8 大智能体正在后台连续生成《${newProjectName}》(${newProjectEpisodes} 集剧本)，请稍候，进度会实时刷新。`,
-              stage: 1
-            }
-          ]);
-        } else {
-          // 🧭 分步引导：仅先生成第 1 步 (总导演)，其余由用户逐步推进/对话微调
-          const nextRes = await apiFetch(`http://localhost:8000/api/drama/${data.taskId}/next?current_stage=1`, {
-            method: 'POST'
-          });
-          if (nextRes.ok) {
-            const nextData = await nextRes.json();
-            setTaskData(nextData);
-            setChatMessages(prev => [
-              ...prev,
-              {
-                id: nextMessageId(),
-                sender: 'ai',
-                text: '⚙️ **【总导演策划已完成】**\n主旋律及角色 DNA 档案已建档。点击下方按钮即可进入 **编剧剧本创作 (Phase 2)**。',
-                stage: 1
-              }
-            ]);
-          }
-        }
+        await startCreatedWorkflow(data, newProjectOneClick);
         fetchHistoryTasks();
         setNewProjectName(''); // 清空输入
       } else {
@@ -2161,7 +2041,7 @@ export default function App() {
                     />
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
                     <div>
                       <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>导演风格</label>
                       <select 
@@ -2177,6 +2057,21 @@ export default function App() {
                         <option value="mystery_dark">Dark Mystery 悬疑暗黑</option>
                         <option value="anime">Anime Niji 动漫二次元</option>
                         <option value="horror_folk">Horror Folk 民俗惊悚</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>画面风格锁</label>
+                      <select
+                        value={newProjectStylePack}
+                        onChange={e => setNewProjectStylePack(e.target.value)}
+                        title="全片统一的画面质感：分镜图、首尾帧与每一镜视频提示词都按它编译"
+                        style={{ width: '100%', padding: '10px', background: '#0a1017', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem' }}
+                      >
+                        <option value="cinematic_realism">真人电影写实（默认）</option>
+                        <option value="film_35mm">35mm 胶片电影</option>
+                        <option value="atom_punk">原子朋克废土</option>
+                        <option value="anime_2d_cel">2D 赛璐珞漫剧</option>
+                        <option value="anime_3d_cg">3D 国漫 CG</option>
                       </select>
                     </div>
                     <div>
@@ -2267,10 +2162,16 @@ export default function App() {
       ) : (
         
         // 2. 已进入项目：双栏工作区大厅 (截图 3)
-        <div className={`workbench-layout ${activeTabStage === 4 && taskData?.assets["4"] ? 'storyboard-mode' : ''}`}>
+        <div
+          ref={workbenchRef}
+          className={`workbench-layout ${activeTabStage === 4 && taskData?.assets["4"] ? 'storyboard-mode' : ''}`}
+          style={chatSidebarWidth === null ? undefined : ({
+            '--workbench-sidebar-width': `${chatSidebarWidth}px`,
+          } as CSSProperties)}
+        >
           
           {/* 左侧：核心资产产出看版 (70% 宽) */}
-          <div className="asset-viewer">
+          <div id="workbench-asset-viewer" className="asset-viewer">
             
             {/* 顶部二级导航条 */}
             <div className="asset-stage-nav">
@@ -2372,6 +2273,8 @@ export default function App() {
                       asset={taskData.assets["5"]}
                       videoModel={taskData.config.videoModel || config.videoModel}
                       imageModel={taskData.config.imageModel || config.imageModel}
+                      taskId={taskId}
+                      onRerun={() => { void sendChatInstruction('重跑第 5 阶段'); }}
                     />
                   )}
 
@@ -2462,63 +2365,8 @@ export default function App() {
                           >
                             查看下一步资产 →
                           </button>
-                        ) : (
-                          activeTabStage === taskData.currentStage && taskData.status !== 'completed' ? (
-                            taskData.status === 'awaiting_quality_review' ? (
-                              <span style={{ fontSize: '0.75rem', color: 'var(--neon-amber)', fontWeight: 600 }}>
-                                🛡️ 等待真实多模态/人工质量验收
-                              </span>
-                            ) : taskData.status === 'quality_failed' ? (
-                              <span style={{ fontSize: '0.75rem', color: 'var(--neon-red)', fontWeight: 600 }}>
-                                ✕ 质量门禁未通过，请按报告定向重生成
-                              </span>
-                            ) :
-                            taskData.status === 'running' ? (
-                              <button 
-                                type="button"
-                                onClick={handlePause} 
-                                className="capsule-btn" 
-                                style={{ borderColor: 'var(--neon-red)', color: 'var(--neon-red)', fontSize: '0.75rem', padding: '5px 12px' }}
-                              >
-                                <Pause size={10} style={{ marginRight: '4px' }} /> 暂停任务
-                              </button>
-                            ) : taskData.status === 'paused' ? (
-                              <button 
-                                type="button"
-                                onClick={handleResume} 
-                                className="capsule-btn" 
-                                style={{ borderColor: 'var(--neon-amber)', color: 'var(--neon-amber)', fontSize: '0.75rem', padding: '5px 12px' }}
-                              >
-                                <Play size={10} style={{ marginRight: '4px' }} /> 恢复一键成片
-                              </button>
-                            ) : (
-                              <>
-                                <button 
-                                  type="button"
-                                  onClick={handleNextStage} 
-                                  className="capsule-btn" 
-                                  style={{ borderColor: 'var(--neon-cyan)', color: 'var(--neon-cyan)', fontSize: '0.75rem', padding: '5px 12px' }}
-                                >
-                                  执行下一步 <ChevronRight size={10} />
-                                </button>
-                                <button 
-                                  type="button"
-                                  onClick={handleRunAll} 
-                                  className="capsule-btn"
-                                  style={{ fontSize: '0.75rem', padding: '5px 12px' }}
-                                >
-                                  一键成片
-                                </button>
-                              </>
-                            )
-                          ) : (
-                            activeTabStage === 8 && taskData.status === 'completed' && (
-                              <span style={{ fontSize: '0.75rem', color: 'var(--neon-green)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                ✓ 全剧一键成片已完成！
-                              </span>
-                            )
-                          )
-                        )}
+                        ) : <WorkflowActions workflow={taskData.workflow} busy={chatSending}
+                          onAction={message => { void (message === '继续' ? handleNextStage() : sendChatInstruction(message)); }} />}
                       </div>
                     </div>
                   )}
@@ -2544,14 +2392,21 @@ export default function App() {
 
           </div>
 
+          <WorkbenchResizeHandle
+            containerRef={workbenchRef}
+            sidebarRef={chatSidebarRef}
+            sidebarWidth={chatSidebarWidth}
+            onResize={setChatSidebarWidth}
+          />
+
           {/* 右侧：对话与工作流控制侧边栏 (30% 宽) (截图 3) */}
-          <div className="chat-sidebar">
+          <div id="workbench-chat-sidebar" ref={chatSidebarRef} className="chat-sidebar">
             
             {/* 顶栏 */}
             <div className="chat-sidebar__header">
               <span>
-                {activeTabStage === 4 && <Bot aria-hidden="true" />}
-                {activeTabStage === 4 ? NOVARA_AGENT_NAME : '对话'}
+                <Bot aria-hidden="true" />
+                {NOVARA_AGENT_NAME}
               </span>
               <button 
                 onClick={() => {
@@ -2565,7 +2420,7 @@ export default function App() {
             </div>
 
             {/* 对话消息流区域 */}
-            <div style={{ flex: 1, padding: '16px', overflowY: 'auto', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <ChatHistory key={taskId}>
               {chatMessages.map(msg => (
                 <div key={msg.id} className={`chat-bubble ${msg.sender}`}>
                   
@@ -2578,35 +2433,6 @@ export default function App() {
                       
                       <div style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</div>
                       
-                      {/* 如果有绑定的步骤，且是当前活跃步骤，且任务处于暂停/等待，则渲染控制按钮 */}
-                      {taskData && msg.stage === taskData.currentStage && taskData.status !== 'completed' && (
-                        <div style={{ display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
-                          
-                          {taskData.status === 'running' ? (
-                            <button onClick={handlePause} className="capsule-btn" style={{ borderColor: 'var(--neon-red)', color: 'var(--neon-red)' }}>
-                              <Pause size={10} /> 暂停任务
-                            </button>
-                          ) : (
-                            <>
-                              {taskData.status === 'paused' ? (
-                                <button onClick={handleResume} className="capsule-btn" style={{ borderColor: 'var(--neon-amber)', color: 'var(--neon-amber)' }}>
-                                  <Play size={10} /> 恢复一键成片
-                                </button>
-                              ) : (
-                                <>
-                                  <button onClick={handleNextStage} className="capsule-btn" style={{ borderColor: 'var(--neon-cyan)', color: 'var(--neon-cyan)' }}>
-                                    执行下一步 <ChevronRight size={10} />
-                                  </button>
-                                  <button onClick={handleRunAll} className="capsule-btn">
-                                    一键成片
-                                  </button>
-                                </>
-                              )}
-                            </>
-                          )}
-
-                        </div>
-                      )}
                     </div>
                   ) : (
                     <div>{msg.text}</div>
@@ -2625,11 +2451,10 @@ export default function App() {
                   <StageProgressPanel progress={taskData.stageProgress} />
                 </div>
               )}
-              <div ref={chatEndRef} />
-            </div>
+            </ChatHistory>
 
             {/* 对话底部输入框 */}
-            <div style={{ padding: '16px', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '10px', position: 'relative' }}>
+            <div className="chat-sidebar__composer">
               
               {/* 侧边栏 Skill 选择气泡弹窗 */}
               {activePopover === 'sidebarSkill' && (
@@ -2722,29 +2547,8 @@ export default function App() {
                 </button>
               </div>
 
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <input 
-                  type="text" 
-                  placeholder="发送消息..." 
-                  aria-label={`发送给 ${NOVARA_AGENT_NAME} 的消息`}
-                  value={chatInput}
-                  onChange={e => setChatInput(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      sendChatInstruction(chatInput);
-                    }
-                  }}
-                  style={{ flex: 1, padding: '10px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.9rem' }}
-                />
-                <button 
-                  onClick={() => sendChatInstruction(chatInput)}
-                  className="cyber-btn" 
-                  aria-label="发送消息"
-                  style={{ width: '36px', height: '36px', borderRadius: '50%', padding: '0' }}
-                >
-                  <Send size={14} />
-                </button>
-              </div>
+              <ChatComposer value={chatInput} busy={chatSending} onChange={setChatInput}
+                onSend={message => { void sendChatInstruction(message); }} />
             </div>
 
           </div>

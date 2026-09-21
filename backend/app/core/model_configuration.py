@@ -46,7 +46,19 @@ PROVIDER_OPTIONS: dict[ModelCategory, tuple[dict[str, str], ...]] = {
     "video": (
         {"id": "minimax", "label": "minimax", "default_base_url": "https://api.minimaxi.com"},
         {"id": "seedance", "label": "Seedance", "default_base_url": "https://ark.cn-beijing.volces.com/api/v3"},
-        {"id": "kling", "label": "Kling", "default_base_url": "https://api-singapore.klingai.com"},
+        {
+            "id": "kling", "label": "Kling", "default_base_url": "https://api-singapore.klingai.com",
+            "key_hint": "填写 ACCESS_KEY:SECRET_KEY（冒号分隔）；后端按官方规范为每次请求签发 JWT",
+        },
+        {"id": "xai", "label": "xAI Grok Imagine", "default_base_url": "https://api.x.ai"},
+        {
+            "id": "fal", "label": "fal.ai（HappyHorse）", "default_base_url": "https://queue.fal.run",
+            "key_hint": "fal.ai 的 FAL_KEY；模型目录来自官方文档，凭据在首次生成时验证",
+        },
+        {
+            "id": "ltx", "label": "LTX", "default_base_url": "https://api.ltx.io",
+            "key_hint": "LTX API Key；模型目录来自官方文档，凭据在首次生成时验证",
+        },
     ),
     "audio": (
         {"id": "elevenlabs", "label": "ElevenLabs", "default_base_url": "https://api.elevenlabs.io"},
@@ -63,11 +75,14 @@ _PROVIDER_HOSTS: dict[str, tuple[str, ...]] = {
     "openai": ("api.openai.com",),
     "minimax": ("api.minimaxi.com", "api.minimax.io", "api.minimaxi.chat"),
     "kling": ("api.klingai.com", "api-singapore.klingai.com"),
+    "xai": ("api.x.ai",),
+    "fal": ("queue.fal.run", "fal.run"),
+    "ltx": ("api.ltx.io",),
     "elevenlabs": ("api.elevenlabs.io",),
 }
 
 _IMAGE_PATTERN = re.compile(r"(?:^|[-_.])(image|imagen|seedream|dall[-_.]?e|paint|render)(?:$|[-_.])", re.I)
-_VIDEO_PATTERN = re.compile(r"(?:^|[-_.])(video|seedance|kling|hailuo|h3)(?:$|[-_.])", re.I)
+_VIDEO_PATTERN = re.compile(r"(?:^|[-_.])(video|seedance|kling|hailuo|h3|ltx)(?:$|[-_.])", re.I)
 _AUDIO_PATTERN = re.compile(r"(?:^|[-_.])(audio|speech|voice|tts|stt|asr|scribe|music|sound|sfx|bgm)(?:$|[-_.])", re.I)
 _MULTIMODAL_PATTERN = re.compile(r"vision|multimodal|omni|视觉|多模态|image input|video input|(?:^|[-_.])vl(?:$|[-_.])", re.I)
 
@@ -290,6 +305,42 @@ class DiscoveredModel(BaseModel):
     category: ModelCategory
     subcategory: AudioSubcategory | None = None
     capabilities: list[str] = Field(default_factory=list, max_length=20)
+
+
+# Providers whose video APIs document no model enumeration endpoint. The catalog
+# comes from their public documentation; the credential is only proven by the
+# first generation, and discovery says so instead of claiming verification.
+_DOCUMENTED_VIDEO_CATALOGS: Final[dict[str, tuple[tuple[str, str, str, tuple[str, ...]], ...]]] = {
+    "kling": (
+        ("kling-v2-6", "Kling 2.6", "Kling Open Platform 视频模型", ("text-to-video", "first-frame", "first-last-frame", "multi-reference")),
+        ("kling-v2-5-turbo", "Kling 2.5 Turbo", "Kling Open Platform 视频模型", ("text-to-video", "first-frame", "first-last-frame", "multi-reference")),
+        ("kling-v2-1", "Kling 2.1", "Kling Open Platform 视频模型", ("text-to-video", "first-frame", "first-last-frame", "multi-reference")),
+        ("kling-v1-6", "Kling 1.6", "Kling Open Platform 视频模型", ("text-to-video", "first-frame", "first-last-frame", "multi-reference")),
+    ),
+    "fal": (
+        ("alibaba/happy-horse/v1.1", "HappyHorse 1.1", "fal.ai 官方合作端点：text-/image-/reference-to-video", ("text-to-video", "first-frame", "multi-reference")),
+    ),
+    "ltx": (
+        ("ltx-2-3-pro", "LTX 2.3 Pro", "LTX /v2 text-to-video 与 image-to-video（含 last_frame_uri）", ("text-to-video", "first-frame", "first-last-frame")),
+        ("ltx-2-3-fast", "LTX 2.3 Fast", "LTX /v2 text-to-video 与 image-to-video（含 last_frame_uri）", ("text-to-video", "first-frame", "first-last-frame")),
+        ("ltx-2-5-pro", "LTX 2.5 Pro", "LTX /v2 text-to-video 与 image-to-video（含 last_frame_uri）", ("text-to-video", "first-frame", "first-last-frame")),
+        ("ltx-2-5-fast", "LTX 2.5 Fast", "LTX /v2 text-to-video 与 image-to-video（含 last_frame_uri）", ("text-to-video", "first-frame", "first-last-frame")),
+    ),
+}
+DOCUMENTED_VIDEO_CATALOG_PROVIDERS: Final[frozenset[str]] = frozenset(_DOCUMENTED_VIDEO_CATALOGS)
+
+
+def _documented_video_models(provider: str) -> list[DiscoveredModel]:
+    return [
+        DiscoveredModel(
+            model_id=model_id,
+            display_name=display_name,
+            description=description,
+            category="video",
+            capabilities=list(capabilities),
+        )
+        for model_id, display_name, description, capabilities in _DOCUMENTED_VIDEO_CATALOGS[provider]
+    ]
 
 
 def _minimax_video_models() -> list[DiscoveredModel]:
@@ -621,6 +672,10 @@ def _candidate_urls(base_url: str, provider: str) -> list[str]:
     # valid key before the official endpoint is ever reached.
     if provider == "elevenlabs":
         return [origin + "/v1/models"]
+    # fal.ai's queue and LTX document no model listing; probing invented paths
+    # would only turn a documented catalog into a spurious failure.
+    if provider in {"fal", "ltx"}:
+        return []
 
     if path.endswith("/models"):
         urls.append(base_url)
@@ -767,6 +822,17 @@ class ModelDiscoveryClient:
                 warnings=(
                     f"已加载 ElevenLabs 官方模型目录；模型接口验证失败（{status}），"
                     "连接测试仍会严格验证。",
+                ),
+            )
+
+        if category == "video" and provider in _DOCUMENTED_VIDEO_CATALOGS and allow_catalog_fallback:
+            return DiscoveryResult(
+                models=_documented_video_models(provider),
+                source_endpoint=f"{provider}:documented-model-catalog",
+                credential_verified=False,
+                warnings=(
+                    f"{provider_label(provider)} 未提供可枚举的模型接口；已加载官方文档目录，"
+                    "凭据将在首次生成时验证。",
                 ),
             )
 

@@ -67,7 +67,7 @@ describe('CharacterDesignerPageContainer', () => {
     );
 
     expect(screen.getAllByText('陆行远').length).toBeGreaterThan(0);
-    expect((await screen.findByRole('status')).textContent).toContain('任务内嵌资产');
+    expect(await screen.findByText(/任务内嵌资产/)).toBeTruthy();
     expect(screen.getByLabelText('五视图已完成 0 / 5')).toBeTruthy();
   });
 
@@ -88,7 +88,7 @@ describe('CharacterDesignerPageContainer', () => {
       />,
     );
 
-    expect((await screen.findByRole('status')).textContent).toContain('任务内嵌资产');
+    expect(await screen.findByText(/任务内嵌资产/)).toBeTruthy();
     expect(screen.getByLabelText('五视图已完成 0 / 5')).toBeTruthy();
     expect(container.querySelectorAll('img')).toHaveLength(0);
   });

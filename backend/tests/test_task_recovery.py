@@ -39,6 +39,19 @@ class TaskRecoveryTests(unittest.TestCase):
         self.assertFalse(_recover_orphan_task_state(task))
         self.assertEqual(task, {"task_id": "idle-task", "status": "idle"})
 
+    def test_review_state_releases_orphan_reservation_without_losing_review(self):
+        for status in ("awaiting_quality_review", "awaiting_council_review", "completed"):
+            task = {"task_id": "review", "status": status, "workflow_control": {"active": True}}
+            self.assertTrue(_recover_orphan_task_state(task))
+            self.assertFalse(task["workflow_control"]["active"])
+            self.assertEqual(task["status"], status)
+
+    def test_stop_request_is_preserved_when_recovering_a_running_task(self):
+        task = {"task_id": "stopping", "status": "running", "workflow_control": {
+            "active": True, "pause_requested": True, "stop_requested": True}}
+        self.assertTrue(_recover_orphan_task_state(task))
+        self.assertEqual(task["status"], "stopped")
+
 
 if __name__ == "__main__":
     unittest.main()

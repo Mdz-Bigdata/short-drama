@@ -381,6 +381,10 @@ describe('ElementLibraryPage', () => {
     expect(fetchMock.mock.calls.some(([url, init]) => (
       String(url).endsWith('/api/elements/generation-jobs') && init?.method === 'POST'
     ))).toBe(true);
+    // Embedded in a project, listing is scoped to that project's own and linked assets.
+    expect(fetchMock.mock.calls.some(([url]) => (
+      String(url).includes('/api/elements?kind=effect&page=1&page_size=50&task_id=task-effects')
+    ))).toBe(true);
   });
 
   it('reveals and focuses the create form when the empty scene stage adds its first asset', async () => {

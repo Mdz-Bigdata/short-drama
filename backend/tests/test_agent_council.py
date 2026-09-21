@@ -156,7 +156,15 @@ class AgentCouncilCompilerTests(unittest.TestCase):
         class Repo:
             task = {
                 "status": "awaiting_council_review",
-                "assets": {"7": {"quality_gate": {"passed": True}}, "8": {}},
+                "assets": {
+                    "1": "总导演方案", "2": "已完成的剧本", "3": "角色",
+                    "3_sheets": {"演员": "sheet.png"}, "3_character_dashboard": {"state": "READY"},
+                    "4": [{"image_url": "shot.png"}], "4_storyboard": {"panels": []},
+                    "4_grid": "grid.png", "4_quality": {"passed": True},
+                    "5": [{"video_url": "clip.mp4"}], "6": {"audio_url": "audio.mp3"},
+                    "7": {"final_video_url": "film.mp4", "quality_gate": {"passed": True}},
+                    "8": {"pr_content": "宣发文案", "short_link": "share"},
+                },
             }
 
             def get_task(self, task_id: str):

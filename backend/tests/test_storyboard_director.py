@@ -9,15 +9,19 @@ from app.schema.storyboard_director import (
     CameraDesign,
     ColorDesign,
     ContinuityLocks,
+    DamageTimelineEntry,
     DirectorCharacter,
+    DirectorExtras,
     DirectorProp,
     DirectorScene,
     DynamicsDesign,
     GlobalVisualRules,
+    SceneLandmark,
     ShotVisualDesign,
     StoryboardDirectorRequest,
     StoryEvent,
     TimedDialogue,
+    TimedSound,
     TransitionDesign,
     TransitionEdge,
 )
@@ -229,6 +233,124 @@ class StoryboardDirectorTests(unittest.TestCase):
         self.assertEqual(len(body["grid_pages"][0]["cells"]), 9)
         self.assertEqual(body["grid_pages"][0]["empty_slots"], 6)
 
+    def _scene(self, **updates) -> DirectorScene:
+        values = {
+            "time": "雨夜",
+            "location": "咖啡厅窗边",
+            "weather": "暴雨",
+            "spatial_structure": "林夏在画面右侧窗边，木桌居中，空椅在桌对面，入口位于背景左侧",
+            "props": [DirectorProp(
+                name="信封", initial_state="封口已拆开",
+                initial_position="林夏右手中", allowed_motion="右手抬起后放到桌面中央",
+            )],
+            "environmental_sound": "连续雨声、远处低频雷声",
+        }
+        values.update(updates)
+        return DirectorScene(**values)
+
+    def test_prompts_carry_spatial_anchor_damage_table_sound_cues_and_reference_scope(self):
+        result = self.compiler.compile(_request(
+            scene=self._scene(
+                landmarks=[SceneLandmark(name="入口", relative_position="林夏左后方约4米，背景左侧")],
+                ground_material="深色木地板，局部雨水反光",
+            ),
+            timed_sounds=[TimedSound(start_seconds=6, end_seconds=7, description="信封落桌的纸张轻响")],
+            damage_timeline=[DamageTimelineEntry(seconds=6.5, subject="信封", change="右下角沾上一滴雨水")],
+            extras=DirectorExtras(
+                initial_distribution="两名顾客坐在背景左侧远桌",
+                motion_parameters="偶尔低头喝咖啡，不看向林夏",
+                stagger_seconds=0.5,
+            ),
+        ))
+        first_still = result.still_prompts[0].prompt
+        last_still = result.still_prompts[-1].prompt
+        video = result.video_segments[-1].prompt
+
+        self.assertIn("入口：林夏左后方约4米", first_still)
+        self.assertIn("禁止场景地标左右镜像翻转", first_still)
+        self.assertIn("已发生：无变化", first_still)
+        self.assertIn("6.5秒信封：右下角沾上一滴雨水", last_still)
+        self.assertIn("【参考素材】", first_still)
+        self.assertIn("【群演】初始分布：两名顾客坐在背景左侧远桌", video)
+        self.assertIn("个体错开0.5秒", video)
+        self.assertIn("本段内变化：6.5秒信封：右下角沾上一滴雨水", video)
+        self.assertIn("6-7秒信封落桌的纸张轻响", video)
+        self.assertIn("不添加背景音乐", video)
+        self.assertIn("不照搬参考图中的人物姿势", video)
+        self.assertIn("时间点音效：6-7秒信封落桌的纸张轻响", result.beats[-1].environmental_sound)
+        self.assertNotIn("时间点音效", result.beats[0].environmental_sound)
+
+        self.assertEqual(result.foundation["extras_and_crowd"]["stagger_seconds"], 0.5)
+        self.assertEqual(len(result.foundation["damage_timeline"]), 1)
+        codes = {item.code: item for item in result.continuity_checks}
+        self.assertTrue(codes["landmarks_relative_to_character"].passed)
+        self.assertTrue(codes["crowd_motion_staggered"].passed)
+        self.assertTrue(codes["damage_timeline_closed"].passed)
+        self.assertTrue(result.submission_ready)
+
+    def test_bare_landmark_and_synchronous_crowd_are_flagged_without_blocking(self):
+        result = self.compiler.compile(_request(
+            scene=self._scene(landmarks=[SceneLandmark(name="摩托车", relative_position="在路边")]),
+            extras=DirectorExtras(initial_distribution="路边一排", motion_parameters="同时起步", stagger_seconds=0),
+        ))
+        codes = {item.code: item for item in result.continuity_checks}
+
+        self.assertFalse(codes["landmarks_relative_to_character"].passed)
+        self.assertEqual(codes["landmarks_relative_to_character"].severity, "warning")
+        self.assertIn("摩托车", codes["landmarks_relative_to_character"].detail)
+        self.assertFalse(codes["crowd_motion_staggered"].passed)
+        self.assertTrue(result.submission_ready)
+        # Bare landmark, synchronous crowd, and no screen-coordinate positions.
+        self.assertEqual(len(result.warnings), 3)
+
+    def test_shot_without_extras_has_no_crowd_block(self):
+        result = self.compiler.compile(_request())
+
+        self.assertNotIn("extras_and_crowd", result.foundation)
+        self.assertNotIn("【群演】", result.still_prompts[0].prompt)
+        self.assertNotIn("【群演】", result.video_segments[0].prompt)
+        self.assertNotIn("crowd_motion_staggered", {item.code for item in result.continuity_checks})
+        self.assertIn("本段内变化：无", result.video_segments[0].prompt)
+        self.assertIn("污损时间表之外新增", result.video_segments[0].prompt)
+
+    def test_rejects_timelines_outside_or_out_of_order(self):
+        with self.assertRaises(ValidationError):
+            _request(timed_sounds=[TimedSound(start_seconds=8, end_seconds=10, description="雷声")])
+        with self.assertRaises(ValidationError):
+            _request(damage_timeline=[DamageTimelineEntry(seconds=9.5, subject="信封", change="沾水")])
+        with self.assertRaises(ValidationError):
+            _request(damage_timeline=[
+                DamageTimelineEntry(seconds=5, subject="信封", change="沾水"),
+                DamageTimelineEntry(seconds=2, subject="信封", change="折角"),
+            ])
+
+    def test_frame_positions_and_light_ratio_are_rendered_and_checked(self):
+        from app.core.frame_position import FramePosition
+
+        result = self.compiler.compile(_request(
+            shot_visual=ShotVisualDesign(
+                base_content="林夏、窗边木桌、空椅和拆开的信封",
+                composition="林夏位于右侧三分线，空椅形成负空间",
+                spatial_layers="前景雨滴玻璃，中景林夏与木桌，背景入口虚化",
+                frame_positions=[
+                    FramePosition(subject="林夏", region="画面右侧三分之一", depth="中景", facing="朝向画面左侧",
+                                  occlusion="桌角从画面左下极近前景遮挡约四分之一", keep_visible="保留面部",
+                                  forbidden_zone="中央区域不要出现第三个人物"),
+                ],
+            ),
+            color=ColorDesign(
+                primary_color="冷蓝灰", secondary_color="深棕", accent_color="暖琥珀", color_temperature="4200K",
+                light_ratio="暗部七成，单侧硬光", start_state="低照度", change_reason="前倾", peak_state="眼部高光", end_state="暖光减弱",
+            ),
+        ))
+        still = result.still_prompts[0].prompt
+        self.assertIn("画面坐标：林夏位于画面右侧三分之一的中景，朝向画面左侧，桌角从画面左下极近前景遮挡约四分之一，保留面部；中央区域不要出现第三个人物", still)
+        self.assertIn("光比暗部七成，单侧硬光", still)
+        self.assertIn("画面坐标：林夏位于画面右侧三分之一的中景", result.video_segments[0].prompt)
+        codes = {item.code: item for item in result.continuity_checks}
+        self.assertTrue(codes["frame_positions_in_screen_coordinates"].passed)
+        self.assertEqual(result.foundation["shot_visual_design"]["frame_positions"][0]["subject"], "林夏")
+        self.assertFalse({c.code: c for c in self.compiler.compile(_request()).continuity_checks}["frame_positions_in_screen_coordinates"].passed)
 
 if __name__ == "__main__":
     unittest.main()

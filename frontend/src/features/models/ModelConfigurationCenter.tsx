@@ -13,6 +13,7 @@ interface ProviderOption {
   id: string;
   label: string;
   default_base_url: string;
+  key_hint?: string;
 }
 
 interface ProviderGroup {
@@ -202,6 +203,8 @@ export function ModelConfigurationCenter({
 
   if (!open) return null;
 
+  const providerKeyHint = providers.find(item => item.id === provider)?.key_hint;
+
   const selectProvider = (providerId: string) => {
     const option = providers.find(item => item.id === providerId);
     setProvider(providerId);
@@ -366,6 +369,7 @@ export function ModelConfigurationCenter({
               <input id="model-api-key" aria-label="API 密钥" type={showKey ? 'text' : 'password'} value={apiKey} onChange={event => setApiKey(event.target.value)} autoComplete="new-password" placeholder="只发送到后端并加密保存" disabled={!canManage} />
               <button type="button" onClick={() => setShowKey(value => !value)} aria-label={showKey ? '隐藏 API 密钥' : '显示 API 密钥'}>{showKey ? <EyeOff /> : <Eye />}</button>
             </div>
+            {providerKeyHint && <p className="model-config-key-hint" data-testid="provider-key-hint">{providerKeyHint}</p>}
 
             <div className="model-field-heading"><label id="model-name-label">模型名称</label><button type="button" className="reload-models" onClick={() => void discoverModels()} disabled={!canManage || busy === 'discover'}>{busy === 'discover' ? <LoaderCircle className="spin" /> : <RefreshCw />}加载模型</button></div>
             {serviceCapabilities.length > 0 && <section className="provider-service-capabilities" aria-label="ElevenLabs 完整能力">

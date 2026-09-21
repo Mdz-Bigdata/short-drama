@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from typing import Optional, Dict, Any, Literal
+from typing import Optional, Dict, Any, Literal, List
 
 
 EditableVideoReferenceMode = Literal[
@@ -29,6 +29,14 @@ class DramaCreateRequest(DramaBaseSchema):
     """
     title_suggestion: str = Field(..., description="创意大纲/选题提示词", min_length=2)
     director_style: str = Field("cyberpunk", description="导演视听风格，如 cyberpunk, retro, realistic")
+    style_pack: Optional[str] = Field(
+        None,
+        description=(
+            "风格锁：全片统一的画面质感包 (cinematic_realism / film_35mm / atom_punk / anime_2d_cel / anime_3d_cg)。"
+            "更新配置时省略该字段表示沿用项目已有的风格锁。"
+        ),
+        max_length=40,
+    )
     shot_style: str = Field("standard", description="运镜风格设定")
     llm_model: str = Field("deepseek", description="选用的多模态语言大模型")
     image_model: str = Field("seedance", description="选用的文生图大模型")
@@ -102,6 +110,7 @@ class DramaConfigSchema(DramaBaseSchema):
     """
     title_suggestion: str = Field(..., description="创意大纲/选题提示词")
     director_style: str = Field("cyberpunk", description="导演视听风格")
+    style_pack: str = Field("cinematic_realism", description="风格锁：全片统一的画面质感包", max_length=40)
     shot_style: str = Field("standard", description="运镜风格设定")
     llm_model: str = Field("deepseek", description="选用的多模态语言大模型")
     image_model: str = Field("seedance", description="选用的文生图大模型")
@@ -142,6 +151,8 @@ class DramaTaskResponse(DramaBaseSchema):
     status: str = Field(..., description="状态: idle, running, paused, completed, failed")
     config: DramaConfigSchema = Field(..., description="创建时所用的参数配置")
     assets: Dict[str, Any] = Field(..., description="各步骤已生成的结构化资产")
+    workflow: Optional[Dict[str, Any]] = Field(None, description="基于真实产物的八 Agent 流程引导")
+    chat_history: List[Dict[str, Any]] = Field(default_factory=list, description="持久化用户与助手消息")
     logs: Dict[str, str] = Field(..., description="各步骤的执行日志与校验结果")
     video_url: Optional[str] = Field(None, description="最终合成视频的播放链接")
     short_link: Optional[str] = Field(None, description="宣发引流短链接")

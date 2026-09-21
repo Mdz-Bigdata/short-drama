@@ -87,7 +87,7 @@
     "license_observation": "AGPL-3.0 with NOTICE/additional terms.",
     "code_treatment": "clean-room",
     "attribution": "ArcReel capability reference",
-    "capability_ids": ["story-graph", "shot-generation", "reference-management", "render-workflow", "timeline"]
+    "capability_ids": ["story-graph", "shot-generation", "reference-management", "render-workflow", "timeline", "episode-ledger", "two-stage-authoring", "verbatim-utterances", "shot-duration-contract", "incremental-plan-edit", "prompt-audit", "shot-camera-motion-workspace"]
   },
   {
     "id": "script-to-shot-engine",
@@ -138,5 +138,55 @@
     "code_treatment": "attributed-adaptation",
     "attribution": "YvonneMovingon/short-drama-skills",
     "capability_ids": ["narrative-breakdown", "power-shift-dialogue", "detailed-action", "episode-continuity", "prompt-polish", "high-impact", "slow-emotion"]
+  },
+  {
+    "id": "sd-2-5-prompt",
+    "url": "https://github.com/huangbai-AI/sd-2-5-prompt",
+    "reviewed_commit": "68a6d3eebd2d3dddd7de5e4fcdf39e70716d835c",
+    "reviewed_at": "2026-09-02",
+    "license_observation": "No root LICENSE file was observed at the reviewed commit.",
+    "code_treatment": "clean-room",
+    "attribution": "huangbai-AI/sd-2-5-prompt capability reference",
+    "capability_ids": ["five-part-organization", "prompt-timeline-audit", "prompt-reference-scope-audit", "prompt-action-causality-audit", "prompt-brand-boundary-audit"]
+  },
+  {
+    "id": "fight-prompt-director",
+    "url": "https://github.com/irenerachel/fight-prompt-director",
+    "reviewed_commit": "fee4387b4c53a4b282efa67e143ac9b54d964150",
+    "reviewed_at": "2026-09-03",
+    "license_observation": "MIT. Copyright (c) 2026 fight-prompt-director contributors. The upstream LICENSE ships verbatim at backend/skills/fight-prompt-director/LICENSE, so the vendored Markdown may be redistributed unchanged as long as that notice travels with it.",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "fight-prompt-director contributors — https://github.com/irenerachel/fight-prompt-director",
+    "capability_ids": ["fight-scene-detection", "fight-section-loading", "speed-tiers", "intensity-plans", "quantified-beats", "fight-negative-contract", "skill-discovery"]
+  },
+  {
+    "id": "seedance-2-5-video-director",
+    "url": "https://github.com/liyue-aigc/seedance-2-5-video-director",
+    "reviewed_commit": "ad0e68ba6ce24fb9ae9c67c9276061cef37663f1",
+    "reviewed_at": "2026-09-03",
+    "license_observation": "MIT. Copyright (c) 2026 liyue-aigc. The upstream LICENSE and NOTICE.md ship verbatim at backend/skills/seedance-2-5-video-director/; NOTICE.md records that two reference files are independently organized summaries derived from the Dreamina Seedance 2.5 user guide.",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "liyue-aigc — https://github.com/liyue-aigc/seedance-2-5-video-director",
+    "capability_ids": ["seedance25-model-gate", "seedance25-primary-mode", "seedance25-mode-limits", "seedance25-asset-lock", "seedance25-realistic-direction", "seedance25-director-layer"]
+  },
+  {
+    "id": "storyai-3d-director-desk",
+    "url": "https://github.com/jiguang132/storyai-3d-director-desk",
+    "reviewed_commit": "8c8bd361790be4d37158a7430365e65546e358fe",
+    "reviewed_at": "2026-09-17",
+    "license_observation": "MIT (Copyright (c) 2026 YZ) for the source code. The bundled UE mannequin GLB is a separate Sketchfab Standard asset by William Luque and is not copied; stand-in figures here are procedural.",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "jiguang132/storyai-3d-director-desk — https://github.com/jiguang132/storyai-3d-director-desk",
+    "capability_ids": ["scene-stage-model", "director-and-camera-view", "delivery-aspect-frame", "pose-preset-vocabulary", "scoped-scene-stage", "director-desk-interchange"]
+  },
+  {
+    "id": "costage",
+    "url": "https://github.com/cs68614-hash/costage",
+    "reviewed_commit": "fa1b7fa0b40d6f71c2700ed503613dea088b6f70",
+    "reviewed_at": "2026-09-17",
+    "license_observation": "No LICENSE file, no license field in package.json or the plugin manifest; all rights reserved by default. Its shot-design skills cite a published book as their knowledge source. The bundled GLB characters are Tripo-generated and carry no license statement.",
+    "code_treatment": "clean-room",
+    "attribution": "cs68614-hash/costage (behavioral reference only)",
+    "capability_ids": ["relative-placement", "facing-pair", "group-formations", "fov-framing", "action-stage-diff", "revisioned-stage-operations", "costage-interchange"]
   }
 ]

@@ -1,5 +1,6 @@
 import { promptLabel } from './promptLabels';
 import { FINAL_OUTPUT_CONTENTS, GLOBAL_VISUAL_EXCLUSIONS, TIME_BEAT_PLANNING_RULES } from './promptRules';
+import { conciseNarrativeGoal } from './storyboardPromptSummary';
 import type { PromptValue, StoryboardPromptDetail } from './storyboardPromptTypes';
 
 
@@ -26,9 +27,15 @@ export function storyboardPromptMarkdown(detail: StoryboardPromptDetail): string
     ['最终输出内容', [...FINAL_OUTPUT_CONTENTS]],
     ['镜头基础信息', detail.foundation.shot_information],
     ['剧本原文', detail.foundation.script_text],
-    ['本镜头叙事目标', detail.foundation.narrative_goal],
+    ['本镜头叙事目标', conciseNarrativeGoal(detail)],
     ['出场角色', detail.foundation.characters],
     ['场景、道具、台词与声音', { scene: detail.foundation.scene_and_props, dialogue: detail.foundation.verbatim_dialogue }],
+    ['时间点音效', detail.foundation.timed_sounds],
+    ['污损时间表', detail.foundation.damage_timeline],
+    // The crowd block is omitted entirely when the shot has none, never left empty.
+    ...(detail.foundation.extras_and_crowd
+      ? [['敌人 / 群演', detail.foundation.extras_and_crowd] as [string, PromptValue]]
+      : []),
     ['全局视觉规范', detail.foundation.global_visual_rules],
     ['通用排除项', [...GLOBAL_VISUAL_EXCLUSIONS]],
     ['连续性锁定项', detail.foundation.continuity_locks],
@@ -42,7 +49,6 @@ export function storyboardPromptMarkdown(detail: StoryboardPromptDetail): string
     ['逐拍静帧提示词', detail.still_prompts as PromptValue],
     ['分段运镜视频提示词', detail.video_segments as PromptValue],
     ['宫格合成说明', detail.grid_pages as PromptValue],
-    ['连续性自检结果', detail.continuity_checks as PromptValue],
   ];
   return [
     `# 通用分镜提示词 · ${detail.project_name} · ${detail.shot_number} · 第 1 页`,

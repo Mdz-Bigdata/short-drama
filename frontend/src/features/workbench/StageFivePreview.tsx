@@ -1,6 +1,7 @@
 import { ImageIcon, Video } from 'lucide-react';
 import { useState } from 'react';
 
+import { ShotVisualWorkspace } from './ShotVisualWorkspace';
 import './StageFivePreview.css';
 
 
@@ -26,6 +27,9 @@ interface Props {
   asset?: ProductionShot | ProductionShot[] | null;
   videoModel: string;
   imageModel: string;
+  /** With a task the stage renders the per-shot camera workspace; without one, the read-only clip cards. */
+  taskId?: string;
+  onRerun?: () => void;
 }
 
 interface MediaPaneProps {
@@ -141,8 +145,16 @@ function ShotCard({ shot, index, videoModel, imageModel }: {
 }
 
 
-export function StageFivePreview({ asset, videoModel, imageModel }: Props) {
+export function StageFivePreview({ asset, videoModel, imageModel, taskId, onRerun }: Props) {
   const shots = Array.isArray(asset) ? asset : asset ? [asset] : [];
+
+  if (taskId) {
+    return (
+      <div className="stage-five-preview-content">
+        <ShotVisualWorkspace taskId={taskId} videoModel={videoModel} imageModel={imageModel} onRerun={onRerun} />
+      </div>
+    );
+  }
 
   if (shots.length === 0) {
     return (

@@ -200,6 +200,17 @@
   font-size: 0.72rem;
 }
 
+/* 资产没出齐时说明为什么「进入分镜师」是灰的，而不是让按钮无声地点不动。 */
+.character-designer__gate-hint {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  color: #ff9b9b;
+  background: rgba(255, 107, 107, 0.08);
+  border: 1px solid rgba(255, 107, 107, 0.24);
+  border-radius: 0.4rem;
+  font-size: 0.72rem;
+}
+
 .character-asset-tabs {
   position: sticky;
   z-index: 8;

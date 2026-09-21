@@ -15,12 +15,14 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
+from app.core.element_scope import element_in_task, link_task
 from app.core.capability_manifest import capability_command_catalog
 from app.platform.models import (
     AuditEvent,
     Base,
     CapabilitySetting,
     ConfiguredModel,
+    DirectorDeskPose,
     ElementAsset,
     ElementFile,
     LedgerEntry,
@@ -49,6 +51,8 @@ PROJECT_SKILL_SOURCE_TYPES = {"created", "markdown_upload", "skill_package"}
 MAX_PROJECT_SKILL_BYTES = 128 * 1024
 MAX_ENABLED_SKILLS = 12
 MAX_ENABLED_SKILL_BYTES = 96 * 1024
+MAX_DESK_POSES_PER_OWNER = 200
+MAX_DESK_POSE_NAME = 40
 
 
 def _configured_limit(name: str, default: int, *, minimum: int, maximum: int) -> int:
@@ -863,11 +867,31 @@ class PlatformStore:
                 )
             )
 
+    async def list_all_elements(self, owner_id: str, kind: str) -> list[ElementAsset]:
+        """Every element of one kind the owner holds, newest first; bounded by the owner quota."""
+        if kind not in ELEMENT_KINDS:
+            raise ValueError("无效元素类型")
+        async with self.sessions() as session:
+            return list((await session.scalars(
+                select(ElementAsset).options(selectinload(ElementAsset.files))
+                .where(ElementAsset.owner_id == owner_id, ElementAsset.kind == kind)
+                .order_by(ElementAsset.updated_at.desc())
+            )).all())
+
     async def list_elements(
-        self, owner_id: str, kind: str, page: int, page_size: int
+        self, owner_id: str, kind: str, page: int, page_size: int, task_id: str | None = None
     ) -> tuple[list[ElementAsset], int]:
         if kind not in ELEMENT_KINDS:
             raise ValueError("无效元素类型")
+        if task_id:
+            # Project scope lives in JSON metadata; filtering in Python keeps SQLite
+            # and PostgreSQL identical, and the per-owner quota bounds the scan.
+            scoped = [
+                item for item in await self.list_all_elements(owner_id, kind)
+                if element_in_task(item.metadata_json, task_id)
+            ]
+            start = (page - 1) * page_size
+            return scoped[start:start + page_size], len(scoped)
         where = (ElementAsset.owner_id == owner_id, ElementAsset.kind == kind)
         async with self.sessions() as session:
             total = int(await session.scalar(select(func.count()).select_from(ElementAsset).where(*where)) or 0)
@@ -876,6 +900,32 @@ class PlatformStore:
                 .order_by(ElementAsset.updated_at.desc()).offset((page - 1) * page_size).limit(page_size)
             )).all())
             return items, total
+
+    async def merge_element_metadata(self, element_id: str, owner_id: str, patch: dict) -> ElementAsset:
+        """Shallow-merge metadata; the model3d record is owned by the model upload path."""
+        async with self.sessions() as session:
+            element = await session.get(ElementAsset, element_id)
+            if not element or element.owner_id != owner_id:
+                raise ValueError("元素不存在")
+            metadata = dict(element.metadata_json or {})
+            metadata.update({key: value for key, value in patch.items() if key != "model3d"})
+            element.metadata_json = metadata
+            await session.commit()
+            loaded = await self._loaded_element(session, element.id)
+            assert loaded is not None
+            return loaded
+
+    async def link_element_to_task(self, element_id: str, owner_id: str, task_id: str) -> ElementAsset:
+        """Make an existing library asset visible to another project without copying it."""
+        async with self.sessions() as session:
+            element = await session.get(ElementAsset, element_id)
+            if not element or element.owner_id != owner_id:
+                raise ValueError("元素不存在")
+            element.metadata_json = link_task(element.metadata_json, task_id)
+            await session.commit()
+            loaded = await self._loaded_element(session, element.id)
+            assert loaded is not None
+            return loaded
 
     async def update_element(self, element_id: str, owner_id: str, *, name: str | None, description: str | None) -> ElementAsset:
         async with self.sessions() as session:
@@ -1147,6 +1197,52 @@ class PlatformStore:
         if cancellation_requested:
             raise StorageMutationCommittedWithError(result, asyncio.CancelledError())
         return result
+
+    async def list_desk_poses(self, owner_id: str) -> list[DirectorDeskPose]:
+        async with self.sessions() as session:
+            return list((await session.scalars(
+                select(DirectorDeskPose).where(DirectorDeskPose.owner_id == owner_id)
+                .order_by(DirectorDeskPose.created_at, DirectorDeskPose.id)
+            )).all())
+
+    async def save_desk_pose(self, owner_id: str, name: str, pose: dict) -> DirectorDeskPose:
+        """Save under a name; the same name again replaces that pose (names are unique per owner)."""
+        label = name.strip()
+        if not label:
+            raise ValueError("姿势需要一个名称")
+        if len(label) > MAX_DESK_POSE_NAME:
+            raise ValueError(f"姿势名称最长 {MAX_DESK_POSE_NAME} 个字符")
+        async with self.sessions() as session:
+            # The owner row serializes the count-then-insert of two saves racing for the last slot.
+            locked_owner = await session.scalar(
+                select(PlatformUser.id).where(PlatformUser.id == owner_id).with_for_update()
+            )
+            if not locked_owner:
+                raise ValueError("用户不存在")
+            record = await session.scalar(
+                select(DirectorDeskPose).where(DirectorDeskPose.owner_id == owner_id, DirectorDeskPose.name == label)
+            )
+            if record is None:
+                count = int(await session.scalar(
+                    select(func.count()).select_from(DirectorDeskPose).where(DirectorDeskPose.owner_id == owner_id)
+                ) or 0)
+                if count >= MAX_DESK_POSES_PER_OWNER:
+                    raise ValueError(f"最多保存 {MAX_DESK_POSES_PER_OWNER} 个姿势，请先删除不用的")
+                record = DirectorDeskPose(owner_id=owner_id, name=label, pose_json=pose)
+                session.add(record)
+            else:
+                record.pose_json = pose
+            await session.commit()
+            return record
+
+    async def delete_desk_pose(self, owner_id: str, pose_id: str) -> bool:
+        async with self.sessions() as session:
+            record = await session.get(DirectorDeskPose, pose_id)
+            if record is None or record.owner_id != owner_id:
+                return False
+            await session.delete(record)
+            await session.commit()
+            return True
 
     async def request_regeneration(self, element_id: str, owner_id: str, prompt: str) -> RegenerationRequest:
         async with self.sessions() as session:

@@ -5,7 +5,9 @@ Projects generated before batched writing hold e.g. 15 episodes of a 30 episode
 plan. Regenerating from scratch would discard finished episodes and invalidate
 their downstream assets, so the missing episodes are appended instead.
 """
+
 import re
+from copy import deepcopy
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,8 +30,17 @@ class _ContinuationGateway:
         self.breakdown = breakdown
         self.refuse = refuse
 
-    def call_llm(self, model, system_prompt, user_prompt, title,
-                 director_style="", shot_style="", user_instruction="", max_tokens=None):
+    def call_llm(
+        self,
+        model,
+        system_prompt,
+        user_prompt,
+        title,
+        director_style="",
+        shot_style="",
+        user_instruction="",
+        max_tokens=None,
+    ):
         self.calls.append({"system_prompt": system_prompt, "user_prompt": user_prompt})
         if "结构化分析器" in system_prompt:
             return self.breakdown or "{}"
@@ -42,7 +53,8 @@ class _ContinuationGateway:
         if not span:
             return ""
         return "\n".join(
-            _episode_text(index) for index in range(int(span.group(1)), int(span.group(2)) + 1)
+            _episode_text(index)
+            for index in range(int(span.group(1)), int(span.group(2)) + 1)
         )
 
 
@@ -50,19 +62,22 @@ class ScriptContinuationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.repo = TaskRepository(str(Path(self.temp.name) / "tasks.json"))
-        self.repo.save_task("truncated-1", {
-            "task_id": "truncated-1",
-            "config": {
-                "title_suggestion": "流氓天子",
-                "episode_count": 30,
-                "llm_model": "m",
-                "video_model": "seedance2.0",
+        self.repo.save_task(
+            "truncated-1",
+            {
+                "task_id": "truncated-1",
+                "config": {
+                    "title_suggestion": "流氓天子",
+                    "episode_count": 30,
+                    "llm_model": "m",
+                    "video_model": "seedance2.0",
+                },
+                "assets": {
+                    "1": "导演策划",
+                    "2": "".join(_episode_text(index) for index in range(1, 16)),
+                },
             },
-            "assets": {
-                "1": "导演策划",
-                "2": "".join(_episode_text(index) for index in range(1, 16)),
-            },
-        })
+        )
 
     def tearDown(self):
         self.temp.cleanup()
@@ -100,12 +115,126 @@ class ScriptContinuationTests(unittest.TestCase):
 
         service.continue_script("truncated-1")
 
-        writes = [call for call in gateway.calls if "结构化分析器" not in call["system_prompt"]]
+        writes = [
+            call
+            for call in gateway.calls
+            if "结构化分析器" not in call["system_prompt"]
+        ]
         self.assertTrue(writes)
         for call in writes:
-            span = re.search(r"【本次只写 第 (\d+) 集(?:到第 (\d+) 集)?】", call["user_prompt"])
+            span = re.search(
+                r"【本次只写 第 (\d+) 集(?:到第 (\d+) 集)?】", call["user_prompt"]
+            )
             self.assertIsNotNone(span)
             self.assertGreaterEqual(int(span.group(1)), 16)
+
+    def test_structure_only_new_episodes_and_preserve_existing_outline(self):
+        from unittest.mock import patch
+
+        task = self.repo.get_task("truncated-1")
+        task["assets"]["2"] = "".join(
+            _episode_text(index) for index in range(1, 31) if index not in {16, 17, 18}
+        )
+        old_scenes = [
+            {
+                "scene_id": "E15S06",
+                "content": "已编辑的镜头",
+                "duration": "11s",
+                "image_url": "keep.png",
+            },
+            {
+                "scene_id": "E25S01",
+                "content": "另一已确认镜头",
+                "custom": {"asset": "actor-1"},
+            },
+        ]
+        old_scenes.extend(
+            {"scene_id": f"E{index}S01", "content": "已有分镜"}
+            for index in range(1, 31)
+            if index not in {15, 16, 17, 18, 25}
+        )
+        task["assets"]["2_breakdown"] = {
+            "scenes": old_scenes,
+            "overview": {"title": "用户定稿标题"},
+            "roles": [{"name": "陈九", "description": "定稿设定"}],
+            "production_assets": {"props": [{"name": "玉佩", "image_url": "prop.png"}]},
+        }
+        self.repo.save_task("truncated-1", task)
+        service = self._service(_ContinuationGateway())
+        addition = {
+            "scenes": [{"scene_id": "E16S01", "content": "补写镜头"}],
+            "roles": [{"name": "新角色"}, {"name": "陈九", "description": "不得覆盖"}],
+            "production_assets": {"props": [{"name": "书信"}]},
+            "overview": {"title": "不应覆盖的标题"},
+        }
+        with patch.object(
+            service, "_extract_script_breakdown", return_value=addition
+        ) as extract:
+            service.continue_script("truncated-1")
+        self.assertEqual(
+            service._script_episode_indexes(extract.call_args.args[4]), [16, 17, 18]
+        )
+        saved = self.repo.get_task("truncated-1")["assets"]["2_breakdown"]
+        for scene in old_scenes:
+            self.assertIn(scene, saved["scenes"])
+        self.assertEqual(saved["overview"], task["assets"]["2_breakdown"]["overview"])
+        self.assertEqual(saved["roles"][0], task["assets"]["2_breakdown"]["roles"][0])
+        self.assertEqual({role["name"] for role in saved["roles"]}, {"陈九", "新角色"})
+        self.assertEqual(
+            {prop["name"] for prop in saved["production_assets"]["props"]},
+            {"玉佩", "书信"},
+        )
+        from app.core.writer_dashboard import episode_from_scene_id
+
+        self.assertEqual(
+            {episode_from_scene_id(scene["scene_id"]) for scene in saved["scenes"]},
+            set(range(1, 31)),
+        )
+
+    def test_failed_incremental_structure_preserves_old_fields_and_fills_from_source(
+        self,
+    ):
+        from unittest.mock import patch
+
+        task = self.repo.get_task("truncated-1")
+        old = {"scene_id": "E15S06", "content": "定稿内容", "image_url": "saved.png"}
+        task["assets"]["2_breakdown"] = {"scenes": [old], "custom": {"keep": True}}
+        before = deepcopy(task["assets"]["2_breakdown"])
+        self.repo.save_task("truncated-1", task)
+        service = self._service(_ContinuationGateway())
+        with patch.object(service, "_extract_script_breakdown", return_value=None):
+            dashboard = service.continue_script("truncated-1")
+        saved = self.repo.get_task("truncated-1")["assets"]["2_breakdown"]
+        self.assertIn(old, saved["scenes"])
+        self.assertEqual(saved["custom"], before["custom"])
+        self.assertEqual(
+            {scene.episode_index for scene in dashboard.scenes}, set(range(1, 31))
+        )
+
+    def test_stale_fifteen_episode_config_repairs_internal_gap_before_episode_twenty_five(
+        self,
+    ):
+        task = self.repo.get_task("truncated-1")
+        task["config"]["episode_count"] = 15
+        task["assets"]["2"] += _episode_text(25)
+        self.repo.save_task("truncated-1", task)
+        service = self._service(_ContinuationGateway())
+        dashboard = service.continue_script("truncated-1")
+        self.assertEqual(dashboard.stats.missing_episodes, [])
+        self.assertEqual(dashboard.stats.scripted_episodes, 25)
+
+    def test_missing_old_structure_is_still_analysed(self):
+        from unittest.mock import patch
+
+        service = self._service(_ContinuationGateway())
+        with patch.object(
+            service, "_extract_script_breakdown", return_value=None
+        ) as extract:
+            service.continue_script("truncated-1")
+        self.assertEqual(
+            service._script_episode_indexes(extract.call_args.args[4]),
+            list(range(1, 31)),
+        )
 
     def test_the_continuation_prompt_carries_the_video_model_clip_cap(self):
         gateway = _ContinuationGateway()
@@ -113,16 +242,27 @@ class ScriptContinuationTests(unittest.TestCase):
 
         service.continue_script("truncated-1")
 
-        writes = [call for call in gateway.calls if "结构化分析器" not in call["system_prompt"]]
+        writes = [
+            call
+            for call in gateway.calls
+            if "结构化分析器" not in call["system_prompt"]
+        ]
         self.assertIn("不得超过 15 秒", writes[0]["system_prompt"])
         self.assertIn("续写", writes[0]["system_prompt"])
 
     def test_a_complete_script_is_refused_rather_than_re_run(self):
-        self.repo.save_task("complete-1", {
-            "task_id": "complete-1",
-            "config": {"title_suggestion": "流氓天子", "episode_count": 3, "llm_model": "m"},
-            "assets": {"2": "".join(_episode_text(index) for index in range(1, 4))},
-        })
+        self.repo.save_task(
+            "complete-1",
+            {
+                "task_id": "complete-1",
+                "config": {
+                    "title_suggestion": "流氓天子",
+                    "episode_count": 3,
+                    "llm_model": "m",
+                },
+                "assets": {"2": "".join(_episode_text(index) for index in range(1, 4))},
+            },
+        )
         gateway = _ContinuationGateway()
 
         with self.assertRaises(ValueError) as caught:
@@ -132,11 +272,18 @@ class ScriptContinuationTests(unittest.TestCase):
         self.assertEqual(gateway.calls, [])
 
     def test_a_project_without_a_script_is_refused(self):
-        self.repo.save_task("empty-1", {
-            "task_id": "empty-1",
-            "config": {"title_suggestion": "流氓天子", "episode_count": 3, "llm_model": "m"},
-            "assets": {},
-        })
+        self.repo.save_task(
+            "empty-1",
+            {
+                "task_id": "empty-1",
+                "config": {
+                    "title_suggestion": "流氓天子",
+                    "episode_count": 3,
+                    "llm_model": "m",
+                },
+                "assets": {},
+            },
+        )
 
         with self.assertRaises(ValueError):
             self._service(_ContinuationGateway()).continue_script("empty-1")
@@ -154,7 +301,10 @@ class ScriptContinuationTests(unittest.TestCase):
         from app.service.drama_service import ScriptUpdateConflictError
 
         service = self._service(_ContinuationGateway())
-        rival = "".join(_episode_text(index) for index in range(1, 16)) + "\n别的页面刚刚改过的剧本\n"
+        rival = (
+            "".join(_episode_text(index) for index in range(1, 16))
+            + "\n别的页面刚刚改过的剧本\n"
+        )
 
         original_extract = service._extract_script_breakdown
 
@@ -192,40 +342,84 @@ class ScriptContinuationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._service(_ContinuationGateway()).continue_script("truncated-1")
 
+    def test_generation_started_during_continuation_blocks_commit(self):
+        from unittest.mock import patch
+        from app.service.drama_service import ScriptUpdateConflictError
+
+        for running_state in (
+            {"episodes": [{"index": 1, "status": "running"}]},
+            {"stage_progress": {"stage": 3, "status": "running"}},
+            {"workflow_control": {"active": True}},
+        ):
+            with self.subTest(running_state=running_state):
+                task = self.repo.get_task("truncated-1")
+                for key in ("episodes", "stage_progress", "workflow_control"):
+                    task.pop(key, None)
+                self.repo.mutate_task("truncated-1", lambda current: current.clear() or current.update(task))
+                before = task["assets"]["2"]
+                service = self._service(_ContinuationGateway())
+
+                def start_generation(*args):
+                    self.repo.mutate_task("truncated-1", lambda current: current.update(running_state))
+                    return None
+
+                with patch.object(service, "_extract_script_breakdown", side_effect=start_generation):
+                    with self.assertRaises(ScriptUpdateConflictError):
+                        service.continue_script("truncated-1")
+                self.assertEqual(self.repo.get_task("truncated-1")["assets"]["2"], before)
+
     def test_scattered_gaps_are_requested_individually_not_as_one_span(self):
-        self.repo.save_task("gappy-1", {
-            "task_id": "gappy-1",
-            "config": {"title_suggestion": "流氓天子", "episode_count": 30, "llm_model": "m"},
-            "assets": {
-                "1": "导演策划",
-                # Everything except 3, 17 and 25 already exists.
-                "2": "".join(
-                    _episode_text(index) for index in range(1, 31)
-                    if index not in {3, 17, 25}
-                ),
+        self.repo.save_task(
+            "gappy-1",
+            {
+                "task_id": "gappy-1",
+                "config": {
+                    "title_suggestion": "流氓天子",
+                    "episode_count": 30,
+                    "llm_model": "m",
+                },
+                "assets": {
+                    "1": "导演策划",
+                    # Everything except 3, 17 and 25 already exists.
+                    "2": "".join(
+                        _episode_text(index)
+                        for index in range(1, 31)
+                        if index not in {3, 17, 25}
+                    ),
+                },
             },
-        })
+        )
         gateway = _ContinuationGateway()
 
         self._service(gateway).continue_script("gappy-1")
 
-        writes = [call for call in gateway.calls if "结构化分析器" not in call["system_prompt"]]
+        writes = [
+            call
+            for call in gateway.calls
+            if "结构化分析器" not in call["system_prompt"]
+        ]
         spans = [
-            re.search(r"【本次只写 第 (\d+) 集(?:到第 (\d+) 集)?】", call["user_prompt"]).groups()
+            re.search(
+                r"【本次只写 第 (\d+) 集(?:到第 (\d+) 集)?】", call["user_prompt"]
+            ).groups()
             for call in writes
         ]
         # One request per gap - never "第3集到第25集", which would re-request 20 finished episodes.
         self.assertEqual([first for first, _ in spans], ["3", "17", "25"])
         self.assertTrue(all(last is None for _, last in spans))
         stored = self.repo.get_task("gappy-1")["assets"]["2"]
-        self.assertEqual(DramaService._script_episode_indexes(stored), list(range(1, 31)))
+        self.assertEqual(
+            DramaService._script_episode_indexes(stored), list(range(1, 31))
+        )
 
     def test_contiguous_runs_are_still_batched_together(self):
         self.assertEqual(
             DramaService._contiguous_batches([16, 17, 18, 19, 20], 4),
             [[16, 17, 18, 19], [20]],
         )
-        self.assertEqual(DramaService._contiguous_batches([3, 17, 25], 4), [[3], [17], [25]])
+        self.assertEqual(
+            DramaService._contiguous_batches([3, 17, 25], 4), [[3], [17], [25]]
+        )
         self.assertEqual(DramaService._contiguous_batches([], 4), [])
 
     def test_a_bold_heading_script_is_understood_by_both_parsers(self):
@@ -237,11 +431,18 @@ class ScriptContinuationTests(unittest.TestCase):
             f"**第{index}集 副标题{index}**\n场景1：街市 日 外景\n陈九：台词。\n\n"
             for index in range(1, 31)
         )
-        self.repo.save_task("bold-1", {
-            "task_id": "bold-1",
-            "config": {"title_suggestion": "流氓天子", "episode_count": 30, "llm_model": "m"},
-            "assets": {"2": bold},
-        })
+        self.repo.save_task(
+            "bold-1",
+            {
+                "task_id": "bold-1",
+                "config": {
+                    "title_suggestion": "流氓天子",
+                    "episode_count": 30,
+                    "llm_model": "m",
+                },
+                "assets": {"2": bold},
+            },
+        )
 
         stats = compile_writer_dashboard(self.repo.get_task("bold-1")).stats
 
@@ -255,11 +456,18 @@ class ScriptContinuationTests(unittest.TestCase):
 
         labels = ["一", "二", "三", "十三", "二十", "三十"]
         script = "".join(f"第{label}集 副标题\n正文\n\n" for label in labels)
-        self.repo.save_task("cn-1", {
-            "task_id": "cn-1",
-            "config": {"title_suggestion": "流氓天子", "episode_count": 30, "llm_model": "m"},
-            "assets": {"2": script},
-        })
+        self.repo.save_task(
+            "cn-1",
+            {
+                "task_id": "cn-1",
+                "config": {
+                    "title_suggestion": "流氓天子",
+                    "episode_count": 30,
+                    "llm_model": "m",
+                },
+                "assets": {"2": script},
+            },
+        )
 
         stats = compile_writer_dashboard(self.repo.get_task("cn-1")).stats
 
@@ -267,7 +475,9 @@ class ScriptContinuationTests(unittest.TestCase):
         self.assertEqual(stats.scripted_episodes, 6)
 
     def test_a_missing_task_returns_none(self):
-        self.assertIsNone(self._service(_ContinuationGateway()).continue_script("no-such-task"))
+        self.assertIsNone(
+            self._service(_ContinuationGateway()).continue_script("no-such-task")
+        )
 
     def test_the_writer_dashboard_asset_is_recompiled(self):
         service = self._service(_ContinuationGateway())

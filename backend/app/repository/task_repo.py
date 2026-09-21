@@ -20,6 +20,8 @@ import logging
 import os
 import threading
 import time
+from collections import Counter
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 
@@ -80,6 +82,60 @@ def _script_revision(task: object) -> int:
         return max(0, int(task.get("script_revision", 0) or 0))
     except (TypeError, ValueError, OverflowError):
         return 0
+
+
+def _chat_event_id(event: object) -> str:
+    return str(event.get("id") or "").strip() if isinstance(event, dict) else ""
+
+
+def _legacy_chat_key(event: object) -> str:
+    """Match old sender/text events with their canonical role/content shape."""
+    if isinstance(event, dict):
+        role = event.get("role") or event.get("sender")
+        role = "assistant" if role == "ai" else role
+        content = event.get("content") if "content" in event else event.get("text")
+        if role is not None and content is not None:
+            return json.dumps([role, content], ensure_ascii=False, sort_keys=True)
+    return json.dumps(event, ensure_ascii=False, sort_keys=True)
+
+
+def _merge_chat_history(current: object, incoming: object) -> list:
+    """Keep durable event order and append unseen snapshot events.
+
+    Stable IDs are immutable: a stale copy cannot rewrite an existing event.
+    Legacy events have no reliable identity, so compare occurrence counts rather
+    than a set; this preserves repeated messages without replaying whole history.
+    """
+    merged = []
+    seen_ids: set[str] = set()
+    for chat_event in current if isinstance(current, list) else []:
+        event_id = _chat_event_id(chat_event)
+        if event_id and event_id in seen_ids:
+            continue
+        merged.append(chat_event)
+        if event_id:
+            seen_ids.add(event_id)
+    durable_counts = Counter(_legacy_chat_key(event) for event in merged)
+    legacy_counts = Counter(_legacy_chat_key(item) for item in merged if not _chat_event_id(item))
+    synthetic_counts: Counter[str] = Counter()
+    incoming_counts: Counter[str] = Counter()
+    for chat_event in incoming if isinstance(incoming, list) else []:
+        event_id = _chat_event_id(chat_event)
+        if event_id:
+            if event_id.startswith("legacy-") and event_id[7:].isdigit():
+                key = _legacy_chat_key(chat_event)
+                synthetic_counts[key] += 1
+                if synthetic_counts[key] <= legacy_counts[key]:
+                    continue
+            if event_id not in seen_ids:
+                merged.append(chat_event)
+                seen_ids.add(event_id)
+        else:
+            key = _legacy_chat_key(chat_event)
+            incoming_counts[key] += 1
+            if incoming_counts[key] > durable_counts[key]:
+                merged.append(chat_event)
+    return merged
 
 
 def _sync_database_url() -> str:
@@ -212,6 +268,24 @@ class TaskRepository:
     def _translate(exc: Exception) -> TaskStoreUnavailableError:
         return TaskStoreUnavailableError(f"任务库不可用: {exc.__class__.__name__}")
 
+    def _snapshot_payload(self, task_data: Dict[str, Any], current_raw: object = None) -> str:
+        current = self._load_payload(current_raw) if current_raw is not None else None
+        durable_history = current.get("chat_history") if current else None
+        incoming_history = task_data.get("chat_history")
+        if isinstance(durable_history, list) or isinstance(incoming_history, list):
+            task_data = {
+                **task_data,
+                "chat_history": _merge_chat_history(durable_history, incoming_history),
+            }
+        if current and isinstance(current.get("workflow_control"), dict):
+            # Workflow reservations and pause intent are atomically maintained
+            # through mutate_task; background result snapshots cannot own them.
+            task_data = {
+                **task_data,
+                "workflow_control": deepcopy(current["workflow_control"]),
+            }
+        return json.dumps(task_data, ensure_ascii=False)
+
     # -------------------------------------------------------------- public API
 
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
@@ -244,17 +318,18 @@ class TaskRepository:
     def save_task(self, task_id: str, task_data: Dict[str, Any]) -> None:
         self._ensure_ready()
         incoming_revision = _script_revision(task_data)
-        payload = json.dumps(task_data, ensure_ascii=False)
         with _WRITE_LOCK:
             try:
                 with self.engine.begin() as connection:
-                    current_revision = connection.execute(
-                        sa.select(_TASKS.c.script_revision)
+                    current = connection.execute(
+                        sa.select(_TASKS.c.script_revision, _TASKS.c.payload)
                         .where(_TASKS.c.task_id == task_id)
                         .with_for_update()
-                    ).scalar()
+                    ).first()
+                    current_revision = current.script_revision if current is not None else None
                     if current_revision is not None and int(current_revision) > incoming_revision:
                         raise StaleTaskWriteError("任务剧本已更新，拒绝旧快照覆盖")
+                    payload = self._snapshot_payload(task_data, current.payload if current is not None else None)
                     now = time.time_ns()
                     if current_revision is None:
                         connection.execute(_TASKS.insert().values(
@@ -276,13 +351,15 @@ class TaskRepository:
                 # A cross-process insert race: the row now exists, retry as update.
                 try:
                     with self.engine.begin() as connection:
-                        current_revision = connection.execute(
-                            sa.select(_TASKS.c.script_revision)
+                        current = connection.execute(
+                            sa.select(_TASKS.c.script_revision, _TASKS.c.payload)
                             .where(_TASKS.c.task_id == task_id)
                             .with_for_update()
-                        ).scalar()
+                        ).first()
+                        current_revision = current.script_revision if current is not None else None
                         if current_revision is not None and int(current_revision) > incoming_revision:
                             raise StaleTaskWriteError("任务剧本已更新，拒绝旧快照覆盖")
+                        payload = self._snapshot_payload(task_data, current.payload if current is not None else None)
                         connection.execute(
                             _TASKS.update()
                             .where(_TASKS.c.task_id == task_id)

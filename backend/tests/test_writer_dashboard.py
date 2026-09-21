@@ -4,7 +4,9 @@ import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+from app.core.production_asset_readiness import evaluate_asset_readiness
 
 from fastapi.testclient import TestClient
 
@@ -27,6 +29,7 @@ def _task() -> dict:
         "status": "idle",
         "config": {"title_suggestion": "十二小时", "episode_count": 2},
         "assets": {
+            "1": "已确认的总导演方案",
             "2": "第1集 匿名录音\n场景1：雨夜办公室\n林夏：你隐瞒了什么？\n第2集 实验室\n场景1：地下实验室\n周教授：现在回头还来得及。",
             "2_breakdown": {
                 "overview": {"synopsis": "林夏追查失踪案。", "genre": "都市悬疑", "theme": "真相需要代价"},
@@ -220,6 +223,14 @@ class WriterDashboardApiTests(unittest.TestCase):
             "user_id": "writer-user",
             "role": "user",
         }
+        # These cases exercise workflow mechanics; the five-kind library gate has
+        # its own tests, so keep the pre-library actor-only readiness here.
+        readiness = patch(
+            "app.service.drama_service.evaluate_project_assets",
+            side_effect=lambda task: evaluate_asset_readiness(task, None),
+        )
+        readiness.start()
+        self.addCleanup(readiness.stop)
         self.client = TestClient(
             _ClientAddressApp(app, (f"writer-{self._testMethodName}", 50000)),
             cookies={"auth_token": auth_service.generate_token("writer-user")},
@@ -290,16 +301,20 @@ class WriterDashboardApiTests(unittest.TestCase):
         task["current_stage"] = 4
         task["status"] = "idle"
         task["assets"]["4"] = [{"shot_id": 1, "desc": "雨夜对峙"}]
+        task["assets"].update({"3": "角色", "3_sheets": {"林夏": "sheet.png"}, "3_character_dashboard": {"state": "READY"}})
         task["assets"].pop("4_storyboard", None)
         self.repo.save_task("writer-task-1", task)
 
-        with self.assertRaises(StagePrerequisiteError):
-            asyncio.run(self.service.assistant_message("writer-task-1", "继续"))
+        with patch.object(self.service, "execute_stage", new_callable=AsyncMock):
+            response = asyncio.run(self.service.assistant_message("writer-task-1", "继续"))
+
+        self.assertEqual(response["stage"], 4)
+        self.assertEqual(response["action"], "run_stage")
 
         stored = self.repo.get_task("writer-task-1")
         self.assertEqual(stored["current_stage"], 4)
-        self.assertEqual(stored["status"], "idle")
-        self.assertNotEqual((stored.get("stage_progress") or {}).get("stage"), 5)
+        self.assertEqual(stored["status"], "running")
+        self.assertEqual((stored.get("stage_progress") or {}).get("stage"), 4)
 
     def test_claiming_a_stage_discards_orphaned_outputs_from_later_stages(self):
         task = self.repo.get_task("writer-task-1")
@@ -1103,7 +1118,10 @@ class ProductionAssetExtractionApiTests(unittest.TestCase):
             self.assertIn(field, contract)
         self.assertIn("production_assets", contract)
 
-    def test_bulk_sync_imports_all_non_actor_categories_idempotently(self):
+    def test_bulk_sync_imports_all_categories_idempotently_and_links_library_assets(self):
+        from app.core.element_scope import link_task
+        from app.core.production_asset_extractor import extract_production_assets
+
         task = _task()
         task["assets"]["2_breakdown"]["production_assets"] = {
             "scenes": [{"name": "祭坛边柴堆引火区", "description": "雪夜外景"}],
@@ -1115,24 +1133,44 @@ class ProductionAssetExtractionApiTests(unittest.TestCase):
             "effects": [{"name": "祭火蔓延", "description": "火舌与雪汽"}],
         }
         self.repo.save_task("writer-task-1", task)
+        actor_count = len(extract_production_assets(task, "actor"))
+        self.assertGreater(actor_count, 0)
 
         class MemoryElementStore:
             def __init__(self):
                 self.items = []
 
-            async def list_elements(self, owner_id, kind, page, page_size):
-                found = [item for item in self.items if item.kind == kind]
+            async def list_all_elements(self, owner_id, kind):
+                return [item for item in self.items if item.kind == kind]
+
+            async def list_elements(self, owner_id, kind, page, page_size, task_id=None):
+                found = await self.list_all_elements(owner_id, kind)
                 return found, len(found)
 
             async def create_element(self, *, owner_id, kind, name, description, metadata):
                 item = SimpleNamespace(
                     id=f"{kind}-{len(self.items) + 1}", kind=kind, name=name,
-                    description=description, metadata_json=metadata,
+                    description=description, metadata_json=metadata, files=[],
                 )
                 self.items.append(item)
                 return item
 
+            async def link_element_to_task(self, element_id, owner_id, task_id):
+                item = next(item for item in self.items if item.id == element_id)
+                item.metadata_json = link_task(item.metadata_json, task_id)
+                return item
+
+            async def merge_element_metadata(self, element_id, owner_id, patch):
+                item = next(item for item in self.items if item.id == element_id)
+                item.metadata_json = {**item.metadata_json, **patch}
+                return item
+
         store = MemoryElementStore()
+        # A torch another project already produced must be linked, not duplicated.
+        store.items.append(SimpleNamespace(
+            id="prop-old", kind="prop", name="火把", description="上一部剧的火把",
+            metadata_json={"task_id": "older-task", "task_ids": ["older-task"]}, files=[],
+        ))
         app.dependency_overrides[get_platform_store] = lambda: store
         try:
             with patch.object(drama_api, "service", self.service):
@@ -1142,12 +1180,20 @@ class ProductionAssetExtractionApiTests(unittest.TestCase):
             app.dependency_overrides.pop(get_platform_store, None)
 
         self.assertEqual(first.status_code, 200, first.text)
-        self.assertEqual(first.json()["created"], 5)
+        self.assertEqual(first.json()["created"], 4 + actor_count)
+        self.assertEqual(first.json()["reused"], 1)
         self.assertEqual(first.json()["kinds"], {
-            "scene": 1, "prop": 2, "costume": 1, "effect": 1,
+            "actor": actor_count, "scene": 1, "prop": 2, "costume": 1, "effect": 1,
         })
+        torch = next(item for item in store.items if item.id == "prop-old")
+        self.assertEqual(torch.metadata_json["task_ids"], ["older-task", "writer-task-1"])
+        self.assertEqual(len([item for item in store.items if item.name == "火把"]), 1)
+        self.assertTrue(all(
+            "writer-task-1" in item.metadata_json.get("task_ids", []) for item in store.items
+        ))
         self.assertEqual(second.json()["created"], 0)
-        self.assertEqual(second.json()["skipped"], 5)
+        self.assertEqual(second.json()["reused"], 0)
+        self.assertEqual(second.json()["skipped"], 5 + actor_count)
 
     def test_actor_extraction_includes_descriptions_and_reference_images(self):
         task = _task()

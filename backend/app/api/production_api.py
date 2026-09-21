@@ -16,9 +16,11 @@ from app.schema.production import (
     NineGridStoryboard,
     SoundEffectRequest,
     Sd25CompileRequest,
+    Sd25PromptAuditRequest,
     TTSRequest,
 )
 from app.service.production_service import ProductionService
+from app.core import style_packs
 from app.core.video_quality import VideoQualityMeasurements
 from app.schema.advanced import AudioMixRequest, PerformancePlanRequest
 from app.schema.evidence import FailureEvidence, GenerationOutcome, ProductionReadinessRequest
@@ -123,6 +125,12 @@ def creative_presets():
     return service.list_presets()
 
 
+@router.get("/style-packs")
+def style_packs_catalog():
+    """全片可选的风格锁：创建项目时选一个，之后每一镜的图与视频提示词都按它编译。"""
+    return {"default": style_packs.DEFAULT_PACK_ID, "packs": [style_packs.describe(pack) for pack in style_packs.list_packs()]}
+
+
 @router.post("/presets/{preset_id}/compile")
 def compile_creative_preset(preset_id: str, request: CreativePresetCompileRequest):
     try:
@@ -190,6 +198,11 @@ def compile_sd25(request: Sd25CompileRequest):
         return service.compile_sd25(request)
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/sd25/audit")
+def audit_sd25_prompt(request: Sd25PromptAuditRequest):
+    return service.audit_sd25_prompt(request)
 
 
 @router.post("/script-prompts/compile")

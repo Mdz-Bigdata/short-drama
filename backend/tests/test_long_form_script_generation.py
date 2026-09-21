@@ -5,8 +5,12 @@ One LLM call caps its own output, so writing a long series in a single call left
 the dashboard advertising "总集数 30" over a script that stopped at episode 15.
 Generation is batched instead; these tests pin that contract.
 """
+import re
+import threading
+import time
 import unittest
 from typing import Any, Dict, List
+from unittest.mock import patch
 
 from app.core.writer_dashboard import compile_writer_dashboard
 from app.service.drama_service import DramaService
@@ -279,6 +283,80 @@ class _BreakdownGateway:
         if "overview 字段可以留空" not in system_prompt:
             payload["overview"] = {"synopsis": "陈九从混混变成皇子。", "genre": "古装权谋"}
         return json.dumps(payload, ensure_ascii=False)
+
+
+class _TimedBreakdownGateway(_BreakdownGateway):
+    """Records overlap, and answers later batches first when asked to."""
+
+    def __init__(self, *, hold_seconds: float = 0.0, fail_first: bool = False):
+        super().__init__()
+        self.hold_seconds = hold_seconds
+        self.fail_first = fail_first
+        self._lock = threading.Lock()
+        self._live = 0
+        self.peak_concurrency = 0
+
+    def call_llm(self, model, system_prompt, user_prompt, title,
+                 director_style="", shot_style="", user_instruction="", max_tokens=None):
+        with self._lock:
+            self._live += 1
+            self.peak_concurrency = max(self.peak_concurrency, self._live)
+        try:
+            if self.hold_seconds:
+                # The opening batches are held longest, so a parallel run finishes
+                # out of order and the merge order is genuinely under test.
+                first = min(int(match) for match in re.findall(r"第(\d+)集", user_prompt))
+                time.sleep(self.hold_seconds * max(0, 6 - first))
+            if self.fail_first and "第1集" in user_prompt:
+                raise RuntimeError("opening batch is down")
+            return super().call_llm(
+                model, system_prompt, user_prompt, title,
+                director_style, shot_style, user_instruction, max_tokens,
+            )
+        finally:
+            with self._lock:
+                self._live -= 1
+
+
+class ParallelBreakdownTests(unittest.TestCase):
+    """Independent batches only cost wall-clock when they queue behind each other."""
+
+    def _run(self, gateway, episode_count=20, concurrency=None):
+        service = _service(gateway)
+        script = "".join(_episode_text(index) for index in range(1, episode_count + 1))
+        environment = {} if concurrency is None else {"SCRIPT_ANALYSIS_CONCURRENCY": concurrency}
+        with patch.dict("os.environ", environment):
+            return service._extract_script_breakdown(
+                {"llm_model": "m", "video_model": "seedance2.5"},
+                "流氓天子", "palace", "cinematic", script,
+            )
+
+    def test_independent_batches_run_at_the_same_time(self):
+        gateway = _TimedBreakdownGateway(hold_seconds=0.02)
+        self._run(gateway)
+        self.assertGreater(gateway.peak_concurrency, 1)
+
+    def test_out_of_order_completion_still_merges_in_episode_order(self):
+        gateway = _TimedBreakdownGateway(hold_seconds=0.02)
+        breakdown = self._run(gateway)
+        self.assertEqual(len(breakdown["scenes"]), 20 * 4)
+        self.assertEqual(
+            [scene["scene_id"] for scene in breakdown["scenes"][:5]],
+            ["E1S01", "E1S02", "E1S03", "E1S04", "E2S01"],
+        )
+
+    def test_the_synopsis_survives_a_failing_opening_batch(self):
+        gateway = _TimedBreakdownGateway(fail_first=True)
+        breakdown = self._run(gateway)
+        self.assertEqual(breakdown["overview"]["genre"], "古装权谋")
+        # 首批垮了，第 1-4 集仍按剧本正文兜底，不会从大纲里消失。
+        self.assertIn("E1S01", {scene["scene_id"] for scene in breakdown["scenes"]})
+
+    def test_concurrency_one_restores_a_strictly_serial_run(self):
+        gateway = _TimedBreakdownGateway(hold_seconds=0.02)
+        breakdown = self._run(gateway, concurrency="1")
+        self.assertEqual(gateway.peak_concurrency, 1)
+        self.assertEqual(len(breakdown["scenes"]), 20 * 4)
 
 
 class BatchedBreakdownTests(unittest.TestCase):

@@ -10,7 +10,10 @@ const providers = {
   items: [
     { category: 'text', providers: [{ id: 'openai', label: 'OpenAI', default_base_url: 'https://api.openai.com/v1' }] },
     { category: 'image', providers: [{ id: 'openai', label: 'OpenAI', default_base_url: 'https://api.openai.com/v1' }] },
-    { category: 'video', providers: [{ id: 'minimax', label: 'minimax', default_base_url: 'https://api.minimaxi.com' }] },
+    { category: 'video', providers: [
+      { id: 'minimax', label: 'minimax', default_base_url: 'https://api.minimaxi.com' },
+      { id: 'kling', label: 'Kling', default_base_url: 'https://api-singapore.klingai.com', key_hint: '填写 ACCESS_KEY:SECRET_KEY（冒号分隔）' },
+    ] },
     { category: 'audio', providers: [
       { id: 'elevenlabs', label: 'ElevenLabs', default_base_url: 'https://api.elevenlabs.io' },
       { id: 'minimax', label: 'minimax', default_base_url: 'https://api.minimaxi.com' },
@@ -242,4 +245,22 @@ describe('ModelConfigurationCenter', () => {
     expect(screen.getByRole('checkbox', { name: /MiniMax Music 3.0 · 音乐/ })).toBeTruthy();
     expect(screen.getByRole('checkbox', { name: /MiniMax Music Cover · 音乐翻唱/ })).toBeTruthy();
   });
+  it('shows the provider key hint only for providers that declare one', async () => {
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/providers')) return { ok: true, json: async () => providers } as Response;
+      return { ok: true, json: async () => ({ items: [], summary: { text: 0, image: 0, video: 0, audio: 0 } }) } as Response;
+    });
+
+    render(<ModelConfigurationCenter open role="admin" onClose={() => undefined} />);
+    await userEvent.click(await screen.findByRole('tab', { name: /视频模型/ }));
+    await userEvent.selectOptions(screen.getByLabelText('AI 供应商'), 'kling');
+
+    expect((screen.getByLabelText('基础 URL') as HTMLInputElement).value).toBe('https://api-singapore.klingai.com');
+    expect(screen.getByTestId('provider-key-hint').textContent).toContain('ACCESS_KEY:SECRET_KEY');
+
+    await userEvent.selectOptions(screen.getByLabelText('AI 供应商'), 'minimax');
+    expect(screen.queryByTestId('provider-key-hint')).toBeNull();
+  });
+
 });

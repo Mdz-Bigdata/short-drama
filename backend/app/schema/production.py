@@ -335,6 +335,9 @@ class Sd25Asset(BaseModel):
     observations: Annotated[str, Field(min_length=1, max_length=2000)]
     duration_seconds: Annotated[float | None, Field(gt=0, le=30)] = None
     required: bool = False
+    # A top-down scene reference must be declared as structure-only; otherwise the
+    # whole clip drifts into an overhead camera that the blockout never asked for.
+    overhead_view: bool = False
 
     @model_validator(mode="after")
     def validate_reference_contract(self) -> "Sd25Asset":
@@ -350,6 +353,8 @@ class Sd25Asset(BaseModel):
             raise ValueError("image references may not declare duration_seconds")
         if self.media_type in {"video", "audio"} and self.duration_seconds is None:
             raise ValueError("video and audio references require duration_seconds for hard-limit validation")
+        if self.overhead_view and self.media_type != "image":
+            raise ValueError("overhead_view only applies to image references")
         return self
 
 
@@ -363,7 +368,7 @@ class Sd25DialogueEntry(BaseModel):
 
 
 class Sd25MissingAsset(BaseModel):
-    """A declared but inaccessible reference that must not enter prompt text."""
+    """A declared but inaccessible reference whose original binding is preserved."""
 
     ref: Annotated[str, Field(pattern=r"^@(?:图片|视频|音频|Image|Video|Audio)\s?\d+$")]
     intended_role: Annotated[str, Field(min_length=1, max_length=500)]
@@ -388,6 +393,11 @@ class Sd25CompileRequest(BaseModel):
     storyboard: NineGridStoryboard | None = None
     blockout_ref: str | None = None
     blockout_granularity: Literal["coarse", "fine"] | None = None
+    # A stand-in with limbs or wings renders stiff unless the body carries a full
+    # segmented action sequence; the flag makes the compiler demand and check one.
+    blockout_standin_limbs: bool = False
+    # End second of each ordered keyframe stage (0-3, 3-7 ...): integer, contiguous.
+    keyframe_stage_ends: Annotated[list[int], Field(max_length=30)] = Field(default_factory=list)
     parameters: dict[str, str | int | float | bool] = Field(default_factory=dict)
 
     @field_validator("parameters")
@@ -422,19 +432,39 @@ class Sd25CompileRequest(BaseModel):
         if sum(asset.duration_seconds or 0 for asset in audios) > 30:
             raise ValueError("sd25 reference audio may total at most 30 seconds")
         by_ref = {asset.ref: asset for asset in self.assets}
+        missing_by_ref = {asset.ref: asset for asset in self.missing_assets}
+
+        def missing_has_type(ref: str, media_type: Sd25MediaType) -> bool:
+            if ref not in missing_by_ref:
+                return False
+            compact = ref.removeprefix("@").replace(" ", "")
+            return {
+                "image": compact.startswith(("图片", "Image")),
+                "video": compact.startswith(("视频", "Video")),
+                "audio": compact.startswith(("音频", "Audio")),
+            }[media_type]
+
+        def has_type(ref: str | None, media_type: Sd25MediaType) -> bool:
+            if not ref:
+                return False
+            available = by_ref.get(ref)
+            return bool(
+                (available and available.media_type == media_type)
+                or missing_has_type(ref, media_type)
+            )
+
         for dialogue in self.dialogue:
             if dialogue.audio_ref:
-                audio = by_ref.get(dialogue.audio_ref)
-                if not audio or audio.media_type != "audio":
-                    raise ValueError("dialogue audio_ref must point to a provided audio asset")
+                if not has_type(dialogue.audio_ref, "audio"):
+                    raise ValueError("dialogue audio_ref must point to a declared audio asset")
         for frame_ref in (self.first_frame_ref, self.last_frame_ref):
-            if frame_ref and (frame_ref not in by_ref or by_ref[frame_ref].media_type != "image"):
-                raise ValueError("first and last frame references must point to provided images")
+            if frame_ref and not has_type(frame_ref, "image"):
+                raise ValueError("first and last frame references must point to declared images")
         if len(self.keyframe_refs) != len(set(self.keyframe_refs)):
             raise ValueError("ordered keyframe references must be unique")
         for frame_ref in self.keyframe_refs:
-            if frame_ref not in by_ref or by_ref[frame_ref].media_type != "image":
-                raise ValueError("ordered keyframes must point to provided images")
+            if not has_type(frame_ref, "image"):
+                raise ValueError("ordered keyframes must point to declared images")
         if self.keyframe_refs and len(self.keyframe_refs) < 2:
             raise ValueError("ordered keyframe generation requires at least two images")
         if self.first_frame_ref and self.keyframe_refs and self.keyframe_refs[0] != self.first_frame_ref:
@@ -442,31 +472,38 @@ class Sd25CompileRequest(BaseModel):
         if self.last_frame_ref and self.keyframe_refs and self.keyframe_refs[-1] != self.last_frame_ref:
             raise ValueError("the last ordered keyframe must equal last_frame_ref")
         if self.task in {"edit", "edit_then_extend"}:
-            source = by_ref.get(self.source_video_ref or "")
-            if not source or source.media_type != "video":
-                raise ValueError("video editing requires one provided source video")
+            if not has_type(self.source_video_ref, "video"):
+                raise ValueError("video editing requires one declared source video")
         if self.task in {"extend", "edit_then_extend"}:
-            source = by_ref.get(self.source_video_ref or "")
-            if not source or source.media_type != "video" or not self.extension_direction:
-                raise ValueError("video extension requires a source video and before/after direction")
+            if not has_type(self.source_video_ref, "video") or not self.extension_direction:
+                raise ValueError("video extension requires a declared source video and before/after direction")
         if self.task != "generation" and (self.first_frame_ref or self.last_frame_ref):
             raise ValueError("keyframe generation and edit/extend are separate primary tasks")
         if bool(self.storyboard_ref) != bool(self.storyboard):
             raise ValueError("storyboard reference and exact nine-grid data must be provided together")
         if self.storyboard_ref:
-            source = by_ref.get(self.storyboard_ref)
-            if not source or source.media_type != "image":
-                raise ValueError("storyboard reference must point to a provided image")
+            if not has_type(self.storyboard_ref, "image"):
+                raise ValueError("storyboard reference must point to a declared image")
         if bool(self.blockout_ref) != bool(self.blockout_granularity):
             raise ValueError("blockout reference and granularity must be provided together")
         if self.blockout_ref:
-            source = by_ref.get(self.blockout_ref)
-            if not source or source.media_type != "video":
-                raise ValueError("blockout reference must point to a provided video")
+            if not has_type(self.blockout_ref, "video"):
+                raise ValueError("blockout reference must point to a declared video")
         if self.storyboard_ref and self.blockout_ref:
             raise ValueError("storyboard and blockout are separate primary structure references")
-        if self.keyframe_refs and (self.storyboard_ref or self.blockout_ref):
-            raise ValueError("ordered keyframes, storyboard and blockout are separate structure references")
+        # Blockout + staged keyframes is the official combination (the blockout owns
+        # camera scheduling, the keyframes own each stage's look); the nine-grid stays separate.
+        if self.keyframe_refs and self.storyboard_ref:
+            raise ValueError("ordered keyframes and exact nine-grid storyboard are separate structure references")
+        if self.blockout_standin_limbs and not self.blockout_ref:
+            raise ValueError("blockout_standin_limbs requires a blockout reference")
+        if self.keyframe_stage_ends:
+            if len(self.keyframe_stage_ends) != len(self.keyframe_refs):
+                raise ValueError("keyframe_stage_ends must give one end second per ordered keyframe")
+            if self.keyframe_stage_ends[0] <= 0 or any(
+                left >= right for left, right in zip(self.keyframe_stage_ends, self.keyframe_stage_ends[1:], strict=False)
+            ):
+                raise ValueError("keyframe_stage_ends must be positive and strictly increasing integer seconds")
         return self
 
 
@@ -486,3 +523,28 @@ class Sd25CompileResult(BaseModel):
     parameters: dict[str, str | int | float | bool]
     warnings: list[str] = Field(default_factory=list)
     steps: list[Sd25CompileStep] = Field(default_factory=list)
+
+
+class Sd25PromptAuditRequest(BaseModel):
+    """Read-only five-part prompt audit; it never submits or rewrites a prompt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: Annotated[str, Field(min_length=1, max_length=50000)]
+    duration_seconds: Annotated[float | None, Field(gt=0, le=30)] = None
+    unbranded: bool = False
+
+
+class Sd25PromptAuditFinding(BaseModel):
+    level: Literal["error", "warning"]
+    code: Annotated[str, Field(min_length=1, max_length=120)]
+    message: Annotated[str, Field(min_length=1, max_length=1000)]
+
+
+class Sd25PromptAuditResult(BaseModel):
+    ok: bool
+    errors: int
+    warnings: int
+    findings: list[Sd25PromptAuditFinding]
+    timeline_end_seconds: float | None = None
+    prompt_sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]

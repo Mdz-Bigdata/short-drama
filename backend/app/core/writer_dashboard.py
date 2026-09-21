@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 from collections import defaultdict
+from collections.abc import Iterable
 from typing import Any
 
 from app.schema.writer_dashboard import (
@@ -62,7 +63,12 @@ def script_episode_indexes(script: str) -> list[int]:
     return found
 
 
-def script_episode_gaps(script: str, total: int) -> list[int]:
+def episode_target(indexes: Iterable[int], configured: Any = 0) -> int:
+    """Never let stale configuration hide a gap inside an existing screenplay."""
+    return max(_bounded_int(configured), max(indexes, default=0))
+
+
+def script_episode_gaps(script: str, total: Any) -> list[int]:
     """Which episode numbers of ``1..total`` the screenplay body is actually missing.
 
     「已写 15 集 / 共 30 集」只说得出缺几集，说不出缺哪几集 - 用户得自己把 E15S06
@@ -74,7 +80,7 @@ def script_episode_gaps(script: str, total: int) -> list[int]:
     produced = set(script_episode_indexes(script))
     if not produced:
         return []
-    return [index for index in range(1, max(0, total) + 1) if index not in produced]
+    return [index for index in range(1, episode_target(produced, total) + 1) if index not in produced]
 
 
 def split_script_by_episode(script: str) -> dict[int, str]:
@@ -108,6 +114,11 @@ _LABEL_MORPHEMES = (
     "分镜", "机位", "剪辑", "调度", "配乐", "尺度", "合规", "复用", "付费",
 )
 _MAX_CHARACTER_NAME_CHARS = 8
+
+# Public aliases: whoever asks "does this text already read as a screenplay?" must
+# use the very parser that later slices it, or the two answers can disagree.
+SCENE_HEADING = _SCENE_HEADING
+SPEAKER_LINE = _SPEAKER
 
 
 def is_character_name(value: Any) -> bool:
@@ -359,8 +370,38 @@ def fallback_scenes_from_script(script: str) -> list[dict[str, Any]]:
     return [{"scene_id": "E1S01", "duration": "", "content": _text(script, 6000), "characters": _characters(script)}]
 
 
+def reconcile_breakdown_scenes(raw_scenes: Any, script: str) -> list[dict[str, Any]]:
+    """Fill whole episodes omitted from a legacy outline, using only their source text.
+
+    Nonempty model output can still be incomplete. Preserve every existing scene
+    and its identifiers so edits and generated media stay attached; only episodes
+    present in the screenplay but absent from the outline receive source-derived
+    scenes. This pure, offline repair is shared by the dashboard and production
+    pipeline, and repeated calls leave the result unchanged.
+    """
+    scenes = (
+        [item for item in raw_scenes if isinstance(item, dict) and str(item.get("scene_id") or "").strip()]
+        if isinstance(raw_scenes, list) else []
+    )
+    if not scenes:
+        scenes = fallback_scenes_from_script(script)
+    else:
+        episodes = split_script_by_episode(script)
+        covered = {episode_from_scene_id(str(scene.get("scene_id") or "")) for scene in scenes}
+        for episode in sorted(episodes):
+            if episode not in covered:
+                scenes.extend(fallback_scenes_from_script(episodes[episode]))
+
+    def scene_order(scene: dict[str, Any]) -> tuple[int, int]:
+        scene_id = _text(scene.get("scene_id"), 80)
+        shot = re.search(r"S(\d+)", scene_id, flags=re.IGNORECASE)
+        return episode_from_scene_id(scene_id), int(shot.group(1)) if shot else 1000000
+
+    return sorted(scenes, key=scene_order)
+
+
 def _normalize_scenes(raw_scenes: Any, script: str) -> list[dict[str, Any]]:
-    source = raw_scenes if isinstance(raw_scenes, list) and raw_scenes else fallback_scenes_from_script(script)
+    source = reconcile_breakdown_scenes(raw_scenes, script)
     result: list[dict[str, Any]] = []
     elapsed = 0
     for index, item in enumerate(source[:5000], start=1):
@@ -520,6 +561,7 @@ def compile_writer_dashboard(task: dict[str, Any]) -> WriterDashboardResponse:
     breakdown = assets.get("2_breakdown") if isinstance(assets.get("2_breakdown"), dict) else {}
     overview_raw = breakdown.get("overview") if isinstance(breakdown.get("overview"), dict) else {}
     script = _script_text(assets.get("2") or config.get("script_content") or "")
+    script_indexes = script_episode_indexes(script)
     scenes_payload = _normalize_scenes(breakdown.get("scenes"), script)
     relationships = _normalize_relationships(breakdown.get("relationships"))
     relationships_inferred = not relationships
@@ -538,7 +580,7 @@ def compile_writer_dashboard(task: dict[str, Any]) -> WriterDashboardResponse:
     requested = _bounded_int(config.get("episode_count"))
     episode_indexes = [scene.episode_index for scene in scenes]
     total_episodes = max([
-        requested,
+        episode_target(script_indexes, requested),
         _bounded_int(task.get("total_episodes")),
         *stored_episodes.keys(),
         *episode_indexes,
@@ -570,11 +612,15 @@ def compile_writer_dashboard(task: dict[str, Any]) -> WriterDashboardResponse:
         theme=_text(overview_raw.get("theme"), 500),
         world_setting=_text(overview_raw.get("world_setting"), 4000),
     )
-    state = "READY" if script and scenes and timeline and roles else "INCOMPLETE" if script else "WAITING"
+    missing_episodes = script_episode_gaps(script, total_episodes)
+    state = (
+        "READY" if script and scenes and timeline and roles and not missing_episodes
+        else "INCOMPLETE" if script else "WAITING"
+    )
     source_hash = hashlib.sha256(json.dumps(
         {
             "script": script,
-            "breakdown": breakdown,
+            "breakdown": {**breakdown, "scenes": reconcile_breakdown_scenes(breakdown.get("scenes"), script)},
             "script_file_name": _text(config.get("script_name"), 255),
         },
         ensure_ascii=False,
@@ -583,10 +629,10 @@ def compile_writer_dashboard(task: dict[str, Any]) -> WriterDashboardResponse:
     ).encode("utf-8")).hexdigest()
     stats = WriterDashboardStats(
         total_episodes=total_episodes,
-        scripted_episodes=len(script_episode_indexes(script)) or (1 if script.strip() else 0),
+        scripted_episodes=len(script_indexes) or (1 if script.strip() else 0),
         # 从正文现算，不落库：手动改稿或补写之后陈旧的断层列表会把已经补好的集数
         # 继续标红，而正文永远是唯一权威。
-        missing_episodes=script_episode_gaps(script, total_episodes),
+        missing_episodes=missing_episodes,
         scene_count=len(scenes),
         character_count=len(roles),
         main_event_count=len(timeline),

@@ -2,6 +2,7 @@ export const FINAL_OUTPUT_CONTENTS = [
   '镜头基础信息',
   '全局视觉规范',
   '连续性锁定项',
+  '空间锚定、污损时间表与时间点音效',
   '镜头画面设计',
   '色调设计',
   '动势设计',
@@ -11,7 +12,6 @@ export const FINAL_OUTPUT_CONTENTS = [
   '逐拍静帧提示词',
   '分段运镜视频提示词',
   '宫格合成说明',
-  '连续性自检结果',
 ] as const;
 
 export const GLOBAL_VISUAL_EXCLUSIONS = [

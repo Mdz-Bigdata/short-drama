@@ -1,5 +1,16 @@
 # Implementation Tasks: Unified AI Short-Drama Studio
 
+## Workflow and outline repair (2026-09-05)
+
+- [x] Polish the scoped script preview with full-text expansion.
+- [x] Add slash commands, remove the right-side stage card, and preserve manual history scrolling.
+
+- [x] Repair missing outline episodes from source, preserving existing IDs/content; test idempotence and real source gaps.
+- [x] Centralize eight-agent readiness, ordered continuation and final review guidance; test safe chat intents and history persistence.
+- [x] Connect chat/history and workflow buttons to server guidance; verify frontend regressions/build.
+- [ ] Repair the affected persisted project without model calls, review changes, and record verification limits.
+  - Code and Python reviews passed. The older screenshot project could not be located in the current local task store; no unrelated project was altered. Its URL/environment is still needed for a historical-data repair. Browser acceptance remains unverified because local computer-use permissions are unavailable.
+
 Each task is intended to be one focused, reviewable increment. A task is complete only when its acceptance criteria and the project Definition of Done in `tasks/plan.md` both pass.
 
 ## Current verified increment

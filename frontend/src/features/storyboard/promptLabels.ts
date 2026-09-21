@@ -28,6 +28,16 @@ const LABELS: Record<string, string> = {
   forbidden_behaviors: '禁止的摄影机行为', adjacent_shot: '相邻镜头', transition_type: '转场类型',
   visual_handoff: '视觉承接点', audio_handoff: '声音承接点', included_in_shot_duration: '计入镜头时长',
   initial_state: '初始状态', initial_position: '初始位置', allowed_motion: '允许运动',
+  landmarks: '空间地标', relative_position: '相对角色方位与距离', form_and_count: '形态与数量',
+  ground_material: '地面材质', initial_environment_state: '初始环境状态', sound_policy: '声音策略',
+  label: '群体名称', reference_note: '参考素材说明', initial_distribution: '初始分布',
+  motion_parameters: '运动参数', hit_reaction_rules: '受击反馈规则', stagger_seconds: '个体错开秒数',
+  seconds: '发生时间', subject: '对象', change: '变化', description: '描述',
+  damage_closure: '污损封闭规则', mirror_lock: '镜像锁定',
+  reference_image_policy: '参考图片规则', reference_video_policy: '参考视频规则',
+  frame_positions: '画面坐标', region: '画面区域', depth: '深度层', facing: '屏幕朝向',
+  occlusion: '遮挡关系', keep_visible: '必须保留', forbidden_zone: '禁区', light_ratio: '光比',
+  sound_design: '音效分层', near: '近景声', mid: '中景声', far: '远景声', music_entry: '音乐进入点', silence: '静音设计',
 };
 
 export function promptLabel(key: string) {

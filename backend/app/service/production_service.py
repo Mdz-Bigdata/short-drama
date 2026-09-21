@@ -26,6 +26,7 @@ from app.core.providers.minimax_audio import MiniMaxAudioArtifact, MiniMaxAudioC
 from app.core.providers.minimax_h3 import H3TaskResult, MiniMaxH3Client
 from app.core.skill_registry import SkillRegistry
 from app.core.sd25_compiler import Sd25PromptCompiler
+from app.core.sd25_prompt_audit import Sd25PromptAuditor
 from app.core.script_prompt_pipeline import ScriptPromptPipeline
 from app.core.shotcraft_catalog import ShotcraftCatalogLoader, ShotcraftSelectionRequest
 from app.core.storyboard_quality import build_nine_grid_prompt, validate_storyboard_continuity
@@ -43,6 +44,7 @@ from app.schema.production import (
     NineGridStoryboard,
     SoundEffectRequest,
     Sd25CompileRequest,
+    Sd25PromptAuditRequest,
     TTSRequest,
 )
 from app.schema.elevenlabs import (
@@ -68,14 +70,19 @@ class ProductionService:
     def __init__(self) -> None:
         backend_root = Path(__file__).resolve().parents[2]
         configured_sd25 = os.getenv("SD25_PE_SKILL_PATH", "").strip()
+        configured_five_part = os.getenv("SD25_FIVE_PART_SKILL_PATH", "").strip()
         sd25_paths = (
             [Path(configured_sd25).expanduser()]
             if configured_sd25
             else [Path.home() / ".agents" / "skills" / "sd25-pe", Path.home() / "Desktop" / "sd25-pe"]
         )
-        self.skill_registry = SkillRegistry([backend_root / "skills", *sd25_paths])
+        five_part_paths = [Path(configured_five_part).expanduser()] if configured_five_part else []
+        self.skill_registry = SkillRegistry([
+            backend_root / "skills", *sd25_paths, *five_part_paths,
+        ])
         self.preset_registry = CreativePresetRegistry()
         self.sd25_compiler = Sd25PromptCompiler()
+        self.sd25_prompt_auditor = Sd25PromptAuditor()
         self.script_prompt_pipeline = ScriptPromptPipeline()
         self.storyboard_director = StoryboardDirectorCompiler()
         self.performance_planner = PerformancePlanner()
@@ -217,6 +224,9 @@ class ProductionService:
         # remains a separate, explicit API operation. The deterministic compiler
         # is portable; local skill discovery only enriches model-assisted paths.
         return self.sd25_compiler.compile(request).model_dump()
+
+    def audit_sd25_prompt(self, request: Sd25PromptAuditRequest) -> dict:
+        return self.sd25_prompt_auditor.audit(request).model_dump()
 
     def compile_script_prompts(self, request: ScriptPromptCompileRequest) -> dict:
         # Both template sources are compilation references only. This entrypoint

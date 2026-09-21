@@ -1,0 +1,15 @@
+{
+  "source": "https://github.com/huangbai-AI/sd-2-5-prompt",
+  "reviewed_commit": "68a6d3eebd2d3dddd7de5e4fcdf39e70716d835c",
+  "reviewed_at": "2026-09-02",
+  "license_observation": "No LICENSE file was observed at the reviewed commit. Absent an explicit grant, all rights are reserved by the upstream author, so no upstream text or code may be copied. Only the unprotectable ideas and methods may be reimplemented.",
+  "treatment": "Independent reimplementation. Upstream is treated as a specification of behavior only; its wording, code and file layout are not reused.",
+  "vendored_upstream_files": [],
+  "executed_upstream_files": [],
+  "notes": [
+    "Upstream scripts/check_prompt.py and agents/openai.yaml are neither vendored nor executed anywhere in this repository.",
+    "SKILL.md and the three reference documents under references/ (audit.md, formula.md, modes.md) are project-authored. Re-verified 2026-09-03 by Han-character n-gram comparison against the upstream corpus (README.md, SKILL.md, references/examples.md, references/formula.md, references/modes.md, scripts/check_prompt.py, agents/openai.yaml): longest identical run of Han characters is 9 (SKILL.md 8, audit.md 9, formula.md 9, modes.md 6), below the 15-character review threshold; 15-gram overlap is 0.00% for every file.",
+    "app/core/sd25_prompt_audit.py was rewritten on 2026-09-03 after review found it was a derivative of upstream scripts/check_prompt.py (a 105-character verbatim regex definition, 40 exactly identical Chinese string literals, a 69-character identical Han run, and 30.74% 15-gram overlap). Re-verified 2026-09-03: 15-gram overlap is 0.00% and the longest identical Han run is 7, an isolated domain term rather than a sentence. The longest common source substring is 84 characters, and is made up of indentation, the severity literal \"error\", the disclosed finding code \"timeline.duration\" and an f-string prefix; the surrounding control flow, tolerance constant and message wording all differ.",
+    "The dotted finding codes exposed by POST /api/production/sd25/audit (timeline.gap, action.causality, and 12 others) still coincide with upstream's. They are short functional identifiers in an obvious namespacing convention, they are now this project's published API contract, and they carry no upstream expression. Recorded here rather than silently claimed as independent."
+  ]
+}

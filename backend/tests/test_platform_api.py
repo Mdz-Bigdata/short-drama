@@ -92,12 +92,51 @@ class PlatformApiTests(unittest.TestCase):
     def _cookie(self, user_id: str) -> dict:
         return {"auth_token": auth_service.generate_token(user_id)}
 
+    def test_project_scope_lists_only_its_own_and_linked_elements(self):
+        async def prepare():
+            mine = await self.store.create_element(
+                owner_id=self.user.id, kind="scene", name="长安城门",
+                metadata={"task_id": "task-a", "task_ids": ["task-a"]},
+            )
+            other = await self.store.create_element(
+                owner_id=self.user.id, kind="scene", name="含元殿", metadata={"task_id": "task-b"},
+            )
+            reused = await self.store.create_element(
+                owner_id=self.user.id, kind="scene", name="东宫书房", metadata={"task_id": "task-b"},
+            )
+            await self.store.link_element_to_task(reused.id, self.user.id, "task-a")
+            return mine.id, other.id, reused.id
+
+        mine_id, other_id, reused_id = asyncio.run(prepare())
+        cookie = self._cookie(self.user.id)
+
+        scoped = self.client.get("/api/elements?kind=scene&task_id=task-a", cookies=cookie).json()
+        self.assertEqual({item["id"] for item in scoped["items"]}, {mine_id, reused_id})
+        self.assertEqual(scoped["total"], 2)
+        linked = next(item for item in scoped["items"] if item["id"] == reused_id)
+        self.assertEqual(linked["metadata"]["task_id"], "task-b")
+        self.assertEqual(linked["metadata"]["task_ids"], ["task-b", "task-a"])
+
+        other_scope = self.client.get("/api/elements?kind=scene&task_id=task-b", cookies=cookie).json()
+        self.assertEqual({item["id"] for item in other_scope["items"]}, {other_id, reused_id})
+        # The standalone library still shows everything the owner produced.
+        self.assertEqual(self.client.get("/api/elements?kind=scene", cookies=cookie).json()["total"], 3)
+
+        # Bulk generation for a project covers its linked assets, never the other project's.
+        with patch("app.api.element_api._generate_non_actor_reference") as generate:
+            generate.return_value = None
+            job = self.client.post(
+                "/api/elements/generation-jobs", json={"kind": "scene", "task_id": "task-a"}, cookies=cookie,
+            )
+        self.assertEqual(job.status_code, 202, job.text)
+        self.assertEqual(job.json()["total"], 2)
+
     def test_admin_can_toggle_global_capability_and_user_can_invoke_enabled_only(self):
         admin_cookie = self._cookie(self.admin.id)
         user_cookie = self._cookie(self.user.id)
         listed = self.client.get("/api/platform/capabilities", cookies=user_cookie)
         self.assertEqual(listed.status_code, 200)
-        self.assertEqual(listed.json()["total"], 13)
+        self.assertEqual(listed.json()["total"], 18)
         ability = listed.json()["items"][0]["abilities"][0]
         source_id = listed.json()["items"][0]["source_id"]
 

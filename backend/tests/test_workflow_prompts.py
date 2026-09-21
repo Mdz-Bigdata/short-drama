@@ -3,7 +3,6 @@ import unittest
 from app.core.workflow_prompts import (
     STORYBOARD_SCRIPT_PROMPT,
     VIDEO_STORYBOARD_PROMPT,
-    build_video_batch_prompt,
 )
 from app.service.drama_service import parse_storyboard_table
 
@@ -41,24 +40,6 @@ class WorkflowPromptTests(unittest.TestCase):
         self.assertIn("每个汉字约0.3秒", VIDEO_STORYBOARD_PROMPT)
         self.assertIn("只生成音效，禁止生成音乐。禁止生成任何字幕。", VIDEO_STORYBOARD_PROMPT)
         self.assertIn("以下是详细剧情：", VIDEO_STORYBOARD_PROMPT)
-
-    def test_video_batch_prompt_is_standalone_and_preserves_dialogue(self):
-        result = build_video_batch_prompt(
-            batch_index=2,
-            visual_style="电影感真人实拍",
-            duration_seconds=8,
-            spatial_relationship="室内办公室，办公桌在房间中央，林夏站在桌前面向周明，周明坐在桌后看向林夏。",
-            timeline="0-3秒，中景，固定镜头，林夏攥紧信封停在桌前。3-8秒，近景，缓慢推镜，林夏说：\"这封信我从来没有打开过。\"",
-            sound="纸张摩擦声、压低的呼吸声",
-        )
-
-        self.assertIn("【批次 2】", result)
-        self.assertIn("预计时长：8秒", result)
-        self.assertIn("空间关系：室内办公室", result)
-        self.assertIn("以下是详细剧情：", result)
-        self.assertIn("这封信我从来没有打开过。", result)
-        self.assertIn("只生成音效，禁止生成音乐。禁止生成任何字幕。", result)
-        self.assertNotIn("同上", result)
 
     def test_storyboard_table_parser_keeps_duration_sound_cast_and_scene(self):
         table = """

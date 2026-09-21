@@ -1,12 +1,27 @@
-import { useMemo, useState } from 'react';
-import { ArrowRight, CheckCircle2, ChevronDown, Download, FileText, RefreshCw, Sparkles } from 'lucide-react';
+import { lazy, Suspense, useMemo, useState } from 'react';
+import { ArrowRight, Axis3d, Clapperboard, CheckCircle2, ChevronDown, Download, FileText, RefreshCw, Sparkles } from 'lucide-react';
 
+import { SpatialStageDialog } from '../spatial/SpatialStageDialog';
 import { StoryboardPromptDialog } from './StoryboardPromptDialog';
 import { STORYBOARD_VISUAL_THEME } from './storyboardTheme';
 import { downloadStoryboardGrid, downloadStoryboardScene, downloadStoryboardShot } from './storyboardDownload';
 import type { StoryboardPromptDetail } from './storyboardPromptTypes';
 import './StoryboardWorkspace.css';
 
+
+// The desk pulls in the whole 3D workspace; it loads when someone opens it, not with the storyboard.
+const DirectorDesk = lazy(() => import('../directorDesk/DirectorDesk').then(m => ({ default: m.DirectorDesk })));
+
+// 后端切点规划写在每一镜上的「切入本镜」方式（backend app/core/shot_transitions.py shot_summary）。
+export interface StoryboardCutIn {
+  from_shot?: number;
+  kind?: 'cut' | 'dissolve' | 'fade' | 'match_cut';
+  technique?: string;
+  label?: string;
+  duration_seconds?: number;
+  motion_join?: string;
+  compositor?: string;
+}
 
 export interface StoryboardShot {
   shot_id?: number;
@@ -17,6 +32,7 @@ export interface StoryboardShot {
   scene?: string;
   scene_id?: string;
   sceneId?: string;
+  cut_in?: StoryboardCutIn | null;
 }
 
 // 后端 assets["4_scene_boards"] 中单个场景九宫格的生成状态（覆盖剧本明细全部场景）。
@@ -25,6 +41,8 @@ export interface SceneBoardStatus {
   shots_total?: number;
   shots_done?: number;
   episode?: number;
+  prompt_detail?: StoryboardPromptDetail;
+  grid_prompt?: string;
 }
 
 // 后端 assets["4_progress"] 中单集的契约进度：total 来自剧本明细，不是已生成数。
@@ -224,10 +242,19 @@ export function StoryboardWorkspace({
   const [selectedSceneId, setSelectedSceneId] = useState<string>(() => scenes[0]?.id || '');
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
   const [showPrompt, setShowPrompt] = useState(false);
+  const [showSpatial, setShowSpatial] = useState(false);
+  const [showDesk, setShowDesk] = useState(false);
   const [downloadBusyKey, setDownloadBusyKey] = useState('');
   const [downloadNotice, setDownloadNotice] = useState('');
   const [collapsedEpisodes, setCollapsedEpisodes] = useState<ReadonlySet<number>>(new Set());
   const selectedScene = scenes.find(scene => scene.id === selectedSceneId) || scenes[0];
+  const selectedBoard = selectedScene ? sceneBoards?.[selectedScene.id] : undefined;
+  const globalPromptScene = promptDetail?.shot_number || promptDetail?.foundation.shot_information?.shot_number;
+  const globalPromptMatches = typeof globalPromptScene === 'string' && globalPromptScene.trim().toUpperCase() === selectedScene?.id.toUpperCase();
+  // Older tasks only stored a single prompt. Never attach it to another known scene.
+  const canUseGlobalPrompt = globalPromptMatches || (!globalPromptScene && scenes.length === 1);
+  const selectedPromptDetail = selectedBoard?.prompt_detail || (canUseGlobalPrompt ? promptDetail : undefined);
+  const selectedPrompt = selectedBoard?.grid_prompt || (canUseGlobalPrompt ? prompt : undefined);
   const selectedEpisodeNumber = selectedScene ? sceneEpisodeNumber(selectedScene.id) : 1;
   const completedScenes = scenes.filter(scene => sceneDisplayState(scene) === 'done').length;
 
@@ -446,8 +473,28 @@ export function StoryboardWorkspace({
               >
                 <FileText aria-hidden="true" /> 查看提示词
               </button>
+              {/* 站位、轴线与逐镜机位：分镜图生成前后都能看，改完可只重画这一场。 */}
+              <button
+                type="button"
+                className="storyboard-action"
+                onClick={() => setShowSpatial(true)}
+                disabled={!taskId}
+                aria-haspopup="dialog"
+              >
+                <Axis3d aria-hidden="true" /> 空间调度
+              </button>
+              {/* 同一份空间舞台的可编辑 3D 视图：摆人、摆道具、架机位、截图交给第 5 阶段。 */}
+              <button
+                type="button"
+                className="storyboard-action"
+                onClick={() => setShowDesk(true)}
+                disabled={!taskId}
+                aria-haspopup="dialog"
+              >
+                <Clapperboard aria-hidden="true" /> 3D 导演台
+              </button>
               <button type="button" className="storyboard-action" onClick={onRegenerate}>
-                <RefreshCw aria-hidden="true" /> 重新创作本分镜
+                <RefreshCw aria-hidden="true" /> 重跑分镜阶段
               </button>
             </div>
           </div>
@@ -484,6 +531,14 @@ export function StoryboardWorkspace({
                     alt={`${selectedScene.id} 分镜 ${number}：${shot.desc || '连续画面'}`}
                   />
                   <span className="storyboard-frame__caption">
+                    {shot.cut_in?.label && (
+                      <span
+                        className={`storyboard-frame__cut ${shot.cut_in.kind && shot.cut_in.kind !== 'cut' ? 'is-optical' : ''}`}
+                        title={`切入本镜：${shot.cut_in.label}`}
+                      >
+                        {shot.cut_in.label}
+                      </span>
+                    )}
                     <span className="storyboard-frame__number">{number}</span>
                     <span className="storyboard-frame__meta">{shot.size || '景别待定'} · {shot.motion || '运镜待定'}</span>
                   </span>
@@ -513,10 +568,30 @@ export function StoryboardWorkspace({
           确认分镜，继续视觉制作 <ArrowRight aria-hidden="true" />
         </button>
       </footer>
+      {showSpatial && taskId && (
+        <SpatialStageDialog
+          key={`spatial-${selectedScene.id}`}
+          taskId={taskId}
+          sceneId={selectedScene.id}
+          onClose={() => setShowSpatial(false)}
+          onRedrawRequested={onRefresh}
+        />
+      )}
+      {showDesk && taskId && (
+        <Suspense fallback={null}>
+          <DirectorDesk
+            key={`desk-${selectedScene.id}`}
+            taskId={taskId}
+            sceneId={selectedScene.id}
+            onClose={() => { setShowDesk(false); onRefresh(); }}
+          />
+        </Suspense>
+      )}
       {showPrompt && (
         <StoryboardPromptDialog
-          detail={promptDetail}
-          fallbackPrompt={prompt}
+          key={selectedScene.id}
+          detail={selectedPromptDetail}
+          fallbackPrompt={selectedPrompt || `${selectedScene.id} 的提示词尚未生成。完成本场分镜生成后可在这里查看。`}
           onClose={() => setShowPrompt(false)}
         />
       )}

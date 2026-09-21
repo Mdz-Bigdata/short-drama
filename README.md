@@ -32,6 +32,11 @@
 ### 1. 系统架构与核心特性
 
 *   **8-Agent 工业化协同**：由 `Executive Director` (总导演)、`Writer` (编剧)、`Character Designer` (角色设计师) 等 8 个智能体分工合作，将非结构化的创意逐步细化并实现音视频物料渲染。
+*   **结构化两段式编剧引擎**：编剧 Agent 先产出分集账本（每集标题、集尾钩子、故事节点、下集预告），再逐集产出分镜内容层（分镜边界、出场资产、逐字台词与旁白、原文锚），最后单独补视觉层（画面 / 动作 / 运镜 / 环境音）并按分镜 ID 合并。台词与出场资产不进入第二次模型调用，因而不会在补提示词时漂移；单镜时长由所选视频模型的单次生成上限决定，台词念不完的分镜会被自动提到能装下的档位，超过上限的会被退回重写并标记待人工重拆。剧本正文是给人读的小说体：每集一行「第N集 标题」，其下为叙述段落与引号对白（台词与分镜内容层逐字一致），场景 / 镜头 / 时长等标签只留在结构化分镜里；上传的小说或剧本则逐字呈现原文切片。详见 [docs/structured-screenwriting-engine](docs/structured-screenwriting-engine/IMPLEMENTATION.md)。
+*   **空间调度（3D 导演台）**：每场戏一份空间方案——人物站位与朝向、地标、关系轴线、每镜一个机位。分镜面板的构图 / 轴线 / 视线 / 调度四句话不再是固定措辞，而是由几何测量得出：景别换算成焦段与机距，机位始终在轴线既定一侧，人物在画面里的区域、深度层和屏幕朝向由透视投影算出，因此九格之间、正反打之间谁在画左谁在画右不会变；同一地点的地标坐标与人物的画左 / 画右承诺跨场景沿用。越轴、主体出画、站位重叠、左右相反会进入分镜连续性自检并拦在第 5 阶段之前。分镜故事板里点「空间调度」可在俯视图上拖动人物与机位、切换 3D 导演视角 / 机位视角、只重画改过站位的那一场，也可导出为 [storyai-3d-director-desk](https://github.com/jiguang132/storyai-3d-director-desk) 工程或 [CoStage](https://github.com/cs68614-hash/costage) 文档并把调整导回。详见 [docs/spatial-stage](docs/spatial-stage/IMPLEMENTATION.md)。
+*   **3D 导演台（可编辑的空间舞台）**：同一份空间方案的 3D 编辑面。左边导演视角摆人、摆道具、架机位（网格与贴面吸附、15° 角度吸附、两点测距），右边机位视角按成片画幅取景，叠加画幅遮幅 / 三分线 / 安全框 / 中心十字。角色可切换白模柱体 / 关节人偶 / 蒙皮人形：人偶有 58 个关节控制键与 20 个预设姿势，拖动手腕脚踝走两骨 IK 并锁定脚高，姿势可存进账号在别的项目复用；群演成阵列添加，整组切换人偶类型。道具可绑定元素库里的 GLB 模型（也能直接从导演台导入本地 .glb），按道具的宽深高等比缩放落到地面。每镜有一条时间线：1–30 秒、24/25/30 fps、机位轨与人物轨、六种缓动、14 种运镜预设写成可再编辑的关键帧，播放即预演。截图与白模视频按成片画幅逐帧导出（浏览器内 WebCodecs 编码），进入本场截图库后可「应用至分镜」——静帧排进该镜的 `sequence_images`，白模视频排进 `reference_videos` 并让第 5 阶段改走多模态；站位再改一次即标记过期，过期的白模视频不会被使用。场景可挂一张背景（纯色 / 参考图 / 全景图），只在机位画面里作构图参考，默认不进入交付的截图与视频。分镜故事板与第 5 阶段的镜头面板都能打开同一个舞台（按场景编号），第 5 阶段还会显示该镜已应用的静帧与白模视频。工程可导出为 [storyai-3d-director-desk](https://github.com/jiguang132/storyai-3d-director-desk) 或 [CoStage](https://github.com/cs68614-hash/costage) 文档并导回。详见 [docs/director-desk](docs/director-desk/IMPLEMENTATION.md)（参考来源与差距见 [RESEARCH.md](docs/director-desk/RESEARCH.md)）。
+*   **镜头衔接（多张分镜的自然过渡）**：每一刀都有一份切点规划——硬切 / 叠化 / 淡入淡出 / 匹配剪辑，以及正反打、视线匹配、切回反应、动作匹配、图形匹配、时间流逝、回忆、章节转换等衔接手法，写明带过去的线索、动接动还是静接静、上一镜在切点做什么、这一镜从哪里接。分镜面板的入剪 / 出剪 / 起止状态由它写出，逻辑、视觉、运动、匹配、节奏五个维度的九项检查（景别跨度、30 度原则、视线闭环、动势方向、人物不瞬移、先因后果、光色、时长张弛、情绪过渡）进入分镜连续性自检；分镜故事板每格标出切入方式，成片合成在连续性质检通过后按规划选择转场。详见 [docs/shot-transitions](docs/shot-transitions/IMPLEMENTATION.md)。
+*   **画面风格锁（Style Pack）**：一个项目选定一种质感——真人电影写实 / 35mm 胶片 / 原子朋克废土 / 2D 赛璐珞漫剧 / 3D 国漫 CG，它的风格锁逐字写进每一张分镜图、每一张首尾帧和每一镜视频提示词，并决定 Ark 的风格锚定句；漫剧项目不再被写实措辞和「禁止动画」的负面词压成真人实拍。视频提示词按分层编译：风格锁 → 参考素材职责 → 结构声明 → 空间/状态/道具/光影/声音五层锁 → 镜头块 → 声音 → 具名铁律 → 负向词，并按目标模型的字数预算做压力裁剪（先砍声音、环境、光影数值、色彩、特效、台词表达，锁定标签、主体、动作、机位、台词绝不裁）。同时修好了 Seedance 2.5 的单镜时长：此前所有模型都被钳在 15 秒，现在 2.5 可以出 30 秒。详见 [docs/style-packs](docs/style-packs/IMPLEMENTATION.md)。
 *   **断点续跑与异常重置机制**：
     *   在任务生成时，支持对任意生成步骤（Stage）进行暂停与恢复。
     *   **防孤儿任务机制**：当系统异常重启或崩溃时，启动时会自动将状态残留为 `running` 的任务重置为 `interrupted` 状态，并填充失败信息，避免前端状态卡死，用户可随时点击恢复（`/resume`）从断点续跑。
@@ -91,7 +96,15 @@ short-drama/
 | **ELEVENLABS_API_KEY** | 仅服务端环境变量 | 配音、多人对话、音效、音乐、语音识别与配音翻译 |
 | **ELEVENLABS_BASE_URL** | `https://api.elevenlabs.io` 或完整 `/v1/sound-generation` 地址 | 服务端会规范化为 API 根，避免重复拼接路径 |
 | **ELEVENLABS_VOICE_MAP** | `{"角色名":"voice_id"}` | 固定每个角色的声音身份 |
-| **SD25_PE_SKILL_PATH** | `/absolute/path/to/sd25-pe` | 指向完整 `sd25-pe/SKILL.md` 的目录；默认优先 `~/.agents/skills/sd25-pe`，兼容 `~/Desktop/sd25-pe` |
+| **WRITER_ENGINE** | `structured`（默认）或 `legacy` | 编剧引擎选择：结构化两段式引擎，或旧的自由文本单次生成引擎 |
+| **SCREENWRITING_ATTEMPTS** | 默认 `3` | 每次结构化生成的校验重试次数，失败原因随重试回传模型 |
+| **SCREENWRITING_MAX_TOKENS** | 默认 `8000` | 单次结构化生成的输出上限 |
+| **SCREENWRITING_PLAN_BATCH** | 默认 `10` | 分集账本一次规划多少集 |
+| **SCREENWRITING_VISUAL_BATCH** | 默认 `12` | 视觉层一次生成多少个分镜 |
+| **SCREENWRITING_KNOWLEDGE_BUDGET** | 默认 `2500` | 注入编剧系统提示词的每份知识源字符预算 |
+| **SCREENWRITING_FALLBACK_TO_LEGACY** | 默认 `1` | 结构化引擎失败时是否回退到自由文本引擎 |
+| **SD25_PE_SKILL_PATH** | `/absolute/path/to/sd25-pe` | 可选的 `sd25-pe` 覆盖目录；默认依次读取 `~/.agents/skills/sd25-pe`、`~/Desktop/sd25-pe` 和项目内置副本 |
+| **SD25_FIVE_PART_SKILL_PATH** | `/absolute/path/to/sd-2-5-prompt` | 可选的五段式 Skill/仓库检出目录；默认使用项目内 clean-room 兼容 Skill |
 | **AUTH_SIGNING_SECRET** | 至少 32 位随机值 | 会话签名；生产环境必填，禁止复用供应商密钥 |
 | **COOKIE_SECURE** | 生产 HTTPS 环境设为 `1` | 只允许浏览器通过 HTTPS 发送登录 Cookie |
 | **DATABASE_URL** | `postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama` | 用户、全局能力、元素、会员、订单和账本的 PostgreSQL 数据源 |
@@ -173,13 +186,14 @@ DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama'
 
 | 路由 | 能力 |
 | :--- | :--- |
-| `GET /api/production/capabilities` | 查询 13 个来源、已发现 Skill、创作预设和供应商配置状态 |
+| `GET /api/production/capabilities` | 查询 14 个来源、已发现 Skill、创作预设和供应商配置状态 |
 | `GET /api/production/agent-council/capabilities` | 查询八 Agent、18 份本地规范、能力所有者、可执行策略、校验器与交付物的完整追踪矩阵 |
 | `POST /api/production/agent-council/compile` | 按题材、平台、形式和动作强度编译八 Agent 提示契约、交接规则、画面/节奏基准与负面词模块 |
 | `POST /api/production/agent-council/release-gate` | 对八阶段交付、五视图、九宫格、契约指纹、视频路由、音频、字幕、授权和 S/A/B/C 问题执行失败关闭验收 |
 | `GET /api/production/presets` | 查询 17 个可调用创作/提示词编译模式 |
 | `POST /api/production/presets/{id}/compile` | 编译带五视图、九宫格、素材职责、首尾帧、表演和连续性硬约束的方案 |
 | `POST /api/production/sd25/compile` | 执行本地 sd25-pe 的生成/编辑/延长、音频单改、编辑后延长有序步骤、素材职责、关键帧、九宫格与白模 Prompt 编译 |
+| `POST /api/production/sd25/audit` | 对五段式 Prompt 执行只读结构审计：标题、连续时间线、素材职责、复杂动作因果与可选无品牌边界 |
 | `POST /api/production/script-prompts/compile` | 把剧本文本完整编译为角色五视图、场景圣经、逐场严格九宫格、同契约分镜/运镜 Prompt、SD25 Prompt、一致性报告和多格式导出 |
 | `POST /api/production/script-prompts/compile-file` | 安全接收 TXT/Markdown/DOCX/PDF/FDX，并执行完整剧本到视频提示词流水线 |
 | `POST /api/production/storyboard-director/compile` | 编译单镜头基础信息、视觉规范、连续性锁定、色调/动势/运镜/转场、连续时间拍点、逐拍单图、相邻关键帧视频、九宫格分页与自检结果 |
@@ -205,7 +219,7 @@ DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama'
 
 工作室平台 API 使用 `/api/studio/*`：包含 SQLite 项目、TXT/Markdown/DOCX/PDF/FDX 来源摄取、证据化故事图、版本谱系、下游过期、追加式人工审核、主线/Freezone 双轨画布、Director World 空间调度、原子任务租约与取消、分币种成本账本、带 SHA-256 的项目归档往返、资产就绪、SRT/ASS/Jianying-compatible 导出以及作用域外部 Agent Key。外部自动化使用 `/api/agent/*`，凭据只允许访问绑定项目和显式授权的 scope。
 
-产品平台 API 使用 PostgreSQL：`/api/platform/*` 提供 13 个来源、81 项能力的全局开关、审计提交/许可证处理和 `/command` 白名单调用；`/api/elements/*` 提供演员、道具、场景、特效独立元素库及安全图片上传/重新生成请求；`/api/users/*` 与 `/api/admin/users/*` 提供个人资料、改密和角色/状态管理；`/api/billing/*` 提供会员计划、积分账本、订单、沙箱支付和签名幂等回调。微信/支付宝真实结算在商户证书未配置时失败关闭，不会把浏览器跳转当作付款成功。
+产品平台 API 使用 PostgreSQL：`/api/platform/*` 提供 14 个来源、86 项能力的全局开关、审计提交/许可证处理和 `/command` 白名单调用；`/api/elements/*` 提供演员、道具、场景、特效独立元素库及安全图片上传/重新生成请求；`/api/users/*` 与 `/api/admin/users/*` 提供个人资料、改密和角色/状态管理；`/api/billing/*` 提供会员计划、积分账本、订单、沙箱支付和签名幂等回调。微信/支付宝真实结算在商户证书未配置时失败关闭，不会把浏览器跳转当作付款成功。
 
 全局模型配置中心使用 `/api/model-configurations/*`。管理员可在文本、图像、视频、音频四类中选择供应商，填写官方 Base URL 和 API Key；服务端优先通过供应商模型枚举接口实时获取模型，自动将文本模型区分为纯文本/多模态。ElevenLabs 固定使用官方 `GET /v1/models` 与 `xi-api-key` 鉴权，将动态响应与 13 个当前官方模型合并，并归为 ASR、TTS、语音转换、声音设计、BGM/音效和音乐。界面另以 14/14 可点击能力分类展示截图要求的所有 ElevenLabs 功能；每个模型分类均可复选，选择会跨分类保留并可一次批量保存，已保存模型没有业务数量上限。无 `model_id` 的隔离、Dubbing、强制对齐等服务会显示为“独立服务”，不会伪装成模型。Key 因 401/403 或网络问题不能读取目录时，“加载模型”仍提供官方目录并明确标注未验证；401 无效/撤销 Key 不能保存，403 仅缺少模型目录 scope 的 Key 可以保存目录配置，但运行能力仍取决于相应 scope 与 IP 白名单，“连接测试”始终严格验证。MiniMax 的通用模型目录只用于无费用鉴权：视频分类返回 `MiniMax-H3` 与锁定的 Hailuo 视频模型；音频分类返回 8 个同步语音模型（含接口仍接受的 `speech-01` 兼容模型）、`music-3.0` 和 `music-cover`，分别标注为 TTS、音乐和音乐翻唱，禁止把 M 系列文本模型误标为音视频。H3 生成采用多模态 `content[]` 请求，并以 `/v2/query/video_generation/{task_id}` 查询成片；MiniMax 音频生成采用 Bearer 鉴权，TTS 使用 `/v1/t2a_v2`，音乐生成和一步翻唱使用 `/v1/music_generation`。保存后启用项立即进入全局运行时路由；文本、图像、视频任务未显式指定模型时会自动采用该分类首个全局启用模型。系统支持逐模型禁用、任务当前模型选择和叉号删除；删除供应商下最后一个模型时会同步删除空配置和对应加密凭据。连接测试不提交付费生成任务。
 
@@ -583,6 +597,8 @@ AI 视频最大的痛点是“人物每换一个镜头就换了一张脸”。�
 2. **角色编译**：根据题材、平台、形式和动作强度，为八 Agent 生成职责、输入、输出、验收和交接合同。
 3. **受控提示注入**：任务阶段只挂载对应角色的编译合同与所需知识片段；项目变量来自类型化请求，不执行文档中的任何命令。
 
+Seedance 提示词路径同时加载项目内置 `sd25-pe` 主规范与 `sd-2-5-prompt` 五段式补充规范。冲突时以 `sd25-pe` 的任务路由、参数分离和素材引用保真为准；五段式规范只补充信息组织、连续时间线、复杂动作因果和静态审计。上游 `sd-2-5-prompt` 在审阅修订中未发现根许可证，因此项目登记其来源和固定 commit，并采用第一方 clean-room 审计器，不执行或复制上游 Python 脚本。
+
 ### 3. 智能体防御与边界约束策略
 模型输出必须先通过结构校验、交付物完整性、五视图/九宫格、镜头指纹、视频参考能力、音频、授权和 S/A/B/C 门禁；提示词声明不能替代代码验收，未验证状态不会被当成通过。
 *   **物理常识防御**：在分镜师规约中硬编码物理约束，例如：`严禁让角色在 2 秒的镜头内完成拔枪、转身并射击三个动作`，提前掐断 AI 产生“不符合物理规律”画面的可能。
@@ -611,4 +627,4 @@ AI 视频最大的痛点是“人物每换一个镜头就换了一张脸”。�
 
 ---
 
-*最后更新于：2026年6月26日*
+*最后更新于：2026年9月3日*

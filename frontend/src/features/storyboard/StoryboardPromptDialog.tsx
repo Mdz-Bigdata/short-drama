@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Download, X } from 'lucide-react';
 
 import { PromptFoundationSections } from './PromptFoundationSections';
@@ -31,8 +32,13 @@ export function StoryboardPromptDialog({ detail, fallbackPrompt, onClose }: {
       }
       if (event.key !== 'Tab') return;
       const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
-        'a[href], button:not(:disabled), [tabindex]:not([tabindex="-1"])',
-      ) || []);
+        'a[href], button:not(:disabled), summary, [tabindex]:not([tabindex="-1"])',
+      ) || []).filter(element => {
+        if (element.closest('[hidden]')) return false;
+        // Controls in closed details cannot receive focus, except their own summary.
+        const closedDetails = element.closest('details:not([open])');
+        return !closedDetails || closedDetails.querySelector(':scope > summary') === element;
+      });
       if (focusable.length === 0) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
@@ -52,7 +58,7 @@ export function StoryboardPromptDialog({ detail, fallbackPrompt, onClose }: {
     };
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div className="prompt-dialog__backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
       <div
         ref={dialogRef}
@@ -63,10 +69,13 @@ export function StoryboardPromptDialog({ detail, fallbackPrompt, onClose }: {
         aria-labelledby="prompt-dialog-title"
       >
         <header className="prompt-dialog__header">
-          <h1 id="prompt-dialog-title">宫格提示词 · 第 1 页</h1>
-          <div>
+          <div className="prompt-dialog__title">
+            <span>STORYBOARD / 镜头创作</span>
+            <h1 id="prompt-dialog-title">{detail?.shot_number ? `${detail.shot_number} · 宫格提示词` : '宫格提示词'}</h1>
+          </div>
+          <div className="prompt-dialog__actions">
             <a href={downloadHref} download={`${detail?.shot_number || 'storyboard'}-page-1.md`}>
-              <Download aria-hidden="true" /> 下载 Markdown
+              <Download aria-hidden="true" /><span>下载 Markdown</span>
             </a>
             <button ref={closeRef} type="button" onClick={onClose} aria-label="关闭宫格提示词">
               <X aria-hidden="true" />
@@ -87,6 +96,7 @@ export function StoryboardPromptDialog({ detail, fallbackPrompt, onClose }: {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

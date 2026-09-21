@@ -29,6 +29,7 @@ interface Props {
 interface ExtractionResult {
   kind: ElementKind;
   created: number;
+  reused?: number;
   skipped: number;
   with_image?: number;
 }
@@ -143,7 +144,10 @@ export function ElementLibraryPage({
     setError('');
     setNotice('');
     try {
-      const data = await apiRequest<ElementResponse>(`/api/elements?kind=${targetKind}&page=1&page_size=50`);
+      // Inside a project only its own and linked assets are listed; the standalone
+      // library (no taskId) still shows everything the owner has ever produced.
+      const scope = taskId ? `&task_id=${encodeURIComponent(taskId)}` : '';
+      const data = await apiRequest<ElementResponse>(`/api/elements?kind=${targetKind}&page=1&page_size=50${scope}`);
       if (sequence !== loadSequence.current || targetKind !== kindRef.current) return;
       const nextTotal = Number.isFinite(data.total) ? data.total : data.items.length;
       setItems(data.items);
@@ -444,13 +448,15 @@ export function ElementLibraryPage({
       await load(targetKind);
       if (targetKind !== kindRef.current) return;
       const images = Number(result.with_image || 0);
-      setNotice(result.created > 0
-        ? `已从剧本提取 ${result.created} 个${label}资产`
+      const reused = Number(result.reused || 0);
+      setNotice(result.created > 0 || reused > 0
+        ? (result.created > 0 ? `已从剧本提取 ${result.created} 个${label}资产` : `已从资产库调取 ${reused} 个${label}`)
+          + (result.created > 0 && reused > 0 ? `，复用资产库 ${reused} 个` : '')
           + (images ? `，其中 ${images} 个带参考图` : '，暂无参考图，可上传或重新生成')
           + (result.skipped ? `，跳过 ${result.skipped} 个已存在项` : '')
           + '。'
         : result.skipped > 0
-          ? `剧本中的 ${result.skipped} 个${label}已全部存在于资产库。`
+          ? `剧本中的 ${result.skipped} 个${label}已全部存在于本项目资产。`
           : `剧本中尚未标注${label}信息，可手动添加或补充剧本后重试。`);
     } catch (err) {
       if (targetKind === kindRef.current) {

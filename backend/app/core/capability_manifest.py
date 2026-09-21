@@ -76,7 +76,12 @@ UPSTREAM_CAPABILITIES: list[CapabilitySource] = [
     {
         "id": "arcreel",
         "source": "https://github.com/ArcReel/ArcReel.git",
-        "capabilities": ["story graph", "shot generation", "asset/reference management", "render workflow", "timeline"],
+        "capabilities": [
+            "story graph", "shot generation", "asset/reference management", "render workflow", "timeline",
+            "episode ledger planning", "two-stage script authoring", "verbatim utterance capture",
+            "model-bound shot duration contract", "incremental plan editing", "prompt audit preview",
+            "shot camera-motion workspace",
+        ],
     },
     {
         "id": "script-to-shot-engine",
@@ -109,6 +114,67 @@ UPSTREAM_CAPABILITIES: list[CapabilitySource] = [
         "capabilities": [
             "narrative breakdown", "power-shift emotional dialogue", "detailed action", "episode continuity grouping",
             "single-video prompt polish", "high-impact drama", "slow cinematic emotion",
+        ],
+    },
+    {
+        "id": "sd-2-5-prompt",
+        "source": "https://github.com/huangbai-AI/sd-2-5-prompt",
+        "capabilities": [
+            "five-part Seedance prompt organization",
+            "continuous timeline audit",
+            "reference responsibility audit",
+            "complex-action causality audit",
+            "unbranded prompt boundary audit",
+        ],
+    },
+    {
+        "id": "fight-prompt-director",
+        "source": "https://github.com/irenerachel/fight-prompt-director",
+        "capabilities": [
+            "fight scene detection",
+            "fight-specific skill section loading",
+            "standard and express speed tiers",
+            "three intensity plans",
+            "quantified fight beats",
+            "fight negative-prompt and anti-collapse contract",
+            "vendored fight director skill discovery",
+        ],
+    },
+    {
+        "id": "seedance-2-5-video-director",
+        "source": "https://github.com/liyue-aigc/seedance-2-5-video-director",
+        "capabilities": [
+            "seedance 2.5 model gate",
+            "seedance primary mode selection",
+            "seedance mode limits and input requirements",
+            "seedance asset lock and person reference scope",
+            "seedance realistic performance and physical causality",
+            "seedance director layer in video prompt optimizer",
+        ],
+    },
+    {
+        "id": "storyai-3d-director-desk",
+        "source": "https://github.com/jiguang132/storyai-3d-director-desk",
+        "capabilities": [
+            "per-scene stage of characters, set pieces and look-at cameras",
+            "director view and camera view of one stage",
+            "delivery-aspect camera frame",
+            "pose preset vocabulary for stand-in figures",
+            "per-scene stage scoping inside a host workbench",
+            "director desk project JSON interchange",
+        ],
+    },
+    {
+        "id": "costage",
+        "source": "https://github.com/cs68614-hash/costage",
+        "capabilities": [
+            "camera-relative and character-relative placement",
+            "facing pair blocking",
+            "line / arc / circle / grid formations with facing",
+            "field-of-view framing from shot size",
+            "action stage must change character state",
+            "revision-pinned semantic stage operations",
+            "CoStage document interchange",
         ],
     },
 ]
@@ -180,6 +246,11 @@ _IMPLEMENTATION_ENTRYPOINTS: dict[str, list[str]] = {
         "/api/studio/projects/{project_id}/canvas", "/api/production/video/minimax-h3",
         "/api/studio/projects/{project_id}/artifacts", "/api/studio/projects/{project_id}/jobs",
         "/api/studio/exports/preview",
+        "/api/drama/{task_id}/screenwriting", "app.core.screenwriting.engine.ScreenwritingEngine",
+        "app.core.screenwriting.models.Utterance", "app.core.screenwriting.durations.supported_shot_durations",
+        "/api/drama/{task_id}/screenwriting/episodes/{episode}/plan",
+        "/api/drama/{task_id}/screenwriting/episodes/{episode}/prompt",
+        "/api/drama/{task_id}/shots/{shot_id}/visual",
     ],
     "script-to-shot-engine": [
         "/api/production/storyboards/compile", "/api/production/storyboards/compile",
@@ -203,6 +274,49 @@ _IMPLEMENTATION_ENTRYPOINTS: dict[str, list[str]] = {
         "/api/production/presets/{preset_id}/compile", "/api/production/presets/{preset_id}/compile",
         "/api/production/presets/{preset_id}/compile",
     ],
+    "sd-2-5-prompt": [
+        "app.core.model_gateway.ModelGateway.optimize_video_prompt",
+        "/api/production/sd25/audit", "/api/production/sd25/audit",
+        "/api/production/sd25/audit", "/api/production/sd25/audit",
+    ],
+    # 打戏能力全部落在阶段四的分镜提示词上：先判场次类型，再按类型换章节与预算，
+    # 速度档位/强度方案/量化节拍/负面词串都是被装载进去的正文，不是另起的接口。
+    "fight-prompt-director": [
+        "app.service.drama_service.DramaService._detect_scene_kind",
+        "app.core.shot_design_skill.section_budgets",
+        "app.service.drama_service.DramaService.storyboard_skill_prefix",
+        "app.service.drama_service.DramaService.storyboard_skill_prefix",
+        "app.service.drama_service.DramaService.storyboard_skill_prefix",
+        "app.service.drama_service.DramaService.storyboard_skill_prefix",
+        "/api/drama/skills",
+    ],
+    # Seedance 2.5 导演层：先判模型版本，再选主模式，然后把上限/素材/表演章节按预算
+    # 打包，最后作为第三段系统提示追加进视频提示词优化器。2.0 与其它模型不套用。
+    "seedance-2-5-video-director": [
+        "app.core.seedance_video_director.is_seedance_25",
+        "app.core.seedance_video_director.select_primary_mode",
+        "app.core.seedance_video_director.build_director_layer",
+        "app.core.seedance_video_director.build_director_layer",
+        "app.core.seedance_video_director.build_director_layer",
+        "app.core.model_gateway.ModelGateway.optimize_video_prompt",
+    ],
+    "storyai-3d-director-desk": [
+        "app.core.spatial_stage.models.StagePlan",
+        "frontend/src/features/spatial/three/SpatialStageViewport.tsx",
+        "frontend/src/features/spatial/three/SpatialStageViewport.tsx",
+        "app.core.spatial_stage.projection.POSTURE_HEIGHT",
+        "/api/drama/{task_id}/spatial/scenes/{scene_id}",
+        "/api/drama/{task_id}/spatial/scenes/{scene_id}/export",
+    ],
+    "costage": [
+        "app.core.spatial_stage.operations.apply_operations",
+        "app.core.spatial_stage.operations.apply_operations",
+        "app.core.spatial_stage.geometry.arc_positions",
+        "app.core.spatial_stage.coverage.solve_camera",
+        "app.core.spatial_stage.validation.check_plan",
+        "/api/drama/{task_id}/spatial/scenes/{scene_id}",
+        "/api/drama/{task_id}/spatial/scenes/{scene_id}/import",
+    ],
 }
 
 _EVIDENCE_BY_SOURCE = {
@@ -214,17 +328,29 @@ _EVIDENCE_BY_SOURCE = {
     "instant-video": "backend/tests/test_production_evidence.py",
     "video-shotcraft": "backend/tests/test_advanced_production.py",
     "fast-movie-ai": "backend/tests/test_drama_pipeline.py",
-    "arcreel": "backend/tests/test_workbench_platform.py",
+    "arcreel": "backend/tests/test_screenwriting_engine.py",
     "script-to-shot-engine": "backend/tests/test_production_contracts.py",
     "script-to-video-prompts": "backend/tests/test_script_prompt_pipeline.py",
     "video-agent-skills": "backend/tests/test_advanced_production.py",
     "short-drama-skills": "backend/tests/test_creative_quality.py",
+    "sd-2-5-prompt": "backend/tests/test_sd25_prompt_audit.py",
+    "fight-prompt-director": "backend/tests/test_fight_prompt_skill.py",
+    "seedance-2-5-video-director": "backend/tests/test_seedance_video_director_skill.py",
+    "storyai-3d-director-desk": "backend/tests/test_spatial_stage_pipeline.py",
+    "costage": "backend/tests/test_spatial_stage.py",
 }
 
 
 def _implementation_status(source_id: str, capability: str, entrypoint: str) -> str:
     if source_id == "video-shotcraft" and capability == "Jianying editable draft export":
         return "interchange-only"
+    if source_id == "fight-prompt-director" and capability == "fight scene detection":
+        # 场次判定是纯本地词表打分，不经模型；下面的 drama_service 标记按整个类
+        # 一刀切成 provider-dependent，对这一条会误报。
+        return "implemented"
+    if source_id == "seedance-2-5-video-director" and "optimizer" in capability:
+        # 导演层本身是本地装载，但它生效的那一步要经过 Seedance/DeepSeek 文本模型改写。
+        return "provider-dependent"
     provider_markers = ("/video/", "/audio/", "drama_service", "media_compositor")
     return "provider-dependent" if any(marker in entrypoint for marker in provider_markers) else "implemented"
 

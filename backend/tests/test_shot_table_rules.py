@@ -205,3 +205,133 @@ class DictionaryAlignmentTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TensionAndFrameRuleTests(unittest.TestCase):
+    def test_character_shots_without_screen_coordinates_are_flagged(self):
+        audit = audit_shot_table([
+            _shot(shot_id=1, characters=["陈九"]),
+            _shot(shot_id=2, size="特写", characters=["陈九"],
+                  desc="陈九位于画面左侧三分之一的中景，朝向画面右侧，指节扣紧火把木柄，肩背绷直，火光在脸颊侧面切出明暗，眼神冷得没有波澜。"),
+        ], video_model="seedance2.0")
+        flagged = {issue.shot_id for issue in audit.issues if issue.rule == "构图未用镜头坐标"}
+        self.assertEqual(flagged, {1})
+
+    def test_an_eyeline_flip_between_adjacent_shots_is_flagged_unless_motivated(self):
+        left = "陈九位于画面左侧三分之一的中景，朝向画面右侧，指节扣紧火把木柄，肩背绷直，眼神冷得没有波澜，火光在侧脸切出明暗。"
+        right = "陈九位于画面右侧三分之一的中景，朝向画面左侧，指节扣紧火把木柄，肩背绷直，眼神冷得没有波澜，火光在侧脸切出明暗。"
+        audit = audit_shot_table([
+            _shot(shot_id=1, characters=["陈九"], desc=left),
+            _shot(shot_id=2, size="近景", characters=["陈九"], desc=right),
+            _shot(shot_id=3, size="特写", characters=["陈九"], desc="陈九转身，" + left),
+        ], video_model="seedance2.0")
+        flagged = {issue.shot_id for issue in audit.issues if issue.rule == "视线左右翻转"}
+        self.assertEqual(flagged, {2})
+
+    def test_too_many_moving_shots_and_unprepared_bursts_are_flagged(self):
+        moving = [_shot(shot_id=i, size=size, motion="推镜", duration="2s") for i, size in enumerate(("全景", "中景", "特写", "近景"), start=1)]
+        moving.append(_shot(shot_id=5, size="全景", motion="固定镜头", duration="2s",
+                            desc="陈九挥剑劈向门柱，木屑飞溅，火把翻滚落地，肩背绷直，指节扣紧剑柄，眼神冷得没有波澜。"))
+        audit = audit_shot_table(moving, video_model="seedance2.0")
+        self.assertIn("运镜过密", _rules(audit))
+        self.assertIn("爆发前缺少静置蓄力", _rules(audit))
+
+        prepared = [
+            _shot(shot_id=1, size="全景", motion="固定镜头", duration="4s"),
+            _shot(shot_id=2, size="特写", motion="推镜", duration="2s",
+                  desc="陈九挥剑劈向门柱，木屑飞溅，火把翻滚落地，肩背绷直，指节扣紧剑柄，眼神冷得没有波澜。"),
+        ]
+        audit = audit_shot_table(prepared, video_model="seedance2.0")
+        self.assertNotIn("爆发前缺少静置蓄力", _rules(audit))
+        self.assertNotIn("运镜过密", _rules(audit))
+
+
+class DialogueFitRuleTests(unittest.TestCase):
+    """A line has to be sayable inside its own shot, by one person."""
+
+    def test_a_line_longer_than_the_shot_is_flagged(self):
+        shot = _shot(
+            duration="4s", characters=["林夏"],
+            dialogue="林夏：你到底瞒了什么？我等了整整三年，从来没有人给过我一句解释。",
+        )
+
+        audit = audit_shot_table([shot, _shot(shot_id=2, size="全景")], video_model="seedance2.5")
+
+        self.assertIn("台词超出本镜时长", _rules(audit))
+        detail = next(issue.detail for issue in audit.issues if issue.rule == "台词超出本镜时长")
+        self.assertIn("两端各留静默", detail)
+
+    def test_a_line_that_fits_passes(self):
+        shot = _shot(duration="8s", characters=["林夏"], dialogue="林夏：你到底瞒了什么？")
+
+        audit = audit_shot_table([shot, _shot(shot_id=2, size="全景")], video_model="seedance2.5")
+
+        self.assertNotIn("台词超出本镜时长", _rules(audit))
+
+    def test_two_speakers_in_one_shot_are_flagged_but_a_quoted_colon_is_not(self):
+        two = _shot(characters=["林夏", "周教授"], dialogue="林夏：你说啊。 周教授：够了。")
+        quoted = _shot(shot_id=2, size="全景", characters=["林夏"], dialogue="林夏：他说：走。")
+
+        audit = audit_shot_table([two, quoted], video_model="seedance2.5")
+
+        flagged = [issue.shot_id for issue in audit.issues if issue.rule == "一镜多个说话人"]
+        self.assertEqual(flagged, [1])
+
+
+class ShotLoadRuleTests(unittest.TestCase):
+    """What one vertical frame can actually hold: people, sound layers, close-ups."""
+
+    def test_a_third_clear_character_is_flagged(self):
+        audit = audit_shot_table(
+            [_shot(characters=["林夏", "周教授", "助理"]), _shot(shot_id=2, size="全景")],
+            video_model="seedance2.5",
+        )
+
+        self.assertIn("同框清晰人物过多", _rules(audit))
+        self.assertNotIn(
+            "同框清晰人物过多",
+            _rules(audit_shot_table([_shot(characters=["林夏", "周教授"])], video_model="seedance2.5")),
+        )
+
+    def test_sound_layers_are_capped(self):
+        noisy = _shot(sound="环境音：空调低鸣·远处车流·钟表滴答；动作音：脚步·纸张·椅子")
+        calm = _shot(shot_id=2, size="全景", sound="环境音：空调低鸣·远处车流；动作音：脚步")
+
+        audit = audit_shot_table([noisy, calm], video_model="seedance2.5")
+
+        flagged = [issue.shot_id for issue in audit.issues if issue.rule == "声音层数超标"]
+        self.assertEqual(flagged, [1])
+
+    def test_close_ups_are_rationed_and_a_fight_scene_is_stricter(self):
+        shots = [
+            _shot(shot_id=1, size="特写"), _shot(shot_id=2, size="全景"), _shot(shot_id=3, size="大特写"),
+            _shot(shot_id=4, size="中景"), _shot(shot_id=5, size="特写"),
+        ]
+
+        drama = audit_shot_table(shots, video_model="seedance2.5")
+        fight = audit_shot_table(shots, video_model="seedance2.5", scene_kind="fight")
+
+        self.assertNotIn("特写超配额", _rules(drama))       # 3 close-ups is the drama quota
+        self.assertIn("特写超配额", _rules(fight))
+        self.assertIn("武戏配额 2", next(issue.detail for issue in fight.issues if issue.rule == "特写超配额"))
+
+
+class ImpactRuleTests(unittest.TestCase):
+    """The two fight rules a model can be held to: no freezes, short bursts."""
+
+    def test_a_frozen_frame_instruction_is_flagged(self):
+        shot = _shot(desc="周教授出拳，画面定格在他扭曲的脸上，碎片悬在半空，指节发白，肩膀前压，呼吸粗重。")
+
+        audit = audit_shot_table([shot, _shot(shot_id=2, size="全景")], video_model="seedance2.5")
+
+        self.assertIn("写了模型做不到的定格", _rules(audit))
+        self.assertIn("白闪", next(issue.detail for issue in audit.issues if issue.rule == "写了模型做不到的定格"))
+
+    def test_a_burst_shot_may_not_run_long(self):
+        long_burst = _shot(duration="8s", desc="周教授出拳砸向桌面，杯子跳起，水花溅开，指节发白，肩膀前压，呼吸粗重起来。")
+        short_burst = _shot(shot_id=2, size="全景", duration="4s", desc=long_burst["desc"])
+
+        audit = audit_shot_table([long_burst, short_burst], video_model="seedance2.5")
+
+        flagged = [issue.shot_id for issue in audit.issues if issue.rule == "爆发镜过长"]
+        self.assertEqual(flagged, [1])

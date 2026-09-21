@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from textwrap import dedent
 
-from app.core.video_references import MIN_SHOT_SECONDS
 
 
 STORYBOARD_SCRIPT_PROMPT = dedent(
@@ -37,11 +36,12 @@ STORYBOARD_SCRIPT_PROMPT = dedent(
     - 画面内容：核心描述区，不少于50字；必须将视觉风格、环境设定、人物布局、动作描述、情绪与表演、光影与色调、镜头构图自然融合成一段话，不使用编号小标题拆开。
       a. 视觉风格（必填）：2D动漫、3D写实或真人实拍；未指定时按项目视觉风格。
       b. 环境设定（必填）：具体地点、空间布局、道具陈设、整体氛围。
-      c. 人物布局（有人时必填）：人物数量、空间相对位置、基本姿态。
+      c. 人物布局（有人时必填）：用观众看到的画面坐标写站位——画面区域（画面左侧三分之一/中央/右侧三分之一）+ 深度层（极近前景/前景/中景/背景）+ 屏幕朝向（朝向画面右侧/面向镜头）+ 遮挡量化（谁遮挡谁、约几分之一、保留面部）+ 禁区（中央过道不放人）；不要写“他的左边”这类人物自身左右。连续对话保持上一镜的站位与视线方向，不跨轴。
       d. 动作描述（必填）：人物具体动作及其速度、力度和方向。
       e. 情绪与表演（有人时必填）：面部表情、眼神焦点、肢体语言传达的情绪。
       f. 光影与色调（必填）：光源方向、硬光/软光、整体色温与影调。
-      g. 镜头构图（必填）：基于景别和角度说明中心构图、三分法、对称构图等方式。
+      g. 镜头构图（必填）：基于景别和角度说明中心构图、三分法、对称构图等方式；张力戏可用失衡偏置、框景囚禁、负空间碾压、前景遮蔽、对角对峙。
+      i. 光比与运镜预算：写明暗部占比或光比（如暗部七成、单侧硬光）；镜头默认固定，运动只留给开场、呼吸式微动和爆发瞬间，爆发镜前一镜先静置蓄力。
       h. 特效/备注（非必填）：视觉特效、特殊道具或后期注意事项。
     - 台词/音效：镜头中的原文对白或关键环境声、动作音效。
     - 入镜角色：镜头中出现的主要演员姓名，多人用中文逗号隔开。
@@ -53,7 +53,7 @@ STORYBOARD_SCRIPT_PROMPT = dedent(
     - 情绪镜头（近景/特写）2-3秒，用于捕捉面部反应和细节。
     - 台词镜头按角色平均语速估算，每10字台词约分配2秒。
     - 强调镜头（特效/高潮）3-5秒，给予充分的视觉消化时间。
-    - 转场镜头1-2秒，用于平滑衔接。
+    - 转场镜头1-2秒，用于平滑衔接；转场按"前镜人物动作 + 转场媒介（遮挡/镜头运动/动作延续/光影/时空/情绪/空间跃迁）+ 镜头运动 + 新场景 + 光影氛围"写，并标明剪辑类型（硬切/叠化/闪白/划像/推拉/匹配剪辑/蒙太奇/声音先行）；同场景直接硬切，换场景才用穿越、甩镜或叠化。
 
     段落节奏控制策略：
     - 快节奏段落（动作、悬疑）以1-2秒镜头为主，通过快速剪辑营造紧张感。
@@ -165,62 +165,3 @@ VIDEO_STORYBOARD_PROMPT = dedent(
 ).strip()
 
 
-_FORBIDDEN_SPATIAL_SHORTHANDS = (
-    "同上",
-    "同前",
-    "延续上一批次",
-    "场景不变",
-    "人物位置不变",
-    "继续刚才的对峙",
-)
-
-
-def build_video_batch_prompt(
-    *,
-    batch_index: int,
-    visual_style: str,
-    duration_seconds: int,
-    spatial_relationship: str,
-    timeline: str,
-    sound: str = "",
-    max_duration_seconds: int = 15,
-) -> str:
-    """Compile one standalone provider prompt that obeys the video contract.
-
-    ``max_duration_seconds`` is the selected video model's single-clip ceiling
-    (see ``video_references.max_shot_seconds``); a hard-coded 15 would reject the
-    30s clips Seedance 2.5 can render.
-    """
-
-    if batch_index < 1:
-        raise ValueError("batch_index must be positive")
-    ceiling = max(MIN_SHOT_SECONDS, int(max_duration_seconds or 15))
-    if not MIN_SHOT_SECONDS <= duration_seconds <= ceiling:
-        raise ValueError(
-            f"video batch duration must be between {MIN_SHOT_SECONDS} and {ceiling} seconds"
-        )
-    spatial_relationship = " ".join(spatial_relationship.split())
-    timeline = " ".join(timeline.split())
-    if not spatial_relationship or not timeline:
-        raise ValueError("spatial relationship and timeline are required")
-    if any(shortcut in spatial_relationship for shortcut in _FORBIDDEN_SPATIAL_SHORTHANDS):
-        raise ValueError("spatial relationship must be restated in full")
-
-    sound_line = f"\n音效：{sound.strip()}" if sound.strip() else ""
-    return dedent(
-        f"""
-        【批次 {batch_index}】
-
-        视觉风格：{visual_style.strip() or "真人实拍视觉风格"}
-
-        只生成音效，禁止生成音乐。禁止生成任何字幕。
-
-        预计时长：{duration_seconds}秒
-
-        空间关系：{spatial_relationship}
-
-        以下是详细剧情：
-
-        {timeline}{sound_line}
-        """
-    ).strip()

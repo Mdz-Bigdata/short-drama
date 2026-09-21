@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   ListTree,
   Network,
+  NotebookPen,
   PenLine,
   RefreshCw,
   Sparkles,
@@ -19,8 +20,10 @@ import { CharacterRelationshipGraph } from './CharacterRelationshipGraph';
 import { EpisodeScenesDialog } from './EpisodeScenesDialog';
 import { EpisodeTextDialog } from './EpisodeTextDialog';
 import { ScreenplayReader } from './ScreenplayReader';
+import { ScreenwritingPanel } from './ScreenwritingPanel';
 import { ScriptLibrary } from './ScriptLibrary';
 import { ScriptOutline } from './ScriptOutline';
+import { groupEpisodeGaps, normalizeMissingEpisodes } from './episodeGaps';
 import { WriterTimeline } from './WriterTimeline';
 import { summarizeEpisodeTitle } from './textSummary';
 import {
@@ -172,7 +175,7 @@ export function WriterAgentPage({
 }) {
   const [timelineMode, setTimelineMode] = useState<'axis' | 'line'>('axis');
   const [readerOpen, setReaderOpen] = useState(false);
-  const [view, setView] = useState<'board' | 'outline' | 'library'>('board');
+  const [view, setView] = useState<'board' | 'outline' | 'planning' | 'library'>('board');
   const [episodeTextTarget, setEpisodeTextTarget] = useState<{ episode?: number } | null>(null);
   const [sceneDialogEpisode, setSceneDialogEpisode] = useState<number | null>(null);
   const [episodePage, setEpisodePage] = useState(0);
@@ -224,10 +227,29 @@ export function WriterAgentPage({
   );
   const scriptedEpisodes = serverStats?.scriptedEpisodes || 0;
   const plannedEpisodes = serverStats?.totalEpisodes || episodeTotal;
+  const missingEpisodes = normalizeMissingEpisodes(serverStats?.missingEpisodes || []);
+  const missingEpisodeLabel = groupEpisodeGaps(missingEpisodes).map(group => group.label).join('、');
   // Episodes the plan calls for that the screenplay never got to.
-  const missingEpisodeCount = scriptedEpisodes && plannedEpisodes > scriptedEpisodes
-    ? plannedEpisodes - scriptedEpisodes
-    : 0;
+  const missingEpisodeCount = serverStats?.missingEpisodes !== undefined
+    ? missingEpisodes.length
+    : scriptedEpisodes && plannedEpisodes > scriptedEpisodes
+      ? plannedEpisodes - scriptedEpisodes
+      : 0;
+  const continueButton = missingEpisodeCount > 0 && onContinueScript ? (
+    <button
+      className="writer-outline-button is-primary"
+      type="button"
+      disabled={scriptContinuing}
+      onClick={() => {
+        setScriptContinuing(true);
+        void onContinueScript()
+          .catch(() => undefined)
+          .finally(() => setScriptContinuing(false));
+      }}
+    >
+      <PenLine aria-hidden="true" /> {scriptContinuing ? '补写中…' : `补写缺失的 ${missingEpisodeCount} 集`}
+    </button>
+  ) : null;
   const stats: Array<{
     label: string;
     value: string | number;
@@ -310,6 +332,16 @@ export function WriterAgentPage({
         {taskId && (
           <button
             type="button"
+            className={view === 'planning' ? 'is-active' : ''}
+            aria-pressed={view === 'planning'}
+            onClick={() => setView('planning')}
+          >
+            <NotebookPen aria-hidden="true" /> 分集规划
+          </button>
+        )}
+        {taskId && (
+          <button
+            type="button"
             className={view === 'library' ? 'is-active' : ''}
             aria-pressed={view === 'library'}
             onClick={() => setView('library')}
@@ -341,7 +373,16 @@ export function WriterAgentPage({
         ))}
       </dl>
 
-      {view === 'library' && taskId ? (
+      {view === 'planning' && taskId ? (
+        <section className="writer-section" aria-labelledby="writer-planning-title">
+          <div className="writer-section__heading">
+            <div><span>PLANNING</span><h2 id="writer-planning-title">分集规划与分镜内容</h2></div>
+          </div>
+          <div className="writer-section__body">
+            <ScreenwritingPanel taskId={taskId} />
+          </div>
+        </section>
+      ) : view === 'library' && taskId ? (
         <section className="writer-section" aria-labelledby="writer-library-title">
           <div className="writer-section__heading">
             <div><span>01</span><div><small>SCRIPT LIBRARY</small><h2 id="writer-library-title">剧本文库</h2></div></div>
@@ -352,8 +393,15 @@ export function WriterAgentPage({
         <section className="writer-section writer-outline-section" aria-labelledby="writer-outline-title">
           <div className="writer-section__heading">
             <div><span>01</span><div><small>SCRIPT BREAKDOWN</small><h2 id="writer-outline-title">剧本大纲</h2></div></div>
+            <div className="writer-section__actions">{continueButton}</div>
           </div>
-          <ScriptOutline scenes={scenes} />
+          {missingEpisodeCount > 0 && (
+            <p className="writer-outline-warning" role="status">
+              {missingEpisodeLabel ? `剧本缺少第 ${missingEpisodeLabel} 集正文。` : `剧本尚缺 ${missingEpisodeCount} 集正文。`}
+              已有内容已保留，补齐后再继续制作。
+            </p>
+          )}
+          <ScriptOutline scenes={scenes} missingEpisodes={missingEpisodes} />
         </section>
       ) : (
       <>
@@ -409,21 +457,7 @@ export function WriterAgentPage({
         <div className="writer-section__heading">
           <div><span>02</span><div><small>EPISODE MAP</small><h2 id="writer-episodes-title">分集概览</h2></div></div>
           <div className="writer-section__actions">
-            {missingEpisodeCount > 0 && onContinueScript && (
-              <button
-                className="writer-outline-button is-primary"
-                type="button"
-                disabled={scriptContinuing}
-                onClick={() => {
-                  setScriptContinuing(true);
-                  void onContinueScript()
-                    .catch(() => undefined)
-                    .finally(() => setScriptContinuing(false));
-                }}
-              >
-                <PenLine aria-hidden="true" /> {scriptContinuing ? '补写中…' : `补写缺失的 ${missingEpisodeCount} 集`}
-              </button>
-            )}
+            {continueButton}
             {onPlanEpisodes && <button className="writer-outline-button" type="button" onClick={onPlanEpisodes} disabled={episodesBusy}><RefreshCw aria-hidden="true" /> {episodesBusy ? '分集中…' : episodes.length ? '重新分集' : '一键分集'}</button>}
           </div>
         </div>

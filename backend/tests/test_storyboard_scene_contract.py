@@ -13,6 +13,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from app.core.production_asset_readiness import evaluate_asset_readiness
+
 from app.repository.task_repo import TaskRepository
 from app.service.drama_service import DramaService, StagePrerequisiteError
 
@@ -39,16 +41,19 @@ def _stub_scene_board(self, task, config, scene, **kwargs):
 
 
 def _task(scenes):
+    episode_count = 2 if any(str(scene.get("scene_id", "")).startswith("E2") for scene in scenes or []) else 1
     assets = {
         "1": "角色1：林夏，调查记者。角色2：周教授，反派。",
         "2": "第1集 匿名录音\n场景1：雨夜办公室\n林夏：你隐瞒了什么？",
         "3": "角色设计完成",
-        "3_sheets": {},
+        "3_sheets": {"林夏": "actor.png"},
         "3_characters": [],
         "3_character_dashboard": {"state": "READY"},
     }
     if scenes is not None:
         assets["2_breakdown"] = {"scenes": scenes}
+    if episode_count == 2:
+        assets["2"] += "\n第2集 实验室\n场景1：地下实验室\n周教授：现在回头还来得及。"
     return {
         "task_id": "storyboard-contract-1",
         "owner_user_id": "u1",
@@ -56,7 +61,7 @@ def _task(scenes):
         "current_stage": 3,
         "config": {
             "title_suggestion": "十二小时",
-            "episode_count": 2,
+            "episode_count": episode_count,
             "llm_model": "m",
             "image_model": "img",
             "video_model": "v",
@@ -158,14 +163,14 @@ class StoryboardSceneContractTests(unittest.TestCase):
         self.assertTrue(all(entry["status"] == "done" for entry in boards.values()))
         self.assertTrue(task["assets"]["4_progress"]["episodes"][0]["complete"])
 
-    def test_missing_breakdown_falls_back_to_a_single_board_and_labels_the_progress(self):
+    def test_missing_breakdown_recovers_a_source_bound_board_and_progress(self):
         task = self._run_stage4(_task(None))
 
         boards = task["assets"]["4_scene_boards"]
         self.assertEqual(set(boards), {"E1S01"})
         self.assertEqual(boards["E1S01"]["status"], "done")
         progress = task["assets"]["4_progress"]
-        self.assertEqual(progress["fallback"], "no_breakdown_single_board")
+        self.assertNotIn("fallback", progress)
         self.assertEqual(progress["episodes"], [{"number": 1, "total": 1, "done": 1, "complete": True}])
         self.assertEqual(DramaService._missing_stage_outputs(task, 4), [])
 
@@ -286,6 +291,14 @@ class ExecuteAllStagesEpisodeLoopTests(unittest.TestCase):
         self.repo = TaskRepository(str(Path(self.temp.name) / "tasks.json"))
         self.service = DramaService()
         self.service.repo = self.repo
+        # This exercises the episode loop, not the five-kind library gate (which has
+        # its own tests); keep the pre-library actor-only readiness here.
+        readiness = patch(
+            "app.service.drama_service.evaluate_project_assets",
+            side_effect=lambda task: evaluate_asset_readiness(task, None),
+        )
+        readiness.start()
+        self.addCleanup(readiness.stop)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -301,10 +314,12 @@ class ExecuteAllStagesEpisodeLoopTests(unittest.TestCase):
         calls = []
         repo = self.repo
 
-        async def fake_execute_stage(service_self, task_id, stage):
+        async def fake_execute_stage(service_self, task_id, stage, **kwargs):
             calls.append(stage)
             current = repo.get_task(task_id)
             if stage == 4:
+                current["assets"].update({"4": [{"scene_id": "E1S01"}], "4_storyboard": {"panels": []},
+                                          "4_grid": "grid.png", "4_quality": {"passed": True}})
                 # 模拟逐集引擎：每次执行只推进一个未完成的集。
                 progress = current["assets"].get("4_progress")
                 if not progress:
@@ -314,7 +329,18 @@ class ExecuteAllStagesEpisodeLoopTests(unittest.TestCase):
                     ]}
                 else:
                     progress["episodes"][1].update(done=1, complete=True)
-                repo.save_task(task_id, current)
+            elif stage == 8:
+                current["assets"]["8"] = {"pr_content": "文案", "short_link": "link"}
+            elif stage == 5:
+                current["assets"]["5"] = [{"video_url": "clip.mp4"}]
+            elif stage == 6:
+                current["assets"]["6"] = {"audio_url": "voice.mp3"}
+            elif stage == 7:
+                current["assets"]["7"] = {"final_video_url": "film.mp4"}
+            else:
+                current["assets"][str(stage)] = {"result": "ready"}
+            current["stage_progress"]["status"] = "success"
+            repo.save_task(task_id, current)
             return current
 
         with patch.object(DramaService, "execute_stage", fake_execute_stage), \
@@ -356,18 +382,19 @@ class GenerateSceneBoardInvariantTests(unittest.TestCase):
         """生图部分失败时必须抛错(调用方标 failed/shots_done=0)，绝不返回可被记成 done 的 payload。"""
         calls = {"n": 0}
 
-        def flaky_generate_image(model, prompt, ref_images=None):
+        def flaky_generate_image(model, prompt, ref_images=None, **kwargs):
             calls["n"] += 1
             if calls["n"] >= 7:
                 raise RuntimeError("provider 503")
             return f"http://img.test/{calls['n']}.png", "meta"
 
+        table = "\n".join(f"| {i} | MS | 平视 | Fixed | 林夏翻开档案第{i}页 | | 环境声 | 2s | 线索 | 林夏 | E1S02 办公室 |" for i in range(1, 10))
         with self.assertRaisesRegex(RuntimeError, "分镜图生成不完整"):
-            self._call("模型没有输出表格", flaky_generate_image)
+            self._call(table, flaky_generate_image)
         self.assertEqual(calls["n"], 9)  # 9 格全部尝试过而非提前虚报
 
-    def test_audit_shortfall_padding_is_counted_as_filler_shots(self):
-        """LLM 只给出4镜时补足到9格可以，但 filler_shots 必须如实等于 5；整表未解析时等于 9。"""
+    def test_short_or_unparsed_table_is_rejected_before_any_image_generation(self):
+        """No generic filler images may masquerade as script-grounded frames."""
         table = "| 镜号 | 景别 | 机位角度 | 运镜 | 画面内容 | 台词对白 | 声音 | 时长 | 叙事目的 |\n"
         table += "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
         for i in range(1, 5):
@@ -376,16 +403,34 @@ class GenerateSceneBoardInvariantTests(unittest.TestCase):
                 f"呼吸放缓第{i}拍 | | 环境声 | 2.5s | 铺垫 |\n"
             )
 
-        def steady_generate_image(model, prompt, ref_images=None):
-            return "http://img.test/ok.png", "meta"
+        def unexpected_image(*args, **kwargs):
+            self.fail("invalid storyboard must not reach paid image generation")
 
-        payload = self._call(table, steady_generate_image)
-        self.assertEqual(len(payload["shots"]), 9)
-        self.assertTrue(all(shot["image_url"] for shot in payload["shots"]))
-        self.assertEqual(payload["filler_shots"], 5)
+        for response in (table, "模型没有输出表格"):
+            with self.assertRaisesRegex(ValueError, "真实镜头"):
+                self._call(response, unexpected_image)
 
-        payload = self._call("模型没有输出表格", steady_generate_image)
-        self.assertEqual(payload["filler_shots"], 9)
+    def test_success_uses_current_scene_assets_and_correct_prompt_identifier(self):
+        self.task["assets"]["3_characters"] = [{"name": "林夏", "desc": "青灰大衣"}, {"name": "周教授", "desc": "反派"}]
+        self.task["assets"]["3_sheets"] = {"林夏": "http://img.test/lin.png", "周教授": "http://img.test/zhou.png"}
+        self.task["assets"]["2_breakdown"] = {"production_assets": {"scenes": [{"name": "办公室", "description": "北侧档案柜"}]}}
+        self.scene["content"] = "林夏在办公室追查线索"
+        self.scene["dialogue"] = "林夏：这是线索。"
+        table = "\n".join(f"| {i} | MS | 平视 | Fixed | 林夏翻开档案第{i}页 | | 环境声 | 2s | 线索 | 林夏 | E1S02 办公室 |" for i in range(1, 10))
+        calls = []
+        def generate(model, prompt, ref_images=None, **kwargs):
+            self.assertFalse(kwargs["enhance_prompt"])
+            calls.append((prompt, ref_images))
+            return f"http://img.test/{len(calls)}.png", "meta"
+        payload = self._call(table, generate)
+        self.assertEqual(payload["prompt_detail"]["shot_number"], "E1S02")
+        self.assertEqual(payload["filler_shots"], 0)
+        self.assertIn("这是线索", payload["prompt_detail"]["foundation"]["script_text"])
+        for prompt, refs in calls:
+            self.assertIn("青灰大衣", prompt)
+            self.assertIn("北侧档案柜", prompt)
+            self.assertNotIn("周教授", prompt)
+            self.assertEqual(refs, ["http://img.test/lin.png"])
 
 
 if __name__ == "__main__":

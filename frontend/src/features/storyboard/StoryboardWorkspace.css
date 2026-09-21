@@ -243,6 +243,12 @@
 .storyboard-frame:hover .storyboard-frame__meta,
 .storyboard-frame:focus-visible .storyboard-frame__meta,
 .storyboard-frame.is-selected .storyboard-frame__meta { opacity: 1; }
+/* 切入本镜的方式：硬切悬停 / 选中时显示，叠化、淡入淡出、匹配剪辑常显。 */
+.storyboard-frame__cut { position: absolute; top: 0.75rem; left: 0.625rem; max-width: calc(100% - 4.25rem); padding: 0.25rem 0.45rem; overflow: hidden; color: #d7f9ff; border: 1px solid rgba(0, 242, 254, 0.28); border-radius: 0.3rem; background: rgba(3, 8, 14, 0.82); font-size: 0.62rem; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; opacity: 0; transition: opacity 160ms ease; }
+.storyboard-frame__cut.is-optical { color: #051015; border-color: rgba(255, 255, 255, 0.42); background: var(--storyboard-cyan); font-weight: 700; opacity: 1; }
+.storyboard-frame:hover .storyboard-frame__cut,
+.storyboard-frame:focus-visible .storyboard-frame__cut,
+.storyboard-frame.is-selected .storyboard-frame__cut { opacity: 1; }
 .storyboard-frame.is-selected { z-index: 1; box-shadow: inset 0 0 0 3px var(--storyboard-cyan), inset 0 0 2rem rgba(0, 242, 254, 0.08); }
 .storyboard-frame__download {
   position: absolute;

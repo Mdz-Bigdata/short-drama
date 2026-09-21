@@ -1,0 +1,141 @@
+[
+  {
+    "id": "ordinary-new-conversation-skips-guide",
+    "category": "onboarding",
+    "request": "新开对话后使用 $seedance-2-5-video-director，生成一个10秒咖啡广告提示词。",
+    "expected": [
+      "不展示安装或新手教程",
+      "直接完成咖啡广告请求",
+      "不把新对话误判为刚安装"
+    ]
+  },
+  {
+    "id": "explicit-tutorial-request-shows-guide",
+    "category": "onboarding",
+    "request": "请显示 $seedance-2-5-video-director 的使用教程和示例。",
+    "expected": [
+      "显示学习指导、最小输入模板和学习示例",
+      "不声称每次新对话都必须重复",
+      "不要求提供视频任务"
+    ]
+  },
+  {
+    "id": "basic-person-reference-lock",
+    "category": "basic-multimodal",
+    "request": "用 @Image 1 的人物生成15秒街头行走视频，严格参考人物图片。",
+    "expected": [
+      "选择basic-multimodal",
+      "把@Image 1解释为完整可见人物参考",
+      "保持原服装、鞋子、配饰和身体比例",
+      "默认不继承参考图背景和姿势"
+    ]
+  },
+  {
+    "id": "exact-thirty-water-variety",
+    "category": "timestamp-30s",
+    "request": "生成30秒、16:9水上障碍综艺，要求精确时间轴和中文直播镜头。",
+    "expected": [
+      "选择timestamp-30s而不是Long Video",
+      "时间段连续且总和等于30秒",
+      "镜头解释赛道、接触和结果",
+      "解说与观众在事件发生后反应"
+    ]
+  },
+  {
+    "id": "long-video-scene-acts",
+    "category": "long-video",
+    "request": "生成90秒、16:9的长视频，讲一名女孩从车站走到海边的完整故事。",
+    "expected": [
+      "选择long-video",
+      "使用场景或幕结构而不是每秒微操",
+      "维护地点、服装、道具和时间状态链",
+      "结尾落在明确视觉状态"
+    ]
+  },
+  {
+    "id": "extension-ambiguous-direction",
+    "category": "video-extension",
+    "request": "参考 @Video 1 向前续写5秒，让人物走进房间。",
+    "expected": [
+      "识别向前续写的语言歧义",
+      "只询问新增片段在原片之前还是之后",
+      "方向未确认前不擅自起草提示词"
+    ]
+  },
+  {
+    "id": "extension-append-boundary",
+    "category": "video-extension",
+    "request": "在 @Video 1 原片之后追加5秒，承接最后一帧让人物关门。",
+    "expected": [
+      "规范化为append-after-source",
+      "只描述新增5秒",
+      "保护原视频",
+      "继承最后一帧的动作、机位、光线、空间和声音"
+    ]
+  },
+  {
+    "id": "marked-local-edit",
+    "category": "video-edit",
+    "request": "在 @Video 1 的5到8秒，只把红框内蓝色杯子替换成白色花瓶。",
+    "expected": [
+      "选择带标记的视频编辑",
+      "写清红框、目标、替换操作和时间",
+      "保护框外人物、动作、背景、机位和声音",
+      "要求透视、遮挡和接触阴影一致"
+    ]
+  },
+  {
+    "id": "coarse-clay-renderer",
+    "category": "clay-renderer",
+    "request": "把 @Video 1 的粗白模动作映射为 @Image 1 的女王并渲染宫殿场景。",
+    "expected": [
+      "选择coarse Clay Renderer",
+      "映射白模动作、位置和相机",
+      "保持@Image 1人物身份与服装",
+      "不继承灰模材质、辅助线和视口背景"
+    ]
+  },
+  {
+    "id": "two-video-seamless-bridge",
+    "category": "seamless-transition",
+    "request": "无缝连接 @Video 1 与 @Video 2，用一片树叶完全遮挡镜头完成转场。",
+    "expected": [
+      "保护两段原视频不变",
+      "定义树叶进入、全屏遮挡和离开",
+      "锁定方向、速度、大小和相机连续性",
+      "禁止黑帧、跳帧和硬切"
+    ]
+  },
+  {
+    "id": "ordered-grid-storyboard",
+    "category": "multi-grid-storyboard",
+    "request": "@Image 1 是四格连续分镜，@Image 2 是主角，请生成15秒视频。",
+    "expected": [
+      "把@Image 1每一格解释为有顺序的完整镜头",
+      "把@Image 2绑定为主角身份",
+      "为每格分配时间、构图、动作和结束状态",
+      "保持跨格空间与人物连续"
+    ]
+  },
+  {
+    "id": "diagnose-camera-contradictions",
+    "category": "diagnosis",
+    "request": "只诊断：一镜到底、固定机位，同时频繁正反打；人物始终离镜头两米，最后脸部填满画面。",
+    "expected": [
+      "指出一镜到底与正反打冲突",
+      "指出固定距离与脸部填满画面冲突",
+      "不静默重写完整故事"
+    ]
+  },
+  {
+    "id": "script-only-breakup",
+    "category": "basic-multimodal",
+    "request": "只要25秒第三人称分手戏脚本，不要两人同框，女主既舍不得又决定离开。",
+    "expected": [
+      "只输出可演脚本",
+      "使用单人近景或正反打且不出现双人同框",
+      "保留听见、停顿、反应和残留情绪",
+      "对白和动作适配25秒"
+    ]
+  }
+]

@@ -22,3 +22,6 @@ backend/.dev_session_secret
 
 # 知识进化引擎的运行期数据（教训库+审计日志随每次质检变化，不入库；目录用 .gitkeep 占位）
 backend/skills/production-knowledge-master/learned/*.jsonl
+
+# Claude Code local settings (may contain API keys)
+.claude/settings.local.json

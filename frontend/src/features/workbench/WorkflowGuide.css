@@ -1,0 +1,3 @@
+.workflow-guide__actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.workflow-guide__actions button { white-space: normal; text-align: left; }
+.workflow-guide__actions button:disabled { opacity: 0.5; cursor: wait; }

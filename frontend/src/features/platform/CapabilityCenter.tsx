@@ -112,7 +112,7 @@ export function CapabilityCenter({ role = 'user' }: CapabilityCenterProps) {
       <div className="capability-heading">
         <div>
           <h3 id="capability-title">工业化能力与可调用入口</h3>
-          <p>{sources.length || 13} 个上游来源 · 每项能力可下拉检查、全局启用并通过 /command 调用</p>
+          <p>{sources.length || 14} 个上游来源 · 每项能力可下拉检查、全局启用并通过 /command 调用</p>
         </div>
         <span className="capability-role">{role === 'admin' ? '管理员 · 可配置全局状态' : '成员 · 使用已启用能力'}</span>
       </div>

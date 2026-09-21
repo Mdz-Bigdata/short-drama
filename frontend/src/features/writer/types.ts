@@ -62,6 +62,8 @@ export interface WriterDashboardStats {
   totalEpisodes: number;
   /** Episodes actually present in the screenplay text; short of totalEpisodes means truncated. */
   scriptedEpisodes?: number;
+  /** Exact missing screenplay episode numbers, not a count inferred from scenes. */
+  missingEpisodes?: number[];
   sceneCount: number;
   characterCount: number;
   mainEventCount: number;

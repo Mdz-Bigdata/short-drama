@@ -118,7 +118,7 @@ class AudioMixPlannerTests(unittest.TestCase):
 class CapabilityImplementationTests(unittest.TestCase):
     def test_every_requested_source_has_callable_implementation_entries(self):
         report = capability_implementation_report()
-        self.assertEqual(len(report), 13)
+        self.assertEqual(len(report), 18)
         self.assertTrue(all(row["implementations"] for row in report))
         self.assertTrue(all(
             all(item["entrypoint"].startswith("/") or "." in item["entrypoint"] for item in row["implementations"])

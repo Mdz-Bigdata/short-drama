@@ -31,7 +31,7 @@ project implements the observed behavior through new, first-party code.
 - exactly one primary task per prompt: generate, edit, or extend;
 - ordered edit-then-extend as two executable prompts;
 - explicit, one-role-per-reference asset responsibilities;
-- unused and missing reference handling;
+- explicit unused-reference handling and verbatim inaccessible-reference preservation;
 - text, first-frame, first-and-last-frame, ordered keyframe, multi-reference,
   multimodal, nine-grid, blockout, edit, audio-edit, and extension modes;
 - dialogue/speaker/audio binding and provider parameters outside prompt text;

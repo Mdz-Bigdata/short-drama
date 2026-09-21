@@ -229,7 +229,7 @@ def _extract_actors(
     characters: list[dict[str, Any]],
     roles: list[dict[str, Any]],
     scenes: list[dict[str, Any]],
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Approved character assets first, then any role the screenplay names."""
     found: dict[str, dict[str, str]] = {}
 
@@ -239,10 +239,22 @@ def _extract_actors(
             continue
         role = _clean(character.get("role"))
         description = _clean(character.get("desc"))[:_MAX_DESCRIPTION_LENGTH]
+        quality = character.get("five_view_quality")
+        views = [
+            {"view": _clean(view.get("view")), "image_url": str(view.get("image_url") or "").strip()}
+            for view in (character.get("views") or [])
+            if isinstance(view, dict) and _clean(view.get("view")) and str(view.get("image_url") or "").strip()
+        ]
         found[name] = {
             "name": name,
             "description": description or role,
             "image_url": _actor_image(character),
+            # Recorded on the library element so another project can reuse the
+            # approved five-view set instead of paying for a new one.
+            "role": role,
+            "sheet_url": str(character.get("sheet") or "").strip(),
+            "views": views,
+            "quality_passed": bool(isinstance(quality, dict) and quality.get("passed")),
         }
 
     for role in roles:
@@ -283,7 +295,7 @@ def _scene_images(shots: list[dict[str, Any]]) -> dict[str, str]:
     return images
 
 
-def extract_production_assets(task: dict[str, Any], kind: str) -> list[dict[str, str]]:
+def extract_production_assets(task: dict[str, Any], kind: str) -> list[dict[str, Any]]:
     """Return the `{name, description, image_url}` assets the screenplay names."""
     if kind not in {"actor", "scene", "prop", "costume", "effect"}:
         raise ValueError("仅支持提取 actor、scene、prop、costume 或 effect 资产")

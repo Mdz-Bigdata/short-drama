@@ -409,6 +409,22 @@ describe('App stage asset preview layout', () => {
         status: 200,
         json: async () => ({ sourceHash: '', episodes: [] }),
       } as Response;
+      // The visual stage shows the per-shot camera workspace built from the same clip.
+      if (url.endsWith(`/api/drama/${taskSummary.taskId}/shots/visual`)) return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          task_id: taskSummary.taskId, current_stage: 5, running: false, video_model: 'video-model',
+          provider_family: 'custom', duration_options: [4, 5, 6, 7, 8, 9, 10],
+          camera_motions: [{ value: 'Static', label: '固定' }], shot_types: [{ value: 'Medium Shot', label: '中景' }],
+          shots: [{
+            shot_id: 1, scene_id: 'E1S01', desc: '双人对峙镜头', dialogue: '', sound: '',
+            settings: { camera_motion: 'Static', shot_type: 'Medium Shot', duration_seconds: 6, action: '', ambiance_audio: '', lighting: '', ambiance: '' },
+            settings_source: 'derived', derived_notes: [], image_url: null, video_url: 'https://example.test/shot-1.mp4',
+            image_prompt: '', video_prompt: '', contract_fingerprint: '', route: null, stale: false, stale_reason: '',
+          }],
+        }),
+      } as Response;
       throw new Error(`unexpected fetch ${url}`);
     });
     const stylesheet = document.createElement('style');
@@ -420,20 +436,19 @@ describe('App stage asset preview layout', () => {
       await userEvent.click(await screen.findByText('紧凑视觉预览'));
 
       const preview = await screen.findByRole('region', { name: 'Stage 5 阶段资产预览' });
-      const shotList = within(preview).getByRole('region', { name: 'Stage 5 镜头资产列表' });
-      const shot = within(shotList).getByRole('article', { name: '镜头 1 视觉资产' });
-      const videoPane = within(shot).getByRole('region', { name: '镜头 1 图生视频动态画面' });
-      const video = videoPane.querySelector('video');
-      const mediaGrid = videoPane.closest('.stage-five-media-grid');
+      const shotList = await within(preview).findByRole('complementary', { name: '分镜列表' });
+      const detail = within(preview).getByRole('region', { name: '镜头 1 详情' });
+      const video = detail.querySelector('video');
 
       expect(video).not.toBeNull();
+      expect(video?.getAttribute('src')).toBe('https://example.test/shot-1.mp4');
       expect(getComputedStyle(preview).flexGrow).toBe('0');
       expect(getComputedStyle(preview.parentElement as Element).flexGrow).toBe('0');
       expect(parseFloat(getComputedStyle(preview).minHeight)).toBeGreaterThanOrEqual(608);
-      expect(parseFloat(getComputedStyle(shotList).height)).toBeGreaterThanOrEqual(512);
-      expect(mediaGrid).not.toBeNull();
-      expect(getComputedStyle(mediaGrid as Element).gridTemplateColumns).toBe('minmax(0, 1fr)');
-      expect(within(shot).getByText('首帧图片仍在生成，已优先放大可用视频。')).toBeTruthy();
+      expect(within(shotList).getByRole('button', { name: '镜头 1' }).textContent).toContain('已生成');
+      // Only the video is ready: the storyboard figure says so instead of showing a blank frame.
+      expect(within(detail).getByText('尚未生成')).toBeTruthy();
+      expect(within(detail).getByLabelText('镜头运动')).toBeTruthy();
       expect(screen.getByText('Stage 5 质检通过')).toBeTruthy();
     } finally {
       stylesheet.remove();

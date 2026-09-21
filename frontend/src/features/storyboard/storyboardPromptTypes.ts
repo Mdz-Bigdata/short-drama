@@ -40,6 +40,9 @@ export interface StoryboardPromptDetail {
     characters?: Array<Record<string, PromptValue>>;
     scene_and_props?: Record<string, PromptValue>;
     verbatim_dialogue?: Array<Record<string, PromptValue>>;
+    timed_sounds?: Array<Record<string, PromptValue>>;
+    damage_timeline?: Array<Record<string, PromptValue>>;
+    extras_and_crowd?: Record<string, PromptValue>;
     global_visual_rules?: Record<string, PromptValue>;
     continuity_locks?: Record<string, PromptValue>;
     shot_visual_design?: Record<string, PromptValue>;

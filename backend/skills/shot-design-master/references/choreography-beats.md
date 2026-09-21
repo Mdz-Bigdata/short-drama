@@ -94,6 +94,8 @@
 从「这场戏用什么武术」走到「逐镜提示词」：
 
 ```text
+⓪ 定节奏档    —— 极速 / 标准 / 慢，三选一，定下交锋次数与镜数，
+                 见 performance-action.md 附 §3.15 节奏档位
 ① 选体系      —— 查上方总索引，先看危险等级再看题材匹配
 ② 取风格块    —— 抄该体系的风格块，进提示词的「风格」位置，全片复用不改
 ③ 选招式      —— 从该体系的翻译表里挑 2–3 招，够一个回合用
@@ -116,6 +118,8 @@
 | 动能运镜术语（Whip Zoom / 手持震颤 / 子弹时间） | [performance-action.md](performance-action.md) 附 §3.9 |
 | 冷兵器与能量光影特效（剑气折射、火星粒子） | [performance-action.md](performance-action.md) 附 §3.10 |
 | 打击感五件套 | [performance-action.md](performance-action.md) §4.2（速查章，非附录同号小节） |
+| 节奏档位（交锋次数 / 镜数 / 单镜时长 / 微动作数） | [performance-action.md](performance-action.md) 附 §3.15 |
+| 1vN 群战、带伤降级、追逐、人兽战、环境杀、伪一镜到底 | [performance-action.md](performance-action.md) 附 §3.16 |
 | 景别 / 机位 / 运镜词典 | [shot-grammar.md](shot-grammar.md) |
 | 站位法与 180° 轴线 | [blocking-lighting.md](blocking-lighting.md) §1.1、§2.1–2.4 |
 
@@ -864,6 +868,7 @@ MMA 风格：分指手套贴身短裤，八角笼铁网背景，
 > 两者不能兼得。
 
 **在拆镜前提下取其神韵的做法**：保留「道具化招 + 环境互动」，放弃「一镜到底」。
+伪长镜的四锁、切点做法与「什么时候可以真的长」见 [performance-action.md](performance-action.md) 附 §3.16 F。
 每个镜头只用**一件道具做一个动作**（抄起椅子挡一下 / 踩着梯子躲开 / 顺手抓起桌布甩出），
 靠**剪辑的连续性**而非镜头的连续性制造流畅感。道具互动本身还能提高稳定性——
 角色与实体物件持续接触时，模型被迫计算接触面，反而减少悬浮滑步。
@@ -902,6 +907,8 @@ MMA 风格：分指手套贴身短裤，八角笼铁网背景，
 > [blocking-lighting.md](blocking-lighting.md) §1.2 公式 7 附）。
 
 **取其神韵的做法**：保留「狭长地形 + 逐个击破 + 体力递减」，放弃「一镜到底」。
+逐个击破的镜数分配与体力递减刻度见 [performance-action.md](performance-action.md) 附 §3.16 A，
+伪长镜四锁见附 §3.16 F。
 用**同一机位、同一地形、逐镜推进**制造伪长镜头感——每一镜的落幅是主角又往前挪了两米、
 喘息更重、衣服更破。观众读到的仍然是"一路打过去"，但每一镜都是独立安全生成的。
 体力递减靠 §一 的 Consequences 逐镜累加（衣袂破损、喘息加重、动作变形）。

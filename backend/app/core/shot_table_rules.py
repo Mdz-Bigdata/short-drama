@@ -16,6 +16,10 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
+from app.core.camera_motion import normalize_camera_motion
+from app.core.camera_recipes import repeated_move_signature
+from app.core.frame_position import flipped_subjects, parse_frame_positions, uses_frame_grammar
+from app.core.screenwriting.speech_rate import estimate_spoken_seconds
 from app.core.video_references import MIN_SHOT_SECONDS, max_shot_seconds, split_shot_seconds
 from app.core.writer_dashboard import parse_duration_seconds
 
@@ -47,6 +51,34 @@ INNER_MONOLOGUE_TERMS: tuple[str, ...] = (
 
 MIN_DESC_CHARS = 50
 MAX_SAME_SIZE_RUN = 2
+# 张力法则：镜头默认静止，运动只留给开头、呼吸和爆发；一场里带运动的镜头超过这个比例
+# 就成了"监控回放"。
+MAX_MOVING_SHOT_RATIO = 0.7
+# 爆发前要有静置蓄力：前一镜至少停这么久、且镜头不动。
+MIN_BUILDUP_SECONDS = 3
+BURST_TERMS: tuple[str, ...] = (
+    "爆发", "挥剑", "挥刀", "砍", "劈", "冲上", "冲向", "撞", "摔", "怒吼", "开枪", "爆炸", "扑向", "出拳", "踢",
+)
+# 爆发镜越短越有冲击力：6 秒的爆发像放烟花，不像打人。
+MAX_BURST_SECONDS = 4
+# 一句台词要在本镜内说完，且两端各留一点静默；同一镜不安排两个人说话。
+SPEECH_HEADROOM = 0.7
+# 分镜表里台词写成「角色名：台词」；说话人名很短，正文里的冒号句（他说：…）不会被当成第二个说话人。
+_SPEAKER_LINE = re.compile(r"([\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z·]{0,5})\s*[：:]")
+# 竖屏同框能画清楚的人物数；第三人起必须虚化、背影或剪影。
+MAX_CLEAR_CHARACTERS_PORTRAIT = 2
+# 特写是标点不是正文：一场戏里给得太多，冲击力就贬值了。
+MAX_CLOSE_UPS_PER_SCENE = 3
+MAX_CLOSE_UPS_PER_FIGHT_SCENE = 2
+CLOSE_UP_TERMS: tuple[str, ...] = ("大特写", "极特写", "特写", "ECU", "BCU", "CU")
+# 视频模型没有逐帧控制力：写「定格」只会让画面真的停住。冲击靠白闪、震镜、径向模糊做。
+FROZEN_FRAME_TERMS: tuple[str, ...] = (
+    "定格", "停格", "顿帧", "凝滞", "静滞", "子弹时间", "时间静止", "时停", "画面冻结", "绝对静默", "hit-stop",
+)
+# 声音一层是底噪、一层是动作；层数堆多了混成一团。
+MAX_AMBIENT_LAYERS = 2
+MAX_ACTION_SOUNDS = 2
+_SOUND_SPLIT = re.compile(r"[·、，,+＋]|以及|还有")
 
 
 @dataclass
@@ -86,22 +118,67 @@ def _has_any(text: str, terms: Iterable[str]) -> bool:
     return any(term in text for term in terms)
 
 
+def _speakers(dialogue: str, cast: Sequence[str] = ()) -> list[str]:
+    """Who the dialogue cell gives lines to, in order.
+
+    With a cast, only labels naming someone in it count, so a colon inside a line
+    (「他说：走」) is not mistaken for a second speaker.
+    """
+    names = [name.strip() for name in _SPEAKER_LINE.findall(dialogue) if name.strip()]
+    known = {str(name).strip() for name in cast if str(name).strip()}
+    return [name for name in names if name in known] if known else names
+
+
+def _spoken_text(dialogue: str) -> str:
+    """The dialogue without the speaker labels, which are not spoken aloud."""
+    return _SPEAKER_LINE.sub(" ", dialogue)
+
+
+def _sound_layers(sound: str) -> tuple[int, int]:
+    """``(ambience layers, action sounds)`` of one shot's sound cell."""
+    ambience, action = "", ""
+    for part in re.split(r"[；;]", sound):
+        label, _, body = part.partition("：")
+        if not body:
+            label, _, body = part.partition(":")
+        if "环境" in label or "底噪" in label:
+            ambience = body
+        elif "动作" in label or "音效" in label and not ambience:
+            action = body
+    if not ambience and not action:
+        ambience = sound
+    def _count(text: str) -> int:
+        return len([item for item in _SOUND_SPLIT.split(text) if item.strip() and item.strip() not in {"无", "none"}])
+    return _count(ambience), _count(action)
+
+
 def audit_shot_table(
     shots: Sequence[dict[str, Any]],
     *,
     video_model: str = "",
     repair: bool = True,
+    scene_kind: str = "",
 ) -> ShotTableAudit:
     """Check a parsed shot table against the skill's mechanically checkable rules.
 
     With ``repair`` the returned shots have over-long durations cut down to the
     model's single-clip ceiling; every other rule is reported, never silently
     rewritten, because only a human can decide how to re-stage a shot.
+
+    ``scene_kind`` tightens the rules a fight scene is judged by (close-up quota).
     """
     cap = max_shot_seconds(video_model)
+    fight = "fight" in str(scene_kind or "").lower()
+    close_ups = 0
     audit = ShotTableAudit()
     previous_size = ""
     same_size_run = 0
+    previous_positions = []
+    previous_static = True
+    previous_seconds = 0
+    previous_shot: dict[str, Any] | None = None
+    moving_shots = 0
+    motion_declared = 0
 
     for index, raw in enumerate(shots):
         if not isinstance(raw, dict):
@@ -159,7 +236,123 @@ def audit_shot_table(
                 shot_id, "情绪未具象化", f"只写了「{hit}」，没有可观察的面部或肢体细节",
             ))
 
+        # 站位与视线写成观众看到的画面坐标，而不是人物自己的左右。
+        characters = [
+            name.strip() for name in (
+                shot.get("characters") if isinstance(shot.get("characters"), list)
+                else re.split(r"[、，,/]", _text(shot.get("characters")))
+            ) if str(name).strip() and str(name).strip() not in {"无", "空镜"}
+        ]
+        positions = parse_frame_positions(desc, characters) if characters and desc else []
+        if characters and desc and not uses_frame_grammar(desc):
+            audit.issues.append(ShotIssue(
+                shot_id, "构图未用镜头坐标",
+                "人物站位请写成画面区域 + 深度层 + 屏幕朝向（如：画面左侧三分之一的中景，朝向画面右侧）",
+            ))
+        flipped = flipped_subjects(previous_positions, positions)
+        if flipped and not _has_any(desc, ("越轴", "转身", "回身", "中性镜头", "换位")):
+            audit.issues.append(ShotIssue(
+                shot_id, "视线左右翻转",
+                f"{'、'.join(flipped)} 的屏幕朝向与上一镜相反，疑似越轴；要么保持上一镜站位，要么写明转身或中性过渡镜",
+            ))
+        if positions:
+            previous_positions = positions
+
+        # 一句台词必须在本镜说完：按项目统一语速换算，两端各留一点静默。
+        dialogue = _text(shot.get("dialogue"))
+        speakers = _speakers(dialogue, characters)
+        if len(set(speakers)) > 1:
+            audit.issues.append(ShotIssue(
+                shot_id, "一镜多个说话人",
+                f"本镜写了 {'、'.join(dict.fromkeys(speakers))} 的台词；一镜只留给一个人说话，其余人闭口给反应",
+            ))
+        spoken = estimate_spoken_seconds(_spoken_text(dialogue))
+        if spoken and seconds and spoken > seconds * SPEECH_HEADROOM:
+            audit.issues.append(ShotIssue(
+                shot_id, "台词超出本镜时长",
+                f"台词约需 {spoken:.1f}s，本镜 {seconds}s（可用 {seconds * SPEECH_HEADROOM:.1f}s，两端各留静默）；"
+                "请加长本镜或按语气停顿拆句",
+            ))
+
+        sound_text = _text(shot.get("sound"))
+        if sound_text:
+            ambience, action = _sound_layers(sound_text)
+            if ambience > MAX_AMBIENT_LAYERS or action > MAX_ACTION_SOUNDS:
+                audit.issues.append(ShotIssue(
+                    shot_id, "声音层数超标",
+                    f"环境音 {ambience} 层、动作音 {action} 个；一镜最多 {MAX_AMBIENT_LAYERS} 层环境音与 "
+                    f"{MAX_ACTION_SOUNDS} 个动作音，多了会混成一团",
+                ))
+
+        if len(characters) > MAX_CLEAR_CHARACTERS_PORTRAIT:
+            audit.issues.append(ShotIssue(
+                shot_id, "同框清晰人物过多",
+                f"{len(characters)} 人同框；竖屏一镜最多画清 {MAX_CLEAR_CHARACTERS_PORTRAIT} 人，"
+                "第三人起请写成虚化、背影或剪影",
+            ))
+
+        if size and _has_any(size.upper(), (term.upper() for term in CLOSE_UP_TERMS)):
+            close_ups += 1
+
+        if _has_any(desc, FROZEN_FRAME_TERMS):
+            hit = next(term for term in FROZEN_FRAME_TERMS if term in desc)
+            audit.issues.append(ShotIssue(
+                shot_id, "写了模型做不到的定格",
+                f"「{hit}」会让画面真的停住；冲击点改用白闪一两帧 + 镜头猛震 + 命中点径向模糊 + 速度线",
+            ))
+
+        if _has_any(desc, BURST_TERMS) and seconds > MAX_BURST_SECONDS:
+            audit.issues.append(ShotIssue(
+                shot_id, "爆发镜过长",
+                f"爆发镜 {seconds}s，超过 {MAX_BURST_SECONDS}s 就散了；把余韵拆到下一镜去",
+            ))
+
+        motion_text = _text(shot.get("motion"))
+        if motion_text:
+            motion_declared += 1
+            canonical, _ = normalize_camera_motion(motion_text)
+            is_static = canonical == "Static"
+            if not is_static:
+                moving_shots += 1
+        else:
+            is_static = True
+        if _has_any(desc, BURST_TERMS) and index > 0 and (
+            not previous_static or (previous_seconds and previous_seconds < MIN_BUILDUP_SECONDS)
+        ):
+            audit.issues.append(ShotIssue(
+                shot_id, "爆发前缺少静置蓄力",
+                f"爆发镜前一镜应至少静止 {MIN_BUILDUP_SECONDS}s 蓄力，再用短促急推或骤停放大冲击",
+            ))
+        previous_static = is_static
+        previous_seconds = seconds
+
+        # 防撞镜：画风质感锁死，相邻镜至少换掉运动 / 角度 / 节奏之一。
+        current = {**shot, "_seconds": seconds}
+        if previous_shot is not None and motion_text:
+            shared = repeated_move_signature(previous_shot, current)
+            if shared:
+                audit.issues.append(ShotIssue(
+                    shot_id, "相邻镜运镜撞款",
+                    f"与上一镜同为「{shared}」，请换掉运动、角度或节奏中的一项",
+                ))
+        previous_shot = current
+
         audit.shots.append(shot)
+
+    if motion_declared >= 4 and moving_shots / motion_declared > MAX_MOVING_SHOT_RATIO:
+        audit.issues.append(ShotIssue(
+            audit.shots[-1].get("shot_id", len(audit.shots)), "运镜过密",
+            f"{moving_shots}/{motion_declared} 镜带镜头运动，超过 {int(MAX_MOVING_SHOT_RATIO * 100)}%；"
+            "以固定镜头为主，运动只留给开头、呼吸式微动和爆发瞬间",
+        ))
+
+    close_up_cap = MAX_CLOSE_UPS_PER_FIGHT_SCENE if fight else MAX_CLOSE_UPS_PER_SCENE
+    if close_ups > close_up_cap and audit.shots:
+        audit.issues.append(ShotIssue(
+            audit.shots[-1].get("shot_id", len(audit.shots)), "特写超配额",
+            f"本场 {close_ups} 个特写，超过{'武戏' if fight else ''}配额 {close_up_cap} 个；"
+            "特写是标点，只留给冲击峰值与转折帧",
+        ))
 
     if len(audit.shots) == 1:
         audit.issues.append(ShotIssue(
@@ -169,9 +362,11 @@ def audit_shot_table(
     return audit
 
 
-def audit_and_log(shots: Sequence[dict[str, Any]], *, video_model: str, task_id: str = "") -> list[dict[str, Any]]:
+def audit_and_log(
+    shots: Sequence[dict[str, Any]], *, video_model: str, task_id: str = "", scene_kind: str = "",
+) -> list[dict[str, Any]]:
     """Audit, log the findings, and return the (possibly repaired) shot list."""
-    audit = audit_shot_table(shots, video_model=video_model)
+    audit = audit_shot_table(shots, video_model=video_model, scene_kind=scene_kind)
     if audit.issues:
         logger.warning("[Stage4] %s (task=%s)", audit.summary(), task_id or "-")
         for issue in audit.issues[:20]:

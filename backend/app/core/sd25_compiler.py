@@ -2,12 +2,24 @@
 
 from __future__ import annotations
 
+import re
+
 from app.schema.production import (
     Sd25Asset,
     Sd25CompileRequest,
     Sd25CompileResult,
     Sd25CompileStep,
 )
+
+
+# Camera language in the prompt body competes with the blockout's own camera track,
+# so in blockout mode its presence is reported rather than silently merged.
+_CAMERA_LANGUAGE = re.compile(
+    r"推镜|推近|推进镜头|拉远|拉镜|摇镜|左摇|右摇|上摇|下摇|横摇|摇臂|移镜|横移|跟拍|跟镜|环绕"
+    r"|升降镜头|变焦|推拉|切到|切至|切换到|航拍|运镜|镜头[推拉摇移跟升降转切]"
+    r"|特写|近景|中景|全景|远景"
+)
+_TIME_SPAN = re.compile(r"\d+(?:\.\d+)?\s*秒?\s*[-—–~～]\s*\d+(?:\.\d+)?\s*[秒sS]")
 
 
 class Sd25PromptCompiler:
@@ -33,7 +45,34 @@ class Sd25PromptCompiler:
             "keyframe": "只定义声明的关键状态，不替换未声明的主体、场景或风格",
             "source": "作为唯一母版，保留原始时间线",
         }
-        return f"{asset.ref}用于{asset.subject}的{asset.observations}；{exclusions[asset.role]}。"
+        overhead = (
+            "；该图为高位俯拍，只补充空间结构与布局（排列、道路宽度、遮挡关系），不提供机位，不改变运镜"
+            if asset.overhead_view else ""
+        )
+        return f"{asset.ref}用于{asset.subject}的{asset.observations}；{exclusions[asset.role]}{overhead}。"
+
+    @staticmethod
+    def _missing_asset_lines(
+        request: Sd25CompileRequest,
+        *,
+        exclude_refs: set[str | None] | None = None,
+    ) -> list[str]:
+        excluded = exclude_refs or set()
+        return [
+            f"{asset.ref}用于{asset.intended_role}。"
+            for asset in request.missing_assets
+            if asset.ref not in excluded
+        ]
+
+    @staticmethod
+    def _observation_for(request: Sd25CompileRequest, ref: str) -> str:
+        for asset in request.assets:
+            if asset.ref == ref:
+                return asset.observations
+        for asset in request.missing_assets:
+            if asset.ref == ref:
+                return asset.intended_role
+        raise KeyError(f"unknown sd25 reference: {ref}")
 
     @staticmethod
     def _used_refs(request: Sd25CompileRequest) -> set[str]:
@@ -122,18 +161,12 @@ class Sd25PromptCompiler:
             parameters = extend_parameters
             warnings = list(dict.fromkeys(edit_warnings + extend_warnings))
         else:
-            prompt, mode = self._compile_generation(request, used, unused)
+            prompt, mode, generation_warnings = self._compile_generation(request, used, unused)
 
         if request.task != "edit_then_extend":
             parameters, warnings = self._parameters_for(request, mode)
-        if request.missing_assets:
-            missing = "；".join(
-                f"{asset.ref}（原定用于{asset.intended_role}）" for asset in request.missing_assets
-            )
-            warnings.append(
-                f"补充建议：未提供或无法读取{missing}；当前 Prompt 已删除这些引用，补充后可重新绑定。"
-            )
-
+            if request.task == "generation":
+                warnings = list(dict.fromkeys(generation_warnings + warnings))
         return Sd25CompileResult(
             mode=mode,
             prompt=prompt,
@@ -149,10 +182,15 @@ class Sd25PromptCompiler:
         request: Sd25CompileRequest,
         used: list[Sd25Asset],
         unused: list[Sd25Asset],
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, list[str]]:
+        warnings: list[str] = []
         parts = ["【生成目标】", request.goal.strip()]
-        if used:
-            parts.extend(["", "【参考素材职责】", *(self._asset_line(asset) for asset in used)])
+        if used or request.missing_assets:
+            parts.extend([
+                "", "【参考素材职责】",
+                *(self._asset_line(asset) for asset in used),
+                *self._missing_asset_lines(request),
+            ])
         if unused:
             parts.extend([
                 "", "【未采用素材】",
@@ -160,19 +198,42 @@ class Sd25PromptCompiler:
             ])
 
         if request.first_frame_ref:
-            asset = next(asset for asset in request.assets if asset.ref == request.first_frame_ref)
             parts.extend([
                 "", f"{request.first_frame_ref}作为首帧。",
-                f"该首帧定义视频开始时的构图、主体位置、姿态、道具状态、场景和镜头方向：{asset.observations}。",
+                "该首帧定义视频开始时的构图、主体位置、姿态、道具状态、场景和镜头方向："
+                f"{self._observation_for(request, request.first_frame_ref)}。",
             ])
         if request.last_frame_ref:
-            asset = next(asset for asset in request.assets if asset.ref == request.last_frame_ref)
             parts.extend([
                 f"{request.last_frame_ref}作为尾帧。",
-                f"该尾帧定义视频结束时的构图、主体位置、姿态、道具状态、场景和镜头方向：{asset.observations}。",
+                "该尾帧定义视频结束时的构图、主体位置、姿态、道具状态、场景和镜头方向："
+                f"{self._observation_for(request, request.last_frame_ref)}。",
             ])
 
-        if request.keyframe_refs:
+        if request.keyframe_refs and request.blockout_ref:
+            stages = (
+                "；".join(
+                    f"{0 if index == 0 else request.keyframe_stage_ends[index - 1]}-{end}秒对应{ref}"
+                    for index, (ref, end) in enumerate(zip(request.keyframe_refs, request.keyframe_stage_ends, strict=True))
+                )
+                if request.keyframe_stage_ends
+                else "；".join(f"第{index}阶段对应{ref}" for index, ref in enumerate(request.keyframe_refs, start=1))
+            )
+            parts.extend([
+                "", "【白模 + 阶段关键帧】",
+                f"{request.blockout_ref}只用于参考整支片段的镜头顺序、机位、景别变化、主体运动轨迹与节奏，"
+                "不复制白模的材质和角色外观。",
+                f"{'、'.join(request.keyframe_refs)}分别约束对应阶段的角色造型、环境与色彩：{stages}。",
+                f"严格保持{request.blockout_ref}的镜头结构，不新增镜头；角色外观随对应关键帧保持一致。",
+            ])
+            if not request.keyframe_stage_ends:
+                warnings.append(
+                    "补充建议：白模+阶段关键帧建议提供整数秒且连续的阶段时间段（如0-3、3-7、7-15），"
+                    "不留无法解释的空档。"
+                )
+            for index, ref in enumerate(request.keyframe_refs, start=1):
+                parts.append(f"{ref}定义第{index}个阶段的画面内容：{self._observation_for(request, ref)}。")
+        elif request.keyframe_refs:
             parts.extend([
                 "", "【有序关键帧】",
                 f"以{'、'.join(request.keyframe_refs)}的顺序作为关键帧。",
@@ -180,9 +241,9 @@ class Sd25PromptCompiler:
             for index, ref in enumerate(request.keyframe_refs, start=1):
                 if ref in {request.first_frame_ref, request.last_frame_ref}:
                     continue
-                asset = next(asset for asset in request.assets if asset.ref == ref)
                 parts.append(
-                    f"{ref}定义第{index}个关键帧：{asset.observations}；作为过程中的可见状态锚点，"
+                    f"{ref}定义第{index}个关键帧：{self._observation_for(request, ref)}；"
+                    "作为过程中的可见状态锚点，"
                     "不要求静态停留或逐像素复刻。"
                 )
             parts.append(
@@ -206,19 +267,39 @@ class Sd25PromptCompiler:
                 )
 
         if request.blockout_ref and request.blockout_granularity:
+            ref = request.blockout_ref
             if request.blockout_granularity == "coarse":
                 parts.extend([
                     "", "【粗粒度白模】",
-                    f"{request.blockout_ref}是粗粒度白模参考，仅提供动作路径、主体站位、进出场、机位、"
+                    f"{ref}是粗粒度白模参考，仅提供动作路径、主体站位、进出场、机位、"
                     "运镜、切镜、光影变化、声音节奏和空间关系，不采用其中的白模外观、材质和场景。",
                     "逐个几何体映射到输入已声明的最终人物或道具；轨迹线、坐标轴、控制器、相机锥体和文字标记不进入成片。",
+                    f"保持{ref}中的动作路径、站位、运镜、切镜、光影与声音节奏。",
                 ])
             else:
                 parts.extend([
                     "", "【细粒度白模】",
-                    f"{request.blockout_ref}是细粒度白模参考，保持主体结构、动作、空间布局、机位、运镜和切镜，"
+                    f"{ref}是细粒度白模参考，保持主体结构、动作、空间布局、机位、运镜和切镜，"
                     "不采用原有灰模材质、空白背景、轨迹线、坐标轴、控制器、相机锥体和文字标记。",
+                    f"将{ref}中的主体重渲染为输入声明的最终主体，场景重渲染为输入声明的最终场景；"
+                    f"保持{ref}中的结构、动作、镜头和空间关系。",
                 ])
+            parts.append(f"{ref}是唯一镜头、机位、景别与调度参考；正文不另写运镜指令。")
+            if request.blockout_standin_limbs:
+                parts.append(
+                    "白模替身带四肢或翅膀：正文必须写出完整的分段肢体动作序列"
+                    "（身体前倾角度、步幅、重心、手臂与布料动态），不把四肢交给模型自由发挥。"
+                )
+                if not _TIME_SPAN.search(request.goal):
+                    warnings.append(
+                        "白模提示：替身带四肢或翅膀，但正文没有分段动作序列（如0-5秒…），渲染后四肢容易僵化。"
+                    )
+            camera_words = list(dict.fromkeys(_CAMERA_LANGUAGE.findall(request.goal)))
+            if camera_words:
+                warnings.append(
+                    f"白模提示：正文出现运镜词「{'、'.join(camera_words)}」，会与白模运镜形成两套竞争指令；"
+                    f"已声明{ref}为唯一镜头与调度参考，建议删除这些词。"
+                )
 
         if request.dialogue:
             parts.extend(["", "【对白账本】", *self._dialogue_lines(request)])
@@ -245,7 +326,7 @@ class Sd25PromptCompiler:
             mode = "generation_reference"
         else:
             mode = "generation_text"
-        return "\n".join(parts), mode
+        return "\n".join(parts), mode, warnings
 
     def _compile_edit(
         self,
@@ -272,6 +353,7 @@ class Sd25PromptCompiler:
             f"{source}是唯一编辑母版，负责原始场景、机位、镜头运动、动作轨迹、遮挡关系、口型时点、声音状态和事件顺序。",
             "", "【目标素材职责】",
             *(self._asset_line(asset) for asset in used if asset.ref != source),
+            *self._missing_asset_lines(request, exclude_refs={source}),
             "", "【编辑对象与范围】",
             request.goal.strip(),
             *scope_lines,
@@ -306,7 +388,11 @@ class Sd25PromptCompiler:
         direction = "向前" if before else "向后"
         boundary = "首帧" if before else "尾帧"
         target = "最后一个画面" if before else "第一个画面"
-        parts = [*(self._asset_line(asset) for asset in used if asset.ref != source_ref), ""]
+        parts = [
+            *(self._asset_line(asset) for asset in used if asset.ref != source_ref),
+            *self._missing_asset_lines(request, exclude_refs={source_ref}),
+            "",
+        ]
         parts.extend([
             f"{source}是需要{direction}延长的原视频。",
             f"{direction}延长{source}。延长片段的{target}自然衔接{source}的{boundary}，保持主体姿态与朝向、道具位置、背景与空间关系、机位与构图、光线、声音状态和运动趋势连续。",

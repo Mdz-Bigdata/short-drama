@@ -265,7 +265,25 @@ class Sd25PromptCompilerTests(unittest.TestCase):
                 ],
             )
 
-    def test_ordered_keyframes_locked_parameters_and_missing_asset_advice(self):
+    def test_inaccessible_source_video_binding_is_preserved_without_claiming_observations(self):
+        request = Sd25CompileRequest(
+            goal="只移除背景音乐。",
+            task="edit",
+            edit_scope="audio",
+            source_video_ref="@视频1",
+            missing_assets=[
+                Sd25MissingAsset(ref="@视频1", intended_role="用户指定的唯一编辑母版")
+            ],
+        )
+
+        result = self.compiler.compile(request)
+
+        self.assertEqual(result.mode, "edit")
+        self.assertIn("@视频1是唯一编辑母版", result.prompt)
+        self.assertNotIn("无法读取", result.prompt)
+        self.assertNotIn("删除这些引用", result.prompt)
+
+    def test_ordered_keyframes_locked_parameters_and_missing_asset_reference_fidelity(self):
         request = Sd25CompileRequest(
             goal="从门边走到窗边，中途拿起信封。",
             first_frame_ref="@图片1",
@@ -287,11 +305,12 @@ class Sd25PromptCompilerTests(unittest.TestCase):
 
         self.assertEqual(result.mode, "generation_keyframes")
         self.assertIn("以@图片1、@图片2、@图片3的顺序作为关键帧", result.prompt)
-        self.assertNotIn("@音频1", result.prompt)
+        self.assertIn("@音频1", result.prompt)
+        self.assertIn("@音频1用于林夏的参考音色", result.prompt)
         self.assertNotIn("aspect_ratio", result.parameters)
         self.assertEqual(result.parameters["duration_seconds"], 8)
         self.assertTrue(any(message.startswith("参数提示：") for message in result.warnings))
-        self.assertTrue(any(message.startswith("补充建议：") for message in result.warnings))
+        self.assertFalse(any(message.startswith("补充建议：") for message in result.warnings))
 
     def test_edit_can_explicitly_delete_all_unspecified_subjects(self):
         request = Sd25CompileRequest(
@@ -314,6 +333,115 @@ class Sd25PromptCompilerTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             Sd25CompileRequest(goal="生成一段视频", parameters={"api_key": "must-not-pass"})
 
+    def test_fine_blockout_rerenders_and_flags_residual_camera_language(self):
+        request = Sd25CompileRequest(
+            goal="镜头右摇后推近，把灰模雕塑重渲染为黄铜与蓝色玻璃。",
+            blockout_ref="@视频1",
+            blockout_granularity="fine",
+            assets=[
+                Sd25Asset(
+                    ref="@视频1", media_type="video", role="action", subject="细粒度白模",
+                    observations="环形装置三层圆环转动、环绕运镜", duration_seconds=8, required=True,
+                ),
+                Sd25Asset(
+                    ref="@图片1", media_type="image", role="scene", subject="展厅俯视布局",
+                    observations="展台排列与通道宽度", required=True, overhead_view=True,
+                ),
+            ],
+        )
+        result = self.compiler.compile(request)
+
+        self.assertEqual(result.mode, "generation_blockout_fine")
+        self.assertIn("将@视频1中的主体重渲染为输入声明的最终主体", result.prompt)
+        self.assertIn("@视频1是唯一镜头、机位、景别与调度参考", result.prompt)
+        self.assertIn("该图为高位俯拍，只补充空间结构与布局", result.prompt)
+        camera_warning = next(message for message in result.warnings if message.startswith("白模提示：正文出现运镜词"))
+        self.assertIn("右摇", camera_warning)
+        self.assertIn("推近", camera_warning)
+
+    def test_blockout_with_staged_keyframes_maps_integer_second_stages(self):
+        assets = [
+            Sd25Asset(
+                ref="@视频1", media_type="video", role="camera", subject="粗粒度白模",
+                observations="女孩放飞飞机、俯冲海面、抵达宇宙的镜头顺序", duration_seconds=30, required=True,
+            ),
+            *[
+                Sd25Asset(
+                    ref=f"@图片{index}", media_type="image", role="keyframe",
+                    subject=f"阶段{index}", observations=f"第{index}阶段造型与环境", required=True,
+                )
+                for index in range(1, 4)
+            ],
+        ]
+        staged = Sd25CompileRequest(
+            goal="女孩放飞玩具飞机，进入幻想天空，最后回到地毯上熟睡。",
+            blockout_ref="@视频1",
+            blockout_granularity="coarse",
+            keyframe_refs=["@图片1", "@图片2", "@图片3"],
+            keyframe_stage_ends=[3, 7, 15],
+            assets=assets,
+        )
+        result = self.compiler.compile(staged)
+
+        self.assertEqual(result.mode, "generation_blockout_coarse")
+        self.assertIn("【白模 + 阶段关键帧】", result.prompt)
+        self.assertIn("0-3秒对应@图片1；3-7秒对应@图片2；7-15秒对应@图片3", result.prompt)
+        self.assertIn("不新增镜头", result.prompt)
+        self.assertFalse(any(message.startswith("补充建议：") for message in result.warnings))
+
+        unstaged = self.compiler.compile(staged.model_copy(update={"keyframe_stage_ends": []}))
+        self.assertIn("第1阶段对应@图片1", unstaged.prompt)
+        self.assertTrue(any(message.startswith("补充建议：白模+阶段关键帧") for message in unstaged.warnings))
+
+        with self.assertRaises(ValidationError):
+            Sd25CompileRequest.model_validate(
+                staged.model_dump() | {"keyframe_stage_ends": [3, 3, 15]}
+            )
+        with self.assertRaises(ValidationError):
+            Sd25CompileRequest.model_validate(
+                staged.model_dump() | {"keyframe_stage_ends": [3, 7]}
+            )
+
+    def test_nine_grid_and_ordered_keyframes_stay_separate(self):
+        with self.assertRaises(ValidationError):
+            Sd25CompileRequest(
+                goal="x",
+                storyboard_ref="@图片1",
+                keyframe_refs=["@图片1", "@图片2"],
+                assets=[
+                    Sd25Asset(ref="@图片1", media_type="image", role="keyframe", subject="a", observations="a", required=True),
+                    Sd25Asset(ref="@图片2", media_type="image", role="keyframe", subject="b", observations="b", required=True),
+                ],
+            )
+        with self.assertRaises(ValidationError):
+            Sd25Asset(
+                ref="@视频1", media_type="video", role="camera", subject="x",
+                observations="x", duration_seconds=5, overhead_view=True,
+            )
+
+    def test_limbed_standin_requires_a_segmented_action_sequence(self):
+        assets = [
+            Sd25Asset(
+                ref="@视频1", media_type="video", role="action", subject="带四肢的灰色人偶",
+                observations="逆风艰难前行", duration_seconds=10, required=True,
+            )
+        ]
+        bare = Sd25CompileRequest(
+            goal="宇航员在废土上艰难跋涉。",
+            blockout_ref="@视频1", blockout_granularity="coarse",
+            blockout_standin_limbs=True, assets=assets,
+        )
+        result = self.compiler.compile(bare)
+        self.assertIn("白模替身带四肢或翅膀：正文必须写出完整的分段肢体动作序列", result.prompt)
+        self.assertTrue(any("四肢容易僵化" in message for message in result.warnings))
+
+        sequenced = self.compiler.compile(bare.model_copy(update={
+            "goal": "0-5秒宇航员身体深深前倾对抗逆风，步幅短促；5-10秒每一步带低重力感。",
+        }))
+        self.assertFalse(any("四肢容易僵化" in message for message in sequenced.warnings))
+
+        with self.assertRaises(ValidationError):
+            Sd25CompileRequest(goal="x", blockout_standin_limbs=True)
 
 if __name__ == "__main__":
     unittest.main()

@@ -700,6 +700,10 @@
 .writer-outline__tag.is-monologue { color: #c9a6f5; border-color: rgba(178, 132, 240, 0.45); background: rgba(178, 132, 240, 0.1); }
 .writer-outline__cue { margin-right: 4px; color: #8fa3b0; font-size: 0.72rem; }
 .writer-outline__roles { min-width: 96px; color: #c4d0d9; }
+.writer-outline-warning { margin: 0; padding: 1rem; color: var(--writer-coral-strong); background: var(--writer-surface-raised); border-bottom: 1px solid var(--writer-line); font-size: 0.8rem; line-height: 1.75; overflow-wrap: anywhere; }
+.writer-outline__gap td { background: var(--writer-surface-raised); border-left: 3px solid var(--writer-coral); }
+.writer-outline__gap strong { display: block; color: var(--writer-coral-strong); }
+.writer-outline__gap span { display: block; color: inherit; }
 
 /* ---- 分集剧本 txt 阅读弹窗 ---- */
 .writer-episode-dialog__backdrop {
@@ -915,3 +919,46 @@
 }
 .writer-outline-button.is-primary:hover { color: #040c12; border-color: transparent; filter: brightness(1.08); }
 .writer-outline-button.is-primary:disabled { filter: none; }
+
+/* ---------- 分集规划（结构化编剧） ---------- */
+.writer-section__body { padding: 22px 32px 30px; }
+.writer-screenwriting { display: flex; flex-direction: column; gap: 18px; }
+.writer-screenwriting__meta { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.writer-screenwriting__meta div { padding: 11px 14px; border: 1px solid var(--writer-line); border-radius: 6px; background: #05090e; }
+.writer-screenwriting__meta dt { color: #6e8194; font-size: 0.66rem; letter-spacing: 0.06em; }
+.writer-screenwriting__meta dd { margin: 5px 0 0; font-size: 0.86rem; font-weight: 600; }
+.writer-screenwriting__stale { margin: 0; padding: 10px 14px; display: flex; align-items: center; gap: 8px; color: #ffc98a; border: 1px solid #6b4a1d; border-radius: 6px; background: #1d1408; font-size: 0.78rem; }
+.writer-screenwriting__stale svg { width: 15px; height: 15px; }
+.writer-screenwriting__ledger { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.writer-screenwriting__ledger > li { border: 1px solid var(--writer-line); border-radius: 7px; background: #05090e; overflow: hidden; }
+.writer-screenwriting__ledger > li.is-open { border-color: var(--writer-cyan); }
+.writer-screenwriting__toggle { width: 100%; min-height: 46px; padding: 0 14px; display: flex; align-items: center; gap: 10px; color: inherit; border: 0; background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.writer-screenwriting__toggle svg { width: 15px; height: 15px; color: #6e8194; flex: none; }
+.writer-screenwriting__episode { color: var(--writer-coral-strong); font: 700 0.68rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.writer-screenwriting__count { margin-left: auto; color: #7e90a2; font-size: 0.72rem; }
+.writer-screenwriting__flag { display: inline-flex; align-items: center; gap: 5px; color: #ffc98a; font-size: 0.72rem; }
+.writer-screenwriting__flag svg { width: 13px; height: 13px; color: inherit; }
+.writer-screenwriting__outline { padding: 0 14px 12px 39px; display: flex; flex-direction: column; gap: 6px; color: #93a5b7; font-size: 0.78rem; }
+.writer-screenwriting__outline p { margin: 0; }
+.writer-screenwriting__outline p span { margin-right: 8px; color: var(--writer-cyan); font-size: 0.68rem; }
+.writer-screenwriting__outline ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.writer-screenwriting__plan { padding: 14px; border-top: 1px solid var(--writer-line); background: #060b11; }
+.writer-screenwriting__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.writer-screenwriting__actions button { min-height: 30px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; color: #93a5b7; border: 1px solid var(--writer-line); border-radius: 5px; background: #05090e; font: inherit; font-size: 0.73rem; cursor: pointer; }
+.writer-screenwriting__actions button svg { width: 13px; height: 13px; }
+.writer-screenwriting__actions button.is-primary { color: #071015; border-color: var(--writer-cyan); background: var(--writer-cyan); font-weight: 700; }
+.writer-screenwriting__actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+.writer-screenwriting__notice { margin: 0 0 10px; color: var(--writer-cyan); font-size: 0.76rem; }
+.writer-screenwriting__prompt { max-height: 320px; margin: 0 0 12px; padding: 12px; overflow: auto; color: #93a5b7; border: 1px solid var(--writer-line); border-radius: 6px; background: #05090e; font: 0.72rem/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+.writer-screenwriting__table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+.writer-screenwriting__table th { padding: 8px; color: #6e8194; text-align: left; font-weight: 600; border-bottom: 1px solid var(--writer-line); }
+.writer-screenwriting__table td { padding: 9px 8px; vertical-align: top; border-bottom: 1px solid var(--writer-line); }
+.writer-screenwriting__table tr.is-flagged { background: #1d1408; }
+.writer-screenwriting__table code { color: var(--writer-coral-strong); font-size: 0.72rem; }
+.writer-screenwriting__table small { display: block; margin-top: 3px; color: #6e8194; font-size: 0.7rem; }
+.writer-screenwriting__table input { width: 62px; padding: 5px 7px; color: inherit; border: 1px solid var(--writer-line); border-radius: 4px; background: #05090e; font: inherit; }
+.writer-screenwriting__table textarea { width: 100%; min-width: 200px; padding: 6px 8px; color: inherit; border: 1px solid var(--writer-line); border-radius: 4px; background: #05090e; font: inherit; resize: vertical; }
+.writer-screenwriting__table p { margin: 0 0 5px; }
+.writer-screenwriting__table b { margin-right: 6px; color: var(--writer-cyan); font-weight: 600; }
+.writer-screenwriting__break { display: block; margin-top: 4px; color: #7e90a2; font-size: 0.68rem; }
+.writer-screenwriting__violation { color: #ffc98a; font-size: 0.72rem; }

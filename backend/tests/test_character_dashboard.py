@@ -431,6 +431,7 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
             task_id = created["task_id"]
             task = service.repo.get_task(task_id)
             task["assets"]["2"] = "群像人物依次进入主线。"
+            task["assets"]["1"] = "已确认的群像总导演方案"
             service.repo.save_task(task_id, task)
             names = ["沈砚", "谢云谣", "贺兰霆", "太后萧氏", "萧景言", "裴九川", "秋嬷嬷"]
             dna = {
@@ -465,7 +466,10 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
             ):
                 result = service._execute_stage_blocking(task_id, 3)
 
-            self.assertEqual(generated_names, names)
+            # 七名角色各出一次图；出图并发，所以只约束「每人一次、一个不落」，
+            # 而演员表的顺序仍然严格是剧本里的角色顺序。
+            self.assertEqual(sorted(generated_names), sorted(names))
+            self.assertEqual(len(generated_names), len(names))
             self.assertEqual(
                 [item["name"] for item in result["assets"]["3_characters"]],
                 names,
@@ -488,6 +492,7 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
             task_id = created["task_id"]
             task = service.repo.get_task(task_id)
             task["assets"]["2"] = "沈知微与陆行远在渡口追查线索。"
+            task["assets"]["1"] = "已确认的总导演方案"
             service.repo.save_task(task_id, task)
             names = ["沈知微", "陆行远", "周教授"]
             dna = {
@@ -526,7 +531,10 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
             ):
                 result = service._execute_stage_blocking(task_id, 3)
 
-            self.assertEqual(call_order, ["沈知微", "陆行远", "陆行远", "周教授"])
+            # 「陆行远」重试一次，另外两人各一次；重试不拖住其余角色，
+            # 出图并发后连先后都不再取决于它。
+            self.assertEqual(attempts, {"沈知微": 1, "陆行远": 2, "周教授": 1})
+            self.assertEqual(len(call_order), 4)
             self.assertEqual(
                 [item["name"] for item in result["assets"]["3_characters"]],
                 names,
@@ -545,6 +553,7 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
             task_id = created["task_id"]
             task = service.repo.get_task(task_id)
             task["assets"]["2"] = "旧项目剧本已完成。"
+            task["assets"]["1"] = "旧项目总导演方案已确认"
             service.repo.save_task(task_id, task)
             names = ["沈砚", "谢云谣", "贺兰霆"]
             dna = {
@@ -604,6 +613,120 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
             )
             self.assertEqual(result["assets"]["3_character_dashboard"]["stats"]["readyCount"], 3)
 
+    def test_stage_three_renders_independent_characters_at_the_same_time(self):
+        """五视图各自独立，排队出图只是在等墙钟；顺序仍按剧本角色表。"""
+        import threading
+        import time
+
+        with tempfile.TemporaryDirectory() as temp, patch.dict(
+            os.environ, {"MAX_CHARACTER_SHEETS": "20"}, clear=False,
+        ):
+            service = DramaService()
+            service.repo = TaskRepository(str(Path(temp) / "tasks.json"))
+            created = service.create_task(DramaCreateRequest(
+                title_suggestion="群像", llm_model="test-llm", image_model="test-image",
+            ))
+            task_id = created["task_id"]
+            task = service.repo.get_task(task_id)
+            task["assets"]["1"] = "群像方案"
+            task["assets"]["2"] = "群像剧本。"
+            service.repo.save_task(task_id, task)
+            names = ["沈砚", "谢云谣", "贺兰霆", "太后萧氏", "萧景言", "裴九川"]
+            dna = {"characters": [
+                {"name": name, "role": "剧情角色", "identity": f"{name}身份"} for name in names
+            ]}
+            quality = FiveViewQualityReport(
+                passed=True, entropy=[6.0] * 5, palette_similarity=0.9,
+                unique_view_hashes=5, issues=[],
+            )
+            view_paths = [Path(temp) / f"{view}.png" for view in FIVE_VIEW_ORDER]
+            lock = threading.Lock()
+            live = {"now": 0, "peak": 0}
+
+            def generate_sheet(model, name, *args, **kwargs):
+                with lock:
+                    live["now"] += 1
+                    live["peak"] = max(live["peak"], live["now"])
+                try:
+                    time.sleep(0.02)
+                    return f"https://cdn.example/{name}/sheet.png"
+                finally:
+                    with lock:
+                        live["now"] -= 1
+
+            with (
+                patch.object(service, "read_md_file", return_value="guide"),
+                patch.object(service.gateway, "call_llm", return_value="角色锁定包"),
+                patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
+                patch.object(service.gateway, "resolve_authorized_face", return_value=None),
+                patch.object(service.gateway, "generate_character_sheet", side_effect=generate_sheet),
+                patch("app.service.drama_service.split_five_view_sheet", return_value=view_paths),
+                patch("app.service.drama_service.validate_five_view_images", return_value=quality),
+                patch.object(service, "run_real_consistency_check", return_value="PASS"),
+            ):
+                result = service._execute_stage_blocking(task_id, 3)
+
+            self.assertGreater(live["peak"], 1)
+            self.assertEqual([item["name"] for item in result["assets"]["3_characters"]], names)
+
+    def test_character_sheet_concurrency_one_restores_a_serial_run(self):
+        import threading
+        import time
+
+        with tempfile.TemporaryDirectory() as temp, patch.dict(
+            os.environ, {"CHARACTER_SHEET_CONCURRENCY": "1", "MAX_CHARACTER_SHEETS": "20"}, clear=False,
+        ):
+            service = DramaService()
+            service.repo = TaskRepository(str(Path(temp) / "tasks.json"))
+            created = service.create_task(DramaCreateRequest(
+                title_suggestion="群像", llm_model="test-llm", image_model="test-image",
+            ))
+            task_id = created["task_id"]
+            task = service.repo.get_task(task_id)
+            task["assets"]["1"] = "群像方案"
+            task["assets"]["2"] = "群像剧本。"
+            service.repo.save_task(task_id, task)
+            names = ["沈砚", "谢云谣", "贺兰霆", "太后萧氏"]
+            dna = {"characters": [
+                {"name": name, "role": "剧情角色", "identity": f"{name}身份"} for name in names
+            ]}
+            quality = FiveViewQualityReport(
+                passed=True, entropy=[6.0] * 5, palette_similarity=0.9,
+                unique_view_hashes=5, issues=[],
+            )
+            view_paths = [Path(temp) / f"{view}.png" for view in FIVE_VIEW_ORDER]
+            lock = threading.Lock()
+            live = {"now": 0, "peak": 0}
+            order: list[str] = []
+
+            def generate_sheet(model, name, *args, **kwargs):
+                with lock:
+                    live["now"] += 1
+                    live["peak"] = max(live["peak"], live["now"])
+                    order.append(name)
+                try:
+                    time.sleep(0.01)
+                    return f"https://cdn.example/{name}/sheet.png"
+                finally:
+                    with lock:
+                        live["now"] -= 1
+
+            with (
+                patch.object(service, "read_md_file", return_value="guide"),
+                patch.object(service.gateway, "call_llm", return_value="角色锁定包"),
+                patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
+                patch.object(service.gateway, "resolve_authorized_face", return_value=None),
+                patch.object(service.gateway, "generate_character_sheet", side_effect=generate_sheet),
+                patch("app.service.drama_service.split_five_view_sheet", return_value=view_paths),
+                patch("app.service.drama_service.validate_five_view_images", return_value=quality),
+                patch.object(service, "run_real_consistency_check", return_value="PASS"),
+            ):
+                result = service._execute_stage_blocking(task_id, 3)
+
+            self.assertEqual(live["peak"], 1)
+            self.assertEqual(order, names)
+            self.assertEqual([item["name"] for item in result["assets"]["3_characters"]], names)
+
     def test_stage_three_persists_completed_and_failed_characters_before_raising(self):
         for failure_mode in ("generation", "quality"):
             with (
@@ -645,17 +768,24 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                     unique_view_hashes=5,
                     issues=[{"code": "palette_drift", "message": "服装调色漂移。"}],
                 )
-                view_paths = [Path(temp) / f"{view}.png" for view in FIVE_VIEW_ORDER]
-
                 def generate_sheet(model, name, *args, **kwargs):
                     if failure_mode == "generation" and name == "陆行远":
                         raise RuntimeError("图生服务失败")
                     return f"https://cdn.example/{name}/sheet.png"
 
-                quality_results = [passed_quality]
-                if failure_mode == "quality":
-                    quality_results.append(failed_quality)
-                quality_results.append(passed_quality)
+                # 出图是并发的，第几次调用不再等于第几名角色；按角色定检查结果，
+                # 「陆行远」不合格这件事才是这个用例真正要钉住的。
+                def split_sheet(sheet_url, view_dir):
+                    character = str(sheet_url).split("/")[-2]
+                    return [Path(temp) / character / f"{view}.png" for view in FIVE_VIEW_ORDER]
+
+                def validate_views(paths):
+                    character = Path(paths[0]).parent.name
+                    return (
+                        failed_quality
+                        if failure_mode == "quality" and character == "陆行远"
+                        else passed_quality
+                    )
 
                 with (
                     patch.object(service, "read_md_file", return_value="guide"),
@@ -663,8 +793,8 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                     patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
                     patch.object(service.gateway, "resolve_authorized_face", return_value=None),
                     patch.object(service.gateway, "generate_character_sheet", side_effect=generate_sheet),
-                    patch("app.service.drama_service.split_five_view_sheet", return_value=view_paths),
-                    patch("app.service.drama_service.validate_five_view_images", side_effect=quality_results),
+                    patch("app.service.drama_service.split_five_view_sheet", side_effect=split_sheet),
+                    patch("app.service.drama_service.validate_five_view_images", side_effect=validate_views),
                     patch.object(service, "run_real_consistency_check", return_value="PASS"),
                 ):
                     with self.assertRaises(RuntimeError):

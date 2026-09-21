@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.auth_api import get_current_user, require_admin
 from app.core.model_configuration import (
+    DOCUMENTED_VIDEO_CATALOG_PROVIDERS,
     ModelDiscoveryClient,
     ModelSecretCipher,
     provider_label,
@@ -125,6 +126,10 @@ async def _discover(
     allow_invalid_key_fallback: bool = True,
 ):
     key = await _resolve_key(request, store, cipher)
+    # Documented-catalog video providers have no enumeration endpoint to verify against.
+    allow_catalog_fallback = allow_catalog_fallback or (
+        request.category == "video" and request.provider in DOCUMENTED_VIDEO_CATALOG_PROVIDERS
+    )
     result = await discovery.discover(
         category=request.category,
         provider=request.provider,
@@ -199,7 +204,12 @@ async def test_model_connection(
             raise ValueError("所选模型已不在供应商返回的动态列表中")
         return {
             "connected": True,
-            "message": f"连接成功，已验证 {len(request.selected_model_ids)} 个模型",
+            "message": (
+                f"连接成功，已验证 {len(request.selected_model_ids)} 个模型"
+                if result.credential_verified
+                else f"已加载 {len(request.selected_model_ids)} 个官方目录模型；该供应商不提供模型枚举接口，凭据将在首次生成时验证"
+            ),
+            "credential_verified": result.credential_verified,
             "selected_model_ids": request.selected_model_ids,
             "source_endpoint": result.source_endpoint,
         }

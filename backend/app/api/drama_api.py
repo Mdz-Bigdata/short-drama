@@ -7,6 +7,15 @@ from urllib.parse import quote, unquote, urlparse
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Form, File, UploadFile, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from typing import List, Dict, Any, Optional
+from app.schema.shot_visual import (
+    ShotCandidateSelection,
+    ShotRecipeRequest,
+    ShotVisualSettings,
+    ShotVisualWorkspaceResponse,
+)
+from app.core.production_asset_readiness import READINESS_KEY, evaluate_asset_readiness
+from app.core.project_asset_completion import project_element_summaries
+from app.core.element_scope import element_in_task, element_name_keys, link_task, normalized_asset_name
 from app.schema.drama import (
     DramaCreateRequest,
     DramaTaskResponse,
@@ -37,6 +46,27 @@ from app.schema.writer_dashboard import (
     WriterRelationshipUpdateRequest,
 )
 from app.schema.character_dashboard import CharacterDashboardResponse
+from app.schema.screenwriting import (
+    ScreenwritingEpisodeResponse,
+    ScreenwritingPlanPatchRequest,
+    ScreenwritingPromptPreviewResponse,
+    ScreenwritingStateResponse,
+)
+from app.core.screenwriting.editing import PlanEditError
+from app.core.screenwriting.engine import PROMPT_STAGES, PlanRejected, ScreenwritingError
+from app.core.spatial_stage.interchange import InterchangeError
+from app.core.spatial_stage.operations import StageEditError
+from app.schema.spatial_stage import (
+    SpatialExportResponse,
+    SpatialImportRequest,
+    SpatialOverviewResponse,
+    SpatialPlanPatchRequest,
+    SpatialPlanResponse,
+    SpatialRevisionRequest,
+)
+from app.schema.director_desk import DeskCapture, DeskCapturesResponse, DeskPosesResponse, DeskSavePoseRequest
+from app.service.director_desk_service import MAX_CLIP_BYTES, CaptureError, CaptureUpload
+from app.service.spatial_stage_service import StageConflict
 
 logger = logging.getLogger("app.api.drama_api")
 service = DramaService()
@@ -214,27 +244,79 @@ async def _attach_extracted_image(
         return False
 
 
+def _has_image(element) -> bool:
+    return any(str(file.mime_type or "").startswith("image/") for file in (element.files or []))
+
+
+def _actor_metadata_patch(kind: str, candidate: Dict[str, Any], metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Approved five-view data a library actor does not hold yet."""
+    if kind != "actor" or not candidate.get("quality_passed"):
+        return {}
+    views = [item for item in (candidate.get("views") or []) if isinstance(item, dict)]
+    if len({item.get("view") for item in views}) < 5 or metadata.get("views") == views:
+        return {}
+    patch: Dict[str, Any] = {"views": views, "five_view_passed": True}
+    if candidate.get("sheet_url"):
+        patch["sheet_url"] = candidate["sheet_url"]
+    if candidate.get("role"):
+        patch["role"] = candidate["role"]
+    return patch
+
+
 async def _import_production_asset_candidates(
     *,
     task_id: str,
     kind: str,
-    candidates: List[Dict[str, str]],
+    candidates: List[Dict[str, Any]],
     owner_id: str,
     store: PlatformStore,
 ) -> Dict[str, Any]:
-    """Idempotently file one extracted asset category into the element library."""
-    if not candidates:
-        return {"kind": kind, "created": 0, "skipped": 0, "with_image": 0, "items": []}
+    """Idempotently file one extracted asset category into the element library.
 
-    existing, _ = await store.list_elements(owner_id, kind, 1, 100)
-    known = {str(item.name).strip() for item in existing}
+    A same-name asset that another project already produced is linked to this
+    project (reused) rather than created again; only genuinely new names are
+    created and, later, generated from the screenplay.
+    """
+    if not candidates:
+        return {"kind": kind, "created": 0, "reused": 0, "skipped": 0, "with_image": 0, "items": [], "reused_items": []}
+
+    by_name: Dict[str, Any] = {}
+    for item in await store.list_all_elements(owner_id, kind):
+        for key in element_name_keys(item.name, item.metadata_json):
+            by_name.setdefault(key, item)
     created: List[Dict[str, Any]] = []
+    reused: List[Dict[str, Any]] = []
     skipped = 0
     with_image = 0
     for candidate in candidates:
         name = str(candidate.get("name") or "").strip()
-        if not name or name in known:
+        if not name:
             skipped += 1
+            continue
+        image_url = str(candidate.get("image_url") or "").strip()
+        match = by_name.get(normalized_asset_name(name))
+        if match is not None:
+            metadata = match.metadata_json if isinstance(match.metadata_json, dict) else {}
+            patch = _actor_metadata_patch(kind, candidate, metadata)
+            already_linked = element_in_task(metadata, task_id)
+            if already_linked and not patch and (_has_image(match) or not image_url):
+                skipped += 1
+                continue
+            if not already_linked:
+                match = await store.link_element_to_task(match.id, owner_id, task_id)
+            if patch:
+                match = await store.merge_element_metadata(match.id, owner_id, patch)
+            attached = _has_image(match)
+            if not attached and image_url:
+                attached = await _attach_extracted_image(
+                    element_id=match.id, owner_id=owner_id, kind=kind, url=image_url, store=store,
+                )
+            if already_linked:
+                skipped += 1
+            else:
+                if attached:
+                    with_image += 1
+                reused.append({"id": match.id, "name": match.name, "image": attached})
             continue
         try:
             element = await store.create_element(
@@ -242,16 +324,19 @@ async def _import_production_asset_candidates(
                 kind=kind,
                 name=name,
                 description=str(candidate.get("description") or ""),
-                metadata={"source": "screenplay-extraction", "task_id": task_id},
+                metadata={
+                    "source": "screenplay-extraction",
+                    **link_task({}, task_id),
+                    **_actor_metadata_patch(kind, candidate, {}),
+                },
             )
         except ValueError as exc:
             # Quota exhaustion stops this category; assets already created stay.
             if created:
                 break
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        known.add(name)
+        by_name[normalized_asset_name(name)] = element
         attached = False
-        image_url = str(candidate.get("image_url") or "").strip()
         if image_url:
             attached = await _attach_extracted_image(
                 element_id=element.id,
@@ -267,9 +352,11 @@ async def _import_production_asset_candidates(
     return {
         "kind": kind,
         "created": len(created),
+        "reused": len(reused),
         "skipped": skipped,
         "with_image": with_image,
         "items": created,
+        "reused_items": reused,
     }
 
 
@@ -331,8 +418,10 @@ async def sync_production_assets(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
+    # Actors are filed too, so a finished five-view set becomes reusable by the
+    # next project instead of living only inside this task's assets.
     by_kind: Dict[str, Dict[str, Any]] = {}
-    for kind in ("scene", "prop", "costume", "effect"):
+    for kind in ("actor", "scene", "prop", "costume", "effect"):
         by_kind[kind] = await _import_production_asset_candidates(
             task_id=task_id,
             kind=kind,
@@ -343,14 +432,42 @@ async def sync_production_assets(
 
     return {
         "created": sum(result["created"] for result in by_kind.values()),
+        "reused": sum(result["reused"] for result in by_kind.values()),
         "skipped": sum(result["skipped"] for result in by_kind.values()),
         "with_image": sum(result["with_image"] for result in by_kind.values()),
         "kinds": {
-            kind: result["created"] + result["skipped"]
+            kind: result["created"] + result["reused"] + result["skipped"]
             for kind, result in by_kind.items()
         },
         "results": by_kind,
+        "readiness": await _persist_asset_readiness(task_id, task, current_user["user_id"], store),
     }
+
+
+async def _persist_asset_readiness(task_id: str, task: Dict[str, Any], owner_id: str, store: PlatformStore) -> Dict[str, Any]:
+    """Compute the five-kind readiness from the project library and record it on the task."""
+    summaries = await project_element_summaries(store, owner_id, task_id)
+    readiness = evaluate_asset_readiness(task, summaries)
+
+    def record(current: Dict[str, Any]) -> Dict[str, Any]:
+        current.setdefault("assets", {})[READINESS_KEY] = readiness
+        return current
+
+    await run_in_threadpool(service.repo.mutate_task, task_id, record)
+    return readiness
+
+
+@router.get("/{task_id}/production-assets/readiness")
+async def production_asset_readiness(
+    task_id: str,
+    current_user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """Whether every actor, scene, prop, costume and effect has a reference image."""
+    task = service.repo.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return await _persist_asset_readiness(task_id, task, current_user["user_id"], store)
 
 
 @router.get("/{task_id}/script-documents", response_model=ScriptLibraryResponse)
@@ -410,6 +527,63 @@ def delete_script_document(task_id: str, document_id: str):
     return {"deleted": True, "id": document_id}
 
 
+@router.get("/{task_id}/shots/visual", response_model=ShotVisualWorkspaceResponse)
+def get_shot_visual_workspace(task_id: str):
+    """Stage-5 shot workspace: camera motion, shot type, duration, media and prompts per shot."""
+    workspace = service.get_shot_visual_workspace(task_id)
+    if not workspace:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return workspace
+
+
+@router.put("/{task_id}/shots/{shot_id}/visual", response_model=ShotVisualWorkspaceResponse)
+def update_shot_visual(task_id: str, shot_id: int, req: ShotVisualSettings):
+    """Persist one shot's camera settings; the workflow stays at its current stage."""
+    try:
+        workspace = service.update_shot_visual(task_id, shot_id, req)
+    except ValueError as exc:
+        raise HTTPException(status_code=409 if "正在执行" in str(exc) else 422, detail=str(exc)) from exc
+    if not workspace:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return workspace
+
+
+@router.post("/{task_id}/shots/seeds/assign", response_model=ShotVisualWorkspaceResponse)
+def assign_shot_seeds(task_id: str):
+    """Fixed per-shot seeds, neighbouring within each scene; clips are marked stale."""
+    try:
+        workspace = service.assign_shot_seeds(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409 if "正在执行" in str(exc) else 422, detail=str(exc)) from exc
+    if not workspace:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return workspace
+
+
+@router.put("/{task_id}/shots/{shot_id}/visual/select", response_model=ShotVisualWorkspaceResponse)
+def select_shot_candidate(task_id: str, shot_id: int, req: ShotCandidateSelection):
+    """Choose one of the rendered candidates as the shot's clip."""
+    try:
+        workspace = service.select_shot_candidate(task_id, shot_id, req.video_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not workspace:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return workspace
+
+
+@router.post("/{task_id}/shots/{shot_id}/visual/recipe")
+def compose_shot_recipe(task_id: str, shot_id: int, req: ShotRecipeRequest):
+    """Compose a camera-move recipe for one shot; nothing is persisted until the user saves."""
+    try:
+        recipe = service.compose_shot_recipe(task_id, shot_id, req.category, req.intensity)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not recipe:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return recipe
+
+
 @router.put("/{task_id}/relationships", response_model=WriterDashboardResponse)
 def update_writer_relationships(task_id: str, req: WriterRelationshipUpdateRequest):
     """Replace the character relationship list with a user-edited version."""
@@ -437,6 +611,224 @@ def continue_writer_script(task_id: str):
     if not dashboard:
         raise HTTPException(status_code=404, detail="任务不存在")
     return dashboard
+
+
+@router.get("/{task_id}/screenwriting", response_model=ScreenwritingStateResponse)
+def get_screenwriting_state(task_id: str):
+    """Episode ledger, asset inventory, duration constraints and per-episode status."""
+    state = service.get_screenwriting_state(task_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return state
+
+
+@router.get("/{task_id}/screenwriting/episodes/{episode}", response_model=ScreenwritingEpisodeResponse)
+def get_screenwriting_episode(task_id: str, episode: int):
+    """One episode's editable shot plan plus its authored visual layer."""
+    try:
+        payload = service.get_screenwriting_episode(task_id, episode)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    if not payload:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return payload
+
+
+@router.get("/{task_id}/screenwriting/episodes/{episode}/prompt", response_model=ScreenwritingPromptPreviewResponse)
+def preview_screenwriting_prompt(task_id: str, episode: int, stage: str = "plan"):
+    """The exact prompt the Writer would send for this episode; no model call, no cost."""
+    if stage not in PROMPT_STAGES:
+        raise HTTPException(status_code=422, detail="stage 只能是 plan、prose 或 visual")
+    try:
+        prompt = service.preview_screenwriting_prompt(task_id, episode, stage)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except (ScreenwritingError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    if prompt is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return ScreenwritingPromptPreviewResponse(task_id=task_id, episode=episode, stage=stage, prompt=prompt)
+
+
+@router.patch("/{task_id}/screenwriting/episodes/{episode}/plan", response_model=ScreenwritingEpisodeResponse)
+def patch_screenwriting_plan(
+    task_id: str,
+    episode: int,
+    req: ScreenwritingPlanPatchRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Apply ordered edits to a shot plan and re-author only the shots whose content changed."""
+    try:
+        payload = service.patch_screenwriting_plan(
+            task_id,
+            episode,
+            base_revision=req.base_revision,
+            operations=req.operations,
+            confirm_invalidate=req.confirm_invalidate,
+            owner_user_id=str(current_user.get("user_id") or ""),
+            is_admin=current_user.get("role") == "admin",
+        )
+    except PlanEditError as error:
+        where = []
+        if error.operation_index is not None:
+            where.append(f"第 {error.operation_index + 1} 个操作")
+        if error.scene_id:
+            where.append(f"分镜 {error.scene_id}")
+        suffix = f"（{'，'.join(where)}）" if where else ""
+        raise HTTPException(status_code=422, detail=f"{error}{suffix}")
+    except PlanRejected as error:
+        raise HTTPException(status_code=409, detail=f"分镜规划未通过内容校验：\n{error}")
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except (ScriptUpdateConflictError, ScreenwritingError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    except Exception:
+        logger.exception("[Writer] 分镜规划编辑失败 task_id=%s episode=%s", task_id, episode)
+        raise HTTPException(status_code=502, detail="分镜规划编辑服务暂不可用，请稍后重试")
+    if not payload:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return payload
+
+
+@router.get("/{task_id}/spatial", response_model=SpatialOverviewResponse)
+def get_spatial_overview(task_id: str):
+    """Every scene's spatial stage at a glance, plus the cross-scene side and location memories."""
+    overview = service.get_spatial_overview(task_id)
+    if not overview:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return overview
+
+
+def _spatial_call(task_id: str, scene_id: str, call):
+    try:
+        payload = call()
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except StageConflict as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    except (StageEditError, InterchangeError, CaptureError) as error:
+        raise HTTPException(status_code=422, detail=str(error))
+    except Exception:
+        logger.exception("[Spatial] 空间调度操作失败 task_id=%s scene_id=%s", task_id, scene_id)
+        raise HTTPException(status_code=502, detail="空间调度服务暂不可用，请稍后重试")
+    if not payload:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return payload
+
+
+@router.get("/{task_id}/spatial/scenes/{scene_id}", response_model=SpatialPlanResponse)
+def get_spatial_plan(task_id: str, scene_id: str):
+    """One scene's stage: marks, set pieces, axis, one solved camera per shot, and the checks."""
+    return _spatial_call(task_id, scene_id, lambda: service.get_spatial_plan(task_id, scene_id))
+
+
+@router.patch("/{task_id}/spatial/scenes/{scene_id}", response_model=SpatialPlanResponse)
+def patch_spatial_plan(task_id: str, scene_id: str, req: SpatialPlanPatchRequest):
+    """Apply ordered semantic edits (place relative, face pair, formations, axis, cameras, per-shot moves)."""
+    return _spatial_call(task_id, scene_id, lambda: service.patch_spatial_plan(
+        task_id, scene_id, base_revision=req.base_revision, operations=req.operations, solve=req.solve,
+    ))
+
+
+@router.post("/{task_id}/spatial/scenes/{scene_id}/rebuild", response_model=SpatialPlanResponse)
+def rebuild_spatial_plan(task_id: str, scene_id: str, req: SpatialRevisionRequest):
+    """Discard edits and plan the scene again from the script and the storyboard table."""
+    return _spatial_call(task_id, scene_id, lambda: service.rebuild_spatial_plan(
+        task_id, scene_id, base_revision=req.base_revision,
+    ))
+
+
+@router.post("/{task_id}/spatial/scenes/{scene_id}/redraw", response_model=SpatialPlanResponse)
+def redraw_spatial_scene(task_id: str, scene_id: str):
+    """Send a finished scene back to stage 4 so its panels are drawn from the current blocking."""
+    return _spatial_call(task_id, scene_id, lambda: service.redraw_spatial_scene(task_id, scene_id))
+
+
+@router.get("/{task_id}/spatial/scenes/{scene_id}/export", response_model=SpatialExportResponse)
+def export_spatial_plan(task_id: str, scene_id: str, format: str = "director-desk"):
+    """The stage as a 3D director-desk project or a CoStage document."""
+    if format not in {"director-desk", "costage"}:
+        raise HTTPException(status_code=422, detail="format 只能是 director-desk 或 costage")
+    return _spatial_call(task_id, scene_id, lambda: service.export_spatial_plan(task_id, scene_id, format))
+
+
+@router.post("/{task_id}/spatial/scenes/{scene_id}/import", response_model=SpatialPlanResponse)
+def import_spatial_plan(task_id: str, scene_id: str, req: SpatialImportRequest):
+    """Bring back positions, facings and camera poses edited in a 3D director desk (matched by name / camera id)."""
+    return _spatial_call(task_id, scene_id, lambda: service.import_spatial_plan(
+        task_id, scene_id, base_revision=req.base_revision, document=req.document,
+    ))
+
+
+@router.get("/{task_id}/director-desk/scenes/{scene_id}/captures", response_model=DeskCapturesResponse)
+def list_desk_captures(task_id: str, scene_id: str):
+    """The stills and blockout clips taken of one scene's stage, and which of them each shot uses."""
+    return _spatial_call(task_id, scene_id, lambda: service.get_desk_captures(task_id, scene_id))
+
+
+@router.post("/{task_id}/director-desk/scenes/{scene_id}/captures", response_model=DeskCapture)
+async def upload_desk_capture(
+    task_id: str,
+    scene_id: str,
+    file: UploadFile = File(..., description="静帧（PNG / JPEG / WebP ≤ 10 MB）或白模视频（MP4 / WebM ≤ 60 MB，≤ 30 秒）"),
+    shot_id: int = Form(...),
+    kind: str = Form(...),
+    camera_id: str = Form(""),
+    plan_revision: int = Form(0),
+    shows_limbs: bool = Form(False),
+    monochrome: bool = Form(False),
+    labelled: bool = Form(False),
+    width: int = Form(0),
+    height: int = Form(0),
+    duration_s: float = Form(0.0),
+    fps: int = Form(0),
+):
+    """Store one capture under the task. The file's own bytes decide what it is, never the declared type."""
+    # One byte past the largest thing we accept: enough to know it is too big without holding all of it.
+    content = await file.read(MAX_CLIP_BYTES + 1)
+    upload = CaptureUpload(
+        content=content, kind=kind, shot_id=shot_id, camera_id=camera_id, plan_revision=plan_revision,
+        shows_limbs=shows_limbs, monochrome=monochrome, labelled=labelled, width=width, height=height,
+        duration_s=duration_s, fps=fps,
+    )
+    return await run_in_threadpool(
+        _spatial_call, task_id, scene_id, lambda: service.add_desk_capture(task_id, scene_id, upload),
+    )
+
+
+@router.delete("/{task_id}/director-desk/scenes/{scene_id}/captures/{capture_id}", response_model=DeskCapturesResponse)
+def delete_desk_capture(task_id: str, scene_id: str, capture_id: str):
+    """Delete a capture; one a shot was using is taken out of that shot first."""
+    return _spatial_call(task_id, scene_id, lambda: service.delete_desk_capture(task_id, scene_id, capture_id))
+
+
+@router.post("/{task_id}/director-desk/scenes/{scene_id}/captures/{capture_id}/apply", response_model=DeskCapturesResponse)
+def apply_desk_capture(task_id: str, scene_id: str, capture_id: str):
+    """Hand a capture to stage 5: a still leads the shot's sequence_images, a clip leads its reference_videos."""
+    return _spatial_call(task_id, scene_id, lambda: service.apply_desk_capture(task_id, scene_id, capture_id))
+
+
+# DELETE …/apply is the same request spelled the REST way; the desk client uses it.
+@router.delete("/{task_id}/director-desk/scenes/{scene_id}/captures/{capture_id}/apply", response_model=DeskCapturesResponse)
+@router.post("/{task_id}/director-desk/scenes/{scene_id}/captures/{capture_id}/unapply", response_model=DeskCapturesResponse)
+def unapply_desk_capture(task_id: str, scene_id: str, capture_id: str):
+    return _spatial_call(task_id, scene_id, lambda: service.apply_desk_capture(task_id, scene_id, capture_id, applied=False))
+
+
+@router.get("/{task_id}/director-desk/poses", response_model=DeskPosesResponse)
+def list_desk_poses(task_id: str):
+    return _spatial_call(task_id, "", lambda: service.get_desk_poses(task_id))
+
+
+@router.post("/{task_id}/director-desk/poses", response_model=DeskPosesResponse)
+def save_desk_pose(task_id: str, req: DeskSavePoseRequest):
+    """Save a pose under a name; saving the same name again replaces it."""
+    return _spatial_call(task_id, "", lambda: service.save_desk_pose(task_id, req.name, req.pose))
+
+
+@router.delete("/{task_id}/director-desk/poses/{pose_id}", response_model=DeskPosesResponse)
+def delete_desk_pose(task_id: str, pose_id: str):
+    return _spatial_call(task_id, "", lambda: service.delete_desk_pose(task_id, pose_id))
 
 
 @router.post("/{task_id}/relationships/analyze", response_model=WriterDashboardResponse)
@@ -628,8 +1020,8 @@ async def run_next_stage(task_id: str, current_stage: int):
     一步一步引导模式：启动执行指定步骤阶段
     """
     try:
-        updated_task = await service.execute_stage(task_id, current_stage)
-        return updated_task
+        await service.execute_stage(task_id, current_stage)
+        return service.get_task_status(task_id)
     except StagePrerequisiteError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as ve:
@@ -648,33 +1040,22 @@ def pause_running_task(task_id: str):
     return task
 
 @router.post("/{task_id}/resume", response_model=DramaTaskResponse)
-def resume_paused_task(task_id: str, background_tasks: BackgroundTasks):
+async def resume_paused_task(task_id: str, background_tasks: BackgroundTasks):
     """
     恢复被暂停的任务，并自动在后台线程中继续一键生成
     """
-    task = service.resume_task(task_id)
-    if not task:
+    if not service.repo.get_task(task_id):
         raise HTTPException(status_code=404, detail="任务不存在")
-    
-    # 异步在后台恢复执行剩下的步骤
-    background_tasks.add_task(service.execute_all_stages, task_id)
-    return task
+    return (await service.assistant_message(task_id, "一键成片"))["task"]
 
 @router.post("/{task_id}/run_all", response_model=DramaTaskResponse)
-def run_all_stages_one_click(task_id: str, background_tasks: BackgroundTasks):
+async def run_all_stages_one_click(task_id: str, background_tasks: BackgroundTasks):
     """
     一键成片模式：异步在后台连续串行运行 1 到 8 步骤
     """
-    task = service.get_task_status(task_id)
-    if not task:
+    if not service.repo.get_task(task_id):
         raise HTTPException(status_code=404, detail="任务不存在")
-    
-    task["status"] = "running"
-    repo.save_task(task_id, task)
-    
-    # 异步在后台执行全生命周期
-    background_tasks.add_task(service.execute_all_stages, task_id)
-    return task
+    return (await service.assistant_message(task_id, "一键成片"))["task"]
 
 @router.post("/{task_id}/episodes/plan")
 def plan_episodes_route(task_id: str):

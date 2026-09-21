@@ -79,29 +79,31 @@ class VideoReferencePlanningTests(unittest.TestCase):
                 model="Seedance 2.5",
             )
 
-    def test_ltx_2_3_routes_storyboard_sequence_to_multi_image_generation(self):
+    def test_ltx_2_3_routes_frame_pair_and_reports_unused_sequence_images(self):
+        # LTX's documented /v2/image-to-video takes image_uri + last_frame_uri only,
+        # so a storyboard sequence cannot be honoured there and is reported unused.
         plan = plan_video_references(
             "auto",
             model="LTX 2.3",
             first_frame="panel-1.png",
-            sequence_images=["panel-2.png", "panel-3.png"],
+            last_frame="panel-3.png",
+            sequence_images=["panel-2.png"],
             intent=VideoGenerationIntent(narrative_image_sequence=True),
         )
         self.assertEqual(plan.provider_family, "ltx_2_3")
-        self.assertEqual(plan.mode, "multi_reference")
-        self.assertEqual(
-            plan.reference_images,
-            ["panel-1.png", "panel-2.png", "panel-3.png"],
-        )
+        self.assertEqual(plan.mode, "first_last_frame")
+        self.assertEqual((plan.first_frame, plan.last_frame), ("panel-1.png", "panel-3.png"))
+        self.assertIn("reference_images:1", plan.unused_assets)
+        self.assertNotIn("multi_reference", normalize_video_provider("ltx-2-3-pro").modes)
 
     def test_named_model_families_declare_the_requested_creation_modes(self):
         expectations = {
             "Seedance 2.5": {"first_last_frame", "multi_reference", "multimodal"},
             "MiniMax H3": {"first_last_frame", "multi_reference", "multimodal"},
             "Kling": {"first_last_frame", "multi_reference", "multimodal"},
-            "Gork": {"multi_reference"},
+            "Gork": {"multi_reference", "first_last_frame"},
             "HappyHorse": {"multi_reference"},
-            "LTX 2.3": {"multi_reference"},
+            "LTX 2.3": {"first_last_frame"},
         }
         for model, required_modes in expectations.items():
             with self.subTest(model=model):
@@ -117,7 +119,7 @@ class VideoReferencePlanningTests(unittest.TestCase):
             reference_videos=["camera.mp4"],
         )
         self.assertEqual(plan.provider_family, "grok")
-        self.assertEqual(plan.provider_status, "adapter_required")
+        self.assertEqual(plan.provider_status, "runtime_configuration_required")
         self.assertEqual(plan.mode, "multi_reference")
         self.assertIn("reference_videos:1", plan.unused_assets)
         self.assertTrue(plan.fallbacks)

@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiRequest } from '../../api/client';
 import { ElementLibraryPage } from '../elements/ElementLibraryPage';
 import type { ElementKind } from '../elements/elementTypes';
+import { assetGateReason, type AssetReadiness } from './assetReadiness';
 import { CharacterAssetTabs } from './CharacterAssetTabs';
 import { characterAssetTabLabels } from './assetTabLabels';
 import { CharacterFiveViewViewer } from './CharacterFiveViewViewer';
@@ -39,9 +40,11 @@ interface ActorExtractionResult {
 
 interface ProductionAssetSyncResult {
   created: number;
+  reused?: number;
   skipped: number;
   with_image?: number;
   kinds?: Partial<Record<(typeof nonActorAssetKinds)[number], number>>;
+  readiness?: AssetReadiness;
 }
 
 export function CharacterDesignerPage({
@@ -78,8 +81,22 @@ export function CharacterDesignerPage({
   const [assetSyncNotice, setAssetSyncNotice] = useState('');
   const [assetGenerationToken, setAssetGenerationToken] = useState(0);
   const [assetGenerationBusy, setAssetGenerationBusy] = useState(false);
+  const [assetReadiness, setAssetReadiness] = useState<AssetReadiness | null>(null);
   const synchronizedTaskId = useRef('');
   const character = dashboard.characters.find(item => item.characterId === selectedId) || dashboard.characters[0];
+  // 数字演员、场地、道具、服装、特效没出齐就离开第 3 步，下游分镜拿不到锁人物的
+  // 五视图，只能自己编一个人出来。看板契约 READY 之前不放行，成片一致性才守得住。
+  // The library gate covers scenes, props, costumes and effects; while it is
+  // unknown (older backend, request failed) the server-side stage-4 check still holds.
+  const assetsReady = !assetReadiness || assetReadiness.complete;
+  const castReady = dashboard.state === 'READY' && assetsReady;
+  const castGateReason = dashboard.state !== 'READY'
+    ? (dashboard.characters.length
+      ? `五视图资产尚未齐备：${dashboard.stats.readyCount}/${dashboard.characters.length} 名数字演员可交付`
+        + `${dashboard.stats.failedCount ? `，${dashboard.stats.failedCount} 名生成失败` : ''}`
+        + '。全部生成完成后才能进入分镜师。'
+      : '尚未生成任何数字演员资产，完成第 3 步后才能进入分镜师。')
+    : assetGateReason(assetReadiness);
   const projectDetails = [
     ['类型', dashboard.project.genre],
     ['平台', dashboard.project.platform],
@@ -101,7 +118,9 @@ export function CharacterDesignerPage({
     const results = await Promise.allSettled(requests.map(async ({ kind, generation }) => ({
       kind,
       generation,
-      response: await apiRequest<ElementCountResponse>(`/api/elements?kind=${kind}&page=1&page_size=1`),
+      response: await apiRequest<ElementCountResponse>(
+        `/api/elements?kind=${kind}&page=1&page_size=1${taskId ? `&task_id=${encodeURIComponent(taskId)}` : ''}`,
+      ),
     })));
 
     setAssetCounts(current => {
@@ -115,7 +134,19 @@ export function CharacterDesignerPage({
       });
       return next;
     });
-  }, []);
+  }, [taskId]);
+
+  const refreshAssetReadiness = useCallback(async () => {
+    if (!taskId) return;
+    try {
+      const readiness = await apiRequest<AssetReadiness>(
+        `/api/drama/${encodeURIComponent(taskId)}/production-assets/readiness`,
+      );
+      if (readiness && typeof readiness.complete === 'boolean') setAssetReadiness(readiness);
+    } catch {
+      // Keep the last known readiness; the backend gate remains authoritative.
+    }
+  }, [taskId]);
 
   useEffect(() => {
     const generations = assetCountGenerations.current;
@@ -140,10 +171,15 @@ export function CharacterDesignerPage({
           { method: 'POST', body: JSON.stringify({}) },
         );
         if (cancelled) return;
-        setAssetSyncNotice(result.created > 0
-          ? `已根据剧本同步 ${result.created} 项拍摄资产。`
+        if (result.readiness && typeof result.readiness.complete === 'boolean') setAssetReadiness(result.readiness);
+        const reused = Number(result.reused || 0);
+        setAssetSyncNotice(result.created > 0 || reused > 0
+          ? (result.created > 0 ? `已根据剧本同步 ${result.created} 项拍摄资产` : '')
+            + (result.created > 0 && reused > 0 ? '，' : '')
+            + (reused > 0 ? `从资产库复用 ${reused} 项` : '')
+            + '。'
           : result.skipped > 0
-            ? '剧本中的拍摄资产已全部存在于资产库。'
+            ? '剧本中的拍摄资产已全部存在于本项目资产。'
             : '剧本中暂未识别到场地、道具、服装或特效资产。');
         await synchronizeAssetCounts();
       } catch {
@@ -159,6 +195,7 @@ export function CharacterDesignerPage({
   const refresh = () => {
     onRefresh();
     void synchronizeAssetCounts();
+    void refreshAssetReadiness();
   };
 
   /** Mine the screenplay for its cast and file each actor into the asset库. */
@@ -257,12 +294,23 @@ export function CharacterDesignerPage({
               ? '重新生成'
               : assetGenerationBusy ? '图片生成中…' : '生成缺失图片'}
           </button>
-          <button type="button" className="is-primary" onClick={onContinue}>
+          <button
+            type="button"
+            className="is-primary"
+            onClick={onContinue}
+            disabled={!castReady}
+            title={castReady ? undefined : castGateReason}
+          >
             进入分镜师 <ArrowRight size={16} aria-hidden="true" />
           </button>
         </div>
       </header>
 
+      {!castReady && (
+        <p className="character-designer__gate-hint" role="status" aria-label="进入分镜师的资产门禁">
+          {castGateReason}
+        </p>
+      )}
       {syncMessage && <p className="character-designer__sync-message" role="status">{syncMessage}</p>}
       {assetSyncNotice && <p className="character-designer__sync-message" role="status">{assetSyncNotice}</p>}
       {extractNotice && <p className="character-designer__sync-message" role="status">{extractNotice}</p>}
@@ -350,7 +398,10 @@ export function CharacterDesignerPage({
             embedded
             taskId={taskId}
             regenerateAllToken={assetGenerationToken}
-            onGenerationStateChange={setAssetGenerationBusy}
+            onGenerationStateChange={busy => {
+              setAssetGenerationBusy(busy);
+              if (!busy) void refreshAssetReadiness();
+            }}
             onCountChange={(kind, total) => {
               assetCountGenerations.current[kind] = (assetCountGenerations.current[kind] || 0) + 1;
               setAssetCounts(current => current[kind] === total ? current : { ...current, [kind]: total });

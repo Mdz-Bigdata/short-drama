@@ -26,7 +26,8 @@ describe('VideoReferenceModeSelect', () => {
     render(<VideoReferenceModeSelect value="auto" onChange={() => undefined} />);
 
     expect(screen.getAllByText(/Seedance 2 \/ 2\.5 · MiniMax H3 · Kling/)).toHaveLength(3);
-    expect(screen.getByText(/Grok · HappyHorse · Seedance 2 \/ 2\.5 · MiniMax H3 · Kling · LTX 2\.3/)).toBeTruthy();
+    expect(screen.getByText(/Grok · HappyHorse · Seedance 2 \/ 2\.5 · MiniMax H3 · Kling$/)).toBeTruthy();
+    expect(screen.getByText(/Seedance 2 \/ 2\.5 · MiniMax H3 · Kling · Grok · LTX 2\.3/)).toBeTruthy();
     expect(screen.getByText(/参考图片、视频或音频/)).toBeTruthy();
   });
 

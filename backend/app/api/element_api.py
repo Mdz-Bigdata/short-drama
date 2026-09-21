@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 from starlette.concurrency import run_in_threadpool
 
+from app.core.element_scope import element_in_task
 from app.api.auth_api import get_current_user
 from app.core.media_compositor import MEDIA_DIR
 from app.core.model_gateway import ModelGateway
@@ -247,10 +248,15 @@ async def list_elements(
     kind: ElementKind,
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=100),
+    task_id: str | None = Query(None, max_length=120),
     user: dict = Depends(get_current_user),
     store: PlatformStore = Depends(get_platform_store),
 ):
-    items, total = await store.list_elements(user["user_id"], kind, page, page_size)
+    # With task_id only the project's own and linked assets are listed; the
+    # rest of the owner's library stays stored but out of the project's view.
+    items, total = await store.list_elements(
+        user["user_id"], kind, page, page_size, task_id=(task_id or "").strip() or None
+    )
     return {"items": [_element(item) for item in items], "page": page, "page_size": page_size, "total": total}
 
 
@@ -964,11 +970,11 @@ async def start_element_generation_job(
     if request.kind not in _NON_ACTOR_KINDS:
         raise HTTPException(status_code=422, detail="批量参考图生成仅支持场景、道具、服装和特效")
     owner_id = user["user_id"]
-    items, _ = await store.list_elements(owner_id, request.kind, 1, 100)
+    items = await store.list_all_elements(owner_id, request.kind)
     task_id = str(request.task_id or "").strip()
     candidates = [
         item for item in items
-        if (not task_id or str(_element_metadata(item).get("task_id") or "") == task_id)
+        if (not task_id or element_in_task(_element_metadata(item), task_id))
         and (
             request.replace_existing
             or not any(file.mime_type.startswith("image/") for file in item.files)

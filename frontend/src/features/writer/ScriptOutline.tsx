@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { Fragment, useMemo } from 'react';
 import { TableProperties } from 'lucide-react';
 
 import { extractSceneDialogues, type SceneDialogueLine } from './scriptOutlineUtils';
+import { groupEpisodeGaps } from './episodeGaps';
 import { sceneEpisode, type WriterScene } from './types';
 
 interface OutlineRow {
@@ -56,10 +57,42 @@ function buildRows(scenes: WriterScene[]): OutlineRow[] {
   });
 }
 
-export function ScriptOutline({ scenes }: { scenes: WriterScene[] }) {
-  const rows = useMemo(() => buildRows(scenes), [scenes]);
+/**
+ * 表格自己看得见的断层：渲染出来的集号从 15 跳到 25，中间那几集就是缺的。
+ * 服务端统计还没到（看板首屏用 fallback 渲染）或请求失败时，这一条仍然成立，
+ * 所以剧本大纲永远不会不声不响地跳集。末尾缺的集数看不出来，仍由服务端统计给出。
+ */
+function gapsBetweenRenderedEpisodes(rows: OutlineRow[]): number[] {
+  const present = new Set(rows.map(row => row.episode).filter(episode => episode > 0));
+  if (!present.size) return [];
+  const missing: number[] = [];
+  const last = Math.max(...present);
+  for (let episode = Math.min(...present); episode <= last; episode += 1) {
+    if (!present.has(episode)) missing.push(episode);
+  }
+  return missing;
+}
 
-  if (!rows.length) {
+export function ScriptOutline({ scenes, missingEpisodes = [] }: { scenes: WriterScene[]; missingEpisodes?: number[] }) {
+  const rows = useMemo(() => buildRows(scenes), [scenes]);
+  const gaps = groupEpisodeGaps([...missingEpisodes, ...gapsBetweenRenderedEpisodes(rows)]);
+  // These are status rows, never invented shots or rewritten scene identifiers.
+  const gapPositions = new Map<number, typeof gaps>();
+  for (const gap of gaps) {
+    const next = rows.findIndex(row => row.episode >= gap.first);
+    const position = next < 0 ? rows.length : next;
+    gapPositions.set(position, [...(gapPositions.get(position) || []), gap]);
+  }
+  const renderGaps = (position: number) => gapPositions.get(position)?.map(gap => (
+    <tr className="writer-outline__gap" key={`gap-${gap.first}`}>
+      <td colSpan={5}>
+        <strong>第 {gap.label} 集正文缺失</strong>
+        <span>待补写；现有镜头编号与内容保持不变。</span>
+      </td>
+    </tr>
+  ));
+
+  if (!rows.length && !gaps.length) {
     return <div className="writer-empty">生成剧本后，剧本大纲会按场景在这里展开。</div>;
   }
 
@@ -82,7 +115,9 @@ export function ScriptOutline({ scenes }: { scenes: WriterScene[] }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map(row => (
+            {rows.map((row, index) => (
+              <Fragment key={row.key}>
+              {renderGaps(index)}
               <tr key={row.key}>
                 <td className="writer-outline__scene">
                   <strong>{row.sceneId}</strong>
@@ -106,7 +141,9 @@ export function ScriptOutline({ scenes }: { scenes: WriterScene[] }) {
                   {row.characters.length ? row.characters.join('、') : '—'}
                 </td>
               </tr>
+              </Fragment>
             ))}
+            {renderGaps(rows.length)}
           </tbody>
         </table>
       </div>
