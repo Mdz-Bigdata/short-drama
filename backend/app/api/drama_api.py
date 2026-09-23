@@ -4,7 +4,7 @@ import logging
 import os
 from urllib.parse import quote, unquote, urlparse
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Form, File, UploadFile, Depends, Request
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Form, File, Query, UploadFile, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from typing import List, Dict, Any, Optional
 from app.schema.shot_visual import (
@@ -21,6 +21,7 @@ from app.schema.drama import (
     DramaTaskResponse,
     DramaTaskSummary,
     ScriptUpdateRequest,
+    ShotFeedbackRequest,
 )
 from app.service.drama_service import DramaService, ScriptUpdateConflictError, StagePrerequisiteError
 from app.repository.task_repo import TaskRepository
@@ -711,6 +712,59 @@ def _spatial_call(task_id: str, scene_id: str, call):
     except Exception:
         logger.exception("[Spatial] 空间调度操作失败 task_id=%s scene_id=%s", task_id, scene_id)
         raise HTTPException(status_code=502, detail="空间调度服务暂不可用，请稍后重试")
+    if not payload:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return payload
+
+
+@router.post("/{task_id}/shots/{shot_id}/feedback")
+def report_shot_feedback(task_id: str, shot_id: str, req: ShotFeedbackRequest):
+    """报告一镜的生成结果：翻车的归类成失败类型并给出修正方案，成功的沉淀为项目经验。"""
+    try:
+        payload = service.report_shot_failure(
+            task_id, shot_id, result=req.result, text=req.text,
+            category=req.category, applied_fix=req.applied_fix,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not payload:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return payload
+
+
+@router.get("/{task_id}/feedback")
+def get_generation_feedback(task_id: str):
+    """本项目的翻车台账：各类失败次数、该模型已确认的弱点、已验证有效的修正手段。"""
+    payload = service.get_generation_feedback(task_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return payload
+
+
+@router.get("/{task_id}/prompt-packages")
+def get_prompt_packages(
+    task_id: str,
+    scene_id: str = Query("", max_length=80, description="只导出这一场；留空则整集"),
+    package_seconds: int = Query(15, description="单条提示词时长：10 / 15 / 20 / 30 秒"),
+    variant: str = Query("standard", pattern="^(standard|continuous|fight|script_doc)$"),
+    delivery: str = Query("正常", pattern="^(正常|急切|沉重)$", description="台词语速档，全篇统一"),
+):
+    """把已定稿的分镜重新切成可直接粘贴的 Seedance 提示词分包（或分段脚本文档）。"""
+    try:
+        payload = service.compile_prompt_packages(
+            task_id, scene_id=scene_id, package_seconds=package_seconds, variant=variant, delivery=delivery,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not payload:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return payload
+
+
+@router.get("/{task_id}/asset-sheets")
+def get_asset_sheets(task_id: str):
+    """人物 / 场景 / 道具 / 色板四类设定图：每项都带稳定识别锚点、可直接生成的提示词与固定版式。"""
+    payload = service.compile_asset_sheets(task_id)
     if not payload:
         raise HTTPException(status_code=404, detail="任务不存在")
     return payload

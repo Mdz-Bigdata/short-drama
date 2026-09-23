@@ -621,3 +621,22 @@
   color: #ffb347;
   border-color: rgba(255, 179, 71, 0.5);
 }
+
+/* 翻车反馈：一句话描述 → 归类 → 修正步骤。 */
+.shot-workspace__feedback textarea {
+  width: 100%;
+  padding: 8px 10px;
+  color: inherit;
+  background: #0a1017;
+  border: 1px solid var(--border-color, rgba(148, 163, 184, 0.24));
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.8rem;
+  resize: vertical;
+}
+.shot-workspace__feedback .shot-workspace__recipe-result ol {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}

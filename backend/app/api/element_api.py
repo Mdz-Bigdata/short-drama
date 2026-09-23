@@ -836,7 +836,7 @@ async def _generate_non_actor_reference(
     extra_prompt: str = "",
 ) -> dict:
     if str(item.kind) not in _NON_ACTOR_KINDS:
-        raise HTTPException(status_code=422, detail="数字演员五视图请在角色设计工作区生成")
+        raise HTTPException(status_code=422, detail="数字演员设定集请在角色设计工作区生成")
     image_model, project_style = await _element_generation_context(item, owner_id)
     prompt = _element_reference_prompt(item, extra_prompt, project_style)
     try:

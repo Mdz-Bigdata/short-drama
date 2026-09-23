@@ -62,7 +62,7 @@ export function CharacterOverview({
             aria-label={`查看角色总数 ${dashboard.stats.characterCount} 详情`}
             onClick={() => onOpen({
               title: `角色资产概览 · 角色总数 ${dashboard.stats.characterCount}`,
-              content: `本项目共有 ${dashboard.stats.characterCount} 个角色：${joinedNames(characterNames, '暂无角色')}。可在角色库中逐一切换查看对应五视图、档案与证据。`,
+              content: `本项目共有 ${dashboard.stats.characterCount} 个角色：${joinedNames(characterNames, '暂无角色')}。可在角色库中逐一切换查看对应数字演员设定集、档案与证据。`,
             })}
           >
             {dashboard.stats.characterCount}
@@ -125,8 +125,8 @@ export function CharacterOverview({
       </div>
 
       <div className="character-designer__contract">
-        <span>固定五视图契约</span>
-        <div className="character-designer__angles" aria-label="五视图角度详情">
+        <span>固定身份视图契约</span>
+        <div className="character-designer__angles" aria-label="身份视图角度详情">
           {dashboard.viewContract.views.map((definition, index) => (
             <span key={definition.key}>
               <button
@@ -134,7 +134,7 @@ export function CharacterOverview({
                 aria-haspopup="dialog"
                 aria-label={`查看${definition.angleDegrees}度${definition.labelZh}契约详情`}
                 onClick={() => onOpen({
-                  title: `五视图契约 · ${definition.angleDegrees}° ${definition.labelZh}`,
+                  title: `身份视图契约 · ${definition.angleDegrees}° ${definition.labelZh}`,
                   content: `第 ${definition.order} 视角：${definition.labelZh}（${definition.labelEn}），标准角度 ${definition.angleDegrees}°。角色视图状态：${viewStatusSummary(dashboard, definition) || '暂无角色'}。`,
                 })}
               >

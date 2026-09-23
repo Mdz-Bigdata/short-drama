@@ -27,7 +27,7 @@ class EveryKnowledgeSourceReachesRuntimeTests(unittest.TestCase):
         "dialogue-pacing",         # AI影视剧台词语速情绪提示词总结.md · 阶段2 编剧台词标注规范
         "golden-narrative",        # AI漫剧短剧剧本黄金叙事结构.md · 阶段1/2
         "director-shot-guide",     # AI短剧与漫剧导演级拍摄分镜完全指南.md · 阶段4
-        "five-view-template",      # AI短剧五视图解决人物一致性提示词模板.md · 阶段3
+        "actor-sheet-template",    # AI短剧五视图解决人物一致性提示词模板.md · 阶段3
         "production-guidelines",   # AI短剧注意事项与关键元素.md · 阶段1/2/8
         "martial-arts",            # AI短剧电影级武打镜头设计指南.md · 阶段4
         "performance-details",     # AI短剧表演细节与提示词指南.md · 阶段2/3
@@ -129,8 +129,9 @@ class NegativePromptModulesReachGenerationTests(unittest.TestCase):
             "extra_negative=designer_negative",
             "{storyboard_negative}",
             "{visual_negative_image}",
-            # 视频侧的角色负面词现在作为风格锁编译器的 extra_negatives 进入提示词。
-            "extra_negatives=[visual_negative_video]",
+            # 视频侧的角色负面词现在作为风格锁编译器的 extra_negatives 进入提示词，
+            # 后面再跟上按模型弱点补的负面词。
+            "*([visual_negative_video] if visual_negative_video.strip() else []),",
             "{episode_negative_image}",
         ):
             self.assertIn(marker, source, f"负面词接线点丢失：{marker}")

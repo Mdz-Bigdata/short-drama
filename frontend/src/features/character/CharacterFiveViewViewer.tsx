@@ -1,6 +1,7 @@
 import { CheckCircle2, ExternalLink, ImageOff, ScanFace, ZoomIn } from 'lucide-react';
 import { useState, type KeyboardEvent } from 'react';
 
+import { actorSheetCellLabels, actorSheetDetailGroups } from './assetTabLabels';
 import { CharacterDetailDialog } from './CharacterDetailDialog';
 import type {
   CharacterDashboardCharacter,
@@ -16,6 +17,7 @@ export function CharacterFiveViewViewer({
   contract: CharacterViewContract;
 }) {
   const [selectedKey, setSelectedKey] = useState<FiveViewKey>('front');
+  const [mode, setMode] = useState<'identity' | 'details'>('identity');
   const [brokenViewUrls, setBrokenViewUrls] = useState<string[]>([]);
   const [brokenSheetUrl, setBrokenSheetUrl] = useState<string | null>(null);
   const [largeImage, setLargeImage] = useState<{
@@ -23,6 +25,16 @@ export function CharacterFiveViewViewer({
     title: string;
     alt: string;
   } | null>(null);
+  // 「细节」页签只收元素拆解 8 格 + 细节矩阵 12 格；身份锚点留在主选择器里。
+  const detailGroups = actorSheetDetailGroups
+    .map(({ group, label }) => ({
+      group,
+      label,
+      cells: character.sheetCells.filter(cell => cell.group === group),
+    }))
+    .filter(item => item.cells.length > 0);
+  const hasDetails = detailGroups.length > 0;
+  const showDetails = hasDetails && mode === 'details';
   const selectedDefinition = contract.views.find(view => view.key === selectedKey) || contract.views[0];
   const selectedAsset = character.views.find(view => view.key === selectedDefinition.key);
   const selectedAvailable = Boolean(selectedAsset?.imageUrl)
@@ -59,15 +71,93 @@ export function CharacterFiveViewViewer({
     <section className="character-viewer" aria-labelledby="character-viewer-title">
       <header className="character-viewer__header">
         <div>
-          <span className="character-section-kicker">FIVE-VIEW IDENTITY LOCK</span>
-          <h2 id="character-viewer-title">五视图工作区</h2>
+          <span className="character-section-kicker">ACTOR SHEET IDENTITY LOCK</span>
+          <h2 id="character-viewer-title">数字演员设定集</h2>
         </div>
-        <div className="character-viewer__count" aria-label={`五视图已完成 ${availableCount} / 5`}>
+        <div className="character-viewer__count" aria-label={`身份视图已完成 ${availableCount} / 5`}>
           <span>{String(availableCount).padStart(2, '0')}</span>
           <small>/ 05 VIEWS</small>
         </div>
       </header>
 
+      {hasDetails && (
+        <div className="character-viewer__modes">
+          <div role="tablist" aria-label={`${character.name} 设定集视图`}>
+          {([['identity', '身份视图'], ['details', '细节']] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={mode === value}
+              aria-controls={panelId}
+              className={`character-viewer__mode ${mode === value ? 'is-selected' : ''}`}
+              onClick={() => setMode(value)}
+            >
+              {label}
+              {value === 'details' && (
+                <small>{character.sheetCells.filter(cell => cell.available).length} 格</small>
+              )}
+            </button>
+          ))}
+          </div>
+          {/* 拆分之后整板本身仍然要能看——25 个格子拼在一起才看得出版面有没有走样。 */}
+          {character.sheetUrl && !sheetBroken && (
+            <button
+              type="button"
+              className="character-viewer__mode character-viewer__mode--sheet"
+              aria-label={`查看${character.name}设定集整板大图`}
+              onClick={() => setLargeImage({
+                src: character.sheetUrl as string,
+                title: `${character.name} · 设定集整板`,
+                alt: `${character.name} 设定集整板大图`,
+              })}
+            >
+              <ZoomIn size={13} aria-hidden="true" /> 整板
+            </button>
+          )}
+        </div>
+      )}
+
+      {showDetails ? (
+        <div id={panelId} role="tabpanel" aria-label={`${character.name} 设定集细节`} className="character-viewer__details">
+          {detailGroups.map(({ group, label, cells }) => (
+            <section key={group} className="character-viewer__detail-group" aria-label={`${label} ${cells.length} 格`}>
+              <h3>{label}<small>{cells.length}</small></h3>
+              <div className="character-viewer__detail-grid">
+                {cells.map(cell => {
+                  const available = Boolean(cell.imageUrl) && !brokenViewUrls.includes(cell.imageUrl || '');
+                  const cellLabel = actorSheetCellLabels[cell.key];
+                  return available && cell.imageUrl ? (
+                    <button
+                      key={cell.key}
+                      type="button"
+                      className="character-viewer__detail-cell"
+                      aria-label={`查看${character.name}${cellLabel}大图`}
+                      onClick={() => setLargeImage({
+                        src: cell.imageUrl as string,
+                        title: `${character.name} · ${cellLabel}`,
+                        alt: `${character.name} ${cellLabel}大图`,
+                      })}
+                    >
+                      <img
+                        src={cell.imageUrl}
+                        alt={`${character.name} ${cellLabel}`}
+                        onError={() => markBroken(cell.imageUrl as string)}
+                      />
+                      <span>{cellLabel}</span>
+                    </button>
+                  ) : (
+                    <div key={cell.key} className="character-viewer__detail-cell is-missing">
+                      <ImageOff aria-hidden="true" size={16} />
+                      <span>{cellLabel}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      ) : (
       <div
         id={panelId}
         role="tabpanel"
@@ -113,20 +203,20 @@ export function CharacterFiveViewViewer({
               onClick={() => setLargeImage({
                 src: character.sheetUrl as string,
                 title: `${character.name} · 整板参考图`,
-                alt: `${character.name} 旧版五视图整板参考图大图`,
+                alt: `${character.name} 设定集整板参考图大图`,
               })}
             >
               <img
                 className="character-viewer__legacy-sheet"
                 src={character.sheetUrl}
-                alt={`${character.name} 旧版五视图整板参考图`}
+                alt={`${character.name} 设定集整板参考图`}
                 onError={() => setBrokenSheetUrl(character.sheetUrl)}
               />
               <span className="character-viewer__zoom-hint" aria-hidden="true"><ZoomIn size={15} /> 点击查看大图</span>
             </button>
             <div className="character-viewer__sheet-notice" role="note">
               <ScanFace size={17} />
-              <span><strong>整板参考图</strong>尚未拆分并通过五视图质检，五个角度槽仍记为缺图。</span>
+              <span><strong>整板参考图</strong>尚未拆分并通过设定集质检，五个身份视图槽仍记为缺图。</span>
             </div>
           </>
         ) : (
@@ -147,8 +237,13 @@ export function CharacterFiveViewViewer({
           </div>
         </div>
       </div>
+      )}
 
-      <div className="character-viewer__tabs" role="tablist" aria-label={`${character.name} 五视图角度`}>
+      <div
+        className={`character-viewer__tabs ${showDetails ? 'is-hidden' : ''}`}
+        role="tablist"
+        aria-label={`${character.name} 身份视图`}
+      >
         {contract.views.map(definition => {
           const asset = character.views.find(view => view.key === definition.key);
           const available = Boolean(asset?.imageUrl) && !brokenViewUrls.includes(asset?.imageUrl || '');

@@ -1,53 +1,93 @@
-# AI 短剧：通过五视图解决人物一致性问题
+# AI 短剧：通过数字演员设定集解决人物一致性问题
 
-> 本文已由三视图规范升级为五视图规范。文件名为兼容既有项目路径而保留，文档内容与代码统一使用“五视图”。
+> 本文由三视图 → 五视图 → **数字演员设定集（Actor Sheet）**逐代升级。文件名为兼容既有项目路径而保留，
+> 文档内容与代码统一使用“数字演员设定集”。版面常量的唯一事实源是
+> `backend/app/core/actor_sheet_layout.py` 的 `ACTOR_SHEET_LAYOUT`。
 
 ## 1. 核心原则
 
-AI 短剧的人物一致性不能依靠每一镜重新描述角色，而应先建立稳定的角色视觉锚点。每个角色必须有一张严格的五视图角色设定板，五个视图从左到右固定为：
+AI 短剧的人物一致性不能依靠每一镜重新描述角色，而应先建立稳定的角色视觉锚点。
+每个角色必须有一张 21:9 超宽横版数字演员设定集，一次出图、再物理拆成 25 个独立格子资产。
 
-1. 正面（front view，0°）；
-2. 正面四分之三（front three-quarter view，约 45°）；
-3. 标准侧面（standard profile view，90°）；
-4. 背面四分之三（rear three-quarter view，约 135°）；
-5. 背面（back view，180°）。
+其中五个格子是**身份锚点**，后续所有镜头都引用它们：
 
-五视图用于锁定：
+1. 正面全身（front）；
+2. 侧面全身（profile，90°）；
+3. 背面全身（back，180°）；
+4. 正脸特写（face_front）；
+5. 3-4 侧脸（face_three_quarter）。
+
+设定集用于锁定：
 
 - 身份 DNA：脸型、五官比例、痣/疤位置、纹身、年龄感和肤色，发型、发色、角色气质、时代背景；
 - 头发：发际线、发型结构、长度、发色和头饰；
 - 身体：身高、肩宽、体型、四肢比例和站姿基准；
 - 服装：版型、层次、颜色、面料、纹样、鞋子和磨损状态；
-- 标志物：眼镜、耳饰、项链、腕表、武器或剧情道具。
+- 标志物：眼镜、耳饰、项链、腕表、武器或剧情道具；
+- 可拆解元素：鞋履、腰部扣环、护腕手部配饰、领口肩部刺绣、面料微距、发饰、手部姿态、裙摆刺绣。
 
 分镜、海报、角色动作、九宫格和运镜视频都必须引用这份角色锚点，不得仅凭文字重新生成。
 
-## 2. 五视图硬性规范
+## 2. 设定集硬性规范
 
-### 2.1 画布与排列
+### 2.1 画布与版面
 
-- 一张横向画布，严格划分为五个等宽面板；
-- 五个面板只能放同一个角色，顺序不可改变；
-- 同焦段、同相机高度、同中性光、同纯色背景；
-- 每格完整全身、自然站姿、双脚不裁切、身体无遮挡；
-- 五个视图的角色高度和缩放比例一致。
+一张 21:9 超宽横向全景画布（默认 3360×1440），高级灰白渐变背景：边缘浅灰向中心纯白过渡，
+无环境杂物。用极细纯白分隔线划成左中右三个等高竖栏，三栏顶部各居中一行深灰无衬线大写标题：
+
+```text
+┌──────────────┬───────────────────────────────┬──────────────────────────────┐
+│ MAIN PORTRAIT│ FULL BODY & ELEMENTS          │ DETAIL MATRIX                │
+│    20%       │            40%                │            40%               │
+│              │  40% of mid │ 60% of mid      │                              │
+│  1 大正面    │  1 全身立绘 │ 上: 1×3 三视图  │  4 行 × 3 列 = 12 格         │
+│  近景特写    │             │ 下: 2×4 元素    │                              │
+└──────────────┴─────────────┴─────────────────┴──────────────────────────────┘
+```
+
+- 左栏 `MAIN PORTRAIT` 占画面宽度 20%：一张正面近景特写，头部至胸部以上；
+- 中栏 `FULL BODY & ELEMENTS` 占 40%，内部再左右分为 40% / 60%：
+  - 中左：一张正面全身立绘，双脚完整、脚底对齐该栏底基线；
+  - 中右上（占中右高度 64%）：1 行 × 3 列全身三视图——正面 / 90° 侧面 / 背面，
+    三视图与中左立绘同比例、脚底同基线、头顶同高；
+  - 中右下：2 行 × 4 列共 8 格元素拆解——
+    第一行 鞋履 / 腰部扣环 / 护腕手部配饰 / 领口肩部刺绣，
+    第二行 面料微距 / 发饰拆解 / 手部姿态 / 裙摆刺绣；
+- 右栏 `DETAIL MATRIX` 占 40%：4 行 × 3 列共 12 格细节特写——
+  第一行 正脸 / 3-4 侧脸 / 后脑发饰，
+  第二行 领口肩颈 / 前襟胸部纹样 / 腰部束结，
+  第三行 袖口末端 / 材质微距 / 背部暗扣系带，
+  第四行 鞋履足部 / 眼妆微距 / 动态姿态或小配件。
+
+三栏等高，子格之间保留均匀的极细白色间隙；格子不重叠、不粘连、不合并、不错位。
 
 ### 2.2 身份一致性
 
-五个视图必须保持同一脸型、同一五官比例、同一痣/疤位置、同一发际线、同一发型、同一服装、同一配饰和同一身材。角度变化只能揭示新的侧面或背面信息，不能重新设计角色。
+25 个格子必须保持同一脸型、同一五官比例、同一痣/疤位置、同一发际线、同一发型、同一服装、
+同一配饰和同一身材。角度与景别的变化只能揭示新的侧面、背面或细节信息，不能重新设计角色。
 
 ### 2.3 禁止项
 
-禁止重复角度、镜像脸、多人、额外肢体、手指异常、裁切脚部、坐姿、动态姿势、透视夸张、服装变体、发型变体、场景道具、文字、水印、边框标题和复杂背景。
+禁止多人、额外肢体、手指异常、裁切脚部、透视夸张、服装变体、发型变体、环境杂物、
+场景道具、文字、标注、水印、边框标题和复杂背景。
 
-## 3. 五视图提示词模板
+## 3. 设定集提示词模板
 
 ### 3.1 项目标准中文模板
 
 ```text
-为角色「[角色名称]」制作同一人物、同一服装、同一发型、同一体型的五视图角色设定板。
-画布严格横向等宽五栏，五个视图按从左到右固定顺序：
-正面、正面四分之三、标准侧面、背面四分之三、背面。
+为角色「[角色名称]」制作一张 21:9 超宽横向全景的数字演员设定集，同一人物、同一服装、同一发型、同一体型。
+背景为高级灰白渐变，边缘浅灰向中心纯白过渡，无环境杂物。
+整张画面用极细纯白分隔线划成左中右三个等高竖栏，左栏占 20%、中栏占 40%、右栏占 40%。
+三栏顶部各居中一行深灰色无衬线大写标题：左栏 MAIN PORTRAIT，中栏 FULL BODY & ELEMENTS，右栏 DETAIL MATRIX。
+左栏只放一张正面近景特写，头部到胸部以上。
+中栏内部再左右分开，左侧占中栏 40% 放一张正面全身立绘，脚底对齐底基线；
+右侧占 60%，上半部是 1 行 3 列的正面 / 90 度侧面 / 背面全身三视图，三张同比例、脚底同基线、头顶同高；
+下半部是 2 行 4 列共 8 格元素拆解：鞋履、腰部扣环、护腕与手部配饰、领口与肩部刺绣；
+面料微距、发饰拆解、手部姿态、裙摆刺绣。
+右栏是 4 行 3 列共 12 格细节特写：正脸、四分之三侧脸、后脑发饰；领口与肩颈、前襟胸部纹样、腰部束结；
+袖口末端、材质微距、背部暗扣与系带；鞋履足部、眼妆微距、动态姿态或小配件。
+三栏等高，所有子格之间保留均匀的极细白色间隙，格子不重叠、不粘连。
 
 身份 DNA：[脸型、五官比例、肤色、痣/疤及准确位置、年龄感]。
 发型：[发际线、长度、结构、发色、头饰]。
@@ -56,47 +96,72 @@ AI 短剧的人物一致性不能依靠每一镜重新描述角色，而应先�
 配饰：[固定配饰及佩戴位置]。
 视觉风格：[写实电影角色设定 / 国风写实 / 动画设定等]。
 
-五个视图必须是同一个人物，不得改变脸型、五官比例、痣/疤位置、发际线、发型、服装、配饰和身材。
-同焦段、同相机高度、同中性光、同纯色背景、完整全身、自然站姿、无遮挡。
-禁止重复角度、镜像脸、多人、额外肢体、裁切脚部、文字、水印和场景道具。
+全部格子必须是同一个人物，不得改变脸型、五官比例、痣/疤位置、发际线、发型、服装、配饰和身材；
+同焦段、同相机高度、同中性光。
+禁止第二个人物、额外肢体、多余手指、裁切脚部、文字、标注、水印和场景道具。
 ```
 
 ### 3.2 English template
 
 ```text
-Create one strict five-panel full-body character turnaround sheet for [character name].
-Use one horizontal canvas divided into five equal-width panels in this fixed left-to-right order:
-front view, front three-quarter view, standard profile view, rear three-quarter view, back view.
-
-The five panels must depict the exact same identity, face proportions, age, skin tone, hairline,
-hairstyle, hair color, body proportions, outfit construction, colors, materials and signature accessories.
+Create one 21:9 ultra-wide digital actor sheet for [character name], one identity, one outfit,
+one hairstyle, one body type.
+Background is a refined grey-to-white gradient, light grey at the edges fading to pure white at the centre,
+with no environmental clutter.
+Divide the canvas with hairline pure-white separators into three equal-height columns:
+left 20%, middle 40%, right 40%. Each column carries one centred dark-grey sans-serif uppercase title at the top:
+MAIN PORTRAIT, FULL BODY & ELEMENTS, DETAIL MATRIX.
+The left column holds a single frontal close-up portrait, head to upper chest.
+The middle column splits again: its left 40% holds one frontal full-body figure with both feet on the baseline;
+its right 60% holds, above, a 1-row by 3-column strip of full-body views — front, 90-degree profile, back —
+at identical scale with feet on one baseline and heads at one height; and below, a 2-row by 4-column grid
+of eight element close-ups: shoes, waist buckle, wrist and hand accessories, collar and shoulder embroidery;
+fabric macro, hair ornament breakdown, hand pose, hem embroidery.
+The right column is a 4-row by 3-column grid of twelve detail close-ups: frontal face, three-quarter face,
+back-of-head hair ornament; collar and neck, chest placket pattern, waist knot; cuff end, material macro,
+back hidden fastening; shoe and foot, eye make-up macro, dynamic pose or small accessory.
+All three columns share one height; every sub-cell is separated by an even hairline white gap and must not
+overlap or merge.
 Identity DNA: [identity details]. Visual style: [style].
-
-Use the same focal length, camera height, neutral lighting, plain background, scale and natural standing pose.
-Show the complete body and both feet without occlusion.
-No repeated angles, mirrored face, extra people, extra limbs, cropped feet, outfit variants,
-text, watermark, title, props or environmental scenery.
+Every cell depicts the exact same identity, face proportions, age, skin tone, hairline, hairstyle, hair colour,
+body proportions, outfit construction, colours, materials and signature accessories.
+No second person, extra limbs, extra fingers, cropped feet, text, labels, watermark or environmental props.
 ```
 
 ### 3.3 代码对应模板
 
+版面数字不写死在提示词里：`build_actor_sheet_prompt` 从 `ACTOR_SHEET_LAYOUT` 读同一份常量，
+切图器 `split_actor_sheet` 读的也是它，所以“提示词里描述的格子”和“裁出来的格子”不可能对不上。
+
 ```python
-def build_five_view_prompt(name: str, identity_dna: str, visual_style: str) -> str:
-    """Build one strict five-panel turnaround prompt for a single identity."""
-    return (
-        f"为角色{name}制作同一人物、同一服装、同一发型、同一体型的五视图角色设定板。"
-        "画布严格横向等宽五栏，五个视图按从左到右固定顺序："
-        "正面、正面四分之三、标准侧面、背面四分之三、背面。"
-        f"身份DNA：{identity_dna}。视觉风格：{visual_style}。"
-        "五个视图必须是同一个人物，不得改变脸型、五官比例、痣/疤位置、发际线、发型、服装、配饰和身材；"
-        "同焦段、同相机高度、同中性光、同纯色背景、完整全身、自然站姿、无遮挡。"
-        "禁止重复角度、镜像脸、多人、额外肢体、裁切脚部、文字水印和场景道具。"
-    )
+from app.core.actor_sheet_layout import ACTOR_SHEET_LAYOUT
+
+
+def build_actor_sheet_prompt(name: str, identity_dna: str, visual_style: str) -> str:
+    """把 25 格数字演员设定集写成一段可执行的画面描述。"""
+    layout = ACTOR_SHEET_LAYOUT
+    ...  # 三区比例、1×3 / 2×4 / 4×3 网格、身份 DNA 与风格、一致性锁全部由常量拼出
 ```
+
+### 3.4 25 格切图顺序
+
+| # | key | 来源区域 | 取景 |
+|---|---|---|---|
+| 1 | `portrait` | 左区 | 正面近景，头部至胸部以上 |
+| 2 | `full_body` | 中左 | 正面全身立绘，脚底对齐底基线 |
+| 3–5 | `front` `profile` `back` | 中右上 1×3 | 正面 / 90° 侧面 / 背面全身 |
+| 6–9 | `element_shoe` `element_waist` `element_wrist` `element_collar` | 中右下 第 1 行 | 鞋履 / 腰部扣环 / 护腕手部配饰 / 领口肩部刺绣 |
+| 10–13 | `element_fabric` `element_hair` `element_hand` `element_hem` | 中右下 第 2 行 | 面料微距 / 发饰拆解 / 手部姿态 / 裙摆刺绣 |
+| 14–16 | `face_front` `face_three_quarter` `face_back_hair` | 右区 第 1 行 | 正脸 / 3-4 侧脸 / 后脑发饰 |
+| 17–19 | `detail_collar` `detail_chest` `detail_waist_knot` | 右区 第 2 行 | 领口肩颈 / 前襟胸部纹样 / 腰部束结 |
+| 20–22 | `detail_cuff` `detail_texture` `detail_back_tie` | 右区 第 3 行 | 袖口末端 / 材质微距 / 背部暗扣系带 |
+| 23–25 | `detail_shoe` `detail_eye` `detail_accessory` | 右区 第 4 行 | 鞋履足部 / 眼妆微距 / 动态姿态或小配件 |
+
+25 格全部落库；其中 `front` / `profile` / `back` / `face_front` / `face_three_quarter` 是身份锚点。
 
 ## 4. 角色锁定卡
 
-五视图生成并通过质检后，提取一份结构化角色锁定卡。后续所有镜头复制这份信息，不得自由改写关键字段。
+设定集生成并通过质检后，提取一份结构化角色锁定卡。后续所有镜头复制这份信息，不得自由改写关键字段。
 
 ```yaml
 character_id: char_001
@@ -125,8 +190,9 @@ outfit:
   palette: ["[主色]", "[辅色]"]
   material: "[材质]"
 signature_accessories: ["[固定配饰]", "[固定道具]"]
-five_view_order: ["正面", "正面四分之三", "标准侧面", "背面四分之三", "背面"]
-five_view_image: "[五视图图片地址]"
+identity_view_order: ["正面全身", "侧面全身", "背面全身", "正脸特写", "3-4侧脸"]
+actor_sheet_image: "[设定集整板图片地址]"
+actor_sheet_cells: "[25 格拆分资产地址]"
 ```
 
 ### 禁止变化
@@ -139,16 +205,16 @@ five_view_image: "[五视图图片地址]"
 
 ## 5. 角色资产工作流
 
-1. 每个角色单独生成五视图，禁止多人共用一张设定板。
+1. 每个角色单独生成一张设定集，禁止多人共用一张设定板。
 2. 执行角度、身份、全身完整性和负面项质检。
-3. 生成角色锁定卡并绑定五视图图片。
-4. 儿童版、老年版、战损版、换装版作为新的“角色状态”，分别生成五视图；不得覆盖基础状态。
+3. 生成角色锁定卡并绑定设定集整板与 25 格拆分资产。
+4. 儿童版、老年版、战损版、换装版作为新的“角色状态”，分别生成设定集；不得覆盖基础状态。
 5. 每个分镜格按 `character_id + state_id` 引用角色，不通过姓名模糊匹配。
 
 ## 6. 单镜头提示词模板
 
 ```text
-严格参考角色「[角色名称]」的五视图和角色锁定卡，保持同一身份、同一张脸、同一发型、同一服装、同一体型和同样的标志性配饰。
+严格参考角色「[角色名称]」的数字演员设定集和角色锁定卡，保持同一身份、同一张脸、同一发型、同一服装、同一体型和同样的标志性配饰。
 
 镜头 ID：[shot_id]
 角色：[角色 ID / 状态 ID]
@@ -176,7 +242,7 @@ five_view_image: "[五视图图片地址]"
 
 每个九宫格故事板必须先声明四类资产：
 
-- 角色：角色 ID、状态 ID、五视图引用；
+- 角色：角色 ID、状态 ID、设定集身份锚点引用；
 - 场景：空间布局、人物站位、主光方向、色温、时间、天气；
 - 道具：外观、归属、位置、状态及连续性；
 - 特效：种类、颜色、强度、触发时机和物理影响。
@@ -210,7 +276,7 @@ storyboard_image: "[独立分镜图]"
 ```text
 生成一张严格 3×3、从左到右再从上到下阅读的九宫格电影分镜板，恰好九格。
 每格只推进一个动作或一个信息单元，九格共同覆盖完整因果和情绪递进。
-所有格严格继承同一角色五视图、场景圣经、道具归属、特效规则、180 度轴线、主光方向和色温。
+所有格严格继承同一角色设定集身份锚点、场景圣经、道具归属、特效规则、180 度轴线、主光方向和色温。
 每格的画面必须匹配该格的角色、场景、道具、特效、景别、机位、构图、动作、表情、首状态和尾状态。
 禁止缺格、重复格、合并格、角色换脸、服装漂移、道具换手、左右翻转、光向跳变和无动机镜头。
 ```
@@ -222,7 +288,7 @@ storyboard_image: "[独立分镜图]"
 ### 8.1 不可改变的字段
 
 - `shot_id`；
-- 角色及五视图/状态引用；
+- 角色及设定集身份锚点/状态引用；
 - 场景、道具、特效；
 - 景别、机位、焦段、构图、动作轴线和视线；
 - 主体动作、表情、灯光；
@@ -280,7 +346,7 @@ storyboard_image: "[独立分镜图]"
 
 - 存在动作或运镜参考视频；
 - 存在需要严格跟随的节奏/声音参考，并且模型支持音频条件；
-- 需要综合角色五视图、动作视频和音频节奏；
+- 需要综合角色设定集、动作视频和音频节奏；
 - 运行时模型确认支持对应媒体类型和数量。
 
 候选可包括 Seedance、MiniMax H3、Kling O1 和 HappyHorse；每种输入是否能同时提交必须以具体模型/端点的运行时能力为准。
@@ -304,13 +370,13 @@ storyboard_image: "[独立分镜图]"
 ```text
 same character, same identity, identical facial proportions, same hairline, same hairstyle,
 same outfit construction, same colors and materials, same body proportions, same age appearance,
-same signature accessories, strict five-view character reference,
+same signature accessories, strict digital actor sheet character reference,
 front view, front three-quarter view, standard profile view, rear three-quarter view, back view
 ```
 
 ```text
 同一个人物，同一身份，同一张脸，同一五官比例，同一发际线，同一发型和发色，
-同一服装版型、颜色与材质，同一体型和年龄感，同样的标志性配饰，严格参考角色五视图
+同一服装版型、颜色与材质，同一体型和年龄感，同样的标志性配饰，严格参考数字演员设定集
 ```
 
 ### 负向词
@@ -333,7 +399,7 @@ duplicate angle, extra person, extra limbs, deformed hands, cropped feet, text, 
 
 ### 多人镜头混脸
 
-为每个角色提供独立五视图，分镜中使用不同 `character_id`，明确左右站位、视线和服装，禁止仅用“男人/女人”区分。
+为每个角色提供独立设定集，分镜中使用不同 `character_id`，明确左右站位、视线和服装，禁止仅用“男人/女人”区分。
 
 ### 道具换手或消失
 
@@ -345,8 +411,8 @@ duplicate angle, extra person, extra limbs, deformed hands, cropped feet, text, 
 
 ## 12. 最终工作流
 
-1. 为每个角色/角色状态生成严格五视图；
-2. 五视图质检并生成角色锁定卡；
+1. 为每个角色/角色状态生成一张 21:9 数字演员设定集并拆成 25 格；
+2. 逐格质检（空白格、身份锚点重复、三视图未转面、大正面与正脸雷同）并生成角色锁定卡；
 3. 建立场景、道具和特效资产卡；
 4. 生成恰好九格的 3×3 分镜契约；
 5. 从契约生成九宫格总图及九张独立分镜图；
@@ -360,8 +426,8 @@ duplicate angle, extra person, extra limbs, deformed hands, cropped feet, text, 
 
 ## 13. 交付检查清单
 
-- [ ] 每个角色有独立五视图，且顺序严格正确；
-- [ ] 五视图为横向五等宽栏、完整全身、同焦段、同高度、同光线、同背景；
+- [ ] 每个角色有独立设定集，25 格齐全且切图顺序严格正确；
+- [ ] 设定集为 21:9 三区版面（MAIN PORTRAIT / FULL BODY & ELEMENTS / DETAIL MATRIX），三视图同比例、脚底同基线、头顶同高，同焦段、同高度、同光线、同背景；
 - [ ] 每个故事板恰好为 3×3 九宫格；
 - [ ] 每格包含角色、场景、道具、特效和完整镜头字段；
 - [ ] 分镜图提示词和运镜提示词来自同一契约；

@@ -43,8 +43,8 @@ anti-leak guards for reference media, the sound defaults and the sentence an ext
 ## Prompt layers and the budget
 
 Order: `style_lock → anchors → structure → locks → camera → subject → motion → expression →
-environment → colour → effects → dialogue → dialogue_notes → end_state → sound → closing →
-rules → negatives`.
+environment → colour → effects → dialogue → dialogue_notes → end_state → sound_layers → sound →
+closing → rules → negatives`.
 
 - Lock tags are `[空间锚] [状态锁] [道具锁] [光影锁] [声音锁]`, ahead of the picture, because the
   front of a prompt weighs most. Lighting numbers live in the lock and nowhere else.
@@ -70,6 +70,109 @@ rules → negatives`.
 - `ModelGateway.generate_video(..., style_pack=…)` resolves the pack for the Ark
   `style_caption` and only applies the photoreal enhancer for live-action packs.
 - `ark_clip_seconds` clamps to `max_shot_seconds(model)`: 15 s for Seedance 2.0, 30 s for 2.5.
+
+## Sound on a model that renders it with the picture
+
+`backend/app/core/h3_sound_design.py`. MiniMax H3 has one sound entry — the prompt — so the
+sound is written as three named layers in one line, in descending weight:
+
+```text
+center: <人声>; ambient: <环境>; music: <配乐>
+```
+
+- **center** carries only the voice: who speaks, `clear speech`, `center channel`, and either
+  `synced to mouth` or, for narration, `voice-over, mouths closed`. Music words here make the
+  model blend the voice into the score, so they are checked for and refused.
+- **ambient** names concrete sources, then `continuous, low volume` and a width word
+  (`surround`, plus `low reverb` only in a hall or a street).
+- **music** is `none` by default, because this project scores the film in stages 6 and 7; when
+  a score is asked for it is pushed under the voice with `low frequency, slight spread`.
+
+**Voice identity.** `build_voice_anchor` derives a character's voice from their character card
+once — age, timbre band, pitch band, pace in characters per second, and a reference-audio slot —
+and `lock_line()` restates it verbatim in every prompt that gives the character a line, ending
+with 「全片音色、音调与声线不变」. The derivation is deterministic, so the same card cannot be
+described two different ways in two episodes, which is what makes a voice drift.
+
+**Checks** (`check_sound_prompt`), reported per shot as `sound_checks`: `h3_sound_three_layers`,
+`h3_sound_center_clean`, `h3_sound_low_bed`, `h3_sound_space`, `h3_sound_word_budget` (≤60 words)
+and `h3_sound_voice_locked`.
+
+**Wiring.** Stage 5 resolves the cast's anchors once (`anchors_from_characters` with the
+project's own `guess_gender`), and for each shot of an audio-native model compiles the layers
+from the shot's dialogue, emotion and sound cell. The layers go into the prompt as a section the
+budget may shorten but never drops, and each speaking character's lock line joins the named rules
+as 「音色铁律」. A reference-audio slot is carried but unused until the project stores a clean dry
+sample per character.
+
+## Genre and feeling
+
+`backend/app/core/creative_intent.py` and `genre_clusters.py`.
+
+- A **cluster** (A 都市文戏, B 古装权谋, C 仙侠玄幻, D 动作打斗, E 悬疑惊悚, F 科幻末世, G 喜剧) is
+  resolved from the production's genre key, else from the words of the scene. It carries whether
+  fight coverage is normal here, the nine-grid rhythm label, the negative modules the genre needs,
+  and the feeling to fall back to.
+- An **intent** is one of 13 feelings, each holding the seven offsets a storyboard can act on:
+  camera tendency, VFX density (share of shots with a visible effect), a rhythm multiplier on shot
+  length, the wide / medium / close mix, composition, lighting and sound strategy.
+- A brief decodes to one primary feeling and up to two secondaries, weighted 70 / 15 / 15 (or
+  70 / 30). Conflicting pairs (hot-blooded vs oppressive, healing vs tragic, comedic vs eerie) are
+  not blended: the primary stays and the secondary is dropped, with the reason kept for the log.
+- Stage 4 writes the combined brief into the table prompt before the scene content, takes
+  `rhythm_profile` from the cluster, and stores the decision as `direction` on the scene board and
+  in the director's production context.
+
+## Prompt packages (E) and design sheets (F)
+
+**`backend/app/core/prompt_packages.py`** re-cuts an approved shot table into Seedance
+packages a person can paste one at a time.
+
+- A storyboard shot is re-cut at its own beats into **generation shots** of at most 4 s
+  (3 s for a fight), sized by the weight of each beat so the slices come out uneven. A line
+  never straddles two generation shots.
+- Generation shots are filled into packages of 10 / 15 / 20 / 30 s. Each package restates its
+  own style lock, cast lock, light lock, carried physical state, spatial lock and negatives,
+  and its clock restarts at `00:00` while the header keeps the episode span. `package_count`
+  is `ceil(total ÷ package)`; the last package may be short.
+- Four shapes: `standard` (the package above), `continuous` (one action chain, cutting
+  forbidden), `fight` (the fight's rules once, then short uneven beats) and `script_doc`
+  (assets → the whole dialogue → `Shot X.Y` rows in ≤15 s / ≤8 shot segments with a duration
+  check per segment).
+- The speech-rate tier (正常 3.0 / 急切 4.0 / 沉重 2.5 characters per second) is a global
+  constraint: a line that cannot be said inside its generation shot is reported, not squeezed.
+
+**`backend/app/core/asset_sheets.py`** reads the task once and writes the sheets that have to
+be locked before anything is generated: characters (face close-up beside front / profile /
+back, costume broken out, white ground, no text), scenes (one image as a four-angle grid, the
+prompt opening with 「不能出现其他人, 无人, 纯场景,」 and closing with `no humans, empty,
+landscape only`), props and the palette card. A character sheet keeps only what a camera can
+see and reports the temperament words it dropped; a scene with a bare name is renamed by its
+light, material or time; a prop earns a sheet only if the sentence that names it also does
+something with it.
+
+Both are read-only: `GET /api/drama/{task_id}/prompt-packages` (scene, length, variant,
+delivery) and `GET /api/drama/{task_id}/asset-sheets`.
+
+## When a shot comes back wrong
+
+`backend/app/core/generation_feedback.py`. A person watching a clip says 「脸崩了」 or 「手是六
+根手指」; that sentence is classified into one of ten failure kinds, each carrying a diagnosis,
+concrete fixes and the negative terms it earns.
+
+- **Escalation.** A shot that keeps failing gives something up in a fixed order — simplify the
+  action, fewer people, fewer effects, split the shot, widen the framing — so the fourth attempt
+  is not the first with a new seed. Past the last cut the shot is declared out of the model's
+  reach, with equivalent-expression suggestions.
+- **Memory.** The same failure twice on the same model becomes that model's weakness
+  (`PROMOTE_AFTER = 2`); a fix that worked twice becomes a project pattern. Stage 5 replays both
+  as preventive notes in the named rules and as extra negatives, so the next shot is designed
+  around a known weakness instead of rediscovering it.
+- The ledger lives in `assets["5_feedback"]` (per-shot history capped at 20 entries, per-model
+  profiles, patterns, counts).
+
+`POST /api/drama/{task_id}/shots/{shot_id}/feedback` takes the report and answers with the plan;
+`GET /api/drama/{task_id}/feedback` is the ledger plus the catalogue the UI shows.
 
 ## API and UI
 

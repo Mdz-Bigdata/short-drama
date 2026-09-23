@@ -42,7 +42,7 @@ class CreativePresetRegistryTests(unittest.TestCase):
             "林夏发现丈夫隐瞒了信件。",
             asset_context="角色林夏；场景客厅；道具信封；特效雨丝。",
         )
-        self.assertIn("角色五视图", compiled.prompt)
+        self.assertIn("数字演员设定集", compiled.prompt)
         self.assertIn("3×3 九宫格", compiled.prompt)
         self.assertIn("角色、场景、道具、特效", compiled.prompt)
         self.assertIn("首帧", compiled.prompt)

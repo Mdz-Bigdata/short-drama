@@ -1,4 +1,4 @@
-"""Physical five-view and exact 3x3 storyboard image operations."""
+"""Physical actor-sheet and exact 3x3 storyboard image operations."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 
 import httpx
 from PIL import Image, ImageOps
+
+from app.core.actor_sheet_layout import ACTOR_SHEET_LAYOUT, actor_sheet_cell_boxes
 
 
 Image.MAX_IMAGE_PIXELS = 60_000_000
@@ -116,8 +118,42 @@ def compose_nine_grid(
     return target
 
 
+def split_actor_sheet(source: str | Path, output_directory: str | Path) -> list[Path]:
+    """把一张 21:9 数字演员设定集裁成 25 个独立格子资产。
+
+    返回的路径严格按 ACTOR_SHEET_CELL_ORDER 排列，文件名为 ``NN_<key>.png``；
+    NN 就是切图序号，肉眼看目录即可对照版面表。
+
+    宽高比不在 2.0–2.6 之间说明模型压根没按超宽横版出图，这时候按固定比例裁只会
+    切出一堆垃圾并把它们当成合格资产存进库里——所以直接拒绝，交给上层重试整张图。
+    """
+    image = _open_image(source)
+    layout = ACTOR_SHEET_LAYOUT
+    aspect = image.width / image.height
+    if not layout.min_aspect_ratio <= aspect <= layout.max_aspect_ratio:
+        raise ValueError(
+            f"数字演员设定集必须是 {layout.aspect_ratio_label} 超宽横版"
+            f"（宽高比需在 {layout.min_aspect_ratio:g}–{layout.max_aspect_ratio:g} 之间），"
+            f"当前为 {aspect:.2f}，不予拆分。"
+        )
+    if image.width < 200 or image.height < 100:
+        raise ValueError("数字演员设定集分辨率过低，无法拆出 25 个格子。")
+    target_dir = Path(output_directory).expanduser().resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    paths: list[Path] = []
+    for index, (cell, box) in enumerate(actor_sheet_cell_boxes(image.width, image.height), start=1):
+        path = target_dir / f"{index:02d}_{cell}.png"
+        image.crop(box).save(path, format="PNG", optimize=True)
+        paths.append(path)
+    return paths
+
+
 def split_five_view_sheet(source: str | Path, output_directory: str | Path) -> list[Path]:
-    """Materialize five stable view assets from an ordered horizontal sheet."""
+    """Materialize five stable view assets from an ordered horizontal sheet.
+
+    旧版五视图等宽五栏排版。新流水线走 ``split_actor_sheet``；这个函数只为
+    已经存在磁盘上的旧整板保留，删掉的话历史任务重开就拆不出图了。
+    """
     image = _open_image(source)
     if image.width < 5 or image.height < 1:
         raise ValueError("five-view sheet is too small")

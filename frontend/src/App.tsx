@@ -184,8 +184,8 @@ function StageProgressPanel({ progress }: { progress: StageProgress }) {
   );
 }
 
-// 五视图角度标签：固定人物关键视觉信息 (0° / 45° / 90° / 135° / 180°)
-// 数字演员卡片式五视图查看器：一张大图 + 底部缩略图条，点击缩略图切换主图
+// 身份视图角度标签：固定人物关键视觉信息 (正面 0° / 侧面 90° / 背面 180° / 正脸 0° / 3-4 侧脸 45°)
+// 数字演员卡片式设定集查看器：一张大图 + 底部缩略图条，点击缩略图切换主图
 type GlobalModelDefaults = Record<ModelCategory, string>;
 
 const EMPTY_GLOBAL_MODEL_DEFAULTS: GlobalModelDefaults = {
@@ -1643,7 +1643,7 @@ export default function App() {
                   {activePopover === 'element' && (
                     <div className="element-menu" role="menu" aria-label="选择元素类型">
                       {([
-                        ['actor', '演员', '五视图与表演身份锚点'],
+                        ['actor', '演员', '设定集与表演身份锚点'],
                         ['scene', '场景', '空间、时段、天气和灯光'],
                         ['prop', '道具', '归属、位置和状态连续性'],
                         ['costume', '服装', '角色状态、材质与换装连续性'],

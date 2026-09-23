@@ -20,7 +20,7 @@ from app.schema.production import (
     TTSRequest,
 )
 from app.service.production_service import ProductionService
-from app.core import style_packs
+from app.core import creative_intent, genre_clusters, style_packs
 from app.core.video_quality import VideoQualityMeasurements
 from app.schema.advanced import AudioMixRequest, PerformancePlanRequest
 from app.schema.evidence import FailureEvidence, GenerationOutcome, ProductionReadinessRequest
@@ -123,6 +123,12 @@ def route_video_generation(request: VideoRouteRequest):
 @router.get("/presets")
 def creative_presets():
     return service.list_presets()
+
+
+@router.get("/creative-direction")
+def creative_direction_catalog():
+    """题材簇与感性意图：创建或调整项目时可选，分镜表按它决定节奏、景别分布与光影倾向。"""
+    return {"clusters": genre_clusters.describe(), "intents": creative_intent.describe()}
 
 
 @router.get("/style-packs")

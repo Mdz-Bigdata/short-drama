@@ -11,23 +11,33 @@ from fastapi.testclient import TestClient
 
 from app.api import drama_api
 from app.api.auth_api import get_current_user
+from app.core.actor_sheet_layout import ACTOR_SHEET_CELL_ORDER
 from app.core.character_dashboard import compile_character_dashboard
 from app.core.image_quality import FiveViewQualityReport
 from app.repository.task_repo import TaskRepository
 from app.schema.drama import DramaCreateRequest
-from app.schema.production import FIVE_VIEW_ORDER
+from app.schema.production import IDENTITY_VIEW_ORDER
 from app.service.drama_service import DramaService, parse_all_characters, parse_characters
 from main import app
 
 
 def _views(name: str) -> list[dict]:
-    # Deliberately shuffled: the compiler must return the production-contract order.
+    # 刻意打乱顺序，且用的是旧五视图角度键：编译器既要还原契约顺序，
+    # 又要把旧角度按别名映射成新的身份锚点，存量角色不得因此掉图。
     return [
         {"view": "back", "image_url": f"https://cdn.example/{name}/back.png"},
         {"view": "profile", "image_url": f"https://cdn.example/{name}/profile.png"},
         {"view": "front", "image_url": f"https://cdn.example/{name}/front.png"},
         {"view": "rear_three_quarter", "image_url": f"https://cdn.example/{name}/rear-3q.png"},
         {"view": "front_three_quarter", "image_url": f"/media/{name}/front-3q.png"},
+    ]
+
+
+def _cell_paths(root: Path) -> list[Path]:
+    """一次设定集拆图的 25 个格子路径，顺序即 ACTOR_SHEET_CELL_ORDER。"""
+    return [
+        root / f"{index:02d}_{cell}.png"
+        for index, cell in enumerate(ACTOR_SHEET_CELL_ORDER, start=1)
     ]
 
 
@@ -148,17 +158,63 @@ class CharacterDashboardCompilerTests(unittest.TestCase):
         dashboard = compile_character_dashboard(_task())
 
         self.assertEqual(dashboard.schema_version, "character-dashboard.v1")
-        self.assertEqual(tuple(dashboard.view_contract.order), FIVE_VIEW_ORDER)
-        self.assertEqual([item.angle_degrees for item in dashboard.view_contract.views], [0, 45, 90, 135, 180])
-        self.assertEqual(dashboard.view_contract.views[2].label_zh, "标准侧面")
-        self.assertEqual([item.key for item in dashboard.characters[0].views], list(FIVE_VIEW_ORDER))
+        self.assertEqual(tuple(dashboard.view_contract.order), IDENTITY_VIEW_ORDER)
+        self.assertEqual([item.angle_degrees for item in dashboard.view_contract.views], [0, 90, 180, 0, 45])
+        self.assertEqual(dashboard.view_contract.views[1].label_zh, "侧面全身")
+        self.assertEqual(dashboard.view_contract.views[3].label_zh, "正脸特写")
+        self.assertEqual([item.key for item in dashboard.characters[0].views], list(IDENTITY_VIEW_ORDER))
         self.assertTrue(all(item.available for item in dashboard.characters[0].views))
         self.assertEqual(dashboard.characters[0].asset_state, "READY")
         self.assertEqual(dashboard.characters[0].sheet_url, "https://cdn.example/shen/sheet.png")
         self.assertEqual(dashboard.characters[0].identity, "学生/调查者")
-        self.assertEqual(dashboard.characters[0].states[0].anchors[2].detail, "鼻梁和发辫轮廓")
+        # 锚点按新契约顺序重排：profile 从旧的第 3 位移到第 2 位。
+        self.assertEqual(dashboard.characters[0].states[0].anchors[1].view, "profile")
+        self.assertEqual(dashboard.characters[0].states[0].anchors[1].detail, "鼻梁和发辫轮廓")
         self.assertEqual(dashboard.stats.available_view_count, 5)
         self.assertEqual(dashboard.state, "READY")
+
+    def test_a_legacy_five_view_record_stays_valid_and_ready_without_regeneration(self):
+        # 存量记录存的是 front / front_three_quarter / profile / rear_three_quarter / back。
+        # 别名表把它映射到新的五个身份锚点，一张图都不用重出。
+        dashboard = compile_character_dashboard(_task())
+        character = dashboard.characters[0]
+
+        self.assertEqual([view.key for view in character.views], list(IDENTITY_VIEW_ORDER))
+        self.assertTrue(all(view.available for view in character.views))
+        self.assertEqual(character.asset_state, "READY")
+        by_key = {view.key: view.image_url for view in character.views}
+        # front_three_quarter -> face_three_quarter
+        self.assertEqual(by_key["face_three_quarter"], "/media/shen/front-3q.png")
+        # 存量的 back 自己有图，rear_three_quarter 不得把它顶掉
+        self.assertEqual(by_key["back"], "https://cdn.example/shen/back.png")
+        # 旧整板没有单独头部裁切，正面全身兼任正脸锚点
+        self.assertEqual(by_key["face_front"], by_key["front"])
+        # 旧记录没有 25 格拆分资产
+        self.assertEqual(character.sheet_cells, [])
+
+    def test_actor_sheet_cells_are_exposed_alongside_the_identity_anchors(self):
+        task = _task()
+        task["assets"]["3_characters"][0]["views"] = [
+            {"view": view, "image_url": f"/media/shen/{view}.png"}
+            for view in IDENTITY_VIEW_ORDER
+        ]
+        task["assets"]["3_characters"][0]["sheet_cells"] = [
+            {"cell": cell, "image_url": f"/media/shen/{cell}.png"}
+            for cell in ACTOR_SHEET_CELL_ORDER
+        ]
+
+        character = compile_character_dashboard(task).characters[0]
+
+        self.assertEqual(character.asset_state, "READY")
+        self.assertEqual([cell.key for cell in character.sheet_cells], list(ACTOR_SHEET_CELL_ORDER))
+        self.assertTrue(all(cell.available for cell in character.sheet_cells))
+        groups = {cell.key: cell.group for cell in character.sheet_cells}
+        self.assertEqual(groups["portrait"], "main_portrait")
+        self.assertEqual(groups["front"], "three_view")
+        self.assertEqual(groups["element_shoe"], "elements")
+        self.assertEqual(groups["detail_eye"], "detail_matrix")
+        self.assertEqual(sum(cell.group == "elements" for cell in character.sheet_cells), 8)
+        self.assertEqual(sum(cell.group == "detail_matrix" for cell in character.sheet_cells), 12)
 
     def test_character_id_and_source_hash_are_stable_and_not_array_index_based(self):
         first = compile_character_dashboard(_task())
@@ -186,7 +242,7 @@ class CharacterDashboardCompilerTests(unittest.TestCase):
         self.assertEqual(len(dashboard.characters), 1)
         self.assertEqual(dashboard.characters[0].name, "老周")
         self.assertEqual(dashboard.characters[0].asset_state, "NEEDS_REVIEW")
-        self.assertEqual([view.key for view in dashboard.characters[0].views], list(FIVE_VIEW_ORDER))
+        self.assertEqual([view.key for view in dashboard.characters[0].views], list(IDENTITY_VIEW_ORDER))
         self.assertFalse(any(view.available for view in dashboard.characters[0].views))
         self.assertEqual(dashboard.stats.expected_view_count, 5)
         self.assertEqual(dashboard.state, "INCOMPLETE")
@@ -291,7 +347,7 @@ class CharacterDashboardApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["schemaVersion"], "character-dashboard.v1")
-        self.assertEqual(response.json()["viewContract"]["order"], list(FIVE_VIEW_ORDER))
+        self.assertEqual(response.json()["viewContract"]["order"], list(IDENTITY_VIEW_ORDER))
         self.assertEqual(exported.status_code, 200, exported.text)
         self.assertIn("attachment", exported.headers["content-disposition"])
         self.assertEqual(exported.headers["cache-control"], "private, no-store")
@@ -330,10 +386,7 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 unique_view_hashes=5,
                 issues=[],
             )
-            view_paths = [
-                Path(temp) / f"{index}_{view}.png"
-                for index, view in enumerate(FIVE_VIEW_ORDER, start=1)
-            ]
+            view_paths = _cell_paths(Path(temp))
             llm_results = [
                 "## 主角：沈知微\n十九岁，深蓝校服。\n## 反派：陆行远\n二十八岁，黑色风衣。",
                 '{"project":{"genre":"民国悬疑"},"characters":[]}',
@@ -344,8 +397,8 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 patch.object(service.gateway, "call_llm", side_effect=llm_results),
                 patch.object(service.gateway, "resolve_authorized_face", return_value=None),
                 patch.object(service.gateway, "generate_character_sheet", side_effect=lambda model, name, *args, **kwargs: f"https://cdn.example/{name}/sheet.png"),
-                patch("app.service.drama_service.split_five_view_sheet", return_value=view_paths),
-                patch("app.service.drama_service.validate_five_view_images", return_value=quality),
+                patch("app.service.drama_service.split_actor_sheet", return_value=view_paths),
+                patch("app.service.drama_service.validate_actor_sheet_images", return_value=quality),
                 patch.object(service, "run_real_consistency_check", return_value="PASS"),
             ):
                 result = service._execute_stage_blocking(task_id, 3)
@@ -396,7 +449,7 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 unique_view_hashes=5,
                 issues=[],
             )
-            view_paths = [Path(temp) / f"{view}.png" for view in FIVE_VIEW_ORDER]
+            view_paths = _cell_paths(Path(temp))
             generated_names = []
 
             def generate_sheet(model, name, *args, **kwargs):
@@ -409,8 +462,8 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
                 patch.object(service.gateway, "resolve_authorized_face", return_value=None),
                 patch.object(service.gateway, "generate_character_sheet", side_effect=generate_sheet),
-                patch("app.service.drama_service.split_five_view_sheet", return_value=view_paths),
-                patch("app.service.drama_service.validate_five_view_images", return_value=quality),
+                patch("app.service.drama_service.split_actor_sheet", return_value=view_paths),
+                patch("app.service.drama_service.validate_actor_sheet_images", return_value=quality),
                 patch.object(service, "run_real_consistency_check", return_value="PASS"),
             ):
                 result = service._execute_stage_blocking(task_id, 3)
@@ -447,7 +500,7 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 unique_view_hashes=5,
                 issues=[],
             )
-            view_paths = [Path(temp) / f"{view}.png" for view in FIVE_VIEW_ORDER]
+            view_paths = _cell_paths(Path(temp))
             generated_names: list[str] = []
 
             def generate_sheet(model, name, *args, **kwargs):
@@ -460,8 +513,8 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
                 patch.object(service.gateway, "resolve_authorized_face", return_value=None),
                 patch.object(service.gateway, "generate_character_sheet", side_effect=generate_sheet),
-                patch("app.service.drama_service.split_five_view_sheet", return_value=view_paths),
-                patch("app.service.drama_service.validate_five_view_images", return_value=quality),
+                patch("app.service.drama_service.split_actor_sheet", return_value=view_paths),
+                patch("app.service.drama_service.validate_actor_sheet_images", return_value=quality),
                 patch.object(service, "run_real_consistency_check", return_value="PASS"),
             ):
                 result = service._execute_stage_blocking(task_id, 3)
@@ -508,7 +561,7 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 unique_view_hashes=5,
                 issues=[],
             )
-            view_paths = [Path(temp) / f"{view}.png" for view in FIVE_VIEW_ORDER]
+            view_paths = _cell_paths(Path(temp))
             attempts: dict[str, int] = {}
             call_order: list[str] = []
 
@@ -525,8 +578,8 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
                 patch.object(service.gateway, "resolve_authorized_face", return_value=None),
                 patch.object(service.gateway, "generate_character_sheet", side_effect=generate_sheet),
-                patch("app.service.drama_service.split_five_view_sheet", return_value=view_paths),
-                patch("app.service.drama_service.validate_five_view_images", return_value=quality),
+                patch("app.service.drama_service.split_actor_sheet", return_value=view_paths),
+                patch("app.service.drama_service.validate_actor_sheet_images", return_value=quality),
                 patch.object(service, "run_real_consistency_check", return_value="PASS"),
             ):
                 result = service._execute_stage_blocking(task_id, 3)
@@ -572,7 +625,7 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 "sheet_type": "ordered_five_view_turnaround",
                 "views": [
                     {"view": view, "image_url": f"/media/沈砚/{view}.png"}
-                    for view in FIVE_VIEW_ORDER
+                    for view in IDENTITY_VIEW_ORDER
                 ],
                 "five_view_quality": {
                     "passed": True, "entropy": [6.0] * 5,
@@ -587,7 +640,7 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 unique_view_hashes=5,
                 issues=[],
             )
-            view_paths = [Path(temp) / f"{view}.png" for view in FIVE_VIEW_ORDER]
+            view_paths = _cell_paths(Path(temp))
             generated_names = []
 
             def generate_sheet(model, name, *args, **kwargs):
@@ -600,8 +653,8 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
                 patch.object(service.gateway, "resolve_authorized_face", return_value=None),
                 patch.object(service.gateway, "generate_character_sheet", side_effect=generate_sheet),
-                patch("app.service.drama_service.split_five_view_sheet", return_value=view_paths),
-                patch("app.service.drama_service.validate_five_view_images", return_value=quality),
+                patch("app.service.drama_service.split_actor_sheet", return_value=view_paths),
+                patch("app.service.drama_service.validate_actor_sheet_images", return_value=quality),
                 patch.object(service, "run_real_consistency_check", return_value="PASS"),
             ):
                 result = service._execute_stage_blocking(task_id, 3)
@@ -639,7 +692,7 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 passed=True, entropy=[6.0] * 5, palette_similarity=0.9,
                 unique_view_hashes=5, issues=[],
             )
-            view_paths = [Path(temp) / f"{view}.png" for view in FIVE_VIEW_ORDER]
+            view_paths = _cell_paths(Path(temp))
             lock = threading.Lock()
             live = {"now": 0, "peak": 0}
 
@@ -660,8 +713,8 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
                 patch.object(service.gateway, "resolve_authorized_face", return_value=None),
                 patch.object(service.gateway, "generate_character_sheet", side_effect=generate_sheet),
-                patch("app.service.drama_service.split_five_view_sheet", return_value=view_paths),
-                patch("app.service.drama_service.validate_five_view_images", return_value=quality),
+                patch("app.service.drama_service.split_actor_sheet", return_value=view_paths),
+                patch("app.service.drama_service.validate_actor_sheet_images", return_value=quality),
                 patch.object(service, "run_real_consistency_check", return_value="PASS"),
             ):
                 result = service._execute_stage_blocking(task_id, 3)
@@ -694,7 +747,7 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 passed=True, entropy=[6.0] * 5, palette_similarity=0.9,
                 unique_view_hashes=5, issues=[],
             )
-            view_paths = [Path(temp) / f"{view}.png" for view in FIVE_VIEW_ORDER]
+            view_paths = _cell_paths(Path(temp))
             lock = threading.Lock()
             live = {"now": 0, "peak": 0}
             order: list[str] = []
@@ -717,8 +770,8 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
                 patch.object(service.gateway, "resolve_authorized_face", return_value=None),
                 patch.object(service.gateway, "generate_character_sheet", side_effect=generate_sheet),
-                patch("app.service.drama_service.split_five_view_sheet", return_value=view_paths),
-                patch("app.service.drama_service.validate_five_view_images", return_value=quality),
+                patch("app.service.drama_service.split_actor_sheet", return_value=view_paths),
+                patch("app.service.drama_service.validate_actor_sheet_images", return_value=quality),
                 patch.object(service, "run_real_consistency_check", return_value="PASS"),
             ):
                 result = service._execute_stage_blocking(task_id, 3)
@@ -777,7 +830,7 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 # 「陆行远」不合格这件事才是这个用例真正要钉住的。
                 def split_sheet(sheet_url, view_dir):
                     character = str(sheet_url).split("/")[-2]
-                    return [Path(temp) / character / f"{view}.png" for view in FIVE_VIEW_ORDER]
+                    return _cell_paths(Path(temp) / character)
 
                 def validate_views(paths):
                     character = Path(paths[0]).parent.name
@@ -793,8 +846,8 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                     patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
                     patch.object(service.gateway, "resolve_authorized_face", return_value=None),
                     patch.object(service.gateway, "generate_character_sheet", side_effect=generate_sheet),
-                    patch("app.service.drama_service.split_five_view_sheet", side_effect=split_sheet),
-                    patch("app.service.drama_service.validate_five_view_images", side_effect=validate_views),
+                    patch("app.service.drama_service.split_actor_sheet", side_effect=split_sheet),
+                    patch("app.service.drama_service.validate_actor_sheet_images", side_effect=validate_views),
                     patch.object(service, "run_real_consistency_check", return_value="PASS"),
                 ):
                     with self.assertRaises(RuntimeError):

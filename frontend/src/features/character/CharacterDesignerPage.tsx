@@ -85,14 +85,14 @@ export function CharacterDesignerPage({
   const synchronizedTaskId = useRef('');
   const character = dashboard.characters.find(item => item.characterId === selectedId) || dashboard.characters[0];
   // 数字演员、场地、道具、服装、特效没出齐就离开第 3 步，下游分镜拿不到锁人物的
-  // 五视图，只能自己编一个人出来。看板契约 READY 之前不放行，成片一致性才守得住。
+  // 身份视图，只能自己编一个人出来。看板契约 READY 之前不放行，成片一致性才守得住。
   // The library gate covers scenes, props, costumes and effects; while it is
   // unknown (older backend, request failed) the server-side stage-4 check still holds.
   const assetsReady = !assetReadiness || assetReadiness.complete;
   const castReady = dashboard.state === 'READY' && assetsReady;
   const castGateReason = dashboard.state !== 'READY'
     ? (dashboard.characters.length
-      ? `五视图资产尚未齐备：${dashboard.stats.readyCount}/${dashboard.characters.length} 名数字演员可交付`
+      ? `数字演员设定集尚未齐备：${dashboard.stats.readyCount}/${dashboard.characters.length} 名数字演员可交付`
         + `${dashboard.stats.failedCount ? `，${dashboard.stats.failedCount} 名生成失败` : ''}`
         + '。全部生成完成后才能进入分镜师。'
       : '尚未生成任何数字演员资产，完成第 3 步后才能进入分镜师。')
@@ -266,7 +266,7 @@ export function CharacterDesignerPage({
           </div>
           <p>
             {activeAssetKind === 'actor'
-              ? '将角色身份 DNA 锁定为可验收的五视图资产，保持脸型、发型、服装与体态跨角度一致。'
+              ? '将角色身份 DNA 锁定为可验收的数字演员设定集，保持脸型、发型、服装与体态跨角度一致。'
               : `管理本剧的${characterAssetTabLabels[activeAssetKind]}资产，与数字演员共用同一资产库。`}
           </p>
         </div>
@@ -380,7 +380,7 @@ export function CharacterDesignerPage({
             <section className="character-designer__empty" role="status">
               <UserRoundPlus size={42} aria-hidden="true" />
               <h2>等待角色设计资产</h2>
-              <p>编剧阶段识别角色后，这里会生成角色库、五视图槽位与身份 DNA 档案。</p>
+              <p>编剧阶段识别角色后，这里会生成角色库、设定集视图槽位与身份 DNA 档案。</p>
               <button type="button" onClick={onRegenerate}><WandSparkles size={16} aria-hidden="true" /> 启动角色设计</button>
             </section>
           )}

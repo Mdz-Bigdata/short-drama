@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.core.actor_sheet_layout import ACTOR_SHEET_LAYOUT
 from app.schema.production import NineGridStoryboard, StoryboardPanel
 
 
@@ -18,16 +19,54 @@ class StoryboardContinuityReport(BaseModel):
     issues: list[ContinuityIssue]
 
 
-def build_five_view_prompt(name: str, identity_dna: str, visual_style: str) -> str:
-    """Build one strict five-panel turnaround prompt for a single identity."""
+def build_actor_sheet_prompt(name: str, identity_dna: str, visual_style: str) -> str:
+    """把 25 格数字演员设定集写成一段可执行的画面描述。
+
+    版面数字全部取自 ACTOR_SHEET_LAYOUT，切图器读的是同一份常量，
+    所以"提示词里描述的格子"和"切图器裁出来的格子"不可能对不上。
+
+    刻意只写画面本身：没有 markdown、没有元指令、不引用任何文档。
+    原因见 model_gateway.generate_character_sheet 的注释——把方法论文档塞进文生图
+    模型会被内容审核判 content_policy_violation，整批设定图直接全灭。
+    """
+    layout = ACTOR_SHEET_LAYOUT
+    left = round(layout.left_portrait_width * 100)
+    middle = round(layout.middle_width * 100)
+    right = round(layout.right_details_width * 100)
+    mid_left = round(layout.middle_inner_split * 100)
+    mid_right = 100 - mid_left
+    three_rows, three_columns = layout.three_view_grid
+    element_rows, element_columns = layout.element_grid
+    detail_rows, detail_columns = layout.detail_matrix_grid
     return (
-        f"为角色{name}制作同一人物、同一服装、同一发型、同一体型的五视图角色设定板。"
-        "画布严格横向等宽五栏，五个视图按从左到右固定顺序："
-        "正面、正面四分之三、标准侧面、背面四分之三、背面。"
+        f"为角色{name}制作一张{layout.aspect_ratio_label}超宽横向全景的数字演员设定集，"
+        "同一人物、同一服装、同一发型、同一体型。"
+        "背景为高级灰白渐变，边缘浅灰向中心纯白过渡，无环境杂物、无地面家具、无场景道具。"
+        "整张画面用极细纯白分隔线划成左中右三个等高竖栏，"
+        f"左栏占画面宽度{left}%、中栏占{middle}%、右栏占{right}%。"
+        "三栏顶部各居中一行深灰色无衬线大写标题："
+        "左栏 MAIN PORTRAIT，中栏 FULL BODY & ELEMENTS，右栏 DETAIL MATRIX。"
+        "左栏 MAIN PORTRAIT 只放一张正面近景特写，头部到胸部以上，居中、直视镜头。"
+        f"中栏内部再用极细纯白分隔线左右分开，左侧占中栏宽度{mid_left}%、右侧占{mid_right}%。"
+        "中栏左侧只放一张正面全身立绘，双脚完整、脚底对齐该栏底部基线。"
+        f"中栏右侧上半部是{three_rows}行×{three_columns}列共3格全身视图，"
+        "从左到右依次是正面全身、90度标准侧面全身、背面全身；"
+        "这三张与中栏左侧的立绘同一比例、脚底在同一条基线上、头顶在同一高度。"
+        f"中栏右侧下半部是{element_rows}行×{element_columns}列共"
+        f"{element_rows * element_columns}格元素拆解特写，"
+        "第一行从左到右：鞋履、腰部扣环、护腕与手部配饰、领口与肩部刺绣；"
+        "第二行从左到右：面料微距、发饰拆解、手部姿态、裙摆刺绣。"
+        f"右栏 DETAIL MATRIX 是{detail_rows}行×{detail_columns}列共"
+        f"{detail_rows * detail_columns}格细节特写，"
+        "第一行：正脸特写、四分之三侧脸、后脑发饰；"
+        "第二行：领口与肩颈、前襟胸部纹样、腰部束结；"
+        "第三行：袖口末端、材质微距、背部暗扣与系带；"
+        "第四行：鞋履足部、眼妆微距、动态姿态或小配件。"
+        "三栏等高，所有子格之间保留均匀的极细白色间隙，格子不重叠、不粘连、不合并、不错位。"
         f"身份DNA：{identity_dna}。视觉风格：{visual_style}。"
-        "五个视图必须是同一人物，不得改变脸型、五官比例、痣/疤位置、发际线、发型、服装、配饰和身材；"
-        "同焦段、同相机高度、同中性光、同纯色背景、完整全身、自然站姿、无遮挡。"
-        "禁止重复角度、镜像脸、多人、额外肢体、裁切脚部、文字水印和场景道具。"
+        "全部格子必须是同一个人物，不得改变脸型、五官比例、痣与疤的位置、发际线、"
+        "发型、服装、配饰和身材；同焦段、同相机高度、同中性光。"
+        "禁止出现第二个人物、额外肢体、多余手指、裁切脚部、文字、标注、水印、logo 和场景道具。"
     )
 
 

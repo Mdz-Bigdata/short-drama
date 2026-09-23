@@ -223,8 +223,8 @@ export function CharacterInspector({ character }: { character: CharacterDashboar
         </section>
       )}
 
-      <section className="character-inspector__readiness" aria-label="五视图就绪度">
-        <div><span>五视图就绪度</span><strong>{available} / 5</strong></div>
+      <section className="character-inspector__readiness" aria-label="身份视图就绪度">
+        <div><span>身份视图就绪度</span><strong>{available} / 5</strong></div>
         <progress value={available} max={5}>{available} / 5</progress>
         <small>{character.quality.passed === true ? '身份一致性质检已通过' : '需全部视图可用并通过身份一致性质检'}</small>
       </section>
@@ -292,8 +292,8 @@ export function CharacterEvidencePanels({
     <div className="character-evidence">
       <section className="character-evidence__panel" aria-labelledby="character-prompt-title">
         <header>
-          <Sparkles size={17} aria-hidden="true" /><h2 id="character-prompt-title">五视图提示词</h2>
-          <button type="button" aria-haspopup="dialog" aria-label="查看五视图提示词完整内容" onClick={() => setDetail('prompt')}>
+          <Sparkles size={17} aria-hidden="true" /><h2 id="character-prompt-title">设定集提示词</h2>
+          <button type="button" aria-haspopup="dialog" aria-label="查看设定集提示词完整内容" onClick={() => setDetail('prompt')}>
             <Maximize2 size={14} aria-hidden="true" /> 查看完整内容
           </button>
         </header>
@@ -343,7 +343,7 @@ export function CharacterEvidencePanels({
       </section>
 
       {detail === 'prompt' && (
-        <CharacterDetailDialog title="五视图提示词" onClose={() => setDetail(null)}>
+        <CharacterDetailDialog title="设定集提示词" onClose={() => setDetail(null)}>
           <pre className="character-dialog__pre">{prompt}</pre>
         </CharacterDetailDialog>
       )}

@@ -59,23 +59,26 @@ interface PendingUpload {
 
 
 const kindMeta: Record<ElementKind, { label: string; hint: string }> = {
-  actor: { label: '演员', hint: '演员必须完成正面、正面 3/4、侧面、背面 3/4、背面五视图' },
+  actor: { label: '演员', hint: '演员必须完成正面全身、侧面全身、背面全身、正脸特写、3-4 侧脸五个身份视图' },
   scene: { label: '场景', hint: '记录空间布局、时段、天气、灯光与机位锚点' },
   prop: { label: '道具', hint: '记录归属、位置、状态、材质与跨镜头连续性' },
   costume: { label: '服装', hint: '记录角色、造型状态、材质、换装节点与镜头连续性' },
   effect: { label: '特效', hint: '记录作用目标、时间、影响区域与结束状态' },
 };
 
+// 数字演员设定集的五个身份视图槽位；后两项是存量五视图整板留下的旧角度。
 const actorSlots = [
-  ['front', '正面'],
+  ['front', '正面全身'],
+  ['profile', '侧面全身'],
+  ['back', '背面全身'],
+  ['face_front', '正脸特写'],
+  ['face_three_quarter', '3-4 侧脸'],
   ['front_three_quarter', '正面 3/4'],
-  ['profile', '侧面'],
   ['rear_three_quarter', '背面 3/4'],
-  ['back', '背面'],
 ];
 
 function actorSlotLabel(slot: string): string {
-  return actorSlots.find(([value]) => value === slot)?.[1] || '正面';
+  return actorSlots.find(([value]) => value === slot)?.[1] || '正面全身';
 }
 
 
@@ -609,7 +612,7 @@ export function ElementLibraryPage({
         body: JSON.stringify({ prompt: `保持 ${item.name} 的身份、状态和视觉锚点，重新生成当前版本` }),
       });
       if (item.kind === 'actor') {
-        setNotice(`“${item.name}”的五视图重新生成请求已提交。`);
+        setNotice(`“${item.name}”的数字演员设定集重新生成请求已提交。`);
         return;
       }
       const targetKind = kindRef.current;
@@ -826,7 +829,7 @@ export function ElementLibraryPage({
                       onClick={() => setImageViewerAsset({
                         kind: item.kind,
                         name: item.name,
-                        // 数字演员按当前五视图逐图放大，标注正在查看的视图。
+                        // 数字演员按当前身份视图逐图放大，标注正在查看的视图。
                         description: item.kind === 'actor' ? `${previewLabel} · ${descriptionText}` : descriptionText,
                         imageUrl,
                       })}
@@ -856,7 +859,7 @@ export function ElementLibraryPage({
                     <p>{descriptionText}</p>
                   </>
                 )}
-                {kind === 'actor' && <small>五视图 {item.files.length}/5</small>}
+                {kind === 'actor' && <small>身份视图 {item.files.length}/5</small>}
                 <div className="element-actions">
                   <button type="button" onClick={() => beginImageUpload(item.id)} disabled={creating || Boolean(busy)}><Upload size={14} /> 添加上传</button>
                   <button

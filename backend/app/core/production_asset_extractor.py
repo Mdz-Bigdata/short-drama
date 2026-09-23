@@ -206,10 +206,10 @@ def _extract_structured_catalog(breakdown: dict[str, Any], kind: str) -> list[di
 
 
 def _actor_image(character: dict[str, Any]) -> str:
-    """Prefer the front five-view render, then the approved turnaround sheet."""
+    """Prefer the front identity view, then the approved actor sheet."""
     views = character.get("views")
     if isinstance(views, list):
-        for wanted in ("front", "front_three_quarter", "profile"):
+        for wanted in ("front", "face_front", "profile", "front_three_quarter"):
             for view in views:
                 if not isinstance(view, dict):
                     continue

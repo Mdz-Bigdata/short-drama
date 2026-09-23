@@ -66,6 +66,18 @@ export interface CameraRecipe {
   provider_phrase: string;
 }
 
+/** 一镜翻车后的修正方案（backend app/core/generation_feedback.py）。 */
+export interface ShotFixPlan {
+  category: string;
+  category_name: string;
+  diagnosis: string;
+  attempt: number;
+  steps: string[];
+  negatives: string[];
+  escalation: string;
+  give_up: boolean;
+}
+
 export interface ShotVisualWorkspace {
   task_id: string;
   current_stage: number;

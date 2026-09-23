@@ -33,7 +33,8 @@ SECTION_FILES: dict[str, str] = {
     "negative-prompts": "AI影视剧负面提示词.md",                    # 负面提示词(运行时走模块词表，此处仅登记)
     "golden-narrative": "AI漫剧短剧剧本黄金叙事结构.md",             # 黄金叙事结构
     "director-shot-guide": "AI短剧与漫剧导演级拍摄分镜完全指南.md",   # 导演级拍摄分镜
-    "five-view-template": "AI短剧五视图解决人物一致性提示词模板.md",  # 五视图模板
+    "actor-sheet-template": "AI短剧五视图解决人物一致性提示词模板.md",  # 数字演员设定集模板
+                                                                    # (文件名为兼容既有路径保留，正文已改为设定集)
     "production-guidelines": "AI短剧注意事项与关键元素.md",          # 注意事项与关键元素
     "martial-arts": "AI短剧电影级武打镜头设计指南.md",               # 武打镜头设计
     "performance-details": "AI短剧表演细节与提示词指南.md",          # 表演细节
@@ -53,7 +54,7 @@ STAGE_SECTIONS: dict[int, tuple[str, ...]] = {
     1: ("production-guidelines", "genre-summary", "golden-narrative"),
     2: ("performance-details", "production-guidelines", "continuity-design",
         "golden-narrative", "dialogue-pacing"),
-    3: ("five-view-template", "performance-details"),
+    3: ("actor-sheet-template", "performance-details"),
     4: ("director-shot-guide", "continuity-design", "plot-shot-coherence",
         "emotion-expression", "martial-arts", "scene-design"),
     5: ("visual-style",),
@@ -72,7 +73,7 @@ SECTION_BUDGETS: dict[str, int] = {
     "negative-prompts": DEFAULT_SECTION_BUDGET,
     "golden-narrative": DEFAULT_SECTION_BUDGET,
     "director-shot-guide": 8_000,     # 阶段4 现值 8000
-    "five-view-template": DEFAULT_SECTION_BUDGET,
+    "actor-sheet-template": DEFAULT_SECTION_BUDGET,
     "production-guidelines": DEFAULT_SECTION_BUDGET,
     "martial-arts": DEFAULT_SECTION_BUDGET,
     "performance-details": DEFAULT_SECTION_BUDGET,

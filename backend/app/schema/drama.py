@@ -124,6 +124,15 @@ class DramaConfigSchema(DramaBaseSchema):
     script_content: Optional[str] = Field(None, description="手动上传的剧本文件内容")
     script_name: Optional[str] = Field(None, description="手动上传的剧本文件名")
 
+class ShotFeedbackRequest(DramaBaseSchema):
+    """One "this shot came back wrong" report from the person watching the clip."""
+
+    result: Literal["success", "partial", "failed"] = Field("failed", description="这次生成的结果")
+    text: str = Field("", description="用自己的话描述问题，如「脸崩了」「手是六根手指」", max_length=500)
+    category: str = Field("", description="可选：直接指定失败类型，留空则按描述归类", max_length=40)
+    applied_fix: str = Field("", description="可选：本次生效的修正手段，连续两次有效会写入项目经验", max_length=300)
+
+
 class DramaTaskSummary(DramaBaseSchema):
     """Lightweight task row for the polled project list.
 

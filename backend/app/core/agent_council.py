@@ -29,6 +29,7 @@ from app.schema.agent_council import (
     ProductionConstitution,
     ReleaseCheck,
 )
+from app.schema.production import identity_view_order_is_valid
 
 
 PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
@@ -69,7 +70,7 @@ _ROLE_NAMES: Final[dict[AgentRole, tuple[str, str]]] = {
 _MISSIONS: Final[dict[AgentRole, str]] = {
     AgentRole.EXECUTIVE_DIRECTOR: "确立题材、受众、商业边界、叙事弧、高光与全局质量标准，并裁决跨部门冲突。",
     AgentRole.WRITER: "交付可拍、可听、因果完整的分集剧本，管理钩子、信息差、伏笔、弧光、台词与情绪节拍。",
-    AgentRole.CHARACTER_DESIGNER: "锁定每个角色与状态的身份 DNA、严格五视图、造型、标志物、表演基线与声音身份。",
+    AgentRole.CHARACTER_DESIGNER: "锁定每个角色与状态的身份 DNA、数字演员设定集、造型、标志物、表演基线与声音身份。",
     AgentRole.STORYBOARD_ARTIST: "把剧本拆成连续可生成的时间拍点、九宫格、场景圣经、镜头契约、动作与剪辑交接。",
     AgentRole.VISUAL_DIRECTOR: "锁定画风、场景、光色材质与参考资产，编译负面词并自动路由多种视频生成模式。",
     AgentRole.AUDIO_DIRECTOR: "设计角色声卡、逐句语速情绪停顿、口型时序、SFX/Foley、BGM 与可编辑混音计划。",
@@ -124,10 +125,10 @@ _ROLE_GATES: Final[dict[AgentRole, tuple[str, ...]]] = {
         "因果、人物知情状态、时间线、伏笔回收和多集承接均有台账。",
     ),
     AgentRole.CHARACTER_DESIGNER: (
-        "每个角色/状态独立交付严格五视图，顺序不得改变且通过完整性检查。",
+        "每个角色/状态独立交付一张 21:9 数字演员设定集（MAIN PORTRAIT / FULL BODY & ELEMENTS / DETAIL MATRIX 三区，含 1×3 三视图、2×4 元素拆解、4×3 细节矩阵），五个身份锚点顺序不得改变且通过完整性检查。",
         "脸、发际线、体型、服装层次、配饰、伤痕与标志道具可量化且可复用。",
         "角色之间在脸型、发型、服装主色和声纹上可区分。",
-        "五视图负面词只取通用/面部/手部肢体/身份造型/服化道/材质模块，不发时序词，不盲目堆叠。",
+        "设定集负面词只取通用/面部/手部肢体/身份造型/服化道/材质模块，不发时序词，不盲目堆叠。",
     ),
     AgentRole.STORYBOARD_ARTIST: (
         "每页为严格3×3九宫格，逐格包含角色、场景、道具、特效与完整镜头字段。",
@@ -206,7 +207,7 @@ CAPABILITIES: Final[tuple[CapabilityRecord, ...]] = (
     _cap("dialogue_performance", "语速、情绪、停顿、重音与呼吸", (_C.AUDIO_DIRECTOR, _C.WRITER),
          ("AI影视剧台词语速情绪提示词总结.md", "AI短剧表演细节与提示词指南.md"),
          "逐句编译 speed/emotion/intensity/pause/stress/breath，并校验对白时长与镜头时长。", "validate_audio_contract", ("dialogue_timing", "lipsync_plan")),
-    _cap("five_view_identity", "角色五视图与身份 DNA", (_C.CHARACTER_DESIGNER,),
+    _cap("five_view_identity", "数字演员设定集与身份 DNA", (_C.CHARACTER_DESIGNER,),
          ("AI短剧五视图解决人物一致性提示词模板.md", "AI 生成短剧一致性检查清单.md"),
          "每个角色状态严格按正面/正面四分之三/侧面/背面四分之三/背面生成并质检。", "validate_five_view_contract", ("five_view_turnarounds", "character_state_cards")),
     _cap("character_styling", "发型、服化、体型、标志物与状态版本", (_C.CHARACTER_DESIGNER, _C.VISUAL_DIRECTOR),
@@ -403,7 +404,7 @@ _NEGATIVE_BASE_MODULES: Final[tuple[str, ...]] = (
 # 每个下游角色按自己真正调用的生成接口筛模块，不是复制全量词表。
 # 依据：知识源 §17.2「不同任务的推荐组合」与各角色在流水线里的实际产出形态。
 _ROLE_NEGATIVE_MODULES: Final[dict[AgentRole, tuple[str, ...]]] = {
-    # 五视图是静态设定图、全片身份锚点：压五官漂移/手部崩塌/服装走样/配色不稳，不发时序词。
+    # 数字演员设定集是静态设定图、全片身份锚点：压五官漂移/手部崩塌/服装走样/配色不稳，不发时序词。
     AgentRole.CHARACTER_DESIGNER: (
         "common_quality", "face_anatomy", "hands_body", "identity_outfit",
         "costume_hair_props", "material_texture", "text_watermark",
@@ -531,7 +532,7 @@ def _role_prompt(
         f"项目：《{request.title}》；题材={request.genre}；受众={request.audience}；平台={request.platform}；"
         f"形式={request.format}；语言={request.output_language}。\n"
         f"使命：{_MISSIONS[role]}\n"
-        "共同硬约束：角色使用严格五视图；分镜使用3×3九宫格；角色/场景/道具/特效不可省略；"
+        "共同硬约束：角色使用 21:9 数字演员设定集并锁定五个身份锚点；分镜使用3×3九宫格；角色/场景/道具/特效不可省略；"
         "分镜图与运镜必须同源并校验契约指纹；视频路由必须在首尾帧、多图/宫格、多模态与首帧模式中按能力自动选择；"
         "不支持的输入不得静默丢弃；任何密钥不得写入提示词、前端、日志或产物。\n"
         f"交付基准：{delivery.width}×{delivery.height} {delivery.aspect_ratio} {delivery.fps}fps；"
@@ -710,10 +711,11 @@ class AgentCouncilCompiler:
                 owner=role,
             ))
 
-        expected_views = ["front", "front_three_quarter", "profile", "rear_three_quarter", "back"]
+        # 当前契约的五个身份锚点，或旧五视图顺序（存量项目的证据包还是老键）。
+        identity_order_ok = identity_view_order_is_valid(tuple(evidence.five_view_order))
         structural = (
-            ("character.five_view_order", evidence.five_view_order == expected_views,
-             "五视图顺序正确" if evidence.five_view_order == expected_views else "五视图缺失或顺序错误", AgentRole.CHARACTER_DESIGNER),
+            ("character.five_view_order", identity_order_ok,
+             "身份视图顺序正确" if identity_order_ok else "身份视图缺失或顺序错误", AgentRole.CHARACTER_DESIGNER),
             ("storyboard.exact_nine_grid", evidence.storyboard_rows == 3 and evidence.storyboard_columns == 3 and evidence.storyboard_panel_count == 9,
              f"{evidence.storyboard_rows}×{evidence.storyboard_columns}, panels={evidence.storyboard_panel_count}", AgentRole.STORYBOARD_ARTIST),
             ("storyboard.motion_fingerprint", evidence.storyboard_motion_fingerprints_match,

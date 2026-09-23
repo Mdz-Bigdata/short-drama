@@ -476,9 +476,9 @@ describe('ElementLibraryPage', () => {
 
     render(<ElementLibraryPage initialKind="actor" onBack={() => undefined} />);
 
-    expect(await screen.findByRole('button', { name: '删除“沈知微”的正面视图' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '删除“沈知微”的正面全身视图' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '删除演员资产“沈知微”' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '删除“陆行远”的正面视图' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '删除“陆行远”的正面全身视图' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '删除演员资产“陆行远”' })).toBeTruthy();
   });
 
@@ -985,12 +985,12 @@ describe('asset image viewer across all five kinds', () => {
 
     render(<ElementLibraryPage initialKind="actor" onBack={() => undefined} />);
 
-    const openButton = await screen.findByRole('button', { name: '查看数字演员“沈砚之”的正面视图' });
+    const openButton = await screen.findByRole('button', { name: '查看数字演员“沈砚之”的正面全身视图' });
     await userEvent.click(openButton);
 
     const dialog = screen.getByRole('dialog', { name: '沈砚之 · 数字演员全景细节' });
     // 逐图放大：弹层描述标注当前查看的是哪一张五视图。
-    expect(within(dialog).getByText(/正面视图/)).toBeTruthy();
+    expect(within(dialog).getByText(/正面全身视图/)).toBeTruthy();
     expect(within(dialog).getByText(/左眉有旧疤/)).toBeTruthy();
 
     await userEvent.keyboard('{Escape}');
@@ -1021,9 +1021,9 @@ describe('asset image viewer across all five kinds', () => {
 
     render(<ElementLibraryPage initialKind="actor" onBack={() => undefined} />);
 
-    expect(await screen.findByRole('button', { name: '查看数字演员“陆行远”的正面视图' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '查看数字演员“陆行远”的正面全身视图' })).toBeTruthy();
     await userEvent.selectOptions(screen.getByLabelText(/上传视图/), 'back');
-    expect(screen.getByText('背面视图未上传')).toBeTruthy();
+    expect(screen.getByText('背面全身视图未上传')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /查看数字演员/ })).toBeNull();
   });
 
@@ -1133,20 +1133,20 @@ describe('actor five-view preview switching', () => {
     render(<ElementLibraryPage initialKind="actor" onBack={() => undefined} />);
 
     // Opens on 正面 and shows the front render.
-    const front = await screen.findByRole('img', { name: '沈砚之 正面视图' });
+    const front = await screen.findByRole('img', { name: '沈砚之 正面全身视图' });
     expect((front as HTMLImageElement).src).toContain('/media/elements/front.png');
 
     // Switching the selector swaps every card to that view's image.
     await userEvent.selectOptions(screen.getByLabelText(/上传视图/), 'profile');
-    const profile = await screen.findByRole('img', { name: '沈砚之 侧面视图' });
+    const profile = await screen.findByRole('img', { name: '沈砚之 侧面全身视图' });
     expect((profile as HTMLImageElement).src).toContain('/media/elements/profile.png');
-    expect(screen.queryByRole('img', { name: '沈砚之 正面视图' })).toBeNull();
-    expect(screen.getByRole('button', { name: '删除“沈砚之”的侧面视图' })).toBeTruthy();
+    expect(screen.queryByRole('img', { name: '沈砚之 正面全身视图' })).toBeNull();
+    expect(screen.getByRole('button', { name: '删除“沈砚之”的侧面全身视图' })).toBeTruthy();
 
     // A view with no upload states that plainly instead of faking a fallback.
     await userEvent.selectOptions(screen.getByLabelText(/上传视图/), 'back');
     expect(screen.queryByRole('img', { name: /沈砚之/ })).toBeNull();
-    expect(screen.getByText('背面视图未上传')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /删除“沈砚之”的背面视图/ })).toBeNull();
+    expect(screen.getByText('背面全身视图未上传')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /删除“沈砚之”的背面全身视图/ })).toBeNull();
   });
 });

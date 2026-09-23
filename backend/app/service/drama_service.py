@@ -18,7 +18,7 @@ from typing import Dict, Any, Optional, List
 from app.repository.task_repo import StaleTaskWriteError, TaskRepository
 from app.core.model_gateway import ModelGateway
 from app.core import media_compositor
-from app.core.storyboard_assets import compose_nine_grid, split_five_view_sheet
+from app.core.storyboard_assets import compose_nine_grid, split_actor_sheet
 from app.core.storyboard_quality import build_nine_grid_prompt, validate_storyboard_continuity
 from app.core.shot_motion_contract import (
     ShotMotionContract,
@@ -27,7 +27,8 @@ from app.core.shot_motion_contract import (
     compile_storyboard_image_prompt,
 )
 from app.core.continuity import ContinuityState, plan_transition
-from app.core.image_quality import validate_five_view_images
+from app.core.actor_sheet_layout import ACTOR_SHEET_CELL_ORDER
+from app.core.image_quality import validate_actor_sheet_images
 from app.core.video_quality import VideoQualityMeasurements, evaluate_video_quality
 from app.core.video_references import (
     VideoGenerationIntent,
@@ -78,7 +79,7 @@ from app.core.shot_design_skill import (
     DEFAULT_CORE_BUDGET,
     DEFAULT_SECTION_BUDGET,
 )
-from app.core.shot_table_rules import audit_and_log
+from app.core.shot_table_rules import audit_and_log, speakers_in
 from app.core.writer_dashboard import (
     compile_writer_dashboard,
     episode_from_scene_id,
@@ -97,7 +98,13 @@ from app.core.character_dashboard import compile_character_dashboard
 from app.core.production_knowledge import load_section, stage_lessons_block
 from app.core import knowledge_evolution
 from app.schema.drama import DramaCreateRequest
-from app.schema.production import NineGridStoryboard, StoryAssetCatalog, StoryboardPanel
+from app.schema.production import (
+    IDENTITY_VIEW_ORDER,
+    LEGACY_IDENTITY_VIEW_ORDER,
+    NineGridStoryboard,
+    StoryAssetCatalog,
+    StoryboardPanel,
+)
 from app.schema.agent_council import AgentRole, CouncilCompileRequest, CouncilReleaseEvidence
 from app.schema.writer_dashboard import WriterDashboardResponse
 from app.schema.screenwriting import ScreenwritingEpisodeResponse, ScreenwritingStateResponse
@@ -109,7 +116,15 @@ from app.service import director_desk_service as director_desk
 from app.service import spatial_stage_service as spatial_stage
 from app.core.spatial_stage.prompting import table_brief as spatial_table_brief
 from app.core.spatial_stage import interchange as spatial_interchange
-from app.core import shot_transitions, style_packs
+from app.core import (
+    asset_sheets,
+    generation_feedback,
+    genre_clusters,
+    h3_sound_design,
+    prompt_packages,
+    shot_transitions,
+    style_packs,
+)
 from app.schema.character_dashboard import CharacterDashboardResponse
 
 
@@ -1299,6 +1314,129 @@ class DramaService:
             "board_status": str(board.get("status") or ""),
             "board_stale": bool(board.get("spatial_stale")),
             "plan": plan.model_dump(mode="json"),
+        }
+
+    def compile_prompt_packages(
+        self,
+        task_id: str,
+        *,
+        scene_id: str = "",
+        package_seconds: int = 15,
+        variant: str = "standard",
+        delivery: str = "正常",
+    ) -> Optional[Dict[str, Any]]:
+        """Re-cut a scene's finished shots into self-contained Seedance packages.
+
+        The shots are already approved at this point, so this only regroups them: no
+        model is called and nothing is written back to the task.
+        """
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        flat = task["assets"].get("4") if isinstance(task["assets"].get("4"), list) else []
+        shots = [
+            shot for shot in flat
+            if isinstance(shot, dict) and (not scene_id or str(shot.get("scene_id") or "") == scene_id)
+        ]
+        if not shots:
+            raise ValueError("还没有可用的分镜表：先完成第4阶段")
+
+        config = task.get("config") or {}
+        pack = style_packs.resolve_pack(config)
+        scene_record = next(
+            (item for item in self._breakdown_scenes(task) if str(item.get("scene_id") or "") == str(shots[0].get("scene_id") or "")),
+            {},
+        )
+        plan = prompt_packages.plan_packages(
+            shots, package_seconds=package_seconds, variant=variant, delivery=delivery,
+        )
+        spatial_plan = spatial_stage.load_plan(task, str(shots[0].get("scene_id") or "")) if scene_id else None
+        context = prompt_packages.PackageContext(
+            pack=pack,
+            scene=str(shots[0].get("scene") or scene_record.get("content") or ""),
+            spatial_lock=spatial_table_brief(spatial_plan) if spatial_plan is not None else "",
+            lighting=str(shots[0].get("lighting") or ""),
+            cast_locks={
+                str(item.get("name")): str(item.get("desc") or item.get("description") or "按设定图渲染，不可改造")
+                for item in (task["assets"].get("3_characters") or [])
+                if isinstance(item, dict) and item.get("name")
+            },
+        )
+        title = f"{config.get('title_suggestion') or '本片'}{f' · {scene_id}' if scene_id else ''}"
+        return {
+            "task_id": task_id,
+            "scene_id": scene_id,
+            "plan": plan.as_dict(),
+            "text": prompt_packages.render(plan, context, title=title),
+        }
+
+    def report_shot_failure(
+        self,
+        task_id: str,
+        shot_id: Any,
+        *,
+        result: str = "failed",
+        text: str = "",
+        category: str = "",
+        applied_fix: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """Take one "this shot came back wrong" report and answer with what to do next.
+
+        The report is written into the project's ledger, so the same failure twice on the
+        same model becomes a weakness the later stages design around.
+        """
+        if result not in {"success", "partial", "failed"}:
+            raise ValueError("result 只能是 success、partial 或 failed")
+
+        outcome: Dict[str, Any] = {}
+
+        def change(task: Dict[str, Any]) -> Dict[str, Any]:
+            model = str((task.get("config") or {}).get("video_model") or "")
+            written = generation_feedback.record(
+                task, shot_id=shot_id, result=result, text=text, category=category,
+                model=model, applied_fix=applied_fix,
+            )
+            outcome.update({
+                "task_id": task_id,
+                "shot_id": shot_id,
+                "result": result,
+                "attempt": written["attempt"],
+                "plan": written["plan"],
+                "summary": generation_feedback.summary(task),
+            })
+            return task
+
+        if self.repo.mutate_task(task_id, change) is None:
+            return None
+        return outcome
+
+    def get_generation_feedback(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """The project's failure ledger: what broke, how often, and on which model."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        model = str((task.get("config") or {}).get("video_model") or "")
+        return {
+            "task_id": task_id,
+            "summary": generation_feedback.summary(task),
+            "preventive_notes": generation_feedback.preventive_notes(task, model),
+            "catalog": generation_feedback.describe(),
+        }
+
+    def compile_asset_sheets(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """The design sheets a production needs locked before anything is generated."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        config = task.get("config") or {}
+        pack = style_packs.resolve_pack(config)
+        sheets = asset_sheets.extract_sheets(
+            task, pack=pack, project=str(config.get("title_suggestion") or "本片"),
+        )
+        return {
+            "task_id": task_id,
+            "sheets": sheets.as_dict(),
+            "markdown": asset_sheets.render_markdown(sheets, title=f"{config.get('title_suggestion') or '本片'} 资产设定图"),
         }
 
     def get_spatial_overview(self, task_id: str) -> Optional[Dict[str, Any]]:
@@ -3454,7 +3592,7 @@ class DramaService:
             "  }]\n"
             "}\n"
             "要求：忠实提取原文信息不要虚构；hex 色值必须是文档中出现的；"
-            "states 覆盖每个角色的全部状态卡；anchors 按五视图顺序排列。"
+            "states 覆盖每个角色的全部状态卡；anchors 按身份视图顺序排列。"
         )
         user_prompt = f"【短剧标题】：{title}\n\n【角色 DNA 锁定包原文】：\n{dna_text}"
         try:
@@ -3590,6 +3728,9 @@ class DramaService:
         spatial_brief = spatial_table_brief(blocking_preview) if blocking_preview is not None else ""
         if spatial_brief:
             user_prompt += "\n" + spatial_brief
+        # 题材决定这场戏怎么拍，感觉决定它拍成什么样：两者在场景内容之前先讲清楚。
+        direction = genre_clusters.direction_from_task(config, genre=genre, text=scene_content)
+        user_prompt += "\n" + direction.brief()
         # 镜头怎么接到下一镜，和镜头本身一样是分镜表作者的事：先把衔接规则讲清，再按同一套规则复核。
         user_prompt += "\n" + shot_transitions.TABLE_BRIEF
         user_prompt += (
@@ -3682,14 +3823,7 @@ class DramaService:
         board = NineGridStoryboard(
             title=title,
             scene_number=int(re.search(r"S(\d+)$", scene_id, re.I).group(1)) if re.search(r"S(\d+)$", scene_id, re.I) else 1,
-            rhythm_profile=(
-                "romance" if genre in {"romance", "retro_romance"}
-                else "suspense" if genre == "mystery"
-                else "horror" if genre == "horror"
-                else "comedy" if genre == "comedy"
-                else "action" if genre in {"military", "sports", "wuxia", "xianxia"}
-                else "confrontation"
-            ),
+            rhythm_profile=("romance" if genre in {"romance", "retro_romance"} else direction.cluster.rhythm_profile),
             assets=StoryAssetCatalog(
                 characters=scene_characters or ["空镜（无人物）"],
                 scenes=[location or shots[0]["scene"]],
@@ -3820,12 +3954,14 @@ class DramaService:
                     "summary": cut_plan.summary,
                     "checks": [check.model_dump() for check in cut_plan.checks],
                 }} if cut_plan is not None else {}),
+                "direction": direction.as_dict(),
             },
         )
         return {
             "scene_id": scene_id,
             "shots": shots,
             "raw": res,
+            "direction": direction.as_dict(),
             "filler_shots": filler_shots,
             "grid_url": board_url,
             "grid_prompt": context["prompt"] + "\n\n" + build_nine_grid_prompt(board),
@@ -4026,8 +4162,8 @@ class DramaService:
                 if isinstance(item, dict)
             ]
             # 经 production-knowledge-master 装载器读取；本阶段现状是全文读入，budget=0 保持不截断。
-            sheet_template = load_section("five-view-template", budget=0)
-            # 角色设计师配药单：五视图是静态身份锚点，模块不含时序词(agent_council._ROLE_NEGATIVE_MODULES)。
+            sheet_template = load_section("actor-sheet-template", budget=0)
+            # 角色设计师配药单：设定集是静态身份锚点，模块不含时序词(agent_council._ROLE_NEGATIVE_MODULES)。
             designer_negative = self._role_negative_suffix(task, AgentRole.CHARACTER_DESIGNER)
             task["assets"]["3_negative_prompt_modules"] = self._role_negative_modules(task, AgentRole.CHARACTER_DESIGNER)
             performance_guide = load_section("performance-details", budget=0)
@@ -4036,8 +4172,13 @@ class DramaService:
                 + "\n\n"
                 "Role: AI 角色设计师智能体 (Character Designer Agent)\n"
                 "Methodology: 设计主角和反派的详细五维 DNA 角色卡（面部、发型、体型、服饰、情绪），"
-                "锁定特征（服装与发型等）以保跨镜头多帧渲染的一致性，不能写任何心理词汇。\n\n"
-                f"【五视图一致性角色卡设定规则与示例】：\n{sheet_template}\n\n"
+                "锁定特征（服装与发型等）以保跨镜头多帧渲染的一致性，不能写任何心理词汇。\n"
+                "角色身份由一张 21:9 数字演员设定集锁定：左区 MAIN PORTRAIT 正面近景，"
+                "中区 FULL BODY & ELEMENTS 全身立绘 + 正面/90°侧面/背面三视图 + 2×4 元素拆解，"
+                "右区 DETAIL MATRIX 4×3 细节矩阵；其中正面全身、侧面全身、背面全身、正脸特写、"
+                "3-4 侧脸五格是身份锚点。DNA 描述必须覆盖这五个锚点看得见的特征，"
+                "并逐项写清鞋履、腰扣、护腕、领口刺绣、面料、发饰、手部、裙摆等可拆解元素。\n\n"
+                f"【数字演员设定集一致性角色卡规则与示例】：\n{sheet_template}\n\n"
                 f"【角色表情细节与身体微动作描述规范】：\n{performance_guide}\n"
             )
             # 追加自动进化的历史生产教训 (无 active 教训时为空串，不产生噪声)
@@ -4095,8 +4236,8 @@ class DramaService:
                 config, title, dir_style, shot_style, res
             )
 
-            # 为每名角色生成严格有序的五视图设定图，并物理拆成五个独立视图资产。
-            # 后续镜头引用同一角色五视图，锁定脸型/发型/服装/体型。
+            # 为每名角色生成一张数字演员设定集，并物理拆成 25 个独立格子资产。
+            # 后续镜头引用同一角色的五个身份锚点，锁定脸型/发型/服装/体型。
             sheets = {}
             characters = []
             try:
@@ -4224,11 +4365,13 @@ class DramaService:
                         str(view.get("view") or ""): str(view.get("image_url") or "").strip()
                         for view in views if isinstance(view, dict)
                     }
-                    return all(view_urls.get(view_name) for view_name in (
-                        "front", "front_three_quarter", "profile", "rear_three_quarter", "back",
-                    ))
+                    # 新契约的五个身份锚点，或旧五视图的五个角度——齐了就不重新付费出图。
+                    return any(
+                        all(view_urls.get(view_name) for view_name in wanted)
+                        for wanted in (IDENTITY_VIEW_ORDER, LEGACY_IDENTITY_VIEW_ORDER)
+                    )
 
-                # 资产库里已有通过质检的同名角色五视图时直接复用，不再付费出图；
+                # 资产库里已有通过质检的同名角色身份视图时直接复用，不再付费出图；
                 # 复用会把该资产挂到本项目，后续分镜阶段读到的是同一份资产。
                 library_records = find_library_characters(task, [entry[0] for entry in selected_characters])
                 for cname, role, cdesc in selected_characters:
@@ -4237,7 +4380,7 @@ class DramaService:
                         prior_by_name[cname] = {**record, "role": role, "desc": cdesc}
 
                 def _render_character_sheet(entry):
-                    """一名角色的五视图付费调用：生成 → 拆图 → 质检。
+                    """一名角色的设定集付费调用：生成 → 拆成 25 格 → 逐格质检。
 
                     只读 gateway 与入参，不碰 task / sheets / characters，所以可以并发；
                     调用顺序、进度上报和落库全部留在主线程，产出顺序与串行时一致。
@@ -4245,16 +4388,18 @@ class DramaService:
                     cname, role, cdesc = entry
                     sheet_url = None
                     views = []
+                    cells = []
                     quality_payload = None
                     failure_phase = "generation_error"
                     last_error = None
                     for attempt in range(1, max_attempts + 1):
                         sheet_url = None
                         views = []
+                        cells = []
                         quality_payload = None
                         failure_phase = "generation_error"
                         try:
-                            # 已授权演员素材作为身份参考，但仍生成统一五视图，不允许用单张脸替代五视图。
+                            # 已授权演员素材作为身份参考，但仍生成统一设定集，不允许用单张脸替代设定集。
                             auth_face = self.gateway.resolve_authorized_face(cname, role)
                             sheet_url = self.gateway.generate_character_sheet(
                                 config["image_model"], cname, cdesc, dir_style, genre=genre,
@@ -4262,30 +4407,36 @@ class DramaService:
                                 extra_negative=designer_negative,
                             )
                             if not sheet_url:
-                                raise RuntimeError(f"角色「{cname}」五视图生成失败")
+                                raise RuntimeError(f"角色「{cname}」设定集生成失败")
 
                             failure_phase = "split_error"
                             view_digest = hashlib.sha256(f"{cname}|{sheet_url}".encode("utf-8")).hexdigest()[:16]
                             view_dir = os.path.join(media_compositor.MEDIA_DIR, "character_views", view_digest)
-                            view_paths = split_five_view_sheet(sheet_url, view_dir)
-                            view_names = ["front", "front_three_quarter", "profile", "rear_three_quarter", "back"]
+                            # 一张设定集拆成 25 个独立资产，全部落库——用户要的是每一格都能单看。
+                            cell_paths = split_actor_sheet(sheet_url, view_dir)
+                            cell_urls = {
+                                cell: media_compositor.public_url(
+                                    os.path.relpath(str(path), media_compositor.MEDIA_DIR).replace(os.sep, "/")
+                                )
+                                for cell, path in zip(ACTOR_SHEET_CELL_ORDER, cell_paths)
+                            }
+                            cells = [
+                                {"cell": cell, "image_url": cell_urls[cell]}
+                                for cell in ACTOR_SHEET_CELL_ORDER
+                            ]
+                            # 其中五格是身份锚点：看板、资产库复用与后续阶段读的就是它们。
                             views = [
-                                {
-                                    "view": view_name,
-                                    "image_url": media_compositor.public_url(
-                                        os.path.relpath(str(path), media_compositor.MEDIA_DIR).replace(os.sep, "/")
-                                    ),
-                                }
-                                for view_name, path in zip(view_names, view_paths)
+                                {"view": view_name, "image_url": cell_urls[view_name]}
+                                for view_name in IDENTITY_VIEW_ORDER
                             ]
 
                             failure_phase = "quality_error"
-                            five_view_quality = validate_five_view_images(view_paths)
-                            quality_payload = five_view_quality.model_dump()
-                            if not five_view_quality.passed:
+                            sheet_quality = validate_actor_sheet_images(cell_paths)
+                            quality_payload = sheet_quality.model_dump()
+                            if not sheet_quality.passed:
                                 raise RuntimeError(
-                                    f"角色「{cname}」五视图质检失败："
-                                    + "；".join(issue.message for issue in five_view_quality.issues)
+                                    f"角色「{cname}」设定集质检失败："
+                                    + "；".join(issue.message for issue in sheet_quality.issues)
                                 )
                             last_error = None
                             break
@@ -4293,13 +4444,13 @@ class DramaService:
                             last_error = char_error
                             if attempt < max_attempts:
                                 logger.warning(
-                                    "[Stage3] 角色五视图生成重试: character=%s attempt=%s/%s phase=%s",
+                                    "[Stage3] 数字演员设定集生成重试: character=%s attempt=%s/%s phase=%s",
                                     cname, attempt, max_attempts, failure_phase,
                                 )
-                    return {"sheet": sheet_url, "views": views, "quality": quality_payload,
-                            "phase": failure_phase, "error": last_error}
+                    return {"sheet": sheet_url, "views": views, "cells": cells,
+                            "quality": quality_payload, "phase": failure_phase, "error": last_error}
 
-                # 每名角色的五视图彼此独立，排队跑纯粹是在等墙钟；复用的角色不重新出图。
+                # 每名角色的设定集彼此独立，排队跑纯粹是在等墙钟；复用的角色不重新出图。
                 pending = [
                     entry for entry in selected_characters
                     if not _is_reusable_character(prior_by_name.get(entry[0]) or {})
@@ -4307,7 +4458,7 @@ class DramaService:
                 if pending:
                     self._progress_step(
                         task, 18,
-                        f"生成五视图设定图 (共 {len(pending)}/{sheet_total} 名角色，最多 "
+                        f"生成数字演员设定集 (共 {len(pending)}/{sheet_total} 名角色，最多 "
                         f"{character_sheet_concurrency()} 名同时进行)",
                     )
                 rendered = dict(zip(
@@ -4327,11 +4478,12 @@ class DramaService:
                     self._progress_step(
                         task,
                         18 + int(68 * sheet_no / sheet_total),
-                        f"「{cname}」五视图设定图完成 ({sheet_no}/{sheet_total})",
+                        f"「{cname}」数字演员设定集完成 ({sheet_no}/{sheet_total})",
                     )
                     result = rendered.get(cname) or {}
                     sheet_url = result.get("sheet")
                     views = result.get("views") or []
+                    cells = result.get("cells") or []
                     quality_payload = result.get("quality")
                     failure_phase = result.get("phase") or "generation_error"
                     last_error = result.get("error")
@@ -4344,8 +4496,9 @@ class DramaService:
                             "role": role,
                             "desc": cdesc,
                             "sheet": sheet_url,
-                            "sheet_type": "ordered_five_view_turnaround",
+                            "sheet_type": "actor_sheet_25_cell",
                             "views": views,
+                            "sheet_cells": cells,
                             "five_view_quality": quality_payload,
                         })
                     else:
@@ -4358,7 +4511,7 @@ class DramaService:
                             "unique_view_hashes": 0,
                             "issues": [{
                                 "code": failure_phase,
-                                "message": safe_message or f"角色「{cname}」五视图生成失败",
+                                "message": safe_message or f"角色「{cname}」数字演员设定集生成失败",
                             }],
                         }
                         characters.append({
@@ -4366,20 +4519,21 @@ class DramaService:
                             "role": role,
                             "desc": cdesc,
                             "sheet": sheet_url,
-                            "sheet_type": "ordered_five_view_turnaround",
+                            "sheet_type": "actor_sheet_25_cell",
                             "views": views,
+                            "sheet_cells": cells,
                             "five_view_quality": failed_quality,
                         })
                         failed_names.append(cname)
                     _persist_character_assets()
 
                 if failed_names:
-                    raise RuntimeError("以下角色五视图生成失败：" + "、".join(failed_names))
+                    raise RuntimeError("以下角色数字演员设定集生成失败：" + "、".join(failed_names))
             except Exception as e:
-                logger.error(f"[Stage3] 角色五视图生成异常: {type(e).__name__}")
+                logger.error(f"[Stage3] 数字演员设定集生成异常: {type(e).__name__}")
                 raise
             task["assets"]["3_sheets"] = sheets
-            # 结构化角色清单(名字+身份+特征+五视图)，供前端阶段3罗列与下游逐镜复用
+            # 结构化角色清单(名字+身份+特征+设定集 25 格)，供前端阶段3罗列与下游逐镜复用
             task["assets"]["3_characters"] = characters
 
             # 场地、道具、服装、特效同样是分镜的锁定依据：归档到资产库、复用同名旧资产、
@@ -4390,7 +4544,7 @@ class DramaService:
             self._progress_step(task, 95, "角色造型一致性质检自检")
             task["logs"]["3"] = self.run_real_consistency_check(3, "角色设计师造型", task["assets"], config, title, task_id=task_id)
 
-            self._progress_step(task, 97, "编译 Character Designer 五视图资产契约")
+            self._progress_step(task, 97, "编译 Character Designer 数字演员设定集资产契约")
             task["assets"]["3_character_dashboard"] = compile_character_dashboard(task).model_dump(
                 mode="json", by_alias=True
             )
@@ -4552,6 +4706,8 @@ class DramaService:
                         # filler_shots>0 说明其中有占位拆镜，复核界面据此提示重做。
                         entry["filler_shots"] = int(payload.get("filler_shots") or 0)
                         entry["grid_url"] = payload["grid_url"]
+                        # 这场戏按哪个题材簇、什么感觉拍的，如实记进场景板，复核时能对着看。
+                        entry["direction"] = payload.get("direction") or {}
                         entry["prompt_detail"] = payload["prompt_detail"]
                         entry["grid_prompt"] = payload["grid_prompt"]
                         # 按当前站位重画完成，之前「站位已改、画面过期」的标记随之解除。
@@ -4592,7 +4748,7 @@ class DramaService:
         elif stage == 5:
             # 阶段 5：视觉总监 (Visual Director)
             task["stage_name"] = "视觉总监多镜头多帧生成"
-            self._progress_step(task, 8, "准备镜头运动契约与角色五视图参考")
+            self._progress_step(task, 8, "准备镜头运动契约与数字演员身份视图参考")
 
             # 视觉规范、Agent 契约与模块化负面词都来自同一委员会计划。
             # 经 production-knowledge-master 装载器读取(登记预算 0=全文)，下游按现状自行切片 [:1000] 进 img prompt。
@@ -4612,6 +4768,17 @@ class DramaService:
             visual_negative_video = self._role_negative_suffix(task, AgentRole.VISUAL_DIRECTOR)
             # 全片风格锁：同一套质感写进每一镜的提示词，2D/3D 漫剧不再被写实风格说明压掉。
             style_pack = style_packs.resolve_pack(config)
+            # 这个模型在本项目上已经栽过两次的地方，这一轮先绕开：既写进提示词，也补进负面词。
+            learned_notes = generation_feedback.preventive_notes(task, str(config.get("video_model") or ""))
+            learned_negatives = generation_feedback.preventive_negatives(task, str(config.get("video_model") or ""))
+            if learned_notes:
+                logger.info("[Stage5] 按已知模型弱点预防性加固：%s", "；".join(learned_notes)[:200])
+            # 音画同生的模型（MiniMax H3）自己出声：声音要写成对白 / 环境 / 配乐三层，
+            # 每个说话的角色还要带上全片不变的音色锚定，否则跨镜换人声。
+            audio_native = normalize_video_provider(str(config.get("video_model") or "")).family == "minimax_h3"
+            voice_anchors = h3_sound_design.anchors_from_characters(
+                task["assets"].get("3_characters") or [], gender_of=guess_gender,
+            ) if audio_native else {}
 
             shots = task["assets"].get("4", [])
             if not isinstance(shots, list):
@@ -4626,7 +4793,7 @@ class DramaService:
                     {"shot_id": 3, "size": "FS", "motion": shot_3_mov, "desc": f"{char1_name}出示底牌进行正义反扑，{char2_name}震惊后退。"}
                 ]
                 
-            # 角色五视图锚点 (来自阶段3)
+            # 数字演员身份视图锚点 (来自阶段3)
             char_sheets = task["assets"].get("3_sheets") or {}
 
             # 逐镜预览音轨用：角色性别 (台词配音男女声分配)
@@ -4734,7 +4901,7 @@ class DramaService:
                     if str(visual.get("action") or "").strip():
                         desc = f"{desc}；动作演变：{str(visual['action']).strip()}"
 
-                # 融合角色特征五维 DNA 并绑定五视图
+                # 融合角色特征五维 DNA 并绑定身份视图
                 char_prompt = ""
                 ref_sheets = []
                 if char1_name and char1_name in desc:
@@ -4878,6 +5045,35 @@ class DramaService:
                     (shot.get("sound") or contract.sound)
                     + (f"；环境音效：{str(visual.get('ambiance_audio')).strip()}" if visual and str(visual.get("ambiance_audio") or "").strip() else "")
                 )
+                sound_layers, voice_locks, sound_checks = "", [], []
+                if audio_native:
+                    speaking = [
+                        voice_anchors[name]
+                        for name in dict.fromkeys(speakers_in(dialogue, list(voice_anchors)))
+                        if name in voice_anchors
+                    ]
+                    _, mood = h3_sound_design.delivery_for_emotion(detect_emotion(f"{desc}{dialogue}"))
+                    compiled_sound = h3_sound_design.compile_sound_prompt(
+                        speakers=speaking,
+                        tone=mood,
+                        narration=bool(dialogue) and not speaking,
+                        ambience=[part for part in re.split(r"[；;·、]", shot_sound) if part.strip()][:3],
+                        music="",
+                        spacious=any(word in contract.scene for word in ("大厅", "广场", "礼堂", "走廊", "隧道", "山谷")),
+                        silent=not dialogue.strip(),
+                    )
+                    sound_layers = compiled_sound.text
+                    voice_locks = list(compiled_sound.voice_locks)
+                    sound_checks = [
+                        {"code": check.code, "passed": check.passed, "detail": check.detail}
+                        for check in compiled_sound.checks
+                    ]
+                    failed = [check for check in compiled_sound.checks if not check.passed]
+                    if failed:
+                        logger.warning(
+                            "[Stage5] 镜头%s 声音提示词未通过 %s：%s",
+                            shot_id, "、".join(check.code for check in failed), failed[0].detail,
+                        )
                 # 提示词按风格锁分层编译：风格锁 → 素材职责 → 结构声明 → 六层锁 → 镜头块 →
                 # 声音 → 铁律 → 负向词，并按目标模型的字数预算做压力裁剪（先砍声音/环境/色彩，
                 # 锁定标签、主体、动作、机位、台词绝不裁）。
@@ -4898,6 +5094,7 @@ class DramaService:
                         characters=contract.characters,
                         lighting=contract.lighting,
                         sound=shot_sound,
+                        sound_layers=sound_layers,
                         dialogue=dialogue,
                         expression=contract.expression,
                         environment=contract.composition,
@@ -4908,9 +5105,14 @@ class DramaService:
                         first_frame=bool(img_url),
                         last_frame=bool(target_frame),
                         tone=f"{dir_style}，{style_pack.tone_default}",
-                        extra_negatives=[visual_negative_video] if visual_negative_video.strip() else [],
+                        extra_negatives=[
+                            *([visual_negative_video] if visual_negative_video.strip() else []),
+                            *learned_negatives,
+                        ],
                         continuity_constants=[
                             f"{self.gateway.CONTINUITY_POSITIVE}。{self.gateway.CONTINUITY_NEGATIVE}{self.gateway.CLONE_NEGATIVE}",
+                            *(f"音色铁律：{line}" for line in voice_locks),
+                            *(f"已知弱点规避：{note}" for note in learned_notes),
                         ],
                     ),
                     model=str(config.get("video_model") or ""),
@@ -4984,6 +5186,8 @@ class DramaService:
                     "motion_prompt": vid_prompt,
                     "prompt_pressure": compiled_video.pressure.as_dict(),
                     "style_pack": style_pack.id,
+                    "sound_layers": sound_layers,
+                    "sound_checks": sound_checks,
                     "contract_motion_prompt": compiled_motion.prompt,
                     "motion_contract": contract.model_dump(mode="json"),
                     "contract_fingerprint": contract.contract_fingerprint,

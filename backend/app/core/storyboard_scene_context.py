@@ -188,7 +188,7 @@ def merge_video_references(
         if url in images or len(images) >= limit:
             continue
         images.append(url)
-        label = "数字演员五视图" if kind == "actor" else LABELS.get(kind, kind)
+        label = "数字演员设定集" if kind == "actor" else LABELS.get(kind, kind)
         notes.append(f"参考图{len(images)}仅锁定{label}「{name}」，不是额外剧情或额外人物")
     return images, "；".join(notes)
 

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useMemo, useState } from 'react';
-import { ArrowRight, Axis3d, Clapperboard, CheckCircle2, ChevronDown, Download, FileText, RefreshCw, Sparkles } from 'lucide-react';
+import { ArrowRight, Axis3d, Clapperboard, CheckCircle2, ChevronDown, ClipboardList, Download, FileText, Images, RefreshCw, Sparkles } from 'lucide-react';
 
+import { ExportDialog } from './ExportDialog';
 import { SpatialStageDialog } from '../spatial/SpatialStageDialog';
 import { StoryboardPromptDialog } from './StoryboardPromptDialog';
 import { STORYBOARD_VISUAL_THEME } from './storyboardTheme';
@@ -243,6 +244,7 @@ export function StoryboardWorkspace({
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
   const [showPrompt, setShowPrompt] = useState(false);
   const [showSpatial, setShowSpatial] = useState(false);
+  const [exportKind, setExportKind] = useState<'packages' | 'sheets' | null>(null);
   const [showDesk, setShowDesk] = useState(false);
   const [downloadBusyKey, setDownloadBusyKey] = useState('');
   const [downloadNotice, setDownloadNotice] = useState('');
@@ -493,6 +495,25 @@ export function StoryboardWorkspace({
               >
                 <Clapperboard aria-hidden="true" /> 3D 导演台
               </button>
+              {/* 定稿的分镜重新切成可直接粘贴的提示词分包；资产设定图是开拍前要先锁死的参考图。 */}
+              <button
+                type="button"
+                className="storyboard-action"
+                onClick={() => setExportKind('packages')}
+                disabled={!taskId}
+                aria-haspopup="dialog"
+              >
+                <ClipboardList aria-hidden="true" /> 提示词分包
+              </button>
+              <button
+                type="button"
+                className="storyboard-action"
+                onClick={() => setExportKind('sheets')}
+                disabled={!taskId}
+                aria-haspopup="dialog"
+              >
+                <Images aria-hidden="true" /> 资产设定图
+              </button>
               <button type="button" className="storyboard-action" onClick={onRegenerate}>
                 <RefreshCw aria-hidden="true" /> 重跑分镜阶段
               </button>
@@ -568,6 +589,15 @@ export function StoryboardWorkspace({
           确认分镜，继续视觉制作 <ArrowRight aria-hidden="true" />
         </button>
       </footer>
+      {exportKind && taskId && (
+        <ExportDialog
+          key={`export-${exportKind}-${selectedScene.id}`}
+          taskId={taskId}
+          sceneId={selectedScene.id}
+          kind={exportKind}
+          onClose={() => setExportKind(null)}
+        />
+      )}
       {showSpatial && taskId && (
         <SpatialStageDialog
           key={`spatial-${selectedScene.id}`}

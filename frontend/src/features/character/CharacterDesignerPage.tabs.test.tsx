@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CharacterDesignerPage } from './CharacterDesignerPage';
-import { normalizeCharacterDashboard } from './types';
+import { ACTOR_SHEET_CELL_KEYS, normalizeCharacterDashboard } from './types';
 
 const dashboard = normalizeCharacterDashboard({
   schemaVersion: 'character-dashboard.v1',
@@ -15,11 +15,11 @@ const dashboard = normalizeCharacterDashboard({
   viewContract: {
     version: 'five-view.v1',
     views: [
-      { key: 'front', order: 1, angleDegrees: 0, labelZh: '正面', labelEn: 'Front view' },
-      { key: 'front_three_quarter', order: 2, angleDegrees: 45, labelZh: '正面四分之三', labelEn: 'Front three-quarter view' },
-      { key: 'profile', order: 3, angleDegrees: 90, labelZh: '标准侧面', labelEn: 'Standard profile view' },
-      { key: 'rear_three_quarter', order: 4, angleDegrees: 135, labelZh: '背面四分之三', labelEn: 'Rear three-quarter view' },
-      { key: 'back', order: 5, angleDegrees: 180, labelZh: '背面', labelEn: 'Back view' },
+      { key: 'front', order: 1, angleDegrees: 0, labelZh: '正面全身', labelEn: 'Front full body' },
+      { key: 'profile', order: 2, angleDegrees: 90, labelZh: '侧面全身', labelEn: 'Profile full body' },
+      { key: 'back', order: 3, angleDegrees: 180, labelZh: '背面全身', labelEn: 'Back full body' },
+      { key: 'face_front', order: 4, angleDegrees: 0, labelZh: '正脸特写', labelEn: 'Face front close-up' },
+      { key: 'face_three_quarter', order: 5, angleDegrees: 45, labelZh: '3-4侧脸', labelEn: 'Face three-quarter' },
     ],
   },
   characters: [
@@ -31,13 +31,20 @@ const dashboard = normalizeCharacterDashboard({
       description: '银丝半框眼镜与白衬衫构成身份锚点。',
       states: [{ stateId: 'base', title: '基础造型', dna: '冷静克制', clothing: '白衬衫' }],
       assetState: 'READY',
+      sheetUrl: 'https://img.test/shen-actor-sheet.png',
       views: [
         { key: 'front', order: 1, imageUrl: 'https://img.test/front.png', available: true },
-        { key: 'front_three_quarter', order: 2, imageUrl: 'https://img.test/front-45.png', available: true },
-        { key: 'profile', order: 3, imageUrl: 'https://img.test/profile.png', available: true },
-        { key: 'rear_three_quarter', order: 4, imageUrl: 'https://img.test/rear-135.png', available: true },
-        { key: 'back', order: 5, imageUrl: 'https://img.test/back.png', available: true },
+        { key: 'profile', order: 2, imageUrl: 'https://img.test/profile.png', available: true },
+        { key: 'back', order: 3, imageUrl: 'https://img.test/back.png', available: true },
+        { key: 'face_front', order: 4, imageUrl: 'https://img.test/face-front.png', available: true },
+        { key: 'face_three_quarter', order: 5, imageUrl: 'https://img.test/face-34.png', available: true },
       ],
+      // 25 格拆分资产齐全：「细节」页签展示其中的元素拆解 8 格 + 细节矩阵 12 格。
+      sheetCells: ACTOR_SHEET_CELL_KEYS.map((key, index) => ({
+        key,
+        order: index + 1,
+        imageUrl: `https://img.test/cell-${key}.png`,
+      })),
       quality: { passed: true, uniqueViewHashes: 5, issues: [] },
     },
     {
@@ -50,10 +57,10 @@ const dashboard = normalizeCharacterDashboard({
       assetState: 'READY',
       views: [
         { key: 'front', order: 1, imageUrl: 'https://img.test/wang-front.png', available: true },
-        { key: 'front_three_quarter', order: 2, imageUrl: null, available: false },
-        { key: 'profile', order: 3, imageUrl: null, available: false },
-        { key: 'rear_three_quarter', order: 4, imageUrl: null, available: false },
-        { key: 'back', order: 5, imageUrl: null, available: false },
+        { key: 'profile', order: 2, imageUrl: null, available: false },
+        { key: 'back', order: 3, imageUrl: null, available: false },
+        { key: 'face_front', order: 4, imageUrl: null, available: false },
+        { key: 'face_three_quarter', order: 5, imageUrl: null, available: false },
       ],
       quality: { passed: null, uniqueViewHashes: 1, issues: [] },
     },
@@ -112,6 +119,75 @@ describe('CharacterDesignerPage asset tab placement and actor naming', () => {
 
     expect(screen.getByRole('tab', { name: /拍摄场地/, selected: true })).toBeTruthy();
     expect(screen.getByRole('heading', { level: 1, name: '拍摄场地' })).toBeTruthy();
+  });
+});
+
+describe('CharacterDesignerPage actor sheet detail tab', () => {
+  beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ items: [], page: 1, page_size: 1, total: 0 }),
+    }) as Response);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('keeps the five identity views as the primary selector', () => {
+    render(<CharacterDesignerPage dashboard={dashboard} {...actions()} />);
+
+    const tablist = screen.getByRole('tablist', { name: '沈砚之 身份视图' });
+    expect(within(tablist).getAllByRole('tab').map(tab => tab.textContent)).toEqual([
+      '正面全身0°',
+      '侧面全身90°',
+      '背面全身180°',
+      '正脸特写0°',
+      '3-4侧脸45°',
+    ]);
+  });
+
+  it('shows the other twenty cells behind the 细节 tab, grouped 元素拆解 and 细节矩阵', async () => {
+    const user = userEvent.setup();
+    render(<CharacterDesignerPage dashboard={dashboard} {...actions()} />);
+
+    await user.click(screen.getByRole('tab', { name: /细节/ }));
+
+    const elements = screen.getByRole('region', { name: '元素拆解 8 格' });
+    expect(within(elements).getAllByRole('button')).toHaveLength(8);
+    expect(within(elements).getByRole('img', { name: '沈砚之 鞋履' })).toBeTruthy();
+    expect(within(elements).getByRole('img', { name: '沈砚之 裙摆刺绣' })).toBeTruthy();
+
+    const matrix = screen.getByRole('region', { name: '细节矩阵 12 格' });
+    expect(within(matrix).getAllByRole('button')).toHaveLength(12);
+    expect(within(matrix).getByRole('img', { name: '沈砚之 后脑发饰' })).toBeTruthy();
+    expect(within(matrix).getByRole('img', { name: '沈砚之 动态姿态配件' })).toBeTruthy();
+
+    // 身份视图选择器让位给细节面板，但切回去仍在。
+    await user.click(screen.getByRole('tab', { name: '身份视图' }));
+    expect(screen.getByRole('tablist', { name: '沈砚之 身份视图' })).toBeTruthy();
+  });
+
+  it('keeps the whole sheet viewable next to the split cells', async () => {
+    const user = userEvent.setup();
+    render(<CharacterDesignerPage dashboard={dashboard} {...actions()} />);
+
+    await user.click(screen.getByRole('button', { name: '查看沈砚之设定集整板大图' }));
+
+    const dialog = screen.getByRole('dialog', { name: '沈砚之 · 设定集整板' });
+    expect(within(dialog).getByRole('img', { name: '沈砚之 设定集整板大图' }).getAttribute('src'))
+      .toBe('https://img.test/shen-actor-sheet.png');
+  });
+
+  it('hides the 细节 tab for a legacy record with no split cells', async () => {
+    const user = userEvent.setup();
+    render(<CharacterDesignerPage dashboard={dashboard} {...actions()} />);
+
+    const library = screen.getByRole('complementary', { name: '角色库' });
+    await user.click(within(library).getByRole('button', { name: /王景略/ }));
+
+    expect(screen.queryByRole('tab', { name: /细节/ })).toBeNull();
   });
 });
 

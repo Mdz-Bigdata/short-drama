@@ -1132,7 +1132,7 @@ class ModelGateway:
                    "癫狂", "羞辱", "厮杀", "杀", "死", "尸", "拳", "踹", "扇", "撕"]:
             p = p.replace(kw, "")
         p = re.sub(r'\s+', ' ', p).strip(" ，,。.；;")
-        # Agnes 对超长提示词(如嵌 3000 字五视图模板)易判违规，截断到稳妥长度，保留前部核心描述
+        # Agnes 对超长提示词(如嵌 3000 字设定集模板)易判违规，截断到稳妥长度，保留前部核心描述
         if len(p) > 600:
             p = p[:600]
         return p
@@ -1277,7 +1277,7 @@ class ModelGateway:
         """
         调用文生图大模型，返回 (图片URL, 实际使用的 provider 名)。
         统一优先 Seedance/火山 Ark Seedream，保证与后续 Seedance 图生视频同源、风格画质一致。
-        ref_images：角色五视图等参考图 URL 列表 (Seedream 通过 image 字段做主体参考，锁定人物一致性)。
+        ref_images：数字演员设定集身份视图等参考图 URL 列表 (Seedream 通过 image 字段做主体参考，锁定人物一致性)。
         降级链：所选/seedance 优先 -> Agnes -> gemini -> 离线兜底图。
         """
         # Compiled scene prompts already lock exact assets and visible events.
@@ -1349,7 +1349,7 @@ class ModelGateway:
                 extra = {"response_format": "url", "size": size or self.seedance_image_size,
                          "watermark": self.seedance_image_watermark}
                 if ref:
-                    # Seedream image 字段传入角色五视图作主体参考，锁定人物一致性
+                    # Seedream image 字段传入数字演员身份视图作主体参考，锁定人物一致性
                     extra["image"] = ref[:9]
             else:
                 extra = {"n": 1, "size": size or "1024x1024"}
@@ -1381,10 +1381,10 @@ class ModelGateway:
         "overseas_us": "欧美时代背景，角色为欧美人物造型与对应服饰",
     }
 
-    # 五视图五大常见问题对照负面约束：
-    # 五官漂移 / 服装走样 / 背景不一 / 手部崩塌 / 配色不稳。在五视图生成时强力规避。
+    # 设定集五大常见问题对照负面约束：
+    # 五官漂移 / 服装走样 / 背景不一 / 手部崩塌 / 配色不稳。在设定集生成时强力规避。
     SHEET_PROBLEM_NEGATIVE = (
-        "(严格规避五视图五大常见问题——"
+        "(严格规避多视图设定集五大常见问题——"
         "①五官漂移：多视角间五官形状/比例不一；②服装走样：褶皱、配件位置在各视角紊乱不符；"
         "③背景不一：各视角背景不统一；④手部崩塌：手指数量/姿态错误、多指畸形；⑤配色不稳：颜色偏差、风格不统一。"
         "no face drift, inconsistent facial features across views, changing outfit details between views, "
@@ -1396,10 +1396,17 @@ class ModelGateway:
                                  dir_style: str = "cyberpunk", genre: str = "general",
                                  ref_images: list = None, extra_negative: str = "") -> str:
         """
-        生成角色五视图设定图(角色视觉锚点，解决跨镜头人物一致性)。
-        方法论遵循项目五视图人物设定板规范：人物设定卡 → 比例统一 → 结构先定 → 细节后补，
-        5 个标准视角严格按正面/正面四分之三/标准侧面/背面四分之三/背面的顺序输出，
-        并对照规避"五官漂移/服装走样/背景不一/手部崩塌/配色不稳"五大问题。
+        生成数字演员设定集(角色视觉锚点，解决跨镜头人物一致性)。
+
+        一次出图给出一张 21:9 超宽横版设定集：左区 MAIN PORTRAIT 一张正面近景，
+        中区 FULL BODY & ELEMENTS 放全身立绘 + 1×3 全身三视图 + 2×4 元素拆解，
+        右区 DETAIL MATRIX 放 4×3 共 12 格细节特写，合计 25 格。
+        画面描述由 storyboard_quality.build_actor_sheet_prompt 按 ACTOR_SHEET_LAYOUT 生成，
+        切图器读的是同一份版面常量，所以提示词和裁切框不会各说各话。
+        出图后由 storyboard_assets.split_actor_sheet 拆成 25 个独立资产，
+        其中 front/profile/back/face_front/face_three_quarter 五格是锁人物的身份锚点。
+
+        对照规避"五官漂移/服装走样/背景不一/手部崩塌/配色不稳"五大问题。
         genre：剧情题材(来自 get_genre)，锁定符合时代背景的服饰造型(如修仙/武侠须古装)。
         """
         # 时代服饰约束优先：题材若属古装/年代/欧美类，强制对应时代造型；否则按导演视听风格取风格词
@@ -1413,34 +1420,37 @@ class ModelGateway:
         if era_costume:
             style_word = "符合时代背景的写实影视质感"
 
-        # 干净的描述式五视图提示词(英文为主、跨 provider 通用)：直接描述要画的画面本身。
+        # 干净的描述式设定集提示词：直接描述要画的画面本身。
         # 关键修复：绝不把 markdown 文档模板 / README 引用 / 中文元指令塞进文生图模型——
-        # 那会被 Agnes 内容审核判 content_policy_violation 拒(Ark SSL 不可达时五视图会全失败、
-        # 退化为纯文本，前端只剩文字看不到图)。五视图一致性"方法论"只喂给上游 LLM(阶段3 sys_prompt)，
+        # 那会被 Agnes 内容审核判 content_policy_violation 拒(Ark SSL 不可达时设定图会全失败、
+        # 退化为纯文本，前端只剩文字看不到图)。人物一致性"方法论"只喂给上游 LLM(阶段3 sys_prompt)，
         # 此处只给图像模型干净可执行的画面描述。
         era_clause = f" The character must wear period-accurate costume — {era_costume}." if era_costume else ""
-        from app.core.storyboard_quality import build_five_view_prompt
+        from app.core.actor_sheet_layout import ACTOR_SHEET_LAYOUT
+        from app.core.storyboard_quality import build_actor_sheet_prompt
         # extra_negative：角色设计师配药单编译出的模块化负面词(agent_council.compile_negative_prompt)，
-        # 拼在五视图问题负面串之后；空串零成本。
+        # 拼在设定集问题负面串之后；空串零成本。
         prompt = (
-            build_five_view_prompt(name, f"{char_desc}.{era_clause}", style_word)
+            build_actor_sheet_prompt(name, f"{char_desc}.{era_clause}", style_word)
             + " photorealistic, live-action, cinematic, highly detailed, sharp focus, 35mm film. "
             + self.SHEET_PROBLEM_NEGATIVE
             + (extra_negative or "")
         )
+        # 默认 3360x1440 即 21:9；宽高比偏了切图器会直接拒绝拆分并重试整张图。
+        default_size = f"{ACTOR_SHEET_LAYOUT.default_width}x{ACTOR_SHEET_LAYOUT.default_height}"
         url, _ = self.generate_image(
             model,
             prompt,
             ref_images=ref_images,
-            size=os.getenv("CHARACTER_SHEET_SIZE", "2560x1440"),
+            size=os.getenv("CHARACTER_SHEET_SIZE", default_size),
         )
-        logger.info(f"[ModelGateway] 角色五视图生成 ({name}, genre={genre}): {(url or '无')[:60]}...")
+        logger.info(f"[ModelGateway] 数字演员设定集生成 ({name}, genre={genre}): {(url or '无')[:60]}...")
         return url
 
 
     # 镜头一致性强化：正向锁定词 + 负面约束词 (供分镜底片生成时拼接)
     SHEET_LOCK_POSITIVE = (
-        "严格参考角色五视图和角色状态卡，保持同一个人物身份、同一张脸、同一个发型、同一个发色、"
+        "严格参考数字演员设定集和角色状态卡，保持同一个人物身份、同一张脸、同一个发型、同一个发色、"
         "同一套服装、同一个体型、同一个年龄感和同样的标志性配饰"
     )
     SHEET_LOCK_NEGATIVE = (

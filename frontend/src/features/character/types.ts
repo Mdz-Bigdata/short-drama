@@ -1,12 +1,88 @@
+// 数字演员设定集的五个身份锚点：三张全身 + 两张头部。
+// 与后端 app/schema/production.py 的 IDENTITY_VIEW_ORDER 逐项对应。
 export const FIVE_VIEW_KEYS = [
   'front',
-  'front_three_quarter',
   'profile',
-  'rear_three_quarter',
   'back',
+  'face_front',
+  'face_three_quarter',
 ] as const;
 
 export type FiveViewKey = (typeof FIVE_VIEW_KEYS)[number];
+
+// 设定集 25 格的切图顺序，与后端 core/actor_sheet_layout.py 的 ACTOR_SHEET_CELL_ORDER 一致。
+export const ACTOR_SHEET_CELL_KEYS = [
+  'portrait',
+  'full_body',
+  'front',
+  'profile',
+  'back',
+  'element_shoe',
+  'element_waist',
+  'element_wrist',
+  'element_collar',
+  'element_fabric',
+  'element_hair',
+  'element_hand',
+  'element_hem',
+  'face_front',
+  'face_three_quarter',
+  'face_back_hair',
+  'detail_collar',
+  'detail_chest',
+  'detail_waist_knot',
+  'detail_cuff',
+  'detail_texture',
+  'detail_back_tie',
+  'detail_shoe',
+  'detail_eye',
+  'detail_accessory',
+] as const;
+
+export type ActorSheetCellKey = (typeof ACTOR_SHEET_CELL_KEYS)[number];
+export type ActorSheetCellGroup =
+  | 'main_portrait'
+  | 'full_body'
+  | 'three_view'
+  | 'elements'
+  | 'detail_matrix';
+
+export interface ActorSheetCell {
+  key: ActorSheetCellKey;
+  order: number;
+  group: ActorSheetCellGroup;
+  imageUrl: string | null;
+  available: boolean;
+}
+
+// 格子 → 它在版面上属于哪个区域，与后端 ACTOR_SHEET_LAYOUT 的区域划分一致。
+export const ACTOR_SHEET_CELL_GROUPS: Record<ActorSheetCellKey, ActorSheetCellGroup> = {
+  portrait: 'main_portrait',
+  full_body: 'full_body',
+  front: 'three_view',
+  profile: 'three_view',
+  back: 'three_view',
+  element_shoe: 'elements',
+  element_waist: 'elements',
+  element_wrist: 'elements',
+  element_collar: 'elements',
+  element_fabric: 'elements',
+  element_hair: 'elements',
+  element_hand: 'elements',
+  element_hem: 'elements',
+  face_front: 'detail_matrix',
+  face_three_quarter: 'detail_matrix',
+  face_back_hair: 'detail_matrix',
+  detail_collar: 'detail_matrix',
+  detail_chest: 'detail_matrix',
+  detail_waist_knot: 'detail_matrix',
+  detail_cuff: 'detail_matrix',
+  detail_texture: 'detail_matrix',
+  detail_back_tie: 'detail_matrix',
+  detail_shoe: 'detail_matrix',
+  detail_eye: 'detail_matrix',
+  detail_accessory: 'detail_matrix',
+};
 export type CharacterAssetState = 'MISSING' | 'PARTIAL' | 'NEEDS_REVIEW' | 'FAILED' | 'READY';
 export type CharacterDashboardState = 'WAITING' | 'INCOMPLETE' | 'READY';
 
@@ -79,6 +155,8 @@ export interface CharacterDashboardCharacter {
   sheetUrl: string | null;
   assetState: CharacterAssetState;
   views: CharacterViewAsset[];
+  /** 设定集的其余格子；旧五视图记录为空数组。 */
+  sheetCells: ActorSheetCell[];
   quality: CharacterFiveViewQuality;
 }
 
@@ -125,11 +203,11 @@ export const DEFAULT_VIEW_CONTRACT: CharacterViewContract = {
   version: 'five-view.v1',
   order: [...FIVE_VIEW_KEYS],
   views: [
-    { key: 'front', order: 1, angleDegrees: 0, labelZh: '正面', labelEn: 'Front view' },
-    { key: 'front_three_quarter', order: 2, angleDegrees: 45, labelZh: '正面四分之三', labelEn: 'Front three-quarter view' },
-    { key: 'profile', order: 3, angleDegrees: 90, labelZh: '标准侧面', labelEn: 'Standard profile view' },
-    { key: 'rear_three_quarter', order: 4, angleDegrees: 135, labelZh: '背面四分之三', labelEn: 'Rear three-quarter view' },
-    { key: 'back', order: 5, angleDegrees: 180, labelZh: '背面', labelEn: 'Back view' },
+    { key: 'front', order: 1, angleDegrees: 0, labelZh: '正面全身', labelEn: 'Front full body' },
+    { key: 'profile', order: 2, angleDegrees: 90, labelZh: '侧面全身', labelEn: 'Profile full body' },
+    { key: 'back', order: 3, angleDegrees: 180, labelZh: '背面全身', labelEn: 'Back full body' },
+    { key: 'face_front', order: 4, angleDegrees: 0, labelZh: '正脸特写', labelEn: 'Face front close-up' },
+    { key: 'face_three_quarter', order: 5, angleDegrees: 45, labelZh: '3-4侧脸', labelEn: 'Face three-quarter' },
   ],
 };
 
@@ -205,19 +283,64 @@ function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.map(item => text(item)).filter(Boolean) : [];
 }
 
-function viewKey(value: unknown): FiveViewKey | null {
+// 存量记录里的旧角度键，只在新锚点自己没图时顶上（见 resolveIdentityViews）。
+const LEGACY_VIEW_KEYS = ['front_three_quarter', 'rear_three_quarter'] as const;
+type LegacyViewKey = (typeof LEGACY_VIEW_KEYS)[number];
+type StoredViewKey = FiveViewKey | LegacyViewKey;
+
+const LEGACY_VIEW_ALIASES: Record<LegacyViewKey, FiveViewKey> = {
+  front_three_quarter: 'face_three_quarter',  // 旧 45° 全身 → 3-4 侧脸锚点
+  rear_three_quarter: 'back',                 // 旧 135° 全身 → 背面全身
+};
+// 旧整板没有单独的头部裁切，正面全身兼任正脸锚点；只对旧记录生效。
+const LEGACY_VIEW_FALLBACKS: Partial<Record<FiveViewKey, FiveViewKey>> = {
+  face_front: 'front',
+};
+
+function viewKey(value: unknown): StoredViewKey | null {
   const normalized = text(value).toLowerCase().replace(/[\s-]+/g, '_');
-  const aliases: Record<string, FiveViewKey> = {
-    front: 'front', front_view: 'front', '正面': 'front',
+  const aliases: Record<string, StoredViewKey> = {
+    front: 'front', front_view: 'front', front_full_body: 'front',
+    '正面': 'front', '正面全身': 'front',
+    profile: 'profile', side: 'profile', standard_profile: 'profile', standard_profile_view: 'profile',
+    profile_full_body: 'profile', '侧面': 'profile', '标准侧面': 'profile', '侧面全身': 'profile',
+    back: 'back', back_view: 'back', back_full_body: 'back', '背面': 'back', '背面全身': 'back',
+    face_front: 'face_front', front_face: 'face_front', '正脸': 'face_front', '正脸特写': 'face_front',
+    face_three_quarter: 'face_three_quarter', three_quarter_face: 'face_three_quarter',
+    '3_4侧脸': 'face_three_quarter', '四分之三侧脸': 'face_three_quarter',
     front_three_quarter: 'front_three_quarter', three_quarter_front: 'front_three_quarter',
     '正面四分之三': 'front_three_quarter', '正面3/4': 'front_three_quarter',
-    profile: 'profile', side: 'profile', standard_profile: 'profile', standard_profile_view: 'profile',
-    '侧面': 'profile', '标准侧面': 'profile',
     rear_three_quarter: 'rear_three_quarter', back_three_quarter: 'rear_three_quarter',
     '背面四分之三': 'rear_three_quarter', '背面3/4': 'rear_three_quarter',
-    back: 'back', back_view: 'back', '背面': 'back',
   };
   return aliases[normalized] || null;
+}
+
+function cellKey(value: unknown): ActorSheetCellKey | null {
+  const normalized = text(value).toLowerCase().replace(/[\s-]+/g, '_');
+  return (ACTOR_SHEET_CELL_KEYS as readonly string[]).includes(normalized)
+    ? normalized as ActorSheetCellKey
+    : null;
+}
+
+/** 把任意一代的 view→url 映射归一到 FIVE_VIEW_KEYS 上。与后端 resolve_identity_views 同一规则。 */
+function resolveIdentityViews(stored: Partial<Record<StoredViewKey, string>>): Partial<Record<FiveViewKey, string>> {
+  const resolved: Partial<Record<FiveViewKey, string>> = {};
+  FIVE_VIEW_KEYS.forEach(key => {
+    if (stored[key]) resolved[key] = stored[key];
+  });
+  LEGACY_VIEW_KEYS.forEach(legacyKey => {
+    const target = LEGACY_VIEW_ALIASES[legacyKey];
+    if (!resolved[target] && stored[legacyKey]) resolved[target] = stored[legacyKey];
+  });
+  const isLegacyRecord = LEGACY_VIEW_KEYS.some(key => stored[key])
+    && !stored.face_front && !stored.face_three_quarter;
+  if (isLegacyRecord) {
+    (Object.entries(LEGACY_VIEW_FALLBACKS) as [FiveViewKey, FiveViewKey][]).forEach(([target, source]) => {
+      if (!resolved[target] && resolved[source]) resolved[target] = resolved[source];
+    });
+  }
+  return resolved;
 }
 
 function normalizeViewContract(value: unknown): CharacterViewContract {
@@ -239,11 +362,37 @@ function normalizeViewContract(value: unknown): CharacterViewContract {
 
 function normalizeViews(value: unknown): CharacterViewAsset[] {
   const provided = Array.isArray(value) ? value.map(record) : [];
-  return FIVE_VIEW_KEYS.map((key, index) => {
-    const raw = provided.find(item => viewKey(item.key ?? item.view) === key);
-    const imageUrl = sanitizeCharacterMediaUrl(raw?.imageUrl ?? raw?.image_url);
-    return { key, order: index + 1, imageUrl, available: Boolean(imageUrl) };
+  const stored: Partial<Record<StoredViewKey, string>> = {};
+  provided.forEach(item => {
+    const key = viewKey(item.key ?? item.view);
+    const imageUrl = sanitizeCharacterMediaUrl(item.imageUrl ?? item.image_url);
+    if (key && imageUrl && !stored[key]) stored[key] = imageUrl;
   });
+  const resolved = resolveIdentityViews(stored);
+  return FIVE_VIEW_KEYS.map((key, index) => ({
+    key,
+    order: index + 1,
+    imageUrl: resolved[key] ?? null,
+    available: Boolean(resolved[key]),
+  }));
+}
+
+function normalizeSheetCells(value: unknown): ActorSheetCell[] {
+  const provided = Array.isArray(value) ? value.map(record) : [];
+  const urls: Partial<Record<ActorSheetCellKey, string>> = {};
+  provided.forEach(item => {
+    const key = cellKey(item.key ?? item.cell ?? item.view);
+    const imageUrl = sanitizeCharacterMediaUrl(item.imageUrl ?? item.image_url);
+    if (key && imageUrl && !urls[key]) urls[key] = imageUrl;
+  });
+  if (!Object.keys(urls).length) return [];
+  return ACTOR_SHEET_CELL_KEYS.map((key, index) => ({
+    key,
+    order: index + 1,
+    group: ACTOR_SHEET_CELL_GROUPS[key],
+    imageUrl: urls[key] ?? null,
+    available: Boolean(urls[key]),
+  }));
 }
 
 function normalizeColors(value: unknown): CharacterColor[] {
@@ -336,6 +485,7 @@ function normalizeCharacter(value: unknown, index: number): CharacterDashboardCh
     sheetUrl,
     assetState: safeAssetState(requestedAssetState(raw.assetState ?? raw.asset_state), views, sheetUrl, quality),
     views,
+    sheetCells: normalizeSheetCells(raw.sheetCells ?? raw.sheet_cells ?? raw.cells),
     quality,
   };
 }

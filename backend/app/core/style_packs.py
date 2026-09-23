@@ -344,7 +344,7 @@ CINEMATIC_REALISM = StylePack(
     negatives=_LIVE_ACTION_NEGATIVES,
     situational_negatives=_SITUATIONAL,
     anti_leak=[
-        "设定图反偷懒铁律：五视图仅作造型参考 + 绝对禁止多格拼版 + 绝对禁止摄影棚白底 + 绝对禁止视图标注文字",
+        "设定图反偷懒铁律：设定集仅作造型参考 + 绝对禁止多格拼版 + 绝对禁止摄影棚白底 + 绝对禁止视图标注文字",
         "故事板反偷懒铁律：分镜图仅作构图机位参考 + 绝对禁止九宫格拼版、线稿质感与文字标注进入画面",
     ],
     extension_restatement="全片保持真人实拍电影质感与色彩基调不变。",

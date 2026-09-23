@@ -46,24 +46,77 @@ def _validate_remote_media(value: object, *, allow_inline_image: bool = False) -
     return text
 
 
-FiveViewName = Literal[
+IdentityViewName = Literal[
+    # 数字演员设定集的五个身份锚点(三张全身 + 两张头部)
     "front",
-    "front_three_quarter",
     "profile",
-    "rear_three_quarter",
     "back",
+    "face_front",
+    "face_three_quarter",
+    # 旧五视图专有的两个角度：只在读取历史记录时出现，新流水线不再产出
+    "front_three_quarter",
+    "rear_three_quarter",
 ]
-FIVE_VIEW_ORDER: tuple[FiveViewName, ...] = (
+#: 设定集锁定人物身份用的五个锚点，顺序即前端选择器顺序。
+IDENTITY_VIEW_ORDER: tuple[IdentityViewName, ...] = (
+    "front",
+    "profile",
+    "back",
+    "face_front",
+    "face_three_quarter",
+)
+#: 旧五视图整板的五个角度。存量记录按这个顺序存着，读取/校验必须继续接受。
+LEGACY_IDENTITY_VIEW_ORDER: tuple[IdentityViewName, ...] = (
     "front",
     "front_three_quarter",
     "profile",
     "rear_three_quarter",
     "back",
 )
+#: 旧角度 → 新锚点。只在新锚点自己没有图时生效，所以存量的 back 永远压过 rear_three_quarter。
+LEGACY_VIEW_ALIASES: dict[str, IdentityViewName] = {
+    "front_three_quarter": "face_three_quarter",  # 旧 45° 全身 → 新 3/4 侧脸锚点
+    "rear_three_quarter": "back",                 # 旧 135° 全身 → 新背面全身
+}
+#: 旧整板没有单独的头部裁切，正面全身兼任正脸锚点——否则存量角色会凭空掉一个视图、
+#: 从 READY 退回 PARTIAL 并被重新出图，正是契约里明令禁止的。只对旧记录生效。
+LEGACY_VIEW_FALLBACKS: dict[IdentityViewName, IdentityViewName] = {
+    "face_front": "front",
+}
+
+
+def is_legacy_view_record(stored: dict[str, str]) -> bool:
+    """旧五视图记录：带旧角度键，且不带任何新锚点专有键。"""
+    return (
+        any(stored.get(key) for key in LEGACY_VIEW_ALIASES)
+        and not any(stored.get(key) for key in ("face_front", "face_three_quarter"))
+    )
+
+
+def resolve_identity_views(stored: dict[str, str]) -> dict[str, str]:
+    """把任意一代的 view→url 映射归一到 IDENTITY_VIEW_ORDER 的键上。
+
+    解析优先级：新锚点本名 → 旧角度别名 → 旧记录兜底。新记录永远不会走到兜底，
+    所以某一格真的没出来时仍然如实缺图，不会被正面全身悄悄补上。
+    """
+    resolved = {key: stored[key] for key in IDENTITY_VIEW_ORDER if stored.get(key)}
+    for legacy_key, identity_key in LEGACY_VIEW_ALIASES.items():
+        if not resolved.get(identity_key) and stored.get(legacy_key):
+            resolved[identity_key] = stored[legacy_key]
+    if is_legacy_view_record(stored):
+        for identity_key, source_key in LEGACY_VIEW_FALLBACKS.items():
+            if not resolved.get(identity_key) and resolved.get(source_key):
+                resolved[identity_key] = resolved[source_key]
+    return resolved
+
+
+def identity_view_order_is_valid(order: tuple[str, ...]) -> bool:
+    """当前契约顺序或旧五视图顺序，两者都算合法。"""
+    return order in (IDENTITY_VIEW_ORDER, LEGACY_IDENTITY_VIEW_ORDER)
 
 
 class FiveView(BaseModel):
-    view: FiveViewName
+    view: IdentityViewName
     image_url: AnyHttpUrl
 
 
@@ -75,8 +128,11 @@ class CharacterAsset(BaseModel):
     @model_validator(mode="after")
     def validate_view_order(self) -> "CharacterAsset":
         actual = tuple(view.view for view in self.views)
-        if actual != FIVE_VIEW_ORDER:
-            raise ValueError(f"five views must use exact order: {', '.join(FIVE_VIEW_ORDER)}")
+        if not identity_view_order_is_valid(actual):
+            raise ValueError(
+                "identity views must use exact order: "
+                f"{', '.join(IDENTITY_VIEW_ORDER)}（或旧版 {', '.join(LEGACY_IDENTITY_VIEW_ORDER)}）"
+            )
         return self
 
 

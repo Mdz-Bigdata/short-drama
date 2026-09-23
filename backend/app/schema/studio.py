@@ -9,7 +9,12 @@ from typing import Annotated, Any, Literal
 
 from pydantic import AnyHttpUrl, BaseModel, Field, field_validator, model_validator
 
-from app.schema.production import FIVE_VIEW_ORDER, FiveViewName
+from app.schema.production import (
+    IDENTITY_VIEW_ORDER,
+    LEGACY_IDENTITY_VIEW_ORDER,
+    IdentityViewName,
+    identity_view_order_is_valid,
+)
 
 
 def utc_now_iso() -> str:
@@ -436,7 +441,7 @@ class AgentAuthorization(BaseModel):
 
 
 class FiveViewReference(BaseModel):
-    view: FiveViewName
+    view: IdentityViewName
     uri: AnyHttpUrl
 
 
@@ -448,9 +453,14 @@ class CharacterReference(BaseModel):
     approved: bool = False
 
     @model_validator(mode="after")
-    def exact_five_views(self) -> "CharacterReference":
-        if tuple(view.view for view in self.views) != FIVE_VIEW_ORDER:
-            raise ValueError("character references require the exact ordered five views")
+    def exact_identity_views(self) -> "CharacterReference":
+        # 新契约的五个身份锚点，或存量记录的旧五视图顺序——两者都放行。
+        if not identity_view_order_is_valid(tuple(view.view for view in self.views)):
+            raise ValueError(
+                "character references require the exact ordered identity views "
+                f"({', '.join(IDENTITY_VIEW_ORDER)}) 或旧版五视图顺序"
+                f"（{', '.join(LEGACY_IDENTITY_VIEW_ORDER)}）"
+            )
         return self
 
 

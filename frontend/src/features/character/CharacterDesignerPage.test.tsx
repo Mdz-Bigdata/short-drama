@@ -20,11 +20,11 @@ const dashboard = normalizeCharacterDashboard({
   viewContract: {
     version: 'five-view.v1',
     views: [
-      { key: 'front', order: 1, angleDegrees: 0, labelZh: '正面', labelEn: 'Front view' },
-      { key: 'front_three_quarter', order: 2, angleDegrees: 45, labelZh: '正面四分之三', labelEn: 'Front three-quarter view' },
-      { key: 'profile', order: 3, angleDegrees: 90, labelZh: '标准侧面', labelEn: 'Standard profile view' },
-      { key: 'rear_three_quarter', order: 4, angleDegrees: 135, labelZh: '背面四分之三', labelEn: 'Rear three-quarter view' },
-      { key: 'back', order: 5, angleDegrees: 180, labelZh: '背面', labelEn: 'Back view' },
+      { key: 'front', order: 1, angleDegrees: 0, labelZh: '正面全身', labelEn: 'Front full body' },
+      { key: 'profile', order: 2, angleDegrees: 90, labelZh: '侧面全身', labelEn: 'Profile full body' },
+      { key: 'back', order: 3, angleDegrees: 180, labelZh: '背面全身', labelEn: 'Back full body' },
+      { key: 'face_front', order: 4, angleDegrees: 0, labelZh: '正脸特写', labelEn: 'Face front close-up' },
+      { key: 'face_three_quarter', order: 5, angleDegrees: 45, labelZh: '3-4侧脸', labelEn: 'Face three-quarter' },
     ],
   },
   project: { genre: '民国悬疑', platform: '竖屏短剧' },
@@ -320,7 +320,7 @@ describe('CharacterDesignerPage', () => {
     expect(within(assetTabs).getByRole('tab', { name: /拍摄道具.*7 个资产/ })).toBeTruthy();
     expect(within(assetTabs).getByRole('tab', { name: /服装.*尚未同步/ })).toBeTruthy();
     expect(within(assetTabs).getByRole('tab', { name: /特效.*7 个资产/ })).toBeTruthy();
-    expect(screen.getByRole('heading', { level: 2, name: '五视图工作区' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 2, name: '数字演员设定集' })).toBeTruthy();
   });
 
   it('refreshes the dashboard and all non-actor counts from the refresh action', async () => {
@@ -389,20 +389,20 @@ describe('CharacterDesignerPage', () => {
     render(<CharacterDesignerPage dashboard={dashboard} {...actions()} />);
 
     expect(screen.getByRole('heading', { level: 1, name: '沈知微' })).toBeTruthy();
-    const tabs = within(screen.getByRole('tablist', { name: '沈知微 五视图角度' })).getAllByRole('tab');
+    const tabs = within(screen.getByRole('tablist', { name: '沈知微 身份视图' })).getAllByRole('tab');
     expect(tabs).toHaveLength(5);
     expect(tabs.map(tab => tab.textContent)).toEqual([
-      '正面0°',
-      '正面四分之三45°',
-      '标准侧面90°',
-      '背面四分之三135°',
-      '背面180°',
+      '正面全身0°',
+      '侧面全身90°',
+      '背面全身180°',
+      '正脸特写0°',
+      '3-4侧脸45°',
     ]);
 
     tabs[0].focus();
     await user.keyboard('{ArrowRight}{ArrowRight}');
     expect(tabs[2].getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByRole('tabpanel', { name: '标准侧面90°' }).textContent).toContain('标准侧面');
+    expect(screen.getByRole('tabpanel', { name: '背面全身180°' }).textContent).toContain('背面全身');
     expect(screen.getByText('背部视角尚未生成')).toBeTruthy();
 
     await user.click(screen.getByRole('button', { name: '查看角色总数 1 详情' }));
@@ -420,7 +420,7 @@ describe('CharacterDesignerPage', () => {
     expect(screen.getByRole('heading', { level: 1, name: '陆行远' })).toBeTruthy();
     expect(screen.queryByRole('heading', { level: 1, name: '渡口角色设定集' })).toBeNull();
     expect(screen.getByRole('button', { name: /02.*陆行远.*巡警/ }).getAttribute('aria-pressed')).toBe('true');
-    expect(screen.getByAltText('陆行远 正面 0度').getAttribute('src')).toBe('https://img.test/lu-front.png');
+    expect(screen.getByAltText('陆行远 正面全身 0度').getAttribute('src')).toBe('https://img.test/lu-front.png');
     expect(within(screen.getByLabelText('角色基本信息')).getByText('二十七岁的码头巡警')).toBeTruthy();
     const evidence = container.querySelector('.character-evidence');
     expect(evidence).toBeTruthy();
@@ -466,11 +466,12 @@ describe('CharacterDesignerPage', () => {
         name: `查看${view.angleDegrees}度${view.labelZh}契约详情`,
       }));
       const dialog = screen.getByRole('dialog', {
-        name: `五视图契约 · ${view.angleDegrees}° ${view.labelZh}`,
+        name: `身份视图契约 · ${view.angleDegrees}° ${view.labelZh}`,
       });
       expect(dialog.textContent).toContain(view.labelEn);
       expect(dialog.textContent).toContain('沈知微：已就绪');
-      expect(dialog.textContent).toContain(`陆行远：${view.angleDegrees < 90 ? '已就绪' : '待生成'}`);
+      // 陆行远只出了前两个身份锚点；按契约槽位序号判断，不再按角度。
+      expect(dialog.textContent).toContain(`陆行远：${view.order <= 2 ? '已就绪' : '待生成'}`);
       await user.keyboard('{Escape}');
     }
   });
@@ -512,9 +513,9 @@ describe('CharacterDesignerPage', () => {
     render(<CharacterDesignerPage dashboard={legacy} {...actions()} />);
 
     expect(screen.getAllByText('待质量审核').length).toBeGreaterThan(0);
-    expect(screen.getByText(/尚未拆分并通过五视图质检/)).toBeTruthy();
-    expect(screen.getByLabelText('五视图已完成 0 / 5')).toBeTruthy();
-    const tabs = within(screen.getByRole('tablist', { name: '陆行远 五视图角度' })).getAllByRole('tab');
+    expect(screen.getByText(/尚未拆分并通过设定集质检/)).toBeTruthy();
+    expect(screen.getByLabelText('身份视图已完成 0 / 5')).toBeTruthy();
+    const tabs = within(screen.getByRole('tablist', { name: '陆行远 身份视图' })).getAllByRole('tab');
     tabs.forEach(tab => expect(within(tab).queryByRole('img')).toBeNull());
 
     await user.click(screen.getByRole('button', { name: '查看陆行远整板参考图大图' }));
@@ -532,11 +533,11 @@ describe('CharacterDesignerPage', () => {
     const actionHandlers = actions();
     const { rerender } = render(<CharacterDesignerPage dashboard={legacy} {...actionHandlers} />);
 
-    fireEvent.error(screen.getByRole('img', { name: '陆行远 旧版五视图整板参考图' }));
+    fireEvent.error(screen.getByRole('img', { name: '陆行远 设定集整板参考图' }));
 
     expect(screen.queryByRole('button', { name: '查看陆行远整板参考图大图' })).toBeNull();
     expect(screen.getByText('整板参考图加载失败')).toBeTruthy();
-    expect(screen.getByText('正面尚未生成')).toBeTruthy();
+    expect(screen.getByText('正面全身尚未生成')).toBeTruthy();
 
     const recovered = buildLegacyCharacterDashboard({
       title: '旧版角色资产',
@@ -546,7 +547,7 @@ describe('CharacterDesignerPage', () => {
     });
     rerender(<CharacterDesignerPage dashboard={recovered} {...actionHandlers} />);
 
-    expect(screen.getByRole('img', { name: '陆行远 旧版五视图整板参考图' }).getAttribute('src'))
+    expect(screen.getByRole('img', { name: '陆行远 设定集整板参考图' }).getAttribute('src'))
       .toBe('https://img.test/recovered-legacy-sheet.png');
   });
 
@@ -554,7 +555,7 @@ describe('CharacterDesignerPage', () => {
     const actionHandlers = actions();
     const { rerender } = render(<CharacterDesignerPage dashboard={interactiveDashboard} {...actionHandlers} />);
 
-    fireEvent.error(screen.getByRole('img', { name: '沈知微 正面 0度' }));
+    fireEvent.error(screen.getByRole('img', { name: '沈知微 正面全身 0度' }));
     expect(screen.queryByRole('button', { name: '查看沈知微正面大图' })).toBeNull();
 
     const refreshed = normalizeCharacterDashboard({
@@ -570,7 +571,7 @@ describe('CharacterDesignerPage', () => {
     });
     rerender(<CharacterDesignerPage dashboard={refreshed} {...actionHandlers} />);
 
-    expect(screen.getByRole('img', { name: '沈知微 正面 0度' }).getAttribute('src'))
+    expect(screen.getByRole('img', { name: '沈知微 正面全身 0度' }).getAttribute('src'))
       .toBe('https://img.test/shen-front-recovered.png');
   });
 
@@ -596,7 +597,7 @@ describe('CharacterDesignerPage', () => {
     const assetTabs = screen.getByRole('tablist', { name: '角色资产类型' });
     expect(within(assetTabs).getAllByRole('tab')).toHaveLength(5);
     expect(within(assetTabs).getByRole('tab', { name: /数字演员.*2/ }).getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByRole('heading', { level: 2, name: '五视图工作区' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 2, name: '数字演员设定集' })).toBeTruthy();
 
     await user.click(within(assetTabs).getByRole('tab', { name: /拍摄场地/ }));
     expect(await screen.findByRole('region', { name: '场景资产工作区' })).toBeTruthy();
@@ -614,7 +615,7 @@ describe('CharacterDesignerPage', () => {
     expect(requestedKinds).toEqual(expect.arrayContaining(['scene', 'prop', 'costume']));
 
     await user.click(within(assetTabs).getByRole('tab', { name: /数字演员/ }));
-    expect(screen.getByRole('heading', { level: 2, name: '五视图工作区' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 2, name: '数字演员设定集' })).toBeTruthy();
     expect(screen.getByRole('heading', { level: 1, name: '沈知微' })).toBeTruthy();
   });
 

@@ -82,7 +82,31 @@ class ProductionContractTests(unittest.TestCase):
                 prompt="爵士风格，慵懒深夜酒吧，萨克斯",
             )
 
-    def test_character_requires_exact_ordered_five_views(self):
+    def test_character_requires_the_exact_ordered_identity_views(self):
+        character = CharacterAsset(
+            name="林夏",
+            identity_dna="椭圆脸、左眼下泪痣、低马尾、米白风衣",
+            views=[
+                FiveView(view="front", image_url="https://cdn.example/front.png"),
+                FiveView(view="profile", image_url="https://cdn.example/profile.png"),
+                FiveView(view="back", image_url="https://cdn.example/back.png"),
+                FiveView(view="face_front", image_url="https://cdn.example/face.png"),
+                FiveView(view="face_three_quarter", image_url="https://cdn.example/face-3q.png"),
+            ],
+        )
+        self.assertEqual([v.view for v in character.views], [
+            "front", "profile", "back", "face_front", "face_three_quarter"
+        ])
+
+        # 顺序打乱仍然拒绝——两代契约都不接受乱序。
+        with self.assertRaises(ValidationError):
+            CharacterAsset(
+                name="林夏",
+                identity_dna="固定身份",
+                views=[character.views[1], character.views[0], *character.views[2:]],
+            )
+
+    def test_character_still_accepts_a_legacy_five_view_record(self):
         character = CharacterAsset(
             name="林夏",
             identity_dna="椭圆脸、左眼下泪痣、低马尾、米白风衣",

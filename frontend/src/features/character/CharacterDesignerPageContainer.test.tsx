@@ -12,20 +12,20 @@ const response = {
   state: 'READY',
   viewContract: {
     version: 'five-view.v1',
-    order: ['front', 'front_three_quarter', 'profile', 'rear_three_quarter', 'back'],
+    order: ['front', 'profile', 'back', 'face_front', 'face_three_quarter'],
     views: [
-      { key: 'front', order: 1, angleDegrees: 0, labelZh: '正面', labelEn: 'Front view' },
-      { key: 'front_three_quarter', order: 2, angleDegrees: 45, labelZh: '正面四分之三', labelEn: 'Front three-quarter view' },
-      { key: 'profile', order: 3, angleDegrees: 90, labelZh: '标准侧面', labelEn: 'Standard profile view' },
-      { key: 'rear_three_quarter', order: 4, angleDegrees: 135, labelZh: '背面四分之三', labelEn: 'Rear three-quarter view' },
-      { key: 'back', order: 5, angleDegrees: 180, labelZh: '背面', labelEn: 'Back view' },
+      { key: 'front', order: 1, angleDegrees: 0, labelZh: '正面全身', labelEn: 'Front full body' },
+      { key: 'profile', order: 2, angleDegrees: 90, labelZh: '侧面全身', labelEn: 'Profile full body' },
+      { key: 'back', order: 3, angleDegrees: 180, labelZh: '背面全身', labelEn: 'Back full body' },
+      { key: 'face_front', order: 4, angleDegrees: 0, labelZh: '正脸特写', labelEn: 'Face front close-up' },
+      { key: 'face_three_quarter', order: 5, angleDegrees: 45, labelZh: '3-4侧脸', labelEn: 'Face three-quarter' },
     ],
   },
   project: {}, assumptions: [], risks: [], rawText: '服务端原文',
   characters: [{
     characterId: 'character-0123456789abcdef', name: '沈知微', role: '女主角', description: '', identity: '侦探学徒', voiceId: '', colors: [], states: [], sheetUrl: null,
     assetState: 'READY',
-    views: ['front', 'front_three_quarter', 'profile', 'rear_three_quarter', 'back'].map((key, index) => ({ key, order: index + 1, imageUrl: `/media/${key}.png`, available: true })),
+    views: ['front', 'profile', 'back', 'face_front', 'face_three_quarter'].map((key, index) => ({ key, order: index + 1, imageUrl: `/media/${key}.png`, available: true })),
     quality: { passed: true, paletteSimilarity: 0.94, uniqueViewHashes: 5, entropy: [], issues: [] },
   }],
 };
@@ -48,7 +48,7 @@ describe('CharacterDesignerPageContainer', () => {
     render(<CharacterDesignerPageContainer {...props} />);
 
     expect(await screen.findByRole('heading', { level: 1, name: '沈知微' })).toBeTruthy();
-    expect(screen.getByAltText('沈知微 正面 0度').getAttribute('src')).toBe('http://localhost:8000/media/front.png');
+    expect(screen.getByAltText('沈知微 正面全身 0度').getAttribute('src')).toBe('http://localhost:8000/media/front.png');
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith(
       'http://localhost:8000/api/drama/task-3/character-dashboard',
       expect.objectContaining({ credentials: 'include' }),
@@ -68,7 +68,7 @@ describe('CharacterDesignerPageContainer', () => {
 
     expect(screen.getAllByText('陆行远').length).toBeGreaterThan(0);
     expect(await screen.findByText(/任务内嵌资产/)).toBeTruthy();
-    expect(screen.getByLabelText('五视图已完成 0 / 5')).toBeTruthy();
+    expect(screen.getByLabelText('身份视图已完成 0 / 5')).toBeTruthy();
   });
 
   it('does not render malicious media URLs from an offline legacy fallback', async () => {
@@ -89,7 +89,7 @@ describe('CharacterDesignerPageContainer', () => {
     );
 
     expect(await screen.findByText(/任务内嵌资产/)).toBeTruthy();
-    expect(screen.getByLabelText('五视图已完成 0 / 5')).toBeTruthy();
+    expect(screen.getByLabelText('身份视图已完成 0 / 5')).toBeTruthy();
     expect(container.querySelectorAll('img')).toHaveLength(0);
   });
 });

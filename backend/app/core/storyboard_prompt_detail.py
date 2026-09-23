@@ -122,7 +122,7 @@ def compile_storyboard_prompt_detail(
             name=name,
             identity="本场主要角色",
             age_impression="继承已批准角色资产",
-            appearance=_clip(profiles.get(name) or f"严格继承{name}的角色五视图、脸型、五官与发型"),
+            appearance=_clip(profiles.get(name) or f"严格继承{name}的数字演员设定集、脸型、五官与发型"),
             costume=_clip("；".join(
                 f"{item['name']}：{item.get('description', '')}"
                 for item in production.get("costumes", [])
@@ -344,14 +344,14 @@ def compile_storyboard_prompt_detail(
         global_visual=GlobalVisualRules(
             visual_style=_clip(visual_style),
             era_and_region="严格继承剧本时代、地域文化和已批准美术资产",
-            art_direction="建筑、服装、道具、角色五视图与场景圣经均为硬约束",
+            art_direction="建筑、服装、道具、数字演员设定集与场景圣经均为硬约束",
             rendering_texture="真人电视剧电影摄影质感，可信材质、自然皮肤纹理、受控景深与细颗粒",
             authenticity="原创虚拟角色，不冒用真人身份；参考图只锁定外观，不复制排版",
             overall_atmosphere=_clip(f"按{board.rhythm_profile}节奏服务本页叙事目标：{narrative_goal}", 500),
         ),
         continuity=ContinuityLocks(
             face_anchor="；".join(f"{item.name}：{item.appearance}" for item in characters) or "空镜，无人物，不生成面孔",
-            body_anchor="保持角色五视图确定的身高感、肩宽、体型和身体比例" if characters else "空镜，无人物或肢体",
+            body_anchor="保持数字演员设定集确定的身高感、肩宽、体型和身体比例" if characters else "空镜，无人物或肢体",
             costume_anchor="；".join(f"{item.name}：{item.costume}" for item in characters) or "空镜，不添加人物服装",
             accessory_anchor="；".join(f"{item.name}：{item.accessories}" for item in characters) or "空镜，无人物配饰",
             wound_and_stain_anchor="伤痕、破损、湿度和污渍严格承接上一拍，不无故增减",

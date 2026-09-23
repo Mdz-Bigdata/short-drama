@@ -63,7 +63,7 @@ const TRAILING_SPEECH_VERB = /(?:说道|问道|答道|喝道|叹道|骂道|喊�
 /** 二级截断：台词内某个句末标点后紧跟镜头指示词 → 后面是摄影叙述，不属于台词。 */
 const CAMERA_TAIL = /^(?:镜头|画面|特写|切至|切换|字幕)/;
 
-const SPEAKER_SEGMENT_CHARSET = /^[一-龥A-Za-z0-9？?·. 　]+$/;
+const SPEAKER_SEGMENT_CHARSET = /^[一-龥A-Za-z0-9？?·.  ]+$/;
 
 /** 未登记说话人段里出现叙事虚词（摆着/摆了/…的东西）→ 是叙述句主语，不是人名。 */
 const NARRATIVE_PARTICLE = /[着了的]/;
@@ -208,7 +208,7 @@ function classifySegment(
     && actionTail.length <= MAX_ACTION_CUE_LENGTH
     && SPEAKER_SEGMENT_CHARSET.test(head)
     && !/^\d+$/.test(head)
-    && !/^[·. 　]+$/.test(head)
+    && !/^[·.  ]+$/.test(head)
   ) {
     // 「今晚三更：北门见」——时间状语后的冒号仍在台词里，并回正文。
     if (TIME_PHRASE.test(head)) return 'absorb';
@@ -368,7 +368,7 @@ export function extractSceneDialogues(
       // 以在册角色开头时视作新说话人，而不是并进上一句。
       if (isContinuation) {
         const raw = content.slice(s, parenStart);
-        const wsIdx = Math.max(raw.lastIndexOf(' '), raw.lastIndexOf('　'), raw.lastIndexOf('\t'));
+        const wsIdx = Math.max(raw.lastIndexOf(' '), raw.lastIndexOf(' '), raw.lastIndexOf('\t'));
         const tail = wsIdx >= 0 ? raw.slice(wsIdx + 1).trim() : '';
         if (tail && rosterByLength.some(name => tail.startsWith(name))) {
           const tailLine = classifySegment(tail, paren, rosterByLength);

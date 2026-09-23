@@ -46,7 +46,7 @@ class AgentCouncilCompilerTests(unittest.TestCase):
     def test_role_briefs_include_hard_production_contracts(self) -> None:
         prompts = {agent.role: agent.system_prompt for agent in self.plan.agents}
         for role, prompt in prompts.items():
-            self.assertIn("严格五视图", prompt, role.value)
+            self.assertIn("数字演员设定集", prompt, role.value)
             self.assertIn("3×3九宫格", prompt, role.value)
             self.assertIn("首尾帧", prompt, role.value)
             self.assertIn("不支持的输入不得静默丢弃", prompt, role.value)

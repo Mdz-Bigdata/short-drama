@@ -49,7 +49,7 @@ class StoryboardPromptDetailTests(unittest.TestCase):
         result = compile_storyboard_prompt_detail(board, script_text="月光照亮泥地棋盘", visual_style="写实")
         self.assertEqual(result.foundation["characters"], [])
         self.assertIn("空镜，无人物", result.still_prompts[0].prompt)
-        self.assertNotIn("空镜（无人物）的角色五视图", result.still_prompts[0].prompt)
+        self.assertNotIn("空镜（无人物）的数字演员设定集", result.still_prompts[0].prompt)
 
     def test_scene_identity_and_current_costume_are_preserved(self):
         board = NineGridStoryboard(

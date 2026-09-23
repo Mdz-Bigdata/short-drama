@@ -1,8 +1,9 @@
-"""Reuse approved five-view actors from the shared library before paying for new ones.
+"""Reuse approved actors from the shared library before paying for new ones.
 
 Stage 3 calls this from its synchronous worker. A library actor qualifies when a
-previous project filed its passed five-view set (all five view images still on
-local media). The match is linked to the current project so the storyboard
+previous project filed a passed identity-view set — the current five anchors, or
+the legacy five-view angles for records filed before the actor-sheet relayout —
+with every image still on local media. The match is linked to the current project so the storyboard
 stage can read the same asset. Any failure here degrades to "generate as usual":
 reuse is an optimisation and must never block production.
 """
@@ -19,9 +20,13 @@ from app.core.element_scope import element_in_task, element_name_keys, normalize
 from app.core.media_compositor import MEDIA_DIR
 from app.platform.dependencies import DEFAULT_DATABASE_URL
 from app.platform.store import PlatformStore
+from app.schema.production import IDENTITY_VIEW_ORDER, LEGACY_IDENTITY_VIEW_ORDER
 
 logger = logging.getLogger(__name__)
-REQUIRED_VIEWS = ("front", "front_three_quarter", "profile", "rear_three_quarter", "back")
+#: 当前契约的五个身份锚点。
+REQUIRED_VIEWS = IDENTITY_VIEW_ORDER
+#: 旧五视图整板的五个角度；存量资产按它入库，复用时同样认。
+LEGACY_REQUIRED_VIEWS = LEGACY_IDENTITY_VIEW_ORDER
 
 
 def _local_media_exists(url: str) -> bool:
@@ -46,9 +51,17 @@ def _approved_views(metadata: dict) -> list[dict[str, str]]:
         url = str(item.get("image_url") or "").strip()
         if view and url and view not in by_view:
             by_view[view] = url
-    if any(view not in by_view or not _local_media_exists(by_view[view]) for view in REQUIRED_VIEWS):
-        return []
-    return [{"view": view, "image_url": by_view[view]} for view in REQUIRED_VIEWS]
+    # 新契约的锚点优先；整套齐不了就退回旧五视图角度，两代资产都能复用。
+    for wanted in (REQUIRED_VIEWS, LEGACY_REQUIRED_VIEWS):
+        if all(view in by_view and _local_media_exists(by_view[view]) for view in wanted):
+            return [{"view": view, "image_url": by_view[view]} for view in wanted]
+    return []
+
+
+def _sheet_type(views: list[dict[str, str]]) -> str:
+    """复用来的资产是哪一代排版——旧五视图整板不要冒充 25 格设定集。"""
+    matched = tuple(item["view"] for item in views)
+    return "actor_sheet_25_cell" if matched == REQUIRED_VIEWS else "ordered_five_view_turnaround"
 
 
 async def _find(owner_id: str, task_id: str, names: list[str]) -> dict[str, dict[str, Any]]:
@@ -77,7 +90,7 @@ async def _find(owner_id: str, task_id: str, names: list[str]) -> dict[str, dict
                 "role": str(metadata.get("role") or ""),
                 "desc": str(item.description or ""),
                 "sheet": sheet,
-                "sheet_type": "ordered_five_view_turnaround",
+                "sheet_type": _sheet_type(views),
                 "views": views,
                 "five_view_quality": {
                     "passed": True,

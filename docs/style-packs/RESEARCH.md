@@ -14,6 +14,7 @@ about, and what the storyboard skill they sent calls the style prefix and the lo
 | `Seedance2.5_Manju_Director_Engine_atom_punk.md` (atom-punk engine, personal-use terms) | Read in full | Three-segment architecture, causal chain levels, de-AI keyword list, per-shot camera kit with purpose alternates, 3–4 colour palette with tonal knobs, asset cards, reference budget by priority, QA rubric |
 | `feichi-storyboard-skill_v2.zip` + `storyboard-script_用户手册(2).md` (commercial skill, no licence file) | Read in full | Lock tags L1–L7 and prompt assembly order, per-model prompt budgets and the pressure test with its truncation order, negative-prompt tiers, template and asset-extraction formats, genre routing, intent decoding, generation feedback loop |
 | 12 WeChat article links | **Not read.** Every fetch returned WeChat's 「环境异常，完成验证后即可继续访问」 verification page; it was not bypassed | None |
+| 「MiniMax-H3 立体声提示词实战」 (WeChat, AI漫剧实验室, 2026-09-16) + the user's own summary | Read in the in-app browser pane | The three-layer sound line (`center / ambient / music`), the weight order, the ≤60-word cap, the four-point checklist, the failure table, and voice locking with a reference sample and a fixed persona wording |
 
 None of these carries an open licence, so nothing is vendored: the packs, the budgets and
 the prompt layers here are the project's own code and wording, and the documents are

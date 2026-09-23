@@ -87,8 +87,9 @@ class ProductionConstitution(BaseModel):
     dialogue_default_cpm: tuple[int, int] = (270, 320)
     shot_duration_seconds: tuple[float, float]
     action_shot_duration_seconds: tuple[float, float] = (1.5, 2.5)
+    # 数字演员设定集的五个身份锚点（三张全身 + 两张头部）。
     character_view_order: tuple[str, ...] = (
-        "front", "front_three_quarter", "profile", "rear_three_quarter", "back",
+        "front", "profile", "back", "face_front", "face_three_quarter",
     )
     storyboard_rows: Literal[3] = 3
     storyboard_columns: Literal[3] = 3

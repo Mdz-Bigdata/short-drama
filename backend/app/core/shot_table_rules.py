@@ -118,7 +118,7 @@ def _has_any(text: str, terms: Iterable[str]) -> bool:
     return any(term in text for term in terms)
 
 
-def _speakers(dialogue: str, cast: Sequence[str] = ()) -> list[str]:
+def speakers_in(dialogue: str, cast: Sequence[str] = ()) -> list[str]:
     """Who the dialogue cell gives lines to, in order.
 
     With a cast, only labels naming someone in it count, so a colon inside a line
@@ -260,7 +260,7 @@ def audit_shot_table(
 
         # 一句台词必须在本镜说完：按项目统一语速换算，两端各留一点静默。
         dialogue = _text(shot.get("dialogue"))
-        speakers = _speakers(dialogue, characters)
+        speakers = speakers_in(dialogue, characters)
         if len(set(speakers)) > 1:
             audit.issues.append(ShotIssue(
                 shot_id, "一镜多个说话人",

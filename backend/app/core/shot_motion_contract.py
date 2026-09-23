@@ -138,7 +138,7 @@ def compile_storyboard_image_prompt(
     prompt = (
         f"镜头{contract.shot_id}的{'首帧' if frame_state == 'start' else '尾帧'}分镜图片。"
         f"{_invariants(contract)}当前必须呈现：{state}。视觉风格：{visual_style}。"
-        "严格锁定角色五视图、场景布局、道具归属、特效规则、摄影轴线、光向与色温；"
+        "严格锁定数字演员设定集、场景布局、道具归属、特效规则、摄影轴线、光向与色温；"
         "禁止变脸、换装、道具换手、镜像翻转、文字、水印和无关人物。"
     )
     return CompiledShotPrompt(

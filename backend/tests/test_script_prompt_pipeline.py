@@ -49,9 +49,10 @@ class ScriptPromptPipelineTests(unittest.TestCase):
             "script-to-video-prompts", "sd25-pe", "universal-storyboard-prompt"
         ])
         self.assertEqual(result.characters[0].five_view_order, [
-            "front", "front_three_quarter", "profile", "rear_three_quarter", "back"
+            "front", "profile", "back", "face_front", "face_three_quarter"
         ])
-        self.assertIn("正面、正面四分之三、标准侧面、背面四分之三、背面", result.characters[0].five_view_prompt)
+        for region in ("MAIN PORTRAIT", "FULL BODY & ELEMENTS", "DETAIL MATRIX"):
+            self.assertIn(region, result.characters[0].five_view_prompt)
         self.assertEqual((result.storyboards[0].rows, result.storyboards[0].columns), (3, 3))
         self.assertEqual([panel.index for panel in result.storyboards[0].panels], [1, 2, 3])
         self.assertEqual(result.storyboards[0].empty_slots, 6)

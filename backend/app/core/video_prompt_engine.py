@@ -11,6 +11,8 @@ thing in the same place every time:
    because the front of a prompt weighs most. Lighting numbers live here and nowhere else.
 5. **Shot block** — camera, picture, background, end state, timeline, dialogue.
 6. **Sound** — layers for this shot, then the closing sentence (no BGM, no subtitles).
+   A model that renders sound with the picture gets its named layers here instead,
+   and those are never cut: for it, the sound *is* half the deliverable.
 7. **Named rules** and the negative list.
 
 The budget applies to the body: the style lock, anchors, rules, negatives and the closing
@@ -51,6 +53,9 @@ class ShotPromptInput:
     characters: Sequence[str] = ()
     lighting: str = ""
     sound: str = ""
+    # A model that generates sound with the picture (MiniMax H3) gets its three
+    # named layers here; unlike the sound note, this one is never cut away.
+    sound_layers: str = ""
     dialogue: str = ""
     dialogue_notes: str = ""
     effects: Sequence[str] = ()
@@ -152,7 +157,8 @@ def compile_shot_prompt(
         "dialogue": dialogue,
         "dialogue_notes": f"台词表达：{shot.dialogue_notes.strip()}" if shot.dialogue_notes.strip() and shot.dialogue.strip() else "",
         "end_state": end_state,
-        "sound": f"【声音设计】{shot.sound.strip()}" if shot.sound.strip() else "",
+        "sound_layers": f"【声音设计·三层】{shot.sound_layers.strip()}" if shot.sound_layers.strip() else "",
+        "sound": f"【声音设计】{shot.sound.strip()}" if shot.sound.strip() and not shot.sound_layers.strip() else "",
         "closing": pack.sound.closing_sentence,
         "rules": "【关键约束】\n" + "\n".join(rules),
         "negatives": " + ".join(negatives),
@@ -165,9 +171,9 @@ def compile_shot_prompt(
 
 _ORDER = (
     "style_lock", "anchors", "structure", "locks", "camera", "subject", "motion", "expression", "environment",
-    "colour", "effects", "dialogue", "dialogue_notes", "end_state", "sound", "closing", "rules", "negatives",
+    "colour", "effects", "dialogue", "dialogue_notes", "end_state", "sound_layers", "sound", "closing", "rules", "negatives",
 )
-_BLANK_BEFORE = frozenset({"anchors", "structure", "locks", "camera", "sound", "rules"})
+_BLANK_BEFORE = frozenset({"anchors", "structure", "locks", "camera", "sound_layers", "sound", "rules"})
 
 
 def _render(sections: Mapping[str, str]) -> str:

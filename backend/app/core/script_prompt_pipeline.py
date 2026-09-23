@@ -24,11 +24,11 @@ from app.core.shot_motion_contract import (
     compile_motion_prompt,
     compile_storyboard_image_prompt,
 )
-from app.core.storyboard_quality import build_five_view_prompt, validate_storyboard_continuity
+from app.core.storyboard_quality import build_actor_sheet_prompt, validate_storyboard_continuity
 from app.core.storyboard_director import StoryboardDirectorCompiler
 from app.core.video_references import VideoGenerationIntent, plan_video_references
 from app.schema.production import (
-    FIVE_VIEW_ORDER,
+    IDENTITY_VIEW_ORDER,
     NineGridStoryboard,
     Sd25CompileRequest,
     Sd25DialogueEntry,
@@ -515,7 +515,7 @@ class ScriptPromptPipeline:
                     "生成前必须补充身份DNA或绑定已批准参考图"
                 )
                 identity_status = "needs_review"
-                warnings.append(f"角色{name}缺少可验证身份DNA，五视图提示词已保留待补充边界")
+                warnings.append(f"角色{name}缺少可验证身份DNA，设定集提示词已保留待补充边界")
 
             costumes: list[CharacterCostumeProfile] = []
             for scene_number in sorted({scene for scene, _line, _content in evidence}):
@@ -547,7 +547,7 @@ class ScriptPromptPipeline:
                 else "supporting" if dialogue_counts.get(name, 0) > 0
                 else "extra"
             )
-            five_view = build_five_view_prompt(name, identity_dna, visual_style)
+            actor_sheet = build_actor_sheet_prompt(name, identity_dna, visual_style)
             profiles.append(CharacterPromptProfile(
                 name=name,
                 role=role,
@@ -559,8 +559,8 @@ class ScriptPromptPipeline:
                 props=props,
                 scene_appearances=appearances,
                 evidence_lines=sorted({line for _scene, line, _content in evidence}),
-                five_view_order=list(FIVE_VIEW_ORDER),
-                five_view_prompt=five_view,
+                five_view_order=list(IDENTITY_VIEW_ORDER),
+                five_view_prompt=actor_sheet,
                 consistency_seed=(
                     f"[CHARACTER:{name}] {identity_dna}；保持同一人物、同一面部结构、同一发型与当前场次服装"
                 ),
@@ -749,13 +749,13 @@ class ScriptPromptPipeline:
             global_visual=GlobalVisualRules(
                 visual_style=visual_style,
                 era_and_region="严格继承剧本时代、地域和已批准美术资产",
-                art_direction="场景圣经、角色五视图、服装和道具版本为硬约束",
+                art_direction="场景圣经、数字演员设定集、服装和道具版本为硬约束",
                 rendering_texture="电影摄影质感、可信材质、自然景深与皮肤纹理",
                 overall_atmosphere="、".join(profile.mood_keywords) or "按本场剧本氛围",
             ),
             continuity=ContinuityLocks(
                 face_anchor=face_anchor,
-                body_anchor="保持角色五视图确定的身高感、肩宽、体型与比例",
+                body_anchor="保持数字演员设定集确定的身高感、肩宽、体型与比例",
                 costume_anchor="；".join(costume_locks) or "本场服装版本待确认",
                 scene_structure=profile.spatial_layout,
                 prop_positions="；".join(
@@ -1060,7 +1060,7 @@ class ScriptPromptPipeline:
                 code="missing_character_cast",
                 severity="error",
                 location="全项目",
-                description="未识别到任何角色，无法满足角色五视图和人物一致性要求。",
+                description="未识别到任何角色，无法满足数字演员设定集和人物一致性要求。",
                 suggestion="使用标准角色名/对白格式或补充角色档案后重新编译。",
             ))
         for character in characters:
@@ -1149,7 +1149,7 @@ class ScriptPromptPipeline:
             f"- 源文件 SHA-256：`{payload['source_sha256']}`",
             f"- 场景数：{len(screenplay['scenes'])}",
             f"- 预估时长：{screenplay['total_duration_seconds']} 秒", "",
-            "## 角色五视图", "",
+            "## 数字演员设定集", "",
         ])
         for character in payload["characters"]:  # type: ignore[index]
             lines.extend([
@@ -1259,7 +1259,7 @@ class ScriptPromptPipeline:
             "small{overflow-wrap:anywhere}</style></head><body>"
             f"<h1>{title}</h1><p>场景数：{len(screenplay['scenes'])}；"
             f"预估时长：{float(screenplay['total_duration_seconds']):g} 秒</p>"
-            f"<h2>角色五视图</h2>{character_cards}<h2>镜头提示词</h2>{''.join(cards)}"
+            f"<h2>数字演员设定集</h2>{character_cards}<h2>镜头提示词</h2>{''.join(cards)}"
             "</body></html>"
         )
 

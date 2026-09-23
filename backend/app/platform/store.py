@@ -36,15 +36,24 @@ from app.platform.models import (
     UserMembership,
 )
 from app.repository.user_repo import hash_password, verify_password
+from app.schema.production import IDENTITY_VIEW_ORDER, LEGACY_IDENTITY_VIEW_ORDER
 
 
-ACTOR_VIEW_SLOTS = (
-    "front",
-    "front_three_quarter",
-    "profile",
-    "rear_three_quarter",
-    "back",
+# 数字演员的图片槽位 = 设定集的五个身份锚点。
+ACTOR_VIEW_SLOTS = IDENTITY_VIEW_ORDER
+# 旧五视图角度：存量演员就存在这些槽位里，上传/删除/就绪判定都必须继续认。
+LEGACY_ACTOR_VIEW_SLOTS = LEGACY_IDENTITY_VIEW_ORDER
+# element_file.position 的排序表：以旧五视图的转面顺序打底，新增的两张头部挂在后面。
+# 这样两代资产各自读起来都对——旧演员仍是 0°→45°→90°→135°→180°，
+# 新演员按位置升序就是 front/profile/back/face_front/face_three_quarter。
+ACTOR_VIEW_SLOT_ORDER = LEGACY_ACTOR_VIEW_SLOTS + tuple(
+    slot for slot in ACTOR_VIEW_SLOTS if slot not in LEGACY_ACTOR_VIEW_SLOTS
 )
+
+
+def actor_views_complete(slots: set[str]) -> bool:
+    """任意一代的整套身份视图齐了，演员就算 ready。"""
+    return set(ACTOR_VIEW_SLOTS) <= slots or set(LEGACY_ACTOR_VIEW_SLOTS) <= slots
 ELEMENT_KINDS = {"actor", "prop", "scene", "costume", "effect"}
 PAYMENT_PROVIDERS = {"sandbox", "wechat", "alipay"}
 PROJECT_SKILL_SOURCE_TYPES = {"created", "markdown_upload", "skill_package"}
@@ -980,9 +989,9 @@ class PlatformStore:
                 if slot == "model_glb" and not is_3d_model:
                     raise ValueError("model_glb 槽位只接受 GLB 3D 模型")
                 if element.kind == "actor":
-                    if slot not in ACTOR_VIEW_SLOTS:
-                        raise ValueError("演员图片必须使用规定的五视图槽位")
-                    position = ACTOR_VIEW_SLOTS.index(slot)
+                    if slot not in ACTOR_VIEW_SLOT_ORDER:
+                        raise ValueError("演员图片必须使用规定的身份视图槽位")
+                    position = ACTOR_VIEW_SLOT_ORDER.index(slot)
                 else:
                     if not re.fullmatch(r"[a-z0-9_-]{1,64}", slot):
                         raise ValueError("文件槽位无效")
@@ -1027,7 +1036,7 @@ class PlatformStore:
                 slots = {item.slot for item in element.files}
                 slots.add(slot)
                 element.status = "ready" if (
-                    element.kind != "actor" or slots == set(ACTOR_VIEW_SLOTS)
+                    element.kind != "actor" or actor_views_complete(slots)
                 ) else "draft"
                 storage_cleanup = (
                     await before_commit((replaced_file,))
@@ -1094,7 +1103,7 @@ class PlatformStore:
                 element.files.remove(target)
                 if element.kind == "actor":
                     for item in element.files:
-                        item.position = ACTOR_VIEW_SLOTS.index(item.slot)
+                        item.position = ACTOR_VIEW_SLOT_ORDER.index(item.slot)
                 else:
                     for position, item in enumerate(element.files):
                         item.position = position
@@ -1104,7 +1113,7 @@ class PlatformStore:
                     element.metadata_json = metadata
                 slots = {item.slot for item in element.files}
                 if element.kind == "actor":
-                    element.status = "ready" if slots == set(ACTOR_VIEW_SLOTS) else "draft"
+                    element.status = "ready" if actor_views_complete(slots) else "draft"
                 else:
                     element.status = "ready" if element.files else "draft"
                 element.version += 1

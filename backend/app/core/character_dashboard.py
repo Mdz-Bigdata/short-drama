@@ -14,8 +14,9 @@ import unicodedata
 from typing import Any
 from urllib.parse import urlsplit
 
+from app.core.actor_sheet_layout import ACTOR_SHEET_CELL_ORDER, ACTOR_SHEET_LAYOUT
 from app.schema.character_dashboard import (
-    FIVE_VIEW_ORDER,
+    IDENTITY_VIEW_ORDER,
     CharacterColor,
     CharacterDashboardCharacter,
     CharacterDashboardResponse,
@@ -25,25 +26,27 @@ from app.schema.character_dashboard import (
     CharacterProjectProfile,
     CharacterQualityIssue,
     CharacterRisk,
+    CharacterSheetCell,
     CharacterStateAnchor,
     CharacterViewAsset,
     CharacterViewContract,
 )
+from app.schema.production import resolve_identity_views
 
 
+# 文本 → 存量视图键。归一化规则见 _canonical_view_key：小写、去掉 -/_/空格。
+# 这里认的是"记录里写的是哪个角度"，新旧两代键都要认得出来；
+# 旧角度到新锚点的换算由 schema.production.resolve_identity_views 按优先级完成。
 _VIEW_ALIASES = {
+    # —— 全身正面 ——
     "front": "front",
     "frontview": "front",
+    "frontfullbody": "front",
     "正面": "front",
+    "正面全身": "front",
     "0": "front",
     "0°": "front",
-    "frontthreequarter": "front_three_quarter",
-    "frontthreequarterview": "front_three_quarter",
-    "front3quarter": "front_three_quarter",
-    "正面四分之三": "front_three_quarter",
-    "正面四分之三视图": "front_three_quarter",
-    "45": "front_three_quarter",
-    "45°": "front_three_quarter",
+    # —— 全身侧面 ——
     "profile": "profile",
     "profileview": "profile",
     "standardprofile": "profile",
@@ -51,10 +54,42 @@ _VIEW_ALIASES = {
     "side": "profile",
     "sideview": "profile",
     "侧面": "profile",
+    "侧面全身": "profile",
     "标准侧面": "profile",
     "标准侧面视图": "profile",
     "90": "profile",
     "90°": "profile",
+    # —— 全身背面 ——
+    "back": "back",
+    "backview": "back",
+    "backfullbody": "back",
+    "rear": "back",
+    "rearview": "back",
+    "背面": "back",
+    "背面全身": "back",
+    "180": "back",
+    "180°": "back",
+    # —— 正脸特写 ——
+    "facefront": "face_front",
+    "facefrontview": "face_front",
+    "frontface": "face_front",
+    "正脸": "face_front",
+    "正脸特写": "face_front",
+    # —— 3/4 侧脸 ——
+    "facethreequarter": "face_three_quarter",
+    "facethreequarterview": "face_three_quarter",
+    "face3quarter": "face_three_quarter",
+    "3-4侧脸": "face_three_quarter",
+    "34侧脸": "face_three_quarter",
+    "四分之三侧脸": "face_three_quarter",
+    # —— 旧五视图专有角度：保留原键，换算交给 resolve_identity_views ——
+    "frontthreequarter": "front_three_quarter",
+    "frontthreequarterview": "front_three_quarter",
+    "front3quarter": "front_three_quarter",
+    "正面四分之三": "front_three_quarter",
+    "正面四分之三视图": "front_three_quarter",
+    "45": "front_three_quarter",
+    "45°": "front_three_quarter",
     "rearthreequarter": "rear_three_quarter",
     "rearthreequarterview": "rear_three_quarter",
     "backthreequarter": "rear_three_quarter",
@@ -62,14 +97,15 @@ _VIEW_ALIASES = {
     "背面四分之三视图": "rear_three_quarter",
     "135": "rear_three_quarter",
     "135°": "rear_three_quarter",
-    "back": "back",
-    "backview": "back",
-    "rear": "back",
-    "rearview": "back",
-    "背面": "back",
-    "180": "back",
-    "180°": "back",
 }
+# 设定集格子键 → 它所属的区域分组，供前端「细节」页签分组渲染。
+_CELL_GROUPS = {
+    cell: region.key
+    for region in ACTOR_SHEET_LAYOUT.regions
+    for cell in region.cells
+}
+
+
 _ROLE_HEADER = re.compile(
     r"(?m)^[ \t]{0,3}(?:#{1,6}[ \t]+|\*\*)"
     r"(?:\d{1,3}[.、][ \t]*)?"
@@ -276,7 +312,7 @@ def _normalize_anchors(value: Any) -> list[CharacterStateAnchor]:
             key = _canonical_view_key(item.get("view"))
             if key and key not in by_view:
                 by_view[key] = _text(item.get("detail"), 1000, multiline=True)
-    return [CharacterStateAnchor(view=key, detail=by_view.get(key, "")) for key in FIVE_VIEW_ORDER]
+    return [CharacterStateAnchor(view=key, detail=by_view.get(key, "")) for key in IDENTITY_VIEW_ORDER]
 
 
 def _normalize_states(character_name: str, value: Any) -> list[CharacterDesignState]:
@@ -319,20 +355,58 @@ def _normalize_views(value: Any) -> list[CharacterViewAsset]:
         iterable = []
     for position, item in enumerate(iterable):
         if isinstance(item, str):
-            key = FIVE_VIEW_ORDER[position] if position < 5 else None
+            key = IDENTITY_VIEW_ORDER[position] if position < 5 else None
             url = _safe_media_url(item)
         elif isinstance(item, dict):
             key = _canonical_view_key(item.get("view", item.get("key")))
             if not key and position < 5:
-                key = FIVE_VIEW_ORDER[position]
+                key = IDENTITY_VIEW_ORDER[position]
             url = _safe_media_url(item.get("image_url", item.get("imageUrl", item.get("url"))))
         else:
             continue
         if key and url and key not in urls:
             urls[key] = url
+    # 存量记录存的是旧五视图角度；按契约别名映射到新锚点，旧记录因此不掉视图、
+    # 不退出 READY、也不会被白白重新出图。
+    resolved = resolve_identity_views(urls)
     return [
-        CharacterViewAsset(key=key, order=index, image_url=urls.get(key), available=key in urls)
-        for index, key in enumerate(FIVE_VIEW_ORDER, start=1)
+        CharacterViewAsset(
+            key=key, order=index, image_url=resolved.get(key), available=key in resolved
+        )
+        for index, key in enumerate(IDENTITY_VIEW_ORDER, start=1)
+    ]
+
+
+def _normalize_sheet_cells(value: Any) -> list[CharacterSheetCell]:
+    """设定集 25 格里非身份锚点的那些格子，按切图顺序排列。"""
+    urls: dict[str, str] = {}
+    if isinstance(value, dict):
+        iterable: list[Any] = [
+            {"cell": key, "image_url": item} if not isinstance(item, dict) else {"cell": key, **item}
+            for key, item in list(value.items())[:60]
+        ]
+    elif isinstance(value, list):
+        iterable = value[:60]
+    else:
+        iterable = []
+    for item in iterable:
+        if not isinstance(item, dict):
+            continue
+        key = _text(item.get("cell", item.get("key", item.get("view"))), 40)
+        url = _safe_media_url(item.get("image_url", item.get("imageUrl", item.get("url"))))
+        if key in _CELL_GROUPS and url and key not in urls:
+            urls[key] = url
+    if not urls:
+        return []
+    return [
+        CharacterSheetCell(
+            key=cell,
+            order=index,
+            group=_CELL_GROUPS[cell],
+            image_url=urls.get(cell),
+            available=cell in urls,
+        )
+        for index, cell in enumerate(ACTOR_SHEET_CELL_ORDER, start=1)
     ]
 
 
@@ -352,11 +426,11 @@ def _normalize_quality(value: Any) -> CharacterFiveViewQuality:
     passed = raw_passed if isinstance(raw_passed, bool) else None
     palette = _finite_float(item.get("palette_similarity", item.get("paletteSimilarity")), minimum=0, maximum=1)
     hashes_value = item.get("unique_view_hashes", item.get("uniqueViewHashes"))
-    hashes = hashes_value if isinstance(hashes_value, int) and not isinstance(hashes_value, bool) and 0 <= hashes_value <= 5 else None
+    hashes = hashes_value if isinstance(hashes_value, int) and not isinstance(hashes_value, bool) and 0 <= hashes_value <= 25 else None
     entropy: list[float] = []
     raw_entropy = item.get("entropy")
     if isinstance(raw_entropy, list):
-        for entry in raw_entropy[:5]:
+        for entry in raw_entropy[:25]:
             parsed = _finite_float(entry, minimum=0, maximum=100)
             if parsed is not None:
                 entropy.append(parsed)
@@ -367,7 +441,7 @@ def _normalize_quality(value: Any) -> CharacterFiveViewQuality:
             if not isinstance(issue, dict):
                 continue
             raw_index = issue.get("view_index", issue.get("viewIndex"))
-            view_index = raw_index if isinstance(raw_index, int) and not isinstance(raw_index, bool) and 1 <= raw_index <= 5 else None
+            view_index = raw_index if isinstance(raw_index, int) and not isinstance(raw_index, bool) and 1 <= raw_index <= 25 else None
             issues.append(CharacterQualityIssue(
                 code=_text(issue.get("code"), 120) or "quality_issue",
                 message=_text(issue.get("message"), 1000, multiline=True),
@@ -459,6 +533,9 @@ def compile_character_dashboard(task: dict[str, Any]) -> CharacterDashboardRespo
             character.get("sheet", character.get("sheet_url", character.get("sheetUrl")))
         ) or _safe_media_url(record.get("sheet"))
         views = _normalize_views(character.get("views"))
+        sheet_cells = _normalize_sheet_cells(
+            character.get("sheet_cells", character.get("sheetCells", character.get("cells")))
+        )
         quality = _normalize_quality(
             character.get("five_view_quality", character.get("fiveViewQuality", character.get("quality")))
         )
@@ -474,6 +551,7 @@ def compile_character_dashboard(task: dict[str, Any]) -> CharacterDashboardRespo
             sheet_url=sheet_url,
             asset_state=_asset_state(views, sheet_url, quality),
             views=views,
+            sheet_cells=sheet_cells,
             quality=quality,
         ))
 

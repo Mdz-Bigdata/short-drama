@@ -147,7 +147,7 @@ class AssetReadinessTests(unittest.TestCase):
             ],
         )
         self.assertEqual(images, ["https://cdn/shen-sheet.png", "data:image/png;base64,AAA", "data:image/png;base64,BBB"])
-        self.assertIn("参考图1仅锁定数字演员五视图「沈砚」", notes)
+        self.assertIn("参考图1仅锁定数字演员设定集「沈砚」", notes)
         self.assertIn("参考图3仅锁定拍摄场地「长安城门」", notes)
         self.assertNotIn("青铜剑", notes)
         capped, _ = merge_video_references([], [

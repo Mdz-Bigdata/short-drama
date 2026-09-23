@@ -10,6 +10,7 @@ import {
   useSliderForDurations,
   vocabularyLabel,
   type CameraRecipe,
+  type ShotFixPlan,
   type ShotVisualSettings,
   type ShotVisualWorkspace as Workspace,
 } from './shotVisual';
@@ -109,6 +110,10 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
   const [recipeIntensity, setRecipeIntensity] = useState<CameraRecipe['intensity']>('medium');
   const [recipe, setRecipe] = useState<CameraRecipe | null>(null);
   const [composing, setComposing] = useState(false);
+  // 这一镜生成翻车时，用自己的话报一句；后端归类、给修正方案，并记进项目台账。
+  const [failureText, setFailureText] = useState('');
+  const [fixPlan, setFixPlan] = useState<ShotFixPlan | null>(null);
+  const [reporting, setReporting] = useState(false);
   // The shot whose scene the desk is open on; the desk itself is keyed by scene, as everywhere else.
   const [deskShot, setDeskShot] = useState<{ sceneId: string; shotId: number } | null>(null);
   const [deskToken, setDeskToken] = useState(0);
@@ -192,6 +197,36 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
       setError(err instanceof Error ? err.message : '运镜配方生成失败');
     } finally {
       setComposing(false);
+    }
+  };
+
+  /** Report how this shot came back, and get the fix for the next attempt. */
+  const reportOutcome = async (result: 'failed' | 'success') => {
+    if (!selected || reporting) return;
+    if (result === 'failed' && !failureText.trim()) return;
+    setReporting(true);
+    setError('');
+    try {
+      const payload = await apiRequest<{ plan: ShotFixPlan | null; attempt: number }>(
+        `/api/drama/${encodeURIComponent(taskId)}/shots/${selected.shot_id}/feedback`,
+        {
+          method: 'POST',
+          body: JSON.stringify(
+            result === 'failed'
+              ? { result, text: failureText.trim() }
+              : { result, applied_fix: fixPlan?.steps?.[0] || '' },
+          ),
+        },
+      );
+      setFixPlan(payload.plan);
+      if (result === 'success') {
+        setFailureText('');
+        setNotice({ shotId: selected.shot_id, text: '已记为成功，生效的修正手段会沉淀为项目经验。' });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '反馈提交失败');
+    } finally {
+      setReporting(false);
     }
   };
 
@@ -435,6 +470,47 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
                 <small>画风与质感锁死，相邻镜只换运动、角度、节奏或环境之一，避免撞镜。</small>
               </div>
             )}
+            <div className="shot-workspace__field shot-workspace__feedback">
+              <label htmlFor="shot-visual-feedback">这一镜翻车了？</label>
+              <textarea
+                id="shot-visual-feedback"
+                rows={2}
+                value={failureText}
+                placeholder="用自己的话写：脸崩了 / 手是六根手指 / 特效糊住了脸 / 位置跳了…"
+                onChange={event => setFailureText(event.target.value)}
+              />
+              <div className="shot-workspace__recipe-controls">
+                <button
+                  type="button"
+                  className="secondary-action"
+                  disabled={reporting || !failureText.trim()}
+                  onClick={() => { void reportOutcome('failed'); }}
+                >
+                  {reporting ? '提交中…' : '报告问题'}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-action"
+                  disabled={reporting}
+                  onClick={() => { void reportOutcome('success'); }}
+                >
+                  这条可用
+                </button>
+              </div>
+              {fixPlan && (
+                <div className="shot-workspace__recipe-result">
+                  <p><strong>{fixPlan.category_name}</strong>（第 {fixPlan.attempt} 次）：{fixPlan.diagnosis}</p>
+                  <ol>
+                    {fixPlan.steps.map(step => <li key={step}>{step}</li>)}
+                  </ol>
+                  {fixPlan.negatives.length > 0 && (
+                    <p className="shot-workspace__hint">建议追加负面词：{fixPlan.negatives.join('、')}</p>
+                  )}
+                  {fixPlan.give_up && <p className="shot-workspace__hint">已到模型能力边界：考虑换等价表达或换模型。</p>}
+                </div>
+              )}
+              <small>同一类问题在同一模型上出现两次，后续镜头会自动按它预防性加固。</small>
+            </div>
             <DurationSelector value={draft.duration_seconds} options={workspace.duration_options} disabled={locked} onChange={seconds => update({ duration_seconds: seconds })} />
             <div className="shot-workspace__field">
               <label htmlFor="shot-visual-action">动作演变</label>

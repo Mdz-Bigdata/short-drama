@@ -25,6 +25,16 @@ class WorkflowPromptTests(unittest.TestCase):
         self.assertIn("不少于50字", STORYBOARD_SCRIPT_PROMPT)
         self.assertIn("输出前自检清单", STORYBOARD_SCRIPT_PROMPT)
 
+    def test_storyboard_prompt_names_the_skeletons_the_cut_signals_and_the_edit_headroom(self):
+        # The eight rules say when a cut is due; these say how many shots a passage owes
+        # before those rules refine it, and which signal every cut must answer to.
+        for skeleton in ("三刀法", "空间五步法", "结尾记忆点"):
+            self.assertIn(skeleton, STORYBOARD_SCRIPT_PROMPT)
+        for signal in ("情绪转折", "对话节奏", "动作变化", "信息揭示"):
+            self.assertIn(signal, STORYBOARD_SCRIPT_PROMPT)
+        self.assertIn("剪辑余量", STORYBOARD_SCRIPT_PROMPT)
+        self.assertIn("让观众消化", STORYBOARD_SCRIPT_PROMPT)
+
     def test_video_prompt_contains_attached_batch_and_continuity_contract(self):
         for rule in (
             "批次拆分规则",

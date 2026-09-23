@@ -7,7 +7,13 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.schema.production import FIVE_VIEW_ORDER, FiveViewName, NineGridStoryboard, Sd25Asset
+from app.schema.production import (
+    IDENTITY_VIEW_ORDER,
+    IdentityViewName,
+    NineGridStoryboard,
+    Sd25Asset,
+    identity_view_order_is_valid,
+)
 from app.schema.storyboard_director import StoryboardDirectorResult
 
 
@@ -61,14 +67,18 @@ class CharacterPromptProfile(BaseModel):
     props: list[str] = Field(default_factory=list, max_length=100)
     scene_appearances: list[int] = Field(default_factory=list, max_length=1_000)
     evidence_lines: list[int] = Field(default_factory=list, max_length=10_000)
-    five_view_order: Annotated[list[FiveViewName], Field(min_length=5, max_length=5)]
+    five_view_order: Annotated[list[IdentityViewName], Field(min_length=5, max_length=5)]
     five_view_prompt: Annotated[str, Field(min_length=1, max_length=12_000)]
     consistency_seed: Annotated[str, Field(min_length=1, max_length=5_000)]
 
     @model_validator(mode="after")
-    def ordered_five_views(self) -> "CharacterPromptProfile":
-        if tuple(self.five_view_order) != FIVE_VIEW_ORDER:
-            raise ValueError("character five-view order must match the project-wide contract")
+    def ordered_identity_views(self) -> "CharacterPromptProfile":
+        # 字段名留作存量键；值是设定集的身份锚点顺序，旧五视图顺序仍然接受。
+        if not identity_view_order_is_valid(tuple(self.five_view_order)):
+            raise ValueError(
+                "character identity view order must match the project-wide contract: "
+                + ", ".join(IDENTITY_VIEW_ORDER)
+            )
         return self
 
 

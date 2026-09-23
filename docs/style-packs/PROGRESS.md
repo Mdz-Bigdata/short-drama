@@ -17,15 +17,15 @@
 
 ### Phase 2: Seedance prompt-package export (self-contained packs, time axis per pack, ≤4s generated shots)
 
-**Status:** Not started
+**Status:** Completed
 
-### Phase 3: Asset sheets (scene four-view, prop, palette card image) and the asset-card fields
+### Phase 3: Asset sheets (scene four-view, prop, palette card) and the asset-card fields
 
-**Status:** Not started
+**Status:** Completed
 
 ### Phase 4: Genre routing and intent decoding (feeling → camera / VFX density / rhythm / lighting offsets)
 
-**Status:** Not started
+**Status:** Completed
 
 ### Phase 5: Shot-list checks from the skill (dialogue fit, sound layers, cast size, close-up quota, freeze words, burst length)
 
@@ -33,7 +33,7 @@
 
 ### Phase 6: Generation feedback loop (symptom → fix, model weakness memory)
 
-**Status:** Not started
+**Status:** Completed
 
 ## Session Log
 
@@ -64,7 +64,59 @@
 - The audit now takes the scene kind, so a fight scene is judged by the tighter close-up quota.
 - Backend: 934 tests pass (8 new); Ruff clean.
 
+### 2026-09-21
+
+- Added the H3 three-layer sound writer and per-character voice anchors, wired into stage 5 for
+  audio-native models; the layers are protected from budget trimming and the voice lock rides in
+  the named rules.
+- Source: a WeChat article on H3 stereo prompting, read through the in-app browser pane (a plain
+  fetch still hits the verification page), plus the user's own summary.
+- Backend: 1011 tests pass (20 new); Ruff clean on the changed files.
+
+### 2026-09-21 (continued)
+
+- `creative_intent.py`: 13 feelings, each with the seven offsets a storyboard can act on
+  (camera tendency, VFX density, rhythm multiplier, shot-size mix, composition, lighting, sound).
+  A brief decodes to one primary and up to two secondaries at 70 / 15 / 15; a feeling that fights
+  the primary is dropped and reported rather than averaged in.
+- `genre_clusters.py`: the seven clusters, routed from the production's genre key or, failing that,
+  from the words of the scene itself — not from the title. A cluster carries whether fight coverage
+  is normal, the nine-grid rhythm label, the negative modules the genre needs, and the feeling a
+  brief falls back to.
+- Stage 4 puts the resulting brief in the table prompt ahead of the scene, takes the rhythm label
+  from the cluster, and records the decision on the scene board as `direction`.
+- `GET /api/production/creative-direction` lists both catalogues.
+- Backend: 1031 tests pass (17 new); Ruff clean on the changed files.
+
+### 2026-09-22
+
+- `prompt_packages.py`: shot table → generation shots (≤4 s, uneven, a line never split) →
+  self-contained packages of 10 / 15 / 20 / 30 s, each restating its locks and negatives with its
+  clock back at zero. Four shapes: standard, continuous, fight, script document.
+- `asset_sheets.py`: characters, scenes, props and the palette card, each with its fixed layout,
+  stable anchors and a pasteable prompt. Looks only for characters, an empty room for scenes, and
+  a prop sheet only when the story leans on the object.
+- Both exposed read-only: `GET /api/drama/{task_id}/prompt-packages` and `/asset-sheets`.
+- Backend: 1063 tests pass (32 new); Ruff clean on the changed files.
+
+### 2026-09-22 (continued)
+
+- `generation_feedback.py`: ten failure kinds with triggers, diagnosis, fixes and negatives; a
+  five-step escalation for repeat failures; a ledger that promotes a failure to a model weakness
+  and a fix to a project pattern after two occurrences. Stage 5 reads both back as preventive
+  notes and extra negatives.
+- Frontend: 「提示词分包」 and 「资产设定图」 open an export dialog in the storyboard workspace
+  (copy or download, with the package length, variant and speech-rate controls); the shot
+  workspace gained a 「这一镜翻车了？」 box that posts the report and shows the fix plan.
+- Backend: my own suites pass (21 new here); the full run is blocked by a parallel session's
+  in-flight refactor of `storyboard_quality.build_five_view_prompt` (see Notes).
+
 ### Notes
+
+- A parallel session was editing this working tree during 2026-09-21/22 (`workflow_prompts.py`,
+  the shot-design skill reference, and a move of the five-view prompt into `actor_sheet_layout.py`).
+  Three test modules and three F821 lint findings in `drama_service.py` come from that refactor,
+  not from this work; they were left alone.
 
 - The packs are data, not prose: a new look is a new `StylePack`, not another branch in the
   prompt builders.
