@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskResponse, WorkflowSnapshot } from '../../types';
-import { appendWorkflowHint, canAcceptTaskResponse, mergeWorkflowHistory, restoreWorkflowHistory, shouldPollWorkflow, workflowBoardStage, workflowIntroMessage } from './workflowMessages';
+import { appendWorkflowHint, canAcceptTaskResponse, mergeWorkflowHistory, restoreWorkflowHistory, shouldPollWorkflow, workflowBoardTransition, workflowIntroMessage } from './workflowMessages';
 
 const workflow: WorkflowSnapshot = {
   stages: [], next_stage: 4, active_stage: null, completed_stages: [1, 2, 3],
@@ -58,11 +58,18 @@ describe('authoritative workflow messages', () => {
     ] });
     expect(merged.map(message => message.id)).toEqual(['history:stage-4-done']);
   });
-  it('follows the running stage, then the next one the server asks for', () => {
-    expect(workflowBoardStage({ ...task, workflow: { ...workflow, active_stage: 1, next_stage: 1 } })).toBe(1);
-    expect(workflowBoardStage({ ...task, currentStage: 1, workflow: { ...workflow, active_stage: null, next_stage: 2 } })).toBe(2);
-    expect(workflowBoardStage({ ...task, currentStage: 8, workflow: { ...workflow, active_stage: null, next_stage: null } })).toBe(8);
-    expect(workflowBoardStage({ taskId: 'a', currentStage: 3 } as TaskResponse)).toBe(3);
+  it('opens a stage when it runs and stays on it for review once it stops', () => {
+    const running = (stage: number) => ({ ...task, workflow: { ...workflow, mode: 'running' as const, active_stage: stage, next_stage: stage } });
+    const ready = (next: number) => ({ ...task, workflow: { ...workflow, mode: 'ready' as const, active_stage: null, next_stage: next } });
+    expect(workflowBoardTransition(ready(1), running(1))).toBe(1);
+    expect(workflowBoardTransition(running(1), running(1))).toBeNull();
+    // Stage 1 finished and the server points at stage 2: keep the director board for review.
+    expect(workflowBoardTransition(running(1), ready(2))).toBe(1);
+    expect(workflowBoardTransition(ready(2), ready(2))).toBeNull();
+    // Automatic mode moves straight on to the next running stage.
+    expect(workflowBoardTransition(running(1), running(2))).toBe(2);
+    expect(workflowBoardTransition(null, ready(2))).toBeNull();
+    expect(workflowBoardTransition({ taskId: 'a', currentStage: 3, status: 'running' } as TaskResponse, ready(4))).toBe(3);
   });
   it('shows the current project transcript once, however often a step was restarted', () => {
     // 真实项目 e4094e02 的形状：阶段三被打断五次，「继续 → 开始第 3/8 步」原样重复五轮。

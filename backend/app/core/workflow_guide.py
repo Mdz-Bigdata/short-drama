@@ -82,6 +82,13 @@ def append_stage_guidance(
             content += "\n完成后我会说明本阶段结果，再引导您确认或继续。"
     elif phase == "failed":
         content = f"第 {stage}/8 步：{labels[stage]}本轮未完成，已停止推进。\n已有内容会保留。请查看错误提示，处理后说「继续」从未完成处恢复。"
+    elif phase == "interrupted":
+        # 服务重启会杀掉正在执行的阶段，却没有任何异常能写进聊天；不交代一句，
+        # 用户只会看到「已完成 0/8 步」，以为流程卡死了。
+        content = (
+            f"第 {stage}/8 步：{labels[stage]}执行到一半时服务重启，本轮被打断，未能完成。\n"
+            "已有内容会保留。回复「继续」重新执行这一步，完成后会自动进入下一步的看板。"
+        )
     elif phase == "done" and snapshot:
         complete = stage in snapshot["completed_stages"]
         content = (
@@ -101,6 +108,9 @@ def append_stage_guidance(
             content += f"\n接下来{verb}第 {next_stage}/8 步：{labels[next_stage]}。{STAGE_GUIDANCE[next_stage]}"
             content += "\n我会先检查暂停或结束请求；没有收到时才继续制作，无需手动确认。"
         else:
+            if complete:
+                # 手动模式：看板停在这一步，等用户审核产物后再说「继续」。
+                content += f"\n已停在第 {stage} 步看板，请先审核本步产物；确认无误后回复「继续」进入下一步，需要调整请说「修改……」。"
             content += "\n" + snapshot["hint"]
     else:
         return None

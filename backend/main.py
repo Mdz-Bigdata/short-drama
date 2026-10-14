@@ -162,7 +162,25 @@ def _recover_orphan_task_state(task: dict) -> bool:
     else:
         task["status"] = "interrupted"
         task["fail_reason"] = "服务重启导致后台任务中断，可点击恢复(/resume)从断点续跑"
+        _record_stage_interruption(task)
     return True
+
+
+def _record_stage_interruption(task: dict) -> None:
+    """Close the dead stage run and tell the chat why the workflow stopped."""
+    progress = task.get("stage_progress")
+    if not isinstance(progress, dict) or progress.get("status") != "running":
+        return
+    from app.core.workflow_guide import append_stage_guidance
+    from app.service.drama_service import DramaService
+
+    progress["status"] = "error"
+    progress["error"] = task["fail_reason"]
+    progress["label"] = "服务重启，阶段执行中断"
+    for call in progress.get("calls") or []:
+        if isinstance(call, dict) and call.get("status") == "running":
+            call["status"] = "error"
+    append_stage_guidance(task, "interrupted", DramaService.STAGE_LABELS)
 
 
 @app.on_event("startup")

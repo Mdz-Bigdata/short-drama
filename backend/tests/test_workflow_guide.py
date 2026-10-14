@@ -416,3 +416,31 @@ class WorkflowGuideTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StageDoneReviewMessageTests(unittest.TestCase):
+    LABELS = DramaService.STAGE_LABELS
+
+    def _task(self, automatic: bool) -> dict:
+        return {
+            "task_id": "review-message",
+            "workflow_control": {"run_id": "r", "automatic": automatic},
+            "stage_progress": {"stage": 1, "started_at": "t0"},
+            "chat_history": [],
+        }
+
+    def _snapshot(self) -> dict:
+        return {"completed_stages": [1], "next_stage": 2, "hint": "已完成 1/8 步。接下来是第 2/8 步：编剧剧本创作。"}
+
+    def test_manual_mode_holds_the_finished_stage_for_review(self):
+        from app.core.workflow_guide import append_stage_guidance
+
+        message = append_stage_guidance(self._task(False), "done", self.LABELS, self._snapshot())
+        self.assertIn("已停在第 1 步看板，请先审核本步产物", message["content"])
+        self.assertIn("回复「继续」进入下一步", message["content"])
+
+    def test_automatic_mode_does_not_ask_for_review(self):
+        from app.core.workflow_guide import append_stage_guidance
+
+        message = append_stage_guidance(self._task(True), "done", self.LABELS, self._snapshot())
+        self.assertNotIn("请先审核", message["content"])

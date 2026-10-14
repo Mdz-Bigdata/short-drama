@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from typing import TypedDict
@@ -389,11 +390,28 @@ def capability_implementation_report() -> list[dict]:
     ]
 
 
-def _command_slug(value: str) -> str:
-    """Return a stable ASCII identifier suitable for an allowlisted slash command."""
+# Must stay within the persisted column widths in app/platform/models.py
+# (CapabilitySetting.capability_id is String(120), command is String(220)).
+CAPABILITY_ID_MAX_LENGTH = 120
+CAPABILITY_COMMAND_MAX_LENGTH = 220
+_SLUG_HASH_LENGTH = 8
+
+
+def _command_slug(value: str, max_length: int = CAPABILITY_ID_MAX_LENGTH) -> str:
+    """Return a stable ASCII identifier suitable for an allowlisted slash command.
+
+    Slugs longer than ``max_length`` are cut at a word boundary and suffixed with
+    a short hash of the full slug, so they stay unique and stable across runs.
+    """
     normalized = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode().lower()
-    normalized = re.sub(r"[^a-z0-9]+", "-", normalized).strip("-")
-    return normalized or "capability"
+    normalized = re.sub(r"[^a-z0-9]+", "-", normalized).strip("-") or "capability"
+    if len(normalized) <= max_length:
+        return normalized
+    digest = hashlib.sha1(normalized.encode()).hexdigest()[:_SLUG_HASH_LENGTH]
+    head = normalized[: max_length - _SLUG_HASH_LENGTH - 1]
+    if "-" in head:
+        head = head.rsplit("-", 1)[0]
+    return f"{head.rstrip('-')}-{digest}"
 
 
 def capability_command_catalog() -> list[dict[str, str]]:
@@ -418,6 +436,11 @@ def capability_command_catalog() -> list[dict[str, str]]:
                 "implementation_status": implementation["implementation_status"],
                 "evidence": implementation["evidence"],
             })
+    too_long = [
+        item["command"] for item in records if len(item["command"]) > CAPABILITY_COMMAND_MAX_LENGTH
+    ]
+    if too_long:
+        raise RuntimeError(f"Capability commands exceed {CAPABILITY_COMMAND_MAX_LENGTH} chars: {too_long}")
     if len({item["command"] for item in records}) != len(records):
         raise RuntimeError("Capability command catalog contains duplicate commands")
     return records

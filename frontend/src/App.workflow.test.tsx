@@ -6,6 +6,7 @@ import type { TaskResponse, WorkflowSnapshot } from './types';
 import App from './App';
 
 vi.mock('./features/storyboard/StoryboardWorkspace', () => ({ StoryboardWorkspace: () => <div>分镜工作区</div> }));
+vi.mock('./features/writer/WriterAgentPageContainer', () => ({ WriterAgentPageContainer: () => <div>编剧工作区</div> }));
 
 function task(id = 'task-a'): TaskResponse {
   const workflow: WorkflowSnapshot = {
@@ -72,7 +73,7 @@ describe('App follows the server workflow', () => {
     for (const event of events) expect(screen.getAllByText(event.content)).toHaveLength(1);
   });
 
-  it('opens the writer agent as soon as the director stage is finished', async () => {
+  it('stays on the director board for review once the director stage is finished', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const running = task();
     running.currentStage = 1;
@@ -91,7 +92,88 @@ describe('App follows the server workflow', () => {
       active_stage: null, next_stage: 2, completed_stages: [1],
       hint: '已完成 1/8 步。接下来是第 2/8 步：编剧剧本创作。', event_id: 'ready-2' } };
     await act(async () => { await vi.advanceTimersByTimeAsync(1_600); });
-    expect(await screen.findByRole('button', { name: /2.编剧/, current: 'step' })).toBeTruthy();
+    expect(await screen.findByText('已完成 1/8 步。接下来是第 2/8 步：编剧剧本创作。')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /1.总导演/ }).getAttribute('aria-current')).toBe('step');
+    expect(screen.getByRole('button', { name: /2.编剧/ }).getAttribute('aria-current')).toBeNull();
+  });
+
+  it('keeps polling through a backend restart and shows why the stage stopped', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const running = task();
+    running.currentStage = 1;
+    running.status = 'running';
+    running.chatHistory = [];
+    running.workflow = { ...running.workflow!, mode: 'running', active_stage: 1, next_stage: 1,
+      completed_stages: [], hint: '正在进行第 1/8 步：总导演策划。', event_id: 'running-1' };
+    let snapshot: TaskResponse | null = running;
+    mockFetch([running], url => {
+      if (!url.endsWith('/task-a/status')) return undefined;
+      if (!snapshot) return Promise.reject(new TypeError('Failed to fetch'));
+      return response(snapshot);
+    });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<App />);
+    await user.click(await screen.findByText('项目 task-a'));
+    expect(await screen.findByRole('button', { name: /1.总导演/, current: 'step' })).toBeTruthy();
+
+    // The server goes away for a few polls while it reloads.
+    snapshot = null;
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_600 * 3); });
+    expect(screen.queryByText(/流程状态暂时同步失败/)).toBeNull();
+
+    const notice = '第 1/8 步：总导演策划执行到一半时服务重启，本轮被打断，未能完成。';
+    snapshot = { ...running, status: 'interrupted',
+      chatHistory: [{ id: 'interrupted-1', role: 'assistant', content: notice }],
+      workflow: { ...running.workflow!, mode: 'paused', active_stage: null, next_stage: 1,
+        hint: '已完成 0/8 步。接下来是第 1/8 步：总导演策划。', event_id: 'paused-1' } };
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_600); });
+    expect(await screen.findByText(notice)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /1.总导演/ }).getAttribute('aria-current')).toBe('step');
+  });
+
+  it('advances one stage per 继续 and holds each finished board for review', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const base = task();
+    const stageNames = ['总导演策划', '编剧剧本创作', '角色设计师造型'];
+    const at = (done: number, running: number | null): TaskResponse => ({
+      ...base,
+      currentStage: running ?? Math.max(1, done),
+      status: running ? 'running' : 'idle',
+      chatHistory: [],
+      workflow: { ...base.workflow!, mode: running ? 'running' : 'ready', active_stage: running,
+        next_stage: running ?? done + 1, completed_stages: Array.from({ length: done }, (_, i) => i + 1),
+        hint: running ? `正在进行第 ${running}/8 步：${stageNames[running - 1]}。`
+          : `已完成 ${done}/8 步。接下来是第 ${done + 1}/8 步：${stageNames[done]}。`,
+        event_id: running ? `running-${running}` : `ready-${done + 1}` },
+    });
+    let snapshot = at(1, null);
+    const sent: string[] = [];
+    mockFetch([snapshot], (url, init) => {
+      if (url.endsWith('/task-a/status')) return response(snapshot);
+      if (!url.endsWith('/assistant')) return undefined;
+      sent.push(JSON.parse(String(init?.body)).message);
+      const stage = snapshot.workflow!.next_stage!;
+      snapshot = at(stage - 1, stage);
+      return response({ reply: snapshot.workflow!.hint, action: 'run_stage', stage, task: snapshot });
+    });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<App />);
+    await user.click(await screen.findByText('项目 task-a'));
+    // Stage 1 is done: its board stays up for review until the user says 继续.
+    expect(await screen.findByRole('button', { name: /1.总导演/, current: 'step' })).toBeTruthy();
+    const tab = (stage: number) => screen.getByRole('button', { name: new RegExp(`^${stage}\\.`) });
+
+    for (const stage of [2, 3]) {
+      await user.type(screen.getByRole('textbox', { name: /发送给/ }), '继续{Enter}');
+      await waitFor(() => expect(tab(stage).getAttribute('aria-current')).toBe('step'));
+      snapshot = at(stage, null);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_600 * 2); });
+      expect(await screen.findByText(snapshot.workflow!.hint)).toBeTruthy();
+      expect(tab(stage).getAttribute('aria-current')).toBe('step');
+      expect(tab(stage + 1).getAttribute('aria-current')).toBeNull();
+    }
+    expect(sent).toEqual(['继续', '继续']);
   });
 
   it('never moves the board past an agent whose assets are still missing', async () => {

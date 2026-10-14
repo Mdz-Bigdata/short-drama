@@ -17,7 +17,7 @@ import { getScriptDisplayName } from './features/workbench/scriptTitle';
 import { VideoReferenceModeSelect } from './features/workbench/VideoReferenceModeSelect';
 import { NOVARA_AGENT_NAME } from './features/workbench/agentBrand';
 import { WorkbenchResizeHandle } from './features/workbench/WorkbenchResizeHandle';
-import { appendWorkflowHint, canAcceptTaskResponse, mergeWorkflowHistory, restoreWorkflowHistory, shouldPollWorkflow, workflowBoardStage, workflowIntroMessage, type WorkflowChatMessage } from './features/workbench/workflowMessages';
+import { appendWorkflowHint, canAcceptTaskResponse, mergeWorkflowHistory, restoreWorkflowHistory, shouldPollWorkflow, workflowBoardTransition, workflowIntroMessage, type WorkflowChatMessage } from './features/workbench/workflowMessages';
 import { WorkflowActions } from './features/workbench/WorkflowGuide';
 import { ChatComposer } from './features/workbench/ChatComposer';
 import { ChatHistory } from './features/workbench/ChatHistory';
@@ -194,6 +194,10 @@ const EMPTY_GLOBAL_MODEL_DEFAULTS: GlobalModelDefaults = {
 
 let messageSequence = 0;
 const nextMessageId = () => `message-${++messageSequence}`;
+
+// A dev-server reload or backend restart drops requests for ~20s. Keep polling
+// through that window so the chat picks up the interrupted stage afterwards.
+const TASK_STATUS_MAX_POLL_FAILURES = 40;
 
 export default function App() {
   // 用户身份认证状态
@@ -439,6 +443,7 @@ export default function App() {
   const progressRef = useRef<{ stage: number; status: string } | null>(null);
   const statusRequestRef = useRef(0);
   const appliedStatusRequestRef = useRef(0);
+  const statusPollFailuresRef = useRef(0);
   const restoreChatRef = useRef<string | null>(null);
   const chatRequestRef = useRef<{ taskId: string } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -803,17 +808,16 @@ export default function App() {
         const data: TaskResponse = await res.json();
         if (request < appliedStatusRequestRef.current || selection !== selectionVersionRef.current || !canAcceptTaskResponse(selectedTaskIdRef.current, data.taskId)) return;
         appliedStatusRequestRef.current = request;
+        statusPollFailuresRef.current = 0;
         const previous = taskDataRef.current;
-        const prevStage = previous ? workflowBoardStage(previous) : 0;
-        const stage = workflowBoardStage(data);
+        const boardStage = workflowBoardTransition(previous, data);
         setTaskData(data);
         taskDataRef.current = data;
 
-        // 阶段推进时联动左侧看板标签页：正在执行的阶段即时展示执行过程，
-        // 阶段完成后跟随服务端指定的下一步 (总导演策划完成即进入编剧 Agent)。
-        // 只前进不回退，用户手动翻看历史阶段时不会被拽走。
-        if (stage > prevStage) {
-          setActiveTabStage(stage);
+        // 阶段开始执行时打开该阶段看板；阶段结束（完成、失败或中断）后停在这一步的
+        // 看板等待审核，用户说「继续」后才进入下一步。执行过程中不打扰用户手动翻看。
+        if (boardStage) {
+          setActiveTabStage(boardStage);
         }
 
         // The server distinguishes a completed run from a completed stage (for
@@ -841,6 +845,10 @@ export default function App() {
     } catch (e) {
       if (request < appliedStatusRequestRef.current || selection !== selectionVersionRef.current || selectedTaskIdRef.current !== id) return;
       console.error('获取状态失败', e);
+      // While polling, an unreachable backend is usually restarting: keep trying.
+      statusPollFailuresRef.current += 1;
+      if (pollIntervalRef.current && statusPollFailuresRef.current < TASK_STATUS_MAX_POLL_FAILURES) return;
+      statusPollFailuresRef.current = 0;
       setIsPolling(false);
       setErrorMessage('流程状态暂时同步失败。请发送「进度」重新查询；不会自动跳到下一阶段。');
     }

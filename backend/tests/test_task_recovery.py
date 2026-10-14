@@ -33,6 +33,32 @@ class TaskRecoveryTests(unittest.TestCase):
         self.assertEqual(task["status"], "interrupted")
         self.assertIn("服务重启", task["fail_reason"])
 
+    def test_interrupted_stage_closes_progress_and_explains_in_chat(self):
+        task = {
+            "task_id": "inflight-chat",
+            "current_stage": 1,
+            "status": "running",
+            "workflow_control": {"run_id": "run-1", "active": True, "automatic": False},
+            "stage_progress": {
+                "stage": 1, "status": "running", "percent": 25, "started_at": "t0",
+                "calls": [{"name": "调用 LLM", "status": "running"}],
+            },
+            "chat_history": [],
+        }
+
+        self.assertTrue(_recover_orphan_task_state(task))
+        self.assertEqual(task["stage_progress"]["status"], "error")
+        self.assertEqual(task["stage_progress"]["calls"][0]["status"], "error")
+        self.assertEqual(len(task["chat_history"]), 1)
+        self.assertIn("第 1/8 步", task["chat_history"][0]["content"])
+        self.assertIn("服务重启", task["chat_history"][0]["content"])
+
+        # A second restart before anyone resumes must not repeat the message.
+        task["status"] = "running"
+        task["stage_progress"]["status"] = "running"
+        _recover_orphan_task_state(task)
+        self.assertEqual(len(task["chat_history"]), 1)
+
     def test_non_running_task_is_unchanged(self):
         task = {"task_id": "idle-task", "status": "idle"}
 

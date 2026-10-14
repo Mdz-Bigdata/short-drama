@@ -104,13 +104,24 @@ export function workflowIntroMessage(task: TaskResponse): WorkflowChatMessage | 
   };
 }
 
+function runningBoardStage(task: TaskResponse): number | null {
+  if (task.workflow) return task.workflow.mode === 'running' ? task.workflow.active_stage : null;
+  return task.status === 'running' && task.currentStage > 0 ? task.currentStage : null;
+}
+
 /**
- * Which agent board the project is on: the running stage, else the next one the
- * server asks for. A finished stage 1 therefore opens the writer agent instead
- * of leaving the director page up while the chat already asks for stage 2.
+ * Which agent board to open when the server reports a new snapshot, or null to
+ * leave the user where they are.
+ *
+ * A stage that starts running opens its own board. A stage that stops (done,
+ * failed or interrupted) keeps its board open so its output is reviewed before
+ * anyone says 「继续」; the next agent's board opens only once that stage runs.
  */
-export function workflowBoardStage(task: TaskResponse): number {
-  return task.workflow?.active_stage ?? task.workflow?.next_stage ?? task.currentStage;
+export function workflowBoardTransition(previous: TaskResponse | null, next: TaskResponse): number | null {
+  const running = runningBoardStage(next);
+  const wasRunning = previous ? runningBoardStage(previous) : null;
+  if (running) return running !== wasRunning ? running : null;
+  return wasRunning;
 }
 
 export function shouldPollWorkflow(task: TaskResponse): boolean {
