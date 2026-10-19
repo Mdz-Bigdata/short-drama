@@ -48,11 +48,14 @@ describe('pose controls', () => {
 });
 
 describe('presets', () => {
-  it('are the twenty of the upstream desk, inside the standard ranges, without a baked-in lift', () => {
+  it('are the twenty of the upstream desk plus five from the product write-ups, inside the standard ranges, without a baked-in lift', () => {
     expect(POSE_PRESETS.map(preset => preset.id)).toEqual([
       'stand', 't-pose', 'walk', 'run', 'sit', 'crouch', 'kneel-one', 'kneel-two', 'hands-on-hips', 'lean', 'bow', 'think', 'fight', 'kick',
       'throw', 'push', 'wave', 'reach', 'cross-arms', 'phone',
+      'lie', 'hands-behind', 'look-back', 'point-ahead', 'punch',
     ]);
+    // 卧倒 implies the lying posture the backend reads a height from; the other four imply nothing.
+    expect(['lie', 'hands-behind', 'look-back', 'point-ahead', 'punch'].map(posePosture)).toEqual(['lie', '', '', '', '']);
     POSE_PRESETS.forEach(preset => {
       expect(preset.joints['body.offsetY']).toBeUndefined();
       expect(clampPose(preset.joints, 'standard'), preset.id).toEqual(Object.fromEntries(Object.entries(preset.joints).filter(([, value]) => value !== 0)));

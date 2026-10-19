@@ -11,6 +11,7 @@ import { BackSide, SRGBColorSpace, Texture, Vector3, type Mesh, type Perspective
 
 import type { StageBackdrop } from '../../spatial/spatialTypes';
 import { HELPER_FLAG } from '../lib/capture';
+import { BACKDROP_FLAG } from '../lib/depthPass';
 
 // Well beyond any stage but far inside the lens's 500 m far plane: the backdrop is depth-tested like
 // everything else, so it has to be genuinely behind the set rather than merely drawn first.
@@ -102,7 +103,8 @@ export function Backdrop({ backdrop, inCapture }: {
   if (backdrop.kind === 'none') return null;
   if (backdrop.kind !== 'color' && !picture) return null;
 
-  const flag = inCapture ? {} : { [HELPER_FLAG]: true };
+  // Always a backdrop (a depth picture never shows one); a helper only when it is kept out of captures.
+  const flag = inCapture ? { [BACKDROP_FLAG]: true } : { [BACKDROP_FLAG]: true, [HELPER_FLAG]: true };
   // Depth-tested and drawn first, but writing no depth: the set stands in front of it, and a
   // half-transparent underlay still shows the empty stage through itself.
   // Keyed by shape: a panorama and a flat underlay are different objects, and swapping one mesh's
@@ -111,7 +113,7 @@ export function Backdrop({ backdrop, inCapture }: {
     <mesh key="flat" ref={mesh} userData={flag} renderOrder={-1} frustumCulled={false}>
       <planeGeometry args={plane} />
       <meshBasicMaterial
-        map={backdrop.kind === 'image' ? picture : null} color={backdrop.kind === 'color' ? (backdrop.color || '#10141c') : '#ffffff'}
+        map={backdrop.kind === 'image' ? picture : null} color={backdrop.kind === 'color' ? (backdrop.color || '#fdf0f2') : '#221b1e'}
         transparent opacity={backdrop.opacity} depthWrite={false} toneMapped={false}
       />
     </mesh>

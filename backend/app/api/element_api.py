@@ -7,31 +7,51 @@ import io
 import json
 import logging
 import os
+import re
 import shutil
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
+from fastapi import Response
 from PIL import Image, UnidentifiedImageError
 from starlette.concurrency import run_in_threadpool
 
-from app.core.element_scope import element_in_task
+from app import settings
+from app.core.prop_turnaround import (
+    PROP_TURNAROUND_CLOSING,
+    PROP_TURNAROUND_INSTRUCTION,
+    PROP_TURNAROUND_SIZE,
+    PROP_VIEW_SLOTS,
+    split_prop_turnaround,
+)
+from app.core import character_variants
+from app.core.element_scope import element_in_task, element_name_keys, element_task_ids, normalized_asset_name
 from app.api.auth_api import get_current_user
 from app.core.media_compositor import MEDIA_DIR
 from app.core.model_gateway import ModelGateway
 from app.core.storyboard_assets import MAX_REMOTE_IMAGE_BYTES, fetch_remote_image_bytes
 from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore, StorageMutationCommittedWithError
-from app.platform.uploads import UploadValidationError, inspect_glb_upload, validate_image_upload
+from app.platform.uploads import (
+    MAX_IMAGE_UPLOAD_BYTES,
+    MAX_MODEL_UPLOAD_BYTES,
+    UploadValidationError,
+    inspect_glb_upload,
+    validate_image_upload,
+)
+from app.schema.production import IDENTITY_VIEW_ORDER
 from app.repository.task_repo import TaskRepository, TaskStoreUnavailableError
 from app.schema.platform import (
     BulkRegenerateElementsRequest,
     ElementCreateRequest,
     ElementKind,
     ElementUpdateRequest,
+    ElementVariantRequest,
     RegenerateElementRequest,
 )
 
@@ -46,10 +66,7 @@ _generation_jobs: dict[str, dict[str, object]] = {}
 
 
 def _private_image_storage_root() -> Path:
-    root = Path(os.getenv(
-        "ELEMENT_IMAGE_STORAGE_DIR",
-        str(Path(MEDIA_DIR).parent / "runtime" / "element_images"),
-    )).expanduser().resolve()
+    root = settings.private_storage_dir("ELEMENT_IMAGE_STORAGE_DIR", "element_images", MEDIA_DIR)
     public_media_root = Path(MEDIA_DIR).resolve()
     if root == public_media_root or public_media_root in root.parents:
         raise RuntimeError("ELEMENT_IMAGE_STORAGE_DIR must be outside the public media directory")
@@ -61,27 +78,16 @@ def _private_image_storage_root() -> Path:
 # authenticated content endpoint while installations migrate their files.
 ELEMENT_MEDIA_ROOT = _private_image_storage_root()
 LEGACY_ELEMENT_MEDIA_ROOT = Path(MEDIA_DIR) / "elements"
-ELEMENT_MODEL_ROOT = Path(os.getenv(
-    "ELEMENT_MODEL_STORAGE_DIR",
-    str(Path(MEDIA_DIR).parent / "runtime" / "element_models"),
-))
+ELEMENT_MODEL_ROOT = settings.private_storage_dir("ELEMENT_MODEL_STORAGE_DIR", "element_models", MEDIA_DIR)
 
 
-def _integer_setting(name: str, default: int, *, minimum: int, maximum: int) -> int:
-    try:
-        value = int(os.getenv(name, str(default)))
-    except ValueError:
-        value = default
-    return max(minimum, min(maximum, value))
-
-
-ELEMENT_STORAGE_MIN_FREE_BYTES = _integer_setting(
+ELEMENT_STORAGE_MIN_FREE_BYTES = settings.env_int(
     "ELEMENT_STORAGE_MIN_FREE_BYTES", 5 * 1024**3, minimum=512 * 1024**2, maximum=1024**4
 )
-ELEMENT_STORAGE_MAX_USED_PERCENT = _integer_setting(
+ELEMENT_STORAGE_MAX_USED_PERCENT = settings.env_int(
     "ELEMENT_STORAGE_MAX_USED_PERCENT", 98, minimum=80, maximum=99
 )
-ELEMENT_IMAGE_GENERATION_CONCURRENCY = _integer_setting(
+ELEMENT_IMAGE_GENERATION_CONCURRENCY = settings.env_int(
     "ELEMENT_IMAGE_GENERATION_CONCURRENCY", 3, minimum=1, maximum=4
 )
 
@@ -92,16 +98,23 @@ _GENERATION_KIND_PROMPTS = {
         "剧本指定的时段天气，采用可实际搭建和拍摄的写实电影美术设计。画面是单一宽幅场景定妆照，"
         "不出现抢眼人物，不做拼贴，不裁断关键建筑。"
     ),
-    "prop": (
-        "生成一张影视道具定妆参考图。只展示一个完整、可制作的核心道具及其剧本状态，清楚呈现"
-        "比例、轮廓、材质、颜色、磨损和关键结构，三分之四视角，简洁中性背景，不出现手和人物，"
-        "不做拼贴，不裁断物体。"
-    ),
+    # 道具出四视图(正面 / 左侧45° / 右侧45° / 背面)的 2×2 四宫格，出图后切成四张，见 core/prop_turnaround。
+    "prop": PROP_TURNAROUND_INSTRUCTION,
+    # 服装穿在无五官的全身人台上出一张 16:9 定妆展示板：左侧四个全身视图、右侧三格细节，
+    # 头巾、帽子、鞋袜都有地方穿戴；人台不是真人，免得和数字演员的脸抢身份。
     "costume": (
-        "生成一张影视服装造型参考图。画面主体只能是悬空陈列的中空立体服装，以隐形支撑塑造"
-        "真实穿着体积与自然垂坠；无人物、无模特、无人体模型、无人台、无头部、无脸、无皮肤、"
-        "无手脚。完整呈现领口、上装、下装、袖口、下摆、鞋履、材质、纹样、配饰及剧情状态，"
-        "正面三分之四全身视角，中性影棚背景，不做拼贴，不裁断服装。"
+        "生成一张影视服装定妆展示板：16:9 横向画布，浅灰到中灰的影棚无缝背景，同一中性柔光。"
+        "整套服装穿在一具全身人体模特(人台)上展示：模特为哑光米白色，头部是光滑无五官的蛋形头，"
+        "有手臂、双手和双脚，真实成年人比例约7.5到8头身，按角色性别与体型选择模特身形；"
+        "头巾、帽子、发饰戴在模特头上，鞋袜穿在模特脚上；服装贴合模特身体，呈现真实穿着体积、"
+        "肩线与自然垂坠，模特端正站立。"
+        "画面左侧约四分之三宽度横排四格全身视图，格与格之间一条纯白细缝，依次为正面、左侧90度侧面、"
+        "背面、右前方45度三分之四侧面；第四格模特面朝画面左侧，同时露出前襟与右半身，"
+        "与第二格的纯侧面明显不同；四格同一比例尺，脚底在同一条基线上，模特头顶到双脚完整入画。"
+        "画面右侧约四分之一宽度竖排三格细节特写：领口与衣襟、腰带系结与配饰、袖口或下摆的面料纹理与缝线磨损。"
+        "完整呈现领口、上装、下装、袖口、下摆、鞋履、材质、纹样、配饰及剧情状态。"
+        "模特不是真人：不出现真人面孔、五官、皮肤、头发、发髻、假发、胡须和妆容，"
+        "头上只戴服装本身的头巾、帽冠与发饰，不出现第二具模特。"
     ),
     "effect": (
         "生成一张影视视觉特效定帧参考图，画面唯一视觉主体必须是特效现象本身，不是道具，"
@@ -110,6 +123,35 @@ _GENERATION_KIND_PROMPTS = {
         "环境参照，写实可合成，无人物，无独立陈列物品，单一完整画面，不做拼贴。"
     ),
 }
+
+
+# 16:9 且不超过 Seedream 单张约 462 万像素的上限，免得先被拒一次再缩小重试。
+COSTUME_BOARD_SIZE = "2848x1600"
+# 服装描述常带着演员的发型、胡须和妆面；喂给人台会被画成假发和胡子，按分句剔掉。
+# 同一分句里有头巾、冠、簪这类穿戴物件时保留，免得把头饰一起删掉。
+_COSTUME_HAIR_WORDS = re.compile(
+    r"乌发|黑发|白发|银发|头发|发髻|发型|束发|披发|碎发|发际|[高低]髻|鬓角|鬓边|胡须|须发|须长|长须|短须|面妆|妆容|妆面|花钿|唇色"
+)
+_COSTUME_WEAR_WORDS = re.compile(r"巾|帽|冠|簪|钗|步摇|幞头|发饰|发带|头饰|笠|盔|面具|珠串|流苏")
+
+
+def _costume_wardrobe_text(description: str) -> str:
+    clauses = []
+    for clause in re.split(r"[；;。]", description):
+        fragments = [
+            fragment.strip() for fragment in re.split(r"[，,]", clause)
+            if fragment.strip() and (not _COSTUME_HAIR_WORDS.search(fragment) or _COSTUME_WEAR_WORDS.search(fragment))
+        ]
+        if fragments:
+            clauses.append("，".join(fragments))
+    return "；".join(clauses)
+COSTUME_BOARD_CLOSING = (
+    "统一要求：模特与服装完整位于各自格内安全区，四个视图是同一套服装、同一配色与磨损状态，"
+    "结构清晰，材质真实，细节丰富，高清写实影棚摄影质感；严禁任何文字、标签、编号、字幕、水印、Logo；"
+    "整张图只有这一具模特的四个视图与三格细节，不出现其他服装或道具陈列。"
+)
+# 多格版式的资产要指定画布尺寸，其余用图像模型默认尺寸。
+_GENERATION_KIND_SIZES = {"prop": PROP_TURNAROUND_SIZE, "costume": COSTUME_BOARD_SIZE}
 
 
 def _element_metadata(item) -> dict:
@@ -139,15 +181,22 @@ async def _element_generation_context(item, owner_id: str) -> tuple[str, str]:
 
 def _element_reference_prompt(item, extra_prompt: str, project_style: str) -> str:
     kind_instruction = _GENERATION_KIND_PROMPTS.get(str(item.kind), "")
+    description = str(item.description or "").strip()
+    if str(item.kind) == "costume":
+        description = _costume_wardrobe_text(description)
     prompt = (
         f"{kind_instruction}\n"
         f"资产名称：{str(item.name).strip()}\n"
-        f"剧本依据：{str(item.description or '').strip() or '按资产名称建立清晰、完整、可复用的影视参考设计'}\n"
+        f"剧本依据：{description or '按资产名称建立清晰、完整、可复用的影视参考设计'}\n"
     )
     if project_style:
         prompt += f"项目视觉基准：{project_style}\n"
     if extra_prompt.strip():
         prompt += f"本次补充要求：{extra_prompt.strip()}\n"
+    if str(item.kind) == "prop":
+        return prompt + PROP_TURNAROUND_CLOSING
+    if str(item.kind) == "costume":
+        return prompt + COSTUME_BOARD_CLOSING
     return (
         prompt
         + "统一要求：主体完整位于画面安全区，结构清晰，透视正确，材质真实，细节丰富，高清写实电影质感；"
@@ -290,6 +339,38 @@ async def get_element(
     return _element(item)
 
 
+@router.put("/{element_id}/variant")
+async def set_element_variant(
+    element_id: str,
+    request: ElementVariantRequest,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """Make an actor element a derived look of another character (少年 / 婚纱 / 受伤后 …)."""
+    item = await store.get_element(element_id, user["user_id"])
+    if not item:
+        raise HTTPException(status_code=404, detail="元素不存在")
+    try:
+        facts = character_variants.clean_variant(request.model_dump(), element_name=item.name)
+        return _element(await store.set_element_variant(element_id, user["user_id"], facts))
+    except character_variants.VariantError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.delete("/{element_id}/variant")
+async def clear_element_variant(
+    element_id: str,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    try:
+        return _element(await store.set_element_variant(element_id, user["user_id"], None))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.patch("/{element_id}")
 async def update_element(
     element_id: str,
@@ -318,7 +399,7 @@ async def upload_element_file(
         raise HTTPException(status_code=404, detail="元素不存在")
 
     filename = file.filename or ""
-    content = await file.read(10 * 1024 * 1024 + 1)
+    content = await file.read(MAX_IMAGE_UPLOAD_BYTES + 1)
     try:
         mime = validate_image_upload(filename, file.content_type or "", content)
     except UploadValidationError as exc:
@@ -755,7 +836,7 @@ async def upload_element_model(
     if element.kind not in {"prop", "scene"}:
         raise HTTPException(status_code=422, detail="只有场景和道具元素可以上传 3D 模型")
 
-    content = await file.read(25 * 1024 * 1024 + 1)
+    content = await file.read(MAX_MODEL_UPLOAD_BYTES + 1)
     max_triangles = 1_000_000 if element.kind == "prop" else 2_000_000
     try:
         stats = await run_in_threadpool(
@@ -839,11 +920,14 @@ async def _generate_non_actor_reference(
         raise HTTPException(status_code=422, detail="数字演员设定集请在角色设计工作区生成")
     image_model, project_style = await _element_generation_context(item, owner_id)
     prompt = _element_reference_prompt(item, extra_prompt, project_style)
+    is_prop = str(item.kind) == "prop"
+    size = _GENERATION_KIND_SIZES.get(str(item.kind))
     try:
         generated_url, provider = await run_in_threadpool(
             element_image_gateway.generate_image,
             image_model,
             prompt,
+            **({"size": size} if size else {}),
         )
         if not generated_url:
             raise RuntimeError("所有已配置图像模型均未返回图片")
@@ -863,6 +947,8 @@ async def _generate_non_actor_reference(
             status_code=502,
             detail="参考图生成失败，图像模型未返回可验证的图片；请检查模型配置后重试",
         ) from exc
+    if is_prop:
+        return await _persist_prop_views(item=item, owner_id=owner_id, store=store, content=content, suffix=suffix, mime=mime)
     return await _persist_element_file(
         element_id=item.id,
         owner_id=owner_id,
@@ -872,6 +958,31 @@ async def _generate_non_actor_reference(
         content=content,
         store=store,
     )
+
+
+async def _persist_prop_views(*, item, owner_id: str, store: PlatformStore, content: bytes, suffix: str, mime: str) -> dict:
+    """把四宫格切成正面 / 左45° / 右45° / 背面四个槽位；正面同时作为道具的主参考图。
+
+    切不开(图片损坏)时整张存成主参考图，至少不丢这次付费出的图。
+    """
+    try:
+        views = await run_in_threadpool(split_prop_turnaround, content)
+    except (OSError, ValueError) as exc:
+        logger.warning("道具四视图切分失败，整张存为参考图: element=%s error=%s", item.id, type(exc).__name__)
+        return await _persist_element_file(
+            element_id=item.id, owner_id=owner_id, slot="reference", suffix=suffix, mime=mime,
+            content=content, store=store,
+        )
+    result: dict = {}
+    for slot in PROP_VIEW_SLOTS:
+        result = await _persist_element_file(
+            element_id=item.id, owner_id=owner_id, slot=slot, suffix=".png", mime="image/png",
+            content=views[slot], store=store,
+        )
+    return await _persist_element_file(
+        element_id=item.id, owner_id=owner_id, slot="reference", suffix=".png", mime="image/png",
+        content=views["prop_front"], store=store,
+    ) or result
 
 
 def _public_generation_job(job: dict[str, object]) -> dict[str, object]:
@@ -1032,10 +1143,192 @@ async def get_element_generation_job(
     return _public_generation_job(job)
 
 
+#: 资产库里数字演员「重新生成」的后台进度键（element.metadata_json）；超过这个时长仍是 running 视为服务重启中断。
+ACTOR_REGENERATION_KEY = "regeneration"
+ACTOR_REGENERATION_STALE_SECONDS = 15 * 60
+
+
+def _actor_regenerating(metadata: dict) -> bool:
+    state = metadata.get(ACTOR_REGENERATION_KEY)
+    if not isinstance(state, dict) or state.get("status") != "running":
+        return False
+    try:
+        started = float(state.get("started_epoch") or 0)
+    except (TypeError, ValueError):
+        return False
+    return time.time() - started < ACTOR_REGENERATION_STALE_SECONDS
+
+
+def _actor_reference_bytes(item) -> bytes | None:
+    """现有的正脸/正面全身做身份参考；一张都没有就不带参考出图。"""
+    files = {file.slot: file for file in item.files or [] if str(file.mime_type or "").startswith("image/")}
+    for slot in ("face_front", "front", "face_three_quarter", "profile"):
+        file = files.get(slot)
+        if file is None:
+            continue
+        try:
+            absolute, _ = _owned_reference_path(file.storage_path, item.owner_id, item.id)
+        except HTTPException:
+            continue
+        if absolute.is_file():
+            return absolute.read_bytes()
+    return None
+
+
+def _media_url_bytes(url: str) -> bytes:
+    """设定集切出的身份格都落在本地 /media 下；只读媒体根之内的文件。"""
+    path = urlparse(str(url or "")).path
+    if not path.startswith(settings.MEDIA_PREFIX):
+        raise ValueError("身份视图不在本地媒体目录")
+    media_root = os.path.realpath(MEDIA_DIR)
+    absolute = os.path.realpath(os.path.join(media_root, unquote(path[len(settings.MEDIA_PREFIX):])))
+    if not absolute.startswith(media_root + os.sep) or not os.path.isfile(absolute):
+        raise ValueError("身份视图文件不存在")
+    with open(absolute, "rb") as handle:
+        return handle.read()
+
+
+async def _file_actor_views(
+    *, element_id: str, owner_id: str, store: PlatformStore, views: list, sheet: str,
+) -> dict:
+    """五个身份视图换进资产库演员对应槽位，返回要合进 metadata 的部分。
+
+    先把五张都读出来并校验，再逐个替换：缺一张或读不到就一张都不换(抛 RuntimeError/ValueError)。
+    """
+    by_view = {
+        str(view.get("view")): str(view.get("image_url") or "")
+        for view in views if isinstance(view, dict)
+    }
+    missing = [view for view in IDENTITY_VIEW_ORDER if not by_view.get(view)]
+    if missing:
+        raise RuntimeError("新设定集缺少身份视图：" + "、".join(missing))
+    prepared = []
+    for view in IDENTITY_VIEW_ORDER:
+        content = await run_in_threadpool(_media_url_bytes, by_view[view])
+        suffix, mime = await run_in_threadpool(_validated_generated_image, content)
+        prepared.append((view, suffix, mime, content))
+    for view, suffix, mime, content in prepared:
+        await _persist_element_file(
+            element_id=element_id, owner_id=owner_id, slot=view,
+            suffix=suffix, mime=mime, content=content, store=store,
+        )
+    return {
+        "views": [{"view": view, "image_url": by_view[view]} for view in IDENTITY_VIEW_ORDER],
+        "five_view_passed": True,
+        **({"sheet_url": sheet} if sheet else {}),
+    }
+
+
+async def _sync_project_actor(
+    *, owner_id: str, task_id: str, name: str, views: list, sheet: str, store: PlatformStore,
+) -> int:
+    """把项目里重新生成的身份视图换进资产库里挂在该项目的同名演员；返回同步了几个。"""
+    wanted = normalized_asset_name(name)
+    synced = 0
+    for item in await store.list_all_elements(owner_id, "actor"):
+        metadata = _element_metadata(item)
+        if not element_in_task(metadata, task_id) or wanted not in element_name_keys(item.name, metadata):
+            continue
+        # 资产库那边发起的重新生成会自己把结果归档(它正标着 running)，这里不重复写。
+        if _actor_regenerating(metadata):
+            continue
+        try:
+            patch = await _file_actor_views(
+                element_id=item.id, owner_id=owner_id, store=store, views=views, sheet=sheet,
+            )
+            await store.merge_element_metadata(item.id, owner_id, {**patch, "synced_from_task": task_id})
+            synced += 1
+        except Exception as exc:  # noqa: BLE001 - 同步是尽力而为，项目里的新图已经落库
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            logger.warning("项目新图同步到资产库失败: element=%s error=%s", item.id, str(detail)[:200])
+    return synced
+
+
+def sync_project_actor_to_library(task: dict, name: str) -> int:
+    """项目里某个角色重新生成成功后(在出图的工作线程里调用)，把新的身份视图同步到资产库。
+
+    只动本人资产库里已挂到这个项目、名字对得上的数字演员；资产库里没有就什么都不做，
+    也不新建。任何失败只记日志，不影响项目里已经换好的图。
+    """
+    owner_id = str(task.get("owner_user_id") or "").strip()
+    task_id = str(task.get("task_id") or "").strip()
+    record = next((
+        item for item in (task.get("assets") or {}).get("3_characters") or []
+        if isinstance(item, dict) and str(item.get("name") or "").strip() == name
+    ), None)
+    if not owner_id or not task_id or record is None:
+        return 0
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        logger.warning("项目新图同步到资产库只能在工作线程里执行，本次跳过")
+        return 0
+
+    async def run() -> int:
+        store = PlatformStore(settings.database_url())
+        try:
+            return await _sync_project_actor(
+                owner_id=owner_id, task_id=task_id, name=name,
+                views=list(record.get("views") or []), sheet=str(record.get("sheet") or ""), store=store,
+            )
+        finally:
+            await store.close()
+
+    try:
+        return asyncio.run(run())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("项目新图同步到资产库失败: task=%s name=%s error=%s", task_id, name, type(exc).__name__)
+        return 0
+
+
+async def _regenerate_library_actor(element_id: str, owner_id: str, store: PlatformStore) -> None:
+    """后台：重出设定集 → 五个身份视图替换进资产库对应槽位 → 记下完成或失败。失败时旧图原样保留。"""
+    from app.api.drama_api import service as drama_service  # 与 drama_api 共用同一个服务实例
+
+    patch: dict = {}
+    error = ""
+    try:
+        item = await store.get_element(element_id, owner_id)
+        if not item:
+            raise RuntimeError("资产不存在")
+        metadata = _element_metadata(item)
+        reference = await run_in_threadpool(_actor_reference_bytes, item)
+        result = await run_in_threadpool(
+            lambda: drama_service.regenerate_library_actor(
+                owner_id=owner_id,
+                name=str(item.name),
+                name_keys=element_name_keys(item.name, metadata),
+                desc=str(item.description or ""),
+                task_ids=element_task_ids(metadata),
+                reference=reference,
+            )
+        )
+        patch = await _file_actor_views(
+            element_id=element_id, owner_id=owner_id, store=store,
+            views=result.get("views") or [], sheet=str(result.get("sheet") or ""),
+        )
+    except Exception as exc:  # noqa: BLE001 - 失败只记在该演员名下，旧图不动
+        detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+        error = str(detail or "").strip()[:260] or "数字演员设定集重新生成失败"
+        logger.warning("资产库数字演员重新生成失败: element=%s error=%s", element_id, error)
+    state = (
+        {"status": "failed", "error": error, "finished_epoch": time.time()}
+        if error else {"status": "done", "finished_epoch": time.time()}
+    )
+    try:
+        await store.merge_element_metadata(element_id, owner_id, {**patch, ACTOR_REGENERATION_KEY: state})
+    except ValueError:
+        logger.warning("资产库数字演员重新生成结果写回失败: element=%s", element_id)
+
+
 @router.post("/{element_id}/regenerate")
 async def regenerate_element(
     element_id: str,
     request: RegenerateElementRequest,
+    background_tasks: BackgroundTasks,
+    response: Response,
     user: dict = Depends(get_current_user),
     store: PlatformStore = Depends(get_platform_store),
 ):
@@ -1049,14 +1342,14 @@ async def regenerate_element(
             store=store,
             extra_prompt=request.prompt,
         )
-    try:
-        job = await store.request_regeneration(element_id, user["user_id"], request.prompt)
-        return {
-            "id": job.id,
-            "element_id": job.element_id,
-            "status": job.status,
-            "paid_submission_approved": job.paid_submission_approved,
-            "created_at": job.created_at,
-        }
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # 数字演员：后台重出一张设定集（付费），五个身份视图通过质检后替换；列表里的 metadata.regeneration 报进度。
+    if _actor_regenerating(_element_metadata(element)):
+        raise HTTPException(status_code=409, detail=f"「{element.name}」正在重新生成，请稍候")
+    updated = await store.merge_element_metadata(
+        element_id,
+        user["user_id"],
+        {ACTOR_REGENERATION_KEY: {"status": "running", "started_epoch": time.time()}},
+    )
+    background_tasks.add_task(_regenerate_library_actor, element_id, user["user_id"], store)
+    response.status_code = 202
+    return _element(updated)

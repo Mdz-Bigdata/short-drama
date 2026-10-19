@@ -120,7 +120,7 @@ class ClipCeilingWiringTests(unittest.TestCase):
     def test_a_thirty_second_clip_is_accepted_for_a_thirty_second_model(self):
         compiled = self._compile(30, "seedance2.5")
 
-        self.assertIn("整段30秒单镜连续画面", compiled.text)
+        self.assertIn("单镜连续画面，一镜到底不切镜", compiled.text)
 
     def test_the_same_clip_is_refused_for_a_fifteen_second_model(self):
         with self.assertRaises(ValueError) as caught:

@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "sections": [
+    {
+      "key": "seedance-capabilities-and-limits",
+      "title": "Seedance 2.5 capabilities and limits",
+      "file": "references/capabilities-and-limits.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "seedance-prompt-blueprints",
+      "title": "Seedance 2.5 prompt blueprints",
+      "file": "references/prompt-blueprints.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "seedance-multimodal-patterns",
+      "title": "Multimodal reference and specialist patterns",
+      "file": "references/multimodal-patterns.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "seedance-realistic-direction-patterns",
+      "title": "Realistic direction patterns",
+      "file": "references/realistic-direction-patterns.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    }
+  ]
+}

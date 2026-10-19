@@ -4,8 +4,9 @@
 Every shot the Writer plans must be renderable by the selected video model in a
 single generation call, so the set of legal shot durations is derived from the
 project's video model (``app.core.video_references``) rather than guessed by the
-LLM. The episode target duration is a *soft* target: it tells the planner how
-many shots to cut, never forces padding or trimming.
+LLM. The episode target duration is a *soft* target inside a hard frame: it
+tells the planner how many shots to cut, while ``EpisodeShape`` states what an
+episode must be at the very least — more than one shot and a minute of film.
 """
 
 from __future__ import annotations
@@ -14,21 +15,38 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from app.core.episode_shape import (
+    MAX_RECOMMENDED_EPISODE_SECONDS,
+    MIN_EPISODE_SCENES,
+    MIN_EPISODE_SECONDS,
+    EpisodeShape,
+    EpisodeShapeIssue,
+    configured_episode_shape,
+)
 from app.core.screenwriting.speech_rate import speech_rate_units_per_second
 from app.core.screenwriting.text_metrics import reading_unit_noun
-from app.core.video_references import MIN_SHOT_SECONDS, max_shot_seconds
 
-# 单集成片目标时长的硬区间（秒）：只拦明显误输入，区间内取值是创作决策。
-MIN_EPISODE_TARGET_SECONDS = 10
-MAX_EPISODE_TARGET_SECONDS = 600
+# 单集成片目标时长的可选区间（秒）：目标本身必须落在成形标准之内。
+MIN_EPISODE_TARGET_SECONDS = MIN_EPISODE_SECONDS
+MAX_EPISODE_TARGET_SECONDS = MAX_RECOMMENDED_EPISODE_SECONDS
 # 本项目短剧单集的默认目标体量（与八 Agent 委员会的 episode_duration_seconds 同口径）。
 DEFAULT_EPISODE_TARGET_SECONDS = 90
 
 
+def renderable_shot_durations(video_model: str) -> list[int]:
+    """Every whole-second clip length the video model can render in one call (what a request may ask for)."""
+    from app.core.video_references import MIN_SHOT_SECONDS as floor, max_shot_seconds
+
+    return list(range(floor, max(floor, max_shot_seconds(video_model)) + 1))
+
+
 def supported_shot_durations(video_model: str) -> list[int]:
-    """Every whole-second clip length the video model can render in one call."""
-    cap = max(MIN_SHOT_SECONDS, max_shot_seconds(video_model))
-    return list(range(MIN_SHOT_SECONDS, cap + 1))
+    """Every whole-second shot length to plan for the video model: its preferred range (seedance2.5
+    10–30 s, seedance2.0 and MiniMax H3 5–15 s), always inside what it renders in one call."""
+    from app.core.video_references import preferred_shot_seconds
+
+    low, high = preferred_shot_seconds(video_model)
+    return list(range(low, high + 1))
 
 
 def format_duration_constraint(supported_durations: list[int], default_duration: int | None) -> str:
@@ -65,15 +83,17 @@ def resolve_episode_target_seconds(config: Mapping[str, Any] | None) -> int | No
     return raw if is_valid_episode_target_seconds(raw) else DEFAULT_EPISODE_TARGET_SECONDS
 
 
-def render_episode_target_rule(target_seconds: int | None) -> str:
-    """The soft-target sentence shared by every planning prompt; empty when unset."""
+def render_episode_target_rule(target_seconds: int | None, shape: EpisodeShape | None = None) -> str:
+    """The episode-length sentences shared by every planning prompt: the soft target, then the hard frame."""
+    frame = (shape or EpisodeShape()).rule()
     if target_seconds is None:
-        return ""
+        return frame
     return (
         f"本集成片目标时长约 {target_seconds} 秒：据此决定本集拆多少个分镜、拆多细，"
-        "让各分镜时长合计向该目标靠拢。这是软目标、不是硬上限——"
-        "内容不足以支撑目标时宁可少拆几个，不要靠注水或切碎凑满；"
-        "内容确实需要更多篇幅时可以超出目标，不要为压进目标删掉必要情节"
+        "让各分镜时长合计向该目标靠拢。目标是软目标——"
+        "不要靠注水或切碎凑满；"
+        "内容确实需要更多篇幅时可以超出目标，不要为压进目标删掉必要情节。"
+        f"{frame}"
     )
 
 
@@ -117,6 +137,12 @@ def resolve_episode_target_volume(
 
 __all__ = [
     "DEFAULT_EPISODE_TARGET_SECONDS",
+    "EpisodeShape",
+    "EpisodeShapeIssue",
+    "MAX_RECOMMENDED_EPISODE_SECONDS",
+    "MIN_EPISODE_SCENES",
+    "MIN_EPISODE_SECONDS",
+    "configured_episode_shape",
     "MIN_EPISODE_TARGET_SECONDS",
     "MAX_EPISODE_TARGET_SECONDS",
     "EpisodeTargetVolume",
@@ -125,5 +151,6 @@ __all__ = [
     "render_episode_target_rule",
     "resolve_episode_target_seconds",
     "resolve_episode_target_volume",
+    "renderable_shot_durations",
     "supported_shot_durations",
 ]

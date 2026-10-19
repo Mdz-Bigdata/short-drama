@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from app.core.reference_limits import MAX_REFERENCE_VIDEOS, MAX_SEQUENCE_IMAGES
 from app.core import media_compositor
 from app.core.spatial_stage.models import StagePose
 from app.core.spatial_stage.prompting import without_camera_pose
@@ -39,13 +40,13 @@ MAX_CAPTURES_PER_SCENE = 60
 # room so uploading one never costs a scene one of its sixty stills.
 MAX_BACKDROPS_PER_SCENE = 20
 MAX_SAVED_POSES = 200
-MAX_STILL_BYTES = 10 * 1024 * 1024
-MAX_CLIP_BYTES = 60 * 1024 * 1024
+_MEBIBYTE = 1024 * 1024
+MAX_STILL_BYTES = 10 * _MEBIBYTE
+MAX_CLIP_BYTES = 60 * _MEBIBYTE
 MAX_CLIP_SECONDS = 30.0
 CLIP_FRAME_RATES = (24, 25, 30)
+_FRAME_RATE_TEXT = " / ".join(str(rate) for rate in CLIP_FRAME_RATES)
 # What stage 5 accepts per shot (``ShotMotionContract.reference_videos``); a fourth would be dropped silently.
-MAX_REFERENCE_VIDEOS = 3
-MAX_SEQUENCE_IMAGES = 9
 _KINDS = ("still", "clip", "backdrop")
 # Only these two kinds are ever handed to a shot; a backdrop has no slot on purpose.
 _SLOT = {"still": "sequence_images", "clip": "reference_videos"}
@@ -53,6 +54,11 @@ _IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
 _SAFE = re.compile(r"[^A-Za-z0-9_-]")
 # Blockout rule 2: a video model copies a white model's limbs, so limbs on screen need their motion spelled out.
 LIMBS_WARNING = "白模带四肢：请在动作描述里写清分段肢体动作，否则四肢容易僵化"
+DEPTH_WARNING = "深度画面：近亮远暗的灰度图，只约束空间层次、走位与运镜，不约束颜色与材质"
+DEPTH_REQUIREMENT = (
+    "参考视频是导演台导出的灰度深度画面（近处亮、远处暗）：只按它复现人物的前后层次、走位路线和镜头运动，"
+    "画面的颜色、材质和光线按文字描述生成，不要复制灰度"
+)
 LIMBS_REQUIREMENT = (
     "白模参考里的替身带四肢，动作描述须按时间顺序逐段写出肢体动作（前倾角度、步幅、重心、手臂与布料动态），"
     "不得只给结果状态，四肢不照搬白模的僵直姿态"
@@ -123,6 +129,8 @@ class CaptureUpload:
     shows_limbs: bool = False
     monochrome: bool = False
     labelled: bool = False
+    # A depth pass: a grayscale picture of distance, not of the white models.
+    depth: bool = False
     width: int = 0
     height: int = 0
     duration_s: float = 0.0
@@ -138,25 +146,27 @@ def validate_upload(upload: CaptureUpload) -> str:
     proven = sniff_media(upload.content[:4096])
     if upload.kind == "backdrop":
         if len(upload.content) > MAX_STILL_BYTES:
-            raise CaptureError("背景图不能超过 10 MB")
+            raise CaptureError(f"背景图不能超过 {MAX_STILL_BYTES // _MEBIBYTE} MB")
         if proven not in _IMAGE_TYPES:
             raise CaptureError("背景图只支持 PNG、JPEG、WebP；文件内容不是其中任何一种")
     elif upload.kind == "still":
         if len(upload.content) > MAX_STILL_BYTES:
-            raise CaptureError("静帧不能超过 10 MB")
+            raise CaptureError(f"静帧不能超过 {MAX_STILL_BYTES // _MEBIBYTE} MB")
         if proven not in _IMAGE_TYPES:
             raise CaptureError("静帧只支持 PNG、JPEG、WebP；文件内容不是其中任何一种")
     else:
         if len(upload.content) > MAX_CLIP_BYTES:
-            raise CaptureError("白模视频不能超过 60 MB")
+            raise CaptureError(f"白模视频不能超过 {MAX_CLIP_BYTES // _MEBIBYTE} MB")
         if proven not in {"video/mp4", "video/webm"}:
             raise CaptureError("白模视频只支持 MP4、WebM；文件内容不是其中任何一种")
         if not math.isfinite(upload.duration_s) or not 0 < upload.duration_s <= MAX_CLIP_SECONDS:
-            raise CaptureError("白模视频时长必须在 0 到 30 秒之间")
+            raise CaptureError(f"白模视频时长必须在 0 到 {MAX_CLIP_SECONDS:g} 秒之间")
         # The declared length is what gets recorded; when the container states one, it has to agree.
         measured = mp4_duration(upload.content) if proven == "video/mp4" else None
         if measured is not None and measured > MAX_CLIP_SECONDS + 0.5:
-            raise CaptureError(f"白模视频实际时长 {measured:.1f} 秒，超过 30 秒上限")
+            raise CaptureError(f"白模视频实际时长 {measured:.1f} 秒，超过 {MAX_CLIP_SECONDS:g} 秒上限")
+    if upload.depth and upload.kind == "backdrop":
+        raise CaptureError("背景图没有深度画面一说")
     # A backdrop belongs to the scene, not to one shot, so it may arrive without a shot number.
     if not (0 if upload.kind == "backdrop" else 1) <= upload.shot_id <= 10_000:
         raise CaptureError("shot_id 必须是 1 到 10000 的镜头编号")
@@ -164,7 +174,7 @@ def validate_upload(upload: CaptureUpload) -> str:
         raise CaptureError("width / height 必须在 0 到 8192 之间")
     # A desk clip is one shot's timeline rendered frame by frame, so it can only have a timeline's rate; 0 is "not stated".
     if upload.fps not in (0, *CLIP_FRAME_RATES):
-        raise CaptureError("fps 只能是 24 / 25 / 30（与时间线的帧率一致）")
+        raise CaptureError(f"fps 只能是 {_FRAME_RATE_TEXT}（与时间线的帧率一致）")
     if upload.plan_revision < 0:
         raise CaptureError("plan_revision 不能为负")
     return proven
@@ -277,8 +287,9 @@ def add_capture(task: dict[str, Any], scene_id: str, upload: CaptureUpload, url:
         "plan_revision": upload.plan_revision,
         # Only a clip can show limbs *moving*, which is what blockout rule 2 is about.
         "shows_limbs": bool(upload.shows_limbs), "monochrome": bool(upload.monochrome), "labelled": bool(upload.labelled),
+        "depth": bool(upload.depth),
         "created_at": datetime.now(timezone.utc).isoformat(), "stale": False,
-        "warning": LIMBS_WARNING if upload.shows_limbs else "",
+        "warning": DEPTH_WARNING if upload.depth else LIMBS_WARNING if upload.shows_limbs else "",
     }
     _scene(task, scene_id)["captures"].append(capture)
     return capture
@@ -311,6 +322,9 @@ def apply_capture(task: dict[str, Any], scene_id: str, capture_id: str) -> dict[
         raise CaptureError("背景图只在导演台的机位画面里作参考，不能应用到分镜")
     if capture.get("stale"):
         raise CaptureError("这条截取是按旧站位拍的，站位已修改；请在导演台重新截取后再应用")
+    if capture.get("depth") and capture["kind"] == "still":
+        # A first-frame reference is copied by the video model; a depth picture would be copied as a grey frame.
+        raise CaptureError("深度静帧不能作为首帧参考图应用到分镜；请导出深度视频作为运动参考，或截取普通静帧")
     shot = _shot(task, scene_id, int(capture["shot_id"]))
     if shot is None:
         raise CaptureError(f"本场分镜里还没有第 {capture['shot_id']} 镜，请先完成第 4 阶段分镜")
@@ -355,6 +369,7 @@ class ShotBlockout:
     stale_urls: frozenset[str] = frozenset()
     clip_url: str = ""
     shows_limbs: bool = False
+    depth: bool = False
 
     @property
     def owns_camera(self) -> bool:
@@ -375,7 +390,9 @@ def shot_blockout(task: Mapping[str, Any], shot: Mapping[str, Any]) -> ShotBlock
     references = shot.get("reference_videos") if isinstance(shot.get("reference_videos"), list) else []
     if clip is None or clip.get("stale") or clip.get("url") not in references:
         return ShotBlockout(stale_urls=stale)
-    return ShotBlockout(stale_urls=stale, clip_url=str(clip["url"]), shows_limbs=bool(clip.get("shows_limbs")))
+    return ShotBlockout(
+        stale_urls=stale, clip_url=str(clip["url"]), shows_limbs=bool(clip.get("shows_limbs")), depth=bool(clip.get("depth")),
+    )
 
 
 @dataclass(frozen=True)
@@ -408,6 +425,9 @@ def motion_inputs(
         # Stage 5 has no Sd25CompileRequest to set ``blockout_standin_limbs`` on; the requirement rides
         # with the motion prompt instead, and only while the limbed clip is the one being followed.
         motion = f"{motion.rstrip('。；; ')}。{LIMBS_REQUIREMENT}。" if motion.strip() else f"{LIMBS_REQUIREMENT}。"
+    if blockout.depth and DEPTH_REQUIREMENT not in motion:
+        # A depth clip carries layers and motion only; say so, or the model paints the grey.
+        motion = f"{motion.rstrip('。；; ')}。{DEPTH_REQUIREMENT}。" if motion.strip() else f"{DEPTH_REQUIREMENT}。"
     # ``blocking`` is a required field downstream: a sentence that was nothing but the lens pose stays.
     return MotionInputs(kept, without_camera_pose(blocking) or blocking, motion, refused, blockout)
 

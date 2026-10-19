@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ShotVisualWorkspace } from './ShotVisualWorkspace';
 import { durationWarning, useSliderForDurations } from './shotVisual';
-import type { ShotVisualWorkspace as Workspace } from './shotVisual';
+import type { BatchAdmission, ShotVisualWorkspace as Workspace } from './shotVisual';
 
 
 function workspace(overrides: Partial<Workspace> = {}): Workspace {
@@ -41,6 +41,185 @@ function workspace(overrides: Partial<Workspace> = {}): Workspace {
   };
 }
 
+
+function admission(decision: BatchAdmission['decision']): BatchAdmission {
+  const base: BatchAdmission = {
+    decision, video_model: 'MiniMax-H3', provider_family: 'minimax_h3',
+    counts: { generate: 1, reuse: 1, blocked: 0, withheld: 0 },
+    shots: [
+      { shot_id: 1, scene_id: 'E1S01', quote: 'reuse', scripted_seconds: 6, requested_seconds: 6, tier_adjustment: 'exact', candidates: 1, problems: [], withheld_by: [], estimate: { priced: true, cost: 0, currency: null } },
+      { shot_id: 2, scene_id: 'E1S01', quote: 'generate', scripted_seconds: 5, requested_seconds: 5, tier_adjustment: 'exact', candidates: 1, problems: [], withheld_by: [], estimate: { priced: true, cost: 2.5, currency: 'CNY' } },
+    ],
+    confirmations: [],
+    estimate: { shots_to_generate: 1, requested_seconds: 5, priced: true, cost: 2.5, currency: 'CNY' },
+  };
+  if (decision === 'blocked') {
+    base.counts = { generate: 0, reuse: 1, blocked: 1, withheld: 1 };
+    base.shots[1] = { ...base.shots[1], quote: 'blocked', problems: [{ code: 'missing_assets', message: '出场角色尚无身份视图：沈知微', blocking: true }] };
+    base.shots[0] = { ...base.shots[0], withheld_by: [2], problems: [{ code: 'generation_batch_admission_withheld', message: '本镜本可生成，但同批有镜头受阻，整批未提交', blocking: false }] };
+  }
+  if (decision === 'confirmation_required') {
+    base.shots[1] = { ...base.shots[1], scripted_seconds: 8, requested_seconds: 10, tier_adjustment: 'up', problems: [{ code: 'duration_confirmation_required', message: '剧本时长 8 秒不在模型档位内，将按 10 秒请求（不裁剪）', blocking: false }] };
+    base.confirmations = [{ scripted_seconds: 8, requested_seconds: 10, adjustment: 'up', shot_ids: [2], shot_count: 1, cost: 5, currency: 'CNY', priced: true }];
+  }
+  return base;
+}
+
+describe('ShotVisualWorkspace per-shot regeneration', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('marks one shot for regeneration and says the others are reused', async () => {
+    const posts: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/shots/1/regenerate') && init?.method === 'POST') {
+        posts.push(url);
+        const next = workspace();
+        next.shots[0] = { ...next.shots[0], stale: true, stale_reason: '人工要求重新生成，重跑第 5 阶段时只重做本镜，其余镜头沿用' };
+        return { ok: true, json: async () => next } as Response;
+      }
+      if (url.endsWith('/shots/admission')) return { ok: true, json: async () => ({}) } as Response;
+      if (url.includes('/usage')) return { ok: true, json: async () => ({ summary: null }) } as Response;
+      return { ok: true, json: async () => workspace() } as Response;
+    });
+    const user = userEvent.setup();
+
+    render(<ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" />);
+    await screen.findByRole('list', { name: '分镜' });
+    await user.click(screen.getByRole('button', { name: '重做本镜' }));
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(await screen.findByText(/只重新生成本镜/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: '重做本镜' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('ShotVisualWorkspace generation queue', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  function queue(running: boolean) {
+    return {
+      task_id: 'visual-task', running, run_id: 'r1',
+      counts: { queued: 1, running: 1, done: 1 },
+      buckets: { 'seedance/video': { limit: 2, running: 1 }, 'elevenlabs/audio': { limit: 2, running: 0 } },
+      items: [
+        { key: 'video:1', label: '镜头 1 · 视频 ×1', family: 'seedance', medium: 'video', bucket: 'seedance/video', depends_on: [], status: 'done', meta: {} },
+        { key: 'video:2', label: '镜头 2 · 视频 ×1', family: 'seedance', medium: 'video', bucket: 'seedance/video', depends_on: [], status: 'running', meta: {} },
+        { key: 'assemble:2', label: '镜头 2 · 配音与入片', family: 'elevenlabs', medium: 'audio', bucket: 'elevenlabs/audio', depends_on: ['video:2'], status: 'queued', meta: {} },
+      ],
+      withdraw: [] as string[],
+    };
+  }
+
+  it('shows the items with their buckets and withdraws only a queued one', async () => {
+    const posts: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/queue')) return { ok: true, json: async () => queue(true) } as Response;
+      if (url.includes('/queue/') && init?.method === 'POST') {
+        posts.push(url.split('/api/drama/visual-task')[1]);
+        return { ok: true, json: async () => ({ ...queue(true), withdraw: ['assemble:2'] }) } as Response;
+      }
+      if (url.endsWith('/shots/admission')) return { ok: true, json: async () => ({}) } as Response;
+      return { ok: true, json: async () => workspace() } as Response;
+    });
+
+    render(<ShotVisualWorkspace taskId="visual-task" videoModel="seedance2.0" imageModel="seedream" />);
+
+    const panel = await screen.findByRole('region', { name: '生成队列' });
+    expect(within(panel).getByText(/排队中 1 · 运行中 1 · 完成 1/)).toBeTruthy();
+    expect(within(panel).getByText(/seedance\/video 1\/2/)).toBeTruthy();
+    expect(within(panel).getByText('依赖 video:2', { exact: false })).toBeTruthy();
+    expect(within(panel).queryByRole('button', { name: '取消 镜头 2 · 视频 ×1' })).toBeNull();
+
+    await userEvent.click(within(panel).getByRole('button', { name: '取消 镜头 2 · 配音与入片' }));
+
+    expect(await within(panel).findByText('取消待生效')).toBeTruthy();
+    expect(posts).toEqual(['/queue/assemble%3A2/cancel']);
+    await userEvent.click(within(panel).getByRole('button', { name: '取消全部排队' }));
+    expect(posts[1]).toBe('/queue/cancel-queued');
+  });
+
+  it('stays out of the way when the project has no queue yet', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/queue')) return { ok: true, json: async () => ({ task_id: 'visual-task', running: false, items: [], counts: {}, buckets: {} }) } as Response;
+      if (url.endsWith('/shots/admission')) return { ok: true, json: async () => ({}) } as Response;
+      return { ok: true, json: async () => workspace() } as Response;
+    });
+    render(<ShotVisualWorkspace taskId="visual-task" videoModel="seedance2.0" imageModel="seedream" />);
+    await screen.findByRole('list', { name: '分镜' });
+    expect(screen.queryByRole('region', { name: '生成队列' })).toBeNull();
+  });
+});
+
+describe('ShotVisualWorkspace batch admission', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  function mockApi(verdict: ReturnType<typeof admission>, posts: Array<unknown>) {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/shots/admission') && init?.method === 'POST') {
+        posts.push(JSON.parse(String(init.body)));
+        const confirmed = (posts[posts.length - 1] as { persist?: boolean }).persist;
+        return { ok: true, json: async () => (confirmed ? admission('admitted') : verdict) } as Response;
+      }
+      if (url.includes('/usage')) {
+        return { ok: true, json: async () => ({ summary: { calls: 3, succeeded: 2, failed: 1, cost_by_currency: { CNY: 12.5 }, primary_currency: 'CNY', unpriced_calls: 1, unpriced_models: ['x'] } }) } as Response;
+      }
+      return { ok: true, json: async () => workspace() } as Response;
+    });
+  }
+
+  it('shows the verdict, the estimate and what the project has spent', async () => {
+    mockApi(admission('admitted'), []);
+
+    render(<ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" />);
+
+    const panel = await screen.findByRole('region', { name: '批量视频准入' });
+    expect(panel.textContent).toContain('准入通过');
+    expect(panel.textContent).toContain('生成 1 · 复用 1 · 受阻 0');
+    expect(panel.textContent).toContain('预估 2.50 CNY（5 秒）');
+    expect(panel.textContent).toContain('已花费 12.50 CNY（1 次调用未定价）');
+  });
+
+  it('lists every blocked shot and says the batch was withheld', async () => {
+    mockApi(admission('blocked'), []);
+
+    render(<ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" />);
+
+    const panel = await screen.findByRole('region', { name: '批量视频准入' });
+    expect(panel.textContent).toContain('受阻：整批未提交');
+    expect(panel.textContent).toContain('镜头 2');
+    expect(panel.textContent).toContain('出场角色尚无身份视图：沈知微');
+    expect(panel.textContent).toContain('其余 1 镜');
+  });
+
+  it('confirms the duration tiers for the whole batch and shows the cleared verdict', async () => {
+    const posts: Array<unknown> = [];
+    mockApi(admission('confirmation_required'), posts);
+    const user = userEvent.setup();
+
+    render(<ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" />);
+    const panel = await screen.findByRole('region', { name: '批量视频准入' });
+    expect(panel.textContent).toContain('剧本 8 秒 → 请求 10 秒 × 1 镜');
+    expect(panel.textContent).toContain('5.00 CNY');
+    await user.click(within(panel).getByRole('button', { name: '确认这些档位' }));
+
+    await waitFor(() => expect(posts).toHaveLength(2));
+    expect(posts[1]).toEqual({ confirmed_request_durations: [{ scripted_seconds: 8, requested_seconds: 10 }], persist: true });
+    await waitFor(() => expect(screen.getByRole('region', { name: '批量视频准入' }).textContent).toContain('准入通过'));
+  });
+});
 
 describe('ShotVisualWorkspace', () => {
   afterEach(() => {
@@ -102,7 +281,9 @@ describe('ShotVisualWorkspace', () => {
     await userEvent.click(screen.getByRole('tab', { name: '脚本 / 对话' }));
     expect(within(screen.getByRole('tabpanel')).getByText('贺兰霆：你来了。')).toBeTruthy();
     await userEvent.click(screen.getByRole('tab', { name: '提示词' }));
-    expect(within(screen.getByRole('tabpanel')).getAllByText('待生成')).toHaveLength(2);
+    // 分镜图提示词还没生成；视频提示词编辑器为空，且阶段运行中不可编辑。
+    expect(within(screen.getByRole('tabpanel')).getAllByText('待生成')).toHaveLength(1);
+    expect((screen.getByLabelText('视频提示词文稿') as HTMLTextAreaElement).disabled).toBe(true);
   });
 
   it('composes a camera recipe and applies its move and action to the draft', async () => {
@@ -157,8 +338,10 @@ describe('ShotVisualWorkspace', () => {
     expect(candidates).toHaveLength(2);
     await userEvent.click(candidates[1]);
     expect(await screen.findByText(/已选用该版本/)).toBeTruthy();
-    expect(calls.map(call => call.url.split('/api/drama/visual-task')[1])).toEqual(['/shots/seeds/assign', '/shots/1/visual/select']);
-    expect(calls[1].body).toEqual({ video_url: '/media/c1-b.mp4' });
+    // The workspace also asks for the batch admission when it opens; that call is not part of this flow.
+    const flow = calls.filter(call => !call.url.endsWith('/shots/admission'));
+    expect(flow.map(call => call.url.split('/api/drama/visual-task')[1])).toEqual(['/shots/seeds/assign', '/shots/1/visual/select']);
+    expect(flow[1].body).toEqual({ video_url: '/media/c1-b.mp4' });
   });
 
   it('shows what the 3D director desk applied to a shot, and takes it back out', async () => {

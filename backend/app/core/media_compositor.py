@@ -11,22 +11,29 @@ import re
 import shutil
 import logging
 import hashlib
-import ipaddress
 import json
 import socket
 import subprocess
 from typing import List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
+from app import settings
+from app.platform.runtime_models import provider_key_available
+
 logger = logging.getLogger("app.core.media_compositor")
 
 # 生成媒体的存储目录 (由 main.py 挂载到 /media 静态路由对外提供访问)
 MEDIA_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "generated_media"))
-# 对外访问基地址 (本地应用)
-PUBLIC_BASE_URL = os.getenv("MEDIA_PUBLIC_BASE_URL", "http://localhost:8000/media")
+# 对外访问基地址：MEDIA_PUBLIC_BASE_URL，未配置时由 PUBLIC_BASE_URL / BACKEND_PORT 推导
+PUBLIC_BASE_URL = settings.media_public_base_url()
 
 # 输出竖屏母版。供应商预览可低分辨率，但最终合成统一为平台标准 FHD。
 OUT_W, OUT_H = 1080, 1920
+# 母版帧率：各家模型出的片段帧率不一，合成时统一到这个值
+OUT_FPS = 30
+# 片头标题卡的副标题与无标题时的占位；TITLE_CARD_TAGLINE 可改成自己的厂牌，设为空则不显示
+DEFAULT_TITLE_TAGLINE = "AI 短剧 · 一键成片"
+UNTITLED_FILM = "AI 短剧"
 # 片头标题卡时长(秒)
 TITLE_DUR = 2.6
 # 男声音高比例 (基于 Tingting 女声降调模拟男声；say 输出固定 22050Hz)
@@ -49,31 +56,57 @@ def _ensure_dir():
     os.makedirs(MEDIA_DIR, exist_ok=True)
 
 
-def _which(name: str, fallbacks: list) -> Optional[str]:
+# 常见安装位置：Homebrew (Apple Silicon / Intel) 与 Linux 发行版
+_BINARY_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin")
+# 字幕与标题卡用的中文字体候选，按平台依次尝试；都没有时用 SUBTITLE_FONT_PATH 指定
+_CJK_FONT_CANDIDATES = (
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/Supplemental/Songti.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "C:/Windows/Fonts/msyh.ttc",
+)
+# macOS `say` 的中文音色；可用 LOCAL_TTS_VOICE 换成本机已安装的其它音色
+DEFAULT_LOCAL_TTS_VOICE = "Tingting"
+
+
+def _which(name: str, fallbacks: Optional[list] = None, *, override: Optional[str] = None) -> Optional[str]:
+    """Locate a binary: an explicit path from the environment, then PATH, then the usual install dirs."""
+    configured = (os.getenv(override) or "").strip() if override else ""
+    if configured:
+        return configured if os.path.exists(configured) else None
     p = shutil.which(name)
     if p:
         return p
-    for fb in fallbacks:
+    for fb in fallbacks or [os.path.join(directory, name) for directory in _BINARY_DIRS]:
         if os.path.exists(fb):
             return fb
     return None
 
 
 def _ffmpeg() -> Optional[str]:
-    return _which("ffmpeg", ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"])
+    return _which("ffmpeg", override="FFMPEG_PATH")
+
+
+def _ffprobe() -> Optional[str]:
+    return _which("ffprobe", override="FFPROBE_PATH")
 
 
 def _say() -> Optional[str]:
     return _which("say", ["/usr/bin/say"])
 
 
+def _local_tts_voice() -> str:
+    return (os.getenv("LOCAL_TTS_VOICE") or "").strip() or DEFAULT_LOCAL_TTS_VOICE
+
+
 def _font_path() -> Optional[str]:
-    for p in [
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/STHeiti Medium.ttc",
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        "/System/Library/Fonts/Supplemental/Songti.ttc",
-    ]:
+    configured = (os.getenv("SUBTITLE_FONT_PATH") or "").strip()
+    for p in ([configured] if configured else []) + list(_CJK_FONT_CANDIDATES):
         if os.path.exists(p):
             return p
     return None
@@ -83,7 +116,7 @@ def public_url(filename: str) -> str:
     return f"{PUBLIC_BASE_URL.rstrip('/')}/{filename}"
 
 
-def _synth_clip(text: str, gender: str, out_mp3: str, emotion: str = "neutral") -> bool:
+def _synth_clip(text: str, gender: str, out_mp3: str, emotion: str = "neutral", voice: Optional[str] = None) -> bool:
     """合成单句语音到 out_mp3。gender='male' 时降调模拟男声；emotion 控制语速与音高营造情绪与节奏。"""
     say_bin = _say()
     ff = _ffmpeg()
@@ -93,7 +126,7 @@ def _synth_clip(text: str, gender: str, out_mp3: str, emotion: str = "neutral") 
     rate, emo_pitch = EMOTION_PRESETS.get(emotion, EMOTION_PRESETS["neutral"])
     aiff = out_mp3 + ".aiff"
     try:
-        subprocess.run([say_bin, "-v", "Tingting", "-r", str(rate), "-o", aiff, text.strip()[:300]],
+        subprocess.run([say_bin, "-v", voice or _local_tts_voice(), "-r", str(rate), "-o", aiff, text.strip()[:300]],
                        check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         # 综合音高：男声基准降调 × 情绪音高系数
         base_pitch = MALE_PITCH if gender == "male" else 1.0
@@ -111,23 +144,6 @@ def _synth_clip(text: str, gender: str, out_mp3: str, emotion: str = "neutral") 
     finally:
         if os.path.exists(aiff):
             os.remove(aiff)
-
-
-def synthesize_tts(text: str, voice: str = "Tingting", tag: str = "tts", gender: str = "female") -> Tuple[Optional[str], Optional[str]]:
-    """
-    用 macOS `say` 合成单条真实中文语音 -> mp3 (单一音色)。
-    返回 (对外URL, 本地文件路径)；失败返回 (None, None)。
-    """
-    if not text or not text.strip():
-        return None, None
-    _ensure_dir()
-    h = hashlib.md5(f"{tag}|{gender}|{text}".encode("utf-8")).hexdigest()[:16]
-    mp3 = os.path.join(MEDIA_DIR, f"{tag}_{h}.mp3")
-    if _synth_clip(text, gender, mp3):
-        logger.info(f"[Compositor] TTS 配音生成成功: {mp3}")
-        return public_url(os.path.basename(mp3)), mp3
-    logger.warning("[Compositor] TTS 不可用 (缺 say/ffmpeg)，跳过真实配音")
-    return None, None
 
 
 def synthesize_dialogue_track(segments, tag: str = "voice") -> Tuple[Optional[str], Optional[str]]:
@@ -198,9 +214,14 @@ def _save_provider_audio(audio: bytes, tag: str, extension: str = "mp3") -> Tupl
     return public_url(filename), path
 
 
+def _elevenlabs_available() -> bool:
+    """模型配置中心保存的 Key 与环境变量里的 Key 都算可用，与 ElevenLabsClient 的取值顺序一致"""
+    return provider_key_available("elevenlabs", "audio", "ELEVENLABS_API_KEY")
+
+
 def synthesize_elevenlabs_dialogue_track(segments, tag: str = "eleven_voice") -> Tuple[Optional[str], Optional[str]]:
     """Generate an emotion-aware multi-speaker track through Text-to-Dialogue."""
-    if not os.getenv("ELEVENLABS_API_KEY"):
+    if not _elevenlabs_available():
         return None, None
     female_voice = (os.getenv("ELEVENLABS_VOICE_FEMALE_ID") or "").strip()
     male_voice = (os.getenv("ELEVENLABS_VOICE_MALE_ID") or "").strip()
@@ -260,7 +281,7 @@ def synthesize_elevenlabs_music(
     duration_seconds: float,
     tag: str = "eleven_bgm",
 ) -> Tuple[Optional[str], Optional[str]]:
-    if not os.getenv("ELEVENLABS_API_KEY"):
+    if not _elevenlabs_available():
         return None, None
     try:
         from app.core.providers.elevenlabs import ElevenLabsClient
@@ -285,7 +306,7 @@ def synthesize_elevenlabs_sfx(
     duration_seconds: float = 12,
     tag: str = "eleven_sfx",
 ) -> Tuple[Optional[str], Optional[str]]:
-    if not os.getenv("ELEVENLABS_API_KEY"):
+    if not _elevenlabs_available():
         return None, None
     try:
         from app.core.providers.elevenlabs import ElevenLabsClient
@@ -354,8 +375,14 @@ def _render_subtitle_png(text: str, out_path: str) -> bool:
         return False
 
 
-def _render_title_png(title: str, out_path: str, subtitle: str = "AI 短剧 · 一键成片") -> bool:
+def _title_tagline() -> str:
+    configured = os.getenv("TITLE_CARD_TAGLINE")
+    return DEFAULT_TITLE_TAGLINE if configured is None else configured.strip()
+
+
+def _render_title_png(title: str, out_path: str, subtitle: Optional[str] = None) -> bool:
     """渲染片头标题卡 PNG (黑底，主标题大字居中 + 副标题)。"""
+    subtitle = _title_tagline() if subtitle is None else subtitle
     font_path = _font_path()
     if not font_path:
         return False
@@ -378,7 +405,7 @@ def _render_title_png(title: str, out_path: str, subtitle: str = "AI 短剧 · �
                 lines.append(cur)
             return lines[:3]
 
-        title = (title or "AI 短剧").strip()
+        title = (title or UNTITLED_FILM).strip()
         lines = wrap(title, big, OUT_W - 100)
         lh = 84
         total = lh * len(lines)
@@ -462,7 +489,7 @@ def extract_last_frame_b64(video_url_or_path: str) -> Optional[str]:
 
 def _probe_duration(path: str) -> Optional[float]:
     """探测媒体时长(秒)，失败返回 None"""
-    ff = _which("ffprobe", ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe"])
+    ff = _ffprobe()
     if not ff:
         return None
     try:
@@ -475,12 +502,14 @@ def _probe_duration(path: str) -> Optional[float]:
 
 def _local_media_source(url: str) -> Optional[str]:
     """Resolve only this app's /media URLs, with traversal protection."""
-    if not url or "/media/" not in url:
+    media_prefix = settings.MEDIA_PREFIX
+    if not url or media_prefix not in url:
         return None
     parsed = urlparse(url)
-    if parsed.hostname not in {None, "localhost", "127.0.0.1", "::1"}:
+    # 本机回环地址与配置的对外媒体域名都指向 MEDIA_DIR 里的同一批文件
+    if parsed.hostname and parsed.hostname.lower() not in settings.own_media_hostnames(PUBLIC_BASE_URL):
         return None
-    relative = parsed.path.split("/media/", 1)[-1].lstrip("/")
+    relative = parsed.path.split(media_prefix, 1)[-1].lstrip("/")
     root = os.path.realpath(MEDIA_DIR)
     candidate = os.path.realpath(os.path.join(root, relative))
     if candidate == root or not candidate.startswith(root + os.sep):
@@ -495,12 +524,12 @@ def _validate_public_media_url(url: str) -> None:
     if parsed.username or parsed.password:
         raise ValueError("credentials in media URLs are forbidden")
     for address in socket.getaddrinfo(parsed.hostname, parsed.port or 443, type=socket.SOCK_STREAM):
-        if not ipaddress.ip_address(address[4][0]).is_global:
+        if not settings.is_public_address(address[4][0]):
             raise ValueError("private or local media hosts are forbidden")
 
 
 def _download(url: str, dst: str, timeout: int = 90, retries: int = 3) -> bool:
-    # 本机自产片段(如分镜拼接产物 http://localhost:8000/media/xxx.mp4)直接从磁盘拷贝，
+    # 本机自产片段(分镜拼接产物等 PUBLIC_BASE_URL 下的文件)直接从磁盘拷贝，
     # 不走 HTTP 回环：避免合成时依赖服务端口可达、省去一次自我下载往返，也更快更稳。
     local = _local_media_source(url)
     if local:
@@ -662,7 +691,7 @@ def _join_video_segments(
         previous_label = output_label
     cmd.extend([
         "-filter_complex", ";".join(filters),
-        "-map", f"[{previous_label}]", "-an", "-r", "30",
+        "-map", f"[{previous_label}]", "-an", "-r", str(OUT_FPS),
         "-c:v", "libx264", "-pix_fmt", "yuv420p", output_path,
     ])
     subprocess.run(cmd, check=True, timeout=240, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -716,7 +745,9 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
                  tag: str = "film", title: Optional[str] = None, bgm: bool = True,
                  shot_voices: List = None, bgm_path: Optional[str] = None,
                  sfx_path: Optional[str] = None,
-                 transition_plans: Optional[List[dict]] = None) -> Optional[str]:
+                 transition_plans: Optional[List[dict]] = None,
+                 trims: Optional[List[Tuple[float, Optional[float]]]] = None,
+                 bgm_volume: float = 0.16) -> Optional[str]:
     """
     将多镜头视频合成为一条带片头标题卡、字幕、配音与 BGM 的竖屏成片/单集。
     - shot_video_urls: 各镜头视频直链 (http mp4)
@@ -725,6 +756,8 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
     - shot_voices: 与镜头一一对应的配音本地路径列表 (按镜头时间轴对齐，实现配音/字幕/画面同步)
     - title: 片头标题卡文字 (None 则不加片头)
     - bgm: 是否叠加程序化生成的 BGM 低音垫
+    - trims: 与镜头一一对应的 (入点秒, 出点秒或 None)，来自剪辑时间线；None 表示整段
+    - bgm_volume: 配乐音量 (0-1)，闪避仍按台词侧链压缩
     返回成片对外 URL；任一关键环节失败返回 None。
     """
     ff = _ffmpeg()
@@ -733,7 +766,7 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
         logger.warning("[Compositor] 成片合成不可用 (缺 ffmpeg 或无有效视频片段)")
         return None
     _ensure_dir()
-    h = hashlib.md5(("|".join(clips) + "|" + "|".join(subtitles or []) + f"|{title}|{bgm}|{bool(shot_voices)}|{bgm_path}|{sfx_path}").encode("utf-8")).hexdigest()[:16]
+    h = hashlib.md5(("|".join(clips) + "|" + "|".join(subtitles or []) + f"|{title}|{bgm}|{bool(shot_voices)}|{bgm_path}|{sfx_path}|{trims}|{bgm_volume}").encode("utf-8")).hexdigest()[:16]
     work = os.path.join(MEDIA_DIR, f"_work_{tag}_{h}")
     os.makedirs(work, exist_ok=True)
     try:
@@ -750,7 +783,7 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
                 tseg = os.path.join(work, "seg_title.mp4")
                 try:
                     subprocess.run([ff, "-y", "-loop", "1", "-i", tpng, "-t", f"{TITLE_DUR}",
-                                    "-vf", f"scale={OUT_W}:{OUT_H},setsar=1", "-r", "30",
+                                    "-vf", f"scale={OUT_W}:{OUT_H},setsar=1", "-r", str(OUT_FPS),
                                     "-c:v", "libx264", "-pix_fmt", "yuv420p", tseg],
                                    check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     seg_files.append(tseg)
@@ -769,14 +802,22 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
             sub_text = re.sub(r"\s+", " ", (sub_text or "")).strip()
             png = os.path.join(work, f"sub_{i}.png")
             has_sub = bool(sub_text) and _render_subtitle_png(sub_text, png)
+            # The timeline's trim: decode from the in point and stop at the out point.
+            trim_args: List[str] = []
+            if trims and i < len(trims) and trims[i]:
+                start, end = trims[i]
+                if start and float(start) > 0:
+                    trim_args += ["-ss", f"{float(start):.3f}"]
+                if end is not None:
+                    trim_args += ["-to", f"{float(end):.3f}"]
             try:
                 if has_sub:
-                    cmd = [ff, "-y", "-i", raw, "-i", png,
+                    cmd = [ff, "-y", *trim_args, "-i", raw, "-i", png,
                            "-filter_complex", f"[0:v]{scale_pad}[bg];[bg][1:v]overlay=0:0",
-                           "-r", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", seg]
+                           "-r", str(OUT_FPS), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", seg]
                 else:
-                    cmd = [ff, "-y", "-i", raw, "-vf", scale_pad,
-                           "-r", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", seg]
+                    cmd = [ff, "-y", *trim_args, "-i", raw, "-vf", scale_pad,
+                           "-r", str(OUT_FPS), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", seg]
                 subprocess.run(cmd, check=True, timeout=180, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 seg_files.append(seg)
                 seg_dur = _probe_duration(seg) or 5.0
@@ -841,7 +882,7 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
         bgm_label = None
         if has_bgm:
             cmd += ["-stream_loop", "-1", "-i", bgm_wav]
-            filters.append(f"[{idx}:a]volume=0.16[bgm]")
+            filters.append(f"[{idx}:a]volume={max(0.0, min(float(bgm_volume), 1.0)):.2f}[bgm]")
             bgm_label = "[bgm]"
             idx += 1
 

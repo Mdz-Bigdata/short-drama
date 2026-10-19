@@ -7,6 +7,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.schema.drama import DEFAULT_EPISODE_COUNT, EPISODE_COUNT_MAX, EPISODE_COUNT_MIN
+
 
 class AgentRole(str, Enum):
     EXECUTIVE_DIRECTOR = "executive_director"
@@ -42,7 +44,7 @@ class CouncilCompileRequest(BaseModel):
         "douyin", "kuaishou", "wechat_channels", "bilibili", "tiktok", "reelshort", "other"
     ] = "douyin"
     format: Literal["live_action", "animation", "motion_comic", "hybrid"] = "live_action"
-    episode_count: Annotated[int, Field(ge=1, le=150)] = 3
+    episode_count: Annotated[int, Field(ge=EPISODE_COUNT_MIN, le=EPISODE_COUNT_MAX)] = DEFAULT_EPISODE_COUNT
     episode_duration_seconds: Annotated[int, Field(ge=15, le=900)] = 90
     output_language: Annotated[str, Field(min_length=2, max_length=40)] = "zh-CN"
     visual_style: Annotated[str, Field(min_length=1, max_length=2000)] = "写实电影感"

@@ -227,6 +227,51 @@ export const POSE_PRESETS: PosePreset[] = [
       'leftShoulder.pitch': -10, 'leftShoulder.spread': -8, 'leftElbow.bend': 16, 'leftHand.pitch': -8,
     },
   },
+  // Five more from the product write-ups' own examples (万兴剧厂 / LUMI AI), written for this desk.
+  {
+    // 反派卧倒在地：俯卧，脸侧向一边，手臂收在身侧。
+    id: 'lie', label: '卧倒',
+    joints: {
+      'body.pitch': 88, 'head.pitch': -20, 'head.yaw': 35, 'leftShoulder.pitch': -20, 'rightShoulder.pitch': 60, 'rightShoulder.spread': 30,
+      'rightElbow.bend': 90, 'leftElbow.bend': 20, 'leftHip.pitch': -6, 'rightHip.pitch': 8, 'rightKnee.bend': 24,
+    },
+  },
+  {
+    // 背手站立：双手交叠在身后，胸口打开。
+    id: 'hands-behind', label: '背手站立',
+    joints: {
+      'torso.pitch': -4, 'leftShoulder.pitch': -40, 'leftShoulder.spread': -10, 'leftShoulder.twist': 30, 'leftElbow.bend': 50, 'leftHand.pitch': 10,
+      'rightShoulder.pitch': -40, 'rightShoulder.spread': 10, 'rightShoulder.twist': -30, 'rightElbow.bend': 50, 'rightHand.pitch': 10,
+    },
+  },
+  {
+    // 侧身回头：身体留在原方向，上身和头转向身后。
+    id: 'look-back', label: '侧身回头',
+    joints: {
+      'torso.yaw': 35, 'head.yaw': 50, 'head.pitch': -4, 'leftShoulder.pitch': 6, 'rightShoulder.pitch': -8, 'leftElbow.bend': 14, 'rightElbow.bend': 10,
+      'leftHip.spread': -8, 'rightHip.spread': 6, 'rightKnee.bend': 6,
+    },
+  },
+  {
+    // 抬手指向远处：右臂平伸，食指伸直，视线顺着手臂。
+    id: 'point-ahead', label: '抬手指向',
+    joints: {
+      'torso.yaw': -8, 'head.yaw': -6, 'rightShoulder.pitch': 88, 'rightShoulder.spread': 6, 'rightElbow.bend': 6, 'rightHand.pitch': -8,
+      'leftShoulder.pitch': -6, 'leftShoulder.spread': -6, 'leftElbow.bend': 14,
+      'rightHand.thumb.curl': 60, 'rightHand.middle.curl': 95, 'rightHand.ring.curl': 95, 'rightHand.pinky.curl': 95,
+    },
+  },
+  {
+    // 出拳：左脚在前的弓步，右拳打出，左拳护在颌下。
+    id: 'punch', label: '出拳',
+    joints: {
+      'body.yaw': -22, 'body.pitch': -6, 'torso.yaw': -18, 'head.yaw': 16, 'rightShoulder.pitch': 92, 'rightShoulder.spread': 4, 'rightShoulder.twist': -20,
+      'rightElbow.bend': 8, 'rightHand.pitch': -4, 'leftShoulder.pitch': 50, 'leftShoulder.spread': -14, 'leftShoulder.twist': 30, 'leftElbow.bend': 120,
+      'leftHip.pitch': 30, 'leftHip.spread': -16, 'leftKnee.bend': 36, 'rightHip.pitch': -18, 'rightHip.spread': 20, 'rightKnee.bend': 14, 'rightFoot.roll': 8,
+      'rightHand.thumb.curl': 60, 'rightHand.index.curl': 95, 'rightHand.middle.curl': 95, 'rightHand.ring.curl': 95, 'rightHand.pinky.curl': 95,
+      'leftHand.thumb.curl': 60, 'leftHand.index.curl': 95, 'leftHand.middle.curl': 95, 'leftHand.ring.curl': 95, 'leftHand.pinky.curl': 95,
+    },
+  },
 ];
 
 export function presetById(id: string | undefined | null): PosePreset | undefined {

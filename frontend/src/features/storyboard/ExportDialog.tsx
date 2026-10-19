@@ -3,6 +3,7 @@ import { ClipboardCopy, Download, Loader2, X } from 'lucide-react';
 
 import { apiRequest } from '../../api/client';
 import './ExportDialog.css';
+import { t } from '../../i18n';
 
 /** 单条提示词时长：模型一次拿得住的内容量，不是简单改秒数。 */
 const PACKAGE_SECONDS = [10, 15, 20, 30] as const;
@@ -93,17 +94,17 @@ export function ExportDialog({ taskId, sceneId, kind, onClose }: ExportDialogPro
   };
 
   return (
-    <div className="export-dialog" role="dialog" aria-label={kind === 'packages' ? '提示词分包' : '资产设定图'} aria-modal="true">
+    <div className="export-dialog" role="dialog" aria-label={kind === 'packages' ? t('提示词分包') : t('资产设定图')} aria-modal="true">
       <div className="export-dialog__panel">
         <header className="export-dialog__head">
-          <h2>{kind === 'packages' ? '提示词分包' : '资产设定图'}</h2>
-          <button type="button" onClick={onClose} aria-label="关闭"><X aria-hidden="true" /></button>
+          <h2>{kind === 'packages' ? t('提示词分包') : t('资产设定图')}</h2>
+          <button type="button" onClick={onClose} aria-label={t('关闭')}><X aria-hidden="true" /></button>
         </header>
 
         {kind === 'packages' && (
           <div className="export-dialog__controls">
             <label>
-              单条时长
+              {t('单条时长')}
               <select
                 value={packageSeconds}
                 onChange={event => { setBusy(true); setPackageSeconds(Number(event.target.value)); }}
@@ -112,7 +113,7 @@ export function ExportDialog({ taskId, sceneId, kind, onClose }: ExportDialogPro
               </select>
             </label>
             <label>
-              形态
+              {t('形态')}
               <select
                 value={variant}
                 onChange={event => { setBusy(true); setVariant(event.target.value as Variant); }}
@@ -121,7 +122,7 @@ export function ExportDialog({ taskId, sceneId, kind, onClose }: ExportDialogPro
               </select>
             </label>
             <label>
-              语速档
+              {t('语速档')}
               <select
                 value={delivery}
                 onChange={event => { setBusy(true); setDelivery(event.target.value); }}
@@ -140,14 +141,14 @@ export function ExportDialog({ taskId, sceneId, kind, onClose }: ExportDialogPro
           </ul>
         )}
 
-        <pre className="export-dialog__text">{busy ? '正在编译…' : text}</pre>
+        <pre className="export-dialog__text">{busy ? t('正在编译…') : text}</pre>
 
         <footer className="export-dialog__foot">
           <button type="button" onClick={copy} disabled={!text || busy}>
-            <ClipboardCopy aria-hidden="true" /> {copied ? '已复制' : '复制全文'}
+            <ClipboardCopy aria-hidden="true" /> {copied ? t('已复制') : t('复制全文')}
           </button>
           <button type="button" onClick={download} disabled={!text || busy}>
-            <Download aria-hidden="true" /> 下载 Markdown
+            <Download aria-hidden="true" /> {t('下载 Markdown')}
           </button>
           {busy && <Loader2 className="export-dialog__spin" aria-hidden="true" />}
         </footer>

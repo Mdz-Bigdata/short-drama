@@ -20,9 +20,49 @@ export interface TaskConfig {
   videoModel: string;
   ttsModel: string;
   videoReferenceMode: VideoReferenceMode;
+  /** 旁白交付：合成旁白配音，或留给后期配音（旁白不进入视频提示词）。 */
+  narrationDelivery?: NarrationDelivery;
+  /** 创作类型 (backend app/core/creation_modes.py)。 */
+  creationMode?: CreationMode;
+  /** 广告短片的产品简报；其它类型忽略。 */
+  adBrief?: AdBrief;
+  /** 剧本内容语言：标题、钩子、台词、旁白、正文与画面描述用它来写 (backend content_language)。 */
+  contentLanguage?: ContentLanguage;
   oneClick: boolean;
   episodeCount: number;
 }
+
+export type NarrationDelivery = 'use_tts' | 'post_production';
+
+export type CreationMode = 'drama' | 'narration' | 'ad';
+
+export interface AdBrief {
+  product: string;
+  sellingPoints: string;
+  audience: string;
+  callToAction: string;
+}
+
+export const EMPTY_AD_BRIEF: AdBrief = { product: '', sellingPoints: '', audience: '', callToAction: '' };
+
+export type ContentLanguage = 'zh' | 'en' | 'vi';
+
+export const CONTENT_LANGUAGE_OPTIONS: Array<{ id: ContentLanguage; label: string }> = [
+  { id: 'zh', label: '中文' },
+  { id: 'en', label: 'English' },
+  { id: 'vi', label: 'Tiếng Việt' },
+];
+
+export const CREATION_MODE_OPTIONS: Array<{ id: CreationMode; label: string; hint: string }> = [
+  { id: 'drama', label: '剧情短剧', hint: '角色在画面里说话，按集推进剧情' },
+  { id: 'narration', label: '旁白解说', hint: '旁白讲述故事，角色只表演不开口' },
+  { id: 'ad', label: '广告短片', hint: '按产品简报做 15–60 秒短片：开场抓人、产品清楚、结尾行动号召' },
+];
+
+export const NARRATION_DELIVERY_OPTIONS: Array<{ id: NarrationDelivery; label: string; hint: string }> = [
+  { id: 'use_tts', label: '合成旁白配音', hint: '旁白与台词一起生成人声' },
+  { id: 'post_production', label: '旁白留给后期', hint: '只合成角色台词，旁白由后期配音' },
+];
 
 export interface StageProgressCall {
   name: string;

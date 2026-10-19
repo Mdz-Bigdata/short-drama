@@ -10,6 +10,10 @@ from app.core.model_configuration import (
     provider_label,
     provider_options,
 )
+from app.core.credential_pool import credential_pool
+from app.core.market import Market
+from app.core.providers import comfyui
+from app.core.providers.declarative_video import PLACEHOLDERS, VideoEndpointSpec, declared_video_endpoints
 from app.core.providers.elevenlabs_capabilities import elevenlabs_capability_catalog
 from app.platform.dependencies import (
     get_model_discovery_client,
@@ -20,9 +24,12 @@ from app.platform.runtime_models import hydrate_runtime_model_registry
 from app.platform.store import PlatformStore
 from app.schema.platform import (
     CapabilityToggleRequest,
+    ModelCredentialCreateRequest,
+    ModelCredentialUpdateRequest,
     ModelDiscoveryRequest,
     ModelSaveRequest,
     ModelTestRequest,
+    VideoEndpointSaveRequest,
 )
 
 
@@ -44,7 +51,38 @@ def _entry(item) -> dict:
     }
 
 
-def _configuration(item) -> dict:
+def _credential(item, configuration_id: str) -> dict:
+    return {
+        "id": item.id,
+        "label": item.label or f"****{item.api_key_hint}",
+        "key_hint": f"****{item.api_key_hint}",
+        "buckets": list(item.buckets or []),
+        "enabled": item.enabled,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        **credential_pool.status(configuration_id, item.id),
+    }
+
+
+def _video_endpoint(raw: dict) -> dict:
+    spec = raw.get("spec") or {}
+    return {
+        "family": spec.get("family"), "label": spec.get("label"), "base_url": spec.get("base_url"),
+        "model_ids": list(spec.get("model_ids") or []), "modes": list(spec.get("modes") or []),
+        "has_api_key": bool(raw.get("api_key_ciphertext")), "key_hint": f"****{raw.get('api_key_hint')}" if raw.get("api_key_hint") else "",
+        "enabled": raw.get("enabled", True), "ready": declared_video_endpoints.ready(str(spec.get("family") or "")), "spec": spec,
+    }
+
+
+async def _settings_view(store: PlatformStore) -> dict:
+    endpoints = (await store.get_setting("video_endpoints")).get("items") or []
+    return {
+        "video_endpoints": [_video_endpoint(raw) for raw in endpoints if isinstance(raw, dict)],
+        "video_endpoint_placeholders": list(PLACEHOLDERS),
+        "comfyui": comfyui.status(),
+    }
+
+
+def _configuration(item, credentials: list | None = None) -> dict:
     response = {
         "id": item.id,
         "category": item.category,
@@ -56,6 +94,7 @@ def _configuration(item) -> dict:
         "enabled": item.enabled,
         "models": [_entry(model) for model in item.models],
         "updated_at": item.updated_at,
+        "credentials": [_credential(credential, item.id) for credential in (credentials or [])],
     }
     response["service_capabilities"] = (
         elevenlabs_capability_catalog() if item.provider == "elevenlabs" else []
@@ -143,7 +182,7 @@ async def _discover(
 
 @router.get("/providers")
 async def list_model_providers(_: dict = Depends(get_current_user)):
-    return {"items": provider_options()}
+    return {"items": provider_options(), "self_hosted": [comfyui.status()]}
 
 
 @router.get("")
@@ -153,11 +192,127 @@ async def list_model_configurations(
 ):
     items = await store.list_model_configurations()
     summary, global_status = _global_status(items)
+    credentials: dict[str, list] = {}
+    for credential in await store.list_model_credentials():
+        credentials.setdefault(credential.configuration_id, []).append(credential)
     return {
-        "items": [_configuration(item) for item in items],
+        "items": [_configuration(item, credentials.get(item.id)) for item in items],
         "summary": summary,
         "global_status": global_status,
+        "settings": await _settings_view(store),
     }
+
+
+# ---------------------------------------------------------------- global settings: declared video endpoints
+
+
+@router.put("/settings/video-endpoints/{family}")
+async def save_video_endpoint(
+    family: str,
+    request: VideoEndpointSaveRequest,
+    admin: dict = Depends(require_admin),
+    store: PlatformStore = Depends(get_platform_store),
+    cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
+):
+    """Declare (or update) one video provider in data; the key is kept encrypted like any other."""
+    try:
+        spec = VideoEndpointSpec.model_validate({**request.spec, "family": family})
+        spec.check()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    current = (await store.get_setting("video_endpoints")).get("items") or []
+    existing = next((raw for raw in current if isinstance(raw, dict) and (raw.get("spec") or {}).get("family") == family), None)
+    key = request.api_key.get_secret_value().strip() if request.api_key else ""
+    if not key and not (existing or {}).get("api_key_ciphertext"):
+        raise HTTPException(status_code=422, detail="首次声明端点时必须提供 API Key")
+    entry = {
+        "spec": spec.model_dump(mode="json"),
+        "enabled": request.enabled,
+        "api_key_ciphertext": cipher.encrypt(key) if key else existing["api_key_ciphertext"],
+        "api_key_hint": key[-4:] if key else existing.get("api_key_hint", ""),
+    }
+    items = [raw for raw in current if isinstance(raw, dict) and (raw.get("spec") or {}).get("family") != family] + [entry]
+    await store.put_setting("video_endpoints", {"items": items}, actor_id=admin["user_id"])
+    await hydrate_runtime_model_registry(store, cipher)
+    return _video_endpoint(entry)
+
+
+@router.delete("/settings/video-endpoints/{family}")
+async def delete_video_endpoint(
+    family: str,
+    admin: dict = Depends(require_admin),
+    store: PlatformStore = Depends(get_platform_store),
+    cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
+):
+    current = (await store.get_setting("video_endpoints")).get("items") or []
+    items = [raw for raw in current if isinstance(raw, dict) and (raw.get("spec") or {}).get("family") != family]
+    if len(items) == len(current):
+        raise HTTPException(status_code=404, detail="没有这个声明式端点")
+    await store.put_setting("video_endpoints", {"items": items}, actor_id=admin["user_id"])
+    # Uninstalling a market entry is deleting its endpoint: the install record goes with it.
+    await Market(store).forget_install(family, actor_id=admin["user_id"])
+    await hydrate_runtime_model_registry(store, cipher)
+    return {"family": family, "deleted": True}
+
+
+# ---------------------------------------------------------------- extra credentials per configuration
+
+
+@router.post("/{configuration_id}/credentials")
+async def add_model_credential(
+    configuration_id: str,
+    request: ModelCredentialCreateRequest,
+    admin: dict = Depends(require_admin),
+    store: PlatformStore = Depends(get_platform_store),
+    cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
+):
+    key = request.api_key.get_secret_value().strip()
+    if len(key) < 6:
+        raise HTTPException(status_code=422, detail="API Key 太短")
+    try:
+        credential = await store.add_model_credential(
+            configuration_id, actor_id=admin["user_id"], label=request.label.strip(),
+            api_key_ciphertext=cipher.encrypt(key), api_key_hint=key[-4:], buckets=request.buckets,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await hydrate_runtime_model_registry(store, cipher)
+    return _credential(credential, configuration_id)
+
+
+@router.patch("/{configuration_id}/credentials/{credential_id}")
+async def update_model_credential(
+    configuration_id: str,
+    credential_id: str,
+    request: ModelCredentialUpdateRequest,
+    admin: dict = Depends(require_admin),
+    store: PlatformStore = Depends(get_platform_store),
+    cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
+):
+    try:
+        credential = await store.update_model_credential(
+            configuration_id, credential_id, actor_id=admin["user_id"], enabled=request.enabled, buckets=request.buckets,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await hydrate_runtime_model_registry(store, cipher)
+    return _credential(credential, configuration_id)
+
+
+@router.delete("/{configuration_id}/credentials/{credential_id}")
+async def delete_model_credential(
+    configuration_id: str,
+    credential_id: str,
+    admin: dict = Depends(require_admin),
+    store: PlatformStore = Depends(get_platform_store),
+    cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
+):
+    try:
+        result = await store.delete_model_credential(configuration_id, credential_id, actor_id=admin["user_id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await hydrate_runtime_model_registry(store, cipher)
+    return result
 
 
 @router.post("/discover")

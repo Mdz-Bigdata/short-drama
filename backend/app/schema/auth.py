@@ -3,6 +3,8 @@ import re
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
+from app import settings
+
 EMAIL_REGEX = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
 
 class RegisterRequest(BaseModel):
@@ -11,7 +13,12 @@ class RegisterRequest(BaseModel):
     """
     email: Optional[str] = Field(None, description="注册绑定的邮箱")
     phone: Optional[str] = Field(None, description="注册绑定的手机号")
-    password: str = Field(..., min_length=10, max_length=256, description="密码，最少 10 位字符")
+    password: str = Field(
+        ...,
+        min_length=settings.PASSWORD_MIN_LENGTH,
+        max_length=settings.PASSWORD_MAX_LENGTH,
+        description=f"密码，最少 {settings.PASSWORD_MIN_LENGTH} 位字符",
+    )
 
     @field_validator("email")
     @classmethod

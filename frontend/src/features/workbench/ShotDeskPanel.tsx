@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Clapperboard, Undo2 } from 'lucide-react';
 
 import { isApplied, listCaptures, unapplyCapture, type DeskCapture, type DeskCaptureList } from '../directorDesk/directorDeskApi';
+import { t } from '../../i18n';
 
 interface Props {
   taskId: string;
@@ -57,7 +58,7 @@ export function ShotDeskPanel({ taskId, sceneId, shotId, reloadToken, onOpenDesk
     setBusy(true);
     setNotice('');
     void unapplyCapture(taskId, sceneId, capture.id)
-      .then(next => { setList(next); setNotice(`已从第 ${shotId} 镜取消应用。`); })
+      .then(next => { setList(next); setNotice(t('已从第 {0} 镜取消应用。', [shotId])); })
       .catch(error => setNotice(messageOf(error, '取消应用失败。')))
       .finally(() => setBusy(false));
   };
@@ -65,13 +66,13 @@ export function ShotDeskPanel({ taskId, sceneId, shotId, reloadToken, onOpenDesk
   return (
     <section className="shot-workspace__desk" aria-label={`镜头 ${shotId} 的 3D 导演台参考`}>
       <div className="shot-workspace__desk-head">
-        <strong><Clapperboard size={13} aria-hidden="true" /> 3D 导演台</strong>
+        <strong><Clapperboard size={13} aria-hidden="true" /> {t('3D 导演台')}</strong>
         <button type="button" className="secondary-action" onClick={onOpenDesk} aria-haspopup="dialog">
           打开第 {shotId} 镜的 3D 导演台
         </button>
       </div>
       {applied.length === 0 ? (
-        <p className="shot-workspace__hint">本镜还没有导演台参考。打开导演台摆好站位与机位，截一张静帧或导出一段白模视频，再「应用至分镜」。</p>
+        <p className="shot-workspace__hint">{t('本镜还没有导演台参考。打开导演台摆好站位与机位，截一张静帧或导出一段白模视频，再「应用至分镜」。')}</p>
       ) : (
         <ul className="shot-workspace__desk-list">
           {applied.map(capture => (
@@ -85,12 +86,12 @@ export function ShotDeskPanel({ taskId, sceneId, shotId, reloadToken, onOpenDesk
                 <strong>{capture.kind === 'clip' ? `白模视频 · ${capture.durationS} 秒 · ${capture.fps} fps` : '导演台静帧'}</strong>
                 <small>第 {capture.planRevision} 版 · {capture.width}×{capture.height}</small>
                 <span className="shot-workspace__desk-badges">
-                  {capture.stale && <em className="is-stale" title="截取之后站位已修改，第 5 阶段不会使用它">过期</em>}
-                  {capture.showsLimbs && <em>带四肢</em>}
+                  {capture.stale && <em className="is-stale" title={t('截取之后站位已修改，第 5 阶段不会使用它')}>{t('过期')}</em>}
+                  {capture.showsLimbs && <em>{t('带四肢')}</em>}
                 </span>
               </span>
               <button type="button" className="secondary-action" disabled={busy} onClick={() => remove(capture)}>
-                <Undo2 size={13} aria-hidden="true" /> 取消应用
+                <Undo2 size={13} aria-hidden="true" /> {t('取消应用')}
               </button>
             </li>
           ))}

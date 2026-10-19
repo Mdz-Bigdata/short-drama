@@ -11,10 +11,11 @@ import {
 import { createPortal } from 'react-dom';
 
 import './AssetImageViewer.css';
+import { t } from '../../i18n';
 
 
 export interface AssetImageViewerAsset {
-  kind: 'actor' | 'scene' | 'prop' | 'costume' | 'effect';
+  kind: 'actor' | 'scene' | 'prop' | 'costume' | 'effect' | 'product';
   name: string;
   description: string;
   imageUrl: string;
@@ -27,6 +28,7 @@ const viewerKindLabels: Record<AssetImageViewerAsset['kind'], string> = {
   prop: '拍摄道具',
   costume: '服装',
   effect: '特效',
+  product: '商品',
 };
 
 interface Props {
@@ -164,7 +166,7 @@ export default function AssetImageViewer({ asset, onClose }: Props) {
             <h2 id={titleId}>{asset.name} · {kindLabel}全景细节</h2>
             <p id={descriptionId}>{asset.description}</p>
           </div>
-          <button ref={closeButtonRef} type="button" aria-label="关闭全景查看器" onClick={onClose}>
+          <button ref={closeButtonRef} type="button" aria-label={t('关闭全景查看器')} onClick={onClose}>
             <X aria-hidden="true" />
           </button>
         </header>
@@ -195,18 +197,18 @@ export default function AssetImageViewer({ asset, onClose }: Props) {
 
         <footer className="asset-image-viewer__controls">
           <div>
-            <button type="button" aria-label="缩小" onClick={() => changeZoom(-ZOOM_STEP)} disabled={zoom <= MIN_ZOOM}>
+            <button type="button" aria-label={t('缩小')} onClick={() => changeZoom(-ZOOM_STEP)} disabled={zoom <= MIN_ZOOM}>
               <Minus aria-hidden="true" />
             </button>
-            <output role="status" aria-label="当前缩放比例" aria-live="polite">{zoom.toFixed(1)}×</output>
-            <button type="button" aria-label="放大" onClick={() => changeZoom(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM}>
+            <output role="status" aria-label={t('当前缩放比例')} aria-live="polite">{zoom.toFixed(1)}×</output>
+            <button type="button" aria-label={t('放大')} onClick={() => changeZoom(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM}>
               <Plus aria-hidden="true" />
             </button>
             <button type="button" className="asset-image-viewer__reset" onClick={resetView}>
-              <RotateCcw aria-hidden="true" /> 全景复位
+              <RotateCcw aria-hidden="true" /> {t('全景复位')}
             </button>
           </div>
-          <p>点击任意细节定位并放大；支持滚轮、键盘 + / − 缩放，按 0 复位，Esc 关闭。</p>
+          <p>{t('点击任意细节定位并放大；支持滚轮、键盘 + / − 缩放，按 0 复位，Esc 关闭。')}</p>
         </footer>
       </section>
     </div>,

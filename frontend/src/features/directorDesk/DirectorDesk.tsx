@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type
 import { createPortal } from 'react-dom';
 import {
   Camera, Columns2, Download, Eye, Keyboard, Magnet, Maximize, MousePointer2, Move3d, PersonStanding, Redo2, RefreshCw,
-  Rotate3d, Ruler, Undo2, Upload, X,
+  Rotate3d, Route, Ruler, Undo2, Upload, X,
 } from 'lucide-react';
 
 import { parseAspect } from '../spatial/floorPlanGeometry';
@@ -12,13 +12,16 @@ import { applyAll, backdropOf } from './deskOperations';
 import { refKey, type DeskLayout, type DeskTool, type DeskViewHandle, type LensFrameInfo, type LensHandle, type SelectionRef } from './deskTypes';
 import { anglePresetCamera, type AnglePresetId } from './lib/anglePresets';
 import type { ClipStage } from './lib/clipExport';
-import { cameraPathOf, stagePlanAt, timelineOf } from './lib/sampling';
+import { pathEdit, pathRefusal, pathTargetOf } from './lib/pathTool';
+import { actorPathsOf, cameraPathOf, stagePlanAt, timelineOf } from './lib/sampling';
 import { snapToGrid } from './lib/snapping';
 import { keyIndexAtFrame, retargetToKeys } from './lib/timelineEdits';
 import { CompositionGuides } from './overlays/CompositionGuides';
 import { BackdropSection } from './panels/BackdropSection';
+import { CameraComparePanel } from './panels/CameraComparePanel';
 import { CameraPanel } from './panels/CameraPanel';
 import { CapturesPanel } from './panels/CapturesPanel';
+import { ChecksPanel } from './panels/ChecksPanel';
 import { CrowdDialog, type CrowdRequest } from './panels/CrowdDialog';
 import { Inspector } from './panels/Inspector';
 import { Outliner } from './panels/Outliner';
@@ -41,11 +44,12 @@ const LAYOUTS: Array<{ id: DeskLayout; label: string; icon: typeof Eye }> = [
 const TOOLS: Array<{ id: DeskTool; label: string; key: string; icon: typeof Eye }> = [
   { id: 'select', label: '选择', key: 'v', icon: MousePointer2 }, { id: 'move', label: '移动', key: 'w', icon: Move3d },
   { id: 'rotate', label: '旋转', key: 'e', icon: Rotate3d }, { id: 'scale', label: '缩放', key: 'r', icon: Maximize },
-  { id: 'pose', label: '姿势', key: 'p', icon: PersonStanding }, { id: 'measure', label: '测量', key: 'm', icon: Ruler },
+  { id: 'pose', label: '姿势', key: 'j', icon: PersonStanding }, { id: 'measure', label: '测量', key: 'm', icon: Ruler },
+  { id: 'path', label: '路径', key: 'p', icon: Route },
 ];
 const SHORTCUTS: Array<[string, string]> = [
-  ['V', '选择'], ['W', '移动'], ['E', '旋转'], ['R', '缩放'], ['M', '测量'], ['P', '姿势'],
-  ['1 / 2 / 3', '导演 / 并排 / 机位视图'], ['空格', '播放或暂停'], ['Delete', '删除所选'],
+  ['V', '选择'], ['W', '移动'], ['E', '旋转'], ['R', '缩放'], ['M', '测量'], ['J', '姿势'], ['P', '手绘路径'],
+  ['1 / 2 / 3', '导演 / 并排 / 机位视图'], ['4', '机位对比'], ['空格', '播放或暂停'], ['Delete', '删除所选'],
   ['Ctrl / ⌘ + Z', '撤销'], ['Ctrl / ⌘ + Shift + Z', '重做'], ['Esc', '依次退出测量、选择，再关闭导演台'],
 ];
 /** A project file bigger than this is not one of ours; the same limit the spatial dialog uses. */
@@ -88,8 +92,12 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
   const [footLock, setFootLock] = useState(true);
   const [viewReady, setViewReady] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // 机位对比: the shot's lenses side by side as thumbnails, over whichever layout is up.
+  const [compareOpen, setCompareOpen] = useState(false);
   // The backdrop is a framing reference, so it is left out of what goes to generation by default.
   const [backdropInCapture, setBackdropInCapture] = useState(false);
+  // The camera view drawn as the depth picture a depth still or clip will be, so what goes out can be seen first.
+  const [depthPreview, setDepthPreview] = useState(false);
   const [transferBusy, setTransferBusy] = useState(false);
   const deskHandle = useRef<DeskViewHandle | null>(null);
   const lensHandle = useRef<LensHandle | null>(null);
@@ -118,7 +126,11 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
   const storedShot = useMemo(() => storedPlan?.shots.find(item => item.shot_id === shotId), [shotId, storedPlan]);
   const lens = plan?.cameras.find(item => item.id === (state.lensCameraId || shot?.camera_id));
   const cameraPath = useMemo(() => (storedPlan ? cameraPathOf(storedPlan, storedShot) : null), [storedPlan, storedShot]);
+  const actorPaths = useMemo(() => (storedPlan ? actorPathsOf(storedPlan, storedShot) : []), [storedPlan, storedShot]);
   const primary = selection[selection.length - 1];
+  // The path tool draws for the selected actor or the shot's filming camera; `pathNote` says why it cannot.
+  const pathTarget = useMemo(() => pathTargetOf(storedPlan ?? undefined, storedShot, primary), [primary, storedPlan, storedShot]);
+  const pathNote = pathRefusal(storedPlan ?? undefined, storedShot, primary);
   const exporting = exportFrame !== null;
 
   // Which track the selected thing is on, and whether the playhead sits on one of its keys: that decides
@@ -222,9 +234,11 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
 
   // Posing happens with the joints in view: the tool brings its panel along.
   const pickTool = useCallback((next: DeskTool) => {
+    // The toolbar button is disabled for the same reason; the shortcut says it instead.
+    if (next === 'path' && pathNote) { dispatch({ type: 'notice', message: `手绘路径：${pathNote}` }); return; }
     dispatch({ type: 'setTool', tool: next });
     if (next === 'pose') setSideTab('pose');
-  }, [dispatch]);
+  }, [dispatch, pathNote]);
 
   const togglePlay = playback.playing ? playback.pause : playback.play;
   useEffect(() => {
@@ -249,6 +263,7 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
       if (key === 'delete' || key === 'backspace') { removeSelected(); return; }
       if (key === ' ') { event.preventDefault(); togglePlay(); return; }
       if (key === '?' || (key === '/' && event.shiftKey)) { setShortcutsOpen(value => !value); return; }
+      if (key === '4') { setCompareOpen(value => !value); return; }
       const layout = LAYOUTS[['1', '2', '3'].indexOf(key)];
       if (layout) { dispatch({ type: 'setLayout', layout: layout.id }); return; }
       const wanted = TOOLS.find(item => item.key === key);
@@ -378,9 +393,11 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
                 plan={plan} basePlan={stagedBase} shot={shot} selection={selection} tool={tool} snap={state.snap}
                 hidden={state.hidden} locked={state.locked} readOnly={!canEdit} measure={state.measure} lensCameraId={lens?.id || ''}
                 poseShotOnly={poseShotOnly} footLock={footLock} cameraPath={cameraPath} playing={playback.playing}
+                actorPaths={actorPaths} pathTarget={pathTarget} pathRefusal={pathNote}
                 onSelect={select} onClearSelection={() => dispatch({ type: 'clearSelection' })}
                 onPreview={previewEdit}
                 onCommit={operations => commitEdit({ label: tool === 'pose' ? '摆姿势' : tool === 'rotate' ? '旋转' : tool === 'scale' ? '缩放' : '移动', operations })}
+                onPath={points => { if (pathTarget && storedShot) commitEdit(pathEdit(storedShot.shot_id, pathTarget, points)); }}
                 onMeasure={point => dispatch({ type: 'measure', point })}
                 onReady={onDeskReady}
               />
@@ -390,10 +407,16 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
             <Suspense fallback={loading}>
               <LensViewport
                 plan={plan} shot={shot} camera={lens} hidden={state.hidden} onReady={onLensReady}
-                frameStamp={exportFrame?.stamp} onFrameShown={onFrameShown} backdropInCapture={backdropInCapture}
+                frameStamp={exportFrame?.stamp} onFrameShown={onFrameShown} backdropInCapture={backdropInCapture} depthPreview={depthPreview}
                 overlay={<CompositionGuides deliveryAspect={parseAspect(plan.aspect_ratio)} guides={state.guides} />}
               />
             </Suspense>
+          )}
+          {compareOpen && (
+            <CameraComparePanel
+              plan={plan} shot={shot} hidden={state.hidden} revision={basePlan.revision} selection={selection} editable={canEdit}
+              onCommit={commitEdit} onSelect={select} onAddPreset={addPresetCamera} onClose={() => setCompareOpen(false)}
+            />
           )}
         </main>
         <aside className="desk-side" aria-label="属性与机位">
@@ -431,11 +454,13 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
                 taskId={taskId} sceneId={sceneId} shotId={shotId} camera={lens} cameras={storedPlan.cameras}
                 planRevision={basePlan.revision} saving={state.pending.length > 0} getLens={getLens}
                 aspect={parseAspect(storedPlan.aspect_ratio)} durationS={timeline.duration_s} fps={timeline.fps} getClipStage={getClipStage}
+                depthPreview={depthPreview} onDepthPreview={setDepthPreview}
               />
             )}
             {/* A 422 must be seen wherever the user is, not only on the tab that caused it. */}
             {sideTab !== 'inspector' && state.inspectorError && <p className="desk-inspector__error" role="alert">{state.inspectorError}</p>}
           </div>
+          <ChecksPanel taskId={taskId} sceneId={sceneId} plan={basePlan} shotId={shotId} editable={canEdit} saving={state.pending.length > 0} onCommit={commitEdit} onSelectShot={id => dispatch({ type: 'setShot', shotId: id })} />
         </aside>
       </div>
     );
@@ -463,9 +488,13 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
             </button>
           ))}
         </div>
+        <button type="button" className="desk-button desk-topbar__compare" aria-pressed={compareOpen} title="机位对比（4）" onClick={() => setCompareOpen(value => !value)}>机位对比</button>
         <div className="desk-segment" role="radiogroup" aria-label="工具">
           {TOOLS.map(item => (
-            <button key={item.id} type="button" role="radio" aria-checked={tool === item.id} title={`${item.label}（${item.key.toUpperCase()}）`} className={tool === item.id ? 'is-active' : ''} onClick={() => pickTool(item.id)}>
+            <button
+              key={item.id} type="button" role="radio" aria-checked={tool === item.id} className={tool === item.id ? 'is-active' : ''} onClick={() => pickTool(item.id)}
+              disabled={item.id === 'path' && Boolean(pathNote)} title={item.id === 'path' && pathNote ? `${item.label}（${item.key.toUpperCase()}）：${pathNote}` : `${item.label}（${item.key.toUpperCase()}）`}
+            >
               <item.icon aria-hidden="true" /> {item.label}
             </button>
           ))}

@@ -90,6 +90,14 @@ Nothing is discarded on a constraint failure:
 | Dialogue longer than the longest clip | sent back to the model to split; if retries run out the shot is kept and flagged `needs_replan` |
 | A rewritten line in `screenplay` mode | sent back with the verbatim requirement |
 | Duplicate `scene_id` | sent back |
+| An episode of one shot, or under a minute in total | sent back with the count and the total named; if retries run out the episode fails when the model wrote it, and is kept with a warning when it was extracted from an uploaded script or saved by a person |
+| An episode over six minutes in total | kept, recorded as a warning |
+
+The episode frame (two shots, 60 seconds, 360 seconds advised) is defined once in
+`app/core/episode_shape.py` and can be moved with `SCREENWRITING_EPISODE_MIN_SCENES`,
+`SCREENWRITING_EPISODE_MIN_SECONDS` and `SCREENWRITING_EPISODE_MAX_SECONDS`. The planning
+prompt states it, the legacy breakdown re-analyses an episode that falls short of it, and
+the writer dashboard lists what is wrong with any stored episode outside it.
 
 Visual-layer coverage is validated the same way: a batch that misses a shot,
 invents an id or repeats one is retried with the exact ids named. If retries run
@@ -106,6 +114,23 @@ told again only when a field it is written from changed (setting, description,
 utterances, shot order); an edit to cast or asset references keeps it. The edit goes through
 the existing `update_script` path, so the screenplay archive, downstream
 invalidation and the confirmation gate all behave as they do for a manual edit.
+
+## Episodes written side by side
+
+`ScreenwritingEngine(episode_concurrency=N)` (from `SCREENWRITING_EPISODE_CONCURRENCY`, default 3 in
+`build_engine`, 1 = the old serial loop) writes a run's episodes concurrently without changing what is stored:
+
+- every episode's shot plan is requested at once (up to N at a time), each against its own copy of the state;
+- the prose chain stays in episode order — episode N opens on episode N-1's ending — and starts as soon as the
+  first plan is in, while the visual layers of the planned episodes run beside it;
+- asset names a plan discovers are merged in episode order, and episode N's prose and visual layer see the
+  inventory as it stood after episode N, as the serial loop would have shown them;
+- results are stored in episode order; a failure in any episode fails the run, as before.
+
+The number of model calls is unchanged; the wall clock is roughly plans/N + the prose chain. With a fixed per-call
+latency, six outline episodes finish in about half the time. `tests/test_screenwriting_concurrency.py` checks that
+the parallel and serial runs store the same episodes, that each prose prompt carries the previous ending, that calls
+overlap, and that progress only moves forward.
 
 ## API
 

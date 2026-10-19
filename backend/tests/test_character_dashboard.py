@@ -189,7 +189,7 @@ class CharacterDashboardCompilerTests(unittest.TestCase):
         self.assertEqual(by_key["back"], "https://cdn.example/shen/back.png")
         # 旧整板没有单独头部裁切，正面全身兼任正脸锚点
         self.assertEqual(by_key["face_front"], by_key["front"])
-        # 旧记录没有 25 格拆分资产
+        # 旧记录没有 分格拆分资产
         self.assertEqual(character.sheet_cells, [])
 
     def test_actor_sheet_cells_are_exposed_alongside_the_identity_anchors(self):
@@ -199,11 +199,14 @@ class CharacterDashboardCompilerTests(unittest.TestCase):
             for view in IDENTITY_VIEW_ORDER
         ]
         task["assets"]["3_characters"][0]["sheet_cells"] = [
-            {"cell": cell, "image_url": f"/media/shen/{cell}.png"}
+            {"cell": cell, "image_url": f"/media/shen/{cell}.png",
+             **({"derived_from": "full_body"} if cell == "element_hem" else {})}
             for cell in ACTOR_SHEET_CELL_ORDER
         ]
 
         character = compile_character_dashboard(task).characters[0]
+        derived = {cell.key: cell.derived_from for cell in character.sheet_cells if cell.derived_from}
+        self.assertEqual(derived, {"element_hem": "full_body"})
 
         self.assertEqual(character.asset_state, "READY")
         self.assertEqual([cell.key for cell in character.sheet_cells], list(ACTOR_SHEET_CELL_ORDER))
@@ -393,7 +396,6 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
             ]
 
             with (
-                patch.object(service, "read_md_file", return_value="guide"),
                 patch.object(service.gateway, "call_llm", side_effect=llm_results),
                 patch.object(service.gateway, "resolve_authorized_face", return_value=None),
                 patch.object(service.gateway, "generate_character_sheet", side_effect=lambda model, name, *args, **kwargs: f"https://cdn.example/{name}/sheet.png"),
@@ -457,7 +459,6 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 return f"https://cdn.example/{name}/sheet.png"
 
             with (
-                patch.object(service, "read_md_file", return_value="guide"),
                 patch.object(service.gateway, "call_llm", return_value=raw),
                 patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
                 patch.object(service.gateway, "resolve_authorized_face", return_value=None),
@@ -468,12 +469,13 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
             ):
                 result = service._execute_stage_blocking(task_id, 3)
 
-            self.assertEqual(generated_names, ["沈知微", "陆行远"])
-            self.assertEqual([item["name"] for item in result["assets"]["3_characters"]], generated_names)
+            # 设定集并发生成，调用先后由线程调度决定；落库顺序才是确定的 DNA 顺序。
+            self.assertEqual(sorted(generated_names), sorted(["沈知微", "陆行远"]))
+            self.assertEqual([item["name"] for item in result["assets"]["3_characters"]], ["沈知微", "陆行远"])
             self.assertNotIn("文本假名", result["assets"]["3_sheets"])
 
     def test_stage_three_generates_every_structured_character_without_a_six_actor_default_cap(self):
-        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {}, clear=True):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"CHARACTER_HD_VIEWS": "0", "CHARACTER_DETAIL_FILL": "0"}, clear=True):
             service = DramaService()
             service.repo = TaskRepository(str(Path(temp) / "tasks.json"))
             created = service.create_task(DramaCreateRequest(
@@ -508,7 +510,6 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 return f"https://cdn.example/{name}/sheet.png"
 
             with (
-                patch.object(service, "read_md_file", return_value="guide"),
                 patch.object(service.gateway, "call_llm", return_value="角色锁定包"),
                 patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
                 patch.object(service.gateway, "resolve_authorized_face", return_value=None),
@@ -573,7 +574,6 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 return f"https://cdn.example/{name}/sheet.png"
 
             with (
-                patch.object(service, "read_md_file", return_value="guide"),
                 patch.object(service.gateway, "call_llm", return_value="角色锁定包"),
                 patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
                 patch.object(service.gateway, "resolve_authorized_face", return_value=None),
@@ -648,7 +648,6 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 return f"https://cdn.example/{name}/sheet.png"
 
             with (
-                patch.object(service, "read_md_file", return_value="guide"),
                 patch.object(service.gateway, "call_llm", return_value="角色锁定包"),
                 patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
                 patch.object(service.gateway, "resolve_authorized_face", return_value=None),
@@ -659,7 +658,8 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
             ):
                 result = service._execute_stage_blocking(task_id, 3)
 
-            self.assertEqual(generated_names, ["谢云谣", "贺兰霆"])
+            # 设定集并发生成，调用先后由线程调度决定，只核对生成了哪些人。
+            self.assertEqual(sorted(generated_names), sorted(["谢云谣", "贺兰霆"]))
             self.assertEqual(
                 result["assets"]["3_characters"][0]["sheet"],
                 "https://cdn.example/沈砚/existing.png",
@@ -708,7 +708,6 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                         live["now"] -= 1
 
             with (
-                patch.object(service, "read_md_file", return_value="guide"),
                 patch.object(service.gateway, "call_llm", return_value="角色锁定包"),
                 patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
                 patch.object(service.gateway, "resolve_authorized_face", return_value=None),
@@ -765,7 +764,6 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                         live["now"] -= 1
 
             with (
-                patch.object(service, "read_md_file", return_value="guide"),
                 patch.object(service.gateway, "call_llm", return_value="角色锁定包"),
                 patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
                 patch.object(service.gateway, "resolve_authorized_face", return_value=None),
@@ -841,7 +839,6 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                     )
 
                 with (
-                    patch.object(service, "read_md_file", return_value="guide"),
                     patch.object(service.gateway, "call_llm", return_value="## 主角：文本假名"),
                     patch.object(service, "_extract_character_dna_breakdown", return_value=dna),
                     patch.object(service.gateway, "resolve_authorized_face", return_value=None),

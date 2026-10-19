@@ -23,6 +23,10 @@ const NEW = {
   plan_revision: 3, monochrome: true, labelled: true, created_at: '2026-09-19T10:00:00Z', stale: false,
 };
 
+// The server's sentences, as the panel must show them.
+const DEPTH_WARNING = '深度画面：近亮远暗的灰度图，只约束空间层次、走位与运镜，不约束颜色与材质';
+const DEPTH_STILL_REFUSAL = '深度静帧不能作为首帧参考图应用到分镜；请导出深度视频作为运动参考，或截取普通静帧';
+
 function json(body: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }));
 }
@@ -63,17 +67,18 @@ describe('CapturesPanel', () => {
         const made = {
           id: 'cap-clip', kind: 'clip', shot_id: 2, camera_id: 'cam-02', url: 'http://localhost:8000/files/desk_clip.mp4', width: 720, height: 1280,
           duration_s: Number(form.get('duration_s')), fps: Number(form.get('fps')), plan_revision: 3, shows_limbs: form.get('shows_limbs') === 'true',
-          monochrome: form.get('monochrome') === 'true', labelled: false, created_at: '2026-09-20T11:00:00Z', stale: false,
-          warning: form.get('shows_limbs') === 'true' ? '白模带四肢：请在动作描述里写清分段肢体动作，否则四肢容易僵化' : '',
+          monochrome: form.get('monochrome') === 'true', labelled: false, depth: form.get('depth') === 'true', created_at: '2026-09-20T11:00:00Z', stale: false,
+          warning: form.get('depth') === 'true' ? DEPTH_WARNING : form.get('shows_limbs') === 'true' ? '白模带四肢：请在动作描述里写清分段肢体动作，否则四肢容易僵化' : '',
         };
         state.captures = [...state.captures, made];
         return json(made);
       }
       if (method === 'POST' && url.endsWith('/captures')) {
         const limbs = (init?.body as FormData).get('shows_limbs') === 'true';
+        const depth = (init?.body as FormData).get('depth') === 'true';
         const made = {
-          ...NEW, id: 'cap-made', created_at: '2026-09-20T10:00:00Z', monochrome: false, labelled: false, shows_limbs: limbs,
-          warning: limbs ? '白模带四肢：请在动作描述里写清分段肢体动作，否则四肢容易僵化' : '',
+          ...NEW, id: 'cap-made', created_at: '2026-09-20T10:00:00Z', monochrome: false, labelled: false, shows_limbs: limbs, depth,
+          warning: depth ? DEPTH_WARNING : limbs ? '白模带四肢：请在动作描述里写清分段肢体动作，否则四肢容易僵化' : '',
         };
         state.captures = [...state.captures, made];
         return json(made);
@@ -121,13 +126,13 @@ describe('CapturesPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: /截取第 2 镜画面/ }));
 
     expect(await screen.findByText('已截图并保存到截图库。')).toBeTruthy();
-    expect(capture).toHaveBeenCalledWith({ monochrome: true, labels: true });
+    expect(capture).toHaveBeenCalledWith({ monochrome: true, labels: true, depth: false });
     const upload = calls().find(call => call.method === 'POST' && call.url.endsWith(BASE));
     const form = upload?.body as FormData;
     expect(form).toBeInstanceOf(FormData);
     expect(Object.fromEntries([...form.entries()].filter(([key]) => key !== 'file'))).toEqual({
       kind: 'still', shot_id: '2', camera_id: 'cam-02', width: '1080', height: '1920', plan_revision: '3',
-      shows_limbs: 'false', monochrome: 'true', labelled: 'true',
+      shows_limbs: 'false', monochrome: 'true', labelled: 'true', depth: 'false',
     });
     expect(form.get('file')).toBeInstanceOf(Blob);
     expect(await screen.findAllByRole('listitem')).toHaveLength(3);
@@ -276,5 +281,60 @@ describe('CapturesPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: /导出第 2 镜白模视频/ }));
     expect((await screen.findByRole('status')).textContent).toContain('0 到 30 秒');
     expect(calls().some(call => call.method === 'POST')).toBe(false);
+  });
+
+  it('takes a depth still: the lens renders depth, the upload says so, and the result cannot be applied', async () => {
+    render(panel());
+    await screen.findAllByRole('listitem');
+    await userEvent.click(screen.getByLabelText('深度画面'));
+    await userEvent.click(screen.getByRole('button', { name: /截取第 2 镜画面/ }));
+
+    expect((await screen.findByRole('status')).textContent).toContain('深度静帧不能应用为首帧');
+    expect(capture).toHaveBeenCalledWith({ monochrome: false, labels: false, depth: true });
+    const form = calls().find(call => call.method === 'POST' && call.url.endsWith(BASE))?.body as FormData;
+    expect(form.get('depth')).toBe('true');
+
+    const item = screen.getByText('深度').closest('li') as HTMLElement;
+    const apply = within(item).getByRole('button', { name: /应用至分镜/ });
+    expect(apply).toHaveProperty('disabled', true);
+    expect(apply.getAttribute('title')).toBe(DEPTH_STILL_REFUSAL);
+    expect(within(item).getByRole('note').textContent).toBe(DEPTH_WARNING);
+  });
+
+  it('exports a depth clip with the same checkbox, and that one applies', async () => {
+    render(panel());
+    await screen.findAllByRole('listitem');
+    await userEvent.click(screen.getByLabelText('深度画面'));
+    await userEvent.click(screen.getByRole('button', { name: /导出第 2 镜白模视频/ }));
+
+    const item = (await screen.findByText(/白模视频 · 4 秒 · 24 fps/)).closest('li') as HTMLElement;
+    expect(clipExport.exportClip.mock.calls[0][0]).toMatchObject({ depth: true });
+    const form = calls().find(call => call.method === 'POST' && call.url.endsWith(BASE))?.body as FormData;
+    expect(form.get('depth')).toBe('true');
+    expect(within(item).getByText('深度')).toBeTruthy();
+    expect(within(item).getByRole('note').textContent).toBe(DEPTH_WARNING);
+
+    const apply = within(item).getByRole('button', { name: /应用至分镜/ });
+    expect(apply).toHaveProperty('disabled', false);
+    expect(apply.getAttribute('title')).toContain('深度视频');
+    await userEvent.click(apply);
+    expect(await within(item).findByText('已应用')).toBeTruthy();
+  });
+
+  it('shows the depth badge and refusal on a stored depth still, and drives the live depth preview', async () => {
+    state.captures = [{ ...NEW, id: 'cap-depth', depth: true, warning: DEPTH_WARNING }];
+    const onDepthPreview = vi.fn();
+    const { rerender } = render(panel({ onDepthPreview }));
+    const [item] = await screen.findAllByRole('listitem');
+    expect(within(item).getByText('深度')).toBeTruthy();
+    expect(within(item).getByRole('button', { name: /应用至分镜/ })).toHaveProperty('disabled', true);
+    expect(within(item).getByRole('button', { name: /应用至分镜/ }).getAttribute('title')).toBe(DEPTH_STILL_REFUSAL);
+
+    const preview = screen.getByLabelText('深度预览') as HTMLInputElement;
+    expect(preview.checked).toBe(false);
+    await userEvent.click(preview);
+    expect(onDepthPreview).toHaveBeenCalledWith(true);
+    rerender(panel({ onDepthPreview, depthPreview: true }));
+    expect((screen.getByLabelText('深度预览') as HTMLInputElement).checked).toBe(true);
   });
 });

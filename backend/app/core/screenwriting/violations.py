@@ -15,7 +15,9 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from app.core.episode_shape import EpisodeShape
 from app.core.screenwriting.prose import spoken_verbatim_in
+from app.core.screenwriting.speech import speech_problems
 from app.core.screenwriting.speech_rate import estimate_spoken_seconds
 
 SCENE_ID_PATTERN = re.compile(r"^E(\d+)S(\d{2,})(?:_(\d+))?$")
@@ -66,6 +68,34 @@ class PlanCheckContext:
     source_kind: str = "outline"
     language: str | None = None
     speech_rate_override: float | None = None
+    # The least an episode may be; ``None`` checks the shots only (a partial plan, not a whole episode).
+    episode_shape: EpisodeShape | None = None
+
+
+# Whole-episode problems: too few shots or too little film. The model is sent back
+# to fix them; a person editing a plan is warned instead of refused.
+EPISODE_SHAPE_CODES = frozenset({"episode_too_few_scenes", "episode_too_short"})
+TOO_FEW_SPOKEN_SHOTS = "too_few_spoken_shots"
+
+
+def spoken_shot_problem(scenes, spoken_shot_ratio: float) -> str | None:
+    """Why an episode is too quiet, or ``None``: fewer than ``spoken_shot_ratio`` of its shots carry speech."""
+    ratio = max(0.0, min(1.0, float(spoken_shot_ratio or 0)))
+    shots = [scene for scene in scenes if isinstance(scene, dict)]
+    if ratio <= 0 or not shots:
+        return None
+    spoken = [
+        scene for scene in shots
+        if any(isinstance(item, dict) and str(item.get("text") or "").strip() for item in (scene.get("utterances") or []))
+    ]
+    needed = int(-(-len(shots) * ratio // 1))  # ceil
+    if len(spoken) >= needed:
+        return None
+    silent = [str(scene.get("scene_id") or "") for scene in shots if scene not in spoken]
+    return (
+        f"台词太少：{len(shots)} 个分镜只有 {len(spoken)} 个有口播，至少要 {needed} 个（{int(round(ratio * 100))}%）。"
+        f"给这些分镜补上人物对白（有来有回的短台词），只有空镜 / 转场可以不说话：{', '.join(silent[:12])}"
+    )
 
 
 @dataclass
@@ -182,6 +212,9 @@ def check_script_plan(scenes: list[dict[str, Any]], ctx: PlanCheckContext, *, re
                     DraftViolation("utterance_not_verbatim", f"台词「{text[:24]}…」在原文中找不到，成品剧本的台词必须逐字保留", label, scene_id=raw_id)
                 )
         scene["characters_in_scene"] = cast
+        # One voice per shot: dialogue on screen or narration over it, never both in one clip.
+        for code, message in speech_problems(scene):
+            result.errors.append(DraftViolation(code, message, label, scene_id=raw_id))
         for name in cast:
             if known_characters and name not in known_characters and name not in result.unknown_characters:
                 result.unknown_characters.append(name)
@@ -229,6 +262,13 @@ def check_script_plan(scenes: list[dict[str, Any]], ctx: PlanCheckContext, *, re
                     )
                 )
 
+    if ctx.episode_shape is not None:
+        durations = [scene.get("duration_seconds") for scene in scenes if isinstance(scene, dict)]
+        total_seconds = sum(value for value in durations if isinstance(value, int) and not isinstance(value, bool))
+        for issue in ctx.episode_shape.issues(len(durations), total_seconds):
+            violation = DraftViolation(issue.code, issue.message, f"第 {ctx.episode} 集", issue.severity)
+            (result.errors if issue.severity == "error" else result.warnings).append(violation)
+
     return result
 
 
@@ -240,7 +280,7 @@ def mark_replan_flags(scenes: list[dict[str, Any]], ctx: PlanCheckContext) -> li
         if not isinstance(scene, dict):
             continue
         spoken = spoken_seconds_of(scene, language=ctx.language, override=ctx.speech_rate_override)
-        if spoken > supported[-1]:
+        if spoken > supported[-1] or speech_problems(scene):
             scene["needs_replan"] = True
             scene["duration_seconds"] = supported[-1]
             flagged.append(str(scene.get("scene_id")))
@@ -251,6 +291,9 @@ def mark_replan_flags(scenes: list[dict[str, Any]], ctx: PlanCheckContext) -> li
 
 __all__ = [
     "DraftViolation",
+    "EPISODE_SHAPE_CODES",
+    "TOO_FEW_SPOKEN_SHOTS",
+    "spoken_shot_problem",
     "PlanCheckContext",
     "PlanCheckResult",
     "SCENE_ID_PATTERN",

@@ -14,6 +14,157 @@ const appStylesheet = [
 ].join('\n');
 
 
+describe('App login gate administrator hint', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  function signedOutSession(extra: Record<string, unknown>) {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/session')) return {
+        ok: true,
+        status: 200,
+        json: async () => ({ authenticated: false, user: null, ...extra }),
+      } as Response;
+      throw new Error(`unexpected fetch ${url}`);
+    });
+  }
+
+  it('names the administrator the server actually bootstrapped', async () => {
+    signedOutSession({ bootstrap_admin_login: 'owner@studio.test' });
+
+    render(<App />);
+
+    expect(await screen.findByText('owner@studio.test')).toBeTruthy();
+    expect(screen.getByText(/本地默认管理员/)).toBeTruthy();
+  });
+
+  it('shows no administrator hint when the server sends none', async () => {
+    signedOutSession({ bootstrap_admin_login: null });
+
+    render(<App />);
+
+    expect(await screen.findByRole('button', { name: '立即登录' })).toBeTruthy();
+    expect(screen.queryByText(/本地默认管理员/)).toBeNull();
+  });
+});
+
+describe('App account data comes from the server', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  function signedIn(routes: Record<string, unknown>) {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/session')) return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          authenticated: true,
+          user: { user_id: 'user-1', username: 'writer', role: 'user', must_change_password: false },
+          ...(routes.session as object | undefined),
+        }),
+      } as Response;
+      const route = Object.keys(routes).find(suffix => suffix !== 'session' && url.endsWith(suffix));
+      if (route) return { ok: true, status: 200, json: async () => routes[route] } as Response;
+      if (url.endsWith('/api/drama/list') || url.endsWith('/api/drama/skills')) return {
+        ok: true, status: 200, json: async () => [],
+      } as Response;
+      throw new Error(`unexpected fetch ${url}`);
+    });
+  }
+
+  it('shows the wallet balance the billing service reports', async () => {
+    signedIn({ '/api/billing/wallet': { points: 2480, money: {}, entries: [] } });
+
+    render(<App />);
+
+    expect(await screen.findByText(/2480 积分/)).toBeTruthy();
+  });
+
+  it('shows no balance at all when the wallet cannot be read', async () => {
+    signedIn({});
+
+    render(<App />);
+
+    expect(await screen.findByRole('button', { name: /模型: / })).toBeTruthy();
+    expect(screen.queryByText(/积分/)).toBeNull();
+    expect(screen.queryByText(/Free/)).toBeNull();
+  });
+
+  it('offers the style locks the server catalogue lists, starting on its default', async () => {
+    signedIn({
+      '/api/production/style-packs': {
+        default: 'ink_wash',
+        packs: [{ id: 'film_35mm', name: '35mm 胶片电影' }, { id: 'ink_wash', name: '水墨国风' }, { name: '缺 id 的条目' }],
+      },
+    });
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: '创建新项目' }));
+
+    const select = screen.getByTitle(/全片统一的画面质感/) as HTMLSelectElement;
+    await waitFor(() => {
+      expect(within(select).getAllByRole('option').map(option => option.textContent)).toEqual(['35mm 胶片电影', '水墨国风']);
+    });
+    expect(select.value).toBe('ink_wash');
+  });
+
+  it('sends the chosen script language with a new project, defaulting to Chinese', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/session')) return {
+        ok: true, status: 200,
+        json: async () => ({ authenticated: true, user: { user_id: 'user-1', username: 'writer', role: 'user', must_change_password: false } }),
+      } as Response;
+      if (url.endsWith('/api/drama/create')) {
+        bodies.push(JSON.parse(String(init?.body)));
+        return { ok: false, status: 400, json: async () => ({ detail: '测试到此为止' }) } as Response;
+      }
+      if (url.endsWith('/api/drama/list') || url.endsWith('/api/drama/skills')) return { ok: true, status: 200, json: async () => [] } as Response;
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: '创建新项目' }));
+    const language = screen.getByLabelText('剧本语言') as HTMLSelectElement;
+    expect(language.value).toBe('zh');
+    expect(within(language).getAllByRole('option').map(option => option.textContent)).toEqual(['中文', 'English', 'Tiếng Việt']);
+
+    await user.type(screen.getByPlaceholderText(/例如：重生之我在火山方舟/), 'Sài Gòn mưa');
+    await user.selectOptions(language, 'vi');
+    await user.click(screen.getByRole('button', { name: /立即创建项目/ }));
+
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toMatchObject({ titleSuggestion: 'Sài Gòn mưa', contentLanguage: 'vi', creationMode: 'drama' });
+  });
+
+  it('applies the password length the server enforces', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/session')) return {
+        ok: true,
+        status: 200,
+        json: async () => ({ authenticated: false, user: null, client_config: { password_min_length: 14 } }),
+      } as Response;
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByText('快速注册'));
+
+    expect(screen.getByPlaceholderText('设置登录密码，不少于14位')).toBeTruthy();
+  });
+});
+
 describe('App model configuration status', () => {
   afterEach(() => {
     cleanup();

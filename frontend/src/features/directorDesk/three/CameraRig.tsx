@@ -48,7 +48,7 @@ export function CameraRig({ camera, label, active, selected, targetSelected, onP
     const distance = Math.hypot(camera.target[0] - camera.position[0], camera.target[1] - camera.position[1], camera.target[2] - camera.position[2]);
     return frustumLines(camera, open ? Math.min(Math.max(distance, 0.5), 8) : 0.7);
   }, [camera, open]);
-  const color = selected || targetSelected ? SELECTION_COLOR : active ? '#ff9f6b' : '#4a5a6a';
+  const color = selected || targetSelected ? SELECTION_COLOR : active ? '#e65100' : '#957884';
   return (
     <group>
       {lines.map((points, index) => <Line key={index} points={points} color={color} lineWidth={open ? 1.6 : 0.8} />)}

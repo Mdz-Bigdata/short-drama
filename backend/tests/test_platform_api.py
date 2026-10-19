@@ -136,7 +136,7 @@ class PlatformApiTests(unittest.TestCase):
         user_cookie = self._cookie(self.user.id)
         listed = self.client.get("/api/platform/capabilities", cookies=user_cookie)
         self.assertEqual(listed.status_code, 200)
-        self.assertEqual(listed.json()["total"], 18)
+        self.assertEqual(listed.json()["total"], 20)
         ability = listed.json()["items"][0]["abilities"][0]
         source_id = listed.json()["items"][0]["source_id"]
 
@@ -206,15 +206,24 @@ class PlatformApiTests(unittest.TestCase):
                 self.assertEqual(uploaded.status_code, 200, uploaded.text)
                 self.assertEqual(len(uploaded.json()["files"]), 1)
 
-                regenerated = self.client.post(
-                    f"/api/elements/{element_id}/regenerate",
-                    json={"prompt": "保持身份与风格，仅优化细节"},
-                    cookies=cookie,
-                )
-                self.assertEqual(regenerated.status_code, 200, regenerated.text)
+                with patch(
+                    "app.api.drama_api.service.regenerate_library_actor",
+                    side_effect=RuntimeError("测试里不出付费图"),
+                ):
+                    regenerated = self.client.post(
+                        f"/api/elements/{element_id}/regenerate",
+                        json={"prompt": "保持身份与风格，仅优化细节"},
+                        cookies=cookie,
+                    )
                 if kind == "actor":
-                    self.assertFalse(regenerated.json()["paid_submission_approved"])
+                    # 数字演员在后台重出设定集：先回 202 + 进度，出图失败只记原因、旧图保留。
+                    self.assertEqual(regenerated.status_code, 202, regenerated.text)
+                    self.assertEqual(regenerated.json()["metadata"]["regeneration"]["status"], "running")
+                    after = self.client.get(f"/api/elements/{element_id}", cookies=cookie).json()
+                    self.assertEqual(after["metadata"]["regeneration"]["status"], "failed")
+                    self.assertEqual(len(after["files"]), 1)
                 else:
+                    self.assertEqual(regenerated.status_code, 200, regenerated.text)
                     self.assertEqual(regenerated.json()["status"], "ready")
                     self.assertEqual(regenerated.json()["files"][0]["slot"], "reference")
 
@@ -258,6 +267,34 @@ class PlatformApiTests(unittest.TestCase):
         self.assertEqual(private_image.status_code, 200, private_image.text)
         self.assertEqual(private_image.content, VALID_PNG)
 
+    def test_prop_regeneration_stores_front_left_right_and_back_views(self):
+        cookie = self._cookie(self.user.id)
+        element = self.client.post(
+            "/api/elements",
+            json={"kind": "prop", "name": "青铜令牌", "description": "掌心大小，正面刻虎纹，背面刻篆字"},
+            cookies=cookie,
+        ).json()
+        image_root = Path(self.temp.name) / "generated-prop-views"
+        with (
+            patch(
+                "app.api.element_api.element_image_gateway.generate_image",
+                return_value=("https://assets.example.test/token-views.png", "seedance"),
+            ) as generate_image,
+            patch("app.api.element_api.fetch_remote_image_bytes", return_value=_prop_turnaround_png()),
+            patch("app.api.element_api.ELEMENT_MEDIA_ROOT", image_root),
+        ):
+            response = self.client.post(
+                f"/api/elements/{element['id']}/regenerate", json={"prompt": ""}, cookies=cookie,
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        slots = {item["slot"] for item in response.json()["files"]}
+        self.assertEqual(slots, {"prop_front", "prop_left_45", "prop_right_45", "prop_back", "reference"})
+        prompt = generate_image.call_args.args[1]
+        self.assertIn("2 行 × 2 列四宫格", prompt)
+        self.assertIn("右下格：背面", prompt)
+        self.assertNotIn("九宫格、接触表和重复物体", prompt)
+        self.assertEqual(generate_image.call_args.kwargs["size"], "2048x2048")
+
     def test_costume_and_effect_prompts_enforce_their_visual_asset_boundaries(self):
         cookie = self._cookie(self.user.id)
         costume = self.client.post(
@@ -271,9 +308,11 @@ class PlatformApiTests(unittest.TestCase):
             cookies=cookie,
         ).json()
         prompts: list[str] = []
+        sizes: list[str | None] = []
 
-        def generate_image(_model, prompt):
+        def generate_image(_model, prompt, size=None):
             prompts.append(prompt)
+            sizes.append(size)
             return "https://assets.example.test/reference.png", "seedream"
 
         with (
@@ -291,14 +330,30 @@ class PlatformApiTests(unittest.TestCase):
 
         costume_prompt, effect_prompt = prompts
         self.assertIn("玄黑官袍大氅", costume_prompt)
-        self.assertIn("无人物", costume_prompt)
-        self.assertIn("无模特", costume_prompt)
-        self.assertIn("无人体模型", costume_prompt)
-        self.assertIn("中空立体服装", costume_prompt)
+        # 服装穿在无五官的全身人台上，出 16:9 的四视图加细节展示板。
+        self.assertIn("全身人体模特(人台)", costume_prompt)
+        self.assertIn("无五官的蛋形头", costume_prompt)
+        self.assertIn("正面、左侧90度侧面、背面、右前方45度三分之四侧面", costume_prompt)
+        self.assertIn("三格细节特写", costume_prompt)
+        self.assertNotIn("无模特", costume_prompt)
+        self.assertNotIn("九宫格、接触表和重复物体", costume_prompt)
+        self.assertEqual(sizes, ["2848x1600", None])
         self.assertIn("祭火爆燃", effect_prompt)
         self.assertIn("特效现象本身", effect_prompt)
         self.assertIn("不是道具", effect_prompt)
         self.assertIn("不是场景", effect_prompt)
+
+    def test_costume_prompt_drops_the_actors_hair_beard_and_makeup_but_keeps_headwear(self):
+        from app.api.element_api import _costume_wardrobe_text
+
+        text = _costume_wardrobe_text(
+            "裴崇穿着；绛紫色宽袖圆领官袍，足踏厚底黑靴；花白头发束顶，戴黑底金线幞头，须发花白且须长及胸；"
+            "乌发梳低髻，缠素白色窄布巾，鬓边无饰；乌发梳高髻，两侧贴金箔花钿，插赤金点翠步摇。"
+        )
+        for gone in ("头发", "须", "髻", "鬓边", "花钿"):
+            self.assertNotIn(gone, text)
+        for kept in ("绛紫色宽袖圆领官袍", "厚底黑靴", "黑底金线幞头", "素白色窄布巾", "赤金点翠步摇"):
+            self.assertIn(kept, text)
 
     def test_bulk_generation_can_replace_existing_reference_images_when_explicitly_requested(self):
         cookie = self._cookie(self.user.id)
@@ -1189,6 +1244,28 @@ class PlatformApiTests(unittest.TestCase):
         self.assertEqual(rejected.status_code, 403)
         self.assertEqual(rejected.json()["detail"], "请求来源不受信任")
 
+
+
+def _prop_turnaround_png() -> bytes:
+    """一张 2×2 四视图：四格各有一个带纹理的道具，格间是白缝。"""
+    import io
+    import random
+
+    from PIL import Image as PILImage, ImageDraw
+
+    image = PILImage.new("RGB", (1024, 1024), (248, 248, 248))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((508, 0, 516, 1024), fill=(255, 255, 255))
+    draw.rectangle((0, 508, 1024, 516), fill=(255, 255, 255))
+    generator = random.Random(3)
+    for left, top in ((150, 140), (650, 150), (140, 650), (660, 640)):
+        for y in range(top, top + 200, 4):
+            for x in range(left, left + 180, 4):
+                value = 60 + generator.randint(0, 70)
+                draw.rectangle((x, y, x + 3, y + 3), fill=(value, value - 20, value - 30))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 if __name__ == "__main__":
     unittest.main()

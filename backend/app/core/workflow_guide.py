@@ -212,6 +212,11 @@ def build_workflow_snapshot(
             gaps = [item for item in missing[2] if item.startswith("剧本缺少第")]
             if gaps:
                 hint += "\n" + "；".join(gaps) + "。请先在剧本大纲点击「补写缺失的集数」，保留已有剧本和镜头。回复「继续」则会重新执行编剧阶段。"
+        if next_stage == 3:
+            # Soft review gate: production may start, but say which episodes nobody has confirmed.
+            review_view = _review_summary(assets)
+            if review_view and review_view.get("message"):
+                hint += f"\n{review_view['message']}。审核门不拦截，但建议先在编剧面板逐集确认，再进入角色设计。"
         if next_stage == 4:
             episodes = (assets.get("4_progress") or {}).get("episodes", [])
             done = sum(
@@ -360,3 +365,12 @@ def assistant_intent(message: str) -> tuple[str, int | None]:
     if any(term in msg for term in ("进度", "状态", "到哪", "流程")):
         return "status", None
     return "read", None
+
+
+def _review_summary(assets: dict) -> dict | None:
+    state = assets.get("2_screenwriting") if isinstance(assets, dict) else None
+    if not isinstance(state, dict) or not state.get("episodes"):
+        return None
+    from app.core.screenwriting import review
+
+    return review.summary(state)

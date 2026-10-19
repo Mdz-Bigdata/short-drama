@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from app.core.actor_sheet_layout import ACTOR_SHEET_LAYOUT
+from app.core.actor_sheet_layout import ACTOR_SHEET_LAYOUT, FULL_BODY_PROPORTION_RULE
 from app.schema.production import NineGridStoryboard, StoryboardPanel
 
 
@@ -19,17 +19,47 @@ class StoryboardContinuityReport(BaseModel):
     issues: list[ContinuityIssue]
 
 
-def build_actor_sheet_prompt(name: str, identity_dna: str, visual_style: str) -> str:
-    """把 25 格数字演员设定集写成一段可执行的画面描述。
+# 每个子格下方的编号中文标注(画在图上，让每一格自带说明)。顺序与 ACTOR_SHEET_LAYOUT 的格子顺序一致。
+_ELEMENT_CAPTIONS = (
+    ("鞋履特写", "腰部配饰扣环", "护腕手部配饰", "领口肩部刺绣"),
+    ("面料纹理微距", "发饰头饰拆解", "手部姿态", "裙摆下摆刺绣"),
+)
+_DETAIL_CAPTIONS = (
+    ("正脸特写", "左侧45°侧脸", "右侧45°侧脸"),
+    ("后脑发饰", "领口肩颈", "前襟胸部纹样"),
+    ("腰部束结", "袖口末端", "材质纹理微距"),
+    ("鞋履足部", "眼部妆容微距", "动态姿态或小配件"),
+)
 
-    版面数字全部取自 ACTOR_SHEET_LAYOUT，切图器读的是同一份常量，
-    所以"提示词里描述的格子"和"切图器裁出来的格子"不可能对不上。
+
+def _numbered(rows: tuple[tuple[str, ...], ...]) -> list[str]:
+    """把各行标注编成「第一行：1. A、2. B；」的连续编号。"""
+    lines, number = [], 1
+    ordinals = "一二三四五六七八九"
+    for index, row in enumerate(rows):
+        items = []
+        for caption in row:
+            items.append(f"{number}. {caption}")
+            number += 1
+        lines.append(f"第{ordinals[index]}行：" + "、".join(items))
+    return lines
+
+
+def build_actor_sheet_prompt(name: str, identity_dna: str, visual_style: str) -> str:
+    """把数字演员设定集写成一段可执行的画面描述。
+
+    版面数字、网格形状和三栏标题全部取自 ACTOR_SHEET_LAYOUT，切图器读的是同一份常量。
+    结构按用户给定的设定集提示词组织：全局画布 → 左栏主肖像 → 中栏全身与元素(中左全身立绘、
+    中右三视图与 2×4 元素) → 右栏 4×3 细节矩阵 → 全局排版规则；每个子格下方一行编号中文标注。
 
     刻意只写画面本身：没有 markdown、没有元指令、不引用任何文档。
     原因见 model_gateway.generate_character_sheet 的注释——把方法论文档塞进文生图
     模型会被内容审核判 content_policy_violation，整批设定图直接全灭。
     """
     layout = ACTOR_SHEET_LAYOUT
+    portrait_title, middle_title, details_title = (
+        region.title for region in layout.regions if region.title
+    )
     left = round(layout.left_portrait_width * 100)
     middle = round(layout.middle_width * 100)
     right = round(layout.right_details_width * 100)
@@ -38,35 +68,45 @@ def build_actor_sheet_prompt(name: str, identity_dna: str, visual_style: str) ->
     three_rows, three_columns = layout.three_view_grid
     element_rows, element_columns = layout.element_grid
     detail_rows, detail_columns = layout.detail_matrix_grid
+    element_lines = "；".join(_numbered(_ELEMENT_CAPTIONS))
+    detail_lines = "；".join(_numbered(_DETAIL_CAPTIONS))
     return (
-        f"为角色{name}制作一张{layout.aspect_ratio_label}超宽横向全景的数字演员设定集，"
-        "同一人物、同一服装、同一发型、同一体型。"
-        "背景为高级灰白渐变，边缘浅灰向中心纯白过渡，无环境杂物、无地面家具、无场景道具。"
-        "整张画面用极细纯白分隔线划成左中右三个等高竖栏，"
-        f"左栏占画面宽度{left}%、中栏占{middle}%、右栏占{right}%。"
-        "三栏顶部各居中一行深灰色无衬线大写标题："
-        "左栏 MAIN PORTRAIT，中栏 FULL BODY & ELEMENTS，右栏 DETAIL MATRIX。"
-        "左栏 MAIN PORTRAIT 只放一张正面近景特写，头部到胸部以上，居中、直视镜头。"
-        f"中栏内部再用极细纯白分隔线左右分开，左侧占中栏宽度{mid_left}%、右侧占{mid_right}%。"
-        "中栏左侧只放一张正面全身立绘，双脚完整、脚底对齐该栏底部基线。"
-        f"中栏右侧上半部是{three_rows}行×{three_columns}列共3格全身视图，"
-        "从左到右依次是正面全身、90度标准侧面全身、背面全身；"
-        "这三张与中栏左侧的立绘同一比例、脚底在同一条基线上、头顶在同一高度。"
-        f"中栏右侧下半部是{element_rows}行×{element_columns}列共"
-        f"{element_rows * element_columns}格元素拆解特写，"
-        "第一行从左到右：鞋履、腰部扣环、护腕与手部配饰、领口与肩部刺绣；"
-        "第二行从左到右：面料微距、发饰拆解、手部姿态、裙摆刺绣。"
-        f"右栏 DETAIL MATRIX 是{detail_rows}行×{detail_columns}列共"
-        f"{detail_rows * detail_columns}格细节特写，"
-        "第一行：正脸特写、四分之三侧脸、后脑发饰；"
-        "第二行：领口与肩颈、前襟胸部纹样、腰部束结；"
-        "第三行：袖口末端、材质微距、背部暗扣与系带；"
-        "第四行：鞋履足部、眼妆微距、动态姿态或小配件。"
-        "三栏等高，所有子格之间保留均匀的极细白色间隙，格子不重叠、不粘连、不合并、不错位。"
+        f"【全局画布与背景】为角色{name}制作一张{layout.aspect_ratio_label}超宽横向全景的数字演员设定集，"
+        "专业角色设计参考图风格，同一人物、同一服装、同一发型、同一体型。"
+        "背景为平滑的高级灰白渐变，边缘浅灰向中心纯白过渡，无任何环境杂物。"
+        "画面采用严格的网格化排版，用极细的纯白间隔线精准分割各个区域；"
+        "左、中、右三栏顶部各居中一行深灰色无衬线中文标题，"
+        f"依次为「{portrait_title}」「{middle_title}」「{details_title}」，标题只写中文，不写英文，"
+        "标题下方留一条白色间隔再开始画格子。"
+        f"【左栏：{portrait_title}】占画面最左侧约{left}%宽度，垂直贯穿上下，右侧由一条细白竖线与中栏分隔。"
+        "只放一张超大尺寸的人物正面近景特写，头部到胸部以上，主体绝对居中，"
+        "重点展现五官、妆容、发型结构和头饰正面效果；静态标准展示，眼神平视镜头，光影立体柔和，"
+        "头顶和下巴完整留在画面里。"
+        f"【中栏：{middle_title}】占画面中央约{middle}%宽度，垂直贯穿上下，"
+        "内部由一条细白竖线分为中左与中右两个子板块。"
+        f"中左占中栏宽度约{mid_left}%：一张完整的正面全身立绘，人物自然站立，"
+        "完整展示服装垂坠感、鞋履与手持道具，头顶到双脚完整，脚底对齐画面底部基准线。"
+        f"中右占中栏宽度约{mid_right}%，由一条细白横线分为上下两部分。"
+        f"上部是{three_rows}行×{three_columns}列三格等宽的全身视图，从左到右依次为正面全身、90度标准侧面全身、背面全身，"
+        "三张与中左立绘比例尺严格一致，脚底在同一条基线上、头顶在同一高度，"
+        f"全身立绘与三视图的{FULL_BODY_PROPORTION_RULE}"
+        "每张下方居中一行小号深灰中文标注：正视图、侧视图、背视图。"
+        f"下部是{element_rows}行×{element_columns}列共{element_rows * element_columns}个等尺寸子格的元素拆解特写，"
+        f"行列之间以细白线均匀分隔，内容与每格下方的编号标注依次为：{element_lines}。"
+        f"【右栏：{details_title}】占画面最右侧约{right}%宽度，垂直贯穿上下，左侧由一条细白竖线与中栏分隔。"
+        f"严格的{detail_rows}行×{detail_columns}列网格，共{detail_rows * detail_columns}个等尺寸子格，"
+        f"行列之间以细白线均匀分隔，内容与每格下方的编号标注依次为：{detail_lines}。"
+        "第一行三张脸部特写同一景别、同一光线：正脸直视镜头，左侧45°是人物脸转向画面左侧，"
+        "右侧45°是人物脸转向画面右侧，三张都完整露出五官与发际线。"
+        "【全局排版规则】三栏高度统一对齐，所有子图与子格之间保留均匀的纯白间隙，不重叠、不粘连、不合并、不错位；"
+        "每格里的人物或物件完整落在格子内，不被格子边缘切断脸部；"
+        "每个子格的编号标注写在该格图片下方的白色间隙里，不压在图片上。"
+        "视觉流向从左到右、从上到下逻辑递进，呈现严谨专业的标准化设定集风格，高质量，高分辨率，极致细节。"
         f"身份DNA：{identity_dna}。视觉风格：{visual_style}。"
         "全部格子必须是同一个人物，不得改变脸型、五官比例、痣与疤的位置、发际线、"
         "发型、服装、配饰和身材；同焦段、同相机高度、同中性光。"
-        "禁止出现第二个人物、额外肢体、多余手指、裁切脚部、文字、标注、水印、logo 和场景道具。"
+        "除三栏标题和各格编号标注外，禁止出现任何文字、标签、水印和 logo；"
+        "禁止出现第二个人物、额外肢体、多余手指、裁切脚部和场景道具。"
     )
 
 

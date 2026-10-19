@@ -3,6 +3,7 @@ import type { KeyboardEvent } from 'react';
 
 import type { ElementKind } from '../elements/elementTypes';
 import { characterAssetTabLabels } from './assetTabLabels';
+import { t } from '../../i18n';
 
 
 interface AssetTabDefinition {
@@ -44,7 +45,7 @@ export function CharacterAssetTabs({
   };
 
   return (
-    <nav className="character-asset-tabs" role="tablist" aria-label="角色资产类型">
+    <nav className="character-asset-tabs" role="tablist" aria-label={t('角色资产类型')}>
       {characterAssetTabs.map(({ kind, label, icon: Icon }) => {
         const selected = kind === activeKind;
         const count = counts[kind];

@@ -1,102 +1,48 @@
 # -*- coding: utf-8 -*-
-"""production-knowledge-master 技能装载器：把根部 16 份知识源按章节键喂给各阶段提示词。
+"""Production knowledge for the eight stages, read through the skills that own it.
 
-唯一事实源原则：16 份 md 只存在于仓库根部（与 drama_service.read_md_file 同一位置），
-技能包 backend/skills/production-knowledge-master 里绝不复制正文——复制必然漂移，
-且会破坏 agent_council.KNOWLEDGE_SOURCE_FILES 的 SHA-256 指纹校验。
-本模块只做三件事：
-1. 章节键 → 根部文件名的映射读取（缓存 + 行边界截断，范式复用 shot_design_skill）；
-2. 阶段 → 章节的消费矩阵（与 tests/test_knowledge_source_runtime.py 登记的矩阵完全对等）；
-3. 从进化引擎(knowledge_evolution)取该阶段 active 教训，组装成可注入提示词的教训块。
+Each guide lives inside the skill it belongs to and is registered in that skill's
+``manifest.json`` with a key, a title, a default budget and the stages that take it
+(see :mod:`app.core.knowledge_registry`). This module only:
 
-import 方向为 production_knowledge → knowledge_evolution 单向；进化引擎绝不 import 本模块。
+1. reads a section by key, with the line-boundary truncation every stage relies on;
+2. exposes the stage → section matrix, which the manifests define;
+3. builds the block of evolved lessons a stage appends to its prompt.
+
+Nothing here names a guide's file or path. The import direction is
+production_knowledge → knowledge_evolution; the evolution engine never imports this module.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 from functools import lru_cache
 from pathlib import Path
 
-from app.core import knowledge_evolution
+from app.core import knowledge_evolution, knowledge_registry
 
 
 logger = logging.getLogger("app.core.production_knowledge")
 
 SKILL_NAME = "production-knowledge-master"
 
-# 章节键(kebab 英文) → 根部 md 文件名，16 份全收，逐条对照：
-SECTION_FILES: dict[str, str] = {
-    "consistency-checklist": "AI 生成短剧一致性检查清单.md",        # 一致性检查清单
-    "dialogue-pacing": "AI影视剧台词语速情绪提示词总结.md",          # 台词语速情绪
-    "negative-prompts": "AI影视剧负面提示词.md",                    # 负面提示词(运行时走模块词表，此处仅登记)
-    "golden-narrative": "AI漫剧短剧剧本黄金叙事结构.md",             # 黄金叙事结构
-    "director-shot-guide": "AI短剧与漫剧导演级拍摄分镜完全指南.md",   # 导演级拍摄分镜
-    "actor-sheet-template": "AI短剧五视图解决人物一致性提示词模板.md",  # 数字演员设定集模板
-                                                                    # (文件名为兼容既有路径保留，正文已改为设定集)
-    "production-guidelines": "AI短剧注意事项与关键元素.md",          # 注意事项与关键元素
-    "martial-arts": "AI短剧电影级武打镜头设计指南.md",               # 武打镜头设计
-    "performance-details": "AI短剧表演细节与提示词指南.md",          # 表演细节
-    "continuity-design": "AI短剧连续性设计指南.md",                 # 连续性设计
-    "scene-design": "场景设计提示词.md",                            # 场景设计
-    "highlight-detection": "影视剧高光时刻识别方案.md",              # 高光时刻识别
-    "visual-style": "画质风格类型总结.md",                          # 画质风格
-    "emotion-expression": "短剧情绪与面部表情提示词库.md",           # 情绪与面部表情
-    "plot-shot-coherence": "短剧情节与镜头连贯性提示词.md",          # 情节与镜头连贯性
-    "genre-summary": "短剧题材类型总结.md",                         # 题材类型总结
-}
-
-# 阶段 → 章节键（消费矩阵，与 test_knowledge_source_runtime.py 的登记逐条对齐）。
-# consistency-checklist 属"全阶段"：由 run_real_consistency_check 单独 load_section，不进本矩阵；
-# negative-prompts 经 agent_council.NEGATIVE_MODULE_WORDS 模块词表生效，同样不进本矩阵。
-STAGE_SECTIONS: dict[int, tuple[str, ...]] = {
-    1: ("production-guidelines", "genre-summary", "golden-narrative"),
-    2: ("performance-details", "production-guidelines", "continuity-design",
-        "golden-narrative", "dialogue-pacing"),
-    3: ("actor-sheet-template", "performance-details"),
-    4: ("director-shot-guide", "continuity-design", "plot-shot-coherence",
-        "emotion-expression", "martial-arts", "scene-design"),
-    5: ("visual-style",),
-    6: (),  # 合成阶段无 LLM 提示词，仅接收教训块
-    7: (),  # 归档阶段无 LLM 提示词，仅接收教训块
-    8: ("highlight-detection", "production-guidelines"),
-}
-
-# 其余章节的统一截断值（保持现有各调用点语义）。
+# The budget a section gets when its manifest entry is missing one.
 DEFAULT_SECTION_BUDGET = 5_000
 
-# 各章节字符预算：保持现有各调用点的截断值；0 表示不截断（全文读入）。
-SECTION_BUDGETS: dict[str, int] = {
-    "consistency-checklist": 3_500,   # run_real_consistency_check 现值 [:3500]
-    "dialogue-pacing": DEFAULT_SECTION_BUDGET,
-    "negative-prompts": DEFAULT_SECTION_BUDGET,
-    "golden-narrative": DEFAULT_SECTION_BUDGET,
-    "director-shot-guide": 8_000,     # 阶段4 现值 8000
-    "actor-sheet-template": DEFAULT_SECTION_BUDGET,
-    "production-guidelines": DEFAULT_SECTION_BUDGET,
-    "martial-arts": DEFAULT_SECTION_BUDGET,
-    "performance-details": DEFAULT_SECTION_BUDGET,
-    "continuity-design": DEFAULT_SECTION_BUDGET,
-    "scene-design": DEFAULT_SECTION_BUDGET,
-    "highlight-detection": 6_000,     # 阶段8 现值 6000
-    "visual-style": 0,                # 阶段5 全文读入后自行切片 1000 进 img prompt
-    "emotion-expression": DEFAULT_SECTION_BUDGET,
-    "plot-shot-coherence": DEFAULT_SECTION_BUDGET,
-    "genre-summary": DEFAULT_SECTION_BUDGET,
-}
+
+def section_files() -> dict[str, str]:
+    """Section key → its file, relative to the skills root (``<skill>/references/<key>.md``)."""
+    return {key: item.relative_path for key, item in knowledge_registry.sections().items()}
 
 
-def knowledge_root() -> Path:
-    """知识源根目录，与 drama_service.read_md_file 完全同源。
+def section_budgets() -> dict[str, int]:
+    """Section key → its default budget in characters (0 = the whole text)."""
+    return {key: item.budget for key, item in knowledge_registry.sections().items()}
 
-    DRAMA_PROMPT_ROOT 优先（部署把提示词放在别处时用），
-    否则取本模块上三级——backend/app/core 之上即仓库根部。
-    """
-    override = os.getenv("DRAMA_PROMPT_ROOT")
-    if override:
-        return Path(override)
-    return Path(__file__).resolve().parents[3]
+
+def stage_sections() -> dict[int, tuple[str, ...]]:
+    """Stage → the section keys its prompts take, as the manifests declare."""
+    return knowledge_registry.stage_sections()
 
 
 # 行边界截断后追加的标记；其长度计入预算，保证注入量绝不超过登记预算。
@@ -106,7 +52,7 @@ TRUNCATION_MARK = "\n\n（本节已按上下文预算截断）"
 def _truncate(text: str, budget: int) -> str:
     """行边界截断，表格绝不留半行（语义复制自 shot_design_skill._truncate）。
 
-    与旧管道 read_md_file(x)[:budget] 的差异是**显式登记的语义**（见
+    与直接切片 text[:budget] 的差异是**显式登记的语义**（见
     test_production_knowledge_skill.py 的装载一致性用例）：截断退到最近的行边界并
     追加 TRUNCATION_MARK。标记长度计入预算——len(结果) <= budget 恒成立，
     不会出现"登记 3500、实注 3514"的预算溢出。
@@ -139,30 +85,26 @@ def _read_file(path_str: str) -> str:
 def load_section(key: str, budget: int | None = None) -> str:
     """按章节键读取一份知识源并按预算做行边界截断。
 
-    budget=None 用 SECTION_BUDGETS 的登记值；显式传 0 表示全文不截断。
-    未知章节键 / 文件缺失都降级为空串，调用点保留自己的兜底文案。
+    budget=None 用该章节在技能 manifest 里登记的预算；显式传 0 表示全文不截断。
+    未知章节键 / 文件缺失 / manifest 不合法都降级为空串，调用点保留自己的兜底文案。
     """
-    filename = SECTION_FILES.get(key)
-    if not filename:
+    try:
+        item = knowledge_registry.section(key)
+    except knowledge_registry.KnowledgeManifestError as error:
+        logger.error("[ProductionKnowledge] 技能 manifest 不合法: %s", error)
+        return ""
+    if item is None:
         logger.warning("[ProductionKnowledge] 未知章节键: %s", key)
         return ""
-    root = knowledge_root().resolve()
-    target = (root / filename).resolve()
-    # 越界防护：映射值是常量文件名，仍按范式确认目标落在根目录之内。
-    if target.parent != root and root not in target.parents:
-        logger.warning("[ProductionKnowledge] 拒绝越界读取: %s", filename)
-        return ""
-    text = _read_file(str(target))
+    text = _read_file(str(item.path))
     if not text:
         return ""
-    if budget is None:
-        budget = SECTION_BUDGETS.get(key, DEFAULT_SECTION_BUDGET)
-    return _truncate(text, budget)
+    return _truncate(text, item.budget if budget is None else budget)
 
 
 def load_stage_sections(stage: int) -> dict[str, str]:
     """按消费矩阵读取某阶段的全部章节；值可能为空串（文件缺失时兜底交给调用点）。"""
-    return {key: load_section(key) for key in STAGE_SECTIONS.get(stage, ())}
+    return {key: load_section(key) for key in stage_sections().get(stage, ())}
 
 
 def stage_lessons_block(stage: int, *, budget: int = 900) -> str:
@@ -191,6 +133,56 @@ def stage_lessons_block(stage: int, *, budget: int = 900) -> str:
     return header + "\n".join(lines)
 
 
+# 统一负面词表在负面提示词指南里的位置：标题含 UNIFIED_NEGATIVE_HEADING 的二级节，
+# 其下标题含「视频」/「静帧」的三级节各有一个 ```text 代码块。词表本身只写在指南里。
+NEGATIVE_GUIDE_KEY = "negative-prompts"
+UNIFIED_NEGATIVE_HEADING = "终极统一负面提示词"
+_UNIFIED_NEGATIVE_MEDIA = {"video": "视频", "image": "静帧"}
+
+
+def _fenced_terms(block: str) -> tuple[str, ...]:
+    """一个小节里第一个代码块的词条，按中英文顿号/逗号/换行切开，去重保序。"""
+    start = block.find("```")
+    if start < 0:
+        return ()
+    body_start = block.find("\n", start)
+    end = block.find("```", body_start + 1)
+    if body_start < 0 or end < 0:
+        return ()
+    raw = block[body_start + 1:end]
+    for separator in ("，", ",", "\n"):
+        raw = raw.replace(separator, "、")
+    return tuple(dict.fromkeys(term.strip() for term in raw.split("、") if term.strip()))
+
+
+def global_negatives(medium: str) -> tuple[str, ...]:
+    """全局强制负面词：``medium`` 为 ``"video"``(全量) 或 ``"image"``(单帧子集)。
+
+    读负面提示词指南里「终极统一负面提示词」一节，不在代码里另存一份；
+    指南缺失或改了结构就返回空元组，调用点照常出图，只是少了这层兜底。
+    """
+    label = _UNIFIED_NEGATIVE_MEDIA.get(medium)
+    if not label:
+        raise ValueError(f"未知媒介: {medium}")
+    text = load_section(NEGATIVE_GUIDE_KEY, budget=0)
+    heading = text.find(UNIFIED_NEGATIVE_HEADING)
+    if heading < 0:
+        return ()
+    section_end = text.find("\n## ", heading)
+    section = text[heading: section_end if section_end >= 0 else len(text)]
+    for part in section.split("\n### ")[1:]:
+        title = part.split("\n", 1)[0]
+        if label in title:
+            return _fenced_terms(part)
+    return ()
+
+
+def global_negative_text(medium: str) -> str:
+    """全局强制负面词拼成一串(顿号分隔)，可直接追加进提示词的负面约束。"""
+    return "、".join(global_negatives(medium))
+
+
 def reset_knowledge_cache() -> None:
-    """清空文件缓存；测试与知识源热更新（含 DRAMA_PROMPT_ROOT 切换）时调用。"""
+    """清空文件缓存与章节索引；测试与知识源热更新（含 SKILLS_DIR 切换、manifest 改动）时调用。"""
     _read_file.cache_clear()
+    knowledge_registry.reset()

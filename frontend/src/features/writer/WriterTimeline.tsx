@@ -1,13 +1,10 @@
 import { Clock3 } from 'lucide-react';
 
-import { stripMarkdown, summarizeSceneDetail, summarizeSceneEvent } from './textSummary';
+import { stripMarkdown, summarizeSceneEvent } from './textSummary';
 import type { WriterScene, WriterTimelineEvent } from './types';
+import { t } from '../../i18n';
 
 const ROW_SIZE = 10;
-
-function clip(value: string, limit: number) {
-  return value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
-}
 
 /** Timeline titles may be short LLM labels or whole raw scene bodies. */
 function eventTitle(value: unknown, limit = 26) {
@@ -20,57 +17,19 @@ function chunks<T>(items: T[], size: number) {
   return Array.from({ length: Math.ceil(items.length / size) }, (_, index) => items.slice(index * size, (index + 1) * size));
 }
 
+/** The story's beats laid along the scenes in script order: a dark major node where a story event begins, small nodes between. */
 export function WriterTimeline({
-  mode,
   scenes,
   timeline,
 }: {
-  mode: 'axis' | 'line';
   scenes: WriterScene[];
   timeline: WriterTimelineEvent[];
 }) {
-  if (mode === 'line') {
-    const events: WriterTimelineEvent[] = timeline.length > 0
-      ? timeline
-      : scenes.map((scene, index) => ({
-        phase: scene.scene_id || `场景 ${index + 1}`,
-        title: scene.content,
-        desc: scene.duration,
-      }));
-
-    if (events.length === 0) return <div className="writer-empty">剧本结构化完成后，关键事件时间线将在这里生成。</div>;
-
-    return (
-      <ol className="writer-event-line" aria-label="剧情关键事件时间线">
-        {events.map((event, index) => {
-          const title = eventTitle(event.title) || `事件 ${index + 1}`;
-          const rawDesc = stripMarkdown(event.desc);
-          const desc = rawDesc && rawDesc !== title
-            ? clip(rawDesc, 110)
-            : summarizeSceneDetail(event.title, 110);
-          return (
-            <li key={`${event.phase}-${title}-${index}`}>
-              <div className="writer-event-line__rail"><span>{String(index + 1).padStart(2, '0')}</span></div>
-              <article>
-                <div><span>{event.phase || '剧情节点'}</span><time>节点 {index + 1}</time></div>
-                <h3>{title}</h3>
-                {desc && desc !== title && <p>{desc}</p>}
-                {Array.isArray(event.points) && event.points.length > 0 && (
-                  <ul>{event.points.map((point, pointIndex) => <li key={`${point}-${pointIndex}`}>{clip(stripMarkdown(point), 60)}</li>)}</ul>
-                )}
-              </article>
-            </li>
-          );
-        })}
-      </ol>
-    );
-  }
-
   const source = scenes.length > 0
     ? scenes
     : timeline.map((event, index) => ({ scene_id: String(index + 1), content: event.title, duration: event.phase }));
 
-  if (source.length === 0) return <div className="writer-empty">剧本结构化完成后，场景节奏轴将在这里生成。</div>;
+  if (source.length === 0) return <div className="writer-empty">{t('剧本结构化完成后，场景节奏轴将在这里生成。')}</div>;
 
   const beats = source.map((scene, index) => {
     const phaseIndex = timeline.length > 0 ? Math.min(Math.floor(index * timeline.length / source.length), timeline.length - 1) : -1;
@@ -85,8 +44,8 @@ export function WriterTimeline({
   });
 
   return (
-    <div className="writer-axis" aria-label="按场景展开的剧本节奏时间轴">
-      <div className="writer-axis__legend"><span><i />关键节点</span><span><i />常规场景</span></div>
+    <div className="writer-axis" aria-label={t('按场景展开的剧本节奏时间轴')}>
+      <div className="writer-axis__legend"><span><i />{t('关键节点')}</span><span><i />{t('常规场景')}</span></div>
       <div className="writer-axis__viewport">
         {chunks(beats, ROW_SIZE).map((row, rowIndex) => (
           <div className="writer-axis__row" key={`row-${rowIndex}`} style={{ '--axis-columns': row.length } as React.CSSProperties}>
@@ -106,7 +65,7 @@ export function WriterTimeline({
           </div>
         ))}
       </div>
-      <p className="writer-axis__hint"><Clock3 aria-hidden="true" /> 场景按剧本顺序排列，深色大节点代表主线节拍切换。</p>
+      <p className="writer-axis__hint"><Clock3 aria-hidden="true" /> {t('场景按剧本顺序排列，深色大节点代表主线节拍切换。')}</p>
     </div>
   );
 }

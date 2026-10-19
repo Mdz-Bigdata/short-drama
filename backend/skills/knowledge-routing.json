@@ -1,0 +1,295 @@
+{
+  "version": 1,
+  "_comment": "Where scripts/organize_knowledge.py files a Markdown guide. 'documents' route a known guide by file name; 'rules' route any other guide by words in its file name or first heading. 'keep' is never moved.",
+  "keep": [
+    "README.md",
+    "THIRD_PARTY_NOTICES.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE.md",
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
+  "documents": [
+    {
+      "file": "AI漫剧短剧剧本黄金叙事结构.md",
+      "skill": "screenwriting-master",
+      "key": "golden-narrative",
+      "title": "AI漫剧短剧剧本黄金叙事结构",
+      "target": "references/golden-narrative.md",
+      "budget": 5000,
+      "stages": [
+        1,
+        2
+      ]
+    },
+    {
+      "file": "AI影视剧台词语速情绪提示词总结.md",
+      "skill": "screenwriting-master",
+      "key": "dialogue-pacing",
+      "title": "AI影视剧台词语速情绪提示词总结",
+      "target": "references/dialogue-pacing.md",
+      "budget": 5000,
+      "stages": [
+        2
+      ]
+    },
+    {
+      "file": "短剧题材类型总结.md",
+      "skill": "screenwriting-master",
+      "key": "genre-summary",
+      "title": "短剧题材类型总结",
+      "target": "references/genre-summary.md",
+      "budget": 5000,
+      "stages": [
+        1
+      ]
+    },
+    {
+      "file": "AI短剧与漫剧导演级拍摄分镜完全指南.md",
+      "skill": "shot-design-master",
+      "key": "director-shot-guide",
+      "title": "AI短剧与漫剧导演级拍摄分镜完全指南",
+      "target": "references/director-shot-guide.md",
+      "budget": 8000,
+      "stages": [
+        4
+      ]
+    },
+    {
+      "file": "场景设计提示词.md",
+      "skill": "shot-design-master",
+      "key": "scene-design",
+      "title": "场景设计提示词",
+      "target": "references/scene-design.md",
+      "budget": 5000,
+      "stages": [
+        4
+      ]
+    },
+    {
+      "file": "短剧情绪与面部表情提示词库.md",
+      "skill": "shot-design-master",
+      "key": "emotion-expression",
+      "title": "短剧情绪与面部表情提示词库",
+      "target": "references/emotion-expression.md",
+      "budget": 5000,
+      "stages": [
+        4
+      ]
+    },
+    {
+      "file": "AI短剧表演细节与提示词指南.md",
+      "skill": "shot-design-master",
+      "key": "performance-details",
+      "title": "AI短剧表演细节与提示词指南",
+      "target": "references/performance-details.md",
+      "budget": 5000,
+      "stages": [
+        2,
+        3
+      ]
+    },
+    {
+      "file": "AI短剧电影级武打镜头设计指南.md",
+      "skill": "shot-design-master",
+      "key": "martial-arts",
+      "title": "AI短剧电影级武打镜头设计指南",
+      "target": "references/martial-arts.md",
+      "budget": 5000,
+      "stages": [
+        4
+      ]
+    },
+    {
+      "file": "短剧情节与镜头连贯性提示词.md",
+      "skill": "shot-design-master",
+      "key": "plot-shot-coherence",
+      "title": "短剧情节与镜头连贯性提示词",
+      "target": "references/plot-shot-coherence.md",
+      "budget": 5000,
+      "stages": [
+        4
+      ]
+    },
+    {
+      "file": "AI短剧五视图解决人物一致性提示词模板.md",
+      "skill": "character-turnaround-consistency",
+      "key": "actor-sheet-template",
+      "title": "AI短剧五视图解决人物一致性提示词模板",
+      "target": "references/actor-sheet-template.md",
+      "budget": 5000,
+      "stages": [
+        3
+      ]
+    },
+    {
+      "file": "AI短剧连续性设计指南.md",
+      "skill": "shot-transitions-master",
+      "key": "continuity-design",
+      "title": "AI短剧连续性设计指南",
+      "target": "references/continuity-design.md",
+      "budget": 5000,
+      "stages": [
+        2,
+        4
+      ]
+    },
+    {
+      "file": "AI短剧注意事项与关键元素.md",
+      "skill": "production-knowledge-master",
+      "key": "production-guidelines",
+      "title": "AI短剧注意事项与关键元素",
+      "target": "references/production-guidelines.md",
+      "budget": 5000,
+      "stages": [
+        1,
+        2,
+        8
+      ]
+    },
+    {
+      "file": "AI 生成短剧一致性检查清单.md",
+      "skill": "production-knowledge-master",
+      "key": "consistency-checklist",
+      "title": "AI 生成短剧一致性检查清单",
+      "target": "references/consistency-checklist.md",
+      "budget": 3500,
+      "stages": []
+    },
+    {
+      "file": "AI影视剧负面提示词.md",
+      "skill": "production-knowledge-master",
+      "key": "negative-prompts",
+      "title": "AI影视剧负面提示词",
+      "target": "references/negative-prompts.md",
+      "budget": 5000,
+      "stages": []
+    },
+    {
+      "file": "影视剧高光时刻识别方案.md",
+      "skill": "production-knowledge-master",
+      "key": "highlight-detection",
+      "title": "影视剧高光时刻识别方案",
+      "target": "references/highlight-detection.md",
+      "budget": 6000,
+      "stages": [
+        8
+      ]
+    },
+    {
+      "file": "画质风格类型总结.md",
+      "skill": "production-knowledge-master",
+      "key": "visual-style",
+      "title": "画质风格类型总结",
+      "target": "references/visual-style.md",
+      "budget": 0,
+      "stages": [
+        5
+      ]
+    },
+    {
+      "file": "SKILL.md",
+      "skill": "ai-short-drama-industrial-production-skill",
+      "key": "industrial-production",
+      "title": "AI 短剧工业级 8-Agent 生产与拍摄连续性终极指南",
+      "target": "SKILL.md",
+      "budget": 0,
+      "stages": []
+    }
+  ],
+  "rules": [
+    {
+      "words": [
+        "剧本",
+        "编剧",
+        "台词",
+        "叙事",
+        "题材",
+        "对白",
+        "剧情结构"
+      ],
+      "skill": "screenwriting-master",
+      "stages": [
+        2
+      ],
+      "budget": 5000
+    },
+    {
+      "words": [
+        "五视图",
+        "三视图",
+        "人物一致性",
+        "角色设定",
+        "数字演员",
+        "造型"
+      ],
+      "skill": "character-turnaround-consistency",
+      "stages": [
+        3
+      ],
+      "budget": 5000
+    },
+    {
+      "words": [
+        "分镜",
+        "镜头",
+        "运镜",
+        "机位",
+        "构图",
+        "表演",
+        "表情",
+        "武打",
+        "场景设计"
+      ],
+      "skill": "shot-design-master",
+      "stages": [
+        4
+      ],
+      "budget": 5000
+    },
+    {
+      "words": [
+        "连续性",
+        "转场",
+        "衔接",
+        "轴线"
+      ],
+      "skill": "shot-transitions-master",
+      "stages": [
+        4
+      ],
+      "budget": 5000
+    },
+    {
+      "words": [
+        "站位",
+        "调度",
+        "空间"
+      ],
+      "skill": "spatial-stage-master",
+      "stages": [
+        4
+      ],
+      "budget": 5000
+    },
+    {
+      "words": [
+        "打戏",
+        "格斗",
+        "动作设计"
+      ],
+      "skill": "shot-design-master",
+      "stages": [
+        4
+      ],
+      "budget": 5000
+    },
+    {
+      "words": [],
+      "skill": "production-knowledge-master",
+      "stages": [],
+      "budget": 5000
+    }
+  ]
+}

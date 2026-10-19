@@ -7,12 +7,12 @@ import { STORYBOARD_VISUAL_THEME } from './storyboardTheme';
 const workspaceStylesheet = readFileSync(new URL('./StoryboardWorkspace.css', import.meta.url), 'utf8');
 
 describe('StoryboardWorkspace visual theme', () => {
-  it('uses the project dark surfaces and cyan accent without the legacy purple palette', () => {
+  it('uses the project light rose surfaces and pale red accent without the legacy purple palette', () => {
     expect(STORYBOARD_VISUAL_THEME).toEqual({
-      id: 'agent-dark-cyan',
-      background: '#05080c',
-      surface: '#08101a',
-      accent: '#00f2fe',
+      id: 'agent-light-rose',
+      background: '#fcedef',
+      surface: '#fdeff1',
+      accent: '#e3546c',
     });
   });
 

@@ -8,6 +8,7 @@ import { STORYBOARD_VISUAL_THEME } from './storyboardTheme';
 import { downloadStoryboardGrid, downloadStoryboardScene, downloadStoryboardShot } from './storyboardDownload';
 import type { StoryboardPromptDetail } from './storyboardPromptTypes';
 import './StoryboardWorkspace.css';
+import { t } from '../../i18n';
 
 
 // The desk pulls in the whole 3D workspace; it loads when someone opens it, not with the storyboard.
@@ -121,7 +122,7 @@ function buildScenes(
     .filter(id => id && !byId.has(id))
     .sort((left, right) => sceneEpisodeNumber(left) - sceneEpisodeNumber(right) || left.localeCompare(right))
     .forEach(id => {
-      byId.set(id, { id, title: '连续场景', shots: [], boardStatus: sceneBoards?.[id]?.status });
+      byId.set(id, { id, title: t('连续场景'), shots: [], boardStatus: sceneBoards?.[id]?.status });
     });
 
   // 2) 已生成 shots 按 scene_id 挂进骨架；骨架外的编号按既有逻辑补一张卡。
@@ -192,7 +193,7 @@ function DownloadAction({
       onClick={onDownload}
       disabled={disabled || busy}
     >
-      <Download aria-hidden="true" /> {busy ? '下载中…' : children}
+      <Download aria-hidden="true" /> {busy ? t('下载中…') : children}
     </button>
   );
 }
@@ -200,10 +201,10 @@ function DownloadAction({
 function StoryboardFrameMedia({ shot, alt }: { shot: StoryboardShot; alt: string }) {
   const [failed, setFailed] = useState(false);
   if (!shot.image_url) {
-    return <div className="storyboard-frame__placeholder">分镜生成中</div>;
+    return <div className="storyboard-frame__placeholder">{t('分镜生成中')}</div>;
   }
   if (failed) {
-    return <div className="storyboard-frame__placeholder">分镜图片暂不可用</div>;
+    return <div className="storyboard-frame__placeholder">{t('分镜图片暂不可用')}</div>;
   }
   return <img src={shot.image_url} alt={alt} onError={() => setFailed(true)} />;
 }
@@ -347,10 +348,10 @@ export function StoryboardWorkspace({
         data-visual-theme={STORYBOARD_VISUAL_THEME.id}
         aria-labelledby="storyboard-title"
       >
-        <h1 id="storyboard-title">分镜故事板</h1>
-        <p>暂无可展示的时序分镜。</p>
+        <h1 id="storyboard-title">{t('分镜故事板')}</h1>
+        <p>{t('暂无可展示的时序分镜。')}</p>
         <button type="button" className="storyboard-action" onClick={onRefresh}>
-          <RefreshCw aria-hidden="true" /> 刷新
+          <RefreshCw aria-hidden="true" /> {t('刷新')}
         </button>
       </section>
     );
@@ -360,23 +361,23 @@ export function StoryboardWorkspace({
     <section className="storyboard-workspace" data-visual-theme={STORYBOARD_VISUAL_THEME.id} aria-labelledby="storyboard-title">
       <header className="storyboard-header">
         <div className="storyboard-heading">
-          <h1 id="storyboard-title">分镜故事板</h1>
+          <h1 id="storyboard-title">{t('分镜故事板')}</h1>
           <p>第 {selectedEpisodeNumber} 集 · {title}</p>
           <span className="storyboard-progress">{completedScenes}/{scenes.length} 个分镜场景已完成</span>
         </div>
-        <div className="storyboard-header-actions" aria-label="故事板操作">
+        <div className="storyboard-header-actions" aria-label={t('故事板操作')}>
           <DownloadAction
             onDownload={() => downloadGrid('全部分镜图')}
             disabled={!taskId || !gridUrl}
             busy={downloadBusyKey === 'grid'}
           >
-            下载全部分镜图
+            {t('下载全部分镜图')}
           </DownloadAction>
           <button type="button" className="storyboard-action" onClick={onRefresh}>
-            <RefreshCw aria-hidden="true" /> 刷新
+            <RefreshCw aria-hidden="true" /> {t('刷新')}
           </button>
           <button type="button" className="storyboard-action" onClick={onRegenerate}>
-            <Sparkles aria-hidden="true" /> 一键创作全部分镜页
+            <Sparkles aria-hidden="true" /> {t('一键创作全部分镜页')}
           </button>
         </div>
       </header>
@@ -384,9 +385,9 @@ export function StoryboardWorkspace({
       {downloadNotice && <p className="storyboard-download-notice" role="status">{downloadNotice}</p>}
 
       <div className="storyboard-body">
-        <aside className="storyboard-scene-nav" aria-label="分集与时序分镜目录">
+        <aside className="storyboard-scene-nav" aria-label={t('分集与时序分镜目录')}>
           <div className="storyboard-scene-nav__heading">
-            <span>时序分镜</span>
+            <span>{t('时序分镜')}</span>
             <strong>共 {episodeGroups.length} 集</strong>
             <small>{title}</small>
           </div>
@@ -430,7 +431,7 @@ export function StoryboardWorkspace({
                           <span className="storyboard-scene-card__format">3 × 3</span>
                           <span className={`storyboard-scene-card__status ${state === 'done' ? 'is-complete' : ''} ${state === 'generating' ? 'is-generating' : ''}`}>
                             {state === 'done' ? <CheckCircle2 aria-hidden="true" /> : <span aria-hidden="true">◌</span>}
-                            {state === 'done' ? '已完成' : state === 'generating' ? '生成中' : '待创作'}
+                            {state === 'done' ? t('已完成') : state === 'generating' ? t('生成中') : t('待创作')}
                           </span>
                         </span>
                         <span className="storyboard-scene-card__title" title={scene.title}>{scene.title}</span>
@@ -439,7 +440,7 @@ export function StoryboardWorkspace({
                             ? `${scene.shots.length} 个连续瞬间`
                             : `${board.shots_done ?? 0}/${board.shots_total ?? GRID_SLOTS} 个画格`}
                         </span>
-                        {episodeLocked && <span className="storyboard-scene-card__lock-hint">待上一集完成</span>}
+                        {episodeLocked && <span className="storyboard-scene-card__lock-hint">{t('待上一集完成')}</span>}
                       </button>
                     );
                   })}
@@ -465,7 +466,7 @@ export function StoryboardWorkspace({
                 disabled={!taskId || !selectedScene.shots.some(shot => Boolean(shot.image_url))}
                 busy={downloadBusyKey === `scene-${selectedScene.id}`}
               >
-                下载本图
+                {t('下载本图')}
               </DownloadAction>
               <button
                 type="button"
@@ -473,7 +474,7 @@ export function StoryboardWorkspace({
                 onClick={() => setShowPrompt(value => !value)}
                 aria-expanded={showPrompt}
               >
-                <FileText aria-hidden="true" /> 查看提示词
+                <FileText aria-hidden="true" /> {t('查看提示词')}
               </button>
               {/* 站位、轴线与逐镜机位：分镜图生成前后都能看，改完可只重画这一场。 */}
               <button
@@ -483,7 +484,7 @@ export function StoryboardWorkspace({
                 disabled={!taskId}
                 aria-haspopup="dialog"
               >
-                <Axis3d aria-hidden="true" /> 空间调度
+                <Axis3d aria-hidden="true" /> {t('空间调度')}
               </button>
               {/* 同一份空间舞台的可编辑 3D 视图：摆人、摆道具、架机位、截图交给第 5 阶段。 */}
               <button
@@ -493,7 +494,7 @@ export function StoryboardWorkspace({
                 disabled={!taskId}
                 aria-haspopup="dialog"
               >
-                <Clapperboard aria-hidden="true" /> 3D 导演台
+                <Clapperboard aria-hidden="true" /> {t('3D 导演台')}
               </button>
               {/* 定稿的分镜重新切成可直接粘贴的提示词分包；资产设定图是开拍前要先锁死的参考图。 */}
               <button
@@ -503,7 +504,7 @@ export function StoryboardWorkspace({
                 disabled={!taskId}
                 aria-haspopup="dialog"
               >
-                <ClipboardList aria-hidden="true" /> 提示词分包
+                <ClipboardList aria-hidden="true" /> {t('提示词分包')}
               </button>
               <button
                 type="button"
@@ -512,10 +513,10 @@ export function StoryboardWorkspace({
                 disabled={!taskId}
                 aria-haspopup="dialog"
               >
-                <Images aria-hidden="true" /> 资产设定图
+                <Images aria-hidden="true" /> {t('资产设定图')}
               </button>
               <button type="button" className="storyboard-action" onClick={onRegenerate}>
-                <RefreshCw aria-hidden="true" /> 重跑分镜阶段
+                <RefreshCw aria-hidden="true" /> {t('重跑分镜阶段')}
               </button>
             </div>
           </div>
@@ -565,7 +566,7 @@ export function StoryboardWorkspace({
                   </span>
                   {downloadable && (
                     <span className="storyboard-frame__download" aria-hidden="true">
-                      <Download /> 点击下载
+                      <Download /> {t('点击下载')}
                     </span>
                   )}
                 </button>
@@ -586,7 +587,7 @@ export function StoryboardWorkspace({
           </span>
         )}
         <button type="button" onClick={onContinue} disabled={!onContinue || !continueUnlocked}>
-          确认分镜，继续视觉制作 <ArrowRight aria-hidden="true" />
+          {t('确认分镜，继续视觉制作')} <ArrowRight aria-hidden="true" />
         </button>
       </footer>
       {exportKind && taskId && (

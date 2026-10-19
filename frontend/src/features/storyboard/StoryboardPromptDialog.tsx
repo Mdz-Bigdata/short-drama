@@ -8,6 +8,7 @@ import { storyboardPromptMarkdown } from './storyboardPromptMarkdown';
 import { STORYBOARD_VISUAL_THEME } from './storyboardTheme';
 import type { StoryboardPromptDetail } from './storyboardPromptTypes';
 import './StoryboardPromptDialog.css';
+import { t } from '../../i18n';
 
 
 export function StoryboardPromptDialog({ detail, fallbackPrompt, onClose }: {
@@ -70,14 +71,14 @@ export function StoryboardPromptDialog({ detail, fallbackPrompt, onClose }: {
       >
         <header className="prompt-dialog__header">
           <div className="prompt-dialog__title">
-            <span>STORYBOARD / 镜头创作</span>
+            <span>{t('STORYBOARD / 镜头创作')}</span>
             <h1 id="prompt-dialog-title">{detail?.shot_number ? `${detail.shot_number} · 宫格提示词` : '宫格提示词'}</h1>
           </div>
           <div className="prompt-dialog__actions">
             <a href={downloadHref} download={`${detail?.shot_number || 'storyboard'}-page-1.md`}>
-              <Download aria-hidden="true" /><span>下载 Markdown</span>
+              <Download aria-hidden="true" /><span>{t('下载 Markdown')}</span>
             </a>
-            <button ref={closeRef} type="button" onClick={onClose} aria-label="关闭宫格提示词">
+            <button ref={closeRef} type="button" onClick={onClose} aria-label={t('关闭宫格提示词')}>
               <X aria-hidden="true" />
             </button>
           </div>
@@ -90,7 +91,7 @@ export function StoryboardPromptDialog({ detail, fallbackPrompt, onClose }: {
             </>
           ) : (
             <section className="prompt-detail__section">
-              <header className="prompt-detail__section-header"><h2>原始宫格提示词</h2></header>
+              <header className="prompt-detail__section-header"><h2>{t('原始宫格提示词')}</h2></header>
               <div className="prompt-detail__section-body"><pre className="prompt-dialog__fallback">{markdown}</pre></div>
             </section>
           )}

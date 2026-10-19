@@ -27,13 +27,13 @@ export const ACTOR_SHEET_CELL_KEYS = [
   'element_hem',
   'face_front',
   'face_three_quarter',
+  'face_three_quarter_right',
   'face_back_hair',
   'detail_collar',
   'detail_chest',
   'detail_waist_knot',
   'detail_cuff',
   'detail_texture',
-  'detail_back_tie',
   'detail_shoe',
   'detail_eye',
   'detail_accessory',
@@ -53,6 +53,8 @@ export interface ActorSheetCell {
   group: ActorSheetCellGroup;
   imageUrl: string | null;
   available: boolean;
+  /** 模型没单独画这一格时，从哪个身份面板按部位补裁(full_body / portrait / back)。 */
+  derivedFrom?: ActorSheetCellKey | null;
 }
 
 // 格子 → 它在版面上属于哪个区域，与后端 ACTOR_SHEET_LAYOUT 的区域划分一致。
@@ -72,13 +74,13 @@ export const ACTOR_SHEET_CELL_GROUPS: Record<ActorSheetCellKey, ActorSheetCellGr
   element_hem: 'elements',
   face_front: 'detail_matrix',
   face_three_quarter: 'detail_matrix',
+  face_three_quarter_right: 'detail_matrix',
   face_back_hair: 'detail_matrix',
   detail_collar: 'detail_matrix',
   detail_chest: 'detail_matrix',
   detail_waist_knot: 'detail_matrix',
   detail_cuff: 'detail_matrix',
   detail_texture: 'detail_matrix',
-  detail_back_tie: 'detail_matrix',
   detail_shoe: 'detail_matrix',
   detail_eye: 'detail_matrix',
   detail_accessory: 'detail_matrix',
@@ -143,6 +145,9 @@ export interface CharacterFiveViewQuality {
   issues: CharacterQualityIssue[];
 }
 
+/** 单角色重新生成：sheet 重出设定集；hd 补高清身份视图；details 把补位裁切的细节格真正画出来。 */
+export type CharacterRegenerateMode = 'sheet' | 'hd' | 'details';
+
 export interface CharacterDashboardCharacter {
   characterId: string;
   name: string;
@@ -158,6 +163,10 @@ export interface CharacterDashboardCharacter {
   /** 设定集的其余格子；旧五视图记录为空数组。 */
   sheetCells: ActorSheetCell[];
   quality: CharacterFiveViewQuality;
+  /** 单个角色「重新生成设定集」正在后台跑。 */
+  regenerating?: boolean;
+  /** 上一次重新生成失败的原因；成功或从未重新生成为空。 */
+  regenerationError?: string;
 }
 
 export interface CharacterDashboardStats {
@@ -207,7 +216,7 @@ export const DEFAULT_VIEW_CONTRACT: CharacterViewContract = {
     { key: 'profile', order: 2, angleDegrees: 90, labelZh: '侧面全身', labelEn: 'Profile full body' },
     { key: 'back', order: 3, angleDegrees: 180, labelZh: '背面全身', labelEn: 'Back full body' },
     { key: 'face_front', order: 4, angleDegrees: 0, labelZh: '正脸特写', labelEn: 'Face front close-up' },
-    { key: 'face_three_quarter', order: 5, angleDegrees: 45, labelZh: '3-4侧脸', labelEn: 'Face three-quarter' },
+    { key: 'face_three_quarter', order: 5, angleDegrees: 45, labelZh: '左侧45°侧脸', labelEn: 'Face left 45°' },
   ],
 };
 
@@ -380,10 +389,15 @@ function normalizeViews(value: unknown): CharacterViewAsset[] {
 function normalizeSheetCells(value: unknown): ActorSheetCell[] {
   const provided = Array.isArray(value) ? value.map(record) : [];
   const urls: Partial<Record<ActorSheetCellKey, string>> = {};
+  const derived: Partial<Record<ActorSheetCellKey, ActorSheetCellKey>> = {};
   provided.forEach(item => {
     const key = cellKey(item.key ?? item.cell ?? item.view);
     const imageUrl = sanitizeCharacterMediaUrl(item.imageUrl ?? item.image_url);
-    if (key && imageUrl && !urls[key]) urls[key] = imageUrl;
+    if (key && imageUrl && !urls[key]) {
+      urls[key] = imageUrl;
+      const source = cellKey(item.derivedFrom ?? item.derived_from);
+      if (source) derived[key] = source;
+    }
   });
   if (!Object.keys(urls).length) return [];
   return ACTOR_SHEET_CELL_KEYS.map((key, index) => ({
@@ -392,6 +406,7 @@ function normalizeSheetCells(value: unknown): ActorSheetCell[] {
     group: ACTOR_SHEET_CELL_GROUPS[key],
     imageUrl: urls[key] ?? null,
     available: Boolean(urls[key]),
+    derivedFrom: derived[key] ?? null,
   }));
 }
 
@@ -487,6 +502,8 @@ function normalizeCharacter(value: unknown, index: number): CharacterDashboardCh
     views,
     sheetCells: normalizeSheetCells(raw.sheetCells ?? raw.sheet_cells ?? raw.cells),
     quality,
+    regenerating: raw.regenerating === true,
+    regenerationError: text(raw.regenerationError ?? raw.regeneration_error),
   };
 }
 

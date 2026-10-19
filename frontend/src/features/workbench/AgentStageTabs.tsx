@@ -1,6 +1,7 @@
 import { ClipboardList, Film, Layers, Music, Share2, Sliders, UserCheck, Video } from 'lucide-react';
 
 import './AgentStageTabs.css';
+import { t } from '../../i18n';
 
 
 const AGENT_STAGES = [
@@ -20,7 +21,7 @@ export function AgentStageTabs({ activeStage, onChange }: {
   onChange: (stage: number) => void;
 }) {
   return (
-    <nav className="agent-stage-tabs" aria-label="八种制作 Agent">
+    <nav className="agent-stage-tabs" aria-label={t('八种制作 Agent')}>
       {AGENT_STAGES.map(stage => {
         const Icon = stage.icon;
         const isActive = activeStage === stage.id;
@@ -33,7 +34,7 @@ export function AgentStageTabs({ activeStage, onChange }: {
             onClick={() => onChange(stage.id)}
           >
             <Icon aria-hidden="true" />
-            {stage.id}.{stage.label}
+            {stage.id}.{t(stage.label)}
           </button>
         );
       })}

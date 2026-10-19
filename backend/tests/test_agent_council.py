@@ -5,7 +5,7 @@ import unittest
 
 from app.api.production_api import router
 from app.api.drama_api import router as drama_router
-from app.core.agent_council import AgentCouncilCompiler, CAPABILITIES, KNOWLEDGE_SOURCE_FILES
+from app.core.agent_council import AgentCouncilCompiler, CAPABILITIES, knowledge_source_keys
 from app.schema.agent_council import (
     ALL_AGENT_ROLES,
     AgentArtifactEvidence,
@@ -34,8 +34,10 @@ class AgentCouncilCompilerTests(unittest.TestCase):
     def test_all_sources_agents_and_capabilities_are_traceable(self) -> None:
         self.assertEqual(len(self.plan.agents), 8)
         self.assertEqual(tuple(agent.role for agent in self.plan.agents), ALL_AGENT_ROLES)
-        self.assertEqual(len(self.plan.source_records), len(KNOWLEDGE_SOURCE_FILES))
-        self.assertEqual({record.filename for record in self.plan.source_records}, set(KNOWLEDGE_SOURCE_FILES))
+        self.assertEqual(len(self.plan.source_records), len(knowledge_source_keys()))
+        self.assertEqual({record.filename for record in self.plan.source_records}, set(knowledge_source_keys()))
+        # Every fingerprinted source is a file inside a skill, addressed from the skills root.
+        self.assertTrue(all(record.project_relative_path.startswith("skills/") for record in self.plan.source_records))
         self.assertTrue(all(record.sha256 and record.byte_size > 0 for record in self.plan.source_records))
         self.assertTrue(all(record.capability_ids for record in self.plan.source_records))
         self.assertTrue(all(capability.owners for capability in CAPABILITIES))
@@ -179,6 +181,19 @@ class AgentCouncilCompilerTests(unittest.TestCase):
         result = service.submit_council_release("task-1", self._approved_evidence())
         self.assertEqual(result["status"], "completed")
         self.assertTrue(result["assets"]["8"]["council_release_gate"]["releasable"])
+
+class ChinesePromptTests(unittest.TestCase):
+    def test_role_prompts_name_deliverables_in_chinese_and_ask_for_chinese_prose(self):
+        from app.core.agent_council import _ROLE_OUTPUTS, ARTIFACT_LABELS
+
+        self.assertEqual([i for ids in _ROLE_OUTPUTS.values() for i in ids if i not in ARTIFACT_LABELS], [])
+        plan = AgentCouncilCompiler().compile(CouncilCompileRequest(title="冒牌皇帝", premise="乞丐被迫冒充皇帝"))
+        director = next(agent for agent in plan.agents if agent.role.value == "executive_director")
+        self.assertIn("必须交付的结构化产物：导演宪法、题材与受众策略", director.system_prompt)
+        self.assertNotIn("director_constitution", director.system_prompt)
+        self.assertIn("标题、正文与表格一律用中文", director.system_prompt)
+        # The structured ids are unchanged: release evidence and handoffs still key on them.
+        self.assertIn("director_constitution", director.required_outputs)
 
 
 if __name__ == "__main__":

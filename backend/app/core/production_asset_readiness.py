@@ -16,6 +16,8 @@ from app.core.element_scope import element_in_task, element_name_keys, normalize
 from app.core.production_asset_extractor import extract_production_assets
 
 ASSET_KINDS = ("actor", "scene", "prop", "costume", "effect")
+# Every kind the library holds; products are only required when an ad's brief names one.
+LIBRARY_KINDS = (*ASSET_KINDS, "product")
 NON_ACTOR_KINDS = ("scene", "prop", "costume", "effect")
 KIND_LABELS = {
     "actor": "数字演员",
@@ -23,6 +25,7 @@ KIND_LABELS = {
     "prop": "拍摄道具",
     "costume": "服装",
     "effect": "特效",
+    "product": "商品",
 }
 READINESS_KEY = "3_asset_readiness"
 _MAX_LISTED = 50
@@ -117,6 +120,7 @@ def evaluate_asset_readiness(
             "missing": missing[:_MAX_LISTED],
             "enforced": enforced,
         }
+    kinds["product"] = _product_readiness(task, summaries)
     complete = (
         not library_error
         and cast_ready
@@ -129,6 +133,31 @@ def evaluate_asset_readiness(
         "library_error": library_error,
         "kinds": kinds,
         "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _product_readiness(task: dict, summaries: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """An ad whose brief names a product needs that product's reference image; nothing else asks for one."""
+    from app.core import creation_modes
+
+    config = task.get("config") if isinstance(task.get("config"), dict) else {}
+    product = creation_modes.ad_brief(config)["product"] if creation_modes.mode_of(config) == "ad" else ""
+    enforced = bool(product) and summaries is not None
+    ready = False
+    if product:
+        wanted = normalized_asset_name(product)
+        ready = any(
+            summary.get("kind") == "product" and summary.get("has_image")
+            and wanted in element_name_keys(summary.get("name"), summary.get("metadata"))
+            for summary in summaries or []
+        )
+    missing = [product] if enforced and not ready else []
+    return {
+        "label": KIND_LABELS["product"],
+        "total": 1 if product else 0,
+        "ready": 1 if product and ready else 0,
+        "missing": missing,
+        "enforced": enforced,
     }
 
 

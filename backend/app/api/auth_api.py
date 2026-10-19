@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import os
 import secrets
 from typing import Optional
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
 
+from app import settings
+from app.ingest.parsers import SourceIngestor
+from app.platform.bootstrap import development_admin_login_hint
 from app.platform.dependencies import get_platform_store
 from app.platform.models import PlatformUser
 from app.platform.store import PlatformStore
+from app.schema.drama import DEFAULT_EPISODE_COUNT, EPISODE_COUNT_MAX, EPISODE_COUNT_MIN
 from app.schema.auth import CodeLoginRequest, PasswordLoginRequest, RegisterRequest, SendCodeRequest
 from app.service.auth_service import AuthService
 
@@ -32,7 +35,7 @@ def _public_user(user: PlatformUser) -> dict:
 
 
 async def get_current_user(
-    auth_token: Optional[str] = Cookie(None),
+    auth_token: Optional[str] = Cookie(None, alias=settings.AUTH_COOKIE_NAME),
     store: PlatformStore = Depends(get_platform_store),
 ) -> dict:
     if not auth_token:
@@ -54,14 +57,35 @@ async def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
     return current_user
 
 
+def _client_config() -> dict:
+    """Limits the browser must agree with the server on, sent with the session instead of copied into the UI."""
+    return {
+        "password_min_length": settings.PASSWORD_MIN_LENGTH,
+        "verification_code": {
+            "length": settings.VERIFICATION_CODE_LENGTH,
+            "cooldown_seconds": settings.code_cooldown_seconds(),
+        },
+        "episode_count": {
+            "min": EPISODE_COUNT_MIN,
+            "max": EPISODE_COUNT_MAX,
+            "default": DEFAULT_EPISODE_COUNT,
+        },
+        "script_upload": {
+            "max_bytes": SourceIngestor.MAX_BYTES,
+            "extensions": [f".{extension}" for extension in SourceIngestor.SUPPORTED_EXTENSIONS],
+        },
+    }
+
+
 def _set_session(response: Response, user_id: str) -> None:
     response.set_cookie(
-        key="auth_token",
+        key=settings.AUTH_COOKIE_NAME,
         value=auth_service.generate_token(user_id),
         httponly=True,
         samesite="lax",
-        max_age=86400,
-        secure=os.getenv("COOKIE_SECURE", "0") == "1",
+        # The cookie lives exactly as long as the signed token inside it stays valid.
+        max_age=settings.session_ttl_seconds(),
+        secure=settings.cookie_secure(),
         path="/",
     )
 
@@ -74,7 +98,11 @@ def send_code(req: SendCodeRequest):
     success, development_code = auth_service.send_verification_code(login_id)
     if not success:
         raise HTTPException(status_code=503, detail="验证码发送服务暂不可用")
-    payload = {"status": "success", "message": f"验证码已成功发送至 {login_id}"}
+    payload = {
+        "status": "success",
+        "message": f"验证码已成功发送至 {login_id}",
+        "cooldown_seconds": settings.code_cooldown_seconds(),
+    }
     if development_code:
         payload["development_code"] = development_code
     return payload
@@ -139,26 +167,35 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
 
 @router.get("/session")
 async def session_status(
-    auth_token: Optional[str] = Cookie(None),
+    auth_token: Optional[str] = Cookie(None, alias=settings.AUTH_COOKIE_NAME),
     store: PlatformStore = Depends(get_platform_store),
 ):
     """Return a quiet browser bootstrap status without turning logged-out state into a console error."""
+    # Local development shows which administrator the server bootstrapped; the
+    # hint is absent in production and whenever bootstrapping is switched off.
+    client_config = _client_config()
+    signed_out = {
+        "authenticated": False,
+        "user": None,
+        "bootstrap_admin_login": development_admin_login_hint(),
+        "client_config": client_config,
+    }
     user_id = auth_service.verify_token(auth_token or "")
     if not user_id:
-        return {"authenticated": False, "user": None}
+        return signed_out
     user = await store.get_user(user_id)
     if not user or user.status != "active":
-        return {"authenticated": False, "user": None}
-    return {"authenticated": True, "user": _public_user(user)}
+        return signed_out
+    return {"authenticated": True, "user": _public_user(user), "client_config": client_config}
 
 
 @router.post("/logout")
 def logout_user(response: Response):
     response.delete_cookie(
-        key="auth_token",
+        key=settings.AUTH_COOKIE_NAME,
         samesite="lax",
         httponly=True,
-        secure=os.getenv("COOKIE_SECURE", "0") == "1",
+        secure=settings.cookie_secure(),
         path="/",
     )
     return {"status": "success", "message": "已成功退出登录"}

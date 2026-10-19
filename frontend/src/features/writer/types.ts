@@ -1,6 +1,21 @@
+export interface WriterDialogueLine {
+  kind?: 'dialogue' | 'voiceover';
+  speaker?: string;
+  text: string;
+  /** The words are the source text's own (a line cut from the novel or screenplay). */
+  verbatim?: boolean;
+}
+
 export interface WriterScene {
   scene_id?: string;
   sceneId?: string;
+  /** Short place / time tag of the shot. */
+  label?: string;
+  /** The picture text alone (``content`` also folds in heading and lines). */
+  description?: string;
+  dialogue?: WriterDialogueLine[];
+  /** Storyboard frame once stage 4 produced one. */
+  imageUrl?: string | null;
   duration?: string;
   durationLabel?: string;
   durationSeconds?: number;
@@ -35,6 +50,19 @@ export interface WriterRole {
   position?: string;
 }
 
+export interface WriterScriptVersion {
+  versionId: string;
+  label: string;
+  createdAt: string;
+  sourceHash: string;
+  episodeCount: number;
+  sceneCount: number;
+}
+
+export const ROLE_POSITIONS = ['男主角', '女主角', '男配角', '女配角', '反派', '其它角色'] as const;
+export const STORY_PHASES = ['故事开始', '进展纠葛', '危机', '高潮', '结局'] as const;
+export const CREATION_MODE_LABELS: Record<string, string> = { drama: '剧情模式', narration: '旁白模式', ad: '广告模式' };
+
 export interface WriterBreakdown {
   overview?: {
     synopsis?: string;
@@ -49,6 +77,13 @@ export interface WriterBreakdown {
   roles?: WriterRole[];
 }
 
+/** Why the server considers an episode not yet well formed (too few shots, too short, over the advised length). */
+export interface WriterEpisodeIssue {
+  code: string;
+  message: string;
+  severity: 'error' | 'warning';
+}
+
 export interface WriterEpisode {
   index: number;
   title: string;
@@ -56,6 +91,7 @@ export interface WriterEpisode {
   videoUrl?: string | null;
   sceneCount?: number;
   durationSeconds?: number;
+  issues?: WriterEpisodeIssue[];
 }
 
 export interface WriterDashboardStats {
@@ -86,6 +122,12 @@ export interface WriterDashboardResponse {
   relationships: WriterRelationship[];
   /** True while the graph is only same-scene co-occurrence, not analysed relations. */
   relationshipsInferred?: boolean;
+  /** The event timeline was arranged by hand and no longer follows the ledger. */
+  timelineAuthored?: boolean;
+  creationMode?: string;
+  versions?: WriterScriptVersion[];
+  /** name → portrait url, once stage 3 drew the character. */
+  portraits?: Record<string, string>;
   episodes: WriterEpisode[];
   script: string;
   scriptFileName?: string | null;

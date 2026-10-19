@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
 import time
 from collections import deque
 from http.cookies import CookieError, SimpleCookie
@@ -12,30 +11,24 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app import settings
+from app.platform.uploads import MAX_IMAGE_UPLOAD_BYTES, MAX_MODEL_UPLOAD_BYTES, MEBIBYTE
 from app.service.auth_service import verify_session_token
 
 
-def _environment_limit(name: str, default: int, *, minimum: int, maximum: int) -> int:
-    try:
-        value = int(os.getenv(name, str(default)))
-    except ValueError:
-        value = default
-    return max(minimum, min(maximum, value))
-
-
-MODEL_UPLOAD_REQUEST_MAX_BYTES = _environment_limit(
+MODEL_UPLOAD_REQUEST_MAX_BYTES = settings.env_int(
     "ELEMENT_MODEL_REQUEST_MAX_BYTES",
-    26 * 1024 * 1024,
-    minimum=25 * 1024 * 1024,
+    MAX_MODEL_UPLOAD_BYTES + MEBIBYTE,
+    minimum=MAX_MODEL_UPLOAD_BYTES,
     maximum=64 * 1024 * 1024,
 )
-IMAGE_UPLOAD_REQUEST_MAX_BYTES = _environment_limit(
+IMAGE_UPLOAD_REQUEST_MAX_BYTES = settings.env_int(
     "ELEMENT_IMAGE_REQUEST_MAX_BYTES",
-    11 * 1024 * 1024,
-    minimum=10 * 1024 * 1024,
+    MAX_IMAGE_UPLOAD_BYTES + MEBIBYTE,
+    minimum=MAX_IMAGE_UPLOAD_BYTES,
     maximum=32 * 1024 * 1024,
 )
-SCRIPT_UPDATE_REQUEST_MAX_BYTES = _environment_limit(
+SCRIPT_UPDATE_REQUEST_MAX_BYTES = settings.env_int(
     "SCRIPT_UPDATE_REQUEST_MAX_BYTES",
     5 * 1024 * 1024,
     minimum=2 * 1024 * 1024,
@@ -113,7 +106,7 @@ class ScriptUpdateGuardMiddleware:
         try:
             cookie = SimpleCookie()
             cookie.load(raw_cookie)
-            token = cookie.get("auth_token")
+            token = cookie.get(settings.AUTH_COOKIE_NAME)
         except CookieError:
             return None
         if not token or len(token.value) > 4096:
@@ -301,7 +294,7 @@ class ElementUploadGuardMiddleware:
         try:
             cookie = SimpleCookie()
             cookie.load(raw_cookie)
-            token = cookie.get("auth_token")
+            token = cookie.get(settings.AUTH_COOKIE_NAME)
         except CookieError:
             return None
         if not token or len(token.value) > 4096:

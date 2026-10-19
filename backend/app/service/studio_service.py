@@ -7,6 +7,7 @@ from pathlib import Path
 import hashlib
 from typing import Any
 
+from app import settings
 from app.export.delivery import CaptionCue, DeliveryExporter
 from app.ingest.parsers import SourceIngestor
 from app.repository.studio_repo import ConcurrencyError, StudioRepository
@@ -33,9 +34,8 @@ from app.story.story_graph import StoryGraphBuilder
 class StudioService:
     def __init__(self, repository: StudioRepository | None = None):
         if repository is None:
-            backend_root = Path(__file__).resolve().parents[2]
             configured = os.getenv("STUDIO_DB_PATH", "").strip()
-            path = Path(configured).expanduser() if configured else backend_root / "runtime" / "studio.sqlite3"
+            path = Path(configured).expanduser() if configured else settings.RUNTIME_DIR / "studio.sqlite3"
             repository = StudioRepository(path)
         self.repository = repository
         self.ingestor = SourceIngestor()

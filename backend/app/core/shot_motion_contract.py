@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
 from app.schema.production import StoryboardPanel
 
 
@@ -47,9 +48,9 @@ class ShotMotionContract(BaseModel):
     continuity_in: Annotated[str, Field(max_length=1500)] = ""
     continuity_out: Annotated[str, Field(min_length=2, max_length=1500)]
     storyboard_image: str | None = None
-    reference_images: list[str] = Field(default_factory=list, max_length=9)
-    reference_videos: list[str] = Field(default_factory=list, max_length=3)
-    reference_audios: list[str] = Field(default_factory=list, max_length=3)
+    reference_images: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_IMAGES)
+    reference_videos: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_VIDEOS)
+    reference_audios: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_AUDIOS)
 
     @classmethod
     def from_panel(
@@ -87,9 +88,9 @@ class ShotMotionContract(BaseModel):
             continuity_in=panel.continuity_in,
             continuity_out=panel.continuity_out,
             storyboard_image=storyboard_image,
-            reference_images=list(dict.fromkeys(reference_images or []))[:9],
-            reference_videos=list(dict.fromkeys(reference_videos or []))[:3],
-            reference_audios=list(dict.fromkeys(reference_audios or []))[:3],
+            reference_images=list(dict.fromkeys(reference_images or []))[:MAX_REFERENCE_IMAGES],
+            reference_videos=list(dict.fromkeys(reference_videos or []))[:MAX_REFERENCE_VIDEOS],
+            reference_audios=list(dict.fromkeys(reference_audios or []))[:MAX_REFERENCE_AUDIOS],
         )
 
     @property

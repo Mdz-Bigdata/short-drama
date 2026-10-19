@@ -35,15 +35,19 @@ def _scene_heading(scene: Mapping[str, Any]) -> str:
 
 
 def _source_slice(state: Mapping[str, Any], episode: int) -> str:
-    if state.get("source_kind") == "outline":
-        return ""
+    """The author's own text for ``episode``: its own upload, else its span of the whole source."""
     source = str(state.get("source_text") or "")
     for entry in state.get("ledger") or []:
-        if isinstance(entry, Mapping) and int(entry.get("episode") or 0) == int(episode):
-            span = entry.get("source_range")
-            if not isinstance(span, Mapping):
-                return ""
-            return source[int(span.get("start") or 0):int(span.get("end") or len(source))].strip()
+        if not isinstance(entry, Mapping) or int(entry.get("episode") or 0) != int(episode):
+            continue
+        if entry.get("source_origin") == "own":
+            return str(entry.get("source_text") or "").strip()
+        if entry.get("source_origin") == "none" or state.get("source_kind") == "outline":
+            return ""
+        span = entry.get("source_range")
+        if not isinstance(span, Mapping):
+            return ""
+        return source[int(span.get("start") or 0):int(span.get("end") or len(source))].strip()
     return ""
 
 
@@ -123,12 +127,40 @@ def scene_breakdown_entry(scene: Mapping[str, Any]) -> dict[str, Any]:
         spoken.append(f"{speaker}：{text}")
     if spoken:
         parts.append("台词：" + " / ".join(spoken))
+    # Lines cut from a source (novel / screenplay) are the source's own words; the
+    # dashboard shows them as 原文 so an editor knows a change there is a change to the book.
+    verbatim = bool(_text(scene.get("source_text"), 10))
+    dialogue = [
+        {
+            "kind": "dialogue" if utterance.get("kind") == "dialogue" else "voiceover",
+            "speaker": _text(utterance.get("speaker"), 80) if utterance.get("kind") == "dialogue" else "",
+            "text": _text(utterance.get("text"), 500),
+            "verbatim": verbatim,
+            # How the line is played (emotion / pace / stress / body): read by the video prompt and the voice.
+            "delivery": _text(utterance.get("delivery"), 120),
+        }
+        for utterance in (scene.get("utterances") or [])
+        if isinstance(utterance, Mapping) and _text(utterance.get("text"), 500)
+    ]
     return {
         "scene_id": str(scene.get("scene_id") or ""),
+        "label": scene_label(scene),
         "duration": f"{duration}s" if isinstance(duration, int) and not isinstance(duration, bool) and duration > 0 else "",
         "content": " ".join(parts)[:_MAX_CONTENT_CHARS],
+        "description": _text(scene.get("scene_description"), _MAX_CONTENT_CHARS),
+        "dialogue": dialogue[:30],
         "characters": [name for name in (scene.get("characters_in_scene") or []) if isinstance(name, str) and name.strip()],
     }
+
+
+def scene_label(scene: Mapping[str, Any]) -> str:
+    """A short tag for a shot: the place and time from its heading, at most twelve characters."""
+    setting = _text(scene.get("setting"), 80)
+    if not setting:
+        return ""
+    parts = [part for part in setting.replace("，", " ").replace("·", " ").split() if part and part not in ("内景", "外景", "内", "外")]
+    label = " ".join(parts[:2])
+    return label[:12]
 
 
 def _phase_for(position: float) -> str:
@@ -155,11 +187,51 @@ def render_timeline(state: Mapping[str, Any]) -> list[dict[str, Any]]:
     return events[:500]
 
 
+_EMPTY_RELATIONS = ("同场", "共同出场", "共现", "有关联", "剧情关联")
+
+
+def render_relationships(state: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The named relations the inventory step read off the story, between characters it registered."""
+    inventory = state.get("inventory") if isinstance(state.get("inventory"), Mapping) else {}
+    characters = inventory.get("characters") if isinstance(inventory.get("characters"), Mapping) else {}
+    names = {str(name).strip() for name in characters if str(name).strip()}
+    seen: set[tuple[str, str, str]] = set()
+    edges: list[dict[str, Any]] = []
+    for item in inventory.get("relationships") or []:
+        if not isinstance(item, Mapping):
+            continue
+        # Parsed relations are stored by field name (``from_``); hand-written ones say ``from``.
+        source, target = _text(item.get("from") or item.get("from_"), 80), _text(item.get("to"), 80)
+        relation = _text(item.get("relation"), 12)
+        if not source or not target or source == target or not relation or any(word in relation for word in _EMPTY_RELATIONS):
+            continue
+        if names and (source not in names or target not in names):
+            continue
+        key = (source, target, relation)
+        if key in seen:
+            continue
+        seen.add(key)
+        edges.append({"from": source, "to": target, "relation": relation, "bidirectional": bool(item.get("bidirectional"))})
+    return edges[:60]
+
+
+def _costume_entry(name: Any, entry: Any) -> dict[str, str]:
+    """A costume names its wearer, so the picture and the five-view sheet can be matched."""
+    entry = entry if isinstance(entry, Mapping) else {}
+    wearer = _text(entry.get("character"), 80)
+    description = _text(entry.get("description"), 1000)
+    if wearer and wearer not in description:
+        description = f"{wearer}穿着；{description}" if description else f"{wearer}穿着"
+    return {"name": str(name), "description": description[:1000], **({"character": wearer} if wearer else {})}
+
+
 def render_breakdown(state: Mapping[str, Any]) -> dict[str, Any]:
     inventory = state.get("inventory") if isinstance(state.get("inventory"), Mapping) else {}
     characters = inventory.get("characters") if isinstance(inventory.get("characters"), Mapping) else {}
     scene_assets = inventory.get("scenes") if isinstance(inventory.get("scenes"), Mapping) else {}
     prop_assets = inventory.get("props") if isinstance(inventory.get("props"), Mapping) else {}
+    costume_assets = inventory.get("costumes") if isinstance(inventory.get("costumes"), Mapping) else {}
+    effect_assets = inventory.get("effects") if isinstance(inventory.get("effects"), Mapping) else {}
     overview = state.get("overview") if isinstance(state.get("overview"), Mapping) else {}
     scenes: list[dict[str, Any]] = []
     for script in episode_scripts(state):
@@ -181,7 +253,7 @@ def render_breakdown(state: Mapping[str, Any]) -> dict[str, Any]:
         },
         "scenes": scenes,
         "timeline": render_timeline(state),
-        "relationships": [],
+        "relationships": render_relationships(state),
         "roles": roles,
         "production_assets": {
             "scenes": [
@@ -192,8 +264,11 @@ def render_breakdown(state: Mapping[str, Any]) -> dict[str, Any]:
                 {"name": str(name), "description": _text((entry or {}).get("description") if isinstance(entry, Mapping) else "", 1000)}
                 for name, entry in prop_assets.items() if str(name).strip()
             ],
-            "costumes": [],
-            "effects": [],
+            "costumes": [_costume_entry(name, entry) for name, entry in costume_assets.items() if str(name).strip()],
+            "effects": [
+                {"name": str(name), "description": _text((entry or {}).get("description") if isinstance(entry, Mapping) else "", 1000)}
+                for name, entry in effect_assets.items() if str(name).strip()
+            ],
         },
     }
 
@@ -204,7 +279,9 @@ __all__ = [
     "render_breakdown",
     "render_episode_text",
     "render_episode_texts",
+    "render_relationships",
     "render_screenplay",
     "render_timeline",
     "scene_breakdown_entry",
+    "scene_label",
 ]

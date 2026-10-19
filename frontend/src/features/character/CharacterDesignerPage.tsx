@@ -22,8 +22,9 @@ import {
   CharacterInspector,
   CharacterLibrary,
 } from './CharacterDesignerPanels';
-import type { CharacterDashboardResponse } from './types';
+import type { CharacterDashboardResponse, CharacterRegenerateMode } from './types';
 import './CharacterDesignerPage.css';
+import { t } from '../../i18n';
 
 const nonActorAssetKinds = ['scene', 'prop', 'costume', 'effect'] as const satisfies readonly ElementKind[];
 
@@ -56,6 +57,8 @@ export function CharacterDesignerPage({
   taskId,
   onRefresh,
   onRegenerate,
+  onRegenerateCharacter,
+  onRegenerateCharacters,
   onExport,
   onContinue,
 }: {
@@ -67,6 +70,10 @@ export function CharacterDesignerPage({
   taskId?: string;
   onRefresh: () => void;
   onRegenerate: () => void;
+  /** 只为一名角色重新出设定集或补高清身份视图；不传时角色档案里不显示这些按钮。 */
+  onRegenerateCharacter?: (name: string, mode: CharacterRegenerateMode) => void;
+  /** 把这些角色的设定集全部重新出一遍（每名一次付费出图）。 */
+  onRegenerateCharacters?: (names: string[]) => void;
   onExport: () => void;
   onContinue: () => void;
 }) {
@@ -80,6 +87,7 @@ export function CharacterDesignerPage({
   const [extractNotice, setExtractNotice] = useState('');
   const [assetSyncNotice, setAssetSyncNotice] = useState('');
   const [assetGenerationToken, setAssetGenerationToken] = useState(0);
+  const [assetReplaceToken, setAssetReplaceToken] = useState(0);
   const [assetGenerationBusy, setAssetGenerationBusy] = useState(false);
   const [assetReadiness, setAssetReadiness] = useState<AssetReadiness | null>(null);
   const synchronizedTaskId = useRef('');
@@ -232,6 +240,37 @@ export function CharacterDesignerPage({
     setOverviewDetail(null);
   };
 
+  const replaceAllActors = () => {
+    if (!onRegenerateCharacters) return;
+    const names = dashboard.characters.filter(item => !item.regenerating).map(item => item.name);
+    if (!names.length) return;
+    const confirmed = window.confirm(
+      `把本项目全部 ${names.length} 名数字演员的设定集重新生成一遍？\n每名角色一次付费出图，以现在的主肖像为身份参考；新图通过质检才替换旧图，未通过的保留旧图。`,
+    );
+    if (confirmed) onRegenerateCharacters(names);
+  };
+
+  const regenerateSelectedActor = () => {
+    if (!onRegenerateCharacter || !character || character.regenerating) return;
+    const confirmed = window.confirm(
+      `重新为「${character.name}」生成一张数字演员设定集？\n这是一次付费出图，以现在的主肖像为身份参考；新图通过质检后才替换旧图，未通过则保留旧图。`,
+    );
+    if (confirmed) onRegenerateCharacter(character.name, 'sheet');
+  };
+
+  const replaceActiveAssets = () => {
+    if (activeAssetKind === 'actor') {
+      replaceAllActors();
+      return;
+    }
+    if (assetGenerationBusy) return;
+    const label = characterAssetTabLabels[activeAssetKind];
+    const confirmed = window.confirm(
+      `把本项目全部「${label}」的参考图重新生成一遍？\n已有的图也会被替换，每一项都是一次付费出图。只想补缺图请用「生成缺失图片」。`,
+    );
+    if (confirmed) setAssetReplaceToken(current => current + 1);
+  };
+
   const regenerateActiveAssets = () => {
     if (activeAssetKind === 'actor') {
       onRegenerate();
@@ -244,7 +283,7 @@ export function CharacterDesignerPage({
     <main
       className="character-designer"
       aria-labelledby="character-designer-title"
-      aria-label="角色设计完整内容，可上下滚动"
+      aria-label={t('角色设计完整内容，可上下滚动')}
       tabIndex={0}
     >
       <CharacterAssetTabs
@@ -270,29 +309,52 @@ export function CharacterDesignerPage({
               : `管理本剧的${characterAssetTabLabels[activeAssetKind]}资产，与数字演员共用同一资产库。`}
           </p>
         </div>
-        <div className="character-designer__actions" aria-label="角色设计工作流操作">
+        <div className="character-designer__actions" aria-label={t('角色设计工作流操作')}>
           {activeAssetKind === 'actor' && taskId && (
             <button type="button" onClick={() => { void importActorsFromScript(); }} disabled={extracting}>
-              <FileSearch size={16} aria-hidden="true" /> {extracting ? '提取中…' : '从剧本提取演员'}
+              <FileSearch size={16} aria-hidden="true" /> {extracting ? t('提取中…') : t('从剧本提取演员')}
             </button>
           )}
           <button type="button" onClick={refresh} disabled={refreshing}>
             <RefreshCcw size={16} className={refreshing ? 'is-spinning' : ''} aria-hidden="true" />
-            {refreshing ? '同步中' : '刷新'}
+            {refreshing ? t('同步中') : t('刷新')}
           </button>
           <button type="button" onClick={onExport} disabled={exporting}>
-            <Download size={16} aria-hidden="true" /> {exporting ? '导出中' : '导出 JSON'}
+            <Download size={16} aria-hidden="true" /> {exporting ? t('导出中') : t('导出 JSON')}
           </button>
+          {(activeAssetKind !== 'actor' || onRegenerateCharacters) && (
+            <button
+              type="button"
+              onClick={replaceActiveAssets}
+              disabled={activeAssetKind === 'actor'
+                ? !dashboard.characters.some(item => !item.regenerating)
+                : assetGenerationBusy}
+              title={activeAssetKind === 'actor' ? t('每名数字演员重新出一张设定集，已有的图在新图通过质检后才被替换') : undefined}
+            >
+              <RefreshCcw size={16} aria-hidden="true" /> {t('全部重新生成')}
+            </button>
+          )}
+          {activeAssetKind === 'actor' && onRegenerateCharacter && character && (
+            <button
+              type="button"
+              onClick={regenerateSelectedActor}
+              disabled={Boolean(character.regenerating)}
+            >
+              <RefreshCcw size={16} className={character.regenerating ? 'is-spinning' : ''} aria-hidden="true" />
+              {character.regenerating ? t('设定集生成中…') : `重新生成「${character.name}」`}
+            </button>
+          )}
           <button
             type="button"
             className="is-accent"
             onClick={regenerateActiveAssets}
             disabled={activeAssetKind !== 'actor' && assetGenerationBusy}
+            title={activeAssetKind === 'actor'
+              ? '重跑角色设计：只为缺图或未通过质检的角色出图；已完成的角色请用「重新生成」。'
+              : undefined}
           >
             <WandSparkles size={16} aria-hidden="true" />
-            {activeAssetKind === 'actor'
-              ? '重新生成'
-              : assetGenerationBusy ? '图片生成中…' : '生成缺失图片'}
+            {activeAssetKind !== 'actor' && assetGenerationBusy ? '图片生成中…' : '生成缺失图片'}
           </button>
           <button
             type="button"
@@ -301,13 +363,13 @@ export function CharacterDesignerPage({
             disabled={!castReady}
             title={castReady ? undefined : castGateReason}
           >
-            进入分镜师 <ArrowRight size={16} aria-hidden="true" />
+            {t('进入分镜师')} <ArrowRight size={16} aria-hidden="true" />
           </button>
         </div>
       </header>
 
       {!castReady && (
-        <p className="character-designer__gate-hint" role="status" aria-label="进入分镜师的资产门禁">
+        <p className="character-designer__gate-hint" role="status" aria-label={t('进入分镜师的资产门禁')}>
           {castGateReason}
         </p>
       )}
@@ -334,7 +396,7 @@ export function CharacterDesignerPage({
           )}
 
           {projectDetails.length > 0 && (
-            <div className="character-designer__project" aria-label="项目角色设计基准">
+            <div className="character-designer__project" aria-label={t('项目角色设计基准')}>
               {projectDetails.map(([label, value]) => (
                 <button
                   key={label}
@@ -371,17 +433,18 @@ export function CharacterDesignerPage({
                   key={character.characterId}
                   character={character}
                   contract={dashboard.viewContract}
+                  onFillDetails={onRegenerateCharacter ? () => onRegenerateCharacter(character.name, 'details') : undefined}
                 />
-                <CharacterInspector key={`inspector-${character.characterId}`} character={character} />
+                <CharacterInspector key={`inspector-${character.characterId}`} character={character} onRegenerate={onRegenerateCharacter} />
               </div>
               <CharacterEvidencePanels dashboard={dashboard} character={character} />
             </>
           ) : (
             <section className="character-designer__empty" role="status">
               <UserRoundPlus size={42} aria-hidden="true" />
-              <h2>等待角色设计资产</h2>
-              <p>编剧阶段识别角色后，这里会生成角色库、设定集视图槽位与身份 DNA 档案。</p>
-              <button type="button" onClick={onRegenerate}><WandSparkles size={16} aria-hidden="true" /> 启动角色设计</button>
+              <h2>{t('等待角色设计资产')}</h2>
+              <p>{t('编剧阶段识别角色后，这里会生成角色库、设定集视图槽位与身份 DNA 档案。')}</p>
+              <button type="button" onClick={onRegenerate}><WandSparkles size={16} aria-hidden="true" /> {t('启动角色设计')}</button>
             </section>
           )}
         </section>
@@ -398,6 +461,7 @@ export function CharacterDesignerPage({
             embedded
             taskId={taskId}
             regenerateAllToken={assetGenerationToken}
+            replaceAllToken={assetReplaceToken}
             onGenerationStateChange={busy => {
               setAssetGenerationBusy(busy);
               if (!busy) void refreshAssetReadiness();

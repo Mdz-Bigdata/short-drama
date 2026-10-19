@@ -28,6 +28,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
+from app.core.actor_sheet_layout import FULL_BODY_PROPORTION_RULE
 from app.core.style_packs import PaletteCard, PaletteColour, StylePack, build_palette_card
 
 AssetKind = Literal["character", "scene", "prop", "palette"]
@@ -41,7 +42,8 @@ EMPTY_SCENE_SUFFIX = "no humans, empty, landscape only"
 CHARACTER_LAYOUT = (
     "版式：画面左侧三分之一为超大高清正面面部特写；右侧三分之二并排三张全身三视图，依次为正面(FRONT)、"
     "侧面(PROFILE)、背面(BACK)；人物下方另排服装细节与配饰展示图。纯白背景，构图工整。"
-    "所有视角的身高、五官位置、服装褶皱严格一致。画面内不得出现任何文字。"
+    "所有视角的身高、五官位置、服装褶皱严格一致。"
+    f"{FULL_BODY_PROPORTION_RULE}画面内不得出现任何文字。"
 )
 SCENE_LAYOUT = (
     "版式：同一张图四宫格输出四个视角——高角度航拍俯瞰、低角度仰视、侧面视角、反面视角；"

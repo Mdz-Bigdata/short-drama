@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { ShotVisualWorkspace } from './ShotVisualWorkspace';
 import './StageFivePreview.css';
+import { t } from '../../i18n';
 
 
 export interface ProductionShot {
@@ -55,7 +56,7 @@ function MediaPane({ kind, url, shotLabel, model }: MediaPaneProps) {
       <div className="stage-five-media-frame">
         {failed ? (
           <div className="stage-five-media-error" role="status">
-            当前媒体无法载入，请重新生成或检查文件地址。
+            {t('当前媒体无法载入，请重新生成或检查文件地址。')}
           </div>
         ) : isVideo ? (
           <video
@@ -133,8 +134,8 @@ function ShotCard({ shot, index, videoModel, imageModel }: {
         {readyMediaCount === 0 && (
           <div className="stage-five-media-empty" role="status">
             <Video aria-hidden="true" />
-            <strong>镜头媒体生成中</strong>
-            <span>视频与首帧完成后会自动显示在此处。</span>
+            <strong>{t('镜头媒体生成中')}</strong>
+            <span>{t('视频与首帧完成后会自动显示在此处。')}</span>
           </div>
         )}
       </div>
@@ -159,7 +160,7 @@ export function StageFivePreview({ asset, videoModel, imageModel, taskId, onReru
   if (shots.length === 0) {
     return (
       <div className="stage-five-empty" role="status">
-        暂无视觉片段资产。请先运行此阶段以生成底片与视频。
+        {t('暂无视觉片段资产。请先运行此阶段以生成底片与视频。')}
       </div>
     );
   }
@@ -169,7 +170,7 @@ export function StageFivePreview({ asset, videoModel, imageModel, taskId, onReru
       <div
         className="stage-five-shot-list"
         role="region"
-        aria-label="Stage 5 镜头资产列表"
+        aria-label={t('Stage 5 镜头资产列表')}
         tabIndex={0}
       >
         {shots.map((shot, index) => (

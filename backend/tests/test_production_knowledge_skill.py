@@ -1,29 +1,28 @@
 # -*- coding: utf-8 -*-
-"""production-knowledge-master 技能专属测试：装载一致性、注册发现、进化生命周期、
-单向依赖与内容对等回归。
+"""production-knowledge 装载测试：章节经技能 manifest 读取、截断、SKILLS_DIR 重定向、
+manifest 校验、整理脚本、注册发现、进化生命周期与单向依赖。
 
-铁律：16 份知识源只存在于仓库根部（唯一事实源），进化数据全部用临时目录重定向，
-本文件绝不写入真实的 skills/production-knowledge-master/learned/。
+铁律：知识源只存在于各自的技能目录里，由 manifest.json 登记；代码不认识任何文件名。
+进化数据全部用临时目录重定向，本文件绝不写入真实的 skills/production-knowledge-master/learned/。
 """
 import json
 import os
+import re
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
-from app.core import knowledge_evolution
+from app.core import knowledge_evolution, knowledge_registry
 from app.core.production_knowledge import (
-    SECTION_BUDGETS,
-    SECTION_FILES,
-    STAGE_SECTIONS,
-    knowledge_root,
     load_section,
     load_stage_sections,
     reset_knowledge_cache,
+    section_budgets,
     stage_lessons_block,
+    stage_sections,
 )
 from app.core.skill_registry import SkillRegistry
-from app.service.drama_service import DramaService
 
 
 # load_section 行边界截断后附加的标记（与 production_knowledge._truncate 保持一致）
@@ -47,82 +46,203 @@ def _stub_llm_factory(payload):
 
 
 class LoadingConsistencyTests(unittest.TestCase):
-    """A. 装载一致性：章节内容必须逐字来自根部文件，截断落在行边界。"""
+    """A. 装载一致性：章节内容逐字来自技能里登记的文件，截断落在行边界。"""
 
     def setUp(self):
         reset_knowledge_cache()
         self.addCleanup(reset_knowledge_cache)
 
-    def test_all_sixteen_sections_are_prefixes_of_their_root_documents(self):
-        # 场景：16 个章节逐一装载，产出必须是根部文件的前缀（截断）或全文——
-        # 任何一字之差都意味着技能包私藏了副本、违反唯一事实源原则。
-        self.assertEqual(len(SECTION_FILES), 16)
-        root = knowledge_root()
-        for key, filename in SECTION_FILES.items():
-            source = (root / filename).read_text(encoding="utf-8")
+    def test_every_section_is_a_prefix_of_its_skill_file_and_respects_its_budget(self):
+        sections = knowledge_registry.sections()
+        self.assertGreaterEqual(len(sections), 16)
+        for key, item in sections.items():
+            source = item.path.read_text(encoding="utf-8")
             loaded = load_section(key)
             self.assertTrue(loaded, f"章节 {key} 装载为空")
-            body = _strip_mark(loaded)
-            self.assertTrue(source.startswith(body),
-                            f"章节 {key} 的输出不是根部文件 {filename} 的前缀")
-            budget = SECTION_BUDGETS[key]
+            self.assertTrue(source.startswith(_strip_mark(loaded)), f"章节 {key} 的输出不是 {item.relative_path} 的前缀")
+            budget = section_budgets()[key]
             if budget > 0:
                 # 截断标记长度计入预算：实注字符数绝不超过登记预算
-                self.assertLessEqual(len(loaded), budget,
-                                     f"章节 {key} 超出预算 {budget}")
+                self.assertLessEqual(len(loaded), budget, f"章节 {key} 超出预算 {budget}")
 
     def test_budget_truncation_lands_on_a_line_boundary(self):
-        # 场景：给大文件一个很小的预算，截断必须整行进出——表格绝不留半行。
-        filename = SECTION_FILES["director-shot-guide"]
-        source = (knowledge_root() / filename).read_text(encoding="utf-8")
+        source = knowledge_registry.section("director-shot-guide").path.read_text(encoding="utf-8")
         self.assertGreater(len(source), 500)
 
         loaded = load_section("director-shot-guide", budget=500)
 
         self.assertTrue(loaded.endswith(TRUNCATION_MARK))
-        body = _strip_mark(loaded)
-        body_lines = body.split("\n")
+        body_lines = _strip_mark(loaded).split("\n")
         source_lines = source.split("\n")
-        # 前 n-1 行逐字相同，最后一行必须是源文件里一整行（允许行尾空白被 rstrip）
         self.assertEqual(body_lines[:-1], source_lines[: len(body_lines) - 1])
         self.assertEqual(body_lines[-1], source_lines[len(body_lines) - 1].rstrip())
 
     def test_zero_budget_returns_the_full_document(self):
-        # 场景：visual-style 登记预算为 0（全文读入，阶段 5 自行切片）。
-        filename = SECTION_FILES["visual-style"]
-        source = (knowledge_root() / filename).read_text(encoding="utf-8")
-
+        # visual-style 登记预算为 0（全文读入，阶段 5 自行切片）。
+        source = knowledge_registry.section("visual-style").path.read_text(encoding="utf-8")
         self.assertEqual(load_section("visual-style"), source)
 
     def test_unknown_section_key_degrades_to_empty_string(self):
-        # 场景：未知章节键降级为空串（fail-soft），绝不抛异常阻塞流水线。
         self.assertEqual(load_section("no-such-section"), "")
 
-    def test_drama_prompt_root_env_redirects_loading(self):
-        # 场景：部署把提示词放在别处时用 DRAMA_PROMPT_ROOT 重定向，
-        # 装载器必须与 read_md_file 同源解析该环境变量。
-        original = os.environ.get("DRAMA_PROMPT_ROOT")
+    def test_skills_dir_env_redirects_loading(self):
         with tempfile.TemporaryDirectory() as tmp:
-            fake = "# 假题材总结\n仅用于验证 DRAMA_PROMPT_ROOT 重定向。\n"
-            (Path(tmp) / SECTION_FILES["genre-summary"]).write_text(fake, encoding="utf-8")
-            os.environ["DRAMA_PROMPT_ROOT"] = tmp
+            skill = Path(tmp) / "screenwriting-master"
+            (skill / "references").mkdir(parents=True)
+            fake = "# 假题材总结\n仅用于验证 SKILLS_DIR 重定向。\n"
+            (skill / "references" / "genre-summary.md").write_text(fake, encoding="utf-8")
+            (skill / "manifest.json").write_text(json.dumps({"version": 1, "sections": [
+                {"key": "genre-summary", "title": "题材", "file": "references/genre-summary.md", "budget": 0, "stages": [1]},
+            ]}), encoding="utf-8")
+            original = os.environ.get("SKILLS_DIR")
+            os.environ["SKILLS_DIR"] = tmp
             reset_knowledge_cache()
             try:
                 self.assertEqual(load_section("genre-summary"), fake)
+                self.assertEqual(stage_sections()[1], ("genre-summary",))
             finally:
                 if original is None:
-                    os.environ.pop("DRAMA_PROMPT_ROOT", None)
+                    os.environ.pop("SKILLS_DIR", None)
                 else:
-                    os.environ["DRAMA_PROMPT_ROOT"] = original
+                    os.environ["SKILLS_DIR"] = original
                 reset_knowledge_cache()
 
-    def test_load_stage_sections_follows_the_consumption_matrix(self):
-        # 场景：按阶段批量装载必须与消费矩阵逐键对齐（阶段 4 是最重的一档）。
+    def test_load_stage_sections_follows_the_manifests(self):
         loaded = load_stage_sections(4)
 
-        self.assertEqual(tuple(loaded.keys()), STAGE_SECTIONS[4])
+        self.assertEqual(tuple(loaded.keys()), stage_sections()[4])
+        self.assertIn("director-shot-guide", loaded)
         for key, text in loaded.items():
             self.assertTrue(text, f"阶段 4 的章节 {key} 装载为空")
+
+
+class ManifestValidationTests(unittest.TestCase):
+    """B0. manifest 是唯一登记处：写错就明确报错，绝不悄悄读到技能目录之外。"""
+
+    def _root(self, tmp: str, manifests: dict) -> None:
+        for skill, sections in manifests.items():
+            folder = Path(tmp) / skill
+            (folder / "references").mkdir(parents=True, exist_ok=True)
+            (folder / "references" / "a.md").write_text("A", encoding="utf-8")
+            (folder / "manifest.json").write_text(json.dumps({"version": 1, "sections": sections}), encoding="utf-8")
+
+    def _expect(self, manifests: dict, needle: str) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._root(tmp, manifests)
+            with unittest.mock.patch.dict(os.environ, {"SKILLS_DIR": tmp}):
+                knowledge_registry.reset()
+                try:
+                    with self.assertRaises(knowledge_registry.KnowledgeManifestError) as raised:
+                        knowledge_registry.sections()
+                    self.assertIn(needle, str(raised.exception))
+                finally:
+                    knowledge_registry.reset()
+
+    def test_bad_manifests_are_refused_in_words(self):
+        good = {"key": "alpha", "title": "甲", "file": "references/a.md"}
+        self._expect({"one": [good], "two": [good]}, "同时登记")
+        self._expect({"one": [{**good, "file": "../two/references/a.md"}]}, "技能目录内")
+        self._expect({"one": [{**good, "key": "Bad Key"}]}, "key")
+        self._expect({"one": [{**good, "scope": "elsewhere"}]}, "scope")
+        self._expect({"one": [{**good, "scope": "skill", "stages": [2]}]}, "不能登记阶段")
+        self._expect({"one": [{**good, "stages": [9]}]}, "stages")
+        self._expect({"one": [{**good, "budget": -1}]}, "budget")
+
+    def test_a_bad_manifest_degrades_loading_to_empty_instead_of_crashing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            good = {"key": "alpha", "title": "甲", "file": "references/a.md"}
+            self._root(tmp, {"one": [good], "two": [good]})
+            with unittest.mock.patch.dict(os.environ, {"SKILLS_DIR": tmp}):
+                reset_knowledge_cache()
+                try:
+                    self.assertEqual(load_section("alpha"), "")
+                finally:
+                    reset_knowledge_cache()
+
+
+class NoGuideIsReadByNameTests(unittest.TestCase):
+    """B1. 仓库根部不再放知识 md；应用代码不认识任何知识文件名。"""
+
+    REPO = Path(__file__).resolve().parents[2]
+
+    def test_only_project_documents_stay_at_the_repository_root(self):
+        routing = json.loads((SKILLS_ROOT / "knowledge-routing.json").read_text(encoding="utf-8"))
+        loose = sorted(path.name for path in self.REPO.glob("*.md") if path.name not in set(routing["keep"]))
+        self.assertEqual(loose, [], "仓库根部有未归入技能的 md；运行 backend/scripts/organize_knowledge.py")
+
+    def test_application_code_names_no_guide_file(self):
+        routing = json.loads((SKILLS_ROOT / "knowledge-routing.json").read_text(encoding="utf-8"))
+        names = [entry["file"] for entry in routing["documents"] if entry["file"] != "SKILL.md"]
+        names += [Path(entry["target"]).name for entry in routing["documents"] if entry["target"] != "SKILL.md"]
+        app_dir = Path(__file__).resolve().parents[1] / "app"
+        offenders = [
+            f"{path.relative_to(app_dir)} → {name}"
+            for path in app_dir.rglob("*.py")
+            for name in names
+            if name in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(offenders, [], "知识文件名只能写在技能 manifest.json 里")
+
+    def test_no_module_builds_the_skills_path_itself(self):
+        app_dir = Path(__file__).resolve().parents[1] / "app"
+        offenders = [
+            str(path.relative_to(app_dir)) for path in app_dir.rglob("*.py")
+            if re.search(r'parents\[\d\]\s*/\s*"skills"', path.read_text(encoding="utf-8"))
+        ]
+        self.assertEqual(offenders, [], "技能目录只从 settings.skills_root() 取得（SKILLS_DIR 可改）")
+
+
+class OrganizerScriptTests(unittest.TestCase):
+    """B2. 整理脚本：按路由表把散落的 md 归入技能并写好 manifest，可重复执行。"""
+
+    def test_known_rule_routed_identical_and_conflicting_guides(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "organize_knowledge", Path(__file__).resolve().parents[1] / "scripts" / "organize_knowledge.py",
+        )
+        organizer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(organizer)
+        with tempfile.TemporaryDirectory() as tmp:
+            source, skills = Path(tmp) / "loose", Path(tmp) / "skills"
+            source.mkdir()
+            for name in ("screenwriting-master", "shot-design-master", "production-knowledge-master"):
+                (skills / name).mkdir(parents=True)
+                (skills / name / "SKILL.md").write_text(f"---\nname: {name}\ndescription: x\n---\n", encoding="utf-8")
+            (skills / "knowledge-routing.json").write_text(json.dumps({
+                "version": 1, "keep": ["README.md"],
+                "documents": [{"file": "黄金结构.md", "skill": "screenwriting-master", "key": "golden-narrative",
+                               "title": "黄金结构", "target": "references/golden-narrative.md", "budget": 5000, "stages": [1, 2]}],
+                "rules": [{"words": ["分镜"], "skill": "shot-design-master", "stages": [4], "budget": 4000},
+                          {"words": [], "skill": "production-knowledge-master", "stages": [], "budget": 5000}],
+            }, ensure_ascii=False), encoding="utf-8")
+            (source / "README.md").write_text("keep", encoding="utf-8")
+            (source / "黄金结构.md").write_text("# 黄金结构\n正文", encoding="utf-8")
+            (source / "新分镜规则.md").write_text("# 新分镜规则\n正文", encoding="utf-8")
+            (source / "杂项.md").write_text("# 杂项\n正文", encoding="utf-8")
+
+            report = organizer.organize(source, skills)
+
+            self.assertEqual(sorted(path.name for path in source.glob("*.md")), ["README.md"])
+            self.assertTrue((skills / "screenwriting-master" / "references" / "golden-narrative.md").is_file())
+            manifest = json.loads((skills / "screenwriting-master" / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["sections"], [{"key": "golden-narrative", "title": "黄金结构",
+                                                     "file": "references/golden-narrative.md", "budget": 5000, "stages": [1, 2]}])
+            shot = json.loads((skills / "shot-design-master" / "manifest.json").read_text(encoding="utf-8"))["sections"][0]
+            self.assertTrue(shot["key"].startswith("guide-"))
+            self.assertEqual((shot["title"], shot["budget"], shot["stages"]), ("新分镜规则", 4000, [4]))
+            self.assertTrue((skills / "production-knowledge-master" / "manifest.json").is_file())
+            self.assertEqual(len(report), 3)
+
+            # Again: the same guide is deduplicated; a different one is a conflict left in place.
+            (source / "黄金结构.md").write_text("# 黄金结构\n正文", encoding="utf-8")
+            self.assertIn("已去重", organizer.organize(source, skills)[0])
+            self.assertFalse((source / "黄金结构.md").exists())
+            (source / "黄金结构.md").write_text("# 黄金结构\n改过", encoding="utf-8")
+            self.assertIn("冲突", organizer.organize(source, skills)[0])
+            self.assertTrue((source / "黄金结构.md").exists())
+            self.assertIn("已覆盖", organizer.organize(source, skills, replace=True)[0])
+            self.assertEqual((skills / "screenwriting-master" / "references" / "golden-narrative.md").read_text(encoding="utf-8"), "# 黄金结构\n改过")
 
 
 class RegistryDiscoveryTests(unittest.TestCase):
@@ -406,39 +526,6 @@ class DependencyDirectionTests(unittest.TestCase):
             if stripped.startswith(("import ", "from ")):
                 self.assertNotIn("production_knowledge", stripped,
                                  f"进化引擎不得 import 装载器：{stripped}")
-
-
-class ContentParityTests(unittest.TestCase):
-    """E. 内容对等回归：load_section 与 read_md_file 在截断长度内逐字相同。"""
-
-    def setUp(self):
-        reset_knowledge_cache()
-        self.addCleanup(reset_knowledge_cache)
-        # read_md_file 不依赖任何实例状态，绕过 __init__ 避免连接任务库/网关
-        self.service = DramaService.__new__(DramaService)
-
-    def test_full_text_section_matches_read_md_file_exactly(self):
-        # 场景：阶段 2 的黄金叙事结构现状是全文读入（budget=0），必须与旧管道逐字相同。
-        legacy = self.service.read_md_file(SECTION_FILES["golden-narrative"])
-
-        self.assertTrue(legacy)
-        self.assertEqual(load_section("golden-narrative", budget=0), legacy)
-
-    def test_stage4_director_guide_matches_read_md_file_prefix(self):
-        # 场景：阶段 4 的导演分镜指南按 8000 预算截断，截断范围内必须与旧管道逐字相同。
-        legacy = self.service.read_md_file(SECTION_FILES["director-shot-guide"])
-        body = _strip_mark(load_section("director-shot-guide"))
-
-        self.assertTrue(body)
-        self.assertEqual(body, legacy[: len(body)])
-
-    def test_stage8_highlight_guide_matches_read_md_file_prefix(self):
-        # 场景：阶段 8 的高光识别方案按 6000 预算截断，截断范围内必须与旧管道逐字相同。
-        legacy = self.service.read_md_file(SECTION_FILES["highlight-detection"])
-        body = _strip_mark(load_section("highlight-detection"))
-
-        self.assertTrue(body)
-        self.assertEqual(body, legacy[: len(body)])
 
 
 if __name__ == "__main__":

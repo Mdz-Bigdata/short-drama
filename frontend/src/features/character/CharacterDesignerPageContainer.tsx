@@ -1,7 +1,7 @@
 import { RefreshCcw, ServerCrash, WandSparkles } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
-import { API_BASE, apiRequest, isUnauthorized } from '../../api/client';
+import { API_BASE, apiRequest, apiUrl, isUnauthorized } from '../../api/client';
 import type { ElementKind } from '../elements/elementTypes';
 import { CharacterDesignerPage } from './CharacterDesignerPage';
 import {
@@ -9,16 +9,17 @@ import {
   normalizeCharacterDashboard,
   sanitizeCharacterMediaUrl,
   type CharacterDashboardResponse,
+  type CharacterRegenerateMode,
 } from './types';
+import { t } from '../../i18n';
 
 type LoadingState = 'loading' | 'ready' | 'error';
 
 function mediaUrl(value: string | null): string | null {
   const safeValue = sanitizeCharacterMediaUrl(value);
   if (!safeValue) return null;
-  return safeValue.startsWith('/media/')
-    ? sanitizeCharacterMediaUrl(`${API_BASE}${safeValue}`)
-    : safeValue;
+  // 后端相对路径补上 API 源；已是完整地址（公网媒体域名或 CDN）的保持原样
+  return sanitizeCharacterMediaUrl(apiUrl(safeValue));
 }
 
 function resolveDashboardMedia(dashboard: CharacterDashboardResponse): CharacterDashboardResponse {
@@ -92,6 +93,53 @@ export function CharacterDesignerPageContainer({
     return () => controller.abort();
   }, [fallback.characters.length, refreshKey, requestVersion, taskId]);
 
+  // 有角色在后台重新生成设定集时，每 5 秒重读一次看板，生成完自动换上新图。
+  const regenerating = Boolean(dashboard?.characters.some(character => character.regenerating));
+  useEffect(() => {
+    if (!regenerating) return;
+    const timer = window.setInterval(() => setRequestVersion(version => version + 1), 5000);
+    return () => window.clearInterval(timer);
+  }, [regenerating]);
+
+  const regenerateCharacter = async (name: string, mode: CharacterRegenerateMode) => {
+    try {
+      const response = await apiRequest<CharacterDashboardResponse>(
+        `/api/drama/${encodeURIComponent(taskId)}/characters/regenerate`,
+        { method: 'POST', body: JSON.stringify({ name, mode }) },
+      );
+      setDashboard(resolveDashboardMedia(normalizeCharacterDashboard(response)));
+      setSyncMessage({
+        hd: `「${name}」的高清身份视图正在后台生成，完成后自动刷新。`,
+        details: `「${name}」的补位细节格正在后台补画，完成后自动刷新。`,
+        sheet: `「${name}」的设定集正在后台重新生成，完成后自动刷新。`,
+      }[mode]);
+    } catch (error) {
+      setSyncMessage(error instanceof Error ? error.message : `「${name}」重新生成失败`);
+    }
+  };
+
+  // 「全部重新生成」：逐个认领，每名角色各自后台出图；已在生成的、认领失败的单独报出来。
+  const regenerateCharacters = async (names: string[]) => {
+    const failed: string[] = [];
+    let latest: CharacterDashboardResponse | null = null;
+    for (const name of names) {
+      try {
+        latest = await apiRequest<CharacterDashboardResponse>(
+          `/api/drama/${encodeURIComponent(taskId)}/characters/regenerate`,
+          { method: 'POST', body: JSON.stringify({ name, mode: 'sheet' }) },
+        );
+      } catch (error) {
+        failed.push(`「${name}」${error instanceof Error ? `：${error.message}` : ''}`);
+      }
+    }
+    if (latest) setDashboard(resolveDashboardMedia(normalizeCharacterDashboard(latest)));
+    const started = names.length - failed.length;
+    setSyncMessage([
+      started ? `${started} 名数字演员的设定集正在后台重新生成，完成后自动刷新。` : '',
+      failed.length ? `未能开始：${failed.join('；')}` : '',
+    ].filter(Boolean).join(' '));
+  };
+
   const refresh = () => {
     onRefresh();
     setLoadingState('loading');
@@ -125,7 +173,7 @@ export function CharacterDesignerPageContainer({
 
   if (loadingState === 'loading' && !dashboard && !hasFallback) {
     return (
-      <section className="character-designer-loader" aria-busy="true" aria-label="正在加载角色设计看板">
+      <section className="character-designer-loader" aria-busy="true" aria-label={t('正在加载角色设计看板')}>
         <div className="character-designer-loader__header" />
         <div className="character-designer-loader__stats" />
         <div className="character-designer-loader__workspace">
@@ -139,11 +187,11 @@ export function CharacterDesignerPageContainer({
     return (
       <section className="character-designer-error" role="alert">
         <ServerCrash size={42} aria-hidden="true" />
-        <h1>角色看板连接失败</h1>
-        <p>{!taskId ? '缺少任务 ID，无法读取角色设计看板。' : syncMessage}</p>
+        <h1>{t('角色看板连接失败')}</h1>
+        <p>{!taskId ? t('缺少任务 ID，无法读取角色设计看板。') : syncMessage}</p>
         <div>
-          <button type="button" onClick={refresh}><RefreshCcw size={16} aria-hidden="true" /> 重新连接</button>
-          <button type="button" onClick={onRegenerate}><WandSparkles size={16} aria-hidden="true" /> 重新生成角色</button>
+          <button type="button" onClick={refresh}><RefreshCcw size={16} aria-hidden="true" /> {t('重新连接')}</button>
+          <button type="button" onClick={onRegenerate}><WandSparkles size={16} aria-hidden="true" /> {t('重新生成角色')}</button>
         </div>
       </section>
     );
@@ -152,13 +200,15 @@ export function CharacterDesignerPageContainer({
   return (
     <CharacterDesignerPage
       dashboard={visibleDashboard}
-      syncMessage={syncMessage || (loadingState === 'loading' ? '正在同步后端角色看板…' : '')}
+      syncMessage={syncMessage || (loadingState === 'loading' ? t('正在同步后端角色看板…') : '')}
       refreshing={loadingState === 'loading'}
       exporting={exporting}
       initialAssetKind={initialAssetKind}
       taskId={taskId}
       onRefresh={refresh}
       onRegenerate={onRegenerate}
+      onRegenerateCharacter={taskId ? (name, mode) => { void regenerateCharacter(name, mode); } : undefined}
+      onRegenerateCharacters={taskId ? names => { void regenerateCharacters(names); } : undefined}
       onExport={() => { void exportDashboard(); }}
       onContinue={onContinue}
     />

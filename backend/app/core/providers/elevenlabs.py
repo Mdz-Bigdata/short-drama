@@ -12,6 +12,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 from pydantic import BaseModel, Field
 
+from app.core.providers.defaults import default_base_url
 from app.platform.runtime_models import runtime_model_registry
 
 
@@ -80,7 +81,7 @@ class ElevenLabsClient:
                 base_url
                 or (runtime.base_url if runtime else None)
                 or os.getenv("ELEVENLABS_BASE_URL")
-                or "https://api.elevenlabs.io"
+                or default_base_url("elevenlabs")
             )
         self._client = httpx.Client(
             base_url=self._api_root(configured_url),

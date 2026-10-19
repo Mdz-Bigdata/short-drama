@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+
+from app import settings
 from typing import Iterable
 
 
@@ -62,26 +64,50 @@ def _project_blockout_rules() -> str:
         return ""
 
 
-def default_sd25_skill_candidates() -> tuple[list[Path], list[Path]]:
-    backend_root = Path(__file__).resolve().parents[2]
-    configured_primary = os.getenv("SD25_PE_SKILL_PATH", "").strip()
-    configured_supplemental = os.getenv("SD25_FIVE_PART_SKILL_PATH", "").strip()
+BUNDLED_SKILLS_DIR = settings.skills_root()
+PRIMARY_SKILL_ENV = "SD25_PE_SKILL_PATH"
+SUPPLEMENTAL_SKILL_ENV = "SD25_FIVE_PART_SKILL_PATH"
 
-    primary = []
-    if configured_primary:
-        primary.append(Path(configured_primary))
-    primary.extend((
+
+def _configured_skill_path(variable: str) -> Path | None:
+    configured = os.getenv(variable, "").strip()
+    return Path(configured) if configured else None
+
+
+def _user_installed_primary_skills() -> tuple[Path, ...]:
+    """Where a user-installed sd25-pe is looked for when no path is configured."""
+    return (
         Path.home() / ".agents" / "skills" / "sd25-pe",
         Path.home() / "Desktop" / "sd25-pe",
-        backend_root / "skills" / "sd25-pe",
-        backend_root / "skills" / "seedance2-prompt-optimizer",
+    )
+
+
+def default_sd25_skill_candidates() -> tuple[list[Path], list[Path]]:
+    configured_primary = _configured_skill_path(PRIMARY_SKILL_ENV)
+    configured_supplemental = _configured_skill_path(SUPPLEMENTAL_SKILL_ENV)
+
+    primary = [configured_primary] if configured_primary else []
+    primary.extend(_user_installed_primary_skills())
+    primary.extend((
+        BUNDLED_SKILLS_DIR / "sd25-pe",
+        BUNDLED_SKILLS_DIR / "seedance2-prompt-optimizer",
     ))
 
-    supplemental = []
-    if configured_supplemental:
-        supplemental.append(Path(configured_supplemental))
-    supplemental.append(backend_root / "skills" / "sd-2-5-prompt")
+    supplemental = [configured_supplemental] if configured_supplemental else []
+    supplemental.append(BUNDLED_SKILLS_DIR / "sd-2-5-prompt")
     return primary, supplemental
+
+
+def skill_registry_roots() -> list[Path]:
+    """Directories the skill registry lists: bundled skills plus the external SD 2.5 ones.
+
+    A configured path replaces the user-install locations rather than joining them.
+    """
+    configured_primary = _configured_skill_path(PRIMARY_SKILL_ENV)
+    configured_supplemental = _configured_skill_path(SUPPLEMENTAL_SKILL_ENV)
+    primary = [configured_primary.expanduser()] if configured_primary else list(_user_installed_primary_skills())
+    supplemental = [configured_supplemental.expanduser()] if configured_supplemental else []
+    return [BUNDLED_SKILLS_DIR, *primary, *supplemental]
 
 
 def load_sd25_skill_bundle(

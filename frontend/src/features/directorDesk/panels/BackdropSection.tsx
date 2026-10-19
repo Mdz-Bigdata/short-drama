@@ -105,7 +105,7 @@ export function BackdropSection({ taskId, sceneId, backdrop, editable, inCapture
         <label className="desk-field is-wide">
           <span>背景色</span>
           <input
-            key={backdrop.color} type="color" aria-label="背景色" defaultValue={backdrop.color || '#10141c'} disabled={disabled}
+            key={backdrop.color} type="color" aria-label="背景色" defaultValue={backdrop.color || '#fdf0f2'} disabled={disabled}
             onBlur={event => { if (event.target.value !== backdrop.color) change('颜色', { color: event.target.value }); }}
             onChange={event => { if (event.target.value !== backdrop.color) change('颜色', { color: event.target.value }); }}
           />

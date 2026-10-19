@@ -2,6 +2,7 @@ import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } fro
 
 import { cameraCone, floorBounds, floorTransform, forwardOf, isOverhead } from './floorPlanGeometry';
 import { actorsInShot, type GroundPoint, type StagePlan, type StageShot } from './spatialTypes';
+import { t } from '../../i18n';
 
 const WIDTH = 720;
 const HEIGHT = 540;
@@ -109,7 +110,7 @@ export function FloorPlan({ plan, shot, locked = false, onSelectShot, onMove }: 
           return <line key={`z${value}`} x1={0} y1={y} x2={WIDTH} y2={y} className={value === 0 ? 'is-origin' : ''} />;
         })}
       </g>
-      <text className="spatial-floor__hint" x={WIDTH / 2} y={HEIGHT - 10} textAnchor="middle">主机位一侧（画面左 ← → 画面右）· 网格 1 米</text>
+      <text className="spatial-floor__hint" x={WIDTH / 2} y={HEIGHT - 10} textAnchor="middle">{t('主机位一侧（画面左 ← → 画面右）· 网格 1 米')}</text>
 
       {plan.axis.kind !== 'none' && (
         <line

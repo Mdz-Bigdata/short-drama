@@ -89,7 +89,11 @@ class StoryboardImageReferenceTests(unittest.TestCase):
             self.gateway, "_http_image", return_value="https://img.test/result.png"
         ) as request:
             self.gateway.generate_image("image-model", prompt, enhance_prompt=False)
-        self.assertEqual(request.call_args.args[3], prompt)
+        sent = request.call_args.args[3]
+        # 关键词增强器不改写编译好的提示词；网关只在末尾追加一行全局强制负面词。
+        before, _, global_line = sent.partition("\n" + self.gateway.GLOBAL_NEGATIVE_LABEL)
+        self.assertEqual(before, prompt)
+        self.assertIn("禁止穿模", global_line)
 
 
 if __name__ == "__main__":

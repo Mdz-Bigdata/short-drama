@@ -14,6 +14,7 @@ import type { Camera, Scene, WebGLRenderer } from 'three';
 import { CAPTURE_LIMITS } from '../directorDeskApi';
 import type { LensFrameInfo } from '../deskTypes';
 import { captureShowsLimbs, drawLabels, enterDeliveryRender } from './capture';
+import { DEPTH_FALLBACK_RANGE, type DepthRange } from './depthPass';
 import { frameCount } from './sampling';
 
 export const CLIP_SHORT_EDGE = 720;
@@ -26,6 +27,8 @@ export interface ClipStage {
   gl: WebGLRenderer;
   scene: Scene;
   camera: Camera;
+  /** Metres mapped to white→black in a depth clip, worked out once from the shot so shades hold while the lens moves. */
+  depthRange?: DepthRange;
   /** Put the stage at `time` seconds; resolves once the lens scene holds exactly that instant. */
   showFrame: (time: number) => Promise<ClipFrameInfo>;
   /** Hand the stage back to the playhead. */
@@ -39,6 +42,8 @@ export interface ClipRequest {
   fps: number;
   monochrome: boolean;
   labels: boolean;
+  /** Every frame as a grayscale depth picture (near bright, far dark). */
+  depth?: boolean;
   signal?: AbortSignal;
   onProgress?: (fraction: number) => void;
 }
@@ -73,7 +78,7 @@ function aborted(): DOMException {
   return new DOMException('已取消导出', 'AbortError');
 }
 
-export async function exportClip({ stage, aspect, durationS, fps, monochrome, labels, signal, onProgress }: ClipRequest): Promise<ClipResult> {
+export async function exportClip({ stage, aspect, durationS, fps, monochrome, labels, depth = false, signal, onProgress }: ClipRequest): Promise<ClipResult> {
   if (!CAPTURE_LIMITS.clipFrameRates.includes(fps)) throw new Error('帧率只能是 24 / 25 / 30');
   if (!(durationS > 0) || durationS > CAPTURE_LIMITS.clipSeconds) throw new Error(`白模视频时长必须在 0 到 ${CAPTURE_LIMITS.clipSeconds} 秒之间`);
   const { width, height } = clipSize(aspect);
@@ -100,7 +105,7 @@ export async function exportClip({ stage, aspect, durationS, fps, monochrome, la
   const total = frameCount(durationS, fps);
   let showsLimbs = false;
   let output: InstanceType<typeof media.Output> | null = null;
-  const delivery = enterDeliveryRender({ gl, scene, camera, width, height, monochrome });
+  const delivery = enterDeliveryRender({ gl, scene, camera, width, height, monochrome, depth: depth ? { range: stage.depthRange ?? DEPTH_FALLBACK_RANGE } : undefined });
   try {
     const target = new media.BufferTarget();
     output = new media.Output({ format: format === 'mp4' ? new media.Mp4OutputFormat({ fastStart: 'in-memory' }) : new media.WebMOutputFormat(), target });

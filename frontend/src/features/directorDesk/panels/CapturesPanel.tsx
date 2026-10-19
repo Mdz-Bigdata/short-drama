@@ -27,10 +27,16 @@ interface Props {
   fps: number;
   /** The lens canvas, ready to be driven frame by frame; `null` while the camera view is not on screen. */
   getClipStage: () => ClipStage | null;
+  /** The camera view is drawn as a depth picture, so the person sees what a depth still or clip will be. */
+  depthPreview?: boolean;
+  onDepthPreview?: (on: boolean) => void;
 }
 
 // Shown for records saved before the server started writing the sentence itself.
 const LIMBS_WARNING = '白模带四肢：请在动作描述里写清分段肢体动作，否则四肢容易僵化';
+const DEPTH_WARNING = '深度画面：近亮远暗的灰度图，只约束空间层次、走位与运镜，不约束颜色与材质';
+// The server's own words: a still has nothing stage 5 could use as a first frame.
+const DEPTH_STILL_REFUSAL ='深度静帧不能作为首帧参考图应用到分镜；请导出深度视频作为运动参考，或截取普通静帧';
 
 function messageOf(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -41,13 +47,14 @@ function when(value: string) {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
-export function CapturesPanel({ taskId, sceneId, shotId, camera, cameras, planRevision, saving, getLens, aspect, durationS, fps, getClipStage }: Props) {
+export function CapturesPanel({ taskId, sceneId, shotId, camera, cameras, planRevision, saving, getLens, aspect, durationS, fps, getClipStage, depthPreview = false, onDepthPreview }: Props) {
   const [list, setList] = useState<DeskCaptureList>({ captures: [], applied: {} });
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [monochrome, setMonochrome] = useState(false);
   const [labels, setLabels] = useState(false);
+  const [depth, setDepth] = useState(false);
   const [viewing, setViewing] = useState<DeskCapture | null>(null);
   // 0…1 while a clip is being rendered; the controller is how 取消 reaches the frame loop.
   const [progress, setProgress] = useState<number | null>(null);
@@ -87,12 +94,12 @@ export function CapturesPanel({ taskId, sceneId, shotId, camera, cameras, planRe
   const take = () => run(async () => {
     const lens = getLens();
     if (!lens || !camera || shotId === null) throw new Error('机位视角还没有准备好，请切到「并排」或「机位」布局后再截图。');
-    const still = await lens.capture({ monochrome, labels });
+    const still = await lens.capture({ monochrome, labels, depth });
     await uploadCapture(taskId, sceneId, {
-      blob: still.blob, width: still.width, height: still.height, shotId, cameraId: camera.id, planRevision, showsLimbs: still.showsLimbs, monochrome, labelled: labels,
+      blob: still.blob, width: still.width, height: still.height, shotId, cameraId: camera.id, planRevision, showsLimbs: still.showsLimbs, monochrome, labelled: labels, depth,
     });
     return listCaptures(taskId, sceneId);
-  }, '已截图并保存到截图库。');
+  }, depth ? '已截取深度静帧并保存到截图库（深度静帧不能应用为首帧）。' : '已截图并保存到截图库。');
 
   const film = () => run(async () => {
     if (!camera || shotId === null) throw new Error('本镜还没有机位。');
@@ -104,10 +111,10 @@ export function CapturesPanel({ taskId, sceneId, shotId, camera, cameras, planRe
     try {
       // three.js and the encoder stay out of the desk's first load.
       const { exportClip } = await import('../lib/clipExport');
-      const clip = await exportClip({ stage, aspect, durationS, fps, monochrome, labels, signal: controller.signal, onProgress: setProgress });
+      const clip = await exportClip({ stage, aspect, durationS, fps, monochrome, labels, depth, signal: controller.signal, onProgress: setProgress });
       await uploadCapture(taskId, sceneId, {
         kind: 'clip', blob: clip.blob, width: clip.width, height: clip.height, durationS: clip.durationS, fps: clip.fps,
-        shotId, cameraId: camera.id, planRevision, showsLimbs: clip.showsLimbs, monochrome, labelled: labels,
+        shotId, cameraId: camera.id, planRevision, showsLimbs: clip.showsLimbs, monochrome, labelled: labels, depth,
       });
       return await listCaptures(taskId, sceneId);
     } catch (error) {
@@ -128,7 +135,13 @@ export function CapturesPanel({ taskId, sceneId, shotId, camera, cameras, planRe
       <h2><Aperture aria-hidden="true" /> 截图库 <small>{shown.length}</small></h2>
       <div className="desk-toggles">
         <label><input type="checkbox" checked={monochrome} onChange={event => setMonochrome(event.target.checked)} /> 统一白模色</label>
+        <label title="近亮远暗的灰度图，静帧和视频都按此输出；只约束空间层次、走位与运镜">
+          <input type="checkbox" checked={depth} onChange={event => setDepth(event.target.checked)} /> 深度画面
+        </label>
         <label><input type="checkbox" checked={labels} onChange={event => setLabels(event.target.checked)} /> 烧入角色名</label>
+        <label title="机位画面按深度画面显示，所见即所出；导演视图不受影响">
+          <input type="checkbox" checked={depthPreview} onChange={event => onDepthPreview?.(event.target.checked)} /> 深度预览
+        </label>
       </div>
       <button type="button" className="desk-button is-primary" disabled={busy || saving || !camera || shotId === null} onClick={() => { void take(); }}>
         <Aperture aria-hidden="true" /> {busy ? '处理中…' : `截取第 ${shotId ?? '—'} 镜画面`}
@@ -172,9 +185,10 @@ export function CapturesPanel({ taskId, sceneId, shotId, camera, cameras, planRe
                   {applied && <em className="desk-badge is-applied">已应用</em>}
                   {capture.monochrome && <em className="desk-badge">白模色</em>}
                   {capture.labelled && <em className="desk-badge">带角色名</em>}
+                  {capture.depth && <em className="desk-badge is-depth" title="近亮远暗的灰度深度图">深度</em>}
                   {capture.showsLimbs && <em className="desk-badge is-limbs">带四肢</em>}
                 </span>
-                {capture.showsLimbs && <small className="desk-captures__warning" role="note">{capture.warning || LIMBS_WARNING}</small>}
+                {(capture.showsLimbs || capture.depth) && <small className="desk-captures__warning" role="note">{capture.warning || (capture.depth ? DEPTH_WARNING : LIMBS_WARNING)}</small>}
               </div>
               <div className="desk-captures__actions">
                 <button type="button" className="desk-icon" aria-label={`查看 ${title}`} onClick={() => setViewing(capture)}><Eye aria-hidden="true" /></button>
@@ -182,8 +196,12 @@ export function CapturesPanel({ taskId, sceneId, shotId, camera, cameras, planRe
                   <button type="button" className="desk-icon" aria-label={`取消应用 ${title}`} disabled={busy} onClick={() => { void run(() => unapplyCapture(taskId, sceneId, capture.id), '已从分镜中取消应用。'); }}><Undo2 aria-hidden="true" /></button>
                 ) : (
                   <button
-                    type="button" className="desk-icon" aria-label={`应用至分镜 ${title}`} disabled={busy || capture.stale}
-                    title={capture.stale ? '这条是按旧站位拍的，请重新截取后再应用' : capture.kind === 'clip' ? '应用后本镜按多模态生成，实测机位句让位给白模视频' : undefined}
+                    type="button" className="desk-icon" aria-label={`应用至分镜 ${title}`} disabled={busy || capture.stale || (capture.depth && capture.kind === 'still')}
+                    title={
+                      capture.depth && capture.kind === 'still' ? DEPTH_STILL_REFUSAL
+                        : capture.stale ? '这条是按旧站位拍的，请重新截取后再应用'
+                          : capture.kind === 'clip' ? (capture.depth ? '应用后本镜按多模态生成，视频模型只从深度视频里取层次与运动' : '应用后本镜按多模态生成，实测机位句让位给白模视频') : undefined
+                    }
                     onClick={() => { void run(() => applyCapture(taskId, sceneId, capture.id), capture.kind === 'clip' ? `已应用到第 ${capture.shotId} 镜：第 5 阶段将按多模态使用这条白模视频，实测机位句不再写入本镜提示词。` : `已应用到第 ${capture.shotId} 镜。`); }}
                   ><Check aria-hidden="true" /></button>
                 )}

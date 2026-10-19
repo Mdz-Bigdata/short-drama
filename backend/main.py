@@ -10,9 +10,11 @@ from dotenv import load_dotenv
 # Load the server-only environment before importing routers and provider services.
 load_dotenv(Path(__file__).resolve().parent / ".env", override=False)
 
+from app import settings
+
 # Application loggers emit structured task events through the root handler.
 # Provider secrets and request bodies are intentionally never included.
-_log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+_log_level = getattr(logging, settings.log_level(), logging.INFO)
 logging.basicConfig(
     level=_log_level,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -34,6 +36,9 @@ from app.api.element_api import router as element_router
 from app.api.platform_api import router as platform_router
 from app.api.model_configuration_api import router as model_configuration_router
 from app.api.user_api import router as user_router
+from app.api.bgm_api import router as bgm_router
+from app.api.mcp_api import router as mcp_router
+from app.api.market_api import router as market_router
 from app.core.media_compositor import MEDIA_DIR
 from app.repository.task_repo import TaskStoreUnavailableError
 from app.platform.bootstrap import initialize_platform
@@ -48,11 +53,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-_allowed_origins = [
-    item.strip() for item in os.getenv(
-        "ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
-    ).split(",") if item.strip()
-]
+_allowed_origins = settings.allowed_origins()
 
 app.add_middleware(ElementUploadGuardMiddleware)
 app.add_middleware(ScriptUpdateGuardMiddleware)
@@ -77,11 +78,12 @@ async def _security_boundary(request: Request, call_next):
         "/" + request.url.path.replace("\\", "/").lstrip("/")
     )
     normalized_path_key = normalized_path.casefold()
+    private_element_media = f"{settings.MEDIA_ROUTE}/elements"
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and origin and origin not in _allowed_origins:
         response = JSONResponse(status_code=403, content={"detail": "请求来源不受信任"})
     elif (
-        normalized_path_key == "/media/elements"
-        or normalized_path_key.startswith("/media/elements/")
+        normalized_path_key == private_element_media
+        or normalized_path_key.startswith(private_element_media + "/")
     ):
         # Element reference images are account-private. Keep the general
         # /media mount for generated audio/video, but never let its static
@@ -94,7 +96,7 @@ async def _security_boundary(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
-    if (os.getenv("ENVIRONMENT") or "development").lower() in {"prod", "production"}:
+    if settings.is_production():
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 
@@ -110,7 +112,7 @@ async def _task_store_unavailable(request: Request, exc: TaskStoreUnavailableErr
 
 # 挂载本地生成媒体的静态访问路由 (TTS 配音、合成成片)
 os.makedirs(MEDIA_DIR, exist_ok=True)
-app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
+app.mount(settings.MEDIA_ROUTE, StaticFiles(directory=MEDIA_DIR), name="media")
 
 # 挂载 API 路由
 app.include_router(drama_router)
@@ -125,6 +127,9 @@ app.include_router(user_router)
 app.include_router(billing_router)
 app.include_router(project_skill_router)
 app.include_router(director_desk_router)
+app.include_router(bgm_router)
+app.include_router(mcp_router)
+app.include_router(market_router)
 
 
 @app.on_event("startup")
@@ -204,6 +209,26 @@ def _recover_orphan_tasks():
             log.warning(f"[启动恢复] 已规范化 {n} 个残留 running 任务的状态")
     except Exception as e:
         log.error(f"[启动恢复] 孤儿任务回收失败: {str(e)[:160]}")
+    # Video jobs the providers accepted before the restart keep running and are paid for:
+    # poll them to their end in the background and record their clips; never re-submit.
+    import threading
+    from app.api.drama_api import service as drama_service
+
+    def _resume():
+        try:
+            queues = drama_service.reconcile_generation_queues()
+            if queues.get("requeued"):
+                log.warning("[启动恢复] 生成队列: %s 项回到排队", queues["requeued"])
+        except Exception as error:  # noqa: BLE001 - recovery must never take the server down
+            log.error("[启动恢复] 生成队列整理失败: %s", str(error)[:160])
+        try:
+            outcome = drama_service.resume_interrupted_video_jobs()
+            if any(outcome.values()):
+                log.warning("[启动恢复] 视频任务续查: 取回 %s 条, 失败 %s 条", outcome["downloaded"], outcome["failed"])
+        except Exception as error:  # noqa: BLE001 - recovery must never take the server down
+            log.error("[启动恢复] 视频任务续查失败: %s", str(error)[:160])
+
+    threading.Thread(target=_resume, name="video-job-resume", daemon=True).start()
 
 
 @app.get("/")
@@ -214,4 +239,9 @@ def read_root():
     }
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app",
+        host=settings.server_host(),
+        port=settings.server_port(),
+        reload=settings.server_reload(),
+    )

@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 
 import { API_BASE, ApiError, apiRequest, isUnauthorized } from '../../api/client';
 import { normalizeScriptTitle } from '../workbench/scriptTitle';
-import { WriterAgentPage } from './WriterAgentPage';
+import { WriterAgentPage, type WriterView } from './WriterAgentPage';
 import type { WriterDashboardResponse, WriterEpisode, WriterRelationship } from './types';
+
+import { t } from '../../i18n';
 
 function mergeEpisodeUpdates(serverEpisodes: WriterEpisode[], liveEpisodes: WriterEpisode[]) {
   const serverIndexes = new Set(serverEpisodes.map(episode => episode.index));
@@ -41,6 +43,7 @@ export function WriterAgentPageContainer({
   onScriptSaved,
   onOpenScenes,
   onOpenActors,
+  defaultView,
 }: {
   taskId: string;
   refreshKey?: string;
@@ -57,6 +60,7 @@ export function WriterAgentPageContainer({
   onScriptSaved?: (dashboard: WriterDashboardResponse) => void;
   onOpenScenes?: () => void;
   onOpenActors?: () => void;
+  defaultView?: WriterView;
 }) {
   const [dashboardState, setDashboardState] = useState<{
     taskId: string;
@@ -64,6 +68,8 @@ export function WriterAgentPageContainer({
   } | null>(null);
   const [syncError, setSyncError] = useState('');
   const dashboard = dashboardState?.taskId === taskId ? dashboardState.data : null;
+  // Portraits are a bonus from stage 3; the board renders initials without them.
+  const avatars = dashboard?.portraits || {};
   const resolvedTitle = normalizeScriptTitle(displayTitle)
     || normalizeScriptTitle(dashboard?.title)
     || normalizeScriptTitle(title)
@@ -159,6 +165,7 @@ export function WriterAgentPageContainer({
     }
   };
 
+
   const analyzeRelationships = async () => {
     try {
       const data = await apiRequest<WriterDashboardResponse>(
@@ -175,6 +182,68 @@ export function WriterAgentPageContainer({
           : '人物关系分析失败，请稍后重试。';
       setSyncError(message);
       throw new Error(message, { cause: error });
+    }
+  };
+
+  const putDashboard = async (path: string, method: string, body?: unknown, failure = '保存失败，请稍后重试。') => {
+    try {
+      const data = await apiRequest<WriterDashboardResponse>(`/api/drama/${encodeURIComponent(taskId)}${path}`, {
+        method, body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      setDashboardState({ taskId, data });
+      setSyncError('');
+      return data;
+    } catch (error) {
+      const message = isUnauthorized(error)
+        ? '登录状态已过期，请重新登录后再试。'
+        : error instanceof ApiError && (error.status === 409 || error.status === 502)
+          ? error.message
+          : failure;
+      setSyncError(message);
+      throw new Error(message, { cause: error });
+    }
+  };
+
+  const saveOverview = async (fields: { title?: string; synopsis?: string; genre?: string; theme?: string; world_setting?: string }) => {
+    await putDashboard('/overview', 'PATCH', fields, '概述保存失败，请稍后重试。');
+  };
+  const regenerateOverview = async () => {
+    await putDashboard('/overview/regenerate', 'POST', undefined, '概述重新创作失败，请稍后重试。');
+  };
+  const saveTimeline = async (events: Array<{ phase: string; title: string; desc: string; points: string[] }>) => {
+    await putDashboard('/timeline', 'PUT', { events }, '剧情节点保存失败，请稍后重试。');
+  };
+  const saveVersion = async (label: string) => {
+    await putDashboard('/script/versions', 'POST', { label }, '版本保存失败，请稍后重试。');
+  };
+  const restoreVersion = async (versionId: string) => {
+    if (!dashboard) throw new Error(t('无法确认剧本版本，请恢复后端连接并刷新页面后再恢复。'));
+    const restore = (confirmInvalidate: boolean) => apiRequest<WriterDashboardResponse>(
+      `/api/drama/${encodeURIComponent(taskId)}/script/versions/${encodeURIComponent(versionId)}/restore`,
+      { method: 'POST', body: JSON.stringify({ expected_source_hash: dashboard.sourceHash, confirm_invalidate: confirmInvalidate }) },
+    );
+    try {
+      let data: WriterDashboardResponse;
+      try {
+        data = await restore(false);
+      } catch (error) {
+        const requiresArchive = error instanceof ApiError && error.status === 409 && /归档|下游|成片|角色、分镜/.test(error.message);
+        if (!requiresArchive) throw error;
+        if (!window.confirm(t('恢复这个版本会归档当前角色、分镜和成片，并从编剧阶段重新开始。旧成果仍保留在版本归档中。是否继续？'))) {
+          throw new Error(t('已取消恢复版本。'), { cause: error });
+        }
+        data = await restore(true);
+      }
+      setDashboardState({ taskId, data });
+      onScriptSaved?.(data);
+      setSyncError('');
+    } catch (error) {
+      const message = isUnauthorized(error)
+        ? '登录状态已过期，请重新登录后再恢复版本。'
+        : error instanceof ApiError && error.status === 409 ? error.message
+          : error instanceof Error ? error.message : '版本恢复失败，请稍后重试。';
+      setSyncError(message);
+      throw error instanceof Error ? error : new Error(message);
     }
   };
 
@@ -202,10 +271,10 @@ export function WriterAgentPageContainer({
 
   const saveScript = async (content: string, fileName: string, baseSourceHash: string) => {
     if (!dashboard) {
-      throw new Error('无法确认剧本版本，请恢复后端连接并刷新页面后再保存。');
+      throw new Error(t('无法确认剧本版本，请恢复后端连接并刷新页面后再保存。'));
     }
     if (!/^[a-f\d]{64}$/i.test(baseSourceHash)) {
-      throw new Error('无法确认编辑起始版本，请关闭编辑器、刷新页面后重试。');
+      throw new Error(t('无法确认编辑起始版本，请关闭编辑器、刷新页面后重试。'));
     }
     const persist = (confirmInvalidate: boolean) => apiRequest<WriterDashboardResponse>(
       `/api/drama/${encodeURIComponent(taskId)}/script`,
@@ -229,10 +298,10 @@ export function WriterAgentPageContainer({
           && /归档|下游|成片|角色、分镜/.test(error.message);
         if (!requiresArchive) throw error;
         const confirmed = window.confirm(
-          '应用新剧本会归档当前角色、分镜和成片，并从编剧阶段重新开始。旧成果仍保留在版本归档中。是否继续？',
+          t('应用新剧本会归档当前角色、分镜和成片，并从编剧阶段重新开始。旧成果仍保留在版本归档中。是否继续？'),
         );
         if (!confirmed) {
-          throw new Error('已取消应用新剧本，本地草稿仍保留。', { cause: error });
+          throw new Error(t('已取消应用新剧本，本地草稿仍保留。'), { cause: error });
         }
         data = await persist(true);
       }
@@ -245,7 +314,7 @@ export function WriterAgentPageContainer({
       return data.sourceHash;
     } catch (error) {
       setSyncError('剧本保存失败，本地草稿仍保留在编辑器中。');
-      throw error instanceof Error ? error : new Error('剧本保存失败，请稍后重试。');
+      throw error instanceof Error ? error : new Error(t('剧本保存失败，请稍后重试。'));
     }
   };
 
@@ -271,8 +340,18 @@ export function WriterAgentPageContainer({
         onAnalyzeRelationships={taskId ? analyzeRelationships : undefined}
         onContinueScript={taskId ? continueScript : undefined}
         relationshipsInferred={dashboard?.relationshipsInferred === true}
+        timelineAuthored={dashboard?.timelineAuthored === true}
+        creationMode={dashboard?.creationMode}
+        versions={dashboard?.versions || []}
+        avatars={avatars}
+        onSaveOverview={dashboard ? saveOverview : undefined}
+        onRegenerateOverview={dashboard ? regenerateOverview : undefined}
+        onSaveTimeline={dashboard ? saveTimeline : undefined}
+        onSaveVersion={dashboard ? saveVersion : undefined}
+        onRestoreVersion={dashboard ? restoreVersion : undefined}
         onOpenScenes={onOpenScenes}
         onOpenActors={onOpenActors}
+        defaultView={defaultView}
       />
     </div>
   );

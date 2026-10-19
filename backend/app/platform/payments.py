@@ -4,6 +4,8 @@ import hashlib
 import hmac
 import os
 
+from app import settings
+
 
 class PaymentSignatureError(ValueError):
     pass
@@ -11,7 +13,7 @@ class PaymentSignatureError(ValueError):
 
 def verify_webhook_signature(body: bytes, signature: str) -> None:
     secret = (os.getenv("PAYMENT_WEBHOOK_SECRET") or "").strip()
-    if len(secret) < 32 or secret.upper().startswith("YOUR_"):
+    if len(secret) < 32 or secret.upper().startswith(settings.PLACEHOLDER_PREFIX):
         raise PaymentSignatureError("支付回调密钥未配置")
     supplied = (signature or "").strip().lower()
     if len(supplied) != 64:

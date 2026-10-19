@@ -7,6 +7,8 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS, MAX_SEQUENCE_IMAGES
+
 
 VideoReferenceMode = Literal[
     "auto", "first_last_frame", "multi_reference", "multimodal",
@@ -150,10 +152,10 @@ class VideoRouteRequest(BaseModel):
     model: str = "MiniMax-H3"
     first_frame: str | None = None
     last_frame: str | None = None
-    sequence_images: list[str] = Field(default_factory=list, max_length=9)
-    reference_images: list[str] = Field(default_factory=list, max_length=9)
-    reference_videos: list[str] = Field(default_factory=list, max_length=3)
-    reference_audios: list[str] = Field(default_factory=list, max_length=3)
+    sequence_images: list[str] = Field(default_factory=list, max_length=MAX_SEQUENCE_IMAGES)
+    reference_images: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_IMAGES)
+    reference_videos: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_VIDEOS)
+    reference_audios: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_AUDIOS)
     intent: VideoGenerationIntent = Field(default_factory=VideoGenerationIntent)
 
 
@@ -182,6 +184,23 @@ VIDEO_MODEL_MAX_SHOT_SECONDS: tuple[tuple[str, int], ...] = (
 )
 
 
+# 单个分镜时长的「宜用区间」：模型能生成的范围之内，按创作习惯取的一段。Seedance 2.5 一次能出 30 秒，
+# 用它拍 4 秒碎镜既浪费调用也丢掉长镜头的连贯；2.0 与 H3 的 5–15 秒是它们画面最稳的一段。
+# 编剧阶段把分镜时长限定在这里（模型从剧本规划时只能取区间内的整数秒），估算也落在这里。
+VIDEO_MODEL_PREFERRED_SHOT_SECONDS: tuple[tuple[str, int, int], ...] = (
+    ("seedance2.5", 10, 30),
+    ("seedance-2.5", 10, 30),
+    ("seedance2.0", 5, 15),
+    ("seedance-2.0", 5, 15),
+    ("seedance2", 5, 15),
+    ("seedance", 5, 15),
+    ("minimax-h3", 5, 15),
+    ("minimax h3", 5, 15),
+    ("hailuo", 5, 15),
+    ("h3", 5, 15),
+)
+
+
 def _normalize_model_token(value: str) -> str:
     return re.sub(r"[\s_.]+", "-", (value or "").strip().lower())
 
@@ -206,6 +225,22 @@ def max_shot_seconds(model: str) -> int:
     return DEFAULT_MAX_SHOT_SECONDS
 
 
+def preferred_shot_seconds(model: str) -> tuple[int, int]:
+    """The (shortest, longest) shot length to plan for ``model``: its preferred range, inside what it can render.
+
+    Unlisted models keep the full renderable range, from the strictest known floor to their maximum.
+    """
+    hard_max = max_shot_seconds(model)
+    normalized = _normalize_model_token(model)
+    if normalized:
+        ranked = sorted(VIDEO_MODEL_PREFERRED_SHOT_SECONDS, key=lambda item: len(_normalize_model_token(item[0])), reverse=True)
+        for alias, low, high in ranked:
+            if _normalize_model_token(alias) in normalized:
+                high = min(high, hard_max)
+                return max(MIN_SHOT_SECONDS, min(low, high)), high
+    return MIN_SHOT_SECONDS, max(MIN_SHOT_SECONDS, hard_max)
+
+
 def split_shot_seconds(duration_seconds: int, model: str) -> list[int]:
     """Cut one over-long shot into clips the model can actually render.
 
@@ -225,7 +260,28 @@ def _unique(values: list[str] | None, limit: int) -> list[str]:
     return list(dict.fromkeys(value for value in (values or []) if value))[:limit]
 
 
+def _declared_profile(model: str) -> VideoProviderProfile | None:
+    """A provider the configuration centre declared in data: its spec says which modes it executes."""
+    from app.core.providers.declarative_video import declared_video_endpoints
+
+    family = declared_video_endpoints.family_for_model(model)
+    spec = declared_video_endpoints.spec(family) if family else None
+    if spec is None:
+        return None
+    return VideoProviderProfile(
+        family=spec.family, aliases=list(spec.model_ids), modes=list(spec.modes),
+        max_reference_images=spec.max_reference_images, max_reference_videos=spec.max_reference_videos,
+        max_reference_audios=spec.max_reference_audios,
+        verification_status="integrated" if declared_video_endpoints.ready(spec.family) else "runtime_configuration_required",
+        capability_source=f"declared video endpoint {spec.label}",
+        notes=["modes and limits come from the declared spec; the credential is proven on first generation"],
+    )
+
+
 def normalize_video_provider(model: str) -> VideoProviderProfile:
+    declared = _declared_profile(model)
+    if declared is not None:
+        return declared
     normalized = re.sub(r"[\s_.]+", "-", (model or "").strip().lower())
     for profile in VIDEO_PROVIDER_PROFILES:
         for alias in sorted(profile.aliases, key=len, reverse=True):
@@ -243,6 +299,47 @@ def normalize_video_provider(model: str) -> VideoProviderProfile:
         capability_source="unknown runtime model",
         notes=["unknown models fail closed for advanced reference modes until capabilities are configured"],
     )
+
+
+_NUMBERED_MENTION = re.compile(r"（参考图(\d+)）")
+_REFERENCE_NOTE = re.compile(r"参考图(\d+)(仅锁定[^；。]*?不是额外剧情或额外人物)([；。]?)")
+
+
+def renumber_reference_mentions(prompt: str, identity_images: list[str], plan: "VideoReferencePlan") -> str:
+    """Number every 参考图N by the image the request actually carries.
+
+    The prompt is written before routing and counts only the identity images
+    (actor sheets, library references): 参考图k is ``identity_images[k-1]``. The
+    router may put the first frame, sequence frames and last frame ahead of them,
+    drop some to fit the model's limit, or send none at all (first / first+last
+    frame modes). Each mention is renumbered to the image's real position, and a
+    mention of an image that is not sent is removed, so no number points at the
+    wrong picture. When the first frame travels as an image it is named as such.
+    """
+    sent = list(plan.reference_images or [])
+    position = {url: index for index, url in enumerate(sent, start=1)}
+
+    def target(old: str) -> int | None:
+        index = int(old) - 1
+        if index < 0 or index >= len(identity_images):
+            return None
+        return position.get(identity_images[index])
+
+    def mention(match: re.Match[str]) -> str:
+        number = target(match.group(1))
+        return f"（参考图{number}）" if number else ""
+
+    def note(match: re.Match[str]) -> str:
+        number = target(match.group(1))
+        return f"参考图{number}{match.group(2)}{match.group(3)}" if number else ""
+
+    text = _REFERENCE_NOTE.sub(note, _NUMBERED_MENTION.sub(mention, prompt or ""))
+    text = re.sub(r"；{2,}", "；", text)
+    if plan.first_frame is None and sent and sent[0] not in identity_images:
+        lead = "参考图1是本镜首帧画面，只决定开场构图、站位与光线；"
+        if not text.startswith(lead):
+            text = lead + text
+    return text
 
 
 def _asset_marker(kind: str, count: int) -> str:

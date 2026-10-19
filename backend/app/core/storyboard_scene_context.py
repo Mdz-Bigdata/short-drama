@@ -5,13 +5,16 @@ from __future__ import annotations
 import re
 from typing import Any
 
-KINDS = {"scene": "scenes", "prop": "props", "costume": "costumes", "effect": "effects"}
+from app.core import character_variants
+
+KINDS = {"scene": "scenes", "prop": "props", "costume": "costumes", "effect": "effects", "product": "products"}
 LABELS = {
     "actor": "数字演员",
     "scene": "拍摄场地",
     "prop": "拍摄道具",
     "costume": "服装",
     "effect": "特效",
+    "product": "商品",
 }
 EMPTY_ACTOR = "空镜（无人物）"
 _EMPTY_NAMES = {"无", "无人", "无人物", "空镜", "—", "-", "无出场角色", EMPTY_ACTOR}
@@ -83,9 +86,13 @@ def compile_scene_context(
         if isinstance(item, dict) and _text(item.get("name"))
     }
     actor_elements: dict[str, dict[str, Any]] = {}
-    for item in elements or []:
-        if item.get("kind") == "actor" and _scoped(item, scene_id):
-            actor_elements.setdefault(item["name"], item)
+    # A derived look (少年 / 婚纱 / 受伤后) is an actor element that names its character;
+    # it dresses that character where the story calls for it and is never a character itself.
+    base_actors, variants = character_variants.split(
+        item for item in elements or [] if item.get("kind") == "actor" and _scoped(item, scene_id)
+    )
+    for item in base_actors:
+        actor_elements.setdefault(item["name"], item)
     all_names = list(dict.fromkeys([*profiles, *actor_elements]))
     characters = _names(scene.get("characters")) or [
         name for name in all_names if name in script
@@ -97,15 +104,21 @@ def compile_scene_context(
         library_actor = actor_elements.get(name, {})
         description = _text(library_actor.get("description")) or profiles.get(name, "")
         profiles[name] = description
-        actors.append(
-            {
-                **library_actor,
-                "kind": "actor",
-                "name": name,
-                "description": description,
-                "image_url": library_actor.get("image_url") or sheets.get(name) or "",
-            }
-        )
+        actor = {
+            **library_actor,
+            "kind": "actor",
+            "name": name,
+            "description": description,
+            "image_url": library_actor.get("image_url") or sheets.get(name) or "",
+        }
+        own_variants = variants.get(name) or []
+        if own_variants:
+            actor["variants"] = own_variants
+            actor["base_description"], actor["base_image_url"] = actor["description"], actor["image_url"]
+        chosen = character_variants.pick(own_variants, text=script, episode=character_variants.episode_of(scene_id))
+        actor = character_variants.apply(actor, chosen)
+        profiles[name] = actor["description"]
+        actors.append(actor)
 
     catalog = (assets.get("2_breakdown") or {}).get("production_assets") or {}
     context: dict[str, Any] = {
@@ -176,21 +189,35 @@ def merge_video_references(
     Returns the image list for the video provider plus the role lines the prompt
     needs so each reference locks exactly one asset and nothing else.
     """
-    ordered: list[tuple[str, str, str]] = [("actor", name, url) for name, url in sheets if url]
+    entries = video_reference_entries(sheets, references, limit=limit)
+    images = [url for _, _, url in entries]
+    notes = [
+        f"参考图{number}仅锁定{'数字演员设定集' if kind == 'actor' else LABELS.get(kind, kind)}「{name}」，不是额外剧情或额外人物"
+        for number, (kind, name, _) in enumerate(entries, start=1)
+    ]
+    return images, "；".join(notes)
+
+
+def video_reference_entries(
+    sheets: list[tuple[str, str]], references: list[dict], *, limit: int = 9
+) -> list[tuple[str, str, str]]:
+    """(资产类型, 名字, 图片) 按随请求上传的顺序排好、去重、截到上限；第 N 项就是参考图 N。"""
+    # A character wearing a derived look is locked by that look's image, not the base five-view sheet.
+    dressed = {str(item.get("name") or "") for item in references if item.get("kind") == "actor" and item.get("variant") and item.get("image_url")}
+    ordered: list[tuple[str, str, str]] = [("actor", name, url) for name, url in sheets if url and name not in dressed]
     ordered += [
         (str(item.get("kind") or ""), str(item.get("name") or ""), str(item.get("image_url") or ""))
         for item in references
         if item.get("image_url")
     ]
-    images: list[str] = []
-    notes: list[str] = []
+    entries: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
     for kind, name, url in ordered:
-        if url in images or len(images) >= limit:
+        if url in seen or len(entries) >= limit:
             continue
-        images.append(url)
-        label = "数字演员设定集" if kind == "actor" else LABELS.get(kind, kind)
-        notes.append(f"参考图{len(images)}仅锁定{label}「{name}」，不是额外剧情或额外人物")
-    return images, "；".join(notes)
+        seen.add(url)
+        entries.append((kind, name, url))
+    return entries
 
 
 def panel_context(context: dict, shot: dict) -> dict:
@@ -228,9 +255,19 @@ def panel_context(context: dict, shot: dict) -> dict:
         characters = [
             name for name in context["characters"] if name in action
         ] or context["characters"]
-    selected = [item for item in context["actors"] if item["name"] in characters]
+    selected = []
+    for item in context["actors"]:
+        if item["name"] not in characters:
+            continue
+        # One shot may call for another look than its scene (a flashback, a costume change).
+        asked = character_variants.triggered(item.get("variants") or [], action)
+        if asked is not None and asked.get("id") != item.get("variant_element_id"):
+            base = {**item, "description": item.get("base_description", item.get("description")), "image_url": item.get("base_image_url", item.get("image_url"))}
+            item = character_variants.apply(base, asked)
+        selected.append(item)
     selected += context["scenes"]
     props = [item for item in context["props"] if _mentioned(item, action)]
+    products = [item for item in context.get("products", []) if _mentioned(item, action)]
     effects = [item for item in context["effects"] if _mentioned(item, action)]
     costumes = [
         item
@@ -238,15 +275,16 @@ def panel_context(context: dict, shot: dict) -> dict:
         if any(_costume_owner(item, name) for name in characters)
         or _mentioned(item, action)
     ]
-    selected += props + costumes + effects
+    selected += props + products + costumes + effects
     references: list[dict[str, str]] = []
     seen_urls = set()
     for item in selected:
         url = item.get("image_url")
         if url and url not in seen_urls and len(references) < 9:
-            references.append(
-                {"kind": item["kind"], "name": item["name"], "image_url": url}
-            )
+            reference = {"kind": item["kind"], "name": item["name"], "image_url": url}
+            if item.get("variant"):
+                reference["variant"] = str(item["variant"])
+            references.append(reference)
             seen_urls.add(url)
     lines = [
         f"【本格剧情动作】{action}",

@@ -47,7 +47,7 @@ IDENTITY_VIEW_LABELS: tuple[tuple[str, str], ...] = (
     ("侧面全身", "Profile full body"),
     ("背面全身", "Back full body"),
     ("正脸特写", "Face front close-up"),
-    ("3-4侧脸", "Face three-quarter"),
+    ("左侧45°侧脸", "Face left 45°"),
 )
 
 
@@ -136,7 +136,7 @@ class CharacterDesignState(DramaBaseSchema):
 class CharacterQualityIssue(DramaBaseSchema):
     code: str = Field("quality_issue", max_length=120)
     message: str = Field("", max_length=1000)
-    # 设定集共 25 格，逐格质检时这里是格子序号；旧五视图记录仍然只用 1-5。
+    # 设定集最多 25 格，逐格质检时这里是格子序号；旧五视图记录仍然只用 1-5。
     view_index: Optional[int] = Field(None, ge=1, le=25)
 
 
@@ -162,7 +162,7 @@ class CharacterViewAsset(DramaBaseSchema):
 
 
 class CharacterSheetCell(DramaBaseSchema):
-    """设定集 25 格里的一格。五个身份锚点走 ``views``，其余的走这里。
+    """设定集里的一格。五个身份锚点走 ``views``，其余的走这里。
 
     key 只做格式校验，不枚举——格子清单归 core.actor_sheet_layout 管，
     schema 层跟着枚举一遍必然漂移。中文标签在前端 assetTabLabels.ts。
@@ -174,6 +174,8 @@ class CharacterSheetCell(DramaBaseSchema):
     group: Literal["main_portrait", "full_body", "three_view", "elements", "detail_matrix"]
     image_url: Optional[str] = Field(None, max_length=4000)
     available: bool = False
+    # 模型没画这一格时，从哪个身份面板按部位补裁(full_body / portrait / back)；模型画了的格子为空。
+    derived_from: Optional[str] = Field(None, pattern=r"^[a-z][a-z0-9_]{1,39}$")
 
     @model_validator(mode="after")
     def validate_availability(self) -> "CharacterSheetCell":
@@ -197,6 +199,9 @@ class CharacterDashboardCharacter(DramaBaseSchema):
     # 设定集的其余格子(元素拆解 + 细节矩阵 + 大正面 + 全身立绘)。旧五视图记录为空列表。
     sheet_cells: list[CharacterSheetCell] = Field(default_factory=list, max_length=25)
     quality: CharacterFiveViewQuality = Field(default_factory=CharacterFiveViewQuality)
+    # 单个角色「重新生成设定集」正在后台跑；上一次重新生成失败时的原因(成功或从未重新生成为空)。
+    regenerating: bool = False
+    regeneration_error: str = Field("", max_length=1000)
 
     @model_validator(mode="after")
     def validate_view_order(self) -> "CharacterDashboardCharacter":

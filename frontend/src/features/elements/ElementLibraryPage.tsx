@@ -1,10 +1,11 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Boxes, Camera, FileSearch, ImagePlus, LoaderCircle, Maximize2, Pencil, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
+import { ArrowLeft, Boxes, Camera, FileSearch, ImagePlus, LoaderCircle, Maximize2, Pencil, Plus, RefreshCw, Shirt, Trash2, Upload } from 'lucide-react';
 
-import { API_BASE, apiRequest } from '../../api/client';
+import { apiRequest, apiUrl } from '../../api/client';
 import AssetImageViewer, { type AssetImageViewerAsset } from './AssetImageViewer';
-import { findPoster, findViewImage, type ElementFile, type ElementItem, type ElementKind } from './elementTypes';
+import { actorRegeneration, findPoster, findViewImage, variantOf, type ElementFile, type ElementItem, type ElementKind } from './elementTypes';
 import './ElementLibraryPage.css';
+import { t } from '../../i18n';
 
 
 export type { ElementKind } from './elementTypes';
@@ -23,6 +24,8 @@ interface Props {
   taskId?: string;
   onCountChange?: (kind: ElementKind, total: number) => void;
   regenerateAllToken?: number;
+  /** 变化一次就把本类资产的参考图全部重新生成一遍(已有的也换掉)。 */
+  replaceAllToken?: number;
   onGenerationStateChange?: (generating: boolean) => void;
 }
 
@@ -64,6 +67,7 @@ const kindMeta: Record<ElementKind, { label: string; hint: string }> = {
   prop: { label: '道具', hint: '记录归属、位置、状态、材质与跨镜头连续性' },
   costume: { label: '服装', hint: '记录角色、造型状态、材质、换装节点与镜头连续性' },
   effect: { label: '特效', hint: '记录作用目标、时间、影响区域与结束状态' },
+  product: { label: '商品', hint: '广告主推的真实商品：上传实物照片（正面、细节、使用中），镜头提到商品名时按照片锁定外观' },
 };
 
 // 数字演员设定集的五个身份视图槽位；后两项是存量五视图整板留下的旧角度。
@@ -89,6 +93,7 @@ export function ElementLibraryPage({
   taskId,
   onCountChange,
   regenerateAllToken = 0,
+  replaceAllToken = 0,
   onGenerationStateChange,
 }: Props) {
   const [kind, setKind] = useState<ElementKind>(initialKind);
@@ -120,6 +125,7 @@ export function ElementLibraryPage({
   const busyRef = useRef('');
   const generationSequence = useRef(0);
   const lastRegenerateAllToken = useRef(regenerateAllToken);
+  const lastReplaceAllToken = useRef(replaceAllToken);
 
   const setCreateInFlight = (value: boolean) => {
     creatingRef.current = value;
@@ -306,7 +312,7 @@ export function ElementLibraryPage({
         }
         setPendingUpload(uploadAttempt);
         setShowForm(true);
-        setError(`${kindMeta[targetKind].label}已创建，但${uploadError}`);
+        setError(t('{0}已创建，但{1}', [kindMeta[targetKind].label, uploadError]));
       } else {
         closeCreateForm();
         await load(targetKind);
@@ -470,7 +476,7 @@ export function ElementLibraryPage({
     }
   };
 
-  const regenerateAllMissing = async () => {
+  const regenerateAllMissing = async (replaceExisting = false) => {
     const targetKind = kindRef.current;
     if (targetKind === 'actor' || creatingRef.current || busyRef.current) return;
     const label = kindMeta[targetKind].label;
@@ -479,15 +485,19 @@ export function ElementLibraryPage({
     const sequence = ++generationSequence.current;
     onGenerationStateChange?.(true);
     setError('');
-    setNotice(`正在检查${label}资产的缺失参考图…`);
+    setNotice(replaceExisting
+      ? t('正在重新生成全部{0}参考图…', [label])
+      : t('正在检查{0}资产的缺失参考图…', [label]));
     try {
       let job = await apiRequest<GenerationJob>('/api/elements/generation-jobs', {
         method: 'POST',
-        body: JSON.stringify({ kind: targetKind, task_id: taskId || null }),
+        body: JSON.stringify(replaceExisting
+          ? { kind: targetKind, task_id: taskId || null, replace_existing: true }
+          : { kind: targetKind, task_id: taskId || null }),
       });
       while (job.status === 'queued' || job.status === 'running') {
         if (sequence !== generationSequence.current || targetKind !== kindRef.current) return;
-        setNotice(`正在生成${label}参考图：${job.processed}/${job.total}，剩余 ${job.remaining} 项…`);
+        setNotice(t('正在生成{0}参考图：{1}/{2}，剩余 {3} 项…', [label, job.processed, job.total, job.remaining]));
         job = await apiRequest<GenerationJob>(`/api/elements/generation-jobs/${encodeURIComponent(job.id)}`);
         if (job.status === 'queued' || job.status === 'running') {
           await new Promise(resolve => window.setTimeout(resolve, 1_200));
@@ -497,11 +507,11 @@ export function ElementLibraryPage({
       await load(targetKind);
       if (sequence !== generationSequence.current || targetKind !== kindRef.current) return;
       if (job.failed > 0) {
-        setError(`${job.succeeded} 项${label}参考图生成成功，${job.failed} 项失败；可再次点击补全失败项。`);
+        setError(t('{0} 项{1}参考图生成成功，{2} 项失败；可再次点击补全失败项。', [job.succeeded, label, job.failed]));
       } else if (job.total === 0) {
-        setNotice(`${label}资产的参考图已全部完整，无需重复生成。`);
+        setNotice(t('{0}资产的参考图已全部完整，无需重复生成。', [label]));
       } else {
-        setNotice(`${job.succeeded} 项${label}参考图已生成完整。`);
+        setNotice(t('{0} 项{1}参考图已生成完整。', [job.succeeded, label]));
       }
     } catch (err) {
       if (sequence === generationSequence.current && targetKind === kindRef.current) {
@@ -519,9 +529,71 @@ export function ElementLibraryPage({
     void regenerateAllMissing();
   }, [regenerateAllToken]); // eslint-disable-line react-hooks/exhaustive-deps -- token deliberately starts one generation run
 
+  useEffect(() => {
+    if (replaceAllToken === lastReplaceAllToken.current) return;
+    lastReplaceAllToken.current = replaceAllToken;
+    void regenerateAllMissing(true);
+  }, [replaceAllToken]); // eslint-disable-line react-hooks/exhaustive-deps -- token deliberately starts one replace-all run
+
   useEffect(() => () => {
     generationSequence.current += 1;
   }, []);
+
+  // 有数字演员在后台重出设定集时，每 5 秒静默重读一次列表（不清提示、不闪加载态），出完自动换上新图。
+  const actorRegenerating = kind === 'actor' && items.some(item => actorRegeneration(item).running);
+  useEffect(() => {
+    if (!actorRegenerating) return;
+    const timer = window.setInterval(() => {
+      const scope = taskId ? `&task_id=${encodeURIComponent(taskId)}` : '';
+      void apiRequest<ElementResponse>(`/api/elements?kind=actor&page=1&page_size=50${scope}`)
+        .then(data => { if (kindRef.current === 'actor') setItems(data.items); })
+        .catch(() => undefined);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [actorRegenerating, taskId]);
+
+  // 衍生形象：把一个演员元素标成另一个角色的另一种造型（少年 / 婚纱 / 受伤后 …）。
+  const [variantFor, setVariantFor] = useState('');
+  const [variantDraft, setVariantDraft] = useState({ of: '', label: '', triggers: '', from: '', to: '' });
+
+  const openVariantEditor = (item: ElementItem) => {
+    const current = variantOf(item);
+    setVariantFor(item.id);
+    setVariantDraft({
+      of: current?.of ?? '',
+      label: current?.label ?? '',
+      triggers: (current?.triggers ?? []).filter(word => word !== current?.label).join('、'),
+      from: current?.episodes ? String(current.episodes[0]) : '',
+      to: current?.episodes ? String(current.episodes[1]) : '',
+    });
+  };
+
+  const saveVariant = async (item: ElementItem, clear = false) => {
+    const busyKey = `variant:${item.id}`;
+    if (!startMutation(busyKey)) return;
+    setError('');
+    try {
+      await apiRequest(`/api/elements/${item.id}/variant`, clear
+        ? { method: 'DELETE' }
+        : {
+          method: 'PUT',
+          body: JSON.stringify({
+            of: variantDraft.of,
+            label: variantDraft.label.trim(),
+            triggers: variantDraft.triggers,
+            episode_from: variantDraft.from ? Number(variantDraft.from) : null,
+            episode_to: variantDraft.to ? Number(variantDraft.to) : null,
+          }),
+        });
+      setVariantFor('');
+      await load('actor');
+      setNotice(clear ? `“${item.name}”已恢复为独立角色。` : `“${item.name}”已设为“${variantDraft.of}”的衍生形象。`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '衍生形象保存失败');
+    } finally {
+      finishMutation(busyKey);
+    }
+  };
 
   const renameElement = async (item: ElementItem) => {
     if (creatingRef.current || busyRef.current) return;
@@ -541,7 +613,7 @@ export function ElementLibraryPage({
       });
       if (targetKind !== kindRef.current) return;
       await load(targetKind);
-      if (targetKind === kindRef.current) setNotice(`已重命名为“${trimmed}”。`);
+      if (targetKind === kindRef.current) setNotice(t('已重命名为“{0}”。', [trimmed]));
     } catch (err) {
       if (targetKind === kindRef.current) setError(err instanceof Error ? err.message : `重命名${label}资产失败`);
     } finally {
@@ -552,7 +624,7 @@ export function ElementLibraryPage({
   const deleteElement = async (item: ElementItem) => {
     if (creatingRef.current || busyRef.current) return;
     const label = kindMeta[item.kind].label;
-    if (!window.confirm(`确定删除${label}资产“${item.name}”吗？关联的参考图与 3D 模型也会一并删除，此操作不可撤销。`)) return;
+    if (!window.confirm(t('确定删除{0}资产“{1}”吗？关联的参考图与 3D 模型也会一并删除，此操作不可撤销。', [label, item.name]))) return;
     const targetKind = kindRef.current;
     const busyKey = `delete:${item.id}`;
     if (!startMutation(busyKey)) return;
@@ -566,7 +638,7 @@ export function ElementLibraryPage({
       if (pendingUpload?.target?.id === item.id) closeCreateForm();
       await load(targetKind);
       if (targetKind === kindRef.current) {
-        setNotice(`已删除${label}资产“${item.name}”。`);
+        setNotice(t('已删除{0}资产“{1}”。', [label, item.name]));
         window.setTimeout(() => toolbarCreateButton.current?.focus(), 0);
       }
     } catch (err) {
@@ -578,7 +650,7 @@ export function ElementLibraryPage({
 
   const deleteReference = async (item: ElementItem, poster: ElementFile, label = '参考图') => {
     if (creatingRef.current || busyRef.current) return;
-    if (!window.confirm(`确定删除“${item.name}”的${label}吗？此操作不可撤销。`)) return;
+    if (!window.confirm(t('确定删除“{0}”的{1}吗？此操作不可撤销。', [item.name, label]))) return;
     const targetKind = kindRef.current;
     const busyKey = `delete-file:${poster.id}`;
     if (!startMutation(busyKey)) return;
@@ -591,7 +663,7 @@ export function ElementLibraryPage({
         : entry));
       await load(targetKind);
       if (targetKind === kindRef.current) {
-        setNotice(`已删除“${item.name}”的${label}。`);
+        setNotice(t('已删除“{0}”的{1}。', [item.name, label]));
         window.setTimeout(() => toolbarImageButton.current?.focus(), 0);
       }
     } catch (err) {
@@ -603,6 +675,13 @@ export function ElementLibraryPage({
 
   const regenerate = async (item: ElementItem) => {
     if (creatingRef.current || busyRef.current) return;
+    if (item.kind === 'actor') {
+      if (actorRegeneration(item).running) return;
+      const confirmed = window.confirm(
+        `重新为“${item.name}”生成一张数字演员设定集？\n这是一次付费出图，以现有身份视图为参考；新图通过质检后才替换五个身份视图，未通过则保留原图。`,
+      );
+      if (!confirmed) return;
+    }
     const busyKey = `regenerate:${item.id}`;
     if (!startMutation(busyKey)) return;
     setError('');
@@ -612,7 +691,10 @@ export function ElementLibraryPage({
         body: JSON.stringify({ prompt: `保持 ${item.name} 的身份、状态和视觉锚点，重新生成当前版本` }),
       });
       if (item.kind === 'actor') {
-        setNotice(`“${item.name}”的数字演员设定集重新生成请求已提交。`);
+        if ('id' in regenerated) {
+          setItems(current => current.map(entry => entry.id === item.id ? regenerated : entry));
+        }
+        setNotice(t('“{0}”的数字演员设定集正在后台重新生成，完成后自动刷新。', [item.name]));
         return;
       }
       const targetKind = kindRef.current;
@@ -621,7 +703,7 @@ export function ElementLibraryPage({
         setItems(current => current.map(entry => entry.id === item.id ? regenerated : entry));
       }
       await load(targetKind);
-      if (targetKind === kindRef.current) setNotice(`已重新生成“${item.name}”的参考图。`);
+      if (targetKind === kindRef.current) setNotice(t('已重新生成“{0}”的参考图。', [item.name]));
     } catch (err) {
       setError(err instanceof Error ? err.message : '重新生成请求失败');
     } finally {
@@ -640,7 +722,7 @@ export function ElementLibraryPage({
     >
       {!embedded && (
         <header className="portal-header">
-          <button type="button" className="back-button" onClick={onBack}><ArrowLeft size={18} /> 返回创作台</button>
+          <button type="button" className="back-button" onClick={onBack}><ArrowLeft size={18} /> {t('返回创作台')}</button>
           <div>
             <span className="eyebrow">ELEMENT LIBRARY</span>
             <h1>{kindMeta[kind].label}元素库</h1>
@@ -651,7 +733,7 @@ export function ElementLibraryPage({
       )}
 
       {!embedded && (
-        <div className="element-tabs" role="tablist" aria-label="元素类型">
+        <div className="element-tabs" role="tablist" aria-label={t('元素类型')}>
           {(Object.keys(kindMeta) as ElementKind[]).map(value => (
             <button
               key={value}
@@ -669,7 +751,7 @@ export function ElementLibraryPage({
         <div><strong>{total}</strong><span> 个{kindMeta[kind].label}元素</span></div>
         <div>
           {kind === 'actor' && (
-            <label className="slot-select">上传视图
+            <label className="slot-select">{t('上传视图')}
               <select value={uploadSlot} onChange={event => setUploadSlot(event.target.value)} disabled={Boolean(busy)}>
                 {actorSlots.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
@@ -677,11 +759,11 @@ export function ElementLibraryPage({
           )}
           {spatialKind ? (
             <>
-              <button ref={toolbarImageButton} type="button" className="secondary-action" onClick={() => beginImageUpload()} disabled={Boolean(busy)}><ImagePlus size={16} /> 上传参考图</button>
-              <button type="button" className="secondary-action model-upload-action" onClick={() => beginModelUpload()} disabled={Boolean(busy)}><Upload size={16} /> 上传 3D 模型</button>
+              <button ref={toolbarImageButton} type="button" className="secondary-action" onClick={() => beginImageUpload()} disabled={Boolean(busy)}><ImagePlus size={16} /> {t('上传参考图')}</button>
+              <button type="button" className="secondary-action model-upload-action" onClick={() => beginModelUpload()} disabled={Boolean(busy)}><Upload size={16} /> {t('上传 3D 模型')}</button>
             </>
           ) : (
-            <button ref={toolbarImageButton} type="button" className="secondary-action" onClick={() => beginImageUpload()} disabled={Boolean(busy)}><Upload size={16} /> 上传</button>
+            <button ref={toolbarImageButton} type="button" className="secondary-action" onClick={() => beginImageUpload()} disabled={Boolean(busy)}><Upload size={16} /> {t('上传')}</button>
           )}
           {taskId && (
             <button
@@ -690,7 +772,7 @@ export function ElementLibraryPage({
               onClick={() => { void importFromScript(); }}
               disabled={Boolean(busy)}
             >
-              <FileSearch size={16} /> {busy === 'extract' ? '提取中…' : '从剧本提取'}
+              <FileSearch size={16} /> {busy === 'extract' ? t('提取中…') : t('从剧本提取')}
             </button>
           )}
           <button ref={toolbarCreateButton} type="button" className="primary-action" onClick={toggleCreateForm} disabled={Boolean(busy)}><Plus size={16} /> 添加{kindMeta[kind].label}</button>
@@ -740,11 +822,11 @@ export function ElementLibraryPage({
                 type="button"
                 onClick={discardPendingUpload}
                 disabled={Boolean(busy)}
-              >{retryUploadTarget ? '放弃重试' : '移除'}</button>
+              >{retryUploadTarget ? t('放弃重试') : t('移除')}</button>
             </div>
           )}
-          <label>名称<input ref={nameInput} value={name} onChange={event => setName(event.target.value)} placeholder={`输入${kindMeta[kind].label}名称`} disabled={Boolean(busy)} /></label>
-          <label>描述<textarea value={description} onChange={event => setDescription(event.target.value)} placeholder="身份、状态、材质、空间或效果约束" disabled={Boolean(busy)} /></label>
+          <label>{t('名称')}<input ref={nameInput} value={name} onChange={event => setName(event.target.value)} placeholder={`输入${kindMeta[kind].label}名称`} disabled={Boolean(busy)} /></label>
+          <label>{t('描述')}<textarea value={description} onChange={event => setDescription(event.target.value)} placeholder={t('身份、状态、材质、空间或效果约束')} disabled={Boolean(busy)} /></label>
           <button
             type="button"
             className="primary-action"
@@ -766,7 +848,7 @@ export function ElementLibraryPage({
       {loading ? (
         <div className="empty-library"><LoaderCircle className="spin" /> 正在加载{kindMeta[kind].label}库…</div>
       ) : spatialKind ? (
-        <Suspense fallback={<div className="empty-library"><LoaderCircle className="spin" /> 正在启动 3D 资产工作台…</div>}>
+        <Suspense fallback={<div className="empty-library"><LoaderCircle className="spin" /> {t('正在启动 3D 资产工作台…')}</div>}>
           <Element3DWorkspace
             kind={kind}
             items={items}
@@ -790,7 +872,7 @@ export function ElementLibraryPage({
                 kind: item.kind,
                 name: item.name,
                 description: item.description || kindMeta[item.kind].hint,
-                imageUrl: `${API_BASE}${poster.url}`,
+                imageUrl: apiUrl(poster.url),
               });
             }}
           />
@@ -807,7 +889,7 @@ export function ElementLibraryPage({
             const descriptionText = item.description || kindMeta[kind].hint;
             // 服装/特效沿用全景卡布局；数字演员保持原卡面，仅叠加放大入口。
             const panoramaLayout = item.kind === 'costume' || item.kind === 'effect';
-            const imageUrl = previewFile?.url ? `${API_BASE}${previewFile.url}` : '';
+            const imageUrl = previewFile?.url ? apiUrl(previewFile.url) : '';
             const openViewerLabel = item.kind === 'costume'
               ? `查看服装资产“${item.name}”全景图`
               : item.kind === 'effect'
@@ -835,7 +917,7 @@ export function ElementLibraryPage({
                       })}
                     >
                       <img src={imageUrl} alt={`${item.name} ${previewLabel}`} />
-                      <span className="element-preview__open-hint"><Maximize2 aria-hidden="true" /> 点击查看全景细节</span>
+                      <span className="element-preview__open-hint"><Maximize2 aria-hidden="true" /> {t('点击查看全景细节')}</span>
                     </button>
                   )
                   : (
@@ -844,7 +926,7 @@ export function ElementLibraryPage({
                       {kind === 'actor' && <small>{previewLabel}未上传</small>}
                     </span>
                   )}
-                <span className={`status-badge ${item.status}`}>{item.status === 'ready' ? '已就绪' : '待完善'}</span>
+                <span className={`status-badge ${item.status}`}>{item.status === 'ready' ? t('已就绪') : t('待完善')}</span>
               </div>
               {panoramaLayout && (
                 <div className="element-card-summary">
@@ -860,8 +942,48 @@ export function ElementLibraryPage({
                   </>
                 )}
                 {kind === 'actor' && <small>身份视图 {item.files.length}/5</small>}
+                {kind === 'actor' && actorRegeneration(item).running && (
+                  <small className="element-regeneration-status" role="status">{t('设定集后台生成中，完成后自动刷新')}</small>
+                )}
+                {kind === 'actor' && !actorRegeneration(item).running && actorRegeneration(item).error && (
+                  <small className="element-regeneration-error" role="alert">
+                    {t('上次重新生成未成功：{0}（已保留原图）', [actorRegeneration(item).error])}
+                  </small>
+                )}
+                {kind === 'actor' && variantOf(item) && (() => {
+                  const variant = variantOf(item)!;
+                  return (
+                    <small className="element-variant-badge">
+                      衍生自「{variant.of}」{variant.label ? ` · ${variant.label}` : ''}
+                      {variant.triggers.length > 0 && ` · 触发：${variant.triggers.join('、')}`}
+                      {variant.episodes && ` · 第 ${variant.episodes[0]}–${variant.episodes[1]} 集`}
+                    </small>
+                  );
+                })()}
+                {kind === 'actor' && variantFor === item.id && (
+                  <form
+                    className="element-variant-form"
+                    aria-label={`设置“${item.name}”的衍生形象`}
+                    onSubmit={event => { event.preventDefault(); void saveVariant(item); }}
+                  >
+                    <label>{t('来源角色')}
+                      <select aria-label={t('来源角色')} value={variantDraft.of} onChange={event => setVariantDraft(current => ({ ...current, of: event.target.value }))}>
+                        <option value="">{t('选择角色')}</option>
+                        {items.filter(other => other.id !== item.id && !variantOf(other)).map(other => <option key={other.id} value={other.name}>{other.name}</option>)}
+                      </select>
+                    </label>
+                    <label>{t('造型名')}<input aria-label={t('造型名')} value={variantDraft.label} placeholder={t('如：少年 / 婚纱 / 受伤后')} onChange={event => setVariantDraft(current => ({ ...current, label: event.target.value }))} /></label>
+                    <label>{t('触发词')}<input aria-label={t('触发词')} value={variantDraft.triggers} placeholder={t('剧本里出现这些词时换上该造型，用顿号分隔')} onChange={event => setVariantDraft(current => ({ ...current, triggers: event.target.value }))} /></label>
+                    <label>{t('从第几集')}<input aria-label={t('起始集')} type="number" min={1} value={variantDraft.from} onChange={event => setVariantDraft(current => ({ ...current, from: event.target.value }))} /></label>
+                    <label>{t('到第几集')}<input aria-label={t('结束集')} type="number" min={1} value={variantDraft.to} onChange={event => setVariantDraft(current => ({ ...current, to: event.target.value }))} /></label>
+                    <div>
+                      <button type="submit" disabled={!variantDraft.of || Boolean(busy)}>{t('保存衍生形象')}</button>
+                      <button type="button" onClick={() => setVariantFor('')}>{t('取消')}</button>
+                    </div>
+                  </form>
+                )}
                 <div className="element-actions">
-                  <button type="button" onClick={() => beginImageUpload(item.id)} disabled={creating || Boolean(busy)}><Upload size={14} /> 添加上传</button>
+                  <button type="button" onClick={() => beginImageUpload(item.id)} disabled={creating || Boolean(busy)}><Upload size={14} /> {t('添加上传')}</button>
                   <button
                     type="button"
                     onClick={() => void renameElement(item)}
@@ -870,7 +992,18 @@ export function ElementLibraryPage({
                   >
                     <Pencil size={14} /> {busy === `rename:${item.id}` ? '重命名中' : '重命名'}
                   </button>
-                  <button type="button" onClick={() => void regenerate(item)} disabled={creating || Boolean(busy)}><RefreshCw size={14} /> 重新生成</button>
+                  <button
+                    type="button"
+                    onClick={() => void regenerate(item)}
+                    disabled={creating || Boolean(busy) || (item.kind === 'actor' && actorRegeneration(item).running)}
+                    aria-label={item.kind === 'actor' ? `重新生成“${item.name}”的数字演员设定集` : undefined}
+                  >
+                    <RefreshCw size={14} className={item.kind === 'actor' && actorRegeneration(item).running ? 'spin' : undefined} />
+                    {item.kind === 'actor' && actorRegeneration(item).running ? t('生成中…') : t('重新生成')}
+                  </button>
+                  {item.kind === 'actor' && (variantOf(item)
+                    ? <button type="button" onClick={() => void saveVariant(item, true)} disabled={creating || Boolean(busy)} aria-label={`取消“${item.name}”的衍生形象`}><Shirt size={14} /> {t('取消衍生')}</button>
+                    : <button type="button" onClick={() => openVariantEditor(item)} disabled={creating || Boolean(busy)} aria-label={`把“${item.name}”设为衍生形象`}><Shirt size={14} /> {t('衍生形象')}</button>)}
                   {previewFile && (
                     <button
                       type="button"

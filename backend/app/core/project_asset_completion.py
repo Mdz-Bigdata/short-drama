@@ -15,14 +15,15 @@ import logging
 import os
 from typing import Any, Awaitable, Callable
 
+from app import settings
 from app.core.production_asset_extractor import extract_production_assets
 from app.core.production_asset_readiness import (
     ASSET_KINDS,
+    LIBRARY_KINDS,
     NON_ACTOR_KINDS,
     element_summary,
     evaluate_asset_readiness,
 )
-from app.platform.dependencies import DEFAULT_DATABASE_URL
 from app.platform.store import PlatformStore
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ async def project_element_summaries(store: Any, owner_id: str, task_id: str) -> 
     """Project-scoped summaries for every kind, paging like the storyboard loader."""
     summaries: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for kind in ASSET_KINDS:
+    for kind in LIBRARY_KINDS:
         page = 1
         while True:
             items, total = await store.list_elements(owner_id, kind, page, _PAGE_SIZE)
@@ -56,7 +57,7 @@ async def _complete(task: dict, owner_id: str, task_id: str, generate_missing: b
     from app.api.drama_api import _import_production_asset_candidates
     from app.api.element_api import _generate_non_actor_reference
 
-    store = PlatformStore(os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL))
+    store = PlatformStore(settings.database_url())
     generated = 0
     failed: list[str] = []
     try:
@@ -136,7 +137,7 @@ def _run_blocking(factory: Callable[[], Awaitable[Any]]) -> Any:
 
 
 async def _read(owner_id: str, task_id: str) -> list[dict[str, Any]]:
-    store = PlatformStore(os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL))
+    store = PlatformStore(settings.database_url())
     try:
         return await project_element_summaries(store, owner_id, task_id)
     finally:

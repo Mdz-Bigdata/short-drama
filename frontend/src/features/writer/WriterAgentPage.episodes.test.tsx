@@ -41,6 +41,35 @@ describe('WriterAgentPage episode overview interactions', () => {
     vi.restoreAllMocks();
   });
 
+  it('names what is wrong with an episode the server reports as not well formed', () => {
+    render(
+      <WriterAgentPage
+        title="十二小时"
+        breakdown={{ scenes, timeline: [], roles: [{ name: '林夏', position: '女主角' }], relationships: [] }}
+        script={script}
+        requestedEpisodeCount={12}
+        episodes={episodes.map(episode => (episode.index === 3
+          ? {
+            ...episode,
+            sceneCount: 1,
+            durationSeconds: 8,
+            issues: [
+              { code: 'episode_too_few_scenes', message: '本集只有 1 个分镜，至少需要 2 个', severity: 'error' as const },
+              { code: 'episode_too_short', message: '本集各分镜时长合计 8 秒，不能少于 60 秒', severity: 'error' as const },
+            ],
+          }
+          : { ...episode, sceneCount: 10, durationSeconds: 90, issues: [] }))}
+      />,
+    );
+
+    const notes = screen.getByRole('list', { name: '第 3 集待处理问题' });
+    expect(within(notes).getByText('本集只有 1 个分镜，至少需要 2 个')).toBeTruthy();
+    expect(within(notes).getByText('本集各分镜时长合计 8 秒，不能少于 60 秒')).toBeTruthy();
+    expect(notes.closest('article')?.className).toContain('has-issue');
+    // A well-formed episode carries no notice at all.
+    expect(screen.queryByRole('list', { name: '第 2 集待处理问题' })).toBeNull();
+  });
+
   it('shows nine episodes per page with next-page navigation', async () => {
     const user = userEvent.setup();
     renderPage();

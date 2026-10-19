@@ -23,6 +23,7 @@ import {
   type MuseumCatalogItem,
   type MuseumModelAsset,
 } from './museumCatalog';
+import { t } from '../../../i18n';
 
 
 export type MuseumModelStatus =
@@ -92,7 +93,7 @@ function tuneMuseumMaterials(root: Object3D, asset: MuseumModelAsset, lowQuality
           displayMap.needsUpdate = true;
         }
         material.vertexColors = false;
-        material.emissive = new Color('#fff8eb');
+        material.emissive = new Color('#e69500');
         material.emissiveMap = displayMap;
         material.emissiveIntensity = 0.07 * (asset.exposure ?? 1);
         material.envMapIntensity = 0.62 * (asset.exposure ?? 1);
@@ -146,7 +147,7 @@ function MuseumModel({
           signal: controller.signal,
         });
         if (!response.ok) {
-          throw new Error(`模型请求失败（HTTP ${response.status}）`);
+          throw new Error(t('模型请求失败（HTTP {0}）', [response.status]));
         }
         const parsed = await gltfLoader.parseAsync(await response.arrayBuffer(), '');
         loadedRoot = parsed.scene;
@@ -238,24 +239,24 @@ export default function MuseumCellScene({
   return (
     <>
       <ambientLight intensity={lowQuality ? 1.35 : 1.18} />
-      <hemisphereLight args={['#f2e6d4', '#2a2218', lowQuality ? 1.15 : 0.95]} />
+      <hemisphereLight args={['#392d32', '#fdf2f4', lowQuality ? 1.15 : 0.95]} />
       <directionalLight
         position={[4.2, 5.2, 5.8]}
         intensity={2.35}
         castShadow={!lowQuality}
-        color="#fff4e4"
+        color="#e68800"
       />
-      <directionalLight position={[-4.4, 2.2, 3.6]} intensity={0.72} color="#ffd9a8" />
+      <directionalLight position={[-4.4, 2.2, 3.6]} intensity={0.72} color="#e68100" />
       {!lowQuality && (
         <spotLight
           position={[-3.6, 3.2, 4.6]}
           angle={0.42}
           penumbra={0.74}
           intensity={0.92}
-          color="#ffe8c8"
+          color="#e68600"
         />
       )}
-      <pointLight position={[2.8, -1.2, 3.2]} intensity={0.38} color="#c9a56a" />
+      <pointLight position={[2.8, -1.2, 3.2]} intensity={0.38} color="#a8803d" />
 
       <MuseumModel
         key={`${item.id}-${lowQuality ? 'low' : 'high'}`}
@@ -272,7 +273,7 @@ export default function MuseumCellScene({
           scale={7.8}
           blur={3.4}
           far={4.2}
-          color="#000000"
+          color="#fcebee"
           resolution={512}
         />
       )}

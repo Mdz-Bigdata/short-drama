@@ -267,7 +267,8 @@ class _BreakdownGateway:
         scenes = [
             {
                 "scene_id": f"E{index}S{shot:02d}",
-                "duration": "12s",
+                # Four shots of fifteen seconds: a well-formed one-minute episode.
+                "duration": "15s",
                 "content": f"第{index}集第{shot}镜",
                 "characters": ["陈九", "小六"],
             }

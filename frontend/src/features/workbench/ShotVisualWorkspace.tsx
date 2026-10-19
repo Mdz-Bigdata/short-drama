@@ -3,6 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react
 
 import { apiRequest } from '../../api/client';
 import { ShotDeskPanel } from './ShotDeskPanel';
+import { VideoPromptEditor } from './VideoPromptEditor';
 import {
   durationWarning,
   settingsEqual,
@@ -13,7 +14,18 @@ import {
   type ShotFixPlan,
   type ShotVisualSettings,
   type ShotVisualWorkspace as Workspace,
+  ADMISSION_LABELS,
+  QUEUE_STATUS_LABELS,
+  isGenerationQueue,
+  type GenerationQueue,
+  formatCost,
+  formatCostByCurrency,
+  isBatchAdmission,
+  isUsageSummary,
+  type BatchAdmission,
+  type UsageSummary,
 } from './shotVisual';
+import { t } from '../../i18n';
 
 const INTENSITIES: Array<[CameraRecipe['intensity'], string]> = [['strong', '强'], ['medium', '中'], ['soft', '弱']];
 // The desk pulls in the whole 3D workspace; it loads when someone opens it, not with the stage.
@@ -53,7 +65,7 @@ function DurationSelector({ value, options, disabled, onChange }: {
   const slider = useSliderForDurations(options);
   return (
     <div className="shot-workspace__field">
-      <label htmlFor="shot-visual-duration">时长</label>
+      <label htmlFor="shot-visual-duration">{t('时长')}</label>
       {slider ? (
         <div className="shot-workspace__duration-slider">
           <input
@@ -64,14 +76,14 @@ function DurationSelector({ value, options, disabled, onChange }: {
             step={1}
             value={Math.min(Math.max(value, options[0]), options[options.length - 1])}
             disabled={disabled}
-            aria-label="时长选择"
+            aria-label={t('时长选择')}
             aria-valuetext={`${value} 秒`}
             onChange={event => onChange(Number(event.target.value))}
           />
           <span className="shot-workspace__duration-value">{value} 秒</span>
         </div>
       ) : (
-        <div className="shot-workspace__duration-chips" role="radiogroup" aria-label="时长选择">
+        <div className="shot-workspace__duration-chips" role="radiogroup" aria-label={t('时长选择')}>
           {options.map(seconds => (
             <button
               key={seconds}
@@ -95,6 +107,7 @@ function DurationSelector({ value, options, disabled, onChange }: {
 
 export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }: Props) {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [savingPrompt, setSavingPrompt] = useState(false);
   const [error, setError] = useState('');
   // Notices belong to the shot they were produced for; switching shots hides them.
   const [notice, setNotice] = useState<{ shotId: number; text: string } | null>(null);
@@ -117,6 +130,85 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
   // The shot whose scene the desk is open on; the desk itself is keyed by scene, as everywhere else.
   const [deskShot, setDeskShot] = useState<{ sceneId: string; shotId: number } | null>(null);
   const [deskToken, setDeskToken] = useState(0);
+  // Stage 5 admits every shot together or none: the assessment, and what the project has spent so far.
+  const [admission, setAdmission] = useState<BatchAdmission | null>(null);
+  const [usage, setUsage] = useState<UsageSummary | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  // The generation queue of the running (or last) stage-5 run: what waits, what runs, what can still be withdrawn.
+  const [queue, setQueue] = useState<GenerationQueue | null>(null);
+  const [queueNotice, setQueueNotice] = useState('');
+
+  const loadQueue = useCallback(async () => {
+    try {
+      const data = await apiRequest<unknown>(`/api/drama/${encodeURIComponent(taskId)}/queue`);
+      setQueue(isGenerationQueue(data) && data.items.length > 0 ? data : null);
+    } catch {
+      setQueue(null);
+    }
+  }, [taskId]);
+
+  const cancelQueued = useCallback(async (key: string | null) => {
+    setQueueNotice('');
+    try {
+      const path = key ? `/queue/${encodeURIComponent(key)}/cancel` : '/queue/cancel-queued';
+      const data = await apiRequest<unknown>(`/api/drama/${encodeURIComponent(taskId)}${path}`, { method: 'POST', body: JSON.stringify({}) });
+      setQueue(isGenerationQueue(data) ? data : null);
+      setQueueNotice(key ? '已请求取消，队列在下次派发前生效。' : '已请求取消所有排队中的项；运行中的会跑完并保留结果。');
+    } catch (err) {
+      setQueueNotice(err instanceof Error ? err.message : '取消失败');
+    }
+  }, [taskId]);
+
+  const loadAdmission = useCallback(async () => {
+    try {
+      const [assessed, spent] = await Promise.all([
+        apiRequest<unknown>(`/api/drama/${encodeURIComponent(taskId)}/shots/admission`, { method: 'POST', body: JSON.stringify({}) }),
+        apiRequest<{ summary?: unknown }>(`/api/drama/${encodeURIComponent(taskId)}/usage?limit=1`),
+      ]);
+      setAdmission(isBatchAdmission(assessed) ? assessed : null);
+      setUsage(isUsageSummary(spent?.summary) ? spent.summary : null);
+    } catch {
+      // The workspace is still usable without the assessment; stage 5 re-assesses when it starts.
+      setAdmission(null);
+    }
+  }, [taskId]);
+
+  // One shot to redo: it is marked stale, so the next stage-5 run regenerates it and reuses the rest.
+  const regenerateShot = useCallback(async (shotId: number) => {
+    setSaving(true);
+    try {
+      const data = await apiRequest<Workspace>(`/api/drama/${encodeURIComponent(taskId)}/shots/${shotId}/regenerate`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: '' }),
+      });
+      setWorkspace(data);
+      setNotice({ shotId, text: '已标记重做；重跑第 5 阶段时只重新生成本镜，其余镜头沿用已有片段。' });
+      void loadAdmission();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '标记重做失败');
+    } finally {
+      setSaving(false);
+    }
+  }, [taskId, loadAdmission]);
+
+  const confirmTiers = useCallback(async () => {
+    if (!admission || admission.confirmations.length === 0) return;
+    setConfirming(true);
+    try {
+      const assessed = await apiRequest<unknown>(`/api/drama/${encodeURIComponent(taskId)}/shots/admission`, {
+        method: 'POST',
+        body: JSON.stringify({
+          confirmed_request_durations: admission.confirmations.map(item => ({ scripted_seconds: item.scripted_seconds, requested_seconds: item.requested_seconds })),
+          persist: true,
+        }),
+      });
+      setAdmission(isBatchAdmission(assessed) ? assessed : null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '确认时长档位失败');
+    } finally {
+      setConfirming(false);
+    }
+  }, [admission, taskId]);
 
   const load = useCallback(async () => {
     try {
@@ -134,9 +226,9 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
   useEffect(() => {
     // Same pattern as the rest of the workbench: the initial fetch is scheduled
     // rather than started synchronously inside the effect body.
-    const handle = window.setTimeout(() => { void load(); }, 0);
+    const handle = window.setTimeout(() => { void load(); void loadAdmission(); void loadQueue(); }, 0);
     return () => window.clearTimeout(handle);
-  }, [load]);
+  }, [load, loadAdmission, loadQueue]);
 
   const selected = useMemo(
     () => workspace?.shots.find(shot => shot.shot_id === selectedId) ?? null,
@@ -174,6 +266,30 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
       setError(err instanceof Error ? err.message : '保存运镜设置失败');
     } finally {
       setSaving(false);
+    }
+  };
+
+  /** 保存人工改写的视频提示词；传 null 恢复自动编译。本镜已出的片会标记为待重做。 */
+  const saveVideoPrompt = async (prompt: string | null) => {
+    if (!selected || !workspace || workspace.running) return;
+    setSavingPrompt(true);
+    setError('');
+    try {
+      const data = await apiRequest<Workspace>(
+        `/api/drama/${encodeURIComponent(taskId)}/shots/${selected.shot_id}/video-prompt`,
+        { method: 'PUT', body: JSON.stringify({ prompt }) },
+      );
+      setWorkspace(data);
+      setNotice({
+        shotId: selected.shot_id,
+        text: prompt === null
+          ? `镜头 ${selected.shot_id} 已恢复自动编译的提示词，重新生成本镜后生效。`
+          : `镜头 ${selected.shot_id} 的视频提示词已保存，重新生成本镜后生效。`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存视频提示词失败');
+    } finally {
+      setSavingPrompt(false);
     }
   };
 
@@ -270,7 +386,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
   };
 
   if (loading && !workspace) {
-    return <div className="stage-five-empty" role="status">正在加载镜头工作区…</div>;
+    return <div className="stage-five-empty" role="status">{t('正在加载镜头工作区…')}</div>;
   }
   if (!workspace) {
     return <div className="stage-five-empty" role="status">{error || '镜头工作区不可用。'}</div>;
@@ -278,7 +394,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
   if (workspace.shots.length === 0) {
     return (
       <div className="stage-five-empty" role="status">
-        暂无分镜镜头。请先完成第 4 阶段分镜，再回到视觉阶段设置运镜。
+        {t('暂无分镜镜头。请先完成第 4 阶段分镜，再回到视觉阶段设置运镜。')}
       </div>
     );
   }
@@ -287,12 +403,12 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
 
   return (
     <div className={`shot-workspace${listCollapsed ? ' is-list-collapsed' : ''}`}>
-      <aside className="shot-workspace__list" aria-label="分镜列表">
+      <aside className="shot-workspace__list" aria-label={t('分镜列表')}>
         <header className="shot-workspace__list-header">
           <button
             type="button"
             className="shot-workspace__list-toggle"
-            aria-label={listCollapsed ? '展开分镜列表' : '折叠分镜列表'}
+            aria-label={listCollapsed ? t('展开分镜列表') : t('折叠分镜列表')}
             onClick={() => setListCollapsed(value => !value)}
           >
             {listCollapsed ? <ChevronRight size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
@@ -303,9 +419,9 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
           <>
             <label className="shot-workspace__search">
               <Search size={13} aria-hidden="true" />
-              <input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索分镜…" aria-label="搜索分镜" />
+              <input value={query} onChange={event => setQuery(event.target.value)} placeholder={t('搜索分镜…')} aria-label={t('搜索分镜')} />
             </label>
-            <ul className="shot-workspace__shots" aria-label="分镜">
+            <ul className="shot-workspace__shots" aria-label={t('分镜')}>
               {visibleShots.map(shot => {
                 const status = shotStatus(shot);
                 return (
@@ -345,35 +461,113 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
             <div>
               <strong>镜头 {selected.shot_id}</strong>
               {selected.contract_fingerprint && <code>契约 {selected.contract_fingerprint.slice(0, 12)}</code>}
-              {selected.settings_source === 'edited' && <small>人工设定</small>}
+              {selected.settings_source === 'edited' && <small>{t('人工设定')}</small>}
             </div>
             <div className="shot-workspace__detail-actions">
               <button type="button" className="secondary-action" onClick={() => { void save(); }} disabled={!dirty || locked}>
-                <Save size={14} aria-hidden="true" /> {saving ? '保存中…' : '保存运镜'}
+                <Save size={14} aria-hidden="true" /> {saving ? t('保存中…') : t('保存运镜')}
               </button>
               <button type="button" className="secondary-action" onClick={() => { void assignSeeds(); }} disabled={locked}>
-                按场分配种子
+                {t('按场分配种子')}
               </button>
+              {selected.video_url && (
+                <button type="button" className="secondary-action" onClick={() => { void regenerateShot(selected.shot_id); }} disabled={locked || saving || selected.stale}>
+                  {t('重做本镜')}
+                </button>
+              )}
               {onRerun && (
                 <button type="button" className="primary-action" onClick={onRerun} disabled={Boolean(workspace.running)}>
-                  <RefreshCcw size={14} aria-hidden="true" /> 重跑第 5 阶段
+                  <RefreshCcw size={14} aria-hidden="true" /> {t('重跑第 5 阶段')}
                 </button>
               )}
             </div>
           </header>
 
-          {workspace.running && <p className="shot-workspace__hint" role="status">任务正在执行阶段，暂不能修改运镜。</p>}
+          {admission && (
+            <section className={`shot-workspace__admission is-${admission.decision}`} aria-label={t('批量视频准入')}>
+              <header>
+                <strong>{ADMISSION_LABELS[admission.decision]}</strong>
+                <span>
+                  生成 {admission.counts.generate} · 复用 {admission.counts.reuse} · 受阻 {admission.counts.blocked}
+                  {admission.estimate.shots_to_generate > 0 && ` · 预估 ${formatCost(admission.estimate.cost, admission.estimate.currency, admission.estimate.priced)}（${admission.estimate.requested_seconds} 秒）`}
+                  {usage && ` · 已花费 ${formatCostByCurrency(usage.cost_by_currency)}${usage.unpriced_calls ? `（${usage.unpriced_calls} 次调用未定价）` : ''}`}
+                </span>
+              </header>
+              {admission.decision === 'blocked' && (
+                <ul className="shot-workspace__admission-problems">
+                  {admission.shots.filter(shot => shot.quote === 'blocked').map(shot => (
+                    <li key={shot.shot_id}>
+                      <strong>镜头 {shot.shot_id}</strong>
+                      {shot.problems.filter(problem => problem.blocking).map(problem => <span key={problem.code}>{problem.message}</span>)}
+                    </li>
+                  ))}
+                  {admission.counts.withheld > 0 && <li><strong>其余 {admission.counts.withheld} 镜</strong><span>{t('本可生成，整批一起暂不提交')}</span></li>}
+                </ul>
+              )}
+              {admission.decision === 'confirmation_required' && (
+                <div className="shot-workspace__admission-confirm">
+                  <ul>
+                    {admission.confirmations.map(item => (
+                      <li key={`${item.scripted_seconds}-${item.requested_seconds}`}>
+                        剧本 {item.scripted_seconds} 秒 → 请求 {item.requested_seconds} 秒 × {item.shot_count} 镜（镜头 {item.shot_ids.join('、')}）
+                        · {formatCost(item.cost, item.currency, item.priced)}
+                      </li>
+                    ))}
+                  </ul>
+                  <p>{t('视频不会被裁剪：按请求档位生成，成片按脚本节奏剪接。')}</p>
+                  <button type="button" className="secondary-action" disabled={confirming || locked} onClick={() => { void confirmTiers(); }}>
+                    {confirming ? t('确认中…') : t('确认这些档位')}
+                  </button>
+                </div>
+              )}
+            </section>
+          )}
+          {queue && (
+            <section className="shot-workspace__queue" aria-label={t('生成队列')}>
+              <header>
+                <strong>生成队列{queue.running ? '（运行中）' : '（上一轮）'}</strong>
+                <span>
+                  {(['queued', 'running', 'done', 'failed', 'cancelled', 'skipped'] as const)
+                    .filter(status => (queue.counts[status] ?? 0) > 0)
+                    .map(status => `${QUEUE_STATUS_LABELS[status]} ${queue.counts[status]}`)
+                    .join(' · ')}
+                  {Object.entries(queue.buckets).length > 0 && ` · 并发 ${Object.entries(queue.buckets).map(([bucket, info]) => `${bucket} ${info.running}/${info.limit}`).join('，')}`}
+                </span>
+                {queue.running && (queue.counts.queued ?? 0) > 0 && (
+                  <button type="button" className="secondary-action" onClick={() => { void cancelQueued(null); }}>{t('取消全部排队')}</button>
+                )}
+                <button type="button" className="secondary-action" onClick={() => { void loadQueue(); }}>{t('刷新')}</button>
+              </header>
+              {queueNotice && <p className="shot-workspace__hint" role="status">{queueNotice}</p>}
+              <ul className="shot-workspace__queue-items">
+                {queue.items.map(item => (
+                  <li key={item.key} className={`is-${item.status}`}>
+                    <span className="shot-workspace__queue-status">{QUEUE_STATUS_LABELS[item.status]}</span>
+                    <strong>{item.label}</strong>
+                    <small>{item.bucket}{item.depends_on.length ? ` · 依赖 ${item.depends_on.join('、')}` : ''}</small>
+                    {item.error && <em>{item.error}</em>}
+                    {item.reason && !item.error && <em>{item.reason}</em>}
+                    {queue.running && item.status === 'queued' && !(queue.withdraw ?? []).includes(item.key) && (
+                      <button type="button" onClick={() => { void cancelQueued(item.key); }} aria-label={`取消 ${item.label}`}>{t('取消')}</button>
+                    )}
+                    {(queue.withdraw ?? []).includes(item.key) && item.status === 'queued' && <em>{t('取消待生效')}</em>}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {workspace.running && <p className="shot-workspace__hint" role="status">{t('任务正在执行阶段，暂不能修改运镜。')}</p>}
           {(selected.stale || staleCount > 0) && (
             <p className="shot-workspace__hint is-stale" role="status">
               {selected.stale ? selected.stale_reason || '内容已更新，提示词可能不符' : `${staleCount} 镜已修改运镜，重跑第 5 阶段后生效。`}
             </p>
           )}
-          {dirty && <p className="shot-workspace__hint" role="status">运镜设置已修改，保存后重跑第 5 阶段生效。</p>}
+          {dirty && <p className="shot-workspace__hint" role="status">{t('运镜设置已修改，保存后重跑第 5 阶段生效。')}</p>}
           {selected.derived_notes.map(note => <p key={note} className="shot-workspace__hint">{note}</p>)}
           {notice && notice.shotId === selected.shot_id && <p className="shot-workspace__hint is-success" role="status">{notice.text}</p>}
           {error && <p className="shot-workspace__warning" role="alert">{error}</p>}
 
-          <div className="shot-workspace__tabs" role="tablist" aria-label="镜头详情">
+          <div className="shot-workspace__tabs" role="tablist" aria-label={t('镜头详情')}>
             {([['script', '脚本 / 对话'], ['prompts', '提示词'], ['media', '分镜 / 视频']] as Array<[DetailTab, string]>).map(([key, label]) => (
               <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? 'is-active' : ''} onClick={() => setTab(key)}>
                 {label}
@@ -383,21 +577,31 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
 
           {tab === 'script' && (
             <div className="shot-workspace__panel" role="tabpanel">
-              <h4>画面描述</h4>
+              <h4>{t('画面描述')}</h4>
               <p>{selected.desc || '（暂无画面描述）'}</p>
-              <h4>对话</h4>
+              <h4>{t('对话')}</h4>
               <p>{selected.dialogue || '（暂无对话）'}</p>
-              <h4>声音</h4>
+              <h4>{t('声音')}</h4>
               <p>{selected.sound || '（暂无声音说明）'}</p>
             </div>
           )}
 
           {tab === 'prompts' && (
             <div className="shot-workspace__panel" role="tabpanel">
-              <h4><ImageIcon size={14} aria-hidden="true" /> Image Prompt · 分镜图 <small>{imageModel}</small></h4>
+              <h4><Video size={14} aria-hidden="true" /> {t('视频提示词')} <small>{videoModel}</small></h4>
+              <VideoPromptEditor
+                key={`${selected.shot_id}:${selected.video_prompt}`}
+                shotId={selected.shot_id}
+                prompt={selected.video_prompt}
+                edited={Boolean(selected.video_prompt_edited)}
+                mentionKinds={selected.mention_kinds ?? {}}
+                referenceNumbers={selected.reference_numbers ?? {}}
+                locked={Boolean(workspace.running)}
+                saving={savingPrompt}
+                onSave={saveVideoPrompt}
+              />
+              <h4><ImageIcon size={14} aria-hidden="true" /> {t('分镜图提示词')} <small>{imageModel}</small></h4>
               <pre>{selected.image_prompt || '待生成'}</pre>
-              <h4><Video size={14} aria-hidden="true" /> Video Prompt · 视频 <small>{videoModel}</small></h4>
-              <pre>{selected.video_prompt || '待生成'}</pre>
             </div>
           )}
 
@@ -408,23 +612,23 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
                 onOpenDesk={() => setDeskShot({ sceneId: selected.scene_id, shotId: selected.shot_id })}
               />
               <figure>
-                <figcaption><ImageIcon size={14} aria-hidden="true" /> 分镜图</figcaption>
-                {selected.image_url ? <img src={selected.image_url} alt={`镜头 ${selected.shot_id} 分镜图`} /> : <p className="shot-workspace__hint">尚未生成</p>}
+                <figcaption><ImageIcon size={14} aria-hidden="true" /> {t('分镜图')}</figcaption>
+                {selected.image_url ? <img src={selected.image_url} alt={`镜头 ${selected.shot_id} 分镜图`} /> : <p className="shot-workspace__hint">{t('尚未生成')}</p>}
               </figure>
               <figure>
-                <figcaption><Video size={14} aria-hidden="true" /> 视频</figcaption>
+                <figcaption><Video size={14} aria-hidden="true" /> {t('视频')}</figcaption>
                 {selected.video_url
                   ? <video src={selected.video_url} controls loop preload="metadata" aria-label={`镜头 ${selected.shot_id} 视频`} />
-                  : <p className="shot-workspace__hint">尚未生成</p>}
+                  : <p className="shot-workspace__hint">{t('尚未生成')}</p>}
                 {selected.route && (
                   <small className="shot-workspace__route">自动路由：{selected.route.mode} · {selected.route.provider_family}{selected.route.reasons?.[0] ? ` · ${selected.route.reasons[0]}` : ''}</small>
                 )}
                 {(selected.candidate_urls?.length ?? 0) > 1 && (
-                  <ul className="shot-workspace__candidates" aria-label="候选版本">
+                  <ul className="shot-workspace__candidates" aria-label={t('候选版本')}>
                     {selected.candidate_urls!.map((url, index) => (
                       <li key={url}>
                         <span>版本 {index + 1}</span>
-                        <button type="button" className="secondary-action" disabled={saving} onClick={() => { void selectCandidate(url); }}>选用此版</button>
+                        <button type="button" className="secondary-action" disabled={saving} onClick={() => { void selectCandidate(url); }}>{t('选用此版')}</button>
                       </li>
                     ))}
                   </ul>
@@ -433,9 +637,9 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
             </div>
           )}
 
-          <Collapsible title="运镜 / 音效 / 对话" defaultOpen>
+          <Collapsible title={t('运镜 / 音效 / 对话')} defaultOpen>
             <div className="shot-workspace__field">
-              <label htmlFor="shot-visual-motion">镜头运动</label>
+              <label htmlFor="shot-visual-motion">{t('镜头运动')}</label>
               <select id="shot-visual-motion" value={draft.camera_motion} disabled={locked} onChange={event => update({ camera_motion: event.target.value })}>
                 {workspace.camera_motions.map(entry => <option key={entry.value} value={entry.value}>{entry.label}（{entry.value}）</option>)}
               </select>
@@ -443,19 +647,19 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
             </div>
             {(workspace.recipe_categories?.length ?? 0) > 0 && (
               <div className="shot-workspace__field shot-workspace__recipe">
-                <label htmlFor="shot-visual-recipe">运镜灵感</label>
+                <label htmlFor="shot-visual-recipe">{t('运镜灵感')}</label>
                 <div className="shot-workspace__recipe-controls">
                   <select id="shot-visual-recipe" value={recipeCategory} disabled={locked} onChange={event => setRecipeCategory(event.target.value)}>
-                    <option value="">选择叙事类别…</option>
+                    <option value="">{t('选择叙事类别…')}</option>
                     {workspace.recipe_categories!.map(entry => <option key={entry.value} value={entry.value}>{entry.label} · {entry.purpose}</option>)}
                   </select>
-                  <div className="shot-workspace__duration-chips" role="radiogroup" aria-label="情绪强度">
+                  <div className="shot-workspace__duration-chips" role="radiogroup" aria-label={t('情绪强度')}>
                     {INTENSITIES.map(([key, label]) => (
                       <button key={key} type="button" role="radio" aria-checked={recipeIntensity === key} className={recipeIntensity === key ? 'is-active' : ''} disabled={locked} onClick={() => setRecipeIntensity(key)}>{label}</button>
                     ))}
                   </div>
                   <button type="button" className="secondary-action" disabled={!recipeCategory || locked || composing} onClick={() => { void composeRecipe(); }}>
-                    {composing ? '生成中…' : '生成配方'}
+                    {composing ? t('生成中…') : t('生成配方')}
                   </button>
                 </div>
                 {recipe && (
@@ -464,19 +668,19 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
                     <p>{recipe.prompt_zh}</p>
                     <p className="shot-workspace__hint">EN: {recipe.prompt_en}</p>
                     <p className="shot-workspace__hint">反向: {recipe.negative}</p>
-                    <button type="button" className="secondary-action" disabled={locked} onClick={applyRecipe}>套用到本镜</button>
+                    <button type="button" className="secondary-action" disabled={locked} onClick={applyRecipe}>{t('套用到本镜')}</button>
                   </div>
                 )}
-                <small>画风与质感锁死，相邻镜只换运动、角度、节奏或环境之一，避免撞镜。</small>
+                <small>{t('画风与质感锁死，相邻镜只换运动、角度、节奏或环境之一，避免撞镜。')}</small>
               </div>
             )}
             <div className="shot-workspace__field shot-workspace__feedback">
-              <label htmlFor="shot-visual-feedback">这一镜翻车了？</label>
+              <label htmlFor="shot-visual-feedback">{t('这一镜翻车了？')}</label>
               <textarea
                 id="shot-visual-feedback"
                 rows={2}
                 value={failureText}
-                placeholder="用自己的话写：脸崩了 / 手是六根手指 / 特效糊住了脸 / 位置跳了…"
+                placeholder={t('用自己的话写：脸崩了 / 手是六根手指 / 特效糊住了脸 / 位置跳了…')}
                 onChange={event => setFailureText(event.target.value)}
               />
               <div className="shot-workspace__recipe-controls">
@@ -486,7 +690,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
                   disabled={reporting || !failureText.trim()}
                   onClick={() => { void reportOutcome('failed'); }}
                 >
-                  {reporting ? '提交中…' : '报告问题'}
+                  {reporting ? t('提交中…') : t('报告问题')}
                 </button>
                 <button
                   type="button"
@@ -494,7 +698,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
                   disabled={reporting}
                   onClick={() => { void reportOutcome('success'); }}
                 >
-                  这条可用
+                  {t('这条可用')}
                 </button>
               </div>
               {fixPlan && (
@@ -506,49 +710,49 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
                   {fixPlan.negatives.length > 0 && (
                     <p className="shot-workspace__hint">建议追加负面词：{fixPlan.negatives.join('、')}</p>
                   )}
-                  {fixPlan.give_up && <p className="shot-workspace__hint">已到模型能力边界：考虑换等价表达或换模型。</p>}
+                  {fixPlan.give_up && <p className="shot-workspace__hint">{t('已到模型能力边界：考虑换等价表达或换模型。')}</p>}
                 </div>
               )}
-              <small>同一类问题在同一模型上出现两次，后续镜头会自动按它预防性加固。</small>
+              <small>{t('同一类问题在同一模型上出现两次，后续镜头会自动按它预防性加固。')}</small>
             </div>
             <DurationSelector value={draft.duration_seconds} options={workspace.duration_options} disabled={locked} onChange={seconds => update({ duration_seconds: seconds })} />
             <div className="shot-workspace__field">
-              <label htmlFor="shot-visual-action">动作演变</label>
-              <textarea id="shot-visual-action" value={draft.action} disabled={locked} rows={3} placeholder="描述这一镜的动作演变：从分镜图开始如何运动…" onChange={event => update({ action: event.target.value })} />
+              <label htmlFor="shot-visual-action">{t('动作演变')}</label>
+              <textarea id="shot-visual-action" value={draft.action} disabled={locked} rows={3} placeholder={t('描述这一镜的动作演变：从分镜图开始如何运动…')} onChange={event => update({ action: event.target.value })} />
             </div>
             <div className="shot-workspace__field shot-workspace__seed-row">
-              <label htmlFor="shot-visual-seed">种子</label>
-              <input id="shot-visual-seed" type="number" min={0} max={2147483647} value={draft.seed ?? ''} disabled={locked} placeholder="留空则随机"
+              <label htmlFor="shot-visual-seed">{t('种子')}</label>
+              <input id="shot-visual-seed" type="number" min={0} max={2147483647} value={draft.seed ?? ''} disabled={locked} placeholder={t('留空则随机')}
                 onChange={event => update({ seed: event.target.value === '' ? null : Number(event.target.value) })} />
-              <label htmlFor="shot-visual-candidates">生成版本数</label>
+              <label htmlFor="shot-visual-candidates">{t('生成版本数')}</label>
               <select id="shot-visual-candidates" value={draft.candidates ?? 1} disabled={locked} onChange={event => update({ candidates: Number(event.target.value) })}>
                 {[1, 2, 3, 4].map(count => <option key={count} value={count}>{count} 次择优</option>)}
               </select>
             </div>
             <div className="shot-workspace__field">
-              <label htmlFor="shot-visual-ambiance-audio">环境音效</label>
-              <input id="shot-visual-ambiance-audio" value={draft.ambiance_audio} disabled={locked} placeholder="环境音效描述..." onChange={event => update({ ambiance_audio: event.target.value })} />
+              <label htmlFor="shot-visual-ambiance-audio">{t('环境音效')}</label>
+              <input id="shot-visual-ambiance-audio" value={draft.ambiance_audio} disabled={locked} placeholder={t('环境音效描述...')} onChange={event => update({ ambiance_audio: event.target.value })} />
             </div>
             <div className="shot-workspace__field">
-              <span className="shot-workspace__label">对话</span>
+              <span className="shot-workspace__label">{t('对话')}</span>
               <p className="shot-workspace__readonly">{selected.dialogue || '（暂无对话）'}</p>
             </div>
           </Collapsible>
 
-          <Collapsible title="composition · 构图">
+          <Collapsible title={t('composition · 构图')}>
             <div className="shot-workspace__field">
-              <label htmlFor="shot-visual-shot-type">镜头</label>
+              <label htmlFor="shot-visual-shot-type">{t('镜头')}</label>
               <select id="shot-visual-shot-type" value={draft.shot_type} disabled={locked} onChange={event => update({ shot_type: event.target.value })}>
                 {workspace.shot_types.map(entry => <option key={entry.value} value={entry.value}>{entry.label}（{entry.value}）</option>)}
               </select>
             </div>
             <div className="shot-workspace__field">
-              <label htmlFor="shot-visual-lighting">光线</label>
-              <input id="shot-visual-lighting" value={draft.lighting} disabled={locked} placeholder="光线描述..." onChange={event => update({ lighting: event.target.value })} />
+              <label htmlFor="shot-visual-lighting">{t('光线')}</label>
+              <input id="shot-visual-lighting" value={draft.lighting} disabled={locked} placeholder={t('光线描述...')} onChange={event => update({ lighting: event.target.value })} />
             </div>
             <div className="shot-workspace__field">
-              <label htmlFor="shot-visual-ambiance">氛围</label>
-              <input id="shot-visual-ambiance" value={draft.ambiance} disabled={locked} placeholder="氛围描述..." onChange={event => update({ ambiance: event.target.value })} />
+              <label htmlFor="shot-visual-ambiance">{t('氛围')}</label>
+              <input id="shot-visual-ambiance" value={draft.ambiance} disabled={locked} placeholder={t('氛围描述...')} onChange={event => update({ ambiance: event.target.value })} />
             </div>
           </Collapsible>
 

@@ -45,9 +45,9 @@ export function ViewportUnavailable({ message, onRetry }: { message: string; onR
 export function StageLights() {
   return (
     <>
-      <color attach="background" args={['#04070d']} />
+      <color attach="background" args={['#fcedef']} />
       <ambientLight intensity={1.1} />
-      <hemisphereLight args={['#b8e8ff', '#0b0d14', 1.4]} />
+      <hemisphereLight args={['#e76a7f', '#fdeef1', 1.4]} />
       <directionalLight position={[6, 9, 5]} intensity={2.2} />
     </>
   );

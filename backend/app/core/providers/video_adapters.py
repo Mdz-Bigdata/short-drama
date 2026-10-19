@@ -31,6 +31,9 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import BaseModel, Field
 
+from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
+from app import settings
+from app.core.providers.defaults import PROVIDER_DEFAULT_BASE_URLS
 from app.platform.runtime_models import runtime_model_registry
 
 
@@ -42,9 +45,9 @@ class VideoJobRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=20000)
     first_frame: str | None = None
     last_frame: str | None = None
-    reference_images: list[str] = Field(default_factory=list, max_length=9)
-    reference_videos: list[str] = Field(default_factory=list, max_length=3)
-    reference_audios: list[str] = Field(default_factory=list, max_length=3)
+    reference_images: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_IMAGES)
+    reference_videos: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_VIDEOS)
+    reference_audios: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_AUDIOS)
     duration_seconds: int = Field(default=5, ge=1, le=30)
     aspect_ratio: str = "9:16"
     resolution: str = "1080p"
@@ -157,7 +160,7 @@ class VideoProviderAdapter:
 class KlingVideoAdapter(VideoProviderAdapter):
     family = "kling"
     provider_label = "Kling"
-    default_base_url = "https://api.klingai.com"
+    default_base_url = PROVIDER_DEFAULT_BASE_URLS["kling"]
     default_model = "kling-v2-1"
     supported_modes = frozenset({"text", "first_frame", "first_last_frame", "multi_reference"})
     success_statuses = frozenset({"succeed", "succeeded", "success"})
@@ -276,7 +279,7 @@ class KlingVideoAdapter(VideoProviderAdapter):
 class GrokImagineAdapter(VideoProviderAdapter):
     family = "grok"
     provider_label = "xAI Grok Imagine"
-    default_base_url = "https://api.x.ai"
+    default_base_url = PROVIDER_DEFAULT_BASE_URLS["xai"]
     default_model = "grok-imagine-video-1.5"
     supported_modes = frozenset({"text", "first_frame", "first_last_frame", "multi_reference"})
     success_statuses = frozenset({"done"})
@@ -330,7 +333,7 @@ class GrokImagineAdapter(VideoProviderAdapter):
 class HappyHorseFalAdapter(VideoProviderAdapter):
     family = "happyhorse"
     provider_label = "HappyHorse (fal.ai)"
-    default_base_url = "https://queue.fal.run"
+    default_base_url = PROVIDER_DEFAULT_BASE_URLS["fal"]
     default_model = "alibaba/happy-horse/v1.1"
     supported_modes = frozenset({"text", "first_frame", "multi_reference"})
     success_statuses = frozenset({"completed"})
@@ -418,7 +421,7 @@ class HappyHorseFalAdapter(VideoProviderAdapter):
 class LtxVideoAdapter(VideoProviderAdapter):
     family = "ltx_2_3"
     provider_label = "LTX"
-    default_base_url = "https://api.ltx.io"
+    default_base_url = PROVIDER_DEFAULT_BASE_URLS["ltx"]
     default_model = "ltx-2-3-pro"
     supported_modes = frozenset({"text", "first_frame", "first_last_frame"})
     success_statuses = frozenset({"completed"})
@@ -500,9 +503,23 @@ ENV_KEY_FOR_FAMILY = {"kling": "KLING_API_KEY", "grok": "XAI_API_KEY", "happyhor
 ENV_BASE_URL_FOR_FAMILY = {"kling": "KLING_BASE_URL", "grok": "XAI_BASE_URL", "happyhorse": "FAL_QUEUE_URL", "ltx_2_3": "LTX_BASE_URL"}
 
 
+def _declared():
+    from app.core.providers.declarative_video import declared_video_endpoints
+
+    return declared_video_endpoints
+
+
+def has_adapter(family: str) -> bool:
+    """A code adapter or a declared endpoint can drive this family."""
+    return family in ADAPTERS or _declared().spec(family) is not None
+
+
 def adapter_supported_modes(family: str) -> frozenset[str] | None:
     adapter = ADAPTERS.get(family)
-    return adapter.supported_modes if adapter else None
+    if adapter:
+        return adapter.supported_modes
+    spec = _declared().spec(family)
+    return frozenset(spec.modes) if spec else None
 
 
 def resolve_family_credentials(family: str, model: str = "") -> tuple[str, str] | None:
@@ -511,6 +528,9 @@ def resolve_family_credentials(family: str, model: str = "") -> tuple[str, str] 
 
     provider = RUNTIME_PROVIDER_FOR_FAMILY.get(family)
     if provider is None:
+        spec = _declared().spec(family)
+        if spec is not None and _declared().ready(family):
+            return _declared().api_key(family), spec.base_url
         return None
     runtime = runtime_model_registry.resolve(model, "video") if model else None
     if runtime is not None and runtime.provider != provider:
@@ -519,7 +539,7 @@ def resolve_family_credentials(family: str, model: str = "") -> tuple[str, str] 
     if runtime is not None and runtime.api_key.strip():
         return runtime.api_key, runtime.base_url
     key = os.getenv(ENV_KEY_FOR_FAMILY[family], "").strip()
-    if not key or key.startswith("YOUR_"):
+    if not settings.is_configured(key):
         return None
     base_url = os.getenv(ENV_BASE_URL_FOR_FAMILY[family], "").strip() or ADAPTERS[family].default_base_url
     return key, base_url
@@ -538,5 +558,7 @@ def build_video_adapter(
 ) -> VideoProviderAdapter:
     adapter = ADAPTERS.get(family)
     if adapter is None:
+        if _declared().spec(family) is not None:
+            return _declared().build(family, transport=transport)
         raise RuntimeError(f"no video adapter for provider family {family}")
     return adapter(api_key=api_key, base_url=base_url, transport=transport)

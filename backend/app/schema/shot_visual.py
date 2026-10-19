@@ -73,6 +73,28 @@ class ShotVisualRecord(BaseModel):
     route: dict[str, Any] | None = None
     stale: bool = False
     stale_reason: str = ""
+    # 视频提示词是人工改过的版本(下次重做本镜时用它，而不是重新编译)。
+    video_prompt_edited: bool = False
+    # 提示词里 @[名字] 对应的资产类型(actor / scene / prop / costume / effect)与参考图序号，供编辑器着色与解析预览。
+    mention_kinds: dict[str, str] = Field(default_factory=dict)
+    reference_numbers: dict[str, int] = Field(default_factory=dict)
+
+
+class ShotVideoPromptUpdate(BaseModel):
+    """人工改写的视频提示词；``prompt`` 为空表示放弃改写，恢复自动编译。"""
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str | None = Field(None, max_length=8000)
+
+
+class ShotRegenerateRequest(BaseModel):
+    reason: str = Field("", max_length=300)
+
+
+class VideoAdmissionRequest(BaseModel):
+    """Re-assess with duration tiers the person has accepted; ``persist`` keeps them on the project."""
+    confirmed_request_durations: list[dict[str, int]] = Field(default_factory=list, max_length=200)
+    persist: bool = False
 
 
 class ShotVisualWorkspaceResponse(BaseModel):

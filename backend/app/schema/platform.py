@@ -6,8 +6,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
+from app import settings
 
-ElementKind = Literal["actor", "prop", "scene", "costume", "effect"]
+
+ElementKind = Literal["actor", "prop", "scene", "costume", "effect", "product"]
 ModelCategory = Literal["text", "image", "video", "audio"]
 
 
@@ -65,6 +67,39 @@ class ModelSaveRequest(ModelTestRequest):
     pass
 
 
+class ModelCredentialCreateRequest(BaseModel):
+    label: str = Field(default="", max_length=80)
+    api_key: SecretStr
+    buckets: list[str] = Field(default_factory=list, max_length=4)
+
+    @field_validator("buckets")
+    @classmethod
+    def known_buckets(cls, values: list[str]) -> list[str]:
+        cleaned = [v.strip().lower() for v in values if v and v.strip()]
+        unknown = [v for v in cleaned if v not in {"text", "image", "video", "audio"}]
+        if unknown:
+            raise ValueError("任务类型桶只能是 text / image / video / audio")
+        return list(dict.fromkeys(cleaned))
+
+
+class ModelCredentialUpdateRequest(BaseModel):
+    enabled: bool | None = None
+    buckets: list[str] | None = Field(default=None, max_length=4)
+
+    @field_validator("buckets")
+    @classmethod
+    def known_buckets(cls, values: list[str] | None) -> list[str] | None:
+        if values is None:
+            return None
+        return ModelCredentialCreateRequest.known_buckets(values)
+
+
+class VideoEndpointSaveRequest(BaseModel):
+    spec: dict
+    api_key: SecretStr | None = None
+    enabled: bool = True
+
+
 class ElementCreateRequest(BaseModel):
     kind: ElementKind
     name: str = Field(min_length=1, max_length=160)
@@ -75,6 +110,15 @@ class ElementCreateRequest(BaseModel):
 class ElementUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=4000)
+
+
+class ElementVariantRequest(BaseModel):
+    """Mark an actor element as a derived look of another character."""
+    of: str = Field(min_length=1, max_length=160)
+    label: str = Field(default="", max_length=40)
+    triggers: list[str] | str = Field(default_factory=list)
+    episode_from: int | None = Field(default=None, ge=1, le=500)
+    episode_to: int | None = Field(default=None, ge=1, le=500)
 
 
 class RegenerateElementRequest(BaseModel):
@@ -94,7 +138,7 @@ class ProfileUpdateRequest(BaseModel):
 
 class PasswordChangeRequest(BaseModel):
     current_password: str = Field(min_length=1, max_length=256)
-    new_password: str = Field(min_length=10, max_length=256)
+    new_password: str = Field(min_length=settings.PASSWORD_MIN_LENGTH, max_length=settings.PASSWORD_MAX_LENGTH)
 
 
 class AdminUserUpdateRequest(BaseModel):

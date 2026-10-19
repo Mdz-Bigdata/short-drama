@@ -10,6 +10,13 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import BaseModel, Field
 
+from app.core.providers.defaults import (
+    MINIMAX_API_ROOT,
+    MINIMAX_FILES_PATH,
+    MINIMAX_H3_PATH,
+    MINIMAX_H3_STATUS_PATH_TEMPLATE,
+)
+from app.platform.runtime_models import runtime_model_registry
 from app.schema.production import H3VideoRequest
 
 
@@ -82,31 +89,54 @@ class MiniMaxH3Client:
         transport: httpx.BaseTransport | None = None,
         timeout_seconds: float = 180,
     ):
-        key = (api_key or os.getenv("MINIMAX_API_KEY") or "").strip()
+        runtime = runtime_model_registry.first("minimax", "video")
+        key = (
+            api_key
+            or (runtime.api_key if runtime else None)
+            or os.getenv("MINIMAX_API_KEY")
+            or ""
+        ).strip()
         if not key:
             raise RuntimeError("MINIMAX_API_KEY is required on the server")
         self.endpoint = (
             endpoint
+            or (self._endpoint_on(runtime.base_url) if runtime and not api_key else None)
             or os.getenv("MINIMAX_H3_ENDPOINT")
-            or "https://api.minimaxi.com/v2/video_generation"
+            or self._default_endpoint()
         ).rstrip("/")
         parsed_endpoint = urlsplit(self.endpoint)
         api_origin = f"{parsed_endpoint.scheme}://{parsed_endpoint.netloc}"
         self.status_url_template = (
             status_url_template
             or os.getenv("MINIMAX_H3_STATUS_URL_TEMPLATE")
-            or (api_origin + "/v2/query/video_generation/{task_id}")
+            or (api_origin + MINIMAX_H3_STATUS_PATH_TEMPLATE)
         )
         self.files_url = (
             files_url
             or os.getenv("MINIMAX_FILES_URL")
-            or (api_origin + "/v1/files/retrieve")
+            or (api_origin + MINIMAX_FILES_PATH)
         )
         self._client = httpx.Client(
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             timeout=timeout_seconds,
             transport=transport,
         )
+
+    @staticmethod
+    def _endpoint_on(base_url: str) -> str | None:
+        """The H3 endpoint for a configured MiniMax address, which may already name it."""
+        base = (base_url or "").strip().rstrip("/")
+        parsed = urlsplit(base)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username:
+            return None
+        if base.endswith("/video_generation"):
+            return base
+        return f"{parsed.scheme}://{parsed.netloc}{MINIMAX_H3_PATH}"
+
+    @classmethod
+    def _default_endpoint(cls) -> str:
+        """H3 on the configured MiniMax host, so one MINIMAX_BASE_URL moves every MiniMax call."""
+        return cls._endpoint_on(os.getenv("MINIMAX_BASE_URL") or "") or MINIMAX_API_ROOT + MINIMAX_H3_PATH
 
     @staticmethod
     def _raise_safe(response: httpx.Response) -> None:

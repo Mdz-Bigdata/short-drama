@@ -330,3 +330,21 @@ export function cameraPathOf(plan: StagePlan, shot: StageShot | undefined, steps
   const points = Array.from({ length: steps + 1 }, (_, index) => sampleCamera(keys, camera, aspect, (timeline.duration_s * index) / steps).position);
   return { points, keys: keys.map(key => ({ time: key.time, position: key.position })) };
 }
+
+export interface ActorPath {
+  name: string;
+  /** On the ground (y = 0), one point per placed key: between two keys a figure walks a straight line. */
+  points: SpacePoint[];
+  keys: Array<{ time: number; position: SpacePoint }>;
+}
+
+/** Every actor track of the shot that goes somewhere; easing changes the timing of a leg, never its line. */
+export function actorPathsOf(plan: StagePlan, shot: StageShot | undefined): ActorPath[] {
+  if (!shot) return [];
+  const timeline = timelineOf(plan, shot.shot_id);
+  return Object.entries(timeline.actors).flatMap(([name, keys]) => {
+    const placed = keys.flatMap(key => (key.position ? [{ time: key.time, position: [key.position[0], 0, key.position[1]] as SpacePoint }] : []));
+    if (placed.length < 2) return [];
+    return [{ name, points: placed.map(key => key.position), keys: placed }];
+  });
+}

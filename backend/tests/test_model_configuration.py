@@ -319,6 +319,54 @@ class ModelDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({item.model_id for item in result.models}, {"grok-imagine-video-1.5"})
         self.assertTrue(result.credential_verified)
 
+    async def test_ark_global_catalog_is_filed_by_name_into_text_image_and_video(self):
+        """Volcengine Ark's /api/v3/models lists every Ark family; each tab gets its own and hears about the rest."""
+        catalog = {"data": [
+            {"id": "doubao-pro-32k-240828"}, {"id": "doubao-pro-32k-241215"}, {"id": "doubao-1-5-pro-256k-250115"},
+            {"id": "deepseek-r1-250120"}, {"id": "doubao-1-5-vision-pro-32k-250115"},
+            {"id": "doubao-seedream-3-0-t2i-250415"}, {"id": "doubao-seededit-3-0-i2i-250628"},
+            {"id": "doubao-seedance-1-0-pro-250528"}, {"id": "doubao-seedance-1-0-lite-i2v-250428"}, {"id": "doubao-seaweed-241128"},
+            {"id": "wan2-1-14b-t2v-250225"}, {"id": "doubao-tts-241105"},
+        ]}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/api/v3/models")
+            return httpx.Response(200, json=catalog)
+
+        discovery = ModelDiscoveryClient(transport=httpx.MockTransport(handler))
+        expected = {
+            "video": {"doubao-seedance-1-0-pro-250528", "doubao-seedance-1-0-lite-i2v-250428", "doubao-seaweed-241128", "wan2-1-14b-t2v-250225"},
+            "image": {"doubao-seedream-3-0-t2i-250415", "doubao-seededit-3-0-i2i-250628"},
+            "text": {"doubao-pro-32k-240828", "doubao-pro-32k-241215", "doubao-1-5-pro-256k-250115", "deepseek-r1-250120", "doubao-1-5-vision-pro-32k-250115"},
+        }
+        # The same Ark endpoint is 火山引擎 on the text / image tabs and Seedance on the video tab.
+        for category, ids in expected.items():
+            with self.subTest(category=category):
+                result = await discovery.discover(
+                    category=category, provider="seedance" if category == "video" else "volcengine",
+                    base_url="https://ark.cn-beijing.volces.com/api/v3", api_key="ark-secret",
+                )
+                self.assertEqual({item.model_id for item in result.models}, ids)
+                self.assertTrue(all(item.category == category for item in result.models))
+                self.assertEqual(len(result.warnings), 1)
+                for other, other_ids in expected.items():
+                    if other != category:
+                        self.assertIn(f"{len(other_ids)} 个{ {'text': '文本', 'image': '图像', 'video': '视频'}[other] }模型", result.warnings[0])
+                self.assertIn("1 个音频模型", result.warnings[0])
+        vision = next(item for item in (await discovery.discover(
+            category="text", provider="volcengine", base_url="https://ark.cn-beijing.volces.com/api/v3", api_key="ark-secret",
+        )).models if "vision" in item.model_id)
+        self.assertIn("multimodal", vision.capabilities)
+
+    async def test_a_catalog_of_one_category_carries_no_filing_note(self):
+        discovery = ModelDiscoveryClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"data": [
+            {"id": "doubao-seedance-1-0-pro-250528"},
+        ]})))
+        result = await discovery.discover(
+            category="video", provider="seedance", base_url="https://ark.cn-beijing.volces.com/api/v3", api_key="ark-secret",
+        )
+        self.assertEqual(result.warnings, ())
+
     async def test_new_video_provider_hosts_are_pinned(self):
         discovery = ModelDiscoveryClient(transport=httpx.MockTransport(lambda _: httpx.Response(404)))
         for provider, wrong_url in (
@@ -660,6 +708,32 @@ class RuntimeModelRoutingTests(unittest.TestCase):
             max_tokens=None,
         )
 
+    def test_a_model_that_is_not_enabled_runs_on_the_globally_selected_text_model(self):
+        runtime_model_registry.replace([
+            RuntimeModelConfiguration(
+                configuration_id="deepseek", category="text", provider="deepseek",
+                base_url="https://api.deepseek.com", api_key="deepseek-secret", model_ids=("deepseek-flash",),
+            ),
+            RuntimeModelConfiguration(
+                configuration_id="openai", category="text", provider="openai",
+                base_url="https://api.openai.com/v1", api_key="openai-secret", model_ids=("gpt-writer",),
+            ),
+        ])
+        gateway = ModelGateway.__new__(ModelGateway)
+        gateway._http_chat = Mock(return_value="三幕大纲")
+        gateway._provider_creds = Mock(side_effect=AssertionError("the legacy key chain must not be used"))
+
+        with self.assertLogs("app.core.model_gateway", level="WARNING") as logs:
+            result = gateway.call_llm("deepseek-v4-pro", "system", "user", "title")
+
+        self.assertEqual(result, "三幕大纲")
+        # The first enabled text model is what the configuration centre shows as current.
+        gateway._http_chat.assert_called_once_with(
+            "deepseek-secret", "https://api.deepseek.com", "deepseek-flash", "system", "user", max_tokens=None,
+        )
+        self.assertIn("deepseek-v4-pro", logs.output[0])
+        self.assertIn("全局选择的 deepseek-flash", logs.output[0])
+
     def test_empty_text_selection_uses_the_enabled_global_default(self):
         runtime_model_registry.replace([RuntimeModelConfiguration(
             configuration_id="configuration-default",
@@ -687,3 +761,21 @@ class RuntimeModelRoutingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CustomProviderTests(unittest.TestCase):
+    def test_a_self_hosted_openai_compatible_provider_accepts_any_public_https_host(self):
+        from app.core.model_configuration import PROVIDER_OPTIONS, validate_provider_url
+
+        self.assertIn("custom_openai", {item["id"] for item in PROVIDER_OPTIONS["text"]})
+        self.assertIn("custom_openai", {item["id"] for item in PROVIDER_OPTIONS["image"]})
+        self.assertNotIn("custom_openai", {item["id"] for item in PROVIDER_OPTIONS["video"]})
+        self.assertEqual(
+            validate_provider_url("text", "custom_openai", "https://relay.example.com/v1/", resolve_dns=False),
+            "https://relay.example.com/v1",
+        )
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            validate_provider_url("text", "custom_openai", "http://relay.example.com/v1", resolve_dns=False)
+        # Official providers still have to use their own domains.
+        with self.assertRaisesRegex(ValueError, "官方域名"):
+            validate_provider_url("text", "deepseek", "https://relay.example.com/v1", resolve_dns=False)

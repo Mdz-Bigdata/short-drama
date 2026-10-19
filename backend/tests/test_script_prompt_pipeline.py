@@ -51,7 +51,7 @@ class ScriptPromptPipelineTests(unittest.TestCase):
         self.assertEqual(result.characters[0].five_view_order, [
             "front", "profile", "back", "face_front", "face_three_quarter"
         ])
-        for region in ("MAIN PORTRAIT", "FULL BODY & ELEMENTS", "DETAIL MATRIX"):
+        for region in ("主肖像", "全身与元素", "细节矩阵"):
             self.assertIn(region, result.characters[0].five_view_prompt)
         self.assertEqual((result.storyboards[0].rows, result.storyboards[0].columns), (3, 3))
         self.assertEqual([panel.index for panel in result.storyboards[0].panels], [1, 2, 3])

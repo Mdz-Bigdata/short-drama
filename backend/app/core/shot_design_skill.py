@@ -12,25 +12,22 @@ from __future__ import annotations
 import logging
 import re
 from functools import lru_cache
-from pathlib import Path
+
+from app import settings
+from app.core import knowledge_registry
 from typing import Mapping, Sequence
 
 
 logger = logging.getLogger("app.core.shot_design_skill")
 
 SKILL_NAME = "shot-design-master"
-SKILL_ROOT = Path(__file__).resolve().parents[2] / "skills" / SKILL_NAME
+SKILL_ROOT = settings.skills_root() / SKILL_NAME
 
-# Section key -> reference file, relative to the skill package root.
+# Section key -> reference file, relative to the skill package root. The skill's manifest.json is
+# the only place that names the files (its scope="skill" sections).
 SHOT_DESIGN_SECTIONS: dict[str, str] = {
-    "shot-grammar": "references/shot-grammar.md",
-    "prompt-contracts": "references/prompt-contracts.md",
-    "blocking-lighting": "references/blocking-lighting.md",
-    "continuity-consistency": "references/continuity-consistency.md",
-    "performance-action": "references/performance-action.md",
-    "choreography-beats": "references/choreography-beats.md",
-    "models-failures": "references/models-failures.md",
-    "h3-native-contract": "references/h3-native-contract.md",
+    key: item.path.relative_to(SKILL_ROOT.resolve()).as_posix()
+    for key, item in knowledge_registry.skill_sections(SKILL_NAME).items()
 }
 
 # Section budgets keep a stage prompt inside what small models can actually read;

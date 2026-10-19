@@ -124,10 +124,10 @@ describe('WriterAgentPage script outline view', () => {
     expect(within(table).getAllByText('林夏、周教授').length).toBe(2);
 
     // 看板独有的模块在大纲视图下隐藏
-    expect(screen.queryByRole('heading', { name: '爽点节奏' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: /剧情事件与爽点节奏/ })).toBeNull();
 
     await user.click(screen.getByRole('button', { name: '创作看板' }));
-    expect(screen.getByRole('heading', { name: '爽点节奏' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /剧情事件与爽点节奏/ })).toBeTruthy();
   });
 
   it('opens per-episode plain text from the total episode stat', async () => {

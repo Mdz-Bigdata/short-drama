@@ -1,5 +1,5 @@
 import { apiRequest } from '../../api/client';
-import type { SpatialPlanResponse, StageOperation } from './spatialTypes';
+import type { SpatialPlanResponse, SpatialRepairsResponse, StageOperation } from './spatialTypes';
 
 const base = (taskId: string, sceneId: string) =>
   `/api/drama/${encodeURIComponent(taskId)}/spatial/scenes/${encodeURIComponent(sceneId)}`;
@@ -16,6 +16,11 @@ export function patchSpatialPlan(
     method: 'PATCH',
     body: JSON.stringify({ baseRevision, operations, ...(options.solve === undefined ? {} : { solve: options.solve }) }),
   });
+}
+
+/** Repairs for the checks that fail right now; the desk sends them through its own edit path so they can be undone. */
+export function fetchSpatialRepairs(taskId: string, sceneId: string, signal?: AbortSignal) {
+  return apiRequest<SpatialRepairsResponse>(`${base(taskId, sceneId)}/repairs`, { signal });
 }
 
 export function rebuildSpatialPlan(taskId: string, sceneId: string, baseRevision: number) {

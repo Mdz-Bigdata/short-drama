@@ -115,7 +115,7 @@ export function ElementModelProp({ landmark, selected, labelled, onPick }: Props
         <PrimitiveProp landmark={landmark} selected={selected} labelled={labelled} onPick={onPick} />
         {failed && (
           <Text
-            position={[landmark.position[0], height + 0.36, landmark.position[1]]} fontSize={0.12} color="#ff8f8f"
+            position={[landmark.position[0], height + 0.36, landmark.position[1]]} fontSize={0.12} color="#e60000"
             anchorX="center" anchorY="bottom" userData={{ [HELPER_FLAG]: true }}
           >
             模型加载失败
@@ -134,11 +134,11 @@ export function ElementModelProp({ landmark, selected, labelled, onPick }: Props
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial
           transparent opacity={selected ? 0.12 : 0} depthWrite={false}
-          color={SELECTION_COLOR} emissive={selected ? SELECTION_COLOR : '#000000'} emissiveIntensity={selected ? 0.4 : 0}
+          color={SELECTION_COLOR} emissive={selected ? SELECTION_COLOR : '#fcebee'} emissiveIntensity={selected ? 0.4 : 0}
         />
       </mesh>
       {labelled && (
-        <Text position={[0, source.size[1] * scale + 0.18, 0]} fontSize={0.13} color={selected ? SELECTION_COLOR : '#c7d3df'} anchorX="center" anchorY="bottom" userData={{ [HELPER_FLAG]: true }}>
+        <Text position={[0, source.size[1] * scale + 0.18, 0]} fontSize={0.13} color={selected ? SELECTION_COLOR : '#46373e'} anchorX="center" anchorY="bottom" userData={{ [HELPER_FLAG]: true }}>
           {landmark.name}
         </Text>
       )}

@@ -108,6 +108,33 @@ motion graph.
 - **Whole-crowd editing.** An array's figure, body type and colour switch in one operation, and come back
   member by member on undo.
 
+## Second pass (2026-10-14): the two articles, the newer upstream, and what was still missing
+
+The two product write-ups were read again in the browser — 万兴剧厂's 「3D导演台上线：多人站位、镜头关系终于可控了」
+(2026-06-23) and LUMI AI's 「3D导演台正式上线：把镜头设计，真正搬进三维空间」 (2026-09-16). They describe the six-part
+loop above, with two emphases this desk had not answered in kind: *stability* — the point of the thing is that
+多人站位、角色姿势、镜头机位 stop drifting between shots, so what the desk measures it should also be able to put
+right — and *choosing between lenses from pictures*, not one lens at a time. The five repositories were cloned
+again. Four are at the reviewed revision; `mangfufu/director-desk` had moved from 0.4.8 to 0.4.11 (`f3afacf`,
+2026-10-08) and gained hand-drawn walk / camera paths, a grayscale depth video export, keyboard-recorded walks,
+and set-piece grouping / alignment / arrays. Nothing of that release is copied; the behaviour is.
+
+What this pass added, against the brief's six points:
+
+| Brief | Was | Now |
+|---|---|---|
+| 1. 自动调整人物站位、角色姿势、镜头机位 | Nine checks said what was wrong; nothing fixed it | `repair.py` turns every failing check into ordinary operations — push a crowded pair apart, turn someone to their partner, swap a pair that opens mirrored, re-solve the lens of a shot that loses, hides or walks into its subject or jumps the axis, write a posture the storyboard names as that shot's override. `GET …/repairs` previews them; `repair_checks` applies them; the desk's 检查 panel shows 修正 per item and 一键修正. A walk the storyboard names is *not* invented: the proposal says to draw it |
+| 2. 三维空间布局与摆场 | Primitives, element-library GLBs, crowd arrays, formations for people | `array_landmark` (line / grid / ring copies of a set piece, the original kept in place) and `align_landmarks` (align by centre, or distribute) for set pieces; five more presets from the articles' own examples (卧倒、背手站立、侧身回头、抬手指向、出拳) |
+| 3. 多机位预览与构图规划 | Candidate lenses existed, viewed one at a time | 机位对比: the filming lens and every candidate rendered side by side from one hidden canvas, with 使用此机位 on each; the angle presets (正面 / 侧面 / 过肩 / 俯拍 / 仰拍 / 特写) add candidates in a click |
+| 4. 镜头运镜预演与调度 | 14 presets, keys on a timeline, blockout clips | 手绘路径: a route dragged on the ground becomes that track's keys (`set_path`: corner-cut once, resampled at even arc length, spread over the chosen seconds with the chosen easing; a walker faces along the route, holds, or watches a point; a camera route looks at a subject or ahead). Actor tracks are drawn in the director view like the camera's |
+| 5. 精准的姿势与动作调节 | 58 control keys, 20 presets, IK, saved poses | unchanged in mechanism; presets above |
+| 6. 衔接 AI 生成与工作流 | Stills and clips applied into the stage-5 slots | 深度画面: a still or clip can be rendered as linear depth (near bright, far dark, range taken from the shot's subjects) and uploaded flagged `depth`; a depth clip applied to a shot makes stage 5 say the reference carries layers and motion only; a depth still is refused as a first-frame reference, because an image model would copy the grey. The tool assistant / MCP gain `get_stage_checks`, `edit_stage`, `repair_stage` so an agent can block a scene in the same operations a person uses |
+
+Still open, deliberately: lighting and look (unchanged boundary); FBX / OBJ import (the element library takes GLB; a
+converter in the browser is possible but was not asked for in a form that justified it); keyboard-recorded walks
+(a drawn route covers the need); groups as a persistent object (an array is enough until someone asks to move a
+set as one).
+
 ## Honest summary
 
 The loop the two products describe is complete: stage, two views, library, hand-off, poses, timeline. What is

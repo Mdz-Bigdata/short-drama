@@ -8,17 +8,28 @@ import re
 import os
 import hashlib
 import threading
-import time
 from pathlib import Path
+import time
 from copy import deepcopy
 from collections import OrderedDict
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List
+from typing import Callable, Dict, Any, Optional, List, Tuple
 
+from app import settings
 from app.repository.task_repo import StaleTaskWriteError, TaskRepository
 from app.core.model_gateway import ModelGateway
+from app.core import usage_ledger, video_jobs
+from app.core.providers.pricing import pricing_table
+from app.core.video_admission import assess_video_batch
+from app.core.subtitles import episode_cues, render_srt
+from app.core import asset_identity
+from app.core.screenwriting.speech import is_narrator, narration_delivery
+from app.core.providers.defaults import GATEWAY_DEFAULT_MODELS
 from app.core import media_compositor
-from app.core.storyboard_assets import compose_nine_grid, split_actor_sheet
+from app.core.storyboard_assets import complete_actor_sheet_cells, compose_nine_grid, split_actor_sheet
+from app.core.storyboard_assets import _open_image as storyboard_assets_open_image, _save_cell as save_actor_cell
+from app.core.actor_detail_fill import detail_fill_enabled, fillable, generate_detail_cells
+from app.core.actor_hd_views import generate_hd_views, hd_identity_views_enabled
 from app.core.storyboard_quality import build_nine_grid_prompt, validate_storyboard_continuity
 from app.core.shot_motion_contract import (
     ShotMotionContract,
@@ -27,10 +38,12 @@ from app.core.shot_motion_contract import (
     compile_storyboard_image_prompt,
 )
 from app.core.continuity import ContinuityState, plan_transition
-from app.core.actor_sheet_layout import ACTOR_SHEET_CELL_ORDER
+from app.core.actor_sheet_layout import ACTOR_SHEET_CELL_ORDER, actor_sheet_cell_paths
 from app.core.image_quality import validate_actor_sheet_images
 from app.core.video_quality import VideoQualityMeasurements, evaluate_video_quality
+from app.core.emotion_table import read_emotion
 from app.core.video_references import (
+    renumber_reference_mentions,
     VideoGenerationIntent,
     MIN_SHOT_SECONDS,
     max_shot_seconds,
@@ -50,7 +63,8 @@ from app.core.workflow_guide import (
     stage_event_id,
 )
 from app.core.storyboard_prompt_detail import compile_storyboard_prompt_detail
-from app.core.storyboard_scene_context import compile_scene_context, merge_video_references, panel_context
+from app.core.asset_mentions import resolve_mentions
+from app.core.storyboard_scene_context import compile_scene_context, merge_video_references, panel_context, video_reference_entries
 from app.core.camera_recipes import compose_recipe, recipe_catalog
 from app.core.shot_seeds import assign_scene_seeds, candidate_seed
 from app.core.camera_motion import (
@@ -62,6 +76,7 @@ from app.core.camera_motion import (
 )
 from app.core.element_library_reuse import find_library_characters
 from app.core.project_asset_completion import complete_project_assets, evaluate_project_assets
+from app.core import fight_design
 from app.core.production_asset_readiness import READINESS_KEY, readiness_reasons
 from app.core.storyboard_element_context import load_storyboard_elements
 from app.core.storyboard_concurrency import (
@@ -81,6 +96,7 @@ from app.core.shot_design_skill import (
 )
 from app.core.shot_table_rules import audit_and_log, speakers_in
 from app.core.writer_dashboard import (
+    version_summaries,
     compile_writer_dashboard,
     episode_from_scene_id,
     episode_label_number,
@@ -92,12 +108,27 @@ from app.core.writer_dashboard import (
     script_episode_indexes,
     split_script_by_episode,
 )
-from app.core.character_dashboard import compile_character_dashboard
+from app.core.element_scope import normalized_asset_name
+from app.core.character_dashboard import (
+    REGENERATION_KEY,
+    compile_character_dashboard,
+    regenerating as character_regenerating,
+)
+from app.core.episode_shape import configured_episode_shape
 # production-knowledge-master 技能装载器：16 份根部知识源按章节键读取(唯一事实源，绝不复制正文)；
 # knowledge_evolution 是质检报告→生产教训的进化引擎，全程 fail-soft 旁路。
+from app.core.knowledge_registry import section_title
 from app.core.production_knowledge import load_section, stage_lessons_block
+from app.platform.runtime_models import runtime_model_registry
+from app.core.sd25_skill_bundle import BUNDLED_SKILLS_DIR, skill_registry_roots
 from app.core import knowledge_evolution
-from app.schema.drama import DramaCreateRequest
+from app.schema.drama import (
+    DEFAULT_DIRECTOR_STYLE,
+    DEFAULT_EPISODE_COUNT,
+    EPISODE_COUNT_MAX,
+    EPISODE_COUNT_MIN,
+    DramaCreateRequest,
+)
 from app.schema.production import (
     IDENTITY_VIEW_ORDER,
     LEGACY_IDENTITY_VIEW_ORDER,
@@ -107,8 +138,17 @@ from app.schema.production import (
 )
 from app.schema.agent_council import AgentRole, CouncilCompileRequest, CouncilReleaseEvidence
 from app.schema.writer_dashboard import WriterDashboardResponse
-from app.schema.screenwriting import ScreenwritingEpisodeResponse, ScreenwritingStateResponse
+from app.schema.screenwriting import (
+    LedgerOperationRequest,
+    ReplanAdoptRequest,
+    ScreenwritingEpisodeResponse,
+    ScreenwritingStateResponse,
+)
 from app.core.screenwriting.editing import apply_plan_operations
+from app.core import bgm_library, creation_modes, edit_timeline, embedded_agent, generation_queue, style_analysis
+from app.export import jianying
+from app.core.screenwriting import ledger_ops, review
+from app.core.screenwriting.engine import RepairNotImproved
 from app.core.screenwriting.engine import ScreenwritingError
 from app.core.screenwriting.renderer import render_breakdown
 from app.service import screenwriting_service as screenwriting
@@ -169,6 +209,10 @@ def _task_script_revision(task: object) -> int:
         return 0
 
 
+def _bounded_episode_count(value: object) -> int:
+    return max(EPISODE_COUNT_MIN, min(EPISODE_COUNT_MAX, int(value or DEFAULT_EPISODE_COUNT)))
+
+
 def _bounded_shot_duration(value: object, default: float = 2.0) -> float:
     match = re.search(r"\d+(?:\.\d+)?", str(value or ""))
     parsed = float(match.group()) if match else default
@@ -185,10 +229,11 @@ def extract_character_info(director_outline: str) -> tuple:
     """
     辅助方法：从导演策划大纲中自动提取角色名字与视觉描述
     """
+    # 大纲没写外观时保持为空：凭空补一套服装会被写进每一张分镜图，古装、仙侠、动画项目都会穿帮
     char1_name = "主角"
-    char1_desc = "身穿连帽卫衣，戴银色项链"
+    char1_desc = ""
     char2_name = "反派"
-    char2_desc = "穿高定西服，眼神傲慢"
+    char2_desc = ""
     
     if not director_outline:
         return char1_name, char1_desc, char2_name, char2_desc
@@ -243,12 +288,18 @@ def extract_character_info(director_outline: str) -> tuple:
 
     return char1_name, char1_desc, char2_name, char2_desc
 
+def _character_clause(name: str, description: str) -> str:
+    """One character's mention in an image prompt; the look is added only when the script gave one."""
+    clause = f", featuring character {name}"
+    return f"{clause} who is: {description}" if description else clause
+
+
 def extract_speech(script: str) -> str:
     """
-    辅助方法：从编剧对白脚本中动态提取主要台词
+    辅助方法：从编剧对白脚本中动态提取主要台词；剧本没有对白时返回空串，不替它编一句
     """
     if not script:
-        return "既然如此，我今日便要了断于此！"
+        return ""
     lines = re.findall(r'[\u4e00-\u9fa5\w]+\s*：\s*([^\n]+)', script)
     if lines:
         for line in lines:
@@ -256,7 +307,7 @@ def extract_speech(script: str) -> str:
             if len(cleaned) > 5 and "环境" not in cleaned and "调度" not in cleaned:
                 return cleaned
         return lines[0].strip()
-    return "既然如此，我今日便要了断于此！"
+    return ""
 
 _CHARACTER_ROLE_LABELS = (
     "核心角色", "对手角色", "反派对手", "大反派", "男配角", "女配角",
@@ -489,9 +540,22 @@ def guess_gender(name: str) -> str:
     return "female"
 
 
-def detect_emotion(text: str) -> str:
-    """根据台词内容粗略判定情绪，用于配音的情绪与节奏 (对应 media_compositor.EMOTION_PRESETS)。"""
+_PARENTHETICAL = re.compile(r"[（(]([^（）()]{1,16})[）)]")
+
+
+def detect_emotion(text: str, notes: str = "") -> str:
+    """判定一句台词 / 一个镜头的情绪，用于配音的情绪与节奏 (对应 media_compositor.EMOTION_PRESETS)。
+
+    明确写下的表演标注优先：``notes``（分镜规划的 delivery、镜头表情）与台词里的括注
+    「（冷笑）」按情绪表读取，具体词先于泛化词（冷笑不会被读成笑）；都没有时才按台词
+    内容的关键词粗略猜测。台词正文里出现的情绪词（「你别生气」）不作数。
+    """
     t = text or ""
+    explicit = " ".join([str(notes or ""), *_PARENTHETICAL.findall(t)]).strip()
+    if explicit:
+        reading = read_emotion(explicit)
+        if reading.matched:
+            return reading.voice
     if any(k in t for k in ["滚", "废物", "凭什么", "怎么敢", "给我", "住手", "！！", "可恶", "混蛋", "放肆", "找死"]):
         return "shout" if t.count("！") >= 2 else "angry"
     if any(k in t for k in ["求求", "对不起", "别走", "别这样", "呜", "泪", "我错了", "求你", "好痛", "救我", "没用了"]):
@@ -536,15 +600,22 @@ def dialogue_delivery_profile(text: str, emotion: str) -> dict:
     }
 
 
+# 记录用户导入的 Skill 的清单文件，位于 skills 目录下
+IMPORTED_SKILL_REGISTRY = "registry.json"
+
+# 早期版本写进任务的占位视频所在域名；回退选片时据此跳过，只取真实生成的片段
+LEGACY_PLACEHOLDER_MEDIA_HOST = "volccdn.com"
+
 # 非角色发声体，配音时跳过 (不为音效/旁白标记等生成人声)
 SKIP_SPEAKERS = ("音效", "环境音", "背景音", "特效音", "音乐", "声音", "bgm", "ost")
 
 
 def parse_shot_dialogue(cell: str, char1_name: str, char2_name: str,
-                        char1_gender: str, char2_gender: str) -> list:
+                        char1_gender: str, char2_gender: str, *, voice_narration: bool = True) -> list:
     """
     把一个镜头的台词单元格解析为 [(台词, 性别, 情绪)]，供逐句情绪配音。
     步骤5(预览音轨)与步骤6(成片配音)共用，避免解析逻辑重复发散。
+    ``voice_narration`` 为假时跳过旁白（项目把旁白留给后期配音）。
     """
     out = []
     cell = (cell or "").strip()
@@ -558,11 +629,13 @@ def parse_shot_dialogue(cell: str, char1_name: str, char2_name: str,
                 continue
             if any(k in speaker.lower() for k in SKIP_SPEAKERS):
                 continue
+            if is_narrator(speaker) and not voice_narration:
+                continue
             if char1_name and char1_name in speaker:
                 g = char1_gender
             elif char2_name and char2_name in speaker:
                 g = char2_gender
-            elif "旁白" in speaker:
+            elif is_narrator(speaker):
                 g = "female"
             else:
                 g = guess_gender(speaker)
@@ -724,6 +797,14 @@ def parse_pr_info(pr_text: str, default_title: str, default_body: str) -> tuple:
         body = chosen
     return title, body
 
+class _HdDone(Exception):
+    """高清身份视图补完：把结果带出 try 块，交给统一的落库逻辑。"""
+
+    def __init__(self, result: Dict[str, Any]):
+        super().__init__("hd views done")
+        self.result = result
+
+
 class DramaService:
     """
     AI 短剧 8-Agent 协同与断点状态控制业务服务类 (Service)
@@ -732,8 +813,387 @@ class DramaService:
         self.repo = TaskRepository()
         self.gateway = ModelGateway()
         self.agent_council = AgentCouncilCompiler()
+        # Provider calls made while a project's stage runs are written onto that project.
+        usage_ledger.configure_sink(self._record_usage)
+        # So are the video jobs the providers accept, so a restart can continue rather than re-pay them.
+        video_jobs.configure_sink(self._record_video_job)
         self.script_archive_max_total_bytes = _SCRIPT_ARCHIVE_MAX_TOTAL_BYTES
         self.script_archive_max_entries = _SCRIPT_ARCHIVE_MAX_ENTRIES
+
+    # ---------------- 风格参考图：看图拆出风格锁，确认后成为本片风格 ----------------
+
+    STYLE_REFERENCE_KEY = "style_reference"
+
+    @staticmethod
+    def _reference_image_uri(content: bytes, content_type: str) -> str:
+        """The image as a data URI a vision model accepts, scaled so its long side is at most 1536 px."""
+        import base64
+        import io
+
+        from PIL import Image, ImageOps
+
+        with Image.open(io.BytesIO(content)) as image:
+            image = ImageOps.exif_transpose(image).convert("RGB")
+            image.thumbnail((1536, 1536))
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=88)
+        return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+    def analyze_style_reference(
+        self, task_id: str, *, content: bytes, filename: str, content_type: str, hint: str = "", model: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """Read a reference image into a style profile and the lock it would become; nothing is applied yet."""
+        import hashlib
+
+        from app.platform.uploads import validate_image_upload
+
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        validate_image_upload(filename, content_type, content)  # UploadValidationError → 422
+        config = task.get("config") if isinstance(task.get("config"), dict) else {}
+        system, user = style_analysis.analysis_prompt(hint)
+        with usage_ledger.bind_task(task_id, "style_reference"):
+            answer, used = self.gateway.describe_image(
+                model or str(config.get("llm_model") or ""), system, user, self._reference_image_uri(content, content_type),
+            )
+        if not used:
+            raise style_analysis.StyleAnalysisError("没有可看图的文本模型：请在模型配置里启用一个标为「多模态」的文本模型")
+        if not answer:
+            raise style_analysis.StyleAnalysisError(f"模型 {used} 没有返回结果（可能不支持图片输入或请求失败），请稍后重试或换一个多模态模型")
+        profile = style_analysis.parse_profile(answer)
+        pack = style_analysis.to_pack(profile, task_id=task_id)
+        record = {
+            **style_analysis.preview(profile, pack),
+            "pack_definition": pack.model_dump(mode="json"),
+            "model": used, "filename": filename[:160], "sha256": hashlib.sha256(content).hexdigest(),
+            "hint": hint[:300], "analyzed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "applied": False,
+        }
+        self.repo.mutate_task(task_id, lambda current: current.setdefault("assets", {}).__setitem__(self.STYLE_REFERENCE_KEY, record))
+        return self.get_style_reference(task_id)
+
+    def get_style_reference(self, task_id: str) -> Optional[Dict[str, Any]]:
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        record = (task.get("assets") or {}).get(self.STYLE_REFERENCE_KEY)
+        config = task.get("config") if isinstance(task.get("config"), dict) else {}
+        current = style_packs.resolve_pack(config)
+        return {
+            "task_id": task_id,
+            "reference": {k: v for k, v in record.items() if k != "pack_definition"} if isinstance(record, dict) else None,
+            "current_pack": {"id": current.id, "name": current.name, "custom": current.id.startswith("custom_")},
+            "previous_pack": config.get("style_pack_before_reference"),
+        }
+
+    def apply_style_reference(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """Make the analysed lock this project's style; images already made keep their old look until remade."""
+        def mutation(task: Dict[str, Any]) -> Dict[str, Any]:
+            record = (task.get("assets") or {}).get(self.STYLE_REFERENCE_KEY)
+            if not isinstance(record, dict) or not isinstance(record.get("pack_definition"), dict):
+                raise style_analysis.StyleAnalysisError("还没有分析过风格参考图")
+            config = task.setdefault("config", {})
+            pack = style_packs.StylePack.model_validate(record["pack_definition"])
+            if not str(config.get("style_pack") or "").startswith("custom_"):
+                config["style_pack_before_reference"] = style_packs.resolve_pack(config).id
+            config["custom_style_pack"] = pack.model_dump(mode="json")
+            config["style_pack"] = pack.id
+            record["applied"] = True
+            style_packs.register_custom(pack)
+            return task
+
+        task = self.repo.mutate_task(task_id, mutation)
+        if task is None:
+            return None
+        assets = task.get("assets") or {}
+        made = [stage for stage, key in ((3, "3_sheets"), (4, "4"), (5, "5")) if assets.get(key)]
+        return {**(self.get_style_reference(task_id) or {}), "stages_with_old_look": made}
+
+    def revert_style_reference(self, task_id: str) -> Optional[Dict[str, Any]]:
+        def mutation(task: Dict[str, Any]) -> Dict[str, Any]:
+            config = task.setdefault("config", {})
+            if not str(config.get("style_pack") or "").startswith("custom_"):
+                raise style_analysis.StyleAnalysisError("本片当前用的不是参考图风格")
+            config["style_pack"] = config.pop("style_pack_before_reference", None) or style_packs.DEFAULT_PACK_ID
+            config.pop("custom_style_pack", None)
+            record = (task.get("assets") or {}).get(self.STYLE_REFERENCE_KEY)
+            if isinstance(record, dict):
+                record["applied"] = False
+            return task
+
+        if self.repo.mutate_task(task_id, mutation) is None:
+            return None
+        return self.get_style_reference(task_id)
+
+    # ---------------- 剪辑时间线：成片照它剪，剪映草稿照它写 ----------------
+
+    @staticmethod
+    def _film_title(title: str) -> str:
+        return re.sub(r'^(请帮我?|帮我?)?(生成|制作|来)?(一个|一部)?', '', title or "").strip() or title
+
+    def _current_timeline(self, task: Dict[str, Any], title: str) -> tuple[Dict[str, Any], list]:
+        """The project's timeline, built or refreshed against the clips stage 5 holds now."""
+        shots = [s for s in (task.get("assets", {}).get("5") or []) if isinstance(s, dict) and s.get("video_url")]
+        specs, reports = final_cut_transitions(shots)
+        existing = task.get("assets", {}).get(edit_timeline.TIMELINE_KEY)
+        if isinstance(existing, dict) and edit_timeline.is_current(existing, task):
+            return existing, reports
+        if isinstance(existing, dict):
+            return edit_timeline.refresh(existing, task, transitions=specs, title=self._film_title(title)), reports
+        return edit_timeline.build(task, transitions=specs, title=self._film_title(title)), reports
+
+    def get_timeline(self, task_id: str) -> Optional[Dict[str, Any]]:
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        config = task.get("config") if isinstance(task.get("config"), dict) else {}
+        timeline, _ = self._current_timeline(task, str(config.get("title_suggestion") or ""))
+        if timeline is not task.get("assets", {}).get(edit_timeline.TIMELINE_KEY):
+            self.repo.mutate_task(task_id, lambda current: current.setdefault("assets", {}).__setitem__(edit_timeline.TIMELINE_KEY, timeline))
+        return self._timeline_response(task_id, timeline)
+
+    @staticmethod
+    def _timeline_response(task_id: str, timeline: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "task_id": task_id, "timeline": timeline, "summary": edit_timeline.summary(timeline),
+            "transitions": list(edit_timeline.TRANSITIONS), "bgm_library": [
+                {k: v for k, v in track.items() if k != "path"} for track in bgm_library.list_tracks()
+            ],
+        }
+
+    def edit_timeline(self, task_id: str, operation: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """One edit on the timeline; the film is not re-rendered until asked."""
+        def mutation(task: Dict[str, Any]) -> Dict[str, Any]:
+            config = task.get("config") if isinstance(task.get("config"), dict) else {}
+            timeline, _ = self._current_timeline(task, str(config.get("title_suggestion") or ""))
+            shot_id = payload.get("shot_id")
+            if operation == "trim":
+                timeline = edit_timeline.trim(timeline, shot_id, start=float(payload.get("start") or 0), end=payload.get("end"))
+            elif operation == "transition":
+                timeline = edit_timeline.set_transition(timeline, shot_id, kind=str(payload.get("kind") or "crossfade"), duration=float(payload.get("duration") or 0.22))
+            elif operation == "subtitle":
+                timeline = edit_timeline.set_subtitle(timeline, shot_id, str(payload.get("text") or ""))
+            elif operation == "mute":
+                timeline = edit_timeline.set_muted(timeline, shot_id, bool(payload.get("muted")))
+            elif operation == "candidate":
+                timeline = edit_timeline.choose_candidate(timeline, shot_id, str(payload.get("video_url") or ""))
+            elif operation == "review":
+                timeline = edit_timeline.review(timeline, shot_id, decision=str(payload.get("decision") or "pending"), note=str(payload.get("note") or ""))
+            elif operation == "title":
+                timeline = edit_timeline.set_title(timeline, payload.get("text"))
+            elif operation == "bgm":
+                source = str(payload.get("source") or "none")
+                track = None
+                if source == "library":
+                    track = bgm_library.get_track(str(payload.get("library_id") or ""))
+                    if not track:
+                        raise edit_timeline.TimelineError("配乐库里没有这条音乐")
+                audio = task.get("assets", {}).get("6") if isinstance(task.get("assets", {}).get("6"), dict) else {}
+                timeline = edit_timeline.set_bgm(
+                    timeline, source=source,
+                    path=track["path"] if track else (audio.get("bgm_path") if source == "generated" else None),
+                    url=f"/api/library/bgm/{track['id']}/audio" if track else (audio.get("bgm_url") if source == "generated" else None),
+                    library_id=track["id"] if track else None, name=track["name"] if track else ("阶段 6 生成" if source == "generated" else None),
+                    volume=payload.get("volume"), duck=payload.get("duck"),
+                )
+            else:
+                raise edit_timeline.TimelineError(f"未知的时间线操作：{operation}")
+            task.setdefault("assets", {})[edit_timeline.TIMELINE_KEY] = timeline
+            return task
+
+        updated = self.repo.mutate_task(task_id, mutation)
+        if updated is None:
+            return None
+        return self._timeline_response(task_id, updated["assets"][edit_timeline.TIMELINE_KEY])
+
+    def render_timeline(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """Re-render the film from the timeline as it is now; stage 7's record is updated in place."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        if self._has_running_generation(task):
+            raise ScriptUpdateConflictError("项目仍有生成任务运行，请等待结束后再合成")
+        config = task.get("config") if isinstance(task.get("config"), dict) else {}
+        timeline, reports = self._current_timeline(task, str(config.get("title_suggestion") or ""))
+        plan = edit_timeline.render_plan(timeline)
+        if not plan["shot_video_urls"]:
+            raise ValueError("时间线上没有可用的镜头片段（都被打回或尚未生成）")
+        composed = media_compositor.compose_film(
+            plan["shot_video_urls"], plan["subtitles"], plan["audio_path"], tag=f"film_{task_id[:8]}", title=plan["title"], bgm=plan["bgm"],
+            shot_voices=plan["shot_voices"] if any(plan["shot_voices"]) else None, bgm_path=plan["bgm_path"], sfx_path=plan["sfx_path"],
+            transition_plans=plan["transition_plans"], trims=plan["trims"], bgm_volume=plan["bgm_volume"],
+        )
+        if not composed:
+            raise ValueError("成片合成失败（缺 ffmpeg 或片段不可用）")
+
+        def mutation(current: Dict[str, Any]) -> Dict[str, Any]:
+            current.setdefault("assets", {})[edit_timeline.TIMELINE_KEY] = timeline
+            record = current["assets"].get("7") if isinstance(current["assets"].get("7"), dict) else {}
+            record.update({
+                "final_video_url": composed, "shot_clips": plan["shot_video_urls"], "transition_quality": reports,
+                "timeline_revision": timeline.get("revision"), "timeline_summary": edit_timeline.summary(timeline),
+                "compose_mode": "按剪辑时间线重新合成", "rendered_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            })
+            current["assets"]["7"] = record
+            current["video_url"] = composed
+            return current
+
+        self.repo.mutate_task(task_id, mutation)
+        return {"task_id": task_id, "final_video_url": composed, "summary": edit_timeline.summary(timeline)}
+
+    def jianying_draft(self, task_id: str) -> Optional[tuple[bytes, Dict[str, Any]]]:
+        """The timeline as a JianYing draft folder, zipped with its media."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        config = task.get("config") if isinstance(task.get("config"), dict) else {}
+        timeline, _ = self._current_timeline(task, str(config.get("title_suggestion") or ""))
+        name = self._film_title(str(config.get("title_suggestion") or "")) or f"short-drama-{task_id[:8]}"
+        draft = jianying.build_draft(timeline, name=name, resolve_local=media_compositor._local_media_source)
+        folder = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", name)[:40] or f"draft_{task_id[:8]}"
+        return jianying.pack(draft, folder_name=folder), {"name": name, "skipped": draft["skipped"], "duration_seconds": draft["duration_seconds"], "files": len(draft["files"])}
+
+    # ---------------- 生成队列：排队中的可取消，运行中的让它跑完 ----------------
+
+    def get_generation_queue(self, task_id: str) -> Optional[Dict[str, Any]]:
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        snapshot = generation_queue.snapshot_of(task) or {"items": [], "counts": {}, "buckets": {}, "run_id": None, "updated_at": None}
+        running = task.get("status") == "running" and int((task.get("stage_progress") or {}).get("stage") or 0) == 5
+        return {"task_id": task_id, "running": running, **snapshot}
+
+    def cancel_generation_item(self, task_id: str, key: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Withdraw one queued item (or every queued one when ``key`` is None); running items keep going."""
+        def mutate(task: Dict[str, Any]) -> Dict[str, Any]:
+            return generation_queue.request_cancel(task, key) if key else generation_queue.request_cancel_queued(task)
+
+        if self.repo.mutate_task(task_id, mutate) is None:
+            return None
+        return self.get_generation_queue(task_id)
+
+    def reconcile_generation_queues(self) -> Dict[str, int]:
+        """After a restart: items a dead process left running go back to queued unless a provider job still holds them."""
+        requeued = 0
+        for task in self.repo.list_all_tasks():
+            if not generation_queue.snapshot_of(task):
+                continue
+            keys = self.repo.mutate_task(task["task_id"], generation_queue.reconcile_after_restart) or []
+            requeued += len(keys)
+        return {"requeued": requeued}
+
+    def _record_video_job(self, task_id: str, entry: Dict[str, Any]) -> None:
+        self.repo.mutate_task(task_id, lambda task: video_jobs.apply_to_task(task, entry))
+
+    def resume_interrupted_video_jobs(self) -> Dict[str, int]:
+        """After a restart: finish polling every accepted video job, recording its clip or its failure.
+
+        Nothing is re-submitted. A job whose provider cannot be asked again is marked
+        failed with the reason, so the next stage-5 run generates that shot afresh.
+        """
+        resumed = {"downloaded": 0, "failed": 0}
+        for task in self.repo.list_all_tasks():
+            if not isinstance(task, dict) or not task.get("task_id"):
+                continue
+            for job in video_jobs.pending_jobs(task):
+                outcome = video_jobs.resume_outcome(job, self.gateway.resume_video_job)
+                self.repo.mutate_task(task["task_id"], lambda current, outcome=outcome: video_jobs.apply_to_task(current, outcome))
+                resumed["downloaded" if outcome["status"] == video_jobs.DOWNLOADED else "failed"] += 1
+                logger.info("[VideoJobs] 续查 task=%s key=%s -> %s %s", task["task_id"], job.get("key"), outcome["status"], outcome.get("error") or "")
+        return resumed
+
+    def _record_usage(self, task_id: str, entry: Dict[str, Any]) -> None:
+        self.repo.mutate_task(task_id, lambda task: usage_ledger.append_to_task(task, entry))
+
+    def change_asset_identity(
+        self, task_id: str, *, operation: str, kind: str, name: str, new_name: str, dry_run: bool,
+        owner_user_id: Optional[str] = None, is_admin: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Rename or merge an asset across the script plan, breakdown, sheets and shots; dry runs only count."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        preview = asset_identity.preview_merge if operation == "merge" else asset_identity.preview_rename
+        if dry_run:
+            return preview(task, kind, name, new_name).as_dict()
+        if self._has_running_generation(task):
+            raise ScriptUpdateConflictError("项目仍有生成任务运行，请等待结束后再改资产名")
+        apply = asset_identity.merge_assets if operation == "merge" else asset_identity.rename_asset
+        holder: Dict[str, Any] = {}
+
+        def mutation(current: Dict[str, Any]) -> Dict[str, Any]:
+            holder["impact"] = apply(current, kind, name, new_name)
+            current_assets = current.setdefault("assets", {})
+            if screenwriting.state_of(current) is not None:
+                # References moved; the text and breakdown the rest of the pipeline reads are re-projected.
+                screenwriting.apply_state(current_assets, screenwriting.state_of(current))
+            current_assets["2_writer_dashboard"] = compile_writer_dashboard(current).model_dump(mode="json", by_alias=True)
+            if current_assets.get("3_characters") is not None or current_assets.get("3_sheets"):
+                current_assets["3_character_dashboard"] = compile_character_dashboard(current).model_dump(mode="json", by_alias=True)
+            return current
+
+        self.repo.mutate_task(task_id, mutation)
+        return holder["impact"].as_dict()
+
+    def episode_subtitles(self, task_id: str, episode: int) -> Optional[Dict[str, Any]]:
+        """A subtitle draft for one planned episode, timed by reading length within each shot."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        state = screenwriting.state_of(task)
+        entry = (state or {}).get("episodes", {}).get(str(int(episode))) if state else None
+        if not isinstance(entry, dict):
+            raise LookupError(f"第 {episode} 集没有结构化编剧记录，无法生成字幕草稿")
+        script = entry.get("script") if isinstance(entry.get("script"), dict) else {}
+        scenes = [scene for scene in (script.get("scenes") or []) if isinstance(scene, dict)]
+        cues = episode_cues(scenes, language=str(state.get("language") or "zh"))
+        return {
+            "task_id": task_id, "episode": int(episode), "cues": [cue.as_dict() for cue in cues],
+            "srt": render_srt(cues), "total_seconds": sum(int(scene.get("duration_seconds") or 0) for scene in scenes),
+        }
+
+    def usage_summary(self, task_id: str, *, limit: int = 50) -> Optional[Dict[str, Any]]:
+        """What a project has spent on provider calls, with its newest records."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        records = task.get("usage_records") if isinstance(task.get("usage_records"), list) else []
+        return {
+            "task_id": task_id,
+            "summary": usage_ledger.summarize(records),
+            "records": list(reversed(records[-max(0, int(limit)):])),
+            "pricing_entries": len(pricing_table()),
+        }
+
+    def assess_video_admission(self, task_id: str, *, confirmed_request_durations: Optional[List[Dict[str, Any]]] = None,
+                               persist_confirmations: bool = False) -> Optional[Dict[str, Any]]:
+        """Admission of the project's shots to stage 5; optionally record the confirmed duration tiers."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        if persist_confirmations and confirmed_request_durations is not None:
+            pairs = [
+                {"scripted_seconds": int(item.get("scripted_seconds") or 0), "requested_seconds": int(item.get("requested_seconds") or 0)}
+                for item in confirmed_request_durations if isinstance(item, dict)
+            ]
+
+            def remember(current: Dict[str, Any]) -> Dict[str, Any]:
+                config = current.setdefault("config", {})
+                known = {(p["scripted_seconds"], p["requested_seconds"]) for p in (config.get("confirmed_request_durations") or []) if isinstance(p, dict)}
+                config["confirmed_request_durations"] = [
+                    {"scripted_seconds": a, "requested_seconds": b} for a, b in sorted(known | {(p["scripted_seconds"], p["requested_seconds"]) for p in pairs})
+                ]
+                return current
+
+            task = self.repo.mutate_task(task_id, remember) or task
+        admission = assess_video_batch(
+            task, provider_ready=ModelGateway.video_family_ready,
+            confirmed_request_durations=confirmed_request_durations if not persist_confirmations else None,
+        )
+        payload = admission.as_dict()
+        self.repo.mutate_task(task_id, lambda current: current.setdefault("assets", {}).__setitem__("5_admission", payload))
+        return payload
 
     def _ensure_agent_council(self, task: Dict[str, Any]) -> dict:
         """Return the typed eight-agent plan, compiling it for legacy tasks when needed."""
@@ -750,12 +1210,12 @@ class DramaService:
             audience="18-35 岁移动端短剧观众",
             platform="douyin",
             format="live_action",
-            episode_count=max(1, min(150, int(config.get("episode_count") or 3))),
+            episode_count=_bounded_episode_count(config.get("episode_count")),
             episode_duration_seconds=90,
             output_language="zh-CN",
             visual_style=str(config.get("director_style") or "写实电影感"),
             action_intensity=(
-                "high" if self.gateway.get_genre(title) in {"military", "sports", "wuxia", "xianxia"}
+                "high" if self.gateway.get_genre(title) in self.FIGHT_GENRES
                 else "medium"
             ),
         )
@@ -782,25 +1242,6 @@ class DramaService:
                 return str(agent.get("system_prompt") or "")
         raise RuntimeError(f"八 Agent 计划缺少角色：{role.value}")
 
-    def read_md_file(self, filename: str) -> str:
-        """Load one prompt document from the repository root.
-
-        The prompt .md files live beside the backend/ directory, so the root is
-        three levels above this module. DRAMA_PROMPT_ROOT overrides it for
-        deployments that ship the prompts elsewhere.
-        """
-        root = os.getenv("DRAMA_PROMPT_ROOT") or str(Path(__file__).resolve().parents[3])
-        path = os.path.join(root, filename)
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return f.read()
-            except Exception as e:
-                logger.error(f"读取md文件 {filename} 失败: {str(e)}")
-        else:
-            logger.warning("提示词文件不存在: %s", path)
-        return ""
-
     def split_shot_action(self, desc: str, creative_title: str) -> tuple:
         """
         将一个镜头的动作描述拆解为前后两个阶段的画面描述，分别用于生成多组图片
@@ -808,7 +1249,7 @@ class DramaService:
         sys_prompt = "You are a storyboard artist. Split the given visual description into two consecutive keyframe visual prompts for image generation. Output format: Part 1: [prompt for keyframe 1] | Part 2: [prompt for keyframe 2]. Do not output anything else."
         user_prompt = f"Please split this action description: {desc}"
         try:
-            res = self.gateway.call_llm("deepseek-chat", sys_prompt, user_prompt, creative_title)
+            res = self.gateway.call_llm(GATEWAY_DEFAULT_MODELS["deepseek"], sys_prompt, user_prompt, creative_title)
             if "|" in res:
                 parts = res.split("|")
                 p1 = parts[0].replace("Part 1:", "").strip()
@@ -849,7 +1290,7 @@ class DramaService:
                 if media_compositor._download(url, local_path):
                     norm_path = os.path.join(work, f"norm_{i}.mp4")
                     scale_pad = f"scale={media_compositor.OUT_W}:-2,pad={media_compositor.OUT_W}:{media_compositor.OUT_H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
-                    cmd = [ff, "-y", "-i", local_path, "-vf", scale_pad, "-r", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", norm_path]
+                    cmd = [ff, "-y", "-i", local_path, "-vf", scale_pad, "-r", str(media_compositor.OUT_FPS), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", norm_path]
                     subprocess.run(cmd, check=True, timeout=90, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     local_files.append(norm_path)
             
@@ -873,10 +1314,17 @@ class DramaService:
             if 'work' in locals():
                 shutil.rmtree(work, ignore_errors=True)
 
+    QC_REPORT_MAX_ROWS = 12
+
+    @staticmethod
+    def qc_max_tokens() -> int:
+        """Output budget of one self-check (QC_MAX_TOKENS); reasoning models spend part of it thinking."""
+        return settings.env_int("QC_MAX_TOKENS", 2500, minimum=500, maximum=8000)
+
     def run_real_consistency_check(self, stage: int, stage_name: str, assets: dict, config: dict, creative_title: str,
                                    task_id: str = "") -> str:
         """
-        读取 "AI 生成短剧一致性检查清单.md" 内容，使用大模型对当前阶段的 assets 进行真实的自检和核验，并输出打分表格。
+        读取 consistency-checklist（production-knowledge-master 技能里的一致性检查清单）内容，使用大模型对当前阶段的 assets 进行真实的自检和核验，并输出打分表格。
         task_id 供知识进化钩子做审计溯源；不传时进化日志记空串，质检本身不受影响。
         """
         # 经 production-knowledge-master 装载器读取(同一根部文件，登记预算 3500，行边界截断)
@@ -884,9 +1332,10 @@ class DramaService:
         
         sys_prompt = (
             "Role: AI 短剧终极质检专家 (Quality Control Hook Agent)\n"
-            "Methodology: 遵循 `AI 生成短剧一致性检查清单.md` 质检准则，对当前阶段生成的真实资产进行客观审查打分。\n"
+            f"Methodology: 遵循《{section_title('consistency-checklist')}》质检准则，对当前阶段生成的真实资产进行客观审查打分。\n"
             "输出格式：标准的 Markdown 质检自检报告表格。表格必须包含列：检查维面 | 质检内容 | 状态得分 | 状态说明。\n"
-            "最后对本阶段给出一个总体结论和一致性评分。"
+            f"只列与本阶段资产相关的检查项，表格不超过 {self.QC_REPORT_MAX_ROWS} 行，每格一句话；"
+            "最后用不超过 120 字给出总体结论和一致性评分。不要复述清单原文。"
         )
         
         # 提取当前阶段的资产特征
@@ -908,8 +1357,10 @@ class DramaService:
         )
         
         try:
-            llm_model = config.get("llm_model", "deepseek-chat")
-            res = self.gateway.call_llm(llm_model, sys_prompt, user_prompt, creative_title)
+            llm_model = config.get("llm_model", GATEWAY_DEFAULT_MODELS["deepseek"])
+            # The report is a gate, not a deliverable: an uncapped "100+ 项" table on a reasoning
+            # model ran past six minutes after every stage, longer than the stage's own work.
+            res = self.gateway.call_llm(llm_model, sys_prompt, user_prompt, creative_title, max_tokens=self.qc_max_tokens())
             if res and "|" in res:
                 report = f"🪝 **[HOOK 拦截器触发] `PostAgentCallHook ({stage_name}质检)`**\n\n{res}"
                 # 知识进化钩子：从真实质检报告蒸馏候选教训并按命中晋升/退休。
@@ -1001,8 +1452,14 @@ class DramaService:
                 "video_model": req.video_model,
                 "tts_model": req.tts_model,
                 "video_reference_mode": req.video_reference_mode,
+                "narration_delivery": req.narration_delivery,
+                "creation_mode": req.creation_mode,
+                # The engine reads source_language; content_language is what the person chose.
+                "content_language": req.content_language,
+                "source_language": req.content_language,
+                "ad_brief": req.ad_brief.model_dump() if req.ad_brief else {},
                 "one_click": req.one_click,
-                "episode_count": max(1, min(150, int(getattr(req, "episode_count", 3) or 3))),
+                "episode_count": _bounded_episode_count(getattr(req, "episode_count", None)),
                 "guidance_instruction": "",
                 "script_content": req.script_content,
                 "script_name": req.script_name
@@ -1118,12 +1575,18 @@ class DramaService:
             str(clip.get("shot_id")): clip
             for clip in (assets.get("5") or []) if isinstance(clip, dict)
         }
+        # 没出过片的镜头也要能给 @[名字] 着色：项目里的角色先按数字演员认。
+        character_kinds = {
+            str(item.get("name") or ""): "actor"
+            for item in (assets.get("3_characters") or []) if isinstance(item, dict) and item.get("name")
+        }
         records = []
         for index, shot in enumerate(assets.get("4") or [], start=1):
             if not isinstance(shot, dict):
                 continue
             shot_id = int(shot.get("shot_id") or index)
             clip = clips.get(str(shot_id)) or {}
+            prompt_override = str(shot.get("video_prompt_override") or "").strip()
             edited = shot.get("visual") if isinstance(shot.get("visual"), dict) else None
             notes: list[str] = []
             if edited:
@@ -1148,11 +1611,19 @@ class DramaService:
                 video_url=clip.get("video_url"),
                 candidate_urls=[str(url) for url in (clip.get("candidates") or []) if url],
                 image_prompt=str(shot.get("storyboard_prompt") or ""),
-                video_prompt=str(clip.get("motion_prompt") or clip.get("contract_motion_prompt") or ""),
+                video_prompt=prompt_override or str(clip.get("motion_prompt") or clip.get("contract_motion_prompt") or ""),
                 contract_fingerprint=str(shot.get("contract_fingerprint") or ""),
                 route=clip.get("video_route_decision") if isinstance(clip.get("video_route_decision"), dict) else None,
                 stale=bool(clip.get("stale")),
                 stale_reason=str(clip.get("stale_reason") or ""),
+                video_prompt_edited=bool(prompt_override),
+                mention_kinds={**character_kinds, **{
+                    str(name): str(kind) for name, kind in (clip.get("mention_kinds") or {}).items()
+                }},
+                reference_numbers={
+                    str(name): int(number) for name, number in (clip.get("reference_numbers") or {}).items()
+                    if isinstance(number, int)
+                },
             ))
         vocab = camera_vocabulary()
         return ShotVisualWorkspaceResponse(
@@ -1229,6 +1700,36 @@ class DramaService:
             return None
         return self.get_shot_visual_workspace(task_id)
 
+    def regenerate_shot(self, task_id: str, shot_id: int, *, reason: str = "") -> Optional[Dict[str, Any]]:
+        """Ask for one shot's clip to be made again: it is marked stale, the rest stay reused on the next run."""
+        def mutate(task: Dict[str, Any]) -> Dict[str, Any]:
+            assets = task.setdefault("assets", {})
+            if task.get("status") == "running" and int((task.get("stage_progress") or {}).get("stage") or 0) == 5:
+                raise LookupError("第 5 阶段正在运行，等它结束后再要求重做")
+            clip = next(
+                (item for item in (assets.get("5") or []) if isinstance(item, dict) and str(item.get("shot_id")) == str(shot_id)),
+                None,
+            )
+            if clip is None:
+                raise LookupError("该镜头尚未生成视频，重跑第 5 阶段即可生成")
+            clip["stale"] = True
+            clip["stale_reason"] = (reason.strip() or "人工要求重新生成") + "，重跑第 5 阶段时只重做本镜，其余镜头沿用"
+            # A resumed or recorded job for this shot must not be handed back as the "same request".
+            jobs = assets.get(video_jobs.JOBS_KEY)
+            if isinstance(jobs, dict):
+                for key in list(jobs):
+                    if str(key).split(":")[0] == str(shot_id):
+                        jobs.pop(key, None)
+            return task
+
+        try:
+            updated = self.repo.mutate_task(task_id, mutate)
+        except LookupError as exc:
+            raise ValueError(str(exc)) from exc
+        if not updated:
+            return None
+        return self.get_shot_visual_workspace(task_id)
+
     def compose_shot_recipe(self, task_id: str, shot_id: int, category: str, intensity: str) -> Optional[Dict[str, Any]]:
         """A category/intensity camera recipe filled with this shot's action, scene and light."""
         task = self.repo.get_task(task_id)
@@ -1252,6 +1753,124 @@ class DramaService:
             provider_family=normalize_video_provider(video_model).family,
         )
         return recipe.model_dump()
+
+    def _render_actor_sheet(
+        self, *, name: str, desc: str, image_model: str, dir_style: str, genre: str,
+        extra_negative: str, max_attempts: int, ref_images: list | None = None,
+    ) -> Dict[str, Any]:
+        """一名角色的设定集付费调用：生成 → 拆成各个格子 → 补齐缺格 → 逐格质检，失败按次数重试。
+
+        只读 gateway 与入参，不碰 task，所以第 3 阶段可以并发调用；单个角色的「重新生成」走的也是它。
+        返回 {sheet, views, cells, quality, phase, error}。
+        """
+        sheet_url = None
+        views: list = []
+        cells: list = []
+        quality_payload = None
+        failure_phase = "generation_error"
+        last_error: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            sheet_url = None
+            views = []
+            cells = []
+            quality_payload = None
+            failure_phase = "generation_error"
+            try:
+                sheet_url = self.gateway.generate_character_sheet(
+                    image_model, name, desc, dir_style, genre=genre,
+                    ref_images=ref_images, extra_negative=extra_negative,
+                )
+                if not sheet_url:
+                    raise RuntimeError(f"角色「{name}」设定集生成失败")
+
+                failure_phase = "split_error"
+                view_digest = hashlib.sha256(f"{name}|{sheet_url}".encode("utf-8")).hexdigest()[:16]
+                view_dir = os.path.join(media_compositor.MEDIA_DIR, "character_views", view_digest)
+                # 一张设定集拆成最多 25 个独立资产，全部落库——用户要的是每一格都能单看。
+                cell_paths = split_actor_sheet(sheet_url, view_dir)
+                # 模型没画的元素/细节格从已画出的身份面板里按部位补裁：数字演员 25 张图一张不缺。
+                cell_paths, derived_cells = complete_actor_sheet_cells(cell_paths)
+                # 其中五格是身份锚点：看板、资产库复用与后续阶段读的就是它们。
+                cells, views = self._actor_cell_records(cell_paths, derived_cells, set())
+
+                failure_phase = "quality_error"
+                sheet_quality = validate_actor_sheet_images(cell_paths)
+                quality_payload = sheet_quality.model_dump()
+                if not sheet_quality.passed:
+                    raise RuntimeError(
+                        f"角色「{name}」设定集质检失败："
+                        + "；".join(issue.message for issue in sheet_quality.issues)
+                    )
+                # 设定集里的身份格只有几百像素，放大就糊：再出两张高清三联替换六个身份视图(失败就保留原裁切)。
+                hd_cells: set[str] = set()
+                if hd_identity_views_enabled():
+                    hd_paths, hd_replaced = self._apply_hd_identity_views(
+                        name=name, desc=desc, image_model=image_model, dir_style=dir_style,
+                        references=[sheet_url], cell_paths=cell_paths,
+                    )
+                    hd_quality = validate_actor_sheet_images(hd_paths) if hd_replaced else None
+                    if hd_quality is not None and hd_quality.passed:
+                        cell_paths, quality_payload, hd_cells = hd_paths, hd_quality.model_dump(), hd_replaced
+                        for cell in hd_cells:
+                            derived_cells.pop(cell, None)
+                # 模型漏画、只能补位裁切的元素/细节格，再出一张特写拼板真正画出来(失败就保留补位)。
+                if detail_fill_enabled() and fillable(derived_cells):
+                    fill_paths, filled = self._apply_detail_fill(
+                        name=name, desc=desc, image_model=image_model, dir_style=dir_style,
+                        references=[sheet_url], cell_paths=cell_paths, cells=list(derived_cells),
+                    )
+                    fill_quality = validate_actor_sheet_images(fill_paths) if filled else None
+                    if fill_quality is not None and fill_quality.passed:
+                        cell_paths, quality_payload = fill_paths, fill_quality.model_dump()
+                        for cell in filled:
+                            derived_cells.pop(cell, None)
+                cells, views = self._actor_cell_records(cell_paths, derived_cells, hd_cells)
+                last_error = None
+                break
+            except Exception as char_error:  # noqa: BLE001 - 每次失败都记下阶段，按次数重试
+                last_error = char_error
+                if attempt < max_attempts:
+                    logger.warning(
+                        "[Stage3] 数字演员设定集生成重试: character=%s attempt=%s/%s phase=%s",
+                        name, attempt, max_attempts, failure_phase,
+                    )
+        return {"sheet": sheet_url, "views": views, "cells": cells,
+                "quality": quality_payload, "phase": failure_phase, "error": last_error}
+
+    def set_shot_video_prompt(self, task_id: str, shot_id: int, prompt: str | None) -> Optional[Dict[str, Any]]:
+        """保存人工改写的视频提示词(空串/None 恢复自动编译)；本镜已出的片标记为待重做。"""
+        def mutate(task: Dict[str, Any]) -> Dict[str, Any]:
+            if self._has_running_generation(task):
+                raise ValueError("任务正在执行阶段，暂不能修改提示词")
+            assets = task.setdefault("assets", {})
+            shots = assets.get("4") if isinstance(assets.get("4"), list) else []
+            target = next(
+                (shot for index, shot in enumerate(shots, start=1)
+                 if isinstance(shot, dict) and int(shot.get("shot_id") or index) == shot_id),
+                None,
+            )
+            if target is None:
+                raise LookupError("镜头不存在，请先完成第 4 阶段分镜")
+            text = (prompt or "").strip()
+            if text:
+                target["video_prompt_override"] = text
+            else:
+                target.pop("video_prompt_override", None)
+            for clip in assets.get("5") or []:
+                if isinstance(clip, dict) and str(clip.get("shot_id")) == str(shot_id):
+                    clip["stale"] = True
+                    clip["stale_reason"] = (
+                        "视频提示词已人工修改，重新生成本镜后生效" if text else "已恢复自动编译的提示词，重新生成本镜后生效"
+                    )
+            return task
+
+        try:
+            updated = self.repo.mutate_task(task_id, mutate)
+        except LookupError as exc:
+            raise ValueError(str(exc)) from exc
+        if not updated:
+            return None
+        return self.get_shot_visual_workspace(task_id)
 
     def update_shot_visual(self, task_id: str, shot_id: int, settings) -> Optional[Dict[str, Any]]:
         """Persist one shot's camera settings onto its stage-4 record and motion contract.
@@ -1465,6 +2084,19 @@ class DramaService:
             raise LookupError(f"场景 {scene_id} 不在剧本大纲里")
         return self._spatial_response(task, scene_id, preview, persisted=False)
 
+    def get_spatial_repairs(self, task_id: str, scene_id: str) -> Optional[Dict[str, Any]]:
+        """What would clear the scene's failing checks, as operations; nothing is written."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        plan = spatial_stage.load_plan(task, scene_id) or spatial_stage.ensure_plan(deepcopy(task), scene_id)
+        if plan is None:
+            raise LookupError(f"场景 {scene_id} 不在剧本大纲里")
+        from app.core.spatial_stage import repair as stage_repair
+
+        proposals = stage_repair.propose(plan)
+        return {"task_id": task_id, "scene_id": scene_id, "revision": plan.revision, **stage_repair.summary(proposals)}
+
     def _mutate_spatial(self, task_id: str, scene_id: str, change) -> Optional[Dict[str, Any]]:
         def mutate(task: Dict[str, Any]) -> Dict[str, Any]:
             if self._has_running_generation(task):
@@ -1643,62 +2275,97 @@ class DramaService:
             return None
         return compile_writer_dashboard(task)
 
-    def ensure_production_asset_catalog(self, task_id: str) -> Optional[Dict[str, List[Dict[str, str]]]]:
-        """Return and persist a complete screenplay-grounded shooting-asset catalog.
+    _CATALOG_KEYS = ("scenes", "props", "costumes", "effects")
+    # A screenplay may truly have no costume note or no effect; these are asked for once per
+    # version of the script instead of on every page open.
+    _OPTIONAL_CATALOG_KEYS = ("costumes", "effects")
+    _CATALOG_CHECKED_KEY = "production_assets_checked"
 
-        New stage-2 runs produce this catalog as part of their normal breakdown.
-        Older projects are repaired with one focused analysis pass so their
-        location/prop/costume/effect libraries do not remain permanently empty.
-        """
-        task = self.repo.get_task(task_id)
-        if not task:
-            return None
+    @staticmethod
+    def _catalog_script(task: Dict[str, Any]) -> str:
         assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
         config = task.get("config") if isinstance(task.get("config"), dict) else {}
+        return str(assets.get("2") or config.get("script_content") or "")
+
+    def _catalog_kinds_to_fill(self, task: Dict[str, Any]) -> List[str]:
+        """Catalog lists the screenplay analysis still owes this task, in catalog order."""
+        assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
         breakdown = assets.get("2_breakdown") if isinstance(assets.get("2_breakdown"), dict) else {}
         existing = breakdown.get("production_assets")
-        catalog_keys = ("scenes", "props", "costumes", "effects")
         if (
-            isinstance(existing, dict)
-            and all(isinstance(existing.get(key), list) for key in catalog_keys)
-            and bool(existing.get("scenes"))
+            not isinstance(existing, dict)
+            or not all(isinstance(existing.get(key), list) for key in self._CATALOG_KEYS)
+            or not existing.get("scenes")
         ):
-            return {key: existing[key] for key in catalog_keys}
+            return list(self._CATALOG_KEYS)
+        checked = breakdown.get(self._CATALOG_CHECKED_KEY)
+        fingerprint = hashlib.sha1(self._catalog_script(task).encode("utf-8")).hexdigest()[:16]
+        done = set(checked.get("kinds") or []) if isinstance(checked, dict) and checked.get("fingerprint") == fingerprint else set()
+        return [key for key in self._OPTIONAL_CATALOG_KEYS if not existing.get(key) and key not in done]
 
-        script = str(assets.get("2") or config.get("script_content") or "")
+    def _analyze_production_catalog(self, task: Dict[str, Any], kinds: List[str]) -> Dict[str, List[Dict[str, str]]]:
+        """One screenplay-grounded analysis pass for the catalog lists in ``kinds``."""
+        assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
+        config = task.get("config") if isinstance(task.get("config"), dict) else {}
+        script = self._catalog_script(task)
         if not script.strip():
             raise ValueError("剧本尚未生成，无法提取拍摄资产")
-
+        shapes = {
+            "scenes": '"scenes": [{"name": "实际拍摄地点名", "description": "时段、内外景、空间布局和剧情用途"}]',
+            "props": '"props": [{"name": "具体道具名", "description": "外观、状态、持有人和出现情节"}]',
+            "costumes": '"costumes": [{"name": "角色名·造型名", "character": "穿着者", "description": "款式、颜色、材质、配饰和穿着的剧情阶段"}]',
+            "effects": '"effects": [{"name": "具体特效名", "description": "视觉形态、颜色、运动方式、触发时机和出现的场次"}]',
+        }
+        rules = {
+            "costumes": (
+                "服装（costumes）：为每位具名角色登记剧中可辨认的每一套造型，换装（喜服、囚衣、战甲、夜行衣、前世/今生两身）另登记一套；"
+                "name 写「角色名·造型名」，如「沈知微·素白医官袍」；description 写款式、颜色、材质、配饰（发饰、腰带、鞋履）和在哪段剧情穿，"
+                "必须与下方角色视觉设定里写的服装一致；剧本与设定都没写服装的角色，按时代与身份登记一套主造型，description 末尾注明「（按身份推定）」。"
+            ),
+            "effects": (
+                "特效（effects）：收录需要合成或现场效果配合的视觉现象——暴雨雨幕、大雪、浓雾、火焰烟尘、爆炸破碎、血迹飞溅、"
+                "法术光效、符咒剑气、超自然现象、全息屏幕等；name 写具体，如「九霄殿金色神光」；普通布光、景别、运镜不算特效。"
+            ),
+        }
         sys_prompt = (
             "你是影视制片资产拆解师。逐段阅读剧本，只输出一个合法 JSON 对象，禁止输出解释或 markdown。\n"
-            "结构必须为：\n"
-            "{\n"
-            '  "scenes": [{"name": "实际拍摄地点名", "description": "时段、内外景、空间布局和剧情用途"}],\n'
-            '  "props": [{"name": "具体道具名", "description": "外观、状态、持有人和出现情节"}],\n'
-            '  "costumes": [{"name": "具体服装造型名", "description": "角色、款式、材质、颜色和剧情阶段"}],\n'
-            '  "effects": [{"name": "具体特效名", "description": "视觉形态、触发时机、环境交互和镜头用途"}]\n'
-            "}\n"
+            "结构必须为：\n{\n  " + ",\n  ".join(shapes[key] for key in kinds) + "\n}\n"
             "只收录剧本有明确文字依据、需要实际拍摄准备或视觉生成的资产；同物异名必须合并。"
             "不要把人物、情绪、抽象主题、普通动作或摄影术语当作资产。"
-            "火焰、烟雾、雨雪、破碎、飞溅等需要合成或现场效果配合的内容归入 effects。"
-            "每类最多 60 项；没有内容时必须输出空数组。"
+            "火焰、烟雾、雨雪、破碎、飞溅等需要合成或现场效果配合的内容归入 effects。\n"
+            + "".join(rules[key] + "\n" for key in kinds if key in rules)
+            + "每类最多 60 项；没有内容时必须输出空数组。"
         )
+        cast_block = ""
+        if "costumes" in kinds:
+            state = screenwriting.state_of(task) or {}
+            inventory = state.get("inventory") if isinstance(state.get("inventory"), dict) else {}
+            looks = {
+                str(name): str((entry or {}).get("description") or "")
+                for name, entry in (inventory.get("characters") or {}).items()
+                if isinstance(entry, dict)
+            }
+            for character in assets.get("3_characters") or []:
+                if isinstance(character, dict) and character.get("name") and len(str(character.get("desc") or "")) > 12:
+                    looks.setdefault(str(character["name"]), str(character["desc"]))
+            lines = [f"- {name}：{look[:600]}" for name, look in looks.items() if look.strip()]
+            if lines:
+                cast_block = "【角色视觉设定】：\n" + "\n".join(lines[:20]) + "\n\n"
         title = str(config.get("title_suggestion") or "未命名短剧")
         result = self.gateway.call_llm(
             str(config.get("llm_model") or ""),
             sys_prompt,
-            f"【短剧标题】：{title}\n\n【剧本原文】：\n{script}",
+            f"【短剧标题】：{title}\n\n{cast_block}【剧本原文】：\n{script}",
             title,
             str(config.get("director_style") or ""),
             str(config.get("shot_style") or ""),
-            max_tokens=self.SCRIPT_BATCH_MAX_TOKENS,
         )
         parsed = extract_json_object(result)
         if not isinstance(parsed, dict):
             raise ValueError("拍摄资产分析未返回可用结果，请稍后重试")
 
         normalized: Dict[str, List[Dict[str, str]]] = {}
-        for key in catalog_keys:
+        for key in kinds:
             items: List[Dict[str, str]] = []
             seen_names = set()
             for item in parsed.get(key) or []:
@@ -1708,15 +2375,56 @@ class DramaService:
                 if not name or name in seen_names:
                     continue
                 seen_names.add(name)
-                items.append({
-                    "name": name,
-                    "description": re.sub(
-                        r"\s+", " ", str(item.get("description") or "")
-                    ).strip()[:2000],
-                })
+                description = re.sub(r"\s+", " ", str(item.get("description") or "")).strip()[:2000]
+                entry = {"name": name, "description": description}
+                wearer = re.sub(r"\s+", " ", str(item.get("character") or "")).strip()[:80]
+                if key == "costumes" and wearer:
+                    entry["character"] = wearer
+                    if wearer not in description:
+                        entry["description"] = f"{wearer}穿着；{description}".rstrip("；")[:2000]
+                items.append(entry)
                 if len(items) >= 60:
                     break
             normalized[key] = items
+        return normalized
+
+    def _fill_production_catalog(self, task: Dict[str, Any]) -> Tuple[Dict[str, List[Dict[str, str]]], bool]:
+        """Fill what the catalog still lacks on ``task`` in place; returns (catalog, changed)."""
+        kinds = self._catalog_kinds_to_fill(task)
+        assets = task.setdefault("assets", {})
+        breakdown = assets.get("2_breakdown") if isinstance(assets.get("2_breakdown"), dict) else {}
+        existing = breakdown.get("production_assets") if isinstance(breakdown.get("production_assets"), dict) else {}
+        if not kinds:
+            return {key: list(existing.get(key) or []) for key in self._CATALOG_KEYS}, False
+        found = self._analyze_production_catalog(task, kinds)
+        catalog = {key: found[key] if key in found else list(existing.get(key) or []) for key in self._CATALOG_KEYS}
+        fingerprint = hashlib.sha1(self._catalog_script(task).encode("utf-8")).hexdigest()[:16]
+        checked = breakdown.get(self._CATALOG_CHECKED_KEY)
+        earlier = set(checked.get("kinds") or []) if isinstance(checked, dict) and checked.get("fingerprint") == fingerprint else set()
+        breakdown["production_assets"] = catalog
+        breakdown[self._CATALOG_CHECKED_KEY] = {
+            "fingerprint": fingerprint,
+            "kinds": sorted(earlier | {key for key in kinds if key in self._OPTIONAL_CATALOG_KEYS}),
+        }
+        assets["2_breakdown"] = breakdown
+        return catalog, True
+
+    def ensure_production_asset_catalog(self, task_id: str) -> Optional[Dict[str, List[Dict[str, str]]]]:
+        """Return and persist a complete screenplay-grounded shooting-asset catalog.
+
+        New stage-2 runs produce this catalog as part of their normal breakdown.
+        Older projects, and ones whose writer never listed costumes or effects,
+        are repaired with one focused analysis pass for just the missing lists,
+        so those libraries do not remain permanently empty.
+        """
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        working = deepcopy(task)
+        catalog, changed = self._fill_production_catalog(working)
+        if not changed:
+            return catalog
+        filled = working["assets"]["2_breakdown"]
 
         def mutation(current: Dict[str, Any]) -> Dict[str, List[Dict[str, str]]]:
             current_assets = current.get("assets")
@@ -1726,9 +2434,10 @@ class DramaService:
             current_breakdown = current_assets.get("2_breakdown")
             if not isinstance(current_breakdown, dict):
                 current_breakdown = {}
-            current_breakdown["production_assets"] = normalized
+            current_breakdown["production_assets"] = filled["production_assets"]
+            current_breakdown[self._CATALOG_CHECKED_KEY] = filled[self._CATALOG_CHECKED_KEY]
             current_assets["2_breakdown"] = current_breakdown
-            return normalized
+            return catalog
 
         return self.repo.mutate_task(task_id, mutation)
 
@@ -1757,7 +2466,7 @@ class DramaService:
             "{\n"
             '  "roles": [{"name": "角色名", "position": "女主角|男主角|反派|男配角|女配角|其它角色"}],\n'
             '  "relationships": [{"from": "角色A", "to": "角色B",'
-            ' "relation": "2-6字具体关系，如 君臣/父子/主仆/师徒/结拜兄弟/暗中背叛/单向倾慕",'
+            ' "relation": "2-6字具体关系，从常规关系里选最贴切的，如 君臣/父子/母子/父女/母女/夫妻/兄弟/兄妹/姐弟/姐妹/主仆/师徒/亦师亦友/惺惺相惜/宿敌/敌对/背叛/暗恋/青梅竹马/结义兄弟/先祖与后裔/祭司辅佐首领/托孤之臣/辅政大臣/效忠/利用/追杀/救命恩人",'
             ' "bidirectional": false}]\n'
             "}\n"
             "要求：relation 必须写明两人之间真实的身份关系或戏剧关系，"
@@ -1777,7 +2486,15 @@ class DramaService:
         )
         parsed = extract_json_object(res)
         relationships = parsed.get("relationships") if isinstance(parsed, dict) else None
-        if not isinstance(relationships, list) or not relationships:
+        # A same-scene count is not a relation: whatever the model calls one is dropped.
+        relationships = [
+            edge for edge in (relationships if isinstance(relationships, list) else [])
+            if isinstance(edge, dict)
+            and str(edge.get("from") or "").strip() and str(edge.get("to") or "").strip()
+            and str(edge.get("relation") or "").strip()
+            and not any(word in str(edge.get("relation")) for word in ("同场", "共同出场", "共现", "剧情关联", "有关联"))
+        ]
+        if not relationships:
             raise ValueError("人物关系分析未返回可用结果，请稍后重试")
         roles = parsed.get("roles") if isinstance(parsed, dict) else None
 
@@ -1790,6 +2507,7 @@ class DramaService:
             if not isinstance(breakdown, dict):
                 breakdown = {}
             breakdown["relationships"] = relationships
+            breakdown["relationships_authored"] = True
             # Only fill roles that the breakdown does not already carry, so a
             # repaired graph never overwrites richer stage-2 casting.
             if isinstance(roles, list) and roles and not breakdown.get("roles"):
@@ -1958,20 +2676,20 @@ class DramaService:
     def _structured_writer_engine(self, task: Dict[str, Any], config: Dict[str, Any], title: str,
                                   guidance: str = "", progress=None):
         """Bind the structured screenwriting engine to this task's models and Writer persona."""
-        system_prompt = screenwriting.writer_system_prompt(
+        system_prompts = screenwriting.writer_system_prompts(
             self._agent_role_prompt(task, AgentRole.WRITER),
             self.get_shanyin_screenplay_skill(),
         )
         return screenwriting.build_engine(
             self.gateway.call_llm, config=config, title=title,
-            system_prompt=system_prompt, guidance=guidance, progress=progress,
+            system_prompt=system_prompts["plan"], system_prompts=system_prompts, guidance=guidance, progress=progress,
         )
 
     def _run_structured_writer(self, task: Dict[str, Any], config: Dict[str, Any], title: str,
                                dir_style: str, shot_style: str, guidance: str, task_id: Any = None) -> bool:
         """Write the screenplay with the structured engine; ``False`` means "fall back to the text engine"."""
-        ep_count = max(1, min(150, int(config.get("episode_count", 3) or 3)))
-        source_text, source_kind = screenwriting.source_for_task(config)
+        ep_count = _bounded_episode_count(config.get("episode_count"))
+        source_text, source_kind, own_episodes = screenwriting.source_for_task(task)
 
         def progress(percent: int, label: str) -> None:
             self._progress_step(task, max(8, min(92, percent)), label)
@@ -1984,6 +2702,7 @@ class DramaService:
                 episode_count=ep_count,
                 source_text=source_text,
                 source_kind=source_kind,
+                own_episodes=own_episodes,
             )
         except (ScreenwritingError, ValueError) as error:
             if not screenwriting.fallback_enabled():
@@ -2107,6 +2826,233 @@ class DramaService:
         refreshed = self.repo.get_task(task_id)
         return screenwriting.episode_response(refreshed or task, episode, rewritten=rewritten)
 
+    # ---------------- 审核确认与草稿修复：确认绑定规划指纹，草稿修好才能确认 ----------------
+
+    def get_screenwriting_review(self, task_id: str) -> Optional[Dict[str, Any]]:
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        state = screenwriting.state_of(task)
+        if state is None:
+            raise LookupError("该任务没有结构化编剧记录")
+        return {"task_id": task_id, **review.summary(state), "episodes": [review.status_of(state, int(e["episode"])) for e in state.get("ledger") or [] if isinstance(e, dict)]}
+
+    def review_screenwriting_episode(self, task_id: str, episode: int, action: str, *, by: Optional[str] = None) -> Optional[ScreenwritingEpisodeResponse]:
+        """Confirm an episode as it stands, or take the confirmation back; neither touches the script."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+
+        def mutation(current: Dict[str, Any]) -> Dict[str, Any]:
+            state = screenwriting.state_of(current)
+            if state is None:
+                raise LookupError("该任务没有结构化编剧记录")
+            new_state = review.confirm(state, episode, by=by) if action == "confirm" else review.reopen(state, episode)
+            current["assets"][screenwriting.STATE_KEY] = new_state
+            return current
+
+        updated = self.repo.mutate_task(task_id, mutation)
+        return screenwriting.episode_response(updated or task, episode)
+
+    def repair_screenwriting_episode(
+        self, task_id: str, episode: int, *, confirm_invalidate: bool = False, owner_user_id: Optional[str] = None, is_admin: bool = False,
+    ) -> Optional[ScreenwritingEpisodeResponse]:
+        """Have the model fix a quarantined draft; a repair that is no better leaves the draft as it was."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        state = screenwriting.state_of(task)
+        if state is None:
+            raise LookupError("该任务没有结构化编剧记录")
+        if self._has_running_generation(task):
+            raise ScriptUpdateConflictError("项目仍有生成任务运行，请等待结束后再修复")
+        config = task.get("config") if isinstance(task.get("config"), dict) else {}
+        engine = self._structured_writer_engine(task, config, str(config.get("title_suggestion") or "未命名短剧"))
+        try:
+            with usage_ledger.bind_task(task_id, "episode_repair"):
+                new_state, outcome = engine.repair_episode(state, episode)
+        except RepairNotImproved as exc:
+            return screenwriting.episode_response(task, episode, repair={"episode": int(episode), "repaired": False, "improved": False, "remaining": exc.reasons})
+        dashboard = self.update_script(
+            task_id, content=screenwriting.render_screenplay(new_state), expected_source_hash=compile_writer_dashboard(task).source_hash,
+            confirm_invalidate=confirm_invalidate, owner_user_id=owner_user_id, is_admin=is_admin, structured_state=new_state,
+        )
+        if dashboard is None:
+            return None
+        return screenwriting.episode_response(self.repo.get_task(task_id) or task, episode, repair={**outcome, "improved": True})
+
+    # ---------------- 分集账本操作：人的手直接改账本，模型只在写出新集时参与 ----------------
+
+    def get_ledger(self, task_id: str) -> Optional[Dict[str, Any]]:
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        state = screenwriting.state_of(task)
+        if state is None:
+            raise LookupError("该任务没有结构化编剧记录")
+        return {"task_id": task_id, **ledger_ops.describe(state)}
+
+    def _persist_ledger_change(
+        self, task_id: str, task: Dict[str, Any], change: ledger_ops.LedgerChange, *,
+        confirm_discard: List[int], confirm_invalidate: bool, write_now: bool,
+        owner_user_id: Optional[str], is_admin: bool,
+    ) -> Dict[str, Any]:
+        """Write the planned episodes a change left unwritten, then store the state as a script revision."""
+        unconfirmed = [number for number in change.discarded if number not in set(confirm_discard)]
+        if unconfirmed:
+            raise ScriptUpdateConflictError(
+                "这一步会丢掉已写出的集：" + "、".join(f"第 {n} 集" for n in unconfirmed) + "；在 confirm_discard 里列出它们以确认"
+            )
+        new_state = change.state
+        if write_now:
+            unwritten = [int(e["episode"]) for e in new_state.get("ledger") or [] if isinstance(e, dict) and not ledger_ops.is_written(new_state, int(e["episode"]))]
+            if unwritten:
+                config = task.get("config") if isinstance(task.get("config"), dict) else {}
+                engine = self._structured_writer_engine(task, config, str(config.get("title_suggestion") or "未命名短剧"))
+                new_state = engine.write_missing(new_state, unwritten)
+        expected_hash = compile_writer_dashboard(task).source_hash
+        dashboard = self.update_script(
+            task_id, content=screenwriting.render_screenplay(new_state), expected_source_hash=expected_hash,
+            confirm_invalidate=confirm_invalidate, owner_user_id=owner_user_id, is_admin=is_admin, structured_state=new_state,
+        )
+        if dashboard is None:
+            raise LookupError("任务不存在")
+
+        def align(current: Dict[str, Any]) -> Dict[str, Any]:
+            # The ledger, not the rendered text, says how many episodes the project has.
+            state = screenwriting.state_of(current)
+            if state is not None:
+                current.setdefault("config", {})["episode_count"] = len(state.get("ledger") or [])
+                current["total_episodes"] = len(state.get("ledger") or [])
+            return current
+
+        self.repo.mutate_task(task_id, align)
+        return {
+            "task_id": task_id,
+            "discarded": list(change.discarded), "created": list(change.created), "notes": list(change.notes),
+            "renumbered": {str(k): v for k, v in change.renumbered.items() if k != v},
+            **ledger_ops.describe(screenwriting.state_of(self.repo.get_task(task_id) or task) or new_state),
+        }
+
+    def apply_ledger_operation(
+        self, task_id: str, request: LedgerOperationRequest, *, owner_user_id: Optional[str] = None, is_admin: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        state = screenwriting.state_of(task)
+        if state is None:
+            raise LookupError("该任务没有结构化编剧记录")
+        if self._has_running_generation(task):
+            raise ScriptUpdateConflictError("项目仍有生成任务运行，请等待结束后再改分集")
+        op = request.operation
+        if op == "split":
+            change = ledger_ops.split_episode(state, int(request.episode or 0), int(request.offset or 0), request.title)
+        elif op == "move_boundary":
+            change = ledger_ops.move_boundary(state, int(request.episode or 0), int(request.offset or 0))
+        elif op == "merge_with_next":
+            change = ledger_ops.merge_with_next(state, int(request.episode or 0), include_unsplit=request.include_unsplit)
+        elif op == "cut_unsplit":
+            change = ledger_ops.cut_unsplit(state, int(request.start or 0), int(request.end or 0), request.title)
+        elif op == "clear_after":
+            change = ledger_ops.clear_after(state, int(request.episode or 0))
+        elif op == "create":
+            change = ledger_ops.create_episode(state, title=request.title, text=request.text, source_kind=request.source_kind, after=request.after)
+        elif op == "move":
+            change = ledger_ops.move_episode(state, int(request.episode or 0), after=request.after)
+        elif op == "delete":
+            change = ledger_ops.delete_episode(state, int(request.episode or 0))
+        elif op == "update_own_source":
+            change = ledger_ops.update_own_source(state, int(request.episode or 0), text=request.text, source_kind=request.source_kind)
+        else:
+            raise ledger_ops.LedgerOperationError(f"未知的账本操作：{op}")
+        return self._persist_ledger_change(
+            task_id, task, change, confirm_discard=request.confirm_discard, confirm_invalidate=request.confirm_invalidate,
+            write_now=request.write_now, owner_user_id=owner_user_id, is_admin=is_admin,
+        )
+
+    def ledger_source_slice(self, task_id: str, start: int, end: int) -> Optional[Dict[str, Any]]:
+        """A stretch of the whole source, so the person sees the text a boundary cuts through."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        state = screenwriting.state_of(task)
+        if state is None:
+            raise LookupError("该任务没有结构化编剧记录")
+        text = str(state.get("source_text") or "")
+        start = max(0, min(int(start), len(text)))
+        end = max(start, min(int(end), len(text)))
+        return {"task_id": task_id, "start": start, "end": end, "text": text[start:end]}
+
+    def preview_ledger_impact(self, task_id: str, episodes: List[int]) -> Optional[Dict[str, Any]]:
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        state = screenwriting.state_of(task)
+        if state is None:
+            raise LookupError("该任务没有结构化编剧记录")
+        return {"task_id": task_id, "episodes": ledger_ops.impact(state, episodes)}
+
+    def plan_replan_candidate(self, task_id: str, from_episode: int) -> Optional[Dict[str, Any]]:
+        """Plan the source again from one episode on, as a candidate the person compares before adopting."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        state = screenwriting.state_of(task)
+        if state is None:
+            raise LookupError("该任务没有结构化编剧记录")
+        if state.get(ledger_ops.CANDIDATE_KEY):
+            raise ScriptUpdateConflictError("已有一份候选重规划，请先采纳或放弃它")
+        config = task.get("config") if isinstance(task.get("config"), dict) else {}
+        engine = self._structured_writer_engine(task, config, str(config.get("title_suggestion") or "未命名短剧"))
+        with usage_ledger.bind_task(task_id, "episode_replan"):
+            entries = engine.plan_replan_candidate(state, from_episode)
+        new_state = ledger_ops.store_candidate(state, from_episode, entries)
+
+        def mutation(current: Dict[str, Any]) -> Dict[str, Any]:
+            live = screenwriting.state_of(current)
+            if live is None:
+                raise LookupError("该任务没有结构化编剧记录")
+            if ledger_ops.layout_revision(live) != new_state[ledger_ops.CANDIDATE_KEY]["layout_revision"]:
+                raise ScriptUpdateConflictError("分集账本在规划期间变过，请重新发起")
+            live[ledger_ops.CANDIDATE_KEY] = new_state[ledger_ops.CANDIDATE_KEY]
+            return current
+
+        self.repo.mutate_task(task_id, mutation)
+        return {"task_id": task_id, **ledger_ops.describe(new_state)}
+
+    def adopt_replan_candidate(
+        self, task_id: str, request: ReplanAdoptRequest, *, owner_user_id: Optional[str] = None, is_admin: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        state = screenwriting.state_of(task)
+        if state is None:
+            raise LookupError("该任务没有结构化编剧记录")
+        if self._has_running_generation(task):
+            raise ScriptUpdateConflictError("项目仍有生成任务运行，请等待结束后再采纳")
+        change = ledger_ops.adopt_candidate(state, delete_replaced=request.delete_replaced)
+        return self._persist_ledger_change(
+            task_id, task, change, confirm_discard=request.confirm_discard, confirm_invalidate=request.confirm_invalidate,
+            write_now=request.write_now, owner_user_id=owner_user_id, is_admin=is_admin,
+        )
+
+    def discard_replan_candidate(self, task_id: str) -> Optional[Dict[str, Any]]:
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+
+        def mutation(current: Dict[str, Any]) -> Dict[str, Any]:
+            live = screenwriting.state_of(current)
+            if live is None:
+                raise LookupError("该任务没有结构化编剧记录")
+            live.pop(ledger_ops.CANDIDATE_KEY, None)
+            return current
+
+        updated = self.repo.mutate_task(task_id, mutation)
+        return {"task_id": task_id, **ledger_ops.describe(screenwriting.state_of(updated or task) or {})}
+
     def _continuation_system_prompt(self, config: Dict[str, Any], ep_count: int) -> str:
         """Rebuild the writing rules so appended episodes match the existing ones."""
         shot_cap = max_shot_seconds(str(config.get("video_model") or ""))
@@ -2158,19 +3104,50 @@ class DramaService:
 
     @staticmethod
     def _script_document_summary(document: Dict[str, Any]) -> Dict[str, Any]:
+        role = str(document.get("role") or "reference")
+        order = document.get("order")
         return {
             "id": str(document.get("id") or ""),
             "name": str(document.get("name") or ""),
             "size_bytes": len(str(document.get("content") or "").encode("utf-8")),
             "updated_at": str(document.get("updated_at") or ""),
+            "role": role if role in screenwriting.DOCUMENT_ROLES else "reference",
+            "source_kind": screenwriting.document_kind(document) if role in ("source", "episode") else None,
+            "order": order if isinstance(order, int) and not isinstance(order, bool) else None,
         }
+
+    @staticmethod
+    def _validate_document_role(role: Optional[str], source_kind: Optional[str]) -> None:
+        if role is not None and role not in screenwriting.DOCUMENT_ROLES:
+            raise ValueError("文件角色只能是 reference（参考资料）、source（整本源文）或 episode（逐集原文）")
+        if source_kind is not None and source_kind not in screenwriting.DOCUMENT_KINDS:
+            raise ValueError("源文体裁只能是 novel（小说）或 screenplay（成品剧本）")
+
+    def _annotate_library_episodes(self, task: Dict[str, Any], documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Add each own-source document's episode number, as the ledger assigned it; ``None`` until stage 2 ran."""
+        state = screenwriting.state_of(task)
+        by_name: Dict[str, int] = {}
+        for entry in (state or {}).get("ledger") or []:
+            if isinstance(entry, dict) and entry.get("source_origin") == "own" and entry.get("source_name"):
+                by_name.setdefault(str(entry["source_name"]), int(entry.get("episode") or 0))
+        own_in_order = screenwriting.ordered_documents(documents, "episode")
+        positions = {str(item.get("id")): index + 1 for index, item in enumerate(own_in_order)}
+        summaries = []
+        for item in documents:
+            if not isinstance(item, dict):
+                continue
+            summary = self._script_document_summary(item)
+            if summary["role"] == "episode":
+                summary["position"] = positions.get(summary["id"])
+                summary["episode"] = by_name.get(summary["name"])
+            summaries.append(summary)
+        return summaries
 
     def list_script_documents(self, task_id: str) -> Optional[List[Dict[str, Any]]]:
         task = self.repo.get_task(task_id)
         if not task:
             return None
-        documents = self._script_documents(task)
-        return [self._script_document_summary(item) for item in documents if isinstance(item, dict)]
+        return self._annotate_library_episodes(task, self._script_documents(task))
 
     def get_script_document(self, task_id: str, document_id: str) -> Optional[Dict[str, Any]]:
         task = self.repo.get_task(task_id)
@@ -2190,11 +3167,19 @@ class DramaService:
         *,
         name: str,
         content: str,
+        role: Optional[str] = None,
+        source_kind: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         safe_name = self._script_document_name(name)
         safe_content = str(content or "").replace("\x00", "")
         if len(safe_content.encode("utf-8")) > self._MAX_SCRIPT_DOCUMENT_BYTES:
             raise ValueError("剧本文件不能超过 2 MB")
+        self._validate_document_role(role, source_kind)
+        # An unnamed role is read from the file name; an unnamed genre from the text.
+        chosen_role = role or screenwriting.document_role_for_name(safe_name)
+        chosen_kind = source_kind if chosen_role != "reference" else None
+        if chosen_role != "reference" and not chosen_kind:
+            chosen_kind = "screenplay" if screenwriting.detect_source_kind(safe_content) == "screenplay" else "novel"
         timestamp = datetime.now(timezone.utc).isoformat()
 
         def mutation(task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -2206,8 +3191,12 @@ class DramaService:
                 "name": safe_name,
                 "content": safe_content,
                 "updated_at": timestamp,
+                "role": chosen_role,
+                "source_kind": chosen_kind,
             }
             documents.append(document)
+            if chosen_role != "reference":
+                screenwriting.mark_stale(task, f"剧本文库新增了{'整本源文' if chosen_role == 'source' else '逐集原文'}《{safe_name}》，请重新执行第 2 阶段")
             return document
 
         document = self.repo.mutate_task(task_id, mutation)
@@ -2220,22 +3209,43 @@ class DramaService:
         *,
         name: Optional[str] = None,
         content: Optional[str] = None,
+        role: Optional[str] = None,
+        source_kind: Optional[str] = None,
+        order: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         safe_name = self._script_document_name(name) if name is not None else None
         safe_content = str(content).replace("\x00", "") if content is not None else None
         if safe_content is not None and len(safe_content.encode("utf-8")) > self._MAX_SCRIPT_DOCUMENT_BYTES:
             raise ValueError("剧本文件不能超过 2 MB")
+        self._validate_document_role(role, source_kind)
+        if order is not None and not 0 <= int(order) <= self._MAX_SCRIPT_DOCUMENTS:
+            raise ValueError("文件顺序越界")
         timestamp = datetime.now(timezone.utc).isoformat()
 
         def mutation(task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             for document in self._script_documents(task):
                 if not isinstance(document, dict) or str(document.get("id")) != document_id:
                     continue
+                was_feeding = document.get("role") in ("source", "episode")
                 if safe_name is not None:
                     document["name"] = safe_name
                 if safe_content is not None:
                     document["content"] = safe_content
+                if role is not None:
+                    document["role"] = role
+                if source_kind is not None:
+                    document["source_kind"] = source_kind
+                if order is not None:
+                    document["order"] = int(order)
+                if document.get("role") == "reference":
+                    document["source_kind"] = None
+                elif not document.get("source_kind"):
+                    document["source_kind"] = "screenplay" if screenwriting.detect_source_kind(str(document.get("content") or "")) == "screenplay" else "novel"
                 document["updated_at"] = timestamp
+                # Anything that changes what stage 2 would read from makes the written plan stale.
+                feeds_now = document.get("role") in ("source", "episode")
+                if (was_feeding or feeds_now) and (safe_content is not None or role is not None or source_kind is not None or order is not None):
+                    screenwriting.mark_stale(task, f"剧本文库的《{document.get('name')}》已变更，请重新执行第 2 阶段")
                 return document
             return None
 
@@ -2252,10 +3262,176 @@ class DramaService:
                 if not (isinstance(item, dict) and str(item.get("id")) == document_id)
             ]
             removed = len(remaining) != len(documents)
+            if removed and any(
+                isinstance(item, dict) and str(item.get("id")) == document_id and item.get("role") in ("source", "episode")
+                for item in documents
+            ):
+                screenwriting.mark_stale(task, "剧本文库删除了一份源文，请重新执行第 2 阶段")
             task["assets"]["2_documents"] = remaining
             return removed
 
         return self.repo.mutate_task(task_id, mutation)
+
+    # ---------------- Writer board: overview, story events, cast, versions ----------------
+
+    def _mutate_breakdown(self, task_id: str, change) -> Optional[WriterDashboardResponse]:
+        """Apply ``change(task, breakdown)`` to the stage-2 breakdown and return the rebuilt dashboard."""
+
+        def mutation(task: Dict[str, Any]) -> Dict[str, Any]:
+            assets = task.get("assets")
+            if not isinstance(assets, dict):
+                assets = {}
+                task["assets"] = assets
+            breakdown = assets.get("2_breakdown")
+            if not isinstance(breakdown, dict):
+                breakdown = {}
+            change(task, breakdown)
+            assets["2_breakdown"] = breakdown
+            return task
+
+        task = self.repo.mutate_task(task_id, mutation)
+        return compile_writer_dashboard(task) if task else None
+
+    def update_overview(self, task_id: str, fields: Dict[str, Optional[str]]) -> Optional[WriterDashboardResponse]:
+        """Edit the project overview by hand; the structured state's copy follows."""
+        clean = {key: str(value).strip() for key, value in fields.items() if value is not None}
+
+        def change(task: Dict[str, Any], breakdown: Dict[str, Any]) -> None:
+            overview = breakdown.get("overview") if isinstance(breakdown.get("overview"), dict) else {}
+            overview.update(clean)
+            breakdown["overview"] = overview
+            state = screenwriting.state_of(task)
+            if state is not None:
+                current = state.get("overview") if isinstance(state.get("overview"), dict) else {}
+                current.update(clean)
+                state["overview"] = current
+
+        return self._mutate_breakdown(task_id, change)
+
+    def regenerate_overview(self, task_id: str) -> Optional[WriterDashboardResponse]:
+        """Tell the overview again from the project's source (or its plan) with one model call."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        config = task.get("config") if isinstance(task.get("config"), dict) else {}
+        assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
+        title = str(config.get("title_suggestion") or "未命名短剧")
+        source_text, source_kind, own_episodes = screenwriting.source_for_task(task)
+        if source_text or own_episodes:
+            source = "\n\n".join(part for part in [source_text or "", *[entry["text"] for entry in own_episodes]] if part.strip())
+            kind = source_kind or "novel"
+        else:
+            source, kind = str(assets.get("1") or assets.get("2") or ""), "outline"
+        if not source.strip():
+            raise ValueError("没有可供提炼概述的内容：请先上传源文，或完成总导演策划")
+        engine = self._structured_writer_engine(task, config, title)
+        overview = engine.refresh_overview(source=source, kind=kind, title_hint=title)
+        if not any(str(overview.get(key) or "").strip() for key in ("synopsis", "genre", "theme", "world_setting")):
+            raise ValueError("模型没有返回可用的概述，请稍后重试")
+
+        def change(current: Dict[str, Any], breakdown: Dict[str, Any]) -> None:
+            breakdown["overview"] = {**(breakdown.get("overview") if isinstance(breakdown.get("overview"), dict) else {}), **overview}
+            state = screenwriting.state_of(current)
+            if state is not None:
+                state["overview"] = {**(state.get("overview") if isinstance(state.get("overview"), dict) else {}), **overview}
+
+        return self._mutate_breakdown(task_id, change)
+
+    def update_timeline(self, task_id: str, events: List[Dict[str, Any]]) -> Optional[WriterDashboardResponse]:
+        """Replace the story event timeline with what the person arranged; it then stops following the ledger."""
+
+        def change(_task: Dict[str, Any], breakdown: Dict[str, Any]) -> None:
+            breakdown["timeline"] = [dict(event) for event in events]
+            breakdown["timeline_authored"] = True
+
+        return self._mutate_breakdown(task_id, change)
+
+    def update_roles(self, task_id: str, roles: List[Dict[str, Any]], hidden: List[str]) -> Optional[WriterDashboardResponse]:
+        """Set the cast: each role's position, new names, and names kept out of the cast."""
+        positions = {str(role.get("name")).strip(): str(role.get("position") or "其它角色").strip() for role in roles if str(role.get("name") or "").strip()}
+        requested_hidden = {str(name).strip() for name in hidden if str(name).strip()}
+
+        def change(task: Dict[str, Any], breakdown: Dict[str, Any]) -> None:
+            # Names removed earlier stay removed; a name listed again comes back.
+            previous_hidden = {str(name) for name in (breakdown.get("hidden_roles") or []) if str(name).strip()}
+            hidden_names = sorted((previous_hidden | requested_hidden) - set(positions))
+            breakdown["roles"] = [{"name": name, "position": position} for name, position in positions.items()]
+            breakdown["role_positions"] = dict(positions)
+            breakdown["hidden_roles"] = hidden_names
+            state = screenwriting.state_of(task)
+            if state is not None:
+                inventory = state.get("inventory") if isinstance(state.get("inventory"), dict) else {}
+                characters = inventory.get("characters") if isinstance(inventory.get("characters"), dict) else {}
+                for name, position in positions.items():
+                    entry = characters.get(name) if isinstance(characters.get(name), dict) else {"description": "需补充外貌与服装细节", "voice_style": ""}
+                    entry["position"] = position
+                    characters[name] = entry
+                for name in hidden_names:
+                    characters.pop(name, None)
+                inventory["characters"] = characters
+                state["inventory"] = inventory
+
+        return self._mutate_breakdown(task_id, change)
+
+    script_version_max_entries = 20
+
+    def list_script_versions(self, task_id: str) -> Optional[List[Dict[str, Any]]]:
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        return version_summaries(task.get("assets") if isinstance(task.get("assets"), dict) else {})
+
+    def save_script_version(self, task_id: str, label: str = "") -> Optional[WriterDashboardResponse]:
+        """Keep a named snapshot of the screenplay, its breakdown and its structured state."""
+
+        def mutation(task: Dict[str, Any]) -> Dict[str, Any]:
+            assets = task.setdefault("assets", {})
+            config = task.get("config") if isinstance(task.get("config"), dict) else {}
+            dashboard = compile_writer_dashboard(task)
+            if not dashboard.script.strip():
+                raise ValueError("剧本尚未生成，没有可保存的版本")
+            versions = [item for item in (assets.get("2_versions") if isinstance(assets.get("2_versions"), list) else []) if isinstance(item, dict)]
+            versions.append({
+                "version_id": uuid.uuid4().hex[:12],
+                "label": str(label or "").strip()[:120] or f"版本 {len(versions) + 1}",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "source_hash": dashboard.source_hash,
+                "episode_count": dashboard.stats.total_episodes,
+                "scene_count": dashboard.stats.scene_count,
+                "payload": {
+                    "2": str(assets.get("2") or ""),
+                    "2_breakdown": deepcopy(assets.get("2_breakdown")) if isinstance(assets.get("2_breakdown"), dict) else None,
+                    screenwriting.STATE_KEY: deepcopy(assets.get(screenwriting.STATE_KEY)) if isinstance(assets.get(screenwriting.STATE_KEY), dict) else None,
+                    "script_name": str(config.get("script_name") or ""),
+                },
+            })
+            assets["2_versions"] = versions[-self.script_version_max_entries:]
+            return task
+
+        task = self.repo.mutate_task(task_id, mutation)
+        return compile_writer_dashboard(task) if task else None
+
+    def restore_script_version(
+        self, task_id: str, version_id: str, *, expected_source_hash: str, confirm_invalidate: bool,
+        owner_user_id: Optional[str], is_admin: bool,
+    ) -> Optional[WriterDashboardResponse]:
+        """Bring a saved version back as the current screenplay (the same path as applying an edited script)."""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
+        version = next((item for item in (assets.get("2_versions") or []) if isinstance(item, dict) and item.get("version_id") == version_id), None)
+        if version is None:
+            raise ValueError("没有这个版本")
+        payload = version.get("payload") if isinstance(version.get("payload"), dict) else {}
+        state = payload.get(screenwriting.STATE_KEY) if isinstance(payload.get(screenwriting.STATE_KEY), dict) else None
+        breakdown = payload.get("2_breakdown") if isinstance(payload.get("2_breakdown"), dict) else None
+        dashboard = self.update_script(
+            task_id, content=str(payload.get("2") or ""), file_name=str(payload.get("script_name") or "") or None,
+            expected_source_hash=expected_source_hash, confirm_invalidate=confirm_invalidate,
+            owner_user_id=owner_user_id, is_admin=is_admin, structured_state=state, breakdown_override=breakdown,
+        )
+        return dashboard
 
     def update_relationships(
         self,
@@ -2273,6 +3449,7 @@ class DramaService:
             if not isinstance(breakdown, dict):
                 breakdown = {}
             breakdown["relationships"] = relationships
+            breakdown["relationships_authored"] = True
             assets["2_breakdown"] = breakdown
             return task
 
@@ -2293,8 +3470,12 @@ class DramaService:
         is_admin: bool = False,
         structured_state: Optional[Dict[str, Any]] = None,
         expected_plan_revision: Optional[tuple] = None,
+        breakdown_override: Optional[Dict[str, Any]] = None,
     ) -> Optional[WriterDashboardResponse]:
         """Atomically apply a user-authored screenplay revision without calling an LLM.
+
+        ``breakdown_override`` is a breakdown to store as is (a restored version brings its
+        own, edits included) instead of deriving one from the state.
 
         ``structured_state`` is the structured screenwriting state a plan edit rendered
         ``content`` from: it is stored alongside the text and its breakdown is derived
@@ -2329,8 +3510,9 @@ class DramaService:
             # A plan edit can leave the rendered text identical (it changed a field the
             # text does not show, e.g. the source anchor); the new structured state must
             # still be stored, so it counts as a change of its own.
-            if not content_changed and not file_name_changed and structured_state is None:
+            if not content_changed and not file_name_changed and structured_state is None and breakdown_override is None:
                 return current_dashboard
+            previous_breakdown = deepcopy(assets.get("2_breakdown")) if isinstance(assets.get("2_breakdown"), dict) else None
 
             if structured_state is not None and expected_plan_revision is not None:
                 plan_episode, plan_revision = expected_plan_revision
@@ -2464,7 +3646,7 @@ class DramaService:
                     if stage_key(key, minimum=2):
                         logs.pop(key, None)
 
-                parsed_episodes = split_episodes(content, max_episodes=12)
+                parsed_episodes = split_episodes(content, max_episodes=EPISODE_COUNT_MAX)
                 task["episodes"] = [
                     {
                         "index": episode["index"],
@@ -2491,9 +3673,12 @@ class DramaService:
 
             if structured_state is not None:
                 # The caller rendered ``content`` from this state, so both are stored
-                # together and the breakdown is derived from the state, not re-analysed.
+                # together and the breakdown is derived from the state, not re-analysed;
+                # what a person authored on the previous breakdown is carried over.
                 assets[screenwriting.STATE_KEY] = structured_state
-                assets["2_breakdown"] = render_breakdown(structured_state)
+                assets["2_breakdown"] = screenwriting.carry_authored(previous_breakdown, render_breakdown(structured_state))
+            if breakdown_override is not None:
+                assets["2_breakdown"] = deepcopy(breakdown_override)
 
             assets["2"] = content
             config["script_content"] = content
@@ -2520,6 +3705,345 @@ class DramaService:
         if not task:
             return None
         return compile_character_dashboard(task)
+
+    # ---------------- 单个数字演员重新生成设定集 ----------------
+
+    #: 角色重新生成成功后调用 (task, name)；drama_api 把它接到资产库同步上，服务本身不碰资产库。
+    character_regenerated_hook: Optional[Callable[[Dict[str, Any], str], Any]] = None
+
+    def regenerate_character(
+        self, task_id: str, name: str, *, mode: str = "sheet", background: bool = True,
+    ) -> Optional[CharacterDashboardResponse]:
+        """为一名角色重新出一张设定集(付费)，以它现在的主肖像为身份参考，通过质检才替换旧图。
+
+        不重跑第 3 阶段、不动其他角色；后台跑完前看板里该角色标着 regenerating。
+        失败时旧图原样保留，失败原因写进 regeneration_error。
+        ``mode="hd"`` 不重出设定集，只用现有图做身份参考补出高清的六个身份视图(两张付费图)。
+        ``mode="details"`` 只把补位裁切的元素/细节格真正画出来(一到两张付费图)。
+        """
+        name = (name or "").strip()
+        if mode not in {"sheet", "hd", "details"}:
+            raise ValueError("重新生成方式只能是 sheet、hd 或 details")
+
+        def claim(task: Dict[str, Any]) -> Dict[str, Any]:
+            if self._has_running_generation(task):
+                raise ValueError("任务正在执行阶段，等它结束后再重新生成角色")
+            assets = task.setdefault("assets", {})
+            if not any(
+                isinstance(item, dict) and str(item.get("name") or "").strip() == name
+                for item in assets.get("3_characters") or []
+            ):
+                raise LookupError(f"没有名为「{name}」的角色")
+            progress = assets.setdefault(REGENERATION_KEY, {})
+            if character_regenerating(progress.get(name)):
+                raise ValueError(f"「{name}」正在重新生成，请稍候")
+            progress[name] = {"status": "running", "mode": mode, "started_epoch": time.time()}
+            assets["3_character_dashboard"] = compile_character_dashboard(task).model_dump(mode="json", by_alias=True)
+            return task
+
+        try:
+            claimed = self.repo.mutate_task(task_id, claim)
+        except LookupError as exc:
+            raise ValueError(str(exc)) from exc
+        if not claimed:
+            return None
+        if background:
+            threading.Thread(
+                target=self._regenerate_character_worker, args=(task_id, name, mode), daemon=True,
+                name=f"regen-character-{task_id[:8]}",
+            ).start()
+        else:
+            self._regenerate_character_worker(task_id, name, mode)
+        return self.get_character_dashboard(task_id)
+
+    def _apply_hd_identity_views(
+        self, *, name: str, desc: str, image_model: str, dir_style: str, references: list, cell_paths: list,
+    ) -> tuple[list, set[str]]:
+        """出头像三联与全身三联，切成高清的六个身份视图存进同一目录；返回 (全部格子路径, 换成高清的格子)。"""
+        by_cell = actor_sheet_cell_paths(list(cell_paths))
+        directory = Path(next(iter(by_cell.values()))).parent if by_cell else None
+        if directory is None:
+            return list(cell_paths), set()
+
+        def generate(prompt: str, refs: list, size: str) -> str | None:
+            url, _ = self.gateway.generate_image(image_model, prompt, ref_images=refs, size=size, enhance_prompt=False)
+            return url
+
+        def load(url: str) -> bytes:
+            import io
+            buffer = io.BytesIO()
+            storyboard_assets_open_image(url).save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        views = generate_hd_views(
+            generate=generate, load=load, name=name, desc=desc, style=dir_style,
+            references=[ref for ref in references if ref],
+        )
+        for cell, image in views.items():
+            by_cell[cell] = save_actor_cell(image, directory, cell)
+        ordered = [by_cell[cell] for cell in ACTOR_SHEET_CELL_ORDER if cell in by_cell]
+        if views:
+            logger.info("[CharacterHD] %s 高清身份视图 %s 张", name, len(views))
+        return ordered, set(views)
+
+    @staticmethod
+    def _actor_cell_records(cell_paths: list, derived: Dict[str, str], hd_cells: set) -> tuple[list, list]:
+        """格子文件 → (sheet_cells 记录, 五个身份锚点 views)；地址按实际文件算(内容哈希文件名，不吃旧缓存)。"""
+        urls = {
+            cell: media_compositor.public_url(
+                os.path.relpath(str(path), media_compositor.MEDIA_DIR).replace(os.sep, "/")
+            )
+            for cell, path in actor_sheet_cell_paths(cell_paths).items()
+        }
+        cells = [
+            {"cell": cell, "image_url": urls[cell],
+             **({"derived_from": derived[cell]} if cell in derived else {}),
+             **({"hd": True} if cell in hd_cells else {})}
+            for cell in ACTOR_SHEET_CELL_ORDER if cell in urls
+        ]
+        views = [{"view": view, "image_url": urls[view]} for view in IDENTITY_VIEW_ORDER if view in urls]
+        return cells, views
+
+    def _apply_detail_fill(
+        self, *, name: str, desc: str, image_model: str, dir_style: str, references: list,
+        cell_paths: list, cells: list,
+    ) -> tuple[list, set[str]]:
+        """把补位格真正画出来，存进同一目录；返回 (全部格子路径, 换成补画的格子)。"""
+        by_cell = actor_sheet_cell_paths(list(cell_paths))
+        directory = Path(next(iter(by_cell.values()))).parent if by_cell else None
+        if directory is None:
+            return list(cell_paths), set()
+
+        def generate(prompt: str, refs: list, size: str) -> str | None:
+            url, _ = self.gateway.generate_image(image_model, prompt, ref_images=refs, size=size, enhance_prompt=False)
+            return url
+
+        def load(url: str) -> bytes:
+            import io
+            buffer = io.BytesIO()
+            storyboard_assets_open_image(url).save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        filled = generate_detail_cells(
+            generate=generate, load=load, cells=cells, name=name, desc=desc, style=dir_style,
+            references=[ref for ref in references if ref],
+        )
+        for cell, image in filled.items():
+            by_cell[cell] = save_actor_cell(image, directory, cell)
+        if filled:
+            logger.info("[CharacterDetails] %s 补画细节格 %s 张", name, len(filled))
+        return [by_cell[cell] for cell in ACTOR_SHEET_CELL_ORDER if cell in by_cell], set(filled)
+
+    def _regenerate_hd_views(self, record: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+        """只补高清身份视图：用现有主肖像、正面全身、正脸做参考出两张三联，替换六个身份格。"""
+        return self._regenerate_cells(record, config, "hd")
+
+    def _regenerate_cells(self, record: Dict[str, Any], config: Dict[str, Any], mode: str) -> Dict[str, Any]:
+        """不重出设定集，只替换一部分格子：``hd`` 换六个身份视图，``details`` 把补位格真正画出来。"""
+        media_root = Path(media_compositor.MEDIA_DIR).resolve()
+
+        def local(url: str) -> Path | None:
+            relative = url.split(settings.MEDIA_PREFIX, 1)[-1] if settings.MEDIA_PREFIX in url else ""
+            path = (media_root / relative).resolve() if relative else None
+            return path if path and path.is_file() and media_root in path.parents else None
+
+        cells = [item for item in record.get("sheet_cells") or [] if isinstance(item, dict)]
+        paths = [path for item in cells if (path := local(str(item.get("image_url") or "")))]
+        if not paths:
+            return {}
+        by_key = {str(item.get("cell")): item for item in cells}
+        references = []
+        reference_keys = ("portrait", "front", "face_front") if mode == "hd" else ("portrait", "full_body", "front")
+        for key in reference_keys:
+            path = local(str((by_key.get(key) or {}).get("image_url") or ""))
+            if path:
+                references.append(self._reference_image_uri(path.read_bytes(), "image/png"))
+        common = dict(
+            name=str(record.get("name") or ""),
+            desc=str(record.get("desc") or record.get("description") or ""),
+            image_model=str(config.get("image_model") or ""),
+            dir_style=str(config.get("director_style") or "真人电影写实"),
+            references=references, cell_paths=paths,
+        )
+        if mode == "details":
+            missing = fillable(key for key, item in by_key.items() if item.get("derived_from"))
+            if not missing:
+                return {}
+            ordered, replaced = self._apply_detail_fill(**common, cells=missing)
+            hd_cells: set[str] = set()
+        else:
+            ordered, replaced = self._apply_hd_identity_views(**common)
+            hd_cells = replaced
+        if not replaced:
+            return {}
+        quality = validate_actor_sheet_images(ordered)
+        if not quality.passed:
+            return {}
+        # 没换的格子沿用原地址；换成高清的格子按实际文件算出新地址(内容哈希文件名，浏览器不会读到旧缓存)。
+        urls = {
+            cell: (
+                media_compositor.public_url(os.path.relpath(str(Path(path).resolve()), str(media_root)).replace(os.sep, "/"))
+                if cell in replaced else str((by_key.get(cell) or {}).get("image_url") or "")
+            )
+            for cell, path in actor_sheet_cell_paths(ordered).items()
+        }
+        derived = {key: item.get("derived_from") for key, item in by_key.items() if item.get("derived_from")}
+        return {
+            "sheet": record.get("sheet"),
+            "cells": [
+                {"cell": cell, "image_url": urls[cell],
+                 **({"derived_from": derived[cell]} if cell in derived and cell not in replaced else {}),
+                 **({"hd": True} if cell in hd_cells or (by_key.get(cell) or {}).get("hd") else {})}
+                for cell in ACTOR_SHEET_CELL_ORDER if cell in urls
+            ],
+            "views": [{"view": view, "image_url": urls[view]} for view in IDENTITY_VIEW_ORDER if view in urls],
+            "quality": quality.model_dump(),
+            "error": None,
+        }
+
+    def _character_identity_reference(self, record: Dict[str, Any]) -> str | None:
+        """角色现在的主肖像(或正脸)做身份参考：本地文件内联成 data URI，供应商取不到 localhost。"""
+        cells = {str(item.get("cell")): str(item.get("image_url") or "") for item in record.get("sheet_cells") or [] if isinstance(item, dict)}
+        views = {str(item.get("view")): str(item.get("image_url") or "") for item in record.get("views") or [] if isinstance(item, dict)}
+        for url in (cells.get("portrait"), views.get("face_front"), views.get("front")):
+            if not url:
+                continue
+            relative = url.split(settings.MEDIA_PREFIX, 1)[-1] if settings.MEDIA_PREFIX in url else ""
+            path = (Path(media_compositor.MEDIA_DIR) / relative).resolve() if relative else None
+            if path and path.is_file() and Path(media_compositor.MEDIA_DIR).resolve() in path.parents:
+                return self._reference_image_uri(path.read_bytes(), "image/png")
+        return None
+
+    def _regenerate_character_worker(self, task_id: str, name: str, mode: str = "sheet") -> None:
+        task = self.repo.get_task(task_id)
+        error = ""
+        result: Dict[str, Any] = {}
+        try:
+            if not task:
+                raise RuntimeError("任务不存在")
+            assets = task.get("assets") or {}
+            record = next(
+                item for item in assets.get("3_characters") or []
+                if isinstance(item, dict) and str(item.get("name") or "").strip() == name
+            )
+            config = task.get("config") or {}
+            if mode == "hd":
+                result = self._regenerate_hd_views(record, config)
+                if not result:
+                    raise RuntimeError(f"角色「{name}」高清身份视图没有生成成功，已保留原图")
+                raise _HdDone(result)
+            if mode == "details":
+                result = self._regenerate_cells(record, config, "details")
+                if not result:
+                    raise RuntimeError(f"角色「{name}」没有需要补画的细节格，或补画没有成功，已保留原图")
+                raise _HdDone(result)
+            reference = self._character_identity_reference(record)
+            authorized = self.gateway.resolve_authorized_face(name, str(record.get("role") or ""))
+            result = self._render_actor_sheet(
+                name=name,
+                desc=str(record.get("desc") or record.get("description") or ""),
+                image_model=str(config.get("image_model") or ""),
+                dir_style=str(config.get("director_style") or "真人电影写实"),
+                genre=self.gateway.get_genre(str(config.get("title_suggestion") or "")),
+                extra_negative=self._role_negative_suffix(task, AgentRole.CHARACTER_DESIGNER),
+                max_attempts=max(1, min(3, int(os.getenv("CHARACTER_SHEET_MAX_ATTEMPTS", "2")))),
+                ref_images=[ref for ref in (reference, authorized) if ref] or None,
+            )
+            if result.get("error") is not None:
+                error = self._safe_error_text(result["error"])
+            elif not (result.get("quality") or {}).get("passed"):
+                error = f"角色「{name}」设定集重新生成未通过质检"
+        except _HdDone as done:
+            result = done.result
+        except Exception as exc:  # noqa: BLE001 - 失败只记在该角色名下，旧图不动
+            logger.exception("[CharacterRegen] %s 重新生成失败", name)
+            error = self._safe_error_text(exc) or f"角色「{name}」设定集重新生成失败"
+
+        def finish(current: Dict[str, Any]) -> Dict[str, Any]:
+            assets = current.setdefault("assets", {})
+            if not error:
+                for item in assets.get("3_characters") or []:
+                    if isinstance(item, dict) and str(item.get("name") or "").strip() == name:
+                        item.update({
+                            "sheet": result["sheet"], "views": result["views"], "sheet_cells": result["cells"],
+                            "five_view_quality": result["quality"], "sheet_type": "actor_sheet_25_cell",
+                        })
+                assets.setdefault("3_sheets", {})[name] = result["sheet"]
+            progress = assets.setdefault(REGENERATION_KEY, {})
+            progress[name] = {"status": "failed", "error": error, "finished_epoch": time.time()} if error else {
+                "status": "done", "finished_epoch": time.time(),
+            }
+            assets["3_character_dashboard"] = compile_character_dashboard(current).model_dump(mode="json", by_alias=True)
+            return current
+
+        finished = self.repo.mutate_task(task_id, finish)
+        # 新图同步给资产库里挂在本项目的同名数字演员；钩子由 API 层装上，失败不影响项目里的新图。
+        if not error and finished and self.character_regenerated_hook is not None:
+            try:
+                self.character_regenerated_hook(finished, name)
+            except Exception:  # noqa: BLE001
+                logger.warning("[CharacterRegen] %s 新图同步到资产库失败", name, exc_info=True)
+
+    def regenerate_library_actor(
+        self, *, owner_id: str, name: str, name_keys: set[str], desc: str,
+        task_ids: tuple[str, ...], reference: bytes | None = None,
+    ) -> Dict[str, Any]:
+        """资产库里的数字演员重出一张设定集(付费、同步阻塞，调用方放后台线程)。
+
+        演员挂在某个本人项目里、项目里也有这名角色：走该项目的 ``regenerate_character``，
+        项目与资产库换的是同一套图。原项目已删或角色不在任何项目里：按资产库里的描述独立出图，
+        现有身份视图做参考。返回 {views, sheet, quality}；失败抛 RuntimeError(旧图由调用方保留)。
+        """
+        for task_id in task_ids:
+            task = self.repo.get_task(task_id)
+            if not task or str(task.get("owner_user_id") or "") != owner_id:
+                continue
+            record = next((
+                item for item in (task.get("assets") or {}).get("3_characters") or []
+                if isinstance(item, dict) and normalized_asset_name(item.get("name")) in name_keys
+            ), None)
+            if record is None:
+                continue
+            character = str(record.get("name") or "").strip()
+            try:
+                self.regenerate_character(task_id, character, mode="sheet", background=False)
+            except ValueError as exc:
+                raise RuntimeError(str(exc)) from exc
+            current = self.repo.get_task(task_id) or {}
+            assets = current.get("assets") or {}
+            progress = (assets.get(REGENERATION_KEY) or {}).get(character) or {}
+            if progress.get("status") != "done":
+                raise RuntimeError(str(progress.get("error") or f"角色「{character}」设定集重新生成失败"))
+            updated = next((
+                item for item in assets.get("3_characters") or []
+                if isinstance(item, dict) and str(item.get("name") or "").strip() == character
+            ), {})
+            return {
+                "views": list(updated.get("views") or []),
+                "sheet": str(updated.get("sheet") or ""),
+                "quality": updated.get("five_view_quality") or {},
+                "task_id": task_id,
+            }
+
+        try:
+            ref_images = [self._reference_image_uri(reference, "image/png")] if reference else None
+        except Exception:  # noqa: BLE001 - 旧图读不出来就不带参考出图，不挡重新生成
+            ref_images = None
+        result = self._render_actor_sheet(
+            name=name,
+            desc=desc,
+            image_model="",
+            dir_style="真人电影写实",
+            genre=self.gateway.get_genre(f"{name} {desc}"),
+            extra_negative="",
+            max_attempts=max(1, min(3, int(os.getenv("CHARACTER_SHEET_MAX_ATTEMPTS", "2")))),
+            ref_images=ref_images,
+        )
+        if result.get("error") is not None:
+            raise RuntimeError(self._safe_error_text(result["error"]) or f"角色「{name}」设定集重新生成失败")
+        if not (result.get("quality") or {}).get("passed"):
+            raise RuntimeError(f"角色「{name}」设定集重新生成未通过质检")
+        return {"views": list(result["views"]), "sheet": str(result["sheet"] or ""), "quality": result["quality"], "task_id": ""}
 
     def pause_task(self, task_id: str, *, stop: bool = False) -> Optional[Dict[str, Any]]:
         """
@@ -2596,6 +4120,25 @@ class DramaService:
             if not _automatic:
                 self._finish_workflow_run(task_id, run_id)
 
+    @staticmethod
+    def _adopt_selected_text_model(task: Dict[str, Any]) -> None:
+        """A project whose text model was removed or disabled runs on the globally selected one, and says so.
+
+        The configuration centre's current text model is the first enabled one; the project's
+        saved choice is replaced with it (persisted with the claim) so every call of the stage,
+        the log and the workbench agree on one model.
+        """
+        config = task.setdefault("config", {})
+        chosen = str(config.get("llm_model") or "")
+        if chosen and runtime_model_registry.resolve(chosen, "text") is not None:
+            return
+        selected = runtime_model_registry.first_for_category("text")
+        if selected is None:
+            return
+        config["llm_model"] = selected.model_ids[0]
+        logger.info("[Models] 项目 %s 的文本模型 %s 未启用，改用全局选择的 %s",
+                    task.get("task_id"), chosen or "（未选择）", selected.model_ids[0])
+
     def _claim_stage_task(self, task_id: str, stage: int, *, run_id: Optional[str] = None, automatic: bool = False, guidance: Optional[str] = None) -> Dict[str, Any]:
         """Atomically mark and return the exact script revision a worker will execute."""
 
@@ -2619,6 +4162,7 @@ class DramaService:
                                       "status": "running", "percent": 0, "label": "等待执行", "calls": []}
             if guidance is not None:
                 task.setdefault("config", {})["guidance_instruction"] = guidance
+            self._adopt_selected_text_model(task)
             # The reservation is what starts a stage, so it owns the single
             # "started" message; the worker and the chat reply reuse it instead
             # of writing their own near-identical bubble.
@@ -2777,6 +4321,21 @@ class DramaService:
                 raise StagePrerequisiteError(
                     "第3阶段的拍摄资产尚未全部生成，不能进入第4阶段；" + "、".join(reasons)
                 )
+        if stage == 3:
+            # The review gate is soft: production starts anyway, but the episodes nobody
+            # confirmed and the drafts still breaking a rule are named on the task.
+            state = screenwriting.state_of(task)
+            if state is not None:
+                record = review.gate_record(state, stage=3)
+                task.setdefault("assets", {})[review.GATE_KEY] = record
+                if not record["passed"] and record["message"]:
+                    logger.warning("[Stage3] 剧本审核软门未全部通过 task=%s：%s", task.get("task_id"), record["message"])
+        if stage == 5:
+            # Video is where the money goes: every shot is admitted together, or none is submitted.
+            admission = assess_video_batch(task, provider_ready=ModelGateway.video_family_ready)
+            task.setdefault("assets", {})["5_admission"] = admission.as_dict()
+            if admission.decision != "admitted":
+                raise StagePrerequisiteError(admission.summary())
 
         for earlier in range(1, previous):
             missing = self._missing_stage_outputs(task, earlier)
@@ -2788,11 +4347,12 @@ class DramaService:
         claimed_task = claimed_task or self._claim_stage_task(task_id, stage)
         claimed_revision = _task_script_revision(claimed_task)
         try:
-            return self._execute_stage_blocking(
-                task_id,
-                stage,
-                _claimed_task=claimed_task,
-            )
+            with usage_ledger.bind_task(task_id, f"stage_{stage}"):
+                return self._execute_stage_blocking(
+                    task_id,
+                    stage,
+                    _claimed_task=claimed_task,
+                )
         except StaleTaskWriteError:
             raise
         except Exception as exc:
@@ -3131,6 +4691,7 @@ class DramaService:
         f"也不要短于 {MIN_SHOT_SECONDS} 秒；"
         "scene_id 里的镜头序号在本集内从 01 连续编号，按剧情顺序排列，"
         "整集时长等于该集各镜头时长之和；"
+        f"{configured_episode_shape().rule()}；"
         "timeline 提炼 5-8 个关键节点按时间顺序；relationships 写明真实的身份或戏剧关系，"
         "禁止输出「同场互动」这类只描述同场次数的占位说法；"
         "角色名必须与剧本中的称呼完全一致，不要把「双轨节奏」「情绪钩子」这类结构标签当成角色；"
@@ -3187,18 +4748,16 @@ class DramaService:
     # 判定打戏用的词表。强信号=只在打戏里出现的动作术语；弱信号=文戏也常见的冲突词，
     # 单独出现不作数，只在已经命中强信号时用来加权。宁可漏判成文戏，也不要把一场
     # 对峙戏判成打戏——那会让它丢掉连贯性与站位两章。
-    FIGHT_STRONG_SIGNALS = (
-        "打斗", "打戏", "武打", "动作戏", "对打", "过招", "交手", "缠斗", "混战", "厮杀",
-        "格斗", "搏斗", "械斗", "单挑", "群殴", "出招", "招式", "拳脚", "挥拳", "出拳",
-        "飞踢", "踢腿", "肘击", "膝撞", "擒拿", "反手夺刀", "拔剑", "拔刀", "刀光", "剑光",
-        "刀剑相接", "短兵相接", "拳拳到肉", "受击", "被击退", "重拳", "扫腿", "腾空跃起",
-    )
-    FIGHT_WEAK_SIGNALS = (
-        "冲突", "对峙", "扭打", "推搡", "撕扯", "追逐", "围攻", "反击", "格挡", "闪身",
-        "倒地", "翻滚", "血迹", "兵器", "长剑", "匕首", "刀刃",
-    )
+    FIGHT_STRONG_SIGNALS = fight_design.STRONG_SIGNALS
+    FIGHT_WEAK_SIGNALS = fight_design.WEAK_SIGNALS
     # 题材本身不构成判据(古装武侠里照样有大段文戏)，只在已经命中强信号时补一分。
-    FIGHT_GENRES = frozenset({"wuxia", "xianxia", "military", "sports", "action"})
+    # 词表与打分在 app.core.fight_design，编剧阶段判定本集是否含打戏也用同一套。
+    FIGHT_GENRES = fight_design.FIGHT_GENRES
+    # 逐集制作的默认节奏，可用 SHOTS_PER_EPISODE / REANCHOR_EVERY / SHOT_DURATION 调整
+    EPISODE_SHOTS_DEFAULT = 16
+    EPISODE_SHOTS_MAX = 60
+    EPISODE_REANCHOR_DEFAULT = 4
+    EPISODE_SHOT_SECONDS_DEFAULT = 10
     FIGHT_INTENSITY_HIGH = frozenset({"high", "extreme", "intense", "高", "强", "很强", "激烈", "高强度"})
     FIGHT_INTENSITY_LOW = frozenset({"low", "none", "无", "低", "弱", "无动作"})
 
@@ -3227,16 +4786,8 @@ class DramaService:
                 value = None
             if value is not None:
                 return "fight" if (value >= 4 if value <= 5 else value >= 7) else "general"
-        content = scene_content or ""
-        strong = sum(1 for word in DramaService.FIGHT_STRONG_SIGNALS if word in content)
-        if not strong:
-            return "general"
-        weak = sum(1 for word in DramaService.FIGHT_WEAK_SIGNALS if word in content)
-        score = 2 * min(strong, 3) + min(weak, 2)
-        if str(genre or "").strip().lower() in DramaService.FIGHT_GENRES:
-            score += 1
         # 3 分 = 一个强信号 + (一个弱信号或动作题材)，或两个强信号。
-        return "fight" if score >= 3 else "general"
+        return "fight" if fight_design.looks_like_fight(scene_content or "", genre) else "general"
 
     @staticmethod
     def storyboard_skill_sections(video_model: str, *, scene_kind: str = "general") -> tuple:
@@ -3300,6 +4851,8 @@ class DramaService:
                 # Shots numbered for an episode the screenplay does not have are the
                 # model's invention, not the script's; the span is the authority.
                 scenes = self._align_scenes_to_span(scenes, sorted(episodes))
+            # 只重拆模型答过的集；按剧本正文回退补齐的集没有时长可言，也不该再去追问
+            scenes = self._restructure_malformed_episodes(config, title, dir_style, shot_style, episodes, scenes)
             missing = [
                 index for index in sorted(episodes)
                 if index not in {episode_from_scene_id(str(scene.get("scene_id") or "")) for scene in scenes}
@@ -3368,6 +4921,10 @@ class DramaService:
                 if not isinstance(merged.get("overview"), dict) and isinstance(part.get("overview"), dict) and part["overview"]:
                     merged["overview"] = part["overview"]
                 self._merge_breakdown_part(part, merged, seen_roles, seen_edges, seen_assets)
+        # 只重拆模型答过的集；下面按剧本正文回退补齐的集没有时长可言，也不该再去追问
+        merged["scenes"] = self._restructure_malformed_episodes(
+            config, title, dir_style, shot_style, episodes, merged["scenes"],
+        )
         # Episodes no batch ever structured would otherwise vanish from the shot
         # list while the dashboard still advertises them.  Fill them from the
         # screenplay text - never for an episode the screenplay does not contain.
@@ -3392,6 +4949,63 @@ class DramaService:
             step = len(merged["timeline"]) / 40
             merged["timeline"] = [merged["timeline"][round(index * step)] for index in range(40)]
         return merged
+
+    @staticmethod
+    def _episode_shape_problems(scenes: List[Dict[str, Any]], shape=None) -> Dict[int, List[str]]:
+        """Episodes that are not yet an episode: one shot only, or under the minimum running time."""
+        shape = shape or configured_episode_shape()
+        counts: Dict[int, int] = {}
+        seconds: Dict[int, int] = {}
+        for scene in scenes:
+            if not isinstance(scene, dict):
+                continue
+            episode = episode_from_scene_id(str(scene.get("scene_id") or ""))
+            counts[episode] = counts.get(episode, 0) + 1
+            seconds[episode] = seconds.get(episode, 0) + parse_duration_seconds(scene.get("duration"))
+        problems: Dict[int, List[str]] = {}
+        for episode in counts:
+            errors = [issue.message for issue in shape.issues(counts[episode], seconds[episode]) if issue.severity == "error"]
+            if errors:
+                problems[episode] = errors
+        return problems
+
+    def _restructure_malformed_episodes(self, config: Dict[str, Any], title: str, dir_style: str, shot_style: str,
+                                        episodes: Dict[int, str], scenes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Send each one-shot or under-length episode back once, on its own, saying what was wrong.
+
+        The contract asks for a well-formed episode, but a batch of several episodes
+        sometimes answers one of them with a single eight-second shot. That episode is
+        re-analysed alone; the new answer replaces the old one only when it is better
+        formed, so a second bad answer never loses what the first one had.
+        """
+        shape = creation_modes.episode_shape_for(config)
+        problems = {episode: reasons for episode, reasons in self._episode_shape_problems(scenes, shape).items() if episode in episodes}
+        if not problems:
+            return scenes
+
+        def restructure(episode: int) -> List[Dict[str, Any]]:
+            part = self._analyze_script_chunk(
+                config, title, dir_style, shot_style, episodes[episode],
+                want_overview=False, episode_span=(episode, episode), correction="；".join(problems[episode]),
+            )
+            return self._align_scenes_to_span((part or {}).get("scenes"), [episode])
+
+        ordered = sorted(problems)
+        logger.warning(
+            "[Stage2] %s 集的镜头拆分不成形 (%s)，逐集重新拆分",
+            len(ordered), "、".join(str(episode) for episode in ordered[:10]),
+        )
+        replaced: Dict[int, List[Dict[str, Any]]] = {}
+        for episode, answer in zip(ordered, map_script_analysis(restructure, ordered)):
+            if answer and episode not in self._episode_shape_problems(answer, shape):
+                replaced[episode] = answer
+        if not replaced:
+            return scenes
+        kept = [
+            scene for scene in scenes
+            if not isinstance(scene, dict) or episode_from_scene_id(str(scene.get("scene_id") or "")) not in replaced
+        ]
+        return kept + [scene for episode in sorted(replaced) for scene in replaced[episode]]
 
     @staticmethod
     def _merge_breakdown_part(part: Dict[str, Any], merged: Dict[str, Any], seen_roles: set,
@@ -3530,7 +5144,7 @@ class DramaService:
 
     def _analyze_script_chunk(self, config: Dict[str, Any], title: str, dir_style: str, shot_style: str,
                               script: str, director_plan: str = "", want_overview: bool = True,
-                              episode_span: Optional[tuple] = None) -> Optional[Dict[str, Any]]:
+                              episode_span: Optional[tuple] = None, correction: str = "") -> Optional[Dict[str, Any]]:
         """Structure one screenplay chunk; a failure degrades the chunk, not the run."""
         video_model = str(config.get("video_model") or "")
         sys_prompt = self._breakdown_contract(max_shot_seconds(video_model), video_model)
@@ -3550,6 +5164,8 @@ class DramaService:
             )
         if director_plan:
             user_prompt += f"\n\n【导演策划大纲(辅助参考)】：\n{director_plan}"
+        if correction:
+            user_prompt += f"\n\n【上一次拆分不合格，必须改正】：{correction}"
         try:
             res = self.gateway.call_llm(
                 config["llm_model"], sys_prompt, user_prompt, title, dir_style, shot_style,
@@ -4006,6 +5622,7 @@ class DramaService:
             guide_elements = load_section("production-guidelines", budget=0)
             genre_summary = load_section("genre-summary", budget=0)
             narrative_structure = load_section("golden-narrative", budget=0)
+            hook_ladder = load_section("episode-hook-ladder", budget=0)
             sys_prompt = (
                 self._agent_role_prompt(task, AgentRole.EXECUTIVE_DIRECTOR)
                 + "\n\n"
@@ -4016,6 +5633,7 @@ class DramaService:
                 "必须严格套用《黄金叙事结构》：前3秒强钩子、每30-60秒一个冲突或反转、每集结尾留钩子，"
                 "并按‘受辱→忍耐→被逼绝境→身份/能力觉醒→打脸→更大敌人’这类爽文逆袭公式搭建三幕大纲。\n\n"
                 f"【黄金叙事结构(单集与整部结构/情绪峰值/钩子公式)如下】：\n{narrative_structure}\n\n"
+                f"【前三集钩子阶梯与付费墙卡点(E1 引爆/E2 升级/E3 反转，E8–E10 虚假胜利→崩塌→黑屏钩子)如下】：\n{hook_ladder}\n\n"
                 f"【全局短剧制作注意事项与关键元素规范如下】：\n{guide_elements}\n\n"
                 f"【短剧题材与爆款题材结构指导如下】：\n{genre_summary}\n"
             )
@@ -4045,6 +5663,13 @@ class DramaService:
             task["stage_name"] = "编剧剧本创作"
             script_content = config.get("script_content")
             script_name = config.get("script_name", "未命名")
+            library_text, _library_kind, library_episodes = screenwriting.library_sources(task)
+            if library_text or library_episodes:
+                # 文库里登记的整本源文与逐集原文就是手动剧本；旧路径按集号顺序合成一份正文
+                parts = [library_text] if library_text else []
+                parts.extend(f"第{index}集 {item['name'] or ''}\n{item['text']}".rstrip() for index, item in enumerate(library_episodes, start=1))
+                script_content = "\n\n".join(parts)
+                script_name = "剧本文库"
             # 结构化两段式编剧引擎（分集账本 → 分镜内容层 → 视觉层）是默认路径；
             # WRITER_ENGINE=legacy 或引擎失败且允许回退时走下方的自由文本旧路径。
             task["assets"].pop(screenwriting.STATE_KEY, None)
@@ -4076,6 +5701,8 @@ class DramaService:
                 continuity_guide = load_section("continuity-design", budget=0)
                 narrative_structure = load_section("golden-narrative", budget=0)
                 dialogue_pacing_guide = load_section("dialogue-pacing", budget=0)
+                craft_redlines = load_section("cinema-craft-redlines", budget=0)
+                hook_ladder = load_section("episode-hook-ladder", budget=0)
                 sys_prompt = (
                     self._agent_role_prompt(task, AgentRole.WRITER)
                     + "\n\n"
@@ -4084,17 +5711,19 @@ class DramaService:
                     "杜绝任何心理描写和括号暗示（如'（她内心很紧张）'），对话高度口语化。\n"
                     "每一集都必须按《黄金叙事结构》单集模型落地：前3秒强钩子→交代冲突→压迫升级→反击/反转/情绪爆点→"
                     "结尾5秒悬念钩子；每集至少命中一个爽/燃/虐/怒/甜/惊情绪点，结尾留‘必须看下一集’的问题。\n\n"
+                    f"【写作红线与 S 级三冲击(情绪/视觉/场景顶点、人物语言指纹、四张追踪表)如下】：\n{craft_redlines}\n\n"
                     f"【黄金叙事结构(单集黄金结构/每集三件事/短剧公式/一集模板)如下】：\n{narrative_structure}\n\n"
+                    f"【前三集钩子阶梯(E1 引爆/E2 升级/E3 反转)、集尾悬念五型、付费墙前三步如下】：\n{hook_ladder}\n\n"
                     f"【短剧表演细节与具象物理动作指导如下】：\n{performance_guide}\n\n"
                     f"【跨镜头与场景动作连续性设计指导如下】：\n{continuity_guide}\n\n"
                     f"【短剧注意事项与合规/剪辑节奏规范如下】：\n{guide_elements}\n\n"
-                    # 台词按《AI影视剧台词语速情绪提示词总结.md》八、万能公式落地：
+                    # 台词按 dialogue-pacing（台词语速情绪总结）第八节的万能公式落地：
                     # 一句台词 = 文本 + 语速 + 情绪 + 停顿 + 重音，缺一不可；只给文本会配出"念稿"。
                     "每句台词必须自带表演标注，格式：[角色][情绪类型-强度/克制度][语速][生理表现] 台词文本；"
                     "关键词用【】标注重音，停顿用……或[停顿N秒]显式标出，情绪转折处标[转折]。\n"
                     f"【台词语速情绪与停顿重音标注规范如下】：\n{dialogue_pacing_guide}\n\n"
                 )
-                ep_count = max(1, min(150, int(config.get("episode_count", 3) or 3)))
+                ep_count = _bounded_episode_count(config.get("episode_count"))
                 ep_labels = "、".join(f"「第{i}集 副标题」" for i in range(1, ep_count + 1))
                 if shanyin_prompt:
                     sys_prompt += f"【山音超级编剧大师核心指导规范如下】：\n{shanyin_prompt}\n\n"
@@ -4173,9 +5802,9 @@ class DramaService:
                 "Role: AI 角色设计师智能体 (Character Designer Agent)\n"
                 "Methodology: 设计主角和反派的详细五维 DNA 角色卡（面部、发型、体型、服饰、情绪），"
                 "锁定特征（服装与发型等）以保跨镜头多帧渲染的一致性，不能写任何心理词汇。\n"
-                "角色身份由一张 21:9 数字演员设定集锁定：左区 MAIN PORTRAIT 正面近景，"
-                "中区 FULL BODY & ELEMENTS 全身立绘 + 正面/90°侧面/背面三视图 + 2×4 元素拆解，"
-                "右区 DETAIL MATRIX 4×3 细节矩阵；其中正面全身、侧面全身、背面全身、正脸特写、"
+                "角色身份由一张 21:9 数字演员设定集锁定：左栏「主肖像」正面近景，"
+                "中栏「全身与元素」全身立绘 + 正面/90°侧面/背面三视图 + 2×4 元素拆解，"
+                "右栏「细节矩阵」4×3 细节特写；其中正面全身、侧面全身、背面全身、正脸特写、"
                 "3-4 侧脸五格是身份锚点。DNA 描述必须覆盖这五个锚点看得见的特征，"
                 "并逐项写清鞋履、腰扣、护腕、领口刺绣、面料、发饰、手部、裙摆等可拆解元素。\n\n"
                 f"【数字演员设定集一致性角色卡规则与示例】：\n{sheet_template}\n\n"
@@ -4236,7 +5865,7 @@ class DramaService:
                 config, title, dir_style, shot_style, res
             )
 
-            # 为每名角色生成一张数字演员设定集，并物理拆成 25 个独立格子资产。
+            # 为每名角色生成一张数字演员设定集，并物理拆成最多 25 个独立格子资产。
             # 后续镜头引用同一角色的五个身份锚点，锁定脸型/发型/服装/体型。
             sheets = {}
             characters = []
@@ -4380,75 +6009,15 @@ class DramaService:
                         prior_by_name[cname] = {**record, "role": role, "desc": cdesc}
 
                 def _render_character_sheet(entry):
-                    """一名角色的设定集付费调用：生成 → 拆成 25 格 → 逐格质检。
-
-                    只读 gateway 与入参，不碰 task / sheets / characters，所以可以并发；
-                    调用顺序、进度上报和落库全部留在主线程，产出顺序与串行时一致。
-                    """
+                    """一名角色的设定集付费调用(见 ``_render_actor_sheet``)；可以并发。"""
                     cname, role, cdesc = entry
-                    sheet_url = None
-                    views = []
-                    cells = []
-                    quality_payload = None
-                    failure_phase = "generation_error"
-                    last_error = None
-                    for attempt in range(1, max_attempts + 1):
-                        sheet_url = None
-                        views = []
-                        cells = []
-                        quality_payload = None
-                        failure_phase = "generation_error"
-                        try:
-                            # 已授权演员素材作为身份参考，但仍生成统一设定集，不允许用单张脸替代设定集。
-                            auth_face = self.gateway.resolve_authorized_face(cname, role)
-                            sheet_url = self.gateway.generate_character_sheet(
-                                config["image_model"], cname, cdesc, dir_style, genre=genre,
-                                ref_images=[auth_face] if auth_face else None,
-                                extra_negative=designer_negative,
-                            )
-                            if not sheet_url:
-                                raise RuntimeError(f"角色「{cname}」设定集生成失败")
-
-                            failure_phase = "split_error"
-                            view_digest = hashlib.sha256(f"{cname}|{sheet_url}".encode("utf-8")).hexdigest()[:16]
-                            view_dir = os.path.join(media_compositor.MEDIA_DIR, "character_views", view_digest)
-                            # 一张设定集拆成 25 个独立资产，全部落库——用户要的是每一格都能单看。
-                            cell_paths = split_actor_sheet(sheet_url, view_dir)
-                            cell_urls = {
-                                cell: media_compositor.public_url(
-                                    os.path.relpath(str(path), media_compositor.MEDIA_DIR).replace(os.sep, "/")
-                                )
-                                for cell, path in zip(ACTOR_SHEET_CELL_ORDER, cell_paths)
-                            }
-                            cells = [
-                                {"cell": cell, "image_url": cell_urls[cell]}
-                                for cell in ACTOR_SHEET_CELL_ORDER
-                            ]
-                            # 其中五格是身份锚点：看板、资产库复用与后续阶段读的就是它们。
-                            views = [
-                                {"view": view_name, "image_url": cell_urls[view_name]}
-                                for view_name in IDENTITY_VIEW_ORDER
-                            ]
-
-                            failure_phase = "quality_error"
-                            sheet_quality = validate_actor_sheet_images(cell_paths)
-                            quality_payload = sheet_quality.model_dump()
-                            if not sheet_quality.passed:
-                                raise RuntimeError(
-                                    f"角色「{cname}」设定集质检失败："
-                                    + "；".join(issue.message for issue in sheet_quality.issues)
-                                )
-                            last_error = None
-                            break
-                        except Exception as char_error:
-                            last_error = char_error
-                            if attempt < max_attempts:
-                                logger.warning(
-                                    "[Stage3] 数字演员设定集生成重试: character=%s attempt=%s/%s phase=%s",
-                                    cname, attempt, max_attempts, failure_phase,
-                                )
-                    return {"sheet": sheet_url, "views": views, "cells": cells,
-                            "quality": quality_payload, "phase": failure_phase, "error": last_error}
+                    # 已授权演员素材作为身份参考，但仍生成统一设定集，不允许用单张脸替代设定集。
+                    auth_face = self.gateway.resolve_authorized_face(cname, role)
+                    return self._render_actor_sheet(
+                        name=cname, desc=cdesc, image_model=config["image_model"], dir_style=dir_style,
+                        genre=genre, extra_negative=designer_negative, max_attempts=max_attempts,
+                        ref_images=[auth_face] if auth_face else None,
+                    )
 
                 # 每名角色的设定集彼此独立，排队跑纯粹是在等墙钟；复用的角色不重新出图。
                 pending = [
@@ -4533,11 +6102,19 @@ class DramaService:
                 logger.error(f"[Stage3] 数字演员设定集生成异常: {type(e).__name__}")
                 raise
             task["assets"]["3_sheets"] = sheets
-            # 结构化角色清单(名字+身份+特征+设定集 25 格)，供前端阶段3罗列与下游逐镜复用
+            # 结构化角色清单(名字+身份+特征+设定集各格)，供前端阶段3罗列与下游逐镜复用
             task["assets"]["3_characters"] = characters
 
             # 场地、道具、服装、特效同样是分镜的锁定依据：归档到资产库、复用同名旧资产、
             # 补齐缺失参考图，并落下阶段4门禁读取的齐备快照。
+            if self._catalog_kinds_to_fill(task):
+                # The writer listed no costumes or effects (older script, or a run that skipped
+                # them): read them off the screenplay now so their reference images are drawn too.
+                self._progress_step(task, 91, "从剧本补全服装与特效清单")
+                try:
+                    self._fill_production_catalog(task)
+                except Exception as exc:  # the rest of the library still gets filed and drawn
+                    logger.warning("[Stage3] 服装/特效清单补全失败（不阻断）: %s", type(exc).__name__)
             self._progress_step(task, 92, "同步拍摄资产到资产库并补齐参考图")
             task["assets"][READINESS_KEY] = complete_project_assets(task, generate_missing=True)
 
@@ -4785,13 +6362,8 @@ class DramaService:
                 shots = parse_storyboard_table(task["assets"].get("4_raw", ""), [])
                 
             if not shots:
-                shot_1_mov = "Extreme Close-up Dolly" if shot_style == "cinematic" else "Slow Dolly In"
-                shot_3_mov = "Dolly Zoom" if shot_style == "cinematic" else "Lateral Tracking"
-                shots = [
-                    {"shot_id": 1, "size": "MS", "motion": "Establishing Shot", "desc": f"{char1_name}出场，环境渲染 ({dir_style} 风格)。"},
-                    {"shot_id": 2, "size": "MCU", "motion": shot_1_mov, "desc": f"{char2_name}正面意图挑衅，视线沿180度轴线对峙。"},
-                    {"shot_id": 3, "size": "FS", "motion": shot_3_mov, "desc": f"{char1_name}出示底牌进行正义反扑，{char2_name}震惊后退。"}
-                ]
+                # 没有分镜就没有可拍的内容：不替项目编三镜“挑衅—反扑”的套路戏去付费生成
+                raise ValueError("第 5 阶段需要第 4 阶段的分镜表，请先完成分镜设计")
                 
             # 数字演员身份视图锚点 (来自阶段3)
             char_sheets = task["assets"].get("3_sheets") or {}
@@ -4800,7 +6372,11 @@ class DramaService:
             char1_gender = "male" if guess_gender(char1_name) == "male" else "female"
             char2_gender = "male" if guess_gender(char2_name) == "male" else "female"
 
-            shot_assets = []
+            # Clips an earlier run of this stage already produced: reused when the request is the same.
+            earlier_clips = {
+                str(clip.get("shot_id")): clip
+                for clip in (task["assets"].get("5") or []) if isinstance(clip, dict) and clip.get("video_url")
+            }
             scenes_by_id = {
                 str(scene.get("scene_id") or ""): scene for scene in self._breakdown_scenes(task)
             }
@@ -4847,6 +6423,8 @@ class DramaService:
                             f"视频模型族 {plan.provider_family} 的适配器尚不能执行 {plan.mode} 模式"
                             f"（已验证接口只支持 {'、'.join(sorted(executable))}），本镜不提交"
                         )
+                # The prompt counted only the identity images; number them by what this request carries.
+                prompt_text = renumber_reference_mentions(prompt_text, identity_images, plan)
                 url = self.gateway.generate_video(
                     config["video_model"],
                     plan.first_frame,
@@ -4860,24 +6438,22 @@ class DramaService:
                     duration=seconds,
                     seed=seed,
                 )
-                return url, plan.model_dump(mode="json")
+                return url, {**plan.model_dump(mode="json"), "prompt_sent": prompt_text}
 
-            # 处理全部分镜镜头，确保合片时长达到 1min ~ 3min
-            for shot_no, shot in enumerate(shots, start=1):
-                self._progress_step(
-                    task,
-                    10 + int(85 * (shot_no - 1) / max(len(shots), 1)),
-                    f"图生视频 · 镜头 {shot_no}/{len(shots)}",
-                )
-                shot_id = shot.get("shot_id", len(shot_assets) + 1)
+            # Every shot is prepared first (prompts, contracts, references: no provider call), then its
+            # paid work goes through the generation queue as three items — frames → video → assemble —
+            # so image, video and voice providers each run under their own ceiling and a restart or a
+            # cancel shows exactly what was waiting.
+            def _prepare_shot(shot_no: int, shot: dict) -> dict:
+                shot_idx = shot_no - 1
+                shot_id = shot.get("shot_id", shot_idx + 1)
                 size = shot.get("size", "MS")
                 motion = shot.get("motion", "Dolly In")
                 desc = shot.get("desc", "")
                 dialogue = shot.get("dialogue", "")
 
-                # 跨镜连贯性约束 (短剧情节与镜头连贯性提示词.md)：第0镜为建立镜不写"承接上一镜"，
+                # 跨镜连贯性约束 (plot-shot-coherence)：第0镜为建立镜不写"承接上一镜"，
                 # 其余每镜都承接上一镜最后一帧；正/负向连贯六锚点约束拼进所有视频提示词。
-                shot_idx = len(shot_assets)
                 carry_lead = "" if shot_idx == 0 else f"{self.gateway.CONTINUITY_CARRY}. "
 
                 # 动态计算时长：由剧情/台词/动作复杂度决定，上限跟随所选视频模型的单镜能力
@@ -4905,11 +6481,11 @@ class DramaService:
                 char_prompt = ""
                 ref_sheets = []
                 if char1_name and char1_name in desc:
-                    char_prompt += f", featuring character {char1_name} who is: {char1_desc}"
+                    char_prompt += _character_clause(char1_name, char1_desc)
                     if char_sheets.get(char1_name):
                         ref_sheets.append(char_sheets[char1_name])
                 if char2_name and char2_name in desc:
-                    char_prompt += f", featuring character {char2_name} who is: {char2_desc}"
+                    char_prompt += _character_clause(char2_name, char2_desc)
                     if char_sheets.get(char2_name):
                         ref_sheets.append(char_sheets[char2_name])
                 if not ref_sheets and char_sheets:
@@ -4962,14 +6538,6 @@ class DramaService:
 
                 # 已批准的 Stage4 分镜是镜头契约的首帧；授权素材仅作为缺图时的回退。
                 img_url = shot.get("image_url") or authorized_first
-                if not img_url:
-                    img_url, _ = self.gateway.generate_image(
-                        config["image_model"], img_prompt, ref_images=ref_sheets,
-                    )
-                contract = contract.model_copy(update={
-                    "storyboard_image": img_url,
-                    "reference_images": ref_sheets,
-                })
 
                 end_state_markers = (
                     "完成", "到位", "落座", "关闭", "完全", "停在", "抓住", "递给",
@@ -4979,7 +6547,7 @@ class DramaService:
                     requested_reference_mode == "first_last_frame"
                     or any(marker in contract.end_state for marker in end_state_markers)
                 )
-                target_frame = None
+                end_prompt = None
                 if exact_end_required:
                     compiled_end = compile_storyboard_image_prompt(
                         contract,
@@ -4991,9 +6559,6 @@ class DramaService:
                         f"{lock_neg}{style_packs.identity_negative(style_pack, self.gateway.DEID_NEGATIVE)}"
                         f"{self.gateway.SCENE_STABILITY_NEGATIVE}{self.gateway.EMOTION_FACE_NEGATIVE}"
                         f"{visual_negative_image}"
-                    )
-                    target_frame, _ = self.gateway.generate_image(
-                        config["image_model"], end_prompt, ref_images=[img_url, *ref_sheets],
                     )
 
                 sequence_images = list(shot.get("sequence_images") or [])
@@ -5012,6 +6577,17 @@ class DramaService:
                 # 与分镜出图用的是同一套项目资产；资产库不可读时整段停下，不悄悄退化。
                 library_references: list = []
                 scene_record = scenes_by_id.get(str(shot.get("scene_id") or ""))
+                # How the writer asked each line of this shot to be played (shot plan ``delivery``).
+                scene_lines = [
+                    line for line in ((scene_record or {}).get("dialogue") or [])
+                    if isinstance(line, dict) and str(line.get("text") or "").strip()
+                ]
+                shot_lines = [line for line in scene_lines if str(line.get("text")) in str(dialogue or "")] or scene_lines
+                delivery_notes = [
+                    f"{str(line.get('speaker') or '旁白')}：{str(line.get('delivery')).strip()}"
+                    for line in shot_lines if str(line.get("delivery") or "").strip()
+                ]
+                emotion_reading = read_emotion("；".join(delivery_notes), contract.expression, desc)
                 if scene_record is not None:
                     scene_elements = load_storyboard_elements(task, scene_record)
                     try:
@@ -5025,6 +6601,10 @@ class DramaService:
                     if name and char_sheets.get(name) in ref_sheets
                 ] or [(name, url) for name, url in char_sheets.items() if url in ref_sheets]
                 identity_images, reference_notes = merge_video_references(sheet_pairs, library_references)
+                # 提示词里的 @[名字]：本镜每个参考图对应的资产，第 N 项就是参考图 N。
+                reference_entries = video_reference_entries(sheet_pairs, library_references)
+                reference_numbers = {name: number for number, (_, name, _) in enumerate(reference_entries, start=1) if name}
+                mention_kinds = {name: kind for kind, name, _ in reference_entries if name}
                 contract = contract.model_copy(update={
                     "storyboard_image": img_url,
                     # Private inline bytes are transient provider inputs, not task JSON.
@@ -5052,7 +6632,9 @@ class DramaService:
                         for name in dict.fromkeys(speakers_in(dialogue, list(voice_anchors)))
                         if name in voice_anchors
                     ]
-                    _, mood = h3_sound_design.delivery_for_emotion(detect_emotion(f"{desc}{dialogue}"))
+                    _, mood = h3_sound_design.delivery_for_emotion(
+                        detect_emotion(f"{desc}{dialogue}", notes=f"{'；'.join(delivery_notes)} {contract.expression}")
+                    )
                     compiled_sound = h3_sound_design.compile_sound_prompt(
                         speakers=speaking,
                         tone=mood,
@@ -5096,14 +6678,24 @@ class DramaService:
                         sound=shot_sound,
                         sound_layers=sound_layers,
                         dialogue=dialogue,
-                        expression=contract.expression,
-                        environment=contract.composition,
+                        # The named emotion stays; what a camera can see of it is added (face, body).
+                        expression="；".join(part for part in (
+                            contract.expression.strip(),
+                            f"外化为{emotion_reading.visible}" if emotion_reading.visible and emotion_reading.visible not in contract.expression else "",
+                        ) if part),
+                        dialogue_notes="；".join(
+                            [*delivery_notes, *(f"声音：{'、'.join(emotion_reading.voice_notes)}" for _ in [0] if emotion_reading.voice_notes)]
+                        ),
+                        composition=contract.composition,
+                        cast_refs=[name for kind, name, _ in reference_entries if kind == "actor" and name],
+                        scene_refs=[name for kind, name, _ in reference_entries if kind == "scene" and name],
+                        prop_refs=[name for kind, name, _ in reference_entries if kind == "prop" and name],
                         motion_prompt=f"{carry_lead}{desk.motion_prompt}",
                         cut_in=shot.get("cut_in") if isinstance(shot.get("cut_in"), dict) else None,
                         reference_notes=[reference_notes] if reference_notes else [],
                         reference_kinds=["five_view"] if identity_images else [],
-                        first_frame=bool(img_url),
-                        last_frame=bool(target_frame),
+                        first_frame=True,
+                        last_frame=exact_end_required,
                         tone=f"{dir_style}，{style_pack.tone_default}",
                         extra_negatives=[
                             *([visual_negative_video] if visual_negative_video.strip() else []),
@@ -5118,7 +6710,10 @@ class DramaService:
                     model=str(config.get("video_model") or ""),
                     max_duration_seconds=clip_ceiling,
                 )
-                vid_prompt = compiled_video.text
+                # 人工改过的提示词优先；展示版保留 @[名字]，发给模型前换成「名字（参考图N）」。
+                prompt_override = str(shot.get("video_prompt_override") or "").strip()
+                display_prompt = prompt_override or compiled_video.text
+                vid_prompt = resolve_mentions(display_prompt, reference_numbers)
                 if compiled_video.pressure.tier == "red":
                     logger.warning(
                         "[Stage5] 镜头%s提示词超出 %s 预算 (%s/%s 字)，已裁掉 %s",
@@ -5129,44 +6724,117 @@ class DramaService:
                 # 用户可在视觉工作区改选；任一候选失败即停止，不为一镜烧掉全部预算。
                 base_seed = visual.get("seed") if visual and isinstance(visual.get("seed"), int) else None
                 candidate_count = max(1, min(4, int(visual.get("candidates") or 1))) if visual else 1
+                return {
+                    "shot_no": shot_no, "shot_idx": shot_idx, "shot_id": shot_id, "shot": shot,
+                    "size": size, "motion": motion, "desc": desc, "dialogue": dialogue, "duration": duration, "visual": visual,
+                    "img_url": img_url, "img_prompt": img_prompt, "ref_sheets": ref_sheets, "end_prompt": end_prompt,
+                    "contract": contract, "compiled_motion": compiled_motion, "compiled_video": compiled_video, "vid_prompt": vid_prompt,
+                    "display_prompt": display_prompt, "prompt_edited": bool(prompt_override),
+                    "reference_numbers": reference_numbers, "mention_kinds": mention_kinds,
+                    "sequence_images": sequence_images, "identity_images": identity_images, "motion_refs": motion_refs,
+                    "timing_refs": timing_refs, "intent": intent, "sound_layers": sound_layers, "voice_locks": voice_locks,
+                    "sound_checks": sound_checks, "base_seed": base_seed, "candidate_count": candidate_count,
+                    "target_frame": None, "candidate_urls": [], "route_decision": {},
+                }
+
+            def _frames_item(req: dict) -> dict:
+                """The first frame when stage 4 left none, and the exact end frame when the shot needs one."""
+                img_url = req["img_url"]
+                if not img_url:
+                    img_url, _ = self.gateway.generate_image(
+                        config["image_model"], req["img_prompt"], ref_images=req["ref_sheets"],
+                    )
+                target_frame = None
+                if req["end_prompt"]:
+                    target_frame, _ = self.gateway.generate_image(
+                        config["image_model"], req["end_prompt"], ref_images=[img_url, *req["ref_sheets"]],
+                    )
+                req["img_url"] = img_url
+                req["target_frame"] = target_frame
+                req["contract"] = req["contract"].model_copy(update={"storyboard_image": img_url})
+                return req
+
+            def _video_item(req: dict) -> dict:
+                """Every candidate clip of one shot, in order; the first failure stops the rest."""
+                shot_id, contract = req["shot_id"], req["contract"]
+                duration, base_seed, candidate_count = req["duration"], req["base_seed"], req["candidate_count"]
+                img_url, target_frame, vid_prompt, intent = req["img_url"], req["target_frame"], req["vid_prompt"], req["intent"]
+                sequence_images, identity_images, motion_refs, timing_refs = req["sequence_images"], req["identity_images"], req["motion_refs"], req["timing_refs"]
                 candidate_urls: list[str] = []
                 route_decision: dict = {}
-                vid_url = None
+                # The same request answered before costs nothing: a usable clip from an earlier run of
+                # this stage, or one a resumed provider job delivered after a restart.
+                earlier = earlier_clips.get(str(shot_id))
+                if (
+                    earlier and not earlier.get("stale")
+                    and str(earlier.get("contract_fingerprint") or "") == contract.contract_fingerprint
+                    and earlier.get("video_reference_mode_requested") == requested_reference_mode
+                ):
+                    candidate_urls = [url for url in (earlier.get("candidates") or [earlier["video_url"]]) if url]
+                    route_decision = earlier.get("video_route_decision") or {}
+                    logger.info("[Stage5] 镜头 %s 复用上一轮已生成的片段，不再提交", shot_id)
                 for candidate_index in range(candidate_count):
-                    candidate_url, decision = _generate_motion_video(
-                        prompt_text=vid_prompt,
-                        first_frame=img_url,
-                        last_frame=target_frame,
-                        sequence_images=sequence_images,
-                        identity_images=identity_images,
-                        motion_videos=motion_refs,
-                        timing_audios=timing_refs,
-                        seconds=duration,
-                        intent=intent,
-                        seed=candidate_seed(base_seed, candidate_index),
+                    if candidate_index < len(candidate_urls):
+                        continue
+                    resumed_url = video_jobs.downloaded_clip(
+                        task, int(shot_id), candidate=candidate_index, fingerprint=contract.contract_fingerprint,
                     )
+                    if resumed_url:
+                        candidate_urls.append(resumed_url)
+                        logger.info("[Stage5] 镜头 %s 候选 %s 取自重启后续查到的片段", shot_id, candidate_index)
+                        continue
+                    with video_jobs.bind_shot(
+                        task_id, int(shot_id), candidate=candidate_index,
+                        checkpoint={"contract_fingerprint": contract.contract_fingerprint, "seconds": duration, "mode": requested_reference_mode},
+                    ):
+                        candidate_url, decision = _generate_motion_video(
+                            prompt_text=vid_prompt,
+                            first_frame=img_url,
+                            last_frame=target_frame,
+                            sequence_images=sequence_images,
+                            identity_images=identity_images,
+                            motion_videos=motion_refs,
+                            timing_audios=timing_refs,
+                            seconds=duration,
+                            intent=intent,
+                            seed=candidate_seed(base_seed, candidate_index),
+                        )
                     route_decision = route_decision or decision
                     if not candidate_url:
                         break
                     candidate_urls.append(candidate_url)
+                req["candidate_urls"] = candidate_urls
+                req["route_decision"] = route_decision
+                return req
+
+            def _assemble_item(req: dict) -> dict:
+                """The shot's preview track and its asset record, once its clips exist."""
+                shot_id, shot, contract = req["shot_id"], req["shot"], req["contract"]
+                size, motion, desc, dialogue, duration = req["size"], req["motion"], req["desc"], req["dialogue"], req["duration"]
+                img_url, target_frame, candidate_urls, route_decision = req["img_url"], req["target_frame"], req["candidate_urls"], req["route_decision"]
+                vid_prompt, compiled_video, compiled_motion = req["vid_prompt"], req["compiled_video"], req["compiled_motion"]
+                sound_layers, sound_checks, base_seed = req["sound_layers"], req["sound_checks"], req["base_seed"]
                 vid_url = candidate_urls[0] if candidate_urls else None
                 used_reference_modes = [route_decision.get("mode")] if route_decision else []
 
                 # 为逐镜预览片段仅挂载原文台词配音，不自动添加音乐；这与视频提示词的
                 # “只生成音效，禁止生成音乐”约束保持一致。最终成片配乐仍由后续音频阶段处理。
                 # voice_path 一并存入资产，供步骤6成片复用，避免重复配音。
-                seg_lines = parse_shot_dialogue(dialogue, char1_name, char2_name, char1_gender, char2_gender)
+                seg_lines = parse_shot_dialogue(
+                    dialogue, char1_name, char2_name, char1_gender, char2_gender,
+                    voice_narration=narration_delivery(config) == "use_tts",
+                )
                 voice_url, voice_path = None, None
                 if seg_lines:
                     voice_url, voice_path = media_compositor.synthesize_preferred_dialogue_track(
                         seg_lines,
                         tts_model=config["tts_model"],
-                        tag=f"voice_{task_id[:8]}_s{len(shot_assets)}",
+                        tag=f"voice_{task_id[:8]}_s{req['shot_idx']}",
                     )
                 vid_url = media_compositor.attach_audio_to_clip(
                     vid_url, voice_path, bgm=False, tag=f"shotav_{task_id[:8]}_s{shot_id}")
 
-                shot_assets.append({
+                return {
                     "shot_id": shot_id,
                     "size": size,
                     "motion": motion,
@@ -5183,7 +6851,11 @@ class DramaService:
                     "video_reference_mode_requested": requested_reference_mode,
                     "video_reference_modes_used": used_reference_modes,
                     "video_route_decision": route_decision,
-                    "motion_prompt": vid_prompt,
+                    "motion_prompt": req["display_prompt"],
+                    "sent_prompt": vid_prompt,
+                    "prompt_edited": req["prompt_edited"],
+                    "reference_numbers": req["reference_numbers"],
+                    "mention_kinds": req["mention_kinds"],
                     "prompt_pressure": compiled_video.pressure.as_dict(),
                     "style_pack": style_pack.id,
                     "sound_layers": sound_layers,
@@ -5214,9 +6886,76 @@ class DramaService:
                         lighting=f"{dir_style}统一主光方向与色温",
                         audio_bed=shot.get("sound") or "连续环境声",
                     ).model_dump(),
-                })
-                
-            task["assets"]["5"] = shot_assets
+                }
+
+            self._progress_step(task, 10, f"准备 {len(shots)} 镜的提示词与契约")
+            requests = {shot_no: _prepare_shot(shot_no, shot) for shot_no, shot in enumerate(shots, start=1)}
+            video_family = normalize_video_provider(str(config.get("video_model") or "")).family
+            image_family = str(config.get("image_model") or "image").split("/")[0]
+            tts_family = str(config.get("tts_model") or "tts").split("/")[0]
+            queue = generation_queue.Queue()
+            steps: dict[str, tuple[str, Callable[[dict], dict]]] = {}
+            for shot_no, req in requests.items():
+                label = f"镜头 {req['shot_id']}"
+                meta = {"shot_id": req["shot_id"], "shot_no": shot_no}
+                depends: list[str] = []
+                if not req["img_url"] or req["end_prompt"]:
+                    key = f"frames:{shot_no}"
+                    queue.add(generation_queue.Item(key=key, label=f"{label} · 首尾帧", family=image_family, medium="image", meta=meta))
+                    steps[key] = (str(shot_no), _frames_item)
+                    depends = [key]
+                key = f"video:{shot_no}"
+                queue.add(generation_queue.Item(
+                    key=key, label=f"{label} · 视频 ×{req['candidate_count']}", family=video_family, medium="video", depends_on=depends,
+                    meta={**meta, "seconds": req["duration"], "candidates": req["candidate_count"], "job_key": video_jobs.job_key(int(req["shot_id"]), 0)},
+                ))
+                steps[key] = (str(shot_no), _video_item)
+                key = f"assemble:{shot_no}"
+                queue.add(generation_queue.Item(key=key, label=f"{label} · 配音与入片", family=tts_family, medium="audio", depends_on=[f"video:{shot_no}"], meta=meta))
+                steps[key] = (str(shot_no), _assemble_item)
+
+            completed: dict[int, dict] = {}
+
+            def _work(item: generation_queue.Item) -> dict:
+                shot_no, step = steps[item.key]
+                return step(requests[int(shot_no)])
+
+            def _persist(snapshot: dict) -> None:
+                self.repo.mutate_task(task_id, lambda current: generation_queue.store_snapshot(current, snapshot))
+
+            def _withdrawn() -> set[str]:
+                current = self.repo.get_task(task_id)
+                return generation_queue.withdrawn_in(current) if current else set()
+
+            def _pause_requested() -> bool:
+                current = self.repo.get_task(task_id)
+                return bool(((current or {}).get("workflow_control") or {}).get("pause_requested"))
+
+            def _on_done(item: generation_queue.Item, result: dict) -> None:
+                if not item.key.startswith("assemble:"):
+                    return
+                completed[int(result["shot_id"]) if str(result.get("shot_id")).isdigit() else len(completed) + 1] = result
+                # What is finished stays finished: the next progress save persists it, so an
+                # interruption loses at most the shots in flight and a rerun reuses the rest.
+                task["assets"]["5"] = [completed[key] for key in sorted(completed)]
+                self._progress_step(
+                    task, 10 + int(85 * len(completed) / max(len(shots), 1)),
+                    f"图生视频 · 已完成 {len(completed)}/{len(shots)} 镜",
+                )
+
+            try:
+                generation_queue.run(
+                    queue, _work, persist=_persist, withdrawn=_withdrawn, pause_requested=_pause_requested, on_done=_on_done,
+                    run_id=str((task.get("workflow_control") or {}).get("run_id") or ""),
+                )
+            except generation_queue.RunCancelled as cancelled:
+                task["assets"]["5"] = [completed[key] for key in sorted(completed)]
+                raise RuntimeError(str(cancelled)) from cancelled
+            failed = [item for item in queue.by_status(generation_queue.FAILED)]
+            if failed:
+                task["assets"]["5"] = [completed[key] for key in sorted(completed)]
+                raise RuntimeError("以下生成项失败：" + "；".join(f"{item.label}（{item.error}）" for item in failed[:5]))
+            task["assets"]["5"] = [completed[key] for key in sorted(completed)]
             
             task["logs"]["5"] = self.run_real_consistency_check(5, "视觉总监多镜头生成", task["assets"], config, title, task_id=task_id)
 
@@ -5237,7 +6976,10 @@ class DramaService:
             if isinstance(shots6, list):
                 for s in shots6:
                     cell = (s.get("dialogue") or "") if isinstance(s, dict) else ""
-                    seg_lines = parse_shot_dialogue(cell, char1_name, char2_name, char1_gender, char2_gender)
+                    seg_lines = parse_shot_dialogue(
+                        cell, char1_name, char2_name, char1_gender, char2_gender,
+                        voice_narration=narration_delivery(config) == "use_tts",
+                    )
                     if seg_lines:
                         dialogue_directions.extend([
                             {
@@ -5334,38 +7076,19 @@ class DramaService:
             # 阶段 7：合成发布 (Composer & Publisher)
             task["stage_name"] = "合成发布渲染合流"
             self._progress_step(task, 15, "视听合流 · 转场衔接与压制渲染")
-            shots5 = task["assets"].get("5") or []
-            shot_voices_all = (task["assets"].get("6") or {}).get("shot_voices") or []
-            # 镜头视频/字幕/逐镜配音三者按同一顺序锁步对齐 (仅纳入有视频的镜头)，确保画/字/声同步
-            shot_clips, subtitles, shot_voices, included_shots = [], [], [], []
-            for idx, s in enumerate(shots5):
-                if not isinstance(s, dict) or not s.get("video_url"):
-                    continue
-                included_shots.append(s)
-                shot_clips.append(s.get("video_url"))
-                # 字幕：优先各镜头台词，回退到画面描述简述
-                txt = (s.get("dialogue") or "").strip()
-                txt = re.sub(r'[^：:]{1,8}[：:]', '', txt).strip() if txt else ""
-                if not txt:
-                    txt = (s.get("desc") or "").strip()[:24]
-                subtitles.append(txt)
-                shot_voices.append(shot_voices_all[idx] if idx < len(shot_voices_all) else None)
-            audio_path = (task["assets"].get("6") or {}).get("audio_path")
-            bgm_path = (task["assets"].get("6") or {}).get("bgm_path")
-            sfx_path = (task["assets"].get("6") or {}).get("sfx_path")
-            transition_specs, transition_reports = final_cut_transitions(included_shots)
-
-            # 片头标题：取选题名 (去除"请帮我生成"等口令冗余)
-            film_title = re.sub(r'^(请帮我?|帮我?)?(生成|制作|来)?(一个|一部)?', '', title).strip() or title
-
-            # 用 ffmpeg 将多镜头真实视频拼接 + 片头标题卡 + 烧录中文字幕 + 逐镜配音(按时间轴对齐) + BGM，导出单条成片
+            # The cut is whatever the edit timeline says: built from stage 5 / 6 the first time,
+            # refreshed when footage changed, otherwise the reviewer's trims and decisions stand.
+            timeline, transition_reports = self._current_timeline(task, title)
+            task["assets"][edit_timeline.TIMELINE_KEY] = timeline
+            plan = edit_timeline.render_plan(timeline)
+            shot_clips = plan["shot_video_urls"]
+            film_title = plan["title"]
             composed_url = media_compositor.compose_film(
-                shot_clips, subtitles, audio_path,
-                tag=f"film_{task_id[:8]}", title=film_title, bgm=True,
-                shot_voices=shot_voices if any(shot_voices) else None,
-                bgm_path=bgm_path,
-                sfx_path=sfx_path,
-                transition_plans=transition_specs,
+                shot_clips, plan["subtitles"], plan["audio_path"],
+                tag=f"film_{task_id[:8]}", title=film_title, bgm=plan["bgm"],
+                shot_voices=plan["shot_voices"] if any(plan["shot_voices"]) else None,
+                bgm_path=plan["bgm_path"], sfx_path=plan["sfx_path"],
+                transition_plans=plan["transition_plans"], trims=plan["trims"], bgm_volume=plan["bgm_volume"],
             )
 
             compose_mode = "ffmpeg 片头标题卡+多镜头拼接+字幕+多角色配音+BGM 真实合成"
@@ -5373,7 +7096,7 @@ class DramaService:
                 final_vid = composed_url
             else:
                 # 合成失败时回退：取首个真实分镜视频；若一个真实分镜都没有则置空 (不再用硬编码占位视频)。
-                real_clips = [u for u in shot_clips if u and "volccdn.com" not in u]
+                real_clips = [u for u in shot_clips if u and LEGACY_PLACEHOLDER_MEDIA_HOST not in u]
                 final_vid = real_clips[0] if real_clips else (shot_clips[0] if shot_clips else None)
                 if final_vid:
                     compose_mode = "回退：采用单条分镜视频 (ffmpeg 合成未成功)"
@@ -5386,6 +7109,8 @@ class DramaService:
                 "final_video_url": final_vid,
                 "shot_clips": shot_clips,
                 "transition_quality": transition_reports,
+                "timeline_revision": timeline.get("revision"),
+                "timeline_summary": edit_timeline.summary(timeline),
                 "compose_mode": compose_mode,
                 "agent_role": AgentRole.COMPOSER_PUBLISHER.value,
                 "agent_policy": self._agent_role_prompt(task, AgentRole.COMPOSER_PUBLISHER),
@@ -5422,11 +7147,14 @@ class DramaService:
             lessons_block = stage_lessons_block(8)
             if lessons_block:
                 sys_prompt += f"\n\n{lessons_block}\n"
+            mode_line = creation_modes.promotion_guidance(config)
+            if mode_line:
+                sys_prompt += f"\n\n【创作类型】{mode_line}\n"
             user_prompt = "请为短剧制作爆款标题和宣发文案：\n\n【导演策划大纲】：\n" + task["assets"].get("1", "")
             res = self.gateway.call_llm(config["llm_model"], sys_prompt, user_prompt, title, dir_style, shot_style, user_instruction=guidance)
             
-            pr_title, pr_body = parse_pr_info(res, title, "被无赖逼至绝境，他休假归来，一铁拳打碎黑暗！爽点爆裂！")
-            task["short_link"] = f"https://short-drama.volces.com/s/{tpl.get('short_link', 'general_revenge_king')}"
+            pr_title, pr_body = parse_pr_info(res, title, f"《{title}》{tpl['genre_desc']}")
+            task["short_link"] = settings.share_link_url(f"{tpl['short_link']}-{task_id[:8]}")
             task["pr_content"] = f"🔥 抖音爆款大字标题：{pr_title}\n📌 黄金引流文案：‘{pr_body}’"
             
             quality_gate = (task["assets"].get("7") or {}).get("quality_gate") or {}
@@ -5587,7 +7315,23 @@ class DramaService:
 
     async def produce_episode(self, task_id: str, ep_index: int) -> Dict[str, Any]:
         """制作指定集 (异步包装，阻塞式生成放线程池)。"""
-        return await asyncio.to_thread(self._produce_episode_blocking, task_id, ep_index)
+        try:
+            with usage_ledger.bind_task(task_id, f"episode_{ep_index}"):
+                return await asyncio.to_thread(self._produce_episode_blocking, task_id, ep_index)
+        except Exception as error:
+            # 失败必须落到这一集的状态上：否则它永远停在 running，前端会一直轮询下去
+            reason = self._safe_error_text(error)
+
+            def _mark_failed(task: Dict[str, Any]) -> bool:
+                episode = next((e for e in task.get("episodes") or [] if e.get("index") == ep_index), None)
+                if not episode:
+                    return False
+                episode["status"] = "failed"
+                episode["fail_reason"] = reason
+                return True
+
+            self.repo.mutate_task(task_id, _mark_failed)
+            raise
 
     def _produce_episode_blocking(self, task_id: str, ep_index: int) -> Dict[str, Any]:
         """逐集制作核心：分镜 -> 尾帧链式逐镜生成(五视图锁人物) -> 情绪配音 -> 合成单集(2.5-3min)。"""
@@ -5601,7 +7345,7 @@ class DramaService:
 
         config = task["config"]
         title = config["title_suggestion"]
-        dir_style = config.get("director_style", "cyberpunk")
+        dir_style = config.get("director_style", DEFAULT_DIRECTOR_STYLE)
         char1_name, char1_desc, char2_name, char2_desc = extract_character_info(task["assets"].get("1", ""))
         char_sheets = task["assets"].get("3_sheets") or {}
         # 多集连续生产线与主管线共用同一套委员会配药单，避免同一项目两套负面词标准。
@@ -5611,12 +7355,17 @@ class DramaService:
         char2_gender = guess_gender(char2_name)
 
         ep["status"] = "running"
+        ep.pop("fail_reason", None)
         task["current_episode"] = ep_index
         self.repo.save_task(task_id, task)
 
-        SHOTS = int(os.getenv("SHOTS_PER_EPISODE", "16"))
-        REANCHOR = int(os.getenv("REANCHOR_EVERY", "4"))
-        DURATION = int(os.getenv("SHOT_DURATION", "10"))
+        # 单集镜头数、每隔几镜重新锚定身份视图、单镜时长；时长不超过所选视频模型的单镜上限
+        SHOTS = settings.env_int("SHOTS_PER_EPISODE", self.EPISODE_SHOTS_DEFAULT, minimum=1, maximum=self.EPISODE_SHOTS_MAX)
+        REANCHOR = settings.env_int("REANCHOR_EVERY", self.EPISODE_REANCHOR_DEFAULT, minimum=1)
+        DURATION = settings.env_int(
+            "SHOT_DURATION", self.EPISODE_SHOT_SECONDS_DEFAULT,
+            minimum=MIN_SHOT_SECONDS, maximum=max_shot_seconds(str(config.get("video_model") or "")),
+        )
 
         # 上一集摘要 (跨集剧情连贯)
         prev_summary = ""
@@ -5638,9 +7387,10 @@ class DramaService:
         guidance = config.get("guidance_instruction", "")
         sb_res = self.gateway.call_llm(config["llm_model"], sys_prompt, user_prompt, title, dir_style,
                                        config.get("shot_style", "cinematic"), user_instruction=guidance)
-        fallback = [{"shot_id": i + 1, "size": "MS", "motion": "Slow Dolly In",
-                     "desc": f"{char1_name}的剧情推进镜头{i+1}", "dialogue": ""} for i in range(SHOTS)]
-        shots = parse_storyboard_table(sb_res, fallback)[:SHOTS]
+        shots = parse_storyboard_table(sb_res, [])[:SHOTS]
+        if not shots:
+            # 与第 4 阶段一致：分镜表解析不出真实镜头就停下，不拿占位描述去逐镜付费生成
+            raise ValueError(f"第{ep_index}集分镜表未解析出镜头，请重新制作本集；不使用占位内容生成画面")
         ep["storyboard_raw"] = sb_res
 
         # 2. 尾帧链式逐镜生成
@@ -5692,7 +7442,7 @@ class DramaService:
                         line = line.strip().strip('“”"\'（）()')
                         if not line or len(re.findall(r'[一-龥]', line)) < 1:
                             continue
-                        if any(k in speaker.lower() for k in ("音效", "环境音", "背景音", "特效音", "音乐", "声音", "bgm")):
+                        if any(k in speaker.lower() for k in SKIP_SPEAKERS):
                             continue
                         if char1_name and char1_name in speaker:
                             g = char1_gender
@@ -5737,7 +7487,7 @@ class DramaService:
         if composed:
             ep["video_url"] = composed
         else:
-            real = [u for u in clips if u and "volccdn.com" not in u]
+            real = [u for u in clips if u and LEGACY_PLACEHOLDER_MEDIA_HOST not in u]
             ep["video_url"] = real[0] if real else (clips[0] if clips else None)
 
         # 4. 跨集衔接：保存本集最后一帧 + 生成本集摘要供下一集承接
@@ -5783,12 +7533,58 @@ class DramaService:
         try:
             return self.gateway.call_llm(
                 config["llm_model"], sys_prompt, f"【任务上下文】{context}\n\n【用户问题】{question}",
-                title, config.get("director_style", "cyberpunk"), config.get("shot_style", "cinematic"),
+                title, config.get("director_style", DEFAULT_DIRECTOR_STYLE), config.get("shot_style", "cinematic"),
             ).strip()
         except Exception:
             return f"目前{context}\n\n{self._next_step_hint(task)}"
 
-    async def assistant_message(self, task_id: str, message: str) -> Dict[str, Any]:
+    _AGENT_PREFIXES = ("/agent ", "/助手 ")
+
+    def _agent_turn(self, task_id: str, task: Dict[str, Any], msg: str, *, user: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Handle /agent, /confirm and /cancel; None when the message is for the workflow assistant."""
+        lowered = msg.lower()
+        prefix = next((p for p in self._AGENT_PREFIXES if lowered.startswith(p)), None)
+        if prefix is None and lowered not in {"/confirm", "/确认", "/cancel", "/取消"}:
+            return None
+        who = user or {"user_id": task.get("owner_user_id"), "role": "user"}
+        config = task.get("config") if isinstance(task.get("config"), dict) else {}
+        history = [h for h in (task.get(embedded_agent.HISTORY_KEY) or []) if isinstance(h, dict)]
+        pending = task.get(embedded_agent.PENDING_KEY) if isinstance(task.get(embedded_agent.PENDING_KEY), dict) else None
+        tool_calls: List[Dict[str, Any]] = []
+        new_pending: Optional[Dict[str, Any]] = None
+        if prefix is None:
+            if lowered in {"/cancel", "/取消"}:
+                reply = "已放弃待确认的操作。" if pending else "没有待确认的操作。"
+            elif not pending:
+                reply = "没有待确认的操作；先用 /agent 说明要做什么。"
+            else:
+                outcome = embedded_agent.confirm_pending(self, user=who, pending=pending)
+                tool_calls.append({"tool": pending.get("tool"), "arguments": pending.get("arguments"), "result": outcome})
+                reply = f"已执行「{pending.get('tool')}」：" + (json.dumps(outcome.get("result"), ensure_ascii=False)[:600] if outcome.get("ok") else f"失败：{outcome.get('error')}")
+            turn = {"reply": reply, "tool_calls": tool_calls, "proposal": None}
+        else:
+            turn = embedded_agent.run_turn(self, user=who, task_id=task_id, message=msg[len(prefix):].strip(), history=history, config=config)
+            new_pending = turn.get("proposal")
+
+        def record(current: Dict[str, Any]) -> Dict[str, Any]:
+            entries = [h for h in (current.get(embedded_agent.HISTORY_KEY) or []) if isinstance(h, dict)]
+            entries.append({"role": "user", "content": msg})
+            for call in turn.get("tool_calls") or []:
+                entries.append({"role": "tool", "tool": call.get("tool"), "result": call.get("result")})
+            entries.append({"role": "assistant", "content": turn["reply"]})
+            current[embedded_agent.HISTORY_KEY] = entries[-embedded_agent.HISTORY_LIMIT * 2:]
+            if new_pending:
+                current[embedded_agent.PENDING_KEY] = new_pending
+            else:
+                current.pop(embedded_agent.PENDING_KEY, None)
+            current.setdefault("chat_history", []).append({"id": uuid.uuid4().hex, "role": "assistant", "content": turn["reply"]})
+            return current
+
+        updated = self.repo.mutate_task(task_id, record) or task
+        return {"reply": turn["reply"], "action": "agent", "stage": None, "task": self.hydrate_task_status(updated),
+                "tool_calls": turn.get("tool_calls") or [], "proposal": new_pending}
+
+    async def assistant_message(self, task_id: str, message: str, *, user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Explicit intents execute; all other messages safely explain the live workflow."""
         msg = (message or "").strip()
         if not msg:
@@ -5799,6 +7595,11 @@ class DramaService:
         task = self.repo.mutate_task(task_id, append_user)
         if not task:
             raise ValueError("任务不存在")
+        # The tool assistant lives behind /agent: it reads and changes the project with tools and
+        # asks before anything paid; /confirm and /cancel settle its last proposal.
+        agent_turn = self._agent_turn(task_id, task, msg, user=user)
+        if agent_turn is not None:
+            return agent_turn
         workflow = self.workflow_snapshot(task)
         intent, requested_stage = assistant_intent(msg)
         if intent == "resume":
@@ -5886,13 +7687,20 @@ class DramaService:
         task["config"]["director_style"] = req.director_style
         # 省略 style_pack 的更新请求沿用项目已有的风格锁，不会把 2D/3D 项目重置成写实默认值。
         if req.style_pack:
-            task["config"]["style_pack"] = style_packs.resolve_pack({"style_pack": req.style_pack}).id
+            # A lock read off a reference image is resolved together with its stored definition.
+            task["config"]["style_pack"] = style_packs.resolve_pack({**task["config"], "style_pack": req.style_pack}).id
         task["config"]["shot_style"] = req.shot_style
         task["config"]["llm_model"] = req.llm_model
         task["config"]["image_model"] = req.image_model
         task["config"]["video_model"] = req.video_model
         task["config"]["tts_model"] = req.tts_model
         task["config"]["video_reference_mode"] = req.video_reference_mode
+        task["config"]["narration_delivery"] = req.narration_delivery
+        task["config"]["creation_mode"] = req.creation_mode
+        task["config"]["content_language"] = req.content_language
+        task["config"]["source_language"] = req.content_language
+        if req.ad_brief is not None:
+            task["config"]["ad_brief"] = req.ad_brief.model_dump()
         task["config"]["one_click"] = req.one_click
         task["config"]["episode_count"] = req.episode_count
         task["config"]["title_suggestion"] = req.title_suggestion
@@ -5912,7 +7720,7 @@ class DramaService:
         from urllib.parse import urlparse
         
         # 确立 skills 保存目录
-        skills_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "skills")
+        skills_dir = str(BUNDLED_SKILLS_DIR)
         if not os.path.exists(skills_dir):
             os.makedirs(skills_dir)
             
@@ -6040,7 +7848,7 @@ class DramaService:
         else:
             raise ValueError(f"不支持的导入类型: {import_type}")
 
-        registry_path = os.path.join(skills_dir, "registry.json")
+        registry_path = os.path.join(skills_dir, IMPORTED_SKILL_REGISTRY)
         registry = {}
         if os.path.exists(registry_path):
             try:
@@ -6071,21 +7879,10 @@ class DramaService:
         返回本地可执行 Skills 与 16 个已审计能力源；sd25-pe 默认优先从 ~/.agents/skills/sd25-pe 读取。
         """
         import json
-        from pathlib import Path
         from app.core.capability_manifest import UPSTREAM_CAPABILITIES
         from app.core.skill_registry import SkillRegistry
 
-        backend_root = Path(__file__).resolve().parents[2]
-        skills_dir = backend_root / "skills"
-        configured_sd25 = (os.getenv("SD25_PE_SKILL_PATH") or "").strip()
-        configured_five_part = (os.getenv("SD25_FIVE_PART_SKILL_PATH") or "").strip()
-        sd25_roots = (
-            [Path(configured_sd25).expanduser()]
-            if configured_sd25
-            else [Path.home() / ".agents" / "skills" / "sd25-pe", Path.home() / "Desktop" / "sd25-pe"]
-        )
-        five_part_roots = [Path(configured_five_part).expanduser()] if configured_five_part else []
-        discovered = SkillRegistry([skills_dir, *sd25_roots, *five_part_roots]).list()
+        discovered = SkillRegistry(skill_registry_roots()).list()
         result = [
             {
                 "name": item.name,
@@ -6097,7 +7894,7 @@ class DramaService:
             for item in discovered
         ]
 
-        registry_path = skills_dir / "registry.json"
+        registry_path = BUNDLED_SKILLS_DIR / IMPORTED_SKILL_REGISTRY
         if registry_path.is_file():
             try:
                 imported = json.loads(registry_path.read_text(encoding="utf-8"))
@@ -6127,8 +7924,8 @@ class DramaService:
         import shutil
         import json
 
-        skills_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "skills")
-        registry_path = os.path.join(skills_dir, "registry.json")
+        skills_dir = str(BUNDLED_SKILLS_DIR)
+        registry_path = os.path.join(skills_dir, IMPORTED_SKILL_REGISTRY)
         
         # 1. 物理删除技能包目录
         target_dir = os.path.join(skills_dir, skill_name)
@@ -6190,7 +7987,7 @@ class DramaService:
         读取本地山音超级编剧大师集成版技能包的最核心段落 (前600行) 作为Prompt系统注入
         """
         skill_path = os.path.join(
-            str(Path(__file__).resolve().parents[2] / "skills" / "shanyin-screenwriting-master"),
+            str(BUNDLED_SKILLS_DIR / "shanyin-screenwriting-master"),
             "山音超级编剧大师集成版（Gemini及其他AI工具通用）.md",
         )
         if os.path.exists(skill_path):

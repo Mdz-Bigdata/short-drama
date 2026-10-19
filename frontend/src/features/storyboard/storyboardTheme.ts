@@ -1,6 +1,6 @@
 export const STORYBOARD_VISUAL_THEME = {
-  id: 'agent-dark-cyan',
-  background: '#05080c',
-  surface: '#08101a',
-  accent: '#00f2fe',
+  id: 'agent-light-rose',
+  background: '#fcedef',
+  surface: '#fdeff1',
+  accent: '#e3546c',
 } as const;

@@ -1,6 +1,6 @@
 # 3D Director Desk Progress
 
-## Status: complete (P1–P6)
+## Status: complete (P1–P7)
 
 ## Quick Reference
 
@@ -24,8 +24,23 @@
 | P4 | Timeline, camera-move previs, blockout clip export: random-access sampling, timeline panel (keys, easing, 14 presets), playback, key-aware editing, deterministic `mediabunny` export, clip upload / apply | Completed |
 | P6 | Element-library GLB set pieces with local import, per-scene backdrop, stage-5 entry with the applied still / clip, whole-crowd figure switch, interchange inside the desk, robustness pass | Completed |
 | 7 | Provenance, notices, documentation | Completed |
+| P7 | Second pass against the two product write-ups and director-desk 0.4.11: automatic repair of failing checks (`repair.py`, `repair_checks`, `GET …/repairs`, 检查 panel with 一键修正), drawn walk / camera routes (`paths.py`, `set_path`, the 路径 tool), depth stills and clips (`depth` capture flag, stage-5 wording, depth pass in the lens view), side-by-side 机位对比, set-piece `array_landmark` / `align_landmarks`, five presets from the articles, stage tools for the tool assistant / MCP (`get_stage_checks`, `edit_stage`, `repair_stage`) | Completed |
 
-## Final numbers
+## Final numbers (P7, 2026-10-14)
+
+| Check | Result |
+|---|---|
+| `cd backend && python -m unittest discover -s tests` | 1317 passed (19 new in `test_director_desk_repairs.py`, 1 in `test_embedded_agent.py`) |
+| `ruff check app tests` | All checks passed |
+| `cd frontend && npx vitest run` | 697 passed (89 files; the desk alone 271 in 27 files) |
+| `cd frontend && npx tsc -b --noEmit` | clean for this round's files; two errors in `src/features/elements/*` belong to unrelated uncommitted work in the tree |
+| eslint on every file of this round | clean |
+
+Not verified in a browser: the local admin password the example config lists is rejected on this machine, so the
+desk could not be opened against the live server; the stroke / orbit interaction, the depth pass and the thumbnail
+renderer are exercised by tests and reasoning only and deserve a manual pass.
+
+## Final numbers (P6)
 
 | Check | Result |
 |---|---|
@@ -48,6 +63,37 @@ Bundle (`npm run build`), the chunks that matter — none of them in the entry c
 | `GLTFLoader-*.js` | 45.58 kB | 13.46 kB |
 
 ## Session Log
+
+### 2026-10-14 — P7: stability, comparison, routes, depth
+
+- The two WeChat write-ups (万兴剧厂 2026-06-23, LUMI AI 2026-09-16) were read in the browser; they are the brief
+  `RESEARCH.md` already describes. The five repositories were cloned again: four unchanged since review,
+  `mangfufu/director-desk` at 0.4.11 (`f3afacf`). Its new behaviour (hand-drawn paths, depth video, staging
+  arrays / alignment) is reimplemented from its descriptions; nothing is copied. It now has its own record in
+  `upstream_sources.json` and the capability manifest (19 sources).
+- **Repair.** `repair.propose(plan)` maps each failing check to operations: spacing → `geo.separate` and
+  `move_actor`; facing → `orient_toward`; a scene that *opens* mirrored → the pair swap marks; subjects out of
+  frame / hidden / lost by a move / lens inside someone / axis jump → `solve_camera` for those shots (one solve
+  per shot however many checks name it); a named posture → `set_shot_override` carrying the override's other
+  fields. A named walk is left to a person with the reason spelled out. Verified on a plan broken four ways at
+  once: every check clears in one `repair_checks`. The desk previews through `GET …/repairs` and submits the
+  returned operations through the ordinary PATCH, so 一键修正 is one undo.
+- **Routes.** `set_path` takes 2–400 points, cuts corners once (Chaikin), resamples at even arc length (≤ 24
+  keys), spreads the keys over `start_s…end_s` with the move easings (`eased_time` inverted, so a smooth walk
+  has its equidistant keys far apart in time at both ends), and replaces that one track. A walker faces along
+  the route, holds, or watches a point; a camera route looks at a subject or ahead, at its own height. A route
+  past the end lengthens the shot unless the length was stated.
+- **Depth.** A capture carries `depth`. A depth still is kept and downloadable but `apply` refuses it (a first
+  frame is copied); a depth clip applies and `motion_inputs` appends `DEPTH_REQUIREMENT` (layers and motion
+  only, colour from the text) while it is followed.
+- **Set pieces.** `array_landmark` lays line / grid / ring copies with the original kept in place and names
+  counted on (`书案 2`, `书案 3`…, skipping numbers already on stage); `align_landmarks` aligns centres or
+  distributes evenly on x or z. 80 landmarks stays the cap.
+- **Agents.** `get_stage_checks`, `edit_stage` (any operations, current revision when none is given) and
+  `repair_stage` join the tool catalog, so the embedded assistant and MCP clients block a scene with the
+  operations a person uses.
+- Frontend: ChecksPanel, the path tool, depth capture and CameraComparePanel were built in parallel worktrees
+  and merged (see the files under `panels/`, `lib/`, `three/`).
 
 ### 2026-09-19
 

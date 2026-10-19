@@ -180,7 +180,7 @@ class GatewayInjectionTests(unittest.TestCase):
         gateway._sd2_opt_prompt_cache = "# 主规范：sd25-pe\n素材逐份负责\n"
         gateway.captured = []
 
-        def fake_chat(api_key, base_url, api_model, system_prompt, user_content, timeout=180, max_tokens=None):
+        def fake_chat(api_key, base_url, api_model, system_prompt, user_content, timeout=180, max_tokens=None, deadline=None):
             gateway.captured.append(system_prompt)
             return "优化后的工程化提示词正文"
 
@@ -217,6 +217,37 @@ class GatewayInjectionTests(unittest.TestCase):
         gateway.optimize_video_prompt(PLAIN_PROMPT, mode="text_to_video")
 
         self.assertNotIn("导演层", gateway.captured[-1])
+
+
+
+class ChineseHandbookLayerTests(unittest.TestCase):
+    """中文手册补充、运镜规则与镜头交接规则按镜头形态进入导演层，且不突破导演层上限。"""
+
+    def test_a_thirty_second_timestamp_shot_gets_the_three_module_layout(self):
+        from app.core.seedance_video_director import DIRECTOR_LAYER_CHAR_CAP, build_director_layer
+
+        layer = build_director_layer(
+            video_model="doubao-seedance-2-5", duration=30, prompt="0-10s 少女回头；转场：叠化",
+        )
+        self.assertEqual(layer.primary_mode, "timestamp-30s")
+        for name in ("cn-handbook/四种提示词公式", "cn-handbook/30 秒长视频的三个模块", "cn-handbook/中文转场用语"):
+            self.assertIn(name, layer.sections)
+        self.assertIn("【时间戳剧本分镜】", layer.text)
+        self.assertLessEqual(len(layer.text), DIRECTOR_LAYER_CHAR_CAP)
+
+    def test_a_short_shot_without_a_transition_skips_the_transition_table(self):
+        from app.core.seedance_video_director import build_director_layer
+
+        layer = build_director_layer(video_model="doubao-seedance-2-5", duration=8, prompt="少女推门进店")
+        self.assertNotIn("cn-handbook/30 秒长视频的三个模块", layer.sections)
+        self.assertNotIn("cn-handbook/中文转场用语", layer.sections)
+        self.assertIn("four-lock/动作连贯三原则", layer.sections)
+        self.assertIn("camera-style/选运镜的总规则", layer.sections)
+
+    def test_other_models_get_no_layer(self):
+        from app.core.seedance_video_director import build_director_layer
+
+        self.assertEqual(build_director_layer(video_model="minimax-h3", duration=8, prompt="少女推门").text, "")
 
 
 if __name__ == "__main__":

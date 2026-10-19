@@ -74,7 +74,7 @@ function shapesOf(bone: BoneLocal, p: Proportions, paint: Paint): ReactNode {
           {/* The nose: which way the character faces is the whole point of the figure. */}
           <mesh position={[0, p.headLift - 0.005, p.headRadius * 0.95]} rotation={[Math.PI / 2, 0, 0]}>
             <coneGeometry args={[0.014, 0.04, 8]} />
-            <meshStandardMaterial color="#ffffff" />
+            <meshStandardMaterial color="#221b1e" />
           </mesh>
         </>
       );
@@ -122,7 +122,7 @@ export function Mannequin({ actor, subject, selected, labelled, onPick }: Props)
     return { root: bones[0], children, lift: groundLift(joints, actor.body_type), top: figureTop(joints, actor.body_type) };
   }, [actor.body_type, joints]);
   const color = actorColor(actor);
-  const paint: Paint = { color, glow: selected ? SELECTION_COLOR : subject ? color : '#000000', intensity: selected ? 0.45 : subject ? 0.25 : 0 };
+  const paint: Paint = { color, glow: selected ? SELECTION_COLOR : subject ? color : '#fcebee', intensity: selected ? 0.45 : subject ? 0.25 : 0 };
   const offsetY = joints['body.offsetY'] ?? 0;
   return (
     <group position={[actor.position[0], 0, actor.position[1]]} rotation={[0, (actor.yaw_deg * Math.PI) / 180, 0]} onClick={onPick}>

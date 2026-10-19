@@ -62,11 +62,11 @@ export function PrimitiveProp({ landmark, selected, labelled, onPick }: Props) {
         <ShapeGeometry shape={shape} />
         <meshStandardMaterial
           color={landmarkColor(landmark)} roughness={0.8} transparent opacity={0.88} side={shape === 'plane' || shape === 'wedge' ? DoubleSide : FrontSide}
-          emissive={selected ? SELECTION_COLOR : '#000000'} emissiveIntensity={selected ? 0.35 : 0}
+          emissive={selected ? SELECTION_COLOR : '#fcebee'} emissiveIntensity={selected ? 0.35 : 0}
         />
       </mesh>
       {labelled && (
-        <Text position={[0, height + 0.18, 0]} fontSize={0.13} color={selected ? SELECTION_COLOR : '#c7d3df'} anchorX="center" anchorY="bottom" userData={{ [HELPER_FLAG]: true }}>
+        <Text position={[0, height + 0.18, 0]} fontSize={0.13} color={selected ? SELECTION_COLOR : '#46373e'} anchorX="center" anchorY="bottom" userData={{ [HELPER_FLAG]: true }}>
           {landmark.name}
         </Text>
       )}

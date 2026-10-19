@@ -2,6 +2,7 @@ import { Color, MeshStandardMaterial, Vector2, Vector3, type Camera, type Materi
 
 import type { StageActor } from '../../spatial/spatialTypes';
 import type { CaptureResult } from '../deskTypes';
+import { createDepthMaterial, hiddenInDepth, type DepthOptions } from './depthPass';
 import { poseShowsLimbs } from './poses';
 
 export const CAPTURE_LONG_EDGE = 1920;
@@ -37,6 +38,8 @@ export interface StillRequest {
   monochrome: boolean;
   labels: CaptureLabel[];
   figures?: CaptureFigure[];
+  /** Render linear depth (near bright, far dark) instead of the shaded stage; wins over `monochrome`. */
+  depth?: DepthOptions;
 }
 
 /** Delivery pixels: long edge 1920, both sides even (video encoders and most image models want that). */
@@ -65,9 +68,9 @@ export function drawLabels(context: CanvasRenderingContext2D, labels: CaptureLab
     const spot = projectToImage(label.position, camera, width, height);
     if (!spot) return;
     context.lineWidth = size / 4;
-    context.strokeStyle = 'rgba(4, 7, 13, 0.9)';
+    context.strokeStyle = 'rgba(252, 237, 239, 0.9)';
     context.strokeText(label.text, spot[0], spot[1]);
-    context.fillStyle = '#ffffff';
+    context.fillStyle = '#221b1e';
     context.fillText(label.text, spot[0], spot[1]);
   });
 }
@@ -79,30 +82,35 @@ export interface RenderSetup {
   width: number;
   height: number;
   monochrome: boolean;
+  depth?: DepthOptions;
 }
 
 /**
- * Put the lens canvas into delivery state — helpers hidden, optional single clay colour, drawing
- * buffer at `width` × `height` — and hand back the one call that undoes all of it. The CSS size
- * is never touched, so nothing on the page shows the intermediate size.
+ * Put the lens canvas into delivery state — helpers hidden, optional single clay colour or depth
+ * shading, drawing buffer at `width` × `height` — and hand back the one call that undoes all of
+ * it. The CSS size is never touched, so nothing on the page shows the intermediate size.
  */
-export function enterDeliveryRender({ gl, scene, camera, width, height, monochrome }: RenderSetup): { hideHelpers: () => void; restore: () => void } {
+export function enterDeliveryRender({ gl, scene, camera, width, height, monochrome, depth }: RenderSetup): { hideHelpers: () => void; restore: () => void } {
   const hidden = new Set<Object3D>();
+  // A backdrop asked into ordinary captures is still a picture, not geometry: a depth render drops it.
   const hideHelpers = () => scene.traverse(object => {
-    if (object.userData[HELPER_FLAG] && object.visible) {
+    if ((object.userData[HELPER_FLAG] || (depth && hiddenInDepth(object))) && object.visible) {
       object.visible = false;
       hidden.add(object);
     }
   });
   const previousOverride: Material | null = scene.overrideMaterial;
-  const clay = monochrome ? new MeshStandardMaterial({ color: new Color('#d8dde3'), roughness: 0.9 }) : null;
+  const override: Material | null = depth
+    ? createDepthMaterial(depth)
+    : monochrome ? new MeshStandardMaterial({ color: new Color('#3e3136'), roughness: 0.9 }) : null;
   const previousRatio = gl.getPixelRatio();
   const previousSize = gl.getSize(new Vector2());
   const lens = camera as PerspectiveCamera;
   const previousAspect = lens.isPerspectiveCamera ? lens.aspect : 0;
 
   hideHelpers();
-  if (clay) scene.overrideMaterial = clay;
+  // Always assigned: a plain capture taken while the live depth preview is on must not inherit it.
+  scene.overrideMaterial = override;
   gl.setPixelRatio(1);
   gl.setSize(width, height, false);
   if (lens.isPerspectiveCamera) {
@@ -114,7 +122,7 @@ export function enterDeliveryRender({ gl, scene, camera, width, height, monochro
     hideHelpers,
     restore: () => {
       scene.overrideMaterial = previousOverride;
-      clay?.dispose();
+      override?.dispose();
       hidden.forEach(object => { object.visible = true; });
       gl.setPixelRatio(previousRatio);
       gl.setSize(previousSize.x, previousSize.y, false);
@@ -128,18 +136,45 @@ export function enterDeliveryRender({ gl, scene, camera, width, height, monochro
 }
 
 /**
+ * The live lens scene drawn the way a depth capture is — same override material, same helpers and
+ * backdrop left out — without touching the drawing buffer. `hide` is for every frame while it is
+ * on (a figure that finishes loading brings new helpers); `restore` puts the scene back.
+ */
+export function enterDepthView(scene: Scene, depth: DepthOptions): { hide: () => void; restore: () => void } {
+  const hidden = new Set<Object3D>();
+  const hide = () => scene.traverse(object => {
+    if ((object.userData[HELPER_FLAG] || hiddenInDepth(object)) && object.visible) {
+      object.visible = false;
+      hidden.add(object);
+    }
+  });
+  const previousOverride: Material | null = scene.overrideMaterial;
+  const override = createDepthMaterial(depth);
+  scene.overrideMaterial = override;
+  hide();
+  return {
+    hide,
+    restore: () => {
+      scene.overrideMaterial = previousOverride;
+      override.dispose();
+      hidden.forEach(object => { object.visible = true; });
+    },
+  };
+}
+
+/**
  * One still of what the lens sees, at delivery size. The drawing buffer is resized for a single
  * synchronous render and read back in the same task, so the image has exactly the on-screen
  * look (tone mapping, colour space).
  */
-export async function captureStill({ gl, scene, camera, aspect, monochrome, labels, figures = [] }: StillRequest): Promise<CaptureResult> {
+export async function captureStill({ gl, scene, camera, aspect, monochrome, labels, figures = [], depth }: StillRequest): Promise<CaptureResult> {
   const { width, height } = captureSize(aspect);
   const output = document.createElement('canvas');
   output.width = width;
   output.height = height;
   const context = output.getContext('2d');
 
-  const delivery = enterDeliveryRender({ gl, scene, camera, width, height, monochrome });
+  const delivery = enterDeliveryRender({ gl, scene, camera, width, height, monochrome, depth });
   try {
     gl.render(scene, camera);
     if (!context) throw new Error('浏览器无法创建画布，截图失败。');

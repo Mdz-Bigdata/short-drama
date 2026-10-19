@@ -16,9 +16,9 @@ import os
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from app import settings
 from app.core.element_scope import element_in_task, element_name_keys, normalized_asset_name
 from app.core.media_compositor import MEDIA_DIR
-from app.platform.dependencies import DEFAULT_DATABASE_URL
 from app.platform.store import PlatformStore
 from app.schema.production import IDENTITY_VIEW_ORDER, LEGACY_IDENTITY_VIEW_ORDER
 
@@ -32,10 +32,10 @@ LEGACY_REQUIRED_VIEWS = LEGACY_IDENTITY_VIEW_ORDER
 def _local_media_exists(url: str) -> bool:
     """Only locally stored renders are reusable; provider URLs expire."""
     path = urlparse(str(url or "")).path
-    if not path.startswith("/media/"):
+    if not path.startswith(settings.MEDIA_PREFIX):
         return False
     media_root = os.path.realpath(MEDIA_DIR)
-    absolute = os.path.realpath(os.path.join(media_root, unquote(path[len("/media/"):])))
+    absolute = os.path.realpath(os.path.join(media_root, unquote(path[len(settings.MEDIA_PREFIX):])))
     return absolute.startswith(media_root + os.sep) and os.path.isfile(absolute)
 
 
@@ -59,13 +59,13 @@ def _approved_views(metadata: dict) -> list[dict[str, str]]:
 
 
 def _sheet_type(views: list[dict[str, str]]) -> str:
-    """复用来的资产是哪一代排版——旧五视图整板不要冒充 25 格设定集。"""
+    """复用来的资产是哪一代排版——旧五视图整板不要冒充分格设定集。"""
     matched = tuple(item["view"] for item in views)
     return "actor_sheet_25_cell" if matched == REQUIRED_VIEWS else "ordered_five_view_turnaround"
 
 
 async def _find(owner_id: str, task_id: str, names: list[str]) -> dict[str, dict[str, Any]]:
-    store = PlatformStore(os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL))
+    store = PlatformStore(settings.database_url())
     wanted = {normalized_asset_name(name): name for name in names if str(name or "").strip()}
     found: dict[str, dict[str, Any]] = {}
     try:

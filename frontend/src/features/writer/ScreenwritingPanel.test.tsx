@@ -94,6 +94,7 @@ describe('ScreenwritingPanel', () => {
       const url = String(input);
       if (url.includes('/screenwriting/episodes/1/prompt')) return jsonResponse({ taskId: 't1', episode: 1, stage: 'plan', prompt: '当前正在生成第 1 集' });
       if (url.includes('/screenwriting/episodes/1')) return jsonResponse(EPISODE);
+      if (url.endsWith('/screenwriting/ledger')) return jsonResponse({ task_id: 't1', entries: [], unsplit: [], source_length: 0, layout_revision: '', candidate: null });
       if (url.endsWith('/screenwriting')) return jsonResponse(STATE);
       throw new Error(`unexpected fetch: ${url}`);
     });
@@ -151,6 +152,7 @@ describe('ScreenwritingPanel', () => {
         return jsonResponse({ ...EPISODE, planRevision: 'sha256-v1:ccc', rewrittenSceneIds: ['E1S01'] });
       }
       if (url.includes('/screenwriting/episodes/1')) return jsonResponse(EPISODE);
+      if (url.endsWith('/screenwriting/ledger')) return jsonResponse({ task_id: 't1', entries: [], unsplit: [], source_length: 0, layout_revision: '', candidate: null });
       if (url.endsWith('/screenwriting')) return jsonResponse(STATE);
       throw new Error(`unexpected fetch: ${url}`);
     });
@@ -179,6 +181,7 @@ describe('ScreenwritingPanel', () => {
         return jsonResponse({ ...EPISODE, rewrittenSceneIds: ['E1S01'] });
       }
       if (url.includes('/screenwriting/episodes/1')) return jsonResponse(EPISODE);
+      if (url.endsWith('/screenwriting/ledger')) return jsonResponse({ task_id: 't1', entries: [], unsplit: [], source_length: 0, layout_revision: '', candidate: null });
       if (url.endsWith('/screenwriting')) return jsonResponse(STATE);
       throw new Error(`unexpected fetch: ${url}`);
     });
@@ -202,6 +205,7 @@ describe('ScreenwritingPanel', () => {
         } as Response);
       }
       if (url.includes('/screenwriting/episodes/1')) return jsonResponse(EPISODE);
+      if (url.endsWith('/screenwriting/ledger')) return jsonResponse({ task_id: 't1', entries: [], unsplit: [], source_length: 0, layout_revision: '', candidate: null });
       if (url.endsWith('/screenwriting')) return jsonResponse(STATE);
       throw new Error(`unexpected fetch: ${url}`);
     });
@@ -234,6 +238,7 @@ describe('ScreenwritingPanel', () => {
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/screenwriting/episodes/1')) return jsonResponse(EPISODE);
+      if (url.endsWith('/screenwriting/ledger')) return jsonResponse({ task_id: 't1', entries: [], unsplit: [], source_length: 0, layout_revision: '', candidate: null });
       return jsonResponse({ ...STATE, sourceKind: 'novel' });
     });
     render(<ScreenwritingPanel taskId="t1" />);
@@ -241,6 +246,93 @@ describe('ScreenwritingPanel', () => {
 
     expect(await screen.findByRole('button', { name: /查看内容层提示词/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /查看正文提示词/ })).toBeNull();
+  });
+
+  it('shows the review summary and each episode\'s review badge', async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/screenwriting/ledger')) return jsonResponse({ task_id: 't1', entries: [], unsplit: [], source_length: 0, layout_revision: '', candidate: null });
+      return jsonResponse({
+        ...STATE,
+        episodes: [
+          { ...STATE.episodes[0], review: { episode: 1, status: 'confirmed', confirmedBy: 'writer-user' } },
+          { ...STATE.episodes[1], review: { episode: 2, status: 'draft', draft: { reasons: ['口播约 24 秒超过最长档 15 秒'], origin: 'model', attempts: 3 } } },
+        ],
+        reviewSummary: { total: 2, confirmed: [1], pending: [], changed: [], drafts: [2], missing: [], allConfirmed: false, message: '第 2 集仍是带违约的草稿' },
+      });
+    });
+    render(<ScreenwritingPanel taskId="t1" />);
+
+    expect(await screen.findByText(/审核：已确认 1\/2 集/)).toBeTruthy();
+    expect(screen.getByText(/审核门不拦截/)).toBeTruthy();
+    expect(screen.getByText('已确认')).toBeTruthy();
+    expect(screen.getByText('违约草稿')).toBeTruthy();
+  });
+
+  it('confirms an episode, refuses while edits are unsaved, and reopens it', async () => {
+    const posted: { url: string; body: unknown }[] = [];
+    let status: 'pending' | 'confirmed' = 'pending';
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/episodes/1/review')) {
+        posted.push({ url, body: JSON.parse(String(init?.body)) });
+        status = status === 'pending' ? 'confirmed' : 'pending';
+        return jsonResponse({ ...EPISODE, review: { episode: 1, status } });
+      }
+      if (url.includes('/screenwriting/episodes/1')) return jsonResponse({ ...EPISODE, review: { episode: 1, status } });
+      if (url.endsWith('/screenwriting/ledger')) return jsonResponse({ task_id: 't1', entries: [], unsplit: [], source_length: 0, layout_revision: '', candidate: null });
+      if (url.endsWith('/screenwriting')) return jsonResponse(STATE);
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    render(<ScreenwritingPanel taskId="t1" />);
+    await userEvent.click(await screen.findByRole('button', { name: /第 1 集/ }));
+
+    const confirmButton = await screen.findByRole('button', { name: /确认本集/ });
+    await userEvent.clear(screen.getByLabelText('E1S01 时长（秒）'));
+    await userEvent.type(screen.getByLabelText('E1S01 时长（秒）'), '8');
+    expect(confirmButton.hasAttribute('disabled')).toBe(true);
+    await userEvent.clear(screen.getByLabelText('E1S01 时长（秒）'));
+    await userEvent.type(screen.getByLabelText('E1S01 时长（秒）'), '6');
+    await waitFor(() => expect(confirmButton.hasAttribute('disabled')).toBe(false));
+
+    await userEvent.click(confirmButton);
+    await waitFor(() => expect(screen.getByText('第 1 集已确认。')).toBeTruthy());
+    expect(posted[0].body).toEqual({ action: 'confirm' });
+
+    await userEvent.click(screen.getByRole('button', { name: /重新打开/ }));
+    await waitFor(() => expect(screen.getByText('第 1 集已重新打开审核。')).toBeTruthy());
+    expect(posted[1].body).toEqual({ action: 'reopen' });
+  });
+
+  it('lists a draft\'s reasons and repairs it, reporting when the model did no better', async () => {
+    let attempt = 0;
+    const draft = { episode: 1, status: 'draft', draft: { reasons: ['口播约 24 秒超过最长档 15 秒'], origin: 'model', attempts: 3 } };
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/episodes/1/repair')) {
+        attempt += 1;
+        if (attempt === 1) return jsonResponse({ ...EPISODE, review: draft, repair: { episode: 1, repaired: false, improved: false, remaining: ['口播约 24 秒超过最长档 15 秒'] } });
+        return jsonResponse({ ...EPISODE, review: { episode: 1, status: 'pending' }, repair: { episode: 1, repaired: true, improved: true, remaining: [] } });
+      }
+      if (url.includes('/screenwriting/episodes/1')) return jsonResponse({ ...EPISODE, review: draft });
+      if (url.endsWith('/screenwriting/ledger')) return jsonResponse({ task_id: 't1', entries: [], unsplit: [], source_length: 0, layout_revision: '', candidate: null });
+      if (url.endsWith('/screenwriting')) return jsonResponse(STATE);
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    render(<ScreenwritingPanel taskId="t1" />);
+    await userEvent.click(await screen.findByRole('button', { name: /第 1 集/ }));
+
+    expect(await screen.findByText(/修好前不能确认/)).toBeTruthy();
+    expect(screen.getByText('口播约 24 秒超过最长档 15 秒')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /确认本集/ })).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: /AI 修复违约/ }));
+    await waitFor(() => expect(screen.getByText(/没有减少违约，保留原草稿/)).toBeTruthy());
+
+    await userEvent.click(screen.getByRole('button', { name: /AI 修复违约/ }));
+    await waitFor(() => expect(screen.getByText(/已修复，违约已清除/)).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /AI 修复违约/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /确认本集/ })).toBeTruthy();
   });
 
   it('explains itself for a project written by the legacy text engine', async () => {

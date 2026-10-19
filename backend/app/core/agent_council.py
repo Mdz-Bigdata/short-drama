@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 from typing import Final
 
 from app.schema.agent_council import (
@@ -29,31 +28,13 @@ from app.schema.agent_council import (
     ProductionConstitution,
     ReleaseCheck,
 )
+from app.core import knowledge_registry
 from app.schema.production import identity_view_order_is_valid
 
 
-PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
-
-KNOWLEDGE_SOURCE_FILES: Final[tuple[str, ...]] = (
-    "AI 生成短剧一致性检查清单.md",
-    "AI影视剧台词语速情绪提示词总结.md",
-    "AI影视剧负面提示词.md",
-    "AI漫剧短剧剧本黄金叙事结构.md",
-    "AI短剧与漫剧导演级拍摄分镜完全指南.md",
-    "AI短剧五视图解决人物一致性提示词模板.md",
-    "AI短剧注意事项与关键元素.md",
-    "AI短剧电影级武打镜头设计指南.md",
-    "AI短剧表演细节与提示词指南.md",
-    "AI短剧连续性设计指南.md",
-    "SKILL.md",
-    "THIRD_PARTY_NOTICES.md",
-    "场景设计提示词.md",
-    "影视剧高光时刻识别方案.md",
-    "画质风格类型总结.md",
-    "短剧情绪与面部表情提示词库.md",
-    "短剧情节与镜头连贯性提示词.md",
-    "短剧题材类型总结.md",
-)
+def knowledge_source_keys() -> tuple[str, ...]:
+    """Every production-knowledge section the skills register; what the council fingerprints."""
+    return tuple(sorted(knowledge_registry.sections()))
 
 
 _ROLE_NAMES: Final[dict[AgentRole, tuple[str, str]]] = {
@@ -113,6 +94,35 @@ _ROLE_OUTPUTS: Final[dict[AgentRole, tuple[str, ...]]] = {
     ),
 }
 
+# What each deliverable is called in the prose an agent writes. The ids stay the structured keys
+# (release evidence, handoffs); the prompt names deliverables in Chinese so the plans read in Chinese.
+ARTIFACT_LABELS: Final[dict[str, str]] = {
+    "director_constitution": "导演宪法", "genre_audience_strategy": "题材与受众策略",
+    "series_narrative_arc": "全季叙事弧线", "highlight_map": "高光地图",
+    "production_risk_register": "制作风险登记", "director_approval": "导演审批",
+    "series_bible": "剧集圣经", "episode_scripts": "分集剧本", "character_arcs": "人物弧光",
+    "dialogue_sheet": "台词表", "foreshadow_ledger": "伏笔账本", "writer_compliance_pass": "编剧合规自检",
+    "character_bible": "角色圣经", "five_view_turnarounds": "五视图设定", "character_state_cards": "角色状态卡",
+    "costume_makeup_ledger": "服化账本", "prop_ownership": "道具归属", "voice_identity_brief": "声音身份说明",
+    "scene_bibles": "场景圣经", "exact_nine_grid_storyboards": "九宫格分镜", "shot_motion_contracts": "镜头运镜契约",
+    "continuity_ledger": "连续性账本", "action_choreography": "动作设计", "storyboard_qc": "分镜质检",
+    "visual_bible": "视觉圣经", "style_palette_lighting_lock": "风格色板与布光锁定", "negative_prompt_plan": "负面提示词方案",
+    "reference_binding_plan": "参考图绑定方案", "generated_keyframes": "关键帧", "video_route_plans": "视频路由方案",
+    "visual_qc": "视觉质检", "voice_cards": "声卡", "dialogue_timing": "台词时间轴",
+    "elevenlabs_job_plan": "配音任务计划", "sfx_foley_cues": "音效与拟音提示", "bgm_music_plan": "配乐方案",
+    "lipsync_plan": "口型同步方案", "audio_mix_plan": "混音方案", "audio_qc": "音频质检",
+    "edit_decision_list": "剪辑决策表", "transition_plan": "转场方案", "subtitle_package": "字幕包",
+    "mastered_timeline": "母版时间线", "export_profiles": "导出规格", "delivery_archive": "交付归档",
+    "final_qc": "成片终检", "highlight_clips": "高光切片", "cover_title_variants": "封面与标题备选",
+    "trailer_plan": "预告方案", "platform_copy_tags": "平台文案与标签", "ab_test_plan": "A/B 测试方案",
+    "localization_package": "本地化素材包", "rights_ai_disclosure": "版权与 AI 标识", "campaign_kpis": "投放指标",
+}
+
+
+def artifact_label(artifact_id: str) -> str:
+    return ARTIFACT_LABELS.get(artifact_id, artifact_id)
+
+
 _ROLE_GATES: Final[dict[AgentRole, tuple[str, ...]]] = {
     AgentRole.EXECUTIVE_DIRECTOR: (
         "前3秒有可见冲突/悬念；每集有冲突、情绪点和尾钩。",
@@ -125,7 +135,7 @@ _ROLE_GATES: Final[dict[AgentRole, tuple[str, ...]]] = {
         "因果、人物知情状态、时间线、伏笔回收和多集承接均有台账。",
     ),
     AgentRole.CHARACTER_DESIGNER: (
-        "每个角色/状态独立交付一张 21:9 数字演员设定集（MAIN PORTRAIT / FULL BODY & ELEMENTS / DETAIL MATRIX 三区，含 1×3 三视图、2×4 元素拆解、4×3 细节矩阵），五个身份锚点顺序不得改变且通过完整性检查。",
+        "每个角色/状态独立交付一张 21:9 数字演员设定集（主肖像 / 全身与元素 / 细节矩阵 三栏，含 1×3 三视图、2×4 元素拆解、4×3 细节矩阵与各格编号中文标注），五个身份锚点顺序不得改变且通过完整性检查。",
         "脸、发际线、体型、服装层次、配饰、伤痕与标志道具可量化且可复用。",
         "角色之间在脸型、发型、服装主色和声纹上可区分。",
         "设定集负面词只取通用/面部/手部肢体/身份造型/服化道/材质模块，不发时序词，不盲目堆叠。",
@@ -187,101 +197,102 @@ def _cap(
 _C = AgentRole
 CAPABILITIES: Final[tuple[CapabilityRecord, ...]] = (
     _cap("genre_strategy", "题材、受众与商业定位", (_C.EXECUTIVE_DIRECTOR, _C.PR_AGENT),
-         ("短剧题材类型总结.md", "AI短剧注意事项与关键元素.md", "SKILL.md"),
+         ("genre-summary", "production-guidelines", "industrial-production"),
          "从题材库选择主类型/混合元素，记录受众、平台、付费与成本边界。", "validate_director_artifacts", ("genre_audience_strategy",)),
     _cap("golden_narrative", "黄金叙事结构与多集弧", (_C.EXECUTIVE_DIRECTOR, _C.WRITER),
-         ("AI漫剧短剧剧本黄金叙事结构.md", "AI短剧注意事项与关键元素.md"),
-         "强制前3秒钩子、周期冲突/反转、单集情绪点与尾5秒钩子。", "validate_narrative_contract", ("series_narrative_arc", "episode_scripts")),
+         ("golden-narrative", "production-guidelines", "cinema-craft-redlines", "episode-hook-ladder"),
+         "强制前3秒钩子、周期冲突/反转、单集情绪点与尾5秒钩子；每集情绪/视觉/场景各有一次顶点(S级三冲击)，强情节必须因果成立；"
+         "前三集按引爆/升级/反转分工，集尾悬念与下一集开场咬合，付费墙前三集走虚假胜利→崩塌→黑屏钩子。", "validate_narrative_contract", ("series_narrative_arc", "episode_scripts")),
     _cap("highlight_detection", "高光识别与传播强度", (_C.EXECUTIVE_DIRECTOR, _C.PR_AGENT),
-         ("影视剧高光时刻识别方案.md",),
+         ("highlight-detection",),
          "按情节/情绪/叙事/视听/观众行为打1-10分，7分以上进入候选并保留上下文理由。", "validate_highlight_map", ("highlight_map", "highlight_clips")),
     _cap("production_orchestration", "八 Agent 编排与人类审批", (_C.EXECUTIVE_DIRECTOR,),
-         ("SKILL.md", "AI 生成短剧一致性检查清单.md"),
+         ("industrial-production", "consistency-checklist"),
          "八角色按契约交接；缺失输入、未批准资产或阻断问题不得向下游推进。", "validate_council_coverage", ("director_constitution", "director_approval")),
     _cap("story_causality", "因果、信息状态、伏笔与世界规则", (_C.WRITER, _C.EXECUTIVE_DIRECTOR),
-         ("AI 生成短剧一致性检查清单.md", "AI漫剧短剧剧本黄金叙事结构.md"),
-         "维护因果链、角色知情表、世界规则、时间线、伏笔设置/回收和关系变化台账。", "validate_narrative_contract", ("series_bible", "foreshadow_ledger")),
+         ("consistency-checklist", "golden-narrative", "cinema-craft-redlines", "episode-hook-ladder"),
+         "维护因果链、角色知情表、世界规则、时间线、伏笔设置/回收和关系变化台账；每集更新角色状态/暗线进度/埋种回调/已公开信息四张追踪表。", "validate_narrative_contract", ("series_bible", "foreshadow_ledger")),
     _cap("dialogue_craft", "口语台词、潜台词与角色辨识", (_C.WRITER, _C.AUDIO_DIRECTOR),
-         ("AI影视剧台词语速情绪提示词总结.md", "AI短剧注意事项与关键元素.md"),
-         "台词短句化并记录角色语癖、潜台词、打断/重叠、叙述层与可读时长。", "validate_dialogue_contract", ("dialogue_sheet", "voice_cards")),
+         ("dialogue-pacing", "production-guidelines", "cinema-craft-redlines"),
+         "台词短句化并记录角色语癖(语言指纹)、潜台词、打断/重叠、叙述层与可读时长；不写心理描写、括号暗示与解释性台词。", "validate_dialogue_contract", ("dialogue_sheet", "voice_cards")),
     _cap("dialogue_performance", "语速、情绪、停顿、重音与呼吸", (_C.AUDIO_DIRECTOR, _C.WRITER),
-         ("AI影视剧台词语速情绪提示词总结.md", "AI短剧表演细节与提示词指南.md"),
+         ("dialogue-pacing", "performance-details"),
          "逐句编译 speed/emotion/intensity/pause/stress/breath，并校验对白时长与镜头时长。", "validate_audio_contract", ("dialogue_timing", "lipsync_plan")),
     _cap("five_view_identity", "数字演员设定集与身份 DNA", (_C.CHARACTER_DESIGNER,),
-         ("AI短剧五视图解决人物一致性提示词模板.md", "AI 生成短剧一致性检查清单.md"),
+         ("actor-sheet-template", "consistency-checklist"),
          "每个角色状态严格按正面/正面四分之三/侧面/背面四分之三/背面生成并质检。", "validate_five_view_contract", ("five_view_turnarounds", "character_state_cards")),
     _cap("character_styling", "发型、服化、体型、标志物与状态版本", (_C.CHARACTER_DESIGNER, _C.VISUAL_DIRECTOR),
-         ("AI短剧五视图解决人物一致性提示词模板.md", "AI短剧与漫剧导演级拍摄分镜完全指南.md"),
+         ("actor-sheet-template", "director-shot-guide"),
          "造型字段逐项锁定；换装/战损/年龄变化使用新 state_id，不覆盖基础状态。", "validate_character_artifacts", ("character_bible", "costume_makeup_ledger")),
     _cap("observable_acting", "可观察表演与微表情", (_C.CHARACTER_DESIGNER, _C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR),
-         ("AI短剧表演细节与提示词指南.md", "短剧情绪与面部表情提示词库.md", "AI短剧电影级武打镜头设计指南.md"),
+         ("performance-details", "emotion-expression", "martial-arts"),
          "把抽象情绪转换为眉眼嘴颌、视线、呼吸、手部、重心和渐进关键帧。", "validate_performance_contract", ("character_bible", "shot_motion_contracts", "visual_qc")),
     _cap("scene_bible", "功能化场景圣经", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR),
-         ("场景设计提示词.md", "AI短剧连续性设计指南.md"),
+         ("scene-design", "continuity-design"),
          "为场景锁定剧情功能、布局、出入口、站位、关键道具、光向色温、材质与前中后景。", "validate_scene_contract", ("scene_bibles", "visual_bible")),
     _cap("shot_grammar", "景别、构图、机位、焦段与运镜语法", (_C.STORYBOARD_ARTIST,),
-         ("AI短剧与漫剧导演级拍摄分镜完全指南.md", "画质风格类型总结.md"),
+         ("director-shot-guide", "visual-style"),
          "每镜说明景别/角度/焦段/构图/运镜路径/速度/起止点/叙事原因，禁止无动机炫技。", "validate_storyboard_contract", ("shot_motion_contracts",)),
     _cap("blocking_axis", "站位、视线与180度轴线", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR),
-         ("AI短剧与漫剧导演级拍摄分镜完全指南.md", "AI短剧连续性设计指南.md"),
+         ("director-shot-guide", "continuity-design"),
          "固定角色左右、眼线、动作方向和机位侧；跨轴须有可见过轴或中性镜头。", "validate_continuity_contract", ("continuity_ledger", "reference_binding_plan")),
     _cap("exact_nine_grid", "严格九宫格与分页", (_C.STORYBOARD_ARTIST,),
-         ("AI短剧五视图解决人物一致性提示词模板.md", "短剧情节与镜头连贯性提示词.md"),
+         ("actor-sheet-template", "plot-shot-coherence"),
          "分镜按3×3从左到右、从上到下；每格一拍，真实镜不足时只留空格不伪造剧情。", "validate_nine_grid_contract", ("exact_nine_grid_storyboards", "storyboard_qc")),
     _cap("continuity_six_anchors", "跨镜六锚点连续性", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR, _C.COMPOSER_PUBLISHER),
-         ("短剧情节与镜头连贯性提示词.md", "AI短剧连续性设计指南.md", "AI 生成短剧一致性检查清单.md"),
+         ("plot-shot-coherence", "continuity-design", "consistency-checklist"),
          "人物/空间/动作/情绪/道具/光影从上一镜尾状态原样交付下一镜首状态。", "validate_continuity_contract", ("continuity_ledger", "transition_plan")),
     _cap("fight_choreography", "武打力学与出招-受击拆分", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR, _C.AUDIO_DIRECTOR),
-         ("AI短剧电影级武打镜头设计指南.md",),
+         ("martial-arts",),
          "高风险动作拆为蓄力/出招/受击/环境反馈，单镜1.5-2.5秒并对齐冲击帧、SFX与轴线。", "validate_action_contract", ("action_choreography", "sfx_foley_cues")),
     _cap("visual_style", "画质、载体、色彩、光影与材质风格", (_C.VISUAL_DIRECTOR, _C.EXECUTIVE_DIRECTOR),
-         ("画质风格类型总结.md", "AI短剧与漫剧导演级拍摄分镜完全指南.md"),
+         ("visual-style", "director-shot-guide"),
          "按题材/载体选择唯一视觉基线并锁定色板、LUT、主光、镜头质感和材质。", "validate_visual_contract", ("style_palette_lighting_lock",)),
     # 编剧之后的六个角色共同持有：出图出视频的角色负责编译执行，
     # 音频/合成/宣发角色负责按同一模块清单做核验与归档，口径不分叉。
     _cap("negative_prompt_router", "模块化负面提示词", POST_WRITER_ROLES,
-         ("AI影视剧负面提示词.md", "短剧情绪与面部表情提示词库.md"),
+         ("negative-prompts", "emotion-expression"),
          "按本角色实际产出形态从通用/脸/手/多人/服装/场景/镜头/材质/时序/表演/题材模块中筛选并保留优先级；"
          "调用图像与视频模型的角色负责把选中模块编译进提示词，不调用生成模型的角色只按同一清单核验与归档，"
          "任何角色都不得把全量词表一次性堆满。", "validate_visual_contract", ("negative_prompt_plan",)),
     _cap("reference_generation", "多图、首尾帧与多模态视频路由", (_C.VISUAL_DIRECTOR, _C.STORYBOARD_ARTIST),
-         ("AI短剧五视图解决人物一致性提示词模板.md", "AI短剧连续性设计指南.md", "SKILL.md"),
+         ("actor-sheet-template", "continuity-design", "industrial-production"),
          "根据硬结尾、连续图片、动作视频、音频节奏和供应商能力自动选择模式；不静默丢参考。", "validate_video_route_contract", ("video_route_plans", "reference_binding_plan")),
     _cap("prompt_fingerprint", "分镜图与运镜同源契约", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR),
-         ("AI短剧五视图解决人物一致性提示词模板.md",),
+         ("actor-sheet-template",),
          "分镜图和视频提示词必须携带同一规范化 ShotMotionContract 指纹；变更使旧计划失效。", "validate_fingerprint_contract", ("shot_motion_contracts", "generated_keyframes")),
     _cap("visual_quality_repair", "视觉质检与局部修复", (_C.VISUAL_DIRECTOR, _C.COMPOSER_PUBLISHER),
-         ("AI 生成短剧一致性检查清单.md", "AI短剧表演细节与提示词指南.md", "AI短剧注意事项与关键元素.md"),
+         ("consistency-checklist", "performance-details", "production-guidelines"),
          "检测身份漂移、手部、口型、闪烁、光向、文字和物理异常；仅重做失败镜头/区域。", "validate_visual_contract", ("visual_qc", "final_qc")),
     _cap("elevenlabs_audio", "ElevenLabs 配音、对白、SFX与音乐", (_C.AUDIO_DIRECTOR,),
-         ("AI影视剧台词语速情绪提示词总结.md", "AI短剧注意事项与关键元素.md", "SKILL.md"),
+         ("dialogue-pacing", "production-guidelines", "industrial-production"),
          "生成可审计服务端任务计划；密钥来自环境，SFX/BGM/TTS端点分离且不在日志暴露。", "validate_audio_contract", ("elevenlabs_job_plan",)),
     _cap("voice_identity", "角色声卡与声纹连续", (_C.AUDIO_DIRECTOR, _C.CHARACTER_DESIGNER),
-         ("AI影视剧台词语速情绪提示词总结.md", "AI短剧表演细节与提示词指南.md"),
+         ("dialogue-pacing", "performance-details"),
          "角色固定 voice_id、音高、年龄感、语癖、语速基准与授权引用，情绪仅做受控偏移。", "validate_audio_contract", ("voice_cards", "voice_identity_brief")),
     _cap("sfx_bgm_mix", "环境音、Foley、BGM与混音母版", (_C.AUDIO_DIRECTOR, _C.COMPOSER_PUBLISHER),
-         ("AI短剧注意事项与关键元素.md", "AI短剧电影级武打镜头设计指南.md", "AI短剧连续性设计指南.md"),
+         ("production-guidelines", "martial-arts", "continuity-design"),
          "环境床跨镜连续、动作声帧对齐、对白时BGM ducking，并交付响度/真峰值母版计划。", "validate_audio_contract", ("sfx_foley_cues", "bgm_music_plan", "audio_mix_plan")),
     _cap("lip_sync", "口型、字幕与对白时序", (_C.AUDIO_DIRECTOR, _C.COMPOSER_PUBLISHER),
-         ("AI短剧表演细节与提示词指南.md", "AI影视剧台词语速情绪提示词总结.md"),
+         ("performance-details", "dialogue-pacing"),
          "先锁最终干声，再生成口型与逐字时间戳；字幕、闭口手柄与镜头时长共同校验。", "validate_lipsync_contract", ("lipsync_plan", "subtitle_package")),
     _cap("editing_transitions", "剪辑节奏与连续性转场", (_C.COMPOSER_PUBLISHER, _C.STORYBOARD_ARTIST),
-         ("AI短剧连续性设计指南.md", "AI短剧注意事项与关键元素.md", "AI短剧与漫剧导演级拍摄分镜完全指南.md"),
+         ("continuity-design", "production-guidelines", "director-shot-guide"),
          "同场优先硬切，时间跳跃用叠化，差异用遮挡/运动/匹配剪辑；转场必须有叙事原因。", "validate_delivery_contract", ("edit_decision_list", "transition_plan")),
     _cap("delivery_master", "字幕、画幅、帧率、编码与归档", (_C.COMPOSER_PUBLISHER,),
-         ("AI短剧注意事项与关键元素.md", "画质风格类型总结.md", "AI 生成短剧一致性检查清单.md"),
+         ("production-guidelines", "visual-style", "consistency-checklist"),
          "按单一目标平台编译导出配置，校验字幕安全区、OCR、音量、帧率、分辨率、命名、版本与元数据。", "validate_delivery_contract", ("mastered_timeline", "export_profiles", "delivery_archive")),
     _cap("release_gate", "S/A/B/C 一致性发布门禁", (_C.EXECUTIVE_DIRECTOR, _C.COMPOSER_PUBLISHER),
-         ("AI 生成短剧一致性检查清单.md",),
+         ("consistency-checklist",),
          "未解决S/A为0、B不超过3、核心均分至少4/5、总分至少85且所有硬门禁通过才可发布。", "evaluate_release", ("final_qc", "director_approval")),
     _cap("marketing_package", "封面、标题、预告、文案与标签", (_C.PR_AGENT,),
-         ("影视剧高光时刻识别方案.md", "AI短剧注意事项与关键元素.md", "SKILL.md"),
+         ("highlight-detection", "production-guidelines", "industrial-production"),
          "从已批准高光生成平台化素材，保留正片事实、角色状态、视觉风格和合规边界。", "validate_marketing_contract", ("cover_title_variants", "trailer_plan", "platform_copy_tags")),
     _cap("growth_loop", "平台指标、A/B、投流与商业闭环", (_C.PR_AGENT, _C.EXECUTIVE_DIRECTOR),
-         ("AI短剧注意事项与关键元素.md", "短剧题材类型总结.md"),
+         ("production-guidelines", "genre-summary"),
          "跟踪3秒留存、完播、下一集点击、付费、分享和ROI，结论回写下一轮创作假设。", "validate_marketing_contract", ("ab_test_plan", "campaign_kpis")),
     _cap("rights_provenance", "授权、版权、AI标识与第三方溯源", (_C.PR_AGENT, _C.COMPOSER_PUBLISHER, _C.EXECUTIVE_DIRECTOR),
-         ("THIRD_PARTY_NOTICES.md", "AI短剧注意事项与关键元素.md", "AI 生成短剧一致性检查清单.md"),
+         ("production-guidelines", "consistency-checklist"),
          "记录人类创作参与、素材/声纹授权、模型条款、来源、AI标识、版本与审批，不复制受限代码资产。", "validate_provenance_contract", ("rights_ai_disclosure", "delivery_archive", "production_risk_register")),
 )
 
@@ -318,7 +329,7 @@ def _delivery_profile(platform: str) -> DeliveryProfile:
     )
 
 
-# 负面词模块词表：id 对照《AI影视剧负面提示词.md》的章节，
+# 负面词模块词表：id 对照负面提示词指南（negative-prompts 章节）的章节，
 # negative_prompt_router 的可执行策略(通用/脸/手/多人/服装/场景/材质/时序/表演/题材)逐项落到这里。
 NEGATIVE_MODULE_LABELS: Final[dict[str, str]] = {
     "common_quality": "通用画质(一)",
@@ -341,7 +352,7 @@ NEGATIVE_MODULE_LABELS: Final[dict[str, str]] = {
     "crowd_limb_separation": "群戏肢体粘连分离(三/十五)",
 }
 
-# 模块 → 可直接拼进生成提示词的负面词串。词条从《AI影视剧负面提示词.md》对应章节精选，
+# 模块 → 可直接拼进生成提示词的负面词串。词条从负面提示词指南（negative-prompts 章节）对应章节精选，
 # 每模块只保留压制力最强的少数词(知识源 §17.3 关键压制项优先级)；多模块叠加后仍要能
 # 活过 Agnes 网关的截断预算——绝不整章搬运(知识源使用原则 1「不要一次性把负面词堆满」)。
 NEGATIVE_MODULE_WORDS: Final[dict[str, str]] = {
@@ -478,25 +489,26 @@ def _negative_modules_by_role(catalog: list[str]) -> dict[AgentRole, list[str]]:
 
 
 def _source_records() -> list[KnowledgeSourceRecord]:
-    capability_ids_by_source: dict[str, list[str]] = {name: [] for name in KNOWLEDGE_SOURCE_FILES}
+    keys = knowledge_source_keys()
+    capability_ids_by_source: dict[str, list[str]] = {key: [] for key in keys}
     for capability in CAPABILITIES:
-        for filename in capability.source_files:
-            if filename not in capability_ids_by_source:
-                raise RuntimeError(f"unknown knowledge source in capability catalog: {filename}")
-            capability_ids_by_source[filename].append(capability.id)
+        for key in capability.source_files:
+            if key not in capability_ids_by_source:
+                raise RuntimeError(f"unknown knowledge section in capability catalog: {key}")
+            capability_ids_by_source[key].append(capability.id)
 
     records: list[KnowledgeSourceRecord] = []
-    for filename in KNOWLEDGE_SOURCE_FILES:
-        path = PROJECT_ROOT / filename
-        if not path.is_file():
-            raise RuntimeError(f"required production knowledge source is missing: {filename}")
-        data = path.read_bytes()
+    for key in keys:
+        section = knowledge_registry.section(key)
+        if section is None or not section.path.is_file():
+            raise RuntimeError(f"required production knowledge section is missing: {key}")
+        data = section.path.read_bytes()
         records.append(KnowledgeSourceRecord(
-            filename=filename,
-            project_relative_path=filename,
+            filename=key,
+            project_relative_path=f"skills/{section.relative_path}",
             sha256=hashlib.sha256(data).hexdigest(),
             byte_size=len(data),
-            capability_ids=sorted(capability_ids_by_source[filename]),
+            capability_ids=sorted(capability_ids_by_source[key]),
         ))
     return records
 
@@ -515,7 +527,7 @@ def _role_prompt(
     name_zh, name_en = _ROLE_NAMES[role]
     capabilities = _role_capabilities(role)
     policies = "\n".join(f"- [{item.id}] {item.executable_policy}" for item in capabilities)
-    outputs = "、".join(_ROLE_OUTPUTS[role])
+    outputs = "、".join(artifact_label(item) for item in _ROLE_OUTPUTS[role])
     gates = "\n".join(f"- {gate}" for gate in _ROLE_GATES[role])
     # 只有编剧之后的角色带负面词小节；总导演与编剧的提示词保持原样。
     negative_section = ""
@@ -524,7 +536,7 @@ def _role_prompt(
             f"- {module}（{NEGATIVE_MODULE_LABELS.get(module, module)}）" for module in negative_modules
         )
         negative_section = (
-            f"本角色负面提示词模块（来自《AI影视剧负面提示词.md》，按本角色产出形态筛选而成，"
+            f"本角色负面提示词模块（来自《{knowledge_registry.section_title('negative-prompts')}》，按本角色产出形态筛选而成，"
             f"不得再自行扩用未列出的模块，也不得一次性堆满全部词条）：\n{rendered}\n"
         )
     return (
@@ -540,7 +552,9 @@ def _role_prompt(
         f"{constitution.dialogue_max_han_characters}个汉字；发布阈值{constitution.release_threshold}分；"
         "执行 S/A/B/C 问题分级门禁。\n"
         f"本角色可执行能力：\n{policies}\n"
-        f"必须交付的结构化 artifact_id：{outputs}。\n"
+        f"必须交付的结构化产物：{outputs}。\n"
+        "书写语言：标题、正文与表格一律用中文；交付物用上面的中文名称，不写英文标识符；集数写「第N集」，"
+        "缺失项写「待补」，专业术语用中文（必要时括注英文缩写，如 LUT、fps）。\n"
         + negative_section +
         f"本阶段验收：\n{gates}\n"
         "输出必须显式列出输入来源、假设、结构化交付物、未解决风险、交接对象和验收结论；"

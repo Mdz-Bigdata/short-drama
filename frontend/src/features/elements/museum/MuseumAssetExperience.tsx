@@ -26,6 +26,10 @@ import {
   type MuseumCatalogItem,
 } from './museumCatalog';
 import './MuseumAssetExperience.css';
+import { t } from '../../../i18n';
+
+// 目录件数的两位数写法（08、12…），随藏品目录变化
+const CATALOG_COUNT_LABEL = String(museumCatalog.length).padStart(2, '0');
 
 
 type MuseumAssetExperienceProps = {
@@ -80,8 +84,8 @@ function ArtifactRail({
   onSelect: (id: string) => void;
 }) {
   return (
-    <nav className="museum-catalog" aria-label="文物目录">
-      <div className="museum-section-kicker">典藏目录 · 08</div>
+    <nav className="museum-catalog" aria-label={t('文物目录')}>
+      <div className="museum-section-kicker">典藏目录 · {CATALOG_COUNT_LABEL}</div>
       {museumCatalog.map((item, index) => (
         <button
           type="button"
@@ -113,7 +117,7 @@ function MobileArtifactSwitcher({
   onSelect: (id: string) => void;
 }) {
   return (
-    <nav className="museum-mobile-switcher" aria-label="移动端文物切换">
+    <nav className="museum-mobile-switcher" aria-label={t('移动端文物切换')}>
       {museumCatalog.map(item => (
         <button
           type="button"
@@ -136,24 +140,24 @@ function MobileArtifactSwitcher({
 function MuseumPlaque({ item }: { item: MuseumCatalogItem }) {
   return (
     <article className="museum-plaque" aria-label={`${item.name}展签`}>
-      <span className="museum-section-kicker">01 · 它是什么</span>
+      <span className="museum-section-kicker">{t('01 · 它是什么')}</span>
       <h2>{item.name}</h2>
       <p className="museum-plaque-type">{item.type}</p>
       <p className="museum-plaque-intro">{item.intro}</p>
       <dl>
         <div>
-          <dt>年代</dt>
+          <dt>{t('年代')}</dt>
           <dd>{item.dynasty}</dd>
         </div>
         <div>
-          <dt>出土地</dt>
+          <dt>{t('出土地')}</dt>
           <dd>{item.origin}</dd>
         </div>
         <div>
-          <dt>现藏</dt>
+          <dt>{t('现藏')}</dt>
           <dd>
             {item.museum}
-            {item.museumAbroad && <em>流落海外</em>}
+            {item.museumAbroad && <em>{t('流落海外')}</em>}
           </dd>
         </div>
       </dl>
@@ -225,7 +229,7 @@ function MuseumStage({
       <div className="museum-stage-heading">
         <span>{item.dynasty}</span>
         <strong>{item.name}</strong>
-        <small>可信静态 GLB · 本地 Draco</small>
+        <small>{t('可信静态 GLB · 本地 Draco')}</small>
       </div>
 
       <div className="museum-canvas-shell">
@@ -253,10 +257,10 @@ function MuseumStage({
           </Canvas>
         )}
         <MuseumStageFallback item={item} state={modelStatus} webglAvailable={webglAvailable} />
-        <span className="museum-stage-number">{museumCatalog.findIndex(entry => entry.id === item.id) + 1}/8</span>
+        <span className="museum-stage-number">{museumCatalog.findIndex(entry => entry.id === item.id) + 1}/{museumCatalog.length}</span>
       </div>
 
-      <div className="museum-stage-tools" role="toolbar" aria-label="三维展台控制">
+      <div className="museum-stage-tools" role="toolbar" aria-label={t('三维展台控制')}>
         <button
           type="button"
           className={autoRotate ? 'is-active' : undefined}
@@ -264,20 +268,20 @@ function MuseumStage({
           onClick={onAutoRotateChange}
         >
           {autoRotate ? <Pause size={16} /> : <Play size={16} />}
-          {autoRotate ? '暂停旋转' : '自动旋转'}
+          {autoRotate ? t('暂停旋转') : t('自动旋转')}
         </button>
         <button type="button" onClick={onReset}>
           <RotateCcw size={16} />
-          重置视角
+          {t('重置视角')}
         </button>
         <button type="button" onClick={onCapture} disabled={modelStatus.state !== 'ready'}>
           <Camera size={16} />
-          保存截图
+          {t('保存截图')}
         </button>
       </div>
       <p className="museum-stage-hint">
         <Box size={14} />
-        拖动旋转 · 滚轮或双指缩放 · 右键或双指移动
+        {t('拖动旋转 · 滚轮或双指缩放 · 右键或双指移动')}
       </p>
     </section>
   );
@@ -317,7 +321,7 @@ function MuseumInsightPanel({
     <aside className="museum-insights">
       <section className="museum-panel museum-detail-panel">
         <header>
-          <span className="museum-section-kicker">02 · 看门道 · 细节</span>
+          <span className="museum-section-kicker">{t('02 · 看门道 · 细节')}</span>
           <button
             type="button"
             className={favorite ? 'is-favorite' : undefined}
@@ -328,7 +332,7 @@ function MuseumInsightPanel({
             <Heart size={20} fill={favorite ? 'currentColor' : 'none'} />
           </button>
         </header>
-        <div className="museum-detail-tabs" role="tablist" aria-label="文物细节标签">
+        <div className="museum-detail-tabs" role="tablist" aria-label={t('文物细节标签')}>
           {item.organelles.map(entry => (
             <button
               type="button"
@@ -353,14 +357,14 @@ function MuseumInsightPanel({
 
       {item.story && (
         <section className="museum-panel museum-story-panel">
-          <span className="museum-section-kicker">03 · 听它说 · 文物的故事</span>
+          <span className="museum-section-kicker">{t('03 · 听它说 · 文物的故事')}</span>
           {item.story.split('\n\n').map(paragraph => <p key={paragraph}>{paragraph}</p>)}
         </section>
       )}
 
       {item.qa && (
         <section className="museum-panel museum-qa-panel">
-          <span className="museum-section-kicker">04 · 你可能好奇</span>
+          <span className="museum-section-kicker">{t('04 · 你可能好奇')}</span>
           {item.qa.map(entry => (
             <QuestionItem key={entry.q} question={entry.q} answer={entry.a} />
           ))}
@@ -368,10 +372,10 @@ function MuseumInsightPanel({
       )}
 
       <section className="museum-panel museum-source-panel">
-        <span className="museum-section-kicker">05 · 数字资产来源</span>
+        <span className="museum-section-kicker">{t('05 · 数字资产来源')}</span>
         <p>模型来源：{item.modelAsset.sourceLabel}</p>
         <a href={item.modelAsset.sourceUrl} target="_blank" rel="noreferrer">
-          查看 3D 模型来源
+          {t('查看 3D 模型来源')}
           <ExternalLink size={14} />
         </a>
       </section>
@@ -460,22 +464,22 @@ export default function MuseumAssetExperience({ kind }: MuseumAssetExperiencePro
     >
       <header className="museum-header">
         <div className="museum-brand">
-          <img src={museumAsset('/museum/logo.png')} alt="数字博物馆标志" />
+          <img src={museumAsset('/museum/logo.png')} alt={t('数字博物馆标志')} />
           <div>
-            <p>穿越千年，触摸文明的温度</p>
-            <h1>{kind === 'scene' ? '场景资产 · 文物数字展厅' : '道具资产 · 文物数字展厅'}</h1>
+            <p>{t('穿越千年，触摸文明的温度')}</p>
+            <h1>{kind === 'scene' ? t('场景资产 · 文物数字展厅') : t('道具资产 · 文物数字展厅')}</h1>
           </div>
         </div>
         <div className="museum-header-meta">
-          <strong>08</strong>
-          <span>件中国文物<br />3D 数字典藏</span>
+          <strong>{CATALOG_COUNT_LABEL}</strong>
+          <span>{t('件中国文物')}<br />{t('3D 数字典藏')}</span>
           <a
             href="https://www.zybkpro.top/threejs/museum/"
             target="_blank"
             rel="noreferrer"
-            aria-label="打开 zybkpro.top 原始在线展厅"
+            aria-label={t('打开 zybkpro.top 原始在线展厅')}
           >
-            zybkpro.top 在线来源
+            {t('zybkpro.top 在线来源')}
             <ExternalLink size={13} />
           </a>
         </div>

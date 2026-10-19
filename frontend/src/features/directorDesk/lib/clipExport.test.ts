@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { Mesh, PerspectiveCamera, Scene, Vector2, type WebGLRenderer } from 'three';
+import { Mesh, PerspectiveCamera, Scene, Vector2, type ShaderMaterial, type WebGLRenderer } from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HELPER_FLAG } from './capture';
 import { ClipUnsupportedError, clipSize, exportClip, type ClipStage } from './clipExport';
+import { BACKDROP_FLAG, DEPTH_FALLBACK_RANGE } from './depthPass';
 
 // The encoder is the boundary: what matters here is what it is asked to do, frame by frame.
 const media = vi.hoisted(() => ({
@@ -192,5 +193,49 @@ describe('exportClip', () => {
     const { stage } = fakeStage();
     await expect(exportClip({ stage, aspect: 1, durationS: 31, fps: 24, monochrome: false, labels: false })).rejects.toThrow('30 秒');
     await expect(exportClip({ stage, aspect: 1, durationS: 5, fps: 60, monochrome: false, labels: false })).rejects.toThrow('24 / 25 / 30');
+  });
+});
+
+describe('exportClip as depth', () => {
+  const context = { drawImage: vi.fn(), strokeText: vi.fn(), fillText: vi.fn() };
+
+  beforeEach(() => {
+    media.canEncode.mockReset().mockResolvedValue(true);
+    media.added.length = 0;
+    media.outputs.length = 0;
+    media.sources.length = 0;
+    vi.stubGlobal('VideoEncoder', class {});
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('films every frame through the depth material at the stage’s range, leaving the backdrop out, then restores', async () => {
+    const { stage, scene, helper } = fakeStage();
+    const backdrop = new Mesh();
+    backdrop.userData[BACKDROP_FLAG] = true;
+    scene.add(backdrop);
+    stage.depthRange = { near: 2, far: 11 };
+    const seen: Array<[string, number | undefined, boolean, boolean]> = [];
+    (stage.gl.render as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      const override = scene.overrideMaterial as ShaderMaterial | null;
+      seen.push([override?.type ?? 'none', override?.uniforms?.farM?.value, backdrop.visible, helper.visible]);
+    });
+    const clip = await exportClip({ stage, aspect: 1, durationS: 1, fps: 24, monochrome: true, labels: false, depth: true });
+    expect(clip.frames).toBe(24);
+    expect(seen.slice(0, 24).every(([type, far, backdropShown, helperShown]) => type === 'ShaderMaterial' && far === 11 && !backdropShown && !helperShown)).toBe(true);
+    expect(seen[24]).toEqual(['none', undefined, true, true]);
+    expect(scene.overrideMaterial).toBeNull();
+  });
+
+  it('uses the fallback range when the stage has none', async () => {
+    const { stage, scene } = fakeStage();
+    let far: number | undefined;
+    (stage.gl.render as ReturnType<typeof vi.fn>).mockImplementation(() => { far ??= (scene.overrideMaterial as ShaderMaterial | null)?.uniforms?.farM?.value; });
+    await exportClip({ stage, aspect: 1, durationS: 0.5, fps: 24, monochrome: false, labels: false, depth: true });
+    expect(far).toBe(DEPTH_FALLBACK_RANGE.far);
   });
 });

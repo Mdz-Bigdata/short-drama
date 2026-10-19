@@ -7,20 +7,20 @@ import base64
 import hashlib
 import io
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
 from PIL import Image, UnidentifiedImageError
 
+from app import settings
+from app.core import character_variants
 from app.core.element_scope import element_in_task
 from app.core.media_compositor import MEDIA_DIR
 from app.core.storyboard_scene_context import compile_scene_context
-from app.platform.dependencies import DEFAULT_DATABASE_URL
 from app.platform.store import PlatformStore
 
 logger = logging.getLogger(__name__)
-_KINDS = ("actor", "scene", "prop", "costume", "effect")
+_KINDS = ("actor", "scene", "prop", "costume", "effect", "product")
 _IMAGE_FORMATS = {"image/png": "PNG", "image/jpeg": "JPEG", "image/webp": "WEBP"}
 _MAX_IMAGE_BYTES = 10 * 1024 * 1024
 _MAX_IMAGE_PIXELS = 40_000_000
@@ -40,16 +40,7 @@ def _identifier(value: object) -> str:
 
 def _image_roots() -> tuple[Path, ...]:
     media = Path(MEDIA_DIR).resolve()
-    private = (
-        Path(
-            os.getenv(
-                "ELEMENT_IMAGE_STORAGE_DIR",
-                str(media.parent / "runtime" / "element_images"),
-            )
-        )
-        .expanduser()
-        .resolve()
-    )
+    private = settings.private_storage_dir("ELEMENT_IMAGE_STORAGE_DIR", "element_images", media)
     # Mirror the element API's prohibition against new public reference storage.
     roots = [] if private == media or media in private.parents else [private]
     legacy = (media / "elements").resolve()
@@ -115,7 +106,7 @@ async def _load_project_elements(
 ) -> list[dict]:
     # Stage workers run in their own thread. The API's cached async engine must
     # never be reused from this temporary event loop.
-    store = PlatformStore(os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL))
+    store = PlatformStore(settings.database_url())
     result: list[dict] = []
     files_by_id: dict[str, list] = {}
     seen: set[str] = set()
@@ -164,7 +155,7 @@ async def _load_project_elements(
         context = compile_scene_context(task, scene, result)
         selected = [
             item
-            for key in ("actors", "scenes", "props", "costumes", "effects")
+            for key in ("actors", "scenes", "props", "costumes", "effects", "products")
             for item in context.get(key, [])
         ]
         selected_ids = {item["id"] for item in selected if item.get("id")}
@@ -173,11 +164,14 @@ async def _load_project_elements(
             for item in selected
             if not item.get("id")
         }
+        # The derived looks of a selected character come along: a shot may still call for one.
+        cast = {item.get("name") for item in context.get("actors", [])}
         result = [
             item
             for item in result
             if item["id"] in selected_ids
             or (item["kind"], item["name"]) in selected_names
+            or (item["kind"] == "actor" and (character_variants.variant_of(item) or {}).get("of") in cast)
         ]
     roots = _image_roots()
     for item in result:

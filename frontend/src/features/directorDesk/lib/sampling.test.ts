@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { PLAN } from '../../spatial/spatialFixtures';
 import type { ActorKey, CameraKey, StageActor, StagePlan } from '../../spatial/spatialTypes';
 import {
-  cameraPathOf, cyclePhase, ease, frameCount, gaitJoints, lerpYaw, sampleActor, sampleShot, snapToFrame, stagePlanAt, timeOfFrame,
+  actorPathsOf, cameraPathOf, cyclePhase, ease, frameCount, gaitJoints, lerpYaw, sampleActor, sampleShot, snapToFrame, stagePlanAt, timeOfFrame,
 } from './sampling';
 import { verticalFov } from './stageMath';
 
@@ -86,6 +86,18 @@ describe('sampleShot', () => {
     expect(cameraPathOf(PLAN, PLAN.shots[0])).toBeNull();
     // Whoever is offstage in the shot is not sampled at all.
     expect(Object.keys(sampleShot(PLAN, PLAN.shots[1], 0).actors)).toEqual(['林夏', '周教授']);
+  });
+
+  it('draws an actor track as the line through its placed keys, and skips a track that stays put', () => {
+    const plan = timed([], {
+      林夏: [{ time: 0, position: [-1.3, 0], easing: 'linear' }, { time: 1, yaw_deg: 45, easing: 'smooth' }, { time: 4, position: [1, 2], easing: 'smooth' }],
+      助手: [{ time: 0, position: [0, -2], easing: 'linear' }, { time: 2, pose: { preset: 'sit' }, easing: 'linear' }],
+    });
+    expect(actorPathsOf(plan, plan.shots[0])).toEqual([
+      { name: '林夏', points: [[-1.3, 0, 0], [1, 0, 2]], keys: [{ time: 0, position: [-1.3, 0, 0] }, { time: 4, position: [1, 0, 2] }] },
+    ]);
+    expect(actorPathsOf(plan, undefined)).toEqual([]);
+    expect(actorPathsOf(PLAN, PLAN.shots[0])).toEqual([]);
   });
 
   it('leaves a candidate lens where it is: keys belong to the lens that films', () => {

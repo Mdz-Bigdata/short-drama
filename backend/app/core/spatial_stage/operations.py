@@ -33,8 +33,9 @@ from app.core.spatial_stage.models import (
     StagePlan,
     StagePose,
 )
+from app.core.spatial_stage import paths, repair
 from app.core.spatial_stage.planner import refresh
-from app.core.spatial_stage.projection import SHOT_SIZE_HEIGHTS, CameraView
+from app.core.spatial_stage.projection import SHOT_SIZE_HEIGHTS, CameraView, posture_height
 
 RELATIONS = ("front", "behind", "left", "right", "foreground", "background")
 REFERENCES = ("actor", "camera", "world")
@@ -52,6 +53,10 @@ BACKDROP_KINDS = ("none", "color", "image", "panorama")
 FIGURES = ("standin", "mannequin", "humanoid")
 MAX_CROWD_MEMBERS = 150
 MAX_ALT_CAMERAS = 8
+ARRAY_LAYOUTS = ("line", "grid", "ring")
+ALIGN_MODES = ("min", "center", "max", "distribute")
+PATH_FACINGS = ("path", "hold", "point")
+MAX_ARRAY_COUNT = 40
 _EXTRA_PREFIX = "extra-"
 _JOINT_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,59}$")
 _HTTP_URL = re.compile(r"^https?://", re.IGNORECASE)
@@ -228,6 +233,13 @@ class _Editor:
 
     def update_actor(self, index: int, **changes: Any) -> None:
         self.actors[index] = self.actors[index].model_copy(update=changes)
+
+    def staged(self) -> StagePlan:
+        """The plan as the operations so far have left it, with everything derived brought up to date."""
+        return refresh(self.plan.model_copy(update={
+            "actors": self.actors, "landmarks": self.landmarks, "cameras": self.cameras, "shots": self.shots,
+            "crowds": self.crowds, "timelines": self.timelines, "axis": self.axis, "backdrop": self.backdrop,
+        }))
 
     # ---- frames of reference
     def basis(self, op: Mapping[str, Any], anchor: StageActor | None) -> tuple[geo.Vec2, geo.Vec2]:
@@ -717,6 +729,164 @@ class _Editor:
         except camera_moves.CameraMoveError as error:
             raise StageEditError(str(error)) from error
 
+    # ---- director desk: drawn routes, set-piece arrays, automatic repair
+    def set_path(self, op: Mapping[str, Any]) -> None:
+        """Lay the keys of a drawn route on one track of a shot's timeline (replacing that track)."""
+        shot = self.shots[self.shot_index(op.get("shot_id"))]
+        values = self._timeline_of(shot.shot_id, op)
+        target = str(op.get("target") or "")
+        if not target:
+            raise StageEditError("set_path 需要 target：\"camera\" 或一个人物名")
+        start_s = _number(op.get("start_s", 0.0), "start_s", 0, 30)
+        duration = float(values.get("duration_s", 5.0))
+        end_s = _number(op.get("end_s", duration), "end_s", 0, 30)
+        if end_s > duration:
+            if "duration_s" in op:
+                raise StageEditError(f"end_s（{end_s:g} 秒）超过了时间线时长 {duration:g} 秒")
+            values["duration_s"] = end_s  # a route drawn past the end lengthens the shot to fit it
+        easing = str(op.get("easing") or "linear")
+        smooth = bool(op.get("smooth", True))
+        try:
+            if target == "camera":
+                camera = self.cameras[self.camera_index(shot.camera_id)]
+                points = paths.read_points(op.get("points"), height_m=_number(op.get("height_m", camera.position[1]), "height_m", 0.05, 100))
+                look_at = op.get("look_at")
+                aim: tuple[float, float, float] | None = None
+                if isinstance(look_at, str) and look_at and look_at != "ahead":
+                    actor = self.actors[self.actor_index(look_at)]
+                    aim = (actor.position[0], round(posture_height(actor) * 0.75, 3), actor.position[1])
+                elif isinstance(look_at, Sequence) and not isinstance(look_at, (str, bytes)):
+                    aim = tuple(_space(look_at, "look_at"))
+                elif look_at not in (None, "", "ahead"):
+                    raise StageEditError("look_at 只能是人物名、[x, y, z] 或 \"ahead\"")
+                values["camera"] = [
+                    key.model_dump() for key in paths.camera_keys(
+                        points, start_s=start_s, end_s=end_s, lens_mm=camera.lens_mm, easing=easing, smooth=smooth,
+                        look_at=aim, ahead_height_m=camera.target[1] if aim is None else None,
+                    )
+                ]
+            else:
+                actor = self.actors[self.actor_index(target)]
+                points = paths.read_points(op.get("points"), height_m=0.0)
+                face = _choice(op.get("face"), PATH_FACINGS, "face", "path")
+                face_point: geo.Vec2 | None = None
+                if face == "point":
+                    if "face_target" in op and op["face_target"] is not None and not isinstance(op["face_target"], str):
+                        face_point = tuple(_ground(op["face_target"], "face_target"))
+                    elif op.get("face_target"):
+                        face_point = self.point_of(op["face_target"])
+                    else:
+                        raise StageEditError("face 为 point 时需要 face_target：人物名、地标名或 [x, z]")
+                pose = None
+                if op.get("pose") is not None:
+                    if not isinstance(op["pose"], Mapping):
+                        raise StageEditError("pose 必须是对象")
+                    pose = StagePose.model_validate(op["pose"])
+                keys = paths.actor_keys(
+                    points, start_s=start_s, end_s=end_s, easing=easing, smooth=smooth, face=face, face_point=face_point,
+                    fallback_yaw=actor.yaw_deg, pose=pose,
+                )
+                tracks = dict(values.get("actors") or {})
+                tracks[actor.name] = [key.model_dump() for key in keys]
+                values["actors"] = tracks
+        except paths.PathError as error:
+            raise StageEditError(str(error)) from error
+        _refuse_keys_past_the_end(values)
+        try:
+            self.timelines[str(shot.shot_id)] = ShotTimeline.model_validate(values)
+        except ValueError as error:
+            raise StageEditError(_timeline_error(error)) from error
+
+    def array_landmark(self, op: Mapping[str, Any]) -> None:
+        """Copies of one set piece laid out in a line, a grid or a ring; the original is the first mark."""
+        index = self.landmark_index(op.get("name"))
+        original = self.landmarks[index]
+        layout = _choice(op.get("layout"), ARRAY_LAYOUTS, "layout", "line")
+        count = _whole(op.get("count", 2), "count", 2, MAX_ARRAY_COUNT)
+        if len(self.landmarks) + count - 1 > 80:
+            raise StageEditError(f"地标数量上限 80，无法再放 {count - 1} 个")
+        spacing = _number(op.get("spacing", max(original.size[0], original.size[1]) + 0.2), "spacing", 0.1, 100)
+        # The yaw the row runs along; by default across the piece's facing, like a row of chairs.
+        heading = _number(op.get("direction_deg", original.yaw_deg + 90), "direction_deg", -360, 360)
+        axis = geo.forward_of(heading)
+        start = (original.position[0], original.position[1])
+        if layout == "line":
+            marks = geo.line_positions(count, start, axis, spacing)
+        elif layout == "grid":
+            columns = _whole(op["columns"], "columns", 1, count) if op.get("columns") else None
+            marks = geo.grid_positions(count, start, axis, spacing, columns)
+        else:
+            # The ring's centre lies ahead of the original piece, which faces it.
+            radius = _number(op.get("radius", spacing * count / 6.283), "radius", 0.1, 100)
+            centre = geo.add(start, geo.scale(geo.forward_of(original.yaw_deg), radius))
+            marks = geo.circle_positions(count, centre, geo.scale(geo.forward_of(original.yaw_deg), -1.0), radius)
+        # Whatever the layout helper centred on, the piece that was there stays where it is.
+        shift = geo.sub(start, marks[0])
+        marks = [geo.add(mark, shift) for mark in marks]
+        number = 1 + max((int(item.id.rsplit("-", 1)[-1]) for item in self.landmarks if item.id.rsplit("-", 1)[-1].isdigit()), default=0)
+        copies: list[StageLandmark] = []
+        suffix = 2
+        for mark in marks[1:]:
+            # Copies count on from the original's name, skipping any number already on the stage.
+            while not self.free_name(f"{original.name} {suffix}") or any(copy.name == f"{original.name} {suffix}" for copy in copies):
+                suffix += 1
+            name = f"{original.name} {suffix}"
+            suffix += 1
+            yaw = original.yaw_deg
+            if layout == "ring":
+                yaw = geo.yaw_toward(mark, centre, original.yaw_deg)
+            copies.append(original.model_copy(update={
+                "id": f"mark-{number + len(copies):02d}", "name": name[:120], "position": geo.rounded(mark), "yaw_deg": round(yaw, 2),
+            }))
+        self.landmarks.extend(copies)
+
+    def align_landmarks(self, op: Mapping[str, Any]) -> None:
+        """Line set pieces up on one world axis (by their centres), or spread them evenly along it."""
+        names = op.get("names")
+        if not isinstance(names, Sequence) or isinstance(names, (str, bytes)) or not 2 <= len(names) <= 80:
+            raise StageEditError("align_landmarks 需要 2-80 个地标名")
+        indexes = [self.landmark_index(name) for name in names]
+        if len(set(indexes)) != len(indexes):
+            raise StageEditError("align_landmarks 的地标不能重复")
+        axis = _choice(op.get("axis"), ("x", "z"), "axis", "x")
+        mode = _choice(op.get("mode"), ALIGN_MODES, "mode", "center")
+        component = 0 if axis == "x" else 1
+        values = [self.landmarks[i].position[component] for i in indexes]
+        if mode == "distribute":
+            order = sorted(range(len(indexes)), key=lambda k: values[k])
+            low, high = values[order[0]], values[order[-1]]
+            for rank, k in enumerate(order):
+                placed = low + (high - low) * rank / (len(order) - 1)
+                self._set_landmark_component(indexes[k], component, placed)
+            return
+        placed = {"min": min(values), "max": max(values), "center": sum(values) / len(values)}[mode]
+        for i in indexes:
+            self._set_landmark_component(i, component, placed)
+
+    def _set_landmark_component(self, index: int, component: int, value: float) -> None:
+        position = list(self.landmarks[index].position)
+        position[component] = round(value, 3)
+        self.landmarks[index] = self.landmarks[index].model_copy(update={"position": position})
+
+    def repair_checks(self, op: Mapping[str, Any]) -> None:
+        """Apply the repairs the failing checks propose (see :mod:`repair`); refuses when there is nothing automatic to do."""
+        codes = op.get("codes")
+        if codes is not None and (not isinstance(codes, Sequence) or isinstance(codes, (str, bytes))):
+            raise StageEditError("codes 必须是检查代码列表")
+        shot_ids = op.get("shot_ids")
+        if shot_ids is not None and (not isinstance(shot_ids, Sequence) or isinstance(shot_ids, (str, bytes))):
+            raise StageEditError("shot_ids 必须是镜头编号列表")
+        proposals = repair.propose(
+            self.staged(), codes=[str(code) for code in codes] if codes is not None else None,
+            shot_ids=[int(item) for item in shot_ids] if shot_ids is not None else None,
+        )
+        operations = repair.combined_operations(proposals)
+        if not operations:
+            manual = "；".join(item.manual for item in proposals if item.manual)
+            raise StageEditError("没有可以自动修正的检查项" + (f"：{manual}" if manual else ""))
+        for operation in operations:
+            getattr(self, str(operation["op"]))(operation)
+
     def _spec_of(self, shot_index: int, op: Mapping[str, Any]) -> ShotSpec:
         shot = self.shots[shot_index]
         camera = self.cameras[self.camera_index(shot.camera_id)]
@@ -810,6 +980,7 @@ _HANDLERS = (
     "transform_landmark", "bind_landmark_model", "set_backdrop", "add_crowd", "remove_crowd", "transform_crowd",
     "add_extra", "remove_extra", "set_figure", "set_pose", "add_camera", "remove_camera", "use_camera",
     "frame_shot", "set_timeline", "clear_timeline", "apply_camera_move",
+    "set_path", "array_landmark", "align_landmarks", "repair_checks",
 )
 OPERATIONS: tuple[str, ...] = _HANDLERS
 

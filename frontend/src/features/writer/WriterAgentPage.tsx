@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
   BookOpenText,
@@ -7,16 +7,24 @@ import {
   Film,
   LayoutDashboard,
   ListTree,
+  Maximize2,
+  Minimize2,
   Network,
   NotebookPen,
   PenLine,
+  Pencil,
   RefreshCw,
   Sparkles,
   TableProperties,
   TimerReset,
+  Upload,
+  Users,
 } from 'lucide-react';
 
 import { CharacterRelationshipGraph } from './CharacterRelationshipGraph';
+import { namedRelationships } from './relationshipCast';
+import { ScriptVersionMenu } from './ScriptVersionMenu';
+import { StoryEventTimeline } from './StoryEventTimeline';
 import { EpisodeScenesDialog } from './EpisodeScenesDialog';
 import { EpisodeTextDialog } from './EpisodeTextDialog';
 import { ScreenplayReader } from './ScreenplayReader';
@@ -27,15 +35,19 @@ import { groupEpisodeGaps, normalizeMissingEpisodes } from './episodeGaps';
 import { WriterTimeline } from './WriterTimeline';
 import { summarizeEpisodeTitle } from './textSummary';
 import {
+  CREATION_MODE_LABELS,
   normalizeWriterBreakdown,
-  relationshipsFromScenes,
   sceneEpisode,
   type WriterDashboardStats,
   type WriterEpisode,
   type WriterRelationship,
   type WriterScene,
+  type WriterScriptVersion,
 } from './types';
 import './WriterAgentPage.css';
+import { t } from '../../i18n';
+
+export type WriterView = 'board' | 'outline' | 'characters' | 'planning' | 'library';
 
 function assetToText(asset: unknown) {
   if (typeof asset === 'string') return asset.trim();
@@ -141,12 +153,20 @@ export function WriterAgentPage({
   onPlanEpisodes,
   onProduceEpisode,
   onSaveScript,
-  onSaveRelationships,
   onAnalyzeRelationships,
   onContinueScript,
-  relationshipsInferred = false,
+  timelineAuthored = false,
+  creationMode,
+  versions = [],
+  avatars = {},
+  onSaveOverview,
+  onRegenerateOverview,
+  onSaveTimeline,
+  onSaveVersion,
+  onRestoreVersion,
   onOpenScenes,
   onOpenActors,
+  defaultView = 'board',
 }: {
   title?: string;
   taskId?: string;
@@ -170,12 +190,30 @@ export function WriterAgentPage({
   onAnalyzeRelationships?: () => Promise<void>;
   onContinueScript?: () => Promise<void>;
   relationshipsInferred?: boolean;
+  timelineAuthored?: boolean;
+  creationMode?: string;
+  versions?: WriterScriptVersion[];
+  /** name → portrait url, when stage 3 drew the character. */
+  avatars?: Record<string, string>;
+  onSaveOverview?: (fields: { title?: string; synopsis?: string; genre?: string; theme?: string; world_setting?: string }) => Promise<void>;
+  onRegenerateOverview?: () => Promise<void>;
+  onSaveTimeline?: (events: Array<{ phase: string; title: string; desc: string; points: string[] }>) => Promise<void>;
+  onSaveVersion?: (label: string) => Promise<void>;
+  onRestoreVersion?: (versionId: string) => Promise<void>;
   onOpenScenes?: () => void;
   onOpenActors?: () => void;
+  /** Which tab opens first: the board, or the character network page. */
+  defaultView?: WriterView;
 }) {
-  const [timelineMode, setTimelineMode] = useState<'axis' | 'line'>('axis');
+  // One block for the story: its events (editable nodes) and, on the other tab, the same events laid along the scenes as a beat map.
+  const [storyView, setStoryView] = useState<'events' | 'beats'>('events');
+  const [networkExpanded, setNetworkExpanded] = useState(false);
+  const [overviewEditing, setOverviewEditing] = useState(false);
+  const [overviewDraft, setOverviewDraft] = useState({ synopsis: '', genre: '', theme: '', world_setting: '' });
+  const [overviewBusy, setOverviewBusy] = useState('');
+  const [overviewError, setOverviewError] = useState('');
   const [readerOpen, setReaderOpen] = useState(false);
-  const [view, setView] = useState<'board' | 'outline' | 'planning' | 'library'>('board');
+  const [view, setView] = useState<WriterView>(defaultView);
   const [episodeTextTarget, setEpisodeTextTarget] = useState<{ episode?: number } | null>(null);
   const [sceneDialogEpisode, setSceneDialogEpisode] = useState<number | null>(null);
   const [episodePage, setEpisodePage] = useState(0);
@@ -190,16 +228,14 @@ export function WriterAgentPage({
   const synopsis = cleanStorySynopsis(overview?.synopsis);
   const synopsisParagraphs = splitSynopsis(synopsis);
   const overviewDetails = [
-    { label: '题材', value: cleanOverviewText(overview?.genre), className: 'is-genre' },
-    { label: '核心主题', value: cleanOverviewText(overview?.theme), className: 'is-theme' },
-    { label: '世界设定', value: cleanOverviewText(overview?.world_setting || overview?.worldSetting), className: 'is-world' },
+    { label: t('题材'), value: cleanOverviewText(overview?.genre), className: 'is-genre' },
+    { label: t('核心主题'), value: cleanOverviewText(overview?.theme), className: 'is-theme' },
+    { label: t('世界设定'), value: cleanOverviewText(overview?.world_setting || overview?.worldSetting), className: 'is-world' },
   ].filter(item => item.value);
-  const displayedRelationships = relationships.length ? relationships : relationshipsFromScenes(scenes);
-  // Co-occurrence edges state only that two names share a scene, so the graph is
-  // flagged until a real analysis (or a manual edit) replaces them.
-  const graphIsInferred = relationshipsInferred
-    || !relationships.length
-    || relationships.every(edge => /^同场互动(?:\s|·|$)/.test(String(edge.relation || '')));
+  // Only named relations (君臣、父子、宿敌 …) are shown or counted; a pairing counted from shared
+  // scenes is not one. Until the story has named relations the page asks for an analysis.
+  const displayedRelationships = namedRelationships(relationships);
+  const graphIsInferred = displayedRelationships.length === 0;
   const source = assetToText(script);
   const sceneEpisodes = scenes.map(sceneEpisode);
   const episodeTotal = Math.max(requestedEpisodeCount, episodes.length, ...sceneEpisodes, source ? 1 : 0);
@@ -284,8 +320,8 @@ export function WriterAgentPage({
       onOpen: onOpenActors,
       hint: '查看数字演员',
     },
-    { label: '预估时长', value: serverStats ? durationSecondsLabel(serverStats.totalDurationSeconds) : durationLabel(scenes), note: '依据场景时长汇总' },
-    { label: '剧本基调', value: serverStats?.tone || breakdown.overview?.genre || '待分析', note: breakdown.overview?.theme || '主题提炼中' },
+    { label: t('预估时长'), value: serverStats ? durationSecondsLabel(serverStats.totalDurationSeconds) : durationLabel(scenes), note: t('依据场景时长汇总') },
+    { label: t('剧本基调'), value: serverStats?.tone || breakdown.overview?.genre || '待分析', note: breakdown.overview?.theme || '主题提炼中' },
   ];
 
   const handleExport = () => {
@@ -298,28 +334,93 @@ export function WriterAgentPage({
     URL.revokeObjectURL(url);
   };
 
+  // The character network has its own page under the 人物关系 tab.
+  const autoAnalyzed = useRef<string | null>(null);
+  const hasScript = Boolean(source);
+  useEffect(() => {
+    if (view !== 'characters' || !graphIsInferred || !onAnalyzeRelationships || !hasScript || roles.length < 2) return;
+    const key = taskId || title || 'writer';
+    if (autoAnalyzed.current === key) return;
+    autoAnalyzed.current = key;
+    let active = true;
+    void Promise.resolve()
+      .then(() => {
+        if (active) setRelationshipsAnalyzing(true);
+        return onAnalyzeRelationships();
+      })
+      .catch(() => undefined)
+      .finally(() => { if (active) setRelationshipsAnalyzing(false); });
+    return () => { active = false; };
+  }, [view, graphIsInferred, onAnalyzeRelationships, hasScript, roles.length, taskId, title]);
+
+  const characterSection = (
+  <section className="writer-section writer-network" aria-labelledby="writer-relationships-title">
+    <div className="writer-network__title">
+      <Network aria-hidden="true" />
+      <h2 id="writer-relationships-title">{t('人物关系星图')} <small className="writer-section__count">{roles.length} {t('角色')} · {displayedRelationships.length} {t('关系')}</small></h2>
+      <button type="button" className="writer-network__expand" aria-label={networkExpanded ? t('还原星图') : t('放大星图')} aria-pressed={networkExpanded} onClick={() => setNetworkExpanded(value => !value)}>
+        {networkExpanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
+      </button>
+    </div>
+    {graphIsInferred && (
+      <div className="writer-network__notice" role="status">
+        <p>
+          {relationshipsAnalyzing
+            ? t('正在按剧本识别人物关系（君臣、父子、母子、主仆、兄弟、宿敌……），完成后直接显示在星图上。')
+            : onAnalyzeRelationships
+              ? t('人物关系尚未识别：点击「AI 分析人物关系」，按剧本识别君臣、父子、母子、主仆、兄弟、兄妹、宿敌等具体关系。')
+              : t('人物关系尚未识别。')}
+        </p>
+        {onAnalyzeRelationships && (
+          <button
+            type="button"
+            disabled={relationshipsAnalyzing}
+            onClick={() => {
+              setRelationshipsAnalyzing(true);
+              void onAnalyzeRelationships()
+                .catch(() => undefined)
+                .finally(() => setRelationshipsAnalyzing(false));
+            }}
+          >
+            <Sparkles aria-hidden="true" /> {relationshipsAnalyzing ? t('分析中…') : t('AI 分析人物关系')}
+          </button>
+        )}
+      </div>
+    )}
+    <div className="writer-network__card writer-network__field">
+      <header>
+        <span><Network aria-hidden="true" /> {t('关系星域')}</span>
+        <span>{roles.length} {t('角色')} · {displayedRelationships.length} {t('关系')}</span>
+      </header>
+      <CharacterRelationshipGraph roles={roles} relationships={displayedRelationships} avatars={avatars} expanded={networkExpanded} />
+    </div>
+  </section>
+  );
+
   return (
     <main className="writer-board" aria-labelledby="writer-page-title">
       <header className="writer-board__header">
         <div>
           <span className="writer-board__eyebrow">WRITER AGENT / 02</span>
           <h1 id="writer-page-title">{title || '未命名短剧'}</h1>
-          <p>专业编剧看板 · 双轨节奏 · 时间线与人物关系分析</p>
+          <p>{creationMode ? t(CREATION_MODE_LABELS[creationMode] || creationMode) : t('专业编剧看板 · 双轨节奏 · 时间线与人物关系分析')}</p>
         </div>
         <div className="writer-board__actions">
-          <span className={`writer-board__state ${source ? 'is-ready' : ''}`}><Check aria-hidden="true" /> {source ? '剧本已载入' : '等待生成'}</span>
-          <button type="button" onClick={() => { void (onExport || handleExport)(); }} disabled={!source && scenes.length === 0}><Download aria-hidden="true" /> 导出 JSON</button>
+          <span className={`writer-board__state ${source ? 'is-ready' : ''}`}><Check aria-hidden="true" /> {source ? t('剧本已载入') : t('等待生成')}</span>
+          {(onSaveVersion || versions.length > 0) && <ScriptVersionMenu versions={versions} onSave={onSaveVersion} onRestore={onRestoreVersion} />}
+          {taskId && <button type="button" className="is-primary" onClick={() => setView('library')}><Upload aria-hidden="true" /> {t('上传映视界文件')}</button>}
+          <button type="button" onClick={() => { void (onExport || handleExport)(); }} disabled={!source && scenes.length === 0}><Download aria-hidden="true" /> {t('导出 JSON')}</button>
         </div>
       </header>
 
-      <nav className="writer-view-tabs" aria-label="编剧页面视图">
+      <nav className="writer-view-tabs" aria-label={t('编剧页面视图')}>
         <button
           type="button"
           className={view === 'board' ? 'is-active' : ''}
           aria-pressed={view === 'board'}
           onClick={() => setView('board')}
         >
-          <LayoutDashboard aria-hidden="true" /> 创作看板
+          <LayoutDashboard aria-hidden="true" /> {t('创作看板')}
         </button>
         <button
           type="button"
@@ -327,7 +428,15 @@ export function WriterAgentPage({
           aria-pressed={view === 'outline'}
           onClick={() => setView('outline')}
         >
-          <TableProperties aria-hidden="true" /> 剧本大纲
+          <TableProperties aria-hidden="true" /> {t('剧本大纲')}
+        </button>
+        <button
+          type="button"
+          className={view === 'characters' ? 'is-active' : ''}
+          aria-pressed={view === 'characters'}
+          onClick={() => setView('characters')}
+        >
+          <Users aria-hidden="true" /> {t('人物关系')}
         </button>
         {taskId && (
           <button
@@ -336,7 +445,7 @@ export function WriterAgentPage({
             aria-pressed={view === 'planning'}
             onClick={() => setView('planning')}
           >
-            <NotebookPen aria-hidden="true" /> 分集规划
+            <NotebookPen aria-hidden="true" /> {t('分集规划')}
           </button>
         )}
         {taskId && (
@@ -346,7 +455,7 @@ export function WriterAgentPage({
             aria-pressed={view === 'library'}
             onClick={() => setView('library')}
           >
-            <BookOpen aria-hidden="true" /> 剧本文库
+            <BookOpen aria-hidden="true" /> {t('剧本文库')}
           </button>
         )}
       </nav>
@@ -376,23 +485,25 @@ export function WriterAgentPage({
       {view === 'planning' && taskId ? (
         <section className="writer-section" aria-labelledby="writer-planning-title">
           <div className="writer-section__heading">
-            <div><span>PLANNING</span><h2 id="writer-planning-title">分集规划与分镜内容</h2></div>
+            <div><span>PLANNING</span><h2 id="writer-planning-title">{t('分集规划与分镜内容')}</h2></div>
           </div>
           <div className="writer-section__body">
-            <ScreenwritingPanel taskId={taskId} />
+            <ScreenwritingPanel taskId={taskId} onOpenEpisodeText={episode => setEpisodeTextTarget({ episode })} />
           </div>
         </section>
       ) : view === 'library' && taskId ? (
         <section className="writer-section" aria-labelledby="writer-library-title">
           <div className="writer-section__heading">
-            <div><span>01</span><div><small>SCRIPT LIBRARY</small><h2 id="writer-library-title">剧本文库</h2></div></div>
+            <div><span>01</span><div><small>SCRIPT LIBRARY</small><h2 id="writer-library-title">{t('剧本文库')}</h2></div></div>
           </div>
           <ScriptLibrary taskId={taskId} />
         </section>
+      ) : view === 'characters' ? (
+        characterSection
       ) : view === 'outline' ? (
         <section className="writer-section writer-outline-section" aria-labelledby="writer-outline-title">
           <div className="writer-section__heading">
-            <div><span>01</span><div><small>SCRIPT BREAKDOWN</small><h2 id="writer-outline-title">剧本大纲</h2></div></div>
+            <div><span>01</span><div><small>SCRIPT BREAKDOWN</small><h2 id="writer-outline-title">{t('剧本大纲')}</h2></div></div>
             <div className="writer-section__actions">{continueButton}</div>
           </div>
           {missingEpisodeCount > 0 && (
@@ -405,21 +516,65 @@ export function WriterAgentPage({
         </section>
       ) : (
       <>
-      {(synopsisParagraphs.length > 0 || overviewDetails.length > 0) && (
+      {(synopsisParagraphs.length > 0 || overviewDetails.length > 0 || onSaveOverview) && (
         <section className="writer-overview" aria-labelledby="writer-logline-title">
-          <div className="writer-overview__label" aria-hidden="true">
-            <span>STORY OVERVIEW</span>
-            <strong>00</strong>
-          </div>
           <div className="writer-overview__content">
             <header>
               <div>
                 <small>NARRATIVE BRIEF</small>
-                <h2 id="writer-logline-title">故事大纲</h2>
+                <h2 id="writer-logline-title">{t('项目概述')}</h2>
               </div>
-              <span>编剧结构提要</span>
+              {(onSaveOverview || onRegenerateOverview) ? (
+                <span className="writer-overview__tools">
+                  {onSaveOverview && !overviewEditing && (
+                    <button type="button" disabled={Boolean(overviewBusy)} onClick={() => {
+                      setOverviewDraft({
+                        synopsis: String(overview?.synopsis || ''), genre: String(overview?.genre || ''),
+                        theme: String(overview?.theme || ''), world_setting: String(overview?.world_setting || overview?.worldSetting || ''),
+                      });
+                      setOverviewError('');
+                      setOverviewEditing(true);
+                    }}><Pencil aria-hidden="true" /> {t('编辑')}</button>
+                  )}
+                  {onRegenerateOverview && (
+                    <button type="button" disabled={Boolean(overviewBusy)} onClick={() => {
+                      setOverviewBusy('regenerate');
+                      setOverviewError('');
+                      void onRegenerateOverview()
+                        .catch(reason => setOverviewError(reason instanceof Error ? reason.message : t('概述重新创作失败，请稍后重试。')))
+                        .finally(() => setOverviewBusy(''));
+                    }}><RefreshCw aria-hidden="true" className={overviewBusy === 'regenerate' ? 'spin' : undefined} /> {overviewBusy === 'regenerate' ? t('重新创作中…') : t('重新创作')}</button>
+                  )}
+                </span>
+              ) : <span>{t('编剧结构提要')}</span>}
             </header>
-            {synopsisParagraphs.length > 0 && (
+            {overviewError && <p className="writer-overview__error" role="alert">{overviewError}</p>}
+            {overviewEditing && onSaveOverview ? (
+              <form className="writer-overview__form" aria-label={t('编辑项目概述')} onSubmit={event => {
+                event.preventDefault();
+                setOverviewBusy('save');
+                setOverviewError('');
+                void onSaveOverview(overviewDraft)
+                  .then(() => setOverviewEditing(false))
+                  .catch(reason => setOverviewError(reason instanceof Error ? reason.message : t('概述保存失败，请稍后重试。')))
+                  .finally(() => setOverviewBusy(''));
+              }}>
+                <label><span>{t('故事梗概')}</span><textarea rows={5} value={overviewDraft.synopsis} maxLength={4000} onChange={event => setOverviewDraft(current => ({ ...current, synopsis: event.target.value }))} /></label>
+                <div className="writer-overview__form-row">
+                  <label><span>{t('题材')}</span><input value={overviewDraft.genre} maxLength={120} onChange={event => setOverviewDraft(current => ({ ...current, genre: event.target.value }))} /></label>
+                  <label><span>{t('主题')}</span><input value={overviewDraft.theme} maxLength={500} onChange={event => setOverviewDraft(current => ({ ...current, theme: event.target.value }))} /></label>
+                </div>
+                <label><span>{t('世界观设定')}</span><textarea rows={3} value={overviewDraft.world_setting} maxLength={4000} onChange={event => setOverviewDraft(current => ({ ...current, world_setting: event.target.value }))} /></label>
+                <div className="writer-overview__form-actions">
+                  <button type="submit" disabled={overviewBusy === 'save'}>{overviewBusy === 'save' ? t('保存中…') : t('保存概述')}</button>
+                  <button type="button" disabled={overviewBusy === 'save'} onClick={() => { setOverviewEditing(false); setOverviewError(''); }}>{t('取消')}</button>
+                </div>
+              </form>
+            ) : null}
+            {!overviewEditing && synopsisParagraphs.length === 0 && overviewDetails.length === 0 && (
+              <p className="writer-overview__empty">{t('还没有项目概述：生成剧本后自动提炼，也可以点「编辑」手写或「重新创作」。')}</p>
+            )}
+            {!overviewEditing && synopsisParagraphs.length > 0 && (
               <div className="writer-overview__synopsis">
                 {synopsisParagraphs.map((paragraph, index) => (
                   <p className={index === 0 ? 'writer-overview__lead' : undefined} key={index}>
@@ -428,7 +583,7 @@ export function WriterAgentPage({
                 ))}
               </div>
             )}
-            {overviewDetails.length > 0 && (
+            {!overviewEditing && overviewDetails.length > 0 && (
               <dl className="writer-overview__details">
                 {overviewDetails.map((item, index) => (
                   <div className={item.className} key={item.label}>
@@ -442,23 +597,29 @@ export function WriterAgentPage({
         </section>
       )}
 
-      <section className="writer-section writer-pacing" aria-labelledby="writer-pacing-title">
+      <section className="writer-section writer-pacing" aria-labelledby="writer-events-title">
         <div className="writer-section__heading">
-          <div><span>01</span><div><small>BEAT MAP</small><h2 id="writer-pacing-title">爽点节奏</h2></div></div>
-          <div className="writer-segmented" aria-label="时间线显示模式">
-            <button type="button" className={timelineMode === 'axis' ? 'is-active' : ''} aria-pressed={timelineMode === 'axis'} onClick={() => setTimelineMode('axis')}><TimerReset aria-hidden="true" />时间轴</button>
-            <button type="button" className={timelineMode === 'line' ? 'is-active' : ''} aria-pressed={timelineMode === 'line'} onClick={() => setTimelineMode('line')}><ListTree aria-hidden="true" />时间线</button>
+          <div><span>01</span><div><small>STORY EVENTS · BEAT MAP</small><h2 id="writer-events-title">{t('剧情事件与爽点节奏')} ({timeline.length})</h2></div></div>
+          <div className="writer-segmented" aria-label={t('剧情视图')}>
+            <button type="button" className={storyView === 'events' ? 'is-active' : ''} aria-pressed={storyView === 'events'} onClick={() => setStoryView('events')}><ListTree aria-hidden="true" />{t('事件节点')}</button>
+            <button type="button" className={storyView === 'beats' ? 'is-active' : ''} aria-pressed={storyView === 'beats'} onClick={() => setStoryView('beats')}><TimerReset aria-hidden="true" />{t('爽点节奏')}</button>
           </div>
         </div>
-        <WriterTimeline mode={timelineMode} scenes={scenes} timeline={timeline} />
+        {storyView === 'events' ? (
+          <div className="writer-section__body">
+            <StoryEventTimeline events={timeline} authored={timelineAuthored} onSave={onSaveTimeline} />
+          </div>
+        ) : (
+          <WriterTimeline scenes={scenes} timeline={timeline} />
+        )}
       </section>
 
       <section className="writer-section" aria-labelledby="writer-episodes-title">
         <div className="writer-section__heading">
-          <div><span>02</span><div><small>EPISODE MAP</small><h2 id="writer-episodes-title">分集概览</h2></div></div>
+          <div><span>02</span><div><small>EPISODE MAP</small><h2 id="writer-episodes-title">{t('分集概览')}</h2></div></div>
           <div className="writer-section__actions">
             {continueButton}
-            {onPlanEpisodes && <button className="writer-outline-button" type="button" onClick={onPlanEpisodes} disabled={episodesBusy}><RefreshCw aria-hidden="true" /> {episodesBusy ? '分集中…' : episodes.length ? '重新分集' : '一键分集'}</button>}
+            {onPlanEpisodes && <button className="writer-outline-button" type="button" onClick={onPlanEpisodes} disabled={episodesBusy}><RefreshCw aria-hidden="true" /> {episodesBusy ? t('分集中…') : episodes.length ? t('重新分集') : t('一键分集')}</button>}
           </div>
         </div>
         {episodeCards.length > 0 ? (
@@ -466,15 +627,17 @@ export function WriterAgentPage({
             <div className="writer-episodes">
               {visibleEpisodeCards.map(card => {
                 const sceneCount = card.episode?.sceneCount || card.scenes.length || 0;
+                const issues = card.episode?.issues ?? [];
+                const blocking = issues.some(issue => issue.severity === 'error');
                 return (
-                  <article key={card.number}>
+                  <article key={card.number} className={blocking ? 'has-issue' : undefined}>
                     <div>
                       <span>第 {card.number} 集</span>
                       <button
                         type="button"
                         className="writer-episodes__title"
                         disabled={!source}
-                        title={source ? '查看本集剧本文本' : undefined}
+                        title={source ? t('查看本集剧本文本') : undefined}
                         onClick={() => setEpisodeTextTarget({ episode: card.number })}
                       >
                         {summarizeEpisodeTitle(card.title) || `第 ${card.number} 集剧本`}
@@ -482,13 +645,13 @@ export function WriterAgentPage({
                     </div>
                     <dl>
                       <div>
-                        <dt>场景</dt>
+                        <dt>{t('场景')}</dt>
                         <dd>
                           {sceneCount > 0 ? (
                             <button
                               type="button"
                               className="writer-stat-link"
-                              title="查看本集全部场景信息"
+                              title={t('查看本集全部场景信息')}
                               aria-label={`查看第 ${card.number} 集的 ${sceneCount} 个场景`}
                               onClick={() => setSceneDialogEpisode(card.number)}
                             >
@@ -497,26 +660,33 @@ export function WriterAgentPage({
                           ) : '—'}
                         </dd>
                       </div>
-                      <div><dt>时长</dt><dd>{card.episode?.durationSeconds ? durationSecondsLabel(card.episode.durationSeconds) : durationLabel(card.scenes)}</dd></div>
+                      <div><dt>{t('时长')}</dt><dd>{card.episode?.durationSeconds ? durationSecondsLabel(card.episode.durationSeconds) : durationLabel(card.scenes)}</dd></div>
                     </dl>
+                    {issues.length > 0 && (
+                      <ul className="writer-episodes__issues" aria-label={`第 ${card.number} 集待处理问题`}>
+                        {issues.map(issue => (
+                          <li key={issue.code} className={`is-${issue.severity}`}>{issue.message}</li>
+                        ))}
+                      </ul>
+                    )}
                     <footer>
-                      <span className={`is-${card.episode?.status || 'idle'}`}>{card.episode?.status === 'completed' ? '已完成' : card.episode?.status === 'running' ? '制作中' : card.episode?.status === 'failed' ? '失败' : '待制作'}</span>
+                      <span className={`is-${card.episode?.status || 'idle'}`}>{card.episode?.status === 'completed' ? t('已完成') : card.episode?.status === 'running' ? t('制作中') : card.episode?.status === 'failed' ? t('失败') : t('待制作')}</span>
                       {card.episode?.status === 'completed' && card.episode.videoUrl
-                        ? <a href={card.episode.videoUrl} target="_blank" rel="noreferrer"><Film aria-hidden="true" />播放</a>
-                        : onProduceEpisode && <button type="button" disabled={card.episode?.status === 'running'} onClick={() => onProduceEpisode(card.number)}><Film aria-hidden="true" />制作本集</button>}
+                        ? <a href={card.episode.videoUrl} target="_blank" rel="noreferrer"><Film aria-hidden="true" />{t('播放')}</a>
+                        : onProduceEpisode && <button type="button" disabled={card.episode?.status === 'running'} onClick={() => onProduceEpisode(card.number)}><Film aria-hidden="true" />{t('制作本集')}</button>}
                     </footer>
                   </article>
                 );
               })}
             </div>
             {episodePageCount > 1 && (
-              <nav className="writer-episodes__pagination" aria-label="分集概览分页">
+              <nav className="writer-episodes__pagination" aria-label={t('分集概览分页')}>
                 <button
                   type="button"
                   disabled={activeEpisodePage === 0}
                   onClick={() => setEpisodePage(activeEpisodePage - 1)}
                 >
-                  上一页
+                  {t('上一页')}
                 </button>
                 <span>{activeEpisodePage + 1} / {episodePageCount} 页 · 共 {episodeCards.length} 集</span>
                 <button
@@ -524,63 +694,29 @@ export function WriterAgentPage({
                   disabled={activeEpisodePage >= episodePageCount - 1}
                   onClick={() => setEpisodePage(activeEpisodePage + 1)}
                 >
-                  下一页
+                  {t('下一页')}
                 </button>
               </nav>
             )}
           </>
-        ) : <div className="writer-empty">生成剧本后，分集概览将在这里按集展开。</div>}
-      </section>
-
-      <section className="writer-section" aria-labelledby="writer-relationships-title">
-        <div className="writer-section__heading">
-          <div><span>03</span><div><small>CHARACTER NETWORK</small><h2 id="writer-relationships-title">人物关系图谱</h2></div></div>
-          {graphIsInferred && onAnalyzeRelationships ? (
-            <button
-              className="writer-outline-button"
-              type="button"
-              disabled={relationshipsAnalyzing}
-              onClick={() => {
-                setRelationshipsAnalyzing(true);
-                void onAnalyzeRelationships()
-                  .catch(() => undefined)
-                  .finally(() => setRelationshipsAnalyzing(false));
-              }}
-            >
-              <Sparkles aria-hidden="true" /> {relationshipsAnalyzing ? '分析中…' : 'AI 分析人物关系'}
-            </button>
-          ) : <Network aria-hidden="true" />}
-        </div>
-        {graphIsInferred && (
-          <p className="writer-relationships__notice">
-            当前连线只是<strong>同场共现统计</strong>，并非人物之间的真实关系。
-            {onAnalyzeRelationships
-              ? '点击「AI 分析人物关系」按剧本重新识别君臣、父子、主仆、背叛等具体关系，也可直接手动编辑每条连线。'
-              : '可直接手动编辑每条连线，补全君臣、父子、主仆、背叛等具体关系。'}
-          </p>
-        )}
-        <CharacterRelationshipGraph
-          roles={roles}
-          relationships={displayedRelationships}
-          onSaveRelationships={onSaveRelationships}
-        />
+        ) : <div className="writer-empty">{t('生成剧本后，分集概览将在这里按集展开。')}</div>}
       </section>
 
       <section className="writer-section writer-script" aria-labelledby="writer-script-title">
         <div className="writer-section__heading">
-          <div><span>04</span><div><small>FULL SCREENPLAY</small><h2 id="writer-script-title">完整剧本原文</h2></div></div>
+          <div><span>04</span><div><small>FULL SCREENPLAY</small><h2 id="writer-script-title">{t('完整剧本原文')}</h2></div></div>
           <button
             className="writer-script__book-button"
             type="button"
-            aria-label="分页阅读完整剧本"
+            aria-label={t('分页阅读完整剧本')}
             onClick={() => setReaderOpen(true)}
           >
             <BookOpenText aria-hidden="true" />
           </button>
         </div>
         <div className="writer-script__launch">
-          <div><span>SCREENPLAY ARCHIVE</span><strong>{source.length.toLocaleString('zh-CN')} 字符</strong><small>支持 .md / .txt 导入、项目内编辑、分页阅读与 Markdown 多维表格</small></div>
-          <button type="button" onClick={() => setReaderOpen(true)}><BookOpenText aria-hidden="true" /> {source ? '打开剧本工作台' : '导入或编辑剧本'}</button>
+          <div><span>SCREENPLAY ARCHIVE</span><strong>{source.length.toLocaleString('zh-CN')} 字符</strong><small>{t('支持 .md / .txt 导入、项目内编辑、分页阅读与 Markdown 多维表格')}</small></div>
+          <button type="button" onClick={() => setReaderOpen(true)}><BookOpenText aria-hidden="true" /> {source ? t('打开剧本工作台') : t('导入或编辑剧本')}</button>
         </div>
       </section>
       </>

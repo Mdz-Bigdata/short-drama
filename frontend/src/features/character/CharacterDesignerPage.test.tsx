@@ -384,24 +384,27 @@ describe('CharacterDesignerPage', () => {
     expect(within(assetTabs).queryByRole('tab', { name: /拍摄场地.*0 个资产/ })).toBeNull();
   });
 
-  it('renders the canonical five slots and supports keyboard tab navigation', async () => {
+  it('renders the six identity slots, faces first, and supports keyboard tab navigation', async () => {
     const user = userEvent.setup();
     render(<CharacterDesignerPage dashboard={dashboard} {...actions()} />);
 
     expect(screen.getByRole('heading', { level: 1, name: '沈知微' })).toBeTruthy();
     const tabs = within(screen.getByRole('tablist', { name: '沈知微 身份视图' })).getAllByRole('tab');
-    expect(tabs).toHaveLength(5);
+    expect(tabs).toHaveLength(6);
     expect(tabs.map(tab => tab.textContent)).toEqual([
+      '正脸特写0°',
+      '3-4侧脸45°',
+      '右侧45°侧脸45°',
       '正面全身0°',
       '侧面全身90°',
       '背面全身180°',
-      '正脸特写0°',
-      '3-4侧脸45°',
     ]);
+    // 默认选中正面全身，主视图仍是完整人物。
+    expect(tabs[3].getAttribute('aria-selected')).toBe('true');
 
-    tabs[0].focus();
+    tabs[3].focus();
     await user.keyboard('{ArrowRight}{ArrowRight}');
-    expect(tabs[2].getAttribute('aria-selected')).toBe('true');
+    expect(tabs[5].getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('tabpanel', { name: '背面全身180°' }).textContent).toContain('背面全身');
     expect(screen.getByText('背部视角尚未生成')).toBeTruthy();
 
@@ -514,7 +517,7 @@ describe('CharacterDesignerPage', () => {
 
     expect(screen.getAllByText('待质量审核').length).toBeGreaterThan(0);
     expect(screen.getByText(/尚未拆分并通过设定集质检/)).toBeTruthy();
-    expect(screen.getByLabelText('身份视图已完成 0 / 5')).toBeTruthy();
+    expect(screen.getByLabelText('身份视图已完成 0 / 6')).toBeTruthy();
     const tabs = within(screen.getByRole('tablist', { name: '陆行远 身份视图' })).getAllByRole('tab');
     tabs.forEach(tab => expect(within(tab).queryByRole('img')).toBeNull());
 
@@ -651,6 +654,43 @@ describe('CharacterDesignerPage', () => {
     ))).toBe(true));
     expect(actionHandlers.onRegenerate).not.toHaveBeenCalled();
     expect(await screen.findByText('场景资产的参考图已全部完整，无需重复生成。')).toBeTruthy();
+  });
+
+  it('regenerates every image of the active non-actor category after confirmation', async () => {
+    const actionHandlers = actions();
+    const bodies: unknown[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = String(input);
+      if (url.endsWith('/api/elements/generation-jobs') && options?.method === 'POST') {
+        bodies.push(JSON.parse(String(options.body)));
+        return {
+          ok: true,
+          json: async () => ({
+            id: 'prop-job', kind: 'prop', status: 'completed', total: 2,
+            processed: 2, succeeded: 2, failed: 0, remaining: 0, errors: [],
+          }),
+        } as Response;
+      }
+      if (url.includes('/api/elements?kind=')) {
+        return { ok: true, json: async () => ({ items: [], total: 0 }) } as Response;
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const user = userEvent.setup();
+    render(<CharacterDesignerPage dashboard={interactiveDashboard} {...actionHandlers} />);
+
+    const assetTabs = screen.getByRole('tablist', { name: '角色资产类型' });
+    await user.click(within(assetTabs).getByRole('tab', { name: /拍摄道具/ }));
+    await user.click(screen.getByRole('button', { name: /全部重新生成/ }));
+    expect(bodies).toEqual([]);
+    await user.click(screen.getByRole('button', { name: /全部重新生成/ }));
+
+    await waitFor(() => expect(bodies).toEqual([{ kind: 'prop', task_id: null, replace_existing: true }]));
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(actionHandlers.onRegenerate).not.toHaveBeenCalled();
+    expect(await screen.findByText('2 项道具参考图已生成完整。')).toBeTruthy();
+    confirm.mockRestore();
   });
 
   it('exposes complete long-form details and makes the character card a keyboard-scrollable region', async () => {

@@ -24,6 +24,7 @@ class DeskCapture(DramaBaseSchema):
     warning: str = Field("", max_length=200, description="带四肢的截取附带的提示")
     monochrome: bool = False
     labelled: bool = False
+    depth: bool = Field(False, description="导演台导出的灰度深度画面；深度静帧不能应用为首帧参考，深度视频应用后提示词说明只取层次与运镜")
     created_at: str = Field("", max_length=64)
     stale: bool = Field(False, description="截取之后站位已修改")
 

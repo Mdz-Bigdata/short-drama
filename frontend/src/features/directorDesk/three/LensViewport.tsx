@@ -1,16 +1,17 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { PerspectiveCamera } from '@react-three/drei';
-import { Canvas, useThree } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 
 import { parseAspect } from '../../spatial/floorPlanGeometry';
-import { actorsInShot, type StageActor, type StageCamera, type StagePlan, type StageShot } from '../../spatial/spatialTypes';
+import type { StageActor, StageCamera, StagePlan, StageShot } from '../../spatial/spatialTypes';
 import { backdropOf } from '../deskOperations';
 import type { LensFrameInfo, LensHandle } from '../deskTypes';
-import { captureStill } from '../lib/capture';
+import { captureStill, enterDepthView } from '../lib/capture';
+import { depthRange, type DepthRange } from '../lib/depthPass';
 import { Backdrop } from './Backdrop';
-import { ActorFigure } from './figures/ActorFigure';
-import { StageProp } from './props/StageProp';
 import { figureHeight } from '../lib/figureHeight';
+import { visibleActors } from '../lib/visibleActors';
+import { LensStage } from './LensStage';
 import { webglAvailable } from './stageLook';
 import { ContextLossGuard, StageLights, ViewportBoundary, ViewportUnavailable } from './ViewportShell';
 
@@ -27,6 +28,8 @@ export interface LensViewportProps {
   onFrameShown?: (stamp: number, info: LensFrameInfo) => void;
   /** The backdrop is a framing reference, so it stays out of a delivered still or clip by default. */
   backdropInCapture?: boolean;
+  /** Draw the frame as the depth picture a depth still or clip will be (near bright, far dark). */
+  depthPreview?: boolean;
 }
 
 function LookAt({ target }: { target: [number, number, number] }) {
@@ -48,7 +51,7 @@ function frameInfo(actors: StageActor[]): LensFrameInfo {
   };
 }
 
-function CaptureBridge({ aspect, actors, onReady }: { aspect: number; actors: StageActor[]; onReady?: (handle: LensHandle | null) => void }) {
+function CaptureBridge({ aspect, actors, range, onReady }: { aspect: number; actors: StageActor[]; range: DepthRange; onReady?: (handle: LensHandle | null) => void }) {
   const gl = useThree(state => state.gl);
   const scene = useThree(state => state.scene);
   const camera = useThree(state => state.camera);
@@ -56,12 +59,40 @@ function CaptureBridge({ aspect, actors, onReady }: { aspect: number; actors: St
     onReady?.({
       capture: options => {
         const info = frameInfo(actors);
-        return captureStill({ gl, scene, camera, aspect, monochrome: options.monochrome, labels: options.labels ? info.labels : [], figures: info.figures });
+        return captureStill({
+          gl, scene, camera, aspect, monochrome: options.monochrome, labels: options.labels ? info.labels : [], figures: info.figures,
+          depth: options.depth ? { range: options.depthRange ?? range } : undefined,
+        });
       },
-      renderer: () => ({ gl, scene, camera }),
+      renderer: () => ({ gl, scene, camera, depthRange: range }),
     });
     return () => onReady?.(null);
-  }, [actors, aspect, camera, gl, onReady, scene]);
+  }, [actors, aspect, camera, gl, onReady, range, scene]);
+  return null;
+}
+
+/**
+ * The live frame drawn the way a depth capture is: the same override material, the same helpers
+ * and backdrop left out, so what is on screen is what will be exported. Everything it changes is
+ * put back when it unmounts; a capture taken meanwhile saves and restores around it.
+ */
+function DepthPreview({ range }: { range: DepthRange }) {
+  const scene = useThree(state => state.scene);
+  const invalidate = useThree(state => state.invalidate);
+  const view = useRef<ReturnType<typeof enterDepthView> | null>(null);
+  useEffect(() => {
+    const entered = enterDepthView(scene, { range });
+    view.current = entered;
+    invalidate();
+    return () => {
+      view.current = null;
+      entered.restore();
+      invalidate();
+    };
+  }, [invalidate, range, scene]);
+  // A helper that arrives while the preview is on (a humanoid finishing its download brings its pick
+  // proxy) is hidden before the frame it would first show in.
+  useFrame(() => view.current?.hide());
   return null;
 }
 
@@ -74,15 +105,13 @@ function FrameAck({ stamp, actors, onShown }: { stamp: number; actors: StageActo
   return null;
 }
 
-export default function LensViewport({ plan, shot, camera, hidden, overlay, onReady, frameStamp, onFrameShown, backdropInCapture = false }: LensViewportProps) {
+export default function LensViewport({ plan, shot, camera, hidden, overlay, onReady, frameStamp, onFrameShown, backdropInCapture = false, depthPreview = false }: LensViewportProps) {
   const [canRender] = useState(webglAvailable);
   const [contextLost, setContextLost] = useState(false);
   const aspect = parseAspect(plan.aspect_ratio);
-  const actors = useMemo(
-    () => actorsInShot(plan, shot).filter(actor => !hidden.includes(actor.crowd_id ? `crowd:${actor.crowd_id}` : `actor:${actor.name}`)),
-    [hidden, plan, shot],
-  );
+  const actors = useMemo(() => visibleActors(plan, shot, hidden), [hidden, plan, shot]);
   const target = useMemo<[number, number, number]>(() => (camera ? [camera.target[0], camera.target[1], camera.target[2]] : [0, 1, 0]), [camera]);
+  const range = useMemo(() => depthRange(plan, camera, shot), [camera, plan, shot]);
 
   if (!canRender) return <ViewportUnavailable message="当前浏览器或设备不支持 WebGL，无法显示机位画面。" />;
   if (contextLost) return <ViewportUnavailable message="图形上下文已中断。" onRetry={() => setContextLost(false)} />;
@@ -99,20 +128,12 @@ export default function LensViewport({ plan, shot, camera, hidden, overlay, onRe
               <StageLights />
               <PerspectiveCamera makeDefault fov={camera.fov_deg} near={0.05} far={500} position={camera.position} />
               <LookAt target={target} />
-              <CaptureBridge aspect={aspect} actors={actors} onReady={onReady} />
+              <CaptureBridge aspect={aspect} actors={actors} range={range} onReady={onReady} />
+              {depthPreview && <DepthPreview range={range} />}
               <ContextLossGuard onLost={() => setContextLost(true)} />
               {/* After LookAt, so the underlay is squared to a lens that has already been aimed. */}
               <Backdrop backdrop={backdropOf(plan)} inCapture={backdropInCapture} />
-              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.005, 0]}>
-                <planeGeometry args={[200, 200]} />
-                <meshStandardMaterial color="#0a111b" roughness={1} />
-              </mesh>
-              {plan.landmarks.filter(item => !hidden.includes(`landmark:${item.name}`)).map(item => (
-                <StageProp key={item.id} landmark={item} labelled={false} selected={false} />
-              ))}
-              {actors.map(actor => (
-                <ActorFigure key={actor.id} actor={actor} labelled={false} selected={false} subject={false} />
-              ))}
+              <LensStage plan={plan} actors={actors} hidden={hidden} />
               {frameStamp !== undefined && onFrameShown && <FrameAck stamp={frameStamp} actors={actors} onShown={onFrameShown} />}
             </Canvas>
             {overlay}
@@ -121,6 +142,7 @@ export default function LensViewport({ plan, shot, camera, hidden, overlay, onRe
       </ViewportBoundary>
       <div className="desk-viewport__hint">
         {shot ? `第 ${shot.shot_id} 镜 · ` : ''}{camera.label || camera.id} · {camera.lens_mm}mm · {plan.aspect_ratio}
+        {depthPreview ? ` · 深度预览 ${range.near.toFixed(1)}–${range.far.toFixed(1)} m` : ''}
       </div>
     </div>
   );

@@ -184,24 +184,39 @@ class PromptFileResolutionTests(unittest.TestCase):
     """Prompt documents must resolve from the repo, not a developer's home."""
 
     def test_prompts_resolve_without_any_hardcoded_absolute_path(self):
+        from app.core.production_knowledge import load_section
         from app.service import drama_service as module
 
         source = Path(module.__file__).read_text(encoding="utf-8")
         self.assertNotIn("/Users/mindezhi", source)
+        self.assertTrue(load_section("production-guidelines").strip(), "a shipped guide should be readable through its skill")
 
-        service = module.DramaService()
-        content = service.read_md_file("AI短剧注意事项与关键元素.md")
-        self.assertTrue(content.strip(), "a shipped prompt document should be readable")
-
-    def test_prompt_root_can_be_overridden_and_missing_files_are_safe(self):
+    def test_no_service_reads_a_markdown_file_by_name(self):
         from app.service.drama_service import DramaService
 
-        service = DramaService()
+        # Guides are reached by section key through the skill manifests, never by file name.
+        self.assertFalse(hasattr(DramaService, "read_md_file"))
+
+    def test_skills_dir_can_be_overridden_and_missing_sections_are_safe(self):
+        from app.core.production_knowledge import load_section, reset_knowledge_cache
+
         with tempfile.TemporaryDirectory() as elsewhere:
-            (Path(elsewhere) / "custom.md").write_text("覆盖后的提示词", encoding="utf-8")
-            with patch.dict("os.environ", {"DRAMA_PROMPT_ROOT": elsewhere}):
-                self.assertEqual(service.read_md_file("custom.md"), "覆盖后的提示词")
-                self.assertEqual(service.read_md_file("absent.md"), "")
+            skill = Path(elsewhere) / "custom-skill"
+            (skill / "references").mkdir(parents=True)
+            (skill / "SKILL.md").write_text("---\nname: custom-skill\ndescription: 测试\n---\n", encoding="utf-8")
+            (skill / "references" / "custom.md").write_text("覆盖后的提示词", encoding="utf-8")
+            (skill / "manifest.json").write_text(
+                '{"version": 1, "sections": [{"key": "custom-guide", "title": "自定义", "file": "references/custom.md"}]}',
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {"SKILLS_DIR": elsewhere}):
+                reset_knowledge_cache()
+                try:
+                    self.assertEqual(load_section("custom-guide"), "覆盖后的提示词")
+                    self.assertEqual(load_section("production-guidelines"), "")
+                finally:
+                    reset_knowledge_cache()
+        reset_knowledge_cache()
 
     def test_the_duplicate_prompt_reader_is_gone_from_the_model_gateway(self):
         from app.core import model_gateway

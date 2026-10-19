@@ -52,7 +52,7 @@ describe('ElementLibraryPage', () => {
     Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
   });
 
-  it('provides all five concrete pages and keeps costume assets image-only', async () => {
+  it('provides all six concrete pages and keeps costume assets image-only', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
       json: async () => ({ items: [], page: 1, page_size: 24, total: 0 }),
@@ -71,7 +71,7 @@ describe('ElementLibraryPage', () => {
 
     await userEvent.click(screen.getByRole('tab', { name: '服装' }));
     expect(await screen.findByRole('heading', { name: /服装元素库/ })).toBeTruthy();
-    expect(screen.getAllByRole('tab')).toHaveLength(5);
+    expect(screen.getAllByRole('tab')).toHaveLength(6);
     expect(screen.getByRole('button', { name: '添加服装' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '上传' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: '上传 3D 模型' })).toBeNull();
@@ -304,6 +304,57 @@ describe('ElementLibraryPage', () => {
     expect(await screen.findByRole('img', { name: '太后朝服 参考图' })).toBeTruthy();
     expect(screen.getByRole('status').textContent).toContain('已重新生成“太后朝服”的参考图');
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/elements?kind=costume'))).toHaveLength(2);
+  });
+
+  it('regenerates a 数字演员 sheet in the background after confirmation and polls until it finishes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const actor = {
+      id: 'actor-lu', kind: 'actor' as const, name: '陆昀', description: '青衫书生',
+      status: 'ready', version: 3, metadata: { task_id: 'task-cast' }, files: [], model3d: null,
+    };
+    const running = { ...actor, metadata: { ...actor.metadata, regeneration: { status: 'running', started_epoch: Date.now() / 1000 } } };
+    const finished = { ...actor, version: 4, metadata: { ...actor.metadata, regeneration: { status: 'done', finished_epoch: Date.now() / 1000 } } };
+    let listCalls = 0;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = String(input);
+      if (url.endsWith('/api/elements/actor-lu/regenerate') && options?.method === 'POST') {
+        return { ok: true, status: 202, json: async () => running } as Response;
+      }
+      if (url.includes('/api/elements?kind=actor')) {
+        listCalls += 1;
+        return { ok: true, json: async () => ({ items: [listCalls === 1 ? actor : finished], total: 1 }) } as Response;
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValue(true);
+
+    render(<ElementLibraryPage initialKind="actor" onBack={() => undefined} />);
+    const button = await screen.findByRole('button', { name: '重新生成“陆昀”的数字演员设定集' });
+    await userEvent.click(button);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/regenerate'))).toBe(false);
+
+    await userEvent.click(button);
+    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('付费出图'));
+    expect(await screen.findByText('设定集后台生成中，完成后自动刷新')).toBeTruthy();
+    expect((screen.getByRole('button', { name: '重新生成“陆昀”的数字演员设定集' }) as HTMLButtonElement).disabled).toBe(true);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    await waitFor(() => expect(screen.queryByText('设定集后台生成中，完成后自动刷新')).toBeNull());
+    expect(listCalls).toBe(2);
+    confirm.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('shows why the last 数字演员 regeneration failed', async () => {
+    const actor = {
+      id: 'actor-pei', kind: 'actor' as const, name: '裴崇', description: '', status: 'ready', version: 2,
+      metadata: { regeneration: { status: 'failed', error: '设定集质检失败：空白格' } }, files: [], model3d: null,
+    };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+      { ok: true, json: async () => ({ items: [actor], total: 1 }) } as Response
+    ));
+    render(<ElementLibraryPage initialKind="actor" onBack={() => undefined} />);
+    expect((await screen.findByRole('alert')).textContent).toContain('空白格');
   });
 
   it('runs a category generation job and reloads every missing reference image', async () => {
@@ -899,7 +950,7 @@ describe('ElementLibraryPage', () => {
 
     expect((screen.getByRole('button', { name: '移除' }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: '添加上传' }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole('button', { name: '重新生成' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: '重新生成“已有演员”的数字演员设定集' }) as HTMLButtonElement).disabled).toBe(true);
 
     await act(async () => {
       createResponse.resolve({ ok: true, json: async () => createdActor } as Response);

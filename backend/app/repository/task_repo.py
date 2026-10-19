@@ -30,6 +30,8 @@ from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 
+from app import settings
+
 logger = logging.getLogger("app.repository.task_repo")
 
 _WRITE_LOCK = threading.RLock()
@@ -57,9 +59,28 @@ _META = sa.Table(
 )
 _MIGRATION_MARKER = "legacy_json_migrated"
 
-# Mirrors app.platform.dependencies.DEFAULT_DATABASE_URL without importing the
-# async platform stack into this synchronous module.
-_DEFAULT_PLATFORM_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama"
+
+# Records that provider sinks append through mutate_task while a stage thread
+# still holds an older in-memory copy of the task: the usage ledger, accepted
+# video jobs and the generation queue. The stored row is the authority for them;
+# a progress save of the stale copy must not take them back.
+SINK_OWNED_TASK_KEYS = ("usage_records",)
+SINK_OWNED_ASSET_KEYS = ("5_jobs", "5_queue")
+
+
+def _keep_sink_owned(incoming: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(incoming)
+    for key in SINK_OWNED_TASK_KEYS:
+        if key in current:
+            merged[key] = deepcopy(current[key])
+    current_assets = current.get("assets") if isinstance(current.get("assets"), dict) else {}
+    if any(key in current_assets for key in SINK_OWNED_ASSET_KEYS):
+        assets = dict(merged.get("assets") or {}) if isinstance(merged.get("assets"), dict) else {}
+        for key in SINK_OWNED_ASSET_KEYS:
+            if key in current_assets:
+                assets[key] = deepcopy(current_assets[key])
+        merged["assets"] = assets
+    return merged
 
 
 class StaleTaskWriteError(RuntimeError):
@@ -142,7 +163,7 @@ def _sync_database_url() -> str:
     explicit = (os.getenv("TASKS_DATABASE_URL") or "").strip()
     if explicit:
         return explicit
-    platform_url = (os.getenv("DATABASE_URL") or _DEFAULT_PLATFORM_URL).strip()
+    platform_url = settings.database_url()
     return platform_url.replace("+asyncpg", "+psycopg2").replace("+aiosqlite", "")
 
 
@@ -284,6 +305,8 @@ class TaskRepository:
                 **task_data,
                 "workflow_control": deepcopy(current["workflow_control"]),
             }
+        if current:
+            task_data = _keep_sink_owned(task_data, current)
         return json.dumps(task_data, ensure_ascii=False)
 
     # -------------------------------------------------------------- public API

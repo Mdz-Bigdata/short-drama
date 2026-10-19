@@ -22,6 +22,7 @@ described in ``docs/style-packs/RESEARCH.md``.
 from __future__ import annotations
 
 import re
+import threading
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Literal
 
@@ -362,13 +363,39 @@ _PACKS: tuple[StylePack, ...] = (CINEMATIC_REALISM, FILM_35MM, ATOM_PUNK, ANIME_
 DEFAULT_PACK_ID = CINEMATIC_REALISM.id
 
 
+# Project-only locks read off a reference image (app/core/style_analysis.py). They live on the
+# project's config; resolving one registers it here so code that only holds the id finds it too.
+_CUSTOM: dict[str, StylePack] = {}
+_CUSTOM_LOCK = threading.Lock()
+
+
 def list_packs() -> list[StylePack]:
     return list(_PACKS)
 
 
+def register_custom(pack: StylePack) -> StylePack:
+    with _CUSTOM_LOCK:
+        _CUSTOM[pack.id] = pack
+    return pack
+
+
 def get_pack(pack_id: str) -> StylePack | None:
     key = str(pack_id or "").strip().lower().replace("-", "_")
-    return next((pack for pack in _PACKS if pack.id == key), None)
+    builtin = next((pack for pack in _PACKS if pack.id == key), None)
+    if builtin is not None:
+        return builtin
+    with _CUSTOM_LOCK:
+        return _CUSTOM.get(key)
+
+
+def _custom_from_config(config: Mapping[str, Any]) -> StylePack | None:
+    raw = config.get("custom_style_pack")
+    if not isinstance(raw, Mapping) or str(config.get("style_pack") or "") != str(raw.get("id") or ""):
+        return None
+    try:
+        return register_custom(StylePack.model_validate(dict(raw)))
+    except ValueError:
+        return None
 
 
 def resolve_pack(config: Mapping[str, Any] | None) -> StylePack:
@@ -378,7 +405,10 @@ def resolve_pack(config: Mapping[str, Any] | None) -> StylePack:
     production had before packs existed.
     """
     config = config or {}
-    explicit = get_pack(str(config.get("style_pack") or ""))
+    custom = _custom_from_config(config)
+    if custom is not None:
+        return custom
+    explicit = next((pack for pack in _PACKS if pack.id == str(config.get("style_pack") or "").strip().lower().replace("-", "_")), None)
     if explicit is not None:
         return explicit
     text = " ".join(str(config.get(key) or "") for key in ("style_pack", "visual_style", "director_style")).lower()
@@ -554,6 +584,6 @@ __all__ = [
     "ANIME_2D_CEL", "ANIME_3D_CG", "ATOM_PUNK", "CINEMATIC_REALISM", "DEFAULT_PACK_ID", "FILM_35MM", "IRON_RULES",
     "CameraKit", "PaletteCard", "PaletteColour", "PaletteRules", "SoundDefaults", "StylePack",
     "build_palette_card", "caption_for", "describe", "get_pack", "identity_negative", "image_style_line",
-    "iron_rules", "list_packs", "negatives_for",
+    "iron_rules", "list_packs", "negatives_for", "register_custom",
     "palette_lines", "resolve_pack", "style_lock_block", "tone_line",
 ]

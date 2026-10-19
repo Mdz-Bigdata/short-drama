@@ -5,6 +5,7 @@ import { Box } from 'lucide-react';
 
 import { parseAspect } from '../floorPlanGeometry';
 import { actorsInShot, type StageActor, type StageCamera, type StageLandmark, type StagePlan, type StageShot } from '../spatialTypes';
+import { t } from '../../../i18n';
 
 export type StageViewMode = 'director' | 'camera';
 
@@ -18,9 +19,9 @@ interface Props {
 const POSTURE_HEIGHT: Record<string, number> = {
   stand: 1, walk: 1, run: 0.96, fight: 0.94, lean: 0.97, bow: 0.8, sit: 0.74, crouch: 0.6, kneel: 0.68, lie: 0.22,
 };
-const ROLE_COLOR: Record<StageActor['role'], string> = { principal: '#00f2fe', supporting: '#9b8af4', crowd: '#5f6b7a' };
+const ROLE_COLOR: Record<StageActor['role'], string> = { principal: '#e3546c', supporting: '#e67563', crowd: '#8b6d79' };
 const LANDMARK_COLOR: Record<StageLandmark['kind'], string> = {
-  prop: '#f2cc8f', furniture: '#8d99ae', architecture: '#52606d', light: '#ffb454',
+  prop: '#ce8818', furniture: '#6d555f', architecture: '#927481', light: '#e68100',
 };
 
 function webglAvailable(): boolean {
@@ -47,7 +48,7 @@ function ActorFigure({ actor, subject, labelled }: { actor: StageActor; subject:
       <group rotation={lying ? [-Math.PI / 2, 0, 0] : [0, 0, 0]} position={lying ? [0, 0.2, 0] : [0, 0, 0]}>
         <mesh position={[0, body / 2, 0]}>
           <capsuleGeometry args={[0.2, Math.max(0.05, body - 0.4), 6, 14]} />
-          <meshStandardMaterial color={color} roughness={0.55} emissive={subject ? color : '#000000'} emissiveIntensity={subject ? 0.25 : 0} />
+          <meshStandardMaterial color={color} roughness={0.55} emissive={subject ? color : '#fcebee'} emissiveIntensity={subject ? 0.25 : 0} />
         </mesh>
         <mesh position={[0, body + head, 0]}>
           <sphereGeometry args={[head, 18, 14]} />
@@ -56,11 +57,11 @@ function ActorFigure({ actor, subject, labelled }: { actor: StageActor; subject:
         {/* The nose: which way the character faces is the whole point of the figure. */}
         <mesh position={[0, body + head, head + 0.05]} rotation={[Math.PI / 2, 0, 0]}>
           <coneGeometry args={[0.04, 0.12, 10]} />
-          <meshStandardMaterial color="#ffffff" />
+          <meshStandardMaterial color="#221b1e" />
         </mesh>
       </group>
       {labelled && (
-        <Text position={[0, height + 0.28, 0]} fontSize={0.16} color="#e8f6ff" anchorX="center" anchorY="bottom" outlineWidth={0.012} outlineColor="#04070d">
+        <Text position={[0, height + 0.28, 0]} fontSize={0.16} color="#e87084" anchorX="center" anchorY="bottom" outlineWidth={0.012} outlineColor="#fcedef">
           {actor.name}
         </Text>
       )}
@@ -77,7 +78,7 @@ function LandmarkBlock({ landmark, labelled }: { landmark: StageLandmark; labell
         <meshStandardMaterial color={LANDMARK_COLOR[landmark.kind]} roughness={0.8} transparent opacity={0.82} />
       </mesh>
       {labelled && (
-        <Text position={[0, height + 0.18, 0]} fontSize={0.13} color="#c7d3df" anchorX="center" anchorY="bottom">{landmark.name}</Text>
+        <Text position={[0, height + 0.18, 0]} fontSize={0.13} color="#46373e" anchorX="center" anchorY="bottom">{landmark.name}</Text>
       )}
     </group>
   );
@@ -107,7 +108,7 @@ function CameraRig({ camera, selected, label }: { camera: StageCamera; selected:
     const apex: [number, number, number] = [position[0], position[1], position[2]];
     return [...corners.map(point => [apex, point]), [...corners, corners[0]]] as [number, number, number][][];
   }, [camera, selected]);
-  const color = selected ? '#ffd166' : '#4a5a6a';
+  const color = selected ? '#e6a000' : '#957884';
   return (
     <group>
       {lines.map((points, index) => <Line key={index} points={points} color={color} lineWidth={selected ? 1.6 : 0.8} />)}
@@ -151,7 +152,7 @@ function Unavailable({ message }: { message: string }) {
   return (
     <div className="spatial-viewport__fallback" role="status">
       <Box size={42} aria-hidden="true" />
-      <strong>3D 预览暂不可用</strong>
+      <strong>{t('3D 预览暂不可用')}</strong>
       <span>{message}</span>
     </div>
   );
@@ -183,14 +184,14 @@ export default function SpatialStageViewport({ plan, shot, mode }: Props) {
   const lensTarget = lens ? [lens.target[0], lens.target[1], lens.target[2]] as [number, number, number] : centre;
 
   return (
-    <div className={`spatial-viewport is-${mode}`} role="region" aria-label={mode === 'camera' ? '机位视角预览' : '导演视角预览'}>
+    <div className={`spatial-viewport is-${mode}`} role="region" aria-label={mode === 'camera' ? t('机位视角预览') : t('导演视角预览')}>
       <ViewportBoundary fallback={fallback}>
         {/* In camera view the canvas itself takes the delivery aspect, so what is inside it is the frame. */}
         <div className="spatial-viewport__frame" style={lens ? { aspectRatio: String(aspect) } : undefined}>
           <Canvas dpr={[1, 1.5]} frameloop="demand" gl={{ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true }}>
-            <color attach="background" args={['#04070d']} />
+            <color attach="background" args={['#fcedef']} />
             <ambientLight intensity={1.1} />
-            <hemisphereLight args={['#b8e8ff', '#0b0d14', 1.4]} />
+            <hemisphereLight args={['#e76a7f', '#fdeef1', 1.4]} />
             <directionalLight position={[6, 9, 5]} intensity={2.2} />
             {lens ? (
               <>
@@ -205,15 +206,15 @@ export default function SpatialStageViewport({ plan, shot, mode }: Props) {
             )}
             {!lens && (
               <Grid
-                args={[40, 40]} cellSize={1} cellThickness={0.5} cellColor="#1b4764"
-                sectionSize={5} sectionThickness={0.9} sectionColor="#087f9a" fadeDistance={45} fadeStrength={1.4} infiniteGrid
+                args={[40, 40]} cellSize={1} cellThickness={0.5} cellColor="#fef9fa"
+                sectionSize={5} sectionThickness={0.9} sectionColor="#e14962" fadeDistance={45} fadeStrength={1.4} infiniteGrid
               />
             )}
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.005, 0]}>
               <planeGeometry args={[200, 200]} />
-              <meshStandardMaterial color="#0a111b" roughness={1} />
+              <meshStandardMaterial color="#fdeff1" roughness={1} />
             </mesh>
-            {!lens && plan.axis.kind !== 'none' && <Line points={axisPoints} color="#ff6b6b" lineWidth={1.4} dashed dashSize={0.25} gapSize={0.15} />}
+            {!lens && plan.axis.kind !== 'none' && <Line points={axisPoints} color="#e60000" lineWidth={1.4} dashed dashSize={0.25} gapSize={0.15} />}
             {plan.landmarks.map(landmark => <LandmarkBlock key={landmark.id} landmark={landmark} labelled={!lens} />)}
             {actors.map(actor => (
               <ActorFigure key={actor.id} actor={actor} subject={Boolean(shot?.subjects.includes(actor.name))} labelled={!lens} />

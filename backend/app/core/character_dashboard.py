@@ -10,10 +10,12 @@ import hashlib
 import json
 import math
 import re
+import time
 import unicodedata
 from typing import Any
 from urllib.parse import urlsplit
 
+from app import settings
 from app.core.actor_sheet_layout import ACTOR_SHEET_CELL_ORDER, ACTOR_SHEET_LAYOUT
 from app.schema.character_dashboard import (
     IDENTITY_VIEW_ORDER,
@@ -144,7 +146,7 @@ def _safe_media_url(value: Any) -> str | None:
         return None
     if not parsed.scheme and not parsed.netloc:
         segments = [segment for segment in parsed.path.split("/") if segment]
-        if parsed.path.startswith("/media/") and ".." not in segments:
+        if parsed.path.startswith(settings.MEDIA_PREFIX) and ".." not in segments:
             return text
         return None
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
@@ -378,7 +380,7 @@ def _normalize_views(value: Any) -> list[CharacterViewAsset]:
 
 
 def _normalize_sheet_cells(value: Any) -> list[CharacterSheetCell]:
-    """设定集 25 格里非身份锚点的那些格子，按切图顺序排列。"""
+    """设定集各格里非身份锚点的那些格子，按切图顺序排列。"""
     urls: dict[str, str] = {}
     if isinstance(value, dict):
         iterable: list[Any] = [
@@ -389,6 +391,7 @@ def _normalize_sheet_cells(value: Any) -> list[CharacterSheetCell]:
         iterable = value[:60]
     else:
         iterable = []
+    derived: dict[str, str] = {}
     for item in iterable:
         if not isinstance(item, dict):
             continue
@@ -396,6 +399,9 @@ def _normalize_sheet_cells(value: Any) -> list[CharacterSheetCell]:
         url = _safe_media_url(item.get("image_url", item.get("imageUrl", item.get("url"))))
         if key in _CELL_GROUPS and url and key not in urls:
             urls[key] = url
+            source = _text(item.get("derived_from", item.get("derivedFrom")), 40)
+            if source in _CELL_GROUPS:
+                derived[key] = source
     if not urls:
         return []
     return [
@@ -405,6 +411,7 @@ def _normalize_sheet_cells(value: Any) -> list[CharacterSheetCell]:
             group=_CELL_GROUPS[cell],
             image_url=urls.get(cell),
             available=cell in urls,
+            derived_from=derived.get(cell),
         )
         for index, cell in enumerate(ACTOR_SHEET_CELL_ORDER, start=1)
     ]
@@ -473,12 +480,26 @@ def _view_contract() -> CharacterViewContract:
     return CharacterViewContract()
 
 
+# 单个角色重新生成的进度记录：assets[REGENERATION_KEY] = {角色名: {status, started_epoch, error}}。
+REGENERATION_KEY = "3_character_regeneration"
+# 超过这个时长还标着 running，多半是服务重启把后台线程带走了，不再当成"正在生成"。
+REGENERATION_STALE_SECONDS = 15 * 60
+
+
+def regenerating(record: Any) -> bool:
+    if not isinstance(record, dict) or record.get("status") != "running":
+        return False
+    started = record.get("started_epoch")
+    return isinstance(started, (int, float)) and time.time() - started < REGENERATION_STALE_SECONDS
+
+
 def compile_character_dashboard(task: dict[str, Any]) -> CharacterDashboardResponse:
     """Normalize Stage 3 assets without network access, filesystem access, or writes."""
     config = task.get("config") if isinstance(task.get("config"), dict) else {}
     assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
     raw_text = _text(assets.get("3") or assets.get("3_raw"), 2_000_000, multiline=True)
     dna = assets.get("3_dna") if isinstance(assets.get("3_dna"), dict) else {}
+    regeneration = assets.get(REGENERATION_KEY) if isinstance(assets.get(REGENERATION_KEY), dict) else {}
 
     records: dict[str, dict[str, Any]] = {}
 
@@ -553,6 +574,9 @@ def compile_character_dashboard(task: dict[str, Any]) -> CharacterDashboardRespo
             views=views,
             sheet_cells=sheet_cells,
             quality=quality,
+            regenerating=regenerating(regeneration.get(name)),
+            regeneration_error=_text((regeneration.get(name) or {}).get("error"), 1000, multiline=True)
+            if (regeneration.get(name) or {}).get("status") == "failed" else "",
         ))
 
     state_counts = {

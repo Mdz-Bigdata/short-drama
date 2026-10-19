@@ -7,6 +7,7 @@ import {
   WORKBENCH_SIDEBAR_MIN_WIDTH,
   workbenchSidebarMaximum,
 } from './workbenchSizing';
+import { t } from '../../i18n';
 
 interface WorkbenchResizeHandleProps {
   containerRef: RefObject<HTMLElement | null>;
@@ -120,14 +121,14 @@ export function WorkbenchResizeHandle({
       className="workbench-resize-handle"
       role="separator"
       tabIndex={0}
-      aria-label="调整作品区与对话区宽度"
+      aria-label={t('调整作品区与对话区宽度')}
       aria-controls="workbench-asset-viewer workbench-chat-sidebar"
       aria-orientation="vertical"
       aria-valuemin={WORKBENCH_SIDEBAR_MIN_WIDTH}
       aria-valuemax={availableMaximum}
       aria-valuenow={announcedWidth}
       aria-valuetext={`右侧对话区宽度 ${announcedWidth} 像素`}
-      title="左右拖动调整宽度；双击恢复默认"
+      title={t('左右拖动调整宽度；双击恢复默认')}
       onDoubleClick={() => resizeTo(WORKBENCH_SIDEBAR_DEFAULT_WIDTH)}
       onKeyDown={handleKeyDown}
       onPointerDown={handlePointerDown}

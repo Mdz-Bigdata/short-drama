@@ -23,7 +23,10 @@ from app.core.media_compositor import MEDIA_DIR, public_url
 from app.core.providers.elevenlabs import DialogueLine, ElevenLabsClient
 from app.core.providers.elevenlabs_capabilities import elevenlabs_capability_catalog
 from app.core.providers.minimax_audio import MiniMaxAudioArtifact, MiniMaxAudioClient
+from app.core.model_gateway import ModelGateway
 from app.core.providers.minimax_h3 import H3TaskResult, MiniMaxH3Client
+from app.core.sd25_skill_bundle import skill_registry_roots
+from app.platform.runtime_models import provider_key_available
 from app.core.skill_registry import SkillRegistry
 from app.core.sd25_compiler import Sd25PromptCompiler
 from app.core.sd25_prompt_audit import Sd25PromptAuditor
@@ -68,18 +71,7 @@ from app.schema.agent_council import CouncilCompileRequest, CouncilReleaseEviden
 
 class ProductionService:
     def __init__(self) -> None:
-        backend_root = Path(__file__).resolve().parents[2]
-        configured_sd25 = os.getenv("SD25_PE_SKILL_PATH", "").strip()
-        configured_five_part = os.getenv("SD25_FIVE_PART_SKILL_PATH", "").strip()
-        sd25_paths = (
-            [Path(configured_sd25).expanduser()]
-            if configured_sd25
-            else [Path.home() / ".agents" / "skills" / "sd25-pe", Path.home() / "Desktop" / "sd25-pe"]
-        )
-        five_part_paths = [Path(configured_five_part).expanduser()] if configured_five_part else []
-        self.skill_registry = SkillRegistry([
-            backend_root / "skills", *sd25_paths, *five_part_paths,
-        ])
+        self.skill_registry = SkillRegistry(skill_registry_roots())
         self.preset_registry = CreativePresetRegistry()
         self.sd25_compiler = Sd25PromptCompiler()
         self.sd25_prompt_auditor = Sd25PromptAuditor()
@@ -122,9 +114,9 @@ class ProductionService:
                 for skill in skills
             ],
             "providers": {
-                "minimax_h3": bool(os.getenv("MINIMAX_API_KEY")),
-                "minimax_audio": bool(os.getenv("MINIMAX_API_KEY")),
-                "elevenlabs": bool(os.getenv("ELEVENLABS_API_KEY")),
+                "minimax_h3": provider_key_available("minimax", "video", "MINIMAX_API_KEY"),
+                "minimax_audio": provider_key_available("minimax", "audio", "MINIMAX_API_KEY"),
+                "elevenlabs": provider_key_available("elevenlabs", "audio", "ELEVENLABS_API_KEY"),
             },
             "local_capabilities": [
                 {
@@ -255,6 +247,10 @@ class ProductionService:
 
     @staticmethod
     def create_h3_video(request: H3VideoRequest, wait: bool = False) -> H3TaskResult:
+        # 这条接口直连 MiniMax、不经网关，全局强制负面词在这里补上(与网关同一份词表、同一个标签)。
+        request = request.model_copy(update={
+            "prompt": ModelGateway._with_global_negatives(request.prompt, "video"),
+        })
         client = MiniMaxH3Client()
         try:
             result = client.create_video(request)

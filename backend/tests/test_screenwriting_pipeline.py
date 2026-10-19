@@ -28,7 +28,22 @@ from app.service.drama_service import DramaService
 from app.core.writer_dashboard import compile_writer_dashboard, script_episode_indexes
 from main import app
 
-from tests.test_screenwriting_engine import PROSE_OPENING, FakeModel
+from tests.test_screenwriting_engine import MINIATURE_EPISODES, PROSE_OPENING, FakeModel
+
+# The fake model answers with miniature episodes; the service reads its episode
+# frame from the environment, so these cases run with the miniature one.
+_MINIATURE_ENVIRONMENT = patch.dict("os.environ", {
+    "SCREENWRITING_EPISODE_MIN_SCENES": str(MINIATURE_EPISODES.min_scenes),
+    "SCREENWRITING_EPISODE_MIN_SECONDS": str(MINIATURE_EPISODES.min_seconds),
+})
+
+
+def setUpModule():
+    _MINIATURE_ENVIRONMENT.start()
+
+
+def tearDownModule():
+    _MINIATURE_ENVIRONMENT.stop()
 
 
 class _Gateway:
@@ -149,12 +164,20 @@ class StructuredStageTwoTests(unittest.TestCase):
     def test_stage_two_prompts_carry_the_writer_persona_and_knowledge(self):
         _run_stage_two(self.service, "sw-task-1")
 
-        systems = {call["system"] for call in self.gateway.model.calls}
-        self.assertEqual(len(systems), 1)
-        system = systems.pop()
-        self.assertIn("AI 专业短剧编剧智能体", system)
-        self.assertIn("黄金叙事结构", system)
-        self.assertIn("单句不超过 15 个字", system)
+        calls = self.gateway.model.calls
+        for call in calls:
+            self.assertIn("AI 专业短剧编剧智能体", call["system"])
+            self.assertIn("单句不超过 15 个字", call["system"])
+        # Writing calls carry the whole creative guidance; the visual layer only the performance
+        # guide; the one-shot extraction calls the persona alone — each call pays for what it uses.
+        visual = [c["system"] for c in calls if "视觉生产层" in c["prompt"]]
+        writing = [c["system"] for c in calls if "视觉生产层" not in c["prompt"] and ("字段写作指引" in c["prompt"] or "小说体剧本正文" in c["prompt"] or "分集大纲" in c["prompt"])]
+        extraction = [c["system"] for c in calls if "提炼项目概述" in c["prompt"] or "角色与世界观分析师" in c["prompt"]]
+        self.assertTrue(writing and visual and extraction)
+        self.assertTrue(all("【黄金叙事结构" in system for system in writing))
+        self.assertTrue(all("【黄金叙事结构" not in system and "【表演细节" in system for system in visual))
+        self.assertTrue(all("【黄金叙事结构" not in system and "【表演细节" not in system for system in extraction))
+        self.assertLess(len(extraction[0]), len(writing[0]))
 
     def test_stage_two_falls_back_to_the_legacy_engine_when_the_model_cannot_do_json(self):
         self.gateway.structured = False
@@ -272,7 +295,7 @@ class ScreenwritingApiTests(unittest.TestCase):
         self.assertEqual([entry["episode"] for entry in body["ledger"]], [1, 2])
         self.assertEqual(body["ledger"][0]["storyBeats"], ["节点1A", "节点1B"])
         self.assertIn("林夏", body["inventory"]["characters"])
-        self.assertEqual(body["durations"]["supported"][0], 4)
+        self.assertEqual(body["durations"]["supported"][0], 5)
         self.assertEqual(body["durations"]["supported"][-1], 15)
         self.assertEqual([item["episode"] for item in body["episodes"]], [1, 2])
         self.assertEqual(body["episodes"][0]["sceneCount"], 2)

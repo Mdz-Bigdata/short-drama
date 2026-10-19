@@ -25,3 +25,10 @@ backend/skills/production-knowledge-master/learned/*.jsonl
 
 # Claude Code local settings (may contain API keys)
 .claude/settings.local.json
+
+# Tool caches (regenerated on demand)
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+frontend/dist/
+node_modules/.vite/

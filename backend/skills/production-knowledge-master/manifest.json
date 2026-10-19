@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "sections": [
+    {
+      "key": "consistency-checklist",
+      "title": "AI 生成短剧一致性检查清单",
+      "file": "references/consistency-checklist.md",
+      "budget": 3500,
+      "stages": []
+    },
+    {
+      "key": "negative-prompts",
+      "title": "AI影视剧负面提示词",
+      "file": "references/negative-prompts.md",
+      "budget": 5000,
+      "stages": []
+    },
+    {
+      "key": "production-guidelines",
+      "title": "AI短剧注意事项与关键元素",
+      "file": "references/production-guidelines.md",
+      "budget": 5000,
+      "stages": [
+        1,
+        2,
+        8
+      ]
+    },
+    {
+      "key": "highlight-detection",
+      "title": "影视剧高光时刻识别方案",
+      "file": "references/highlight-detection.md",
+      "budget": 6000,
+      "stages": [
+        8
+      ]
+    },
+    {
+      "key": "visual-style",
+      "title": "画质风格类型总结",
+      "file": "references/visual-style.md",
+      "budget": 0,
+      "stages": [
+        5
+      ]
+    }
+  ]
+}

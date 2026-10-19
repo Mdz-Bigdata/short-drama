@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """知识源运行时生效性回归测试。
 
-委员会把 18 个 md 注册成 KNOWLEDGE_SOURCE_FILES 只保证"登记在册"；
+委员会按技能 manifest 登记的章节做指纹，只保证"登记在册"；
 这里保证每份知识源的内容真的作用在流水线上——要么内容经
 production-knowledge-master 装载器(load_section)读进某个阶段的提示词，
 要么(负面提示词.md)经模块词表编译进生成提示词。
@@ -20,8 +20,8 @@ def _drama_source() -> str:
 
 
 class EveryKnowledgeSourceReachesRuntimeTests(unittest.TestCase):
-    # 经装载器以章节键(全文或按登记预算截断)进入阶段提示词的 15 份文档。
-    # 键与文件的对应关系由 production_knowledge.SECTION_FILES 唯一登记。
+    # 经装载器以章节键(全文或按登记预算截断)进入阶段提示词的 16 份文档。
+    # 键与文件的对应关系只登记在各技能的 manifest.json 里。
     READ_AT_RUNTIME = (
         "consistency-checklist",   # AI 生成短剧一致性检查清单.md · 全部 8 阶段的 run_real_consistency_check
         "dialogue-pacing",         # AI影视剧台词语速情绪提示词总结.md · 阶段2 编剧台词标注规范
@@ -38,6 +38,8 @@ class EveryKnowledgeSourceReachesRuntimeTests(unittest.TestCase):
         "emotion-expression",      # 短剧情绪与面部表情提示词库.md · 阶段4
         "plot-shot-coherence",     # 短剧情节与镜头连贯性提示词.md · 阶段4
         "genre-summary",           # 短剧题材类型总结.md · 阶段1
+        "cinema-craft-redlines",   # 星云AI编剧大师(山音二创)红线与S级三冲击 · 阶段2
+        "episode-hook-ladder",     # 前三集钩子阶梯与付费墙卡点 · 阶段1/2
     )
 
     def test_each_guide_is_read_into_a_stage_prompt(self):
@@ -49,32 +51,25 @@ class EveryKnowledgeSourceReachesRuntimeTests(unittest.TestCase):
             )
 
     def test_section_keys_map_to_real_registered_documents(self):
-        # 每个运行时章节键都必须在装载器登记且指向根部真实文件名——键名打错立刻变红。
-        from app.core.production_knowledge import SECTION_FILES
+        # 每个运行时章节键都必须在某个技能的 manifest 里登记且指向真实文件——键名打错立刻变红。
+        from app.core import knowledge_registry
 
         for section_key in self.READ_AT_RUNTIME:
-            self.assertIn(
-                section_key, SECTION_FILES,
-                f"章节键《{section_key}》未在 production_knowledge.SECTION_FILES 登记",
-            )
+            item = knowledge_registry.section(section_key)
+            self.assertIsNotNone(item, f"章节键《{section_key}》没有在任何技能的 manifest.json 登记")
+            self.assertTrue(item.path.is_file(), f"章节《{section_key}》登记的文件不存在：{item.path}")
 
     def test_the_registry_and_runtime_cover_the_same_documents(self):
-        # 登记在册的产出类知识源(排除 SKILL/THIRD_PARTY 两份工程文档)必须全部有运行时消费：
-        # 装载器 SECTION_FILES 的值域 ∪ 负面提示词(走模块词表) == 委员会登记的产出类文档全集。
-        from app.core.agent_council import KNOWLEDGE_SOURCE_FILES
-        from app.core.production_knowledge import SECTION_FILES
+        # 委员会做指纹的产出类章节（除工业化总纲这份技能正文）必须全部有运行时消费：
+        # load_section 消费的章节 ∪ 负面提示词(走模块词表) == 委员会登记的章节全集。
+        from app.core.agent_council import knowledge_source_keys
 
-        production_docs = set(KNOWLEDGE_SOURCE_FILES) - {"SKILL.md", "THIRD_PARTY_NOTICES.md"}
-        consumed = set(SECTION_FILES.values()) | {"AI影视剧负面提示词.md"}
+        production = set(knowledge_source_keys()) - {"industrial-production"}
+        # 负面提示词指南走模块词表，其中「终极统一负面提示词」一节由 production_knowledge.global_negatives 原样读取。
+        consumed = set(self.READ_AT_RUNTIME) | {"negative-prompts"}
         self.assertEqual(
-            production_docs, consumed,
-            "知识源清单与运行时消费清单漂移：新增文档必须同时接入流水线并登记到 SECTION_FILES",
-        )
-        # 且值域里除负面提示词外的每份文档都要有 load_section 消费(登记≠消费，两头都要锁死)。
-        runtime_files = {SECTION_FILES[key] for key in self.READ_AT_RUNTIME}
-        self.assertEqual(
-            set(SECTION_FILES.values()) - {"AI影视剧负面提示词.md"}, runtime_files,
-            "SECTION_FILES 里存在登记了但没有任何阶段 load_section 消费的文档",
+            production, consumed,
+            "知识章节清单与运行时消费清单漂移：新增章节必须同时接入流水线",
         )
 
 
@@ -101,7 +96,7 @@ class EvolvedLessonsReachEveryStageTests(unittest.TestCase):
 
 
 class NegativePromptModulesReachGenerationTests(unittest.TestCase):
-    """《AI影视剧负面提示词.md》走模块词表：委员会配药单 → 编译 → 真实生成提示词。"""
+    """负面提示词（negative-prompts）走模块词表：委员会配药单 → 编译 → 真实生成提示词。"""
 
     def test_every_module_has_words_and_a_label(self):
         from app.core.agent_council import NEGATIVE_MODULE_LABELS, NEGATIVE_MODULE_WORDS

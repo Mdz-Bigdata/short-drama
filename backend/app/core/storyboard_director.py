@@ -65,10 +65,6 @@ def _clip(value: str, limit: int = 4_000) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
-def _event_key(event: StoryEvent) -> tuple[str, str, str, str]:
-    return event.kind, event.speaker.strip(), event.exact_text.strip(), event.text.strip()
-
-
 class StoryboardDirectorCompiler:
     """Compile one shot into natural beats, still prompts and video segments."""
 

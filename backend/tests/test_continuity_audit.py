@@ -116,9 +116,11 @@ class StageGateTests(unittest.TestCase):
 class _CapturingGateway:
     def __init__(self):
         self.calls = []
+        self.kwargs = []
 
     def call_llm(self, model, system_prompt, user_prompt, *args, **kwargs):
         self.calls.append((system_prompt, user_prompt))
+        self.kwargs.append(kwargs)
         return "| 检查维面 | 质检内容 | 状态得分 | 状态说明 |\n|---|---|---|---|\n| 连续性 | 时间轴 | 5 | 通过 |"
 
 
@@ -151,6 +153,24 @@ class QualityHookTests(unittest.TestCase):
             service.run_real_consistency_check(2, "剧本", {"2": "剧本正文"}, {"llm_model": "x"}, "测试剧")
 
         self.assertNotIn("机器连续性自检", gateway.calls[-1][1])
+
+
+class QualityHookBudgetTests(unittest.TestCase):
+    def test_the_self_check_is_a_capped_compact_report(self):
+        gateway = _CapturingGateway()
+        service = DramaService.__new__(DramaService)
+        service.gateway = gateway
+
+        with mock.patch.object(knowledge_evolution, "harvest_from_qc"), \
+             mock.patch.object(knowledge_evolution, "promote_and_prune"):
+            service.run_real_consistency_check(1, "总导演策划", {"1": "方案"}, {"llm_model": "x"}, "测试剧")
+            with mock.patch.dict("os.environ", {"QC_MAX_TOKENS": "1200"}):
+                service.run_real_consistency_check(1, "总导演策划", {"1": "方案"}, {"llm_model": "x"}, "测试剧")
+
+        self.assertEqual([item["max_tokens"] for item in gateway.kwargs], [2500, 1200])
+        system_prompt = gateway.calls[0][0]
+        self.assertIn(f"不超过 {DramaService.QC_REPORT_MAX_ROWS} 行", system_prompt)
+        self.assertIn("不要复述清单原文", system_prompt)
 
 
 if __name__ == "__main__":

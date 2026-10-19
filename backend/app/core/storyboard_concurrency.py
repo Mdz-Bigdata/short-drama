@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import os
+import contextvars
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import Callable, Sequence, TypeVar
+
+from app import settings
 
 _T = TypeVar("_T")
 _R = TypeVar("_R")
@@ -18,10 +20,7 @@ _ANALYSIS_POOL = ThreadPoolExecutor(max_workers=3, thread_name_prefix="script-an
 
 
 def _bounded_width(variable: str, ceiling: int) -> int:
-    try:
-        return max(1, min(ceiling, int(os.getenv(variable, str(ceiling)))))
-    except ValueError:
-        return ceiling
+    return settings.env_int(variable, ceiling, minimum=1, maximum=ceiling)
 
 
 def map_storyboard_images(work: Callable[[_T], _R], items: Sequence[_T]) -> list[_R]:
@@ -62,6 +61,12 @@ def map_script_analysis(work: Callable[[_T], _R], items: Sequence[_T]) -> list[_
     )
 
 
+def _in_context(work: Callable[[_T], _R]) -> Callable[[_T], _R]:
+    """A worker inherits the caller's context (usage ledger binding, job attribution); one copy per call."""
+    context = contextvars.copy_context()
+    return lambda item: context.run(work, item)
+
+
 def _map_bounded(
     work: Callable[[_T], _R],
     items: Sequence[_T],
@@ -74,7 +79,7 @@ def _map_bounded(
     try:
         for _ in range(min(width, len(items))):
             index, item = next(source)
-            pending[pool.submit(work, item)] = index
+            pending[pool.submit(_in_context(work), item)] = index
         while pending:
             completed, _ = wait(pending, return_when=FIRST_COMPLETED)
             # Consume every ready result before refilling. A later panel's fatal
@@ -88,7 +93,7 @@ def _map_bounded(
                     index, item = next(source)
                 except StopIteration:
                     break
-                pending[pool.submit(work, item)] = index
+                pending[pool.submit(_in_context(work), item)] = index
     except BaseException:
         # Do not leave queued paid work behind after a deterministic failure.
         # Already-running calls cannot be cancelled; drain them before returning.

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from app.core.actor_sheet_layout import ACTOR_SHEET_CELL_ORDER
+from app.core.actor_sheet_layout import ACTOR_SHEET_CELL_ORDER, REQUIRED_CELLS, actor_sheet_cell_key
 from app.core.image_quality import validate_actor_sheet_images, validate_five_view_images
 
 
@@ -73,12 +73,35 @@ def _actor_sheet_cells(root: Path) -> list[Path]:
 
 
 class ActorSheetQualityTests(unittest.TestCase):
-    def test_actor_sheet_quality_accepts_twenty_five_distinct_cells(self):
+    def test_actor_sheet_quality_accepts_every_drawn_cell(self):
         with tempfile.TemporaryDirectory() as tmp:
             report = validate_actor_sheet_images(_actor_sheet_cells(Path(tmp)))
             self.assertTrue(report.passed, report.model_dump())
-            self.assertEqual(len(report.entropy), 25)
+            self.assertEqual(len(report.entropy), len(ACTOR_SHEET_CELL_ORDER))
             self.assertEqual(report.unique_view_hashes, 5)
+
+    def test_actor_sheet_quality_accepts_a_sheet_with_fewer_drawn_details(self):
+        """模型只画了部分元素/细节格：七个必需格齐了就放行，按文件名认格子。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = [
+                path for path in _actor_sheet_cells(Path(tmp))
+                if actor_sheet_cell_key(path) in REQUIRED_CELLS
+                or actor_sheet_cell_key(path) in ("element_shoe", "detail_eye")
+            ]
+            report = validate_actor_sheet_images(paths)
+            self.assertTrue(report.passed, report.model_dump())
+            self.assertEqual(len(report.entropy), len(REQUIRED_CELLS) + 2)
+
+    def test_actor_sheet_quality_rejects_a_sheet_missing_a_face_anchor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = [
+                path for path in _actor_sheet_cells(Path(tmp))
+                if actor_sheet_cell_key(path) != "face_three_quarter"
+            ]
+            report = validate_actor_sheet_images(paths)
+            self.assertFalse(report.passed)
+            self.assertEqual({issue.code for issue in report.issues}, {"cell_count"})
+            self.assertIn("face_three_quarter", report.issues[0].message)
 
     def test_actor_sheet_quality_rejects_a_wrong_cell_count(self):
         with tempfile.TemporaryDirectory() as tmp:

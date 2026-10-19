@@ -277,13 +277,14 @@ class VideoPromptTests(unittest.TestCase):
         text = compiled.text
         self.assertTrue(text.startswith("[STYLE LOCK]"))
         for earlier, later in (
-            ("[STYLE LOCK]", "【结构声明】"), ("【结构声明】", "[空间锚]"), ("[空间锚]", "机位：近景"),
-            ("机位：近景", "台词（逐字保持原文"), ("台词（逐字保持原文", "【关键约束】"),
+            ("[STYLE LOCK]", "【结构声明】"), ("【结构声明】", "[空间锚]"), ("[空间锚]", "景别：近景"),
+            ("景别：近景", "台词（逐字保持原文"), ("台词（逐字保持原文", "【关键约束】"),
         ):
             self.assertLess(text.index(earlier), text.index(later), f"{earlier} 应在 {later} 之前")
         for tag in ("[空间锚]", "[状态锁]", "[道具锁]", "[光影锁]", "[声音锁]"):
             self.assertIn(tag, text)
-        self.assertIn("整段6秒单镜连续画面", text)
+        self.assertIn("单镜连续画面，一镜到底不切镜", text)
+        self.assertNotRegex(text, r"(?<!\d)\d{1,2}\s*[-–~至]\s*\d{1,2}\s*(?:s|秒)", "no absolute second ranges")
         self.assertIn("不要BGM", text)
         self.assertIn("多人身份铁律", text)        # two characters in frame
         self.assertIn("口型同步铁律", text)        # the shot has a line

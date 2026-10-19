@@ -99,6 +99,21 @@ jointed figure is grounded from its own contacts, so presets carry no `body.offs
 | `set_timeline` / `clear_timeline` | `shot_id`, `duration_s`, `fps`, `camera`, `actors` |
 | `apply_camera_move` | `shot_id`, `preset`, `amplitude`, `angle`, `side`, `easing` — writes editable keys |
 
+| `set_path` | `shot_id`, `target` (`"camera"` or an actor name), `points` (`[[x,z]…]` or `[[x,y,z]…]`, 2–400), `start_s`, `end_s`, `easing`, `smooth`; actor: `face` (`path` / `hold` / `point`) + `face_target`, `pose`; camera: `height_m`, `look_at` (name / `[x,y,z]` / `ahead`) — replaces that one track with keys at even arc length |
+| `array_landmark` | `name`, `layout` (`line` / `grid` / `ring`), `count` (2–40), `spacing`, `columns`, `radius`, `direction_deg` — copies named `name 2`, `name 3`…; the original stays put |
+| `align_landmarks` | `names` (2–80), `axis` (`x` / `z`), `mode` (`min` / `center` / `max` / `distribute`) |
+| `repair_checks` | optional `codes`, `shot_ids` — applies what `repair.propose` proposes for the failing checks; refuses when nothing is automatic |
+
+`GET /{task_id}/spatial/scenes/{scene_id}/repairs` previews the same proposals without writing: one entry per failing
+check (`code`, `label`, `detail`, `shotIds`, `operations`, `manual`, `automatic`) plus the de-duplicated `operations`
+and the `revision` they were computed against. The desk submits those operations through the ordinary PATCH so undo
+works; `repair_checks` exists for agents and MCP. The tool catalog (`agent_tools.py`) exposes `get_stage_checks`,
+`edit_stage` and `repair_stage`.
+
+Captures carry a `depth: bool`. A depth still is listed and downloadable but `apply` refuses it (an image model would
+copy the grey as a first frame); a depth clip applies like any clip and `motion_inputs` appends `DEPTH_REQUIREMENT`
+to the motion prompt while it is the followed clip, alongside the limbs rule and the withheld lens clause.
+
 `move_camera` keeps the camera's `move` unless the caller passes `reset_move`.
 A patch may carry `solve: false` so a drag does not re-solve the lens the user is looking through.
 
@@ -126,6 +141,29 @@ lib/poses.ts                presets, mirror, clamps, mannequin joint table
 lib/ik.ts                   two-bone CCD with foot lock
 lib/capture.ts              still; the delivery-render setup (helpers hidden, clay colour, buffer size) shared with the clip
 ```
+
+### Added in P7
+
+- `panels/ChecksPanel.tsx` — every check with its state and shot chips; failing ones fetch `GET …/repairs` (debounced
+  on `plan.revision`, aborted when stale, never when all pass) and offer 修正 per item or the `manual` text; 一键修正
+  submits the de-duplicated operations as one barrier edit, so it is one undo. A response computed against another
+  revision is not offered.
+- `lib/pathTool.ts` + `three/DeskViewport.tsx` — the 路径 tool (`P`; the pose tool moved to `J`): a stroke on the
+  y = 0 plane, points ≥ 5 cm apart, capped at 400, drawn live, Esc cancels; release sends one `set_path` with
+  `barrier: true`. Allowed for an actor who is not a crowd member and for the shot's filming camera (a candidate's
+  route would land on the filming track, so it is refused with the reason). Actor tracks of the shot are drawn in
+  the director view like the camera's travel (`lib/sampling.actorPathsOf`).
+- `lib/depthPass.ts` — `depthRange(plan, camera, shot)` from the subjects' and set pieces' distances (padded, min
+  span 2 m, fallback 1–20 m) and `createDepthMaterial`: a `ShaderMaterial` used as `scene.overrideMaterial`, skinning
+  through three's standard chunks, view-space distance in a varying mapped white→black over the range, lights off;
+  backdrop meshes carry a flag and are hidden in depth. 「深度画面」 applies to stills and clips, 「深度预览」 shows it
+  live in the lens view; the upload carries `depth`, the list shows 深度, and 应用 is disabled on a depth still with
+  the server's reason.
+- `three/CompareRenderer.tsx` + `lib/compareQueue.ts` + `panels/CameraComparePanel.tsx` — one hidden 360 px canvas
+  at the delivery aspect renders the filming lens and each candidate in turn (`frameloop="never"`, helpers hidden,
+  `toDataURL`), scheduled by a pure queue (sequential, newest run supersedes, cancel). The strip (`4`) shows 主机位 /
+  候选 with 选中 / 使用此机位 / 删除 and the angle presets to add candidates. `three/LensStage.tsx` is the lens view's
+  stage content, extracted so the thumbnails draw exactly what the lens view draws.
 
 ## Timeline, playback and clips
 

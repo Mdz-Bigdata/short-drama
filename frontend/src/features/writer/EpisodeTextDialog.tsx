@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ScrollText, X } from 'lucide-react';
 
 import { splitScriptEpisodes } from './scriptOutlineUtils';
+import { t } from '../../i18n';
 
 export function EpisodeTextDialog({
   title,
@@ -44,11 +45,11 @@ export function EpisodeTextDialog({
             <small>EPISODE SCRIPTS</small>
             <h2><ScrollText aria-hidden="true" /> 分集剧本 · {title}</h2>
           </div>
-          <button type="button" aria-label="关闭分集剧本" onClick={onClose}><X aria-hidden="true" /></button>
+          <button type="button" aria-label={t('关闭分集剧本')} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
         {episodes.length ? (
           <div className="writer-episode-dialog__body">
-            <nav className="writer-episode-dialog__nav" aria-label="选择剧集">
+            <nav className="writer-episode-dialog__nav" aria-label={t('选择剧集')}>
               {episodes.map(episode => (
                 <button
                   key={episode.number}
@@ -71,7 +72,7 @@ export function EpisodeTextDialog({
             </pre>
           </div>
         ) : (
-          <p className="writer-episode-dialog__empty">尚未载入剧本，生成或导入剧本后即可按集查看。</p>
+          <p className="writer-episode-dialog__empty">{t('尚未载入剧本，生成或导入剧本后即可按集查看。')}</p>
         )}
       </section>
     </div>

@@ -10,6 +10,8 @@ from collections import defaultdict
 from collections.abc import Iterable
 from typing import Any
 
+from app.core import creation_modes
+from app.core.episode_shape import EpisodeShape
 from app.schema.writer_dashboard import (
     WriterDashboardEpisode,
     WriterDashboardEvent,
@@ -18,6 +20,7 @@ from app.schema.writer_dashboard import (
     WriterDashboardRole,
     WriterDashboardScene,
     WriterDashboardStats,
+    WriterEpisodeIssue,
     WriterOverview,
 )
 
@@ -356,7 +359,7 @@ def fallback_scenes_from_script(script: str) -> list[dict[str, Any]]:
             flush()
             current_heading = _text(scene_match.group(2) if scene_match else line, 500)
             continue
-        if line:
+        if line and not line.startswith("|"):
             current_lines.append(line)
     flush()
     if scenes:
@@ -400,7 +403,104 @@ def reconcile_breakdown_scenes(raw_scenes: Any, script: str) -> list[dict[str, A
     return sorted(scenes, key=scene_order)
 
 
-def _normalize_scenes(raw_scenes: Any, script: str) -> list[dict[str, Any]]:
+def _episode_issues(scene_count: int, total_seconds: int, shape: EpisodeShape) -> list[WriterEpisodeIssue]:
+    """What keeps a planned episode from being well formed; nothing for one not yet planned.
+
+    Shots taken straight from the script text carry no durations, so a total of zero
+    means "not estimated yet" and is not reported as a short episode.
+    """
+    if scene_count == 0:
+        return []
+    return [
+        WriterEpisodeIssue(code=issue.code, message=issue.message, severity=issue.severity)
+        for issue in shape.issues(scene_count, total_seconds)
+        if total_seconds > 0 or issue.code == "episode_too_few_scenes"
+    ]
+
+
+# A speaker's line in a parsed shot: 沈昭：[沈昭][释然-克制][慢速] 戏唱完了。 — up to the next speaker or 【…】.
+_SPOKEN = re.compile(r"(?:^|[\s。！？!?；;])([\u4e00-\u9fff·]{1,8})[：:]\s*(.+?)(?=(?:[\s。！？!?；;][\u4e00-\u9fff·]{1,8}[：:])|【|$)", re.S)
+_CUES = re.compile(r"\[[^\]]*\]|（[^）]*）|\([^)]*\)")
+_NOT_SPEAKERS = frozenset({"镜头", "画面", "时长", "景别", "运镜", "场景", "内景", "外景", "动作", "音效", "备注"})
+# Action-only shots: the plan's own rhythm (2.5-3.2 s a shot) rounded up to what the model renders.
+_ACTION_SHOT_SECONDS = 3.0
+# Breath after the last word, so a line is not cut on its final syllable.
+_SPEECH_PAD_SECONDS = 1.0
+
+
+def spoken_text(content: str) -> str:
+    """The words spoken in a shot's text, without speaker names or [情绪][语速] cues."""
+    text = content or ""
+    lines: list[str] = []
+    rest: list[str] = []
+    cursor = 0
+    for match in _SPOKEN.finditer(text):
+        speaker, words = match.group(1), match.group(2)
+        if speaker in _NOT_SPEAKERS:
+            continue
+        lines.append(_CUES.sub("", words).strip().strip("“”\"").strip())
+        rest.append(text[cursor:match.start(1)])
+        cursor = match.end()
+    rest.append(text[cursor:])
+    # A quotation outside any speaker's line is spoken too ("她低声说“走吧”" without a colon).
+    lines.extend(re.findall(r"“([^”]{1,400})”", _CUES.sub("", "".join(rest))))
+    return " ".join(line for line in lines if line)
+
+
+def estimated_shot_seconds(content: str, video_model: str, language: str | None = None) -> int:
+    """How long a shot taken straight from the script should run, as a length the video model renders.
+
+    The spoken words at the language's speech rate plus a breath, or a short action beat when
+    nobody speaks, rounded up to the smallest clip length the model supports — the same rule the
+    structured writer's plan is checked against; a shot longer than the model's longest clip gets
+    the longest one.
+    """
+    # Imported here: the screenwriting package imports this module, so a top-level import would be circular.
+    from app.core.screenwriting.durations import supported_shot_durations
+    from app.core.screenwriting.speech_rate import estimate_spoken_seconds
+    from app.core.screenwriting.violations import smallest_tier_at_least
+
+    supported = supported_shot_durations(video_model)
+    spoken = estimate_spoken_seconds(spoken_text(content), language)
+    needed = spoken + _SPEECH_PAD_SECONDS if spoken else _ACTION_SHOT_SECONDS
+    return smallest_tier_at_least(needed, supported) or max(supported)
+
+
+def _normalize_lines(value: Any) -> list[dict[str, Any]]:
+    lines: list[dict[str, Any]] = []
+    for item in (value if isinstance(value, list) else [])[:30]:
+        if not isinstance(item, dict):
+            continue
+        text = _text(item.get("text"), 500)
+        if not text:
+            continue
+        lines.append({
+            "kind": "dialogue" if item.get("kind") == "dialogue" else "voiceover",
+            "speaker": _text(item.get("speaker"), 80),
+            "text": text,
+            "verbatim": bool(item.get("verbatim")),
+            "delivery": _text(item.get("delivery"), 120),
+        })
+    return lines
+
+
+def storyboard_images(assets: dict[str, Any]) -> dict[str, str]:
+    """``scene_id`` → storyboard frame, from the finished shots of stage 4 (empty before it ran)."""
+    images: dict[str, str] = {}
+    for shot in assets.get("4") if isinstance(assets.get("4"), list) else []:
+        if not isinstance(shot, dict):
+            continue
+        scene_id = _text(shot.get("scene_id"), 80)
+        url = _text(shot.get("image_url") or shot.get("storyboard_image"), 4000)
+        if scene_id and url and scene_id not in images:
+            images[scene_id] = url
+    return images
+
+
+def _normalize_scenes(
+    raw_scenes: Any, script: str, *, video_model: str = "", language: str | None = None,
+    images: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     source = reconcile_breakdown_scenes(raw_scenes, script)
     result: list[dict[str, Any]] = []
     elapsed = 0
@@ -410,6 +510,11 @@ def _normalize_scenes(raw_scenes: Any, script: str) -> list[dict[str, Any]]:
         scene_id = _text(item.get("scene_id"), 80) or f"E1S{index:02d}"
         duration_label = _text(item.get("duration"), 80)
         duration = parse_duration_seconds(duration_label)
+        estimated = not duration
+        if estimated:
+            # Shots parsed from free script text have no planned length: estimate one the video model can render.
+            duration = estimated_shot_seconds(_text(item.get("content"), 6000), video_model, language)
+            duration_label = f"{duration}秒（按视频模型估算）"
         result.append({
             "scene_id": scene_id,
             "episode_index": episode_from_scene_id(scene_id),
@@ -417,7 +522,12 @@ def _normalize_scenes(raw_scenes: Any, script: str) -> list[dict[str, Any]]:
             "start_seconds": min(elapsed, _MAX_DASHBOARD_SECONDS),
             "duration_seconds": duration,
             "duration_label": duration_label,
+            "duration_estimated": estimated,
             "content": _text(item.get("content"), 6000),
+            "label": _text(item.get("label"), 40),
+            "description": _text(item.get("description"), 6000),
+            "dialogue": _normalize_lines(item.get("dialogue")),
+            "image_url": (images or {}).get(scene_id) or None,
             "characters": [
                 name for name in _text_list(item.get("characters"), limit=100, item_limit=80)
                 if is_character_name(name)
@@ -537,8 +647,16 @@ def _infer_relationships_from_scenes(scenes: list[dict[str, Any]]) -> list[Write
     ]
 
 
-def _normalize_roles(value: Any, scenes: list[dict[str, Any]], relationships: list[WriterDashboardRelationship], script: str) -> list[WriterDashboardRole]:
+def _normalize_roles(
+    value: Any, scenes: list[dict[str, Any]], relationships: list[WriterDashboardRelationship], script: str,
+    hidden: Any = None,
+) -> list[WriterDashboardRole]:
+    """The cast: declared roles first, then every name the scenes, script or relations mention.
+
+    ``hidden`` names were removed by a person; they stay out even though the scenes still mention them.
+    """
     roles: dict[str, str] = {}
+    hidden_names = {_text(name, 80) for name in (hidden if isinstance(hidden, list) else []) if _text(name, 80)}
     if isinstance(value, list):
         for item in value[:500]:
             if isinstance(item, dict):
@@ -552,7 +670,39 @@ def _normalize_roles(value: Any, scenes: list[dict[str, Any]], relationships: li
     for name in discovered:
         if is_character_name(name):
             roles.setdefault(name, "剧情角色")
-    return [WriterDashboardRole(name=name, position=position) for name, position in list(roles.items())[:500]]
+    return [WriterDashboardRole(name=name, position=position) for name, position in list(roles.items())[:500] if name not in hidden_names]
+
+
+def character_portraits(task: dict[str, Any]) -> dict[str, str]:
+    """name → portrait, read off the stage-3 character dashboard (empty before it ran or if it cannot compile)."""
+    try:
+        from app.core.character_dashboard import compile_character_dashboard
+
+        dashboard = compile_character_dashboard(task)
+    except Exception:  # noqa: BLE001 - a broken stage-3 record must not take the writer board down
+        return {}
+    portraits: dict[str, str] = {}
+    for character in dashboard.characters:
+        main = next((cell.image_url for cell in character.sheet_cells if cell.group == "main_portrait" and cell.image_url), None)
+        view = next((item.image_url for item in character.views if item.available and item.image_url), None)
+        url = main or view
+        if character.name and url:
+            portraits[character.name] = url
+    return portraits
+
+
+def version_summaries(assets: dict[str, Any]) -> list[dict[str, Any]]:
+    """The saved screenplay versions, newest first, without their payloads."""
+    rows = []
+    for item in (assets.get("2_versions") if isinstance(assets.get("2_versions"), list) else [])[-50:]:
+        if not isinstance(item, dict) or not item.get("version_id"):
+            continue
+        rows.append({
+            "version_id": _text(item.get("version_id"), 40), "label": _text(item.get("label"), 120),
+            "created_at": _text(item.get("created_at"), 64), "source_hash": _text(item.get("source_hash"), 64),
+            "episode_count": _bounded_int(item.get("episode_count"), minimum=0), "scene_count": _bounded_int(item.get("scene_count"), minimum=0),
+        })
+    return list(reversed(rows))
 
 
 def compile_writer_dashboard(task: dict[str, Any]) -> WriterDashboardResponse:
@@ -562,12 +712,16 @@ def compile_writer_dashboard(task: dict[str, Any]) -> WriterDashboardResponse:
     overview_raw = breakdown.get("overview") if isinstance(breakdown.get("overview"), dict) else {}
     script = _script_text(assets.get("2") or config.get("script_content") or "")
     script_indexes = script_episode_indexes(script)
-    scenes_payload = _normalize_scenes(breakdown.get("scenes"), script)
+    scenes_payload = _normalize_scenes(
+        breakdown.get("scenes"), script,
+        video_model=str(config.get("video_model") or ""), language=str(config.get("content_language") or "zh"),
+        images=storyboard_images(assets),
+    )
     relationships = _normalize_relationships(breakdown.get("relationships"))
     relationships_inferred = not relationships
     if relationships_inferred:
         relationships = _infer_relationships_from_scenes(scenes_payload)
-    roles = _normalize_roles(breakdown.get("roles"), scenes_payload, relationships, script)
+    roles = _normalize_roles(breakdown.get("roles"), scenes_payload, relationships, script, hidden=breakdown.get("hidden_roles"))
     timeline = _normalize_events(breakdown.get("timeline"), scenes_payload)
     scenes = [WriterDashboardScene(**item) for item in scenes_payload]
 
@@ -587,6 +741,7 @@ def compile_writer_dashboard(task: dict[str, Any]) -> WriterDashboardResponse:
         1 if script else 0,
     ])
     title_map = _episode_titles(script)
+    episode_shape = creation_modes.episode_shape_for(task.get("config") if isinstance(task.get("config"), dict) else {})
     scenes_by_episode: defaultdict[int, list[WriterDashboardScene]] = defaultdict(list)
     for scene in scenes:
         scenes_by_episode[scene.episode_index].append(scene)
@@ -596,11 +751,18 @@ def compile_writer_dashboard(task: dict[str, Any]) -> WriterDashboardResponse:
         episode_scenes = scenes_by_episode[index]
         fallback_title = _text(episode_scenes[0].content, 120) if episode_scenes else f"第 {index} 集"
         status = str(stored.get("status") or "idle")
+        episode_seconds = min(_MAX_DASHBOARD_SECONDS, sum(scene.duration_seconds for scene in episode_scenes))
         episodes.append(WriterDashboardEpisode(
             index=index,
             title=_text(stored.get("title") or title_map.get(index) or fallback_title, 500) or f"第 {index} 集",
             scene_count=len(episode_scenes),
-            duration_seconds=min(_MAX_DASHBOARD_SECONDS, sum(scene.duration_seconds for scene in episode_scenes)),
+            duration_seconds=episode_seconds,
+            # An episode is judged on planned lengths only: an estimate is a guess, not a finding.
+            issues=_episode_issues(
+                len(episode_scenes),
+                min(_MAX_DASHBOARD_SECONDS, sum(scene.duration_seconds for scene in episode_scenes if not scene.duration_estimated)),
+                episode_shape,
+            ),
             status=status if status in _ALLOWED_EPISODE_STATUS else "idle",
             video_url=_text(stored.get("video_url"), 4000) or None,
         ))
@@ -652,6 +814,10 @@ def compile_writer_dashboard(task: dict[str, Any]) -> WriterDashboardResponse:
         roles=roles,
         relationships=relationships,
         relationships_inferred=relationships_inferred,
+        timeline_authored=bool(breakdown.get("timeline_authored")),
+        creation_mode=creation_modes.mode_of(config),
+        versions=version_summaries(assets),
+        portraits=character_portraits(task),
         episodes=episodes,
         script=script,
         script_file_name=_text(config.get("script_name"), 255) or None,

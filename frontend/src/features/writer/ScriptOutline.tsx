@@ -4,6 +4,7 @@ import { TableProperties } from 'lucide-react';
 import { extractSceneDialogues, type SceneDialogueLine } from './scriptOutlineUtils';
 import { groupEpisodeGaps } from './episodeGaps';
 import { sceneEpisode, type WriterScene } from './types';
+import { t } from '../../i18n';
 
 interface OutlineRow {
   key: string;
@@ -87,31 +88,31 @@ export function ScriptOutline({ scenes, missingEpisodes = [] }: { scenes: Writer
     <tr className="writer-outline__gap" key={`gap-${gap.first}`}>
       <td colSpan={5}>
         <strong>第 {gap.label} 集正文缺失</strong>
-        <span>待补写；现有镜头编号与内容保持不变。</span>
+        <span>{t('待补写；现有镜头编号与内容保持不变。')}</span>
       </td>
     </tr>
   ));
 
   if (!rows.length && !gaps.length) {
-    return <div className="writer-empty">生成剧本后，剧本大纲会按场景在这里展开。</div>;
+    return <div className="writer-empty">{t('生成剧本后，剧本大纲会按场景在这里展开。')}</div>;
   }
 
   return (
     <div className="writer-outline">
       <header className="writer-outline__header">
         <TableProperties aria-hidden="true" />
-        <h3>剧本明细</h3>
+        <h3>{t('剧本明细')}</h3>
         <span>{rows.length} 条</span>
       </header>
-      <div className="writer-outline__scroll" role="region" aria-label="剧本明细表，可横向滚动" tabIndex={0}>
+      <div className="writer-outline__scroll" role="region" aria-label={t('剧本明细表，可横向滚动')} tabIndex={0}>
         <table className="writer-outline__table">
           <thead>
             <tr>
-              <th scope="col">场景</th>
-              <th scope="col">时长</th>
-              <th scope="col">内容</th>
-              <th scope="col">对话</th>
-              <th scope="col">角色</th>
+              <th scope="col">{t('场景')}</th>
+              <th scope="col">{t('时长')}</th>
+              <th scope="col">{t('内容')}</th>
+              <th scope="col">{t('对话')}</th>
+              <th scope="col">{t('角色')}</th>
             </tr>
           </thead>
           <tbody>

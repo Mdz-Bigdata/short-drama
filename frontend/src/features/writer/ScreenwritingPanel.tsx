@@ -1,17 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, BookOpenText, ChevronDown, ChevronRight, Clapperboard, FileCode2, Save } from 'lucide-react';
+import { AlertTriangle, BookOpenText, CheckCircle2, ChevronDown, ChevronRight, Clapperboard, FileCode2, RotateCcw, Save, Wrench } from 'lucide-react';
 
 import { ApiError, isUnauthorized } from '../../api/client';
+import { EpisodeLedgerTools } from './EpisodeLedgerTools';
 import { draftOfScene, planOperations, type PlanDraft } from './planOperations';
 import {
   fetchScreenwritingEpisode,
   fetchScreenwritingPrompt,
   fetchScreenwritingState,
   patchScreenwritingPlan,
+  ledgerOriginLabel,
+  repairScreenwritingEpisode,
+  reviewScreenwritingEpisode,
+  REVIEW_STATUS_LABEL,
   type ScreenwritingEpisode,
   type ScreenwritingPromptStage,
   type ScreenwritingState,
 } from './screenwritingApi';
+import { t } from '../../i18n';
 
 const SOURCE_KIND_LABEL: Record<string, string> = {
   outline: '按导演大纲创作',
@@ -25,7 +31,11 @@ function violationMessage(error: unknown): string {
   return '分镜规划保存失败，请稍后重试。';
 }
 
-export function ScreenwritingPanel({ taskId }: { taskId: string }) {
+export function ScreenwritingPanel({ taskId, onOpenEpisodeText }: {
+  taskId: string;
+  /** Open one episode's full screenplay (from the ledger's 来源 cell). */
+  onOpenEpisodeText?: (episode: number) => void;
+}) {
   const [state, setState] = useState<ScreenwritingState | null>(null);
   const [error, setError] = useState('');
   const [openEpisode, setOpenEpisode] = useState<number | null>(null);
@@ -56,7 +66,7 @@ export function ScreenwritingPanel({ taskId }: { taskId: string }) {
         setEpisode(data);
         setDrafts(Object.fromEntries(data.plan.scenes.map(scene => [scene.scene_id, draftOfScene(scene)])));
       })
-      .catch(() => setError('该集的分镜规划读取失败。'));
+      .catch(() => setError(t('该集的分镜规划读取失败。')));
   }, [taskId]);
 
   const toggleEpisode = (index: number) => {
@@ -101,8 +111,8 @@ export function ScreenwritingPanel({ taskId }: { taskId: string }) {
           && caught.status === 409
           && /归档|下游|成片|角色、分镜/.test(String(caught.message));
         if (!needsConfirm) throw caught;
-        if (!window.confirm('保存分镜改动会归档当前角色、分镜和成片，并从编剧阶段重新开始。旧成果仍保留在版本归档中。是否继续？')) {
-          setNotice('已取消保存，本地改动仍保留。');
+        if (!window.confirm(t('保存分镜改动会归档当前角色、分镜和成片，并从编剧阶段重新开始。旧成果仍保留在版本归档中。是否继续？'))) {
+          setNotice(t('已取消保存，本地改动仍保留。'));
           return;
         }
         updated = await submit(true);
@@ -120,22 +130,74 @@ export function ScreenwritingPanel({ taskId }: { taskId: string }) {
     }
   };
 
+  const review = async (action: 'confirm' | 'reopen') => {
+    if (!episode) return;
+    setSaving(true);
+    setNotice('');
+    try {
+      const updated = await reviewScreenwritingEpisode(taskId, episode.episode, action);
+      setEpisode(updated);
+      setNotice(action === 'confirm' ? `第 ${episode.episode} 集已确认。` : `第 ${episode.episode} 集已重新打开审核。`);
+      setState(await fetchScreenwritingState(taskId));
+    } catch (caught) {
+      setNotice(violationMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const repair = async () => {
+    if (!episode) return;
+    setSaving(true);
+    setNotice('');
+    const submit = (confirmInvalidate: boolean) => repairScreenwritingEpisode(taskId, episode.episode, confirmInvalidate);
+    try {
+      let updated: ScreenwritingEpisode;
+      try {
+        updated = await submit(false);
+      } catch (caught) {
+        const needsConfirm = caught instanceof ApiError && caught.status === 409 && /归档|下游|成片|角色、分镜/.test(String(caught.message));
+        if (!needsConfirm) throw caught;
+        if (!window.confirm(t('修复会改写这一集，并归档当前角色、分镜和成片，从编剧阶段重新开始。旧成果仍保留在版本归档中。是否继续？'))) {
+          setNotice(t('已取消修复。'));
+          return;
+        }
+        updated = await submit(true);
+      }
+      setEpisode(updated);
+      setDrafts(Object.fromEntries(updated.plan.scenes.map(scene => [scene.scene_id, draftOfScene(scene)])));
+      const outcome = updated.repair;
+      if (!outcome || !outcome.improved) {
+        setNotice(`模型的修复没有减少违约，保留原草稿${outcome?.remaining?.length ? `：${outcome.remaining.join('；')}` : '。'}`);
+      } else if (outcome.repaired) {
+        setNotice(t('第 {0} 集已修复，违约已清除，可以审核确认。', [episode.episode]));
+      } else {
+        setNotice(t('第 {0} 集有所改善，仍有违约：{1}', [episode.episode, outcome.remaining.join('；')]));
+      }
+      setState(await fetchScreenwritingState(taskId));
+    } catch (caught) {
+      setNotice(violationMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const showPrompt = async (stage: ScreenwritingPromptStage) => {
     if (!episode) return;
     try {
       const data = await fetchScreenwritingPrompt(taskId, episode.episode, stage);
       setPrompt(data.prompt);
     } catch {
-      setNotice('提示词预览读取失败。');
+      setNotice(t('提示词预览读取失败。'));
     }
   };
 
   if (error) return <p className="writer-empty" role="status">{error}</p>;
-  if (!state) return <p className="writer-empty">正在读取结构化编剧数据…</p>;
+  if (!state) return <p className="writer-empty">{t('正在读取结构化编剧数据…')}</p>;
   if (!state.available) {
     return (
       <p className="writer-empty">
-        本项目的剧本由自由文本引擎生成，没有结构化分集规划。重新执行第 2 阶段即可获得分集账本与可编辑的分镜规划。
+        {t('本项目的剧本由自由文本引擎生成，没有结构化分集规划。重新执行第 2 阶段即可获得分集账本与可编辑的分镜规划。')}
       </p>
     );
   }
@@ -144,17 +206,35 @@ export function ScreenwritingPanel({ taskId }: { taskId: string }) {
   return (
     <div className="writer-screenwriting">
       <dl className="writer-screenwriting__meta">
-        <div><dt>创作口径</dt><dd>{SOURCE_KIND_LABEL[state.sourceKind || ''] || '未知'}</dd></div>
-        <div><dt>合法单镜时长</dt><dd>{durations.length ? `${durations[0]}–${durations[durations.length - 1]} 秒` : '—'}</dd></div>
-        <div><dt>单集目标时长</dt><dd>{state.durations.episodeTargetSeconds ? `${state.durations.episodeTargetSeconds} 秒` : '未设置'}</dd></div>
-        <div><dt>视频模型</dt><dd>{state.durations.videoModel || '未指定'}</dd></div>
+        <div><dt>{t('创作口径')}</dt><dd>{SOURCE_KIND_LABEL[state.sourceKind || ''] || '未知'}</dd></div>
+        <div><dt>{t('合法单镜时长')}</dt><dd>{durations.length ? `${durations[0]}–${durations[durations.length - 1]} 秒` : '—'}</dd></div>
+        <div><dt>{t('单集目标时长')}</dt><dd>{state.durations.episodeTargetSeconds ? `${state.durations.episodeTargetSeconds} 秒` : '未设置'}</dd></div>
+        <div><dt>{t('视频模型')}</dt><dd>{state.durations.videoModel || '未指定'}</dd></div>
       </dl>
+
+      {state.reviewSummary && state.reviewSummary.total > 0 && (
+        <p className={`writer-screenwriting__review ${state.reviewSummary.allConfirmed ? 'is-complete' : ''}`} role="status">
+          <CheckCircle2 aria-hidden="true" />
+          审核：已确认 {state.reviewSummary.confirmed.length}/{state.reviewSummary.total} 集
+          {state.reviewSummary.message ? `；${state.reviewSummary.message}。审核门不拦截后续阶段，但建议逐集确认。` : '，全部通过。'}
+        </p>
+      )}
 
       {state.stale && (
         <p className="writer-screenwriting__stale" role="status">
           <AlertTriangle aria-hidden="true" /> {state.staleReason || '剧本正文已被手动修改，分镜规划不再与正文一致。'}
         </p>
       )}
+
+      <EpisodeLedgerTools
+        taskId={taskId}
+        onOpenEpisode={onOpenEpisodeText}
+        onChanged={() => {
+          setOpenEpisode(null);
+          setEpisode(null);
+          fetchScreenwritingState(taskId).then(setState).catch(() => undefined);
+        }}
+      />
 
       <ol className="writer-screenwriting__ledger">
         {state.ledger.map(entry => {
@@ -166,30 +246,45 @@ export function ScreenwritingPanel({ taskId }: { taskId: string }) {
                 {open ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
                 <span className="writer-screenwriting__episode">第 {entry.episode} 集</span>
                 <strong>{entry.title || '未命名'}</strong>
+                <span className="writer-screenwriting__origin">{ledgerOriginLabel(entry)}</span>
+                {summary?.review && (
+                  <span className={`writer-screenwriting__review-badge is-${summary.review.status}`}>{REVIEW_STATUS_LABEL[summary.review.status]}</span>
+                )}
                 {summary && <span className="writer-screenwriting__count">{summary.sceneCount} 个分镜 · {summary.durationSeconds} 秒</span>}
                 {summary && summary.needsReplan.length > 0 && (
                   <span className="writer-screenwriting__flag"><AlertTriangle aria-hidden="true" /> {summary.needsReplan.length} 个分镜待重拆</span>
                 )}
               </button>
               <div className="writer-screenwriting__outline">
-                {entry.hook && <p><span>集尾钩子</span>{entry.hook}</p>}
+                {entry.hook && <p><span>{t('集尾钩子')}</span>{entry.hook}</p>}
                 {entry.storyBeats.length > 0 && (
                   <ul>{entry.storyBeats.map((beat, index) => <li key={index}>{beat}</li>)}</ul>
                 )}
-                {entry.nextEpisodeTeaser && <p><span>下集预告</span>{entry.nextEpisodeTeaser}</p>}
+                {entry.nextEpisodeTeaser && <p><span>{t('下集预告')}</span>{entry.nextEpisodeTeaser}</p>}
               </div>
 
               {open && (
                 <div className="writer-screenwriting__plan">
-                  {!episode && <p className="writer-empty">正在读取分镜规划…</p>}
+                  {!episode && <p className="writer-empty">{t('正在读取分镜规划…')}</p>}
                   {episode && episode.episode === entry.episode && (
                     <>
                       <div className="writer-screenwriting__actions">
-                        <button type="button" onClick={() => { void showPrompt('plan'); }}><FileCode2 aria-hidden="true" /> 查看内容层提示词</button>
+                        <button type="button" onClick={() => { void showPrompt('plan'); }}><FileCode2 aria-hidden="true" /> {t('查看内容层提示词')}</button>
                         {state.sourceKind === 'outline' && (
-                          <button type="button" onClick={() => { void showPrompt('prose'); }}><BookOpenText aria-hidden="true" /> 查看正文提示词</button>
+                          <button type="button" onClick={() => { void showPrompt('prose'); }}><BookOpenText aria-hidden="true" /> {t('查看正文提示词')}</button>
                         )}
-                        <button type="button" onClick={() => { void showPrompt('visual'); }}><Clapperboard aria-hidden="true" /> 查看视觉层提示词</button>
+                        <button type="button" onClick={() => { void showPrompt('visual'); }}><Clapperboard aria-hidden="true" /> {t('查看视觉层提示词')}</button>
+                        {episode.review?.status === 'draft' && (
+                          <button type="button" disabled={saving} onClick={() => { void repair(); }}><Wrench aria-hidden="true" /> {t('AI 修复违约')}</button>
+                        )}
+                        {(episode.review?.status === 'pending' || episode.review?.status === 'changed') && (
+                          <button type="button" disabled={saving || operations.length > 0} onClick={() => { void review('confirm'); }}>
+                            <CheckCircle2 aria-hidden="true" /> {episode.review.status === 'changed' ? t('复审确认') : t('确认本集')}
+                          </button>
+                        )}
+                        {(episode.review?.status === 'confirmed' || episode.review?.status === 'changed') && (
+                          <button type="button" disabled={saving} onClick={() => { void review('reopen'); }}><RotateCcw aria-hidden="true" /> {t('重新打开')}</button>
+                        )}
                         <button
                           type="button"
                           className="is-primary"
@@ -199,11 +294,20 @@ export function ScreenwritingPanel({ taskId }: { taskId: string }) {
                           <Save aria-hidden="true" /> {saving ? '保存中…' : `保存改动${operations.length ? `（${operations.length}）` : ''}`}
                         </button>
                       </div>
+                      {episode.review?.draft && (
+                        <div className="writer-screenwriting__draft" role="note">
+                          <AlertTriangle aria-hidden="true" />
+                          <div>
+                            <b>{t('这一集仍是带违约的草稿，修好前不能确认。')}</b>
+                            <ul>{episode.review.draft.reasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul>
+                          </div>
+                        </div>
+                      )}
                       {notice && <p className="writer-screenwriting__notice" role="status">{notice}</p>}
                       {prompt && <pre className="writer-screenwriting__prompt">{prompt}</pre>}
                       <table className="writer-screenwriting__table">
                         <thead>
-                          <tr><th>分镜</th><th>时长</th><th>场景 / 出场</th><th>画面</th><th>口播</th></tr>
+                          <tr><th>{t('分镜')}</th><th>{t('时长')}</th><th>{t('场景 / 出场')}</th><th>{t('画面')}</th><th>{t('口播')}</th></tr>
                         </thead>
                         <tbody>
                           {scenes.map(scene => {
@@ -213,7 +317,7 @@ export function ScreenwritingPanel({ taskId }: { taskId: string }) {
                               <tr key={scene.scene_id} className={scene.needs_replan ? 'is-flagged' : ''}>
                                 <td>
                                   <code>{scene.scene_id}</code>
-                                  {scene.segment_break && <span className="writer-screenwriting__break">场景切换</span>}
+                                  {scene.segment_break && <span className="writer-screenwriting__break">{t('场景切换')}</span>}
                                 </td>
                                 <td>
                                   <input
@@ -244,7 +348,7 @@ export function ScreenwritingPanel({ taskId }: { taskId: string }) {
                                   {(scene.utterances || []).length === 0 && <span>—</span>}
                                   {(scene.utterances || []).map((utterance, index) => (
                                     <p key={index}>
-                                      <b>{utterance.kind === 'dialogue' ? utterance.speaker : '旁白'}</b>
+                                      <b>{utterance.kind === 'dialogue' ? utterance.speaker : t('旁白')}</b>
                                       {utterance.text}
                                       {utterance.delivery && <small>{utterance.delivery}</small>}
                                     </p>

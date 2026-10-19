@@ -84,13 +84,14 @@ export function workflowIntroMessage(task: TaskResponse): WorkflowChatMessage | 
   if (!workflow?.stages.length) return null;
   const sequence = workflow.stages.map(stage => `${stage.stage}.${stage.label}`).join(' → ');
   const done = workflow.completed_stages.length;
+  const total = workflow.stages.length;
   const active = workflow.active_stage;
   const next = workflow.next_stage;
   const where = active
-    ? `正在执行第 ${active}/8 步：${workflow.stages[active - 1].label}。`
+    ? `正在执行第 ${active}/${total} 步：${workflow.stages[active - 1].label}。`
     : next
-      ? `已完成 ${done}/8 步，下一步是第 ${next}/8 步：${workflow.stages[next - 1].label}。`
-      : `8 个阶段的产物都已生成，只剩成片验收与发布终审。`;
+      ? `已完成 ${done}/${total} 步，下一步是第 ${next}/${total} 步：${workflow.stages[next - 1].label}。`
+      : `${total} 个阶段的产物都已生成，只剩成片验收与发布终审。`;
   return {
     id: `workflow-intro:${task.taskId}:${workflow.event_id}`,
     sender: 'ai',

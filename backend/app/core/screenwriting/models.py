@@ -164,14 +164,41 @@ class VisualAsset(BaseModel):
     description: Annotated[str, BeforeValidator(_none_to_text)] = Field(default="", description="视觉描述")
 
 
+class CostumeAsset(BaseModel):
+    """One recognisable outfit a named character wears; a change of clothes is a separate asset."""
+
+    model_config = LENIENT
+
+    character: Annotated[str, BeforeValidator(_none_to_text)] = Field(
+        default="", description="穿着者，与 characters 里的名字逐字一致"
+    )
+    description: Annotated[str, BeforeValidator(_none_to_text)] = Field(
+        default="", description="款式、颜色、材质、配饰（发饰 / 腰带 / 鞋履），以及在哪段剧情穿"
+    )
+
+
+class CharacterRelation(BaseModel):
+    """How two named characters stand to each other: 敌对 / 亦师亦友 / 夫妻 / 父子 …"""
+
+    model_config = LENIENT
+
+    from_: str = Field(alias="from", min_length=1, max_length=80, description="关系发起方 / 主动方的角色名")
+    to: str = Field(min_length=1, max_length=80, description="另一方的角色名")
+    relation: str = Field(min_length=1, max_length=12, description="2–6 字的具体关系，如 君臣、父子、母子、父女、母女、夫妻、兄弟、兄妹、姐弟、姐妹、主仆、师徒、亦师亦友、惺惺相惜、宿敌、敌对、背叛、暗恋、青梅竹马、结义兄弟、先祖与后裔、祭司辅佐首领、托孤之臣、辅政大臣、效忠、利用、追杀、救命恩人")
+    bidirectional: bool = Field(default=False, description="关系对等（夫妻、兄弟、宿敌、惺惺相惜）为 true；有方向（暗恋、效忠、追杀）为 false")
+
+
 class AssetInventory(BaseModel):
-    """Characters / scenes / props that a shot may reference by name."""
+    """Characters / scenes / props / costumes / effects a shot may reference by name, and how the characters relate."""
 
     model_config = LENIENT
 
     characters: dict[str, CharacterAsset] = Field(default_factory=dict)
     scenes: dict[str, VisualAsset] = Field(default_factory=dict)
     props: dict[str, VisualAsset] = Field(default_factory=dict)
+    costumes: dict[str, CostumeAsset] = Field(default_factory=dict)
+    effects: dict[str, VisualAsset] = Field(default_factory=dict)
+    relationships: list[CharacterRelation] = Field(default_factory=list, max_length=60)
 
     @model_validator(mode="before")
     @classmethod
@@ -180,7 +207,7 @@ class AssetInventory(BaseModel):
         if not isinstance(data, dict):
             return data
         data = dict(data)
-        for key in ("characters", "scenes", "props"):
+        for key in ("characters", "scenes", "props", "costumes", "effects"):
             value = data.get(key)
             if value is None:
                 data[key] = {}
@@ -242,6 +269,14 @@ class LedgerEntry(BaseModel):
     source_range: dict[str, int] | None = Field(
         default=None, description="{start, end} 在归一化源文中的字符偏移；无源文时为 null"
     )
+    # Where this episode's text comes from: a span cut from the whole source, a
+    # source of its own (uploaded per episode), or none (planned from the outline).
+    source_origin: Literal["cut", "own", "none"] = "cut"
+    source_text: str | None = Field(default=None, description="自带原文的集：该集自己的原文")
+    source_kind: Literal["novel", "screenplay"] | None = Field(
+        default=None, description="自带原文的体裁；切出集沿用整本源文的体裁，无原文的集为 null"
+    )
+    source_name: str | None = Field(default=None, description="自带原文的文件名，供界面对账")
     ledger_status: Literal["planned", "written", "stale"] = "planned"
 
     def outline(self) -> dict[str, Any]:

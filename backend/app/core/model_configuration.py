@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import os
 import re
+from collections.abc import Mapping
 import socket
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +15,9 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
 from pydantic import BaseModel, Field
+
+from app import settings
+from app.core.providers.defaults import default_base_url
 
 
 ModelCategory = Literal["text", "image", "video", "audio"]
@@ -31,38 +34,46 @@ AudioSubcategory = Literal[
 
 PROVIDER_OPTIONS: dict[ModelCategory, tuple[dict[str, str], ...]] = {
     "text": (
-        {"id": "deepseek", "label": "DeepSeek", "default_base_url": "https://api.deepseek.com"},
-        {"id": "volcengine", "label": "火山引擎", "default_base_url": "https://ark.cn-beijing.volces.com/api/v3"},
-        {"id": "qwen", "label": "通义千问", "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"},
-        {"id": "gemini", "label": "Gemini", "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai"},
-        {"id": "openai", "label": "OpenAI", "default_base_url": "https://api.openai.com/v1"},
+        {"id": "deepseek", "label": "DeepSeek", "default_base_url": default_base_url("deepseek")},
+        {"id": "volcengine", "label": "火山引擎", "default_base_url": default_base_url("volcengine")},
+        {"id": "qwen", "label": "通义千问", "default_base_url": default_base_url("qwen")},
+        {"id": "gemini", "label": "Gemini", "default_base_url": default_base_url("gemini")},
+        {"id": "openai", "label": "OpenAI", "default_base_url": default_base_url("openai")},
+        {
+            "id": "custom_openai", "label": "自定义 OpenAI 兼容端点", "default_base_url": "",
+            "key_hint": "任意 OpenAI 兼容的 /chat/completions 服务（中转、自建网关）；填 HTTPS 根地址，模型目录从 /models 读取",
+        },
     ),
     "image": (
-        {"id": "volcengine", "label": "火山引擎", "default_base_url": "https://ark.cn-beijing.volces.com/api/v3"},
-        {"id": "qwen", "label": "通义千问", "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"},
-        {"id": "gemini", "label": "Gemini", "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai"},
-        {"id": "openai", "label": "OpenAI", "default_base_url": "https://api.openai.com/v1"},
+        {"id": "volcengine", "label": "火山引擎", "default_base_url": default_base_url("volcengine")},
+        {"id": "qwen", "label": "通义千问", "default_base_url": default_base_url("qwen")},
+        {"id": "gemini", "label": "Gemini", "default_base_url": default_base_url("gemini")},
+        {"id": "openai", "label": "OpenAI", "default_base_url": default_base_url("openai")},
+        {
+            "id": "custom_openai", "label": "自定义 OpenAI 兼容端点", "default_base_url": "",
+            "key_hint": "任意 OpenAI 兼容的 /images/generations 服务；填 HTTPS 根地址，模型目录从 /models 读取",
+        },
     ),
     "video": (
-        {"id": "minimax", "label": "minimax", "default_base_url": "https://api.minimaxi.com"},
-        {"id": "seedance", "label": "Seedance", "default_base_url": "https://ark.cn-beijing.volces.com/api/v3"},
+        {"id": "minimax", "label": "minimax", "default_base_url": default_base_url("minimax")},
+        {"id": "seedance", "label": "Seedance", "default_base_url": default_base_url("seedance")},
         {
-            "id": "kling", "label": "Kling", "default_base_url": "https://api-singapore.klingai.com",
+            "id": "kling", "label": "Kling", "default_base_url": default_base_url("kling"),
             "key_hint": "填写 ACCESS_KEY:SECRET_KEY（冒号分隔）；后端按官方规范为每次请求签发 JWT",
         },
-        {"id": "xai", "label": "xAI Grok Imagine", "default_base_url": "https://api.x.ai"},
+        {"id": "xai", "label": "xAI Grok Imagine", "default_base_url": default_base_url("xai")},
         {
-            "id": "fal", "label": "fal.ai（HappyHorse）", "default_base_url": "https://queue.fal.run",
+            "id": "fal", "label": "fal.ai（HappyHorse）", "default_base_url": default_base_url("fal"),
             "key_hint": "fal.ai 的 FAL_KEY；模型目录来自官方文档，凭据在首次生成时验证",
         },
         {
-            "id": "ltx", "label": "LTX", "default_base_url": "https://api.ltx.io",
+            "id": "ltx", "label": "LTX", "default_base_url": default_base_url("ltx"),
             "key_hint": "LTX API Key；模型目录来自官方文档，凭据在首次生成时验证",
         },
     ),
     "audio": (
-        {"id": "elevenlabs", "label": "ElevenLabs", "default_base_url": "https://api.elevenlabs.io"},
-        {"id": "minimax", "label": "minimax", "default_base_url": "https://api.minimaxi.com"},
+        {"id": "elevenlabs", "label": "ElevenLabs", "default_base_url": default_base_url("elevenlabs")},
+        {"id": "minimax", "label": "minimax", "default_base_url": default_base_url("minimax")},
     ),
 }
 
@@ -81,8 +92,16 @@ _PROVIDER_HOSTS: dict[str, tuple[str, ...]] = {
     "elevenlabs": ("api.elevenlabs.io",),
 }
 
-_IMAGE_PATTERN = re.compile(r"(?:^|[-_.])(image|imagen|seedream|dall[-_.]?e|paint|render)(?:$|[-_.])", re.I)
-_VIDEO_PATTERN = re.compile(r"(?:^|[-_.])(video|seedance|kling|hailuo|h3|ltx)(?:$|[-_.])", re.I)
+# Volcengine Ark names its families by product: seedream / seededit draw, seedance / seaweed film,
+# and the task suffixes t2i / i2i / t2v / i2v say what goes in and what comes out.
+_IMAGE_PATTERN = re.compile(
+    r"(?:^|[-_.])(image|imagen|seedream|seededit|dreamina|dall[-_.]?e|paint|render|flux|sdxl|stable[-_.]?diffusion|t2i|i2i)(?:$|[-_.])",
+    re.I,
+)
+_VIDEO_PATTERN = re.compile(
+    r"(?:^|[-_.])(video|seedance|seaweed|kling|hailuo|h3|ltx|t2v|i2v|wan|wan2(?:\.\d+)?|veo|sora|vidu|pixverse)(?:$|[-_.])",
+    re.I,
+)
 _AUDIO_PATTERN = re.compile(r"(?:^|[-_.])(audio|speech|voice|tts|stt|asr|scribe|music|sound|sfx|bgm)(?:$|[-_.])", re.I)
 _MULTIMODAL_PATTERN = re.compile(r"vision|multimodal|omni|视觉|多模态|image input|video input|(?:^|[-_.])vl(?:$|[-_.])", re.I)
 
@@ -442,7 +461,7 @@ class ModelSecretCipher:
         configured = (os.getenv("MODEL_CONFIG_MASTER_KEY") or "").strip()
         if configured:
             return cls(configured)
-        if (os.getenv("ENVIRONMENT") or "development").lower() in {"prod", "production"}:
+        if settings.is_production():
             raise RuntimeError("生产环境必须配置 MODEL_CONFIG_MASTER_KEY")
         runtime_dir.mkdir(parents=True, exist_ok=True)
         key_path = runtime_dir / "model-config.key"
@@ -580,8 +599,10 @@ def _classify(
     # metadata. Never apply this fallback to a global catalog (for example
     # OpenAI /models), otherwise an ordinary text model would be relabelled as
     # an image/video/audio model merely because that tab initiated discovery.
+    # Seedance is not here on purpose: Volcengine Ark's /api/v3/models is the whole Ark catalog
+    # (doubao-pro text, seedream images, seedance videos), so a bare id there means "text", not
+    # "whatever tab asked"; its video and image models are told apart by name above.
     provider_catalog_category = {
-        "seedance": "video",
         "kling": "video",
         "elevenlabs": "audio",
     }.get(provider or "")
@@ -593,15 +614,34 @@ def _classify(
     return category, subcategory, capabilities
 
 
+CATEGORY_LABELS: Final[dict[str, str]] = {"text": "文本", "image": "图像", "video": "视频", "audio": "音频"}
+
+
+def filed_elsewhere_warning(hidden: Mapping[str, int], requested: ModelCategory) -> str:
+    """One line saying what a global catalog held besides the tab's own category, and where to find it."""
+    parts = [
+        f"{count} 个{CATEGORY_LABELS[category]}模型"
+        for category, count in sorted(hidden.items(), key=lambda item: item[0])
+        if count and category != requested
+    ]
+    if not parts:
+        return ""
+    return f"已按名称自动归类：另有 {'、'.join(parts)}未列在{CATEGORY_LABELS[requested]}分类下，请到对应标签加载"
+
+
 def normalize_models(
     payload: object,
     requested: ModelCategory,
     provider: str | None = None,
+    *,
+    hidden: dict[str, int] | None = None,
 ) -> list[DiscoveredModel]:
+    """The rows of ``payload`` that belong under ``requested``; ``hidden`` collects how many fell under each other category."""
     rows = _model_rows(payload)
     if len(rows) > 1000:
         raise ValueError("供应商返回的模型数量超过 1000 条安全上限")
     found: dict[tuple[str, str | None], DiscoveredModel] = {}
+    filed: set[tuple[str, str]] = set()
     for row in rows:
         model_id = _identifier(row)
         if not model_id:
@@ -610,6 +650,9 @@ def normalize_models(
             row, model_id, requested, provider
         )
         if category != requested:
+            if hidden is not None and (category, model_id) not in filed:
+                filed.add((category, model_id))
+                hidden[category] = hidden.get(category, 0) + 1
             continue
         display = _safe_text(
             row.get("displayName") or row.get("display_name") or row.get("name") or model_id,
@@ -627,7 +670,13 @@ def normalize_models(
     return sorted(found.values(), key=lambda item: (item.subcategory or "", item.model_id.lower()))
 
 
+# A provider the person brings themselves has no official domain: any public HTTPS host is its home.
+CUSTOM_PROVIDERS = frozenset({"custom_openai"})
+
+
 def _host_allowed(host: str, provider: str) -> bool:
+    if provider in CUSTOM_PROVIDERS:
+        return True
     return any(host == allowed or host.endswith("." + allowed) for allowed in _PROVIDER_HOSTS.get(provider, ()))
 
 
@@ -637,9 +686,11 @@ def _assert_public_addresses(host: str) -> None:
     except socket.gaierror as exc:
         raise ValueError("供应商域名无法解析") from exc
     for address in {item[4][0] for item in addresses}:
-        parsed = ipaddress.ip_address(address)
-        if not parsed.is_global:
-            raise ValueError("供应商域名解析到了非公网地址")
+        if not settings.is_public_address(address):
+            raise ValueError(
+                f"供应商域名解析到了非公网地址 {address}；若本机代理使用 fake-ip 模式，"
+                "设置 ALLOW_PROXY_FAKE_IP=1（或用 PROXY_FAKE_IP_CIDR 指定其地址段）"
+            )
 
 
 def validate_provider_url(category: ModelCategory, provider: str, base_url: str, *, resolve_dns: bool = True) -> str:
@@ -802,11 +853,13 @@ class ModelDiscoveryClient:
                             models=_minimax_audio_models(),
                             source_endpoint=endpoint,
                         )
-                models = normalize_models(payload, category, provider)
+                hidden: dict[str, int] = {}
+                models = normalize_models(payload, category, provider, hidden=hidden)
                 if provider == "elevenlabs" and category == "audio":
                     models = _merge_elevenlabs_audio_models(models)
                 if models:
-                    return DiscoveryResult(models=models, source_endpoint=endpoint)
+                    note = filed_elsewhere_warning(hidden, category)
+                    return DiscoveryResult(models=models, source_endpoint=endpoint, warnings=(note,) if note else ())
 
         if (
             provider == "elevenlabs"

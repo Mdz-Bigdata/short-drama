@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEv
 
 import { MarkdownBlocks } from './MarkdownDocument';
 import { paginateMarkdown } from './markdownParser';
+import { t } from '../../i18n';
 
 function paginationItems(total: number, current: number): Array<number | 'ellipsis-left' | 'ellipsis-right'> {
   if (total <= 7) return Array.from({ length: total }, (_, index) => index);
@@ -48,10 +49,10 @@ function plainTextPages(source: string, maxCharacters = 2200) {
 async function readScriptFile(file: File) {
   const extension = file.name.toLowerCase().match(/\.[^.]+$/)?.[0];
   if (extension !== '.md' && extension !== '.txt') {
-    throw new Error('仅支持 .md 或 .txt 文件。');
+    throw new Error(t('仅支持 .md 或 .txt 文件。'));
   }
   if (file.size > MAX_SCRIPT_BYTES) {
-    throw new Error('文件不能超过 2 MB。');
+    throw new Error(t('文件不能超过 2 MB。'));
   }
   const bytes = await file.arrayBuffer();
   let content: string;
@@ -61,13 +62,13 @@ async function readScriptFile(file: File) {
     try {
       content = new TextDecoder('gb18030', { fatal: true }).decode(bytes);
     } catch {
-      throw new Error('无法读取文件编码，请使用 UTF-8 或 GB18030。');
+      throw new Error(t('无法读取文件编码，请使用 UTF-8 或 GB18030。'));
     }
   }
-  if (content.includes('\u0000')) throw new Error('文件包含不支持的空字符。');
+  if (content.includes('\u0000')) throw new Error(t('文件包含不支持的空字符。'));
   for (const character of content) {
     if (character.charCodeAt(0) < 32 && !'\n\r\t'.includes(character)) {
-      throw new Error('文件包含不支持的控制字符。');
+      throw new Error(t('文件包含不支持的控制字符。'));
     }
   }
   return content.replace(/^\uFEFF/, '');
@@ -170,7 +171,7 @@ export function ScreenplayReader({
   }, [activePageIndex]);
 
   const requestClose = () => {
-    if (isDirty && !window.confirm('当前剧本有未保存修改，确定放弃并关闭吗？')) return;
+    if (isDirty && !window.confirm(t('当前剧本有未保存修改，确定放弃并关闭吗？'))) return;
     onClose();
   };
 
@@ -250,12 +251,12 @@ export function ScreenplayReader({
     const submittedBaseSourceHash = baseSourceHash;
     setError('');
     if (!draft.trim()) {
-      setError('剧本内容不能为空。');
+      setError(t('剧本内容不能为空。'));
       setSaveState('idle');
       return;
     }
     if (new TextEncoder().encode(draft).byteLength > MAX_SCRIPT_BYTES) {
-      setError('剧本内容不能超过 2 MB。');
+      setError(t('剧本内容不能超过 2 MB。'));
       setSaveState('idle');
       return;
     }
@@ -308,49 +309,49 @@ export function ScreenplayReader({
           </div>
           <div className="writer-reader__tools">
             <label className="writer-reader__file-button">
-              <FileUp aria-hidden="true" /> 打开文件
+              <FileUp aria-hidden="true" /> {t('打开文件')}
               <input
                 type="file"
                 accept=".md,.txt,text/markdown,text/plain"
-                aria-label="打开 Markdown 或文本文件"
+                aria-label={t('打开 Markdown 或文本文件')}
                 onChange={handleFileChange}
               />
             </label>
             <button
               type="button"
-              aria-label={mode === 'edit' ? '预览剧本' : '编辑剧本'}
+              aria-label={mode === 'edit' ? t('预览剧本') : t('编辑剧本')}
               onClick={() => {
                 setError('');
                 setMode(current => current === 'edit' ? 'preview' : 'edit');
               }}
             >
               {mode === 'edit' ? <Eye aria-hidden="true" /> : <Pencil aria-hidden="true" />}
-              {mode === 'edit' ? '预览' : '编辑'}
+              {mode === 'edit' ? t('预览') : t('编辑')}
             </button>
             <button
               className="is-primary"
               type="button"
-              aria-label="保存剧本"
+              aria-label={t('保存剧本')}
               disabled={!onSave || saveInFlight || !isDirty}
               onClick={() => { void handleSave(); }}
             >
-              <Save aria-hidden="true" /> {saveInFlight ? '保存中' : '保存'}
+              <Save aria-hidden="true" /> {saveInFlight ? t('保存中') : t('保存')}
             </button>
-            <button ref={closeRef} className="writer-reader__close" type="button" aria-label="关闭剧本阅读器" onClick={requestClose}><X aria-hidden="true" /></button>
+            <button ref={closeRef} className="writer-reader__close" type="button" aria-label={t('关闭剧本阅读器')} onClick={requestClose}><X aria-hidden="true" /></button>
           </div>
         </header>
 
         <div className="writer-reader__message-slot">
           {error && <p className="writer-reader__message is-error" role="alert">{error}</p>}
-          {!error && saveState === 'saved' && <p className="writer-reader__message is-success" role="status" aria-live="polite">已保存</p>}
+          {!error && saveState === 'saved' && <p className="writer-reader__message is-success" role="status" aria-live="polite">{t('已保存')}</p>}
         </div>
 
         {mode === 'edit' ? (
           <div className="writer-reader__editor">
-            <label htmlFor="writer-script-editor">剧本内容</label>
+            <label htmlFor="writer-script-editor">{t('剧本内容')}</label>
             <textarea
               id="writer-script-editor"
-              aria-label="剧本内容"
+              aria-label={t('剧本内容')}
               value={draft}
               spellCheck={false}
               onChange={event => {
@@ -369,7 +370,7 @@ export function ScreenplayReader({
                 setError('');
                 setSaveState('idle');
               }}
-              placeholder="在这里输入剧本，或打开 .md / .txt 文件…"
+              placeholder={t('在这里输入剧本，或打开 .md / .txt 文件…')}
             />
             <small>{draft.length.toLocaleString('zh-CN')} 字符 · Ctrl / ⌘ + S 保存到项目</small>
           </div>
@@ -389,11 +390,11 @@ export function ScreenplayReader({
         )}
 
         <footer className={`writer-reader__footer ${mode === 'edit' ? 'is-editing' : ''}`}>
-          {mode === 'edit' ? <span>编辑模式 · 支持 Markdown 与纯文本</span> : <>
-          <button type="button" onClick={() => goToPage(activePageIndex - 1)} disabled={activePageIndex === 0} aria-label="上一页">
-            <ChevronLeft aria-hidden="true" /> 上一页
+          {mode === 'edit' ? <span>{t('编辑模式 · 支持 Markdown 与纯文本')}</span> : <>
+          <button type="button" onClick={() => goToPage(activePageIndex - 1)} disabled={activePageIndex === 0} aria-label={t('上一页')}>
+            <ChevronLeft aria-hidden="true" /> {t('上一页')}
           </button>
-          <nav className="writer-reader__pagination" aria-label="剧本页码">
+          <nav className="writer-reader__pagination" aria-label={t('剧本页码')}>
             {paginationItems(pageCount, activePageIndex).map(item => typeof item === 'number' ? (
               <button
                 type="button"
@@ -407,8 +408,8 @@ export function ScreenplayReader({
             ) : <span key={item} aria-hidden="true">…</span>)}
           </nav>
           <span className="writer-reader__counter" role="status" aria-live="polite">第 {activePageIndex + 1} / {pageCount} 页</span>
-          <button type="button" onClick={() => goToPage(activePageIndex + 1)} disabled={activePageIndex === pageCount - 1} aria-label="下一页">
-            下一页 <ChevronRight aria-hidden="true" />
+          <button type="button" onClick={() => goToPage(activePageIndex + 1)} disabled={activePageIndex === pageCount - 1} aria-label={t('下一页')}>
+            {t('下一页')} <ChevronRight aria-hidden="true" />
           </button>
           </>}
         </footer>

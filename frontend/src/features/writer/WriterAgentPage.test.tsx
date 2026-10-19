@@ -45,23 +45,35 @@ describe('WriterAgentPage', () => {
     );
 
     expect(screen.getByRole('heading', { name: '十二小时' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: '爽点节奏' })).toBeTruthy();
+    // Story events and the beat map share one block: nodes first, the beat map behind its own tab.
+    expect(screen.getByRole('heading', { name: /剧情事件与爽点节奏/ })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: '爽点节奏' })).toBeNull();
+    expect(screen.queryByLabelText('按场景展开的剧本节奏时间轴')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '爽点节奏' }));
     expect(screen.getByLabelText('按场景展开的剧本节奏时间轴')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '爽点节奏' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('heading', { name: '分集概览' })).toBeTruthy();
     expect(screen.getAllByText('第 2 集').length).toBeGreaterThanOrEqual(1);
+
+    await user.click(screen.getByRole('button', { name: '事件节点' }));
+    expect(screen.getByLabelText('剧情事件时间轴')).toBeTruthy();
+    expect(screen.queryByLabelText('按场景展开的剧本节奏时间轴')).toBeNull();
+    expect(screen.getAllByText('最信任的人暴露破绽。').length).toBeGreaterThan(0);
+
+    // The character network is its own page.
+    await user.click(screen.getByRole('button', { name: '人物关系' }));
     expect(screen.getByRole('img', { name: /2名角色、1条人物关系/ })).toBeTruthy();
     expect(screen.getAllByText('师生对立').length).toBeGreaterThanOrEqual(1);
-
-    await user.click(screen.getByRole('button', { name: '时间线' }));
-    expect(screen.getByLabelText('剧情关键事件时间线')).toBeTruthy();
-    expect(screen.getByText('最信任的人暴露破绽。')).toBeTruthy();
   });
 
   it('shows meaningful empty states before the writer asset is generated', () => {
     render(<WriterAgentPage title="待创作项目" requestedEpisodeCount={3} />);
 
     expect(screen.getByText('等待生成')).toBeTruthy();
+    expect(screen.getByText('还没有剧情节点：生成剧本后由分集账本生成，也可以手动添加。')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '爽点节奏' }));
     expect(screen.getByText('剧本结构化完成后，场景节奏轴将在这里生成。')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '人物关系' }));
     expect(screen.getByText('识别角色后，这里会生成以主角为中心的人物关系图谱。')).toBeTruthy();
   });
 
@@ -127,7 +139,7 @@ describe('WriterAgentPage', () => {
       />,
     );
 
-    const overview = within(screen.getByRole('region', { name: '故事大纲' }));
+    const overview = within(screen.getByRole('region', { name: '项目概述' }));
     expect(overview.getByText('题材')).toBeTruthy();
     expect(overview.getByText('都市悬疑')).toBeTruthy();
     expect(overview.getByText('核心主题')).toBeTruthy();
@@ -156,7 +168,7 @@ describe('WriterAgentPage', () => {
       />,
     );
 
-    const overviewText = screen.getByRole('region', { name: '故事大纲' }).textContent || '';
+    const overviewText = screen.getByRole('region', { name: '项目概述' }).textContent || '';
     expect(overviewText).toContain('林夏在雨夜收到失踪者的匿名录音，并在十二小时内追查真相。');
     expect(overviewText).not.toContain('我将严格遵循');
     expect(overviewText).not.toContain('以下内容仅包含');
@@ -179,7 +191,7 @@ describe('WriterAgentPage', () => {
       />,
     );
 
-    const overview = screen.getByRole('region', { name: '故事大纲' });
+    const overview = screen.getByRole('region', { name: '项目概述' });
     expect(overview.textContent).toContain('我将逃离这座城市，却在最后一班地铁里发现失踪多年的姐姐。');
   });
 
@@ -199,7 +211,7 @@ describe('WriterAgentPage', () => {
       />,
     );
 
-    const overviewText = screen.getByRole('region', { name: '故事大纲' }).textContent || '';
+    const overviewText = screen.getByRole('region', { name: '项目概述' }).textContent || '';
     expect(overviewText).toContain(legitimateSynopsis);
   });
 
@@ -219,7 +231,7 @@ describe('WriterAgentPage', () => {
       />,
     );
 
-    const overviewText = screen.getByRole('region', { name: '故事大纲' }).textContent || '';
+    const overviewText = screen.getByRole('region', { name: '项目概述' }).textContent || '';
     expect(overviewText).toContain('#7 站台');
     expect(overviewText).toContain('state_modern');
     expect(overviewText).toContain(technicalSynopsis);
@@ -240,7 +252,7 @@ describe('WriterAgentPage', () => {
       />,
     );
 
-    const overviewText = screen.getByRole('region', { name: '故事大纲' }).textContent || '';
+    const overviewText = screen.getByRole('region', { name: '项目概述' }).textContent || '';
     expect(overviewText).toContain('沈砚之从乱葬坑苏醒，必须在追兵封城前找到自己的真实身份。');
     expect(overviewText).not.toContain('我将严格遵循');
     expect(overviewText).not.toContain('以下内容仅包含');
@@ -480,7 +492,7 @@ describe('WriterAgentPage', () => {
         { from: '阿岚', to: '林夏', relation: '信任' },
       ],
     };
-    const { container } = render(<WriterAgentPage title="十二小时" breakdown={multidirectionalBreakdown} script="正文" />);
+    const { container } = render(<WriterAgentPage defaultView="characters" title="十二小时" breakdown={multidirectionalBreakdown} script="正文" />);
 
     expect(screen.getByRole('img', { name: /3名角色、4条人物关系/ })).toBeTruthy();
     const paths = Array.from(container.querySelectorAll('path[data-relation-edge]'));
@@ -504,14 +516,14 @@ describe('WriterAgentPage', () => {
         { from: '周教授', to: '林夏', relation: '误导' },
       ],
     };
-    const { container } = render(<WriterAgentPage title="十二小时" breakdown={overlappingBreakdown} script="正文" />);
+    const { container } = render(<WriterAgentPage defaultView="characters" title="十二小时" breakdown={overlappingBreakdown} script="正文" />);
 
     const paths = Array.from(container.querySelectorAll('path[data-relation-edge]'));
     expect(paths).toHaveLength(3);
     expect(new Set(paths.map(path => path.getAttribute('d'))).size).toBe(3);
   });
 
-  it('uses real scene co-occurrence as a bidirectional relationship fallback', () => {
+  it('never draws or counts a pairing counted from shared scenes as a relation', () => {
     const fallbackRelationshipBreakdown = {
       ...breakdown,
       relationships: [],
@@ -520,25 +532,28 @@ describe('WriterAgentPage', () => {
         { scene_id: 'E1S02', content: '二人在天台对峙。', characters: ['林夏', '周教授'] },
       ],
     };
-    const { container } = render(<WriterAgentPage title="十二小时" breakdown={fallbackRelationshipBreakdown} script="正文" />);
+    const { container } = render(<WriterAgentPage defaultView="characters" title="十二小时" breakdown={fallbackRelationshipBreakdown} script="正文" />);
 
-    expect(screen.getByRole('img', { name: /2名角色、1条人物关系/ })).toBeTruthy();
-    expect(screen.getAllByText('同场互动 · 2 场').length).toBeGreaterThan(0);
-    const edge = container.querySelector('path[data-relation-edge]');
-    expect(edge?.getAttribute('marker-start')).toMatch(/^url\(#/);
-    expect(edge?.getAttribute('marker-end')).toMatch(/^url\(#/);
+    expect(screen.getByRole('img', { name: /2名角色、0条人物关系/ })).toBeTruthy();
+    expect(container.querySelectorAll('path[data-relation-edge]')).toHaveLength(0);
+    expect(container.textContent).not.toMatch(/同场/);
+    expect(screen.getByText(/人物关系尚未识别/)).toBeTruthy();
   });
 
-  it('recognizes backend co-occurrence relationships as bidirectional without inventing a second edge', () => {
-    const backendFallback = {
+  it('drops the backend\'s same-scene pairings and keeps the named relations beside them', () => {
+    const mixed = {
       ...breakdown,
-      relationships: [{ from: '林夏', to: '周教授', relation: '同场互动 · 2 场' }],
+      relationships: [
+        { from: '林夏', to: '周教授', relation: '同场互动 · 2 场', bidirectional: true },
+        { from: '周教授', to: '林夏', relation: '亦师亦友', bidirectional: true },
+      ],
     };
-    const { container } = render(<WriterAgentPage title="十二小时" breakdown={backendFallback} script="正文" />);
+    const { container } = render(<WriterAgentPage defaultView="characters" title="十二小时" breakdown={mixed} script="正文" />);
 
-    const edge = container.querySelector('path[data-relation-edge]');
-    expect(edge?.getAttribute('marker-start')).toMatch(/^url\(#/);
-    expect(screen.getByLabelText('双向关系')).toBeTruthy();
+    expect(container.querySelectorAll('path[data-relation-edge]')).toHaveLength(1);
+    expect([...container.querySelectorAll('[data-relation-label="true"]')].map(node => node.textContent)).toEqual(['亦师亦友']);
+    expect(container.textContent).not.toMatch(/同场/);
+    expect(screen.getByRole('heading', { name: /人物关系星图/ }).textContent).toContain('1 关系');
   });
 
   it('clamps the active screenplay page when refreshed content becomes shorter', async () => {
@@ -574,7 +589,7 @@ describe('WriterAgentPage', () => {
     expect(screen.getAllByText('3 分钟').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('keeps relationships beyond the twelve-node graph visible in the relationship list', () => {
+  it('names the people beyond the twelve-node field under it', () => {
     const roles = Array.from({ length: 14 }, (_, index) => ({
       name: `角色${index + 1}`,
       position: index === 0 ? '主角' : '剧情角色',
@@ -585,13 +600,12 @@ describe('WriterAgentPage', () => {
       relation: index === 12 ? '终局同盟' : `关系${index + 1}`,
     }));
 
-    render(<WriterAgentPage title="群像剧" breakdown={{ ...breakdown, roles, relationships }} script="正文" />);
+    render(<WriterAgentPage defaultView="characters" title="群像剧" breakdown={{ ...breakdown, roles, relationships }} script="正文" />);
 
-    expect(screen.getByText('终局同盟')).toBeTruthy();
-    expect(screen.getAllByText('角色14').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByLabelText(/图外角色 2 名/).textContent).toContain('角色14');
   });
 
-  it('caps SVG edges while retaining the complete relationship count for pagination', () => {
+  it('caps SVG edges while the heading keeps the complete relationship count', () => {
     const denseRelationships = Array.from({ length: 120 }, (_, index) => ({
       from: '林夏',
       to: '周教授',
@@ -599,6 +613,7 @@ describe('WriterAgentPage', () => {
     }));
     const { container } = render(
       <WriterAgentPage
+        defaultView="characters"
         title="密集关系"
         breakdown={{ ...breakdown, relationships: denseRelationships }}
         script="正文"
@@ -606,8 +621,7 @@ describe('WriterAgentPage', () => {
     );
 
     expect(container.querySelectorAll('path[data-relation-edge]').length).toBeLessThanOrEqual(80);
-    expect(screen.getByText('120')).toBeTruthy();
-    expect(screen.getByRole('navigation', { name: '人物关系列表分页' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /人物关系星图/ }).textContent).toContain('120 关系');
   });
 
   it('keeps relationship endpoints visible even when they are absent from a full role contract', () => {
@@ -617,6 +631,7 @@ describe('WriterAgentPage', () => {
     }));
     render(
       <WriterAgentPage
+        defaultView="characters"
         title="群像档案"
         breakdown={{
           ...breakdown,

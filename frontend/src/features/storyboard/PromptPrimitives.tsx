@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { parseMarkdownTable, type ParsedMarkdownTable } from './parseMarkdownTable';
 import { promptLabel } from './promptLabels';
 import type { PromptValue } from './storyboardPromptTypes';
+import { t } from '../../i18n';
 
 function PromptMarkdownTable({ table, label }: { table: ParsedMarkdownTable; label: string }) {
   return (
@@ -39,7 +40,7 @@ function displayValue(value: PromptValue, label: string): ReactNode {
 }
 
 export function PromptFields({ value, omit = [], className = '' }: { value?: Record<string, PromptValue>; omit?: string[]; className?: string }) {
-  if (!value) return <p className="prompt-detail__muted">未生成该部分信息。</p>;
+  if (!value) return <p className="prompt-detail__muted">{t('未生成该部分信息。')}</p>;
   return (
     <dl className={`prompt-detail__fields ${className}`.trim()}>
       {Object.entries(value).filter(([key]) => !omit.includes(key)).map(([key, field]) => {

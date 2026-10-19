@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 import './MarkdownDocument.css';
 import { MARKDOWN_RENDER_BUDGETS, parseMarkdownBlocks, type MarkdownBlock } from './markdownParser';
+import { t } from '../../i18n';
 
 export interface MarkdownDocumentProps {
   source: string;
@@ -77,7 +78,7 @@ export function MarkdownBlocks({ blocks }: { blocks: MarkdownBlock[] }) {
                 {row.map((cell, cellIndex) => <td key={`cell-${rowIndex}-${cellIndex}`}>{cleanInline(cell) || '—'}</td>)}
               </tr>
             )) : (
-              <tr><td colSpan={block.headers.length}>暂无表格记录</td></tr>
+              <tr><td colSpan={block.headers.length}>{t('暂无表格记录')}</td></tr>
             )}
           </tbody>
         </table>
@@ -103,7 +104,7 @@ export function MarkdownDocument({ source, ariaLabel = 'Markdown 文档', classN
     <div className={`writer-markdown-document ${className}`.trim()} aria-label={ariaLabel}>
       {blocks.length > 0
         ? <MarkdownBlocks blocks={blocks} />
-        : <p className="writer-markdown-document__empty">暂无可显示内容。</p>}
+        : <p className="writer-markdown-document__empty">{t('暂无可显示内容。')}</p>}
     </div>
   );
 }

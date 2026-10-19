@@ -2,6 +2,20 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, Dict, Any, Literal, List
 
+from app.core.style_packs import DEFAULT_PACK_ID
+
+# One definition of a new project's range and defaults; requests, stored
+# configuration and the pipeline's fallbacks all read these.
+EPISODE_COUNT_MIN = 1
+EPISODE_COUNT_MAX = 150
+DEFAULT_EPISODE_COUNT = 3
+DEFAULT_DIRECTOR_STYLE = "cyberpunk"
+DEFAULT_SHOT_STYLE = "standard"
+DEFAULT_LLM_MODEL = "deepseek"
+DEFAULT_IMAGE_MODEL = "seedance"
+DEFAULT_VIDEO_MODEL = "seedance2.0"
+DEFAULT_TTS_MODEL = "ElevenLabs"
+
 
 EditableVideoReferenceMode = Literal[
     "auto", "first_last_frame", "multi_reference", "multimodal",
@@ -23,12 +37,20 @@ class DramaBaseSchema(BaseModel):
     """
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
+class AdBrief(DramaBaseSchema):
+    """An advertisement's brief: what the spot sells and what it asks the viewer to do."""
+    product: str = Field("", max_length=200)
+    selling_points: str = Field("", max_length=500)
+    audience: str = Field("", max_length=200)
+    call_to_action: str = Field("", max_length=100)
+
+
 class DramaCreateRequest(DramaBaseSchema):
     """
     创建短剧任务的请求 Schema
     """
     title_suggestion: str = Field(..., description="创意大纲/选题提示词", min_length=2)
-    director_style: str = Field("cyberpunk", description="导演视听风格，如 cyberpunk, retro, realistic")
+    director_style: str = Field(DEFAULT_DIRECTOR_STYLE, description="导演视听风格，如 cyberpunk, retro, realistic")
     style_pack: Optional[str] = Field(
         None,
         description=(
@@ -37,16 +59,31 @@ class DramaCreateRequest(DramaBaseSchema):
         ),
         max_length=40,
     )
-    shot_style: str = Field("standard", description="运镜风格设定")
-    llm_model: str = Field("deepseek", description="选用的多模态语言大模型")
-    image_model: str = Field("seedance", description="选用的文生图大模型")
-    video_model: str = Field("seedance2.0", description="选用的视频生成大模型")
-    tts_model: str = Field("ElevenLabs", description="选用的语音配音大模型")
+    shot_style: str = Field(DEFAULT_SHOT_STYLE, description="运镜风格设定")
+    llm_model: str = Field(DEFAULT_LLM_MODEL, description="选用的多模态语言大模型")
+    image_model: str = Field(DEFAULT_IMAGE_MODEL, description="选用的文生图大模型")
+    video_model: str = Field(DEFAULT_VIDEO_MODEL, description="选用的视频生成大模型")
+    tts_model: str = Field(DEFAULT_TTS_MODEL, description="选用的语音配音大模型")
     video_reference_mode: EditableVideoReferenceMode = Field(
         "auto", description="运镜视频的参考输入模式（自动、首尾帧、多图/宫格或多模态参考）"
     )
+    narration_delivery: Literal["use_tts", "post_production"] = Field(
+        "use_tts", description="旁白交付方式：合成旁白配音，或留给后期配音（旁白不进入视频提示词）"
+    )
+    creation_mode: Literal["drama", "narration", "ad"] = Field(
+        "drama", description="创作类型：剧情短剧、旁白解说、广告短片"
+    )
+    ad_brief: Optional[AdBrief] = Field(None, description="广告短片的产品简报（其它类型忽略）")
+    content_language: Literal["zh", "en", "vi"] = Field(
+        "zh", description="剧本内容语言：标题、钩子、台词、旁白、正文与画面描述用这种语言写"
+    )
     one_click: bool = Field(False, description="是否一键成片模式")
-    episode_count: int = Field(3, description="一次性生成的剧本集数 (1-150)，视频按集逐集制作", ge=1, le=150)
+    episode_count: int = Field(
+        DEFAULT_EPISODE_COUNT,
+        description=f"一次性生成的剧本集数 ({EPISODE_COUNT_MIN}-{EPISODE_COUNT_MAX})，视频按集逐集制作",
+        ge=EPISODE_COUNT_MIN,
+        le=EPISODE_COUNT_MAX,
+    )
     script_content: Optional[str] = Field(None, description="手动上传的剧本文件内容")
     script_name: Optional[str] = Field(None, description="手动上传的剧本文件名")
 
@@ -109,18 +146,27 @@ class DramaConfigSchema(DramaBaseSchema):
     创建时所用的参数配置 Schema
     """
     title_suggestion: str = Field(..., description="创意大纲/选题提示词")
-    director_style: str = Field("cyberpunk", description="导演视听风格")
-    style_pack: str = Field("cinematic_realism", description="风格锁：全片统一的画面质感包", max_length=40)
-    shot_style: str = Field("standard", description="运镜风格设定")
-    llm_model: str = Field("deepseek", description="选用的多模态语言大模型")
-    image_model: str = Field("seedance", description="选用的文生图大模型")
-    video_model: str = Field("seedance2.0", description="选用的视频生成大模型")
-    tts_model: str = Field("ElevenLabs", description="选用的语音配音大模型")
+    director_style: str = Field(DEFAULT_DIRECTOR_STYLE, description="导演视听风格")
+    style_pack: str = Field(DEFAULT_PACK_ID, description="风格锁：全片统一的画面质感包", max_length=40)
+    shot_style: str = Field(DEFAULT_SHOT_STYLE, description="运镜风格设定")
+    llm_model: str = Field(DEFAULT_LLM_MODEL, description="选用的多模态语言大模型")
+    image_model: str = Field(DEFAULT_IMAGE_MODEL, description="选用的文生图大模型")
+    video_model: str = Field(DEFAULT_VIDEO_MODEL, description="选用的视频生成大模型")
+    tts_model: str = Field(DEFAULT_TTS_MODEL, description="选用的语音配音大模型")
     video_reference_mode: StoredVideoReferenceMode = Field(
         "auto", description="运镜视频的参考输入模式；响应兼容历史 first_frame 项目"
     )
+    narration_delivery: Literal["use_tts", "post_production"] = Field("use_tts", description="旁白交付方式")
+    creation_mode: Literal["drama", "narration", "ad"] = Field("drama", description="创作类型")
+    ad_brief: Optional[dict] = Field(None, description="广告短片的产品简报")
+    content_language: Literal["zh", "en", "vi"] = Field("zh", description="剧本内容语言")
     one_click: bool = Field(False, description="是否一键成片模式")
-    episode_count: int = Field(3, description="一次性生成的剧本集数 (1-150)，视频按集逐集制作", ge=1, le=150)
+    episode_count: int = Field(
+        DEFAULT_EPISODE_COUNT,
+        description=f"一次性生成的剧本集数 ({EPISODE_COUNT_MIN}-{EPISODE_COUNT_MAX})，视频按集逐集制作",
+        ge=EPISODE_COUNT_MIN,
+        le=EPISODE_COUNT_MAX,
+    )
     script_content: Optional[str] = Field(None, description="手动上传的剧本文件内容")
     script_name: Optional[str] = Field(None, description="手动上传的剧本文件名")
 

@@ -72,10 +72,10 @@ describe('PosePanel', () => {
     ]);
   });
 
-  it('applies one of twenty presets as a single set_pose and warns that limbs reach the prompt', async () => {
+  it('applies one of twenty-five presets as a single set_pose and warns that limbs reach the prompt', async () => {
     render(panel(withActor({ figure: 'mannequin' })));
     const presets = within(screen.getByRole('group', { name: '预设姿势' })).getAllByRole('button');
-    expect(presets).toHaveLength(20);
+    expect(presets).toHaveLength(25);
     expect(screen.getByRole('note').textContent).toContain('白模带四肢');
 
     await userEvent.click(screen.getByRole('button', { name: '单膝跪' }));

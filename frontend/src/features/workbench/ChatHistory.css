@@ -11,7 +11,7 @@
 .chat-history__latest {
   position: absolute; bottom: 0.75rem; left: 50%; transform: translateX(-50%);
   background: var(--bg-popover); color: var(--neon-cyan); border-color: var(--border-active);
-  white-space: nowrap; box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.2);
+  white-space: nowrap; box-shadow: 0 0.25rem 0.75rem rgba(60, 30, 40, 0.11);
 }
 .chat-sidebar__composer {
   flex: 0 0 auto; min-width: 0; padding: 1rem; border-top: 1px solid var(--border-color);

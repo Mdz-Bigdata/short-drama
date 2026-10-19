@@ -8,24 +8,29 @@ import { planResponse } from '../spatial/spatialFixtures';
 import type { StagePlan } from '../spatial/spatialTypes';
 import { applyAll } from './deskOperations';
 import { DirectorDesk } from './DirectorDesk';
+import type { CompareRendererProps } from './three/CompareRenderer';
 import type { DeskViewportProps } from './three/DeskViewport';
 import type { LensViewportProps } from './three/LensViewport';
 
 // The viewports are the three.js boundary. The stand-ins expose what the desk hands them and let
 // a test play the part of the gizmo: preview while "dragging", one commit on release.
 vi.mock('./three/DeskViewport', () => ({
-  default: function MockDeskViewport({ plan, tool, readOnly, onPreview, onCommit, onSelect, onReady }: DeskViewportProps) {
+  default: function MockDeskViewport({ plan, tool, readOnly, actorPaths, pathTarget, pathRefusal, onPreview, onCommit, onSelect, onPath, onReady }: DeskViewportProps) {
     useEffect(() => {
       onReady?.({ viewPose: () => ({ position: [4, 3, 6], target: [0.6, 1, -0.4] }) });
       return () => onReady?.(null);
     }, [onReady]);
     const drag = [{ op: 'move_actor', name: '林夏', position: [0.5, 1] }];
     return (
-      <div data-testid="desk-viewport" data-tool={tool} data-readonly={String(readOnly)}>
+      <div data-testid="desk-viewport" data-tool={tool} data-readonly={String(readOnly)} data-path-target={pathTarget ? JSON.stringify(pathTarget) : ''} data-path-refusal={pathRefusal}>
         {plan.actors.map(actor => <span key={actor.id} data-testid={`actor-${actor.name}`}>{actor.position.join(',')}</span>)}
+        {actorPaths?.map(path => <span key={path.name} data-testid={`track-${path.name}`}>{path.points.map(point => point.join(',')).join(';')}</span>)}
         <button type="button" onClick={() => onSelect({ kind: 'actor', name: '林夏' }, false)}>pick 林夏</button>
+        <button type="button" onClick={() => onSelect({ kind: 'camera', id: 'cam-01' }, false)}>pick cam-01</button>
+        <button type="button" onClick={() => onSelect({ kind: 'camera', id: 'cam-02' }, false)}>pick cam-02</button>
         <button type="button" onClick={() => onPreview(drag)}>drag</button>
         <button type="button" onClick={() => onCommit(drag)}>release</button>
+        <button type="button" onClick={() => onPath?.([[-1.3, 0], [0, 1], [1.2, 1.1]])}>stroke</button>
       </div>
     );
   },
@@ -40,6 +45,17 @@ vi.mock('./three/LensViewport', () => ({
         {overlay}
       </div>
     );
+  },
+}));
+
+// The comparison canvas is three.js too; the stand-in hands over a renderer that draws nothing.
+vi.mock('./three/CompareRenderer', () => ({
+  default: function MockCompareRenderer({ onReady }: CompareRendererProps) {
+    useEffect(() => {
+      onReady?.({ renderThumbnails: () => Promise.resolve({}), cancel: () => {} });
+      return () => onReady?.(null);
+    }, [onReady]);
+    return null;
   },
 }));
 
@@ -124,7 +140,7 @@ describe('DirectorDesk', () => {
 
   it('poses from the pose tool: the panel comes with it, figure and pose are one PATCH each, and undo restores them', async () => {
     await open();
-    fireEvent.keyDown(window, { key: 'p' });
+    fireEvent.keyDown(window, { key: 'j' });
     expect(screen.getByTestId('desk-viewport').getAttribute('data-tool')).toBe('pose');
     expect(screen.getByRole('tab', { name: '姿势' }).getAttribute('aria-selected')).toBe('true');
     await userEvent.click(screen.getByRole('button', { name: 'pick 林夏' }));
@@ -486,10 +502,113 @@ describe('DirectorDesk', () => {
     await userEvent.click(screen.getByRole('button', { name: '快捷键' }));
     const card = screen.getByRole('dialog', { name: '快捷键' });
     expect(within(card).getAllByRole('term').map(item => item.textContent)).toEqual([
-      'V', 'W', 'E', 'R', 'M', 'P', '1 / 2 / 3', '空格', 'Delete', 'Ctrl / ⌘ + Z', 'Ctrl / ⌘ + Shift + Z', 'Esc',
+      'V', 'W', 'E', 'R', 'M', 'J', 'P', '1 / 2 / 3', '4', '空格', 'Delete', 'Ctrl / ⌘ + Z', 'Ctrl / ⌘ + Shift + Z', 'Esc',
     ]);
     await userEvent.click(within(card).getByRole('button', { name: '知道了' }));
     expect(screen.queryByRole('dialog', { name: '快捷键' })).toBeNull();
+  });
+
+  describe('path tool', () => {
+    const ROUTE = [[-1.3, 0], [0, 1], [1.2, 1.1]];
+    const pathButton = () => screen.getByRole('radio', { name: /路径/ });
+
+    it('is offered for an actor, not for a crowd, and sends the stroke alone as set_path', async () => {
+      const base = planResponse().plan;
+      stage = {
+        ...base,
+        crowds: [{ id: 'crowd-01', label: '围观', rows: 1, columns: 2, spacing: 1, center: [4, 4], yaw_deg: 0, body_type: 'standard', seed: 7 }],
+        actors: [
+          ...base.actors,
+          { ...base.actors[2], id: 'crowd-01-001', name: '围观-01', position: [3.5, 4], role: 'crowd', crowd_id: 'crowd-01' },
+          { ...base.actors[2], id: 'crowd-01-002', name: '围观-02', position: [4.5, 4], role: 'crowd', crowd_id: 'crowd-01' },
+        ],
+      };
+      await open();
+      const viewport = screen.getByTestId('desk-viewport');
+      // Nothing selected: the button is out, and the shortcut says why instead of switching.
+      expect(pathButton()).toHaveProperty('disabled', true);
+      fireEvent.keyDown(window, { key: 'p' });
+      expect(viewport.getAttribute('data-tool')).toBe('select');
+      expect(screen.getByText(/手绘路径：先选择一个角色/)).toBeTruthy();
+
+      await userEvent.click(within(screen.getByRole('region', { name: '群演' })).getByRole('button', { name: /^围观/ }));
+      expect(pathButton()).toHaveProperty('disabled', true);
+      expect(pathButton().getAttribute('title')).toContain('群演');
+      expect(viewport.getAttribute('data-path-refusal')).toContain('群演');
+
+      await userEvent.click(screen.getByRole('button', { name: 'pick 林夏' }));
+      expect(pathButton()).toHaveProperty('disabled', false);
+      fireEvent.keyDown(window, { key: 'p' });
+      expect(viewport.getAttribute('data-tool')).toBe('path');
+      expect(viewport.getAttribute('data-path-target')).toBe(JSON.stringify({ kind: 'actor', name: '林夏' }));
+
+      await userEvent.click(screen.getByRole('button', { name: 'stroke' }));
+      await waitFor(() => expect(patches()).toHaveLength(1));
+      expect(patches()[0]).toEqual({ baseRevision: 3, solve: false, operations: [{ op: 'set_path', shot_id: 1, target: '林夏', points: ROUTE }] });
+      // The route is keyed by the server, so the desk takes its answer rather than applying anything itself.
+      expect(await screen.findByText(/已保存 · 第 4 版/)).toBeTruthy();
+    });
+
+    it('takes the filming camera, aimed at its first subject, but not another shot’s lens', async () => {
+      await open();
+      const viewport = screen.getByTestId('desk-viewport');
+      await userEvent.click(screen.getByRole('button', { name: 'pick cam-02' }));
+      expect(pathButton()).toHaveProperty('disabled', true);
+      expect(pathButton().getAttribute('title')).toContain('不拍摄本镜');
+
+      await userEvent.click(screen.getByRole('button', { name: 'pick cam-01' }));
+      await userEvent.click(pathButton());
+      expect(viewport.getAttribute('data-tool')).toBe('path');
+      expect(viewport.getAttribute('data-path-target')).toBe(JSON.stringify({ kind: 'camera', id: 'cam-01', lookAt: '林夏' }));
+      await userEvent.click(screen.getByRole('button', { name: 'stroke' }));
+      await waitFor(() => expect(patches()).toHaveLength(1));
+      expect(patches()[0].operations).toEqual([{ op: 'set_path', shot_id: 1, target: 'camera', points: ROUTE, look_at: '林夏' }]);
+    });
+
+    it('hands every moving actor track of the shot to the director view', async () => {
+      stage = { ...stage, timelines: { 1: { duration_s: 5, fps: 24, camera: [], actors: { 林夏: [{ time: 0, position: [-1.3, 0], easing: 'linear' }, { time: 2, position: [0.7, 0], easing: 'linear' }] as never } } } };
+      await open();
+      expect(screen.getByTestId('track-林夏').textContent).toBe('-1.3,0,0;0.7,0,0');
+      await userEvent.selectOptions(screen.getByLabelText('镜头'), '2');
+      expect(screen.queryByTestId('track-林夏')).toBeNull();
+    });
+  });
+
+  it('opens the camera comparison over the stage with 4 and promotes a candidate from it', async () => {
+    const base = planResponse().plan;
+    stage = {
+      ...base,
+      cameras: [...base.cameras, { ...base.cameras[0], id: 'alt-01-01', label: '01 建立 · 候选1', lens_mm: 50 }],
+      shots: [{ ...base.shots[0], alt_camera_ids: ['alt-01-01'] }, base.shots[1]],
+    };
+    await open();
+    expect(screen.queryByRole('region', { name: '机位对比' })).toBeNull();
+    fireEvent.keyDown(window, { key: '4' });
+    const strip = await screen.findByRole('region', { name: '机位对比' });
+    expect(screen.getByRole('button', { name: '机位对比' }).getAttribute('aria-pressed')).toBe('true');
+    // The strip sits over the stage, so both views and the side panel are still there.
+    expect(screen.getByTestId('desk-viewport')).toBeTruthy();
+    expect(screen.getByTestId('lens-viewport')).toBeTruthy();
+    const cards = within(strip).getAllByRole('listitem');
+    expect(cards.map(card => card.querySelector('strong')?.textContent)).toEqual(['01 建立', '01 建立 · 候选1']);
+
+    // 选中 hands the lens to the desk: the inspector follows it.
+    await userEvent.click(within(cards[1]).getByRole('button', { name: /^选中/ }));
+    expect(screen.getByRole('contentinfo').textContent).toContain('已选：alt-01-01');
+    expect(screen.getByRole('tab', { name: '属性' }).getAttribute('aria-selected')).toBe('true');
+
+    await userEvent.click(within(cards[1]).getByRole('button', { name: /使用此机位/ }));
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    expect(patches()[0].operations).toEqual([{ op: 'use_camera', shot_id: 1, camera_id: 'alt-01-01' }]);
+    // The promoted lens now films, so it moved to the front of the strip.
+    await waitFor(() => expect(within(strip).getAllByRole('listitem').map(card => card.querySelector('strong')?.textContent)).toEqual(['01 建立 · 候选1', '01 建立']));
+
+    await userEvent.click(screen.getByRole('button', { name: '关闭机位对比' }));
+    expect(screen.queryByRole('region', { name: '机位对比' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: '机位对比' }));
+    expect(screen.getByRole('region', { name: '机位对比' })).toBeTruthy();
+    fireEvent.keyDown(window, { key: '4' });
+    expect(screen.queryByRole('region', { name: '机位对比' })).toBeNull();
   });
 
   describe('timeline', () => {

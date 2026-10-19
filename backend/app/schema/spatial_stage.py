@@ -57,6 +57,27 @@ class SpatialImportRequest(DramaBaseSchema):
     document: dict[str, Any] = Field(..., description="3D 导演台工程（version 1）或 CoStage 文档（version 2）")
 
 
+class SpatialRepair(DramaBaseSchema):
+    code: str = Field(..., max_length=80)
+    label: str = Field(..., max_length=40)
+    detail: str = Field("", max_length=2000)
+    shot_ids: list[int] = Field(default_factory=list, max_length=200)
+    operations: list[dict[str, Any]] = Field(default_factory=list, max_length=100, description="清除该项检查要提交的操作")
+    manual: str = Field("", max_length=2000, description="无法自动修正时，需要人决定的事")
+    automatic: bool = False
+
+
+class SpatialRepairsResponse(DramaBaseSchema):
+    schema_version: Literal["spatial-stage.v1"] = "spatial-stage.v1"
+    task_id: str = Field(..., min_length=1, max_length=120)
+    scene_id: str = Field(..., max_length=80)
+    revision: int = Field(0, ge=0, description="提案所依据的 plan.revision；提交时作为 base_revision")
+    repairs: list[SpatialRepair] = Field(default_factory=list, max_length=40)
+    operations: list[dict[str, Any]] = Field(default_factory=list, max_length=100, description="全部自动修正去重后的操作，按序提交即可")
+    automatic: int = Field(0, ge=0)
+    manual: int = Field(0, ge=0)
+
+
 class SpatialExportResponse(DramaBaseSchema):
     task_id: str = Field(..., min_length=1, max_length=120)
     scene_id: str = Field(..., max_length=80)

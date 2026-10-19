@@ -26,7 +26,8 @@ import re
 import tempfile
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
+
+from app import settings
 from typing import Callable, Literal
 
 from pydantic import BaseModel, Field
@@ -35,7 +36,7 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger("app.core.knowledge_evolution")
 
 SKILL_NAME = "production-knowledge-master"
-SKILL_ROOT = Path(__file__).resolve().parents[2] / "skills" / SKILL_NAME
+SKILL_ROOT = settings.skills_root() / SKILL_NAME
 
 # 教训库与审计日志固定在技能包 learned/ 内；不提供外部路径入参。
 LESSONS_PATH = SKILL_ROOT / "learned" / "lessons.jsonl"

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "sections": [
+    {
+      "key": "continuity-design",
+      "title": "AI短剧连续性设计指南",
+      "file": "references/continuity-design.md",
+      "budget": 5000,
+      "stages": [
+        2,
+        4
+      ]
+    }
+  ]
+}

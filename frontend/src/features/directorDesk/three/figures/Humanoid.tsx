@@ -59,7 +59,7 @@ function release() {
   if (users <= 0 && loaded) free(loaded);
 }
 
-const WHITE = '#e9edf2';
+const WHITE = '#31262b';
 
 export function Humanoid({ actor, subject, selected, labelled, onPick }: Props) {
   const invalidate = useThree(state => state.invalidate);
@@ -127,7 +127,7 @@ export function Humanoid({ actor, subject, selected, labelled, onPick }: Props) 
     <group position={[actor.position[0], 0, actor.position[1]]} rotation={[0, (actor.yaw_deg * Math.PI) / 180, 0]} onClick={onPick}>
       <meshStandardMaterial
         ref={setMaterial} color={actor.color ? actorColor(actor) : WHITE} roughness={0.6}
-        emissive={selected ? SELECTION_COLOR : subject ? actorColor(actor) : '#000000'} emissiveIntensity={selected ? 0.35 : subject ? 0.18 : 0}
+        emissive={selected ? SELECTION_COLOR : subject ? actorColor(actor) : '#fcebee'} emissiveIntensity={selected ? 0.35 : subject ? 0.18 : 0}
       />
       <primitive object={figure.scene} position={[0, -source.floor * scale, 0]} scale={scale} />
       <mesh position={[0, top / 2, 0]} userData={{ [HELPER_FLAG]: true }}>

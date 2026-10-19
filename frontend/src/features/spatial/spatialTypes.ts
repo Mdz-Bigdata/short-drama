@@ -219,6 +219,32 @@ export interface SpatialPlanResponse {
 
 export type StageOperation = { op: string } & Record<string, unknown>;
 
+/** What would put one failing check right. `operations` stay stage operations, so an ordinary PATCH applies them. */
+export interface SpatialRepair {
+  code: string;
+  label: string;
+  detail: string;
+  shotIds: number[];
+  operations: StageOperation[];
+  /** Filled in when `automatic` is false: what the person has to decide. */
+  manual: string;
+  automatic: boolean;
+}
+
+export interface SpatialRepairsResponse {
+  schemaVersion: string;
+  taskId: string;
+  sceneId: string;
+  /** The plan revision these repairs were worked out on. */
+  revision: number;
+  /** One per failing check, in `plan.checks` order. */
+  repairs: SpatialRepair[];
+  /** Every automatic operation, de-duplicated and in order: what「一键修正」sends. */
+  operations: StageOperation[];
+  automatic: number;
+  manual: number;
+}
+
 export const FUNCTION_LABELS: Record<ShotFunction, string> = {
   establish: '建立', relation: '关系', single: '单人', over_shoulder: '过肩',
   reaction: '反应', detail: '细节', empty: '空镜',

@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, UsersRound } from 'lucide-react';
 
 import { PromptFields } from './PromptPrimitives';
 import type { PromptValue } from './storyboardPromptTypes';
+import { t } from '../../i18n';
 
 export function PromptCharacters({ characters }: { characters: Array<Record<string, PromptValue>> }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -30,11 +31,11 @@ export function PromptCharacters({ characters }: { characters: Array<Record<stri
   return (
     <div className="prompt-detail__subgroup prompt-characters" ref={containerRef}>
       <div className="prompt-characters__heading">
-        <h3><UsersRound aria-hidden="true" />出场角色</h3>
+        <h3><UsersRound aria-hidden="true" />{t('出场角色')}</h3>
         <span>{characters.length} 位角色</span>
       </div>
       {characters.length === 0 ? (
-        <p className="prompt-detail__muted">当前镜头未注明出场角色。</p>
+        <p className="prompt-detail__muted">{t('当前镜头未注明出场角色。')}</p>
       ) : (
         <>
           <div id={listId} className="prompt-characters__grid" data-columns={Math.min(pageSize, visibleCharacters.length)}>
@@ -49,13 +50,13 @@ export function PromptCharacters({ characters }: { characters: Array<Record<stri
             })}
           </div>
           {pageCount > 1 && (
-            <nav className="prompt-characters__pagination" aria-label="出场角色分页">
+            <nav className="prompt-characters__pagination" aria-label={t('出场角色分页')}>
               <button type="button" disabled={page === 0} aria-controls={listId} onClick={() => setAnchorIndex((page - 1) * pageSize)}>
-                <ChevronLeft aria-hidden="true" />上一页
+                <ChevronLeft aria-hidden="true" />{t('上一页')}
               </button>
               <span role="status" aria-live="polite">第 {page + 1} / {pageCount} 页 · 角色 {start + 1}–{Math.min(start + pageSize, characters.length)}</span>
               <button type="button" disabled={page === pageCount - 1} aria-controls={listId} onClick={() => setAnchorIndex((page + 1) * pageSize)}>
-                下一页<ChevronRight aria-hidden="true" />
+                {t('下一页')}<ChevronRight aria-hidden="true" />
               </button>
             </nav>
           )}

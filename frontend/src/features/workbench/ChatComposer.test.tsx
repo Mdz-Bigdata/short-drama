@@ -12,12 +12,12 @@ function Harness({ busy = false, onSend = vi.fn() }: { busy?: boolean; onSend?: 
 afterEach(cleanup);
 
 describe('slash command composer', () => {
-  it('opens all eight commands for slash without sending the slash itself', async () => {
+  it('opens every command for slash without sending the slash itself', async () => {
     const onSend = vi.fn();
     const user = userEvent.setup();
     render(<Harness onSend={onSend} />);
     await user.type(screen.getByRole('textbox'), '/');
-    expect(screen.getAllByRole('option')).toHaveLength(8);
+    expect(screen.getAllByRole('option')).toHaveLength(11);
     expect(screen.getByRole('combobox').getAttribute('aria-expanded')).toBe('true');
     await user.keyboard('{Enter}');
     expect(onSend).not.toHaveBeenCalled();

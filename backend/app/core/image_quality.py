@@ -11,6 +11,9 @@ from pydantic import BaseModel
 from app.core.actor_sheet_layout import (
     ACTOR_SHEET_CELL_ORDER,
     FULL_BODY_CELLS,
+    REQUIRED_CELLS,
+    actor_sheet_cell_key,
+    actor_sheet_cell_paths,
 )
 from app.schema.production import IDENTITY_VIEW_ORDER
 
@@ -24,7 +27,7 @@ class ImageQualityIssue(BaseModel):
 class FiveViewQualityReport(BaseModel):
     """两代质检共用的报告。
 
-    ``entropy`` 每个被检查的格子一项（旧五视图 5 项、设定集 25 项），
+    ``entropy`` 每个被检查的格子一项（旧五视图 5 项、设定集按实际格子数），
     ``unique_view_hashes`` 是五个身份锚点里互不相同的角度数。
     形状保持不变，drama_service 落库、看板编译、资产库复用都不用改读法。
     """
@@ -92,9 +95,11 @@ def _is_near_uniform(image: Image.Image) -> bool:
 
 
 def validate_actor_sheet_images(paths: list[str | Path]) -> FiveViewQualityReport:
-    """数字演员设定集 25 格的逐格质检。
+    """数字演员设定集的逐格质检。
 
-    ``paths`` 必须是 ``split_actor_sheet`` 的返回值，顺序即 ACTOR_SHEET_CELL_ORDER。
+    ``paths`` 是 ``split_actor_sheet`` 的返回值：文件名 ``NN_<key>.png`` 标明每张是哪一格。
+    认不出文件名时(旧调用方)按 ACTOR_SHEET_CELL_ORDER 的位置对应，此时必须恰好给齐全部格子。
+    元素拆解和细节矩阵按模型真实画出的格子数落库，所以只强制要求七个身份必需格。
 
     四道闸：
     1. 逐格空白/纯色检查——模型没画满网格时，裁出来的就是一片底色；
@@ -102,21 +107,32 @@ def validate_actor_sheet_images(paths: list[str | Path]) -> FiveViewQualityRepor
     3. 正面/侧面/背面三张全身必须两两不同，否则根本没转面；
     4. 左区大正面与正脸特写不能是同一张裁切，否则细节矩阵没真的画出来。
     """
-    expected = len(ACTOR_SHEET_CELL_ORDER)
-    if len(paths) != expected:
+    named = [actor_sheet_cell_key(Path(path)) for path in paths]
+    if all(named) and len(set(named)) == len(named):
+        by_cell = actor_sheet_cell_paths(list(paths))
+    elif len(paths) == len(ACTOR_SHEET_CELL_ORDER):
+        by_cell = dict(zip(ACTOR_SHEET_CELL_ORDER, paths))
+    else:
+        by_cell = {}
+    cells = list(by_cell)
+    paths = list(by_cell.values())
+    missing = [cell for cell in REQUIRED_CELLS if cell not in cells]
+    if missing:
         return FiveViewQualityReport(
             passed=False,
             entropy=[],
             palette_similarity=0,
             unique_view_hashes=0,
             issues=[ImageQualityIssue(
-                code="cell_count", message=f"设定集必须恰好提供{expected}个格子。",
+                code="cell_count",
+                message=f"设定集缺少必需格子：{'、'.join(missing)}。",
             )],
         )
     images: dict[str, Image.Image] = {}
     issues: list[ImageQualityIssue] = []
     entropies: list[float] = []
-    for index, (cell, path) in enumerate(zip(ACTOR_SHEET_CELL_ORDER, paths), start=1):
+    for cell, path in zip(cells, paths):
+        index = ACTOR_SHEET_CELL_ORDER.index(cell) + 1
         try:
             image = Image.open(Path(path)).convert("RGB")
             image.load()
@@ -135,7 +151,7 @@ def validate_actor_sheet_images(paths: list[str | Path]) -> FiveViewQualityRepor
             issues.append(ImageQualityIssue(
                 code="blank_cell", message="格子疑似空白或纯色，模型未在该格作画。", view_index=index,
             ))
-    if len(images) != expected:
+    if len(images) != len(cells):
         return FiveViewQualityReport(
             passed=False, entropy=entropies, palette_similarity=0,
             unique_view_hashes=0, issues=issues,

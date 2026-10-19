@@ -11,6 +11,7 @@ import re
 import unittest
 from typing import Any, Dict, List
 
+from app.core.episode_shape import EpisodeShape
 from app.core.screenwriting import anchors, editing, entries, models, prose, renderer, speech_rate, text_metrics, violations
 from app.core.screenwriting.engine import PlanRejected, ScreenwritingEngine, ScreenwritingError, detect_source_kind
 from app.core.screenwriting.structured_llm import RETRY_HEADER, extract_json_object
@@ -85,6 +86,7 @@ class FakeModel:
                                "周教授": {"description": "花白头发，金丝眼镜", "voice_style": "低沉", "position": "反派"}},
                 "scenes": {"地下实验室": {"description": "冷白灯光的地下空间"}},
                 "props": {"录音笔": {"description": "银色录音笔"}},
+                "relationships": [{"from": "周教授", "to": "林夏", "relation": "亦师亦友", "bidirectional": True}],
             }, ensure_ascii=False)
         if "分集大纲" in user_prompt and "episodes 数组长度必须等于" in user_prompt:
             first, last = map(int, re.search(r"对应第 (\d+) 集到第 (\d+) 集|对应第 (\d+) 集", user_prompt).groups(default="0")[:2]) if "集到第" in user_prompt else (0, 0)
@@ -125,8 +127,16 @@ class FakeModel:
         raise AssertionError(f"unexpected prompt: {user_prompt[:120]}")
 
 
+# These cases drive the engine with episodes of one or two six-second shots, so each
+# exercises a single behaviour; the minimum size of a real episode has its own tests.
+MINIATURE_EPISODES = EpisodeShape(min_scenes=1, min_seconds=1)
+
+
 def _engine(model: FakeModel, **overrides) -> ScreenwritingEngine:
-    params = dict(video_model="seedance2.0", attempts=3, system_prompt="SYS", style="写实电影感")
+    params = dict(
+        video_model="seedance2.0", attempts=3, system_prompt="SYS", style="写实电影感",
+        episode_shape=MINIATURE_EPISODES,
+    )
     params.update(overrides)
     return ScreenwritingEngine(model, **params)
 
@@ -165,10 +175,12 @@ class OutlineModeTests(unittest.TestCase):
         self.assertIn("下集标题：第2集标题", prompts[1])
         self.assertNotIn("<next_episode_outline>", plan_prompt)
         # seedance2.0 renders at most 15s per clip, so the legal set is 4..15.
-        self.assertIn("4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15", plan_prompt)
+        # seedance2.0 plans 5-15 s shots (the preferred range), not everything it can render.
+        self.assertIn("5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15", plan_prompt)
+        self.assertNotIn("4, 5, 6", plan_prompt)
         self.assertIn("最长 15 秒", plan_prompt)
         self.assertIn("开篇", plan_prompt)  # pacing rules injected
-        self.assertIn('"enum":[4,5,6,7,8,9,10,11,12,13,14,15]', plan_prompt)
+        self.assertIn('"enum":[5,6,7,8,9,10,11,12,13,14,15]', plan_prompt)
         self.assertTrue(all(call["system"] == "SYS" for call in model.calls))
 
     def test_rendered_screenplay_is_prose_under_episode_headings(self):
@@ -237,8 +249,8 @@ class OutlineModeTests(unittest.TestCase):
 class SpeechDurationTests(unittest.TestCase):
     def test_duration_is_raised_to_the_smallest_tier_that_fits_the_dialogue(self):
         model = FakeModel()
-        long_line = "这" * 30  # 30 字 / 5 字每秒 = 6 秒 > 4 秒
-        model.plan_overrides[1] = lambda attempt, prompt: json.dumps({"title": "t", "scenes": [_scene(1, 1, text=long_line, duration=4)]}, ensure_ascii=False)
+        long_line = "这" * 30  # 30 字 / 5 字每秒 = 6 秒 > 5 秒
+        model.plan_overrides[1] = lambda attempt, prompt: json.dumps({"title": "t", "scenes": [_scene(1, 1, text=long_line, duration=5)]}, ensure_ascii=False)
         state = _engine(model).write(title="暗室回声", director_plan="大纲", episode_count=1)
 
         scene = state["episodes"]["1"]["script"]["scenes"][0]

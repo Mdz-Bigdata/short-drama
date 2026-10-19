@@ -9,6 +9,13 @@ from pathlib import Path
 from PIL import Image, UnidentifiedImageError
 
 
+MEBIBYTE = 1024 * 1024
+# Largest single file accepted for an element image and for a GLB model. The
+# request guard in request_limits.py allows these plus multipart overhead.
+MAX_IMAGE_UPLOAD_BYTES = 10 * MEBIBYTE
+MAX_MODEL_UPLOAD_BYTES = 25 * MEBIBYTE
+
+
 class UploadValidationError(ValueError):
     pass
 
@@ -141,7 +148,7 @@ def validate_image_upload(
     content_type: str,
     content: bytes,
     *,
-    max_bytes: int = 10 * 1024 * 1024,
+    max_bytes: int = MAX_IMAGE_UPLOAD_BYTES,
 ) -> str:
     if not content or len(content) > max_bytes:
         raise UploadValidationError("图片为空或超过大小限制")
@@ -168,7 +175,7 @@ def validate_glb_upload(
     content_type: str,
     content: bytes,
     *,
-    max_bytes: int = 25 * 1024 * 1024,
+    max_bytes: int = MAX_MODEL_UPLOAD_BYTES,
 ) -> str:
     inspect_glb_upload(filename, content_type, content, max_bytes=max_bytes)
     return "model/gltf-binary"
@@ -179,7 +186,7 @@ def inspect_glb_upload(
     content_type: str,
     content: bytes,
     *,
-    max_bytes: int = 25 * 1024 * 1024,
+    max_bytes: int = MAX_MODEL_UPLOAD_BYTES,
     max_triangles: int = 2_000_000,
     max_nodes: int = 5_000,
     max_materials: int = 256,
@@ -187,7 +194,7 @@ def inspect_glb_upload(
 ) -> dict:
     """Validate and return bounded, server-derived metadata for a glTF 2.0 binary."""
     if not content or len(content) > max_bytes:
-        raise UploadValidationError("3D 模型为空或超过 25 MB 大小限制")
+        raise UploadValidationError(f"3D 模型为空或超过 {MAX_MODEL_UPLOAD_BYTES // MEBIBYTE} MB 大小限制")
     if Path(filename or "").suffix.lower() != ".glb":
         raise UploadValidationError("3D 资产仅支持自包含的 GLB 文件")
     declared = (content_type or "").split(";", 1)[0].strip().lower()

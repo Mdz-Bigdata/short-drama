@@ -167,6 +167,39 @@ class ShotVisualWorkspaceTests(unittest.TestCase):
         self.assertEqual(stored["current_stage"], 5)
         self.assertEqual(stored["status"], "completed")
 
+    def test_a_hand_edited_video_prompt_is_kept_and_can_be_cleared(self):
+        edited = "【人物锚点·锁脸】@[沈砚]。\n景别：中景；运镜：缓慢推近\n画面：@[沈砚]推开@[天牢]的铁门。"
+        with patch.object(drama_api, "service", self.service):
+            saved = self.client.put("/api/drama/visual-task/shots/1/video-prompt", json={"prompt": edited})
+            self.assertEqual(saved.status_code, 200, saved.text)
+            shot = saved.json()["shots"][0]
+            self.assertEqual(shot["video_prompt"], edited)
+            self.assertTrue(shot["video_prompt_edited"])
+            self.assertTrue(shot["stale"])
+            self.assertIn("人工修改", shot["stale_reason"])
+            self.assertEqual(self.repo.get_task("visual-task")["assets"]["4"][0]["video_prompt_override"], edited)
+
+            cleared = self.client.put("/api/drama/visual-task/shots/1/video-prompt", json={"prompt": ""})
+            self.assertEqual(cleared.status_code, 200, cleared.text)
+            shot = cleared.json()["shots"][0]
+            self.assertEqual(shot["video_prompt"], "【批次 1】…")
+            self.assertFalse(shot["video_prompt_edited"])
+            self.assertNotIn("video_prompt_override", self.repo.get_task("visual-task")["assets"]["4"][0])
+
+            missing = self.client.put("/api/drama/visual-task/shots/9/video-prompt", json={"prompt": "x"})
+        self.assertEqual(missing.status_code, 422)
+
+    def test_project_characters_are_known_mentions_before_any_clip_exists(self):
+        task = self.repo.get_task("visual-task")
+        task["assets"]["3_characters"] = [{"name": "沈砚"}]
+        task["assets"]["5"][0]["mention_kinds"] = {"天牢": "scene"}
+        task["assets"]["5"][0]["reference_numbers"] = {"沈砚": 1, "天牢": 2}
+        self.repo.save_task("visual-task", task)
+        with patch.object(drama_api, "service", self.service):
+            shot = self.client.get("/api/drama/visual-task/shots/visual").json()["shots"][0]
+        self.assertEqual(shot["mention_kinds"], {"沈砚": "actor", "天牢": "scene"})
+        self.assertEqual(shot["reference_numbers"], {"沈砚": 1, "天牢": 2})
+
     def test_edits_are_refused_while_a_stage_is_running(self):
         task = self.repo.get_task("visual-task")
         task["status"] = "running"

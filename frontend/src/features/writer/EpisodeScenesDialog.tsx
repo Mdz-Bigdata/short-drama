@@ -3,6 +3,7 @@ import { Clapperboard, X } from 'lucide-react';
 
 import { ScriptOutline } from './ScriptOutline';
 import { sceneEpisode, type WriterScene } from './types';
+import { t } from '../../i18n';
 
 export function EpisodeScenesDialog({
   episodeNumber,
@@ -40,13 +41,13 @@ export function EpisodeScenesDialog({
             <small>EPISODE SCENES</small>
             <h2><Clapperboard aria-hidden="true" /> 第 {episodeNumber} 集 · {episodeScenes.length} 个场景</h2>
           </div>
-          <button type="button" aria-label="关闭场景明细" onClick={onClose}><X aria-hidden="true" /></button>
+          <button type="button" aria-label={t('关闭场景明细')} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
         <div className="writer-episode-dialog__scenes">
           {episodeScenes.length ? (
             <ScriptOutline scenes={episodeScenes} />
           ) : (
-            <p className="writer-episode-dialog__empty">该集尚未拆分出场景，完成剧本结构化后即可查看。</p>
+            <p className="writer-episode-dialog__empty">{t('该集尚未拆分出场景，完成剧本结构化后即可查看。')}</p>
           )}
         </div>
       </section>

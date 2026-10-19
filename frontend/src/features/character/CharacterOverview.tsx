@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 
 import type { CharacterDashboardResponse, CharacterViewDefinition } from './types';
+import { t } from '../../i18n';
 
 export type CharacterOverviewDetail = {
   title: string;
@@ -51,7 +52,7 @@ export function CharacterOverview({
   });
 
   return (
-    <section className="character-designer__overview" aria-label="角色资产概览">
+    <section className="character-designer__overview" aria-label={t('角色资产概览')}>
       <div className="character-designer__stat">
         <UsersRound size={18} aria-hidden="true" />
         <div>
@@ -67,7 +68,7 @@ export function CharacterOverview({
           >
             {dashboard.stats.characterCount}
           </button>
-          <span>角色总数</span>
+          <span>{t('角色总数')}</span>
         </div>
       </div>
 
@@ -86,14 +87,14 @@ export function CharacterOverview({
           >
             {dashboard.stats.readyCount}
           </button>
-          <span>可交付角色</span>
+          <span>{t('可交付角色')}</span>
         </div>
       </div>
 
       <div className="character-designer__stat">
         <UserRoundPlus size={18} aria-hidden="true" />
         <div>
-          <div className="character-designer__view-totals" aria-label="有效视图数量">
+          <div className="character-designer__view-totals" aria-label={t('有效视图数量')}>
             <button
               type="button"
               className="character-designer__number"
@@ -120,13 +121,13 @@ export function CharacterOverview({
               {dashboard.stats.expectedViewCount}
             </button>
           </div>
-          <span>有效视图</span>
+          <span>{t('有效视图')}</span>
         </div>
       </div>
 
       <div className="character-designer__contract">
-        <span>固定身份视图契约</span>
-        <div className="character-designer__angles" aria-label="身份视图角度详情">
+        <span>{t('固定身份视图契约')}</span>
+        <div className="character-designer__angles" aria-label={t('身份视图角度详情')}>
           {dashboard.viewContract.views.map((definition, index) => (
             <span key={definition.key}>
               <button

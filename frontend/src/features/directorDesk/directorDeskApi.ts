@@ -18,6 +18,8 @@ export interface DeskCapture {
   showsLimbs: boolean;
   monochrome: boolean;
   labelled: boolean;
+  /** A grayscale depth picture: layers, blocking and camera motion only. A depth still cannot be applied. */
+  depth: boolean;
   createdAt: string;
   stale: boolean;
   /** What the server has to say about this capture (a limbed white model needs its motion spelled out). */
@@ -42,6 +44,8 @@ export interface CaptureUpload {
   showsLimbs: boolean;
   monochrome: boolean;
   labelled: boolean;
+  /** Rendered as linear depth (near bright, far dark). Refused on a backdrop. */
+  depth?: boolean;
   /** Clips only. */
   durationS?: number;
   fps?: number;
@@ -99,6 +103,7 @@ export function normalizeCapture(raw: unknown): DeskCapture {
     showsLimbs: Boolean(field(source, 'showsLimbs', 'shows_limbs')),
     monochrome: Boolean(source.monochrome),
     labelled: Boolean(source.labelled),
+    depth: Boolean(source.depth),
     createdAt: String(field(source, 'createdAt', 'created_at') ?? ''),
     stale: Boolean(source.stale),
     warning: String(source.warning ?? ''),
@@ -147,6 +152,8 @@ export function uploadCapture(taskId: string, sceneId: string, upload: CaptureUp
   form.append('shows_limbs', String(upload.showsLimbs));
   form.append('monochrome', String(upload.monochrome));
   form.append('labelled', String(upload.labelled));
+  // A backdrop is a picture of a place, never a depth map; the server refuses the field on one.
+  if (upload.kind !== 'backdrop') form.append('depth', String(Boolean(upload.depth)));
   if (clip) {
     form.append('duration_s', String(upload.durationS));
     form.append('fps', String(upload.fps));

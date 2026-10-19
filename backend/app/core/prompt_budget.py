@@ -30,11 +30,11 @@ DEFAULT_BUDGET = (200, 600)
 UNLIMITED_MODELS = ("sora",)
 
 # Optional sections, first to go → last to go.
-CUT_ORDER: tuple[str, ...] = ("sound", "environment", "light_numbers", "colour", "effects", "dialogue_notes")
+CUT_ORDER: tuple[str, ...] = ("sound", "environment", "light_numbers", "colour", "effects", "contact", "dialogue_notes")
 NEVER_CUT: frozenset[str] = frozenset({"style_lock", "locks", "anchors", "subject", "action", "camera", "dialogue", "rules"})
 # Layers restated verbatim on every prompt: they do not count toward the body budget, the
 # way lock tags do not count toward a picture description's length limit.
-FIXED_SECTIONS: frozenset[str] = frozenset({"style_lock", "anchors", "closing", "rules", "negatives"})
+FIXED_SECTIONS: frozenset[str] = frozenset({"style_lock", "anchor_cast", "anchor_scene", "anchor_props", "anchors", "closing", "rules", "negatives"})
 MAIN_DESCRIPTION_FLOOR = 100
 _NUMBER_NOTE = re.compile(r"[（(][^（）()]*?(?:\d+K|\d+:\d+|\d+\s*mm|ISO\s*\d+|\d+\s*stop)[^（）()]*?[）)]")
 

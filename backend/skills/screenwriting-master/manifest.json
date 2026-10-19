@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "sections": [
+    {
+      "key": "dialogue-pacing",
+      "title": "AI影视剧台词语速情绪提示词总结",
+      "file": "references/dialogue-pacing.md",
+      "budget": 5000,
+      "stages": [
+        2
+      ]
+    },
+    {
+      "key": "golden-narrative",
+      "title": "AI漫剧短剧剧本黄金叙事结构",
+      "file": "references/golden-narrative.md",
+      "budget": 5000,
+      "stages": [
+        1,
+        2
+      ]
+    },
+    {
+      "key": "genre-summary",
+      "title": "短剧题材类型总结",
+      "file": "references/genre-summary.md",
+      "budget": 5000,
+      "stages": [
+        1
+      ]
+    },
+    {
+      "key": "episode-pacing-drama",
+      "title": "episode-pacing-drama.md",
+      "file": "references/episode-pacing-drama.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "episode-pacing-narration",
+      "title": "episode-pacing-narration.md",
+      "file": "references/episode-pacing-narration.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "cinema-craft-redlines",
+      "title": "电影级编剧红线与 S 级三冲击",
+      "file": "references/cinema-craft-redlines.md",
+      "budget": 2500,
+      "stages": [
+        2
+      ]
+    },
+    {
+      "key": "episode-hook-ladder",
+      "title": "前三集钩子阶梯与付费墙卡点",
+      "file": "references/episode-hook-ladder.md",
+      "budget": 2500,
+      "stages": [
+        1,
+        2
+      ]
+    }
+  ]
+}

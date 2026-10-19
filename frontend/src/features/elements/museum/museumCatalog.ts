@@ -40,7 +40,7 @@ export const museumCatalog: MuseumCatalogItem[] = [
     id: "owlZun",
     name: "猫头鹰尊",
     type: "商代青铜酒器",
-    accent: "#5a7a4a",
+    accent: "#91737f",
     defaultOrganelle: "body",
     modelAsset: {
       url: "/museum/models/owl_zun_wine_vessel_13th-12th_century_bce.glb",
@@ -77,21 +77,21 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "body",
         name: "器身",
         subtitle: "鸮形主体",
-        color: "#5a7a4a",
+        color: "#91737f",
         note: "器身呈猫头鹰站立状，昂首挺胸，双翅并拢贴于身侧。鸮在商代被视为神鸟，具有沟通天地的象征意义。"
       },
       {
         id: "lid",
         name: "器盖",
         subtitle: "可拆卸鸮首",
-        color: "#7a9a5a",
+        color: "#826772",
         note: "猫头鹰的头部即为器盖，可以拆卸。盖上装饰有精细的羽毛纹路，展现了商代工匠对自然观察的细致入微。"
       },
       {
         id: "pattern",
         name: "纹饰",
         subtitle: "饕餮与云雷纹",
-        color: "#4a6a3a",
+        color: "#987d88",
         note: "器身遍布繁密的饕餮纹和云雷纹，层次分明。这种复杂的纹饰体系是商代晚期青铜器的典型特征。"
       }
     ]
@@ -144,14 +144,14 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "ears",
         name: "双耳",
         subtitle: "招风巨耳",
-        color: "#4a9a8a",
+        color: "#876a76",
         note: "面具的双耳向两侧极度夸张地展开，呈招风状。这种对眼、耳的强调，可能反映古蜀人对「看见」与「听见」神灵的崇拜。"
       },
       {
         id: "craft",
         name: "铸造工艺",
         subtitle: "古蜀青铜术",
-        color: "#1a5a4a",
+        color: "#fef8f9",
         note: "三星堆青铜器采用分铸法，再以铆接、嵌铸等方式组合，工艺水平极高，说明古蜀拥有独立而成熟的青铜铸造体系。"
       }
     ]
@@ -160,7 +160,7 @@ export const museumCatalog: MuseumCatalogItem[] = [
     id: "shengding",
     name: "青铜鼎",
     type: "春秋礼器",
-    accent: "#6d5a3a",
+    accent: "#987c87",
     defaultOrganelle: "body",
     modelAsset: {
       url: "/museum/models/shengding_food_vessel_around_575_bce.glb",
@@ -197,21 +197,21 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "body",
         name: "鼎身",
         subtitle: "圆腹容器",
-        color: "#6d5a3a",
+        color: "#987c87",
         note: "鼎身为圆形深腹，用于烹煮牛羊等祭品。鼎的大小和数量直接反映拥有者的身份等级。"
       },
       {
         id: "legs",
         name: "三足",
         subtitle: "承重支撑",
-        color: "#8a7a5a",
+        color: "#876a76",
         note: "三足鼎立的结构让鼎可以直接架在火上加热，是最早的「炊具」之一。足部造型从商代的锥足演变为春秋的蹄足。"
       },
       {
         id: "ears",
         name: "双耳",
         subtitle: "提举把手",
-        color: "#5a4a2a",
+        color: "#fef9fa",
         note: "双耳对称立于鼎口两侧，用于穿插横杠搬运。大型鼎重达数百公斤，需要多人协力抬举。"
       }
     ]
@@ -220,7 +220,7 @@ export const museumCatalog: MuseumCatalogItem[] = [
     id: "terracotta",
     name: "兵马俑",
     type: "秦代陶俑",
-    accent: "#8a5a4a",
+    accent: "#8c6e7b",
     defaultOrganelle: "head",
     modelAsset: {
       url: "/museum/models/terracotta_warrior.glb",
@@ -257,21 +257,21 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "head",
         name: "头部",
         subtitle: "千人千面",
-        color: "#8a5a4a",
+        color: "#8c6e7b",
         note: "兵马俑最令人惊叹之处在于，每一尊俑的五官、表情、发型都各不相同。学者认为这些可能是以真实士兵为原型塑造的。"
       },
       {
         id: "armor",
         name: "铠甲",
         subtitle: "军事装备",
-        color: "#7a4a3a",
+        color: "#957884",
         note: "铠甲的样式和精细程度反映了秦军严格的等级制度。将军俑的铠甲最为华丽，普通士兵则相对简朴。"
       },
       {
         id: "hands",
         name: "双手",
         subtitle: "握持兵器",
-        color: "#9a6a5a",
+        color: "#826772",
         note: "俑的双手呈握持状，原本持有真实的青铜兵器。部分出土的青铜剑经过两千多年仍然锋利如新。"
       }
     ]
@@ -331,7 +331,7 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "saddle",
         name: "鞍鞯",
         subtitle: "马具装饰",
-        color: "#7a9a5a",
+        color: "#826772",
         note: "马背上的鞍鞯往往单独施以绿釉，与马身的黄褐釉形成对比。鞍具的华丽程度也反映了主人的身份地位。"
       }
     ]
@@ -384,14 +384,14 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "crown",
         name: "宝冠璎珞",
         subtitle: "装饰系统",
-        color: "#aa8a4a",
+        color: "#826772",
         note: "五叶宝冠、臂钏、璎珞等装饰极为繁复精美，每一处细节都经过工匠精心錾刻，展现了永乐宫廷造像的最高工艺水平。"
       },
       {
         id: "base",
         name: "莲花座",
         subtitle: "仰覆莲台",
-        color: "#6a5a2a",
+        color: "#fefbfc",
         note: "莲花座是佛像的基座，象征佛从污泥中超脱的清净本性。永乐造像的莲瓣饱满有力，尖端略微上翘。"
       }
     ]
@@ -400,7 +400,7 @@ export const museumCatalog: MuseumCatalogItem[] = [
     id: "porcelainVase",
     name: "青花瓷瓶",
     type: "清代瓷器",
-    accent: "#3a5a8a",
+    accent: "#91737f",
     defaultOrganelle: "body",
     modelAsset: {
       url: "/museum/models/baluster_vase_from_a_five-piece_garniture.glb",
@@ -437,21 +437,21 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "body",
         name: "瓶身",
         subtitle: "棒槌瓶形制",
-        color: "#3a5a8a",
+        color: "#91737f",
         note: "此瓶属于五件套陈设瓷之一，棒槌瓶造型挺拔端庄。瓶身通体以钴蓝绘制花卉纹饰，蓝白相映，典雅大方。"
       },
       {
         id: "glaze",
         name: "青花釉色",
         subtitle: "钴蓝与白釉",
-        color: "#2a4a7a",
+        color: "#c96f62",
         note: "钴蓝料在高温下呈现出深沉而稳定的蓝色，配合白色瓷胎，形成鲜明对比。不同产地的钴料呈色各有特点。"
       },
       {
         id: "pattern",
         name: "纹饰",
         subtitle: "缠枝花卉",
-        color: "#4a6a9a",
+        color: "#876a76",
         note: "瓶身纹饰分为多层，以缠枝花卉为主题，辅以如意云头、蕉叶纹等边饰，构图严谨而富有韵律。"
       }
     ]
@@ -460,7 +460,7 @@ export const museumCatalog: MuseumCatalogItem[] = [
     id: "censer",
     name: "青铜瑞兽香炉",
     type: "明清铜炉",
-    accent: "#5a5048",
+    accent: "#fffdfd",
     defaultOrganelle: "beast",
     modelAsset: {
       url: "/museum/models/chinese_censer.glb",
@@ -497,21 +497,21 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "beast",
         name: "炉顶瑞兽",
         subtitle: "狻猊踞顶",
-        color: "#5a5048",
+        color: "#fffdfd",
         note: "炉盖顶端蹲坐的瑞兽是狻猊，传说为龙之第五子，喜烟好坐，因此常被铸于香炉之上。它张口的姿态正好让香烟从口中袅袅升起。"
       },
       {
         id: "lid",
         name: "镂空炉盖",
         subtitle: "出香透烟",
-        color: "#7a6e60",
+        color: "#8a6d79",
         note: "炉盖采用镂空透雕，缠枝卷草的纹样间留出孔隙，焚香时香烟便从镂空处缓缓溢出，形成「香雾缭绕」的意境。"
       },
       {
         id: "legs",
         name: "兽足龙耳",
         subtitle: "三足双耳",
-        color: "#4a4038",
+        color: "#fef9fa",
         note: "香炉的三足作兽首状，两侧的炉耳铸成龙形，整体形制仿照上古青铜鼎，体现了明清文人「仿古慕雅」的审美追求。"
       }
     ]

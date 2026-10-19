@@ -9,6 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
+from app.core.providers.defaults import MINIMAX_API_ROOT
 from app.platform.runtime_models import runtime_model_registry
 from app.schema.minimax_audio import (
     MiniMaxMusicCoverRequest,
@@ -77,7 +78,7 @@ class MiniMaxAudioClient:
             base_url
             or (runtime.base_url if runtime else None)
             or os.getenv("MINIMAX_BASE_URL")
-            or "https://api.minimaxi.com"
+            or MINIMAX_API_ROOT
         )
         self._client = httpx.Client(
             base_url=self._api_root(configured_url),

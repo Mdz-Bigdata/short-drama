@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
+import hmac
 import re
 import secrets
 from collections.abc import Awaitable, Callable
@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
+from app import settings
 from app.core.element_scope import element_in_task, link_task
 from app.core.capability_manifest import capability_command_catalog
 from app.platform.models import (
@@ -34,6 +35,9 @@ from app.platform.models import (
     ProjectSkill,
     RegenerationRequest,
     UserMembership,
+    ModelConfigurationCredential,
+    PlatformSetting,
+    McpToken,
 )
 from app.repository.user_repo import hash_password, verify_password
 from app.schema.production import IDENTITY_VIEW_ORDER, LEGACY_IDENTITY_VIEW_ORDER
@@ -54,7 +58,7 @@ ACTOR_VIEW_SLOT_ORDER = LEGACY_ACTOR_VIEW_SLOTS + tuple(
 def actor_views_complete(slots: set[str]) -> bool:
     """任意一代的整套身份视图齐了，演员就算 ready。"""
     return set(ACTOR_VIEW_SLOTS) <= slots or set(LEGACY_ACTOR_VIEW_SLOTS) <= slots
-ELEMENT_KINDS = {"actor", "prop", "scene", "costume", "effect"}
+ELEMENT_KINDS = {"actor", "prop", "scene", "costume", "effect", "product"}
 PAYMENT_PROVIDERS = {"sandbox", "wechat", "alipay"}
 PROJECT_SKILL_SOURCE_TYPES = {"created", "markdown_upload", "skill_package"}
 MAX_PROJECT_SKILL_BYTES = 128 * 1024
@@ -64,21 +68,13 @@ MAX_DESK_POSES_PER_OWNER = 200
 MAX_DESK_POSE_NAME = 40
 
 
-def _configured_limit(name: str, default: int, *, minimum: int, maximum: int) -> int:
-    try:
-        value = int(os.getenv(name, str(default)))
-    except ValueError:
-        value = default
-    return max(minimum, min(maximum, value))
-
-
-MAX_ELEMENT_ASSETS_PER_OWNER = _configured_limit(
+MAX_ELEMENT_ASSETS_PER_OWNER = settings.env_int(
     "ELEMENT_ASSET_COUNT_QUOTA", 1_000, minimum=10, maximum=100_000
 )
-MAX_ELEMENT_STORAGE_BYTES = _configured_limit(
+MAX_ELEMENT_STORAGE_BYTES = settings.env_int(
     "ELEMENT_STORAGE_QUOTA_BYTES", 5 * 1024**3, minimum=50 * 1024**2, maximum=1024**5
 )
-MAX_GLOBAL_ELEMENT_STORAGE_BYTES = _configured_limit(
+MAX_GLOBAL_ELEMENT_STORAGE_BYTES = settings.env_int(
     "ELEMENT_GLOBAL_STORAGE_QUOTA_BYTES", 20 * 1024**3, minimum=1024**3, maximum=1024**5
 )
 
@@ -219,7 +215,7 @@ class PlatformStore:
         username: str | None = None,
         role: str = "user",
         must_change_password: bool = False,
-        _minimum_password_length: int = 10,
+        _minimum_password_length: int = settings.PASSWORD_MIN_LENGTH,
     ) -> tuple[PlatformUser, bool]:
         clean_email = email.strip().lower() if email else None
         clean_phone = phone.strip() if phone else None
@@ -256,7 +252,7 @@ class PlatformStore:
             return user, True
 
     async def bootstrap_admin(
-        self, password: str, *, login: str = "admin@short-drama"
+        self, password: str, *, login: str
     ) -> tuple[PlatformUser, bool]:
         clean_login = login.strip().lower()
         if "@" not in clean_login or len(clean_login) > 320:
@@ -274,7 +270,7 @@ class PlatformStore:
             username="admin",
             role="admin",
             must_change_password=True,
-            _minimum_password_length=8,
+            _minimum_password_length=settings.BOOTSTRAP_ADMIN_PASSWORD_MIN_LENGTH,
         )
 
     async def verify_login(self, login_id: str, password: str) -> PlatformUser | None:
@@ -330,8 +326,8 @@ class PlatformStore:
             return user
 
     async def change_password(self, user_id: str, current_password: str, new_password: str) -> PlatformUser:
-        if len(new_password) < 10:
-            raise ValueError("新密码至少需要 10 位")
+        if len(new_password) < settings.PASSWORD_MIN_LENGTH:
+            raise ValueError(f"新密码至少需要 {settings.PASSWORD_MIN_LENGTH} 位")
         async with self.sessions() as session:
             user = await session.get(PlatformUser, user_id)
             if not user or not verify_password(current_password, user.password_hash):
@@ -735,6 +731,154 @@ class PlatformStore:
             assert loaded is not None
             return loaded
 
+    # ------------------------------------------------------------ extra credentials
+
+    async def list_model_credentials(self, configuration_id: str | None = None) -> list[ModelConfigurationCredential]:
+        async with self.sessions() as session:
+            query = select(ModelConfigurationCredential).order_by(ModelConfigurationCredential.created_at)
+            if configuration_id:
+                query = query.where(ModelConfigurationCredential.configuration_id == configuration_id)
+            return list((await session.scalars(query)).all())
+
+    async def add_model_credential(
+        self, configuration_id: str, *, actor_id: str, label: str, api_key_ciphertext: str, api_key_hint: str, buckets: list[str],
+    ) -> ModelConfigurationCredential:
+        async with self.sessions() as session:
+            configuration = await session.get(ModelProviderConfiguration, configuration_id)
+            if not configuration:
+                raise ValueError("模型配置不存在")
+            credential = ModelConfigurationCredential(
+                configuration_id=configuration_id, label=label[:80], api_key_ciphertext=api_key_ciphertext,
+                api_key_hint=api_key_hint, buckets=list(buckets), enabled=True, created_by=actor_id,
+            )
+            session.add(credential)
+            session.add(AuditEvent(
+                actor_id=actor_id, action="model_credential.add", resource_type="model_configuration",
+                resource_id=configuration_id, details={"label": label[:80], "buckets": list(buckets)},
+            ))
+            await session.commit()
+            await session.refresh(credential)
+            return credential
+
+    async def update_model_credential(
+        self, configuration_id: str, credential_id: str, *, actor_id: str, enabled: bool | None = None, buckets: list[str] | None = None,
+    ) -> ModelConfigurationCredential:
+        async with self.sessions() as session:
+            credential = await session.get(ModelConfigurationCredential, credential_id)
+            if not credential or credential.configuration_id != configuration_id:
+                raise ValueError("凭据不存在")
+            if enabled is not None:
+                credential.enabled = enabled
+            if buckets is not None:
+                credential.buckets = list(buckets)
+            session.add(AuditEvent(
+                actor_id=actor_id, action="model_credential.update", resource_type="model_configuration",
+                resource_id=configuration_id, details={"credential_id": credential_id, "enabled": enabled, "buckets": buckets},
+            ))
+            await session.commit()
+            await session.refresh(credential)
+            return credential
+
+    async def delete_model_credential(self, configuration_id: str, credential_id: str, *, actor_id: str) -> dict:
+        async with self.sessions() as session:
+            credential = await session.get(ModelConfigurationCredential, credential_id)
+            if not credential or credential.configuration_id != configuration_id:
+                raise ValueError("凭据不存在")
+            await session.delete(credential)
+            session.add(AuditEvent(
+                actor_id=actor_id, action="model_credential.delete", resource_type="model_configuration",
+                resource_id=configuration_id, details={"credential_id": credential_id},
+            ))
+            await session.commit()
+            return {"credential_id": credential_id, "deleted": True}
+
+    # ------------------------------------------------------------ MCP tokens
+
+    async def create_mcp_token(self, user_id: str, *, label: str) -> tuple[McpToken, str]:
+        """Issue a token; the clear text is returned once and never stored."""
+        clear = "mcp_" + secrets.token_urlsafe(32)
+        digest = hashlib.sha256(clear.encode("utf-8")).hexdigest()
+        async with self.sessions() as session:
+            token = McpToken(user_id=user_id, label=label[:80], token_digest=digest, token_hint=clear[-4:])
+            session.add(token)
+            await session.flush()  # the audit row names the token's id
+            session.add(AuditEvent(actor_id=user_id, action="mcp_token.create", resource_type="mcp_token", resource_id=token.id, details={"label": label[:80]}))
+            await session.commit()
+            await session.refresh(token)
+            return token, clear
+
+    async def list_mcp_tokens(self, user_id: str) -> list[McpToken]:
+        async with self.sessions() as session:
+            return list((await session.scalars(
+                select(McpToken).where(McpToken.user_id == user_id, McpToken.revoked.is_(False)).order_by(McpToken.created_at)
+            )).all())
+
+    async def revoke_mcp_token(self, user_id: str, token_id: str) -> bool:
+        async with self.sessions() as session:
+            token = await session.get(McpToken, token_id)
+            if not token or token.user_id != user_id or token.revoked:
+                return False
+            token.revoked = True
+            session.add(AuditEvent(actor_id=user_id, action="mcp_token.revoke", resource_type="mcp_token", resource_id=token_id, details={}))
+            await session.commit()
+            return True
+
+    async def verify_mcp_token(self, clear: str) -> PlatformUser | None:
+        """The active user a token belongs to, or None; a used token's last_used_at moves."""
+        if not clear.startswith("mcp_") or len(clear) > 128:
+            return None
+        digest = hashlib.sha256(clear.encode("utf-8")).hexdigest()
+        async with self.sessions() as session:
+            token = await session.scalar(select(McpToken).where(McpToken.token_digest == digest))
+            if not token or token.revoked or not hmac.compare_digest(token.token_digest, digest):
+                return None
+            user = await session.get(PlatformUser, token.user_id)
+            if not user or user.status != "active":
+                return None
+            token.last_used_at = datetime.now(timezone.utc)
+            await session.commit()
+            return user
+
+    # ------------------------------------------------------------ global settings
+
+    async def get_setting(self, key: str) -> dict:
+        async with self.sessions() as session:
+            row = await session.get(PlatformSetting, key)
+            return dict(row.value or {}) if row else {}
+
+    async def put_setting(self, key: str, value: dict, *, actor_id: str) -> dict:
+        async with self.sessions() as session:
+            row = await session.get(PlatformSetting, key)
+            if row is None:
+                row = PlatformSetting(key=key, value=dict(value), updated_by=actor_id)
+                session.add(row)
+            else:
+                row.value = dict(value)
+                row.updated_by = actor_id
+            session.add(AuditEvent(
+                actor_id=actor_id, action="platform_setting.put", resource_type="platform_setting", resource_id=key,
+                details={"keys": sorted(str(k) for k in value)},
+            ))
+            await session.commit()
+            return dict(value)
+
+    async def put_settings(self, values: dict[str, dict], *, actor_id: str) -> dict[str, dict]:
+        """Write several global settings in one transaction: all of them land, or none."""
+        async with self.sessions() as session:
+            for key, value in values.items():
+                row = await session.get(PlatformSetting, key)
+                if row is None:
+                    session.add(PlatformSetting(key=key, value=dict(value), updated_by=actor_id))
+                else:
+                    row.value = dict(value)
+                    row.updated_by = actor_id
+                session.add(AuditEvent(
+                    actor_id=actor_id, action="platform_setting.put", resource_type="platform_setting", resource_id=key,
+                    details={"keys": sorted(str(k) for k in value), "batch": sorted(values)},
+                ))
+            await session.commit()
+            return {key: dict(value) for key, value in values.items()}
+
     async def set_model_configuration_enabled(
         self, configuration_id: str, enabled: bool, *, actor_id: str
     ) -> ModelProviderConfiguration:
@@ -947,6 +1091,26 @@ class PlatformStore:
                 element.name = name.strip()[:160]
             if description is not None:
                 element.description = description.strip()
+            element.version += 1
+            await session.commit()
+            loaded = await self._loaded_element(session, element.id)
+            assert loaded is not None
+            return loaded
+
+    async def set_element_variant(self, element_id: str, owner_id: str, variant: dict | None) -> ElementAsset:
+        """Set or clear an actor element's derived-look facts; nothing else on its metadata moves."""
+        async with self.sessions() as session:
+            element = await session.get(ElementAsset, element_id)
+            if not element or element.owner_id != owner_id:
+                raise ValueError("元素不存在")
+            if element.kind != "actor":
+                raise ValueError("只有数字演员可以设为衍生形象")
+            metadata = dict(element.metadata_json or {})
+            if variant is None:
+                metadata.pop("variant", None)
+            else:
+                metadata["variant"] = dict(variant)
+            element.metadata_json = metadata
             element.version += 1
             await session.commit()
             loaded = await self._loaded_element(session, element.id)

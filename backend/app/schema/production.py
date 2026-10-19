@@ -5,10 +5,12 @@ from __future__ import annotations
 import base64
 import binascii
 import re
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Optional
 from urllib.parse import urlsplit
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+
+from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
 
 
 _DATA_IMAGE_RE = re.compile(
@@ -236,9 +238,9 @@ class H3VideoRequest(BaseModel):
     model: Annotated[str, Field(min_length=1, max_length=120)] = "MiniMax-H3"
     first_frame: str | None = None
     last_frame: str | None = None
-    reference_images: Annotated[list[str], Field(max_length=9)] = Field(default_factory=list)
-    reference_videos: Annotated[list[str], Field(max_length=3)] = Field(default_factory=list)
-    reference_audios: Annotated[list[str], Field(max_length=3)] = Field(default_factory=list)
+    reference_images: Annotated[list[str], Field(max_length=MAX_REFERENCE_IMAGES)] = Field(default_factory=list)
+    reference_videos: Annotated[list[str], Field(max_length=MAX_REFERENCE_VIDEOS)] = Field(default_factory=list)
+    reference_audios: Annotated[list[str], Field(max_length=MAX_REFERENCE_AUDIOS)] = Field(default_factory=list)
     reference_bindings: Annotated[list[H3ReferenceBinding], Field(max_length=12)] = Field(default_factory=list)
     duration_seconds: Annotated[int, Field(ge=4, le=15)] = 6
     resolution: Literal["720p", "1080p", "2k"] = "1080p"
@@ -604,3 +606,22 @@ class Sd25PromptAuditResult(BaseModel):
     findings: list[Sd25PromptAuditFinding]
     timeline_end_seconds: float | None = None
     prompt_sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+
+
+class TimelineOperationRequest(BaseModel):
+    """One edit on the stage-7 timeline; which fields matter depends on ``operation``."""
+    operation: Literal["trim", "transition", "subtitle", "mute", "candidate", "review", "title", "bgm"]
+    shot_id: Optional[int] = Field(None, ge=1)
+    start: Optional[float] = Field(None, ge=0)
+    end: Optional[float] = Field(None, ge=0)
+    kind: Optional[str] = Field(None, max_length=40)
+    duration: Optional[float] = Field(None, ge=0, le=5)
+    text: Optional[str] = Field(None, max_length=200)
+    muted: Optional[bool] = None
+    video_url: Optional[str] = Field(None, max_length=2000)
+    decision: Optional[Literal["pending", "approved", "rejected"]] = None
+    note: Optional[str] = Field(None, max_length=500)
+    source: Optional[Literal["none", "generated", "library"]] = None
+    library_id: Optional[str] = Field(None, max_length=40)
+    volume: Optional[float] = Field(None, ge=0, le=1)
+    duck: Optional[bool] = None

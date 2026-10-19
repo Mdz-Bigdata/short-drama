@@ -2664,10 +2664,10 @@ style_caption: "写实真人实拍剧情短剧，photorealistic live-action，�
 - **画面文字**：空乘名牌和手机屏幕都写了「不出现可读文字」，因为 2.0 渲染文字容易乱码；需要显示名牌内容的话，后期再加。
 - **分辨率**：统一用 720p，近景拍脸时更稳。需要 2K 时，等出片稳定后再升。
 - **依据文件**：
-  - `/Users/mindezhi/short-drama/backend/skills/shot-design-master/references/seedance-templates.md`（§4.1、§7.3、§7.6、§7.10、§10、§12、§14）
-  - `/Users/mindezhi/short-drama/backend/skills/seedance2-prompt-optimizer/SKILL.md`
-  - `/Users/mindezhi/short-drama/backend/skills/shot-design-master/references/models-failures.md`（§1.1、§1.3）
-  - `/Users/mindezhi/short-drama/backend/app/core/model_gateway.py`（`_ark_video` 的 content 拼装顺序）
+  - `backend/skills/shot-design-master/references/seedance-templates.md`（§4.1、§7.3、§7.6、§7.10、§10、§12、§14）
+  - `backend/skills/seedance2-prompt-optimizer/SKILL.md`
+  - `backend/skills/shot-design-master/references/models-failures.md`（§1.1、§1.3）
+  - `backend/app/core/model_gateway.py`（`_ark_video` 的 content 拼装顺序）
 
 ---
 

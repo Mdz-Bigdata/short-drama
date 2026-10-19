@@ -7,8 +7,9 @@ import type { Object3D } from 'three';
 // fallbacks, which made Vite ship a duplicate ~1.3MB draco runtime in dist.
 import { GLTFLoader } from 'three-stdlib';
 
-import { API_BASE } from '../../../api/client';
+import { API_BASE, apiUrl } from '../../../api/client';
 import { disposeModelResources } from './disposeModelResources';
+import { t } from '../../../i18n';
 
 
 interface Props {
@@ -159,10 +160,10 @@ class ModelErrorBoundary extends Component<BoundaryProps, { failed: boolean }> {
 function ModelFallback({ message, posterUrl, onRetry }: { message: string; posterUrl?: string; onRetry?: () => void }) {
   return (
     <div className="model-fallback" role="status">
-      {posterUrl ? <img src={posterUrl} alt="3D 资产参考图" /> : <Box size={54} />}
-      <strong>3D 预览暂不可用</strong>
+      {posterUrl ? <img src={posterUrl} alt={t('3D 资产参考图')} /> : <Box size={54} />}
+      <strong>{t('3D 预览暂不可用')}</strong>
       <span>{message}</span>
-      {onRetry && <button type="button" onClick={onRetry}>重试加载</button>}
+      {onRetry && <button type="button" onClick={onRetry}>{t('重试加载')}</button>}
     </div>
   );
 }
@@ -190,10 +191,10 @@ export default function ElementModelViewport({ name, contentUrl, posterUrl }: Pr
     void container.current?.requestFullscreen?.();
   };
 
-  const poster = posterUrl ? `${API_BASE}${posterUrl}` : undefined;
+  const poster = posterUrl ? apiUrl(posterUrl) : undefined;
   const fallback = (
     <ModelFallback
-      message={contextLost ? '图形上下文已中断，请重试恢复。' : '模型无法解析，可保留参考图并替换 GLB。'}
+      message={contextLost ? t('图形上下文已中断，请重试恢复。') : t('模型无法解析，可保留参考图并替换 GLB。')}
       posterUrl={poster}
       onRetry={retry}
     />
@@ -202,7 +203,7 @@ export default function ElementModelViewport({ name, contentUrl, posterUrl }: Pr
   return (
     <div className="element-model-viewport" ref={container} role="region" aria-label={`${name} 3D 模型交互预览`}>
       {model.loading ? (
-        <div className="model-fetch-state" role="status"><Gauge className="spin" /> 正在安全读取并解析 GLB…</div>
+        <div className="model-fetch-state" role="status"><Gauge className="spin" /> {t('正在安全读取并解析 GLB…')}</div>
       ) : model.error ? (
         <ModelFallback message={model.error} posterUrl={poster} onRetry={retry} />
       ) : !canRender ? (
@@ -215,13 +216,13 @@ export default function ElementModelViewport({ name, contentUrl, posterUrl }: Pr
             camera={{ position: [4.5, 2.8, 6], fov: 38, near: 0.01, far: 10_000 }}
             gl={{ antialias: !lowQuality, powerPreference: 'high-performance' }}
           >
-            <color attach="background" args={['#04070d']} />
-            <fog attach="fog" args={['#04070d', 14, 34]} />
+            <color attach="background" args={['#fcedef']} />
+            <fog attach="fog" args={['#fcedef', 14, 34]} />
             <ambientLight intensity={1.05} />
-            <hemisphereLight args={['#b8e8ff', '#0b0d14', 1.7]} />
-            <directionalLight position={[5, 8, 4]} intensity={2.8} color="#d9f6ff" />
-            <spotLight position={[-6, 5, 1]} intensity={35} angle={0.45} penumbra={0.9} color="#3d7cff" />
-            <spotLight position={[4, 2, -5]} intensity={24} angle={0.55} penumbra={1} color="#00f2fe" />
+            <hemisphereLight args={['#e76a7f', '#fdeef1', 1.7]} />
+            <directionalLight position={[5, 8, 4]} intensity={2.8} color="#e76e82" />
+            <spotLight position={[-6, 5, 1]} intensity={35} angle={0.45} penumbra={0.9} color="#e46e5b" />
+            <spotLight position={[4, 2, -5]} intensity={24} angle={0.55} penumbra={1} color="#e3546c" />
             <Bounds fit clip observe margin={1.25}>
               <Center>
                 <primitive object={scene} />
@@ -234,10 +235,10 @@ export default function ElementModelViewport({ name, contentUrl, posterUrl }: Pr
                 args={[28, 28]}
                 cellSize={0.5}
                 cellThickness={0.4}
-                cellColor="#1b4764"
+                cellColor="#fef9fa"
                 sectionSize={2.5}
                 sectionThickness={0.8}
-                sectionColor="#087f9a"
+                sectionColor="#e14962"
                 fadeDistance={28}
                 fadeStrength={1.5}
                 infiniteGrid
@@ -257,20 +258,20 @@ export default function ElementModelViewport({ name, contentUrl, posterUrl }: Pr
         </ModelErrorBoundary>
       )}
 
-      <div className="model-view-controls" aria-label="3D 视图控制">
-        <button type="button" onClick={() => setResetSignal(value => value + 1)}><RotateCcw size={15} /> 重置</button>
+      <div className="model-view-controls" aria-label={t('3D 视图控制')}>
+        <button type="button" onClick={() => setResetSignal(value => value + 1)}><RotateCcw size={15} /> {t('重置')}</button>
         <button
           type="button"
           aria-pressed={autoRotate && !reducedMotion}
           disabled={reducedMotion}
           onClick={() => setAutoRotate(value => !value)}
         >{autoRotate ? <Pause size={15} /> : <Play size={15} />} 环绕</button>
-        <button type="button" aria-pressed={showGrid} onClick={() => setShowGrid(value => !value)}><Grid3X3 size={15} /> 网格</button>
-        <button type="button" aria-pressed={lowQuality} onClick={() => setLowQuality(value => !value)}><Gauge size={15} /> 省电</button>
-        <button type="button" onClick={enterFullscreen}><Maximize2 size={15} /> 全屏</button>
+        <button type="button" aria-pressed={showGrid} onClick={() => setShowGrid(value => !value)}><Grid3X3 size={15} /> {t('网格')}</button>
+        <button type="button" aria-pressed={lowQuality} onClick={() => setLowQuality(value => !value)}><Gauge size={15} /> {t('省电')}</button>
+        <button type="button" onClick={enterFullscreen}><Maximize2 size={15} /> {t('全屏')}</button>
       </div>
 
-      <div className="model-gesture-hint">拖动旋转 · 滚轮或双指缩放 · 右键平移</div>
+      <div className="model-gesture-hint">{t('拖动旋转 · 滚轮或双指缩放 · 右键平移')}</div>
     </div>
   );
 }

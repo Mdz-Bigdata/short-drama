@@ -1,5 +1,5 @@
 .agent-stage-tabs {
-  --agent-stage-tab-background: rgba(255, 255, 255, 0.04);
+  --agent-stage-tab-background: rgba(214, 90, 120, 0.088);
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -17,7 +17,7 @@
   align-items: center;
   gap: 6px;
   color: var(--text-dim);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(214, 90, 120, 0.176);
   border-radius: 999px;
   background: var(--agent-stage-tab-background);
   font: inherit;
@@ -28,13 +28,13 @@
 }
 
 .agent-stage-tab svg { width: 10px; height: 10px; }
-.agent-stage-tab:hover { color: #ffffff; border-color: rgba(255, 255, 255, 0.2); }
+.agent-stage-tab:hover { color: #221b1e; border-color: rgba(214, 90, 120, 0.44); }
 .agent-stage-tab.is-active {
   color: var(--neon-cyan);
   border-color: var(--neon-cyan);
-  box-shadow: 0 0 10px rgba(0, 242, 254, 0.2);
+  box-shadow: 0 0 10px rgba(227, 84, 108, 0.2);
 }
-.agent-stage-tab:focus-visible { outline: 3px solid rgba(0, 242, 254, 0.22); outline-offset: 2px; }
+.agent-stage-tab:focus-visible { outline: 3px solid rgba(227, 84, 108, 0.22); outline-offset: 2px; }
 
 @media (max-width: 900px) {
   .agent-stage-tabs {

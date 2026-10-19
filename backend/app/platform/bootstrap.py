@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
+from app import settings
 from app.platform.store import PlatformStore
 
 
-RUNTIME_DIR = Path(__file__).resolve().parents[2] / "runtime"
-BOOTSTRAP_CREDENTIAL_FILE = RUNTIME_DIR / "bootstrap-admin.txt"
+BOOTSTRAP_CREDENTIAL_FILE = settings.RUNTIME_DIR / "bootstrap-admin.txt"
 DEVELOPMENT_DEFAULT_ADMIN_LOGIN = "admin@short-drama"
 DEVELOPMENT_DEFAULT_ADMIN_PASSWORD = "admin@123"
 
@@ -16,23 +15,36 @@ def bootstrap_admin_login() -> str:
     return (os.getenv("BOOTSTRAP_ADMIN_LOGIN") or DEVELOPMENT_DEFAULT_ADMIN_LOGIN).strip().lower()
 
 
+def bootstrap_admin_enabled() -> bool:
+    default_enabled = "0" if settings.is_production() else "1"
+    return os.getenv("BOOTSTRAP_ADMIN", default_enabled) == "1"
+
+
+def development_admin_login_hint() -> str | None:
+    """Login of the local bootstrap administrator, for the development login page only."""
+    if settings.is_production() or not bootstrap_admin_enabled():
+        return None
+    return bootstrap_admin_login()
+
+
 async def initialize_platform(store: PlatformStore) -> dict:
-    environment = (os.getenv("ENVIRONMENT") or "development").lower()
-    default_enabled = "0" if environment in {"prod", "production"} else "1"
-    bootstrap_enabled = os.getenv("BOOTSTRAP_ADMIN", default_enabled) == "1"
+    production = settings.is_production()
+    bootstrap_enabled = bootstrap_admin_enabled()
     login = bootstrap_admin_login()
     configured_password = (os.getenv("BOOTSTRAP_ADMIN_PASSWORD") or "").strip()
     password = configured_password or (
         DEVELOPMENT_DEFAULT_ADMIN_PASSWORD
-        if environment not in {"prod", "production"}
+        if not production
         else ""
     )
 
-    if bootstrap_enabled and environment in {"prod", "production"}:
+    if bootstrap_enabled and production:
         if password == DEVELOPMENT_DEFAULT_ADMIN_PASSWORD:
             raise RuntimeError("生产环境禁止使用默认管理员密码 admin@123")
-        if len(password) < 12:
-            raise RuntimeError("生产环境启用管理员初始化时必须配置至少 12 位独立强密码")
+        if len(password) < settings.PRODUCTION_ADMIN_PASSWORD_MIN_LENGTH:
+            raise RuntimeError(
+                f"生产环境启用管理员初始化时必须配置至少 {settings.PRODUCTION_ADMIN_PASSWORD_MIN_LENGTH} 位独立强密码"
+            )
 
     await store.create_schema()
     await store.seed_capabilities()

@@ -68,7 +68,7 @@ describe('CharacterDesignerPageContainer', () => {
 
     expect(screen.getAllByText('陆行远').length).toBeGreaterThan(0);
     expect(await screen.findByText(/任务内嵌资产/)).toBeTruthy();
-    expect(screen.getByLabelText('身份视图已完成 0 / 5')).toBeTruthy();
+    expect(screen.getByLabelText('身份视图已完成 0 / 6')).toBeTruthy();
   });
 
   it('does not render malicious media URLs from an offline legacy fallback', async () => {
@@ -89,7 +89,7 @@ describe('CharacterDesignerPageContainer', () => {
     );
 
     expect(await screen.findByText(/任务内嵌资产/)).toBeTruthy();
-    expect(screen.getByLabelText('身份视图已完成 0 / 5')).toBeTruthy();
+    expect(screen.getByLabelText('身份视图已完成 0 / 6')).toBeTruthy();
     expect(container.querySelectorAll('img')).toHaveLength(0);
   });
 });

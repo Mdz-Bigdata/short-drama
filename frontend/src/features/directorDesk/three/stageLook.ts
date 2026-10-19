@@ -5,11 +5,11 @@ import { posePosture } from '../lib/poses';
 export const POSTURE_HEIGHT: Record<string, number> = {
   stand: 1, walk: 1, run: 0.96, fight: 0.94, lean: 0.97, bow: 0.8, sit: 0.74, crouch: 0.6, kneel: 0.68, lie: 0.22,
 };
-export const ROLE_COLOR: Record<StageActor['role'], string> = { principal: '#00f2fe', supporting: '#9b8af4', crowd: '#5f6b7a' };
+export const ROLE_COLOR: Record<StageActor['role'], string> = { principal: '#e3546c', supporting: '#e67563', crowd: '#8b6d79' };
 export const LANDMARK_COLOR: Record<StageLandmark['kind'], string> = {
-  prop: '#f2cc8f', furniture: '#8d99ae', architecture: '#52606d', light: '#ffb454',
+  prop: '#ce8818', furniture: '#6d555f', architecture: '#927481', light: '#e68100',
 };
-export const SELECTION_COLOR = '#ffd166';
+export const SELECTION_COLOR = '#e6a000';
 
 export const SHAPE_LABELS: Record<LandmarkShape, string> = {
   box: '立方体', cylinder: '圆柱', sphere: '球体', cone: '圆锥', wedge: '楔形', plane: '平面',

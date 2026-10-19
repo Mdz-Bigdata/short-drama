@@ -112,6 +112,54 @@ describe('Element3DWorkspace', () => {
     const preview = screen.getByRole('region', { name: '场景资产“旧车站月台”参考预览' });
     expect(within(preview).getByRole('img', { name: '旧车站月台 参考图' })).toBeTruthy();
     expect(within(preview).getByText('清晨薄雾')).toBeTruthy();
+
+    // 没有 GLB：检查面板改为统计参考图本身，不再是一排破折号。
+    expect(screen.queryByText('模型统计')).toBeNull();
+    const referenceStats = screen.getByLabelText('参考图统计');
+    expect(within(referenceStats).getByText('1 张')).toBeTruthy();
+    expect(within(referenceStats).getByText('V01')).toBeTruthy();
+    expect(within(referenceStats).getByText('未导入')).toBeTruthy();
+    expect(screen.getByText('PNG · 2D 参考')).toBeTruthy();
+    expect(screen.getByText('1.0 KB')).toBeTruthy();
+    expect(screen.getByText('参考图可用')).toBeTruthy();
+    expect(screen.getByText('尚未导入 3D 模型')).toBeTruthy();
+  });
+
+  it('shows a prop as front, left 45°, right 45° and back views and swaps the main preview', async () => {
+    const file = (slot: string) => ({
+      id: `token-${slot}`, slot, mime_type: 'image/png', media_kind: 'image' as const,
+      size_bytes: 1_024, sha256: `${slot}-sha`, url: `/media/elements/token-${slot}.png`,
+    });
+    const props: ElementItem[] = [
+      {
+        id: 'prop-1', kind: 'prop', name: '青铜令牌', description: '正面虎纹', status: 'ready', version: 3,
+        metadata: {}, model3d: null,
+        files: [file('reference'), file('prop_front'), file('prop_left_45'), file('prop_right_45'), file('prop_back')],
+      },
+      {
+        id: 'prop-2', kind: 'prop', name: '旧钥匙', description: '只有一张参考图', status: 'ready', version: 1,
+        metadata: {}, model3d: null, files: [file('reference')],
+      },
+    ];
+    const handlers = {
+      onSelect: vi.fn(), onCreate: vi.fn(), onUploadModel: vi.fn(), onUploadPoster: vi.fn(), onRegenerate: vi.fn(),
+      onDelete: vi.fn(), onDeletePoster: vi.fn(), onInspectPoster: vi.fn(),
+    };
+    const { rerender } = render(<Element3DWorkspace kind="prop" items={props} selectedId="prop-1" busy="" {...handlers} />);
+
+    const strip = screen.getByRole('tablist', { name: '青铜令牌 四视图' });
+    expect(within(strip).getAllByRole('tab').map(tab => tab.textContent)).toEqual(['正面', '左侧45°', '右侧45°', '背面']);
+    const preview = screen.getByRole('region', { name: '道具资产“青铜令牌”参考预览' });
+    expect(within(preview).getByRole('img', { name: '青铜令牌 正面' }).getAttribute('src')).toContain('token-prop_front.png');
+
+    await userEvent.click(within(strip).getByRole('tab', { name: '背面' }));
+    expect(within(preview).getByRole('img', { name: '青铜令牌 背面' }).getAttribute('src')).toContain('token-prop_back.png');
+
+    rerender(<Element3DWorkspace kind="prop" items={props} selectedId="prop-2" busy="" {...handlers} />);
+    const empty = screen.getByRole('tablist', { name: '旧钥匙 四视图' });
+    expect(within(empty).getAllByText('待生成')).toHaveLength(4);
+    expect(within(empty).getByText(/生成正面、左侧45°、右侧45°、背面四视图/)).toBeTruthy();
+    expect(within(screen.getByLabelText('参考图统计')).getByText('0/4')).toBeTruthy();
   });
 
   it('opens the integrated museum without mounting the private project viewer at the same time', async () => {

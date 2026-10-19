@@ -23,7 +23,7 @@ export function StandIn({ actor, subject, selected, labelled, onPick }: Props) {
   const body = Math.max(0.2, height - head * 2);
   const color = actorColor(actor);
   const lying = actor.posture === 'lie';
-  const glow = selected ? SELECTION_COLOR : subject ? color : '#000000';
+  const glow = selected ? SELECTION_COLOR : subject ? color : '#fcebee';
   return (
     <group position={[actor.position[0], 0, actor.position[1]]} rotation={[0, (actor.yaw_deg * Math.PI) / 180, 0]} onClick={onPick}>
       <group rotation={lying ? [-Math.PI / 2, 0, 0] : [0, 0, 0]} position={lying ? [0, 0.2, 0] : [0, 0, 0]}>
@@ -38,7 +38,7 @@ export function StandIn({ actor, subject, selected, labelled, onPick }: Props) {
         {/* The nose: which way the character faces is the whole point of the figure. */}
         <mesh position={[0, body + head, head + 0.05]} rotation={[Math.PI / 2, 0, 0]}>
           <coneGeometry args={[0.04, 0.12, 10]} />
-          <meshStandardMaterial color="#ffffff" />
+          <meshStandardMaterial color="#221b1e" />
         </mesh>
       </group>
       {selected && (
@@ -49,8 +49,8 @@ export function StandIn({ actor, subject, selected, labelled, onPick }: Props) {
       )}
       {labelled && (
         <Text
-          position={[0, height + 0.28, 0]} fontSize={0.16} color="#e8f6ff" anchorX="center" anchorY="bottom"
-          outlineWidth={0.012} outlineColor="#04070d" userData={{ [HELPER_FLAG]: true }}
+          position={[0, height + 0.28, 0]} fontSize={0.16} color="#e87084" anchorX="center" anchorY="bottom"
+          outlineWidth={0.012} outlineColor="#fcedef" userData={{ [HELPER_FLAG]: true }}
         >
           {actor.name}
         </Text>

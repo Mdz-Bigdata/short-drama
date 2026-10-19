@@ -82,6 +82,26 @@ UPSTREAM_CAPABILITIES: list[CapabilitySource] = [
             "episode ledger planning", "two-stage script authoring", "verbatim utterance capture",
             "model-bound shot duration contract", "incremental plan editing", "prompt audit preview",
             "shot camera-motion workspace",
+            "whole-source and own-source episode library", "batch video admission",
+            "provider call usage ledger", "speech ownership and narration delivery", "subtitle draft",
+            "asset name identity with rename cascade and merge aliases",
+            "provider video job checkpoint, restart resume and clip reuse",
+            "per-shot regeneration with reuse of the rest", "self-hosted OpenAI-compatible provider",
+            "episode ledger operations: manual split/merge/cut, create/move/delete with impact preview, candidate replan compare-and-adopt",
+            "fingerprint-bound episode review with a soft production gate, violating-draft quarantine and non-degrading AI repair",
+            "persistent generation queue with per provider-family x medium ceilings, item dependencies and cancel-only-queued",
+            "credential pools per provider with job-type buckets and refusal cooldown",
+            "video providers declared in data (submit / poll / result paths)", "self-hosted ComfyUI workflow provider (workflow required)",
+            "edit timeline with trims, transitions, subtitles, per-clip review and local re-render", "music library with uploads and generated beds",
+            "JianYing draft export (draft_content / draft_meta_info with packed media)",
+            "per-clip material review: approve or send back before the final cut",
+            "one tool catalog for agents with read / write / paid effects and ownership checks", "embedded tool assistant in project chat (/agent, /confirm)",
+            "remote MCP server (JSON-RPC over POST /mcp) exposing the same tools", "per-user MCP bearer tokens issued in the user centre",
+            "creation types: drama / narration / ad with their own plan rules and episode frame", "ad brief (product, selling points, audience, call to action)",
+            "character derived looks bound by trigger words or episode range", "product assets bound by mention and required for an ad's brief",
+            "style lock read off a reference image by a vision model",
+            "interface in zh / en / vi with Chinese fallback and a coverage check", "script content language per project (zh / en / vi) applied to every writing prompt",
+            "market sources as repositories (index + definitions over raw file addresses, no central service)", "market installs as a separate record: editable in place, version-equality updates, unavailable when delisted",
         ],
     },
     {
@@ -142,6 +162,15 @@ UPSTREAM_CAPABILITIES: list[CapabilitySource] = [
         ],
     },
     {
+        "id": "fight-video-create-skill",
+        "source": "https://github.com/qualsenWeb/fight-video-create-skill",
+        "capabilities": [
+            "fight design rules in the episode plan",
+            "one exchange per fight shot in the visual layer",
+            "shared fight detection for writer and storyboard",
+        ],
+    },
+    {
         "id": "seedance-2-5-video-director",
         "source": "https://github.com/liyue-aigc/seedance-2-5-video-director",
         "capabilities": [
@@ -163,6 +192,18 @@ UPSTREAM_CAPABILITIES: list[CapabilitySource] = [
             "pose preset vocabulary for stand-in figures",
             "per-scene stage scoping inside a host workbench",
             "director desk project JSON interchange",
+        ],
+    },
+    {
+        "id": "director-desk",
+        "source": "https://github.com/mangfufu/director-desk",
+        "capabilities": [
+            "camera move presets written as editable timeline keys",
+            "film-back framing from shot size",
+            "deterministic frame-by-frame blockout clip export",
+            "hand-drawn walk and camera routes resampled into keys",
+            "depth stills and depth video as generation references",
+            "set-piece arrays and alignment for fast set building",
         ],
     },
     {
@@ -252,6 +293,24 @@ _IMPLEMENTATION_ENTRYPOINTS: dict[str, list[str]] = {
         "/api/drama/{task_id}/screenwriting/episodes/{episode}/plan",
         "/api/drama/{task_id}/screenwriting/episodes/{episode}/prompt",
         "/api/drama/{task_id}/shots/{shot_id}/visual",
+        "/api/drama/{task_id}/script-documents", "/api/drama/{task_id}/shots/admission",
+        "/api/drama/{task_id}/usage", "app.core.screenwriting.speech.speech_mode",
+        "/api/drama/{task_id}/subtitles", "/api/drama/{task_id}/assets/rename",
+        "app.core.video_jobs.resume_outcome", "/api/drama/{task_id}/shots/{shot_id}/regenerate",
+        "app.core.model_configuration.CUSTOM_PROVIDERS",
+        "/api/drama/{task_id}/screenwriting/ledger/ops",
+        "/api/drama/{task_id}/screenwriting/episodes/{episode}/review",
+        "/api/drama/{task_id}/queue",
+        "/api/model-configurations/{configuration_id}/credentials",
+        "/api/model-configurations/settings/video-endpoints/{family}", "app.core.providers.comfyui.status",
+        "/api/drama/{task_id}/timeline", "/api/library/bgm", "/api/drama/{task_id}/timeline/jianying.zip",
+        "/api/drama/{task_id}/timeline/ops",
+        "app.core.agent_tools.catalog", "/api/drama/{task_id}/assistant", "/mcp", "/api/mcp/tokens",
+        "app.core.creation_modes.writer_guidance", "app.core.creation_modes.ad_brief",
+        "/api/elements/{element_id}/variant", "app.core.storyboard_scene_context.panel_context",
+        "/api/drama/{task_id}/style/reference",
+        "frontend/src/i18n/index.ts", "app.core.screenwriting.prompts.language_scope",
+        "/api/market/sources", "/api/market/sources/{source_id}/entries/{slug}/install",
     ],
     "script-to-shot-engine": [
         "/api/production/storyboards/compile", "/api/production/storyboards/compile",
@@ -291,6 +350,13 @@ _IMPLEMENTATION_ENTRYPOINTS: dict[str, list[str]] = {
         "app.service.drama_service.DramaService.storyboard_skill_prefix",
         "/api/drama/skills",
     ],
+    # 打戏设计前移到编剧阶段：本集含打戏时，分集规划与视觉层各带一段打戏规则；
+    # 判定词表与阶段四共用 app.core.fight_design。
+    "fight-video-create-skill": [
+        "app.core.screenwriting.prompts.build_script_plan_prompt",
+        "app.core.screenwriting.prompts.build_visual_prompt",
+        "app.core.fight_design.looks_like_fight",
+    ],
     # Seedance 2.5 导演层：先判模型版本，再选主模式，然后把上限/素材/表演章节按预算
     # 打包，最后作为第三段系统提示追加进视频提示词优化器。2.0 与其它模型不套用。
     "seedance-2-5-video-director": [
@@ -308,6 +374,14 @@ _IMPLEMENTATION_ENTRYPOINTS: dict[str, list[str]] = {
         "app.core.spatial_stage.projection.POSTURE_HEIGHT",
         "/api/drama/{task_id}/spatial/scenes/{scene_id}",
         "/api/drama/{task_id}/spatial/scenes/{scene_id}/export",
+    ],
+    "director-desk": [
+        "app.core.spatial_stage.camera_moves.build_keys",
+        "app.core.spatial_stage.operations.apply_operations",
+        "frontend/src/features/directorDesk/lib/clipExport.ts",
+        "app.core.spatial_stage.paths.actor_keys",
+        "app.service.director_desk_service.motion_inputs",
+        "app.core.spatial_stage.operations.apply_operations",
     ],
     "costage": [
         "app.core.spatial_stage.operations.apply_operations",
@@ -336,8 +410,10 @@ _EVIDENCE_BY_SOURCE = {
     "short-drama-skills": "backend/tests/test_creative_quality.py",
     "sd-2-5-prompt": "backend/tests/test_sd25_prompt_audit.py",
     "fight-prompt-director": "backend/tests/test_fight_prompt_skill.py",
+    "fight-video-create-skill": "backend/tests/test_fight_design.py",
     "seedance-2-5-video-director": "backend/tests/test_seedance_video_director_skill.py",
     "storyai-3d-director-desk": "backend/tests/test_spatial_stage_pipeline.py",
+    "director-desk": "backend/tests/test_director_desk_repairs.py",
     "costage": "backend/tests/test_spatial_stage.py",
 }
 

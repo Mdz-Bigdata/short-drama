@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowDown } from 'lucide-react';
 import './ChatHistory.css';
+import { t } from '../../i18n';
 
 export function ChatHistory({ children }: { children: ReactNode }) {
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -29,7 +30,7 @@ export function ChatHistory({ children }: { children: ReactNode }) {
 
   return (
     <div className="chat-history">
-      <div ref={viewportRef} className="chat-history__viewport" role="log" aria-label="对话历史"
+      <div ref={viewportRef} className="chat-history__viewport" role="log" aria-label={t('对话历史')}
         aria-live="polite" aria-relevant="additions text" tabIndex={0}
         onScroll={event => {
           const viewport = event.currentTarget;
@@ -44,7 +45,7 @@ export function ChatHistory({ children }: { children: ReactNode }) {
           followingRef.current = true;
           if (viewportRef.current) viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
           setShowLatest(false);
-        }}><ArrowDown size={13} aria-hidden="true" />回到最新消息</button>
+        }}><ArrowDown size={13} aria-hidden="true" />{t('回到最新消息')}</button>
       )}
     </div>
   );

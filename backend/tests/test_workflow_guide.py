@@ -44,7 +44,7 @@ def task_at(completed):
         "current_stage": completed,
         "stage_name": "阶段",
         "status": "idle",
-        "config": {"title_suggestion": "测试", "episode_count": 2},
+        "config": {"title_suggestion": "测试", "episode_count": 2, "video_model": "seedance2.0"},
         "assets": assets,
         "logs": {},
     }
@@ -414,9 +414,6 @@ class WorkflowGuideTests(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class StageDoneReviewMessageTests(unittest.TestCase):
     LABELS = DramaService.STAGE_LABELS
@@ -444,3 +441,52 @@ class StageDoneReviewMessageTests(unittest.TestCase):
 
         message = append_stage_guidance(self._task(True), "done", self.LABELS, self._snapshot())
         self.assertNotIn("请先审核", message["content"])
+
+
+class SelectedTextModelTests(unittest.TestCase):
+    """Every stage runs on the globally selected text model when the project's own is not enabled."""
+
+    def tearDown(self):
+        from app.platform.runtime_models import runtime_model_registry
+
+        runtime_model_registry.replace([])
+
+    def _registry(self, *model_ids):
+        from app.platform.runtime_models import RuntimeModelConfiguration, runtime_model_registry
+
+        runtime_model_registry.replace([RuntimeModelConfiguration(
+            configuration_id="deepseek", category="text", provider="deepseek", base_url="https://api.deepseek.com",
+            api_key="k", model_ids=tuple(model_ids),
+        )] if model_ids else [])
+
+    def test_a_disabled_project_model_is_replaced_and_saved_at_stage_start(self):
+        self._registry("deepseek-flash")
+        task = {"task_id": "t", "config": {"llm_model": "deepseek-v4-pro"}}
+        DramaService._adopt_selected_text_model(task)
+        self.assertEqual(task["config"]["llm_model"], "deepseek-flash")
+
+    def test_an_enabled_choice_or_an_empty_registry_is_left_alone(self):
+        self._registry("deepseek-flash", "deepseek-v4-pro")
+        task = {"task_id": "t", "config": {"llm_model": "deepseek-v4-pro"}}
+        DramaService._adopt_selected_text_model(task)
+        self.assertEqual(task["config"]["llm_model"], "deepseek-v4-pro")
+        self._registry()
+        stale = {"task_id": "t", "config": {"llm_model": "gone"}}
+        DramaService._adopt_selected_text_model(stale)
+        self.assertEqual(stale["config"]["llm_model"], "gone")
+
+    def test_the_claim_writes_the_selected_model_into_the_task(self):
+        self._registry("deepseek-flash")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = TaskRepository(str(Path(tmp) / "tasks.json"))
+            service = DramaService()
+            service.repo = repo
+            task = task_at(0)
+            task["config"]["llm_model"] = "deepseek-v4-pro"
+            repo.save_task(task["task_id"], task)
+            service._claim_stage_task(task["task_id"], 1)
+            self.assertEqual(repo.get_task(task["task_id"])["config"]["llm_model"], "deepseek-flash")
+
+
+if __name__ == "__main__":
+    unittest.main()

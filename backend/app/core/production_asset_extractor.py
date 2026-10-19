@@ -297,10 +297,19 @@ def _scene_images(shots: list[dict[str, Any]]) -> dict[str, str]:
 
 def extract_production_assets(task: dict[str, Any], kind: str) -> list[dict[str, Any]]:
     """Return the `{name, description, image_url}` assets the screenplay names."""
-    if kind not in {"actor", "scene", "prop", "costume", "effect"}:
-        raise ValueError("仅支持提取 actor、scene、prop、costume 或 effect 资产")
+    if kind not in {"actor", "scene", "prop", "costume", "effect", "product"}:
+        raise ValueError("仅支持提取 actor、scene、prop、costume、effect 或 product 资产")
     assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
     config = task.get("config") if isinstance(task.get("config"), dict) else {}
+    if kind == "product":
+        # The product an ad sells comes from its brief, not from the script; its image must be a real photo.
+        from app.core import creation_modes
+
+        brief = creation_modes.ad_brief(config) if creation_modes.mode_of(config) == "ad" else {}
+        if not brief.get("product"):
+            return []
+        description = "；".join(part for part in (brief.get("selling_points"), brief.get("audience") and f"面向{brief['audience']}") if part)
+        return [{"name": brief["product"], "description": description or "广告主推商品", "image_url": ""}]
     breakdown = assets.get("2_breakdown") if isinstance(assets.get("2_breakdown"), dict) else {}
     scenes = [item for item in (breakdown.get("scenes") or []) if isinstance(item, dict)]
     script_parts = [

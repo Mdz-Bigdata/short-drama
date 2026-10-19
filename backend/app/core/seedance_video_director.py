@@ -16,13 +16,16 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
-from pathlib import Path
+
+from app import settings
+from app.core import knowledge_registry
+from app.core import fight_design
 
 from app.core.video_references import _normalize_model_token
 
 
 SKILL_NAME = "seedance-2-5-video-director"
-SKILL_ROOT = Path(__file__).resolve().parents[2] / "skills" / SKILL_NAME
+SKILL_ROOT = settings.skills_root() / SKILL_NAME
 
 # 导演层是追加在 sd25-pe 主规范之后的第三段系统提示；34k 的主规范之外再放这么多，
 # 对 doubao-seed / deepseek 这类 128k 上下文的文本模型仍有余量，但不能无限长——
@@ -39,6 +42,10 @@ _DIALOGUE_MARKERS = ("台词", "对白", "说道", "说：", "喊道", "低声",
 _ACTING_MARKERS = ("表情", "眼神", "哭", "笑", "颤抖", "情绪", "愤怒", "泪", "拥抱", "吻", "对峙")
 _PHYSICAL_MARKERS = ("打", "踢", "摔", "撞", "碰撞", "推开", "拳", "刀", "剑", "跌", "坠", "扑", "劈", "砍", "格挡", "冲刺")
 _SPORTS_MARKERS = ("比赛", "综艺", "赛道", "障碍", "直播", "解说", "观众席")
+# 打戏专用：比 _PHYSICAL_MARKERS 严——"御剑""剑修"里的"剑"不算打斗。
+_FIGHT_MARKERS = ("打斗", "交手", "对打", "互打", "拳", "踢", "劈", "砍", "斩", "刺向", "格挡", "对撞", "出招", "厮杀", "击飞", "大招", "连招", "反杀")
+# 与编剧阶段共用一份玄幻词表（app.core.fight_design）。
+_XIANXIA_MARKERS = fight_design.XIANXIA_MARKERS
 _TIMESTAMP_PATTERN = re.compile(r"(?<!\d)\d{1,2}\s*[-–~至]\s*\d{1,2}\s*(?:s|秒)")
 
 # 项目自写的接入说明：放在导演层最前面，讲清它与 sd25-pe 的分工，免得模型把
@@ -93,11 +100,28 @@ def skill_installed() -> bool:
     return (SKILL_ROOT / "SKILL.md").is_file()
 
 
+def _reference(key: str) -> str:
+    """A reference file of this skill, by its manifest key, relative to the skill root."""
+    item = knowledge_registry.section(key)
+    return item.path.relative_to(SKILL_ROOT.resolve()).as_posix() if item is not None else ""
+
+
 @lru_cache(maxsize=16)
 def _read(relative: str) -> str:
     path = SKILL_ROOT / relative
     try:
         return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _registered_text(key: str) -> str:
+    """任意技能里按 manifest 键登记的参考文件全文(如 shot-design-master 的 Seedance 中文手册补充)。"""
+    item = knowledge_registry.section(key)
+    if item is None:
+        return ""
+    try:
+        return item.path.read_text(encoding="utf-8")
     except OSError:
         return ""
 
@@ -143,10 +167,18 @@ def build_director_layer(
 
     primary_mode = select_primary_mode(duration=duration, prompt=prompt)
     skill = _read("SKILL.md")
-    limits = _read("references/capabilities-and-limits.md")
-    blueprints = _read("references/prompt-blueprints.md")
-    multimodal = _read("references/multimodal-patterns.md")
-    realistic = _read("references/realistic-direction-patterns.md")
+    limits = _read(_reference("seedance-capabilities-and-limits"))
+    blueprints = _read(_reference("seedance-prompt-blueprints"))
+    multimodal = _read(_reference("seedance-multimodal-patterns"))
+    realistic = _read(_reference("seedance-realistic-direction-patterns"))
+    # 中文手册补充(本项目自己整理，见 shot-design-master)：公式与固定说法按镜头形态挑，优先级低于上游技能。
+    handbook = _registered_text("seedance25-cn-handbook")
+    camera_library = _registered_text("camera-style-library")
+    handoff = _registered_text("four-lock-handoff")
+    composition = _registered_text("composition-library")
+    camera_moves = _registered_text("camera-move-library")
+    combat = _registered_text("combat-camera-handbook")
+    xianxia = _registered_text("xianxia-combat-vfx")
 
     corpus = f"{prompt}\n{asset_hint}"
     has_refs = mode in _REF_MODES
@@ -154,6 +186,8 @@ def build_director_layer(
     has_dialogue = _has_any(corpus, _DIALOGUE_MARKERS) or _has_any(corpus, _ACTING_MARKERS)
     has_physical = _has_any(corpus, _PHYSICAL_MARKERS)
     has_sports = _has_any(corpus, _SPORTS_MARKERS)
+    has_fight = _has_any(corpus, _FIGHT_MARKERS)
+    has_xianxia = has_fight and _has_any(corpus, _XIANXIA_MARKERS)
 
     # (优先级, 章节名, 正文)。优先级越小越先保住；同优先级按出现顺序。
     blueprint_heading = (
@@ -189,8 +223,38 @@ def build_director_layer(
         ))
     if has_physical:
         candidates.append((2, "realistic/Physical causality", _section(realistic, "Physical causality")))
+    if has_fight:
+        # 打戏：镜头贴动作走、命中短停、尾帧留下一击；速度档位词与拼接顺序。
+        candidates.append((3, "combat/核心原则", _section(combat, "一、核心原则")))
+        candidates.append((4, "combat/速度档位词", _section(combat, "四、速度档位词(写进运镜句)")))
+        candidates.append((4, "combat/拼接公式", _section(combat, "五、拼接公式(一段打戏一条 prompt)")))
+    if has_xianxia:
+        # 玄幻打戏：能量先定形再有光、大招尺度要量得出来、结尾只能四种收法。
+        candidates.append((3, "xianxia/能量四态", _section(xianxia, "二、能量四态：先定形，再有光")))
+        candidates.append((3, "xianxia/收束协议", _section(xianxia, "五、收束协议：一段打戏只能用四种方式结束")))
+        candidates.append((4, "xianxia/尺度四件套", _section(xianxia, "三、尺度四件套：大招必须量得出来")))
     if has_sports:
         candidates.append((4, "realistic/Sports and variety live coverage", _section(realistic, "Sports and variety live coverage")))
+    candidates.append((3, "cn-handbook/四种提示词公式", _section(handbook, "一、四种提示词公式")))
+    if primary_mode == "timestamp-30s":
+        candidates.append((2, "cn-handbook/30 秒长视频的三个模块", _section(handbook, "二、30 秒长视频的三个模块")))
+    if "转场" in corpus or "切镜" in corpus:
+        candidates.append((3, "cn-handbook/中文转场用语", _section(handbook, "五、中文转场用语")))
+    if has_dialogue or has_refs:
+        candidates.append((4, "cn-handbook/人物造型细分公式", _section(handbook, "三、人物造型细分公式（真人与动画通用）")))
+    candidates.append((4, "cn-handbook/其他可直接用的说法", _section(handbook, "六、其他可直接用的说法")))
+    candidates.append((4, "camera-style/选运镜的总规则", _section(camera_library, "一、选运镜的总规则")))
+    # 运镜句怎么写(幅度/速度词、单句放最后、给落点)；48 条词条太长，只带总则与组合公式。
+    candidates.append((4, "camera-move/写法总则", _section(camera_moves, "一、写法总则")))
+    candidates.append((5, "camera-move/组合公式", _section(camera_moves, "三、六个组合公式(整句填入运镜位)")))
+    candidates.append((4, "composition/怎么用", _section(composition, "一、怎么用")))
+    if has_physical:
+        candidates.append((4, "composition/动作张力", _section(composition, "四、动作张力：把速度、压迫与爆点组织清楚")))
+    else:
+        candidates.append((4, "composition/电影氛围", _section(composition, "三、电影氛围：让光线、天气与遮挡参与叙事")))
+    candidates.append((4, "four-lock/动作连贯三原则", _section(handoff, "五、动作连贯三原则")))
+    if has_refs:
+        candidates.append((3, "four-lock/故事板交给视频模型时的五条设置", _section(handoff, "六、故事板交给视频模型时的五条设置")))
 
     # 按预算打包：从高优先级往下装，装不下的整段丢弃，保持原相对顺序。
     ordered = sorted(

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { useState } from 'react';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -108,7 +108,8 @@ describe('WriterAgentPageContainer', () => {
     );
 
     expect(await screen.findByRole('heading', { name: '十二小时' })).toBeTruthy();
-    expect(screen.getByText('实验室对峙')).toBeTruthy();
+    expect(screen.getAllByText('实验室对峙').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: '人物关系' }));
     expect(screen.getByRole('img', { name: /2名角色、1条人物关系/ })).toBeTruthy();
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith(
       'http://localhost:8000/api/drama/writer-task-1/writer-dashboard',
@@ -226,8 +227,7 @@ describe('WriterAgentPageContainer', () => {
     ));
   });
 
-  it('repairs a co-occurrence graph through the relationship analysis endpoint', async () => {
-    const user = userEvent.setup();
+  it('identifies the relations by itself the first time the character page opens on a project without any', async () => {
     const inferred = {
       ...dashboard,
       relationshipsInferred: true,
@@ -242,8 +242,9 @@ describe('WriterAgentPageContainer', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => inferred } as Response)
       .mockResolvedValueOnce({ ok: true, json: async () => analysed } as Response);
 
-    render(
+    const { container } = render(
       <WriterAgentPageContainer
+        defaultView="characters"
         taskId="writer-task-1"
         episodes={[]}
         episodesBusy={false}
@@ -251,11 +252,6 @@ describe('WriterAgentPageContainer', () => {
         onProduceEpisode={vi.fn()}
       />,
     );
-
-    const analyze = await screen.findByRole('button', { name: /AI 分析人物关系/ });
-    expect(screen.getByText(/同场共现统计/)).toBeTruthy();
-
-    await user.click(analyze);
 
     await waitFor(() => expect(fetchSpy).toHaveBeenNthCalledWith(
       2,
@@ -263,26 +259,26 @@ describe('WriterAgentPageContainer', () => {
       expect.objectContaining({ method: 'POST' }),
     ));
     await waitFor(() => expect(screen.getAllByText(/师徒反目/).length).toBeGreaterThan(0));
-    expect(screen.queryByText(/同场共现统计/)).toBeNull();
+    expect(container.textContent).not.toMatch(/同场/);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
-  it('surfaces a refused analysis without dropping the existing graph', async () => {
+  it('keeps the analyse button when the automatic analysis is refused, and lets it be retried', async () => {
     const user = userEvent.setup();
     const inferred = {
       ...dashboard,
       relationshipsInferred: true,
       relationships: [{ from: '林夏', to: '周教授', relation: '同场互动 · 1 场', bidirectional: true }],
     };
-    vi.spyOn(globalThis, 'fetch')
+    const refused = { ok: false, status: 409, json: async () => ({ detail: '剧本尚未生成，无法分析人物关系' }) } as Response;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce({ ok: true, json: async () => inferred } as Response)
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 409,
-        json: async () => ({ detail: '剧本尚未生成，无法分析人物关系' }),
-      } as Response);
+      .mockResolvedValueOnce(refused)
+      .mockResolvedValueOnce(refused);
 
     render(
       <WriterAgentPageContainer
+        defaultView="characters"
         taskId="writer-task-1"
         episodes={[]}
         episodesBusy={false}
@@ -291,9 +287,9 @@ describe('WriterAgentPageContainer', () => {
       />,
     );
 
+    expect(await screen.findByText(/剧本尚未生成/)).toBeTruthy();
     await user.click(await screen.findByRole('button', { name: /AI 分析人物关系/ }));
-
-    expect((await screen.findByRole('status')).textContent).toContain('剧本尚未生成');
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(3));
     expect(screen.getByRole('button', { name: /AI 分析人物关系/ })).toBeTruthy();
   });
 
@@ -634,7 +630,7 @@ describe('WriterAgentPageContainer', () => {
     };
     const { rerender } = render(<WriterAgentPageContainer {...commonProps} refreshKey="revision-1" />);
 
-    expect(await screen.findByText('实验室对峙')).toBeTruthy();
+    expect((await screen.findAllByText('实验室对峙')).length).toBeGreaterThan(0);
     rerender(<WriterAgentPageContainer {...commonProps} refreshKey="revision-2" />);
 
     expect((await screen.findByRole('status')).textContent).toContain('后端编剧看板暂不可用');
@@ -668,7 +664,7 @@ describe('WriterAgentPageContainer', () => {
     };
     const { rerender } = render(<WriterAgentPageContainer {...baseProps} taskId="writer-task-1" />);
 
-    expect(await screen.findByText('实验室对峙')).toBeTruthy();
+    expect((await screen.findAllByText('实验室对峙')).length).toBeGreaterThan(0);
     rerender(<WriterAgentPageContainer {...baseProps} taskId="writer-task-2" />);
 
     expect(screen.queryByText('实验室对峙')).toBeNull();
