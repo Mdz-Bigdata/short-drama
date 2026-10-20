@@ -2,45 +2,78 @@
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import os
 import re
+from collections.abc import Mapping
 import socket
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
 from pydantic import BaseModel, Field
 
+from app import settings
+from app.core.providers.defaults import default_base_url
+
 
 ModelCategory = Literal["text", "image", "video", "audio"]
+AudioSubcategory = Literal[
+    "asr",
+    "tts",
+    "voice_conversion",
+    "voice_design",
+    "bgm",
+    "music",
+    "music_cover",
+]
 
 
 PROVIDER_OPTIONS: dict[ModelCategory, tuple[dict[str, str], ...]] = {
     "text": (
-        {"id": "deepseek", "label": "DeepSeek", "default_base_url": "https://api.deepseek.com"},
-        {"id": "volcengine", "label": "火山引擎", "default_base_url": "https://ark.cn-beijing.volces.com/api/v3"},
-        {"id": "qwen", "label": "通义千问", "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"},
-        {"id": "gemini", "label": "Gemini", "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai"},
-        {"id": "openai", "label": "OpenAI", "default_base_url": "https://api.openai.com/v1"},
+        {"id": "deepseek", "label": "DeepSeek", "default_base_url": default_base_url("deepseek")},
+        {"id": "volcengine", "label": "火山引擎", "default_base_url": default_base_url("volcengine")},
+        {"id": "qwen", "label": "通义千问", "default_base_url": default_base_url("qwen")},
+        {"id": "gemini", "label": "Gemini", "default_base_url": default_base_url("gemini")},
+        {"id": "openai", "label": "OpenAI", "default_base_url": default_base_url("openai")},
+        {
+            "id": "custom_openai", "label": "自定义 OpenAI 兼容端点", "default_base_url": "",
+            "key_hint": "任意 OpenAI 兼容的 /chat/completions 服务（中转、自建网关）；填 HTTPS 根地址，模型目录从 /models 读取",
+        },
     ),
     "image": (
-        {"id": "volcengine", "label": "火山引擎", "default_base_url": "https://ark.cn-beijing.volces.com/api/v3"},
-        {"id": "qwen", "label": "通义千问", "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"},
-        {"id": "gemini", "label": "Gemini", "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai"},
-        {"id": "openai", "label": "OpenAI", "default_base_url": "https://api.openai.com/v1"},
+        {"id": "volcengine", "label": "火山引擎", "default_base_url": default_base_url("volcengine")},
+        {"id": "qwen", "label": "通义千问", "default_base_url": default_base_url("qwen")},
+        {"id": "gemini", "label": "Gemini", "default_base_url": default_base_url("gemini")},
+        {"id": "openai", "label": "OpenAI", "default_base_url": default_base_url("openai")},
+        {
+            "id": "custom_openai", "label": "自定义 OpenAI 兼容端点", "default_base_url": "",
+            "key_hint": "任意 OpenAI 兼容的 /images/generations 服务；填 HTTPS 根地址，模型目录从 /models 读取",
+        },
     ),
     "video": (
-        {"id": "minimax", "label": "MiniMax H3", "default_base_url": "https://api.minimaxi.com"},
-        {"id": "seedance", "label": "Seedance", "default_base_url": "https://ark.cn-beijing.volces.com/api/v3"},
-        {"id": "kling", "label": "Kling", "default_base_url": "https://api-singapore.klingai.com"},
+        {"id": "minimax", "label": "minimax", "default_base_url": default_base_url("minimax")},
+        {"id": "seedance", "label": "Seedance", "default_base_url": default_base_url("seedance")},
+        {
+            "id": "kling", "label": "Kling", "default_base_url": default_base_url("kling"),
+            "key_hint": "填写 ACCESS_KEY:SECRET_KEY（冒号分隔）；后端按官方规范为每次请求签发 JWT",
+        },
+        {"id": "xai", "label": "xAI Grok Imagine", "default_base_url": default_base_url("xai")},
+        {
+            "id": "fal", "label": "fal.ai（HappyHorse）", "default_base_url": default_base_url("fal"),
+            "key_hint": "fal.ai 的 FAL_KEY；模型目录来自官方文档，凭据在首次生成时验证",
+        },
+        {
+            "id": "ltx", "label": "LTX", "default_base_url": default_base_url("ltx"),
+            "key_hint": "LTX API Key；模型目录来自官方文档，凭据在首次生成时验证",
+        },
     ),
     "audio": (
-        {"id": "elevenlabs", "label": "ElevenLabs", "default_base_url": "https://api.elevenlabs.io"},
+        {"id": "elevenlabs", "label": "ElevenLabs", "default_base_url": default_base_url("elevenlabs")},
+        {"id": "minimax", "label": "minimax", "default_base_url": default_base_url("minimax")},
     ),
 }
 
@@ -53,13 +86,235 @@ _PROVIDER_HOSTS: dict[str, tuple[str, ...]] = {
     "openai": ("api.openai.com",),
     "minimax": ("api.minimaxi.com", "api.minimax.io", "api.minimaxi.chat"),
     "kling": ("api.klingai.com", "api-singapore.klingai.com"),
+    "xai": ("api.x.ai",),
+    "fal": ("queue.fal.run", "fal.run"),
+    "ltx": ("api.ltx.io",),
     "elevenlabs": ("api.elevenlabs.io",),
 }
 
-_IMAGE_PATTERN = re.compile(r"(?:^|[-_.])(image|imagen|seedream|dall[-_.]?e|paint|render)(?:$|[-_.])", re.I)
-_VIDEO_PATTERN = re.compile(r"(?:^|[-_.])(video|seedance|kling|hailuo|h3)(?:$|[-_.])", re.I)
+# Volcengine Ark names its families by product: seedream / seededit draw, seedance / seaweed film,
+# and the task suffixes t2i / i2i / t2v / i2v say what goes in and what comes out.
+_IMAGE_PATTERN = re.compile(
+    r"(?:^|[-_.])(image|imagen|seedream|seededit|dreamina|dall[-_.]?e|paint|render|flux|sdxl|stable[-_.]?diffusion|t2i|i2i)(?:$|[-_.])",
+    re.I,
+)
+_VIDEO_PATTERN = re.compile(
+    r"(?:^|[-_.])(video|seedance|seaweed|kling|hailuo|h3|ltx|t2v|i2v|wan|wan2(?:\.\d+)?|veo|sora|vidu|pixverse)(?:$|[-_.])",
+    re.I,
+)
 _AUDIO_PATTERN = re.compile(r"(?:^|[-_.])(audio|speech|voice|tts|stt|asr|scribe|music|sound|sfx|bgm)(?:$|[-_.])", re.I)
 _MULTIMODAL_PATTERN = re.compile(r"vision|multimodal|omni|视觉|多模态|image input|video input|(?:^|[-_.])vl(?:$|[-_.])", re.I)
+
+_MINIMAX_VIDEO_MODELS: Final[tuple[tuple[str, str, tuple[str, ...]], ...]] = (
+    (
+        "MiniMax-H3",
+        "MiniMax H3（文生 / 图生 / 首尾帧 / 多模态参考）",
+        (
+            "video",
+            "text-to-video",
+            "image-to-video",
+            "first-last-frame",
+            "multi-reference",
+            "multimodal-reference",
+            "native-audio",
+        ),
+    ),
+    (
+        "MiniMax-Hailuo-2.3",
+        "MiniMax Hailuo 2.3（文生视频 / 图生视频）",
+        ("video", "text-to-video", "image-to-video"),
+    ),
+    (
+        "MiniMax-Hailuo-2.3-Fast",
+        "MiniMax Hailuo 2.3 Fast（图生视频）",
+        ("video", "image-to-video"),
+    ),
+    (
+        "MiniMax-Hailuo-02",
+        "MiniMax Hailuo 02（文生 / 图生 / 首尾帧）",
+        ("video", "text-to-video", "image-to-video", "first-last-frame"),
+    ),
+)
+
+_MINIMAX_AUDIO_MODELS: Final[
+    tuple[tuple[str, str, str, AudioSubcategory, tuple[str, ...]], ...]
+] = (
+    (
+        "speech-2.8-hd",
+        "MiniMax Speech 2.8 HD",
+        "最新 HD 语音模型，支持自然情绪渲染、语气词与高质量配音",
+        "tts",
+        ("audio", "tts", "emotion", "paralinguistic-tags"),
+    ),
+    (
+        "speech-2.8-turbo",
+        "MiniMax Speech 2.8 Turbo",
+        "最新 Turbo 语音模型，面向低延迟、自然逼真的快速配音",
+        "tts",
+        ("audio", "tts", "emotion", "low-latency", "paralinguistic-tags"),
+    ),
+    (
+        "speech-2.6-hd",
+        "MiniMax Speech 2.6 HD",
+        "韵律与音质优先的 HD 语音模型",
+        "tts",
+        ("audio", "tts", "emotion"),
+    ),
+    (
+        "speech-2.6-turbo",
+        "MiniMax Speech 2.6 Turbo",
+        "超低延迟 Turbo 语音模型，适合对话和数字人",
+        "tts",
+        ("audio", "tts", "emotion", "low-latency"),
+    ),
+    (
+        "speech-02-hd",
+        "MiniMax Speech 02 HD",
+        "高韵律、高稳定性与高复刻相似度的 HD 语音模型",
+        "tts",
+        ("audio", "tts", "emotion"),
+    ),
+    (
+        "speech-02-turbo",
+        "MiniMax Speech 02 Turbo",
+        "稳定且强化小语种能力的 Turbo 语音模型",
+        "tts",
+        ("audio", "tts", "emotion", "low-latency"),
+    ),
+    (
+        "speech-01-hd",
+        "MiniMax Speech 01 HD（兼容）",
+        "同步语音合成接口仍支持的兼容 HD 模型",
+        "tts",
+        ("audio", "tts", "emotion", "legacy"),
+    ),
+    (
+        "speech-01-turbo",
+        "MiniMax Speech 01 Turbo（兼容）",
+        "同步语音合成接口仍支持的兼容 Turbo 模型",
+        "tts",
+        ("audio", "tts", "emotion", "low-latency", "legacy"),
+    ),
+    (
+        "music-3.0",
+        "MiniMax Music 3.0",
+        "文本、歌词或纯音乐生成模型，支持歌词优化生成",
+        "music",
+        ("audio", "music", "text-to-music", "lyrics", "instrumental"),
+    ),
+    (
+        "music-cover",
+        "MiniMax Music Cover",
+        "基于参考音频的一步翻唱模型，可自动提取歌词并重塑音乐风格",
+        "music_cover",
+        ("audio", "music", "music-cover", "audio-reference", "automatic-asr"),
+    ),
+)
+
+_ELEVENLABS_AUDIO_MODELS: Final[
+    tuple[tuple[str, str, str, AudioSubcategory, tuple[str, ...]], ...]
+] = (
+    (
+        "eleven_v3",
+        "Eleven v3",
+        "高表现力、多语言文本转语音与多人对话模型",
+        "tts",
+        ("audio", "tts", "dialogue"),
+    ),
+    (
+        "eleven_ttv_v3",
+        "Eleven Text to Voice v3",
+        "高表现力文本生成声音设计模型",
+        "voice_design",
+        ("audio", "voice_design"),
+    ),
+    (
+        "eleven_multilingual_v2",
+        "Eleven Multilingual v2",
+        "稳定、高保真的多语言文本转语音模型",
+        "tts",
+        ("audio", "tts"),
+    ),
+    (
+        "eleven_flash_v2_5",
+        "Eleven Flash v2.5",
+        "低延迟多语言文本转语音模型",
+        "tts",
+        ("audio", "tts", "low-latency"),
+    ),
+    (
+        "eleven_flash_v2",
+        "Eleven Flash v2",
+        "低延迟英语文本转语音模型",
+        "tts",
+        ("audio", "tts", "low-latency"),
+    ),
+    (
+        "eleven_multilingual_sts_v2",
+        "Eleven Multilingual STS v2",
+        "多语言语音转换与变声模型",
+        "voice_conversion",
+        ("audio", "voice_conversion"),
+    ),
+    (
+        "eleven_multilingual_ttv_v2",
+        "Eleven Multilingual TTV v2",
+        "多语言文本生成声音设计模型",
+        "voice_design",
+        ("audio", "voice_design"),
+    ),
+    (
+        "eleven_english_sts_v2",
+        "Eleven English STS v2",
+        "英语语音转换与变声模型",
+        "voice_conversion",
+        ("audio", "voice_conversion"),
+    ),
+    (
+        "scribe_v2_realtime",
+        "Scribe v2 Realtime",
+        "低延迟实时语音识别模型",
+        "asr",
+        ("audio", "asr", "realtime"),
+    ),
+    (
+        "scribe_v2",
+        "Scribe v2",
+        "多语言语音识别与转录模型",
+        "asr",
+        ("audio", "asr"),
+    ),
+    (
+        "eleven_text_to_sound_v2",
+        "Eleven Text to Sound v2",
+        "文本生成音效、环境声与 Foley 模型",
+        "bgm",
+        ("audio", "bgm", "sound-effects"),
+    ),
+    (
+        "music_v2",
+        "Eleven Music v2",
+        "新一代文本生成音乐与音频参考音乐模型",
+        "music",
+        ("audio", "music", "audio-reference"),
+    ),
+    (
+        "music_v1",
+        "Eleven Music v1",
+        "过渡期仍可用的文本生成音乐模型",
+        "music",
+        ("audio", "music", "legacy"),
+    ),
+)
+
+_ELEVENLABS_SCOPE_WARNING: Final[str] = (
+    "已加载 ElevenLabs 官方模型目录；该 Key 的 models scope 或当前 IP 未获授权，"
+    "可以保存目录配置，但实际生成能力仍取决于 Key 的相应 scope 与 IP 白名单。"
+)
+_ELEVENLABS_INVALID_KEY_WARNING: Final[str] = (
+    "已加载 ElevenLabs 官方模型目录；该 Key 被供应商判定为无效、已撤销或已过期，"
+    "请轮换 Key 后再执行连接测试或保存。"
+)
 
 
 class DiscoveredModel(BaseModel):
@@ -67,14 +322,121 @@ class DiscoveredModel(BaseModel):
     display_name: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=1000)
     category: ModelCategory
-    subcategory: Literal["asr", "tts", "bgm", "music"] | None = None
+    subcategory: AudioSubcategory | None = None
     capabilities: list[str] = Field(default_factory=list, max_length=20)
+
+
+# Providers whose video APIs document no model enumeration endpoint. The catalog
+# comes from their public documentation; the credential is only proven by the
+# first generation, and discovery says so instead of claiming verification.
+_DOCUMENTED_VIDEO_CATALOGS: Final[dict[str, tuple[tuple[str, str, str, tuple[str, ...]], ...]]] = {
+    "kling": (
+        ("kling-v2-6", "Kling 2.6", "Kling Open Platform 视频模型", ("text-to-video", "first-frame", "first-last-frame", "multi-reference")),
+        ("kling-v2-5-turbo", "Kling 2.5 Turbo", "Kling Open Platform 视频模型", ("text-to-video", "first-frame", "first-last-frame", "multi-reference")),
+        ("kling-v2-1", "Kling 2.1", "Kling Open Platform 视频模型", ("text-to-video", "first-frame", "first-last-frame", "multi-reference")),
+        ("kling-v1-6", "Kling 1.6", "Kling Open Platform 视频模型", ("text-to-video", "first-frame", "first-last-frame", "multi-reference")),
+    ),
+    "fal": (
+        ("alibaba/happy-horse/v1.1", "HappyHorse 1.1", "fal.ai 官方合作端点：text-/image-/reference-to-video", ("text-to-video", "first-frame", "multi-reference")),
+    ),
+    "ltx": (
+        ("ltx-2-3-pro", "LTX 2.3 Pro", "LTX /v2 text-to-video 与 image-to-video（含 last_frame_uri）", ("text-to-video", "first-frame", "first-last-frame")),
+        ("ltx-2-3-fast", "LTX 2.3 Fast", "LTX /v2 text-to-video 与 image-to-video（含 last_frame_uri）", ("text-to-video", "first-frame", "first-last-frame")),
+        ("ltx-2-5-pro", "LTX 2.5 Pro", "LTX /v2 text-to-video 与 image-to-video（含 last_frame_uri）", ("text-to-video", "first-frame", "first-last-frame")),
+        ("ltx-2-5-fast", "LTX 2.5 Fast", "LTX /v2 text-to-video 与 image-to-video（含 last_frame_uri）", ("text-to-video", "first-frame", "first-last-frame")),
+    ),
+}
+DOCUMENTED_VIDEO_CATALOG_PROVIDERS: Final[frozenset[str]] = frozenset(_DOCUMENTED_VIDEO_CATALOGS)
+
+
+def _documented_video_models(provider: str) -> list[DiscoveredModel]:
+    return [
+        DiscoveredModel(
+            model_id=model_id,
+            display_name=display_name,
+            description=description,
+            category="video",
+            capabilities=list(capabilities),
+        )
+        for model_id, display_name, description, capabilities in _DOCUMENTED_VIDEO_CATALOGS[provider]
+    ]
+
+
+def _minimax_video_models() -> list[DiscoveredModel]:
+    """Return the versioned video catalog after a credential probe succeeds."""
+    return [
+        DiscoveredModel(
+            model_id=model_id,
+            display_name=display_name,
+            description="minimax Video Generation API 视频模型",
+            category="video",
+            capabilities=list(capabilities),
+        )
+        for model_id, display_name, capabilities in _MINIMAX_VIDEO_MODELS
+    ]
+
+
+def _minimax_audio_models() -> list[DiscoveredModel]:
+    """Return every MiniMax model accepted by the integrated audio APIs."""
+    return [
+        DiscoveredModel(
+            model_id=model_id,
+            display_name=display_name,
+            description=description,
+            category="audio",
+            subcategory=subcategory,
+            capabilities=list(capabilities),
+        )
+        for model_id, display_name, description, subcategory, capabilities
+        in _MINIMAX_AUDIO_MODELS
+    ]
+
+
+def _elevenlabs_audio_models() -> list[DiscoveredModel]:
+    """Return the versioned active ElevenLabs model catalog."""
+    return [
+        DiscoveredModel(
+            model_id=model_id,
+            display_name=display_name,
+            description=description,
+            category="audio",
+            subcategory=subcategory,
+            capabilities=list(capabilities),
+        )
+        for model_id, display_name, description, subcategory, capabilities
+        in _ELEVENLABS_AUDIO_MODELS
+    ]
+
+
+def _merge_elevenlabs_audio_models(
+    live_models: list[DiscoveredModel],
+) -> list[DiscoveredModel]:
+    merged = {item.model_id: item for item in _elevenlabs_audio_models()}
+    for live in live_models:
+        documented = merged.get(live.model_id)
+        if documented is None:
+            merged[live.model_id] = live
+            continue
+        merged[live.model_id] = documented.model_copy(update={
+            "display_name": live.display_name or documented.display_name,
+            "description": live.description or documented.description,
+            "subcategory": live.subcategory or documented.subcategory,
+            "capabilities": list(dict.fromkeys(
+                [*documented.capabilities, *live.capabilities]
+            )),
+        })
+    return sorted(
+        merged.values(),
+        key=lambda item: (item.subcategory or "", item.model_id.lower()),
+    )
 
 
 @dataclass(frozen=True)
 class DiscoveryResult:
     models: list[DiscoveredModel]
     source_endpoint: str
+    credential_verified: bool = True
+    warnings: tuple[str, ...] = ()
 
 
 class ModelSecretCipher:
@@ -99,7 +461,7 @@ class ModelSecretCipher:
         configured = (os.getenv("MODEL_CONFIG_MASTER_KEY") or "").strip()
         if configured:
             return cls(configured)
-        if (os.getenv("ENVIRONMENT") or "development").lower() in {"prod", "production"}:
+        if settings.is_production():
             raise RuntimeError("生产环境必须配置 MODEL_CONFIG_MASTER_KEY")
         runtime_dir.mkdir(parents=True, exist_ok=True)
         key_path = runtime_dir / "model-config.key"
@@ -177,7 +539,7 @@ def _classify(
     model_id: str,
     requested: ModelCategory,
     provider: str | None,
-) -> tuple[ModelCategory, str | None, list[str]]:
+) -> tuple[ModelCategory, AudioSubcategory | None, list[str]]:
     name = _safe_text(row.get("displayName") or row.get("display_name") or row.get("name") or model_id, 200)
     description = _safe_text(row.get("description"), 1000)
     haystack = f"{model_id} {name} {description}".lower()
@@ -185,9 +547,18 @@ def _classify(
     outputs = _string_list(row.get("output_modalities") or row.get("outputModalities"))
     actions = _string_list(row.get("supportedGenerationMethods") or row.get("supported_actions"))
 
-    if row.get("can_do_text_to_speech") is True:
+    can_do_tts = row.get("can_do_text_to_speech") is True
+    can_do_voice_conversion = row.get("can_do_voice_conversion") is True
+
+    if can_do_tts or can_do_voice_conversion:
         category: ModelCategory = "audio"
-        subcategory = "tts"
+        subcategory: AudioSubcategory | None = (
+            "tts" if can_do_tts else "voice_conversion"
+        )
+    elif re.search(r"(?:^|[-_.])ttv(?:$|[-_.])|text[- ]?to[- ]?voice|voice design", haystack):
+        category, subcategory = "audio", "voice_design"
+    elif re.search(r"voice[- ]?chang|voice conversion|speech[- ]?to[- ]?speech|(?:^|[-_.])sts(?:$|[-_.])", haystack):
+        category, subcategory = "audio", "voice_conversion"
     elif any("image" in value for value in outputs) or _IMAGE_PATTERN.search(haystack):
         category, subcategory = "image", None
     elif any("video" in value for value in outputs) or _VIDEO_PATTERN.search(haystack):
@@ -219,14 +590,19 @@ def _classify(
             capabilities.append("text-only")
     elif subcategory:
         capabilities.append(subcategory)
+        if can_do_tts and "tts" not in capabilities:
+            capabilities.append("tts")
+        if can_do_voice_conversion and "voice_conversion" not in capabilities:
+            capabilities.append("voice_conversion")
 
     # Category-specific provider catalogs may return minimal IDs without modality
     # metadata. Never apply this fallback to a global catalog (for example
     # OpenAI /models), otherwise an ordinary text model would be relabelled as
     # an image/video/audio model merely because that tab initiated discovery.
+    # Seedance is not here on purpose: Volcengine Ark's /api/v3/models is the whole Ark catalog
+    # (doubao-pro text, seedream images, seedance videos), so a bare id there means "text", not
+    # "whatever tab asked"; its video and image models are told apart by name above.
     provider_catalog_category = {
-        "minimax": "video",
-        "seedance": "video",
         "kling": "video",
         "elevenlabs": "audio",
     }.get(provider or "")
@@ -234,20 +610,38 @@ def _classify(
         category = requested
         capabilities = [requested]
         if requested == "audio":
-            subcategory = "tts"
-            capabilities.append("tts")
+            subcategory = None
     return category, subcategory, capabilities
+
+
+CATEGORY_LABELS: Final[dict[str, str]] = {"text": "文本", "image": "图像", "video": "视频", "audio": "音频"}
+
+
+def filed_elsewhere_warning(hidden: Mapping[str, int], requested: ModelCategory) -> str:
+    """One line saying what a global catalog held besides the tab's own category, and where to find it."""
+    parts = [
+        f"{count} 个{CATEGORY_LABELS[category]}模型"
+        for category, count in sorted(hidden.items(), key=lambda item: item[0])
+        if count and category != requested
+    ]
+    if not parts:
+        return ""
+    return f"已按名称自动归类：另有 {'、'.join(parts)}未列在{CATEGORY_LABELS[requested]}分类下，请到对应标签加载"
 
 
 def normalize_models(
     payload: object,
     requested: ModelCategory,
     provider: str | None = None,
+    *,
+    hidden: dict[str, int] | None = None,
 ) -> list[DiscoveredModel]:
+    """The rows of ``payload`` that belong under ``requested``; ``hidden`` collects how many fell under each other category."""
     rows = _model_rows(payload)
     if len(rows) > 1000:
         raise ValueError("供应商返回的模型数量超过 1000 条安全上限")
     found: dict[tuple[str, str | None], DiscoveredModel] = {}
+    filed: set[tuple[str, str]] = set()
     for row in rows:
         model_id = _identifier(row)
         if not model_id:
@@ -256,6 +650,9 @@ def normalize_models(
             row, model_id, requested, provider
         )
         if category != requested:
+            if hidden is not None and (category, model_id) not in filed:
+                filed.add((category, model_id))
+                hidden[category] = hidden.get(category, 0) + 1
             continue
         display = _safe_text(
             row.get("displayName") or row.get("display_name") or row.get("name") or model_id,
@@ -273,7 +670,13 @@ def normalize_models(
     return sorted(found.values(), key=lambda item: (item.subcategory or "", item.model_id.lower()))
 
 
+# A provider the person brings themselves has no official domain: any public HTTPS host is its home.
+CUSTOM_PROVIDERS = frozenset({"custom_openai"})
+
+
 def _host_allowed(host: str, provider: str) -> bool:
+    if provider in CUSTOM_PROVIDERS:
+        return True
     return any(host == allowed or host.endswith("." + allowed) for allowed in _PROVIDER_HOSTS.get(provider, ()))
 
 
@@ -283,9 +686,11 @@ def _assert_public_addresses(host: str) -> None:
     except socket.gaierror as exc:
         raise ValueError("供应商域名无法解析") from exc
     for address in {item[4][0] for item in addresses}:
-        parsed = ipaddress.ip_address(address)
-        if not parsed.is_global:
-            raise ValueError("供应商域名解析到了非公网地址")
+        if not settings.is_public_address(address):
+            raise ValueError(
+                f"供应商域名解析到了非公网地址 {address}；若本机代理使用 fake-ip 模式，"
+                "设置 ALLOW_PROXY_FAKE_IP=1（或用 PROXY_FAKE_IP_CIDR 指定其地址段）"
+            )
 
 
 def validate_provider_url(category: ModelCategory, provider: str, base_url: str, *, resolve_dns: bool = True) -> str:
@@ -313,6 +718,16 @@ def _candidate_urls(base_url: str, provider: str) -> list[str]:
     path = parsed.path.rstrip("/")
     urls: list[str] = []
 
+    # ElevenLabs has one account-aware catalog endpoint. Requesting the
+    # tempting but invalid `/models` path first can return 401/403 and mask a
+    # valid key before the official endpoint is ever reached.
+    if provider == "elevenlabs":
+        return [origin + "/v1/models"]
+    # fal.ai's queue and LTX document no model listing; probing invented paths
+    # would only turn a documented catalog into a spurious failure.
+    if provider in {"fal", "ltx"}:
+        return []
+
     if path.endswith("/models"):
         urls.append(base_url)
     else:
@@ -322,7 +737,6 @@ def _candidate_urls(base_url: str, provider: str) -> list[str]:
         "volcengine": ("/api/v3/models",),
         "seedance": ("/api/v3/models",),
         "gemini": ("/v1beta/models", "/v1beta/openai/models"),
-        "elevenlabs": ("/v1/models",),
         "minimax": ("/v2/models", "/v1/models", "/models"),
         "kling": ("/v1/models", "/models"),
     }.get(provider, ("/v1/models", "/models"))
@@ -350,6 +764,8 @@ class ModelDiscoveryClient:
         provider: str,
         base_url: str,
         api_key: str,
+        allow_catalog_fallback: bool = False,
+        allow_invalid_key_fallback: bool = True,
     ) -> DiscoveryResult:
         key = api_key.strip()
         if len(key) < 6 or len(key) > 1000:
@@ -382,7 +798,35 @@ class ModelDiscoveryClient:
                 last_status = response.status_code
                 if response.status_code in {301, 302, 303, 307, 308}:
                     raise ValueError("供应商模型接口不允许重定向")
-                if response.status_code in {401, 403}:
+                if response.status_code == 401:
+                    if provider == "elevenlabs":
+                        if (
+                            category == "audio"
+                            and allow_catalog_fallback
+                            and allow_invalid_key_fallback
+                        ):
+                            return DiscoveryResult(
+                                models=_elevenlabs_audio_models(),
+                                source_endpoint="elevenlabs:documented-model-catalog",
+                                credential_verified=False,
+                                warnings=(_ELEVENLABS_INVALID_KEY_WARNING,),
+                            )
+                        raise ValueError(
+                            "ElevenLabs API Key 无效、已撤销或已过期（HTTP 401）"
+                        )
+                    raise ValueError("API Key 无效或无权读取模型列表")
+                if response.status_code == 403:
+                    if provider == "elevenlabs" and category == "audio":
+                        if allow_catalog_fallback:
+                            return DiscoveryResult(
+                                models=_elevenlabs_audio_models(),
+                                source_endpoint="elevenlabs:documented-model-catalog",
+                                credential_verified=False,
+                                warnings=(_ELEVENLABS_SCOPE_WARNING,),
+                            )
+                        raise ValueError(
+                            "ElevenLabs 拒绝读取模型目录：请检查 Key 的 models scope 或 IP 白名单（HTTP 403）"
+                        )
                     raise ValueError("API Key 无效或无权读取模型列表")
                 if response.status_code == 404:
                     continue
@@ -394,9 +838,56 @@ class ModelDiscoveryClient:
                     payload = json.loads(response.content)
                 except (json.JSONDecodeError, UnicodeError) as exc:
                     raise ValueError("供应商模型接口未返回有效 JSON") from exc
-                models = normalize_models(payload, category, provider)
+                # MiniMax's generic models endpoint returns its language catalog,
+                # not its dedicated video, speech or music catalogs. A successful
+                # response proves the credential without a paid generation; expose
+                # the versioned modality catalog instead of relabelling M-series text.
+                if provider == "minimax" and _model_rows(payload):
+                    if category == "video":
+                        return DiscoveryResult(
+                            models=_minimax_video_models(),
+                            source_endpoint=endpoint,
+                        )
+                    if category == "audio":
+                        return DiscoveryResult(
+                            models=_minimax_audio_models(),
+                            source_endpoint=endpoint,
+                        )
+                hidden: dict[str, int] = {}
+                models = normalize_models(payload, category, provider, hidden=hidden)
+                if provider == "elevenlabs" and category == "audio":
+                    models = _merge_elevenlabs_audio_models(models)
                 if models:
-                    return DiscoveryResult(models=models, source_endpoint=endpoint)
+                    note = filed_elsewhere_warning(hidden, category)
+                    return DiscoveryResult(models=models, source_endpoint=endpoint, warnings=(note,) if note else ())
+
+        if (
+            provider == "elevenlabs"
+            and category == "audio"
+            and allow_catalog_fallback
+            and allow_invalid_key_fallback
+        ):
+            status = f"HTTP {last_status}" if last_status else "网络不可用"
+            return DiscoveryResult(
+                models=_elevenlabs_audio_models(),
+                source_endpoint="elevenlabs:documented-model-catalog",
+                credential_verified=False,
+                warnings=(
+                    f"已加载 ElevenLabs 官方模型目录；模型接口验证失败（{status}），"
+                    "连接测试仍会严格验证。",
+                ),
+            )
+
+        if category == "video" and provider in _DOCUMENTED_VIDEO_CATALOGS and allow_catalog_fallback:
+            return DiscoveryResult(
+                models=_documented_video_models(provider),
+                source_endpoint=f"{provider}:documented-model-catalog",
+                credential_verified=False,
+                warnings=(
+                    f"{provider_label(provider)} 未提供可枚举的模型接口；已加载官方文档目录，"
+                    "凭据将在首次生成时验证。",
+                ),
+            )
 
         status_hint = f"（最后状态 HTTP {last_status}）" if last_status else ""
         raise ValueError(f"供应商未提供可枚举的{category}模型列表{status_hint}")

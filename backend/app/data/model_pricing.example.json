@@ -1,0 +1,10 @@
+{
+  "_comment": "Reference prices per model id. Copy to backend/runtime/model_pricing.json (or point MODEL_PRICING_PATH at it) and fill in the figures from each provider's price list. A model that is not listed is recorded as unpriced. Keys match by the longest id contained in the model name, so 'seedance-2-5' also prices 'doubao-seedance-2-5-pro-xxxx'.",
+  "models": {
+    "deepseek-chat": {"kind": "per_million_tokens", "currency": "CNY", "input": 0, "output": 0},
+    "doubao-seedream-4-5": {"kind": "per_image", "currency": "CNY", "price": 0},
+    "seedance-2-5": {"kind": "per_second", "currency": "CNY", "price": 0, "by_resolution": {"720p": 0, "1080p": 0}},
+    "minimax-h3": {"kind": "per_second", "currency": "CNY", "price": 0},
+    "eleven_multilingual_v2": {"kind": "per_thousand_characters", "currency": "USD", "price": 0}
+  }
+}

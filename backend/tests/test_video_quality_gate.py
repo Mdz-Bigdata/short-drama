@@ -59,7 +59,7 @@ class VideoQualityGateTests(unittest.TestCase):
         self.assertFalse(report.passed)
         self.assertIn("hard_defects", report.failed_dimensions)
 
-    def test_task_cannot_complete_until_evidence_backed_gate_passes(self):
+    def test_task_requires_council_review_after_video_gate_passes(self):
         service = DramaService.__new__(DramaService)
         service.repo = _TaskRepo()
         failed = service.submit_video_quality("task-1", VideoQualityMeasurements(
@@ -73,7 +73,7 @@ class VideoQualityGateTests(unittest.TestCase):
             photorealism=0.95, temporal_continuity=0.95,
             dialogue_emotion_timing=0.95, lip_sync=0.95, assessor="human-director",
         ))
-        self.assertEqual(passed["status"], "completed")
+        self.assertEqual(passed["status"], "awaiting_council_review")
 
 
 if __name__ == "__main__":

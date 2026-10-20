@@ -1,12 +1,24 @@
 # -*- coding: utf-8 -*-
 # ruff: noqa: E402
 import os
+import posixpath
+import logging
 import uvicorn
 from pathlib import Path
 from dotenv import load_dotenv
 
 # Load the server-only environment before importing routers and provider services.
 load_dotenv(Path(__file__).resolve().parent / ".env", override=False)
+
+from app import settings
+
+# Application loggers emit structured task events through the root handler.
+# Provider secrets and request bodies are intentionally never included.
+_log_level = getattr(logging, settings.log_level(), logging.INFO)
+logging.basicConfig(
+    level=_log_level,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -16,6 +28,7 @@ from app.api.drama_api import router as drama_router
 from app.api.auth_api import router as auth_router
 from app.api.production_api import router as production_router
 from app.api.project_skill_api import router as project_skill_router
+from app.api.director_desk_api import router as director_desk_router
 from app.api.studio_api import router as studio_router
 from app.api.agent_api import router as agent_router
 from app.api.billing_api import router as billing_router
@@ -23,9 +36,14 @@ from app.api.element_api import router as element_router
 from app.api.platform_api import router as platform_router
 from app.api.model_configuration_api import router as model_configuration_router
 from app.api.user_api import router as user_router
+from app.api.bgm_api import router as bgm_router
+from app.api.mcp_api import router as mcp_router
+from app.api.market_api import router as market_router
 from app.core.media_compositor import MEDIA_DIR
+from app.repository.task_repo import TaskStoreUnavailableError
 from app.platform.bootstrap import initialize_platform
 from app.platform.dependencies import get_model_secret_cipher, get_platform_store
+from app.platform.request_limits import ElementUploadGuardMiddleware, ScriptUpdateGuardMiddleware
 from app.platform.runtime_models import hydrate_runtime_model_registry
 from app.platform.runtime_skills import hydrate_runtime_skill_registry
 
@@ -35,11 +53,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
-_allowed_origins = [
-    item.strip() for item in os.getenv(
-        "ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
-    ).split(",") if item.strip()
-]
+_allowed_origins = settings.allowed_origins()
+
+app.add_middleware(ElementUploadGuardMiddleware)
+app.add_middleware(ScriptUpdateGuardMiddleware)
 
 # 允许跨域请求 CORS (由于需要带凭证Cookie，allow_origins不能使用"*")
 app.add_middleware(
@@ -54,21 +71,48 @@ app.add_middleware(
 @app.middleware("http")
 async def _security_boundary(request: Request, call_next):
     origin = request.headers.get("origin")
+    # StaticFiles normalizes duplicate slashes and dot segments before opening
+    # a file. Apply the same normalization to the percent-decoded ASGI path so
+    # legacy private element images cannot bypass this boundary.
+    normalized_path = posixpath.normpath(
+        "/" + request.url.path.replace("\\", "/").lstrip("/")
+    )
+    normalized_path_key = normalized_path.casefold()
+    private_element_media = f"{settings.MEDIA_ROUTE}/elements"
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and origin and origin not in _allowed_origins:
-        return JSONResponse(status_code=403, content={"detail": "请求来源不受信任"})
-    response = await call_next(request)
+        response = JSONResponse(status_code=403, content={"detail": "请求来源不受信任"})
+    elif (
+        normalized_path_key == private_element_media
+        or normalized_path_key.startswith(private_element_media + "/")
+    ):
+        # Element reference images are account-private. Keep the general
+        # /media mount for generated audio/video, but never let its static
+        # handler bypass the authenticated element file endpoint.
+        response = JSONResponse(status_code=404, content={"detail": "Not Found"})
+    else:
+        response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
-    if (os.getenv("ENVIRONMENT") or "development").lower() in {"prod", "production"}:
+    if settings.is_production():
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 
+@app.exception_handler(TaskStoreUnavailableError)
+async def _task_store_unavailable(request: Request, exc: TaskStoreUnavailableError):
+    """Report a broken task store honestly instead of as a missing project."""
+    logging.getLogger("app.main").error("任务库不可用: %s", exc)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "任务库暂时不可用，已阻止写入以避免数据丢失，请检查服务端存储后重试"},
+    )
+
+
 # 挂载本地生成媒体的静态访问路由 (TTS 配音、合成成片)
 os.makedirs(MEDIA_DIR, exist_ok=True)
-app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
+app.mount(settings.MEDIA_ROUTE, StaticFiles(directory=MEDIA_DIR), name="media")
 
 # 挂载 API 路由
 app.include_router(drama_router)
@@ -82,6 +126,10 @@ app.include_router(element_router)
 app.include_router(user_router)
 app.include_router(billing_router)
 app.include_router(project_skill_router)
+app.include_router(director_desk_router)
+app.include_router(bgm_router)
+app.include_router(mcp_router)
+app.include_router(market_router)
 
 
 @app.on_event("startup")
@@ -96,12 +144,56 @@ async def _initialize_postgresql_platform():
     await hydrate_runtime_model_registry(get_platform_store(), get_model_secret_cipher())
     await hydrate_runtime_skill_registry(get_platform_store())
 
+def _recover_orphan_task_state(task: dict) -> bool:
+    """Normalize a persisted running task after a process restart."""
+    control = task.get("workflow_control") or {}
+    if not task.get("task_id") or (task.get("status") != "running" and not control.get("active")):
+        return False
+
+    if isinstance(task.get("workflow_control"), dict):
+        task["workflow_control"]["active"] = False
+    if task.get("status") != "running":
+        return True
+    if control.get("pause_requested"):
+        task["status"] = "stopped" if control.get("stop_requested") else "paused"
+        return True
+
+    progress = task.get("stage_progress")
+    if isinstance(progress, dict) and progress.get("status") == "success":
+        # A stage can finish while the historical task-level status remains
+        # running. It is complete and merely waiting for the next stage.
+        task["status"] = "idle"
+        task["fail_reason"] = None
+    else:
+        task["status"] = "interrupted"
+        task["fail_reason"] = "服务重启导致后台任务中断，可点击恢复(/resume)从断点续跑"
+        _record_stage_interruption(task)
+    return True
+
+
+def _record_stage_interruption(task: dict) -> None:
+    """Close the dead stage run and tell the chat why the workflow stopped."""
+    progress = task.get("stage_progress")
+    if not isinstance(progress, dict) or progress.get("status") != "running":
+        return
+    from app.core.workflow_guide import append_stage_guidance
+    from app.service.drama_service import DramaService
+
+    progress["status"] = "error"
+    progress["error"] = task["fail_reason"]
+    progress["label"] = "服务重启，阶段执行中断"
+    for call in progress.get("calls") or []:
+        if isinstance(call, dict) and call.get("status") == "running":
+            call["status"] = "error"
+    append_stage_guidance(task, "interrupted", DramaService.STAGE_LABELS)
+
+
 @app.on_event("startup")
 def _recover_orphan_tasks():
     """
     服务启动时回收孤儿任务 (防孤儿)：一键成片走 FastAPI BackgroundTasks，
-    若服务在生成途中重启/崩溃，任务会永久卡在 running。启动时把这些残留 running
-    重置为 interrupted —— 前端可见且不再"假装在跑"，可通过 /resume 从断点续跑。
+    若服务在生成途中重启/崩溃，任务会永久卡在 running。启动时把真正未完成的运行态
+    重置为 interrupted；阶段进度已经成功的任务恢复为 idle，等待下一阶段。
     """
     import logging
     log = logging.getLogger("main")
@@ -110,15 +202,33 @@ def _recover_orphan_tasks():
         repo = TaskRepository()
         n = 0
         for t in repo.list_all_tasks():
-            if isinstance(t, dict) and t.get("status") == "running" and t.get("task_id"):
-                t["status"] = "interrupted"
-                t["fail_reason"] = "服务重启导致后台任务中断，可点击恢复(/resume)从断点续跑"
-                repo.save_task(t["task_id"], t)
-                n += 1
+            if isinstance(t, dict) and (t.get("status") == "running" or (t.get("workflow_control") or {}).get("active")):
+                if repo.mutate_task(t["task_id"], _recover_orphan_task_state):
+                    n += 1
         if n:
-            log.warning(f"[启动恢复] 已回收 {n} 个中断的运行中任务 -> interrupted (可 /resume 续跑)")
+            log.warning(f"[启动恢复] 已规范化 {n} 个残留 running 任务的状态")
     except Exception as e:
         log.error(f"[启动恢复] 孤儿任务回收失败: {str(e)[:160]}")
+    # Video jobs the providers accepted before the restart keep running and are paid for:
+    # poll them to their end in the background and record their clips; never re-submit.
+    import threading
+    from app.api.drama_api import service as drama_service
+
+    def _resume():
+        try:
+            queues = drama_service.reconcile_generation_queues()
+            if queues.get("requeued"):
+                log.warning("[启动恢复] 生成队列: %s 项回到排队", queues["requeued"])
+        except Exception as error:  # noqa: BLE001 - recovery must never take the server down
+            log.error("[启动恢复] 生成队列整理失败: %s", str(error)[:160])
+        try:
+            outcome = drama_service.resume_interrupted_video_jobs()
+            if any(outcome.values()):
+                log.warning("[启动恢复] 视频任务续查: 取回 %s 条, 失败 %s 条", outcome["downloaded"], outcome["failed"])
+        except Exception as error:  # noqa: BLE001 - recovery must never take the server down
+            log.error("[启动恢复] 视频任务续查失败: %s", str(error)[:160])
+
+    threading.Thread(target=_resume, name="video-job-resume", daemon=True).start()
 
 
 @app.get("/")
@@ -129,4 +239,9 @@ def read_root():
     }
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app",
+        host=settings.server_host(),
+        port=settings.server_port(),
+        reload=settings.server_reload(),
+    )

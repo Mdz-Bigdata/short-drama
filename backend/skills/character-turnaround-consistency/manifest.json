@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "sections": [
+    {
+      "key": "actor-sheet-template",
+      "title": "AI短剧五视图解决人物一致性提示词模板",
+      "file": "references/actor-sheet-template.md",
+      "budget": 5000,
+      "stages": [
+        3
+      ]
+    }
+  ]
+}

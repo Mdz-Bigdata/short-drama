@@ -1,0 +1,32 @@
+{
+  "source": "https://github.com/liyue-aigc/seedance-2-5-video-director",
+  "reviewed_commit": "ad0e68ba6ce24fb9ae9c67c9276061cef37663f1",
+  "reviewed_at": "2026-09-03",
+  "license_observation": "MIT. Copyright (c) 2026 liyue-aigc. NOTICE.md states the package is an independent community project not affiliated with ByteDance/Dreamina, and that references/capabilities-and-limits.md and references/official-examples.md are independently organized summaries derived from the Dreamina Seedance 2.5 user guide.",
+  "treatment": "Vendored verbatim under the MIT license. The upstream LICENSE and NOTICE.md ship unmodified next to this file and the copyright notice is preserved; no upstream wording was rewritten or re-attributed. The full upstream tree (except .git and .gitignore) is kept so the upstream validator keeps passing against this copy.",
+  "vendored_upstream_files": [
+    "LICENSE",
+    "NOTICE.md",
+    "README.md",
+    "SKILL.md",
+    "agents/openai.yaml",
+    "references/capabilities-and-limits.md",
+    "references/first-use-onboarding.md",
+    "references/multimodal-patterns.md",
+    "references/official-examples.md",
+    "references/prompt-blueprints.md",
+    "references/realistic-direction-patterns.md",
+    "scripts/validate_skill.py",
+    "tests/cases.json",
+    ".github/workflows/validate.yml"
+  ],
+  "executed_upstream_files": [
+    "scripts/validate_skill.py"
+  ],
+  "notes": [
+    "The vendored tree was verified byte-identical (diff -r) to the reviewed commit on 2026-09-03.",
+    "scripts/validate_skill.py is executed only by the project test-suite (backend/tests/test_seedance_video_director_skill.py) against this vendored copy. It is a read-only structural validator with no network access and is never imported by the application.",
+    "At runtime only Markdown is read: app/core/seedance_video_director.py extracts the provider-specific sections (mode limits, input requirements, timing/reference rules, the selected prompt blueprint, asset-lock and realistic-direction patterns) and appends them as a budgeted director layer to ModelGateway.optimize_video_prompt when, and only when, the target model resolves to Seedance 2.5. The chat-agent behaviours of the upstream Skill (onboarding, clarifying questions, director-brief/diagnosis output modes) are intentionally not wired.",
+    "Registered in backend/app/data/upstream_sources.json and backend/app/core/capability_manifest.py as source id seedance-2-5-video-director."
+  ]
+}

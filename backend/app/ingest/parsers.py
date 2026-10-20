@@ -24,6 +24,8 @@ class SourceIngestor:
     MAX_ARCHIVE_ENTRIES = 2_000
     MAX_ARCHIVE_UNCOMPRESSED = 100 * 1024 * 1024
     MAX_PDF_PAGES = 1_000
+    # File extensions `ingest` understands; upload pickers are told the same list.
+    SUPPORTED_EXTENSIONS = ("txt", "md", "markdown", "docx", "pdf", "fdx")
 
     def ingest(self, filename: str, content: bytes) -> SourceDocument:
         if not filename or len(filename) > 255:
@@ -31,7 +33,7 @@ class SourceIngestor:
         if not content:
             raise SourceIngestError("source is empty")
         if len(content) > self.MAX_BYTES:
-            raise SourceIngestError("source exceeds 25 MB")
+            raise SourceIngestError(f"source exceeds {self.MAX_BYTES // (1024 * 1024)} MB")
         suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
         if suffix in {"txt"}:
             text, source_format = self._decode_text(content), "text"

@@ -18,6 +18,7 @@ from app.schema.studio import (
     ProjectCreate,
     AgentKeyCreateRequest,
     CanvasPromoteRequest,
+    CanvasDuplicateRequest,
     CanvasPutRequest,
     CostEventRequest,
     DirectorWorldPutRequest,
@@ -275,6 +276,31 @@ def promote_canvas_node(
 ):
     try:
         return service.promote_canvas_node(project_id, _owner(current_user), request)
+    except Exception as exc:
+        raise _safe_error(exc) from exc
+
+
+@router.post("/projects/{project_id}/canvas/duplicate")
+def duplicate_canvas_nodes(
+    project_id: str,
+    request: CanvasDuplicateRequest,
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+):
+    try:
+        return service.duplicate_canvas_nodes(project_id, _owner(current_user), request)
+    except Exception as exc:
+        raise _safe_error(exc) from exc
+
+
+@router.get("/projects/{project_id}/canvas/outline")
+def canvas_outline(
+    project_id: str,
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+):
+    try:
+        return service.canvas_outline(project_id, _owner(current_user))
     except Exception as exc:
         raise _safe_error(exc) from exc
 

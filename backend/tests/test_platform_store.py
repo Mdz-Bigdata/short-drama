@@ -4,9 +4,11 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
+from sqlalchemy import select
+
 from app.core.capability_manifest import UPSTREAM_CAPABILITIES
 from app.platform.bootstrap import initialize_platform
-from app.platform.models import PaymentOrder
+from app.platform.models import PaymentOrder, RegenerationRequest
 from app.platform.store import PlatformStore
 
 
@@ -102,7 +104,7 @@ class PlatformStoreTests(unittest.IsolatedAsyncioTestCase):
             "rear_three_quarter", "back",
         ]
         for index, slot in enumerate(slots):
-            actor = await self.store.add_element_file(
+            stored = await self.store.add_element_file(
                 element_id=actor.id,
                 owner_id=user.id,
                 slot=slot,
@@ -111,6 +113,7 @@ class PlatformStoreTests(unittest.IsolatedAsyncioTestCase):
                 size_bytes=100 + index,
                 sha256=f"hash-{index}",
             )
+            actor = stored.element
         self.assertEqual(actor.status, "ready")
         self.assertEqual([item.slot for item in actor.files], slots)
 
@@ -124,6 +127,200 @@ class PlatformStoreTests(unittest.IsolatedAsyncioTestCase):
                 size_bytes=10,
                 sha256="bad",
             )
+
+    async def test_element_storage_quota_uses_replacement_delta(self):
+        user, _ = await self.store.create_user(
+            email="quota-owner@example.com", phone=None, password="owner-password"
+        )
+        scene = await self.store.create_element(owner_id=user.id, kind="scene", name="配额场景")
+        with patch("app.platform.store.MAX_ELEMENT_STORAGE_BYTES", 150):
+            first = await self.store.add_element_file(
+                element_id=scene.id,
+                owner_id=user.id,
+                slot="model_glb",
+                storage_path="private/first.glb",
+                mime_type="model/gltf-binary",
+                size_bytes=100,
+                sha256="first",
+            )
+            replaced = await self.store.add_element_file(
+                element_id=scene.id,
+                owner_id=user.id,
+                slot="model_glb",
+                storage_path="private/replaced.glb",
+                mime_type="model/gltf-binary",
+                size_bytes=120,
+                sha256="replaced",
+            )
+            self.assertIsNone(first.replaced_storage_path)
+            self.assertEqual(replaced.replaced_storage_path, "private/first.glb")
+            with self.assertRaisesRegex(ValueError, "存储空间"):
+                await self.store.add_element_file(
+                    element_id=scene.id,
+                    owner_id=user.id,
+                    slot="reference",
+                    storage_path="public/reference.png",
+                    mime_type="image/png",
+                    size_bytes=40,
+                    sha256="image",
+                )
+
+    async def test_global_element_storage_quota_spans_accounts(self):
+        first_user, _ = await self.store.create_user(
+            email="global-one@example.com", phone=None, password="owner-password"
+        )
+        second_user, _ = await self.store.create_user(
+            email="global-two@example.com", phone=None, password="owner-password"
+        )
+        first_scene = await self.store.create_element(owner_id=first_user.id, kind="scene", name="场景一")
+        second_scene = await self.store.create_element(owner_id=second_user.id, kind="scene", name="场景二")
+        with (
+            patch("app.platform.store.MAX_ELEMENT_STORAGE_BYTES", 1_000),
+            patch("app.platform.store.MAX_GLOBAL_ELEMENT_STORAGE_BYTES", 150),
+        ):
+            await self.store.add_element_file(
+                element_id=first_scene.id,
+                owner_id=first_user.id,
+                slot="reference",
+                storage_path="public/one.png",
+                mime_type="image/png",
+                size_bytes=100,
+                sha256="one",
+            )
+            with self.assertRaisesRegex(ValueError, "全局存储配额"):
+                await self.store.add_element_file(
+                    element_id=second_scene.id,
+                    owner_id=second_user.id,
+                    slot="reference",
+                    storage_path="public/two.png",
+                    mime_type="image/png",
+                    size_bytes=60,
+                    sha256="two",
+                )
+
+    async def test_deleting_files_updates_model_metadata_status_version_and_owner_scope(self):
+        owner, _ = await self.store.create_user(
+            email="delete-owner@example.com", phone=None, password="owner-password"
+        )
+        stranger, _ = await self.store.create_user(
+            email="delete-stranger@example.com", phone=None, password="owner-password"
+        )
+        scene = await self.store.create_element(
+            owner_id=owner.id,
+            kind="scene",
+            name="待删除场景",
+            metadata={"source": "test"},
+        )
+        await self.store.add_element_file(
+            element_id=scene.id,
+            owner_id=owner.id,
+            slot="reference",
+            storage_path=f"{owner.id}/{scene.id}/reference.png",
+            mime_type="image/png",
+            size_bytes=10,
+            sha256="reference",
+        )
+        with_model = await self.store.add_element_file(
+            element_id=scene.id,
+            owner_id=owner.id,
+            slot="model_glb",
+            storage_path=f"{owner.id}/{scene.id}/model.glb",
+            mime_type="model/gltf-binary",
+            size_bytes=20,
+            sha256="model",
+            model_metadata={"format": "glb", "stats": {"triangles": 1}},
+        )
+        reference_file = next(item for item in with_model.element.files if item.slot == "reference")
+        model_file = next(item for item in with_model.element.files if item.slot == "model_glb")
+        original_version = with_model.element.version
+
+        with self.assertRaisesRegex(ValueError, "元素不存在"):
+            await self.store.delete_element_file(
+                scene.id, reference_file.id, stranger.id
+            )
+        unchanged = await self.store.get_element(scene.id, owner.id)
+        self.assertEqual(len(unchanged.files), 2)
+
+        without_reference = await self.store.delete_element_file(
+            scene.id, reference_file.id, owner.id
+        )
+        self.assertEqual(without_reference.deleted_file.id, reference_file.id)
+        self.assertEqual(without_reference.element.version, original_version + 1)
+        self.assertEqual(without_reference.element.status, "ready")
+        self.assertIn("model3d", without_reference.element.metadata_json)
+
+        without_model = await self.store.delete_element_file(
+            scene.id, model_file.id, owner.id
+        )
+        self.assertEqual(without_model.deleted_file.storage_path, f"{owner.id}/{scene.id}/model.glb")
+        self.assertEqual(without_model.element.version, original_version + 2)
+        self.assertEqual(without_model.element.status, "draft")
+        self.assertEqual(without_model.element.metadata_json, {"source": "test"})
+        self.assertEqual(without_model.element.files, [])
+
+    async def test_deleting_actor_view_marks_ready_actor_draft(self):
+        owner, _ = await self.store.create_user(
+            email="delete-actor@example.com", phone=None, password="owner-password"
+        )
+        actor = await self.store.create_element(owner_id=owner.id, kind="actor", name="演员")
+        for index, slot in enumerate((
+            "front", "front_three_quarter", "profile", "rear_three_quarter", "back"
+        )):
+            stored = await self.store.add_element_file(
+                element_id=actor.id,
+                owner_id=owner.id,
+                slot=slot,
+                storage_path=f"{owner.id}/{actor.id}/{slot}.png",
+                mime_type="image/png",
+                size_bytes=10,
+                sha256=f"actor-{index}",
+            )
+        front = next(item for item in stored.element.files if item.slot == "front")
+        original_version = stored.element.version
+
+        result = await self.store.delete_element_file(actor.id, front.id, owner.id)
+
+        self.assertEqual(result.element.status, "draft")
+        self.assertEqual(result.element.version, original_version + 1)
+        self.assertEqual([item.slot for item in result.element.files], [
+            "front_three_quarter", "profile", "rear_three_quarter", "back"
+        ])
+
+    async def test_deleting_element_is_owner_scoped_and_removes_regeneration_records(self):
+        owner, _ = await self.store.create_user(
+            email="delete-asset-owner@example.com", phone=None, password="owner-password"
+        )
+        stranger, _ = await self.store.create_user(
+            email="delete-asset-stranger@example.com", phone=None, password="owner-password"
+        )
+        prop = await self.store.create_element(owner_id=owner.id, kind="prop", name="旧道具")
+        stored = await self.store.add_element_file(
+            element_id=prop.id,
+            owner_id=owner.id,
+            slot="reference",
+            storage_path=f"{owner.id}/{prop.id}/reference.png",
+            mime_type="image/png",
+            size_bytes=10,
+            sha256="delete-asset-reference",
+        )
+        regeneration = await self.store.request_regeneration(prop.id, owner.id, "重绘")
+
+        with self.assertRaisesRegex(ValueError, "元素不存在"):
+            await self.store.delete_element(prop.id, stranger.id)
+        self.assertIsNotNone(await self.store.get_element(prop.id, owner.id))
+
+        result = await self.store.delete_element(prop.id, owner.id)
+
+        self.assertEqual(result.element_id, prop.id)
+        self.assertEqual([item.id for item in result.deleted_files], [stored.element.files[0].id])
+        self.assertIsNone(await self.store.get_element(prop.id, owner.id))
+        async with self.store.sessions() as session:
+            orphan = await session.scalar(
+                select(RegenerationRequest).where(RegenerationRequest.id == regeneration.id)
+            )
+        self.assertIsNone(orphan)
+        with self.assertRaisesRegex(ValueError, "元素不存在"):
+            await self.store.delete_element(prop.id, owner.id)
 
     async def test_ledger_and_payment_confirmation_are_append_only_and_idempotent(self):
         user, _ = await self.store.create_user(

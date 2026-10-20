@@ -1,37 +1,56 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense, type CSSProperties } from 'react';
 import { 
   Film, Play, Pause, ChevronRight, 
-  UserCheck, ClipboardList, Video, Music, Share2, 
-  Layers, HardDrive, Cpu, Monitor, Sliders, 
-  Send, X, ArrowUp, Folder, ArrowRight, User,
-  Upload
+  Music,
+  HardDrive, Cpu, Monitor, Sliders,
+  X, ArrowUp, Folder, ArrowRight, User,
+  Upload, Bot
 } from 'lucide-react';
-import { type TaskConfig, type TaskResponse } from './types';
+import { CONTENT_LANGUAGE_OPTIONS, CREATION_MODE_OPTIONS, EMPTY_AD_BRIEF, NARRATION_DELIVERY_OPTIONS, normalizeVideoReferenceMode, type AdBrief, type ContentLanguage, type CreationMode, type NarrationDelivery, type TaskConfig, type TaskResponse, type TaskSummary, type StageProgress } from './types';
 import { CapabilityCenter } from './features/platform/CapabilityCenter';
-import { ElementLibraryPage, type ElementKind } from './features/elements/ElementLibraryPage';
-import { UserCenterPage } from './features/account/UserCenterPage';
-import { BillingCenterPage } from './features/billing/BillingCenterPage';
-import { ModelConfigurationCenter, type ModelCategory } from './features/models/ModelConfigurationCenter';
-import { ProjectSkillManager } from './features/skills/ProjectSkillManager';
+import type { ElementKind } from './features/elements/elementTypes';
+import type { ModelCategory } from './features/models/ModelConfigurationCenter';
+import type { BreakdownSceneRef, SceneBoardStatus, StoryboardProgress, StoryboardShot } from './features/storyboard/StoryboardWorkspace';
+import { AgentStageTabs } from './features/workbench/AgentStageTabs';
+import { StageFivePreview } from './features/workbench/StageFivePreview';
+import { TimelinePanel } from './features/workbench/TimelinePanel';
+import { StyleReferencePanel } from './features/workbench/StyleReferencePanel';
+import { getScriptDisplayName } from './features/workbench/scriptTitle';
+import { VideoReferenceModeSelect } from './features/workbench/VideoReferenceModeSelect';
+import { NOVARA_AGENT_NAME, PRODUCT_TITLE } from './features/workbench/agentBrand';
+import {
+  DEFAULT_DIRECTOR_STYLE, DEFAULT_SHOT_STYLE, DIRECTOR_STYLES, FALLBACK_STYLE_PACK, FALLBACK_STYLE_PACKS,
+  SHOT_STYLES, parseStylePacks, type StylePackOption,
+} from './features/workbench/creationOptions';
+import { WorkbenchResizeHandle } from './features/workbench/WorkbenchResizeHandle';
+import { SLOW_CALL_MS, callElapsed, formatDuration, liveElapsed } from './features/workbench/stageProgress';
+import { appendWorkflowHint, canAcceptTaskResponse, mergeWorkflowHistory, restoreWorkflowHistory, shouldPollWorkflow, workflowBoardTransition, workflowIntroMessage, type WorkflowChatMessage } from './features/workbench/workflowMessages';
+import { WorkflowActions } from './features/workbench/WorkflowGuide';
+import { ChatComposer } from './features/workbench/ChatComposer';
+import { ChatHistory } from './features/workbench/ChatHistory';
+import type { WriterDashboardResponse } from './features/writer/types';
 
-// 定义 Agent 节点常数
-const AGENT_STAGES = [
-  { id: 1, name: '总导演 (Executive Director)', icon: Film, desc: '确立主旋律与故事爽点大纲' },
-  { id: 2, name: '专业编剧 (Writer Agent)', icon: ClipboardList, desc: '撰写双轨节奏剧本与口语化台词' },
-  { id: 3, name: '角色设计师 (Character Designer)', icon: UserCheck, desc: '设计人物五维 DNA 档案' },
-  { id: 4, name: '专业分镜师 (Storyboard Artist)', icon: Sliders, desc: '拆解 15 秒切片与 36 运镜系统' },
-  { id: 5, name: '视觉总监 (Visual Director)', icon: Video, desc: '调用文生图/图生视频及多帧校验' },
-  { id: 6, name: '音频总监 (Audio Director)', icon: Music, desc: '合成多角色 TTS 配音及音画对齐' },
-  { id: 7, name: '合成发布 (Composer & Publisher)', icon: Layers, desc: '视听合流压制与内置特效字幕' },
-  { id: 8, name: '宣发 Agent (PR Agent)', icon: Share2, desc: '生成引流封面大字及高完播率文案' },
-];
-interface ChatMessage {
-  id: string;
-  sender: 'user' | 'ai';
-  text: string;
-  stage?: number;
-  isSystem?: boolean;
+// Every screen below sits behind navigation (a portal, a workbench stage or a
+// modal), so it is loaded on demand instead of shipping in the first bundle.
+const ElementLibraryPage = lazy(() => import('./features/elements/ElementLibraryPage').then(m => ({ default: m.ElementLibraryPage })));
+const UserCenterPage = lazy(() => import('./features/account/UserCenterPage').then(m => ({ default: m.UserCenterPage })));
+const BillingCenterPage = lazy(() => import('./features/billing/BillingCenterPage').then(m => ({ default: m.BillingCenterPage })));
+const ModelConfigurationCenter = lazy(() => import('./features/models/ModelConfigurationCenter').then(m => ({ default: m.ModelConfigurationCenter })));
+const ProjectSkillManager = lazy(() => import('./features/skills/ProjectSkillManager').then(m => ({ default: m.ProjectSkillManager })));
+const StoryboardWorkspace = lazy(() => import('./features/storyboard/StoryboardWorkspace').then(m => ({ default: m.StoryboardWorkspace })));
+const DirectorPlanningPage = lazy(() => import('./features/director/DirectorPlanningPage').then(m => ({ default: m.DirectorPlanningPage })));
+const WriterAgentPageContainer = lazy(() => import('./features/writer/WriterAgentPageContainer').then(m => ({ default: m.WriterAgentPageContainer })));
+const CharacterDesignerPageContainer = lazy(() => import('./features/character/CharacterDesignerPageContainer').then(m => ({ default: m.CharacterDesignerPageContainer })));
+
+function StageFallback() {
+  return <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--text-muted)', padding: '40px' }}>{tr('正在载入…')}</div>;
 }
+import { API_BASE, apiRequest, onUnauthorized } from './api/client';
+import { DEFAULT_CLIENT_CONFIG, parseClientConfig, type ClientConfig } from './api/clientConfig';
+import { acceptLanguage, t as tr, useLocale } from './i18n';
+import { LanguageSwitcher } from './i18n/LanguageSwitcher';
+
+type ChatMessage = WorkflowChatMessage;
 
 interface CurrentUser {
   user_id: string;
@@ -50,6 +69,79 @@ interface EpisodeItem {
   videoUrl?: string | null;
 }
 
+interface EpisodeCollectionState {
+  taskId: string;
+  sourceHash: string;
+  items: EpisodeItem[];
+}
+
+// 轮询节奏（毫秒）：当前任务状态、制作中的分集列表、刚提交制作后的首次回查
+const TASK_STATUS_POLL_MS = 1500;
+// A dev-server reload or backend restart drops requests for ~20s. Keep polling
+// through that window so the chat picks up the interrupted stage afterwards.
+const TASK_STATUS_MAX_POLL_FAILURES = 40;
+// 项目大厅列表：有项目在跑时跟随任务轮询节奏，否则慢速刷新
+const LOBBY_IDLE_POLL_MS = 15000;
+const EPISODE_LIST_POLL_MS = 8000;
+const EPISODE_PRODUCE_RECHECK_MS = 5000;
+
+// 下拉常用档位：小体量逐集递增，长剧按 10 集一档；实际可选范围由服务端下发的集数上下限裁剪
+const EPISODE_COUNT_PRESETS = [
+  1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 24, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150,
+];
+// 工作流共 8 个 Agent 阶段
+const WORKFLOW_STAGE_COUNT = 8;
+
+type EpisodeLimits = ClientConfig['episodeCount'];
+
+function clampEpisodeCount(value: string | number, limits: EpisodeLimits) {
+  const parsed = typeof value === 'number' ? value : parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return limits.min;
+  return Math.min(limits.max, Math.max(limits.min, Math.trunc(parsed)));
+}
+
+function normalizeEpisodeSourceHash(value: unknown) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return /^[a-f\d]{64}$/.test(normalized) ? normalized : '';
+}
+
+function stageKeyAtLeast(value: string, minimum: number) {
+  const match = value.match(/^([0-9]+)(?:$|_)/);
+  return Boolean(match && Number(match[1]) >= minimum && Number(match[1]) <= WORKFLOW_STAGE_COUNT);
+}
+
+function applyWriterDashboardToTask(
+  task: TaskResponse,
+  dashboard: WriterDashboardResponse,
+): TaskResponse {
+  const assets = Object.fromEntries(Object.entries(task.assets).filter(([key]) => (
+    !stageKeyAtLeast(key, 3) && key !== '2_breakdown' && key !== '2_writer_dashboard'
+  )));
+  assets['2'] = dashboard.script;
+  assets['2_writer_dashboard'] = dashboard;
+  const logs = Object.fromEntries(Object.entries(task.logs).filter(([key]) => !stageKeyAtLeast(key, 2)));
+  return {
+    ...task,
+    currentStage: 2,
+    stageName: '编剧剧本创作',
+    status: 'idle',
+    config: {
+      ...task.config,
+      scriptContent: dashboard.script,
+      scriptName: dashboard.scriptFileName || task.config.scriptName,
+      episodeCount: dashboard.stats.totalEpisodes,
+    },
+    assets,
+    logs,
+    videoUrl: undefined,
+    shortLink: undefined,
+    prContent: undefined,
+    stageProgress: null,
+    failReason: null,
+    workflow: undefined,
+  };
+}
+
 interface ImportedSkill {
   name: string;
   description?: string;
@@ -65,41 +157,120 @@ interface RecommendedTemplate {
   prompt: string;
 }
 
-interface CharacterCard {
-  name: string;
-  role?: string;
-  desc?: string;
-  sheet?: string;
-  views?: Array<{ view: string; image_url: string }>;
+// 阶段3角色 DNA 锁定包结构化产物 (assets["3_dna"])：项目基准 + 假设 + 风险 + 角色档案/状态卡/视图锚点
+// Ticks once a second while a stage runs, so its clocks move during a long model call.
+function useNowWhile(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return undefined;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  return now;
 }
 
-interface ProductionShot {
-  shot_id?: number;
-  size?: string;
-  motion?: string;
-  desc?: string;
-  image_url?: string;
-  video_url?: string;
+function StageProgressPanel({ progress }: { progress: StageProgress }) {
+  const now = useNowWhile(progress.status === 'running');
+  const totalMs = liveElapsed(progress, now);
+  const label = progress.stage_label || progress.stageLabel || `阶段${progress.stage}`;
+  const pct = Math.max(0, Math.min(100, Math.round(progress.percent || 0)));
+  const isError = progress.status === 'error';
+  const accent = isError ? '#e60029' : progress.status === 'success' ? '#3ddc84' : 'var(--neon-cyan)';
+  const calls = Array.isArray(progress.calls) ? progress.calls : [];
+  const shownCalls = calls.slice(-8);
+  return (
+    <div style={{ padding: '12px 14px', background: '#fdeff1', border: `1px solid ${isError ? 'rgba(230, 0, 41, 0.45)' : 'rgba(227, 84, 108, 0.25)'}`, borderRadius: '10px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-light)' }}>
+          ⚙️ Stage {progress.stage} · {label}
+        </span>
+        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: accent, fontVariantNumeric: 'tabular-nums' }}>{pct}%</span>
+      </div>
+      <div style={{ height: '6px', background: 'rgba(214, 90, 120, 0.176)', borderRadius: '999px', overflow: 'hidden', margin: '8px 0 10px' }}>
+        <div style={{ width: `${pct}%`, height: '100%', borderRadius: '999px', background: `linear-gradient(90deg, #e3546c, ${isError ? '#e60029' : '#e3546c'})`, boxShadow: `0 0 8px ${accent}`, transition: 'width 0.8s ease' }} />
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        {calls.length > shownCalls.length && (
+          <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>… 前 {calls.length - shownCalls.length} 步已完成</div>
+        )}
+        {shownCalls.map((call, i) => (
+          <div key={`${call.name}-${i}`} style={{ display: 'flex', alignItems: 'flex-start', gap: '6px', fontSize: '0.72rem', lineHeight: '1.5', color: call.status === 'running' ? 'var(--text-light)' : call.status === 'error' ? '#e60029' : 'var(--text-muted)' }}>
+            <span style={{ flexShrink: 0 }}>{call.status === 'running' ? '⏳' : call.status === 'error' ? '❌' : '✅'}</span>
+            <span>{call.name}</span>
+            {callElapsed(call, now) !== null && (
+              <span style={{ marginLeft: 'auto', color: 'var(--text-dim)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                {call.status === 'running' ? '已等待 ' : ''}{formatDuration(callElapsed(call, now) ?? 0)}
+              </span>
+            )}
+          </div>
+        ))}
+        {shownCalls.some(call => call.status === 'running' && (callElapsed(call, now) ?? 0) > SLOW_CALL_MS) && (
+          <div role="status" style={{ fontSize: '0.68rem', lineHeight: '1.5', color: 'var(--neon-amber)' }}>
+            模型响应较慢，仍在等待；超过总时限会自动放弃本次调用并换用备用凭据或模型。
+          </div>
+        )}
+      </div>
+      {totalMs !== null && (
+        <div style={{ marginTop: '8px', textAlign: 'right', color: 'var(--text-dim)', fontSize: '0.66rem', fontVariantNumeric: 'tabular-nums' }}>
+          累计耗时 {formatDuration(totalMs)}
+        </div>
+      )}
+      {isError && progress.error && (
+        <div style={{ marginTop: '8px', fontSize: '0.74rem', lineHeight: '1.6', color: '#e60029', background: 'rgba(230, 0, 41, 0.08)', border: '1px solid rgba(230, 0, 41, 0.3)', borderRadius: '6px', padding: '8px 10px' }}>
+          {progress.error}
+        </div>
+      )}
+    </div>
+  );
 }
+
+// 身份视图角度标签：固定人物关键视觉信息 (正面 0° / 侧面 90° / 背面 180° / 正脸 0° / 3-4 侧脸 45°)
+// 数字演员卡片式设定集查看器：一张大图 + 底部缩略图条，点击缩略图切换主图
+type GlobalModelDefaults = Record<ModelCategory, string>;
+
+const EMPTY_GLOBAL_MODEL_DEFAULTS: GlobalModelDefaults = {
+  text: '', image: '', video: '', audio: '',
+};
 
 let messageSequence = 0;
 const nextMessageId = () => `message-${++messageSequence}`;
 
 export default function App() {
+  // The whole shell re-renders when the interface language changes (src/i18n).
+  useLocale();
   // 用户身份认证状态
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [authChecked, setAuthChecked] = useState<boolean>(false);
+  // 本地开发时后端引导创建的管理员登录名；生产环境或未启用引导时后端不下发
+  const [bootstrapAdminLogin, setBootstrapAdminLogin] = useState<string | null>(null);
+  // 与服务端共用的限制（密码长度、验证码、集数范围、剧本上传），随会话接口下发
+  const [clientConfig, setClientConfig] = useState<ClientConfig>(DEFAULT_CLIENT_CONFIG);
+  // 账户可用创作积分；未取到时不显示，不拿假数字占位
+  const [walletPoints, setWalletPoints] = useState<string | null>(null);
+  const [stylePacks, setStylePacks] = useState<readonly StylePackOption[]>(FALLBACK_STYLE_PACKS);
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
   const [activePortal, setActivePortal] = useState<'home' | 'user' | 'billing' | ElementKind>('home');
+
+  // 会话失效后统一回到登录态，避免工作台面板各自吞掉 401 空转重试。
+  const resetToSignedOut = useCallback(() => {
+    setCurrentUser(null);
+    setWalletPoints(null);
+    setHasEnabledGlobalModel(false);
+    setGlobalModelDefaults(EMPTY_GLOBAL_MODEL_DEFAULTS);
+    setAuthChecked(true);
+  }, []);
+
+  // 功能面板共用 api/client 的 apiRequest，它在 401 时广播到这里。
+  useEffect(() => onUnauthorized(resetToSignedOut), [resetToSignedOut]);
 
   // 统一的网络请求拦截器，确保附带 HttpOnly Cookie 并在 401 时拦截至登录态
   const apiFetch = async (url: string, options: RequestInit = {}) => {
     options.credentials = 'include';
+    options.headers = { 'Accept-Language': acceptLanguage(), ...(options.headers as Record<string, string> | undefined) };
     const response = await fetch(url, options);
     if (response.status === 401) {
-      setCurrentUser(null);
-      setAuthChecked(true);
-      throw new Error('未登录或登录已过期');
+      resetToSignedOut();
+      throw new Error(tr('未登录或登录已过期'));
     }
     return response;
   };
@@ -118,18 +289,18 @@ export default function App() {
   const [codeCountdown, setCodeCountdown] = useState<number>(0);
   const [mockVerificationCode, setMockVerificationCode] = useState<string>('');
 
-  // 发送验证码并启动 60 秒倒计时；生产环境永不回显验证码。
+  // 发送验证码并按服务端的冷却时间启动倒计时；生产环境永不回显验证码。
   const handleSendVerificationCode = async () => {
     const loginId = authForm.loginId.trim();
     if (!loginId) {
-      setAuthError('请输入邮箱或手机号');
+      setAuthError(tr('请输入邮箱或手机号'));
       return;
     }
     setAuthError('');
     setAuthSuccess('');
     
     try {
-      const res = await fetch('http://localhost:8000/api/auth/send_code', {
+      const res = await fetch(`${API_BASE}/api/auth/send_code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ login_id: loginId }),
@@ -143,7 +314,9 @@ export default function App() {
         setAuthSuccess(developmentCode
           ? `验证码发送成功（本地开发码：${developmentCode}）`
           : '验证码发送成功，请查看短信或邮件。');
-        setCodeCountdown(60);
+        setCodeCountdown(typeof data.cooldown_seconds === 'number' && data.cooldown_seconds > 0
+          ? Math.ceil(data.cooldown_seconds)
+          : clientConfig.verificationCode.cooldownSeconds);
         const timer = setInterval(() => {
           setCodeCountdown(prev => {
             if (prev <= 1) {
@@ -155,10 +328,10 @@ export default function App() {
         }, 1000);
       } else {
         const err = await res.json();
-        setAuthError(err.detail || '验证码发送失败');
+        setAuthError(err.detail || tr('验证码发送失败'));
       }
     } catch {
-      setAuthError('无法连接至后端，请先确保后端运行中。');
+      setAuthError(tr('无法连接至后端，请先确保后端运行中。'));
     }
   };
 
@@ -171,10 +344,10 @@ export default function App() {
     try {
       if (authTab === 'login_pwd') {
         if (!authForm.loginId.trim() || !authForm.password.trim()) {
-          setAuthError('请输入账号和密码');
+          setAuthError(tr('请输入账号和密码'));
           return;
         }
-        const res = await fetch('http://localhost:8000/api/auth/login_password', {
+        const res = await fetch(`${API_BASE}/api/auth/login_password`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ login_id: authForm.loginId, password: authForm.password }),
@@ -184,20 +357,22 @@ export default function App() {
         if (res.ok) {
           const data = await res.json();
           setCurrentUser(data.user);
+          void refreshModelConfigurationStatus();
+          void refreshAccountResources();
           if (data.user.must_change_password) setActivePortal('user');
           setAuthForm({ loginId: '', password: '', email: '', phone: '', code: '' });
           fetchHistoryTasks();
           fetchImportedSkills();
         } else {
           const err = await res.json();
-          setAuthError(err.detail || '登录失败，账号或密码错误');
+          setAuthError(err.detail || tr('登录失败，账号或密码错误'));
         }
       } else if (authTab === 'login_code') {
         if (!authForm.loginId.trim() || !authForm.code.trim()) {
-          setAuthError('请输入手机/邮箱及验证码');
+          setAuthError(tr('请输入手机/邮箱及验证码'));
           return;
         }
-        const res = await fetch('http://localhost:8000/api/auth/login_code', {
+        const res = await fetch(`${API_BASE}/api/auth/login_code`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ login_id: authForm.loginId, code: authForm.code }),
@@ -207,6 +382,8 @@ export default function App() {
         if (res.ok) {
           const data = await res.json();
           setCurrentUser(data.user);
+          void refreshModelConfigurationStatus();
+          void refreshAccountResources();
           if (data.user.must_change_password) setActivePortal('user');
           setAuthForm({ loginId: '', password: '', email: '', phone: '', code: '' });
           setMockVerificationCode('');
@@ -214,19 +391,19 @@ export default function App() {
           fetchImportedSkills();
         } else {
           const err = await res.json();
-          setAuthError(err.detail || '登录失败，验证码错误或已失效');
+          setAuthError(err.detail || tr('登录失败，验证码错误或已失效'));
         }
       } else if (authTab === 'register') {
         if (!authForm.email.trim() && !authForm.phone.trim()) {
-          setAuthError('邮箱与手机号至少需填写一项');
+          setAuthError(tr('邮箱与手机号至少需填写一项'));
           return;
         }
-        if (!authForm.password || authForm.password.length < 10) {
-          setAuthError('密码长度不能少于 10 位');
+        if (!authForm.password || authForm.password.length < clientConfig.passwordMinLength) {
+          setAuthError(tr('密码长度不能少于 {0} 位', [clientConfig.passwordMinLength]));
           return;
         }
         
-        const res = await fetch('http://localhost:8000/api/auth/register', {
+        const res = await fetch(`${API_BASE}/api/auth/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -238,7 +415,7 @@ export default function App() {
         });
         
         if (res.ok) {
-          setAuthSuccess('恭喜您注册成功！已自动为您填入登录项，请输入密码进行登录。');
+          setAuthSuccess(tr('恭喜您注册成功！已自动为您填入登录项，请输入密码进行登录。'));
           setAuthTab('login_pwd');
           setAuthForm(prev => ({
             ...prev,
@@ -246,23 +423,25 @@ export default function App() {
           }));
         } else {
           const err = await res.json();
-          setAuthError(err.detail || '注册失败，手机号或邮箱可能已被占用');
+          setAuthError(err.detail || tr('注册失败，手机号或邮箱可能已被占用'));
         }
       }
     } catch {
-      setAuthError('连接服务器失败，请确认后端已正常启动。');
+      setAuthError(tr('连接服务器失败，请确认后端已正常启动。'));
     }
   };
 
   // 登出系统并清理状态
   const handleLogout = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/auth/logout', {
+      const res = await fetch(`${API_BASE}/api/auth/logout`, {
         method: 'POST',
         credentials: 'include'
       });
       if (res.ok) {
         setCurrentUser(null);
+        setHasEnabledGlobalModel(false);
+        setGlobalModelDefaults(EMPTY_GLOBAL_MODEL_DEFAULTS);
         setTaskId('');
         setTaskData(null);
       }
@@ -274,45 +453,84 @@ export default function App() {
   // 配置状态
   const [config, setConfig] = useState<TaskConfig>({
     titleSuggestion: '',
-    directorStyle: 'cyberpunk',
-    shotStyle: 'cinematic',
+    directorStyle: DEFAULT_DIRECTOR_STYLE,
+    shotStyle: DEFAULT_SHOT_STYLE,
     llmModel: '',
     imageModel: '',
     videoModel: '',
     ttsModel: '',
+    videoReferenceMode: 'auto',
     oneClick: false,
-    episodeCount: 3
+    episodeCount: DEFAULT_CLIENT_CONFIG.episodeCount.default
   });
 
   // 界面交互状态
-  const [taskId, setTaskId] = useState<string>('');
+  const [taskId, setTaskIdState] = useState<string>('');
+  const selectedTaskIdRef = useRef('');
+  const selectionVersionRef = useRef(0);
+  const setTaskId = (id: string) => {
+    ++selectionVersionRef.current;
+    selectedTaskIdRef.current = id;
+    setTaskIdState(id);
+  };
   const [taskData, setTaskData] = useState<TaskResponse | null>(null);
+  const scriptDisplayName = useMemo(() => getScriptDisplayName(
+    taskData?.config,
+    taskData?.assets["2"] ?? taskData?.config.scriptContent,
+    // The compiled dashboard carries the analysed drama name, so the header shows
+    // the screenplay's title instead of the chat prompt the project was created from.
+    (taskData?.assets["2_writer_dashboard"] as { title?: string } | undefined)?.title,
+  ), [taskData]);
   const taskDataRef = useRef<TaskResponse | null>(null);
   const [uploadedScript, setUploadedScript] = useState<File | null>(null);
   const [scriptContent, setScriptContent] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTabStage, setActiveTabStage] = useState<number>(1);
-  const [historyTasks, setHistoryTasks] = useState<TaskResponse[]>([]);
+  // 从编剧统计跳到角色 agent 时，预选中的资产 Tab（数字演员 / 拍摄场地）
+  const [characterAssetKind, setCharacterAssetKind] = useState<ElementKind>('actor');
+  const [historyTasks, setHistoryTasks] = useState<TaskSummary[]>([]);
   const [isPolling, setIsPolling] = useState<boolean>(false);
+  // 阶段执行进度快照 (用于检测 running -> success/error 转变，驱动对话面板状态气泡)
+  const progressRef = useRef<{ stage: number; status: string } | null>(null);
+  const statusRequestRef = useRef(0);
+  const appliedStatusRequestRef = useRef(0);
+  const statusPollFailuresRef = useRef(0);
+  const restoreChatRef = useRef<string | null>(null);
+  const chatRequestRef = useRef<{ taskId: string } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
   
   // 气泡控制
   const [activePopover, setActivePopover] = useState<'none' | 'skill' | 'element' | 'sidebarSkill'>('none');
   const [showModelConfiguration, setShowModelConfiguration] = useState(false);
+  const [hasEnabledGlobalModel, setHasEnabledGlobalModel] = useState(false);
+  const [globalModelDefaults, setGlobalModelDefaults] = useState<GlobalModelDefaults>(EMPTY_GLOBAL_MODEL_DEFAULTS);
   const [showProjectSkillManager, setShowProjectSkillManager] = useState(false);
   
   // 对话流状态
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState<string>('');
+  const [chatSending, setChatSending] = useState(false);
 
   // 新项目创建模态窗及 Skills 区状态
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [newProjectName, setNewProjectName] = useState<string>('');
-  const [newProjectDirectorStyle, setNewProjectDirectorStyle] = useState<string>('cyberpunk');
-  const [newProjectShotStyle, setNewProjectShotStyle] = useState<string>('cinematic');
+  const [newProjectDirectorStyle, setNewProjectDirectorStyle] = useState<string>(DEFAULT_DIRECTOR_STYLE);
+  const [newProjectStylePack, setNewProjectStylePack] = useState<string>(FALLBACK_STYLE_PACK);
+  const [newProjectShotStyle, setNewProjectShotStyle] = useState<string>(DEFAULT_SHOT_STYLE);
+  const [newProjectNarrationDelivery, setNewProjectNarrationDelivery] = useState<NarrationDelivery>('use_tts');
+  const [newProjectCreationMode, setNewProjectCreationMode] = useState<CreationMode>('drama');
+  const [newProjectAdBrief, setNewProjectAdBrief] = useState<AdBrief>(EMPTY_AD_BRIEF);
+  const [newProjectContentLanguage, setNewProjectContentLanguage] = useState<ContentLanguage>('zh');
   const [newProjectOneClick, setNewProjectOneClick] = useState<boolean>(true); // 成片方式：true=一键成片 / false=分步引导
-  const [newProjectEpisodes, setNewProjectEpisodes] = useState<number>(3); // 一次性生成的剧本集数
-  const [episodes, setEpisodes] = useState<EpisodeItem[]>([]); // 分集制作清单 (逐集出片)
+  const [newProjectEpisodes, setNewProjectEpisodes] = useState<number>(DEFAULT_CLIENT_CONFIG.episodeCount.default); // 一次性生成的剧本集数
+  const [newProjectEpisodesCustom, setNewProjectEpisodesCustom] = useState<boolean>(false); // 集数改为手动填写
+  const [episodeState, setEpisodeState] = useState<EpisodeCollectionState>({
+    taskId: '',
+    sourceHash: '',
+    items: [],
+  }); // 分集制作清单与其所属剧本版本
+  const episodes = episodeState.taskId === taskId ? episodeState.items : [];
+  const episodesSourceHash = episodeState.taskId === taskId ? episodeState.sourceHash : '';
   const [episodesBusy, setEpisodesBusy] = useState<boolean>(false);
   const [showSkillsGrid, setShowSkillsGrid] = useState<boolean>(true);
 
@@ -332,7 +550,67 @@ export default function App() {
     { id: '6', title: '⚖️ 金牌律师正义反扑', desc: '行贿伪证当庭拆穿，豪门大少收押', prompt: '请帮我生成一个金牌律师庭审翻盘短剧，走完流程。' }
   ]);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const episodeRequestGenerationRef = useRef(0);
+  const workbenchRef = useRef<HTMLDivElement | null>(null);
+  const chatSidebarRef = useRef<HTMLDivElement | null>(null);
+  const [chatSidebarWidth, setChatSidebarWidth] = useState<number | null>(null);
+
+  // 登录后才有的账户数据：积分余额与可选的画面风格锁。任一项取不到都保持现状，不影响主流程。
+  async function refreshAccountResources() {
+    void apiRequest<{ points?: string | number }>('/api/billing/wallet')
+      .then(wallet => setWalletPoints(wallet.points === undefined ? null : String(wallet.points)))
+      .catch(() => undefined);
+    void apiRequest<unknown>('/api/production/style-packs')
+      .then(catalog => {
+        const parsed = parseStylePacks(catalog);
+        if (!parsed) return;
+        setStylePacks(parsed.packs);
+        setNewProjectStylePack(current => (parsed.packs.some(pack => pack.id === current) ? current : parsed.defaultId));
+      })
+      .catch(() => undefined);
+  }
+
+  async function refreshModelConfigurationStatus() {
+    try {
+      const response = await fetch(`${API_BASE}/api/model-configurations`, {
+        method: 'GET', credentials: 'include'
+      });
+      if (!response.ok) return;
+      const data = await response.json() as {
+        summary?: Partial<Record<ModelCategory, number>>;
+        global_status?: {
+          configured: boolean;
+          enabled_model_ids: Partial<Record<ModelCategory, string[]>>;
+          default_model_ids: Partial<Record<ModelCategory, string | null>>;
+        };
+      };
+      const configured = data.global_status?.configured ?? Object.values(data.summary ?? {}).some(count => (count ?? 0) > 0);
+      const defaults = data.global_status?.default_model_ids;
+      const nextDefaults: GlobalModelDefaults = {
+        text: defaults?.text ?? '',
+        image: defaults?.image ?? '',
+        video: defaults?.video ?? '',
+        audio: defaults?.audio ?? '',
+      };
+      const enabledModelIds = data.global_status?.enabled_model_ids;
+      const selectGlobalModel = (current: string, category: ModelCategory) => {
+        const enabled = enabledModelIds?.[category] ?? [];
+        if (!current) return nextDefaults[category];
+        return enabled.length > 0 && !enabled.includes(current) ? nextDefaults[category] : current;
+      };
+      setHasEnabledGlobalModel(configured);
+      setGlobalModelDefaults(nextDefaults);
+      setConfig(current => ({
+        ...current,
+        llmModel: selectGlobalModel(current.llmModel, 'text'),
+        imageModel: selectGlobalModel(current.imageModel, 'image'),
+        videoModel: selectGlobalModel(current.videoModel, 'video'),
+        ttsModel: selectGlobalModel(current.ttsModel, 'audio'),
+      }));
+    } catch {
+      // 保留当前状态，短暂网络故障不应把已配置误报为未配置。
+    }
+  }
 
   useEffect(() => {
     taskDataRef.current = taskData;
@@ -341,13 +619,19 @@ export default function App() {
   // 挂载时检查一次会话登录态，成功后再拉取任务和Skills。
   useEffect(() => {
     let active = true;
-    void fetch('http://localhost:8000/api/auth/session', {
+    void fetch(`${API_BASE}/api/auth/session`, {
       method: 'GET', credentials: 'include'
     }).then(async res => {
       if (res.ok && active) {
         const data = await res.json();
+        setBootstrapAdminLogin(typeof data.bootstrap_admin_login === 'string' ? data.bootstrap_admin_login : null);
+        const nextClientConfig = parseClientConfig(data.client_config);
+        setClientConfig(nextClientConfig);
+        setNewProjectEpisodes(nextClientConfig.episodeCount.default);
         if (data.authenticated && data.user) {
           setCurrentUser(data.user);
+          void refreshModelConfigurationStatus();
+          void refreshAccountResources();
           if (data.user.must_change_password) setActivePortal('user');
           void fetchHistoryTasks();
           void fetchImportedSkills();
@@ -362,7 +646,7 @@ export default function App() {
   // 获取所有已导入的技能列表
   async function fetchImportedSkills() {
     try {
-      const res = await apiFetch('http://localhost:8000/api/drama/skills');
+      const res = await apiFetch(`${API_BASE}/api/drama/skills`);
       if (res.ok) {
         const data = await res.json();
         setImportedSkills(data);
@@ -379,32 +663,32 @@ export default function App() {
     
     if (importSkillType === 'github' || importSkillType === 'clawhub') {
       if (!importSkillUrl.trim()) {
-        alert('请输入 Git 仓库或 Clawhub 的克隆 URL！');
+        alert(tr('请输入 Git 仓库或 Clawhub 的克隆 URL！'));
         return;
       }
       formData.append('url', importSkillUrl.trim());
     } else if (importSkillType === 'npx') {
       if (!importSkillPackage.trim()) {
-        alert('请输入 NPX 包名！');
+        alert(tr('请输入 NPX 包名！'));
         return;
       }
       formData.append('package_name', importSkillPackage.trim());
     } else if (importSkillType === 'zip') {
       if (!importSkillFile) {
-        alert('请选择需要上传的本地 ZIP 技能压缩包！');
+        alert(tr('请选择需要上传的本地 ZIP 技能压缩包！'));
         return;
       }
       formData.append('file', importSkillFile);
     }
     
     try {
-      const res = await apiFetch('http://localhost:8000/api/drama/import_skill', {
+      const res = await apiFetch(`${API_BASE}/api/drama/import_skill`, {
         method: 'POST',
         body: formData
       });
       if (res.ok) {
         const data = await res.json();
-        alert(`🎉 技能包导入成功: ${data.skillName}`);
+        alert(tr('🎉 技能包导入成功: {0}', [data.skillName]));
         
         // 自动高亮并选中当前新导入的技能作为运镜模板名
         updateConfigAndSync({ shotStyle: data.skillName });
@@ -417,48 +701,48 @@ export default function App() {
         setImportSkillFile(null);
       } else {
         const err = await res.json();
-        alert(`导入失败: ${err.detail || '接口解析错误'}`);
+        alert(tr('导入失败: {0}', [err.detail || '接口解析错误']));
       }
     } catch {
-      alert('无法连接至后端，请先确保后端启动运行中。');
+      alert(tr('无法连接至后端，请先确保后端启动运行中。'));
     }
   };
 
   // 物理删除指定已导入的 Skill 技能包
   const handleDeleteSkill = async (skillName: string) => {
-    if (!window.confirm(`确定要物理删除技能包 "${skillName}" 吗？此操作不可逆！`)) {
+    if (!window.confirm(tr('确定要物理删除技能包 "{0}" 吗？此操作不可逆！', [skillName]))) {
       return;
     }
     try {
-      const res = await apiFetch(`http://localhost:8000/api/drama/skills/${skillName}`, {
+      const res = await apiFetch(`${API_BASE}/api/drama/skills/${skillName}`, {
         method: 'DELETE'
       });
       if (res.ok) {
-        alert('技能包删除成功！');
+        alert(tr('技能包删除成功！'));
         fetchImportedSkills();
         if (config.shotStyle === skillName) {
-          updateConfigAndSync({ shotStyle: 'cinematic' });
+          updateConfigAndSync({ shotStyle: DEFAULT_SHOT_STYLE });
         }
       } else {
         const err = await res.json();
-        alert(`删除失败: ${err.detail || '接口错误'}`);
+        alert(tr('删除失败: {0}', [err.detail || '接口错误']));
       }
     } catch {
-      alert('删除失败，无法连接至后端。');
+      alert(tr('删除失败，无法连接至后端。'));
     }
   };
 
   // 物理删除指定任务记录
   const handleDeleteTask = async (targetTaskId: string) => {
-    if (!window.confirm("确定要物理删除该短剧生成项目吗？该操作不可逆且将清除所有已生成视频与音频资产！")) {
+    if (!window.confirm(tr("确定要物理删除该短剧生成项目吗？该操作不可逆且将清除所有已生成视频与音频资产！"))) {
       return;
     }
     try {
-      const res = await apiFetch(`http://localhost:8000/api/drama/${targetTaskId}`, {
+      const res = await apiFetch(`${API_BASE}/api/drama/${targetTaskId}`, {
         method: 'DELETE'
       });
       if (res.ok) {
-        alert('该任务已成功物理删除！');
+        alert(tr('该任务已成功物理删除！'));
         fetchHistoryTasks();
         // 如果删除的是当前选中的项目，重置工作区状态
         if (taskId === targetTaskId) {
@@ -469,10 +753,10 @@ export default function App() {
         }
       } else {
         const err = await res.json();
-        alert(`删除失败: ${err.detail || '接口解析错误'}`);
+        alert(tr('删除失败: {0}', [err.detail || '接口解析错误']));
       }
     } catch {
-      alert('物理删除失败，无法连接至后端。');
+      alert(tr('物理删除失败，无法连接至后端。'));
     }
   };
 
@@ -482,11 +766,17 @@ export default function App() {
     if (!file) return;
 
     setErrorMessage('');
+    if (file.size > clientConfig.scriptUpload.maxBytes) {
+      // 超限文件不必先传完再被服务端拒绝
+      setErrorMessage(tr('剧本文件不能超过 {0}MB', [Math.floor(clientConfig.scriptUpload.maxBytes / (1024 * 1024))]));
+      e.target.value = '';
+      return;
+    }
     const formData = new FormData();
     formData.append('file', file);
 
     try {
-      const res = await apiFetch('http://localhost:8000/api/drama/parse_script', {
+      const res = await apiFetch(`${API_BASE}/api/drama/parse_script`, {
         method: 'POST',
         body: formData
       });
@@ -496,59 +786,93 @@ export default function App() {
         setScriptContent(data.content);
       } else {
         const err = await res.json();
-        setErrorMessage(err.detail || '解析剧本文件失败，请确保格式正确。');
+        setErrorMessage(err.detail || tr('解析剧本文件失败，请确保格式正确。'));
       }
     } catch {
-      setErrorMessage('无法连接至后端解析剧本，请检查服务。');
+      setErrorMessage(tr('无法连接至后端解析剧本，请检查服务。'));
     }
   };
 
 
 
 
-  // 轮询监控后台当前任务
+  // 轮询监控后台当前任务。后台标签页不轮询：任务列表响应可达 1 MB 以上，
+  // 隐藏时轮询纯属浪费带宽与电量，重新可见时立即补一次。
   useEffect(() => {
-    if (isPolling && taskId) {
-      pollIntervalRef.current = setInterval(() => {
-        fetchTaskStatus(taskId);
-      }, 1500);
-    } else {
+    const shouldPoll = () => isPolling && taskId && !document.hidden;
+
+    const start = () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (!shouldPoll()) return;
+      pollIntervalRef.current = setInterval(() => { fetchTaskStatus(taskId); }, TASK_STATUS_POLL_MS);
+    };
+    const stop = () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
-    }
+    };
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        stop();
+        return;
+      }
+      if (isPolling && taskId) fetchTaskStatus(taskId);
+      start();
+    };
+
+    start();
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-      }
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      stop();
     };
   }, [isPolling, taskId]); // eslint-disable-line react-hooks/exhaustive-deps -- polling callback reads current refs
 
   // 登录后在大厅定时轮询拉取所有任务 (当不在工作台内时)
+  // Derive a STABLE boolean: fetchHistoryTasks replaces historyTasks with a new
+  // array every tick, so depending on the array itself would reset the timer on
+  // every response.
+  const hasRunningTask = historyTasks.some(task => task.status === 'running');
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
-    if (currentUser && !taskId) {
-      interval = setInterval(() => {
-        fetchHistoryTasks();
-      }, 1500);
-    }
-    return () => {
+    const stop = () => {
       if (interval) clearInterval(interval);
+      interval = null;
     };
-  }, [currentUser, taskId]); // eslint-disable-line react-hooks/exhaustive-deps -- lobby refresh follows authentication and selected task
+    const start = () => {
+      stop();
+      if (!currentUser || taskId || document.hidden) return;
+      // The listing ships every task with all of its assets, so only poll fast
+      // while something is actually progressing.
+      interval = setInterval(() => { fetchHistoryTasks(); }, hasRunningTask ? TASK_STATUS_POLL_MS : LOBBY_IDLE_POLL_MS);
+    };
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        stop();
+        return;
+      }
+      if (currentUser && !taskId) fetchHistoryTasks();
+      start();
+    };
 
-  // 聊天自动滚动到底部
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages, taskData]);
+    start();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      stop();
+    };
+  }, [currentUser, taskId, hasRunningTask]); // eslint-disable-line react-hooks/exhaustive-deps -- lobby refresh follows authentication, selected task and whether work is in flight
 
   // 拉取历史列表
   async function fetchHistoryTasks() {
     try {
-      const res = await apiFetch('http://localhost:8000/api/drama/list');
+      const res = await apiFetch(`${API_BASE}/api/drama/list`);
       if (res.ok) {
         const data = await res.json();
-        setHistoryTasks(data);
+        // A non-array body (error envelope, proxy page) must not crash the
+        // whole workbench when the history list is rendered.
+        setHistoryTasks(Array.isArray(data) ? data : []);
       }
     } catch (e) {
       console.error('加载历史任务失败', e);
@@ -557,57 +881,91 @@ export default function App() {
 
   // 拉取单条任务状态并联动更新聊天气泡
   async function fetchTaskStatus(id: string) {
+    const request = ++statusRequestRef.current;
+    const selection = selectionVersionRef.current;
     try {
-      const res = await apiFetch(`http://localhost:8000/api/drama/${id}/status`);
+      const res = await apiFetch(`${API_BASE}/api/drama/${id}/status`);
       if (res.ok) {
         const data: TaskResponse = await res.json();
-        const prevStage = taskDataRef.current?.currentStage || 0;
+        if (request < appliedStatusRequestRef.current || selection !== selectionVersionRef.current || !canAcceptTaskResponse(selectedTaskIdRef.current, data.taskId)) return;
+        appliedStatusRequestRef.current = request;
+        statusPollFailuresRef.current = 0;
+        const previous = taskDataRef.current;
+        const boardStage = workflowBoardTransition(previous, data);
         setTaskData(data);
         taskDataRef.current = data;
-        
-        // 当 stage 发生变化时，追加入 AI 的进度对话气泡
-        if (data.currentStage > prevStage) {
-          setActiveTabStage(data.currentStage);
-          const currentStageInfo = AGENT_STAGES.find(s => s.id === data.currentStage);
-          setChatMessages(prev => [
-            ...prev,
-            {
-              id: nextMessageId(),
-              sender: 'ai',
-              text: `⚙️ **【${currentStageInfo?.name} 已完成】**\n\n该阶段资产已成功生成并校验完毕。您可直接在左侧看板查阅该步骤的高保真输出。`,
-              stage: data.currentStage
-            }
-          ]);
+
+        // 阶段开始执行时打开该阶段看板；阶段结束（完成、失败或中断）后停在这一步的
+        // 看板等待审核，用户说「继续」后才进入下一步。执行过程中不打扰用户手动翻看。
+        if (boardStage) {
+          setActiveTabStage(boardStage);
         }
 
-        // 状态判定
-        if (data.status !== 'running') {
-          setIsPolling(false);
-          fetchHistoryTasks();
-          if (data.status === 'completed') {
-            setChatMessages(prev => [
-              ...prev,
-              {
-                id: nextMessageId(),
-                sender: 'ai',
-                text: `🎉 **【短剧生成大功告成】**\n\n8大智能体已顺利完成全部工序，最终 9:16 H.264 格式高清成片及社交引爆 PR 文案已封装完毕！您现在可以点击右上角“导出”进行下载和发布。`
-              }
-            ]);
-          } else if (data.status === 'awaiting_quality_review') {
-            setChatMessages(prev => [
-              ...prev,
-              {
-                id: `quality-review-${data.taskId}`,
-                sender: 'ai',
-                text: '🛡️ **【成片已生成，等待终审】**\n\n人物身份、解剖、表情、真人感、镜头连续、对白情绪与口型必须提交真实多模态或人工验收；未通过前不会标记成片完成。'
-              }
-            ]);
-          }
-        }
+        // The server distinguishes a completed run from a completed stage (for
+        // example, one finished episode is not the entire storyboard stage).
+        const sp = data.stageProgress;
+        const prevSp = progressRef.current;
+        const restore = restoreChatRef.current === id;
+        if (restore) restoreChatRef.current = null;
+        const showHint = restore || data.workflow?.mode !== 'running' || !prevSp || sp?.stage !== prevSp.stage;
+        setChatMessages(prev => {
+          const restored = restore ? restoreWorkflowHistory(data) : null;
+          // 打开一个还没有对话记录的项目（老项目、或刚创建就刷新）时，先交代
+          // 八个 Agent 的整条流程和当前位置，用户不会从半路醒来。
+          const intro = restored && !restored.length ? workflowIntroMessage(data) : null;
+          const messages = restored ? (intro ? [intro] : restored) : mergeWorkflowHistory(prev, data);
+          // Durable transitions include stages completed between two polls.
+          // Do not repeat the same transition as a second live hint bubble.
+          const receivedHistory = !restore && messages.length > prev.length;
+          return showHint && !receivedHistory ? appendWorkflowHint(messages, data) : messages;
+        });
+        progressRef.current = sp ? { stage: sp.stage, status: sp.status } : null;
+        setIsPolling(shouldPollWorkflow(data));
+        if (!shouldPollWorkflow(data)) fetchHistoryTasks();
       }
     } catch (e) {
+      if (request < appliedStatusRequestRef.current || selection !== selectionVersionRef.current || selectedTaskIdRef.current !== id) return;
       console.error('获取状态失败', e);
+      // While polling, an unreachable backend is usually restarting: keep trying.
+      statusPollFailuresRef.current += 1;
+      if (pollIntervalRef.current && statusPollFailuresRef.current < TASK_STATUS_MAX_POLL_FAILURES) return;
+      statusPollFailuresRef.current = 0;
       setIsPolling(false);
+      setErrorMessage(tr('流程状态暂时同步失败。请发送「进度」重新查询；不会自动跳到下一阶段。'));
+    }
+  }
+
+  async function startCreatedWorkflow(createdTask: TaskResponse, oneClick: boolean) {
+    const selection = selectionVersionRef.current;
+    const requestToken = { taskId: createdTask.taskId };
+    chatRequestRef.current = requestToken;
+    setChatSending(true);
+    try {
+      const response = await apiFetch(`${API_BASE}/api/drama/${createdTask.taskId}/assistant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: oneClick ? '一键成片' : '继续' }),
+      });
+      const result = await response.json();
+      if (chatRequestRef.current !== requestToken || selection !== selectionVersionRef.current || !canAcceptTaskResponse(selectedTaskIdRef.current, createdTask.taskId)) return;
+      if (!response.ok) {
+        setErrorMessage(result.detail || tr('项目已创建，但流程尚未启动。请发送「进度」查看。'));
+        return;
+      }
+      const updated: TaskResponse = result.task;
+      appliedStatusRequestRef.current = ++statusRequestRef.current;
+      setTaskData(updated);
+      taskDataRef.current = updated;
+      progressRef.current = updated.stageProgress ? { stage: updated.stageProgress.stage, status: updated.stageProgress.status } : null;
+      setIsPolling(shouldPollWorkflow(updated));
+      setChatMessages(prev => updated.chatHistory?.length
+        ? mergeWorkflowHistory(prev.filter(message => message.id !== '2'), updated)
+        : [...prev.filter(message => message.id !== '2'), { id: nextMessageId(), sender: 'ai', text: result.reply }]);
+    } finally {
+      if (chatRequestRef.current === requestToken) {
+        chatRequestRef.current = null;
+        if (selection === selectionVersionRef.current) setChatSending(false);
+      }
     }
   }
 
@@ -638,13 +996,11 @@ export default function App() {
     // 初始化聊天流
     setChatMessages([
       { id: '1', sender: 'user', text: displayMsg },
-      { id: '2', sender: 'ai', text: uploadedScript 
-        ? '🎬 **【总导演 Agent 启动】**\n正在为您定调与策划您上传的剧本，请稍候...'
-        : '🎬 **【总导演 Agent 启动】**\n正在为您规划短剧框架与角色 DNA，请稍候...' }
+      { id: '2', sender: 'ai', text: '正在创建项目。创建后，我会从总导演开始，按顺序陪您完成八大 Agent 流程。' }
     ]);
 
     try {
-      const res = await apiFetch('http://localhost:8000/api/drama/create', {
+      const res = await apiFetch(`${API_BASE}/api/drama/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(currentConfig)
@@ -653,86 +1009,43 @@ export default function App() {
         const data: TaskResponse = await res.json();
         setTaskId(data.taskId);
         setTaskData(data);
+        taskDataRef.current = data;
         setUploadedScript(null);
         setScriptContent('');
         setActiveTabStage(1);
-        setIsPolling(true);
-        
-        // 自动触发下一步
-        const nextRes = await apiFetch(`http://localhost:8000/api/drama/${data.taskId}/next?current_stage=1`, {
-          method: 'POST'
-        });
-        if (nextRes.ok) {
-          const nextData = await nextRes.json();
-          setTaskData(nextData);
-          setChatMessages(prev => [
-            ...prev,
-            {
-              id: '3',
-              sender: 'ai',
-              text: '⚙️ **【总导演策划已完成】**\n主旋律及角色 DNA 档案已建档。点击下方按钮即可进入 **编剧剧本创作 (Phase 2)**。',
-              stage: 1
-            }
-          ]);
-        }
+        await startCreatedWorkflow(data, currentConfig.oneClick);
         fetchHistoryTasks();
       } else {
         const err = await res.json();
-        setErrorMessage(err.detail || '创建任务失败');
+        setErrorMessage(err.detail || tr('创建任务失败'));
       }
     } catch {
-      setErrorMessage('无法连接至后端，请先在终端运行 `./start.sh` 启动系统。');
+      setErrorMessage(tr('无法连接至后端，请先在终端运行 `./start.sh` 启动系统。'));
     }
   };
 
   // 步骤式单步生成
   const handleNextStage = async () => {
-    if (!taskData) return;
-    const nextStage = taskData.currentStage + 1;
-    if (nextStage > 8) return;
-    
-    const stageInfo = AGENT_STAGES.find(s => s.id === nextStage);
-    setChatMessages(prev => [
-      ...prev,
-      {
-        id: nextMessageId(),
-        sender: 'ai',
-        text: `⏳ **【${stageInfo?.name} 正在生成中...】**`
-      }
-    ]);
-    
-    setTaskData({ ...taskData, status: 'running', currentStage: nextStage });
-    setIsPolling(true);
-
-    try {
-      const res = await apiFetch(`http://localhost:8000/api/drama/${taskId}/next?current_stage=${nextStage}`, {
-        method: 'POST'
-      });
-      if (res.ok) {
-        const data: TaskResponse = await res.json();
-        setTaskData(data);
-        setActiveTabStage(nextStage);
-        fetchHistoryTasks();
-      } else {
-        setIsPolling(false);
-      }
-    } catch (e) {
-      console.error(e);
-      setIsPolling(false);
-    }
+    if (!taskData?.workflow || taskData.workflow.next_stage === null || taskData.workflow.mode === 'running') return;
+    await sendChatInstruction('继续');
   };
 
   // —— 分集制作 (item 6: 剧本一次多集，视频逐集制作) ——
   const fetchEpisodes = async (tid: string) => {
+    const requestGeneration = episodeRequestGenerationRef.current;
     try {
-      const res = await apiFetch(`http://localhost:8000/api/drama/${tid}/episodes`);
+      const res = await apiFetch(`${API_BASE}/api/drama/${tid}/episodes`);
       if (res.ok) {
         const data = await res.json();
         const eps = data.episodes || [];
-        setEpisodes(eps);
+        const sourceHash = normalizeEpisodeSourceHash(data.sourceHash);
+        if (requestGeneration !== episodeRequestGenerationRef.current) return;
+        setEpisodeState(current => current.taskId === tid
+          ? { taskId: tid, sourceHash, items: eps }
+          : current);
         // 有正在制作的集则继续轮询
         if (eps.some((episode: EpisodeItem) => episode.status === 'running')) {
-          setTimeout(() => fetchEpisodes(tid), 8000);
+          setTimeout(() => fetchEpisodes(tid), EPISODE_LIST_POLL_MS);
         }
       }
     } catch (e) { console.error(e); }
@@ -742,15 +1055,15 @@ export default function App() {
     if (!taskId) return;
     setEpisodesBusy(true);
     try {
-      const res = await apiFetch(`http://localhost:8000/api/drama/${taskId}/episodes/plan`, { method: 'POST' });
+      const res = await apiFetch(`${API_BASE}/api/drama/${taskId}/episodes/plan`, { method: 'POST' });
       if (res.ok) {
         await fetchEpisodes(taskId);
       } else {
         const err = await res.json();
-        setErrorMessage(err.detail || '分集失败 (请先完成阶段1-2剧本)');
+        setErrorMessage(err.detail || tr('分集失败 (请先完成阶段1-2剧本)'));
       }
     } catch {
-      setErrorMessage('分集请求失败');
+      setErrorMessage(tr('分集请求失败'));
     } finally {
       setEpisodesBusy(false);
     }
@@ -759,161 +1072,156 @@ export default function App() {
   const handleProduceEpisode = async (idx: number) => {
     if (!taskId) return;
     try {
-      const res = await apiFetch(`http://localhost:8000/api/drama/${taskId}/episodes/${idx}/produce`, { method: 'POST' });
+      const res = await apiFetch(`${API_BASE}/api/drama/${taskId}/episodes/${idx}/produce`, { method: 'POST' });
       if (res.ok) {
-        setEpisodes(prev => prev.map(e => e.index === idx ? { ...e, status: 'running' } : e));
-        setTimeout(() => fetchEpisodes(taskId), 5000);
+        setEpisodeState(current => current.taskId === taskId
+          ? {
+            ...current,
+            items: current.items.map(episode => episode.index === idx
+              ? { ...episode, status: 'running' }
+              : episode),
+          }
+          : current);
+        setTimeout(() => fetchEpisodes(taskId), EPISODE_PRODUCE_RECHECK_MS);
       } else {
         const err = await res.json();
-        setErrorMessage(err.detail || `第${idx}集制作启动失败`);
+        setErrorMessage(err.detail || tr('第{0}集制作启动失败', [idx]));
       }
     } catch {
-      setErrorMessage(`第${idx}集制作请求失败`);
+      setErrorMessage(tr('第{0}集制作请求失败', [idx]));
     }
   };
 
-  // 一键生成全片
-  const handleRunAll = async () => {
-    if (!taskId) return;
-    setIsPolling(true);
-    setTaskData(prev => prev ? { ...prev, status: 'running' } : null);
-    setChatMessages(prev => [
-      ...prev,
-      { id: nextMessageId(), sender: 'ai', text: '🚀 一键成片启动！8大智能体正在后台连续执行生成，请稍候...' }
-    ]);
-    try {
-      await apiFetch(`http://localhost:8000/api/drama/${taskId}/run_all`, {
-        method: 'POST'
-      });
-    } catch (e) {
-      console.error(e);
-      setIsPolling(false);
-    }
-  };
-
-  // 暂停
-  const handlePause = async () => {
-    if (!taskId) return;
-    try {
-      const res = await apiFetch(`http://localhost:8000/api/drama/${taskId}/pause`, {
-        method: 'POST'
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setTaskData(data);
-        setIsPolling(false);
-        setChatMessages(prev => [
-          ...prev,
-          { id: nextMessageId(), sender: 'ai', text: '⏸️ 任务已成功暂停，断点已保存。您可随时点击恢复继续。' }
-        ]);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // 恢复一键成片
-  const handleResume = async () => {
-    if (!taskId) return;
-    setIsPolling(true);
-    setTaskData(prev => prev ? { ...prev, status: 'running' } : null);
-    setChatMessages(prev => [
-      ...prev,
-      { id: nextMessageId(), sender: 'ai', text: '▶️ 正在从断点恢复生成...' }
-    ]);
-    try {
-      await apiFetch(`http://localhost:8000/api/drama/${taskId}/resume`, {
-        method: 'POST'
-      });
-    } catch (e) {
-      console.error(e);
-      setIsPolling(false);
-    }
+  const handleWriterScriptSaved = (dashboard: WriterDashboardResponse) => {
+    if (taskDataRef.current?.taskId !== taskId) return;
+    episodeRequestGenerationRef.current += 1;
+    setEpisodeState({
+      taskId,
+      sourceHash: normalizeEpisodeSourceHash(dashboard.sourceHash),
+      items: dashboard.episodes.map(episode => ({ ...episode })),
+    });
+    setTaskData(current => current && current.taskId === taskId
+      ? applyWriterDashboardToTask(current, dashboard)
+      : current);
+    void fetchTaskStatus(taskId);
   };
 
   // 发送对话指引微调或生成
   const sendChatInstruction = async (text: string) => {
-    if (!text.trim()) return;
+    if (!text.trim() || text.trim() === '/' || !taskId || chatRequestRef.current?.taskId === taskId) return;
+    const requestTaskId = taskId;
+    const selection = selectionVersionRef.current;
+    const requestToken = { taskId: requestTaskId };
+    chatRequestRef.current = requestToken;
+    setChatSending(true);
     setErrorMessage('');
     setChatInput('');
+    const userMessageId = nextMessageId();
     
     // 添加用户发送的文本气泡
     setChatMessages(prev => [
       ...prev,
-      { id: nextMessageId(), sender: 'user', text: text }
+      { id: userMessageId, sender: 'user', text: text }
     ]);
     
     const pendingId = nextMessageId();
     setChatMessages(prev => [
       ...prev,
-      { id: pendingId, sender: 'ai', text: '⚙️ **【收到您的指令】**\n正在根据您的对话指引调整并生成短剧，请稍候...' }
+      { id: pendingId, sender: 'ai', text: '🧠 正在理解您的指令...' }
     ]);
-    
+
     try {
-      const res = await apiFetch(`http://localhost:8000/api/drama/${taskId}/chat`, {
+      const res = await apiFetch(`${API_BASE}/api/drama/${requestTaskId}/assistant`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text })
       });
       if (res.ok) {
-        const data: TaskResponse = await res.json();
-        setTaskData(data);
-        setActiveTabStage(data.currentStage > 0 ? data.currentStage : 1);
-        
-        // 移除等待气泡并追加成功调整气泡
+        const data: { reply: string; action: string; stage: number | null; task: TaskResponse } = await res.json();
+        if (chatRequestRef.current !== requestToken || selection !== selectionVersionRef.current || !canAcceptTaskResponse(selectedTaskIdRef.current, data.task.taskId)) return;
+        appliedStatusRequestRef.current = ++statusRequestRef.current;
+        restoreChatRef.current = null;
+        setTaskData(data.task);
+        taskDataRef.current = data.task;
+
+        // 替换等待气泡为助手回复
         setChatMessages(prev => {
-          const filtered = prev.filter(m => m.id !== pendingId);
-          const currentStageInfo = AGENT_STAGES.find(s => s.id === data.currentStage);
-          return [
-            ...filtered,
-            {
-              id: nextMessageId(),
-              sender: 'ai',
-              text: `✅ **【指引调整已生效】**\n\n已根据您的指示 “*${text}*” 对 **${currentStageInfo?.name || '当前阶段'}** 进行了内容重塑！您可以立即在左侧面板查阅更新后的剧作资产与 100+ 项质检 Hook 报告。`,
-              stage: data.currentStage
-            }
+          const withoutPending = prev.filter(m => m.id !== pendingId);
+          if (!data.task.chatHistory?.length) return [
+            ...withoutPending,
+            { id: nextMessageId(), sender: 'ai', text: data.reply },
           ];
+          return mergeWorkflowHistory(withoutPending.filter(m => m.id !== userMessageId), data.task);
         });
+
+        // 执行类动作：切换看板标签并开启轮询，进度卡实时展示调用过程与百分比
+        if (data.action === 'run_stage' || data.action === 'run_all') {
+          if (data.stage) setActiveTabStage(data.stage);
+          if (data.task.stageProgress) {
+            progressRef.current = { stage: data.task.stageProgress.stage, status: data.task.stageProgress.status };
+          }
+        }
+        setIsPolling(shouldPollWorkflow(data.task));
         fetchHistoryTasks();
       } else {
         const err = await res.json();
-        setErrorMessage(err.detail || '发送指令失败');
+        if (chatRequestRef.current !== requestToken || selection !== selectionVersionRef.current || selectedTaskIdRef.current !== requestTaskId) return;
+        setErrorMessage(err.detail || tr('发送指令失败'));
         setChatMessages(prev => prev.filter(m => m.id !== pendingId));
       }
     } catch {
-      setErrorMessage('发送消息失败，请检查后端网络连接。');
+      if (chatRequestRef.current !== requestToken || selection !== selectionVersionRef.current || selectedTaskIdRef.current !== requestTaskId) return;
+      setErrorMessage(tr('发送消息失败，请检查后端网络连接。'));
       setChatMessages(prev => prev.filter(m => m.id !== pendingId));
+    } finally {
+      if (chatRequestRef.current === requestToken) {
+        chatRequestRef.current = null;
+        if (selection === selectionVersionRef.current && selectedTaskIdRef.current === requestTaskId) setChatSending(false);
+      }
     }
   };
 
   // 载入已有项目
-  const handleLoadTask = (task: TaskResponse) => {
+  const handleLoadTask = (task: TaskSummary) => {
     setTaskId(task.taskId);
-    setTaskData(task);
+    restoreChatRef.current = task.taskId;
+    chatRequestRef.current = null;
+    setChatSending(false);
+    taskDataRef.current = { ...task, assets: {}, logs: {} };
+    // The lobby row carries no assets; show the shell immediately and pull the
+    // full project (scripts, storyboards, logs) right after.
+    setTaskData({ ...task, assets: {}, logs: {} });
+    void fetchTaskStatus(task.taskId);
     setActiveTabStage(task.currentStage > 0 ? task.currentStage : 1);
     setIsPolling(task.status === 'running');
-    setEpisodes([]);
+    episodeRequestGenerationRef.current += 1;
+    setEpisodeState({ taskId: task.taskId, sourceHash: '', items: [] });
     fetchEpisodes(task.taskId); // 载入已有的分集制作清单
 
     // 同步配置状态，以便工作台侧边栏能够高亮匹配该项目的实际模型配置
     if (task.config) {
       setConfig({
         titleSuggestion: task.config.titleSuggestion || '',
-        directorStyle: task.config.directorStyle || 'cyberpunk',
-        shotStyle: task.config.shotStyle || 'cinematic',
-        llmModel: task.config.llmModel || '',
-        imageModel: task.config.imageModel || '',
-        videoModel: task.config.videoModel || '',
-        ttsModel: task.config.ttsModel || '',
+        scriptName: task.config.scriptName,
+        scriptContent: task.config.scriptContent,
+        directorStyle: task.config.directorStyle || DEFAULT_DIRECTOR_STYLE,
+        shotStyle: task.config.shotStyle || DEFAULT_SHOT_STYLE,
+        llmModel: task.config.llmModel || globalModelDefaults.text,
+        imageModel: task.config.imageModel || globalModelDefaults.image,
+        videoModel: task.config.videoModel || globalModelDefaults.video,
+        ttsModel: task.config.ttsModel || globalModelDefaults.audio,
+        videoReferenceMode: normalizeVideoReferenceMode(task.config.videoReferenceMode),
         oneClick: task.config.oneClick || false,
-        episodeCount: task.config.episodeCount || 3
+        episodeCount: task.config.episodeCount || clientConfig.episodeCount.default
       });
     }
     
-    // 初始化已有消息
+    // The summary intentionally omits assets. Do not infer completion or the
+    // next stage until the full authoritative workflow and history arrive.
     setChatMessages([
-      { id: 'init', sender: 'ai', text: `📁 已经为您加载项目: **${task.config.titleSuggestion}**。当前进度为第 ${task.currentStage}/8 步 (${task.stageName})。` }
+      { id: 'loading-history', sender: 'ai', text: `正在为您恢复《${task.config.titleSuggestion}》的对话和八大 Agent 流程进度…` }
     ]);
+    progressRef.current = task.stageProgress ? { stage: task.stageProgress.stage, status: task.stageProgress.status } : null;
   };
 
   // 统一的配置同步方法，如果在工作台内，还会自动向后端请求更新配置以应用在下一步执行中
@@ -922,7 +1230,7 @@ export default function App() {
     setConfig(updated);
     if (taskId) {
       try {
-        const res = await apiFetch(`http://localhost:8000/api/drama/${taskId}/update_config`, {
+        const res = await apiFetch(`${API_BASE}/api/drama/${taskId}/update_config`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(updated)
@@ -940,7 +1248,7 @@ export default function App() {
   // 大厅项目卡片暂停操作
   const handleCardPause = async (id: string) => {
     try {
-      const res = await apiFetch(`http://localhost:8000/api/drama/${id}/pause`, {
+      const res = await apiFetch(`${API_BASE}/api/drama/${id}/pause`, {
         method: 'POST'
       });
       if (res.ok) {
@@ -954,7 +1262,7 @@ export default function App() {
   // 大厅项目卡片恢复一键成片操作
   const handleCardResume = async (id: string) => {
     try {
-      const res = await apiFetch(`http://localhost:8000/api/drama/${id}/resume`, {
+      const res = await apiFetch(`${API_BASE}/api/drama/${id}/resume`, {
         method: 'POST'
       });
       if (res.ok) {
@@ -968,7 +1276,7 @@ export default function App() {
   // 磨砂玻璃 Modal 弹窗确认创建真实短剧项目
   const handleConfirmCreate = async () => {
     if (!newProjectName.trim()) {
-      alert("请输入短剧选题名称！");
+      alert(tr("请输入短剧选题名称！"));
       return;
     }
     setErrorMessage('');
@@ -977,23 +1285,29 @@ export default function App() {
     // 初始化工作台聊天提示
     setChatMessages([
       { id: '1', sender: 'user', text: newProjectName },
-      { id: '2', sender: 'ai', text: '🎬 **【总导演 Agent 启动】**\n正在为您规划短剧框架与角色 DNA，请稍候...' }
+      { id: '2', sender: 'ai', text: '正在创建项目。创建后，我会从总导演开始，按顺序陪您完成八大 Agent 流程。' }
     ]);
 
     const currentConfig = {
       titleSuggestion: newProjectName,
       directorStyle: newProjectDirectorStyle,
+      stylePack: newProjectStylePack,
       shotStyle: newProjectShotStyle,
       llmModel: config.llmModel,
       imageModel: config.imageModel,
       videoModel: config.videoModel,
       ttsModel: config.ttsModel,
-      episodeCount: newProjectEpisodes, // 一次性生成的剧本集数 (视频按集逐集制作)
+      videoReferenceMode: config.videoReferenceMode,
+      narrationDelivery: newProjectNarrationDelivery,
+      creationMode: newProjectCreationMode,
+      contentLanguage: newProjectContentLanguage,
+      ...(newProjectCreationMode === 'ad' ? { adBrief: newProjectAdBrief } : {}),
+      episodeCount: clampEpisodeCount(newProjectEpisodes, clientConfig.episodeCount), // 一次性生成的剧本集数 (视频按集逐集制作)
       oneClick: newProjectOneClick // 由新建弹窗的「成片方式」选择决定：一键成片 / 分步引导
     };
 
     try {
-      const res = await apiFetch('http://localhost:8000/api/drama/create', {
+      const res = await apiFetch(`${API_BASE}/api/drama/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(currentConfig)
@@ -1002,48 +1316,17 @@ export default function App() {
         const data: TaskResponse = await res.json();
         setTaskId(data.taskId);
         setTaskData(data);
+        taskDataRef.current = data;
         setActiveTabStage(1);
-        setIsPolling(true);
-
-        if (newProjectOneClick) {
-          // ⚡ 一键成片：后台连续执行全部 8 步，前端轮询进度
-          await apiFetch(`http://localhost:8000/api/drama/${data.taskId}/run_all`, { method: 'POST' });
-          setChatMessages(prev => [
-            ...prev,
-            {
-              id: nextMessageId(),
-              sender: 'ai',
-              text: `🚀 **【一键成片启动】**\n8 大智能体正在后台连续生成《${newProjectName}》(${newProjectEpisodes} 集剧本)，请稍候，进度会实时刷新。`,
-              stage: 1
-            }
-          ]);
-        } else {
-          // 🧭 分步引导：仅先生成第 1 步 (总导演)，其余由用户逐步推进/对话微调
-          const nextRes = await apiFetch(`http://localhost:8000/api/drama/${data.taskId}/next?current_stage=1`, {
-            method: 'POST'
-          });
-          if (nextRes.ok) {
-            const nextData = await nextRes.json();
-            setTaskData(nextData);
-            setChatMessages(prev => [
-              ...prev,
-              {
-                id: nextMessageId(),
-                sender: 'ai',
-                text: '⚙️ **【总导演策划已完成】**\n主旋律及角色 DNA 档案已建档。点击下方按钮即可进入 **编剧剧本创作 (Phase 2)**。',
-                stage: 1
-              }
-            ]);
-          }
-        }
+        await startCreatedWorkflow(data, newProjectOneClick);
         fetchHistoryTasks();
         setNewProjectName(''); // 清空输入
       } else {
         const err = await res.json();
-        setErrorMessage(err.detail || '创建项目失败');
+        setErrorMessage(err.detail || tr('创建项目失败'));
       }
     } catch {
-      setErrorMessage('无法连接至后端，请先确保后端运行中。');
+      setErrorMessage(tr('无法连接至后端，请先确保后端运行中。'));
     }
   };
 
@@ -1060,7 +1343,7 @@ export default function App() {
       }}>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
           <div className="loading-spinner" />
-          <span style={{ fontSize: '0.95rem', letterSpacing: '1px' }}>正在加载 AI 协同系统会话...</span>
+          <span style={{ fontSize: '0.95rem', letterSpacing: '1px' }}>{tr('正在加载 AI 协同系统会话...')}</span>
         </div>
       </div>
     );
@@ -1073,14 +1356,14 @@ export default function App() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'radial-gradient(circle at 50% -20%, #112240 0%, var(--bg-dark) 100%)',
+        background: 'radial-gradient(circle at 50% -20%, #fdf4f5 0%, var(--bg-dark) 100%)',
         padding: '20px',
         position: 'relative',
         overflow: 'hidden'
       }}>
         {/* 背景动态流光感装饰球 */}
-        <div style={{ position: 'absolute', width: '300px', height: '300px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(0,242,254,0.12) 0%, transparent 70%)', top: '-10%', left: '-5%', filter: 'blur(30px)' }} />
-        <div style={{ position: 'absolute', width: '400px', height: '400px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(255,51,102,0.08) 0%, transparent 70%)', bottom: '-10%', right: '-5%', filter: 'blur(40px)' }} />
+        <div style={{ position: 'absolute', width: '300px', height: '300px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(227, 84, 108, 0.12) 0%, transparent 70%)', top: '-10%', left: '-5%', filter: 'blur(30px)' }} />
+        <div style={{ position: 'absolute', width: '400px', height: '400px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(255, 51, 102, 0.08) 0%, transparent 70%)', bottom: '-10%', right: '-5%', filter: 'blur(40px)' }} />
 
         {/* 仅 AUTH_EXPOSE_MOCK_CODE=1 的本地开发环境显示；生产环境无此字段。 */}
         {mockVerificationCode && (
@@ -1088,19 +1371,19 @@ export default function App() {
             position: 'absolute',
             top: '24px',
             right: '24px',
-            border: '1px solid rgba(0, 242, 254, 0.4)',
-            boxShadow: '0 0 15px rgba(0, 242, 254, 0.2)',
+            border: '1px solid rgba(227, 84, 108, 0.4)',
+            boxShadow: '0 0 15px rgba(227, 84, 108, 0.2)',
             zIndex: 99999,
             padding: '12px 18px',
             borderRadius: '12px',
-            background: 'rgba(18, 28, 48, 0.95)',
+            background: 'rgba(253, 242, 244, 0.95)',
             display: 'flex',
             alignItems: 'center',
             gap: '8px',
             animation: 'ping 1.5s ease-in-out infinite alternate'
           }}>
-            <span style={{ color: 'var(--neon-cyan)', fontSize: '0.85rem', fontWeight: 600 }}>💡 [演示通道] 验证码为:</span>
-            <strong style={{ fontSize: '1.05rem', color: '#fff', letterSpacing: '2px', fontFamily: 'monospace' }}>{mockVerificationCode}</strong>
+            <span style={{ color: 'var(--neon-cyan)', fontSize: '0.85rem', fontWeight: 600 }}>{tr('💡 [演示通道] 验证码为:')}</span>
+            <strong style={{ fontSize: '1.05rem', color: '#221b1e', letterSpacing: '2px', fontFamily: 'monospace' }}>{mockVerificationCode}</strong>
           </div>
         )}
 
@@ -1108,9 +1391,9 @@ export default function App() {
           width: '100%',
           maxWidth: '440px',
           padding: '32px',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
-          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
-          background: 'rgba(13, 20, 35, 0.55)',
+          border: '1px solid rgba(214, 90, 120, 0.176)',
+          boxShadow: '0 25px 50px -12px rgba(60, 30, 40, 0.275)',
+          background: 'rgba(253, 240, 242, 0.55)',
           backdropFilter: 'blur(30px)',
           WebkitBackdropFilter: 'blur(30px)',
           borderRadius: '24px',
@@ -1119,45 +1402,46 @@ export default function App() {
         }}>
           {/* 系统头部 Logo 与名称 */}
           <div style={{ textAlign: 'center', marginBottom: '28px' }}>
-            <h2 style={{ fontSize: '1.8rem', fontWeight: 700, letterSpacing: '2px', background: 'linear-gradient(135deg, #00f2fe, #0072ff)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: '8px' }}>
-              Novara 1.0
+            <h2 style={{ fontSize: '1.8rem', fontWeight: 700, letterSpacing: '2px', background: 'linear-gradient(135deg, #e3546c, #e3546c)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: '8px' }}>
+              {PRODUCT_TITLE}
             </h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>工业级 AI 短剧多智能体协同成片平台</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{tr('工业级 AI 短剧多智能体协同成片平台')}</p>
+            <div style={{ marginTop: '10px' }}><LanguageSwitcher /></div>
           </div>
 
           {/* 表单切换 Tab 栏 */}
-          <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.06)', marginBottom: '24px', paddingBottom: '2px' }}>
+          <div style={{ display: 'flex', borderBottom: '1px solid rgba(214, 90, 120, 0.132)', marginBottom: '24px', paddingBottom: '2px' }}>
             <button
               onClick={() => { setAuthTab('login_pwd'); setAuthError(''); setAuthSuccess(''); }}
               className={`popover-tab-btn ${authTab === 'login_pwd' ? 'active' : ''}`}
               style={{ flex: 1, textAlign: 'center', fontSize: '0.85rem' }}
             >
-              密码登录
+              {tr('密码登录')}
             </button>
             <button
               onClick={() => { setAuthTab('login_code'); setAuthError(''); setAuthSuccess(''); }}
               className={`popover-tab-btn ${authTab === 'login_code' ? 'active' : ''}`}
               style={{ flex: 1, textAlign: 'center', fontSize: '0.85rem' }}
             >
-              验证码登录
+              {tr('验证码登录')}
             </button>
             <button
               onClick={() => { setAuthTab('register'); setAuthError(''); setAuthSuccess(''); }}
               className={`popover-tab-btn ${authTab === 'register' ? 'active' : ''}`}
               style={{ flex: 1, textAlign: 'center', fontSize: '0.85rem' }}
             >
-              快速注册
+              {tr('快速注册')}
             </button>
           </div>
 
           {/* 统一提示信息反馈 */}
           {authError && (
-            <div style={{ background: 'rgba(239, 68, 68, 0.12)', border: '1px solid var(--neon-red)', color: '#fca5a5', padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '0.8rem' }}>
+            <div style={{ background: 'rgba(211, 18, 18, 0.12)', border: '1px solid var(--neon-red)', color: '#de0707', padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '0.8rem' }}>
               ⚠️ {authError}
             </div>
           )}
           {authSuccess && (
-            <div style={{ background: 'rgba(16, 185, 129, 0.12)', border: '1px solid var(--neon-green)', color: '#a7f3d0', padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '0.8rem' }}>
+            <div style={{ background: 'rgba(16, 185, 129, 0.12)', border: '1px solid var(--neon-green)', color: '#1cca7a', padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '0.8rem' }}>
               ✓ {authSuccess}
             </div>
           )}
@@ -1167,25 +1451,25 @@ export default function App() {
             {authTab === 'login_pwd' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>账号 (手机号或邮箱)</label>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>{tr('账号 (手机号或邮箱)')}</label>
                   <input
                     type="text"
                     required
-                    placeholder="请输入绑定的手机号或邮箱"
+                    placeholder={tr('请输入绑定的手机号或邮箱')}
                     value={authForm.loginId}
                     onChange={e => setAuthForm({ ...authForm, loginId: e.target.value })}
-                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', outline: 'none' }}
+                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem', outline: 'none' }}
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>密码</label>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>{tr('密码')}</label>
                   <input
                     type="password"
                     required
-                    placeholder="请输入您的密码"
+                    placeholder={tr('请输入您的密码')}
                     value={authForm.password}
                     onChange={e => setAuthForm({ ...authForm, password: e.target.value })}
-                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', outline: 'none' }}
+                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem', outline: 'none' }}
                   />
                 </div>
               </div>
@@ -1194,27 +1478,27 @@ export default function App() {
             {authTab === 'login_code' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>手机号或邮箱</label>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>{tr('手机号或邮箱')}</label>
                   <input
                     type="text"
                     required
-                    placeholder="请输入绑定的手机号或邮箱"
+                    placeholder={tr('请输入绑定的手机号或邮箱')}
                     value={authForm.loginId}
                     onChange={e => setAuthForm({ ...authForm, loginId: e.target.value })}
-                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', outline: 'none' }}
+                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem', outline: 'none' }}
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>6位验证码</label>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>{clientConfig.verificationCode.length}位验证码</label>
                   <div style={{ display: 'flex', gap: '10px' }}>
                     <input
                       type="text"
                       required
-                      maxLength={6}
-                      placeholder="验证码"
+                      maxLength={clientConfig.verificationCode.length}
+                      placeholder={tr('验证码')}
                       value={authForm.code}
                       onChange={e => setAuthForm({ ...authForm, code: e.target.value })}
-                      style={{ flex: 1, padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', outline: 'none', textAlign: 'center', letterSpacing: '2px', fontFamily: 'monospace' }}
+                      style={{ flex: 1, padding: '10px 14px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem', outline: 'none', textAlign: 'center', letterSpacing: '2px', fontFamily: 'monospace' }}
                     />
                     <button
                       type="button"
@@ -1233,34 +1517,34 @@ export default function App() {
             {authTab === 'register' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>注册邮箱 (选填)</label>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>{tr('注册邮箱 (选填)')}</label>
                   <input
                     type="email"
-                    placeholder="请输入注册邮箱"
+                    placeholder={tr('请输入注册邮箱')}
                     value={authForm.email}
                     onChange={e => setAuthForm({ ...authForm, email: e.target.value })}
-                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', outline: 'none' }}
+                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem', outline: 'none' }}
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>注册手机号 (选填)</label>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>{tr('注册手机号 (选填)')}</label>
                   <input
                     type="text"
-                    placeholder="请输入注册手机号"
+                    placeholder={tr('请输入注册手机号')}
                     value={authForm.phone}
                     onChange={e => setAuthForm({ ...authForm, phone: e.target.value })}
-                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', outline: 'none' }}
+                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem', outline: 'none' }}
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>登录密码</label>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>{tr('登录密码')}</label>
                   <input
                     type="password"
                     required
-                    placeholder="设置登录密码，不少于10位"
+                    placeholder={`设置登录密码，不少于${clientConfig.passwordMinLength}位`}
                     value={authForm.password}
                     onChange={e => setAuthForm({ ...authForm, password: e.target.value })}
-                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem', outline: 'none' }}
+                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem', outline: 'none' }}
                   />
                 </div>
               </div>
@@ -1274,8 +1558,8 @@ export default function App() {
                 marginTop: '28px',
                 padding: '12px',
                 borderRadius: '8px',
-                background: 'linear-gradient(135deg, #00f2fe, #0072ff)',
-                color: '#fff',
+                background: 'linear-gradient(135deg, #e3546c, #e3546c)',
+                color: '#221b1e',
                 fontWeight: 600,
                 fontSize: '0.9rem',
                 border: 'none',
@@ -1284,33 +1568,35 @@ export default function App() {
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '8px',
-                boxShadow: '0 4px 15px rgba(0, 242, 254, 0.15)'
+                boxShadow: '0 4px 15px rgba(227, 84, 108, 0.15)'
               }}
             >
-              {authTab === 'register' ? '提交注册' : '立即登录'}
+              {authTab === 'register' ? tr('提交注册') : tr('立即登录')}
             </button>
           </form>
 
-          {/* 安全提示 */}
-          <div style={{ marginTop: '20px', borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: '14px', fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <div>🔐 本地默认管理员：<strong>admin@short-drama</strong></div>
-            <div>登录配置位于后端 `.env`；首次登录必须修改。生产环境禁止使用开发默认密码。</div>
-          </div>
+          {/* 安全提示：仅本地开发且后端启用了管理员引导时显示 */}
+          {bootstrapAdminLogin && (
+            <div style={{ marginTop: '20px', borderTop: '1px solid rgba(214, 90, 120, 0.088)', paddingTop: '14px', fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div>{tr('🔐 本地默认管理员：')}<strong>{bootstrapAdminLogin}</strong></div>
+              <div>登录配置位于后端 `.env`；首次登录必须修改。生产环境禁止使用开发默认密码。</div>
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
   if (currentUser && activePortal === 'user') {
-    return <UserCenterPage onBack={() => setActivePortal('home')} onUserChange={setCurrentUser} />;
+    return <Suspense fallback={<StageFallback />}><UserCenterPage onBack={() => setActivePortal('home')} onUserChange={setCurrentUser} passwordMinLength={clientConfig.passwordMinLength} /></Suspense>;
   }
 
   if (currentUser && activePortal === 'billing') {
-    return <BillingCenterPage onBack={() => setActivePortal('home')} />;
+    return <Suspense fallback={<StageFallback />}><BillingCenterPage onBack={() => setActivePortal('home')} /></Suspense>;
   }
 
-  if (currentUser && ['actor', 'prop', 'scene', 'effect'].includes(activePortal)) {
-    return <ElementLibraryPage initialKind={activePortal as ElementKind} onBack={() => setActivePortal('home')} />;
+  if (currentUser && ['actor', 'scene', 'prop', 'costume', 'effect'].includes(activePortal)) {
+    return <Suspense fallback={<StageFallback />}><ElementLibraryPage initialKind={activePortal as ElementKind} onBack={() => setActivePortal('home')} /></Suspense>;
   }
 
   return (
@@ -1324,19 +1610,21 @@ export default function App() {
           
           {/* 右上角快捷导航 */}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '16px', padding: '20px 0', alignItems: 'center' }}>
-            <span style={{ background: 'rgba(255,255,255,0.06)', padding: '5px 14px', borderRadius: '20px', fontSize: '0.8rem', border: '1px solid var(--border-color)', color: '#fbc02d', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              🏆 世界杯挑战赛让「灵感上场」
-            </span>
-            <span style={{ background: 'rgba(255,255,255,0.06)', padding: '5px 14px', borderRadius: '20px', fontSize: '0.8rem', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              ⚡ 132 Free
-            </span>
+            {walletPoints !== null && (
+              <span
+                title={tr('可用创作积分')}
+                style={{ background: 'rgba(214, 90, 120, 0.132)', padding: '5px 14px', borderRadius: '20px', fontSize: '0.8rem', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                ⚡ {walletPoints} 积分
+              </span>
+            )}
             <div 
               style={{ position: 'relative' }}
               onMouseEnter={() => setShowUserMenu(true)}
               onMouseLeave={() => setShowUserMenu(false)}
             >
-              <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'linear-gradient(135deg, #00f2fe, #4facfe)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                <User size={16} color="#000" />
+              <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'linear-gradient(135deg, #e3546c, #e55d74)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                <User size={16} color="#fcebee" />
               </div>
               
               {showUserMenu && currentUser && (
@@ -1346,8 +1634,8 @@ export default function App() {
                   right: 0,
                   width: '180px',
                   padding: '12px',
-                  border: '1px solid rgba(255, 255, 255, 0.1)',
-                  boxShadow: '0 10px 20px rgba(0,0,0,0.3)',
+                  border: '1px solid rgba(214, 90, 120, 0.22)',
+                  boxShadow: '0 10px 20px rgba(60, 30, 40, 0.165)',
                   zIndex: 1000,
                   background: 'var(--bg-popover)',
                   borderRadius: '12px',
@@ -1355,23 +1643,23 @@ export default function App() {
                   flexDirection: 'column',
                   gap: '8px'
                 }}>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 600, borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px', color: 'var(--neon-cyan)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>
+                  <div style={{ fontSize: '0.8rem', fontWeight: 600, borderBottom: '1px solid rgba(214, 90, 120, 0.11)', paddingBottom: '6px', color: 'var(--neon-cyan)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>
                     👤 {currentUser.username || '当前用户'}
                   </div>
                   <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>
                     {currentUser.email || currentUser.phone || '未绑定账号'}
                   </div>
                   <button className="account-menu-action" onClick={() => { setActivePortal('user'); setShowUserMenu(false); }}>
-                    用户中心
+                    {tr('用户中心')}
                   </button>
                   <button className="account-menu-action" onClick={() => { setActivePortal('billing'); setShowUserMenu(false); }}>
-                    会员与支付
+                    {tr('会员与支付')}
                   </button>
                   <button
                     onClick={handleLogout}
                     style={{
-                      background: 'rgba(239, 68, 68, 0.1)',
-                      border: '1px solid rgba(239, 68, 68, 0.2)',
+                      background: 'rgba(211, 18, 18, 0.1)',
+                      border: '1px solid rgba(211, 18, 18, 0.2)',
                       color: 'var(--neon-red)',
                       fontSize: '0.75rem',
                       padding: '4px 8px',
@@ -1382,8 +1670,9 @@ export default function App() {
                       marginTop: '4px'
                     }}
                   >
-                    退出登录
+                    {tr('退出登录')}
                   </button>
+                  <div style={{ marginTop: '8px' }}><LanguageSwitcher /></div>
                 </div>
               )}
             </div>
@@ -1392,17 +1681,17 @@ export default function App() {
           {/* 标题 */}
           <div style={{ textAlign: 'center', marginTop: '60px', marginBottom: '40px' }}>
             <h2 style={{ fontSize: '2.8rem', fontWeight: 300, letterSpacing: '3px', marginBottom: '12px' }}>
-              Novara 1.0 - 你的专属AI视频创作Agent
+              {PRODUCT_TITLE} - 你的专属AI视频创作Agent
             </h2>
             <p style={{ color: 'var(--text-dim)', fontSize: '1.1rem', fontWeight: 300 }}>
-              把品味和习惯写进Skill，让精力回归创意
+              {tr('把品味和习惯写进Skill，让精力回归创意')}
             </p>
           </div>
 
           {/* 核心创意输入框 (带气泡) */}
           <div style={{ position: 'relative', width: '100%' }}>
             {errorMessage && (
-              <div style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', color: '#fca5a5', padding: '12px 16px', borderRadius: '8px', marginBottom: '16px', fontSize: '0.9rem' }}>
+              <div style={{ background: 'rgba(211, 18, 18, 0.15)', border: '1px solid #d31212', color: '#de0707', padding: '12px 16px', borderRadius: '8px', marginBottom: '16px', fontSize: '0.9rem' }}>
                 ⚠️ {errorMessage}
               </div>
             )}
@@ -1430,7 +1719,7 @@ export default function App() {
                     className={`capsule-btn ${showModelConfiguration ? 'active' : ''}`}
                     onClick={() => { setActivePopover('none'); setShowModelConfiguration(true); }}
                   >
-                    <Cpu size={14} /> 模型: {config.videoModel || '未配置'}
+                    <Cpu size={14} /> 模型: {hasEnabledGlobalModel ? tr('已配置') : tr('未配置')}
                   </button>
 
                   {/* Skill 选择按钮 */}
@@ -1439,7 +1728,7 @@ export default function App() {
                     className={`capsule-btn ${showProjectSkillManager ? 'active' : ''}`}
                     onClick={() => { setActivePopover('none'); setShowProjectSkillManager(true); }}
                   >
-                    <Sliders size={14} /> Skill: 项目管理
+                    <Sliders size={14} /> {tr('Skill: 项目管理')}
                   </button>
 
                   <button
@@ -1448,14 +1737,15 @@ export default function App() {
                     onClick={() => setActivePopover(activePopover === 'element' ? 'none' : 'element')}
                     aria-haspopup="menu"
                     aria-expanded={activePopover === 'element'}
-                  ><Folder size={14} /> 元素</button>
+                  ><Folder size={14} /> {tr('元素')}</button>
 
                   {activePopover === 'element' && (
-                    <div className="element-menu" role="menu" aria-label="选择元素类型">
+                    <div className="element-menu" role="menu" aria-label={tr('选择元素类型')}>
                       {([
-                        ['actor', '演员', '五视图与表演身份锚点'],
-                        ['prop', '道具', '归属、位置和状态连续性'],
+                        ['actor', '演员', '设定集与表演身份锚点'],
                         ['scene', '场景', '空间、时段、天气和灯光'],
+                        ['prop', '道具', '归属、位置和状态连续性'],
+                        ['costume', '服装', '角色状态、材质与换装连续性'],
                         ['effect', '特效', '时间、目标和结束状态'],
                       ] as Array<[ElementKind, string, string]>).map(([value, label, hint]) => (
                         <button key={value} type="button" role="menuitem" onClick={() => { setActivePortal(value); setActivePopover('none'); }}>
@@ -1470,7 +1760,7 @@ export default function App() {
                     className={`capsule-btn ${uploadedScript ? 'active' : ''}`}
                     onClick={() => fileInputRef.current?.click()}
                     style={{ position: 'relative' }}
-                    title={uploadedScript ? '已加载手动剧本，点击可重新上传' : '上传手动剧本并一键生成短剧'}
+                    title={uploadedScript ? tr('已加载手动剧本，点击可重新上传') : tr('上传手动剧本并一键生成短剧')}
                   >
                     <Upload size={14} /> {uploadedScript ? `已选剧本: ${uploadedScript.name.substring(0, 10)}${uploadedScript.name.length > 10 ? '...' : ''}` : '上传剧本'}
                     {uploadedScript && (
@@ -1482,7 +1772,7 @@ export default function App() {
                           if (fileInputRef.current) fileInputRef.current.value = '';
                         }} 
                         style={{ marginLeft: '6px', color: 'var(--neon-red)', cursor: 'pointer', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center' }}
-                        title="清除剧本并切换回普通选题模式"
+                        title={tr('清除剧本并切换回普通选题模式')}
                       >
                         <X size={10} />
                       </span>
@@ -1492,20 +1782,20 @@ export default function App() {
                     type="file" 
                     ref={fileInputRef} 
                     style={{ display: 'none' }} 
-                    accept=".txt,.md,.docx,.pdf,.fdx"
+                    accept={clientConfig.scriptUpload.extensions.join(',')}
                     onChange={handleScriptUpload}
                   />
 
                   {/* Skill 选择气泡弹窗 */}
                   {activePopover === 'skill' && (
                     <div className="popover-window" style={{ bottom: '45px', left: '120px', width: '300px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '6px' }}>
-                        <h4 style={{ fontSize: '0.9rem', margin: 0 }}>内置与导入 Skills</h4>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid rgba(214, 90, 120, 0.132)', paddingBottom: '6px' }}>
+                        <h4 style={{ fontSize: '0.9rem', margin: 0 }}>{tr('内置与导入 Skills')}</h4>
                         <button 
                           onClick={() => { setShowImportSkillModal(true); setActivePopover('none'); }}
                           style={{ background: 'transparent', border: 'none', color: 'var(--neon-cyan)', fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '2px' }}
                         >
-                          + 导入外部Skill
+                          {tr('+ 导入外部Skill')}
                         </button>
                       </div>
                       <div 
@@ -1515,8 +1805,8 @@ export default function App() {
                         }}
                         className={`model-list-item ${config.shotStyle === 'cinematic' ? 'selected' : ''}`}
                       >
-                        <div><strong>AI 短剧一站式生成</strong></div>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>内置36运镜及100+质检</span>
+                        <div><strong>{tr('AI 短剧一站式生成')}</strong></div>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{tr('内置36运镜及100+质检')}</span>
                       </div>
                       <div 
                         onClick={() => {
@@ -1525,8 +1815,8 @@ export default function App() {
                         }}
                         className={`model-list-item ${config.shotStyle === 'standard' ? 'selected' : ''}`}
                       >
-                        <div><strong>剧情短片生成</strong></div>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>经典正反打文戏对切</span>
+                        <div><strong>{tr('剧情短片生成')}</strong></div>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{tr('经典正反打文戏对切')}</span>
                       </div>
 
                       {importedSkills.map(s => (
@@ -1552,7 +1842,7 @@ export default function App() {
                               transform: 'translateY(-50%)',
                               background: 'transparent',
                               border: 'none',
-                              color: 'rgba(255, 255, 255, 0.4)',
+                              color: 'rgba(214, 90, 120, 0.88)',
                               cursor: 'pointer',
                               padding: '4px',
                               display: 'flex',
@@ -1560,11 +1850,11 @@ export default function App() {
                               justifyContent: 'center',
                               zIndex: 10
                             }}
-                            title="物理删除该技能包"
+                            title={tr('物理删除该技能包')}
                           >
                             <X size={12} />
                           </button>
-                          <div><strong>{s.name}</strong> <span style={{ fontSize: '0.65rem', padding: '1px 4px', background: 'var(--neon-green)', color: '#000', borderRadius: '4px', marginLeft: '4px', fontWeight: 'bold' }}>已导入</span></div>
+                          <div><strong>{s.name}</strong> <span style={{ fontSize: '0.65rem', padding: '1px 4px', background: 'var(--neon-green)', color: '#fcebee', borderRadius: '4px', marginLeft: '4px', fontWeight: 'bold' }}>{tr('已导入')}</span></div>
                           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{s.description}</span>
                         </div>
                       ))}
@@ -1577,9 +1867,9 @@ export default function App() {
                 <button 
                   onClick={() => initDramaProject(chatInput)}
                   className="cyber-btn" 
-                  style={{ width: '40px', height: '40px', borderRadius: '50%', padding: '0', background: 'linear-gradient(135deg, #00f2fe, #0072ff)' }}
+                  style={{ width: '40px', height: '40px', borderRadius: '50%', padding: '0', background: 'linear-gradient(135deg, #e3546c, #e3546c)' }}
                 >
-                  <ArrowUp size={18} color="#fff" />
+                  <ArrowUp size={18} color="#221b1e" />
                 </button>
 
               </div>
@@ -1592,21 +1882,21 @@ export default function App() {
             <div style={{ marginTop: '24px', position: 'relative' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  🔥 推荐创作 Skills (点击快速填入选题)
+                  {tr('🔥 推荐创作 Skills (点击快速填入选题)')}
                 </span>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                   <button 
                     onClick={() => setShowProjectSkillManager(true)}
-                    style={{ background: 'rgba(0, 242, 254, 0.08)', border: '1px solid rgba(0, 242, 254, 0.3)', color: 'var(--neon-cyan)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', padding: '2px 8px', borderRadius: '4px' }}
+                    style={{ background: 'rgba(227, 84, 108, 0.08)', border: '1px solid rgba(227, 84, 108, 0.3)', color: 'var(--neon-cyan)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', padding: '2px 8px', borderRadius: '4px' }}
                   >
-                    + 管理项目 Skill
+                    {tr('+ 管理项目 Skill')}
                   </button>
                   <button 
                     onClick={() => setShowSkillsGrid(false)} 
                     style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.8rem' }}
-                    title="关闭推荐"
+                    title={tr('关闭推荐')}
                   >
-                    <X size={14} /> 隐藏
+                    <X size={14} /> {tr('隐藏')}
                   </button>
                 </div>
               </div>
@@ -1631,10 +1921,10 @@ export default function App() {
                         position: 'absolute', 
                         top: '6px', 
                         right: '6px', 
-                        background: 'rgba(255,255,255,0.1)', 
+                        background: 'rgba(214, 90, 120, 0.22)', 
                         border: 'none', 
                         borderRadius: '50%', 
-                        color: 'rgba(255,255,255,0.6)', 
+                        color: 'rgba(43, 29, 35, 0.6)', 
                         width: '18px', 
                         height: '18px', 
                         display: 'flex', 
@@ -1644,7 +1934,7 @@ export default function App() {
                         padding: 0,
                         transition: 'all 0.2s'
                       }}
-                      title="删除该模版"
+                      title={tr('删除该模版')}
                     >
                       <X size={10} />
                     </button>
@@ -1661,7 +1951,7 @@ export default function App() {
           {/* 历史任务/断点大厅 (大卡片) */}
           <div style={{ maxWidth: '900px', width: '100%', margin: '40px auto 0 auto' }}>
             <h3 style={{ fontSize: '1.2rem', fontWeight: 500, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <HardDrive size={18} color="#fbc02d" /> 断点续传项目大厅
+              <HardDrive size={18} color="#fbc02d" /> {tr('断点续传项目大厅')}
             </h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
               {historyTasks.map(task => {
@@ -1689,7 +1979,7 @@ export default function App() {
                 }
 
                 // 进度百分比
-                const progressPct = Math.min(Math.round((task.currentStage / 8) * 100), 100);
+                const progressPct = Math.min(Math.round((task.currentStage / WORKFLOW_STAGE_COUNT) * 100), 100);
 
                 return (
                   <div 
@@ -1699,9 +1989,9 @@ export default function App() {
                     style={{ 
                       padding: '18px', 
                       cursor: 'pointer', 
-                      background: 'rgba(255,255,255,0.02)',
-                      border: isRunning ? '1px solid rgba(0, 242, 254, 0.3)' : '1px solid var(--border-color)',
-                      boxShadow: isRunning ? '0 0 15px rgba(0, 242, 254, 0.08)' : 'none',
+                      background: 'rgba(214, 90, 120, 0.044)',
+                      border: isRunning ? '1px solid rgba(227, 84, 108, 0.3)' : '1px solid var(--border-color)',
+                      boxShadow: isRunning ? '0 0 15px rgba(227, 84, 108, 0.08)' : 'none',
                       transition: 'all 0.3s ease',
                       position: 'relative'
                     }}
@@ -1718,7 +2008,7 @@ export default function App() {
                         right: '4px',
                         background: 'transparent',
                         border: 'none',
-                        color: 'rgba(255, 255, 255, 0.35)',
+                        color: 'rgba(214, 90, 120, 0.77)',
                         cursor: 'pointer',
                         padding: '4px',
                         display: 'flex',
@@ -1726,7 +2016,7 @@ export default function App() {
                         justifyContent: 'center',
                         zIndex: 10
                       }}
-                      title="删除任务项目"
+                      title={tr('删除任务项目')}
                     >
                       <X size={10} />
                     </button>
@@ -1741,29 +2031,29 @@ export default function App() {
 
                     <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '8px' }}>
                       {isCompleted ? (
-                        <span>🎉 已完成一键成片 (100%)</span>
+                        <span>{tr('🎉 已完成一键成片 (100%)')}</span>
                       ) : (
                         <span>
-                          当前进度: 第 {task.currentStage}/8 步 ({task.stageName})
+                          当前进度: 第 {task.currentStage}/{WORKFLOW_STAGE_COUNT} 步 ({task.stageName})
                           {isRunning ? (
-                            <span style={{ color: 'var(--neon-cyan)', marginLeft: '4px' }}>- 正在生成...</span>
+                            <span style={{ color: 'var(--neon-cyan)', marginLeft: '4px' }}>{tr('- 正在生成...')}</span>
                           ) : (
-                            <span style={{ color: 'var(--text-muted)', marginLeft: '4px' }}>- 已暂停</span>
+                            <span style={{ color: 'var(--text-muted)', marginLeft: '4px' }}>{tr('- 已暂停')}</span>
                           )}
                         </span>
                       )}
                     </p>
 
                     {/* 进度条打印显示 */}
-                    <div style={{ width: '100%', height: '5px', background: 'rgba(255,255,255,0.06)', borderRadius: '3px', overflow: 'hidden', marginBottom: '14px' }}>
+                    <div style={{ width: '100%', height: '5px', background: 'rgba(214, 90, 120, 0.132)', borderRadius: '3px', overflow: 'hidden', marginBottom: '14px' }}>
                       <div 
                         style={{ 
                           width: `${progressPct}%`, 
                           height: '100%', 
                           background: isCompleted 
                             ? 'linear-gradient(90deg, #10b981, #10b981)' 
-                            : 'linear-gradient(90deg, #00f2fe, #0072ff)',
-                          boxShadow: isRunning ? '0 0 8px #00f2fe' : 'none',
+                            : 'linear-gradient(90deg, #e3546c, #e3546c)',
+                          boxShadow: isRunning ? '0 0 8px #e3546c' : 'none',
                           transition: 'width 0.6s cubic-bezier(0.4, 0, 0.2, 1)' 
                         }}
                       ></div>
@@ -1779,9 +2069,9 @@ export default function App() {
                               handleCardPause(task.taskId);
                             }}
                             className="capsule-btn" 
-                            style={{ padding: '2px 8px', fontSize: '0.7rem', borderColor: 'var(--neon-red)', color: 'var(--neon-red)', background: 'rgba(239, 68, 68, 0.05)' }}
+                            style={{ padding: '2px 8px', fontSize: '0.7rem', borderColor: 'var(--neon-red)', color: 'var(--neon-red)', background: 'rgba(211, 18, 18, 0.05)' }}
                           >
-                            <Pause size={10} style={{ display: 'inline', marginRight: '2px' }} /> 暂停
+                            <Pause size={10} style={{ display: 'inline', marginRight: '2px' }} /> {tr('暂停')}
                           </button>
                         )}
                         {isIdle && (
@@ -1791,15 +2081,15 @@ export default function App() {
                               handleCardResume(task.taskId);
                             }}
                             className="capsule-btn" 
-                            style={{ padding: '2px 8px', fontSize: '0.7rem', borderColor: 'var(--neon-cyan)', color: 'var(--neon-cyan)', background: 'rgba(0, 242, 254, 0.05)' }}
+                            style={{ padding: '2px 8px', fontSize: '0.7rem', borderColor: 'var(--neon-cyan)', color: 'var(--neon-cyan)', background: 'rgba(227, 84, 108, 0.05)' }}
                           >
-                            <Play size={10} style={{ display: 'inline', marginRight: '2px' }} /> 恢复
+                            <Play size={10} style={{ display: 'inline', marginRight: '2px' }} /> {tr('恢复')}
                           </button>
                         )}
                       </div>
                       
                       <button className="capsule-btn" style={{ padding: '2px 10px', fontSize: '0.7rem' }}>
-                        加载断点 <ArrowRight size={10} />
+                        {tr('加载断点')} <ArrowRight size={10} />
                       </button>
                     </div>
                   </div>
@@ -1816,17 +2106,17 @@ export default function App() {
                 setNewProjectName('');
                 setShowCreateModal(true);
               }} 
-              style={{ padding: '12px 20px', borderRadius: '99px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', background: 'rgba(255,255,255,0.03)' }}
+              style={{ padding: '12px 20px', borderRadius: '99px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', background: 'rgba(214, 90, 120, 0.066)' }}
             >
               <span style={{ width: 16, height: 16, borderRadius: '50%', background: 'var(--neon-cyan)', display: 'inline-block' }}></span>
-              创建新项目
+              {tr('创建新项目')}
             </button>
           </div>
 
           {/* 磨砂玻璃真·创建新项目 Modal 弹窗 */}
           {showCreateModal && (
-            <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-              <div className="glass-panel" style={{ width: '480px', padding: '24px', position: 'relative', border: '1px solid rgba(0, 242, 254, 0.2)', boxShadow: '0 0 30px rgba(0, 242, 254, 0.15)' }}>
+            <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(60, 30, 40, 0.33)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+              <div className="glass-panel" style={{ width: '480px', padding: '24px', position: 'relative', border: '1px solid rgba(227, 84, 108, 0.2)', boxShadow: '0 0 30px rgba(227, 84, 108, 0.15)' }}>
                 <button 
                   onClick={() => setShowCreateModal(false)} 
                   style={{ position: 'absolute', top: '16px', right: '16px', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
@@ -1835,77 +2125,173 @@ export default function App() {
                 </button>
 
                 <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '20px', color: 'var(--neon-cyan)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  🎬 创建全新短剧制作项目
+                  {tr('🎬 创建全新短剧制作项目')}
                 </h3>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '24px' }}>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>创意大纲/选题名称</label>
+                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>{tr('创意大纲/选题名称')}</label>
                     <input 
                       type="text" 
-                      placeholder="例如：重生之我在火山方舟当车载配件巨头"
+                      placeholder={tr('例如：重生之我在火山方舟当车载配件巨头')}
                       value={newProjectName}
                       onChange={e => setNewProjectName(e.target.value)}
-                      style={{ width: '100%', padding: '10px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.9rem' }}
+                      style={{ width: '100%', padding: '10px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.9rem' }}
                     />
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>导演风格</label>
+                      <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>{tr('导演风格')}</label>
                       <select 
                         value={newProjectDirectorStyle}
                         onChange={e => setNewProjectDirectorStyle(e.target.value)}
-                        style={{ width: '100%', padding: '10px', background: '#0a1017', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem' }}
+                        style={{ width: '100%', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
                       >
-                        <option value="cyberpunk">Cyberpunk 赛博朋克</option>
-                        <option value="retro">Retro 怀旧经典</option>
-                        <option value="realistic">Realistic 电影写实</option>
-                        <option value="sci_fi_future">Sci-Fi Future 科幻未来</option>
-                        <option value="palace">Ancient Palace 古风宫廷</option>
-                        <option value="mystery_dark">Dark Mystery 悬疑暗黑</option>
-                        <option value="anime">Anime Niji 动漫二次元</option>
-                        <option value="horror_folk">Horror Folk 民俗惊悚</option>
+                        {DIRECTOR_STYLES.map(style => (
+                          <option key={style.id} value={style.id}>{tr(style.label)}</option>
+                        ))}
                       </select>
                     </div>
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>运镜风格</label>
+                      <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>{tr('画面风格锁')}</label>
+                      <select
+                        value={newProjectStylePack}
+                        onChange={e => setNewProjectStylePack(e.target.value)}
+                        title={tr('全片统一的画面质感：分镜图、首尾帧与每一镜视频提示词都按它编译')}
+                        style={{ width: '100%', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
+                      >
+                        {stylePacks.map(pack => (
+                          <option key={pack.id} value={pack.id}>{pack.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>{tr('运镜风格')}</label>
                       <select 
                         value={newProjectShotStyle}
                         onChange={e => setNewProjectShotStyle(e.target.value)}
-                        style={{ width: '100%', padding: '10px', background: '#0a1017', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem' }}
+                        style={{ width: '100%', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
                       >
-                        <option value="cinematic">Cinematic 36运镜系统</option>
-                        <option value="standard">Standard 普通分镜</option>
+                        {SHOT_STYLES.map(style => (
+                          <option key={style.id} value={style.id}>{tr(style.label)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="new-project-content-language" style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>{tr('剧本语言')}</label>
+                      <select
+                        id="new-project-content-language"
+                        value={newProjectContentLanguage}
+                        onChange={e => setNewProjectContentLanguage(e.target.value as ContentLanguage)}
+                        title={tr('标题、台词、旁白、正文与画面描述都用这种语言写；界面语言另在右上角切换')}
+                        style={{ width: '100%', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
+                      >
+                        {CONTENT_LANGUAGE_OPTIONS.map(option => (
+                          <option key={option.id} value={option.id}>{option.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="new-project-creation-mode" style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>{tr('创作类型')}</label>
+                      <select
+                        id="new-project-creation-mode"
+                        value={newProjectCreationMode}
+                        onChange={e => setNewProjectCreationMode(e.target.value as CreationMode)}
+                        title={tr(CREATION_MODE_OPTIONS.find(option => option.id === newProjectCreationMode)?.hint ?? '')}
+                        style={{ width: '100%', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
+                      >
+                        {CREATION_MODE_OPTIONS.map(option => (
+                          <option key={option.id} value={option.id}>{tr(option.label)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {newProjectCreationMode === 'ad' && (
+                      <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px' }} aria-label={tr('广告简报')}>
+                        {([
+                          ['product', '产品', '如：静音吹风机'],
+                          ['sellingPoints', '卖点', '如：三分钟速干，45 分贝'],
+                          ['audience', '目标人群', '如：合租年轻人'],
+                          ['callToAction', '行动号召', '如：立即下单'],
+                        ] as const).map(([key, label, placeholder]) => (
+                          <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            {label}
+                            <input
+                              aria-label={`广告${label}`}
+                              value={newProjectAdBrief[key]}
+                              placeholder={placeholder}
+                              onChange={e => setNewProjectAdBrief(current => ({ ...current, [key]: e.target.value }))}
+                              style={{ padding: '8px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.8rem' }}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>{tr('旁白交付')}</label>
+                      <select
+                        value={newProjectNarrationDelivery}
+                        onChange={e => setNewProjectNarrationDelivery(e.target.value as NarrationDelivery)}
+                        title={tr(NARRATION_DELIVERY_OPTIONS.find(option => option.id === newProjectNarrationDelivery)?.hint ?? '')}
+                        style={{ width: '100%', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
+                      >
+                        {NARRATION_DELIVERY_OPTIONS.map(option => (
+                          <option key={option.id} value={option.id}>{tr(option.label)}</option>
+                        ))}
                       </select>
                     </div>
                   </div>
+                  <VideoReferenceModeSelect
+                    value={config.videoReferenceMode}
+                    onChange={videoReferenceMode => void updateConfigAndSync({ videoReferenceMode })}
+                  />
                 </div>
 
                 {/* 成片方式 + 集数 (item 3 两种成片方式 / item 6 选择指定集数) */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginTop: '14px' }}>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>成片方式</label>
+                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>{tr('成片方式')}</label>
                     <select
                       value={newProjectOneClick ? 'one_click' : 'guided'}
                       onChange={e => setNewProjectOneClick(e.target.value === 'one_click')}
-                      style={{ width: '100%', padding: '10px', background: '#0a1017', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem' }}
+                      style={{ width: '100%', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
                     >
-                      <option value="one_click">⚡ 一键成片 (后台连续生成全部 8 步)</option>
-                      <option value="guided">🧭 一步一步引导 (逐步生成，可对话微调)</option>
+                      <option value="one_click">{tr('⚡ 一键成片 (后台连续生成全部 8 步)')}</option>
+                      <option value="guided">{tr('🧭 一步一步引导 (逐步生成，可对话微调)')}</option>
                     </select>
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>剧本集数 (一次生成，视频逐集制作)</label>
+                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>{tr('剧本集数 (一次生成，视频逐集制作)')}</label>
                     <select
-                      value={newProjectEpisodes}
-                      onChange={e => setNewProjectEpisodes(parseInt(e.target.value, 10))}
-                      style={{ width: '100%', padding: '10px', background: '#0a1017', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.85rem' }}
+                      value={newProjectEpisodesCustom ? 'custom' : String(newProjectEpisodes)}
+                      onChange={e => {
+                        if (e.target.value === 'custom') {
+                          setNewProjectEpisodesCustom(true); // 切到手动填写，保留当前集数作为初始值
+                          return;
+                        }
+                        setNewProjectEpisodesCustom(false);
+                        setNewProjectEpisodes(parseInt(e.target.value, 10));
+                      }}
+                      style={{ width: '100%', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
                     >
-                      {[1, 2, 3, 4, 5, 6, 8, 10, 12].map(n => (
-                        <option key={n} value={n}>{n} 集</option>
-                      ))}
+                      {EPISODE_COUNT_PRESETS
+                        .filter(n => n >= clientConfig.episodeCount.min && n <= clientConfig.episodeCount.max)
+                        .map(n => (
+                          <option key={n} value={n}>{n} 集</option>
+                        ))}
+                      <option value="custom">{tr('✏️ 手动填写集数…')}</option>
                     </select>
+                    {newProjectEpisodesCustom && (
+                      <input
+                        type="number"
+                        min={clientConfig.episodeCount.min}
+                        max={clientConfig.episodeCount.max}
+                        value={newProjectEpisodes}
+                        onChange={e => setNewProjectEpisodes(clampEpisodeCount(e.target.value, clientConfig.episodeCount))}
+                        placeholder={`${clientConfig.episodeCount.min}-${clientConfig.episodeCount.max} 集`}
+                        style={{ width: '100%', marginTop: '8px', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -1915,14 +2301,14 @@ export default function App() {
                     className="capsule-btn"
                     style={{ padding: '8px 16px' }}
                   >
-                    取消
+                    {tr('取消')}
                   </button>
                   <button
                     onClick={handleConfirmCreate}
                     className="cyber-btn"
-                    style={{ padding: '8px 20px', background: 'linear-gradient(135deg, #00f2fe, #0072ff)', color: '#fff', fontWeight: 600 }}
+                    style={{ padding: '8px 20px', background: 'linear-gradient(135deg, #e3546c, #e3546c)', color: '#221b1e', fontWeight: 600 }}
                   >
-                    立即创建项目
+                    {tr('立即创建项目')}
                   </button>
                 </div>
               </div>
@@ -1930,301 +2316,134 @@ export default function App() {
           )}
 
         </div>
-      ) : (
-        
-        // 2. 已进入项目：双栏工作区大厅 (截图 3)
-        <div className="workbench-layout">
+      ) : ( // 2. 已进入项目：双栏工作区大厅 (截图 3)
+        <div
+          ref={workbenchRef}
+          className={`workbench-layout ${activeTabStage === 4 && taskData?.assets["4"] ? 'storyboard-mode' : ''}`}
+          style={chatSidebarWidth === null ? undefined : ({
+            '--workbench-sidebar-width': `${chatSidebarWidth}px`,
+          } as CSSProperties)}
+        >
           
           {/* 左侧：核心资产产出看版 (70% 宽) */}
-          <div className="asset-viewer">
+          <div id="workbench-asset-viewer" className="asset-viewer">
             
             {/* 顶部二级导航条 */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '16px', marginBottom: '20px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div className="asset-stage-nav">
+              <div className="asset-stage-nav__identity">
                 <Film size={22} color="var(--neon-cyan)" />
-                <h2 style={{ fontSize: '1.2rem', fontWeight: 600 }}>
-                  {taskData?.config.titleSuggestion ? `《${taskData.config.titleSuggestion}》` : "AI短剧制作"} - 看板展示大厅
+                <h2>
+                  《{scriptDisplayName}》 - 看板展示大厅
                 </h2>
               </div>
-              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                <button className={`capsule-btn ${activeTabStage === 1 ? 'active' : ''}`} onClick={() => setActiveTabStage(1)}><Film size={12} /> 1.总导演</button>
-                <button className={`capsule-btn ${activeTabStage === 2 ? 'active' : ''}`} onClick={() => setActiveTabStage(2)}><ClipboardList size={12} /> 2.编剧</button>
-                <button className={`capsule-btn ${activeTabStage === 3 ? 'active' : ''}`} onClick={() => setActiveTabStage(3)}><UserCheck size={12} /> 3.角色</button>
-                <button className={`capsule-btn ${activeTabStage === 4 ? 'active' : ''}`} onClick={() => setActiveTabStage(4)}><Sliders size={12} /> 4.分镜</button>
-                <button className={`capsule-btn ${activeTabStage === 5 ? 'active' : ''}`} onClick={() => setActiveTabStage(5)}><Video size={12} /> 5.视觉</button>
-                <button className={`capsule-btn ${activeTabStage === 6 ? 'active' : ''}`} onClick={() => setActiveTabStage(6)}><Music size={12} /> 6.音频</button>
-                <button className={`capsule-btn ${activeTabStage === 7 ? 'active' : ''}`} onClick={() => setActiveTabStage(7)}><Layers size={12} /> 7.合成</button>
-                <button className={`capsule-btn ${activeTabStage === 8 ? 'active' : ''}`} onClick={() => setActiveTabStage(8)}><Share2 size={12} /> 8.宣发</button>
-              </div>
+              <AgentStageTabs activeStage={activeTabStage} onChange={setActiveTabStage} />
             </div>
 
             {/* 当选择的阶段尚无资产时，展示 Novara Slate */}
-            {!taskData?.assets[activeTabStage.toString()] ? (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', opacity: 0.65 }}>
-                <img 
-                  src="https://portal.volccdn.com/obj/volcfe/cloud-universal-doc/upload_5a2661e94d2474b95a54475798558b66.mp4" 
-                  style={{ width: '120px', height: '120px', display: 'none' }} 
-                  alt="clapperboard" 
+            <Suspense fallback={<StageFallback />}>
+            {activeTabStage === 4 && taskData?.assets["4"] ? (
+              <StoryboardWorkspace
+                title={taskData.config.titleSuggestion}
+                shots={taskData.assets["4"] as StoryboardShot[]}
+                taskId={taskId}
+                gridUrl={taskData.assets["4_grid"] as string | undefined}
+                prompt={taskData.assets["4_grid_prompt"] as string | undefined}
+                promptDetail={taskData.assets["4_prompt_detail"]}
+                sceneBoards={taskData.assets["4_scene_boards"] as Record<string, SceneBoardStatus> | undefined}
+                progress={taskData.assets["4_progress"] as StoryboardProgress | undefined}
+                breakdownScenes={(taskData.assets["2_breakdown"] as { scenes?: BreakdownSceneRef[] } | undefined)?.scenes}
+                onRefresh={() => { void fetchTaskStatus(taskId); }}
+                onRegenerate={() => { void sendChatInstruction('重跑第 4 阶段'); }}
+                onContinue={() => setActiveTabStage(5)}
+              />
+            ) : activeTabStage === 1 ? (
+              <>
+                <DirectorPlanningPage
+                  title={taskData?.config.titleSuggestion}
+                  directorStyle={taskData?.config.directorStyle}
+                  shotStyle={taskData?.config.shotStyle}
+                  asset={taskData?.assets["1"]}
                 />
-                <Film size={80} color="var(--neon-cyan)" style={{ marginBottom: '20px', filter: 'drop-shadow(0 0 20px rgba(0, 242, 254, 0.3))' }} />
-                <h3 style={{ fontSize: '1.8rem', fontWeight: 600, marginBottom: '10px' }}>开始！</h3>
-                <p style={{ color: 'var(--text-muted)' }}>请在右侧聊天框中输入您的创作需求，或者点击“下一步”启动生成吧！</p>
+                {taskId && <StyleReferencePanel taskId={taskId} />}
+              </>
+            ) : activeTabStage === 2 ? (
+              <WriterAgentPageContainer
+                taskId={taskId}
+                refreshKey={`${taskData?.currentStage}:${taskData?.status}:${Boolean(taskData?.assets["2_writer_dashboard"])}`}
+                displayTitle={scriptDisplayName}
+                title={taskData?.config.titleSuggestion}
+                fallbackBreakdown={taskData?.assets["2_breakdown"]}
+                fallbackScript={taskData?.assets["2"]}
+                requestedEpisodeCount={taskData?.config.episodeCount || 0}
+                episodes={episodes}
+                episodesSourceHash={episodesSourceHash}
+                episodesBusy={episodesBusy}
+                onPlanEpisodes={() => { void handlePlanEpisodes(); }}
+                onProduceEpisode={(episodeIndex) => { void handleProduceEpisode(episodeIndex); }}
+                onScriptSaved={handleWriterScriptSaved}
+                onOpenScenes={() => { setCharacterAssetKind('scene'); setActiveTabStage(3); }}
+                onOpenActors={() => { setCharacterAssetKind('actor'); setActiveTabStage(3); }}
+              />
+            ) : activeTabStage === 3 ? (
+              <CharacterDesignerPageContainer
+                key={`${taskId}:${characterAssetKind}`}
+                taskId={taskId}
+                initialAssetKind={characterAssetKind}
+                refreshKey={`${taskData?.currentStage}:${taskData?.status}:${Boolean(taskData?.assets["3_character_dashboard"])}`}
+                title={taskData?.config.titleSuggestion}
+                fallbackCharacters={taskData?.assets["3_characters"]}
+                fallbackSheets={taskData?.assets["3_sheets"]}
+                fallbackDna={taskData?.assets["3_dna"]}
+                fallbackRaw={taskData?.assets["3"]}
+                onRefresh={() => { void fetchTaskStatus(taskId); }}
+                onRegenerate={() => { void sendChatInstruction('重跑第 3 阶段'); }}
+                onContinue={() => setActiveTabStage(4)}
+              />
+            ) : !taskData?.assets[activeTabStage.toString()] ? (
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', opacity: 0.65 }}>
+                <Film size={80} color="var(--neon-cyan)" style={{ marginBottom: '20px', filter: 'drop-shadow(0 0 20px rgba(227, 84, 108, 0.3))' }} />
+                <h3 style={{ fontSize: '1.8rem', fontWeight: 600, marginBottom: '10px' }}>{tr('开始！')}</h3>
+                <p style={{ color: 'var(--text-muted)' }}>{tr('请在右侧聊天框中输入您的创作需求，或者点击“下一步”启动生成吧！')}</p>
               </div>
-            ) : (
-              
-              // 步骤资产高保真呈现
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            ) : ( // 步骤资产高保真呈现
+              <div className="stage-asset-stack">
                 
-                <div className="glass-panel" style={{ flex: 1, background: 'rgba(0,0,0,0.2)' }}>
+                <div
+                  className={`glass-panel stage-asset-preview${activeTabStage === 5 ? ' stage-asset-preview--visual' : ''}`}
+                  role="region"
+                  aria-label={`Stage ${activeTabStage} 阶段资产预览`}
+                >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', marginBottom: '16px' }}>
                     <Monitor size={18} color="var(--neon-cyan)" />
                     <span style={{ fontWeight: 600 }}>Stage {activeTabStage} 阶段资产预览</span>
                   </div>
 
-                  {/* 1: 总导演策划方案 */}
-                  {activeTabStage === 1 && (
-                    <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.7', fontSize: '0.95rem', background: '#05080c', padding: '20px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                      {taskData.assets["1"]}
-                    </div>
-                  )}
-
-                  {/* 2: 编剧剧本创作 */}
-                  {activeTabStage === 2 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                      <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.7', fontSize: '0.95rem', background: '#05080c', padding: '20px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                        {taskData.assets["2"]}
-                      </div>
-
-                      {/* 分集制作：剧本一次生成多集，视频逐集制作 (item 6) */}
-                      {taskData.assets["2"] && (
-                        <div style={{ background: '#05080c', padding: '16px 20px', borderRadius: '12px', border: '1px solid rgba(0, 242, 254, 0.18)' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-                            <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--neon-cyan)' }}>
-                              🎬 分集制作 (视频逐集出片)
-                            </div>
-                            <button
-                              onClick={handlePlanEpisodes}
-                              disabled={episodesBusy}
-                              className="capsule-btn"
-                              style={{ padding: '6px 14px', fontSize: '0.78rem', opacity: episodesBusy ? 0.6 : 1 }}
-                            >
-                              {episodesBusy ? '分集中...' : (episodes.length > 0 ? '🔄 重新分集' : '📑 一键分集')}
-                            </button>
-                          </div>
-                          {episodes.length === 0 ? (
-                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                              点击「一键分集」把完整剧本切分为多集，然后可逐集制作 2.5-3 分钟成片。
-                            </div>
-                          ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                              {episodes.map((ep: EpisodeItem) => (
-                                <div key={ep.index} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: '#0a1017', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                                  <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-light)', minWidth: '52px' }}>第{ep.index}集</span>
-                                  <span style={{ flex: 1, fontSize: '0.76rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ep.title}</span>
-                                  <span style={{ fontSize: '0.7rem', padding: '1px 8px', borderRadius: '999px', border: '1px solid var(--border-color)', color: ep.status === 'completed' ? '#3ddc84' : ep.status === 'running' ? '#ffb020' : 'var(--text-muted)' }}>
-                                    {ep.status === 'completed' ? '✓ 已完成' : ep.status === 'running' ? '制作中…' : '待制作'}
-                                  </span>
-                                  {ep.status === 'completed' && ep.videoUrl ? (
-                                    <a href={ep.videoUrl} target="_blank" rel="noreferrer" className="capsule-btn" style={{ padding: '4px 12px', fontSize: '0.74rem' }}>▶ 播放</a>
-                                  ) : (
-                                    <button
-                                      onClick={() => handleProduceEpisode(ep.index)}
-                                      disabled={ep.status === 'running'}
-                                      className="capsule-btn"
-                                      style={{ padding: '4px 12px', fontSize: '0.74rem', opacity: ep.status === 'running' ? 0.6 : 1 }}
-                                    >
-                                      {ep.status === 'running' ? '⏳' : '🎬 制作本集'}
-                                    </button>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* 3: 角色五视图设定图 + 五维 DNA 设定文本 */}
-                  {activeTabStage === 3 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                      {/* 全部人物角色：姓名 + 身份 + 特征信息 + 有序五视图，跨镜头一致性锚点 */}
-                      {(() => {
-                        const structured = Array.isArray(taskData.assets["3_characters"]) ? taskData.assets["3_characters"] : null;
-                        const sheets = taskData.assets["3_sheets"] || {};
-                        const cards = structured && structured.length > 0
-                          ? structured
-                          : Object.entries(sheets).map(([name, sheet]) => ({ name, role: '', desc: '', sheet: String(sheet) }));
-                        if (!cards || cards.length === 0) return null;
-                        return (
-                          <div>
-                            <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--neon-cyan)', marginBottom: '10px' }}>
-                              🎭 全部人物角色 ({cards.length}) · 五视图设定图 (正面 · 正面3/4 · 侧面 · 背面3/4 · 背面)
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '14px' }}>
-                              {(cards as CharacterCard[]).map((c: CharacterCard, i: number) => {
-                                const url = c.sheet;
-                                return (
-                                  <div key={`${c.name}-${i}`} className="glass-panel" style={{ background: '#05080c', border: '1px solid rgba(0, 242, 254, 0.18)', borderRadius: '12px', padding: '10px' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
-                                      <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-light)' }}>{String(c.name).replace(/[:：]$/, '')}</span>
-                                      {c.role && (
-                                        <span style={{ fontSize: '0.68rem', padding: '1px 7px', borderRadius: '999px', background: 'rgba(0, 242, 254, 0.14)', color: 'var(--neon-cyan)', border: '1px solid rgba(0, 242, 254, 0.3)' }}>{c.role}</span>
-                                      )}
-                                    </div>
-                                    {typeof url === 'string' && url.startsWith('http') ? (
-                                      <a href={url} target="_blank" rel="noreferrer">
-                                        <img src={url} alt={`${c.name} 五视图`} style={{ width: '100%', borderRadius: '8px', objectFit: 'contain', background: '#fff', border: '1px solid rgba(0, 242, 254, 0.25)' }} />
-                                      </a>
-                                    ) : (
-                                      <div style={{ width: '100%', height: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '1px dashed var(--text-muted)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>五视图生成中...</div>
-                                    )}
-                                    {Array.isArray(c.views) && c.views.length === 5 && (
-                                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px', marginTop: '8px' }}>
-                                        {c.views.map((view: { view: string; image_url: string }) => (
-                                          <a href={view.image_url} target="_blank" rel="noreferrer" key={view.view} title={view.view}>
-                                            <img src={view.image_url} alt={`${c.name} ${view.view}`} style={{ width: '100%', aspectRatio: '1/2', objectFit: 'cover', borderRadius: '4px', border: '1px solid rgba(0, 242, 254, 0.2)' }} />
-                                          </a>
-                                        ))}
-                                      </div>
-                                    )}
-                                    {c.desc && (
-                                      <div style={{ marginTop: '8px', fontSize: '0.74rem', lineHeight: '1.5', color: 'var(--text-muted)', maxHeight: '88px', overflow: 'auto' }}>{c.desc}</div>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })()}
-                      {/* 五维 DNA 设定文本 */}
-                      <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.7', fontSize: '0.95rem', background: '#05080c', padding: '20px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                        {typeof taskData.assets["3"] === 'string'
-                          ? taskData.assets["3"]
-                          : Object.entries(taskData.assets["3"] || {}).map(([key, val]) => `【${key}】:\n${val}`).join('\n\n')
-                        }
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 4: 精准九宫格分镜 + 明细表 */}
-                  {activeTabStage === 4 && (
-                    <div style={{ overflowX: 'auto', display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                      {taskData.assets["4_grid"] && (
-                        <div>
-                          <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--neon-cyan)', marginBottom: '10px' }}>
-                            🎬 3×3 九宫格分镜 · 从左到右、从上到下
-                          </div>
-                          <a href={taskData.assets["4_grid"]} target="_blank" rel="noreferrer">
-                            <img src={taskData.assets["4_grid"]} alt="3×3 九宫格分镜" style={{ width: 'min(100%, 540px)', display: 'block', margin: '0 auto', borderRadius: '10px', border: '1px solid rgba(0, 242, 254, 0.35)', background: '#000' }} />
-                          </a>
-                        </div>
-                      )}
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                        <thead>
-                          <tr style={{ background: 'rgba(0, 242, 254, 0.08)', borderBottom: '1px solid var(--neon-cyan)' }}>
-                            <th style={{ padding: '10px', textAlign: 'left' }}>镜号</th>
-                            <th style={{ padding: '10px', textAlign: 'left' }}>分镜预览图</th>
-                            <th style={{ padding: '10px', textAlign: 'left' }}>景别</th>
-                            <th style={{ padding: '10px', textAlign: 'left' }}>运镜</th>
-                            <th style={{ padding: '10px', textAlign: 'left' }}>画面视觉动作描述 (拍摄指南映射)</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {taskData.assets["4"].map((shot: ProductionShot) => (
-                            <tr key={shot.shot_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                              <td style={{ padding: '12px', fontWeight: 600 }}>Shot {shot.shot_id}</td>
-                              <td style={{ padding: '12px' }}>
-                                {shot.image_url ? (
-                                  <img 
-                                    src={shot.image_url} 
-                                    style={{ width: '70px', height: '124px', borderRadius: '6px', objectFit: 'cover', border: '1px solid rgba(0, 242, 254, 0.25)', boxShadow: '0 0 6px rgba(0, 242, 254, 0.1)' }} 
-                                    alt={`Shot ${shot.shot_id}`} 
-                                  />
-                                ) : (
-                                  <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>暂无图片</span>
-                                )}
-                              </td>
-                              <td style={{ padding: '12px' }}><span style={{ padding: '2px 6px', background: 'rgba(255,255,255,0.04)', borderRadius: '4px' }}>{shot.size}</span></td>
-                              <td style={{ padding: '12px', color: 'var(--neon-cyan)' }}>{shot.motion}</td>
-                              <td style={{ padding: '12px' }}>{shot.desc}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-
                   {/* 5: 视觉总监生成 */}
                   {activeTabStage === 5 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                      {taskData.assets["5"] ? (
-                        Array.isArray(taskData.assets["5"]) ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', maxHeight: '500px', overflowY: 'auto', paddingRight: '8px' }}>
-                            {taskData.assets["5"].map((shot: ProductionShot, idx: number) => (
-                              <div key={idx} className="glass-panel" style={{ background: '#05080c', border: '1px solid rgba(0, 242, 254, 0.15)', padding: '16px', borderRadius: '12px' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
-                                  <span style={{ fontWeight: 600, color: 'var(--neon-cyan)', fontSize: '0.9rem' }}>镜头 {shot.shot_id || (idx + 1)} ({shot.size || 'MS'} | {shot.motion || 'Dolly In'})</span>
-                                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>描述: {shot.desc || '分镜画面'}</span>
-                                </div>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '16px' }}>
-                                  <div>
-                                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>图生视频动态画面 ({taskData.config.videoModel || config.videoModel})</span>
-                                    {shot.video_url ? (
-                                      <video src={shot.video_url} controls loop style={{ width: '100%', borderRadius: '8px', border: '1px solid var(--neon-cyan)' }} />
-                                    ) : (
-                                      <div style={{ width: '100%', height: '150px', background: 'rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '1px dashed var(--text-muted)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>视频生成中...</div>
-                                    )}
-                                  </div>
-                                  <div>
-                                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>文生图底片首帧 ({taskData.config.imageModel || config.imageModel})</span>
-                                    {shot.image_url ? (
-                                      <img src={shot.image_url} style={{ width: '100%', borderRadius: '8px', objectFit: 'cover' }} alt={`镜头 ${shot.shot_id || (idx + 1)}`} />
-                                    ) : (
-                                      <div style={{ width: '100%', height: '150px', background: 'rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px', border: '1px dashed var(--text-muted)', color: 'var(--text-muted)', fontSize: '0.8rem' }}>图片生成中...</div>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '20px' }}>
-                            <div>
-                              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>图生视频动态渲染片段 ({taskData.config.videoModel || config.videoModel})</span>
-                              {taskData.assets["5"].video_url ? (
-                                <video src={taskData.assets["5"].video_url} controls loop style={{ width: '100%', borderRadius: '12px', border: '1px solid var(--neon-cyan)' }} />
-                              ) : (
-                                <div style={{ width: '100%', height: '200px', background: 'rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '12px', border: '1px dashed var(--text-muted)', color: 'var(--text-muted)' }}>视频生成中...</div>
-                              )}
-                            </div>
-                            <div>
-                              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>首帧文生图高精度底片 ({taskData.config.imageModel || config.imageModel})</span>
-                              {taskData.assets["5"].image_url ? (
-                                <img src={taskData.assets["5"].image_url} style={{ width: '100%', borderRadius: '12px', objectFit: 'cover' }} alt="首帧" />
-                              ) : (
-                                <div style={{ width: '100%', height: '200px', background: 'rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '12px', border: '1px dashed var(--text-muted)', color: 'var(--text-muted)' }}>图片生成中...</div>
-                              )}
-                            </div>
-                          </div>
-                        )
-                      ) : (
-                        <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                          暂无视觉片段资产。请先运行此阶段以生成底片与视频。
-                        </div>
-                      )}
-                    </div>
+                    <StageFivePreview
+                      asset={taskData.assets["5"]}
+                      videoModel={taskData.config.videoModel || config.videoModel}
+                      imageModel={taskData.config.imageModel || config.imageModel}
+                      taskId={taskId}
+                      onRerun={() => { void sendChatInstruction('重跑第 5 阶段'); }}
+                    />
                   )}
 
                   {/* 6: 音频总监生成 */}
                   {activeTabStage === 6 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                      <div className="glass-panel" style={{ background: '#05080c', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                      <div className="glass-panel" style={{ background: '#fcedef', display: 'flex', alignItems: 'center', gap: '16px' }}>
                         <Music size={28} color="var(--neon-cyan)" />
                         <div>
-                          <h4 style={{ fontSize: '0.95rem' }}>音轨合成: 角色专属配音 + BGM摇滚背景音</h4>
-                          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>模型: {taskData.config.ttsModel || config.ttsModel} | 唇形对齐率: 92.5% | 声线特征: {taskData.assets["6"]?.voice_profile || "自适应推荐"}</p>
+                          <h4 style={{ fontSize: '0.95rem' }}>
+                            音轨合成: 角色专属配音
+                            {taskData.assets["6"]?.bgm_url ? tr(' + 背景音乐') : ''}
+                            {taskData.assets["6"]?.sfx_url ? tr(' + 环境音效') : ''}
+                          </h4>
+                          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                            模型: {taskData.config.ttsModel || config.ttsModel}
+                            {taskData.assets["6"]?.tts_text ? ` | 配音: ${taskData.assets["6"].tts_text}` : ''}
+                          </p>
                         </div>
                       </div>
                       <audio src={taskData.assets["6"].audio_url} controls style={{ width: '100%' }} />
@@ -2235,18 +2454,39 @@ export default function App() {
                   {activeTabStage === 7 && (
                     <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: '20px' }}>
                       <div>
-                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>9:16 H.264 竖屏高清成片</span>
-                        <video src={taskData.videoUrl || taskData.assets["7"]?.final_video_url} controls style={{ width: '100%', borderRadius: '16px', border: '2px solid var(--neon-cyan)', boxShadow: '0 0 20px rgba(0, 242, 254, 0.2)' }} />
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>
+                          {[
+                            taskData.assets["7"]?.aspect_ratio,
+                            taskData.assets["7"]?.delivery_profile?.video_codec?.toUpperCase(),
+                            '成片',
+                          ].filter(Boolean).join(' ')}
+                        </span>
+                        <video src={taskData.videoUrl || taskData.assets["7"]?.final_video_url} controls style={{ width: '100%', borderRadius: '16px', border: '2px solid var(--neon-cyan)', boxShadow: '0 0 20px rgba(227, 84, 108, 0.2)' }} />
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        <div className="glass-panel" style={{ background: '#05080c', padding: '12px' }}>
-                          <span style={{ color: 'var(--neon-cyan)', fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>合成属性</span>
+                        <div className="glass-panel" style={{ background: '#fcedef', padding: '12px' }}>
+                          <span style={{ color: 'var(--neon-cyan)', fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>{tr('合成属性')}</span>
                           <div style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                            <div><strong>画幅比例:</strong> {taskData.assets["7"]?.aspect_ratio || "9:16 (竖屏)"}</div>
-                            <div><strong>帧率:</strong> 30 fps (锁定恒定帧率)</div>
-                            <div><strong>音画同步:</strong> 0 帧偏移</div>
-                            <div><strong>字幕样式:</strong> {taskData.assets["7"]?.subtitles || "内置流光特效字幕"}</div>
+                            {taskData.assets["7"]?.aspect_ratio && (
+                              <div><strong>{tr('画幅比例:')}</strong> {taskData.assets["7"].aspect_ratio}</div>
+                            )}
+                            {taskData.assets["7"]?.delivery_profile?.width && (
+                              <div><strong>{tr('分辨率:')}</strong> {taskData.assets["7"].delivery_profile.width}×{taskData.assets["7"].delivery_profile.height}</div>
+                            )}
+                            {taskData.assets["7"]?.delivery_profile?.fps && (
+                              <div><strong>{tr('帧率:')}</strong> {taskData.assets["7"].delivery_profile.fps} fps</div>
+                            )}
+                            {taskData.assets["7"]?.compose_mode && (
+                              <div><strong>{tr('合成方式:')}</strong> {taskData.assets["7"].compose_mode}</div>
+                            )}
+                            {taskData.assets["7"]?.subtitles && (
+                              <div><strong>{tr('字幕样式:')}</strong> {taskData.assets["7"].subtitles}</div>
+                            )}
                           </div>
+                        </div>
+                        {/* 剪辑时间线：审看、裁剪、转场、配乐，按它重新合成或导出剪映草稿 */}
+                        <div className="glass-panel" style={{ background: '#fcedef', padding: '12px' }}>
+                          <TimelinePanel taskId={taskId} />
                         </div>
                       </div>
                     </div>
@@ -2255,8 +2495,8 @@ export default function App() {
                   {/* 8: 宣发 Agent */}
                   {activeTabStage === 8 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      <div className="glass-panel" style={{ background: '#05080c', padding: '12px' }}>
-                        <span style={{ color: 'var(--neon-cyan)', fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>宣发大字标题</span>
+                      <div className="glass-panel" style={{ background: '#fcedef', padding: '12px' }}>
+                        <span style={{ color: 'var(--neon-cyan)', fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>{tr('宣发大字标题')}</span>
                         <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>
                           {(() => {
                             const titleMatch = taskData.prContent?.match(/🔥 抖音爆款大字标题：([^\n]+)/);
@@ -2264,8 +2504,8 @@ export default function App() {
                           })()}
                         </span>
                       </div>
-                      <div className="glass-panel" style={{ background: '#05080c', padding: '12px' }}>
-                        <span style={{ color: 'var(--neon-cyan)', fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>引流文案</span>
+                      <div className="glass-panel" style={{ background: '#fcedef', padding: '12px' }}>
+                        <span style={{ color: 'var(--neon-cyan)', fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>{tr('引流文案')}</span>
                         <p style={{ fontSize: '0.8rem', lineHeight: '1.4' }}>
                           {(() => {
                             const bodyMatch = taskData.prContent?.match(/📌 黄金引流文案：‘([^’]+)’/);
@@ -2274,7 +2514,7 @@ export default function App() {
                         </p>
                       </div>
                       <div style={{ fontSize: '0.85rem' }}>
-                        <span style={{ color: 'var(--text-muted)' }}>短发布链接: </span>
+                        <span style={{ color: 'var(--text-muted)' }}>{tr('短发布链接:')} </span>
                         <a href={taskData.shortLink} target="_blank" rel="noreferrer" style={{ color: 'var(--neon-cyan)' }}>{taskData.shortLink}</a>
                       </div>
                     </div>
@@ -2282,7 +2522,7 @@ export default function App() {
 
                   {/* 统一卡片底部推进/下一步按钮栏 */}
                   {taskData && (
-                    <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid rgba(214, 90, 120, 0.11)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       {activeTabStage > 1 ? (
                         <button 
                           type="button"
@@ -2290,7 +2530,7 @@ export default function App() {
                           className="capsule-btn"
                           style={{ fontSize: '0.75rem', padding: '5px 12px' }}
                         >
-                          ← 上一步资产
+                          {tr('← 上一步资产')}
                         </button>
                       ) : <div />}
 
@@ -2302,65 +2542,10 @@ export default function App() {
                             className="capsule-btn"
                             style={{ borderColor: 'var(--neon-cyan)', color: 'var(--neon-cyan)', fontSize: '0.75rem', padding: '5px 12px' }}
                           >
-                            查看下一步资产 →
+                            {tr('查看下一步资产 →')}
                           </button>
-                        ) : (
-                          activeTabStage === taskData.currentStage && taskData.status !== 'completed' ? (
-                            taskData.status === 'awaiting_quality_review' ? (
-                              <span style={{ fontSize: '0.75rem', color: 'var(--neon-amber)', fontWeight: 600 }}>
-                                🛡️ 等待真实多模态/人工质量验收
-                              </span>
-                            ) : taskData.status === 'quality_failed' ? (
-                              <span style={{ fontSize: '0.75rem', color: 'var(--neon-red)', fontWeight: 600 }}>
-                                ✕ 质量门禁未通过，请按报告定向重生成
-                              </span>
-                            ) :
-                            taskData.status === 'running' ? (
-                              <button 
-                                type="button"
-                                onClick={handlePause} 
-                                className="capsule-btn" 
-                                style={{ borderColor: 'var(--neon-red)', color: 'var(--neon-red)', fontSize: '0.75rem', padding: '5px 12px' }}
-                              >
-                                <Pause size={10} style={{ marginRight: '4px' }} /> 暂停任务
-                              </button>
-                            ) : taskData.status === 'paused' ? (
-                              <button 
-                                type="button"
-                                onClick={handleResume} 
-                                className="capsule-btn" 
-                                style={{ borderColor: 'var(--neon-amber)', color: 'var(--neon-amber)', fontSize: '0.75rem', padding: '5px 12px' }}
-                              >
-                                <Play size={10} style={{ marginRight: '4px' }} /> 恢复一键成片
-                              </button>
-                            ) : (
-                              <>
-                                <button 
-                                  type="button"
-                                  onClick={handleNextStage} 
-                                  className="capsule-btn" 
-                                  style={{ borderColor: 'var(--neon-cyan)', color: 'var(--neon-cyan)', fontSize: '0.75rem', padding: '5px 12px' }}
-                                >
-                                  执行下一步 <ChevronRight size={10} />
-                                </button>
-                                <button 
-                                  type="button"
-                                  onClick={handleRunAll} 
-                                  className="capsule-btn"
-                                  style={{ fontSize: '0.75rem', padding: '5px 12px' }}
-                                >
-                                  一键成片
-                                </button>
-                              </>
-                            )
-                          ) : (
-                            activeTabStage === 8 && taskData.status === 'completed' && (
-                              <span style={{ fontSize: '0.75rem', color: 'var(--neon-green)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                ✓ 全剧一键成片已完成！
-                              </span>
-                            )
-                          )
-                        )}
+                        ) : <WorkflowActions workflow={taskData.workflow} busy={chatSending}
+                          onAction={message => { void (message === '继续' ? handleNextStage() : sendChatInstruction(message)); }} />}
                       </div>
                     </div>
                   )}
@@ -2368,9 +2553,9 @@ export default function App() {
                 </div>
 
                 {/* 质检监控底栏 */}
-                <div className="glass-panel" style={{ background: 'rgba(0,0,0,0.1)' }}>
-                  <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--neon-amber)', marginBottom: '10px', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
-                    100+项质检校验 (AI 生成短剧一致性检查清单.md) 一致性 Hooks 报告
+                <div className="glass-panel" style={{ background: 'rgba(60, 30, 40, 0.055)' }}>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--neon-amber)', marginBottom: '10px', borderBottom: '1px solid rgba(214, 90, 120, 0.11)', paddingBottom: '6px' }}>
+                    {tr('100+项质检校验（一致性检查清单）一致性 Hooks 报告')}
                   </div>
                   <div 
                     style={{ fontFamily: 'monospace', fontSize: '0.8rem', maxHeight: '120px', overflowY: 'auto', whiteSpace: 'pre-wrap' }}
@@ -2382,69 +2567,51 @@ export default function App() {
               </div>
 
             )}
+            </Suspense>
 
           </div>
 
+          <WorkbenchResizeHandle
+            containerRef={workbenchRef}
+            sidebarRef={chatSidebarRef}
+            sidebarWidth={chatSidebarWidth}
+            onResize={setChatSidebarWidth}
+          />
+
           {/* 右侧：对话与工作流控制侧边栏 (30% 宽) (截图 3) */}
-          <div className="chat-sidebar">
+          <div id="workbench-chat-sidebar" ref={chatSidebarRef} className="chat-sidebar">
             
             {/* 顶栏 */}
-            <div style={{ height: '56px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 16px' }}>
-              <span style={{ fontWeight: 600 }}>对话</span>
+            <div className="chat-sidebar__header">
+              <span>
+                <Bot aria-hidden="true" />
+                {NOVARA_AGENT_NAME}
+              </span>
               <button 
                 onClick={() => {
                   setTaskId('');
                   setTaskData(null);
                 }} 
-                style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+                aria-label={tr('关闭项目工作台')}
               >
                 <X size={18} />
               </button>
             </div>
 
             {/* 对话消息流区域 */}
-            <div style={{ flex: 1, padding: '16px', overflowY: 'auto', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <ChatHistory key={taskId}>
               {chatMessages.map(msg => (
                 <div key={msg.id} className={`chat-bubble ${msg.sender}`}>
                   
                   {/* AI 消息加上 Novara 标志和交互按钮 */}
                   {msg.sender === 'ai' ? (
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.04)', paddingBottom: '4px' }}>
-                        <span style={{ fontSize: '0.7rem', padding: '1px 6px', background: 'linear-gradient(90deg, #00f2fe, #0072ff)', color: '#fff', borderRadius: '4px', fontWeight: 'bold' }}>Novara AI</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', borderBottom: '1px solid rgba(214, 90, 120, 0.088)', paddingBottom: '4px' }}>
+                        <span className="chat-agent-badge">{NOVARA_AGENT_NAME}</span>
                       </div>
                       
                       <div style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</div>
                       
-                      {/* 如果有绑定的步骤，且是当前活跃步骤，且任务处于暂停/等待，则渲染控制按钮 */}
-                      {taskData && msg.stage === taskData.currentStage && taskData.status !== 'completed' && (
-                        <div style={{ display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
-                          
-                          {taskData.status === 'running' ? (
-                            <button onClick={handlePause} className="capsule-btn" style={{ borderColor: 'var(--neon-red)', color: 'var(--neon-red)' }}>
-                              <Pause size={10} /> 暂停任务
-                            </button>
-                          ) : (
-                            <>
-                              {taskData.status === 'paused' ? (
-                                <button onClick={handleResume} className="capsule-btn" style={{ borderColor: 'var(--neon-amber)', color: 'var(--neon-amber)' }}>
-                                  <Play size={10} /> 恢复一键成片
-                                </button>
-                              ) : (
-                                <>
-                                  <button onClick={handleNextStage} className="capsule-btn" style={{ borderColor: 'var(--neon-cyan)', color: 'var(--neon-cyan)' }}>
-                                    执行下一步 <ChevronRight size={10} />
-                                  </button>
-                                  <button onClick={handleRunAll} className="capsule-btn">
-                                    一键成片
-                                  </button>
-                                </>
-                              )}
-                            </>
-                          )}
-
-                        </div>
-                      )}
                     </div>
                   ) : (
                     <div>{msg.text}</div>
@@ -2452,16 +2619,26 @@ export default function App() {
 
                 </div>
               ))}
-              <div ref={chatEndRef} />
-            </div>
+
+              {/* 阶段执行实时进度卡：调用过程 + 滚动百分比 */}
+              {taskData?.stageProgress && taskData.stageProgress.status === 'running' && taskData.status === 'running' && (
+                <div className="chat-bubble ai">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', borderBottom: '1px solid rgba(214, 90, 120, 0.088)', paddingBottom: '4px' }}>
+                    <span className="chat-agent-badge">{NOVARA_AGENT_NAME}</span>
+                    <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{tr('正在执行 · 实时调用过程')}</span>
+                  </div>
+                  <StageProgressPanel progress={taskData.stageProgress} />
+                </div>
+              )}
+            </ChatHistory>
 
             {/* 对话底部输入框 */}
-            <div style={{ padding: '16px', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '10px', position: 'relative' }}>
+            <div className="chat-sidebar__composer">
               
               {/* 侧边栏 Skill 选择气泡弹窗 */}
               {activePopover === 'sidebarSkill' && (
                 <div className="popover-window" style={{ bottom: '85px', left: '16px', right: '16px', width: 'auto', zIndex: 100 }}>
-                  <h4 style={{ fontSize: '0.85rem', marginBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '6px' }}>内置超级 Skills</h4>
+                  <h4 style={{ fontSize: '0.85rem', marginBottom: '8px', borderBottom: '1px solid rgba(214, 90, 120, 0.132)', paddingBottom: '6px' }}>{tr('内置超级 Skills')}</h4>
                   <div 
                     onClick={() => {
                       updateConfigAndSync({ shotStyle: 'cinematic', directorStyle: 'cyberpunk' });
@@ -2469,8 +2646,8 @@ export default function App() {
                     }}
                     className={`model-list-item ${config.shotStyle === 'cinematic' ? 'selected' : ''}`}
                   >
-                    <div><strong>AI 短剧一站式生成</strong></div>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>36运镜及100+自检</span>
+                    <div><strong>{tr('AI 短剧一站式生成')}</strong></div>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{tr('36运镜及100+自检')}</span>
                   </div>
                   <div 
                     onClick={() => {
@@ -2479,13 +2656,13 @@ export default function App() {
                     }}
                     className={`model-list-item ${config.shotStyle === 'standard' ? 'selected' : ''}`}
                   >
-                    <div><strong>普通分镜短片生成</strong></div>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>经典正反打对话</span>
+                    <div><strong>{tr('普通分镜短片生成')}</strong></div>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{tr('经典正反打对话')}</span>
                   </div>
 
                   {importedSkills.length > 0 && (
                     <>
-                      <h4 style={{ fontSize: '0.85rem', marginTop: '12px', marginBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '6px' }}>导入外部 Skills</h4>
+                      <h4 style={{ fontSize: '0.85rem', marginTop: '12px', marginBottom: '8px', borderBottom: '1px solid rgba(214, 90, 120, 0.132)', paddingBottom: '6px' }}>{tr('导入外部 Skills')}</h4>
                       {importedSkills.map(s => (
                         <div 
                           key={s.name}
@@ -2509,7 +2686,7 @@ export default function App() {
                               transform: 'translateY(-50%)',
                               background: 'transparent',
                               border: 'none',
-                              color: 'rgba(255, 255, 255, 0.4)',
+                              color: 'rgba(214, 90, 120, 0.88)',
                               cursor: 'pointer',
                               padding: '4px',
                               display: 'flex',
@@ -2517,11 +2694,11 @@ export default function App() {
                               justifyContent: 'center',
                               zIndex: 10
                             }}
-                            title="物理删除该技能包"
+                            title={tr('物理删除该技能包')}
                           >
                             <X size={12} />
                           </button>
-                          <div><strong>{s.name}</strong> <span style={{ fontSize: '0.65rem', padding: '1px 4px', background: 'var(--neon-green)', color: '#000', borderRadius: '4px', marginLeft: '4px', fontWeight: 'bold' }}>已导入</span></div>
+                          <div><strong>{s.name}</strong> <span style={{ fontSize: '0.65rem', padding: '1px 4px', background: 'var(--neon-green)', color: '#fcebee', borderRadius: '4px', marginLeft: '4px', fontWeight: 'bold' }}>{tr('已导入')}</span></div>
                           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{s.description}</span>
                         </div>
                       ))}
@@ -2537,7 +2714,7 @@ export default function App() {
                   style={{ padding: '4px 10px', fontSize: '0.7rem' }}
                   onClick={() => { setActivePopover('none'); setShowModelConfiguration(true); }}
                 >
-                  模型: {config.llmModel || '未配置'} / {config.videoModel || '未配置'}
+                  模型: {hasEnabledGlobalModel ? tr('已配置') : tr('未配置')}
                 </button>
                 <button 
                   type="button"
@@ -2545,31 +2722,12 @@ export default function App() {
                   style={{ padding: '4px 10px', fontSize: '0.7rem' }}
                   onClick={() => { setActivePopover('none'); setShowProjectSkillManager(true); }}
                 >
-                  Skill: 项目管理
+                  {tr('Skill: 项目管理')}
                 </button>
               </div>
 
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <input 
-                  type="text" 
-                  placeholder="发送消息..." 
-                  value={chatInput}
-                  onChange={e => setChatInput(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      sendChatInstruction(chatInput);
-                    }
-                  }}
-                  style={{ flex: 1, padding: '10px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.9rem' }}
-                />
-                <button 
-                  onClick={() => sendChatInstruction(chatInput)}
-                  className="cyber-btn" 
-                  style={{ width: '36px', height: '36px', borderRadius: '50%', padding: '0' }}
-                >
-                  <Send size={14} />
-                </button>
-              </div>
+              <ChatComposer value={chatInput} busy={chatSending} onChange={setChatInput}
+                onSend={message => { void sendChatInstruction(message); }} />
             </div>
 
           </div>
@@ -2577,11 +2735,12 @@ export default function App() {
         </div>
       )}
 
-      <ModelConfigurationCenter
+      {showModelConfiguration && <Suspense fallback={null}><ModelConfigurationCenter
         open={showModelConfiguration}
         role={currentUser?.role}
         mustChangePassword={currentUser?.must_change_password}
-        onClose={() => setShowModelConfiguration(false)}
+        onClose={() => { setShowModelConfiguration(false); void refreshModelConfigurationStatus(); }}
+        onConfigurationChange={() => { void refreshModelConfigurationStatus(); }}
         onSelect={(category: ModelCategory, modelId: string) => {
           const configKey = ({
             text: 'llmModel', image: 'imageModel', video: 'videoModel', audio: 'ttsModel',
@@ -2590,19 +2749,19 @@ export default function App() {
           else setConfig(current => ({ ...current, [configKey]: modelId }));
           setShowModelConfiguration(false);
         }}
-      />
+      /></Suspense>}
 
-      <ProjectSkillManager
+      {showProjectSkillManager && <Suspense fallback={null}><ProjectSkillManager
         open={showProjectSkillManager}
         role={currentUser?.role}
         mustChangePassword={currentUser?.must_change_password}
         onClose={() => setShowProjectSkillManager(false)}
-      />
+      /></Suspense>}
 
       {/* 磨砂玻璃 导入外部 Skill 弹窗 */}
       {showImportSkillModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyItems: 'center', justifyContent: 'center', zIndex: 99999 }}>
-          <div className="glass-panel" style={{ width: '500px', padding: '26px', position: 'relative', border: '1px solid rgba(0, 242, 254, 0.25)', boxShadow: '0 0 35px rgba(0, 242, 254, 0.2)' }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(60, 30, 40, 0.358)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyItems: 'center', justifyContent: 'center', zIndex: 99999 }}>
+          <div className="glass-panel" style={{ width: '500px', padding: '26px', position: 'relative', border: '1px solid rgba(227, 84, 108, 0.25)', boxShadow: '0 0 35px rgba(227, 84, 108, 0.2)' }}>
             <button 
               onClick={() => setShowImportSkillModal(false)} 
               style={{ position: 'absolute', top: '16px', right: '16px', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
@@ -2611,18 +2770,18 @@ export default function App() {
             </button>
 
             <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '20px', color: 'var(--neon-cyan)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              🔌 导入外部 Skill 技能包
+              {tr('🔌 导入外部 Skill 技能包')}
             </h3>
 
             {/* 标签切换 */}
-            <div style={{ display: 'flex', background: 'rgba(255,255,255,0.04)', padding: '4px', borderRadius: '8px', marginBottom: '20px', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div style={{ display: 'flex', background: 'rgba(214, 90, 120, 0.088)', padding: '4px', borderRadius: '8px', marginBottom: '20px', border: '1px solid rgba(214, 90, 120, 0.11)' }}>
               <button 
                 type="button"
                 className={`popover-tab-btn ${importSkillType === 'github' ? 'active' : ''}`}
                 onClick={() => setImportSkillType('github')}
                 style={{ flex: 1, padding: '6px 0', fontSize: '0.8rem' }}
               >
-                GitHub 仓库
+                {tr('GitHub 仓库')}
               </button>
               <button 
                 type="button"
@@ -2630,7 +2789,7 @@ export default function App() {
                 onClick={() => setImportSkillType('clawhub')}
                 style={{ flex: 1, padding: '6px 0', fontSize: '0.8rem' }}
               >
-                Clawhub 库
+                {tr('Clawhub 库')}
               </button>
               <button 
                 type="button"
@@ -2638,7 +2797,7 @@ export default function App() {
                 onClick={() => setImportSkillType('npx')}
                 style={{ flex: 1, padding: '6px 0', fontSize: '0.8rem' }}
               >
-                NPX 安装
+                {tr('NPX 安装')}
               </button>
               <button 
                 type="button"
@@ -2646,7 +2805,7 @@ export default function App() {
                 onClick={() => setImportSkillType('zip')}
                 style={{ flex: 1, padding: '6px 0', fontSize: '0.8rem' }}
               >
-                ZIP 上传
+                {tr('ZIP 上传')}
               </button>
             </div>
 
@@ -2655,30 +2814,30 @@ export default function App() {
               {(importSkillType === 'github' || importSkillType === 'clawhub') && (
                 <div>
                   <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '8px' }}>
-                    {importSkillType === 'github' ? 'GitHub 仓库 URL' : 'Clawhub 库 URL'}
+                    {importSkillType === 'github' ? tr('GitHub 仓库 URL') : tr('Clawhub 库 URL')}
                   </label>
                   <input 
                     type="text" 
                     placeholder="https://github.com/Shanyin-ai/shanyin-screenwriting-master.git"
                     value={importSkillUrl}
                     onChange={e => setImportSkillUrl(e.target.value)}
-                    style={{ width: '100%', padding: '10px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.9rem' }}
+                    style={{ width: '100%', padding: '10px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.9rem' }}
                   />
                   <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '8px' }}>
-                    系统会自动克隆该技能包项目，读取其内部配置规范并在大厅中加载。
+                    {tr('系统会自动克隆该技能包项目，读取其内部配置规范并在大厅中加载。')}
                   </p>
                 </div>
               )}
 
               {importSkillType === 'npx' && (
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '8px' }}>NPX 包名</label>
+                  <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '8px' }}>{tr('NPX 包名')}</label>
                   <input 
                     type="text" 
-                    placeholder="例如：create-vite-app"
+                    placeholder={tr('例如：create-vite-app')}
                     value={importSkillPackage}
                     onChange={e => setImportSkillPackage(e.target.value)}
-                    style={{ width: '100%', padding: '10px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', fontSize: '0.9rem' }}
+                    style={{ width: '100%', padding: '10px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.9rem' }}
                   />
                   <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '8px' }}>
                     系统将在后台通过 `npx -y` 载入并安装指定的包。
@@ -2688,14 +2847,14 @@ export default function App() {
 
               {importSkillType === 'zip' && (
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '8px' }}>本地 ZIP 技能包</label>
+                  <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '8px' }}>{tr('本地 ZIP 技能包')}</label>
                   <div 
                     style={{ 
-                      border: '1px dashed rgba(0, 242, 254, 0.4)', 
+                      border: '1px dashed rgba(227, 84, 108, 0.4)', 
                       borderRadius: '12px', 
                       padding: '30px 20px', 
                       textAlign: 'center', 
-                      background: 'rgba(0,0,0,0.2)',
+                      background: 'rgba(60, 30, 40, 0.11)',
                       cursor: 'pointer',
                       transition: 'all 0.3s ease'
                     }}
@@ -2714,7 +2873,7 @@ export default function App() {
                       }}
                     />
                     <div style={{ fontSize: '2.5rem', marginBottom: '10px' }}>📦</div>
-                    <span style={{ fontSize: '0.85rem', display: 'block', color: importSkillFile ? 'var(--neon-green)' : '#fff' }}>
+                    <span style={{ fontSize: '0.85rem', display: 'block', color: importSkillFile ? 'var(--neon-green)' : '#221b1e' }}>
                       {importSkillFile ? `已选择: ${importSkillFile.name} (${Math.round(importSkillFile.size / 1024)} KB)` : '点击选择或拖拽本地 ZIP 压缩文件上传'}
                     </span>
                   </div>
@@ -2729,14 +2888,14 @@ export default function App() {
                 className="capsule-btn" 
                 style={{ padding: '8px 16px' }}
               >
-                取消
+                {tr('取消')}
               </button>
               <button 
                 onClick={handleImportSkill} 
                 className="cyber-btn" 
-                style={{ padding: '8px 20px', background: 'linear-gradient(135deg, #00f2fe, #0072ff)', color: '#fff', fontWeight: 600 }}
+                style={{ padding: '8px 20px', background: 'linear-gradient(135deg, #e3546c, #e3546c)', color: '#221b1e', fontWeight: 600 }}
               >
-                立即导入技能包
+                {tr('立即导入技能包')}
               </button>
             </div>
           </div>

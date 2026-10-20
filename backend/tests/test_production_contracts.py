@@ -6,9 +6,15 @@ from app.schema.production import (
     CharacterAsset,
     FiveView,
     H3VideoRequest,
+    H3ReferenceBinding,
     NineGridStoryboard,
     StoryAssetCatalog,
     StoryboardPanel,
+)
+from app.schema.minimax_audio import (
+    MiniMaxMusicCoverRequest,
+    MiniMaxMusicRequest,
+    MiniMaxTTSRequest,
 )
 
 
@@ -41,7 +47,66 @@ def _panel(index: int) -> StoryboardPanel:
 
 
 class ProductionContractTests(unittest.TestCase):
-    def test_character_requires_exact_ordered_five_views(self):
+    def test_minimax_audio_contracts_cover_every_speech_model_and_music_mode(self):
+        speech_models = (
+            "speech-2.8-hd", "speech-2.8-turbo",
+            "speech-2.6-hd", "speech-2.6-turbo",
+            "speech-02-hd", "speech-02-turbo",
+            "speech-01-hd", "speech-01-turbo",
+        )
+        for model in speech_models:
+            with self.subTest(model=model):
+                request = MiniMaxTTSRequest(
+                    model=model,
+                    text="同一角色使用稳定音色完成短剧配音。",
+                    voice_id="male-qn-qingse",
+                )
+                self.assertEqual(request.model, model)
+
+        music = MiniMaxMusicRequest(
+            prompt="Mandopop, Festive, Upbeat",
+            lyrics_optimizer=True,
+        )
+        self.assertEqual(music.model, "music-3.0")
+        cover = MiniMaxMusicCoverRequest(
+            audio_url="https://cdn.example/reference.mp3",
+            prompt="爵士风格，慵懒深夜酒吧，萨克斯",
+        )
+        self.assertEqual(cover.model, "music-cover")
+
+        with self.assertRaises(ValidationError):
+            MiniMaxMusicRequest(prompt="没有歌词策略的歌曲")
+        with self.assertRaises(ValidationError):
+            MiniMaxMusicCoverRequest(
+                audio_url="http://127.0.0.1/private.mp3",
+                prompt="爵士风格，慵懒深夜酒吧，萨克斯",
+            )
+
+    def test_character_requires_the_exact_ordered_identity_views(self):
+        character = CharacterAsset(
+            name="林夏",
+            identity_dna="椭圆脸、左眼下泪痣、低马尾、米白风衣",
+            views=[
+                FiveView(view="front", image_url="https://cdn.example/front.png"),
+                FiveView(view="profile", image_url="https://cdn.example/profile.png"),
+                FiveView(view="back", image_url="https://cdn.example/back.png"),
+                FiveView(view="face_front", image_url="https://cdn.example/face.png"),
+                FiveView(view="face_three_quarter", image_url="https://cdn.example/face-3q.png"),
+            ],
+        )
+        self.assertEqual([v.view for v in character.views], [
+            "front", "profile", "back", "face_front", "face_three_quarter"
+        ])
+
+        # 顺序打乱仍然拒绝——两代契约都不接受乱序。
+        with self.assertRaises(ValidationError):
+            CharacterAsset(
+                name="林夏",
+                identity_dna="固定身份",
+                views=[character.views[1], character.views[0], *character.views[2:]],
+            )
+
+    def test_character_still_accepts_a_legacy_five_view_record(self):
         character = CharacterAsset(
             name="林夏",
             identity_dna="椭圆脸、左眼下泪痣、低马尾、米白风衣",
@@ -68,7 +133,7 @@ class ProductionContractTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             StoryAssetCatalog(characters=[], scenes=["客厅"], props=["信封"], effects=["雨丝"])
 
-    def test_storyboard_is_exact_three_by_three_and_has_nine_unique_panels(self):
+    def test_storyboard_is_exact_three_by_three_and_leaves_unused_slots_blank(self):
         board = NineGridStoryboard(
             title="雨夜来信",
             assets=StoryAssetCatalog(
@@ -77,6 +142,7 @@ class ProductionContractTests(unittest.TestCase):
             panels=[_panel(i) for i in range(1, 10)],
         )
         self.assertEqual((board.rows, board.columns), (3, 3))
+        self.assertEqual(board.empty_slots, 0)
         dumped = board.panels[0].model_dump()
         for field in [
             "characters", "camera_reason", "lens_mm", "aperture", "composition",
@@ -84,11 +150,18 @@ class ProductionContractTests(unittest.TestCase):
         ]:
             self.assertIn(field, dumped)
 
+        partial = NineGridStoryboard(
+            title="三拍九宫格",
+            assets=board.assets,
+            panels=[_panel(i) for i in range(1, 4)],
+        )
+        self.assertEqual(partial.empty_slots, 6)
+
         with self.assertRaises(ValidationError):
             NineGridStoryboard(
                 title="错误分镜",
                 assets=board.assets,
-                panels=[_panel(i) for i in range(1, 9)],
+                panels=[_panel(1), _panel(3)],
             )
 
     def test_h3_reference_limits_and_audio_guard(self):
@@ -120,6 +193,75 @@ class ProductionContractTests(unittest.TestCase):
             duration_seconds=6,
         )
         self.assertEqual(request.inferred_mode, "first_last_frame")
+
+    def test_h3_accepts_bounded_inline_tail_frames_but_rejects_unsafe_media(self):
+        request = H3VideoRequest(
+            prompt="以前一段真实尾帧继续动作",
+            first_frame="data:image/jpeg;base64,YWJj",
+        )
+        self.assertEqual(request.inferred_mode, "first_frame")
+
+        for unsafe in (
+            "file:///tmp/frame.jpg",
+            "data:text/plain;base64,YWJj",
+            "https://user:password@cdn.example/frame.jpg",
+        ):
+            with self.subTest(unsafe=unsafe), self.assertRaises(ValidationError):
+                H3VideoRequest(prompt="拒绝不安全素材", first_frame=unsafe)
+
+        with self.assertRaises(ValidationError):
+            H3VideoRequest(
+                prompt="视频引用不能伪装成内联图片",
+                reference_videos=["data:image/jpeg;base64,YWJj"],
+            )
+
+    def test_h3_structured_references_require_stable_slots_order_hash_and_provenance(self):
+        request = H3VideoRequest(
+            prompt="锁定角色身份并参考动作与声音节奏",
+            reference_bindings=[
+                H3ReferenceBinding(
+                    slot_id="character-linxia",
+                    order=1,
+                    media_type="image",
+                    uri="https://cdn.example/linxia.png",
+                    role="identity",
+                    priority=100,
+                    content_sha256="a" * 64,
+                    provenance="asset:char-linxia:v3",
+                ),
+                H3ReferenceBinding(
+                    slot_id="motion-walk",
+                    order=2,
+                    media_type="video",
+                    uri="https://cdn.example/walk.mp4",
+                    role="motion",
+                    priority=80,
+                    content_sha256="b" * 64,
+                    provenance="licensed-reference:walk-01",
+                ),
+                H3ReferenceBinding(
+                    slot_id="voice-rhythm",
+                    order=3,
+                    media_type="audio",
+                    uri="https://cdn.example/voice.wav",
+                    role="voice",
+                    priority=70,
+                    content_sha256="c" * 64,
+                    provenance="authorized-voice:linxia:v1",
+                ),
+            ],
+            duration_seconds=8,
+        )
+        self.assertEqual(request.inferred_mode, "reference")
+
+        with self.assertRaises(ValidationError):
+            H3VideoRequest(
+                prompt="参考顺序不能含洞",
+                reference_bindings=[
+                    request.reference_bindings[0],
+                    request.reference_bindings[1].model_copy(update={"order": 3}),
+                ],
+            )
 
 
 if __name__ == "__main__":

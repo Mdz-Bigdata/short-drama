@@ -6,7 +6,9 @@ import secrets
 import time
 import re
 import logging
+from pathlib import Path
 from typing import Optional, Dict, Tuple, Any
+from app import settings
 from app.repository.user_repo import UserRepository, verify_password
 
 logger = logging.getLogger("app.service.auth_service")
@@ -14,7 +16,41 @@ logger = logging.getLogger("app.service.auth_service")
 # Only a keyed digest is retained; plaintext codes are never stored.
 MOCK_CODES_DB: Dict[str, Dict[str, Any]] = {}
 _CODE_SEND_AT: Dict[str, float] = {}
-_DEV_SESSION_SECRET = secrets.token_bytes(32)
+_DEV_SECRET_FILE = Path(__file__).resolve().parents[2] / ".dev_session_secret"
+
+
+def _load_dev_session_secret() -> bytes:
+    """Persist the development signing secret across uvicorn reloads.
+
+    Without this, every code reload regenerated the in-memory secret and
+    silently invalidated all active sessions, so the frontend started
+    receiving 401 responses until the user logged in again. Production still
+    requires AUTH_SIGNING_SECRET and never touches this file.
+    """
+    try:
+        existing = _DEV_SECRET_FILE.read_text(encoding="utf-8").strip()
+        if re.fullmatch(r"[0-9a-f]{64}", existing):
+            return existing.encode("utf-8")
+    except OSError:
+        pass
+    secret = secrets.token_hex(32)
+    try:
+        descriptor = os.open(str(_DEV_SECRET_FILE), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(secret)
+    except FileExistsError:
+        try:
+            existing = _DEV_SECRET_FILE.read_text(encoding="utf-8").strip()
+            if re.fullmatch(r"[0-9a-f]{64}", existing):
+                return existing.encode("utf-8")
+        except OSError:
+            pass
+    except OSError:
+        logger.warning("[AuthService] 无法持久化开发会话密钥，将退化为进程内密钥")
+    return secret.encode("utf-8")
+
+
+_DEV_SESSION_SECRET = _load_dev_session_secret()
 
 
 def _session_secret() -> bytes:
@@ -23,13 +59,34 @@ def _session_secret() -> bytes:
         if len(configured) < 32:
             raise RuntimeError("AUTH_SIGNING_SECRET must contain at least 32 characters")
         return configured.encode("utf-8")
-    if (os.getenv("ENVIRONMENT") or "development").lower() in {"prod", "production"}:
+    if settings.is_production():
         raise RuntimeError("AUTH_SIGNING_SECRET is required in production")
     return _DEV_SESSION_SECRET
 
 
 def _code_digest(login_id: str, code: str) -> str:
     return hmac.new(_session_secret(), f"{login_id}\0{code}".encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def verify_session_token(token: str) -> Optional[str]:
+    """Validate a signed session cookie without constructing a repository."""
+    if not token:
+        return None
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        user_id, issued_at_text, signature = parts
+        issued_at = int(issued_at_text)
+        ttl = settings.session_ttl_seconds()
+        now = int(time.time())
+        if issued_at > now + 60 or now - issued_at > ttl:
+            return None
+        payload = f"{user_id}.{issued_at_text}"
+        expected_sig = hmac.new(_session_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        return user_id if hmac.compare_digest(signature, expected_sig) else None
+    except (ValueError, TypeError, RuntimeError):
+        return None
 
 class AuthService:
     """
@@ -51,24 +108,7 @@ class AuthService:
         """
         验证 Token 签名是否合法，如果合法返回解析出的 user_id，否则返回 None
         """
-        if not token:
-            return None
-        try:
-            parts = token.split(".")
-            if len(parts) != 3:
-                return None
-            user_id, issued_at_text, signature = parts
-            issued_at = int(issued_at_text)
-            ttl = max(300, min(2_592_000, int(os.getenv("AUTH_SESSION_TTL_SECONDS", "86400"))))
-            now = int(time.time())
-            if issued_at > now + 60 or now - issued_at > ttl:
-                return None
-            payload = f"{user_id}.{issued_at_text}"
-            expected_sig = hmac.new(_session_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
-            if hmac.compare_digest(signature, expected_sig):
-                return user_id
-        except (ValueError, TypeError, RuntimeError):
-            return None
+        return verify_session_token(token)
 
     def _send_ali_sms(self, phone: str, code: str) -> bool:
         """
@@ -92,7 +132,7 @@ class AuthService:
                 access_key_id=access_key_id,
                 access_key_secret=access_key_secret
             )
-            config.endpoint = "dysmsapi.aliyuncs.com"
+            config.endpoint = settings.sms_endpoint()
             client = DysmsapiClient(config)
             
             send_sms_request = dysmsapi_models.SendSmsRequest(
@@ -123,13 +163,14 @@ class AuthService:
         if not login_id_clean:
             return False, ""
         now = time.monotonic()
-        cooldown = max(10, min(300, int(os.getenv("AUTH_CODE_COOLDOWN_SECONDS", "60"))))
+        cooldown = settings.code_cooldown_seconds()
         if now - _CODE_SEND_AT.get(login_id_clean, 0) < cooldown:
             return False, ""
         _CODE_SEND_AT[login_id_clean] = now
             
-        # Cryptographically strong six-digit code with a short expiry.
-        code = f"{secrets.randbelow(900000) + 100000}"
+        # Cryptographically strong fixed-length code with a short expiry.
+        floor = 10 ** (settings.VERIFICATION_CODE_LENGTH - 1)
+        code = f"{secrets.randbelow(9 * floor) + floor}"
         
         # 判断是否是手机号
         is_phone = re.match(r"^1[3-9]\d{9}$", login_id_clean) is not None
@@ -138,13 +179,11 @@ class AuthService:
         if is_phone:
             sms_sent = self._send_ali_sms(login_id_clean, code)
 
-        mock_enabled = os.getenv("AUTH_MOCK_CODES", "0") == "1" and (
-            os.getenv("ENVIRONMENT") or "development"
-        ).lower() not in {"prod", "production"}
+        mock_enabled = os.getenv("AUTH_MOCK_CODES", "0") == "1" and not settings.is_production()
         if not sms_sent and not mock_enabled:
             return False, ""
 
-        ttl = max(60, min(900, int(os.getenv("AUTH_CODE_TTL_SECONDS", "300"))))
+        ttl = settings.code_ttl_seconds()
         MOCK_CODES_DB[login_id_clean] = {
             "digest": _code_digest(login_id_clean, code),
             "expires_at": int(time.time()) + ttl,
@@ -250,7 +289,7 @@ class AuthService:
             MOCK_CODES_DB.pop(login_id_clean, None)
             raise ValueError("验证码不正确或已过期")
         saved["attempts"] = int(saved.get("attempts", 0)) + 1
-        if saved["attempts"] > 5:
+        if saved["attempts"] > settings.VERIFICATION_CODE_MAX_ATTEMPTS:
             MOCK_CODES_DB.pop(login_id_clean, None)
             raise ValueError("验证码不正确或已过期")
         supplied = _code_digest(login_id_clean, code_clean)

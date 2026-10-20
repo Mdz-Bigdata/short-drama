@@ -1,14 +1,163 @@
 # -*- coding: utf-8 -*-
 import logging
+import base64
+import binascii
 import os
 import random
 import re
-from typing import Dict, Any, List
+import threading
+from typing import Any, Dict, Mapping, Optional
 
+from app.core import llm_profile
+from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
+from app import settings
+from app.core import production_knowledge, style_packs, usage_ledger, video_jobs
+from app.core.providers.defaults import (
+    ARK_HOST_SUFFIX,
+    DEFAULT_ASPECT_RATIO,
+    DEFAULT_SEEDANCE_IMAGE_SIZE,
+    DEFAULT_VIDEO_POLL_SECONDS,
+    DEFAULT_VIDEO_RESOLUTION,
+    DEFAULT_VIDEO_WAIT_SECONDS,
+    GATEWAY_DEFAULT_BASE_URLS,
+    GATEWAY_DEFAULT_MODELS,
+    MINIMAX_H3_PATH,
+    SEEDANCE_DEFAULT_RESOLUTION,
+)
+from app.core.video_references import max_shot_seconds
+from app.core.credential_pool import CREDENTIAL_REJECTED, credential_pool
+from app.core.providers import comfyui
 from app.platform.runtime_models import runtime_model_registry
 from app.platform.runtime_skills import runtime_skill_registry
 
 logger = logging.getLogger("app.core.model_gateway")
+
+
+def _image_reference(value: object) -> bool:
+    """Accept provider URLs or bounded inline images from the private library."""
+    if not isinstance(value, str):
+        return False
+    if value.startswith(("https://", "http://")):
+        return True
+    match = re.fullmatch(r"data:image/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)", value)
+    if not match or len(match[2]) > 14 * 1024 * 1024:
+        return False
+    try:
+        content = base64.b64decode(match[2], validate=True)
+    except (ValueError, binascii.Error):
+        return False
+    return bool(content) and (
+        (match[1] == "png" and content.startswith(b"\x89PNG\r\n\x1a\n"))
+        or (match[1] == "jpeg" and content.startswith(b"\xff\xd8\xff"))
+        or (match[1] == "webp" and content.startswith(b"RIFF") and content[8:12] == b"WEBP")
+    )
+
+_HTTP_STATUS = re.compile(r"HTTP (\d{3})")
+
+
+def _http_status_in(message: str) -> Optional[int]:
+    """The status code an adapter wrote into its error message, if any."""
+    match = _HTTP_STATUS.search(message or "")
+    return int(match.group(1)) if match else None
+
+
+# The output limit asked for when a caller names none (LLM_MAX_TOKENS). Providers that take less
+# say so in a 400; the gateway then retries at their figure and remembers it per model.
+DEFAULT_LLM_MAX_TOKENS = 1_000_000
+# Total wall-clock limit of one text-model call. A reasoning model asked for a long answer can
+# think for many minutes; a call is only abandoned after this long (LLM_CALL_DEADLINE_SECONDS).
+DEFAULT_LLM_CALL_DEADLINE_SECONDS = 1800.0
+# Longest silence allowed between two reads of one text-model call (LLM_READ_TIMEOUT_SECONDS).
+# Some providers send nothing at all while a reasoning model thinks; a short gap would end the
+# call and mark a healthy host broken. Connecting still fails fast (LLM_CONNECT_TIMEOUT_SECONDS).
+DEFAULT_LLM_READ_TIMEOUT_SECONDS = 600.0
+DEFAULT_LLM_CONNECT_TIMEOUT_SECONDS = 30.0
+MAX_TOKENS_SHRINKS = 4
+_MAX_TOKENS_WORDS = ("max_tokens", "max_completion_tokens", "max_output_tokens", "max_new_tokens", "completion tokens",
+                     "output tokens", "maximum", "too large", "exceed", "context length", "最大", "上限", "超出")
+_MAX_TOKENS_LADDER = (524_288, 262_144, 131_072, 65_536, 32_768, 16_384, 8_192, 4_096)
+
+
+_IMAGE_AREA_LIMIT = re.compile(
+    r"image area must be (?:at most|no more than|less than or equal to|<=)\s*([\d,]+)\s*pixels", re.IGNORECASE,
+)
+_IMAGE_SIZE = re.compile(r"^\s*(\d{2,5})\s*[xX×*]\s*(\d{2,5})\s*$")
+
+
+def allowed_image_area(status: int, error_text: str) -> int | None:
+    """The pixel ceiling an image model states when it refuses a size, e.g. Seedream's
+    ``image area must be at most 4624220 pixels``; ``None`` for any other refusal."""
+    if status not in (400, 413, 422):
+        return None
+    match = _IMAGE_AREA_LIMIT.search(error_text or "")
+    return int(match.group(1).replace(",", "")) if match else None
+
+
+# Sides near the area ceiling are tried a few steps down; a ratio this close counts as exact,
+# and among those the largest picture wins (5040x2160 -> 3280x1408, 0.16% off 21:9).
+_FIT_RATIO_TOLERANCE = 0.005
+_FIT_SEARCH_STEPS = 8
+
+
+def fit_image_size(size: str, max_area: int, multiple: int = 16) -> str | None:
+    """``size`` ("WxH") shrunk to at most ``max_area`` pixels, keeping its aspect ratio.
+
+    Both sides stay multiples of ``multiple`` so the model accepts them; the pair is picked
+    to keep the ratio within 0.5% where possible, then to keep the most pixels. ``None``
+    when the size already fits or is not a ``WxH`` size (``"2K"`` is left to the model).
+    """
+    match = _IMAGE_SIZE.match(str(size or ""))
+    if not match or max_area <= 0:
+        return None
+    width, height = int(match.group(1)), int(match.group(2))
+    if width * height <= max_area:
+        return None
+    ratio = width / height
+    start = int(height * (max_area / (width * height)) ** 0.5) // multiple * multiple + multiple
+    candidates: list[tuple[float, int, int, int]] = []
+    for fitted_height in range(start, max(multiple, start - _FIT_SEARCH_STEPS * multiple) - 1, -multiple):
+        fitted_width = max(multiple, round(fitted_height * ratio / multiple) * multiple)
+        while fitted_width > multiple and fitted_width * fitted_height > max_area:
+            fitted_width -= multiple
+        if fitted_width * fitted_height > max_area:
+            continue
+        error = abs(fitted_width / fitted_height - ratio) / ratio
+        candidates.append((error, fitted_width * fitted_height, fitted_width, fitted_height))
+    if not candidates:
+        return None
+    close = [candidate for candidate in candidates if candidate[0] <= _FIT_RATIO_TOLERANCE]
+    _, _, fitted_width, fitted_height = max(close, key=lambda candidate: candidate[1]) if close else min(candidates)
+    return f"{fitted_width}x{fitted_height}"
+
+
+def allowed_max_tokens(status: int, error_text: str, requested: int) -> int | None:
+    """The output limit a provider will take, read off its refusal of ``requested``; ``None`` when it is another error.
+
+    Uses the figure the message gives (``valid range [1, 65536]``, ``at most 32768``); for a
+    context-length refusal, the context left after the prompt; otherwise the next step down.
+    """
+    if status not in (400, 413, 422):
+        return None
+    text = str(error_text or "")
+    lowered = text.lower()
+    if not any(word in lowered for word in _MAX_TOKENS_WORDS):
+        return None
+    numbers = [int(value) for value in re.findall(r"(?<![\d.])(\d{3,8})(?![\d.])", text.replace(",", ""))]
+    context = re.search(r"context length is (\d+)", lowered)
+    prompt_part = re.search(r"(\d+) (?:tokens )?in the messages", lowered) or re.search(r"(\d+) (?:tokens )?(?:in|for) (?:the )?(?:prompt|input)", lowered)
+    if context and prompt_part:
+        left = int(context.group(1)) - int(prompt_part.group(1)) - 64
+        if 256 <= left < requested:
+            return left
+    candidates = [value for value in numbers if 256 <= value < requested]
+    if candidates and not context:
+        return max(candidates)
+    return next((step for step in _MAX_TOKENS_LADDER if step < requested), None)
+
+
+class LLMCallDeadlineExceeded(Exception):
+    """A chat response did not finish within its total deadline."""
+
 
 class ModelGateway:
     """
@@ -91,6 +240,7 @@ class ModelGateway:
     }
 
     def __init__(self):
+        self._host_state_lock = threading.RLock()
         # 1. 尝试载入项目根目录或当前目录下的 .env 配置文件
         try:
             from dotenv import load_dotenv
@@ -148,38 +298,35 @@ class ModelGateway:
         # 4. 非敏感配置可由 config.json 补充；所有 API key 只允许来自服务端环境变量。
         def get_valid_value(env_val, json_section, json_key, default_val):
             # 判断环境变量是否有效（非空且非占位符）
-            if env_val and isinstance(env_val, str) and not env_val.startswith("YOUR_") and env_val.strip():
+            if settings.is_configured(env_val):
                 return env_val
             # 否则尝试从 json 文件中获取
             if json_config and json_section in json_config:
                 json_val = json_config[json_section].get(json_key)
-                if json_val and isinstance(json_val, str) and not json_val.startswith("YOUR_") and json_val.strip():
+                if settings.is_configured(json_val):
                     return json_val
             return default_val
 
         def get_secret(env_val, placeholder):
-            if env_val and isinstance(env_val, str) and not env_val.startswith("YOUR_") and env_val.strip():
+            if settings.is_configured(env_val):
                 return env_val
             return placeholder
 
         self.deepseek_key = get_secret(env_deepseek_key, "YOUR_DEEPSEEK_API_KEY")
-        self.deepseek_base_url = get_valid_value(env_deepseek_url, "deepseek", "base_url", env_deepseek_url or "https://api.deepseek.com/v1")
-        self.deepseek_model_name = get_valid_value(env_deepseek_model, "deepseek", "model_name", env_deepseek_model or "deepseek-chat")
+        self.deepseek_base_url = get_valid_value(env_deepseek_url, "deepseek", "base_url", env_deepseek_url or GATEWAY_DEFAULT_BASE_URLS["deepseek"])
+        self.deepseek_model_name = get_valid_value(env_deepseek_model, "deepseek", "model_name", env_deepseek_model or GATEWAY_DEFAULT_MODELS["deepseek"])
 
         self.seedance_key = get_secret(env_seedance_key, "YOUR_SEEDANCE_API_KEY")
-        self.seedance_base_url = get_valid_value(env_seedance_url, "seedance", "base_url", env_seedance_url or "https://api.seedance.ai/v1")
-        self.seedance_model_name = get_valid_value(env_seedance_model, "seedance", "model_name", env_seedance_model or "seedance-llm")
+        self.seedance_base_url = get_valid_value(env_seedance_url, "seedance", "base_url", env_seedance_url or GATEWAY_DEFAULT_BASE_URLS["seedance"])
+        self.seedance_model_name = get_valid_value(env_seedance_model, "seedance", "model_name", env_seedance_model or GATEWAY_DEFAULT_MODELS["seedance"])
         # Seedream 文生图模型 + 尺寸 (与 Seedance 图生视频同属火山 Ark，统一风格)
-        self.seedance_image_model = os.getenv("SEEDANCE_IMAGE_MODEL_NAME") or "doubao-seedream-4-5-251128"
+        self.seedance_image_model = os.getenv("SEEDANCE_IMAGE_MODEL_NAME") or GATEWAY_DEFAULT_MODELS["seedance_image"]
         # Seedream 4.5 要求图片 ≥3686400 像素；1440x2560 为 9:16 竖屏且达标
-        self.seedance_image_size = os.getenv("SEEDANCE_IMAGE_SIZE") or "1440x2560"
+        self.seedance_image_size = os.getenv("SEEDANCE_IMAGE_SIZE") or DEFAULT_SEEDANCE_IMAGE_SIZE
         # Seedream 文生图 AI 水印/标记：必须开启！火山 Ark 图生视频审核靠该 AI 标记识别"自家 AI 图"，
         # 关闭后写实人脸首帧会被判「疑似真人 InputImageSensitiveContentDetected」而拒。默认 True，
         # 同时也满足"AI 生成内容须显著标识"的合规要求。可用 SEEDANCE_IMAGE_WATERMARK=0 关闭(不建议)。
         self.seedance_image_watermark = (os.getenv("SEEDANCE_IMAGE_WATERMARK", "1").strip() not in ("0", "false", "False", ""))
-        # 火山 Ark 专用代理 (当部署环境无法直连 ark.cn-beijing.volces.com 时，
-        # 设置 ARK_PROXY=http://host:port 即可让所有 Ark 请求走该代理)
-        self.ark_proxy = os.getenv("ARK_PROXY") or os.getenv("SEEDANCE_PROXY") or ""
         # 火山「可信素材库」已授权真人素材白名单：演员在控制台/即梦App完成一次性真人认证入库后，
         # 把授权素材的 volces.com 直链填到 .env 的 ARK_AUTHORIZED_FACE_ASSETS (逗号分隔) 或
         # config.json 的 seedance.authorized_face_assets。这些已授权真人素材作为首帧/参考图时，
@@ -220,19 +367,19 @@ class ModelGateway:
         self._sd2_opt_prompt_cache = None
 
         self.qwen_key = get_secret(env_qwen_key, "YOUR_QWEN_API_KEY")
-        self.qwen_base_url = get_valid_value(env_qwen_url, "qwen", "base_url", env_qwen_url or "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        self.qwen_model_name = get_valid_value(env_qwen_model, "qwen", "model_name", env_qwen_model or "qwen-turbo")
+        self.qwen_base_url = get_valid_value(env_qwen_url, "qwen", "base_url", env_qwen_url or GATEWAY_DEFAULT_BASE_URLS["qwen"])
+        self.qwen_model_name = get_valid_value(env_qwen_model, "qwen", "model_name", env_qwen_model or GATEWAY_DEFAULT_MODELS["qwen"])
 
         self.gemini_key = get_secret(env_gemini_key, "YOUR_GEMINI_API_KEY")
-        self.gemini_base_url = get_valid_value(env_gemini_url, "gemini", "base_url", env_gemini_url or "https://generativelanguage.googleapis.com")
-        self.gemini_model_name = get_valid_value(env_gemini_model, "gemini", "model_name", env_gemini_model or "gemini-3.1-pro-image")
+        self.gemini_base_url = get_valid_value(env_gemini_url, "gemini", "base_url", env_gemini_url or GATEWAY_DEFAULT_BASE_URLS["gemini"])
+        self.gemini_model_name = get_valid_value(env_gemini_model, "gemini", "model_name", env_gemini_model or GATEWAY_DEFAULT_MODELS["gemini"])
 
         self.agnes_key = get_secret(env_agnes_key, "YOUR_AGNES_API_KEY")
-        self.agnes_base_url = get_valid_value(env_agnes_url, "agnes", "base_url", env_agnes_url or "https://apihub.agnes-ai.com/v1")
-        self.agnes_model_name = get_valid_value(env_agnes_model, "agnes", "model_name", env_agnes_model or "agnes-2.0-flash")
+        self.agnes_base_url = get_valid_value(env_agnes_url, "agnes", "base_url", env_agnes_url or GATEWAY_DEFAULT_BASE_URLS["agnes"])
+        self.agnes_model_name = get_valid_value(env_agnes_model, "agnes", "model_name", env_agnes_model or GATEWAY_DEFAULT_MODELS["agnes"])
         # Agnes 网关的文生图与图生视频模型 ID (经实测可用，可用环境变量覆盖)
-        self.agnes_image_model = os.getenv("AGNES_IMAGE_MODEL_NAME") or "agnes-image-2.1-flash"
-        self.agnes_video_model = os.getenv("AGNES_VIDEO_MODEL_NAME") or "agnes-video-v2.0"
+        self.agnes_image_model = os.getenv("AGNES_IMAGE_MODEL_NAME") or GATEWAY_DEFAULT_MODELS["agnes_image"]
+        self.agnes_video_model = os.getenv("AGNES_VIDEO_MODEL_NAME") or GATEWAY_DEFAULT_MODELS["agnes_video"]
         # 按 host 维度记录"物理不可达"的厂商域名 (如部署在海外时中国 Ark/DeepSeek 端点 SSL 中断)。
         # 关键：绝不能用一个全局布尔把所有 provider 一起熔断 —— 否则一个不可达的端点(Ark)失败后，
         # 会把另一个可达的端点(Agnes)也短路成离线，导致整条流水线只能出占位图/占位视频。
@@ -264,22 +411,24 @@ class ModelGateway:
         (保留失败计数；若试探再失败会按更长冷却重新熔断)。"""
         import time
         host = self._host_of(base_url)
-        expiry = self._broken_hosts.get(host)
-        if not expiry:
-            return False
-        if time.time() >= expiry:
-            # 冷却到期：进入半开，移除熔断标记放行一次试探 (失败计数不清零，留给试探后决定)
-            self._broken_hosts.pop(host, None)
-            logger.info(f"[ModelGateway] {host} 冷却到期，半开放行一次试探调用。")
-            return False
-        return True
+        with self._host_state_lock:
+            expiry = self._broken_hosts.get(host)
+            if not expiry:
+                return False
+            if time.time() >= expiry:
+                # Keep the existing cooldown semantics, atomically with updates.
+                self._broken_hosts.pop(host, None)
+                logger.info(f"[ModelGateway] {host} 冷却到期，恢复试探调用。")
+                return False
+            return True
 
     def _note_host_ok(self, base_url: str):
         """该域名一次调用成功：清零失败计数并彻底撤销熔断 (端点已恢复可达)。"""
         host = self._host_of(base_url)
         if host:
-            self._host_fail[host] = 0
-            self._broken_hosts.pop(host, None)
+            with self._host_state_lock:
+                self._host_fail[host] = 0
+                self._broken_hosts.pop(host, None)
 
     def _mark_host_broken(self, base_url: str):
         """记录一次 SSL 不可达；连续失败达阈值即熔断一段冷却时间 (失败越多冷却越久，死端点少重试)。"""
@@ -287,20 +436,24 @@ class ModelGateway:
         host = self._host_of(base_url)
         if not host:
             return
-        self._host_fail[host] = self._host_fail.get(host, 0) + 1
-        n = self._host_fail[host]
-        if n >= self._broken_threshold:
-            cooldown = min(self._broken_cooldown * (n - self._broken_threshold + 1), self._broken_cooldown_max)
-            self._broken_hosts[host] = time.time() + cooldown
-            logger.info(f"[ModelGateway] {host} 连续 {n} 次 SSL 不可达，熔断短路 {cooldown:.0f}s (到期自动半开重试，其它厂商不受影响)。")
+        with self._host_state_lock:
+            self._host_fail[host] = self._host_fail.get(host, 0) + 1
+            n = self._host_fail[host]
+            if n >= self._broken_threshold:
+                cooldown = min(self._broken_cooldown * (n - self._broken_threshold + 1), self._broken_cooldown_max)
+                self._broken_hosts[host] = time.time() + cooldown
+                logger.info(f"[ModelGateway] {host} 连续 {n} 次 SSL 不可达，熔断短路 {cooldown:.0f}s (到期自动半开重试，其它厂商不受影响)。")
 
     def _proxies_for(self, base_url: str):
         """代理选择：
         - 若显式配置了代理 (SEEDANCE_PROXY / HTTPS_PROXY / ALL_PROXY)，所有上游调用走该代理。
           这是本机到火山 Ark / DeepSeek 被网络环境定向 TLS 阻断 (SSLEOFError) 时跑通的唯一可靠途径。
           例: 在 backend/.env 加 SEEDANCE_PROXY=http://127.0.0.1:7890 (指向本机科学上网客户端的 HTTP 代理端口)。
+        - ARK_PROXY 只作用于火山 Ark 的域名：部署环境仅 Ark 不可直连时，用它单独给 Ark 指定代理，
+          其它厂商不受影响；它优先于上面的通用代理。
         - 未配置时返回空代理字典，直连并忽略可能损坏的系统代理。"""
-        proxy = (os.getenv("SEEDANCE_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")
+        ark_only = os.getenv("ARK_PROXY") if self._host_of(base_url).split(":")[0].endswith(ARK_HOST_SUFFIX) else ""
+        proxy = (ark_only or os.getenv("SEEDANCE_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")
                  or os.getenv("ALL_PROXY") or os.getenv("all_proxy") or "").strip()
         if proxy:
             return {"http": proxy, "https": proxy}
@@ -312,7 +465,7 @@ class ModelGateway:
     @staticmethod
     def _is_valid_key(k) -> bool:
         """判断一个 API Key 是否有效 (非空、非占位符)"""
-        return bool(k and isinstance(k, str) and not k.startswith("YOUR_") and k.strip())
+        return settings.is_configured(k)
 
     @staticmethod
     def _is_ark_native(url: str) -> bool:
@@ -366,8 +519,155 @@ class ModelGateway:
             return "deepseek"
         return default
 
-    def _http_chat(self, api_key: str, base_url: str, api_model: str, system_prompt: str, user_content: str, timeout: int = 180):
-        """底层 OpenAI 兼容 /chat/completions 调用，成功返回文本，失败返回 None"""
+    _thread_state = threading.local()
+
+    def _remember_chat_usage(self, api_model: str, base_url: str, usage: object) -> None:
+        """Keep the token counts of the chat call that just answered, for the usage record."""
+        tokens = usage if isinstance(usage, dict) else {}
+        self._thread_state.last_chat = {
+            "model": api_model,
+            "provider": self._host_of(base_url),
+            "input_tokens": tokens.get("prompt_tokens"),
+            "output_tokens": tokens.get("completion_tokens"),
+        }
+
+    def _with_credentials(self, runtime, bucket: str, call):
+        """Run ``call(api_key)`` with the configuration's keys in turn; a key the provider refuses is set aside."""
+        candidates = credential_pool.candidates(runtime.configuration_id, runtime.credentials_for(bucket), bucket)
+        if not candidates:
+            candidates = credential_pool.candidates(runtime.configuration_id, runtime.credentials_for(""), bucket) or [
+                type("_Primary", (), {"id": "primary", "api_key": runtime.api_key, "label": "主凭据"})()
+            ]
+        for credential in candidates:
+            self._thread_state.last_status = None
+            result = call(credential.api_key)
+            if result:
+                credential_pool.note_used(runtime.configuration_id, credential.id)
+                return result
+            status = getattr(self._thread_state, "last_status", None)
+            if not credential_pool.note_rejected(runtime.configuration_id, credential.id, status):
+                return None  # not a credential problem: another key would not help
+            logger.warning("[ModelGateway] %s 的凭据 %s 被供应商拒绝（HTTP %s），改用下一把", runtime.provider, credential.label or credential.id, status)
+        return None
+
+    def _take_chat_usage(self) -> dict:
+        state = getattr(self._thread_state, "last_chat", None)
+        self._thread_state.last_chat = None
+        return state or {}
+
+    def call_llm(self, model: str, system_prompt: str, user_prompt: str, creative_title: str, director_style: str = "cyberpunk", shot_style: str = "cinematic", user_instruction: str = "", max_tokens: Optional[int] = None) -> str:
+        """Text generation, recorded as one provider call (see ``app.core.usage_ledger``)."""
+        self._thread_state.last_chat = None
+        runtime = runtime_model_registry.resolve(model, "text")
+        provider = runtime.provider if runtime else self._detect_provider(model)
+        with usage_ledger.timed_call("text", provider=provider, model=model or "", units={"input_chars": len(system_prompt or "") + len(user_prompt or "")}) as outcome:
+            result = self._call_llm_unmetered(model, system_prompt, user_prompt, creative_title, director_style, shot_style, user_instruction, max_tokens)
+            answered = self._take_chat_usage()
+            if answered:
+                outcome["units"].update({key: value for key, value in answered.items() if key in ("input_tokens", "output_tokens") and value is not None})
+                if answered.get("model"):
+                    outcome["units"]["api_model"] = answered["model"]
+                if answered.get("provider"):
+                    outcome["units"]["host"] = answered["provider"]
+            outcome["units"]["output_chars"] = len(result or "")
+            if not result:
+                outcome["failed"] = True
+                outcome["error"] = "no provider answered"
+            return result
+
+    def generate_image(self, model: str, prompt: str, ref_images: list = None, size: str = None, *, enhance_prompt: bool = True, require_reference_support: bool = False):
+        """Image generation, recorded as one provider call."""
+        runtime = runtime_model_registry.resolve(model, "image")
+        provider = runtime.provider if runtime else self._detect_provider(model, "seedance")
+        with usage_ledger.timed_call("image", provider=provider, model=model or "", units={"images": 1, "resolution": size or ""}) as outcome:
+            url, used = self._generate_image_unmetered(model, prompt, ref_images, size, enhance_prompt=enhance_prompt, require_reference_support=require_reference_support)
+            if used:
+                outcome["units"]["provider_used"] = used
+            if not url:
+                outcome["failed"] = True
+                outcome["error"] = "no provider returned an image"
+            return url, used
+
+    def generate_video(self, model: str, image_url: str, prompt: str, prefer_provider: str = None,
+                       last_frame: str = None, ref_images: list = None,
+                       ref_videos: list = None, ref_audios: list = None, duration: int = 5,
+                       seed: int | None = None, style_pack: str | None = None) -> str:
+        """Video generation, recorded as one provider call priced by requested seconds."""
+        runtime = runtime_model_registry.resolve(model, "video")
+        provider = runtime.provider if runtime else self._detect_provider(model, prefer_provider or "seedance")
+        with usage_ledger.timed_call("video", provider=provider, model=model or "", units={"seconds": int(duration or 0)}) as outcome:
+            url = self._generate_video_unmetered(
+                model, image_url, prompt, prefer_provider, last_frame, ref_images, ref_videos, ref_audios, duration, seed, style_pack,
+            )
+            if not url:
+                outcome["failed"] = True
+                outcome["error"] = "no provider returned a video"
+            return url
+
+    def describe_image(self, model: str, system_prompt: str, prompt: str, image: str, *, max_tokens: int = 2000) -> tuple[Optional[str], str]:
+        """Ask a text model that can see about one image; returns (answer, model used).
+
+        ``image`` is an https URL or a ``data:`` URI. The model is ``model`` when the configuration
+        centre marked it multimodal, else the first multimodal text model configured; with none,
+        the answer is None and the model is empty.
+        """
+        choice = runtime_model_registry.vision_model(model or "")
+        if choice is None:
+            return None, ""
+        runtime, chosen = choice
+        content = [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": image}}]
+        with usage_ledger.timed_call("text", provider=runtime.provider, model=chosen, units={"images": 1, "input_chars": len(system_prompt) + len(prompt)}) as outcome:
+            self._thread_state.last_chat = None
+            answer = self._with_credentials(runtime, "text", lambda key: self._http_chat(
+                key, runtime.base_url, chosen, system_prompt, content, max_tokens=max_tokens,
+            ))
+            answered = self._take_chat_usage()
+            outcome["units"].update({k: v for k, v in answered.items() if k in ("input_tokens", "output_tokens") and v is not None})
+            if not answer:
+                outcome["failed"] = True
+                outcome["error"] = "vision model did not answer"
+        return answer, chosen
+
+    @staticmethod
+    def _json_within(response: Any, deadline: float) -> Any:
+        """Read a response body, giving up at ``deadline`` (a ``time.monotonic()`` instant).
+
+        ``requests``' timeout bounds each socket read, not the whole response. DeepSeek answers a
+        slow non-streaming request with HTTP 200 and then blank keep-alive lines while the model
+        reasons, so a call can sit on one connection for many minutes without ever timing out —
+        stage 1 was seen stuck at 「调用 LLM」 that way. Reading the body in chunks and checking the
+        clock after each one ends it. (A server that goes completely silent is still ended by the
+        per-read timeout, so the worst case is deadline + timeout.)
+        """
+        import json as _json
+        import time
+
+        reader = getattr(response, "iter_content", None)
+        if reader is None:  # a test double or an adapter that already holds the body
+            return response.json()
+        chunks: list[bytes] = []
+        try:
+            for chunk in reader(chunk_size=8192):
+                if chunk:
+                    chunks.append(chunk)
+                if time.monotonic() > deadline:
+                    raise LLMCallDeadlineExceeded()
+        finally:
+            close = getattr(response, "close", None)
+            if close:
+                close()
+        # Keep-alive blank lines lead the JSON; json.loads skips leading whitespace.
+        return _json.loads(b"".join(chunks))
+
+    def _http_chat(self, api_key: str, base_url: str, api_model: str, system_prompt: str, user_content: Any, timeout: Optional[float] = None, max_tokens: Optional[int] = None, temperature: Optional[float] = None, deadline: Optional[float] = None):
+        """底层 OpenAI 兼容 /chat/completions 调用，成功返回文本，失败返回 None
+
+        采样温度：显式参数 > 调用方通过 ``llm_profile.temperature_scope`` 设定的档位 > 0.7。
+        ``timeout`` 约束单次读取的间隔：显式参数 > LLM_READ_TIMEOUT_SECONDS > 默认 10 分钟（有的供应商在推理期间
+        一个字节都不发）；建连另有短时限 LLM_CONNECT_TIMEOUT_SECONDS（默认 30 秒），不可达的主机仍然很快认输。
+        整次调用另有总时限：显式 ``deadline`` > LLM_CALL_DEADLINE_SECONDS
+        > 默认 30 分钟（推理模型写长文会先想很久），超时即放弃本次调用，由上层降级到下一把凭据 / 下一个供应商。
+        """
         if self._is_host_broken(base_url):
             return None
         try:
@@ -379,30 +679,78 @@ class ModelGateway:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content},
                 ],
-                "temperature": 0.7,
-                # 约束最大输出，避免模型(如 deepseek-v4-pro)在超长剧本上失控生成、
-                # 连接被字节间慢吐拖垮 (曾观测到单次调用挂起 15 分钟后 "Response ended prematurely")。
-                "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "8000")),
+                "temperature": temperature if temperature is not None else llm_profile.current_temperature(llm_profile.DEFAULT_TEMPERATURE),
+                # 输出上限默认放到 1M（LLM_MAX_TOKENS）：推理模型会先把一大段预算花在思考上，8K 时常
+                # 整段都是推理、正文一个字没写就被截断。各家供应商有自己的上限，超过就整次 400 拒绝——
+                # 所以这里记住每个模型实际接受的上限，被拒时按报错里的数字（或逐级减半）收回来重试。
+                # 失控长输出另由整次调用总时限（LLM_CALL_DEADLINE_SECONDS）兜底。
+                "max_tokens": self._fit_max_tokens(base_url, api_model, int(max_tokens or settings.env_int("LLM_MAX_TOKENS", DEFAULT_LLM_MAX_TOKENS, minimum=256))),
             }
             url = base_url.rstrip('/') + "/chat/completions"
             # 部分端点(如本网络位置的火山 Ark / DeepSeek)会在 TLS 握手阶段被定向 RST(SSL UNEXPECTED_EOF)。
             # 对瞬时网络错误退避重试一次即认输并熔断，随后由熔断器静默跳过该域名、无缝降级到可达 provider，
             # 避免"反复重试 + 逐行刷屏"。日志降为 debug，被阻断主机不再污染 INFO 级日志。
             import time
+            read_timeout = float(timeout) if timeout else settings.env_float(
+                "LLM_READ_TIMEOUT_SECONDS", DEFAULT_LLM_READ_TIMEOUT_SECONDS, minimum=5,
+            )
+            connect_timeout = min(read_timeout, settings.env_float(
+                "LLM_CONNECT_TIMEOUT_SECONDS", DEFAULT_LLM_CONNECT_TIMEOUT_SECONDS, minimum=1,
+            ))
+            deadline_seconds = float(deadline) if deadline else settings.env_float(
+                "LLM_CALL_DEADLINE_SECONDS", DEFAULT_LLM_CALL_DEADLINE_SECONDS, minimum=10,
+            )
             attempts = 2
-            for attempt in range(attempts):
+            attempt = 0
+            shrinks = 0
+            while True:
                 try:
-                    r = requests.post(url, json=payload, headers=headers, timeout=timeout, proxies=self._proxies_for(base_url), verify=self.tls_verify)
+                    started = time.monotonic()
+                    r = requests.post(url, json=payload, headers=headers, timeout=(connect_timeout, read_timeout), proxies=self._proxies_for(base_url), verify=self.tls_verify, stream=True)
+                    self._thread_state.last_status = r.status_code
                     if r.status_code == 200:
                         self._note_host_ok(base_url)
-                        return r.json()["choices"][0]["message"]["content"]
-                    logger.error(f"[ModelGateway] chat({api_model}) 响应错误 {r.status_code}: {r.text[:200]}")
+                        try:
+                            body = self._json_within(r, started + deadline_seconds)
+                        except LLMCallDeadlineExceeded:
+                            # A slow model is not a broken host: no retry, no circuit breaker — the
+                            # caller moves on to the next credential or provider.
+                            logger.warning(
+                                "[ModelGateway] chat(%s) 超过 %.0f 秒仍未返回完整结果，放弃本次调用并降级",
+                                api_model, deadline_seconds,
+                            )
+                            return None
+                        self._remember_chat_usage(api_model, base_url, body.get("usage"))
+                        choice = body["choices"][0]
+                        self._thread_state.last_finish = choice.get("finish_reason")
+                        if choice.get("finish_reason") == "length":
+                            usage = body.get("usage") or {}
+                            reasoning = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
+                            logger.warning(
+                                "[ModelGateway] chat(%s) 输出达到 max_tokens=%s 被截断（completion_tokens=%s，其中推理 %s）",
+                                api_model, payload["max_tokens"], usage.get("completion_tokens"), reasoning,
+                            )
+                        return choice["message"]["content"] or ""
+                    error_text = r.text or ""
+                    allowed = allowed_max_tokens(r.status_code, error_text, int(payload["max_tokens"]))
+                    if allowed and shrinks < MAX_TOKENS_SHRINKS:
+                        # The provider refused the output limit itself: remember what it takes and ask again.
+                        shrinks += 1
+                        self._remember_max_tokens(base_url, api_model, allowed)
+                        logger.warning(
+                            "[ModelGateway] chat(%s) 不接受 max_tokens=%s，按其上限 %s 重试",
+                            api_model, payload["max_tokens"], allowed,
+                        )
+                        payload["max_tokens"] = allowed
+                        continue
+                    logger.error(f"[ModelGateway] chat({api_model}) 响应错误 {r.status_code}: {error_text[:200]}")
                     return None
                 except (requests.exceptions.SSLError, requests.exceptions.ConnectionError,
                         requests.exceptions.Timeout, requests.exceptions.ChunkedEncodingError) as e:
                     if attempt < attempts - 1:
                         logger.debug(f"[ModelGateway] chat({api_model}) 瞬时网络抖动第{attempt+1}次重试: {str(e)[:90]}")
                         time.sleep(min(2 * (attempt + 1), 4))
+                        attempt += 1
                         continue
                     raise
         except Exception as e:
@@ -410,9 +758,27 @@ class ModelGateway:
             self._mark_host_broken(base_url)
         return None
 
+    def _fit_max_tokens(self, base_url: str, api_model: str, requested: int) -> int:
+        """``requested``, unless this model already told us it takes less."""
+        ceiling = self._max_tokens_ceilings().get((base_url.rstrip("/"), api_model))
+        return min(requested, ceiling) if ceiling else requested
+
+    def _remember_max_tokens(self, base_url: str, api_model: str, allowed: int) -> None:
+        self._max_tokens_ceilings()[(base_url.rstrip("/"), api_model)] = int(allowed)
+
+    def _max_tokens_ceilings(self) -> dict:
+        ceilings = getattr(self, "_max_tokens_ceiling_cache", None)
+        if ceilings is None:
+            ceilings = {}
+            self._max_tokens_ceiling_cache = ceilings
+        return ceilings
+
     def _http_image(self, api_key: str, base_url: str, api_model: str, prompt: str, extra: dict = None, timeout: int = 180):
         """底层 OpenAI 兼容 /images/generations 调用，成功返回图片 URL，失败返回 None。
-        extra 用于注入不同厂商所需的额外字段 (如火山 Ark Seedream 的 response_format/size/watermark)。"""
+        extra 用于注入不同厂商所需的额外字段 (如火山 Ark Seedream 的 response_format/size/watermark)。
+
+        各模型对单张图的像素面积有上限（如 Seedream 5.0 pro 约 462 万像素），而调用方按用途要的尺寸
+        可能更大：被拒时按报错里的上限等比缩小重试一次，并记住该模型的上限，之后的请求直接按它出图。"""
         if self._is_host_broken(base_url):
             return None
         try:
@@ -421,12 +787,20 @@ class ModelGateway:
             payload = {"model": api_model, "prompt": prompt}
             if extra:
                 payload.update(extra)
+            area_key = (base_url.rstrip("/"), api_model)
+            known_area = self._image_area_ceilings().get(area_key)
+            fitted = fit_image_size(str(payload.get("size") or ""), known_area) if known_area else None
+            if fitted:
+                payload["size"] = fitted
             url = base_url.rstrip('/') + "/images/generations"
             import time
             attempts = 2
-            for attempt in range(attempts):
+            attempt = 0
+            resized = False
+            while True:
                 try:
                     r = requests.post(url, json=payload, headers=headers, timeout=timeout, proxies=self._proxies_for(base_url), verify=self.tls_verify)
+                    self._thread_state.last_status = r.status_code
                     if r.status_code == 200:
                         data = r.json().get("data", [{}])
                         if data:
@@ -434,7 +808,19 @@ class ModelGateway:
                             if u and isinstance(u, str) and u.startswith("http"):
                                 self._note_host_ok(base_url)
                                 return u
-                    logger.error(f"[ModelGateway] image({api_model}) 响应错误 {r.status_code}: {r.text[:200]}")
+                    error_text = r.text or ""
+                    ceiling = allowed_image_area(r.status_code, error_text)
+                    fitted = fit_image_size(str(payload.get("size") or ""), ceiling) if ceiling else None
+                    if fitted and not resized:
+                        resized = True
+                        self._image_area_ceilings()[area_key] = ceiling
+                        logger.warning(
+                            "[ModelGateway] image(%s) 不接受尺寸 %s（上限 %s 像素），等比缩小为 %s 重试",
+                            api_model, payload.get("size"), ceiling, fitted,
+                        )
+                        payload["size"] = fitted
+                        continue
+                    logger.error(f"[ModelGateway] image({api_model}) 响应错误 {r.status_code}: {error_text[:200]}")
                     return None
                 except (requests.exceptions.SSLError, requests.exceptions.ConnectionError,
                         requests.exceptions.Timeout, requests.exceptions.ChunkedEncodingError) as e:
@@ -442,12 +828,20 @@ class ModelGateway:
                     if attempt < attempts - 1:
                         logger.debug(f"[ModelGateway] image({api_model}) 瞬时网络抖动第{attempt+1}次重试: {str(e)[:90]}")
                         time.sleep(min(2 * (attempt + 1), 4))
+                        attempt += 1
                         continue
                     raise
         except Exception as e:
             logger.debug(f"[ModelGateway] image({api_model}) 不可达(重试耗尽，将自动降级): {str(e)[:160]}")
             self._mark_host_broken(base_url)
         return None
+
+    def _image_area_ceilings(self) -> dict:
+        ceilings = getattr(self, "_image_area_ceiling_cache", None)
+        if ceilings is None:
+            ceilings = {}
+            self._image_area_ceiling_cache = ceilings
+        return ceilings
 
     @staticmethod
     def _extract_mp4(d) -> str:
@@ -467,7 +861,8 @@ class ModelGateway:
         对 Agnes 偶发的「Internal generation failed」终态失败做【整次重试】(最多 2 次)，显著提高出片成功率。"""
         if self._is_host_broken(base_url):
             return None
-        import requests, time
+        import requests
+        import time
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         base = base_url.rstrip('/')
         gen_attempts = 2
@@ -480,7 +875,7 @@ class ModelGateway:
                 r = None
                 for attempt in range(2):
                     try:
-                        r = requests.post(base + "/video/generations", json=body, headers=headers, timeout=40, proxies=self._proxies_for(base_url))
+                        r = requests.post(base + "/video/generations", json=body, headers=headers, timeout=40, proxies=self._proxies_for(base_url), verify=self.tls_verify)
                         break
                     except (requests.exceptions.SSLError, requests.exceptions.ConnectionError,
                             requests.exceptions.Timeout, requests.exceptions.ChunkedEncodingError) as ce:
@@ -504,7 +899,7 @@ class ModelGateway:
                     time.sleep(interval)
                     waited += interval
                     try:
-                        poll = requests.get(base + f"/video/generations/{task_id}", headers=headers, timeout=30, proxies=self._proxies_for(base_url))
+                        poll = requests.get(base + f"/video/generations/{task_id}", headers=headers, timeout=30, proxies=self._proxies_for(base_url), verify=self.tls_verify)
                         d = poll.json().get("data", {})
                     except Exception as pe:
                         logger.debug(f"[ModelGateway] Agnes 视频轮询抖动(任务仍在生成中)，重试: {str(pe)[:120]}")
@@ -541,36 +936,23 @@ class ModelGateway:
         return None
 
     def _load_sd2_optimizer_prompt(self) -> str:
-        """Load sd25-pe first, falling back to the bundled older optimizer."""
+        """Load the authoritative sd25-pe rules plus five-part audit guidance."""
         if self._sd2_opt_prompt_cache is not None:
             return self._sd2_opt_prompt_cache
-        from pathlib import Path
+        from app.core.sd25_skill_bundle import load_sd25_skill_bundle
 
-        backend_root = Path(__file__).resolve().parents[2]
-        configured = (os.getenv("SD25_PE_SKILL_PATH") or "").strip()
-        candidates = []
-        if configured:
-            candidates.append(Path(configured).expanduser() / "SKILL.md")
-        candidates.extend([
-            Path.home() / "Desktop" / "sd25-pe" / "SKILL.md",
-            backend_root / "skills" / "sd25-pe" / "SKILL.md",
-            backend_root / "skills" / "seedance2-prompt-optimizer" / "SKILL.md",
-        ])
-        text = ""
-        for path in candidates:
-            try:
-                if path.is_file():
-                    text = path.read_text(encoding="utf-8")
-                    logger.info(f"[ModelGateway] 已载入视频提示词编译 Skill: {path.parent.name}")
-                    break
-            except OSError as exc:
-                logger.warning(f"[ModelGateway] 视频提示词 Skill 读取失败: {type(exc).__name__}")
-        self._sd2_opt_prompt_cache = text
-        return text
+        self._sd2_opt_prompt_cache = load_sd25_skill_bundle()
+        if self._sd2_opt_prompt_cache:
+            logger.info("[ModelGateway] 已载入 sd25-pe + sd-2-5-prompt 集成规则")
+        return self._sd2_opt_prompt_cache
 
-    def optimize_video_prompt(self, raw_prompt: str, mode: str = "first_frame", asset_hint: str = "") -> str:
+    def optimize_video_prompt(self, raw_prompt: str, mode: str = "first_frame", asset_hint: str = "",
+                              *, video_model: str = "", duration: int = 0) -> str:
         """用 Seedance 2.0 多模态文本模型 (doubao-seed-2-0-pro) + sd2-pe 规范，把"形容词堆砌"的原始
-        提示词重写为工程化指令。失败/未启用时原样返回 raw_prompt。"""
+        提示词重写为工程化指令。失败/未启用时原样返回 raw_prompt。
+
+        video_model / duration 供 seedance-2-5-video-director 导演层判定：目标解析为 Seedance 2.5
+        时才追加该层（模式上限、素材要求、时序规则、所选蓝图与真人表演约束），2.0 及其它模型不套用。"""
         if not self.seedance_prompt_opt or not raw_prompt or not raw_prompt.strip():
             return raw_prompt
         sd2 = self._load_sd2_optimizer_prompt()
@@ -589,9 +971,25 @@ class ModelGateway:
             "text_to_video": "文生视频 (无参考素材)",
             "multi_ref": "多模态参考生视频 (已提供多张参考图/视频/音频)",
         }.get(mode, "图生视频-首帧")
+        from app.core.seedance_video_director import build_director_layer
+
+        director = build_director_layer(
+            video_model=video_model, fallback_model=self.seedance_model_name,
+            duration=duration, mode=mode, prompt=raw_prompt, asset_hint=asset_hint,
+        )
+        director_block = f"\n\n{director.text}" if director.applied else ""
+        director_hint = (
+            f"- 目标模型为 Seedance 2.5，主模式已选定为「{director.primary_mode}」；按导演层该模式的蓝图组织正文，"
+            "导演层里的提问、导演方案与诊断输出模式一律不适用。\n"
+            if director.applied else ""
+        )
+        if director.applied:
+            logger.debug("[ModelGateway] Seedance 2.5 导演层已装载 (mode=%s, sections=%d, chars=%d)",
+                         director.primary_mode, len(director.sections), len(director.text))
         sys_prompt = (
-            sd2 + "\n\n## 当前调用约定\n"
+            sd2 + director_block + "\n\n## 当前调用约定\n"
             f"- 任务模式：{mode_hint}。{asset_hint}\n"
+            + director_hint +
             "- 这是单镜头、单一连续动作的简单视频；保持素材逐份职责、主体映射、事件开始/结束状态与对白账本。\n"
             "- 画幅、总时长、分辨率、帧率和声音开关属于接口参数，不写入 Prompt。\n"
             "- 直接只输出优化后提示词那一段工程化中文提示词正文本身，"
@@ -599,7 +997,7 @@ class ModelGateway:
         )
         user_prompt = f"请按已加载的 Seedance 2.5 Prompt Optimizer 规则编译下面的视频提示词：\n{raw_prompt}"
         for key, b_url, model_id in candidates:
-            txt = self._http_chat(key, b_url, model_id, sys_prompt, user_prompt, timeout=40)
+            txt = self._http_chat(key, b_url, model_id, sys_prompt, user_prompt, timeout=40, deadline=80)
             if txt and txt.strip():
                 out = txt.strip().strip('`').strip()
                 out = re.sub(r'^(优化后提示词[:：]?|【优化后提示词】)\s*', '', out).strip()
@@ -617,10 +1015,18 @@ class ModelGateway:
         "not illustration, not sketch, not concept art)"
     )
 
+    def ark_clip_seconds(self, model_name: str | None, duration: int) -> int:
+        """单次时长钳到所选模型的合法区间：Seedance 2.0 为 4~15s，2.5 为 4~30s。
+
+        越界值会被 Ark 以 400 拒绝；写死 15 秒则会把 Seedance 2.5 的 30 秒能力截掉。
+        """
+        ceiling = max_shot_seconds(model_name or self.seedance_model_name)
+        return max(4, min(ceiling, int(duration or 0)))
+
     def _ark_video(self, api_key: str, base_url: str, prompt: str,
                    first_frame: str = None, last_frame: str = None,
                    ref_images: list = None, ref_videos: list = None, ref_audios: list = None,
-                   resolution: str = "720p", duration: int = 5, ratio: str = "9:16",
+                   resolution: str | None = None, duration: int = 5, ratio: str | None = None,
                    style_caption: str = None, max_wait: int = 360,
                    model_name: str | None = None):
         """火山 Ark (Seedance 2.0) 异步生视频：遵循 Ark contents/generations/tasks 协议，支持
@@ -636,7 +1042,8 @@ class ModelGateway:
         if self._is_host_broken(base_url):
             return None
         try:
-            import requests, time
+            import requests
+            import time
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             base = base_url.rstrip('/')
             sc = style_caption or self.DEFAULT_STYLE_CAPTION
@@ -648,20 +1055,19 @@ class ModelGateway:
             if last_frame:
                 content.append({"type": "image_url", "image_url": {"url": last_frame}, "role": "last_frame"})
             # 多模态参考素材 (参考图 0-9 / 参考视频 0-3 / 参考音频 0-3)
-            for u in (ref_images or [])[:9]:
+            for u in (ref_images or [])[:MAX_REFERENCE_IMAGES]:
                 content.append({"type": "image_url", "image_url": {"url": u}, "role": "reference_image"})
-            for u in (ref_videos or [])[:3]:
+            for u in (ref_videos or [])[:MAX_REFERENCE_VIDEOS]:
                 content.append({"type": "video_url", "video_url": {"url": u}, "role": "reference_video"})
-            for u in (ref_audios or [])[:3]:
+            for u in (ref_audios or [])[:MAX_REFERENCE_AUDIOS]:
                 content.append({"type": "audio_url", "audio_url": {"url": u}, "role": "reference_audio"})
             # Seedance 2.0 顶层参数：分辨率/时长/比例为独立字段；成片不打可见水印
             body = {
                 "model": model_name or self.seedance_model_name,
                 "content": content,
-                "resolution": resolution,
-                # Seedance 2.0 单次时长合法区间 4~15s，钳制避免分段出现越界值(如 3s)被 400 拒
-                "duration": max(4, min(15, int(duration))),
-                "ratio": ratio,
+                "resolution": resolution or os.getenv("SEEDANCE_VIDEO_RESOLUTION") or SEEDANCE_DEFAULT_RESOLUTION,
+                "duration": self.ark_clip_seconds(model_name, duration),
+                "ratio": ratio or os.getenv("VIDEO_ASPECT_RATIO") or DEFAULT_ASPECT_RATIO,
                 "watermark": False,
             }
             proxies = self._proxies_for(base_url)
@@ -688,44 +1094,101 @@ class ModelGateway:
             if not task_id:
                 return None
             logger.info(f"[ModelGateway] Ark 视频任务已创建: {task_id} (ratio={ratio}, {resolution}, {duration}s)，开始轮询...")
-            waited = 0
-            interval = 6
-            poll_errs = 0  # 轮询期瞬时网络抖动计数：任务已提交成功(主机本就可达)，单次轮询失败绝不放弃也不熔断
-            while waited < max_wait:
-                time.sleep(interval)
-                waited += interval
-                try:
-                    poll = requests.get(base + f"/contents/generations/tasks/{task_id}", headers=headers, timeout=30, proxies=proxies, verify=self.tls_verify).json()
-                except Exception as pe:
-                    # 轮询抖动：任务正在服务端生成，稍后重试；连续多次才认输，且不调用 _mark_host_broken (创建已证明可达)
-                    poll_errs += 1
-                    logger.debug(f"[ModelGateway] Ark 轮询抖动第 {poll_errs} 次(任务 {task_id} 仍在生成中)，重试: {str(pe)[:90]}")
-                    if poll_errs >= 15:
-                        logger.error(f"[ModelGateway] Ark 轮询连续 {poll_errs} 次失败，放弃任务 {task_id}")
-                        break
-                    continue
-                poll_errs = 0
-                status = str(poll.get("status", "")).lower()
-                if status == "succeeded":
-                    url = (poll.get("content", {}) or {}).get("video_url") or self._extract_mp4(poll)
-                    if url:
-                        self._note_host_ok(base_url)
-                        logger.info(f"[ModelGateway] Ark 视频生成成功: {url[:70]}...")
-                        return url
-                    logger.error(f"[ModelGateway] Ark 视频成功但无 video_url: {str(poll)[:200]}")
-                    return None
-                if status in ("failed", "canceled", "cancelled", "error"):
-                    err_msg = str(poll.get("error") or poll.get("message") or "").lower()
-                    # 已移除「疑似真人」特判：失败统一静默返回 None，由上层降级到 Agnes 图生视频。
-                    logger.debug(f"[ModelGateway] Ark 视频生成未通过: {err_msg}")
-                    return None
-            logger.debug(f"[ModelGateway] Ark 视频生成超时 ({max_wait}s)")
+            # The job exists and is being paid for from here on: remember it before polling.
+            video_jobs.note_submitted("seedance", str(task_id), model=str(body["model"]), endpoint=base_url)
+            url = self._ark_wait(api_key, base_url, str(task_id), max_wait)
+            if url:
+                video_jobs.note_finished(str(task_id), url)
+            else:
+                video_jobs.note_failed(str(task_id), "ark task did not yield a video")
+            return url
         except Exception as e:
             logger.debug(f"[ModelGateway] Ark 视频接口不可达(将自动降级): {str(e)[:160]}")
-            err_str = str(e).lower()
             if isinstance(e, requests.exceptions.ConnectionError):  # SSL/连接失败=主机不可达；读超时(ReadTimeout)不算
                 # 仅熔断 Ark 这一个域名，不影响其它厂商，也不阻断本次的文生视频自愈兜底
                 self._mark_host_broken(base_url)
+        return None
+
+    def _ark_wait(self, api_key: str, base_url: str, task_id: str, max_wait: int = 360) -> str | None:
+        """Poll one accepted Ark job to its end; also how a restart continues a job it never saw finish."""
+        import requests
+        import time
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        base = base_url.rstrip('/')
+        proxies = self._proxies_for(base_url)
+        waited = 0
+        interval = 6
+        poll_errs = 0  # 轮询期瞬时网络抖动计数：任务已提交成功(主机本就可达)，单次轮询失败绝不放弃也不熔断
+        while waited < max_wait:
+            time.sleep(interval)
+            waited += interval
+            try:
+                poll = requests.get(base + f"/contents/generations/tasks/{task_id}", headers=headers, timeout=30, proxies=proxies, verify=self.tls_verify).json()
+            except Exception as pe:
+                # 轮询抖动：任务正在服务端生成，稍后重试；连续多次才认输，且不调用 _mark_host_broken (创建已证明可达)
+                poll_errs += 1
+                logger.debug(f"[ModelGateway] Ark 轮询抖动第 {poll_errs} 次(任务 {task_id} 仍在生成中)，重试: {str(pe)[:90]}")
+                if poll_errs >= 15:
+                    logger.error(f"[ModelGateway] Ark 轮询连续 {poll_errs} 次失败，放弃任务 {task_id}")
+                    return None
+                continue
+            poll_errs = 0
+            status = str(poll.get("status", "")).lower()
+            if status == "succeeded":
+                url = (poll.get("content", {}) or {}).get("video_url") or self._extract_mp4(poll)
+                if url:
+                    self._note_host_ok(base_url)
+                    logger.info(f"[ModelGateway] Ark 视频生成成功: {url[:70]}...")
+                    return url
+                logger.error(f"[ModelGateway] Ark 视频成功但无 video_url: {str(poll)[:200]}")
+                return None
+            if status in ("failed", "canceled", "cancelled", "error"):
+                err_msg = str(poll.get("error") or poll.get("message") or "").lower()
+                # 已移除「疑似真人」特判：失败统一静默返回 None，由上层降级到 Agnes 图生视频。
+                logger.debug(f"[ModelGateway] Ark 视频生成未通过: {err_msg}")
+                return None
+        logger.debug(f"[ModelGateway] Ark 视频生成超时 ({max_wait}s)")
+        return None
+
+    def resume_video_job(self, job: Mapping[str, object]) -> str | None:
+        """Continue polling a job a previous process submitted; never submits anything."""
+        family = str(job.get("family") or "")
+        job_id = str(job.get("job_id") or "")
+        endpoint = str(job.get("endpoint") or "")
+        model = str(job.get("model") or "")
+        if not job_id:
+            return None
+        if family == "seedance":
+            key, base, _ = self._provider_creds("seedance")
+            return self._ark_wait(key, endpoint or base, job_id) if self._is_valid_key(key) else None
+        if family == "minimax_h3":
+            from app.core.providers.minimax_h3 import MiniMaxH3Client
+            runtime = runtime_model_registry.first("minimax", "video")
+            client = MiniMaxH3Client(api_key=runtime.api_key if runtime else None, endpoint=endpoint or None)
+            try:
+                result = client.wait_for_video(
+                    job_id,
+                    timeout_seconds=settings.env_float("MINIMAX_H3_WAIT_SECONDS", DEFAULT_VIDEO_WAIT_SECONDS, minimum=1),
+                    poll_interval_seconds=settings.env_float("MINIMAX_H3_POLL_SECONDS", DEFAULT_VIDEO_POLL_SECONDS, minimum=0),
+                )
+                return result.video_url
+            finally:
+                client.close()
+        from app.core.providers import video_adapters
+        if family in video_adapters.ADAPTERS:
+            credentials = video_adapters.resolve_family_credentials(family, model)
+            if credentials is None:
+                return None
+            adapter = video_adapters.build_video_adapter(family, api_key=credentials[0], base_url=endpoint or credentials[1])
+            try:
+                result = adapter.wait_for_video(
+                    job_id,
+                    timeout_seconds=settings.env_float("VIDEO_ADAPTER_WAIT_SECONDS", DEFAULT_VIDEO_WAIT_SECONDS, minimum=1),
+                    poll_interval_seconds=settings.env_float("VIDEO_ADAPTER_POLL_SECONDS", DEFAULT_VIDEO_POLL_SECONDS, minimum=0),
+                )
+                return result.video_url
+            finally:
+                adapter.close()
         return None
 
     def generate_random_name(self, title: str, is_villain: bool = False) -> str:
@@ -805,7 +1268,6 @@ class ModelGateway:
                 action = parts[1][:10].strip()
 
         # 3. 对话指引微调重命名或修改指令解析 (例如“把主角改名叫阿星”、“反派改成王梅”)
-        instruction_lower = instruction.lower()
         if instruction:
             rename_match1 = re.search(r'(?:把主角|将主角|主角)(?:改名(?:叫|为)|改为|换成|叫做|是)\s*([\u4e00-\u9fa5\w]+)', instruction)
             if rename_match1:
@@ -858,7 +1320,7 @@ class ModelGateway:
         t = re.sub(r'^\s*(?:-{3,}|={3,})\s*', '', t).lstrip()
         return t or text
 
-    def call_llm(self, model: str, system_prompt: str, user_prompt: str, creative_title: str, director_style: str = "cyberpunk", shot_style: str = "cinematic", user_instruction: str = "") -> str:
+    def _call_llm_unmetered(self, model: str, system_prompt: str, user_prompt: str, creative_title: str, director_style: str = "cyberpunk", shot_style: str = "cinematic", user_instruction: str = "", max_tokens: Optional[int] = None) -> str:
         """
         调用大语言模型 (在线或离线动态智能故事生成算法)
         基于配置的导演风格与运镜风格，动态组合 36运镜、8种站位和 16种环境构图
@@ -878,14 +1340,27 @@ class ModelGateway:
         # 数据库里启用的动态模型优先。模型 ID、Base URL 和解密密钥均来自
         # 运行时注册表，生产代码不维护供应商的远端模型清单。
         runtime = runtime_model_registry.resolve(model, "text")
+        if runtime is None and not (model or "").strip():
+            runtime = runtime_model_registry.first_for_category("text")
+            if runtime:
+                model = runtime.model_ids[0]
+        elif runtime is None:
+            # The caller names a model that is not enabled (removed or switched off in the
+            # configuration centre). Use the globally selected text model — the first enabled one,
+            # which the centre shows as current — instead of the legacy environment keys: those sat
+            # on a stale key for minutes and then wrote the offline template into the project.
+            selected = runtime_model_registry.first_for_category("text")
+            if selected is not None:
+                logger.warning(
+                    "[ModelGateway] 文本模型 %s 未在模型配置中心启用，改用全局选择的 %s (provider=%s)",
+                    model, selected.model_ids[0], selected.provider,
+                )
+                runtime, model = selected, selected.model_ids[0]
         if runtime:
-            text = self._http_chat(
-                runtime.api_key,
-                runtime.base_url,
-                model,
-                system_prompt,
-                full_user_content,
-            )
+            self._thread_state.last_finish = None
+            text = self._with_credentials(runtime, "text", lambda key: self._http_chat(
+                key, runtime.base_url, model, system_prompt, full_user_content, max_tokens=max_tokens,
+            ))
             if text:
                 logger.info(
                     "[ModelGateway] 动态文本模型生成成功 (provider=%s, model=%s)",
@@ -893,6 +1368,11 @@ class ModelGateway:
                     model,
                 )
                 return self._strip_model_preamble(text)
+            if getattr(self._thread_state, "last_finish", None) == "length":
+                # The configured model answered but spent the whole budget thinking. Another provider
+                # (a rate-limited legacy key, then the offline template) is not a better answer: hand the
+                # empty reply back so the caller can ask again with more room.
+                return ""
 
         # 1. 在线调用：构建多 provider 降级链 (所选优先 -> Agnes -> deepseek -> qwen -> gemini)
         #    所选 provider 在可直连环境(如国内)优先生效；不可达时自动降级到其它已配置有效的真实模型
@@ -909,7 +1389,7 @@ class ModelGateway:
                 continue
             if not self._is_valid_key(key):
                 continue
-            text = self._http_chat(key, b_url, api_model, system_prompt, full_user_content)
+            text = self._http_chat(key, b_url, api_model, system_prompt, full_user_content, max_tokens=max_tokens)
             if text:
                 text = self._strip_model_preamble(text)
                 logger.info(f"[ModelGateway] 文本生成成功 (provider={name}, model={api_model})")
@@ -964,18 +1444,18 @@ class ModelGateway:
         
         # 动态对白配音文本，包含模式打破 (Pattern Interrupt) 元素
         speech_char2 = "你不过是个无权无势的底层小人物，也配站在这里？！"
-        speech_char1 = f"睁大眼看清楚，这才是我的底牌！今日，属于我的一切我都会拿回来！"
+        speech_char1 = "睁大眼看清楚，这才是我的底牌！今日，属于我的一切我都会拿回来！"
         
         # 根据题材匹配特定台词与语调
         if genre == "xianxia":
-            speech_char2 = f"萧凡，你已全身筋脉尽碎，交出魔骨，仙门容不得你！"
-            speech_char1 = f"清虚老儿！你们道貌岸然剥我仙骨，今日我便一剑踏平你这仙山！"
+            speech_char2 = "萧凡，你已全身筋脉尽碎，交出魔骨，仙门容不得你！"
+            speech_char1 = "清虚老儿！你们道貌岸然剥我仙骨，今日我便一剑踏平你这仙山！"
         elif genre == "romance":
-            speech_char2 = f"顾安然，你只是个被扫地出门的养女，这设计稿你不配署名！"
-            speech_char1 = f"陆霆骁是我的底气，但没有他，我也能让你们身败名裂！"
+            speech_char2 = "顾安然，你只是个被扫地出门的养女，这设计稿你不配署名！"
+            speech_char1 = "陆霆骁是我的底气，但没有他，我也能让你们身败名裂！"
         elif genre == "horror":
-            speech_char2 = f"林九，半夜扎纸铺不迎活客？今天我就砸了你这纸人店！"
-            speech_char1 = f"人有归路，鬼有黄泉。赵虎，这副大木黑漆棺，是留给你的！"
+            speech_char2 = "林九，半夜扎纸铺不迎活客？今天我就砸了你这纸人店！"
+            speech_char1 = "人有归路，鬼有黄泉。赵虎，这副大木黑漆棺，是留给你的！"
 
         # 针对不同智能体阶段，返回纯动态的生成结果
         if "编剧" in system_prompt or "writer-agent" in system_prompt:
@@ -1052,14 +1532,14 @@ class ModelGateway:
         elif "宣发" in system_prompt or "pr-agent" in system_prompt:
             # 宣发引流文本
             pr_title = f"{creative_title}：隐藏大佬的暴爽翻盘！"
-            pr_body = f"太爽了！前妻/恶毒总监当众撕毁签字合同，逼迫主角净身出户！殊不知主角就是身家千亿的龙王/总裁，一通电话全省财阀大雨中跪迎！逆袭风暴点爆全场，点击免费看全集！💥"
+            pr_body = "太爽了！前妻/恶毒总监当众撕毁签字合同，逼迫主角净身出户！殊不知主角就是身家千亿的龙王/总裁，一通电话全省财阀大雨中跪迎！逆袭风暴点爆全场，点击免费看全集！💥"
             
             if genre == "xianxia":
-                pr_title = f"《仙骨已碎，剑开天门！》"
-                pr_body = f"虚伪仙尊强挖去我的魔骨给义子？他没想到我竟然唤醒了体内的九幽魔皇元神，当着全天下宗门弟子的面一剑震碎仙山！热血仙侠狂暴反扑！点击免费看大结局！"
+                pr_title = "《仙骨已碎，剑开天门！》"
+                pr_body = "虚伪仙尊强挖去我的魔骨给义子？他没想到我竟然唤醒了体内的九幽魔皇元神，当着全天下宗门弟子的面一剑震碎仙山！热血仙侠狂暴反扑！点击免费看大结局！"
             elif genre == "horror":
-                pr_title = f"《深夜纸人抬棺：民俗禁忌起！》"
-                pr_body = f"深夜恶霸强行抢夺扎纸铺的玉佛，少掌柜默默摇动三清铜铃，满屋纸扎童男童女瞬间走下货架列队抬棺！惊悚重重，点击免费看爆爽灵异大戏！💥"
+                pr_title = "《深夜纸人抬棺：民俗禁忌起！》"
+                pr_body = "深夜恶霸强行抢夺扎纸铺的玉佛，少掌柜默默摇动三清铜铃，满屋纸扎童男童女瞬间走下货架列队抬棺！惊悚重重，点击免费看爆爽灵异大戏！💥"
                 
             return f"""【封面大字PR标题】
 🔥 《{pr_title}》
@@ -1068,6 +1548,37 @@ class ModelGateway:
 📌 ‘{pr_body}’"""
 
         return "*(AI 智能内容生成完成)*"
+
+    # 全局强制负面词(负面提示词指南「终极统一负面提示词」一节)在提示词里的标签：
+    # 追加一次、可识别、可剥离——Agnes 清洗会截断长提示词，先剥掉再清洗再补回，词表不会被截半。
+    GLOBAL_NEGATIVE_LABEL = "【全局负面】"
+
+    @classmethod
+    def _with_global_negatives(cls, prompt: str, medium: str) -> str:
+        """给一条生成提示词追加全局负面词(``medium``: ``"video"`` 全量 / ``"image"`` 单帧子集)。
+
+        幂等：已经带了标签就原样返回。指南缺失时词表为空，提示词不变。
+        """
+        if not prompt or cls.GLOBAL_NEGATIVE_LABEL in prompt:
+            return prompt
+        terms = production_knowledge.global_negative_text(medium)
+        if not terms:
+            return prompt
+        return f"{prompt.rstrip()}\n{cls.GLOBAL_NEGATIVE_LABEL}{terms}"
+
+    @classmethod
+    def _strip_global_negatives(cls, prompt: str) -> str:
+        """去掉提示词里那一行全局负面词(标签起到行尾)。"""
+        if not prompt or cls.GLOBAL_NEGATIVE_LABEL not in prompt:
+            return prompt
+        return re.sub(re.escape(cls.GLOBAL_NEGATIVE_LABEL) + r"[^\n]*", "", prompt).rstrip()
+
+    @classmethod
+    def _agnes_prompt(cls, prompt: str, medium: str) -> str:
+        """Agnes/Gemini 用的提示词：先剥离全局负面词再清洗截断，最后把完整词表补回末尾。"""
+        return cls._with_global_negatives(
+            cls._sanitize_prompt_for_agnes(cls._strip_global_negatives(prompt)), medium
+        )
 
     @staticmethod
     def _sanitize_prompt_for_agnes(prompt: str) -> str:
@@ -1087,7 +1598,7 @@ class ModelGateway:
                    "癫狂", "羞辱", "厮杀", "杀", "死", "尸", "拳", "踹", "扇", "撕"]:
             p = p.replace(kw, "")
         p = re.sub(r'\s+', ' ', p).strip(" ，,。.；;")
-        # Agnes 对超长提示词(如嵌 3000 字三视图模板)易判违规，截断到稳妥长度，保留前部核心描述
+        # Agnes 对超长提示词(如嵌 3000 字设定集模板)易判违规，截断到稳妥长度，保留前部核心描述
         if len(p) > 600:
             p = p[:600]
         return p
@@ -1127,12 +1638,10 @@ class ModelGateway:
             )
         }
 
-        hasExpression = False
         for expKey, (keywords, facialDesc) in expressionMap.items():
             if any(kw in lowerPrompt for kw in keywords):
                 if facialDesc not in enhanced:
                     enhanced += f", {facialDesc}"
-                    hasExpression = True
                     break
 
         # 2. 电影级色彩与调色矩阵 (色彩基调智能判断)
@@ -1217,20 +1726,44 @@ class ModelGateway:
 
         return enhanced
 
-    def generate_image(self, model: str, prompt: str, ref_images: list = None, size: str = None):
+    def validate_image_request(self, model: str, ref_images: list[str] | None = None, *, require_reference_support: bool = False) -> None:
+        """Fail known configuration errors before a batch makes any paid calls."""
+        runtime = runtime_model_registry.resolve(model, "image")
+        if runtime is None and not (model or "").strip():
+            runtime = runtime_model_registry.first_for_category("image")
+        if (
+            require_reference_support
+            and runtime is not None
+            and runtime.provider not in {"volcengine", "seedance"}
+            and any(_image_reference(url) for url in (ref_images or []))
+        ):
+            raise ValueError("当前图像模型未接入参考图生图，请选择支持参考图的 Seedream 模型")
+
+    def _generate_image_unmetered(self, model: str, prompt: str, ref_images: list = None, size: str = None, *, enhance_prompt: bool = True, require_reference_support: bool = False):
         """
         调用文生图大模型，返回 (图片URL, 实际使用的 provider 名)。
         统一优先 Seedance/火山 Ark Seedream，保证与后续 Seedance 图生视频同源、风格画质一致。
-        ref_images：角色三视图等参考图 URL 列表 (Seedream 通过 image 字段做主体参考，锁定人物一致性)。
+        ref_images：数字演员设定集身份视图等参考图 URL 列表 (Seedream 通过 image 字段做主体参考，锁定人物一致性)。
         降级链：所选/seedance 优先 -> Agnes -> gemini -> 离线兜底图。
         """
-        prompt = self._enhancePromptWithRules(prompt)
+        # Compiled scene prompts already lock exact assets and visible events.
+        # Keyword-based additions (e.g. 剑眉 -> weapons) must not rewrite them.
+        if enhance_prompt:
+            prompt = self._enhancePromptWithRules(prompt)
+        # 全局强制负面词(单帧子集)：设定集、分镜画面、首尾帧、参考图都从这里出图。
+        prompt = self._with_global_negatives(prompt, "image")
         runtime = runtime_model_registry.resolve(model, "image")
+        if runtime is None and not (model or "").strip():
+            runtime = runtime_model_registry.first_for_category("image")
+            if runtime:
+                model = runtime.model_ids[0]
         if runtime:
             reference_urls = [
                 url for url in (ref_images or [])
-                if isinstance(url, str) and url.startswith("http")
-            ][:9]
+                if _image_reference(url)
+            ][:MAX_REFERENCE_IMAGES]
+            if require_reference_support and reference_urls and runtime.provider not in {"volcengine", "seedance"}:
+                raise ValueError("当前图像模型未接入参考图生图，请选择支持参考图的 Seedream 模型")
             extra: dict[str, object] = {"n": 1, "size": size or "1024x1024"}
             if runtime.provider in {"volcengine", "seedance"}:
                 extra = {
@@ -1240,13 +1773,9 @@ class ModelGateway:
                 }
                 if reference_urls:
                     extra["image"] = reference_urls
-            url = self._http_image(
-                runtime.api_key,
-                runtime.base_url,
-                model,
-                prompt,
-                extra=extra,
-            )
+            url = self._with_credentials(runtime, "image", lambda key: self._http_image(
+                key, runtime.base_url, model, prompt, extra=extra,
+            ))
             if url:
                 logger.info(
                     "[ModelGateway] 动态图像模型生成成功 (provider=%s, model=%s)",
@@ -1254,6 +1783,10 @@ class ModelGateway:
                     model,
                 )
                 return url, runtime.provider
+        if (model or "").strip().lower() == comfyui.FAMILY:
+            # A self-hosted workflow was chosen on purpose: it answers or the shot has no image, never another vendor.
+            url = self._comfyui_generate(prompt, image=next((u for u in (ref_images or []) if _image_reference(u)), None), want="image")
+            return url, comfyui.FAMILY if url else None
 
         primary = self._detect_provider(model, default="seedance")
         # 各 provider 对应的文生图模型 ID (seedance 用 Seedream 文生图模型，而非视频模型)
@@ -1262,7 +1795,7 @@ class ModelGateway:
             "agnes": self.agnes_image_model,
             "gemini": self.gemini_model_name,
         }
-        ref = [u for u in (ref_images or []) if u and isinstance(u, str) and u.startswith("http")]
+        ref = [u for u in (ref_images or []) if _image_reference(u)]
         # seedance(Seedream) 必须排最前：图生视频走 Seedance/火山 Ark 时，Ark 风控只接受
         # 火山生态自产(带 AI 标记)的首帧图；外部写实人像(如 Agnes)会被判定"疑似真人"而 400 拒绝。
         # 因此要让 Seedance 视频跑通，首帧图必须用 Seedream。Agnes 仅作文生图兜底。
@@ -1271,6 +1804,8 @@ class ModelGateway:
         for name in order:
             if name in tried or name not in image_model:
                 continue
+            if require_reference_support and ref and name != "seedance":
+                continue  # Never silently drop identity/production references on fallback.
             tried.add(name)
             key, b_url, _ = self._provider_creds(name)
             if not self._is_valid_key(key):
@@ -1282,12 +1817,12 @@ class ModelGateway:
                 extra = {"response_format": "url", "size": size or self.seedance_image_size,
                          "watermark": self.seedance_image_watermark}
                 if ref:
-                    # Seedream image 字段传入角色三视图作主体参考，锁定人物一致性
-                    extra["image"] = ref[:9]
+                    # Seedream image 字段传入数字演员身份视图作主体参考，锁定人物一致性
+                    extra["image"] = ref[:MAX_REFERENCE_IMAGES]
             else:
                 extra = {"n": 1, "size": size or "1024x1024"}
             # 火山 Seedream 用原始提示词(含 DEID 过审);其它网关(Agnes/Gemini)用清洗后干净写实提示词避免内容审核 400
-            use_prompt = prompt if name == "seedance" else self._sanitize_prompt_for_agnes(prompt)
+            use_prompt = prompt if name == "seedance" else self._agnes_prompt(prompt, "image")
             url = self._http_image(key, b_url, image_model[name], use_prompt, extra=extra)
             if url:
                 logger.info(f"[ModelGateway] 文生图成功 (provider={name}, model={image_model[name]}, 参考图={len(ref)}): {url[:60]}...")
@@ -1300,20 +1835,8 @@ class ModelGateway:
                      "(降级为 Seedance 文生视频，不使用任何占位图)")
         return None, None
 
-    def read_md_file(self, filename: str) -> str:
-        # 支持在项目根目录查找
-        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), filename)
-        if not os.path.exists(path):
-            path = os.path.join("/Users/mindezhi/short-drama", filename)
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return f.read()
-            except Exception as e:
-                logger.error(f"读取md文件 {filename} 失败: {str(e)}")
-        return ""
 
-    # 题材 -> 时代服饰硬约束：确保三视图人物造型契合剧情时代背景
+    # 题材 -> 时代服饰硬约束：确保五视图人物造型契合剧情时代背景
     # (如修仙/武侠/宫斗必须古装，绝不能出现现代服饰)，从 get_genre 的题材分类推导。
     GENRE_ERA_COSTUME = {
         "xianxia": "古代仙侠时代背景，角色必须身着古装（道袍/汉服/广袖仙袍/云纹长袍），古典发髻发饰，"
@@ -1326,24 +1849,46 @@ class ModelGateway:
         "overseas_us": "欧美时代背景，角色为欧美人物造型与对应服饰",
     }
 
-    # 三视图五大常见问题对照负面约束 (源自《AI漫剧三视图生成全流程》图解 §7)：
-    # 五官漂移 / 服装走样 / 背景不一 / 手部崩塌 / 配色不稳。在三视图生成时强力规避。
+    # 设定集五大常见问题对照负面约束：
+    # 五官漂移 / 服装走样 / 背景不一 / 手部崩塌 / 配色不稳。在设定集生成时强力规避。
     SHEET_PROBLEM_NEGATIVE = (
-        "(严格规避三视图五大常见问题——"
+        "(严格规避多视图设定集五大常见问题——"
         "①五官漂移：多视角间五官形状/比例不一；②服装走样：褶皱、配件位置在各视角紊乱不符；"
         "③背景不一：各视角背景不统一；④手部崩塌：手指数量/姿态错误、多指畸形；⑤配色不稳：颜色偏差、风格不统一。"
         "no face drift, inconsistent facial features across views, changing outfit details between views, "
         "inconsistent background, deformed hands, extra or missing fingers, color inconsistency, "
+        "oversized head, big head small body, chibi, bobblehead, child-like proportions, short legs, "
         "multiple different persons, watermark, text, logo)"
     )
 
     def generate_character_sheet(self, model: str, name: str, char_desc: str,
                                  dir_style: str = "cyberpunk", genre: str = "general",
-                                 ref_images: list = None) -> str:
+                                 ref_images: list = None, extra_negative: str = "") -> str:
+        """A character's sheet is one image call, recorded as such."""
+        runtime = runtime_model_registry.resolve(model, "image")
+        provider = runtime.provider if runtime else self._detect_provider(model, "seedance")
+        with usage_ledger.timed_call("image", provider=provider, model=model or "", units={"images": 1, "purpose_detail": "character_sheet"}) as outcome:
+            url = self._generate_character_sheet_unmetered(model, name, char_desc, dir_style, genre, ref_images, extra_negative)
+            if not url:
+                outcome["failed"] = True
+                outcome["error"] = "no provider returned a sheet"
+            return url
+
+    def _generate_character_sheet_unmetered(self, model: str, name: str, char_desc: str,
+                                 dir_style: str = "cyberpunk", genre: str = "general",
+                                 ref_images: list = None, extra_negative: str = "") -> str:
         """
-        生成角色五视图设定图(角色视觉锚点，解决跨镜头人物一致性)。
-        方法论遵循《AI漫剧三视图生成全流程》图解：人物设定卡 → 比例统一 → 结构先定 → 细节后补，
-        5 个标准视角(正面/侧面/背面/45度/3-4视角)，并对照规避"五官漂移/服装走样/背景不一/手部崩塌/配色不稳"五大问题。
+        生成数字演员设定集(角色视觉锚点，解决跨镜头人物一致性)。
+
+        一次出图给出一张 21:9 超宽横版设定集(20% / 40% / 40%)：左栏「主肖像」一张正面近景，
+        中栏「全身与元素」放全身立绘 + 1×3 全身三视图 + 2×4 元素拆解，
+        右栏「细节矩阵」放 4×3 共 12 格细节特写，合计 25 格，各格下方编号中文标注。
+        画面描述由 storyboard_quality.build_actor_sheet_prompt 按 ACTOR_SHEET_LAYOUT 生成，
+        切图器读的是同一份版面常量，所以提示词和裁切框不会各说各话。
+        出图后由 storyboard_assets.split_actor_sheet 按画面里的分隔线拆成最多 25 个独立资产，
+        其中 front/profile/back/face_front/face_three_quarter 五格是锁人物的身份锚点。
+
+        对照规避"五官漂移/服装走样/背景不一/手部崩塌/配色不稳"五大问题。
         genre：剧情题材(来自 get_genre)，锁定符合时代背景的服饰造型(如修仙/武侠须古装)。
         """
         # 时代服饰约束优先：题材若属古装/年代/欧美类，强制对应时代造型；否则按导演视听风格取风格词
@@ -1357,31 +1902,38 @@ class ModelGateway:
         if era_costume:
             style_word = "符合时代背景的写实影视质感"
 
-        # 干净的描述式三视图提示词(英文为主、跨 provider 通用)：直接描述要画的画面本身。
+        # 干净的描述式设定集提示词：直接描述要画的画面本身。
         # 关键修复：绝不把 markdown 文档模板 / README 引用 / 中文元指令塞进文生图模型——
-        # 那会被 Agnes 内容审核判 content_policy_violation 拒(Ark SSL 不可达时三视图会全失败、
-        # 退化为纯文本，前端只剩文字看不到图)。三视图一致性"方法论"只喂给上游 LLM(阶段3 sys_prompt)，
+        # 那会被 Agnes 内容审核判 content_policy_violation 拒(Ark SSL 不可达时设定图会全失败、
+        # 退化为纯文本，前端只剩文字看不到图)。人物一致性"方法论"只喂给上游 LLM(阶段3 sys_prompt)，
         # 此处只给图像模型干净可执行的画面描述。
         era_clause = f" The character must wear period-accurate costume — {era_costume}." if era_costume else ""
-        from app.core.storyboard_quality import build_five_view_prompt
+        from app.core.actor_sheet_layout import ACTOR_SHEET_LAYOUT
+        from app.core.storyboard_quality import build_actor_sheet_prompt
+        # extra_negative：角色设计师配药单编译出的模块化负面词(agent_council.compile_negative_prompt)，
+        # 拼在设定集问题负面串之后；空串零成本。
         prompt = (
-            build_five_view_prompt(name, f"{char_desc}.{era_clause}", style_word)
+            build_actor_sheet_prompt(name, f"{char_desc}.{era_clause}", style_word)
             + " photorealistic, live-action, cinematic, highly detailed, sharp focus, 35mm film. "
             + self.SHEET_PROBLEM_NEGATIVE
+            + (extra_negative or "")
         )
-        url, _ = self.generate_image(
-            model,
-            prompt,
-            ref_images=ref_images,
-            size=os.getenv("CHARACTER_SHEET_SIZE", "2560x1440"),
-        )
-        logger.info(f"[ModelGateway] 角色五视图生成 ({name}, genre={genre}): {(url or '无')[:60]}...")
+        # 默认 5040x2160 即 21:9；宽高比偏了切图器会直接拒绝拆分并重试整张图。
+        default_size = f"{ACTOR_SHEET_LAYOUT.default_width}x{ACTOR_SHEET_LAYOUT.default_height}"
+        size = os.getenv("CHARACTER_SHEET_SIZE", default_size)
+        url, _ = self._generate_image_unmetered(model, prompt, ref_images=ref_images, size=size)
+        fallback_size = f"{ACTOR_SHEET_LAYOUT.fallback_width}x{ACTOR_SHEET_LAYOUT.fallback_height}"
+        if not url and size != fallback_size:
+            # 有的图像模型不收大尺寸：退回 3360x1440 再出一次，宁可格子小一点也要有图。
+            logger.warning("[ModelGateway] 设定集 %s 出图失败，按 %s 重试", size, fallback_size)
+            url, _ = self._generate_image_unmetered(model, prompt, ref_images=ref_images, size=fallback_size)
+        logger.info(f"[ModelGateway] 数字演员设定集生成 ({name}, genre={genre}): {(url or '无')[:60]}...")
         return url
 
 
     # 镜头一致性强化：正向锁定词 + 负面约束词 (供分镜底片生成时拼接)
     SHEET_LOCK_POSITIVE = (
-        "严格参考角色三视图，保持同一个人物身份、同一张脸、同一个发型、同一个发色、"
+        "严格参考数字演员设定集和角色状态卡，保持同一个人物身份、同一张脸、同一个发型、同一个发色、"
         "同一套服装、同一个体型、同一个年龄感和同样的标志性配饰"
     )
     SHEET_LOCK_NEGATIVE = (
@@ -1410,10 +1962,10 @@ class ModelGateway:
     )
 
     # ============== 三篇提示词文档工程化落地 (可复用片段，拼进 Stage4/5 图生与视频提示词) ==============
-    # 来源：场景设计提示词.md / 短剧情节与镜头连贯性提示词.md / 短剧情绪与面部表情提示词库.md
+    # 来源：shot-design-master 的 scene-design / plot-shot-coherence / emotion-expression 三节
     # 作用：把"给人看的方法论"变成"每一镜可执行的正/负向约束"，直接作用于成片画面。
 
-    # 场景设计：场景服务剧情 + 空间层次稳定 (场景设计提示词.md §最小模板/§5/§12)
+    # 场景设计：场景服务剧情 + 空间层次稳定 (scene-design §最小模板/§5/§12)
     SCENE_STABILITY_POSITIVE = (
         "，场景服务剧情且空间关系固定：前景-中景-背景三层电影感纵深，主光方向与色温统一，"
         "关键道具位置固定并参与叙事，人物左右站位与画面方向稳定 "
@@ -1426,7 +1978,7 @@ class ModelGateway:
         "messy objects, empty meaningless background, no spatial depth, background flickering)"
     )
 
-    # 镜头连贯性：六锚点 + 承接上一镜 + 逐镜单动作 (短剧情节与镜头连贯性提示词.md §1/§7/§8)
+    # 镜头连贯性：六锚点 + 承接上一镜 + 逐镜单动作 (plot-shot-coherence §1/§7/§8)
     CONTINUITY_POSITIVE = (
         "，严守跨镜连贯六锚点：同一人物同一张脸同一发型同一服装、同一场景与左右画面方向、"
         "动作从上一镜自然延续、情绪逐级递进不突变、道具始终在同一只手同一位置、光影色温时间一致，"
@@ -1445,16 +1997,26 @@ class ModelGateway:
         "承接上一镜最后一帧、动作与站位无缝衔接"
     )
 
-    # 情绪与面部表情：正向微表情已由分镜文本承载，此处补防崩坏负面 (短剧情绪与面部表情提示词库.md §1/§8)
+    # 复制人防治：多角色同框时模型常把主角复刻成外形一致的"分身"站在旁边。
+    # 该约束来自分镜提示词技能 (skills/shot-design-master) 的收尾串。
+    CLONE_NEGATIVE = (
+        "，视频全程禁止出现外形、着装、配饰完全一致的人物，禁止生成同款分身、双胞胎效果，"
+        "同一画面中仅保留单个对应人物，不出现人物重复复刻 "
+        "(no duplicated character, no twin, no clone, no repeated identical person, "
+        "single instance per character)"
+    )
+
+    # 情绪与面部表情：正向微表情已由分镜文本承载，此处补防崩坏负面 (emotion-expression §1/§8)
     EMOTION_FACE_NEGATIVE = (
         "(规避表情/面部崩坏：bad anatomy, distorted face, asymmetrical eyes, crossed eyes, extra teeth, "
         "deformed mouth, frozen face, plastic skin, uncanny smile, exaggerated expression, "
         "changing face, blurred facial features, extra fingers, extra hands, flickering)"
     )
 
-    def generate_video(self, model: str, image_url: str, prompt: str, prefer_provider: str = None,
+    def _generate_video_unmetered(self, model: str, image_url: str, prompt: str, prefer_provider: str = None,
                        last_frame: str = None, ref_images: list = None,
-                       ref_videos: list = None, ref_audios: list = None, duration: int = 5) -> str:
+                       ref_videos: list = None, ref_audios: list = None, duration: int = 5,
+                       seed: int | None = None, style_pack: str | None = None) -> str:
         """
         调用图生视频大模型 (Seedance 2.0 / Agnes)，支持：
           - 文生视频：image_url=None 且无参考素材
@@ -1464,9 +2026,23 @@ class ModelGateway:
         降级机制(已移除所有「疑似真人」处理)：首帧/尾帧原样直接发送，Ark 首尾帧图生视频逻辑完整保留；
         Ark 失败(账号未授权/网络不可达)则静默降级给 Agnes 图生视频(接受真人脸)以维持首帧人物一致性，
         全部失败后再执行文生视频(不传首帧)作为终极兜底，确保每镜必出真实片且绝不刷屏报错。
+
+        style_pack 为本片风格锁 (app/core/style_packs)：它决定 Ark 的风格锚定句，也决定要不要
+        追加写实增强词。缺省沿用项目默认的真人实拍锁；2D/3D 漫剧项目必须传入自己的锁，
+        否则会被写实默认值压成真人实拍。
         """
-        prompt = self._enhancePromptWithRules(prompt)
+        pack = style_packs.get_pack(style_pack or "")
+        style_caption = pack.style_caption if pack else None
+        # 写实增强词 (毛孔、35mm 颗粒、景深) 是为真人实拍调的：漫剧锁下只会把画面往照片质感上拽。
+        if pack is None or pack.medium == "live_action":
+            prompt = self._enhancePromptWithRules(prompt)
+        # 全局强制负面词(全量)：H3、各家适配器、ComfyUI、Seedance 与 Agnes 都从这里取提示词。
+        prompt = self._with_global_negatives(prompt, "video")
         runtime = runtime_model_registry.resolve(model, "video")
+        if runtime is None and not (model or "").strip():
+            runtime = runtime_model_registry.first_for_category("video")
+            if runtime:
+                model = runtime.model_ids[0]
 
         # MiniMax H3 is a first-class video provider. It supports frame anchoring
         # (text / first / last / first+last) and Ref2VA mixed references. The
@@ -1485,7 +2061,7 @@ class ModelGateway:
                 # When motion/audio references are supplied, preserve the image
                 # as an ordinary subject/scene reference instead of claiming it
                 # is an exact first-frame anchor.
-                if ref_videos or ref_audios:
+                if h3_images or ref_videos or ref_audios:
                     if h3_first:
                         h3_images.insert(0, h3_first)
                     if h3_last:
@@ -1497,13 +2073,14 @@ class ModelGateway:
                     prompt=prompt,
                     first_frame=h3_first,
                     last_frame=h3_last,
-                    reference_images=list(dict.fromkeys(h3_images))[:9],
-                    reference_videos=list(dict.fromkeys(ref_videos or []))[:3],
-                    reference_audios=list(dict.fromkeys(ref_audios or []))[:3],
+                    reference_images=list(dict.fromkeys(h3_images))[:MAX_REFERENCE_IMAGES],
+                    reference_videos=list(dict.fromkeys(ref_videos or []))[:MAX_REFERENCE_VIDEOS],
+                    reference_audios=list(dict.fromkeys(ref_audios or []))[:MAX_REFERENCE_AUDIOS],
                     duration_seconds=max(4, min(15, int(duration or 6))),
-                    resolution=os.getenv("MINIMAX_H3_RESOLUTION", "1080p"),
-                    aspect_ratio=os.getenv("MINIMAX_H3_ASPECT_RATIO", "9:16"),
+                    resolution=os.getenv("MINIMAX_H3_RESOLUTION", DEFAULT_VIDEO_RESOLUTION),
+                    aspect_ratio=os.getenv("MINIMAX_H3_ASPECT_RATIO", DEFAULT_ASPECT_RATIO),
                     native_audio=os.getenv("MINIMAX_H3_NATIVE_AUDIO", "1") not in {"0", "false", "False"},
+                    seed=seed,
                 )
                 endpoint = None
                 runtime_key = None
@@ -1513,7 +2090,7 @@ class ModelGateway:
                     endpoint = (
                         configured_base
                         if configured_base.endswith("/video_generation")
-                        else configured_base + "/v2/video_generation"
+                        else configured_base + MINIMAX_H3_PATH
                     )
                 client = MiniMaxH3Client(api_key=runtime_key, endpoint=endpoint)
                 try:
@@ -1521,18 +2098,37 @@ class ModelGateway:
                     if result.video_url:
                         return result.video_url
                     if result.task_id:
-                        result = client.wait_for_video(
-                            result.task_id,
-                            timeout_seconds=float(os.getenv("MINIMAX_H3_WAIT_SECONDS", "900")),
-                            poll_interval_seconds=float(os.getenv("MINIMAX_H3_POLL_SECONDS", "5")),
-                        )
+                        job_id = str(result.task_id)
+                        video_jobs.note_submitted("minimax_h3", job_id, model=model, endpoint=client.endpoint)
+                        try:
+                            result = client.wait_for_video(
+                                job_id,
+                                timeout_seconds=settings.env_float("MINIMAX_H3_WAIT_SECONDS", DEFAULT_VIDEO_WAIT_SECONDS, minimum=1),
+                                poll_interval_seconds=settings.env_float("MINIMAX_H3_POLL_SECONDS", DEFAULT_VIDEO_POLL_SECONDS, minimum=0),
+                            )
+                        except Exception as wait_error:
+                            video_jobs.note_failed(job_id, f"{type(wait_error).__name__}: {wait_error}")
+                            raise
                         if result.video_url:
+                            video_jobs.note_finished(job_id, result.video_url)
                             return result.video_url
+                        video_jobs.note_failed(job_id, "h3 task finished without a video url")
                 finally:
                     client.close()
                 logger.warning("[ModelGateway] MiniMax H3 completed without a downloadable video URL; trying fallback")
             except Exception as exc:
                 logger.warning(f"[ModelGateway] MiniMax H3 unavailable; trying configured fallback: {type(exc).__name__}")
+        # Kling / xAI Grok Imagine / HappyHorse (fal.ai) / LTX 走各自的文档化任务协议。
+        # 这些族由路由显式选中，因此绝不改投 Seedance：要么由该供应商出片，要么本镜不出片。
+        from app.core.providers import video_adapters
+        from app.core.video_references import normalize_video_provider
+
+        family = normalize_video_provider(model).family
+        if video_adapters.has_adapter(family) or family == comfyui.FAMILY:
+            return self._adapter_video(
+                family, model, prompt, image_url, last_frame, ref_images, ref_videos, ref_audios, duration, seed,
+            )
+
         # 判定 Seedance 2.0 任务模式 (用于提示词优化器的模式提示)
         if last_frame:
             mode = "first_last_frame"
@@ -1570,19 +2166,23 @@ class ModelGateway:
 
             if name == "seedance":
                 if opt_prompt is None:
-                    opt_prompt = self.optimize_video_prompt(prompt, mode=mode)
+                    # 优化器按规则不主动添加负面约束，可能改写掉末尾的词表：改写后再补一次(幂等)。
+                    opt_prompt = self._with_global_negatives(
+                        self.optimize_video_prompt(prompt, mode=mode, video_model=model, duration=duration), "video"
+                    )
                 # 火山 Ark 首帧/尾帧/多模态参考 图生视频：原样上传，不做任何疑似真人预处理
                 url = self._ark_video(key, b_url, opt_prompt,
                                       first_frame=image_url, last_frame=last_frame,
                                       ref_images=ref_images, ref_videos=ref_videos, ref_audios=ref_audios,
-                                      duration=duration, model_name=video_model)
+                                      duration=duration, model_name=video_model,
+                                      style_caption=style_caption)
                 if url:
                     logger.info(f"[ModelGateway] Seedance 图生视频成功 (mode={mode}): {url[:60]}...")
                     return url
 
             elif name == "agnes":
                 # Agnes 接收任意写实人脸首帧，无真人风控；发送清洗后的干净写实提示词。
-                url = self._agnes_video(key, b_url, image_url, self._sanitize_prompt_for_agnes(opt_prompt or prompt))
+                url = self._agnes_video(key, b_url, image_url, self._agnes_prompt(opt_prompt or prompt, "video"))
                 if url:
                     logger.info(f"[ModelGateway] Agnes 图生视频成功 (mode={mode}): {url[:60]}...")
                     return url
@@ -1599,7 +2199,10 @@ class ModelGateway:
                 continue
             if name == "seedance":
                 if opt_prompt is None:
-                    opt_prompt = self.optimize_video_prompt(prompt, mode=mode)
+                    # 优化器按规则不主动添加负面约束，可能改写掉末尾的词表：改写后再补一次(幂等)。
+                    opt_prompt = self._with_global_negatives(
+                        self.optimize_video_prompt(prompt, mode=mode, video_model=model, duration=duration), "video"
+                    )
                 url = self._ark_video(
                     key,
                     b_url,
@@ -1607,13 +2210,14 @@ class ModelGateway:
                     first_frame=None,
                     duration=duration,
                     model_name=video_model,
+                    style_caption=style_caption,
                 )
                 if url:
                     logger.info(f"[ModelGateway] Seedance 文生视频兜底成功: {url[:60]}...")
                     return url
             elif name == "agnes":
                 # Ark 不可达或失败时，Agnes 文生视频(不传首帧)兜底，确保每镜必出真实片。
-                url = self._agnes_video(key, b_url, None, self._sanitize_prompt_for_agnes(opt_prompt or prompt))
+                url = self._agnes_video(key, b_url, None, self._agnes_prompt(opt_prompt or prompt, "video"))
                 if url:
                     logger.info(f"[ModelGateway] Agnes 文生视频兜底成功: {url[:60]}...")
                     return url
@@ -1621,6 +2225,123 @@ class ModelGateway:
         # 所有在线视频 provider 均不可用：返回 None，让上层跳过该镜 (Fail loud)，不混入占位视频。
         logger.error("[ModelGateway] 所有在线视频 provider 均不可用 (Seedance/Agnes)，本镜无真实视频产出")
         return None
+
+    def _comfyui_generate(self, prompt: str, *, image: str | None, want: str, seed: int | None = None) -> Optional[str]:
+        """One run of the person's ComfyUI workflow; nothing is sent while it is not ready."""
+        if not comfyui.ready():
+            logger.error("[ModelGateway] ComfyUI 未就绪：%s", "；".join(comfyui.status()["problems"]))
+            return None
+        client = comfyui.ComfyUIClient.from_environment()
+        try:
+            return client.generate(prompt=prompt, image=image, seed=seed, want=want)
+        except Exception as exc:  # noqa: BLE001 - the workflow's failure is the shot's failure, reported not hidden
+            logger.error("[ModelGateway] ComfyUI 工作流失败: %s", str(exc)[:200])
+            return None
+        finally:
+            client.close()
+
+    def _adapter_video(
+        self, family: str, model: str, prompt: str, image_url, last_frame,
+        ref_images, ref_videos, ref_audios, duration, seed: int | None = None,
+    ) -> Optional[str]:
+        """Submit one clip through a routed provider family; fail loud instead of falling back."""
+        from app.core.providers import video_adapters
+
+        if family == comfyui.FAMILY:
+            return self._comfyui_generate(prompt, image=image_url or None, want="video", seed=seed)
+        credentials = video_adapters.resolve_family_credentials(family, model)
+        if credentials is None:
+            logger.error("[ModelGateway] %s 未配置运行时凭据，本镜不提交（禁止改投其他供应商）", family)
+            return None
+        request = video_adapters.VideoJobRequest(
+            model=model or "",
+            prompt=prompt,
+            first_frame=image_url or None,
+            last_frame=last_frame or None,
+            reference_images=list(dict.fromkeys(ref_images or []))[:MAX_REFERENCE_IMAGES],
+            reference_videos=list(dict.fromkeys(ref_videos or []))[:MAX_REFERENCE_VIDEOS],
+            reference_audios=list(dict.fromkeys(ref_audios or []))[:MAX_REFERENCE_AUDIOS],
+            duration_seconds=max(1, min(30, int(duration or 5))),
+            aspect_ratio=os.getenv("VIDEO_ASPECT_RATIO", DEFAULT_ASPECT_RATIO),
+            resolution=os.getenv("VIDEO_RESOLUTION", DEFAULT_VIDEO_RESOLUTION),
+            seed=seed,
+        )
+        provider = video_adapters.RUNTIME_PROVIDER_FOR_FAMILY.get(family)
+        runtime = runtime_model_registry.first(provider, "video") if provider else None
+        keys = [(c.id, c.api_key, c.label) for c in (runtime.credentials_for("video") if runtime else ())] or [("primary", credentials[0], "主凭据")]
+        if runtime:
+            ordered = credential_pool.candidates(runtime.configuration_id, runtime.credentials_for("video"), "video")
+            keys = [(c.id, c.api_key, c.label) for c in ordered] or keys
+        last_error: Optional[Exception] = None
+        for credential_id, api_key, label in keys:
+            try:
+                adapter = video_adapters.build_video_adapter(family, api_key=api_key, base_url=credentials[1])
+            except RuntimeError as exc:
+                logger.error("[ModelGateway] %s 适配器初始化失败: %s", family, exc)
+                return None
+            try:
+                url = self._adapter_video_once(adapter, family, model, request, credentials[1])
+                if runtime:
+                    credential_pool.note_used(runtime.configuration_id, credential_id)
+                return url
+            except RuntimeError as exc:
+                last_error = exc
+                status = _http_status_in(str(exc))
+                if runtime and credential_pool.note_rejected(runtime.configuration_id, credential_id, status):
+                    logger.warning("[ModelGateway] %s 的凭据 %s 被拒绝（HTTP %s），改用下一把", family, label, status)
+                    continue
+                break
+        logger.error("[ModelGateway] %s 视频生成失败: %s", family, str(last_error)[:200] if last_error else "no credential accepted")
+        return None
+
+    def _adapter_video_once(self, adapter, family: str, model: str, request, endpoint: str) -> Optional[str]:
+        """One submission and its polling on one adapter; a refusal surfaces as RuntimeError for the caller."""
+        try:
+            result = adapter.create_video(request)
+            if result.video_url:
+                return result.video_url
+            if result.task_id:
+                job_id = str(result.task_id)
+                video_jobs.note_submitted(family, job_id, model=model or "", endpoint=endpoint)
+                try:
+                    result = adapter.wait_for_video(
+                        job_id,
+                        timeout_seconds=settings.env_float("VIDEO_ADAPTER_WAIT_SECONDS", DEFAULT_VIDEO_WAIT_SECONDS, minimum=1),
+                        poll_interval_seconds=settings.env_float("VIDEO_ADAPTER_POLL_SECONDS", DEFAULT_VIDEO_POLL_SECONDS, minimum=0),
+                    )
+                except Exception as wait_error:
+                    video_jobs.note_failed(job_id, f"{type(wait_error).__name__}: {wait_error}")
+                    raise
+                if result.video_url:
+                    video_jobs.note_finished(job_id, result.video_url)
+                    logger.info(f"[ModelGateway] {family} 生成成功: {result.video_url[:60]}...")
+                    return result.video_url
+                video_jobs.note_failed(job_id, "adapter task finished without a video url")
+            logger.error("[ModelGateway] %s 任务结束但没有可下载的视频 URL", family)
+        except Exception as exc:
+            if _http_status_in(str(exc)) in CREDENTIAL_REJECTED:
+                raise RuntimeError(str(exc)) from exc  # the caller tries the next credential
+            logger.error("[ModelGateway] %s 生成失败: %s: %s", family, type(exc).__name__, exc)
+        finally:
+            adapter.close()
+        return None
+
+    @staticmethod
+    def video_family_ready(family: str, model: str = "") -> bool:
+        """Integrated providers keep their own credential handling; adapter families need a configuration."""
+        from app.core.providers import video_adapters
+
+        if family == comfyui.FAMILY:
+            return comfyui.ready()
+        if not video_adapters.has_adapter(family):
+            return True
+        return video_adapters.family_ready(family, model)
+
+    @staticmethod
+    def video_family_modes(family: str):
+        from app.core.providers import video_adapters
+
+        return video_adapters.adapter_supported_modes(family)
 
     def generate_tts(self, model: str, voice_role: str, text: str):
         """

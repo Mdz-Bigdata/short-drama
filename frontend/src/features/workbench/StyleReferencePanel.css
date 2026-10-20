@@ -1,0 +1,25 @@
+/* Style reference image: analyse a still into the project's style lock */
+.style-reference { margin-top: 16px; padding: 14px 16px; border: 1px solid var(--border-color); border-radius: 12px; background: rgba(214, 90, 120, 0.044); display: flex; flex-direction: column; gap: 10px; font-size: 0.8rem; }
+.style-reference header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.style-reference header svg { width: 16px; height: 16px; color: var(--neon-cyan); }
+.style-reference header span { color: var(--text-muted); font-size: 0.74rem; }
+.style-reference__hint, .style-reference__notice, .style-reference__negatives { margin: 0; color: var(--text-muted); font-size: 0.76rem; }
+.style-reference__row { display: flex; flex-wrap: wrap; gap: 8px; }
+.style-reference__row input { flex: 1 1 220px; padding: 7px 10px; color: inherit; border: 1px solid var(--border-color); border-radius: 6px; background: rgba(60, 30, 40, 0.165); font: inherit; }
+.style-reference button { min-height: 30px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; color: inherit; border: 1px solid var(--border-color); border-radius: 6px; background: rgba(214, 90, 120, 0.066); font: inherit; cursor: pointer; }
+.style-reference button svg { width: 14px; height: 14px; }
+.style-reference button.is-primary { color: #fdeef0; border-color: var(--neon-cyan); background: var(--neon-cyan); font-weight: 600; }
+.style-reference button:disabled { opacity: 0.5; cursor: not-allowed; }
+.style-reference__result { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border-color); }
+.style-reference__result h4 { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.style-reference__result h4 small, .style-reference__result h5 { color: var(--text-muted); font-size: 0.72rem; font-weight: 500; }
+.style-reference__result h5 { margin: 4px 0 0; }
+.style-reference__result p, .style-reference__result ul { margin: 0; }
+.style-reference__result dl { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 6px 12px; }
+.style-reference__result dt { color: var(--text-muted); font-size: 0.7rem; }
+.style-reference__result dd { margin: 2px 0 0; }
+.style-reference__swatches { padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.style-reference__swatches li { display: flex; align-items: center; gap: 6px; }
+.style-reference__swatches small { color: var(--text-muted); }
+.style-reference__swatch { width: 18px; height: 18px; border-radius: 4px; border: 1px solid rgba(214, 90, 120, 0.44); }
+.style-reference__actions { display: flex; flex-wrap: wrap; gap: 8px; }

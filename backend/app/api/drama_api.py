@@ -1,44 +1,1588 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Form, File, UploadFile, Depends
+import hashlib
+import json
+import logging
+import os
+from urllib.parse import quote, unquote, urlparse
+
+from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Form, File, Query, UploadFile, Depends, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from typing import List, Dict, Any, Optional
-from app.schema.drama import DramaCreateRequest, DramaTaskResponse
-from app.service.drama_service import DramaService
+from app.schema.shot_visual import (
+    ShotRegenerateRequest,
+    ShotVideoPromptUpdate,
+    VideoAdmissionRequest,
+    ShotCandidateSelection,
+    ShotRecipeRequest,
+    ShotVisualSettings,
+    ShotVisualWorkspaceResponse,
+)
+from app.core.production_asset_readiness import READINESS_KEY, evaluate_asset_readiness
+from app.core.project_asset_completion import project_element_summaries
+from app.core.element_scope import element_in_task, element_name_keys, link_task, normalized_asset_name
+from app.schema.drama import (
+    DramaCreateRequest,
+    DramaTaskResponse,
+    DramaTaskSummary,
+    ScriptUpdateRequest,
+    ShotFeedbackRequest,
+)
+from app.service.drama_service import DramaService, ScriptUpdateConflictError, StagePrerequisiteError
 from app.repository.task_repo import TaskRepository
 from app.api.auth_api import get_current_user, require_admin
-from app.core.video_quality import VideoQualityMeasurements
+from app.core.media_compositor import MEDIA_DIR
+from app.core.production_asset_extractor import extract_production_assets
+from app.core.storyboard_assets import compose_nine_grid, fetch_remote_image_bytes
+from app.core.writer_dashboard import compile_writer_dashboard
+from app.api.element_api import _persist_element_file, sync_project_actor_to_library
+from app.platform.dependencies import get_platform_store
+from app.platform.store import PlatformStore
+from app import settings
+from app.core import asset_identity
+from app.core import creation_modes, edit_timeline, generation_queue, style_analysis
+from app.core.screenwriting import ledger_ops
+from app.core.screenwriting.review import ReviewError
+from app.ingest.parsers import SourceIngestor
+from app.platform.uploads import validate_image_upload
+from starlette.concurrency import run_in_threadpool
 
-# 创建 API 路由，全局挂载登录身份校验依赖
-router = APIRouter(prefix="/api/drama", tags=["AI短剧制作"], dependencies=[Depends(get_current_user)])
+from app.platform.uploads import MAX_IMAGE_UPLOAD_BYTES, UploadValidationError
+from app.core.video_quality import VideoQualityMeasurements
+from app.schema.agent_council import CouncilReleaseEvidence
+from app.schema.writer_dashboard import (
+    AssetIdentityRequest,
+    ScriptDocument,
+    ScriptDocumentCreateRequest,
+    ScriptDocumentDetail,
+    ScriptDocumentUpdateRequest,
+    ScriptLibraryResponse,
+    WriterDashboardResponse,
+    WriterOverviewUpdateRequest,
+    WriterRelationshipUpdateRequest,
+    WriterRolesUpdateRequest,
+    WriterTimelineUpdateRequest,
+    WriterVersionCreateRequest,
+    WriterVersionRestoreRequest,
+)
+from app.schema.character_dashboard import CharacterDashboardResponse
+from app.schema.production import TimelineOperationRequest
+from app.schema.screenwriting import (
+    ScreenwritingReviewRequest,
+    ScreenwritingRepairRequest,
+    ReplanRequest,
+    ReplanAdoptRequest,
+    LedgerOperationRequest,
+    ScreenwritingEpisodeResponse,
+    ScreenwritingPlanPatchRequest,
+    ScreenwritingPromptPreviewResponse,
+    ScreenwritingStateResponse,
+)
+from app.core.screenwriting.editing import PlanEditError
+from app.core.screenwriting.engine import PROMPT_STAGES, PlanRejected, ScreenwritingError
+from app.core.spatial_stage.interchange import InterchangeError
+from app.core.spatial_stage.operations import StageEditError
+from app.schema.spatial_stage import (
+    SpatialExportResponse,
+    SpatialImportRequest,
+    SpatialOverviewResponse,
+    SpatialPlanPatchRequest,
+    SpatialPlanResponse,
+    SpatialRepairsResponse,
+    SpatialRevisionRequest,
+)
+from app.schema.director_desk import DeskCapture, DeskCapturesResponse, DeskPosesResponse, DeskSavePoseRequest
+from app.service.director_desk_service import MAX_CLIP_BYTES, CaptureError, CaptureUpload
+from app.service.spatial_stage_service import StageConflict
+
+logger = logging.getLogger("app.api.drama_api")
 service = DramaService()
+# 项目里重新生成的数字演员新图，同步给资产库里挂在本项目的同名演员。
+service.character_regenerated_hook = sync_project_actor_to_library
 repo = TaskRepository()
 
+
+def require_owned_drama_task(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Enforce per-task ownership for every route containing a task_id."""
+    task_id = request.path_params.get("task_id")
+    if not task_id:
+        return current_user
+
+    task = service.repo.get_task(str(task_id))
+    if not task:
+        # Fail closed: a transient repository read failure must never let the
+        # handler perform a second, unauthorised read that happens to succeed.
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    if current_user.get("role") == "admin":
+        return current_user
+
+    user_id = str(current_user.get("user_id") or "")
+    owner_user_id = str(task.get("owner_user_id") or "")
+    if not user_id or not owner_user_id or user_id != owner_user_id:
+        # Hide task existence from users who do not own it.
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return current_user
+
+
+# 登录校验与任务归属校验在同一路由边界内统一执行。
+router = APIRouter(
+    prefix="/api/drama",
+    tags=["AI短剧制作"],
+    dependencies=[Depends(require_owned_drama_task)],
+)
+
 @router.post("/create", response_model=DramaTaskResponse)
-def create_new_task(req: DramaCreateRequest):
+def create_new_task(req: DramaCreateRequest, current_user: dict = Depends(get_current_user)):
     """
     新建一个 AI 短剧任务。
     如果是一键成片，则初始化后可直接一键生成。
     """
     try:
-        task_data = service.create_task(req)
+        task_data = service.create_task(req, owner_user_id=current_user.get("user_id"))
         return task_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"创建任务失败: {str(e)}")
 
-@router.get("/list", response_model=List[DramaTaskResponse])
-def get_all_tasks():
+@router.get("/list", response_model=List[DramaTaskSummary])
+def get_all_tasks(current_user: dict = Depends(get_current_user)):
+    """List the caller's projects for the lobby.
+
+    Returns summaries only: the generated assets are the bulk of a task and the
+    list is polled, so they are fetched per project through /{task_id}/status.
     """
-    获取所有的短剧生成任务列表历史
-    """
-    return repo.list_all_tasks()
+    tasks = service.repo.list_all_tasks()
+    if current_user.get("role") != "admin":
+        user_id = str(current_user.get("user_id") or "")
+        tasks = (
+            [
+                task for task in tasks
+                if isinstance(task, dict) and str(task.get("owner_user_id") or "") == user_id
+            ]
+            if user_id else []
+        )
+    return [task for task in tasks if isinstance(task, dict) and task.get("task_id")]
 
 @router.get("/{task_id}/status", response_model=DramaTaskResponse)
-def get_task_status(task_id: str):
-    """
-    获取单条任务的状态 (提供断点续传的中间结果)
+def get_task_status(task_id: str, request: Request):
+    """Return one task with every generated asset, revalidated by ETag.
+
+    The workbench polls this every 1.5s while a stage runs, but a stage takes
+    far longer than one tick, so most polls carry an unchanged body of several
+    hundred kilobytes. Tagging the payload lets the browser revalidate and get
+    an empty 304 whenever nothing has moved.
     """
     task = service.get_task_status(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    return task
+
+    payload = DramaTaskResponse.model_validate(task).model_dump(mode="json", by_alias=True)
+    body = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    etag = f'W/"{hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]}"'
+    # Revalidate on every poll, but skip the body when the task has not moved.
+    headers = {"ETag": etag, "Cache-Control": "private, no-cache", "Vary": "Cookie"}
+
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    return JSONResponse(content=payload, headers=headers)
+
+
+@router.get("/{task_id}/writer-dashboard/export")
+def export_writer_dashboard(task_id: str):
+    """Download the normalized Writer Agent dashboard as versioned JSON."""
+    dashboard = service.get_writer_dashboard(task_id)
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return JSONResponse(
+        content=dashboard.model_dump(mode="json", by_alias=True),
+        headers={"Content-Disposition": 'attachment; filename="writer-dashboard.json"'},
+    )
+
+
+@router.get("/{task_id}/writer-dashboard", response_model=WriterDashboardResponse)
+def get_writer_dashboard(task_id: str):
+    """Return the Writer Agent timeline, episodes, statistics and relationship graph contract."""
+    dashboard = service.get_writer_dashboard(task_id)
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
+
+
+_EXTRACTABLE_ASSET_KINDS = {"actor", "scene", "prop", "costume", "effect", "product"}
+_IMAGE_SUFFIX_BY_MIME = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+
+
+def _local_media_bytes(path: str) -> Optional[bytes]:
+    """Read a /media/... file without leaving the media root."""
+    media_root = os.path.realpath(MEDIA_DIR)
+    absolute = os.path.realpath(os.path.join(media_root, unquote(path[len(settings.MEDIA_PREFIX):])))
+    if not absolute.startswith(media_root + os.sep) or not os.path.isfile(absolute):
+        return None
+    with open(absolute, "rb") as handle:
+        return handle.read()
+
+
+def _extracted_image_bytes(url: str) -> Optional[bytes]:
+    """Fetch one screenplay-derived reference image, local or remote."""
+    parsed = urlparse(url)
+    if parsed.path.startswith(settings.MEDIA_PREFIX):
+        return _local_media_bytes(parsed.path)
+    if parsed.scheme in {"http", "https"}:
+        try:
+            return fetch_remote_image_bytes(url)
+        except Exception:
+            return None
+    return None
+
+
+async def _attach_extracted_image(
+    *,
+    element_id: str,
+    owner_id: str,
+    kind: str,
+    url: str,
+    store: PlatformStore,
+) -> bool:
+    """Best-effort: a missing image must never fail the whole import."""
+    try:
+        content = await run_in_threadpool(_extracted_image_bytes, url)
+        if not content:
+            return False
+        suffix = os.path.splitext(urlparse(url).path)[1].lower()
+        if suffix == ".jpeg":
+            suffix = ".jpg"
+        if suffix not in _IMAGE_SUFFIX_BY_MIME.values():
+            suffix = ".png"
+        mime = next(key for key, value in _IMAGE_SUFFIX_BY_MIME.items() if value == suffix)
+        validated = validate_image_upload(f"reference{suffix}", mime, content)
+        await _persist_element_file(
+            element_id=element_id,
+            owner_id=owner_id,
+            slot="front" if kind == "actor" else "reference",
+            suffix=suffix,
+            mime=validated,
+            content=content,
+            store=store,
+        )
+        return True
+    except Exception:
+        logger.warning("提取资产参考图附加失败: element=%s kind=%s", element_id, kind)
+        return False
+
+
+def _has_image(element) -> bool:
+    return any(str(file.mime_type or "").startswith("image/") for file in (element.files or []))
+
+
+def _actor_metadata_patch(kind: str, candidate: Dict[str, Any], metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Approved five-view data a library actor does not hold yet."""
+    if kind != "actor" or not candidate.get("quality_passed"):
+        return {}
+    views = [item for item in (candidate.get("views") or []) if isinstance(item, dict)]
+    if len({item.get("view") for item in views}) < 5 or metadata.get("views") == views:
+        return {}
+    patch: Dict[str, Any] = {"views": views, "five_view_passed": True}
+    if candidate.get("sheet_url"):
+        patch["sheet_url"] = candidate["sheet_url"]
+    if candidate.get("role"):
+        patch["role"] = candidate["role"]
+    return patch
+
+
+async def _import_production_asset_candidates(
+    *,
+    task_id: str,
+    kind: str,
+    candidates: List[Dict[str, Any]],
+    owner_id: str,
+    store: PlatformStore,
+) -> Dict[str, Any]:
+    """Idempotently file one extracted asset category into the element library.
+
+    A same-name asset that another project already produced is linked to this
+    project (reused) rather than created again; only genuinely new names are
+    created and, later, generated from the screenplay.
+    """
+    if not candidates:
+        return {"kind": kind, "created": 0, "reused": 0, "skipped": 0, "with_image": 0, "items": [], "reused_items": []}
+
+    by_name: Dict[str, Any] = {}
+    for item in await store.list_all_elements(owner_id, kind):
+        for key in element_name_keys(item.name, item.metadata_json):
+            by_name.setdefault(key, item)
+    created: List[Dict[str, Any]] = []
+    reused: List[Dict[str, Any]] = []
+    skipped = 0
+    with_image = 0
+    for candidate in candidates:
+        name = str(candidate.get("name") or "").strip()
+        if not name:
+            skipped += 1
+            continue
+        image_url = str(candidate.get("image_url") or "").strip()
+        match = by_name.get(normalized_asset_name(name))
+        if match is not None:
+            metadata = match.metadata_json if isinstance(match.metadata_json, dict) else {}
+            patch = _actor_metadata_patch(kind, candidate, metadata)
+            already_linked = element_in_task(metadata, task_id)
+            if already_linked and not patch and (_has_image(match) or not image_url):
+                skipped += 1
+                continue
+            if not already_linked:
+                match = await store.link_element_to_task(match.id, owner_id, task_id)
+            if patch:
+                match = await store.merge_element_metadata(match.id, owner_id, patch)
+            attached = _has_image(match)
+            if not attached and image_url:
+                attached = await _attach_extracted_image(
+                    element_id=match.id, owner_id=owner_id, kind=kind, url=image_url, store=store,
+                )
+            if already_linked:
+                skipped += 1
+            else:
+                if attached:
+                    with_image += 1
+                reused.append({"id": match.id, "name": match.name, "image": attached})
+            continue
+        try:
+            element = await store.create_element(
+                owner_id=owner_id,
+                kind=kind,
+                name=name,
+                description=str(candidate.get("description") or ""),
+                metadata={
+                    "source": "screenplay-extraction",
+                    **link_task({}, task_id),
+                    **_actor_metadata_patch(kind, candidate, {}),
+                },
+            )
+        except ValueError as exc:
+            # Quota exhaustion stops this category; assets already created stay.
+            if created:
+                break
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        by_name[normalized_asset_name(name)] = element
+        attached = False
+        if image_url:
+            attached = await _attach_extracted_image(
+                element_id=element.id,
+                owner_id=owner_id,
+                kind=kind,
+                url=image_url,
+                store=store,
+            )
+            if attached:
+                with_image += 1
+        created.append({"id": element.id, "name": element.name, "image": attached})
+
+    return {
+        "kind": kind,
+        "created": len(created),
+        "reused": len(reused),
+        "skipped": skipped,
+        "with_image": with_image,
+        "items": created,
+        "reused_items": reused,
+    }
+
+
+@router.get("/{task_id}/production-assets/{kind}")
+def preview_production_assets(task_id: str, kind: str):
+    """Preview the shooting assets of one kind that the screenplay names."""
+    if kind not in _EXTRACTABLE_ASSET_KINDS:
+        raise HTTPException(status_code=404, detail="不支持的资产类型")
+    task = service.repo.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    assets = extract_production_assets(task, kind)
+    return {"kind": kind, "items": assets, "total": len(assets)}
+
+
+@router.post("/{task_id}/production-assets/{kind}/import")
+async def import_production_assets(
+    task_id: str,
+    kind: str,
+    current_user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """Import screenplay-derived shooting assets into the user's element library."""
+    if kind not in _EXTRACTABLE_ASSET_KINDS:
+        raise HTTPException(status_code=404, detail="不支持的资产类型")
+    if kind in ("costume", "effect"):
+        # The writer may never have listed these; read them off the screenplay first.
+        try:
+            await run_in_threadpool(service.ensure_production_asset_catalog, task_id)
+        except Exception as exc:  # a failed analysis still imports whatever is already listed
+            logger.warning("服装/特效清单补全失败: task_id=%s error=%s", task_id, type(exc).__name__)
+    task = service.repo.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    return await _import_production_asset_candidates(
+        task_id=task_id,
+        kind=kind,
+        candidates=extract_production_assets(task, kind),
+        owner_id=current_user["user_id"],
+        store=store,
+    )
+
+
+@router.post("/{task_id}/production-assets/sync")
+async def sync_production_assets(
+    task_id: str,
+    current_user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """Extract and idempotently synchronize all non-actor shooting assets."""
+    try:
+        catalog = await run_in_threadpool(service.ensure_production_asset_catalog, task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("拍摄资产目录同步失败: task_id=%s", task_id)
+        raise HTTPException(status_code=502, detail="拍摄资产分析服务暂不可用，请稍后重试") from exc
+    if catalog is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # Reload after the repair pass so the shared extractor sees the persisted
+    # structured catalog and keeps preview/import behavior identical.
+    task = service.repo.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # Actors are filed too, so a finished five-view set becomes reusable by the
+    # next project instead of living only inside this task's assets.
+    by_kind: Dict[str, Dict[str, Any]] = {}
+    # An ad's product comes from its brief; other projects have none to file.
+    kinds = ("actor", "scene", "prop", "costume", "effect") + (("product",) if creation_modes.mode_of(task.get("config")) == "ad" else ())
+    for kind in kinds:
+        by_kind[kind] = await _import_production_asset_candidates(
+            task_id=task_id,
+            kind=kind,
+            candidates=extract_production_assets(task, kind),
+            owner_id=current_user["user_id"],
+            store=store,
+        )
+
+    return {
+        "created": sum(result["created"] for result in by_kind.values()),
+        "reused": sum(result["reused"] for result in by_kind.values()),
+        "skipped": sum(result["skipped"] for result in by_kind.values()),
+        "with_image": sum(result["with_image"] for result in by_kind.values()),
+        "kinds": {
+            kind: result["created"] + result["reused"] + result["skipped"]
+            for kind, result in by_kind.items()
+        },
+        "results": by_kind,
+        "readiness": await _persist_asset_readiness(task_id, task, current_user["user_id"], store),
+    }
+
+
+async def _persist_asset_readiness(task_id: str, task: Dict[str, Any], owner_id: str, store: PlatformStore) -> Dict[str, Any]:
+    """Compute the five-kind readiness from the project library and record it on the task."""
+    summaries = await project_element_summaries(store, owner_id, task_id)
+    readiness = evaluate_asset_readiness(task, summaries)
+
+    def record(current: Dict[str, Any]) -> Dict[str, Any]:
+        current.setdefault("assets", {})[READINESS_KEY] = readiness
+        return current
+
+    await run_in_threadpool(service.repo.mutate_task, task_id, record)
+    return readiness
+
+
+@router.get("/{task_id}/production-assets/readiness")
+async def production_asset_readiness(
+    task_id: str,
+    current_user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """Whether every actor, scene, prop, costume and effect has a reference image."""
+    task = service.repo.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return await _persist_asset_readiness(task_id, task, current_user["user_id"], store)
+
+
+@router.get("/{task_id}/script-documents", response_model=ScriptLibraryResponse)
+def list_script_documents(task_id: str):
+    """List the project's screenplay library (.txt / .md reference documents)."""
+    documents = service.list_script_documents(task_id)
+    if documents is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return ScriptLibraryResponse(documents=documents, total=len(documents))
+
+
+@router.post("/{task_id}/script-documents", response_model=ScriptDocument, status_code=201)
+def create_script_document(task_id: str, req: ScriptDocumentCreateRequest):
+    """Add one screenplay document to the project's library."""
+    try:
+        document = service.create_script_document(
+            task_id, name=req.name, content=req.content, role=req.role, source_kind=req.source_kind,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if document is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return document
+
+
+@router.get("/{task_id}/script-documents/{document_id}", response_model=ScriptDocumentDetail)
+def get_script_document(task_id: str, document_id: str):
+    """Read one screenplay document, including its full text."""
+    document = service.get_script_document(task_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="剧本文件不存在")
+    return document
+
+
+@router.patch("/{task_id}/script-documents/{document_id}", response_model=ScriptDocumentDetail)
+def update_script_document(task_id: str, document_id: str, req: ScriptDocumentUpdateRequest):
+    """Rename or rewrite one screenplay document."""
+    if req.name is None and req.content is None and req.role is None and req.source_kind is None and req.order is None:
+        raise HTTPException(status_code=422, detail="请至少提供一项要修改的内容")
+    try:
+        document = service.update_script_document(
+            task_id, document_id, name=req.name, content=req.content,
+            role=req.role, source_kind=req.source_kind, order=req.order,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if document is None:
+        raise HTTPException(status_code=404, detail="剧本文件不存在")
+    return document
+
+
+@router.delete("/{task_id}/script-documents/{document_id}")
+def delete_script_document(task_id: str, document_id: str):
+    """Permanently remove one screenplay document from the library."""
+    removed = service.delete_script_document(task_id, document_id)
+    if removed is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if not removed:
+        raise HTTPException(status_code=404, detail="剧本文件不存在")
+    return {"deleted": True, "id": document_id}
+
+
+@router.post("/{task_id}/assets/rename")
+def rename_asset(task_id: str, req: AssetIdentityRequest, current_user: dict = Depends(require_owned_drama_task)):
+    """Rename a character, scene or prop everywhere it is referenced; ``dry_run`` only counts."""
+    return _change_identity(task_id, "rename", req, current_user)
+
+
+@router.post("/{task_id}/assets/merge")
+def merge_asset(task_id: str, req: AssetIdentityRequest, current_user: dict = Depends(require_owned_drama_task)):
+    """Merge ``name`` into the existing ``new_name``; the merged name stays as an alias."""
+    return _change_identity(task_id, "merge", req, current_user)
+
+
+def _change_identity(task_id: str, operation: str, req: AssetIdentityRequest, current_user: dict):
+    try:
+        result = service.change_asset_identity(
+            task_id, operation=operation, kind=req.kind, name=req.name, new_name=req.new_name, dry_run=req.dry_run,
+            owner_user_id=current_user.get("user_id"), is_admin=current_user.get("role") == "admin",
+        )
+    except asset_identity.AssetIdentityError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ScriptUpdateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/shots/admission")
+def assess_shots_admission(task_id: str, req: VideoAdmissionRequest):
+    """Admit every shot to stage 5 together: admitted, confirmation required, or blocked with per-shot problems."""
+    result = service.assess_video_admission(
+        task_id, confirmed_request_durations=req.confirmed_request_durations, persist_confirmations=req.persist,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.get("/{task_id}/usage")
+def get_usage(task_id: str, limit: int = Query(50, ge=1, le=500)):
+    """Provider calls this project has made, with their reference cost."""
+    result = service.usage_summary(task_id, limit=limit)
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.get("/{task_id}/subtitles")
+def get_subtitles(task_id: str, episode: int = Query(..., ge=1, le=200), format: str = Query("json", pattern="^(json|srt)$")):
+    """A subtitle draft for one planned episode, as cues or as SubRip text."""
+    try:
+        result = service.episode_subtitles(task_id, episode)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if format == "srt":
+        filename = f"episode_{episode}.srt"
+        return Response(
+            content=result["srt"], media_type="application/x-subrip; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename=\"{filename}\""},
+        )
+    return result
+
+
+class CharacterRegenerateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    # sheet：重出整张设定集；hd：只补高清的六个身份视图(两张付费图，保留现有设定集)；
+    # details：只把补位裁切的元素/细节格真正画出来(一到两张付费图)。
+    mode: str = Field("sheet", pattern="^(sheet|hd|details)$")
+
+
+@router.post("/{task_id}/characters/regenerate", status_code=202)
+def regenerate_character(task_id: str, req: CharacterRegenerateRequest):
+    """Redraw one character's actor sheet in the background (paid); its current portrait is the identity reference."""
+    try:
+        dashboard = service.regenerate_character(task_id, req.name, mode=req.mode)
+    except ValueError as exc:
+        detail = str(exc)
+        raise HTTPException(status_code=409 if ("正在" in detail) else 422, detail=detail) from exc
+    if dashboard is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard.model_dump(mode="json", by_alias=True)
+
+
+@router.get("/{task_id}/shots/visual", response_model=ShotVisualWorkspaceResponse)
+def get_shot_visual_workspace(task_id: str):
+    """Stage-5 shot workspace: camera motion, shot type, duration, media and prompts per shot."""
+    workspace = service.get_shot_visual_workspace(task_id)
+    if not workspace:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return workspace
+
+
+@router.put("/{task_id}/shots/{shot_id}/visual", response_model=ShotVisualWorkspaceResponse)
+def update_shot_visual(task_id: str, shot_id: int, req: ShotVisualSettings):
+    """Persist one shot's camera settings; the workflow stays at its current stage."""
+    try:
+        workspace = service.update_shot_visual(task_id, shot_id, req)
+    except ValueError as exc:
+        raise HTTPException(status_code=409 if "正在执行" in str(exc) else 422, detail=str(exc)) from exc
+    if not workspace:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return workspace
+
+
+@router.put("/{task_id}/shots/{shot_id}/video-prompt", response_model=ShotVisualWorkspaceResponse)
+def update_shot_video_prompt(task_id: str, shot_id: int, req: ShotVideoPromptUpdate):
+    """Save a hand-edited video prompt for one shot (empty restores the compiled one); its clip goes stale."""
+    try:
+        workspace = service.set_shot_video_prompt(task_id, shot_id, req.prompt)
+    except ValueError as exc:
+        raise HTTPException(status_code=409 if "正在执行" in str(exc) else 422, detail=str(exc)) from exc
+    if not workspace:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return workspace
+
+
+@router.post("/{task_id}/shots/seeds/assign", response_model=ShotVisualWorkspaceResponse)
+def assign_shot_seeds(task_id: str):
+    """Fixed per-shot seeds, neighbouring within each scene; clips are marked stale."""
+    try:
+        workspace = service.assign_shot_seeds(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409 if "正在执行" in str(exc) else 422, detail=str(exc)) from exc
+    if not workspace:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return workspace
+
+
+@router.put("/{task_id}/shots/{shot_id}/visual/select", response_model=ShotVisualWorkspaceResponse)
+def select_shot_candidate(task_id: str, shot_id: int, req: ShotCandidateSelection):
+    """Choose one of the rendered candidates as the shot's clip."""
+    try:
+        workspace = service.select_shot_candidate(task_id, shot_id, req.video_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not workspace:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return workspace
+
+
+@router.post("/{task_id}/shots/{shot_id}/regenerate", response_model=ShotVisualWorkspaceResponse)
+def regenerate_shot(task_id: str, shot_id: int, req: ShotRegenerateRequest | None = None):
+    """Mark one shot's clip for regeneration; the next stage-5 run redoes only it and reuses the others."""
+    try:
+        workspace = service.regenerate_shot(task_id, shot_id, reason=(req.reason if req else ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not workspace:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return workspace
+
+
+@router.post("/{task_id}/shots/{shot_id}/visual/recipe")
+def compose_shot_recipe(task_id: str, shot_id: int, req: ShotRecipeRequest):
+    """Compose a camera-move recipe for one shot; nothing is persisted until the user saves."""
+    try:
+        recipe = service.compose_shot_recipe(task_id, shot_id, req.category, req.intensity)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not recipe:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return recipe
+
+
+@router.put("/{task_id}/relationships", response_model=WriterDashboardResponse)
+def update_writer_relationships(task_id: str, req: WriterRelationshipUpdateRequest):
+    """Replace the character relationship list with a user-edited version."""
+    relationships = [
+        item.model_dump(mode="json", by_alias=True)
+        for item in req.relationships
+        if item.from_.strip() and item.to.strip() and item.from_.strip() != item.to.strip()
+    ]
+    dashboard = service.update_relationships(task_id, relationships)
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
+
+
+@router.patch("/{task_id}/overview", response_model=WriterDashboardResponse)
+def update_writer_overview(task_id: str, req: WriterOverviewUpdateRequest):
+    """Edit the project overview (synopsis / genre / theme / world setting) by hand."""
+    dashboard = service.update_overview(task_id, req.model_dump(exclude_none=True))
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
+
+
+@router.post("/{task_id}/overview/regenerate", response_model=WriterDashboardResponse)
+def regenerate_writer_overview(task_id: str):
+    """Tell the overview again from the source with one model call."""
+    try:
+        dashboard = service.regenerate_overview(task_id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    except Exception:
+        logger.exception("[Writer] 概述重新创作失败 task_id=%s", task_id)
+        raise HTTPException(status_code=502, detail="概述重新创作暂不可用，请稍后重试")
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
+
+
+@router.put("/{task_id}/timeline", response_model=WriterDashboardResponse)
+def update_writer_timeline(task_id: str, req: WriterTimelineUpdateRequest):
+    """Replace the story event timeline with the person's arrangement of nodes."""
+    dashboard = service.update_timeline(task_id, [event.model_dump(mode="json") for event in req.events])
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
+
+
+@router.put("/{task_id}/roles", response_model=WriterDashboardResponse)
+def update_writer_roles(task_id: str, req: WriterRolesUpdateRequest):
+    """Set the cast: positions, added names, names kept out."""
+    dashboard = service.update_roles(task_id, [role.model_dump(mode="json") for role in req.roles], list(req.hidden))
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
+
+
+@router.get("/{task_id}/script/versions")
+def list_writer_script_versions(task_id: str):
+    versions = service.list_script_versions(task_id)
+    if versions is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {"items": versions}
+
+
+@router.post("/{task_id}/script/versions", response_model=WriterDashboardResponse)
+def save_writer_script_version(task_id: str, req: WriterVersionCreateRequest):
+    """Keep the current screenplay as a named version."""
+    try:
+        dashboard = service.save_script_version(task_id, req.label)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
+
+
+@router.post("/{task_id}/script/versions/{version_id}/restore", response_model=WriterDashboardResponse)
+def restore_writer_script_version(
+    task_id: str, version_id: str, req: WriterVersionRestoreRequest, current_user: dict = Depends(get_current_user),
+):
+    """Bring a saved version back; like applying an edited script, it archives later-stage work on confirmation."""
+    try:
+        dashboard = service.restore_script_version(
+            task_id, version_id, expected_source_hash=req.expected_source_hash, confirm_invalidate=req.confirm_invalidate,
+            owner_user_id=str(current_user.get("user_id") or ""), is_admin=current_user.get("role") == "admin",
+        )
+    except ScriptUpdateConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
+
+
+@router.post("/{task_id}/script/continue", response_model=WriterDashboardResponse)
+def continue_writer_script(task_id: str):
+    """Append the episodes a truncated screenplay is still missing."""
+    try:
+        dashboard = service.continue_script(task_id)
+    except (ValueError, ScriptUpdateConflictError) as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    except Exception:
+        logger.exception("[Writer] 剧本补写失败 task_id=%s", task_id)
+        raise HTTPException(status_code=502, detail="剧本补写服务暂不可用，请稍后重试")
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
+
+
+@router.get("/{task_id}/screenwriting/ledger")
+def get_screenwriting_ledger(task_id: str):
+    """The episode ledger as the Episodes view shows it: entries, unsplit source, any candidate replan."""
+    try:
+        result = service.get_ledger(task_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.get("/{task_id}/screenwriting/ledger/source")
+def get_ledger_source_slice(task_id: str, start: int = Query(0, ge=0), end: int = Query(0, ge=0)):
+    """The whole source between two offsets, for choosing where an episode boundary falls."""
+    try:
+        result = service.ledger_source_slice(task_id, start, end)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/screenwriting/ledger/impact")
+def preview_ledger_impact(task_id: str, episodes: list[int] = Query(..., alias="episode")):
+    """What the named episodes would lose if an operation discarded them."""
+    try:
+        result = service.preview_ledger_impact(task_id, episodes)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/screenwriting/ledger/ops")
+def apply_ledger_operation(task_id: str, req: LedgerOperationRequest, current_user: dict = Depends(require_owned_drama_task)):
+    """Split, merge, cut, create, move or delete episodes; written episodes it would discard must be confirmed."""
+    try:
+        result = service.apply_ledger_operation(
+            task_id, req, owner_user_id=current_user.get("user_id"), is_admin=current_user.get("role") == "admin",
+        )
+    except ledger_ops.LedgerOperationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ScriptUpdateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/screenwriting/replan")
+def plan_replan(task_id: str, req: ReplanRequest):
+    """Plan the source again from one episode on; the result is a candidate beside the ledger."""
+    try:
+        result = service.plan_replan_candidate(task_id, req.from_episode)
+    except ledger_ops.LedgerOperationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ScriptUpdateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/screenwriting/replan/adopt")
+def adopt_replan(task_id: str, req: ReplanAdoptRequest, current_user: dict = Depends(require_owned_drama_task)):
+    """Replace the cut episodes from the replan point with the candidate's."""
+    try:
+        result = service.adopt_replan_candidate(
+            task_id, req, owner_user_id=current_user.get("user_id"), is_admin=current_user.get("role") == "admin",
+        )
+    except ledger_ops.LedgerOperationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ScriptUpdateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/screenwriting/replan/discard")
+def discard_replan(task_id: str):
+    try:
+        result = service.discard_replan_candidate(task_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.get("/{task_id}/style/reference")
+def get_style_reference(task_id: str):
+    """The last analysed reference image's style, and the lock the project uses now."""
+    result = service.get_style_reference(task_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/style/reference")
+async def analyze_style_reference(
+    task_id: str,
+    file: UploadFile = File(...),
+    hint: str = Form(""),
+    model: str = Form(""),
+    current_user: dict = Depends(require_owned_drama_task),
+):
+    """Read a reference image's look into a style lock; it is shown, not applied."""
+    content = await file.read(MAX_IMAGE_UPLOAD_BYTES + 1)
+    try:
+        result = await run_in_threadpool(
+            service.analyze_style_reference, task_id,
+            content=content, filename=file.filename or "", content_type=file.content_type or "", hint=hint, model=model,
+        )
+    except UploadValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except style_analysis.StyleAnalysisError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/style/reference/apply")
+def apply_style_reference(task_id: str, current_user: dict = Depends(require_owned_drama_task)):
+    try:
+        result = service.apply_style_reference(task_id)
+    except style_analysis.StyleAnalysisError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/style/reference/revert")
+def revert_style_reference(task_id: str, current_user: dict = Depends(require_owned_drama_task)):
+    try:
+        result = service.revert_style_reference(task_id)
+    except style_analysis.StyleAnalysisError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.get("/{task_id}/timeline")
+def get_timeline(task_id: str):
+    """The edit timeline the final cut is rendered from, plus the music library to pick from."""
+    result = service.get_timeline(task_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/timeline/ops")
+def edit_timeline_route(task_id: str, req: TimelineOperationRequest, current_user: dict = Depends(require_owned_drama_task)):
+    """Trim, re-subtitle, mute, change a transition, pick a candidate, review a clip, set the title or the music."""
+    try:
+        result = service.edit_timeline(task_id, req.operation, req.model_dump(exclude={"operation"}, exclude_none=True))
+    except edit_timeline.TimelineError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/timeline/render")
+def render_timeline(task_id: str, current_user: dict = Depends(require_owned_drama_task)):
+    """Render the film again from the timeline as edited, without re-running stage 7."""
+    try:
+        result = service.render_timeline(task_id)
+    except ScriptUpdateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.get("/{task_id}/timeline/jianying.zip")
+def download_jianying_draft(task_id: str, current_user: dict = Depends(require_owned_drama_task)):
+    """The timeline as a JianYing draft folder with its media, zipped."""
+    result = service.jianying_draft(task_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    payload, info = result
+    headers = {
+        "Content-Disposition": f'attachment; filename="jianying_{task_id[:8]}.zip"',
+        "X-Draft-Skipped": str(len(info["skipped"])), "X-Draft-Seconds": str(info["duration_seconds"]),
+    }
+    return Response(content=payload, media_type="application/zip", headers=headers)
+
+
+@router.get("/{task_id}/queue")
+def get_generation_queue(task_id: str):
+    """The generation queue of the current or last stage-5 run: items, buckets and their ceilings."""
+    result = service.get_generation_queue(task_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/queue/cancel-queued")
+def cancel_queued_generation(task_id: str, current_user: dict = Depends(require_owned_drama_task)):
+    """Withdraw every item still waiting; the ones already running finish and keep their result."""
+    try:
+        result = service.cancel_generation_item(task_id, None)
+    except generation_queue.CancelError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/queue/{key}/cancel")
+def cancel_generation_item(task_id: str, key: str, current_user: dict = Depends(require_owned_drama_task)):
+    """Withdraw one queued item; a running one cannot be taken back."""
+    try:
+        result = service.cancel_generation_item(task_id, key)
+    except generation_queue.CancelError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.get("/{task_id}/screenwriting/review")
+def get_screenwriting_review(task_id: str):
+    """Which episodes are confirmed, pending, changed since confirmation, or quarantined drafts."""
+    try:
+        result = service.get_screenwriting_review(task_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/screenwriting/episodes/{episode}/review", response_model=ScreenwritingEpisodeResponse)
+def review_screenwriting_episode(task_id: str, episode: int, req: ScreenwritingReviewRequest, current_user: dict = Depends(require_owned_drama_task)):
+    """Confirm the episode as it stands (binds to its plan fingerprint) or reopen it."""
+    try:
+        result = service.review_screenwriting_episode(task_id, episode, req.action, by=str(current_user.get("user_id") or "") or None)
+    except ReviewError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/screenwriting/episodes/{episode}/repair", response_model=ScreenwritingEpisodeResponse)
+def repair_screenwriting_episode(task_id: str, episode: int, req: ScreenwritingRepairRequest, current_user: dict = Depends(require_owned_drama_task)):
+    """Let the model repair a quarantined draft with its violation reasons; never accepts a worse result."""
+    try:
+        result = service.repair_screenwriting_episode(
+            task_id, episode, confirm_invalidate=req.confirm_invalidate,
+            owner_user_id=current_user.get("user_id"), is_admin=current_user.get("role") == "admin",
+        )
+    except ScriptUpdateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ScreenwritingError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.get("/{task_id}/screenwriting", response_model=ScreenwritingStateResponse)
+def get_screenwriting_state(task_id: str):
+    """Episode ledger, asset inventory, duration constraints and per-episode status."""
+    state = service.get_screenwriting_state(task_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return state
+
+
+@router.get("/{task_id}/screenwriting/episodes/{episode}", response_model=ScreenwritingEpisodeResponse)
+def get_screenwriting_episode(task_id: str, episode: int):
+    """One episode's editable shot plan plus its authored visual layer."""
+    try:
+        payload = service.get_screenwriting_episode(task_id, episode)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    if not payload:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return payload
+
+
+@router.get("/{task_id}/screenwriting/episodes/{episode}/prompt", response_model=ScreenwritingPromptPreviewResponse)
+def preview_screenwriting_prompt(task_id: str, episode: int, stage: str = "plan"):
+    """The exact prompt the Writer would send for this episode; no model call, no cost."""
+    if stage not in PROMPT_STAGES:
+        raise HTTPException(status_code=422, detail="stage 只能是 plan、prose 或 visual")
+    try:
+        prompt = service.preview_screenwriting_prompt(task_id, episode, stage)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except (ScreenwritingError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    if prompt is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return ScreenwritingPromptPreviewResponse(task_id=task_id, episode=episode, stage=stage, prompt=prompt)
+
+
+@router.patch("/{task_id}/screenwriting/episodes/{episode}/plan", response_model=ScreenwritingEpisodeResponse)
+def patch_screenwriting_plan(
+    task_id: str,
+    episode: int,
+    req: ScreenwritingPlanPatchRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Apply ordered edits to a shot plan and re-author only the shots whose content changed."""
+    try:
+        payload = service.patch_screenwriting_plan(
+            task_id,
+            episode,
+            base_revision=req.base_revision,
+            operations=req.operations,
+            confirm_invalidate=req.confirm_invalidate,
+            owner_user_id=str(current_user.get("user_id") or ""),
+            is_admin=current_user.get("role") == "admin",
+        )
+    except PlanEditError as error:
+        where = []
+        if error.operation_index is not None:
+            where.append(f"第 {error.operation_index + 1} 个操作")
+        if error.scene_id:
+            where.append(f"分镜 {error.scene_id}")
+        suffix = f"（{'，'.join(where)}）" if where else ""
+        raise HTTPException(status_code=422, detail=f"{error}{suffix}")
+    except PlanRejected as error:
+        raise HTTPException(status_code=409, detail=f"分镜规划未通过内容校验：\n{error}")
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except (ScriptUpdateConflictError, ScreenwritingError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    except Exception:
+        logger.exception("[Writer] 分镜规划编辑失败 task_id=%s episode=%s", task_id, episode)
+        raise HTTPException(status_code=502, detail="分镜规划编辑服务暂不可用，请稍后重试")
+    if not payload:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return payload
+
+
+@router.get("/{task_id}/spatial", response_model=SpatialOverviewResponse)
+def get_spatial_overview(task_id: str):
+    """Every scene's spatial stage at a glance, plus the cross-scene side and location memories."""
+    overview = service.get_spatial_overview(task_id)
+    if not overview:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return overview
+
+
+def _spatial_call(task_id: str, scene_id: str, call):
+    try:
+        payload = call()
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except StageConflict as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    except (StageEditError, InterchangeError, CaptureError) as error:
+        raise HTTPException(status_code=422, detail=str(error))
+    except Exception:
+        logger.exception("[Spatial] 空间调度操作失败 task_id=%s scene_id=%s", task_id, scene_id)
+        raise HTTPException(status_code=502, detail="空间调度服务暂不可用，请稍后重试")
+    if not payload:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return payload
+
+
+@router.post("/{task_id}/shots/{shot_id}/feedback")
+def report_shot_feedback(task_id: str, shot_id: str, req: ShotFeedbackRequest):
+    """报告一镜的生成结果：翻车的归类成失败类型并给出修正方案，成功的沉淀为项目经验。"""
+    try:
+        payload = service.report_shot_failure(
+            task_id, shot_id, result=req.result, text=req.text,
+            category=req.category, applied_fix=req.applied_fix,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not payload:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return payload
+
+
+@router.get("/{task_id}/feedback")
+def get_generation_feedback(task_id: str):
+    """本项目的翻车台账：各类失败次数、该模型已确认的弱点、已验证有效的修正手段。"""
+    payload = service.get_generation_feedback(task_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return payload
+
+
+@router.get("/{task_id}/prompt-packages")
+def get_prompt_packages(
+    task_id: str,
+    scene_id: str = Query("", max_length=80, description="只导出这一场；留空则整集"),
+    package_seconds: int = Query(15, description="单条提示词时长：10 / 15 / 20 / 30 秒"),
+    variant: str = Query("standard", pattern="^(standard|continuous|fight|script_doc)$"),
+    delivery: str = Query("正常", pattern="^(正常|急切|沉重)$", description="台词语速档，全篇统一"),
+):
+    """把已定稿的分镜重新切成可直接粘贴的 Seedance 提示词分包（或分段脚本文档）。"""
+    try:
+        payload = service.compile_prompt_packages(
+            task_id, scene_id=scene_id, package_seconds=package_seconds, variant=variant, delivery=delivery,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not payload:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return payload
+
+
+@router.get("/{task_id}/asset-sheets")
+def get_asset_sheets(task_id: str):
+    """人物 / 场景 / 道具 / 色板四类设定图：每项都带稳定识别锚点、可直接生成的提示词与固定版式。"""
+    payload = service.compile_asset_sheets(task_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return payload
+
+
+@router.get("/{task_id}/spatial/scenes/{scene_id}", response_model=SpatialPlanResponse)
+def get_spatial_plan(task_id: str, scene_id: str):
+    """One scene's stage: marks, set pieces, axis, one solved camera per shot, and the checks."""
+    return _spatial_call(task_id, scene_id, lambda: service.get_spatial_plan(task_id, scene_id))
+
+
+@router.patch("/{task_id}/spatial/scenes/{scene_id}", response_model=SpatialPlanResponse)
+def patch_spatial_plan(task_id: str, scene_id: str, req: SpatialPlanPatchRequest):
+    """Apply ordered semantic edits (place relative, face pair, formations, axis, cameras, per-shot moves)."""
+    return _spatial_call(task_id, scene_id, lambda: service.patch_spatial_plan(
+        task_id, scene_id, base_revision=req.base_revision, operations=req.operations, solve=req.solve,
+    ))
+
+
+@router.get("/{task_id}/spatial/scenes/{scene_id}/repairs", response_model=SpatialRepairsResponse)
+def get_spatial_repairs(task_id: str, scene_id: str):
+    """The edits that would clear the scene's failing checks; submit them through PATCH, or send `repair_checks`."""
+    return _spatial_call(task_id, scene_id, lambda: service.get_spatial_repairs(task_id, scene_id))
+
+
+@router.post("/{task_id}/spatial/scenes/{scene_id}/rebuild", response_model=SpatialPlanResponse)
+def rebuild_spatial_plan(task_id: str, scene_id: str, req: SpatialRevisionRequest):
+    """Discard edits and plan the scene again from the script and the storyboard table."""
+    return _spatial_call(task_id, scene_id, lambda: service.rebuild_spatial_plan(
+        task_id, scene_id, base_revision=req.base_revision,
+    ))
+
+
+@router.post("/{task_id}/spatial/scenes/{scene_id}/redraw", response_model=SpatialPlanResponse)
+def redraw_spatial_scene(task_id: str, scene_id: str):
+    """Send a finished scene back to stage 4 so its panels are drawn from the current blocking."""
+    return _spatial_call(task_id, scene_id, lambda: service.redraw_spatial_scene(task_id, scene_id))
+
+
+@router.get("/{task_id}/spatial/scenes/{scene_id}/export", response_model=SpatialExportResponse)
+def export_spatial_plan(task_id: str, scene_id: str, format: str = "director-desk"):
+    """The stage as a 3D director-desk project or a CoStage document."""
+    if format not in {"director-desk", "costage"}:
+        raise HTTPException(status_code=422, detail="format 只能是 director-desk 或 costage")
+    return _spatial_call(task_id, scene_id, lambda: service.export_spatial_plan(task_id, scene_id, format))
+
+
+@router.post("/{task_id}/spatial/scenes/{scene_id}/import", response_model=SpatialPlanResponse)
+def import_spatial_plan(task_id: str, scene_id: str, req: SpatialImportRequest):
+    """Bring back positions, facings and camera poses edited in a 3D director desk (matched by name / camera id)."""
+    return _spatial_call(task_id, scene_id, lambda: service.import_spatial_plan(
+        task_id, scene_id, base_revision=req.base_revision, document=req.document,
+    ))
+
+
+@router.get("/{task_id}/director-desk/scenes/{scene_id}/captures", response_model=DeskCapturesResponse)
+def list_desk_captures(task_id: str, scene_id: str):
+    """The stills and blockout clips taken of one scene's stage, and which of them each shot uses."""
+    return _spatial_call(task_id, scene_id, lambda: service.get_desk_captures(task_id, scene_id))
+
+
+@router.post("/{task_id}/director-desk/scenes/{scene_id}/captures", response_model=DeskCapture)
+async def upload_desk_capture(
+    task_id: str,
+    scene_id: str,
+    file: UploadFile = File(..., description="静帧（PNG / JPEG / WebP ≤ 10 MB）或白模视频（MP4 / WebM ≤ 60 MB，≤ 30 秒）"),
+    shot_id: int = Form(...),
+    kind: str = Form(...),
+    camera_id: str = Form(""),
+    plan_revision: int = Form(0),
+    shows_limbs: bool = Form(False),
+    monochrome: bool = Form(False),
+    labelled: bool = Form(False),
+    depth: bool = Form(False),
+    width: int = Form(0),
+    height: int = Form(0),
+    duration_s: float = Form(0.0),
+    fps: int = Form(0),
+):
+    """Store one capture under the task. The file's own bytes decide what it is, never the declared type."""
+    # One byte past the largest thing we accept: enough to know it is too big without holding all of it.
+    content = await file.read(MAX_CLIP_BYTES + 1)
+    upload = CaptureUpload(
+        content=content, kind=kind, shot_id=shot_id, camera_id=camera_id, plan_revision=plan_revision,
+        shows_limbs=shows_limbs, monochrome=monochrome, labelled=labelled, depth=depth, width=width, height=height,
+        duration_s=duration_s, fps=fps,
+    )
+    return await run_in_threadpool(
+        _spatial_call, task_id, scene_id, lambda: service.add_desk_capture(task_id, scene_id, upload),
+    )
+
+
+@router.delete("/{task_id}/director-desk/scenes/{scene_id}/captures/{capture_id}", response_model=DeskCapturesResponse)
+def delete_desk_capture(task_id: str, scene_id: str, capture_id: str):
+    """Delete a capture; one a shot was using is taken out of that shot first."""
+    return _spatial_call(task_id, scene_id, lambda: service.delete_desk_capture(task_id, scene_id, capture_id))
+
+
+@router.post("/{task_id}/director-desk/scenes/{scene_id}/captures/{capture_id}/apply", response_model=DeskCapturesResponse)
+def apply_desk_capture(task_id: str, scene_id: str, capture_id: str):
+    """Hand a capture to stage 5: a still leads the shot's sequence_images, a clip leads its reference_videos."""
+    return _spatial_call(task_id, scene_id, lambda: service.apply_desk_capture(task_id, scene_id, capture_id))
+
+
+# DELETE …/apply is the same request spelled the REST way; the desk client uses it.
+@router.delete("/{task_id}/director-desk/scenes/{scene_id}/captures/{capture_id}/apply", response_model=DeskCapturesResponse)
+@router.post("/{task_id}/director-desk/scenes/{scene_id}/captures/{capture_id}/unapply", response_model=DeskCapturesResponse)
+def unapply_desk_capture(task_id: str, scene_id: str, capture_id: str):
+    return _spatial_call(task_id, scene_id, lambda: service.apply_desk_capture(task_id, scene_id, capture_id, applied=False))
+
+
+@router.get("/{task_id}/director-desk/poses", response_model=DeskPosesResponse)
+def list_desk_poses(task_id: str):
+    return _spatial_call(task_id, "", lambda: service.get_desk_poses(task_id))
+
+
+@router.post("/{task_id}/director-desk/poses", response_model=DeskPosesResponse)
+def save_desk_pose(task_id: str, req: DeskSavePoseRequest):
+    """Save a pose under a name; saving the same name again replaces it."""
+    return _spatial_call(task_id, "", lambda: service.save_desk_pose(task_id, req.name, req.pose))
+
+
+@router.delete("/{task_id}/director-desk/poses/{pose_id}", response_model=DeskPosesResponse)
+def delete_desk_pose(task_id: str, pose_id: str):
+    return _spatial_call(task_id, "", lambda: service.delete_desk_pose(task_id, pose_id))
+
+
+@router.post("/{task_id}/relationships/analyze", response_model=WriterDashboardResponse)
+def analyze_writer_relationships(task_id: str):
+    """Re-derive real character relations from the screenplay with one LLM pass."""
+    try:
+        dashboard = service.analyze_relationships(task_id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    except Exception:
+        logger.exception("[Writer] 人物关系分析失败 task_id=%s", task_id)
+        raise HTTPException(status_code=502, detail="人物关系分析服务暂不可用，请稍后重试")
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
+
+
+_STORYBOARD_IMAGE_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+
+
+def _storyboard_attachment(url: str, filename_base: str):
+    """Serve a task-owned storyboard image URL as a file download."""
+    parsed = urlparse(url)
+    extension = os.path.splitext(parsed.path)[1].lower()
+    if extension not in _STORYBOARD_IMAGE_TYPES:
+        extension = ".png"
+    media_type = _STORYBOARD_IMAGE_TYPES[extension]
+    filename = f"{filename_base}{extension}"
+    disposition = f"attachment; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}"
+
+    if parsed.path.startswith(settings.MEDIA_PREFIX) and parsed.scheme in {"http", "https", ""}:
+        media_root = os.path.realpath(MEDIA_DIR)
+        local_path = os.path.realpath(
+            os.path.join(media_root, unquote(parsed.path[len(settings.MEDIA_PREFIX):]))
+        )
+        if not local_path.startswith(media_root + os.sep) or not os.path.isfile(local_path):
+            raise HTTPException(status_code=404, detail="分镜图文件不存在")
+        return FileResponse(
+            local_path,
+            media_type=media_type,
+            headers={"Content-Disposition": disposition},
+        )
+
+    if parsed.scheme in {"http", "https"}:
+        try:
+            payload = fetch_remote_image_bytes(url)
+        except Exception:
+            raise HTTPException(status_code=502, detail="分镜图下载失败，请稍后重试")
+        return Response(
+            content=payload,
+            media_type=media_type,
+            headers={"Content-Disposition": disposition},
+        )
+    raise HTTPException(status_code=404, detail="分镜图地址无效")
+
+
+def _scene_grid_attachment(shots: list, scene_id: str):
+    """Compose and serve one scene's own 3x3 board so the file matches its name."""
+    sources = [
+        str(entry.get("image_url")).strip()
+        for entry in shots
+        if isinstance(entry, dict) and str(entry.get("image_url") or "").strip()
+    ][:9]
+    if not sources:
+        raise HTTPException(status_code=404, detail="该分镜场景尚未生成图片")
+    safe_scene = "".join(ch for ch in scene_id if ch.isalnum() or ch in "-_")[:40] or "scene"
+    digest = hashlib.sha256("\n".join(sources).encode("utf-8")).hexdigest()[:16]
+    target_path = os.path.join(MEDIA_DIR, "storyboards", f"scene_{safe_scene}_{digest}.png")
+    if not os.path.isfile(target_path):
+        try:
+            compose_nine_grid(sources, target_path)
+        except Exception:
+            raise HTTPException(status_code=502, detail="分镜场景合成失败，请稍后重试")
+    filename = f"storyboard-{safe_scene}.png"
+    disposition = f"attachment; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}"
+    return FileResponse(
+        target_path,
+        media_type="image/png",
+        headers={"Content-Disposition": disposition},
+    )
+
+
+@router.get("/{task_id}/storyboard/download")
+def download_storyboard_image(
+    task_id: str,
+    target: str = "grid",
+    shot: int = -1,
+    scene: str = "",
+):
+    """Download the whole board, one scene's own board, or a single frame."""
+    task = service.repo.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
+
+    if target == "grid":
+        grid_url = assets.get("4_grid")
+        if not isinstance(grid_url, str) or not grid_url.strip():
+            raise HTTPException(status_code=404, detail="分镜合成图尚未生成")
+        return _storyboard_attachment(grid_url.strip(), "storyboard-grid")
+
+    if target == "scene":
+        scene_id = scene.strip()
+        if not scene_id:
+            raise HTTPException(status_code=404, detail="缺少分镜场景标识")
+        shots = assets.get("4")
+        if not isinstance(shots, list):
+            raise HTTPException(status_code=404, detail="分镜画格不存在")
+        scene_shots = [
+            entry for entry in shots
+            if isinstance(entry, dict)
+            and str(entry.get("scene_id") or entry.get("sceneId") or "").strip() == scene_id
+        ]
+        if not scene_shots:
+            raise HTTPException(status_code=404, detail="该分镜场景不存在")
+        return _scene_grid_attachment(scene_shots, scene_id)
+
+    if target != "shot":
+        raise HTTPException(status_code=404, detail="不支持的下载目标")
+    shots = assets.get("4")
+    if not isinstance(shots, list) or not 0 <= shot < len(shots):
+        raise HTTPException(status_code=404, detail="分镜画格不存在")
+    entry = shots[shot] if isinstance(shots[shot], dict) else {}
+    image_url = entry.get("image_url")
+    if not isinstance(image_url, str) or not image_url.strip():
+        raise HTTPException(status_code=404, detail="该分镜画格尚未生成图片")
+    scene_id = str(entry.get("scene_id") or entry.get("sceneId") or "scene").strip() or "scene"
+    safe_scene = "".join(ch for ch in scene_id if ch.isalnum() or ch in "-_")[:40] or "scene"
+    return _storyboard_attachment(image_url.strip(), f"storyboard-{safe_scene}-{shot + 1:02d}")
+
+
+@router.patch("/{task_id}/script", response_model=WriterDashboardResponse)
+def update_script(
+    task_id: str,
+    request: ScriptUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Save an edited .md/.txt screenplay and return its rebuilt dashboard."""
+    try:
+        dashboard = service.update_script(
+            task_id,
+            content=request.content,
+            file_name=request.file_name,
+            expected_source_hash=request.expected_source_hash,
+            confirm_invalidate=request.confirm_invalidate,
+            owner_user_id=str(current_user.get("user_id") or ""),
+            is_admin=current_user.get("role") == "admin",
+        )
+    except ScriptUpdateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
+
+
+@router.get("/{task_id}/character-dashboard/export")
+def export_character_dashboard(task_id: str):
+    """Download the normalized Character Designer five-view contract as JSON."""
+    dashboard = service.get_character_dashboard(task_id)
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return JSONResponse(
+        content=dashboard.model_dump(mode="json", by_alias=True),
+        headers={
+            "Content-Disposition": 'attachment; filename="character-dashboard.json"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.get("/{task_id}/character-dashboard", response_model=CharacterDashboardResponse)
+def get_character_dashboard(task_id: str):
+    """Return the Character Designer cards, fixed five-view slots and quality state."""
+    dashboard = service.get_character_dashboard(task_id)
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard
 
 @router.post("/{task_id}/next", response_model=DramaTaskResponse)
 async def run_next_stage(task_id: str, current_stage: int):
@@ -46,8 +1590,10 @@ async def run_next_stage(task_id: str, current_stage: int):
     一步一步引导模式：启动执行指定步骤阶段
     """
     try:
-        updated_task = await service.execute_stage(task_id, current_stage)
-        return updated_task
+        await service.execute_stage(task_id, current_stage)
+        return service.get_task_status(task_id)
+    except StagePrerequisiteError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:
@@ -64,40 +1610,30 @@ def pause_running_task(task_id: str):
     return task
 
 @router.post("/{task_id}/resume", response_model=DramaTaskResponse)
-def resume_paused_task(task_id: str, background_tasks: BackgroundTasks):
+async def resume_paused_task(task_id: str, background_tasks: BackgroundTasks):
     """
     恢复被暂停的任务，并自动在后台线程中继续一键生成
     """
-    task = service.resume_task(task_id)
-    if not task:
+    if not service.repo.get_task(task_id):
         raise HTTPException(status_code=404, detail="任务不存在")
-    
-    # 异步在后台恢复执行剩下的步骤
-    background_tasks.add_task(service.execute_all_stages, task_id)
-    return task
+    return (await service.assistant_message(task_id, "一键成片"))["task"]
 
 @router.post("/{task_id}/run_all", response_model=DramaTaskResponse)
-def run_all_stages_one_click(task_id: str, background_tasks: BackgroundTasks):
+async def run_all_stages_one_click(task_id: str, background_tasks: BackgroundTasks):
     """
     一键成片模式：异步在后台连续串行运行 1 到 8 步骤
     """
-    task = service.get_task_status(task_id)
-    if not task:
+    if not service.repo.get_task(task_id):
         raise HTTPException(status_code=404, detail="任务不存在")
-    
-    task["status"] = "running"
-    repo.save_task(task_id, task)
-    
-    # 异步在后台执行全生命周期
-    background_tasks.add_task(service.execute_all_stages, task_id)
-    return task
+    return (await service.assistant_message(task_id, "一键成片"))["task"]
 
 @router.post("/{task_id}/episodes/plan")
 def plan_episodes_route(task_id: str):
     """把已生成的完整剧本(阶段2)切分为多集，返回分集清单。需先完成阶段1-3。"""
     try:
         task = service.plan_episodes(task_id)
-        return {"status": "success", "totalEpisodes": task.get("total_episodes", 0),
+        return {"status": "success", "sourceHash": compile_writer_dashboard(task).source_hash,
+                "totalEpisodes": task.get("total_episodes", 0),
                 "episodes": [{"index": e["index"], "title": e["title"], "status": e["status"]}
                              for e in task.get("episodes", [])]}
     except ValueError as ve:
@@ -113,11 +1649,12 @@ def list_episodes_route(task_id: str):
         raise HTTPException(status_code=404, detail="任务不存在")
     eps = task.get("episodes", []) or []
     return {
+        "sourceHash": compile_writer_dashboard(task).source_hash,
         "totalEpisodes": task.get("total_episodes", len(eps)),
         "currentEpisode": task.get("current_episode", 0),
         "episodes": [{"index": e.get("index"), "title": e.get("title"), "status": e.get("status"),
                       "videoUrl": e.get("video_url"), "shotsCount": len(e.get("shots") or []),
-                      "summary": e.get("summary", "")} for e in eps],
+                      "summary": e.get("summary", ""), "failReason": e.get("fail_reason")} for e in eps],
     }
 
 @router.post("/{task_id}/episodes/{ep_index}/produce")
@@ -144,6 +1681,33 @@ def produce_episode_route(task_id: str, ep_index: int, background_tasks: Backgro
     repo.save_task(task_id, task)
     return {"status": "running", "episode": ep_index, "message": f"第{ep_index}集已开始后台制作，请轮询 /episodes 查看进度"}
 
+@router.post("/{task_id}/assistant")
+async def assistant_chat(task_id: str, payload: Dict[str, str], current_user: dict = Depends(require_owned_drama_task)):
+    """
+    自然语言流程助手：意图识别 (执行下一步/重跑阶段N/暂停/查询进度/微调/答疑)，
+    执行类动作后台异步启动并立即返回；前端轮询 /status 的 stageProgress 展示调用过程与进度条。
+    """
+    message = payload.get("message", "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="消息内容不能为空")
+    try:
+        result = await service.assistant_message(task_id, message, user=current_user)
+        return {
+            "reply": result["reply"],
+            "action": result["action"],
+            "stage": result["stage"],
+            "task": DramaTaskResponse(**result["task"]).model_dump(by_alias=True),
+            "tool_calls": result.get("tool_calls") or [],
+            "proposal": result.get("proposal"),
+        }
+    except StagePrerequisiteError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"对话处理失败: {str(e)}")
+
+
 @router.post("/{task_id}/chat", response_model=DramaTaskResponse)
 async def chat_with_agent(task_id: str, payload: Dict[str, str]):
     """
@@ -163,11 +1727,21 @@ async def chat_with_agent(task_id: str, payload: Dict[str, str]):
 
 @router.post("/{task_id}/quality/video", response_model=DramaTaskResponse)
 def submit_video_quality(task_id: str, measurements: VideoQualityMeasurements):
-    """提交真实多模态或人工复核证据；只有通过后任务才标记 completed。"""
+    """提交成片多模态或人工复核证据；通过后进入八 Agent 终审。"""
     try:
         return service.submit_video_quality(task_id, measurements)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{task_id}/quality/council", response_model=DramaTaskResponse)
+def submit_council_release(task_id: str, evidence: CouncilReleaseEvidence):
+    """提交八 Agent 全量交付证据；只有视频门禁和委员会门禁均通过才完成。"""
+    try:
+        return service.submit_council_release(task_id, evidence)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
 
 @router.post("/{task_id}/update_config", response_model=DramaTaskResponse)
 def update_task_config(task_id: str, req: DramaCreateRequest):
@@ -268,10 +1842,11 @@ async def parse_script_file_route(file: UploadFile = File(..., description="上�
     手动上传剧本文件解析接口，支持 .txt, .md, .docx, .pdf, .fdx。
     """
     try:
-        maximum = 20 * 1024 * 1024
+        # 与解析器同一个上限：接口先于解析器拦截，两边数字不一致时会出现“接口放行、解析拒绝”
+        maximum = SourceIngestor.MAX_BYTES
         file_bytes = await file.read(maximum + 1)
         if len(file_bytes) > maximum:
-            raise ValueError("剧本文件不能超过 20MB")
+            raise ValueError(f"剧本文件不能超过 {maximum // (1024 * 1024)}MB")
         safe_name = file.filename or "script.txt"
         content = service.parse_script_file(safe_name, file_bytes)
         return {

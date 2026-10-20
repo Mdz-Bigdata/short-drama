@@ -3,15 +3,26 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.auth_api import get_current_user, require_admin
+from app.core.capability_manifest import capability_command_catalog
 from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore
 from app.schema.platform import CapabilityToggleRequest, CommandRequest
+from app.core.provenance import upstream_source_by_id
 
 
 router = APIRouter(prefix="/api/platform", tags=["全局能力与命令"])
+_CAPABILITY_EVIDENCE = {
+    (record["source_id"], record["capability_id"]): record
+    for record in capability_command_catalog()
+}
+
+
+def _capability_evidence(source_id: str, capability_id: str) -> dict:
+    return _CAPABILITY_EVIDENCE.get((source_id, capability_id), {})
 
 
 def _ability(item) -> dict:
+    evidence = _capability_evidence(item.source_id, item.capability_id)
     return {
         "id": item.capability_id,
         "label": item.label,
@@ -19,6 +30,8 @@ def _ability(item) -> dict:
         "entrypoint": item.entrypoint,
         "enabled": item.enabled,
         "updated_at": item.updated_at,
+        "implementation_status": evidence.get("implementation_status", "unverified"),
+        "evidence": evidence.get("evidence", ""),
     }
 
 
@@ -28,10 +41,17 @@ async def list_capabilities(
     store: PlatformStore = Depends(get_platform_store),
 ):
     grouped: dict[str, dict] = {}
+    provenance = upstream_source_by_id()
     for item in await store.list_capabilities():
+        source_record = provenance[item.source_id]
         source = grouped.setdefault(item.source_id, {
             "source_id": item.source_id,
             "source_url": item.source_url,
+            "reviewed_commit": source_record.reviewed_commit,
+            "reviewed_at": source_record.reviewed_at,
+            "license_observation": source_record.license_observation,
+            "code_treatment": source_record.code_treatment,
+            "attribution": source_record.attribution,
             "enabled_count": 0,
             "abilities": [],
         })
@@ -60,6 +80,7 @@ async def toggle_capability(
 async def _resolve(request: CommandRequest, store: PlatformStore) -> dict:
     try:
         resolved = await store.resolve_command(request.command)
+        evidence = _capability_evidence(resolved.source_id, resolved.capability_id)
         return {
             "status": "resolved",
             "source_id": resolved.source_id,
@@ -67,6 +88,8 @@ async def _resolve(request: CommandRequest, store: PlatformStore) -> dict:
             "label": resolved.label,
             "command": resolved.command,
             "entrypoint": resolved.entrypoint,
+            "implementation_status": evidence.get("implementation_status", "unverified"),
+            "evidence": evidence.get("evidence", ""),
             "payload": resolved.payload,
         }
     except ValueError as exc:

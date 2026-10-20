@@ -32,6 +32,13 @@
 ### 1. 系统架构与核心特性
 
 *   **8-Agent 工业化协同**：由 `Executive Director` (总导演)、`Writer` (编剧)、`Character Designer` (角色设计师) 等 8 个智能体分工合作，将非结构化的创意逐步细化并实现音视频物料渲染。
+*   **结构化两段式编剧引擎**：编剧 Agent 先产出分集账本（每集标题、集尾钩子、故事节点、下集预告），再逐集产出分镜内容层（分镜边界、出场资产、逐字台词与旁白、原文锚），最后单独补视觉层（画面 / 动作 / 运镜 / 环境音）并按分镜 ID 合并。台词与出场资产不进入第二次模型调用，因而不会在补提示词时漂移；单镜时长由所选视频模型的单次生成上限决定，台词念不完的分镜会被自动提到能装下的档位，超过上限的会被退回重写并标记待人工重拆。剧本正文是给人读的小说体：每集一行「第N集 标题」，其下为叙述段落与引号对白（台词与分镜内容层逐字一致），场景 / 镜头 / 时长等标签只留在结构化分镜里；上传的小说或剧本则逐字呈现原文切片。详见 [docs/structured-screenwriting-engine](docs/structured-screenwriting-engine/IMPLEMENTATION.md)。
+*   **空间调度（3D 导演台）**：每场戏一份空间方案——人物站位与朝向、地标、关系轴线、每镜一个机位。分镜面板的构图 / 轴线 / 视线 / 调度四句话不再是固定措辞，而是由几何测量得出：景别换算成焦段与机距，机位始终在轴线既定一侧，人物在画面里的区域、深度层和屏幕朝向由透视投影算出，因此九格之间、正反打之间谁在画左谁在画右不会变；同一地点的地标坐标与人物的画左 / 画右承诺跨场景沿用。越轴、主体出画、站位重叠、左右相反会进入分镜连续性自检并拦在第 5 阶段之前。分镜故事板里点「空间调度」可在俯视图上拖动人物与机位、切换 3D 导演视角 / 机位视角、只重画改过站位的那一场，也可导出为 [storyai-3d-director-desk](https://github.com/jiguang132/storyai-3d-director-desk) 工程或 [CoStage](https://github.com/cs68614-hash/costage) 文档并把调整导回。详见 [docs/spatial-stage](docs/spatial-stage/IMPLEMENTATION.md)。
+*   **3D 导演台（可编辑的空间舞台）**：同一份空间方案的 3D 编辑面。左边导演视角摆人、摆道具、架机位（网格与贴面吸附、15° 角度吸附、两点测距），右边机位视角按成片画幅取景，叠加画幅遮幅 / 三分线 / 安全框 / 中心十字。角色可切换白模柱体 / 关节人偶 / 蒙皮人形：人偶有 58 个关节控制键与 25 个预设姿势（含卧倒、背手站立、侧身回头、抬手指向、出拳），拖动手腕脚踝走两骨 IK 并锁定脚高，姿势可存进账号在别的项目复用；群演成阵列添加，整组切换人偶类型。道具可绑定元素库里的 GLB 模型（也能直接从导演台导入本地 .glb），按道具的宽深高等比缩放落到地面。每镜有一条时间线：1–30 秒、24/25/30 fps、机位轨与人物轨、六种缓动、14 种运镜预设写成可再编辑的关键帧，播放即预演；也可以在导演视角按住鼠标直接画一条走位或机位路线，松手即按等距采样写成该轨的关键帧。空间检查（站位重叠、主体出画、遮挡、越轴、朝向、姿态）不只报错：「检查」面板逐条给出修正，「一键修正」把站位推开、人物转向、机位重解一次做完，并能一次撤销；「机位对比」把本镜主机位与候选机位并排渲染，按画面择优，正面 / 侧面 / 过肩 / 俯拍 / 仰拍 / 特写一键加候选；道具可按直线 / 网格 / 环形阵列复制并对齐。截图与白模视频按成片画幅逐帧导出（浏览器内 WebCodecs 编码），进入本场截图库后可「应用至分镜」——静帧排进该镜的 `sequence_images`，白模视频排进 `reference_videos` 并让第 5 阶段改走多模态；站位再改一次即标记过期，过期的白模视频不会被使用。静帧与视频都可以导出为灰度深度画面（近亮远暗）：深度视频应用后第 5 阶段只取其层次与运镜，深度静帧不能作首帧参考。内置工具助手与 MCP 也能查看一场的检查、提交同一套空间操作并自动修正。场景可挂一张背景（纯色 / 参考图 / 全景图），只在机位画面里作构图参考，默认不进入交付的截图与视频。分镜故事板与第 5 阶段的镜头面板都能打开同一个舞台（按场景编号），第 5 阶段还会显示该镜已应用的静帧与白模视频。工程可导出为 [storyai-3d-director-desk](https://github.com/jiguang132/storyai-3d-director-desk) 或 [CoStage](https://github.com/cs68614-hash/costage) 文档并导回。详见 [docs/director-desk](docs/director-desk/IMPLEMENTATION.md)（参考来源与差距见 [RESEARCH.md](docs/director-desk/RESEARCH.md)）。
+*   **镜头衔接（多张分镜的自然过渡）**：每一刀都有一份切点规划——硬切 / 叠化 / 淡入淡出 / 匹配剪辑，以及正反打、视线匹配、切回反应、动作匹配、图形匹配、时间流逝、回忆、章节转换等衔接手法，写明带过去的线索、动接动还是静接静、上一镜在切点做什么、这一镜从哪里接。分镜面板的入剪 / 出剪 / 起止状态由它写出，逻辑、视觉、运动、匹配、节奏五个维度的九项检查（景别跨度、30 度原则、视线闭环、动势方向、人物不瞬移、先因后果、光色、时长张弛、情绪过渡）进入分镜连续性自检；分镜故事板每格标出切入方式，成片合成在连续性质检通过后按规划选择转场。详见 [docs/shot-transitions](docs/shot-transitions/IMPLEMENTATION.md)。
+*   **画面风格锁（Style Pack）**：一个项目选定一种质感——真人电影写实 / 35mm 胶片 / 原子朋克废土 / 2D 赛璐珞漫剧 / 3D 国漫 CG，它的风格锁逐字写进每一张分镜图、每一张首尾帧和每一镜视频提示词，并决定 Ark 的风格锚定句；漫剧项目不再被写实措辞和「禁止动画」的负面词压成真人实拍。视频提示词按分层编译：风格锁 → 参考素材职责 → 结构声明 → 空间/状态/道具/光影/声音五层锁 → 镜头块 → 声音 → 具名铁律 → 负向词，并按目标模型的字数预算做压力裁剪（先砍声音、环境、光影数值、色彩、特效、台词表达，锁定标签、主体、动作、机位、台词绝不裁）。同时修好了 Seedance 2.5 的单镜时长：此前所有模型都被钳在 15 秒，现在 2.5 可以出 30 秒。详见 [docs/style-packs](docs/style-packs/IMPLEMENTATION.md)。
+*   **源文库（整本源文 + 逐集原文）**：剧本文库里的每个文件有自己的角色——整本源文按顺序拼接后由分集规划切成集；逐集原文每个文件就是一集，排在切出的集之后；参考资料只给人读。体裁（小说 / 成品剧本）逐文件记录，分集账本记下每集原文的来源（整本切出 / 自带原文 / 按大纲创作），源文一变即把已写好的规划标记为过期。详见 [docs/arcreel-parity](docs/arcreel-parity/IMPLEMENTATION.md)。
+*   **批量视频准入与调用台账**：第 5 阶段开始前把全部镜头一起评估，结论只有三种——放行、需确认时长档位（附费用）、受阻（零任务零费用、逐镜列出原因）。每次供应商调用（文本 / 图 / 视频 / 语音）都记成一条带参考费用的记录，价格由部署方按模型在 `model_pricing.json` 里声明，按币种分列从不合并。一镜只有一种口播（角色台词 / 旁白 / 无声），混合即退回规划；旁白可选合成配音或留给后期；每集可导出按阅读量计时的字幕草稿。
 *   **断点续跑与异常重置机制**：
     *   在任务生成时，支持对任意生成步骤（Stage）进行暂停与恢复。
     *   **防孤儿任务机制**：当系统异常重启或崩溃时，启动时会自动将状态残留为 `running` 的任务重置为 `interrupted` 状态，并填充失败信息，避免前端状态卡死，用户可随时点击恢复（`/resume`）从断点续跑。
@@ -44,7 +51,6 @@
 short-drama/
 ├── start.sh                      # 【重要】一键启动脚本 (优雅管理前后端进程)
 ├── README.md                     # 本说明文档 (全局导航与参数基准)
-├── SKILL.md                      # 工程层智能体执行逻辑与规约
 ├── backend/                      # Python FastAPI 后端
 │   ├── app/
 │   │   ├── api/                  # 请求解析与响应封装 (drama_api.py, auth_api.py)
@@ -83,13 +89,40 @@ short-drama/
 | **ALIBABA_CLOUD_ACCESS_KEY_SECRET**| `xxxxxxxxxxxxxxxxxxxxxxxxxx` | 阿里云短信 AccessKey Secret |
 | **ALIBABA_CLOUD_SMS_SIGN_NAME** | `伊胜雪网络科技` | 验证短信签名 |
 | **ALIBABA_CLOUD_SMS_TEMPLATE_CODE**| `SMS_501585017` | 验证短信模板 ID |
-| **MINIMAX_API_KEY** | 仅服务端环境变量 | MiniMax H3 视频生成密钥 |
-| **MINIMAX_H3_ENDPOINT** | `https://api.minimaxi.com/v2/video_generation` | MiniMax H3 创建任务端点 |
-| **MINIMAX_H3_STATUS_URL_TEMPLATE** | 同 API 主机的 `/v1/query/video_generation?task_id={task_id}` | 异步任务查询端点，可覆盖 |
+| **MINIMAX_API_KEY** | 仅服务端环境变量 | minimax 视频、同步语音、Music 3.0 与 Music Cover 密钥 |
+| **MINIMAX_BASE_URL** | `https://api.minimaxi.com` | MiniMax 音频 API 根地址；模型配置中心保存的音频配置优先 |
+| **MINIMAX_H3_ENDPOINT** | 默认取 `MINIMAX_BASE_URL` 主机的 `/v2/video_generation` | MiniMax H3 创建任务端点，可覆盖 |
+| **MINIMAX_H3_STATUS_URL_TEMPLATE** | 同 API 主机的 `/v2/query/video_generation/{task_id}` | H3 异步任务查询端点，可覆盖 |
 | **MINIMAX_FILES_URL** | 同 API 主机的 `/v1/files/retrieve` | 根据 `file_id` 解析最终下载地址，可覆盖 |
 | **ELEVENLABS_API_KEY** | 仅服务端环境变量 | 配音、多人对话、音效、音乐、语音识别与配音翻译 |
+| **ELEVENLABS_BASE_URL** | `https://api.elevenlabs.io` 或完整 `/v1/sound-generation` 地址 | 服务端会规范化为 API 根，避免重复拼接路径 |
 | **ELEVENLABS_VOICE_MAP** | `{"角色名":"voice_id"}` | 固定每个角色的声音身份 |
-| **SD25_PE_SKILL_PATH** | `/absolute/path/to/sd25-pe` | 指向完整 `sd25-pe/SKILL.md` 的目录；默认 `~/Desktop/sd25-pe` |
+| **WRITER_ENGINE** | `structured`（默认）或 `legacy` | 编剧引擎选择：结构化两段式引擎，或旧的自由文本单次生成引擎 |
+| **SCREENWRITING_ATTEMPTS** | 默认 `3` | 每次结构化生成的校验重试次数，失败原因随重试回传模型 |
+| **SCREENWRITING_MAX_TOKENS** | 默认 `1000000` | 编剧每次结构化生成的输出上限；输出被截断时自动加倍重试，至多到 **SCREENWRITING_MAX_TOKENS_CAP**（默认 `1000000`） |
+| **LLM_MAX_TOKENS** | 默认 `1000000` | 调用方未指定时的对话输出上限。推理模型会先把预算花在思考上，上限太小会整段被截断；超过供应商自身上限时，网关按其报错里的数字（或逐级减半）收回重试一次，并记住该模型的上限 |
+| **LLM_CALL_DEADLINE_SECONDS** | 默认 `1800`（30 分钟） | 一次文本模型调用的总时限。推理模型写长剧本会先思考很久，超过这个时间才放弃本次调用并降级到下一把凭据或下一个供应商。 |
+| **LLM_READ_TIMEOUT_SECONDS** | 默认 `600`（10 分钟） | 一次文本模型调用里两次读到数据之间允许的最长静默。有的供应商在推理期间一个字节都不发，间隔太短会把正常的长调用当成断线。 |
+| **LLM_CONNECT_TIMEOUT_SECONDS** | 默认 `30` | 建立连接的时限。不可达的主机仍然很快认输并降级。 |
+| **SCREENWRITING_PLAN_BATCH** | 默认 `10` | 分集账本一次规划多少集 |
+| **SCREENWRITING_VISUAL_BATCH** | 默认 `12` | 视觉层一次生成多少个分镜 |
+| **SCREENWRITING_KNOWLEDGE_BUDGET** | 默认 `2500` | 注入编剧系统提示词的每份知识源字符预算；规划 / 分镜 / 正文带全部知识，视觉层只带表演细节，概述 / 资产提取只带人设 |
+| **MODEL_PRICING_PATH** | 默认 `backend/runtime/model_pricing.json` | 按模型声明的参考价格（每百万 token / 每张 / 每秒 / 每千字），用于调用台账与批量预估；未定价的模型照记并单列 |
+| **SCREENWRITING_EPISODE_MIN_SCENES** / **SCREENWRITING_EPISODE_MIN_SECONDS** / **SCREENWRITING_EPISODE_MAX_SECONDS** | 默认 `2` / `60` / `360` | 单集成形标准：至少几个分镜、合计不少于多少秒（不满足退回模型重写）、建议不超过多少秒（超出只提醒） |
+| **SCREENWRITING_EPISODE_CONCURRENCY** | 默认 `3` | 结构化编剧同时规划的集数，旁边再有同样多路出正文 / 视觉层；资产提取与分集规划也并行；`1` 恢复逐集串行 |
+| **SCREENWRITING_PROSE_CHAIN** | 默认关 | 开启后每集小说体正文等上一集正文写完再写（严格承接上一集的文字）；默认各集正文并行，承接上一集分镜的结尾 |
+| **MARKET_OFFICIAL_SOURCE_URL** | 默认空 | 随版预置的官方市场源（GitHub 仓库或 https 索引目录）：可停用、不可删除；留空则没有官方源，市场只有用户自行添加的源 |
+| **MARKET_RAW_PROXY_PREFIX** | 默认空 | 抓取 `raw.githubusercontent.com` 文件时拼在前面的代理前缀（大陆可达性）；其它主机不经过它 |
+| **SCREENWRITING_MIN_SPOKEN_SHOT_RATIO** | 默认 `0.7` | 按大纲写的每一集里，至少这个比例的分镜要有口播（剧情片是人物对白，旁白片是旁白）；不够时退回模型补台词，用尽重试则保留并标「台词太少」警告；`0` 关闭。源文改编的集逐字沿用原文台词，不受此限 |
+| **SCREENWRITING_ANALYSIS_CHARS** | 默认 `48000` | 长篇源文送给概述 / 资产提取两步时的字数上限：取开头、等距中段节选与结尾，分集规划仍读全文 |
+| **ALLOW_PROXY_FAKE_IP** / **PROXY_FAKE_IP_CIDR** | 开发环境默认开 / `198.18.0.0/15` | 本机代理（Clash、Surge 等）用 fake-ip 模式时，供应商域名会解析到该地址段；开启后公网地址校验接受它，内网、回环、链路本地地址仍一律拒绝。生产环境默认关闭 |
+| **GENERATION_CONCURRENCY_VIDEO** / **_IMAGE** / **_AUDIO** / **_TEXT** | 默认 `2` / `3` / `2` / `3` | 第 5 阶段生成队列按「供应商族 × 媒介」分桶的并发上限；`GENERATION_CONCURRENCY_<媒介>_<供应商族>`（如 `GENERATION_CONCURRENCY_VIDEO_MINIMAX_H3=1`）可单独给某一族设限 |
+| **CREATION_AD_MIN_SCENES** / **CREATION_AD_MIN_SECONDS** / **CREATION_AD_MAX_SECONDS** | 默认 `3` / `15` / `60` | 广告短片类型的单集框架：至少几个分镜、合计不少于多少秒、建议不超过多少秒（剧情与旁白解说沿用 `SCREENWRITING_EPISODE_*`） |
+| **CREDENTIAL_COOLDOWN_SECONDS** | 默认 `300` | 同一供应商配置了多把 Key 时，被供应商拒绝（401 / 403 / 429）的 Key 冷却多少秒后再参与轮换 |
+| **COMFYUI_BASE_URL** / **COMFYUI_WORKFLOW_PATH** / **COMFYUI_BINDINGS** / **COMFYUI_API_KEY** | 空 | 自托管 ComfyUI：服务地址、「Save (API Format)」导出的工作流 JSON、绑定（如 `{"prompt":"6.inputs.text","image":"10.inputs.image","seed":"3.inputs.seed"}`）与可选鉴权；三者齐备才就绪，项目里把图像 / 视频模型选为 `comfyui` 即走该工作流 |
+| **SCREENWRITING_FALLBACK_TO_LEGACY** | 默认 `1` | 结构化引擎失败时是否回退到自由文本引擎 |
+| **SD25_PE_SKILL_PATH** | `/absolute/path/to/sd25-pe` | 可选的 `sd25-pe` 覆盖目录；默认依次读取 `~/.agents/skills/sd25-pe`、`~/Desktop/sd25-pe` 和项目内置副本 |
+| **SD25_FIVE_PART_SKILL_PATH** | `/absolute/path/to/sd-2-5-prompt` | 可选的五段式 Skill/仓库检出目录；默认使用项目内 clean-room 兼容 Skill |
 | **AUTH_SIGNING_SECRET** | 至少 32 位随机值 | 会话签名；生产环境必填，禁止复用供应商密钥 |
 | **COOKIE_SECURE** | 生产 HTTPS 环境设为 `1` | 只允许浏览器通过 HTTPS 发送登录 Cookie |
 | **DATABASE_URL** | `postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama` | 用户、全局能力、元素、会员、订单和账本的 PostgreSQL 数据源 |
@@ -98,15 +131,38 @@ short-drama/
 | **BOOTSTRAP_ADMIN_LOGIN** | `admin@short-drama` | 本地默认管理员登录名 |
 | **BOOTSTRAP_ADMIN_PASSWORD** | 本地开发默认 `admin@123` | 首次登录必须修改；生产环境禁止使用该默认值 |
 | **PAYMENT_WEBHOOK_SECRET** | 至少 32 位随机值 | 微信/支付宝回调信封的 HMAC 验签密钥 |
+| **FFMPEG_PATH** / **FFPROBE_PATH** | 默认自动查找（PATH、Homebrew、`/usr/bin`） | ffmpeg / ffprobe 不在常规位置时指定完整路径 |
+| **SUBTITLE_FONT_PATH** | 默认按 macOS、Linux（Noto / 文泉驿）、Windows 的常见中文字体依次查找 | 烧录字幕与片头标题卡使用的中文字体文件 |
+| **LOCAL_TTS_VOICE** | 默认 `Tingting` | 本机 `say` 兜底配音使用的音色（仅 macOS） |
+| **TITLE_CARD_TAGLINE** | 默认 `AI 短剧 · 一键成片` | 片头标题卡副标题；设为空则只显示片名 |
+| **ARK_PROXY** | 可选 | 仅作用于火山 Ark 域名的代理，优先于 `SEEDANCE_PROXY` |
+| **SEEDANCE_VIDEO_RESOLUTION** | 默认 `720p` | Seedance 单镜分辨率；成片统一合成为 1080×1920 |
+| **SHOTS_PER_EPISODE** / **REANCHOR_EVERY** / **SHOT_DURATION** | 默认 `16` / `4` / `10` | 逐集制作的镜头数、身份视图重锚间隔、单镜秒数（不超过所选视频模型上限） |
+| **BACKEND_HOST** / **BACKEND_PORT** | 默认 `0.0.0.0` / `8000` | 后端监听地址与端口；`start.sh` 与 `python main.py` 共用 |
+| **BACKEND_RELOAD** | 开发默认 `1`，生产默认 `0` | 源码变更后是否自动重载后端 |
+| **FRONTEND_PORT** | 默认 `5173` | Vite 开发端口；未配置 `ALLOWED_ORIGINS` 时，后端按它推导默认跨域白名单 |
+| **ALLOWED_ORIGINS** | 默认 `http://localhost:<FRONTEND_PORT>` 与 `http://127.0.0.1:<FRONTEND_PORT>` | 允许携带登录 Cookie 与发起写请求的前端来源，逗号分隔 |
+| **PUBLIC_BASE_URL** | 默认 `http://localhost:<BACKEND_PORT>` | 浏览器访问后端的对外地址，部署到域名后必须配置 |
+| **MEDIA_PUBLIC_BASE_URL** | 默认 `<PUBLIC_BASE_URL>/media` | 生成的图片、配音、成片的对外访问前缀，可指向 CDN |
+| **SHARE_LINK_BASE_URL** | 默认 `https://short-drama.volces.com/s` | 宣发阶段生成引流短链接时使用的前缀 |
+| **VITE_API_BASE_URL**（前端 `frontend/.env.local`） | 默认 `http://localhost:8000` | 前端请求的后端地址；留空表示与页面同源（前后端由同一反向代理提供） |
 
 > [!WARNING]
 > 敏感密钥只允许来自服务端环境变量或模型配置中心。模型配置中心的 Key 使用服务端主密钥加密后写入 PostgreSQL，浏览器、列表接口、日志和 `localStorage` 都不会收到或保存明文。禁止将带有明文 Key 的代码提交到公共仓库。
+
+任何曾粘贴到聊天、工单或日志中的 Key 都应视为已经暴露：先在供应商后台撤销/轮换，再把新 Key 注入服务端密钥存储。自动测试不会调用付费生成接口。
 
 ### 4. 本地快速启动
 
 #### 方式 A：使用一键启动脚本 (推荐)
 
-在项目根目录下，我们提供了一个优雅的 `start.sh` 脚本，它会自动检测当前依赖、清除历史冲突的 Vite/FastAPI 后台进程、并在后台同步启动前后端服务，输出日志。
+在项目根目录下，我们提供了一个优雅的 `start.sh` 脚本，它会自动检测当前依赖、清除历史冲突的 Vite/FastAPI 后台进程、并在后台同步启动前后端服务，输出日志。脚本以自身所在目录为工作目录，项目放在任何路径都可直接运行；清理时只回收本项目留在这两个端口上的进程，端口被其他程序占用会直接提示而不会误杀。
+
+端口可通过环境变量或 `backend/.env` 中的 `BACKEND_PORT` / `FRONTEND_PORT` 调整，前端连接地址、后端跨域白名单与媒体地址会随之一起变化：
+
+```bash
+BACKEND_PORT=8010 FRONTEND_PORT=5180 ./start.sh
+```
 
 1. **为脚本赋予执行权限（仅首次）**：
    ```bash
@@ -158,6 +214,8 @@ DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama'
 
 ### 5. 常用服务地址与调试
 
+以下为默认端口下的地址；修改 `BACKEND_PORT` / `FRONTEND_PORT` 后以 `start.sh` 启动时打印的地址为准。
+
 *   **前端控制台 Web 页面**：[http://localhost:5173/](http://localhost:5173/)
 *   **后端 API 交互式文档 (Swagger UI)**：[http://localhost:8000/docs](http://localhost:8000/docs)
 *   **后端 API 备用文档 (ReDoc)**：[http://localhost:8000/redoc](http://localhost:8000/redoc)
@@ -169,27 +227,42 @@ DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama'
 
 | 路由 | 能力 |
 | :--- | :--- |
-| `GET /api/production/capabilities` | 查询 13 个来源、已发现 Skill、创作预设和供应商配置状态 |
+| `GET /api/production/capabilities` | 查询 14 个来源、已发现 Skill、创作预设和供应商配置状态 |
+| `GET /api/production/agent-council/capabilities` | 查询八 Agent、18 份本地规范、能力所有者、可执行策略、校验器与交付物的完整追踪矩阵 |
+| `POST /api/production/agent-council/compile` | 按题材、平台、形式和动作强度编译八 Agent 提示契约、交接规则、画面/节奏基准与负面词模块 |
+| `POST /api/production/agent-council/release-gate` | 对八阶段交付、五视图、九宫格、契约指纹、视频路由、音频、字幕、授权和 S/A/B/C 问题执行失败关闭验收 |
 | `GET /api/production/presets` | 查询 17 个可调用创作/提示词编译模式 |
 | `POST /api/production/presets/{id}/compile` | 编译带五视图、九宫格、素材职责、首尾帧、表演和连续性硬约束的方案 |
 | `POST /api/production/sd25/compile` | 执行本地 sd25-pe 的生成/编辑/延长、音频单改、编辑后延长有序步骤、素材职责、关键帧、九宫格与白模 Prompt 编译 |
+| `POST /api/production/sd25/audit` | 对五段式 Prompt 执行只读结构审计：标题、连续时间线、素材职责、复杂动作因果与可选无品牌边界 |
+| `POST /api/production/script-prompts/compile` | 把剧本文本完整编译为角色五视图、场景圣经、逐场严格九宫格、同契约分镜/运镜 Prompt、SD25 Prompt、一致性报告和多格式导出 |
+| `POST /api/production/script-prompts/compile-file` | 安全接收 TXT/Markdown/DOCX/PDF/FDX，并执行完整剧本到视频提示词流水线 |
+| `POST /api/production/storyboard-director/compile` | 编译单镜头基础信息、视觉规范、连续性锁定、色调/动势/运镜/转场、连续时间拍点、逐拍单图、相邻关键帧视频、九宫格分页与自检结果 |
 | `GET /api/production/shotcraft/catalog` | 查询锁定的 Video Shotcraft 152 卡 / 209 样式目录与音效统计 |
 | `POST /api/production/shotcraft/compile` | 将 Shotcraft 卡片和样式编译为统一镜头计划，不执行上游脚本 |
 | `POST /api/production/storyboards/compile` | 校验并编译严格 3×3 九宫格分镜 |
 | `POST /api/production/video/minimax-h3` | H3 文本、首帧、尾帧、首尾帧、多图和多模态参考视频 |
-| `POST /api/production/audio/*` | ElevenLabs TTS/Dialogue（含时间戳）、SFX、Music、Video-to-Music、STT 和 legacy Dubbing |
+| `GET/POST /api/production/audio/*` | ElevenLabs 14/14 能力：TTS、STT、Music、Speech Engine、Voices、Dialogue、Voice Changer、Voice Design、SFX、Audio Isolation、Dubbing、Forced Alignment、Pronunciation Dictionaries 和 Audio Native |
+| `POST /api/production/audio/minimax/tts` | MiniMax 同步语音合成；支持 8 个 `speech-*` 接口模型、情绪、语速、音量、音调、发音字典与输出规格 |
+| `POST /api/production/audio/minimax/music` | 使用 `music-3.0` 生成歌词歌曲、自动歌词或纯音乐 |
+| `POST /api/production/audio/minimax/music-cover` | 使用 `music-cover` 和公网参考音频 URL 一步翻唱，自动 ASR 提取歌词 |
 | `POST /api/production/performance/plan` | 生成动机、触发、视线、呼吸、微表情、身体、声音与权力转移的表演节拍 |
 | `POST /api/production/audio/mix/plan` | 生成带对白闪避、响度和峰值门禁的可编辑混音计划 |
+| `POST /api/production/preproduction/*` | 长篇可复现抽样、断点分集与授权声音参考计划 |
+| `POST /api/production/readiness/evaluate` | 在付费提交前校验四类资产、九宫格审批、供应商模式/数量/时长 |
+| `POST /api/production/failures/normalize` | 生成脱敏、可定向重试的结构化失败证据 |
+| `POST /api/production/analytics/summarize` | 汇总接受率、重试率、延迟、费用与失败类别 |
 | `POST /api/production/quality/video/decision` | 对真实多模态/人工评分执行失败关闭的成片质量门禁 |
-| `POST /api/drama/{task_id}/quality/video` | 将验收证据写入任务；仅通过后任务状态变为 `completed` |
+| `POST /api/drama/{task_id}/quality/video` | 将成片多模态/人工证据写入任务；通过后进入 `awaiting_council_review`，不能直接完成 |
+| `POST /api/drama/{task_id}/quality/council` | 在视频门禁通过后持久化八 Agent 全量证据；只有委员会门禁也通过才将任务标为 `completed` |
 
-角色阶段会生成一张有序五视图设定板并物理拆成五个视图；分镜阶段强制产出九张独立镜头图和一张物理 3×3 九宫格。长视频合成会根据场景、轴线、动作、道具、灯光和声音状态选择动作匹配、硬切、短叠化、声音桥或转黑，未通过连续性门禁的镜头禁止合成。
+角色阶段会生成一张有序五视图设定板并物理拆成五个视图；分镜阶段按真实叙事事件生成 N 张独立镜头图，再合成为固定 3×3 九宫格展示页：不足九拍的格位留白，超过九拍自动分页，禁止复制或补造拍点。长视频合成会根据场景、轴线、动作、道具、灯光和声音状态选择动作匹配、硬切、短叠化、声音桥或转黑，未通过连续性门禁的镜头禁止合成。
 
 工作室平台 API 使用 `/api/studio/*`：包含 SQLite 项目、TXT/Markdown/DOCX/PDF/FDX 来源摄取、证据化故事图、版本谱系、下游过期、追加式人工审核、主线/Freezone 双轨画布、Director World 空间调度、原子任务租约与取消、分币种成本账本、带 SHA-256 的项目归档往返、资产就绪、SRT/ASS/Jianying-compatible 导出以及作用域外部 Agent Key。外部自动化使用 `/api/agent/*`，凭据只允许访问绑定项目和显式授权的 scope。
 
-产品平台 API 使用 PostgreSQL：`/api/platform/*` 提供 13 个来源、66 项能力的全局开关和 `/command` 白名单调用；`/api/elements/*` 提供演员、道具、场景、特效独立元素库及安全图片上传/重新生成请求；`/api/users/*` 与 `/api/admin/users/*` 提供个人资料、改密和角色/状态管理；`/api/billing/*` 提供会员计划、积分账本、订单、沙箱支付和签名幂等回调。微信/支付宝真实结算在商户证书未配置时失败关闭，不会把浏览器跳转当作付款成功。
+产品平台 API 使用 PostgreSQL：`/api/platform/*` 提供 14 个来源、86 项能力的全局开关、审计提交/许可证处理和 `/command` 白名单调用；`/api/elements/*` 提供演员、道具、场景、特效独立元素库及安全图片上传/重新生成请求；`/api/users/*` 与 `/api/admin/users/*` 提供个人资料、改密和角色/状态管理；`/api/billing/*` 提供会员计划、积分账本、订单、沙箱支付和签名幂等回调。微信/支付宝真实结算在商户证书未配置时失败关闭，不会把浏览器跳转当作付款成功。
 
-全局模型配置中心使用 `/api/model-configurations/*`。管理员可在文本、图像、视频、音频四类中选择供应商，填写官方 Base URL 和 API Key；服务端通过供应商模型枚举接口实时获取模型，自动将文本模型区分为纯文本/多模态，并将 ElevenLabs 音频能力归为 ASR、TTS、BGM/音效和音乐。前后端均不内置可选模型 ID 清单；供应商没有开放可枚举接口时会明确失败，不伪造候选模型。保存前会重新发现并验证所选 ID，保存后启用项进入全局运行时路由，支持逐模型禁用、连接测试和任务当前模型选择。连接测试只校验鉴权、模型枚举和选择有效性，不提交付费生成任务。
+全局模型配置中心使用 `/api/model-configurations/*`。管理员可在文本、图像、视频、音频四类中选择供应商，填写官方 Base URL 和 API Key；服务端优先通过供应商模型枚举接口实时获取模型，自动将文本模型区分为纯文本/多模态。ElevenLabs 固定使用官方 `GET /v1/models` 与 `xi-api-key` 鉴权，将动态响应与 13 个当前官方模型合并，并归为 ASR、TTS、语音转换、声音设计、BGM/音效和音乐。界面另以 14/14 可点击能力分类展示截图要求的所有 ElevenLabs 功能；每个模型分类均可复选，选择会跨分类保留并可一次批量保存，已保存模型没有业务数量上限。无 `model_id` 的隔离、Dubbing、强制对齐等服务会显示为“独立服务”，不会伪装成模型。Key 因 401/403 或网络问题不能读取目录时，“加载模型”仍提供官方目录并明确标注未验证；401 无效/撤销 Key 不能保存，403 仅缺少模型目录 scope 的 Key 可以保存目录配置，但运行能力仍取决于相应 scope 与 IP 白名单，“连接测试”始终严格验证。MiniMax 的通用模型目录只用于无费用鉴权：视频分类返回 `MiniMax-H3` 与锁定的 Hailuo 视频模型；音频分类返回 8 个同步语音模型（含接口仍接受的 `speech-01` 兼容模型）、`music-3.0` 和 `music-cover`，分别标注为 TTS、音乐和音乐翻唱，禁止把 M 系列文本模型误标为音视频。H3 生成采用多模态 `content[]` 请求，并以 `/v2/query/video_generation/{task_id}` 查询成片；MiniMax 音频生成采用 Bearer 鉴权，TTS 使用 `/v1/t2a_v2`，音乐生成和一步翻唱使用 `/v1/music_generation`。保存后启用项立即进入全局运行时路由；文本、图像、视频任务未显式指定模型时会自动采用该分类首个全局启用模型。系统支持逐模型禁用、任务当前模型选择和叉号删除；删除供应商下最后一个模型时会同步删除空配置和对应加密凭据。连接测试不提交付费生成任务。
 
 动态配置 API：
 
@@ -202,34 +275,48 @@ DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama'
 | `POST /api/model-configurations` | 加密保存已验证的模型配置并全局生效 |
 | `PATCH /api/model-configurations/{id}` | 启用或禁用整组供应商配置 |
 | `PATCH /api/model-configurations/{id}/models/{entry_id}` | 启用或禁用单个动态模型 |
+| `DELETE /api/model-configurations/{id}/models/{entry_id}` | 删除单个已保存模型；最后一项会清理空配置 |
 
-实现依据的当前官方接口：[MiniMax API 概览](https://platform.minimaxi.com/docs/api-reference/api-overview)、[ElevenLabs 鉴权](https://elevenlabs.io/docs/api-reference/authentication)、[TTS 与时间戳](https://elevenlabs.io/docs/api-reference/text-to-speech/convert-with-timestamps)、[多人对话时间戳](https://elevenlabs.io/docs/api-reference/text-to-dialogue/convert-with-timestamps)、[Video-to-Music](https://elevenlabs.io/docs/api-reference/music/video-to-music)、[FastAPI 多文件路由](https://fastapi.tiangolo.com/tutorial/bigger-applications/)、[Pydantic 校验器](https://pydantic.dev/docs/validation/latest/concepts/validators/) 与 [Python sqlite3](https://docs.python.org/3/library/sqlite3.html)。
+已保存模型面板使用独立滚动列表呈现全部条目，不以 5 项截断；面板会分别显示保存总数和当前启用数。
+
+首页“模型”徽标以服务端 `global_status` 为准：任意分类存在至少一个全局启用模型时显示“已配置”，全部停用或删除后显示“未配置”。保存、启用、停用和删除都会立即刷新；前端同时自动采用各分类的全局默认启用模型，不再依赖当前任务是否手动选择视频模型来判断配置状态。
+
+实现依据的当前官方接口：[MiniMax API 概览](https://platform.minimaxi.com/docs/api-reference/api-overview)、[MiniMax 同步语音合成](https://platform.minimaxi.com/docs/api-reference/speech-t2a-http)、[MiniMax 音乐生成与翻唱指南](https://platform.minimaxi.com/docs/guides/music-generation)、[ElevenLabs 模型](https://elevenlabs.io/docs/overview/models)、[ElevenLabs 鉴权](https://elevenlabs.io/docs/api-reference/authentication)、[Voices](https://elevenlabs.io/docs/api-reference/voices/search)、[Speech Engine](https://elevenlabs.io/docs/api-reference/speech-engine/list)、[Voice Changer](https://elevenlabs.io/docs/api-reference/speech-to-speech/convert)、[Voice Design](https://elevenlabs.io/docs/api-reference/text-to-voice/design)、[Audio Isolation](https://elevenlabs.io/docs/api-reference/audio-isolation/convert)、[Forced Alignment](https://elevenlabs.io/docs/api-reference/forced-alignment/create)、[Pronunciation Dictionaries](https://elevenlabs.io/docs/api-reference/pronunciation-dictionaries/list)、[Audio Native](https://elevenlabs.io/docs/api-reference/audio-native/create)、[FastAPI 多文件路由](https://fastapi.tiangolo.com/tutorial/bigger-applications/)、[Pydantic 校验器](https://pydantic.dev/docs/validation/latest/concepts/validators/) 与 [Python sqlite3](https://docs.python.org/3/library/sqlite3.html)。
 
 ---
 
 ## 二、AI 短剧制作知识库与工作流导航
 
-本项目不仅包含工程代码，还是 AI 短剧「从选题到发布」的完整全流程知识库，由 8 份核心专题文档与下层工程逻辑组成。
+本项目不仅包含工程代码，还是 AI 短剧「从选题到发布」的完整全流程知识库。17 份规范各自住在所属技能的 `references/` 里，由该技能的 `manifest.json` 登记章节键、预算与消费阶段；运行时只按章节键经 `app/core/knowledge_registry.py` 读取，代码里不写任何文件名。八 Agent 能力注册表把每个章节映射到代码、交付物和验收器；Markdown 只作为知识与行为规范读取，不会作为代码执行。新增一份规范：放到仓库根部后运行 `backend/scripts/organize_knowledge.py`，它按 `backend/skills/knowledge-routing.json` 归入对应技能并写好 manifest。
 
 ### 1. 知识库文档地图
 
-| # | 文档名称 | 负责内容与唯一权威源 | 适用创作节点 |
+| # | 文档（所在技能） | 负责内容与唯一权威源 | 适用创作节点 |
 | :--- | :--- | :--- | :--- |
-| 1 | [短剧题材类型总结.md](短剧题材类型总结.md) | 题材库、爆款公式、商业价值矩阵 | 选题立项阶段 |
-| 2 | [画质风格类型总结.md](画质风格类型总结.md) | 画风设计、调色调色板、光影、技术参数 | 制定视觉基调阶段 |
-| 3 | [AI短剧注意事项与关键元素.md](AI短剧注意事项与关键元素.md) | 剧本结构、商业模式、避坑清单、全流程总览 | 贯穿全盘把控阶段 |
-| 4 | [AI短剧三视图解决人物一致性提示词模板.md](AI短剧三视图解决人物一致性提示词模板.md) | 已升级为五视图法、角色锁定卡、提示词渲染模板 | 锁定人物形象时 |
-| 5 | [AI短剧连续性设计指南.md](AI短剧连续性设计指南.md) | 跨镜头角色/背景/光影连续性、首尾帧衔接 | 多镜头过渡与拼接阶段 |
-| 6 | [AI短剧表演细节与提示词指南.md](AI短剧表演细节与提示词指南.md) | 表演与表情、口型对齐、肢体与手部精细度 | 渲染表演与音视频对齐阶段 |
-| 7 | [AI短剧与漫剧导演级拍摄分镜完全指南.md](AI短剧与漫剧导演级拍摄分镜完全指南.md) | 36种高级运镜设计、景别布局、镜头视角 | 镜头剧本与画面构图设计时 |
-| 8 | [AI 生成短剧一致性检查清单.md](AI%20生成短剧一致性检查清单.md) | 40章终极质检清单、100+项打分指标 | 每一步骤质检及发布前终审 |
+| 1 | [AI 生成短剧一致性检查清单](backend/skills/production-knowledge-master/references/consistency-checklist.md) | 全链路一致性、S/A/B/C 分级、自动/人工质检和发布评分 | 八阶段质检与终审 |
+| 2 | [AI影视剧台词语速情绪提示词总结](backend/skills/screenwriting-master/references/dialogue-pacing.md) | 语速、情绪、停顿、重音、呼吸、角色声卡和口型时长 | 编剧、音频总监 |
+| 3 | [AI影视剧负面提示词](backend/skills/production-knowledge-master/references/negative-prompts.md) | 人脸、手部、多人、服化、场景、材质、时序与题材负面词模块 | 视觉总监 |
+| 4 | [AI漫剧短剧剧本黄金叙事结构](backend/skills/screenwriting-master/references/golden-narrative.md) | 前3秒钩子、冲突/反转密度、多集弧与尾钩 | 总导演、编剧 |
+| 5 | [AI短剧与漫剧导演级拍摄分镜完全指南](backend/skills/shot-design-master/references/director-shot-guide.md) | 景别、机位、构图、站位、光影、36/88 运镜系统 | 分镜师、视觉总监 |
+| 6 | [AI短剧五视图解决人物一致性提示词模板](backend/skills/character-turnaround-consistency/references/actor-sheet-template.md) | 严格五视图、角色状态、九宫格与分镜/运镜同源契约 | 角色设计师、分镜师、视觉总监 |
+| 7 | [AI短剧注意事项与关键元素](backend/skills/production-knowledge-master/references/production-guidelines.md) | 剧本、视觉、声音、后期、平台、商业、团队和版权总览 | 全流程 |
+| 8 | [AI短剧电影级武打镜头设计指南](backend/skills/shot-design-master/references/martial-arts.md) | 力学拆解、出招/受击、冲击帧、防越轴、Foley 卡点 | 分镜师、视觉/音频总监 |
+| 9 | [AI短剧表演细节与提示词指南](backend/skills/shot-design-master/references/performance-details.md) | 身体、微表情、口型、关键帧、手部、声音与竖屏适配 | 角色、分镜、视觉、音频 |
+| 10 | [AI短剧连续性设计指南](backend/skills/shot-transitions-master/references/continuity-design.md) | 视觉/角色/空间/时间/运动连续性、首尾帧和后期修复 | 分镜、视觉、合成 |
+| 11 | [AI 短剧工业级 8-Agent 生产规范](backend/skills/ai-short-drama-industrial-production-skill/SKILL.md) | 八 Agent 角色职责与工业化协作规范（知识规范，不执行） | 八 Agent 总览 |
+| 12 | [场景设计提示词](backend/skills/shot-design-master/references/scene-design.md) | 功能化场景圣经、空间布局、光色、道具叙事和负面词 | 分镜师、视觉总监 |
+| 13 | [影视剧高光时刻识别方案](backend/skills/production-knowledge-master/references/highlight-detection.md) | 情节/情绪/叙事/视听/观众行为高光标签与强度 | 总导演、宣发 |
+| 14 | [画质风格类型总结](backend/skills/production-knowledge-master/references/visual-style.md) | 载体画风、调色、光影、画幅、色彩空间与技术基准 | 总导演、视觉、合成 |
+| 15 | [短剧情绪与面部表情提示词库](backend/skills/shot-design-master/references/emotion-expression.md) | 可观察微表情、情绪递进、镜头搭配和负面约束 | 角色、分镜、视觉 |
+| 16 | [短剧情节与镜头连贯性提示词](backend/skills/shot-design-master/references/plot-shot-coherence.md) | 六锚点、连续性圣经、逐镜单动作和承接模板 | 分镜师、视觉总监 |
+| 17 | [短剧题材类型总结](backend/skills/screenwriting-master/references/genre-summary.md) | 完整题材库、商业价值、出海与互动形式 | 总导演、编剧、宣发 |
 
-### 2. 知识层 vs 工程层 (SKILL.md)
+### 2. 知识层 vs 工程层（技能与 manifest）
 
 本仓库将创作经验与工程代码以分层模式紧密耦合：
 
-*   **知识层 (8份文档)**：提供给人（创作者、导演）查阅的规范标准与案例分析，覆盖审美、技巧及避坑思路。
-*   **工程层 (SKILL.md)**：将知识层的内容浓缩、硬编码为机器可执行的规范与规则。它与后端核心代码中的 `drama_service.py` 以及 Agent 提示词模板直接绑定，定义智能体的底层执行准则，**切勿随意手动修改**。
+*   **知识层（17 份规范，住在各技能里）**：提供给创作者查阅的标准、案例与验收依据；内容不会被执行。版权与第三方来源另见仓库根部的 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+*   **工程层（Agent Council）**：`agent_council.py` 将知识能力映射为类型化角色、交付、校验器、交接和发布门禁，并由 `drama_service.py` 的真实八阶段流程复用。
 
 ### 3. 后端 8-Agent 与创作流程映射
 
@@ -281,18 +368,18 @@ DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama'
 ```
 
 每一阶段包含如下 12 个核心操作步骤：
-1.  **选题立项**：匹配爆款公式及受众爽点，定义内容方向 `[主用文档 1]`
-2.  **视觉基调设定**：确定画风色彩、画面纵横比及特定物理参数 `[主用文档 2 + 全局基准]`
-3.  **剧本与脚本**：输出镜号级分镜脚本，细化每一镜的起止状态描述 `[主用文档 3]`
-4.  **角色一致性锁定**：渲染标准有序五视图，分配种子(Seed)与特征锁定卡 `[主用文档 4 + 8]`
-5.  **声音设计**：基于 TTS 或音色克隆技术生成分镜干声音频文件 `[主用文档 6]`
-6.  **设计镜头语言**：确定每镜的景别、光影与站位 `[主用文档 7]`
-7.  **生成身体动作**：剥离面部多余特征，专注于角色姿态与肢体渲染 `[主用文档 6]`
-8.  **表情与口型驱动**：对渲染后的角色加载精细表情参数及口型对齐 `[主用文档 6]`
-9.  **连续性合成**：设置转场，使用图像至视频（Image-to-Video）首尾帧衔接 `[主用文档 5]`
-10. **后期调优**：调色、降噪、消除闪烁并混合音轨 `[主用文档 6 + 5]`
-11. **端到端质检**：在每个 Stage 结束时，触发检查清单的自动及手动打分过滤 `[主用文档 8]`
-12. **封装导出与发布**：执行 9:16 竖屏裁剪，优化文件编码规格，发布合规终审 `[主用文档 6 + 3]`
+1.  **选题立项**：匹配题材、受众、商业价值、黄金结构与高光模型。
+2.  **视觉基调设定**：确定载体画风、色板、光线、画幅、帧率和技术参数。
+3.  **剧本与脚本**：建立系列圣经、因果/信息/伏笔台账、分集剧本和台词表。
+4.  **角色一致性锁定**：渲染严格有序五视图，建立角色状态、服化、标志物和声音身份卡。
+5.  **声音设计**：逐句编译语速、情绪、停顿、重音、呼吸，生成配音、环境、SFX、Foley 与 BGM 计划。
+6.  **设计镜头语言**：建立场景圣经、九宫格、景别、光影、站位、轴线、首尾状态与 ShotMotionContract。
+7.  **生成身体动作**：按动作风险拆镜；武打采用蓄力/出招/受击/环境反馈并对齐冲击帧。
+8.  **表情与口型驱动**：使用可观察微表情、关键帧和最终干声完成口型与字幕时序。
+9.  **连续性生成**：自动选择首尾帧、多图/宫格、多模态或首帧模式，指纹不一致时禁止生成。
+10. **后期调优**：按连续性选择转场，统一调色、去闪烁、字幕、音轨与母版。
+11. **端到端质检**：每个 Stage 验收交付物，最终执行 S/A/B/C、评分、授权和人工复核门禁。
+12. **封装导出与宣发**：输出单一平台母版，从真实高光制作封面/预告/文案并建立 KPI/A-B 闭环。
 
 ### 5. 按创作问题快速定位
 
@@ -300,13 +387,14 @@ DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama'
 
 | 遇到的具体问题 | 优先查阅路径 |
 | :--- | :--- |
-| **画面缺乏电影感**，类似“会动的 PPT” | 查阅 [7] 运镜完全指南 §一/§六 及 [2] 画风文档 |
-| **镜头切换时人物服饰、脸部出现漂移** | 查阅 [4] 五视图锁定模板及 [6] 表演指南 §10 |
-| **多镜头拼接在一起割裂，产生跳轴与视觉跳变** | 查阅 [5] 连续性设计指南（全篇） |
-| **角色表情极其僵硬，口型与配音完全对不上** | 查阅 [6] 表演指南 §3/§4/§9 |
-| **手指畸形、物品穿模** | 查阅 [6] 表演指南 §12（手部策略规避） |
-| **配音感情缺失或音色随着句式变化而突变** | 查阅 [6] 表演指南 §11（声音设计） |
-| **导出画面在手机竖屏被切边，字幕不合理** | 查阅 [6] 表演指南 §13 及 [3] 注意事项 |
+| **画面缺乏电影感**，类似“会动的 PPT” | 查阅导演级分镜指南与画质风格总结 |
+| **镜头切换时人物服饰、脸部出现漂移** | 查阅五视图模板、连续性指南与一致性清单 |
+| **多镜头拼接割裂、跳轴或视觉跳变** | 查阅连续性设计与情节/镜头连贯性提示词 |
+| **角色表情僵硬，口型与配音对不上** | 查阅表演细节、情绪表情库与台词语速情绪总结 |
+| **手指畸形、物品穿模** | 查阅表演细节 §12 与负面提示词 |
+| **武打假打、无重量或音效不对点** | 查阅电影级武打镜头设计指南 |
+| **配音感情缺失或音色漂移** | 查阅台词语速情绪总结与表演细节 §11 |
+| **导出切边、字幕不合理或宣发不一致** | 查阅注意事项、画质风格、高光识别和一致性清单 |
 
 ---
 
@@ -321,7 +409,7 @@ DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama'
 | **画面尺寸** | **9:16（1080×1920像素）** | 针对短剧平台的标准竖屏设定。精品单集可采用横屏 16:9。 |
 | **全局帧率** | **全片统一（30 fps 或 24 fps）** | 竖屏投放默认 30fps，电影级基调采用 24fps。严禁中途混用。 |
 | **同框人数** | **主视角 2-4 人最佳，上限 ≤ 5人** | 人数过多将导致 AI 无法有效执行 FaceID 和人物一致性。 |
-| **单镜时长** | **1.5s - 3s**；特定情绪特写长镜头 **≤ 5s - 8s** | 超过 3s 会大幅增加 AI 动作形变与表情崩坏的概率。 |
+| **单镜时长** | 竖屏普通镜头 **1.5s - 4s**；高风险动作镜头 **1.5s - 2.5s**；特定情绪长镜头 **≤ 8s** | 由题材和风险自适应；越长越需要真人驱动、关键帧与逐帧质检。 |
 | **单集时长** | **60s - 120s**（即 1-2 分钟） | 契合短视频平台完播率模型的最优时长。 |
 | **特写镜头策略** | **严禁裸生成特写** | 特写表现力最强但最易崩坏。必须搭载面部驱动或经逐帧修复。 |
 | **角色锁定技术** | **首帧 Image-to-Video 优先** | 优先级：首帧垫图 ＞ LoRA/FaceID ＞ 固定 Seed ＞ 纯文字。 |
@@ -335,7 +423,7 @@ DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama'
 ## 四、冲突裁决与维护约定
 
 *   **唯一基准点**：所有在业务开发和新文档补充中产生的技术参数冲突，统一在 [README.md §三](#三全局制作基准参数-跨文档唯一权威源) 中进行登记与裁决。
-*   **改名联动警告**：如果修改了 8 份专题文档中任意一份的文件名，必须同步调整 `frontend/src/App.tsx` 与 `backend/app/service/drama_service.py` 中的引用标签，否则将导致任务质检链路（Consistency Check）因路径缺失而崩塌。
+*   **改名联动警告**：如果修改了 18 份规范中任意一份的文件名，必须同步调整 `backend/app/core/agent_council.py` 的来源注册表以及实际读取方；能力目录会对缺失或未映射来源失败关闭。
 *   **工程层同步约定**：当修改了本项目 README 的全局设计基准（如单镜时长限制或角色人数上限）后，需要立即评估 `SKILL.md` 文件的同步更新，确保机器 Agent 端提示词与人的制作标准在逻辑上完全共识。
 
 ---
@@ -346,7 +434,7 @@ DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama'
 本系统致力于打破当前 AI 影视创作中**“工具链割裂”**与**“人物一致性崩坏”**的行业痛点。
 *   **工业化流水线 (Pipeline)**：将高度复杂的短剧制作拆解为 8 个边界清晰的 Agent。每个智能体只负责单一领域的推理（如编剧专攻台词，分镜师专攻运镜），有效降低大模型在长文本生成中的幻觉和不可控性。
 *   **Human-in-the-loop (人机协同)**：系统不是单纯的黑盒盲盒生成，而是提供了友好的“断点续传”与“人工干预”机制。在剧本生成后、视频渲染前，导演（用户）可以随时暂停流水线，介入修改分镜提示词或台词，确认无误后再放行。
-*   **知识硬编码 (Knowledge as Code)**：通过引入本仓库的专题知识库及 `SKILL.md`，将人类导演的运镜学、色彩学沉淀为机器可理解的底层提示词规则，强制约束大模型的输出边界。
+*   **版本化知识规范**：各技能里的专题知识库只提供可审计的创作依据；工程层把规则编译为类型、交付物、门禁和提示契约，Markdown 本身不执行。
 
 ### 2. 系统原理架构图
 系统采用前后端分离与多智能体编排架构，逻辑流转如下：
@@ -397,6 +485,7 @@ DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama'
 *   **交互式分镜编辑器**：提供剧本与分镜的表格化编辑面板，支持锁定角色种子 (Seed)、可视化微调镜头语言 (Camera Movement) 与场景光影。
 *   **多模态配置中心**：支持热切换底层驱动模型。例如您可以设定“剧本撰写选用 DeepSeek-v4-pro”，而“视频渲染选用 火山 Seedance 2.0”。
 *   **审片与质检播放器**：集成多轨道时间轴预览功能，并在侧边栏动态呈现基于《一致性检查清单》的系统自动打分雷达图。
+*   **界面三语与剧本语言分离**：界面可在中文 / English / Tiếng Việt 间切换（右上角，缺译回落中文，`npm run i18n:check` 守覆盖率）；新建项目另选「剧本语言」，编剧引擎的标题、台词、旁白、正文与画面描述都按该语言生成，字数按字或词计。
 
 ### 2. 引擎后台与中间件 (Backend & Middleware)
 *   **Agent 编排引擎**：基于 FastAPI BackgroundTasks 构建的非阻塞异步任务调度器，负责按严格的拓扑依赖顺序唤醒对应的 Agent。
@@ -536,23 +625,23 @@ AI 视频最大的痛点是“人物每换一个镜头就换了一张脸”。�
 
 ---
 
-## 十一、SKILL 规约与 Prompt 工程化引擎 (核心)
+## 十一、知识规范与八 Agent 能力编译器（核心）
 
-本项目之所以能实现“类人导演”级别的产出，核心在于自研的 **SKILL 解析引擎**。我们将原本散落在 Python 代码中的提示词（Prompt）提取出来，形成了一套工程化的规范。
+18 份 Markdown 是创作规范和验收依据，不是可执行指令。`AgentCouncilCompiler` 将其中的规则显式映射为 31 项能力、八个角色合同、结构化交付物和失败关闭门禁。
 
-### 1. Prompt as Code (PaaC) 架构理念
-*   **逻辑与业务解耦**：系统后端 `drama_service.py` 纯粹只负责“状态流转”与“API 通信”。所有关于“如何写好剧本”、“如何打光”的 AI 逻辑，全部剥离在项目根目录的 `SKILL.md` 中。
-*   **版本控制友好**：作为纯 Markdown 文件，`SKILL.md` 可以像代码一样通过 Git 进行版本控制、回滚与 Code Review。更新 AI 的“导演技巧”不再需要修改任何一行 Python 代码。
+### 1. 规范与工程边界
+*   **知识层**：Markdown 可以版本控制、评审和追溯，但不会被 import、eval、作为 Shell 执行或被当成高权限指令。
+*   **工程层**：Pydantic 合同、能力注册表、ShotMotionContract、视频路由与发布门禁承担真实业务逻辑；修改规范后必须同步能力映射和测试。
 
-### 2. SKILL 动态解析与挂载机制
-在后台调度引擎中，针对不同的 Agent 节点，系统会执行**动态上下文挂载**：
-1.  **词法解析**：当系统唤醒 `分镜师 Agent` 时，引擎会使用正则或 AST 解析树去读取 `SKILL.md` 中专门属于 `[分镜师规约]` 的区块。
-2.  **System Prompt 拼装**：提取出的 Markdown 文本将作为 `system_prompt` 被注入到 DeepSeek 或 GPT 模型中。
-3.  **变量动态替换**：系统支持在 SKILL 中使用模板语法（如 `{{user_theme}}`、`{{character_seed}}`），在运行时动态渲染真实的业务数据。
+### 2. 编译与挂载机制
+1. **来源登记**：对 18 份规范记录项目相对路径、SHA-256、字节数和关联能力，缺失或未映射时失败。
+2. **角色编译**：根据题材、平台、形式和动作强度，为八 Agent 生成职责、输入、输出、验收和交接合同。
+3. **受控提示注入**：任务阶段只挂载对应角色的编译合同与所需知识片段；项目变量来自类型化请求，不执行文档中的任何命令。
+
+Seedance 提示词路径同时加载项目内置 `sd25-pe` 主规范与 `sd-2-5-prompt` 五段式补充规范。冲突时以 `sd25-pe` 的任务路由、参数分离和素材引用保真为准；五段式规范只补充信息组织、连续时间线、复杂动作因果和静态审计。上游 `sd-2-5-prompt` 在审阅修订中未发现根许可证，因此项目登记其来源和固定 commit，并采用第一方 clean-room 审计器，不执行或复制上游 Python 脚本。
 
 ### 3. 智能体防御与边界约束策略
-大语言模型天生容易发散和产生幻觉。为了将其用于工业化生产，`SKILL.md` 中植入了严密的**边界约束（Constraint Vectors）**：
-*   **格式防御**：强制约定 `你必须且只能返回合法的 JSON 格式，严禁输出任何 Markdown 标记或解释性文字`，从而避免下游 JSON 解析器崩溃。
+模型输出必须先通过结构校验、交付物完整性、五视图/九宫格、镜头指纹、视频参考能力、音频、授权和 S/A/B/C 门禁；提示词声明不能替代代码验收，未验证状态不会被当成通过。
 *   **物理常识防御**：在分镜师规约中硬编码物理约束，例如：`严禁让角色在 2 秒的镜头内完成拔枪、转身并射击三个动作`，提前掐断 AI 产生“不符合物理规律”画面的可能。
 
 ---
@@ -579,4 +668,4 @@ AI 视频最大的痛点是“人物每换一个镜头就换了一张脸”。�
 
 ---
 
-*最后更新于：2026年6月26日*
+*最后更新于：2026年9月3日*

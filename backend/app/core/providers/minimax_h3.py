@@ -10,6 +10,13 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import BaseModel, Field
 
+from app.core.providers.defaults import (
+    MINIMAX_API_ROOT,
+    MINIMAX_FILES_PATH,
+    MINIMAX_H3_PATH,
+    MINIMAX_H3_STATUS_PATH_TEMPLATE,
+)
+from app.platform.runtime_models import runtime_model_registry
 from app.schema.production import H3VideoRequest
 
 
@@ -54,10 +61,14 @@ def _result_video_url(data: dict[str, Any]) -> Any:
     explicit = _find_key(data, ("video_url", "download_url", "file_url"))
     if explicit:
         return explicit
-    for key in ("output", "result", "video", "file", "data"):
+    for key in ("output", "result", "video", "file", "data", "task"):
         container = data.get(key)
-        if isinstance(container, dict) and container.get("url"):
-            return container["url"]
+        if isinstance(container, dict):
+            if container.get("url"):
+                return container["url"]
+            content = container.get("content")
+            if isinstance(content, dict) and content.get("url"):
+                return content["url"]
         if isinstance(container, list):
             for item in container:
                 if isinstance(item, dict) and item.get("url") and (
@@ -78,31 +89,54 @@ class MiniMaxH3Client:
         transport: httpx.BaseTransport | None = None,
         timeout_seconds: float = 180,
     ):
-        key = (api_key or os.getenv("MINIMAX_API_KEY") or "").strip()
+        runtime = runtime_model_registry.first("minimax", "video")
+        key = (
+            api_key
+            or (runtime.api_key if runtime else None)
+            or os.getenv("MINIMAX_API_KEY")
+            or ""
+        ).strip()
         if not key:
             raise RuntimeError("MINIMAX_API_KEY is required on the server")
         self.endpoint = (
             endpoint
+            or (self._endpoint_on(runtime.base_url) if runtime and not api_key else None)
             or os.getenv("MINIMAX_H3_ENDPOINT")
-            or "https://api.minimaxi.com/v2/video_generation"
+            or self._default_endpoint()
         ).rstrip("/")
         parsed_endpoint = urlsplit(self.endpoint)
         api_origin = f"{parsed_endpoint.scheme}://{parsed_endpoint.netloc}"
         self.status_url_template = (
             status_url_template
             or os.getenv("MINIMAX_H3_STATUS_URL_TEMPLATE")
-            or (api_origin + "/v1/query/video_generation?task_id={task_id}")
+            or (api_origin + MINIMAX_H3_STATUS_PATH_TEMPLATE)
         )
         self.files_url = (
             files_url
             or os.getenv("MINIMAX_FILES_URL")
-            or (api_origin + "/v1/files/retrieve")
+            or (api_origin + MINIMAX_FILES_PATH)
         )
         self._client = httpx.Client(
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             timeout=timeout_seconds,
             transport=transport,
         )
+
+    @staticmethod
+    def _endpoint_on(base_url: str) -> str | None:
+        """The H3 endpoint for a configured MiniMax address, which may already name it."""
+        base = (base_url or "").strip().rstrip("/")
+        parsed = urlsplit(base)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username:
+            return None
+        if base.endswith("/video_generation"):
+            return base
+        return f"{parsed.scheme}://{parsed.netloc}{MINIMAX_H3_PATH}"
+
+    @classmethod
+    def _default_endpoint(cls) -> str:
+        """H3 on the configured MiniMax host, so one MINIMAX_BASE_URL moves every MiniMax call."""
+        return cls._endpoint_on(os.getenv("MINIMAX_BASE_URL") or "") or MINIMAX_API_ROOT + MINIMAX_H3_PATH
 
     @staticmethod
     def _raise_safe(response: httpx.Response) -> None:
@@ -113,36 +147,47 @@ class MiniMaxH3Client:
 
     @staticmethod
     def _payload(request: H3VideoRequest) -> dict[str, Any]:
+        content: list[dict[str, Any]] = [
+            {"type": "text", "text": request.prompt},
+        ]
+
+        def add_reference(media_type: str, url: str, role: str) -> None:
+            content_type = f"{media_type}_url"
+            content.append({
+                "type": content_type,
+                content_type: {"url": str(url)},
+                "role": role,
+            })
+
+        if request.first_frame:
+            add_reference("image", request.first_frame, "first_frame")
+        if request.last_frame:
+            add_reference("image", request.last_frame, "last_frame")
+        for url in request.reference_images:
+            add_reference("image", url, "reference_image")
+        for url in request.reference_videos:
+            add_reference("video", url, "reference_video")
+        for url in request.reference_audios:
+            add_reference("audio", url, "reference_audio")
+        for binding in request.reference_bindings:
+            add_reference(
+                binding.media_type,
+                binding.uri,
+                f"reference_{binding.media_type}",
+            )
+
         payload: dict[str, Any] = {
             "model": request.model,
-            "prompt": request.prompt,
-            "mode": request.inferred_mode,
+            "content": content,
             "duration": request.duration_seconds,
-            "resolution": request.resolution,
-            "aspect_ratio": request.aspect_ratio,
-            "native_audio": request.native_audio,
+            "resolution": request.resolution.upper(),
         }
+        # H3 derives image/reference aspect ratios from the supplied media.
+        # Only pure text generation requires an explicit non-adaptive ratio.
+        if request.inferred_mode == "text":
+            payload["ratio"] = request.aspect_ratio
         if request.seed is not None:
             payload["seed"] = request.seed
-        if request.first_frame:
-            payload["first_frame_image"] = str(request.first_frame)
-        if request.last_frame:
-            payload["last_frame_image"] = str(request.last_frame)
-        media_inputs: list[dict[str, str]] = []
-        media_inputs.extend(
-            {"type": "image", "url": str(url), "role": "subject_or_scene_reference"}
-            for url in request.reference_images
-        )
-        media_inputs.extend(
-            {"type": "video", "url": str(url), "role": "motion_camera_or_rhythm_reference"}
-            for url in request.reference_videos
-        )
-        media_inputs.extend(
-            {"type": "audio", "url": str(url), "role": "voice_music_or_timing_reference"}
-            for url in request.reference_audios
-        )
-        if media_inputs:
-            payload["media_inputs"] = media_inputs
         return payload
 
     @staticmethod

@@ -1,15 +1,30 @@
 # Implementation Tasks: Unified AI Short-Drama Studio
 
+## Workflow and outline repair (2026-09-05)
+
+- [x] Polish the scoped script preview with full-text expansion.
+- [x] Add slash commands, remove the right-side stage card, and preserve manual history scrolling.
+
+- [x] Repair missing outline episodes from source, preserving existing IDs/content; test idempotence and real source gaps.
+- [x] Centralize eight-agent readiness, ordered continuation and final review guidance; test safe chat intents and history persistence.
+- [x] Connect chat/history and workflow buttons to server guidance; verify frontend regressions/build.
+- [ ] Repair the affected persisted project without model calls, review changes, and record verification limits.
+  - Code and Python reviews passed. The older screenshot project could not be located in the current local task store; no unrelated project was altered. Its URL/environment is still needed for a historical-data repair. Browser acceptance remains unverified because local computer-use permissions are unavailable.
+
 Each task is intended to be one focused, reviewable increment. A task is complete only when its acceptance criteria and the project Definition of Done in `tasks/plan.md` both pass.
 
 ## Current verified increment
 
 - [x] Executable sd25-pe generation/edit/extension compiler with multimodal, keyframe, nine-grid, blockout, dialogue-ledger, unused-material, and parameter-separation rules.
+- [x] Fully integrate script-to-video-prompts with sd25-pe through one typed, source-bound production pipeline and safe multi-format exports.
 - [x] Owner-scoped SQLite project/artifact/job/audit foundation with optimistic versions, staleness, idempotency, attempts, provider task IDs, and cost reservation.
 - [x] Safe TXT/Markdown/DOCX/PDF/FDX ingestion, evidence spans, hashes, and deterministic story graph.
 - [x] Mandatory five-view asset readiness and metadata-complete exact 3×3 storyboard contract.
 - [x] Motivation-first performance planning and fail-closed identity/anatomy/expression/realism/continuity/dialogue/lip-sync QA.
 - [x] ElevenLabs timed TTS/dialogue, SFX, music, video-to-music, STT, dubbing, plus ducked/loudness-limited final mix.
+- [x] ElevenLabs Base URL normalization accepts either the API root or a full `/v1/sound-generation` endpoint; provider errors and failure evidence redact labeled and bare secret forms.
+- [x] Explicit video reference routing for first frame, first+last frame, multi-image, and multimodal image/video/audio inputs, including safe accepted-tail inline frames.
+- [x] Source-hash-bound novel triage, resumable episode intake, consent-aware voice direction, pre-spend readiness, failure evidence, production analytics, and lineage-safe Freezone subgraph duplication.
 - [x] SRT/ASS/Jianying-compatible interchange and scoped/revocable external Agent API.
 - [ ] Full-product parity items are still listed in `tasks/implementation-status.md`; do not infer completion from the 13-source implementation report.
 

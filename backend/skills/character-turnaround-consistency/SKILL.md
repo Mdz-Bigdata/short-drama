@@ -1,3 +1,8 @@
+---
+name: character-turnaround-consistency
+description: 人物一致性规约——用三视图 / 五视图数字演员设定集锁定角色视觉锚点，含设定集提示词模板（references/actor-sheet-template.md，由 manifest.json 登记为 actor-sheet-template 章节）
+---
+
 # AI短剧：通过三视图解决人物一致性问题
 
 ## 1. 核心思路

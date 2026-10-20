@@ -1,5 +1,16 @@
 # Implementation Plan: Unified AI Short-Drama Studio
 
+## Active workflow and outline repair increment (2026-09-05)
+
+Follow-up scope: replace the oversized full-script wall with readable scoped previews and full-text expansion; remove the right-side eight-stage card; add a keyboard-accessible `/` command menu; keep chat history independently scrollable without forcing readers to the latest message. One-click production continues automatically between stages, while failures and release-review status remain truthful.
+
+User-requested scope: guide the full eight-agent workflow using actual output readiness, and repair persisted episode gaps without renumbering or regenerating existing content. This increment extends the existing assistant/workbench roadmap; other unfinished tasks remain unchanged.
+
+1. Reconcile screenplay episodes with persisted outlines, preserving existing scene IDs and assets; share the repair across read and production paths.
+2. Use a canonical readiness snapshot for chat guidance, next-stage selection, automatic continuation, and review gates. Questions, greetings and negated commands must not start generation.
+3. Restore durable chat history and show stage-specific guidance without claiming unverified completion.
+4. Run offline regressions and frontend build; transactionally repair the affected project from its complete source without paid generation.
+
 > This document preserves the full parity roadmap and original gap analysis. For the current implemented production core and verification boundary, see `tasks/implementation-status.md`.
 
 ## Active delivery increment (2026-08-09)

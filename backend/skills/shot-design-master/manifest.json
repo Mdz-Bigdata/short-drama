@@ -1,0 +1,180 @@
+{
+  "version": 1,
+  "sections": [
+    {
+      "key": "shot-grammar",
+      "title": "镜头语法词典",
+      "file": "references/shot-grammar.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "prompt-contracts",
+      "title": "提示词结构契约",
+      "file": "references/prompt-contracts.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "blocking-lighting",
+      "title": "站位、场景圣经与光色",
+      "file": "references/blocking-lighting.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "continuity-consistency",
+      "title": "连续性与一致性锁",
+      "file": "references/continuity-consistency.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "performance-action",
+      "title": "表演、情绪与动作设计",
+      "file": "references/performance-action.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "choreography-beats",
+      "title": "武打招式翻译表（choreography-beats）",
+      "file": "references/choreography-beats.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "models-failures",
+      "title": "模型能力、质量锚点与失败诊断",
+      "file": "references/models-failures.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "h3-native-contract",
+      "title": "MiniMax H3 原生提示词契约",
+      "file": "references/h3-native-contract.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "director-shot-guide",
+      "title": "AI短剧与漫剧导演级拍摄分镜完全指南",
+      "file": "references/director-shot-guide.md",
+      "budget": 8000,
+      "stages": [
+        4
+      ]
+    },
+    {
+      "key": "martial-arts",
+      "title": "AI短剧电影级武打镜头设计指南",
+      "file": "references/martial-arts.md",
+      "budget": 5000,
+      "stages": [
+        4
+      ]
+    },
+    {
+      "key": "performance-details",
+      "title": "AI短剧表演细节与提示词指南",
+      "file": "references/performance-details.md",
+      "budget": 5000,
+      "stages": [
+        2,
+        3
+      ]
+    },
+    {
+      "key": "scene-design",
+      "title": "场景设计提示词",
+      "file": "references/scene-design.md",
+      "budget": 5000,
+      "stages": [
+        4
+      ]
+    },
+    {
+      "key": "emotion-expression",
+      "title": "短剧情绪与面部表情提示词库",
+      "file": "references/emotion-expression.md",
+      "budget": 5000,
+      "stages": [
+        4
+      ]
+    },
+    {
+      "key": "plot-shot-coherence",
+      "title": "短剧情节与镜头连贯性提示词",
+      "file": "references/plot-shot-coherence.md",
+      "budget": 5000,
+      "stages": [
+        4
+      ]
+    },
+    {
+      "key": "camera-style-library",
+      "title": "运镜与画面风格速查库",
+      "file": "references/camera-style-library.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "four-lock-handoff",
+      "title": "四重锁与镜头交接",
+      "file": "references/four-lock-handoff.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "seedance25-cn-handbook",
+      "title": "Seedance 2.5 中文手册补充",
+      "file": "references/seedance25-cn-handbook.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "composition-library",
+      "title": "构图速查：基础秩序、电影氛围、动作张力",
+      "file": "references/composition-library.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "camera-move-library",
+      "title": "运镜词条库：英文模板、幅度速度语法与镜头时长反推",
+      "file": "references/camera-move-library.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "combat-camera-handbook",
+      "title": "高速打斗与割草运镜手册",
+      "file": "references/combat-camera-handbook.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
+      "key": "xianxia-combat-vfx",
+      "title": "玄幻打斗：能量形态、特效尺度与收束协议",
+      "file": "references/xianxia-combat-vfx.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    }
+  ]
+}

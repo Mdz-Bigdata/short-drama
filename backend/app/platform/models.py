@@ -175,6 +175,20 @@ class ElementFile(Base):
     element: Mapped[ElementAsset] = relationship(back_populates="files")
 
 
+class DirectorDeskPose(Base):
+    """A pose someone saved on the 3D director desk; it follows the person, not the project."""
+
+    __tablename__ = "director_desk_poses"
+    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_director_desk_pose_owner_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("platform_users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(40))
+    pose_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
 class RegenerationRequest(Base):
     __tablename__ = "element_regeneration_requests"
 
@@ -254,6 +268,53 @@ class PaymentWebhookEvent(Base):
     order_id: Mapped[str | None] = mapped_column(String(36))
     result: Mapped[str] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ModelConfigurationCredential(Base):
+    """One more key for a provider configuration; calls rotate across the enabled ones of their bucket."""
+
+    __tablename__ = "model_configuration_credentials"
+    __table_args__ = (Index("ix_model_credential_configuration", "configuration_id", "enabled"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    configuration_id: Mapped[str] = mapped_column(
+        ForeignKey("model_provider_configurations.id", ondelete="CASCADE"), index=True
+    )
+    label: Mapped[str] = mapped_column(String(80), default="")
+    api_key_ciphertext: Mapped[str] = mapped_column(Text)
+    api_key_hint: Mapped[str] = mapped_column(String(16))
+    # Job-type buckets this key may serve (text / image / video / audio); empty means any.
+    buckets: Mapped[list] = mapped_column(JSON, default=list)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[str | None] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class PlatformSetting(Base):
+    """A named global setting (text tiers, declarative video endpoints …) as one JSON value."""
+
+    __tablename__ = "platform_settings"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_by: Mapped[str | None] = mapped_column(String(36))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class McpToken(Base):
+    """A bearer token an external agent uses to reach this user's projects over MCP; only its hash is kept."""
+
+    __tablename__ = "mcp_tokens"
+    __table_args__ = (Index("ix_mcp_token_user", "user_id", "revoked"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    label: Mapped[str] = mapped_column(String(80), default="")
+    token_digest: Mapped[str] = mapped_column(String(64), unique=True)
+    token_hint: Mapped[str] = mapped_column(String(8), default="")
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AuditEvent(Base):

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Check, ChevronDown, ChevronRight, Command, ExternalLink, LoaderCircle, Search } from 'lucide-react';
 
 import { apiRequest } from '../../api/client';
+import { t } from '../../i18n';
 
 
 interface Ability {
@@ -9,12 +10,19 @@ interface Ability {
   label: string;
   command: string;
   entrypoint: string;
+  implementation_status: 'implemented' | 'provider-dependent' | 'interchange-only' | 'unverified';
+  evidence: string;
   enabled: boolean;
 }
 
 interface CapabilitySource {
   source_id: string;
   source_url: string;
+  reviewed_commit: string;
+  reviewed_at: string;
+  license_observation: string;
+  code_treatment: 'attributed-adaptation' | 'clean-room' | 'api-interoperability';
+  attribution: string;
   enabled_count: number;
   abilities: Ability[];
 }
@@ -42,7 +50,7 @@ export function CapabilityCenter({ role = 'user' }: CapabilityCenterProps) {
     let active = true;
     apiRequest<CapabilityResponse>('/api/platform/capabilities')
       .then(data => { if (active) setSources(data.items); })
-      .catch(err => { if (active) setError(err instanceof Error ? err.message : '能力注册表加载失败'); })
+      .catch(err => { if (active) setError(err instanceof Error ? err.message : t('能力注册表加载失败')); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, []);
@@ -104,22 +112,22 @@ export function CapabilityCenter({ role = 'user' }: CapabilityCenterProps) {
     <section className="capability-center" aria-labelledby="capability-title">
       <div className="capability-heading">
         <div>
-          <h3 id="capability-title">工业化能力与可调用入口</h3>
-          <p>{sources.length || 13} 个上游来源 · 每项能力可下拉检查、全局启用并通过 /command 调用</p>
+          <h3 id="capability-title">{t('工业化能力与可调用入口')}</h3>
+          <p>{sources.length > 0 ? `${sources.length} 个上游来源 · ` : ''}每项能力可下拉检查、全局启用并通过 /command 调用</p>
         </div>
-        <span className="capability-role">{role === 'admin' ? '管理员 · 可配置全局状态' : '成员 · 使用已启用能力'}</span>
+        <span className="capability-role">{role === 'admin' ? t('管理员 · 可配置全局状态') : t('成员 · 使用已启用能力')}</span>
       </div>
 
       <div className="command-palette" role="search">
         <Command size={18} aria-hidden="true" />
-        <label htmlFor="global-command" className="sr-only">输入能力命令</label>
+        <label htmlFor="global-command" className="sr-only">{t('输入能力命令')}</label>
         <input
           id="global-command"
           list="enabled-command-list"
           value={commandText}
           onChange={event => setCommandText(event.target.value)}
           onKeyDown={event => { if (event.key === 'Enter') void invoke(); }}
-          placeholder="输入 /command，例如 /minimax-h3-skills.multi-reference-video 雨夜追车"
+          placeholder={t('输入 /command，例如 /minimax-h3-skills.multi-reference-video 雨夜追车')}
         />
         <datalist id="enabled-command-list">
           {enabledAbilities.map(item => <option key={item.command} value={item.command}>{item.label}</option>)}
@@ -133,7 +141,7 @@ export function CapabilityCenter({ role = 'user' }: CapabilityCenterProps) {
       {error && <div className="inline-error" role="alert">{error}</div>}
 
       {loading ? (
-        <div className="capability-loading"><LoaderCircle className="spin" /> 正在同步全局能力注册表…</div>
+        <div className="capability-loading"><LoaderCircle className="spin" /> {t('正在同步全局能力注册表…')}</div>
       ) : (
         <div className="capability-source-grid">
           {sources.map(source => {
@@ -157,8 +165,13 @@ export function CapabilityCenter({ role = 'user' }: CapabilityCenterProps) {
                 {open && (
                   <div className="ability-list" id={`abilities-${source.source_id}`}>
                     <a href={source.source_url} target="_blank" rel="noreferrer" className="source-link">
-                      查看能力来源 <ExternalLink size={12} />
+                      {t('查看能力来源')} <ExternalLink size={12} />
                     </a>
+                    <div className="source-provenance">
+                      <span>审计 {source.reviewed_at} · {source.reviewed_commit.slice(0, 7)}</span>
+                      <span>{source.code_treatment} · {source.license_observation}</span>
+                      {source.attribution && <span>{source.attribution}</span>}
+                    </div>
                     {source.abilities.map(ability => {
                       const key = `${source.source_id}:${ability.id}`;
                       return (
@@ -167,6 +180,14 @@ export function CapabilityCenter({ role = 'user' }: CapabilityCenterProps) {
                             <strong>{ability.label}</strong>
                             <code>{ability.command}</code>
                             <small>{ability.entrypoint}</small>
+                            <small className={`implementation-status ${ability.implementation_status}`}>
+                              {ability.implementation_status === 'provider-dependent'
+                                ? '已实现 · 需配置服务商'
+                                : ability.implementation_status === 'interchange-only'
+                                  ? '部分实现 · 仅交换格式，未验证原生导入'
+                                  : '已实现'}
+                              {ability.evidence ? ` · ${ability.evidence}` : ''}
+                            </small>
                           </div>
                           <button
                             type="button"
@@ -176,7 +197,7 @@ export function CapabilityCenter({ role = 'user' }: CapabilityCenterProps) {
                             className={`switch ${ability.enabled ? 'on' : ''}`}
                             disabled={role !== 'admin' || busy === key}
                             onClick={() => void toggleAbility(source.source_id, ability)}
-                            title={role === 'admin' ? '切换项目全局状态' : '仅管理员可修改'}
+                            title={role === 'admin' ? t('切换项目全局状态') : t('仅管理员可修改')}
                           >
                             <span />
                           </button>

@@ -10,6 +10,7 @@ from app.repository.studio_repo import ConcurrencyError, StudioRepository
 from app.schema.studio import (
     ArtifactKind,
     CanvasEdge,
+    CanvasDuplicateRequest,
     CanvasNode,
     CanvasPutRequest,
     CostEventRequest,
@@ -23,6 +24,7 @@ from app.schema.studio import (
     Vec3,
 )
 from app.service.project_archive import ProjectArchiveError, ProjectArchiveService
+from app.service.studio_service import StudioService
 
 
 class WorkbenchRepositoryTests(unittest.TestCase):
@@ -145,6 +147,56 @@ class WorkbenchRepositoryTests(unittest.TestCase):
                 target_kind=ArtifactKind.script,
                 expected_version=1,
             )
+
+    def test_freezone_subgraph_duplicate_preserves_lineage_and_internal_edges(self):
+        first = self.repo.put_canvas(
+            self.project.id,
+            "owner-1",
+            CanvasPutRequest(
+                expected_version=0,
+                nodes=[
+                    CanvasNode(
+                        id="source", kind="artifact", track="mainline", x=0, y=0,
+                        width=200, height=120, artifact_id=self.script.id,
+                    ),
+                    CanvasNode(
+                        id="candidate-a", kind="candidate", track="freezone", x=100, y=200,
+                        width=200, height=120, artifact_id=self.script.id, payload={"label": "A"},
+                    ),
+                    CanvasNode(
+                        id="candidate-b", kind="candidate", track="freezone", x=400, y=200,
+                        width=200, height=120, artifact_id=self.script.id, payload={"label": "B"},
+                    ),
+                ],
+                edges=[
+                    CanvasEdge(id="external", source="source", target="candidate-a", kind="variant"),
+                    CanvasEdge(id="internal", source="candidate-a", target="candidate-b", kind="continuity"),
+                ],
+            ),
+        )
+        service = StudioService(self.repo)
+        duplicated = service.duplicate_canvas_nodes(
+            self.project.id,
+            "owner-1",
+            CanvasDuplicateRequest(
+                expected_version=first.version,
+                operation_id="duplicate-candidates-1",
+                node_ids=["candidate-a", "candidate-b"],
+                offset_x=40,
+                offset_y=60,
+            ),
+        )
+
+        clones = [node for node in duplicated["nodes"] if node["id"].startswith("dup:")]
+        self.assertEqual(len(clones), 2)
+        self.assertTrue(all(node["track"] == "freezone" for node in clones))
+        self.assertTrue(all(node["artifact_id"] == self.script.id for node in clones))
+        duplicate_edges = [edge for edge in duplicated["edges"] if edge["id"].startswith("dup:")]
+        self.assertEqual(len(duplicate_edges), 1)
+        self.assertEqual(duplicate_edges[0]["kind"], "continuity")
+        outline = service.canvas_outline(self.project.id, "owner-1")
+        self.assertEqual(outline["version"], 2)
+        self.assertEqual(len(outline["tracks"]["freezone"]), 4)
 
     def test_director_world_validates_references_and_builds_deterministic_frame_plan(self):
         world = self.repo.put_director_world(
@@ -356,6 +408,8 @@ class WorkbenchApiContractTests(unittest.TestCase):
                 "/api/studio/artifacts/{artifact_id}/reviews",
                 "/api/studio/projects/{project_id}/canvas",
                 "/api/studio/projects/{project_id}/canvas/promote",
+                "/api/studio/projects/{project_id}/canvas/duplicate",
+                "/api/studio/projects/{project_id}/canvas/outline",
                 "/api/studio/projects/{project_id}/director-world",
                 "/api/studio/projects/{project_id}/director-world/frame-plan",
                 "/api/studio/projects/{project_id}/costs",

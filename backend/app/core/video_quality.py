@@ -55,7 +55,7 @@ _THRESHOLDS = {
 }
 
 _ACTIONS = {
-    "identity_consistency": "重新绑定角色五视图与身份 DNA，减少同镜角色数，并用上一镜验收尾帧作为首帧重生成。",
+    "identity_consistency": "重新绑定数字演员设定集与身份 DNA，减少同镜角色数，并用上一镜验收尾帧作为首帧重生成。",
     "anatomy_integrity": "缩短镜头并拆分复杂手部/身体动作，增加遮挡或中景构图，针对畸形区段局部重生成。",
     "expression_fidelity": "按动机→视线→呼吸→面部肌群→肢体顺序重写微表情节拍，降低夸张幅度后重生成。",
     "photorealism": "锁定自然皮肤纹理、物理可信光线与真实镜头缺陷，移除塑料皮肤、CG渲染和过度磨皮描述。",

@@ -1,23 +1,29 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import hmac
 import re
 import secrets
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
+from app import settings
+from app.core.element_scope import element_in_task, link_task
 from app.core.capability_manifest import capability_command_catalog
 from app.platform.models import (
     AuditEvent,
     Base,
     CapabilitySetting,
     ConfiguredModel,
+    DirectorDeskPose,
     ElementAsset,
     ElementFile,
     LedgerEntry,
@@ -29,23 +35,48 @@ from app.platform.models import (
     ProjectSkill,
     RegenerationRequest,
     UserMembership,
+    ModelConfigurationCredential,
+    PlatformSetting,
+    McpToken,
 )
 from app.repository.user_repo import hash_password, verify_password
+from app.schema.production import IDENTITY_VIEW_ORDER, LEGACY_IDENTITY_VIEW_ORDER
 
 
-ACTOR_VIEW_SLOTS = (
-    "front",
-    "front_three_quarter",
-    "profile",
-    "rear_three_quarter",
-    "back",
+# 数字演员的图片槽位 = 设定集的五个身份锚点。
+ACTOR_VIEW_SLOTS = IDENTITY_VIEW_ORDER
+# 旧五视图角度：存量演员就存在这些槽位里，上传/删除/就绪判定都必须继续认。
+LEGACY_ACTOR_VIEW_SLOTS = LEGACY_IDENTITY_VIEW_ORDER
+# element_file.position 的排序表：以旧五视图的转面顺序打底，新增的两张头部挂在后面。
+# 这样两代资产各自读起来都对——旧演员仍是 0°→45°→90°→135°→180°，
+# 新演员按位置升序就是 front/profile/back/face_front/face_three_quarter。
+ACTOR_VIEW_SLOT_ORDER = LEGACY_ACTOR_VIEW_SLOTS + tuple(
+    slot for slot in ACTOR_VIEW_SLOTS if slot not in LEGACY_ACTOR_VIEW_SLOTS
 )
-ELEMENT_KINDS = {"actor", "prop", "scene", "effect"}
+
+
+def actor_views_complete(slots: set[str]) -> bool:
+    """任意一代的整套身份视图齐了，演员就算 ready。"""
+    return set(ACTOR_VIEW_SLOTS) <= slots or set(LEGACY_ACTOR_VIEW_SLOTS) <= slots
+ELEMENT_KINDS = {"actor", "prop", "scene", "costume", "effect", "product"}
 PAYMENT_PROVIDERS = {"sandbox", "wechat", "alipay"}
 PROJECT_SKILL_SOURCE_TYPES = {"created", "markdown_upload", "skill_package"}
 MAX_PROJECT_SKILL_BYTES = 128 * 1024
 MAX_ENABLED_SKILLS = 12
 MAX_ENABLED_SKILL_BYTES = 96 * 1024
+MAX_DESK_POSES_PER_OWNER = 200
+MAX_DESK_POSE_NAME = 40
+
+
+MAX_ELEMENT_ASSETS_PER_OWNER = settings.env_int(
+    "ELEMENT_ASSET_COUNT_QUOTA", 1_000, minimum=10, maximum=100_000
+)
+MAX_ELEMENT_STORAGE_BYTES = settings.env_int(
+    "ELEMENT_STORAGE_QUOTA_BYTES", 5 * 1024**3, minimum=50 * 1024**2, maximum=1024**5
+)
+MAX_GLOBAL_ELEMENT_STORAGE_BYTES = settings.env_int(
+    "ELEMENT_GLOBAL_STORAGE_QUOTA_BYTES", 20 * 1024**3, minimum=1024**3, maximum=1024**5
+)
 
 
 @dataclass(frozen=True)
@@ -65,6 +96,87 @@ class WalletSnapshot:
     entries: Sequence[LedgerEntry]
 
 
+@dataclass(frozen=True)
+class StoredElementFileResult:
+    element: ElementAsset
+    replaced_storage_path: str | None
+
+
+@dataclass(frozen=True)
+class DeletedElementFileRecord:
+    id: str
+    element_id: str
+    slot: str
+    storage_path: str
+    mime_type: str
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class DeletedElementFileResult:
+    element: ElementAsset
+    deleted_file: DeletedElementFileRecord
+
+
+@dataclass(frozen=True)
+class DeletedElementResult:
+    element_id: str
+    deleted_files: tuple[DeletedElementFileRecord, ...]
+
+
+DeletionStorageHook = Callable[
+    [tuple[DeletedElementFileRecord, ...]],
+    Awaitable[dict[str, object] | None],
+]
+
+
+class StorageMutationCommittedWithError(BaseException):
+    """Carries a committed result through context-exit/cancellation failures."""
+
+    def __init__(
+        self,
+        result: StoredElementFileResult | DeletedElementFileResult | DeletedElementResult,
+        original_error: BaseException,
+    ):
+        super().__init__("storage mutation committed before a later error")
+        self.result = result
+        self.original_error = original_error
+
+
+def _deleted_element_file_record(item: ElementFile) -> DeletedElementFileRecord:
+    return DeletedElementFileRecord(
+        id=item.id,
+        element_id=item.element_id,
+        slot=item.slot,
+        storage_path=item.storage_path,
+        mime_type=item.mime_type,
+        size_bytes=item.size_bytes,
+    )
+
+
+async def _commit_deletion_with_cancellation_boundary(session) -> bool:
+    """Commit exactly once and report cancellation only after its outcome is known.
+
+    Shielding avoids the unsafe state where the filesystem has already been
+    quarantined but request cancellation leaves the database commit outcome
+    ambiguous. Repeated cancellation requests are deferred until the commit
+    task has either succeeded or failed.
+    """
+
+    commit_task = asyncio.create_task(session.commit())
+    cancellation_requested = False
+    while not commit_task.done():
+        try:
+            await asyncio.shield(commit_task)
+        except asyncio.CancelledError:
+            cancellation_requested = True
+            if commit_task.done():
+                break
+            continue
+    commit_task.result()
+    return cancellation_requested
+
+
 class PlatformStore:
     def __init__(self, database_url: str, *, echo: bool = False):
         if not database_url.startswith(("postgresql+asyncpg://", "sqlite+aiosqlite://")):
@@ -79,6 +191,21 @@ class PlatformStore:
     async def close(self) -> None:
         await self.engine.dispose()
 
+    async def _lock_element_storage_budget(self, session) -> None:
+        if self.engine.dialect.name == "postgresql":
+            # Serializes the global quota calculation across every account and
+            # process without introducing a migration-only sentinel row.
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_id)"),
+                {"lock_id": 6_002_829_067_579_314_753},
+            )
+        else:
+            # SQLite is a local-development boundary. This remains a no-op lock
+            # there, while SQLite itself serializes the eventual write commit.
+            await session.scalar(
+                select(PlatformUser.id).order_by(PlatformUser.id).limit(1).with_for_update()
+            )
+
     async def create_user(
         self,
         *,
@@ -88,7 +215,7 @@ class PlatformStore:
         username: str | None = None,
         role: str = "user",
         must_change_password: bool = False,
-        _minimum_password_length: int = 10,
+        _minimum_password_length: int = settings.PASSWORD_MIN_LENGTH,
     ) -> tuple[PlatformUser, bool]:
         clean_email = email.strip().lower() if email else None
         clean_phone = phone.strip() if phone else None
@@ -125,7 +252,7 @@ class PlatformStore:
             return user, True
 
     async def bootstrap_admin(
-        self, password: str, *, login: str = "admin@short-drama"
+        self, password: str, *, login: str
     ) -> tuple[PlatformUser, bool]:
         clean_login = login.strip().lower()
         if "@" not in clean_login or len(clean_login) > 320:
@@ -143,7 +270,7 @@ class PlatformStore:
             username="admin",
             role="admin",
             must_change_password=True,
-            _minimum_password_length=8,
+            _minimum_password_length=settings.BOOTSTRAP_ADMIN_PASSWORD_MIN_LENGTH,
         )
 
     async def verify_login(self, login_id: str, password: str) -> PlatformUser | None:
@@ -199,8 +326,8 @@ class PlatformStore:
             return user
 
     async def change_password(self, user_id: str, current_password: str, new_password: str) -> PlatformUser:
-        if len(new_password) < 10:
-            raise ValueError("新密码至少需要 10 位")
+        if len(new_password) < settings.PASSWORD_MIN_LENGTH:
+            raise ValueError(f"新密码至少需要 {settings.PASSWORD_MIN_LENGTH} 位")
         async with self.sessions() as session:
             user = await session.get(PlatformUser, user_id)
             if not user or not verify_password(current_password, user.password_hash):
@@ -254,14 +381,20 @@ class PlatformStore:
         catalog = capability_command_catalog()
         async with self.sessions() as session:
             for item in catalog:
+                persisted = {
+                    key: item[key]
+                    for key in (
+                        "source_id", "capability_id", "source_url", "label", "command", "entrypoint"
+                    )
+                }
                 setting = await session.get(CapabilitySetting, (item["source_id"], item["capability_id"]))
                 if setting:
-                    setting.source_url = item["source_url"]
-                    setting.label = item["label"]
-                    setting.command = item["command"]
-                    setting.entrypoint = item["entrypoint"]
+                    setting.source_url = persisted["source_url"]
+                    setting.label = persisted["label"]
+                    setting.command = persisted["command"]
+                    setting.entrypoint = persisted["entrypoint"]
                 else:
-                    session.add(CapabilitySetting(**item, enabled=True))
+                    session.add(CapabilitySetting(**persisted, enabled=True))
             await session.commit()
 
     async def list_capabilities(self) -> list[CapabilitySetting]:
@@ -598,6 +731,154 @@ class PlatformStore:
             assert loaded is not None
             return loaded
 
+    # ------------------------------------------------------------ extra credentials
+
+    async def list_model_credentials(self, configuration_id: str | None = None) -> list[ModelConfigurationCredential]:
+        async with self.sessions() as session:
+            query = select(ModelConfigurationCredential).order_by(ModelConfigurationCredential.created_at)
+            if configuration_id:
+                query = query.where(ModelConfigurationCredential.configuration_id == configuration_id)
+            return list((await session.scalars(query)).all())
+
+    async def add_model_credential(
+        self, configuration_id: str, *, actor_id: str, label: str, api_key_ciphertext: str, api_key_hint: str, buckets: list[str],
+    ) -> ModelConfigurationCredential:
+        async with self.sessions() as session:
+            configuration = await session.get(ModelProviderConfiguration, configuration_id)
+            if not configuration:
+                raise ValueError("模型配置不存在")
+            credential = ModelConfigurationCredential(
+                configuration_id=configuration_id, label=label[:80], api_key_ciphertext=api_key_ciphertext,
+                api_key_hint=api_key_hint, buckets=list(buckets), enabled=True, created_by=actor_id,
+            )
+            session.add(credential)
+            session.add(AuditEvent(
+                actor_id=actor_id, action="model_credential.add", resource_type="model_configuration",
+                resource_id=configuration_id, details={"label": label[:80], "buckets": list(buckets)},
+            ))
+            await session.commit()
+            await session.refresh(credential)
+            return credential
+
+    async def update_model_credential(
+        self, configuration_id: str, credential_id: str, *, actor_id: str, enabled: bool | None = None, buckets: list[str] | None = None,
+    ) -> ModelConfigurationCredential:
+        async with self.sessions() as session:
+            credential = await session.get(ModelConfigurationCredential, credential_id)
+            if not credential or credential.configuration_id != configuration_id:
+                raise ValueError("凭据不存在")
+            if enabled is not None:
+                credential.enabled = enabled
+            if buckets is not None:
+                credential.buckets = list(buckets)
+            session.add(AuditEvent(
+                actor_id=actor_id, action="model_credential.update", resource_type="model_configuration",
+                resource_id=configuration_id, details={"credential_id": credential_id, "enabled": enabled, "buckets": buckets},
+            ))
+            await session.commit()
+            await session.refresh(credential)
+            return credential
+
+    async def delete_model_credential(self, configuration_id: str, credential_id: str, *, actor_id: str) -> dict:
+        async with self.sessions() as session:
+            credential = await session.get(ModelConfigurationCredential, credential_id)
+            if not credential or credential.configuration_id != configuration_id:
+                raise ValueError("凭据不存在")
+            await session.delete(credential)
+            session.add(AuditEvent(
+                actor_id=actor_id, action="model_credential.delete", resource_type="model_configuration",
+                resource_id=configuration_id, details={"credential_id": credential_id},
+            ))
+            await session.commit()
+            return {"credential_id": credential_id, "deleted": True}
+
+    # ------------------------------------------------------------ MCP tokens
+
+    async def create_mcp_token(self, user_id: str, *, label: str) -> tuple[McpToken, str]:
+        """Issue a token; the clear text is returned once and never stored."""
+        clear = "mcp_" + secrets.token_urlsafe(32)
+        digest = hashlib.sha256(clear.encode("utf-8")).hexdigest()
+        async with self.sessions() as session:
+            token = McpToken(user_id=user_id, label=label[:80], token_digest=digest, token_hint=clear[-4:])
+            session.add(token)
+            await session.flush()  # the audit row names the token's id
+            session.add(AuditEvent(actor_id=user_id, action="mcp_token.create", resource_type="mcp_token", resource_id=token.id, details={"label": label[:80]}))
+            await session.commit()
+            await session.refresh(token)
+            return token, clear
+
+    async def list_mcp_tokens(self, user_id: str) -> list[McpToken]:
+        async with self.sessions() as session:
+            return list((await session.scalars(
+                select(McpToken).where(McpToken.user_id == user_id, McpToken.revoked.is_(False)).order_by(McpToken.created_at)
+            )).all())
+
+    async def revoke_mcp_token(self, user_id: str, token_id: str) -> bool:
+        async with self.sessions() as session:
+            token = await session.get(McpToken, token_id)
+            if not token or token.user_id != user_id or token.revoked:
+                return False
+            token.revoked = True
+            session.add(AuditEvent(actor_id=user_id, action="mcp_token.revoke", resource_type="mcp_token", resource_id=token_id, details={}))
+            await session.commit()
+            return True
+
+    async def verify_mcp_token(self, clear: str) -> PlatformUser | None:
+        """The active user a token belongs to, or None; a used token's last_used_at moves."""
+        if not clear.startswith("mcp_") or len(clear) > 128:
+            return None
+        digest = hashlib.sha256(clear.encode("utf-8")).hexdigest()
+        async with self.sessions() as session:
+            token = await session.scalar(select(McpToken).where(McpToken.token_digest == digest))
+            if not token or token.revoked or not hmac.compare_digest(token.token_digest, digest):
+                return None
+            user = await session.get(PlatformUser, token.user_id)
+            if not user or user.status != "active":
+                return None
+            token.last_used_at = datetime.now(timezone.utc)
+            await session.commit()
+            return user
+
+    # ------------------------------------------------------------ global settings
+
+    async def get_setting(self, key: str) -> dict:
+        async with self.sessions() as session:
+            row = await session.get(PlatformSetting, key)
+            return dict(row.value or {}) if row else {}
+
+    async def put_setting(self, key: str, value: dict, *, actor_id: str) -> dict:
+        async with self.sessions() as session:
+            row = await session.get(PlatformSetting, key)
+            if row is None:
+                row = PlatformSetting(key=key, value=dict(value), updated_by=actor_id)
+                session.add(row)
+            else:
+                row.value = dict(value)
+                row.updated_by = actor_id
+            session.add(AuditEvent(
+                actor_id=actor_id, action="platform_setting.put", resource_type="platform_setting", resource_id=key,
+                details={"keys": sorted(str(k) for k in value)},
+            ))
+            await session.commit()
+            return dict(value)
+
+    async def put_settings(self, values: dict[str, dict], *, actor_id: str) -> dict[str, dict]:
+        """Write several global settings in one transaction: all of them land, or none."""
+        async with self.sessions() as session:
+            for key, value in values.items():
+                row = await session.get(PlatformSetting, key)
+                if row is None:
+                    session.add(PlatformSetting(key=key, value=dict(value), updated_by=actor_id))
+                else:
+                    row.value = dict(value)
+                    row.updated_by = actor_id
+                session.add(AuditEvent(
+                    actor_id=actor_id, action="platform_setting.put", resource_type="platform_setting", resource_id=key,
+                    details={"keys": sorted(str(k) for k in value), "batch": sorted(values)},
+                ))
+            await session.commit()
+            return {key: dict(value) for key, value in values.items()}
+
     async def set_model_configuration_enabled(
         self, configuration_id: str, enabled: bool, *, actor_id: str
     ) -> ModelProviderConfiguration:
@@ -652,14 +933,67 @@ class PlatformStore:
             await session.commit()
             return entry
 
+    async def delete_configured_model(
+        self, configuration_id: str, entry_id: str, *, actor_id: str
+    ) -> dict:
+        """Delete one saved model and remove the credential container when it becomes empty."""
+        async with self.sessions() as session:
+            configuration = await session.scalar(
+                select(ModelProviderConfiguration)
+                .options(selectinload(ModelProviderConfiguration.models))
+                .where(ModelProviderConfiguration.id == configuration_id)
+            )
+            if not configuration:
+                raise ValueError("模型配置不存在")
+            entry = next((item for item in configuration.models if item.id == entry_id), None)
+            if entry is None:
+                raise ValueError("模型不存在")
+
+            result = {
+                "entry_id": entry.id,
+                "model_id": entry.model_id,
+                "category": entry.category,
+                "was_enabled": bool(configuration.enabled and entry.enabled),
+                "configuration_deleted": len(configuration.models) == 1,
+            }
+            session.add(AuditEvent(
+                actor_id=actor_id,
+                action="configured_model.delete",
+                resource_type="configured_model",
+                resource_id=entry.id,
+                details={
+                    "configuration_id": configuration.id,
+                    "model_id": entry.model_id,
+                    "category": entry.category,
+                    "configuration_deleted": result["configuration_deleted"],
+                },
+            ))
+            if result["configuration_deleted"]:
+                await session.delete(configuration)
+            else:
+                await session.delete(entry)
+                configuration.updated_by = actor_id
+            await session.commit()
+            return result
+
     async def create_element(
         self, *, owner_id: str, kind: str, name: str, description: str = "", metadata: dict | None = None
     ) -> ElementAsset:
         if kind not in ELEMENT_KINDS:
-            raise ValueError("元素类型必须是 actor、prop、scene 或 effect")
+            raise ValueError("元素类型必须是 actor、prop、scene、costume 或 effect")
         if not name.strip():
             raise ValueError("元素名称不能为空")
         async with self.sessions() as session:
+            locked_owner = await session.scalar(
+                select(PlatformUser.id).where(PlatformUser.id == owner_id).with_for_update()
+            )
+            if not locked_owner:
+                raise ValueError("用户不存在")
+            existing_count = int(await session.scalar(
+                select(func.count()).select_from(ElementAsset).where(ElementAsset.owner_id == owner_id)
+            ) or 0)
+            if existing_count >= MAX_ELEMENT_ASSETS_PER_OWNER:
+                raise ValueError(f"元素数量已达到 {MAX_ELEMENT_ASSETS_PER_OWNER} 项配额")
             element = ElementAsset(
                 owner_id=owner_id,
                 kind=kind,
@@ -686,11 +1020,31 @@ class PlatformStore:
                 )
             )
 
+    async def list_all_elements(self, owner_id: str, kind: str) -> list[ElementAsset]:
+        """Every element of one kind the owner holds, newest first; bounded by the owner quota."""
+        if kind not in ELEMENT_KINDS:
+            raise ValueError("无效元素类型")
+        async with self.sessions() as session:
+            return list((await session.scalars(
+                select(ElementAsset).options(selectinload(ElementAsset.files))
+                .where(ElementAsset.owner_id == owner_id, ElementAsset.kind == kind)
+                .order_by(ElementAsset.updated_at.desc())
+            )).all())
+
     async def list_elements(
-        self, owner_id: str, kind: str, page: int, page_size: int
+        self, owner_id: str, kind: str, page: int, page_size: int, task_id: str | None = None
     ) -> tuple[list[ElementAsset], int]:
         if kind not in ELEMENT_KINDS:
             raise ValueError("无效元素类型")
+        if task_id:
+            # Project scope lives in JSON metadata; filtering in Python keeps SQLite
+            # and PostgreSQL identical, and the per-owner quota bounds the scan.
+            scoped = [
+                item for item in await self.list_all_elements(owner_id, kind)
+                if element_in_task(item.metadata_json, task_id)
+            ]
+            start = (page - 1) * page_size
+            return scoped[start:start + page_size], len(scoped)
         where = (ElementAsset.owner_id == owner_id, ElementAsset.kind == kind)
         async with self.sessions() as session:
             total = int(await session.scalar(select(func.count()).select_from(ElementAsset).where(*where)) or 0)
@@ -699,6 +1053,32 @@ class PlatformStore:
                 .order_by(ElementAsset.updated_at.desc()).offset((page - 1) * page_size).limit(page_size)
             )).all())
             return items, total
+
+    async def merge_element_metadata(self, element_id: str, owner_id: str, patch: dict) -> ElementAsset:
+        """Shallow-merge metadata; the model3d record is owned by the model upload path."""
+        async with self.sessions() as session:
+            element = await session.get(ElementAsset, element_id)
+            if not element or element.owner_id != owner_id:
+                raise ValueError("元素不存在")
+            metadata = dict(element.metadata_json or {})
+            metadata.update({key: value for key, value in patch.items() if key != "model3d"})
+            element.metadata_json = metadata
+            await session.commit()
+            loaded = await self._loaded_element(session, element.id)
+            assert loaded is not None
+            return loaded
+
+    async def link_element_to_task(self, element_id: str, owner_id: str, task_id: str) -> ElementAsset:
+        """Make an existing library asset visible to another project without copying it."""
+        async with self.sessions() as session:
+            element = await session.get(ElementAsset, element_id)
+            if not element or element.owner_id != owner_id:
+                raise ValueError("元素不存在")
+            element.metadata_json = link_task(element.metadata_json, task_id)
+            await session.commit()
+            loaded = await self._loaded_element(session, element.id)
+            assert loaded is not None
+            return loaded
 
     async def update_element(self, element_id: str, owner_id: str, *, name: str | None, description: str | None) -> ElementAsset:
         async with self.sessions() as session:
@@ -717,6 +1097,26 @@ class PlatformStore:
             assert loaded is not None
             return loaded
 
+    async def set_element_variant(self, element_id: str, owner_id: str, variant: dict | None) -> ElementAsset:
+        """Set or clear an actor element's derived-look facts; nothing else on its metadata moves."""
+        async with self.sessions() as session:
+            element = await session.get(ElementAsset, element_id)
+            if not element or element.owner_id != owner_id:
+                raise ValueError("元素不存在")
+            if element.kind != "actor":
+                raise ValueError("只有数字演员可以设为衍生形象")
+            metadata = dict(element.metadata_json or {})
+            if variant is None:
+                metadata.pop("variant", None)
+            else:
+                metadata["variant"] = dict(variant)
+            element.metadata_json = metadata
+            element.version += 1
+            await session.commit()
+            loaded = await self._loaded_element(session, element.id)
+            assert loaded is not None
+            return loaded
+
     async def add_element_file(
         self,
         *,
@@ -727,48 +1127,295 @@ class PlatformStore:
         mime_type: str,
         size_bytes: int,
         sha256: str,
-    ) -> ElementAsset:
-        async with self.sessions() as session:
-            element = await session.scalar(
-                select(ElementAsset).options(selectinload(ElementAsset.files)).where(ElementAsset.id == element_id)
-            )
-            if not element or element.owner_id != owner_id:
-                raise ValueError("元素不存在")
-            if element.kind == "actor":
-                if slot not in ACTOR_VIEW_SLOTS:
-                    raise ValueError("演员图片必须使用规定的五视图槽位")
-                position = ACTOR_VIEW_SLOTS.index(slot)
-            else:
-                if not re.fullmatch(r"[a-z0-9_-]{1,64}", slot):
-                    raise ValueError("文件槽位无效")
-                position = len(element.files)
-            existing = next((item for item in element.files if item.slot == slot), None)
-            if existing:
-                existing.storage_path = storage_path
-                existing.mime_type = mime_type
-                existing.size_bytes = size_bytes
-                existing.sha256 = sha256
-                existing.position = position
-            else:
-                session.add(ElementFile(
-                    element_id=element.id,
-                    slot=slot,
-                    position=position,
-                    storage_path=storage_path,
-                    mime_type=mime_type,
-                    size_bytes=size_bytes,
-                    sha256=sha256,
+        model_metadata: dict | None = None,
+        before_commit: DeletionStorageHook | None = None,
+    ) -> StoredElementFileResult:
+        result: StoredElementFileResult | None = None
+        cancellation_requested = False
+        try:
+            async with self.sessions() as session:
+                await self._lock_element_storage_budget(session)
+                locked_owner = await session.scalar(
+                    select(PlatformUser.id).where(PlatformUser.id == owner_id).with_for_update()
+                )
+                if not locked_owner:
+                    raise ValueError("用户不存在")
+                element = await session.scalar(
+                    select(ElementAsset).options(selectinload(ElementAsset.files))
+                    .where(ElementAsset.id == element_id)
+                    .with_for_update()
+                )
+                if not element or element.owner_id != owner_id:
+                    raise ValueError("元素不存在")
+                is_3d_model = mime_type == "model/gltf-binary"
+                if is_3d_model and (element.kind not in {"prop", "scene"} or slot != "model_glb"):
+                    raise ValueError("3D 模型只允许绑定到场景或道具的 model_glb 槽位")
+                if slot == "model_glb" and not is_3d_model:
+                    raise ValueError("model_glb 槽位只接受 GLB 3D 模型")
+                if element.kind == "actor":
+                    if slot not in ACTOR_VIEW_SLOT_ORDER:
+                        raise ValueError("演员图片必须使用规定的身份视图槽位")
+                    position = ACTOR_VIEW_SLOT_ORDER.index(slot)
+                else:
+                    if not re.fullmatch(r"[a-z0-9_-]{1,64}", slot):
+                        raise ValueError("文件槽位无效")
+                    position = len(element.files)
+                existing = next((item for item in element.files if item.slot == slot), None)
+                owner_usage = int(await session.scalar(
+                    select(func.coalesce(func.sum(ElementFile.size_bytes), 0))
+                    .select_from(ElementFile)
+                    .join(ElementAsset, ElementFile.element_id == ElementAsset.id)
+                    .where(ElementAsset.owner_id == owner_id)
+                ) or 0)
+                projected_usage = owner_usage - (existing.size_bytes if existing else 0) + size_bytes
+                if size_bytes < 0 or projected_usage > MAX_ELEMENT_STORAGE_BYTES:
+                    raise ValueError("元素资产存储空间已达到账号配额")
+                global_usage = int(await session.scalar(
+                    select(func.coalesce(func.sum(ElementFile.size_bytes), 0)).select_from(ElementFile)
+                ) or 0)
+                projected_global_usage = global_usage - (existing.size_bytes if existing else 0) + size_bytes
+                if projected_global_usage > MAX_GLOBAL_ELEMENT_STORAGE_BYTES:
+                    raise ValueError("元素资产已达到服务全局存储配额")
+                replaced_storage_path = existing.storage_path if existing else None
+                replaced_file = _deleted_element_file_record(existing) if existing else None
+                if existing:
+                    existing.storage_path = storage_path
+                    existing.mime_type = mime_type
+                    existing.size_bytes = size_bytes
+                    existing.sha256 = sha256
+                    existing.position = position
+                else:
+                    element.files.append(ElementFile(
+                        element_id=element.id,
+                        slot=slot,
+                        position=position,
+                        storage_path=storage_path,
+                        mime_type=mime_type,
+                        size_bytes=size_bytes,
+                        sha256=sha256,
+                    ))
+                element.version += 1
+                if is_3d_model and model_metadata is not None:
+                    element.metadata_json = {**(element.metadata_json or {}), "model3d": model_metadata}
+                slots = {item.slot for item in element.files}
+                slots.add(slot)
+                element.status = "ready" if (
+                    element.kind != "actor" or actor_views_complete(slots)
+                ) else "draft"
+                storage_cleanup = (
+                    await before_commit((replaced_file,))
+                    if before_commit is not None and replaced_file is not None
+                    else None
+                )
+                audit_details: dict[str, object] = {
+                    "slot": slot,
+                    "mime_type": mime_type,
+                    "size_bytes": size_bytes,
+                    "replaced": existing is not None,
+                }
+                if storage_cleanup:
+                    audit_details["storage_cleanup"] = storage_cleanup
+                session.add(AuditEvent(
+                    actor_id=owner_id,
+                    action="element.file.upload",
+                    resource_type="element",
+                    resource_id=element.id,
+                    details=audit_details,
                 ))
-            element.version += 1
-            slots = {item.slot for item in element.files}
-            slots.add(slot)
-            element.status = "ready" if (
-                element.kind != "actor" or slots == set(ACTOR_VIEW_SLOTS)
-            ) else "draft"
+                cancellation_requested = await _commit_deletion_with_cancellation_boundary(session)
+                result = StoredElementFileResult(
+                    element=element,
+                    replaced_storage_path=replaced_storage_path,
+                )
+        except BaseException as exc:
+            if result is not None:
+                raise StorageMutationCommittedWithError(result, exc) from exc
+            raise
+        assert result is not None
+        if cancellation_requested:
+            raise StorageMutationCommittedWithError(result, asyncio.CancelledError())
+        return result
+
+    async def delete_element_file(
+        self,
+        element_id: str,
+        file_id: str,
+        owner_id: str,
+        *,
+        before_commit: DeletionStorageHook | None = None,
+    ) -> DeletedElementFileResult:
+        result: DeletedElementFileResult | None = None
+        cancellation_requested = False
+        try:
+            async with self.sessions() as session:
+                element = await session.scalar(
+                    select(ElementAsset)
+                    .options(selectinload(ElementAsset.files))
+                    .where(
+                        ElementAsset.id == element_id,
+                        ElementAsset.owner_id == owner_id,
+                    )
+                    .with_for_update()
+                )
+                if not element:
+                    raise ValueError("元素不存在")
+                target = next((item for item in element.files if item.id == file_id), None)
+                if target is None:
+                    raise ValueError("元素文件不存在")
+
+                deleted_file = _deleted_element_file_record(target)
+                element.files.remove(target)
+                if element.kind == "actor":
+                    for item in element.files:
+                        item.position = ACTOR_VIEW_SLOT_ORDER.index(item.slot)
+                else:
+                    for position, item in enumerate(element.files):
+                        item.position = position
+                if target.slot == "model_glb":
+                    metadata = dict(element.metadata_json or {})
+                    metadata.pop("model3d", None)
+                    element.metadata_json = metadata
+                slots = {item.slot for item in element.files}
+                if element.kind == "actor":
+                    element.status = "ready" if actor_views_complete(slots) else "draft"
+                else:
+                    element.status = "ready" if element.files else "draft"
+                element.version += 1
+                storage_cleanup = (
+                    await before_commit((deleted_file,))
+                    if before_commit is not None
+                    else None
+                )
+                audit_details: dict[str, object] = {
+                    "file_id": target.id,
+                    "slot": target.slot,
+                    "mime_type": target.mime_type,
+                    "size_bytes": target.size_bytes,
+                }
+                if storage_cleanup:
+                    audit_details["storage_cleanup"] = storage_cleanup
+                session.add(AuditEvent(
+                    actor_id=owner_id,
+                    action="element.file.delete",
+                    resource_type="element",
+                    resource_id=element.id,
+                    details=audit_details,
+                ))
+                cancellation_requested = await _commit_deletion_with_cancellation_boundary(session)
+                result = DeletedElementFileResult(element=element, deleted_file=deleted_file)
+        except BaseException as exc:
+            if result is not None:
+                raise StorageMutationCommittedWithError(result, exc) from exc
+            raise
+        assert result is not None
+        if cancellation_requested:
+            raise StorageMutationCommittedWithError(result, asyncio.CancelledError())
+        return result
+
+    async def delete_element(
+        self,
+        element_id: str,
+        owner_id: str,
+        *,
+        before_commit: DeletionStorageHook | None = None,
+    ) -> DeletedElementResult:
+        result: DeletedElementResult | None = None
+        cancellation_requested = False
+        try:
+            async with self.sessions() as session:
+                element = await session.scalar(
+                    select(ElementAsset)
+                    .options(selectinload(ElementAsset.files))
+                    .where(
+                        ElementAsset.id == element_id,
+                        ElementAsset.owner_id == owner_id,
+                    )
+                    .with_for_update()
+                )
+                if not element:
+                    raise ValueError("元素不存在")
+
+                deleted_files = tuple(_deleted_element_file_record(item) for item in element.files)
+                await session.execute(
+                    delete(RegenerationRequest).where(RegenerationRequest.element_id == element.id)
+                )
+                await session.delete(element)
+                storage_cleanup = (
+                    await before_commit(deleted_files)
+                    if before_commit is not None
+                    else None
+                )
+                audit_details: dict[str, object] = {
+                    "kind": element.kind,
+                    "name": element.name,
+                    "file_count": len(deleted_files),
+                    "size_bytes": sum(item.size_bytes for item in deleted_files),
+                }
+                if storage_cleanup:
+                    audit_details["storage_cleanup"] = storage_cleanup
+                session.add(AuditEvent(
+                    actor_id=owner_id,
+                    action="element.delete",
+                    resource_type="element",
+                    resource_id=element.id,
+                    details=audit_details,
+                ))
+                cancellation_requested = await _commit_deletion_with_cancellation_boundary(session)
+                result = DeletedElementResult(element_id=element_id, deleted_files=deleted_files)
+        except BaseException as exc:
+            if result is not None:
+                raise StorageMutationCommittedWithError(result, exc) from exc
+            raise
+        assert result is not None
+        if cancellation_requested:
+            raise StorageMutationCommittedWithError(result, asyncio.CancelledError())
+        return result
+
+    async def list_desk_poses(self, owner_id: str) -> list[DirectorDeskPose]:
+        async with self.sessions() as session:
+            return list((await session.scalars(
+                select(DirectorDeskPose).where(DirectorDeskPose.owner_id == owner_id)
+                .order_by(DirectorDeskPose.created_at, DirectorDeskPose.id)
+            )).all())
+
+    async def save_desk_pose(self, owner_id: str, name: str, pose: dict) -> DirectorDeskPose:
+        """Save under a name; the same name again replaces that pose (names are unique per owner)."""
+        label = name.strip()
+        if not label:
+            raise ValueError("姿势需要一个名称")
+        if len(label) > MAX_DESK_POSE_NAME:
+            raise ValueError(f"姿势名称最长 {MAX_DESK_POSE_NAME} 个字符")
+        async with self.sessions() as session:
+            # The owner row serializes the count-then-insert of two saves racing for the last slot.
+            locked_owner = await session.scalar(
+                select(PlatformUser.id).where(PlatformUser.id == owner_id).with_for_update()
+            )
+            if not locked_owner:
+                raise ValueError("用户不存在")
+            record = await session.scalar(
+                select(DirectorDeskPose).where(DirectorDeskPose.owner_id == owner_id, DirectorDeskPose.name == label)
+            )
+            if record is None:
+                count = int(await session.scalar(
+                    select(func.count()).select_from(DirectorDeskPose).where(DirectorDeskPose.owner_id == owner_id)
+                ) or 0)
+                if count >= MAX_DESK_POSES_PER_OWNER:
+                    raise ValueError(f"最多保存 {MAX_DESK_POSES_PER_OWNER} 个姿势，请先删除不用的")
+                record = DirectorDeskPose(owner_id=owner_id, name=label, pose_json=pose)
+                session.add(record)
+            else:
+                record.pose_json = pose
             await session.commit()
-            loaded = await self._loaded_element(session, element.id)
-            assert loaded is not None
-            return loaded
+            return record
+
+    async def delete_desk_pose(self, owner_id: str, pose_id: str) -> bool:
+        async with self.sessions() as session:
+            record = await session.get(DirectorDeskPose, pose_id)
+            if record is None or record.owner_id != owner_id:
+                return False
+            await session.delete(record)
+            await session.commit()
+            return True
 
     async def request_regeneration(self, element_id: str, owner_id: str, prompt: str) -> RegenerationRequest:
         async with self.sessions() as session:

@@ -1,0 +1,358 @@
+import { useEffect, useState } from 'react';
+
+import { API_BASE, ApiError, apiRequest, isUnauthorized } from '../../api/client';
+import { normalizeScriptTitle } from '../workbench/scriptTitle';
+import { WriterAgentPage, type WriterView } from './WriterAgentPage';
+import type { WriterDashboardResponse, WriterEpisode, WriterRelationship } from './types';
+
+import { t } from '../../i18n';
+
+function mergeEpisodeUpdates(serverEpisodes: WriterEpisode[], liveEpisodes: WriterEpisode[]) {
+  const serverIndexes = new Set(serverEpisodes.map(episode => episode.index));
+  const merged = serverEpisodes.map(serverEpisode => {
+    const liveEpisode = liveEpisodes.find(episode => episode.index === serverEpisode.index);
+    if (!liveEpisode) return serverEpisode;
+    const runtimeEpisode = liveEpisode as WriterEpisode & Record<string, unknown>;
+    const result = { ...serverEpisode, ...liveEpisode };
+    if (typeof runtimeEpisode.video_url === 'string' || runtimeEpisode.video_url === null) {
+      result.videoUrl = runtimeEpisode.video_url;
+    }
+    return result;
+  });
+  return [...merged, ...liveEpisodes.filter(episode => !serverIndexes.has(episode.index))];
+}
+
+function normalizeSourceHash(value: unknown) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return /^[a-f\d]{64}$/.test(normalized) ? normalized : '';
+}
+
+export function WriterAgentPageContainer({
+  taskId,
+  refreshKey,
+  displayTitle,
+  title,
+  fallbackBreakdown,
+  fallbackScript,
+  requestedEpisodeCount,
+  episodes,
+  episodesSourceHash,
+  episodesBusy,
+  onPlanEpisodes,
+  onProduceEpisode,
+  onScriptSaved,
+  onOpenScenes,
+  onOpenActors,
+  defaultView,
+}: {
+  taskId: string;
+  refreshKey?: string;
+  displayTitle?: string;
+  title?: string;
+  fallbackBreakdown?: unknown;
+  fallbackScript?: unknown;
+  requestedEpisodeCount?: number;
+  episodes: WriterEpisode[];
+  episodesSourceHash?: string;
+  episodesBusy: boolean;
+  onPlanEpisodes: () => void;
+  onProduceEpisode: (index: number) => void;
+  onScriptSaved?: (dashboard: WriterDashboardResponse) => void;
+  onOpenScenes?: () => void;
+  onOpenActors?: () => void;
+  defaultView?: WriterView;
+}) {
+  const [dashboardState, setDashboardState] = useState<{
+    taskId: string;
+    data: WriterDashboardResponse;
+  } | null>(null);
+  const [syncError, setSyncError] = useState('');
+  const dashboard = dashboardState?.taskId === taskId ? dashboardState.data : null;
+  // Portraits are a bonus from stage 3; the board renders initials without them.
+  const avatars = dashboard?.portraits || {};
+  const resolvedTitle = normalizeScriptTitle(displayTitle)
+    || normalizeScriptTitle(dashboard?.title)
+    || normalizeScriptTitle(title)
+    || '未命名剧本';
+
+  useEffect(() => {
+    if (!taskId) return;
+    const controller = new AbortController();
+    void apiRequest<WriterDashboardResponse>(`/api/drama/${encodeURIComponent(taskId)}/writer-dashboard`, {
+      signal: controller.signal,
+    }).then(data => {
+      setDashboardState({
+        taskId,
+        data,
+      });
+      setSyncError('');
+    }).catch(error => {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      setDashboardState(null);
+      setSyncError(isUnauthorized(error)
+        ? '登录状态已过期，请重新登录后继续。'
+        : '后端编剧看板暂不可用，当前显示任务内嵌资产。');
+    });
+    return () => controller.abort();
+  }, [taskId, refreshKey]);
+
+  const breakdown = dashboard ? {
+    overview: {
+      ...dashboard.overview,
+      world_setting: dashboard.overview.worldSetting || dashboard.overview.world_setting,
+    },
+    scenes: dashboard.scenes.map(scene => ({
+      ...scene,
+      scene_id: scene.sceneId,
+      duration: scene.durationLabel,
+    })),
+    timeline: dashboard.timeline,
+    roles: dashboard.roles,
+    relationships: dashboard.relationships,
+  } : fallbackBreakdown;
+  const parentEpisodesSourceHash = normalizeSourceHash(episodesSourceHash);
+  const dashboardSourceHash = normalizeSourceHash(dashboard?.sourceHash);
+  const parentEpisodesMatchDashboard = Boolean(parentEpisodesSourceHash)
+    && parentEpisodesSourceHash === dashboardSourceHash;
+  const resolvedEpisodes = dashboard
+    ? (parentEpisodesMatchDashboard
+      ? mergeEpisodeUpdates(dashboard.episodes, episodes)
+      : dashboard.episodes)
+    : episodes;
+
+  const downloadDashboard = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/drama/${encodeURIComponent(taskId)}/writer-dashboard/export`, {
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error(`export failed: ${response.status}`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${resolvedTitle || 'writer-agent'}-dashboard.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setSyncError('后端 JSON 导出失败，请稍后重试。');
+    }
+  };
+
+  const saveRelationships = async (relationships: WriterRelationship[]) => {
+    try {
+      const data = await apiRequest<WriterDashboardResponse>(
+        `/api/drama/${encodeURIComponent(taskId)}/relationships`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            relationships: relationships.map(edge => ({
+              from: String(edge.from || '').trim(),
+              to: String(edge.to || '').trim(),
+              relation: String(edge.relation || '').trim() || '剧情关联',
+              bidirectional: edge.bidirectional === true,
+            })),
+          }),
+        },
+      );
+      setDashboardState({ taskId, data });
+      setSyncError('');
+    } catch (error) {
+      const message = isUnauthorized(error)
+        ? '登录状态已过期，请重新登录后再保存人物关系。'
+        : '人物关系保存失败，请确认后端服务可用后重试。';
+      setSyncError(message);
+      throw new Error(message, { cause: error });
+    }
+  };
+
+
+  const analyzeRelationships = async () => {
+    try {
+      const data = await apiRequest<WriterDashboardResponse>(
+        `/api/drama/${encodeURIComponent(taskId)}/relationships/analyze`,
+        { method: 'POST' },
+      );
+      setDashboardState({ taskId, data });
+      setSyncError('');
+    } catch (error) {
+      const message = isUnauthorized(error)
+        ? '登录状态已过期，请重新登录后再分析人物关系。'
+        : error instanceof ApiError && error.status === 409
+          ? error.message
+          : '人物关系分析失败，请稍后重试。';
+      setSyncError(message);
+      throw new Error(message, { cause: error });
+    }
+  };
+
+  const putDashboard = async (path: string, method: string, body?: unknown, failure = '保存失败，请稍后重试。') => {
+    try {
+      const data = await apiRequest<WriterDashboardResponse>(`/api/drama/${encodeURIComponent(taskId)}${path}`, {
+        method, body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      setDashboardState({ taskId, data });
+      setSyncError('');
+      return data;
+    } catch (error) {
+      const message = isUnauthorized(error)
+        ? '登录状态已过期，请重新登录后再试。'
+        : error instanceof ApiError && (error.status === 409 || error.status === 502)
+          ? error.message
+          : failure;
+      setSyncError(message);
+      throw new Error(message, { cause: error });
+    }
+  };
+
+  const saveOverview = async (fields: { title?: string; synopsis?: string; genre?: string; theme?: string; world_setting?: string }) => {
+    await putDashboard('/overview', 'PATCH', fields, '概述保存失败，请稍后重试。');
+  };
+  const regenerateOverview = async () => {
+    await putDashboard('/overview/regenerate', 'POST', undefined, '概述重新创作失败，请稍后重试。');
+  };
+  const saveTimeline = async (events: Array<{ phase: string; title: string; desc: string; points: string[] }>) => {
+    await putDashboard('/timeline', 'PUT', { events }, '剧情节点保存失败，请稍后重试。');
+  };
+  const saveVersion = async (label: string) => {
+    await putDashboard('/script/versions', 'POST', { label }, '版本保存失败，请稍后重试。');
+  };
+  const restoreVersion = async (versionId: string) => {
+    if (!dashboard) throw new Error(t('无法确认剧本版本，请恢复后端连接并刷新页面后再恢复。'));
+    const restore = (confirmInvalidate: boolean) => apiRequest<WriterDashboardResponse>(
+      `/api/drama/${encodeURIComponent(taskId)}/script/versions/${encodeURIComponent(versionId)}/restore`,
+      { method: 'POST', body: JSON.stringify({ expected_source_hash: dashboard.sourceHash, confirm_invalidate: confirmInvalidate }) },
+    );
+    try {
+      let data: WriterDashboardResponse;
+      try {
+        data = await restore(false);
+      } catch (error) {
+        const requiresArchive = error instanceof ApiError && error.status === 409 && /归档|下游|成片|角色、分镜/.test(error.message);
+        if (!requiresArchive) throw error;
+        if (!window.confirm(t('恢复这个版本会归档当前角色、分镜和成片，并从编剧阶段重新开始。旧成果仍保留在版本归档中。是否继续？'))) {
+          throw new Error(t('已取消恢复版本。'), { cause: error });
+        }
+        data = await restore(true);
+      }
+      setDashboardState({ taskId, data });
+      onScriptSaved?.(data);
+      setSyncError('');
+    } catch (error) {
+      const message = isUnauthorized(error)
+        ? '登录状态已过期，请重新登录后再恢复版本。'
+        : error instanceof ApiError && error.status === 409 ? error.message
+          : error instanceof Error ? error.message : '版本恢复失败，请稍后重试。';
+      setSyncError(message);
+      throw error instanceof Error ? error : new Error(message);
+    }
+  };
+
+  const continueScript = async () => {
+    try {
+      const data = await apiRequest<WriterDashboardResponse>(
+        `/api/drama/${encodeURIComponent(taskId)}/script/continue`,
+        { method: 'POST' },
+      );
+      setDashboardState({ taskId, data });
+      // Deliberately NOT onScriptSaved: that path treats the screenplay as replaced
+      // and drops every stage>=3 asset from the workbench. Appending episodes leaves
+      // the finished episodes' characters, storyboards and videos valid.
+      setSyncError('');
+    } catch (error) {
+      const message = isUnauthorized(error)
+        ? '登录状态已过期，请重新登录后再补写剧本。'
+        : error instanceof ApiError && error.status === 409
+          ? error.message
+          : '剧本补写失败，已生成的集数未受影响，请稍后重试。';
+      setSyncError(message);
+      throw new Error(message, { cause: error });
+    }
+  };
+
+  const saveScript = async (content: string, fileName: string, baseSourceHash: string) => {
+    if (!dashboard) {
+      throw new Error(t('无法确认剧本版本，请恢复后端连接并刷新页面后再保存。'));
+    }
+    if (!/^[a-f\d]{64}$/i.test(baseSourceHash)) {
+      throw new Error(t('无法确认编辑起始版本，请关闭编辑器、刷新页面后重试。'));
+    }
+    const persist = (confirmInvalidate: boolean) => apiRequest<WriterDashboardResponse>(
+      `/api/drama/${encodeURIComponent(taskId)}/script`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          content,
+          file_name: fileName,
+          expected_source_hash: baseSourceHash,
+          confirm_invalidate: confirmInvalidate,
+        }),
+      },
+    );
+    try {
+      let data: WriterDashboardResponse;
+      try {
+        data = await persist(false);
+      } catch (error) {
+        const requiresArchive = error instanceof ApiError
+          && error.status === 409
+          && /归档|下游|成片|角色、分镜/.test(error.message);
+        if (!requiresArchive) throw error;
+        const confirmed = window.confirm(
+          t('应用新剧本会归档当前角色、分镜和成片，并从编剧阶段重新开始。旧成果仍保留在版本归档中。是否继续？'),
+        );
+        if (!confirmed) {
+          throw new Error(t('已取消应用新剧本，本地草稿仍保留。'), { cause: error });
+        }
+        data = await persist(true);
+      }
+      setDashboardState({
+        taskId,
+        data,
+      });
+      onScriptSaved?.(data);
+      setSyncError('');
+      return data.sourceHash;
+    } catch (error) {
+      setSyncError('剧本保存失败，本地草稿仍保留在编辑器中。');
+      throw error instanceof Error ? error : new Error(t('剧本保存失败，请稍后重试。'));
+    }
+  };
+
+  return (
+    <div className="writer-board-container">
+      {syncError && <p className="writer-sync-warning" role="status">{syncError}</p>}
+      <WriterAgentPage
+        title={resolvedTitle}
+        taskId={taskId}
+        breakdown={breakdown}
+        script={dashboard?.script || fallbackScript}
+        scriptFileName={dashboard?.scriptFileName || undefined}
+        scriptSourceHash={dashboard?.sourceHash || undefined}
+        requestedEpisodeCount={dashboard?.stats.totalEpisodes || requestedEpisodeCount}
+        episodes={resolvedEpisodes}
+        episodesBusy={episodesBusy}
+        serverStats={dashboard?.stats}
+        onExport={downloadDashboard}
+        onPlanEpisodes={onPlanEpisodes}
+        onProduceEpisode={onProduceEpisode}
+        onSaveScript={saveScript}
+        onSaveRelationships={taskId ? saveRelationships : undefined}
+        onAnalyzeRelationships={taskId ? analyzeRelationships : undefined}
+        onContinueScript={taskId ? continueScript : undefined}
+        relationshipsInferred={dashboard?.relationshipsInferred === true}
+        timelineAuthored={dashboard?.timelineAuthored === true}
+        creationMode={dashboard?.creationMode}
+        versions={dashboard?.versions || []}
+        avatars={avatars}
+        onSaveOverview={dashboard ? saveOverview : undefined}
+        onRegenerateOverview={dashboard ? regenerateOverview : undefined}
+        onSaveTimeline={dashboard ? saveTimeline : undefined}
+        onSaveVersion={dashboard ? saveVersion : undefined}
+        onRestoreVersion={dashboard ? restoreVersion : undefined}
+        onOpenScenes={onOpenScenes}
+        onOpenActors={onOpenActors}
+        defaultView={defaultView}
+      />
+    </div>
+  );
+}
