@@ -268,14 +268,16 @@ class DialogueFitRuleTests(unittest.TestCase):
 
         self.assertNotIn("台词超出本镜时长", _rules(audit))
 
-    def test_two_speakers_in_one_shot_are_flagged_but_a_quoted_colon_is_not(self):
-        two = _shot(characters=["林夏", "周教授"], dialogue="林夏：你说啊。 周教授：够了。")
-        quoted = _shot(shot_id=2, size="全景", characters=["林夏"], dialogue="林夏：他说：走。")
+    def test_a_two_person_exchange_in_one_shot_is_the_rule_not_a_fault(self):
+        # 单元环扣（P12-03）：两人对话一格至少一个来回；只放一个人的一句才要提示。
+        two = _shot(duration="10s", characters=["林夏", "周教授"], dialogue="林夏：你说啊，那封信到底是谁写的？ 周教授：够了，别再问了。")
+        half = _shot(shot_id=2, size="全景", duration="10s", characters=["林夏", "周教授"], dialogue="林夏：他说：走。")
 
-        audit = audit_shot_table([two, quoted], video_model="seedance2.5")
+        audit = audit_shot_table([two, half], video_model="seedance2.5")
 
-        flagged = [issue.shot_id for issue in audit.issues if issue.rule == "一镜多个说话人"]
-        self.assertEqual(flagged, [1])
+        self.assertNotIn("一镜多个说话人", _rules(audit))
+        flagged = [issue.shot_id for issue in audit.issues if issue.rule == "对话少于一个来回"]
+        self.assertEqual(flagged, [2], "a quoted colon inside a line is not a second speaker")
 
 
 class ShotLoadRuleTests(unittest.TestCase):

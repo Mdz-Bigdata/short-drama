@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "sections": [
+    {"key": "exchange-unit-code-table", "title": "三单元共用代码表 V1.3（交互力量档、混档、状态修正、节奏、台词镜头）", "file": "references/unit-code-table.csv", "budget": 0, "stages": [], "scope": "skill"},
+    {"key": "exchange-unit-spec", "title": "三单元共用规格 V1.3", "file": "references/unit-spec.md", "budget": 0, "stages": [], "scope": "skill"},
+    {"key": "exchange-martial-tempo", "title": "武术节奏档表（含判定词）", "file": "references/martial-tempo-tiers.csv", "budget": 0, "stages": [], "scope": "skill"},
+    {"key": "exchange-martial-styles", "title": "武术流派节奏表（34 流派）", "file": "references/martial-style-tempo.csv", "budget": 0, "stages": [], "scope": "skill"},
+    {"key": "exchange-dialogue-tempo", "title": "台词节奏表", "file": "references/dialogue-tempo.csv", "budget": 0, "stages": [], "scope": "skill"},
+    {"key": "exchange-dialogue-camera", "title": "台词镜头表", "file": "references/dialogue-camera.csv", "budget": 0, "stages": [], "scope": "skill"},
+    {"key": "exchange-dialogue-arc", "title": "台词起承转合表", "file": "references/dialogue-arc.csv", "budget": 0, "stages": [], "scope": "skill"},
+    {"key": "exchange-chain-rules", "title": "单元环扣纪律", "file": "references/chain-rules.csv", "budget": 0, "stages": [], "scope": "skill"},
+    {"key": "exchange-unit-kinds", "title": "单元类型表", "file": "references/unit-kinds.csv", "budget": 0, "stages": [], "scope": "skill"},
+    {"key": "exchange-hard-checks", "title": "硬检查 SI-69～76", "file": "references/hard-checks.csv", "budget": 0, "stages": [], "scope": "skill"},
+    {"key": "exchange-sanda", "title": "散打动作要领表", "file": "references/sanda-essentials.csv", "budget": 0, "stages": [], "scope": "skill"},
+    {"key": "exchange-multi-fighter", "title": "多人交锋模式表", "file": "references/multi-fighter-modes.csv", "budget": 0, "stages": [], "scope": "skill"},
+    {"key": "exchange-section-frames", "title": "截面与单元环扣对照表", "file": "references/section-frames.csv", "budget": 0, "stages": [], "scope": "skill"},
+    {"key": "exchange-martial-method", "title": "P11 武术环扣增补 V2.15", "file": "references/martial-chain-method.md", "budget": 0, "stages": [], "scope": "skill"},
+    {"key": "exchange-dialogue-method", "title": "P12 台词表达单元库增补 V2.15", "file": "references/dialogue-unit-method.md", "budget": 0, "stages": [], "scope": "skill"},
+    {"key": "exchange-pack-readme", "title": "1025 新增信息包说明", "file": "references/pack-readme.md", "budget": 0, "stages": [], "scope": "skill"}
+  ]
+}

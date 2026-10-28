@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
+from app.core import exchange_units, fight_design
 from app.core.camera_motion import normalize_camera_motion
 from app.core.camera_recipes import repeated_move_signature
 from app.core.frame_position import flipped_subjects, parse_frame_positions, uses_frame_grammar
@@ -158,6 +159,7 @@ def audit_shot_table(
     video_model: str = "",
     repair: bool = True,
     scene_kind: str = "",
+    exchange: exchange_units.ScenePlan | None = None,
 ) -> ShotTableAudit:
     """Check a parsed shot table against the skill's mechanically checkable rules.
 
@@ -166,9 +168,16 @@ def audit_shot_table(
     rewritten, because only a human can decide how to re-stage a shot.
 
     ``scene_kind`` tightens the rules a fight scene is judged by (close-up quota).
+    ``exchange`` is the scene's unit-chain plan (``exchange_units.scene_plan``) the table writer
+    was briefed with; without one the table's own text is judged.
     """
     cap = max_shot_seconds(video_model)
     fight = "fight" in str(scene_kind or "").lower()
+    if exchange is None:
+        table_text = "\n".join(
+            f"{_text(shot.get('desc'))}\n{_text(shot.get('dialogue'))}" for shot in shots if isinstance(shot, dict)
+        )
+        exchange = exchange_units.scene_plan(table_text, fight=fight, has_dialogue=True)
     close_ups = 0
     audit = ShotTableAudit()
     previous_size = ""
@@ -260,12 +269,12 @@ def audit_shot_table(
 
         # 一句台词必须在本镜说完：按项目统一语速换算，两端各留一点静默。
         dialogue = _text(shot.get("dialogue"))
-        speakers = speakers_in(dialogue, characters)
-        if len(set(speakers)) > 1:
-            audit.issues.append(ShotIssue(
-                shot_id, "一镜多个说话人",
-                f"本镜写了 {'、'.join(dict.fromkeys(speakers))} 的台词；一镜只留给一个人说话，其余人闭口给反应",
-            ))
+        # 单元环扣：两人对话一格至少一个来回、格尾不空叹、一轮不超字数；打斗格按流派 × 力量档数 U。
+        fight_shot = fight and (fight_design.fight_score(desc) > 0 or exchange_units.count_units(desc) > 0)
+        for unit_issue in exchange_units.audit_shot(
+            exchange, seconds=seconds, characters=characters, dialogue=dialogue, desc=desc, fight_shot=fight_shot,
+        ):
+            audit.issues.append(ShotIssue(shot_id, unit_issue.rule, unit_issue.detail))
         spoken = estimate_spoken_seconds(_spoken_text(dialogue))
         if spoken and seconds and spoken > seconds * SPEECH_HEADROOM:
             audit.issues.append(ShotIssue(
@@ -364,9 +373,10 @@ def audit_shot_table(
 
 def audit_and_log(
     shots: Sequence[dict[str, Any]], *, video_model: str, task_id: str = "", scene_kind: str = "",
+    exchange: exchange_units.ScenePlan | None = None,
 ) -> list[dict[str, Any]]:
     """Audit, log the findings, and return the (possibly repaired) shot list."""
-    audit = audit_shot_table(shots, video_model=video_model, scene_kind=scene_kind)
+    audit = audit_shot_table(shots, video_model=video_model, scene_kind=scene_kind, exchange=exchange)
     if audit.issues:
         logger.warning("[Stage4] %s (task=%s)", audit.summary(), task_id or "-")
         for issue in audit.issues[:20]:

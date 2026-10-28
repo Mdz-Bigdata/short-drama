@@ -1,0 +1,33 @@
+{
+  "source": "泽云灵映 ZeCloud LingFilming 新增信息包 【1025】（含 1023 交互力量维度、三脑共用代码表 V1.3），出品人提供",
+  "received_at": "2026-10-28",
+  "license_observation": "出品人自有资料，随本项目使用；未附第三方许可证。",
+  "treatment": "references/ 下的 CSV 与 Markdown 逐字节照搬自新增信息包，只改了文件名（中文长文件名 → 英文短名）；SKILL.md 与 app/core/exchange_units.py 为本项目按这些表写的接入。",
+  "vendored_files": {
+    "references/unit-code-table.csv": "4 三脑共用/【1025】【UNIT】灵映三脑三单元共用代码表V1.3.csv",
+    "references/unit-spec.md": "4 三脑共用/【1025】【UNIT】灵映三脑三单元共用规格V1.3.md",
+    "references/martial-tempo-tiers.csv": "1 大脑 SI/【1025】【LF_SI_KB】P11武术节奏档表V2.15.csv",
+    "references/martial-style-tempo.csv": "2 脑干 O2F/【1025】【C13】【LF_MartialExchangeLibrary】映世界武术流派节奏表V5.21.csv",
+    "references/dialogue-tempo.csv": "2 脑干 O2F/【1025】【C14】【LF_DialogueUnitLibrary】映世界台词节奏表V5.21.csv",
+    "references/dialogue-camera.csv": "2 脑干 O2F/【1025】【C14】【LF_DialogueUnitLibrary】映世界台词镜头表V5.21.csv",
+    "references/dialogue-arc.csv": "1 大脑 SI/【1025】【LF_SI_KB】P12台词起承转合表V2.15.csv",
+    "references/chain-rules.csv": "1 大脑 SI/【1025】【LF_SI_KB】P11武术环扣规则V2.15.csv",
+    "references/unit-kinds.csv": "1 大脑 SI/【1025】【LF_SI_KB】P12单元类型表V2.15.csv",
+    "references/hard-checks.csv": "1 大脑 SI/【1025】【LF_SI_KB】P12硬检查SI-69至76V2.15.csv",
+    "references/sanda-essentials.csv": "2 脑干 O2F/【1025】【C13】【LF_MartialExchangeLibrary】映世界散打动作要领表V5.21.csv",
+    "references/multi-fighter-modes.csv": "2 脑干 O2F/【1025】【C13】【LF_MartialExchangeLibrary】映世界多人交锋模式表V5.21.csv",
+    "references/section-frames.csv": "3 小脑 D2P/【1025】【LD】【LF_D2P_GranuleDynamicIntensityLibrary】映世界截面与单元环扣对照表V1.11.csv",
+    "references/martial-chain-method.md": "1 大脑 SI/【1025】【LF_SI_KB】P11武术环扣增补V2.15.md",
+    "references/dialogue-unit-method.md": "1 大脑 SI/【1025】【LF_SI_KB】P12台词表达单元库增补V2.15.md",
+    "references/pack-readme.md": "00 先读我_新增信息包说明.md"
+  },
+  "not_vendored": [
+    "C13 武术交互单元库 V5.21（12 MB，三轴展开 11,988 格）、C13 节点总表、C13X 武术环扣链表（1.9 MB）",
+    "C14 台词表达单元库 V5.21（2.3 MB，3,645 格）、P12 台词表达单元库主库摘出（0.5 MB）",
+    "C13／C14 总纲（.md／.docx）、P11P12 触发词、P11 武术环扣八条主库摘出、P12 交接字段：内容已由上面的表与增补 md 覆盖，或只对三脑系统的工具与模板有用"
+  ],
+  "notes": [
+    "包内 1022 反例 JSON 与「进一步升级动作Unit规划」说明是背景材料，未入库；交互力量档的判定词与倍率取自代码表 V1.3。",
+    "节奏秒数、话轮字数、起承转合与台词镜头都是编排约定，包说明写明全部未经视频试点。"
+  ]
+}

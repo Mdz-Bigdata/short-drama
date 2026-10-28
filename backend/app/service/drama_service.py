@@ -77,7 +77,7 @@ from app.core.camera_motion import (
 )
 from app.core.element_library_reuse import find_library_characters
 from app.core.project_asset_completion import complete_project_assets, evaluate_project_assets
-from app.core import fight_design
+from app.core import exchange_units, fight_design
 from app.core.production_asset_readiness import READINESS_KEY, readiness_reasons
 from app.core.storyboard_element_context import load_storyboard_elements
 from app.core.storyboard_concurrency import (
@@ -5333,6 +5333,12 @@ class DramaService:
         if not scene_content.strip():
             raise ValueError(f"场景 {scene_id} 缺少剧情内容，无法生成对应分镜")
         task_id = str(task.get("task_id") or "")
+        scene_kind = self._detect_scene_kind(scene_content, genre, scene.get("action_intensity"))
+        # 单元环扣：本场谁在动、打的什么流派、对话什么性质，决定一格装几个接化发、几轮听思答。
+        # 表格作者照着写，复核照着查，两边用同一份判档。
+        exchange = exchange_units.scene_plan(
+            scene_content, profiles=context.get("profiles") or {}, fight=scene_kind == "fight",
+        )
 
         user_prompt = (
             "请基于以下剧本场景设计恰好9镜的精准九宫格分镜表，覆盖该场景完整剧情，不要断开：\n\n"
@@ -5353,6 +5359,9 @@ class DramaService:
         user_prompt += "\n" + direction.brief()
         # 镜头怎么接到下一镜，和镜头本身一样是分镜表作者的事：先把衔接规则讲清，再按同一套规则复核。
         user_prompt += "\n" + shot_transitions.TABLE_BRIEF
+        exchange_brief = exchange.brief() if exchange is not None else ""
+        if exchange_brief:
+            user_prompt += "\n" + exchange_brief
         user_prompt += (
             "\n只拆当前场景，不续写下一场。入镜角色列必须逐镜填写真实角色名；空镜填‘无’。"
             "不能用主角、反派、剧情推进分镜等占位词。人物外观及拍摄资产沿用以上资料。"
@@ -5369,7 +5378,8 @@ class DramaService:
             video_model=str(config.get("video_model") or ""),
             task_id=task_id,
             # 武戏的特写配额比文戏紧：特写是标点，不是正文。
-            scene_kind=self._detect_scene_kind(scene_content, genre, scene.get("action_intensity")),
+            scene_kind=scene_kind,
+            exchange=exchange,
         )
         shots = list(shots or [])
         if len(shots) != 9:

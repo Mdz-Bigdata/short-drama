@@ -1,0 +1,11 @@
+﻿码,名称,什么时候,中文写法,英文写法,对应镜头功能码
+DC1,说者主镜,一方大段输出、情绪往上走,镜头缓推{A}，{B}的肩留在画边,"slow push on {A}, {B}'s shoulder kept at the edge",CB6
+DC2,听者反应,说者的话尾、关键词落下时,{A}话尾插一拍{B}的反应,cut to {B}'s reaction as {A}'s line lands,CB5
+DC3,视角嵌套,要让观众站在听者一边看说者,过{B}的肩拍{A}，{B}虚在前景,"over {B}'s shoulder onto {A}, {B} soft in the foreground",CB5
+DC4,反打换边,换人开口,反打到{A}，{B}的侧脸压在前景,"reverse onto {A}, {B}'s profile framing the foreground",CB5
+DC5,抢白快切,激烈争吵、斗嘴，话头一个接一个,快切到{A}，手持微晃跟上语速,"quick cut to {A}, handheld keeping pace with the words",CB2
+DC6,沉默接住,听的人思得久、不马上答,{A}沉默时焦点从{B}拉到{A},focus racks from {B} to {A} in the silence,CB6
+DC7,群说调度,一人对众人说、众人起反应,镜头横移带出众人的反应,a lateral move carrying the crowd's reactions,CB1
+DC8,独白长推,独白、自语、临终遗言,极缓推近{A}，不切,"an imperceptible push on {A}, no cut",CB6
+DC9,同框呼吸,舒缓的两人对话，关系本身是内容,两人同框，镜头轻推保持距离,"both in frame, a gentle push holding the distance",CB6
+DC10,话落接招,一句话说完就动手,{A}话音一落镜头随出手甩出,as {A}'s line ends the camera whips with the strike,CB2
