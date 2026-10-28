@@ -769,6 +769,38 @@ describe('CharacterDesignerPage', () => {
     expect(scrollRegion?.getAttribute('tabindex')).toBe('0');
   });
 
+  it('shows the face-card layers and their warnings under the active state', () => {
+    // 后端按 snake_case 返回人物资产卡质检；归一化后挂在状态上。
+    const faceCard = normalizeCharacterDashboard({
+      ...interactiveDashboard,
+      characters: [{
+        ...interactiveDashboard.characters[0],
+        states: [{
+          state_id: 'base',
+          title: '基础造型',
+          dna: '18岁东亚女学生',
+          bone: '瓜子脸、深眼窝',
+          features: '内眦褶、高鼻根',
+          skin: '暖黄调半哑光',
+          face_card_issues: [{ code: 'face_card_mixed_bone_system', message: '骨相与五官里混用了两套骨相锚点，模型容易拉出一张混血脸。' }],
+        }],
+      }],
+    }).characters[0];
+    render(<CharacterInspector character={faceCard} />);
+
+    expect(screen.getByText('瓜子脸、深眼窝')).toBeTruthy();
+    expect(screen.getByText('内眦褶、高鼻根')).toBeTruthy();
+    expect(screen.getByText('暖黄调半哑光')).toBeTruthy();
+    const notes = screen.getByRole('list', { name: '人物资产卡提示' });
+    expect(within(notes).getByText(/混血脸/)).toBeTruthy();
+  });
+
+  it('shows no face-card list when a state has no warnings', () => {
+    render(<CharacterInspector character={interactiveDashboard.characters[0]} />);
+
+    expect(screen.queryByRole('list', { name: '人物资产卡提示' })).toBeNull();
+  });
+
   it('rejects unsafe artwork URLs at the dashboard normalization boundary', () => {
     const unsafeUrls = [
       'javascript:alert(1)',
