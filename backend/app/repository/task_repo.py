@@ -64,7 +64,8 @@ _MIGRATION_MARKER = "legacy_json_migrated"
 # still holds an older in-memory copy of the task: the usage ledger, accepted
 # video jobs and the generation queue. The stored row is the authority for them;
 # a progress save of the stale copy must not take them back.
-SINK_OWNED_TASK_KEYS = ("usage_records",)
+# qc_reports: 剧本阶段的后台质检报告由质检线程写入，阶段自己的整份快照不覆盖它。
+SINK_OWNED_TASK_KEYS = ("usage_records", "qc_reports")
 SINK_OWNED_ASSET_KEYS = ("5_jobs", "5_queue")
 
 

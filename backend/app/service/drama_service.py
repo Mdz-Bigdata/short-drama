@@ -1316,6 +1316,54 @@ class DramaService:
                 shutil.rmtree(work, ignore_errors=True)
 
     QC_REPORT_MAX_ROWS = 12
+    #: 剧本阶段（总导演、编剧）的质检不再挡在阶段完成之前：它只读资产前 2000 字、出一张参考报告，
+    #: 实测却占 10–16 秒（连同教训蒸馏），什么也不放行、什么也不拦。改在后台跑，报告出来后显示在
+    #: 本阶段日志里。QC_IN_BACKGROUND=0 恢复同步。后面的阶段质检照旧同步。
+    BACKGROUND_QC_STAGES = frozenset({1, 2})
+    QC_PENDING_TEXT = "🪝 **一致性质检在后台进行**：本阶段结果已可审看，质检报告生成后显示在这里。"
+
+    @staticmethod
+    def background_qc_enabled() -> bool:
+        return os.getenv("QC_IN_BACKGROUND", "1").strip() != "0"
+
+    @staticmethod
+    def _qc_fingerprint(asset: Any) -> str:
+        """Which version of a stage's asset a report checked: a rerun or an edit makes the report stale."""
+        text = asset if isinstance(asset, str) else json.dumps(asset, ensure_ascii=False, sort_keys=True, default=str)
+        return hashlib.sha256(str(text).encode("utf-8")).hexdigest()
+
+    def _stage_quality_report(self, task: Dict[str, Any], stage: int, stage_name: str, config: dict,
+                              title: str, task_id: str) -> str:
+        """The stage's self-check: synchronous, or for the script stages a placeholder while it runs aside.
+
+        The background report lands in the sink-owned ``qc_reports`` (a stage's full-task save never
+        overwrites it) with the fingerprint of the asset it checked; ``hydrate_task_status`` shows it in
+        ``logs`` only while that asset is unchanged.
+        """
+        if not (task_id and stage in self.BACKGROUND_QC_STAGES and self.background_qc_enabled()):
+            return self.run_real_consistency_check(stage, stage_name, task["assets"], config, title, task_id=task_id)
+        asset = deepcopy(task["assets"].get(str(stage)))
+        fingerprint = self._qc_fingerprint(asset)
+        config_snapshot = dict(config)
+
+        def check_aside() -> None:
+            try:
+                report = self.run_real_consistency_check(
+                    stage, stage_name, {str(stage): asset}, config_snapshot, title, task_id=task_id,
+                )
+
+                def record(current: Dict[str, Any]) -> bool:
+                    reports = current.get("qc_reports") if isinstance(current.get("qc_reports"), dict) else {}
+                    reports[str(stage)] = {"fingerprint": fingerprint, "report": report}
+                    current["qc_reports"] = reports
+                    return True
+
+                self.repo.mutate_task(task_id, record)
+            except Exception as error:  # 质检是旁路：失败只记日志，阶段结果不受影响
+                logger.warning("[QC] 阶段 %s 后台质检失败 (task=%s): %s", stage, task_id, type(error).__name__)
+
+        threading.Thread(target=check_aside, daemon=True, name=f"qc-{stage}-{task_id[:8]}").start()
+        return self.QC_PENDING_TEXT
 
     @staticmethod
     def qc_max_tokens() -> int:
@@ -1493,6 +1541,16 @@ class DramaService:
         once per task, which is the dominant cost of the polled task list.
         """
         assets = task.setdefault("assets", {})
+        # 后台质检的报告：只在它核对的那一版资产还在时显示（重跑、改稿后旧报告不冒充新结果）。
+        reports = task.get("qc_reports")
+        logs = task.get("logs")
+        if isinstance(reports, dict) and isinstance(logs, dict):
+            for stage_key, entry in reports.items():
+                if (
+                    isinstance(entry, dict) and entry.get("report")
+                    and entry.get("fingerprint") == self._qc_fingerprint(assets.get(stage_key))
+                ):
+                    logs[stage_key] = entry["report"]
         if assets.get("2"):
             breakdown = assets.setdefault("2_breakdown", {})
             if isinstance(breakdown, dict):
@@ -2721,7 +2779,7 @@ class DramaService:
         text, _breakdown = screenwriting.apply_state(task["assets"], state)
         task["scripted_episode_count"] = self._audit_scripted_episodes(text, ep_count, task_id)
         self._progress_step(task, 93, "剧本一致性质检自检")
-        task["logs"]["2"] = self.run_real_consistency_check(2, "编剧剧本创作", task["assets"], config, title, task_id=task_id)
+        task["logs"]["2"] = self._stage_quality_report(task, 2, "编剧剧本创作", config, title, task_id)
         written = screenwriting.written_episode_numbers(state)
         logger.info("[Stage2] 结构化编剧完成：%s 模式，%s/%s 集 (task=%s)", state.get("source_kind"), len(written), ep_count, task_id)
         return True
@@ -5670,7 +5728,7 @@ class DramaService:
             self._progress_step(task, 85, "剧本一致性质检自检")
             task["assets"]["1"] = res
             
-            task["logs"]["1"] = self.run_real_consistency_check(1, "总导演策划", task["assets"], config, title, task_id=task_id)
+            task["logs"]["1"] = self._stage_quality_report(task, 1, "总导演策划", config, title, task_id)
 
         elif stage == 2:
             # 阶段 2：编剧 (Writer Agent)
@@ -5788,7 +5846,7 @@ class DramaService:
                 )
 
                 self._progress_step(task, 90, "剧本一致性质检自检")
-                task["logs"]["2"] = self.run_real_consistency_check(2, "编剧剧本创作", task["assets"], config, title, task_id=task_id)
+                task["logs"]["2"] = self._stage_quality_report(task, 2, "编剧剧本创作", config, title, task_id)
 
             self._progress_step(task, 96, "编译 Writer Dashboard 时间轴与人物关系契约")
             task["assets"]["2_writer_dashboard"] = compile_writer_dashboard(task).model_dump(

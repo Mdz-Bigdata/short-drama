@@ -710,13 +710,14 @@ class ScreenwritingEngine:
         self.progress(base_percent, f"编剧 · 并行编写 {total} 集（{width} 路）")
         planned: dict[int, dict[str, Any]] = {}
         cumulative = deepcopy(state.get("inventory") or {"characters": {}, "scenes": {}, "props": {}, "costumes": {}, "effects": {}})
-        # Plans have their own pool; prose and visual layers share a second one of the same
-        # width (the chained prose, when chosen, holds one of its workers for the whole run).
+        # Plans have their own pool; prose and visual layers share a second one with room for
+        # both jobs of every episode in a round, so the last episode's prose never queues behind
+        # the others' visual layers (the chained prose, when chosen, is one long job instead).
         prose_future = None
         prose_futures: dict[int, Any] = {}
         visual_futures: dict[int, Any] = {}
         with ThreadPoolExecutor(max_workers=width, thread_name_prefix="screenwriting-plan") as planners, \
-                ThreadPoolExecutor(max_workers=width + (1 if self.prose_chain else 0), thread_name_prefix="screenwriting-tell") as tellers:
+                ThreadPoolExecutor(max_workers=width + (1 if self.prose_chain else width), thread_name_prefix="screenwriting-tell") as tellers:
             plan_futures = {number: planners.submit(in_context(plan_one, number)) for number in numbers}
             if self.prose_chain:
                 prose_future = tellers.submit(in_context(prose_chain))

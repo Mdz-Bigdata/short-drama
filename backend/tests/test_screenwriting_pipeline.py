@@ -11,6 +11,8 @@ import asyncio
 import json
 import re
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from typing import Any, Dict, List
@@ -112,9 +114,58 @@ def _task(task_id: str = "sw-task-1", *, episode_count: int = 2, **config_extra)
 
 
 def _run_stage_two(service: DramaService, task_id: str) -> Dict[str, Any]:
-    """Run stage 2 exactly as the API does, so the task ends in its real post-stage state."""
-    with patch.object(service, "run_real_consistency_check", return_value="QC-OK"):
+    """Run stage 2 exactly as the API does, so the task ends in its real post-stage state.
+
+    The self-check runs inline here so its report is part of that state; the background
+    path has its own test below.
+    """
+    with patch.object(service, "run_real_consistency_check", return_value="QC-OK"), \
+         patch.dict("os.environ", {"QC_IN_BACKGROUND": "0"}):
         return asyncio.run(service.execute_stage(task_id, 2))
+
+
+class BackgroundQualityCheckTests(unittest.TestCase):
+    """剧本阶段的质检不挡在阶段完成前：先给占位，报告出来后按资产指纹显示。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.repo = TaskRepository(str(Path(self.temp.name) / "tasks.json"))
+        self.repo.save_task("sw-task-1", _task())
+        self.service = _service(_Gateway(), self.repo)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_the_stage_finishes_first_and_the_report_follows_for_that_version_only(self):
+        released = threading.Event()
+
+        def slow_check(*_args, **_kwargs):
+            released.wait(5)
+            return "QC-LATER"
+
+        with patch.object(self.service, "run_real_consistency_check", side_effect=slow_check), \
+             patch.dict("os.environ", {"QC_IN_BACKGROUND": "1"}):
+            task = asyncio.run(self.service.execute_stage("sw-task-1", 2))
+            self.assertEqual(task["logs"]["2"], DramaService.QC_PENDING_TEXT, "the stage did not wait for the check")
+            released.set()
+            for _ in range(100):
+                if (self.repo.get_task("sw-task-1") or {}).get("qc_reports"):
+                    break
+                time.sleep(0.02)
+
+        status = self.service.get_task_status("sw-task-1")
+        self.assertEqual(status["logs"]["2"], "QC-LATER")
+
+        # A later full-task save (the next stage) keeps the report; a rewritten script hides it.
+        stored = self.repo.get_task("sw-task-1")
+        stored.pop("qc_reports")
+        stored["logs"]["2"] = DramaService.QC_PENDING_TEXT
+        self.repo.save_task("sw-task-1", stored)
+        self.assertEqual(self.service.get_task_status("sw-task-1")["logs"]["2"], "QC-LATER")
+        stored = self.repo.get_task("sw-task-1")
+        stored["assets"]["2"] += "\n改稿后的新一幕。"
+        self.repo.save_task("sw-task-1", stored)
+        self.assertEqual(self.service.get_task_status("sw-task-1")["logs"]["2"], DramaService.QC_PENDING_TEXT)
 
 
 class StructuredStageTwoTests(unittest.TestCase):
