@@ -163,6 +163,8 @@ export function CharacterFiveViewViewer({
                       })}
                     >
                       <img
+                        loading="lazy"
+                        decoding="async"
                         src={cell.imageUrl}
                         alt={`${character.name} ${cellLabel}`}
                         onError={() => markBroken(cell.imageUrl as string)}
@@ -209,6 +211,7 @@ export function CharacterFiveViewViewer({
               })}
             >
               <img
+                decoding="async"
                 src={selectedAsset.imageUrl}
                 alt={`${character.name} ${selectedDefinition.labelZh} ${selectedDefinition.angleDegrees}度`}
                 onError={() => markBroken(selectedAsset.imageUrl as string)}
@@ -238,6 +241,7 @@ export function CharacterFiveViewViewer({
               })}
             >
               <img
+                decoding="async"
                 className="character-viewer__legacy-sheet"
                 src={character.sheetUrl}
                 alt={`${character.name} 设定集整板参考图`}
@@ -295,6 +299,8 @@ export function CharacterFiveViewViewer({
               <span className="character-viewer__tab-image">
                 {available && asset?.imageUrl ? (
                   <img
+                    loading="lazy"
+                    decoding="async"
                     src={asset.imageUrl}
                     alt=""
                     onError={() => markBroken(asset.imageUrl as string)}
@@ -328,7 +334,7 @@ export function CharacterFiveViewViewer({
           onClose={() => setLargeImage(null)}
         >
           <figure className="character-dialog__image">
-            <img src={largeImage.src} alt={largeImage.alt} />
+            <img src={largeImage.src} alt={largeImage.alt} decoding="async" />
             <figcaption>
               <a href={largeImage.src} target="_blank" rel="noreferrer">
                 <ExternalLink size={15} aria-hidden="true" /> {t('在新窗口打开原图')}

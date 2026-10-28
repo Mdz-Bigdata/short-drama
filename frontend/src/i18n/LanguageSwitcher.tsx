@@ -8,7 +8,7 @@ export function LanguageSwitcher({ className = '' }: { className?: string }) {
   return (
     <label className={`language-switcher ${className}`.trim()}>
       <Languages size={15} aria-hidden="true" />
-      <select aria-label="界面语言 / Language / Ngôn ngữ" value={locale} onChange={event => setLocale(event.target.value as Locale)}>
+      <select aria-label="界面语言 / Language / Ngôn ngữ" value={locale} onChange={event => { void setLocale(event.target.value as Locale); }}>
         {LOCALES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
       </select>
     </label>

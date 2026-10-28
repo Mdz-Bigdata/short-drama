@@ -97,7 +97,8 @@ export function CharacterDesignerPageContainer({
   const regenerating = Boolean(dashboard?.characters.some(character => character.regenerating));
   useEffect(() => {
     if (!regenerating) return;
-    const timer = window.setInterval(() => setRequestVersion(version => version + 1), 5000);
+    // 标签页在后台时不重读：看板响应不小，切回来后下一拍(5 秒内)就补上。
+    const timer = window.setInterval(() => { if (!document.hidden) setRequestVersion(version => version + 1); }, 5000);
     return () => window.clearInterval(timer);
   }, [regenerating]);
 

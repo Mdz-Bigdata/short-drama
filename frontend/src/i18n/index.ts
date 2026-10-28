@@ -5,11 +5,12 @@
  * and the dictionary entry in English or Vietnamese, so a screen is translated by wrapping
  * its text and adding entries, and anything not yet translated still reads in Chinese.
  * `{name}` / `{0}` placeholders are filled from the second argument.
+ *
+ * Chinese needs no dictionary, so the English and Vietnamese ones (a third of the app's
+ * first-load script) are fetched only when that language is chosen: `setLocale` loads it
+ * before switching, and the entry point loads a remembered language before the first render.
  */
 import { useSyncExternalStore } from 'react';
-
-import { en } from './en';
-import { vi } from './vi';
 
 export type Locale = 'zh-CN' | 'en' | 'vi';
 
@@ -19,7 +20,21 @@ export const LOCALES: ReadonlyArray<{ id: Locale; label: string; htmlLang: strin
   { id: 'vi', label: 'Tiếng Việt', htmlLang: 'vi' },
 ];
 
-export const DICTIONARIES: Record<Exclude<Locale, 'zh-CN'>, Record<string, string>> = { en, vi };
+type Translated = Exclude<Locale, 'zh-CN'>;
+
+const LOADERS: Record<Translated, () => Promise<Record<string, string>>> = {
+  en: () => import('./en').then(module => module.en),
+  vi: () => import('./vi').then(module => module.vi),
+};
+
+/** The dictionaries loaded so far; a language missing here reads in Chinese until it loads. */
+export const DICTIONARIES: Partial<Record<Translated, Record<string, string>>> = {};
+
+/** Fetch a language's dictionary once; Chinese and already-loaded languages resolve at once. */
+export async function loadLocale(locale: Locale): Promise<void> {
+  if (locale === 'zh-CN' || DICTIONARIES[locale]) return;
+  DICTIONARIES[locale] = await LOADERS[locale]();
+}
 
 const STORAGE_KEY = 'ui.locale';
 const listeners = new Set<() => void>();
@@ -45,8 +60,10 @@ export function getLocale(): Locale {
   return current;
 }
 
-export function setLocale(next: Locale): void {
+/** Switch the interface language, loading its dictionary first so nothing flashes in Chinese. */
+export async function setLocale(next: Locale): Promise<void> {
   if (!isLocale(next) || next === current) return;
+  await loadLocale(next);
   current = next;
   try {
     window.localStorage.setItem(STORAGE_KEY, next);
@@ -81,7 +98,7 @@ function fill(text: string, vars?: Vars): string {
 
 /** The text in the current language; the Chinese source when no translation exists yet. */
 export function t(source: string, vars?: Vars, locale: Locale = current): string {
-  const translated = locale === 'zh-CN' ? source : (DICTIONARIES[locale][source] ?? source);
+  const translated = locale === 'zh-CN' ? source : (DICTIONARIES[locale]?.[source] ?? source);
   return fill(translated, vars);
 }
 

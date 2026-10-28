@@ -100,7 +100,7 @@ export function CharacterLibrary({
             >
               <span className="character-library__index">{String(index + 1).padStart(2, '0')}</span>
               <span className="character-library__avatar">
-                {thumbnail ? <img src={thumbnail} alt="" /> : <UserRound size={21} aria-hidden="true" />}
+                {thumbnail ? <img src={thumbnail} alt="" loading="lazy" decoding="async" /> : <UserRound size={21} aria-hidden="true" />}
               </span>
               <span className="character-library__copy">
                 <span className="character-library__name">{character.name}</span>

@@ -86,7 +86,7 @@ export async function exportClip({ stage, aspect, durationS, fps, monochrome, la
 
   // Everything that can say "no" is asked before the renderer is touched.
   if (typeof VideoEncoder === 'undefined') throw new ClipUnsupportedError();
-  const media = await import('mediabunny');
+  const media = await import('./mediabunnyExport');
   const quality = new media.Quality({ bitrate: Math.max(2_000_000, Math.round(width * height * fps * 0.13)) });
   let format: 'mp4' | 'webm' | null = null;
   for (const [candidate, codec] of [['mp4', 'avc'], ['webm', 'vp9']] as const) {

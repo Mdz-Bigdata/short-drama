@@ -206,7 +206,7 @@ function StoryboardFrameMedia({ shot, alt }: { shot: StoryboardShot; alt: string
   if (failed) {
     return <div className="storyboard-frame__placeholder">{t('分镜图片暂不可用')}</div>;
   }
-  return <img src={shot.image_url} alt={alt} onError={() => setFailed(true)} />;
+  return <img src={shot.image_url} alt={alt} loading="lazy" decoding="async" onError={() => setFailed(true)} />;
 }
 
 

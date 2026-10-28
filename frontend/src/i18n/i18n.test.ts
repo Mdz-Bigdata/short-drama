@@ -1,23 +1,38 @@
 // @vitest-environment jsdom
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
-import { DICTIONARIES, acceptLanguage, getLocale, setLocale, t } from './index';
+import { en } from './en';
+import { DICTIONARIES, acceptLanguage, getLocale, loadLocale, setLocale, t } from './index';
+import { vi } from './vi';
 
 describe('interface language', () => {
   afterEach(() => setLocale('zh-CN'));
 
-  it('reads Chinese by default, translates, and falls back to Chinese for anything untranslated', () => {
+  it('loads a dictionary only when its language is asked for', async () => {
+    expect(DICTIONARIES.en).toBeUndefined();
+    expect(t('立即登录', undefined, 'en')).toBe('立即登录');
+    await loadLocale('en');
+    expect(t('立即登录', undefined, 'en')).toBe('Sign in');
+  });
+
+  it('reads Chinese by default, translates, and falls back to Chinese for anything untranslated', async () => {
     expect(t('立即登录')).toBe('立即登录');
-    setLocale('en');
+    await setLocale('en');
     expect(t('立即登录')).toBe('Sign in');
     expect(t('一句还没有翻译的话')).toBe('一句还没有翻译的话');
-    setLocale('vi');
+    await setLocale('vi');
     expect(t('立即登录')).toBe('Đăng nhập');
     expect(document.documentElement.lang).toBe('vi');
     expect(acceptLanguage()).toBe('vi,zh-CN;q=0.5');
   });
+
+  describe('with every dictionary loaded', () => {
+    beforeAll(async () => {
+      await loadLocale('en');
+      await loadLocale('vi');
+    });
 
   it('fills numbered and named placeholders in every language', () => {
     expect(t('删除失败: {0}', ['网络错误'])).toBe('删除失败: 网络错误');
@@ -26,15 +41,16 @@ describe('interface language', () => {
     expect(t('共 {count} 项', { count: 3 })).toBe('共 3 项');
   });
 
-  it('remembers the choice and ignores unknown languages', () => {
-    setLocale('en');
+  it('remembers the choice and ignores unknown languages', async () => {
+    await setLocale('en');
     expect(window.localStorage.getItem('ui.locale')).toBe('en');
-    setLocale('fr' as never);
+    await setLocale('fr' as never);
     expect(getLocale()).toBe('en');
+  });
   });
 
   it('keeps every translation free of lost placeholders', () => {
-    for (const dictionary of Object.values(DICTIONARIES)) {
+    for (const dictionary of [en, vi]) {
       for (const [source, translated] of Object.entries(dictionary)) {
         const wanted = (source.match(/\{\w+\}/g) ?? []).sort();
         expect((translated.match(/\{\w+\}/g) ?? []).sort(), source).toEqual(wanted);

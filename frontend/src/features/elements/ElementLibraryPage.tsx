@@ -544,6 +544,7 @@ export function ElementLibraryPage({
   useEffect(() => {
     if (!actorRegenerating) return;
     const timer = window.setInterval(() => {
+      if (document.hidden) return;  // 后台标签页不轮询，切回来后下一拍补上
       const scope = taskId ? `&task_id=${encodeURIComponent(taskId)}` : '';
       void apiRequest<ElementResponse>(`/api/elements?kind=actor&page=1&page_size=50${scope}`)
         .then(data => { if (kindRef.current === 'actor') setItems(data.items); })
@@ -916,7 +917,7 @@ export function ElementLibraryPage({
                         imageUrl,
                       })}
                     >
-                      <img src={imageUrl} alt={`${item.name} ${previewLabel}`} />
+                      <img src={imageUrl} alt={`${item.name} ${previewLabel}`} loading="lazy" decoding="async" />
                       <span className="element-preview__open-hint"><Maximize2 aria-hidden="true" /> {t('点击查看全景细节')}</span>
                     </button>
                   )

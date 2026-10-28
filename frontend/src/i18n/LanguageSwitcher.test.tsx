@@ -21,8 +21,8 @@ describe('LanguageSwitcher', () => {
     render(<><LanguageSwitcher /><Greeting /></>);
     expect(screen.getByText('立即登录')).toBeTruthy();
     await userEvent.selectOptions(screen.getByLabelText('界面语言 / Language / Ngôn ngữ'), 'en');
-    expect(screen.getByText('Sign in')).toBeTruthy();
+    expect(await screen.findByText('Sign in')).toBeTruthy();
     await userEvent.selectOptions(screen.getByLabelText('界面语言 / Language / Ngôn ngữ'), 'vi');
-    expect(screen.getByText('Đăng nhập')).toBeTruthy();
+    expect(await screen.findByText('Đăng nhập')).toBeTruthy();
   });
 });

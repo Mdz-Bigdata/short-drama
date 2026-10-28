@@ -12,9 +12,6 @@ import type { ElementKind } from './features/elements/elementTypes';
 import type { ModelCategory } from './features/models/ModelConfigurationCenter';
 import type { BreakdownSceneRef, SceneBoardStatus, StoryboardProgress, StoryboardShot } from './features/storyboard/StoryboardWorkspace';
 import { AgentStageTabs } from './features/workbench/AgentStageTabs';
-import { StageFivePreview } from './features/workbench/StageFivePreview';
-import { TimelinePanel } from './features/workbench/TimelinePanel';
-import { StyleReferencePanel } from './features/workbench/StyleReferencePanel';
 import { getScriptDisplayName } from './features/workbench/scriptTitle';
 import { VideoReferenceModeSelect } from './features/workbench/VideoReferenceModeSelect';
 import { NOVARA_AGENT_NAME, PRODUCT_TITLE } from './features/workbench/agentBrand';
@@ -41,6 +38,10 @@ const StoryboardWorkspace = lazy(() => import('./features/storyboard/StoryboardW
 const DirectorPlanningPage = lazy(() => import('./features/director/DirectorPlanningPage').then(m => ({ default: m.DirectorPlanningPage })));
 const WriterAgentPageContainer = lazy(() => import('./features/writer/WriterAgentPageContainer').then(m => ({ default: m.WriterAgentPageContainer })));
 const CharacterDesignerPageContainer = lazy(() => import('./features/character/CharacterDesignerPageContainer').then(m => ({ default: m.CharacterDesignerPageContainer })));
+// 第 1、5、7 阶段的面板只在那几步出现，登录页与项目大厅不为它们付下载。
+const StyleReferencePanel = lazy(() => import('./features/workbench/StyleReferencePanel').then(m => ({ default: m.StyleReferencePanel })));
+const StageFivePreview = lazy(() => import('./features/workbench/StageFivePreview').then(m => ({ default: m.StageFivePreview })));
+const TimelinePanel = lazy(() => import('./features/workbench/TimelinePanel').then(m => ({ default: m.TimelinePanel })));
 
 function StageFallback() {
   return <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--text-muted)', padding: '40px' }}>{tr('正在载入…')}</div>;
@@ -495,6 +496,8 @@ export default function App() {
   const statusRequestRef = useRef(0);
   const appliedStatusRequestRef = useRef(0);
   const statusPollFailuresRef = useRef(0);
+  // 上一次轮询应用到界面上的状态正文与对象：内容没变就不换对象，整个工作台不重渲染。
+  const lastStatusRef = useRef<{ body: string; data: TaskResponse } | null>(null);
   const restoreChatRef = useRef<string | null>(null);
   const chatRequestRef = useRef<{ taskId: string } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -890,10 +893,16 @@ export default function App() {
         if (request < appliedStatusRequestRef.current || selection !== selectionVersionRef.current || !canAcceptTaskResponse(selectedTaskIdRef.current, data.taskId)) return;
         appliedStatusRequestRef.current = request;
         statusPollFailuresRef.current = 0;
+        // 运行中每 1.5 秒轮询一次，绝大多数回包和上一次一字不差：这时界面上的对象原样保留，
+        // 不触发整个工作台重渲染。界面上若是本地刚改过的对象（不是上次回包），照常用回包覆盖。
+        const body = JSON.stringify(data);
+        const last = lastStatusRef.current;
+        if (last && last.body === body && taskDataRef.current === last.data && restoreChatRef.current !== id) return;
         const previous = taskDataRef.current;
         const boardStage = workflowBoardTransition(previous, data);
         setTaskData(data);
         taskDataRef.current = data;
+        lastStatusRef.current = { body, data };
 
         // 阶段开始执行时打开该阶段看板；阶段结束（完成、失败或中断）后停在这一步的
         // 看板等待审核，用户说「继续」后才进入下一步。执行过程中不打扰用户手动翻看。
@@ -2364,7 +2373,7 @@ export default function App() {
                   shotStyle={taskData?.config.shotStyle}
                   asset={taskData?.assets["1"]}
                 />
-                {taskId && <StyleReferencePanel taskId={taskId} />}
+                {taskId && <Suspense fallback={null}><StyleReferencePanel taskId={taskId} /></Suspense>}
               </>
             ) : activeTabStage === 2 ? (
               <WriterAgentPageContainer
@@ -2420,13 +2429,15 @@ export default function App() {
 
                   {/* 5: 视觉总监生成 */}
                   {activeTabStage === 5 && (
-                    <StageFivePreview
-                      asset={taskData.assets["5"]}
-                      videoModel={taskData.config.videoModel || config.videoModel}
-                      imageModel={taskData.config.imageModel || config.imageModel}
-                      taskId={taskId}
-                      onRerun={() => { void sendChatInstruction('重跑第 5 阶段'); }}
-                    />
+                    <Suspense fallback={<StageFallback />}>
+                      <StageFivePreview
+                        asset={taskData.assets["5"]}
+                        videoModel={taskData.config.videoModel || config.videoModel}
+                        imageModel={taskData.config.imageModel || config.imageModel}
+                        taskId={taskId}
+                        onRerun={() => { void sendChatInstruction('重跑第 5 阶段'); }}
+                      />
+                    </Suspense>
                   )}
 
                   {/* 6: 音频总监生成 */}
@@ -2486,7 +2497,7 @@ export default function App() {
                         </div>
                         {/* 剪辑时间线：审看、裁剪、转场、配乐，按它重新合成或导出剪映草稿 */}
                         <div className="glass-panel" style={{ background: '#fcedef', padding: '12px' }}>
-                          <TimelinePanel taskId={taskId} />
+                          <Suspense fallback={<StageFallback />}><TimelinePanel taskId={taskId} /></Suspense>
                         </div>
                       </div>
                     </div>

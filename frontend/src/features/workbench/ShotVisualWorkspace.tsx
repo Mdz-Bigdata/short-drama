@@ -435,7 +435,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
                     >
                       <span className="shot-workspace__shot-index">{shot.shot_id}</span>
                       <span className="shot-workspace__shot-thumb">
-                        {shot.image_url ? <img src={shot.image_url} alt="" /> : <ImageIcon size={16} aria-hidden="true" />}
+                        {shot.image_url ? <img src={shot.image_url} alt="" loading="lazy" decoding="async" /> : <ImageIcon size={16} aria-hidden="true" />}
                       </span>
                       <span className="shot-workspace__shot-body">
                         <span className="shot-workspace__shot-desc">{shot.desc || '分镜画面'}</span>
