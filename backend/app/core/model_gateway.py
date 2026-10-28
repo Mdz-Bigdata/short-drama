@@ -1913,7 +1913,7 @@ class ModelGateway:
         # extra_negative：角色设计师配药单编译出的模块化负面词(agent_council.compile_negative_prompt)，
         # 拼在设定集问题负面串之后；空串零成本。
         prompt = (
-            build_actor_sheet_prompt(name, f"{char_desc}.{era_clause}", style_word)
+            build_actor_sheet_prompt(name, char_desc, style_word, era_note=era_clause)
             + " photorealistic, live-action, cinematic, highly detailed, sharp focus, 35mm film. "
             + self.SHEET_PROBLEM_NEGATIVE
             + (extra_negative or "")

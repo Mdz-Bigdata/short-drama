@@ -219,6 +219,21 @@ class CharacterDashboardCompilerTests(unittest.TestCase):
         self.assertEqual(sum(cell.group == "elements" for cell in character.sheet_cells), 8)
         self.assertEqual(sum(cell.group == "detail_matrix" for cell in character.sheet_cells), 12)
 
+    def test_each_state_carries_its_face_card_audit_without_blocking_readiness(self):
+        task = _task()
+        state = task["assets"]["3_dna"]["characters"][0]["states"][0]
+        state.update({"dna": "18岁东亚女学生", "bone": "瓜子脸、深眼窝", "features": "内眦褶、高鼻根"})
+
+        character = compile_character_dashboard(task).characters[0]
+
+        issues = character.states[0].face_card_issues
+        self.assertEqual([issue.code for issue in issues], ["face_card_mixed_bone_system"])
+        self.assertIn("混血脸", issues[0].message)
+        self.assertEqual(character.states[0].bone, "瓜子脸、深眼窝")
+        # 只是提示：不进设定集质检，不改变就绪状态。
+        self.assertEqual(character.asset_state, compile_character_dashboard(_task()).characters[0].asset_state)
+        self.assertEqual(compile_character_dashboard(_task()).characters[0].states[0].face_card_issues, [])
+
     def test_character_id_and_source_hash_are_stable_and_not_array_index_based(self):
         first = compile_character_dashboard(_task())
         reordered = copy.deepcopy(_task())

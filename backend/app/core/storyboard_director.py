@@ -11,6 +11,7 @@ import json
 import re
 from decimal import Decimal, ROUND_HALF_UP
 
+from app.core.face_card import fit_face_text_to_framing
 from app.core.frame_position import render_frame_positions
 from app.core.transition_catalog import describe_transition, normalize_transition_type
 from app.schema.storyboard_director import (
@@ -393,11 +394,19 @@ class StoryboardDirectorCompiler:
         compiler = StoryboardDirectorCompiler
         landmarks = compiler._landmarks(request)
         damage_so_far = compiler._damage_until(request, beat.keyframe_seconds)
-        characters = "；".join(
-            f"{item.name}：{item.appearance}；服装{item.costume}；配饰{item.accessories}；"
-            f"身体状态{item.physical_state}；心理状态{item.psychological_state}"
+        # 构图裁到哪，长相词写到哪：半身不写体态比例，远景不写毛孔细纹；否定词与防混血锚点进排除项。
+        fitted = [
+            fit_face_text_to_framing(item.appearance, request.shot_visual.shot_size)
             for item in request.characters
+        ]
+        characters = "；".join(
+            f"{item.name}：{appearance}；服装{item.costume}；配饰{item.accessories}；"
+            f"身体状态{item.physical_state}；心理状态{item.psychological_state}"
+            for item, (appearance, _negatives) in zip(request.characters, fitted)
         ) or "空镜，无人物，不生成面孔、肢体或人物服装"
+        exclusions = list(request.global_visual.exclusions)
+        for _appearance, negatives in fitted:
+            exclusions.extend(term for term in negatives if term not in exclusions)
         prompt = (
             f"镜头{request.shot_number}第{beat.index}/{total_beats}个关键拍点，"
             f"关键帧时间{beat.keyframe_seconds:g}秒，动作阶段{beat.action_phase}。"
@@ -429,14 +438,14 @@ class StoryboardDirectorCompiler:
             f"【台词表演依据】{beat.verbatim_line or '无'}；不得把台词生成在画面中。\n"
             f"【参考素材】{request.global_visual.reference_image_policy}；"
             f"{request.global_visual.reference_video_policy}。\n"
-            f"【排除】{'、'.join(request.global_visual.exclusions)}。"
+            f"【排除】{'、'.join(exclusions)}。"
         )
         return StillFramePrompt(
             beat_index=beat.index,
             keyframe_seconds=beat.keyframe_seconds,
             action_phase=beat.action_phase,
             prompt=prompt,
-            exclusions=request.global_visual.exclusions,
+            exclusions=exclusions[:50],
         )
 
     @staticmethod

@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 
 from app import settings
 from app.core.actor_sheet_layout import ACTOR_SHEET_CELL_ORDER, ACTOR_SHEET_LAYOUT
+from app.core.face_card import audit_face_card, parse_face_card, state_face_fragments
 from app.schema.character_dashboard import (
     IDENTITY_VIEW_ORDER,
     CharacterColor,
@@ -317,6 +318,14 @@ def _normalize_anchors(value: Any) -> list[CharacterStateAnchor]:
     return [CharacterStateAnchor(view=key, detail=by_view.get(key, "")) for key in IDENTITY_VIEW_ORDER]
 
 
+def _face_card_issues(state: dict[str, Any]) -> list[CharacterQualityIssue]:
+    card = parse_face_card("；".join(state_face_fragments(state)))
+    return [
+        CharacterQualityIssue(code=f"face_card_{issue.code}", message=_text(f"{issue.message}{issue.suggestion}", 1000))
+        for issue in audit_face_card(card)
+    ]
+
+
 def _normalize_states(character_name: str, value: Any) -> list[CharacterDesignState]:
     if not isinstance(value, list):
         return []
@@ -334,12 +343,16 @@ def _normalize_states(character_name: str, value: Any) -> list[CharacterDesignSt
             state_id=state_id,
             title=title,
             dna=_text(item.get("dna"), 4000, multiline=True),
+            bone=_text(item.get("bone"), 1000, multiline=True),
+            features=_text(item.get("features"), 1000, multiline=True),
+            skin=_text(item.get("skin"), 1000, multiline=True),
             hair=_text(item.get("hair"), 1000, multiline=True),
             body=_text(item.get("body"), 1000, multiline=True),
             clothing=_text(item.get("clothing"), 2000, multiline=True),
             accessories=_text(item.get("accessories"), 1000, multiline=True),
             style=_text(item.get("style"), 1000, multiline=True),
             anchors=_normalize_anchors(item.get("anchors")),
+            face_card_issues=_face_card_issues(item),
         ))
     return states
 

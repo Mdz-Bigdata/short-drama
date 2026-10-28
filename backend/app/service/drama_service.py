@@ -17,6 +17,7 @@ from typing import Callable, Dict, Any, Optional, List, Tuple
 
 from app import settings
 from app.repository.task_repo import StaleTaskWriteError, TaskRepository
+from app.core.face_card import state_face_fragments
 from app.core.model_gateway import ModelGateway
 from app.core import usage_ledger, video_jobs
 from app.core.providers.pricing import pricing_table
@@ -5201,13 +5202,16 @@ class DramaService:
             '    "colors": [{"name": "主色名(如 青灰)", "hex": "#8A9BA8"}],\n'
             '    "states": [{\n'
             '      "state_id": "如 modern / beggar_child", "title": "状态中文名(如 现代博士状态)",\n'
-            '      "dna": "身份DNA一段话", "hair": "发型", "body": "体型", "clothing": "服装",\n'
+            '      "dna": "身份DNA一段话",\n'
+            '      "bone": "脸型、颧弓、下颌角、眉弓、眼窝", "features": "眼型、鼻根鼻梁鼻尖、唇、下巴、痣疤位置",\n'
+            '      "skin": "肤色与至多3个质感词", "hair": "发型", "body": "体型", "clothing": "服装",\n'
             '      "accessories": "配饰", "style": "视觉风格",\n'
             '      "anchors": [{"view": "正面|正面四分之三|标准侧面|背面四分之三|背面", "detail": "该视图可见身份锚点"}]\n'
             "    }]\n"
             "  }]\n"
             "}\n"
             "要求：忠实提取原文信息不要虚构；hex 色值必须是文档中出现的；"
+            "bone/features/skin 按人物资产卡分层摘出原文的骨相、五官、皮肤词，原文没写的层留空字符串；"
             "states 覆盖每个角色的全部状态卡；anchors 按身份视图顺序排列。"
         )
         user_prompt = f"【短剧标题】：{title}\n\n【角色 DNA 锁定包原文】：\n{dna_text}"
@@ -5801,6 +5805,8 @@ class DramaService:
                 + "\n\n"
                 "Role: AI 角色设计师智能体 (Character Designer Agent)\n"
                 "Methodology: 设计主角和反派的详细五维 DNA 角色卡（面部、发型、体型、服饰、情绪），"
+                "面部按人物资产卡分层写死：身份锚点、骨相、五官、皮肤、毛发、体态，同一张脸只用同一套骨相锚点，"
+                "否定词另列不写进正向描述，皮肤质感词不超过 3 个；"
                 "锁定特征（服装与发型等）以保跨镜头多帧渲染的一致性，不能写任何心理词汇。\n"
                 "角色身份由一张 21:9 数字演员设定集锁定：左栏「主肖像」正面近景，"
                 "中栏「全身与元素」全身立绘 + 正面/90°侧面/背面三视图 + 2×4 元素拆解，"
@@ -5891,10 +5897,10 @@ class DramaService:
                         for state in states[:3]:
                             if not isinstance(state, dict):
                                 continue
-                            details.extend(
-                                state.get(key)
-                                for key in ("dna", "hair", "body", "clothing", "accessories", "style")
-                            )
+                            # 每个状态里骨相/五官/皮肤/毛发/体态带层名排在前面：设定集提示词按层解析时原样归层，
+                            # _clean_desc 截断时先丢的是后面的服装与风格，不是这几层锁脸的词。
+                            details.extend(state_face_fragments(state))
+                            details.extend(state.get(key) for key in ("clothing", "accessories", "style"))
                     return _clean_desc("；".join(str(value) for value in details if value))
 
                 ordered = []  # [(name, role, desc)]

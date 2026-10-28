@@ -5,6 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from app.core.actor_sheet_layout import ACTOR_SHEET_LAYOUT, FULL_BODY_PROPORTION_RULE
+from app.core.face_card import card_negatives, parse_face_card, render_face_card
 from app.schema.production import NineGridStoryboard, StoryboardPanel
 
 
@@ -45,17 +46,36 @@ def _numbered(rows: tuple[tuple[str, ...], ...]) -> list[str]:
     return lines
 
 
-def build_actor_sheet_prompt(name: str, identity_dna: str, visual_style: str) -> str:
+def _identity_clause(identity_dna: str) -> tuple[str, str]:
+    """身份 DNA 按人物资产卡分层写进设定集，返回 (正向身份句, 追加的禁止项)。
+
+    设定集同时有脸部特写和全身格，所以五层全写，再告诉模型哪层落在哪些格；
+    否定片段和防混血锚点进禁止项，不留在正向描述里。没解析出长相层的 DNA 原样保留。
+    """
+    card = parse_face_card(identity_dna)
+    if not card.has_face_layers:
+        return f"身份DNA：{identity_dna}。", ""
+    clause = (
+        f"人物资产卡：{render_face_card(card)}。"
+        "主肖像与脸部特写格严格按骨相、五官、皮肤刻画，全身立绘与三视图严格按体态比例刻画。"
+    )
+    negatives = card_negatives(card)
+    return clause, ("；禁止" + "、".join(negatives)) if negatives else ""
+
+
+def build_actor_sheet_prompt(name: str, identity_dna: str, visual_style: str, *, era_note: str = "") -> str:
     """把数字演员设定集写成一段可执行的画面描述。
 
     版面数字、网格形状和三栏标题全部取自 ACTOR_SHEET_LAYOUT，切图器读的是同一份常量。
     结构按用户给定的设定集提示词组织：全局画布 → 左栏主肖像 → 中栏全身与元素(中左全身立绘、
     中右三视图与 2×4 元素) → 右栏 4×3 细节矩阵 → 全局排版规则；每个子格下方一行编号中文标注。
+    身份 DNA 按 face_card 的人物资产卡分层；era_note(时代服饰约束)不参与分层，原样跟在后面。
 
     刻意只写画面本身：没有 markdown、没有元指令、不引用任何文档。
     原因见 model_gateway.generate_character_sheet 的注释——把方法论文档塞进文生图
     模型会被内容审核判 content_policy_violation，整批设定图直接全灭。
     """
+    identity_clause, card_exclusions = _identity_clause(identity_dna)
     layout = ACTOR_SHEET_LAYOUT
     portrait_title, middle_title, details_title = (
         region.title for region in layout.regions if region.title
@@ -102,11 +122,11 @@ def build_actor_sheet_prompt(name: str, identity_dna: str, visual_style: str) ->
         "每格里的人物或物件完整落在格子内，不被格子边缘切断脸部；"
         "每个子格的编号标注写在该格图片下方的白色间隙里，不压在图片上。"
         "视觉流向从左到右、从上到下逻辑递进，呈现严谨专业的标准化设定集风格，高质量，高分辨率，极致细节。"
-        f"身份DNA：{identity_dna}。视觉风格：{visual_style}。"
+        f"{identity_clause}{era_note}视觉风格：{visual_style}。"
         "全部格子必须是同一个人物，不得改变脸型、五官比例、痣与疤的位置、发际线、"
         "发型、服装、配饰和身材；同焦段、同相机高度、同中性光。"
         "除三栏标题和各格编号标注外，禁止出现任何文字、标签、水印和 logo；"
-        "禁止出现第二个人物、额外肢体、多余手指、裁切脚部和场景道具。"
+        f"禁止出现第二个人物、额外肢体、多余手指、裁切脚部和场景道具{card_exclusions}。"
     )
 
 

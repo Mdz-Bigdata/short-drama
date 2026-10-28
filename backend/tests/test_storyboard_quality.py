@@ -57,7 +57,8 @@ class StoryboardQualityTests(unittest.TestCase):
             self.assertIn(phrase, prompt)
         # 身份锁与禁止项沿用旧提示词的约束
         self.assertIn("同一人物", prompt)
-        self.assertIn("左眼下泪痣、低马尾、米白风衣", prompt)
+        # 身份 DNA 按人物资产卡分层写进去(见 test_face_card)。
+        self.assertIn("五官：左眼下泪痣；毛发：低马尾；其他固定特征：米白风衣", prompt)
         self.assertIn("写实电影", prompt)
         for lock in ["脸型", "五官比例", "发际线", "水印", "场景道具"]:
             self.assertIn(lock, prompt)

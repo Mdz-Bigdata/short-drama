@@ -274,12 +274,22 @@ export function CharacterInspector({ character, onRegenerate }: {
           {activeState && (
             <dl className="character-inspector__state-detail">
               <DefinitionRow label={t('身份 DNA')} value={activeState.dna} />
+              <DefinitionRow label={t('骨相')} value={activeState.bone} />
+              <DefinitionRow label={t('五官')} value={activeState.features} />
+              <DefinitionRow label={t('皮肤')} value={activeState.skin} />
               <DefinitionRow label={t('发型')} value={activeState.hair} />
               <DefinitionRow label={t('体型')} value={activeState.body} />
               <DefinitionRow label={t('服装')} value={activeState.clothing} />
               <DefinitionRow label={t('配饰')} value={activeState.accessories} />
               <DefinitionRow label={t('视觉风格')} value={activeState.style} />
             </dl>
+          )}
+          {activeState && activeState.faceCardIssues.length > 0 && (
+            <ul className="character-quality-issues" aria-label={t('人物资产卡提示')}>
+              {activeState.faceCardIssues.map((issue, index) => (
+                <li key={`${issue.code}-${index}`}><TriangleAlert size={14} aria-hidden="true" /><span>{issue.message || issue.code}</span></li>
+              ))}
+            </ul>
           )}
         </section>
       )}
@@ -307,6 +317,9 @@ export function CharacterInspector({ character, onRegenerate }: {
               <DefinitionRow label={t('声音 ID')} value={character.voiceId} />
               <DefinitionRow label={t('角色描述')} value={character.description} />
               <DefinitionRow label={t('身份 DNA')} value={activeState?.dna} />
+              <DefinitionRow label={t('骨相')} value={activeState?.bone} />
+              <DefinitionRow label={t('五官')} value={activeState?.features} />
+              <DefinitionRow label={t('皮肤')} value={activeState?.skin} />
               <DefinitionRow label={t('发型')} value={activeState?.hair} />
               <DefinitionRow label={t('体型')} value={activeState?.body} />
               <DefinitionRow label={t('服装')} value={activeState?.clothing} />
@@ -323,7 +336,7 @@ export function CharacterInspector({ character, onRegenerate }: {
 function promptFor(character: CharacterDashboardCharacter, contract: CharacterViewContract): string {
   const state = character.states[0];
   const identity = state?.dna || character.identity || character.description || '锁定人物身份特征';
-  const styling = [state?.hair, state?.body, state?.clothing, state?.accessories, state?.style].filter(Boolean).join('；');
+  const styling = [state?.bone, state?.features, state?.skin, state?.hair, state?.body, state?.clothing, state?.accessories, state?.style].filter(Boolean).join('；');
   const views = contract.views.map(view => `${view.labelZh} ${view.angleDegrees}°`).join(' / ');
   const anchors = state?.anchors.map(anchor => `${anchor.view}: ${anchor.detail}`).filter(item => !item.endsWith(': ')).join('；');
   return [

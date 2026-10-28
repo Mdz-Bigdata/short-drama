@@ -123,12 +123,17 @@ export interface CharacterDesignState {
   stateId: string;
   title: string;
   dna: string;
+  bone: string;
+  features: string;
+  skin: string;
   hair: string;
   body: string;
   clothing: string;
   accessories: string;
   style: string;
   anchors: CharacterStateAnchor[];
+  /** 人物资产卡质检：骨相锚点混系统、人群标签笼统、皮肤词过多。只提示，不影响就绪。 */
+  faceCardIssues: CharacterQualityIssue[];
 }
 
 export interface CharacterQualityIssue {
@@ -432,19 +437,22 @@ function normalizeStates(value: unknown): CharacterDesignState[] {
       stateId: text(raw.stateId ?? raw.state_id, `state-${index + 1}`),
       title: text(raw.title, `状态 ${index + 1}`),
       dna: text(raw.dna),
+      bone: text(raw.bone),
+      features: text(raw.features),
+      skin: text(raw.skin),
       hair: text(raw.hair),
       body: text(raw.body),
       clothing: text(raw.clothing),
       accessories: text(raw.accessories),
       style: text(raw.style),
       anchors,
+      faceCardIssues: normalizeIssues(raw.faceCardIssues ?? raw.face_card_issues),
     };
   });
 }
 
-function normalizeQuality(value: unknown): CharacterFiveViewQuality {
-  const raw = record(value);
-  const issues = Array.isArray(raw.issues) ? raw.issues.map(item => {
+function normalizeIssues(value: unknown): CharacterQualityIssue[] {
+  return Array.isArray(value) ? value.map(item => {
     const issue = record(item);
     return {
       code: text(issue.code, 'quality_issue'),
@@ -452,6 +460,11 @@ function normalizeQuality(value: unknown): CharacterFiveViewQuality {
       viewIndex: numberOrNull(issue.viewIndex ?? issue.view_index),
     };
   }) : [];
+}
+
+function normalizeQuality(value: unknown): CharacterFiveViewQuality {
+  const raw = record(value);
+  const issues = normalizeIssues(raw.issues);
   return {
     passed: booleanOrNull(raw.passed),
     paletteSimilarity: numberOrNull(raw.paletteSimilarity ?? raw.palette_similarity),

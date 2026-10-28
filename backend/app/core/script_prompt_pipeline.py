@@ -17,6 +17,7 @@ import zipfile
 from dataclasses import dataclass
 from xml.sax.saxutils import escape as xml_escape
 
+from app.core.face_card import audit_face_card, parse_face_card, render_face_card
 from app.core.sd25_compiler import Sd25PromptCompiler
 from app.core.shot_motion_contract import (
     ShotMotionContract,
@@ -153,6 +154,12 @@ def _bounded(value: float, low: float, high: float) -> float:
 def _clip(value: str, limit: int) -> str:
     text = value.strip()
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _layered_identity(identity_dna: str) -> str:
+    """身份 DNA 写成分层人物资产卡；没解析出长相层(如待补充占位)时原样返回。"""
+    card = parse_face_card(identity_dna)
+    return render_face_card(card) if card.has_face_layers else identity_dna
 
 
 def _safe_sheet_text(value: object) -> str:
@@ -562,7 +569,8 @@ class ScriptPromptPipeline:
                 five_view_order=list(IDENTITY_VIEW_ORDER),
                 five_view_prompt=actor_sheet,
                 consistency_seed=(
-                    f"[CHARACTER:{name}] {identity_dna}；保持同一人物、同一面部结构、同一发型与当前场次服装"
+                    f"[CHARACTER:{name}] {_layered_identity(identity_dna)}；"
+                    "保持同一人物、同一面部结构、同一发型与当前场次服装"
                 ),
             ))
         return profiles, warnings
@@ -722,9 +730,16 @@ class ScriptPromptPipeline:
             for beat in source_beats
         ]
         palette = profile.color_palette or ["场景既定主色", "场景既定辅助色"]
+        # 面部锚点只锁看得见脸的几层，体态层归体态锚点：两条锁各管各的，不重复堆词。
+        cards = {character.name: parse_face_card(character.identity_dna) for character in scene_characters}
         face_anchor = "；".join(
-            f"{character.name}：{character.identity_dna}" for character in scene_characters
+            f"{character.name}：{render_face_card(cards[character.name], 'close', include_other=False)}"
+            if cards[character.name].has_face_layers else f"{character.name}：{character.identity_dna}"
+            for character in scene_characters
         ) or "角色身份信息缺失（需确认）"
+        physiques = "；".join(
+            f"{name}：{'、'.join(card.physique)}" for name, card in cards.items() if card.physique
+        )
         duration = _bounded(
             scene.estimated_duration_seconds or len(events) * 2.0, 0.5, 300
         )
@@ -755,7 +770,10 @@ class ScriptPromptPipeline:
             ),
             continuity=ContinuityLocks(
                 face_anchor=face_anchor,
-                body_anchor="保持数字演员设定集确定的身高感、肩宽、体型与比例",
+                body_anchor=(
+                    "保持数字演员设定集确定的身高感、肩宽、体型与比例"
+                    + (f"（{physiques}）" if physiques else "")
+                ),
                 costume_anchor="；".join(costume_locks) or "本场服装版本待确认",
                 scene_structure=profile.spatial_layout,
                 prop_positions="；".join(
@@ -1072,6 +1090,15 @@ class ScriptPromptPipeline:
                     description="剧本没有提供足够身份事实，无法安全锁定同一人物。",
                     suggestion="补充角色身份DNA或绑定已批准参考图后再提交生成。",
                 ))
+            if character.identity_status == "bound":
+                for card_issue in audit_face_card(parse_face_card(character.identity_dna)):
+                    issues.append(PromptConsistencyIssue(
+                        code=f"face_card_{card_issue.code}",
+                        severity="warning",
+                        location=f"角色 {character.name}",
+                        description=card_issue.message,
+                        suggestion=card_issue.suggestion,
+                    ))
             if len(character.costumes) > 1:
                 issues.append(PromptConsistencyIssue(
                     code="costume_change_tracked",

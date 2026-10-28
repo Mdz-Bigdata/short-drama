@@ -115,29 +115,35 @@ class CharacterStateAnchor(DramaBaseSchema):
     detail: str = Field("", max_length=1000)
 
 
+class CharacterQualityIssue(DramaBaseSchema):
+    code: str = Field("quality_issue", max_length=120)
+    message: str = Field("", max_length=1000)
+    # 设定集最多 25 格，逐格质检时这里是格子序号；旧五视图记录仍然只用 1-5。
+    view_index: Optional[int] = Field(None, ge=1, le=25)
+
+
 class CharacterDesignState(DramaBaseSchema):
     state_id: str = Field(..., min_length=1, max_length=120)
     title: str = Field(..., min_length=1, max_length=200)
     dna: str = Field("", max_length=4000)
+    # 人物资产卡的骨相 / 五官 / 皮肤层(见 core/face_card)；旧任务没有这三层时为空。
+    bone: str = Field("", max_length=1000)
+    features: str = Field("", max_length=1000)
+    skin: str = Field("", max_length=1000)
     hair: str = Field("", max_length=1000)
     body: str = Field("", max_length=1000)
     clothing: str = Field("", max_length=2000)
     accessories: str = Field("", max_length=1000)
     style: str = Field("", max_length=1000)
     anchors: list[CharacterStateAnchor] = Field(default_factory=list, min_length=5, max_length=5)
+    # 人物资产卡质检(骨相锚点混系统、人群标签笼统、皮肤词过多)：只提示，不影响设定集是否就绪。
+    face_card_issues: list[CharacterQualityIssue] = Field(default_factory=list, max_length=10)
 
     @model_validator(mode="after")
     def validate_anchor_order(self) -> "CharacterDesignState":
         if not identity_view_order_is_valid(tuple(anchor.view for anchor in self.anchors)):
             raise ValueError("state anchors must use the canonical identity view order")
         return self
-
-
-class CharacterQualityIssue(DramaBaseSchema):
-    code: str = Field("quality_issue", max_length=120)
-    message: str = Field("", max_length=1000)
-    # 设定集最多 25 格，逐格质检时这里是格子序号；旧五视图记录仍然只用 1-5。
-    view_index: Optional[int] = Field(None, ge=1, le=25)
 
 
 class CharacterFiveViewQuality(DramaBaseSchema):
