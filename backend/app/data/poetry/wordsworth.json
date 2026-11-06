@@ -1,0 +1,107 @@
+{
+  "collection": "wordsworth",
+  "author": "华兹华斯",
+  "aliases": [
+    "William Wordsworth",
+    "Wordsworth",
+    "威廉·华兹华斯"
+  ],
+  "dynasty": "英国·19世纪",
+  "profile": "英国湖畔派诗人，语言平易，写自然与回忆带来的宁静喜悦，主张“诗是强烈情感的自然流露”。适合田园治愈的旁白、童心不改的人物信条、城市清晨的画外音。",
+  "source": "文本据 1807 年 Poems, in Two Volumes 及 1815 年修订本，只收英文原文。",
+  "entries": [
+    {
+      "id": "i-wandered-lonely-as-a-cloud",
+      "title": "I Wandered Lonely as a Cloud",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "I wandered lonely as a cloud\nThat floats on high o'er vales and hills,\nWhen all at once I saw a crowd,\nA host, of golden daffodils;\nBeside the lake, beneath the trees,\nFluttering and dancing in the breeze.\n\nContinuous as the stars that shine\nAnd twinkle on the milky way,\nThey stretched in never-ending line\nAlong the margin of a bay:\nTen thousand saw I at a glance,\nTossing their heads in sprightly dance.\n\nThe waves beside them danced; but they\nOut-did the sparkling waves in glee:\nA poet could not but be gay,\nIn such a jocund company:\nI gazed—and gazed—but little thought\nWhat wealth the show to me had brought:\n\nFor oft, when on my couch I lie\nIn vacant or in pensive mood,\nThey flash upon that inward eye\nWhich is the bliss of solitude;\nAnd then my heart with pleasure fills,\nAnd dances with the daffodils.",
+      "themes": [
+        "自然",
+        "孤独",
+        "回忆",
+        "治愈",
+        "春",
+        "花"
+      ],
+      "emotions": [
+        "闲适",
+        "欢欣",
+        "宁静"
+      ],
+      "famous_lines": [
+        "I wandered lonely as a cloud",
+        "A host, of golden daffodils",
+        "They flash upon that inward eye Which is the bliss of solitude",
+        "And dances with the daffodils."
+      ],
+      "drama_uses": [
+        "田园治愈题材的开场旁白",
+        "独处时回忆美好的转场",
+        "片名或集名：水仙"
+      ],
+      "note": "1807 年刊，此为 1815 年修订本文本。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "my-heart-leaps-up",
+      "title": "My Heart Leaps Up",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "My heart leaps up when I behold\nA rainbow in the sky:\nSo was it when my life began;\nSo is it now I am a man;\nSo be it when I shall grow old,\nOr let me die!\nThe Child is father of the Man;\nAnd I could wish my days to be\nBound each to each by natural piety.",
+      "themes": [
+        "童心",
+        "彩虹",
+        "成长",
+        "初心",
+        "自然"
+      ],
+      "emotions": [
+        "欢欣",
+        "坚定",
+        "虔诚"
+      ],
+      "famous_lines": [
+        "My heart leaps up when I behold A rainbow in the sky",
+        "The Child is father of the Man"
+      ],
+      "drama_uses": [
+        "成年主角重拾童心的转折旁白",
+        "片名或集名：彩虹",
+        "父子题材的题眼：孩子是成人的父亲"
+      ],
+      "note": "1802 年作。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "composed-upon-westminster-bridge",
+      "title": "Composed upon Westminster Bridge, September 3, 1802",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Earth has not any thing to show more fair:\nDull would he be of soul who could pass by\nA sight so touching in its majesty:\nThis City now doth, like a garment, wear\nThe beauty of the morning; silent, bare,\nShips, towers, domes, theatres, and temples lie\nOpen unto the fields, and to the sky;\nAll bright and glittering in the smokeless air.\nNever did sun more beautifully steep\nIn his first splendour, valley, rock, or hill;\nNe'er saw I, never felt, a calm so deep!\nThe river glideth at his own sweet will:\nDear God! the very houses seem asleep;\nAnd all that mighty heart is lying still!",
+      "themes": [
+        "城市",
+        "清晨",
+        "宁静",
+        "河",
+        "赞美"
+      ],
+      "emotions": [
+        "宁静",
+        "肃穆",
+        "惊叹"
+      ],
+      "famous_lines": [
+        "Earth has not any thing to show more fair",
+        "And all that mighty heart is lying still!"
+      ],
+      "drama_uses": [
+        "大城市清晨空镜的画外音",
+        "主角初到都市的开场旁白",
+        "片尾城市沉睡的字幕"
+      ],
+      "note": "1802 年作。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

@@ -1,0 +1,136 @@
+{
+  "collection": "keats",
+  "author": "济慈",
+  "aliases": [
+    "John Keats",
+    "Keats",
+    "约翰·济慈"
+  ],
+  "dynasty": "英国·19世纪",
+  "profile": "英国浪漫派诗人，二十五岁早逝，诗句感官丰盈，以美与真、短暂与永恒为核心。适合唯美爱情、早逝天才、夜莺与星辰意象的旁白与片名。",
+  "source": "文本据 1817–1820 年初版诗集及通行本 Poetical Works，只收英文原文。",
+  "entries": [
+    {
+      "id": "ode-to-a-nightingale",
+      "title": "Ode to a Nightingale（节选·第 1、7、8 节）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "My heart aches, and a drowsy numbness pains\nMy sense, as though of hemlock I had drunk,\nOr emptied some dull opiate to the drains\nOne minute past, and Lethe-wards had sunk:\n'Tis not through envy of thy happy lot,\nBut being too happy in thine happiness,—\nThat thou, light-winged Dryad of the trees,\nIn some melodious plot\nOf beechen green, and shadows numberless,\nSingest of summer in full-throated ease.\n\nThou wast not born for death, immortal Bird!\nNo hungry generations tread thee down;\nThe voice I hear this passing night was heard\nIn ancient days by emperor and clown:\nPerhaps the self-same song that found a path\nThrough the sad heart of Ruth, when, sick for home,\nShe stood in tears amid the alien corn;\nThe same that oft-times hath\nCharm'd magic casements, opening on the foam\nOf perilous seas, in faery lands forlorn.\n\nForlorn! the very word is like a bell\nTo toll me back from thee to my sole self!\nAdieu! the fancy cannot cheat so well\nAs she is fam'd to do, deceiving elf.\nAdieu! adieu! thy plaintive anthem fades\nPast the near meadows, over the still stream,\nUp the hill-side; and now 'tis buried deep\nIn the next valley-glades:\nWas it a vision, or a waking dream?\nFled is that music:—Do I wake or sleep?",
+      "themes": [
+        "夜莺",
+        "永恒",
+        "梦境",
+        "思乡",
+        "死亡",
+        "美"
+      ],
+      "emotions": [
+        "迷醉",
+        "哀婉",
+        "怅惘"
+      ],
+      "famous_lines": [
+        "My heart aches, and a drowsy numbness pains",
+        "Thou wast not born for death, immortal Bird!",
+        "Forlorn! the very word is like a bell",
+        "Was it a vision, or a waking dream?"
+      ],
+      "drama_uses": [
+        "夜晚听歌声出神的唯美段落",
+        "梦醒分不清真假的片尾旁白",
+        "异乡人思乡的画外音"
+      ],
+      "note": "1819 年作。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "endymion-opening",
+      "title": "Endymion（节选·开篇）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "A thing of beauty is a joy for ever:\nIts loveliness increases; it will never\nPass into nothingness; but still will keep\nA bower quiet for us, and a sleep\nFull of sweet dreams, and health, and quiet breathing.\nTherefore, on every morrow, are we wreathing\nA flowery band to bind us to the earth,\nSpite of despondence, of the inhuman dearth\nOf noble natures, of the gloomy days,\nOf all the unhealthy and o'er-darkened ways\nMade for our searching: yes, in spite of all,\nSome shape of beauty moves away the pall\nFrom our dark spirits.",
+      "themes": [
+        "美",
+        "永恒",
+        "希望",
+        "慰藉"
+      ],
+      "emotions": [
+        "温柔",
+        "明亮",
+        "坚定"
+      ],
+      "famous_lines": [
+        "A thing of beauty is a joy for ever",
+        "Some shape of beauty moves away the pall"
+      ],
+      "drama_uses": [
+        "艺术家或收藏家的人物信条",
+        "片名或集名：美是永恒的喜悦",
+        "黑暗中被一点美打动的转折旁白"
+      ],
+      "note": "1818 年出版。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "bright-star",
+      "title": "Bright Star",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Bright star, would I were stedfast as thou art—\nNot in lone splendour hung aloft the night\nAnd watching, with eternal lids apart,\nLike nature's patient, sleepless Eremite,\nThe moving waters at their priestlike task\nOf pure ablution round earth's human shores,\nOr gazing on the new soft-fallen mask\nOf snow upon the mountains and the moors—\nNo—yet still stedfast, still unchangeable,\nPillow'd upon my fair love's ripening breast,\nTo feel for ever its soft fall and swell,\nAwake for ever in a sweet unrest,\nStill, still to hear her tender-taken breath,\nAnd so live ever—or else swoon to death.",
+      "themes": [
+        "爱情",
+        "星",
+        "永恒",
+        "生死",
+        "守望"
+      ],
+      "emotions": [
+        "缠绵",
+        "炽热",
+        "肃穆"
+      ],
+      "famous_lines": [
+        "Bright star, would I were stedfast as thou art",
+        "And so live ever—or else swoon to death."
+      ],
+      "drama_uses": [
+        "恋人相拥看星的告白戏",
+        "片名或集名：明亮的星",
+        "病中恋人的生死誓言"
+      ],
+      "note": "约 1819 年作，为济慈写给芳妮·布朗的十四行诗。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "ode-on-a-grecian-urn-final",
+      "title": "Ode on a Grecian Urn（节选·末节）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "O Attic shape! Fair attitude! with brede\nOf marble men and maidens overwrought,\nWith forest branches and the trodden weed;\nThou, silent form, dost tease us out of thought\nAs doth eternity: Cold Pastoral!\nWhen old age shall this generation waste,\nThou shalt remain, in midst of other woe\nThan ours, a friend to man, to whom thou say'st,\n\"Beauty is truth, truth beauty,—that is all\nYe know on earth, and all ye need to know.\"",
+      "themes": [
+        "美",
+        "真理",
+        "艺术",
+        "永恒",
+        "时间"
+      ],
+      "emotions": [
+        "肃穆",
+        "深邃",
+        "冷静"
+      ],
+      "famous_lines": [
+        "Beauty is truth, truth beauty",
+        "that is all Ye know on earth, and all ye need to know"
+      ],
+      "drama_uses": [
+        "文物或艺术品题材的片尾升华",
+        "艺术家人物的信条台词",
+        "博物馆场景的画外音"
+      ],
+      "note": "1819 年作。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

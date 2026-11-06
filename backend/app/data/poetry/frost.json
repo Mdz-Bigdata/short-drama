@@ -1,0 +1,138 @@
+{
+  "collection": "frost",
+  "author": "弗罗斯特",
+  "aliases": [
+    "Robert Frost",
+    "Frost",
+    "罗伯特·弗罗斯特"
+  ],
+  "dynasty": "美国·20世纪",
+  "profile": "美国新英格兰诗人，语言朴素，以乡村意象写人生抉择、责任与无常，看似平淡而余味深长。适合人生岔路口的抉择旁白、雪夜赶路的片尾、青春易逝的题眼。",
+  "source": "文本据 Mountain Interval（1916）与 New Hampshire（1923）初版，只收英文原文。作者 1963 年去世，所收作品均已进入公有领域。",
+  "entries": [
+    {
+      "id": "the-road-not-taken",
+      "title": "The Road Not Taken",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Two roads diverged in a yellow wood,\nAnd sorry I could not travel both\nAnd be one traveler, long I stood\nAnd looked down one as far as I could\nTo where it bent in the undergrowth;\n\nThen took the other, as just as fair,\nAnd having perhaps the better claim,\nBecause it was grassy and wanted wear;\nThough as for that the passing there\nHad worn them really about the same,\n\nAnd both that morning equally lay\nIn leaves no step had trodden black.\nOh, I kept the first for another day!\nYet knowing how way leads on to way,\nI doubted if I should ever come back.\n\nI shall be telling this with a sigh\nSomewhere ages and ages hence:\nTwo roads diverged in a wood, and I—\nI took the one less traveled by,\nAnd that has made all the difference.",
+      "themes": [
+        "抉择",
+        "人生",
+        "道路",
+        "命运",
+        "回忆",
+        "秋"
+      ],
+      "emotions": [
+        "怅惘",
+        "坚定",
+        "感慨"
+      ],
+      "famous_lines": [
+        "Two roads diverged in a yellow wood",
+        "I took the one less traveled by",
+        "And that has made all the difference."
+      ],
+      "drama_uses": [
+        "主角在人生岔路口做决定的旁白",
+        "多年后回望当年选择的片尾字幕",
+        "片名或集名：未选择的路"
+      ],
+      "note": "1916 年刊。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "stopping-by-woods-on-a-snowy-evening",
+      "title": "Stopping by Woods on a Snowy Evening",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Whose woods these are I think I know.\nHis house is in the village though;\nHe will not see me stopping here\nTo watch his woods fill up with snow.\n\nMy little horse must think it queer\nTo stop without a farmhouse near\nBetween the woods and frozen lake\nThe darkest evening of the year.\n\nHe gives his harness bells a shake\nTo ask if there is some mistake.\nThe only other sound's the sweep\nOf easy wind and downy flake.\n\nThe woods are lovely, dark and deep,\nBut I have promises to keep,\nAnd miles to go before I sleep,\nAnd miles to go before I sleep.",
+      "themes": [
+        "雪",
+        "责任",
+        "承诺",
+        "赶路",
+        "诱惑",
+        "夜"
+      ],
+      "emotions": [
+        "宁静",
+        "坚定",
+        "疲惫"
+      ],
+      "famous_lines": [
+        "The woods are lovely, dark and deep",
+        "But I have promises to keep",
+        "And miles to go before I sleep"
+      ],
+      "drama_uses": [
+        "雪夜赶路者的内心独白",
+        "想放弃却因承诺继续前行的片尾旁白",
+        "片名或集名：雪夜林边"
+      ],
+      "note": "1923 年刊。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "fire-and-ice",
+      "title": "Fire and Ice",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Some say the world will end in fire,\nSome say in ice.\nFrom what I've tasted of desire\nI hold with those who favor fire.\nBut if it had to perish twice,\nI think I know enough of hate\nTo say that for destruction ice\nIs also great\nAnd would suffice.",
+      "themes": [
+        "欲望",
+        "仇恨",
+        "末日",
+        "毁灭",
+        "冷与热"
+      ],
+      "emotions": [
+        "冷峻",
+        "反讽",
+        "克制"
+      ],
+      "famous_lines": [
+        "Some say the world will end in fire, Some say in ice.",
+        "I think I know enough of hate To say that for destruction ice Is also great And would suffice."
+      ],
+      "drama_uses": [
+        "爱恨纠缠题材的片头题眼",
+        "冷暴力与炽烈欲望对照的旁白",
+        "片名或集名：火与冰"
+      ],
+      "note": "1920 年作，1923 年刊。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "nothing-gold-can-stay",
+      "title": "Nothing Gold Can Stay",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Nature's first green is gold,\nHer hardest hue to hold.\nHer early leaf's a flower;\nBut only so an hour.\nThen leaf subsides to leaf.\nSo Eden sank to grief,\nSo dawn goes down to day.\nNothing gold can stay.",
+      "themes": [
+        "青春",
+        "无常",
+        "时光",
+        "黎明",
+        "美好易逝"
+      ],
+      "emotions": [
+        "怅惘",
+        "清冷",
+        "感慨"
+      ],
+      "famous_lines": [
+        "Nature's first green is gold",
+        "Nothing gold can stay."
+      ],
+      "drama_uses": [
+        "少年时代结束的片尾字幕",
+        "美好初恋转瞬即逝的旁白",
+        "片名或集名：岁月留金"
+      ],
+      "note": "1923 年刊。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

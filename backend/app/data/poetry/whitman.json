@@ -1,0 +1,137 @@
+{
+  "collection": "whitman",
+  "author": "惠特曼",
+  "aliases": [
+    "Walt Whitman",
+    "Whitman",
+    "沃尔特·惠特曼"
+  ],
+  "dynasty": "美国·19世纪",
+  "profile": "美国自由诗之父，长句奔放，歌颂自我、民主与肉体，也有对领袖之死的深哀。适合领袖陨落的哀悼戏、自我宣言式的独白、豪放不羁人物的信条。",
+  "source": "文本据 Leaves of Grass 1891–92 年“临终版”（deathbed edition），只收英文原文。",
+  "entries": [
+    {
+      "id": "o-captain-my-captain",
+      "title": "O Captain! My Captain!",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "O Captain! my Captain! our fearful trip is done,\nThe ship has weather'd every rack, the prize we sought is won,\nThe port is near, the bells I hear, the people all exulting,\nWhile follow eyes the steady keel, the vessel grim and daring;\nBut O heart! heart! heart!\nO the bleeding drops of red,\nWhere on the deck my Captain lies,\nFallen cold and dead.\n\nO Captain! my Captain! rise up and hear the bells;\nRise up—for you the flag is flung—for you the bugle trills,\nFor you bouquets and ribbon'd wreaths—for you the shores a-crowding,\nFor you they call, the swaying mass, their eager faces turning;\nHere Captain! dear father!\nThis arm beneath your head!\nIt is some dream that on the deck,\nYou've fallen cold and dead.\n\nMy Captain does not answer, his lips are pale and still,\nMy father does not feel my arm, he has no pulse nor will,\nThe ship is anchor'd safe and sound, its voyage closed and done,\nFrom fearful trip the victor ship comes in with object won;\nExult O shores, and ring O bells!\nBut I with mournful tread,\nWalk the deck my Captain lies,\nFallen cold and dead.",
+      "themes": [
+        "悼亡",
+        "领袖",
+        "胜利与牺牲",
+        "师生",
+        "告别"
+      ],
+      "emotions": [
+        "沉痛",
+        "悲壮",
+        "哀婉"
+      ],
+      "famous_lines": [
+        "O Captain! my Captain! our fearful trip is done",
+        "Fallen cold and dead",
+        "Exult O shores, and ring O bells!"
+      ],
+      "drama_uses": [
+        "功成之日领袖或恩师倒下的哀悼戏",
+        "学生向老师告别的站桌致敬段",
+        "片名或集名：船长"
+      ],
+      "note": "1865 年作，悼念林肯。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "song-of-myself-1",
+      "title": "Song of Myself（节选·第 1 节）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "I celebrate myself, and sing myself,\nAnd what I assume you shall assume,\nFor every atom belonging to me as good belongs to you.\n\nI loafe and invite my soul,\nI lean and loafe at my ease observing a spear of summer grass.\n\nMy tongue, every atom of my blood, form'd from this soil, this air,\nBorn here of parents born here from parents the same, and their parents the same,\nI, now thirty-seven years old in perfect health begin,\nHoping to cease not till death.\n\nCreeds and schools in abeyance,\nRetiring back a while sufficed at what they are, but never forgotten,\nI harbor for good or bad, I permit to speak at every hazard,\nNature without check with original energy.",
+      "themes": [
+        "自我",
+        "自由",
+        "生命",
+        "青春",
+        "宣言"
+      ],
+      "emotions": [
+        "豪迈",
+        "舒展",
+        "自信"
+      ],
+      "famous_lines": [
+        "I celebrate myself, and sing myself",
+        "I loafe and invite my soul"
+      ],
+      "drama_uses": [
+        "自由不羁主角的开场独白",
+        "三十七岁重新开始的人物旁白",
+        "草地上躺平放空的闲适段落"
+      ],
+      "note": "《自己之歌》开篇。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "song-of-myself-51",
+      "title": "Song of Myself（节选·第 51 节）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "The past and present wilt—I have fill'd them, emptied them,\nAnd proceed to fill my next fold of the future.\n\nListener up there! what have you to confide to me?\nLook in my face while I snuff the sidle of evening,\n(Talk honestly, no one else hears you, and I stay only a minute longer.)\n\nDo I contradict myself?\nVery well then I contradict myself,\n(I am large, I contain multitudes.)",
+      "themes": [
+        "自我",
+        "矛盾",
+        "人性",
+        "包容"
+      ],
+      "emotions": [
+        "坦荡",
+        "自信",
+        "狡黠"
+      ],
+      "famous_lines": [
+        "Do I contradict myself?",
+        "Very well then I contradict myself",
+        "I am large, I contain multitudes."
+      ],
+      "drama_uses": [
+        "被指前后矛盾时的回应台词",
+        "多面人物的定场旁白",
+        "片名或集名：我包罗万象"
+      ],
+      "note": "“I contain multitudes”为常被引用的名句。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "song-of-myself-52",
+      "title": "Song of Myself（节选·第 52 节）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "The spotted hawk swoops by and accuses me, he complains of my gab and my loitering.\n\nI too am not a bit tamed, I too am untranslatable,\nI sound my barbaric yawp over the roofs of the world.\n\nThe last scud of day holds back for me,\nIt flings my likeness after the rest and true as any on the shadow'd wilds,\nIt coaxes me to the vapor and the dusk.\n\nI depart as air, I shake my white locks at the runaway sun,\nI effuse my flesh in eddies, and drift it in lacy jags.\n\nI bequeath myself to the dirt to grow from the grass I love,\nIf you want me again look for me under your boot-soles.\n\nYou will hardly know who I am or what I mean,\nBut I shall be good health to you nevertheless,\nAnd filter and fibre your blood.\n\nFailing to fetch me at first keep encouraged,\nMissing me one place search another,\nI stop somewhere waiting for you.",
+      "themes": [
+        "生死",
+        "告别",
+        "自由",
+        "等待",
+        "黄昏"
+      ],
+      "emotions": [
+        "旷达",
+        "温柔",
+        "野性"
+      ],
+      "famous_lines": [
+        "I sound my barbaric yawp over the roofs of the world",
+        "I bequeath myself to the dirt to grow from the grass I love",
+        "If you want me again look for me under your boot-soles",
+        "I stop somewhere waiting for you."
+      ],
+      "drama_uses": [
+        "长者离世前的旷达遗言",
+        "片尾升华：我在某处等你",
+        "野性青春题材的呐喊段落"
+      ],
+      "note": "《自己之歌》结尾。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

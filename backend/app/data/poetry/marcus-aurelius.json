@@ -1,0 +1,356 @@
+{
+  "collection": "marcus-aurelius",
+  "author": "马可·奥勒留",
+  "aliases": [
+    "Marcus Aurelius",
+    "奥勒留",
+    "Meditations",
+    "沉思录"
+  ],
+  "dynasty": "罗马·2世纪",
+  "profile": "罗马皇帝兼斯多葛哲人，《沉思录》是写给自己的箴言，谈清晨自勉、宽恕他人、退回内心、死亡与当下。适合强者的自我训诫、失眠清晨的内心独白、命运无常题材的片尾字幕。",
+  "source": "文本据 George Long 1862 年英译 The Thoughts of the Emperor Marcus Aurelius Antoninus（译者 1879 年去世，英译为公有领域），只收英文原文，括号内为卷、节。",
+  "entries": [
+    {
+      "id": "begin-the-morning",
+      "title": "Begin the morning by saying to thyself（II.1）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Begin the morning by saying to thyself, I shall meet with the busy-body, the ungrateful, arrogant, deceitful, envious, unsocial.\nAll these things happen to them by reason of their ignorance of what is good and evil.\nBut I who have seen the nature of the good that it is beautiful, and of the bad that it is ugly, and the nature of him who does wrong, that it is akin to me, not only of the same blood or seed, but that it participates in the same intelligence and the same portion of the divinity, I can neither be injured by any of them, for no one can fix on me what is ugly, nor can I be angry with my kinsman, nor hate him.\nFor we are made for co-operation, like feet, like hands, like eyelids, like the rows of the upper and lower teeth.\nTo act against one another then is contrary to nature; and it is acting against one another to be vexed and to turn away.",
+      "themes": [
+        "自勉",
+        "宽恕",
+        "清晨",
+        "处世",
+        "克制"
+      ],
+      "emotions": [
+        "肃穆",
+        "冷静",
+        "宽厚"
+      ],
+      "famous_lines": [
+        "Begin the morning by saying to thyself",
+        "For we are made for co-operation, like feet, like hands, like eyelids"
+      ],
+      "drama_uses": [
+        "主角清晨出门前的自我训诫旁白",
+        "被小人围绕仍保持克制的人物信条",
+        "职场题材的片头题眼"
+      ],
+      "note": "George Long 译，第二卷第 1 节。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "three-thousand-years",
+      "title": "Though thou shouldst be going to live three thousand years（II.14）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Though thou shouldst be going to live three thousand years, and as many times ten thousand years, still remember that no man loses any other life than this which he now lives, nor lives any other than this which he now loses.\nThe longest and shortest are thus brought to the same.\nFor the present is the same to all, though that which perishes is not the same; and so that which is lost appears to be a mere moment.\nFor a man cannot lose either the past or the future: for what a man has not, how can any one take this from him?",
+      "themes": [
+        "当下",
+        "生死",
+        "时间",
+        "人生无常",
+        "哲理"
+      ],
+      "emotions": [
+        "冷静",
+        "通透",
+        "肃穆"
+      ],
+      "famous_lines": [
+        "no man loses any other life than this which he now lives",
+        "The longest and shortest are thus brought to the same."
+      ],
+      "drama_uses": [
+        "长寿与早夭对照的旁白",
+        "临终人物的坦然独白",
+        "片尾字幕：你只会失去此刻"
+      ],
+      "note": "George Long 译，第二卷第 14 节。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "of-human-life-the-time-is-a-point",
+      "title": "Of human life the time is a point（II.17）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Of human life the time is a point, and the substance is in a flux, and the perception dull, and the composition of the whole body subject to putrefaction, and the soul a whirl, and fortune hard to divine, and fame a thing devoid of judgement.\nAnd, to say all in a word, everything which belongs to the body is a stream, and what belongs to the soul is a dream and vapour, and life is a warfare and a stranger's sojourn, and after-fame is oblivion.\nWhat then is that which is able to conduct a man?\nOne thing and only one, philosophy.",
+      "themes": [
+        "人生无常",
+        "名利",
+        "哲理",
+        "虚空",
+        "旅程"
+      ],
+      "emotions": [
+        "苍凉",
+        "冷静",
+        "肃穆"
+      ],
+      "famous_lines": [
+        "life is a warfare and a stranger's sojourn, and after-fame is oblivion",
+        "One thing and only one, philosophy."
+      ],
+      "drama_uses": [
+        "功成名就者看破虚名的独白",
+        "历史题材的片头旁白",
+        "片名或集名：客旅"
+      ],
+      "note": "George Long 译，第二卷第 17 节。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "men-seek-retreats",
+      "title": "Men seek retreats for themselves（IV.3）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Men seek retreats for themselves, houses in the country, sea-shores, and mountains; and thou too art wont to desire such things very much.\nBut this is altogether a mark of the most common sort of men, for it is in thy power whenever thou shalt choose to retire into thyself.\nFor nowhere either with more quiet or more freedom from trouble does a man retire than into his own soul, particularly when he has within him such thoughts that by looking into them he is immediately in perfect tranquillity; and I affirm that tranquillity is nothing else than the good ordering of the mind.",
+      "themes": [
+        "隐逸",
+        "内心",
+        "宁静",
+        "处世",
+        "逃离"
+      ],
+      "emotions": [
+        "平和",
+        "通透",
+        "肃穆"
+      ],
+      "famous_lines": [
+        "it is in thy power whenever thou shalt choose to retire into thyself",
+        "tranquillity is nothing else than the good ordering of the mind"
+      ],
+      "drama_uses": [
+        "想逃离都市的主角被点醒的台词",
+        "冥想或独处场景的画外音",
+        "片名或集名：退回内心"
+      ],
+      "note": "George Long 译，第四卷第 3 节。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "do-not-act-as-if",
+      "title": "Do not act as if thou wert going to live ten thousand years（IV.17）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Do not act as if thou wert going to live ten thousand years.\nDeath hangs over thee.\nWhile thou livest, while it is in thy power, be good.",
+      "themes": [
+        "当下",
+        "死亡",
+        "行善",
+        "惜时"
+      ],
+      "emotions": [
+        "肃穆",
+        "紧迫",
+        "坚定"
+      ],
+      "famous_lines": [
+        "Do not act as if thou wert going to live ten thousand years.",
+        "While thou livest, while it is in thy power, be good."
+      ],
+      "drama_uses": [
+        "拖延者被警醒的转折旁白",
+        "片尾字幕",
+        "绝症题材的题眼"
+      ],
+      "note": "George Long 译，第四卷第 17 节。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "time-is-like-a-river",
+      "title": "Time is like a river（IV.43）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Time is like a river made up of the events which happen, and a violent stream; for as soon as a thing has been seen, it is carried away, and another comes in its place, and this will be carried away too.",
+      "themes": [
+        "时间",
+        "河",
+        "人生无常",
+        "流逝"
+      ],
+      "emotions": [
+        "苍茫",
+        "冷静"
+      ],
+      "famous_lines": [
+        "Time is like a river made up of the events which happen, and a violent stream"
+      ],
+      "drama_uses": [
+        "时间流逝的蒙太奇旁白",
+        "年代剧的片头题眼"
+      ],
+      "note": "George Long 译，第四卷第 43 节。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "in-the-morning-when-thou-risest",
+      "title": "In the morning when thou risest unwillingly（V.1）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "In the morning when thou risest unwillingly, let this thought be present—I am rising to the work of a human being.\nWhy then am I dissatisfied if I am going to do the things for which I exist and for which I was brought into the world?\nOr have I been made for this, to lie in the bed-clothes and keep myself warm?\nBut this is more pleasant.\nDost thou exist then to take thy pleasure, and not at all for action or exertion?\nDost thou not see the little plants, the little birds, the ants, the spiders, the bees working together to put in order their several parts of the universe?\nAnd art thou unwilling to do the work of a human being, and dost thou not make haste to do that which is according to thy nature?",
+      "themes": [
+        "自勉",
+        "清晨",
+        "责任",
+        "劝学",
+        "勤勉"
+      ],
+      "emotions": [
+        "严厉",
+        "坚定",
+        "自省"
+      ],
+      "famous_lines": [
+        "I am rising to the work of a human being.",
+        "Or have I been made for this, to lie in the bed-clothes and keep myself warm?"
+      ],
+      "drama_uses": [
+        "赖床青年被叫醒的喜剧旁白",
+        "创业者清晨自我鞭策的独白",
+        "励志题材的片头字幕"
+      ],
+      "note": "George Long 译，第五卷第 1 节。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "the-best-way-of-avenging",
+      "title": "The best way of avenging thyself（VI.6）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "The best way of avenging thyself is not to become like the wrong doer.",
+      "themes": [
+        "复仇",
+        "克制",
+        "处世",
+        "善恶"
+      ],
+      "emotions": [
+        "冷静",
+        "坚定"
+      ],
+      "famous_lines": [
+        "The best way of avenging thyself is not to become like the wrong doer."
+      ],
+      "drama_uses": [
+        "复仇题材中劝主角收手的台词",
+        "片名或集名：最好的报复",
+        "反派与主角分野的题眼"
+      ],
+      "note": "George Long 译，第六卷第 6 节。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "not-good-for-the-swarm",
+      "title": "That which is not good for the swarm（VI.54）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "That which is not good for the swarm, neither is it good for the bee.",
+      "themes": [
+        "集体",
+        "利他",
+        "处世",
+        "团队"
+      ],
+      "emotions": [
+        "冷静",
+        "坚定"
+      ],
+      "famous_lines": [
+        "That which is not good for the swarm, neither is it good for the bee."
+      ],
+      "drama_uses": [
+        "团队题材的人物信条",
+        "家族利益与个人利益冲突的题眼"
+      ],
+      "note": "George Long 译，第六卷第 54 节。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "look-within",
+      "title": "Look within（VII.59）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Look within.\nWithin is the fountain of good, and it will ever bubble up, if thou wilt ever dig.",
+      "themes": [
+        "内心",
+        "自我",
+        "善",
+        "成长"
+      ],
+      "emotions": [
+        "平和",
+        "坚定",
+        "温暖"
+      ],
+      "famous_lines": [
+        "Look within.",
+        "Within is the fountain of good, and it will ever bubble up, if thou wilt ever dig."
+      ],
+      "drama_uses": [
+        "迷茫者被点醒的台词",
+        "片尾字幕",
+        "心理治愈题材的题眼"
+      ],
+      "note": "George Long 译，第七卷第 59 节。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "if-thou-art-pained",
+      "title": "If thou art pained by any external thing（VIII.47）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "If thou art pained by any external thing, it is not this thing that disturbs thee, but thy own judgement about it.\nAnd it is in thy power to wipe out this judgement now.",
+      "themes": [
+        "痛苦",
+        "心态",
+        "处世",
+        "自我"
+      ],
+      "emotions": [
+        "冷静",
+        "通透"
+      ],
+      "famous_lines": [
+        "it is not this thing that disturbs thee, but thy own judgement about it"
+      ],
+      "drama_uses": [
+        "被流言困扰的主角被开导的台词",
+        "心理题材的旁白",
+        "片名或集名：困住你的是判断"
+      ],
+      "note": "George Long 译，第八卷第 47 节。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "no-longer-talk",
+      "title": "No longer talk at all about the kind of man that a good man ought to be（X.16）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "No longer talk at all about the kind of man that a good man ought to be, but be such.",
+      "themes": [
+        "行动",
+        "品格",
+        "自勉",
+        "处世"
+      ],
+      "emotions": [
+        "坚定",
+        "严厉"
+      ],
+      "famous_lines": [
+        "No longer talk at all about the kind of man that a good man ought to be, but be such."
+      ],
+      "drama_uses": [
+        "空谈者被当头棒喝的台词",
+        "片尾升华字幕",
+        "人物信条：别说，去做"
+      ],
+      "note": "George Long 译，第十卷第 16 节。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

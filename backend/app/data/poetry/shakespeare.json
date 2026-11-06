@@ -1,0 +1,232 @@
+{
+  "collection": "shakespeare",
+  "author": "莎士比亚",
+  "aliases": [
+    "Shakespeare",
+    "William Shakespeare",
+    "威廉·莎士比亚"
+  ],
+  "dynasty": "英国·文艺复兴",
+  "profile": "英国文艺复兴时期的剧作家与诗人，十四行诗写爱情、时间与永恒，戏剧独白写尽人生百态。适合爱情誓言、人生如戏的片头题眼、失意者的自怜与振作、追忆往事的旁白。",
+  "source": "文本据 1609 年四开本 Sonnets 及 First Folio（1623）通行校勘本，只收英文原文；中译以译者去世 50 年以上者为限（如朱生豪 1944 年去世），其余未收。",
+  "entries": [
+    {
+      "id": "sonnet-18",
+      "title": "Sonnet 18: Shall I compare thee to a summer's day?",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Shall I compare thee to a summer's day?\nThou art more lovely and more temperate:\nRough winds do shake the darling buds of May,\nAnd summer's lease hath all too short a date;\nSometime too hot the eye of heaven shines,\nAnd often is his gold complexion dimm'd;\nAnd every fair from fair sometime declines,\nBy chance or nature's changing course untrimm'd;\nBut thy eternal summer shall not fade,\nNor lose possession of that fair thou ow'st;\nNor shall Death brag thou wander'st in his shade,\nWhen in eternal lines to time thou grow'st:\nSo long as men can breathe or eyes can see,\nSo long lives this, and this gives life to thee.",
+      "themes": [
+        "爱情",
+        "夏",
+        "永恒",
+        "赞美",
+        "时间"
+      ],
+      "emotions": [
+        "深情",
+        "明亮",
+        "笃定"
+      ],
+      "famous_lines": [
+        "Shall I compare thee to a summer's day?",
+        "Thou art more lovely and more temperate",
+        "So long as men can breathe or eyes can see, So long lives this, and this gives life to thee."
+      ],
+      "drama_uses": [
+        "告白戏的经典朗诵",
+        "作家或画家以作品留住爱人的片尾升华",
+        "片名或集名：夏日"
+      ],
+      "note": "1609 年刊。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "sonnet-29",
+      "title": "Sonnet 29: When, in disgrace with fortune and men's eyes",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "When, in disgrace with fortune and men's eyes,\nI all alone beweep my outcast state,\nAnd trouble deaf heaven with my bootless cries,\nAnd look upon myself and curse my fate,\nWishing me like to one more rich in hope,\nFeatured like him, like him with friends possess'd,\nDesiring this man's art and that man's scope,\nWith what I most enjoy contented least;\nYet in these thoughts myself almost despising,\nHaply I think on thee, and then my state,\nLike to the lark at break of day arising\nFrom sullen earth, sings hymns at heaven's gate;\nFor thy sweet love remember'd such wealth brings\nThat then I scorn to change my state with kings.",
+      "themes": [
+        "失意",
+        "爱情",
+        "自卑",
+        "振作",
+        "命运"
+      ],
+      "emotions": [
+        "自怜",
+        "振奋",
+        "深情"
+      ],
+      "famous_lines": [
+        "When, in disgrace with fortune and men's eyes",
+        "Haply I think on thee, and then my state, Like to the lark at break of day arising",
+        "That then I scorn to change my state with kings."
+      ],
+      "drama_uses": [
+        "落魄主角想起爱人重新振作的独白",
+        "被所有人看不起时的旁白",
+        "片尾字幕：不与君王换"
+      ],
+      "note": "1609 年刊。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "sonnet-30",
+      "title": "Sonnet 30: When to the sessions of sweet silent thought",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "When to the sessions of sweet silent thought\nI summon up remembrance of things past,\nI sigh the lack of many a thing I sought,\nAnd with old woes new wail my dear time's waste:\nThen can I drown an eye, unused to flow,\nFor precious friends hid in death's dateless night,\nAnd weep afresh love's long since cancell'd woe,\nAnd moan the expense of many a vanish'd sight:\nThen can I grieve at grievances foregone,\nAnd heavily from woe to woe tell o'er\nThe sad account of fore-bemoaned moan,\nWhich I new pay as if not paid before.\nBut if the while I think on thee, dear friend,\nAll losses are restored and sorrows end.",
+      "themes": [
+        "追忆",
+        "友情",
+        "悼亡",
+        "往事",
+        "慰藉"
+      ],
+      "emotions": [
+        "哀婉",
+        "温暖",
+        "怅惘"
+      ],
+      "famous_lines": [
+        "I summon up remembrance of things past",
+        "For precious friends hid in death's dateless night",
+        "All losses are restored and sorrows end."
+      ],
+      "drama_uses": [
+        "深夜追忆故人的旁白",
+        "片名或集名：追忆似水年华",
+        "挚友出现化解悲伤的转场"
+      ],
+      "note": "1609 年刊。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "sonnet-73",
+      "title": "Sonnet 73: That time of year thou mayst in me behold",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "That time of year thou mayst in me behold\nWhen yellow leaves, or none, or few, do hang\nUpon those boughs which shake against the cold,\nBare ruin'd choirs, where late the sweet birds sang.\nIn me thou see'st the twilight of such day\nAs after sunset fadeth in the west,\nWhich by and by black night doth take away,\nDeath's second self, that seals up all in rest.\nIn me thou see'st the glowing of such fire\nThat on the ashes of his youth doth lie,\nAs the death-bed whereon it must expire,\nConsumed with that which it was nourish'd by.\nThis thou perceivest, which makes thy love more strong,\nTo love that well which thou must leave ere long.",
+      "themes": [
+        "衰老",
+        "秋",
+        "黄昏",
+        "爱情",
+        "生死"
+      ],
+      "emotions": [
+        "苍凉",
+        "深情",
+        "肃穆"
+      ],
+      "famous_lines": [
+        "Bare ruin'd choirs, where late the sweet birds sang.",
+        "To love that well which thou must leave ere long."
+      ],
+      "drama_uses": [
+        "老年恋人相守的片尾旁白",
+        "秋日黄昏的空镜画外音",
+        "忘年恋题材的题眼"
+      ],
+      "note": "1609 年刊。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "sonnet-116",
+      "title": "Sonnet 116: Let me not to the marriage of true minds",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Let me not to the marriage of true minds\nAdmit impediments. Love is not love\nWhich alters when it alteration finds,\nOr bends with the remover to remove:\nO no! it is an ever-fixed mark\nThat looks on tempests and is never shaken;\nIt is the star to every wandering bark,\nWhose worth's unknown, although his height be taken.\nLove's not Time's fool, though rosy lips and cheeks\nWithin his bending sickle's compass come:\nLove alters not with his brief hours and weeks,\nBut bears it out even to the edge of doom.\nIf this be error and upon me proved,\nI never writ, nor no man ever loved.",
+      "themes": [
+        "爱情",
+        "忠贞",
+        "婚姻",
+        "誓言",
+        "时间"
+      ],
+      "emotions": [
+        "笃定",
+        "庄重",
+        "深情"
+      ],
+      "famous_lines": [
+        "Let me not to the marriage of true minds Admit impediments.",
+        "Love is not love Which alters when it alteration finds",
+        "Love's not Time's fool",
+        "But bears it out even to the edge of doom."
+      ],
+      "drama_uses": [
+        "婚礼誓词或证婚朗诵",
+        "历经考验仍不变心的人物信条",
+        "片名或集名：真心的结合"
+      ],
+      "note": "1609 年刊。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "all-the-worlds-a-stage",
+      "title": "All the world's a stage（As You Like It, II.vii）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "All the world's a stage,\nAnd all the men and women merely players;\nThey have their exits and their entrances;\nAnd one man in his time plays many parts,\nHis acts being seven ages.\nAt first the infant,\nMewling and puking in the nurse's arms.\nAnd then the whining school-boy, with his satchel\nAnd shining morning face, creeping like snail\nUnwillingly to school.\nAnd then the lover,\nSighing like furnace, with a woeful ballad\nMade to his mistress' eyebrow.\nThen a soldier,\nFull of strange oaths and bearded like the pard,\nJealous in honour, sudden and quick in quarrel,\nSeeking the bubble reputation\nEven in the cannon's mouth.\nAnd then the justice,\nIn fair round belly with good capon lined,\nWith eyes severe and beard of formal cut,\nFull of wise saws and modern instances;\nAnd so he plays his part.\nThe sixth age shifts\nInto the lean and slipper'd pantaloon,\nWith spectacles on nose and pouch on side,\nHis youthful hose, well saved, a world too wide\nFor his shrunk shank; and his big manly voice,\nTurning again toward childish treble, pipes\nAnd whistles in his sound.\nLast scene of all,\nThat ends this strange eventful history,\nIs second childishness and mere oblivion,\nSans teeth, sans eyes, sans taste, sans everything.",
+      "themes": [
+        "人生如戏",
+        "七个阶段",
+        "人生无常",
+        "衰老",
+        "群像"
+      ],
+      "emotions": [
+        "旷达",
+        "反讽",
+        "苍凉"
+      ],
+      "famous_lines": [
+        "All the world's a stage, And all the men and women merely players",
+        "They have their exits and their entrances",
+        "And one man in his time plays many parts",
+        "Sans teeth, sans eyes, sans taste, sans everything."
+      ],
+      "drama_uses": [
+        "人生七阶段的蒙太奇旁白",
+        "群像剧的片头题眼：世界是座舞台",
+        "片名或集名：人生如戏",
+        "老年回望一生的片尾字幕"
+      ],
+      "note": "《皆大欢喜》第二幕第七场杰奎斯的独白。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "hamlet-to-be-zhu",
+      "title": "哈姆雷特·第三幕第一场独白（朱生豪译）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "生存还是毁灭，这是一个值得考虑的问题；默然忍受命运的暴虐的毒箭，或是挺身反抗人世的无涯的苦难，通过斗争把它们扫清，这两种行为，哪一种更高贵？\n死了；睡着了；什么都完了；要是在这一种睡眠之中，我们心头的创痛，以及其他无数血肉之躯所不能避免的打击，都可以从此消失，那正是我们求之不得的结局。\n死了，睡去了；睡去了也许还会做梦；嗯，阻碍就在这儿：因为当我们摆脱了这一具朽腐的皮囊以后，在那死的睡眠里，究竟将要做些什么梦，那不能不使我们踌躇顾虑。\n人们甘心久困于患难之中，也就是为了这个缘故；谁愿意忍受人世的鞭挞和讥嘲，压迫者的凌辱，傲慢者的冷眼，被轻蔑的爱情的惨痛，法律的迁延，官吏的横暴和微贱者费尽辛勤所换来的鄙视，要是他只要用一柄小小的刀子，就可以清算他自己的一生？\n谁愿意负著这样的重担，在烦劳的生命的压迫下呻吟流汗，倘不是因为惧怕不可知的死后，那从来不曾有一个旅人回来过的神秘之国，是它迷惑了我们的意志，使我们宁愿忍受目前的磨折，不敢向我们所不知道的痛苦飞去？\n这样理智使我们全变成了懦夫，决心的赤热的光彩，被审慎的思维盖上了一层灰色，伟大的事业在这一种考虑之下，也会逆流而退，失去了行动的意义。",
+      "themes": [
+        "生死",
+        "抉择",
+        "犹豫",
+        "命运",
+        "独白"
+      ],
+      "emotions": [
+        "沉郁",
+        "挣扎"
+      ],
+      "famous_lines": [
+        "生存还是毁灭，这是一个值得考虑的问题",
+        "默然忍受命运的暴虐的毒箭，或是挺身反抗人世的无涯的苦难",
+        "这样理智使我们全变成了懦夫"
+      ],
+      "drama_uses": [
+        "主角在生死抉择前的大段独白",
+        "犹豫不决者的心理外化台词",
+        "舞台剧题材的戏中戏"
+      ],
+      "note": "朱生豪译本（译者 1944 年逝世，译文已进入公有领域），据维基文库《漢姆萊脫》录入并转简体。"
+    }
+  ]
+}

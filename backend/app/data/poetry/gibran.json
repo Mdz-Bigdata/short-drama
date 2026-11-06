@@ -1,0 +1,143 @@
+{
+  "collection": "gibran",
+  "author": "纪伯伦",
+  "aliases": [
+    "Kahlil Gibran",
+    "Gibran",
+    "哈利勒·纪伯伦",
+    "卡里·纪伯伦"
+  ],
+  "dynasty": "黎巴嫩·20世纪",
+  "profile": "黎巴嫩裔美国诗人，《先知》以先知布道的口吻谈爱、婚姻、孩子与悲喜，句子如箴言、如祷词。适合婚礼与亲子题材的旁白、长者开导年轻人的台词、哲理片尾。",
+  "source": "文本据 The Prophet（1923）英文初版，只收英文原文。作者 1931 年去世；冰心中译本仍在版权期，未收。",
+  "entries": [
+    {
+      "id": "on-children",
+      "title": "On Children",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "And a woman who held a babe against her bosom said, Speak to us of Children.\nAnd he said:\nYour children are not your children.\nThey are the sons and daughters of Life's longing for itself.\nThey come through you but not from you,\nAnd though they are with you yet they belong not to you.\n\nYou may give them your love but not your thoughts,\nFor they have their own thoughts.\nYou may house their bodies but not their souls,\nFor their souls dwell in the house of tomorrow, which you cannot visit, not even in your dreams.\nYou may strive to be like them, but seek not to make them like you.\nFor life goes not backward nor tarries with yesterday.\n\nYou are the bows from which your children as living arrows are sent forth.\nThe archer sees the mark upon the path of the infinite, and He bends you with His might that His arrows may go swift and far.\nLet your bending in the archer's hand be for gladness;\nFor even as He loves the arrow that flies, so He loves also the bow that is stable.",
+      "themes": [
+        "亲子",
+        "父母",
+        "放手",
+        "成长",
+        "教育"
+      ],
+      "emotions": [
+        "温厚",
+        "睿智",
+        "深情"
+      ],
+      "famous_lines": [
+        "Your children are not your children.",
+        "They are the sons and daughters of Life's longing for itself.",
+        "You may give them your love but not your thoughts",
+        "You are the bows from which your children as living arrows are sent forth."
+      ],
+      "drama_uses": [
+        "控制欲父母觉悟的转折旁白",
+        "孩子远行时父母的画外音",
+        "亲子题材的片尾字幕"
+      ],
+      "note": "出自 The Prophet。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "on-love",
+      "title": "On Love",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Then said Almitra, Speak to us of Love.\nAnd he raised his head and looked upon the people, and there fell a stillness upon them.\nAnd with a great voice he said:\nWhen love beckons to you, follow him,\nThough his ways are hard and steep.\nAnd when his wings enfold you yield to him,\nThough the sword hidden among his pinions may wound you.\nAnd when he speaks to you believe in him,\nThough his voice may shatter your dreams as the north wind lays waste the garden.\n\nFor even as love crowns you so shall he crucify you.\nEven as he is for your growth so is he for your pruning.\nEven as he ascends to your height and caresses your tenderest branches that quiver in the sun,\nSo shall he descend to your roots and shake them in their clinging to the earth.\n\nLike sheaves of corn he gathers you unto himself.\nHe threshes you to make you naked.\nHe sifts you to free you from your husks.\nHe grinds you to whiteness.\nHe kneads you until you are pliant;\nAnd then he assigns you to his sacred fire, that you may become sacred bread for God's sacred feast.\n\nAll these things shall love do unto you that you may know the secrets of your heart, and in that knowledge become a fragment of Life's heart.\n\nBut if in your fear you would seek only love's peace and love's pleasure,\nThen it is better for you that you cover your nakedness and pass out of love's threshing-floor,\nInto the seasonless world where you shall laugh, but not all of your laughter, and weep, but not all of your tears.\nLove gives naught but itself and takes naught but from itself.\nLove possesses not nor would it be possessed;\nFor love is sufficient unto love.\n\nWhen you love you should not say, \"God is in my heart,\" but rather, \"I am in the heart of God.\"\nAnd think not you can direct the course of love, for love, if it finds you worthy, directs your course.\n\nLove has no other desire but to fulfil itself.\nBut if you love and must needs have desires, let these be your desires:\nTo melt and be like a running brook that sings its melody to the night.\nTo know the pain of too much tenderness.\nTo be wounded by your own understanding of love;\nAnd to bleed willingly and joyfully.\nTo wake at dawn with a winged heart and give thanks for another day of loving;\nTo rest at the noon hour and meditate love's ecstasy;\nTo return home at eventide with gratitude;\nAnd then to sleep with a prayer for the beloved in your heart and a song of praise upon your lips.",
+      "themes": [
+        "爱情",
+        "痛苦",
+        "成长",
+        "奉献",
+        "信仰"
+      ],
+      "emotions": [
+        "虔诚",
+        "炽热",
+        "肃穆"
+      ],
+      "famous_lines": [
+        "When love beckons to you, follow him",
+        "Though his ways are hard and steep.",
+        "For even as love crowns you so shall he crucify you.",
+        "Love gives naught but itself and takes naught but from itself.",
+        "To know the pain of too much tenderness."
+      ],
+      "drama_uses": [
+        "长者劝人勇敢去爱的台词",
+        "爱情磨难题材的片头旁白",
+        "婚礼或告白的朗诵段"
+      ],
+      "note": "出自 The Prophet。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "on-marriage",
+      "title": "On Marriage",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Then Almitra spoke again and said, And what of Marriage, master?\nAnd he answered saying:\nYou were born together, and together you shall be forevermore.\nYou shall be together when the white wings of death scatter your days.\nAy, you shall be together even in the silent memory of God.\nBut let there be spaces in your togetherness,\nAnd let the winds of the heavens dance between you.\n\nLove one another, but make not a bond of love:\nLet it rather be a moving sea between the shores of your souls.\nFill each other's cup but drink not from one cup.\nGive one another of your bread but eat not from the same loaf.\nSing and dance together and be joyous, but let each one of you be alone,\nEven as the strings of a lute are alone though they quiver with the same music.\n\nGive your hearts, but not into each other's keeping.\nFor only the hand of Life can contain your hearts.\nAnd stand together yet not too near together:\nFor the pillars of the temple stand apart,\nAnd the oak tree and the cypress grow not in each other's shadow.",
+      "themes": [
+        "婚姻",
+        "夫妻",
+        "距离",
+        "独立",
+        "爱情"
+      ],
+      "emotions": [
+        "睿智",
+        "温厚",
+        "庄重"
+      ],
+      "famous_lines": [
+        "But let there be spaces in your togetherness",
+        "And let the winds of the heavens dance between you.",
+        "Fill each other's cup but drink not from one cup.",
+        "And the oak tree and the cypress grow not in each other's shadow."
+      ],
+      "drama_uses": [
+        "婚礼致辞或证婚词",
+        "夫妻争吵后和解的旁白",
+        "片名或集名：相爱但留白"
+      ],
+      "note": "出自 The Prophet。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "on-joy-and-sorrow",
+      "title": "On Joy and Sorrow",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Then a woman said, Speak to us of Joy and Sorrow.\nAnd he answered:\nYour joy is your sorrow unmasked.\nAnd the selfsame well from which your laughter rises was oftentimes filled with your tears.\nAnd how else can it be?\nThe deeper that sorrow carves into your being, the more joy you can contain.\nIs not the cup that holds your wine the very cup that was burned in the potter's oven?\nAnd is not the lute that soothes your spirit, the very wood that was hollowed with knives?\nWhen you are joyous, look deep into your heart and you shall find it is only that which has given you sorrow that is giving you joy.\nWhen you are sorrowful look again in your heart, and you shall see that in truth you are weeping for that which has been your delight.\n\nSome of you say, \"Joy is greater than sorrow,\" and others say, \"Nay, sorrow is the greater.\"\nBut I say unto you, they are inseparable.\nTogether they come, and when one sits alone with you at your board, remember that the other is asleep upon your bed.\n\nVerily you are suspended like scales between your sorrow and your joy.\nOnly when you are empty are you at standstill and balanced.\nWhen the treasure-keeper lifts you to weigh his gold and his silver, needs must your joy or your sorrow rise or fall.",
+      "themes": [
+        "悲喜",
+        "人生",
+        "痛苦",
+        "成长",
+        "哲理"
+      ],
+      "emotions": [
+        "睿智",
+        "平和",
+        "深邃"
+      ],
+      "famous_lines": [
+        "Your joy is your sorrow unmasked.",
+        "The deeper that sorrow carves into your being, the more joy you can contain.",
+        "But I say unto you, they are inseparable."
+      ],
+      "drama_uses": [
+        "大起大落人生的片尾旁白",
+        "安慰失意者的台词",
+        "片名或集名：悲喜同源"
+      ],
+      "note": "出自 The Prophet。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

@@ -1,0 +1,281 @@
+{
+  "collection": "khayyam",
+  "author": "奥玛·海亚姆",
+  "aliases": [
+    "Omar Khayyam",
+    "莪默·伽亚谟",
+    "欧玛尔·海亚姆",
+    "Rubaiyat",
+    "鲁拜集"
+  ],
+  "dynasty": "波斯·11世纪",
+  "profile": "波斯数学家兼诗人，《鲁拜集》四行诗劝人把握当下、饮酒及时，带着对命运与死亡的清醒。适合及时行乐的人物信条、命运不可改写的旁白、酒宴场景的题眼。",
+  "source": "文本据 Edward FitzGerald 英译 Rubaiyat of Omar Khayyam 第五版（1889），第 1 首另附第一版（1859）文本；译者 1883 年去世，英译为公有领域。只收英文原文。",
+  "entries": [
+    {
+      "id": "quatrain-1-fifth",
+      "title": "Rubaiyat 第 1 首（第五版）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Wake! For the Sun, who scatter'd into flight\nThe Stars before him from the Field of Night,\nDrives Night along with them from Heav'n, and strikes\nThe Sultán's Turret with a Shaft of Light.",
+      "themes": [
+        "黎明",
+        "觉醒",
+        "开场",
+        "时间"
+      ],
+      "emotions": [
+        "昂扬",
+        "明亮"
+      ],
+      "famous_lines": [
+        "Wake! For the Sun, who scatter'd into flight",
+        "The Sultán's Turret with a Shaft of Light."
+      ],
+      "drama_uses": [
+        "清晨开场的画外音",
+        "新一天开始的转场旁白"
+      ],
+      "note": "FitzGerald 第五版（1889）。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "quatrain-1-first",
+      "title": "Rubaiyat 第 1 首（第一版）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Awake! for Morning in the Bowl of Night\nHas flung the Stone that puts the Stars to Flight:\nAnd Lo! the Hunter of the East has caught\nThe Sultan's Turret in a Noose of Light.",
+      "themes": [
+        "黎明",
+        "觉醒",
+        "开场",
+        "时间"
+      ],
+      "emotions": [
+        "昂扬",
+        "神秘"
+      ],
+      "famous_lines": [
+        "Awake! for Morning in the Bowl of Night",
+        "Has flung the Stone that puts the Stars to Flight"
+      ],
+      "drama_uses": [
+        "清晨开场的画外音",
+        "沙漠日出的空镜旁白"
+      ],
+      "note": "FitzGerald 第一版（1859）。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "quatrain-7",
+      "title": "Rubaiyat 第 7 首",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Come, fill the Cup, and in the fire of Spring\nYour Winter-garment of Repentance fling:\nThe Bird of Time has but a little way\nTo flutter—and the Bird is on the Wing.",
+      "themes": [
+        "及时行乐",
+        "春",
+        "酒",
+        "时光",
+        "人生无常"
+      ],
+      "emotions": [
+        "旷达",
+        "热烈",
+        "紧迫"
+      ],
+      "famous_lines": [
+        "Come, fill the Cup, and in the fire of Spring",
+        "The Bird of Time has but a little way To flutter—and the Bird is on the Wing."
+      ],
+      "drama_uses": [
+        "酒宴劝酒的台词",
+        "春天放下悔恨重新开始的旁白",
+        "片名或集名：时间之鸟"
+      ],
+      "note": "FitzGerald 第五版（1889）。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "quatrain-12",
+      "title": "Rubaiyat 第 12 首",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "A Book of Verses underneath the Bough,\nA Jug of Wine, a Loaf of Bread—and Thou\nBeside me singing in the Wilderness—\nOh, Wilderness were Paradise enow!",
+      "themes": [
+        "爱情",
+        "酒",
+        "闲适",
+        "知足",
+        "田园"
+      ],
+      "emotions": [
+        "闲适",
+        "甜蜜",
+        "旷达"
+      ],
+      "famous_lines": [
+        "A Book of Verses underneath the Bough",
+        "A Jug of Wine, a Loaf of Bread—and Thou",
+        "Oh, Wilderness were Paradise enow!"
+      ],
+      "drama_uses": [
+        "恋人野餐树下的甜蜜段落",
+        "安贫乐道人物的信条",
+        "片名或集名：荒野即天堂"
+      ],
+      "note": "FitzGerald 第五版（1889）。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "quatrain-24",
+      "title": "Rubaiyat 第 24 首",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Ah, make the most of what we yet may spend,\nBefore we too into the Dust descend;\nDust into Dust, and under Dust to lie,\nSans Wine, sans Song, sans Singer, and—sans End!",
+      "themes": [
+        "及时行乐",
+        "死亡",
+        "尘土",
+        "人生无常",
+        "酒"
+      ],
+      "emotions": [
+        "旷达",
+        "苍凉",
+        "紧迫"
+      ],
+      "famous_lines": [
+        "Ah, make the most of what we yet may spend",
+        "Before we too into the Dust descend",
+        "Sans Wine, sans Song, sans Singer, and—sans End!"
+      ],
+      "drama_uses": [
+        "绝症人物决定尽情活一次的旁白",
+        "墓前祭酒的画外音",
+        "片尾字幕：尘归尘"
+      ],
+      "note": "FitzGerald 第五版（1889）。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "quatrain-27",
+      "title": "Rubaiyat 第 27 首",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Myself when young did eagerly frequent\nDoctor and Saint, and heard great argument\nAbout it and about: but evermore\nCame out by the same door where in I went.",
+      "themes": [
+        "求索",
+        "青春",
+        "困惑",
+        "哲理",
+        "徒劳"
+      ],
+      "emotions": [
+        "自嘲",
+        "通透",
+        "怅惘"
+      ],
+      "famous_lines": [
+        "Myself when young did eagerly frequent Doctor and Saint",
+        "Came out by the same door where in I went."
+      ],
+      "drama_uses": [
+        "求学求道多年仍困惑的自嘲独白",
+        "中年人物回望青春的旁白"
+      ],
+      "note": "FitzGerald 第五版（1889）。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "quatrain-29",
+      "title": "Rubaiyat 第 29 首",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Into this Universe, and Why not knowing\nNor Whence, like Water willy-nilly flowing;\nAnd out of it, as Wind along the Waste,\nI know not Whither, willy-nilly blowing.",
+      "themes": [
+        "生死",
+        "命运",
+        "来去",
+        "人生无常",
+        "风"
+      ],
+      "emotions": [
+        "苍茫",
+        "通透",
+        "虚无"
+      ],
+      "famous_lines": [
+        "Into this Universe, and Why not knowing",
+        "I know not Whither, willy-nilly blowing."
+      ],
+      "drama_uses": [
+        "人生从何来往何去的片头题眼",
+        "流浪者的旁白",
+        "风沙空镜的画外音"
+      ],
+      "note": "FitzGerald 第五版（1889）。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "quatrain-71",
+      "title": "Rubaiyat 第 71 首（命运之指）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "The Moving Finger writes; and, having writ,\nMoves on: nor all your Piety nor Wit\nShall lure it back to cancel half a Line,\nNor all your Tears wash out a Word of it.",
+      "themes": [
+        "命运",
+        "不可挽回",
+        "时间",
+        "悔恨",
+        "宿命"
+      ],
+      "emotions": [
+        "肃穆",
+        "冷静",
+        "无奈"
+      ],
+      "famous_lines": [
+        "The Moving Finger writes; and, having writ, Moves on",
+        "Nor all your Tears wash out a Word of it."
+      ],
+      "drama_uses": [
+        "无法挽回的错误铸成后的旁白",
+        "宿命题材的片头题眼",
+        "片名或集名：命运之指"
+      ],
+      "note": "FitzGerald 第五版（1889）第 71 首，第一版为第 51 首。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "quatrain-99",
+      "title": "Rubaiyat 第 99 首",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Ah Love! could you and I with Him conspire\nTo grasp this sorry Scheme of Things entire,\nWould not we shatter it to bits—and then\nRe-mould it nearer to the Heart's Desire!",
+      "themes": [
+        "爱情",
+        "重塑世界",
+        "反抗",
+        "命运",
+        "理想"
+      ],
+      "emotions": [
+        "炽热",
+        "不甘",
+        "浪漫"
+      ],
+      "famous_lines": [
+        "Ah Love! could you and I with Him conspire",
+        "Would not we shatter it to bits—and then Re-mould it nearer to the Heart's Desire!"
+      ],
+      "drama_uses": [
+        "恋人誓言改写命运的台词",
+        "重生或穿越题材的题眼",
+        "片名或集名：重塑世界"
+      ],
+      "note": "FitzGerald 第五版（1889）。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

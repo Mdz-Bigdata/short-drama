@@ -1,0 +1,68 @@
+{
+  "collection": "tagore",
+  "author": "泰戈尔",
+  "aliases": [
+    "Tagore",
+    "Rabindranath Tagore",
+    "飞鸟集"
+  ],
+  "dynasty": "印度·19–20世纪",
+  "source": "《飞鸟集》郑振铎译（1922），据维基文库录入，译者 1958 年逝世，译文已进入公有领域；英文原文为泰戈尔自译。",
+  "profile": "短句、物象、拟人，一句一个哲理。适合片头题字、集与集之间的字幕卡、人物日记体旁白；二次创作宜保留“小物象说大道理”的句式。",
+  "entries": [
+    {
+      "id": "stray-birds-selection",
+      "title": "飞鸟集（郑振铎译·选十六则）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "1\n夏天的飞鸟，飞到我的窗前唱歌，又飞去了。\n秋天的黄叶，它们没有什么可唱，只叹息一声，飞落在那里。\n2\n世界上的一队小小的漂泊者呀，请留下你们的足印在我的文字里。\n3\n世界对着它的爱人，把它浩翰的面具揭下了。\n它变小了，小如一首歌，小如一回永恒的接吻。\n6\n如果你因失去了太阳而流泪，那么你也将失去群星了。\n7\n跳舞着的流水呀，在你途中的泥沙，要求你的歌声，你的流动呢。你肯挟瘸足的泥沙而俱下么？\n12\n“海水呀，你说的是什么？”\n“是永恒的疑问。”\n“天空呀，你回答的话是什么？”\n“是永恒的沉默。”\n13\n静静地听，我的心呀，听那世界的低语，这是它对你求爱的表示呀。\n16\n我今晨坐在窗前，世界如一个路人似的，停留了一会，向我点点头又走过去了。\n20\n我不能选择那最好的。\n是那最好的选择我。\n21\n那些把灯背在背上的人，把他们的影子投到了自己前面。\n29\n我的心把她的波浪在世界的海岸上冲激着，以热泪在上边写着她的题记：“我爱你。”\n31\n绿树长到了我的窗前，仿佛是喑哑的大地发出的渴望的声音。\n35\n鸟儿愿为一朵云。\n云儿愿为一只鸟。\n42\n你微微地笑着，不同我说什么话。而我觉得，为了这个，我已等待得久了。\n48\n群星不怕显得象萤火那样。\n52\n人在他的历史中表现不出他自己，他在历史中奋斗着露出头角。",
+      "themes": [
+        "哲理",
+        "自然",
+        "爱",
+        "人生",
+        "孤独"
+      ],
+      "emotions": [
+        "恬淡",
+        "温柔"
+      ],
+      "famous_lines": [
+        "如果你因失去了太阳而流泪，那么你也将失去群星了",
+        "我不能选择那最好的。是那最好的选择我",
+        "那些把灯背在背上的人，把他们的影子投到了自己前面",
+        "鸟儿愿为一朵云。云儿愿为一只鸟"
+      ],
+      "drama_uses": [
+        "集间字幕卡与片头题字",
+        "失恋后自我安慰的旁白",
+        "人物日记体独白"
+      ],
+      "note": "各则前的数字为通行本序号。"
+    },
+    {
+      "id": "stray-birds-english",
+      "title": "Stray Birds (selection, English original)",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "1\nStray birds of summer come to my window to sing and fly away.\nAnd yellow leaves of autumn, which have no songs, flutter and fall there with a sigh.\n2\nO troupe of little vagrants of the world, leave your footprints in my words.\n3\nThe world puts off its mask of vastness to its lover.\nIt becomes small as one song, as one kiss of the eternal.\n6\nIf you shed tears when you miss the sun, you also miss the stars.\n7\nThe sands in your way beg for your song and your movement, dancing water. Will you carry the burden of their lameness?",
+      "themes": [
+        "哲理",
+        "自然",
+        "英文原文"
+      ],
+      "emotions": [
+        "恬淡"
+      ],
+      "famous_lines": [
+        "If you shed tears when you miss the sun, you also miss the stars"
+      ],
+      "drama_uses": [
+        "双语字幕卡"
+      ],
+      "note": "泰戈尔自译英文，公有领域。"
+    }
+  ]
+}

@@ -1,0 +1,139 @@
+{
+  "collection": "blake",
+  "author": "布莱克",
+  "aliases": [
+    "William Blake",
+    "Blake",
+    "威廉·布莱克"
+  ],
+  "dynasty": "英国·18世纪",
+  "profile": "英国诗人兼版画家，诗句简短如童谣却寓意深邃，善写天真与经验、羔羊与猛虎的对照。适合哲理开场、善恶双生的人物设定、怨恨滋长的黑色寓言。",
+  "source": "文本据 Songs of Innocence（1789）、Songs of Experience（1794）及 Pickering 手稿通行本，只收英文原文，标点依通行本略作规整。",
+  "entries": [
+    {
+      "id": "auguries-of-innocence-opening",
+      "title": "Auguries of Innocence（节选·开篇）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "To see a World in a Grain of Sand\nAnd a Heaven in a Wild Flower,\nHold Infinity in the palm of your hand\nAnd Eternity in an hour.",
+      "themes": [
+        "哲理",
+        "永恒",
+        "瞬间",
+        "自然",
+        "禅意"
+      ],
+      "emotions": [
+        "空灵",
+        "深邃"
+      ],
+      "famous_lines": [
+        "To see a World in a Grain of Sand",
+        "And a Heaven in a Wild Flower",
+        "Hold Infinity in the palm of your hand",
+        "And Eternity in an hour."
+      ],
+      "drama_uses": [
+        "哲理题材的片头题眼",
+        "一沙一世界式的开场旁白",
+        "片名或集名：一花一世界"
+      ],
+      "note": "约 1803 年作，Pickering 手稿。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "the-tyger",
+      "title": "The Tyger",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Tyger Tyger, burning bright,\nIn the forests of the night;\nWhat immortal hand or eye,\nCould frame thy fearful symmetry?\n\nIn what distant deeps or skies\nBurnt the fire of thine eyes?\nOn what wings dare he aspire?\nWhat the hand, dare seize the fire?\n\nAnd what shoulder, and what art,\nCould twist the sinews of thy heart?\nAnd when thy heart began to beat,\nWhat dread hand? and what dread feet?\n\nWhat the hammer? what the chain,\nIn what furnace was thy brain?\nWhat the anvil? what dread grasp,\nDare its deadly terrors clasp!\n\nWhen the stars threw down their spears\nAnd water'd heaven with their tears:\nDid he smile his work to see?\nDid he who made the Lamb make thee?\n\nTyger Tyger burning bright,\nIn the forests of the night:\nWhat immortal hand or eye,\nDare frame thy fearful symmetry?",
+      "themes": [
+        "猛虎",
+        "创造",
+        "善恶",
+        "敬畏",
+        "夜",
+        "力量"
+      ],
+      "emotions": [
+        "震撼",
+        "肃穆",
+        "敬畏"
+      ],
+      "famous_lines": [
+        "Tyger Tyger, burning bright",
+        "In the forests of the night",
+        "What immortal hand or eye",
+        "Did he who made the Lamb make thee?"
+      ],
+      "drama_uses": [
+        "反派或野性人物的出场旁白",
+        "善恶同源的主题题眼",
+        "片名或集名：猛虎"
+      ],
+      "note": "出自 Songs of Experience（1794）。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "the-lamb",
+      "title": "The Lamb",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Little Lamb who made thee\nDost thou know who made thee\nGave thee life and bid thee feed.\nBy the stream and o'er the mead;\nGave thee clothing of delight,\nSoftest clothing wooly bright;\nGave thee such a tender voice,\nMaking all the vales rejoice!\nLittle Lamb who made thee\nDost thou know who made thee\n\nLittle Lamb I'll tell thee,\nLittle Lamb I'll tell thee!\nHe is called by thy name,\nFor he calls himself a Lamb:\nHe is meek and he is mild,\nHe became a little child:\nI a child and thou a lamb,\nWe are called by his name.\nLittle Lamb God bless thee.\nLittle Lamb God bless thee.",
+      "themes": [
+        "天真",
+        "童年",
+        "羔羊",
+        "温柔",
+        "信仰"
+      ],
+      "emotions": [
+        "纯真",
+        "温暖",
+        "安宁"
+      ],
+      "famous_lines": [
+        "Little Lamb who made thee",
+        "Dost thou know who made thee"
+      ],
+      "drama_uses": [
+        "孩童视角的开场童谣",
+        "与《猛虎》对照的善恶双生设定",
+        "摇篮曲式的温情段落"
+      ],
+      "note": "出自 Songs of Innocence（1789），原刻本以 & 代 and，此处依通行本写作 and。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "a-poison-tree",
+      "title": "A Poison Tree",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "I was angry with my friend;\nI told my wrath, my wrath did end.\nI was angry with my foe:\nI told it not, my wrath did grow.\n\nAnd I waterd it in fears,\nNight and morning with my tears:\nAnd I sunned it with smiles,\nAnd with soft deceitful wiles.\n\nAnd it grew both day and night.\nTill it bore an apple bright.\nAnd my foe beheld it shine,\nAnd he knew that it was mine.\n\nAnd into my garden stole,\nWhen the night had veild the pole;\nIn the morning glad I see;\nMy foe outstretched beneath the tree.",
+      "themes": [
+        "仇恨",
+        "复仇",
+        "压抑",
+        "寓言",
+        "友情与敌意"
+      ],
+      "emotions": [
+        "阴冷",
+        "反讽",
+        "压抑"
+      ],
+      "famous_lines": [
+        "I was angry with my friend; I told my wrath, my wrath did end.",
+        "I was angry with my foe: I told it not, my wrath did grow.",
+        "My foe outstretched beneath the tree."
+      ],
+      "drama_uses": [
+        "复仇者隐忍多年的黑色寓言旁白",
+        "片名或集名：毒树",
+        "劝人直言化解怨恨的台词"
+      ],
+      "note": "出自 Songs of Experience（1794）。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

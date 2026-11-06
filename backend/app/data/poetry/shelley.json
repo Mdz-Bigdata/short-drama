@@ -1,0 +1,107 @@
+{
+  "collection": "shelley",
+  "author": "雪莱",
+  "aliases": [
+    "Percy Bysshe Shelley",
+    "Shelley",
+    "珀西·比希·雪莱"
+  ],
+  "dynasty": "英国·19世纪",
+  "profile": "英国浪漫派诗人，激情澎湃，崇尚自由与变革，善写风、废墟与时间的意象。适合王朝覆灭的咏史旁白、逆境中预言春天的片尾、追忆逝者的短句。",
+  "source": "文本据 1819–1824 年初刊本及通行本 Poetical Works，只收英文原文。",
+  "entries": [
+    {
+      "id": "ozymandias",
+      "title": "Ozymandias",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "I met a traveller from an antique land,\nWho said—\"Two vast and trunkless legs of stone\nStand in the desert. . . . Near them, on the sand,\nHalf sunk a shattered visage lies, whose frown,\nAnd wrinkled lip, and sneer of cold command,\nTell that its sculptor well those passions read\nWhich yet survive, stamped on these lifeless things,\nThe hand that mocked them, and the heart that fed;\nAnd on the pedestal, these words appear:\nMy name is Ozymandias, King of Kings;\nLook on my Works, ye Mighty, and despair!\nNothing beside remains. Round the decay\nOf that colossal Wreck, boundless and bare\nThe lone and level sands stretch far away.\"",
+      "themes": [
+        "咏史",
+        "权力",
+        "兴亡",
+        "时间",
+        "沙漠",
+        "虚妄"
+      ],
+      "emotions": [
+        "苍凉",
+        "反讽",
+        "肃穆"
+      ],
+      "famous_lines": [
+        "My name is Ozymandias, King of Kings",
+        "Look on my Works, ye Mighty, and despair!",
+        "The lone and level sands stretch far away"
+      ],
+      "drama_uses": [
+        "帝国或财阀崩塌后的废墟旁白",
+        "狂妄反派的墓志铭式台词",
+        "片名或集名：万王之王"
+      ],
+      "note": "1818 年作。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "ode-to-the-west-wind-v",
+      "title": "Ode to the West Wind（节选·第五节）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Make me thy lyre, even as the forest is:\nWhat if my leaves are falling like its own!\nThe tumult of thy mighty harmonies\n\nWill take from both a deep, autumnal tone,\nSweet though in sadness. Be thou, Spirit fierce,\nMy spirit! Be thou me, impetuous one!\n\nDrive my dead thoughts over the universe\nLike wither'd leaves to quicken a new birth!\nAnd, by the incantation of this verse,\n\nScatter, as from an unextinguish'd hearth\nAshes and sparks, my words among mankind!\nBe through my lips to unawaken'd earth\n\nThe trumpet of a prophecy! O Wind,\nIf Winter comes, can Spring be far behind?",
+      "themes": [
+        "希望",
+        "变革",
+        "风",
+        "秋",
+        "新生",
+        "预言"
+      ],
+      "emotions": [
+        "激昂",
+        "悲壮",
+        "昂扬"
+      ],
+      "famous_lines": [
+        "Make me thy lyre, even as the forest is",
+        "If Winter comes, can Spring be far behind?"
+      ],
+      "drama_uses": [
+        "低谷中坚信转机的片尾字幕",
+        "改革者或革命者的呐喊段落",
+        "秋风落叶转春的蒙太奇"
+      ],
+      "note": "1819 年作。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "music-when-soft-voices-die",
+      "title": "Music, when soft voices die",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Music, when soft voices die,\nVibrates in the memory—\nOdours, when sweet violets sicken,\nLive within the sense they quicken.\n\nRose leaves, when the rose is dead,\nAre heaped for the belovèd's bed;\nAnd so thy thoughts, when thou art gone,\nLove itself shall slumber on.",
+      "themes": [
+        "悼亡",
+        "记忆",
+        "爱情",
+        "音乐",
+        "玫瑰"
+      ],
+      "emotions": [
+        "哀婉",
+        "温柔",
+        "绵长"
+      ],
+      "famous_lines": [
+        "Music, when soft voices die",
+        "Vibrates in the memory"
+      ],
+      "drama_uses": [
+        "故人离去后睹物思人的旁白",
+        "音乐家题材的片尾字幕",
+        "追思会上的朗诵"
+      ],
+      "note": "1824 年刊于雪莱身后诗集。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "collection": "byron",
+  "author": "拜伦",
+  "aliases": [
+    "Lord Byron",
+    "Byron",
+    "George Gordon Byron",
+    "乔治·戈登·拜伦"
+  ],
+  "dynasty": "英国·19世纪",
+  "profile": "英国浪漫派诗人，风流桀骜，抒情诗音韵华美，写美人、离别与倦怠的夜游。适合惊艳初见的旁白、旧情人重逢的沉默、浪子告别夜生活的片尾。",
+  "source": "文本据 Hebrew Melodies（1815）及 Letters and Journals 通行本，只收英文原文。",
+  "entries": [
+    {
+      "id": "she-walks-in-beauty",
+      "title": "She Walks in Beauty",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "She walks in beauty, like the night\nOf cloudless climes and starry skies;\nAnd all that's best of dark and bright\nMeet in her aspect and her eyes;\nThus mellowed to that tender light\nWhich heaven to gaudy day denies.\n\nOne shade the more, one ray the less,\nHad half impaired the nameless grace\nWhich waves in every raven tress,\nOr softly lightens o'er her face;\nWhere thoughts serenely sweet express,\nHow pure, how dear their dwelling-place.\n\nAnd on that cheek, and o'er that brow,\nSo soft, so calm, yet eloquent,\nThe smiles that win, the tints that glow,\nBut tell of days in goodness spent,\nA mind at peace with all below,\nA heart whose love is innocent!",
+      "themes": [
+        "美人",
+        "初见",
+        "爱情",
+        "夜",
+        "赞美"
+      ],
+      "emotions": [
+        "惊艳",
+        "温柔",
+        "倾慕"
+      ],
+      "famous_lines": [
+        "She walks in beauty, like the night",
+        "Of cloudless climes and starry skies",
+        "A heart whose love is innocent!"
+      ],
+      "drama_uses": [
+        "舞会上一见钟情的旁白",
+        "女主出场的画外音",
+        "片名或集名：她在美中行走"
+      ],
+      "note": "1814 年作。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "when-we-two-parted",
+      "title": "When We Two Parted",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "When we two parted\nIn silence and tears,\nHalf broken-hearted\nTo sever for years,\nPale grew thy cheek and cold,\nColder thy kiss;\nTruly that hour foretold\nSorrow to this.\n\nThe dew of the morning\nSunk chill on my brow—\nIt felt like the warning\nOf what I feel now.\nThy vows are all broken,\nAnd light is thy fame;\nI hear thy name spoken,\nAnd share in its shame.\n\nThey name thee before me,\nA knell to mine ear;\nA shudder comes o'er me—\nWhy wert thou so dear?\nThey know not I knew thee,\nWho knew thee too well:—\nLong, long shall I rue thee,\nToo deeply to tell.\n\nIn secret we met—\nIn silence I grieve,\nThat thy heart could forget,\nThy spirit deceive.\nIf I should meet thee\nAfter long years,\nHow should I greet thee?—\nWith silence and tears.",
+      "themes": [
+        "离别",
+        "旧情",
+        "背叛",
+        "重逢",
+        "秘密"
+      ],
+      "emotions": [
+        "哀婉",
+        "隐忍",
+        "怨悔"
+      ],
+      "famous_lines": [
+        "When we two parted In silence and tears",
+        "If I should meet thee After long years, How should I greet thee?— With silence and tears."
+      ],
+      "drama_uses": [
+        "旧情人多年后重逢无言的戏",
+        "秘密恋情破裂的回忆旁白",
+        "片名或集名：沉默与眼泪"
+      ],
+      "note": "1816 年刊。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "so-well-go-no-more-a-roving",
+      "title": "So We'll Go No More a Roving",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "So, we'll go no more a roving\nSo late into the night,\nThough the heart be still as loving,\nAnd the moon be still as bright.\n\nFor the sword outwears its sheath,\nAnd the soul wears out the breast,\nAnd the heart must pause to breathe,\nAnd love itself have rest.\n\nThough the night was made for loving,\nAnd the day returns too soon,\nYet we'll go no more a roving\nBy the light of the moon.",
+      "themes": [
+        "倦怠",
+        "夜游",
+        "月",
+        "告别",
+        "青春逝去"
+      ],
+      "emotions": [
+        "疲惫",
+        "温柔",
+        "怅惘"
+      ],
+      "famous_lines": [
+        "So, we'll go no more a roving So late into the night",
+        "For the sword outwears its sheath, And the soul wears out the breast"
+      ],
+      "drama_uses": [
+        "浪子决定收心的片尾旁白",
+        "狂欢散场后的月夜独白",
+        "片名或集名：不再夜游"
+      ],
+      "note": "1817 年写于威尼斯狂欢节后的信中。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

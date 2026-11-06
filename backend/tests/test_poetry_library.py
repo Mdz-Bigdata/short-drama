@@ -21,6 +21,21 @@ REQUESTED = (
 )
 
 
+# The wider shelf asked for afterwards (古今中外), by collection id.
+EXPANDED = (
+    "shijing", "lunyu", "mengzi", "zhuangzi", "sunzi", "yijing", "liji", "quyuan",
+    "caocao", "gushi-shijiu-shou", "han-yuefu", "wang-wei", "du-fu", "bai-ju-yi", "meng-hao-ran", "wang-zhi-huan", "chen-zi-ang",
+    "cui-hao", "zhang-ji", "cen-shen", "gao-shi", "liu-yu-xi", "liu-zong-yuan", "li-he", "jia-dao", "zhang-jiu-ling", "meng-jiao",
+    "he-zhi-zhang", "zhang-ruo-xu", "wang-xi-zhi", "zhuge-liang",
+    "wang-an-shi", "qin-guan", "yue-fei", "wen-tian-xiang", "zhou-bang-yan", "he-zhu", "zhu-xi", "yang-wan-li", "lin-bu", "jiang-jie",
+    "ma-zhi-yuan", "zhang-yang-hao", "tang-yin", "yu-qian", "zheng-xie", "gong-zi-zhen", "lin-ze-xu", "tan-si-tong", "cao-xue-qin",
+    "wang-shi-fu", "tang-xian-zu", "wang-guo-wei",
+    "lu-xun", "xu-zhi-mo", "dai-wang-shu", "wen-yi-duo", "zhu-zi-qing", "lin-hui-yin", "li-shu-tong", "liang-qi-chao", "qiu-jin", "yu-da-fu",
+    "shakespeare", "tagore", "bible-cuv", "whitman", "dickinson", "keats", "shelley", "blake", "wordsworth", "byron", "yeats", "frost",
+    "gibran", "khayyam", "marcus-aurelius",
+)
+
+
 class ShelfTests(unittest.TestCase):
     def setUp(self):
         poetry_library.reset()
@@ -32,6 +47,13 @@ class ShelfTests(unittest.TestCase):
         for name in REQUESTED:
             with self.subTest(name):
                 self.assertTrue(poetry_library.resolve_sources([name], self.lib)[0], name)
+
+    def test_the_wider_shelf_is_there_too(self):
+        on_shelf = {collection.collection for collection in self.lib.collections}
+        self.assertEqual([name for name in EXPANDED if name not in on_shelf], [])
+        for name in EXPANDED:
+            with self.subTest(name):
+                self.assertTrue(self.lib.by_collection(name), name)
 
     def test_the_long_prose_pieces_are_whole(self):
         for title, opening, ending in (

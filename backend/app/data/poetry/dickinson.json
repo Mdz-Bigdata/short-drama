@@ -1,0 +1,165 @@
+{
+  "collection": "dickinson",
+  "author": "狄金森",
+  "aliases": [
+    "Emily Dickinson",
+    "Dickinson",
+    "艾米莉·狄金森"
+  ],
+  "dynasty": "美国·19世纪",
+  "profile": "美国隐居女诗人，短章精警，写希望、死亡、孤独与真理，意象奇崛而口吻俏皮。适合内向主角的心声、生死题材的点题短句、小众人物的自我认同。",
+  "source": "文本据 1890–1896 年 Todd 与 Higginson 编本及 1945 年 Bolts of Melody 初刊文本，只收英文原文。",
+  "entries": [
+    {
+      "id": "hope-is-the-thing-with-feathers",
+      "title": "Hope is the thing with feathers",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Hope is the thing with feathers\nThat perches in the soul,\nAnd sings the tune without the words,\nAnd never stops at all,\n\nAnd sweetest in the gale is heard;\nAnd sore must be the storm\nThat could abash the little bird\nThat kept so many warm.\n\nI've heard it in the chillest land,\nAnd on the strangest sea;\nYet, never, in extremity,\nIt asked a crumb of me.",
+      "themes": [
+        "希望",
+        "坚韧",
+        "风暴",
+        "鸟"
+      ],
+      "emotions": [
+        "温暖",
+        "坚定",
+        "轻盈"
+      ],
+      "famous_lines": [
+        "Hope is the thing with feathers",
+        "That perches in the soul",
+        "And sings the tune without the words"
+      ],
+      "drama_uses": [
+        "绝境中仍抱希望的旁白",
+        "片名或集名：有羽毛的希望",
+        "风暴夜的画外音"
+      ],
+      "note": "据 1891 年编本。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "because-i-could-not-stop-for-death",
+      "title": "Because I could not stop for Death",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Because I could not stop for Death,\nHe kindly stopped for me;\nThe carriage held but just ourselves\nAnd Immortality.\n\nWe slowly drove, he knew no haste,\nAnd I had put away\nMy labor, and my leisure too,\nFor his civility.\n\nWe passed the school where children played,\nTheir lessons scarcely done;\nWe passed the fields of gazing grain,\nWe passed the setting sun.\n\nWe paused before a house that seemed\nA swelling of the ground;\nThe roof was scarcely visible,\nThe cornice but a mound.\n\nSince then 'tis centuries; but each\nFeels shorter than the day\nI first surmised the horses' heads\nWere toward eternity.",
+      "themes": [
+        "死亡",
+        "永恒",
+        "时间",
+        "旅程",
+        "黄昏"
+      ],
+      "emotions": [
+        "肃穆",
+        "从容",
+        "幽微"
+      ],
+      "famous_lines": [
+        "Because I could not stop for Death",
+        "He kindly stopped for me",
+        "Were toward eternity."
+      ],
+      "drama_uses": [
+        "主角临终的马车意象蒙太奇",
+        "死亡拟人化的奇幻段落旁白",
+        "片尾字幕：驶向永恒"
+      ],
+      "note": "据 1890 年编本（题为 The Chariot），该本略去一节。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "im-nobody-who-are-you",
+      "title": "I'm nobody! Who are you?",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "I'm nobody! Who are you?\nAre you nobody, too?\nThen there's a pair of us — don't tell!\nThey'd banish us, you know.\n\nHow dreary to be somebody!\nHow public, like a frog\nTo tell your name the livelong day\nTo an admiring bog!",
+      "themes": [
+        "无名",
+        "孤独",
+        "自我认同",
+        "反名利",
+        "友情"
+      ],
+      "emotions": [
+        "俏皮",
+        "亲密",
+        "反讽"
+      ],
+      "famous_lines": [
+        "I'm nobody! Who are you?",
+        "Are you nobody, too?",
+        "How dreary to be somebody!"
+      ],
+      "drama_uses": [
+        "两个边缘人物结盟的台词",
+        "反对流量与虚名的片名或集名：无名之辈",
+        "内向主角的自我介绍旁白"
+      ],
+      "note": "据 1891 年编本。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "if-i-can-stop-one-heart-from-breaking",
+      "title": "If I can stop one heart from breaking",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "If I can stop one heart from breaking,\nI shall not live in vain;\nIf I can ease one life the aching,\nOr cool one pain,\nOr help one fainting robin\nUnto his nest again,\nI shall not live in vain.",
+      "themes": [
+        "善意",
+        "人生意义",
+        "助人",
+        "温情"
+      ],
+      "emotions": [
+        "温暖",
+        "谦卑",
+        "坚定"
+      ],
+      "famous_lines": [
+        "If I can stop one heart from breaking",
+        "I shall not live in vain"
+      ],
+      "drama_uses": [
+        "医生护士或志愿者的人物信条",
+        "小善举题材的片尾升华",
+        "片名或集名：不枉此生"
+      ],
+      "note": "据 1890 年编本。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "tell-all-the-truth-but-tell-it-slant",
+      "title": "Tell all the truth but tell it slant",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Tell all the truth but tell it slant —\nSuccess in Circuit lies\nToo bright for our infirm Delight\nThe Truth's superb surprise\nAs Lightning to the Children eased\nWith explanation kind\nThe Truth must dazzle gradually\nOr every man be blind —",
+      "themes": [
+        "真相",
+        "智慧",
+        "沟通",
+        "善意的谎言"
+      ],
+      "emotions": [
+        "机敏",
+        "温和",
+        "深邃"
+      ],
+      "famous_lines": [
+        "Tell all the truth but tell it slant",
+        "The Truth must dazzle gradually",
+        "Or every man be blind"
+      ],
+      "drama_uses": [
+        "长辈劝人委婉说真相的台词",
+        "揭露真相前的旁白铺垫",
+        "片名或集名：真相要斜着说"
+      ],
+      "note": "1945 年收入 Bolts of Melody 初次发表；作者 1886 年去世，原文为公有领域。 英文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}
