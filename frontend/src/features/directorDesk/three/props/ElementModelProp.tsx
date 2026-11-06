@@ -126,7 +126,7 @@ export function ElementModelProp({ landmark, selected, labelled, onPick }: Props
   }
 
   return (
-    <group position={[landmark.position[0], 0, landmark.position[1]]} rotation={[0, ((landmark.yaw_deg ?? 0) * Math.PI) / 180, 0]} onClick={onPick}>
+    <group position={[landmark.position[0], landmark.elevation_m ?? 0, landmark.position[1]]} rotation={[0, ((landmark.yaw_deg ?? 0) * Math.PI) / 180, 0]} onClick={onPick}>
       {/* The model's own centre goes over the mark and its lowest point onto the floor. */}
       <primitive object={source.scene} scale={scale} position={[-source.center[0] * scale, -source.center[1] * scale, -source.center[2] * scale]} />
       {/* Picking and the selection glow go through this box: ray-testing a whole GLB per move is wasted work. */}

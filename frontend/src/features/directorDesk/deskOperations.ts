@@ -1,7 +1,7 @@
 import { parseAspect } from '../spatial/floorPlanGeometry';
 import {
   NO_BACKDROP,
-  type ActorKey, type ActorOverride, type CameraKey, type GroundPoint, type ShotTimeline, type StageActor, type StageBackdrop,
+  type ActionClip, type CameraCut, type FollowClip, type ActorKey, type ActorOverride, type CameraKey, type GroundPoint, type ShotTimeline, type StageActor, type StageBackdrop,
   type StageCamera, type StageCrowd, type StageLandmark, type StageOperation, type StagePlan, type StagePose, type StageShot,
 } from '../spatial/spatialTypes';
 import { crowdMembersOf, nextCrowdId } from './lib/crowdLayout';
@@ -13,7 +13,7 @@ import { crowdOf, normalizeYaw, rotateAbout, round2, verticalFov } from './lib/s
 // preview, the request and the undo entry can never describe three different edits.
 
 const ACTOR_FIELDS = ['position', 'yaw_deg', 'posture', 'height_m'] as const;
-const LANDMARK_FIELDS = ['position', 'size', 'yaw_deg', 'shape', 'color', 'kind'] as const;
+const LANDMARK_FIELDS = ['position', 'size', 'yaw_deg', 'shape', 'color', 'kind', 'elevation_m'] as const;
 const CROWD_FIELDS = ['center', 'yaw_deg', 'spacing'] as const;
 const BACKDROP_FIELDS = ['kind', 'color', 'url', 'yaw_deg', 'opacity'] as const;
 const FIGURE_FIELDS = ['figure', 'body_type', 'color'] as const;
@@ -103,6 +103,9 @@ function setTimeline(plan: StagePlan, op: StageOperation): StagePlan {
     next.actors = Object.fromEntries(Object.entries(op.actors as Record<string, ActorKey[]>)
       .filter(([, keys]) => keys.length).map(([name, keys]) => [name, keys.map(key => ({ ...key, easing: key.easing ?? 'linear' }))]));
   }
+  if ('clips' in op) next.clips = Object.fromEntries(Object.entries(op.clips as Record<string, ActionClip[]>).filter(([, clips]) => clips.length));
+  if ('follow' in op) next.follow = op.follow as FollowClip[];
+  if ('cuts' in op) next.cuts = op.cuts as CameraCut[];
   return withTimeline(plan, op.shot_id, next);
 }
 
@@ -128,6 +131,7 @@ export function applyLocal(plan: StagePlan, op: StageOperation): StagePlan {
         id: `pending-${String(op.name)}`, name: String(op.name), kind: (op.kind as StageLandmark['kind']) || 'prop',
         position: (op.position as GroundPoint) || [0, -1.5], size: (op.size as StageLandmark['size']) || [0.5, 0.5, 0.5],
         yaw_deg: Number(op.yaw_deg) || 0, shape: (op.shape as StageLandmark['shape']) || 'box', color: String(op.color || ''),
+        kit: String(op.kit || ''), parts: (op.fitted_parts as StageLandmark['parts']) || [],
       };
       return { ...plan, landmarks: [...plan.landmarks, landmark] };
     }
@@ -159,10 +163,9 @@ export function applyLocal(plan: StagePlan, op: StageOperation): StagePlan {
         ...plan,
         cameras: mapWhere(plan.cameras, camera => camera.id === op.camera_id, camera => {
           const next: StageCamera = { ...camera, ...pick<StageCamera>(['position', 'target'], op) };
-          if ('lens_mm' in op) {
-            next.lens_mm = Number(op.lens_mm);
-            next.fov_deg = round2(verticalFov(next.lens_mm, parseAspect(camera.aspect)));
-          }
+          if ('lens_mm' in op) next.lens_mm = Number(op.lens_mm);
+          if ('sensor_mm' in op) next.sensor_mm = Number(op.sensor_mm);
+          if ('lens_mm' in op || 'sensor_mm' in op) next.fov_deg = round2(verticalFov(next.lens_mm, parseAspect(camera.aspect), next.sensor_mm));
           return next;
         }),
       };
@@ -301,6 +304,7 @@ function inverseOfOne(plan: StagePlan, op: StageOperation): StageOperation[] | n
       if (!camera) return [];
       const restore: StageOperation = { op: 'move_camera', camera_id: camera.id };
       (['position', 'target', 'lens_mm'] as const).forEach(key => { if (key in op) restore[key] = camera[key]; });
+      if ('sensor_mm' in op) restore.sensor_mm = camera.sensor_mm ?? 36;
       return [restore];
     }
     case 'frame_shot': {
@@ -327,11 +331,19 @@ function inverseOfOne(plan: StagePlan, op: StageOperation): StageOperation[] | n
       if (!stored) return shotOf(plan, op.shot_id) ? [{ op: 'clear_timeline', shot_id: op.shot_id }] : [];
       const restore: StageOperation = { op: 'set_timeline', shot_id: op.shot_id };
       (['duration_s', 'fps', 'camera', 'actors'] as const).forEach(key => { if (key in op) restore[key] = stored[key]; });
+      if ('clips' in op) restore.clips = stored.clips ?? {};
+      if ('follow' in op) restore.follow = stored.follow ?? [];
+      if ('cuts' in op) restore.cuts = stored.cuts ?? [];
       return [restore];
     }
     case 'clear_timeline': {
       const stored = plan.timelines?.[String(Number(op.shot_id))];
       return stored ? [{ op: 'set_timeline', shot_id: op.shot_id, ...stored }] : [];
+    }
+    case 'set_path': {
+      // The route rewrites a whole track (and may lengthen the shot, and lay a motion on it): all of that goes back.
+      const stored = plan.timelines?.[String(Number(op.shot_id))];
+      return stored ? [{ op: 'set_timeline', shot_id: op.shot_id, ...stored }] : [{ op: 'clear_timeline', shot_id: op.shot_id }];
     }
     case 'apply_camera_move': {
       // The keys it writes are the server's to lay out; what was there before is all undo needs.
@@ -387,6 +399,8 @@ export function addLandmarkOperation(landmark: StageLandmark, name = landmark.na
   return {
     op: 'add_landmark', name, kind: landmark.kind, position: landmark.position, size: landmark.size,
     yaw_deg: landmark.yaw_deg ?? 0, shape: landmark.shape ?? 'box', color: landmark.color ?? '',
+    // A piece built from parts comes back exactly as it was, not rebuilt from its name.
+    ...(landmark.parts?.length ? { kit: landmark.kit ?? '', fitted_parts: landmark.parts } : {}),
   };
 }
 
@@ -406,6 +420,14 @@ export function inverseOf(plan: StagePlan, operations: StageOperation[]): StageO
   return inverses.flat();
 }
 
+/** A set piece in the shape `apply_blockout` takes. */
+export function blockoutPiece(item: StageLandmark): Record<string, unknown> {
+  return {
+    name: item.name, kind: item.kind, shape: item.shape ?? 'box', center: item.position, size: item.size,
+    yaw_deg: item.yaw_deg ?? 0, elevation_m: item.elevation_m ?? 0, color: item.color ?? '',
+  };
+}
+
 /** For operations whose result carries server-made ids: undo whatever appeared between the two plans. */
 export function inverseFromDiff(before: StagePlan, after: StagePlan): StageOperation[] {
   const operations: StageOperation[] = [];
@@ -415,8 +437,17 @@ export function inverseFromDiff(before: StagePlan, after: StagePlan): StageOpera
     .forEach(id => operations.push({ op: 'remove_crowd', crowd_id: id }));
   const knownCameras = new Set(before.cameras.map(camera => camera.id));
   after.cameras.filter(camera => !knownCameras.has(camera.id)).forEach(camera => operations.push({ op: 'remove_camera', camera_id: camera.id }));
+  // A blockout is hundreds of pieces and one thing to a person: it goes back as one operation.
+  const blockoutOf = (plan: StagePlan) => plan.landmarks.filter(item => item.origin === 'blockout');
+  const heldBefore = blockoutOf(before);
+  const heldAfter = blockoutOf(after);
+  if (heldBefore.length !== heldAfter.length || heldAfter.some(item => !heldBefore.some(old => old.name === item.name))) {
+    operations.push(heldBefore.length
+      ? { op: 'apply_blockout', replace: true, pieces: heldBefore.map(blockoutPiece) }
+      : { op: 'clear_blockout' });
+  }
   const knownLandmarks = new Set(before.landmarks.map(item => item.name));
-  after.landmarks.filter(item => !knownLandmarks.has(item.name)).forEach(item => operations.push({ op: 'remove_landmark', name: item.name }));
+  after.landmarks.filter(item => !knownLandmarks.has(item.name) && item.origin !== 'blockout').forEach(item => operations.push({ op: 'remove_landmark', name: item.name }));
   // A re-framed or re-solved lens goes back to where it was.
   before.cameras.forEach(camera => {
     const now = after.cameras.find(item => item.id === camera.id);

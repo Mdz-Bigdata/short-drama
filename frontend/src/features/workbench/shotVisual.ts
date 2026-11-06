@@ -25,9 +25,25 @@ export interface ShotRouteDecision {
   unused_assets?: string[];
 }
 
+/** 供应商没给这张看板出片(backend app/core/video_failures.py)；看板出片后清除。 */
+export interface ShotVideoFailure {
+  kind: 'input_image_sensitive' | 'provider_error';
+  kind_label?: string;
+  code?: string;
+  /** 供应商原话。 */
+  message: string;
+  hint?: string;
+  /** 本看板发出去的分镜画面。 */
+  panels?: string[];
+  scene_id?: string;
+  at?: number | null;
+}
+
 export interface ShotVisualRecord {
   shot_id: number;
   scene_id: string;
+  /** 全剧唯一的镜头编号(集·场·镜)；各场镜号都从 1 起。 */
+  shot_uid?: number;
   desc: string;
   dialogue: string;
   sound: string;
@@ -50,6 +66,19 @@ export interface ShotVisualRecord {
   mention_kinds?: Record<string, string>;
   /** @[名字] 对应本镜随请求上传的第几张参考图。 */
   reference_numbers?: Record<string, number>;
+  /** 本镜所在看板最近一次没出片的原因。 */
+  failure?: ShotVideoFailure | null;
+}
+
+/** 一镜在工作区里的键：各场镜号都从 1 起，只用镜号会把不同场的「镜头 1」混成一个。 */
+export function shotKey(shot: Pick<ShotVisualRecord, 'shot_id' | 'scene_id'>): string {
+  return `${shot.scene_id}#${shot.shot_id}`;
+}
+
+/** 单镜接口的地址：带上场号，后端据此找到这一镜和它所在的那段片段视频。 */
+export function shotPath(taskId: string, shot: Pick<ShotVisualRecord, 'shot_id' | 'scene_id'>, action: string): string {
+  const scope = shot.scene_id ? `?scene_id=${encodeURIComponent(shot.scene_id)}` : '';
+  return `/api/drama/${encodeURIComponent(taskId)}/shots/${shot.shot_id}/${action}${scope}`;
 }
 
 export interface RecipeCategory {
@@ -82,14 +111,38 @@ export interface ShotFixPlan {
   negatives: string[];
   escalation: string;
   give_up: boolean;
+  /** 本轮只改的那一类变量（动作 / 镜头 / 参考素材 / 声音）；连续两轮没改善会换一类。 */
+  variable?: string;
+  variable_name?: string;
+  reconsidered?: string[];
+}
+
+/** The clip made before the batch (backend app/core/pilot_shot.py). */
+export interface ShotPilot {
+  state: 'requested' | 'running' | 'ready' | 'failed';
+  shot_id?: number;
+  shot_uid?: number;
+  label?: string;
+  reason?: string;
+  error?: string;
+  video_url?: string;
+  others_left?: number;
+  checks?: string[];
 }
 
 export interface ShotVisualWorkspace {
   task_id: string;
   current_stage: number;
   running: boolean;
+  pilot?: ShotPilot | null;
   video_model: string;
   provider_family: string;
+  /** 模型配置中心启用的视频模型。 */
+  enabled_video_models?: string[];
+  /** 项目当前视频模型不能用的原因(如未在模型配置中心启用)；空串表示可用。 */
+  video_model_issue?: string;
+  /** 项目原选的视频模型被模型配置中心的型号替换时的说明(不阻断)。 */
+  video_model_note?: string;
   duration_options: number[];
   camera_motions: VocabularyEntry[];
   shot_types: VocabularyEntry[];
@@ -114,7 +167,13 @@ export function useSliderForDurations(options: number[]): boolean {
   return options.every((value, index) => index === 0 || value === options[index - 1] + 1);
 }
 
-export function shotStatus(shot: ShotVisualRecord): { key: 'stale' | 'ready' | 'partial' | 'pending'; label: string } {
+export type ShotStatusKey = 'refused' | 'failed' | 'stale' | 'ready' | 'partial' | 'pending';
+
+export function shotStatus(shot: ShotVisualRecord): { key: ShotStatusKey; label: string } {
+  // 供应商拒单要一眼看出来：看板最近一次没出片时，它压过其他状态。
+  if (shot.failure) {
+    return shot.failure.kind === 'input_image_sensitive' ? { key: 'refused', label: '被拒' } : { key: 'failed', label: '失败' };
+  }
   if (shot.stale) return { key: 'stale', label: '需重跑' };
   if (shot.video_url) return { key: 'ready', label: '已生成' };
   if (shot.image_url) return { key: 'partial', label: '仅首帧' };
@@ -240,3 +299,92 @@ export const QUEUE_STATUS_LABELS: Record<QueueItem['status'], string> = {
   cancelled: '已取消',
   skipped: '已跳过',
 };
+
+/** 还在等人看的项(排队 / 运行 / 失败)和已经结束的项(完成 / 取消 / 跳过)；结束的默认折叠起来。 */
+export function splitQueueItems(items: QueueItem[]): { active: QueueItem[]; settled: QueueItem[] } {
+  const settled = new Set<QueueItem['status']>(['done', 'cancelled', 'skipped']);
+  return {
+    active: items.filter(item => !settled.has(item.status)),
+    settled: items.filter(item => settled.has(item.status)),
+  };
+}
+
+/** 受阻的镜头按「同一句原因」归并：第 5 阶段运行中时每一镜都是同一句话，不必逐镜重复。 */
+export function groupBlockedShots(admission: BatchAdmission): Array<{ message: string; shots: ShotAdmission[] }> {
+  const groups = new Map<string, ShotAdmission[]>();
+  for (const shot of admission.shots) {
+    if (shot.quote !== 'blocked') continue;
+    for (const problem of shot.problems) {
+      if (!problem.blocking) continue;
+      const bucket = groups.get(problem.message) ?? [];
+      if (!bucket.includes(shot)) bucket.push(shot);
+      groups.set(problem.message, bucket);
+    }
+  }
+  return [...groups].map(([message, shots]) => ({ message, shots }));
+}
+
+/** 一组镜头的简短写法：覆盖全部时说「全部 N 镜」，否则按场列镜号(各场镜号都从 1 起)。 */
+export function describeShots(shots: Array<Pick<ShotAdmission, 'shot_id' | 'scene_id'>>, total: number): string {
+  if (total > 0 && shots.length === total) return `全部 ${total} 镜`;
+  const byScene = new Map<string, number[]>();
+  for (const shot of shots) {
+    byScene.set(shot.scene_id, [...(byScene.get(shot.scene_id) ?? []), shot.shot_id]);
+  }
+  const parts: string[] = [];
+  let listed = 0;
+  for (const [scene, ids] of byScene) {
+    if (listed >= 12) {
+      parts.push(`等共 ${shots.length} 镜`);
+      break;
+    }
+    parts.push(`${scene ? `${scene} ` : ''}镜头 ${ids.join('、')}`);
+    listed += ids.length;
+  }
+  return parts.join(' · ');
+}
+
+
+/** 工作区左栏的分集卡：从镜头推出来的进度，加上外层给的标题与成片状态。 */
+export interface EpisodeMeta {
+  number: number;
+  title?: string;
+  /** 这一集已出成片。 */
+  filmDone?: boolean;
+}
+
+export interface EpisodeSummary extends EpisodeMeta {
+  shotCount: number;
+  generated: number;
+  seconds: number;
+  thumbnail: string | null;
+  /** 第一镜的键，点卡片时选中它。 */
+  firstKey: string;
+}
+
+export function episodeNumberOf(sceneId: string): number {
+  const match = /^E(\d+)/.exec(sceneId || '');
+  return match ? Number(match[1]) : 0;
+}
+
+export function episodeSummaries(shots: ShotVisualRecord[], meta: EpisodeMeta[] = []): EpisodeSummary[] {
+  const byNumber = new Map<number, EpisodeSummary>();
+  for (const shot of shots) {
+    const number = episodeNumberOf(shot.scene_id);
+    const entry = byNumber.get(number) ?? {
+      number, shotCount: 0, generated: 0, seconds: 0, thumbnail: null, firstKey: shotKey(shot),
+      ...(meta.find(item => item.number === number) ?? {}),
+    };
+    entry.shotCount += 1;
+    if (shot.video_url && !shot.stale) entry.generated += 1;
+    entry.seconds += Number(shot.settings?.duration_seconds) || 0;
+    if (!entry.thumbnail && shot.image_url) entry.thumbnail = shot.image_url;
+    byNumber.set(number, entry);
+  }
+  return [...byNumber.values()].sort((a, b) => a.number - b.number);
+}
+
+export function formatClock(seconds: number): string {
+  const whole = Math.max(0, Math.round(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+}

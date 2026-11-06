@@ -1,0 +1,95 @@
+{
+  "category": "short_drama",
+  "label": "短剧关键场面",
+  "recipes": [
+    {
+      "id": "drama-public-reversal",
+      "name": "当众反转",
+      "description": "被所有人看低的一方亮出底牌，全场的脸色在同一个镜头里变掉。",
+      "output_type": "video",
+      "inputs": [
+        {"name": "protagonist", "label": "翻盘的人", "required": true, "max_length": 80},
+        {"name": "opponent", "label": "被打脸的人", "required": true, "max_length": 80},
+        {"name": "place", "label": "地点", "required": true, "max_length": 120},
+        {"name": "reveal", "label": "亮出的底牌", "required": true, "max_length": 200},
+        {"name": "line", "label": "翻盘那句台词", "max_length": 120}
+      ],
+      "prompt": "竖屏短剧爽点镜头。{{place}}，围观者站满画面两侧。{{opponent}}还挂着得意的笑，{{protagonist}}不急不慢地亮出：{{reveal}}。机位从{{protagonist}}的手部特写缓慢上摇到脸，再反打{{opponent}}的笑容一点点僵住；背景的围观者在后景同时停下动作、交头接耳。[[{{protagonist}}平静地说出：「{{line}}」。]]表演克制，爽感来自对比和停顿，不靠喊叫。只生成现场音效与对白，不生成音乐；画面不出现字幕。",
+      "negative": "字幕，水印，夸张的漫画表情，人物变形，背景人物静止不动",
+      "params": {"aspect_ratio": "9:16", "seconds": 12}
+    },
+    {
+      "id": "drama-identity-reveal",
+      "name": "身份揭晓",
+      "description": "一个一直被当作普通人的角色，身份在众人面前被第三方说破。",
+      "output_type": "video",
+      "inputs": [
+        {"name": "person", "label": "身份被揭晓的人", "required": true, "max_length": 80},
+        {"name": "identity", "label": "真实身份", "required": true, "max_length": 120},
+        {"name": "witness", "label": "说破的人", "required": true, "max_length": 80},
+        {"name": "place", "label": "地点", "required": true, "max_length": 120}
+      ],
+      "prompt": "竖屏短剧身份反转镜头。{{place}}。{{witness}}快步走进画面，在{{person}}面前停下，低头恭敬地称呼其为「{{identity}}」。镜头先停在{{person}}没有表情的侧脸，然后缓慢推近；后景的人一个接一个转过头来，焦点从前景的{{person}}转移到后景错愕的面孔，再拉回{{person}}。光线稳定，节奏先慢后停，最后一拍留白两秒。只生成现场音效与对白，不生成音乐；画面不出现字幕。",
+      "negative": "字幕，水印，人物身份牌文字，夸张的特效光",
+      "params": {"aspect_ratio": "9:16", "seconds": 10}
+    },
+    {
+      "id": "drama-rain-farewell",
+      "name": "雨中决裂",
+      "description": "两个人在雨里把话说绝，一个走，一个留在原地。",
+      "output_type": "video",
+      "inputs": [
+        {"name": "leaving", "label": "转身离开的人", "required": true, "max_length": 80},
+        {"name": "staying", "label": "留下的人", "required": true, "max_length": 80},
+        {"name": "place", "label": "地点", "required": true, "default": "夜晚的街道", "max_length": 120},
+        {"name": "object", "label": "两人之间的物件", "max_length": 80}
+      ],
+      "prompt": "竖屏短剧情感镜头。{{place}}，大雨，路灯把雨丝照亮，地面积水反光。{{leaving}}和{{staying}}隔着两步距离站着，都没有打伞。[[{{leaving}}把{{object}}放到{{staying}}手里，手指松开时停了半秒。]]{{leaving}}转身走开，镜头留在{{staying}}身上不动，身后的人影在景深里越来越虚。雨水顺着{{staying}}的头发和下颌滑落，呼吸可见。雨声和远处的车流是唯一的声音，不生成音乐；画面不出现字幕。",
+      "negative": "字幕，水印，雨丝穿过人物，衣服全干，头发不湿",
+      "params": {"aspect_ratio": "9:16", "seconds": 12}
+    },
+    {
+      "id": "drama-tense-confrontation",
+      "name": "对峙升级",
+      "description": "一场口角在同一空间里一步步逼近，最后一句话把距离压到最近。",
+      "output_type": "video",
+      "inputs": [
+        {"name": "first", "label": "逼近的人", "required": true, "max_length": 80},
+        {"name": "second", "label": "被逼近的人", "required": true, "max_length": 80},
+        {"name": "place", "label": "地点", "required": true, "max_length": 120},
+        {"name": "stake", "label": "争的是什么", "required": true, "max_length": 160}
+      ],
+      "prompt": "竖屏短剧对峙镜头，两人争的是：{{stake}}。{{place}}。过肩机位交替，每次切回都比上一次更近：{{first}}每说一句就往前半步，{{second}}退到背后的墙或桌沿再也退不了。视线始终锁死，手部有小动作透出情绪。结尾停在两人几乎贴近的双人近景，谁也不先移开眼睛。遵守 180 度轴线，光线从一侧来，半边脸在暗部。只生成现场音效与对白，不生成音乐；画面不出现字幕。",
+      "negative": "字幕，水印，跳轴，人物穿模，第三人闯入画面",
+      "params": {"aspect_ratio": "9:16", "seconds": 12}
+    },
+    {
+      "id": "drama-episode-hook",
+      "name": "集尾钩子",
+      "description": "每集最后几秒：抛出一个没有答案的画面，让人想点下一集。",
+      "output_type": "video",
+      "inputs": [
+        {"name": "person", "label": "人物", "required": true, "max_length": 80},
+        {"name": "discovery", "label": "看见或听见了什么", "required": true, "max_length": 200},
+        {"name": "place", "label": "地点", "required": true, "max_length": 120}
+      ],
+      "prompt": "竖屏短剧集尾钩子，时长极短。{{place}}。{{person}}正在做一件日常的小事，动作被打断：{{discovery}}。快速推近到{{person}}的眼睛，瞳孔微缩，呼吸停住；下一拍切到让人看不全的局部——只露出足以引起疑问的部分，不交代答案。画面在最高点定住，戛然而止。环境声在最后一拍突然抽空。不生成音乐；画面不出现字幕。",
+      "negative": "字幕，水印，把答案拍全，人物说明性台词",
+      "params": {"aspect_ratio": "9:16", "seconds": 6}
+    },
+    {
+      "id": "drama-flashback-memory",
+      "name": "回忆闪回",
+      "description": "从现在的一个物件切入过去的一段记忆，色调和节奏都明显不同。",
+      "output_type": "video",
+      "inputs": [
+        {"name": "person", "label": "回忆的人", "required": true, "max_length": 80},
+        {"name": "trigger", "label": "勾起回忆的物件", "required": true, "max_length": 120},
+        {"name": "memory", "label": "回忆里发生了什么", "required": true, "max_length": 240}
+      ],
+      "prompt": "竖屏短剧闪回段落。现在时：{{person}}的手碰到{{trigger}}，特写，停住。淡白过渡进入过去：{{memory}}。过去时的画面暖黄、低对比、边缘轻微柔化，运动比现在时更慢，人物比现在年轻，穿着符合当时。最后再由{{trigger}}的同一构图切回现在时的冷色调，{{person}}抬起眼。只生成现场音效，不生成音乐；画面不出现字幕。",
+      "negative": "字幕，水印，时间标注文字，现在时与过去时色调相同",
+      "params": {"aspect_ratio": "9:16", "seconds": 12}
+    }
+  ]
+}

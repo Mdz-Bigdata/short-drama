@@ -48,7 +48,7 @@ describe('ProjectSkillManager', () => {
       throw new Error(`unexpected fetch ${url}`);
     });
 
-    render(<ProjectSkillManager open role="admin" onClose={() => undefined} />);
+    render(<ProjectSkillManager open canManage onClose={() => undefined} />);
     expect(await screen.findByRole('heading', { name: '项目 Skill 管理' })).toBeTruthy();
     expect(screen.getByText('/skill.nuanced-acting')).toBeTruthy();
 
@@ -84,7 +84,7 @@ describe('ProjectSkillManager', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true, json: async () => ({ items: [skill], total: 1, enabled_count: 1 }),
     } as Response);
-    render(<ProjectSkillManager open role="admin" onClose={() => undefined} />);
+    render(<ProjectSkillManager open canManage onClose={() => undefined} />);
     await screen.findByText('/skill.nuanced-acting');
     await userEvent.click(screen.getByRole('button', { name: '新增 Skill' }));
     await userEvent.type(screen.getByLabelText('Markdown 指令'), 'UNSAVED-SKILL-CONTENT');

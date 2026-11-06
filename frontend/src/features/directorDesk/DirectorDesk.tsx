@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Camera, Columns2, Download, Eye, Keyboard, Magnet, Maximize, MousePointer2, Move3d, PersonStanding, Redo2, RefreshCw,
+  Camera, Columns2, Download, Eye, Grid2x2, Keyboard, Magnet, Maximize, MousePointer2, Move3d, PersonStanding, Redo2, RefreshCw,
   Rotate3d, Route, Ruler, Undo2, Upload, X,
 } from 'lucide-react';
 
@@ -13,15 +13,19 @@ import { refKey, type DeskLayout, type DeskTool, type DeskViewHandle, type LensF
 import { anglePresetCamera, type AnglePresetId } from './lib/anglePresets';
 import type { ClipStage } from './lib/clipExport';
 import { pathEdit, pathRefusal, pathTargetOf } from './lib/pathTool';
-import { actorPathsOf, cameraPathOf, stagePlanAt, timelineOf } from './lib/sampling';
+import { actorPathsOf, cameraPathOf, cutCameraAt, stagePlanAt, timelineOf } from './lib/sampling';
 import { snapToGrid } from './lib/snapping';
+import { figureForAction } from './lib/timelineClips';
 import { keyIndexAtFrame, retargetToKeys } from './lib/timelineEdits';
 import { CompositionGuides } from './overlays/CompositionGuides';
 import { BackdropSection } from './panels/BackdropSection';
 import { CameraComparePanel } from './panels/CameraComparePanel';
 import { CameraPanel } from './panels/CameraPanel';
+import { BlenderPanel } from './panels/BlenderPanel';
+import { BlockoutPanel } from './panels/BlockoutPanel';
 import { CapturesPanel } from './panels/CapturesPanel';
 import { ChecksPanel } from './panels/ChecksPanel';
+import { DirectorPanel } from './panels/DirectorPanel';
 import { CrowdDialog, type CrowdRequest } from './panels/CrowdDialog';
 import { Inspector } from './panels/Inspector';
 import { Outliner } from './panels/Outliner';
@@ -35,11 +39,13 @@ import './DirectorDesk.css';
 // three.js only loads once a stage is actually on screen.
 const DeskViewport = lazy(() => import('./three/DeskViewport'));
 const LensViewport = lazy(() => import('./three/LensViewport'));
+const OrthoViewport = lazy(() => import('./three/OrthoViewport'));
 
-type SideTab = 'inspector' | 'pose' | 'camera' | 'captures';
+export type SideTab = 'inspector' | 'director' | 'pose' | 'camera' | 'blockout' | 'captures' | 'blender';
 
 const LAYOUTS: Array<{ id: DeskLayout; label: string; icon: typeof Eye }> = [
   { id: 'director', label: '导演', icon: Eye }, { id: 'split', label: '并排', icon: Columns2 }, { id: 'lens', label: '机位', icon: Camera },
+  { id: 'quad', label: '四视图', icon: Grid2x2 },
 ];
 const TOOLS: Array<{ id: DeskTool; label: string; key: string; icon: typeof Eye }> = [
   { id: 'select', label: '选择', key: 'v', icon: MousePointer2 }, { id: 'move', label: '移动', key: 'w', icon: Move3d },
@@ -55,7 +61,7 @@ const SHORTCUTS: Array<[string, string]> = [
 /** A project file bigger than this is not one of ours; the same limit the spatial dialog uses. */
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex]:not([tabindex="-1"])';
-const SIDE_TABS: Array<{ id: SideTab; label: string }> = [{ id: 'inspector', label: '属性' }, { id: 'pose', label: '姿势' }, { id: 'camera', label: '机位' }, { id: 'captures', label: '截图库' }];
+const SIDE_TABS: Array<{ id: SideTab; label: string }> = [{ id: 'inspector', label: '属性' }, { id: 'director', label: 'AI 导演' }, { id: 'pose', label: '姿势' }, { id: 'camera', label: '机位' }, { id: 'blockout', label: '白模' }, { id: 'captures', label: '截图库' }, { id: 'blender', label: 'Blender' }];
 // A lens scene that has not shown the instant it was asked for within this long never will.
 const FRAME_TIMEOUT_MS = 8000;
 const SAVE_LABELS = { idle: '', saving: '保存中…', saved: '已保存', error: '未保存' } as const;
@@ -77,16 +83,20 @@ function messageOf(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
+export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, initialReference, onClose }: {
   taskId: string;
   sceneId: string;
   initialShotId?: number;
+  /** Which right-hand panel to open on (the agent can open the desk straight on the Blender tab). */
+  initialSideTab?: SideTab;
+  /** A reference picture handed in from outside (the node canvas), loaded into the 白模 tab as if it had been chosen there. */
+  initialReference?: { url: string };
   onClose: () => void;
 }) {
   const { state, dispatch, commit, undo, redo, reload, editable } = useDeskSession(taskId, sceneId);
   // The drag (or slider) in progress: drawn in both views, sent to nobody until it is let go.
   const [preview, setPreview] = useState<StageOperation[] | null>(null);
-  const [sideTab, setSideTab] = useState<SideTab>('inspector');
+  const [sideTab, setSideTab] = useState<SideTab>(initialSideTab ?? 'inspector');
   const [crowdOpen, setCrowdOpen] = useState(false);
   const [poseShotOnly, setPoseShotOnly] = useState(false);
   const [footLock, setFootLock] = useState(true);
@@ -99,6 +109,8 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
   // The camera view drawn as the depth picture a depth still or clip will be, so what goes out can be seen first.
   const [depthPreview, setDepthPreview] = useState(false);
   const [transferBusy, setTransferBusy] = useState(false);
+  // How fast a drawn route is walked; 0 stretches it over the whole shot instead.
+  const [pathSpeed, setPathSpeed] = useState(1.4);
   const deskHandle = useRef<DeskViewHandle | null>(null);
   const lensHandle = useRef<LensHandle | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -124,7 +136,8 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
   const stagedBase = useMemo(() => (basePlan ? stagePlanAt(basePlan, shotId, now) : basePlan), [basePlan, now, shotId]);
   const shot = useMemo(() => plan?.shots.find(item => item.shot_id === shotId), [plan, shotId]);
   const storedShot = useMemo(() => storedPlan?.shots.find(item => item.shot_id === shotId), [shotId, storedPlan]);
-  const lens = plan?.cameras.find(item => item.id === (state.lensCameraId || shot?.camera_id));
+  // Nothing picked by hand: the lens view follows the cuts, so playback and a clip export show the cut.
+  const lens = plan?.cameras.find(item => item.id === (state.lensCameraId || cutCameraAt(timeline, now) || shot?.camera_id));
   const cameraPath = useMemo(() => (storedPlan ? cameraPathOf(storedPlan, storedShot) : null), [storedPlan, storedShot]);
   const actorPaths = useMemo(() => (storedPlan ? actorPathsOf(storedPlan, storedShot) : []), [storedPlan, storedShot]);
   const primary = selection[selection.length - 1];
@@ -397,7 +410,13 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
                 onSelect={select} onClearSelection={() => dispatch({ type: 'clearSelection' })}
                 onPreview={previewEdit}
                 onCommit={operations => commitEdit({ label: tool === 'pose' ? '摆姿势' : tool === 'rotate' ? '旋转' : tool === 'scale' ? '缩放' : '移动', operations })}
-                onPath={points => { if (pathTarget && storedShot) commitEdit(pathEdit(storedShot.shot_id, pathTarget, points)); }}
+                onPath={points => {
+                  if (!pathTarget || !storedShot) return;
+                  const edit = pathEdit(storedShot.shot_id, pathTarget, points, pathSpeed);
+                  // A paced walk brings legs with it, so a limbless stand-in becomes a figure that has some.
+                  const walker = pathTarget.kind === 'actor' && pathSpeed > 0 ? storedPlan.actors.find(actor => actor.name === pathTarget.name) : undefined;
+                  commitEdit({ ...edit, operations: [...figureForAction(walker), ...edit.operations] });
+                }}
                 onMeasure={point => dispatch({ type: 'measure', point })}
                 onReady={onDeskReady}
               />
@@ -410,6 +429,12 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
                 frameStamp={exportFrame?.stamp} onFrameShown={onFrameShown} backdropInCapture={backdropInCapture} depthPreview={depthPreview}
                 overlay={<CompositionGuides deliveryAspect={parseAspect(plan.aspect_ratio)} guides={state.guides} />}
               />
+            </Suspense>
+          )}
+          {layout === 'quad' && (
+            <Suspense fallback={loading}>
+              <OrthoViewport plan={plan} shot={shot} hidden={state.hidden} side="top" />
+              <OrthoViewport plan={plan} shot={shot} hidden={state.hidden} side="front" />
             </Suspense>
           )}
           {compareOpen && (
@@ -426,8 +451,14 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
             ))}
           </div>
           <div className="desk-side__panel">
-            {keyNote && sideTab !== 'captures' && <p className={`desk-keynote ${onKey ? 'is-key' : ''}`} role="note">{keyNote}</p>}
+            {keyNote && sideTab !== 'captures' && sideTab !== 'blender' && sideTab !== 'director' && <p className={`desk-keynote ${onKey ? 'is-key' : ''}`} role="note">{keyNote}</p>}
             {sideTab === 'inspector' && <Inspector plan={panelPlan} shot={panelShot} selection={selection} editable={canEdit} error={state.inspectorError} taskId={taskId} onCommit={commitEdit} onSelect={select} />}
+            {sideTab === 'director' && (
+              <DirectorPanel
+                taskId={taskId} sceneId={sceneId} plan={basePlan} shotId={shotId} selection={state.selection} editable={canEdit} saving={state.pending.length > 0}
+                dropPoint={dropPoint} onCommit={commitEdit} onPlanChanged={reload} onSelect={ref => dispatch({ type: 'select', ref })}
+              />
+            )}
             {sideTab === 'pose' && (
               <PosePanel
                 plan={panelPlan} shot={panelShot} selection={selection} editable={canEdit} shotOnly={poseShotOnly} footLock={footLock}
@@ -449,6 +480,12 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
                 onGuides={guides => dispatch({ type: 'setGuides', guides })}
               />
             )}
+            {sideTab === 'blockout' && (
+              <BlockoutPanel
+                taskId={taskId} sceneId={sceneId} plan={panelPlan} shot={panelShot} editable={canEdit} onCommit={commitEdit} initialReference={initialReference}
+                onLook={cameraId => { dispatch({ type: 'setLensCamera', cameraId }); if (layout === 'director') dispatch({ type: 'setLayout', layout: 'split' }); }}
+              />
+            )}
             {sideTab === 'captures' && (
               <CapturesPanel
                 taskId={taskId} sceneId={sceneId} shotId={shotId} camera={lens} cameras={storedPlan.cameras}
@@ -457,10 +494,17 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
                 depthPreview={depthPreview} onDepthPreview={setDepthPreview}
               />
             )}
+            {sideTab === 'blender' && (
+              <BlenderPanel
+                taskId={taskId} sceneId={sceneId} shotIds={storedPlan.shots.map(item => item.shot_id)} planRevision={basePlan.revision}
+                editable={canEdit} onPlanChanged={reload} onSelectShot={id => dispatch({ type: 'setShot', shotId: id })}
+              />
+            )}
             {/* A 422 must be seen wherever the user is, not only on the tab that caused it. */}
             {sideTab !== 'inspector' && state.inspectorError && <p className="desk-inspector__error" role="alert">{state.inspectorError}</p>}
           </div>
-          <ChecksPanel taskId={taskId} sceneId={sceneId} plan={basePlan} shotId={shotId} editable={canEdit} saving={state.pending.length > 0} onCommit={commitEdit} onSelectShot={id => dispatch({ type: 'setShot', shotId: id })} />
+          {/* The director panel needs the height and says what fails itself. */}
+          {sideTab !== 'director' && <ChecksPanel taskId={taskId} sceneId={sceneId} plan={basePlan} shotId={shotId} editable={canEdit} saving={state.pending.length > 0} onCommit={commitEdit} onSelectShot={id => dispatch({ type: 'setShot', shotId: id })} />}
         </aside>
       </div>
     );
@@ -499,6 +543,13 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, onClose }: {
             </button>
           ))}
         </div>
+        {tool === 'path' && (
+          <label className="desk-topbar__speed" title="画完路径后按这个速度走完，并自动铺上行走或慢跑动作；填 0 则把路径拉满整个镜头">
+            <span>速度</span>
+            <input type="number" aria-label="路径速度（米/秒）" min={0} max={30} step={0.1} value={pathSpeed} onChange={event => setPathSpeed(Math.min(30, Math.max(0, Number(event.target.value) || 0)))} />
+            <span>m/s</span>
+          </label>
+        )}
         <div className="desk-topbar__snap" role="group" aria-label="吸附">
           <Magnet aria-hidden="true" />
           <label><input type="checkbox" checked={state.snap.grid} onChange={event => dispatch({ type: 'setSnap', snap: { grid: event.target.checked } })} /> 网格</label>

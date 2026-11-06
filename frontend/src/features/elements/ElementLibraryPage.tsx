@@ -1,9 +1,12 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Boxes, Camera, FileSearch, ImagePlus, LoaderCircle, Maximize2, Pencil, Plus, RefreshCw, Shirt, Trash2, Upload } from 'lucide-react';
+import { ArrowLeft, Boxes, Camera, FileSearch, ImagePlus, LoaderCircle, Maximize2, Mic, Pencil, Plus, RefreshCw, Shirt, Trash2, Upload } from 'lucide-react';
 
 import { apiRequest, apiUrl } from '../../api/client';
 import AssetImageViewer, { type AssetImageViewerAsset } from './AssetImageViewer';
-import { actorRegeneration, findPoster, findViewImage, variantOf, type ElementFile, type ElementItem, type ElementKind } from './elementTypes';
+import { actorRegeneration, findPoster, findViewImage, isLook, lookCheckProblems, variantOf, type ElementFile, type ElementItem, type ElementKind } from './elementTypes';
+import { ElementFolderBar, ElementFolderSelect } from './ElementFolderBar';
+import { moveElementsToFolder, UNFILED, useElementFolders } from './elementFolders';
+import { VoicePanel } from './VoicePanel';
 import './ElementLibraryPage.css';
 import { t } from '../../i18n';
 
@@ -68,6 +71,11 @@ const kindMeta: Record<ElementKind, { label: string; hint: string }> = {
   costume: { label: '服装', hint: '记录角色、造型状态、材质、换装节点与镜头连续性' },
   effect: { label: '特效', hint: '记录作用目标、时间、影响区域与结束状态' },
   product: { label: '商品', hint: '广告主推的真实商品：上传实物照片（正面、细节、使用中），镜头提到商品名时按照片锁定外观' },
+  extra: { label: '群演', hint: '没有台词的背景人物，按职能登记：人数、服装、在做什么；有参考图更好，没有也能拍' },
+  vehicle: { label: '车辆', hint: '入画的车、船、马车：车型、颜色、新旧和谁在用' },
+  stunt: { label: '特技', hint: '有风险的动作过程整体记一条：谁做、在哪、结果；不拆成替身和道具' },
+  set_dressing: { label: '置景', hint: '角色不去碰的陈设：家具、灯具、匾额、帷幔；会碰的归道具' },
+  makeup: { label: '化妆', hint: '只记特殊的：伤口、血迹、假体、老年妆；写在谁身上、什么形态、从哪场开始' },
 };
 
 // 数字演员设定集的五个身份视图槽位；后两项是存量五视图整板留下的旧角度。
@@ -112,6 +120,11 @@ export function ElementLibraryPage({
   const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
   const [selectedId, setSelectedId] = useState('');
   const [imageViewerAsset, setImageViewerAsset] = useState<AssetImageViewerAsset | null>(null);
+  // Folders belong to the person's library, so a project's embedded view does not show them.
+  const foldersEnabled = !embedded;
+  const [folder, setFolder] = useState('');
+  const [voicesOpen, setVoicesOpen] = useState(false);
+  const { listing: folderListing, reload: reloadFolders } = useElementFolders(kind, foldersEnabled);
   const imageInput = useRef<HTMLInputElement>(null);
   const modelInput = useRef<HTMLInputElement>(null);
   const toolbarImageButton = useRef<HTMLButtonElement>(null);
@@ -156,12 +169,14 @@ export function ElementLibraryPage({
       // Inside a project only its own and linked assets are listed; the standalone
       // library (no taskId) still shows everything the owner has ever produced.
       const scope = taskId ? `&task_id=${encodeURIComponent(taskId)}` : '';
-      const data = await apiRequest<ElementResponse>(`/api/elements?kind=${targetKind}&page=1&page_size=50${scope}`);
+      const inFolder = folder ? `&folder=${encodeURIComponent(folder)}` : '';
+      const data = await apiRequest<ElementResponse>(`/api/elements?kind=${targetKind}&page=1&page_size=50${scope}${inFolder}`);
       if (sequence !== loadSequence.current || targetKind !== kindRef.current) return;
       const nextTotal = Number.isFinite(data.total) ? data.total : data.items.length;
       setItems(data.items);
       setTotal(nextTotal);
-      onCountChange?.(targetKind, nextTotal);
+      if (!folder) onCountChange?.(targetKind, nextTotal);
+      void reloadFolders();
       setSelectedId(current => data.items.some(item => item.id === current) ? current : (data.items[0]?.id ?? ''));
     } catch (err) {
       if (sequence !== loadSequence.current || targetKind !== kindRef.current) return;
@@ -174,7 +189,7 @@ export function ElementLibraryPage({
   useEffect(() => {
     const handle = window.setTimeout(() => { void load(kind); }, 0);
     return () => window.clearTimeout(handle);
-  }, [kind]); // eslint-disable-line react-hooks/exhaustive-deps -- reload when the concrete element route changes
+  }, [kind, folder]); // eslint-disable-line react-hooks/exhaustive-deps -- reload when the concrete element route changes
 
   useEffect(() => {
     if (!showForm) return;
@@ -204,6 +219,16 @@ export function ElementLibraryPage({
     setSelectedId('');
     setImageViewerAsset(null);
     setUploadSlot(next === 'actor' ? 'front' : 'reference');
+  };
+
+  const moveToFolder = async (item: ElementItem, folderId: string | null) => {
+    setError('');
+    try {
+      await moveElementsToFolder([item.id], folderId);
+      await load(kindRef.current);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('操作失败'));
+    }
   };
 
   const sendUpload = async (pending: PendingUpload, target: string, targetKind: ElementKind) => {
@@ -265,6 +290,11 @@ export function ElementLibraryPage({
       finishMutation('create');
       setCreateInFlight(false);
       return;
+    }
+
+    // Made while looking into a folder: it belongs there, or it would vanish from view on save.
+    if (folder && folder !== UNFILED) {
+      await moveElementsToFolder([created.id], folder).catch(() => undefined);
     }
 
     const uploadAttempt = uploadAfterCreate ? {
@@ -622,6 +652,28 @@ export function ElementLibraryPage({
     }
   };
 
+  const setPropSize = async (item: ElementItem, lengthCm: number | null) => {
+    const targetKind = item.kind;
+    const busyKey = `size:${item.id}`;
+    if (!startMutation(busyKey)) return;
+    setError('');
+    try {
+      const updated = await apiRequest<ElementItem>(`/api/elements/${item.id}/prop-size`, {
+        method: 'PUT',
+        body: JSON.stringify({ length_cm: lengthCm }),
+      });
+      if (targetKind !== kindRef.current) return;
+      setItems(current => current.map(entry => entry.id === item.id ? updated : entry));
+      setNotice(lengthCm === null
+        ? t('已清除“{0}”手动填写的尺寸。', [item.name])
+        : t('已把“{0}”的最长边设为 {1} cm。', [item.name, String(lengthCm)]));
+    } catch (err) {
+      if (targetKind === kindRef.current) setError(err instanceof Error ? err.message : t('尺寸保存失败，请稍后重试。'));
+    } finally {
+      finishMutation(busyKey);
+    }
+  };
+
   const deleteElement = async (item: ElementItem) => {
     if (creatingRef.current || busyRef.current) return;
     const label = kindMeta[item.kind].label;
@@ -676,7 +728,7 @@ export function ElementLibraryPage({
 
   const regenerate = async (item: ElementItem) => {
     if (creatingRef.current || busyRef.current) return;
-    if (item.kind === 'actor') {
+    if (item.kind === 'actor' && !isLook(item)) {
       if (actorRegeneration(item).running) return;
       const confirmed = window.confirm(
         `重新为“${item.name}”生成一张数字演员设定集？\n这是一次付费出图，以现有身份视图为参考；新图通过质检后才替换五个身份视图，未通过则保留原图。`,
@@ -691,7 +743,7 @@ export function ElementLibraryPage({
         method: 'POST',
         body: JSON.stringify({ prompt: `保持 ${item.name} 的身份、状态和视觉锚点，重新生成当前版本` }),
       });
-      if (item.kind === 'actor') {
+      if (item.kind === 'actor' && !isLook(item)) {
         if ('id' in regenerated) {
           setItems(current => current.map(entry => entry.id === item.id ? regenerated : entry));
         }
@@ -735,7 +787,7 @@ export function ElementLibraryPage({
 
       {!embedded && (
         <div className="element-tabs" role="tablist" aria-label={t('元素类型')}>
-          {(Object.keys(kindMeta) as ElementKind[]).map(value => (
+          {(Object.keys(kindMeta) as ElementKind[]).filter(value => value !== 'costume' && value !== 'makeup').map(value => (
             <button
               key={value}
               type="button"
@@ -746,6 +798,20 @@ export function ElementLibraryPage({
             >{kindMeta[value].label}</button>
           ))}
         </div>
+      )}
+
+      {foldersEnabled && (
+        <ElementFolderBar
+          listing={folderListing}
+          active={folder}
+          items={items}
+          selected={spatialKind ? items.find(item => item.id === selectedId) : undefined}
+          disabled={Boolean(busy)}
+          onSelect={setFolder}
+          onMove={(item, folderId) => { void moveToFolder(item, folderId); }}
+          onChanged={() => { void load(kindRef.current); }}
+          onError={setError}
+        />
       )}
 
       <section className="element-toolbar">
@@ -765,6 +831,11 @@ export function ElementLibraryPage({
             </>
           ) : (
             <button ref={toolbarImageButton} type="button" className="secondary-action" onClick={() => beginImageUpload()} disabled={Boolean(busy)}><Upload size={16} /> {t('上传')}</button>
+          )}
+          {taskId && kind === 'actor' && (
+            <button type="button" className="secondary-action" aria-expanded={voicesOpen} onClick={() => setVoicesOpen(open => !open)}>
+              <Mic size={16} /> {t('声音')}
+            </button>
           )}
           {taskId && (
             <button
@@ -803,6 +874,8 @@ export function ElementLibraryPage({
           )}
         </div>
       </section>
+
+      {taskId && kind === 'actor' && voicesOpen && <VoicePanel taskId={taskId} onClose={() => setVoicesOpen(false)} />}
 
       {showForm && (
         <section className="element-create-form" ref={createForm} aria-label={`添加${kindMeta[kind].label}`}>
@@ -865,9 +938,10 @@ export function ElementLibraryPage({
               const poster = findPoster(item);
               if (poster) void deleteReference(item, poster);
             }}
-            onInspectPoster={item => {
+            onSetPropSize={(item, lengthCm) => { void setPropSize(item, lengthCm); }}
+            onInspectPoster={(item, shown) => {
               // 与服装/特效同构：有参考图才提供放大查看入口。
-              const poster = findPoster(item);
+              const poster = shown ?? findPoster(item);
               if (!poster?.url) return;
               setImageViewerAsset({
                 kind: item.kind,
@@ -885,11 +959,13 @@ export function ElementLibraryPage({
           {items.map(item => {
             // The actor slot selector doubles as the preview switch: whichever
             // five-view slot it names is the image every card shows.
-            const previewFile = kind === 'actor' ? findViewImage(item, uploadSlot) : findPoster(item);
-            const previewLabel = kind === 'actor' ? `${actorSlotLabel(uploadSlot)}视图` : '参考图';
+            // 定妆图只有一张展示板，没有五个身份视图。
+            const look = isLook(item);
+            const previewFile = kind === 'actor' && !look ? findViewImage(item, uploadSlot) : findPoster(item);
+            const previewLabel = look ? '定妆图' : kind === 'actor' ? `${actorSlotLabel(uploadSlot)}视图` : '参考图';
             const descriptionText = item.description || kindMeta[kind].hint;
             // 服装/特效沿用全景卡布局；数字演员保持原卡面，仅叠加放大入口。
-            const panoramaLayout = item.kind === 'costume' || item.kind === 'effect';
+            const panoramaLayout = item.kind === 'costume' || item.kind === 'effect' || look;
             const imageUrl = previewFile?.url ? apiUrl(previewFile.url) : '';
             const openViewerLabel = item.kind === 'costume'
               ? `查看服装资产“${item.name}”全景图`
@@ -942,7 +1018,9 @@ export function ElementLibraryPage({
                     <p>{descriptionText}</p>
                   </>
                 )}
-                {kind === 'actor' && <small>身份视图 {item.files.length}/5</small>}
+                {kind === 'actor' && !look && <small>身份视图 {item.files.length}/5</small>}
+                {Boolean(item.metadata?.needs_redraw) && <small className="element-regeneration-error">{t('设定改过，这张图还是旧写法，建议重新生成')}</small>}
+                {lookCheckProblems(item).length > 0 && <small className="element-regeneration-error">{t('妆效核对没过：{0}。建议重新生成，或把妆效写得更具体', [lookCheckProblems(item).join('；')])}</small>}
                 {kind === 'actor' && actorRegeneration(item).running && (
                   <small className="element-regeneration-status" role="status">{t('设定集后台生成中，完成后自动刷新')}</small>
                 )}
@@ -957,7 +1035,7 @@ export function ElementLibraryPage({
                     <small className="element-variant-badge">
                       衍生自「{variant.of}」{variant.label ? ` · ${variant.label}` : ''}
                       {variant.triggers.length > 0 && ` · 触发：${variant.triggers.join('、')}`}
-                      {variant.episodes && ` · 第 ${variant.episodes[0]}–${variant.episodes[1]} 集`}
+                      {variant.episodes && ` · 第 ${(variant.spans?.length ? variant.spans : [variant.episodes]).map(([first, last]) => (first === last ? `${first}` : `${first}–${last}`)).join('、')} 集`}
                     </small>
                   );
                 })()}
@@ -983,6 +1061,14 @@ export function ElementLibraryPage({
                     </div>
                   </form>
                 )}
+                {foldersEnabled && (
+                  <ElementFolderSelect
+                    item={item}
+                    folders={folderListing.folders}
+                    disabled={Boolean(busy)}
+                    onMove={(target, folderId) => { void moveToFolder(target, folderId); }}
+                  />
+                )}
                 <div className="element-actions">
                   <button type="button" onClick={() => beginImageUpload(item.id)} disabled={creating || Boolean(busy)}><Upload size={14} /> {t('添加上传')}</button>
                   <button
@@ -1002,7 +1088,7 @@ export function ElementLibraryPage({
                     <RefreshCw size={14} className={item.kind === 'actor' && actorRegeneration(item).running ? 'spin' : undefined} />
                     {item.kind === 'actor' && actorRegeneration(item).running ? t('生成中…') : t('重新生成')}
                   </button>
-                  {item.kind === 'actor' && (variantOf(item)
+                  {item.kind === 'actor' && !isLook(item) && (variantOf(item)
                     ? <button type="button" onClick={() => void saveVariant(item, true)} disabled={creating || Boolean(busy)} aria-label={`取消“${item.name}”的衍生形象`}><Shirt size={14} /> {t('取消衍生')}</button>
                     : <button type="button" onClick={() => openVariantEditor(item)} disabled={creating || Boolean(busy)} aria-label={`把“${item.name}”设为衍生形象`}><Shirt size={14} /> {t('衍生形象')}</button>)}
                   {previewFile && (

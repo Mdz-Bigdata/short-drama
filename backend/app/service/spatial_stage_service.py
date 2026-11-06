@@ -30,12 +30,20 @@ from app.core.spatial_stage.planner import (
     SceneBrief,
     build_plan,
     cast_fingerprint,
+    height_from_text,
     location_key,
     refresh,
     speaker_of,
 )
-from app.core.spatial_stage.prompting import array_members, frame_positions, landmark_relative_position, master_camera
+from app.core.spatial_stage.prompting import (
+    array_members,
+    frame_positions,
+    landmark_relative_position,
+    landmark_size,
+    master_camera,
+)
 from app.core.storyboard_scene_context import compile_scene_context
+from app.core.writer_dashboard import parse_duration_seconds
 from app.service.director_desk_service import mark_captures_stale
 
 logger = logging.getLogger("app.service.spatial_stage")
@@ -180,6 +188,7 @@ def shot_specs(shots: Sequence[Mapping[str, Any]], cast: Sequence[str]) -> list[
             angle=str(shot.get("angle") or ""),
             motion=str(shot.get("motion") or ""),
             desc=str(shot.get("desc") or "")[:1000],
+            seconds=float(parse_duration_seconds(shot.get("duration")) or 0),
         ))
     return specs
 
@@ -203,6 +212,10 @@ def brief_for(
         props=[str(item.get("name") or "") for item in (context.get("props") or []) if isinstance(item, Mapping)],
         shots=shot_specs(shots, cast),
         aspect_ratio=aspect_ratio_of(task),
+        heights={
+            name: height for name in cast
+            if (height := height_from_text((context.get("profiles") or {}).get(name, ""))) is not None
+        },
     )
 
 
@@ -250,7 +263,7 @@ def panel_fields(plan: StagePlan, shot_id: int) -> dict[str, Any]:
         return {}
     text = shot.text
     return {
-        "camera_angle": text.camera_angle, "lens_mm": int(round(max(8.0, min(600.0, camera.lens_mm)))),
+        "camera_angle": text.camera_angle, "lens_mm": int(round(max(8.0, min(600.0, camera.equivalent_lens_mm)))),
         "composition": text.composition, "action_axis": text.action_axis,
         "eyeline": text.eyeline, "blocking": text.blocking,
     }
@@ -278,7 +291,7 @@ def shot_summary(plan: StagePlan, shot_id: int) -> dict[str, Any]:
     return {
         "camera_id": camera.id, "function": camera.function, "axis_side": shot.axis_side, "crossing": shot.crossing,
         "screen_direction": screen_direction(plan, shot_id),
-        "lens_mm": camera.lens_mm, "plan_revision": plan.revision,
+        "lens_mm": camera.equivalent_lens_mm, "plan_revision": plan.revision,
         "screen": [
             {"name": state.name, "region": state.region, "depth": state.depth_layer, "facing": state.facing}
             for state in shot.screen if state.visible
@@ -300,7 +313,10 @@ def director_context(plan: StagePlan) -> dict[str, Any]:
             for item in (frame_positions(lead, plan.camera(lead.camera_id), array_members(plan)) if lead is not None else [])
         ],
         "landmarks": [
-            {"name": item.name, "relative_position": landmark_relative_position(plan, item), "form_and_count": "1处，位置固定"}
+            {
+                "name": item.name, "relative_position": landmark_relative_position(plan, item),
+                "form_and_count": f"1处，{landmark_size(item)}，位置固定",
+            }
             for item in plan.landmarks
         ][:50],
         "camera_axis": lead.text.action_axis if lead is not None else "",

@@ -254,6 +254,28 @@ class Sd25PromptCompilerTests(unittest.TestCase):
         self.assertIn("第一步输出的视频", result.steps[1].prompt)
         self.assertNotEqual(result.steps[0].prompt, result.steps[1].prompt)
 
+    def test_extensions_name_the_real_light_and_restate_the_set_on_schedule(self):
+        def extend(**updates):
+            return self.compiler.compile(Sd25CompileRequest(
+                goal="林夏起身走向门口。", task="extend", source_video_ref="@视频1", extension_direction="after",
+                assets=[Sd25Asset(
+                    ref="@视频1", media_type="video", role="source", subject="上一段",
+                    observations="林夏坐在窗边木桌旁", duration_seconds=5, required=True,
+                )],
+                **updates,
+            )).prompt
+
+        plain = extend()
+        self.assertNotIn("光线：主光", plain)
+        self.assertNotIn("【空间快照】", plain)
+        snapshot = "门在画面左侧、窗在画面右侧；主光画面右侧窗外冷光，4200K"
+        light = "画面右侧窗外冷光，4200K"
+        self.assertIn("光线：主光画面右侧窗外冷光，4200K，延长片段内主光方向与色温不变。", extend(key_light=light))
+        self.assertNotIn("【空间快照】", extend(key_light=light, space_snapshot=snapshot, chain_index=2))
+        self.assertIn(f"【空间快照】{snapshot}", extend(key_light=light, space_snapshot=snapshot, chain_index=4))
+        self.assertIn(f"【空间快照】{snapshot}", extend(space_snapshot=snapshot, chain_index=1))
+        self.assertNotIn("【空间快照】", extend(space_snapshot=snapshot))
+
     def test_dialogue_audio_reference_must_be_present(self):
         with self.assertRaises(ValidationError):
             Sd25CompileRequest(
@@ -442,6 +464,36 @@ class Sd25PromptCompilerTests(unittest.TestCase):
 
         with self.assertRaises(ValidationError):
             Sd25CompileRequest(goal="x", blockout_standin_limbs=True)
+
+
+class Sd25VoiceReferenceTests(unittest.TestCase):
+    def test_a_voice_reference_lends_timbre_only(self):
+        request = Sd25CompileRequest(
+            goal="林夏在雨夜里低声回答。",
+            task="edit",
+            edit_scope="audio",
+            source_video_ref="@视频1",
+            assets=[
+                Sd25Asset(
+                    ref="@视频1", media_type="video", role="source", subject="编辑母版",
+                    observations="8秒雨夜对话", duration_seconds=8, required=True,
+                ),
+                Sd25Asset(
+                    ref="@音频1", media_type="audio", role="voice", subject="林夏音色",
+                    observations="清亮女声", duration_seconds=8, required=True,
+                ),
+            ],
+            dialogue=[
+                Sd25DialogueEntry(
+                    speaker="林夏", text="我知道了。", delivery="开口前停半拍", position="画内", audio_ref="@音频1",
+                )
+            ],
+        )
+        prompt = Sd25PromptCompiler().compile(request).prompt
+
+        self.assertIn("只采用音色（嗓音质感与音高），不采用参考里的语速和情绪", prompt)
+        self.assertIn("音色参考@音频1（只取音色，语速与情绪按本句表达）", prompt)
+        self.assertNotIn("只采用音色、语速和情绪", prompt)
 
 if __name__ == "__main__":
     unittest.main()

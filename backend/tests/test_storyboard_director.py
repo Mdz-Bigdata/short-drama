@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.api.auth_api import get_current_user
-from app.core.storyboard_director import StoryboardDirectorCompiler
+from app.core.storyboard_director import StoryboardDirectorCompiler, space_restatement
 from app.schema.storyboard_director import (
     CameraDesign,
     ColorDesign,
@@ -180,6 +180,38 @@ class StoryboardDirectorTests(unittest.TestCase):
         self.assertEqual((result.grid_pages[1].used_slots, result.grid_pages[1].empty_slots), (1, 8))
         self.assertEqual(len(result.video_segments), 9)
 
+    def test_every_segment_names_the_real_key_light_and_colour_temperature(self):
+        result = self.compiler.compile(_request())
+        for segment in result.video_segments:
+            self.assertIn("【光向】主光画面左侧窗外冷光，右后方暖色实景灯补光，窗侧4200K、实景灯3000K", segment.prompt)
+            self.assertIn("本段主光方向与色温不变", segment.prompt)
+
+    def test_a_long_chain_describes_the_space_once_and_restates_a_snapshot_every_fourth_segment(self):
+        self.assertEqual([space_restatement(index) for index in range(1, 10)],
+                         ["full", "same", "same", "snapshot", "same", "same", "same", "snapshot", "same"])
+        events = [StoryEvent(text=f"林夏完成可见动作{i}") for i in range(1, 11)]
+        request = _request(
+            events=events, duration_seconds=20, timed_dialogue=[],
+            scene=self._scene(landmarks=[SceneLandmark(name="入口", relative_position="林夏左后方约4米，背景左侧")]),
+        )
+        result = self.compiler.compile(request)
+        prompts = [segment.prompt for segment in result.video_segments]
+
+        self.assertIn("【空间锚定】咖啡厅窗边：林夏在画面右侧窗边，木桌居中", prompts[0])
+        self.assertIn("入口：林夏左后方约4米，背景左侧（形态与数量按首拍画面锁定）", prompts[0])
+        for index in (1, 2, 4, 5, 6, 8):
+            self.assertIn("【空间锚定】同一咖啡厅窗边，空间布局与地标位置以起始关键帧画面为准，不重新描述", prompts[index])
+            self.assertIn(f"本段变化：只新增本拍事件：林夏完成可见动作{index + 2}", prompts[index])
+            self.assertNotIn("入口：", prompts[index])
+            self.assertNotIn("木桌居中", prompts[index])
+            self.assertIn("禁止场景地标左右镜像翻转", prompts[index])
+        for index in (3, 7):
+            self.assertIn("【空间快照】同一咖啡厅窗边：入口：林夏左后方约4米，背景左侧；画面坐标：", prompts[index])
+            self.assertIn("【光向】主光画面左侧窗外冷光", prompts[index])
+            self.assertNotIn("形态与数量", prompts[index])
+        # Same input, same chain.
+        self.assertEqual(prompts, [segment.prompt for segment in self.compiler.compile(request).video_segments])
+
     def test_fallback_parser_ignores_metadata_but_preserves_real_repeated_events(self):
         result = self.compiler.compile(_request(
             events=[],
@@ -287,6 +319,31 @@ class StoryboardDirectorTests(unittest.TestCase):
         self.assertTrue(codes["crowd_motion_staggered"].passed)
         self.assertTrue(codes["damage_timeline_closed"].passed)
         self.assertTrue(result.submission_ready)
+
+    def test_video_exclusions_do_not_repeat_what_the_locks_already_state(self):
+        segment = self.compiler.compile(_request()).video_segments[0]
+
+        # 角色、服装、背景与镜头路径在同一段提示词里已经正面锁定，不再作为排除项把那几个词念一遍。
+        for repeated in ("角色变脸", "服装变化", "背景跳动", "镜头漂移"):
+            self.assertNotIn(repeated, segment.exclusions)
+            self.assertNotIn(repeated, segment.prompt)
+        self.assertIn("角色、服装、伤痕污渍、场景结构、道具、光向、摄影轴线", segment.prompt)
+        self.assertIn("新增人物道具动作或特效", segment.exclusions)
+        codes = {item.code: item for item in self.compiler.compile(_request()).continuity_checks}
+        self.assertTrue(codes["video_no_extra_content"].passed)
+
+    def test_a_motion_reference_role_swaps_only_the_default_policy(self):
+        base = _request().global_visual.model_dump()
+        motion = GlobalVisualRules(**{**base, "reference_video_role": "motion_trajectory"})
+        written = GlobalVisualRules(**{**base, "reference_video_role": "motion_trajectory", "reference_video_policy": "参考视频只看节奏"})
+
+        self.assertIn("只提供身体运动轨迹与发力节奏", motion.reference_video_policy)
+        self.assertEqual(written.reference_video_policy, "参考视频只看节奏")
+        self.assertIn("只锁定角色长相", GlobalVisualRules(**base).reference_video_policy)
+        result = self.compiler.compile(_request(global_visual=motion))
+        codes = {item.code: item for item in result.continuity_checks}
+        self.assertIn("身体轨迹与发力节奏", codes["reference_material_scoped"].detail)
+        self.assertIn("只提供身体运动轨迹与发力节奏", result.video_segments[0].prompt)
 
     def test_bare_landmark_and_synchronous_crowd_are_flagged_without_blocking(self):
         result = self.compiler.compile(_request(

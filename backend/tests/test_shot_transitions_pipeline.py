@@ -27,9 +27,10 @@ class StageFourCutPlanTests(unittest.TestCase):
         self.assertIn("时间流逝与回忆用叠化", prompts[0])
 
         cut_in = [shot["cut_in"] for shot in payload["shots"]]
-        # The first scene of the episode fades in; inside the scene everything is a hard cut.
+        # The first scene of the episode fades in; inside the scene every join is continuous — no hard cut.
         self.assertEqual((cut_in[0]["from_shot"], cut_in[0]["label"], cut_in[0]["compositor"]), (0, "淡入淡出·开场", "dip_to_black"))
-        self.assertTrue(all(item["compositor"] == "hard_cut" for item in cut_in[1:]))
+        self.assertTrue(all(item["compositor"] == "match_cut" for item in cut_in[1:]))
+        self.assertFalse(any("硬切" in item["label"] for item in cut_in))
         # 林夏 stares across the table, and the next shot is what she stares at.
         self.assertEqual(cut_in[2]["technique"], "eyeline_match")
         self.assertEqual(cut_in[3]["technique"], "shot_reverse")
@@ -43,13 +44,13 @@ class StageFourCutPlanTests(unittest.TestCase):
         shots = payload["shots"]
 
         self.assertIn("渐显进入", panels[0]["edit_in"])
-        self.assertIn("切到对方，视线方向与上一镜相对", panels[3]["edit_in"])
+        self.assertIn("接续到对方，视线方向与上一镜相对", panels[3]["edit_in"])
         self.assertIn("先以起幅稳住约半秒再开始运动", panels[3]["edit_in"])
-        self.assertIn("运镜在切点前约半秒落幅稳住再切", panels[3]["edit_out"])
+        self.assertIn("运镜在衔接点前约半秒落幅稳住再过渡", panels[3]["edit_out"])
         self.assertEqual(panels[3]["end_state"], "运镜落幅稳住，人物姿态与视线定格在可承接的状态")
         self.assertIn("本场最后一镜", panels[8]["edit_out"])
         self.assertGreater(len({panel["edit_in"] for panel in panels}), 4)
-        self.assertIn("承接第3镜（硬切·正反打）", shots[3]["continuity_in"])
+        self.assertIn("承接第3镜（匹配剪辑·正反打）", shots[3]["continuity_in"])
         self.assertIn("向第5镜交付", shots[3]["continuity_out"])
 
     def test_the_prompt_detail_carries_the_cut_summary_and_the_transition_checks(self):
@@ -58,7 +59,8 @@ class StageFourCutPlanTests(unittest.TestCase):
 
         linkage = detail["foundation"]["transition_design"]["internal_linkage"]
         self.assertTrue(linkage.startswith("逐镜衔接：入场→1 淡入淡出·开场；1→2 "))
-        self.assertIn("2→3 硬切·视线匹配（林夏投向画外的视线）", linkage)
+        self.assertIn("2→3 匹配剪辑·视线匹配（林夏投向画外的视线）", linkage)
+        self.assertNotIn("硬切", linkage)
 
         checks = {item["code"]: item for item in detail["continuity_checks"]}
         for code in ("transition_shot_size_step", "transition_thirty_degree", "transition_state_continuous",
@@ -77,8 +79,8 @@ class StageFourCutPlanTests(unittest.TestCase):
         second = _generate(self.service, self.task, "E1S02")
 
         opening = second["shots"][0]["cut_in"]
-        self.assertEqual((opening["kind"], opening["technique"], opening["compositor"]), ("cut", "scene_change", "hard_cut"))
-        self.assertIn("入场→1 硬切·场景转换", second["prompt_detail"]["foundation"]["transition_design"]["internal_linkage"])
+        self.assertEqual((opening["kind"], opening["technique"], opening["compositor"]), ("push_pull", "scene_change", "crossfade"))
+        self.assertIn("入场→1 推拉转场·场景转换", second["prompt_detail"]["foundation"]["transition_design"]["internal_linkage"])
 
     def test_a_scene_whose_cuts_cannot_be_planned_keeps_the_fixed_wording_instead_of_failing(self):
         with patch("app.core.shot_transitions.plan_transitions", side_effect=RuntimeError("boom")):
@@ -113,6 +115,15 @@ def _clip(shot_id, cut_in=None, **state):
 
 
 class FinalCutTransitionTests(unittest.TestCase):
+    def test_a_planned_sound_offset_is_handed_to_the_film(self):
+        specs, _ = final_cut_transitions([_clip(1), _clip(2, {"label": "同物换境", "compositor": "match_cut", "sound_join": "l_cut"})])
+        self.assertEqual(specs[0]["sound_join"], "l_cut")
+
+    def test_the_later_part_of_one_continuous_shot_is_not_offset(self):
+        later = {**_clip(2, {"label": "同物换境", "compositor": "match_cut", "sound_join": "l_cut"}), "first_frame_from": "E1S01 片段 1/2"}
+        specs, _ = final_cut_transitions([_clip(1), later])
+        self.assertNotIn("sound_join", specs[0])
+
     def test_the_film_is_cut_the_way_stage_four_planned_once_the_continuity_gate_passes(self):
         clips = [
             _clip(1),
@@ -122,14 +133,16 @@ class FinalCutTransitionTests(unittest.TestCase):
         ]
         specs, reports = final_cut_transitions(clips)
 
-        self.assertEqual([spec["type"] for spec in specs], ["hard_cut", "crossfade", "dip_to_black"])
+        # 旧方案里的硬切也按短交叉过渡合成。
+        self.assertEqual([spec["type"] for spec in specs], ["crossfade", "crossfade", "dip_to_black"])
         self.assertEqual([spec["duration"] for spec in specs[1:]], [0.5, 0.8])
         self.assertEqual([report["planned_cut"] for report in reports], ["硬切·正反打", "叠化·时间流逝", "淡入淡出·章节转换"])
         self.assertTrue(all(report["accepted"] for report in reports))
 
     def test_a_cut_without_a_plan_uses_the_gate_s_own_choice(self):
         specs, reports = final_cut_transitions([_clip(1), _clip(2), _clip(3, {"compositor": "wipe"})])
-        self.assertEqual([spec["type"] for spec in specs], ["hard_cut", "hard_cut"])
+        # 连续性高分时闸门选匹配衔接，不选硬切。
+        self.assertEqual([spec["type"] for spec in specs], ["match_cut", "match_cut"])
         self.assertNotIn("planned_cut", reports[0])
         self.assertNotIn("planned_cut", reports[1])
 

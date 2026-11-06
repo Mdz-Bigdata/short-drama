@@ -77,6 +77,8 @@ class ShotSpec:
     angle: str = ""
     motion: str = ""
     desc: str = ""
+    # 分镜表写的时长(秒)；0 表示没写，动作轨道按默认时长排。
+    seconds: float = 0.0
 
 
 # Shot-list shorthand, matched as whole tokens (a bare "cu" also lives inside "mcu" and "focus").

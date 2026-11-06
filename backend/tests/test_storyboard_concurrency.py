@@ -12,6 +12,20 @@ from app.core.model_gateway import ModelGateway
 from app.service.drama_service import DramaService
 
 
+# 九格各有新的景别、机位或动作：分镜只画会推进画面的格子，同机位同姿态的重复格会被去掉。
+_BEATS = (
+    ("远景", "平视", "办公室全景，林夏推门进来，档案柜在画面右侧"),
+    ("中景", "侧拍", "林夏走到桌前，把公文包放在桌角"),
+    ("近景", "俯拍", "林夏翻开第一页档案，指尖停在一张照片上"),
+    ("特写", "平视", "照片上的人脸被红笔圈出"),
+    ("中景", "仰拍", "林夏猛地抬头，看向门口的脚步声"),
+    ("全景", "平视", "门被推开一条缝，走廊的灯光斜照进屋"),
+    ("近景", "侧拍", "林夏把档案合上塞进抽屉，手按住抽屉把手"),
+    ("中景", "俯拍", "林夏转身面对门口，后背贴住档案柜"),
+    ("特写", "仰拍", "林夏的眼睛盯着门缝，呼吸压低"),
+)
+
+
 def generate_test_board(generate_image, *, preflight=None, compose=None):
     """Exercise the production pipeline without database, network or media writes."""
     service = DramaService.__new__(DramaService)
@@ -31,7 +45,7 @@ def generate_test_board(generate_image, *, preflight=None, compose=None):
         "duration": "45s",
     }
     table = "\n".join(
-        f"| {i} | MS | 平视 | Fixed | 林夏翻开档案第{i}页 | | 环境声 | 2s | 线索 | 林夏 | E1S02 办公室 |"
+        f"| {i} | {_BEATS[i - 1][0]} | {_BEATS[i - 1][1]} | Fixed | {_BEATS[i - 1][2]}（档案第{i}页） | | 环境声 | 12s | 线索 | 林夏 | E1S02 办公室 |"
         for i in range(1, 10)
     )
     with patch.object(service.gateway, "call_llm", return_value=table), patch.object(
@@ -68,7 +82,7 @@ class ImageProbe:
         self.calls = []
 
     def __call__(self, model, prompt, ref_images=None, **kwargs):
-        number = int(re.search(r"档案第(\d+)页", prompt)[1])
+        number = int(re.findall(r"档案第(\d+)页", prompt.split("调度：")[0])[-1])  # 调度之前最后一个是本格动作，再前面是上一格的结束状态
         with self.lock:
             self.calls.append(number)
             self.active += 1
@@ -103,7 +117,7 @@ class StoryboardConcurrencyTests(unittest.TestCase):
         self.assertEqual(probe.calls, list(range(1, 10)))
         self.assertEqual(len(result["shots"]), 9)
 
-    def test_two_boards_share_a_process_wide_three_image_ceiling(self):
+    def test_boards_share_a_process_wide_six_image_ceiling(self):
         # Exercise the scheduler directly: patching process-global gateway methods
         # concurrently would make the test fixture, not the product, race.
         from app.core.storyboard_concurrency import map_storyboard_images
@@ -117,11 +131,11 @@ class StoryboardConcurrencyTests(unittest.TestCase):
 
         with patch.dict(
             "os.environ", {"STORYBOARD_IMAGE_CONCURRENCY": "3"}
-        ), ThreadPoolExecutor(max_workers=2) as callers:
-            results = list(callers.map(board, [1, 2]))
-        self.assertEqual(probe.peak, 3)
-        self.assertEqual(len(probe.calls), 18)
-        self.assertEqual([len(result) for result in results], [9, 9])
+        ), ThreadPoolExecutor(max_workers=3) as callers:
+            results = list(callers.map(board, [1, 2, 3]))
+        self.assertEqual(probe.peak, 6)
+        self.assertEqual(len(probe.calls), 27)
+        self.assertEqual([len(result) for result in results], [9, 9, 9])
 
     def test_preflight_checks_every_panel_before_any_provider_call(self):
         checked = []
@@ -138,7 +152,7 @@ class StoryboardConcurrencyTests(unittest.TestCase):
 
     def test_failed_panel_never_composes_or_returns_a_done_board(self):
         probe = ImageProbe(fail=(3,))
-        with self.assertRaisesRegex(RuntimeError, "分镜图生成不完整"):
+        with self.assertRaisesRegex(RuntimeError, "分镜图生成失败"):
             generate_test_board(
                 probe, compose=lambda *args: self.fail("failed board must not compose")
             )
@@ -148,7 +162,7 @@ class StoryboardConcurrencyTests(unittest.TestCase):
         second_finished = threading.Event()
 
         def delayed(model, prompt, **kwargs):
-            number = int(re.search(r"档案第(\d+)页", prompt)[1])
+            number = int(re.findall(r"档案第(\d+)页", prompt.split("调度：")[0])[-1])  # 调度之前最后一个是本格动作，再前面是上一格的结束状态
             if number == 1:
                 self.assertTrue(second_finished.wait(2))
             if number == 2:

@@ -1180,10 +1180,11 @@ class ProductionAssetExtractionApiTests(unittest.TestCase):
             app.dependency_overrides.pop(get_platform_store, None)
 
         self.assertEqual(first.status_code, 200, first.text)
-        self.assertEqual(first.json()["created"], 4 + actor_count)
+        self.assertEqual(first.json()["created"], 3 + actor_count)
         self.assertEqual(first.json()["reused"], 1)
         self.assertEqual(first.json()["kinds"], {
-            "actor": actor_count, "scene": 1, "prop": 2, "costume": 1, "effect": 1,
+            "actor": actor_count, "scene": 1, "prop": 2, "effect": 1, "look": 0,
+            "extra": 0, "vehicle": 0, "stunt": 0, "set_dressing": 0,
         })
         torch = next(item for item in store.items if item.id == "prop-old")
         self.assertEqual(torch.metadata_json["task_ids"], ["older-task", "writer-task-1"])
@@ -1193,7 +1194,7 @@ class ProductionAssetExtractionApiTests(unittest.TestCase):
         ))
         self.assertEqual(second.json()["created"], 0)
         self.assertEqual(second.json()["reused"], 0)
-        self.assertEqual(second.json()["skipped"], 5 + actor_count)
+        self.assertEqual(second.json()["skipped"], 4 + actor_count)
 
     def test_actor_extraction_includes_descriptions_and_reference_images(self):
         task = _task()

@@ -33,11 +33,11 @@ interface CapabilityResponse {
 }
 
 interface CapabilityCenterProps {
-  role?: string;
+  canManage?: boolean;
 }
 
 
-export function CapabilityCenter({ role = 'user' }: CapabilityCenterProps) {
+export function CapabilityCenter({ canManage = false }: CapabilityCenterProps) {
   const [sources, setSources] = useState<CapabilitySource[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -115,7 +115,7 @@ export function CapabilityCenter({ role = 'user' }: CapabilityCenterProps) {
           <h3 id="capability-title">{t('工业化能力与可调用入口')}</h3>
           <p>{sources.length > 0 ? `${sources.length} 个上游来源 · ` : ''}每项能力可下拉检查、全局启用并通过 /command 调用</p>
         </div>
-        <span className="capability-role">{role === 'admin' ? t('管理员 · 可配置全局状态') : t('成员 · 使用已启用能力')}</span>
+        <span className="capability-role">{canManage ? t('管理员 · 可配置全局状态') : t('成员 · 使用已启用能力')}</span>
       </div>
 
       <div className="command-palette" role="search">
@@ -195,9 +195,9 @@ export function CapabilityCenter({ role = 'user' }: CapabilityCenterProps) {
                             aria-checked={ability.enabled}
                             aria-label={`${ability.label} 全局启用`}
                             className={`switch ${ability.enabled ? 'on' : ''}`}
-                            disabled={role !== 'admin' || busy === key}
+                            disabled={!canManage || busy === key}
                             onClick={() => void toggleAbility(source.source_id, ability)}
-                            title={role === 'admin' ? t('切换项目全局状态') : t('仅管理员可修改')}
+                            title={canManage ? t('切换项目全局状态') : t('仅管理员可修改')}
                           >
                             <span />
                           </button>

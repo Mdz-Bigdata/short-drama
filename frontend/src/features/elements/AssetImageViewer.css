@@ -5,7 +5,7 @@
   padding: 1.5rem;
   display: grid;
   place-items: center;
-  background: rgba(252, 236, 239, 0.88);
+  background: rgba(var(--surface-tint-rgb), 0.88);
   backdrop-filter: blur(0.75rem);
 }
 
@@ -16,11 +16,11 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
-  color: #e87084;
-  border: 1px solid rgba(229, 98, 120, 0.25);
+  color: var(--accent);
+  border: 1px solid rgba(var(--accent-rgb), 0.25);
   border-radius: 1rem;
-  background: #fcedef;
-  box-shadow: 0 2rem 6rem rgba(60, 30, 40, 0.341);
+  background: var(--surface);
+  box-shadow: 0 2rem 6rem rgba(var(--shadow-rgb), 0.341);
 }
 
 .asset-image-viewer__header {
@@ -30,8 +30,8 @@
   gap: 1.5rem;
   align-items: flex-start;
   justify-content: space-between;
-  border-bottom: 1px solid rgba(229, 98, 120, 0.14);
-  background: #fdeff1;
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.14);
+  background: var(--surface);
 }
 
 .asset-image-viewer__header > div {
@@ -39,21 +39,21 @@
 }
 
 .asset-image-viewer__header span {
-  color: #e56278;
+  color: var(--accent);
   font: 700 0.6rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.16em;
 }
 
 .asset-image-viewer__header h2 {
   margin: 0.4rem 0 0.3rem;
-  color: #e87185;
+  color: var(--accent);
   font-size: clamp(1rem, 2vw, 1.25rem);
 }
 
 .asset-image-viewer__header p {
   max-width: 68rem;
   margin: 0;
-  color: #68515b;
+  color: var(--text-muted);
   font-size: 0.75rem;
   line-height: 1.55;
 }
@@ -63,10 +63,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #59464e;
-  border: 1px solid rgba(96, 75, 84, 0.2);
+  color: var(--text-muted);
+  border: 1px solid rgba(var(--ink-rgb), 0.2);
   border-radius: 0.5rem;
-  background: rgba(214, 90, 120, 0.088);
+  background: rgba(var(--accent-rgb), 0.088);
   cursor: pointer;
 }
 
@@ -85,13 +85,13 @@
 
 .asset-image-viewer__header button:hover,
 .asset-image-viewer__controls button:hover:not(:disabled) {
-  color: #221b1e;
-  border-color: rgba(229, 98, 120, 0.48);
-  background: rgba(229, 98, 120, 0.08);
+  color: var(--ink);
+  border-color: rgba(var(--accent-rgb), 0.48);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 
 .asset-image-viewer button:focus-visible {
-  outline: 2px solid #e56278;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -100,8 +100,8 @@
   min-height: 0;
   overflow: hidden;
   background:
-    radial-gradient(circle at 50% 45%, rgba(254, 247, 248, 0.2), transparent 38%),
-    #fcecef;
+    radial-gradient(circle at 50% 45%, rgba(var(--surface-tint-rgb), 0.2), transparent 38%),
+    var(--surface);
 }
 
 .asset-image-viewer__stage {
@@ -136,17 +136,17 @@
   display: inline-flex;
   gap: 0.45rem;
   align-items: center;
-  color: #493940;
-  border: 1px solid rgba(229, 98, 120, 0.22);
+  color: var(--text-muted);
+  border: 1px solid rgba(var(--accent-rgb), 0.22);
   border-radius: 0.4rem;
-  background: rgba(252, 237, 239, 0.78);
+  background: rgba(var(--surface-rgb), 0.78);
   backdrop-filter: blur(0.5rem);
   font-size: 0.65rem;
   pointer-events: none;
 }
 
 .asset-image-viewer__position svg {
-  color: #e56278;
+  color: var(--accent);
 }
 
 .asset-image-viewer__controls {
@@ -156,8 +156,8 @@
   gap: 1rem;
   align-items: center;
   justify-content: space-between;
-  border-top: 1px solid rgba(229, 98, 120, 0.14);
-  background: #fdeff1;
+  border-top: 1px solid rgba(var(--accent-rgb), 0.14);
+  background: var(--surface);
 }
 
 .asset-image-viewer__controls > div {
@@ -181,14 +181,14 @@
 
 .asset-image-viewer__controls output {
   min-width: 3.5rem;
-  color: #e87084;
+  color: var(--accent);
   font: 700 0.75rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: center;
 }
 
 .asset-image-viewer__controls p {
   margin: 0;
-  color: #7a606a;
+  color: var(--text-muted);
   font-size: 0.65rem;
   text-align: right;
 }

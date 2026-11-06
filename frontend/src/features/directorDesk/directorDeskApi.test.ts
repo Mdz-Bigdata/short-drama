@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { normalizeCapture, uploadCapture, uploadRefusal, type CaptureUpload } from './directorDeskApi';
+import { analyzeBlockout, normalizeCapture, uploadCapture, uploadRefusal, type CaptureUpload } from './directorDeskApi';
 
 const base = { shotId: 1, cameraId: 'cam-01', width: 720, height: 1280, planRevision: 3, showsLimbs: false, monochrome: false, labelled: false };
 const clip = (patch: Partial<CaptureUpload> = {}): CaptureUpload => ({ ...base, kind: 'clip', blob: new Blob(['x'], { type: 'video/mp4' }), durationS: 5, fps: 24, ...patch });
@@ -58,5 +58,20 @@ describe('normalizeCapture', () => {
     expect(normalizeCapture({ id: 'c2', depth: false }).depth).toBe(false);
     expect(normalizeCapture({ id: 'c3' }).depth).toBe(false);
     expect(normalizeCapture({ id: 'c4', depth: true, warning: '深度画面：近亮远暗的灰度图' })).toMatchObject({ depth: true, warning: '深度画面：近亮远暗的灰度图' });
+  });
+});
+
+describe('analyzeBlockout', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('posts the picture to the scene route under /api', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ pieces: [] }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    await analyzeBlockout('task-1', 'E1S01', new File(['x'], 'ref.png', { type: 'image/png' }), { hint: ' 庭院 ', widthM: 24 });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toMatch(/\/api\/drama\/task-1\/director-desk\/scenes\/E1S01\/blockout\/analyze$/);
+    expect(init.method).toBe('POST');
+    expect((init.body as FormData).get('hint')).toBe('庭院');
+    expect((init.body as FormData).get('width_m')).toBe('24');
   });
 });

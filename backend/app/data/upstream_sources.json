@@ -75,9 +75,9 @@
   {
     "id": "dramaclaw",
     "url": "https://github.com/dramaclaw/dramaclaw",
-    "reviewed_commit": "5ae9c3f9d1bddb1c2581d7fc6b63dfa51de45ffb",
-    "reviewed_at": "2026-08-15",
-    "license_observation": "Elastic License 2.0.",
+    "reviewed_commit": "aedddae59e782960e60f77061ed8577227a14266",
+    "reviewed_at": "2026-11-03",
+    "license_observation": "Elastic License 2.0 (no hosted or managed service; notices kept; trademark rights not granted). Its README marks the 3D director stage (Previz) and interactive stories as closed beta, and their implementation is not in the public repository.",
     "code_treatment": "clean-room",
     "attribution": "DramaClaw capability reference",
     "capability_ids": [
@@ -333,8 +333,8 @@
   {
     "id": "director-desk",
     "url": "https://github.com/mangfufu/director-desk",
-    "reviewed_commit": "f3afacf5f8bfd33ccf99640c72126add1e76201b",
-    "reviewed_at": "2026-10-14",
+    "reviewed_commit": "a4bde95c773535ea038482fb7aeb08a2ff715947",
+    "reviewed_at": "2026-11-03",
     "license_observation": "MIT (Copyright (c) 2026 DirectorDesk contributors). The bundled motions are the Quaternius Universal Animation Library, CC0-1.0, shipped here with its NOTICE. Release 0.4.11 re-reviewed: hand-drawn paths, depth video, staging arrays and groups are read as behaviour and reimplemented; no source file of that release is copied.",
     "code_treatment": "attributed-adaptation",
     "attribution": "mangfufu/director-desk — https://github.com/mangfufu/director-desk",
@@ -344,7 +344,10 @@
       "deterministic-clip-export",
       "hand-drawn-routes",
       "depth-references",
-      "set-piece-arrays"
+      "set-piece-arrays",
+      "built-in-white-model-library",
+      "transactional-assistant-turn",
+      "obstacle-avoiding-routes"
     ]
   },
   {
@@ -377,6 +380,43 @@
       "fight-plan-design-rules",
       "fight-exchange-visual-rules",
       "shared-fight-detection"
+    ]
+  },
+  {
+    "id": "blender-skills",
+    "url": "https://github.com/arjun988/blender-skills",
+    "reviewed_commit": "8f778d2405a214b508d4c7d80742be8e43acdd52",
+    "reviewed_at": "2026-11-03",
+    "license_observation": "MIT (Copyright (c) 2026 blender-skills contributors). 94 Markdown skills written for coding agents driving Blender over MCP.",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "arjun988/blender-skills — https://github.com/arjun988/blender-skills",
+    "capability_ids": [
+      "set-dressing-and-prop-craft-in-planning-prompts"
+    ]
+  },
+  {
+    "id": "monoform-previs-studio",
+    "url": "https://github.com/GuiYi-Xi/monoform-previs-studio",
+    "reviewed_commit": "a07faf9b5208ef24efb564510422c95b64636cc6",
+    "reviewed_at": "2026-11-03",
+    "license_observation": "No LICENSE file observed. Only the README, the user guide and the published article were read; its source and server prompts were not.",
+    "code_treatment": "clean-room",
+    "attribution": "GuiYi-Xi/monoform-previs-studio — https://github.com/GuiYi-Xi/monoform-previs-studio",
+    "capability_ids": [
+      "text-to-editable-blockout",
+      "text-or-image-to-object"
+    ]
+  },
+  {
+    "id": "reveric",
+    "url": "https://github.com/looplj/reveric",
+    "reviewed_commit": "797af100c0c27ffb9945882488258e844788c869",
+    "reviewed_at": "2026-11-03",
+    "license_observation": "AGPL-3.0 with a CLA. Only its README and design documents were read; none of its Dart source is used.",
+    "code_treatment": "clean-room",
+    "attribution": "looplj/reveric — https://github.com/looplj/reveric",
+    "capability_ids": [
+      "agent-operates-the-director-desk"
     ]
   }
 ]

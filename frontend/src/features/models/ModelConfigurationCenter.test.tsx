@@ -75,7 +75,7 @@ describe('ModelConfigurationCenter', () => {
 
     const onSelect = vi.fn();
     const onConfigurationChange = vi.fn();
-    render(<ModelConfigurationCenter open role="admin" onClose={() => undefined} onSelect={onSelect} onConfigurationChange={onConfigurationChange} />);
+    render(<ModelConfigurationCenter open canManage onClose={() => undefined} onSelect={onSelect} onConfigurationChange={onConfigurationChange} />);
 
     expect(await screen.findByRole('heading', { name: '模型配置' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: /文本模型/ })).toBeTruthy();
@@ -160,7 +160,7 @@ describe('ModelConfigurationCenter', () => {
       throw new Error(`unexpected fetch ${url}`);
     });
 
-    render(<ModelConfigurationCenter open role="admin" onClose={() => undefined} />);
+    render(<ModelConfigurationCenter open canManage onClose={() => undefined} />);
 
     const pool = await screen.findByRole('region', { name: 'OpenAI 备用凭据' });
     await userEvent.click(within(pool).getByRole('button', { name: '添加备用 Key' }));
@@ -219,7 +219,7 @@ describe('ModelConfigurationCenter', () => {
       if (url.endsWith('/providers')) return { ok: true, json: async () => providers } as Response;
       return { ok: true, json: async () => ({ items: [], summary: { text: 0, image: 0, video: 0, audio: 0 } }) } as Response;
     });
-    render(<ModelConfigurationCenter open role="admin" onClose={() => undefined} />);
+    render(<ModelConfigurationCenter open canManage onClose={() => undefined} />);
     await userEvent.selectOptions(await screen.findByLabelText('AI 供应商'), 'openai');
     const secret = screen.getByLabelText('API 密钥') as HTMLInputElement;
     await userEvent.type(secret, 'unsaved-api-secret');
@@ -253,7 +253,7 @@ describe('ModelConfigurationCenter', () => {
       }) } as Response;
     });
 
-    render(<ModelConfigurationCenter open role="admin" onClose={() => undefined} />);
+    render(<ModelConfigurationCenter open canManage onClose={() => undefined} />);
     await userEvent.click(await screen.findByRole('tab', { name: /音频模型/ }));
 
     expect(screen.getByLabelText('已保存模型数量').textContent).toBe('共 8 个 · 已启用 8 个');
@@ -287,7 +287,7 @@ describe('ModelConfigurationCenter', () => {
       return { ok: true, json: async () => ({ items: [], summary: { text: 0, image: 0, video: 0, audio: 0 } }) } as Response;
     });
 
-    render(<ModelConfigurationCenter open role="admin" onClose={() => undefined} />);
+    render(<ModelConfigurationCenter open canManage onClose={() => undefined} />);
     await userEvent.click(await screen.findByRole('tab', { name: /音频模型/ }));
     await userEvent.selectOptions(screen.getByLabelText('AI 供应商'), 'elevenlabs');
     await userEvent.type(screen.getByLabelText('API 密钥'), 'api-key-from-form');
@@ -335,7 +335,7 @@ describe('ModelConfigurationCenter', () => {
       return { ok: true, json: async () => ({ items: [], summary: { text: 0, image: 0, video: 0, audio: 0 } }) } as Response;
     });
 
-    render(<ModelConfigurationCenter open role="admin" onClose={() => undefined} />);
+    render(<ModelConfigurationCenter open canManage onClose={() => undefined} />);
     await userEvent.click(await screen.findByRole('tab', { name: /音频模型/ }));
     await userEvent.selectOptions(screen.getByLabelText('AI 供应商'), 'minimax');
     expect((screen.getByLabelText('基础 URL') as HTMLInputElement).value).toBe('https://api.minimaxi.com');
@@ -353,7 +353,7 @@ describe('ModelConfigurationCenter', () => {
       return { ok: true, json: async () => ({ items: [], summary: { text: 0, image: 0, video: 0, audio: 0 } }) } as Response;
     });
 
-    render(<ModelConfigurationCenter open role="admin" onClose={() => undefined} />);
+    render(<ModelConfigurationCenter open canManage onClose={() => undefined} />);
     await userEvent.click(await screen.findByRole('tab', { name: /视频模型/ }));
     await userEvent.selectOptions(screen.getByLabelText('AI 供应商'), 'kling');
 

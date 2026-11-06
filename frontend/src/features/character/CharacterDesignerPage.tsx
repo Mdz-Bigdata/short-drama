@@ -13,6 +13,7 @@ import { ElementLibraryPage } from '../elements/ElementLibraryPage';
 import type { ElementKind } from '../elements/elementTypes';
 import { assetGateReason, type AssetReadiness } from './assetReadiness';
 import { CharacterAssetTabs } from './CharacterAssetTabs';
+import { CharacterLooks } from './CharacterLooks';
 import { characterAssetTabLabels } from './assetTabLabels';
 import { CharacterFiveViewViewer } from './CharacterFiveViewViewer';
 import { CharacterDetailDialog } from './CharacterDetailDialog';
@@ -26,7 +27,7 @@ import type { CharacterDashboardResponse, CharacterRegenerateMode } from './type
 import './CharacterDesignerPage.css';
 import { t } from '../../i18n';
 
-const nonActorAssetKinds = ['scene', 'prop', 'costume', 'effect'] as const satisfies readonly ElementKind[];
+const nonActorAssetKinds = ['scene', 'prop', 'effect'] as const satisfies readonly ElementKind[];
 
 interface ElementCountResponse {
   items: unknown[];
@@ -90,11 +91,12 @@ export function CharacterDesignerPage({
   const [assetReplaceToken, setAssetReplaceToken] = useState(0);
   const [assetGenerationBusy, setAssetGenerationBusy] = useState(false);
   const [assetReadiness, setAssetReadiness] = useState<AssetReadiness | null>(null);
+  const [looksToken, setLooksToken] = useState(0);
   const synchronizedTaskId = useRef('');
   const character = dashboard.characters.find(item => item.characterId === selectedId) || dashboard.characters[0];
-  // 数字演员、场地、道具、服装、特效没出齐就离开第 3 步，下游分镜拿不到锁人物的
+  // 数字演员、定妆图、场地、道具、特效没出齐就离开第 3 步，下游分镜拿不到锁人物的
   // 身份视图，只能自己编一个人出来。看板契约 READY 之前不放行，成片一致性才守得住。
-  // The library gate covers scenes, props, costumes and effects; while it is
+  // The library gate covers costume looks, scenes, props and effects; while it is
   // unknown (older backend, request failed) the server-side stage-4 check still holds.
   const assetsReady = !assetReadiness || assetReadiness.complete;
   const castReady = dashboard.state === 'READY' && assetsReady;
@@ -170,7 +172,8 @@ export function CharacterDesignerPage({
   useEffect(() => {
     if (!taskId || synchronizedTaskId.current === taskId) return;
     synchronizedTaskId.current = taskId;
-    let cancelled = false;
+    // 只认当前项目的结果。不用清理函数打标记：StrictMode 的第二次挂载被上面的判断挡回，第一次的结果还得用上。
+    const stale = () => synchronizedTaskId.current !== taskId;
 
     const synchronizeProductionAssets = async () => {
       try {
@@ -178,7 +181,7 @@ export function CharacterDesignerPage({
           `/api/drama/${encodeURIComponent(taskId)}/production-assets/sync`,
           { method: 'POST', body: JSON.stringify({}) },
         );
-        if (cancelled) return;
+        if (stale()) return;
         if (result.readiness && typeof result.readiness.complete === 'boolean') setAssetReadiness(result.readiness);
         const reused = Number(result.reused || 0);
         setAssetSyncNotice(result.created > 0 || reused > 0
@@ -188,20 +191,21 @@ export function CharacterDesignerPage({
             + '。'
           : result.skipped > 0
             ? '剧本中的拍摄资产已全部存在于本项目资产。'
-            : '剧本中暂未识别到场地、道具、服装或特效资产。');
+            : '剧本中暂未识别到场地、道具或特效资产。');
+        setLooksToken(current => current + 1);
         await synchronizeAssetCounts();
       } catch {
-        if (!cancelled) {
+        if (!stale()) {
           setAssetSyncNotice('拍摄资产自动同步失败，可进入对应分类手动从剧本提取。');
         }
       }
     };
     void synchronizeProductionAssets();
-    return () => { cancelled = true; };
   }, [taskId, synchronizeAssetCounts]);
 
   const refresh = () => {
     onRefresh();
+    setLooksToken(current => current + 1);
     void synchronizeAssetCounts();
     void refreshAssetReadiness();
   };
@@ -437,6 +441,14 @@ export function CharacterDesignerPage({
                 />
                 <CharacterInspector key={`inspector-${character.characterId}`} character={character} onRegenerate={onRegenerateCharacter} />
               </div>
+              {taskId && (
+                <CharacterLooks
+                  taskId={taskId}
+                  characterName={character.name}
+                  refreshToken={looksToken}
+                  onGenerated={() => { void refreshAssetReadiness(); }}
+                />
+              )}
               <CharacterEvidencePanels dashboard={dashboard} character={character} />
             </>
           ) : (

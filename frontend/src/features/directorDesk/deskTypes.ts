@@ -1,12 +1,12 @@
 import type { Camera, Scene, WebGLRenderer } from 'three';
 
 import type { SpacePoint, StageOperation } from '../spatial/spatialTypes';
-import type { CaptureFigure, CaptureLabel } from './lib/capture';
+import type { CaptureFigure, CaptureLabel, CaptureLayer } from './lib/capture';
 import type { DepthRange } from './lib/depthPass';
 
 /** `path`: drag on the ground to draw the selected actor's walk or the filming camera's travel. */
 export type DeskTool = 'select' | 'move' | 'rotate' | 'scale' | 'pose' | 'measure' | 'path';
-export type DeskLayout = 'director' | 'split' | 'lens';
+export type DeskLayout = 'director' | 'split' | 'lens' | 'quad';
 
 /** `camera-target` is the look-at handle of a rig: it selects and drags on its own. */
 export type SelectionRef =
@@ -53,6 +53,8 @@ export interface CaptureOptions {
   depth?: boolean;
   /** Metres mapped to white→black; the lens works one out from the shot when this is left out. */
   depthRange?: DepthRange;
+  /** A control frame instead of the whole stage. */
+  layer?: CaptureLayer;
 }
 
 export interface CaptureResult {

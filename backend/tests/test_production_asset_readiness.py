@@ -64,7 +64,8 @@ class AssetReadinessTests(unittest.TestCase):
         self.assertEqual(readiness["kinds"]["scene"]["missing"], ["含元殿"])
         self.assertEqual((readiness["kinds"]["scene"]["total"], readiness["kinds"]["scene"]["ready"]), (2, 1))
         self.assertEqual(readiness["kinds"]["prop"]["missing"], [])
-        self.assertEqual(readiness["kinds"]["costume"]["total"], 0)
+        self.assertEqual(readiness["kinds"]["look"]["total"], 0)
+        self.assertNotIn("costume", readiness["kinds"])
         self.assertEqual(readiness["kinds"]["effect"]["missing"], [])
         self.assertEqual(readiness_reasons(readiness), ["3.拍摄场地缺少参考图（1项）：含元殿"])
 

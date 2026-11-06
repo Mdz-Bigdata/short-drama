@@ -9,6 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
+from app.core import usage_ledger
 from app.core.providers.defaults import MINIMAX_API_ROOT
 from app.platform.runtime_models import runtime_model_registry
 from app.schema.minimax_audio import (
@@ -26,6 +27,14 @@ class MiniMaxAudioArtifact:
     audio_url: str | None = None
     trace_id: str | None = None
     extra_info: dict[str, Any] = field(default_factory=dict)
+
+
+def _speech_units(_client, request, *_args, **_kwargs):
+    return request.model, {"characters": len(request.text)}
+
+
+def _music_units(_client, request, *_args, **_kwargs):
+    return request.model, {"calls": 1}
 
 
 class MiniMaxAudioClient:
@@ -168,6 +177,7 @@ class MiniMaxAudioClient:
             extra_info=safe_extra,
         )
 
+    @usage_ledger.metered("audio", provider="minimax", describe=_speech_units)
     def text_to_speech(self, request: MiniMaxTTSRequest) -> MiniMaxAudioArtifact:
         voice_setting: dict[str, Any] = {
             "voice_id": request.voice_id,
@@ -215,6 +225,7 @@ class MiniMaxAudioClient:
             "format": audio_format,
         }
 
+    @usage_ledger.metered("audio", provider="minimax", describe=_music_units)
     def generate_music(self, request: MiniMaxMusicRequest) -> MiniMaxAudioArtifact:
         payload: dict[str, Any] = {
             "model": request.model,
@@ -239,6 +250,7 @@ class MiniMaxAudioClient:
             output_format="url",
         )
 
+    @usage_ledger.metered("audio", provider="minimax", describe=_music_units)
     def cover_music(
         self, request: MiniMaxMusicCoverRequest
     ) -> MiniMaxAudioArtifact:

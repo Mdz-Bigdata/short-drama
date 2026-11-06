@@ -27,11 +27,11 @@ export function StandIn({ actor, subject, selected, labelled, onPick }: Props) {
   return (
     <group position={[actor.position[0], 0, actor.position[1]]} rotation={[0, (actor.yaw_deg * Math.PI) / 180, 0]} onClick={onPick}>
       <group rotation={lying ? [-Math.PI / 2, 0, 0] : [0, 0, 0]} position={lying ? [0, 0.2, 0] : [0, 0, 0]}>
-        <mesh position={[0, body / 2, 0]}>
+        <mesh position={[0, body / 2, 0]} castShadow>
           <capsuleGeometry args={[0.2, Math.max(0.05, body - 0.4), 6, 14]} />
           <meshStandardMaterial color={color} roughness={0.55} emissive={glow} emissiveIntensity={selected ? 0.45 : subject ? 0.25 : 0} />
         </mesh>
-        <mesh position={[0, body + head, 0]}>
+        <mesh position={[0, body + head, 0]} castShadow>
           <sphereGeometry args={[head, 18, 14]} />
           <meshStandardMaterial color={color} roughness={0.5} />
         </mesh>

@@ -115,7 +115,7 @@ ARTIFACT_LABELS: Final[dict[str, str]] = {
     "mastered_timeline": "母版时间线", "export_profiles": "导出规格", "delivery_archive": "交付归档",
     "final_qc": "成片终检", "highlight_clips": "高光切片", "cover_title_variants": "封面与标题备选",
     "trailer_plan": "预告方案", "platform_copy_tags": "平台文案与标签", "ab_test_plan": "A/B 测试方案",
-    "localization_package": "本地化素材包", "rights_ai_disclosure": "版权与 AI 标识", "campaign_kpis": "投放指标",
+    "localization_package": "本地化素材包", "rights_ai_disclosure": "版权与授权", "campaign_kpis": "投放指标",
 }
 
 
@@ -142,7 +142,7 @@ _ROLE_GATES: Final[dict[AgentRole, tuple[str, ...]]] = {
     ),
     AgentRole.STORYBOARD_ARTIST: (
         "每页为严格3×3九宫格，逐格包含角色、场景、道具、特效与完整镜头字段。",
-        "每镜只推进一个动作/信息/情绪节拍，并承接上一镜首尾状态。",
+        "一镜可以多人同时露面、连着多个动作，写清谁先谁后，并承接上一镜首尾状态。",
         "轴线、视线、左右站位、光向、道具归属和声音桥连续；动作戏拆成出招/受击/环境反馈。",
         "九宫格负面词只取通用/面部/手部肢体/身份造型/多人群演/场景光影/镜头语言/表演模块，静图不发时序词，不盲目堆叠。",
     ),
@@ -167,7 +167,7 @@ _ROLE_GATES: Final[dict[AgentRole, tuple[str, ...]]] = {
     ),
     AgentRole.PR_AGENT: (
         "宣传素材只能取自正片真实高光，不得夸大或诱导。",
-        "每个平台独立交付封面、标题、预告、简介、标签、AI标识与版权说明。",
+        "每个平台独立交付封面、标题、预告、简介、标签与版权说明；物料里不写 AI 生成、AI 制作这类声明。",
         "用3秒留存、完播、下一集点击、转化、分享和ROI做A/B闭环。",
         "宣发当前不生成画面，负面词只保留身份造型与文字水印两项用于物料核验；新增封面或预告生成前不得扩用画面负面词。",
     ),
@@ -200,7 +200,7 @@ CAPABILITIES: Final[tuple[CapabilityRecord, ...]] = (
          ("genre-summary", "production-guidelines", "industrial-production"),
          "从题材库选择主类型/混合元素，记录受众、平台、付费与成本边界。", "validate_director_artifacts", ("genre_audience_strategy",)),
     _cap("golden_narrative", "黄金叙事结构与多集弧", (_C.EXECUTIVE_DIRECTOR, _C.WRITER),
-         ("golden-narrative", "production-guidelines", "cinema-craft-redlines", "episode-hook-ladder"),
+         ("golden-narrative", "production-guidelines", "cinema-craft-redlines", "episode-hook-ladder", "scene-craft-dialogue"),
          "强制前3秒钩子、周期冲突/反转、单集情绪点与尾5秒钩子；每集情绪/视觉/场景各有一次顶点(S级三冲击)，强情节必须因果成立；"
          "前三集按引爆/升级/反转分工，集尾悬念与下一集开场咬合，付费墙前三集走虚假胜利→崩塌→黑屏钩子。", "validate_narrative_contract", ("series_narrative_arc", "episode_scripts")),
     _cap("highlight_detection", "高光识别与传播强度", (_C.EXECUTIVE_DIRECTOR, _C.PR_AGENT),
@@ -213,7 +213,7 @@ CAPABILITIES: Final[tuple[CapabilityRecord, ...]] = (
          ("consistency-checklist", "golden-narrative", "cinema-craft-redlines", "episode-hook-ladder"),
          "维护因果链、角色知情表、世界规则、时间线、伏笔设置/回收和关系变化台账；每集更新角色状态/暗线进度/埋种回调/已公开信息四张追踪表。", "validate_narrative_contract", ("series_bible", "foreshadow_ledger")),
     _cap("dialogue_craft", "口语台词、潜台词与角色辨识", (_C.WRITER, _C.AUDIO_DIRECTOR),
-         ("dialogue-pacing", "production-guidelines", "cinema-craft-redlines"),
+         ("dialogue-pacing", "production-guidelines", "cinema-craft-redlines", "scene-craft-dialogue", "poetry-recreation"),
          "台词短句化并记录角色语癖(语言指纹)、潜台词、打断/重叠、叙述层与可读时长；不写心理描写、括号暗示与解释性台词。", "validate_dialogue_contract", ("dialogue_sheet", "voice_cards")),
     _cap("dialogue_performance", "语速、情绪、停顿、重音与呼吸", (_C.AUDIO_DIRECTOR, _C.WRITER),
          ("dialogue-pacing", "performance-details"),
@@ -234,13 +234,13 @@ CAPABILITIES: Final[tuple[CapabilityRecord, ...]] = (
          ("director-shot-guide", "visual-style"),
          "每镜说明景别/角度/焦段/构图/运镜路径/速度/起止点/叙事原因，禁止无动机炫技。", "validate_storyboard_contract", ("shot_motion_contracts",)),
     _cap("blocking_axis", "站位、视线与180度轴线", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR),
-         ("director-shot-guide", "continuity-design"),
+         ("director-shot-guide", "continuity-design", "shot-group-and-handoff-checks"),
          "固定角色左右、眼线、动作方向和机位侧；跨轴须有可见过轴或中性镜头。", "validate_continuity_contract", ("continuity_ledger", "reference_binding_plan")),
     _cap("exact_nine_grid", "严格九宫格与分页", (_C.STORYBOARD_ARTIST,),
          ("actor-sheet-template", "plot-shot-coherence"),
          "分镜按3×3从左到右、从上到下；每格一拍，真实镜不足时只留空格不伪造剧情。", "validate_nine_grid_contract", ("exact_nine_grid_storyboards", "storyboard_qc")),
     _cap("continuity_six_anchors", "跨镜六锚点连续性", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR, _C.COMPOSER_PUBLISHER),
-         ("plot-shot-coherence", "continuity-design", "consistency-checklist"),
+         ("plot-shot-coherence", "continuity-design", "consistency-checklist", "frame-handoff-action-light-tone", "shot-group-and-handoff-checks", "cut-connection-ideas"),
          "人物/空间/动作/情绪/道具/光影从上一镜尾状态原样交付下一镜首状态。", "validate_continuity_contract", ("continuity_ledger", "transition_plan")),
     _cap("fight_choreography", "武打力学与出招-受击拆分", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR, _C.AUDIO_DIRECTOR),
          ("martial-arts",),
@@ -277,8 +277,8 @@ CAPABILITIES: Final[tuple[CapabilityRecord, ...]] = (
          ("performance-details", "dialogue-pacing"),
          "先锁最终干声，再生成口型与逐字时间戳；字幕、闭口手柄与镜头时长共同校验。", "validate_lipsync_contract", ("lipsync_plan", "subtitle_package")),
     _cap("editing_transitions", "剪辑节奏与连续性转场", (_C.COMPOSER_PUBLISHER, _C.STORYBOARD_ARTIST),
-         ("continuity-design", "production-guidelines", "director-shot-guide"),
-         "同场优先硬切，时间跳跃用叠化，差异用遮挡/运动/匹配剪辑；转场必须有叙事原因。", "validate_delivery_contract", ("edit_decision_list", "transition_plan")),
+         ("continuity-design", "production-guidelines", "director-shot-guide", "frame-handoff-action-light-tone"),
+         "不用硬切：同场用动作/视线匹配或镜头顺势运动衔接，换场用遮挡/推拉并让声音先行，时间跳跃用叠化；转场必须连贯自然且有叙事原因。", "validate_delivery_contract", ("edit_decision_list", "transition_plan")),
     _cap("delivery_master", "字幕、画幅、帧率、编码与归档", (_C.COMPOSER_PUBLISHER,),
          ("production-guidelines", "visual-style", "consistency-checklist"),
          "按单一目标平台编译导出配置，校验字幕安全区、OCR、音量、帧率、分辨率、命名、版本与元数据。", "validate_delivery_contract", ("mastered_timeline", "export_profiles", "delivery_archive")),
@@ -291,9 +291,9 @@ CAPABILITIES: Final[tuple[CapabilityRecord, ...]] = (
     _cap("growth_loop", "平台指标、A/B、投流与商业闭环", (_C.PR_AGENT, _C.EXECUTIVE_DIRECTOR),
          ("production-guidelines", "genre-summary"),
          "跟踪3秒留存、完播、下一集点击、付费、分享和ROI，结论回写下一轮创作假设。", "validate_marketing_contract", ("ab_test_plan", "campaign_kpis")),
-    _cap("rights_provenance", "授权、版权、AI标识与第三方溯源", (_C.PR_AGENT, _C.COMPOSER_PUBLISHER, _C.EXECUTIVE_DIRECTOR),
+    _cap("rights_provenance", "授权、版权与第三方溯源", (_C.PR_AGENT, _C.COMPOSER_PUBLISHER, _C.EXECUTIVE_DIRECTOR),
          ("production-guidelines", "consistency-checklist"),
-         "记录人类创作参与、素材/声纹授权、模型条款、来源、AI标识、版本与审批，不复制受限代码资产。", "validate_provenance_contract", ("rights_ai_disclosure", "delivery_archive", "production_risk_register")),
+         "记录人类创作参与、素材/声纹授权、模型条款、来源、版本与审批，不复制受限代码资产。", "validate_provenance_contract", ("rights_ai_disclosure", "delivery_archive", "production_risk_register")),
 )
 
 
@@ -367,7 +367,8 @@ NEGATIVE_MODULE_WORDS: Final[dict[str, str]] = {
     "material_texture": "plastic skin, waxy skin, CGI look, 3d render",                    # §八
     "temporal_continuity": "frame flicker, temporal inconsistency, character drift, sliding feet",  # §九
     "performance_acting": "overacting, stiff acting, broken lip sync, expression drift",   # §十
-    "text_watermark": "text, subtitles, watermark, logo",                                  # §一·关键压制项
+    # 只禁叠加上去的东西：裸写 text 会让模型去擦场景里原有的匾额、对联、招牌。短一点，预算内才轮得到它。
+    "text_watermark": "subtitles, watermark, logo",                                        # §一·关键压制项
     "period_costume_architecture": "modern hairstyle, zipper, modern props, cosplay look", # §十一
     "suspense_horror_visibility": "muddy darkness, unreadable shadows, cheesy blood",      # §十三
     "scifi_material_ui": "cheap sci-fi, fake hologram, floating meaningless interface",    # §十四
@@ -583,7 +584,7 @@ def _handoffs() -> list[AgentHandoff]:
         required_artifacts=["rights_ai_disclosure", "campaign_kpis", "highlight_clips"],
         acceptance_rules=[
             "宣发主张与已批准正片高光一致",
-            "版权、授权、AI标识、平台合规和最终人工复核齐备",
+            "版权、授权、平台合规和最终人工复核齐备",
             "发布门禁可复算且所有阻断项为零",
         ],
     ))
@@ -730,7 +731,7 @@ class AgentCouncilCompiler:
         structural = (
             ("character.five_view_order", identity_order_ok,
              "身份视图顺序正确" if identity_order_ok else "身份视图缺失或顺序错误", AgentRole.CHARACTER_DESIGNER),
-            ("storyboard.exact_nine_grid", evidence.storyboard_rows == 3 and evidence.storyboard_columns == 3 and evidence.storyboard_panel_count == 9,
+            ("storyboard.exact_nine_grid", evidence.storyboard_rows == 3 and evidence.storyboard_columns == 3 and 1 <= evidence.storyboard_panel_count <= 9,
              f"{evidence.storyboard_rows}×{evidence.storyboard_columns}, panels={evidence.storyboard_panel_count}", AgentRole.STORYBOARD_ARTIST),
             ("storyboard.motion_fingerprint", evidence.storyboard_motion_fingerprints_match,
              "分镜与运镜契约指纹一致" if evidence.storyboard_motion_fingerprints_match else "契约指纹不一致", AgentRole.VISUAL_DIRECTOR),

@@ -147,6 +147,53 @@ class StoryboardPromptDetailTests(unittest.TestCase):
             "沈砚完成第1个连续动作阶段 → 沈砚完成第2个连续动作阶段 → 沈砚完成第3个连续动作阶段",
         )
 
+    def test_a_fight_page_unlocks_the_camera_and_writes_contact_as_a_path(self):
+        fight = _panel(1).model_copy(update={"subject_action": "沈砚拔剑与狱卒交手，刀剑相接，狱卒被击退半步"})
+        board = NineGridStoryboard(
+            title="天牢夺刀", rhythm_profile="action",
+            assets=StoryAssetCatalog(characters=["沈砚"], scenes=["天牢"], props=["铁链"], effects=["月光尘埃"]),
+            panels=[fight, _panel(2)],
+        )
+
+        result = compile_storyboard_prompt_detail(board, script_text="沈砚拔剑与狱卒交手", visual_style="写实")
+
+        camera = result.foundation["camera_design"]
+        self.assertIn("镜头跟着动作走", camera["stability"])
+        self.assertNotIn("固定机位", camera["stability"])
+        self.assertNotIn("突然推近", camera["forbidden_behaviors"])
+        self.assertIn("继续推进", result.foundation["dynamics_design"]["speed_curve"])
+        self.assertIn("接触点", result.foundation["dynamics_design"]["motion_blur"])
+        self.assertIn("镜头跟着动作走", result.video_segments[0].prompt)
+
+    def test_a_quiet_page_keeps_the_steady_camera(self):
+        board = NineGridStoryboard(
+            title="天牢月光",
+            assets=StoryAssetCatalog(characters=["沈砚"], scenes=["天牢"], props=["铁链"], effects=["月光尘埃"]),
+            panels=[_panel(1), _panel(2)],
+        )
+
+        camera = compile_storyboard_prompt_detail(board, script_text="沈砚抬头望月", visual_style="写实").foundation["camera_design"]
+
+        self.assertIn("以稳定器/固定机位为基准", camera["stability"])
+        self.assertIn("突然推近", camera["forbidden_behaviors"])
+
+    def test_a_motion_reference_video_lends_only_the_body_path(self):
+        board = NineGridStoryboard(
+            title="天牢夺刀",
+            assets=StoryAssetCatalog(characters=["沈砚"], scenes=["天牢"], props=["铁链"], effects=["月光尘埃"]),
+            panels=[_panel(1), _panel(2)],
+        )
+
+        default = compile_storyboard_prompt_detail(board, script_text="沈砚抬头", visual_style="写实")
+        motion = compile_storyboard_prompt_detail(
+            board, script_text="沈砚抬头", visual_style="写实",
+            production_context={"reference_video_role": "motion_trajectory"},
+        )
+
+        self.assertIn("只锁定角色长相", default.video_segments[0].prompt)
+        self.assertIn("只提供身体运动轨迹与发力节奏", motion.video_segments[0].prompt)
+        self.assertIn("不继承其中的长相、服装、场景与运镜", motion.still_prompts[0].prompt)
+
     def test_bare_dialogue_uses_the_character_in_its_current_panel(self):
         second_panel = _panel(2, "这句台词属于当前拍角色")
         second_panel.characters = ["贺兰霆"]

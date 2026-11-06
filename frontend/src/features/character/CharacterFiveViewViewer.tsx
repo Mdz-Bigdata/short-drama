@@ -191,13 +191,14 @@ export function CharacterFiveViewViewer({
           ))}
         </div>
       ) : (
+      // 身份视图：左边一张主卡，右边一列竖排缩略图（参照数字演员卡片的版式）。
+      <div className="character-viewer__identity">
       <div
         id={panelId}
         role="tabpanel"
         aria-labelledby={`character-view-tab-${selectedDefinition.key}`}
         className={`character-viewer__stage ${selectedAvailable ? 'is-ready' : 'is-missing'}`}
       >
-        <div className="character-viewer__reticle" aria-hidden="true" />
         {selectedAvailable && selectedAsset?.imageUrl ? (
           <>
             <button
@@ -225,7 +226,7 @@ export function CharacterFiveViewViewer({
               rel="noreferrer"
               aria-label={`查看${character.name}${selectedDefinition.labelZh}原图`}
             >
-              <ExternalLink size={15} /> {t('原图')}
+              <ExternalLink size={16} aria-hidden="true" />
             </a>
           </>
         ) : sheetOnly && character.sheetUrl ? (
@@ -264,18 +265,14 @@ export function CharacterFiveViewViewer({
           </div>
         )}
 
-        <div className="character-viewer__stage-label">
-          <span>{String(selectedDefinition.order).padStart(2, '0')}</span>
-          <div>
-            <strong>{selectedDefinition.labelZh}</strong>
-            <small>{selectedDefinition.labelEn} · {selectedDefinition.angleDegrees}°</small>
-          </div>
+        <div className="character-viewer__badge" title={selectedDefinition.labelEn}>
+          <strong>{selectedDefinition.labelZh}</strong>
+          <small>{selectedDefinition.angleDegrees}°</small>
         </div>
       </div>
-      )}
 
       <div
-        className={`character-viewer__tabs ${showDetails ? 'is-hidden' : ''}`}
+        className="character-viewer__tabs"
         role="tablist"
         aria-label={`${character.name} 身份视图`}
       >
@@ -325,6 +322,8 @@ export function CharacterFiveViewViewer({
           );
         })}
       </div>
+      </div>
+      )}
 
       {largeImage && (
         <CharacterDetailDialog

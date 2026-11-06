@@ -25,6 +25,9 @@ interface Props {
 }
 
 const FOCALS = [18, 24, 35, 50, 85, 120];
+const SENSORS: Array<{ label: string; mm: number }> = [
+  { label: '全画幅', mm: 36 }, { label: 'Super35', mm: 24.89 }, { label: 'APS-C', mm: 23.6 }, { label: 'M4/3', mm: 17.3 }, { label: '中画幅', mm: 43.8 }, { label: '65mm', mm: 54.12 },
+];
 const SIZES = ['全景', '中景', '近景', '特写'];
 const GUIDE_TOGGLES: Array<{ key: 'frame' | 'thirds' | 'safe' | 'cross'; label: string }> = [
   { key: 'frame', label: '画幅遮幅' }, { key: 'thirds', label: '三分线' }, { key: 'safe', label: '9% 安全框' }, { key: 'cross', label: '中心十字' },
@@ -125,6 +128,16 @@ export function CameraPanel({ plan, shot, lens, guides, editable, canUseView, ba
         onKeyUp={() => { if (focal !== null) sendFocal(focal, true); }}
         onBlur={() => { if (focal !== null) sendFocal(focal, true); }}
       />
+
+      <h3>传感器 {lens ? <small>长边 {lens.sensor_mm ?? 36}mm · 视场 {lens.fov_deg.toFixed(1)}° · 等效 {Math.round((lens.lens_mm * 36) / (lens.sensor_mm ?? 36))}mm</small> : null}</h3>
+      <div className="desk-chips" role="group" aria-label="传感器尺寸">
+        {SENSORS.map(item => (
+          <button
+            key={item.mm} type="button" className="desk-chip" aria-pressed={(lens?.sensor_mm ?? 36) === item.mm} disabled={!editable || !lens}
+            onClick={() => { if (lens && (lens.sensor_mm ?? 36) !== item.mm) onCommit({ label: `传感器 ${item.label}`, operations: [{ op: 'move_camera', camera_id: lens.id, sensor_mm: item.mm }] }); }}
+          >{item.label}</button>
+        ))}
+      </div>
 
       <h3>景别</h3>
       <div className="desk-chips" role="group" aria-label="景别">

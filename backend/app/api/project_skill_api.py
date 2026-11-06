@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
-from app.api.auth_api import get_current_user, require_admin
+from app.api.auth_api import get_current_user, require_permission
+from app.platform.permissions import SKILL_MANAGE
 from app.core.project_skill_import import (
     MAX_ARCHIVE_BYTES,
     MAX_MARKDOWN_BYTES,
@@ -60,7 +61,7 @@ async def list_project_skills(
 @router.post("")
 async def create_project_skill(
     request: ProjectSkillCreateRequest,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_permission(SKILL_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
 ):
     try:
@@ -82,7 +83,7 @@ async def create_project_skill(
 @router.post("/upload")
 async def upload_project_skill_markdown(
     file: UploadFile = File(...),
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_permission(SKILL_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
 ):
     try:
@@ -109,7 +110,7 @@ async def upload_project_skill_markdown(
 @router.post("/import")
 async def import_project_skill_package(
     file: UploadFile = File(...),
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_permission(SKILL_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
 ):
     try:
@@ -137,7 +138,7 @@ async def import_project_skill_package(
 async def update_project_skill(
     skill_id: str,
     request: ProjectSkillUpdateRequest,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_permission(SKILL_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
 ):
     try:
@@ -159,7 +160,7 @@ async def update_project_skill(
 async def toggle_project_skill(
     skill_id: str,
     request: CapabilityToggleRequest,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_permission(SKILL_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
 ):
     try:

@@ -125,6 +125,16 @@ def is_production() -> bool:
     return environment() in PRODUCTION_ENVIRONMENTS
 
 
+def billing_enforced() -> bool:
+    """Whether model calls take points from balances. Off, they are only recorded."""
+    return env_flag("BILLING_ENFORCE", False)
+
+
+def payment_sandbox_enabled() -> bool:
+    """The sandbox channel grants points with no money behind them, so it never runs in production."""
+    return not is_production() and env_flag("PAYMENT_SANDBOX_ENABLED", False)
+
+
 def server_host() -> str:
     return _text("BACKEND_HOST") or DEFAULT_SERVER_HOST
 

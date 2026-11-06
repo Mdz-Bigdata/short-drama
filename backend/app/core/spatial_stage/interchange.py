@@ -70,7 +70,8 @@ def _desk_timeline(plan: StagePlan) -> dict[str, Any] | None:
     aspect = geo.parse_aspect(plan.aspect_ratio)
     for shot in plan.shots:
         timeline = plan.timelines.get(str(shot.shot_id))
-        if timeline is None:
+        # 别的导演台只有机位轨：人物关键帧和动作片段是本台自己的(见 _local_notes)，不算这份工程的动画。
+        if timeline is None or not timeline.camera:
             continue
         if timeline.camera:
             tracks.append({"cameraId": shot.camera_id, "keyframes": [
@@ -79,13 +80,13 @@ def _desk_timeline(plan: StagePlan) -> dict[str, Any] | None:
                     "value": {
                         # The same convention as the camera records: the rig body, not the lens.
                         "position": _rig(key.position, key.target), "target": list(key.target),
-                        "fov": round(geo.vertical_fov(key.lens_mm, aspect), 2),
+                        "fov": round(geo.vertical_fov(key.lens_mm, aspect, plan.camera(shot.camera_id).sensor_mm), 2),
                     },
                 }
                 for index, key in enumerate(timeline.camera)
             ]})
         clock += timeline.duration_s
-    return {"duration": round(clock, 3), "tracks": [], "cameraTracks": tracks} if plan.timelines else None
+    return {"duration": round(clock, 3), "tracks": [], "cameraTracks": tracks} if tracks else None
 
 
 _BACKDROP_WORDS = {"none": "无", "color": "纯色", "image": "参考图", "panorama": "全景图"}

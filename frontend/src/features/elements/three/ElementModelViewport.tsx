@@ -216,10 +216,10 @@ export default function ElementModelViewport({ name, contentUrl, posterUrl }: Pr
             camera={{ position: [4.5, 2.8, 6], fov: 38, near: 0.01, far: 10_000 }}
             gl={{ antialias: !lowQuality, powerPreference: 'high-performance' }}
           >
-            <color attach="background" args={['#fcedef']} />
-            <fog attach="fog" args={['#fcedef', 14, 34]} />
+            <color attach="background" args={['#0f0c12']} />
+            <fog attach="fog" args={['#0f0c12', 14, 34]} />
             <ambientLight intensity={1.05} />
-            <hemisphereLight args={['#e76a7f', '#fdeef1', 1.7]} />
+            <hemisphereLight args={['#f0a3b4', '#1a1420', 1.7]} />
             <directionalLight position={[5, 8, 4]} intensity={2.8} color="#e76e82" />
             <spotLight position={[-6, 5, 1]} intensity={35} angle={0.45} penumbra={0.9} color="#e46e5b" />
             <spotLight position={[4, 2, -5]} intensity={24} angle={0.55} penumbra={1} color="#e3546c" />

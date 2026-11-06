@@ -36,8 +36,10 @@ import { WriterTimeline } from './WriterTimeline';
 import { summarizeEpisodeTitle } from './textSummary';
 import {
   CREATION_MODE_LABELS,
+  EMPTY_OVERVIEW,
   normalizeWriterBreakdown,
   sceneEpisode,
+  type OverviewFields,
   type WriterDashboardStats,
   type WriterEpisode,
   type WriterRelationship,
@@ -150,6 +152,7 @@ export function WriterAgentPage({
   episodesBusy = false,
   serverStats,
   onExport,
+  onExportBreakdown,
   onPlanEpisodes,
   onProduceEpisode,
   onSaveScript,
@@ -179,6 +182,8 @@ export function WriterAgentPage({
   episodesBusy?: boolean;
   serverStats?: WriterDashboardStats;
   onExport?: () => void | Promise<void>;
+  /** 每场一张的拆解单：表格给制片排期，Markdown 给人看。 */
+  onExportBreakdown?: (format: 'csv' | 'md') => void | Promise<void>;
   onPlanEpisodes?: () => void;
   onProduceEpisode?: (index: number) => void;
   onSaveScript?: (
@@ -195,7 +200,7 @@ export function WriterAgentPage({
   versions?: WriterScriptVersion[];
   /** name → portrait url, when stage 3 drew the character. */
   avatars?: Record<string, string>;
-  onSaveOverview?: (fields: { title?: string; synopsis?: string; genre?: string; theme?: string; world_setting?: string }) => Promise<void>;
+  onSaveOverview?: (fields: OverviewFields) => Promise<void>;
   onRegenerateOverview?: () => Promise<void>;
   onSaveTimeline?: (events: Array<{ phase: string; title: string; desc: string; points: string[] }>) => Promise<void>;
   onSaveVersion?: (label: string) => Promise<void>;
@@ -209,7 +214,7 @@ export function WriterAgentPage({
   const [storyView, setStoryView] = useState<'events' | 'beats'>('events');
   const [networkExpanded, setNetworkExpanded] = useState(false);
   const [overviewEditing, setOverviewEditing] = useState(false);
-  const [overviewDraft, setOverviewDraft] = useState({ synopsis: '', genre: '', theme: '', world_setting: '' });
+  const [overviewDraft, setOverviewDraft] = useState<OverviewFields>(EMPTY_OVERVIEW);
   const [overviewBusy, setOverviewBusy] = useState('');
   const [overviewError, setOverviewError] = useState('');
   const [readerOpen, setReaderOpen] = useState(false);
@@ -231,6 +236,10 @@ export function WriterAgentPage({
     { label: t('题材'), value: cleanOverviewText(overview?.genre), className: 'is-genre' },
     { label: t('核心主题'), value: cleanOverviewText(overview?.theme), className: 'is-theme' },
     { label: t('世界设定'), value: cleanOverviewText(overview?.world_setting || overview?.worldSetting), className: 'is-world' },
+    // 立意卡：总导演策划写、概述接下来的三项。
+    { label: t('立意'), value: cleanOverviewText(overview?.thesis), className: 'is-thesis' },
+    { label: t('母题'), value: cleanOverviewText(overview?.motif), className: 'is-motif' },
+    { label: t('终局意象'), value: cleanOverviewText(overview?.ending_image || overview?.endingImage), className: 'is-ending' },
   ].filter(item => item.value);
   // Only named relations (君臣、父子、宿敌 …) are shown or counted; a pairing counted from shared
   // scenes is not one. Until the story has named relations the page asks for an analysis.
@@ -409,6 +418,12 @@ export function WriterAgentPage({
           <span className={`writer-board__state ${source ? 'is-ready' : ''}`}><Check aria-hidden="true" /> {source ? t('剧本已载入') : t('等待生成')}</span>
           {(onSaveVersion || versions.length > 0) && <ScriptVersionMenu versions={versions} onSave={onSaveVersion} onRestore={onRestoreVersion} />}
           {taskId && <button type="button" className="is-primary" onClick={() => setView('library')}><Upload aria-hidden="true" /> {t('上传映视界文件')}</button>}
+          {onExportBreakdown && (
+            <>
+              <button type="button" onClick={() => { void onExportBreakdown('csv'); }} disabled={!source && scenes.length === 0} title={t('每场一张：场号、内外、日夜、页长、演员和元素。页长按一页约一分钟估算。')}><Download aria-hidden="true" /> {t('拆解单表格')}</button>
+              <button type="button" onClick={() => { void onExportBreakdown('md'); }} disabled={!source && scenes.length === 0}><Download aria-hidden="true" /> {t('拆解单文档')}</button>
+            </>
+          )}
           <button type="button" onClick={() => { void (onExport || handleExport)(); }} disabled={!source && scenes.length === 0}><Download aria-hidden="true" /> {t('导出 JSON')}</button>
         </div>
       </header>
@@ -531,6 +546,8 @@ export function WriterAgentPage({
                       setOverviewDraft({
                         synopsis: String(overview?.synopsis || ''), genre: String(overview?.genre || ''),
                         theme: String(overview?.theme || ''), world_setting: String(overview?.world_setting || overview?.worldSetting || ''),
+                        thesis: String(overview?.thesis || ''), motif: String(overview?.motif || ''),
+                        ending_image: String(overview?.ending_image || overview?.endingImage || ''),
                       });
                       setOverviewError('');
                       setOverviewEditing(true);
@@ -565,6 +582,11 @@ export function WriterAgentPage({
                   <label><span>{t('主题')}</span><input value={overviewDraft.theme} maxLength={500} onChange={event => setOverviewDraft(current => ({ ...current, theme: event.target.value }))} /></label>
                 </div>
                 <label><span>{t('世界观设定')}</span><textarea rows={3} value={overviewDraft.world_setting} maxLength={4000} onChange={event => setOverviewDraft(current => ({ ...current, world_setting: event.target.value }))} /></label>
+                <label><span>{t('立意')}</span><input value={overviewDraft.thesis} maxLength={500} placeholder={t('一个可以被反驳的判断，不是题目')} onChange={event => setOverviewDraft(current => ({ ...current, thesis: event.target.value }))} /></label>
+                <div className="writer-overview__form-row">
+                  <label><span>{t('母题')}</span><input value={overviewDraft.motif} maxLength={1000} placeholder={t('一件东西，出现三次各是什么意思')} onChange={event => setOverviewDraft(current => ({ ...current, motif: event.target.value }))} /></label>
+                  <label><span>{t('终局意象')}</span><input value={overviewDraft.ending_image} maxLength={500} placeholder={t('全剧最后一个画面')} onChange={event => setOverviewDraft(current => ({ ...current, ending_image: event.target.value }))} /></label>
+                </div>
                 <div className="writer-overview__form-actions">
                   <button type="submit" disabled={overviewBusy === 'save'}>{overviewBusy === 'save' ? t('保存中…') : t('保存概述')}</button>
                   <button type="button" disabled={overviewBusy === 'save'} onClick={() => { setOverviewEditing(false); setOverviewError(''); }}>{t('取消')}</button>

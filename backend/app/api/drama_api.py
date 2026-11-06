@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Optional
 from app.schema.shot_visual import (
     ShotRegenerateRequest,
     ShotVideoPromptUpdate,
+    ProjectVideoModelUpdate,
     VideoAdmissionRequest,
     ShotCandidateSelection,
     ShotRecipeRequest,
@@ -19,7 +20,7 @@ from app.schema.shot_visual import (
 )
 from app.core.production_asset_readiness import READINESS_KEY, evaluate_asset_readiness
 from app.core.project_asset_completion import project_element_summaries
-from app.core.element_scope import element_in_task, element_name_keys, link_task, normalized_asset_name
+from app.core.element_scope import element_in_task, element_name_keys, element_task_ids, link_task, normalized_asset_name
 from app.schema.drama import (
     DramaCreateRequest,
     DramaTaskResponse,
@@ -28,18 +29,24 @@ from app.schema.drama import (
     ShotFeedbackRequest,
 )
 from app.service.drama_service import DramaService, ScriptUpdateConflictError, StagePrerequisiteError
+from app.service.acquisition_service import AcquisitionService
 from app.repository.task_repo import TaskRepository
-from app.api.auth_api import get_current_user, require_admin
+from app.api.auth_api import get_current_user, require_permission
+from app.platform.access_audit import record_access
+from app.platform.billing_book import active_book
+from app.platform.permissions import PROJECT_READ_ANY, PROJECT_WRITE_ANY, SKILL_MANAGE, authorize, has_permission
 from app.core.media_compositor import MEDIA_DIR
 from app.core.production_asset_extractor import extract_production_assets
 from app.core.storyboard_assets import compose_nine_grid, fetch_remote_image_bytes
 from app.core.writer_dashboard import compile_writer_dashboard
-from app.api.element_api import _persist_element_file, sync_project_actor_to_library
+from app.api.element_api import NEEDS_REDRAW, _first_image_bytes, _persist_element_file, sync_project_actor_to_library
 from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore
 from app import settings
-from app.core import asset_identity
+from app.core import breakdown_kinds, character_variants, script_breakdown, asset_identity
+from app.core.character_looks import crowd_wardrobe, plan_looks, timing_is_readable, untimed_makeup
 from app.core import creation_modes, edit_timeline, generation_queue, style_analysis
+from app.core.spatial_stage import blockout as stage_blockout
 from app.core.screenwriting import ledger_ops
 from app.core.screenwriting.review import ReviewError
 from app.ingest.parsers import SourceIngestor
@@ -79,7 +86,9 @@ from app.schema.screenwriting import (
 )
 from app.core.screenwriting.editing import PlanEditError
 from app.core.screenwriting.engine import PROMPT_STAGES, PlanRejected, ScreenwritingError
+from app.core.spatial_stage.director_ai import DirectorAIError
 from app.core.spatial_stage.interchange import InterchangeError
+from app.core.spatial_stage.model_kit import ModelKitError
 from app.core.spatial_stage.operations import StageEditError
 from app.schema.spatial_stage import (
     SpatialExportResponse,
@@ -93,6 +102,8 @@ from app.schema.spatial_stage import (
 from app.schema.director_desk import DeskCapture, DeskCapturesResponse, DeskPosesResponse, DeskSavePoseRequest
 from app.service.director_desk_service import MAX_CLIP_BYTES, CaptureError, CaptureUpload
 from app.service.spatial_stage_service import StageConflict
+from app.service import stage_director_service as stage_director
+from app.core import project_memory
 
 logger = logging.getLogger("app.api.drama_api")
 service = DramaService()
@@ -101,29 +112,33 @@ service.character_regenerated_hook = sync_project_actor_to_library
 repo = TaskRepository()
 
 
-def require_owned_drama_task(
+async def require_owned_drama_task(
     request: Request,
     current_user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
 ) -> dict:
     """Enforce per-task ownership for every route containing a task_id."""
     task_id = request.path_params.get("task_id")
     if not task_id:
         return current_user
 
-    task = service.repo.get_task(str(task_id))
+    task = await run_in_threadpool(service.repo.get_task, str(task_id))
     if not task:
         # Fail closed: a transient repository read failure must never let the
         # handler perform a second, unauthorised read that happens to succeed.
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    if current_user.get("role") == "admin":
-        return current_user
-
-    user_id = str(current_user.get("user_id") or "")
+    write = request.method not in {"GET", "HEAD", "OPTIONS"}
     owner_user_id = str(task.get("owner_user_id") or "")
-    if not user_id or not owner_user_id or user_id != owner_user_id:
+    decision = authorize(current_user, owner_id=owner_user_id, write=write)
+    if not decision.allowed:
         # Hide task existence from users who do not own it.
         raise HTTPException(status_code=404, detail="任务不存在")
+    if decision.cross_account:
+        await record_access(
+            store, current_user, resource_id=str(task_id), owner_id=owner_user_id, write=write,
+            via=f"{request.method} {request.url.path}",
+        )
     return current_user
 
 
@@ -141,6 +156,11 @@ def create_new_task(req: DramaCreateRequest, current_user: dict = Depends(get_cu
     如果是一键成片，则初始化后可直接一键生成。
     """
     try:
+        book = active_book()
+        if book is not None:
+            owner_id = str(current_user.get("user_id") or "")
+            owned = sum(1 for task in service.repo.list_all_tasks() if isinstance(task, dict) and task.get("owner_user_id") == owner_id)
+            book.require_feature(owner_id, "project.max", current=owned)
         task_data = service.create_task(req, owner_user_id=current_user.get("user_id"))
         return task_data
     except Exception as e:
@@ -154,7 +174,7 @@ def get_all_tasks(current_user: dict = Depends(get_current_user)):
     list is polled, so they are fetched per project through /{task_id}/status.
     """
     tasks = service.repo.list_all_tasks()
-    if current_user.get("role") != "admin":
+    if not has_permission(current_user, PROJECT_READ_ANY):
         user_id = str(current_user.get("user_id") or "")
         tasks = (
             [
@@ -201,6 +221,25 @@ def export_writer_dashboard(task_id: str):
     )
 
 
+@router.get("/{task_id}/script-breakdown")
+def download_script_breakdown(task_id: str, format: str = Query("json", pattern="^(json|csv|md)$")):
+    """The scene-by-scene breakdown: JSON to read, CSV for a spreadsheet, Markdown to hand around."""
+    breakdown = service.script_breakdown(task_id)
+    if breakdown is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if format == "csv":
+        return Response(
+            content=script_breakdown.render_csv(breakdown), media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="script-breakdown.csv"'},
+        )
+    if format == "md":
+        return Response(
+            content=script_breakdown.render_markdown(breakdown), media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="script-breakdown.md"'},
+        )
+    return breakdown
+
+
 @router.get("/{task_id}/writer-dashboard", response_model=WriterDashboardResponse)
 def get_writer_dashboard(task_id: str):
     """Return the Writer Agent timeline, episodes, statistics and relationship graph contract."""
@@ -210,7 +249,7 @@ def get_writer_dashboard(task_id: str):
     return dashboard
 
 
-_EXTRACTABLE_ASSET_KINDS = {"actor", "scene", "prop", "costume", "effect", "product"}
+_EXTRACTABLE_ASSET_KINDS = {"actor", "scene", "prop", "costume", "effect", "product", *breakdown_kinds.KINDS}
 _IMAGE_SUFFIX_BY_MIME = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
 
 
@@ -388,6 +427,167 @@ async def _import_production_asset_candidates(
     }
 
 
+async def _copy_first_image(source: Any, element_id: str, owner_id: str, store: PlatformStore) -> bool:
+    """同一身戏服的图不重画：别的项目已经画过，只是穿的集数不一样。"""
+    content = await run_in_threadpool(_first_image_bytes, source)
+    if not content:
+        return False
+    file = next(entry for entry in source.files if str(entry.mime_type or "").startswith("image/"))
+    await _persist_element_file(
+        element_id=element_id, owner_id=owner_id, slot="front",
+        suffix=_IMAGE_SUFFIX_BY_MIME.get(str(file.mime_type), ".png"), mime=str(file.mime_type), content=content, store=store,
+    )
+    return True
+
+
+async def _file_character_looks(*, task: Dict[str, Any], task_id: str, owner_id: str, store: PlatformStore) -> Dict[str, Any]:
+    """Keep each character's looks in step with the script's outfits and makeup; no image is drawn here.
+
+    A look belongs to its project: another project's look of the same name is shared only while it says the
+    same thing. When only the episodes differ this project gets its own entry with a copy of the picture.
+    """
+    looks = plan_looks(task)
+    planned = {normalized_asset_name(look["name"]) for look in looks}
+    actors = await store.list_all_elements(owner_id, "actor")
+    created: List[Dict[str, Any]] = []
+    reused: List[Dict[str, Any]] = []
+    skipped = with_image = 0
+
+    def named(key: str) -> List[Any]:
+        return [item for item in actors if key in element_name_keys(item.name, item.metadata_json)]
+
+    async def create(look: Dict[str, Any], source: Any = None) -> None:
+        nonlocal with_image
+        element = await store.create_element(
+            owner_id=owner_id, kind="actor", name=look["name"], description=look["description"],
+            metadata={"source": "screenplay-extraction", **link_task({}, task_id), character_variants.VARIANT_KEY: look["facts"]},
+        )
+        copied = await _copy_first_image(source, element.id, owner_id, store) if source is not None else False
+        with_image += int(copied)
+        created.append({"id": element.id, "name": element.name, "image": copied})
+
+    for look in looks:
+        same_name = named(normalized_asset_name(look["name"]))
+        mine = next((item for item in same_name if element_in_task(item.metadata_json, task_id)), None)
+        if mine is None:
+            twin = next((item for item in same_name if str(item.description or "") == look["description"] and _has_image(item)), None)
+            current = character_variants.variant_of({"metadata": twin.metadata_json}) if twin is not None else None
+            if twin is not None and current == look["facts"]:
+                await store.link_element_to_task(twin.id, owner_id, task_id)
+                with_image += 1
+                reused.append({"id": twin.id, "name": twin.name, "image": True})
+            else:
+                await create(look, twin)
+            continue
+        current = character_variants.variant_of({"metadata": mine.metadata_json})
+        # 手工设的衍生形象和用户改过的换装依据不动；其余跟着剧本走。
+        if current is not None and (current.get("source") != character_variants.LOOK_SOURCE or current.get("edited")):
+            skipped += 1
+            continue
+        same_words = str(mine.description or "") == look["description"]
+        if current == look["facts"] and same_words:
+            skipped += 1
+        elif len(element_task_ids(mine.metadata_json)) > 1:
+            # 别的项目也在用它：这个项目另起一条，别的项目不受影响。
+            await store.unlink_element_from_task(mine.id, owner_id, task_id)
+            await create(look, mine if same_words else None)
+        else:
+            await store.set_element_variant(mine.id, owner_id, look["facts"])
+            if not same_words:
+                await store.update_element(mine.id, owner_id, name=None, description=look["description"])
+                # 图是按旧写法画的：不自动花钱重画，提示一下。
+                if _has_image(mine):
+                    await store.merge_element_metadata(mine.id, owner_id, {NEEDS_REDRAW: True})
+            skipped += 1
+    # 剧本不再需要的定妆图：只有这个项目用就留着图但不再穿，否则它和新的那张抢同一段集数；别的项目也在用就只退出这个项目。
+    for item in actors:
+        current = character_variants.variant_of({"metadata": item.metadata_json})
+        if (
+            current and current.get("source") == character_variants.LOOK_SOURCE and not current.get("edited") and not current.get("retired")
+            and element_in_task(item.metadata_json, task_id) and not element_name_keys(item.name, item.metadata_json) & planned
+        ):
+            if len(element_task_ids(item.metadata_json)) > 1:
+                await store.unlink_element_from_task(item.id, owner_id, task_id)
+            else:
+                await store.set_element_variant(item.id, owner_id, {**current, "retired": True})
+    return {
+        "kind": "look", "created": len(created), "reused": len(reused), "skipped": skipped, "with_image": with_image,
+        "items": created, "reused_items": reused,
+    }
+
+
+async def _file_crowd_wardrobe(*, task: Dict[str, Any], task_id: str, owner_id: str, store: PlatformStore) -> None:
+    """已经入库的群演补上后来才写的戏服和妆效；已有的图不自动重画，提示一下。"""
+    crowd = {normalized_asset_name(item["name"]): item["parts"] for item in crowd_wardrobe(task)}
+    if not crowd:
+        return
+    for item in await store.list_all_elements(owner_id, "extra"):
+        if not element_in_task(item.metadata_json, task_id):
+            continue
+        description = str(item.description or "")
+        missing = [part for part in crowd.get(normalized_asset_name(item.name), []) if part not in description]
+        if missing:
+            await store.update_element(item.id, owner_id, name=None, description="；".join(part for part in (description, *missing) if part))
+            if _has_image(item):
+                await store.merge_element_metadata(item.id, owner_id, {NEEDS_REDRAW: True})
+
+
+class _LookTimingRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    episodes: str = Field(min_length=1, max_length=60)
+
+
+@router.get("/{task_id}/character-looks/untimed")
+def untimed_character_makeup(task_id: str):
+    """定不下时间的妆效：角色页列出来，人可以补上集数。"""
+    task = service.repo.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {"items": untimed_makeup(task)}
+
+
+@router.put("/{task_id}/character-looks/timing")
+async def set_character_look_timing(
+    task_id: str,
+    request: _LookTimingRequest,
+    current_user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """人给一处妆效定时间；这处妆效随即合进当时穿的那身。不出图，出图还是用户点。"""
+    words = request.episodes.strip()
+    if not timing_is_readable(words):
+        raise HTTPException(status_code=422, detail="没读懂这个时间，可以写：第9集起、第9-12集、第2集第3场起")
+    name = request.name.strip()
+
+    def record(current: Dict[str, Any]) -> bool:
+        catalog = ((current.get("assets") or {}).get("2_breakdown") or {}).get("production_assets") or {}
+        entry = next((item for item in catalog.get("makeup") or [] if isinstance(item, dict) and str(item.get("name") or "").strip() == name), None)
+        if entry is None:
+            return False
+        entry["timing"] = words
+        return True
+
+    if not await run_in_threadpool(service.repo.mutate_task, task_id, record):
+        raise HTTPException(status_code=404, detail="这处妆效不在本剧的拆解目录里")
+    task = await run_in_threadpool(service.repo.get_task, task_id)
+    await _file_character_looks(task=task, task_id=task_id, owner_id=current_user["user_id"], store=store)
+    return {"readiness": await _persist_asset_readiness(task_id, task, current_user["user_id"], store)}
+
+
+# Before the {kind} route, or "readiness" is read as a kind and answers 404.
+@router.get("/{task_id}/production-assets/readiness")
+async def production_asset_readiness(
+    task_id: str,
+    current_user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """Whether every actor, costume look, scene, prop and effect has a reference image."""
+    task = service.repo.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return await _persist_asset_readiness(task_id, task, current_user["user_id"], store)
+
+
 @router.get("/{task_id}/production-assets/{kind}")
 def preview_production_assets(task_id: str, kind: str):
     """Preview the shooting assets of one kind that the screenplay names."""
@@ -410,12 +610,15 @@ async def import_production_assets(
     """Import screenplay-derived shooting assets into the user's element library."""
     if kind not in _EXTRACTABLE_ASSET_KINDS:
         raise HTTPException(status_code=404, detail="不支持的资产类型")
-    if kind in ("costume", "effect"):
+    if kind in ("costume", "makeup"):
+        # 不单独入库：拆解目录里的服装和化妆由 _file_character_looks 登记成角色妆造。
+        raise HTTPException(status_code=422, detail="服装和化妆已并入角色妆造，不再单独入库")
+    if kind == "effect":
         # The writer may never have listed these; read them off the screenplay first.
         try:
             await run_in_threadpool(service.ensure_production_asset_catalog, task_id)
         except Exception as exc:  # a failed analysis still imports whatever is already listed
-            logger.warning("服装/特效清单补全失败: task_id=%s error=%s", task_id, type(exc).__name__)
+            logger.warning("特效清单补全失败: task_id=%s error=%s", task_id, type(exc).__name__)
     task = service.repo.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
@@ -456,7 +659,7 @@ async def sync_production_assets(
     # next project instead of living only inside this task's assets.
     by_kind: Dict[str, Dict[str, Any]] = {}
     # An ad's product comes from its brief; other projects have none to file.
-    kinds = ("actor", "scene", "prop", "costume", "effect") + (("product",) if creation_modes.mode_of(task.get("config")) == "ad" else ())
+    kinds = ("actor", "scene", "prop", "effect", *breakdown_kinds.FILED_KINDS) + (("product",) if creation_modes.mode_of(task.get("config")) == "ad" else ())
     for kind in kinds:
         by_kind[kind] = await _import_production_asset_candidates(
             task_id=task_id,
@@ -465,6 +668,8 @@ async def sync_production_assets(
             owner_id=current_user["user_id"],
             store=store,
         )
+    by_kind["look"] = await _file_character_looks(task=task, task_id=task_id, owner_id=current_user["user_id"], store=store)
+    await _file_crowd_wardrobe(task=task, task_id=task_id, owner_id=current_user["user_id"], store=store)
 
     return {
         "created": sum(result["created"] for result in by_kind.values()),
@@ -491,19 +696,6 @@ async def _persist_asset_readiness(task_id: str, task: Dict[str, Any], owner_id:
 
     await run_in_threadpool(service.repo.mutate_task, task_id, record)
     return readiness
-
-
-@router.get("/{task_id}/production-assets/readiness")
-async def production_asset_readiness(
-    task_id: str,
-    current_user: dict = Depends(get_current_user),
-    store: PlatformStore = Depends(get_platform_store),
-):
-    """Whether every actor, scene, prop, costume and effect has a reference image."""
-    task = service.repo.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
-    return await _persist_asset_readiness(task_id, task, current_user["user_id"], store)
 
 
 @router.get("/{task_id}/script-documents", response_model=ScriptLibraryResponse)
@@ -582,7 +774,7 @@ def _change_identity(task_id: str, operation: str, req: AssetIdentityRequest, cu
     try:
         result = service.change_asset_identity(
             task_id, operation=operation, kind=req.kind, name=req.name, new_name=req.new_name, dry_run=req.dry_run,
-            owner_user_id=current_user.get("user_id"), is_admin=current_user.get("role") == "admin",
+            owner_user_id=current_user.get("user_id"), is_admin=has_permission(current_user, PROJECT_WRITE_ANY),
         )
     except asset_identity.AssetIdentityError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -602,6 +794,63 @@ def assess_shots_admission(task_id: str, req: VideoAdmissionRequest):
     if result is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     return result
+
+
+class ProjectMemoryAddRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=200)
+    kind: str = Field("decision", pattern="^(preference|decision|fact)$")
+    pinned: bool = False
+
+
+class ProjectMemoryPatchRequest(BaseModel):
+    text: Optional[str] = Field(None, min_length=1, max_length=200)
+    kind: Optional[str] = Field(None, pattern="^(preference|decision|fact)$")
+    pinned: Optional[bool] = None
+
+
+class PromptProfileRequest(BaseModel):
+    profile: str = Field(..., pattern="^(standard|lean)$")
+
+
+def _memory_call(call):
+    try:
+        view = call()
+    except project_memory.MemoryError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    if view is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return view
+
+
+@router.get("/{task_id}/memory")
+def get_project_memory(task_id: str):
+    """What the project remembers, the prompt profile, and the tokens used and saved."""
+    return _memory_call(lambda: service.project_memory_view(task_id))
+
+
+@router.post("/{task_id}/memory")
+def add_project_memory(task_id: str, req: ProjectMemoryAddRequest):
+    return _memory_call(lambda: service.edit_project_memory(
+        task_id, lambda task: project_memory.add(task, req.text, kind=req.kind, source="user", pinned=req.pinned),
+    ))
+
+
+@router.patch("/{task_id}/memory/{memory_id}")
+def edit_project_memory(task_id: str, memory_id: str, req: ProjectMemoryPatchRequest):
+    return _memory_call(lambda: service.edit_project_memory(
+        task_id, lambda task: project_memory.update(task, memory_id, text=req.text, pinned=req.pinned, kind=req.kind),
+    ))
+
+
+@router.delete("/{task_id}/memory/{memory_id}")
+def delete_project_memory(task_id: str, memory_id: str):
+    return _memory_call(lambda: service.edit_project_memory(task_id, lambda task: project_memory.remove(task, memory_id)))
+
+
+@router.put("/{task_id}/memory/prompt-profile")
+def set_prompt_profile(task_id: str, req: PromptProfileRequest):
+    """省 token 模式：分镜阶段的指南减半。"""
+    return _memory_call(lambda: service.set_prompt_profile(task_id, req.profile))
 
 
 @router.get("/{task_id}/usage")
@@ -631,11 +880,172 @@ def get_subtitles(task_id: str, episode: int = Query(..., ge=1, le=200), format:
     return result
 
 
+class PublishPrepareRequest(BaseModel):
+    platforms: list[str] = Field(min_length=1, max_length=12)
+
+
+@router.get("/{task_id}/publish")
+def get_publish_preparation(task_id: str):
+    """The share panel: the platforms on offer and the last prepared packages."""
+    result = service.get_publish_preparation(task_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/publish/prepare")
+def prepare_publish(task_id: str, req: PublishPrepareRequest):
+    """Prepare each selected platform's upload package; nothing is posted."""
+    try:
+        result = service.prepare_publish(task_id, req.platforms)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+# ---------------- 宣发 · 自动获客：作品 → 评论 → 线索 → 联系 → 跟进 ----------------
+
+acquisition = AcquisitionService(service.repo, service.gateway)
+
+
+def _acquired(call, *args, **kwargs):
+    try:
+        result = call(*args, **kwargs)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+class AcquisitionWorkRequest(BaseModel):
+    platform: str = Field(min_length=1, max_length=32)
+    url: str = Field(min_length=8, max_length=600)
+    episode: Optional[int] = Field(default=None, ge=1, le=999)
+    title: str = Field(default="", max_length=80)
+
+
+class AcquisitionMetricsRequest(BaseModel):
+    views: Optional[int] = Field(default=None, ge=0)
+    likes: Optional[int] = Field(default=None, ge=0)
+    comments: Optional[int] = Field(default=None, ge=0)
+    shares: Optional[int] = Field(default=None, ge=0)
+    favorites: Optional[int] = Field(default=None, ge=0)
+
+
+class AcquisitionImportRequest(BaseModel):
+    work_id: str = Field(min_length=1, max_length=40)
+    text: str = Field(min_length=1, max_length=200_000)
+
+
+class AcquisitionLeadRequest(BaseModel):
+    status: Optional[str] = Field(default=None, max_length=20)
+    reply: Optional[str] = Field(default=None, max_length=1500)
+    dm: Optional[str] = Field(default=None, max_length=1500)
+    note: Optional[str] = Field(default=None, max_length=1500)
+
+
+class AcquisitionSendResultRequest(BaseModel):
+    sent: bool
+
+
+class AcquisitionFollowUpRequest(BaseModel):
+    when: str = Field(min_length=1, max_length=60)
+    reason: str = Field(default="", max_length=200)
+
+
+class AcquisitionFollowUpStatusRequest(BaseModel):
+    status: str = Field(min_length=1, max_length=20)
+
+
+class AcquisitionInboxRequest(BaseModel):
+    platform: str = Field(min_length=1, max_length=32)
+    author: str = Field(default="", max_length=40)
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class AcquisitionSettingsRequest(BaseModel):
+    auto_sync: bool
+
+
+@router.get("/{task_id}/acquisition")
+def get_acquisition(task_id: str):
+    """Published works, leads, follow-ups and today's review."""
+    return _acquired(acquisition.get, task_id)
+
+
+@router.post("/{task_id}/acquisition/works")
+def add_acquisition_work(task_id: str, req: AcquisitionWorkRequest):
+    return _acquired(acquisition.add_work, task_id, req.platform, req.url, episode=req.episode, title=req.title)
+
+
+@router.delete("/{task_id}/acquisition/works/{work_id}")
+def remove_acquisition_work(task_id: str, work_id: str):
+    return _acquired(acquisition.remove_work, task_id, work_id)
+
+
+@router.patch("/{task_id}/acquisition/works/{work_id}/metrics")
+def update_acquisition_metrics(task_id: str, work_id: str, req: AcquisitionMetricsRequest):
+    return _acquired(acquisition.update_metrics, task_id, work_id, req.model_dump(exclude_none=True))
+
+
+@router.post("/{task_id}/acquisition/comments/import")
+def import_acquisition_comments(task_id: str, req: AcquisitionImportRequest):
+    return _acquired(acquisition.import_comments, task_id, req.work_id, req.text)
+
+
+@router.post("/{task_id}/acquisition/sync")
+def sync_acquisition(task_id: str):
+    """Pull new comments and statistics through official APIs (YouTube) and judge them."""
+    return _acquired(acquisition.sync, task_id)
+
+
+@router.patch("/{task_id}/acquisition/leads/{lead_id}")
+def update_acquisition_lead(task_id: str, lead_id: str, req: AcquisitionLeadRequest):
+    return _acquired(acquisition.update_lead, task_id, lead_id, req.model_dump(exclude_none=True))
+
+
+@router.post("/{task_id}/acquisition/leads/{lead_id}/send")
+def send_acquisition_reply(task_id: str, lead_id: str):
+    """Post this lead's reply under its YouTube comment; one click, one reply."""
+    return _acquired(acquisition.send_reply, task_id, lead_id)
+
+
+@router.post("/{task_id}/acquisition/leads/{lead_id}/send-result")
+def resolve_acquisition_send(task_id: str, lead_id: str, req: AcquisitionSendResultRequest):
+    return _acquired(acquisition.resolve_send, task_id, lead_id, req.sent)
+
+
+@router.post("/{task_id}/acquisition/leads/{lead_id}/follow-up")
+def schedule_acquisition_follow_up(task_id: str, lead_id: str, req: AcquisitionFollowUpRequest):
+    return _acquired(acquisition.schedule_follow_up, task_id, lead_id, req.when, req.reason)
+
+
+@router.patch("/{task_id}/acquisition/follow-ups/{follow_up_id}")
+def update_acquisition_follow_up(task_id: str, follow_up_id: str, req: AcquisitionFollowUpStatusRequest):
+    return _acquired(acquisition.update_follow_up, task_id, follow_up_id, req.status)
+
+
+@router.post("/{task_id}/acquisition/inbox")
+def answer_acquisition_inbox(task_id: str, req: AcquisitionInboxRequest):
+    """Draft the reply to a message someone sent the account and keep them as a lead."""
+    return _acquired(acquisition.answer_inbox, task_id, req.platform, req.author, req.text)
+
+
+@router.patch("/{task_id}/acquisition/settings")
+def update_acquisition_settings(task_id: str, req: AcquisitionSettingsRequest):
+    return _acquired(acquisition.set_auto_sync, task_id, req.auto_sync)
+
+
 class CharacterRegenerateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     # sheet：重出整张设定集；hd：只补高清的六个身份视图(两张付费图，保留现有设定集)；
     # details：只把补位裁切的元素/细节格真正画出来(一到两张付费图)。
-    mode: str = Field("sheet", pattern="^(sheet|hd|details)$")
+    mode: str = Field("sheet", pattern="^(sheet|hd|hd_body|details)$")
 
 
 @router.post("/{task_id}/characters/regenerate", status_code=202)
@@ -651,6 +1061,50 @@ def regenerate_character(task_id: str, req: CharacterRegenerateRequest):
     return dashboard.model_dump(mode="json", by_alias=True)
 
 
+class CharacterVoiceAuditionRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    # 留空用角色 DNA 里的 voice_prompt；填了就用它试听，并存回角色 DNA。
+    voice_prompt: str = Field("", max_length=1000)
+    seed: Optional[int] = Field(None, ge=0, le=2147483647)
+
+
+class CharacterVoiceCastRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    generated_voice_id: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/{task_id}/characters/voice/audition")
+def audition_character_voice(task_id: str, req: CharacterVoiceAuditionRequest):
+    """Render one round of voice previews from the character's voice prompt (paid); call again to re-roll."""
+    try:
+        result = service.audition_character_voice(task_id, req.name, voice_prompt=req.voice_prompt, seed=req.seed)
+    except ValueError as exc:
+        detail = str(exc)
+        raise HTTPException(status_code=409 if ("正在" in detail) else 422, detail=detail) from exc
+    except Exception as exc:
+        logger.warning("角色音色试听失败: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="音色设计服务暂不可用") from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.post("/{task_id}/characters/voice/cast")
+def cast_character_voice(task_id: str, req: CharacterVoiceCastRequest):
+    """Keep one auditioned preview as the character's voice_id."""
+    try:
+        dashboard = service.cast_character_voice(task_id, req.name, req.generated_voice_id)
+    except ValueError as exc:
+        detail = str(exc)
+        raise HTTPException(status_code=409 if ("正在" in detail) else 422, detail=detail) from exc
+    except Exception as exc:
+        logger.warning("角色音色定版失败: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="音色设计服务暂不可用") from exc
+    if dashboard is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return dashboard.model_dump(mode="json", by_alias=True)
+
+
 @router.get("/{task_id}/shots/visual", response_model=ShotVisualWorkspaceResponse)
 def get_shot_visual_workspace(task_id: str):
     """Stage-5 shot workspace: camera motion, shot type, duration, media and prompts per shot."""
@@ -661,10 +1115,14 @@ def get_shot_visual_workspace(task_id: str):
 
 
 @router.put("/{task_id}/shots/{shot_id}/visual", response_model=ShotVisualWorkspaceResponse)
-def update_shot_visual(task_id: str, shot_id: int, req: ShotVisualSettings):
+def update_shot_visual(
+    task_id: str, shot_id: int, req: ShotVisualSettings,
+    scene_id: str = Query("", max_length=40, description="镜头所在场次(如 E1S03)；各场镜号都从 1 起，不给时镜号须全剧唯一"),
+    shot_uid: int | None = Query(None, ge=1, description="全剧唯一的镜头编号，给了就按它找"),
+):
     """Persist one shot's camera settings; the workflow stays at its current stage."""
     try:
-        workspace = service.update_shot_visual(task_id, shot_id, req)
+        workspace = service.update_shot_visual(task_id, shot_id, req, scene_id=scene_id, shot_uid=shot_uid)
     except ValueError as exc:
         raise HTTPException(status_code=409 if "正在执行" in str(exc) else 422, detail=str(exc)) from exc
     if not workspace:
@@ -673,10 +1131,26 @@ def update_shot_visual(task_id: str, shot_id: int, req: ShotVisualSettings):
 
 
 @router.put("/{task_id}/shots/{shot_id}/video-prompt", response_model=ShotVisualWorkspaceResponse)
-def update_shot_video_prompt(task_id: str, shot_id: int, req: ShotVideoPromptUpdate):
+def update_shot_video_prompt(
+    task_id: str, shot_id: int, req: ShotVideoPromptUpdate,
+    scene_id: str = Query("", max_length=40, description="镜头所在场次(如 E1S03)；各场镜号都从 1 起，不给时镜号须全剧唯一"),
+    shot_uid: int | None = Query(None, ge=1, description="全剧唯一的镜头编号，给了就按它找"),
+):
     """Save a hand-edited video prompt for one shot (empty restores the compiled one); its clip goes stale."""
     try:
-        workspace = service.set_shot_video_prompt(task_id, shot_id, req.prompt)
+        workspace = service.set_shot_video_prompt(task_id, shot_id, req.prompt, scene_id=scene_id, shot_uid=shot_uid)
+    except ValueError as exc:
+        raise HTTPException(status_code=409 if "正在执行" in str(exc) else 422, detail=str(exc)) from exc
+    if not workspace:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return workspace
+
+
+@router.put("/{task_id}/video-model", response_model=ShotVisualWorkspaceResponse)
+def set_project_video_model(task_id: str, req: ProjectVideoModelUpdate):
+    """Switch the project's video model to one enabled in the model centre; rendered clips stay reusable."""
+    try:
+        workspace = service.set_project_video_model(task_id, req.video_model)
     except ValueError as exc:
         raise HTTPException(status_code=409 if "正在执行" in str(exc) else 422, detail=str(exc)) from exc
     if not workspace:
@@ -697,10 +1171,14 @@ def assign_shot_seeds(task_id: str):
 
 
 @router.put("/{task_id}/shots/{shot_id}/visual/select", response_model=ShotVisualWorkspaceResponse)
-def select_shot_candidate(task_id: str, shot_id: int, req: ShotCandidateSelection):
+def select_shot_candidate(
+    task_id: str, shot_id: int, req: ShotCandidateSelection,
+    scene_id: str = Query("", max_length=40, description="镜头所在场次(如 E1S03)；各场镜号都从 1 起，不给时镜号须全剧唯一"),
+    shot_uid: int | None = Query(None, ge=1, description="全剧唯一的镜头编号，给了就按它找"),
+):
     """Choose one of the rendered candidates as the shot's clip."""
     try:
-        workspace = service.select_shot_candidate(task_id, shot_id, req.video_url)
+        workspace = service.select_shot_candidate(task_id, shot_id, req.video_url, scene_id=scene_id, shot_uid=shot_uid)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not workspace:
@@ -708,11 +1186,37 @@ def select_shot_candidate(task_id: str, shot_id: int, req: ShotCandidateSelectio
     return workspace
 
 
-@router.post("/{task_id}/shots/{shot_id}/regenerate", response_model=ShotVisualWorkspaceResponse)
-def regenerate_shot(task_id: str, shot_id: int, req: ShotRegenerateRequest | None = None):
-    """Mark one shot's clip for regeneration; the next stage-5 run redoes only it and reuses the others."""
+class PilotShotRequest(BaseModel):
+    shot_uid: Optional[int] = Field(None, ge=1, description="指定试拍哪一镜；不给就挑人和动作最少的一段")
+    redo: bool = False
+    problems: List[str] = Field(default_factory=list, max_length=8)
+
+
+@router.post("/{task_id}/shots/pilot", response_model=ShotVisualWorkspaceResponse, status_code=202)
+async def start_pilot_shot(task_id: str, req: Optional[PilotShotRequest] = None):
+    """Generate one clip before the batch; it is reused when the batch runs."""
     try:
-        workspace = service.regenerate_shot(task_id, shot_id, reason=(req.reason if req else ""))
+        workspace = await service.start_pilot_shot(
+            task_id, shot_uid=req.shot_uid if req else None, redo=bool(req and req.redo), problems=req.problems if req else (),
+        )
+    except StagePrerequisiteError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return workspace
+
+
+@router.post("/{task_id}/shots/{shot_id}/regenerate", response_model=ShotVisualWorkspaceResponse)
+def regenerate_shot(
+    task_id: str, shot_id: int, req: ShotRegenerateRequest | None = None,
+    scene_id: str = Query("", max_length=40, description="镜头所在场次(如 E1S03)；各场镜号都从 1 起，不给时镜号须全剧唯一"),
+    shot_uid: int | None = Query(None, ge=1, description="全剧唯一的镜头编号，给了就按它找"),
+):
+    """Mark one shot's clip (its whole board clip) for regeneration; the next stage-5 run redoes only it."""
+    try:
+        workspace = service.regenerate_shot(
+            task_id, shot_id, reason=(req.reason if req else ""), scene_id=scene_id, shot_uid=shot_uid,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not workspace:
@@ -721,10 +1225,16 @@ def regenerate_shot(task_id: str, shot_id: int, req: ShotRegenerateRequest | Non
 
 
 @router.post("/{task_id}/shots/{shot_id}/visual/recipe")
-def compose_shot_recipe(task_id: str, shot_id: int, req: ShotRecipeRequest):
+def compose_shot_recipe(
+    task_id: str, shot_id: int, req: ShotRecipeRequest,
+    scene_id: str = Query("", max_length=40, description="镜头所在场次(如 E1S03)；各场镜号都从 1 起，不给时镜号须全剧唯一"),
+    shot_uid: int | None = Query(None, ge=1, description="全剧唯一的镜头编号，给了就按它找"),
+):
     """Compose a camera-move recipe for one shot; nothing is persisted until the user saves."""
     try:
-        recipe = service.compose_shot_recipe(task_id, shot_id, req.category, req.intensity)
+        recipe = service.compose_shot_recipe(
+            task_id, shot_id, req.category, req.intensity, scene_id=scene_id, shot_uid=shot_uid,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not recipe:
@@ -816,7 +1326,7 @@ def restore_writer_script_version(
     try:
         dashboard = service.restore_script_version(
             task_id, version_id, expected_source_hash=req.expected_source_hash, confirm_invalidate=req.confirm_invalidate,
-            owner_user_id=str(current_user.get("user_id") or ""), is_admin=current_user.get("role") == "admin",
+            owner_user_id=str(current_user.get("user_id") or ""), is_admin=has_permission(current_user, PROJECT_WRITE_ANY),
         )
     except ScriptUpdateConflictError as error:
         raise HTTPException(status_code=409, detail=str(error))
@@ -883,7 +1393,7 @@ def apply_ledger_operation(task_id: str, req: LedgerOperationRequest, current_us
     """Split, merge, cut, create, move or delete episodes; written episodes it would discard must be confirmed."""
     try:
         result = service.apply_ledger_operation(
-            task_id, req, owner_user_id=current_user.get("user_id"), is_admin=current_user.get("role") == "admin",
+            task_id, req, owner_user_id=current_user.get("user_id"), is_admin=has_permission(current_user, PROJECT_WRITE_ANY),
         )
     except ledger_ops.LedgerOperationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -917,7 +1427,7 @@ def adopt_replan(task_id: str, req: ReplanAdoptRequest, current_user: dict = Dep
     """Replace the cut episodes from the replan point with the candidate's."""
     try:
         result = service.adopt_replan_candidate(
-            task_id, req, owner_user_id=current_user.get("user_id"), is_admin=current_user.get("role") == "admin",
+            task_id, req, owner_user_id=current_user.get("user_id"), is_admin=has_permission(current_user, PROJECT_WRITE_ANY),
         )
     except ledger_ops.LedgerOperationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1034,6 +1544,9 @@ def render_timeline(task_id: str, current_user: dict = Depends(require_owned_dra
 @router.get("/{task_id}/timeline/jianying.zip")
 def download_jianying_draft(task_id: str, current_user: dict = Depends(require_owned_drama_task)):
     """The timeline as a JianYing draft folder with its media, zipped."""
+    book = active_book()
+    if book is not None:
+        book.require_feature(str(current_user.get("user_id") or ""), "export.jianying")
     result = service.jianying_draft(task_id)
     if result is None:
         raise HTTPException(status_code=404, detail="任务不存在")
@@ -1041,6 +1554,7 @@ def download_jianying_draft(task_id: str, current_user: dict = Depends(require_o
     headers = {
         "Content-Disposition": f'attachment; filename="jianying_{task_id[:8]}.zip"',
         "X-Draft-Skipped": str(len(info["skipped"])), "X-Draft-Seconds": str(info["duration_seconds"]),
+        "X-Draft-Sound-Offsets": str(sum(1 for join in info["sound_joins"] if join["applied"])),
     }
     return Response(content=payload, media_type="application/zip", headers=headers)
 
@@ -1110,7 +1624,7 @@ def repair_screenwriting_episode(task_id: str, episode: int, req: ScreenwritingR
     try:
         result = service.repair_screenwriting_episode(
             task_id, episode, confirm_invalidate=req.confirm_invalidate,
-            owner_user_id=current_user.get("user_id"), is_admin=current_user.get("role") == "admin",
+            owner_user_id=current_user.get("user_id"), is_admin=has_permission(current_user, PROJECT_WRITE_ANY),
         )
     except ScriptUpdateConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -1176,7 +1690,7 @@ def patch_screenwriting_plan(
             operations=req.operations,
             confirm_invalidate=req.confirm_invalidate,
             owner_user_id=str(current_user.get("user_id") or ""),
-            is_admin=current_user.get("role") == "admin",
+            is_admin=has_permission(current_user, PROJECT_WRITE_ANY),
         )
     except PlanEditError as error:
         where = []
@@ -1216,7 +1730,7 @@ def _spatial_call(task_id: str, scene_id: str, call):
         raise HTTPException(status_code=404, detail=str(error))
     except StageConflict as error:
         raise HTTPException(status_code=409, detail=str(error))
-    except (StageEditError, InterchangeError, CaptureError) as error:
+    except (StageEditError, InterchangeError, CaptureError, UploadValidationError, stage_blockout.BlockoutError, DirectorAIError, ModelKitError) as error:
         raise HTTPException(status_code=422, detail=str(error))
     except Exception:
         logger.exception("[Spatial] 空间调度操作失败 task_id=%s scene_id=%s", task_id, scene_id)
@@ -1224,6 +1738,88 @@ def _spatial_call(task_id: str, scene_id: str, call):
     if not payload:
         raise HTTPException(status_code=404, detail="任务不存在")
     return payload
+
+
+class BlenderRenderRequest(BaseModel):
+    shot_ids: Optional[List[int]] = None
+    long_edge: int = Field(1920, ge=480, le=3840)
+
+
+class BlenderOptionsRequest(BaseModel):
+    handheld_shots: Optional[List[int]] = None
+    reserved: Optional[List[Dict[str, Any]]] = None
+
+
+class BlenderAttachRequest(BaseModel):
+    shot_ids: Optional[List[int]] = None
+
+
+class BlenderPullRequest(BaseModel):
+    apply: bool = False
+
+
+def _previz_call(task_id: str, scene_id: str, call):
+    from app.core.blender_previz.runner import BlenderUnavailable
+    from app.service.blender_previz_service import PrevizError
+
+    def guarded():
+        try:
+            return call()
+        except (PrevizError, BlenderUnavailable) as error:
+            raise HTTPException(status_code=422, detail=str(error))
+
+    return _spatial_call(task_id, scene_id, guarded)
+
+
+@router.get("/{task_id}/spatial/scenes/{scene_id}/blender")
+def get_blender_previz(task_id: str, scene_id: str):
+    """最近一次 Blender 白模预演、是否过期，以及手持/空段设置。"""
+    from app.service import blender_previz_service
+
+    return _previz_call(task_id, scene_id, lambda: blender_previz_service.get_previz(service.repo.get_task(task_id) or {}, scene_id))
+
+
+@router.post("/{task_id}/spatial/scenes/{scene_id}/blender/render")
+async def render_blender_previz(task_id: str, scene_id: str, req: BlenderRenderRequest):
+    """在本机 Blender 里把这场的站位、机位与切镜渲染成白模预演(整段视频 + 每镜首帧)。"""
+    from app.service import blender_previz_service
+
+    return await run_in_threadpool(_previz_call, task_id, scene_id, lambda: blender_previz_service.render_scene(
+        service, task_id, scene_id, shot_ids=req.shot_ids, long_edge=req.long_edge))
+
+
+@router.put("/{task_id}/spatial/scenes/{scene_id}/blender/options")
+def set_blender_previz_options(task_id: str, scene_id: str, req: BlenderOptionsRequest):
+    from app.service import blender_previz_service
+
+    return _previz_call(task_id, scene_id, lambda: blender_previz_service.set_options(
+        service, task_id, scene_id, handheld_shots=req.handheld_shots, reserved=req.reserved))
+
+
+@router.post("/{task_id}/spatial/scenes/{scene_id}/blender/attach")
+async def attach_blender_previz(task_id: str, scene_id: str, req: BlenderAttachRequest):
+    """按镜头切片并登记为这些镜的运动参考视频，第 5 阶段出片时用它管机位、切点与时间。"""
+    from app.service import blender_previz_service
+
+    return await run_in_threadpool(_previz_call, task_id, scene_id, lambda: blender_previz_service.attach_to_shots(
+        service, task_id, scene_id, shot_ids=req.shot_ids))
+
+
+@router.post("/{task_id}/spatial/scenes/{scene_id}/blender/push")
+async def push_blender_previz(task_id: str, scene_id: str):
+    """在本机打开的 Blender(已启用桥接插件)里重建这场的预演场景。"""
+    from app.service import blender_previz_service
+
+    return await run_in_threadpool(_previz_call, task_id, scene_id, lambda: blender_previz_service.push_live(service, task_id, scene_id))
+
+
+@router.post("/{task_id}/spatial/scenes/{scene_id}/blender/pull")
+async def pull_blender_previz(task_id: str, scene_id: str, req: BlenderPullRequest):
+    """读回在 Blender 里拖过的站位与机位；apply=true 时写回方案。"""
+    from app.service import blender_previz_service
+
+    return await run_in_threadpool(_previz_call, task_id, scene_id, lambda: blender_previz_service.pull_live(
+        service, task_id, scene_id, apply=req.apply))
 
 
 @router.post("/{task_id}/shots/{shot_id}/feedback")
@@ -1329,6 +1925,156 @@ def import_spatial_plan(task_id: str, scene_id: str, req: SpatialImportRequest):
     ))
 
 
+class StagePlanRequest(BaseModel):
+    base_revision: int = Field(..., ge=0)
+    count: int = Field(3, ge=1, le=3)
+    goal: str = Field("", max_length=2000)
+    model: str = Field("", max_length=160)
+
+
+class StageAdoptRequest(BaseModel):
+    base_revision: int = Field(..., ge=0)
+    candidate_id: str = Field(..., min_length=1, max_length=40)
+
+
+class StageChatRequest(BaseModel):
+    base_revision: int = Field(..., ge=0)
+    message: str = Field("", max_length=2000)
+    names: List[str] = Field(default_factory=list, max_length=40)
+    shot_id: Optional[int] = Field(None, ge=1)
+    model: str = Field("", max_length=160)
+
+
+class StageRevertRequest(BaseModel):
+    base_revision: int = Field(..., ge=0)
+    snapshot_id: str = Field(..., min_length=1, max_length=40)
+
+
+class StageBlockoutRequest(BaseModel):
+    description: str = Field(..., min_length=1, max_length=2000)
+    width_m: Optional[float] = Field(None, gt=0, le=500)
+    model: str = Field("", max_length=160)
+
+
+class StagePlannerModeRequest(BaseModel):
+    mode: str = Field(..., pattern="^(model|rules)$")
+
+
+@router.get("/{task_id}/director-desk/scenes/{scene_id}/director")
+def get_stage_director(task_id: str, scene_id: str):
+    """The director panel of one scene: the conversation, what can be undone, candidates not yet adopted, the current score."""
+    return _spatial_call(task_id, scene_id, lambda: stage_director.state(service, task_id, scene_id))
+
+
+@router.put("/{task_id}/director-desk/planner")
+def set_stage_planner(task_id: str, req: StagePlannerModeRequest):
+    """Whether the storyboard stage asks a model for each scene's blocking (the default), or uses the rules alone."""
+    return _spatial_call(task_id, "", lambda: stage_director.set_pipeline_planner(service, task_id, req.mode))
+
+
+@router.post("/{task_id}/director-desk/scenes/{scene_id}/director/plan")
+async def plan_stage_with_model(task_id: str, scene_id: str, req: StagePlanRequest):
+    """Several complete stagings from the model, ranked against the rule plan. Costs one or two text calls each; the stage does not change."""
+    return await run_in_threadpool(_spatial_call, task_id, scene_id, lambda: stage_director.plan_scene(
+        service, task_id, scene_id, base_revision=req.base_revision, count=req.count, goal=req.goal, model=req.model,
+    ))
+
+
+@router.post("/{task_id}/director-desk/scenes/{scene_id}/director/adopt", response_model=None)
+def adopt_stage_candidate(task_id: str, scene_id: str, req: StageAdoptRequest):
+    return _spatial_call(task_id, scene_id, lambda: stage_director.adopt_candidate(
+        service, task_id, scene_id, candidate_id=req.candidate_id, base_revision=req.base_revision,
+    ))
+
+
+@router.post("/{task_id}/director-desk/scenes/{scene_id}/director/chat")
+async def chat_with_stage_director(task_id: str, scene_id: str, req: StageChatRequest):
+    """One message: the model edits a copy, reads back what that did, and goes again up to three times; then it is saved as one undoable step."""
+    return await run_in_threadpool(_spatial_call, task_id, scene_id, lambda: stage_director.chat(
+        service, task_id, scene_id, message=req.message, base_revision=req.base_revision, names=req.names, shot_id=req.shot_id, model=req.model,
+    ))
+
+
+@router.post("/{task_id}/director-desk/scenes/{scene_id}/director/optimize")
+async def optimize_stage(task_id: str, scene_id: str, req: StageChatRequest):
+    """Rules first, then the model; a result that scores lower than what was there is not kept."""
+    return await run_in_threadpool(_spatial_call, task_id, scene_id, lambda: stage_director.optimize(
+        service, task_id, scene_id, base_revision=req.base_revision, goal=req.message, names=req.names, shot_id=req.shot_id, model=req.model,
+    ))
+
+
+@router.post("/{task_id}/director-desk/scenes/{scene_id}/director/revert")
+def revert_stage_step(task_id: str, scene_id: str, req: StageRevertRequest):
+    return _spatial_call(task_id, scene_id, lambda: stage_director.revert(
+        service, task_id, scene_id, snapshot_id=req.snapshot_id, base_revision=req.base_revision,
+    ))
+
+
+@router.delete("/{task_id}/director-desk/scenes/{scene_id}/director/chat")
+def clear_stage_chat(task_id: str, scene_id: str):
+    return _spatial_call(task_id, scene_id, lambda: stage_director.clear_chat(service, task_id, scene_id))
+
+
+@router.post("/{task_id}/director-desk/scenes/{scene_id}/blockout/describe")
+async def describe_desk_blockout(task_id: str, scene_id: str, req: StageBlockoutRequest):
+    """Propose a grey-box set from words. Costs one text call; nothing changes until the desk applies it."""
+    return await run_in_threadpool(_spatial_call, task_id, scene_id, lambda: stage_director.describe_blockout(
+        service, task_id, scene_id, description=req.description, width_m=req.width_m, model=req.model,
+    ))
+
+
+@router.post("/{task_id}/director-desk/scenes/{scene_id}/models/propose")
+async def propose_stage_model(
+    task_id: str,
+    scene_id: str,
+    description: str = Form("", max_length=2000),
+    width_m: Optional[float] = Form(None, gt=0, le=200),
+    depth_m: Optional[float] = Form(None, gt=0, le=200),
+    height_m: Optional[float] = Form(None, gt=0, le=200),
+    model: str = Form("", max_length=160),
+    file: Optional[UploadFile] = File(None, description="可选：物体的参考图"),
+):
+    """One object built from words or a picture. A library model named exactly costs nothing; the stage does not change."""
+    image = None
+    if file is not None:
+        image = await file.read(MAX_IMAGE_UPLOAD_BYTES + 1)
+        validate_image_upload(file.filename or "", file.content_type or "", image)
+    given = (width_m, depth_m, height_m)
+    size = list(given) if all(value is not None for value in given) else None
+    return await run_in_threadpool(_spatial_call, task_id, scene_id, lambda: stage_director.propose_model(
+        service, task_id, scene_id, description=description, size=size, model=model, image=image,
+        content_type=file.content_type if file is not None else "",
+    ))
+
+
+@router.get("/{task_id}/director-desk/scenes/{scene_id}/models/{landmark_id}.glb")
+def export_stage_model(task_id: str, scene_id: str, landmark_id: str):
+    """A set piece as a binary glTF file, at its real size."""
+    name, content = _spatial_call(task_id, scene_id, lambda: stage_director.export_model(service, task_id, scene_id, landmark_id))
+    return Response(
+        content=content, media_type="model/gltf-binary",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"},
+    )
+
+
+@router.post("/{task_id}/director-desk/scenes/{scene_id}/blockout/analyze")
+async def analyze_desk_blockout(
+    task_id: str,
+    scene_id: str,
+    file: UploadFile = File(..., description="场景参考图（概念图、实景照片、航拍）"),
+    hint: str = Form("", max_length=300),
+    width_m: Optional[float] = Form(None, gt=0, le=500),
+    model: str = Form("", max_length=160),
+    current_user: dict = Depends(require_owned_drama_task),
+):
+    """Propose a grey-box set from a reference image. Costs one vision call; nothing changes until the desk applies it."""
+    content = await file.read(MAX_IMAGE_UPLOAD_BYTES + 1)
+    return await run_in_threadpool(_spatial_call, task_id, scene_id, lambda: service.analyze_stage_blockout(
+        task_id, scene_id, content=content, filename=file.filename or "", content_type=file.content_type or "",
+        hint=hint, width_m=width_m, model=model,
+    ))
+
+
 @router.get("/{task_id}/director-desk/scenes/{scene_id}/captures", response_model=DeskCapturesResponse)
 def list_desk_captures(task_id: str, scene_id: str):
     """The stills and blockout clips taken of one scene's stage, and which of them each shot uses."""
@@ -1348,6 +2094,7 @@ async def upload_desk_capture(
     monochrome: bool = Form(False),
     labelled: bool = Form(False),
     depth: bool = Form(False),
+    layer: str = Form("", max_length=20),
     width: int = Form(0),
     height: int = Form(0),
     duration_s: float = Form(0.0),
@@ -1358,7 +2105,7 @@ async def upload_desk_capture(
     content = await file.read(MAX_CLIP_BYTES + 1)
     upload = CaptureUpload(
         content=content, kind=kind, shot_id=shot_id, camera_id=camera_id, plan_revision=plan_revision,
-        shows_limbs=shows_limbs, monochrome=monochrome, labelled=labelled, depth=depth, width=width, height=height,
+        shows_limbs=shows_limbs, monochrome=monochrome, labelled=labelled, depth=depth, layer=layer, width=width, height=height,
         duration_s=duration_s, fps=fps,
     )
     return await run_in_threadpool(
@@ -1551,7 +2298,7 @@ def update_script(
             expected_source_hash=request.expected_source_hash,
             confirm_invalidate=request.confirm_invalidate,
             owner_user_id=str(current_user.get("user_id") or ""),
-            is_admin=current_user.get("role") == "admin",
+            is_admin=has_permission(current_user, PROJECT_WRITE_ANY),
         )
     except ScriptUpdateConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -1750,11 +2497,13 @@ def update_task_config(task_id: str, req: DramaCreateRequest):
     """
     try:
         task = service.update_task_config(task_id, req)
-        if not task:
-            raise HTTPException(status_code=404, detail="任务不存在")
-        return task
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"更新配置失败: {str(e)}")
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return task
 
 @router.post("/import_skill")
 async def import_new_skill(
@@ -1762,7 +2511,7 @@ async def import_new_skill(
     url: Optional[str] = Form(None, description="GitHub或Clawhub链接"),
     package_name: Optional[str] = Form(None, description="NPX包名"),
     file: Optional[UploadFile] = File(None, description="上传的ZIP技能包文件"),
-    _admin: dict = Depends(require_admin),
+    _admin: dict = Depends(require_permission(SKILL_MANAGE)),
 ):
     """
     导入并添加外部自定义 Skill 技能包
@@ -1781,7 +2530,7 @@ def get_imported_skills():
     return service.get_all_skills()
 
 @router.delete("/skills/{skill_name}")
-def delete_imported_skill(skill_name: str, _admin: dict = Depends(require_admin)):
+def delete_imported_skill(skill_name: str, _admin: dict = Depends(require_permission(SKILL_MANAGE))):
     """
     删除指定的已导入 Skill 技能包
     """
@@ -1809,8 +2558,7 @@ def delete_drama_task(task_id: str):
 @router.post("/seedance2_video")
 async def seedance2_video_route(payload: Dict[str, Any]):
     """
-    Seedance 2.0 多模态生视频统一接口，支持四种能力：
-      - 文生视频：{"prompt": "..."}
+    Seedance 2.0 多模态生视频统一接口(禁止文生视频：至少要有首帧、参考图或参考视频)：
       - 图生视频-首帧：{"prompt": "...", "first_frame": "<图片URL>"}
       - 图生视频-首尾帧：{"prompt": "...", "first_frame": "<首帧URL>", "last_frame": "<尾帧URL>"}
       - 多模态参考生视频：{"prompt": "...", "ref_images": ["url",...0-9], "ref_videos": [..0-3], "ref_audios": [..0-3]}
@@ -1823,8 +2571,9 @@ async def seedance2_video_route(payload: Dict[str, Any]):
     ref_videos = payload.get("ref_videos") or []
     ref_audios = payload.get("ref_audios") or []
     optimize = payload.get("optimize", True)
-    if not prompt and not first_frame and not ref_images and not ref_videos:
-        raise HTTPException(status_code=400, detail="至少需要提供 prompt 或 first_frame 或参考素材之一")
+    if not (first_frame or ref_images or ref_videos):
+        # 禁止文生视频：只有提示词、没有首帧或参考素材的请求不提交。
+        raise HTTPException(status_code=400, detail="禁止文生视频：至少需要首帧、参考图或参考视频之一")
     if ref_audios and not (ref_images or ref_videos or first_frame):
         raise HTTPException(status_code=400, detail="不可单独输入音频，应至少包含 1 个参考视频或图片")
     try:
@@ -1839,7 +2588,7 @@ async def seedance2_video_route(payload: Dict[str, Any]):
 @router.post("/parse_script")
 async def parse_script_file_route(file: UploadFile = File(..., description="上传的剧本文件")):
     """
-    手动上传剧本文件解析接口，支持 .txt, .md, .docx, .pdf, .fdx。
+    手动上传剧本文件解析接口，支持 .txt, .md, .docx, .pdf, .fdx, .fountain, .spmd。
     """
     try:
         # 与解析器同一个上限：接口先于解析器拦截，两边数字不一致时会出现“接口放行、解析拒绝”

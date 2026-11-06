@@ -33,6 +33,20 @@ class _StreamingResponse:
         self.closed = True
 
 
+class _Plain:
+    """A refusal (or any non-streamed answer) with a status and headers."""
+
+    text = ""
+
+    def __init__(self, status_code, headers=None):
+        self.status_code = status_code
+        self.headers = dict(headers or {})
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
 class ChatDeadlineTests(unittest.TestCase):
     def setUp(self):
         self.gateway = ModelGateway.__new__(ModelGateway)
@@ -113,6 +127,54 @@ class ChatDeadlineTests(unittest.TestCase):
             _, explicit = self._chat(_StreamingResponse([body], self.clock, seconds_per_chunk=1), timeout=40)
         self.assertEqual(from_env[0]["timeout"], (15.0, 1200.0))
         self.assertEqual(explicit[0]["timeout"], (15.0, 40.0))
+
+    def _chat_sequence(self, responses, **kwargs):
+        """Each call to the provider answers with the next response; the waits between retries are recorded."""
+        calls, waits = [], []
+        queue = list(responses)
+
+        def post(url, **request):
+            calls.append(request)
+            return queue.pop(0)
+
+        with patch("requests.post", side_effect=post), patch("time.sleep", side_effect=waits.append):
+            result = self.gateway._http_chat("key", "https://api.deepseek.com", "deepseek-v4-pro", "S", "U", **kwargs)
+        return result, calls, waits
+
+    def test_a_rate_limited_call_waits_as_told_and_asks_the_same_credential_again(self):
+        body = json.dumps({"choices": [{"message": {"content": "好"}}], "usage": {}}).encode()
+        limited = _Plain(429, headers={"Retry-After": "1.5"})
+        with self.assertLogs("app.core.model_gateway", level="WARNING"):
+            result, calls, waits = self._chat_sequence([limited, _StreamingResponse([body], self.clock, seconds_per_chunk=1)])
+
+        self.assertEqual(result, "好")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(waits, [1.5])
+        self.assertTrue(limited.closed)
+        self.gateway._mark_host_broken.assert_not_called()
+
+    def test_rate_limiting_backs_off_a_few_times_then_gives_the_call_up_without_the_breaker(self):
+        with self.assertLogs("app.core.model_gateway", level="WARNING"):
+            result, calls, waits = self._chat_sequence([_Plain(429) for _ in range(model_gateway.RATE_LIMIT_RETRIES + 2)])
+
+        self.assertIsNone(result)
+        self.assertEqual(len(calls), model_gateway.RATE_LIMIT_RETRIES + 1)
+        self.assertEqual(waits, [2.0, 4.0, 6.0])
+        self.gateway._mark_host_broken.assert_not_called()
+
+    def test_other_refusals_are_not_retried(self):
+        with self.assertLogs("app.core.model_gateway", level="ERROR"):
+            result, calls, waits = self._chat_sequence([_Plain(500), _Plain(500)])
+
+        self.assertIsNone(result)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(waits, [])
+
+    def test_the_rate_limit_wait_reads_retry_after_and_is_capped(self):
+        self.assertEqual(model_gateway.rate_limit_wait("3", 1), 3.0)
+        self.assertEqual(model_gateway.rate_limit_wait(None, 2), 4.0)
+        self.assertEqual(model_gateway.rate_limit_wait("Wed, 21 Oct 2026 07:28:00 GMT", 1), 2.0)
+        self.assertEqual(model_gateway.rate_limit_wait("600", 1), model_gateway.RATE_LIMIT_WAIT_MAX)
 
     def test_a_response_without_a_stream_is_read_whole(self):
         class _Plain:

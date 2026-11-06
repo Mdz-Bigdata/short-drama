@@ -1,19 +1,24 @@
 import { useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import {
-  ChevronDown, ChevronUp, ClipboardPaste, Copy, Diamond, Film, Pause, Play, Repeat, SkipBack, SkipForward, Square, Trash2,
+  ChevronDown, ChevronUp, ClipboardPaste, Copy, Diamond, Film, Pause, Play, Repeat, SkipBack, SkipForward, Square, Trash2, Waypoints,
 } from 'lucide-react';
 
-import { actorsInShot, type ActorKey, type StageEasing, type StagePlan, type StageShot } from '../../spatial/spatialTypes';
+import { actorsInShot, type ActionClip, type ActorKey, type CameraCut, type FollowClip, type SpacePoint, type StageEasing, type StagePlan, type StageShot } from '../../spatial/spatialTypes';
 import type { EditRequest, SelectionRef } from '../deskTypes';
 import {
   AMPLITUDE_RANGE, ANGLE_RANGE, CAMERA_MOVES, DEFAULT_MOVE_ANGLE, MOVE_EASINGS, SIDE_LABELS, cameraMove, type MoveSide,
 } from '../lib/cameraMoves';
+import { HUMANOID_CLIPS, humanoidClip } from '../lib/humanoidClips';
 import { FRAME_RATES, cameraKeysOf, frameCount, frameOf, sampleActor, sampleShot, timeOfFrame, timelineOf } from '../lib/sampling';
+import {
+  FOLLOW_PRESETS, actionClipsOf, addAction, addCut, addFollow, bakeFollow, clipsOperation, cutsOperation, figureForAction, followOperation,
+} from '../lib/timelineClips';
 import {
   DURATION_RANGE, EASING_LABELS, MAX_TRACK_KEYS, actorKeyAt, cameraKeyAt, durationRefusal, keyIndexAtFrame, keysOf, removeKey, retimeKey,
   trackKey, trackLabel, trackOperation, upsertKey, type TimelineKey, type TrackRef,
 } from '../lib/timelineEdits';
 import type { DeskPlayback } from '../useDeskPlayback';
+import { ClipLane } from './ClipLane';
 
 interface Props {
   /** The plan as stored (unconfirmed edits included): what the keys are read from and written to. */
@@ -29,6 +34,7 @@ interface Props {
 }
 
 interface KeyRef { track: TrackRef; index: number }
+type BlockRef = { kind: 'action'; name: string; id: string } | { kind: 'follow'; id: string } | { kind: 'cut'; id: string };
 
 function timecode(frame: number, fps: number): string {
   const pad = (value: number) => String(value).padStart(2, '0');
@@ -53,15 +59,20 @@ export function TimelinePanel({ plan, shot, playback, selection, editable, colla
   );
   // The key being dragged: drawn at `time` until it is let go, then written once.
   const [dragged, setDragged] = useState<(KeyRef & { time: number }) | null>(null);
+  const [pickedBlock, setPickedBlock] = useState<BlockRef | null>(null);
+  // People put on the timeline by hand, before they have a key or a clip of their own.
+  const [pinned, setPinned] = useState<string[]>([]);
   const drag = useRef<{ key: KeyRef; lane: HTMLElement; startX: number; moved: boolean } | null>(null);
 
   const primary = selection[selection.length - 1];
   const selectedActor = primary?.kind === 'actor' ? primary.name : '';
   const cast = useMemo(() => actorsInShot(plan, shot), [plan, shot]);
   const tracks = useMemo<TrackRef[]>(() => {
-    const names = cast.filter(actor => timeline.actors[actor.name]?.length || actor.name === selectedActor).map(actor => actor.name);
+    const names = cast
+      .filter(actor => timeline.actors[actor.name]?.length || timeline.clips?.[actor.name]?.length || actor.name === selectedActor || pinned.includes(actor.name))
+      .map(actor => actor.name);
     return [{ kind: 'camera' }, ...names.map(name => ({ kind: 'actor' as const, name }))];
-  }, [cast, selectedActor, timeline]);
+  }, [cast, pinned, selectedActor, timeline]);
 
   const camera = plan.cameras.find(item => item.id === shot?.camera_id);
   // A lens that only has the planner's move shows it as the two keys it amounts to.
@@ -69,6 +80,64 @@ export function TimelinePanel({ plan, shot, playback, selection, editable, colla
   const shownKeys = (track: TrackRef): TimelineKey[] => (track.kind === 'camera' ? cameraKeys : keysOf(timeline, track));
   const pickedKey = picked ? shownKeys(picked.track)[picked.index] : undefined;
   const busy = !editable || !shot;
+  const follow = timeline.follow ?? [];
+  const pickedAction = pickedBlock?.kind === 'action' ? actionClipsOf(timeline, pickedBlock.name).find(clip => clip.id === pickedBlock.id) : undefined;
+  const pickedFollow = pickedBlock?.kind === 'follow' ? follow.find(clip => clip.id === pickedBlock.id) : undefined;
+  const cuts = timeline.cuts ?? [];
+  const pickedCut = pickedBlock?.kind === 'cut' ? cuts.find(cut => cut.id === pickedBlock.id) : undefined;
+  // The lenses a cut may go to: the shot's own and its candidates.
+  const lenses = shot ? [shot.camera_id, ...(shot.alt_camera_ids ?? [])].flatMap(id => plan.cameras.filter(item => item.id === id)) : [];
+  const lensLabel = (id: string) => plan.cameras.find(item => item.id === id)?.label || id;
+
+  const writeCuts = (label: string, next: CameraCut[]) => {
+    if (!shot) return;
+    setMessage('');
+    onCommit({ label, operations: [cutsOperation(shot.shot_id, next)] });
+  };
+
+  const dropCut = (cameraId: string) => {
+    const cut = addCut(timeline, cameraId, timeOfFrame(playback.frame, fps));
+    if (!cut) { setMessage('播放头这里已经没有空位：先把播放头挪到空白处，或修剪旁边的切机位片段'); return; }
+    setPickedBlock({ kind: 'cut', id: cut.id });
+    writeCuts(`切到 ${lensLabel(cameraId)}`, [...cuts, cut]);
+  };
+
+  const writeClips = (label: string, name: string, clips: ActionClip[]) => {
+    if (!shot) return;
+    setMessage('');
+    onCommit({ label, operations: [clipsOperation(shot.shot_id, timeline, name, clips)] });
+  };
+
+  const writeFollow = (label: string, clips: FollowClip[]) => {
+    if (!shot) return;
+    setMessage('');
+    onCommit({ label, operations: [followOperation(shot.shot_id, clips)] });
+  };
+
+  const dropAction = (name: string, clipId: string) => {
+    if (!shot) return;
+    const clip = addAction(timeline, name, clipId, timeOfFrame(playback.frame, fps));
+    if (!clip) { setMessage('播放头这里已经没有空位：先把播放头挪到空白处，或修剪旁边的片段'); return; }
+    setMessage('');
+    setPickedBlock({ kind: 'action', name, id: clip.id });
+    onCommit({
+      label: `动作：${humanoidClip(clipId).name}`,
+      operations: [...figureForAction(cast.find(actor => actor.name === name)), clipsOperation(shot.shot_id, timeline, name, [...actionClipsOf(timeline, name), clip])],
+    });
+  };
+
+  const dropFollow = (actor: string, presetId: string) => {
+    const preset = FOLLOW_PRESETS.find(item => item.id === presetId);
+    if (!preset) return;
+    const clip = addFollow(timeline, actor, preset, timeOfFrame(playback.frame, fps));
+    if (!clip) { setMessage('播放头这里已经没有空位：先把播放头挪到空白处，或修剪旁边的跟拍片段'); return; }
+    setPickedBlock({ kind: 'follow', id: clip.id });
+    writeFollow(`跟拍：${actor}`, [...follow, clip]);
+  };
+
+  const changeFollow = (changes: Partial<FollowClip>) => {
+    if (pickedFollow) writeFollow('调整跟拍', follow.map(clip => (clip.id === pickedFollow.id ? { ...clip, ...changes } : clip)));
+  };
 
   const write = (label: string, track: TrackRef, keys: TimelineKey[]) => {
     if (!shot) return;
@@ -319,10 +388,156 @@ export function TimelinePanel({ plan, shot, playback, selection, editable, colla
                 })}
                 <b className="desk-timeline__playhead" style={{ left: percent(playback.time) }} />
               </div>
+              {track.kind === 'camera' ? (
+                <>
+                  <span className="desk-timeline__name is-sub">切机位
+                    <select
+                      aria-label="添加切机位片段" value="" disabled={busy || lenses.length < 2} title={lenses.length < 2 ? '先在机位面板添加候选机位' : undefined}
+                      onChange={event => { if (event.target.value) dropCut(event.target.value); }}
+                    >
+                      <option value="">+ 切到</option>
+                      {lenses.map(item => <option key={item.id} value={item.id}>{item.label}{item.id === shot?.camera_id ? '（主机位）' : ''}</option>)}
+                    </select>
+                  </span>
+                  <ClipLane
+                    tone="cut" label="切机位" durationS={durationS} fps={fps} time={playback.time} disabled={busy}
+                    blocks={cuts.map(cut => ({ ...cut, label: lensLabel(cut.camera_id) }))}
+                    pickedId={pickedBlock?.kind === 'cut' ? pickedBlock.id : ''}
+                    onPick={id => setPickedBlock({ kind: 'cut', id })}
+                    onChange={blocks => writeCuts('移动切机位片段', cuts.map(cut => { const moved = blocks.find(block => block.id === cut.id); return moved ? { ...cut, start: moved.start, end: moved.end } : cut; }).sort((a, b) => a.start - b.start))}
+                    onScrub={scrub}
+                  />
+                  <span className="desk-timeline__name is-sub">跟拍
+                    <select
+                      aria-label="添加跟拍片段" value="" disabled={busy || !cast.length}
+                      onChange={event => { const [actor, preset] = event.target.value.split('\u0000'); if (actor && preset) dropFollow(actor, preset); }}
+                    >
+                      <option value="">+ 跟拍</option>
+                      {cast.map(actor => (
+                        <optgroup key={actor.name} label={actor.name}>
+                          {FOLLOW_PRESETS.map(preset => <option key={preset.id} value={`${actor.name}\u0000${preset.id}`}>{preset.label}</option>)}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </span>
+                  <ClipLane
+                    tone="follow" label="跟拍" durationS={durationS} fps={fps} time={playback.time} disabled={busy}
+                    blocks={follow.map(clip => ({ ...clip, label: clip.actor }))}
+                    pickedId={pickedBlock?.kind === 'follow' ? pickedBlock.id : ''}
+                    onPick={id => setPickedBlock({ kind: 'follow', id })}
+                    onChange={blocks => writeFollow('移动跟拍片段', follow.map(clip => { const moved = blocks.find(block => block.id === clip.id); return moved ? { ...clip, start: moved.start, end: moved.end } : clip; }).sort((a, b) => a.start - b.start))}
+                    onScrub={scrub}
+                  />
+                </>
+              ) : (
+                <>
+                  <span className="desk-timeline__name is-sub">动作
+                    <select
+                      aria-label={`给${track.name}添加动作`} value="" disabled={busy}
+                      onChange={event => { if (event.target.value) dropAction(track.name, event.target.value); }}
+                    >
+                      <option value="">+ 动作</option>
+                      {HUMANOID_CLIPS.map(clip => <option key={clip.id} value={clip.id}>{clip.name}</option>)}
+                    </select>
+                  </span>
+                  <ClipLane
+                    tone="action" label={`「${track.name}」动作`} durationS={durationS} fps={fps} time={playback.time} disabled={busy}
+                    blocks={actionClipsOf(timeline, track.name).map(clip => ({ ...clip, label: humanoidClip(clip.clip).name }))}
+                    pickedId={pickedBlock?.kind === 'action' && pickedBlock.name === track.name ? pickedBlock.id : ''}
+                    onPick={id => setPickedBlock({ kind: 'action', name: track.name, id })}
+                    onChange={blocks => writeClips('移动动作片段', track.name, actionClipsOf(timeline, track.name).map(clip => { const moved = blocks.find(block => block.id === clip.id); return moved ? { ...clip, start: moved.start, end: moved.end } : clip; }).sort((a, b) => a.start - b.start))}
+                    onScrub={scrub}
+                  />
+                </>
+              )}
             </div>
           );
         })}
+        {cast.some(actor => !tracks.some(track => track.kind === 'actor' && track.name === actor.name)) && (
+          <div className="desk-timeline__row">
+            <select
+              className="desk-timeline__add" aria-label="添加角色到时间线" value=""
+              onChange={event => { if (event.target.value) setPinned(names => [...names, event.target.value]); }}
+            >
+              <option value="">+ 添加角色到时间线</option>
+              {cast.filter(actor => !tracks.some(track => track.kind === 'actor' && track.name === actor.name)).map(actor => <option key={actor.name} value={actor.name}>{actor.name}</option>)}
+            </select>
+          </div>
+        )}
       </div>
+
+      {pickedAction && pickedBlock?.kind === 'action' && (
+        <div className="desk-timeline__clipbar" role="group" aria-label="动作片段">
+          <strong>{pickedBlock.name} · {humanoidClip(pickedAction.clip).name}</strong>
+          <span>{pickedAction.start.toFixed(2)}–{pickedAction.end.toFixed(2)} 秒</span>
+          <label className="desk-timeline__field"><span>动作</span>
+            <select aria-label="片段动作" value={pickedAction.clip} disabled={busy} onChange={event => writeClips('更换动作', pickedBlock.name, actionClipsOf(timeline, pickedBlock.name).map(clip => (clip.id === pickedAction.id ? { ...clip, clip: event.target.value } : clip)))}>
+              {HUMANOID_CLIPS.map(clip => <option key={clip.id} value={clip.id}>{clip.name}</option>)}
+            </select>
+          </label>
+          <label className="desk-timeline__field"><span>速度</span>
+            <input
+              key={pickedAction.speed ?? 1} type="number" aria-label="动作速度" defaultValue={pickedAction.speed ?? 1} min={0.1} max={4} step={0.1} disabled={busy}
+              onBlur={event => { const speed = Number(event.target.value); if (speed >= 0.1 && speed <= 4 && speed !== (pickedAction.speed ?? 1)) writeClips('动作速度', pickedBlock.name, actionClipsOf(timeline, pickedBlock.name).map(clip => (clip.id === pickedAction.id ? { ...clip, speed } : clip))); }}
+            />
+          </label>
+          <button type="button" className="desk-icon" aria-label="删除动作片段" disabled={busy} onClick={() => { setPickedBlock(null); writeClips('删除动作片段', pickedBlock.name, actionClipsOf(timeline, pickedBlock.name).filter(clip => clip.id !== pickedAction.id)); }}><Trash2 aria-hidden="true" /></button>
+        </div>
+      )}
+
+      {pickedCut && (
+        <div className="desk-timeline__clipbar" role="group" aria-label="切机位片段">
+          <strong>切到 · {lensLabel(pickedCut.camera_id)}</strong>
+          <span>{pickedCut.start.toFixed(2)}–{pickedCut.end.toFixed(2)} 秒</span>
+          <label className="desk-timeline__field"><span>机位</span>
+            <select aria-label="切到哪个机位" value={pickedCut.camera_id} disabled={busy} onChange={event => writeCuts('更换切机位', cuts.map(cut => (cut.id === pickedCut.id ? { ...cut, camera_id: event.target.value } : cut)))}>
+              {lenses.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+            </select>
+          </label>
+          <small>这段时间机位画面和导出的白模视频都按这个机位拍；它不随主机位的关键帧运动</small>
+          <button type="button" className="desk-icon" aria-label="删除切机位片段" disabled={busy} onClick={() => { setPickedBlock(null); writeCuts('删除切机位片段', cuts.filter(cut => cut.id !== pickedCut.id)); }}><Trash2 aria-hidden="true" /></button>
+        </div>
+      )}
+      {pickedFollow && (
+        <div className="desk-timeline__clipbar" role="group" aria-label="跟拍片段">
+          <strong>跟拍 · {pickedFollow.actor}</strong>
+          <span>{pickedFollow.start.toFixed(2)}–{pickedFollow.end.toFixed(2)} 秒</span>
+          {(['右', '上', '后'] as const).map((axis, index) => (
+            <label key={axis} className="desk-timeline__field"><span>{axis}</span>
+              <input
+                key={pickedFollow.offset[index]} type="number" aria-label={`跟拍偏移 ${axis}（米）`} defaultValue={pickedFollow.offset[index]} step={0.1} disabled={busy}
+                onBlur={event => {
+                  const value = Number(event.target.value);
+                  if (!Number.isFinite(value) || value === pickedFollow.offset[index]) return;
+                  const offset = [...pickedFollow.offset] as SpacePoint;
+                  offset[index] = value;
+                  changeFollow({ offset });
+                }}
+              />
+            </label>
+          ))}
+          <label className="desk-timeline__field"><span>焦距</span>
+            <input
+              key={pickedFollow.lens_mm ?? 0} type="number" aria-label="跟拍焦距（毫米）" defaultValue={pickedFollow.lens_mm ?? ''} min={8} max={600} step={1} disabled={busy}
+              onBlur={event => { const value = Number(event.target.value); if (value >= 8 && value <= 600 && value !== pickedFollow.lens_mm) changeFollow({ lens_mm: value }); }}
+            />
+          </label>
+          <label className="desk-timeline__field"><span>跟随</span>
+            <select aria-label="跟拍坐标系" value={pickedFollow.relative} disabled={busy} onChange={event => changeFollow({ relative: event.target.value as FollowClip['relative'] })}>
+              <option value="actor">随人物转身</option>
+              <option value="world">保持世界方向</option>
+            </select>
+          </label>
+          <label className="desk-timeline__field"><span>过渡</span>
+            <input
+              key={pickedFollow.blend_s} type="number" aria-label="跟拍进出过渡（秒）" defaultValue={pickedFollow.blend_s} min={0} max={3} step={0.1} disabled={busy}
+              onBlur={event => { const value = Number(event.target.value); if (value >= 0 && value <= 3 && value !== pickedFollow.blend_s) changeFollow({ blend_s: value }); }}
+            />
+          </label>
+          <button type="button" className="desk-button" disabled={busy} title="写成普通机位关键帧：可以逐帧改，Blender 和工程导出也读得到" onClick={() => { if (shot) { setPickedBlock(null); onCommit({ label: '跟拍转关键帧', operations: [bakeFollow(plan, shot)] }); } }}><Waypoints aria-hidden="true" /> 转为关键帧</button>
+          <button type="button" className="desk-icon" aria-label="删除跟拍片段" disabled={busy} onClick={() => { setPickedBlock(null); writeFollow('删除跟拍片段', follow.filter(clip => clip.id !== pickedFollow.id)); }}><Trash2 aria-hidden="true" /></button>
+        </div>
+      )}
 
       <div className="desk-timeline__foot">
         {pickedKey && picked ? (

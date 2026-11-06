@@ -35,6 +35,24 @@ class CameraMotionVocabularyTests(unittest.TestCase):
         self.assertEqual(normalize_camera_motion("镜头先推再拉再摇"), ("Static", False))
         self.assertEqual(normalize_camera_motion(""), ("Static", False))
 
+    def test_an_unknown_move_in_a_fight_follows_the_action_instead_of_locking_off(self):
+        self.assertEqual(normalize_camera_motion("镜头先推再拉再摇", fight=True), ("Tracking Shot", False))
+        self.assertEqual(normalize_camera_motion("", fight=True), ("Tracking Shot", False))
+        # A move the table names is kept, fight or not.
+        self.assertEqual(normalize_camera_motion("固定镜头", fight=True), ("Static", True))
+
+    def test_a_fight_shot_is_derived_with_a_follow_move_and_says_so(self):
+        options = duration_options("seedance2.5")
+        fight = {"motion": "乱晃一通", "desc": "两人短兵相接，陈九一记扫腿逼退对手，刀光擦着颈侧划过。"}
+        talk = {"motion": "乱晃一通", "desc": "她把信推过去，谁都没有先开口。"}
+
+        settings, notes = DramaService._derive_shot_visual(fight, {}, options)
+        self.assertEqual(settings["camera_motion"], "Tracking Shot")
+        self.assertIn("已按「跟踪」处理", notes[0])
+        settings, notes = DramaService._derive_shot_visual(talk, {}, options)
+        self.assertEqual(settings["camera_motion"], "Static")
+        self.assertIn("已按「固定」处理", notes[0])
+
     def test_shot_sizes_collapse_onto_the_nine_shot_types(self):
         for raw, expected in (
             ("MS", "Medium Shot"), ("MCU", "Medium Close-up"), ("FS", "Long Shot"), ("特写", "Close-up"),
@@ -54,7 +72,8 @@ class CameraMotionVocabularyTests(unittest.TestCase):
     def test_duration_options_follow_the_selected_video_model(self):
         self.assertEqual(duration_options("seedance2.5"), list(range(4, 31)))
         self.assertEqual(duration_options("MiniMax-H3"), list(range(4, 16)))
-        self.assertEqual(duration_options(""), list(range(4, 11)))
+        self.assertEqual(duration_options(""), list(range(4, 16)))
+        self.assertEqual(duration_options("kling-v2"), list(range(4, 11)))
         vocab = vocabulary()
         self.assertEqual(len(vocab["camera_motions"]), 16)
         self.assertEqual(len(vocab["shot_types"]), 9)

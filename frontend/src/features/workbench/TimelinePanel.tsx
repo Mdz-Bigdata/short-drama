@@ -5,6 +5,13 @@ import { ApiError, apiRequest, apiUrl } from '../../api/client';
 import './TimelinePanel.css';
 import { t } from '../../i18n';
 
+export interface SoundJoin {
+  join: '' | 'j_cut' | 'l_cut';
+  seconds?: number;
+  edited?: boolean;
+  result?: { applied: boolean; seconds?: number; reason: string };
+}
+
 export interface TimelineClip {
   shot_id: number;
   video_url: string;
@@ -16,6 +23,7 @@ export interface TimelineClip {
   subtitle: string;
   voice_path: string | null;
   transition_in: { type: string; duration: number } | null;
+  sound_in?: SoundJoin | null;
   review: { decision: 'pending' | 'approved' | 'rejected'; note: string; decided_at: string | null };
 }
 
@@ -39,6 +47,8 @@ interface TimelineResponse {
 const TRANSITION_LABELS: Record<string, string> = {
   hard_cut: '硬切', match_cut: '动作匹配', crossfade: '叠化', dip_to_black: '转黑', neutral_bridge: '中性过渡',
 };
+const SOUND_JOIN_SECONDS = [0.3, 0.5, 0.8, 1.2];
+const DEFAULT_SOUND_JOIN_SECONDS = { j_cut: 0.4, l_cut: 0.5 } as const;
 const DECISION_LABELS = { pending: '待审看', approved: '通过', rejected: '打回' } as const;
 
 interface Props {
@@ -179,6 +189,27 @@ export function TimelinePanel({ taskId, onRendered }: Props) {
                         {transitions.map(kind => <option key={kind} value={kind}>{TRANSITION_LABELS[kind] ?? kind}</option>)}
                       </select>
                     </label>
+                  )}
+                  {index > 0 && (
+                    <label>{t('声音错开')}
+                      <select aria-label={`镜头 ${clip.shot_id} 声音错开`} value={clip.sound_in?.join ?? ''} disabled={busy !== ''} onChange={event => { void operate({ operation: 'sound_join', shot_id: clip.shot_id, join: event.target.value }, '声音'); }}>
+                        <option value="">{t('声画同切')}</option>
+                        <option value="j_cut">{t('J-cut：这一镜的声音先到')}</option>
+                        <option value="l_cut">{t('L-cut：上一镜的声音留下')}</option>
+                      </select>
+                    </label>
+                  )}
+                  {index > 0 && clip.sound_in?.join && (
+                    <label>{t('错开秒数')}
+                      <select aria-label={`镜头 ${clip.shot_id} 错开秒数`} value={clip.sound_in.seconds ?? DEFAULT_SOUND_JOIN_SECONDS[clip.sound_in.join]} disabled={busy !== ''} onChange={event => { void operate({ operation: 'sound_join', shot_id: clip.shot_id, join: clip.sound_in?.join, seconds: Number(event.target.value) }, '声音'); }}>
+                        {[...new Set([...SOUND_JOIN_SECONDS, clip.sound_in.seconds ?? DEFAULT_SOUND_JOIN_SECONDS[clip.sound_in.join]])].sort((a, b) => a - b).map(value => <option key={value} value={value}>{value} {t('秒')}</option>)}
+                      </select>
+                    </label>
+                  )}
+                  {index > 0 && clip.sound_in?.result && (
+                    <p className="timeline__wide timeline__note" role="status">
+                      {clip.sound_in.result.applied ? `${t('上次合成已错开')} ${clip.sound_in.result.seconds ?? ''} ${t('秒')}` : `${t('上次合成没有错开：')}${clip.sound_in.result.reason}`}
+                    </p>
                   )}
                   <label className="timeline__wide">{t('字幕')}
                     <input aria-label={`镜头 ${clip.shot_id} 字幕`} value={draft.subtitle} onChange={event => setDrafts(current => ({ ...current, [clip.shot_id]: { ...draft, subtitle: event.target.value } }))} onBlur={() => { if (draft.subtitle !== clip.subtitle) void operate({ operation: 'subtitle', shot_id: clip.shot_id, text: draft.subtitle }, '字幕'); }} />

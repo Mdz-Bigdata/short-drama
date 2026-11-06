@@ -14,6 +14,29 @@ from pydantic import BaseModel, Field
 
 from app.core.providers.defaults import default_base_url
 from app.platform.runtime_models import runtime_model_registry
+from app.core import usage_ledger
+
+
+def _speech_units(_client, text, *_args, model_id="eleven_multilingual_v2", **_kwargs):
+    return model_id, {"characters": len(text)}
+
+
+def _dialogue_units(_client, lines, *_args, **_kwargs):
+    return "eleven_text_to_dialogue", {"characters": sum(len(line.text) for line in lines)}
+
+
+def _named(default_model):
+    def describe(_client, *_args, model_id=None, **_kwargs):
+        return model_id or default_model, {"calls": 1}
+
+    return describe
+
+
+def _seconds_units(default_model):
+    def describe(_client, *_args, duration_seconds=None, model_id=None, **_kwargs):
+        return model_id or default_model, {"seconds": duration_seconds, "calls": 1}
+
+    return describe
 
 
 class DialogueLine(BaseModel):
@@ -120,6 +143,7 @@ class ElevenLabsClient:
         tag = mapping.get(emotion.strip(), emotion.strip())
         return f"[{tag}] " if tag and tag.lower() != "neutral" else ""
 
+    @usage_ledger.metered("audio", provider="elevenlabs", describe=_speech_units)
     def text_to_speech(
         self,
         text: str,
@@ -224,6 +248,7 @@ class ElevenLabsClient:
             raise RuntimeError("ElevenLabs timing response contained empty audio")
         return {"audio": audio, **payload}
 
+    @usage_ledger.metered("audio", provider="elevenlabs", describe=_speech_units)
     def text_to_speech_with_timestamps(
         self,
         text: str,
@@ -249,6 +274,7 @@ class ElevenLabsClient:
         )
         return self._timed_audio(response)
 
+    @usage_ledger.metered("audio", provider="elevenlabs", describe=_dialogue_units)
     def create_dialogue(
         self,
         lines: list[DialogueLine],
@@ -268,6 +294,7 @@ class ElevenLabsClient:
         self._raise_safe(response)
         return response.content
 
+    @usage_ledger.metered("audio", provider="elevenlabs", describe=_dialogue_units)
     def create_dialogue_with_timestamps(
         self,
         lines: list[DialogueLine],
@@ -290,6 +317,7 @@ class ElevenLabsClient:
         )
         return self._timed_audio(response)
 
+    @usage_ledger.metered("audio", provider="elevenlabs", describe=_named("eleven_multilingual_sts_v2"))
     def voice_change(
         self,
         audio: BinaryIO | io.BytesIO,
@@ -314,6 +342,7 @@ class ElevenLabsClient:
         self._raise_safe(response)
         return response.content
 
+    @usage_ledger.metered("audio", provider="elevenlabs", describe=_named("eleven_voice_design"))
     def design_voice(
         self,
         *,
@@ -365,6 +394,7 @@ class ElevenLabsClient:
         self._raise_safe(response)
         return response.json()
 
+    @usage_ledger.metered("audio", provider="elevenlabs", describe=_seconds_units("eleven_sound_effects"))
     def sound_effect(
         self,
         prompt: str,
@@ -382,6 +412,7 @@ class ElevenLabsClient:
         self._raise_safe(response)
         return response.content
 
+    @usage_ledger.metered("audio", provider="elevenlabs", describe=_seconds_units("music_v2"))
     def compose_music(
         self,
         prompt: str,
@@ -404,6 +435,7 @@ class ElevenLabsClient:
         self._raise_safe(response)
         return response.content
 
+    @usage_ledger.metered("audio", provider="elevenlabs", describe=_named("music_v2"))
     def video_to_music(
         self,
         videos: list[tuple[str, BinaryIO | io.BytesIO]],
@@ -439,6 +471,7 @@ class ElevenLabsClient:
         self._raise_safe(response)
         return response.content
 
+    @usage_ledger.metered("audio", provider="elevenlabs", describe=_named("audio-isolation"))
     def isolate_audio(
         self,
         audio: BinaryIO | io.BytesIO,
@@ -456,6 +489,7 @@ class ElevenLabsClient:
         self._raise_safe(response)
         return response.content
 
+    @usage_ledger.metered("audio", provider="elevenlabs", describe=_named("forced-alignment"))
     def force_align(
         self,
         audio: BinaryIO | io.BytesIO,

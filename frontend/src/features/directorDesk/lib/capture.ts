@@ -1,4 +1,4 @@
-import { Color, MeshStandardMaterial, Vector2, Vector3, type Camera, type Material, type Object3D, type PerspectiveCamera, type Scene, type WebGLRenderer } from 'three';
+import { Color, MeshBasicMaterial, MeshStandardMaterial, Vector2, Vector3, type Camera, type Material, type Mesh, type Object3D, type PerspectiveCamera, type Scene, type WebGLRenderer } from 'three';
 
 import type { StageActor } from '../../spatial/spatialTypes';
 import type { CaptureResult } from '../deskTypes';
@@ -8,6 +8,9 @@ import { poseShowsLimbs } from './poses';
 export const CAPTURE_LONG_EDGE = 1920;
 /** Anything that is there to help the operator, not to be filmed, carries this in `userData`. */
 export const HELPER_FLAG = 'deskHelper';
+/** On the root of every figure, so a control frame can tell the cast from the set. */
+export const ACTOR_FLAG = 'deskActor';
+export type CaptureLayer = '' | 'background' | 'mask';
 
 export interface CaptureLabel {
   text: string;
@@ -40,6 +43,8 @@ export interface StillRequest {
   figures?: CaptureFigure[];
   /** Render linear depth (near bright, far dark) instead of the shaded stage; wins over `monochrome`. */
   depth?: DepthOptions;
+  /** A control frame: the set with nobody on it, or the cast white on black. */
+  layer?: CaptureLayer;
 }
 
 /** Delivery pixels: long edge 1920, both sides even (video encoders and most image models want that). */
@@ -68,9 +73,9 @@ export function drawLabels(context: CanvasRenderingContext2D, labels: CaptureLab
     const spot = projectToImage(label.position, camera, width, height);
     if (!spot) return;
     context.lineWidth = size / 4;
-    context.strokeStyle = 'rgba(252, 237, 239, 0.9)';
+    context.strokeStyle = 'rgba(255, 255, 255, 0.9)';
     context.strokeText(label.text, spot[0], spot[1]);
-    context.fillStyle = '#221b1e';
+    context.fillStyle = '#1f1a1c';
     context.fillText(label.text, spot[0], spot[1]);
   });
 }
@@ -102,7 +107,7 @@ export function enterDeliveryRender({ gl, scene, camera, width, height, monochro
   const previousOverride: Material | null = scene.overrideMaterial;
   const override: Material | null = depth
     ? createDepthMaterial(depth)
-    : monochrome ? new MeshStandardMaterial({ color: new Color('#3e3136'), roughness: 0.9 }) : null;
+    : monochrome ? new MeshStandardMaterial({ color: new Color('#b4b4b8'), roughness: 0.9 }) : null;
   const previousRatio = gl.getPixelRatio();
   const previousSize = gl.getSize(new Vector2());
   const lens = camera as PerspectiveCamera;
@@ -162,25 +167,69 @@ export function enterDepthView(scene: Scene, depth: DepthOptions): { hide: () =>
   };
 }
 
+function hasActorAncestor(object: Object3D): boolean {
+  for (let node: Object3D | null = object; node; node = node.parent) {
+    if (node.userData[ACTOR_FLAG]) return true;
+  }
+  return false;
+}
+
+/** Which things a control frame leaves out: the cast from the empty set, everything else from the mask. */
+export function hiddenInLayer(object: Object3D, layer: CaptureLayer): boolean {
+  if (layer === 'background') return Boolean(object.userData[ACTOR_FLAG]);
+  if (layer === 'mask') return Boolean((object as Mesh).isMesh) && !hasActorAncestor(object);
+  return false;
+}
+
+/** Sets the scene up for one layer of a control frame and hands back the call that undoes it. */
+export function applyLayer(scene: Scene, layer: CaptureLayer): { restore: () => void } {
+  if (!layer) return { restore: () => undefined };
+  const hidden: Object3D[] = [];
+  scene.traverse(object => {
+    if (object.visible && hiddenInLayer(object, layer)) {
+      object.visible = false;
+      hidden.push(object);
+    }
+  });
+  const previousBackground = scene.background;
+  const previousOverride = scene.overrideMaterial;
+  const white = layer === 'mask' ? new MeshBasicMaterial({ color: 0xffffff, toneMapped: false }) : null;
+  if (white) {
+    scene.background = new Color(0x000000);
+    scene.overrideMaterial = white;
+  }
+  return {
+    restore: () => {
+      hidden.forEach(object => { object.visible = true; });
+      scene.background = previousBackground;
+      scene.overrideMaterial = previousOverride;
+      white?.dispose();
+    },
+  };
+}
+
 /**
  * One still of what the lens sees, at delivery size. The drawing buffer is resized for a single
  * synchronous render and read back in the same task, so the image has exactly the on-screen
  * look (tone mapping, colour space).
  */
-export async function captureStill({ gl, scene, camera, aspect, monochrome, labels, figures = [], depth }: StillRequest): Promise<CaptureResult> {
+export async function captureStill({ gl, scene, camera, aspect, monochrome, labels, figures = [], depth, layer = '' }: StillRequest): Promise<CaptureResult> {
   const { width, height } = captureSize(aspect);
   const output = document.createElement('canvas');
   output.width = width;
   output.height = height;
   const context = output.getContext('2d');
 
-  const delivery = enterDeliveryRender({ gl, scene, camera, width, height, monochrome, depth });
+  const delivery = enterDeliveryRender({ gl, scene, camera, width, height, monochrome: monochrome && !layer, depth });
+  const control = applyLayer(scene, layer);
   try {
     gl.render(scene, camera);
     if (!context) throw new Error('浏览器无法创建画布，截图失败。');
     context.drawImage(gl.domElement, 0, 0, width, height);
-    if (labels.length) drawLabels(context, labels, camera, width, height);
+    // A control frame is read by a machine: names burned into it would be read as part of the picture.
+    if (labels.length && !layer) drawLabels(context, labels, camera, width, height);
   } finally {
+    control.restore();
     delivery.restore();
   }
 

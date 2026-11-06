@@ -15,7 +15,7 @@ import { t } from '../../i18n';
 
 
 export interface AssetImageViewerAsset {
-  kind: 'actor' | 'scene' | 'prop' | 'costume' | 'effect' | 'product';
+  kind: 'actor' | 'scene' | 'prop' | 'costume' | 'effect' | 'product' | 'extra' | 'vehicle' | 'stunt' | 'set_dressing' | 'makeup';
   name: string;
   description: string;
   imageUrl: string;
@@ -29,6 +29,11 @@ const viewerKindLabels: Record<AssetImageViewerAsset['kind'], string> = {
   costume: '服装',
   effect: '特效',
   product: '商品',
+  extra: '群演',
+  vehicle: '车辆',
+  stunt: '特技',
+  set_dressing: '置景',
+  makeup: '化妆',
 };
 
 interface Props {

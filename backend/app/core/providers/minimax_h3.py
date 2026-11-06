@@ -20,6 +20,19 @@ from app.platform.runtime_models import runtime_model_registry
 from app.schema.production import H3VideoRequest
 
 
+#: H3 接口实际接受的分辨率(拒单信息原话：supported resolutions: 480P, 768P, 2K)。
+H3_RESOLUTIONS: tuple[str, ...] = ("480p", "768p", "2k")
+_H3_NEAREST = {"720p": "768p", "1080p": "768p", "1440p": "2k", "4k": "2k"}
+
+
+def h3_resolution(value: object) -> str:
+    """把通用的 720p / 1080p 这类写法换成 H3 真正接受的档位(1080p → 768p)；认不出的按 768p。"""
+    wanted = str(value or "").strip().lower()
+    if wanted in H3_RESOLUTIONS:
+        return wanted
+    return _H3_NEAREST.get(wanted, "768p")
+
+
 class H3TaskResult(BaseModel):
     task_id: str | None = None
     status: str
@@ -53,6 +66,16 @@ def _result_identifier(data: dict[str, Any]) -> Any:
             if container.get(key) not in (None, ""):
                 return container[key]
     return _find_key(data, ("task_id", "taskId"))
+
+
+def _result_error(data: dict[str, Any]) -> str:
+    """任务失败时供应商给的原因(如 1026 input image sensitive)，没有就空串。"""
+    error = _find_key(data, ("error",))
+    if isinstance(error, dict):
+        code = str(error.get("code") or "").strip()
+        message = str(error.get("message") or "").strip()
+        return f"{code} {message}".strip()
+    return str(error or "").strip()
 
 
 def _result_video_url(data: dict[str, Any]) -> Any:
@@ -143,7 +166,22 @@ class MiniMaxH3Client:
         if response.is_success:
             return
         request_id = response.headers.get("x-request-id", "unknown")
-        raise RuntimeError(f"MiniMax H3 request failed: HTTP {response.status_code}, request_id={request_id}")
+        # 供应商的错误说明(不含密钥)一并带上：只有状态码时看不出是参数、额度还是审核问题。
+        detail = ""
+        try:
+            body = response.json()
+            base = body.get("base_resp") if isinstance(body, dict) else None
+            error = body.get("error") if isinstance(body, dict) else None
+            if isinstance(base, dict):
+                detail = f"{base.get('status_code', '')} {base.get('status_msg') or ''}".strip()
+            elif isinstance(error, dict):
+                detail = str(error.get("message") or error.get("code") or "")
+        except ValueError:
+            pass
+        raise RuntimeError(
+            f"MiniMax H3 request failed: HTTP {response.status_code}, request_id={request_id}"
+            + (f", {detail[:200]}" if detail else "")
+        )
 
     @staticmethod
     def _payload(request: H3VideoRequest) -> dict[str, Any]:
@@ -180,7 +218,7 @@ class MiniMaxH3Client:
             "model": request.model,
             "content": content,
             "duration": request.duration_seconds,
-            "resolution": request.resolution.upper(),
+            "resolution": h3_resolution(request.resolution).upper(),
         }
         # H3 derives image/reference aspect ratios from the supplied media.
         # Only pure text generation requires an explicit non-adaptive ratio.
@@ -245,7 +283,8 @@ class MiniMaxH3Client:
             if result.video_url or status in {"success", "succeeded", "completed", "done"}:
                 return result
             if status in {"failed", "error", "cancelled", "canceled"}:
-                raise RuntimeError(f"MiniMax H3 task ended with status={result.status}")
+                reason = _result_error(result.provider_payload)
+                raise RuntimeError(f"MiniMax H3 task ended with status={result.status}" + (f": {reason[:200]}" if reason else ""))
             time.sleep(min(max(poll_interval_seconds, 0.2), 30))
         raise TimeoutError("MiniMax H3 video generation timed out")
 

@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, CheckCircle2, Coins, CreditCard, LoaderCircle, ReceiptText, ShieldCheck } from 'lucide-react';
 
 import { apiRequest } from '../../api/client';
 import { t } from '../../i18n';
+import { PaymentDialog } from './PaymentDialog';
+import { channelLabel, type PaymentChannelName } from './paymentChannels';
 
 
 interface Plan {
@@ -26,14 +28,30 @@ interface Order {
 }
 
 interface Wallet {
+  available?: string | number;
+  held?: string | number;
+  frozen?: string | number;
+  charging?: boolean;
   points: string;
   money: Record<string, string>;
   entries: Array<{ id: string; direction: string; amount: string; currency: string; category: string; created_at: string }>;
 }
 
 
-export function BillingCenterPage({ onBack }: { onBack: () => void }) {
+const orderStatusLabel = (status: string) => {
+  if (status === 'paid') return t('已支付');
+  if (status === 'closed') return t('已关闭');
+  if (status === 'partially_refunded') return t('部分退款');
+  if (status === 'refunded') return t('已全额退款');
+  return t('待支付');
+};
+
+
+export function BillingCenterPage({ onBack, inProject = false }: { onBack: () => void; inProject?: boolean }) {
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [sandboxEnabled, setSandboxEnabled] = useState(false);
+  const [channels, setChannels] = useState<PaymentChannelName[]>([]);
+  const [paying, setPaying] = useState<{ plan?: Plan; order?: Order; provider: PaymentChannelName } | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [wallet, setWallet] = useState<Wallet>({ points: '0', money: {}, entries: [] });
   const [loading, setLoading] = useState(true);
@@ -45,11 +63,13 @@ export function BillingCenterPage({ onBack }: { onBack: () => void }) {
     setError('');
     try {
       const [planData, walletData, orderData] = await Promise.all([
-        apiRequest<{ items: Plan[] }>('/api/billing/plans'),
+        apiRequest<{ items: Plan[]; sandbox_enabled?: boolean; channels?: PaymentChannelName[] }>('/api/billing/plans'),
         apiRequest<Wallet>('/api/billing/wallet'),
         apiRequest<{ items: Order[] }>('/api/billing/orders?page=1&page_size=50'),
       ]);
       setPlans(planData.items);
+      setSandboxEnabled(Boolean(planData.sandbox_enabled));
+      setChannels(planData.channels ?? []);
       setWallet(walletData);
       setOrders(orderData.items);
     } catch (err) {
@@ -63,6 +83,19 @@ export function BillingCenterPage({ onBack }: { onBack: () => void }) {
     const handle = window.setTimeout(() => { void load(); }, 0);
     return () => window.clearTimeout(handle);
   }, []);
+
+  const createOrderFor = useCallback((plan: Plan) => async () => {
+    const order = await apiRequest<Order>('/api/billing/orders', {
+      method: 'POST',
+      body: JSON.stringify({ plan_id: plan.id, idempotency_key: `web-${plan.id}-${crypto.randomUUID()}` }),
+    });
+    return order.id;
+  }, []);
+  const reload = useCallback(() => { void load(); }, []);
+  const closePaying = () => {
+    setPaying(null);
+    void load();
+  };
 
   const buySandbox = async (plan: Plan) => {
     setBusy(plan.id);
@@ -95,27 +128,36 @@ export function BillingCenterPage({ onBack }: { onBack: () => void }) {
         <CreditCard size={34} className="portal-mark" />
       </header>
 
-      <div className="billing-safety"><ShieldCheck size={18} /><span>{t('当前开放沙箱支付；微信/支付宝在商户证书和签名密钥配置前不会发起真实扣款。')}</span></div>
+      <div className="billing-safety"><ShieldCheck size={18} /><span>{channels.length > 0
+        ? t('付款在支付宝或微信内完成，本站不接触你的支付账号。')
+        : sandboxEnabled
+          ? t('当前开放沙箱支付；微信/支付宝在商户证书和签名密钥配置前不会发起真实扣款。')
+          : t('在线支付暂未开放，暂时无法购买。')}</span></div>
       {error && <div className="inline-error" role="alert">{error}</div>}
       {notice && <div className="command-result"><CheckCircle2 size={16} /> {notice}</div>}
 
       {loading ? <div className="empty-library"><LoaderCircle className="spin" /> {t('正在加载支付中心…')}</div> : (
         <>
           <section className="wallet-hero">
-            <div><Coins size={25} /><span>{t('可用创作积分')}</span><strong>{wallet.points}</strong></div>
+            <div><Coins size={25} /><span>{t('可用创作积分')}</span><strong>{wallet.charging ? Number(wallet.available ?? 0) : wallet.points}</strong>{Number(wallet.held ?? 0) > 0 && <small>{t('其中 {0} 积分正在使用', [String(Number(wallet.held))])}</small>}{Number(wallet.frozen ?? 0) > 0 && <small>{t('另有 {0} 积分在退款审核中，暂不可用', [String(Number(wallet.frozen))])}</small>}</div>
             <div><ReceiptText size={25} /><span>{t('账本记录')}</span><strong>{wallet.entries.length}</strong></div>
             <div><CreditCard size={25} /><span>{t('订单数量')}</span><strong>{orders.length}</strong></div>
           </section>
 
           <section className="billing-section">
-            <div className="section-title"><div><h2>{t('会员计划')}</h2><p>{t('下列按钮仅执行本地沙箱确认，不会调用外部支付服务。')}</p></div></div>
+            <div className="section-title"><div><h2>{t('会员计划')}</h2>{sandboxEnabled && <p>{t('下列按钮仅执行本地沙箱确认，不会调用外部支付服务。')}</p>}</div></div>
             <div className="plan-grid">
               {plans.map(plan => (
                 <article className="plan-card" key={plan.id}>
                   <span>{plan.duration_days} 天</span><h2>{plan.name}</h2><p>{plan.description}</p>
                   <div className="plan-price"><strong>¥{plan.price}</strong><small> {t('/ 期')}</small></div>
                   <ul><li><CheckCircle2 size={15} /> {plan.points} 创作积分</li><li><CheckCircle2 size={15} /> {t('幂等订单与追加式流水')}</li></ul>
-                  <button type="button" className="primary-action" onClick={() => void buySandbox(plan)} disabled={busy === plan.id}>{busy === plan.id ? <LoaderCircle className="spin" size={16} /> : <CreditCard size={16} />} 沙箱购买 {plan.name}</button>
+                  {channels.map(channel => (
+                    <button type="button" className="primary-action" key={channel} onClick={() => setPaying({ plan, provider: channel })}><CreditCard size={16} /> {channelLabel(channel)}</button>
+                  ))}
+                  {(sandboxEnabled || channels.length === 0) && (
+                    <button type="button" className={channels.length > 0 ? 'secondary-action' : 'primary-action'} onClick={() => void buySandbox(plan)} disabled={!sandboxEnabled || busy === plan.id}>{busy === plan.id ? <LoaderCircle className="spin" size={16} /> : <CreditCard size={16} />} {sandboxEnabled ? `沙箱购买 ${plan.name}` : t('暂未开放购买')}</button>
+                  )}
                 </article>
               ))}
             </div>
@@ -125,11 +167,27 @@ export function BillingCenterPage({ onBack }: { onBack: () => void }) {
             <div className="section-title"><ReceiptText size={20} /><div><h2>{t('订单记录')}</h2><p>{t('金额和币种由服务端会员计划锁定，浏览器不能覆盖。')}</p></div></div>
             <div className="order-list">
               {orders.length === 0 ? <p>{t('暂无订单')}</p> : orders.map(order => (
-                <div className="order-row" key={order.id}><div><strong>{order.plan_id}</strong><small>{new Date(order.created_at).toLocaleString('zh-CN')}</small></div><span>{order.provider}</span><span>{order.currency} {order.amount}</span><span className={`order-status ${order.status}`}>{order.status === 'paid' ? t('已支付') : t('待支付')}</span></div>
+                <div className="order-row" key={order.id}><div><strong>{order.plan_id}</strong><small>{new Date(order.created_at).toLocaleString('zh-CN')}</small></div><span>{channelLabel(order.provider)}</span><span>{order.currency} {order.amount}</span><span className={`order-status ${order.status}`}>{orderStatusLabel(order.status)}</span>{order.status === 'pending' && order.provider !== 'sandbox' && channels.length > 0 && (
+                  <button type="button" className="secondary-action" onClick={() => setPaying({ order, provider: channels.includes(order.provider as PaymentChannelName) ? order.provider as PaymentChannelName : channels[0] })}>{t('继续支付')}</button>
+                )}</div>
               ))}
             </div>
           </section>
         </>
+      )}
+      {paying && (
+        <PaymentDialog
+          title={paying.plan?.name ?? paying.order?.plan_id ?? ''}
+          amount={paying.plan?.price ?? paying.order?.amount ?? ''}
+          points={paying.plan?.points ?? plans.find(plan => plan.id === paying.order?.plan_id)?.points}
+          channels={channels}
+          provider={paying.provider}
+          orderId={paying.order?.id}
+          createOrder={paying.plan ? createOrderFor(paying.plan) : undefined}
+          onClose={closePaying}
+          onPaid={reload}
+          onBackToProject={inProject ? onBack : undefined}
+        />
       )}
     </main>
   );

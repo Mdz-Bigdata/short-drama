@@ -9,8 +9,9 @@ Conventions (this project's own, stated once so every module agrees):
   whose ``rotation.y`` is that yaw, so the viewport needs no conversion.
 - "Right" of any forward (a person's right hand, a camera's screen right) is
   ``cross(forward, up)`` flattened to the floor: ``(-f_z, f_x)``.
-- A lens is a full-frame focal length; the 36 mm side of the sensor lies along
-  the long side of the delivery frame, so a 9:16 frame sees 36 mm vertically.
+- A lens is a focal length on a sensor whose long side (36 mm unless the camera
+  says otherwise) lies along the long side of the delivery frame, so a 9:16 frame
+  on a full-frame sensor sees 36 mm vertically.
 """
 
 from __future__ import annotations
@@ -105,10 +106,10 @@ def yaw_toward(source: Vec2, target: Vec2, fallback: float = 0.0) -> float:
 # --------------------------------------------------------------------------- lens and framing
 
 
-def vertical_fov(lens_mm: float, aspect: float) -> float:
-    """Vertical field of view in degrees of a full-frame lens on a frame of ``aspect`` (w / h)."""
+def vertical_fov(lens_mm: float, aspect: float, sensor_mm: float = SENSOR_LONG_SIDE_MM) -> float:
+    """Vertical field of view in degrees of a lens on a frame of ``aspect`` (w / h); ``sensor_mm`` lies along its long side."""
     lens = max(1.0, float(lens_mm))
-    sensor_height = SENSOR_LONG_SIDE_MM if aspect < 1 else SENSOR_LONG_SIDE_MM / max(aspect, _EPSILON)
+    sensor_height = sensor_mm if aspect < 1 else sensor_mm / max(aspect, _EPSILON)
     return math.degrees(2 * math.atan(sensor_height / (2 * lens)))
 
 

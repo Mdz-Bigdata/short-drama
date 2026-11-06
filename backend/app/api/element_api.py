@@ -11,7 +11,7 @@ import re
 import shutil
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -22,14 +22,30 @@ from PIL import Image, UnidentifiedImageError
 from starlette.concurrency import run_in_threadpool
 
 from app import settings
+from app.platform.billing_book import BillingRefused
+from app.core.prop_board import compose_prop_board
 from app.core.prop_turnaround import (
-    PROP_TURNAROUND_CLOSING,
-    PROP_TURNAROUND_INSTRUCTION,
-    PROP_TURNAROUND_SIZE,
-    PROP_VIEW_SLOTS,
-    split_prop_turnaround,
+    PROP_ALL_SLOTS,
+    PROP_BOARD_SLOT,
+    PROP_CLOSING,
+    PROP_REFERENCE_SLOT,
+    PROP_VIEWS,
+    PropPlan,
+    plan_prop,
+    prop_instruction,
+    split_prop_sheet,
+)
+from app.core.scene_turnaround import (
+    SCENE_TURNAROUND_CLOSING,
+    SCENE_TURNAROUND_INSTRUCTION,
+    SCENE_TURNAROUND_SIZE,
+    SCENE_VIEW_SLOTS,
+    split_scene_turnaround,
 )
 from app.core import character_variants
+from app.core.character_looks import (
+    LOOK_BOARD_SIZE, LOOK_CHECK_SYSTEM, look_check_prompt, look_fix_prompt, look_prompt, parse_look_check, wears_makeup,
+)
 from app.core.element_scope import element_in_task, element_name_keys, element_task_ids, normalized_asset_name
 from app.api.auth_api import get_current_user
 from app.core.media_compositor import MEDIA_DIR
@@ -49,6 +65,10 @@ from app.repository.task_repo import TaskRepository, TaskStoreUnavailableError
 from app.schema.platform import (
     BulkRegenerateElementsRequest,
     ElementCreateRequest,
+    PropSizeRequest,
+    ElementFolderCreateRequest,
+    ElementFolderMoveRequest,
+    ElementFolderUpdateRequest,
     ElementKind,
     ElementUpdateRequest,
     ElementVariantRequest,
@@ -61,7 +81,14 @@ logger = logging.getLogger(__name__)
 element_image_gateway = ModelGateway()
 element_task_repository = TaskRepository()
 
-_NON_ACTOR_KINDS = {"scene", "prop", "costume", "effect"}
+#: 设定写法改了、图还是按旧写法画的：提示人重画，不自动花钱。重新生成后清掉。
+NEEDS_REDRAW = "needs_redraw"
+#: 定妆图画完后看图模型核对妆效的结论 ``{passed, problems}``；重画一次仍不合格就留在卡片上给人看。
+LOOK_CHECK = "look_check"
+#: 看图模型多半先推理再作答：给少了答案还没写出来就被截断。
+LOOK_CHECK_MAX_TOKENS = 8000
+LOOK_CHECK_ATTEMPTS = 2
+_NON_ACTOR_KINDS = {"scene", "prop", "effect", "extra", "vehicle", "stunt", "set_dressing"}
 _generation_jobs: dict[str, dict[str, object]] = {}
 
 
@@ -93,29 +120,8 @@ ELEMENT_IMAGE_GENERATION_CONCURRENCY = settings.env_int(
 
 
 _GENERATION_KIND_PROMPTS = {
-    "scene": (
-        "生成一张影视拍摄场景参考图。完整展现空间结构、出入口、地面、墙体、纵深、主要光源和"
-        "剧本指定的时段天气，采用可实际搭建和拍摄的写实电影美术设计。画面是单一宽幅场景定妆照，"
-        "不出现抢眼人物，不做拼贴，不裁断关键建筑。"
-    ),
-    # 道具出四视图(正面 / 左侧45° / 右侧45° / 背面)的 2×2 四宫格，出图后切成四张，见 core/prop_turnaround。
-    "prop": PROP_TURNAROUND_INSTRUCTION,
-    # 服装穿在无五官的全身人台上出一张 16:9 定妆展示板：左侧四个全身视图、右侧三格细节，
-    # 头巾、帽子、鞋袜都有地方穿戴；人台不是真人，免得和数字演员的脸抢身份。
-    "costume": (
-        "生成一张影视服装定妆展示板：16:9 横向画布，浅灰到中灰的影棚无缝背景，同一中性柔光。"
-        "整套服装穿在一具全身人体模特(人台)上展示：模特为哑光米白色，头部是光滑无五官的蛋形头，"
-        "有手臂、双手和双脚，真实成年人比例约7.5到8头身，按角色性别与体型选择模特身形；"
-        "头巾、帽子、发饰戴在模特头上，鞋袜穿在模特脚上；服装贴合模特身体，呈现真实穿着体积、"
-        "肩线与自然垂坠，模特端正站立。"
-        "画面左侧约四分之三宽度横排四格全身视图，格与格之间一条纯白细缝，依次为正面、左侧90度侧面、"
-        "背面、右前方45度三分之四侧面；第四格模特面朝画面左侧，同时露出前襟与右半身，"
-        "与第二格的纯侧面明显不同；四格同一比例尺，脚底在同一条基线上，模特头顶到双脚完整入画。"
-        "画面右侧约四分之一宽度竖排三格细节特写：领口与衣襟、腰带系结与配饰、袖口或下摆的面料纹理与缝线磨损。"
-        "完整呈现领口、上装、下装、袖口、下摆、鞋履、材质、纹样、配饰及剧情状态。"
-        "模特不是真人：不出现真人面孔、五官、皮肤、头发、发髻、假发、胡须和妆容，"
-        "头上只戴服装本身的头巾、帽冠与发饰，不出现第二具模特。"
-    ),
+    # 场地出一张空景四视角(主场景全景 / 45°斜角 / 纵深视角 / 关键细节)的 2×2 四宫格，切成四张，见 core/scene_turnaround。
+    "scene": SCENE_TURNAROUND_INSTRUCTION,
     "effect": (
         "生成一张影视视觉特效定帧参考图，画面唯一视觉主体必须是特效现象本身，不是道具，"
         "不是场景，也不是普通环境空镜。准确表现剧本指定特效的形态、尺度、颜色、能量层次、"
@@ -125,33 +131,8 @@ _GENERATION_KIND_PROMPTS = {
 }
 
 
-# 16:9 且不超过 Seedream 单张约 462 万像素的上限，免得先被拒一次再缩小重试。
-COSTUME_BOARD_SIZE = "2848x1600"
-# 服装描述常带着演员的发型、胡须和妆面；喂给人台会被画成假发和胡子，按分句剔掉。
-# 同一分句里有头巾、冠、簪这类穿戴物件时保留，免得把头饰一起删掉。
-_COSTUME_HAIR_WORDS = re.compile(
-    r"乌发|黑发|白发|银发|头发|发髻|发型|束发|披发|碎发|发际|[高低]髻|鬓角|鬓边|胡须|须发|须长|长须|短须|面妆|妆容|妆面|花钿|唇色"
-)
-_COSTUME_WEAR_WORDS = re.compile(r"巾|帽|冠|簪|钗|步摇|幞头|发饰|发带|头饰|笠|盔|面具|珠串|流苏")
-
-
-def _costume_wardrobe_text(description: str) -> str:
-    clauses = []
-    for clause in re.split(r"[；;。]", description):
-        fragments = [
-            fragment.strip() for fragment in re.split(r"[，,]", clause)
-            if fragment.strip() and (not _COSTUME_HAIR_WORDS.search(fragment) or _COSTUME_WEAR_WORDS.search(fragment))
-        ]
-        if fragments:
-            clauses.append("，".join(fragments))
-    return "；".join(clauses)
-COSTUME_BOARD_CLOSING = (
-    "统一要求：模特与服装完整位于各自格内安全区，四个视图是同一套服装、同一配色与磨损状态，"
-    "结构清晰，材质真实，细节丰富，高清写实影棚摄影质感；严禁任何文字、标签、编号、字幕、水印、Logo；"
-    "整张图只有这一具模特的四个视图与三格细节，不出现其他服装或道具陈列。"
-)
 # 多格版式的资产要指定画布尺寸，其余用图像模型默认尺寸。
-_GENERATION_KIND_SIZES = {"prop": PROP_TURNAROUND_SIZE, "costume": COSTUME_BOARD_SIZE}
+_GENERATION_KIND_SIZES = {"scene": SCENE_TURNAROUND_SIZE}
 
 
 def _element_metadata(item) -> dict:
@@ -179,11 +160,22 @@ async def _element_generation_context(item, owner_id: str) -> tuple[str, str]:
     return str(config.get("image_model") or "").strip(), "，".join(part for part in style_parts if part)
 
 
+def _prop_length(item) -> float | None:
+    length = _element_metadata(item).get("prop_length_cm")
+    return float(length) if isinstance(length, (int, float)) and length > 0 else None
+
+
+def _prop_plan(item, extra_prompt: str = "") -> PropPlan:
+    return plan_prop(str(item.name or ""), f"{item.description or ''} {extra_prompt}", length_cm=_prop_length(item))
+
+
 def _element_reference_prompt(item, extra_prompt: str, project_style: str) -> str:
-    kind_instruction = _GENERATION_KIND_PROMPTS.get(str(item.kind), "")
     description = str(item.description or "").strip()
-    if str(item.kind) == "costume":
-        description = _costume_wardrobe_text(description)
+    # 道具画几个视图看物件本身，见 core/prop_turnaround。
+    kind_instruction = (
+        prop_instruction(_prop_plan(item, extra_prompt)) if str(item.kind) == "prop"
+        else _GENERATION_KIND_PROMPTS.get(str(item.kind), "")
+    )
     prompt = (
         f"{kind_instruction}\n"
         f"资产名称：{str(item.name).strip()}\n"
@@ -194,9 +186,9 @@ def _element_reference_prompt(item, extra_prompt: str, project_style: str) -> st
     if extra_prompt.strip():
         prompt += f"本次补充要求：{extra_prompt.strip()}\n"
     if str(item.kind) == "prop":
-        return prompt + PROP_TURNAROUND_CLOSING
-    if str(item.kind) == "costume":
-        return prompt + COSTUME_BOARD_CLOSING
+        return prompt + PROP_CLOSING
+    if str(item.kind) == "scene":
+        return prompt + SCENE_TURNAROUND_CLOSING
     return (
         prompt
         + "统一要求：主体完整位于画面安全区，结构清晰，透视正确，材质真实，细节丰富，高清写实电影质感；"
@@ -276,8 +268,18 @@ def _model3d(item) -> dict | None:
     }
 
 
+def _prop_scale(item) -> dict:
+    plan, manual = _prop_plan(item), _prop_length(item)
+    return {
+        "longest_cm": plan.longest_cm,
+        "manual_cm": manual,
+        "source": "manual" if manual else "description" if plan.size_stated else "estimate",
+    }
+
+
 def _element(item) -> dict:
     return {
+        **({"prop_scale": _prop_scale(item)} if str(item.kind) == "prop" else {}),
         "id": item.id,
         "kind": item.kind,
         "name": item.name,
@@ -298,15 +300,20 @@ async def list_elements(
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=100),
     task_id: str | None = Query(None, max_length=120),
+    folder: str | None = Query(None, max_length=36, description="文件夹 id，或 unfiled 表示未归档；不给时列出全部"),
     user: dict = Depends(get_current_user),
     store: PlatformStore = Depends(get_platform_store),
 ):
     # With task_id only the project's own and linked assets are listed; the
     # rest of the owner's library stays stored but out of the project's view.
     items, total = await store.list_elements(
-        user["user_id"], kind, page, page_size, task_id=(task_id or "").strip() or None
+        user["user_id"], kind, page, page_size, task_id=(task_id or "").strip() or None, folder=(folder or "").strip() or None,
     )
-    return {"items": [_element(item) for item in items], "page": page, "page_size": page_size, "total": total}
+    placed = await store.element_folder_ids(user["user_id"], [item.id for item in items])
+    return {
+        "items": [{**_element(item), "folder_id": placed.get(item.id)} for item in items],
+        "page": page, "page_size": page_size, "total": total,
+    }
 
 
 @router.post("")
@@ -325,6 +332,95 @@ async def create_element(
         return _element(item)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _cover_url(cover) -> str | None:
+    image = next((file for file in (cover.files if cover else []) if file.mime_type != "model/gltf-binary"), None)
+    return _file(cover.id, cover.version, image)["url"] if image else None
+
+
+async def _folders_view(store: PlatformStore, owner_id: str, kind: ElementKind | None) -> dict:
+    listing = await store.list_element_folders(owner_id, kind)
+    return {
+        "folders": [
+            {
+                "id": entry["folder"].id, "name": entry["folder"].name, "count": entry["count"],
+                # A cover whose element was deleted reads as no cover.
+                "cover_element_id": entry["cover"].id if entry["cover"] else None,
+                "cover_url": _cover_url(entry["cover"]),
+            }
+            for entry in listing["folders"]
+        ],
+        "total": listing["total"],
+        "unfiled": listing["unfiled"],
+    }
+
+
+# These sit above /{element_id}, which would otherwise take "folders" for an id.
+@router.get("/folders")
+async def list_element_folders(
+    kind: ElementKind | None = None,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    return await _folders_view(store, user["user_id"], kind)
+
+
+@router.post("/folders", status_code=201)
+async def create_element_folder(
+    request: ElementFolderCreateRequest,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    try:
+        folder = await store.create_element_folder(user["user_id"], request.name, request.cover_element_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"id": folder.id, "name": folder.name}
+
+
+@router.post("/folders/move")
+async def move_elements_to_folder(
+    request: ElementFolderMoveRequest,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """File elements in a folder, or take them out with ``folder_id: null``."""
+    try:
+        moved = await store.move_elements_to_folder(user["user_id"], request.element_ids, request.folder_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"moved": moved, "folder_id": request.folder_id}
+
+
+@router.patch("/folders/{folder_id}")
+async def update_element_folder(
+    folder_id: str,
+    request: ElementFolderUpdateRequest,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    try:
+        folder = await store.update_element_folder(
+            user["user_id"], folder_id, name=request.name, cover_element_id=request.cover_element_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if folder is None:
+        raise HTTPException(status_code=404, detail="文件夹不存在")
+    return {"id": folder.id, "name": folder.name, "cover_element_id": folder.cover_element_id}
+
+
+@router.delete("/folders/{folder_id}")
+async def delete_element_folder(
+    folder_id: str,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """Delete the folder only; its elements go back to unfiled."""
+    if not await store.delete_element_folder(user["user_id"], folder_id):
+        raise HTTPException(status_code=404, detail="文件夹不存在")
+    return {"deleted": True}
 
 
 @router.get("/{element_id}")
@@ -351,7 +447,17 @@ async def set_element_variant(
     if not item:
         raise HTTPException(status_code=404, detail="元素不存在")
     try:
-        facts = character_variants.clean_variant(request.model_dump(), element_name=item.name)
+        # 表单只有一段集数和这几个字段：定妆图的来源和分散的集数跟着条目走，见 clean_variant。
+        # 改过的定妆图记下来，之后同步剧本不再覆盖。
+        current = character_variants.variant_of({"metadata": _element_metadata(item)}) or {}
+        facts = character_variants.clean_variant(
+            {
+                **request.model_dump(),
+                **{key: current.get(key) for key in ("source", "spans", "outfit", "makeups", "starts")},
+                "edited": current.get("source") == character_variants.LOOK_SOURCE,
+            },
+            element_name=item.name,
+        )
         return _element(await store.set_element_variant(element_id, user["user_id"], facts))
     except character_variants.VariantError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -378,12 +484,33 @@ async def update_element(
     user: dict = Depends(get_current_user),
     store: PlatformStore = Depends(get_platform_store),
 ):
+    before = await store.get_element(element_id, user["user_id"])
     try:
-        return _element(await store.update_element(
+        updated = await store.update_element(
             element_id, user["user_id"], name=request.name, description=request.description
-        ))
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # 描述里改了尺寸，比例总览上的数字也要跟着变。
+    if str(updated.kind) == "prop" and before and _prop_plan(before).longest_cm != _prop_plan(updated).longest_cm:
+        return await _redraw_prop_board(updated, user["user_id"], store) or _element(updated)
+    return _element(updated)
+
+
+@router.put("/{element_id}/prop-size")
+async def set_prop_size(
+    element_id: str,
+    request: PropSizeRequest,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """人填的最长边。比例总览当场重画，不调用图像模型；还没有新版视图的道具等下次生成时用。"""
+    try:
+        updated = await store.set_prop_length(element_id, user["user_id"], request.length_cm)
+    except ValueError as exc:
+        status = 404 if "不存在" in str(exc) else 422
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    return await _redraw_prop_board(updated, user["user_id"], store) or _element(updated)
 
 
 @router.post("/{element_id}/files")
@@ -738,12 +865,16 @@ async def delete_element_file(
     user: dict = Depends(get_current_user),
     store: PlatformStore = Depends(get_platform_store),
 ):
-    quarantine = _DeletionQuarantine(user["user_id"], element_id)
+    return await _drop_element_file(element_id, file_id, user["user_id"], store)
+
+
+async def _drop_element_file(element_id: str, file_id: str, owner_id: str, store: PlatformStore) -> dict:
+    quarantine = _DeletionQuarantine(owner_id, element_id)
     try:
         deleted = await store.delete_element_file(
             element_id,
             file_id,
-            user["user_id"],
+            owner_id,
             before_commit=quarantine.stage,
         )
     except StorageMutationCommittedWithError as committed:
@@ -920,8 +1051,8 @@ async def _generate_non_actor_reference(
         raise HTTPException(status_code=422, detail="数字演员设定集请在角色设计工作区生成")
     image_model, project_style = await _element_generation_context(item, owner_id)
     prompt = _element_reference_prompt(item, extra_prompt, project_style)
-    is_prop = str(item.kind) == "prop"
-    size = _GENERATION_KIND_SIZES.get(str(item.kind))
+    prop_plan = _prop_plan(item, extra_prompt) if str(item.kind) == "prop" else None
+    size = prop_plan.size if prop_plan else _GENERATION_KIND_SIZES.get(str(item.kind))
     try:
         generated_url, provider = await run_in_threadpool(
             element_image_gateway.generate_image,
@@ -947,9 +1078,16 @@ async def _generate_non_actor_reference(
             status_code=502,
             detail="参考图生成失败，图像模型未返回可验证的图片；请检查模型配置后重试",
         ) from exc
-    if is_prop:
-        return await _persist_prop_views(item=item, owner_id=owner_id, store=store, content=content, suffix=suffix, mime=mime)
-    return await _persist_element_file(
+    if prop_plan:
+        return await _persist_prop_views(
+            item=item, owner_id=owner_id, store=store, content=content, suffix=suffix, mime=mime, plan=prop_plan,
+        )
+    if str(item.kind) == "scene":
+        return await _persist_board_views(
+            item=item, owner_id=owner_id, store=store, content=content, suffix=suffix, mime=mime,
+            split=split_scene_turnaround, slots=SCENE_VIEW_SLOTS, what="场景四视角",
+        )
+    result = await _persist_element_file(
         element_id=item.id,
         owner_id=owner_id,
         slot="reference",
@@ -958,30 +1096,200 @@ async def _generate_non_actor_reference(
         content=content,
         store=store,
     )
+    if _element_metadata(item).get(NEEDS_REDRAW):
+        return _element(await store.merge_element_metadata(item.id, owner_id, {NEEDS_REDRAW: False}))
+    return result
 
 
-async def _persist_prop_views(*, item, owner_id: str, store: PlatformStore, content: bytes, suffix: str, mime: str) -> dict:
-    """把四宫格切成正面 / 左45° / 右45° / 背面四个槽位；正面同时作为道具的主参考图。
+def _is_look(item) -> bool:
+    return str(item.kind) == "actor" and character_variants.is_look({"metadata": _element_metadata(item)})
 
-    切不开(图片损坏)时整张存成主参考图，至少不丢这次付费出的图。
+
+async def _generate_look_image(*, item, owner_id: str, store: PlatformStore, extra_prompt: str = "") -> dict:
+    """角色穿好这套戏服的定妆图：以这名角色现有的正脸/全身为身份参考，没有身份参考就不出图。"""
+    facts = character_variants.variant_of({"metadata": _element_metadata(item)}) or {}
+    wanted = normalized_asset_name(facts.get("of"))
+    task_ids = set(element_task_ids(_element_metadata(item)))
+    bases = [
+        other for other in await store.list_all_elements(owner_id, "actor")
+        if wanted in element_name_keys(other.name, other.metadata_json) and not _is_look(other)
+    ]
+    bases.sort(key=lambda other: not task_ids & set(element_task_ids(_element_metadata(other))))
+    reference = None
+    for base in bases:
+        reference = await run_in_threadpool(_actor_reference_bytes, base)
+        if reference:
+            break
+    if not reference:
+        raise HTTPException(status_code=422, detail=f"「{facts.get('of')}」还没有可用的身份视图，请先生成数字演员设定集")
+    # 旧项目已经确认过的服装图、妆效图不白费：一起给模型当设计参考。
+    earlier: list[bytes] = []
+    worn = {normalized_asset_name(name) for name in character_variants.worn_names({"name": item.name, "metadata": _element_metadata(item)})}
+    for kind in ("costume", "makeup"):
+        for other in await store.list_all_elements(owner_id, kind):
+            if worn & element_name_keys(other.name, other.metadata_json) and (content := await run_in_threadpool(_first_image_bytes, other)):
+                earlier.append(content)
+    image_model, project_style = await _element_generation_context(item, owner_id)
+    wardrobe = str(item.description or "")
+    try:
+        references = []
+        for picture in (reference, *earlier):
+            _suffix, picture_mime = await run_in_threadpool(_validated_generated_image, picture)
+            references.append(f"data:{picture_mime};base64,{base64.b64encode(picture).decode('ascii')}")
+
+        async def draw(fix: str = "") -> tuple[bytes, str, str]:
+            wanted = "\n".join(part for part in (extra_prompt.strip(), fix) if part)
+            prompt = look_prompt(str(item.name or ""), wardrobe, project_style, wanted, earlier_designs=len(earlier))
+            generated_url, _provider = await run_in_threadpool(
+                lambda: element_image_gateway.generate_image(
+                    image_model, prompt, ref_images=references, size=LOOK_BOARD_SIZE, require_reference_support=True,
+                )
+            )
+            if not generated_url:
+                raise RuntimeError("所有已配置图像模型均未返回图片")
+            drawn = await run_in_threadpool(_load_generated_image_bytes, generated_url)
+            drawn_suffix, drawn_mime = await run_in_threadpool(_validated_generated_image, drawn)
+            return drawn, drawn_suffix, drawn_mime
+
+        content, suffix, mime = await draw()
+        check = await _check_look(content, wardrobe) if wears_makeup(wardrobe) else None
+        if check is not None and not check["passed"]:
+            try:
+                redrawn = await draw(look_fix_prompt(check["problems"]))
+            except (OSError, RuntimeError, ValueError) as exc:  # 重画没出来，留第一张和它的问题
+                logger.warning("定妆图按核对问题重画失败: element=%s error=%s", item.id, type(exc).__name__)
+            else:
+                content, suffix, mime = redrawn
+                check = await _check_look(content, wardrobe)
+    except HTTPException:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.warning("角色定妆图生成失败: element=%s error=%s", item.id, type(exc).__name__)
+        raise HTTPException(status_code=502, detail="定妆图生成失败，图像模型未返回可验证的图片；请检查模型配置后重试") from exc
+    # 演员条目只收身份视图槽位；定妆图是整张展示板，放在分镜优先取的正面槽。
+    await _persist_element_file(
+        element_id=item.id, owner_id=owner_id, slot="front", suffix=suffix, mime=mime, content=content, store=store,
+    )
+    return _element(await store.merge_element_metadata(item.id, owner_id, {NEEDS_REDRAW: False, LOOK_CHECK: check}))
+
+
+async def _check_look(content: bytes, wardrobe: str) -> dict | None:
+    """看图模型核对这张定妆图的妆效；没有看图模型、没答或答不清时返回 None，不拦出图。
+
+    推理型看图模型偶尔想过了头、没写出答案，这种情况再问一次。
     """
     try:
-        views = await run_in_threadpool(split_prop_turnaround, content)
+        picture = await run_in_threadpool(_look_check_image, content)
+        for _attempt in range(LOOK_CHECK_ATTEMPTS):
+            answer, used = await run_in_threadpool(
+                lambda: element_image_gateway.describe_image(
+                    "", LOOK_CHECK_SYSTEM, look_check_prompt(wardrobe), picture, max_tokens=LOOK_CHECK_MAX_TOKENS,
+                )
+            )
+            if not used:
+                return None
+            if check := parse_look_check(answer):
+                return {**check, "model": used}
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.warning("定妆图妆效核对失败: error=%s", type(exc).__name__)
+    return None
+
+
+def _look_check_image(content: bytes) -> str:
+    """缩到看图模型收得下、特写还看得清伤口的 JPEG。"""
+    with Image.open(io.BytesIO(content)) as image:
+        image = image.convert("RGB")
+        image.thumbnail((2048, 2048))
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=88)
+    return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+async def _persist_prop_views(
+    *, item, owner_id: str, store: PlatformStore, content: bytes, suffix: str, mime: str, plan: PropPlan,
+) -> dict:
+    """道具的各个视图、比例总览和主参考图。这一版不画的视图从上一版里清掉，免得新旧混在一起。"""
+    try:
+        views = await run_in_threadpool(split_prop_sheet, content, plan)
     except (OSError, ValueError) as exc:
-        logger.warning("道具四视图切分失败，整张存为参考图: element=%s error=%s", item.id, type(exc).__name__)
+        logger.warning("道具视图切分失败，整张存为参考图: element=%s error=%s", item.id, type(exc).__name__)
+        return await _persist_element_file(
+            element_id=item.id, owner_id=owner_id, slot="reference", suffix=suffix, mime=mime,
+            content=content, store=store,
+        )
+    try:
+        views[PROP_BOARD_SLOT] = await run_in_threadpool(compose_prop_board, plan, views)
+    except (OSError, ValueError) as exc:  # 总览画不出来，视图还在
+        logger.warning("道具比例总览生成失败: element=%s error=%s", item.id, type(exc).__name__)
+    for slot, image in views.items():
+        await _persist_element_file(
+            element_id=item.id, owner_id=owner_id, slot=slot, suffix=".png", mime="image/png",
+            content=image, store=store,
+        )
+    result = await _persist_element_file(
+        element_id=item.id, owner_id=owner_id, slot="reference", suffix=".png", mime="image/png",
+        content=views[plan.views[0]], store=store,
+    )
+    current = await store.get_element(item.id, owner_id)
+    for file in (current.files if current else []):
+        if file.slot in PROP_ALL_SLOTS and file.slot not in views:
+            result = await _drop_element_file(item.id, file.id, owner_id, store)
+    return result
+
+
+async def _redraw_prop_board(item, owner_id: str, store: PlatformStore) -> dict | None:
+    """用已存的视图按现在的尺寸重画比例总览。旧版四视图没有比例参照格，画不了，返回 None。"""
+    files = {file.slot: file for file in item.files}
+    plan = _prop_plan(item)
+    views = tuple(slot for slot in (*plan.views, *PROP_VIEWS) if slot in files)
+    views = tuple(dict.fromkeys(views))
+    if PROP_REFERENCE_SLOT not in files or not views:
+        return None
+    plan = replace(plan, views=views, measured=tuple(slot for slot in plan.measured if slot in files) or views[:1])
+
+    def draw() -> bytes:
+        stored = {
+            slot: _owned_reference_path(files[slot].storage_path, owner_id, item.id)[0].read_bytes()
+            for slot in plan.slots
+        }
+        return compose_prop_board(plan, stored)
+
+    try:
+        board = await run_in_threadpool(draw)
+    except (HTTPException, OSError, ValueError) as exc:
+        logger.warning("道具比例总览重画失败: element=%s error=%s", item.id, type(exc).__name__)
+        return None
+    return await _persist_element_file(
+        element_id=item.id, owner_id=owner_id, slot=PROP_BOARD_SLOT, suffix=".png", mime="image/png",
+        content=board, store=store,
+    )
+
+
+async def _persist_board_views(
+    *, item, owner_id: str, store: PlatformStore, content: bytes, suffix: str, mime: str,
+    split, slots: tuple[str, ...], what: str,
+) -> dict:
+    """把四宫格切成各自的槽位：道具是正面 / 左45° / 右45° / 背面，场地是全景 / 45° / 纵深 / 细节。
+
+    第一格(道具正面、场地全景)同时作为主参考图。切不开(图片损坏)时整张存成主参考图，至少不丢这次付费出的图。
+    """
+    try:
+        views = await run_in_threadpool(split, content)
+    except (OSError, ValueError) as exc:
+        logger.warning("%s切分失败，整张存为参考图: element=%s error=%s", what, item.id, type(exc).__name__)
         return await _persist_element_file(
             element_id=item.id, owner_id=owner_id, slot="reference", suffix=suffix, mime=mime,
             content=content, store=store,
         )
     result: dict = {}
-    for slot in PROP_VIEW_SLOTS:
+    for slot in slots:
         result = await _persist_element_file(
             element_id=item.id, owner_id=owner_id, slot=slot, suffix=".png", mime="image/png",
             content=views[slot], store=store,
         )
     return await _persist_element_file(
         element_id=item.id, owner_id=owner_id, slot="reference", suffix=".png", mime="image/png",
-        content=views["prop_front"], store=store,
+        content=views[slots[0]], store=store,
     ) or result
 
 
@@ -1039,6 +1347,9 @@ async def _run_generation_job(
                     raise ValueError("资产不存在")
                 if any(file.mime_type.startswith("image/") for file in current.files) and not replace_existing:
                     job["succeeded"] = int(job["succeeded"]) + 1
+                elif _is_look(current):
+                    await _generate_look_image(item=current, owner_id=owner_id, store=store)
+                    job["succeeded"] = int(job["succeeded"]) + 1
                 else:
                     await _generate_non_actor_reference(
                         item=current,
@@ -1047,7 +1358,7 @@ async def _run_generation_job(
                         extra_prompt="按剧本资产描述生成可直接用于本项目的完整参考图",
                     )
                     job["succeeded"] = int(job["succeeded"]) + 1
-            except (Exception, asyncio.CancelledError) as exc:
+            except (Exception, asyncio.CancelledError, BillingRefused) as exc:
                 if isinstance(exc, asyncio.CancelledError):
                     raise
                 job["failed"] = int(job["failed"]) + 1
@@ -1078,14 +1389,16 @@ async def start_element_generation_job(
     user: dict = Depends(get_current_user),
     store: PlatformStore = Depends(get_platform_store),
 ):
-    if request.kind not in _NON_ACTOR_KINDS:
-        raise HTTPException(status_code=422, detail="批量参考图生成仅支持场景、道具、服装和特效")
+    looks_only = request.looks and request.kind == "actor"
+    if request.kind not in _NON_ACTOR_KINDS and not looks_only:
+        raise HTTPException(status_code=422, detail="批量参考图生成不支持数字演员和商品")
     owner_id = user["user_id"]
     items = await store.list_all_elements(owner_id, request.kind)
     task_id = str(request.task_id or "").strip()
     candidates = [
         item for item in items
         if (not task_id or element_in_task(_element_metadata(item), task_id))
+        and (not looks_only or character_variants.is_current_look({"metadata": _element_metadata(item)}))
         and (
             request.replace_existing
             or not any(file.mime_type.startswith("image/") for file in item.files)
@@ -1165,6 +1478,20 @@ def _actor_reference_bytes(item) -> bytes | None:
     for slot in ("face_front", "front", "face_three_quarter", "profile"):
         file = files.get(slot)
         if file is None:
+            continue
+        try:
+            absolute, _ = _owned_reference_path(file.storage_path, item.owner_id, item.id)
+        except HTTPException:
+            continue
+        if absolute.is_file():
+            return absolute.read_bytes()
+    return None
+
+
+def _first_image_bytes(item) -> bytes | None:
+    """这个条目的第一张图；读不到就算没有。"""
+    for file in item.files or []:
+        if not str(file.mime_type or "").startswith("image/"):
             continue
         try:
             absolute, _ = _owned_reference_path(file.storage_path, item.owner_id, item.id)
@@ -1309,8 +1636,8 @@ async def _regenerate_library_actor(element_id: str, owner_id: str, store: Platf
             element_id=element_id, owner_id=owner_id, store=store,
             views=result.get("views") or [], sheet=str(result.get("sheet") or ""),
         )
-    except Exception as exc:  # noqa: BLE001 - 失败只记在该演员名下，旧图不动
-        detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+    except (Exception, BillingRefused) as exc:  # noqa: BLE001 - 失败只记在该演员名下，旧图不动
+        detail = exc.detail if isinstance(exc, (HTTPException, BillingRefused)) else str(exc)
         error = str(detail or "").strip()[:260] or "数字演员设定集重新生成失败"
         logger.warning("资产库数字演员重新生成失败: element=%s error=%s", element_id, error)
     state = (
@@ -1335,6 +1662,10 @@ async def regenerate_element(
     element = await store.get_element(element_id, user["user_id"])
     if not element:
         raise HTTPException(status_code=404, detail="元素不存在")
+    if str(element.kind) in ("costume", "makeup"):
+        raise HTTPException(status_code=422, detail="服装和化妆已并入角色妆造，请在角色设计的定妆图里重新生成")
+    if _is_look(element):
+        return await _generate_look_image(item=element, owner_id=user["user_id"], store=store, extra_prompt=request.prompt)
     if str(element.kind) in _NON_ACTOR_KINDS:
         return await _generate_non_actor_reference(
             item=element,

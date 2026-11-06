@@ -39,6 +39,9 @@ class ScreenwritingOverview(DramaBaseSchema):
     genre: str = Field("", max_length=200)
     theme: str = Field("", max_length=2000)
     world_setting: str = Field("", max_length=8000)
+    thesis: str = Field("", max_length=2000)
+    motif: str = Field("", max_length=4000)
+    ending_image: str = Field("", max_length=2000)
 
 
 class ScreenwritingDurations(DramaBaseSchema):

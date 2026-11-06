@@ -519,7 +519,8 @@ class CameraOperationTests(unittest.TestCase):
         longer = apply_operations(timed, [{"op": "set_timeline", "shot_id": 2, "duration_s": 6}])
         self.assertEqual((longer.timelines["2"].duration_s, longer.timelines["2"].fps, len(longer.timelines["2"].camera)), (6.0, 30, 2))
         cleared = apply_operations(longer, [{"op": "clear_timeline", "shot_id": 2}, {"op": "clear_timeline", "shot_id": 3}])
-        self.assertEqual(cleared.timelines, {})
+        self.assertNotIn("2", cleared.timelines)
+        self.assertNotIn("3", cleared.timelines)
         # Stored and loaded like the rest of the plan.
         self.assertEqual(StagePlan.model_validate(timed.model_dump(mode="json")).timelines["2"], timeline)
 
@@ -693,7 +694,7 @@ class CameraMoveTests(unittest.TestCase):
         _rejects(self, self.plan, {"op": "apply_camera_move", "shot_id": 4, "preset": "push", "amplitude": 0}, "amplitude")
         _rejects(self, self.plan, {"op": "apply_camera_move", "shot_id": 4, "preset": "arc", "angle": 270}, "angle")
         _rejects(self, self.plan, {"op": "apply_camera_move", "shot_id": 4, "preset": "push", "duration_s": 0.2}, "duration_s")
-        self.assertEqual(self.plan.timelines, {})
+        self.assertEqual(self.plan.timelines, build_plan(_brief()).timelines, "a refused move changes nothing")
 
 
 class InterchangeTests(unittest.TestCase):

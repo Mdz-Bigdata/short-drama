@@ -7,7 +7,9 @@
 - 头像三联：横排三格 1:1，左正脸、中左侧 45°、右右侧 45°，每格约 1024px；
 - 全身三联：横排三格 1:2，左正面、中 90° 侧面、右背面，每格约 1024×2048。
 
-切法与道具四视图相同：分割线从 1/3、2/3 处吸附到真实白缝，每格收紧到人物并留余量。
+切法：先找三块真实面板，在相邻两块之间的白缝里定分界，把整张图分成三列；每列再收紧到其中的
+全部内容并留余量。人物身边离身的小块(斜出去的剑、垂下的袖、流苏)和人物在同一列里，不会被当成
+碎片丢掉——白衣白底时它们和身体之间常隔着一段"平滑"的白。全身三联用浅灰底，白衣服才分得出来。
 三张脸必须真的转了面(差分哈希互不相同)，否则这一组不采用，保留设定集里的裁切。
 """
 
@@ -18,7 +20,7 @@ import os
 from dataclasses import dataclass
 from typing import Callable
 
-from PIL import Image
+from PIL import Image, ImageChops
 
 from app.core.actor_sheet_cutter import _runs, _SeparatorMap
 from app.core.actor_sheet_layout import FULL_BODY_PROPORTION_RULE
@@ -40,8 +42,12 @@ class HdGroup:
     cells: tuple[str, ...]
     size: str
     layout: str
-    # 三格必须明显不同才采用：模型常把三张脸都画成正脸，这一组就要查；全身三视图轮廓差异本就大。
+    # 三格必须明显不同才采用：模型常把三张脸都画成正脸，这一组就要查。
     require_distinct: bool = False
+    # 只查这几对格子(按横排位置)，以及它们至少要差多少。全身三联只查正面与侧面：有的模型把「侧面」
+    # 也画成正面(实测差异约 10，真侧面 30–50)；正面与背面的轮廓本来就可能很像(实测低到 9.6)，不查。
+    distinct_pairs: tuple[tuple[int, int], ...] = ()
+    distinct_level: float = 6.0
 
 
 HD_GROUPS: tuple[HdGroup, ...] = (
@@ -61,12 +67,16 @@ HD_GROUPS: tuple[HdGroup, ...] = (
         cells=HD_BODY_CELLS,
         size=HD_BODY_SIZE,
         layout=(
-            "横向 1 行 3 格的全身三视图，格与格之间一条纯白细缝，纯白干净背景。"
+            # 浅灰底：白衣服、白靴、银剑在纯白底上和背景连成一片，切图时会被当成留白切掉。
+            "横向 1 行 3 格的全身三视图，格与格之间一条纯白细缝，浅灰色(不是纯白)纯色干净背景。"
+            "手持的兵器、道具与垂下的衣袖、披帛、流苏都完整留在本格之内，不越过格缝。"
             "左格：正面全身；中格：90 度标准侧面全身；右格：背面全身。"
             "三格同一比例，脚底在同一条基线上，头顶在同一高度，头顶到双脚完整入画。"
             f"{FULL_BODY_PROPORTION_RULE}"
             "服装面料、纹样、配饰与鞋履高清锐利。"
         ),
+        distinct_pairs=((0, 1),),
+        distinct_level=18.0,
     ),
 )
 
@@ -93,8 +103,47 @@ def _snap(separators: list[bool], length: int, fraction: float) -> int:
     return (low + high) // 2
 
 
+#: 收紧时一列(一行)算有内容：分成 CONTENT_BANDS 段，任一段里跳变或暗像素占到 CONTENT_SHARE。
+#: 设定集切图按整列比例判断，细长的剑、流苏、袖口在一整列里只占几行，会被当成留白切掉。
+CONTENT_BANDS = 32
+CONTENT_SHARE = 0.08
+
+
+def _content_flags(mask: Image.Image, axis: str) -> list[bool]:
+    width, height = mask.size
+    size = (width, CONTENT_BANDS) if axis == "x" else (CONTENT_BANDS, height)
+    data = mask.resize(size, Image.Resampling.BOX).tobytes()
+    limit = 255 * CONTENT_SHARE
+    if axis == "x":
+        return [any(data[band * width + column] >= limit for band in range(CONTENT_BANDS)) for column in range(width)]
+    return [any(data[row * CONTENT_BANDS + band] >= limit for band in range(CONTENT_BANDS)) for row in range(height)]
+
+
+def _content_box(seps: _SeparatorMap, box: tuple[int, int, int, int]) -> tuple[int, int, int, int] | None:
+    """一列里全部内容的外框：细小的剑尖、流苏也算内容。"""
+    mask = ImageChops.lighter(ImageChops.lighter(seps.vertical, seps.horizontal), seps.dark).crop(box)
+    columns, rows = _content_flags(mask, "x"), _content_flags(mask, "y")
+    if not any(columns) or not any(rows):
+        return None
+    x0, x1 = columns.index(True), len(columns) - columns[::-1].index(True)
+    y0, y1 = rows.index(True), len(rows) - rows[::-1].index(True)
+    return (box[0] + x0, box[1] + y0, box[0] + x1, box[1] + y1)
+
+
+def _boundary(seps: _SeparatorMap, low: int, high: int, height: int) -> int:
+    """两块面板之间的分界：这段区间里最宽的一条整列白缝的正中；没有就取区间正中。"""
+    if high <= low:
+        return (low + high) // 2
+    flags = seps.separators((low, 0, high, height), "x")
+    runs = _runs(flags, interior_only=False)
+    if not runs:
+        return (low + high) // 2
+    start, end = max(runs, key=lambda run: (run[1] - run[0], -abs((run[0] + run[1]) / 2 - (high - low) / 2)))
+    return low + (start + end) // 2
+
+
 def split_triptych(content: bytes) -> list[Image.Image]:
-    """横排三联切成三张：分割线吸附白缝，每格收紧到人物并留余量。"""
+    """横排三联切成三张：按真实格缝分成三列，每列收紧到其中的全部内容并留余量。"""
     with Image.open(io.BytesIO(content)) as opened:
         image = opened.convert("RGB")
     seps = _SeparatorMap(image)
@@ -106,7 +155,10 @@ def split_triptych(content: bytes) -> list[Image.Image]:
         key=lambda box: box[0],
     )
     if len(panels) == 3:
-        boxes = [(left, 0, right, height) for left, _, right, _ in panels]
+        # 分界放在相邻面板之间的白缝里：面板之外、格缝之前的小块(剑尖、袖口)归它所在的那一列。
+        first = _boundary(seps, panels[0][2], panels[1][0], height)
+        second = _boundary(seps, panels[1][2], panels[2][0], height)
+        boxes = [(0, 0, first, height), (first, 0, second, height), (second, 0, width, height)]
     else:
         columns = seps.separators((0, 0, width, height), "x")
         first, second = _snap(columns, width, 1 / 3), _snap(columns, width, 2 / 3)
@@ -115,7 +167,7 @@ def split_triptych(content: bytes) -> list[Image.Image]:
         boxes = [(0, 0, first, height), (first, 0, second, height), (second, 0, width, height)]
     crops = []
     for box in boxes:
-        tight = seps.trim(box) or box
+        tight = _content_box(seps, box) or seps.trim(box) or box
         margin_x = round((box[2] - box[0]) * VIEW_MARGIN)
         margin_y = round((box[3] - box[1]) * VIEW_MARGIN)
         crops.append(image.crop((
@@ -125,14 +177,14 @@ def split_triptych(content: bytes) -> list[Image.Image]:
     return crops
 
 
-def _distinct(images: list[Image.Image]) -> bool:
-    """三张必须真的不同(转了面)：缩成 16×16 灰度后两两差异够大。"""
+def _distinct(images: list[Image.Image], pairs: tuple[tuple[int, int], ...] = (), level: float = 6.0) -> bool:
+    """格子必须真的不同(转了面)：缩成 16×16 灰度后差异够大；``pairs`` 为空时两两都查。"""
     thumbs = [list(image.convert("L").resize((16, 16), Image.Resampling.BOX).tobytes()) for image in images]
-    for i in range(len(thumbs)):
-        for j in range(i + 1, len(thumbs)):
-            diff = sum(abs(a - b) for a, b in zip(thumbs[i], thumbs[j])) / len(thumbs[i])
-            if diff < 6:
-                return False
+    checks = pairs or tuple((i, j) for i in range(len(thumbs)) for j in range(i + 1, len(thumbs)))
+    for i, j in checks:
+        diff = sum(abs(a - b) for a, b in zip(thumbs[i], thumbs[j])) / len(thumbs[i])
+        if diff < level:
+            return False
     return True
 
 
@@ -144,22 +196,38 @@ def generate_hd_views(
     desc: str,
     style: str,
     references: list,
+    keep: Callable[[str, bytes], None] | None = None,
+    only: tuple[str, ...] | None = None,
 ) -> dict[str, Image.Image]:
     """出两张三联并切开，返回 {格子 key: 高清图}；某一组失败或没转面就整组跳过。
+
+    ``keep(组名, 原图字节)`` 用来留下三联原图(face / body)：切法以后再改，不用重新付费出图。
 
     ``generate(model 之外的) (prompt, references, size)`` 返回图片地址，``load(url)`` 取回字节——
     由调用方绑定模型与网关，这里只管提示词、切图和取舍。
     """
     views: dict[str, Image.Image] = {}
     for group in HD_GROUPS:
+        if only is not None and not set(group.cells) & set(only):
+            continue  # ``only`` 只要某几格时，不相干的那一组不出图、不花钱
         try:
             url = generate(hd_prompt(group, name=name, desc=desc, style=style), references, group.size)
             if not url:
                 continue
-            crops = split_triptych(load(url))
+            content = load(url)
+            if keep is not None:
+                try:
+                    keep("face" if group.cells == HD_FACE_CELLS else "body", content)
+                except Exception:  # noqa: BLE001 - 留原图失败不影响出视图
+                    pass
+            crops = split_triptych(content)
         except Exception:  # noqa: BLE001 - 高清视图是锦上添花，失败就保留设定集裁切
             continue
-        if len(crops) == len(group.cells) and (not group.require_distinct or _distinct(crops)):
+        turned = (
+            _distinct(crops, group.distinct_pairs, group.distinct_level)
+            if group.require_distinct or group.distinct_pairs else True
+        )
+        if len(crops) == len(group.cells) and turned:
             views.update(zip(group.cells, crops))
     return views
 

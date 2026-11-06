@@ -13,6 +13,7 @@ import { figureHeight } from '../lib/figureHeight';
 import { visibleActors } from '../lib/visibleActors';
 import { LensStage } from './LensStage';
 import { webglAvailable } from './stageLook';
+import { stageReach } from '../lib/stageMath';
 import { ContextLossGuard, StageLights, ViewportBoundary, ViewportUnavailable } from './ViewportShell';
 
 export interface LensViewportProps {
@@ -61,7 +62,7 @@ function CaptureBridge({ aspect, actors, range, onReady }: { aspect: number; act
         const info = frameInfo(actors);
         return captureStill({
           gl, scene, camera, aspect, monochrome: options.monochrome, labels: options.labels ? info.labels : [], figures: info.figures,
-          depth: options.depth ? { range: options.depthRange ?? range } : undefined,
+          depth: options.depth ? { range: options.depthRange ?? range } : undefined, layer: options.layer,
         });
       },
       renderer: () => ({ gl, scene, camera, depthRange: range }),
@@ -124,8 +125,8 @@ export default function LensViewport({ plan, shot, camera, hidden, overlay, onRe
         <div className="desk-viewport__pane">
           <div className="desk-viewport__frame" style={{ '--desk-aspect': String(aspect) } as CSSProperties}>
             {/* The drawing buffer is kept so a still can be read back after the render that made it. */}
-            <Canvas dpr={[1, 1.5]} frameloop="demand" gl={{ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true }}>
-              <StageLights />
+            <Canvas shadows dpr={[1, 1.5]} frameloop="demand" gl={{ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true }}>
+              <StageLights reach={stageReach({ actors: [], landmarks: plan.landmarks }).radius} />
               <PerspectiveCamera makeDefault fov={camera.fov_deg} near={0.05} far={500} position={camera.position} />
               <LookAt target={target} />
               <CaptureBridge aspect={aspect} actors={actors} range={range} onReady={onReady} />

@@ -8,6 +8,8 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
 
 from app import settings
 from app.ingest.parsers import SourceIngestor
+from app.core import usage_ledger
+from app.platform.permissions import authorize, legacy_role, permissions_for
 from app.platform.bootstrap import development_admin_login_hint
 from app.platform.dependencies import get_platform_store
 from app.platform.models import PlatformUser
@@ -28,7 +30,10 @@ def _public_user(user: PlatformUser) -> dict:
         "display_name": user.display_name,
         "email": user.email,
         "phone": user.phone,
-        "role": user.role,
+        # The old field stays for anything still reading it; decisions go by permissions.
+        "role": legacy_role(user.roles),
+        "roles": user.roles,
+        "permissions": sorted(permissions_for(user.roles)),
         "status": user.status,
         "must_change_password": user.must_change_password,
     }
@@ -46,15 +51,21 @@ async def get_current_user(
     user = await store.get_user(user_id)
     if not user or user.status != "active":
         raise HTTPException(status_code=401, detail="用户账户不存在或已停用")
+    usage_ledger.bind_user(user.id)
     return _public_user(user)
 
 
-async def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="需要管理员权限")
-    if current_user.get("must_change_password"):
-        raise HTTPException(status_code=403, detail="首次登录必须先在用户中心修改管理员密码")
-    return current_user
+def require_permission(permission: str):
+    """A route dependency: the caller holds ``permission``. The route scan test reads ``required_permission``."""
+
+    async def dependency(current_user: dict = Depends(get_current_user)) -> dict:
+        decision = authorize(current_user, permission=permission)
+        if not decision.allowed:
+            raise HTTPException(status_code=decision.status, detail=decision.detail)
+        return current_user
+
+    dependency.required_permission = permission
+    return dependency
 
 
 def _client_config() -> dict:

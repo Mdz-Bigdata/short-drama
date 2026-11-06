@@ -11,7 +11,7 @@ from typing import Any, Dict, Mapping, Optional
 from app.core import llm_profile
 from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
 from app import settings
-from app.core import production_knowledge, style_packs, usage_ledger, video_jobs
+from app.core import production_knowledge, reference_fit, style_packs, usage_ledger, video_jobs
 from app.core.providers.defaults import (
     ARK_HOST_SUFFIX,
     DEFAULT_ASPECT_RATIO,
@@ -28,9 +28,51 @@ from app.core.video_references import max_shot_seconds
 from app.core.credential_pool import CREDENTIAL_REJECTED, credential_pool
 from app.core.providers import comfyui
 from app.platform.runtime_models import runtime_model_registry
+from app.core import prompt_compact
 from app.platform.runtime_skills import runtime_skill_registry
 
 logger = logging.getLogger("app.core.model_gateway")
+# 每个出片线程最近一次 Ark 视频请求被拒的原因：图生视频失败时要说清为什么，而不是只说「暂不可用」。
+_ark_notes = threading.local()
+
+# 单张图的请求上限：Seedream 5.0 pro 画九宫格分镜(大尺寸 + 多张参考图)常要两三分钟。
+IMAGE_REQUEST_TIMEOUT_SECONDS = 300
+
+
+def _ark_rejection(response) -> str:
+    """Ark 拒单的错误码与说明(不含密钥)，供日志与降级原因使用。"""
+    try:
+        error = response.json().get("error") or {}
+    except ValueError:
+        error = {}
+    code = str(error.get("code") or "").strip() if isinstance(error, dict) else ""
+    message = str(error.get("message") or "").strip() if isinstance(error, dict) else ""
+    return f"HTTP {response.status_code} {code} {message[:160]}".strip()
+
+
+def _centre_runtime(model: str, category: str, *, keep=None, quiet: bool = False):
+    """模型配置中心优先：项目的型号在中心启用就用它；中心有该类模型、项目型号却不在其中时改用中心的第一个；
+    中心没有该类模型时返回 (None, model)，由 .env 的配置出图 / 出片。``keep(model)`` 为真的型号不替换
+    (如 ComfyUI、已在别处配好的视频适配器族)。"""
+    runtime = runtime_model_registry.resolve(model, category)
+    if runtime is not None:
+        return runtime, model
+    if keep is not None and (model or "").strip() and keep(model):
+        return None, model
+    fallback = runtime_model_registry.first_for_category(category)
+    if fallback is None:
+        return None, model
+    if (model or "").strip() and not quiet:
+        logger.warning("[ModelGateway] %s 模型 %s 未在模型配置中心启用，改用配置中心的 %s", category, model, fallback.model_ids[0])
+    return fallback, fallback.model_ids[0]
+
+
+def _h3_failure(payload: object) -> str:
+    """MiniMax 在 HTTP 200 里用 base_resp 报错：取出状态码与说明。"""
+    base = payload.get("base_resp") if isinstance(payload, dict) else None
+    if isinstance(base, dict) and base.get("status_code") not in (None, 0, "0"):
+        return f"{base.get('status_code')} {str(base.get('status_msg') or '')[:160]}".strip()
+    return ""
 
 
 def _image_reference(value: object) -> bool:
@@ -73,6 +115,10 @@ DEFAULT_LLM_CALL_DEADLINE_SECONDS = 1800.0
 DEFAULT_LLM_READ_TIMEOUT_SECONDS = 600.0
 DEFAULT_LLM_CONNECT_TIMEOUT_SECONDS = 30.0
 MAX_TOKENS_SHRINKS = 4
+# A rate-limited (429) chat call is asked again on the same credential this many extra times
+# before the caller falls through to the next one; other refusals are not retried.
+RATE_LIMIT_RETRIES = 3
+RATE_LIMIT_WAIT_MAX = 30.0
 _MAX_TOKENS_WORDS = ("max_tokens", "max_completion_tokens", "max_output_tokens", "max_new_tokens", "completion tokens",
                      "output tokens", "maximum", "too large", "exceed", "context length", "最大", "上限", "超出")
 _MAX_TOKENS_LADDER = (524_288, 262_144, 131_072, 65_536, 32_768, 16_384, 8_192, 4_096)
@@ -82,6 +128,20 @@ _IMAGE_AREA_LIMIT = re.compile(
     r"image area must be (?:at most|no more than|less than or equal to|<=)\s*([\d,]+)\s*pixels", re.IGNORECASE,
 )
 _IMAGE_SIZE = re.compile(r"^\s*(\d{2,5})\s*[xX×*]\s*(\d{2,5})\s*$")
+
+
+def rate_limit_wait(retry_after: Any, attempt: int) -> float:
+    """Seconds to wait before retrying a 429: the provider's ``Retry-After`` (seconds; a date is
+    ignored) when it gives one, else ~2 s × attempt; never more than ``RATE_LIMIT_WAIT_MAX``."""
+    wait: float | None = None
+    try:
+        if retry_after is not None and str(retry_after).strip():
+            wait = float(str(retry_after).strip())
+    except ValueError:
+        wait = None
+    if wait is None or wait < 0:
+        wait = 2.0 * max(1, int(attempt))
+    return min(wait, RATE_LIMIT_WAIT_MAX)
 
 
 def allowed_image_area(status: int, error_text: str) -> int | None:
@@ -323,10 +383,11 @@ class ModelGateway:
         self.seedance_image_model = os.getenv("SEEDANCE_IMAGE_MODEL_NAME") or GATEWAY_DEFAULT_MODELS["seedance_image"]
         # Seedream 4.5 要求图片 ≥3686400 像素；1440x2560 为 9:16 竖屏且达标
         self.seedance_image_size = os.getenv("SEEDANCE_IMAGE_SIZE") or DEFAULT_SEEDANCE_IMAGE_SIZE
-        # Seedream 文生图 AI 水印/标记：必须开启！火山 Ark 图生视频审核靠该 AI 标记识别"自家 AI 图"，
-        # 关闭后写实人脸首帧会被判「疑似真人 InputImageSensitiveContentDetected」而拒。默认 True，
-        # 同时也满足"AI 生成内容须显著标识"的合规要求。可用 SEEDANCE_IMAGE_WATERMARK=0 关闭(不建议)。
-        self.seedance_image_watermark = (os.getenv("SEEDANCE_IMAGE_WATERMARK", "1").strip() not in ("0", "false", "False", ""))
+        # Seedream 的可见水印(画面右下角「AI生成」字样)：默认关闭。这些图是分镜首帧、角色设定与场景/道具
+        # 参考图，可见水印会被印进每一段视频和每一张下游图里。Ark 的 watermark 字段本就是可选项，关掉只去掉
+        # 画面上的字样，不影响图片元数据里的隐式 AI 标识。
+        # 需要可见水印时设 SEEDANCE_IMAGE_WATERMARK=1。图生视频若因此被判「疑似真人」，日志里会有 Ark 拒单码。
+        self.seedance_image_watermark = (os.getenv("SEEDANCE_IMAGE_WATERMARK", "0").strip() not in ("0", "false", "False", ""))
         # 火山「可信素材库」已授权真人素材白名单：演员在控制台/即梦App完成一次性真人认证入库后，
         # 把授权素材的 volces.com 直链填到 .env 的 ARK_AUTHORIZED_FACE_ASSETS (逗号分隔) 或
         # config.json 的 seedance.authorized_face_assets。这些已授权真人素材作为首帧/参考图时，
@@ -479,7 +540,7 @@ class ModelGateway:
 
     def resolve_authorized_face(self, name: str = None, role: str = None) -> str:
         """解析某角色对应的已授权真人素材 URL：先按具体角色名精确匹配，再按角色位(主角/反派)匹配。
-        未配置则返回 None (该角色走常规文生图/文生视频流程)。"""
+        未配置则返回 None (该角色走常规文生图/图生视频流程)。"""
         m = getattr(self, "ark_authorized_face_map", None) or {}
         if not m:
             return None
@@ -529,6 +590,12 @@ class ModelGateway:
             "provider": self._host_of(base_url),
             "input_tokens": tokens.get("prompt_tokens"),
             "output_tokens": tokens.get("completion_tokens"),
+            "reasoning_tokens": (tokens.get("completion_tokens_details") or {}).get("reasoning_tokens"),
+            # OpenAI 系放在 prompt_tokens_details，DeepSeek 用 prompt_cache_hit_tokens，Anthropic 兼容端用 cache_read_input_tokens。
+            "cached_tokens": (
+                (tokens.get("prompt_tokens_details") or {}).get("cached_tokens")
+                or tokens.get("prompt_cache_hit_tokens") or tokens.get("cache_read_input_tokens")
+            ),
         }
 
     def _with_credentials(self, runtime, bucket: str, call):
@@ -558,28 +625,42 @@ class ModelGateway:
     def call_llm(self, model: str, system_prompt: str, user_prompt: str, creative_title: str, director_style: str = "cyberpunk", shot_style: str = "cinematic", user_instruction: str = "", max_tokens: Optional[int] = None) -> str:
         """Text generation, recorded as one provider call (see ``app.core.usage_ledger``)."""
         self._thread_state.last_chat = None
-        runtime = runtime_model_registry.resolve(model, "text")
+        self._thread_state.offline_answer = False
+        self._thread_state.system_chars_saved = 0
+        runtime, called = _centre_runtime(model, "text", quiet=True)
         provider = runtime.provider if runtime else self._detect_provider(model)
-        with usage_ledger.timed_call("text", provider=provider, model=model or "", units={"input_chars": len(system_prompt or "") + len(user_prompt or "")}) as outcome:
+        with usage_ledger.timed_call("text", provider=provider, model=called or "", units={"input_chars": len(system_prompt or "") + len(user_prompt or "")}) as outcome:
             result = self._call_llm_unmetered(model, system_prompt, user_prompt, creative_title, director_style, shot_style, user_instruction, max_tokens)
             answered = self._take_chat_usage()
             if answered:
-                outcome["units"].update({key: value for key, value in answered.items() if key in ("input_tokens", "output_tokens") and value is not None})
+                outcome["units"].update({key: value for key, value in answered.items() if key in ("input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens") and value is not None})
                 if answered.get("model"):
                     outcome["units"]["api_model"] = answered["model"]
                 if answered.get("provider"):
                     outcome["units"]["host"] = answered["provider"]
             outcome["units"]["output_chars"] = len(result or "")
+            outcome["units"]["system_chars_saved"] = getattr(self._thread_state, "system_chars_saved", 0)
             if not result:
                 outcome["failed"] = True
                 outcome["error"] = "no provider answered"
             return result
 
+    def has_text_model(self) -> bool:
+        """Whether a text call could reach a real model at all, rather than only the offline template."""
+        if runtime_model_registry.first_for_category("text") is not None:
+            return True
+        return any(self._is_valid_key(self._provider_creds(name)[0]) for name in ("agnes", "deepseek", "qwen", "gemini"))
+
+    def last_answer_was_offline(self) -> bool:
+        """Whether this thread's last ``call_llm`` came from the offline template rather than a model."""
+        return bool(getattr(self._thread_state, "offline_answer", False))
+
     def generate_image(self, model: str, prompt: str, ref_images: list = None, size: str = None, *, enhance_prompt: bool = True, require_reference_support: bool = False):
         """Image generation, recorded as one provider call."""
-        runtime = runtime_model_registry.resolve(model, "image")
+        # 记账记真正调用的型号：项目型号没启用时，配置中心会换成它自己的。
+        runtime, called = _centre_runtime(model, "image", keep=lambda value: value.strip().lower() == comfyui.FAMILY, quiet=True)
         provider = runtime.provider if runtime else self._detect_provider(model, "seedance")
-        with usage_ledger.timed_call("image", provider=provider, model=model or "", units={"images": 1, "resolution": size or ""}) as outcome:
+        with usage_ledger.timed_call("image", provider=provider, model=called or "", units={"images": 1, "resolution": size or ""}) as outcome:
             url, used = self._generate_image_unmetered(model, prompt, ref_images, size, enhance_prompt=enhance_prompt, require_reference_support=require_reference_support)
             if used:
                 outcome["units"]["provider_used"] = used
@@ -593,9 +674,13 @@ class ModelGateway:
                        ref_videos: list = None, ref_audios: list = None, duration: int = 5,
                        seed: int | None = None, style_pack: str | None = None) -> str:
         """Video generation, recorded as one provider call priced by requested seconds."""
-        runtime = runtime_model_registry.resolve(model, "video")
+        runtime, called = _centre_runtime(model, "video", keep=ModelGateway._keeps_own_video_config, quiet=True)
         provider = runtime.provider if runtime else self._detect_provider(model, prefer_provider or "seedance")
-        with usage_ledger.timed_call("video", provider=provider, model=model or "", units={"seconds": int(duration or 0)}) as outcome:
+        video_units: dict[str, Any] = {"seconds": int(duration or 0)}
+        if "h3" in (called or "").lower():
+            from app.core.providers.minimax_h3 import h3_resolution
+            video_units["resolution"] = h3_resolution(os.getenv("MINIMAX_H3_RESOLUTION") or "768p")
+        with usage_ledger.timed_call("video", provider=provider, model=called or "", units=video_units) as outcome:
             url = self._generate_video_unmetered(
                 model, image_url, prompt, prefer_provider, last_frame, ref_images, ref_videos, ref_audios, duration, seed, style_pack,
             )
@@ -686,6 +771,7 @@ class ModelGateway:
                 # 失控长输出另由整次调用总时限（LLM_CALL_DEADLINE_SECONDS）兜底。
                 "max_tokens": self._fit_max_tokens(base_url, api_model, int(max_tokens or settings.env_int("LLM_MAX_TOKENS", DEFAULT_LLM_MAX_TOKENS, minimum=256))),
             }
+            payload.update(self._reasoning_fields(base_url))
             url = base_url.rstrip('/') + "/chat/completions"
             # 部分端点(如本网络位置的火山 Ark / DeepSeek)会在 TLS 握手阶段被定向 RST(SSL UNEXPECTED_EOF)。
             # 对瞬时网络错误退避重试一次即认输并熔断，随后由熔断器静默跳过该域名、无缝降级到可达 provider，
@@ -703,11 +789,27 @@ class ModelGateway:
             attempts = 2
             attempt = 0
             shrinks = 0
+            rate_limited = 0
             while True:
                 try:
                     started = time.monotonic()
                     r = requests.post(url, json=payload, headers=headers, timeout=(connect_timeout, read_timeout), proxies=self._proxies_for(base_url), verify=self.tls_verify, stream=True)
                     self._thread_state.last_status = r.status_code
+                    if r.status_code == 429 and rate_limited < RATE_LIMIT_RETRIES:
+                        # 限流不是坏主机：并行编剧会同时压上好几路，等一会儿再问同一把凭据（Retry-After
+                        # 优先，否则 2 秒 × 次数），最多 RATE_LIMIT_RETRIES 次；不计入熔断，其它状态码照旧。
+                        rate_limited += 1
+                        wait = rate_limit_wait(r.headers.get("Retry-After") if getattr(r, "headers", None) else None, rate_limited)
+                        logger.warning(
+                            "[ModelGateway] chat(%s) 被限流 (429)，%.1f 秒后第 %d/%d 次重试",
+                            api_model, wait, rate_limited, RATE_LIMIT_RETRIES,
+                        )
+                        try:
+                            r.close()
+                        except Exception:
+                            pass
+                        time.sleep(wait)
+                        continue
                     if r.status_code == 200:
                         self._note_host_ok(base_url)
                         try:
@@ -758,6 +860,13 @@ class ModelGateway:
             self._mark_host_broken(base_url)
         return None
 
+    def _reasoning_fields(self, base_url: str) -> dict:
+        """调用方要求的推理强度。DeepSeek 默认开推理(effort=high)；其它供应商不一定认这些字段，不发。"""
+        level = llm_profile.current_reasoning()
+        if level is None or not self._host_of(base_url).split(":")[0].endswith("deepseek.com"):
+            return {}
+        return {"thinking": {"type": "disabled"}} if level == "off" else {"reasoning_effort": level}
+
     def _fit_max_tokens(self, base_url: str, api_model: str, requested: int) -> int:
         """``requested``, unless this model already told us it takes less."""
         ceiling = self._max_tokens_ceilings().get((base_url.rstrip("/"), api_model))
@@ -773,14 +882,16 @@ class ModelGateway:
             self._max_tokens_ceiling_cache = ceilings
         return ceilings
 
-    def _http_image(self, api_key: str, base_url: str, api_model: str, prompt: str, extra: dict = None, timeout: int = 180):
+    def _http_image(self, api_key: str, base_url: str, api_model: str, prompt: str, extra: dict = None, timeout: int | None = None):
         """底层 OpenAI 兼容 /images/generations 调用，成功返回图片 URL，失败返回 None。
         extra 用于注入不同厂商所需的额外字段 (如火山 Ark Seedream 的 response_format/size/watermark)。
 
         各模型对单张图的像素面积有上限（如 Seedream 5.0 pro 约 462 万像素），而调用方按用途要的尺寸
         可能更大：被拒时按报错里的上限等比缩小重试一次，并记住该模型的上限，之后的请求直接按它出图。"""
         if self._is_host_broken(base_url):
+            logger.warning("[ModelGateway] image(%s) 跳过：%s 刚刚连接失败，暂不重试", api_model, base_url)
             return None
+        timeout = timeout or settings.env_float("IMAGE_REQUEST_TIMEOUT_SECONDS", IMAGE_REQUEST_TIMEOUT_SECONDS, minimum=30)
         try:
             import requests
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -797,10 +908,21 @@ class ModelGateway:
             attempts = 2
             attempt = 0
             resized = False
+            rate_limited = 0
             while True:
                 try:
                     r = requests.post(url, json=payload, headers=headers, timeout=timeout, proxies=self._proxies_for(base_url), verify=self.tls_verify)
                     self._thread_state.last_status = r.status_code
+                    if r.status_code == 429 and rate_limited < RATE_LIMIT_RETRIES:
+                        # 分镜并行时会同时压上好几路：限流不算失败，等一会儿再问，免得整场分镜因一格被判失败。
+                        rate_limited += 1
+                        wait = rate_limit_wait(r.headers.get("Retry-After") if getattr(r, "headers", None) else None, rate_limited)
+                        logger.warning(
+                            "[ModelGateway] image(%s) 被限流 (429)，%.1f 秒后第 %d/%d 次重试",
+                            api_model, wait, rate_limited, RATE_LIMIT_RETRIES,
+                        )
+                        time.sleep(wait)
+                        continue
                     if r.status_code == 200:
                         data = r.json().get("data", [{}])
                         if data:
@@ -822,9 +944,16 @@ class ModelGateway:
                         continue
                     logger.error(f"[ModelGateway] image({api_model}) 响应错误 {r.status_code}: {error_text[:200]}")
                     return None
+                except requests.exceptions.ReadTimeout:
+                    # 服务端已经在画：再发一次只会再等一轮、可能再扣一次费，也不说明主机不可达。
+                    logger.warning(
+                        "[ModelGateway] image(%s) 超过 %s 秒未返回，本次放弃(可调 IMAGE_REQUEST_TIMEOUT_SECONDS)",
+                        api_model, int(timeout),
+                    )
+                    return None
                 except (requests.exceptions.SSLError, requests.exceptions.ConnectionError,
-                        requests.exceptions.Timeout, requests.exceptions.ChunkedEncodingError) as e:
-                    # 瞬时 TLS/连接抖动：退避重试一次即认输并熔断，随后静默降级到可达 provider
+                        requests.exceptions.ConnectTimeout, requests.exceptions.ChunkedEncodingError) as e:
+                    # 瞬时 TLS/连接抖动：退避重试一次即认输并熔断
                     if attempt < attempts - 1:
                         logger.debug(f"[ModelGateway] image({api_model}) 瞬时网络抖动第{attempt+1}次重试: {str(e)[:90]}")
                         time.sleep(min(2 * (attempt + 1), 4))
@@ -832,7 +961,7 @@ class ModelGateway:
                         continue
                     raise
         except Exception as e:
-            logger.debug(f"[ModelGateway] image({api_model}) 不可达(重试耗尽，将自动降级): {str(e)[:160]}")
+            logger.warning(f"[ModelGateway] image({api_model}) 不可达: {type(e).__name__}: {str(e)[:160]}")
             self._mark_host_broken(base_url)
         return None
 
@@ -978,6 +1107,9 @@ class ModelGateway:
             duration=duration, mode=mode, prompt=raw_prompt, asset_hint=asset_hint,
         )
         director_block = f"\n\n{director.text}" if director.applied else ""
+        from app.core.slice_video import beat_count
+
+        beats = beat_count(raw_prompt)
         director_hint = (
             f"- 目标模型为 Seedance 2.5，主模式已选定为「{director.primary_mode}」；按导演层该模式的蓝图组织正文，"
             "导演层里的提问、导演方案与诊断输出模式一律不适用。\n"
@@ -990,7 +1122,12 @@ class ModelGateway:
             sd2 + director_block + "\n\n## 当前调用约定\n"
             f"- 任务模式：{mode_hint}。{asset_hint}\n"
             + director_hint +
-            "- 这是单镜头、单一连续动作的简单视频；保持素材逐份职责、主体映射、事件开始/结束状态与对白账本。\n"
+            (
+                f"- 这是同一场戏连续 {beats} 个镜头的一段多镜头视频：逐个保留「【镜头k/{beats}｜…】」镜头块、顺序与衔接方式，"
+                "不得合并、删减或改写成单镜头；保持素材逐份职责、主体映射、每个镜头的起止状态与对白账本。\n"
+                if beats > 1 else
+                "- 这是单镜头、单一连续动作的简单视频；保持素材逐份职责、主体映射、事件开始/结束状态与对白账本。\n"
+            ) +
             "- 画幅、总时长、分辨率、帧率和声音开关属于接口参数，不写入 Prompt。\n"
             "- 直接只输出优化后提示词那一段工程化中文提示词正文本身，"
             "不要输出优化问题/相关原则/任何标题/解释/Markdown，不要加引号或代码块。"
@@ -1014,6 +1151,25 @@ class ModelGateway:
         "绝非动画、绝非卡通、绝非3D渲染、绝非插画、绝非草图 (not anime, not cartoon, not 3d render, "
         "not illustration, not sketch, not concept art)"
     )
+
+    def last_video_failure(self) -> str:
+        """本线程最近一次 generate_video 没出片的原因(供应商的拒单信息)；出片了就是空串。"""
+        return str(getattr(_ark_notes, "last", "") or "")
+
+    def video_clip_ceiling(self, model: str) -> int:
+        """一次视频请求实际能拿到的最长秒数，按真正出片的型号算。
+
+        模型配置中心优先(见 :meth:`effective_video_model`)：中心启用的型号就按它的上限。中心没有
+        视频模型、走配置文件时，Seedance 提交的是网关默认型号(例如 2.0，上限 15 秒)，按所选型号
+        (2.5，30 秒)规划会被 Ark 截短。
+        """
+        from app.core.video_references import normalize_video_provider
+
+        effective = ModelGateway.effective_video_model(model)
+        ceiling = max_shot_seconds(effective)
+        if runtime_model_registry.resolve(effective, "video") is None and normalize_video_provider(effective).family == "seedance":
+            ceiling = min(ceiling, max_shot_seconds(self.seedance_model_name))
+        return ceiling
 
     def ark_clip_seconds(self, model_name: str | None, duration: int) -> int:
         """单次时长钳到所选模型的合法区间：Seedance 2.0 为 4~15s，2.5 为 4~30s。
@@ -1086,9 +1242,10 @@ class ModelGateway:
                         continue
                     raise
             if r.status_code not in (200, 201):
-                # 已移除「疑似真人」特判：任何创建失败(含内容风控 400)统一静默返回 None，
-                # 由上层无缝降级到 Agnes 图生视频(接受真人脸)，不再刷屏、不再走专门的疑似真人降级分支。
-                logger.debug(f"[ModelGateway] Ark 视频创建未通过 {r.status_code}: {r.text[:200]}")
+                # 任何创建失败(含内容风控 400)返回 None，由上层降级；但原因必须看得见：
+                # 之前只记 debug，图生视频整批被拒(参考图比例越界)时日志里只剩一句「暂不可用」。
+                _ark_notes.last = _ark_rejection(r)
+                logger.warning("[ModelGateway] Ark 视频创建被拒(%s 张图): %s", sum(1 for item in content if item["type"] == "image_url"), _ark_notes.last)
                 return None
             task_id = r.json().get("id")
             if not task_id:
@@ -1101,11 +1258,14 @@ class ModelGateway:
                 video_jobs.note_finished(str(task_id), url)
             else:
                 video_jobs.note_failed(str(task_id), "ark task did not yield a video")
+                if not getattr(_ark_notes, "last", ""):
+                    _ark_notes.last = f"Ark 任务 {task_id} 未出片(超时或轮询失败)"
             return url
         except Exception as e:
+            _ark_notes.last = f"Ark 视频接口不可达: {type(e).__name__}: {str(e)[:160]}"
             logger.debug(f"[ModelGateway] Ark 视频接口不可达(将自动降级): {str(e)[:160]}")
             if isinstance(e, requests.exceptions.ConnectionError):  # SSL/连接失败=主机不可达；读超时(ReadTimeout)不算
-                # 仅熔断 Ark 这一个域名，不影响其它厂商，也不阻断本次的文生视频自愈兜底
+                # 仅熔断 Ark 这一个域名，不影响其它厂商
                 self._mark_host_broken(base_url)
         return None
 
@@ -1143,9 +1303,10 @@ class ModelGateway:
                 logger.error(f"[ModelGateway] Ark 视频成功但无 video_url: {str(poll)[:200]}")
                 return None
             if status in ("failed", "canceled", "cancelled", "error"):
-                err_msg = str(poll.get("error") or poll.get("message") or "").lower()
-                # 已移除「疑似真人」特判：失败统一静默返回 None，由上层降级到 Agnes 图生视频。
-                logger.debug(f"[ModelGateway] Ark 视频生成未通过: {err_msg}")
+                err_msg = str(poll.get("error") or poll.get("message") or "")
+                # 失败返回 None，由上层降级；原因记成 warning，便于看出是审核、超时还是参数问题。
+                _ark_notes.last = f"任务 {task_id} {status}: {err_msg[:200]}"
+                logger.warning(f"[ModelGateway] Ark 视频生成未通过: {_ark_notes.last}")
                 return None
         logger.debug(f"[ModelGateway] Ark 视频生成超时 ({max_wait}s)")
         return None
@@ -1328,6 +1489,10 @@ class ModelGateway:
         # Project-wide enabled Markdown Skills are an atomic runtime snapshot.
         # They remain lower-authority creative guidance and are never executable.
         system_prompt = runtime_skill_registry.apply(system_prompt)
+        # 系统提示词来自给人读的 Markdown：线框、表格留白和重复句都按 token 计费，模型读的是同一个意思。
+        compacted = prompt_compact.compact_system(system_prompt)
+        self._thread_state.system_chars_saved = len(system_prompt) - len(compacted)
+        system_prompt = compacted
 
         # 组装用户内容 (含对话微调指引)
         full_user_content = user_prompt
@@ -1396,6 +1561,7 @@ class ModelGateway:
                 return text
 
         logger.warning("[ModelGateway] 所有在线文本 provider 均不可用，平滑退回离线引擎")
+        self._thread_state.offline_answer = True
 
         # 2. 离线模式：全动态、不需要预先设置模板的智能故事生成算法
         # 提取动态上下文实体
@@ -1427,7 +1593,7 @@ class ModelGateway:
             lighting = "民俗高饱和红绿高对比冷光频闪，香烛惨白冷光，诡异阴沉黑调"
             visual_term = "民俗惊悚诡秘调 (Folk Horror Tone)"
         else:
-            lighting = "丁达尔效应/体积光 (Tyndall Effect)，金属玻璃硬质反光，电影级自然光照"
+            lighting = "丁达尔效应/体积光 (Tyndall Effect)，金属玻璃硬质反光，自然光照"
             visual_term = "大片级写实硬核调 (Cinematic Reality Style)"
 
 
@@ -1586,6 +1752,9 @@ class ModelGateway:
         而 Agnes 本就接受写实人脸、无需 DEID 去脸(那是火山 Ark 疑似真人专用)。故走 Agnes 时清洗掉
         括号负面约束块与触发词，只保留正向写实描述，确保 Agnes 文生图/图生视频不被拒。"""
         p = prompt or ""
+        # 每格分镜的开头都是参考图说明：这条线路下面只留 600 字，不先去掉就轮不到本格的动作。
+        if "【落笔】" in p and "不是概念图。" in p:
+            p = p.split("不是概念图。", 1)[1].split("【收边】", 1)[0]
         # 去掉成对括号(中/英)内的负面约束/DEID 说明，最多三层嵌套
         for _ in range(3):
             p = re.sub(r'[（(][^（()）]*[)）]', '', p)
@@ -1752,11 +1921,11 @@ class ModelGateway:
             prompt = self._enhancePromptWithRules(prompt)
         # 全局强制负面词(单帧子集)：设定集、分镜画面、首尾帧、参考图都从这里出图。
         prompt = self._with_global_negatives(prompt, "image")
-        runtime = runtime_model_registry.resolve(model, "image")
-        if runtime is None and not (model or "").strip():
-            runtime = runtime_model_registry.first_for_category("image")
-            if runtime:
-                model = runtime.model_ids[0]
+        # 本地媒体里的参考图(分镜帧、设定集格子)读成内嵌图再发。
+        from app.core.media_compositor import inline_local_image
+
+        ref_images = [reference_fit.compact_image_reference(inline_local_image(url)) for url in ref_images] if ref_images else ref_images
+        runtime, model = _centre_runtime(model, "image", keep=lambda value: value.strip().lower() == comfyui.FAMILY)
         if runtime:
             reference_urls = [
                 url for url in (ref_images or [])
@@ -1783,6 +1952,10 @@ class ModelGateway:
                     model,
                 )
                 return url, runtime.provider
+            # 模型配置中心选定的图像模型：要么它出图，要么本格失败。绝不悄悄换成 .env 里的另一个型号
+            # (比如账号根本没开通的 doubao-seedream-4-0)，画风和参考图支持都会变。
+            logger.error("[ModelGateway] 图像模型 %s 未出图，本格失败(不改用其它图像模型)", model)
+            return None, None
         if (model or "").strip().lower() == comfyui.FAMILY:
             # A self-hosted workflow was chosen on purpose: it answers or the shot has no image, never another vendor.
             url = self._comfyui_generate(prompt, image=next((u for u in (ref_images or []) if _image_reference(u)), None), want="image")
@@ -1811,8 +1984,7 @@ class ModelGateway:
             if not self._is_valid_key(key):
                 continue
             # 火山 Ark Seedream 需要 response_format/size/watermark 字段；其它厂商用通用字段。
-            # watermark 必须为 True：Ark 图生视频靠该 AI 标记识别"火山自产 AI 图"放行，
-            # 关闭会导致写实人脸首帧被判「疑似真人」而 400 拒绝 (本文件多处注释亦载明须"带 AI 标记")。
+            # watermark 默认关闭(不在画面上印「AI生成」)，见 seedance_image_watermark。
             if name == "seedance":
                 extra = {"response_format": "url", "size": size or self.seedance_image_size,
                          "watermark": self.seedance_image_watermark}
@@ -1828,11 +2000,8 @@ class ModelGateway:
                 logger.info(f"[ModelGateway] 文生图成功 (provider={name}, model={image_model[name]}, 参考图={len(ref)}): {url[:60]}...")
                 return url, name
 
-        # 所有在线文生图 provider 均不可用：不再按性别关键词返回任何硬编码占位图。
-        # 旧逻辑会让占位图被下游当成"真实首帧"使用，污染成片。返回 None，由上层据此降级为
-        # Seedance 文生视频 (text-to-video)，整条流水线仍走真实 doubao-seedance-2-0-260128 模型。
-        logger.error("[ModelGateway] 所有在线文生图 provider 均不可用，本镜放弃首帧图 "
-                     "(降级为 Seedance 文生视频，不使用任何占位图)")
+        # 所有在线文生图 provider 均不可用：不返回任何占位图(会被下游当成真实首帧)，也不降级为文生视频。
+        logger.error("[ModelGateway] 所有在线文生图 provider 均不可用，本格没有图(不使用占位图，也不改走文生视频)")
         return None, None
 
 
@@ -1865,9 +2034,9 @@ class ModelGateway:
                                  dir_style: str = "cyberpunk", genre: str = "general",
                                  ref_images: list = None, extra_negative: str = "") -> str:
         """A character's sheet is one image call, recorded as such."""
-        runtime = runtime_model_registry.resolve(model, "image")
+        runtime, called = _centre_runtime(model, "image", keep=lambda value: value.strip().lower() == comfyui.FAMILY, quiet=True)
         provider = runtime.provider if runtime else self._detect_provider(model, "seedance")
-        with usage_ledger.timed_call("image", provider=provider, model=model or "", units={"images": 1, "purpose_detail": "character_sheet"}) as outcome:
+        with usage_ledger.timed_call("image", provider=provider, model=called or "", units={"images": 1, "purpose_detail": "character_sheet"}) as outcome:
             url = self._generate_character_sheet_unmetered(model, name, char_desc, dir_style, genre, ref_images, extra_negative)
             if not url:
                 outcome["failed"] = True
@@ -1914,7 +2083,7 @@ class ModelGateway:
         # 拼在设定集问题负面串之后；空串零成本。
         prompt = (
             build_actor_sheet_prompt(name, char_desc, style_word, era_note=era_clause)
-            + " photorealistic, live-action, cinematic, highly detailed, sharp focus, 35mm film. "
+            + " photorealistic, live-action, 35mm film. "
             + self.SHEET_PROBLEM_NEGATIVE
             + (extra_negative or "")
         )
@@ -1946,7 +2115,6 @@ class ModelGateway:
     # 写实电影构图(背影/逆光剪影/过肩/侧脸/面部被遮挡/环境远中景)即便保持照片级真实也放行。
     # 关键：绝不能为了过审把画面降成 3D渲染/CG/卡通(那正是用户禁止的"动画卡通")。
     # 正确做法是【保持照片级写实，只用构图把"清晰正面真人脸"从首帧里移除】—— 既写实、又过审。
-    # 实在需要露正脸特写的镜头，由上层渐进式自愈降级为 Seedance 文生视频兜底(模型自造虚构人物，不受真人审核限制)。
     DEID_POSITIVE = (
         "，保持照片级写实实拍电影质感(photorealistic, live-action, cinematic film still, 35mm film grain, "
         "real human skin, natural lighting)，但采用不展示清晰可识别正面人脸的电影化构图："
@@ -1957,6 +2125,14 @@ class ModelGateway:
     DEID_NEGATIVE = (
         "(避免：清晰可识别的正面真人脸、正脸特写、直视镜头的高锐度清晰五官、证件照/写真式人脸、"
         "护照照片、headshot、passport photo、真实名人、真实可识别的个人身份；"
+        "并严禁任何非写实风格：动画、卡通、二次元、3D渲染、游戏CG、Unreal Engine、插画、漫画、概念草图 "
+        "anime, cartoon, 2d/3d cartoon, 3d render, cgi, game cg, unreal engine, illustration, comic, concept art, sketch)"
+    )
+
+    # 每格分镜图用这一条，不用上面的去身份化：分镜要看得清表情和口型，所以不再要求避开正脸。
+    # 代价是 Ark 图生视频可能判「疑似真人」拒单，video_failures 会记到镜头上；已授权素材不受影响。
+    PANEL_IDENTITY_NEGATIVE = (
+        "(避免：证件照/写真式人脸、护照照片、headshot、passport photo、真实名人、真实可识别的个人身份；"
         "并严禁任何非写实风格：动画、卡通、二次元、3D渲染、游戏CG、Unreal Engine、插画、漫画、概念草图 "
         "anime, cartoon, 2d/3d cartoon, 3d render, cgi, game cg, unreal engine, illustration, comic, concept art, sketch)"
     )
@@ -1978,7 +2154,7 @@ class ModelGateway:
         "messy objects, empty meaningless background, no spatial depth, background flickering)"
     )
 
-    # 镜头连贯性：六锚点 + 承接上一镜 + 逐镜单动作 (plot-shot-coherence §1/§7/§8)
+    # 镜头连贯性：六锚点 + 承接上一镜 (plot-shot-coherence §1/§7/§8)
     CONTINUITY_POSITIVE = (
         "，严守跨镜连贯六锚点：同一人物同一张脸同一发型同一服装、同一场景与左右画面方向、"
         "动作从上一镜自然延续、情绪逐级递进不突变、道具始终在同一只手同一位置、光影色温时间一致，"
@@ -2018,31 +2194,50 @@ class ModelGateway:
                        ref_videos: list = None, ref_audios: list = None, duration: int = 5,
                        seed: int | None = None, style_pack: str | None = None) -> str:
         """
-        调用图生视频大模型 (Seedance 2.0 / Agnes)，支持：
-          - 文生视频：image_url=None 且无参考素材
+        调用图生视频大模型 (Seedance 2.0 / Agnes)，支持(禁止文生视频：没有首帧、参考图或参考视频的请求不提交)：
           - 图生视频-首帧：image_url=首帧图
           - 图生视频-首尾帧：image_url=首帧 + last_frame=尾帧
           - 多模态参考生视频：ref_images(0-9)/ref_videos(0-3)/ref_audios(0-3) + 可选 image_url
         降级机制(已移除所有「疑似真人」处理)：首帧/尾帧原样直接发送，Ark 首尾帧图生视频逻辑完整保留；
-        Ark 失败(账号未授权/网络不可达)则静默降级给 Agnes 图生视频(接受真人脸)以维持首帧人物一致性，
-        全部失败后再执行文生视频(不传首帧)作为终极兜底，确保每镜必出真实片且绝不刷屏报错。
+        Ark 失败(账号未授权/网络不可达)则降级给 Agnes 图生视频(接受真人脸)以维持首帧人物一致性；
+        全部失败时本镜失败并记下原因，不降级为文生视频。
 
         style_pack 为本片风格锁 (app/core/style_packs)：它决定 Ark 的风格锚定句，也决定要不要
         追加写实增强词。缺省沿用项目默认的真人实拍锁；2D/3D 漫剧项目必须传入自己的锁，
         否则会被写实默认值压成真人实拍。
         """
+        # 本镜为什么没出片：各条路径把原因写在这里，阶段代码用 last_video_failure() 读出来报给人看。
+        _ark_notes.last = ""
         pack = style_packs.get_pack(style_pack or "")
         style_caption = pack.style_caption if pack else None
+        from app.core.h3_native import fit as fit_h3_prompt, is_native
+
+        # H3 官方六段式提示词按字段逐字提交：不追加中文增强词，也不另挂一段并列的负面词
+        # (官方契约把一致性要求写成正面约束，写在 retention_analysis 里)。
+        native = is_native(prompt)
+        plain_prompt = prompt
         # 写实增强词 (毛孔、35mm 颗粒、景深) 是为真人实拍调的：漫剧锁下只会把画面往照片质感上拽。
-        if pack is None or pack.medium == "live_action":
+        if not native and (pack is None or pack.medium == "live_action"):
             prompt = self._enhancePromptWithRules(prompt)
         # 全局强制负面词(全量)：H3、各家适配器、ComfyUI、Seedance 与 Agnes 都从这里取提示词。
-        prompt = self._with_global_negatives(prompt, "video")
-        runtime = runtime_model_registry.resolve(model, "video")
-        if runtime is None and not (model or "").strip():
-            runtime = runtime_model_registry.first_for_category("video")
-            if runtime:
-                model = runtime.model_ids[0]
+        if not native:
+            prompt = self._with_global_negatives(prompt, "video")
+        # 禁止文生视频：没有首帧、参考图或参考视频的请求一律不提交，任何供应商都一样。
+        if not (image_url or ref_images or ref_videos):
+            _ark_notes.last = "本镜没有首帧/参考图/参考视频，不提交(禁止文生视频)"
+            logger.error("[ModelGateway] %s", _ark_notes.last)
+            return None
+        # 本地媒体里的分镜帧、设定集格子供应商取不到(localhost)：发之前读成内嵌图。
+        from app.core.media_compositor import inline_local_image
+
+        image_url = reference_fit.compact_image_reference(inline_local_image(image_url))
+        last_frame = reference_fit.compact_image_reference(inline_local_image(last_frame))
+        ref_images = [reference_fit.compact_image_reference(inline_local_image(url)) for url in ref_images] if ref_images else ref_images
+        # 宽高比 / 短边越界的内嵌参考图(身份视图竖条)补边后再发：越界的图会让整条图生视频请求被拒。
+        image_url = reference_fit.fit_image(image_url)
+        last_frame = reference_fit.fit_image(last_frame)
+        ref_images = reference_fit.fit_images(ref_images)
+        runtime, model = _centre_runtime(model, "video", keep=ModelGateway._keeps_own_video_config)
 
         # MiniMax H3 is a first-class video provider. It supports frame anchoring
         # (text / first / last / first+last) and Ref2VA mixed references. The
@@ -2051,7 +2246,7 @@ class ModelGateway:
         is_minimax = bool(runtime and runtime.provider == "minimax")
         if is_minimax or "minimax" in model_key or model_key in {"h3", "minimax-h3"}:
             try:
-                from app.core.providers.minimax_h3 import MiniMaxH3Client
+                from app.core.providers.minimax_h3 import MiniMaxH3Client, h3_resolution
                 from app.schema.production import H3VideoRequest
 
                 h3_images = list(ref_images or [])
@@ -2070,14 +2265,16 @@ class ModelGateway:
                     h3_last = None
                 request = H3VideoRequest(
                     model=model,
-                    prompt=prompt,
+                    # 中文原文加上增强词与负面词可能超过官方 7000 字符：超了先去掉追加词，再截句末。
+                    prompt=fit_h3_prompt(prompt, plain=plain_prompt),
                     first_frame=h3_first,
                     last_frame=h3_last,
                     reference_images=list(dict.fromkeys(h3_images))[:MAX_REFERENCE_IMAGES],
                     reference_videos=list(dict.fromkeys(ref_videos or []))[:MAX_REFERENCE_VIDEOS],
                     reference_audios=list(dict.fromkeys(ref_audios or []))[:MAX_REFERENCE_AUDIOS],
                     duration_seconds=max(4, min(15, int(duration or 6))),
-                    resolution=os.getenv("MINIMAX_H3_RESOLUTION", DEFAULT_VIDEO_RESOLUTION),
+                    # H3 只接受 480P / 768P / 2K：通用默认的 1080p 会被整批拒单。
+                    resolution=h3_resolution(os.getenv("MINIMAX_H3_RESOLUTION") or "768p"),
                     aspect_ratio=os.getenv("MINIMAX_H3_ASPECT_RATIO", DEFAULT_ASPECT_RATIO),
                     native_audio=os.getenv("MINIMAX_H3_NATIVE_AUDIO", "1") not in {"0", "false", "False"},
                     seed=seed,
@@ -2115,9 +2312,13 @@ class ModelGateway:
                         video_jobs.note_failed(job_id, "h3 task finished without a video url")
                 finally:
                     client.close()
-                logger.warning("[ModelGateway] MiniMax H3 completed without a downloadable video URL; trying fallback")
+                _ark_notes.last = "MiniMax H3 未返回视频" + (f"：{_h3_failure(result.provider_payload)}" if _h3_failure(result.provider_payload) else "")
+                logger.warning("[ModelGateway] %s", _ark_notes.last)
             except Exception as exc:
-                logger.warning(f"[ModelGateway] MiniMax H3 unavailable; trying configured fallback: {type(exc).__name__}")
+                _ark_notes.last = f"MiniMax H3 请求失败: {type(exc).__name__}: {str(exc)[:300]}"
+                logger.warning("[ModelGateway] %s", _ark_notes.last)
+            # 项目选的是 MiniMax H3：本镜要么由 H3 出片，要么不出片，绝不悄悄改投 .env 里的 Seedance。
+            return None
         # Kling / xAI Grok Imagine / HappyHorse (fal.ai) / LTX 走各自的文档化任务协议。
         # 这些族由路由显式选中，因此绝不改投 Seedance：要么由该供应商出片，要么本镜不出片。
         from app.core.providers import video_adapters
@@ -2155,6 +2356,7 @@ class ModelGateway:
         #    不再有 __ARK_SENSITIVE__ 哨兵与「首帧仍被判疑似真人」降级刷屏。
         #    Ark 首尾帧图生视频逻辑【完整保留】；若 Ark 因账号未授权/网络不可达而失败，
         #    会静默返回 None 并无缝落到 Agnes(接受任意写实人脸首帧) 继续图生视频，绝不刷屏报错。
+        _ark_notes.last = ""
         for name in order:
             if runtime and name == runtime.provider:
                 key, b_url, video_model = runtime.api_key, runtime.base_url, model
@@ -2163,6 +2365,11 @@ class ModelGateway:
                 video_model = self.seedance_model_name
             if not self._is_valid_key(key):
                 continue
+            if name == "seedance" and video_model != model and (model or "").lower().startswith("doubao-seedance"):
+                logger.warning(
+                    "[ModelGateway] 项目视频模型 %s 未在模型配置中心启用，改用 .env 的 Seedance 凭据与型号 %s",
+                    model, video_model,
+                )
 
             if name == "seedance":
                 if opt_prompt is None:
@@ -2181,49 +2388,22 @@ class ModelGateway:
                     return url
 
             elif name == "agnes":
+                # Agnes 只收首帧、不收参考图：没有首帧时调它就成了文生视频，跳过。
+                if not image_url:
+                    continue
                 # Agnes 接收任意写实人脸首帧，无真人风控；发送清洗后的干净写实提示词。
                 url = self._agnes_video(key, b_url, image_url, self._agnes_prompt(opt_prompt or prompt, "video"))
                 if url:
                     logger.info(f"[ModelGateway] Agnes 图生视频成功 (mode={mode}): {url[:60]}...")
                     return url
 
-        # 2. 终极兜底：带首帧图生视频均不可用时，降级为文生视频(不传首帧，必出片)。
-        logger.info("[ModelGateway] 带首帧图生视频暂不可用，降级为文生视频兜底")
-        for name in order:
-            if runtime and name == runtime.provider:
-                key, b_url, video_model = runtime.api_key, runtime.base_url, model
-            else:
-                key, b_url, _ = self._provider_creds(name)
-                video_model = self.seedance_model_name
-            if not self._is_valid_key(key):
-                continue
-            if name == "seedance":
-                if opt_prompt is None:
-                    # 优化器按规则不主动添加负面约束，可能改写掉末尾的词表：改写后再补一次(幂等)。
-                    opt_prompt = self._with_global_negatives(
-                        self.optimize_video_prompt(prompt, mode=mode, video_model=model, duration=duration), "video"
-                    )
-                url = self._ark_video(
-                    key,
-                    b_url,
-                    opt_prompt,
-                    first_frame=None,
-                    duration=duration,
-                    model_name=video_model,
-                    style_caption=style_caption,
-                )
-                if url:
-                    logger.info(f"[ModelGateway] Seedance 文生视频兜底成功: {url[:60]}...")
-                    return url
-            elif name == "agnes":
-                # Ark 不可达或失败时，Agnes 文生视频(不传首帧)兜底，确保每镜必出真实片。
-                url = self._agnes_video(key, b_url, None, self._agnes_prompt(opt_prompt or prompt, "video"))
-                if url:
-                    logger.info(f"[ModelGateway] Agnes 文生视频兜底成功: {url[:60]}...")
-                    return url
-
-        # 所有在线视频 provider 均不可用：返回 None，让上层跳过该镜 (Fail loud)，不混入占位视频。
-        logger.error("[ModelGateway] 所有在线视频 provider 均不可用 (Seedance/Agnes)，本镜无真实视频产出")
+        # 图生视频全部未通过：本镜失败并说明原因。禁止降级为文生视频——不带首帧和参考图的片
+        # 人物、场景都对不上分镜，只会浪费额度。
+        reason = getattr(_ark_notes, "last", "")
+        logger.error(
+            "[ModelGateway] 图生视频未通过%s，本镜失败(禁止降级为文生视频)",
+            f"({reason})" if reason else "",
+        )
         return None
 
     def _comfyui_generate(self, prompt: str, *, image: str | None, want: str, seed: int | None = None) -> Optional[str]:
@@ -2251,7 +2431,8 @@ class ModelGateway:
             return self._comfyui_generate(prompt, image=image_url or None, want="video", seed=seed)
         credentials = video_adapters.resolve_family_credentials(family, model)
         if credentials is None:
-            logger.error("[ModelGateway] %s 未配置运行时凭据，本镜不提交（禁止改投其他供应商）", family)
+            _ark_notes.last = f"{family} 未配置运行时凭据，本镜不提交（禁止改投其他供应商）"
+            logger.error("[ModelGateway] %s", _ark_notes.last)
             return None
         request = video_adapters.VideoJobRequest(
             model=model or "",
@@ -2277,7 +2458,8 @@ class ModelGateway:
             try:
                 adapter = video_adapters.build_video_adapter(family, api_key=api_key, base_url=credentials[1])
             except RuntimeError as exc:
-                logger.error("[ModelGateway] %s 适配器初始化失败: %s", family, exc)
+                _ark_notes.last = f"{family} 适配器初始化失败: {exc}"
+                logger.error("[ModelGateway] %s", _ark_notes.last)
                 return None
             try:
                 url = self._adapter_video_once(adapter, family, model, request, credentials[1])
@@ -2291,7 +2473,8 @@ class ModelGateway:
                     logger.warning("[ModelGateway] %s 的凭据 %s 被拒绝（HTTP %s），改用下一把", family, label, status)
                     continue
                 break
-        logger.error("[ModelGateway] %s 视频生成失败: %s", family, str(last_error)[:200] if last_error else "no credential accepted")
+        _ark_notes.last = f"{family} 视频生成失败: " + (str(last_error)[:300] if last_error else "no credential accepted")
+        logger.error("[ModelGateway] %s", _ark_notes.last)
         return None
 
     def _adapter_video_once(self, adapter, family: str, model: str, request, endpoint: str) -> Optional[str]:
@@ -2336,6 +2519,40 @@ class ModelGateway:
         if not video_adapters.has_adapter(family):
             return True
         return video_adapters.family_ready(family, model)
+
+    @staticmethod
+    def enabled_video_models() -> list[str]:
+        """模型配置中心里启用的视频模型(按配置顺序)。"""
+        return list(dict.fromkeys(
+            model_id for item in runtime_model_registry.list("video") for model_id in item.model_ids
+        ))
+
+    @staticmethod
+    def _keeps_own_video_config(model: str) -> bool:
+        """ComfyUI 与视频适配器族(Kling 等)有自己的配置入口，配好了就按项目所选，不被配置中心的型号替换。"""
+        from app.core.providers import video_adapters
+        from app.core.video_references import normalize_video_provider
+
+        family = normalize_video_provider(model).family
+        return (family == comfyui.FAMILY or video_adapters.has_adapter(family)) and ModelGateway.video_family_ready(family, model)
+
+    @staticmethod
+    def effective_video_model(model: str) -> str:
+        """实际出片的型号：前端模型配置中心配了视频模型就优先用它，没配时用项目所选(由 .env 出片)。"""
+        return _centre_runtime(model, "video", keep=ModelGateway._keeps_own_video_config)[1]
+
+    @staticmethod
+    def video_model_problem(family: str, model: str = "") -> str:
+        """项目的视频模型为什么不能用；能用时返回空串(未在配置中心启用的型号会被替换，不算问题)。"""
+        if not model:
+            return ""
+        if runtime_model_registry.resolve(model, "video") is not None:
+            return ""
+        if ModelGateway.effective_video_model(model) != model:
+            return ""
+        if not ModelGateway.video_family_ready(family, model):
+            return f"视频模型族 {family} 没有可用的运行时凭据"
+        return ""
 
     @staticmethod
     def video_family_modes(family: str):

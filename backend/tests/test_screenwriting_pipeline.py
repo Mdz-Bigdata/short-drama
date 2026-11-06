@@ -168,6 +168,46 @@ class BackgroundQualityCheckTests(unittest.TestCase):
         self.assertEqual(self.service.get_task_status("sw-task-1")["logs"]["2"], DramaService.QC_PENDING_TEXT)
 
 
+class StageOnePlanTests(unittest.TestCase):
+    """The director's plan is asked for at a length: the model writes at a fixed rate, so time follows length."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.repo = TaskRepository(str(Path(self.temp.name) / "tasks.json"))
+        self.repo.save_task("sw-task-1", _task())
+        self.gateway = _Gateway()
+        self.service = _service(self.gateway, self.repo)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _run_stage_one(self) -> Dict[str, Any]:
+        with patch.object(self.service, "run_real_consistency_check", return_value="QC-OK"), \
+             patch.dict("os.environ", {"QC_IN_BACKGROUND": "0"}):
+            return asyncio.run(self.service.execute_stage("sw-task-1", 1))
+
+    def test_the_plan_prompt_names_its_length_target_and_keeps_every_section(self):
+        with patch.dict("os.environ", {}, clear=False):
+            import os
+
+            os.environ.pop("STAGE1_PLAN_CHARS", None)
+            self._run_stage_one()
+        prompt = self.gateway.legacy_calls[0]["prompt"]
+        self.assertIn("约 5000 字", prompt)
+        self.assertIn("三幕大纲", prompt)
+        self.assertIn("一个不少", prompt)
+
+    def test_the_length_target_is_set_from_the_environment_with_a_floor(self):
+        with patch.dict("os.environ", {"STAGE1_PLAN_CHARS": "8000"}):
+            self.assertEqual(DramaService.stage1_plan_chars(), 8000)
+        with patch.dict("os.environ", {"STAGE1_PLAN_CHARS": "300"}):
+            self.assertEqual(DramaService.stage1_plan_chars(), 2000)
+        with patch.dict("os.environ", {"STAGE1_PLAN_CHARS": "3000"}):
+            self.gateway.legacy_calls.clear()
+            self._run_stage_one()
+        self.assertIn("约 3000 字", self.gateway.legacy_calls[0]["prompt"])
+
+
 class StructuredStageTwoTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

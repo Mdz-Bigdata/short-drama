@@ -57,6 +57,16 @@ def link_task(metadata: Any, task_id: Any) -> dict:
     return base
 
 
+def unlink_task(metadata: Any, task_id: Any) -> dict:
+    """Return metadata without ``task_id``; the next linked project becomes the origin when it was the origin."""
+    base = dict(metadata) if isinstance(metadata, dict) else {}
+    task = str(task_id or "").strip()
+    ids = [item for item in element_task_ids(base) if item != task]
+    base["task_ids"] = ids
+    base["task_id"] = ids[0] if ids else ""
+    return base
+
+
 def element_name_keys(name: Any, metadata: Any = None) -> set[str]:
     """Normalized lookup keys: the element name plus any recorded aliases."""
     keys = {normalized_asset_name(name)}

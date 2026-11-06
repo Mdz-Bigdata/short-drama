@@ -38,7 +38,7 @@ describe('StoryboardWorkspace scene-specific prompts', () => {
     project_name: '测试剧本', episode: '第1集', scene_number: 1, shot_number: 'E1S01',
     duration_seconds: 10, aspect_ratio: '9:16', fps: 24, grid_spec: '3x3',
     foundation: { script_text: '第一场青石阶对峙', narrative_goal: '沈砚发现血痕' },
-    beats: [], still_prompts: [], video_segments: [], grid_pages: [], continuity_checks: [],
+    beats: [], continuity_checks: [],
   };
 
   it('opens the selected scene’s own prompt and never leaks another scene’s global prompt', async () => {
@@ -227,7 +227,7 @@ describe('StoryboardWorkspace episode hierarchy', () => {
     expect(screen.getByRole('heading', { name: 'E2S01 时序分镜' })).toBeTruthy();
   });
 
-  it('pads a short scene to nine grid slots with vacant placeholders', async () => {
+  it('draws only the panels a short scene has, without vacant placeholders', async () => {
     const user = userEvent.setup();
     render(
       <StoryboardWorkspace
@@ -243,7 +243,9 @@ describe('StoryboardWorkspace episode hierarchy', () => {
     await user.click(within(nav).getByText('E1S02'));
 
     expect(screen.getByRole('button', { name: '下载分镜 1' })).toBeTruthy();
-    expect(screen.getAllByText(/画格 \d · 空位/)).toHaveLength(8);
+    expect(screen.queryByText(/空位/)).toBeNull();
+    const grid = screen.getByLabelText(/E1S02 1 格时序分镜/);
+    expect(grid.querySelectorAll('.storyboard-frame')).toHaveLength(1);
   });
 });
 

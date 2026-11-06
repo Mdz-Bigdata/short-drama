@@ -77,14 +77,14 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "body",
         name: "器身",
         subtitle: "鸮形主体",
-        color: "#91737f",
+        color: "var(--text-muted)",
         note: "器身呈猫头鹰站立状，昂首挺胸，双翅并拢贴于身侧。鸮在商代被视为神鸟，具有沟通天地的象征意义。"
       },
       {
         id: "lid",
         name: "器盖",
         subtitle: "可拆卸鸮首",
-        color: "#826772",
+        color: "var(--text-muted)",
         note: "猫头鹰的头部即为器盖，可以拆卸。盖上装饰有精细的羽毛纹路，展现了商代工匠对自然观察的细致入微。"
       },
       {
@@ -144,7 +144,7 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "ears",
         name: "双耳",
         subtitle: "招风巨耳",
-        color: "#876a76",
+        color: "var(--text-muted)",
         note: "面具的双耳向两侧极度夸张地展开，呈招风状。这种对眼、耳的强调，可能反映古蜀人对「看见」与「听见」神灵的崇拜。"
       },
       {
@@ -204,7 +204,7 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "legs",
         name: "三足",
         subtitle: "承重支撑",
-        color: "#876a76",
+        color: "var(--text-muted)",
         note: "三足鼎立的结构让鼎可以直接架在火上加热，是最早的「炊具」之一。足部造型从商代的锥足演变为春秋的蹄足。"
       },
       {
@@ -257,21 +257,21 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "head",
         name: "头部",
         subtitle: "千人千面",
-        color: "#8c6e7b",
+        color: "var(--text-muted)",
         note: "兵马俑最令人惊叹之处在于，每一尊俑的五官、表情、发型都各不相同。学者认为这些可能是以真实士兵为原型塑造的。"
       },
       {
         id: "armor",
         name: "铠甲",
         subtitle: "军事装备",
-        color: "#957884",
+        color: "var(--text-muted)",
         note: "铠甲的样式和精细程度反映了秦军严格的等级制度。将军俑的铠甲最为华丽，普通士兵则相对简朴。"
       },
       {
         id: "hands",
         name: "双手",
         subtitle: "握持兵器",
-        color: "#826772",
+        color: "var(--text-muted)",
         note: "俑的双手呈握持状，原本持有真实的青铜兵器。部分出土的青铜剑经过两千多年仍然锋利如新。"
       }
     ]
@@ -331,7 +331,7 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "saddle",
         name: "鞍鞯",
         subtitle: "马具装饰",
-        color: "#826772",
+        color: "var(--text-muted)",
         note: "马背上的鞍鞯往往单独施以绿釉，与马身的黄褐釉形成对比。鞍具的华丽程度也反映了主人的身份地位。"
       }
     ]
@@ -384,7 +384,7 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "crown",
         name: "宝冠璎珞",
         subtitle: "装饰系统",
-        color: "#826772",
+        color: "var(--text-muted)",
         note: "五叶宝冠、臂钏、璎珞等装饰极为繁复精美，每一处细节都经过工匠精心錾刻，展现了永乐宫廷造像的最高工艺水平。"
       },
       {
@@ -437,7 +437,7 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "body",
         name: "瓶身",
         subtitle: "棒槌瓶形制",
-        color: "#91737f",
+        color: "var(--text-muted)",
         note: "此瓶属于五件套陈设瓷之一，棒槌瓶造型挺拔端庄。瓶身通体以钴蓝绘制花卉纹饰，蓝白相映，典雅大方。"
       },
       {
@@ -451,7 +451,7 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "pattern",
         name: "纹饰",
         subtitle: "缠枝花卉",
-        color: "#876a76",
+        color: "var(--text-muted)",
         note: "瓶身纹饰分为多层，以缠枝花卉为主题，辅以如意云头、蕉叶纹等边饰，构图严谨而富有韵律。"
       }
     ]
@@ -504,7 +504,7 @@ export const museumCatalog: MuseumCatalogItem[] = [
         id: "lid",
         name: "镂空炉盖",
         subtitle: "出香透烟",
-        color: "#8a6d79",
+        color: "var(--text-muted)",
         note: "炉盖采用镂空透雕，缠枝卷草的纹样间留出孔隙，焚香时香烟便从镂空处缓缓溢出，形成「香雾缭绕」的意境。"
       },
       {

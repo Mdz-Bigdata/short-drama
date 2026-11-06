@@ -28,8 +28,12 @@ export function actorColor(actor: Pick<StageActor, 'color' | 'role'>): string {
   return actor.color && HEX.test(actor.color) ? actor.color : ROLE_COLOR[actor.role];
 }
 
-export function landmarkColor(landmark: Pick<StageLandmark, 'color' | 'kind'>): string {
-  return landmark.color && HEX.test(landmark.color) ? landmark.color : LANDMARK_COLOR[landmark.kind];
+/** A reference-image blockout is a grey box until somebody paints a piece. */
+export const BLOCKOUT_COLOR = '#b4b4b8';
+
+export function landmarkColor(landmark: Pick<StageLandmark, 'color' | 'kind' | 'origin'>): string {
+  if (landmark.color && HEX.test(landmark.color)) return landmark.color;
+  return landmark.origin === 'blockout' ? BLOCKOUT_COLOR : LANDMARK_COLOR[landmark.kind];
 }
 
 /** Mirrors the backend's `posture_height`: a pose preset that implies a posture decides the height before the plan's posture does. */

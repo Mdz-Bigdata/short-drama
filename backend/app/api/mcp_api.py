@@ -17,6 +17,9 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.auth_api import get_current_user
 from app.core.agent_tools import ToolError, catalog
+from app.core import usage_ledger
+from app.platform.billing_book import active_book
+from app.platform.permissions import legacy_role, permissions_for
 from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore
 
@@ -66,7 +69,14 @@ async def _mcp_user(authorization: str | None, store: PlatformStore) -> dict:
     user = await store.verify_mcp_token(authorization.removeprefix("Bearer ").strip())
     if user is None:
         raise HTTPException(status_code=401, detail="MCP 令牌无效或已撤销")
-    return {"user_id": user.id, "role": user.role, "username": user.username}
+    usage_ledger.bind_user(user.id)
+    book = active_book()
+    if book is not None:
+        await run_in_threadpool(book.require_feature, user.id, "mcp.access")
+    return {
+        "user_id": user.id, "role": legacy_role(user.roles), "roles": user.roles, "username": user.username,
+        "permissions": sorted(permissions_for(user.roles)),
+    }
 
 
 def _tool_listing() -> list[dict[str, Any]]:

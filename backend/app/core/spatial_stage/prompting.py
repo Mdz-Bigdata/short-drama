@@ -48,6 +48,19 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip("，；、 ") + "…"
 
 
+# How many pieces of a reference-image blockout a prompt may name. A hundred wall sections would
+# push the axis and the cast out of every clipped text, and the picture already shows the set.
+_BLOCKOUT_PIECES_IN_PROMPT = 6
+
+
+def prompt_landmarks(plan: StagePlan) -> list[StageLandmark]:
+    """The set pieces prose talks about: all placed by hand, and of a blockout only its biggest."""
+    placed = [item for item in plan.landmarks if item.origin != "blockout"]
+    built = [item for item in plan.landmarks if item.origin == "blockout" and item.size[2] >= 0.3]
+    built.sort(key=lambda item: item.size[0] * item.size[1] * item.size[2], reverse=True)
+    return [*placed, *built[:_BLOCKOUT_PIECES_IN_PROMPT]]
+
+
 def bearing_from(actor: StageActor, point: geo.Vec2) -> tuple[str, float]:
     """``(bearing, meters)`` of ``point`` as the actor would say it: 前方 / 左前方 / 右侧 / 后方 …"""
     origin = (actor.position[0], actor.position[1])
@@ -88,6 +101,17 @@ def master_camera(plan: StagePlan) -> StageCamera | None:
     )
 
 
+def _master_side(plan: StagePlan, landmark: StageLandmark) -> str:
+    """左侧 / 右侧 / 中央 as the master frame shows ``landmark``; empty when it is behind that lens."""
+    master = master_camera(plan)
+    if master is None:
+        return ""
+    x, _, depth = CameraView.of(master).project((landmark.position[0], landmark.size[2] / 2, landmark.position[1]))
+    if depth <= 0.2:
+        return ""
+    return "左侧" if x < -0.12 else "右侧" if x > 0.12 else "中央"
+
+
 def landmark_relative_position(plan: StagePlan, landmark: StageLandmark) -> str:
     """Bearing and distance from the scene's anchor character, plus where the master frame shows it."""
     anchor = _anchor_actor(plan)
@@ -97,13 +121,64 @@ def landmark_relative_position(plan: StagePlan, landmark: StageLandmark) -> str:
         return _clip(f"距场地中心约{geo.distance(point, centre):.1f}米，位置固定不镜像", 500)
     bearing, meters = bearing_from(anchor, point)
     text = f"位于{anchor.name}{bearing}约{meters:.1f}米"
-    master = master_camera(plan)
-    if master is not None:
-        x, _, depth = CameraView.of(master).project((point[0], landmark.size[2] / 2, point[1]))
-        if depth > 0.2:
-            side = "左侧" if x < -0.12 else "右侧" if x > 0.12 else "中央"
-            text += f"，主机位画面{side}"
+    if side := _master_side(plan, landmark):
+        text += f"，主机位画面{side}"
     return _clip(text, 500)
+
+
+def layout_facts(plan: StagePlan, limit: int = 4) -> str:
+    """The set as one line of screen sides: 门在画面右侧、窗在画面左侧. Fixtures first, small props last."""
+    pieces = sorted(prompt_landmarks(plan), key=lambda item: (item.kind not in {"architecture", "furniture"}, -item.size[2]))
+    facts = [f"{item.name}在画面{side}" for item in pieces if (side := _master_side(plan, item))]
+    return _clip("、".join(facts[:limit]), 200)
+
+
+def landmark_size(landmark: StageLandmark) -> str:
+    """The set piece's real size, so the frame holds one scale: 宽约1.4米、高约2.4米."""
+    width, depth, height = landmark.size
+    parts = [f"宽约{width:.1f}米"]
+    if depth >= 0.5:
+        parts.append(f"进深约{depth:.1f}米")
+    parts.append(f"高约{height:.1f}米")
+    return "、".join(parts)
+
+
+# A standing body in fractions of its height: where the top of a set piece meets it.
+_BODY_MARKS = ((0.92, "与{name}头顶齐平"), (0.78, "约齐{name}肩"), (0.62, "约齐{name}胸口"), (0.45, "约齐{name}腰"), (0.25, "约到{name}大腿"))
+_HEADS_ZH = {0.5: "半个头", 1.0: "一个头", 1.5: "一个半头", 2.0: "两个头", 2.5: "两个半头", 3.0: "三个头"}
+
+
+def _scale_piece(plan: StagePlan) -> StageLandmark | None:
+    """The set piece a person is measured against: the tallest fixture, a door before a table."""
+    pieces = [item for item in prompt_landmarks(plan) if item.kind != "light" and item.size[2] >= 0.3]
+    return max(pieces, key=lambda item: (item.kind == "architecture", item.size[2]), default=None)
+
+
+def scale_reference(plan: StagePlan, actor: StageActor | None = None, landmark: StageLandmark | None = None) -> str:
+    """One fixed person-to-set ratio: 林晚身高约168cm；门高约2.4米，林晚站在门旁头顶比门顶低约一个头.
+
+    Every shot of the scene says the same ratio, so a door never shrinks to a cupboard between cuts.
+    """
+    actor = actor or _anchor_actor(plan)
+    if actor is None or actor.crowd_id:
+        return ""
+    head = f"{actor.name}身高约{round(actor.height_m * 100)}cm"
+    landmark = landmark or _scale_piece(plan)
+    if landmark is None:
+        return head
+    height = landmark.size[2]
+    ratio = height / actor.height_m
+    if ratio >= 1.08:
+        gap = height - actor.height_m
+        # 一个头约为身高的 1/7.5。
+        heads = _HEADS_ZH.get(round(gap / (actor.height_m / 7.5) * 2) / 2)
+        relation = f"{actor.name}站在{landmark.name}旁，头顶比{landmark.name}顶低约{gap:.1f}米" + (f"（约{heads}）" if heads else "")
+    else:
+        relation = next(
+            (f"{landmark.name}顶{text.format(name=actor.name)}" for share, text in _BODY_MARKS if ratio >= share),
+            f"{landmark.name}不及{actor.name}膝盖",
+        )
+    return f"{head}；{landmark.name}高约{height:.1f}米，{relation}"
 
 
 def array_members(plan: StagePlan) -> frozenset[str]:
@@ -233,8 +308,10 @@ def _blocking_text(plan: StagePlan, shot: StageShot, camera: StageCamera) -> str
     if lead is not None:
         reach = geo.distance((camera.position[0], camera.position[2]), (lead.position[0], lead.position[1]))
         parts.append(f"机位距{lead.name}{reach:.1f}米、机高{camera.position[1]:.1f}米")
-    for landmark in plan.landmarks[:3]:
+    for landmark in prompt_landmarks(plan)[:3]:
         parts.append(f"{landmark.name}{landmark_relative_position(plan, landmark)}")
+    if lead is not None and plan.landmarks and not lead.crowd_id:
+        parts.append(f"比例：{scale_reference(plan, lead)}")
     return _clip("；".join(parts) or "空镜：按场景圣经保持地标位置", 800)
 
 
@@ -259,20 +336,20 @@ def _camera_pose_text(plan: StagePlan, shot: StageShot, camera: StageCamera, *, 
     if lead is not None:
         bearing, meters = bearing_from(lead, (position[0], position[2]))
         where = f"位于{lead.name}{bearing}{meters:.1f}米、" + where
-    return _clip(f"{where}，{camera.lens_mm:g}mm，{camera.angle}", 500)
+    return _clip(f"{where}，{camera.equivalent_lens_mm:g}mm，{camera.angle}", 500)
 
 
 def shot_text(plan: StagePlan, shot: StageShot, camera: StageCamera) -> ShotText:
     positions = frame_positions(shot, camera, array_members(plan))
     placed = render_frame_positions(positions)
-    composition = f"{camera.shot_size}，{camera.lens_mm:g}mm"
+    composition = f"{camera.shot_size}，{camera.equivalent_lens_mm:g}mm"
     if placed:
         composition += f"；{placed}"
     else:
         view = CameraView.of(camera)
         seen = []
-        for landmark in plan.landmarks:
-            x, y, depth = view.project((landmark.position[0], landmark.size[2] / 2, landmark.position[1]))
+        for landmark in prompt_landmarks(plan):
+            x, y, depth = view.project((landmark.position[0], landmark.elevation_m + landmark.size[2] / 2, landmark.position[1]))
             if depth > 0.2 and abs(x) <= 1.0 and abs(y) <= 1.2:
                 seen.append(f"{landmark.name}位于{'画面左侧' if x < -0.12 else '画面右侧' if x > 0.12 else '画面中央'}")
         composition += "；空镜，不出现人物" + (f"；{'，'.join(seen[:4])}" if seen else "；按场景圣经的地标左右位置构图")
@@ -301,7 +378,8 @@ def scene_bible(plan: StagePlan) -> str:
             continue
         side = {"left": "恒在画左", "right": "恒在画右"}.get(actor.screen_side, "")
         lines.append(
-            f"{actor.name}：{_POSTURE_ZH.get(actor.posture, '站立')}，地面坐标({actor.position[0]:.1f}, {actor.position[1]:.1f})"
+            f"{actor.name}：{_POSTURE_ZH.get(actor.posture, '站立')}，身高约{round(actor.height_m * 100)}cm，"
+            f"地面坐标({actor.position[0]:.1f}, {actor.position[1]:.1f})"
             + (f"，{side}" if side else "") + "。"
         )
     for crowd in plan.crowds:
@@ -309,8 +387,10 @@ def scene_bible(plan: StagePlan) -> str:
             f"{crowd.label}：{crowd.rows}排×{crowd.columns}列共{crowd.rows * crowd.columns}人，"
             f"阵心地面坐标({crowd.center[0]:.1f}, {crowd.center[1]:.1f})，间距{crowd.spacing:.1f}米。"
         )
-    for landmark in plan.landmarks:
-        lines.append(f"{landmark.name}：{landmark_relative_position(plan, landmark)}。")
+    for landmark in prompt_landmarks(plan):
+        lines.append(f"{landmark.name}：{landmark_size(landmark)}，{landmark_relative_position(plan, landmark)}。")
+    if (scale := scale_reference(plan)) and plan.landmarks:
+        lines.append(f"比例尺：{scale}；全场人物与陈设保持这一比例，不随景别缩放。")
     if axis_rules.has_axis(plan.axis):
         lines.append(
             f"轴线：{plan.axis.from_name}—{plan.axis.to_name}；全部机位位于轴线同一侧，"
@@ -335,7 +415,7 @@ def table_brief(plan: StagePlan) -> str:
     others = [actor.name for actor in plan.actors if actor.role != "principal"]
     if others:
         parts.append(f"{'、'.join(others[:6])}在两人后方")
-    for landmark in plan.landmarks[:4]:
+    for landmark in prompt_landmarks(plan)[:4]:
         parts.append(f"{landmark.name}{landmark_relative_position(plan, landmark)}")
     if not parts:
         return ""
@@ -351,7 +431,10 @@ __all__ = [
     "bearing_from",
     "frame_positions",
     "landmark_relative_position",
+    "landmark_size",
+    "layout_facts",
     "master_camera",
+    "scale_reference",
     "scene_bible",
     "shot_text",
     "table_brief",

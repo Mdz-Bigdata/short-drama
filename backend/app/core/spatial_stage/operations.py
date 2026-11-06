@@ -20,9 +20,12 @@ from app.core.spatial_stage import geometry as geo
 from app.core.spatial_stage.coverage import ShotSpec, fit_move, named_size, solve_camera
 from app.core.spatial_stage.models import (
     MAX_ACTORS,
+    MAX_LANDMARKS,
     MAX_POSE_JOINTS,
+    MAX_STAGE_PARTS,
     ActorOverride,
     CameraMove,
+    LandmarkPart,
     ShotTimeline,
     StageActor,
     StageAxis,
@@ -33,7 +36,7 @@ from app.core.spatial_stage.models import (
     StagePlan,
     StagePose,
 )
-from app.core.spatial_stage import paths, repair
+from app.core.spatial_stage import blockout, model_kit, paths, repair, scoring
 from app.core.spatial_stage.planner import refresh
 from app.core.spatial_stage.projection import SHOT_SIZE_HEIGHTS, CameraView, posture_height
 
@@ -217,7 +220,11 @@ class _Editor:
             for shot in self.shots
         ]
         self.timelines = {
-            key: timeline.model_copy(update={"actors": {name: keys for name, keys in timeline.actors.items() if name not in names}})
+            key: timeline.model_copy(update={
+                "actors": {name: keys for name, keys in timeline.actors.items() if name not in names},
+                "clips": {name: clips for name, clips in timeline.clips.items() if name not in names},
+                "follow": [clip for clip in timeline.follow if clip.actor not in names],
+            })
             for key, timeline in self.timelines.items()
         }
 
@@ -401,13 +408,36 @@ class _Editor:
             changes["color"] = _color(op["color"])
         if "kind" in op:
             changes["kind"] = _choice(op["kind"], LANDMARK_KINDS, "kind", "prop")
+        if "elevation_m" in op:
+            changes["elevation_m"] = round(_number(op["elevation_m"], "elevation_m", 0, 100), 3)
+        changes.update(self._model_changes(op, changes.get("size")))
         return changes
+
+    @staticmethod
+    def _model_changes(op: Mapping[str, Any], size: Sequence[float] | None) -> dict[str, Any]:
+        """A named built-in model or a list of volumes as the piece's shape; an empty ``parts`` makes it one volume again."""
+        try:
+            if op.get("fitted_parts"):
+                # Parts already in fractions of the piece: an undo putting a piece back, or a proposal being placed.
+                fitted = [LandmarkPart.model_validate(part) for part in op["fitted_parts"]]
+                return {"parts": fitted, "kit": str(op.get("kit") or "")[:60]}
+            if op.get("parts"):
+                parts, overall, _ = model_kit.read_parts(op["parts"], size)
+                return {"parts": parts, "size": overall, "kit": str(op.get("kit") or "")[:60]}
+            if op.get("kit"):
+                kit, parts, overall = model_kit.build_kit(op["kit"], size)
+                return {"parts": parts, "size": overall, "kit": kit.id, "kind": _choice(op.get("kind"), LANDMARK_KINDS, "kind", kit.kind)}
+        except (model_kit.ModelKitError, ValueError) as error:
+            raise StageEditError(str(error)[:300]) from error
+        if "parts" in op or "kit" in op:
+            return {"parts": [], "kit": ""}
+        return {}
 
     def transform_landmark(self, op: Mapping[str, Any]) -> None:
         index = self.landmark_index(op.get("name"))
         changes = self._landmark_changes(op)
         if not changes:
-            raise StageEditError("transform_landmark 需要 position / size / yaw_deg / shape / color / kind 之一")
+            raise StageEditError("transform_landmark 需要 position / size / yaw_deg / shape / color / kind / elevation_m 之一")
         self.landmarks[index] = self.landmarks[index].model_copy(update=changes)
 
     def bind_landmark_model(self, op: Mapping[str, Any]) -> None:
@@ -438,7 +468,7 @@ class _Editor:
         name = str(op.get("name") or "").strip()[:120]
         if not name or any(item.name == name for item in self.landmarks) or any(actor.name == name for actor in self.actors):
             raise StageEditError("地标需要一个场上尚未使用的名称")
-        if len(self.landmarks) >= 80:
+        if len(self.landmarks) >= MAX_LANDMARKS:
             raise StageEditError("地标数量已达上限")
         number = 1 + max((int(item.id.rsplit("-", 1)[-1]) for item in self.landmarks if item.id.rsplit("-", 1)[-1].isdigit()), default=0)
         self.landmarks.append(StageLandmark(**{
@@ -464,9 +494,15 @@ class _Editor:
             changes["target"] = _space(op["target"], "target")
         if "lens_mm" in op:
             lens = _number(op["lens_mm"], "lens_mm", 8, 600)
-            changes.update(lens_mm=round(lens, 1), fov_deg=round(geo.vertical_fov(lens, geo.parse_aspect(camera.aspect)), 2))
+            changes["lens_mm"] = round(lens, 1)
+        if "sensor_mm" in op:
+            changes["sensor_mm"] = round(_number(op["sensor_mm"], "sensor_mm", 4, 80), 2)
+        if "lens_mm" in changes or "sensor_mm" in changes:
+            changes["fov_deg"] = round(geo.vertical_fov(
+                changes.get("lens_mm", camera.lens_mm), geo.parse_aspect(camera.aspect), changes.get("sensor_mm", camera.sensor_mm),
+            ), 2)
         if not changes:
-            raise StageEditError("move_camera 需要 position / target / lens_mm 之一")
+            raise StageEditError("move_camera 需要 position / target / lens_mm / sensor_mm 之一")
         position, target = changes.get("position", camera.position), changes.get("target", camera.target)
         if sum((position[i] - target[i]) ** 2 for i in range(3)) < 1e-4:
             raise StageEditError("机位与注视点不能重合")
@@ -619,7 +655,7 @@ class _Editor:
         # A candidate starts as a copy of the lens that films, standing still: it is a place to look from.
         self.cameras.append(filming.model_copy(update={"id": camera_id, "label": label, "move": CameraMove(kind="static")}))
         self.shots[shot_index] = shot.model_copy(update={"alt_camera_ids": [*shot.alt_camera_ids, camera_id]})
-        if any(key in op for key in ("position", "target", "lens_mm")):
+        if any(key in op for key in ("position", "target", "lens_mm", "sensor_mm")):
             self.move_camera({**op, "camera_id": camera_id})
 
     def remove_camera(self, op: Mapping[str, Any]) -> None:
@@ -634,6 +670,11 @@ class _Editor:
             if camera.id in shot.alt_camera_ids else shot
             for shot in self.shots
         ]
+        # A cut through a lens that is gone has nothing to show; the shot falls back to its own lens there.
+        self.timelines = {
+            key: timeline.model_copy(update={"cuts": [cut for cut in timeline.cuts if cut.camera_id != camera.id]}) if timeline.cuts else timeline
+            for key, timeline in self.timelines.items()
+        }
 
     def use_camera(self, op: Mapping[str, Any]) -> None:
         shot_index = self.shot_index(op.get("shot_id"))
@@ -679,6 +720,20 @@ class _Editor:
         values: dict[str, Any] = current.model_dump() if current is not None else {}
         if "duration_s" in op:
             values["duration_s"] = _number(op["duration_s"], "duration_s", 1, 30)
+            # 自动排的动作片段(编号 auto-*)跟着新时长裁：人缩短时间线不该被机器排的待机挡住。
+            duration = float(values["duration_s"])
+            trimmed = {}
+            for name, clips in (values.get("clips") or {}).items():
+                kept = []
+                for clip in clips:
+                    if not str(clip.get("id") or "").startswith("auto-"):
+                        kept.append(clip)
+                    elif float(clip.get("start") or 0) < duration - 0.1:
+                        kept.append({**clip, "end": min(float(clip.get("end") or 0), duration)})
+                if kept:
+                    trimmed[name] = kept
+            if "clips" in values:
+                values["clips"] = trimmed
         if "fps" in op:
             if op["fps"] not in (24, 25, 30):
                 raise StageEditError("fps 只能是 24 / 25 / 30")
@@ -698,8 +753,30 @@ class _Editor:
             for name in op["actors"]:
                 self.actor_index(name)
             values["actors"] = {str(name): keys for name, keys in op["actors"].items() if keys}
-        if not any(key in op for key in ("duration_s", "fps", "camera", "actors")):
-            raise StageEditError("set_timeline 需要 duration_s / fps / camera / actors 之一")
+        if "clips" in op:
+            if not isinstance(op["clips"], Mapping):
+                raise StageEditError("clips 必须是 {人物名: 动作片段列表} 的对象")
+            for name in op["clips"]:
+                self.actor_index(name)
+            values["clips"] = {str(name): clips for name, clips in op["clips"].items() if clips}
+        if "follow" in op:
+            if not isinstance(op["follow"], Sequence) or isinstance(op["follow"], (str, bytes)):
+                raise StageEditError("follow 必须是跟拍片段列表")
+            for clip in op["follow"]:
+                if isinstance(clip, Mapping):
+                    self.actor_index(clip.get("actor"))
+            values["follow"] = list(op["follow"])
+        if "cuts" in op:
+            if not isinstance(op["cuts"], Sequence) or isinstance(op["cuts"], (str, bytes)):
+                raise StageEditError("cuts 必须是切机位片段列表")
+            shot = self.shots[self.shot_index(shot_id)]
+            allowed = {shot.camera_id, *shot.alt_camera_ids}
+            for cut in op["cuts"]:
+                if isinstance(cut, Mapping) and str(cut.get("camera_id") or "") not in allowed:
+                    raise StageEditError(f"机位「{cut.get('camera_id')}」不是第 {shot.shot_id} 镜的机位或候选机位，不能切过去")
+            values["cuts"] = list(op["cuts"])
+        if not any(key in op for key in ("duration_s", "fps", "camera", "actors", "clips", "follow", "cuts")):
+            raise StageEditError("set_timeline 需要 duration_s / fps / camera / actors / clips / follow / cuts 之一")
         _refuse_keys_past_the_end(values)
         try:
             self.timelines[str(shot_id)] = ShotTimeline.model_validate(values)
@@ -740,6 +817,17 @@ class _Editor:
         start_s = _number(op.get("start_s", 0.0), "start_s", 0, 30)
         duration = float(values.get("duration_s", 5.0))
         end_s = _number(op.get("end_s", duration), "end_s", 0, 30)
+        if op.get("speed_mps") is not None:
+            # A speed instead of an end: the route takes however long that pace makes it, within what a shot can hold.
+            speed = _number(op["speed_mps"], "speed_mps", 0.1, 30)
+            try:
+                route = paths.read_points(op.get("points"), height_m=0.0)
+            except paths.PathError as error:
+                raise StageEditError(str(error)) from error
+            end_s = round(start_s + paths.arc_length(route) / speed, 3)
+            if end_s > 30:
+                raise StageEditError(f"按 {speed:g} 米/秒走完这条路径要 {end_s - start_s:.1f} 秒，超过了 30 秒；请提高速度或缩短路径")
+            end_s = max(end_s, round(start_s + 0.1, 3))
         if end_s > duration:
             if "duration_s" in op:
                 raise StageEditError(f"end_s（{end_s:g} 秒）超过了时间线时长 {duration:g} 秒")
@@ -789,6 +877,16 @@ class _Editor:
                 tracks = dict(values.get("actors") or {})
                 tracks[actor.name] = [key.model_dump() for key in keys]
                 values["actors"] = tracks
+                if op.get("clip"):
+                    # A walk needs legs: the route brings its motion, over whatever was on that stretch of the track.
+                    held = [dict(clip) for clip in (values.get("clips") or {}).get(actor.name, [])]
+                    kept = [clip for clip in held if clip["end"] <= start_s or clip["start"] >= end_s]
+                    taken = {str(clip.get("id")) for clip in kept}
+                    number = next(n for n in range(1, MAX_ACTORS + 1) if f"clip-{n:02d}" not in taken)
+                    values["clips"] = {**(values.get("clips") or {}), actor.name: sorted(
+                        [*kept, {"id": f"clip-{number:02d}", "clip": _text(op["clip"], "clip", 80), "start": start_s, "end": end_s}],
+                        key=lambda clip: clip["start"],
+                    )}
         except paths.PathError as error:
             raise StageEditError(str(error)) from error
         _refuse_keys_past_the_end(values)
@@ -803,8 +901,8 @@ class _Editor:
         original = self.landmarks[index]
         layout = _choice(op.get("layout"), ARRAY_LAYOUTS, "layout", "line")
         count = _whole(op.get("count", 2), "count", 2, MAX_ARRAY_COUNT)
-        if len(self.landmarks) + count - 1 > 80:
-            raise StageEditError(f"地标数量上限 80，无法再放 {count - 1} 个")
+        if len(self.landmarks) + count - 1 > MAX_LANDMARKS:
+            raise StageEditError(f"地标数量上限 {MAX_LANDMARKS}，无法再放 {count - 1} 个")
         spacing = _number(op.get("spacing", max(original.size[0], original.size[1]) + 0.2), "spacing", 0.1, 100)
         # The yaw the row runs along; by default across the piece's facing, like a row of chairs.
         heading = _number(op.get("direction_deg", original.yaw_deg + 90), "direction_deg", -360, 360)
@@ -843,8 +941,8 @@ class _Editor:
     def align_landmarks(self, op: Mapping[str, Any]) -> None:
         """Line set pieces up on one world axis (by their centres), or spread them evenly along it."""
         names = op.get("names")
-        if not isinstance(names, Sequence) or isinstance(names, (str, bytes)) or not 2 <= len(names) <= 80:
-            raise StageEditError("align_landmarks 需要 2-80 个地标名")
+        if not isinstance(names, Sequence) or isinstance(names, (str, bytes)) or not 2 <= len(names) <= MAX_LANDMARKS:
+            raise StageEditError(f"align_landmarks 需要 2-{MAX_LANDMARKS} 个地标名")
         indexes = [self.landmark_index(name) for name in names]
         if len(set(indexes)) != len(indexes):
             raise StageEditError("align_landmarks 的地标不能重复")
@@ -868,6 +966,53 @@ class _Editor:
         position[component] = round(value, 3)
         self.landmarks[index] = self.landmarks[index].model_copy(update={"position": position})
 
+    def apply_blockout(self, op: Mapping[str, Any]) -> None:
+        """Build the set from a blockout read off a reference image; the previous blockout goes, hand-placed pieces stay.
+
+        ``reference_camera`` adds a look-from point where the picture was taken from (replacing the last
+        one), a candidate of ``shot_id`` when one is given, so the set can be held up against the picture.
+        """
+        kept = [item for item in self.landmarks if item.origin != "blockout"] if op.get("replace", True) else list(self.landmarks)
+        try:
+            pieces = blockout.read_pieces(op.get("pieces"))
+        except blockout.BlockoutError as error:
+            raise StageEditError(str(error)) from error
+        if len(kept) + len(pieces) > MAX_LANDMARKS:
+            raise StageEditError(f"地标数量上限 {MAX_LANDMARKS}：场上已有 {len(kept)} 个，这份白模有 {len(pieces)} 块")
+        taken = {item.name for item in kept} | {actor.name for actor in self.actors}
+        number = 1 + max((int(item.id.rsplit("-", 1)[-1]) for item in self.landmarks if item.id.rsplit("-", 1)[-1].isdigit()), default=0)
+        built: list[StageLandmark] = []
+        for piece in pieces:
+            name, suffix = piece.name, 2
+            while name in taken:
+                name, suffix = f"{piece.name[:112]} {suffix}", suffix + 1
+            taken.add(name)
+            built.append(StageLandmark(**{
+                "id": f"mark-{number + len(built):02d}", "name": name, "kind": piece.kind, "position": list(piece.center), "size": list(piece.size),
+                "yaw_deg": geo.normalize_yaw(piece.yaw_deg), "shape": piece.shape, "color": piece.color, "elevation_m": piece.elevation_m, "origin": "blockout",
+                **self._model_changes({"kit": piece.kit, "parts": piece.parts, "kind": piece.kind}, piece.size if piece.size_given else None),
+            }))
+        self.landmarks = [*kept, *built]
+        lens = op.get("reference_camera")
+        if lens is None:
+            return
+        if "shot_id" not in op:
+            raise StageEditError("reference_camera 需要 shot_id：参考机位是某一镜的候选机位")
+        if not isinstance(lens, Mapping):
+            raise StageEditError("reference_camera 必须是对象")
+        shot_index = self.shot_index(op["shot_id"])
+        label = blockout.REFERENCE_CAMERA_LABEL
+        for stale in [camera for camera in self.cameras if camera.label == label and all(shot.camera_id != camera.id for shot in self.shots)]:
+            self.remove_camera({"camera_id": stale.id})
+        self.add_camera({
+            "shot_id": self.shots[shot_index].shot_id, "label": label,
+            **{key: lens[key] for key in ("position", "target", "lens_mm") if key in lens},
+        })
+
+    def clear_blockout(self, op: Mapping[str, Any]) -> None:
+        """Take a reference-image blockout off the stage in one piece; hand-placed set pieces stay."""
+        self.landmarks = [item for item in self.landmarks if item.origin != "blockout"]
+
     def repair_checks(self, op: Mapping[str, Any]) -> None:
         """Apply the repairs the failing checks propose (see :mod:`repair`); refuses when there is nothing automatic to do."""
         codes = op.get("codes")
@@ -886,6 +1031,66 @@ class _Editor:
             raise StageEditError("没有可以自动修正的检查项" + (f"：{manual}" if manual else ""))
         for operation in operations:
             getattr(self, str(operation["op"]))(operation)
+
+    def auto_route(self, op: Mapping[str, Any]) -> None:
+        """Walk someone to a mark by a route around the set and the people standing on it, then lay it as ``set_path``."""
+        name = self.actors[self.actor_index(op.get("name"))].name
+        shot = self.shots[self.shot_index(op.get("shot_id"))]
+        actor = self.actors[self.actor_index(name)]
+        goal = tuple(_ground(op.get("to"), "to"))
+        keys = self.timelines.get(str(shot.shot_id))
+        track = keys.actors.get(name) if keys is not None else None
+        start = next((tuple(key.position) for key in reversed(track or []) if key.position is not None), tuple(actor.position))
+        radius = _number(op.get("radius", 0.3), "radius", 0.05, 2)
+        footprints = [
+            (piece.position[0], piece.position[1], piece.size[0] / 2, piece.size[1] / 2, piece.yaw_deg)
+            for piece in self.landmarks
+            if piece.elevation_m < actor.height_m and piece.size[2] > 0.25 and piece.shape != "plane"
+            # Someone already standing inside a piece (a sedan chair, a tent) has to be able to walk out of it.
+            and not scoring.inside_piece(start, piece)
+        ]
+        people = [
+            (other.position[0], other.position[1]) for other in self.staged().actors_in(shot)
+            if other.name != name and not other.crowd_id
+        ]
+        try:
+            route = paths.find_route(start, goal, footprints, people, radius)
+        except paths.PathError as error:
+            raise StageEditError(str(error)) from error
+        self.set_path({
+            "shot_id": shot.shot_id, "target": name, "points": [list(point) for point in route],
+            **{key: op[key] for key in ("speed_mps", "start_s", "end_s", "clip", "easing") if key in op},
+            **({} if "speed_mps" in op or "end_s" in op else {"speed_mps": 1.3}),
+            # A route with corners has to keep them: rounding them off would walk through what it goes around.
+            "smooth": len(route) <= 2,
+        })
+
+    def best_camera(self, op: Mapping[str, Any]) -> None:
+        """Search around each named shot's lens for a better view of its subjects; ``alternates`` keeps runners-up as candidates."""
+        wanted = [self.shot_index(op["shot_id"])] if op.get("shot_id") is not None else list(range(len(self.shots)))
+        extra = _whole(op.get("alternates", 0), "alternates", 0, 3)
+        staged = self.staged()
+        for shot_index in wanted:
+            shot = self.shots[shot_index]
+            timeline = self.timelines.get(str(shot.shot_id))
+            # Keys hold world poses along a route someone laid; the lens they animate is not this search's to move.
+            if timeline is not None and timeline.camera:
+                continue
+            camera_index = self.camera_index(shot.camera_id)
+            current = self.cameras[camera_index]
+            # One camera can serve several shots; only move it when nothing else is looking through it.
+            if sum(other.camera_id == current.id for other in self.shots) > 1:
+                continue
+            found = scoring.candidate_cameras(staged, shot, limit=1 + extra)
+            if scoring.best_lens_is_worth_it(found, current, scoring.score_shot(staged, shot)[0]):
+                self.cameras[camera_index] = found[0][1]
+            for number, (_, alternate) in enumerate(found[1:], start=1):
+                if len(shot.alt_camera_ids) + number > MAX_ALT_CAMERAS or alternate.position == current.position:
+                    continue
+                self.add_camera({
+                    "shot_id": shot.shot_id, "label": f"第{shot.shot_id}镜候选 {number}",
+                    "position": alternate.position, "target": alternate.target, "lens_mm": alternate.lens_mm,
+                })
 
     def _spec_of(self, shot_index: int, op: Mapping[str, Any]) -> ShotSpec:
         shot = self.shots[shot_index]
@@ -922,7 +1127,12 @@ class _Editor:
                 stage_center=centre, first_shot=shot_index == 0,
             )
             solved = fit_move(solved, staged.actors_in(shot), staged.actors_in(shot, at_end=True), self.axis)
-            self.cameras[camera_index] = solved.model_copy(update={"id": self.cameras[camera_index].id})
+            # The solver thinks in full-frame millimetres; the same field of view on this camera's sensor is a shorter or longer lens.
+            sensor = self.cameras[camera_index].sensor_mm
+            self.cameras[camera_index] = solved.model_copy(update={
+                "id": self.cameras[camera_index].id, "sensor_mm": sensor,
+                "lens_mm": round(max(8.0, min(600.0, solved.lens_mm * sensor / solved.sensor_mm)), 1),
+            })
 
     def set_shot_override(self, op: Mapping[str, Any]) -> None:
         shot_index = self.shot_index(op.get("shot_id"))
@@ -957,6 +1167,12 @@ def _refuse_keys_past_the_end(values: Mapping[str, Any]) -> None:
         late = [float(time) for time in times if isinstance(time, (int, float)) and not isinstance(time, bool) and time > duration + 1e-6]
         if late:
             raise StageEditError(f"关键帧的时间不能超过时间线时长：{label}轨最后一个关键帧在 {max(late):g} 秒，时长是 {duration:g} 秒")
+    blocks = [("跟拍", values.get("follow") or []), ("切机位", values.get("cuts") or []), *((f"「{name}」动作", clips) for name, clips in (values.get("clips") or {}).items())]
+    for label, clips in blocks:
+        ends = [clip.get("end") for clip in clips if isinstance(clip, Mapping)]
+        late = [float(end) for end in ends if isinstance(end, (int, float)) and not isinstance(end, bool) and end > duration + 1e-6]
+        if late:
+            raise StageEditError(f"片段不能超过时间线时长：{label}轨最后一段到 {max(late):g} 秒，时长是 {duration:g} 秒")
 
 
 def _timeline_error(error: ValueError) -> str:
@@ -967,6 +1183,10 @@ def _timeline_error(error: ValueError) -> str:
         ("position and target must differ", "机位关键帧的位置与注视点不能重合"),
         ("needs a position", "人物关键帧至少要有 position / yaw_deg / pose 之一"),
         ("at most 120", "每条轨道最多 120 个关键帧"),
+        ("must not overlap", "同一条轨道上的片段不能重叠"),
+        ("camera cut must use", "切机位只能切到本镜的机位或候选机位"),
+        ("clips must lie within", "片段不能超过时间线时长"),
+        ("end must come after", "片段的结束时间必须晚于开始时间"),
     ):
         if marker in text:
             return message
@@ -980,7 +1200,8 @@ _HANDLERS = (
     "transform_landmark", "bind_landmark_model", "set_backdrop", "add_crowd", "remove_crowd", "transform_crowd",
     "add_extra", "remove_extra", "set_figure", "set_pose", "add_camera", "remove_camera", "use_camera",
     "frame_shot", "set_timeline", "clear_timeline", "apply_camera_move",
-    "set_path", "array_landmark", "align_landmarks", "repair_checks",
+    "set_path", "array_landmark", "align_landmarks", "repair_checks", "apply_blockout", "clear_blockout",
+    "auto_route", "best_camera",
 )
 OPERATIONS: tuple[str, ...] = _HANDLERS
 
@@ -1017,6 +1238,8 @@ def apply_operations(
             editor.solve_camera({})
         except (StageEditError, ValueError, TypeError) as error:
             raise StageEditError(f"重解机位失败：{str(error)[:300]}") from error
+    if sum(len(item.parts) for item in editor.landmarks) > MAX_STAGE_PARTS:
+        raise StageEditError(f"场上模型的体块总数超过 {MAX_STAGE_PARTS}，请合并或删除一些模型")
     try:
         edited = plan.model_copy(update={
             "actors": [StageActor.model_validate(actor.model_dump()) for actor in editor.actors],

@@ -16,7 +16,7 @@ import logging
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, Protocol, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -38,6 +38,7 @@ TRUNCATED_REASON = "上一轮输出超出长度上限被截断，本轮已放宽
 # A cut-off answer is retried with twice the room, up to this (SCREENWRITING_MAX_TOKENS_CAP).
 # The gateway brings any figure above a provider's own ceiling back down to it.
 DEFAULT_MAX_TOKENS_CAP = 1_000_000
+PREVIOUS_OUTPUT_LIMIT = 30_000
 
 
 def max_tokens_cap() -> int:
@@ -146,6 +147,22 @@ def format_validation_error(error: ValidationError, limit: int = 8) -> list[str]
     return reasons
 
 
+def _previous_output_section(previous: str) -> str:
+    """The rejected answer: correcting it takes far less than writing the whole object again."""
+    text = (previous or "").strip()
+    if not text or len(text) > PREVIOUS_OUTPUT_LIMIT:
+        return ""
+    return f"\n\n【上一轮输出】（只改下面指出的问题，其余内容原样保留）\n{text}"
+
+
+class StructuredMemo(Protocol):
+    """Where validated answers to one-answer questions are kept; see ``app.core.llm_memo``."""
+
+    def recall(self, label: str, system: str, user: str) -> str | None: ...
+
+    def keep(self, label: str, system: str, user: str, answer: str) -> None: ...
+
+
 def call_structured(
     caller: LLMCaller,
     *,
@@ -157,21 +174,37 @@ def call_structured(
     validators: Sequence[SemanticValidator] = (),
     label: str = "structured",
     temperature: float | None = None,
+    memo: StructuredMemo | None = None,
 ) -> StructuredResult:
     """Ask, parse, validate, retry with reasons; raise ``StructuredOutputError`` when exhausted.
 
     ``temperature`` is the sampling profile the gateway should use for this stage
     (``None`` keeps the gateway's default); a validator may mutate the parsed dict
-    for mechanical repairs before the next round is decided.
+    for mechanical repairs before the next round is decided. ``memo`` serves a validated
+    answer to this exact question from an earlier run, and keeps this one for the next;
+    pass it only where the question has one right answer.
     """
+    if memo is not None:
+        remembered = memo.recall(label, system_prompt, user_prompt)
+        if remembered is not None:
+            try:
+                validated = schema.model_validate(extract_json_object(remembered) or {})
+            except ValidationError:
+                validated = None
+            if validated is not None:
+                data = validated.model_dump(mode="json")
+                if not [reason for validator in validators for reason in validator(data)]:
+                    return StructuredResult(data=data, raw_text=remembered, attempts=0, prompt=user_prompt)
     reasons: list[str] = []
     raw_text = ""
     budget = max_tokens
     base_prompt = f"{user_prompt.rstrip()}\n\n{output_format_section(schema)}"
     prompt = base_prompt
+    previous = ""  # the rejected object the next round is to correct; nothing when it did not parse
     for attempt in range(1, max(1, attempts) + 1):
         if reasons:
-            prompt = f"{base_prompt}\n\n{RETRY_HEADER}\n" + "\n".join(f"- {reason}" for reason in reasons)
+            prompt = f"{base_prompt}{_previous_output_section(previous)}\n\n{RETRY_HEADER}\n" + "\n".join(f"- {reason}" for reason in reasons)
+        previous = ""
         with temperature_scope(temperature):
             raw_text = caller(system_prompt, prompt, budget) or ""
         parsed = extract_json_object(raw_text)
@@ -191,6 +224,7 @@ def call_structured(
         try:
             validated = schema.model_validate(parsed)
         except ValidationError as error:
+            previous = raw_text
             reasons = ["输出不符合 schema：" + "；".join(format_validation_error(error))]
             logger.warning("[Screenwriting] %s 第 %d/%d 轮：schema 校验失败 %s", label, attempt, attempts, reasons[0][:300])
             continue
@@ -199,9 +233,12 @@ def call_structured(
         for validator in validators:
             semantic.extend(validator(data))
         if semantic:
+            previous = raw_text
             reasons = semantic
             logger.warning("[Screenwriting] %s 第 %d/%d 轮：内容校验失败 %s", label, attempt, attempts, "; ".join(semantic)[:400])
             continue
+        if memo is not None:
+            memo.keep(label, system_prompt, user_prompt, raw_text)
         return StructuredResult(data=data, raw_text=raw_text, attempts=attempt, prompt=prompt)
     raise StructuredOutputError(
         f"{label} 连续 {attempts} 次未通过校验，最后一轮原因：{'; '.join(reasons)}",

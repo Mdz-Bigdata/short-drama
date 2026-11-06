@@ -30,6 +30,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from statistics import median
 from typing import Any, Literal
 
@@ -41,25 +42,48 @@ from app.core.spatial_stage.models import StageCamera, StagePlan
 from app.core.transition_catalog import transition_label
 from app.core.writer_dashboard import parse_duration_seconds
 
-CutKind = Literal["cut", "dissolve", "fade", "match_cut"]
+# 「cut」只为读旧数据保留：规划器不再选硬切，同场景用匹配衔接，换场景用推拉(遮挡 / 镜头运动)带入。
+CutKind = Literal["cut", "dissolve", "fade", "match_cut", "push_pull"]
 Technique = Literal[
     "opening", "plain", "shot_reverse", "action_match", "eyeline_match", "reaction",
     "graphic_match", "time_passage", "flashback", "chapter", "scene_change",
+    "action_rhyme", "occlusion", "object_carry",
 ]
+# 声音和画面错开切：J 是下一镜的声音先到，L 是上一镜的声音留下。成片合成时才做，不写进视频提示词。
+SoundJoin = Literal["", "j_cut", "l_cut"]
 MotionJoin = Literal["static_to_static", "moving_to_moving", "moving_to_static", "static_to_moving"]
 
 # A leap of this many size steps (全景 → 特写 is 5) needs a reason.
 MAX_SIZE_STEP = 4
 MAX_STATE_JUMP_M = 0.8
-_CUT_SECONDS: dict[str, float] = {"cut": 0.0, "match_cut": 0.0, "dissolve": 0.5, "fade": 0.8}
+_CUT_SECONDS: dict[str, float] = {"cut": 0.0, "match_cut": 0.0, "dissolve": 0.5, "fade": 0.8, "push_pull": 0.5}
 # What the compositor calls each device.
 COMPOSITOR_TRANSITIONS: dict[str, str] = {
-    "cut": "hard_cut", "match_cut": "match_cut", "dissolve": "crossfade", "fade": "dip_to_black",
+    # 旧数据里的硬切也按短交叉过渡合成，成片里不出现生硬的跳切。
+    "cut": "crossfade", "match_cut": "match_cut", "dissolve": "crossfade", "fade": "dip_to_black", "push_pull": "crossfade",
 }
 _TECHNIQUE_ZH: dict[str, str] = {
     "opening": "开场", "plain": "顺接", "shot_reverse": "正反打", "action_match": "动作匹配",
-    "eyeline_match": "视线匹配", "reaction": "切回反应", "graphic_match": "图形匹配",
+    "eyeline_match": "视线匹配", "reaction": "回到反应", "graphic_match": "图形匹配",
     "time_passage": "时间流逝", "flashback": "回忆", "chapter": "章节转换", "scene_change": "场景转换",
+    "action_rhyme": "动作呼应", "occlusion": "遮挡转场", "object_carry": "同物换境",
+}
+# 这种接法回看成片时要核对什么。
+_WATCH: dict[str, str] = {
+    "opening": "空间、人物关系是否一眼读清",
+    "plain": "人物姿态、朝向、道具归属；观众的注意力位置有没有跨过整个画面",
+    "shot_reverse": "视线高度、轴线同侧、两边焦段是否接近",
+    "action_match": "动作阶段、速度、用手、道具状态、重心；后镜不重演前镜做过的部分",
+    "eyeline_match": "谁在看、看向哪里、所见之物的方位",
+    "reaction": "反应的视线方向与发出时一致",
+    "graphic_match": "图形的中心位置、大小、边缘、明暗",
+    "time_passage": "机位与陈设不变，只有光线和天气变；观众能读出过了多久",
+    "flashback": "色调与现实区分，能读出何时进、何时回",
+    "chapter": "新的时间与空间是否一进来就交代",
+    "scene_change": "新空间的建立画面；声音来源听得清",
+    "action_rhyme": "运动方向、节奏、落点；情节或环境要说明为什么这样接，不等于两场戏同时发生",
+    "occlusion": "切点处是否遮满；遮挡边缘的方向和速度；摄影机运动与前景滑动方向分开核对",
+    "object_carry": "形状、缺口、颜色等辨识特征不变；后续动作或对白要交代它为何在这里",
 }
 _EMPTY_CAST = frozenset({"", "无", "无人", "无人物", "空镜", "空镜（无人物）"})
 
@@ -75,6 +99,23 @@ _NIGHT = re.compile(r"深夜|夜里|夜晚|入夜|夜色|月光|月色|三更|�
 _LOOK = re.compile(r"看向|望向|盯着|盯住|注视|凝视|瞥见|瞥向|抬头看|低头看|回头看|目光落|目光移|循声望|望去|看去|看见|发现")
 _POV = re.compile(r"主观|POV|第一人称|视角镜头", re.IGNORECASE)
 _EXIT = re.compile(r"推门而出|出门|走出|冲出|离开|踏出|跨出|转身离去|夺门")
+# 分镜明说了前景遮过镜头才算遮挡转场：「手撑着墙」不算。
+_OCCLUSION = re.compile(r"(衣袖|袖口|袖子|披风|斗篷|手掌|门板|屏风|墙面|墙|廊柱|立柱|背影|人群)[^，。；]{0,8}(?:遮住|遮满|挡住|盖住|掠过|扫过|贴近镜头|充满画面|占满画面)")
+# 能跨场景认出来的小物件：同一个物件换了环境，线索就接上了。
+_TOKENS = ("令牌", "铜牌", "玉佩", "玉坠", "戒指", "钥匙", "信封", "密信", "手帕", "发簪", "怀表", "项链", "吊坠", "地图", "卷轴", "火折子", "香囊")
+_DIRECTION = re.compile(r"(?:向|往|朝)(左|右)(?:走|跑|奔|行|冲|飞|驶|移动|前进)|从(左|右)(?:向|往|到|至)(?:左|右)")
+_TURNED = re.compile(r"转身|掉头|折返|回身|调头|返回|迎面|相向|对向")
+_DONE = re.compile(r"站稳|站直|落定|收势|做完|彻底|完全|已经")
+_PICKUP = re.compile(r"继续|接着|后半|余势|顺势")
+_FAST_MOVE = re.compile(r"快速|急推|急拉|急摇|猛推|猛拉|甩镜|甩向|极速|高速")
+_SLOW_MOVE = re.compile(r"缓慢|缓缓|缓推|缓移|缓拉|慢推|慢移|轻推|微推|微移")
+_VIOLENT_MOVE = re.compile(r"剧烈|大幅|猛烈|疯狂|地震|shaky", re.IGNORECASE)
+_ENERGY_MOTIVE = re.compile(r"声|响|碎|喊|叫|惊|突然|猛地|骤然|冲|扑|撞|爆|转身|回头")
+# 两镜的描述相似到这个程度，又没有新动作和新台词，切过去就只是换了个机位。
+SAME_INFO_RATIO = 0.82
+# 同一人物在画面里挪了这么多（画面宽为 100）观众的眼睛就得跨屏重新找人。
+MAX_ATTENTION_JUMP = 45.0
+STATIC_RUN = 4
 # One action, cut in two: a family names the same movement at different moments.
 _ACTION_FAMILIES: tuple[tuple[str, ...], ...] = (
     ("推门", "推开", "门开", "门被推开", "开门", "拉开门"), ("拔剑", "拔刀", "出鞘", "抽剑", "抽刀"),
@@ -82,7 +123,7 @@ _ACTION_FAMILIES: tuple[tuple[str, ...], ...] = (
     ("起身", "站起", "爬起"), ("坐下", "落座"), ("跪下", "跪倒", "跪地"), ("倒地", "倒下", "摔倒", "栽倒"),
     ("举杯", "饮下", "喝下", "仰头饮"), ("抬手", "扬手", "挥手", "抬起手"), ("奔", "跑", "冲向", "冲进", "冲出"),
     ("跃起", "跳下", "跃下", "腾空"), ("扔", "掷", "抛", "摔碎", "砸"), ("点燃", "烧", "燃起", "火舌"),
-    ("展开", "抖开", "摊开", "翻开", "合上"), ("出拳", "挥拳", "踢", "踹", "格挡"),
+    ("展开", "抖开", "摊开", "翻开", "合上"), ("出拳", "挥拳", "踢", "踹", "格挡"), ("落笔", "落槌", "落子", "击鼓", "敲鼓", "捶下"),
 )
 # (cause words, effect words): the effect on screen before anyone has done the cause.
 _CAUSALITY: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
@@ -93,9 +134,10 @@ _CAUSALITY: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("一推", "猛推", "一脚踹"), ("跌出去", "摔出去", "撞在", "撞翻")),
 )
 _SHAPES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("圆形", ("瞳孔", "眼眸", "月亮", "圆月", "满月", "太阳", "铜镜", "圆镜", "灯笼", "钟表", "车轮", "碗口", "井口", "玉璧", "铜钱", "星球")),
+    ("圆形", ("瞳孔", "眼眸", "月亮", "圆月", "满月", "太阳", "铜镜", "圆镜", "灯笼", "灯罩", "鼓面", "钟表", "车轮", "碗口", "井口", "玉璧", "铜钱", "星球")),
     ("竖线", ("剑身", "长剑", "立柱", "廊柱", "门缝", "烛台", "旗杆", "竹", "塔")),
     ("横线", ("地平线", "案几", "长桥", "城墙", "水面", "屋檐")),
+    ("斜线", ("石阶", "扶手", "楼梯", "阶梯", "山脊", "斜坡", "缆绳")),
     ("火光", ("烛火", "火舌", "篝火", "火把", "炭火", "烈焰")),
 )
 _WARM = ("烛", "火光", "炭", "篝火", "夕阳", "暖", "金色", "灯笼", "橘")
@@ -145,6 +187,8 @@ class CutPlan(BaseModel):
     reasons: list[str] = Field(default_factory=list, max_length=12)
     edit_out: str = Field("", max_length=500)
     edit_in: str = Field("", max_length=500)
+    sound_join: SoundJoin = ""
+    sound_note: str = Field("", max_length=200)
 
 
 class TransitionPlan(BaseModel):
@@ -179,6 +223,7 @@ class _Shot:
     seconds: int
     subjects: list[str]
     camera: StageCamera | None = None
+    dialogue: str = ""
 
     @property
     def moving(self) -> bool:
@@ -212,7 +257,7 @@ def _view(raw: Mapping[str, Any], index: int, plan: StagePlan | None) -> _Shot:
         desc=" ".join(str(raw.get("desc") or "").split()), purpose=str(raw.get("shot_purpose") or "information"),
         seconds=parse_duration_seconds(raw.get("duration")),
         subjects=[str(name).strip() for name in names if str(name).strip() not in _EMPTY_CAST],
-        camera=camera,
+        camera=camera, dialogue=str(raw.get("dialogue") or "").strip(),
     )
 
 
@@ -256,6 +301,28 @@ def _shared_action(first: _Shot, second: _Shot) -> str:
     return ""
 
 
+def _rhyming_action(first: _Shot, second: _Shot) -> tuple[str, str]:
+    """两场戏里相似的运动：笔落下、槌落下。谁做的都行，靠的是方向和节奏。"""
+    for family in _ACTION_FAMILIES:
+        before = next((word for word in family if word in first.desc), "")
+        after = next((word for word in family if word in second.desc), "")
+        if before and after:
+            return before, after
+    return "", ""
+
+
+def _sound_join(first: _Shot | None, second: _Shot, kind: str, technique: str) -> tuple[SoundJoin, str]:
+    """这一刀声音和画面要不要错开。淡入淡出是换章的停顿，不错开。"""
+    if first is None or kind == "fade" or technique == "opening":
+        return "", ""
+    moved = first.scene_id != second.scene_id or bool(first.location and second.location and first.location != second.location)
+    if first.dialogue and not second.dialogue and (moved or second.is_insert or not set(first.subjects) & set(second.subjects)):
+        return "l_cut", "L-cut：上一镜这句话越过切点再留一小段，画面先切过去，别让声音和画面同时断"
+    if moved:
+        return "j_cut", "J-cut：下一场的声音先进来，再切画面；交接时听得清声音来自哪里"
+    return "", ""
+
+
 def _motion_join(first: _Shot | None, second: _Shot) -> MotionJoin:
     if first is None or not first.moving:
         return "static_to_moving" if second.moving else "static_to_static"
@@ -276,15 +343,15 @@ def _moves_oppose(first: _Shot, second: _Shot) -> bool:
 
 
 _JOIN_OUT: dict[str, str] = {
-    "static_to_static": "画面稳住，切点落在动作或台词的停顿上",
-    "moving_to_moving": "运动中直接切出，不留落幅",
-    "moving_to_static": "运镜在切点前约半秒落幅稳住再切",
-    "static_to_moving": "画面稳住后切出",
+    "static_to_static": "画面稳住，衔接点落在动作或台词的停顿上",
+    "moving_to_moving": "运动中顺势衔接，方向与速度连续，不留落幅",
+    "moving_to_static": "运镜在衔接点前约半秒落幅稳住再过渡",
+    "static_to_moving": "画面稳住后再过渡",
 }
 _JOIN_IN: dict[str, str] = {
-    "static_to_static": "以稳定画面切入",
+    "static_to_static": "以稳定画面进入",
     "moving_to_moving": "从运动中起，方向与速度承接上一镜",
-    "moving_to_static": "以稳定画面切入，承接上一镜落幅",
+    "moving_to_static": "以稳定画面进入，承接上一镜落幅",
     "static_to_moving": "先以起幅稳住约半秒再开始运动",
 }
 
@@ -294,7 +361,7 @@ def _decide(first: _Shot | None, second: _Shot, *, first_of_episode: bool) -> tu
     if first is None:
         if first_of_episode:
             return "fade", "opening", "", ["本集第一镜：渐显进入"]
-        return "cut", "opening", "", ["本场第一镜，前面没有可承接的镜头"]
+        return "dissolve", "opening", "", ["本场第一镜：渐显进入，不硬切"]
     same_scene = first.scene_id == second.scene_id
     if _FLASHBACK.search(second.text) and not _FLASHBACK.search(first.text):
         return "dissolve", "flashback", "同一人物的神态或手中物件", ["进入回忆 / 梦境：用叠化区分时空"]
@@ -311,20 +378,29 @@ def _decide(first: _Shot | None, second: _Shot, *, first_of_episode: bool) -> tu
         if shape_a and shape_a == shape_b:
             return "match_cut", "graphic_match", f"{word_a}与{word_b}同为{shape_a}", ["前后画面有相同的形状，用图形匹配带过场景转换"]
         if _EXIT.search(first.desc) and set(first.subjects) & set(second.subjects):
-            return "cut", "action_match", "人物穿过门 / 出口的动作", ["人物的出场动作把两个空间接起来，不会像瞬移"]
+            return "match_cut", "action_match", "人物穿过门 / 出口的动作", ["人物的出场动作把两个空间连贯接起来，不会像瞬移"]
+        token = next((word for word in _TOKENS if word in first.desc and word in second.desc), "")
+        if token:
+            return "match_cut", "object_carry", f"同一个{token}", ["同物换境：观众认出同一线索，但它为什么在这里要靠后面的动作或对白交代"]
+        rhyme = _rhyming_action(first, second)
+        if all(rhyme):
+            return "match_cut", "action_rhyme", f"{rhyme[0]}与{rhyme[1]}的相似运动", ["相似动作呼应：方向、节奏、落点相近，形成联想；不表示人物到了对方那里，也不说明两场同时发生"]
+        hidden = _OCCLUSION.search(first.desc)
+        if hidden:
+            return "push_pull", "occlusion", f"{hidden.group(1)}遮过镜头", ["前景遮满画面后切，下一镜从相近的色块和质感开始再揭开新空间"]
         if (_tone(first.text) and _tone(second.text) and _tone(first.text) != _tone(second.text)) or (before and after and before != after):
             return "dissolve", "scene_change", "光色由前镜渐变到后镜", ["两个场景的色调不同：用叠化渐变，避免割裂"]
-        return "cut", "scene_change", "声音先行或环境线索（门、窗、道路）", ["换场景：硬切，由声音或环境线索承接空间"]
+        return "push_pull", "scene_change", "前景遮挡或镜头推进带入新空间，环境声先行", ["换场景：用前景遮挡或镜头推拉带入新空间，声音先行承接，不硬切"]
     if first.subjects and _LOOK.search(first.desc) and (second.is_pov or second.is_insert or not set(first.subjects) & set(second.subjects)):
-        return "cut", "eyeline_match", f"{first.subjects[0]}投向画外的视线", ["视线匹配：先给视线，再给所看到的"]
+        return "match_cut", "eyeline_match", f"{first.subjects[0]}投向画外的视线", ["视线匹配：先给视线，镜头顺视线方向带到所看到的"]
     if (first.is_pov or first.is_insert) and second.subjects:
-        return "cut", "reaction", "所见之物带来的反应", ["看过对象之后切回人物的反应"]
+        return "match_cut", "reaction", "所见之物带来的反应", ["看过对象之后顺势回到人物的反应"]
     action = _shared_action(first, second)
     if action:
-        return "cut", "action_match", f"「{action}」这一个动作", ["动作匹配：在动作进行中切，下一镜接同一动作的后半段"]
+        return "match_cut", "action_match", f"「{action}」这一个动作", ["动作匹配：在动作进行中衔接，下一镜接同一动作的后半段"]
     if len(first.subjects) == 1 and len(second.subjects) == 1 and first.subjects != second.subjects:
-        return "cut", "shot_reverse", "两人相接的视线", ["正反打：同侧机位，视线方向相对"]
-    return "cut", "plain", "人物姿态、朝向与道具归属", ["同一场景内顺接：硬切"]
+        return "match_cut", "shot_reverse", "两人相接的视线", ["正反打：镜头沿轴线同侧顺势移向对方，视线相接，不硬切"]
+    return "match_cut", "plain", "人物姿态、朝向与道具归属", ["同一场景内顺接：姿态、朝向、道具与声音延续，不硬切"]
 
 
 def _edit_text(cut_kind: str, technique: str, carries: str, first: _Shot | None, second: _Shot, join: str) -> tuple[str, str]:
@@ -333,28 +409,38 @@ def _edit_text(cut_kind: str, technique: str, carries: str, first: _Shot | None,
         return "", _clip(("渐显进入；" if cut_kind == "fade" else "") + "先建立空间与人物关系；" + _JOIN_IN[join], 500)
     looker = first.subjects[0] if first is not None and first.subjects else "人物"
     out_by_technique = {
-        "action_match": f"在{carries}进行到一半时切出，不把动作做完",
-        "eyeline_match": f"停在{looker}视线投向画外的瞬间切出",
-        "reaction": "所见之物读清后切出",
-        "shot_reverse": "在台词收音点或视线落点切出",
-        "graphic_match": f"以{carries.split('与')[0] if '与' in carries else '该图形'}充满画面并稳住后切出",
+        "action_match": f"在{carries}进行到一半时顺势衔接到下一镜，动作不中断",
+        "eyeline_match": f"在{looker}视线投向画外时，镜头顺视线方向带向所见之物",
+        "reaction": "所见之物读清后，镜头顺势回到人物",
+        "shot_reverse": "在台词收音点或视线落点，镜头沿轴线同侧顺势移向对方",
+        "graphic_match": f"以{carries.split('与')[0] if '与' in carries else '该图形'}充满画面并稳住后过渡",
         "time_passage": "画面稳住后叠化淡出（约0.5秒）",
         "flashback": "停在人物神态上叠化淡出（约0.5秒）",
         "chapter": "情绪收住后渐隐至黑（约0.8秒）",
-        "scene_change": "在动作或台词收束处切出，环境声先行引出下一场",
-        "plain": "在动作接触、视线落点或台词收音点切出",
+        "scene_change": "在动作或台词收束处，前景遮挡物掠过或镜头推进带出本场，环境声先行引出下一场",
+        "action_rhyme": f"在{carries.split('的相似运动')[0]}运动到一半时过渡，落点留在画面同一位置",
+        "occlusion": f"{carries.split('遮过镜头')[0]}贴近镜头直到遮满画面，半遮藏不住背景的变化",
+        "object_carry": f"{carries}停在画面中央、辨识特征看得清时过渡",
+        "plain": "在动作接触、视线落点或台词收音点顺势衔接",
     }
     in_by_technique = {
-        "action_match": "从同一动作的后半段切入，动作方向与速度与上一镜一致",
-        "eyeline_match": f"切入{looker}所看的对象，机位取其视线方向",
-        "reaction": f"切回{second.subjects[0] if second.subjects else '人物'}的反应，视线方向与发出时一致",
-        "shot_reverse": "切到对方，视线方向与上一镜相对，机位留在轴线同一侧",
-        "graphic_match": "以相同位置、相同大小的同形物切入，再拉开交代新场景",
-        "time_passage": "叠化淡入，先交代时间变化的可见线索（光线、影子、烛长）",
+        "action_match": "从同一动作的后半段接续，动作方向与速度与上一镜一致，用手、道具状态和重心不变，不重演已做过的部分",
+        "eyeline_match": f"顺着{looker}的视线方向接续其所看的对象",
+        "reaction": f"回到{second.subjects[0] if second.subjects else '人物'}的反应，视线方向与发出时一致",
+        "shot_reverse": "接续到对方，视线方向与上一镜相对，机位留在轴线同一侧",
+        "graphic_match": "以相同位置、相同大小的同形物接续，再拉开交代新场景",
+        "time_passage": (
+            "叠化淡入，机位与陈设不变，只让光线和天气变化（光线、影子、烛长）"
+            if first is not None and first.location and first.location == second.location
+            else "叠化淡入，先交代时间变化的可见线索（光线、影子、烛长）"
+        ),
         "flashback": "叠化淡入，色调与现实区分",
         "chapter": "自黑渐显，先建立新的时间与空间",
-        "scene_change": "切入新空间的建立画面，由上一镜延续的声音或环境线索承接",
-        "plain": "承接上一镜的人物姿态、朝向与道具归属切入",
+        "scene_change": "遮挡移开或镜头推进后进入新空间的建立画面，由上一镜延续的声音或环境线索承接",
+        "action_rhyme": "相同方向、相近节奏的运动落在画面同一位置，再带出这一场的环境与人物",
+        "occlusion": "从相近的色块和质感开始，遮挡沿同一方向滑开后揭示新空间，前景滑动方向与摄影机运动方向分开写",
+        "object_carry": f"{carries}的形状和特征不变、换到新环境里，先看清物件再交代它为何在此",
+        "plain": "承接上一镜的人物姿态、朝向与道具归属自然接续",
     }
     # An optical transition needs a settled picture on both sides, whatever the cameras were doing.
     settle = cut_kind in {"dissolve", "fade"}
@@ -387,6 +473,7 @@ def plan_transitions(
         if first is not None and first.camera is not None and second.camera is not None and index:
             lens_change = bearing_change_deg(first.camera, second.camera, (second.camera.target[0], second.camera.target[2]))
         edit_out, edit_in = _edit_text(kind, technique, carries, first, second, join)
+        sound_join, sound_note = _sound_join(first, second, kind, technique)
         cuts.append(CutPlan(
             from_shot=(first.shot_id if first is not None and index else 0), to_shot=second.shot_id,
             kind=kind, technique=technique, label=f"{transition_label(kind)}·{_TECHNIQUE_ZH[technique]}"[:60],
@@ -394,6 +481,7 @@ def plan_transitions(
             size_step=max(-8, min(8, second.rank - first.rank)) if first is not None else 0,
             lens_change_deg=round(lens_change, 1) if lens_change is not None else None,
             carries=_clip(carries, 300), reasons=reasons, edit_out=edit_out, edit_in=edit_in,
+            sound_join=sound_join, sound_note=sound_note,
         ))
     return TransitionPlan(cuts=cuts, checks=_checks(views, cuts, stage_plan))
 
@@ -479,7 +567,7 @@ def _checks(views: Sequence[_Shot], cuts: Sequence[CutPlan], plan: StagePlan | N
         for a, b in pairs:
             staged_a, staged_b = plan.shot(a.shot_id), plan.shot(b.shot_id)
             cut = next((item for item in cuts if item.to_shot == b.shot_id), None)
-            if staged_a is None or staged_b is None or a.scene_id != b.scene_id or (cut is not None and cut.kind != "cut"):
+            if staged_a is None or staged_b is None or a.scene_id != b.scene_id or (cut is not None and cut.kind not in {"cut", "match_cut"}):
                 continue
             seen = {state.name for state in staged_a.screen if state.visible}
             ending = {actor.name: actor for actor in plan.actors_in(staged_a, at_end=True)}
@@ -494,8 +582,8 @@ def _checks(views: Sequence[_Shot], cuts: Sequence[CutPlan], plan: StagePlan | N
                 jumped_ids.append(b.shot_id)
         checks.append(TransitionCheck(
             code="transition_state_continuous", passed=not jumped,
-            detail="；".join(jumped)[:1800] + "：硬切两侧人物不能瞬移；让上一镜交代人物退开 / 起步，或把走位留在同一镜内完成。" if jumped
-            else "硬切两侧的人物位置首尾相接，没有瞬移。",
+            detail="；".join(jumped)[:1800] + "：衔接两侧人物不能瞬移；让上一镜交代人物退开 / 起步，或把走位留在同一镜内完成。" if jumped
+            else "衔接两侧的人物位置首尾相接，没有瞬移。",
             shot_ids=_ids(jumped_ids),
         ))
 
@@ -524,7 +612,7 @@ def _checks(views: Sequence[_Shot], cuts: Sequence[CutPlan], plan: StagePlan | N
     flip_ids: list[int] = []
     for a, b in pairs:
         cut = next((item for item in cuts if item.to_shot == b.shot_id), None)
-        if cut is None or cut.kind != "cut" or a.scene_id != b.scene_id:
+        if cut is None or cut.kind not in {"cut", "match_cut"} or a.scene_id != b.scene_id:
             continue
         hours = _time_of_day(a.desc), _time_of_day(b.desc)
         tones = _tone(a.desc), _tone(b.desc)
@@ -538,8 +626,8 @@ def _checks(views: Sequence[_Shot], cuts: Sequence[CutPlan], plan: StagePlan | N
     checks.append(TransitionCheck(
         code="transition_light_continuity", passed=not flips,
         detail=(
-            "；".join(flips)[:1800] + "：同一场景硬切两侧的光色相反；统一主光色温，或在画面里交代光源变化（点灯、云遮月），否则改用叠化。"
-            if flips else "硬切两侧的光线与色调协调；时段变化处已安排叠化或淡入淡出。"
+            "；".join(flips)[:1800] + "：同一场景衔接两侧的光色相反；统一主光色温，或在画面里交代光源变化（点灯、云遮月），否则改用叠化。"
+            if flips else "衔接两侧的光线与色调协调；时段变化处已安排叠化或淡入淡出。"
         ),
         shot_ids=_ids(flip_ids),
     ))
@@ -575,14 +663,138 @@ def _checks(views: Sequence[_Shot], cuts: Sequence[CutPlan], plan: StagePlan | N
         ),
         shot_ids=_ids([b.shot_id for _, b in breaks]),
     ))
+    checks.extend(_diagnosis_checks(pairs, views, plan))
     return checks
+
+
+def _diagnosis_checks(pairs: Sequence[tuple[_Shot, _Shot]], views: Sequence[_Shot], plan: StagePlan | None) -> list[TransitionCheck]:
+    """单看都好、接起来别扭的那几类：没有新信息、动作重演、方向翻转、能量没来由、眼睛要跨屏、全程不动。"""
+    checks: list[TransitionCheck] = []
+
+    # ---- why cut at all: the next shot brings something new
+    same = [
+        (a, b) for a, b in pairs
+        if a.scene_id == b.scene_id and a.subjects and a.subjects == b.subjects and a.rank == b.rank and a.move == b.move
+        and (not b.dialogue or b.dialogue == a.dialogue) and SequenceMatcher(None, a.desc, b.desc).ratio() >= SAME_INFO_RATIO
+    ]
+    checks.append(TransitionCheck(
+        code="transition_new_information", passed=not same,
+        detail=(
+            "；".join(f"第{a.shot_id}镜→第{b.shot_id}镜" for a, b in same)[:1800]
+            + "：景别、运镜、内容都差不多，切过去只是换了个机位；给后一镜一个新动作、新表情或新信息，或者并成一镜。"
+            if same else "每次换镜都带来了新的动作或信息。"
+        ),
+        shot_ids=_ids([b.shot_id for _, b in same]),
+    ))
+
+    # ---- action: the next shot picks it up, it does not start it again
+    replays: list[tuple[_Shot, _Shot, str]] = []
+    for a, b in pairs:
+        action = _shared_action(a, b) if a.scene_id == b.scene_id else ""
+        if action and _DONE.search(a.desc[a.desc.find(action):]) and not _PICKUP.search(b.desc):
+            replays.append((a, b, action))
+    checks.append(TransitionCheck(
+        code="transition_action_replay", passed=not replays,
+        detail=(
+            "；".join(f"第{a.shot_id}镜已做完「{action}」，第{b.shot_id}镜又写了一遍" for a, b, action in replays)[:1800]
+            + "：人物会像被按回去重来；前镜停在动作进行中，后镜写明从哪个阶段接着做。"
+            if replays else "没有把做完的动作重演一遍。"
+        ),
+        shot_ids=_ids([b.shot_id for _, b, _ in replays]),
+    ))
+
+    # ---- direction: someone walking right does not walk left without showing why
+    flips = [
+        (a, b) for a, b in pairs
+        if a.scene_id == b.scene_id and set(a.subjects) & set(b.subjects) and _heading(a.desc) and _heading(b.desc)
+        and _heading(a.desc) != _heading(b.desc) and not _TURNED.search(f"{a.desc} {b.desc}")
+    ]
+    checks.append(TransitionCheck(
+        code="transition_screen_direction", passed=not flips,
+        detail=(
+            "；".join(f"第{a.shot_id}镜→第{b.shot_id}镜" for a, b in flips)[:1800]
+            + "：同一人物的行进方向在画面里反了，又没有交代原因，观众会以为他掉头了；补一个转身或全景，或改成同向。"
+            if flips else "人物的行进方向连续，方向改变都有交代。"
+        ),
+        shot_ids=_ids([b.shot_id for _, b in flips]),
+    ))
+
+    # ---- energy: two moves of the same size, and a burst has a reason
+    energy: list[str] = []
+    energy_ids: list[int] = []
+    for a, b in pairs:
+        if a.scene_id != b.scene_id:
+            continue
+        if a.moving and b.moving and ((_FAST_MOVE.search(a.move_text) and _SLOW_MOVE.search(b.move_text)) or (_SLOW_MOVE.search(a.move_text) and _FAST_MOVE.search(b.move_text))):
+            energy.append(f"第{a.shot_id}镜「{a.move_text}」接第{b.shot_id}镜「{b.move_text}」速度差太多，像撞上减速带")
+            energy_ids.append(b.shot_id)
+        elif _FAST_MOVE.search(b.move_text) and not a.moving and b.purpose not in _FAST_PURPOSES and not _ENERGY_MOTIVE.search(f"{a.desc} {b.desc}"):
+            energy.append(f"第{b.shot_id}镜「{b.move_text}」前面什么都没发生")
+            energy_ids.append(b.shot_id)
+    checks.append(TransitionCheck(
+        code="transition_motion_energy", passed=not energy,
+        detail="；".join(energy)[:1800] + "：运动能量要有来由和落点；用一声响动、一个动作带起来，或把两边的速度拉近。" if energy
+        else "相邻镜头的运动能量相近，加速都有来由。",
+        shot_ids=_ids(energy_ids),
+    ))
+
+    # ---- breath: the lens is not locked off for a whole scene, and people are not shaken about
+    breath: list[str] = []
+    breath_ids: list[int] = []
+    scenes: dict[str, list[_Shot]] = {}
+    for shot in views:
+        scenes.setdefault(shot.scene_id, []).append(shot)
+    for scene_id, shots in scenes.items():
+        if len(shots) >= STATIC_RUN and not any(shot.moving for shot in shots):
+            breath.append(f"{scene_id or '本场'}{len(shots)}镜全部固定机位，连起来像幻灯片；挑关键转折处给一个缓推或跟拍")
+            breath_ids.append(shots[-1].shot_id)
+    for shot in views:
+        if shot.subjects and _VIOLENT_MOVE.search(shot.move_text):
+            breath.append(f"第{shot.shot_id}镜人物镜头运镜「{shot.move_text}」幅度太大，人物容易崩坏；写成轻微的，大幅运动留给空镜")
+            breath_ids.append(shot.shot_id)
+    checks.append(TransitionCheck(
+        code="transition_camera_breath", passed=not breath,
+        detail="；".join(breath)[:1900] + "。" if breath else "运镜有呼吸，人物镜头的运动幅度克制。",
+        shot_ids=_ids(breath_ids),
+    ))
+
+    # ---- attention: the eye lands near where it was (needs the staged frames)
+    if plan is not None:
+        jumps: list[str] = []
+        jump_ids: list[int] = []
+        for a, b in pairs:
+            staged_a, staged_b = plan.shot(a.shot_id), plan.shot(b.shot_id)
+            if staged_a is None or staged_b is None or a.scene_id != b.scene_id or abs(b.rank - a.rank) > 1:
+                continue
+            before = {state.name: state for state in staged_a.screen if state.visible}
+            for state in staged_b.screen:
+                held = before.get(state.name)
+                if held is not None and state.visible and abs(state.x - held.x) > MAX_ATTENTION_JUMP:
+                    jumps.append(f"{state.name}从第{a.shot_id}镜到第{b.shot_id}镜在画面里横跨了{abs(state.x - held.x):.0f}%")
+                    jump_ids.append(b.shot_id)
+                    break
+        checks.append(TransitionCheck(
+            code="transition_attention_jump", passed=not jumps,
+            detail="；".join(jumps)[:1800] + "：景别相近时眼睛要跨屏重新找人，会漏掉后一镜开头的信息；让主体靠近上一镜的落点。" if jumps
+            else "相邻镜头的主体位置相近，观众的视线交接得过去。",
+            shot_ids=_ids(jump_ids),
+        ))
+    return checks
+
+
+def _heading(text: str) -> str:
+    found = _DIRECTION.search(text)
+    return (found.group(1) or ("左" if found.group(2) == "右" else "右")) if found else ""
 
 
 TABLE_BRIEF = (
     "【镜头衔接】相邻镜景别逐级变化，远景不直接跳特写（冲击 / 反转镜除外）；连续拍同一人物时，景别拉开两级以上或机位方向变化30度以上；"
     "人物看向画外的下一镜给其所见（主观或物件），再切回该人物的反应；动作在进行中切出，下一镜接同一动作的后半段，先因后果；"
     "运动镜头接运动镜头方向一致，接固定镜头前先落幅；动作戏用短镜头、情绪戏留长镜头，时长要有长短变化，悲喜之间留缓冲镜头；"
-    "同场景直接硬切，时间流逝与回忆用叠化，章节或大跨度时间用淡入淡出，画面同形时用匹配剪辑。"
+    "转场不用硬切，镜与镜之间要连贯、顺畅、自然过渡：同场景用动作匹配、视线引导或镜头顺势运动衔接，"
+    "换场景用前景遮挡或镜头推拉带入并让声音先行，时间流逝与回忆用叠化，章节或大跨度时间用淡入淡出，画面同形时用图形匹配。"
+    "每次换镜先想清这一切新增了什么信息、要让观众跟住什么；同一动作换景别时后一镜从略往后的阶段接，不重演；"
+    "运镜跟着戏走：建立用摇或固定，推进用缓推缓移，冲突用手持或快推，释放用缓拉或固定，慢推是悬念、快推是震惊；人物镜头幅度要轻，空镜可以大一些。"
 )
 
 
@@ -640,6 +852,7 @@ def shot_summary(plan: TransitionPlan, shot_id: int) -> dict[str, Any]:
         "from_shot": cut.from_shot, "kind": cut.kind, "technique": cut.technique, "label": cut.label,
         "duration_seconds": cut.duration_seconds, "motion_join": cut.motion_join,
         "compositor": COMPOSITOR_TRANSITIONS[cut.kind],
+        "sound_join": cut.sound_join, "sound_note": cut.sound_note, "watch": _WATCH[cut.technique],
     }
 
 

@@ -52,8 +52,41 @@ class PromptTests(unittest.TestCase):
     def test_the_visual_layer_writes_one_exchange_per_shot_for_a_fight(self):
         visual = _visual(FIGHT)
         self.assertIn("攻方动作 → 守方反应 → 接触结果 → 受力反馈 → 落点姿态", visual)
-        self.assertIn("禁止身体或兵器互相融合", visual)
+        self.assertIn("双方肢体与兵器轮廓分明", visual)
         self.assertNotIn("打斗分镜的视觉写法", _visual(TALK))
+
+    def test_the_visual_layer_cuts_a_fight_by_its_length_and_never_into_one_second_pieces(self):
+        visual = _visual(FIGHT)
+        for phrase in ("4–6 秒分 1–2 段", "7–10 秒分 2–3 段", "11–15 秒分 3–5 段", "每段 2.5–4 秒"):
+            self.assertIn(phrase, visual)
+        # Impact frames, shake, blur and slow motion are rationed, not handed to every hit.
+        for phrase in ("2–3 帧黑白或白闪冲击帧只给关键击与终结击", "镜头震动放在接触之后，只震一次", "接触点保持清晰", "慢动作只放在最后 1–2 秒"):
+            self.assertIn(phrase, visual)
+
+    def test_contact_is_written_as_a_point_on_a_path_with_its_simultaneous_details(self):
+        visual = _visual(FIGHT)
+        self.assertIn("起势 → 加速 → 接触 → 受力形变 → 继续推进 → 滑开 / 擦过 → 转入下一动作", visual)
+        self.assertIn("句子不停在接触那一下", visual)
+        self.assertIn("双方身体各自的反应", visual)
+
+    def test_spacing_density_effects_camera_and_first_frame_reach_every_fight(self):
+        visual = _visual(FIGHT)
+        for phrase in (
+            "至少半个身位", "接触点位于画面正中偏上",                      # spacing and screen position
+            "第一次接触落在 1.5 秒前后", "流派节奏 × 交互力量档", "高手 ×1", "攻守易位",  # density
+            "横斩扫出一道宽扇形", "上撩是向上扬起的月牙", "下劈是沉重的楔形", "轻击只溅火花", "每个角色固定一种特效颜色",
+            "选跟随动作的运镜", "起势姿态",
+            "不把要避开的那个名词再写一遍",
+        ):
+            self.assertIn(phrase, visual)
+        self.assertNotIn("能量四态", visual, "the move-shape effects are not the xianxia block")
+
+    def test_the_plan_sets_the_density_of_a_fight(self):
+        plan = _plan(FIGHT)
+        # 交锋多密不再是一个固定数，而是流派节奏 × 人物的交互力量档（exchange-unit-master）。
+        self.assertIn("截拳道约 0.75 秒一个半单元", plan)
+        self.assertIn("两个高手 9 秒至少过四招", plan)
+        self.assertIn("第一次接触落在开场 1.5 秒前后", plan)
 
 
 class XianxiaTests(unittest.TestCase):

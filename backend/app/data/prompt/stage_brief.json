@@ -1,0 +1,64 @@
+{
+  "title": "【导演台占位】",
+  "labels": {
+    "person": "人物",
+    "space": "空间",
+    "gaze": "视线",
+    "axis": "轴线",
+    "camera": "机位",
+    "set": "布景",
+    "crowd": "群演"
+  },
+  "body_types": {
+    "slim": "偏瘦",
+    "heavy": "壮硕",
+    "child": "儿童身形"
+  },
+  "joint_sides": {
+    "left": "左",
+    "right": "右"
+  },
+  "joint_parts": {
+    "Shoulder": "肩",
+    "Elbow": "肘",
+    "Hand": "腕",
+    "Hip": "髋",
+    "Knee": "膝",
+    "Foot": "踝"
+  },
+  "joint_axes": {
+    "pitch": "前后",
+    "spread": "开合",
+    "twist": "扭转",
+    "bend": "弯曲",
+    "roll": "侧摆"
+  },
+  "joint_named": {
+    "head.pitch": "头部俯仰",
+    "head.yaw": "转头",
+    "head.roll": "歪头",
+    "body.pitch": "整体前后倾",
+    "body.yaw": "整体转向",
+    "body.roll": "整体侧倾",
+    "torso.pitch": "上身前后倾",
+    "torso.yaw": "上身转向",
+    "torso.roll": "上身侧倾"
+  },
+  "clip_names": {
+    "human-idle-v1": "站立待机",
+    "human-talk-v1": "交谈手势",
+    "human-walk-v1": "行走",
+    "human-jog-v1": "慢跑",
+    "human-crouch-idle-v1": "蹲姿待机",
+    "human-crouch-walk-v1": "蹲着前进",
+    "human-sit-enter-v1": "坐下",
+    "human-sit-idle-v1": "坐姿待机",
+    "human-sit-talk-v1": "坐姿交谈",
+    "human-sit-exit-v1": "站起"
+  },
+  "min_joint_degrees": 15,
+  "max_joints": 6,
+  "max_people": 6,
+  "max_landmarks": 3,
+  "person_chars": 220
+}

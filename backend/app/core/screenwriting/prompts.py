@@ -13,6 +13,8 @@ Principles (kept from the reference design, wording is this project's own):
 
 from __future__ import annotations
 
+import re
+
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -20,6 +22,7 @@ from contextvars import ContextVar
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from app.core import breakdown_kinds, emotion_points, literary
 from app.core.episode_shape import EpisodeShape
 from app.core.fight_design import plan_rules_for, visual_rules_for
 from app.core.screenwriting.durations import render_episode_target_rule
@@ -91,11 +94,14 @@ def _format_assets_with_desc(mapping: Mapping[str, Any] | None) -> str:
 
 def _overview_block(overview: Mapping[str, Any] | None) -> str:
     overview = overview or {}
+    # 立意卡（立意 / 母题 / 终局意象）填了才写，每集的写作都照它。
+    literary_lines = "".join(f"{neutralize_tags(line)}\n" for line in literary.overview_lines(overview))
     return (
         "<overview>\n"
         f"{neutralize_tags(overview.get('synopsis', ''))}\n\n"
         f"题材：{neutralize_tags(overview.get('genre', ''))}\n"
         f"主题：{neutralize_tags(overview.get('theme', ''))}\n"
+        f"{literary_lines}"
         f"世界观：{neutralize_tags(overview.get('world_setting', ''))}\n"
         "</overview>"
     )
@@ -177,7 +183,7 @@ def build_overview_prompt(source_content: str, *, source_kind: SourceKind, title
         heading, tag = "导演策划方案", "director_plan"
     hint = f"\n用户给出的选题提示：{neutralize_tags(title_hint)}\n" if title_hint else ""
     return (
-        f"{task}\n{hint}\n**输出语言**：所有字符串值使用{output_language_name()}；JSON 键名保持英文。\n\n"
+        f"{task}{literary.overview_ask()}\n{hint}\n**输出语言**：所有字符串值使用{output_language_name()}；JSON 键名保持英文。\n\n"
         f"## {heading}\n\n<{tag}>\n{neutralize_tags(source_content)}\n</{tag}>"
     )
 
@@ -187,7 +193,7 @@ def build_overview_prompt(source_content: str, *, source_kind: SourceKind, title
 
 _ASSET_RULES_NOVEL = (
     "- 角色：识别在文本中有实质出场的具名角色；description 只写视觉信息（五官与身材要点、服装款式颜色材质、"
-    "标志物、主色调、参考风格），不写性格、关系与剧情；voice_style 记录声音/语气；position 填戏剧位置。\n"
+    f"标志物、主色调、参考风格），不写性格、关系与剧情；voice_style 记录声音/语气，{literary.voice_print_rule()}；position 填戏剧位置。\n"
     "- 泛指 / 群演 / 空镜（老人甲、村民若干、一群孩子、无人物空场）不登记为角色。\n"
     "- 场景：提取重复出现或有视觉特征的环境地点；description 只写环境本身（空间结构、氛围、光线、色调），"
     "不写人物和情节。\n"
@@ -198,7 +204,8 @@ _ASSET_RULES_NOVEL = (
     "配饰（发饰、腰带、鞋履）和在哪段剧情穿，与该角色 description 里的服装一致。\n"
     "- 特效（effects）：提取需要合成或现场效果配合的视觉现象，如暴雨雨幕、大雪、浓雾、火焰烟尘、爆炸破碎、"
     "血迹飞溅、法术光效、符咒剑气、超自然现象、全息屏幕；名称写具体，如「九霄殿金色神光」；description 写视觉形态、"
-    "颜色、运动方式和触发时机。普通布光、景别、运镜不算特效；文本里没有就留空。"
+    "颜色、运动方式和触发时机。普通布光、景别、运镜不算特效；文本里没有就留空。\n"
+    + breakdown_kinds.WRITER_RULES
 )
 _ASSET_RULES_SCREENPLAY = (
     "- 这是作者写好的成品剧本，角色由作者定义：只提取作者写下的具名角色（人物表、括注简介、对白前缀里反复出现的固定人名），"
@@ -210,6 +217,7 @@ _ASSET_RULES_SCREENPLAY = (
     "description 末尾注明「（按身份推定）」；名称写「角色名·造型名」，character 填穿着者。\n"
     "- 特效（effects）：只提取作者写出的、需要合成或现场效果配合的视觉现象（天气、火焰烟尘、爆炸破碎、血迹、法术光效等）；"
     "名称写具体，description 写视觉形态、颜色、运动方式和触发时机；没有就留空。"
+    + breakdown_kinds.WRITER_RULES
 )
 
 
@@ -234,14 +242,16 @@ def build_asset_inventory_prompt(
     existing_block = ""
     if existing:
         parts = []
-        for key, label in (("characters", "角色"), ("scenes", "场景"), ("props", "道具"), ("costumes", "服装"), ("effects", "特效")):
+        for key, label in (("characters", "角色"), ("scenes", "场景"), ("props", "道具"), ("costumes", "服装"), ("effects", "特效"),
+                           *((key, breakdown_kinds.LABELS[kind]) for kind, key in breakdown_kinds.CATALOG_KEYS.items())):
             names = list(existing.get(key) or [])
             if names:
                 parts.append(f"- 已登记{label}：{'、'.join(neutralize_tags(name) for name in names)}")
         if parts:
             existing_block = "\n\n# 已登记资产（沿用其名称，不要重复登记、不要改名）\n" + "\n".join(parts)
     return (
-        "你是一位角色与世界观分析师，负责从文本中提取可用于 AI 视频生成的角色 / 场景 / 道具 / 服装 / 特效五类资产，以及角色之间的关系。\n\n"
+        "你是一位角色与世界观分析师，负责从文本中提取可用于 AI 视频生成的角色 / 场景 / 道具 / 服装 / 特效，"
+        "以及拆解补充的群演 / 车辆 / 特技 / 置景 / 化妆，和角色之间的关系。\n\n"
         f"{_overview_block(overview)}\n\n"
         f"# 提取规则\n{rules}\n{_RELATION_RULES}{existing_block}\n\n"
         f"## {heading}\n\n<source>\n{neutralize_tags(source_content)}\n</source>"
@@ -323,6 +333,7 @@ def build_anchored_plan_prompt(
         "  本集内容 = 上一集结尾之后到该片段末尾为止的全部原文）。",
         "- 每一集另给出 story_beats（本集故事节点列表，按顺序）与 next_episode_teaser（下集预告语；末集后续未知可为 null）"
         + ("；剧本已写明节点 / 预告时照搬其原文，未写明再自行提炼。" if is_screenplay else "。"),
+        f"- story_beats 每条以「【情绪点类型】」开头，类型只能是 {emotion_points.names()}（{emotion_points.menu()}）；一集至少一条不是信息交代。",
     ]
     if is_screenplay:
         lines.append("- 优先照用作者的分集：剧本已划定每集边界时，end_anchor 取作者每集结尾处的原文片段。")
@@ -367,6 +378,9 @@ def build_outline_plan_prompt(
         lines.append(f"- 故事概述：{neutralize_tags(overview['synopsis'])}")
     if overview.get("genre"):
         lines.append(f"- 题材：{neutralize_tags(overview['genre'])}")
+    lines.extend(f"- {neutralize_tags(line)}" for line in literary.overview_lines(overview))
+    if _payoff_block(overview):
+        lines.append(_PAYOFF_FORMULA)
     lines += _context_lines(context_entries)
     if instructions:
         lines += ["", USER_INSTRUCTIONS_HEADER, instructions]
@@ -375,6 +389,10 @@ def build_outline_plan_prompt(
         "# 规划规则",
         "- 每一集给出 title（吸引人的短标题）、hook（集尾钩子：这一集停在什么悬念上、为什么观众必须看下一集）、",
         "  story_beats（本集故事节点列表，按顺序，每条一句话、只写可拍摄的外部事件）、next_episode_teaser（下集预告语；全剧末集可为 null）。",
+        f"- story_beats 每条以「【情绪点类型】」开头，类型只能是 {emotion_points.names()}（{emotion_points.menu()}）；"
+        "一集至少一条不是信息交代，钩子 / 悬念通常落在集尾。",
+        literary.outline_rule(),
+        literary.hook_rule(),
         f"- 最后一集（第 {total} 集）须完成全剧收束；其余每集结尾都要接得上下一集。",
         "- 不写心理描写，节点只描述镜头拍得到的动作、事件与对话结果。",
         "",
@@ -438,7 +456,7 @@ def spoken_density_rule(spoken_shot_ratio: float, creation_mode: str = "drama") 
         )
     return (
         f"**台词要多**：这是靠对白推进的剧情片——至少 {percent}% 的分镜要有口播，有人物出场的分镜几乎都该有台词；"
-        "角色之间要有来有回（一问一答、针锋相对、试探与回避），每个分镜 2–4 句短台词，"
+        "角色之间要有来有回（出招接招、针锋相对、试探与回避，不是一问一答），每个分镜 2–4 句短台词，"
         "信息、冲突与情绪尽量让人物用嘴说出来，不要用画面描述或旁白代替对白；只有空镜 / 转场可以留空数组。"
         "台词多了就按口播时长取更长的秒数档位或拆成多个分镜，不要为了凑时长删台词。"
     )
@@ -446,6 +464,25 @@ def spoken_density_rule(spoken_shot_ratio: float, creation_mode: str = "drama") 
 
 _SOURCE_TEXT_GUIDE = "逐字摘录本分镜对应的原文片段，尽量与原文一致、宁缺毋造（无把握可留空）。"
 _SOURCE_TEXT_OUTLINE = "填写本分镜覆盖的故事节点原文（从本集大纲的 story_beats 里逐字摘录），便于追溯。"
+
+_PAYOFF_GENRES = re.compile(r"逆袭|复仇|打脸|赘婿|战神|重生|爽|虐渣|退婚|龙王|神医|下山")
+_PAYOFF_FORMULA = (
+    "# 爽点公式（本剧题材适用）\n"
+    "- 开篇双炸点：第一个画面是反常的视觉，第一句对白就带冲突，前 7 秒内触发身份反差、羞辱或危机之一。\n"
+    "- 每集走完「压→怒→爽→悬」四段。\n"
+    "- 打脸之前反派三连嘲：看不起→羞辱→动手或下最后通牒，把愤怒推到顶再反击。\n"
+    "- 主角三不：不解释、不废话、不墨迹，打脸只用 1–2 个动作加一句台词。\n"
+    "- 爽点之后给配角反应三连：路人惊呼、反派脸白、重要配角震惊凝视。\n"
+    "- 集尾双钩子：一个悬念画面，加一句钩子台词。\n"
+    "- 每集埋一条至少跨 3 集才回收的主线伏笔。"
+)
+
+
+def _payoff_block(overview: Mapping[str, Any] | None) -> str:
+    """爽剧的写法只给爽剧：正剧和悬疑套三连嘲会串味，所以按题材词判断，判不出来就不加。"""
+    genre = str((overview or {}).get("genre") or "")
+    return f"\n\n{_PAYOFF_FORMULA}" if _PAYOFF_GENRES.search(genre) else ""
+
 
 _HOOK_LANDING = (
     "末场（最后一个或几个分镜）的画面与对白须实际呈现集尾钩子的戏剧内容，让悬念定格在画面上；"
@@ -565,7 +602,10 @@ def build_script_plan_prompt(
         )
         heading, tag = "本集写作依据（导演策划节选）", "director_plan"
         density = spoken_density_rule(spoken_shot_ratio, creation_mode)
-        scene_rule, utter_rule, source_rule = _SCENE_RULE_OUTLINE, (_UTTERANCES_OUTLINE + (" " + density if density else "")), _SOURCE_TEXT_OUTLINE
+        # 创作的台词才讲写法；改编 / 提取的台词是原文的。
+        scene_rule, utter_rule, source_rule = (
+            _SCENE_RULE_OUTLINE, (_UTTERANCES_OUTLINE + (" " + density if density else "") + " " + literary.dialogue_rule()), _SOURCE_TEXT_OUTLINE,
+        )
         break_rule = "在真正的场景切换点（地点 / 时间的重大变化）标 true，同一连续场景内标 false；一个分镜内不要跨越多个地点或大段时间。"
         language_rule = (
             f"自然语言字符串值使用{output_language_name()}；JSON 键名 / 枚举值保持英文。资产引用字段"
@@ -578,6 +618,12 @@ def build_script_plan_prompt(
     # 本集写到打斗才装打戏设计规则，文戏集不占篇幅。
     fight_rules = plan_rules_for(source_text, _outline_block(episode_outline, None))
     fight_block = f"\n{fight_rules}" if fight_rules else ""
+    emotion_rule = (
+        f"这一格要打到哪种情绪点上，只能填 {emotion_points.names()}（{emotion_points.menu()}）；"
+        "纯转场 / 空镜可留空；一集至少一格不是信息交代。"
+    )
+    # 题眼台词：改编 / 提取只选哪一句是，创作才讲怎么写。
+    key_line_rule = literary.key_line_rule(authored=source_kind == "outline")
     return f"""{task}
 
 **输出语言**：{language_rule}
@@ -587,7 +633,7 @@ def build_script_plan_prompt(
 
 ## 项目信息
 
-{_overview_block(overview)}
+{_overview_block(overview)}{_payoff_block(overview)}
 
 <style>
 {neutralize_tags(style)}
@@ -620,6 +666,8 @@ def build_script_plan_prompt(
 - **scene_id**：`E{episode}S{{两位序号}}` 格式（如 E{episode}S01），按分镜顺序递增，不得用其他集号前缀。
 - **duration_seconds**：{duration_rule}。
 - **segment_break**：{break_rule}
+- **emotion_point**：{emotion_rule}
+- **key_line**：{key_line_rule}
 - **setting**：场景标题行，写成「地点 时间 内景/外景」（如「市井长街 黄昏 外景」），地点优先用候选场景表里的名字。
 - **characters_in_scene** / **scenes** / **props**：从下列候选中列出此分镜实际出现的资产。
   - 候选 characters：[{", ".join(character_names) or "（暂无）"}]
@@ -633,8 +681,7 @@ def build_script_plan_prompt(
 - **source_text**：{source_rule}
 - **utterances**：{utter_rule}
 
-每个分镜应为一个独立的视觉画面、可在指定时长内完成；避免在一个分镜内安排多个动作或画面切换。
-一个分镜的出场角色不超过 3 人；激烈打斗、奔跑、多人肢体接触改用近景暗示或侧面过肩镜头承载。
+每个分镜应为一个独立的视觉画面、可在指定时长内完成；一个分镜可以多人同时露面、连着演多个动作，时长要够演完。
 {fight_block}"""
 
 
@@ -654,7 +701,7 @@ _ACTION_WRITING_GUIDE = (
     "镜头运动专由 camera_motion 承载，action 只写主体与环境的运动。按主体动作（肢体 / 手势 / 表情过渡）、物件互动、"
     "环境动态（衣摆、尘埃、雨势、光影移动）分层写成连贯叙述句；动词描述物理可观察动作（伸手 / 转身 / 摩挲），避免内心动词。"
     "优先低缓、连贯的细微动作，动作量与时长匹配：5 秒级完成一个连贯动作加一个细节互动；8 秒级可承载一次动作过渡；"
-    "更长的分镜保持单一动作主线、随时长递增动作段数，而非叠加并行动作。\n"
+    "更长的分镜可以连着多个动作，多人可以同时行动，写清谁先谁后。\n"
     "   正例：「林清缓缓抬起头，眼角微微收紧，手指无意识地摩挲信纸边缘；窗外雨势渐大，桌面的雨痕影子缓慢移动。」\n"
     "   反例：「林清像蝴蝶般飞舞，思绪在过去与现在之间快速切换。」——「思绪切换」不可拍摄，「像蝴蝶般」是修辞。\n"
     "   避开任务类型触发词：不要用「增加 / 删除 / 去掉 / 修改 / 替换 / 改成 / 延长 / 续写」这类祈使动词，直接描述目标画面本身。"
@@ -803,6 +850,11 @@ _PROSE_EXAMPLE = (
 )
 
 
+def _prose_literary_rules(first: int) -> str:
+    """母题留白、结尾落在物上，从第 ``first`` 条起编号。"""
+    return "\n".join(f"{first + index}. {rule}" for index, rule in enumerate(literary.prose_rules()))
+
+
 def _prose_length_rule(shot_count: int, language: str | None) -> str:
     unit = reading_unit_noun(language)
     low, high = 80 * max(1, shot_count), 170 * max(1, shot_count)
@@ -884,10 +936,11 @@ def build_prose_prompt(
 3. **画面**：只写看得见的画面与听得见的声音；人物的心理用动作、神态和手里的物件外化，不用括号做提示。
    取材于分镜的视觉描述与角色外观，可以补足衔接动作与环境细节，但不改变事件的因果与结果。
 4. **结尾**：最后一两段落在本集的集尾钩子上，让悬念停在画面或一句台词上；不写「下集预告」「未完待续」之类的字样。
-5. **不要出现**：场景 / 镜头 / 画面 / 动作 / 旁白 / 时长等标签行，景别与运镜术语，分镜编号（E{episode}S01），
+{_prose_literary_rules(5)}
+7. **不要出现**：场景 / 镜头 / 画面 / 动作 / 旁白 / 时长等标签行，景别与运镜术语，分镜编号（E{episode}S01），
    「角色名：台词」的剧本体对白，括号舞台提示，列表与表格。
-6. **篇幅**：{_prose_length_rule(len(content_scenes), language)}
-7. **语言**：正文用{output_language_name()}写作（逐字保留的口播除外）；下面的示例只示范写法，不示范语言。
+8. **篇幅**：{_prose_length_rule(len(content_scenes), language)}
+9. **语言**：正文用{output_language_name()}写作（逐字保留的口播除外）；下面的示例只示范写法，不示范语言。
 
 {_PROSE_EXAMPLE}
 """

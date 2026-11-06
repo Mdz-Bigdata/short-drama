@@ -147,7 +147,7 @@ describe('CharacterDesignerPage', () => {
     expect(handlers.onContinue).toHaveBeenCalledTimes(1);
   });
 
-  it('holds a READY cast at stage 3 until every scene, prop, costume and effect has a reference image', async () => {
+  it('holds a READY cast at stage 3 until every look, scene, prop and effect has a reference image', async () => {
     const handlers = actions();
     const ready = normalizeCharacterDashboard({
       ...dashboard,
@@ -244,7 +244,7 @@ describe('CharacterDesignerPage', () => {
   });
 
   it('synchronizes every non-actor asset count on the initial actor page load', async () => {
-    const totals = { scene: 6, prop: 8, costume: 2, effect: 4 } as const;
+    const totals = { scene: 6, prop: 8, effect: 4 } as const;
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
       const url = new URL(String(input));
       const kind = url.searchParams.get('kind') as keyof typeof totals;
@@ -262,9 +262,9 @@ describe('CharacterDesignerPage', () => {
     expect(within(assetTabs).getByRole('tab', { name: /数字演员.*2 个资产/ })).toBeTruthy();
     expect(await within(assetTabs).findByRole('tab', { name: /拍摄场地.*6 个资产/ })).toBeTruthy();
     expect(within(assetTabs).getByRole('tab', { name: /拍摄道具.*8 个资产/ })).toBeTruthy();
-    expect(within(assetTabs).getByRole('tab', { name: /服装.*2 个资产/ })).toBeTruthy();
+    expect(within(assetTabs).queryByRole('tab', { name: /服装/ })).toBeNull();
     expect(within(assetTabs).getByRole('tab', { name: /特效.*4 个资产/ })).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('syncs every screenplay production asset category before refreshing their counts', async () => {
@@ -277,12 +277,12 @@ describe('CharacterDesignerPage', () => {
           json: async () => ({
             created: 9,
             skipped: 0,
-            kinds: { scene: 3, prop: 3, costume: 1, effect: 2 },
+            kinds: { scene: 3, prop: 3, effect: 2 },
           }),
         } as Response;
       }
       const kind = new URL(url).searchParams.get('kind');
-      const totals = { scene: 3, prop: 3, costume: 1, effect: 2 } as const;
+      const totals = { scene: 3, prop: 3, effect: 2 } as const;
       return {
         ok: true,
         json: async () => ({ items: [], page: 1, page_size: 1, total: totals[kind as keyof typeof totals] || 0 }),
@@ -295,7 +295,6 @@ describe('CharacterDesignerPage', () => {
     const assetTabs = screen.getByRole('tablist', { name: '角色资产类型' });
     expect(within(assetTabs).getByRole('tab', { name: /拍摄场地.*3 个资产/ })).toBeTruthy();
     expect(within(assetTabs).getByRole('tab', { name: /拍摄道具.*3 个资产/ })).toBeTruthy();
-    expect(within(assetTabs).getByRole('tab', { name: /服装.*1 个资产/ })).toBeTruthy();
     expect(within(assetTabs).getByRole('tab', { name: /特效.*2 个资产/ })).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith(
       'http://localhost:8000/api/drama/task-assets/production-assets/sync',
@@ -306,7 +305,7 @@ describe('CharacterDesignerPage', () => {
   it('keeps a failed asset count unsynchronized without hiding successful totals', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
       const kind = new URL(String(input)).searchParams.get('kind');
-      if (kind === 'costume') throw new Error('costume service unavailable');
+      if (kind === 'prop') throw new Error('prop service unavailable');
       return {
         ok: true,
         json: async () => ({ items: [], page: 1, page_size: 1, total: kind === 'scene' ? 3 : 7 }),
@@ -317,8 +316,7 @@ describe('CharacterDesignerPage', () => {
 
     const assetTabs = screen.getByRole('tablist', { name: '角色资产类型' });
     expect(await within(assetTabs).findByRole('tab', { name: /拍摄场地.*3 个资产/ })).toBeTruthy();
-    expect(within(assetTabs).getByRole('tab', { name: /拍摄道具.*7 个资产/ })).toBeTruthy();
-    expect(within(assetTabs).getByRole('tab', { name: /服装.*尚未同步/ })).toBeTruthy();
+    expect(within(assetTabs).getByRole('tab', { name: /拍摄道具.*尚未同步/ })).toBeTruthy();
     expect(within(assetTabs).getByRole('tab', { name: /特效.*7 个资产/ })).toBeTruthy();
     expect(screen.getByRole('heading', { level: 2, name: '数字演员设定集' })).toBeTruthy();
   });
@@ -330,7 +328,7 @@ describe('CharacterDesignerPage', () => {
       const kind = new URL(String(input)).searchParams.get('kind') || '';
       const callCount = (callCounts.get(kind) || 0) + 1;
       callCounts.set(kind, callCount);
-      const base = { scene: 1, prop: 2, costume: 3, effect: 4 }[kind] || 0;
+      const base = { scene: 1, prop: 2, effect: 4 }[kind] || 0;
       return {
         ok: true,
         json: async () => ({ items: [], page: 1, page_size: 1, total: base + (callCount - 1) * 10 }),
@@ -348,9 +346,8 @@ describe('CharacterDesignerPage', () => {
     expect(actionHandlers.onRefresh).toHaveBeenCalledTimes(1);
     expect(await within(assetTabs).findByRole('tab', { name: /拍摄场地.*11 个资产/ })).toBeTruthy();
     expect(within(assetTabs).getByRole('tab', { name: /拍摄道具.*12 个资产/ })).toBeTruthy();
-    expect(within(assetTabs).getByRole('tab', { name: /服装.*13 个资产/ })).toBeTruthy();
     expect(within(assetTabs).getByRole('tab', { name: /特效.*14 个资产/ })).toBeTruthy();
-    await waitFor(() => expect([...callCounts.values()]).toEqual([2, 2, 2, 2]));
+    await waitFor(() => expect([...callCounts.values()]).toEqual([2, 2, 2]));
   });
 
   it('does not let a late initial count overwrite a newer embedded-library count', async () => {
@@ -578,7 +575,7 @@ describe('CharacterDesignerPage', () => {
       .toBe('https://img.test/shen-front-recovered.png');
   });
 
-  it('keeps the actor workspace and adds synchronized scene, prop, costume and effect pages', async () => {
+  it('keeps the actor workspace and adds synchronized scene, prop and effect pages', async () => {
     const user = userEvent.setup();
     const requestedKinds: string[] = [];
     vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
@@ -598,7 +595,7 @@ describe('CharacterDesignerPage', () => {
     render(<CharacterDesignerPage dashboard={interactiveDashboard} {...actions()} />);
 
     const assetTabs = screen.getByRole('tablist', { name: '角色资产类型' });
-    expect(within(assetTabs).getAllByRole('tab')).toHaveLength(5);
+    expect(within(assetTabs).getAllByRole('tab')).toHaveLength(4);
     expect(within(assetTabs).getByRole('tab', { name: /数字演员.*2/ }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('heading', { level: 2, name: '数字演员设定集' })).toBeTruthy();
 
@@ -612,10 +609,10 @@ describe('CharacterDesignerPage', () => {
     const sceneTab = within(assetTabs).getByRole('tab', { name: /拍摄场地/ });
     sceneTab.focus();
     await user.keyboard('{ArrowRight}{ArrowRight}');
-    expect(within(assetTabs).getByRole('tab', { name: /服装/ }).getAttribute('aria-selected')).toBe('true');
-    expect(await screen.findByRole('region', { name: '服装资产工作区' })).toBeTruthy();
+    expect(within(assetTabs).getByRole('tab', { name: /特效/ }).getAttribute('aria-selected')).toBe('true');
+    expect(await screen.findByRole('region', { name: '特效资产工作区' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: '上传 3D 模型' })).toBeNull();
-    expect(requestedKinds).toEqual(expect.arrayContaining(['scene', 'prop', 'costume']));
+    expect(requestedKinds).toEqual(expect.arrayContaining(['scene', 'prop', 'effect']));
 
     await user.click(within(assetTabs).getByRole('tab', { name: /数字演员/ }));
     expect(screen.getByRole('heading', { level: 2, name: '数字演员设定集' })).toBeTruthy();

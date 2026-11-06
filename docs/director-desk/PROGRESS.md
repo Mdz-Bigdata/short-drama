@@ -25,6 +25,7 @@
 | P6 | Element-library GLB set pieces with local import, per-scene backdrop, stage-5 entry with the applied still / clip, whole-crowd figure switch, interchange inside the desk, robustness pass | Completed |
 | 7 | Provenance, notices, documentation | Completed |
 | P7 | Second pass against the two product write-ups and director-desk 0.4.11: automatic repair of failing checks (`repair.py`, `repair_checks`, `GET …/repairs`, 检查 panel with 一键修正), drawn walk / camera routes (`paths.py`, `set_path`, the 路径 tool), depth stills and clips (`depth` capture flag, stage-5 wording, depth pass in the lens view), side-by-side 机位对比, set-piece `array_landmark` / `align_landmarks`, five presets from the articles, stage tools for the tool assistant / MCP (`get_stage_checks`, `edit_stage`, `repair_stage`) | Completed |
+| P8 | Previz pass against DramaClaw's published description: a grey-box set read off a reference image (`blockout.py`, `apply_blockout`, `clear_blockout`, 白模 tab, reference camera), action and follow block tracks (`ShotTimeline.clips` / `.follow`, `ClipLane`, `timelineClips.ts`), per-camera sensor size, paced routes with a motion, four-view layout, neutral lighting and shadows | Completed |
 
 ## Final numbers (P7, 2026-10-14)
 
@@ -63,6 +64,45 @@ Bundle (`npm run build`), the chunks that matter — none of them in the entry c
 | `GLTFLoader-*.js` | 45.58 kB | 13.46 kB |
 
 ## Session Log
+
+### 2026-11-03 — 模型优先的 AI 导演
+
+- **建模**：`spatial_stage/model_kit.py` 是 74 个内置白模（移植自 mangfufu/director-desk 的尺寸和体块构造，古装道具是自己写的）；`StageLandmark.parts` 让一件布景由多个体块组成，部件存的是相对尺寸的比例，拖动缩放时跟着变。文字搭物体、文字搭场景都只产出提案，放上舞台才算数。
+- **规划**：`director_ai.plan_candidates` 的三个方向各问一次模型，每版出错的操作连同原因送回去改一轮，再跑规则修正和机位搜索，打分后和规则基线一起排序。过检的模型方案排在规则方案前面；只要模型方案还有错误，规则方案就排到前面。
+- **对话**：一条消息是一个事务：模型改副本，读回检查结果和画面测量，最多三轮，最后整体写回一次，可以一键撤销。选中对象或镜头后，超出范围的操作会被拒绝并告诉模型。写回前核对版本，模型想的这段时间里舞台变了就拒绝，不会覆盖人的改动。
+- **流水线**：生成分镜前每场多一次文本调用，由模型定布景、站位和姿势；机位仍由分镜表决定，之后只在附近搜索。人改过的舞台不动；没有可用模型或项目关掉开关（`config.stage_planner = rules`）时走规则。
+- **评分**只量几何：主体是否入画、有没有被人或布景挡、景别是否对得上、是否贴画边、有没有人站进墙里、机位有没有变化。它不判断戏好不好，所以规则方案也常常接近满分。
+- 为什么撤销用快照：模型的一批操作没有可靠的逆操作，整份方案快照最稳；每场只留最近 4 步。
+- `.desk-side` 只给了两行网格却有三个子元素，检查面板把属性面板挤到约 100px，这次改成三行并给检查面板限高。
+
+### 2026-11-04 — P8 follow-up: cuts and control frames
+
+- **切机位.** `ShotTimeline.cuts` holds stretches filmed through one of the shot's candidate lenses. `sampleShot` picks
+  the cut lens when nobody asked for one by name, so the lens view, playback and a clip export all follow the cuts;
+  the cut lens is static (keys and follow clips belong to the filming lens). A lens that is removed takes its cuts
+  with it; `use_camera` keeps them valid since the ids only swap roles.
+- **Control frames.** 截图内容 on the captures panel: 空景 hides whatever carries `ACTOR_FLAG`, 人物遮罩 hides every mesh
+  that is not under one and draws the rest white on black. A mask cannot be applied as a first frame. The canvas's
+  贴回人物 tool recognises the mask by its histogram and composites the still's cast onto a generated picture.
+- Fixed: the clay colour and burned-in labels used CSS variables, which three.js and a 2D canvas cannot read.
+
+### 2026-11-03 — P8: previz
+
+- DramaClaw's README lists a 3D director stage as closed beta; the public repository holds no implementation of it, so
+  the brief is its feature list and its demo GIF. Of its four bullets this desk already had props, lenses and capture;
+  it lacked the reference image → scene step, clip blocks on the timeline, a sensor size and a lens tied to a character.
+- **Blockout.** A vision model lists the place as volumes on a floor plan (`blockout.parse_blockout`). Rows are read one
+  by one, so a bad row costs that row and a reply cut off at the token limit keeps every piece it finished. `array` rows
+  expand locally, so a colonnade costs one row. Pieces are ordinary landmarks marked `origin: "blockout"`; prose names
+  only the six largest (`prompting.prompt_landmarks`), or a hundred wall sections would clip the axis out of the scene bible.
+- **Follow clips** are sampled, not baked: `sampling.followPose` averages the character over the damping window, so a
+  frame comes out the same in any order, which clip export relies on. 转为关键帧 writes them out for hand-editing and for
+  Blender and interchange, which read camera keys only.
+- **Sensor.** `fov_deg` follows `lens_mm` and `sensor_mm`; prompts quote the full-frame equivalent (`equivalent_lens_mm`).
+- Fixed in passing: `Humanoid.tsx` called a dark brown `WHITE`, and `set_path` had no undo.
+- Verified in a real browser against an isolated database (first time this desk has been): apply, fit view, action and
+  follow blocks, a drawn walk at 1.4 m/s, the lens following it, sensor change, clear and undo, four views.
+  **Not verified:** the blockout prompt against a real vision model; the browser run stubbed that one response.
 
 ### 2026-10-14 — P7: stability, comparison, routes, depth
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from typing import Optional, Dict, Any, Literal, List
+from typing import Annotated, Optional, Dict, Any, Literal, List
 
 from app.core.style_packs import DEFAULT_PACK_ID
 
@@ -74,6 +74,10 @@ class DramaCreateRequest(DramaBaseSchema):
         "drama", description="创作类型：剧情短剧、旁白解说、广告短片"
     )
     ad_brief: Optional[AdBrief] = Field(None, description="广告短片的产品简报（其它类型忽略）")
+    poetry_sources: Optional[List[Annotated[str, Field(min_length=1, max_length=40)]]] = Field(
+        None, max_length=40,
+        description="编剧可取材的诗词库作者、别名或篇名（如 苏轼、李清照、滕王阁序；“全部”表示整个诗词库）。更新配置时省略表示沿用。",
+    )
     content_language: Literal["zh", "en", "vi"] = Field(
         "zh", description="剧本内容语言：标题、钩子、台词、旁白、正文与画面描述用这种语言写"
     )
@@ -159,6 +163,7 @@ class DramaConfigSchema(DramaBaseSchema):
     narration_delivery: Literal["use_tts", "post_production"] = Field("use_tts", description="旁白交付方式")
     creation_mode: Literal["drama", "narration", "ad"] = Field("drama", description="创作类型")
     ad_brief: Optional[dict] = Field(None, description="广告短片的产品简报")
+    poetry_sources: List[str] = Field(default_factory=list, description="编剧可取材的诗词库作者或篇名")
     content_language: Literal["zh", "en", "vi"] = Field("zh", description="剧本内容语言")
     one_click: bool = Field(False, description="是否一键成片模式")
     episode_count: int = Field(

@@ -11,8 +11,8 @@ class WorkflowPromptTests(unittest.TestCase):
     def test_storyboard_prompt_contains_attached_breakdown_contract(self):
         for rule in (
             "情绪转变需切镜",
-            "复杂动作需切镜",
-            "人物变化需切镜",
+            "复杂动作可切镜",
+            "人物变化可切镜",
             "空间转场需切镜",
             "时间跳跃需切镜",
             "对话的视线乒乓逻辑",

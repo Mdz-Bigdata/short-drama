@@ -21,10 +21,7 @@ function detail(extra: Partial<StoryboardPromptDetail['foundation']> = {}) {
       ...extra,
     },
     beats: [{ index: 1, core_event: '沈砚抬头望月' }],
-    still_prompts: [],
-    video_segments: [],
-    grid_pages: [],
-    continuity_checks: [],
+          continuity_checks: [],
   } as unknown as StoryboardPromptDetail;
 }
 

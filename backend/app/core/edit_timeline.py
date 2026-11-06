@@ -22,6 +22,8 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 
+from app.core.spoken_lines import spoken_lines
+
 TIMELINE_KEY = "7_timeline"
 VERSION = 1
 FPS = 30
@@ -30,6 +32,7 @@ TITLE_SECONDS = 2.6
 TRANSITIONS = ("hard_cut", "match_cut", "crossfade", "dip_to_black", "neutral_bridge")
 REVIEW_DECISIONS = ("pending", "approved", "rejected")
 BGM_SOURCES = ("none", "generated", "library")
+SOUND_JOINS = ("j_cut", "l_cut")
 
 
 class TimelineError(ValueError):
@@ -41,12 +44,12 @@ def _now() -> str:
 
 
 def _subtitle_of(shot: Mapping[str, Any]) -> str:
-    """The on-screen line for a shot: its dialogue without speaker labels, else a short cue from the description."""
-    text = str(shot.get("dialogue") or "").strip()
-    text = re.sub(r"[^：:]{1,8}[：:]", "", text).strip() if text else ""
-    if not text:
-        text = str(shot.get("desc") or "").strip()[:24]
-    return re.sub(r"\s+", " ", text)
+    """The on-screen line for a shot: only the words spoken in it (see :mod:`app.core.spoken_lines`).
+
+    台词栏里的说话人、语气与音色说明、花括号、舞台说明都不上字幕；没有台词的镜头不出字幕——
+    以前会把画面描述的前 24 个字当字幕烧进成片。
+    """
+    return " ".join(spoken_lines([str(shot.get("dialogue") or "")]))
 
 
 def _clip_fingerprint(shot: Mapping[str, Any]) -> str:
@@ -60,6 +63,7 @@ def build(task: Mapping[str, Any], *, transitions: Sequence[Mapping[str, Any]] |
     shots = [s for s in (assets.get("5") or []) if isinstance(s, Mapping) and s.get("video_url")]
     audio = assets.get("6") if isinstance(assets.get("6"), Mapping) else {}
     voices = list(audio.get("shot_voices") or [])
+    native = list(audio.get("native_audio_shots") or [])
     all_shots = [s for s in (assets.get("5") or []) if isinstance(s, Mapping)]
     specs = list(transitions or [])
     clips: list[dict[str, Any]] = []
@@ -77,7 +81,9 @@ def build(task: Mapping[str, Any], *, transitions: Sequence[Mapping[str, Any]] |
             "muted": False,
             "subtitle": _subtitle_of(shot),
             "voice_path": voices[index_in_stage] if index_in_stage < len(voices) else None,
+            "native_audio": bool(native[index_in_stage]) if index_in_stage < len(native) else False,
             "transition_in": {"type": str((spec or {}).get("type") or "crossfade"), "duration": float((spec or {}).get("duration") or 0.22)} if position else None,
+            "sound_in": {"join": str(spec["sound_join"]), "edited": False} if position and (spec or {}).get("sound_join") else None,
             "review": {"decision": "pending", "note": "", "decided_at": None},
             "fingerprint": _clip_fingerprint(shot),
         })
@@ -121,6 +127,9 @@ def refresh(timeline: Mapping[str, Any], task: Mapping[str, Any], **build_kwargs
             for key in ("in", "out", "muted", "subtitle", "transition_in", "review"):
                 if key in old:
                     clip[key] = deepcopy(old[key])
+            # 人改过的声画错开留着；没改过的跟着新的切点规划走。
+            if (old.get("sound_in") or {}).get("edited"):
+                clip["sound_in"] = deepcopy(old["sound_in"])
     for key in ("title", "bgm", "ambience"):
         if isinstance(timeline.get(key), Mapping):
             fresh[key] = deepcopy(dict(timeline[key]))
@@ -165,6 +174,36 @@ def set_transition(timeline: Mapping[str, Any], shot_id: int, *, kind: str, dura
         raise TimelineError("第一镜之前没有转场")
     clip["transition_in"] = {"type": kind, "duration": max(0.04, min(float(duration), 1.0))}
     _touch(new)
+    return new
+
+
+def set_sound_join(timeline: Mapping[str, Any], shot_id: int, *, join: str, seconds: float | None = None) -> dict[str, Any]:
+    """这一刀声音和画面错不错开：j_cut 下一镜的声音先到，l_cut 上一镜的声音留下，空串是同切。"""
+    if join not in {"", *SOUND_JOINS}:
+        raise TimelineError(f"未知的声画错开方式 {join}；可用：{', '.join(SOUND_JOINS)}")
+    new = deepcopy(dict(timeline))
+    clip = _clip(new, shot_id)
+    if new["clips"] and new["clips"][0] is clip:
+        raise TimelineError("第一镜之前没有切点")
+    clip["sound_in"] = {"join": join, "edited": True}
+    if join and seconds is not None:
+        clip["sound_in"]["seconds"] = max(0.1, min(float(seconds), 1.5))
+    _touch(new)
+    return new
+
+
+def record_sound_results(timeline: Mapping[str, Any], shot_ids: Sequence[Any], report: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """合成时每一刀错开了没有，记回时间线给剪辑看。不算一次编辑，版本号不变。"""
+    new = deepcopy(dict(timeline))
+    for clip in new.get("clips") or []:
+        if isinstance(clip.get("sound_in"), dict):
+            clip["sound_in"].pop("result", None)
+    for entry in report:
+        index = int(entry.get("index") or 0)
+        shot_id = shot_ids[index] if 0 <= index < len(shot_ids) else None
+        clip = next((item for item in new.get("clips") or [] if item.get("shot_id") == shot_id), None)
+        if clip is not None and isinstance(clip.get("sound_in"), dict):
+            clip["sound_in"]["result"] = {"applied": bool(entry.get("applied")), "seconds": entry.get("seconds"), "reason": str(entry.get("reason") or "")}
     return new
 
 
@@ -262,8 +301,10 @@ def render_plan(timeline: Mapping[str, Any]) -> dict[str, Any]:
         "shot_ids": [c.get("shot_id") for c in clips],
         "subtitles": [str(c.get("subtitle") or "") for c in clips],
         "shot_voices": [None if c.get("muted") else c.get("voice_path") for c in clips],
+        "native_audio": [bool(c.get("native_audio")) and not c.get("muted") for c in clips],
         "trims": [(float(c.get("in") or 0), (float(c["out"]) if c.get("out") is not None else None)) for c in clips],
         "transition_plans": [dict(c.get("transition_in") or {"type": "crossfade", "duration": 0.22}) for c in clips[1:]],
+        "sound_joins": [{key: value for key, value in (c.get("sound_in") or {}).items() if key in {"join", "seconds"}} or None for c in clips[1:]],
         "title": str((timeline.get("title") or {}).get("text") or "") or None,
         "bgm": bgm.get("source", "none") != "none",
         "bgm_path": bgm.get("path") if bgm.get("source", "none") != "none" else None,
@@ -276,5 +317,5 @@ def render_plan(timeline: Mapping[str, Any]) -> dict[str, Any]:
 __all__ = [
     "BGM_SOURCES", "REVIEW_DECISIONS", "TIMELINE_KEY", "TRANSITIONS", "TimelineError",
     "build", "choose_candidate", "clip_seconds", "is_current", "refresh", "render_plan", "review",
-    "set_bgm", "set_muted", "set_subtitle", "set_title", "set_transition", "summary", "trim",
+    "record_sound_results", "set_bgm", "set_muted", "set_sound_join", "set_subtitle", "set_title", "set_transition", "summary", "trim",
 ]

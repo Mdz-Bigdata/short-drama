@@ -69,6 +69,50 @@ def _download_image(url: str) -> bytes:
     raise ValueError("too many image redirects")
 
 
+#: 分镜帧在媒体目录里的子目录。
+FRAME_DIRECTORY = "storyboards/frames"
+_PNG = b"\x89PNG\r\n\x1a\n"
+_JPEG = b"\xff\xd8\xff"
+
+
+def persist_storyboard_frame(url: str, directory: str | Path, name: str) -> Path | None:
+    """把供应商返回的分镜图存成本地文件，返回路径；存不下来返回 ``None``。
+
+    供应商给的是带签名的临时链接，24 小时后就打不开：之后的视频、单镜重做、导出和 3D 导演台
+    全都拿不到这张图。所以出图后立刻落地，后面各阶段读本地文件。下载失败(网络抖动、测试桩地址)
+    不算分镜失败，调用方保留远程链接。
+    """
+    if not str(url or "").startswith(("http://", "https://")):
+        return None
+    try:
+        data = _download_image(str(url))
+    except Exception:  # noqa: BLE001 - 落地是尽力而为，远程链接仍在
+        return None
+    suffix = ".png" if data.startswith(_PNG) else ".jpg" if data.startswith(_JPEG) else None
+    if suffix is None:
+        return None
+    target = Path(directory).expanduser().resolve() / f"{name}{suffix}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    return target
+
+
+def cut_grid_panels(
+    source: str | Path, count: int, *, cell_size: tuple[int, int] = (356, 636), gutter: int = 6,
+) -> list[Image.Image]:
+    """从 :func:`compose_nine_grid` 拼出的看板里按原几何切回前 ``count`` 格(远程原图失效后的找回路径)。"""
+    if not 1 <= count <= 9:
+        raise ValueError("a nine-grid page holds between one and nine panels")
+    image = _open_image(source)
+    cell_width, cell_height = cell_size
+    panels: list[Image.Image] = []
+    for index in range(count):
+        row, column = divmod(index, 3)
+        left, top = column * (cell_width + gutter), row * (cell_height + gutter)
+        panels.append(image.crop((left, top, left + cell_width, top + cell_height)))
+    return panels
+
+
 def fetch_remote_image_bytes(url: str) -> bytes:
     """Download a validated remote storyboard image for re-serving to the user."""
     return _download_image(url)

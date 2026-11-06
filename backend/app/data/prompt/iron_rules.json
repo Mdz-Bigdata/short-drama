@@ -1,0 +1,112 @@
+{
+  "iron_rules": {
+    "identity": [
+      "主体身份铁律",
+      "{subjects}严格按各自参考图渲染 + 不可改造 + 禁止互串。"
+    ],
+    "parts": [
+      "造型部件铁律",
+      "部件清单全部可见 + 禁止增减配件 + 禁止左右换位。"
+    ],
+    "camera": [
+      "机位铁律",
+      "景别与运镜只用本镜声明的方式 + 无变焦 + 无环绕 + 仅 handheld 微抖。"
+    ],
+    "palette": [
+      "色卡锚定铁律",
+      "所有色彩严格按色卡执行 + 不可偏离色板。"
+    ],
+    "physics": [
+      "物理铁律",
+      "参考图与物理冲突时以物理为准：不反向、不瞬移、不突然加速；每次接触点有材质的物理反应，动作轴线连续不反转；位移全程可见，不穿固定物、人不重叠，道具不凭空消失，受力合理、动作因果清楚；收尾站位、朝向与道具归属即下一镜起点。"
+    ],
+    "fight": [
+      "打斗铁律",
+      "拳拳到肉：每一招有蓄力、出招、击中三段，力量从脚、腰、肩传到拳脚，击中处有接触形变与受击反应，受击方被打动的幅度与力道相称；动作飘逸流畅：招与招之间用身法衔接，前一招的收势就是下一招的起势，不停顿、不定格、不摆姿势；全程连贯不断档：不跳帧、不重复帧、不中途换人换装、不穿模、不穿固定物，谁打谁、哪只手哪只脚从头到尾不换。"
+    ],
+    "form": [
+      "形态铁律",
+      "形态在时间上连续继承，变化必须有可见的外力与过程，不得融化、变形或变成另一件东西；纹理稳定无帧间跳变，运动模糊符合快门与速度，不得纹理闪烁、鬼影、拖尾、频闪。"
+    ],
+    "mask": [
+      "遮罩铁律",
+      "遮罩必须接近全黑或全白（near total）+ 禁止半灰 + 遮罩之后禁止再出现可见元素。"
+    ],
+    "extension": [
+      "延长重申铁律",
+      "{restatement}"
+    ],
+    "reference_cap": [
+      "参考图限量铁律",
+      "单次投喂核心锚定不超过 9 个，超限按场景组分批。"
+    ],
+    "lip_sync": [
+      "口型同步铁律",
+      "嘴部动作与台词逐字同步；无台词时闭口聆听。"
+    ],
+    "multi_person": [
+      "多人身份铁律",
+      "多人同框时各按各自设定图渲染 + 绝对禁止面部特征互换 + 绝对禁止换装 + 各人物的动作、站位和台词不互相交换。"
+    ]
+  },
+  "quality": {
+    "live_action": "画质：真人实拍电影画质，电影摄影机质感，皮肤毛孔与布料纤维清晰；光影物理正确——全局光照、阴影边缘柔和自然、金属与湿面真实反射周围环境；发光体分层：核心亮、边缘柔和弥散；快动作带符合快门的运动模糊，停住处锐利不糊。",
+    "anime_2d": "画质：剧场版动画画质，线条粗细稳定、色块边缘干净，无照片纹理；光影按赛璐珞两段分色，发光体核心亮、边缘柔和弥散；快动作用拖影帧与动态线，停住处线条锐利不糊。",
+    "anime_3d": "画质：高端 CG 动画画质，PBR 材质，皮肤次表面散射、布料与毛发有细节；光影物理正确——全局光照、阴影边缘柔和自然、金属与湿面真实反射周围环境；发光体分层：核心亮、边缘柔和弥散；快动作带符合快门的运动模糊，停住处锐利不糊。"
+  },
+  "signage_rule": "场景中原有的匾额、招牌、对联、标语保持原样；严禁新增叠加的字幕、歌词、说明文字、图形符号与水印。",
+  "situational_negatives": {
+    "multi_person": [
+      "绝对禁止面部特征互换",
+      "绝对禁止换装",
+      "no character face-swap",
+      "no identity confusion"
+    ],
+    "extension": [
+      "禁止生硬切镜",
+      "禁止物体凭空出现",
+      "禁止人物凭空消失"
+    ],
+    "audio_driven": [
+      "no lip-sync error",
+      "口型与台词逐字同步"
+    ],
+    "green_screen": [
+      "no glowing edge around composited characters",
+      "背景无渐变无阴影"
+    ],
+    "fight": [
+      "NOT slow motion for the whole clip",
+      "no frozen pose",
+      "no foot sliding",
+      "no strike without visible contact"
+    ],
+    "night": [
+      "NOT clear blue sky",
+      "NOT even daylight"
+    ]
+  },
+  "live_action_negatives": [
+    "NOT 3D rendered",
+    "NOT CGI",
+    "NOT video game graphics",
+    "NOT plastic look",
+    "NOT wax figure skin",
+    "NOT cartoon",
+    "NOT anime",
+    "NOT illustration",
+    "NOT 强磨皮美颜",
+    "无字幕",
+    "无水印"
+  ],
+  "live_action_positives": [
+    "photorealistic live-action footage",
+    "real physical scene captured through a camera lens",
+    "film grain visible",
+    "lens imperfection",
+    "micro-details and surface wear",
+    "natural lighting inconsistency",
+    "dust particles in air",
+    "motion blur on fast objects"
+  ]
+}

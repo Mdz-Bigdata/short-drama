@@ -280,6 +280,7 @@ class ModelDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         for provider, base_url, expected in (
             ("fal", "https://queue.fal.run", "alibaba/happy-horse/v1.1"),
             ("ltx", "https://api.ltx.io", "ltx-2-3-pro"),
+            ("kling", "https://api-singapore.klingai.com", "kling-v3"),
             ("kling", "https://api-singapore.klingai.com", "kling-v2-1"),
         ):
             with self.subTest(provider=provider):

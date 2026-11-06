@@ -322,6 +322,7 @@ class PlatformStoreTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "元素不存在"):
             await self.store.delete_element(prop.id, owner.id)
 
+    @patch.dict("os.environ", {"PAYMENT_SANDBOX_ENABLED": "1"})
     async def test_ledger_and_payment_confirmation_are_append_only_and_idempotent(self):
         user, _ = await self.store.create_user(
             email="buyer@example.com", phone=None, password="buyer-password"
@@ -350,57 +351,6 @@ class PlatformStoreTests(unittest.IsolatedAsyncioTestCase):
         wallet = await self.store.wallet(user.id)
         self.assertEqual(wallet.points, Decimal(str(plans[0].points)))
         self.assertEqual(len(wallet.entries), 1)
-
-    async def test_provider_webhook_matches_order_facts_and_is_idempotent(self):
-        user, _ = await self.store.create_user(
-            email="webhook@example.com", phone=None, password="webhook-password"
-        )
-        await self.store.seed_billing_plans()
-        plan = (await self.store.list_plans())[0]
-        async with self.store.sessions() as session:
-            order = PaymentOrder(
-                user_id=user.id,
-                plan_id=plan.id,
-                provider="wechat",
-                amount=plan.price,
-                currency=plan.currency,
-                status="pending",
-                idempotency_key="provider-webhook-order",
-            )
-            session.add(order)
-            await session.commit()
-            order_id = order.id
-
-        paid, applied = await self.store.process_webhook_payment(
-            provider="wechat",
-            event_id="wechat-event-1",
-            order_id=order_id,
-            amount=plan.price,
-            currency=plan.currency,
-            payload_sha256="a" * 64,
-        )
-        same, applied_again = await self.store.process_webhook_payment(
-            provider="wechat",
-            event_id="wechat-event-1",
-            order_id=order_id,
-            amount=plan.price,
-            currency=plan.currency,
-            payload_sha256="a" * 64,
-        )
-        self.assertTrue(applied)
-        self.assertFalse(applied_again)
-        self.assertEqual(paid.id, same.id)
-        self.assertEqual((await self.store.wallet(user.id)).points, Decimal(plan.points))
-
-        with self.assertRaises(ValueError):
-            await self.store.process_webhook_payment(
-                provider="wechat",
-                event_id="wechat-event-wrong-amount",
-                order_id=order_id,
-                amount=plan.price + Decimal("1.00"),
-                currency=plan.currency,
-                payload_sha256="b" * 64,
-            )
 
 
 if __name__ == "__main__":

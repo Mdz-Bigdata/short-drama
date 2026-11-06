@@ -1,6 +1,6 @@
 import type { GroundPoint, StageActor, StageCrowd, StagePlan } from '../../spatial/spatialTypes';
 
-// Mirrors backend geometry.py: a full-frame sensor whose long side follows the frame's long side.
+// Mirrors backend geometry.py: a sensor (full frame unless the camera says otherwise) whose long side follows the frame's long side.
 const SENSOR_LONG_SIDE_MM = 36;
 
 export function round2(value: number): number {
@@ -8,10 +8,24 @@ export function round2(value: number): number {
   return Math.round(value * 100) / 100 + 0;
 }
 
-export function verticalFov(lensMm: number, aspect: number): number {
+export function verticalFov(lensMm: number, aspect: number, sensorMm: number = SENSOR_LONG_SIDE_MM): number {
   const lens = Math.max(1, lensMm);
-  const sensorHeight = aspect < 1 ? SENSOR_LONG_SIDE_MM : SENSOR_LONG_SIDE_MM / Math.max(aspect, 1e-6);
+  const sensorHeight = aspect < 1 ? sensorMm : sensorMm / Math.max(aspect, 1e-6);
   return (2 * Math.atan(sensorHeight / (2 * lens)) * 180) / Math.PI;
+}
+
+/** How far the set and cast spread on the floor: enough to aim a view at all of it, or to size its shadows. */
+export function stageReach(plan: Pick<StagePlan, 'actors' | 'landmarks'>): { center: GroundPoint; radius: number } {
+  const points: Array<[number, number, number]> = [
+    ...plan.actors.map(actor => [actor.position[0], actor.position[1], 1] as [number, number, number]),
+    ...plan.landmarks.map(item => [item.position[0], item.position[1], Math.hypot(item.size[0], item.size[1]) / 2] as [number, number, number]),
+  ];
+  if (!points.length) return { center: [0, 0], radius: 6 };
+  const left = Math.min(...points.map(([x, , r]) => x - r));
+  const right = Math.max(...points.map(([x, , r]) => x + r));
+  const near = Math.min(...points.map(([, z, r]) => z - r));
+  const far = Math.max(...points.map(([, z, r]) => z + r));
+  return { center: [(left + right) / 2, (near + far) / 2], radius: Math.max(2, Math.hypot(right - left, far - near) / 2) };
 }
 
 export function normalizeYaw(degrees: number): number {

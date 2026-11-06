@@ -191,6 +191,7 @@ class WorkflowGuideTests(unittest.TestCase):
 
     def test_partial_storyboards_and_missing_episode_progress_stay_on_four(self):
         task = task_at(4)
+        task["config"]["episode_by_episode"] = False  # 旧口径：全部集分镜做完才进视频；逐集见 test_episode_cycle
         task["assets"]["4_progress"] = {"episodes": [{"number": 1, "complete": True}]}
         self.assertEqual(self.service.workflow_snapshot(task)["next_stage"], 4)
         task["assets"]["4_progress"]["episodes"].append(

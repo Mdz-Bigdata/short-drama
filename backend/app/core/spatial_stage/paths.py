@@ -10,6 +10,7 @@ enforced here — the checks will say if it crosses the line, and a repair can r
 
 from __future__ import annotations
 
+import heapq
 import math
 from collections.abc import Sequence
 
@@ -204,8 +205,127 @@ def camera_keys(
     return keys
 
 
+# Rotated footprints, as (centre x, centre z, half width, half depth, yaw in degrees).
+Footprint = tuple[float, float, float, float, float]
+_ROUTE_MAX_CELLS = 80_000
+
+
+def _clear_of_footprints(a: geo.Vec2, b: geo.Vec2, footprints: Sequence[Footprint]) -> bool:
+    for x, z, half_x, half_z, yaw in footprints:
+        turn = math.radians(yaw)
+        cos, sin = math.cos(turn), math.sin(turn)
+        ax, az = (a[0] - x) * cos - (a[1] - z) * sin, (a[0] - x) * sin + (a[1] - z) * cos
+        bx, bz = (b[0] - x) * cos - (b[1] - z) * sin, (b[0] - x) * sin + (b[1] - z) * cos
+        low, high, hit = 0.0, 1.0, True
+        for origin, stop, half in ((ax, bx, half_x), (az, bz, half_z)):
+            delta = stop - origin
+            if abs(delta) < 1e-10:
+                if abs(origin) > half:
+                    hit = False
+                continue
+            first, second = (-half - origin) / delta, (half - origin) / delta
+            low, high = max(low, min(first, second)), min(high, max(first, second))
+            if low > high:
+                hit = False
+        if hit:
+            return False
+    return True
+
+
+def _segment_distance(a: geo.Vec2, b: geo.Vec2, point: geo.Vec2) -> float:
+    dx, dz = b[0] - a[0], b[1] - a[1]
+    t = max(0.0, min(1.0, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dz) / (dx * dx + dz * dz or 1.0)))
+    return math.hypot(a[0] + t * dx - point[0], a[1] + t * dz - point[1])
+
+
+def find_route(
+    start: geo.Vec2, goal: geo.Vec2, footprints: Sequence[Footprint], people: Sequence[geo.Vec2] = (), radius: float = 0.3,
+) -> list[geo.Vec2]:
+    """A ground route from ``start`` to ``goal`` around set pieces and standing people, with corners cut.
+
+    A* over an eight-neighbour grid followed by line-of-sight shortcutting, as in mangfufu/director-desk
+    ``src/navigation/planner.ts`` (MIT): footprints are rotated rectangles here rather than world-aligned ones.
+    Raises ``PathError`` when the goal is occupied or nothing connects them.
+    """
+    grown = [(x, z, half_x + radius, half_z + radius, yaw) for x, z, half_x, half_z, yaw in footprints]
+
+    def clear(a: geo.Vec2, b: geo.Vec2) -> bool:
+        return _clear_of_footprints(a, b, grown) and all(_segment_distance(a, b, person) >= radius * 2 - 1e-7 for person in people)
+
+    if not clear(goal, goal):
+        raise PathError("终点被布景或其他人物占着，请换一个终点")
+    if clear(start, goal):
+        return [start, goal]
+    step = max(0.25, radius)
+    margin = max(5.0, math.hypot(goal[0] - start[0], goal[1] - start[1]) * 0.4)
+    x0, z0 = min(start[0], goal[0]) - margin, min(start[1], goal[1]) - margin
+    columns = math.ceil((abs(start[0] - goal[0]) + margin * 2) / step) + 1
+    rows = math.ceil((abs(start[1] - goal[1]) + margin * 2) / step) + 1
+    if columns * rows > _ROUTE_MAX_CELLS:
+        raise PathError("寻路范围太大，请分段走位")
+
+    def point(cell: tuple[int, int]) -> geo.Vec2:
+        return (x0 + cell[0] * step, z0 + cell[1] * step)
+
+    def distance(a: geo.Vec2, b: geo.Vec2) -> float:
+        return math.hypot(a[0] - b[0], a[1] - b[1])
+
+    first = (round((start[0] - x0) / step), round((start[1] - z0) / step))
+    costs: dict[tuple[int, int], float] = {}
+    came: dict[tuple[int, int], tuple[int, int] | None] = {}
+    queue: list[tuple[float, tuple[int, int]]] = []
+    for dx in (-1, 0, 1):
+        for dz in (-1, 0, 1):
+            cell = (first[0] + dx, first[1] + dz)
+            if 0 <= cell[0] < columns and 0 <= cell[1] < rows and clear(start, point(cell)):
+                costs[cell] = distance(start, point(cell))
+                came[cell] = None
+                heapq.heappush(queue, (costs[cell] + distance(point(cell), goal), cell))
+    closed: set[tuple[int, int]] = set()
+    last: tuple[int, int] | None = None
+    while queue:
+        _, cell = heapq.heappop(queue)
+        if cell in closed:
+            continue
+        closed.add(cell)
+        here = point(cell)
+        if distance(here, goal) <= step * 2 and clear(here, goal):
+            last = cell
+            break
+        for dx in (-1, 0, 1):
+            for dz in (-1, 0, 1):
+                near = (cell[0] + dx, cell[1] + dz)
+                if (not dx and not dz) or near in closed or not (0 <= near[0] < columns and 0 <= near[1] < rows):
+                    continue
+                there = point(near)
+                if not clear(here, there):
+                    continue
+                cost = costs[cell] + distance(here, there)
+                if cost < costs.get(near, math.inf):
+                    costs[near], came[near] = cost, cell
+                    heapq.heappush(queue, (cost + distance(there, goal), near))
+    if last is None:
+        raise PathError("没有找到能绕开布景的路线")
+    route: list[geo.Vec2] = [goal]
+    walker: tuple[int, int] | None = last
+    while walker is not None:
+        route.append(point(walker))
+        walker = came[walker]
+    route.append(start)
+    route.reverse()
+    simple = [start]
+    cursor = 0
+    while cursor < len(route) - 1:
+        reach = len(route) - 1
+        while reach > cursor + 1 and not clear(route[cursor], route[reach]):
+            reach -= 1
+        simple.append(route[reach])
+        cursor = reach
+    return [(round(x, 3), round(z, 3)) for x, z in simple]
+
+
 __all__ = [
     "ACTOR_KEY_SPACING_M", "CAMERA_KEY_SPACING_M", "MAX_PATH_KEYS", "MAX_PATH_POINTS", "MIN_PATH_POINTS",
-    "PathError", "actor_keys", "arc_length", "camera_keys", "chaikin", "heading_deg", "key_count", "key_times",
+    "PathError", "actor_keys", "arc_length", "camera_keys", "chaikin", "find_route", "heading_deg", "key_count", "key_times",
     "read_points", "resample",
 ]

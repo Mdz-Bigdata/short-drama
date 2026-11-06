@@ -36,7 +36,7 @@ function Part({ geometry, position, scale, paint, rotation }: {
   geometry: typeof SPHERE | typeof TUBE | typeof BOX; position: Triple; scale: Triple; paint: Paint; rotation?: Triple;
 }) {
   return (
-    <mesh geometry={geometry} position={position} scale={scale} rotation={rotation}>
+    <mesh geometry={geometry} position={position} scale={scale} rotation={rotation} castShadow>
       <meshStandardMaterial color={paint.color} roughness={0.55} emissive={paint.glow} emissiveIntensity={paint.intensity} />
     </mesh>
   );

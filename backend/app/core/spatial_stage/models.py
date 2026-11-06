@@ -36,10 +36,14 @@ CameraMoveKind = Literal["static", "push", "pull", "pan", "track", "orbit", "ris
 Crossing = Literal["none", "neutral", "moving", "reestablish"]
 Severity = Literal["error", "warning"]
 PlanSource = Literal["auto", "edited"]
+# Who decided the blocking: the rule planner, or a text model the rules then checked.
+PlanPlanner = Literal["rules", "model"]
 # The three figures of the director desk. A stand-in has no limbs on purpose: a video model copies
 # a white model's pose, so limbs are opt-in (mannequin / humanoid) and flagged when a clip shows them.
 FigureKind = Literal["standin", "mannequin", "humanoid"]
 LandmarkShape = Literal["box", "cylinder", "sphere", "cone", "wedge", "plane"]
+# "blockout": built from a reference image, replaced as a set and kept out of prompts except its largest pieces.
+LandmarkOrigin = Literal["", "blockout"]
 BackdropKind = Literal["none", "color", "image", "panorama"]
 Easing = Literal["linear", "smooth", "ease-in", "ease-out", "hold", "whip"]
 HexColor = Annotated[str, Field(pattern=r"^(?:#[0-9A-Fa-f]{6})?$")]
@@ -51,6 +55,12 @@ KeyTime = Annotated[float, Field(ge=0, le=30)]
 MAX_ACTORS = 200
 MAX_POSE_JOINTS = 120
 MAX_TRACK_KEYS = 120
+# A reference image turned into a blockout is many pieces; a hand-dressed set rarely passes a few dozen.
+MAX_LANDMARKS = 240
+MAX_TRACK_CLIPS = 40
+MAX_LANDMARK_PARTS = 64
+# Every piece of a stage together: plans are stored and sent whole on each edit.
+MAX_STAGE_PARTS = 2400
 
 
 class StageModel(BaseModel):
@@ -99,6 +109,24 @@ class StageCrowd(StageModel):
     seed: Annotated[int, Field(ge=0, le=2_147_483_647)] = 0
 
 
+class LandmarkPart(StageModel):
+    """One volume of a set piece built from several, in fractions of the piece's size so it scales with it.
+
+    ``center`` is [x, y, z] from the piece's ground centre (y up, +z its front); ``size`` is [width, depth,
+    height]; ``rotation`` is degrees about x, y, z. Drawn with the rotation applied after the scale, so a wheel
+    lying on its side stays a wheel when the piece is stretched.
+    """
+
+    shape: LandmarkShape = "box"
+    center: Annotated[list[Annotated[float, Field(ge=-4, le=4)]], Field(min_length=3, max_length=3)]
+    size: Annotated[list[Annotated[float, Field(gt=0, le=4)]], Field(min_length=3, max_length=3)]
+    rotation: Annotated[list[Annotated[float, Field(ge=-360, le=360)]], Field(min_length=3, max_length=3)] = Field(
+        default_factory=lambda: [0.0, 0.0, 0.0],
+    )
+    # Darker or lighter than the piece's own colour, so its parts read apart in a grey render.
+    tone: Literal["", "dark", "light"] = ""
+
+
 class StageLandmark(StageModel):
     id: Identifier
     name: Name
@@ -114,6 +142,13 @@ class StageLandmark(StageModel):
     color: HexColor = ""
     # Element-library GLB drawn in place of the primitive.
     element_id: Annotated[str, Field(max_length=120)] = ""
+    # Height of the piece's underside above the floor: a roof on a wall, a shelf on a counter.
+    elevation_m: Annotated[float, Field(ge=0, le=100)] = 0.0
+    origin: LandmarkOrigin = ""
+    # Which built-in model this piece was made from, when one was named.
+    kit: Annotated[str, Field(max_length=60)] = ""
+    # Empty: the piece is the single volume ``shape`` describes.
+    parts: Annotated[list[LandmarkPart], Field(max_length=MAX_LANDMARK_PARTS)] = Field(default_factory=list)
 
 
 class StageBackdrop(StageModel):
@@ -166,6 +201,8 @@ class StageCamera(StageModel):
     position: SpacePoint
     target: SpacePoint
     lens_mm: Annotated[float, Field(ge=8, le=600)] = 50.0
+    # The long side of the sensor; a lens is only a field of view once it is known.
+    sensor_mm: Annotated[float, Field(ge=4, le=80)] = 36.0
     fov_deg: Annotated[float, Field(ge=1, le=170)] = 39.6
     aspect: Annotated[str, Field(pattern=r"^\d{1,3}(?:\.\d+)?:\d{1,3}(?:\.\d+)?$")] = "9:16"
     shot_size: Annotated[str, Field(max_length=80)] = "中景"
@@ -173,6 +210,11 @@ class StageCamera(StageModel):
     function: ShotFunction = "single"
     subjects: Annotated[list[Name], Field(max_length=40)] = Field(default_factory=list)
     move: CameraMove = Field(default_factory=CameraMove)
+
+    @property
+    def equivalent_lens_mm(self) -> float:
+        """The full-frame lens with this field of view: what a prompt's millimetres are read as."""
+        return round(self.lens_mm * 36.0 / self.sensor_mm, 1)
 
 
 class ScreenState(StageModel):
@@ -279,6 +321,75 @@ class ActorKey(StageModel):
         return self
 
 
+def _in_order_without_overlap(clips: list, duration_s: float, label: str) -> None:
+    ordered = sorted(clips, key=lambda clip: clip.start)
+    if any(later.start < earlier.end - 1e-6 for earlier, later in zip(ordered, ordered[1:])):
+        raise ValueError(f"{label} clips must not overlap")
+    if ordered and max(clip.end for clip in ordered) > duration_s + 1e-6:
+        raise ValueError(f"{label} clips must lie within the timeline's duration")
+
+
+class ActionClip(StageModel):
+    """One named motion on an actor's action track: what the figure does from ``start`` to ``end``."""
+
+    id: Identifier
+    clip: Annotated[str, Field(min_length=1, max_length=80)]
+    start: KeyTime
+    end: KeyTime
+    speed: Annotated[float, Field(ge=0.1, le=4)] = 1.0
+    # Where in the motion the block opens, so a trimmed head skips rather than squeezes.
+    offset: Annotated[float, Field(ge=0, le=1)] = 0.0
+
+    @model_validator(mode="after")
+    def runs_forward(self) -> "ActionClip":
+        if self.end <= self.start:
+            raise ValueError("a clip's end must come after its start")
+        return self
+
+
+class FollowClip(StageModel):
+    """The filming lens tied to a character for a stretch of the shot.
+
+    ``offset`` is ``[right, up, back]`` in metres. In the character's own frame when ``relative`` is
+    ``"actor"`` (the lens swings round as they turn), along the world axes when ``"world"``.
+    """
+
+    id: Identifier
+    actor: Name
+    start: KeyTime
+    end: KeyTime
+    offset: SpacePoint = Field(default_factory=lambda: [0.0, 0.3, 1.2])
+    relative: Literal["actor", "world"] = "actor"
+    # Where on the body the lens aims, as a fraction of standing height: 0.9 is the head, 0.55 the waist.
+    aim: Annotated[float, Field(ge=0, le=1.2)] = 0.9
+    # The lens lags by averaging the character over this window, so a jerky walk does not shake the frame.
+    damping_s: Annotated[float, Field(ge=0, le=2)] = 0.3
+    # The way in and out of the clip; 0 is a hard cut.
+    blend_s: Annotated[float, Field(ge=0, le=3)] = 0.0
+    lens_mm: Annotated[float, Field(ge=8, le=600)] | None = None
+
+    @model_validator(mode="after")
+    def runs_forward(self) -> "FollowClip":
+        if self.end <= self.start:
+            raise ValueError("a clip's end must come after its start")
+        return self
+
+
+class CameraCut(StageModel):
+    """A stretch of the shot filmed through one of its candidate lenses: a cut inside the shot, without a second shot."""
+
+    id: Identifier
+    camera_id: Identifier
+    start: KeyTime
+    end: KeyTime
+
+    @model_validator(mode="after")
+    def runs_forward(self) -> "CameraCut":
+        if self.end <= self.start:
+            raise ValueError("a cut's end must come after its start")
+        return self
+
+
 class ShotTimeline(StageModel):
     duration_s: Annotated[float, Field(ge=1, le=30)] = 5.0
     fps: Literal[24, 25, 30] = 24
@@ -286,12 +397,21 @@ class ShotTimeline(StageModel):
     actors: Annotated[
         dict[Name, Annotated[list[ActorKey], Field(max_length=MAX_TRACK_KEYS)]], Field(max_length=MAX_ACTORS)
     ] = Field(default_factory=dict)
+    clips: Annotated[
+        dict[Name, Annotated[list[ActionClip], Field(max_length=MAX_TRACK_CLIPS)]], Field(max_length=MAX_ACTORS)
+    ] = Field(default_factory=dict)
+    follow: Annotated[list[FollowClip], Field(max_length=MAX_TRACK_CLIPS)] = Field(default_factory=list)
+    cuts: Annotated[list[CameraCut], Field(max_length=MAX_TRACK_CLIPS)] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def keys_are_ordered(self) -> "ShotTimeline":
         _strictly_increasing(self.camera, self.duration_s, "camera")
         for name, keys in self.actors.items():
             _strictly_increasing(keys, self.duration_s, f"actor {name}")
+        for name, clips in self.clips.items():
+            _in_order_without_overlap(clips, self.duration_s, f"actor {name}")
+        _in_order_without_overlap(self.follow, self.duration_s, "follow")
+        _in_order_without_overlap(self.cuts, self.duration_s, "cuts")
         return self
 
 
@@ -317,7 +437,7 @@ class StagePlan(StageModel):
     # 60 was the cast; crowd arrays are what need the room above it.
     actors: Annotated[list[StageActor], Field(max_length=MAX_ACTORS)] = Field(default_factory=list)
     crowds: Annotated[list[StageCrowd], Field(max_length=20)] = Field(default_factory=list)
-    landmarks: Annotated[list[StageLandmark], Field(max_length=80)] = Field(default_factory=list)
+    landmarks: Annotated[list[StageLandmark], Field(max_length=MAX_LANDMARKS)] = Field(default_factory=list)
     axis: StageAxis = Field(default_factory=StageAxis)
     backdrop: StageBackdrop = Field(default_factory=StageBackdrop)
     cameras: Annotated[list[StageCamera], Field(max_length=200)] = Field(default_factory=list)
@@ -327,6 +447,8 @@ class StagePlan(StageModel):
     timelines: Annotated[dict[str, ShotTimeline], Field(max_length=200)] = Field(default_factory=dict)
     scene_bible: Annotated[str, Field(max_length=4000)] = ""
     source: PlanSource = "auto"
+    planner: PlanPlanner = "rules"
+    planner_note: Annotated[str, Field(max_length=600)] = ""
     revision: Annotated[int, Field(ge=0, le=1_000_000_000)] = 0
     cast_fingerprint: Annotated[str, Field(max_length=80)] = ""
     updated_at: Annotated[str, Field(max_length=64)] = ""
@@ -358,6 +480,12 @@ class StagePlan(StageModel):
             raise ValueError("spatial stage crowd ids must be unique")
         if any(actor.crowd_id and actor.crowd_id not in crowd_ids for actor in self.actors):
             raise ValueError("every crowd member must belong to a crowd of the stage")
+        if any(clip.actor not in names for timeline in self.timelines.values() for clip in timeline.follow):
+            raise ValueError("every follow clip must name a character on the stage")
+        for shot in self.shots:
+            timeline = self.timelines.get(str(shot.shot_id))
+            if timeline and any(cut.camera_id not in {shot.camera_id, *shot.alt_camera_ids} for cut in timeline.cuts):
+                raise ValueError("every camera cut must use the shot's own lens or one of its candidates")
         return self
 
     def actor(self, name: str) -> StageActor | None:
@@ -396,7 +524,12 @@ __all__ = [
     "MAX_ACTORS",
     "MAX_POSE_JOINTS",
     "MAX_TRACK_KEYS",
+    "MAX_TRACK_CLIPS",
+    "MAX_LANDMARKS",
+    "ActionClip",
     "ActorKey",
+    "CameraCut",
+    "FollowClip",
     "ActorOverride",
     "CameraKey",
     "CameraMove",

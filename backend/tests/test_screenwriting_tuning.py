@@ -39,7 +39,7 @@ class SourceSamplingTests(unittest.TestCase):
         overview = next(c["prompt"] for c in model.calls if "提炼项目概述" in c["prompt"])
         inventory = next(c["prompt"] for c in model.calls if "角色与世界观分析师" in c["prompt"])
         self.assertLess(len(overview), 3000 + 1500)
-        self.assertLess(len(inventory), 3000 + 4500, "a sample plus the fixed instructions (five asset kinds and relations), far short of the whole source")
+        self.assertLess(len(inventory), 3000 + 5500, "a sample plus the fixed instructions (ten asset kinds and relations), far short of the whole source")
         self.assertIn("录音笔还在转", overview, "the ending survives the sampling")
         planner = next(c["prompt"] for c in model.calls if "end_anchor" in c["prompt"])
         self.assertGreater(len(planner), len(novel), "the ledger planner still reads the source itself")

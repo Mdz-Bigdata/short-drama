@@ -18,8 +18,11 @@ named layers in one line, in a fixed order of weight:
 
 The other half is identity. A character's voice drifts between clips unless the
 same words describe it every time, so each character gets a **voice anchor** —
-derived once from their character card and restated verbatim in every prompt —
-plus a reference audio slot when the project has a clean sample.
+the short voice description designed for them in stage 3 (``voice_desc``) when there
+is one, otherwise derived from their character card — restated verbatim in every
+prompt, plus a reference audio slot when the project has a clean sample. The anchor
+is the same for every model that renders sound with the picture, not only H3; a
+shot's emotion is layered on top of it and never rewrites it.
 """
 
 from __future__ import annotations
@@ -68,6 +71,15 @@ def delivery_for_emotion(emotion: str) -> tuple[str, str]:
     return _DELIVERY_BY_EMOTION.get(str(emotion or "").strip().lower(), ("正常", ""))
 
 
+def emotion_overlay(anchors: Sequence["VoiceAnchor"], notes: str) -> str:
+    """本镜情绪只叠加在语气、力度与停顿上；基础音色照锁定句不变。"""
+    names = "、".join(dict.fromkeys(anchor.name for anchor in anchors))
+    notes = " ".join(str(notes or "").split())
+    if not names or not notes:
+        return ""
+    return f"{names}本镜情绪（{notes}）只改变语气、力度与停顿，基础音色、音调与声线照上面的锁定句不变"
+
+
 @dataclass(frozen=True)
 class VoiceAnchor:
     """One character's voice, written the same way in every prompt."""
@@ -79,6 +91,7 @@ class VoiceAnchor:
     pitch: str                     # 中高音区 / 中音区 / 低音区
     pace_cps: float = 3.0
     ref_audio: str = ""            # @音频N when the project has a clean dry sample
+    designed: str = ""             # 第3阶段为角色设计的音色短描述(voice_desc)，有就逐字用它
 
     @property
     def persona(self) -> str:
@@ -88,7 +101,10 @@ class VoiceAnchor:
 
     def lock_line(self) -> str:
         """The sentence restated verbatim in every prompt that gives this character a line."""
-        parts = [f"{self.name}：{self.persona}", self.pitch, f"语速每秒{self.pace_cps:g}字"]
+        if self.designed:
+            parts = [f"{self.name}：{self.designed}"]
+        else:
+            parts = [f"{self.name}：{self.persona}", self.pitch, f"语速每秒{self.pace_cps:g}字"]
         if self.ref_audio:
             parts.append(f"音色参考{self.ref_audio}")
         return "，".join(parts) + "；全片音色、音调与声线不变"
@@ -104,21 +120,32 @@ _CENTER_TONE = {
 }
 
 
+MAX_VOICE_DESC_CHARS = 40
+
+
 def build_voice_anchor(
     name: str, *, description: str = "", gender: str = "female", delivery: str = "正常", ref_audio: str = "",
+    voice_desc: str = "",
 ) -> VoiceAnchor:
     """Derive a character's voice from their card, deterministically.
 
     The same card always yields the same words, which is the whole point: a voice
-    described differently in the next episode is heard as a different person.
+    described differently in the next episode is heard as a different person. A
+    designed ``voice_desc`` wins over the keyword rules: it is the lock line itself,
+    and the rules only read it for the H3 centre-layer words.
     """
-    text = f"{name} {description}"
+    designed = " ".join(str(voice_desc or "").split())[:MAX_VOICE_DESC_CHARS]
+    if designed and ("女" in designed) != ("男" in designed):
+        gender = "female" if "女" in designed else "male"
+    card = f"{name} {description}"
     timbre, pitch = _DEFAULT_TIMBRE
-    for words, band_timbre, band_pitch in _TIMBRE_RULES:
-        if any(word in text for word in words):
-            timbre, pitch = band_timbre, band_pitch
+    # 设计过的音色先读，读不出音区再退回角色卡。
+    for text in ((designed, card) if designed else (card,)):
+        band = next(((t, p) for words, t, p in _TIMBRE_RULES if any(word in text for word in words)), None)
+        if band:
+            timbre, pitch = band
             break
-    age = _AGE.search(text)
+    age = _AGE.search(designed) or _AGE.search(card)
     return VoiceAnchor(
         name=str(name).strip(),
         gender="male" if str(gender).lower().startswith("m") or gender == "male" else "female",
@@ -127,6 +154,7 @@ def build_voice_anchor(
         pitch=pitch,
         pace_cps=PACE_BY_DELIVERY.get(str(delivery), 3.0),
         ref_audio=str(ref_audio or "").strip(),
+        designed=designed,
     )
 
 
@@ -273,8 +301,14 @@ def _layer_of(text: str, tag: str) -> str:
 
 def anchors_from_characters(
     characters: Sequence[Mapping[str, object]], *, gender_of, delivery: str = "正常",
+    voices: Mapping[str, str] | None = None,
 ) -> dict[str, VoiceAnchor]:
-    """Voice anchors for a cast list, keyed by name; ``gender_of(name)`` supplies the gender."""
+    """Voice anchors for a cast list, keyed by name; ``gender_of(name)`` supplies the gender.
+
+    ``voices`` maps a name to its designed ``voice_desc`` (from the stage-3 DNA); a card's
+    own ``voice_desc`` field is read too.
+    """
+    voices = voices or {}
     anchors: dict[str, VoiceAnchor] = {}
     for item in characters:
         if not isinstance(item, Mapping):
@@ -285,6 +319,7 @@ def anchors_from_characters(
         description = str(item.get("desc") or item.get("description") or "")
         anchors[name] = build_voice_anchor(
             name, description=description, gender=gender_of(name), delivery=delivery,
+            voice_desc=str(item.get("voice_desc") or voices.get(name) or ""),
         )
     return anchors
 
@@ -293,5 +328,5 @@ __all__ = [
     "AMBIENT_TAG", "CENTER_TAG", "MAX_SOUND_WORDS", "MUSIC_TAG", "PACE_BY_DELIVERY",
     "H3SoundPrompt", "SoundCheck", "VoiceAnchor",
     "anchors_from_characters", "build_voice_anchor", "check_sound_prompt", "compile_sound_prompt",
-    "delivery_for_emotion",
+    "delivery_for_emotion", "emotion_overlay",
 ]

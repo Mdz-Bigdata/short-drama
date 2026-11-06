@@ -18,6 +18,8 @@ Nothing here calls a model: the same brief always decodes to the same numbers.
 
 from __future__ import annotations
 
+import re
+import zlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -62,7 +64,7 @@ INTENTS: tuple[Intent, ...] = (
     ),
     Intent(
         "tension", "压迫紧绷", ("紧张", "绷住", "压迫", "剑拔弩张", "对峙感", "窒息"),
-        camera="缓慢推进、被遮挡的窥视式推镜、静止到骤动",
+        camera="缓慢推进、被遮挡的窥视式横移、固定长镜蓄力、静止到骤动",
         vfx_density=0.1, rhythm=1.5, sizes=(0.2, 0.4, 0.4),
         composition="偏离中心、大量留白、前景遮挡、荷兰角",
         lighting="高对比、硬阴影、明确的明暗交界线、单一方向光源",
@@ -94,7 +96,7 @@ INTENTS: tuple[Intent, ...] = (
     ),
     Intent(
         "oppressive", "压抑暗黑", ("压抑", "暗黑", "阴郁", "沉重", "绝望"),
-        camera="窥视式推镜、缓慢推进、俯冲下压",
+        camera="窥视式横移、缓慢推进、俯冲下压",
         vfx_density=0.1, rhythm=1.5, sizes=(0.15, 0.35, 0.5),
         composition="压缩头顶空间、画框向内挤压、人物被环境吞掉、前景遮挡",
         lighting="低调、单光源、大片阴影吃掉人物、冷色主导，拒绝暖调",
@@ -180,7 +182,21 @@ class IntentPlan:
         """A base shot length under this brief, never outside what a clip can be."""
         return round(max(1.0, base * self.rhythm), 1)
 
-    def brief(self) -> str:
+    def camera_line(self, scene_key: str = "") -> str:
+        """How the camera tends to move here. Told about a scene, it leads with a different option from its neighbours.
+
+        Given one list every scene, a model takes its first item every time. The choice follows the scene's own number,
+        so a rerun asks the same question and neighbouring scenes differ.
+        """
+        options = [item.split("：")[-1].strip() for item in self.primary.camera.split("、") if item.strip()]
+        if not scene_key or len(options) < 2:
+            return f"运镜倾向：{self.primary.camera}"
+        number = re.search(r"(\d+)$", scene_key)
+        lead = (int(number.group(1)) if number else zlib.crc32(scene_key.encode("utf-8"))) % len(options)
+        rest = "、".join(option for index, option in enumerate(options) if index != lead)
+        return f"运镜倾向：这一场优先用「{options[lead]}」作主运镜，确实不合戏再换成{rest}"
+
+    def brief(self, scene_key: str = "") -> str:
         """The paragraph the storyboard writer is given."""
         mix = "、".join(
             f"{label}{round(share * 100)}%" for label, share in zip(("远中景", "中景", "近特写"), self.sizes)
@@ -188,7 +204,7 @@ class IntentPlan:
         lines = [
             f"【感觉】主感觉：{self.primary.name}"
             + (f"；次感觉：{'、'.join(intent.name for intent in self.secondary)}（只做偏移，不反客为主）" if self.secondary else ""),
-            f"运镜倾向：{self.primary.camera}",
+            self.camera_line(scene_key),
             f"景别分布：{mix}；镜头长度按{self.rhythm:.2f}倍基准（小于1更碎、大于1更长）",
             f"特效密度：约{round(self.vfx_density * 100)}%的镜头带明显特效",
             f"构图：{self.primary.composition}",

@@ -1,6 +1,7 @@
 import unittest
 
 from app.core.transition_catalog import (
+    smooth_text,
     classify_transition_category,
     compose_transition,
     describe_transition,
@@ -45,12 +46,15 @@ class TransitionCatalogTests(unittest.TestCase):
             "镜头运动：镜头轻微推进；切入：十年后的同一间书房；光影氛围：暖黄烛光转为冷白晨光",
         )
         self.assertIn("念旧", spec.emotions)
+        # 不用硬切：写成硬切的也按匹配剪辑(连贯衔接)组织。
         bare = compose_transition("硬切")
-        self.assertEqual(bare.prompt, "硬切（同场景动作衔接、正反打、节奏推进）")
+        self.assertEqual(bare.prompt, "匹配剪辑（同场景动作 / 视线 / 姿态延续衔接、创意叙事、时空跳跃）")
 
     def test_describe_and_grammar_helpers(self):
         self.assertEqual(describe_transition("声音先行硬切"), "声音先行：悬疑、回忆、梦境；声音先于画面进入（暗流、期待）；媒介类别：电影高级叙事")
-        self.assertIn("未在转场词典内，按硬切处理", describe_transition("随便写的"))
+        self.assertIn("未在转场词典内，按动作匹配衔接处理", describe_transition("随便写的"))
+        self.assertNotIn("硬切", describe_transition("视线匹配硬切"))
+        self.assertEqual(smooth_text("视觉承接：硬切。声音先行硬切"), "视觉承接：连贯衔接。声音先行衔接")
         self.assertTrue(uses_transition_grammar("转场媒介：衣袖"))
         self.assertFalse(uses_transition_grammar("人物走向窗边"))
         catalog = transition_catalog()

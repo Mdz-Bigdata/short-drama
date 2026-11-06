@@ -1,0 +1,632 @@
+[
+ {
+  "id": "cel_anime",
+  "group": "动画",
+  "names": {
+   "zh": "日系赛璐璐",
+   "en": "Cel anime",
+   "vi": "Anime cel"
+  },
+  "prompt": "日系二维赛璐璐动画：干净的描线、平涂加一层硬阴影、高饱和的天空和发色",
+  "swatch": [
+   "#5aa9e6",
+   "#ffd166"
+  ]
+ },
+ {
+  "id": "soft_anime",
+  "group": "动画",
+  "names": {
+   "zh": "柔光日漫",
+   "en": "Soft anime",
+   "vi": "Anime dịu nhẹ"
+  },
+  "prompt": "柔和手绘感的日系动画：淡彩背景、细腻光斑、轻描线、空气感明显",
+  "swatch": [
+   "#bde0fe",
+   "#ffc8dd"
+  ]
+ },
+ {
+  "id": "shonen",
+  "group": "动画",
+  "names": {
+   "zh": "热血少年漫",
+   "en": "Shonen action",
+   "vi": "Shonen hành động"
+  },
+  "prompt": "少年漫画式动画：粗描线、强烈明暗对比、速度线感的构图、夸张的力量感",
+  "swatch": [
+   "#ef233c",
+   "#2b2d42"
+  ]
+ },
+ {
+  "id": "guoman",
+  "group": "动画",
+  "names": {
+   "zh": "国风动画",
+   "en": "Chinese animation",
+   "vi": "Hoạt hình Trung"
+  },
+  "prompt": "东方幻想动画：飘逸衣袂、青绿与朱红配色、流云与山水纹样",
+  "swatch": [
+   "#2a9d8f",
+   "#e76f51"
+  ]
+ },
+ {
+  "id": "ghibli_like",
+  "group": "动画",
+  "names": {
+   "zh": "田园手绘",
+   "en": "Pastoral hand-drawn",
+   "vi": "Vẽ tay đồng quê"
+  },
+  "prompt": "田园气息的手绘动画：水彩背景、圆润的人物造型、午后阳光和大片植被",
+  "swatch": [
+   "#90be6d",
+   "#f9c74f"
+  ]
+ },
+ {
+  "id": "cg_3d",
+  "group": "动画",
+  "names": {
+   "zh": "三维动画",
+   "en": "3D feature animation",
+   "vi": "Hoạt hình 3D"
+  },
+  "prompt": "长片级三维动画：圆润造型、次表面散射的皮肤、柔和全局光、细腻毛发",
+  "swatch": [
+   "#4cc9f0",
+   "#f72585"
+  ]
+ },
+ {
+  "id": "clay",
+  "group": "动画",
+  "names": {
+   "zh": "黏土定格",
+   "en": "Claymation",
+   "vi": "Đất sét"
+  },
+  "prompt": "黏土定格动画：手捏纹理和指纹痕迹、微缩布景、柔和棚灯",
+  "swatch": [
+   "#d4a373",
+   "#a3b18a"
+  ]
+ },
+ {
+  "id": "paper_cut",
+  "group": "动画",
+  "names": {
+   "zh": "剪纸定格",
+   "en": "Paper cut-out",
+   "vi": "Cắt giấy"
+  },
+  "prompt": "多层剪纸定格：纸张纤维质感、层与层之间有真实投影、色块简洁",
+  "swatch": [
+   "#e63946",
+   "#f1faee"
+  ]
+ },
+ {
+  "id": "pixel",
+  "group": "动画",
+  "names": {
+   "zh": "像素游戏",
+   "en": "Pixel art",
+   "vi": "Pixel art"
+  },
+  "prompt": "16 位像素风：有限调色板、清晰的像素边缘、抖动阴影",
+  "swatch": [
+   "#7209b7",
+   "#4361ee"
+  ]
+ },
+ {
+  "id": "comic_us",
+  "group": "漫画",
+  "names": {
+   "zh": "美式漫画",
+   "en": "American comic",
+   "vi": "Truyện tranh Mỹ"
+  },
+  "prompt": "美式漫画：粗黑墨线、网点阴影、强烈的主色和戏剧化透视",
+  "swatch": [
+   "#d62828",
+   "#fcbf49"
+  ]
+ },
+ {
+  "id": "manga_bw",
+  "group": "漫画",
+  "names": {
+   "zh": "黑白漫画",
+   "en": "Black and white manga",
+   "vi": "Manga đen trắng"
+  },
+  "prompt": "黑白日漫：G 笔墨线、网点纸灰阶、无彩色",
+  "swatch": [
+   "#111111",
+   "#eeeeee"
+  ]
+ },
+ {
+  "id": "manhwa",
+  "group": "漫画",
+  "names": {
+   "zh": "韩漫上色",
+   "en": "Webtoon",
+   "vi": "Webtoon"
+  },
+  "prompt": "韩式条漫上色：干净线条、柔和渐变阴影、明亮的肤色和时尚造型",
+  "swatch": [
+   "#ff8fab",
+   "#a2d2ff"
+  ]
+ },
+ {
+  "id": "noir_comic",
+  "group": "漫画",
+  "names": {
+   "zh": "硬派黑白",
+   "en": "Hard noir comic",
+   "vi": "Comic noir"
+  },
+  "prompt": "硬派漫画：大块纯黑阴影、高反差、只留一种点缀色",
+  "swatch": [
+   "#000000",
+   "#c1121f"
+  ]
+ },
+ {
+  "id": "ink_wash",
+  "group": "绘画",
+  "names": {
+   "zh": "水墨",
+   "en": "Ink wash",
+   "vi": "Thủy mặc"
+  },
+  "prompt": "中国水墨：墨色浓淡渐变、留白、宣纸纹理、笔触有飞白",
+  "swatch": [
+   "#22223b",
+   "#f2e9e4"
+  ]
+ },
+ {
+  "id": "gongbi",
+  "group": "绘画",
+  "names": {
+   "zh": "工笔重彩",
+   "en": "Gongbi",
+   "vi": "Công bút"
+  },
+  "prompt": "工笔重彩：细密勾线、层层渲染的矿物色、绢本质感",
+  "swatch": [
+   "#9d0208",
+   "#e9c46a"
+  ]
+ },
+ {
+  "id": "watercolor",
+  "group": "绘画",
+  "names": {
+   "zh": "水彩",
+   "en": "Watercolour",
+   "vi": "Màu nước"
+  },
+  "prompt": "透明水彩：颜料晕染和水痕、纸张白色透出、边缘自然渗开",
+  "swatch": [
+   "#8ecae6",
+   "#ffb4a2"
+  ]
+ },
+ {
+  "id": "oil",
+  "group": "绘画",
+  "names": {
+   "zh": "古典油画",
+   "en": "Classical oil",
+   "vi": "Sơn dầu cổ điển"
+  },
+  "prompt": "古典油画：厚涂笔触、画布肌理、明暗法的深色背景和暖色高光",
+  "swatch": [
+   "#6f1d1b",
+   "#bb9457"
+  ]
+ },
+ {
+  "id": "impasto",
+  "group": "绘画",
+  "names": {
+   "zh": "厚涂插画",
+   "en": "Painterly illustration",
+   "vi": "Minh họa dày"
+  },
+  "prompt": "数字厚涂插画：可见的大笔触、色彩丰富的阴影、概念设定气质",
+  "swatch": [
+   "#3a506b",
+   "#ee6c4d"
+  ]
+ },
+ {
+  "id": "impression",
+  "group": "绘画",
+  "names": {
+   "zh": "印象派",
+   "en": "Impressionist",
+   "vi": "Ấn tượng"
+  },
+  "prompt": "印象派：短促的色点笔触、光影优先于轮廓、明亮的户外色调",
+  "swatch": [
+   "#adc178",
+   "#fec89a"
+  ]
+ },
+ {
+  "id": "ukiyoe",
+  "group": "绘画",
+  "names": {
+   "zh": "浮世绘",
+   "en": "Ukiyo-e",
+   "vi": "Ukiyo-e"
+  },
+  "prompt": "浮世绘木版画：平面色块、流畅黑线、靛蓝和胭脂红、和纸颗粒",
+  "swatch": [
+   "#1d3557",
+   "#e5383b"
+  ]
+ },
+ {
+  "id": "pencil",
+  "group": "绘画",
+  "names": {
+   "zh": "铅笔素描",
+   "en": "Pencil sketch",
+   "vi": "Chì"
+  },
+  "prompt": "铅笔素描：交叉排线、纸张颗粒、灰阶明暗",
+  "swatch": [
+   "#6c757d",
+   "#f8f9fa"
+  ]
+ },
+ {
+  "id": "pastel",
+  "group": "绘画",
+  "names": {
+   "zh": "彩铅童话",
+   "en": "Coloured pencil",
+   "vi": "Bút chì màu"
+  },
+  "prompt": "彩铅绘本：柔和的线条叠色、留纸白、童话般的亲切感",
+  "swatch": [
+   "#ffcad4",
+   "#b8e0d2"
+  ]
+ },
+ {
+  "id": "poster",
+  "group": "绘画",
+  "names": {
+   "zh": "复古海报",
+   "en": "Vintage poster",
+   "vi": "Poster cổ điển"
+  },
+  "prompt": "复古丝网海报：三到五个平涂色、粗颗粒、强烈的图形化构图",
+  "swatch": [
+   "#e07a5f",
+   "#3d405b"
+  ]
+ },
+ {
+  "id": "film_35",
+  "group": "胶片",
+  "names": {
+   "zh": "35mm 胶片",
+   "en": "35mm film",
+   "vi": "Phim 35mm"
+  },
+  "prompt": "35mm 电影胶片：柔和高光滚降、细腻颗粒、略带青绿的暗部",
+  "swatch": [
+   "#335c67",
+   "#e09f3e"
+  ]
+ },
+ {
+  "id": "kodak_warm",
+  "group": "胶片",
+  "names": {
+   "zh": "暖调胶片",
+   "en": "Warm film stock",
+   "vi": "Phim tông ấm"
+  },
+  "prompt": "暖调胶片：金色肤色、奶油般的高光、轻微褪色的黑位",
+  "swatch": [
+   "#bc6c25",
+   "#fefae0"
+  ]
+ },
+ {
+  "id": "fuji_green",
+  "group": "胶片",
+  "names": {
+   "zh": "清冷胶片",
+   "en": "Cool film stock",
+   "vi": "Phim tông lạnh"
+  },
+  "prompt": "清冷胶片：偏绿的阴影、低饱和、干净的中间调",
+  "swatch": [
+   "#588157",
+   "#dad7cd"
+  ]
+ },
+ {
+  "id": "bw_film",
+  "group": "胶片",
+  "names": {
+   "zh": "黑白胶片",
+   "en": "Black and white film",
+   "vi": "Phim đen trắng"
+  },
+  "prompt": "黑白胶片：丰富的灰阶、明显颗粒、柔和的光晕",
+  "swatch": [
+   "#212529",
+   "#adb5bd"
+  ]
+ },
+ {
+  "id": "polaroid",
+  "group": "胶片",
+  "names": {
+   "zh": "宝丽来",
+   "en": "Instant film",
+   "vi": "Ảnh lấy ngay"
+  },
+  "prompt": "即显胶片：偏色的暗部、低对比、轻微漏光和柔焦",
+  "swatch": [
+   "#e9d8a6",
+   "#94d2bd"
+  ]
+ },
+ {
+  "id": "vhs",
+  "group": "胶片",
+  "names": {
+   "zh": "录像带",
+   "en": "VHS",
+   "vi": "VHS"
+  },
+  "prompt": "录像带质感：扫描线、色彩溢出、噪点和轻微画面抖动",
+  "swatch": [
+   "#7b2cbf",
+   "#00b4d8"
+  ]
+ },
+ {
+  "id": "realistic",
+  "group": "写实",
+  "names": {
+   "zh": "电影写实",
+   "en": "Cinematic realism",
+   "vi": "Hiện thực điện ảnh"
+  },
+  "prompt": "电影级写实：真实皮肤毛孔、自然光比、浅景深、细微的镜头呼吸感",
+  "swatch": [
+   "#344e41",
+   "#a3b18a"
+  ]
+ },
+ {
+  "id": "documentary",
+  "group": "写实",
+  "names": {
+   "zh": "纪实手持",
+   "en": "Documentary",
+   "vi": "Tài liệu"
+  },
+  "prompt": "纪实摄影：自然环境光、略粗的颗粒、不修饰的皮肤和生活化构图",
+  "swatch": [
+   "#6b705c",
+   "#cb997e"
+  ]
+ },
+ {
+  "id": "period_drama",
+  "group": "写实",
+  "names": {
+   "zh": "古装正剧",
+   "en": "Period drama",
+   "vi": "Cổ trang"
+  },
+  "prompt": "古装正剧质感：烛火与天光混合、丝绸和铜器的真实反光、沉稳的低饱和",
+  "swatch": [
+   "#582f0e",
+   "#b6ad90"
+  ]
+ },
+ {
+  "id": "wuxia",
+  "group": "写实",
+  "names": {
+   "zh": "武侠",
+   "en": "Wuxia",
+   "vi": "Võ hiệp"
+  },
+  "prompt": "武侠电影：竹林薄雾、逆光飞尘、衣袂飘动、青灰为主调",
+  "swatch": [
+   "#4f772d",
+   "#d8e2dc"
+  ]
+ },
+ {
+  "id": "xianxia",
+  "group": "写实",
+  "names": {
+   "zh": "仙侠",
+   "en": "Xianxia",
+   "vi": "Tiên hiệp"
+  },
+  "prompt": "仙侠奇观：云海仙山、发光的法术粒子、轻纱与金饰、高亮度梦幻色",
+  "swatch": [
+   "#c8b6ff",
+   "#ffd6ff"
+  ]
+ },
+ {
+  "id": "noir",
+  "group": "写实",
+  "names": {
+   "zh": "黑色电影",
+   "en": "Film noir",
+   "vi": "Film noir"
+  },
+  "prompt": "黑色电影：百叶窗投影、硬光和大片阴影、烟雾、冷峻的单色",
+  "swatch": [
+   "#14213d",
+   "#fca311"
+  ]
+ },
+ {
+  "id": "thriller",
+  "group": "写实",
+  "names": {
+   "zh": "冷调悬疑",
+   "en": "Cold thriller",
+   "vi": "Hồi hộp lạnh"
+  },
+  "prompt": "冷调悬疑：青蓝色调、低照度、皮肤发灰、空间压迫感",
+  "swatch": [
+   "#0b3954",
+   "#7fb7be"
+  ]
+ },
+ {
+  "id": "romance",
+  "group": "写实",
+  "names": {
+   "zh": "暖光甜宠",
+   "en": "Warm romance",
+   "vi": "Lãng mạn"
+  },
+  "prompt": "甜宠剧质感：柔焦、奶油色高光、粉橘色调、清透的皮肤",
+  "swatch": [
+   "#ffafcc",
+   "#ffc8a2"
+  ]
+ },
+ {
+  "id": "cyberpunk",
+  "group": "科幻",
+  "names": {
+   "zh": "赛博朋克",
+   "en": "Cyberpunk",
+   "vi": "Cyberpunk"
+  },
+  "prompt": "赛博朋克：雨夜霓虹、品红和青色反光的湿地面、全息招牌、机械义体",
+  "swatch": [
+   "#ff006e",
+   "#3a86ff"
+  ]
+ },
+ {
+  "id": "atompunk",
+  "group": "科幻",
+  "names": {
+   "zh": "原子朋克",
+   "en": "Atompunk",
+   "vi": "Atompunk"
+  },
+  "prompt": "原子朋克：五十年代未来主义、圆润金属、奶油色和电光青、胶片感",
+  "swatch": [
+   "#00a896",
+   "#f0f3bd"
+  ]
+ },
+ {
+  "id": "steampunk",
+  "group": "科幻",
+  "names": {
+   "zh": "蒸汽朋克",
+   "en": "Steampunk",
+   "vi": "Steampunk"
+  },
+  "prompt": "蒸汽朋克：黄铜齿轮、皮革、煤烟和蒸汽、暖褐色调",
+  "swatch": [
+   "#7f5539",
+   "#ddb892"
+  ]
+ },
+ {
+  "id": "wasteland",
+  "group": "科幻",
+  "names": {
+   "zh": "废土",
+   "en": "Wasteland",
+   "vi": "Hoang tàn"
+  },
+  "prompt": "废土：沙尘、锈蚀金属、拼凑的装备、褪色的土黄调",
+  "swatch": [
+   "#a68a64",
+   "#582f0e"
+  ]
+ },
+ {
+  "id": "space",
+  "group": "科幻",
+  "names": {
+   "zh": "硬科幻太空",
+   "en": "Hard sci-fi",
+   "vi": "Khoa học viễn tưởng"
+  },
+  "prompt": "硬科幻：真实比例的飞船、单一强光源、深黑太空和冷白灯带",
+  "swatch": [
+   "#03045e",
+   "#caf0f8"
+  ]
+ },
+ {
+  "id": "toy_block",
+  "group": "趣味",
+  "names": {
+   "zh": "积木小人",
+   "en": "Toy bricks",
+   "vi": "Gạch đồ chơi"
+  },
+  "prompt": "积木玩具世界：塑料光泽、凸点、微距浅景深、圆柱形小人",
+  "swatch": [
+   "#ffbe0b",
+   "#fb5607"
+  ]
+ },
+ {
+  "id": "miniature",
+  "group": "趣味",
+  "names": {
+   "zh": "移轴微缩",
+   "en": "Tilt-shift miniature",
+   "vi": "Thu nhỏ"
+  },
+  "prompt": "移轴微缩：极浅景深、高饱和、把场景拍成模型的俯视感",
+  "swatch": [
+   "#80ed99",
+   "#57cc99"
+  ]
+ },
+ {
+  "id": "felt",
+  "group": "趣味",
+  "names": {
+   "zh": "毛毡手作",
+   "en": "Felt craft",
+   "vi": "Nỉ thủ công"
+  },
+  "prompt": "羊毛毡手作：绒毛纤维、缝线细节、柔和棚灯和微缩布景",
+  "swatch": [
+   "#ffb5a7",
+   "#cdb4db"
+  ]
+ }
+]

@@ -65,6 +65,9 @@ LIMBS_REQUIREMENT = (
 )
 
 
+CAPTURE_LAYERS = frozenset({"", "background", "mask"})
+
+
 class CaptureError(ValueError):
     """The upload, or what was asked of a capture, is not acceptable; the message says why."""
 
@@ -131,6 +134,8 @@ class CaptureUpload:
     labelled: bool = False
     # A depth pass: a grayscale picture of distance, not of the white models.
     depth: bool = False
+    # A control frame: "" is the whole stage, "background" the set with nobody on it, "mask" the cast white on black.
+    layer: str = ""
     width: int = 0
     height: int = 0
     duration_s: float = 0.0
@@ -141,6 +146,12 @@ def validate_upload(upload: CaptureUpload) -> str:
     """The proven media type of an acceptable upload; raises :class:`CaptureError` otherwise."""
     if upload.kind not in _KINDS:
         raise CaptureError("kind 只能是 still、clip 或 backdrop")
+    if upload.layer not in CAPTURE_LAYERS:
+        raise CaptureError(f"不认识的控制帧类型 {upload.layer}")
+    if upload.layer and upload.kind != "still":
+        raise CaptureError("控制帧只能是静帧")
+    if upload.layer and upload.depth:
+        raise CaptureError("控制帧和深度画面不能同时选")
     if not upload.content:
         raise CaptureError("上传的文件是空的")
     proven = sniff_media(upload.content[:4096])
@@ -288,6 +299,7 @@ def add_capture(task: dict[str, Any], scene_id: str, upload: CaptureUpload, url:
         # Only a clip can show limbs *moving*, which is what blockout rule 2 is about.
         "shows_limbs": bool(upload.shows_limbs), "monochrome": bool(upload.monochrome), "labelled": bool(upload.labelled),
         "depth": bool(upload.depth),
+        "layer": upload.layer,
         "created_at": datetime.now(timezone.utc).isoformat(), "stale": False,
         "warning": DEPTH_WARNING if upload.depth else LIMBS_WARNING if upload.shows_limbs else "",
     }
@@ -322,6 +334,8 @@ def apply_capture(task: dict[str, Any], scene_id: str, capture_id: str) -> dict[
         raise CaptureError("背景图只在导演台的机位画面里作参考，不能应用到分镜")
     if capture.get("stale"):
         raise CaptureError("这条截取是按旧站位拍的，站位已修改；请在导演台重新截取后再应用")
+    if capture.get("layer") == "mask":
+        raise CaptureError("人物遮罩是黑白控制图，不能应用为首帧；把它连到支持遮罩的工具或下载使用")
     if capture.get("depth") and capture["kind"] == "still":
         # A first-frame reference is copied by the video model; a depth picture would be copied as a grey frame.
         raise CaptureError("深度静帧不能作为首帧参考图应用到分镜；请导出深度视频作为运动参考，或截取普通静帧")

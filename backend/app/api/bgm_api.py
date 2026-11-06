@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from app.api.auth_api import get_current_user
+from app.platform.access_audit import record_access_from_thread
+from app.platform.permissions import authorize
 from app.core import bgm_library
 
 router = APIRouter(prefix="/api/library/bgm", tags=["配乐库"])
@@ -52,7 +54,12 @@ def delete_bgm(track_id: str, current_user: dict = Depends(get_current_user)):
     track = bgm_library.get_track(track_id)
     if not track:
         raise HTTPException(status_code=404, detail="配乐不存在")
-    if track.get("owner_id") and track["owner_id"] != str(current_user.get("user_id")) and current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="只能删除自己上传的配乐")
+    owner_id = str(track.get("owner_id") or "")
+    if owner_id:
+        decision = authorize(current_user, owner_id=owner_id, write=True)
+        if not decision.allowed:
+            raise HTTPException(status_code=403, detail="只能删除自己上传的配乐")
+        if decision.cross_account:
+            record_access_from_thread(current_user, resource_id=f"bgm:{track_id}", owner_id=owner_id, write=True, via="bgm.delete")
     bgm_library.remove_track(track_id)
     return {"id": track_id, "deleted": True}

@@ -1,3 +1,4 @@
+from decimal import Decimal
 import asyncio
 import base64
 import json
@@ -136,7 +137,7 @@ class PlatformApiTests(unittest.TestCase):
         user_cookie = self._cookie(self.user.id)
         listed = self.client.get("/api/platform/capabilities", cookies=user_cookie)
         self.assertEqual(listed.status_code, 200)
-        self.assertEqual(listed.json()["total"], 20)
+        self.assertEqual(listed.json()["total"], 23)
         ability = listed.json()["items"][0]["abilities"][0]
         source_id = listed.json()["items"][0]["source_id"]
 
@@ -184,7 +185,7 @@ class PlatformApiTests(unittest.TestCase):
             patch("app.api.element_api.fetch_remote_image_bytes", return_value=VALID_PNG),
             patch("app.api.element_api.ELEMENT_MEDIA_ROOT", Path(self.temp.name) / "generated-elements"),
         ):
-            for kind in ("actor", "prop", "scene", "costume", "effect"):
+            for kind in ("actor", "prop", "scene", "effect"):
                 created = self.client.post(
                     "/api/elements",
                     json={"kind": kind, "name": f"{kind}-sample", "description": "fixture"},
@@ -267,7 +268,7 @@ class PlatformApiTests(unittest.TestCase):
         self.assertEqual(private_image.status_code, 200, private_image.text)
         self.assertEqual(private_image.content, VALID_PNG)
 
-    def test_prop_regeneration_stores_front_left_right_and_back_views(self):
+    def test_prop_regeneration_stores_the_views_this_object_needs_and_a_scale_board(self):
         cookie = self._cookie(self.user.id)
         element = self.client.post(
             "/api/elements",
@@ -288,20 +289,173 @@ class PlatformApiTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200, response.text)
         slots = {item["slot"] for item in response.json()["files"]}
-        self.assertEqual(slots, {"prop_front", "prop_left_45", "prop_right_45", "prop_back", "reference"})
+        self.assertEqual(slots, {"prop_front", "prop_back", "prop_side", "prop_in_use", "prop_board", "reference"})
         prompt = generate_image.call_args.args[1]
-        self.assertIn("2 行 × 2 列四宫格", prompt)
-        self.assertIn("右下格：背面", prompt)
+        self.assertIn("2 行 × 2 列网格", prompt)
+        self.assertIn("第 2 格：背面", prompt)
+        self.assertIn("一只成年人的手", prompt)
+        self.assertIn("严禁任何文字、数字、刻度", prompt)
         self.assertNotIn("九宫格、接触表和重复物体", prompt)
         self.assertEqual(generate_image.call_args.kwargs["size"], "2048x2048")
 
-    def test_costume_and_effect_prompts_enforce_their_visual_asset_boundaries(self):
+    def _regenerated_prop(self, cookie, image_root, **fields):
+        element = self.client.post("/api/elements", json={"kind": "prop", **fields}, cookies=cookie).json()
+        with (
+            patch(
+                "app.api.element_api.element_image_gateway.generate_image",
+                return_value=("https://assets.example.test/token-views.png", "seedance"),
+            ),
+            patch("app.api.element_api.fetch_remote_image_bytes", return_value=_prop_turnaround_png()),
+        ):
+            response = self.client.post(f"/api/elements/{element['id']}/regenerate", json={"prompt": ""}, cookies=cookie)
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()
+
+    def test_setting_a_prop_size_redraws_the_board_without_calling_a_model(self):
         cookie = self._cookie(self.user.id)
-        costume = self.client.post(
+        image_root = Path(self.temp.name) / "prop-size"
+        with patch("app.api.element_api.ELEMENT_MEDIA_ROOT", image_root):
+            element = self._regenerated_prop(cookie, image_root, name="青铜令牌", description="刻虎纹")
+            self.assertEqual(element["prop_scale"], {"longest_cm": 10.0, "manual_cm": None, "source": "estimate"})
+            board = next(file for file in element["files"] if file["slot"] == "prop_board")
+            front = next(file for file in element["files"] if file["slot"] == "prop_front")
+            with patch("app.api.element_api.element_image_gateway.generate_image") as generate_image:
+                sized = self.client.put(
+                    f"/api/elements/{element['id']}/prop-size", json={"length_cm": 22.5}, cookies=cookie,
+                )
+            self.assertEqual(sized.status_code, 200, sized.text)
+            generate_image.assert_not_called()
+            self.assertEqual(sized.json()["prop_scale"], {"longest_cm": 22.5, "manual_cm": 22.5, "source": "manual"})
+            files = {file["slot"]: file for file in sized.json()["files"]}
+            self.assertNotEqual(files["prop_board"]["sha256"], board["sha256"], "the board was drawn again")
+            self.assertEqual(files["prop_front"]["sha256"], front["sha256"], "the views were left alone")
+
+            cleared = self.client.put(f"/api/elements/{element['id']}/prop-size", json={"length_cm": None}, cookies=cookie)
+            self.assertEqual(cleared.json()["prop_scale"], {"longest_cm": 10.0, "manual_cm": None, "source": "estimate"})
+
+    def test_a_size_in_the_description_counts_and_changing_it_redraws_the_board(self):
+        cookie = self._cookie(self.user.id)
+        image_root = Path(self.temp.name) / "prop-described"
+        with patch("app.api.element_api.ELEMENT_MEDIA_ROOT", image_root):
+            element = self._regenerated_prop(cookie, image_root, name="青铜令牌", description="长约12厘米")
+            self.assertEqual(element["prop_scale"]["source"], "description")
+            board = next(file for file in element["files"] if file["slot"] == "prop_board")
+            changed = self.client.patch(f"/api/elements/{element['id']}", json={"description": "长约18厘米"}, cookies=cookie)
+            self.assertEqual(changed.json()["prop_scale"]["longest_cm"], 18.0)
+            self.assertNotEqual(next(file for file in changed.json()["files"] if file["slot"] == "prop_board")["sha256"], board["sha256"])
+            same = self.client.patch(f"/api/elements/{element['id']}", json={"description": "长约18厘米，有锈"}, cookies=cookie)
+            self.assertEqual(
+                next(file for file in same.json()["files"] if file["slot"] == "prop_board")["sha256"],
+                next(file for file in changed.json()["files"] if file["slot"] == "prop_board")["sha256"],
+            )
+
+    def test_the_size_set_by_hand_reaches_the_next_generation(self):
+        cookie = self._cookie(self.user.id)
+        element = self.client.post("/api/elements", json={"kind": "prop", "name": "长剑"}, cookies=cookie).json()
+        sized = self.client.put(f"/api/elements/{element['id']}/prop-size", json={"length_cm": 180}, cookies=cookie)
+        self.assertEqual(sized.status_code, 200, sized.text)
+        self.assertEqual(sized.json()["prop_scale"]["longest_cm"], 180.0)
+        image_root = Path(self.temp.name) / "prop-next"
+        with (
+            patch(
+                "app.api.element_api.element_image_gateway.generate_image",
+                return_value=("https://assets.example.test/token-views.png", "seedance"),
+            ) as generate_image,
+            patch("app.api.element_api.fetch_remote_image_bytes", return_value=_prop_turnaround_png()),
+            patch("app.api.element_api.ELEMENT_MEDIA_ROOT", image_root),
+        ):
+            self.client.post(f"/api/elements/{element['id']}/regenerate", json={"prompt": ""}, cookies=cookie)
+        prompt = generate_image.call_args.args[1]
+        self.assertIn("最长边约 180 厘米", prompt)
+        self.assertIn("人台", prompt, "at this length a hand can no longer show the size")
+
+    def test_with_the_sandbox_off_nobody_gets_points_for_nothing(self):
+        cookie = self._cookie(self.user.id)
+        listed = self.client.get("/api/billing/plans").json()
+        self.assertFalse(listed["sandbox_enabled"])
+        order = self.client.post(
+            "/api/billing/orders",
+            json={"plan_id": listed["items"][0]["id"], "provider": "sandbox", "idempotency_key": "free-points-1"},
+            cookies=cookie,
+        )
+        self.assertEqual(order.status_code, 422)
+        self.assertEqual(self.client.post("/api/billing/orders/any/sandbox-confirm", cookies=cookie).status_code, 404)
+        self.assertEqual(Decimal(str(self.client.get("/api/billing/wallet", cookies=cookie).json()["points"])), 0)
+
+    def test_an_order_made_while_the_sandbox_was_on_cannot_be_confirmed_once_it_is_off(self):
+        cookie = self._cookie(self.user.id)
+        plan_id = self.client.get("/api/billing/plans").json()["items"][0]["id"]
+        with patch.dict("os.environ", {"PAYMENT_SANDBOX_ENABLED": "1"}):
+            order = self.client.post(
+                "/api/billing/orders",
+                json={"plan_id": plan_id, "provider": "sandbox", "idempotency_key": "left-over-1"},
+                cookies=cookie,
+            ).json()
+        confirmed = self.client.post(f"/api/billing/orders/{order['id']}/sandbox-confirm", cookies=cookie)
+        self.assertEqual(confirmed.status_code, 404)
+        self.assertEqual(Decimal(str(self.client.get("/api/billing/wallet", cookies=cookie).json()["points"])), 0)
+
+    def test_prop_size_is_checked_and_only_for_props(self):
+        cookie = self._cookie(self.user.id)
+        prop = self.client.post("/api/elements", json={"kind": "prop", "name": "长剑"}, cookies=cookie).json()
+        for bad in (0, -3, 0.1, 99999):
+            response = self.client.put(f"/api/elements/{prop['id']}/prop-size", json={"length_cm": bad}, cookies=cookie)
+            self.assertEqual(response.status_code, 422, bad)
+        scene = self.client.post("/api/elements", json={"kind": "scene", "name": "天牢"}, cookies=cookie).json()
+        self.assertEqual(self.client.put(f"/api/elements/{scene['id']}/prop-size", json={"length_cm": 10}, cookies=cookie).status_code, 422)
+        self.assertNotIn("prop_scale", scene)
+        self.assertEqual(self.client.put("/api/elements/nope/prop-size", json={"length_cm": 10}, cookies=cookie).status_code, 404)
+
+    def test_a_prop_with_only_the_old_four_views_keeps_its_size_for_next_time(self):
+        cookie = self._cookie(self.user.id)
+        prop = self.client.post("/api/elements", json={"kind": "prop", "name": "长剑"}, cookies=cookie).json()
+        image_root = Path(self.temp.name) / "prop-old"
+        with patch("app.api.element_api.ELEMENT_MEDIA_ROOT", image_root):
+            for slot in ("prop_front", "prop_left_45", "prop_right_45", "prop_back"):
+                uploaded = self.client.post(
+                    f"/api/elements/{prop['id']}/files", data={"slot": slot},
+                    files={"file": ("v.png", _prop_turnaround_png(), "image/png")}, cookies=cookie,
+                )
+                self.assertEqual(uploaded.status_code, 200, uploaded.text)
+            sized = self.client.put(f"/api/elements/{prop['id']}/prop-size", json={"length_cm": 70}, cookies=cookie)
+        self.assertEqual(sized.status_code, 200, sized.text)
+        self.assertEqual(sized.json()["prop_scale"]["manual_cm"], 70.0)
+        self.assertNotIn("prop_board", {file["slot"] for file in sized.json()["files"]})
+
+    def test_scene_regeneration_stores_an_empty_plate_in_four_views(self):
+        cookie = self._cookie(self.user.id)
+        element = self.client.post(
             "/api/elements",
-            json={"kind": "costume", "name": "玄黑官袍大氅", "description": "玄黑织金官袍与落地大氅"},
+            json={"kind": "scene", "name": "雨夜书房", "description": "深夜书房，左侧木门，右侧花窗，书案居中"},
             cookies=cookie,
         ).json()
+        with (
+            patch(
+                "app.api.element_api.element_image_gateway.generate_image",
+                return_value=("https://assets.example.test/study-views.png", "seedream"),
+            ) as generate_image,
+            patch("app.api.element_api.fetch_remote_image_bytes", return_value=_scene_turnaround_png()),
+            patch("app.api.element_api.ELEMENT_MEDIA_ROOT", Path(self.temp.name) / "generated-scene-views"),
+        ):
+            response = self.client.post(
+                f"/api/elements/{element['id']}/regenerate", json={"prompt": ""}, cookies=cookie,
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        files = {item["slot"]: item for item in response.json()["files"]}
+        self.assertEqual(set(files), {"scene_main", "scene_45", "scene_depth", "scene_detail", "reference"})
+        # 主场景全景同时是卡片上的主参考图。
+        self.assertEqual(files["reference"]["sha256"], files["scene_main"]["sha256"])
+        prompt = generate_image.call_args.args[1]
+        for phrase in (
+            "无人, 纯场景", "no humans", "不出现任何人物", "左上格：主场景全景", "右上格：45°斜角",
+            "左下格：纵深视角", "右下格：关键细节", "画面左侧是什么、右侧是什么", "色温与时段", "材质", "门高约2米",
+        ):
+            self.assertIn(phrase, prompt)
+        self.assertNotIn("不出现抢眼人物", prompt)
+        self.assertEqual(generate_image.call_args.kwargs["size"], "2848x1600")
+
+    def test_effect_prompt_enforces_its_visual_asset_boundary(self):
+        cookie = self._cookie(self.user.id)
         effect = self.client.post(
             "/api/elements",
             json={"kind": "effect", "name": "祭火爆燃", "description": "琥珀火舌沿浸油柴枝迅速蔓延"},
@@ -320,50 +474,43 @@ class PlatformApiTests(unittest.TestCase):
             patch("app.api.element_api.fetch_remote_image_bytes", return_value=VALID_PNG),
             patch("app.api.element_api.ELEMENT_MEDIA_ROOT", Path(self.temp.name) / "boundary-images"),
         ):
-            for element in (costume, effect):
-                response = self.client.post(
-                    f"/api/elements/{element['id']}/regenerate",
-                    json={"prompt": "严格遵循资产类别"},
-                    cookies=cookie,
-                )
-                self.assertEqual(response.status_code, 200, response.text)
+            response = self.client.post(
+                f"/api/elements/{effect['id']}/regenerate",
+                json={"prompt": "严格遵循资产类别"},
+                cookies=cookie,
+            )
+            self.assertEqual(response.status_code, 200, response.text)
 
-        costume_prompt, effect_prompt = prompts
-        self.assertIn("玄黑官袍大氅", costume_prompt)
-        # 服装穿在无五官的全身人台上，出 16:9 的四视图加细节展示板。
-        self.assertIn("全身人体模特(人台)", costume_prompt)
-        self.assertIn("无五官的蛋形头", costume_prompt)
-        self.assertIn("正面、左侧90度侧面、背面、右前方45度三分之四侧面", costume_prompt)
-        self.assertIn("三格细节特写", costume_prompt)
-        self.assertNotIn("无模特", costume_prompt)
-        self.assertNotIn("九宫格、接触表和重复物体", costume_prompt)
-        self.assertEqual(sizes, ["2848x1600", None])
+        effect_prompt = prompts[0]
+        self.assertEqual(sizes, [None])
         self.assertIn("祭火爆燃", effect_prompt)
         self.assertIn("特效现象本身", effect_prompt)
         self.assertIn("不是道具", effect_prompt)
         self.assertIn("不是场景", effect_prompt)
 
-    def test_costume_prompt_drops_the_actors_hair_beard_and_makeup_but_keeps_headwear(self):
-        from app.api.element_api import _costume_wardrobe_text
-
-        text = _costume_wardrobe_text(
-            "裴崇穿着；绛紫色宽袖圆领官袍，足踏厚底黑靴；花白头发束顶，戴黑底金线幞头，须发花白且须长及胸；"
-            "乌发梳低髻，缠素白色窄布巾，鬓边无饰；乌发梳高髻，两侧贴金箔花钿，插赤金点翠步摇。"
-        )
-        for gone in ("头发", "须", "髻", "鬓边", "花钿"):
-            self.assertNotIn(gone, text)
-        for kept in ("绛紫色宽袖圆领官袍", "厚底黑靴", "黑底金线幞头", "素白色窄布巾", "赤金点翠步摇"):
-            self.assertIn(kept, text)
+    def test_an_older_costume_element_is_kept_but_no_longer_drawn(self):
+        cookie = self._cookie(self.user.id)
+        costume = self.client.post(
+            "/api/elements", json={"kind": "costume", "name": "玄黑官袍大氅", "description": "玄黑织金官袍"}, cookies=cookie,
+        ).json()
+        with patch("app.api.element_api.element_image_gateway.generate_image") as generate_image:
+            refused = self.client.post(f"/api/elements/{costume['id']}/regenerate", json={"prompt": ""}, cookies=cookie)
+            bulk = self.client.post("/api/elements/generation-jobs", json={"kind": "costume"}, cookies=cookie)
+        self.assertEqual(refused.status_code, 422)
+        self.assertIn("角色妆造", refused.json()["detail"])
+        self.assertEqual(bulk.status_code, 422)
+        generate_image.assert_not_called()
+        self.assertEqual(self.client.get(f"/api/elements/{costume['id']}", cookies=cookie).status_code, 200)
 
     def test_bulk_generation_can_replace_existing_reference_images_when_explicitly_requested(self):
         cookie = self._cookie(self.user.id)
         element = self.client.post(
             "/api/elements",
             json={
-                "kind": "costume",
-                "name": "赭红凤袍",
-                "description": "赭红缂丝凤纹礼服",
-                "metadata": {"task_id": "task-costume-refresh"},
+                "kind": "effect",
+                "name": "祭火爆燃",
+                "description": "琥珀火舌",
+                "metadata": {"task_id": "task-effect-refresh"},
             },
             cookies=cookie,
         ).json()
@@ -378,7 +525,7 @@ class PlatformApiTests(unittest.TestCase):
         with (
             patch(
                 "app.api.element_api.element_image_gateway.generate_image",
-                return_value=("https://assets.example.test/new-costume.png", "seedream"),
+                return_value=("https://assets.example.test/new-effect.png", "seedream"),
             ) as generate_image,
             patch("app.api.element_api.fetch_remote_image_bytes", return_value=VALID_PNG),
             patch("app.api.element_api.ELEMENT_MEDIA_ROOT", Path(self.temp.name) / "replacement-images"),
@@ -386,8 +533,8 @@ class PlatformApiTests(unittest.TestCase):
             started = self.client.post(
                 "/api/elements/generation-jobs",
                 json={
-                    "kind": "costume",
-                    "task_id": "task-costume-refresh",
+                    "kind": "effect",
+                    "task_id": "task-effect-refresh",
                     "replace_existing": True,
                 },
                 cookies=cookie,
@@ -485,7 +632,7 @@ class PlatformApiTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 200, response.text)
 
-        def generate_image(_model, prompt):
+        def generate_image(_model, prompt, size=None):
             if "故障场景" in prompt:
                 raise RuntimeError("provider unavailable")
             return "https://assets.example.test/scene.png", "seedance"
@@ -1211,6 +1358,7 @@ class PlatformApiTests(unittest.TestCase):
             self.assertTrue(Path(mapping["quarantined_path"]).exists())
             self.assertTrue(any(str(old_public_path) in entry for entry in logs.output))
 
+    @patch.dict("os.environ", {"PAYMENT_SANDBOX_ENABLED": "1"})
     def test_user_center_and_sandbox_payment_are_operational(self):
         cookie = self._cookie(self.user.id)
         center = self.client.get("/api/users/me", cookies=cookie)
@@ -1244,6 +1392,26 @@ class PlatformApiTests(unittest.TestCase):
         self.assertEqual(rejected.status_code, 403)
         self.assertEqual(rejected.json()["detail"], "请求来源不受信任")
 
+
+
+def _scene_turnaround_png() -> bytes:
+    """一张 16:9 的 2×2 场景四视角：四格铺满带纹理的画面，格间是白缝。"""
+    import io
+    import random
+
+    from PIL import Image as PILImage, ImageDraw
+
+    image = PILImage.new("RGB", (1424, 800), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    generator = random.Random(5)
+    for left, top, right, bottom in ((0, 0, 706, 394), (718, 0, 1424, 394), (0, 406, 706, 800), (718, 406, 1424, 800)):
+        for y in range(top, bottom, 6):
+            for x in range(left, right, 6):
+                value = 40 + generator.randint(0, 120)
+                draw.rectangle((x, y, min(x + 5, right - 1), min(y + 5, bottom - 1)), fill=(value, value - 10, value - 30))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _prop_turnaround_png() -> bytes:

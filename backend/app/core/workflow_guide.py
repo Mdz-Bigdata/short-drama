@@ -1,5 +1,6 @@
 """Read-only, output-backed guidance shared by chat, polling and scheduling."""
 
+from app.core import episode_cycle
 import hashlib
 import json
 import re
@@ -8,7 +9,7 @@ from typing import Any, Callable
 STAGE_GUIDANCE = {
     1: "先确定题材、受众、人物冲突和整季方向。请检查总导演方案是否符合您的创作目标。",
     2: "将方案写成分集剧本和场景大纲。请检查集数连续、剧情与对白完整。",
-    3: "建立数字演员、场地、道具、服装和特效资产。请检查角色造型与剧本设定一致。",
+    3: "建立数字演员（每身戏服和妆效各有一张定妆图）、场地、道具和特效资产。请检查角色造型与剧本设定一致。",
     4: "按每集、每场剧情制作分镜，并关联本场演员与拍摄资产。请检查画面内容和镜头衔接。",
     5: "把确认的分镜制作成视频镜头。请检查人物一致性、动作与画面连续性。",
     6: "制作角色配音、音效和配乐。请检查台词、情绪、音量与画面对齐。",
@@ -217,7 +218,10 @@ def build_workflow_snapshot(
             review_view = _review_summary(assets)
             if review_view and review_view.get("message"):
                 hint += f"\n{review_view['message']}。审核门不拦截，但建议先在编剧面板逐集确认，再进入角色设计。"
-        if next_stage == 4:
+        cycle_line = episode_cycle.status_line(task)
+        if cycle_line:
+            hint += "\n" + cycle_line
+        elif next_stage == 4:
             episodes = (assets.get("4_progress") or {}).get("episodes", [])
             done = sum(
                 isinstance(item, dict) and bool(item.get("complete"))

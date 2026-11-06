@@ -28,6 +28,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core import prompt_data
+
 Medium = Literal["live_action", "anime_2d", "anime_3d", "mixed"]
 _HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
@@ -72,7 +74,7 @@ class SoundDefaults(BaseModel):
     ambience_allowed: bool = True
     signature_sfx: list[str] = Field(default_factory=list, max_length=20)
     closing_sentence: str = Field(
-        "仅生成动作音效、对白音效与环境音效；不要BGM；无字幕；无水印。", max_length=200,
+        "仅生成动作音效、对白音效与环境音效；不要BGM；无字幕；无水印。", max_length=300,
     )
 
 
@@ -93,6 +95,8 @@ class StylePack(BaseModel):
     situational_negatives: dict[str, list[str]] = Field(default_factory=dict)
     anti_leak: list[str] = Field(default_factory=list, max_length=12)
     extension_restatement: str = Field(max_length=300)
+    # 画质段(《运镜提示词》Pa2)：这个媒介下「画质好」具体指什么——材质、光影物理、发光体、运动模糊。
+    quality: str = Field("", max_length=400)
     sound: SoundDefaults = Field(default_factory=SoundDefaults)
     # What the Ark request's ``style_caption`` field carries for this look.
     style_caption: str = Field(max_length=600)
@@ -107,23 +111,14 @@ class StylePack(BaseModel):
 # ---------------------------------------------------------------------------------------------
 # The packs
 
-_LIVE_ACTION_NEGATIVES = [
-    "NOT 3D rendered", "NOT CGI", "NOT video game graphics", "NOT plastic look", "NOT wax figure skin",
-    "NOT cartoon", "NOT anime", "NOT illustration", "NOT 强磨皮美颜", "无字幕", "无水印",
-]
-_LIVE_ACTION_POSITIVES = [
-    "photorealistic live-action footage", "real physical scene captured through a camera lens",
-    "film grain visible", "lens imperfection", "micro-details and surface wear",
-    "natural lighting inconsistency", "dust particles in air", "motion blur on fast objects",
-]
-_SITUATIONAL = {
-    "multi_person": ["绝对禁止面部特征互换", "绝对禁止换装", "no character face-swap", "no identity confusion"],
-    "extension": ["禁止生硬切镜", "禁止物体凭空出现", "禁止人物凭空消失"],
-    "audio_driven": ["no lip-sync error", "口型与台词逐字同步"],
-    "green_screen": ["no glowing edge around composited characters", "背景无渐变无阴影"],
-    "fight": ["NOT slow motion", "NOT speed ramping", "no frozen pose", "no foot sliding"],
-    "night": ["NOT clear blue sky", "NOT even daylight"],
-}
+# Pa2 的画质段、常驻负向词、情境负向词：都是数据(app/data/prompt/iron_rules.json)，这里只读。
+LIVE_ACTION_QUALITY = str(prompt_data.value("iron_rules", "quality")["live_action"])
+ANIME_2D_QUALITY = str(prompt_data.value("iron_rules", "quality")["anime_2d"])
+ANIME_3D_QUALITY = str(prompt_data.value("iron_rules", "quality")["anime_3d"])
+
+_LIVE_ACTION_NEGATIVES = list(prompt_data.words("iron_rules", "live_action_negatives"))
+_LIVE_ACTION_POSITIVES = list(prompt_data.words("iron_rules", "live_action_positives"))
+_SITUATIONAL = {key: list(items) for key, items in prompt_data.value("iron_rules", "situational_negatives").items()}
 
 FILM_35MM = StylePack(
     id="film_35mm",
@@ -163,6 +158,7 @@ FILM_35MM = StylePack(
         "白模反偷懒铁律：白模仅作调度与机位参考 + 绝对禁止白模材质残留 + 绝对禁止轨迹线、坐标线与相机cone入画",
     ],
     extension_restatement="全片保持35mm胶片质感、胶片颗粒与色卡色彩不变。",
+    quality=LIVE_ACTION_QUALITY,
     sound=SoundDefaults(bgm_policy="none", ambience_allowed=True, signature_sfx=[]),
     style_caption=(
         "35mm 胶片电影实拍质感，photorealistic live-action film still, Kodak Vision3 500T grain, "
@@ -225,6 +221,7 @@ ATOM_PUNK = StylePack(
         "像素面板铁律：像素观感只出现在面板上，身体、服装与世界保持实拍质感",
     ],
     extension_restatement="全片保持原子朋克实拍工业质感、Vision3 500T 颗粒与色卡色彩不变；磨损与油污延续并可累积。",
+    quality=LIVE_ACTION_QUALITY,
     sound=SoundDefaults(
         bgm_policy="none", ambience_allowed=True,
         signature_sfx=["金属碰撞 metal clank", "液压嘶声 hydraulic hiss", "盖革计数器滴答 Geiger ticks", "电子管嗡鸣 tube hum", "面板提示音 panel beep"],
@@ -274,6 +271,7 @@ ANIME_2D_CEL = StylePack(
         "实拍参考反偷懒铁律：实拍参考图仅作构图与光位参考 + 绝对禁止照片质感、皮肤毛孔与镜头颗粒进入画面",
     ],
     extension_restatement="全片保持同一套线稿粗细、赛璐珞二阶阴影与色卡色彩不变，角色比例与脸型不变。",
+    quality=ANIME_2D_QUALITY,
     sound=SoundDefaults(bgm_policy="none", ambience_allowed=True, signature_sfx=[]),
     style_caption=(
         "2D 赛璐珞动画漫剧，cel-shaded anime illustration, clean line art, flat colours with two-step shadows, "
@@ -294,7 +292,7 @@ ANIME_3D_CG = StylePack(
         "not live-action footage + not 2D flat illustration",
     ],
     tone_slots=["类型调性", "节奏词", "结尾beat", "画幅", "光线时段"],
-    tone_default="仙侠史诗调性 + 蓄力后爆发的节奏 + 结尾悬念beat + 9:16 + 逆光时段",
+    tone_default="仙侠调性 + 蓄力后爆发的节奏 + 结尾悬念beat + 9:16 + 逆光时段",
     camera=CameraKit(body="虚拟摄影机", lens="35mm / 85mm 等效", stock="", grain="无颗粒", per_shot_swap_allowed=True),
     palette=PaletteRules(
         through_colours=[
@@ -319,6 +317,7 @@ ANIME_3D_CG = StylePack(
         "白模反偷懒铁律：白模仅作调度与机位参考 + 绝对禁止白模材质残留 + 绝对禁止轨迹线、坐标线与相机cone入画",
     ],
     extension_restatement="全片保持同一套 3D 材质、光照方案与色卡色彩不变，角色模型与脸部绑定不变。",
+    quality=ANIME_3D_QUALITY,
     sound=SoundDefaults(bgm_policy="none", ambience_allowed=True, signature_sfx=[]),
     style_caption=(
         "3D 国漫 CG 动画，stylised 3D CG animation, UE5-class PBR rendering, volumetric light, "
@@ -349,6 +348,7 @@ CINEMATIC_REALISM = StylePack(
         "故事板反偷懒铁律：分镜图仅作构图机位参考 + 绝对禁止九宫格拼版、线稿质感与文字标注进入画面",
     ],
     extension_restatement="全片保持真人实拍电影质感与色彩基调不变。",
+    quality=LIVE_ACTION_QUALITY,
     sound=SoundDefaults(bgm_policy="none", ambience_allowed=True, signature_sfx=[]),
     style_caption=(
         "真实电影质感，实拍写真，photorealistic live-action cinematic film still, "
@@ -436,6 +436,10 @@ def tone_line(pack: StylePack, values: Mapping[str, str] | None = None) -> str:
     return " + ".join(part for part in parts if part)
 
 
+# 场景里本来就有的字(匾额、对联、招牌)要留着；禁的是叠加上去的。只写「无文字」模型会去擦背景。
+SIGNAGE_RULE = prompt_data.text("iron_rules", "signage_rule")
+
+
 def style_lock_block(pack: StylePack, tone: Mapping[str, str] | str | None = None) -> str:
     """The first layer of every prompt: the lock verbatim, then this segment's tone line."""
     line = tone if isinstance(tone, str) and tone.strip() else tone_line(pack, tone if isinstance(tone, Mapping) else None)
@@ -508,17 +512,9 @@ _LEAK_KINDS: dict[str, str] = {
     "live_photo": "实拍参考",
 }
 
+# 具名铁律：规则名与模板(可带 {subjects} / {restatement})，见 app/data/prompt/iron_rules.json。
 IRON_RULES: dict[str, tuple[str, str]] = {
-    "identity": ("主体身份铁律", "{subjects}严格按各自参考图渲染 + 不可改造 + 禁止互串。"),
-    "parts": ("造型部件铁律", "部件清单全部可见 + 禁止增减配件 + 禁止左右换位。"),
-    "camera": ("机位铁律", "景别与运镜只用本镜声明的方式 + 无变焦 + 无环绕 + 仅 handheld 微抖。"),
-    "palette": ("色卡锚定铁律", "所有色彩严格按色卡执行 + 不可偏离色板。"),
-    "physics": ("物理铁律", "道具不凭空消失、受力合理、动作因果清楚。"),
-    "mask": ("遮罩铁律", "遮罩必须接近全黑或全白（near total）+ 禁止半灰 + 遮罩之后禁止再出现可见元素。"),
-    "extension": ("延长重申铁律", "{restatement}"),
-    "reference_cap": ("参考图限量铁律", "单次投喂核心锚定不超过 9 个，超限按场景组分批。"),
-    "lip_sync": ("口型同步铁律", "嘴部动作与台词逐字同步；无台词时闭口聆听。"),
-    "multi_person": ("多人身份铁律", "多人同框时各按各自设定图渲染 + 绝对禁止面部特征互换 + 绝对禁止换装。"),
+    key: (str(name), str(template)) for key, (name, template) in prompt_data.value("iron_rules", "iron_rules").items()
 }
 
 
@@ -581,9 +577,10 @@ def describe(pack: StylePack) -> dict[str, Any]:
 
 
 __all__ = [
-    "ANIME_2D_CEL", "ANIME_3D_CG", "ATOM_PUNK", "CINEMATIC_REALISM", "DEFAULT_PACK_ID", "FILM_35MM", "IRON_RULES",
+    "ANIME_2D_CEL", "ANIME_2D_QUALITY", "ANIME_3D_CG", "ANIME_3D_QUALITY", "ATOM_PUNK", "CINEMATIC_REALISM", "DEFAULT_PACK_ID",
+    "FILM_35MM", "IRON_RULES", "LIVE_ACTION_QUALITY",
     "CameraKit", "PaletteCard", "PaletteColour", "PaletteRules", "SoundDefaults", "StylePack",
     "build_palette_card", "caption_for", "describe", "get_pack", "identity_negative", "image_style_line",
-    "iron_rules", "list_packs", "negatives_for", "register_custom",
+    "SIGNAGE_RULE", "iron_rules", "list_packs", "negatives_for", "register_custom",
     "palette_lines", "resolve_pack", "style_lock_block", "tone_line",
 ]

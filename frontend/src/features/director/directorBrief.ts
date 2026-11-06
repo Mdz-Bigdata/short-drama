@@ -27,7 +27,7 @@ export const DELIVERABLE_LABELS: Record<string, string> = {
   transition_plan: '转场方案', subtitle_package: '字幕包', mastered_timeline: '母版时间线', export_profiles: '导出规格',
   delivery_archive: '交付归档', final_qc: '成片终检', highlight_clips: '高光切片', cover_title_variants: '封面与标题备选',
   trailer_plan: '预告方案', platform_copy_tags: '平台文案与标签', ab_test_plan: 'A/B 测试方案', localization_package: '本地化素材包',
-  rights_ai_disclosure: '版权与 AI 标识', campaign_kpis: '投放指标',
+  rights_ai_disclosure: '版权与授权', campaign_kpis: '投放指标',
 };
 
 // English the planning model tends to mix in, and the Chinese a reader expects. Units and model terms

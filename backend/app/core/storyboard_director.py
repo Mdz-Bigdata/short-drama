@@ -13,7 +13,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from app.core.face_card import fit_face_text_to_framing
 from app.core.frame_position import render_frame_positions
-from app.core.transition_catalog import describe_transition, normalize_transition_type
+from app.core.transition_catalog import describe_transition, normalize_transition_type, smooth_text
 from app.schema.storyboard_director import (
     ContinuityCheckItem,
     StoryboardDirectorRequest,
@@ -51,6 +51,19 @@ _META_LABELS = {
 }
 _SENTENCE_SPLIT = re.compile(r"(?<=[。！？!?；;])\s*")
 _MILLISECOND = Decimal("0.001")
+
+
+# A continuation chain keeps only the last few segments in view (Seedance 2.5: about 4–6).
+# The space is written out once, then only "同一<场所>" + what changes, and every
+# SPACE_SNAPSHOT_EVERY-th segment restates a compact snapshot before the memory runs out.
+SPACE_SNAPSHOT_EVERY = 4
+
+
+def space_restatement(index: int) -> str:
+    """``full`` / ``snapshot`` / ``same``: how much of the space segment ``index`` (1-based) restates."""
+    if index <= 1:
+        return "full"
+    return "snapshot" if index % SPACE_SNAPSHOT_EVERY == 0 else "same"
 
 
 def _q(value: Decimal) -> Decimal:
@@ -217,6 +230,15 @@ class StoryboardDirectorCompiler:
             f"{item.name}：{item.relative_position}（{item.form_and_count}）"
             for item in request.scene.landmarks
         )
+
+    @staticmethod
+    def _space_snapshot(request: StoryboardDirectorRequest) -> str:
+        """Landmark sides and distances without their form notes: the compact restatement of the set."""
+        return "；".join(f"{item.name}：{item.relative_position}" for item in request.scene.landmarks)
+
+    @staticmethod
+    def _key_light(request: StoryboardDirectorRequest) -> str:
+        return f"主光{request.continuity.key_light_direction}，{request.color.color_temperature}"
 
     @staticmethod
     def _damage_until(request: StoryboardDirectorRequest, seconds: float) -> str:
@@ -453,9 +475,11 @@ class StoryboardDirectorCompiler:
         request: StoryboardDirectorRequest, beats: list[StoryboardTimeBeat]
     ) -> list[VideoSegmentPrompt]:
         segments: list[VideoSegmentPrompt] = []
+        # Faces, costume, background and camera path are already stated as locks in the same
+        # prompt; naming them again as things to avoid only puts the words back in front of the
+        # model. What stays here has no positive line of its own.
         exclusions = [
-            "镜头漂移", "角色变脸", "服装变化", "肢体畸形", "背景跳动", "速度突变",
-            "瞬移", "穿模", "物体闪现", "肢体重置", "新增人物道具动作或特效",
+            "肢体畸形", "瞬移", "穿模", "物体闪现", "肢体重置", "新增人物道具动作或特效",
         ]
         compiler = StoryboardDirectorCompiler
         landmarks = compiler._landmarks(request)
@@ -472,12 +496,14 @@ class StoryboardDirectorCompiler:
             if index == 1:
                 transition_lines += (
                     f"【转场·入】{describe_transition(entry.transition_type)}；来自{entry.adjacent_shot}；"
-                    f"视觉承接：{entry.visual_handoff}；声音承接：{entry.audio_handoff}。\n"
+                    f"视觉承接：{smooth_text(entry.visual_handoff)}；声音承接：{smooth_text(entry.audio_handoff)}；"
+                    "连贯自然过渡，不硬切。\n"
                 )
             if index == len(beats) - 1:
                 transition_lines += (
                     f"【转场·出】{describe_transition(exit_edge.transition_type)}；交给{exit_edge.adjacent_shot}；"
-                    f"视觉交接：{exit_edge.visual_handoff}；声音交接：{exit_edge.audio_handoff}。\n"
+                    f"视觉交接：{smooth_text(exit_edge.visual_handoff)}；声音交接：{smooth_text(exit_edge.audio_handoff)}；"
+                    "连贯自然过渡，不硬切。\n"
                 )
             prompt = (
                 f"视频片段{index}：连续瞬间{start.index}→连续瞬间{end.index}，"
@@ -495,9 +521,8 @@ class StoryboardDirectorCompiler:
                 f"路径{request.camera.path}；方向{request.camera.direction}；速度{request.camera.speed_curve}；"
                 f"跟随{request.camera.subject_following}；对焦{request.camera.focus_change}；"
                 f"稳定性{request.camera.stability}。\n"
-                f"【空间锚定】地标（相对角色方位与距离）：{landmarks or '按场景结构锁定，位置、形态、数量不变'}；"
-                f"画面坐标：{frame_positions or '保持首帧站位与屏幕朝向'}；"
-                f"地面{request.scene.ground_material}；{request.continuity.mirror_lock}。\n"
+                + compiler._space_line(request, index, end, landmarks, frame_positions)
+                + f"【光向】{compiler._key_light(request)}；光比{request.color.light_ratio}；本段主光方向与色温不变。\n"
                 + compiler._extras_line(request) +
                 f"【色调变化】从“{start.color_state}”连续过渡到“{end.color_state}”，"
                 f"只由“{request.color.change_reason}”驱动。\n"
@@ -528,6 +553,32 @@ class StoryboardDirectorCompiler:
                 exclusions=exclusions,
             ))
         return segments
+
+    @staticmethod
+    def _space_line(
+        request: StoryboardDirectorRequest, index: int, end: StoryboardTimeBeat, landmarks: str, frame_positions: str,
+    ) -> str:
+        """The space, said once in full; later segments say 同一<场所> and what changes, with a snapshot every few."""
+        mode = space_restatement(index)
+        place = request.scene.location
+        if mode == "full":
+            return (
+                f"【空间锚定】{place}：{request.scene.spatial_structure}；"
+                f"地标（相对角色方位与距离）：{landmarks or '按场景结构锁定，位置、形态、数量不变'}；"
+                f"画面坐标：{frame_positions or '保持首帧站位与屏幕朝向'}；"
+                f"地面{request.scene.ground_material}；{request.continuity.mirror_lock}。\n"
+            )
+        if mode == "snapshot":
+            # The light line follows every segment, so the snapshot itself carries only the set.
+            snapshot = StoryboardDirectorCompiler._space_snapshot(request)
+            return (
+                f"【空间快照】同一{place}：{snapshot or request.scene.spatial_structure}；"
+                f"画面坐标：{frame_positions or '保持首帧站位与屏幕朝向'}；{request.continuity.mirror_lock}。\n"
+            )
+        return (
+            f"【空间锚定】同一{place}，空间布局与地标位置以起始关键帧画面为准，不重新描述；"
+            f"本段变化：{end.change_from_previous}；{request.continuity.mirror_lock}。\n"
+        )
 
     @staticmethod
     def _grid_pages(
@@ -690,7 +741,7 @@ class StoryboardDirectorCompiler:
                     for edge in (request.transitions.entry, request.transitions.exit)
                 ),
                 severity="warning",
-                detail="入场与出场转场均使用转场词典中的剪辑类型（硬切/淡入淡出/叠化/闪白/划像/推拉/匹配剪辑/蒙太奇/声音先行）。",
+                detail="入场与出场转场均使用转场词典中的连贯过渡类型（匹配剪辑/推拉/叠化/淡入淡出/声音先行/闪白/划像/蒙太奇），不用硬切。",
             ),
             ContinuityCheckItem(
                 code="transitions_explicit",
@@ -768,7 +819,11 @@ class StoryboardDirectorCompiler:
                 code="reference_material_scoped",
                 passed=bool(request.global_visual.reference_image_policy.strip())
                 and bool(request.global_visual.reference_video_policy.strip()),
-                detail="参考图片只取外形材质、参考视频只锁外观，不照搬姿势或复刻旧动作。",
+                detail=(
+                    "参考图片只取外形材质、参考视频只借身体轨迹与发力节奏，不继承其长相、服装与场景。"
+                    if request.global_visual.reference_video_role == "motion_trajectory" else
+                    "参考图片只取外形材质、参考视频只锁外观，不照搬姿势或复刻旧动作。"
+                ),
             ),
         ])
         checks.extend(request.spatial_checks)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from app.core.storyboard_director import space_restatement
 from app.schema.production import (
     Sd25Asset,
     Sd25CompileRequest,
@@ -39,7 +40,8 @@ class Sd25PromptCompiler:
             "style": "只采用可见风格，不替换人物、场景和剧情事实",
             "action": "不采用素材中的人物身份、服装和场景",
             "camera": "不采用素材中的人物身份、服装和场景",
-            "voice": "只采用音色、语速和情绪，不覆盖文字台词",
+            # 参考音频里的语速和情绪会原样带进生成，所以只借音色，节奏与情绪按本句的表达方式走。
+            "voice": "只采用音色（嗓音质感与音高），不采用参考里的语速和情绪，不覆盖文字台词",
             "music": "只用于音乐结构和情绪，不作为对白或环境声",
             "sound": "只用于声明的声音来源",
             "keyframe": "只定义声明的关键状态，不替换未声明的主体、场景或风格",
@@ -113,7 +115,7 @@ class Sd25PromptCompiler:
     def _dialogue_lines(request: Sd25CompileRequest) -> list[str]:
         lines: list[str] = []
         for entry in request.dialogue:
-            audio = f"，音色参考{entry.audio_ref}" if entry.audio_ref else ""
+            audio = f"，音色参考{entry.audio_ref}（只取音色，语速与情绪按本句表达）" if entry.audio_ref else ""
             language = f"使用{entry.language}" if entry.language else "按输入语言"
             spoken = f" {{{entry.text}}}" if entry.text else "；不编造用户未提供的台词原文"
             lines.append(
@@ -399,6 +401,11 @@ class Sd25PromptCompiler:
             request.goal.strip(),
             "延长过程中保持人物身份与服装、关键道具、背景布局、摄影轴线和原有声音环境连续；同一主体始终是一个连续对象，不重复、不分裂，身体结构和部件数量稳定。",
         ])
+        if request.key_light.strip():
+            parts.append(f"光线：主光{request.key_light.strip()}，延长片段内主光方向与色温不变。")
+        # 续写链只在第一段和每隔几段写一次空间快照，其余段落只写同一场所里的动作与变化。
+        if request.space_snapshot.strip() and request.chain_index and space_restatement(request.chain_index) != "same":
+            parts.append(f"【空间快照】{request.space_snapshot.strip()}")
         if before:
             parts.append("只属于原视频后续的角色、道具或特效不得提前出现。")
         if unused:

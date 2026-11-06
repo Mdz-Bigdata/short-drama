@@ -22,6 +22,10 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.core import usage_ledger
+from app.core import slice_video
+from app.core.episode_cycle import clip_for, shot_uid
+from app.core.media_compositor import media_available
+from app.core.storyboard_scene_context import cast_aliases, is_uncast
 from app.core.screenwriting.durations import renderable_shot_durations
 from app.core.screenwriting.speech import speech_problems
 from app.core.video_references import MIN_SHOT_SECONDS, max_shot_seconds, normalize_video_provider
@@ -114,7 +118,8 @@ class BatchAdmission:
             parts = []
             for shot in self.shots:
                 if shot.quote == "blocked":
-                    parts.append(f"镜头 {shot.shot_id}：" + "；".join(problem.message for problem in shot.problems if problem.blocking))
+                    label = f"{shot.scene_id} 镜头 {shot.shot_id}" if shot.scene_id else f"镜头 {shot.shot_id}"
+                    parts.append(f"{label}：" + "；".join(problem.message for problem in shot.problems if problem.blocking))
             return "批量视频准入受阻，未提交任何镜头：" + " / ".join(parts[:8]) + ("…" if len(parts) > 8 else "")
         if self.decision == "confirmation_required":
             tiers = "、".join(f"{item['scripted_seconds']}s→{item['requested_seconds']}s×{item['shot_count']}" for item in self.confirmations)
@@ -157,14 +162,16 @@ def scripted_seconds(shot: Mapping[str, Any], model: str) -> int:
 
 
 def _characters_in(shot: Mapping[str, Any]) -> list[str]:
+    """本镜要锁脸的人：空镜标记、无名路人、按职务称呼的跑龙套都不算。"""
     names = shot.get("characters")
     if isinstance(names, list):
-        return [str(name).strip() for name in names if str(name).strip() and str(name).strip() not in {"无", "-"}]
+        return [str(name).strip() for name in names if not is_uncast(str(name))]
     return []
 
 
 def _clip_reusable(clip: Mapping[str, Any] | None) -> bool:
-    return bool(clip and clip.get("video_url") and not clip.get("stale"))
+    # 服务商的签名链接过期、本机文件丢了，这段就不能算复用：要重新生成，费用也要算进报价。
+    return bool(clip and clip.get("video_url") and not clip.get("stale") and media_available(str(clip["video_url"])))
 
 
 def assess_video_batch(
@@ -172,20 +179,41 @@ def assess_video_batch(
     *,
     provider_ready: Any = None,
     confirmed_request_durations: Sequence[Mapping[str, Any]] | None = None,
+    clip_ceiling: int | None = None,
+    provider_problem: Any = None,
 ) -> BatchAdmission:
     """Assess every stage-4 shot of ``task`` for stage 5.
 
     ``provider_ready(family, model) -> bool`` says whether the routed provider has
-    credentials; ``confirmed_request_durations`` is the list of
+    credentials; ``provider_problem(family, model) -> str`` (when given) says why the
+    project's model cannot be used, e.g. it is not enabled in the model centre;
+    ``confirmed_request_durations`` is the list of
     ``{"scripted_seconds", "requested_seconds"}`` pairs the person has accepted.
+
+    默认每个分镜片段一段视频(见 :mod:`app.core.slice_video`)：几个瞬间合成一次请求，费用和时长
+    按片段计，算在片段的第一个瞬间上；片段时长由规划保证落在模型档位内，不再逐镜确认档位。
+    ``clip_ceiling`` 是单次请求实际能拿到的最长秒数(网关按真正提交的型号给出)。
     """
     config = task.get("config") if isinstance(task.get("config"), Mapping) else {}
     assets = task.get("assets") if isinstance(task.get("assets"), Mapping) else {}
     model = str(config.get("video_model") or "")
     profile = normalize_video_provider(model)
     shots = [shot for shot in (assets.get("4") or []) if isinstance(shot, Mapping)]
-    clips = {str(clip.get("shot_id")): clip for clip in (assets.get("5") or []) if isinstance(clip, Mapping)}
+    # 镜号每场从 1 起，按全剧唯一的镜头编号对片段，不同场的同号镜头不会互相顶替。
+    # 旧片段没有场号，仍按镜号对上。
+    all_clips = [clip for clip in (assets.get("5") or []) if isinstance(clip, Mapping)]
+    clips = {shot_uid(clip): clip for clip in all_clips if clip.get("scene_id") or clip.get("shot_uid")}
+    legacy_clips = {str(clip.get("shot_id")): clip for clip in all_clips if not (clip.get("scene_id") or clip.get("shot_uid"))}
     sheets = assets.get("3_sheets") if isinstance(assets.get("3_sheets"), Mapping) else {}
+    aliases = cast_aliases(dict(task))
+    slicing = slice_video.enabled(config) and bool(model)
+    slice_of: dict[int, slice_video.Slice] = {}
+    if slicing:
+        ceiling = int(clip_ceiling or max_shot_seconds(model))
+        planned = {str(shot.get("scene_id") or ""): slice_video.planned_seconds(task, str(shot.get("scene_id") or "")) for shot in shots}
+        for piece in slice_video.plan(shots, ceiling=ceiling, planned=planned):
+            for index in piece.indexes:
+                slice_of[index] = piece
     # Admission asks what the model can render, not what the writer prefers to plan: a 4 s shot from an
     # older script is still a valid request for a model whose preferred range starts at 5 s.
     supported = renderable_shot_durations(model)
@@ -202,15 +230,25 @@ def assess_video_batch(
     model_problem: ShotProblem | None = None
     if not model:
         model_problem = ShotProblem(UNRESOLVABLE_MODEL, "项目未选择视频模型，无法决定提交给谁")
+    elif provider_problem is not None and (problem := provider_problem(profile.family, model)):
+        model_problem = ShotProblem(PROVIDER_NOT_READY, problem)
     elif provider_ready is not None and not provider_ready(profile.family, model):
         model_problem = ShotProblem(PROVIDER_NOT_READY, f"视频模型族 {profile.family} 没有可用的运行时凭据")
 
     assessments: list[ShotAssessment] = []
     for index, shot in enumerate(shots, start=1):
+        piece = slice_of.get(index - 1)
         shot_id = _int(shot.get("shot_id"), index)
         scene_id = str(shot.get("scene_id") or "")
         scripted = scripted_seconds(shot, model) if model else max(MIN_SHOT_SECONDS, _int(shot.get("duration"), MIN_SHOT_SECONDS))
         requested, adjustment = request_tier(scripted, supported) if model else (scripted, "exact")
+        if piece is not None:
+            # 片段的第一个瞬间承担整段请求(档位按整段时长取)；同片段的其余瞬间不另外请求。
+            if piece.indexes[0] == index - 1:
+                scripted = piece.seconds
+                requested, adjustment = request_tier(scripted, supported)
+            else:
+                requested, adjustment = 0, "exact"
         visual = shot.get("visual") if isinstance(shot.get("visual"), Mapping) else {}
         candidates = max(1, min(4, _int(visual.get("candidates"), 1))) if visual else 1
         problems: list[ShotProblem] = []
@@ -224,10 +262,14 @@ def assess_video_batch(
                 problems.append(ShotProblem(NEEDS_REPLAN, f"分镜 {scene_id} 的台词装不进任何时长档位，需先在分镜规划里重拆"))
             for code, message in speech_problems(scene):
                 problems.append(ShotProblem(code, message))
-        missing = [name for name in _characters_in(shot) if sheets and name not in sheets]
+        missing = [name for name in _characters_in(shot) if sheets and aliases.get(name, name) not in sheets]
         if missing:
             problems.append(ShotProblem(MISSING_ASSETS, "出场角色尚无身份视图：" + "、".join(missing)))
-        clip = clips.get(str(shot_id))
+        clip = clips.get(shot_uid({**shot, "shot_id": shot_id})) or legacy_clips.get(str(shot_id))
+        if slicing:
+            # 只有分镜片段视频能复用；按单个瞬间出的旧片不是同一个请求。
+            clip = clip_for({**shot, "shot_id": shot_id}, all_clips)
+            clip = clip if clip and clip.get("slice") else None
         if any(problem.blocking for problem in problems):
             quote: Quote = "blocked"
         elif _clip_reusable(clip):
@@ -240,7 +282,7 @@ def assess_video_batch(
                 f"剧本时长 {scripted} 秒不在模型档位内，将按 {requested} 秒请求（不裁剪）",
                 blocking=False,
             ))
-        estimate = usage_ledger.estimate(model, "video", {"seconds": requested * candidates}) if quote == "generate" else {"priced": True, "cost": 0.0, "currency": None}
+        estimate = usage_ledger.estimate(model, "video", {"seconds": requested * candidates}) if quote == "generate" and requested else {"priced": True, "cost": 0.0, "currency": None}
         assessments.append(ShotAssessment(
             shot_id=shot_id, scene_id=scene_id, quote=quote, scripted_seconds=scripted,
             requested_seconds=requested, tier_adjustment=adjustment, candidates=candidates,
@@ -308,7 +350,7 @@ def _batch_estimate(assessments: Sequence[ShotAssessment]) -> dict[str, Any]:
     cost = 0.0
     currency: str | None = None
     priced = True
-    generate = [shot for shot in assessments if shot.quote == "generate"]
+    generate = [shot for shot in assessments if shot.quote == "generate" and shot.requested_seconds]
     for shot in generate:
         if shot.estimate.get("priced") and shot.estimate.get("currency"):
             cost = round(cost + float(shot.estimate.get("cost") or 0.0), 6)

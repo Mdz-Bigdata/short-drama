@@ -1,0 +1,48 @@
+{
+  "category": "social_image",
+  "label": "社交媒体图片",
+  "recipes": [
+    {
+      "id": "social-drama-poster",
+      "name": "短剧竖版海报",
+      "description": "一部短剧的主视觉：一眼看出关系和冲突，片名区留白。",
+      "output_type": "image",
+      "inputs": [
+        {"name": "lead", "label": "主角形象", "required": true, "max_length": 200},
+        {"name": "rival", "label": "对手或爱人的形象", "required": true, "max_length": 200},
+        {"name": "conflict", "label": "两人的关系与冲突", "required": true, "max_length": 200},
+        {"name": "tone", "label": "基调", "type": "choice", "choices": ["冷峻悬疑", "炽烈虐恋", "明快爽感", "古装权谋"], "default": "炽烈虐恋"}
+      ],
+      "prompt": "竖版短剧海报主视觉，基调：{{tone}}。{{lead}}占据前景大半，{{rival}}在后方或对侧形成对角构图，两人的视线和站位直接说明：{{conflict}}。电影级布光，主色不超过两个，人物肤色真实。画面上方三分之一留出干净的暗部，供后期放片名。不写任何文字，不放 logo。人物面部以参考图为准。",
+      "negative": "文字，片名，水印，多余的人物，面部变形",
+      "params": {"aspect_ratio": "3:4"}
+    },
+    {
+      "id": "social-note-cover",
+      "name": "图文笔记封面",
+      "description": "信息流里三秒抓眼：一个主体、一个情绪、大块留白放标题。",
+      "output_type": "image",
+      "inputs": [
+        {"name": "subject", "label": "主体", "required": true, "max_length": 160},
+        {"name": "feeling", "label": "想传达的感觉", "required": true, "max_length": 80},
+        {"name": "style", "label": "风格", "type": "choice", "choices": ["胶片生活感", "干净棚拍", "手绘插画"], "default": "胶片生活感"}
+      ],
+      "prompt": "社交媒体图文封面，风格：{{style}}。主体只有一个：{{subject}}，放在画面下半部，传达{{feeling}}的感觉。上半部是大块干净的单色或虚化背景，留给后期放标题。色彩有记忆点但不刺眼，主体轮廓清晰，缩成手机上的小图也认得出。画面不写字。",
+      "negative": "文字，水印，杂乱的背景，多个主体抢视线",
+      "params": {"aspect_ratio": "3:4"}
+    },
+    {
+      "id": "social-episode-teaser",
+      "name": "追更预告图",
+      "description": "新一集发布时用的静帧：停在最想知道答案的那一秒。",
+      "output_type": "image",
+      "inputs": [
+        {"name": "moment", "label": "悬念时刻", "required": true, "max_length": 240},
+        {"name": "person", "label": "画面里的人", "required": true, "max_length": 120}
+      ],
+      "prompt": "短剧追更预告静帧，像从正片里截出来的一帧。{{person}}正处在这一刻：{{moment}}。构图只给足够引起好奇的信息，关键物体或另一个人留在画外或虚焦里。低调布光，带一点运动模糊，真实得不像海报。画面不写字，人物以参考图为准。",
+      "negative": "文字，水印，海报式摆拍，答案完全可见",
+      "params": {"aspect_ratio": "9:16"}
+    }
+  ]
+}

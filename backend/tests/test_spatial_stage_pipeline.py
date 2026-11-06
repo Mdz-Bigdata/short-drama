@@ -38,7 +38,7 @@ ROWS = [
 
 def _table(scene_id: str) -> str:
     return "\n".join(
-        f"| {index} | {size} | {angle} | {motion} | {desc} | | 环境声 | 3s | 线索 | {cast} | {scene_id} 办公室 |"
+        f"| {index} | {size} | {angle} | {motion} | {desc} | | 环境声 | 5s | 线索 | {cast} | {scene_id} 办公室 |"
         for index, (size, angle, motion, desc, cast) in enumerate(ROWS, start=1)
     )
 
@@ -49,7 +49,7 @@ def _task(task_id: str = "spatial-1") -> Dict[str, Any]:
         "owner_user_id": "director-user",
         "current_stage": 4,
         "status": "idle",
-        "config": {"llm_model": "m", "image_model": "img", "video_model": "v", "title_suggestion": "暗室回声"},
+        "config": {"stage_planner": "rules", "llm_model": "m", "image_model": "img", "video_model": "v", "title_suggestion": "暗室回声"},
         "assets": {
             "3_sheets": {"林夏": "http://img.test/lin.png", "周教授": "http://img.test/zhou.png"},
             "3_characters": [{"name": "林夏", "desc": "青灰大衣"}, {"name": "周教授", "desc": "花白头发"}],
@@ -121,7 +121,7 @@ class StageFourIntegrationTests(unittest.TestCase):
         for panel in panels:
             self.assertNotIn("沿场景圣经指定轴线", panel["action_axis"])   # no fixed wording left
         # The image prompt is compiled from the same contract (panels render concurrently, so pick by shot).
-        second = next(prompt for prompt in payload["image_prompts"] if "镜头2的首帧" in prompt)
+        second = payload["shots"][1]["storyboard_prompt"]
         self.assertIn("林夏恒在画左、周教授恒在画右", second)
         self.assertIn("遮挡画面右侧约四分之一", second)
 
@@ -156,6 +156,18 @@ class StageFourIntegrationTests(unittest.TestCase):
         self.assertTrue(detail["submission_ready"])
         self.assertIn("画面坐标：林夏位于画面左侧三分之一", detail["still_prompts"][0]["prompt"])
         self.assertTrue(audit_prompt_detail(detail)["passed"])
+
+    def test_profile_heights_and_set_sizes_reach_the_director(self):
+        self.task["assets"]["3_characters"][0]["desc"] = "青灰大衣，身高168cm"
+        detail = _generate(self.service, self.task, "E1S01")["prompt_detail"]
+
+        self.assertEqual(spatial_stage.load_plan(self.task, "E1S01").actor("林夏").height_m, 1.68)
+        scene = detail["foundation"]["scene_and_props"]
+        self.assertIn("林夏：站立，身高约168cm", scene["spatial_structure"])
+        forms = {item["name"]: item["form_and_count"] for item in scene["landmarks"]}
+        self.assertRegex(forms["录音笔"], r"^1处，宽约\d\.\d米.*高约\d\.\d米，位置固定$")
+        self.assertIn("录音笔：", detail["still_prompts"][0]["prompt"])
+        self.assertIn("高约", detail["still_prompts"][0]["prompt"])
 
     def test_an_error_level_spatial_failure_holds_the_scene_back_from_stage_five(self):
         payload = _generate(self.service, self.task, "E1S01")

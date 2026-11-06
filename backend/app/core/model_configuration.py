@@ -331,6 +331,7 @@ class DiscoveredModel(BaseModel):
 # first generation, and discovery says so instead of claiming verification.
 _DOCUMENTED_VIDEO_CATALOGS: Final[dict[str, tuple[tuple[str, str, str, tuple[str, ...]], ...]]] = {
     "kling": (
+        ("kling-v3", "Kling 3.0", "Kling Open Platform 视频模型，单段 3–15 秒", ("text-to-video", "first-frame", "first-last-frame")),
         ("kling-v2-6", "Kling 2.6", "Kling Open Platform 视频模型", ("text-to-video", "first-frame", "first-last-frame", "multi-reference")),
         ("kling-v2-5-turbo", "Kling 2.5 Turbo", "Kling Open Platform 视频模型", ("text-to-video", "first-frame", "first-last-frame", "multi-reference")),
         ("kling-v2-1", "Kling 2.1", "Kling Open Platform 视频模型", ("text-to-video", "first-frame", "first-last-frame", "multi-reference")),

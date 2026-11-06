@@ -1,0 +1,48 @@
+{
+  "category": "general_audio",
+  "label": "通用音频",
+  "recipes": [
+    {
+      "id": "audio-character-voice",
+      "name": "角色音色设计",
+      "description": "写给音色设计服务的描述：只讲声音本身，情绪保持中性。",
+      "output_type": "audio",
+      "inputs": [
+        {"name": "who", "label": "身份", "required": true, "max_length": 120},
+        {"name": "gender", "label": "性别", "type": "choice", "choices": ["女声", "男声"], "required": true},
+        {"name": "age", "label": "年龄", "required": true, "default": "三十岁左右", "max_length": 40},
+        {"name": "texture", "label": "音色质感", "required": true, "default": "清亮，略带颗粒", "max_length": 80},
+        {"name": "pace", "label": "语速", "type": "choice", "choices": ["偏慢", "适中", "偏快"], "default": "适中"}
+      ],
+      "prompt": "{{who}}，{{gender}}，{{age}}，音色{{texture}}，音高适中，咬字清晰，语速{{pace}}。情绪保持中性，陈述语气；干声，不含音乐、音效、环境声和混响。",
+      "params": {"use": "voice_design"}
+    },
+    {
+      "id": "audio-scene-ambience",
+      "name": "场景环境声",
+      "description": "一个地点的底噪，垫在对白下面不抢戏。",
+      "output_type": "audio",
+      "inputs": [
+        {"name": "place", "label": "地点", "required": true, "max_length": 160},
+        {"name": "time", "label": "时段与天气", "default": "深夜，小雨", "max_length": 80},
+        {"name": "accent", "label": "偶尔出现的声音", "max_length": 120}
+      ],
+      "prompt": "循环环境声：{{place}}，{{time}}。持续、平稳的空间底噪，有真实的远近层次。[[偶尔能听到{{accent}}，音量不高，间隔不规律。]]没有人声对白，没有音乐，没有突然的响声，适合垫在对白之下。",
+      "params": {"use": "sound_effect", "seconds": 20}
+    },
+    {
+      "id": "audio-score-brief",
+      "name": "配乐需求",
+      "description": "给一段戏写音乐需求：情绪走向讲清楚，不点名具体作品或歌手。",
+      "output_type": "audio",
+      "inputs": [
+        {"name": "moment", "label": "这段戏发生了什么", "required": true, "max_length": 240},
+        {"name": "arc", "label": "情绪走向", "required": true, "default": "由压抑到爆发", "max_length": 80},
+        {"name": "instruments", "label": "主要配器", "default": "钢琴与弦乐", "max_length": 80},
+        {"name": "seconds", "label": "时长（秒）", "type": "number", "default": "30", "minimum": 5, "maximum": 180}
+      ],
+      "prompt": "原创影视配乐，纯音乐无人声，时长约 {{seconds}} 秒。这段戏：{{moment}}。情绪走向：{{arc}}。配器以{{instruments}}为主，前段稀疏给对白留出空间，高潮只出现一次，结尾干净收住。",
+      "params": {"use": "music"}
+    }
+  ]
+}

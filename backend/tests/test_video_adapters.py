@@ -72,6 +72,65 @@ class VideoAdapterTests(unittest.TestCase):
         self.assertEqual(calls[1][:2], ("GET", "/v1/videos/image2video/task_1"))
         self.assertTrue(calls[1][2].startswith("Bearer "))
 
+    def test_kling_three_takes_the_planned_seconds_and_earlier_models_their_two_lengths(self):
+        duration = KlingVideoAdapter._duration
+        self.assertEqual([duration("kling-v3", seconds) for seconds in (3, 7, 12, 15, 20)], ["3", "7", "12", "15", "15"])
+        self.assertEqual(duration("kling-v3-omni", 15), "15")
+        self.assertEqual([duration("kling-v2-1", seconds) for seconds in (4, 5, 6, 15)], ["5", "5", "10", "10"])
+
+    def test_kling_three_sends_fifteen_seconds_on_the_wire(self):
+        bodies = []
+
+        def handler(request):
+            bodies.append(json.loads(request.content))
+            return httpx.Response(200, json={"code": 0, "data": {"task_id": "task_1", "task_status": "submitted"}})
+
+        adapter = KlingVideoAdapter(
+            api_key="ak_test:sk_test", base_url="https://api-singapore.klingai.com",
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            adapter.create_video(VideoJobRequest(
+                model="kling-v3", prompt="雨夜追逐", first_frame="https://cdn.example/first.png", duration_seconds=15,
+            ))
+        finally:
+            adapter.close()
+        self.assertEqual((bodies[0]["model_name"], bodies[0]["duration"]), ("kling-v3", "15"))
+
+    def test_kling_defaults_to_three_and_an_older_default_can_still_be_chosen(self):
+        bodies = []
+
+        def handler(request):
+            bodies.append(json.loads(request.content))
+            return httpx.Response(200, json={"code": 0, "data": {"task_id": "task_1", "task_status": "submitted"}})
+
+        adapter = KlingVideoAdapter(
+            api_key="ak_test:sk_test", base_url="https://api-singapore.klingai.com",
+            transport=httpx.MockTransport(handler),
+        )
+        older = KlingVideoAdapter(
+            api_key="ak_test:sk_test", base_url="https://api-singapore.klingai.com",
+            transport=httpx.MockTransport(handler), model_name="kling-v2-1",
+        )
+        request = VideoJobRequest(
+            model="kling", prompt="雨夜追逐", first_frame="https://cdn.example/first.png", duration_seconds=12,
+        )
+        with patch.dict("os.environ", {}, clear=False):
+            os.environ.pop("KLING_MODEL_NAME", None)
+            current = KlingVideoAdapter(
+                api_key="ak_test:sk_test", base_url="https://api-singapore.klingai.com",
+                transport=httpx.MockTransport(handler),
+            )
+        try:
+            current.create_video(request)
+            older.create_video(request)
+        finally:
+            adapter.close()
+            current.close()
+            older.close()
+        self.assertEqual((bodies[0]["model_name"], bodies[0]["duration"]), ("kling-v3", "12"))
+        self.assertEqual((bodies[1]["model_name"], bodies[1]["duration"]), ("kling-v2-1", "10"))
+
     def test_kling_multi_image_uses_image_list_and_refuses_multimodal_before_any_call(self):
         calls: list[str] = []
 

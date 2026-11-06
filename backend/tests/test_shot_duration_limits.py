@@ -32,11 +32,22 @@ class MaxShotSecondsTests(unittest.TestCase):
         for value in ("MiniMax-H3", "minimax_h3", "minimax h3", "MiniMax-Hailuo-2.3"):
             self.assertEqual(max_shot_seconds(value), 15, value)
 
-    def test_an_unknown_or_missing_model_falls_back_conservatively(self):
-        for value in ("", "   ", "some-new-model", "kling-o1"):
+    def test_an_unknown_or_missing_model_can_plan_a_fifteen_second_scene(self):
+        for value in ("", "   ", "some-new-model", "grok-imagine-video-1.5", "happyhorse-1"):
             self.assertEqual(max_shot_seconds(value), DEFAULT_MAX_SHOT_SECONDS, value)
-        # Conservative means short enough for anything, never longer than the shortest known cap.
-        self.assertLess(DEFAULT_MAX_SHOT_SECONDS, 15)
+        self.assertEqual(DEFAULT_MAX_SHOT_SECONDS, 15)
+
+    def test_a_model_whose_adapter_sends_shorter_clips_is_registered_at_its_real_cap(self):
+        from app.core.providers.video_adapters import LtxVideoAdapter
+
+        for value in ("kling-o1", "kling-v1-6", "kling-v2", "kling-v2-6", "Kling 2.6", "kling2.1", "ltx-2-3-pro"):
+            self.assertEqual(max_shot_seconds(value), 10, value)
+        for value in ("kling", "kling-v3", "kling-v3-omni", "Kling 3.0", "kling3"):
+            self.assertEqual(max_shot_seconds(value), 15, value)
+        self.assertEqual(max_shot_seconds("ltx-2-3-fast"), 15)
+        # What the plan may ask for is what the adapter actually sends.
+        self.assertEqual(LtxVideoAdapter.duration_for("ltx-2-3-pro", max_shot_seconds("ltx-2-3-pro")), 10)
+        self.assertGreaterEqual(LtxVideoAdapter.duration_for("ltx-2-3-fast", max_shot_seconds("ltx-2-3-fast")), 15)
 
     def test_the_minimax_cap_matches_the_provider_capability_registry(self):
         from app.core.providers.capabilities import ProviderCapabilityRegistry

@@ -226,3 +226,52 @@ class PromptFileResolutionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DroppedConnectionTests(unittest.TestCase):
+    """数据库在语句执行中途断开：重连后重试一次，第二次仍失败才报任务库不可用。"""
+
+    def _dropped(self):
+        from sqlalchemy.exc import OperationalError
+        return OperationalError("SELECT 1", {}, Exception("server closed the connection unexpectedly"))
+
+    def test_a_read_survives_one_dropped_connection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = TaskRepository(str(Path(tmp) / "tasks.json"))
+            repo.save_task("task-1", {"task_id": "task-1", "status": "running"})
+            real_connect = repo.engine.connect
+            calls = []
+
+            def flaky_connect(*args, **kwargs):
+                calls.append(1)
+                if len(calls) == 1:
+                    raise self._dropped()
+                return real_connect(*args, **kwargs)
+
+            with patch.object(repo.engine, "connect", side_effect=flaky_connect):
+                self.assertEqual(repo.get_task("task-1")["status"], "running")
+            self.assertEqual(len(calls), 2)
+
+    def test_a_mutation_survives_one_dropped_connection_and_a_second_drop_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = TaskRepository(str(Path(tmp) / "tasks.json"))
+            repo.save_task("task-1", {"task_id": "task-1", "n": 0})
+            real_begin = repo.engine.begin
+            calls = []
+
+            def flaky_begin(*args, **kwargs):
+                calls.append(1)
+                if len(calls) == 1:
+                    raise self._dropped()
+                return real_begin(*args, **kwargs)
+
+            def bump(task):
+                task["n"] += 1
+                return task["n"]
+
+            with patch.object(repo.engine, "begin", side_effect=flaky_begin):
+                self.assertEqual(repo.mutate_task("task-1", bump), 1)
+            self.assertEqual(repo.get_task("task-1")["n"], 1)
+            with patch.object(repo.engine, "begin", side_effect=self._dropped()):
+                with self.assertRaises(TaskStoreUnavailableError):
+                    repo.mutate_task("task-1", bump)

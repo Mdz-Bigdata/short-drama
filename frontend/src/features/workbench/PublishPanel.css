@@ -1,0 +1,174 @@
+/* 宣发 · 分享至社媒：平台按钮用各家品牌色，其余跟随全局主题 token */
+.publish-panel {
+  padding: 1.4rem;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow: var(--panel-shadow);
+}
+
+.publish-panel h3 {
+  margin-bottom: 1.1rem;
+  color: var(--ink);
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.publish-panel__platforms {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.publish-panel__platform {
+  position: relative;
+  min-height: 3.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  color: #fff;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  border: 2px solid transparent;
+  border-radius: 16px;
+  background: var(--platform-color);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--platform-color) 30%, transparent);
+  cursor: pointer;
+  opacity: 0.88;
+  transition: transform 150ms ease, opacity 150ms ease, box-shadow 180ms ease, border-color 150ms ease;
+}
+.publish-panel__platform:hover { opacity: 1; transform: translateY(-2px); }
+.publish-panel__platform.is-selected {
+  opacity: 1;
+  border-color: #fff;
+  box-shadow: 0 0 0 3px var(--platform-color), 0 12px 26px color-mix(in srgb, var(--platform-color) 40%, transparent);
+}
+.publish-panel__tick {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.55rem;
+  padding: 2px;
+  color: var(--platform-color);
+  background: #fff;
+  border-radius: 50%;
+}
+
+.publish-panel__prepare {
+  width: 100%;
+  min-height: 3.9rem;
+  margin-top: 1.3rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  color: #fff;
+  font: inherit;
+  font-size: 1.1rem;
+  font-weight: 700;
+  border: 0;
+  border-radius: 16px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  box-shadow: 0 12px 28px rgba(var(--accent-rgb), 0.3);
+  cursor: pointer;
+  transition: transform 150ms ease, filter 180ms ease, opacity 180ms ease;
+}
+.publish-panel__prepare:hover:not(:disabled) { transform: translateY(-1px); filter: saturate(1.1); }
+.publish-panel__prepare:disabled { cursor: not-allowed; opacity: 0.45; box-shadow: none; }
+
+.publish-panel__note { margin-top: 0.6rem; color: var(--text-muted); font-size: 0.76rem; text-align: center; }
+.publish-panel__error { margin-top: 0.6rem; color: var(--danger); font-size: 0.8rem; text-align: center; }
+
+.publish-panel__packages {
+  margin-top: 1.4rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  gap: 1rem;
+}
+
+.publish-package {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-top: 4px solid var(--platform-color);
+  border-radius: 16px;
+  background: var(--surface-2);
+}
+.publish-package header { display: flex; align-items: center; gap: 0.5rem; }
+.publish-package__dot { width: 0.65rem; height: 0.65rem; border-radius: 50%; background: var(--platform-color); }
+.publish-package header strong { color: var(--ink); font-size: 0.95rem; }
+.publish-package header em { padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.7rem; font-style: normal; }
+.publish-package header em.is-ready { color: var(--success); background: rgba(var(--success-rgb), 0.12); }
+.publish-package header em.is-blocked { color: var(--danger); background: rgba(var(--danger-rgb), 0.12); }
+.publish-package__copy-all {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.65rem;
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.74rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.publish-package__copy-all:hover { color: var(--accent); border-color: var(--accent); }
+
+.publish-package dl { display: grid; gap: 0.55rem; }
+.publish-package dl > div { display: grid; grid-template-columns: 2.6rem minmax(0, 1fr); gap: 0.5rem; align-items: start; }
+.publish-package dt { padding-top: 0.15rem; color: var(--text-muted); font-size: 0.72rem; }
+.publish-package dd { display: flex; align-items: flex-start; gap: 0.4rem; color: var(--text-main); font-size: 0.82rem; line-height: 1.5; }
+.publish-package dd > span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.publish-package__description { white-space: pre-line; max-height: 7.5rem; overflow-y: auto; }
+.publish-package dd button {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  color: var(--text-muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.publish-package dd button:hover { color: var(--accent); border-color: var(--accent); }
+.publish-package__tags { flex-wrap: wrap; }
+.publish-package__tags span { padding: 0.05rem 0.5rem; color: var(--accent); border-radius: 999px; background: rgba(var(--accent-rgb), 0.1); font-size: 0.74rem; }
+.publish-package__films { flex-direction: column; }
+.publish-package__films a { color: var(--accent); text-decoration: none; }
+.publish-package__films a:hover { text-decoration: underline; }
+
+.publish-package__checks { display: grid; gap: 0.3rem; margin: 0; padding: 0; list-style: none; }
+.publish-package__checks li { display: flex; align-items: flex-start; gap: 0.4rem; font-size: 0.74rem; line-height: 1.45; color: var(--text-muted); }
+.publish-package__checks li svg { flex: none; margin-top: 0.15rem; }
+.publish-package__checks li.is-error { color: var(--danger); }
+.publish-package__checks li.is-warning { color: var(--warning); }
+.publish-package__checks li.is-info { color: var(--info); }
+
+.publish-package footer { margin-top: auto; }
+.publish-package__upload {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.9rem;
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-decoration: none;
+  border-radius: 10px;
+  background: var(--platform-color);
+}
+.publish-package__offline { color: var(--text-muted); font-size: 0.76rem; }
+
+@media (max-width: 640px) {
+  .publish-panel__platforms { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .publish-panel__platform, .publish-panel__prepare { transition: none; }
+}

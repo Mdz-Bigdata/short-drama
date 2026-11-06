@@ -133,6 +133,9 @@ describe('WriterAgentPage', () => {
             genre: '都市悬疑',
             theme: '真相与信任的代价',
             world_setting: '近未来沿海都市，公共记忆可以被数字化存取。',
+            thesis: '记忆可以存取，信任不能。',
+            motif: '一盘空白录音带',
+            endingImage: '林夏把录音带放回导师桌上，没有按下播放。',
           },
         }}
         script="正文"
@@ -140,6 +143,11 @@ describe('WriterAgentPage', () => {
     );
 
     const overview = within(screen.getByRole('region', { name: '项目概述' }));
+    expect(overview.getByText('立意')).toBeTruthy();
+    expect(overview.getByText('记忆可以存取，信任不能。')).toBeTruthy();
+    expect(overview.getByText('母题')).toBeTruthy();
+    expect(overview.getByText('终局意象')).toBeTruthy();
+    expect(overview.getByText('林夏把录音带放回导师桌上，没有按下播放。')).toBeTruthy();
     expect(overview.getByText('题材')).toBeTruthy();
     expect(overview.getByText('都市悬疑')).toBeTruthy();
     expect(overview.getByText('核心主题')).toBeTruthy();
@@ -645,5 +653,26 @@ describe('WriterAgentPage', () => {
     expect(screen.getAllByText('关键证词交换').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('外部证人甲').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('外部证人乙').length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('WriterAgentPage breakdown download', () => {
+  afterEach(() => cleanup());
+
+  it('offers the breakdown as a sheet and as a document', async () => {
+    const onExportBreakdown = vi.fn();
+    const user = userEvent.setup();
+    render(<WriterAgentPage title="雨夜来信" script="第1集\n内景：书房 - 日\n沈砚抬头。" onExportBreakdown={onExportBreakdown} />);
+
+    await user.click(screen.getByRole('button', { name: '拆解单表格' }));
+    await user.click(screen.getByRole('button', { name: '拆解单文档' }));
+
+    expect(onExportBreakdown.mock.calls).toEqual([['csv'], ['md']]);
+  });
+
+  it('has nothing to offer when nothing can handle it', () => {
+    render(<WriterAgentPage title="雨夜来信" script="第1集" />);
+
+    expect(screen.queryByRole('button', { name: '拆解单表格' })).toBeNull();
   });
 });

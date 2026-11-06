@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from app import settings
 
 
-ElementKind = Literal["actor", "prop", "scene", "costume", "effect", "product"]
+ElementKind = Literal["actor", "prop", "scene", "costume", "effect", "product", "extra", "vehicle", "stunt", "set_dressing", "makeup"]
 ModelCategory = Literal["text", "image", "video", "audio"]
 
 
@@ -112,6 +113,28 @@ class ElementUpdateRequest(BaseModel):
     description: str | None = Field(default=None, max_length=4000)
 
 
+class PropSizeRequest(BaseModel):
+    """A prop's longest side in centimetres; null goes back to what the description or the kind of object says."""
+
+    length_cm: float | None = Field(default=None, ge=0.5, le=5000)
+
+
+class ElementFolderCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    cover_element_id: str | None = Field(default=None, max_length=36)
+
+
+class ElementFolderUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    # Absent keeps the cover; null clears it.
+    cover_element_id: str | None = Field(default="", max_length=36)
+
+
+class ElementFolderMoveRequest(BaseModel):
+    element_ids: list[str] = Field(min_length=1, max_length=200)
+    folder_id: str | None = Field(default=None, max_length=36)
+
+
 class ElementVariantRequest(BaseModel):
     """Mark an actor element as a derived look of another character."""
     of: str = Field(min_length=1, max_length=160)
@@ -129,6 +152,8 @@ class BulkRegenerateElementsRequest(BaseModel):
     kind: ElementKind
     task_id: str | None = Field(default=None, max_length=160)
     replace_existing: bool = False
+    # With kind "actor": the characters' costume looks rather than their actor sheets.
+    looks: bool = False
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -142,13 +167,31 @@ class PasswordChangeRequest(BaseModel):
 
 
 class AdminUserUpdateRequest(BaseModel):
-    role: Literal["admin", "editor", "user"] | None = None
-    status: Literal["active", "suspended"] | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["active", "suspended"]
+
+
+class PointRateCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = Field(min_length=1, max_length=160)
+    resolution: str = Field(default="", max_length=24)
+    kind: Literal["per_million_tokens", "per_image", "per_second", "per_thousand_characters", "per_call"]
+    input: Decimal = Field(default=Decimal(0), ge=0)
+    cached_input: Decimal = Field(default=Decimal(0), ge=0)
+    output: Decimal = Field(default=Decimal(0), ge=0)
+    price: Decimal = Field(default=Decimal(0), ge=0)
+    effective_from: datetime | None = None
+
+
+class UserRolesRequest(BaseModel):
+    roles: list[str] = Field(default_factory=list, max_length=8)
 
 
 class OrderCreateRequest(BaseModel):
     plan_id: str = Field(min_length=1, max_length=40)
-    provider: Literal["sandbox", "wechat", "alipay"] = "sandbox"
+    provider: Literal["sandbox", "wechat", "alipay"] | None = None
     idempotency_key: str = Field(min_length=8, max_length=120)
 
     @field_validator("idempotency_key")
@@ -159,9 +202,31 @@ class OrderCreateRequest(BaseModel):
         return value
 
 
-class PaymentWebhookPayload(BaseModel):
-    event_id: str = Field(min_length=1, max_length=160)
-    order_id: str = Field(min_length=1, max_length=36)
-    status: Literal["paid"]
-    amount: Decimal = Field(gt=0)
-    currency: str = Field(min_length=3, max_length=12)
+class OrderPayRequest(BaseModel):
+    provider: Literal["wechat", "alipay"]
+
+
+class RefundCreateRequest(BaseModel):
+    note: str = Field(min_length=1, max_length=500)
+    points: Decimal | None = Field(default=None, ge=0)
+    amount_minor: int | None = Field(default=None, gt=0)
+
+
+class RefundApproveRequest(BaseModel):
+    amount_minor: int | None = Field(default=None, gt=0)
+    note: str = Field(default="", max_length=500)
+
+
+class DecisionRequest(BaseModel):
+    note: str = Field(default="", max_length=500)
+
+
+class WalletAdjustmentRequest(BaseModel):
+    user_id: str = Field(min_length=1, max_length=36)
+    points: Decimal
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class ReconResolveRequest(BaseModel):
+    status: Literal["resolved", "ignored"]
+    resolution: str = Field(min_length=1, max_length=500)

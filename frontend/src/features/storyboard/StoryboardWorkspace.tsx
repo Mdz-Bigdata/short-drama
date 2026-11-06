@@ -1,5 +1,5 @@
-import { lazy, Suspense, useMemo, useState } from 'react';
-import { ArrowRight, Axis3d, Clapperboard, CheckCircle2, ChevronDown, ClipboardList, Download, FileText, Images, RefreshCw, Sparkles } from 'lucide-react';
+import { lazy, Suspense, useMemo, useState, type CSSProperties } from 'react';
+import { ArrowRight, Axis3d, Clapperboard, CheckCircle2, ChevronDown, ClipboardList, Download, FileText, Globe, Images, RefreshCw, Sparkles } from 'lucide-react';
 
 import { ExportDialog } from './ExportDialog';
 import { SpatialStageDialog } from '../spatial/SpatialStageDialog';
@@ -7,12 +7,15 @@ import { StoryboardPromptDialog } from './StoryboardPromptDialog';
 import { STORYBOARD_VISUAL_THEME } from './storyboardTheme';
 import { downloadStoryboardGrid, downloadStoryboardScene, downloadStoryboardShot } from './storyboardDownload';
 import type { StoryboardPromptDetail } from './storyboardPromptTypes';
+import type { StoryboardViewAction } from './storyboardActions';
 import './StoryboardWorkspace.css';
 import { t } from '../../i18n';
 
 
 // The desk pulls in the whole 3D workspace; it loads when someone opens it, not with the storyboard.
 const DirectorDesk = lazy(() => import('../directorDesk/DirectorDesk').then(m => ({ default: m.DirectorDesk })));
+const ImagePoolPanel = lazy(() => import('./ImagePoolPanel').then(m => ({ default: m.ImagePoolPanel })));
+const PanoramaPanel = lazy(() => import('../spatial/PanoramaPanel').then(m => ({ default: m.PanoramaPanel })));
 
 // 后端切点规划写在每一镜上的「切入本镜」方式（backend app/core/shot_transitions.py shot_summary）。
 export interface StoryboardCutIn {
@@ -23,6 +26,9 @@ export interface StoryboardCutIn {
   duration_seconds?: number;
   motion_join?: string;
   compositor?: string;
+  sound_join?: '' | 'j_cut' | 'l_cut';
+  sound_note?: string;
+  watch?: string;
 }
 
 export interface StoryboardShot {
@@ -43,6 +49,7 @@ export interface SceneBoardStatus {
   shots_total?: number;
   shots_done?: number;
   episode?: number;
+  error?: string;
   prompt_detail?: StoryboardPromptDetail;
   grid_prompt?: string;
 }
@@ -89,6 +96,8 @@ interface StoryboardWorkspaceProps {
   onRefresh: () => void;
   onRegenerate: () => void;
   onContinue?: () => void;
+  /** The project agent asked to open a scene's view (「打开 E1S01 的提示词」). */
+  externalAction?: StoryboardViewAction | null;
 }
 
 
@@ -173,7 +182,16 @@ function buildEpisodeGroups(scenes: StoryboardScene[]): StoryboardEpisodeGroup[]
     .map(([number, groupScenes]) => ({ number, scenes: groupScenes }));
 }
 
-const GRID_SLOTS = 9;
+// 一场画几格由剧情决定（1–9）：格子少时收窄列数，不补空位。
+function gridColumns(count: number): number {
+  if (count <= 1) return 1;
+  if (count === 2 || count === 4) return 2;
+  return 3;
+}
+
+function panelCountLabel(count: number): string {
+  return count > 0 ? `${count} 格` : '格数待定';
+}
 
 function DownloadAction({
   onDownload,
@@ -223,6 +241,7 @@ export function StoryboardWorkspace({
   onRefresh,
   onRegenerate,
   onContinue,
+  externalAction,
 }: StoryboardWorkspaceProps) {
   const normalizedShots = useMemo(() => (Array.isArray(shots) ? shots : []), [shots]);
   const scenes = useMemo(
@@ -247,6 +266,20 @@ export function StoryboardWorkspace({
   const [showSpatial, setShowSpatial] = useState(false);
   const [exportKind, setExportKind] = useState<'packages' | 'sheets' | null>(null);
   const [showDesk, setShowDesk] = useState(false);
+  const [showPool, setShowPool] = useState(false);
+  const [showPanorama, setShowPanorama] = useState(false);
+  const [deskTab, setDeskTab] = useState<'inspector' | 'blender'>('inspector');
+  // 对话里的「打开某场的某个视图」：渲染时按新请求调整状态(React 推荐的随 prop 调整 state 写法)，不在 effect 里 setState。
+  const [appliedAction, setAppliedAction] = useState(0);
+  if (externalAction && externalAction.nonce !== appliedAction) {
+    setAppliedAction(externalAction.nonce);
+    if (scenes.some(scene => scene.id === externalAction.sceneId)) setSelectedSceneId(externalAction.sceneId);
+    setShowPrompt(externalAction.view === 'prompt');
+    setShowSpatial(externalAction.view === 'spatial');
+    setExportKind(externalAction.view === 'packages' ? 'packages' : externalAction.view === 'sheets' ? 'sheets' : null);
+    setShowDesk(externalAction.view === 'desk' || externalAction.view === 'blender');
+    setDeskTab(externalAction.view === 'blender' ? 'blender' : 'inspector');
+  }
   const [downloadBusyKey, setDownloadBusyKey] = useState('');
   const [downloadNotice, setDownloadNotice] = useState('');
   const [collapsedEpisodes, setCollapsedEpisodes] = useState<ReadonlySet<number>>(new Set());
@@ -428,7 +461,7 @@ export function StoryboardWorkspace({
                       >
                         <span className="storyboard-scene-card__topline">
                           <strong>{scene.id}</strong>
-                          <span className="storyboard-scene-card__format">3 × 3</span>
+                          <span className="storyboard-scene-card__format">{panelCountLabel(scene.shots.length)}</span>
                           <span className={`storyboard-scene-card__status ${state === 'done' ? 'is-complete' : ''} ${state === 'generating' ? 'is-generating' : ''}`}>
                             {state === 'done' ? <CheckCircle2 aria-hidden="true" /> : <span aria-hidden="true">◌</span>}
                             {state === 'done' ? t('已完成') : state === 'generating' ? t('生成中') : t('待创作')}
@@ -438,7 +471,9 @@ export function StoryboardWorkspace({
                         <span className="storyboard-scene-card__count">
                           {scene.shots.length > 0 || !board
                             ? `${scene.shots.length} 个连续瞬间`
-                            : `${board.shots_done ?? 0}/${board.shots_total ?? GRID_SLOTS} 个画格`}
+                            : board.status === 'done'
+                              ? `${board.shots_done ?? 0} 个画格`
+                              : t('按剧情生成分镜图')}
                         </span>
                         {episodeLocked && <span className="storyboard-scene-card__lock-hint">{t('待上一集完成')}</span>}
                       </button>
@@ -454,7 +489,7 @@ export function StoryboardWorkspace({
           <div className="storyboard-main-toolbar">
             <div>
               <h2>{selectedScene.id} 时序分镜</h2>
-              <p><strong>3×3</strong><span aria-hidden="true">·</span>{selectedScene.shots.length} 个连续瞬间</p>
+              <p><strong>{panelCountLabel(selectedScene.shots.length)}</strong><span aria-hidden="true">·</span>{selectedScene.shots.length} 个连续瞬间</p>
               {/* 侧栏卡片受宽度所限只能单行截断，这里给出剧本大纲的完整场景描述。 */}
               {selectedScene.title && selectedScene.title !== '连续场景' && (
                 <p className="storyboard-scene-summary">{selectedScene.title}</p>
@@ -496,6 +531,12 @@ export function StoryboardWorkspace({
               >
                 <Clapperboard aria-hidden="true" /> {t('3D 导演台')}
               </button>
+              <button type="button" className="storyboard-action" onClick={() => setShowPanorama(true)} disabled={!taskId} aria-haspopup="dialog">
+                <Globe aria-hidden="true" /> {t('360° 全景')}
+              </button>
+              <button type="button" className="storyboard-action" onClick={() => setShowPool(true)} disabled={!taskId} aria-haspopup="dialog">
+                <Images aria-hidden="true" /> {t('图片池')}
+              </button>
               {/* 定稿的分镜重新切成可直接粘贴的提示词分包；资产设定图是开拍前要先锁死的参考图。 */}
               <button
                 type="button"
@@ -521,24 +562,38 @@ export function StoryboardWorkspace({
             </div>
           </div>
 
-          <div className="storyboard-grid" aria-label={`${selectedScene.id} 3×3 时序分镜`}>
-            {Array.from(
-              { length: Math.max(GRID_SLOTS, selectedScene.shots.length) },
-              (_, index) => selectedScene.shots[index] ?? null,
-            ).map((shot, index) => {
+          {selectedScene.shots.length === 0 ? (
+            <div className="storyboard-grid-empty" role="status">
+              <strong>
+                {selectedBoard?.status === 'generating'
+                  ? t('本场分镜图生成中…')
+                  : selectedBoard?.status === 'failed'
+                    ? t('本场分镜生成失败')
+                    : t('本场分镜待创作')}
+              </strong>
+              <span>
+                {selectedBoard?.status === 'failed' && selectedBoard.error
+                  ? selectedBoard.error
+                  : t('按剧情需要生成 1–9 格分镜图，每格换机位、景别、角度、姿态或动作，不画重复格。')}
+              </span>
+            </div>
+          ) : (
+          <div
+            className="storyboard-grid"
+            aria-label={`${selectedScene.id} ${panelCountLabel(selectedScene.shots.length)}时序分镜`}
+            style={{ '--storyboard-columns': gridColumns(selectedScene.shots.length) } as CSSProperties}
+          >
+            {selectedScene.shots.map((shot, index) => {
               const number = index + 1;
-              if (!shot) {
-                return (
-                  <div className="storyboard-frame storyboard-frame--vacant" key={`${selectedScene.id}-vacant-${number}`}>
-                    <span className="storyboard-frame__vacant-label">画格 {number} · 空位</span>
-                  </div>
-                );
-              }
+              const count = selectedScene.shots.length;
+              const columns = gridColumns(count);
+              const lastColumn = index % columns === columns - 1 || index === count - 1;
+              const lastRow = index >= count - (count % columns || columns);
               const downloadable = Boolean(taskId && shot.image_url);
               return (
                 <button
                   type="button"
-                  className={`storyboard-frame ${selectedFrameIndex === index ? 'is-selected' : ''}`}
+                  className={`storyboard-frame ${selectedFrameIndex === index ? 'is-selected' : ''} ${lastColumn ? 'is-last-column' : ''} ${lastRow ? 'is-last-row' : ''}`}
                   key={`${selectedScene.id}-${number}`}
                   aria-label={downloadable ? `下载分镜 ${number}` : `选择分镜 ${number}`}
                   aria-pressed={selectedFrameIndex === index}
@@ -556,9 +611,9 @@ export function StoryboardWorkspace({
                     {shot.cut_in?.label && (
                       <span
                         className={`storyboard-frame__cut ${shot.cut_in.kind && shot.cut_in.kind !== 'cut' ? 'is-optical' : ''}`}
-                        title={`切入本镜：${shot.cut_in.label}`}
+                        title={[`切入本镜：${shot.cut_in.label}`, shot.cut_in.sound_note, shot.cut_in.watch && `回看核对：${shot.cut_in.watch}`].filter(Boolean).join('\n')}
                       >
-                        {shot.cut_in.label}
+                        {shot.cut_in.label}{shot.cut_in.sound_join ? ` · ${shot.cut_in.sound_join === 'j_cut' ? 'J' : 'L'}` : ''}
                       </span>
                     )}
                     <span className="storyboard-frame__number">{number}</span>
@@ -573,6 +628,7 @@ export function StoryboardWorkspace({
               );
             })}
           </div>
+          )}
         </main>
       </div>
 
@@ -614,8 +670,19 @@ export function StoryboardWorkspace({
             key={`desk-${selectedScene.id}`}
             taskId={taskId}
             sceneId={selectedScene.id}
-            onClose={() => { setShowDesk(false); onRefresh(); }}
+            initialSideTab={deskTab}
+            onClose={() => { setShowDesk(false); setDeskTab('inspector'); onRefresh(); }}
           />
+        </Suspense>
+      )}
+      {showPool && taskId && (
+        <Suspense fallback={null}>
+          <ImagePoolPanel taskId={taskId} onAssigned={() => onRefresh()} onClose={() => { setShowPool(false); onRefresh(); }} />
+        </Suspense>
+      )}
+      {showPanorama && taskId && (
+        <Suspense fallback={null}>
+          <PanoramaPanel key={`panorama-${selectedScene.id}`} taskId={taskId} sceneId={selectedScene.id} onClose={() => { setShowPanorama(false); onRefresh(); }} />
         </Suspense>
       )}
       {showPrompt && (

@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from app.core import breakdown_kinds
 from app.core.screenwriting.prose import has_episode_heading, prose_from_scenes
 
 _PHASES = ("故事开始", "进展纠葛", "危机", "高潮", "结局")
@@ -148,6 +149,10 @@ def scene_breakdown_entry(scene: Mapping[str, Any]) -> dict[str, Any]:
         "duration": f"{duration}s" if isinstance(duration, int) and not isinstance(duration, bool) and duration > 0 else "",
         "content": " ".join(parts)[:_MAX_CONTENT_CHARS],
         "description": _text(scene.get("scene_description"), _MAX_CONTENT_CHARS),
+        # 这一格打到的情绪点(钩子/冲突/反转…)：分镜师按它定这一场的切法与落点。
+        "emotion_point": _text(scene.get("emotion_point"), 20),
+        # 本集的题眼台词落在这一格时那一句：分镜师给它留停留，导演台上能一眼看到。
+        "key_line": _text(scene.get("key_line"), 120),
         "dialogue": dialogue[:30],
         "characters": [name for name in (scene.get("characters_in_scene") or []) if isinstance(name, str) and name.strip()],
     }
@@ -269,6 +274,13 @@ def render_breakdown(state: Mapping[str, Any]) -> dict[str, Any]:
                 {"name": str(name), "description": _text((entry or {}).get("description") if isinstance(entry, Mapping) else "", 1000)}
                 for name, entry in effect_assets.items() if str(name).strip()
             ],
+            **{
+                key: [
+                    {"name": str(name), "description": _text((entry or {}).get("description") if isinstance(entry, Mapping) else "", 1000)}
+                    for name, entry in (inventory.get(key) if isinstance(inventory.get(key), Mapping) else {}).items() if str(name).strip()
+                ]
+                for key in breakdown_kinds.CATALOG_KEYS.values()
+            },
         },
     }
 

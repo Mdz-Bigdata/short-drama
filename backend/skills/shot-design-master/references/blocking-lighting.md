@@ -920,15 +920,20 @@ axis flip, broken eyeline, mismatched screen direction, overlapping limbs, chara
 
 ---
 
-### 3.1 场景圣经六要素（①–⑤ 全场必填，⑥ 打戏场次必填）
+### 3.1 场景圣经九要素（①–⑤、⑦–⑨ 全场必填，⑥ 打戏场次必填）
 
 | 要素 | 必须写死的内容 | 继承方式 |
 |---|---|---|
-| **① 空间布局** | 左/右/中/前景/背景各是什么，家具位置，出入口在哪 | 整场不变，逐镜复制 |
+| **① 类型与空间布局** | 场景类型与剧情功能（审讯室 / 告别的站台）；画面左/右/中/前景/背景各是什么——左右一律以主机位画面为准，家具位置，出入口在哪 | 整场不变，逐镜复制 |
 | **② 人物左右站位** | A 在左还是右、离什么家具最近、两人之间隔着什么 | 与 180 度轴线绑定 |
-| **③ 关键道具位置** | 名称 + 归属 + 精确位置（如「茶几右上角」）+ 状态（亮屏/半杯） | 道具连续性锚点 |
-| **④ 主光方向与色温** | 光从画面哪一侧进来、几度角、什么色温、室内还有什么实体光源 | 光影连续性锚点 |
+| **③ 固定陈设与关键道具** | 门窗柱等不动的陈设在哪；道具名称 + 归属 + 精确位置（如「茶几右上角」）+ 状态（亮屏/半杯） | 道具连续性锚点 |
+| **④ 主光方向、色温与时段** | 光从画面哪一侧进来、几度角、什么色温、几点钟（黄昏 / 深夜）、室内还有什么实体光源 | 光影连续性锚点 |
 | **⑤ 前中后景层次** | 前景是什么遮挡、中景是谁、背景是什么（且虚化） | 景深与纵深锚点 |
+| **⑦ 色彩与材质** | 墙、地、主要家具的颜色与材质（青砖地、深胡桃木书案、斑驳白墙） | 美术连续性锚点 |
+| **⑧ 尺度** | 关键陈设的实际尺寸（门高约 2 米、书案高约 0.75 米）+ 一个人物身高参照（林晚 168cm，站在门旁约比门顶低一头） | 人物与场景的比例锚点：景别再变，这个比例不变 |
+| **⑨ 视角约束** | 主机位在哪一侧、哪条轴线不能越、哪一面墙不拍（第四面墙） | 与 180 度轴线绑定 |
+
+> ⑧ 不写，模型只能按景别猜比例：近景里门像衣柜，全景里人像玩偶。写一次实际尺寸 + 一个身高参照，全场每一镜都按同一把尺子量。
 
 **第⑥要素 · 可破坏元素清单（打戏场景必填）**
 
@@ -955,11 +960,14 @@ axis flip, broken eyeline, mismatched screen direction, overlapping limbs, chara
 
 ```text
 场景圣经【scene_{ID}】：
-① 空间布局：{时间}的{场景类型}，{右/左}侧是{窗/门/主要开口}，{左/右}侧是{主要家具}，中间是{分隔物}，{方位}有清晰出入口。
+① 类型与空间布局：{时间}的{场景类型}，剧情功能是{这场戏在这里发生什么}；画面{右/左}侧是{窗/门/主要开口}，画面{左/右}侧是{主要家具}，中间是{分隔物}，{方位}有清晰出入口（左右以主机位画面为准）。
 ② 人物左右站位：{角色A}站在画面{左/右}侧靠近{家具}，{角色B}站在画面{右/左}侧靠近{家具}，两人之间隔着{分隔物}；全场保持该左右关系与 180 度轴线。
-③ 关键道具：{道具名}放在{精确位置}，状态为{状态}，归属{角色}；{第二道具}在{位置}。
-④ 主光方向与色温：主光来自画面{方位}的{动机光源}，色温{色温}，{硬光/柔光}；辅助光为{室内实体光源}，色温{色温}；光比约{光比}。
+③ 固定陈设与关键道具：{门/窗/柱}固定在{位置}；{道具名}放在{精确位置}，状态为{状态}，归属{角色}；{第二道具}在{位置}。
+④ 主光方向、色温与时段：{时段}，主光来自画面{方位}的{动机光源}，色温{色温}，{硬光/柔光}；辅助光为{室内实体光源}，色温{色温}；光比约{光比}。
 ⑤ 前中后景层次：前景是{虚化遮挡物}，中景是{人物与主要动作区}，背景是{虚化环境}，形成前中后三层电影感空间层次。
+⑦ 色彩与材质：墙面{颜色+材质}，地面{颜色+材质}，{主要家具}为{颜色+材质}。
+⑧ 尺度：{门/窗/主要家具}高约{尺寸}米、宽约{尺寸}米；{角色A}身高约{身高}cm，站在{门/家具}旁{约比门顶低一头/约齐腰}；全场人物与陈设保持这一比例。
+⑨ 视角约束：主机位在{轴线哪一侧}，全场不越过{角色A—角色B / 运动方向}轴线；{哪一面}不入画。
 ⑥ 可破坏元素清单（打戏场次必填，文戏整行删除）：本场允许被破坏的元素为{元素1}（可{破坏形态}）、{元素2}（可{破坏形态}）；破坏一次到位、后续镜头不复原不减轻；破坏后的形态写进该镜落幅，并从下一镜起作为新的恒定态继承。清单以外的墙面、家具、门窗、道具全场保持原状。
 全场保持同一空间布局、同一家具位置、同一道具位置、同一光源方向、同一色温、同一{时间}状态（清单内元素的已破坏状态除外）。
 ```
@@ -968,11 +976,14 @@ axis flip, broken eyeline, mismatched screen direction, overlapping limbs, chara
 
 ```text
 Scene bible [scene_{ID}]:
-1) Spatial layout: a {location type} at {time of day}, {window/door} on screen {right/left}, {main furniture} on screen {left/right}, {divider} in the center, a clear exit {position}.
+1) Type and layout: a {location type} at {time of day} where {what the scene uses this place for}; {window/door} on screen {right/left} (sides as the master frame shows them), {main furniture} on screen {left/right}, {divider} in the center, a clear exit {position}.
 2) Character blocking: {character A} on screen {left/right} near the {furniture}, {character B} on screen {right/left} near the {furniture}, with the {divider} between them; preserve this left-right relationship and the 180-degree rule throughout.
-3) Key props: {prop} placed on the {exact position}, state {state}, belonging to {character}; {second prop} at {position}.
-4) Key light and color temperature: key light from {direction} motivated by {practical source}, {color temperature}, {hard/soft}; fill from {interior practical}, {color temperature}; lighting ratio approximately {ratio}.
+3) Fixed set pieces and key props: the {door/window/pillar} fixed at {position}; {prop} placed on the {exact position}, state {state}, belonging to {character}; {second prop} at {position}.
+4) Key light, color temperature and time of day: at {time of day}, key light from {direction} motivated by {practical source}, {color temperature}, {hard/soft}; fill from {interior practical}, {color temperature}; lighting ratio approximately {ratio}.
 5) Depth layers: foreground {blurred obstruction}, middle ground {characters and action zone}, background {defocused environment}, forming layered cinematic depth.
+7) Colours and materials: walls {colour + material}, floor {colour + material}, {main furniture} in {colour + material}.
+8) Scale: the {door/window/main furniture} is about {size} m tall and {size} m wide; {character A} is {height} cm tall and, standing beside the {door/furniture}, {is about a head shorter than the door top / reaches its top at the waist}; keep this ratio in every shot.
+9) Viewpoint constraints: the master camera stays on {which side of the axis}; never cross the {A–B / direction of travel} axis; the {fourth wall} is never shown.
 6) Destructible elements (fight scenes only, delete this line otherwise): only {element 1} ({allowed damage}) and {element 2} ({allowed damage}) may break in this scene; the damage is permanent and never repairs or reverts; the damaged state is carried into this shot's end frame and inherited as the new constant from the next shot on. All other walls, furniture, doors, windows and props stay exactly as described.
 Keep the same room layout, furniture placement, prop position, lighting direction, color temperature, and {time of day} setting throughout the scene.
 ```
@@ -1688,7 +1699,7 @@ Light & color: dominant {color} with {color} accent, key light motivated by {pra
 
 **场景圣经**
 
-- [ ] 六要素（空间布局 / 人物左右站位 / 关键道具位置 / 主光方向与色温 / 前中后景层次 / 可破坏元素清单）是否全部写死？⑥ 在打戏场次不得留空。
+- [ ] 九要素（类型与空间布局 / 人物左右站位 / 固定陈设与关键道具 / 主光方向、色温与时段 / 前中后景层次 / 可破坏元素清单 / 色彩与材质 / 尺度 / 视角约束）是否全部写死？⑥ 在打戏场次不得留空；⑧ 必须有实际尺寸和一个人物身高参照。
 - [ ] 打戏中被打坏的元素是否都在 ⑥ 清单内？破坏后的形态是否写进了该镜落幅并被下一镜继承（不复原、不减轻）？
 - [ ] 每一格九宫格是否引用了同一个 `scene_id`，而不是各写各的？
 - [ ] 是否有一个关键道具承担叙事并被指定为辅色？

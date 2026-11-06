@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
 
 from app.api.auth_api import get_current_user
+from app.core.spatial_stage import model_kit
 from app.core.spatial_stage.models import StagePose
 from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore
@@ -24,6 +25,12 @@ def _serialize(item) -> dict:
 
 async def _library(store: PlatformStore, user_id: str) -> dict:
     return {"poses": [_serialize(item) for item in await store.list_desk_poses(user_id)]}
+
+
+@router.get("/kits")
+async def list_model_kits(user: dict = Depends(get_current_user)):
+    """The built-in white models: furniture, architecture, vehicles, set pieces, at their real sizes."""
+    return {"kits": model_kit.catalog()}
 
 
 @router.get("/poses", response_model=DeskUserPosesResponse)

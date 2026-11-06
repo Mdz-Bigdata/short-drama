@@ -544,7 +544,14 @@ describe('DirectorDesk', () => {
 
       await userEvent.click(screen.getByRole('button', { name: 'stroke' }));
       await waitFor(() => expect(patches()).toHaveLength(1));
-      expect(patches()[0]).toEqual({ baseRevision: 3, solve: false, operations: [{ op: 'set_path', shot_id: 1, target: '林夏', points: ROUTE }] });
+      // The default pace walks the route, so the figure gets legs and the walk its motion.
+      expect(patches()[0]).toEqual({
+        baseRevision: 3, solve: false,
+        operations: [
+          { op: 'set_figure', name: '林夏', figure: 'humanoid' },
+          { op: 'set_path', shot_id: 1, target: '林夏', points: ROUTE, speed_mps: 1.4, clip: 'human-walk-v1' },
+        ],
+      });
       // The route is keyed by the server, so the desk takes its answer rather than applying anything itself.
       expect(await screen.findByText(/已保存 · 第 4 版/)).toBeTruthy();
     });
@@ -562,7 +569,7 @@ describe('DirectorDesk', () => {
       expect(viewport.getAttribute('data-path-target')).toBe(JSON.stringify({ kind: 'camera', id: 'cam-01', lookAt: '林夏' }));
       await userEvent.click(screen.getByRole('button', { name: 'stroke' }));
       await waitFor(() => expect(patches()).toHaveLength(1));
-      expect(patches()[0].operations).toEqual([{ op: 'set_path', shot_id: 1, target: 'camera', points: ROUTE, look_at: '林夏' }]);
+      expect(patches()[0].operations).toEqual([{ op: 'set_path', shot_id: 1, target: 'camera', points: ROUTE, look_at: '林夏', speed_mps: 1.4 }]);
     });
 
     it('hands every moving actor track of the shot to the director view', async () => {

@@ -13,8 +13,8 @@
 
 import { parseAspect } from '../../spatial/floorPlanGeometry';
 import {
-  actorsInShot, type ActorKey, type CameraKey, type GroundPoint, type ShotTimeline, type SpacePoint, type StageActor, type StageCamera,
-  type StageEasing, type StagePlan, type StagePose, type StageShot,
+  actorsInShot, type ActionClip, type ActorKey, type CameraKey, type FollowClip, type GroundPoint, type ShotTimeline, type SpacePoint,
+  type StageActor, type StageCamera, type StageEasing, type StagePlan, type StagePose, type StageShot,
 } from '../../spatial/spatialTypes';
 import { clipForPosture, humanoidClip } from './humanoidClips';
 import { blendPose, jointsOf, posePosture, type Joints } from './poses';
@@ -130,7 +130,7 @@ export function sampleCamera(keys: CameraKey[], camera: StageCamera, aspect: num
   const point = (a: SpacePoint, b: SpacePoint): SpacePoint => [lerp(a[0], b[0], weight), lerp(a[1], b[1], weight), lerp(a[2], b[2], weight)];
   // Millimetres are what a person keyed; the angle follows from them, never the other way round.
   const lens = lerp(from.lens_mm, to.lens_mm, weight);
-  return { position: point(from.position, to.position), target: point(from.target, to.target), lens_mm: lens, fov_deg: verticalFov(lens, aspect) };
+  return { position: point(from.position, to.position), target: point(from.target, to.target), lens_mm: lens, fov_deg: verticalFov(lens, aspect, camera.sensor_mm) };
 }
 
 function swing(forward: number, back: number, theta: number): number {
@@ -215,11 +215,42 @@ function clipOver(actor: StageActor, pose: StagePose | null, poseKeys: ActorKey[
   return { preset: pose?.preset || '', joints: pose?.joints || {}, clip: clipId, clip_phase: round3(phase) };
 }
 
+/** The block of the action track playing at `t`; a block owns its first instant and hands over its last. */
+export function actionBlockAt(clips: ActionClip[] | undefined, t: number): ActionClip | undefined {
+  return clips?.find(clip => t >= clip.start && t < clip.end);
+}
+
+/**
+ * What a block of the action track makes a figure do at `t`. A skinned figure plays the motion
+ * itself. A jointed one has no motion to play, so it takes the matching preset, whose walk and run
+ * the gait curves bring to life. A limbless stand-in has nothing to show it with.
+ */
+function actionOver(actor: StageActor, pose: StagePose | null, block: ActionClip, t: number): StagePose | null {
+  const motion = humanoidClip(block.clip);
+  if (actor.figure === 'humanoid') {
+    const elapsed = ((t - block.start) * (block.speed ?? 1)) / motion.duration;
+    const base = block.offset ?? 0;
+    const phase = motion.loop ? cyclePhase(elapsed, 1, base) : Math.min(1, base + elapsed);
+    return { preset: motion.posture, joints: pose?.joints || {}, clip: motion.id, clip_phase: round3(phase) };
+  }
+  if (actor.figure === 'mannequin') {
+    const preset = { preset: motion.posture, joints: {} };
+    return strideOver(actor, { ...preset, joints: jointsOf({ ...actor, pose: preset }) }, t * (block.speed ?? 1));
+  }
+  return pose;
+}
+
 /**
  * `authored` leaves the gait and the running clip out: the pose as somebody keyed it, which is
  * what a new key has to record (a key that froze one frame of a stride would stop the walk).
  */
-export function sampleActor(actor: StageActor, keys: ActorKey[] | undefined, t: number, authored = false): SampledActor {
+export function sampleActor(actor: StageActor, keys: ActorKey[] | undefined, t: number, authored = false, clips?: ActionClip[]): SampledActor {
+  const sampled = sampleKeyed(actor, keys, t, authored);
+  const block = authored ? undefined : actionBlockAt(clips, t);
+  return block ? { ...sampled, pose: actionOver(actor, sampled.pose, block, t) } : sampled;
+}
+
+function sampleKeyed(actor: StageActor, keys: ActorKey[] | undefined, t: number, authored: boolean): SampledActor {
   const strideAt = authored ? (_: StageActor, pose: StagePose | null) => pose : strideOver;
   const clipAt = authored ? (_: StageActor, pose: StagePose | null) => pose : clipOver;
   if (!keys?.length) return { position: actor.position, yaw_deg: actor.yaw_deg, pose: clipAt(actor, actor.pose ?? null, [], t) };
@@ -244,6 +275,62 @@ export function sampleActor(actor: StageActor, keys: ActorKey[] | undefined, t: 
   return { position, yaw_deg: yaw, pose: clipAt(actor, pose, poseKeys, t) };
 }
 
+const FOLLOW_DAMPING_SAMPLES = 6;
+
+/**
+ * Where a follow clip puts the lens at `t`. The lag is an average of the character over the window
+ * behind `t`, not a filter with memory, so any frame can be asked for in any order, as export does.
+ */
+export function followPose(
+  clip: FollowClip, actor: StageActor, keys: ActorKey[] | undefined, t: number, aspect: number, sensorMm: number | undefined, fallbackLens: number,
+): SampledCamera {
+  const window = Math.min(clip.damping_s, Math.max(0, t - clip.start));
+  let x = 0;
+  let z = 0;
+  let forwardX = 0;
+  let forwardZ = 0;
+  for (let index = 0; index < FOLLOW_DAMPING_SAMPLES; index += 1) {
+    const at = t - (window * index) / (FOLLOW_DAMPING_SAMPLES - 1);
+    const sample = sampleKeyed(actor, keys, at, true);
+    x += sample.position[0];
+    z += sample.position[1];
+    forwardX += Math.sin((sample.yaw_deg * Math.PI) / 180);
+    forwardZ += Math.cos((sample.yaw_deg * Math.PI) / 180);
+  }
+  x /= FOLLOW_DAMPING_SAMPLES;
+  z /= FOLLOW_DAMPING_SAMPLES;
+  const size = Math.hypot(forwardX, forwardZ) || 1;
+  const [right, up, back] = clip.offset;
+  // Forward is (sin yaw, cos yaw) and right is (-fz, fx): geometry.py's conventions, stated there once.
+  const forward: GroundPoint = clip.relative === 'actor' ? [forwardX / size, forwardZ / size] : [0, 1];
+  const side: GroundPoint = [-forward[1], forward[0]];
+  const height = actor.height_m * clip.aim;
+  const lens = clip.lens_mm ?? fallbackLens;
+  return {
+    position: [round3(x + side[0] * right - forward[0] * back), round3(height + up), round3(z + side[1] * right - forward[1] * back)],
+    target: [round3(x), round3(height), round3(z)],
+    lens_mm: lens,
+    fov_deg: verticalFov(lens, aspect, sensorMm),
+  };
+}
+
+/** How much of the follow clip's own pose shows at `t`: all of it, except on the way in and out. */
+function followWeight(clip: FollowClip, t: number): number {
+  if (clip.blend_s <= 0) return 1;
+  const inward = (t - clip.start) / clip.blend_s;
+  const outward = (clip.end - t) / clip.blend_s;
+  return ease(Math.min(1, inward, outward), 'smooth');
+}
+
+/** The lens a cut puts in front of the shot at `t`; `undefined` when the shot's own lens films. */
+export function cutCameraAt(timeline: Pick<ShotTimeline, 'cuts'>, t: number): string | undefined {
+  return timeline.cuts?.find(cut => t >= cut.start && t < cut.end)?.camera_id;
+}
+
+function followClipAt(clips: FollowClip[] | undefined, t: number): FollowClip | undefined {
+  return clips?.find(clip => t >= clip.start && t < clip.end);
+}
+
 /**
  * The shot at `t` seconds. `cameraId` is the lens being looked through: keys belong to the lens
  * that films the shot, so a candidate lens stays where it is.
@@ -251,15 +338,25 @@ export function sampleActor(actor: StageActor, keys: ActorKey[] | undefined, t: 
 export function sampleShot(plan: StagePlan, shot: StageShot | undefined, t: number, cameraId?: string): ShotSample {
   const timeline = timelineOf(plan, shot?.shot_id);
   const time = Math.min(Math.max(0, Number.isFinite(t) ? t : 0), timeline.duration_s);
-  const lensId = cameraId || shot?.camera_id;
+  // Asked for a lens: that one. Otherwise whatever a cut puts in front of the shot now, else its own lens.
+  const lensId = cameraId || cutCameraAt(timeline, time) || shot?.camera_id;
   const camera = plan.cameras.find(item => item.id === lensId);
   const filming = Boolean(camera) && camera?.id === shot?.camera_id;
   const actors: Record<string, SampledActor> = {};
-  actorsInShot(plan, shot).forEach(actor => { actors[actor.name] = sampleActor(actor, timeline.actors[actor.name], time); });
-  return {
-    camera: camera ? sampleCamera(filming ? cameraKeysOf(timeline, camera) : [], camera, parseAspect(plan.aspect_ratio), time) : null,
-    actors,
-  };
+  const cast = actorsInShot(plan, shot);
+  cast.forEach(actor => { actors[actor.name] = sampleActor(actor, timeline.actors[actor.name], time, false, timeline.clips?.[actor.name]); });
+  const aspect = parseAspect(plan.aspect_ratio);
+  let lens = camera ? sampleCamera(filming ? cameraKeysOf(timeline, camera) : [], camera, aspect, time) : null;
+  const follow = filming ? followClipAt(timeline.follow, time) : undefined;
+  const followed = follow ? cast.find(actor => actor.name === follow.actor) : undefined;
+  if (lens && follow && followed) {
+    const tied = followPose(follow, followed, timeline.actors[followed.name], time, aspect, camera?.sensor_mm, lens.lens_mm);
+    const weight = followWeight(follow, time);
+    const mix = (a: SpacePoint, b: SpacePoint): SpacePoint => [lerp(a[0], b[0], weight), lerp(a[1], b[1], weight), lerp(a[2], b[2], weight)];
+    const lensMm = lerp(lens.lens_mm, tied.lens_mm, weight);
+    lens = { position: mix(lens.position, tied.position), target: mix(lens.target, tied.target), lens_mm: lensMm, fov_deg: verticalFov(lensMm, aspect, camera?.sensor_mm) };
+  }
+  return { camera: lens, actors };
 }
 
 function sameNumbers(a: readonly number[], b: readonly number[]): boolean {
@@ -325,9 +422,9 @@ export function cameraPathOf(plan: StagePlan, shot: StageShot | undefined, steps
   if (!shot || !camera) return null;
   const timeline = timelineOf(plan, shot.shot_id);
   const keys = cameraKeysOf(timeline, camera);
-  if (keys.length < 2) return null;
-  const aspect = parseAspect(plan.aspect_ratio);
-  const points = Array.from({ length: steps + 1 }, (_, index) => sampleCamera(keys, camera, aspect, (timeline.duration_s * index) / steps).position);
+  if (keys.length < 2 && !timeline.follow?.length) return null;
+  // The whole lens, not just its keys: a follow clip moves it without having any.
+  const points = Array.from({ length: steps + 1 }, (_, index) => sampleShot(plan, shot, (timeline.duration_s * index) / steps).camera?.position ?? camera.position);
   return { points, keys: keys.map(key => ({ time: key.time, position: key.position })) };
 }
 

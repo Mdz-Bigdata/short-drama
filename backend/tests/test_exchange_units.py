@@ -198,6 +198,15 @@ class StageFourWiringTests(unittest.TestCase):
         self.assertIn("exchange.brief()", source)
         self.assertIn("exchange=exchange", source)
 
+    def test_stage_five_hands_a_fight_shot_the_previous_landing_unless_it_shares_a_video(self):
+        from app.service.drama_service import DramaService
+
+        source = inspect.getsource(DramaService._execute_stage_blocking)
+
+        self.assertIn('prompt_data.text("clip_prompt", "fight_carry").format(landing=', source)
+        self.assertIn("in fight_scenes and episode_cycle.shot_uid(shot) not in sliced_uids", source)
+        self.assertIn("carry_in=fight_carry", source)
+
 
 if __name__ == "__main__":
     unittest.main()

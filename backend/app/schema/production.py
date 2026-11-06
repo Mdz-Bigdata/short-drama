@@ -243,7 +243,8 @@ class H3VideoRequest(BaseModel):
     reference_audios: Annotated[list[str], Field(max_length=MAX_REFERENCE_AUDIOS)] = Field(default_factory=list)
     reference_bindings: Annotated[list[H3ReferenceBinding], Field(max_length=12)] = Field(default_factory=list)
     duration_seconds: Annotated[int, Field(ge=4, le=15)] = 6
-    resolution: Literal["720p", "1080p", "2k"] = "1080p"
+    # H3 接受 480p / 768p / 2k；720p、1080p 仍可填，发给接口时换成最近的档位(见 providers.minimax_h3.h3_resolution)。
+    resolution: Literal["480p", "720p", "768p", "1080p", "2k"] = "768p"
     aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
     native_audio: bool = True
     seed: Annotated[int | None, Field(ge=0, le=2147483647)] = None
@@ -456,6 +457,11 @@ class Sd25CompileRequest(BaseModel):
     blockout_standin_limbs: bool = False
     # End second of each ordered keyframe stage (0-3, 3-7 ...): integer, contiguous.
     keyframe_stage_ends: Annotated[list[int], Field(max_length=30)] = Field(default_factory=list)
+    # Extensions: the real key light (direction + colour temperature), a compact snapshot of the set
+    # (landmark sides + light), and where this segment sits in its continuation chain (1-based; 0 = none).
+    key_light: Annotated[str, Field(max_length=300)] = ""
+    space_snapshot: Annotated[str, Field(max_length=1000)] = ""
+    chain_index: Annotated[int, Field(ge=0, le=200)] = 0
     parameters: dict[str, str | int | float | bool] = Field(default_factory=dict)
 
     @field_validator("parameters")
@@ -610,12 +616,14 @@ class Sd25PromptAuditResult(BaseModel):
 
 class TimelineOperationRequest(BaseModel):
     """One edit on the stage-7 timeline; which fields matter depends on ``operation``."""
-    operation: Literal["trim", "transition", "subtitle", "mute", "candidate", "review", "title", "bgm"]
+    operation: Literal["trim", "transition", "sound_join", "subtitle", "mute", "candidate", "review", "title", "bgm"]
     shot_id: Optional[int] = Field(None, ge=1)
     start: Optional[float] = Field(None, ge=0)
     end: Optional[float] = Field(None, ge=0)
     kind: Optional[str] = Field(None, max_length=40)
     duration: Optional[float] = Field(None, ge=0, le=5)
+    join: Optional[Literal["", "j_cut", "l_cut"]] = None
+    seconds: Optional[float] = Field(None, ge=0, le=5)
     text: Optional[str] = Field(None, max_length=200)
     muted: Optional[bool] = None
     video_url: Optional[str] = Field(None, max_length=2000)

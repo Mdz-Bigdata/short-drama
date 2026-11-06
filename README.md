@@ -36,7 +36,7 @@
 *   **空间调度（3D 导演台）**：每场戏一份空间方案——人物站位与朝向、地标、关系轴线、每镜一个机位。分镜面板的构图 / 轴线 / 视线 / 调度四句话不再是固定措辞，而是由几何测量得出：景别换算成焦段与机距，机位始终在轴线既定一侧，人物在画面里的区域、深度层和屏幕朝向由透视投影算出，因此九格之间、正反打之间谁在画左谁在画右不会变；同一地点的地标坐标与人物的画左 / 画右承诺跨场景沿用。越轴、主体出画、站位重叠、左右相反会进入分镜连续性自检并拦在第 5 阶段之前。分镜故事板里点「空间调度」可在俯视图上拖动人物与机位、切换 3D 导演视角 / 机位视角、只重画改过站位的那一场，也可导出为 [storyai-3d-director-desk](https://github.com/jiguang132/storyai-3d-director-desk) 工程或 [CoStage](https://github.com/cs68614-hash/costage) 文档并把调整导回。详见 [docs/spatial-stage](docs/spatial-stage/IMPLEMENTATION.md)。
 *   **3D 导演台（可编辑的空间舞台）**：同一份空间方案的 3D 编辑面。左边导演视角摆人、摆道具、架机位（网格与贴面吸附、15° 角度吸附、两点测距），右边机位视角按成片画幅取景，叠加画幅遮幅 / 三分线 / 安全框 / 中心十字。角色可切换白模柱体 / 关节人偶 / 蒙皮人形：人偶有 58 个关节控制键与 25 个预设姿势（含卧倒、背手站立、侧身回头、抬手指向、出拳），拖动手腕脚踝走两骨 IK 并锁定脚高，姿势可存进账号在别的项目复用；群演成阵列添加，整组切换人偶类型。道具可绑定元素库里的 GLB 模型（也能直接从导演台导入本地 .glb），按道具的宽深高等比缩放落到地面。每镜有一条时间线：1–30 秒、24/25/30 fps、机位轨与人物轨、六种缓动、14 种运镜预设写成可再编辑的关键帧，播放即预演；也可以在导演视角按住鼠标直接画一条走位或机位路线，松手即按等距采样写成该轨的关键帧。空间检查（站位重叠、主体出画、遮挡、越轴、朝向、姿态）不只报错：「检查」面板逐条给出修正，「一键修正」把站位推开、人物转向、机位重解一次做完，并能一次撤销；「机位对比」把本镜主机位与候选机位并排渲染，按画面择优，正面 / 侧面 / 过肩 / 俯拍 / 仰拍 / 特写一键加候选；道具可按直线 / 网格 / 环形阵列复制并对齐。截图与白模视频按成片画幅逐帧导出（浏览器内 WebCodecs 编码），进入本场截图库后可「应用至分镜」——静帧排进该镜的 `sequence_images`，白模视频排进 `reference_videos` 并让第 5 阶段改走多模态；站位再改一次即标记过期，过期的白模视频不会被使用。静帧与视频都可以导出为灰度深度画面（近亮远暗）：深度视频应用后第 5 阶段只取其层次与运镜，深度静帧不能作首帧参考。内置工具助手与 MCP 也能查看一场的检查、提交同一套空间操作并自动修正。场景可挂一张背景（纯色 / 参考图 / 全景图），只在机位画面里作构图参考，默认不进入交付的截图与视频。分镜故事板与第 5 阶段的镜头面板都能打开同一个舞台（按场景编号），第 5 阶段还会显示该镜已应用的静帧与白模视频。工程可导出为 [storyai-3d-director-desk](https://github.com/jiguang132/storyai-3d-director-desk) 或 [CoStage](https://github.com/cs68614-hash/costage) 文档并导回。详见 [docs/director-desk](docs/director-desk/IMPLEMENTATION.md)（参考来源与差距见 [RESEARCH.md](docs/director-desk/RESEARCH.md)）。
 *   **镜头衔接（多张分镜的自然过渡）**：每一刀都有一份切点规划——硬切 / 叠化 / 淡入淡出 / 匹配剪辑，以及正反打、视线匹配、切回反应、动作匹配、图形匹配、时间流逝、回忆、章节转换等衔接手法，写明带过去的线索、动接动还是静接静、上一镜在切点做什么、这一镜从哪里接。分镜面板的入剪 / 出剪 / 起止状态由它写出，逻辑、视觉、运动、匹配、节奏五个维度的九项检查（景别跨度、30 度原则、视线闭环、动势方向、人物不瞬移、先因后果、光色、时长张弛、情绪过渡）进入分镜连续性自检；分镜故事板每格标出切入方式，成片合成在连续性质检通过后按规划选择转场。详见 [docs/shot-transitions](docs/shot-transitions/IMPLEMENTATION.md)。
-*   **画面风格锁（Style Pack）**：一个项目选定一种质感——真人电影写实 / 35mm 胶片 / 原子朋克废土 / 2D 赛璐珞漫剧 / 3D 国漫 CG，它的风格锁逐字写进每一张分镜图、每一张首尾帧和每一镜视频提示词，并决定 Ark 的风格锚定句；漫剧项目不再被写实措辞和「禁止动画」的负面词压成真人实拍。视频提示词按分层编译：风格锁 → 参考素材职责 → 结构声明 → 空间/状态/道具/光影/声音五层锁 → 镜头块 → 声音 → 具名铁律 → 负向词，并按目标模型的字数预算做压力裁剪（先砍声音、环境、光影数值、色彩、特效、台词表达，锁定标签、主体、动作、机位、台词绝不裁）。同时修好了 Seedance 2.5 的单镜时长：此前所有模型都被钳在 15 秒，现在 2.5 可以出 30 秒。详见 [docs/style-packs](docs/style-packs/IMPLEMENTATION.md)。
+*   **画面风格锁（Style Pack）**：一个项目选定一种质感——真人电影写实 / 35mm 胶片 / 原子朋克废土 / 2D 赛璐珞漫剧 / 3D 国漫 CG，它的风格锁逐字写进每一张分镜图、每一张首尾帧和每一镜视频提示词，并决定 Ark 的风格锚定句；漫剧项目不再被写实措辞和「禁止动画」的负面词压成真人实拍。视频提示词按《运镜提示词》三段编译：Pa1 人物/服装绑定/场景/道具锚点 → 参考素材职责 → 结构声明 → 空间/状态/道具归属/光影/声音五层锁 → 镜头块；Pa2 风格锁 → 人物外貌简述 → 画质 → 声音；Pa3 具名铁律（物理优先于参考图、形态连续）→ 负向词，并按目标模型的字数预算做压力裁剪（先砍声音、环境、光影数值、色彩、特效、台词表达，锁定标签、主体、动作、机位、台词绝不裁）。同时修好了 Seedance 2.5 的单镜时长：此前所有模型都被钳在 15 秒，现在 2.5 可以出 30 秒。详见 [docs/style-packs](docs/style-packs/IMPLEMENTATION.md)。
 *   **源文库（整本源文 + 逐集原文）**：剧本文库里的每个文件有自己的角色——整本源文按顺序拼接后由分集规划切成集；逐集原文每个文件就是一集，排在切出的集之后；参考资料只给人读。体裁（小说 / 成品剧本）逐文件记录，分集账本记下每集原文的来源（整本切出 / 自带原文 / 按大纲创作），源文一变即把已写好的规划标记为过期。详见 [docs/arcreel-parity](docs/arcreel-parity/IMPLEMENTATION.md)。
 *   **批量视频准入与调用台账**：第 5 阶段开始前把全部镜头一起评估，结论只有三种——放行、需确认时长档位（附费用）、受阻（零任务零费用、逐镜列出原因）。每次供应商调用（文本 / 图 / 视频 / 语音）都记成一条带参考费用的记录，价格由部署方按模型在 `model_pricing.json` 里声明，按币种分列从不合并。一镜只有一种口播（角色台词 / 旁白 / 无声），混合即退回规划；旁白可选合成配音或留给后期；每集可导出按阅读量计时的字幕草稿。
 *   **断点续跑与异常重置机制**：
@@ -130,11 +130,15 @@ short-drama/
 | **BOOTSTRAP_ADMIN** | 本地开发 `1`，生产默认 `0` | 仅在配置登录名不存在时初始化管理员 |
 | **BOOTSTRAP_ADMIN_LOGIN** | `admin@short-drama` | 本地默认管理员登录名 |
 | **BOOTSTRAP_ADMIN_PASSWORD** | 本地开发默认 `admin@123` | 首次登录必须修改；生产环境禁止使用该默认值 |
-| **PAYMENT_WEBHOOK_SECRET** | 至少 32 位随机值 | 微信/支付宝回调信封的 HMAC 验签密钥 |
+| **BILLING_ENFORCE** | `0`（默认）或 `1` | 模型调用是否真正扣积分。关闭时只记录。开启时作废沙箱积分，并拒绝没有费率的模型 |
+| **PAYMENT_SANDBOX_ENABLED** | `0`（默认）或 `1` | 本地沙箱支付，不收钱就发积分。默认关闭，生产环境始终关闭 |
+| **PAYMENT_NOTIFY_BASE_URL** | 公网 https 地址 | 微信和支付宝的支付通知发到这里。不是 https 时两个渠道都不启用 |
+| **WECHATPAY_MCH_ID** / **APP_ID** / **CERT_SERIAL** / **PRIVATE_KEY_PATH** / **API_V3_KEY** / **PUBLIC_KEY_ID** / **PUBLIC_KEY_PATH** | 微信商户平台获取 | 微信 Native 支付（公钥模式）。缺任何一项就不提供微信支付 |
+| **ALIPAY_APP_ID** / **SELLER_ID** / **PRIVATE_KEY_PATH** / **PUBLIC_KEY_PATH** | 支付宝开放平台获取 | 支付宝订单码支付。缺任何一项就不提供支付宝 |
 | **FFMPEG_PATH** / **FFPROBE_PATH** | 默认自动查找（PATH、Homebrew、`/usr/bin`） | ffmpeg / ffprobe 不在常规位置时指定完整路径 |
 | **SUBTITLE_FONT_PATH** | 默认按 macOS、Linux（Noto / 文泉驿）、Windows 的常见中文字体依次查找 | 烧录字幕与片头标题卡使用的中文字体文件 |
 | **LOCAL_TTS_VOICE** | 默认 `Tingting` | 本机 `say` 兜底配音使用的音色（仅 macOS） |
-| **TITLE_CARD_TAGLINE** | 默认 `AI 短剧 · 一键成片` | 片头标题卡副标题；设为空则只显示片名 |
+| **TITLE_CARD_TAGLINE** | 默认空 | 片头标题卡副标题；不设就只显示片名 |
 | **ARK_PROXY** | 可选 | 仅作用于火山 Ark 域名的代理，优先于 `SEEDANCE_PROXY` |
 | **SEEDANCE_VIDEO_RESOLUTION** | 默认 `720p` | Seedance 单镜分辨率；成片统一合成为 1080×1920 |
 | **SHOTS_PER_EPISODE** / **REANCHOR_EVERY** / **SHOT_DURATION** | 默认 `16` / `4` / `10` | 逐集制作的镜头数、身份视图重锚间隔、单镜秒数（不超过所选视频模型上限） |
@@ -236,7 +240,7 @@ DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama'
 | `POST /api/production/sd25/compile` | 执行本地 sd25-pe 的生成/编辑/延长、音频单改、编辑后延长有序步骤、素材职责、关键帧、九宫格与白模 Prompt 编译 |
 | `POST /api/production/sd25/audit` | 对五段式 Prompt 执行只读结构审计：标题、连续时间线、素材职责、复杂动作因果与可选无品牌边界 |
 | `POST /api/production/script-prompts/compile` | 把剧本文本完整编译为角色五视图、场景圣经、逐场严格九宫格、同契约分镜/运镜 Prompt、SD25 Prompt、一致性报告和多格式导出 |
-| `POST /api/production/script-prompts/compile-file` | 安全接收 TXT/Markdown/DOCX/PDF/FDX，并执行完整剧本到视频提示词流水线 |
+| `POST /api/production/script-prompts/compile-file` | 安全接收 TXT/Markdown/DOCX/PDF/FDX/Fountain，并执行完整剧本到视频提示词流水线 |
 | `POST /api/production/storyboard-director/compile` | 编译单镜头基础信息、视觉规范、连续性锁定、色调/动势/运镜/转场、连续时间拍点、逐拍单图、相邻关键帧视频、九宫格分页与自检结果 |
 | `GET /api/production/shotcraft/catalog` | 查询锁定的 Video Shotcraft 152 卡 / 209 样式目录与音效统计 |
 | `POST /api/production/shotcraft/compile` | 将 Shotcraft 卡片和样式编译为统一镜头计划，不执行上游脚本 |
@@ -258,7 +262,7 @@ DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5432/short-drama'
 
 角色阶段会生成一张有序五视图设定板并物理拆成五个视图；分镜阶段按真实叙事事件生成 N 张独立镜头图，再合成为固定 3×3 九宫格展示页：不足九拍的格位留白，超过九拍自动分页，禁止复制或补造拍点。长视频合成会根据场景、轴线、动作、道具、灯光和声音状态选择动作匹配、硬切、短叠化、声音桥或转黑，未通过连续性门禁的镜头禁止合成。
 
-工作室平台 API 使用 `/api/studio/*`：包含 SQLite 项目、TXT/Markdown/DOCX/PDF/FDX 来源摄取、证据化故事图、版本谱系、下游过期、追加式人工审核、主线/Freezone 双轨画布、Director World 空间调度、原子任务租约与取消、分币种成本账本、带 SHA-256 的项目归档往返、资产就绪、SRT/ASS/Jianying-compatible 导出以及作用域外部 Agent Key。外部自动化使用 `/api/agent/*`，凭据只允许访问绑定项目和显式授权的 scope。
+工作室平台 API 使用 `/api/studio/*`：包含 SQLite 项目、TXT/Markdown/DOCX/PDF/FDX/Fountain 来源摄取、证据化故事图、版本谱系、下游过期、追加式人工审核、主线/Freezone 双轨画布、Director World 空间调度、原子任务租约与取消、分币种成本账本、带 SHA-256 的项目归档往返、资产就绪、SRT/ASS/Jianying-compatible 导出以及作用域外部 Agent Key。外部自动化使用 `/api/agent/*`，凭据只允许访问绑定项目和显式授权的 scope。
 
 产品平台 API 使用 PostgreSQL：`/api/platform/*` 提供 14 个来源、86 项能力的全局开关、审计提交/许可证处理和 `/command` 白名单调用；`/api/elements/*` 提供演员、道具、场景、特效独立元素库及安全图片上传/重新生成请求；`/api/users/*` 与 `/api/admin/users/*` 提供个人资料、改密和角色/状态管理；`/api/billing/*` 提供会员计划、积分账本、订单、沙箱支付和签名幂等回调。微信/支付宝真实结算在商户证书未配置时失败关闭，不会把浏览器跳转当作付款成功。
 

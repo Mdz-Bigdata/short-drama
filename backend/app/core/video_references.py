@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import re
-from typing import Literal, cast
+from collections.abc import Mapping
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core import prompt_data
 from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS, MAX_SEQUENCE_IMAGES
 
 
@@ -37,6 +40,9 @@ class VideoGenerationIntent(BaseModel):
     motion_reference_required: bool = False
     audio_rhythm_required: bool = False
     multi_shot_output: bool = False
+    # 文本模型按戏判定的方式(见 app.core.video_mode_judge)：自动路由优先采用，执行不了就按素材规则选。
+    preferred_mode: ExecutableVideoMode | None = None
+    preferred_reason: str = ""
 
 
 class VideoProviderProfile(BaseModel):
@@ -52,6 +58,9 @@ class VideoProviderProfile(BaseModel):
     ]
     capability_source: str
     notes: list[str] = Field(default_factory=list)
+    # 画面与声音一次生成（对白、音效、环境声随片而出）。没有核实过的族一律记 False：
+    # 提示词里的声音描述对它们是噪声，台词与音效改走后期配音。
+    native_audio: bool = False
 
 
 VIDEO_PROVIDER_PROFILES: tuple[VideoProviderProfile, ...] = (
@@ -65,6 +74,7 @@ VIDEO_PROVIDER_PROFILES: tuple[VideoProviderProfile, ...] = (
         verification_status="integrated",
         capability_source="project MiniMax H3 adapter and request contract",
         notes=["frame anchoring and mixed Ref2VA references are separate request modes"],
+        native_audio=True,
     ),
     VideoProviderProfile(
         family="seedance",
@@ -75,7 +85,11 @@ VIDEO_PROVIDER_PROFILES: tuple[VideoProviderProfile, ...] = (
         max_reference_audios=3,
         verification_status="integrated",
         capability_source="project Ark-compatible runtime adapter; exact model access is runtime-configured",
-        notes=["the configured endpoint remains authoritative for each Seedance version"],
+        notes=[
+            "the configured endpoint remains authoritative for each Seedance version",
+            "Seedance 2.x renders dialogue, effects and ambience with the picture; 1.0 is silent (see VIDEO_MODEL_NATIVE_AUDIO)",
+        ],
+        native_audio=True,
     ),
     VideoProviderProfile(
         family="kling",
@@ -89,6 +103,7 @@ VIDEO_PROVIDER_PROFILES: tuple[VideoProviderProfile, ...] = (
         notes=[
             "audio is not advertised as a conditioning input in the reviewed O1 guide",
             "the adapter executes text, first-frame, first+last-frame and multi-image modes; Video O1 multimodal references fail closed until their fields are verified",
+            "kling-v2-6 / v3 can render sound, but only behind a request flag the adapter does not send, so clips arrive silent",
         ],
     ),
     VideoProviderProfile(
@@ -103,7 +118,9 @@ VIDEO_PROVIDER_PROFILES: tuple[VideoProviderProfile, ...] = (
         notes=[
             "Gork is normalized as a user-facing alias for Grok",
             "reference_audios are xAI voice ids, not uploaded audio, so audio references stay unsupported",
+            "Grok Imagine video returns synchronized sound (effects, ambience, short speech) per provider listings; not toggled by the adapter",
         ],
+        native_audio=True,
     ),
     VideoProviderProfile(
         family="happyhorse",
@@ -114,7 +131,11 @@ VIDEO_PROVIDER_PROFILES: tuple[VideoProviderProfile, ...] = (
         max_reference_audios=0,
         verification_status="runtime_configuration_required",
         capability_source="fal.ai official-partner endpoints alibaba/happy-horse/v1.1 text-/image-/reference-to-video (1-9 image_urls)",
-        notes=["no documented last-frame, video or audio conditioning input on the fal.ai endpoints"],
+        notes=[
+            "no documented last-frame, video or audio conditioning input on the fal.ai endpoints",
+            "fal.ai documents HappyHorse as joint audio-video generation in a single pass",
+        ],
+        native_audio=True,
     ),
     VideoProviderProfile(
         family="ltx_2_3",
@@ -125,7 +146,11 @@ VIDEO_PROVIDER_PROFILES: tuple[VideoProviderProfile, ...] = (
         max_reference_audios=0,
         verification_status="runtime_configuration_required",
         capability_source="LTX OpenAPI: /v2/image-to-video takes image_uri plus optional last_frame_uri; no multi-image input",
-        notes=["audio-to-video exists for ltx-2-3-pro but is not wired as a reference mode"],
+        notes=[
+            "audio-to-video exists for ltx-2-3-pro but is not wired as a reference mode",
+            "the adapter requests generate_audio=true, so clips carry generated sound",
+        ],
+        native_audio=True,
     ),
 )
 
@@ -162,8 +187,8 @@ class VideoRouteRequest(BaseModel):
 # 每个分镜都必须能被所选视频模型**一次**生成出来，所以镜头时长上限由模型决定。
 # 这张表按「版本」而不是按「族」解析：seedance2.0 与 seedance2.5 同属 seedance 族，
 # 单次生成上限却是 15s 与 30s，VIDEO_PROVIDER_PROFILES 的族粒度区分不了它们。
-# 未登记的模型走保守默认值——切得偏碎只是多几个镜头，切得偏长会让生成请求直接失败。
-DEFAULT_MAX_SHOT_SECONDS = 10
+# 未登记的模型按 15 秒规划：场景时长要能用到 15 秒。上限更短的模型必须登记在下面，否则生成的视频比分镜计划短。
+DEFAULT_MAX_SHOT_SECONDS = 15
 # H3VideoRequest declares duration_seconds ge=4 (schema/production.py), and
 # providers/capabilities.py records min_duration_seconds=4 for minimax_h3, so a
 # shorter shot would be rejected at submission. 4s is the strictest known floor.
@@ -181,6 +206,19 @@ VIDEO_MODEL_MAX_SHOT_SECONDS: tuple[tuple[str, int], ...] = (
     ("minimax h3", 15),
     ("hailuo", 15),
     ("h3", 15),
+    # 可灵默认 3.0，单段 3–15 秒；更早的型号只有 5 / 10 秒(适配器按型号发，见 providers/video_adapters.py)。
+    ("kling", 15),
+    ("kling-v1", 10),
+    ("kling-v2", 10),
+    ("kling-1", 10),
+    ("kling-2", 10),
+    ("kling1", 10),
+    ("kling2", 10),
+    ("kling-o1", 10),
+    ("kling-video-o1", 10),
+    # 适配器只能发这些时长：LTX pro 6 / 8 / 10 秒；LTX fast 到 20 秒。
+    ("ltx", 10),
+    ("ltx-2-3-fast", 15),
 )
 
 
@@ -198,6 +236,13 @@ VIDEO_MODEL_PREFERRED_SHOT_SECONDS: tuple[tuple[str, int, int], ...] = (
     ("minimax h3", 5, 15),
     ("hailuo", 5, 15),
     ("h3", 5, 15),
+)
+
+
+# 同一族里不出声的版本：族粒度上 seedance 音画同生，但 1.0 只出画面（1.5 起出声）。
+VIDEO_MODEL_NATIVE_AUDIO: tuple[tuple[str, bool], ...] = (
+    ("seedance-1-0", False),
+    ("seedance1-0", False),
 )
 
 
@@ -278,6 +323,32 @@ def _declared_profile(model: str) -> VideoProviderProfile | None:
     )
 
 
+def video_native_audio(model: str) -> bool:
+    """Whether the selected video model renders dialogue and sound with the picture.
+
+    A version entry wins over its family (``seedance1.0`` is silent although the family is not);
+    unknown and declared-but-unverified models are treated as silent.
+    """
+    normalized = _normalize_model_token(model)
+    if normalized:
+        ranked = sorted(VIDEO_MODEL_NATIVE_AUDIO, key=lambda item: len(item[0]), reverse=True)
+        for alias, audio in ranked:
+            if alias in normalized:
+                return audio
+    return normalize_video_provider(model).native_audio
+
+
+def uses_native_soundtrack(config: Mapping[str, Any]) -> bool:
+    """Whether this project's clips keep the sound the video model made, with no dubbing over it.
+
+    Only MiniMax H3 so far: it is the one this was listened to on. ``native_audio: false`` goes back to dubbing.
+    """
+    model = str(config.get("video_model") or "")
+    if os.getenv("MINIMAX_H3_NATIVE_AUDIO", "1") in {"0", "false", "False"}:  # the clips come back silent
+        return False
+    return config.get("native_audio") is not False and video_native_audio(model) and normalize_video_provider(model).family == "minimax_h3"
+
+
 def normalize_video_provider(model: str) -> VideoProviderProfile:
     declared = _declared_profile(model)
     if declared is not None:
@@ -303,6 +374,16 @@ def normalize_video_provider(model: str) -> VideoProviderProfile:
 
 _NUMBERED_MENTION = re.compile(r"（参考图(\d+)）")
 _REFERENCE_NOTE = re.compile(r"参考图(\d+)(仅锁定[^；。]*?不是额外剧情或额外人物)([；。]?)")
+
+
+def _frames_only_wording(text: str) -> str:
+    """请求里只有首(尾)帧、没有参考图时：提示词不再指向不存在的参考图，长相以首帧为准。"""
+    for old, new in prompt_data.pairs("clip_prompt", "no_reference_rewrites"):
+        text = text.replace(old, new)
+    dropped = prompt_data.words("clip_prompt", "no_reference_drop_lines")
+    text = "\n".join(line for line in text.split("\n") if not line.startswith(dropped))
+    text = re.sub(r"【参考素材职责】\n[；。\s]*(?=\S)", "", text)
+    return re.sub(r"\n{3,}", "\n\n", text)
 
 
 def renumber_reference_mentions(prompt: str, identity_images: list[str], plan: "VideoReferencePlan") -> str:
@@ -335,6 +416,8 @@ def renumber_reference_mentions(prompt: str, identity_images: list[str], plan: "
 
     text = _REFERENCE_NOTE.sub(note, _NUMBERED_MENTION.sub(mention, prompt or ""))
     text = re.sub(r"；{2,}", "；", text)
+    if plan.first_frame and not sent:
+        text = _frames_only_wording(text)
     if plan.first_frame is None and sent and sent[0] not in identity_images:
         lead = "参考图1是本镜首帧画面，只决定开场构图、站位与光线；"
         if not text.startswith(lead):
@@ -422,6 +505,13 @@ def plan_video_references(
         if not candidates:
             raise ValueError(f"no compatible video mode for {profile.family} and the supplied assets")
         _, mode, reason = max(candidates, key=lambda item: (item[0], item[1]))
+        # 人放上去的视频 / 音频参考不因模型一句话被丢掉；模型判定的方式这一镜执行不了，也照规则走。
+        preferred = next((item for item in candidates if item[1] == intent.preferred_mode), None)
+        if intent.preferred_mode and preferred and not (has_multimodal and "multimodal" in profile.modes):
+            _, mode, reason = preferred
+            reason = f"模型判定：{intent.preferred_reason or reason}"
+        elif intent.preferred_mode and intent.preferred_mode != mode:
+            fallbacks.append(f"模型判定的 {intent.preferred_mode} 这一镜执行不了，按素材规则选择")
         reasons.append(reason)
     else:
         mode = requested_mode

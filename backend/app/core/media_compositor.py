@@ -14,11 +14,16 @@ import hashlib
 import json
 import socket
 import subprocess
-from typing import List, Optional, Tuple
-from urllib.parse import urljoin, urlparse
+import time
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
+from datetime import datetime, timezone
+from typing import Any, List, Optional, Tuple
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from app import settings
-from app.platform.runtime_models import provider_key_available
+from app.platform.runtime_models import provider_key_available, runtime_model_registry
 
 logger = logging.getLogger("app.core.media_compositor")
 
@@ -32,8 +37,8 @@ OUT_W, OUT_H = 1080, 1920
 # 母版帧率：各家模型出的片段帧率不一，合成时统一到这个值
 OUT_FPS = 30
 # 片头标题卡的副标题与无标题时的占位；TITLE_CARD_TAGLINE 可改成自己的厂牌，设为空则不显示
-DEFAULT_TITLE_TAGLINE = "AI 短剧 · 一键成片"
-UNTITLED_FILM = "AI 短剧"
+DEFAULT_TITLE_TAGLINE = ""
+UNTITLED_FILM = "短剧"
 # 片头标题卡时长(秒)
 TITLE_DUR = 2.6
 # 男声音高比例 (基于 Tingting 女声降调模拟男声；say 输出固定 22050Hz)
@@ -114,6 +119,51 @@ def _font_path() -> Optional[str]:
 
 def public_url(filename: str) -> str:
     return f"{PUBLIC_BASE_URL.rstrip('/')}/{filename}"
+
+
+def local_media_path(url: object) -> Optional[str]:
+    """本服务 /media 地址(或 /media/ 开头的路径)对应的本地文件；不是本地媒体、文件不存在或越出媒体目录时为 None。"""
+    value = str(url or "").strip()
+    if not value:
+        return None
+    base = PUBLIC_BASE_URL.rstrip("/") + "/"
+    if value.startswith(base):
+        relative = value[len(base):]
+    elif value.startswith(settings.MEDIA_PREFIX):
+        relative = value[len(settings.MEDIA_PREFIX):]
+    else:
+        return None
+    relative = relative.split("?", 1)[0].split("#", 1)[0]
+    root = os.path.realpath(MEDIA_DIR)
+    path = os.path.realpath(os.path.join(root, relative))
+    if not path.startswith(root + os.sep) or not os.path.isfile(path):
+        return None
+    return path
+
+
+#: 内嵌图上限：与模型网关接受的 data URI 大小一致。
+INLINE_IMAGE_LIMIT = 14 * 1024 * 1024
+_INLINE_TYPES = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"RIFF", "image/webp"))
+
+
+def inline_local_image(url: object) -> object:
+    """本地媒体里的图读成 data URI 交给供应商(它们取不到 localhost)；其它地址原样返回。"""
+    path = local_media_path(url)
+    if path is None:
+        return url
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(INLINE_IMAGE_LIMIT + 1)
+    except OSError:
+        return url
+    if len(data) > INLINE_IMAGE_LIMIT:
+        return url
+    mime = next((mime for magic, mime in _INLINE_TYPES if data.startswith(magic)), None)
+    if mime is None or (mime == "image/webp" and data[8:12] != b"WEBP"):
+        return url
+    import base64
+
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
 
 def _synth_clip(text: str, gender: str, out_mp3: str, emotion: str = "neutral", voice: Optional[str] = None) -> bool:
@@ -219,14 +269,77 @@ def _elevenlabs_available() -> bool:
     return provider_key_available("elevenlabs", "audio", "ELEVENLABS_API_KEY")
 
 
+_ACCOUNT_VOICES: dict[str, Tuple[str, str]] = {}
+_speaker_voices: ContextVar[Mapping[str, str]] = ContextVar("speaker_voices", default={})
+
+
+def _elevenlabs_voices() -> Tuple[str, str]:
+    """(女声, 男声) 的 voice_id：.env 写了就用；没写就从这个账号自己的音色库里按性别各挑一个(只查一次)。
+
+    以前没配 .env 时整条配音悄悄退回本地 TTS——模型配置中心明明配好了 ElevenLabs 也用不上。
+    """
+    female = (os.getenv("ELEVENLABS_VOICE_FEMALE_ID") or "").strip()
+    male = (os.getenv("ELEVENLABS_VOICE_MALE_ID") or "").strip()
+    if female and male:
+        return female, male
+    runtime = runtime_model_registry.first("elevenlabs", "audio")
+    account = hashlib.sha256(((runtime.api_key if runtime else "") or os.getenv("ELEVENLABS_API_KEY") or "").encode()).hexdigest()[:12]
+    if account not in _ACCOUNT_VOICES:
+        from app.core.providers.elevenlabs import ElevenLabsClient
+
+        client = ElevenLabsClient()
+        try:
+            voices = list((client.list_voices(page_size=100) or {}).get("voices") or [])
+        finally:
+            client.close()
+        by_gender: dict[str, str] = {}
+        for voice in voices:
+            gender = str(((voice.get("labels") or {}) if isinstance(voice, dict) else {}).get("gender") or "").lower()
+            if gender in {"female", "male"} and voice.get("voice_id"):
+                by_gender.setdefault(gender, str(voice["voice_id"]))
+        _ACCOUNT_VOICES[account] = (by_gender.get("female", ""), by_gender.get("male", ""))
+        logger.info("[Compositor] ElevenLabs 未在 .env 指定音色，取账号音色库：女声 %s / 男声 %s",
+                    _ACCOUNT_VOICES[account][0] or "无", _ACCOUNT_VOICES[account][1] or "无")
+    found_female, found_male = _ACCOUNT_VOICES[account]
+    return female or found_female or found_male, male or found_male or found_female
+
+
+def effective_audio_model(tts_model: str) -> Tuple[str, str]:
+    """(供应商, 型号)：模型配置中心启用了项目选的配音型号就用它；中心有音频模型、项目型号不在其中时
+    用中心的第一个；中心没有音频模型时才按项目 / 配置文件里的型号。与文本、图像、视频同一口径。"""
+    model = (tts_model or "").strip()
+    runtime = runtime_model_registry.resolve(model, "audio") if model else None
+    if runtime is not None:
+        return runtime.provider, model
+    first = runtime_model_registry.first_for_category("audio")
+    if first is not None:
+        if model:
+            logger.warning("[Compositor] 配音模型 %s 未在模型配置中心启用，改用配置中心的 %s", model, first.model_ids[0])
+        return first.provider, first.model_ids[0]
+    return ("elevenlabs" if "eleven" in model.lower() else ""), model
+
+
+@contextmanager
+def bind_speaker_voices(voices: Mapping[str, str] | None) -> Iterator[None]:
+    """The voices a project has cast, for the dubbing done inside this block (worker threads inherit the context)."""
+    token = _speaker_voices.set(dict(voices or {}))
+    try:
+        yield
+    finally:
+        _speaker_voices.reset(token)
+
+
 def synthesize_elevenlabs_dialogue_track(segments, tag: str = "eleven_voice") -> Tuple[Optional[str], Optional[str]]:
     """Generate an emotion-aware multi-speaker track through Text-to-Dialogue."""
     if not _elevenlabs_available():
         return None, None
-    female_voice = (os.getenv("ELEVENLABS_VOICE_FEMALE_ID") or "").strip()
-    male_voice = (os.getenv("ELEVENLABS_VOICE_MALE_ID") or "").strip()
+    try:
+        female_voice, male_voice = _elevenlabs_voices()
+    except Exception as exc:
+        logger.warning("[Compositor] ElevenLabs 音色库读取失败，本条配音改用本地 TTS：%s", type(exc).__name__)
+        return None, None
     if not female_voice or not male_voice:
-        logger.warning("[Compositor] ElevenLabs voice IDs are not configured; using local TTS fallback")
+        logger.warning("[Compositor] ElevenLabs 账号里没有可用音色且 .env 未指定；本条配音改用本地 TTS")
         return None, None
     try:
         from app.core.providers.elevenlabs import DialogueLine, ElevenLabsClient
@@ -237,6 +350,7 @@ def synthesize_elevenlabs_dialogue_track(segments, tag: str = "eleven_voice") ->
                 voice_map = {}
         except json.JSONDecodeError:
             voice_map = {}
+        cast = _speaker_voices.get()
         lines = []
         for segment in segments or []:
             text = re.sub(r"\s+", " ", (segment[0] or "")).strip()
@@ -246,7 +360,7 @@ def synthesize_elevenlabs_dialogue_track(segments, tag: str = "eleven_voice") ->
             emotion = segment[2] if len(segment) > 2 else "neutral"
             speaker = segment[3] if len(segment) > 3 else ""
             lines.append(DialogueLine(
-                voice_id=str(voice_map.get(speaker) or (male_voice if gender == "male" else female_voice)),
+                voice_id=str(cast.get(speaker) or voice_map.get(speaker) or (male_voice if gender == "male" else female_voice)),
                 text=text,
                 emotion=emotion,
             ))
@@ -268,8 +382,9 @@ def synthesize_preferred_dialogue_track(
     tts_model: str,
     tag: str = "voice",
 ) -> Tuple[Optional[str], Optional[str]]:
-    """Use ElevenLabs when selected/configured, then fall back to the local renderer."""
-    if "eleven" in (tts_model or "").lower():
+    """配音按模型配置中心优先(见 :func:`effective_audio_model`)；ElevenLabs 出不了声时才落到本地渲染并记日志。"""
+    provider, model = effective_audio_model(tts_model)
+    if provider == "elevenlabs" or "eleven" in model.lower():
         url, path = synthesize_elevenlabs_dialogue_track(segments, tag=f"eleven_{tag}")
         if path:
             return url, path
@@ -457,13 +572,22 @@ def extract_last_frame_b64(video_url_or_path: str) -> Optional[str]:
     抽取视频最后一帧并返回 base64 data URI (image/jpeg)，用于「尾帧链式衔接」：
     把上一镜尾帧作为下一镜的首帧喂给 Seedance，实现镜头无缝连贯 (火山云端可直接读 base64)。
     """
+    return _extract_frame_b64(video_url_or_path, "last")
+
+
+def extract_first_frame_b64(video_url_or_path: str) -> Optional[str]:
+    """视频的第一帧，data URI；接缝质检拿它和前一段的末帧比。"""
+    return _extract_frame_b64(video_url_or_path, "first")
+
+
+def _extract_frame_b64(video_url_or_path: str, which: str) -> Optional[str]:
     ff = _ffmpeg()
     if not ff or not video_url_or_path:
         return None
     _ensure_dir()
     import base64 as _b64
     h = hashlib.md5(video_url_or_path.encode("utf-8")).hexdigest()[:16]
-    work = os.path.join(MEDIA_DIR, f"_frame_{h}")
+    work = os.path.join(MEDIA_DIR, f"_frame_{h}_{which}")
     os.makedirs(work, exist_ok=True)
     try:
         src = video_url_or_path
@@ -472,9 +596,15 @@ def extract_last_frame_b64(video_url_or_path: str) -> Optional[str]:
             if not _download(video_url_or_path, src):
                 return None
         frame = os.path.join(work, "last.jpg")
-        # 取最后一帧并缩到 720 宽（仅作参考输入，控制 base64 体积）。
-        subprocess.run([ff, "-y", "-sseof", "-0.2", "-i", src, "-vf", "scale=720:-2", "-frames:v", "1", frame],
-                       check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # 真正的最后一帧：从结尾前 1 秒起逐帧覆盖写同一个文件，留下的就是末帧。
+        # (`-sseof -0.2 -frames:v 1` 给的是结尾前 0.2 秒的那一帧，24fps 下差约 5 帧，接缝处动作会重一下。)
+        # 缩到 1280 宽：首帧是要被照着画的，720 宽的参考会把接缝后的画面带糊。
+        scale = ["-vf", "scale='min(1280,iw)':-2", "-q:v", "2"]
+        if which == "last":
+            arguments = ["-sseof", "-1", "-i", src, *scale, "-update", "1", frame]
+        else:
+            arguments = ["-i", src, *scale, "-frames:v", "1", frame]
+        subprocess.run([ff, "-y", *arguments], check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if not os.path.exists(frame):
             return None
         with open(frame, "rb") as f:
@@ -515,6 +645,34 @@ def _local_media_source(url: str) -> Optional[str]:
     if candidate == root or not candidate.startswith(root + os.sep):
         return None
     return candidate
+
+
+def _signed_url_expiry(url: str) -> Optional[float]:
+    """签名链接的到期时刻(epoch 秒)：OSS 的 ``Expires``、S3 的 ``X-Amz-Date`` + ``X-Amz-Expires``；不是签名链接为 None。"""
+    query = {key.lower(): values[0] for key, values in parse_qs(urlparse(url).query).items() if values}
+    if query.get("expires", "").isdigit():
+        return float(query["expires"])
+    signed_at, lifetime = query.get("x-amz-date", ""), query.get("x-amz-expires", "")
+    if lifetime.isdigit():
+        try:
+            return datetime.strptime(signed_at, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc).timestamp() + int(lifetime)
+        except ValueError:
+            return None
+    return None
+
+
+def media_available(url: str) -> bool:
+    """不发请求判断一段媒体还拿不拿得到：本机 /media 文件在不在，远端签名链接过没过期。
+
+    视频服务商回传的成片链接大多是限时签名链接(MiniMax 的 OSS 链接一周左右失效)。
+    """
+    if not url:
+        return False
+    local = _local_media_source(url)
+    if local:
+        return os.path.isfile(local) and os.path.getsize(local) > 1024
+    expiry = _signed_url_expiry(url)
+    return expiry is None or expiry > time.time()
 
 
 def _validate_public_media_url(url: str) -> None:
@@ -577,6 +735,31 @@ def _download(url: str, dst: str, timeout: int = 90, retries: int = 3) -> bool:
         if attempt < retries - 1:
             time.sleep(2)
     return False
+
+
+def keep_clip(video_url: Optional[str], tag: str = "shotav") -> Optional[str]:
+    """A provider's clip as a local file with its own sound: provider links expire. On failure, the link as it was."""
+    if not video_url or not video_url.startswith("http") or _local_media_source(video_url):
+        return video_url
+    _ensure_dir()
+    name = f"{tag}_{hashlib.md5(video_url.encode('utf-8')).hexdigest()[:16]}.mp4"
+    if _download(video_url, os.path.join(MEDIA_DIR, name)):
+        return public_url(name)
+    return video_url
+
+
+def _clip_sound(ff: str, raw: str, trim: Optional[Tuple[float, Optional[float]]], target: str) -> Optional[str]:
+    """The part of a clip's own sound that stays after its trim; None when it has no sound to give."""
+    start, end = trim if trim else (0.0, None)
+    start = float(start or 0)
+    length = ["-t", f"{max(0.0, float(end) - start):.3f}"] if end is not None else []
+    cmd = [ff, "-y", "-ss", f"{start:.3f}", "-i", raw, *length, "-vn", "-c:a", "aac", target]
+    try:
+        subprocess.run(cmd, check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as error:  # noqa: BLE001 - a clip with no audio stream is an ordinary case
+        logger.info(f"[Compositor] 片段没有可用的原声: {type(error).__name__}")
+        return None
+    return target if os.path.exists(target) and os.path.getsize(target) > 256 else None
 
 
 def attach_audio_to_clip(video_url: str, voice_path: Optional[str] = None,
@@ -703,8 +886,13 @@ def _append_master_mix_filters(
     voice_labels: List[str],
     bgm_label: Optional[str],
     sfx_label: Optional[str],
+    voices_carry_ambience: bool = False,
 ) -> str:
-    """Append dialogue ducking and EBU-style delivery mastering to a filter graph."""
+    """Append dialogue ducking and EBU-style delivery mastering to a filter graph.
+
+    A clip's own sound never drops to silence between lines: with ``voices_carry_ambience`` the music gives way to
+    loud moments only, or it would stay ducked out of hearing for the whole film.
+    """
     mix_inputs: List[str] = []
     dialogue_base: Optional[str] = None
     if voice_labels:
@@ -719,7 +907,8 @@ def _append_master_mix_filters(
     if bgm_label and dialogue_base:
         filters.append(f"{dialogue_base}asplit=2[dialogue][duckkey]")
         filters.append(
-            f"{bgm_label}[duckkey]sidechaincompress=threshold=0.04:ratio=8:attack=20:release=350:makeup=1[bgmduck]"
+            f"{bgm_label}[duckkey]sidechaincompress=threshold={0.25 if voices_carry_ambience else 0.04}"
+            f":ratio={3 if voices_carry_ambience else 8}:attack=20:release=350:makeup=1[bgmduck]"
         )
         mix_inputs.extend(["[dialogue]", "[bgmduck]"])
     else:
@@ -741,13 +930,100 @@ def _append_master_mix_filters(
     return "[aout]"
 
 
+# J-cut / L-cut：声音和画面错开切。配音是对着片段开头摆的，只挪声音口型就歪了，所以动的是画面：
+# L 把上一镜的画面提前切走，台词继续；J 让下一镜的画面晚点出现(剪掉片头)，台词在它之前响起。
+SOUND_JOIN_SECONDS = {"j_cut": 0.4, "l_cut": 0.5}
+MIN_SOUND_JOIN_SECONDS = 0.1
+MAX_SOUND_JOIN_SECONDS = 1.5
+#: 错开之后一段画面至少留这么长。
+MIN_CLIP_AFTER_JOIN_S = 1.0
+#: 为了让台词越过切点，上一镜的尾巴最多剪掉这么多；再多就是在删戏了。
+MAX_TAIL_CUT_S = 1.5
+MAX_TAIL_CUT_FRACTION = 0.3
+
+
+def sound_join_seconds(join: Any) -> float:
+    """这一刀声音错开多久：写了就用写的(限在范围内)，没写用默认。"""
+    wanted = join.get("seconds") if isinstance(join, dict) else None
+    fallback = SOUND_JOIN_SECONDS.get(str((join or {}).get("join") or ""), 0.0)
+    return max(MIN_SOUND_JOIN_SECONDS, min(float(wanted or fallback), MAX_SOUND_JOIN_SECONDS))
+
+
+def plan_sound_joins(
+    clip_seconds: List[float],
+    voice_seconds: List[Optional[float]],
+    joins: List[Optional[dict]],
+    transitions: Optional[List[dict]] = None,
+) -> Tuple[List[float], List[float], List[float], List[dict]]:
+    """``(片头剪掉, 片尾剪掉, 配音提前, 报告)``，都按镜头一一对应。``joins[k]`` 是切入第 k+1 镜的那一刀。
+
+    做不到的不硬做：报告里写明为什么，这一刀按普通的声画同切合成。
+    """
+    count = len(clip_seconds)
+    heads, tails, leads = [0.0] * count, [0.0] * count, [0.0] * count
+    report: List[dict] = []
+    for index in range(1, count):
+        join = joins[index - 1] if index - 1 < len(joins) else None
+        kind = str((join or {}).get("join") or "")
+        if kind not in SOUND_JOIN_SECONDS:
+            continue
+        seconds = sound_join_seconds(join)
+        before, after = index - 1, index
+        room_before = clip_seconds[before] - heads[before] - tails[before]
+        room_after = clip_seconds[after] - heads[after] - tails[after]
+        spoken_before = voice_seconds[before] - leads[before] if voice_seconds[before] is not None else None
+        spec = transitions[index - 1] if transitions and index - 1 < len(transitions) else {}
+        reason = ""
+        cut = 0.0
+        if str((spec or {}).get("type") or "") in {"dip_to_black", "neutral_bridge"}:
+            reason = "转黑是一次停顿，声音不错开"
+        elif kind == "j_cut":
+            if voice_seconds[after] is None:
+                reason = "下一镜没有配音，没有声音可以提前"
+            elif room_after - seconds < MIN_CLIP_AFTER_JOIN_S:
+                reason = "下一镜太短，剪掉片头就不够看了"
+            elif spoken_before is not None and spoken_before > room_before - seconds:
+                reason = "上一镜的台词还没说完，提前会和它压在一起"
+            else:
+                heads[after] += seconds
+                leads[after] = seconds
+        elif spoken_before is None:
+            reason = "上一镜没有配音，没有声音可以留下"
+        elif voice_seconds[after] is not None:
+            reason = "下一镜也有台词，留下的声音会压住它"
+        else:
+            cut = max(0.0, room_before - (spoken_before - seconds))
+            if cut > min(MAX_TAIL_CUT_S, room_before * MAX_TAIL_CUT_FRACTION) or room_before - cut < MIN_CLIP_AFTER_JOIN_S:
+                reason = f"这句话在切点前 {max(0.0, room_before - spoken_before):.1f} 秒就说完了，要留声音得剪掉太多画面"
+            else:
+                tails[before] += cut
+        report.append({"index": index, "join": kind, "seconds": seconds, "applied": not reason, "reason": reason})
+    return heads, tails, leads, report
+
+
+def _kept_seconds(trim: Optional[Tuple[float, Optional[float]]], raw_seconds: float) -> float:
+    start, end = trim if trim else (0.0, None)
+    return (float(end) if end is not None else raw_seconds) - float(start or 0)
+
+
+def _trim_after_join(trim: Optional[Tuple[float, Optional[float]]], head: float, tail: float, raw_seconds: float) -> Tuple[float, Optional[float]]:
+    start, end = trim if trim else (0.0, None)
+    start = float(start or 0) + head
+    if tail > 0:
+        end = (float(end) if end is not None else raw_seconds) - tail
+    return start, end
+
+
 def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: Optional[str],
                  tag: str = "film", title: Optional[str] = None, bgm: bool = True,
                  shot_voices: List = None, bgm_path: Optional[str] = None,
                  sfx_path: Optional[str] = None,
                  transition_plans: Optional[List[dict]] = None,
                  trims: Optional[List[Tuple[float, Optional[float]]]] = None,
-                 bgm_volume: float = 0.16) -> Optional[str]:
+                 bgm_volume: float = 0.16,
+                 sound_joins: Optional[List[Optional[dict]]] = None,
+                 sound_report: Optional[List[dict]] = None,
+                 native_audio: Optional[List[bool]] = None) -> Optional[str]:
     """
     将多镜头视频合成为一条带片头标题卡、字幕、配音与 BGM 的竖屏成片/单集。
     - shot_video_urls: 各镜头视频直链 (http mp4)
@@ -758,6 +1034,9 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
     - bgm: 是否叠加程序化生成的 BGM 低音垫
     - trims: 与镜头一一对应的 (入点秒, 出点秒或 None)，来自剪辑时间线；None 表示整段
     - bgm_volume: 配乐音量 (0-1)，闪避仍按台词侧链压缩
+    - sound_joins: 切入第 2、3…镜的声画错开 ({join: j_cut|l_cut, seconds})；只作用于逐镜配音
+    - sound_report: 传一个列表进来，合成时写进每一刀错开了没有、没错开的原因
+    - native_audio: 与镜头一一对应；为真的镜头用片段自己的声音(按修剪后的入出点取)，不错开也不配音
     返回成片对外 URL；任一关键环节失败返回 None。
     """
     ff = _ffmpeg()
@@ -766,7 +1045,7 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
         logger.warning("[Compositor] 成片合成不可用 (缺 ffmpeg 或无有效视频片段)")
         return None
     _ensure_dir()
-    h = hashlib.md5(("|".join(clips) + "|" + "|".join(subtitles or []) + f"|{title}|{bgm}|{bool(shot_voices)}|{bgm_path}|{sfx_path}|{trims}|{bgm_volume}").encode("utf-8")).hexdigest()[:16]
+    h = hashlib.md5(("|".join(clips) + "|" + "|".join(subtitles or []) + f"|{native_audio}|{title}|{bgm}|{bool(shot_voices)}|{bgm_path}|{sfx_path}|{trims}|{bgm_volume}|{sound_joins}").encode("utf-8")).hexdigest()[:16]
     work = os.path.join(MEDIA_DIR, f"_work_{tag}_{h}")
     os.makedirs(work, exist_ok=True)
     try:
@@ -788,15 +1067,53 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
                                    check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     seg_files.append(tseg)
                     title_dur = TITLE_DUR
-                    timeline.append((TITLE_DUR, None))
+                    timeline.append((TITLE_DUR, None, 0.0))
                 except Exception as e:
                     logger.warning(f"[Compositor] 标题卡片段生成失败: {str(e)[:120]}")
 
-        # 各镜头：下载 -> 竖屏化 + 烧字幕(仅对话镜头)
+        raws = [os.path.join(work, f"raw_{i}.mp4") for i in range(len(clips))]
         for i, url in enumerate(clips):
-            raw = os.path.join(work, f"raw_{i}.mp4")
-            if not _download(url, raw):
-                continue
+            if not _download(url, raws[i]):
+                # 少一段就不是这一集：跳过它会剪出一部短了一截、字幕和配音错位的成片，还被当成合成成功。
+                logger.error(f"[Compositor] 第{i + 1}/{len(clips)}段片段拿不到，不合成残缺成片")
+                return None
+
+        native_tracks: dict[int, str] = {}
+
+        def voice_of(position: int) -> Optional[str]:
+            if position in native_tracks:
+                return native_tracks[position]
+            if shot_voices and position < len(shot_voices) and shot_voices[position] and os.path.exists(shot_voices[position]):
+                return shot_voices[position]
+            return None
+
+        # 声画错开要先知道每段画面和配音多长，才定得下剪多少。
+        effective_trims = list(trims or [])
+        voice_leads = [0.0] * len(clips)
+        if sound_joins and any(sound_joins):
+            raw_seconds = [_probe_duration(path) or 0.0 for path in raws]
+            kept = [_kept_seconds(effective_trims[i] if i < len(effective_trims) else None, raw_seconds[i]) for i in range(len(clips))]
+            heads, tails, voice_leads, joined = plan_sound_joins(
+                kept, [_probe_duration(voice_of(i)) if voice_of(i) else None for i in range(len(clips))], list(sound_joins), transition_plans,
+            )
+            effective_trims = [
+                _trim_after_join(effective_trims[i] if i < len(effective_trims) else None, heads[i], tails[i], raw_seconds[i])
+                for i in range(len(clips))
+            ]
+            if sound_report is not None:
+                sound_report.extend(joined)
+
+        # 片段自己的声音按修剪后的入出点取：和画面同一段，不会错开口型。放在声画错开之后，这些镜头不参与错开。
+        for i in range(len(clips)):
+            if native_audio and i < len(native_audio) and native_audio[i]:
+                trim = effective_trims[i] if i < len(effective_trims) else None
+                track = _clip_sound(ff, raws[i], trim, os.path.join(work, f"native_{i}.m4a"))
+                if track:
+                    native_tracks[i] = track
+
+        # 各镜头：竖屏化 + 烧字幕(仅对话镜头)
+        for i, url in enumerate(clips):
+            raw = raws[i]
             seg = os.path.join(work, f"seg_{i}.mp4")
             sub_text = subtitles[i] if subtitles and i < len(subtitles) else ""
             sub_text = re.sub(r"\s+", " ", (sub_text or "")).strip()
@@ -804,8 +1121,8 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
             has_sub = bool(sub_text) and _render_subtitle_png(sub_text, png)
             # The timeline's trim: decode from the in point and stop at the out point.
             trim_args: List[str] = []
-            if trims and i < len(trims) and trims[i]:
-                start, end = trims[i]
+            if i < len(effective_trims) and effective_trims[i]:
+                start, end = effective_trims[i]
                 if start and float(start) > 0:
                     trim_args += ["-ss", f"{float(start):.3f}"]
                 if end is not None:
@@ -821,13 +1138,10 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
                 subprocess.run(cmd, check=True, timeout=180, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 seg_files.append(seg)
                 seg_dur = _probe_duration(seg) or 5.0
-                voice = None
-                if shot_voices and i < len(shot_voices) and shot_voices[i] and os.path.exists(shot_voices[i]):
-                    voice = shot_voices[i]
-                timeline.append((seg_dur, voice))
+                timeline.append((seg_dur, voice_of(i), voice_leads[i]))
             except Exception as e:
-                logger.warning(f"[Compositor] 片段{i}处理失败: {str(e)[:120]}")
-                continue
+                logger.error(f"[Compositor] 片段{i}处理失败，不合成残缺成片: {str(e)[:120]}")
+                return None
 
         if not seg_files:
             logger.warning("[Compositor] 无可用片段，成片合成失败")
@@ -851,7 +1165,7 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
             has_bgm = bgm and vdur > 0 and _make_bgm(vdur, bgm_wav)
 
         # 逐镜配音按时间轴对齐 (优先)；否则用整条全局配音
-        per_shot_voices = [(t, v) for (t, v) in timeline if v]
+        per_shot_voices = [(t, v) for (t, v, _) in timeline if v]
         cmd = [ff, "-y", "-i", concat]
         filters = []
         voice_labels = []
@@ -860,11 +1174,11 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
             # 计算每段在时间轴上的起点，把该段配音 adelay 到对应时刻
             cum = 0.0
             offsets = []
-            for timeline_index, (dur, voice) in enumerate(timeline):
+            for timeline_index, (dur, voice, lead) in enumerate(timeline):
                 if timeline_index > 0 and timeline_index - 1 < len(transition_overlaps):
                     cum = max(0.0, cum - transition_overlaps[timeline_index - 1])
                 if voice:
-                    offsets.append((voice, cum))
+                    offsets.append((voice, max(0.0, cum - lead)))
                 cum += dur
             for voice, start in offsets:
                 cmd += ["-i", voice]
@@ -895,7 +1209,7 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
 
         all_labels = voice_labels + ([bgm_label] if bgm_label else []) + ([sfx_label] if sfx_label else [])
         if all_labels:
-            out_label = _append_master_mix_filters(filters, voice_labels, bgm_label, sfx_label)
+            out_label = _append_master_mix_filters(filters, voice_labels, bgm_label, sfx_label, voices_carry_ambience=bool(native_tracks))
             fc = ";".join(filters)
             cmd += ["-filter_complex", fc, "-map", "0:v:0", "-map", out_label,
                     "-c:v", "copy", "-c:a", "aac", "-t", f"{vdur:.3f}", final]

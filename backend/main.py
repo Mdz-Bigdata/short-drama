@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # ruff: noqa: E402
+import asyncio
 import os
 import posixpath
 import logging
@@ -25,6 +26,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.api.drama_api import router as drama_router
+from app.api.blender_api import router as blender_router
 from app.api.auth_api import router as auth_router
 from app.api.production_api import router as production_router
 from app.api.project_skill_api import router as project_skill_router
@@ -32,13 +34,30 @@ from app.api.director_desk_api import router as director_desk_router
 from app.api.studio_api import router as studio_router
 from app.api.agent_api import router as agent_router
 from app.api.billing_api import router as billing_router
+from app.api.finance_api import router as finance_router
+from app.api.notification_api import router as notification_router
+from app.api.poetry_api import router as poetry_router
 from app.api.element_api import router as element_router
 from app.api.platform_api import router as platform_router
 from app.api.model_configuration_api import router as model_configuration_router
 from app.api.user_api import router as user_router
+from app.api.usage_admin_api import _tasks as usage_task_repository
+from app.api.usage_admin_api import read_usage_records, router as usage_admin_router
+from app.core import usage_ledger
+from app import settings
+from app.platform import payment_flow, reconciliation, usage_billing
+from app.platform.billing_book import AccountGuard, BillingBook, active_book, set_account_watcher, set_active_book
+from app.platform.billing_http import BillingRefusalMiddleware
 from app.api.bgm_api import router as bgm_router
 from app.api.mcp_api import router as mcp_router
 from app.api.market_api import router as market_router
+from app.api.task_center_api import router as task_center_router
+from app.api.voice_asset_api import router as voice_asset_router
+from app.api.image_pool_api import router as image_pool_router
+from app.api.panorama_api import router as panorama_router
+from app.api.recipe_api import router as recipe_router
+from app.api.interactive_story_api import router as interactive_story_router
+from app.api.canvas_workflow_api import router as canvas_workflow_router
 from app.core.media_compositor import MEDIA_DIR
 from app.repository.task_repo import TaskStoreUnavailableError
 from app.platform.bootstrap import initialize_platform
@@ -55,6 +74,8 @@ app = FastAPI(
 
 _allowed_origins = settings.allowed_origins()
 
+# Added first, so it sits innermost: a refused paid call becomes a 402 that still passes through CORS on its way out.
+app.add_middleware(BillingRefusalMiddleware)
 app.add_middleware(ElementUploadGuardMiddleware)
 app.add_middleware(ScriptUpdateGuardMiddleware)
 
@@ -116,6 +137,8 @@ app.mount(settings.MEDIA_ROUTE, StaticFiles(directory=MEDIA_DIR), name="media")
 
 # 挂载 API 路由
 app.include_router(drama_router)
+app.include_router(usage_admin_router)
+app.include_router(blender_router)
 app.include_router(auth_router)
 app.include_router(production_router)
 app.include_router(studio_router)
@@ -125,11 +148,21 @@ app.include_router(model_configuration_router)
 app.include_router(element_router)
 app.include_router(user_router)
 app.include_router(billing_router)
+app.include_router(finance_router)
+app.include_router(notification_router)
+app.include_router(poetry_router)
 app.include_router(project_skill_router)
 app.include_router(director_desk_router)
 app.include_router(bgm_router)
 app.include_router(mcp_router)
 app.include_router(market_router)
+app.include_router(task_center_router)
+app.include_router(voice_asset_router)
+app.include_router(image_pool_router)
+app.include_router(panorama_router)
+app.include_router(recipe_router)
+app.include_router(interactive_story_router)
+app.include_router(canvas_workflow_router)
 
 
 @app.on_event("startup")
@@ -188,6 +221,91 @@ def _record_stage_interruption(task: dict) -> None:
     append_stage_guidance(task, "interrupted", DramaService.STAGE_LABELS)
 
 
+_usage_drain_task = None
+_billing_upkeep_task = None
+_payment_upkeep_task = None
+_reconciliation_task = None
+_account_watcher = None
+
+
+async def _billing_upkeep(book: BillingBook | None) -> None:
+    """Lots past their date, and holds left by a process that died."""
+    while True:
+        await asyncio.sleep(600)
+        try:
+            await get_platform_store().expire_points()
+            await get_platform_store().send_membership_reminders()
+            if book is not None:
+                await asyncio.to_thread(book.release_stale)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the next pass tries again
+            logging.getLogger("main").warning("积分到期处理失败: %s", type(exc).__name__)
+
+
+@app.on_event("startup")
+async def _start_usage_billing():
+    """Keep every provider call for billing. Balances are only touched while BILLING_ENFORCE is on."""
+    global _usage_drain_task, _billing_upkeep_task, _payment_upkeep_task, _reconciliation_task, _account_watcher
+    spool = usage_billing.UsageSpool()
+    usage_ledger.configure_billing_sink(spool.append)
+    _usage_drain_task = asyncio.create_task(usage_billing.run_drain_loop(get_platform_store(), spool, _task_owner))
+    book = None
+    if settings.billing_enforced():
+        if not settings.payment_sandbox_enabled():
+            await get_platform_store().void_sandbox_points()
+        book = BillingBook(settings.database_url(), _task_owner)
+        set_active_book(book)
+        usage_ledger.configure_billing_guard(book)
+        set_account_watcher(book)
+    else:
+        # Nothing is charged, but a closed account still must not reach a provider.
+        _account_watcher = BillingBook(settings.database_url(), _task_owner)
+        usage_ledger.configure_billing_guard(AccountGuard(_account_watcher))
+        set_account_watcher(_account_watcher)
+    _billing_upkeep_task = asyncio.create_task(_billing_upkeep(book))
+    _payment_upkeep_task = asyncio.create_task(payment_flow.run_upkeep_loop(get_platform_store()))
+    _reconciliation_task = asyncio.create_task(reconciliation.run_loop(get_platform_store(), read_usage_records))
+
+
+@app.on_event("shutdown")
+async def _stop_usage_billing():
+    global _usage_drain_task, _billing_upkeep_task, _payment_upkeep_task, _reconciliation_task, _account_watcher
+    usage_ledger.configure_billing_sink(None)
+    usage_ledger.configure_billing_guard(None)
+    set_account_watcher(None)
+    if _account_watcher is not None:
+        _account_watcher.close()
+        _account_watcher = None
+    book = active_book()
+    set_active_book(None)
+    if book is not None:
+        book.close()
+    if _billing_upkeep_task is not None:
+        _billing_upkeep_task.cancel()
+        _billing_upkeep_task = None
+    if _payment_upkeep_task is not None:
+        _payment_upkeep_task.cancel()
+        _payment_upkeep_task = None
+    if _reconciliation_task is not None:
+        _reconciliation_task.cancel()
+        _reconciliation_task = None
+    if _usage_drain_task is None:
+        return
+    _usage_drain_task.cancel()
+    _usage_drain_task = None
+    try:
+        await usage_billing.drain(get_platform_store(), usage_billing.UsageSpool(), _task_owner)
+    except Exception as exc:  # noqa: BLE001 - the file stays and the next start loads it
+        import logging
+        logging.getLogger("main").warning("退出时用量入库失败，下次启动再试: %s", type(exc).__name__)
+
+
+def _task_owner(task_id: str) -> str | None:
+    task = usage_task_repository.get_task(task_id)
+    return str(task.get("owner_user_id") or "") or None if isinstance(task, dict) else None
+
+
 @app.on_event("startup")
 def _recover_orphan_tasks():
     """
@@ -229,6 +347,42 @@ def _recover_orphan_tasks():
             log.error("[启动恢复] 视频任务续查失败: %s", str(error)[:160])
 
     threading.Thread(target=_resume, name="video-job-resume", daemon=True).start()
+
+
+@app.on_event("startup")
+def _start_acquisition_sweep():
+    """宣发获客的定时拉取：每隔 ACQUISITION_SYNC_MINUTES（默认 60，0 关闭）用官方接口读新评论并判定线索。
+
+    只读不发：回复和私信始终由人点发送。没有配置 YOUTUBE_API_KEY 时整轮跳过，不花模型调用。
+    """
+    import logging
+    import os
+    import threading
+
+    log = logging.getLogger("main")
+    try:
+        minutes = float(os.getenv("ACQUISITION_SYNC_MINUTES", "60"))
+    except ValueError:
+        minutes = 60.0
+    if minutes <= 0:
+        return
+    stop = threading.Event()
+
+    def _loop():
+        from app.api.drama_api import acquisition
+        from app.service.acquisition_service import KEY
+
+        delay = 120.0  # 启动后先等两分钟，避开开发模式下的连续热重载。
+        while not stop.wait(delay):
+            delay = minutes * 60
+            try:
+                outcome = acquisition.scheduled_sweep(acquisition.repo.task_ids_containing(f'"{KEY}"'))
+                if outcome["swept"] or outcome["failed"]:
+                    log.info("[获客] 定时同步: %s 个项目, 失败 %s 个", outcome["swept"], outcome["failed"])
+            except Exception as error:  # noqa: BLE001 - the sweep must never take the server down
+                log.error("[获客] 定时同步失败: %s", str(error)[:160])
+
+    threading.Thread(target=_loop, name="acquisition-sweep", daemon=True).start()
 
 
 @app.get("/")

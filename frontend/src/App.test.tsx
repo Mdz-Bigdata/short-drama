@@ -588,7 +588,7 @@ describe('App stage asset preview layout', () => {
 
       const preview = await screen.findByRole('region', { name: 'Stage 5 阶段资产预览' });
       const shotList = await within(preview).findByRole('complementary', { name: '分镜列表' });
-      const detail = within(preview).getByRole('region', { name: '镜头 1 详情' });
+      const detail = within(preview).getByRole('region', { name: 'E1S01 镜头 1 详情' });
       const video = detail.querySelector('video');
 
       expect(video).not.toBeNull();
@@ -596,7 +596,9 @@ describe('App stage asset preview layout', () => {
       expect(getComputedStyle(preview).flexGrow).toBe('0');
       expect(getComputedStyle(preview.parentElement as Element).flexGrow).toBe('0');
       expect(parseFloat(getComputedStyle(preview).minHeight)).toBeGreaterThanOrEqual(608);
-      expect(within(shotList).getByRole('button', { name: '镜头 1' }).textContent).toContain('已生成');
+      // The left rail holds the episode cards; the shots sit in the film strip under the scene chips.
+      expect(within(shotList).getByRole('list', { name: '分集列表' })).toBeTruthy();
+      expect(within(within(preview).getByRole('list', { name: '分镜' })).getByRole('button', { name: 'E1S01 镜头 1' }).textContent).toContain('已生成');
       // Only the video is ready: the storyboard figure says so instead of showing a blank frame.
       expect(within(detail).getByText('尚未生成')).toBeTruthy();
       expect(within(detail).getByLabelText('镜头运动')).toBeTruthy();

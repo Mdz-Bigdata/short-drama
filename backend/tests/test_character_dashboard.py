@@ -886,5 +886,27 @@ class CharacterDashboardStagePersistenceTests(unittest.TestCase):
                 )
 
 
+
+class CharacterVoiceFieldTests(unittest.TestCase):
+    def test_designed_voice_fields_are_carried_next_to_the_voice_id(self):
+        task = _task()
+        dna = task["assets"]["3_dna"]["characters"][0]
+        dna["voice_prompt"] = "民国女学生，18岁，中高音，清亮略带气声，咬字干净，语速偏快；情绪中性；干声"
+        dna["voice_desc"] = "18岁女声，清亮带气声，语速偏快，警觉克制" + "多余的字" * 10
+
+        character = compile_character_dashboard(task).characters[0]
+
+        self.assertEqual(character.voice_id, "VC_SHEN")
+        self.assertIn("民国女学生", character.voice_prompt)
+        self.assertLessEqual(len(character.voice_desc), 40)
+        dumped = character.model_dump(mode="json", by_alias=True)
+        self.assertIn("voicePrompt", dumped)
+        self.assertIn("voiceDesc", dumped)
+
+    def test_an_older_record_without_them_stays_valid(self):
+        character = compile_character_dashboard(_task()).characters[0]
+
+        self.assertEqual((character.voice_prompt, character.voice_desc), ("", ""))
+
 if __name__ == "__main__":
     unittest.main()

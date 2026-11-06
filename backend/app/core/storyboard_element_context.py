@@ -14,13 +14,16 @@ from PIL import Image, UnidentifiedImageError
 
 from app import settings
 from app.core import character_variants
+from app.core.prop_turnaround import PROP_DISPLAY_ONLY_SLOTS
 from app.core.element_scope import element_in_task
 from app.core.media_compositor import MEDIA_DIR
+from app.core import breakdown_kinds
+from app.core.scene_turnaround import SCENE_VIEW_SLOTS
 from app.core.storyboard_scene_context import compile_scene_context
 from app.platform.store import PlatformStore
 
 logger = logging.getLogger(__name__)
-_KINDS = ("actor", "scene", "prop", "costume", "effect", "product")
+_KINDS = ("actor", "scene", "prop", "costume", "effect", "product", *breakdown_kinds.KINDS)
 _IMAGE_FORMATS = {"image/png": "PNG", "image/jpeg": "JPEG", "image/webp": "WEBP"}
 _MAX_IMAGE_BYTES = 10 * 1024 * 1024
 _MAX_IMAGE_PIXELS = 40_000_000
@@ -155,7 +158,7 @@ async def _load_project_elements(
         context = compile_scene_context(task, scene, result)
         selected = [
             item
-            for key in ("actors", "scenes", "props", "costumes", "effects", "products")
+            for key in ("actors", "scenes", "props", "costumes", "effects", "products", *breakdown_kinds.CATALOG_KEYS.values())
             for item in context.get(key, [])
         ]
         selected_ids = {item["id"] for item in selected if item.get("id")}
@@ -176,14 +179,25 @@ async def _load_project_elements(
     roots = _image_roots()
     for item in result:
         preferred_slot = "front" if item["kind"] == "actor" else "reference"
+        # 手持、人形和比例总览只给人看：上面有手和文字，不能拿去锁定道具的样子。
         references = sorted(
-            files_by_id[item["id"]],
+            (entry for entry in files_by_id[item["id"]] if getattr(entry, "slot", "") not in PROP_DISPLAY_ONLY_SLOTS),
             key=lambda entry: getattr(entry, "slot", "") != preferred_slot,
         )
         for reference in references:
             item["image_url"] = _image_data_uri(reference, owner_id, item["id"], roots)
             if item["image_url"]:
                 break
+        if item["kind"] == "scene":
+            # 场地四视角里除主全景(即主参考图)之外的三张，按用途另行绑定。
+            views: dict[str, str] = {}
+            for reference in files_by_id[item["id"]]:
+                slot = str(getattr(reference, "slot", "") or "")
+                if slot in SCENE_VIEW_SLOTS[1:] and slot not in views:
+                    if uri := _image_data_uri(reference, owner_id, item["id"], roots):
+                        views[slot] = uri
+            if views:
+                item["views"] = views
     return result
 
 

@@ -6,6 +6,7 @@ describe('parseClientConfig', () => {
   it('uses the defaults when the server sends nothing', () => {
     expect(parseClientConfig(undefined)).toEqual(DEFAULT_CLIENT_CONFIG);
     expect(parseClientConfig('nonsense')).toEqual(DEFAULT_CLIENT_CONFIG);
+    expect(DEFAULT_CLIENT_CONFIG.scriptUpload.extensions).toEqual(expect.arrayContaining(['.fountain', '.spmd']));
   });
 
   it('takes every limit the server names', () => {

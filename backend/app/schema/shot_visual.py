@@ -54,9 +54,23 @@ class ShotCandidateSelection(BaseModel):
     video_url: str = Field(min_length=1, max_length=2000)
 
 
+class ShotVideoFailure(BaseModel):
+    """供应商没给这张看板出片：分类、错误码、原话、下一步，以及发出去的分镜画面。"""
+    kind: Literal["input_image_sensitive", "provider_error"] = "provider_error"
+    kind_label: str = ""
+    code: str = ""
+    message: str = ""
+    hint: str = ""
+    panels: list[str] = Field(default_factory=list)
+    scene_id: str = ""
+    at: float | None = None
+
+
 class ShotVisualRecord(BaseModel):
     shot_id: int
     scene_id: str = ""
+    # 全剧唯一的镜头编号(集·场·镜)：各场镜号都从 1 起，只靠 shot_id 分不清是哪一场的镜头。
+    shot_uid: int = 0
     desc: str = ""
     dialogue: str = ""
     sound: str = ""
@@ -78,6 +92,8 @@ class ShotVisualRecord(BaseModel):
     # 提示词里 @[名字] 对应的资产类型(actor / scene / prop / costume / effect)与参考图序号，供编辑器着色与解析预览。
     mention_kinds: dict[str, str] = Field(default_factory=dict)
     reference_numbers: dict[str, int] = Field(default_factory=dict)
+    # 本镜所在看板最近一次没出片的原因(供应商拒单等)；出片后清除。
+    failure: ShotVideoFailure | None = None
 
 
 class ShotVideoPromptUpdate(BaseModel):
@@ -85,6 +101,12 @@ class ShotVideoPromptUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     prompt: str | None = Field(None, max_length=8000)
+
+
+class ProjectVideoModelUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    video_model: str = Field(min_length=1, max_length=200)
 
 
 class ShotRegenerateRequest(BaseModel):
@@ -101,8 +123,15 @@ class ShotVisualWorkspaceResponse(BaseModel):
     task_id: str
     current_stage: int = 0
     running: bool = False
+    # 首镜试拍的状态；没有试拍或整批已跑完时为空。
+    pilot: dict[str, Any] | None = None
     video_model: str = ""
     provider_family: str = ""
+    # 模型配置中心启用的视频模型，以及项目当前视频模型不能用的原因(空串表示可用)。
+    enabled_video_models: list[str] = Field(default_factory=list)
+    video_model_issue: str = ""
+    # 项目原选的型号被配置中心的型号替换时的说明(不阻断)。
+    video_model_note: str = ""
     duration_options: list[int] = Field(default_factory=list)
     camera_motions: list[dict[str, str]] = Field(default_factory=list)
     shot_types: list[dict[str, str]] = Field(default_factory=list)

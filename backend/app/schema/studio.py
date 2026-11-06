@@ -48,7 +48,9 @@ class SourceSpan(BaseModel):
 class SourceDocument(BaseModel):
     id: str
     filename: str
-    format: Literal["text", "markdown", "docx", "pdf", "fdx"]
+    format: Literal["text", "markdown", "docx", "pdf", "fdx", "fountain"]
+    # Only formats with a title page know it; the body text never carries it, or it would read as a scene.
+    title: str | None = None
     sha256: str
     text: str
     spans: list[SourceSpan]
@@ -189,7 +191,11 @@ CanvasTrack = Literal["mainline", "freezone"]
 
 class CanvasNode(BaseModel):
     id: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$")]
-    kind: Literal["artifact", "candidate", "media", "note", "group"]
+    # media = an upload, note = text / annotation; the rest were added for the node canvas.
+    kind: Literal[
+        "artifact", "candidate", "media", "note", "group",
+        "image_gen", "video_gen", "audio_gen", "video_compose", "style_ref", "panorama", "previz", "tool",
+    ]
     track: CanvasTrack
     x: Annotated[float, Field(ge=-1_000_000, le=1_000_000)]
     y: Annotated[float, Field(ge=-1_000_000, le=1_000_000)]
@@ -230,12 +236,18 @@ class CanvasPutRequest(BaseModel):
         return self
 
 
+# The canvas a project always had lives in `canvas_versions`; further ones are named boards beside it.
+CANVAS_MAIN_ID = "main"
+CanvasId = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$")]
+
+
 class CanvasRecord(BaseModel):
     project_id: str
     version: int
     nodes: list[CanvasNode]
     edges: list[CanvasEdge]
     created_at: str
+    canvas_id: str = CANVAS_MAIN_ID
 
 
 class CanvasPromoteRequest(BaseModel):
@@ -256,6 +268,109 @@ class CanvasDuplicateRequest(BaseModel):
         if len(self.node_ids) != len(set(self.node_ids)):
             raise ValueError("canvas duplicate node_ids must be unique")
         return self
+
+
+class CanvasBookmark(BaseModel):
+    slot: Annotated[int, Field(ge=1, le=9)]
+    x: Annotated[float, Field(ge=-10_000_000, le=10_000_000)]
+    y: Annotated[float, Field(ge=-10_000_000, le=10_000_000)]
+    zoom: Annotated[float, Field(gt=0, le=16)]
+    label: Annotated[str, Field(max_length=60)] = ""
+
+
+class CanvasBoardCreate(BaseModel):
+    title: Annotated[str, Field(min_length=1, max_length=80)]
+
+
+class CanvasBoardPatch(BaseModel):
+    title: Annotated[str | None, Field(min_length=1, max_length=80)] = None
+    bookmarks: Annotated[list[CanvasBookmark] | None, Field(max_length=9)] = None
+
+    @model_validator(mode="after")
+    def unique_slots(self) -> "CanvasBoardPatch":
+        slots = [item.slot for item in self.bookmarks or []]
+        if len(slots) != len(set(slots)):
+            raise ValueError("canvas bookmark slots must be unique")
+        return self
+
+
+class CanvasBoardRecord(BaseModel):
+    id: str
+    project_id: str
+    title: str
+    bookmarks: list[CanvasBookmark] = Field(default_factory=list)
+    version: int = 0
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class CanvasVersionSummary(BaseModel):
+    version: int
+    created_at: str
+    node_count: int
+    edge_count: int
+
+
+class CanvasRestoreRequest(BaseModel):
+    expected_version: Annotated[int, Field(ge=0)]
+
+
+class CanvasTierConfirmation(BaseModel):
+    scripted_seconds: Annotated[int, Field(ge=0, le=3600)]
+    requested_seconds: Annotated[int, Field(ge=0, le=3600)]
+
+
+class CanvasRunRequest(BaseModel):
+    # What is run is the saved canvas; a stale copy must not spend money on prompts nobody can see.
+    expected_version: Annotated[int, Field(ge=0)]
+    node_ids: Annotated[list[str], Field(min_length=1, max_length=50)]
+    operation_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,119}$")]
+    confirm: bool = False
+    confirmed_request_durations: Annotated[list[CanvasTierConfirmation], Field(max_length=50)] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def unique_nodes(self) -> "CanvasRunRequest":
+        if len(self.node_ids) != len(set(self.node_ids)):
+            raise ValueError("canvas run node_ids must be unique")
+        return self
+
+
+class CanvasAssessRequest(BaseModel):
+    node_ids: Annotated[list[str], Field(min_length=1, max_length=50)]
+    confirmed_request_durations: Annotated[list[CanvasTierConfirmation], Field(max_length=50)] = Field(default_factory=list)
+
+
+class CanvasRunCancelRequest(BaseModel):
+    # Omitted withdraws everything still waiting in the batch.
+    key: Annotated[str | None, Field(max_length=200)] = None
+
+
+class CanvasCommitPreviewRequest(BaseModel):
+    node_ids: Annotated[list[str], Field(min_length=1, max_length=200)]
+
+
+class CanvasCommitRequest(BaseModel):
+    node_ids: Annotated[list[str], Field(min_length=1, max_length=200)]
+    expected_version: Annotated[int, Field(ge=1)]
+
+
+class CanvasNodeRun(BaseModel):
+    """One generation of one node: the append-only history behind its thumbnails."""
+
+    id: str
+    project_id: str
+    canvas_id: str
+    node_id: str
+    batch_id: str
+    medium: str
+    status: Literal["queued", "running", "done", "failed", "cancelled", "skipped"]
+    model: str = ""
+    request: dict[str, Any] = Field(default_factory=dict)
+    output: dict[str, Any] | None = None
+    error: str | None = None
+    created_at: str
+    updated_at: str
+    deleted_at: str | None = None
 
 
 class Vec3(BaseModel):

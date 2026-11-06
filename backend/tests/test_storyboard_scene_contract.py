@@ -19,6 +19,20 @@ from app.repository.task_repo import TaskRepository
 from app.service.drama_service import DramaService, StagePrerequisiteError
 
 
+# 九格各有新的景别、机位或动作：分镜只画会推进画面的格子，同机位同姿态的重复格会被去掉。
+_BEATS = (
+    ("远景", "平视", "办公室全景，林夏推门进来，档案柜在画面右侧"),
+    ("中景", "侧拍", "林夏走到桌前，把公文包放在桌角"),
+    ("近景", "俯拍", "林夏翻开第一页档案，指尖停在一张照片上"),
+    ("特写", "平视", "照片上的人脸被红笔圈出"),
+    ("中景", "仰拍", "林夏猛地抬头，看向门口的脚步声"),
+    ("全景", "平视", "门被推开一条缝，走廊的灯光斜照进屋"),
+    ("近景", "侧拍", "林夏把档案合上塞进抽屉，手按住抽屉把手"),
+    ("中景", "俯拍", "林夏转身面对门口，后背贴住档案柜"),
+    ("特写", "仰拍", "林夏的眼睛盯着门缝，呼吸压低"),
+)
+
+
 def _stub_scene_board(self, task, config, scene, **kwargs):
     scene_id = str(scene.get("scene_id") or "E1S01")
     if scene_id == "FAIL_ME":
@@ -65,6 +79,8 @@ def _task(scenes):
             "llm_model": "m",
             "image_model": "img",
             "video_model": "v",
+            # 本文件验证「先把全部集分镜做完」的旧口径；逐集制作见 tests/test_episode_cycle.py。
+            "episode_by_episode": False,
         },
         "assets": assets,
         "logs": {},
@@ -217,8 +233,9 @@ class StoryboardSceneContractTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "全部生成失败"):
                 self.service._execute_stage_blocking(rerun["task_id"], 4, _claimed_task=rerun)
 
-        # 两轮生成调用序列：E2S01 从未被调用；E1S01 done 后续跑不重做；FAIL_ME 续跑重做。
-        self.assertEqual(calls, ["E1S01", "FAIL_ME", "FAIL_ME"])
+        # 两轮生成调用：E2S01 从未被调用；E1S01 done 后续跑不重做；FAIL_ME 续跑重做。
+        # 同一集的场景并行，首轮两场的先后不定。
+        self.assertCountEqual(calls, ["E1S01", "FAIL_ME", "FAIL_ME"])
         boards = self.repo.get_task(task["task_id"])["assets"]["4_scene_boards"]
         self.assertEqual(boards["E2S01"]["status"], "pending")
         self.assertEqual(boards["FAIL_ME"]["status"], "failed")
@@ -388,27 +405,55 @@ class GenerateSceneBoardInvariantTests(unittest.TestCase):
                 raise RuntimeError("provider 503")
             return f"http://img.test/{calls['n']}.png", "meta"
 
-        table = "\n".join(f"| {i} | MS | 平视 | Fixed | 林夏翻开档案第{i}页 | | 环境声 | 2s | 线索 | 林夏 | E1S02 办公室 |" for i in range(1, 10))
-        with self.assertRaisesRegex(RuntimeError, "分镜图生成不完整"):
+        table = "\n".join(f"| {i} | {_BEATS[i - 1][0]} | {_BEATS[i - 1][1]} | Fixed | {_BEATS[i - 1][2]} | | 环境声 | 12s | 线索 | 林夏 | E1S02 办公室 |" for i in range(1, 10))
+        with self.assertRaisesRegex(RuntimeError, "分镜图生成失败"):
             self._call(table, flaky_generate_image)
         self.assertEqual(calls["n"], 9)  # 9 格全部尝试过而非提前虚报
 
-    def test_short_or_unparsed_table_is_rejected_before_any_image_generation(self):
+    def test_unparsed_output_is_rejected_before_any_image_generation(self):
         """No generic filler images may masquerade as script-grounded frames."""
-        table = "| 镜号 | 景别 | 机位角度 | 运镜 | 画面内容 | 台词对白 | 声音 | 时长 | 叙事目的 |\n"
-        table += "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
-        for i in range(1, 5):
-            table += (
-                f"| {i} | MS | 平视 | Dolly In | 林夏推门而入，目光扫过散落的档案，指节抵住桌沿慢慢收紧，"
-                f"呼吸放缓第{i}拍 | | 环境声 | 2.5s | 铺垫 |\n"
-            )
-
         def unexpected_image(*args, **kwargs):
             self.fail("invalid storyboard must not reach paid image generation")
 
-        for response in (table, "模型没有输出表格"):
-            with self.assertRaisesRegex(ValueError, "真实镜头"):
-                self._call(response, unexpected_image)
+        with self.assertRaisesRegex(ValueError, "没有解析出任何镜头"):
+            self._call("模型没有输出表格", unexpected_image)
+
+    def test_a_short_scene_draws_only_its_own_panels(self):
+        """一场戏需要几格就画几格：四个不同的镜头画四张，不补到九张。"""
+        table = "| 镜号 | 景别 | 机位角度 | 运镜 | 画面内容 | 台词对白 | 声音 | 时长 | 叙事目的 |\n"
+        table += "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+        for i in range(1, 5):
+            size, angle, action = _BEATS[i - 1]
+            table += f"| {i} | {size} | {angle} | Dolly In | {action} | | 环境声 | 12s | 铺垫 |\n"
+        calls = []
+
+        def generate(model, prompt, ref_images=None, **kwargs):
+            calls.append(prompt)
+            return f"http://img.test/{len(calls)}.png", "meta"
+
+        payload = self._call(table, generate)
+
+        self.assertEqual(len(calls), 4)
+        self.assertEqual([shot["shot_id"] for shot in payload["shots"]], [1, 2, 3, 4])
+
+    def test_repeated_panels_in_a_long_table_are_not_drawn(self):
+        """逐秒节拍表里同机位同姿态的重复行不画；整场压成一页最多九格。"""
+        rows = [f"| {i} | MS | 平视 | Fixed | 林夏翻开档案，停在第一页 | | 环境声 | 1s | 线索 | 林夏 | E1S02 办公室 |" for i in range(1, 30)]
+        rows += [f"| {29 + i} | {size} | {angle} | Fixed | {action} | | 环境声 | 12s | 线索 | 林夏 | E1S02 办公室 |" for i, (size, angle, action) in enumerate(_BEATS, start=1)]
+        calls = []
+
+        def generate(model, prompt, ref_images=None, **kwargs):
+            calls.append(prompt)
+            return f"http://img.test/{len(calls)}.png", "meta"
+
+        payload = self._call("\n".join(rows), generate)
+
+        self.assertLessEqual(len(payload["shots"]), 9)
+        self.assertEqual(len(calls), len(payload["shots"]))
+        # 二十九行一秒的同一画面并成了少数几格，相邻两格不再是同一张图。
+        from app.core.storyboard_panels import repeats
+        for previous, shot in zip(payload["shots"], payload["shots"][1:]):
+            self.assertFalse(repeats(previous, shot))
 
     def test_success_uses_current_scene_assets_and_correct_prompt_identifier(self):
         self.task["assets"]["3_characters"] = [{"name": "林夏", "desc": "青灰大衣"}, {"name": "周教授", "desc": "反派"}]
@@ -416,7 +461,7 @@ class GenerateSceneBoardInvariantTests(unittest.TestCase):
         self.task["assets"]["2_breakdown"] = {"production_assets": {"scenes": [{"name": "办公室", "description": "北侧档案柜"}]}}
         self.scene["content"] = "林夏在办公室追查线索"
         self.scene["dialogue"] = "林夏：这是线索。"
-        table = "\n".join(f"| {i} | MS | 平视 | Fixed | 林夏翻开档案第{i}页 | | 环境声 | 2s | 线索 | 林夏 | E1S02 办公室 |" for i in range(1, 10))
+        table = "\n".join(f"| {i} | {_BEATS[i - 1][0]} | {_BEATS[i - 1][1]} | Fixed | {_BEATS[i - 1][2]} | | 环境声 | 12s | 线索 | 林夏 | E1S02 办公室 |" for i in range(1, 10))
         calls = []
         def generate(model, prompt, ref_images=None, **kwargs):
             self.assertFalse(kwargs["enhance_prompt"])

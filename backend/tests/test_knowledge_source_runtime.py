@@ -5,7 +5,8 @@
 这里保证每份知识源的内容真的作用在流水线上——要么内容经
 production-knowledge-master 装载器(load_section)读进某个阶段的提示词，
 要么(负面提示词.md)经模块词表编译进生成提示词。
-同时守住知识进化闭环的接线：8 个阶段都注入 stage_lessons_block，
+同时守住知识进化闭环的接线：除第 5 阶段外都注入 stage_lessons_block(第 5 阶段没有
+文本模型，教训写不进视频提示词，靠 generation_feedback 的弱点预防)，
 质检报告经 harvest_from_qc → promote_and_prune 回流教训库。
 断言基于源代码静态检查：接线一旦被删，测试立刻变红。
 """
@@ -25,6 +26,7 @@ class EveryKnowledgeSourceReachesRuntimeTests(unittest.TestCase):
     READ_AT_RUNTIME = (
         "consistency-checklist",   # AI 生成短剧一致性检查清单.md · 全部 8 阶段的 run_real_consistency_check
         "dialogue-pacing",         # AI影视剧台词语速情绪提示词总结.md · 阶段2 编剧台词标注规范
+        "poetry-recreation",       # 诗词取材与二次创作 · 阶段2 项目点名诗词库作者时
         "golden-narrative",        # AI漫剧短剧剧本黄金叙事结构.md · 阶段1/2
         "director-shot-guide",     # AI短剧与漫剧导演级拍摄分镜完全指南.md · 阶段4
         "actor-sheet-template",    # AI短剧五视图解决人物一致性提示词模板.md · 阶段3
@@ -40,6 +42,10 @@ class EveryKnowledgeSourceReachesRuntimeTests(unittest.TestCase):
         "genre-summary",           # 短剧题材类型总结.md · 阶段1
         "cinema-craft-redlines",   # 星云AI编剧大师(山音二创)红线与S级三冲击 · 阶段2
         "episode-hook-ladder",     # 前三集钩子阶梯与付费墙卡点 · 阶段1/2
+        "scene-craft-dialogue",    # 场次工艺与对白技法 · 阶段2
+        "frame-handoff-action-light-tone",  # 首尾帧衔接：接动作、接光线、接色调 · 阶段4
+        "shot-group-and-handoff-checks",    # 镜头组与连镜对表：站位、道具、组合禁忌 · 阶段4
+        "cut-connection-ideas",             # 接镜思路与接不上的诊断 · 阶段4
     )
 
     def test_each_guide_is_read_into_a_stage_prompt(self):
@@ -74,13 +80,14 @@ class EveryKnowledgeSourceReachesRuntimeTests(unittest.TestCase):
 
 
 class EvolvedLessonsReachEveryStageTests(unittest.TestCase):
-    """知识进化闭环接线：教训注入 8 个阶段，质检报告回流教训库。"""
+    """知识进化闭环接线：教训注入各阶段，质检报告回流教训库。"""
 
-    def test_stage_lessons_block_is_wired_into_all_eight_stages(self):
-        # 有 sys_prompt 的阶段(1/2/3/4/8)拼进提示词，阶段5 拼进视觉总监策略简报，
-        # 无 LLM 的阶段(6/7)以 learned_lessons 键随产物归档。
+    def test_stage_lessons_block_is_wired_into_every_stage_that_can_use_it(self):
+        # 有 sys_prompt 的阶段(1/2/3/4/8)拼进提示词，无 LLM 的阶段(6/7)以 learned_lessons 键随产物归档。
+        # 第 5 阶段不接：之前只存在片段资产里，从没进过视频模型。
         source = _drama_source()
-        for stage in range(1, 9):
+        self.assertNotIn("stage_lessons_block(5)", source)
+        for stage in (1, 2, 3, 4, 6, 7, 8):
             self.assertIn(
                 f"stage_lessons_block({stage})", source,
                 f"第 {stage} 阶段缺少历史生产教训注入 (stage_lessons_block)",
@@ -144,9 +151,13 @@ class NegativePromptModulesReachGenerationTests(unittest.TestCase):
 
 class DialoguePacingGuideReachesTheWriterTests(unittest.TestCase):
     def test_the_writer_prompt_carries_the_annotation_rule(self):
+        from app.core import prompt_data
+
         source = _drama_source()
         self.assertIn("台词语速情绪与停顿重音标注规范", source)
-        self.assertIn("[角色][情绪类型-强度/克制度][语速][生理表现]", source)
+        # The annotation rule itself is data; the writer prompt pulls it in right before the pacing guide.
+        self.assertIn('prompt_data.text("agent_prompts", "writer_dialogue_marks")', source)
+        self.assertIn("[角色][情绪类型-强度/克制度][语速][生理表现]", prompt_data.text("agent_prompts", "writer_dialogue_marks"))
 
 
 if __name__ == "__main__":

@@ -46,6 +46,8 @@ _SPORTS_MARKERS = ("比赛", "综艺", "赛道", "障碍", "直播", "解说", "
 _FIGHT_MARKERS = ("打斗", "交手", "对打", "互打", "拳", "踢", "劈", "砍", "斩", "刺向", "格挡", "对撞", "出招", "厮杀", "击飞", "大招", "连招", "反杀")
 # 与编剧阶段共用一份玄幻词表（app.core.fight_design）。
 _XIANXIA_MARKERS = fight_design.XIANXIA_MARKERS
+# 群敌清场：换上割草专章的机位表，不带单挑那张——两张表一起进来太长，也会互相打架。
+_MASS_BATTLE_MARKERS = ("割草", "群敌", "群战", "混战", "围攻", "一打多", "以一敌", "敌群", "杂兵", "千军", "大军", "士兵们", "清场")
 _TIMESTAMP_PATTERN = re.compile(r"(?<!\d)\d{1,2}\s*[-–~至]\s*\d{1,2}\s*(?:s|秒)")
 
 # 项目自写的接入说明：放在导演层最前面，讲清它与 sd25-pe 的分工，免得模型把
@@ -56,7 +58,10 @@ _PRECEDENCE_NOTE = """# 导演层：seedance-2-5-video-director（仅 Seedance 2
 模式上限、素材要求、时序/引用规则与真人表演约束；接口参数分离（画幅、总时长、
 分辨率、帧率、声音开关不进 Prompt）与素材引用保真仍以上文 sd25-pe 主规范为准。
 主模式已由项目按镜头时长与提示词形态选定（见「当前调用约定」），不要再提问、
-不要输出导演方案或诊断，只把这些约束体现在最终的中文提示词正文里。"""
+不要输出导演方案或诊断，只把这些约束体现在最终的中文提示词正文里。
+
+写正文时，排除项少而精、尽量正着说：写画面里有什么（「双手各握一把刀」），而不是「不要 X」，
+被排除的那个名词不在正文里重复出现；容易被模型按常见印象误读的名词，改写成形状、材质与空间关系。"""
 
 
 @dataclass(frozen=True)
@@ -188,6 +193,7 @@ def build_director_layer(
     has_sports = _has_any(corpus, _SPORTS_MARKERS)
     has_fight = _has_any(corpus, _FIGHT_MARKERS)
     has_xianxia = has_fight and _has_any(corpus, _XIANXIA_MARKERS)
+    has_mass_battle = has_fight and _has_any(corpus, _MASS_BATTLE_MARKERS)
 
     # (优先级, 章节名, 正文)。优先级越小越先保住；同优先级按出现顺序。
     blueprint_heading = (
@@ -224,8 +230,13 @@ def build_director_layer(
     if has_physical:
         candidates.append((2, "realistic/Physical causality", _section(realistic, "Physical causality")))
     if has_fight:
-        # 打戏：镜头贴动作走、命中短停、尾帧留下一击；速度档位词与拼接顺序。
+        # 打戏：镜头贴动作走、命中打实、尾帧留下一击；速度档位词与拼接顺序。
         candidates.append((3, "combat/核心原则", _section(combat, "一、核心原则")))
+        # 机位词典按场次只带一张：群敌清场带割草专章（含群演规矩），其余带单挑机位表。
+        if has_mass_battle:
+            candidates.append((3, "combat/割草专章", _section(combat, "三、割草专章(群敌清场)")))
+        else:
+            candidates.append((3, "combat/单挑机位公式", _section(combat, "二、单挑机位公式")))
         candidates.append((4, "combat/速度档位词", _section(combat, "四、速度档位词(写进运镜句)")))
         candidates.append((4, "combat/拼接公式", _section(combat, "五、拼接公式(一段打戏一条 prompt)")))
     if has_xianxia:

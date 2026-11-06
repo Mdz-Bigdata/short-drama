@@ -3,6 +3,7 @@ import { Aperture, Check, Clapperboard, Download, Eye, Trash2, Undo2, X } from '
 
 import type { StageCamera } from '../../spatial/spatialTypes';
 import type { LensHandle } from '../deskTypes';
+import type { CaptureLayer } from '../lib/capture';
 import type { ClipStage } from '../lib/clipExport';
 import { useReducedMotion } from '../lib/useReducedMotion';
 import {
@@ -55,6 +56,7 @@ export function CapturesPanel({ taskId, sceneId, shotId, camera, cameras, planRe
   const [monochrome, setMonochrome] = useState(false);
   const [labels, setLabels] = useState(false);
   const [depth, setDepth] = useState(false);
+  const [layer, setLayer] = useState<CaptureLayer>('');
   const [viewing, setViewing] = useState<DeskCapture | null>(null);
   // 0…1 while a clip is being rendered; the controller is how 取消 reaches the frame loop.
   const [progress, setProgress] = useState<number | null>(null);
@@ -94,12 +96,12 @@ export function CapturesPanel({ taskId, sceneId, shotId, camera, cameras, planRe
   const take = () => run(async () => {
     const lens = getLens();
     if (!lens || !camera || shotId === null) throw new Error('机位视角还没有准备好，请切到「并排」或「机位」布局后再截图。');
-    const still = await lens.capture({ monochrome, labels, depth });
+    const still = await lens.capture({ monochrome, labels, depth: depth && !layer, ...(layer ? { layer } : {}) });
     await uploadCapture(taskId, sceneId, {
-      blob: still.blob, width: still.width, height: still.height, shotId, cameraId: camera.id, planRevision, showsLimbs: still.showsLimbs, monochrome, labelled: labels, depth,
+      blob: still.blob, width: still.width, height: still.height, shotId, cameraId: camera.id, planRevision, showsLimbs: layer ? false : still.showsLimbs, monochrome: monochrome && !layer, labelled: labels && !layer, depth: depth && !layer, layer,
     });
     return listCaptures(taskId, sceneId);
-  }, depth ? '已截取深度静帧并保存到截图库（深度静帧不能应用为首帧）。' : '已截图并保存到截图库。');
+  }, layer === 'mask' ? '已截取人物遮罩（遮罩不能应用为首帧）。' : layer ? '已截取空景。' : depth ? '已截取深度静帧并保存到截图库（深度静帧不能应用为首帧）。' : '已截图并保存到截图库。');
 
   const film = () => run(async () => {
     if (!camera || shotId === null) throw new Error('本镜还没有机位。');
@@ -143,6 +145,14 @@ export function CapturesPanel({ taskId, sceneId, shotId, camera, cameras, planRe
           <input type="checkbox" checked={depthPreview} onChange={event => onDepthPreview?.(event.target.checked)} /> 深度预览
         </label>
       </div>
+      <label className="desk-field is-wide" title="控制帧只出静帧，不带角色名">
+        <span>截图内容</span>
+        <select aria-label="截图内容" value={layer} onChange={event => setLayer(event.target.value as CaptureLayer)}>
+          <option value="">完整画面</option>
+          <option value="background">空景（只有场景）</option>
+          <option value="mask">人物遮罩（黑底白人）</option>
+        </select>
+      </label>
       <button type="button" className="desk-button is-primary" disabled={busy || saving || !camera || shotId === null} onClick={() => { void take(); }}>
         <Aperture aria-hidden="true" /> {busy ? '处理中…' : `截取第 ${shotId ?? '—'} 镜画面`}
       </button>
@@ -186,6 +196,8 @@ export function CapturesPanel({ taskId, sceneId, shotId, camera, cameras, planRe
                   {capture.monochrome && <em className="desk-badge">白模色</em>}
                   {capture.labelled && <em className="desk-badge">带角色名</em>}
                   {capture.depth && <em className="desk-badge is-depth" title="近亮远暗的灰度深度图">深度</em>}
+                  {capture.layer === 'background' && <em className="desk-badge">空景</em>}
+                  {capture.layer === 'mask' && <em className="desk-badge is-depth" title="黑底白人的控制图，不能作首帧">人物遮罩</em>}
                   {capture.showsLimbs && <em className="desk-badge is-limbs">带四肢</em>}
                 </span>
                 {(capture.showsLimbs || capture.depth) && <small className="desk-captures__warning" role="note">{capture.warning || (capture.depth ? DEPTH_WARNING : LIMBS_WARNING)}</small>}

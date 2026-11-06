@@ -83,6 +83,33 @@ describe('TimelinePanel', () => {
     expect(await within(panel).findByText('已按时间线重新合成成片。')).toBeTruthy();
   });
 
+  it('offers the sound offset on a cut and says what the last render did with it', async () => {
+    const base = timeline();
+    const current = timeline({
+      clips: base.clips.map((clip, index) => index === 1 ? { ...clip, sound_in: { join: 'j_cut', result: { applied: false, reason: '下一镜没有配音，没有声音可以提前' } } } : clip),
+    });
+    const posts: unknown[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/timeline/ops')) {
+        posts.push(JSON.parse(String(init?.body)));
+        return { ok: true, json: async () => response(current) } as Response;
+      }
+      return { ok: true, json: async () => response(current) } as Response;
+    }));
+    render(<TimelinePanel taskId="t1" />);
+
+    const second = current.clips[1].shot_id;
+    const select = await screen.findByRole('combobox', { name: `镜头 ${second} 声音错开` }) as HTMLSelectElement;
+    expect(select.value).toBe('j_cut');
+    expect(screen.queryByRole('combobox', { name: `镜头 ${current.clips[0].shot_id} 声音错开` })).toBeNull();
+    expect(screen.getByText(/下一镜没有配音/)).toBeTruthy();
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: `镜头 ${second} 错开秒数` }), '0.8');
+    expect(posts).toContainEqual({ operation: 'sound_join', shot_id: second, join: 'j_cut', seconds: 0.8 });
+    await userEvent.selectOptions(select, '');
+    expect(posts).toContainEqual({ operation: 'sound_join', shot_id: second, join: '' });
+  });
+
   it('uploads a music file into the library and puts it on the timeline', async () => {
     const current = timeline();
     const calls: string[] = [];

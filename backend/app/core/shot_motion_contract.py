@@ -151,11 +151,8 @@ def compile_storyboard_image_prompt(
 
 def compile_motion_prompt(contract: ShotMotionContract) -> CompiledShotPrompt:
     prompt = (
-        f"镜头{contract.shot_id}，严格依据对应分镜契约生成连续运镜视频。{_invariants(contract)}"
-        f"相机以“{contract.camera_movement}”运动；运镜只为“{contract.camera_reason}”服务。"
-        f"从“{contract.start_state}”自然运动到“{contract.end_state}”，"
-        f"并向下一镜交付“{contract.continuity_out}”。"
-        "角色、场景、道具、特效、景别、机位、焦段、构图、轴线、视线和灯光均为硬约束；"
+        f"{_invariants(contract)}"
+        f"相机以“{contract.camera_movement}”运动。"
         "保持真实物理运动、稳定面部、手指和服装纹理，禁止无动机切镜、瞬移、变脸、"
         "道具换手、轴线翻转或新增画面元素。"
     )

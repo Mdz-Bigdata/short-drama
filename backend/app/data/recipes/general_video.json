@@ -1,0 +1,46 @@
+{
+  "category": "general_video",
+  "label": "通用视频",
+  "recipes": [
+    {
+      "id": "video-product-orbit",
+      "name": "商品环绕展示",
+      "description": "商品缓慢转一圈，光线扫过表面，适合详情页和信息流。",
+      "output_type": "video",
+      "inputs": [
+        {"name": "product", "label": "商品", "required": true, "max_length": 160},
+        {"name": "backdrop", "label": "背景", "default": "深灰渐变的影棚背景", "max_length": 120}
+      ],
+      "prompt": "商品展示视频：{{product}}静置在{{backdrop}}前的台面上，镜头以匀速环绕半圈，一道柔和的高光随之扫过表面，把材质带出来。商品本身不动、不变形，形状和颜色以参考图为准。结尾缓慢推近到最有辨识度的部位。只保留极轻的环境声，不生成音乐；画面不出现文字。",
+      "negative": "文字，水印，商品变形，商品自己旋转，跳帧",
+      "params": {"aspect_ratio": "9:16", "seconds": 6}
+    },
+    {
+      "id": "video-establishing-shot",
+      "name": "地点建立镜头",
+      "description": "开场交代在哪儿、什么时候，让观众落地。",
+      "output_type": "video",
+      "inputs": [
+        {"name": "place", "label": "地点", "required": true, "max_length": 200},
+        {"name": "time", "label": "时段与天气", "required": true, "max_length": 80},
+        {"name": "motion", "label": "运镜", "type": "choice", "choices": ["缓慢推进", "缓慢横移", "高处下摇"], "default": "缓慢推进"}
+      ],
+      "prompt": "建立镜头：{{place}}，{{time}}。{{motion}}，全程匀速，无抖动。画面里有环境自身的运动（风、水、车流、灯光），但没有主要人物出场。结束时停在之后戏份要发生的那个位置。只生成环境音，不生成音乐；画面不出现文字。",
+      "negative": "文字，水印，抖动，主要人物入画，速度突变",
+      "params": {"aspect_ratio": "9:16", "seconds": 6}
+    },
+    {
+      "id": "video-opening-hook",
+      "name": "前三秒抓人开场",
+      "description": "信息流开头：第一帧就发生事情，不铺垫。",
+      "output_type": "video",
+      "inputs": [
+        {"name": "event", "label": "第一秒发生的事", "required": true, "max_length": 200},
+        {"name": "person", "label": "人物", "required": true, "max_length": 120}
+      ],
+      "prompt": "竖屏开场镜头。第一帧就已经在发生：{{event}}，{{person}}处在事件中心。开场即动作，不淡入、不铺垫；镜头跟着动作走，一秒内完成一次明确的景别变化。结束在一个让人想看下去的未完成动作上。只生成现场音效与对白，不生成音乐；画面不出现字幕。",
+      "negative": "字幕，水印，淡入，空镜铺垫，人物定格摆拍",
+      "params": {"aspect_ratio": "9:16", "seconds": 5}
+    }
+  ]
+}

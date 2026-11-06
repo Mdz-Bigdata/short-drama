@@ -1,0 +1,47 @@
+{
+  "category": "general_image",
+  "label": "通用图片",
+  "recipes": [
+    {
+      "id": "image-cinematic-still",
+      "name": "电影感剧照",
+      "description": "任意一个场面的单帧：像正片截图而不是广告图。",
+      "output_type": "image",
+      "inputs": [
+        {"name": "scene", "label": "画面内容", "required": true, "max_length": 300},
+        {"name": "light", "label": "光线", "default": "单一方向的自然光，暗部保留细节", "max_length": 120},
+        {"name": "lens", "label": "镜头", "type": "choice", "choices": ["35mm 环境人像", "50mm 自然视角", "85mm 特写"], "default": "35mm 环境人像"}
+      ],
+      "prompt": "电影剧照质感的单帧：{{scene}}。{{lens}}，{{light}}。人物正在做事而不是看镜头，环境有真实的使用痕迹。肤色真实，有胶片的细微颗粒，色彩克制。不写字，没有水印。",
+      "negative": "文字，水印，塑料皮肤，正对镜头摆拍，过饱和",
+      "params": {"aspect_ratio": "16:9"}
+    },
+    {
+      "id": "image-empty-location",
+      "name": "空景地点",
+      "description": "一个地点的空镜参考：同一地点后续镜头都能对上。",
+      "output_type": "image",
+      "inputs": [
+        {"name": "place", "label": "地点", "required": true, "max_length": 200},
+        {"name": "time", "label": "时段", "default": "傍晚", "max_length": 40},
+        {"name": "details", "label": "必须出现的陈设", "max_length": 200}
+      ],
+      "prompt": "影视场地空景参考图：{{place}}，{{time}}。主机位平视，交代整体布局和出入口。[[画面里必须有：{{details}}。]]全场无人，没有人影和倒影里的人。光向、色温明确，门高约 2 米、桌面高约 0.75 米，尺度真实。不写字，没有水印。",
+      "negative": "人物，人影，文字，水印，不真实的尺度",
+      "params": {"aspect_ratio": "16:9"}
+    },
+    {
+      "id": "image-prop-reference",
+      "name": "道具参考",
+      "description": "一件关键道具的定妆图，跨镜头保持一致用。",
+      "output_type": "image",
+      "inputs": [
+        {"name": "prop", "label": "道具", "required": true, "max_length": 160},
+        {"name": "wear", "label": "新旧与痕迹", "default": "使用过，有轻微磨损", "max_length": 120}
+      ],
+      "prompt": "影视道具定妆参考：{{prop}}，{{wear}}。中性浅灰背景，柔光，三分之二侧面，完整呈现轮廓、材质和颜色，尺寸感真实。画面只有这一件东西，没有人手，不写字，没有水印。",
+      "negative": "人手，文字，水印，多件道具，夸张的光效",
+      "params": {"aspect_ratio": "1:1"}
+    }
+  ]
+}

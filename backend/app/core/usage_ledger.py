@@ -19,8 +19,9 @@ import time
 import uuid
 from collections import deque
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from datetime import datetime, timezone
+from functools import partial, wraps
 from typing import Any, Callable, Iterator, Mapping
 
 from app.core.providers.pricing import pricing_table
@@ -34,12 +35,60 @@ MAX_RECORDS_PER_TASK = 5000
 
 _current_task: ContextVar[str | None] = ContextVar("usage_task", default=None)
 _current_purpose: ContextVar[str | None] = ContextVar("usage_purpose", default=None)
+_current_user: ContextVar[str | None] = ContextVar("usage_user", default=None)
 
 Sink = Callable[[str, dict[str, Any]], None]
 _sink: Sink | None = None
 _sink_lock = threading.Lock()
 # Calls made outside any project (model discovery, standalone endpoints) are kept in memory.
 unattributed: deque[dict[str, Any]] = deque(maxlen=500)
+
+
+BillingSink = Callable[[dict[str, Any]], None]
+_billing_sink: BillingSink | None = None
+# Something with ``reserve`` and ``settle``, while charging is on: see app.platform.billing_book.
+_billing_guard: Any = None
+
+
+def configure_billing_guard(guard: Any) -> None:
+    global _billing_guard
+    _billing_guard = guard
+
+
+def current_user_id() -> str | None:
+    return _current_user.get()
+
+
+def configure_billing_sink(sink: BillingSink | None) -> None:
+    """Install the function that keeps every record for billing, whichever project it belongs to, or none."""
+    global _billing_sink
+    with _sink_lock:
+        _billing_sink = sink
+
+
+def bind_user(user_id: str | None) -> None:
+    """Who is asking, for the rest of this request and anything it starts with its context."""
+    _current_user.set(user_id)
+
+
+def carrying_context(work: Callable[..., Any]) -> Callable[..., Any]:
+    """``work`` with the caller's project and user: a new thread starts with neither, so its calls would belong to nobody."""
+    return partial(copy_context().run, work)
+
+
+def metered(media_type: str, *, provider: str, describe: Callable[..., tuple[str, Mapping[str, Any]]]):
+    """Record a provider client's paid method; ``describe`` turns its arguments into (model, units)."""
+
+    def decorate(method):
+        @wraps(method)
+        def call(*args, **kwargs):
+            model, units = describe(*args, **kwargs)
+            with timed_call(media_type, provider=provider, model=model, units=units):
+                return method(*args, **kwargs)
+
+        return call
+
+    return decorate
 
 
 def configure_sink(sink: Sink | None) -> None:
@@ -85,6 +134,7 @@ def record(
     error: str | None = None,
     duration_ms: int | None = None,
     purpose: str | None = None,
+    billing_mode: str | None = None,
 ) -> dict[str, Any]:
     """Write one provider-call record and return it."""
     if media_type not in MEDIA_TYPES:
@@ -119,6 +169,13 @@ def record(
             unattributed.append({**entry, "task_id": task_id})
     else:
         unattributed.append({**entry, "task_id": task_id})
+    with _sink_lock:
+        billing_sink = _billing_sink
+    if billing_sink is not None:
+        try:
+            billing_sink({**entry, "task_id": task_id, "user_id": _current_user.get(), "billing_mode": billing_mode})
+        except Exception as exc:  # noqa: BLE001 - same: the call already happened
+            logger.error("[Usage] 计费记录写入失败 usage=%s: %s", entry["id"], type(exc).__name__)
     return entry
 
 
@@ -131,21 +188,33 @@ def timed_call(
     The block may add to ``outcome["units"]`` (tokens read from the response) and set
     ``outcome["error"]``.
     """
+    guard = _billing_guard
+    # With charging on, this is where a call that cannot be paid for stops: it raises and the provider is never reached.
+    handle = guard.reserve(
+        media_type=media_type, provider=provider, model=model, units=dict(units or {}),
+        task_id=_current_task.get(), user_id=_current_user.get(),
+    ) if guard is not None else None
     started = time.monotonic()
     outcome: dict[str, Any] = {"units": dict(units or {}), "failed": False, "error": None}
     try:
         yield outcome
-    except Exception as exc:
+    except BaseException as exc:  # a cancelled call holds nothing either
         outcome["failed"] = True
         outcome["error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
         raise
     finally:
-        record(
+        entry = record(
             media_type, provider=provider, model=model,
             status="failed" if outcome["failed"] else "success",
             units=outcome["units"], error=outcome.get("error"),
             duration_ms=int((time.monotonic() - started) * 1000), purpose=purpose,
+            billing_mode=handle.mode if handle is not None else None,
         )
+        if handle is not None:
+            try:
+                guard.settle(handle, entry)
+            except Exception as exc:  # noqa: BLE001 - the call happened; the reconciliation will show this
+                logger.error("[Usage] 结算失败 usage=%s: %s", entry["id"], type(exc).__name__)
 
 
 def append_to_task(task: dict[str, Any], entry: Mapping[str, Any]) -> None:
@@ -159,6 +228,10 @@ def append_to_task(task: dict[str, Any], entry: Mapping[str, Any]) -> None:
     task["usage_records"] = records
 
 
+def _count(value: Any) -> int:
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+
 def summarize(records: list[Mapping[str, Any]] | None) -> dict[str, Any]:
     """Totals a project page can show: calls, failures, cost per currency, and what could not be priced."""
     items = [item for item in (records or []) if isinstance(item, Mapping)]
@@ -168,7 +241,22 @@ def summarize(records: list[Mapping[str, Any]] | None) -> dict[str, Any]:
     unpriced_calls = 0
     unpriced_models: set[str] = set()
     failed = 0
+    tokens = {
+        "input": 0, "output": 0, "reasoning": 0, "cached_input": 0,
+        "reused_calls": 0, "reused_saved": 0, "system_chars_saved": 0,
+    }
     for item in items:
+        units = item.get("units") if isinstance(item.get("units"), Mapping) else {}
+        tokens["input"] += _count(units.get("input_tokens"))
+        tokens["output"] += _count(units.get("output_tokens"))
+        tokens["reasoning"] += _count(units.get("reasoning_tokens"))
+        tokens["cached_input"] += _count(units.get("cached_tokens"))
+        tokens["system_chars_saved"] += _count(units.get("system_chars_saved"))
+        if units.get("reused"):
+            # A question not asked: nothing was spent, so it is neither a provider call nor an unpriced one.
+            tokens["reused_calls"] += 1
+            tokens["reused_saved"] += _count(units.get("saved_tokens"))
+            continue
         media = str(item.get("media_type") or "unknown")
         purpose_name = str(item.get("purpose") or "unspecified")
         media_bucket = by_media.setdefault(media, {"calls": 0, "failed": 0, "cost": {}})
@@ -191,9 +279,11 @@ def summarize(records: list[Mapping[str, Any]] | None) -> dict[str, Any]:
             if item.get("model"):
                 unpriced_models.add(str(item["model"]))
     primary = max(cost_by_currency, key=lambda currency: cost_by_currency[currency]) if cost_by_currency else None
+    calls = len(items) - tokens["reused_calls"]
     return {
-        "calls": len(items),
-        "succeeded": len(items) - failed,
+        "calls": calls,
+        "succeeded": calls - failed,
+        "tokens": tokens,
         "failed": failed,
         "cost_by_currency": cost_by_currency,
         "primary_currency": primary,

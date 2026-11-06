@@ -8,6 +8,11 @@ export const characterAssetTabLabels: Record<ElementKind, string> = {
   costume: '服装',
   effect: '特效',
   product: '商品',
+  extra: '群演',
+  vehicle: '车辆',
+  stunt: '特技',
+  set_dressing: '置景',
+  makeup: '化妆',
 };
 
 /** 设定集 25 格的中文标签，逐条对应 docs/actor-sheet/IMPLEMENTATION.md 的取景表。 */

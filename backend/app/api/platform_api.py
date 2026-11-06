@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.auth_api import get_current_user, require_admin
+from app.api.auth_api import get_current_user, require_permission
+from app.platform.permissions import CAPABILITY_MANAGE
 from app.core.capability_manifest import capability_command_catalog
 from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore
@@ -65,7 +66,7 @@ async def toggle_capability(
     source_id: str,
     capability_id: str,
     request: CapabilityToggleRequest,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_permission(CAPABILITY_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
 ):
     try:

@@ -90,12 +90,19 @@ export function pathLabel(target: PathTarget): string {
 }
 
 /** The `set_path` operation for a route; camera points are 2-D, so the server keeps the lens at its current height. */
-export function pathOperation(shotId: number, target: PathTarget, points: GroundPoint[]): StageOperation {
-  if (target.kind === 'actor') return { op: 'set_path', shot_id: shotId, target: target.name, points };
-  return { op: 'set_path', shot_id: shotId, target: 'camera', points, look_at: target.lookAt };
+export function pathOperation(shotId: number, target: PathTarget, points: GroundPoint[], speedMps = 0): StageOperation {
+  // No speed: the route fills the shot. A speed: it takes as long as that pace makes it, and a figure gets legs to match.
+  const paced = speedMps > 0 ? { speed_mps: speedMps } : {};
+  if (target.kind === 'actor') return { op: 'set_path', shot_id: shotId, target: target.name, points, ...paced, ...(speedMps > 0 ? { clip: motionForSpeed(speedMps) } : {}) };
+  return { op: 'set_path', shot_id: shotId, target: 'camera', points, look_at: target.lookAt, ...paced };
+}
+
+/** Walk up to a brisk pace; past that a figure has to jog to cover the ground. */
+export function motionForSpeed(speedMps: number): string {
+  return speedMps > 2.2 ? 'human-jog-v1' : 'human-walk-v1';
 }
 
 /** Sent alone (`barrier`): the server keys the route, and the desk takes the plan it returns. */
-export function pathEdit(shotId: number, target: PathTarget, points: GroundPoint[]): EditRequest {
-  return { operations: [pathOperation(shotId, target, points)], label: pathLabel(target), barrier: true };
+export function pathEdit(shotId: number, target: PathTarget, points: GroundPoint[], speedMps = 0): EditRequest {
+  return { operations: [pathOperation(shotId, target, points, speedMps)], label: pathLabel(target), barrier: true };
 }

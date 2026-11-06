@@ -97,8 +97,9 @@ class SceneContextTests(unittest.TestCase):
                 "characters_explicit": True,
             },
         )
-        self.assertIn("批准布局：石阶向北", panel["prompt"])
-        self.assertNotIn("另一场", panel["prompt"])
+        written = " ".join(item["description"] for item in panel["assets"])
+        self.assertIn("批准布局：石阶向北", written)
+        self.assertNotIn("另一场", written)
         self.assertEqual(
             [ref["name"] for ref in panel["references"]], ["沈砚", "太常寺天文台"]
         )
@@ -115,7 +116,7 @@ class SceneContextTests(unittest.TestCase):
         )
         self.assertEqual(panel["characters"], ["空镜（无人物）"])
         self.assertFalse(any(ref["kind"] == "actor" for ref in panel["references"]))
-        self.assertNotIn("墨青长袍", panel["prompt"])
+        self.assertFalse(any(item["kind"] == "actor" for item in panel["assets"]))
 
     def test_out_of_scene_actor_and_generic_filler_are_rejected(self):
         context = compile_scene_context(self.task, self.scene)

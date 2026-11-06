@@ -52,9 +52,6 @@ export interface StoryboardPromptDetail {
     transition_design?: Record<string, PromptValue>;
   };
   beats: StoryboardTimeBeat[];
-  still_prompts: Array<Record<string, PromptValue>>;
-  video_segments: Array<Record<string, PromptValue>>;
-  grid_pages: Array<Record<string, PromptValue>>;
   continuity_checks: Array<Record<string, PromptValue>>;
   submission_ready?: boolean;
   warnings?: string[];

@@ -70,7 +70,13 @@ export function Outliner({ plan, shot, selection, hidden, locked, editable, onSe
             </button>
           ))}
         </div>
-        <ul>{plan.landmarks.map(item => row({ kind: 'landmark', name: item.name }, item.name, SHAPE_LABELS[item.shape ?? 'box']))}</ul>
+        <ul>{plan.landmarks.filter(item => item.origin !== 'blockout').map(item => row({ kind: 'landmark', name: item.name }, item.name, SHAPE_LABELS[item.shape ?? 'box']))}</ul>
+        {plan.landmarks.some(item => item.origin === 'blockout') && (
+          <details className="desk-outliner__group">
+            <summary>白模 <small>{plan.landmarks.filter(item => item.origin === 'blockout').length}</small></summary>
+            <ul>{plan.landmarks.filter(item => item.origin === 'blockout').map(item => row({ kind: 'landmark', name: item.name }, item.name, SHAPE_LABELS[item.shape ?? 'box']))}</ul>
+          </details>
+        )}
       </section>
       <section aria-label="机位">
         <h2>机位 <small>{plan.cameras.length}</small></h2>

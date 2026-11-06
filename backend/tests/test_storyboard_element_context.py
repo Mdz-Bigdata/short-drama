@@ -141,6 +141,25 @@ class StoryboardElementContextTests(unittest.TestCase):
         self.assertEqual(result[0]["metadata"], {"task_id": "task-one"})
         self.assertEqual(result[0]["description"], item.description)
 
+    def test_a_scene_carries_its_extra_views_beside_the_main_reference(self):
+        item = self.element("scene-one", kind="scene")
+        _, main = self.reference(item, slot="reference", content=_image_bytes("navy"))
+        self.reference(item, slot="scene_main", content=_image_bytes("navy"))
+        _, angled = self.reference(item, slot="scene_45", content=_image_bytes("olive"))
+        self.reference(item, slot="scene_detail", content=_image_bytes("maroon"))
+        prop = self.element("prop-one", kind="prop")
+        self.reference(prop, slot="prop_left_45")
+        result, _ = self.load([item, prop])
+        scene = next(entry for entry in result if entry["kind"] == "scene")
+
+        def digest(uri):
+            return hashlib.sha256(base64.b64decode(uri.split(",", 1)[1])).hexdigest()
+
+        self.assertEqual(digest(scene["image_url"]), main.sha256)
+        self.assertEqual(set(scene["views"]), {"scene_45", "scene_detail"})
+        self.assertEqual(digest(scene["views"]["scene_45"]), angled.sha256)
+        self.assertNotIn("views", next(entry for entry in result if entry["kind"] == "prop"))
+
     def test_scene_selection_reads_only_matched_reference_files(self):
         selected = [self.element("current-actor")]
         selected[0].name = "沈砚"

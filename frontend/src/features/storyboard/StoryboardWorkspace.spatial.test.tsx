@@ -53,6 +53,18 @@ describe('StoryboardWorkspace spatial stage entry', () => {
     expect(document.querySelectorAll('.storyboard-frame__cut')).toHaveLength(2);   // a legacy shot has no badge
   });
 
+  it('shows a sound offset on the badge and what to check in its tooltip', () => {
+    const planned: StoryboardShot[] = [
+      { ...shots[0], cut_in: { from_shot: 1, kind: 'match_cut', label: '匹配剪辑·同物换境', sound_join: 'l_cut', sound_note: 'L-cut：上一镜这句话留一小段', watch: '辨识特征不变' } },
+    ];
+    render(<StoryboardWorkspace title="暗室回声" shots={planned} taskId="task-1" onRefresh={vi.fn()} onRegenerate={vi.fn()} />);
+
+    const badge = document.querySelector('.storyboard-frame__cut');
+    expect(badge?.textContent).toBe('匹配剪辑·同物换境 · L');
+    expect(badge?.getAttribute('title')).toContain('L-cut：上一镜这句话留一小段');
+    expect(badge?.getAttribute('title')).toContain('回看核对：辨识特征不变');
+  });
+
   it('needs a task to talk to', () => {
     render(<StoryboardWorkspace title="暗室回声" shots={shots} onRefresh={vi.fn()} onRegenerate={vi.fn()} />);
     expect(screen.getByRole('button', { name: '空间调度' })).toHaveProperty('disabled', true);

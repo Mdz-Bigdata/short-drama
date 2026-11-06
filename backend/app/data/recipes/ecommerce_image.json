@@ -1,0 +1,61 @@
+{
+  "category": "ecommerce_image",
+  "label": "电商图片",
+  "recipes": [
+    {
+      "id": "ecom-white-background",
+      "name": "白底主图",
+      "description": "平台主图：纯白背景、商品居中、形状和颜色不走样。",
+      "output_type": "image",
+      "inputs": [
+        {"name": "product", "label": "商品", "required": true, "max_length": 160},
+        {"name": "material", "label": "材质与颜色", "required": true, "max_length": 160},
+        {"name": "angle", "label": "角度", "type": "choice", "choices": ["正面", "三分之二侧面", "俯拍"], "default": "三分之二侧面"}
+      ],
+      "prompt": "电商白底商品主图：{{product}}，{{material}}，{{angle}}。纯白背景（#FFFFFF），商品居中，占画面约七成，四周留白均匀。柔和的影棚大面积布光，商品底部只有一层很淡的接触阴影。边缘清晰，材质纹理真实，颜色准确，不做夸张的高光。画面里只有商品本身，没有文字、标签、道具、人手和水印。如有参考图，形状、比例、logo 位置和颜色一律以参考图为准。",
+      "negative": "文字，水印，价格标签，渐变背景，道具，变形，多余的商品",
+      "params": {"aspect_ratio": "1:1", "size": "2048x2048"}
+    },
+    {
+      "id": "ecom-lifestyle-scene",
+      "name": "场景种草图",
+      "description": "把商品放回它真正被使用的地方，让人想象自己在用。",
+      "output_type": "image",
+      "inputs": [
+        {"name": "product", "label": "商品", "required": true, "max_length": 160},
+        {"name": "scene", "label": "使用场景", "required": true, "max_length": 200},
+        {"name": "mood", "label": "氛围", "default": "安静、干净的早晨", "max_length": 80},
+        {"name": "person", "label": "使用者（可不要人）", "max_length": 120}
+      ],
+      "prompt": "商品生活方式摄影：{{product}}自然地放在{{scene}}里，是画面的视觉中心但不像摆拍。氛围：{{mood}}，窗光或环境光为主，浅景深，前后景有真实的生活痕迹。[[{{person}}正在使用它，只拍到手和局部身体，不露完整的脸。]]商品的形状、比例、颜色和表面文字以参考图为准，绝不改动。不加任何文字和水印。",
+      "negative": "文字，水印，商品变形，logo 改动，过度磨皮的人物",
+      "params": {"aspect_ratio": "4:5"}
+    },
+    {
+      "id": "ecom-feature-breakdown",
+      "name": "卖点分解图",
+      "description": "一张图讲清三个卖点。只画底图，文字留位，后期排真实文案。",
+      "output_type": "image",
+      "inputs": [
+        {"name": "product", "label": "商品", "required": true, "max_length": 160},
+        {"name": "points", "label": "要呈现的卖点（如实填写，不写未证实的功效）", "required": true, "max_length": 300}
+      ],
+      "prompt": "电商详情页卖点底图：{{product}}放在画面中央偏下，干净的浅色背景。围绕商品安排三个圆形局部放大，分别呈现这些真实存在的特征：{{points}}。每个放大圈里是该部位的微距细节，圈与商品之间有一条细线相连；圈的旁边留出空白，供后期排版文字。画面本身不写任何字，不画图标，不暗示认证标志或检测数据。",
+      "negative": "任何文字，假的认证标志，夸张的前后对比，商品变形",
+      "params": {"aspect_ratio": "3:4"}
+    },
+    {
+      "id": "ecom-macro-detail",
+      "name": "材质微距",
+      "description": "贴近到看得见纹理：缝线、拉丝、颗粒，证明做工的那种图。",
+      "output_type": "image",
+      "inputs": [
+        {"name": "product", "label": "商品", "required": true, "max_length": 160},
+        {"name": "detail", "label": "要拍的部位", "required": true, "max_length": 160}
+      ],
+      "prompt": "商品微距摄影：{{product}}的{{detail}}，贴近到能看清材料本身的纹理与工艺痕迹。侧逆光掠过表面把质感带出来，景深很浅，焦点落在最能说明做工的地方，其余自然虚化。颜色还原准确，不加滤镜感。画面没有文字和水印。",
+      "negative": "文字，水印，塑料感，不真实的完美表面",
+      "params": {"aspect_ratio": "1:1"}
+    }
+  ]
+}

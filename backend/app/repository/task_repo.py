@@ -28,9 +28,10 @@ from typing import Any, Callable, Dict, List, Optional, TypeVar
 import sqlalchemy as sa
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError, SQLAlchemyError
 
 from app import settings
+from app.core.inline_media import strip_stage_five_routes
 
 logger = logging.getLogger("app.repository.task_repo")
 
@@ -62,11 +63,12 @@ _MIGRATION_MARKER = "legacy_json_migrated"
 
 # Records that provider sinks append through mutate_task while a stage thread
 # still holds an older in-memory copy of the task: the usage ledger, accepted
-# video jobs and the generation queue. The stored row is the authority for them;
-# a progress save of the stale copy must not take them back.
+# video jobs, the generation queue and the per-board video failures. The stored row is
+# the authority for them; a progress save of the stale copy must not take them back.
 # qc_reports: 剧本阶段的后台质检报告由质检线程写入，阶段自己的整份快照不覆盖它。
 SINK_OWNED_TASK_KEYS = ("usage_records", "qc_reports")
-SINK_OWNED_ASSET_KEYS = ("5_jobs", "5_queue")
+# 8_acquisition: 宣发获客的评论、线索与跟进只经 mutate_task 写，阶段快照不覆盖。
+SINK_OWNED_ASSET_KEYS = ("5_jobs", "5_queue", "5_failures", "8_acquisition")
 
 
 def _keep_sink_owned(incoming: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
@@ -290,6 +292,25 @@ class TaskRepository:
     def _translate(exc: Exception) -> TaskStoreUnavailableError:
         return TaskStoreUnavailableError(f"任务库不可用: {exc.__class__.__name__}")
 
+    def _retry_once(self, operation: Callable[[], _ResultT], label: str) -> _ResultT:
+        """Run ``operation``; a connection the server dropped mid-statement is retried once on a fresh one.
+
+        ``pool_pre_ping`` only checks a connection at checkout. Postgres closing it while a statement
+        runs (a restart, an idle timeout) surfaced as 任务库不可用 and failed a stage twenty minutes in;
+        the pool is recycled and the statement sent again before giving up.
+        """
+        for attempt in (1, 2):
+            try:
+                return operation()
+            except (DBAPIError, SQLAlchemyError) as exc:
+                dropped = isinstance(exc, OperationalError) or (isinstance(exc, DBAPIError) and exc.connection_invalidated)
+                if attempt == 1 and dropped:
+                    logger.warning("[TaskRepo] %s时数据库连接断开，重连后重试一次: %s", label, exc.__class__.__name__)
+                    self.engine.dispose()
+                    continue
+                raise self._translate(exc) from exc
+        raise AssertionError("unreachable")
+
     def _snapshot_payload(self, task_data: Dict[str, Any], current_raw: object = None) -> str:
         current = self._load_payload(current_raw) if current_raw is not None else None
         durable_history = current.get("chat_history") if current else None
@@ -308,19 +329,23 @@ class TaskRepository:
             }
         if current:
             task_data = _keep_sink_owned(task_data, current)
+        # A stage-5 clip's route decision keeps markers, not the inline pictures it sent: an
+        # in-memory copy loaded before that rule must not write the bytes back.
+        strip_stage_five_routes(task_data)
         return json.dumps(task_data, ensure_ascii=False)
 
     # -------------------------------------------------------------- public API
 
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         self._ensure_ready()
-        try:
+
+        def read() -> object:
             with self.engine.connect() as connection:
-                raw = connection.execute(
+                return connection.execute(
                     sa.select(_TASKS.c.payload).where(_TASKS.c.task_id == task_id)
                 ).scalar()
-        except (DBAPIError, SQLAlchemyError) as exc:
-            raise self._translate(exc) from exc
+
+        raw = self._retry_once(read, "读取任务")
         return self._load_payload(raw) if raw is not None else None
 
     def list_all_tasks(self) -> List[Dict[str, Any]]:
@@ -338,6 +363,17 @@ class TaskRepository:
             if task is not None:
                 tasks.append(task)
         return tasks
+
+    def task_ids_containing(self, marker: str) -> List[str]:
+        """Ids of tasks whose stored payload contains ``marker`` (matched in the database, nothing parsed)."""
+        self._ensure_ready()
+        try:
+            with self.engine.connect() as connection:
+                return list(connection.execute(
+                    sa.select(_TASKS.c.task_id).where(_TASKS.c.payload.contains(marker, autoescape=True))
+                ).scalars().all())
+        except (DBAPIError, SQLAlchemyError) as exc:
+            raise self._translate(exc) from exc
 
     def save_task(self, task_id: str, task_data: Dict[str, Any]) -> None:
         self._ensure_ready()
@@ -407,30 +443,33 @@ class TaskRepository:
     ) -> Optional[_ResultT]:
         """Read, mutate and persist one task inside a single row-locked transaction."""
         self._ensure_ready()
-        with _WRITE_LOCK:
-            try:
-                with self.engine.begin() as connection:
-                    raw = connection.execute(
-                        sa.select(_TASKS.c.payload)
-                        .where(_TASKS.c.task_id == task_id)
-                        .with_for_update()
-                    ).scalar()
-                    task = self._load_payload(raw) if raw is not None else None
-                    if task is None:
-                        return None
-                    result = mutation(task)
-                    connection.execute(
-                        _TASKS.update()
-                        .where(_TASKS.c.task_id == task_id)
-                        .values(
-                            payload=json.dumps(task, ensure_ascii=False),
-                            script_revision=_script_revision(task),
-                            updated_ns=time.time_ns(),
-                        )
+
+        def transact() -> Optional[_ResultT]:
+            with self.engine.begin() as connection:
+                raw = connection.execute(
+                    sa.select(_TASKS.c.payload)
+                    .where(_TASKS.c.task_id == task_id)
+                    .with_for_update()
+                ).scalar()
+                task = self._load_payload(raw) if raw is not None else None
+                if task is None:
+                    return None
+                result = mutation(task)
+                strip_stage_five_routes(task)
+                connection.execute(
+                    _TASKS.update()
+                    .where(_TASKS.c.task_id == task_id)
+                    .values(
+                        payload=json.dumps(task, ensure_ascii=False),
+                        script_revision=_script_revision(task),
+                        updated_ns=time.time_ns(),
                     )
-                    return result
-            except (DBAPIError, SQLAlchemyError) as exc:
-                raise self._translate(exc) from exc
+                )
+                return result
+
+        # The transaction re-reads the row, so a retried mutation starts from the stored task again.
+        with _WRITE_LOCK:
+            return self._retry_once(transact, "修改任务")
 
     def delete_task(self, task_id: str) -> bool:
         self._ensure_ready()

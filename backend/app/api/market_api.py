@@ -11,7 +11,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, SecretStr
 
-from app.api.auth_api import get_current_user, require_admin
+from app.api.auth_api import get_current_user, require_permission
+from app.platform.permissions import MARKET_MANAGE
 from app.core.market import Fetch, Market, MarketError, http_fetch
 from app.core.model_configuration import ModelSecretCipher
 from app.platform.dependencies import get_model_secret_cipher, get_platform_store
@@ -60,7 +61,7 @@ async def list_sources(_user: dict = Depends(get_current_user), store: PlatformS
 
 
 @router.post("/sources")
-async def add_source(request: SourceAddRequest, admin: dict = Depends(require_admin), store: PlatformStore = Depends(get_platform_store), fetch: Fetch = Depends(get_market_fetch)):
+async def add_source(request: SourceAddRequest, admin: dict = Depends(require_permission(MARKET_MANAGE)), store: PlatformStore = Depends(get_platform_store), fetch: Fetch = Depends(get_market_fetch)):
     try:
         return await _market(store, fetch).add_source(request.url, label=request.label, actor_id=admin["user_id"])
     except MarketError as error:
@@ -68,7 +69,7 @@ async def add_source(request: SourceAddRequest, admin: dict = Depends(require_ad
 
 
 @router.patch("/sources/{source_id}")
-async def toggle_source(source_id: str, request: SourceToggleRequest, admin: dict = Depends(require_admin), store: PlatformStore = Depends(get_platform_store), fetch: Fetch = Depends(get_market_fetch)):
+async def toggle_source(source_id: str, request: SourceToggleRequest, admin: dict = Depends(require_permission(MARKET_MANAGE)), store: PlatformStore = Depends(get_platform_store), fetch: Fetch = Depends(get_market_fetch)):
     try:
         return await _market(store, fetch).set_source_enabled(source_id, request.enabled, actor_id=admin["user_id"])
     except MarketError as error:
@@ -76,7 +77,7 @@ async def toggle_source(source_id: str, request: SourceToggleRequest, admin: dic
 
 
 @router.delete("/sources/{source_id}")
-async def remove_source(source_id: str, admin: dict = Depends(require_admin), store: PlatformStore = Depends(get_platform_store), fetch: Fetch = Depends(get_market_fetch)):
+async def remove_source(source_id: str, admin: dict = Depends(require_permission(MARKET_MANAGE)), store: PlatformStore = Depends(get_platform_store), fetch: Fetch = Depends(get_market_fetch)):
     try:
         return await _market(store, fetch).remove_source(source_id, actor_id=admin["user_id"])
     except MarketError as error:
@@ -84,7 +85,7 @@ async def remove_source(source_id: str, admin: dict = Depends(require_admin), st
 
 
 @router.post("/sources/{source_id}/refresh")
-async def refresh_source(source_id: str, admin: dict = Depends(require_admin), store: PlatformStore = Depends(get_platform_store), fetch: Fetch = Depends(get_market_fetch)):
+async def refresh_source(source_id: str, admin: dict = Depends(require_permission(MARKET_MANAGE)), store: PlatformStore = Depends(get_platform_store), fetch: Fetch = Depends(get_market_fetch)):
     try:
         return await _market(store, fetch).refresh_source(source_id, actor_id=admin["user_id"])
     except MarketError as error:
@@ -92,7 +93,7 @@ async def refresh_source(source_id: str, admin: dict = Depends(require_admin), s
 
 
 @router.post("/sources/refresh")
-async def refresh_all(admin: dict = Depends(require_admin), store: PlatformStore = Depends(get_platform_store), fetch: Fetch = Depends(get_market_fetch)):
+async def refresh_all(admin: dict = Depends(require_permission(MARKET_MANAGE)), store: PlatformStore = Depends(get_platform_store), fetch: Fetch = Depends(get_market_fetch)):
     return {"items": await _market(store, fetch).refresh_all(actor_id=admin["user_id"])}
 
 
@@ -108,7 +109,7 @@ async def list_installed(_user: dict = Depends(get_current_user), store: Platfor
 
 @router.post("/sources/{source_id}/entries/{slug}/install")
 async def install_entry(
-    source_id: str, slug: str, request: InstallRequest, admin: dict = Depends(require_admin),
+    source_id: str, slug: str, request: InstallRequest, admin: dict = Depends(require_permission(MARKET_MANAGE)),
     store: PlatformStore = Depends(get_platform_store), cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
     fetch: Fetch = Depends(get_market_fetch),
 ):

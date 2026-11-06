@@ -21,9 +21,6 @@ const detail: StoryboardPromptDetail = {
     narrative_goal: '主角发现线索',
   },
   beats: [],
-  still_prompts: [],
-  video_segments: [],
-  grid_pages: [],
   continuity_checks: [{ code: 'camera_axis', passed: false, detail: '摄影机轴线发生跳变' }],
   submission_ready: false,
   warnings: ['请先修正轴线再提交'],
@@ -52,7 +49,15 @@ describe('StoryboardPromptDialog', () => {
     expect(document.activeElement).toBe(screen.getByText('详细视觉、连续性与摄影参数').closest('summary'));
 
     await user.tab();
-    expect(document.activeElement).toBe(screen.getByText('拍点规划与宫格合成').closest('summary'));
+    expect(document.activeElement).toBe(screen.getByText('拍点规划').closest('summary'));
+  });
+
+  it('shows no prompt that never reaches a model', () => {
+    render(<StoryboardPromptDialog detail={detail} onClose={vi.fn()} />);
+
+    for (const title of ['逐拍出图提示词', '分段运镜视频提示词', '宫格合成说明']) {
+      expect(screen.queryByText(title)).toBeNull();
+    }
   });
 
   it('keeps continuity failures available in a concise collapsed summary', () => {

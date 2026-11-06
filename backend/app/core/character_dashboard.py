@@ -580,6 +580,8 @@ def compile_character_dashboard(task: dict[str, Any]) -> CharacterDashboardRespo
             description=description,
             identity=_text(dna_character.get("identity"), 1000, multiline=True),
             voice_id=_text(dna_character.get("voice_id", dna_character.get("voiceId")), 160),
+            voice_prompt=_text(dna_character.get("voice_prompt", dna_character.get("voicePrompt")), 1000, multiline=True),
+            voice_desc=_text(dna_character.get("voice_desc", dna_character.get("voiceDesc")), 40),
             colors=_normalize_colors(dna_character.get("colors")),
             states=states,
             sheet_url=sheet_url,

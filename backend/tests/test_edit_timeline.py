@@ -2,6 +2,7 @@
 
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -12,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from app.api import drama_api
 from app.api.auth_api import get_current_user
-from app.core import bgm_library, edit_timeline
+from app.core import bgm_library, edit_timeline, media_compositor
 from app.export import jianying
 from app.repository.task_repo import TaskRepository
 from app.service.drama_service import DramaService
@@ -37,6 +38,20 @@ def _task(**overrides) -> dict:
     return task
 
 
+class SubtitleTextTests(unittest.TestCase):
+    def test_only_the_spoken_words_reach_the_subtitle(self):
+        cases = {
+            "｛站住。｝——苏问剑，低沉偏冷、气声短促 ｛伸手。｝": "站住。 伸手。",
+            "「贱籍碰剑，断手。」（音色偏低沉厚、冷得无情绪的中年男声，语速慢": "贱籍碰剑，断手。",
+            "无 无 无": "",
+            "裴仲玄：果然在这。停顿一拍，三年了。": "果然在这。 三年了。",
+            "苏问剑：{爹！}（音色偏低、沙哑、被压住的女声；起音猛、尾音发颤，语速快）": "爹！",
+            "沈无咎：剑不是我拿的（气声；喉头发紧，越说越低": "剑不是我拿的",
+        }
+        for dialogue, subtitle in cases.items():
+            self.assertEqual(edit_timeline._subtitle_of({"dialogue": dialogue, "desc": "周教授站在门口"}), subtitle, dialogue)
+
+
 class TimelineModelTests(unittest.TestCase):
     def test_a_timeline_is_built_from_the_clips_with_voices_subtitles_and_music(self):
         timeline = edit_timeline.build(_task(), transitions=[{"type": "dip_to_black", "duration": 0.4}], title="暗室回声")
@@ -46,10 +61,40 @@ class TimelineModelTests(unittest.TestCase):
         self.assertEqual(first["voice_path"], "/tmp/v1.mp3")
         self.assertIsNone(first["transition_in"])
         self.assertEqual(third["transition_in"], {"type": "dip_to_black", "duration": 0.4})
-        self.assertEqual(third["subtitle"][:4], "周教授站")
+        self.assertEqual(third["subtitle"], "", "没有台词的镜头不出字幕(不再把画面描述烧进成片)")
         self.assertEqual(timeline["bgm"]["source"], "generated")
         self.assertEqual(timeline["title"], {"text": "暗室回声", "seconds": 2.6})
         self.assertEqual(edit_timeline.summary(timeline)["seconds"], 16.6)
+
+    def test_a_planned_sound_offset_reaches_the_render_and_a_person_can_change_it(self):
+        specs = [{"type": "crossfade", "duration": 0.22, "sound_join": "l_cut"}]
+        timeline = edit_timeline.build(_task(), transitions=specs, title="t")
+        self.assertIsNone(timeline["clips"][0]["sound_in"])
+        self.assertEqual(edit_timeline.render_plan(timeline)["sound_joins"], [{"join": "l_cut"}])
+
+        changed = edit_timeline.set_sound_join(timeline, 3, join="j_cut", seconds=0.8)
+        self.assertEqual(edit_timeline.render_plan(changed)["sound_joins"], [{"join": "j_cut", "seconds": 0.8}])
+        self.assertEqual(edit_timeline.render_plan(edit_timeline.set_sound_join(changed, 3, join=""))["sound_joins"], [{"join": ""}])
+        with self.assertRaisesRegex(edit_timeline.TimelineError, "未知"):
+            edit_timeline.set_sound_join(timeline, 3, join="x_cut")
+        with self.assertRaisesRegex(edit_timeline.TimelineError, "第一镜"):
+            edit_timeline.set_sound_join(timeline, 1, join="j_cut")
+
+    def test_a_refresh_keeps_a_persons_sound_offset_and_follows_the_plan_otherwise(self):
+        task = _task()
+        planned = edit_timeline.build(task, transitions=[{"sound_join": "l_cut"}], title="t")
+        self.assertEqual(edit_timeline.refresh(planned, task, transitions=[{"sound_join": "j_cut"}], title="t")["clips"][1]["sound_in"]["join"], "j_cut")
+        edited = edit_timeline.set_sound_join(planned, 3, join="")
+        self.assertEqual(edit_timeline.refresh(edited, task, transitions=[{"sound_join": "j_cut"}], title="t")["clips"][1]["sound_in"]["join"], "")
+
+    def test_what_the_render_did_is_recorded_on_the_clip_without_counting_as_an_edit(self):
+        timeline = edit_timeline.build(_task(), transitions=[{"sound_join": "j_cut"}], title="t")
+        report = [{"index": 1, "join": "j_cut", "seconds": 0.4, "applied": False, "reason": "下一镜没有配音，没有声音可以提前"}]
+        recorded = edit_timeline.record_sound_results(timeline, edit_timeline.render_plan(timeline)["shot_ids"], report)
+        self.assertEqual(recorded["clips"][1]["sound_in"]["result"]["reason"], report[0]["reason"])
+        self.assertEqual(recorded["revision"], timeline["revision"])
+        cleared = edit_timeline.record_sound_results(recorded, [1, 3], [])
+        self.assertNotIn("result", cleared["clips"][1]["sound_in"])
 
     def test_edits_change_the_cut_and_a_rejected_clip_leaves_it(self):
         timeline = edit_timeline.build(_task(), title="暗室回声")
@@ -121,7 +166,7 @@ class JianYingDraftTests(unittest.TestCase):
             self.assertEqual(audio_tracks[0]["segments"][0]["target_timerange"]["start"], 2_600_000)
             self.assertEqual(audio_tracks[1]["segments"][0]["target_timerange"]["duration"], content["duration"])
             texts = next(t for t in content["tracks"] if t["type"] == "text")
-            self.assertEqual(len(texts["segments"]), 3, "title line plus two subtitles")
+            self.assertEqual(len(texts["segments"]), 2, "title line plus the one spoken subtitle (the silent shot carries none)")
             self.assertEqual(draft["draft_meta_info"]["tm_duration"], content["duration"])
             self.assertEqual(draft["skipped"], [])
 
@@ -134,6 +179,66 @@ class JianYingDraftTests(unittest.TestCase):
                 self.assertIn("暗室回声/materials/bgm.mp3", names)
                 loaded = json.loads(archive.read("暗室回声/draft_content.json"))
                 self.assertEqual(loaded["version"], jianying.DRAFT_VERSION)
+
+    def offset_draft(self, joins, voices, *, probe=None):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        media = {name: str(Path(temp.name) / name) for name in ("c1.mp4", "c3.mp4", "v1.mp3", "v3.mp3")}
+        for path in media.values():
+            Path(path).write_bytes(b"x" * 16)
+        task = _task()
+        task["assets"]["6"]["shot_voices"] = [media.get(voices[0]), None, media.get(voices[1])]
+        task["assets"]["6"]["bgm_path"] = None
+        timeline = edit_timeline.build(task, transitions=[{"type": "crossfade", "duration": 0.22, **joins}], title=None)
+        lengths = {media["v1.mp3"]: 7.5, media["v3.mp3"]: 2.0}
+        draft = jianying.build_draft(timeline, name="x", resolve_local=lambda url: media.get(url.rsplit("/", 1)[-1]), probe=probe or lengths.get)
+        tracks = draft["draft_content"]["tracks"]
+        picture = next(t for t in tracks if t["type"] == "video")["segments"]
+        sound = next((t for t in tracks if t["type"] == "audio"), {"segments": []})["segments"]
+        return draft, picture, sound
+
+    def test_an_l_cut_shortens_the_picture_and_lets_the_line_run_past_it(self):
+        draft, picture, sound = self.offset_draft({"sound_join": "l_cut"}, ("v1.mp3", None))
+        # An 8s clip with a 7.5s line: the picture leaves at 7s, half a second before the line ends.
+        self.assertEqual(picture[0]["source_timerange"], {"start": 0, "duration": 7_000_000})
+        self.assertEqual(picture[1]["target_timerange"]["start"], 7_000_000)
+        self.assertEqual(sound[0]["target_timerange"], {"start": 0, "duration": 7_500_000})
+        self.assertEqual(draft["sound_joins"][0]["shot_id"], 3)
+        self.assertTrue(draft["sound_joins"][0]["applied"])
+
+    def test_a_j_cut_starts_the_line_before_the_picture_and_drops_the_head(self):
+        draft, picture, sound = self.offset_draft({"sound_join": "j_cut"}, (None, "v3.mp3"))
+        self.assertEqual(picture[1]["source_timerange"], {"start": 400_000, "duration": 5_600_000})
+        self.assertEqual(picture[1]["target_timerange"]["start"], 8_000_000)
+        self.assertEqual(sound[0]["target_timerange"], {"start": 7_600_000, "duration": 2_000_000})
+        self.assertEqual(draft["draft_content"]["duration"], 13_600_000)
+
+    def test_a_cut_that_cannot_be_offset_says_why_and_stays_as_it_was(self):
+        draft, picture, sound = self.offset_draft({"sound_join": "l_cut"}, ("v1.mp3", "v3.mp3"))
+        self.assertFalse(draft["sound_joins"][0]["applied"])
+        self.assertIn("压住", draft["sound_joins"][0]["reason"])
+        self.assertEqual(picture[0]["source_timerange"]["duration"], 8_000_000)
+        self.assertEqual(sound[1]["target_timerange"]["start"], 8_000_000)
+
+    def test_a_long_line_stops_where_the_next_one_starts(self):
+        lengths = lambda path: 9.5 if path.endswith("v1.mp3") else 2.0  # noqa: E731 - a stub
+        _, _, sound = self.offset_draft({}, ("v1.mp3", "v3.mp3"), probe=lengths)
+        self.assertEqual(sound[0]["target_timerange"], {"start": 0, "duration": 8_000_000})
+        self.assertEqual(sound[0]["source_timerange"]["duration"], 8_000_000)
+
+    def test_without_a_probe_nothing_is_offset(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        media = {name: str(Path(temp.name) / name) for name in ("c1.mp4", "c3.mp4", "v3.mp3")}
+        for path in media.values():
+            Path(path).write_bytes(b"x" * 16)
+        task = _task()
+        task["assets"]["6"]["shot_voices"] = [None, None, media["v3.mp3"]]
+        timeline = edit_timeline.build(task, transitions=[{"sound_join": "j_cut"}], title=None)
+        draft = jianying.build_draft(timeline, name="x", resolve_local=lambda url: media.get(url.rsplit("/", 1)[-1]))
+        self.assertFalse(draft["sound_joins"][0]["applied"])
+        picture = next(t for t in draft["draft_content"]["tracks"] if t["type"] == "video")["segments"]
+        self.assertEqual(picture[1]["source_timerange"]["start"], 0)
 
     def test_footage_that_is_not_on_this_machine_is_reported_not_faked(self):
         draft = jianying.build_draft(edit_timeline.build(_task(), title=None), name="x", resolve_local=lambda _url: None)
@@ -189,6 +294,32 @@ class TimelineServiceTests(unittest.TestCase):
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
 
+    def test_the_downloaded_draft_offsets_the_cut_using_the_real_length_of_the_voice(self):
+        ffmpeg = media_compositor._ffmpeg()
+        if not ffmpeg:
+            self.skipTest("ffmpeg unavailable")
+        root = Path(self.temp.name)
+        for name in ("c1.mp4", "c3.mp4"):
+            (root / name).write_bytes(b"x" * 16)
+        voice = root / "v1.wav"
+        subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=7.5", str(voice)], check=True)
+        task = _task()
+        task["assets"]["6"].update({"shot_voices": [str(voice), None, None], "bgm_path": None})
+        task["assets"]["5"][2]["cut_in"] = {"from_shot": 2, "kind": "match_cut", "label": "同物换境", "compositor": "match_cut", "sound_join": "l_cut"}
+        self.repo.save_task("tl-1", task)
+        with patch.object(drama_api, "service", self.service), \
+                patch("app.service.drama_service.media_compositor._local_media_source", side_effect=lambda url: str(root / str(url).rsplit("/", 1)[-1])):
+            response = self.client.get("/api/drama/tl-1/timeline/jianying.zip")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers["x-draft-sound-offsets"], "1")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            content = json.loads(archive.read(next(name for name in archive.namelist() if name.endswith("draft_content.json"))))
+        picture = next(track for track in content["tracks"] if track["type"] == "video")["segments"]
+        sound = next(track for track in content["tracks"] if track["type"] == "audio")["segments"]
+        cut = picture[-1]["target_timerange"]["start"]
+        ends = sound[0]["target_timerange"]["start"] + sound[0]["target_timerange"]["duration"]
+        self.assertAlmostEqual((ends - cut) / 1_000_000, 0.5, delta=0.02)
+
     def test_the_timeline_is_built_on_first_read_edited_through_the_api_and_rendered_with_its_trims(self):
         with patch.object(drama_api, "service", self.service):
             first = self.client.get("/api/drama/tl-1/timeline")
@@ -196,6 +327,23 @@ class TimelineServiceTests(unittest.TestCase):
             self.assertEqual([c["shot_id"] for c in first.json()["timeline"]["clips"]], [1, 3])
             self.assertEqual(first.json()["timeline"]["title"]["text"], "暗室回声")
             self.assertIn("crossfade", first.json()["transitions"])
+
+            offset = self.client.post("/api/drama/tl-1/timeline/ops", json={"operation": "sound_join", "shot_id": 3, "join": "j_cut", "seconds": 0.8})
+            self.assertEqual(offset.status_code, 200, offset.text)
+            self.assertEqual(offset.json()["timeline"]["clips"][1]["sound_in"]["join"], "j_cut")
+
+            def renders(*_args, **kwargs):
+                self.assertEqual(kwargs["sound_joins"], [{"join": "j_cut", "seconds": 0.8}])
+                kwargs["sound_report"].append({"index": 1, "join": "j_cut", "seconds": 0.8, "applied": False, "reason": "下一镜没有配音"})
+                return "http://localhost:8000/media/film.mp4"
+
+            with patch("app.service.drama_service.media_compositor.compose_film", side_effect=renders):
+                joined = self.client.post("/api/drama/tl-1/timeline/render")
+            self.assertEqual(joined.status_code, 200, joined.text)
+            self.assertEqual(joined.json()["sound_joins"][0]["reason"], "下一镜没有配音")
+            self.assertEqual(self.client.get("/api/drama/tl-1/timeline").json()["timeline"]["clips"][1]["sound_in"]["result"]["applied"], False)
+            cleared = self.client.post("/api/drama/tl-1/timeline/ops", json={"operation": "sound_join", "shot_id": 3, "join": ""})
+            self.assertEqual(cleared.json()["timeline"]["clips"][1]["sound_in"]["join"], "")
 
             trimmed = self.client.post("/api/drama/tl-1/timeline/ops", json={"operation": "trim", "shot_id": 1, "start": 1, "end": 6})
             self.assertEqual(trimmed.status_code, 200, trimmed.text)
@@ -217,6 +365,14 @@ class TimelineServiceTests(unittest.TestCase):
         self.assertEqual(stored["assets"]["7"]["final_video_url"], "http://localhost:8000/media/film.mp4")
         self.assertEqual(stored["assets"]["7"]["timeline_summary"]["included"], 1)
         self.assertEqual(stored["video_url"], "http://localhost:8000/media/film.mp4")
+
+    def test_the_title_card_carries_the_screenplays_title_not_the_request(self):
+        task = _task()
+        task["config"]["title_suggestion"] = "请帮我生成一份武侠短剧"
+        task["assets"]["2_screenwriting"] = {"overview": {"title": "拭剑奴"}}
+        self.repo.save_task("tl-1", task)
+        timeline = self.service.get_timeline("tl-1")["timeline"]
+        self.assertEqual(timeline["title"]["text"], "拭剑奴")
 
     def test_music_from_the_library_is_picked_onto_the_timeline(self):
         with patch.object(bgm_library, "_probe_seconds", return_value=30.0):
@@ -243,12 +399,25 @@ class TimelineServiceTests(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
             self.assertTrue(any(name.endswith("/draft_content.json") for name in archive.namelist()))
 
+    def test_stage_seven_refuses_to_cut_a_film_from_clips_it_cannot_fetch(self):
+        task = self.repo.get_task("tl-1")
+        task["assets"].update({"1": "方案", "2": "剧本", "3": "角色", "4": [{"shot_id": 1}]})
+        task["stage_progress"] = {"stage": 7, "status": "running", "calls": []}
+        self.repo.save_task("tl-1", task)
+        with patch("app.service.drama_service.media_compositor.compose_film") as compose, \
+             patch.object(DramaService, "_ensure_agent_council", lambda _self, _task: {"delivery": {"aspect_ratio": "9:16"}, "negative_prompt_by_role": {}}), \
+             patch.object(DramaService, "_agent_role_prompt", lambda _self, _task, _role: ""), \
+             self.assertRaisesRegex(RuntimeError, "已拿不到"):
+            self.service._execute_stage_blocking("tl-1", 7, _claimed_task=task)
+        compose.assert_not_called()
+
     def test_stage_seven_renders_from_the_timeline_it_persists(self):
         task = self.repo.get_task("tl-1")
         task["assets"].update({"1": "方案", "2": "剧本", "3": "角色", "4": [{"shot_id": 1}]})
         task["stage_progress"] = {"stage": 7, "status": "running", "calls": []}
         self.repo.save_task("tl-1", task)
         with patch("app.service.drama_service.media_compositor.compose_film", return_value="http://localhost:8000/media/film7.mp4") as compose, \
+             patch("app.service.drama_service.media_compositor.media_available", return_value=True), \
              patch.object(DramaService, "run_real_consistency_check", lambda _self, *a, **k: "OK"), \
              patch.object(DramaService, "_ensure_agent_council", lambda _self, _task: {"delivery": {"aspect_ratio": "9:16"}, "negative_prompt_by_role": {}}), \
              patch.object(DramaService, "_agent_role_prompt", lambda _self, _task, _role: ""):

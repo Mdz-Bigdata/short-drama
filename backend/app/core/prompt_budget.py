@@ -5,13 +5,15 @@ Every video model has a length past which it starts dropping information rather 
 using it. A prompt is built from named sections; the sections that carry the shot
 (locks, subject, action, camera) are never cut, and the rest come off in a fixed order —
 sound, environment detail, lighting numbers, colour, effects, dialogue delivery notes —
-until the prompt fits. The main picture description never goes below a floor.
+until the prompt fits. A prompt still over budget after that stays over: the picture the table
+wrote is what the clip is for, and cutting it silently films a different shot.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from app.core.video_references import _normalize_model_token
@@ -30,12 +32,15 @@ DEFAULT_BUDGET = (200, 600)
 UNLIMITED_MODELS = ("sora",)
 
 # Optional sections, first to go → last to go.
-CUT_ORDER: tuple[str, ...] = ("sound", "environment", "light_numbers", "colour", "effects", "contact", "dialogue_notes")
+CUT_ORDER: tuple[str, ...] = ("sound", "environment", "light_numbers", "colour", "effects", "contact", "handoff", "dialogue_notes")
 NEVER_CUT: frozenset[str] = frozenset({"style_lock", "locks", "anchors", "subject", "action", "camera", "dialogue", "rules"})
 # Layers restated verbatim on every prompt: they do not count toward the body budget, the
 # way lock tags do not count toward a picture description's length limit.
-FIXED_SECTIONS: frozenset[str] = frozenset({"style_lock", "anchor_cast", "anchor_scene", "anchor_props", "anchors", "closing", "rules", "negatives"})
-MAIN_DESCRIPTION_FLOOR = 100
+# 外貌简述一人至多 80 字、每镜重写，算作锁定层：预算再紧也不拿它顶数。
+FIXED_SECTIONS: frozenset[str] = frozenset({
+    "style_lock", "stage", "appearance", "quality", "anchor_cast", "anchor_costumes", "anchor_scene", "anchor_props", "anchors",
+    "closing", "rules", "negatives",
+})
 _NUMBER_NOTE = re.compile(r"[（(][^（）()]*?(?:\d+K|\d+:\d+|\d+\s*mm|ISO\s*\d+|\d+\s*stop)[^（）()]*?[）)]")
 
 
@@ -67,6 +72,8 @@ class PressureReport:
     total_length: int = 0
     dropped: list[str] = field(default_factory=list)
     trimmed: list[str] = field(default_factory=list)
+    # 正文经去重 / 精炼压短而不是逐段裁掉：内容都在，可能仍略超预算。
+    distilled: bool = False
 
     @property
     def ratio(self) -> float | None:
@@ -76,6 +83,7 @@ class PressureReport:
         return {
             "model": self.model, "budget": self.budget, "length": self.length, "total_length": self.total_length,
             "ratio": self.ratio, "tier": self.tier, "dropped": list(self.dropped), "trimmed": list(self.trimmed),
+            "distilled": self.distilled,
         }
 
 
@@ -97,14 +105,18 @@ def pressure(text: str, model: str) -> PressureReport:
 
 
 def compress(
-    sections: Mapping[str, str], model: str, *, main: str = "subject", fixed: frozenset[str] = FIXED_SECTIONS,
+    sections: Mapping[str, str], model: str, *, fixed: frozenset[str] = FIXED_SECTIONS,
+    distill: Callable[[Mapping[str, str], int], Mapping[str, str] | None] | None = None,
 ) -> tuple[dict[str, str], PressureReport]:
     """Cut optional sections in ``CUT_ORDER`` until the body fits the model's budget.
 
+    With ``distill(sections, budget)`` (see :mod:`app.core.prompt_distiller`) an over-budget body is
+    condensed instead: the returned sections are used as they are and nothing is cut afterwards, even
+    if they are still somewhat over budget — content comes first. ``None`` falls back to cutting.
+
     ``fixed`` sections are restated on every prompt and are not measured. Sections not in
-    ``CUT_ORDER`` are never removed. Lighting numbers are trimmed out of the light section
-    before the section itself goes. If everything optional is gone and the body is still
-    over, the main description is shortened, but not below ``MAIN_DESCRIPTION_FLOOR``.
+    ``CUT_ORDER`` are never removed, the main picture description included. Lighting numbers are
+    trimmed out of the light section before the section itself goes.
     """
     kept = {key: str(value or "") for key, value in sections.items()}
     budget = prompt_budget(model)
@@ -119,6 +131,14 @@ def compress(
     if budget is None:
         report.length, report.total_length = total(), everything()
         return kept, report
+    if total() > budget and distill is not None:
+        condensed = distill(dict(kept), budget)
+        if condensed:
+            kept = {key: str(value or "") for key, value in condensed.items()}
+            report.distilled = True
+            report.length, report.total_length = total(), everything()
+            report.tier = tier_for(report.length, budget)
+            return {key: value for key, value in kept.items() if value}, report
     for key in CUT_ORDER:
         if total() <= budget:
             break
@@ -132,30 +152,12 @@ def compress(
         if kept.get(key):
             kept[key] = ""
             report.dropped.append(key)
-    if total() > budget and kept.get(main):
-        excess = total() - budget
-        body = kept[main]
-        target = max(MAIN_DESCRIPTION_FLOOR, prompt_length(body) - excess)
-        if target < prompt_length(body):
-            kept[main] = _shorten(body, target)
-            report.trimmed.append(main)
     report.length, report.total_length = total(), everything()
     report.tier = tier_for(report.length, budget)
     return {key: value for key, value in kept.items() if value}, report
 
 
-def _shorten(text: str, target: int) -> str:
-    """Cut whole clauses from the end until the text is within ``target`` costed characters."""
-    clauses = re.split(r"(?<=[。；;！？!?])", text)
-    while len(clauses) > 1 and prompt_length("".join(clauses)) > target:
-        clauses.pop()
-    joined = "".join(clauses)
-    if prompt_length(joined) > target:
-        joined = joined[:target].rstrip("，、,；;") + "…"
-    return joined
-
-
 __all__ = [
-    "CUT_ORDER", "DEFAULT_BUDGET", "FIXED_SECTIONS", "MAIN_DESCRIPTION_FLOOR", "MODEL_PROMPT_BUDGETS", "NEVER_CUT",
+    "CUT_ORDER", "DEFAULT_BUDGET", "FIXED_SECTIONS", "MODEL_PROMPT_BUDGETS", "NEVER_CUT",
     "PressureReport", "compress", "pressure", "prompt_budget", "prompt_length", "tier_for",
 ]

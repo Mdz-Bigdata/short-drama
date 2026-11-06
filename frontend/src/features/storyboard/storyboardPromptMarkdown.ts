@@ -46,9 +46,6 @@ export function storyboardPromptMarkdown(detail: StoryboardPromptDetail): string
     ['转场设计', detail.foundation.transition_design],
     ['时间拍点规划规则', [...TIME_BEAT_PLANNING_RULES]],
     ['时间拍点', detail.beats as unknown as PromptValue],
-    ['逐拍静帧提示词', detail.still_prompts as PromptValue],
-    ['分段运镜视频提示词', detail.video_segments as PromptValue],
-    ['宫格合成说明', detail.grid_pages as PromptValue],
   ];
   return [
     `# 通用分镜提示词 · ${detail.project_name} · ${detail.shot_number} · 第 1 页`,

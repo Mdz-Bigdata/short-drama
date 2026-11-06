@@ -9,9 +9,9 @@ import { StageProp } from './props/StageProp';
 export function LensStage({ plan, actors, hidden }: { plan: StagePlan; actors: StageActor[]; hidden: string[] }) {
   return (
     <>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.005, 0]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.005, 0]} receiveShadow>
         <planeGeometry args={[200, 200]} />
-        <meshStandardMaterial color="#fdeff1" roughness={1} />
+        <meshStandardMaterial color="#d9d9dd" roughness={1} />
       </mesh>
       {plan.landmarks.filter(item => !hidden.includes(`landmark:${item.name}`)).map(item => (
         <StageProp key={item.id} landmark={item} labelled={false} selected={false} />

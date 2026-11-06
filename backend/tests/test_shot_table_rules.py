@@ -283,17 +283,13 @@ class DialogueFitRuleTests(unittest.TestCase):
 class ShotLoadRuleTests(unittest.TestCase):
     """What one vertical frame can actually hold: people, sound layers, close-ups."""
 
-    def test_a_third_clear_character_is_flagged(self):
+    def test_any_number_of_people_may_share_a_shot(self):
         audit = audit_shot_table(
-            [_shot(characters=["林夏", "周教授", "助理"]), _shot(shot_id=2, size="全景")],
+            [_shot(characters=["林夏", "周教授", "助理", "保安"]), _shot(shot_id=2, size="全景")],
             video_model="seedance2.5",
         )
 
-        self.assertIn("同框清晰人物过多", _rules(audit))
-        self.assertNotIn(
-            "同框清晰人物过多",
-            _rules(audit_shot_table([_shot(characters=["林夏", "周教授"])], video_model="seedance2.5")),
-        )
+        self.assertNotIn("同框清晰人物过多", _rules(audit))
 
     def test_sound_layers_are_capped(self):
         noisy = _shot(sound="环境音：空调低鸣·远处车流·钟表滴答；动作音：脚步·纸张·椅子")

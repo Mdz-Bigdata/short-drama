@@ -1,5 +1,3 @@
-import type { ElementKind } from '../elements/elementTypes';
-
 export interface AssetKindReadiness {
   label: string;
   total: number;
@@ -8,11 +6,11 @@ export interface AssetKindReadiness {
   enforced?: boolean;
 }
 
-/** Whether every actor, scene, prop, costume and effect has a reference image. */
+/** Whether every actor, costume look, scene, prop and effect has a reference image. */
 export interface AssetReadiness {
   complete: boolean;
   library_error?: string;
-  kinds: Partial<Record<ElementKind, AssetKindReadiness>>;
+  kinds: Partial<Record<string, AssetKindReadiness>>;
 }
 
 export function assetGateReason(readiness: AssetReadiness | null): string {

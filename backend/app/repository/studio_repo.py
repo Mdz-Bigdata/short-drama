@@ -13,12 +13,15 @@ import secrets
 import sqlite3
 import threading
 import uuid
+import weakref
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from app.core import studio_canvas
 from app.schema.studio import (
+    CANVAS_MAIN_ID,
     ArtifactKind,
     ArtifactRecord,
     GenerationJobRecord,
@@ -29,9 +32,13 @@ from app.schema.studio import (
     AgentKeyCreateRequest,
     AgentKeyRecord,
     CanvasEdge,
+    CanvasBoardRecord,
+    CanvasBookmark,
     CanvasNode,
+    CanvasNodeRun,
     CanvasPutRequest,
     CanvasRecord,
+    CanvasVersionSummary,
     CostEventRecord,
     CostEventRequest,
     CurrencyCostSummary,
@@ -51,6 +58,10 @@ class ConcurrencyError(RuntimeError):
     pass
 
 
+class _ThreadConnection(sqlite3.Connection):
+    """A plain connection that can be weakly referenced, so a finished thread's connection can go."""
+
+
 class StudioRepository:
     _JOB_TRANSITIONS = {
         "queued": {"running", "cancelled", "failed"},
@@ -65,11 +76,11 @@ class StudioRepository:
     def __init__(self, path: str | Path):
         db_path = Path(path).expanduser().resolve()
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._connection.row_factory = sqlite3.Row
+        self._db_path = db_path
+        self._local = threading.local()
+        self._connections: weakref.WeakSet[sqlite3.Connection] = weakref.WeakSet()
         self._lock = threading.RLock()
         with self._connection:
-            self._connection.execute("PRAGMA foreign_keys = ON")
             self._connection.execute("PRAGMA journal_mode = WAL")
             self._connection.executescript(
                 """
@@ -195,6 +206,95 @@ class StudioRepository:
                     UNIQUE(project_id, idempotency_key)
                 );
                 CREATE INDEX IF NOT EXISTS idx_cost_project ON cost_events(project_id, currency, phase);
+
+                -- canvas_versions is keyed (project_id, version), which leaves no room for a second canvas
+                -- and SQLite cannot change a primary key in place: further canvases get their own tables.
+                CREATE TABLE IF NOT EXISTS canvas_boards (
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    bookmarks TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    deleted_at TEXT,
+                    PRIMARY KEY(project_id, id)
+                );
+
+                CREATE TABLE IF NOT EXISTS canvas_board_versions (
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    canvas_id TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    nodes TEXT NOT NULL,
+                    edges TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, canvas_id, version)
+                );
+
+                -- A canvas is opened from a drama task; this says which studio project holds it for whom.
+                CREATE TABLE IF NOT EXISTS task_canvas_projects (
+                    task_id TEXT NOT NULL,
+                    owner_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(task_id, owner_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_task_canvas_project ON task_canvas_projects(project_id);
+
+                -- A planned workflow: its draft, and once applied which node each step became.
+                CREATE TABLE IF NOT EXISTS canvas_workflows (
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    id TEXT NOT NULL,
+                    canvas_id TEXT NOT NULL,
+                    owner_id TEXT NOT NULL,
+                    record TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, id)
+                );
+
+                CREATE TABLE IF NOT EXISTS canvas_run_batches (
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    id TEXT NOT NULL,
+                    canvas_id TEXT NOT NULL,
+                    owner_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    operation_id TEXT NOT NULL,
+                    snapshot TEXT NOT NULL DEFAULT '{}',
+                    lease_expires_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, id),
+                    UNIQUE(project_id, operation_id)
+                );
+
+                -- Generations are never edited away: deleting one sets deleted_at, nothing else changes.
+                CREATE TABLE IF NOT EXISTS canvas_node_runs (
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    id TEXT NOT NULL,
+                    canvas_id TEXT NOT NULL,
+                    node_id TEXT NOT NULL,
+                    batch_id TEXT NOT NULL,
+                    medium TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    model TEXT NOT NULL DEFAULT '',
+                    request TEXT NOT NULL DEFAULT '{}',
+                    output TEXT,
+                    error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    deleted_at TEXT,
+                    PRIMARY KEY(project_id, id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_canvas_runs_node ON canvas_node_runs(project_id, canvas_id, node_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_canvas_runs_batch ON canvas_node_runs(project_id, batch_id);
+
+                CREATE TABLE IF NOT EXISTS canvas_node_active (
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    canvas_id TEXT NOT NULL,
+                    node_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, canvas_id, node_id)
+                );
                 """
             )
             self._ensure_column("generation_jobs", "lease_owner", "TEXT")
@@ -204,6 +304,20 @@ class StudioRepository:
             )
             self._ensure_column("generation_jobs", "logs", "TEXT NOT NULL DEFAULT '[]'")
 
+    @property
+    def _connection(self) -> sqlite3.Connection:
+        # One connection per thread. Two threads reading through a shared connection step the same
+        # cached statement and get each other's rows: with canvas runs writing from worker threads
+        # that showed up as garbled records and paid results lost. WAL lets the readers run side by side.
+        connection = getattr(self._local, "connection", None)
+        if connection is None:
+            connection = sqlite3.connect(str(self._db_path), check_same_thread=False, factory=_ThreadConnection)
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            self._local.connection = connection
+            self._connections.add(connection)
+        return connection
+
     def _ensure_column(self, table: str, column: str, declaration: str) -> None:
         columns = {
             row["name"] for row in self._connection.execute(f"PRAGMA table_info({table})").fetchall()
@@ -212,7 +326,9 @@ class StudioRepository:
             self._connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
     def close(self) -> None:
-        self._connection.close()
+        for connection in list(self._connections):
+            connection.close()
+        self._local = threading.local()
 
     def create_project(self, owner_id: str, request: ProjectCreate) -> ProjectRecord:
         now = utc_now_iso()
@@ -436,10 +552,11 @@ class StudioRepository:
         return [self._review_from_row(row) for row in rows]
 
     def put_canvas(
-        self, project_id: str, owner_id: str, request: CanvasPutRequest
+        self, project_id: str, owner_id: str, request: CanvasPutRequest, *, canvas_id: str = CANVAS_MAIN_ID
     ) -> CanvasRecord:
         if not self.get_project(project_id, owner_id):
             raise PermissionError("project not found or not owned by actor")
+        self._require_board(project_id, canvas_id)
         artifact_ids = {node.artifact_id for node in request.nodes if node.artifact_id}
         if artifact_ids:
             placeholders = ",".join("?" for _ in artifact_ids)
@@ -453,11 +570,7 @@ class StudioRepository:
         with self._lock:
             try:
                 self._connection.execute("BEGIN IMMEDIATE")
-                row = self._connection.execute(
-                    "SELECT COALESCE(MAX(version), 0) AS latest FROM canvas_versions WHERE project_id = ?",
-                    (project_id,),
-                ).fetchone()
-                latest = int(row["latest"])
+                latest = self._latest_canvas_version(project_id, canvas_id)
                 if latest != request.expected_version:
                     raise ConcurrencyError(
                         f"canvas version conflict: expected {request.expected_version}, latest is {latest}"
@@ -468,18 +581,17 @@ class StudioRepository:
                     nodes=request.nodes,
                     edges=request.edges,
                     created_at=now,
+                    canvas_id=canvas_id,
                 )
-                self._connection.execute(
-                    "INSERT INTO canvas_versions(project_id, version, nodes, edges, created_at) VALUES(?, ?, ?, ?, ?)",
-                    (
-                        project_id,
-                        record.version,
-                        json.dumps([node.model_dump(mode="json") for node in record.nodes], ensure_ascii=False, sort_keys=True),
-                        json.dumps([edge.model_dump(mode="json") for edge in record.edges], ensure_ascii=False, sort_keys=True),
-                        now,
-                    ),
+                self._insert_canvas_version(
+                    project_id, canvas_id, record.version,
+                    json.dumps([node.model_dump(mode="json") for node in record.nodes], ensure_ascii=False, sort_keys=True),
+                    json.dumps([edge.model_dump(mode="json") for edge in record.edges], ensure_ascii=False, sort_keys=True),
+                    now,
                 )
-                self._audit(project_id, owner_id, "canvas.versioned", project_id, {"version": record.version})
+                self._audit(project_id, owner_id, "canvas.versioned", project_id, {"version": record.version, "canvas_id": canvas_id})
+                if record.version % 20 == 0:
+                    self._prune_canvas_versions(project_id, canvas_id)
                 self._connection.commit()
                 return record
             except Exception:
@@ -493,14 +605,81 @@ class StudioRepository:
         data["edges"] = [CanvasEdge.model_validate(item) for item in json.loads(data["edges"])]
         return CanvasRecord.model_validate(data)
 
-    def get_canvas(self, project_id: str, owner_id: str) -> CanvasRecord | None:
+    def get_canvas(self, project_id: str, owner_id: str, *, canvas_id: str = CANVAS_MAIN_ID) -> CanvasRecord | None:
         if not self.get_project(project_id, owner_id):
             raise PermissionError("project not found or not owned by actor")
-        row = self._connection.execute(
-            "SELECT * FROM canvas_versions WHERE project_id = ? ORDER BY version DESC LIMIT 1",
-            (project_id,),
-        ).fetchone()
+        self._require_board(project_id, canvas_id)
+        if canvas_id == CANVAS_MAIN_ID:
+            row = self._connection.execute(
+                "SELECT * FROM canvas_versions WHERE project_id = ? ORDER BY version DESC LIMIT 1",
+                (project_id,),
+            ).fetchone()
+        else:
+            row = self._connection.execute(
+                "SELECT * FROM canvas_board_versions WHERE project_id = ? AND canvas_id = ? ORDER BY version DESC LIMIT 1",
+                (project_id, canvas_id),
+            ).fetchone()
         return self._canvas_from_row(row) if row else None
+
+    def _require_board(self, project_id: str, canvas_id: str) -> None:
+        if canvas_id == CANVAS_MAIN_ID:
+            return
+        row = self._connection.execute(
+            "SELECT 1 FROM canvas_boards WHERE project_id = ? AND id = ? AND deleted_at IS NULL",
+            (project_id, canvas_id),
+        ).fetchone()
+        if not row:
+            raise PermissionError("canvas not found")
+
+    def _latest_canvas_version(self, project_id: str, canvas_id: str) -> int:
+        if canvas_id == CANVAS_MAIN_ID:
+            row = self._connection.execute(
+                "SELECT COALESCE(MAX(version), 0) AS latest FROM canvas_versions WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+        else:
+            row = self._connection.execute(
+                "SELECT COALESCE(MAX(version), 0) AS latest FROM canvas_board_versions WHERE project_id = ? AND canvas_id = ?",
+                (project_id, canvas_id),
+            ).fetchone()
+        return int(row["latest"])
+
+    def latest_canvas_version(self, project_id: str, owner_id: str, *, canvas_id: str = CANVAS_MAIN_ID) -> int:
+        if not self.get_project(project_id, owner_id):
+            raise PermissionError("project not found or not owned by actor")
+        self._require_board(project_id, canvas_id)
+        return self._latest_canvas_version(project_id, canvas_id)
+
+    def _insert_canvas_version(self, project_id: str, canvas_id: str, version: int, nodes: str, edges: str, created_at: str) -> None:
+        if canvas_id == CANVAS_MAIN_ID:
+            self._connection.execute(
+                "INSERT INTO canvas_versions(project_id, version, nodes, edges, created_at) VALUES(?, ?, ?, ?, ?)",
+                (project_id, version, nodes, edges, created_at),
+            )
+        else:
+            self._connection.execute(
+                "INSERT INTO canvas_board_versions(project_id, canvas_id, version, nodes, edges, created_at) VALUES(?, ?, ?, ?, ?, ?)",
+                (project_id, canvas_id, version, nodes, edges, created_at),
+            )
+
+    def _prune_canvas_versions(self, project_id: str, canvas_id: str) -> None:
+        if canvas_id == CANVAS_MAIN_ID:
+            rows = self._connection.execute(
+                "SELECT version, created_at FROM canvas_versions WHERE project_id = ?", (project_id,),
+            ).fetchall()
+        else:
+            rows = self._connection.execute(
+                "SELECT version, created_at FROM canvas_board_versions WHERE project_id = ? AND canvas_id = ?",
+                (project_id, canvas_id),
+            ).fetchall()
+        for version in studio_canvas.versions_to_prune([(int(row["version"]), str(row["created_at"])) for row in rows]):
+            if canvas_id == CANVAS_MAIN_ID:
+                self._connection.execute("DELETE FROM canvas_versions WHERE project_id = ? AND version = ?", (project_id, version))
+            else:
+                self._connection.execute(
+                    "DELETE FROM canvas_board_versions WHERE project_id = ? AND canvas_id = ? AND version = ?",
+                    (project_id, canvas_id, version),
+                )
 
     def promote_canvas_node(
         self,
@@ -510,8 +689,9 @@ class StudioRepository:
         node_id: str,
         target_kind: ArtifactKind,
         expected_version: int,
+        canvas_id: str = CANVAS_MAIN_ID,
     ) -> CanvasRecord:
-        canvas = self.get_canvas(project_id, owner_id)
+        canvas = self.get_canvas(project_id, owner_id, canvas_id=canvas_id)
         if not canvas or canvas.version != expected_version:
             latest = canvas.version if canvas else 0
             raise ConcurrencyError(
@@ -535,6 +715,7 @@ class StudioRepository:
             project_id,
             owner_id,
             CanvasPutRequest(expected_version=expected_version, nodes=nodes, edges=canvas.edges),
+            canvas_id=canvas_id,
         )
         with self._lock, self._connection:
             self._audit(
@@ -542,9 +723,340 @@ class StudioRepository:
                 owner_id,
                 "canvas.promoted",
                 node_id,
-                {"target_kind": target_kind.value, "version": record.version},
+                {"target_kind": target_kind.value, "version": record.version, "canvas_id": canvas_id},
             )
         return record
+
+    # ------------------------------------------------------------------ the task a canvas belongs to
+
+    def project_for_task(self, task_id: str, owner_id: str, title: str) -> ProjectRecord:
+        """The studio project holding this person's canvases for a drama task, made on first open."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT project_id FROM task_canvas_projects WHERE task_id = ? AND owner_id = ?", (task_id, owner_id),
+            ).fetchone()
+            if row:
+                project = self.get_project(str(row["project_id"]), owner_id)
+                if project:
+                    return project
+            project = self.create_project(owner_id, ProjectCreate(name=(title or "画布")[:160] or "画布", description=f"drama task {task_id}"))
+            with self._connection:
+                self._connection.execute(
+                    "INSERT OR REPLACE INTO task_canvas_projects(task_id, owner_id, project_id, created_at) VALUES(?, ?, ?, ?)",
+                    (task_id, owner_id, project.id, utc_now_iso()),
+                )
+            return project
+
+    def task_for_project(self, project_id: str, owner_id: str) -> str | None:
+        if not self.get_project(project_id, owner_id):
+            raise PermissionError("project not found or not owned by actor")
+        row = self._connection.execute(
+            "SELECT task_id FROM task_canvas_projects WHERE project_id = ? AND owner_id = ?", (project_id, owner_id),
+        ).fetchone()
+        return str(row["task_id"]) if row else None
+
+    # ------------------------------------------------------------------ several canvases per project
+
+    def _board_from_row(self, row: sqlite3.Row, project_id: str) -> CanvasBoardRecord:
+        data = dict(row)
+        return CanvasBoardRecord(
+            id=str(data["id"]), project_id=project_id, title=str(data["title"]),
+            bookmarks=[CanvasBookmark.model_validate(item) for item in json.loads(data.get("bookmarks") or "[]")],
+            version=self._latest_canvas_version(project_id, str(data["id"])),
+            created_at=str(data.get("created_at") or ""), updated_at=str(data.get("updated_at") or ""),
+        )
+
+    def list_canvases(self, project_id: str, owner_id: str) -> list[CanvasBoardRecord]:
+        if not self.get_project(project_id, owner_id):
+            raise PermissionError("project not found or not owned by actor")
+        rows = self._connection.execute(
+            "SELECT * FROM canvas_boards WHERE project_id = ? AND deleted_at IS NULL ORDER BY created_at, id", (project_id,),
+        ).fetchall()
+        boards = [self._board_from_row(row, project_id) for row in rows]
+        if not any(board.id == CANVAS_MAIN_ID for board in boards):
+            boards.insert(0, CanvasBoardRecord(id=CANVAS_MAIN_ID, project_id=project_id, title="主画布", version=self._latest_canvas_version(project_id, CANVAS_MAIN_ID)))
+        return sorted(boards, key=lambda board: (board.id != CANVAS_MAIN_ID, board.created_at, board.id))
+
+    def create_canvas(self, project_id: str, owner_id: str, title: str) -> CanvasBoardRecord:
+        if not self.get_project(project_id, owner_id):
+            raise PermissionError("project not found or not owned by actor")
+        board_id = f"cv_{uuid.uuid4().hex[:16]}"
+        now = utc_now_iso()
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO canvas_boards(project_id, id, title, created_at, updated_at) VALUES(?, ?, ?, ?, ?)",
+                (project_id, board_id, title.strip()[:80] or "画布", now, now),
+            )
+        return CanvasBoardRecord(id=board_id, project_id=project_id, title=title.strip()[:80] or "画布", created_at=now, updated_at=now)
+
+    def patch_canvas(
+        self, project_id: str, owner_id: str, canvas_id: str, *, title: str | None = None, bookmarks: list[CanvasBookmark] | None = None,
+    ) -> CanvasBoardRecord:
+        """A name and viewport bookmarks: not part of the drawing, so they neither bump its version nor conflict with it."""
+        if not self.get_project(project_id, owner_id):
+            raise PermissionError("project not found or not owned by actor")
+        self._require_board(project_id, canvas_id)
+        now = utc_now_iso()
+        with self._lock, self._connection:
+            if canvas_id == CANVAS_MAIN_ID:
+                self._connection.execute(
+                    "INSERT OR IGNORE INTO canvas_boards(project_id, id, title, created_at, updated_at) VALUES(?, ?, ?, ?, ?)",
+                    (project_id, CANVAS_MAIN_ID, "主画布", "", now),
+                )
+            if title is not None:
+                self._connection.execute(
+                    "UPDATE canvas_boards SET title = ?, updated_at = ? WHERE project_id = ? AND id = ?",
+                    (title.strip()[:80] or "画布", now, project_id, canvas_id),
+                )
+            if bookmarks is not None:
+                self._connection.execute(
+                    "UPDATE canvas_boards SET bookmarks = ?, updated_at = ? WHERE project_id = ? AND id = ?",
+                    (json.dumps([item.model_dump(mode="json") for item in bookmarks], ensure_ascii=False, sort_keys=True), now, project_id, canvas_id),
+                )
+        row = self._connection.execute("SELECT * FROM canvas_boards WHERE project_id = ? AND id = ?", (project_id, canvas_id)).fetchone()
+        return self._board_from_row(row, project_id)
+
+    def delete_canvas(self, project_id: str, owner_id: str, canvas_id: str) -> None:
+        if canvas_id == CANVAS_MAIN_ID:
+            raise ValueError("主画布不能删除")
+        if not self.get_project(project_id, owner_id):
+            raise PermissionError("project not found or not owned by actor")
+        self._require_board(project_id, canvas_id)
+        now = utc_now_iso()
+        with self._lock, self._connection:
+            # The versions stay on disk: a board taken off the switcher can still be brought back by hand.
+            self._connection.execute(
+                "UPDATE canvas_boards SET deleted_at = ?, updated_at = ? WHERE project_id = ? AND id = ?", (now, now, project_id, canvas_id),
+            )
+
+    # ------------------------------------------------------------------ canvas revision history
+
+    def list_canvas_versions(self, project_id: str, owner_id: str, *, canvas_id: str = CANVAS_MAIN_ID, limit: int = 100) -> list[CanvasVersionSummary]:
+        if not self.get_project(project_id, owner_id):
+            raise PermissionError("project not found or not owned by actor")
+        self._require_board(project_id, canvas_id)
+        table, where, params = self._versions_query(project_id, canvas_id)
+        rows = self._connection.execute(
+            f"SELECT version, created_at, json_array_length(nodes) AS node_count, json_array_length(edges) AS edge_count "
+            f"FROM {table} WHERE {where} ORDER BY version DESC LIMIT ?",
+            (*params, max(1, min(int(limit), 500))),
+        ).fetchall()
+        return [CanvasVersionSummary.model_validate(dict(row)) for row in rows]
+
+    @staticmethod
+    def _versions_query(project_id: str, canvas_id: str) -> tuple[str, str, tuple[str, ...]]:
+        if canvas_id == CANVAS_MAIN_ID:
+            return "canvas_versions", "project_id = ?", (project_id,)
+        return "canvas_board_versions", "project_id = ? AND canvas_id = ?", (project_id, canvas_id)
+
+    def get_canvas_version(self, project_id: str, owner_id: str, version: int, *, canvas_id: str = CANVAS_MAIN_ID) -> CanvasRecord | None:
+        if not self.get_project(project_id, owner_id):
+            raise PermissionError("project not found or not owned by actor")
+        self._require_board(project_id, canvas_id)
+        table, where, params = self._versions_query(project_id, canvas_id)
+        row = self._connection.execute(f"SELECT * FROM {table} WHERE {where} AND version = ?", (*params, int(version))).fetchone()
+        return self._canvas_from_row(row) if row else None
+
+    # ------------------------------------------------------------------ append-only generation history
+
+    @staticmethod
+    def _run_from_row(row: sqlite3.Row) -> CanvasNodeRun:
+        data = dict(row)
+        data["request"] = json.loads(data.get("request") or "{}")
+        data["output"] = json.loads(data["output"]) if data.get("output") else None
+        return CanvasNodeRun.model_validate(data)
+
+    def find_canvas_batch(self, project_id: str, operation_id: str) -> dict[str, Any] | None:
+        row = self._connection.execute(
+            "SELECT * FROM canvas_run_batches WHERE project_id = ? AND operation_id = ?", (project_id, operation_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_canvas_batch(self, project_id: str, batch_id: str) -> dict[str, Any] | None:
+        row = self._connection.execute(
+            "SELECT * FROM canvas_run_batches WHERE project_id = ? AND id = ?", (project_id, batch_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def create_canvas_batch(
+        self, project_id: str, owner_id: str, *, canvas_id: str, task_id: str, operation_id: str, entries: list[dict[str, Any]], lease_expires_at: str,
+    ) -> tuple[str, list[CanvasNodeRun]]:
+        """Write the batch and all its waiting runs together, so a crash leaves either all of them on record or none."""
+        batch_id = f"batch_{uuid.uuid4().hex[:20]}"
+        now = utc_now_iso()
+        records: list[CanvasNodeRun] = []
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO canvas_run_batches(project_id, id, canvas_id, owner_id, task_id, operation_id, lease_expires_at, created_at, updated_at)
+                   VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (project_id, batch_id, canvas_id, owner_id, task_id, operation_id, lease_expires_at, now, now),
+            )
+            for entry in entries:
+                record = CanvasNodeRun(
+                    id=f"run_{uuid.uuid4().hex[:20]}", project_id=project_id, canvas_id=canvas_id, node_id=str(entry["node_id"]), batch_id=batch_id,
+                    medium=str(entry["medium"]), status="queued", model=str(entry.get("model") or ""), request=dict(entry.get("request") or {}),
+                    created_at=now, updated_at=now,
+                )
+                self._connection.execute(
+                    """INSERT INTO canvas_node_runs(project_id, id, canvas_id, node_id, batch_id, medium, status, model, request, created_at, updated_at)
+                       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (project_id, record.id, canvas_id, record.node_id, batch_id, record.medium, record.status, record.model,
+                     json.dumps(record.request, ensure_ascii=False, sort_keys=True), now, now),
+                )
+                records.append(record)
+        return batch_id, records
+
+    def save_canvas_batch_snapshot(self, project_id: str, batch_id: str, snapshot: dict[str, Any], *, lease_expires_at: str | None = None) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE canvas_run_batches SET snapshot = ?, updated_at = ?, lease_expires_at = COALESCE(?, lease_expires_at) WHERE project_id = ? AND id = ?",
+                (json.dumps(snapshot, ensure_ascii=False, sort_keys=True), utc_now_iso(), lease_expires_at, project_id, batch_id),
+            )
+
+    def renew_canvas_batch_lease(self, project_id: str, batch_id: str, lease_expires_at: str | None) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE canvas_run_batches SET lease_expires_at = ? WHERE project_id = ? AND id = ?", (lease_expires_at, project_id, batch_id),
+            )
+
+    def update_canvas_run(
+        self, project_id: str, run_id: str, *, status: str | None = None, output: dict[str, Any] | None = None, error: str | None = None,
+    ) -> None:
+        with self._lock, self._connection:
+            if status == "done":
+                # A fresh result is what the node shows next, whichever older one had been restored.
+                row = self._connection.execute("SELECT canvas_id, node_id, status FROM canvas_node_runs WHERE project_id = ? AND id = ?", (project_id, run_id)).fetchone()
+                if row and row["status"] != "done":
+                    self._connection.execute(
+                        "DELETE FROM canvas_node_active WHERE project_id = ? AND canvas_id = ? AND node_id = ?",
+                        (project_id, row["canvas_id"], row["node_id"]),
+                    )
+            self._connection.execute(
+                """UPDATE canvas_node_runs SET status = COALESCE(?, status), output = COALESCE(?, output), error = COALESCE(?, error), updated_at = ?
+                   WHERE project_id = ? AND id = ?""",
+                (status, json.dumps(output, ensure_ascii=False, sort_keys=True) if output is not None else None, error, utc_now_iso(), project_id, run_id),
+            )
+
+    def expire_canvas_runs(self, project_id: str) -> int:
+        """Runs whose batch stopped renewing its lease were cut off by a restart: say so instead of spinning forever.
+
+        They are not requeued: a running item may already have been paid for, so going again is the person's call.
+        """
+        now = utc_now_iso()
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE canvas_node_runs SET status = 'failed', error = ?, updated_at = ?
+                   WHERE project_id = ? AND status IN ('queued', 'running') AND batch_id IN (
+                     SELECT id FROM canvas_run_batches WHERE project_id = ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)
+                   )""",
+                ("服务重启，这次生成没有取回结果；可以重新运行（运行中的那次可能已经计费）", now, project_id, project_id, now),
+            )
+            return int(cursor.rowcount or 0)
+
+    def list_canvas_runs(self, project_id: str, owner_id: str, *, canvas_id: str = CANVAS_MAIN_ID, node_id: str | None = None) -> list[CanvasNodeRun]:
+        """Visible history, newest first."""
+        if not self.get_project(project_id, owner_id):
+            raise PermissionError("project not found or not owned by actor")
+        self.expire_canvas_runs(project_id)
+        where = "project_id = ? AND canvas_id = ? AND deleted_at IS NULL"
+        params: tuple[Any, ...] = (project_id, canvas_id)
+        if node_id is not None:
+            where += " AND node_id = ?"
+            params = (*params, node_id)
+        rows = self._connection.execute(
+            f"SELECT * FROM canvas_node_runs WHERE {where} ORDER BY created_at DESC, rowid DESC LIMIT 2000", params,
+        ).fetchall()
+        return [self._run_from_row(row) for row in rows]
+
+    def canvas_active_runs(self, project_id: str, owner_id: str, *, canvas_id: str = CANVAS_MAIN_ID) -> dict[str, CanvasNodeRun]:
+        """For each node the generation it currently shows: the restored one, else its newest finished one."""
+        runs = self.list_canvas_runs(project_id, owner_id, canvas_id=canvas_id)
+        pinned = {
+            str(row["node_id"]): str(row["run_id"])
+            for row in self._connection.execute(
+                "SELECT node_id, run_id FROM canvas_node_active WHERE project_id = ? AND canvas_id = ?", (project_id, canvas_id),
+            ).fetchall()
+        }
+        active: dict[str, CanvasNodeRun] = {}
+        for run in runs:
+            if run.status != "done":
+                continue
+            if pinned.get(run.node_id) == run.id:
+                active[run.node_id] = run
+            elif run.node_id not in active and run.node_id not in pinned:
+                active[run.node_id] = run
+        # A pin whose run was deleted (or never finished) falls back to the newest finished one.
+        for run in runs:
+            if run.status == "done" and run.node_id not in active:
+                active[run.node_id] = run
+        return active
+
+    def restore_canvas_run(self, project_id: str, owner_id: str, canvas_id: str, node_id: str, run_id: str) -> CanvasNodeRun:
+        if not self.get_project(project_id, owner_id):
+            raise PermissionError("project not found or not owned by actor")
+        row = self._connection.execute(
+            "SELECT * FROM canvas_node_runs WHERE project_id = ? AND canvas_id = ? AND node_id = ? AND id = ? AND deleted_at IS NULL",
+            (project_id, canvas_id, node_id, run_id),
+        ).fetchone()
+        if not row:
+            raise PermissionError("canvas run not found")
+        run = self._run_from_row(row)
+        if run.status != "done" or not run.output:
+            raise ValueError("这次生成没有结果，无法恢复")
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT OR REPLACE INTO canvas_node_active(project_id, canvas_id, node_id, run_id, updated_at) VALUES(?, ?, ?, ?, ?)",
+                (project_id, canvas_id, node_id, run_id, utc_now_iso()),
+            )
+        return run
+
+    def delete_canvas_run(self, project_id: str, owner_id: str, canvas_id: str, node_id: str, run_id: str) -> None:
+        if not self.get_project(project_id, owner_id):
+            raise PermissionError("project not found or not owned by actor")
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT status FROM canvas_node_runs WHERE project_id = ? AND canvas_id = ? AND node_id = ? AND id = ? AND deleted_at IS NULL",
+                (project_id, canvas_id, node_id, run_id),
+            ).fetchone()
+            if not row:
+                raise PermissionError("canvas run not found")
+            if row["status"] in {"queued", "running"}:
+                raise ValueError("这次生成还没结束，不能删除")
+            self._connection.execute(
+                "UPDATE canvas_node_runs SET deleted_at = ? WHERE project_id = ? AND id = ?", (utc_now_iso(), project_id, run_id),
+            )
+
+    def save_canvas_workflow(self, record: dict[str, Any]) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT OR REPLACE INTO canvas_workflows(project_id, id, canvas_id, owner_id, record, updated_at) VALUES(?, ?, ?, ?, ?, ?)",
+                (record["project_id"], record["id"], record["canvas_id"], record["owner_id"], json.dumps(record, ensure_ascii=False), record["updated_at"]),
+            )
+
+    def get_canvas_workflow(self, project_id: str, owner_id: str, workflow_id: str) -> dict[str, Any] | None:
+        if not self.get_project(project_id, owner_id):
+            raise PermissionError("project not found or not owned by actor")
+        row = self._connection.execute(
+            "SELECT record FROM canvas_workflows WHERE project_id = ? AND id = ? AND owner_id = ?", (project_id, workflow_id, owner_id),
+        ).fetchone()
+        return json.loads(row["record"]) if row else None
+
+    def list_canvas_workflows(self, project_id: str, owner_id: str, *, canvas_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        if not self.get_project(project_id, owner_id):
+            raise PermissionError("project not found or not owned by actor")
+        rows = self._connection.execute(
+            "SELECT record FROM canvas_workflows WHERE project_id = ? AND canvas_id = ? AND owner_id = ? ORDER BY updated_at DESC LIMIT ?",
+            (project_id, canvas_id, owner_id, limit),
+        ).fetchall()
+        return [json.loads(row["record"]) for row in rows]
+
+    def delete_canvas_workflow(self, project_id: str, owner_id: str, workflow_id: str) -> None:
+        with self._lock, self._connection:
+            self._connection.execute("DELETE FROM canvas_workflows WHERE project_id = ? AND id = ? AND owner_id = ?", (project_id, workflow_id, owner_id))
+
+    def canvas_write_lock(self) -> threading.RLock:
+        """Held across a multi-step commit so no other save in this process slips between its read and its write."""
+        return self._lock
 
     def put_director_world(
         self, project_id: str, owner_id: str, request: DirectorWorldPutRequest
@@ -1100,7 +1612,7 @@ class StudioRepository:
             "SELECT * FROM director_world_versions WHERE project_id = ? ORDER BY version",
             (project_id,),
         ).fetchall()
-        return {
+        snapshot: dict[str, Any] = {
             "schema_version": 1,
             "project": project.model_dump(mode="json"),
             "artifacts": artifacts,
@@ -1110,6 +1622,24 @@ class StudioRepository:
             "director_world_versions": [self._world_from_row(row).model_dump(mode="json") for row in world_rows],
             "cost_events": [item.model_dump(mode="json") for item in self.list_costs(project_id, owner_id)],
         }
+        # Further canvases and generation history travel with the project; an archive without any looks as it always did.
+        boards = self._connection.execute(
+            "SELECT id, title, bookmarks, created_at, updated_at FROM canvas_boards WHERE project_id = ? AND deleted_at IS NULL ORDER BY created_at, id", (project_id,),
+        ).fetchall()
+        if boards:
+            snapshot["canvas_boards"] = [dict(row) for row in boards]
+        board_versions = self._connection.execute(
+            """SELECT v.* FROM canvas_board_versions v JOIN canvas_boards b ON b.project_id = v.project_id AND b.id = v.canvas_id
+               WHERE v.project_id = ? AND b.deleted_at IS NULL ORDER BY v.canvas_id, v.version""", (project_id,),
+        ).fetchall()
+        if board_versions:
+            snapshot["canvas_board_versions"] = [self._canvas_from_row(row).model_dump(mode="json") for row in board_versions]
+        runs = self._connection.execute(
+            "SELECT * FROM canvas_node_runs WHERE project_id = ? AND deleted_at IS NULL ORDER BY created_at, id", (project_id,),
+        ).fetchall()
+        if runs:
+            snapshot["canvas_node_runs"] = [self._run_from_row(row).model_dump(mode="json") for row in runs]
+        return snapshot
 
     def import_project_snapshot(
         self, snapshot: dict[str, Any], *, owner_id: str, project_name: str
@@ -1230,6 +1760,40 @@ class StudioRepository:
                             json.dumps([edge.model_dump(mode="json") for edge in canvas.edges], ensure_ascii=False, sort_keys=True),
                             canvas.created_at,
                         ),
+                    )
+                for board in snapshot.get("canvas_boards") or []:
+                    self._connection.execute(
+                        "INSERT INTO canvas_boards(project_id, id, title, bookmarks, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?)",
+                        (project_id, str(board["id"]), str(board["title"])[:80], str(board.get("bookmarks") or "[]"), str(board.get("created_at") or ""), str(board.get("updated_at") or "")),
+                    )
+                for raw_board_canvas in snapshot.get("canvas_board_versions") or []:
+                    board_canvas = CanvasRecord.model_validate(raw_board_canvas)
+                    nodes = []
+                    for node in board_canvas.nodes:
+                        data = node.model_dump(mode="json")
+                        if data.get("artifact_id") in artifact_map:
+                            data["artifact_id"] = artifact_map[data["artifact_id"]]
+                        nodes.append(data)
+                    self._connection.execute(
+                        "INSERT INTO canvas_board_versions(project_id, canvas_id, version, nodes, edges, created_at) VALUES(?, ?, ?, ?, ?, ?)",
+                        (
+                            project_id, board_canvas.canvas_id, board_canvas.version,
+                            json.dumps(nodes, ensure_ascii=False, sort_keys=True),
+                            json.dumps([edge.model_dump(mode="json") for edge in board_canvas.edges], ensure_ascii=False, sort_keys=True),
+                            board_canvas.created_at,
+                        ),
+                    )
+                for raw_run in snapshot.get("canvas_node_runs") or []:
+                    run = CanvasNodeRun.model_validate(raw_run)
+                    # An archived run still "queued" has no worker in the new home.
+                    status = run.status if run.status not in {"queued", "running"} else "failed"
+                    self._connection.execute(
+                        """INSERT INTO canvas_node_runs(project_id, id, canvas_id, node_id, batch_id, medium, status, model, request, output, error, created_at, updated_at)
+                           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (project_id, run.id, run.canvas_id, run.node_id, run.batch_id, run.medium, status, run.model,
+                         json.dumps(run.request, ensure_ascii=False, sort_keys=True),
+                         json.dumps(run.output, ensure_ascii=False, sort_keys=True) if run.output else None,
+                         run.error, run.created_at, run.updated_at),
                     )
                 for world in worlds:
                     self._connection.execute(

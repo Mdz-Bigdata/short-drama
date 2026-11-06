@@ -241,7 +241,7 @@ async def compile_script_prompt_file(
     try:
         document = SourceIngestor().ingest(file.filename or "script.txt", content)
         request = ScriptPromptCompileRequest(
-            title=(title.strip() or document.filename.rsplit(".", 1)[0] or "Untitled"),
+            title=(title.strip() or document.title or document.filename.rsplit(".", 1)[0] or "Untitled"),
             script_text=document.text,
             source_format=document.format,
             source_sha256=document.sha256,

@@ -30,6 +30,8 @@ export interface TaskConfig {
   contentLanguage?: ContentLanguage;
   oneClick: boolean;
   episodeCount: number;
+  /** 编剧可引用、化用的诗词库作者或篇名 (backend app/core/poetry_library.py)；空表示不用诗词库。 */
+  poetrySources?: string[];
 }
 
 export type NarrationDelivery = 'use_tts' | 'post_production';

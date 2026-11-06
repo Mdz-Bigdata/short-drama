@@ -113,7 +113,7 @@ UPSTREAM_CAPABILITIES: list[CapabilitySource] = [
         "id": "script-to-video-prompts",
         "source": "https://github.com/Morris1029/script-to-video-prompts.git",
         "capabilities": [
-            "TXT/Markdown/DOCX/PDF/FDX ingestion",
+            "TXT/Markdown/DOCX/PDF/FDX/Fountain ingestion",
             "script element parsing",
             "character/costume/five-view profiles",
             "scene/light/color analysis",
@@ -204,7 +204,25 @@ UPSTREAM_CAPABILITIES: list[CapabilitySource] = [
             "hand-drawn walk and camera routes resampled into keys",
             "depth stills and depth video as generation references",
             "set-piece arrays and alignment for fast set building",
+            "built-in library of white models at real-world sizes",
+            "assistant turn applied as one transaction with its result read back",
+            "ground routes that walk around set pieces and people",
         ],
+    },
+    {
+        "id": "blender-skills",
+        "source": "https://github.com/arjun988/blender-skills",
+        "capabilities": ["set-dressing, prop and lens craft rules in the planning prompts"],
+    },
+    {
+        "id": "monoform-previs-studio",
+        "source": "https://github.com/GuiYi-Xi/monoform-previs-studio",
+        "capabilities": ["text description to an editable grey-box scene", "text or picture to one editable object"],
+    },
+    {
+        "id": "reveric",
+        "source": "https://github.com/looplj/reveric",
+        "capabilities": ["agent plans and adjusts the director desk"],
     },
     {
         "id": "costage",
@@ -382,7 +400,13 @@ _IMPLEMENTATION_ENTRYPOINTS: dict[str, list[str]] = {
         "app.core.spatial_stage.paths.actor_keys",
         "app.service.director_desk_service.motion_inputs",
         "app.core.spatial_stage.operations.apply_operations",
+        "app.core.spatial_stage.model_kit.build_kit",
+        "app.core.spatial_stage.director_ai.run_turn",
+        "app.core.spatial_stage.paths.find_route",
     ],
+    "blender-skills": ["app.core.spatial_stage.director_ai.craft_notes"],
+    "monoform-previs-studio": ["app.core.spatial_stage.blockout.text_prompt", "app.service.stage_director_service.propose_model"],
+    "reveric": ["app.service.stage_director_service.plan_scene"],
     "costage": [
         "app.core.spatial_stage.operations.apply_operations",
         "app.core.spatial_stage.operations.apply_operations",
@@ -414,6 +438,9 @@ _EVIDENCE_BY_SOURCE = {
     "seedance-2-5-video-director": "backend/tests/test_seedance_video_director_skill.py",
     "storyai-3d-director-desk": "backend/tests/test_spatial_stage_pipeline.py",
     "director-desk": "backend/tests/test_director_desk_repairs.py",
+    "blender-skills": "backend/tests/test_stage_director.py",
+    "monoform-previs-studio": "backend/tests/test_stage_director.py",
+    "reveric": "backend/tests/test_stage_director.py",
     "costage": "backend/tests/test_spatial_stage.py",
 }
 

@@ -215,7 +215,7 @@ class ScriptPromptCompileRequest(BaseModel):
 
     title: Annotated[str, Field(min_length=1, max_length=300)] = "Untitled"
     script_text: Annotated[str, Field(min_length=1, max_length=2_000_000)]
-    source_format: Literal["text", "markdown", "docx", "pdf", "fdx"] = "text"
+    source_format: Literal["text", "markdown", "docx", "pdf", "fdx", "fountain"] = "text"
     source_sha256: Annotated[str | None, Field(pattern=r"^[a-fA-F0-9]{64}$")] = None
     visual_style: Annotated[str, Field(min_length=1, max_length=2_000)] = "写实真人电影质感"
     prompt_language: Annotated[str, Field(min_length=1, max_length=40)] = "zh-CN"

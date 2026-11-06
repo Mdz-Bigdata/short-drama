@@ -1,0 +1,74 @@
+/* 第 6 阶段：音轨列表——混音 / BGM / 音效三条底轨，下面逐镜配音 */
+.stage-six { display: flex; flex-direction: column; gap: 16px; }
+
+.stage-six__head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.stage-six__head h4 { margin: 0; font-size: 1rem; color: var(--ink); }
+.stage-six__head p { margin: 4px 0 0; font-size: 0.78rem; color: var(--text-muted); }
+.stage-six__icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  color: var(--on-accent);
+  background: var(--brand-gradient);
+  box-shadow: 0 8px 20px rgba(var(--accent-rgb), 0.25);
+}
+.stage-six__chips { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+.stage-six__chips span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  color: var(--accent);
+  border: 1px solid rgba(var(--accent-rgb), 0.25);
+  background: rgba(var(--accent-rgb), 0.06);
+}
+
+.stage-six__beds { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.stage-six__bed {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(var(--accent-rgb), 0.14);
+  background: rgba(var(--surface-rgb), 0.8);
+}
+.stage-six__bed-label { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; font-weight: 600; color: var(--ink); }
+.stage-six__bed audio, .stage-six__tracks audio { width: 100%; height: 34px; }
+
+.stage-six__tracks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.stage-six__tracks li {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 260px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(var(--accent-rgb), 0.12);
+  background: rgba(var(--surface-rgb), 0.72);
+  transition: border-color 160ms ease, box-shadow 200ms ease;
+}
+.stage-six__tracks li:hover { border-color: rgba(var(--accent-rgb), 0.35); box-shadow: 0 10px 26px rgba(var(--shadow-rgb), 0.1); }
+.stage-six__shot {
+  padding: 4px 0;
+  border-radius: 8px;
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.08);
+}
+.stage-six__line { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 0.86rem; color: var(--text-main); }
+.stage-six__line strong { flex: none; color: var(--ink); }
+.stage-six__line span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stage-six__line em { flex: none; font-style: normal; font-size: 0.72rem; color: var(--text-dim); }
+.stage-six__empty { margin: 0; color: var(--text-muted); font-size: 0.85rem; }
+
+@media (max-width: 900px) {
+  .stage-six__tracks li { grid-template-columns: 48px minmax(0, 1fr); }
+  .stage-six__tracks audio { grid-column: 1 / -1; }
+}

@@ -52,7 +52,7 @@ describe('ElementLibraryPage', () => {
     Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
   });
 
-  it('provides all six concrete pages and keeps costume assets image-only', async () => {
+  it('provides every concrete page and keeps effect assets image-only', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
       json: async () => ({ items: [], page: 1, page_size: 24, total: 0 }),
@@ -69,10 +69,13 @@ describe('ElementLibraryPage', () => {
     const scrollList = within(workspace).getByRole('region', { name: '场景资产列表，可上下滚动' });
     expect(scrollList.getAttribute('tabindex')).toBe('0');
 
-    await userEvent.click(screen.getByRole('tab', { name: '服装' }));
-    expect(await screen.findByRole('heading', { name: /服装元素库/ })).toBeTruthy();
-    expect(screen.getAllByRole('tab')).toHaveLength(6);
-    expect(screen.getByRole('button', { name: '添加服装' })).toBeTruthy();
+    // 戏服和妆效并入了角色妆造，资产库不再有单独的服装页和化妆页。
+    expect(screen.queryByRole('tab', { name: '服装' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: '化妆' })).toBeNull();
+    await userEvent.click(screen.getByRole('tab', { name: '特效' }));
+    expect(await screen.findByRole('heading', { name: /特效元素库/ })).toBeTruthy();
+    expect(screen.getAllByRole('tab')).toHaveLength(9);
+    expect(screen.getByRole('button', { name: '添加特效' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '上传' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: '上传 3D 模型' })).toBeNull();
     expect(container.querySelector('input[accept*=".glb"]')).toBeNull();

@@ -66,8 +66,6 @@ MAX_BURST_SECONDS = 4
 SPEECH_HEADROOM = 0.7
 # 分镜表里台词写成「角色名：台词」；说话人名很短，正文里的冒号句（他说：…）不会被当成第二个说话人。
 _SPEAKER_LINE = re.compile(r"([\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z·]{0,5})\s*[：:]")
-# 竖屏同框能画清楚的人物数；第三人起必须虚化、背影或剪影。
-MAX_CLEAR_CHARACTERS_PORTRAIT = 2
 # 特写是标点不是正文：一场戏里给得太多，冲击力就贬值了。
 MAX_CLOSE_UPS_PER_SCENE = 3
 MAX_CLOSE_UPS_PER_FIGHT_SCENE = 2
@@ -159,7 +157,7 @@ def audit_shot_table(
     video_model: str = "",
     repair: bool = True,
     scene_kind: str = "",
-    exchange: exchange_units.ScenePlan | None = None,
+    exchange: exchange_units.ScenePlan | None = None, whole_episode: bool = True,
 ) -> ShotTableAudit:
     """Check a parsed shot table against the skill's mechanically checkable rules.
 
@@ -293,13 +291,6 @@ def audit_shot_table(
                     f"{MAX_ACTION_SOUNDS} 个动作音，多了会混成一团",
                 ))
 
-        if len(characters) > MAX_CLEAR_CHARACTERS_PORTRAIT:
-            audit.issues.append(ShotIssue(
-                shot_id, "同框清晰人物过多",
-                f"{len(characters)} 人同框；竖屏一镜最多画清 {MAX_CLEAR_CHARACTERS_PORTRAIT} 人，"
-                "第三人起请写成虚化、背影或剪影",
-            ))
-
         if size and _has_any(size.upper(), (term.upper() for term in CLOSE_UP_TERMS)):
             close_ups += 1
 
@@ -363,7 +354,7 @@ def audit_shot_table(
             "特写是标点，只留给冲击峰值与转折帧",
         ))
 
-    if len(audit.shots) == 1:
+    if whole_episode and len(audit.shots) == 1:
         audit.issues.append(ShotIssue(
             audit.shots[0].get("shot_id", 1), "整集仅一个镜头", "一集必须拆成多个镜头", "error",
         ))
@@ -373,10 +364,10 @@ def audit_shot_table(
 
 def audit_and_log(
     shots: Sequence[dict[str, Any]], *, video_model: str, task_id: str = "", scene_kind: str = "",
-    exchange: exchange_units.ScenePlan | None = None,
+    exchange: exchange_units.ScenePlan | None = None, whole_episode: bool = True,
 ) -> list[dict[str, Any]]:
     """Audit, log the findings, and return the (possibly repaired) shot list."""
-    audit = audit_shot_table(shots, video_model=video_model, scene_kind=scene_kind, exchange=exchange)
+    audit = audit_shot_table(shots, video_model=video_model, scene_kind=scene_kind, exchange=exchange, whole_episode=whole_episode)
     if audit.issues:
         logger.warning("[Stage4] %s (task=%s)", audit.summary(), task_id or "-")
         for issue in audit.issues[:20]:

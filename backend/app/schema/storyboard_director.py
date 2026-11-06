@@ -158,6 +158,15 @@ class StoryEvent(BaseModel):
         return self
 
 
+APPEARANCE_REFERENCE_VIDEO_POLICY = "参考视频只锁定角色长相、服装与破损污渍状态，不强制复刻其中的动作与运镜"
+# A user-supplied motion reference (a stunt take, a rehearsal clip) is the opposite job: it lends the
+# body's path and the timing of the force, and nothing that belongs to the approved assets.
+MOTION_REFERENCE_VIDEO_POLICY = (
+    "参考视频只提供身体运动轨迹与发力节奏（起势、加速、接触、收势各在什么时间点），"
+    "不继承其中的长相、服装、场景与运镜；角色外观以设定图为准"
+)
+
+
 class GlobalVisualRules(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -170,13 +179,21 @@ class GlobalVisualRules(BaseModel):
     reference_image_policy: ShortText = (
         "参考图片只提供角色、道具与场景的外形、材质和颜色，不照搬参考图中的人物姿势、构图或排版"
     )
-    reference_video_policy: ShortText = (
-        "参考视频只锁定角色长相、服装与破损污渍状态，不强制复刻其中的动作与运镜"
-    )
+    # What a reference video is for: the default locks appearance; "motion_trajectory" is the
+    # user's own motion reference, which locks only the body's path and force timing.
+    reference_video_role: Literal["appearance", "motion_trajectory"] = "appearance"
+    reference_video_policy: ShortText = APPEARANCE_REFERENCE_VIDEO_POLICY
     exclusions: Annotated[list[str], Field(min_length=1, max_length=50)] = Field(default_factory=lambda: [
         "错误时代物品", "人物数量变化", "角色外貌漂移", "无原因换装", "多余肢体和畸形手指",
         "字幕、水印、编号和无关文字", "无剧情依据的粒子、烟雾或光效",
     ])
+
+    @model_validator(mode="after")
+    def motion_reference_policy(self) -> "GlobalVisualRules":
+        # Only the untouched default follows the role; a policy written by hand stays as written.
+        if self.reference_video_role == "motion_trajectory" and self.reference_video_policy == APPEARANCE_REFERENCE_VIDEO_POLICY:
+            self.reference_video_policy = MOTION_REFERENCE_VIDEO_POLICY
+        return self
 
 
 class ContinuityLocks(BaseModel):
@@ -268,7 +285,7 @@ class TransitionEdge(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     adjacent_shot: ShortText = "无"
-    transition_type: ShortText = "硬切"
+    transition_type: ShortText = "匹配剪辑"
     visual_handoff: BoundedText
     audio_handoff: BoundedText
     duration_seconds: Annotated[float, Field(ge=0, le=30)] = 0

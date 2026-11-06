@@ -197,6 +197,9 @@ class CharacterDashboardCharacter(DramaBaseSchema):
     description: str = Field("", max_length=4000)
     identity: str = Field("", max_length=1000)
     voice_id: str = Field("", max_length=160)
+    # 第3阶段为角色设计的声音：完整的音色设计提示词，以及每镜逐字复述的短描述。旧记录没有，为空。
+    voice_prompt: str = Field("", max_length=1000)
+    voice_desc: str = Field("", max_length=40)
     colors: list[CharacterColor] = Field(default_factory=list, max_length=20)
     states: list[CharacterDesignState] = Field(default_factory=list, max_length=50)
     sheet_url: Optional[str] = Field(None, max_length=4000)

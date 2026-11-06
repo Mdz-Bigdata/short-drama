@@ -89,6 +89,7 @@ class WorkflowTranscriptTests(unittest.TestCase):
 
     def test_partial_storyboard_never_claims_the_entire_stage_is_complete(self):
         task = task_at(4)
+        task["config"]["episode_by_episode"] = False  # 旧口径；逐集制作见 test_episode_cycle
         task["workflow_control"] = {"automatic": True, "run_id": "partial"}
         task["assets"]["4_progress"] = {
             "episodes": [

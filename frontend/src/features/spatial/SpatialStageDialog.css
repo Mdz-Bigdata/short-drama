@@ -5,15 +5,15 @@
   padding: clamp(0.75rem, 2vw, 1.5rem);
   display: grid;
   place-items: center;
-  background: rgba(252, 236, 239, 0.82);
+  background: rgba(var(--surface-tint-rgb), 0.82);
   backdrop-filter: blur(0.5rem);
 }
 
 .spatial-dialog {
-  --spatial-cyan: var(--neon-cyan, #e3546c);
-  --spatial-line: rgba(103, 81, 90, 0.16);
-  --spatial-surface: #fdeff1;
-  --spatial-text: var(--text-main, #e17789);
+  --spatial-cyan: var(--neon-cyan, var(--accent));
+  --spatial-line: rgba(var(--ink-rgb), 0.16);
+  --spatial-surface: var(--surface);
+  --spatial-text: var(--text-main);
   --spatial-amber: #e6a000;
   --spatial-red: #e60000;
   --spatial-green: #21c584;
@@ -24,11 +24,11 @@
   display: grid;
   grid-template-rows: auto auto auto auto minmax(0, 1fr);
   overflow: hidden;
-  color: #514047;
-  border: 1px solid rgba(227, 84, 108, 0.34);
+  color: var(--text-muted);
+  border: 1px solid rgba(var(--accent-rgb), 0.34);
   border-radius: 0.75rem;
   background: var(--spatial-surface);
-  box-shadow: 0 2rem 5rem rgba(60, 30, 40, 0.286), 0 0 3rem rgba(227, 84, 108, 0.05);
+  box-shadow: 0 2rem 5rem rgba(var(--shadow-rgb), 0.286), 0 0 3rem rgba(var(--accent-rgb), 0.05);
 }
 
 .spatial-dialog__header {
@@ -38,7 +38,7 @@
   justify-content: space-between;
   gap: 1.25rem;
   border-bottom: 1px solid var(--spatial-line);
-  background: linear-gradient(105deg, rgba(227, 84, 108, 0.06), transparent 60%), #fcedf0;
+  background: linear-gradient(105deg, rgba(var(--accent-rgb), 0.06), transparent 60%), var(--surface);
 }
 
 .spatial-dialog__header span {
@@ -91,12 +91,12 @@
   padding: 0.5rem 1.5rem;
   font-size: 0.82rem;
   border-bottom: 1px solid var(--spatial-line);
-  background: rgba(227, 84, 108, 0.05);
+  background: rgba(var(--accent-rgb), 0.05);
 }
 
 .spatial-dialog__banner.is-warning {
   color: var(--spatial-amber);
-  background: rgba(230, 160, 0, 0.07);
+  background: rgba(var(--gold-rgb), 0.07);
 }
 
 .spatial-dialog__notice {
@@ -127,7 +127,7 @@
   min-height: 0;
   overflow-y: auto;
   padding: 1rem;
-  background: #fdeef0;
+  background: var(--surface);
 }
 
 .spatial-shots {
@@ -151,7 +151,7 @@
 .spatial-shots h2 small {
   margin-left: auto;
   font-weight: 400;
-  color: #755c67;
+  color: var(--text-muted);
 }
 
 .spatial-shots ul,
@@ -174,13 +174,13 @@
   color: inherit;
   border: 1px solid transparent;
   border-radius: 0.5rem;
-  background: rgba(103, 81, 90, 0.05);
+  background: rgba(var(--ink-rgb), 0.05);
   cursor: pointer;
 }
 
 .spatial-shot.is-selected {
   border-color: var(--spatial-amber);
-  background: rgba(230, 160, 0, 0.08);
+  background: rgba(var(--gold-rgb), 0.08);
 }
 
 .spatial-shot__number {
@@ -190,7 +190,7 @@
   display: grid;
   place-items: center;
   font-size: 0.75rem;
-  color: #fcedef;
+  color: var(--on-accent);
   border-radius: 50%;
   background: var(--spatial-cyan);
 }
@@ -211,7 +211,7 @@
   font-size: 0.72rem;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: #755c67;
+  color: var(--text-muted);
 }
 
 .spatial-badge {
@@ -255,13 +255,13 @@
   color: inherit;
   border: 1px solid var(--spatial-line);
   border-radius: 0.45rem;
-  background: rgba(103, 81, 90, 0.06);
+  background: rgba(var(--ink-rgb), 0.06);
   cursor: pointer;
 }
 
 .spatial-stage__views button.is-active,
 .spatial-button.is-primary {
-  color: #fcedef;
+  color: var(--on-accent);
   border-color: var(--spatial-cyan);
   background: var(--spatial-cyan);
 }
@@ -285,7 +285,7 @@
   display: grid;
   place-items: center;
   overflow: hidden;
-  background: radial-gradient(circle at 50% 40%, rgba(227, 84, 108, 0.05), transparent 65%), #fcedef;
+  background: radial-gradient(circle at 50% 40%, rgba(var(--accent-rgb), 0.05), transparent 65%), var(--surface);
 }
 
 .spatial-floor {
@@ -298,32 +298,32 @@
 
 .spatial-floor.is-locked { opacity: 0.6; }
 
-.spatial-floor__grid line { stroke: rgba(254, 249, 250, 0.55); stroke-width: 1; }
-.spatial-floor__grid line.is-origin { stroke: rgba(225, 73, 98, 0.9); }
-.spatial-floor__hint { font-size: 11px; fill: #846874; }
+.spatial-floor__grid line { stroke: rgba(var(--surface-tint-rgb), 0.55); stroke-width: 1; }
+.spatial-floor__grid line.is-origin { stroke: rgba(var(--accent-rgb), 0.9); }
+.spatial-floor__hint { font-size: 11px; fill: var(--text-muted); }
 .spatial-floor__axis { stroke: var(--spatial-red); stroke-width: 1.5; stroke-dasharray: 7 5; }
 
-.spatial-floor text { font-size: 12px; fill: #44353b; pointer-events: none; }
+.spatial-floor text { font-size: 12px; fill: var(--text-muted); pointer-events: none; }
 
-.spatial-floor__landmark rect { fill: rgba(109, 85, 95, 0.28); stroke: #6d555f; cursor: grab; }
-.spatial-floor__landmark.is-light rect { fill: rgba(230, 129, 0, 0.3); stroke: #e68100; }
-.spatial-floor__landmark.is-prop rect { fill: rgba(206, 136, 24, 0.28); stroke: #ce8818; }
+.spatial-floor__landmark rect { fill: rgba(var(--ink-rgb), 0.28); stroke: var(--text-muted); cursor: grab; }
+.spatial-floor__landmark.is-light rect { fill: rgba(var(--warning-rgb), 0.3); stroke: var(--warning); }
+.spatial-floor__landmark.is-prop rect { fill: rgba(var(--warning-rgb), 0.28); stroke: var(--warning); }
 
-.spatial-floor__actor circle { fill: rgba(230, 117, 99, 0.35); stroke: #e67563; stroke-width: 1.5; cursor: grab; }
-.spatial-floor__actor line { stroke: #221b1e; stroke-width: 2; stroke-linecap: round; }
-.spatial-floor__actor.is-principal circle { fill: rgba(227, 84, 108, 0.28); stroke: var(--spatial-cyan); }
-.spatial-floor__actor.is-crowd circle { fill: rgba(139, 109, 121, 0.4); stroke: #8b6d79; }
+.spatial-floor__actor circle { fill: rgba(var(--accent-rgb), 0.35); stroke: var(--accent); stroke-width: 1.5; cursor: grab; }
+.spatial-floor__actor line { stroke: var(--ink); stroke-width: 2; stroke-linecap: round; }
+.spatial-floor__actor.is-principal circle { fill: rgba(var(--accent-rgb), 0.28); stroke: var(--spatial-cyan); }
+.spatial-floor__actor.is-crowd circle { fill: rgba(var(--ink-rgb), 0.4); stroke: var(--text-muted); }
 .spatial-floor__actor.is-subject circle { stroke-width: 3; }
 .spatial-floor__actor.is-overridden circle { stroke-dasharray: 4 3; cursor: default; }
 
 .spatial-floor__camera { cursor: pointer; outline: none; }
-.spatial-floor__camera-body { fill: #fefafb; stroke: #846874; }
-.spatial-floor__camera text { fill: #67515a; font-size: 11px; }
+.spatial-floor__camera-body { fill: var(--surface-2); stroke: var(--text-muted); }
+.spatial-floor__camera text { fill: var(--text-dim); font-size: 11px; }
 .spatial-floor__camera.is-selected .spatial-floor__camera-body { fill: var(--spatial-amber); stroke: var(--spatial-amber); cursor: grab; }
 .spatial-floor__camera.is-selected text { fill: var(--spatial-amber); }
 .spatial-floor__camera.is-crossed .spatial-floor__camera-body { stroke: var(--spatial-red); }
-.spatial-floor__camera:focus-visible .spatial-floor__camera-body { stroke: #221b1e; stroke-width: 2; }
-.spatial-floor__cone { fill: rgba(230, 160, 0, 0.12); stroke: rgba(230, 160, 0, 0.55); }
+.spatial-floor__camera:focus-visible .spatial-floor__camera-body { stroke: var(--ink); stroke-width: 2; }
+.spatial-floor__cone { fill: rgba(var(--gold-rgb), 0.12); stroke: rgba(var(--gold-rgb), 0.55); }
 .spatial-floor__cone.is-end { fill: none; stroke-dasharray: 5 4; }
 
 .spatial-viewport {
@@ -356,7 +356,7 @@
 .spatial-viewport__hint {
   padding: 0.35rem 1rem;
   font-size: 0.75rem;
-  color: #755c67;
+  color: var(--text-muted);
 }
 
 .spatial-viewport__fallback {
@@ -376,12 +376,12 @@
   gap: 0.3rem;
   font-size: 0.78rem;
   border-top: 1px solid var(--spatial-line);
-  background: #fdeef0;
+  background: var(--surface);
 }
 
 .spatial-stage__text div { display: grid; grid-template-columns: 2.6rem minmax(0, 1fr); gap: 0.5rem; }
 .spatial-stage__text dt { color: var(--spatial-cyan); }
-.spatial-stage__text dd { margin: 0; color: #44353b; }
+.spatial-stage__text dd { margin: 0; color: var(--text-muted); }
 
 .spatial-inspector section + section {
   margin-top: 1.1rem;
@@ -401,7 +401,7 @@
 
 .spatial-actors li span { min-width: 0; display: grid; }
 .spatial-actors strong { color: var(--spatial-text); }
-.spatial-actors small { color: #755c67; }
+.spatial-actors small { color: var(--text-muted); }
 
 .spatial-actors select,
 .spatial-inspector__row input {
@@ -410,7 +410,7 @@
   color: var(--spatial-text);
   border: 1px solid var(--spatial-line);
   border-radius: 0.4rem;
-  background: #fdf0f2;
+  background: var(--surface);
 }
 
 .spatial-inspector__row {
@@ -437,13 +437,13 @@
   gap: 0.4rem;
   font-size: 0.76rem;
   border-radius: 0.4rem;
-  background: rgba(103, 81, 90, 0.05);
+  background: rgba(var(--ink-rgb), 0.05);
 }
 
 .spatial-checks li.is-passed strong { color: var(--spatial-green); }
 .spatial-checks li.is-warning strong { color: var(--spatial-amber); }
 .spatial-checks li.is-error strong { color: var(--spatial-red); }
-.spatial-checks li.is-error { background: rgba(230, 0, 0, 0.08); }
+.spatial-checks li.is-error { background: rgba(var(--danger-rgb), 0.08); }
 
 @media (max-width: 1100px) {
   .spatial-dialog__grid {

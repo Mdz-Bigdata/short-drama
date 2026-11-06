@@ -1,7 +1,7 @@
-import { PerspectiveCamera } from 'three';
+import { Color, Group, Mesh, MeshBasicMaterial, PerspectiveCamera, Scene } from 'three';
 import { describe, expect, it } from 'vitest';
 
-import { captureShowsLimbs, captureSize, projectToImage } from './capture';
+import { ACTOR_FLAG, applyLayer, captureShowsLimbs, captureSize, projectToImage } from './capture';
 
 describe('captureSize', () => {
   it('puts 1920 on the long edge for every delivery aspect', () => {
@@ -66,5 +66,57 @@ describe('captureShowsLimbs', () => {
   it('ignores a limbed figure that is behind the lens or out of frame', () => {
     expect(captureShowsLimbs([figure('mannequin', [0, 9])], camera, 1080, 1920)).toBe(false);
     expect(captureShowsLimbs([figure('mannequin', [30, 0])], camera, 1080, 1920)).toBe(false);
+  });
+});
+
+describe('control frames', () => {
+  function stage() {
+    const scene = new Scene();
+    scene.background = new Color(0x123456);
+    const floor = new Mesh();
+    const actor = new Group();
+    actor.userData[ACTOR_FLAG] = true;
+    const body = new Mesh();
+    actor.add(body);
+    scene.add(floor, actor);
+    return { scene, floor, actor, body };
+  }
+
+  it('the empty set leaves out the cast and only the cast', () => {
+    const { scene, floor, actor } = stage();
+    const layer = applyLayer(scene, 'background');
+    expect(actor.visible).toBe(false);
+    expect(floor.visible).toBe(true);
+    expect(scene.overrideMaterial).toBeNull();
+    layer.restore();
+    expect(actor.visible).toBe(true);
+  });
+
+  it('the mask is the cast in white on black, and everything comes back', () => {
+    const { scene, floor, actor, body } = stage();
+    const background = scene.background;
+    const layer = applyLayer(scene, 'mask');
+    expect(floor.visible).toBe(false);
+    expect(actor.visible).toBe(true);
+    expect(body.visible).toBe(true);
+    expect((scene.background as Color).getHex()).toBe(0x000000);
+    expect((scene.overrideMaterial as MeshBasicMaterial).color.getHex()).toBe(0xffffff);
+    layer.restore();
+    expect(floor.visible).toBe(true);
+    expect(scene.background).toBe(background);
+    expect(scene.overrideMaterial).toBeNull();
+  });
+
+  it('something already hidden stays hidden afterwards', () => {
+    const { scene, floor } = stage();
+    floor.visible = false;
+    applyLayer(scene, 'mask').restore();
+    expect(floor.visible).toBe(false);
+  });
+
+  it('no layer changes nothing', () => {
+    const { scene, floor, actor } = stage();
+    applyLayer(scene, '').restore();
+    expect(floor.visible && actor.visible).toBe(true);
   });
 });

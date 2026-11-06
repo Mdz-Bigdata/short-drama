@@ -20,6 +20,10 @@ from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, create_model, model_validator
 
+from app.core import fight_design, literary
+
+_LITERARY_FIELDS = dict(literary.OVERVIEW_FIELDS)
+
 logger = logging.getLogger("app.core.screenwriting.models")
 
 STRICT = ConfigDict(extra="forbid")
@@ -89,6 +93,8 @@ CAMERA_MOTION_ZH: dict[str, str] = {
 
 DEFAULT_SHOT_TYPE: ShotType = "Medium Shot"
 DEFAULT_CAMERA_MOTION: CameraMotion = "Static"
+# A fight shot whose move is missing or unrecognised follows the action rather than locking off.
+FIGHT_DEFAULT_CAMERA_MOTION: CameraMotion = "Tracking Shot"
 DEFAULT_SCENE_SECONDS = 8
 
 
@@ -144,6 +150,10 @@ class Overview(BaseModel):
     genre: str = Field(default="", description="题材类型")
     theme: str = Field(default="", description="一句话主题")
     world_setting: str = Field(default="", description="世界观与时代背景")
+    # 立意卡（见 app/core/literary.py）：总导演策划写，这里接下来，分集大纲和分镜内容都按它写。
+    thesis: str = Field(default="", description=_LITERARY_FIELDS["thesis"])
+    motif: str = Field(default="", description=_LITERARY_FIELDS["motif"])
+    ending_image: str = Field(default="", description=_LITERARY_FIELDS["ending_image"])
 
 
 class CharacterAsset(BaseModel):
@@ -198,6 +208,12 @@ class AssetInventory(BaseModel):
     props: dict[str, VisualAsset] = Field(default_factory=dict)
     costumes: dict[str, CostumeAsset] = Field(default_factory=dict)
     effects: dict[str, VisualAsset] = Field(default_factory=dict)
+    # 拆解补充类别(群演、车辆、特技、置景、化妆)：有参考图更好，没有也能拍。
+    extras: dict[str, VisualAsset] = Field(default_factory=dict)
+    vehicles: dict[str, VisualAsset] = Field(default_factory=dict)
+    stunts: dict[str, VisualAsset] = Field(default_factory=dict)
+    set_dressing: dict[str, VisualAsset] = Field(default_factory=dict)
+    makeup: dict[str, VisualAsset] = Field(default_factory=dict)
     relationships: list[CharacterRelation] = Field(default_factory=list, max_length=60)
 
     @model_validator(mode="before")
@@ -207,7 +223,7 @@ class AssetInventory(BaseModel):
         if not isinstance(data, dict):
             return data
         data = dict(data)
-        for key in ("characters", "scenes", "props", "costumes", "effects"):
+        for key in ("characters", "scenes", "props", "costumes", "effects", "extras", "vehicles", "stunts", "set_dressing", "makeup"):
             value = data.get(key)
             if value is None:
                 data[key] = {}
@@ -234,7 +250,9 @@ class EpisodeOutlineDraft(BaseModel):
 
     title: str = Field(min_length=1, description="吸引人的短标题")
     hook: str = Field(min_length=1, description="集尾钩子：这一刀为什么切在这里、给观众留了什么悬念")
-    story_beats: list[str] = Field(min_length=1, description="本集故事节点，按顺序")
+    story_beats: list[str] = Field(
+        min_length=1, description="本集故事节点，按顺序；每条以「【情绪点类型】」开头（钩子/冲突/反转/爽点/暖点/泪点/笑点/揭秘/悬念/抒情/信息交代）",
+    )
     next_episode_teaser: str | None = Field(default=None, description="下集预告语；末集后续未知可为 null")
 
 
@@ -341,6 +359,12 @@ class SceneContent(BaseModel):
     scene_id: str = Field(min_length=1, description="分镜 ID，格式 E{集}S{两位序号}，拆分后可带 _{子序号}")
     duration_seconds: int = Field(default=DEFAULT_SCENE_SECONDS, ge=1, le=60, description="分镜时长（秒）")
     segment_break: bool = Field(default=False, description="是否为场景切换点（地点 / 时间的重大变化）")
+    emotion_point: Annotated[str, BeforeValidator(_none_to_text)] = Field(
+        default="", description="这一格打到的情绪点类型：钩子/冲突/反转/爽点/暖点/泪点/笑点/揭秘/悬念/抒情/信息交代；纯转场可留空"
+    )
+    key_line: Annotated[str, BeforeValidator(_none_to_text)] = Field(
+        default="", description="本集的题眼台词：逐字等于本分镜 utterances 里的某一句 text；一集最多一句，不是题眼的分镜留空"
+    )
     setting: Annotated[str, BeforeValidator(_none_to_text)] = Field(
         default="", description="场景标题行：地点 时间 内景/外景，如「市井长街 黄昏 外景」"
     )
@@ -402,6 +426,19 @@ class VideoPrompt(BaseModel):
         default=DEFAULT_CAMERA_MOTION, description="镜头运动"
     )
     ambiance_audio: Annotated[str, BeforeValidator(_none_to_text)] = Field(default="", description="画内环境音")
+
+    @model_validator(mode="before")
+    @classmethod
+    def fight_follows_the_action(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        raw = data.get("camera_motion")
+        if raw is not None and (not isinstance(raw, str) or _canon_key(raw) in _CAMERA_MOTION_BY_KEY):
+            return data
+        if not fight_design.looks_like_fight(f"{data.get('action') or ''}\n{raw or ''}"):
+            return data
+        logger.warning("[Screenwriting] 打斗镜 camera_motion 无法归一，改为 %s: %r", FIGHT_DEFAULT_CAMERA_MOTION, raw)
+        return {**data, "camera_motion": FIGHT_DEFAULT_CAMERA_MOTION}
 
 
 class SceneVisual(BaseModel):
@@ -527,6 +564,7 @@ __all__ = [
     "CharacterAsset",
     "Composition",
     "DEFAULT_CAMERA_MOTION",
+    "FIGHT_DEFAULT_CAMERA_MOTION",
     "DEFAULT_SCENE_SECONDS",
     "DEFAULT_SHOT_TYPE",
     "DramaScene",

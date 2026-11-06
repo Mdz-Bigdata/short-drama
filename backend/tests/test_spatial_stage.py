@@ -17,9 +17,16 @@ from app.core.spatial_stage import interchange, language
 from app.core.spatial_stage.coverage import canonical_size, move_kind
 from app.core.spatial_stage.models import StagePlan
 from app.core.spatial_stage.operations import StageEditError, apply_operations
-from app.core.spatial_stage.planner import cast_fingerprint, location_key, speaker_of
+from app.core.spatial_stage.planner import cast_fingerprint, height_from_text, location_key, speaker_of
 from app.core.spatial_stage.projection import CameraView, classify_shot_size, screen_states
-from app.core.spatial_stage.prompting import bearing_from, landmark_relative_position, table_brief
+from app.core.spatial_stage.prompting import (
+    bearing_from,
+    landmark_relative_position,
+    landmark_size,
+    layout_facts,
+    scale_reference,
+    table_brief,
+)
 from app.core.storyboard_director import landmark_is_anchored
 
 
@@ -574,6 +581,48 @@ class ProseTests(unittest.TestCase):
         self.assertIn("内侍在两人后方", brief)
         self.assertLessEqual(len(brief), 600)
         self.assertEqual(table_brief(build_plan(_brief(characters=[], props=[], text="空殿", shots=[]))), "")
+
+    def test_the_bible_states_real_sizes_and_one_person_to_set_ratio(self):
+        plan = build_plan(_brief(text="沈砚与黄琰隔着书案对峙，内侍站在后面。炭盆里烧着黄绫。推门而入。"))
+        door = next(item for item in plan.landmarks if item.name == "门")
+        self.assertEqual(landmark_size(door), "宽约1.4米、高约2.4米")
+        self.assertIn("门：宽约1.4米、高约2.4米，位于沈砚", plan.scene_bible)
+        self.assertIn("书案：宽约1.4米、进深约0.7米、高约0.8米", plan.scene_bible)
+        self.assertIn("沈砚：站立，身高约170cm", plan.scene_bible)
+        # The tallest fixture is the ruler, and the same ratio rides in every shot that has a lead.
+        self.assertIn("比例尺：沈砚身高约170cm；门高约2.4米，沈砚站在门旁，头顶比门顶低约0.7米（约三个头）", plan.scene_bible)
+        for shot_id in (1, 2, 4):
+            self.assertIn("比例：沈砚身高约170cm；门高约2.4米", plan.shot(shot_id).text.blocking)
+
+    def test_the_ratio_reads_against_the_body_when_the_set_piece_is_low(self):
+        plan = build_plan(_brief(text="沈砚与黄琰隔着书案对峙。", props=[]))
+        lead = plan.actor("沈砚")
+        desk = next(item for item in plan.landmarks if item.name == "书案")
+        self.assertEqual(scale_reference(plan, lead, desk), "沈砚身高约170cm；书案高约0.8米，书案顶约到沈砚大腿")
+        short = lead.model_copy(update={"height_m": 1.68})
+        door = desk.model_copy(update={"name": "门", "size": [1.0, 0.2, 2.0], "kind": "architecture"})
+        self.assertEqual(scale_reference(plan, short, door), "沈砚身高约168cm；门高约2.0米，沈砚站在门旁，头顶比门顶低约0.3米（约一个半头）")
+        self.assertEqual(scale_reference(build_plan(_brief(characters=[], props=[], text="空殿", shots=[]))), "")
+
+    def test_profiles_set_the_standing_height(self):
+        self.assertEqual(height_from_text("林晚，168cm，黑色长发"), 1.68)
+        self.assertEqual(height_from_text("身高1.82米，宽肩"), 1.82)
+        self.assertIsNone(height_from_text("2024年秋，长发及腰"))
+        plan = build_plan(_brief(heights={"沈砚": 1.82}))
+        self.assertEqual(plan.actor("沈砚").height_m, 1.82)
+        self.assertEqual(plan.actor("黄琰").height_m, 1.7)
+        self.assertIn("沈砚：站立，身高约182cm", plan.scene_bible)
+
+    def test_layout_facts_name_the_screen_side_of_every_fixture(self):
+        plan = build_plan(_brief(text="沈砚与黄琰隔着书案对峙，窗外落雨，推门而入。", props=[]))
+        facts = layout_facts(plan)
+        for piece in ("门", "窗", "书案"):
+            item = next(landmark for landmark in plan.landmarks if landmark.name == piece)
+            self.assertIn(f"{piece}在画面", facts)
+            side = landmark_relative_position(plan, item).split("主机位画面")[-1]
+            self.assertIn(f"{piece}在画面{side}", facts)
+        self.assertNotIn("；", facts)
+        self.assertEqual(layout_facts(build_plan(_brief(characters=[], props=[], text="空殿", shots=[]))), "")
 
     def test_every_sentence_fits_the_panel_contract(self):
         plan = build_plan(_brief(characters=["沈砚", "黄琰", "内侍", "魏渊", "裴相", "禁军们"], props=["黄绫", "炭盆", "铜管", "书案"]))

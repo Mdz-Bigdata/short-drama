@@ -11,10 +11,10 @@
 .video-reference-field > select {
   width: 100%;
   padding: 10px;
-  color: #221b1e;
+  color: var(--ink);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  background: #fdeff1;
+  background: var(--surface);
   font: inherit;
   font-size: 0.85rem;
 }
@@ -30,9 +30,9 @@
   gap: 4px;
   min-width: 0;
   padding: 9px 10px;
-  border: 1px solid rgba(227, 84, 108, 0.12);
+  border: 1px solid rgba(var(--accent-rgb), 0.12);
   border-radius: 9px;
-  background: rgba(227, 84, 108, 0.035);
+  background: rgba(var(--accent-rgb), 0.035);
 }
 
 .video-reference-field__strategy strong {

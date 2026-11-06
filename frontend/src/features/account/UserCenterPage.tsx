@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, KeyRound, LoaderCircle, ShieldCheck, UserRound, UsersRound } from 'lucide-react';
 
-import { apiRequest } from '../../api/client';
+import { apiRequest, apiUrl } from '../../api/client';
 import { DEFAULT_CLIENT_CONFIG } from '../../api/clientConfig';
 import { t } from '../../i18n';
+import { hasPermission } from './permissions';
 
 
 interface UserRecord {
@@ -12,8 +13,10 @@ interface UserRecord {
   display_name?: string | null;
   email?: string | null;
   phone?: string | null;
-  role: 'admin' | 'editor' | 'user';
-  status: 'active' | 'suspended';
+  role: 'admin' | 'user';
+  roles: string[];
+  permissions: string[];
+  status: 'active' | 'suspended' | 'deleted';
   must_change_password: boolean;
 }
 
@@ -24,6 +27,13 @@ interface CenterResponse {
     status: string;
     expires_at: string;
   };
+}
+
+interface RoleInfo {
+  role: string;
+  label: string;
+  description: string;
+  permissions: string[];
 }
 
 interface AdminUsersResponse {
@@ -40,7 +50,9 @@ interface McpToken {
 }
 
 
-const roleLabels = { admin: '管理员', editor: '编辑', user: '成员' };
+const ROLE_NAMES: Record<string, string> = {
+  super_admin: '超级管理员', ops: '运维', finance: '财务', support: '客服', auditor: '审计',
+};
 
 
 export function UserCenterPage({
@@ -55,12 +67,14 @@ export function UserCenterPage({
 }) {
   const [center, setCenter] = useState<CenterResponse | null>(null);
   const [users, setUsers] = useState<UserRecord[]>([]);
+  const [roleCatalog, setRoleCatalog] = useState<RoleInfo[]>([]);
   const [displayName, setDisplayName] = useState('');
   const [phone, setPhone] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [confirmingDelete, setConfirmingDelete] = useState('');
   const [notice, setNotice] = useState('');
   // MCP tokens let an external agent (Claude Code, etc.) work on this user's projects through /mcp.
   const [mcpTokens, setMcpTokens] = useState<McpToken[]>([]);
@@ -112,9 +126,13 @@ export function UserCenterPage({
       onUserChange?.(data.user);
       setDisplayName(data.user.display_name || '');
       setPhone(data.user.phone || '');
-      if (data.user.role === 'admin' && !data.user.must_change_password) {
-        const result = await apiRequest<AdminUsersResponse>('/api/admin/users?page=1&page_size=50');
+      if (hasPermission(data.user, 'user:read') && !data.user.must_change_password) {
+        const [result, roles] = await Promise.all([
+          apiRequest<AdminUsersResponse>('/api/admin/users?page=1&page_size=50'),
+          apiRequest<{ items: RoleInfo[] }>('/api/admin/roles'),
+        ]);
         setUsers(Array.isArray(result.items) ? result.items : []);
+        setRoleCatalog(Array.isArray(roles.items) ? roles.items : []);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '用户中心加载失败');
@@ -164,7 +182,21 @@ export function UserCenterPage({
     }
   };
 
-  const updateUser = async (target: UserRecord, patch: Partial<Pick<UserRecord, 'role' | 'status'>>) => {
+  const deleteUser = async (target: UserRecord) => {
+    setBusy(target.user_id);
+    setError('');
+    try {
+      await apiRequest(`/api/admin/users/${target.user_id}`, { method: 'DELETE' });
+      setConfirmingDelete('');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除账号失败');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const updateUser = async (target: UserRecord, patch: Pick<UserRecord, 'status'>) => {
     setBusy(target.user_id);
     setError('');
     try {
@@ -178,6 +210,25 @@ export function UserCenterPage({
       setBusy('');
     }
   };
+
+  const toggleRole = async (target: UserRecord, role: string, granted: boolean) => {
+    setBusy(target.user_id);
+    setError('');
+    try {
+      const roles = granted ? [...target.roles, role] : target.roles.filter(item => item !== role);
+      await apiRequest(`/api/admin/users/${target.user_id}/roles`, {
+        method: 'PUT', body: JSON.stringify({ roles }),
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('角色更新失败'));
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const canAssignRoles = hasPermission(center?.user, 'role:assign') && !center?.user.must_change_password;
+  const canManageUsers = hasPermission(center?.user, 'user:manage') && !center?.user.must_change_password;
 
   if (!center) {
     return <main className="portal-page"><div className="empty-library"><LoaderCircle className="spin" /> {t('正在加载用户中心…')}</div>{error && <div className="inline-error">{error}</div>}</main>;
@@ -200,7 +251,9 @@ export function UserCenterPage({
       <div className="account-grid">
         <section className="account-card identity-card">
           <div className="identity-avatar">{center.user.username.slice(0, 1).toUpperCase()}</div>
-          <div><span className="role-pill">{roleLabels[center.user.role]}</span><h2>{center.user.display_name || center.user.username}</h2><p>{center.user.email || center.user.phone}</p></div>
+          <div>{(center.user.roles?.length ? center.user.roles : ['']).map(role => (
+            <span className="role-pill" key={role}>{role ? t(ROLE_NAMES[role] ?? role) : t('成员')}</span>
+          ))}<h2>{center.user.display_name || center.user.username}</h2><p>{center.user.email || center.user.phone}</p></div>
           <dl><div><dt>{t('账号状态')}</dt><dd>{center.user.status === 'active' ? t('正常') : t('已停用')}</dd></div><div><dt>{t('会员')}</dt><dd>{center.membership?.plan_name || '未开通'}</dd></div></dl>
         </section>
 
@@ -222,6 +275,12 @@ export function UserCenterPage({
           <h2>{t('MCP 令牌')}</h2>
           <p className="account-help">{t('外部 Agent（如 Claude Code）凭令牌通过')} <code>POST /mcp</code> {t('使用与站内工具助手相同的工具；付费工具仍需显式确认。令牌只显示一次。')}</p>
           {issuedToken && <div className="command-result" role="status"><KeyRound size={16} /> {t('新令牌（请立即复制）：')}<code>{issuedToken}</code></div>}
+          {issuedToken && (
+            <div className="command-result" role="note">
+              {t('接入 Claude Code：')}<code>{`claude mcp add --transport http short-drama ${apiUrl('/mcp')} --header "Authorization: Bearer ${issuedToken}"`}</code>
+              <small>{t('其他客户端见项目里的 agent-kit/README.md')}</small>
+            </div>
+          )}
           <ul className="mcp-token-list">
             {mcpTokens.map(token => (
               <li key={token.id}>
@@ -236,7 +295,7 @@ export function UserCenterPage({
         </section>
       </div>
 
-      {center.user.role === 'admin' && (
+      {hasPermission(center.user, 'user:read') && (
         <section className="user-management">
           <div className="section-title"><UsersRound size={20} /><div><h2>{t('用户管理')}</h2><p>共 {users.length} 个账号；系统会保护最后一个有效管理员。</p></div></div>
           <div className="user-table" role="table">
@@ -244,10 +303,33 @@ export function UserCenterPage({
             {users.map(user => (
               <div className="user-row" role="row" key={user.user_id}>
                 <div><strong>{user.display_name || user.username}</strong><small>{user.email || user.phone}</small></div>
-                <select value={user.role} disabled={busy === user.user_id} onChange={event => void updateUser(user, { role: event.target.value as UserRecord['role'] })} aria-label={`${user.username} 角色`}>
-                  <option value="admin">{t('管理员')}</option><option value="editor">{t('编辑')}</option><option value="user">{t('成员')}</option>
-                </select>
-                <button type="button" className={`status-control ${user.status}`} disabled={busy === user.user_id} onClick={() => void updateUser(user, { status: user.status === 'active' ? 'suspended' : 'active' })}>{user.status === 'active' ? t('正常') : t('已停用')}</button>
+                <div className="user-roles" role="group" aria-label={`${user.username} 角色`}>
+                  {roleCatalog.map(item => (
+                    <label key={item.role} title={item.description}>
+                      <input
+                        type="checkbox"
+                        checked={user.roles.includes(item.role)}
+                        disabled={!canAssignRoles || busy === user.user_id}
+                        onChange={event => void toggleRole(user, item.role, event.target.checked)}
+                      />
+                      {t(ROLE_NAMES[item.role] ?? item.label)}
+                    </label>
+                  ))}
+                </div>
+                {user.status === 'deleted' ? <span className="status-control deleted">{t('已删除')}</span> : (
+                  <>
+                <button type="button" className={`status-control ${user.status}`} disabled={!canManageUsers || (user.roles.length > 0 && !canAssignRoles) || busy === user.user_id} onClick={() => void updateUser(user, { status: user.status === 'active' ? 'suspended' : 'active' })}>{user.status === 'active' ? t('正常') : t('已停用')}</button>
+                    {confirmingDelete === user.user_id ? (
+                      <span className="account-delete-confirm">
+                        <span>{t('删除后无法恢复。财务记录会保留，登录信息会清除。')}</span>
+                        <button type="button" className="status-control suspended" disabled={busy === user.user_id} onClick={() => void deleteUser(user)}>{t('确认删除')}</button>
+                        <button type="button" className="status-control" onClick={() => setConfirmingDelete('')}>{t('取消')}</button>
+                      </span>
+                    ) : (
+                      <button type="button" className="status-control" disabled={!canManageUsers || (user.roles.length > 0 && !canAssignRoles) || user.user_id === center.user.user_id} onClick={() => setConfirmingDelete(user.user_id)}>{t('删除')}</button>
+                    )}
+                  </>
+                )}
               </div>
             ))}
           </div>

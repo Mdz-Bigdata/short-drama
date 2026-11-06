@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 from app.core.spatial_stage import axis as axis_rules
 from app.core.spatial_stage import geometry as geo
+from app.core.spatial_stage import performance
 from app.core.spatial_stage.coverage import ShotSpec, fit_move, keep_side, lens_bearing, repeats_the_angle, solve_camera
 from app.core.spatial_stage.language import enters_in, posture_in, travel_in
 from app.core.spatial_stage.models import (
@@ -80,6 +81,19 @@ class SceneBrief:
     props: list[str] = field(default_factory=list)
     shots: list[ShotSpec] = field(default_factory=list)
     aspect_ratio: str = "9:16"
+    # Standing heights in meters the character profiles state ("身高168cm"); the rest stand 1.7 m.
+    heights: dict[str, float] = field(default_factory=dict)
+
+
+_HEIGHT = re.compile(r"(?<!\d)(1[2-9]\d|2[0-2]\d)\s*(?:cm|CM|厘米|公分)|身高\s*(1\.\d{1,2}|2\.[0-2]\d?)\s*(?:米|m(?![a-z]))")
+
+
+def height_from_text(text: str) -> float | None:
+    """The standing height a profile states, in meters: 168cm / 身高1.68米 → 1.68."""
+    match = _HEIGHT.search(str(text or ""))
+    if match is None:
+        return None
+    return round(int(match.group(1)) / 100, 2) if match.group(1) else round(float(match.group(2)), 2)
 
 
 def location_key(location: str) -> str:
@@ -285,6 +299,10 @@ def _stage_actors(
     if len(actors) > 1:
         apart = geo.separate([(actor.position[0], actor.position[1]) for actor in actors], 0.6)
         actors = [actor.model_copy(update={"position": geo.rounded(mark)}) for actor, mark in zip(actors, apart)]
+    actors = [
+        actor.model_copy(update={"height_m": brief.heights[actor.name]}) if actor.name in brief.heights else actor
+        for actor in actors
+    ]
     return actors, axis, formation[:200]
 
 
@@ -558,6 +576,8 @@ def build_plan(
         # A crowd array is carried with its members: an actor that names a crowd the plan does not
         # hold is not a valid stage, so dropping the record would refuse the re-plan outright.
         actors=actors, crowds=kept_crowds, landmarks=landmarks, axis=axis, backdrop=backdrop,
+        planner=blocking_from.planner if blocking_from is not None else "rules",
+        planner_note=blocking_from.planner_note if blocking_from is not None else "",
         cameras=cameras, shots=shots,
         source=blocking_from.source if blocking_from is not None else "auto",
         revision=(blocking_from.revision + 1) if blocking_from is not None else 1,
@@ -586,7 +606,8 @@ def build_plan(
         shot = plan.shots[index]
         varied[index] = _carry_camera(solve(index, specs[index], plan.actors_in(shot), avoid), shot, plan)
     plan = plan.model_copy(update={"cameras": varied})
-    return refresh(fit_moves(plan))
+    # 站位和机位定了，再按画面文字排每个人的姿势与动作轨道；人在导演台上排过的镜照旧。
+    return refresh(fit_moves(performance.stage(plan, specs, keep=blocking_from)))
 
 
 __all__ = [

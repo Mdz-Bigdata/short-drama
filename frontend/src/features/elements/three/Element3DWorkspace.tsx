@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import {
   AlertTriangle,
   Box,
@@ -20,12 +20,33 @@ import {
 } from 'lucide-react';
 
 import { apiUrl } from '../../../api/client';
-import { findPoster, formatFileSize, formatMetric, propViews, type ElementItem } from '../elementTypes';
+import { findPoster, formatFileSize, formatMetric, propViews, sceneViews, type ElementFile, type ElementItem } from '../elementTypes';
 import { t } from '../../../i18n';
 
 
 const ElementModelViewport = lazy(() => import('./ElementModelViewport'));
 const MuseumAssetExperience = lazy(() => import('../museum/MuseumAssetExperience'));
+
+// 工作台占满页面剩下的高度：量出它在页面里的起点，底边落到窗口底部(留一点边)，窗口变了就重算。
+const WORKSPACE_BOTTOM_GAP = 16;
+
+function useFillViewportHeight<T extends HTMLElement>(remeasure: unknown): [RefObject<T | null>, string | undefined] {
+  const ref = useRef<T | null>(null);
+  const [height, setHeight] = useState<string>();
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node || typeof window === 'undefined') return undefined;
+    const update = () => {
+      const top = Math.max(0, Math.round(node.getBoundingClientRect().top + window.scrollY));
+      setHeight(`calc(100dvh - ${top + WORKSPACE_BOTTOM_GAP}px)`);
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+    // 从文物展厅切回项目资产时工作台是新挂上的节点，要重新量。
+  }, [remeasure]);
+  return [ref, height];
+}
 
 // 没导入 GLB 时，检查面板改为统计参考图本身：读出图片真实像素，再按常见画幅取名。
 const ASPECT_NAMES: ReadonlyArray<readonly [ratio: number, label: string]> = [
@@ -73,7 +94,61 @@ interface Props {
   onRegenerate: (item: ElementItem) => void;
   onDelete: (item: ElementItem) => void;
   onDeletePoster: (item: ElementItem) => void;
-  onInspectPoster: (item: ElementItem) => void;
+  /** ``shown`` 是主预览里当前放的那张，放大时看的就是它。 */
+  onInspectPoster: (item: ElementItem, shown?: ElementFile) => void;
+  /** 改道具的最长边，``null`` 退回描述或估算。 */
+  onSetPropSize?: (item: ElementItem, lengthCm: number | null) => void;
+}
+
+function PropSizeField({ item, locked, onSave }: { item: ElementItem; locked: boolean; onSave: (lengthCm: number | null) => void }) {
+  const scale = item.prop_scale;
+  const [draft, setDraft] = useState(scale?.manual_cm ? String(scale.manual_cm) : '');
+  if (!scale) return null;
+  const value = Number(draft);
+  const valid = draft.trim() !== '' && value >= 0.5 && value <= 5000;
+  const changed = valid && value !== scale.manual_cm;
+  const hasBoard = item.files.some(file => file.slot === 'prop_board');
+  const source = scale.source === 'manual'
+    ? t('手动设置')
+    : scale.source === 'description'
+      ? t('来自描述：{0} cm', [String(scale.longest_cm)])
+      : t('按物件类别估算：约 {0} cm', [String(scale.longest_cm)]);
+  return (
+    <form
+      className="asset-prop-size"
+      onSubmit={event => {
+        event.preventDefault();
+        if (changed && !locked) onSave(value);
+      }}
+    >
+      <label>
+        <span>{t('最长边')}</span>
+        <input
+          type="number"
+          min={0.5}
+          max={5000}
+          step="any"
+          inputMode="decimal"
+          value={draft}
+          placeholder={String(scale.longest_cm)}
+          disabled={locked}
+          onChange={event => setDraft(event.target.value)}
+        />
+        <span>cm</span>
+      </label>
+      <button type="submit" disabled={locked || !changed}>{t('保存尺寸')}</button>
+      {scale.manual_cm !== null && (
+        <button type="button" disabled={locked} onClick={() => onSave(null)}>{t('清除')}</button>
+      )}
+      <small>
+        {source}
+        {' · '}
+        {hasBoard
+          ? t('比例总览会立刻重画，不调用模型；手持或人形那格是模型画的，重生成才会变。')
+          : t('下次生成参考图时使用。')}
+      </small>
+    </form>
+  );
 }
 
 
@@ -90,6 +165,7 @@ export default function Element3DWorkspace({
   onDelete,
   onDeletePoster,
   onInspectPoster,
+  onSetPropSize,
 }: Props) {
   const [view, setView] = useState<'project' | 'museum'>('project');
   const [query, setQuery] = useState('');
@@ -100,18 +176,18 @@ export default function Element3DWorkspace({
     return items.filter(item => `${item.name} ${item.description}`.toLocaleLowerCase('zh-CN').includes(needle));
   }, [items, query]);
   const poster = selected ? findPoster(selected) : undefined;
-  // 道具四视图：选中哪一张就在主预览里放哪一张，换道具后回到正面。
-  const [propViewChoice, setPropViewChoice] = useState<{ itemId: string; slot: string } | null>(null);
-  const selectedPropViews = kind === 'prop' && selected ? propViews(selected) : [];
-  const activePropView = selectedPropViews.find(view => (
-    view.file && propViewChoice?.itemId === selected?.id && view.slot === propViewChoice?.slot
-  )) ?? selectedPropViews.find(view => view.file);
+  // 道具视图 / 场地四视角：选中哪一张就在主预览里放哪一张，换资产后回到第一张(比例总览 / 全景)。
+  const [viewChoice, setViewChoice] = useState<{ itemId: string; slot: string } | null>(null);
+  const selectedViews = selected ? (kind === 'prop' ? propViews(selected) : sceneViews(selected)) : [];
+  const activeView = selectedViews.find(view => (
+    view.file && viewChoice?.itemId === selected?.id && view.slot === viewChoice?.slot
+  )) ?? selectedViews.find(view => view.file);
   const model = selected?.model3d;
   const stats = model?.stats ?? {};
   const referenceImages = selected?.files.filter(file => file.media_kind === 'image' && Boolean(file.url)) ?? [];
-  const shownReference = activePropView?.file ?? poster;
+  const shownReference = activeView?.file ?? poster;
   const shownSize = useImageSize(shownReference?.url ? apiUrl(shownReference.url) : undefined);
-  const filledPropViews = selectedPropViews.filter(view => view.file).length;
+  const filledViews = selectedViews.filter(view => view.file).length;
   const label = kind === 'scene' ? '场景' : '道具';
   // 放大查看器沿用制片口径命名，与查看器标题里的类别一致。
   const viewerLabel = kind === 'scene' ? '拍摄场地' : '拍摄道具';
@@ -120,6 +196,7 @@ export default function Element3DWorkspace({
     : '补充材质、尺寸、状态与跨镜头连续性。');
   const locked = Boolean(busy);
   const KindIcon = kind === 'scene' ? Map : Package;
+  const [workspaceRef, workspaceHeight] = useFillViewportHeight<HTMLElement>(view);
 
   return (
     <div className="element-3d-module">
@@ -149,7 +226,12 @@ export default function Element3DWorkspace({
           <MuseumAssetExperience kind={kind} />
         </Suspense>
       ) : (
-        <section className="element-3d-workspace" aria-label={`${label} 3D 资产工作台`}>
+        <section
+          ref={workspaceRef}
+          className="element-3d-workspace"
+          aria-label={`${label} 3D 资产工作台`}
+          style={workspaceHeight ? ({ '--asset-workspace-height': workspaceHeight } as CSSProperties) : undefined}
+        >
       <aside className="asset-rail">
         <div className="asset-rail-heading">
           <div><span>ASSET INDEX</span><strong>{label}资产</strong></div>
@@ -247,39 +329,43 @@ export default function Element3DWorkspace({
                 type="button"
                 className="asset-reference-preview__open"
                 aria-label={`查看${viewerLabel}“${selected.name}”全景图`}
-                onClick={() => onInspectPoster(selected)}
+                onClick={() => onInspectPoster(selected, activeView?.file)}
               >
                 <img
-                  src={apiUrl(activePropView?.file?.url ?? poster.url)}
-                  alt={activePropView?.file ? `${selected.name} ${activePropView.label}` : `${selected.name} 参考图`}
+                  src={apiUrl(activeView?.file?.url ?? poster.url)}
+                  alt={activeView?.file ? `${selected.name} ${activeView.label}` : `${selected.name} 参考图`}
                 />
                 <span className="element-preview__open-hint"><Maximize2 aria-hidden="true" /> {t('点击查看全景细节')}</span>
               </button>
               <span>2D REFERENCE</span>
             </div>
-            {kind === 'prop' && (
-              <div className="asset-prop-views" role="tablist" aria-label={`${selected.name} 四视图`}>
-                {selectedPropViews.map(view => (
-                  <button
-                    key={view.slot}
-                    type="button"
-                    role="tab"
-                    aria-selected={activePropView?.slot === view.slot}
-                    className={activePropView?.slot === view.slot ? 'is-active' : ''}
-                    disabled={!view.file}
-                    onClick={() => setPropViewChoice({ itemId: selected.id, slot: view.slot })}
-                  >
-                    {view.file?.url
-                      ? <img src={apiUrl(view.file.url)} alt="" />
-                      : <span className="asset-prop-views__empty">{t('待生成')}</span>}
-                    <small>{view.label}</small>
-                  </button>
-                ))}
-                {!selectedPropViews.some(view => view.file) && (
-                  <p className="asset-prop-views__hint">{t('点「重生成参考图」生成正面、左侧45°、右侧45°、背面四视图。')}</p>
-                )}
-              </div>
-            )}
+            <div
+              className={`asset-prop-views${kind === 'scene' ? ' asset-prop-views--scene' : ''}`}
+              role="tablist"
+              aria-label={`${selected.name} ${kind === 'prop' ? '视图' : '四视角'}`}
+            >
+              {selectedViews.map(view => (
+                <button
+                  key={view.slot}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeView?.slot === view.slot}
+                  className={activeView?.slot === view.slot ? 'is-active' : ''}
+                  disabled={!view.file}
+                  onClick={() => setViewChoice({ itemId: selected.id, slot: view.slot })}
+                >
+                  {view.file?.url
+                    ? <img src={apiUrl(view.file.url)} alt="" />
+                    : <span className="asset-prop-views__empty">{t('待生成')}</span>}
+                  <small>{view.label}</small>
+                </button>
+              ))}
+              {!selectedViews.some(view => view.file) && (
+                <p className="asset-prop-views__hint">{kind === 'prop'
+                  ? t('点「重生成参考图」按物件生成视图、比例尺和手或人形参照。')
+                  : t('点「重生成参考图」生成主场景全景、45°斜角、纵深视角、关键细节四张空景视角。')}</p>
+              )}
+            </div>
             <div className="asset-reference-preview__details">
               <div>
                 <span>{label}参考资产 · VERSION {String(selected.version).padStart(2, '0')}</span>
@@ -344,12 +430,21 @@ export default function Element3DWorkspace({
                   <div><span>{t('画幅')}</span><strong>{shownSize ? aspectLabel(shownSize.width, shownSize.height) : '—'}</strong></div>
                   <div><span>{t('像素')}</span><strong>{shownSize ? `${(shownSize.width * shownSize.height / 1e6).toFixed(1)} MP` : '—'}</strong></div>
                   {kind === 'prop' ? (
-                    <div><span>{t('四视图')}</span><strong>{`${filledPropViews}/${selectedPropViews.length}`}</strong></div>
+                    <div><span>{t('视图')}</span><strong>{String(filledViews)}</strong></div>
                   ) : (
                     <div><span>{t('资产版本')}</span><strong>{`V${String(selected.version).padStart(2, '0')}`}</strong></div>
                   )}
                   <div><span>{t('3D 模型')}</span><strong>{t('未导入')}</strong></div>
                 </div>
+
+                {kind === 'prop' && onSetPropSize && selected.prop_scale && (
+                  <PropSizeField
+                    key={`${selected.id}:${selected.prop_scale.manual_cm ?? ''}`}
+                    item={selected}
+                    locked={locked}
+                    onSave={lengthCm => onSetPropSize(selected, lengthCm)}
+                  />
+                )}
 
                 <div className="asset-contract-list">
                   <div><span>{t('格式')}</span><strong>{shownReference ? `${imageFormat(shownReference.mime_type)} · ${t('2D 参考')}` : '—'}</strong></div>

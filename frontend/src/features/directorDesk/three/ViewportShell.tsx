@@ -42,13 +42,21 @@ export function ViewportUnavailable({ message, onRetry }: { message: string; onR
   );
 }
 
-export function StageLights() {
+/**
+ * Neutral light: a grey box has to read as a grey box, since what the lens sees goes to image and
+ * video models as a reference. `reach` is how far the set spreads, so a street still gets its shadows.
+ */
+export function StageLights({ reach = 12 }: { reach?: number }) {
+  const span = Math.max(12, reach * 1.3);
   return (
     <>
-      <color attach="background" args={['#fcedef']} />
-      <ambientLight intensity={1.1} />
-      <hemisphereLight args={['#e76a7f', '#fdeef1', 1.4]} />
-      <directionalLight position={[6, 9, 5]} intensity={2.2} />
+      <color attach="background" args={['#e7e7ea']} />
+      <ambientLight intensity={0.7} />
+      <hemisphereLight args={['#ffffff', '#b9b9be', 1.1]} />
+      <directionalLight
+        position={[span * 0.55, span * 0.9, span * 0.4]} intensity={2.2} castShadow shadow-mapSize={[2048, 2048]} shadow-bias={-0.0005}
+        shadow-camera-left={-span} shadow-camera-right={span} shadow-camera-top={span} shadow-camera-bottom={-span} shadow-camera-near={0.5} shadow-camera-far={span * 4}
+      />
     </>
   );
 }

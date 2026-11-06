@@ -47,6 +47,15 @@ version: 1.0.0
 | 口播超过单镜最长时长 | 回传模型要求拆分；重试耗尽则标 needs_replan 待人工重拆 |
 | `screenplay` 模式台词与原文不符 | 回传模型要求逐字保留 |
 | scene_id 重复 | 回传模型重出 |
+| 题眼台词（key_line）不是那一格的口播、一集多句、压在反转 / 揭秘 / 抒情之外的情绪点 | 回传模型要求改 |
+| 创作模式的题眼台词超过 20 字或用了抽象名词（命运 / 人生 / 灵魂……） | 回传模型要求改 |
+| 整集没有题眼台词 | 保留，记为警告给编辑看 |
+| 创作模式的一格连着两问两答、一句口播超过 45 字、台词里有念稿词（我认为 / 我明白了 / 然而……） | 保留，记为警告给编辑看 |
+| 分集大纲推翻了概述或策划方案里已定的事实（模型校对，`app/core/screenwriting/fact_check.py`） | 带理由退回重规划一次；仍有则保留并记警告 |
+
+立意从总导演策划的「立意卡」来（立意句 / 母题物件 / 终局意象 / 说理方式），项目概述接下来，
+分集大纲要求每集的反转考验立意一次、母题按三次变义排进节点；词表与校验在 `app/core/literary.py`
+与 `app/data/prompt/literary.json`。
 
 详细规则见 `references/shot-content-rules.md` 与 `references/visual-layer-rules.md`，
 节奏建议见 `references/episode-pacing-drama.md` 与 `references/episode-pacing-narration.md`

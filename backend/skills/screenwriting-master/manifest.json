@@ -63,6 +63,24 @@
         1,
         2
       ]
+    },
+    {
+      "key": "poetry-recreation",
+      "title": "诗词取材与二次创作",
+      "file": "references/poetry-recreation.md",
+      "budget": 2500,
+      "stages": [
+        2
+      ]
+    },
+    {
+      "key": "scene-craft-dialogue",
+      "title": "场次工艺与对白技法",
+      "file": "references/scene-craft-dialogue.md",
+      "budget": 4500,
+      "stages": [
+        2
+      ]
     }
   ]
 }

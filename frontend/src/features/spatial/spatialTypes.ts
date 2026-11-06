@@ -50,6 +50,18 @@ export interface StageCrowd {
   seed: number;
 }
 
+/** One volume of a piece built from several, in fractions of the piece's size. */
+export interface LandmarkPart {
+  shape: LandmarkShape;
+  /** x, y, z from the piece's ground centre; y up, +z its front. */
+  center: [number, number, number];
+  /** Width, depth, height. */
+  size: [number, number, number];
+  /** Degrees about x, y, z. */
+  rotation?: [number, number, number];
+  tone?: '' | 'dark' | 'light';
+}
+
 export interface StageLandmark {
   id: string;
   name: string;
@@ -62,6 +74,14 @@ export interface StageLandmark {
   /** "#rrggbb", or empty for the kind colour. */
   color?: string;
   element_id?: string;
+  /** Height of the piece's underside above the floor. */
+  elevation_m?: number;
+  /** 'blockout': built from a reference image, and replaced as a set. */
+  origin?: '' | 'blockout';
+  /** The built-in model this piece was made from. */
+  kit?: string;
+  /** Absent or empty: the piece is the one volume `shape` describes. */
+  parts?: LandmarkPart[];
 }
 
 export type BackdropKind = 'none' | 'color' | 'image' | 'panorama';
@@ -94,6 +114,8 @@ export interface StageCamera {
   position: SpacePoint;
   target: SpacePoint;
   lens_mm: number;
+  /** Long side of the sensor; absent in a plan stored before the desk had it (full frame). */
+  sensor_mm?: number;
   fov_deg: number;
   aspect: string;
   shot_size: string;
@@ -177,11 +199,50 @@ export interface ActorKey {
   easing: StageEasing;
 }
 
+/** One named motion on an actor's action track. */
+export interface ActionClip {
+  id: string;
+  clip: string;
+  start: number;
+  end: number;
+  speed?: number;
+  /** Where in the motion the block opens (0…1). */
+  offset?: number;
+}
+
+/** The filming lens tied to a character for a stretch of the shot. */
+export interface FollowClip {
+  id: string;
+  actor: string;
+  start: number;
+  end: number;
+  /** [right, up, back] in metres. */
+  offset: SpacePoint;
+  relative: 'actor' | 'world';
+  /** Where on the body the lens aims, as a fraction of standing height. */
+  aim: number;
+  damping_s: number;
+  blend_s: number;
+  lens_mm?: number | null;
+}
+
+/** A stretch of the shot seen through one of its candidate lenses: a cut inside the shot. */
+export interface CameraCut {
+  id: string;
+  camera_id: string;
+  start: number;
+  end: number;
+}
+
 export interface ShotTimeline {
   duration_s: number;
   fps: 24 | 25 | 30;
   camera: CameraKey[];
   actors: Record<string, ActorKey[]>;
+  /** Absent in a timeline stored before the desk had clip tracks. */
+  clips?: Record<string, ActionClip[]>;
+  follow?: FollowClip[];
+  cuts?: CameraCut[];
 }
 
 export interface StagePlan {
@@ -202,6 +263,9 @@ export interface StagePlan {
   checks: StageCheck[];
   scene_bible: string;
   source: 'auto' | 'edited';
+  /** Who decided the blocking. Absent in a plan stored before a model could. */
+  planner?: 'rules' | 'model';
+  planner_note?: string;
   revision: number;
   /** Keyed by shot id as a string. */
   timelines?: Record<string, ShotTimeline>;

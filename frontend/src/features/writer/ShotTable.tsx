@@ -54,12 +54,14 @@ export function ShotTable({ scenes }: { scenes: WriterScene[] }) {
             const shot = shotIndex(scene) || absolute - (episodeStarts.get(episode) ?? 0) + 1;
             const lines = Array.isArray(scene.dialogue) ? scene.dialogue : [];
             const verbatim = lines.some(line => line.verbatim);
+            const keyLine = String(scene.keyLine || '').trim();
             return (
               <tr key={`${id}-${absolute}`}>
                 <td className="writer-shots__scene">
                   <code>{id || `#${absolute + 1}`}</code>
                   <small>{`第 ${episode} 集第 ${shot} 镜`}</small>
                   {scene.label && <em>{scene.label}</em>}
+                  {scene.emotionPoint && <span className="writer-shots__point" title={t('这一格打到的情绪点')}>{scene.emotionPoint}</span>}
                 </td>
                 <td className="writer-shots__frame">
                   {scene.imageUrl
@@ -70,8 +72,9 @@ export function ShotTable({ scenes }: { scenes: WriterScene[] }) {
                 <td className="writer-shots__content">{scene.description || scene.content || ''}</td>
                 <td className="writer-shots__lines">
                   {lines.length === 0 ? <span className="writer-shots__silent">{t('无口播')}</span> : lines.map((line, lineIndex) => (
-                    <p key={`${line.text}-${lineIndex}`}>
+                    <p key={`${line.text}-${lineIndex}`} className={keyLine && line.text === keyLine ? 'writer-shots__key' : undefined}>
                       {line.verbatim && <span className="writer-shots__tag">{t('原文')}</span>}
+                      {keyLine && line.text === keyLine && <span className="writer-shots__tag writer-shots__tag--key" title={t('本集的题眼台词')}>{t('题眼')}</span>}
                       {line.kind === 'dialogue' && line.speaker ? <strong>{line.speaker}：</strong> : null}
                       {line.text}
                     </p>

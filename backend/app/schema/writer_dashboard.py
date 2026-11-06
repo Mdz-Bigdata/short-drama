@@ -18,6 +18,10 @@ class WriterOverview(DramaBaseSchema):
     genre: str = Field("", max_length=120)
     theme: str = Field("", max_length=500)
     world_setting: str = Field("", max_length=4000)
+    # 立意卡：立意句 / 母题物件 / 终局意象（见 app/core/literary.py）。
+    thesis: str = Field("", max_length=500)
+    motif: str = Field("", max_length=1000)
+    ending_image: str = Field("", max_length=500)
 
 
 class WriterDashboardStats(DramaBaseSchema):
@@ -60,6 +64,8 @@ class WriterDashboardScene(DramaBaseSchema):
     # The shot table: a short place / time tag, the picture text alone, the spoken lines, the storyboard frame when one exists.
     label: str = Field("", max_length=40)
     description: str = Field("", max_length=6000)
+    emotion_point: str = Field("", max_length=20, description="这一格打到的情绪点：钩子/冲突/反转/爽点/暖点/泪点/笑点/揭秘/悬念/抒情/信息交代")
+    key_line: str = Field("", max_length=120, description="本集的题眼台词落在这一格时，那一句；一集最多一格有")
     dialogue: list[WriterDashboardLine] = Field(default_factory=list, max_length=30)
     image_url: Optional[str] = Field(None, max_length=4000)
     characters: list[str] = Field(default_factory=list, max_length=100)
@@ -118,6 +124,9 @@ class WriterOverviewUpdateRequest(DramaBaseSchema):
     genre: Optional[str] = Field(None, max_length=120)
     theme: Optional[str] = Field(None, max_length=500)
     world_setting: Optional[str] = Field(None, max_length=4000)
+    thesis: Optional[str] = Field(None, max_length=500)
+    motif: Optional[str] = Field(None, max_length=1000)
+    ending_image: Optional[str] = Field(None, max_length=500)
 
 
 class WriterScriptVersion(DramaBaseSchema):

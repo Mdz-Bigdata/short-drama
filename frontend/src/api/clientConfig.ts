@@ -18,7 +18,7 @@ export const DEFAULT_CLIENT_CONFIG: ClientConfig = {
   episodeCount: { min: 1, max: 150, default: 3 },
   scriptUpload: {
     maxBytes: 25 * 1024 * 1024,
-    extensions: ['.txt', '.md', '.markdown', '.docx', '.pdf', '.fdx'],
+    extensions: ['.txt', '.md', '.markdown', '.docx', '.pdf', '.fdx', '.fountain', '.spmd'],
   },
 };
 

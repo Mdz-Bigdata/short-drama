@@ -57,7 +57,7 @@ function ActorFigure({ actor, subject, labelled }: { actor: StageActor; subject:
         {/* The nose: which way the character faces is the whole point of the figure. */}
         <mesh position={[0, body + head, head + 0.05]} rotation={[Math.PI / 2, 0, 0]}>
           <coneGeometry args={[0.04, 0.12, 10]} />
-          <meshStandardMaterial color="#221b1e" />
+          <meshStandardMaterial color="#f3e9ec" />
         </mesh>
       </group>
       {labelled && (
@@ -189,9 +189,9 @@ export default function SpatialStageViewport({ plan, shot, mode }: Props) {
         {/* In camera view the canvas itself takes the delivery aspect, so what is inside it is the frame. */}
         <div className="spatial-viewport__frame" style={lens ? { aspectRatio: String(aspect) } : undefined}>
           <Canvas dpr={[1, 1.5]} frameloop="demand" gl={{ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true }}>
-            <color attach="background" args={['#fcedef']} />
+            <color attach="background" args={['#0f0c12']} />
             <ambientLight intensity={1.1} />
-            <hemisphereLight args={['#e76a7f', '#fdeef1', 1.4]} />
+            <hemisphereLight args={['#f0a3b4', '#1a1420', 1.4]} />
             <directionalLight position={[6, 9, 5]} intensity={2.2} />
             {lens ? (
               <>
@@ -212,7 +212,7 @@ export default function SpatialStageViewport({ plan, shot, mode }: Props) {
             )}
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.005, 0]}>
               <planeGeometry args={[200, 200]} />
-              <meshStandardMaterial color="#fdeff1" roughness={1} />
+              <meshStandardMaterial color="#1c1620" roughness={1} />
             </mesh>
             {!lens && plan.axis.kind !== 'none' && <Line points={axisPoints} color="#e60000" lineWidth={1.4} dashed dashSize={0.25} gapSize={0.15} />}
             {plan.landmarks.map(landmark => <LandmarkBlock key={landmark.id} landmark={landmark} labelled={!lens} />)}

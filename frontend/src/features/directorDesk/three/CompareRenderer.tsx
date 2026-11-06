@@ -16,6 +16,7 @@ import { createCompareQueue } from '../lib/compareQueue';
 import { visibleActors } from '../lib/visibleActors';
 import { LensStage } from './LensStage';
 import { webglAvailable } from './stageLook';
+import { stageReach } from '../lib/stageMath';
 import { ContextLossGuard, StageLights, ViewportBoundary } from './ViewportShell';
 
 /** Long edge of a thumbnail: enough to judge a framing, small enough that six lenses draw in a blink. */
@@ -98,8 +99,8 @@ export default function CompareRenderer({ plan, shot, hidden, aspect, onReady, o
     <div className="desk-compare__renderer" aria-hidden="true" style={{ width, height }}>
       <ViewportBoundary fallback={null}>
         {/* Nothing draws on its own: every frame is one requested thumbnail. */}
-        <Canvas dpr={1} frameloop="never" gl={{ antialias: true, preserveDrawingBuffer: true }}>
-          <StageLights />
+        <Canvas shadows dpr={1} frameloop="never" gl={{ antialias: true, preserveDrawingBuffer: true }}>
+          <StageLights reach={stageReach({ actors: [], landmarks: plan.landmarks }).radius} />
           <PerspectiveCamera makeDefault fov={40} near={0.05} far={500} position={[0, 1.5, 5]} />
           <RenderBridge width={width} height={height} onReady={onReady} />
           <ContextLossGuard onLost={() => setContextLost(true)} />

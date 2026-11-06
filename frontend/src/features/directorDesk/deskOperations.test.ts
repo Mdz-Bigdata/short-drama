@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { PLAN } from '../spatial/spatialFixtures';
-import { actorsInShot, type StagePlan } from '../spatial/spatialTypes';
+import { actorsInShot, type StageLandmark, type StagePlan } from '../spatial/spatialTypes';
 import { actorMoveOperation, applyAll, applyLocal, inverseFromDiff, inverseOf, poseOperation } from './deskOperations';
 
 const CROWD = { id: 'crowd-01', label: '围观', rows: 1, columns: 2, spacing: 1, center: [4, 4] as [number, number], yaw_deg: 0, body_type: 'standard', seed: 7 };
@@ -283,3 +283,67 @@ describe('timelines', () => {
   });
 });
 
+
+describe('undoing a reference-image blockout', () => {
+  const piece = (name: string) => ({
+    id: name, name, kind: 'architecture' as const, position: [0, 0] as [number, number], size: [1, 1, 1] as [number, number, number], origin: 'blockout' as const,
+  });
+
+  it('a first blockout goes back as one operation, however many pieces it had', () => {
+    const before = { ...STAGE, landmarks: [] };
+    const after = { ...STAGE, landmarks: Array.from({ length: 150 }, (_, index) => piece(`墙${index}`)) };
+    expect(inverseFromDiff(before, after)).toEqual([{ op: 'clear_blockout' }]);
+  });
+
+  it('a replaced blockout brings the previous pieces back', () => {
+    const before = { ...STAGE, landmarks: [piece('旧墙')] };
+    const after = { ...STAGE, landmarks: [piece('新墙')] };
+    const [undo] = inverseFromDiff(before, after);
+    expect(undo).toMatchObject({ op: 'apply_blockout', replace: true });
+    expect((undo.pieces as Array<{ name: string }>).map(item => item.name)).toEqual(['旧墙']);
+  });
+
+  it('a hand-placed piece that appeared is still removed by name', () => {
+    const before = { ...STAGE, landmarks: [] };
+    const after = { ...STAGE, landmarks: [{ ...piece('桌子'), origin: '' as const }] };
+    expect(inverseFromDiff(before, after)).toEqual([{ op: 'remove_landmark', name: '桌子' }]);
+  });
+});
+
+describe('undoing a drawn route', () => {
+  it('puts the whole timeline back, since a route can lengthen the shot and lay a motion', () => {
+    const stored = { duration_s: 5, fps: 24 as const, camera: [], actors: {}, clips: {}, follow: [] };
+    const timed = { ...STAGE, timelines: { 1: stored } };
+    expect(inverseOf(timed, [{ op: 'set_path', shot_id: 1, target: '林夏', points: [] }])).toEqual([{ op: 'set_timeline', shot_id: 1, ...stored }]);
+    expect(inverseOf({ ...STAGE, timelines: {} }, [{ op: 'set_path', shot_id: 1, target: '林夏', points: [] }])).toEqual([{ op: 'clear_timeline', shot_id: 1 }]);
+  });
+});
+
+describe('the sensor', () => {
+  it('previews a new field of view and restores the old sensor on undo', () => {
+    const camera = STAGE.cameras[0];
+    const operation = { op: 'move_camera', camera_id: camera.id, sensor_mm: 18 };
+    const after = applyLocal(STAGE, operation).cameras[0];
+    expect(after.sensor_mm).toBe(18);
+    expect(after.fov_deg).toBeLessThan(applyLocal(STAGE, { op: 'move_camera', camera_id: camera.id, lens_mm: camera.lens_mm }).cameras[0].fov_deg);
+    expect(inverseOf(STAGE, [operation])).toEqual([{ op: 'move_camera', camera_id: camera.id, sensor_mm: camera.sensor_mm ?? 36 }]);
+  });
+});
+
+describe('a piece built from parts', () => {
+  const parts: StageLandmark['parts'] = [{ shape: 'cylinder', center: [0, 0.5, 0], size: [1, 1, 1], rotation: [0, 0, 90], tone: 'dark' }];
+
+  it('comes back whole when its removal is undone, and shows at once when placed', () => {
+    const piece: StageLandmark = { id: 'mark-09', name: '牛车', kind: 'furniture', position: [1, 2], size: [1.6, 3.8, 2], kit: '', parts };
+    const plan = { ...PLAN, landmarks: [...PLAN.landmarks, piece] };
+    const [restore] = inverseOf(plan, [{ op: 'remove_landmark', name: '牛车' }]) ?? [];
+    expect(restore).toMatchObject({ op: 'add_landmark', name: '牛车', fitted_parts: parts, size: [1.6, 3.8, 2] });
+    const placed = applyLocal(PLAN, restore);
+    expect(placed.landmarks.find(item => item.name === '牛车')?.parts).toEqual(parts);
+  });
+
+  it('leaves a plain piece without any part fields on its way back', () => {
+    const [restore] = inverseOf(PLAN, [{ op: 'remove_landmark', name: PLAN.landmarks[0].name }]) ?? [];
+    expect(restore).not.toHaveProperty('fitted_parts');
+  });
+});

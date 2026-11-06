@@ -843,7 +843,7 @@ duplicate angle, extra person, extra limbs, deformed hands, cropped feet, text, 
 
 ### 4.1 场景圣经的继承规则（写法与样例见 blocking-lighting.md）
 
-场景圣经的**六要素写法、填空模板与权威样例**（夜晚高层公寓客厅中英双语版、带光源清单的精简版、最小可复制成品）见 [blocking-lighting.md](blocking-lighting.md) §3.2–3.3，本文件不重复。
+场景圣经的**九要素写法、填空模板与权威样例**（夜晚高层公寓客厅中英双语版、带光源清单的精简版、最小可复制成品）见 [blocking-lighting.md](blocking-lighting.md) §3.2–3.3，本文件不重复。
 
 本文件只管一件事：**这场戏的场景圣经一旦定稿，后续每一镜怎么继承。**
 

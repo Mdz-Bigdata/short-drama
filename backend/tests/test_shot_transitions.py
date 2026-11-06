@@ -7,6 +7,7 @@ chosen for each cut. No model and no network; the spatial plans are built by the
 """
 
 import unittest
+from types import SimpleNamespace
 
 from app.core import shot_transitions as cuts
 from app.core.spatial_stage import SceneBrief, ShotSpec, build_plan
@@ -39,7 +40,7 @@ class CutDecisionTests(unittest.TestCase):
         self.assertIn("渐显进入", opening.edit_in)
 
         later = cuts.plan_transitions([_shot(1, "沈砚立于窗前", size="全景")]).cuts[0]
-        self.assertEqual((later.kind, later.technique), ("cut", "opening"))
+        self.assertEqual((later.kind, later.technique), ("dissolve", "opening"))
 
     def test_inside_a_scene_a_look_is_answered_and_then_the_reaction_follows(self):
         plan = cuts.plan_transitions([
@@ -48,18 +49,18 @@ class CutDecisionTests(unittest.TestCase):
             _shot(3, "沈砚脸色一变", size="近景"),
         ])
         look, reaction = plan.cuts[1], plan.cuts[2]
-        self.assertEqual((look.kind, look.technique), ("cut", "eyeline_match"))
+        self.assertEqual((look.kind, look.technique), ("match_cut", "eyeline_match"))
         self.assertEqual(look.carries, "沈砚投向画外的视线")
-        self.assertIn("停在沈砚视线投向画外的瞬间切出", look.edit_out)
+        self.assertIn("在沈砚视线投向画外时，镜头顺视线方向带向所见之物", look.edit_out)
         self.assertEqual(reaction.technique, "reaction")
-        self.assertIn("切回沈砚的反应", reaction.edit_in)
+        self.assertIn("回到沈砚的反应", reaction.edit_in)
         self.assertTrue(_check(plan, "transition_eyeline_answered").passed)
 
     def test_one_action_is_cut_in_the_middle_and_picked_up_in_the_middle(self):
         cut = _pair(_shot(1, "沈砚伸手去拿剑"), _shot(2, "沈砚握住剑柄", size="特写"))
-        self.assertEqual((cut.kind, cut.technique), ("cut", "action_match"))
+        self.assertEqual((cut.kind, cut.technique), ("match_cut", "action_match"))
         self.assertEqual(cut.carries, "「伸手」这一个动作")
-        self.assertIn("进行到一半时切出", cut.edit_out)
+        self.assertIn("进行到一半时顺势衔接到下一镜", cut.edit_out)
         self.assertIn("同一动作的后半段", cut.edit_in)
         self.assertEqual(cut.size_step, 3)
 
@@ -69,7 +70,7 @@ class CutDecisionTests(unittest.TestCase):
 
     def test_two_singles_of_different_people_are_shot_and_reverse_shot(self):
         cut = _pair(_shot(1, "沈砚沉声开口", cast=("沈砚",)), _shot(2, "黄琰冷笑", cast=("黄琰",)))
-        self.assertEqual((cut.kind, cut.technique, cut.label), ("cut", "shot_reverse", "硬切·正反打"))
+        self.assertEqual((cut.kind, cut.technique, cut.label), ("match_cut", "shot_reverse", "匹配剪辑·正反打"))
         self.assertIn("机位留在轴线同一侧", cut.edit_in)
 
         plain = _pair(_shot(1, "两人对视", cast=("沈砚", "黄琰")), _shot(2, "两人僵持", cast=("沈砚", "黄琰")))
@@ -83,7 +84,7 @@ class CutDecisionTests(unittest.TestCase):
         light = _pair(_shot(1, "深夜，烛火下沈砚伏案"), _shot(2, "清晨阳光照进书房"))
         self.assertEqual(light.technique, "time_passage")
         # Candlelight alone is not a time of day.
-        self.assertEqual(_pair(_shot(1, "烛火下沈砚伏案"), _shot(2, "阳光照进书房")).kind, "cut")
+        self.assertEqual(_pair(_shot(1, "烛火下沈砚伏案"), _shot(2, "阳光照进书房")).kind, "match_cut")
 
         memory = _pair(_shot(1, "沈砚闭上眼"), _shot(2, "回忆中少年沈砚在雪地里练剑"))
         self.assertEqual((memory.kind, memory.technique), ("dissolve", "flashback"))
@@ -100,7 +101,7 @@ class CutDecisionTests(unittest.TestCase):
 
         hard = _pair(_shot(1, "沈砚沉声开口", motion="缓推"), _shot(2, "黄琰冷笑", cast=("黄琰",)))
         self.assertEqual(hard.motion_join, "moving_to_static")
-        self.assertIn("落幅稳住再切", hard.edit_out)
+        self.assertIn("落幅稳住再过渡", hard.edit_out)
 
     def test_a_change_of_scene_rides_a_shared_shape_an_exit_or_a_change_of_colour(self):
         graphic = _pair(
@@ -114,7 +115,7 @@ class CutDecisionTests(unittest.TestCase):
             _shot(1, "沈砚推门而出"),
             _shot(2, "沈砚踏上长街", scene_id="E1S02", location="长街"),
         )
-        self.assertEqual((exit_cut.kind, exit_cut.technique), ("cut", "action_match"))
+        self.assertEqual((exit_cut.kind, exit_cut.technique), ("match_cut", "action_match"))
 
         tone = _pair(
             _shot(1, "烛火映着沈砚的脸"),
@@ -123,13 +124,14 @@ class CutDecisionTests(unittest.TestCase):
         self.assertEqual((tone.kind, tone.technique), ("dissolve", "scene_change"))
 
         plain = _pair(_shot(1, "沈砚合上书卷"), _shot(2, "黄琰在院中踱步", cast=("黄琰",), scene_id="E1S02", location="庭院"))
-        self.assertEqual((plain.kind, plain.technique), ("cut", "scene_change"))
+        self.assertEqual((plain.kind, plain.technique), ("push_pull", "scene_change"))
+        self.assertIn("前景遮挡物掠过或镜头推进", plain.edit_out)
 
     def test_the_first_shot_of_a_scene_cuts_from_the_last_shot_of_the_one_before(self):
         lead_in = _shot(9, "沈砚推门而出", scene_id="E1S01")
         plan = cuts.plan_transitions([_shot(1, "沈砚走进长街", scene_id="E1S02", location="长街")], previous_shot=lead_in)
         self.assertEqual((plan.cuts[0].from_shot, plan.cuts[0].technique), (0, "action_match"))
-        self.assertTrue(plan.summary.startswith("入场→1 硬切·动作匹配"))
+        self.assertTrue(plan.summary.startswith("入场→1 匹配剪辑·动作匹配"))
 
 
 class CutCheckTests(unittest.TestCase):
@@ -176,9 +178,9 @@ class CutCheckTests(unittest.TestCase):
         rows[0]["shot_purpose"] = "suspense"
         self.assertTrue(_check(cuts.plan_transitions(rows), "transition_cause_before_effect").passed)
 
-    def test_light_and_colour_do_not_flip_across_a_hard_cut_inside_a_scene(self):
+    def test_light_and_colour_do_not_flip_across_a_join_inside_a_scene(self):
         plan = cuts.plan_transitions([_shot(1, "烛火映着沈砚的脸", size="近景"), _shot(2, "冷色的光落在黄琰肩头", cast=("黄琰",), size="近景")])
-        self.assertEqual(plan.cuts[1].kind, "cut")
+        self.assertEqual(plan.cuts[1].kind, "match_cut")
         check = _check(plan, "transition_light_continuity")
         self.assertFalse(check.passed)
         self.assertIn("第1镜暖色、第2镜冷色", check.detail)
@@ -213,7 +215,120 @@ class CutCheckTests(unittest.TestCase):
         codes = {item.code for item in cuts.plan_transitions([_shot(1, "沈砚落笔"), _shot(2, "沈砚抬头")]).checks}
         self.assertNotIn("transition_thirty_degree", codes)
         self.assertNotIn("transition_state_continuous", codes)
-        self.assertEqual(len(codes), 7)
+        self.assertEqual(len(codes), 12)
+        self.assertNotIn("transition_attention_jump", codes)
+
+
+class ConnectionIdeaTests(unittest.TestCase):
+    def test_a_similar_movement_links_two_scenes_without_saying_they_are_one(self):
+        cut = _pair(_shot(1, "画师的笔向下落笔", cast=("画师",)), _shot(2, "鼓手落槌", cast=("鼓手",), scene_id="E1S02", location="河岸"))
+        self.assertEqual((cut.kind, cut.technique), ("match_cut", "action_rhyme"))
+        self.assertEqual(cut.carries, "落笔与落槌的相似运动")
+        self.assertIn("不表示人物到了对方那里", cut.reasons[0])
+
+    def test_the_same_object_carries_a_change_of_place(self):
+        cut = _pair(_shot(1, "书桌上放着六角铜牌"), _shot(2, "铜牌躺在码头石面上", cast=(), scene_id="E1S02", location="码头"))
+        self.assertEqual(cut.technique, "object_carry")
+        self.assertIn("同一个铜牌", cut.edit_in)
+
+    def test_a_named_occluder_makes_an_occlusion_cut_and_says_cover_it_all(self):
+        cut = _pair(_shot(1, "衣袖贴近镜头遮满画面"), _shot(2, "码头清晨", cast=(), scene_id="E1S02", location="码头"))
+        self.assertEqual((cut.kind, cut.technique), ("push_pull", "occlusion"))
+        self.assertIn("遮满画面", cut.edit_out)
+        self.assertIn("前景滑动方向与摄影机运动方向分开写", cut.edit_in)
+
+    def test_leaning_on_a_wall_is_not_an_occlusion(self):
+        cut = _pair(_shot(1, "他手撑着墙喘气"), _shot(2, "码头清晨", cast=(), scene_id="E1S02", location="码头"))
+        self.assertEqual(cut.technique, "scene_change")
+
+    def test_a_diagonal_can_match_a_diagonal(self):
+        cut = _pair(_shot(1, "石阶由左下伸向右上", cast=()), _shot(2, "山脊沿同一方向展开", cast=(), scene_id="E1S02", location="山"))
+        self.assertEqual(cut.technique, "graphic_match")
+        self.assertIn("斜线", cut.carries)
+
+    def test_the_same_room_keeps_the_lens_when_time_passes(self):
+        cut = _pair(_shot(1, "午后日光里他作画", location="画室"), _shot(2, "雨暮时分他仍在作画，次日", location="画室"))
+        self.assertEqual(cut.technique, "time_passage")
+        self.assertIn("机位与陈设不变", cut.edit_in)
+
+    def test_a_line_runs_past_the_cut_into_a_shot_without_lines(self):
+        first = {**_shot(1, "送信人开口"), "dialogue": "他不会来了"}
+        cut = _pair(first, _shot(2, "空码头", cast=(), scene_id="E1S02", location="码头"))
+        self.assertEqual(cut.sound_join, "l_cut")
+
+    def test_the_next_scene_is_heard_first(self):
+        cut = _pair(_shot(1, "他收起画笔"), _shot(2, "鼓手站上高台", cast=("鼓手",), scene_id="E1S02", location="河岸"))
+        self.assertEqual(cut.sound_join, "j_cut")
+
+    def test_a_sound_offset_stays_out_of_the_words_sent_to_the_video_model(self):
+        first = {**_shot(1, "送信人开口"), "dialogue": "他不会来了"}
+        plan = cuts.plan_transitions([first, _shot(2, "空码头", cast=(), scene_id="E1S02", location="码头")])
+        self.assertEqual(plan.cuts[1].sound_join, "l_cut")
+        for text in cuts.panel_fields(plan, 2, total=2).values():
+            self.assertNotIn("L-cut", text)
+        self.assertEqual(cuts.shot_summary(plan, 2)["sound_join"], "l_cut")
+
+    def test_a_chapter_fade_does_not_offset_sound(self):
+        cut = _pair(_shot(1, "他收起画笔"), _shot(2, "三年后，他回到河岸", location="河岸", scene_id="E1S02"))
+        self.assertEqual((cut.kind, cut.sound_join), ("fade", ""))
+
+
+class CutDiagnosisTests(unittest.TestCase):
+    def test_a_cut_that_brings_nothing_new_is_named(self):
+        plan = cuts.plan_transitions([_shot(1, "沈砚坐在桌边说话"), _shot(2, "沈砚坐在桌边说话。")])
+        check = _check(plan, "transition_new_information")
+        self.assertFalse(check.passed)
+        self.assertEqual(check.shot_ids, [2])
+
+    def test_a_new_line_is_new_information(self):
+        plan = cuts.plan_transitions([_shot(1, "沈砚坐在桌边说话"), {**_shot(2, "沈砚坐在桌边说话。"), "dialogue": "走吧"}])
+        self.assertTrue(_check(plan, "transition_new_information").passed)
+
+    def test_an_action_already_finished_is_not_started_again(self):
+        plan = cuts.plan_transitions([_shot(1, "沈砚起身，站稳"), _shot(2, "沈砚从椅子上起身", size="近景")])
+        self.assertFalse(_check(plan, "transition_action_replay").passed)
+        picked_up = cuts.plan_transitions([_shot(1, "沈砚起身，站稳"), _shot(2, "沈砚起身的余势未尽，抬眼", size="近景")])
+        self.assertTrue(_check(picked_up, "transition_action_replay").passed)
+
+    def test_walking_the_other_way_needs_a_reason(self):
+        plan = cuts.plan_transitions([_shot(1, "沈砚向右走"), _shot(2, "沈砚向左走", size="近景")])
+        self.assertFalse(_check(plan, "transition_screen_direction").passed)
+        turned = cuts.plan_transitions([_shot(1, "沈砚向右走"), _shot(2, "沈砚转身向左走", size="近景")])
+        self.assertTrue(_check(turned, "transition_screen_direction").passed)
+
+    def test_a_fast_move_needs_a_reason_and_a_match(self):
+        burst = cuts.plan_transitions([_shot(1, "沈砚慢慢说话"), _shot(2, "沈砚站着", motion="快速左摇", size="近景")])
+        self.assertFalse(_check(burst, "transition_motion_energy").passed)
+        heard = cuts.plan_transitions([_shot(1, "门外玻璃碎裂声"), _shot(2, "沈砚站着", motion="快速左摇", size="近景")])
+        self.assertTrue(_check(heard, "transition_motion_energy").passed)
+        brakes = cuts.plan_transitions([_shot(1, "沈砚奔", motion="快速左摇"), _shot(2, "沈砚站定", motion="缓慢左摇", size="近景")])
+        self.assertIn("减速带", _check(brakes, "transition_motion_energy").detail)
+
+    def test_a_scene_locked_off_throughout_reads_as_slides(self):
+        shots = [_shot(index, f"第{index}个动作", size=size) for index, size in enumerate(("全景", "中景", "近景", "特写"), start=1)]
+        self.assertIn("幻灯片", _check(cuts.plan_transitions(shots), "transition_camera_breath").detail)
+        shots[2]["motion"] = "缓推"
+        self.assertTrue(_check(cuts.plan_transitions(shots), "transition_camera_breath").passed)
+
+    def test_the_eye_is_not_sent_across_the_frame_at_a_similar_size(self):
+        def staged(x):
+            return SimpleNamespace(screen=[SimpleNamespace(name="沈砚", visible=True, x=x)])
+
+        def check(second_x, second_size="中景"):
+            shots = {1: staged(-30), 2: staged(second_x)}
+            views = [cuts._view(_shot(1, "他站着"), 1, None), cuts._view(_shot(2, "他抬头", size=second_size), 2, None)]
+            found = cuts._diagnosis_checks(list(zip(views, views[1:])), views, SimpleNamespace(shot=shots.get))
+            return next(item for item in found if item.code == "transition_attention_jump")
+
+        self.assertFalse(check(30).passed)
+        self.assertTrue(check(5).passed)
+        self.assertTrue(check(30, second_size="大特写").passed)
+
+    def test_a_violent_move_on_a_person_is_named_but_not_on_an_empty_shot(self):
+        person = cuts.plan_transitions([_shot(1, "他站着", motion="剧烈晃动")])
+        self.assertFalse(_check(person, "transition_camera_breath").passed)
+        empty = cuts.plan_transitions([_shot(1, "空街", cast=(), motion="剧烈晃动")])
+        self.assertTrue(_check(empty, "transition_camera_breath").passed)
 
 
 def _brief(shots, **overrides):
@@ -346,18 +461,19 @@ class PanelTextTests(unittest.TestCase):
         after = cuts.panel_fields(self.plan, 3, total=3)
         self.assertEqual(before["end_state"], "动作停在进行中，留给下一镜完成")
         self.assertEqual(after["start_state"], "同一动作已进行到一半，从这里继续")
-        self.assertIn("承接第2镜（硬切·动作匹配）", after["continuity_in"])
+        self.assertIn("承接第2镜（匹配剪辑·动作匹配）", after["continuity_in"])
         self.assertIn("景别推近3级", after["continuity_in"])
         self.assertIn("先以起幅稳住约半秒再开始运动", after["edit_in"])
 
     def test_a_shot_records_the_cut_into_it_in_the_compositor_s_terms(self):
         self.assertEqual(cuts.shot_summary(self.plan, 1)["compositor"], "dip_to_black")
         self.assertEqual(cuts.shot_summary(self.plan, 3), {
-            "from_shot": 2, "kind": "cut", "technique": "action_match", "label": "硬切·动作匹配",
-            "duration_seconds": 0.0, "motion_join": "static_to_moving", "compositor": "hard_cut",
+            "from_shot": 2, "kind": "match_cut", "technique": "action_match", "label": "匹配剪辑·动作匹配",
+            "duration_seconds": 0.0, "motion_join": "static_to_moving", "compositor": "match_cut",
+            "sound_join": "", "sound_note": "", "watch": cuts._WATCH["action_match"],
         })
         self.assertEqual(cuts.shot_summary(self.plan, 99), {})
-        self.assertEqual(set(cuts.COMPOSITOR_TRANSITIONS.values()), {"hard_cut", "match_cut", "crossfade", "dip_to_black"})
+        self.assertEqual(set(cuts.COMPOSITOR_TRANSITIONS.values()), {"match_cut", "crossfade", "dip_to_black"})
 
     def test_a_scene_follows_the_last_shot_of_the_nearest_earlier_scene_that_has_shots(self):
         flat = [

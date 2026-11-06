@@ -25,6 +25,10 @@ export interface WriterScene {
   keyEventIndex?: number | null;
   content?: string;
   characters?: string[];
+  /** The emotion point this shot hits (钩子 / 冲突 / 反转 …). */
+  emotionPoint?: string;
+  /** The episode's key line (题眼台词) when it falls in this shot: one of its own lines, verbatim. */
+  keyLine?: string;
 }
 
 export interface WriterTimelineEvent {
@@ -63,13 +67,32 @@ export const ROLE_POSITIONS = ['男主角', '女主角', '男配角', '女配角
 export const STORY_PHASES = ['故事开始', '进展纠葛', '危机', '高潮', '结局'] as const;
 export const CREATION_MODE_LABELS: Record<string, string> = { drama: '剧情模式', narration: '旁白模式', ad: '广告模式' };
 
+/** The overview fields a person can edit on the board; the PATCH accepts the same snake_case keys. */
+export interface OverviewFields {
+  title?: string;
+  synopsis: string;
+  genre: string;
+  theme: string;
+  world_setting: string;
+  thesis: string;
+  motif: string;
+  ending_image: string;
+}
+
+export const EMPTY_OVERVIEW: OverviewFields = { synopsis: '', genre: '', theme: '', world_setting: '', thesis: '', motif: '', ending_image: '' };
+
 export interface WriterBreakdown {
   overview?: {
     synopsis?: string;
     genre?: string;
     theme?: string;
     world_setting?: string;
+    /** 立意卡：立意句 / 母题物件 / 终局意象。 */
+    thesis?: string;
+    motif?: string;
+    ending_image?: string;
     worldSetting?: string;
+    endingImage?: string;
   };
   scenes?: WriterScene[];
   timeline?: WriterTimelineEvent[];

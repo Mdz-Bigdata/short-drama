@@ -245,7 +245,7 @@ export function CharacterInspector({ character, onRegenerate }: {
                 aria-pressed={activeColorIndex === index}
                 onClick={() => setThemeSelection({ characterId: character.characterId, index })}
               >
-                <i style={{ '--character-swatch': color.hex || '#846874' } as CSSProperties} aria-hidden="true" />
+                <i style={{ '--character-swatch': color.hex || 'var(--text-muted)' } as CSSProperties} aria-hidden="true" />
                 {color.name || color.hex}
               </button>
             ))}

@@ -526,6 +526,8 @@ def _normalize_scenes(
             "content": _text(item.get("content"), 6000),
             "label": _text(item.get("label"), 40),
             "description": _text(item.get("description"), 6000),
+            "emotion_point": _text(item.get("emotion_point"), 20),
+            "key_line": _text(item.get("key_line"), 120),
             "dialogue": _normalize_lines(item.get("dialogue")),
             "image_url": (images or {}).get(scene_id) or None,
             "characters": [

@@ -253,12 +253,12 @@ class SetPieceTests(unittest.TestCase):
             with self.assertRaises(StageEditError, msg=operation) as refused:
                 apply_operations(self.plan, [operation], solve=False)
             self.assertIn(needle, str(refused.exception))
-        big = apply_operations(self.plan, [{"op": "array_landmark", "name": self.name, "count": 40}] * 2, solve=False)
-        self.assertEqual(len(big.landmarks), len(self.plan.landmarks) + 78)
+        big = apply_operations(self.plan, [{"op": "array_landmark", "name": self.name, "count": 40}] * 6, solve=False)
+        self.assertEqual(len(big.landmarks), len(self.plan.landmarks) + 234)
         self.assertEqual(len({item.name for item in big.landmarks}), len(big.landmarks))
         with self.assertRaises(StageEditError) as refused:
-            apply_operations(big, [{"op": "array_landmark", "name": self.name, "count": 3}], solve=False)
-        self.assertIn("上限 80", str(refused.exception))
+            apply_operations(big, [{"op": "array_landmark", "name": self.name, "count": 20}], solve=False)
+        self.assertIn("上限 240", str(refused.exception))
 
     def test_align_and_distribute(self):
         names = [item.name for item in self.plan.landmarks[:2]]

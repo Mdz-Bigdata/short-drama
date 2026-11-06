@@ -12,7 +12,7 @@
   → 第 4 阶段分镜图  image_style_line / identity_negative
   → 第 5 阶段首尾帧  同上
   → 第 5 阶段视频    video_prompt_engine.compile_shot_prompt
-        风格锁 → 参考素材职责 → 结构声明 → 六层锁 → 镜头块 → 声音 → 铁律 → 负向词
+        Pa1 锚点/服装绑定 → 参考素材职责 → 结构声明 → 六层锁 → 镜头块；Pa2 风格锁 → 外貌简述 → 画质 → 声音；Pa3 铁律 → 负向词
         prompt_budget.compress 按目标模型预算裁剪（声音→环境→光影数值→色彩→特效→台词表达）
   → ModelGateway.generate_video(style_pack=…)
         pack.style_caption 作为 Ark 风格锚定；写实锁才追加写实增强词
@@ -23,6 +23,7 @@
 
 | Module | Responsibility |
 |---|---|
+| `backend/app/data/prompt/*.json` | the wording and word tables the prompt writers read (`prompt_data.py`): named iron rules and 画质 paragraphs (`iron_rules.json`), the clip prompt's verbs, patterns, joins and limits (`clip_prompt.json`), the sound planner's tables (`sound_events.json`), the storyboard reviewer's fight and prop words (`storyboard_revision.json`), the stage-4 hard requirements (`storyboard_hard_rules.json`), and the role/methodology heads and static system prompts of the director, writer, character designer, PR, asset-breakdown, relationship and DNA analysers plus the two long storyboard contracts (`agent_prompts.json`) |
 | `backend/app/core/style_packs.py` | `StylePack` and the five packs; `resolve_pack`, `style_lock_block`, `tone_line`, `build_palette_card` / `palette_lines`, `negatives_for`, `iron_rules`, `image_style_line`, `identity_negative`, `describe` |
 | `backend/app/core/prompt_budget.py` | Per-model budgets, `pressure`, `compress` with the cut order, the 100-character description floor, fixed (unmeasured) layers |
 | `backend/app/core/video_prompt_engine.py` | `ShotPromptInput` → `compile_shot_prompt` (the layered prompt + `PressureReport`), `extension_prompt` |
@@ -42,9 +43,10 @@ anti-leak guards for reference media, the sound defaults and the sentence an ext
 
 ## Prompt layers and the budget
 
-Order: `style_lock → anchors → structure → locks → camera → subject → motion → expression →
-environment → colour → effects → dialogue → dialogue_notes → end_state → sound_layers → sound →
-closing → rules → negatives`.
+Order (the three paragraphs of the 《运镜提示词》 template): `anchor_cast → anchor_costumes →
+anchor_scene → anchor_props → anchors → structure → locks → stage → camera → subject → motion → expression →
+environment → colour → effects → dialogue → dialogue_notes → end_state` (Pa1) `→ style_lock →
+appearance → quality → sound_layers → sound → closing` (Pa2) `→ rules → negatives` (Pa3).
 
 - Lock tags are `[空间锚] [状态锁] [道具锁] [光影锁] [声音锁]`, ahead of the picture, because the
   front of a prompt weighs most. Lighting numbers live in the lock and nowhere else.

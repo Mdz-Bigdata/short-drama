@@ -1,16 +1,21 @@
 import { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense, type CSSProperties } from 'react';
 import { 
-  Film, Play, Pause, ChevronRight, 
-  Music,
+  Film, Play, Pause, ChevronRight, Network, GitBranch, BrainCircuit, ListChecks, 
   HardDrive, Cpu, Monitor, Sliders,
   X, ArrowUp, Folder, ArrowRight, User,
-  Upload, Bot
+  Upload, Bot, BookOpen
 } from 'lucide-react';
 import { CONTENT_LANGUAGE_OPTIONS, CREATION_MODE_OPTIONS, EMPTY_AD_BRIEF, NARRATION_DELIVERY_OPTIONS, normalizeVideoReferenceMode, type AdBrief, type ContentLanguage, type CreationMode, type NarrationDelivery, type TaskConfig, type TaskResponse, type TaskSummary, type StageProgress } from './types';
 import { CapabilityCenter } from './features/platform/CapabilityCenter';
+import { PoetrySourcePicker } from './features/writer/PoetrySourcePicker';
 import type { ElementKind } from './features/elements/elementTypes';
+import { NotificationBell } from './features/account/NotificationBell';
+import { hasPermission } from './features/account/permissions';
+import { FINANCE_PERMISSIONS } from './features/finance/financeFormat';
 import type { ModelCategory } from './features/models/ModelConfigurationCenter';
 import type { BreakdownSceneRef, SceneBoardStatus, StoryboardProgress, StoryboardShot } from './features/storyboard/StoryboardWorkspace';
+import { storyboardActionFrom, type StoryboardViewAction } from './features/storyboard/storyboardActions';
+import { downloadStoryboardScene } from './features/storyboard/storyboardDownload';
 import { AgentStageTabs } from './features/workbench/AgentStageTabs';
 import { getScriptDisplayName } from './features/workbench/scriptTitle';
 import { VideoReferenceModeSelect } from './features/workbench/VideoReferenceModeSelect';
@@ -31,6 +36,7 @@ import type { WriterDashboardResponse } from './features/writer/types';
 // modal), so it is loaded on demand instead of shipping in the first bundle.
 const ElementLibraryPage = lazy(() => import('./features/elements/ElementLibraryPage').then(m => ({ default: m.ElementLibraryPage })));
 const UserCenterPage = lazy(() => import('./features/account/UserCenterPage').then(m => ({ default: m.UserCenterPage })));
+const FinanceConsolePage = lazy(() => import('./features/finance/FinanceConsolePage').then(m => ({ default: m.FinanceConsolePage })));
 const BillingCenterPage = lazy(() => import('./features/billing/BillingCenterPage').then(m => ({ default: m.BillingCenterPage })));
 const ModelConfigurationCenter = lazy(() => import('./features/models/ModelConfigurationCenter').then(m => ({ default: m.ModelConfigurationCenter })));
 const ProjectSkillManager = lazy(() => import('./features/skills/ProjectSkillManager').then(m => ({ default: m.ProjectSkillManager })));
@@ -42,14 +48,23 @@ const CharacterDesignerPageContainer = lazy(() => import('./features/character/C
 const StyleReferencePanel = lazy(() => import('./features/workbench/StyleReferencePanel').then(m => ({ default: m.StyleReferencePanel })));
 const StageFivePreview = lazy(() => import('./features/workbench/StageFivePreview').then(m => ({ default: m.StageFivePreview })));
 const TimelinePanel = lazy(() => import('./features/workbench/TimelinePanel').then(m => ({ default: m.TimelinePanel })));
+const PublishPanel = lazy(() => import('./features/workbench/PublishPanel').then(m => ({ default: m.PublishPanel })));
+const AcquisitionPanel = lazy(() => import('./features/workbench/AcquisitionPanel').then(m => ({ default: m.AcquisitionPanel })));
+// 画布、互动剧与任务中心盖在工作台之上，只有打开时才下载。
+const CanvasWorkspace = lazy(() => import('./features/canvas/CanvasWorkspace').then(m => ({ default: m.CanvasWorkspace })));
+const InteractiveStoryWorkspace = lazy(() => import('./features/interactive/InteractiveStoryWorkspace').then(m => ({ default: m.InteractiveStoryWorkspace })));
+const TaskCenter = lazy(() => import('./features/tasks/TaskCenter').then(m => ({ default: m.TaskCenter })));
+const ProjectMemory = lazy(() => import('./features/memory/ProjectMemory').then(m => ({ default: m.ProjectMemory })));
 
 function StageFallback() {
   return <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--text-muted)', padding: '40px' }}>{tr('正在载入…')}</div>;
 }
-import { API_BASE, apiRequest, onUnauthorized } from './api/client';
+import { API_BASE, apiRequest, notifyBillingRequired, onUnauthorized } from './api/client';
 import { DEFAULT_CLIENT_CONFIG, parseClientConfig, type ClientConfig } from './api/clientConfig';
 import { acceptLanguage, t as tr, useLocale } from './i18n';
 import { LanguageSwitcher } from './i18n/LanguageSwitcher';
+import { MarkdownDocument } from './features/writer/MarkdownDocument';
+import { StageSixPreview } from './features/workbench/StageSixPreview';
 
 type ChatMessage = WorkflowChatMessage;
 
@@ -58,8 +73,10 @@ interface CurrentUser {
   username: string;
   email?: string | null;
   phone?: string | null;
-  role?: 'admin' | 'editor' | 'user';
-  status?: 'active' | 'suspended';
+  role?: 'admin' | 'user';
+  roles?: string[];
+  permissions?: string[];
+  status?: 'active' | 'suspended' | 'deleted';
   must_change_password?: boolean;
 }
 
@@ -170,7 +187,7 @@ function useNowWhile(active: boolean): number {
   return now;
 }
 
-function StageProgressPanel({ progress }: { progress: StageProgress }) {
+function StageProgressPanel({ progress, onOpenBilling }: { progress: StageProgress; onOpenBilling?: () => void }) {
   const now = useNowWhile(progress.status === 'running');
   const totalMs = liveElapsed(progress, now);
   const label = progress.stage_label || progress.stageLabel || `阶段${progress.stage}`;
@@ -180,15 +197,15 @@ function StageProgressPanel({ progress }: { progress: StageProgress }) {
   const calls = Array.isArray(progress.calls) ? progress.calls : [];
   const shownCalls = calls.slice(-8);
   return (
-    <div style={{ padding: '12px 14px', background: '#fdeff1', border: `1px solid ${isError ? 'rgba(230, 0, 41, 0.45)' : 'rgba(227, 84, 108, 0.25)'}`, borderRadius: '10px' }}>
+    <div style={{ padding: '12px 14px', background: 'var(--surface)', border: `1px solid ${isError ? 'rgba(230, 0, 41, 0.45)' : 'rgba(var(--accent-rgb), 0.25)'}`, borderRadius: '10px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
         <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-light)' }}>
           ⚙️ Stage {progress.stage} · {label}
         </span>
         <span style={{ fontSize: '0.82rem', fontWeight: 700, color: accent, fontVariantNumeric: 'tabular-nums' }}>{pct}%</span>
       </div>
-      <div style={{ height: '6px', background: 'rgba(214, 90, 120, 0.176)', borderRadius: '999px', overflow: 'hidden', margin: '8px 0 10px' }}>
-        <div style={{ width: `${pct}%`, height: '100%', borderRadius: '999px', background: `linear-gradient(90deg, #e3546c, ${isError ? '#e60029' : '#e3546c'})`, boxShadow: `0 0 8px ${accent}`, transition: 'width 0.8s ease' }} />
+      <div style={{ height: '6px', background: 'rgba(var(--accent-rgb), 0.176)', borderRadius: '999px', overflow: 'hidden', margin: '8px 0 10px' }}>
+        <div style={{ width: `${pct}%`, height: '100%', borderRadius: '999px', background: `linear-gradient(90deg, var(--accent), ${isError ? '#e60029' : 'var(--accent)'})`, boxShadow: `0 0 8px ${accent}`, transition: 'width 0.8s ease' }} />
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
         {calls.length > shownCalls.length && (
@@ -219,6 +236,9 @@ function StageProgressPanel({ progress }: { progress: StageProgress }) {
       {isError && progress.error && (
         <div style={{ marginTop: '8px', fontSize: '0.74rem', lineHeight: '1.6', color: '#e60029', background: 'rgba(230, 0, 41, 0.08)', border: '1px solid rgba(230, 0, 41, 0.3)', borderRadius: '6px', padding: '8px 10px' }}>
           {progress.error}
+          {onOpenBilling && /积分不足|升级套餐/.test(progress.error) && (
+            <button type="button" className="billing-required__action" onClick={onOpenBilling}>{tr('去充值')}</button>
+          )}
         </div>
       )}
     </div>
@@ -236,6 +256,18 @@ const EMPTY_GLOBAL_MODEL_DEFAULTS: GlobalModelDefaults = {
 let messageSequence = 0;
 const nextMessageId = () => `message-${++messageSequence}`;
 
+/** 各集的标题（剧本规划）与成片状态（逐集归档），给第 5 阶段左栏的分集卡。 */
+function episodeMetaOf(assets: Record<string, unknown>): Array<{ number: number; title?: string; filmDone?: boolean }> {
+  const written = (assets['2_screenwriting'] as { episodes?: Record<string, { plan?: { title?: string } }> } | undefined)?.episodes ?? {};
+  const cycle = (assets['episode_cycle'] as { episodes?: Record<string, { film?: { final_video_url?: string | null } }> } | undefined)?.episodes ?? {};
+  const numbers = new Set([...Object.keys(written), ...Object.keys(cycle)].map(Number).filter(Number.isFinite));
+  return [...numbers].sort((a, b) => a - b).map(number => ({
+    number,
+    title: (written[String(number)]?.plan?.title ?? '').replace(/^第\s*\d+\s*集\s*/, '').trim() || undefined,
+    filmDone: Boolean(cycle[String(number)]?.film?.final_video_url),
+  }));
+}
+
 export default function App() {
   // The whole shell re-renders when the interface language changes (src/i18n).
   useLocale();
@@ -250,7 +282,18 @@ export default function App() {
   const [walletPoints, setWalletPoints] = useState<string | null>(null);
   const [stylePacks, setStylePacks] = useState<readonly StylePackOption[]>(FALLBACK_STYLE_PACKS);
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
-  const [activePortal, setActivePortal] = useState<'home' | 'user' | 'billing' | ElementKind>('home');
+  const [activePortal, setActivePortal] = useState<'home' | 'user' | 'billing' | 'finance' | ElementKind>('home');
+  const [billingNotice, setBillingNotice] = useState('');
+  // 换页就收起：提示说的是刚才那个操作。
+  useEffect(() => {
+    const handle = window.setTimeout(() => setBillingNotice(''), 0);
+    return () => window.clearTimeout(handle);
+  }, [activePortal]);
+  useEffect(() => {
+    const show = (event: Event) => setBillingNotice((event as CustomEvent<string>).detail);
+    window.addEventListener('billing-required', show);
+    return () => window.removeEventListener('billing-required', show);
+  }, []);
 
   // 会话失效后统一回到登录态，避免工作台面板各自吞掉 401 空转重试。
   const resetToSignedOut = useCallback(() => {
@@ -272,6 +315,10 @@ export default function App() {
     if (response.status === 401) {
       resetToSignedOut();
       throw new Error(tr('未登录或登录已过期'));
+    }
+    if (response.status === 402) {
+      const body = await response.clone().json().catch(() => ({})) as { detail?: string };
+      notifyBillingRequired(body.detail || tr('积分不足'));
     }
     return response;
   };
@@ -487,6 +534,8 @@ export default function App() {
   const [scriptContent, setScriptContent] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTabStage, setActiveTabStage] = useState<number>(1);
+  // 助手在对话里要求打开的分镜视图(场景 + 视图)，交给分镜看板执行。
+  const [storyboardViewAction, setStoryboardViewAction] = useState<StoryboardViewAction | null>(null);
   // 从编剧统计跳到角色 agent 时，预选中的资产 Tab（数字演员 / 拍摄场地）
   const [characterAssetKind, setCharacterAssetKind] = useState<ElementKind>('actor');
   const [historyTasks, setHistoryTasks] = useState<TaskSummary[]>([]);
@@ -503,8 +552,9 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string>('');
   
   // 气泡控制
-  const [activePopover, setActivePopover] = useState<'none' | 'skill' | 'element' | 'sidebarSkill'>('none');
+  const [activePopover, setActivePopover] = useState<'none' | 'skill' | 'element' | 'sidebarSkill' | 'poetry'>('none');
   const [showModelConfiguration, setShowModelConfiguration] = useState(false);
+  const [projectOverlay, setProjectOverlay] = useState<'canvas' | 'interactive' | 'tasks' | 'memory' | null>(null);
   const [hasEnabledGlobalModel, setHasEnabledGlobalModel] = useState(false);
   const [globalModelDefaults, setGlobalModelDefaults] = useState<GlobalModelDefaults>(EMPTY_GLOBAL_MODEL_DEFAULTS);
   const [showProjectSkillManager, setShowProjectSkillManager] = useState(false);
@@ -1146,7 +1196,7 @@ export default function App() {
         body: JSON.stringify({ message: text })
       });
       if (res.ok) {
-        const data: { reply: string; action: string; stage: number | null; task: TaskResponse } = await res.json();
+        const data: { reply: string; action: string; stage: number | null; task: TaskResponse; tool_calls?: unknown } = await res.json();
         if (chatRequestRef.current !== requestToken || selection !== selectionVersionRef.current || !canAcceptTaskResponse(selectedTaskIdRef.current, data.task.taskId)) return;
         appliedStatusRequestRef.current = ++statusRequestRef.current;
         restoreChatRef.current = null;
@@ -1162,6 +1212,18 @@ export default function App() {
           ];
           return mergeWorkflowHistory(withoutPending.filter(m => m.id !== userMessageId), data.task);
         });
+
+        // 助手在界面上打开了某场的视图：切到分镜看板并把动作交给看板；下载直接触发，不必再点按钮。
+        const storyboardAction = storyboardActionFrom(data.tool_calls, Date.now());
+        if (storyboardAction) {
+          setActiveTabStage(4);
+          if (storyboardAction.view === 'download') {
+            void downloadStoryboardScene(requestTaskId, storyboardAction.sceneId, `${storyboardAction.sceneId}-时序分镜`);
+            setStoryboardViewAction({ ...storyboardAction, view: 'board' });
+          } else {
+            setStoryboardViewAction(storyboardAction);
+          }
+        }
 
         // 执行类动作：切换看板标签并开启轮询，进度卡实时展示调用过程与百分比
         if (data.action === 'run_stage' || data.action === 'run_all') {
@@ -1247,9 +1309,15 @@ export default function App() {
         if (res.ok) {
           const data = await res.json();
           setTaskData(data);
+        } else {
+          // 改模型被拒(如阶段运行中)时要说出来，不能让界面显示新模型、项目却还在用旧的。
+          const detail = await res.json().then(body => (typeof body?.detail === 'string' ? body.detail : ''), () => '');
+          setConfig(config);
+          alert(detail || `同步配置失败（HTTP ${res.status}）`);
         }
       } catch (e) {
         console.error('同步配置到后端失败', e);
+        alert(tr('同步配置到后端失败，请稍后重试'));
       }
     }
   };
@@ -1311,6 +1379,7 @@ export default function App() {
       creationMode: newProjectCreationMode,
       contentLanguage: newProjectContentLanguage,
       ...(newProjectCreationMode === 'ad' ? { adBrief: newProjectAdBrief } : {}),
+      poetrySources: config.poetrySources ?? [],
       episodeCount: clampEpisodeCount(newProjectEpisodes, clientConfig.episodeCount), // 一次性生成的剧本集数 (视频按集逐集制作)
       oneClick: newProjectOneClick // 由新建弹窗的「成片方式」选择决定：一键成片 / 分步引导
     };
@@ -1365,13 +1434,13 @@ export default function App() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'radial-gradient(circle at 50% -20%, #fdf4f5 0%, var(--bg-dark) 100%)',
+        background: 'radial-gradient(circle at 50% -20%, var(--surface) 0%, var(--bg-dark) 100%)',
         padding: '20px',
         position: 'relative',
         overflow: 'hidden'
       }}>
         {/* 背景动态流光感装饰球 */}
-        <div style={{ position: 'absolute', width: '300px', height: '300px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(227, 84, 108, 0.12) 0%, transparent 70%)', top: '-10%', left: '-5%', filter: 'blur(30px)' }} />
+        <div style={{ position: 'absolute', width: '300px', height: '300px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(var(--accent-rgb), 0.12) 0%, transparent 70%)', top: '-10%', left: '-5%', filter: 'blur(30px)' }} />
         <div style={{ position: 'absolute', width: '400px', height: '400px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(255, 51, 102, 0.08) 0%, transparent 70%)', bottom: '-10%', right: '-5%', filter: 'blur(40px)' }} />
 
         {/* 仅 AUTH_EXPOSE_MOCK_CODE=1 的本地开发环境显示；生产环境无此字段。 */}
@@ -1380,19 +1449,19 @@ export default function App() {
             position: 'absolute',
             top: '24px',
             right: '24px',
-            border: '1px solid rgba(227, 84, 108, 0.4)',
-            boxShadow: '0 0 15px rgba(227, 84, 108, 0.2)',
+            border: '1px solid rgba(var(--accent-rgb), 0.4)',
+            boxShadow: '0 0 15px rgba(var(--accent-rgb), 0.2)',
             zIndex: 99999,
             padding: '12px 18px',
             borderRadius: '12px',
-            background: 'rgba(253, 242, 244, 0.95)',
+            background: 'rgba(var(--surface-rgb), 0.95)',
             display: 'flex',
             alignItems: 'center',
             gap: '8px',
             animation: 'ping 1.5s ease-in-out infinite alternate'
           }}>
             <span style={{ color: 'var(--neon-cyan)', fontSize: '0.85rem', fontWeight: 600 }}>{tr('💡 [演示通道] 验证码为:')}</span>
-            <strong style={{ fontSize: '1.05rem', color: '#221b1e', letterSpacing: '2px', fontFamily: 'monospace' }}>{mockVerificationCode}</strong>
+            <strong style={{ fontSize: '1.05rem', color: 'var(--ink)', letterSpacing: '2px', fontFamily: 'monospace' }}>{mockVerificationCode}</strong>
           </div>
         )}
 
@@ -1400,9 +1469,9 @@ export default function App() {
           width: '100%',
           maxWidth: '440px',
           padding: '32px',
-          border: '1px solid rgba(214, 90, 120, 0.176)',
-          boxShadow: '0 25px 50px -12px rgba(60, 30, 40, 0.275)',
-          background: 'rgba(253, 240, 242, 0.55)',
+          border: '1px solid rgba(var(--accent-rgb), 0.176)',
+          boxShadow: '0 25px 50px -12px rgba(var(--shadow-rgb), 0.275)',
+          background: 'rgba(var(--surface-rgb), 0.55)',
           backdropFilter: 'blur(30px)',
           WebkitBackdropFilter: 'blur(30px)',
           borderRadius: '24px',
@@ -1411,7 +1480,7 @@ export default function App() {
         }}>
           {/* 系统头部 Logo 与名称 */}
           <div style={{ textAlign: 'center', marginBottom: '28px' }}>
-            <h2 style={{ fontSize: '1.8rem', fontWeight: 700, letterSpacing: '2px', background: 'linear-gradient(135deg, #e3546c, #e3546c)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: '8px' }}>
+            <h2 style={{ fontSize: '1.8rem', fontWeight: 700, letterSpacing: '2px', background: 'linear-gradient(135deg, var(--accent), var(--accent-2))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: '8px' }}>
               {PRODUCT_TITLE}
             </h2>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{tr('工业级 AI 短剧多智能体协同成片平台')}</p>
@@ -1419,7 +1488,7 @@ export default function App() {
           </div>
 
           {/* 表单切换 Tab 栏 */}
-          <div style={{ display: 'flex', borderBottom: '1px solid rgba(214, 90, 120, 0.132)', marginBottom: '24px', paddingBottom: '2px' }}>
+          <div style={{ display: 'flex', borderBottom: '1px solid rgba(var(--accent-rgb), 0.132)', marginBottom: '24px', paddingBottom: '2px' }}>
             <button
               onClick={() => { setAuthTab('login_pwd'); setAuthError(''); setAuthSuccess(''); }}
               className={`popover-tab-btn ${authTab === 'login_pwd' ? 'active' : ''}`}
@@ -1445,7 +1514,7 @@ export default function App() {
 
           {/* 统一提示信息反馈 */}
           {authError && (
-            <div style={{ background: 'rgba(211, 18, 18, 0.12)', border: '1px solid var(--neon-red)', color: '#de0707', padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '0.8rem' }}>
+            <div style={{ background: 'rgba(211, 18, 18, 0.12)', border: '1px solid var(--neon-red)', color: 'var(--danger)', padding: '10px 14px', borderRadius: '8px', marginBottom: '16px', fontSize: '0.8rem' }}>
               ⚠️ {authError}
             </div>
           )}
@@ -1467,7 +1536,7 @@ export default function App() {
                     placeholder={tr('请输入绑定的手机号或邮箱')}
                     value={authForm.loginId}
                     onChange={e => setAuthForm({ ...authForm, loginId: e.target.value })}
-                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem', outline: 'none' }}
+                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(var(--shadow-rgb), 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem', outline: 'none' }}
                   />
                 </div>
                 <div>
@@ -1478,7 +1547,7 @@ export default function App() {
                     placeholder={tr('请输入您的密码')}
                     value={authForm.password}
                     onChange={e => setAuthForm({ ...authForm, password: e.target.value })}
-                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem', outline: 'none' }}
+                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(var(--shadow-rgb), 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem', outline: 'none' }}
                   />
                 </div>
               </div>
@@ -1494,7 +1563,7 @@ export default function App() {
                     placeholder={tr('请输入绑定的手机号或邮箱')}
                     value={authForm.loginId}
                     onChange={e => setAuthForm({ ...authForm, loginId: e.target.value })}
-                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem', outline: 'none' }}
+                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(var(--shadow-rgb), 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem', outline: 'none' }}
                   />
                 </div>
                 <div>
@@ -1507,7 +1576,7 @@ export default function App() {
                       placeholder={tr('验证码')}
                       value={authForm.code}
                       onChange={e => setAuthForm({ ...authForm, code: e.target.value })}
-                      style={{ flex: 1, padding: '10px 14px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem', outline: 'none', textAlign: 'center', letterSpacing: '2px', fontFamily: 'monospace' }}
+                      style={{ flex: 1, padding: '10px 14px', background: 'rgba(var(--shadow-rgb), 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem', outline: 'none', textAlign: 'center', letterSpacing: '2px', fontFamily: 'monospace' }}
                     />
                     <button
                       type="button"
@@ -1532,7 +1601,7 @@ export default function App() {
                     placeholder={tr('请输入注册邮箱')}
                     value={authForm.email}
                     onChange={e => setAuthForm({ ...authForm, email: e.target.value })}
-                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem', outline: 'none' }}
+                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(var(--shadow-rgb), 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem', outline: 'none' }}
                   />
                 </div>
                 <div>
@@ -1542,7 +1611,7 @@ export default function App() {
                     placeholder={tr('请输入注册手机号')}
                     value={authForm.phone}
                     onChange={e => setAuthForm({ ...authForm, phone: e.target.value })}
-                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem', outline: 'none' }}
+                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(var(--shadow-rgb), 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem', outline: 'none' }}
                   />
                 </div>
                 <div>
@@ -1553,7 +1622,7 @@ export default function App() {
                     placeholder={`设置登录密码，不少于${clientConfig.passwordMinLength}位`}
                     value={authForm.password}
                     onChange={e => setAuthForm({ ...authForm, password: e.target.value })}
-                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem', outline: 'none' }}
+                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(var(--shadow-rgb), 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem', outline: 'none' }}
                   />
                 </div>
               </div>
@@ -1567,8 +1636,8 @@ export default function App() {
                 marginTop: '28px',
                 padding: '12px',
                 borderRadius: '8px',
-                background: 'linear-gradient(135deg, #e3546c, #e3546c)',
-                color: '#221b1e',
+                background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
+                color: 'var(--ink)',
                 fontWeight: 600,
                 fontSize: '0.9rem',
                 border: 'none',
@@ -1577,7 +1646,7 @@ export default function App() {
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '8px',
-                boxShadow: '0 4px 15px rgba(227, 84, 108, 0.15)'
+                boxShadow: '0 4px 15px rgba(var(--accent-rgb), 0.15)'
               }}
             >
               {authTab === 'register' ? tr('提交注册') : tr('立即登录')}
@@ -1586,7 +1655,7 @@ export default function App() {
 
           {/* 安全提示：仅本地开发且后端启用了管理员引导时显示 */}
           {bootstrapAdminLogin && (
-            <div style={{ marginTop: '20px', borderTop: '1px solid rgba(214, 90, 120, 0.088)', paddingTop: '14px', fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div style={{ marginTop: '20px', borderTop: '1px solid rgba(var(--accent-rgb), 0.088)', paddingTop: '14px', fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <div>{tr('🔐 本地默认管理员：')}<strong>{bootstrapAdminLogin}</strong></div>
               <div>登录配置位于后端 `.env`；首次登录必须修改。生产环境禁止使用开发默认密码。</div>
             </div>
@@ -1600,16 +1669,28 @@ export default function App() {
     return <Suspense fallback={<StageFallback />}><UserCenterPage onBack={() => setActivePortal('home')} onUserChange={setCurrentUser} passwordMinLength={clientConfig.passwordMinLength} /></Suspense>;
   }
 
+  if (currentUser && activePortal === 'finance') {
+    return <Suspense fallback={<StageFallback />}><FinanceConsolePage user={currentUser} onBack={() => setActivePortal('home')} /></Suspense>;
+  }
   if (currentUser && activePortal === 'billing') {
-    return <Suspense fallback={<StageFallback />}><BillingCenterPage onBack={() => setActivePortal('home')} /></Suspense>;
+    return <Suspense fallback={<StageFallback />}><BillingCenterPage inProject={taskId !== ''} onBack={() => setActivePortal('home')} /></Suspense>;
   }
 
-  if (currentUser && ['actor', 'scene', 'prop', 'costume', 'effect'].includes(activePortal)) {
+  if (currentUser && ['actor', 'scene', 'prop', 'effect', 'extra', 'vehicle', 'stunt', 'set_dressing'].includes(activePortal)) {
     return <Suspense fallback={<StageFallback />}><ElementLibraryPage initialKind={activePortal as ElementKind} onBack={() => setActivePortal('home')} /></Suspense>;
   }
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {billingNotice && (
+        <div className="billing-required" role="alert">
+          <span>{billingNotice}</span>
+          {/积分不足|升级套餐/.test(billingNotice) && (
+            <button type="button" className="billing-required__action" onClick={() => { setBillingNotice(''); setActivePortal('billing'); }}>{tr('去充值')}</button>
+          )}
+          <button type="button" className="billing-required__action" onClick={() => setBillingNotice('')}>{tr('关闭')}</button>
+        </div>
+      )}
       
 
 
@@ -1619,10 +1700,11 @@ export default function App() {
           
           {/* 右上角快捷导航 */}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '16px', padding: '20px 0', alignItems: 'center' }}>
+            <NotificationBell onOpenBilling={() => setActivePortal('billing')} onOpenFinance={() => setActivePortal('finance')} />
             {walletPoints !== null && (
               <span
                 title={tr('可用创作积分')}
-                style={{ background: 'rgba(214, 90, 120, 0.132)', padding: '5px 14px', borderRadius: '20px', fontSize: '0.8rem', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '6px' }}
+                style={{ background: 'rgba(var(--accent-rgb), 0.132)', padding: '5px 14px', borderRadius: '20px', fontSize: '0.8rem', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '6px' }}
               >
                 ⚡ {walletPoints} 积分
               </span>
@@ -1632,8 +1714,8 @@ export default function App() {
               onMouseEnter={() => setShowUserMenu(true)}
               onMouseLeave={() => setShowUserMenu(false)}
             >
-              <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'linear-gradient(135deg, #e3546c, #e55d74)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                <User size={16} color="#fcebee" />
+              <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #e55d74)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                <User size={16} color="var(--on-accent)" />
               </div>
               
               {showUserMenu && currentUser && (
@@ -1643,8 +1725,8 @@ export default function App() {
                   right: 0,
                   width: '180px',
                   padding: '12px',
-                  border: '1px solid rgba(214, 90, 120, 0.22)',
-                  boxShadow: '0 10px 20px rgba(60, 30, 40, 0.165)',
+                  border: '1px solid rgba(var(--accent-rgb), 0.22)',
+                  boxShadow: '0 10px 20px rgba(var(--shadow-rgb), 0.165)',
                   zIndex: 1000,
                   background: 'var(--bg-popover)',
                   borderRadius: '12px',
@@ -1652,7 +1734,7 @@ export default function App() {
                   flexDirection: 'column',
                   gap: '8px'
                 }}>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 600, borderBottom: '1px solid rgba(214, 90, 120, 0.11)', paddingBottom: '6px', color: 'var(--neon-cyan)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>
+                  <div style={{ fontSize: '0.8rem', fontWeight: 600, borderBottom: '1px solid rgba(var(--accent-rgb), 0.11)', paddingBottom: '6px', color: 'var(--neon-cyan)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>
                     👤 {currentUser.username || '当前用户'}
                   </div>
                   <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>
@@ -1664,6 +1746,11 @@ export default function App() {
                   <button className="account-menu-action" onClick={() => { setActivePortal('billing'); setShowUserMenu(false); }}>
                     {tr('会员与支付')}
                   </button>
+                  {FINANCE_PERMISSIONS.some(permission => hasPermission(currentUser, permission)) && (
+                    <button className="account-menu-action" onClick={() => { setActivePortal('finance'); setShowUserMenu(false); }}>
+                      {tr('财务后台')}
+                    </button>
+                  )}
                   <button
                     onClick={handleLogout}
                     style={{
@@ -1688,11 +1775,11 @@ export default function App() {
           </div>
 
           {/* 标题 */}
-          <div style={{ textAlign: 'center', marginTop: '60px', marginBottom: '40px' }}>
-            <h2 style={{ fontSize: '2.8rem', fontWeight: 300, letterSpacing: '3px', marginBottom: '12px' }}>
+          <div className="hero">
+            <h2 className="hero-title">
               {PRODUCT_TITLE} - 你的专属AI视频创作Agent
             </h2>
-            <p style={{ color: 'var(--text-dim)', fontSize: '1.1rem', fontWeight: 300 }}>
+            <p className="hero-sub">
               {tr('把品味和习惯写进Skill，让精力回归创意')}
             </p>
           </div>
@@ -1700,7 +1787,7 @@ export default function App() {
           {/* 核心创意输入框 (带气泡) */}
           <div style={{ position: 'relative', width: '100%' }}>
             {errorMessage && (
-              <div style={{ background: 'rgba(211, 18, 18, 0.15)', border: '1px solid #d31212', color: '#de0707', padding: '12px 16px', borderRadius: '8px', marginBottom: '16px', fontSize: '0.9rem' }}>
+              <div className="error-banner">
                 ⚠️ {errorMessage}
               </div>
             )}
@@ -1748,14 +1835,28 @@ export default function App() {
                     aria-expanded={activePopover === 'element'}
                   ><Folder size={14} /> {tr('元素')}</button>
 
+                  <button
+                    type="button"
+                    className={`capsule-btn ${activePopover === 'poetry' || (config.poetrySources?.length ?? 0) > 0 ? 'active' : ''}`}
+                    onClick={() => setActivePopover(activePopover === 'poetry' ? 'none' : 'poetry')}
+                    aria-expanded={activePopover === 'poetry'}
+                  ><BookOpen size={14} /> {(config.poetrySources?.length ?? 0) > 0 ? tr('诗词取材 {0}', [String(config.poetrySources?.length)]) : tr('诗词取材')}</button>
+
+                  {activePopover === 'poetry' && (
+                    <PoetrySourcePicker value={config.poetrySources ?? []} onChange={next => setConfig({ ...config, poetrySources: next })} />
+                  )}
+
                   {activePopover === 'element' && (
                     <div className="element-menu" role="menu" aria-label={tr('选择元素类型')}>
                       {([
                         ['actor', '演员', '设定集与表演身份锚点'],
                         ['scene', '场景', '空间、时段、天气和灯光'],
                         ['prop', '道具', '归属、位置和状态连续性'],
-                        ['costume', '服装', '角色状态、材质与换装连续性'],
                         ['effect', '特效', '时间、目标和结束状态'],
+                        ['extra', '群演', '没有台词的背景人物'],
+                        ['vehicle', '车辆', '入画的车、船、马车'],
+                        ['stunt', '特技', '有风险的动作过程'],
+                        ['set_dressing', '置景', '角色不碰的陈设'],
                       ] as Array<[ElementKind, string, string]>).map(([value, label, hint]) => (
                         <button key={value} type="button" role="menuitem" onClick={() => { setActivePortal(value); setActivePopover('none'); }}>
                           <span>{label}</span><small>{hint}</small><ChevronRight size={15} />
@@ -1798,7 +1899,7 @@ export default function App() {
                   {/* Skill 选择气泡弹窗 */}
                   {activePopover === 'skill' && (
                     <div className="popover-window" style={{ bottom: '45px', left: '120px', width: '300px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid rgba(214, 90, 120, 0.132)', paddingBottom: '6px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid rgba(var(--accent-rgb), 0.132)', paddingBottom: '6px' }}>
                         <h4 style={{ fontSize: '0.9rem', margin: 0 }}>{tr('内置与导入 Skills')}</h4>
                         <button 
                           onClick={() => { setShowImportSkillModal(true); setActivePopover('none'); }}
@@ -1851,7 +1952,7 @@ export default function App() {
                               transform: 'translateY(-50%)',
                               background: 'transparent',
                               border: 'none',
-                              color: 'rgba(214, 90, 120, 0.88)',
+                              color: 'rgba(var(--accent-rgb), 0.88)',
                               cursor: 'pointer',
                               padding: '4px',
                               display: 'flex',
@@ -1863,7 +1964,7 @@ export default function App() {
                           >
                             <X size={12} />
                           </button>
-                          <div><strong>{s.name}</strong> <span style={{ fontSize: '0.65rem', padding: '1px 4px', background: 'var(--neon-green)', color: '#fcebee', borderRadius: '4px', marginLeft: '4px', fontWeight: 'bold' }}>{tr('已导入')}</span></div>
+                          <div><strong>{s.name}</strong> <span style={{ fontSize: '0.65rem', padding: '1px 4px', background: 'var(--neon-green)', color: 'var(--on-accent)', borderRadius: '4px', marginLeft: '4px', fontWeight: 'bold' }}>{tr('已导入')}</span></div>
                           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{s.description}</span>
                         </div>
                       ))}
@@ -1876,9 +1977,9 @@ export default function App() {
                 <button 
                   onClick={() => initDramaProject(chatInput)}
                   className="cyber-btn" 
-                  style={{ width: '40px', height: '40px', borderRadius: '50%', padding: '0', background: 'linear-gradient(135deg, #e3546c, #e3546c)' }}
+                  style={{ width: '40px', height: '40px', borderRadius: '50%', padding: '0', background: 'linear-gradient(135deg, var(--accent), var(--accent-2))' }}
                 >
-                  <ArrowUp size={18} color="#221b1e" />
+                  <ArrowUp size={18} color="var(--ink)" />
                 </button>
 
               </div>
@@ -1889,20 +1990,20 @@ export default function App() {
           {/* 热门 Skills 卡片横列 */}
           {showSkillsGrid && (
             <div style={{ marginTop: '24px', position: 'relative' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div className="skills-head">
+                <span className="skills-head__label">
                   {tr('🔥 推荐创作 Skills (点击快速填入选题)')}
                 </span>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                   <button 
                     onClick={() => setShowProjectSkillManager(true)}
-                    style={{ background: 'rgba(227, 84, 108, 0.08)', border: '1px solid rgba(227, 84, 108, 0.3)', color: 'var(--neon-cyan)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', padding: '2px 8px', borderRadius: '4px' }}
+                    className="skills-head__manage"
                   >
                     {tr('+ 管理项目 Skill')}
                   </button>
                   <button 
                     onClick={() => setShowSkillsGrid(false)} 
-                    style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.8rem' }}
+                    className="skills-head__hide"
                     title={tr('关闭推荐')}
                   >
                     <X size={14} /> {tr('隐藏')}
@@ -1930,7 +2031,7 @@ export default function App() {
                         position: 'absolute', 
                         top: '6px', 
                         right: '6px', 
-                        background: 'rgba(214, 90, 120, 0.22)', 
+                        background: 'rgba(var(--accent-rgb), 0.22)', 
                         border: 'none', 
                         borderRadius: '50%', 
                         color: 'rgba(43, 29, 35, 0.6)', 
@@ -1955,12 +2056,12 @@ export default function App() {
             </div>
           )}
 
-          <CapabilityCenter role={currentUser?.role} />
+          <CapabilityCenter canManage={hasPermission(currentUser, 'capability:manage')} />
 
           {/* 历史任务/断点大厅 (大卡片) */}
           <div style={{ maxWidth: '900px', width: '100%', margin: '40px auto 0 auto' }}>
             <h3 style={{ fontSize: '1.2rem', fontWeight: 500, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <HardDrive size={18} color="#fbc02d" /> {tr('断点续传项目大厅')}
+              <HardDrive size={18} color="var(--gold)" /> {tr('断点续传项目大厅')}
             </h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
               {historyTasks.map(task => {
@@ -1998,9 +2099,9 @@ export default function App() {
                     style={{ 
                       padding: '18px', 
                       cursor: 'pointer', 
-                      background: 'rgba(214, 90, 120, 0.044)',
-                      border: isRunning ? '1px solid rgba(227, 84, 108, 0.3)' : '1px solid var(--border-color)',
-                      boxShadow: isRunning ? '0 0 15px rgba(227, 84, 108, 0.08)' : 'none',
+                      background: 'rgba(var(--accent-rgb), 0.044)',
+                      border: isRunning ? '1px solid rgba(var(--accent-rgb), 0.3)' : '1px solid var(--border-color)',
+                      boxShadow: isRunning ? '0 0 15px rgba(var(--accent-rgb), 0.08)' : 'none',
                       transition: 'all 0.3s ease',
                       position: 'relative'
                     }}
@@ -2017,7 +2118,7 @@ export default function App() {
                         right: '4px',
                         background: 'transparent',
                         border: 'none',
-                        color: 'rgba(214, 90, 120, 0.77)',
+                        color: 'rgba(var(--accent-rgb), 0.77)',
                         cursor: 'pointer',
                         padding: '4px',
                         display: 'flex',
@@ -2054,15 +2155,15 @@ export default function App() {
                     </p>
 
                     {/* 进度条打印显示 */}
-                    <div style={{ width: '100%', height: '5px', background: 'rgba(214, 90, 120, 0.132)', borderRadius: '3px', overflow: 'hidden', marginBottom: '14px' }}>
+                    <div style={{ width: '100%', height: '5px', background: 'rgba(var(--accent-rgb), 0.132)', borderRadius: '3px', overflow: 'hidden', marginBottom: '14px' }}>
                       <div 
                         style={{ 
                           width: `${progressPct}%`, 
                           height: '100%', 
                           background: isCompleted 
                             ? 'linear-gradient(90deg, #10b981, #10b981)' 
-                            : 'linear-gradient(90deg, #e3546c, #e3546c)',
-                          boxShadow: isRunning ? '0 0 8px #e3546c' : 'none',
+                            : 'linear-gradient(90deg, var(--accent), var(--accent))',
+                          boxShadow: isRunning ? '0 0 8px var(--accent)' : 'none',
                           transition: 'width 0.6s cubic-bezier(0.4, 0, 0.2, 1)' 
                         }}
                       ></div>
@@ -2090,7 +2191,7 @@ export default function App() {
                               handleCardResume(task.taskId);
                             }}
                             className="capsule-btn" 
-                            style={{ padding: '2px 8px', fontSize: '0.7rem', borderColor: 'var(--neon-cyan)', color: 'var(--neon-cyan)', background: 'rgba(227, 84, 108, 0.05)' }}
+                            style={{ padding: '2px 8px', fontSize: '0.7rem', borderColor: 'var(--neon-cyan)', color: 'var(--neon-cyan)', background: 'rgba(var(--accent-rgb), 0.05)' }}
                           >
                             <Play size={10} style={{ display: 'inline', marginRight: '2px' }} /> {tr('恢复')}
                           </button>
@@ -2110,22 +2211,21 @@ export default function App() {
           {/* 创建项目悬浮按钮 */}
           <div style={{ position: 'fixed', bottom: '40px', left: '40px', zIndex: 100 }}>
             <button 
-              className="glass-panel" 
+              className="project-fab" 
               onClick={() => {
                 setNewProjectName('');
                 setShowCreateModal(true);
               }} 
-              style={{ padding: '12px 20px', borderRadius: '99px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', background: 'rgba(214, 90, 120, 0.066)' }}
             >
-              <span style={{ width: 16, height: 16, borderRadius: '50%', background: 'var(--neon-cyan)', display: 'inline-block' }}></span>
+              <span className="project-fab__dot"></span>
               {tr('创建新项目')}
             </button>
           </div>
 
           {/* 磨砂玻璃真·创建新项目 Modal 弹窗 */}
           {showCreateModal && (
-            <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(60, 30, 40, 0.33)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-              <div className="glass-panel" style={{ width: '480px', padding: '24px', position: 'relative', border: '1px solid rgba(227, 84, 108, 0.2)', boxShadow: '0 0 30px rgba(227, 84, 108, 0.15)' }}>
+            <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(var(--shadow-rgb), 0.33)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+              <div className="glass-panel" style={{ width: '480px', padding: '24px', position: 'relative', border: '1px solid rgba(var(--accent-rgb), 0.2)', boxShadow: '0 0 30px rgba(var(--accent-rgb), 0.15)' }}>
                 <button 
                   onClick={() => setShowCreateModal(false)} 
                   style={{ position: 'absolute', top: '16px', right: '16px', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
@@ -2145,7 +2245,7 @@ export default function App() {
                       placeholder={tr('例如：重生之我在火山方舟当车载配件巨头')}
                       value={newProjectName}
                       onChange={e => setNewProjectName(e.target.value)}
-                      style={{ width: '100%', padding: '10px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.9rem' }}
+                      style={{ width: '100%', padding: '10px', background: 'rgba(var(--shadow-rgb), 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.9rem' }}
                     />
                   </div>
 
@@ -2155,7 +2255,7 @@ export default function App() {
                       <select 
                         value={newProjectDirectorStyle}
                         onChange={e => setNewProjectDirectorStyle(e.target.value)}
-                        style={{ width: '100%', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
+                        style={{ width: '100%', padding: '10px', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem' }}
                       >
                         {DIRECTOR_STYLES.map(style => (
                           <option key={style.id} value={style.id}>{tr(style.label)}</option>
@@ -2168,7 +2268,7 @@ export default function App() {
                         value={newProjectStylePack}
                         onChange={e => setNewProjectStylePack(e.target.value)}
                         title={tr('全片统一的画面质感：分镜图、首尾帧与每一镜视频提示词都按它编译')}
-                        style={{ width: '100%', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
+                        style={{ width: '100%', padding: '10px', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem' }}
                       >
                         {stylePacks.map(pack => (
                           <option key={pack.id} value={pack.id}>{pack.name}</option>
@@ -2180,7 +2280,7 @@ export default function App() {
                       <select 
                         value={newProjectShotStyle}
                         onChange={e => setNewProjectShotStyle(e.target.value)}
-                        style={{ width: '100%', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
+                        style={{ width: '100%', padding: '10px', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem' }}
                       >
                         {SHOT_STYLES.map(style => (
                           <option key={style.id} value={style.id}>{tr(style.label)}</option>
@@ -2194,7 +2294,7 @@ export default function App() {
                         value={newProjectContentLanguage}
                         onChange={e => setNewProjectContentLanguage(e.target.value as ContentLanguage)}
                         title={tr('标题、台词、旁白、正文与画面描述都用这种语言写；界面语言另在右上角切换')}
-                        style={{ width: '100%', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
+                        style={{ width: '100%', padding: '10px', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem' }}
                       >
                         {CONTENT_LANGUAGE_OPTIONS.map(option => (
                           <option key={option.id} value={option.id}>{option.label}</option>
@@ -2208,7 +2308,7 @@ export default function App() {
                         value={newProjectCreationMode}
                         onChange={e => setNewProjectCreationMode(e.target.value as CreationMode)}
                         title={tr(CREATION_MODE_OPTIONS.find(option => option.id === newProjectCreationMode)?.hint ?? '')}
-                        style={{ width: '100%', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
+                        style={{ width: '100%', padding: '10px', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem' }}
                       >
                         {CREATION_MODE_OPTIONS.map(option => (
                           <option key={option.id} value={option.id}>{tr(option.label)}</option>
@@ -2230,7 +2330,7 @@ export default function App() {
                               value={newProjectAdBrief[key]}
                               placeholder={placeholder}
                               onChange={e => setNewProjectAdBrief(current => ({ ...current, [key]: e.target.value }))}
-                              style={{ padding: '8px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.8rem' }}
+                              style={{ padding: '8px', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.8rem' }}
                             />
                           </label>
                         ))}
@@ -2242,7 +2342,7 @@ export default function App() {
                         value={newProjectNarrationDelivery}
                         onChange={e => setNewProjectNarrationDelivery(e.target.value as NarrationDelivery)}
                         title={tr(NARRATION_DELIVERY_OPTIONS.find(option => option.id === newProjectNarrationDelivery)?.hint ?? '')}
-                        style={{ width: '100%', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
+                        style={{ width: '100%', padding: '10px', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem' }}
                       >
                         {NARRATION_DELIVERY_OPTIONS.map(option => (
                           <option key={option.id} value={option.id}>{tr(option.label)}</option>
@@ -2263,7 +2363,7 @@ export default function App() {
                     <select
                       value={newProjectOneClick ? 'one_click' : 'guided'}
                       onChange={e => setNewProjectOneClick(e.target.value === 'one_click')}
-                      style={{ width: '100%', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
+                      style={{ width: '100%', padding: '10px', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem' }}
                     >
                       <option value="one_click">{tr('⚡ 一键成片 (后台连续生成全部 8 步)')}</option>
                       <option value="guided">{tr('🧭 一步一步引导 (逐步生成，可对话微调)')}</option>
@@ -2281,7 +2381,7 @@ export default function App() {
                         setNewProjectEpisodesCustom(false);
                         setNewProjectEpisodes(parseInt(e.target.value, 10));
                       }}
-                      style={{ width: '100%', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
+                      style={{ width: '100%', padding: '10px', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem' }}
                     >
                       {EPISODE_COUNT_PRESETS
                         .filter(n => n >= clientConfig.episodeCount.min && n <= clientConfig.episodeCount.max)
@@ -2298,7 +2398,7 @@ export default function App() {
                         value={newProjectEpisodes}
                         onChange={e => setNewProjectEpisodes(clampEpisodeCount(e.target.value, clientConfig.episodeCount))}
                         placeholder={`${clientConfig.episodeCount.min}-${clientConfig.episodeCount.max} 集`}
-                        style={{ width: '100%', marginTop: '8px', padding: '10px', background: '#fdeff1', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.85rem' }}
+                        style={{ width: '100%', marginTop: '8px', padding: '10px', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem' }}
                       />
                     )}
                   </div>
@@ -2315,7 +2415,7 @@ export default function App() {
                   <button
                     onClick={handleConfirmCreate}
                     className="cyber-btn"
-                    style={{ padding: '8px 20px', background: 'linear-gradient(135deg, #e3546c, #e3546c)', color: '#221b1e', fontWeight: 600 }}
+                    style={{ padding: '8px 20px', background: 'linear-gradient(135deg, var(--accent), var(--accent-2))', color: 'var(--ink)', fontWeight: 600 }}
                   >
                     {tr('立即创建项目')}
                   </button>
@@ -2345,6 +2445,12 @@ export default function App() {
                   《{scriptDisplayName}》 - 看板展示大厅
                 </h2>
               </div>
+              <div className="asset-stage-nav__tools" role="group" aria-label={tr('项目工具')}>
+                <button type="button" onClick={() => setProjectOverlay('canvas')}><Network size={14} aria-hidden="true" /> {tr('节点画布')}</button>
+                <button type="button" onClick={() => setProjectOverlay('interactive')}><GitBranch size={14} aria-hidden="true" /> {tr('互动剧')}</button>
+                <button type="button" onClick={() => setProjectOverlay('tasks')}><ListChecks size={14} aria-hidden="true" /> {tr('任务中心')}</button>
+                <button type="button" onClick={() => setProjectOverlay('memory')}><BrainCircuit size={14} aria-hidden="true" /> {tr('项目记忆')}</button>
+              </div>
               <AgentStageTabs activeStage={activeTabStage} onChange={setActiveTabStage} />
             </div>
 
@@ -2363,6 +2469,7 @@ export default function App() {
                 breakdownScenes={(taskData.assets["2_breakdown"] as { scenes?: BreakdownSceneRef[] } | undefined)?.scenes}
                 onRefresh={() => { void fetchTaskStatus(taskId); }}
                 onRegenerate={() => { void sendChatInstruction('重跑第 4 阶段'); }}
+                externalAction={storyboardViewAction}
                 onContinue={() => setActiveTabStage(5)}
               />
             ) : activeTabStage === 1 ? (
@@ -2408,9 +2515,9 @@ export default function App() {
                 onRegenerate={() => { void sendChatInstruction('重跑第 3 阶段'); }}
                 onContinue={() => setActiveTabStage(4)}
               />
-            ) : !taskData?.assets[activeTabStage.toString()] ? (
+            ) : !taskData?.assets[activeTabStage.toString()] && !(activeTabStage === 5 && taskData?.assets["4"]) ? (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', opacity: 0.65 }}>
-                <Film size={80} color="var(--neon-cyan)" style={{ marginBottom: '20px', filter: 'drop-shadow(0 0 20px rgba(227, 84, 108, 0.3))' }} />
+                <Film size={80} color="var(--neon-cyan)" style={{ marginBottom: '20px', filter: 'drop-shadow(0 0 20px rgba(var(--accent-rgb), 0.3))' }} />
                 <h3 style={{ fontSize: '1.8rem', fontWeight: 600, marginBottom: '10px' }}>{tr('开始！')}</h3>
                 <p style={{ color: 'var(--text-muted)' }}>{tr('请在右侧聊天框中输入您的创作需求，或者点击“下一步”启动生成吧！')}</p>
               </div>
@@ -2422,9 +2529,9 @@ export default function App() {
                   role="region"
                   aria-label={`Stage ${activeTabStage} 阶段资产预览`}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', marginBottom: '16px' }}>
-                    <Monitor size={18} color="var(--neon-cyan)" />
-                    <span style={{ fontWeight: 600 }}>Stage {activeTabStage} 阶段资产预览</span>
+                  <div className="stage-preview-head">
+                    <span className="stage-preview-head__icon"><Monitor size={16} /></span>
+                    <span className="stage-preview-head__title">Stage {activeTabStage} 阶段资产预览</span>
                   </div>
 
                   {/* 5: 视觉总监生成 */}
@@ -2435,30 +2542,19 @@ export default function App() {
                         videoModel={taskData.config.videoModel || config.videoModel}
                         imageModel={taskData.config.imageModel || config.imageModel}
                         taskId={taskId}
+                        episodes={episodeMetaOf(taskData.assets)}
                         onRerun={() => { void sendChatInstruction('重跑第 5 阶段'); }}
+                        onVideoModelChange={(model: string) => {
+                          setConfig(current => ({ ...current, videoModel: model }));
+                          setTaskData(current => (current ? { ...current, config: { ...current.config, videoModel: model } } : current));
+                        }}
                       />
                     </Suspense>
                   )}
 
                   {/* 6: 音频总监生成 */}
                   {activeTabStage === 6 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                      <div className="glass-panel" style={{ background: '#fcedef', display: 'flex', alignItems: 'center', gap: '16px' }}>
-                        <Music size={28} color="var(--neon-cyan)" />
-                        <div>
-                          <h4 style={{ fontSize: '0.95rem' }}>
-                            音轨合成: 角色专属配音
-                            {taskData.assets["6"]?.bgm_url ? tr(' + 背景音乐') : ''}
-                            {taskData.assets["6"]?.sfx_url ? tr(' + 环境音效') : ''}
-                          </h4>
-                          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                            模型: {taskData.config.ttsModel || config.ttsModel}
-                            {taskData.assets["6"]?.tts_text ? ` | 配音: ${taskData.assets["6"].tts_text}` : ''}
-                          </p>
-                        </div>
-                      </div>
-                      <audio src={taskData.assets["6"].audio_url} controls style={{ width: '100%' }} />
-                    </div>
+                    <StageSixPreview asset={taskData.assets["6"]} ttsModel={taskData.config.ttsModel || config.ttsModel} />
                   )}
 
                   {/* 7: 合成发布 */}
@@ -2472,10 +2568,10 @@ export default function App() {
                             '成片',
                           ].filter(Boolean).join(' ')}
                         </span>
-                        <video src={taskData.videoUrl || taskData.assets["7"]?.final_video_url} controls style={{ width: '100%', borderRadius: '16px', border: '2px solid var(--neon-cyan)', boxShadow: '0 0 20px rgba(227, 84, 108, 0.2)' }} />
+                        <video src={taskData.videoUrl || taskData.assets["7"]?.final_video_url} controls style={{ width: '100%', borderRadius: '16px', border: '2px solid var(--neon-cyan)', boxShadow: '0 0 20px rgba(var(--accent-rgb), 0.2)' }} />
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        <div className="glass-panel" style={{ background: '#fcedef', padding: '12px' }}>
+                        <div className="glass-panel" style={{ background: 'var(--surface)', padding: '12px' }}>
                           <span style={{ color: 'var(--neon-cyan)', fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>{tr('合成属性')}</span>
                           <div style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                             {taskData.assets["7"]?.aspect_ratio && (
@@ -2496,7 +2592,7 @@ export default function App() {
                           </div>
                         </div>
                         {/* 剪辑时间线：审看、裁剪、转场、配乐，按它重新合成或导出剪映草稿 */}
-                        <div className="glass-panel" style={{ background: '#fcedef', padding: '12px' }}>
+                        <div className="glass-panel" style={{ background: 'var(--surface)', padding: '12px' }}>
                           <Suspense fallback={<StageFallback />}><TimelinePanel taskId={taskId} /></Suspense>
                         </div>
                       </div>
@@ -2506,7 +2602,7 @@ export default function App() {
                   {/* 8: 宣发 Agent */}
                   {activeTabStage === 8 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      <div className="glass-panel" style={{ background: '#fcedef', padding: '12px' }}>
+                      <div className="glass-panel" style={{ background: 'var(--surface)', padding: '12px' }}>
                         <span style={{ color: 'var(--neon-cyan)', fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>{tr('宣发大字标题')}</span>
                         <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>
                           {(() => {
@@ -2515,7 +2611,7 @@ export default function App() {
                           })()}
                         </span>
                       </div>
-                      <div className="glass-panel" style={{ background: '#fcedef', padding: '12px' }}>
+                      <div className="glass-panel" style={{ background: 'var(--surface)', padding: '12px' }}>
                         <span style={{ color: 'var(--neon-cyan)', fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>{tr('引流文案')}</span>
                         <p style={{ fontSize: '0.8rem', lineHeight: '1.4' }}>
                           {(() => {
@@ -2528,12 +2624,16 @@ export default function App() {
                         <span style={{ color: 'var(--text-muted)' }}>{tr('短发布链接:')} </span>
                         <a href={taskData.shortLink} target="_blank" rel="noreferrer" style={{ color: 'var(--neon-cyan)' }}>{taskData.shortLink}</a>
                       </div>
+                      {/* 分享至社媒：选平台，准备各平台上架物料（不自动发布） */}
+                      {taskId && <Suspense fallback={<StageFallback />}><PublishPanel taskId={taskId} /></Suspense>}
+                      {/* 自动获客：已发布作品的评论与私信 → 线索 → 由人确认的回复 → 跟进 */}
+                      {taskId && <Suspense fallback={<StageFallback />}><AcquisitionPanel taskId={taskId} /></Suspense>}
                     </div>
                   )}
 
                   {/* 统一卡片底部推进/下一步按钮栏 */}
                   {taskData && (
-                    <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid rgba(214, 90, 120, 0.11)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid rgba(var(--accent-rgb), 0.11)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       {activeTabStage > 1 ? (
                         <button 
                           type="button"
@@ -2564,16 +2664,17 @@ export default function App() {
                 </div>
 
                 {/* 质检监控底栏 */}
-                <div className="glass-panel" style={{ background: 'rgba(60, 30, 40, 0.055)' }}>
-                  <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--neon-amber)', marginBottom: '10px', borderBottom: '1px solid rgba(214, 90, 120, 0.11)', paddingBottom: '6px' }}>
-                    {tr('100+项质检校验（一致性检查清单）一致性 Hooks 报告')}
+                <section className="glass-panel qc-panel" aria-label={tr('质检报告')}>
+                  <header className="qc-panel__head">
+                    <span className="qc-panel__badge">QC</span>
+                    <span>{tr('100+项质检校验（一致性检查清单）一致性 Hooks 报告')}</span>
+                  </header>
+                  <div className="qc-panel__body">
+                    {taskData.logs[activeTabStage.toString()]
+                      ? <MarkdownDocument source={String(taskData.logs[activeTabStage.toString()])} ariaLabel={tr('质检报告')} />
+                      : <p className="qc-panel__empty">{tr('本阶段的质检报告生成后会显示在这里。')}</p>}
                   </div>
-                  <div 
-                    style={{ fontFamily: 'monospace', fontSize: '0.8rem', maxHeight: '120px', overflowY: 'auto', whiteSpace: 'pre-wrap' }}
-                  >
-                    {taskData.logs[activeTabStage.toString()]}
-                  </div>
-                </div>
+                </section>
 
               </div>
 
@@ -2617,7 +2718,7 @@ export default function App() {
                   {/* AI 消息加上 Novara 标志和交互按钮 */}
                   {msg.sender === 'ai' ? (
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', borderBottom: '1px solid rgba(214, 90, 120, 0.088)', paddingBottom: '4px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', borderBottom: '1px solid rgba(var(--accent-rgb), 0.088)', paddingBottom: '4px' }}>
                         <span className="chat-agent-badge">{NOVARA_AGENT_NAME}</span>
                       </div>
                       
@@ -2634,11 +2735,11 @@ export default function App() {
               {/* 阶段执行实时进度卡：调用过程 + 滚动百分比 */}
               {taskData?.stageProgress && taskData.stageProgress.status === 'running' && taskData.status === 'running' && (
                 <div className="chat-bubble ai">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', borderBottom: '1px solid rgba(214, 90, 120, 0.088)', paddingBottom: '4px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', borderBottom: '1px solid rgba(var(--accent-rgb), 0.088)', paddingBottom: '4px' }}>
                     <span className="chat-agent-badge">{NOVARA_AGENT_NAME}</span>
                     <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{tr('正在执行 · 实时调用过程')}</span>
                   </div>
-                  <StageProgressPanel progress={taskData.stageProgress} />
+                  <StageProgressPanel progress={taskData.stageProgress} onOpenBilling={() => setActivePortal('billing')} />
                 </div>
               )}
             </ChatHistory>
@@ -2649,7 +2750,7 @@ export default function App() {
               {/* 侧边栏 Skill 选择气泡弹窗 */}
               {activePopover === 'sidebarSkill' && (
                 <div className="popover-window" style={{ bottom: '85px', left: '16px', right: '16px', width: 'auto', zIndex: 100 }}>
-                  <h4 style={{ fontSize: '0.85rem', marginBottom: '8px', borderBottom: '1px solid rgba(214, 90, 120, 0.132)', paddingBottom: '6px' }}>{tr('内置超级 Skills')}</h4>
+                  <h4 style={{ fontSize: '0.85rem', marginBottom: '8px', borderBottom: '1px solid rgba(var(--accent-rgb), 0.132)', paddingBottom: '6px' }}>{tr('内置超级 Skills')}</h4>
                   <div 
                     onClick={() => {
                       updateConfigAndSync({ shotStyle: 'cinematic', directorStyle: 'cyberpunk' });
@@ -2673,7 +2774,7 @@ export default function App() {
 
                   {importedSkills.length > 0 && (
                     <>
-                      <h4 style={{ fontSize: '0.85rem', marginTop: '12px', marginBottom: '8px', borderBottom: '1px solid rgba(214, 90, 120, 0.132)', paddingBottom: '6px' }}>{tr('导入外部 Skills')}</h4>
+                      <h4 style={{ fontSize: '0.85rem', marginTop: '12px', marginBottom: '8px', borderBottom: '1px solid rgba(var(--accent-rgb), 0.132)', paddingBottom: '6px' }}>{tr('导入外部 Skills')}</h4>
                       {importedSkills.map(s => (
                         <div 
                           key={s.name}
@@ -2697,7 +2798,7 @@ export default function App() {
                               transform: 'translateY(-50%)',
                               background: 'transparent',
                               border: 'none',
-                              color: 'rgba(214, 90, 120, 0.88)',
+                              color: 'rgba(var(--accent-rgb), 0.88)',
                               cursor: 'pointer',
                               padding: '4px',
                               display: 'flex',
@@ -2709,7 +2810,7 @@ export default function App() {
                           >
                             <X size={12} />
                           </button>
-                          <div><strong>{s.name}</strong> <span style={{ fontSize: '0.65rem', padding: '1px 4px', background: 'var(--neon-green)', color: '#fcebee', borderRadius: '4px', marginLeft: '4px', fontWeight: 'bold' }}>{tr('已导入')}</span></div>
+                          <div><strong>{s.name}</strong> <span style={{ fontSize: '0.65rem', padding: '1px 4px', background: 'var(--neon-green)', color: 'var(--on-accent)', borderRadius: '4px', marginLeft: '4px', fontWeight: 'bold' }}>{tr('已导入')}</span></div>
                           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{s.description}</span>
                         </div>
                       ))}
@@ -2746,9 +2847,18 @@ export default function App() {
         </div>
       )}
 
+      {taskId && projectOverlay && (
+        <Suspense fallback={null}>
+          {projectOverlay === 'canvas' && <CanvasWorkspace taskId={taskId} onClose={() => setProjectOverlay(null)} />}
+          {projectOverlay === 'interactive' && <InteractiveStoryWorkspace taskId={taskId} onClose={() => setProjectOverlay(null)} onOpenCanvas={() => setProjectOverlay('canvas')} />}
+          {projectOverlay === 'tasks' && <TaskCenter taskId={taskId} onClose={() => setProjectOverlay(null)} />}
+          {projectOverlay === 'memory' && <ProjectMemory taskId={taskId} onClose={() => setProjectOverlay(null)} />}
+        </Suspense>
+      )}
+
       {showModelConfiguration && <Suspense fallback={null}><ModelConfigurationCenter
         open={showModelConfiguration}
-        role={currentUser?.role}
+        canManage={hasPermission(currentUser, 'model_config:manage')}
         mustChangePassword={currentUser?.must_change_password}
         onClose={() => { setShowModelConfiguration(false); void refreshModelConfigurationStatus(); }}
         onConfigurationChange={() => { void refreshModelConfigurationStatus(); }}
@@ -2764,15 +2874,15 @@ export default function App() {
 
       {showProjectSkillManager && <Suspense fallback={null}><ProjectSkillManager
         open={showProjectSkillManager}
-        role={currentUser?.role}
+        canManage={hasPermission(currentUser, 'skill:manage')}
         mustChangePassword={currentUser?.must_change_password}
         onClose={() => setShowProjectSkillManager(false)}
       /></Suspense>}
 
       {/* 磨砂玻璃 导入外部 Skill 弹窗 */}
       {showImportSkillModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(60, 30, 40, 0.358)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyItems: 'center', justifyContent: 'center', zIndex: 99999 }}>
-          <div className="glass-panel" style={{ width: '500px', padding: '26px', position: 'relative', border: '1px solid rgba(227, 84, 108, 0.25)', boxShadow: '0 0 35px rgba(227, 84, 108, 0.2)' }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(var(--shadow-rgb), 0.358)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyItems: 'center', justifyContent: 'center', zIndex: 99999 }}>
+          <div className="glass-panel" style={{ width: '500px', padding: '26px', position: 'relative', border: '1px solid rgba(var(--accent-rgb), 0.25)', boxShadow: '0 0 35px rgba(var(--accent-rgb), 0.2)' }}>
             <button 
               onClick={() => setShowImportSkillModal(false)} 
               style={{ position: 'absolute', top: '16px', right: '16px', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
@@ -2785,7 +2895,7 @@ export default function App() {
             </h3>
 
             {/* 标签切换 */}
-            <div style={{ display: 'flex', background: 'rgba(214, 90, 120, 0.088)', padding: '4px', borderRadius: '8px', marginBottom: '20px', border: '1px solid rgba(214, 90, 120, 0.11)' }}>
+            <div style={{ display: 'flex', background: 'rgba(var(--accent-rgb), 0.088)', padding: '4px', borderRadius: '8px', marginBottom: '20px', border: '1px solid rgba(var(--accent-rgb), 0.11)' }}>
               <button 
                 type="button"
                 className={`popover-tab-btn ${importSkillType === 'github' ? 'active' : ''}`}
@@ -2832,7 +2942,7 @@ export default function App() {
                     placeholder="https://github.com/Shanyin-ai/shanyin-screenwriting-master.git"
                     value={importSkillUrl}
                     onChange={e => setImportSkillUrl(e.target.value)}
-                    style={{ width: '100%', padding: '10px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.9rem' }}
+                    style={{ width: '100%', padding: '10px', background: 'rgba(var(--shadow-rgb), 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.9rem' }}
                   />
                   <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '8px' }}>
                     {tr('系统会自动克隆该技能包项目，读取其内部配置规范并在大厅中加载。')}
@@ -2848,7 +2958,7 @@ export default function App() {
                     placeholder={tr('例如：create-vite-app')}
                     value={importSkillPackage}
                     onChange={e => setImportSkillPackage(e.target.value)}
-                    style={{ width: '100%', padding: '10px', background: 'rgba(60, 30, 40, 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#221b1e', fontSize: '0.9rem' }}
+                    style={{ width: '100%', padding: '10px', background: 'rgba(var(--shadow-rgb), 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.9rem' }}
                   />
                   <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '8px' }}>
                     系统将在后台通过 `npx -y` 载入并安装指定的包。
@@ -2861,11 +2971,11 @@ export default function App() {
                   <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '8px' }}>{tr('本地 ZIP 技能包')}</label>
                   <div 
                     style={{ 
-                      border: '1px dashed rgba(227, 84, 108, 0.4)', 
+                      border: '1px dashed rgba(var(--accent-rgb), 0.4)', 
                       borderRadius: '12px', 
                       padding: '30px 20px', 
                       textAlign: 'center', 
-                      background: 'rgba(60, 30, 40, 0.11)',
+                      background: 'rgba(var(--shadow-rgb), 0.11)',
                       cursor: 'pointer',
                       transition: 'all 0.3s ease'
                     }}
@@ -2884,7 +2994,7 @@ export default function App() {
                       }}
                     />
                     <div style={{ fontSize: '2.5rem', marginBottom: '10px' }}>📦</div>
-                    <span style={{ fontSize: '0.85rem', display: 'block', color: importSkillFile ? 'var(--neon-green)' : '#221b1e' }}>
+                    <span style={{ fontSize: '0.85rem', display: 'block', color: importSkillFile ? 'var(--neon-green)' : 'var(--surface-2)' }}>
                       {importSkillFile ? `已选择: ${importSkillFile.name} (${Math.round(importSkillFile.size / 1024)} KB)` : '点击选择或拖拽本地 ZIP 压缩文件上传'}
                     </span>
                   </div>
@@ -2904,7 +3014,7 @@ export default function App() {
               <button 
                 onClick={handleImportSkill} 
                 className="cyber-btn" 
-                style={{ padding: '8px 20px', background: 'linear-gradient(135deg, #e3546c, #e3546c)', color: '#221b1e', fontWeight: 600 }}
+                style={{ padding: '8px 20px', background: 'linear-gradient(135deg, var(--accent), var(--accent-2))', color: 'var(--ink)', fontWeight: 600 }}
               >
                 {tr('立即导入技能包')}
               </button>

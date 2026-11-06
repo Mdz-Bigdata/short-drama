@@ -23,7 +23,7 @@ TRANSITION_TYPES: tuple[tuple[str, str, str, str, str, str], ...] = (
     ("flash", "闪白/闪黑", "flash white/black", "闪回回忆、打斗冲击后、激烈碰撞", "强烈、惊惧、屏息", "fast"),
     ("wipe", "划像", "wipe", "风格化表达、节奏增强、时空跳跃", "跃动、干脆、摩登", "fast"),
     ("push_pull", "推拉转场", "push/pull", "进入新场景、情绪递进、强调空间关系", "顺滑、连贯、代入", "medium"),
-    ("match_cut", "匹配剪辑", "match cut", "创意叙事、隐喻象征、时空跳跃", "机巧、回味、有深意", "medium"),
+    ("match_cut", "匹配剪辑", "match cut", "同场景动作 / 视线 / 姿态延续衔接、创意叙事、时空跳跃", "连贯、顺畅、自然", "medium"),
     ("montage", "蒙太奇", "montage", "时间压缩、场景累积、故事快进", "密实、燃情、激荡", "fast"),
     ("sound_bridge", "声音先行", "sound bridge (J-cut)", "悬疑、回忆、梦境；声音先于画面进入", "暗流、期待", "medium"),
 )
@@ -139,7 +139,7 @@ def compose_transition(
     category: str = "",
 ) -> TransitionSpec:
     """Universal formula: outgoing action + medium + camera move + incoming scene + light mood."""
-    canonical, _ = normalize_transition_type(kind)
+    canonical = smooth_kind(normalize_transition_type(kind)[0])
     _, label, _en, usage, emotions, _pacing = next(row for row in TRANSITION_TYPES if row[0] == canonical)
     category = category if category in _CATEGORY_LABELS else classify_transition_category(medium or outgoing_action)
     parts = [
@@ -162,19 +162,38 @@ def compose_transition(
 
 
 def transition_label(kind: str) -> str:
-    return next((label for value, label, *_ in TRANSITION_TYPES if value == kind), "硬切")
+    return next((label for value, label, *_ in TRANSITION_TYPES if value == smooth_kind(kind)), "匹配剪辑")
+
+
+def smooth_kind(kind: str) -> str:
+    """不用硬切：读到的硬切一律按匹配剪辑(动作 / 视线 / 姿态延续)处理。"""
+    return "match_cut" if kind == "cut" else kind
+
+
+_HARD_CUT_WORDS = re.compile(r"(?:声音先行)?(?:硬切|直切|直接切(?:出|入)?|跳切)")
+# 交接说明里的剪切动词换成连贯的说法(只用于转场交接文字，那里它们都指切镜)。
+_CUT_VERBS = (("切入", "进入"), ("切出", "带出"), ("切回", "回到"), ("切到", "转到"), ("切点", "衔接点"))
+
+
+def smooth_text(text: Any) -> str:
+    """转场说明里出现的「硬切 / 直切 / 跳切 / 切入切出」改写成连贯衔接的说法，旧数据进视频提示词前也不带硬切。"""
+    out = _HARD_CUT_WORDS.sub(lambda m: "声音先行衔接" if m.group(0).startswith("声音先行") else "连贯衔接", str(text or ""))
+    for old, new in _CUT_VERBS:
+        out = out.replace(old, new)
+    return out
 
 
 def describe_transition(value: Any) -> str:
     """Short catalog note for free-text transition types, used in prompts and checks."""
     canonical, matched = normalize_transition_type(value)
+    canonical = smooth_kind(canonical)
     _, label, _en, usage, emotions, _pacing = next(row for row in TRANSITION_TYPES if row[0] == canonical)
     category = classify_transition_category(value)
     note = f"{label}：{usage}（{emotions}）"
     if category:
         note += f"；媒介类别：{_CATEGORY_LABELS[category]}"
     if not matched:
-        note += "；未在转场词典内，按硬切处理"
+        note += "；未在转场词典内，按动作匹配衔接处理"
     return note
 
 

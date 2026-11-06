@@ -40,8 +40,9 @@ FINAL = frozenset({DONE, FAILED, CANCELLED, SKIPPED})
 
 # Default ceilings per medium; a provider family may get its own with
 # GENERATION_CONCURRENCY_<MEDIUM>_<FAMILY> (e.g. GENERATION_CONCURRENCY_VIDEO_SEEDANCE=2).
-_DEFAULT_CEILING = {"video": 2, "image": 3, "audio": 2, "text": 3}
+_DEFAULT_CEILING = {"video": 4, "image": 3, "audio": 2, "text": 3}
 _MAX_CEILING = 16
+MAX_RETRY_RECORDS = 50
 
 # One pool for the whole process; the buckets, not the pool, bound how much runs at once.
 _POOL = ThreadPoolExecutor(max_workers=_MAX_CEILING, thread_name_prefix="generation")
@@ -66,6 +67,10 @@ def ceiling_for(bucket: str) -> int:
 
 class CancelError(ValueError):
     """The item cannot be cancelled: it is unknown, already running, or already over."""
+
+
+class RetryError(ValueError):
+    """The item cannot be retried: it is unknown, did not fail, or a run is still going."""
 
 
 @dataclass
@@ -345,6 +350,10 @@ def store_snapshot(task: dict[str, Any], snapshot: Mapping[str, Any]) -> None:
     withdraw = [str(k) for k in previous.get("withdraw") or [] if str(k) not in final]
     if withdraw:
         data["withdraw"] = withdraw
+    # A run replaces every item, so what was retried and why survives only beside them.
+    retries = previous.get("retries")
+    if isinstance(retries, list) and retries:
+        data["retries"] = retries
     task.setdefault("assets", {})[QUEUE_KEY] = data
 
 
@@ -386,6 +395,32 @@ def request_cancel_queued(task: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def assert_retryable(task: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    """The stored failed item. A skipped one has nothing of its own to retry: the item it waited on does."""
+    data = snapshot_of(task)
+    if not data:
+        raise RetryError("当前没有生成队列")
+    item = next((i for i in data.get("items") or [] if isinstance(i, Mapping) and i.get("key") == key), None)
+    if item is None:
+        raise RetryError(f"队列里没有 {key}")
+    if item.get("status") == SKIPPED:
+        raise RetryError(f"{item.get('label')} 是被依赖项连带跳过的，重试它依赖的失败项即可")
+    if item.get("status") != FAILED:
+        raise RetryError(f"{item.get('label')} {STATUS_LABEL.get(str(item.get('status')), '未失败')}，只有失败的项可以重试")
+    return item
+
+
+def note_retry(task: dict[str, Any], key: str) -> dict[str, Any]:
+    """Keep the error being retried on the project; the new run's snapshot replaces the item itself."""
+    data = snapshot_of(task) or {}
+    item = next((i for i in data.get("items") or [] if isinstance(i, Mapping) and i.get("key") == key), {})
+    retries = [entry for entry in data.get("retries") or [] if isinstance(entry, Mapping)]
+    retries.append({"key": key, "at": _now(), "error": item.get("error")})
+    data["retries"] = retries[-MAX_RETRY_RECORDS:]
+    task.setdefault("assets", {})[QUEUE_KEY] = data
+    return data
+
+
 def reconcile_after_restart(task: dict[str, Any]) -> list[str]:
     """Items left ``running`` by a process that died were never finished: back to queued unless a provider job holds them."""
     data = snapshot_of(task)
@@ -411,7 +446,7 @@ def reconcile_after_restart(task: dict[str, Any]) -> list[str]:
 
 __all__ = [
     "CANCELLED", "DONE", "FAILED", "FINAL", "QUEUED", "QUEUE_KEY", "RUNNING", "SKIPPED", "STATUS_LABEL",
-    "CancelError", "Item", "Queue", "RunCancelled",
-    "bucket_of", "ceiling_for", "reconcile_after_restart", "request_cancel", "request_cancel_queued", "run",
+    "CancelError", "Item", "Queue", "RetryError", "RunCancelled",
+    "assert_retryable", "bucket_of", "ceiling_for", "note_retry", "reconcile_after_restart", "request_cancel", "request_cancel_queued", "run",
     "snapshot_of", "store_snapshot", "withdrawn_in",
 ]

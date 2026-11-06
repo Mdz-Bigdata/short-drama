@@ -1,9 +1,10 @@
-"""Readiness of a project's five asset kinds before the storyboard stage.
+"""Readiness of a project's assets before the storyboard stage.
 
-The storyboard agent can only lock people, places, props, costumes and effects
+The storyboard agent can only lock people, their looks, places, props and effects
 that exist as reference images. This module answers, from the project-scoped
 library, whether every asset the screenplay names has one — actors through the
 five-view dashboard contract, the other kinds through library reference files.
+Costumes are not an asset of their own: each is a character look (``character_looks``).
 """
 
 from __future__ import annotations
@@ -11,21 +12,27 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from app.core import breakdown_kinds
+from app.core.character_looks import plan_looks
 from app.core.character_dashboard import compile_character_dashboard
 from app.core.element_scope import element_in_task, element_name_keys, normalized_asset_name
 from app.core.production_asset_extractor import extract_production_assets
 
-ASSET_KINDS = ("actor", "scene", "prop", "costume", "effect")
-# Every kind the library holds; products are only required when an ad's brief names one.
-LIBRARY_KINDS = (*ASSET_KINDS, "product")
-NON_ACTOR_KINDS = ("scene", "prop", "costume", "effect")
+ASSET_KINDS = ("actor", "scene", "prop", "effect")
+# Every kind the library holds; products are only required when an ad's brief names one, and the
+# breakdown kinds (extras, vehicles…) are counted but never block the storyboard. Costume rows are
+# what older projects filed before looks existed: nothing new is filed there.
+LIBRARY_KINDS = (*ASSET_KINDS, "costume", "product", *breakdown_kinds.KINDS)
+NON_ACTOR_KINDS = ("scene", "prop", "effect")
+OPTIONAL_KINDS = breakdown_kinds.FILED_KINDS
 KIND_LABELS = {
     "actor": "数字演员",
     "scene": "拍摄场地",
     "prop": "拍摄道具",
-    "costume": "服装",
+    "look": "角色妆造",
     "effect": "特效",
     "product": "商品",
+    **breakdown_kinds.LABELS,
 }
 READINESS_KEY = "3_asset_readiness"
 _MAX_LISTED = 50
@@ -120,11 +127,23 @@ def evaluate_asset_readiness(
             "missing": missing[:_MAX_LISTED],
             "enforced": enforced,
         }
+    kinds["look"] = _look_readiness(task, summaries)
     kinds["product"] = _product_readiness(task, summaries)
+    for kind in OPTIONAL_KINDS:
+        expected = expected_asset_names(task, kind)
+        ready_keys = set()
+        for summary in summaries or []:
+            if summary.get("kind") == kind and summary.get("has_image"):
+                ready_keys |= element_name_keys(summary.get("name"), summary.get("metadata"))
+        missing = [name for key, name in expected.items() if key not in ready_keys] if summaries is not None else []
+        kinds[kind] = {
+            "label": KIND_LABELS[kind], "total": len(expected), "ready": len(expected) - len(missing) if summaries is not None else 0,
+            "missing": missing[:_MAX_LISTED], "enforced": False,
+        }
     complete = (
         not library_error
         and cast_ready
-        and all(not info["missing"] for info in kinds.values())
+        and all(not info["missing"] for info in kinds.values() if info.get("enforced", True))
     )
     return {
         "schema_version": "asset-readiness.v1",
@@ -133,6 +152,24 @@ def evaluate_asset_readiness(
         "library_error": library_error,
         "kinds": kinds,
         "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _look_readiness(task: dict, summaries: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """Every outfit and makeup the script gives a named character needs its look; an older project's costume image still counts."""
+    expected = {normalized_asset_name(look["name"]): look["name"] for look in plan_looks(task)}
+    enforced = summaries is not None
+    ready_keys: set[str] = set()
+    for summary in summaries or []:
+        if summary.get("kind") in ("actor", "costume") and summary.get("has_image"):
+            ready_keys |= element_name_keys(summary.get("name"), summary.get("metadata"))
+    missing = [name for key, name in expected.items() if key not in ready_keys] if enforced else []
+    return {
+        "label": KIND_LABELS["look"],
+        "total": len(expected),
+        "ready": len(expected) - len(missing) if enforced else 0,
+        "missing": missing[:_MAX_LISTED],
+        "enforced": enforced,
     }
 
 

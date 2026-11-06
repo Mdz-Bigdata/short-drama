@@ -1,22 +1,34 @@
-import { ChevronDown, ChevronRight, Clapperboard, ImageIcon, RefreshCcw, Save, Search, Video } from 'lucide-react';
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Activity, ChevronDown, ChevronRight, Clapperboard, Film, ImageIcon, RefreshCcw, Save, Video, X } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { apiRequest } from '../../api/client';
+import { PilotShotCard } from './PilotShotCard';
 import { ShotDeskPanel } from './ShotDeskPanel';
 import { VideoPromptEditor } from './VideoPromptEditor';
 import {
+  describeShots,
   durationWarning,
+  groupBlockedShots,
   settingsEqual,
+  shotKey,
+  shotPath,
   shotStatus,
   useSliderForDurations,
   vocabularyLabel,
   type CameraRecipe,
   type ShotFixPlan,
+  type ShotVideoFailure,
+  type ShotVisualRecord,
   type ShotVisualSettings,
   type ShotVisualWorkspace as Workspace,
+  type EpisodeMeta,
+  episodeNumberOf,
+  episodeSummaries,
+  formatClock,
   ADMISSION_LABELS,
   QUEUE_STATUS_LABELS,
   isGenerationQueue,
+  splitQueueItems,
   type GenerationQueue,
   formatCost,
   formatCostByCurrency,
@@ -31,11 +43,42 @@ const INTENSITIES: Array<[CameraRecipe['intensity'], string]> = [['strong', '强
 // The desk pulls in the whole 3D workspace; it loads when someone opens it, not with the stage.
 const DirectorDesk = lazy(() => import('../directorDesk/DirectorDesk').then(module => ({ default: module.DirectorDesk })));
 
+/** 本看板最近一次没出片：分类、供应商原话、下一步，以及发出去的分镜画面，好看出是哪张图被拒。 */
+function ShotFailureCard({ failure }: { failure: ShotVideoFailure }) {
+  const panels = failure.panels ?? [];
+  return (
+    <section className="shot-workspace__failure" role="alert" aria-label={t('出片失败')}>
+      <p className="shot-workspace__failure-head">
+        <strong>{failure.kind === 'input_image_sensitive' ? t('输入图被判敏感') : t('供应商未出片')}</strong>
+        {failure.code && <code>{failure.code}</code>}
+        {failure.scene_id && <span>{failure.scene_id}</span>}
+      </p>
+      <p className="shot-workspace__failure-message">{failure.message}</p>
+      {failure.hint && <p className="shot-workspace__failure-hint">{failure.hint}</p>}
+      {panels.length > 0 && (
+        <ul className="shot-workspace__failure-panels" aria-label={t('发出去的分镜画面')}>
+          {panels.map((url, index) => (
+            <li key={url}>
+              <a href={url} target="_blank" rel="noreferrer" title={t('查看大图')}>
+                <img src={url} alt={t('第 {0} 格分镜', [String(index + 1)])} />
+                <span className="num">{index + 1}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 interface Props {
+  /** 各集的标题与成片状态；进度从镜头算。 */
+  episodes?: EpisodeMeta[];
   taskId: string;
   videoModel: string;
   imageModel: string;
   onRerun?: () => void;
+  onVideoModelChange?: (model: string) => void;
 }
 
 type DetailTab = 'script' | 'prompts' | 'media';
@@ -105,19 +148,23 @@ function DurationSelector({ value, options, disabled, onChange }: {
 }
 
 
-export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }: Props) {
+const PILOT_POLL_MS = 4000;
+
+export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, onVideoModelChange, episodes: episodeMeta = [] }: Props) {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [savingPrompt, setSavingPrompt] = useState(false);
   const [error, setError] = useState('');
   // Notices belong to the shot they were produced for; switching shots hides them.
-  const [notice, setNotice] = useState<{ shotId: number; text: string } | null>(null);
+  // Shots are keyed by scene and number (shotKey): every scene numbers its shots from 1.
+  const [notice, setNotice] = useState<{ shotKey: string; text: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   // Unsaved edits per shot; a shot without an entry shows its persisted settings.
-  const [drafts, setDrafts] = useState<Record<number, ShotVisualSettings>>({});
-  const [query, setQuery] = useState('');
+  const [drafts, setDrafts] = useState<Record<string, ShotVisualSettings>>({});
   const [listCollapsed, setListCollapsed] = useState(false);
+  // The episode whose scenes and shots the rail and the strip show; 0 follows the selected shot.
+  const [episodeFilter, setEpisodeFilter] = useState(0);
   const [tab, setTab] = useState<DetailTab>('media');
   const [recipeCategory, setRecipeCategory] = useState('');
   const [recipeIntensity, setRecipeIntensity] = useState<CameraRecipe['intensity']>('medium');
@@ -132,11 +179,16 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
   const [deskToken, setDeskToken] = useState(0);
   // Stage 5 admits every shot together or none: the assessment, and what the project has spent so far.
   const [admission, setAdmission] = useState<BatchAdmission | null>(null);
+  const [batchAsked, setBatchAsked] = useState(false);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [confirming, setConfirming] = useState(false);
   // The generation queue of the running (or last) stage-5 run: what waits, what runs, what can still be withdrawn.
   const [queue, setQueue] = useState<GenerationQueue | null>(null);
   const [queueNotice, setQueueNotice] = useState('');
+  // The queue lives in a drawer opened from the status chip, so the shot panel stays about the shot.
+  const [queueOpen, setQueueOpen] = useState(false);
+  // Finished queue items are folded away so what is still waiting or running stays in view.
+  const [showSettled, setShowSettled] = useState(false);
 
   const loadQueue = useCallback(async () => {
     try {
@@ -173,16 +225,16 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
     }
   }, [taskId]);
 
-  // One shot to redo: it is marked stale, so the next stage-5 run regenerates it and reuses the rest.
-  const regenerateShot = useCallback(async (shotId: number) => {
+  // One shot to redo: its clip (the whole board clip) is marked stale, so the next stage-5 run regenerates it and reuses the rest.
+  const regenerateShot = useCallback(async (shot: ShotVisualRecord) => {
     setSaving(true);
     try {
-      const data = await apiRequest<Workspace>(`/api/drama/${encodeURIComponent(taskId)}/shots/${shotId}/regenerate`, {
+      const data = await apiRequest<Workspace>(shotPath(taskId, shot, 'regenerate'), {
         method: 'POST',
         body: JSON.stringify({ reason: '' }),
       });
       setWorkspace(data);
-      setNotice({ shotId, text: '已标记重做；重跑第 5 阶段时只重新生成本镜，其余镜头沿用已有片段。' });
+      setNotice({ shotKey: shotKey(shot), text: '已标记重做；重跑第 5 阶段时只重新生成本镜所在的片段，其余片段沿用。' });
       void loadAdmission();
     } catch (err) {
       setError(err instanceof Error ? err.message : '标记重做失败');
@@ -190,6 +242,41 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
       setSaving(false);
     }
   }, [taskId, loadAdmission]);
+
+  // 项目留着一个模型配置中心没启用的视频模型时，一键换成启用的那个(后端只收启用的型号)。
+  // One clip before the batch. A redo reports what was wrong and makes the same clip again.
+  const startPilot = useCallback(async (options: { shot_uid?: number; redo?: boolean; problems?: string[] } = {}) => {
+    setSaving(true);
+    try {
+      const data = await apiRequest<Workspace>(`/api/drama/${encodeURIComponent(taskId)}/shots/pilot`, {
+        method: 'POST', body: JSON.stringify(options),
+      });
+      setWorkspace(data);
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '试拍没有启动');
+    } finally {
+      setSaving(false);
+    }
+  }, [taskId]);
+
+  const switchVideoModel = useCallback(async (model: string) => {
+    setSaving(true);
+    setError('');
+    try {
+      const data = await apiRequest<Workspace>(`/api/drama/${encodeURIComponent(taskId)}/video-model`, {
+        method: 'PUT',
+        body: JSON.stringify({ video_model: model }),
+      });
+      setWorkspace(data);
+      onVideoModelChange?.(model);
+      void loadAdmission();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '更换视频模型失败');
+    } finally {
+      setSaving(false);
+    }
+  }, [taskId, loadAdmission, onVideoModelChange]);
 
   const confirmTiers = useCallback(async () => {
     if (!admission || admission.confirmations.length === 0) return;
@@ -214,7 +301,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
     try {
       const data = await apiRequest<Workspace>(`/api/drama/${encodeURIComponent(taskId)}/shots/visual`);
       setWorkspace(data);
-      setSelectedId(current => (current !== null && data.shots.some(shot => shot.shot_id === current)) ? current : (data.shots[0]?.shot_id ?? null));
+      setSelectedKey(current => (current !== null && data.shots.some(shot => shotKey(shot) === current)) ? current : (data.shots[0] ? shotKey(data.shots[0]) : null));
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : '镜头工作区加载失败');
@@ -230,18 +317,36 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
     return () => window.clearTimeout(handle);
   }, [load, loadAdmission, loadQueue]);
 
-  const selected = useMemo(
-    () => workspace?.shots.find(shot => shot.shot_id === selectedId) ?? null,
-    [workspace, selectedId],
-  );
-  const draft = selected ? (drafts[selected.shot_id] ?? selected.settings) : null;
+  // The clip is made in the background: keep looking until it is out.
+  const pilotState = workspace?.pilot?.state;
+  const generating = Boolean(workspace?.running) || batchAsked || pilotState === 'requested' || pilotState === 'running';
+  useEffect(() => {
+    if (!generating) return undefined;
+    const timer = window.setInterval(() => { void load(); }, PILOT_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [generating, load]);
+  // What is left to generate changed: the reused clip is no longer quoted.
+  const wasGenerating = useRef(false);
+  useEffect(() => {
+    const finished = wasGenerating.current && !generating;
+    wasGenerating.current = generating;
+    if (!finished) return undefined;
+    const handle = window.setTimeout(() => { void loadAdmission(); }, 0);
+    return () => window.clearTimeout(handle);
+  }, [generating, loadAdmission]);
+  // The batch is started through the chat, so it may not show as running on the very next look.
+  useEffect(() => {
+    if (!batchAsked) return undefined;
+    const timer = window.setTimeout(() => setBatchAsked(false), PILOT_POLL_MS * 5);
+    return () => window.clearTimeout(timer);
+  }, [batchAsked]);
 
-  const visibleShots = useMemo(() => {
-    if (!workspace) return [];
-    const needle = query.trim().toLocaleLowerCase('zh-CN');
-    if (!needle) return workspace.shots;
-    return workspace.shots.filter(shot => `${shot.shot_id} ${shot.desc} ${shot.dialogue}`.toLocaleLowerCase('zh-CN').includes(needle));
-  }, [workspace, query]);
+  const selected = useMemo(
+    () => workspace?.shots.find(shot => shotKey(shot) === selectedKey) ?? null,
+    [workspace, selectedKey],
+  );
+  const draft = selected ? (drafts[shotKey(selected)] ?? selected.settings) : null;
+
 
   const dirty = Boolean(selected && draft && !settingsEqual(selected.settings, draft));
   const locked = Boolean(workspace?.running) || saving;
@@ -252,16 +357,16 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
     setError('');
     try {
       const data = await apiRequest<Workspace>(
-        `/api/drama/${encodeURIComponent(taskId)}/shots/${selected.shot_id}/visual`,
+        shotPath(taskId, selected, 'visual'),
         { method: 'PUT', body: JSON.stringify(draft) },
       );
       setWorkspace(data);
       setDrafts(current => {
         const next = { ...current };
-        delete next[selected.shot_id];
+        delete next[shotKey(selected)];
         return next;
       });
-      setNotice({ shotId: selected.shot_id, text: `镜头 ${selected.shot_id} 的运镜设置已保存，重跑第 5 阶段后生效。` });
+      setNotice({ shotKey: shotKey(selected), text: `镜头 ${selected.shot_id} 的运镜设置已保存，重跑第 5 阶段后生效。` });
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存运镜设置失败');
     } finally {
@@ -276,12 +381,12 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
     setError('');
     try {
       const data = await apiRequest<Workspace>(
-        `/api/drama/${encodeURIComponent(taskId)}/shots/${selected.shot_id}/video-prompt`,
+        shotPath(taskId, selected, 'video-prompt'),
         { method: 'PUT', body: JSON.stringify({ prompt }) },
       );
       setWorkspace(data);
       setNotice({
-        shotId: selected.shot_id,
+        shotKey: shotKey(selected),
         text: prompt === null
           ? `镜头 ${selected.shot_id} 已恢复自动编译的提示词，重新生成本镜后生效。`
           : `镜头 ${selected.shot_id} 的视频提示词已保存，重新生成本镜后生效。`,
@@ -295,7 +400,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
 
   const update = (patch: Partial<ShotVisualSettings>) => {
     if (!selected || !draft) return;
-    setDrafts(current => ({ ...current, [selected.shot_id]: { ...draft, ...patch } }));
+    setDrafts(current => ({ ...current, [shotKey(selected)]: { ...draft, ...patch } }));
   };
 
   /** Ask the backend for a category/intensity recipe filled with this shot's action and scene. */
@@ -305,7 +410,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
     setError('');
     try {
       const composed = await apiRequest<CameraRecipe>(
-        `/api/drama/${encodeURIComponent(taskId)}/shots/${selected.shot_id}/visual/recipe`,
+        shotPath(taskId, selected, 'visual/recipe'),
         { method: 'POST', body: JSON.stringify({ category: recipeCategory, intensity: recipeIntensity }) },
       );
       setRecipe(composed);
@@ -337,7 +442,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
       setFixPlan(payload.plan);
       if (result === 'success') {
         setFailureText('');
-        setNotice({ shotId: selected.shot_id, text: '已记为成功，生效的修正手段会沉淀为项目经验。' });
+        setNotice({ shotKey: shotKey(selected), text: '已记为成功，生效的修正手段会沉淀为项目经验。' });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '反馈提交失败');
@@ -359,7 +464,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
       const data = await apiRequest<Workspace>(`/api/drama/${encodeURIComponent(taskId)}/shots/seeds/assign`, { method: 'POST', body: JSON.stringify({}) });
       setWorkspace(data);
       setDrafts({});
-      if (selected) setNotice({ shotId: selected.shot_id, text: '已按场景分配固定种子（同场相邻），重跑第 5 阶段后生效。' });
+      if (selected) setNotice({ shotKey: shotKey(selected), text: '已按场景分配固定种子（同场相邻），重跑第 5 阶段后生效。' });
     } catch (err) {
       setError(err instanceof Error ? err.message : '分配种子失败');
     } finally {
@@ -373,11 +478,11 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
     setError('');
     try {
       const data = await apiRequest<Workspace>(
-        `/api/drama/${encodeURIComponent(taskId)}/shots/${selected.shot_id}/visual/select`,
+        shotPath(taskId, selected, 'visual/select'),
         { method: 'PUT', body: JSON.stringify({ video_url: url }) },
       );
       setWorkspace(data);
-      setNotice({ shotId: selected.shot_id, text: `镜头 ${selected.shot_id} 已选用该版本。` });
+      setNotice({ shotKey: shotKey(selected), text: `镜头 ${selected.shot_id} 已选用该版本。` });
     } catch (err) {
       setError(err instanceof Error ? err.message : '选用版本失败');
     } finally {
@@ -400,9 +505,99 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
   }
 
   const staleCount = workspace.shots.filter(shot => shot.stale).length;
+  const generated = workspace.shots.filter(shot => shot.video_url && !shot.stale).length;
+  const episodeCards = episodeSummaries(workspace.shots, episodeMeta);
+  const episodes = episodeCards.map(card => card.number);
+  const episodesDone = episodeCards.filter(card => card.filmDone || (card.shotCount > 0 && card.generated === card.shotCount)).length;
+  const currentEpisode = episodeFilter || (selected ? episodeNumberOf(selected.scene_id) : episodes[0] ?? 0);
+  const inEpisode = (shot: ShotVisualRecord) => !currentEpisode || episodeNumberOf(shot.scene_id) === currentEpisode;
+  // The film strip under the scene chips holds the current episode's shots.
+  const railShots = workspace.shots.filter(inEpisode);
+  const episodeShots = workspace.shots.filter(inEpisode);
+  const episodeGenerated = episodeShots.filter(shot => shot.video_url && !shot.stale).length;
+  // The strip across the top: one chip per scene, coloured by how far its shots have got.
+  const scenes = workspace.shots.filter(inEpisode).reduce<Array<{ id: string; status: 'ready' | 'partial' | 'failed' | 'pending'; firstKey: string }>>((list, shot) => {
+    const status = shotStatus(shot).key;
+    const entry = list.find(item => item.id === shot.scene_id);
+    const mark = status === 'ready' ? 'ready' : status === 'refused' || status === 'failed' ? 'failed' : 'pending';
+    if (!entry) {
+      list.push({ id: shot.scene_id, status: mark, firstKey: shotKey(shot) });
+    } else if (entry.status !== mark) {
+      entry.status = entry.status === 'failed' || mark === 'failed' ? 'failed' : 'partial';
+    }
+    return list;
+  }, []);
+  const shotTitle = (desc: string) => desc.split(/[，。；！？,.;!?\n]/)[0].slice(0, 18) || '分镜画面';
 
   return (
     <div className={`shot-workspace${listCollapsed ? ' is-list-collapsed' : ''}`}>
+      <header className="shot-workspace__topbar">
+        <div className="shot-workspace__topbar-title">
+          <h3>{t('运镜')}</h3>
+          <span>{currentEpisode ? `第 ${currentEpisode} 集` : ''}{episodeCards.find(card => card.number === currentEpisode)?.title ? ` · ${episodeCards.find(card => card.number === currentEpisode)!.title}` : ''}</span>
+          <em className={episodeGenerated === episodeShots.length ? 'is-done' : ''}>{episodeGenerated}/{episodeShots.length} {t('个运镜已生成')}</em>
+        </div>
+        {onRerun && !workspace.pilot && workspace.shots.some(shot => !shot.video_url || shot.stale) && (
+          <button
+            type="button" className="secondary-action shot-workspace__pilot-start" disabled={locked}
+            title={t('整批生成之前，先只拍人和动作最少的一段看看效果。拍好的这段整批时直接复用。')}
+            onClick={() => { void startPilot(); }}
+          >
+            {t('先试拍一段')}
+          </button>
+        )}
+        {onRerun && (
+          <button type="button" className="primary-action shot-workspace__rerun" onClick={onRerun} disabled={Boolean(workspace.running)}>
+            <RefreshCcw size={14} aria-hidden="true" /> {t('重跑第 5 阶段')}（{workspace.shots.length}）
+          </button>
+        )}
+        <nav className="shot-workspace__scenes" aria-label={t('场次')}>
+          {scenes.map(scene => (
+            <button
+              key={scene.id}
+              type="button"
+              className={`is-${scene.status}${selected?.scene_id === scene.id ? ' is-current' : ''}`}
+              onClick={() => { setEpisodeFilter(0); setSelectedKey(scene.firstKey); }}
+            >
+              {scene.id}<i aria-hidden="true" />
+            </button>
+          ))}
+        </nav>
+        <ul className="shot-workspace__filmstrip" aria-label={t('分镜')}>
+          {railShots.map((shot, index) => {
+            const status = shotStatus(shot);
+            // Shot numbers restart in every scene, so the list says which scene a run of numbers belongs to.
+            const sceneStart = Boolean(shot.scene_id) && railShots[index - 1]?.scene_id !== shot.scene_id;
+            return (
+              <li key={shotKey(shot)} className={sceneStart ? 'is-scene-start' : undefined}>
+                {sceneStart && <span className="shot-workspace__scene-label" aria-hidden="true">{shot.scene_id}</span>}
+                <button
+                  type="button"
+                  className={`shot-workspace__shot${shotKey(shot) === selectedKey ? ' is-selected' : ''}`}
+                  aria-pressed={shotKey(shot) === selectedKey}
+                  aria-label={`${shot.scene_id ? `${shot.scene_id} ` : ''}镜头 ${shot.shot_id}`}
+                  title={shot.scene_id || undefined}
+                  onClick={() => setSelectedKey(shotKey(shot))}
+                >
+                  <span className="shot-workspace__shot-index">{shot.shot_id}</span>
+                  <span className="shot-workspace__shot-thumb">
+                    {shot.image_url ? <img src={shot.image_url} alt="" loading="lazy" decoding="async" /> : <ImageIcon size={16} aria-hidden="true" />}
+                  </span>
+                  <span className="shot-workspace__shot-body">
+                    <span className="shot-workspace__shot-desc">{shot.desc || '分镜画面'}</span>
+                    <span className="shot-workspace__shot-meta">
+                      <em>{vocabularyLabel(workspace.shot_types, shot.settings.shot_type)}</em>
+                      <em>{vocabularyLabel(workspace.camera_motions, shot.settings.camera_motion)}</em>
+                      <em className="num">{shot.settings.duration_seconds} 秒</em>
+                      <em className={`shot-workspace__status is-${status.key}`}>{status.label}</em>
+                    </span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </header>
       <aside className="shot-workspace__list" aria-label={t('分镜列表')}>
         <header className="shot-workspace__list-header">
           <button
@@ -413,55 +608,75 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
           >
             {listCollapsed ? <ChevronRight size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
           </button>
-          {!listCollapsed && <strong>分镜 · {workspace.shots.length} 镜</strong>}
+          {!listCollapsed && <strong>{t('分集列表')} <small>{episodeCards.length} {t('集')}</small></strong>}
         </header>
         {!listCollapsed && (
           <>
-            <label className="shot-workspace__search">
-              <Search size={13} aria-hidden="true" />
-              <input value={query} onChange={event => setQuery(event.target.value)} placeholder={t('搜索分镜…')} aria-label={t('搜索分镜')} />
-            </label>
-            <ul className="shot-workspace__shots" aria-label={t('分镜')}>
-              {visibleShots.map(shot => {
-                const status = shotStatus(shot);
+            <ol className="shot-workspace__episodes" aria-label={t('分集列表')}>
+              {episodeCards.map(card => {
+                const percent = card.shotCount ? Math.round((card.generated / card.shotCount) * 100) : 0;
+                const done = card.filmDone || (card.shotCount > 0 && card.generated === card.shotCount);
                 return (
-                  <li key={shot.shot_id}>
+                  <li key={card.number}>
                     <button
                       type="button"
-                      className={`shot-workspace__shot${shot.shot_id === selectedId ? ' is-selected' : ''}`}
-                      aria-pressed={shot.shot_id === selectedId}
-                      aria-label={`镜头 ${shot.shot_id}`}
-                      onClick={() => setSelectedId(shot.shot_id)}
+                      className={card.number === currentEpisode ? 'is-current' : ''}
+                      aria-pressed={card.number === currentEpisode}
+                      onClick={() => { setEpisodeFilter(card.number); setSelectedKey(card.firstKey); }}
                     >
-                      <span className="shot-workspace__shot-index">{shot.shot_id}</span>
-                      <span className="shot-workspace__shot-thumb">
-                        {shot.image_url ? <img src={shot.image_url} alt="" loading="lazy" decoding="async" /> : <ImageIcon size={16} aria-hidden="true" />}
+                      <span className="shot-workspace__episode-thumb">
+                        {card.thumbnail ? <img src={card.thumbnail} alt="" loading="lazy" decoding="async" /> : <ImageIcon size={16} aria-hidden="true" />}
+                        <b>第{card.number}集</b>
                       </span>
-                      <span className="shot-workspace__shot-body">
-                        <span className="shot-workspace__shot-desc">{shot.desc || '分镜画面'}</span>
-                        <span className="shot-workspace__shot-meta">
-                          <em>{vocabularyLabel(workspace.shot_types, shot.settings.shot_type)}</em>
-                          <em>{vocabularyLabel(workspace.camera_motions, shot.settings.camera_motion)}</em>
-                          <em className="num">{shot.settings.duration_seconds} 秒</em>
-                          <em className={`shot-workspace__status is-${status.key}`}>{status.label}</em>
+                      <span className="shot-workspace__episode-body">
+                        <span className="shot-workspace__episode-head">
+                          <strong>{card.title || `第 ${card.number} 集`}</strong>
+                          <em className="num">{formatClock(card.seconds)}</em>
+                        </span>
+                        <span className={`shot-workspace__episode-state${done ? ' is-done' : ''}`}>
+                          <i aria-hidden="true" />{done ? t('制作完成') : t('制作中')} · {card.generated}/{card.shotCount} {t('运镜')}
+                        </span>
+                        <span className="shot-workspace__episode-progress">
+                          <small>{t('制作进度')}</small>
+                          <em className="num">{percent}%</em>
+                          <span><span style={{ width: `${percent}%` }} /></span>
                         </span>
                       </span>
                     </button>
                   </li>
                 );
               })}
-            </ul>
+            </ol>
           </>
         )}
       </aside>
 
       {selected && draft && (
-        <section className="shot-workspace__detail" aria-label={`镜头 ${selected.shot_id} 详情`}>
+        <section className="shot-workspace__detail" aria-label={`${selected.scene_id ? `${selected.scene_id} ` : ''}镜头 ${selected.shot_id} 详情`}>
           <header className="shot-workspace__detail-header">
-            <div>
+            <div className="shot-workspace__detail-title">
+              {selected.scene_id && <span className="shot-workspace__scene-chip">{selected.scene_id}</span>}
               <strong>镜头 {selected.shot_id}</strong>
+              <span className="shot-workspace__shot-title">{shotTitle(selected.desc)}</span>
+              <span className="shot-workspace__shot-brief">{selected.scene_id} · {draft.duration_seconds} 秒运镜</span>
               {selected.contract_fingerprint && <code>契约 {selected.contract_fingerprint.slice(0, 12)}</code>}
               {selected.settings_source === 'edited' && <small>{t('人工设定')}</small>}
+              {queue && (
+                <button
+                  type="button"
+                  className={`shot-workspace__queue-chip${queue.running ? ' is-running' : ''}`}
+                  aria-expanded={queueOpen}
+                  aria-controls="shot-queue-drawer"
+                  onClick={() => setQueueOpen(value => !value)}
+                >
+                  <Activity size={12} aria-hidden="true" />
+                  {t('生成队列')}
+                  {!queue.running && ` · ${t('上一轮')}`}
+                  {(['running', 'queued', 'failed'] as const)
+                    .filter(status => (queue.counts[status] ?? 0) > 0)
+                    .map(status => <em key={status} className={`is-${status}`}>{QUEUE_STATUS_LABELS[status]} {queue.counts[status]}</em>)}
+                </button>
+              )}
             </div>
             <div className="shot-workspace__detail-actions">
               <button type="button" className="secondary-action" onClick={() => { void save(); }} disabled={!dirty || locked}>
@@ -470,18 +685,43 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
               <button type="button" className="secondary-action" onClick={() => { void assignSeeds(); }} disabled={locked}>
                 {t('按场分配种子')}
               </button>
-              {selected.video_url && (
-                <button type="button" className="secondary-action" onClick={() => { void regenerateShot(selected.shot_id); }} disabled={locked || saving || selected.stale}>
-                  {t('重做本镜')}
+              {!workspace.pilot && !selected.video_url && (
+                <button type="button" className="secondary-action" disabled={locked} onClick={() => { void startPilot({ shot_uid: selected.shot_uid }); }}>
+                  {t('用这一镜试拍')}
                 </button>
               )}
-              {onRerun && (
-                <button type="button" className="primary-action" onClick={onRerun} disabled={Boolean(workspace.running)}>
-                  <RefreshCcw size={14} aria-hidden="true" /> {t('重跑第 5 阶段')}
+              {selected.video_url && (
+                <button type="button" className="secondary-action" onClick={() => { void regenerateShot(selected); }} disabled={locked || saving || selected.stale}>
+                  {t('重做本镜')}
                 </button>
               )}
             </div>
           </header>
+
+          {workspace.video_model_issue && (
+            <section className="shot-workspace__model-issue" role="alert" aria-label={t('视频模型不可用')}>
+              <p>{workspace.video_model_issue}</p>
+              {(workspace.enabled_video_models ?? []).filter(model => model !== workspace.video_model).map(model => (
+                <button key={model} type="button" className="secondary-action" disabled={locked} onClick={() => { void switchVideoModel(model); }}>
+                  {t('改用')} {model}
+                </button>
+              ))}
+            </section>
+          )}
+
+          {workspace.video_model_note && <p className="shot-workspace__hint" role="status">{workspace.video_model_note}</p>}
+
+          {workspace.pilot && !(workspace.pilot.state === 'ready' && (workspace.running || batchAsked)) && (
+            <PilotShotCard
+              // A new clip starts with nothing ticked: the old ticks were about the old clip.
+              key={workspace.pilot.video_url || workspace.pilot.state}
+              pilot={workspace.pilot}
+              locked={locked}
+              onPass={() => { setBatchAsked(true); onRerun?.(); }}
+              onRedo={problems => { void startPilot({ redo: true, problems }); }}
+              onRetry={() => { void startPilot({ redo: true }); }}
+            />
+          )}
 
           {admission && (
             <section className={`shot-workspace__admission is-${admission.decision}`} aria-label={t('批量视频准入')}>
@@ -495,13 +735,13 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
               </header>
               {admission.decision === 'blocked' && (
                 <ul className="shot-workspace__admission-problems">
-                  {admission.shots.filter(shot => shot.quote === 'blocked').map(shot => (
-                    <li key={shot.shot_id}>
-                      <strong>镜头 {shot.shot_id}</strong>
-                      {shot.problems.filter(problem => problem.blocking).map(problem => <span key={problem.code}>{problem.message}</span>)}
+                  {groupBlockedShots(admission).map(group => (
+                    <li key={group.message}>
+                      <span>{group.message}</span>
+                      <strong>{describeShots(group.shots, admission.shots.length)}</strong>
                     </li>
                   ))}
-                  {admission.counts.withheld > 0 && <li><strong>其余 {admission.counts.withheld} 镜</strong><span>{t('本可生成，整批一起暂不提交')}</span></li>}
+                  {admission.counts.withheld > 0 && <li><span>{t('本可生成，整批一起暂不提交')}</span><strong>其余 {admission.counts.withheld} 镜</strong></li>}
                 </ul>
               )}
               {admission.decision === 'confirmation_required' && (
@@ -522,50 +762,19 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
               )}
             </section>
           )}
-          {queue && (
-            <section className="shot-workspace__queue" aria-label={t('生成队列')}>
-              <header>
-                <strong>生成队列{queue.running ? '（运行中）' : '（上一轮）'}</strong>
-                <span>
-                  {(['queued', 'running', 'done', 'failed', 'cancelled', 'skipped'] as const)
-                    .filter(status => (queue.counts[status] ?? 0) > 0)
-                    .map(status => `${QUEUE_STATUS_LABELS[status]} ${queue.counts[status]}`)
-                    .join(' · ')}
-                  {Object.entries(queue.buckets).length > 0 && ` · 并发 ${Object.entries(queue.buckets).map(([bucket, info]) => `${bucket} ${info.running}/${info.limit}`).join('，')}`}
-                </span>
-                {queue.running && (queue.counts.queued ?? 0) > 0 && (
-                  <button type="button" className="secondary-action" onClick={() => { void cancelQueued(null); }}>{t('取消全部排队')}</button>
-                )}
-                <button type="button" className="secondary-action" onClick={() => { void loadQueue(); }}>{t('刷新')}</button>
-              </header>
-              {queueNotice && <p className="shot-workspace__hint" role="status">{queueNotice}</p>}
-              <ul className="shot-workspace__queue-items">
-                {queue.items.map(item => (
-                  <li key={item.key} className={`is-${item.status}`}>
-                    <span className="shot-workspace__queue-status">{QUEUE_STATUS_LABELS[item.status]}</span>
-                    <strong>{item.label}</strong>
-                    <small>{item.bucket}{item.depends_on.length ? ` · 依赖 ${item.depends_on.join('、')}` : ''}</small>
-                    {item.error && <em>{item.error}</em>}
-                    {item.reason && !item.error && <em>{item.reason}</em>}
-                    {queue.running && item.status === 'queued' && !(queue.withdraw ?? []).includes(item.key) && (
-                      <button type="button" onClick={() => { void cancelQueued(item.key); }} aria-label={`取消 ${item.label}`}>{t('取消')}</button>
-                    )}
-                    {(queue.withdraw ?? []).includes(item.key) && item.status === 'queued' && <em>{t('取消待生效')}</em>}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-          {workspace.running && <p className="shot-workspace__hint" role="status">{t('任务正在执行阶段，暂不能修改运镜。')}</p>}
-          {(selected.stale || staleCount > 0) && (
-            <p className="shot-workspace__hint is-stale" role="status">
-              {selected.stale ? selected.stale_reason || '内容已更新，提示词可能不符' : `${staleCount} 镜已修改运镜，重跑第 5 阶段后生效。`}
-            </p>
-          )}
-          {dirty && <p className="shot-workspace__hint" role="status">{t('运镜设置已修改，保存后重跑第 5 阶段生效。')}</p>}
-          {selected.derived_notes.map(note => <p key={note} className="shot-workspace__hint">{note}</p>)}
-          {notice && notice.shotId === selected.shot_id && <p className="shot-workspace__hint is-success" role="status">{notice.text}</p>}
-          {error && <p className="shot-workspace__warning" role="alert">{error}</p>}
+          <div className="shot-workspace__notes">
+            {workspace.running && <p className="shot-workspace__hint" role="status">{t('任务正在执行阶段，暂不能修改运镜。')}</p>}
+            {(selected.stale || staleCount > 0) && (
+              <p className="shot-workspace__hint is-stale" role="status">
+                {selected.stale ? selected.stale_reason || '内容已更新，提示词可能不符' : `${staleCount} 镜已修改运镜，重跑第 5 阶段后生效。`}
+              </p>
+            )}
+            {dirty && <p className="shot-workspace__hint" role="status">{t('运镜设置已修改，保存后重跑第 5 阶段生效。')}</p>}
+            {selected.failure && <ShotFailureCard failure={selected.failure} />}
+            {selected.derived_notes.map(note => <p key={note} className="shot-workspace__hint">{note}</p>)}
+            {notice && notice.shotKey === shotKey(selected) && <p className="shot-workspace__hint is-success" role="status">{notice.text}</p>}
+            {error && <p className="shot-workspace__warning" role="alert">{error}</p>}
+          </div>
 
           <div className="shot-workspace__tabs" role="tablist" aria-label={t('镜头详情')}>
             {([['script', '脚本 / 对话'], ['prompts', '提示词'], ['media', '分镜 / 视频']] as Array<[DetailTab, string]>).map(([key, label]) => (
@@ -590,7 +799,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
             <div className="shot-workspace__panel" role="tabpanel">
               <h4><Video size={14} aria-hidden="true" /> {t('视频提示词')} <small>{videoModel}</small></h4>
               <VideoPromptEditor
-                key={`${selected.shot_id}:${selected.video_prompt}`}
+                key={`${shotKey(selected)}:${selected.video_prompt}`}
                 shotId={selected.shot_id}
                 prompt={selected.video_prompt}
                 edited={Boolean(selected.video_prompt_edited)}
@@ -607,33 +816,59 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
 
           {tab === 'media' && (
             <div className="shot-workspace__panel shot-workspace__media" role="tabpanel">
-              <ShotDeskPanel
-                taskId={taskId} sceneId={selected.scene_id} shotId={selected.shot_id} reloadToken={deskToken}
-                onOpenDesk={() => setDeskShot({ sceneId: selected.scene_id, shotId: selected.shot_id })}
-              />
-              <figure>
-                <figcaption><ImageIcon size={14} aria-hidden="true" /> {t('分镜图')}</figcaption>
-                {selected.image_url ? <img src={selected.image_url} alt={`镜头 ${selected.shot_id} 分镜图`} /> : <p className="shot-workspace__hint">{t('尚未生成')}</p>}
-              </figure>
-              <figure>
-                <figcaption><Video size={14} aria-hidden="true" /> {t('视频')}</figcaption>
-                {selected.video_url
-                  ? <video src={selected.video_url} controls loop preload="metadata" aria-label={`镜头 ${selected.shot_id} 视频`} />
-                  : <p className="shot-workspace__hint">{t('尚未生成')}</p>}
-                {selected.route && (
-                  <small className="shot-workspace__route">自动路由：{selected.route.mode} · {selected.route.provider_family}{selected.route.reasons?.[0] ? ` · ${selected.route.reasons[0]}` : ''}</small>
-                )}
-                {(selected.candidate_urls?.length ?? 0) > 1 && (
-                  <ul className="shot-workspace__candidates" aria-label={t('候选版本')}>
-                    {selected.candidate_urls!.map((url, index) => (
-                      <li key={url}>
-                        <span>版本 {index + 1}</span>
-                        <button type="button" className="secondary-action" disabled={saving} onClick={() => { void selectCandidate(url); }}>{t('选用此版')}</button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </figure>
+              <div className="shot-workspace__media-grid">
+                <div className="shot-workspace__column">
+                  <figure className="shot-workspace__reference">
+                    <figcaption><ImageIcon size={14} aria-hidden="true" /> {t('参考图')}</figcaption>
+                    <div className="shot-workspace__frame">
+                      {selected.image_url
+                        ? <img src={selected.image_url} alt={`镜头 ${selected.shot_id} 分镜图`} />
+                        : <p className="shot-workspace__hint">{t('尚未生成')}</p>}
+                      <b>1</b>
+                    </div>
+                  </figure>
+                  <section className="shot-workspace__plan" aria-label={t('运镜方案')}>
+                    <h4><Video size={14} aria-hidden="true" /> {t('运镜方案')}</h4>
+                    <div className="shot-workspace__plan-item">
+                      <i>1</i>
+                      <div>
+                        <strong>{t('视频描述')}</strong>
+                        <p>{selected.video_prompt || selected.desc || '（暂无）'}</p>
+                        <button type="button" className="shot-workspace__link" onClick={() => setTab('prompts')}>{t('编辑提示词')}</button>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+                <div className="shot-workspace__column">
+                  <figure className="shot-workspace__clip">
+                    <figcaption>
+                      <Film size={14} aria-hidden="true" /> {t('正式片')}
+                      {selected.route && (
+                        <small className="shot-workspace__route">自动路由：{selected.route.mode} · {selected.route.provider_family}{selected.route.reasons?.[0] ? ` · ${selected.route.reasons[0]}` : ''}</small>
+                      )}
+                    </figcaption>
+                    <div className="shot-workspace__frame is-video">
+                      {selected.video_url
+                        ? <video src={selected.video_url} controls loop preload="metadata" aria-label={`镜头 ${selected.shot_id} 视频`} />
+                        : <p className="shot-workspace__hint">{t('尚未生成')}</p>}
+                    </div>
+                    {(selected.candidate_urls?.length ?? 0) > 1 && (
+                      <ul className="shot-workspace__candidates" aria-label={t('候选版本')}>
+                        {selected.candidate_urls!.map((url, index) => (
+                          <li key={url} className={url === selected.video_url ? 'is-current' : ''}>
+                            <span>版本 {index + 1}</span>
+                            <button type="button" className="secondary-action" disabled={saving} onClick={() => { void selectCandidate(url); }}>{t('选用此版')}</button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </figure>
+                  <ShotDeskPanel
+                    taskId={taskId} sceneId={selected.scene_id} shotId={selected.shot_id} reloadToken={deskToken}
+                    onOpenDesk={() => setDeskShot({ sceneId: selected.scene_id, shotId: selected.shot_id })}
+                  />
+                </div>
+              </div>
             </div>
           )}
 
@@ -704,6 +939,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
               {fixPlan && (
                 <div className="shot-workspace__recipe-result">
                   <p><strong>{fixPlan.category_name}</strong>（第 {fixPlan.attempt} 次）：{fixPlan.diagnosis}</p>
+                  {fixPlan.variable_name && <p className="shot-workspace__hint">本轮只改：{fixPlan.variable_name}</p>}
                   <ol>
                     {fixPlan.steps.map(step => <li key={step}>{step}</li>)}
                   </ol>
@@ -757,10 +993,70 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun }:
           </Collapsible>
 
           <footer className="shot-workspace__footer">
-            <Clapperboard size={13} aria-hidden="true" />
-            <span>视频模型 {workspace.video_model || videoModel} · 可用时长 {workspace.duration_options[0]}–{workspace.duration_options[workspace.duration_options.length - 1]} 秒 · 修改只影响本镜，流程仍按 8 个 Agent 顺序推进。</span>
+            <strong>{generated}/{workspace.shots.length} {t('个运镜已完成')}</strong>
+            <span className="shot-workspace__footer-sep" aria-hidden="true">|</span>
+            <strong>{episodesDone}/{episodes.length} {t('集完成')}</strong>
+            <span className="shot-workspace__footer-note">
+              <Clapperboard size={13} aria-hidden="true" />
+              视频模型 {workspace.video_model || videoModel} · 可用时长 {workspace.duration_options[0]}–{workspace.duration_options[workspace.duration_options.length - 1]} 秒 · 修改只影响本镜，流程仍按 8 个 Agent 顺序推进。
+            </span>
           </footer>
         </section>
+      )}
+      {queue && queueOpen && (
+        <aside id="shot-queue-drawer" className="shot-workspace__drawer" role="dialog" aria-modal="false" aria-label={t('生成队列')}>
+          <header>
+            <strong>生成队列{queue.running ? '（运行中）' : '（上一轮）'}</strong>
+            <span>
+              {(['queued', 'running', 'done', 'failed', 'cancelled', 'skipped'] as const)
+                .filter(status => (queue.counts[status] ?? 0) > 0)
+                .map(status => `${QUEUE_STATUS_LABELS[status]} ${queue.counts[status]}`)
+                .join(' · ')}
+              {Object.entries(queue.buckets).length > 0 && ` · 并发 ${Object.entries(queue.buckets).map(([bucket, info]) => `${bucket} ${info.running}/${info.limit}`).join('，')}`}
+            </span>
+            {queue.running && (queue.counts.queued ?? 0) > 0 && (
+              <button type="button" className="secondary-action" onClick={() => { void cancelQueued(null); }}>{t('取消全部排队')}</button>
+            )}
+            <button type="button" className="secondary-action" onClick={() => { void loadQueue(); }}>{t('刷新')}</button>
+            <button type="button" className="shot-workspace__drawer-close" aria-label={t('关闭队列')} onClick={() => setQueueOpen(false)}><X size={15} aria-hidden="true" /></button>
+          </header>
+          {queueNotice && <p className="shot-workspace__hint" role="status">{queueNotice}</p>}
+          {(() => {
+            const { active, settled } = splitQueueItems(queue.items);
+            const shown = showSettled ? queue.items : active;
+            const breakdown = (['done', 'cancelled', 'skipped'] as const)
+              .filter(status => settled.some(item => item.status === status))
+              .map(status => `${QUEUE_STATUS_LABELS[status]} ${settled.filter(item => item.status === status).length}`)
+              .join(' · ');
+            return (
+              <>
+                {settled.length > 0 && (
+                  <button type="button" className="shot-workspace__queue-fold" aria-expanded={showSettled} onClick={() => setShowSettled(value => !value)}>
+                    {showSettled ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}
+                    已结束 {settled.length} 项（{breakdown}）
+                  </button>
+                )}
+                {shown.length > 0 && (
+          <ul className="shot-workspace__queue-items">
+            {shown.map(item => (
+              <li key={item.key} className={`is-${item.status}`}>
+                <span className="shot-workspace__queue-status">{QUEUE_STATUS_LABELS[item.status]}</span>
+                <strong>{item.label}</strong>
+                <small>{item.bucket}{item.depends_on.length ? ` · 依赖 ${item.depends_on.join('、')}` : ''}</small>
+                {item.error && <em>{item.error}</em>}
+                {item.reason && !item.error && <em>{item.reason}</em>}
+                {queue.running && item.status === 'queued' && !(queue.withdraw ?? []).includes(item.key) && (
+                  <button type="button" onClick={() => { void cancelQueued(item.key); }} aria-label={`取消 ${item.label}`}>{t('取消')}</button>
+                )}
+                {(queue.withdraw ?? []).includes(item.key) && item.status === 'queued' && <em>{t('取消待生效')}</em>}
+              </li>
+            ))}
+          </ul>
+                )}
+              </>
+            );
+          })()}
+        </aside>
       )}
       {deskShot && (
         <Suspense fallback={null}>

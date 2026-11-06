@@ -150,7 +150,7 @@ Neon lights reflection on wet ground, volumetric smoke trails curling around arm
     *   *画面内容*：B 身体成弧线向后倒飞，砸在地上向前滑行，地上擦起一片尘土，背景的货架或碎石崩落。
     *   *生成难度*：中等。远景中人物细节度低，主要展示“人体抛物线+物理碎裂特效”，极其容易跑通。
 
-> 💡 **效果**：这三个镜头在时间轴上快速拼接（2s -> 1s -> 2s），配合**击中瞬间一帧的白屏闪烁（冲击帧）**和**爆裂的撞击音效（SFX）**，其视觉冲击力和“打击感”甚至会远远超越真实动作演员的套路打斗，呈现出极其强烈的电影级节奏！
+> 💡 **效果**：这三个镜头在剪辑台上快速拼接（成片 2s -> 1s -> 2s；每镜仍按 ≥ 4 秒生成再裁，生成请求里不写 1 秒的切镜），关键击再配 **2–3 帧白屏闪烁（冲击帧）**和**爆裂的撞击音效（SFX）**，其视觉冲击力和“打击感”甚至会远远超越真实动作演员的套路打斗，呈现出极其强烈的电影级节奏！
 
 ## 六、 空间动作学：轴线原则与 180 度防越轴规约
 
@@ -241,12 +241,12 @@ Neon lights reflection on wet ground, volumetric smoke trails curling around arm
 
 ### 10.1 动作时间戳引导 (Timestamp Motion Control)
 针对 Kling、Runway 和火山 Seedance 2.0 等支持时序引导的大模型，不要将所有攻击和格挡动作杂糅在一个 Prompt 中。建议在提示词头部使用秒级时间戳分配动作：
-*   **动作分配公式**：`[0:00-0:02] A charges forward aggressively; [0:02-duration] A swings a heavy right hook connecting with B's jaw.`
+*   **动作分配公式**：`[0:00-0:03] A charges forward aggressively; [0:03-duration] A swings a heavy right hook connecting with B's jaw.`（每个时间段 2.5–4 秒：4–6 秒分 1–2 段，7–10 秒 2–3 段，11–15 秒 3–5 段）
 *   **底层原理解析**：AI 的扩散模型是在时序帧（Latent Space Frames）中按步扩散生成的。在提示词中显式带入秒级时段切片，能够引导模型在扩散前几步（Denoising Steps）将动作能量强行约束在对应的帧区间，**从根本上解决动作随机发生、无法卡点在特定时间片上的难题**。
 
 ### 10.2 瞬间冲击帧技术 (Impact Frame & Flash Effect)
-好莱坞动作电影中，在拳拳命中的黄金帧，画面往往会发生 1 帧的强烈曝光、黑白交替或瞬间白光以突出打击力道。在 AI 视频提示词中，可以通过专门的特效词汇引导模型生成此视觉特效：
-*   *提示词*：`1-frame flashing impact white screen, sudden momentary black and white flash, extreme dynamic range burst at the moment of contact`
+好莱坞动作电影中，在关键一击命中的黄金帧，画面往往会发生 2–3 帧的强烈曝光、黑白交替或瞬间白光以突出打击力道；只给关键击与终结击，中间回合不闪，否则力量被平均掉。在 AI 视频提示词中，可以通过专门的特效词汇引导模型生成此视觉特效：
+*   *提示词*：`2-3 frame flashing impact white screen, sudden momentary black and white flash, extreme dynamic range burst at the moment of contact`
 *   **视觉生理原理**：当人的视网膜接收到极短时间（约 0.04s，即 24fps 下的 1 帧）的色彩/明暗骤变时，脑部视觉皮层会自然产生物理性的“碰撞负反馈”，从而在生理层面产生极其强烈的打击力量感。
 
 ---

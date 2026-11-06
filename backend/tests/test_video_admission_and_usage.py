@@ -139,7 +139,8 @@ def _task(shots, *, clips=None, sheets=None, scenes=None, model="seedance2.0", c
     state = {"engine": "structured-screenwriting", "episodes": {"1": {"script": {"scenes": scenes or []}}}}
     return {
         "task_id": "adm-1", "status": status, "stage_progress": {"stage": 5, "status": "running"} if status == "running" else {},
-        "config": {"video_model": model, **(config_extra or {})},
+        # 逐镜准入口径；按分镜片段估价见 tests/test_slice_video.py。
+        "config": {"video_model": model, "video_granularity": "shot", **(config_extra or {})},
         "assets": {"4": shots, "5": clips or [], "3_sheets": sheets or {}, "2_screenwriting": state},
     }
 

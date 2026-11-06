@@ -167,12 +167,12 @@ class BudgetTests(unittest.TestCase):
         # The fixed layers are restated every time and are not measured against the budget.
         self.assertGreater(report.total_length, report.length)
 
-    def test_a_long_description_is_shortened_to_the_floor_but_not_past_it(self):
+    def test_a_long_description_is_never_cut_even_over_budget(self):
         sections = {"locks": "锚" * 50, "subject": "主体。" * 200, "camera": "机位"}
         kept, report = prompt_budget.compress(sections, "vidu")
-        self.assertIn("subject", report.trimmed)
-        self.assertGreaterEqual(prompt_budget.prompt_length(kept["subject"]), prompt_budget.MAIN_DESCRIPTION_FLOOR)
-        self.assertTrue(kept["subject"].endswith("。"))
+        self.assertEqual(kept["subject"], sections["subject"])
+        self.assertNotIn("subject", report.trimmed)
+        self.assertEqual(report.tier, "red")
 
 
 class GatewayLookTests(unittest.TestCase):
@@ -198,9 +198,9 @@ class GatewayLookTests(unittest.TestCase):
         with unittest.mock.patch.object(self.gateway, "_ark_video", side_effect=fake_ark), \
              unittest.mock.patch.object(self.gateway, "_is_valid_key", return_value=True), \
              unittest.mock.patch.object(self.gateway, "optimize_video_prompt", side_effect=lambda text, **_: text):
-            self.gateway.generate_video("seedance2.5", None, "林夏走进办公室", style_pack="anime_2d_cel")
+            self.gateway.generate_video("seedance2.5", "https://cdn.test/frame.jpeg", "林夏走进办公室", style_pack="anime_2d_cel")
             anime_prompt, anime_caption = sent["prompt"], sent["style_caption"]
-            self.gateway.generate_video("seedance2.5", None, "林夏走进办公室", style_pack="film_35mm")
+            self.gateway.generate_video("seedance2.5", "https://cdn.test/frame.jpeg", "林夏走进办公室", style_pack="film_35mm")
             film_prompt, film_caption = sent["prompt"], sent["style_caption"]
 
         self.assertEqual(anime_caption, style_packs.ANIME_2D_CEL.style_caption)
@@ -273,12 +273,14 @@ class TaskConfigTests(unittest.TestCase):
 
 class VideoPromptTests(unittest.TestCase):
     def test_the_prompt_is_layered_in_one_fixed_order(self):
-        compiled = compile_shot_prompt(style_packs.FILM_35MM, _shot(), model="seedance2.5")
+        """《运镜提示词》三段：Pa1 锚点、结构、锁、镜头块；Pa2 风格、外貌、画质、声音；Pa3 铁律。"""
+        compiled = compile_shot_prompt(style_packs.FILM_35MM, _shot(cast_refs=["林夏", "周教授"]), model="seedance2.5")
         text = compiled.text
-        self.assertTrue(text.startswith("[STYLE LOCK]"))
+        self.assertTrue(text.startswith("【人物锚点·锁脸】"))
         for earlier, later in (
-            ("[STYLE LOCK]", "【结构声明】"), ("【结构声明】", "[空间锚]"), ("[空间锚]", "景别：近景"),
-            ("景别：近景", "台词（逐字保持原文"), ("台词（逐字保持原文", "【关键约束】"),
+            ("【人物锚点·锁脸】", "【结构声明】"), ("【结构声明】", "[空间锚]"), ("[空间锚]", "景别：近景"),
+            ("景别：近景", "台词（逐字保持原文"), ("台词（逐字保持原文", "落幅："), ("落幅：", "[STYLE LOCK]"),
+            ("[STYLE LOCK]", "画质："), ("画质：", "【声音设计】"), ("【声音设计】", "不要BGM"), ("不要BGM", "【关键约束】"),
         ):
             self.assertLess(text.index(earlier), text.index(later), f"{earlier} 应在 {later} 之前")
         for tag in ("[空间锚]", "[状态锁]", "[道具锁]", "[光影锁]", "[声音锁]"):
@@ -289,6 +291,89 @@ class VideoPromptTests(unittest.TestCase):
         self.assertIn("多人身份铁律", text)        # two characters in frame
         self.assertIn("口型同步铁律", text)        # the shot has a line
         self.assertEqual(compiled.style_pack, "film_35mm")
+
+    def test_the_cast_line_declares_the_people_distinct_and_binds_each_costume(self):
+        compiled = compile_shot_prompt(
+            style_packs.FILM_35MM,
+            _shot(cast_refs=["林夏", "周教授"], costume_refs=[("林夏", "林夏·深蓝西装"), ("周教授", "周教授·灰呢外套")]),
+            model="seedance2.5",
+        )
+        text = compiled.text
+        self.assertIn("@[林夏]、@[周教授]是2个不同的人，互不相像，各自在画面里只出现一次；同一人物的多张参考图属于同一个人", text)
+        self.assertIn("【服装绑定】@[林夏]全程穿@[林夏·深蓝西装]；@[周教授]全程穿@[周教授·灰呢外套]，款式、颜色与配饰以参考图为准，不换装", text)
+        self.assertLess(text.index("【服装绑定】"), text.index("【结构声明】"))
+        alone = compile_shot_prompt(style_packs.FILM_35MM, _shot(cast_refs=["林夏"], characters=["林夏"]), model="seedance2.5").text
+        self.assertIn("画面里只有这一个人，只出现一次", alone)
+        self.assertNotIn("【服装绑定】", alone)
+
+    def test_a_picture_that_already_ends_with_a_full_stop_does_not_get_a_second_one(self):
+        text = compile_shot_prompt(style_packs.FILM_35MM, _shot(subject_action="林夏盯着对面。"), model="seedance2.5").text
+        self.assertIn("画面：林夏盯着对面。\n", text)
+        self.assertNotIn("。。", text)
+
+    def test_the_props_lock_says_who_holds_what(self):
+        text = compile_shot_prompt(style_packs.FILM_35MM, _shot(), model="seedance2.5").text
+        self.assertIn("[道具锁]录音笔：林夏持有", text, "「林夏坐在桌前，录音笔在右手」：拿着的人在前一个分句里")
+        unowned = compile_shot_prompt(
+            style_packs.FILM_35MM, _shot(start_state="桌上放着录音笔", subject_action="林夏盯着对面"), model="seedance2.5",
+        ).text
+        self.assertIn("[道具锁]录音笔\n", unowned, "no holder in the text: no holder is invented")
+
+    def test_each_person_gets_a_short_appearance_line_cut_to_the_shot_size(self):
+        looks = {
+            "林夏": "骨相：瓜子脸、浅眼窝；五官：内双、鼻尖圆钝；皮肤：冷白；毛发：黑色低马尾；体态：清瘦，四肢修长",
+            "周教授": "身份锚点：反派/周教授（系主任）、男性、五十多岁；毛发：花白短发；其他固定特征：金丝眼镜",
+        }
+        close = compile_shot_prompt(style_packs.FILM_35MM, _shot(cast_looks=looks), model="seedance2.5").text
+        self.assertIn("人物外貌：@[林夏]：瓜子脸、浅眼窝；内双、鼻尖圆钝；冷白；黑色低马尾。@[周教授]：男性、五十多岁；花白短发；金丝眼镜。", close)
+        self.assertNotIn("反派", close, "the role and the name are not a look")
+        self.assertNotIn("骨相：", close, "layer labels are for the audit, not the model")
+        self.assertNotIn("四肢修长", close, "a close shot does not describe the limbs")
+        wide = compile_shot_prompt(style_packs.FILM_35MM, _shot(cast_looks=looks, shot_size="全景"), model="seedance2.5").text
+        self.assertIn("清瘦、四肢修长", wide)
+        long_look = {"林夏": "；".join(f"特征{n}" for n in range(40))}
+        text = compile_shot_prompt(style_packs.FILM_35MM, _shot(cast_looks=long_look), model="seedance2.5").text
+        line = text.split("人物外貌：", 1)[1].split("\n", 1)[0]
+        self.assertLessEqual(len(line), 100, line)
+        self.assertNotIn("人物外貌", compile_shot_prompt(style_packs.FILM_35MM, _shot(), model="seedance2.5").text)
+
+    def test_every_pack_states_what_good_picture_quality_means_for_its_medium(self):
+        for pack in style_packs.list_packs():
+            text = compile_shot_prompt(pack, _shot(), model="seedance2.5").text
+            self.assertIn("画质：", text, pack.id)
+            self.assertIn("锐利不糊", text, pack.id)
+            if pack.medium == "live_action":
+                self.assertIn("皮肤毛孔与布料纤维清晰", text, pack.id)
+            else:
+                self.assertNotIn("皮肤毛孔", text, pack.id)
+        self.assertIn("线条粗细稳定", compile_shot_prompt(style_packs.ANIME_2D_CEL, _shot(), model="seedance2.5").text)
+
+    def test_the_physics_and_form_rules_put_physics_over_the_reference(self):
+        text = compile_shot_prompt(style_packs.FILM_35MM, _shot(), model="seedance2.5").text
+        rules = text.split("【关键约束】", 1)[1]
+        self.assertIn("物理铁律：参考图与物理冲突时以物理为准：不反向、不瞬移、不突然加速", rules)
+        self.assertIn("动作轴线连续不反转", rules)
+        self.assertIn("收尾站位、朝向与道具归属即下一镜起点", rules)
+        self.assertIn("形态铁律：形态在时间上连续继承", rules)
+        self.assertIn("不得纹理闪烁、鬼影、拖尾、频闪", rules)
+        self.assertLess(rules.index("物理铁律"), rules.index("形态铁律"))
+
+    def test_a_fight_shot_gets_the_fight_rule_and_a_quiet_one_does_not(self):
+        fight = compile_shot_prompt(style_packs.FILM_35MM, _shot(situations=["fight"]), model="seedance2.5").text
+        rules = fight.split("【关键约束】", 1)[1]
+        self.assertIn("打斗铁律：拳拳到肉", rules)
+        self.assertIn("动作飘逸流畅：招与招之间用身法衔接", rules)
+        self.assertIn("全程连贯不断档", rules)
+        self.assertIn("NOT slow motion for the whole clip", fight)
+        self.assertNotIn("打斗铁律", compile_shot_prompt(style_packs.FILM_35MM, _shot(), model="seedance2.5").text)
+
+    def test_a_fight_shot_picks_up_the_previous_landing_at_the_head_of_its_picture(self):
+        text = compile_shot_prompt(
+            style_packs.FILM_35MM,
+            _shot(situations=["fight"], carry_in="从上一镜收势接住：林夏左膝跪地、右手撑在桌沿，从这个姿态直接起势、不重新摆架；"),
+            model="seedance2.5",
+        ).text
+        self.assertIn("画面：从上一镜收势接住：林夏左膝跪地、右手撑在桌沿，从这个姿态直接起势、不重新摆架；林夏盯着对面", text)
 
     def test_a_silent_shot_says_so_and_drops_the_lip_sync_rule(self):
         compiled = compile_shot_prompt(style_packs.FILM_35MM, _shot(dialogue="", characters=["林夏"]), model="seedance2.5")
@@ -325,6 +410,63 @@ class VideoPromptTests(unittest.TestCase):
         self.assertIn("禁止生硬切镜", text)
         self.assertIn("遮罩转场", text)
         self.assertIn(style_packs.ATOM_PUNK.extension_restatement, text)
+        self.assertNotIn("光线：主光", text)
+
+    def test_an_extension_names_the_light_and_restates_the_set_every_fourth_link(self):
+        def extend(index: int) -> str:
+            return extension_prompt(
+                style_packs.FILM_35MM, source_ref="@视频1", seconds=5, continuation="林夏走到窗前",
+                key_light="画面右侧窗外冷光，4200K", space_snapshot="同一书房：门在画面左侧、窗在画面右侧", chain_index=index,
+            )
+
+        for index in range(1, 9):
+            self.assertIn("光线：主光画面右侧窗外冷光，4200K，延长片段内主光方向与色温不变。", extend(index))
+        restated = [index for index in range(1, 9) if "【空间快照】同一书房：门在画面左侧" in extend(index)]
+        self.assertEqual(restated, [1, 4, 8])
+
+
+class FightNegativeTests(unittest.TestCase):
+    def test_a_fight_bans_wall_to_wall_slow_motion_but_not_the_one_hit_worth_seeing_twice(self):
+        for pack in style_packs.list_packs():
+            terms = style_packs.negatives_for(pack, ["fight"])
+            self.assertNotIn("NOT slow motion", terms, pack.id)
+            self.assertNotIn("NOT speed ramping", terms, pack.id)
+        live = style_packs.negatives_for(style_packs.get_pack(style_packs.DEFAULT_PACK_ID), ["fight"])
+        self.assertIn("NOT slow motion for the whole clip", live)
+        self.assertIn("no foot sliding", live)
+
+    def test_a_fight_scene_sends_its_negatives_and_a_dialogue_scene_does_not(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.repository.task_repo import TaskRepository
+        from app.service.drama_service import DramaService
+        from tests.test_stage_five_queue import _task
+
+        prompts: list[str] = []
+
+        def generate_video(model, image_url, prompt, *args, **kwargs):
+            prompts.append(prompt)
+            return f"https://cdn/{len(prompts)}.mp4"
+
+        for kind in ("fight", "general"):
+            task = _task(1)
+            task["task_id"] = f"fight-{kind}"
+            task["assets"]["4_scene_boards"] = {"E1S01": {"status": "done", "episode": 1, "scene_kind": kind}}
+            prompts.clear()
+            with tempfile.TemporaryDirectory() as temp:
+                service = DramaService()
+                service.repo = TaskRepository(str(Path(temp) / "tasks.json"))
+                service.repo.save_task(task["task_id"], task)
+                with patch.object(service.gateway, "generate_video", side_effect=generate_video), \
+                        patch.object(service.gateway, "generate_image", return_value=("https://cdn/f.png", "m")), \
+                        patch.object(service.gateway, "call_llm", return_value=""), \
+                        patch.object(DramaService, "run_real_consistency_check", lambda _self, *a, **k: "OK"), \
+                        patch.object(DramaService, "_missing_stage_outputs", staticmethod(lambda *a, **k: [])):
+                    service._execute_stage_blocking(task["task_id"], 5, _claimed_task=task)
+            self.assertEqual(len(prompts), 1, kind)
+            self.assertEqual("no foot sliding" in prompts[0], kind == "fight", kind)
 
 
 if __name__ == "__main__":

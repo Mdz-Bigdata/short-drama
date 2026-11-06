@@ -37,6 +37,21 @@ describe('ShotTable', () => {
     expect(within(rows[2]).getByText('第 2 集第 1 镜')).toBeTruthy();
     expect(within(rows[2]).getByText('无口播')).toBeTruthy();
   });
+
+  it('marks the emotion point of a shot and the one line that is the episode key line', () => {
+    render(<ShotTable scenes={[
+      { sceneId: 'E1S03', episodeIndex: 1, sceneIndex: 3, durationSeconds: 8, emotionPoint: '反转', keyLine: '我要的是不用再拔它。', dialogue: [
+        { kind: 'dialogue', speaker: '裴仲玄', text: '你要的是赢。' },
+        { kind: 'dialogue', speaker: '沈无咎', text: '我要的是不用再拔它。' },
+      ] },
+    ]} />);
+    const row = screen.getAllByRole('row')[1];
+    expect(within(row).getByText('反转')).toBeTruthy();
+    const tags = within(row).getAllByText('题眼');
+    expect(tags).toHaveLength(1);
+    expect(tags[0].closest('p')?.textContent).toContain('我要的是不用再拔它。');
+    expect(within(row).getByText('你要的是赢。').closest('p')?.className).toBe('');
+  });
 });
 
 describe('StoryEventTimeline', () => {

@@ -76,6 +76,10 @@ class PlanCheckContext:
 # to fix them; a person editing a plan is warned instead of refused.
 EPISODE_SHAPE_CODES = frozenset({"episode_too_few_scenes", "episode_too_short"})
 TOO_FEW_SPOKEN_SHOTS = "too_few_spoken_shots"
+# A whole episode with no shot on an emotion point (信息交代 does not count): kept, flagged for the editor.
+NO_EMOTION_POINT = "no_emotion_point"
+# A written episode with no key line (题眼台词) on any shot: kept, flagged for the editor.
+NO_KEY_LINE = "no_key_line"
 
 
 def spoken_shot_problem(scenes, spoken_shot_ratio: float) -> str | None:

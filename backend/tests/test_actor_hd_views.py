@@ -19,8 +19,10 @@ def _triptych(width: int, height: int, *, seeds=(1, 2, 3), same=False) -> bytes:
         left = index * third + third // 4
         top = height // 8
         offset = 0 if same else index * third // 10
+        # 侧面比正面、背面窄一截：真的转了身，缩略图才对得出差别。
+        span = third // 2 if same or index != 1 else third // 5
         for y in range(top, height - top, 6):
-            for x in range(left + offset, left + offset + third // 2, 6):
+            for x in range(left + offset, left + offset + span, 6):
                 value = 50 + generator.randint(0, 120)
                 draw.rectangle((x, y, x + 5, y + 5), fill=(value, value - 20, value - 30))
     buffer = io.BytesIO()
@@ -58,6 +60,40 @@ class UnevenSplitTests(unittest.TestCase):
         self.assertLess(widths[2], 452)
 
 
+class WhiteOnWhiteTests(unittest.TestCase):
+    def test_a_sword_held_away_from_a_white_robe_stays_in_its_view(self):
+        """白衣白底：剑和身体之间隔着一段平滑的白，以前剑被当成碎片丢掉、正面视图把剑切断。"""
+        image = Image.new("RGB", (1536, 1024), (236, 236, 236))
+        draw = ImageDraw.Draw(image)
+        for gap in (512, 1024):
+            draw.rectangle((gap - 5, 0, gap + 5, 1024), fill=(255, 255, 255))
+        generator = random.Random(3)
+        for left in (120, 632, 1144):
+            for y in range(80, 960, 6):
+                for x in range(left, left + 220, 6):
+                    value = 60 + generator.randint(0, 120)
+                    draw.rectangle((x, y, x + 5, y + 5), fill=(value, value, value))
+        # 正面那格：右手边斜出去一把剑，离身体有 60px 的空白，剑尖到 470px。
+        draw.line((400, 420, 470, 640), fill=(90, 90, 100), width=6)
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        front, profile, back = split_triptych(buffer.getvalue())
+        self.assertGreater(front.width, 470 - 120)      # 剑尖在正面视图里
+        self.assertLess(front.width, 512)                # 没有越过格缝带进侧面
+        self.assertLess(profile.width, 512)
+        crop = front.crop((front.width - 12, 0, front.width, front.height)).convert("L")
+        self.assertGreater(min(crop.getdata()), 200, "剑没有被切到视图边上")
+
+    def test_the_raw_triptychs_are_kept_for_recutting(self):
+        kept = {}
+        generate_hd_views(
+            generate=lambda prompt, refs, size: f"https://img.test/{size}.png",
+            load=lambda url: _triptych(1536, 512) if "1024." in url else _triptych(1536, 1024, seeds=(4, 5, 6)),
+            name="苏问剑", desc="女主", style="写实", references=[], keep=kept.__setitem__,
+        )
+        self.assertEqual(set(kept), {"face", "body"})
+
+
 class GenerateTests(unittest.TestCase):
     def _run(self, payloads):
         calls = []
@@ -78,7 +114,22 @@ class GenerateTests(unittest.TestCase):
         self.assertEqual([size for _, _, size in calls], ["3072x1024", "3072x2048"])
         self.assertIn("向画面左侧转 45°", calls[0][0])
         self.assertIn("90 度标准侧面全身", calls[1][0])
+        self.assertIn("浅灰色(不是纯白)", calls[1][0])
         self.assertEqual(calls[0][1], ["data:image/png;base64,AAA"])
+
+    def test_only_the_body_triptych_can_be_redone(self):
+        calls = []
+        views = generate_hd_views(
+            generate=lambda prompt, refs, size: calls.append(size) or "https://img.test/1.png",
+            load=lambda url: _triptych(1536, 1024, seeds=(4, 5, 6)),
+            name="苏问剑", desc="", style="", references=[], only=HD_BODY_CELLS,
+        )
+        self.assertEqual(calls, ["3072x2048"])
+        self.assertEqual(set(views), set(HD_BODY_CELLS))
+
+    def test_a_body_triptych_whose_profile_is_another_front_view_is_not_used(self):
+        views, _ = self._run([_triptych(1536, 512), _triptych(1536, 1024, same=True)])
+        self.assertEqual(set(views), set(HD_FACE_CELLS))
 
     def test_faces_that_did_not_turn_are_not_used(self):
         views, _ = self._run([_triptych(1536, 512, same=True), _triptych(1536, 1024, seeds=(4, 5, 6))])

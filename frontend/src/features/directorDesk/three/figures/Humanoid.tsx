@@ -59,7 +59,7 @@ function release() {
   if (users <= 0 && loaded) free(loaded);
 }
 
-const WHITE = '#31262b';
+const WHITE = '#eeece8';
 
 export function Humanoid({ actor, subject, selected, labelled, onPick }: Props) {
   const invalidate = useThree(state => state.invalidate);
@@ -84,6 +84,7 @@ export function Humanoid({ actor, subject, selected, labelled, onPick }: Props) 
       if (!mesh.isMesh) return;
       // The bind-pose bounds say nothing about where a posed limb is.
       mesh.frustumCulled = false;
+      mesh.castShadow = true;
       // Picking goes through the proxy below; ray-testing skinned triangles on every move is wasted work.
       mesh.raycast = () => {};
     });

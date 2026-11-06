@@ -357,6 +357,32 @@ class ProviderClientTests(unittest.TestCase):
             ["first_frame", "last_frame"],
         )
 
+    def test_minimax_h3_failed_tasks_carry_the_provider_reason(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"task": {"id": "t1", "status": "failed", "error": {"code": "1026", "message": "input image sensitive"}}})
+
+        client = MiniMaxH3Client(api_key="server-test-key", transport=httpx.MockTransport(handler))
+        with self.assertRaisesRegex(RuntimeError, "1026 input image sensitive"):
+            client.wait_for_video("t1", timeout_seconds=5, poll_interval_seconds=0)
+
+    def test_minimax_h3_only_asks_for_resolutions_it_accepts(self):
+        """H3 拒单原话：supported resolutions: 480P, 768P, 2K；通用的 1080p 换成最近的 768P。"""
+        from app.core.providers.minimax_h3 import h3_resolution
+        self.assertEqual(h3_resolution("1080p"), "768p")
+        self.assertEqual(h3_resolution("720P"), "768p")
+        self.assertEqual(h3_resolution("2K"), "2k")
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["payload"] = json.loads(request.content)
+            return httpx.Response(200, json={"task_id": "h3-res-task"})
+
+        client = MiniMaxH3Client(api_key="server-test-key", transport=httpx.MockTransport(handler))
+        client.create_video(H3VideoRequest(prompt="一镜", first_frame="https://cdn.example/first.png", resolution="1080p"))
+        self.assertEqual(captured["payload"]["resolution"], "768P")
+        client.create_video(H3VideoRequest(prompt="一镜", first_frame="https://cdn.example/first.png"))
+        self.assertEqual(captured["payload"]["resolution"], "768P")
+
     def test_elevenlabs_timing_and_video_to_music_use_current_official_endpoints(self):
         seen = []
 

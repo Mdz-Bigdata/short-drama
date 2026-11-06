@@ -16,8 +16,10 @@ production_knowledge → knowledge_evolution; the evolution engine never imports
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from app.core import knowledge_evolution, knowledge_registry
 
@@ -100,6 +102,33 @@ def load_section(key: str, budget: int | None = None) -> str:
     if not text:
         return ""
     return _truncate(text, item.budget if budget is None else budget)
+
+
+PROMPT_PROFILE_KEY = "prompt_profile"
+LEAN_PROFILE = "lean"
+# 指南按行边界截断，前段是方法、后段是例子，所以减半丢的主要是例子；是否影响成片要用真实模型比过才知道。
+_LEAN_FACTOR = 0.5
+
+
+def is_lean_prompts(config: Mapping[str, Any] | None) -> bool:
+    """The project chose the shorter guides over the full ones (省 token 模式)."""
+    return str((config or {}).get(PROMPT_PROFILE_KEY) or "") == LEAN_PROFILE
+
+
+def lean_guide_budget(key: str) -> int | None:
+    """Half the characters a guide is registered for; None when it is unknown, which leaves the loader's own handling."""
+    try:
+        item = knowledge_registry.section(key)
+    except knowledge_registry.KnowledgeManifestError:
+        return None
+    return int(item.budget * _LEAN_FACTOR) if item is not None and item.budget else None
+
+
+def lean_section_budgets(budgets: Any) -> Any:
+    """The shot-design skill's section budgets at half; its core is never cut."""
+    if isinstance(budgets, Mapping):
+        return {key: int(value * _LEAN_FACTOR) for key, value in budgets.items()}
+    return budgets
 
 
 def load_stage_sections(stage: int) -> dict[str, str]:

@@ -288,7 +288,7 @@ export function CharacterRelationshipGraph({
             <stop offset="100%" stopColor="#f5b3a3" />
           </linearGradient>
           <linearGradient id={`${uid}-lead-ring`} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#e3546c" />
+            <stop offset="0%" stopColor="var(--accent)" />
             <stop offset="100%" stopColor="#f28b6c" />
           </linearGradient>
           <filter id={`${uid}-glow`} x="-60%" y="-60%" width="220%" height="220%">

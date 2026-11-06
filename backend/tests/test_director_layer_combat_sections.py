@@ -43,6 +43,40 @@ class CombatSectionsTests(unittest.TestCase):
         sections = _sections("仙门山巅，她御剑落在云海边，回头看了他一眼")
         self.assertFalse(any(name.startswith(("combat/", "xianxia/")) for name in sections))
 
+    def test_a_duel_gets_the_single_fight_camera_dictionary(self):
+        director.reset_seedance_director_cache()
+        layer = director.build_director_layer(video_model=SEEDANCE_25, duration=8, prompt="两人在巷子里拳脚互打，一人被踢倒撞上墙")
+
+        self.assertIn("combat/单挑机位公式", layer.sections)
+        self.assertNotIn("combat/割草专章", layer.sections)
+        for entry in ("旋身攻击", "破门而入", "跃起下压", "翻滚闪避", "格挡震手", "压迫长镜", "胜负环绕"):
+            self.assertIn(entry, layer.text, entry)
+
+    def test_a_mass_battle_gets_the_mow_down_table_and_its_extras_rules(self):
+        director.reset_seedance_director_cache()
+        layer = director.build_director_layer(
+            video_model=SEEDANCE_25, duration=8, prompt="他一人杀入敌群，长刀横斩，杂兵成片击飞",
+        )
+
+        self.assertIn("combat/割草专章", layer.sections)
+        self.assertNotIn("combat/单挑机位公式", layer.sections)
+        for rule in ("没有清晰五官的模糊剪影", "只减不增", "不从画外补人", "不起身再战", "群像甩焦"):
+            self.assertIn(rule, layer.text, rule)
+
+    def test_the_handbook_no_longer_asks_for_a_freeze_on_every_hit(self):
+        """shot_table_rules 把「凝滞」判成模型做不到的定格；手册里的命中处理改成接触后震一次。"""
+        text = knowledge_registry.section("combat-camera-handbook").path.read_text(encoding="utf-8")
+
+        self.assertNotIn("凝滞", text)
+        self.assertIn("4–6 秒 1–2 个，7–10 秒 2–3 个，11–15 秒 3–5 个", text)
+
+    def test_the_precedence_note_asks_for_few_positively_worded_exclusions(self):
+        director.reset_seedance_director_cache()
+        layer = director.build_director_layer(video_model=SEEDANCE_25, duration=8, prompt="她低头看信")
+
+        self.assertIn("排除项少而精、尽量正着说", layer.text)
+        self.assertIn("被排除的那个名词不在正文里重复出现", layer.text)
+
     def test_every_layer_keeps_the_camera_sentence_rules(self):
         self.assertIn("camera-move/写法总则", _sections("她低声说：“我知道是你。”眼神发冷"))
 

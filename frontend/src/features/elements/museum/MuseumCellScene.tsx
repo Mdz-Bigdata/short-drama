@@ -239,7 +239,7 @@ export default function MuseumCellScene({
   return (
     <>
       <ambientLight intensity={lowQuality ? 1.35 : 1.18} />
-      <hemisphereLight args={['#392d32', '#fdf2f4', lowQuality ? 1.15 : 0.95]} />
+      <hemisphereLight args={['#f0a3b4', '#15111a', lowQuality ? 1.15 : 0.95]} />
       <directionalLight
         position={[4.2, 5.2, 5.8]}
         intensity={2.35}

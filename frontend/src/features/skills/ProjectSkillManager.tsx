@@ -9,7 +9,7 @@ import { t } from '../../i18n';
 
 interface Props {
   open: boolean;
-  role?: 'admin' | 'editor' | 'user';
+  canManage?: boolean;
   mustChangePassword?: boolean;
   onClose: () => void;
 }
@@ -27,7 +27,7 @@ async function responseData(response: Response) {
 }
 
 
-export function ProjectSkillManager({ open, role, mustChangePassword, onClose }: Props) {
+export function ProjectSkillManager({ open, canManage: canManageRole = false, mustChangePassword, onClose }: Props) {
   const [skills, setSkills] = useState<ProjectSkill[]>([]);
   const [editing, setEditing] = useState<ProjectSkill | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -37,7 +37,7 @@ export function ProjectSkillManager({ open, role, mustChangePassword, onClose }:
   const [error, setError] = useState('');
   const markdownInput = useRef<HTMLInputElement>(null);
   const packageInput = useRef<HTMLInputElement>(null);
-  const canManage = role === 'admin' && !mustChangePassword;
+  const canManage = canManageRole && !mustChangePassword;
 
   const load = async () => {
     setLoading(true);

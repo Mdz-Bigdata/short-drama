@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import re
 
+from app.core import fight_design
 from app.core.frame_position import FramePosition, parse_frame_positions
 from app.core.storyboard_director import StoryboardDirectorCompiler, landmark_is_anchored
-from app.core.transition_catalog import normalize_transition_type, transition_label
+from app.core.transition_catalog import normalize_transition_type, transition_label, smooth_text
 from app.core.storyboard_scene_context import EMPTY_ACTOR
 from app.schema.production import NineGridStoryboard
 from app.schema.storyboard_director import (
@@ -72,9 +73,9 @@ def _dialogue_parts(value: str, fallback_speaker: str) -> tuple[str, str, str]:
 
 
 def _transition_type(hint: str, *, default: str) -> str:
-    """Catalog type named by the panel's edit hint; unnamed hints fall back to a hard cut."""
+    """Catalog type named by the panel's edit hint; unnamed hints fall back to a continuous match transition."""
     kind, matched = normalize_transition_type(hint)
-    return _clip(f"{transition_label(kind)}（{hint.strip()}）", 500) if matched and hint.strip() else default
+    return _clip(f"{transition_label(kind)}（{smooth_text(hint.strip())}）", 500) if matched and hint.strip() else default
 
 
 def _narrative_goal(board: NineGridStoryboard) -> str:
@@ -86,6 +87,17 @@ def _narrative_goal(board: NineGridStoryboard) -> str:
     if len(actions) == 2:
         return f"{actions[0]} → {actions[1]}"
     return f"{actions[0]} → {actions[len(actions) // 2]} → {actions[-1]}"
+
+
+# 第 5 阶段按分镜表重新编译视频提示词，这几段从不发给任何模型；留在场景板上只会让人照着不会生效的内容审稿。
+UNSENT_DETAIL_SECTIONS = ("still_prompts", "video_segments", "grid_pages")
+
+
+def storable_prompt_detail(detail: object) -> object:
+    """场景板上要留的那部分：拍点、基础设定和连续性检查。"""
+    if not isinstance(detail, dict):
+        return detail
+    return {key: value for key, value in detail.items() if key not in UNSENT_DETAIL_SECTIONS}
 
 
 def compile_storyboard_prompt_detail(
@@ -308,6 +320,12 @@ def compile_storyboard_prompt_detail(
         f"{item.name}：{item.initial_position}，{item.initial_state}" for item in props
     )
     narrative_goal = _narrative_goal(board)
+    # A fight page swaps the locked-off camera for one that follows the action: the generic
+    # 稳定器/固定机位 stance and the ban on sudden push-ins are what make fights look static.
+    fight = board.rhythm_profile == "action" or fight_design.looks_like_fight(
+        "\n".join([script_text, *(panel.subject_action for panel in panels)])
+    )
+    reference_video_role = production.get("reference_video_role")
     episode_match = re.search(r"\d+", episode)
     episode_number = int(episode_match.group()) if episode_match else 1
 
@@ -347,6 +365,7 @@ def compile_storyboard_prompt_detail(
             art_direction="建筑、服装、道具、数字演员设定集与场景圣经均为硬约束",
             rendering_texture="真人电视剧电影摄影质感，可信材质、自然皮肤纹理、受控景深与细颗粒",
             authenticity="原创虚拟角色，不冒用真人身份；参考图只锁定外观，不复制排版",
+            **({"reference_video_role": reference_video_role} if reference_video_role in {"appearance", "motion_trajectory"} else {}),
             overall_atmosphere=_clip(f"按{board.rhythm_profile}节奏服务本页叙事目标：{narrative_goal}", 500),
         ),
         continuity=ContinuityLocks(
@@ -396,12 +415,18 @@ def compile_storyboard_prompt_detail(
             subject_direction="服从既定屏幕方向、人物视线和每拍动作目标",
             subject_trajectory="沿场景结构允许的直线、自然弧线或重力轨迹",
             force_source="人物主动发力、重力、接触反作用力或剧本明确环境力",
-            speed_curve="准备—缓起—发展—峰值—自然减速—收束",
+            speed_curve=(
+                "起势—加速—接触—受力形变—继续推进—滑开或擦过—转入下一动作，接触只是路径上的一个点"
+                if fight else "准备—缓起—发展—峰值—自然减速—收束"
+            ),
             center_of_gravity="随动作真实转移，不瞬移、不重置、不无过程换脚",
             visual_flow="观众视线从动作发起者移动至动作目标、道具或反应者",
             secondary_motion="衣摆、发丝、铁链、尘埃和环境动态只响应主体动作或真实环境力",
             inertia_and_follow_through="动作结束保留符合速度、质量和材质的惯性、回落与余振",
-            motion_blur="仅快速运动部位允许轻微动态模糊，身份锚点不得模糊",
+            motion_blur=(
+                "动态模糊落在环境与运动边缘，接触点、面部与身份锚点保持清晰"
+                if fight else "仅快速运动部位允许轻微动态模糊，身份锚点不得模糊"
+            ),
             stable_regions="角色面部、手部关键姿态、身份锚点和关键道具保持清晰稳定",
         ),
         camera=CameraDesign(
@@ -416,18 +441,28 @@ def compile_storyboard_prompt_detail(
             ),
             path="沿既定轴线一侧连续移动，不穿越人物、道具或场景实体",
             direction="服从主体动线、视线方向和连续性锁定",
-            speed_curve="缓入—随叙事强度调整—缓出；禁止无原因急停或速度跳变",
+            speed_curve=(
+                "贴着攻击方向加速与减速：起势时贴近，接触瞬间短促推近，受力后沿推开方向跟随"
+                if fight else "缓入—随叙事强度调整—缓出；禁止无原因急停或速度跳变"
+            ),
             subject_following="保持核心角色、动作与关键道具可读，必要时延迟跟随以交付反应",
             composition_change=_clip("；".join(panel.composition for panel in panels)),
             focus_change="按动作信息在人物眼神、手部和关键道具间平滑跟焦或转焦",
-            stability="以稳定器/固定机位为基准，仅在剧本明确时使用受控手持微动",
-            forbidden_behaviors="禁止随机旋转、突然推近、无动机变焦、越轴、镜像翻转和构图漂移",
+            stability=(
+                "镜头跟着动作走，运动强度高：以稳定器跟拍为基准，随攻击方向推、拉、横移或环绕，"
+                "接触之后可短震一次随即稳住"
+                if fight else "以稳定器/固定机位为基准，仅在剧本明确时使用受控手持微动"
+            ),
+            forbidden_behaviors=(
+                "禁止无动机旋转、越轴、镜像翻转和构图漂移" if fight
+                else "禁止随机旋转、突然推近、无动机变焦、越轴、镜像翻转和构图漂移"
+            ),
         ),
         transitions=TransitionDesign(
             entry=TransitionEdge(
                 adjacent_shot="上一页/上一镜或无",
-                transition_type=_transition_type(first.edit_in, default="硬切（承接上一镜动作、视线或声音桥）"),
-                visual_handoff=first.edit_in,
+                transition_type=_transition_type(first.edit_in, default="匹配剪辑（承接上一镜动作、视线或声音桥，连贯过渡）"),
+                visual_handoff=smooth_text(first.edit_in),
                 audio_handoff=f"以{first.sound}承接入场",
                 duration_seconds=0,
                 included_in_shot_duration=False,
@@ -439,8 +474,8 @@ def compile_storyboard_prompt_detail(
             ),
             exit=TransitionEdge(
                 adjacent_shot="下一页/下一镜或无",
-                transition_type=_transition_type(last.edit_out, default="硬切（在动作接触、视线落点或对白收音点切出）"),
-                visual_handoff=last.edit_out,
+                transition_type=_transition_type(last.edit_out, default="匹配剪辑（在动作接触、视线落点或对白收音点顺势衔接）"),
+                visual_handoff=smooth_text(last.edit_out),
                 audio_handoff=f"以{last.sound}向下一镜交接",
                 duration_seconds=0,
                 included_in_shot_duration=False,

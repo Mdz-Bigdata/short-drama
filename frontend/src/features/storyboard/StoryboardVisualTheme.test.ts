@@ -9,9 +9,9 @@ const workspaceStylesheet = readFileSync(new URL('./StoryboardWorkspace.css', im
 describe('StoryboardWorkspace visual theme', () => {
   it('uses the project light rose surfaces and pale red accent without the legacy purple palette', () => {
     expect(STORYBOARD_VISUAL_THEME).toEqual({
-      id: 'agent-light-rose',
-      background: '#fcedef',
-      surface: '#fdeff1',
+      id: 'agent-dark-cinema',
+      background: '#0f0c12',
+      surface: '#1a1420',
       accent: '#e3546c',
     });
   });

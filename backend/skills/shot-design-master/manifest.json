@@ -175,6 +175,14 @@
       "budget": 0,
       "stages": [],
       "scope": "skill"
+    },
+    {
+      "key": "blender-previz-protocol",
+      "title": "Blender 白模预演协议：运动主权与外观分离",
+      "file": "references/blender-previz-protocol.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
     }
   ]
 }

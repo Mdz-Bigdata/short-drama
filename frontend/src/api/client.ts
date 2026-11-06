@@ -72,6 +72,11 @@ function notifyUnauthorized() {
 }
 
 
+/** A paid call was refused: not enough points, or not in the plan. The app offers the way to the billing centre. */
+export function notifyBillingRequired(detail: string): void {
+  window.dispatchEvent(new CustomEvent('billing-required', { detail }));
+}
+
 export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const hasJsonBody = options.body !== undefined && !(options.body instanceof FormData);
   const response = await fetch(`${API_BASE}${path}`, {
@@ -93,6 +98,7 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
       // Preserve the generic safe error when the server did not return JSON.
     }
     if (response.status === 401) notifyUnauthorized();
+    if (response.status === 402) notifyBillingRequired(detail);
     throw new ApiError(detail, response.status);
   }
   return response.json() as Promise<T>;

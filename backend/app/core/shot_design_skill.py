@@ -98,21 +98,21 @@ SECTION_BUDGET_PROFILES: dict[str, dict[str, int]] = {
     # performance-action 附 §3.8 自带)，连贯性/站位两章让位。
     # 下面两档按抽取块在拼接结果里的**实测**偏移倒推，不是拍脑袋的整数。
     # performance-action 抽取后各块的起始偏移(用 _excerpt 实测，改动前必须重测)：
-    #   动能运镜 3982、节奏档位 5093、危险等级 5837、选档决策 7758、
-    #   防越轴 8354、动作戏负面词 8787、deformed limbs 8823、不要跳轴 9164。
+    #   动能运镜 3994、节奏档位 5105、危险等级 5864、选档决策 7830、
+    #   防越轴 8426、动作戏负面词 8859、deformed limbs 8895、不要跳轴 9236。
     # 预算落在哪两个数字之间，就决定了最后一个完整到达提示词的块是谁。
-    # 9_200 是让 §3.13 负面词串整段落地的最小值：_truncate 按行边界回退，
-    # 9_100 只能带到 deformed limbs，中文负面串「不要跳轴」还在行外。
+    # 9_280 是让 §3.13 负面词串整段落地的最小值：_truncate 按行边界回退，
+    # 9_200 只能带到 deformed limbs，中文负面串「不要跳轴」还在行外。
     "fight": {
-        "performance-action": 9_200,
+        "performance-action": 9_280,
         "choreography-beats": 2_100,
         "shot-grammar": 1_700,
     },
     "fight+h3": {
-        # 多一章 h3-native-contract，池子少 1800；performance-action 仍须保住 9_200,
+        # 多一章 h3-native-contract，池子少 1800；performance-action 仍须保住 9_280,
         # 否则 SKILL.md 里「打戏防崩坏后缀见 §3.13」就是一条到不了的死链。
         # 缩的是招式表与镜头语法：招式可按体系抽查，负面词串少一行就等于不设防。
-        "performance-action": 9_200,
+        "performance-action": 9_280,
         "choreography-beats": 900,
         "shot-grammar": 1_100,
         "h3-native-contract": 1_800,

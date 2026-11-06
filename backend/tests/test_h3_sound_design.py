@@ -184,11 +184,59 @@ class ShotPromptIntegrationTests(unittest.TestCase):
         self.assertNotIn("sound_layers", compiled.pressure.dropped)
         self.assertIn("environment", compiled.pressure.dropped)
 
-    def test_without_layers_the_plain_sound_note_is_used(self):
+    def test_without_layers_the_sound_note_becomes_one_ambience_bed(self):
         compiled = compile_shot_prompt(CINEMATIC_REALISM, self._shot(), model="seedance2.5", max_duration_seconds=30)
 
-        self.assertIn("【声音设计】环境音：空调低鸣", compiled.text)
+        self.assertIn("【声音设计】环境铺底：空调低鸣，全程连续", compiled.text)
         self.assertNotIn("【声音设计·三层】", compiled.text)
+
+    def test_with_layers_only_the_event_bound_contacts_are_added(self):
+        anchor = sound.build_voice_anchor("林夏", gender="female")
+        layers = sound.compile_sound_prompt(speakers=[anchor], ambience=["office hum"]).text
+        shot = self._shot(
+            sound_layers=layers, subject_action="林夏把纸杯放在木柜台上", props=["纸杯"],
+            sound="环境音：空调低鸣；动作音：纸杯碰柜台", environment="",
+        )
+
+        text = compile_shot_prompt(CINEMATIC_REALISM, shot, model="seedance2.5", max_duration_seconds=30).text
+
+        self.assertIn("【声音设计·三层】", text)
+        self.assertIn("【声音事件】林夏把纸杯放在木柜台上的瞬间：", text)
+        self.assertNotIn("环境铺底", text, "H3's ambient layer is the bed; it is not written twice")
+
+
+class DesignedVoiceTests(unittest.TestCase):
+    def test_a_designed_voice_desc_is_the_lock_line_verbatim(self):
+        anchor = sound.build_voice_anchor(
+            "周教授", description="少年天才", gender="female", voice_desc="55岁男声，低沉微哑，语速偏慢，克制",
+        )
+
+        self.assertTrue(anchor.lock_line().startswith("周教授：55岁男声，低沉微哑，语速偏慢，克制"))
+        self.assertNotIn("语速每秒", anchor.lock_line())
+        self.assertEqual(anchor.gender, "male", "the designed voice names the gender")
+        self.assertEqual(anchor.timbre, "沙哑", "the keyword rules read the designed voice, not the card")
+
+    def test_without_a_design_the_card_rules_still_apply(self):
+        anchor = sound.build_voice_anchor("林夏", description="22岁女记者", gender="female")
+
+        self.assertIn("22岁清亮女声", anchor.lock_line())
+
+    def test_the_cast_list_takes_designed_voices_by_name(self):
+        anchors = sound.anchors_from_characters(
+            [{"name": "林夏", "desc": "22岁女记者"}, {"name": "周教授", "desc": "中年男教授"}],
+            gender_of=lambda name: "female", voices={"周教授": "50岁男声，沉稳，语速慢"},
+        )
+
+        self.assertIn("周教授：50岁男声，沉稳，语速慢", anchors["周教授"].lock_line())
+        self.assertIn("清亮女声", anchors["林夏"].lock_line())
+
+    def test_the_shot_emotion_rides_on_top_of_the_base_voice(self):
+        anchor = sound.build_voice_anchor("林夏", voice_desc="22岁女声，清亮，语速适中")
+        overlay = sound.emotion_overlay([anchor], "林夏：压抑-克制 / 慢")
+
+        self.assertIn("林夏本镜情绪（林夏：压抑-克制 / 慢）", overlay)
+        self.assertIn("基础音色、音调与声线照上面的锁定句不变", overlay)
+        self.assertEqual(sound.emotion_overlay([anchor], ""), "")
 
 
 class StageFiveWiringTests(unittest.TestCase):
@@ -207,6 +255,12 @@ class StageFiveWiringTests(unittest.TestCase):
 
         for marker in (
             'normalize_video_provider(str(config.get("video_model") or "")).family == "minimax_h3"',
+            'audio_native = video_native_audio(str(config.get("video_model") or ""))',
+            "voices=self._designed_voices(task)",
+            "voice_locks = [anchor.lock_line() for anchor in speaking]",
+            'f"情绪叠加：{voice_overlay}"',
+            "native_audio=audio_native",
+            '"post_audio": req.get("post_audio")',
             "h3_sound_design.anchors_from_characters",
             "h3_sound_design.compile_sound_prompt",
             "sound_layers=sound_layers",

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.auth_api import get_current_user, require_admin
+from app.api.auth_api import get_current_user, require_permission
+from app.platform.permissions import MODEL_CONFIG_MANAGE
 from app.core.model_configuration import (
     DOCUMENTED_VIDEO_CATALOG_PROVIDERS,
     ModelDiscoveryClient,
@@ -210,7 +211,7 @@ async def list_model_configurations(
 async def save_video_endpoint(
     family: str,
     request: VideoEndpointSaveRequest,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_permission(MODEL_CONFIG_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
     cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
 ):
@@ -240,7 +241,7 @@ async def save_video_endpoint(
 @router.delete("/settings/video-endpoints/{family}")
 async def delete_video_endpoint(
     family: str,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_permission(MODEL_CONFIG_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
     cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
 ):
@@ -262,7 +263,7 @@ async def delete_video_endpoint(
 async def add_model_credential(
     configuration_id: str,
     request: ModelCredentialCreateRequest,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_permission(MODEL_CONFIG_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
     cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
 ):
@@ -285,7 +286,7 @@ async def update_model_credential(
     configuration_id: str,
     credential_id: str,
     request: ModelCredentialUpdateRequest,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_permission(MODEL_CONFIG_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
     cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
 ):
@@ -303,7 +304,7 @@ async def update_model_credential(
 async def delete_model_credential(
     configuration_id: str,
     credential_id: str,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_permission(MODEL_CONFIG_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
     cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
 ):
@@ -318,7 +319,7 @@ async def delete_model_credential(
 @router.post("/discover")
 async def discover_models(
     request: ModelDiscoveryRequest,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_permission(MODEL_CONFIG_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
     cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
     discovery: ModelDiscoveryClient = Depends(get_model_discovery_client),
@@ -346,7 +347,7 @@ async def discover_models(
 @router.post("/test")
 async def test_model_connection(
     request: ModelTestRequest,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_permission(MODEL_CONFIG_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
     cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
     discovery: ModelDiscoveryClient = Depends(get_model_discovery_client),
@@ -375,7 +376,7 @@ async def test_model_connection(
 @router.post("")
 async def save_model_configuration(
     request: ModelSaveRequest,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_permission(MODEL_CONFIG_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
     cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
     discovery: ModelDiscoveryClient = Depends(get_model_discovery_client),
@@ -414,7 +415,7 @@ async def save_model_configuration(
 async def toggle_model_configuration(
     configuration_id: str,
     request: CapabilityToggleRequest,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_permission(MODEL_CONFIG_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
     cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
 ):
@@ -433,7 +434,7 @@ async def toggle_configured_model(
     configuration_id: str,
     entry_id: str,
     request: CapabilityToggleRequest,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_permission(MODEL_CONFIG_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
     cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
 ):
@@ -451,7 +452,7 @@ async def toggle_configured_model(
 async def delete_configured_model(
     configuration_id: str,
     entry_id: str,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_permission(MODEL_CONFIG_MANAGE)),
     store: PlatformStore = Depends(get_platform_store),
     cipher: ModelSecretCipher = Depends(get_model_secret_cipher),
 ):

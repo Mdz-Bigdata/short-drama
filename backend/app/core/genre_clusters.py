@@ -63,7 +63,7 @@ CLUSTERS: tuple[GenreCluster, ...] = (
         ("military", "sports", "mafia"),
         fight_coverage=True, default_intent="tight_fight", rhythm_profile="action",
         negative_modules=("action_physics", "weapon_contact", "crowd_limb_separation"),
-        note="动作按起手→碰撞→结果拆镜，硬切落在撞击帧，空间单向推进。",
+        note="动作按起手→碰撞→结果拆镜，用动作匹配在撞击帧衔接(动作不中断)，空间单向推进。",
     ),
     GenreCluster(
         "E", "悬疑惊悚",
@@ -120,10 +120,10 @@ class DirectionPlan:
     cluster: GenreCluster
     intent: IntentPlan
 
-    def brief(self) -> str:
+    def brief(self, scene_key: str = "") -> str:
         return "\n".join((
             f"【题材】{self.cluster.name}（{self.cluster.id}簇）：{self.cluster.note}",
-            self.intent.brief(),
+            self.intent.brief(scene_key),
         ))
 
     def as_dict(self) -> dict:

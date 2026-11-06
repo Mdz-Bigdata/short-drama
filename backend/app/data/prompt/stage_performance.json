@@ -1,0 +1,107 @@
+{
+  "gestures": [
+    [
+      "出拳|挥拳|一拳|直拳|勾拳",
+      "punch"
+    ],
+    [
+      "踢|蹬|扫腿",
+      "kick"
+    ],
+    [
+      "推开|推搡|猛推|一推",
+      "push"
+    ],
+    [
+      "抱臂|环抱双臂|双臂抱胸|抱着胳膊",
+      "cross-arms"
+    ],
+    [
+      "叉腰|双手叉腰",
+      "hands-on-hips"
+    ],
+    [
+      "鞠躬|躬身|行礼|作揖|俯身一礼",
+      "bow"
+    ],
+    [
+      "回头|回望|回首|侧身回看",
+      "look-back"
+    ],
+    [
+      "指向|指着|一指|抬手指",
+      "point-ahead"
+    ],
+    [
+      "伸手|递|接过|拿起|抓起|探手|摸向",
+      "reach"
+    ],
+    [
+      "招手|挥手|摆手",
+      "wave"
+    ],
+    [
+      "扔|掷|抛|甩出",
+      "throw"
+    ],
+    [
+      "沉思|思索|托腮|沉吟|若有所思",
+      "think"
+    ],
+    [
+      "看手机|手机|划着屏幕",
+      "phone"
+    ],
+    [
+      "背手|负手|背着手",
+      "hands-behind"
+    ],
+    [
+      "倚着|靠着|靠在|倚在|斜倚",
+      "lean"
+    ],
+    [
+      "格挡|架住|摆出架势|拉开架势|格斗架势",
+      "fight"
+    ]
+  ],
+  "posture_presets": {
+    "stand": "stand",
+    "walk": "walk",
+    "run": "run",
+    "sit": "sit",
+    "crouch": "crouch",
+    "kneel": "kneel-one",
+    "lie": "lie",
+    "fight": "fight",
+    "bow": "bow",
+    "lean": "lean"
+  },
+  "posture_clips": {
+    "stand": "human-idle-v1",
+    "walk": "human-walk-v1",
+    "run": "human-jog-v1",
+    "crouch": "human-crouch-idle-v1",
+    "kneel": "human-crouch-idle-v1",
+    "sit": "human-sit-idle-v1",
+    "lean": "human-idle-v1",
+    "fight": "human-idle-v1",
+    "bow": "human-idle-v1"
+  },
+  "talk_clips": {
+    "stand": "human-talk-v1",
+    "sit": "human-sit-talk-v1",
+    "lean": "human-talk-v1"
+  },
+  "sit_enter": [
+    "human-sit-enter-v1",
+    1.3
+  ],
+  "sit_exit": [
+    "human-sit-exit-v1",
+    1.0333
+  ],
+  "walk_speed_mps": 1.2,
+  "run_speed_mps": 2.6,
+  "name_gap": 10
+}

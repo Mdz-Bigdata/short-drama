@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Grid, Line, OrbitControls, PerspectiveCamera, Text, TransformControls } from '@react-three/drei';
 import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber';
-import { MOUSE, Plane, Raycaster, TOUCH, Vector2, Vector3, type Object3D } from 'three';
+import { MOUSE, Plane, Raycaster, TOUCH, Vector2, Vector3, type Object3D, type PerspectiveCamera as LensCamera } from 'three';
 
 import { actorsInShot, type GroundPoint, type SpacePoint, type StageOperation, type StagePlan, type StageShot } from '../../spatial/spatialTypes';
 import { overrideFor } from '../deskOperations';
@@ -11,7 +11,7 @@ import { anchorOf, dragOperations, gizmoMode, type AnchorTransform } from '../li
 import { appendStrokePoint, strokeFull, strokeIsRoute, type PathTarget } from '../lib/pathTool';
 import { useReducedMotion } from '../lib/useReducedMotion';
 import type { ActorPath, CameraPath } from '../lib/sampling';
-import { round2 } from '../lib/stageMath';
+import { round2, stageReach } from '../lib/stageMath';
 import { CameraRig } from './CameraRig';
 import { ActorFigure } from './figures/ActorFigure';
 import { PoseHandles } from './PoseHandles';
@@ -66,6 +66,26 @@ const ORBIT_TOUCHES = { ONE: TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN };
 const DRAWING_TOUCHES = { ONE: undefined, TWO: TOUCH.DOLLY_PAN };
 /** Lines on the floor sit just above it so the ground plane does not swallow them. */
 const FLOOR_LIFT = 0.03;
+
+/** Stand back far enough to see the whole set, each time `stamp` changes to something truthy. */
+function FitView({ plan, stamp }: { plan: StagePlan; stamp: string }) {
+  const camera = useThree(state => state.camera);
+  const controls = useThree(state => state.controls) as unknown as { target?: { set: (x: number, y: number, z: number) => void }; update?: () => void } | null;
+  const invalidate = useThree(state => state.invalidate);
+  // Read when asked, not followed: a playing shot changes the plan every frame.
+  const latest = useRef(plan);
+  useEffect(() => { latest.current = plan; }, [plan]);
+  useEffect(() => {
+    if (!stamp || !controls?.target) return;
+    const { center, radius } = stageReach(latest.current);
+    const distance = radius / Math.tan(((camera as LensCamera).fov * Math.PI) / 360);
+    controls.target.set(center[0], 0, center[1]);
+    camera.position.set(center[0] + distance * 0.45, distance * 0.75, center[1] + distance * 0.6);
+    controls.update?.();
+    invalidate();
+  }, [camera, controls, invalidate, stamp]);
+  return null;
+}
 
 function ViewBridge({ onReady }: { onReady?: (handle: DeskViewHandle | null) => void }) {
   const camera = useThree(state => state.camera);
@@ -282,6 +302,9 @@ export default function DeskViewport({
   const anchor = useMemo(() => (primary ? anchorOf(plan, shot, primary) : null), [plan, primary, shot]);
   const drawing = tool === 'path' && pathTarget !== null && Boolean(onPath) && !readOnly && !playing;
   // The orbit pivot is read once: following every edit would yank the view around mid-drag.
+  // Asked for by the button; a blockout landing or changing asks for it too, since it is usually far bigger than the default view.
+  const [fitRequests, setFitRequests] = useState(0);
+  const blockoutPieces = plan.landmarks.filter(item => item.origin === 'blockout').length;
   const [centre] = useState<SpacePoint>(() => {
     const solid = basePlan.actors.filter(actor => actor.role !== 'crowd');
     const pool = solid.length ? solid : basePlan.actors;
@@ -373,24 +396,25 @@ export default function DeskViewport({
   return (
     <div className={`desk-viewport is-director ${tool === 'measure' ? 'is-measuring' : ''} ${drawing ? 'is-drawing' : ''}`} role="region" aria-label="导演视角">
       <ViewportBoundary fallback={<ViewportUnavailable message="3D 场景渲染失败，请关闭后重新打开导演台。" />}>
-        <Canvas dpr={[1, 1.5]} frameloop="demand" gl={{ antialias: true, powerPreference: 'high-performance' }} onPointerMissed={() => { if (tool !== 'measure' && performance.now() - drag.current.endedAt > CLICK_AFTER_DRAG_MS) onClearSelection(); }}>
-          <StageLights />
+        <Canvas shadows dpr={[1, 1.5]} frameloop="demand" gl={{ antialias: true, powerPreference: 'high-performance' }} onPointerMissed={() => { if (tool !== 'measure' && performance.now() - drag.current.endedAt > CLICK_AFTER_DRAG_MS) onClearSelection(); }}>
+          <StageLights reach={stageReach({ actors: [], landmarks: plan.landmarks }).radius} />
           <PerspectiveCamera makeDefault fov={42} near={0.05} far={500} position={[centre[0] + 5.5, 5, centre[2] + 8]} />
           <OrbitControls
-            makeDefault enableDamping={!reducedMotion} target={centre} minDistance={0.5} maxDistance={120} maxPolarAngle={Math.PI / 2.02} enabled={!dragging}
+            makeDefault enableDamping={!reducedMotion} target={centre} minDistance={0.5} maxDistance={400} maxPolarAngle={Math.PI / 2.02} enabled={!dragging}
             mouseButtons={drawing ? DRAWING_BUTTONS : ORBIT_BUTTONS} touches={drawing ? DRAWING_TOUCHES : ORBIT_TOUCHES}
           />
           <ViewBridge onReady={onReady} />
+          <FitView plan={plan} stamp={fitRequests || blockoutPieces ? `${fitRequests}:${blockoutPieces}` : ''} />
           <StrokeListener armed={drawing} onStart={startStroke} onPoint={extendStroke} onEnd={endStroke} onRelease={releaseStroke} />
           <ContextLossGuard onLost={() => setContextLost(true)} />
           <group userData={{ [HELPER_FLAG]: true }}>
             <Grid
               args={[40, 40]} cellSize={snap.gridSize >= 0.25 ? snap.gridSize * 4 : 1} cellThickness={0.5} cellColor="#fef9fa"
-              sectionSize={5} sectionThickness={0.9} sectionColor="#e14962" fadeDistance={45} fadeStrength={1.4} infiniteGrid
+              sectionSize={5} sectionThickness={0.9} sectionColor="#e14962" fadeDistance={Math.max(45, stageReach({ actors: [], landmarks: plan.landmarks }).radius * 4)} fadeStrength={1.4} infiniteGrid
             />
           </group>
           <mesh
-            rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.005, 0]}
+            rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.005, 0]} receiveShadow
             onClick={event => {
               event.stopPropagation();
               if (performance.now() - drag.current.endedAt < CLICK_AFTER_DRAG_MS) return;
@@ -400,7 +424,7 @@ export default function DeskViewport({
             }}
           >
             <planeGeometry args={[200, 200]} />
-            <meshStandardMaterial color="#fdeff1" roughness={1} />
+            <meshStandardMaterial color="#d9d9dd" roughness={1} />
           </mesh>
           {plan.axis.kind !== 'none' && (
             <group userData={{ [HELPER_FLAG]: true }}>
@@ -409,8 +433,11 @@ export default function DeskViewport({
           )}
           {plan.landmarks.filter(item => !hidden.includes(`landmark:${item.name}`)).map(item => (
             <StageProp
-              key={item.id} landmark={item} labelled selected={selectedKeys.has(`landmark:${item.name}`)}
-              onPick={pick({ kind: 'landmark', name: item.name }, [item.position[0], 0, item.position[1]])}
+              key={item.id} landmark={item} selected={selectedKeys.has(`landmark:${item.name}`)}
+              // Names on a hundred wall sections are noise; a picked one still says what it is.
+              labelled={item.origin !== 'blockout' || selectedKeys.has(`landmark:${item.name}`)}
+              // A blockout's ground slab fills the view: a click on it is a click on the floor. The outliner still reaches it.
+              onPick={item.origin === 'blockout' && item.size[2] < 0.2 ? undefined : pick({ kind: 'landmark', name: item.name }, [item.position[0], 0, item.position[1]])}
             />
           ))}
           {actors.filter(actor => !hidden.includes(actor.crowd_id ? `crowd:${actor.crowd_id}` : `actor:${actor.name}`)).map(actor => (
@@ -470,6 +497,7 @@ export default function DeskViewport({
           )}
         </Canvas>
       </ViewportBoundary>
+      <button type="button" className="desk-button desk-viewport__fit" title="把视角退到能看到整个场景" onClick={() => setFitRequests(count => count + 1)}>框选全场</button>
       <div className="desk-viewport__hint">
         {tool === 'measure' ? '依次点击两个点或物体，读出它们之间的距离'
           : tool === 'path' ? pathHint()

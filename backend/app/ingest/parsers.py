@@ -1,4 +1,4 @@
-"""Safe TXT/Markdown/DOCX/PDF/FDX parsing with source provenance."""
+"""Safe TXT/Markdown/DOCX/PDF/FDX/Fountain parsing with source provenance."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from pathlib import PurePosixPath
 
 from lxml import etree
 
+from app.ingest.fdx import FdxError, parse_fdx
+from app.ingest.fountain import FountainScript, parse_fountain
 from app.schema.studio import SourceDocument, SourceSpan
 
 
@@ -25,7 +27,7 @@ class SourceIngestor:
     MAX_ARCHIVE_UNCOMPRESSED = 100 * 1024 * 1024
     MAX_PDF_PAGES = 1_000
     # File extensions `ingest` understands; upload pickers are told the same list.
-    SUPPORTED_EXTENSIONS = ("txt", "md", "markdown", "docx", "pdf", "fdx")
+    SUPPORTED_EXTENSIONS = ("txt", "md", "markdown", "docx", "pdf", "fdx", "fountain", "spmd")
 
     def ingest(self, filename: str, content: bytes) -> SourceDocument:
         if not filename or len(filename) > 255:
@@ -35,6 +37,7 @@ class SourceIngestor:
         if len(content) > self.MAX_BYTES:
             raise SourceIngestError(f"source exceeds {self.MAX_BYTES // (1024 * 1024)} MB")
         suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
+        title = None
         if suffix in {"txt"}:
             text, source_format = self._decode_text(content), "text"
         elif suffix in {"md", "markdown"}:
@@ -44,9 +47,13 @@ class SourceIngestor:
         elif suffix == "pdf":
             text, source_format = self._pdf(content), "pdf"
         elif suffix == "fdx":
-            text, source_format = self._fdx(content), "fdx"
+            script = self._fdx(content)
+            text, source_format, title = script.text, "fdx", script.title
+        elif suffix in {"fountain", "spmd"}:
+            script = parse_fountain(self._decode_text(content))
+            text, source_format, title = script.text, "fountain", script.title
         else:
-            raise SourceIngestError("supported source formats are TXT, Markdown, DOCX, PDF and FDX")
+            raise SourceIngestError("supported source formats are TXT, Markdown, DOCX, PDF, FDX and Fountain")
         normalized = self._normalize(text)
         if not normalized:
             raise SourceIngestError("source contains no extractable text")
@@ -55,6 +62,7 @@ class SourceIngestor:
             id=source_id,
             filename=PurePosixPath(filename.replace("\\", "/")).name,
             format=source_format,
+            title=title,
             sha256=hashlib.sha256(content).hexdigest(),
             text=normalized,
             spans=self._spans(source_id, normalized),
@@ -117,17 +125,11 @@ class SourceIngestor:
             raise SourceIngestError("PDF could not be parsed safely") from exc
 
     @staticmethod
-    def _fdx(content: bytes) -> str:
-        if b"<!DOCTYPE" in content.upper() or b"<!ENTITY" in content.upper():
-            raise SourceIngestError("FDX external entities are forbidden")
+    def _fdx(content: bytes) -> FountainScript:
         try:
-            parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=False, huge_tree=False)
-            root = etree.fromstring(content, parser=parser)
-            return "\n".join(
-                text.strip() for text in root.xpath("//*[local-name()='Text']/text()") if text.strip()
-            )
-        except Exception as exc:
-            raise SourceIngestError("FDX could not be parsed safely") from exc
+            return parse_fdx(content)
+        except FdxError as exc:
+            raise SourceIngestError(str(exc)) from exc
 
     @staticmethod
     def _normalize(text: str) -> str:

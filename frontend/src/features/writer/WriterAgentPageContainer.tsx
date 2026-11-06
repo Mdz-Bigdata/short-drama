@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { API_BASE, ApiError, apiRequest, isUnauthorized } from '../../api/client';
 import { normalizeScriptTitle } from '../workbench/scriptTitle';
 import { WriterAgentPage, type WriterView } from './WriterAgentPage';
-import type { WriterDashboardResponse, WriterEpisode, WriterRelationship } from './types';
+import type { OverviewFields, WriterDashboardResponse, WriterEpisode, WriterRelationship } from './types';
 
 import { t } from '../../i18n';
 
@@ -100,6 +100,7 @@ export function WriterAgentPageContainer({
     overview: {
       ...dashboard.overview,
       world_setting: dashboard.overview.worldSetting || dashboard.overview.world_setting,
+      ending_image: dashboard.overview.endingImage || dashboard.overview.ending_image,
     },
     scenes: dashboard.scenes.map(scene => ({
       ...scene,
@@ -135,6 +136,24 @@ export function WriterAgentPageContainer({
       URL.revokeObjectURL(url);
     } catch {
       setSyncError('后端 JSON 导出失败，请稍后重试。');
+    }
+  };
+
+  const downloadBreakdown = async (format: 'csv' | 'md') => {
+    try {
+      const response = await fetch(`${API_BASE}/api/drama/${encodeURIComponent(taskId)}/script-breakdown?format=${format}`, {
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error(`export failed: ${response.status}`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${resolvedTitle || 'script'}-拆解单.${format}`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setSyncError('拆解单导出失败，请稍后重试。');
     }
   };
 
@@ -204,7 +223,7 @@ export function WriterAgentPageContainer({
     }
   };
 
-  const saveOverview = async (fields: { title?: string; synopsis?: string; genre?: string; theme?: string; world_setting?: string }) => {
+  const saveOverview = async (fields: OverviewFields) => {
     await putDashboard('/overview', 'PATCH', fields, '概述保存失败，请稍后重试。');
   };
   const regenerateOverview = async () => {
@@ -333,6 +352,7 @@ export function WriterAgentPageContainer({
         episodesBusy={episodesBusy}
         serverStats={dashboard?.stats}
         onExport={downloadDashboard}
+        onExportBreakdown={downloadBreakdown}
         onPlanEpisodes={onPlanEpisodes}
         onProduceEpisode={onProduceEpisode}
         onSaveScript={saveScript}

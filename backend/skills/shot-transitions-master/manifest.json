@@ -10,6 +10,33 @@
         2,
         4
       ]
+    },
+    {
+      "key": "frame-handoff-action-light-tone",
+      "title": "首尾帧衔接：接动作、接光线、接色调",
+      "file": "references/frame-handoff-action-light-tone.md",
+      "budget": 3000,
+      "stages": [
+        4
+      ]
+    },
+    {
+      "key": "shot-group-and-handoff-checks",
+      "title": "镜头组与连镜对表：站位、道具、组合禁忌",
+      "file": "references/shot-group-and-handoff-checks.md",
+      "budget": 2600,
+      "stages": [
+        4
+      ]
+    },
+    {
+      "key": "cut-connection-ideas",
+      "title": "接镜思路与接不上的诊断",
+      "file": "references/cut-connection-ideas.md",
+      "budget": 2400,
+      "stages": [
+        4
+      ]
     }
   ]
 }

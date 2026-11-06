@@ -38,7 +38,7 @@ describe('CapabilityCenter', () => {
       ok: true,
       json: async () => response,
     } as Response);
-    render(<CapabilityCenter role="admin" />);
+    render(<CapabilityCenter canManage />);
 
     await userEvent.click(await screen.findByRole('button', { name: /minimax-h3-skills/i }));
     expect(screen.getByText('/minimax-h3-skills.multi-reference-video')).toBeTruthy();

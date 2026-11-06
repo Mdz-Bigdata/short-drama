@@ -75,6 +75,8 @@ export function durationRefusal(timeline: ShotTimeline, durationS: number): stri
   if (last && last.time > durationS + 1e-6) {
     return `时长不能短于最后一个关键帧：${trackLabel(last.track)}轨在 ${last.time.toFixed(2)} 秒还有一帧，请先移动或删除它`;
   }
+  const blockEnd = Math.max(0, ...(timeline.follow ?? []).map(clip => clip.end), ...(timeline.cuts ?? []).map(cut => cut.end), ...Object.values(timeline.clips ?? {}).flat().map(clip => clip.end));
+  if (blockEnd > durationS + 1e-6) return `时长不能短于最后一个片段：有片段到 ${blockEnd.toFixed(2)} 秒，请先修剪或删除它`;
   return '';
 }
 

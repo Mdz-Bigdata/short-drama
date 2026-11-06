@@ -2,13 +2,14 @@
 
 Files every screenplay asset into the owner's library (reusing same-name assets
 from earlier projects), generates the reference images that are still missing
-for scenes, props, costumes and effects, and returns the readiness snapshot the
-stage-4 gate reads. Runs in the synchronous stage worker like the other library
+for scenes, props and effects and every character's costume looks, and returns the
+readiness snapshot the stage-4 gate reads. Runs in the synchronous stage worker like the other library
 helpers; a library failure is reported in the snapshot instead of hiding it.
 """
 
 from __future__ import annotations
 
+import contextvars
 import asyncio
 import concurrent.futures
 import logging
@@ -16,6 +17,9 @@ import os
 from typing import Any, Awaitable, Callable
 
 from app import settings
+from app.core.character_looks import crowd_wardrobe
+from app.core.character_variants import is_current_look, is_look
+from app.core.element_scope import normalized_asset_name
 from app.core.production_asset_extractor import extract_production_assets
 from app.core.production_asset_readiness import (
     ASSET_KINDS,
@@ -54,14 +58,15 @@ async def project_element_summaries(store: Any, owner_id: str, task_id: str) -> 
 async def _complete(task: dict, owner_id: str, task_id: str, generate_missing: bool) -> dict[str, Any]:
     # The API-layer helpers own the storage and image-validation rules; they are
     # reused here rather than duplicated so one policy governs both entry points.
-    from app.api.drama_api import _import_production_asset_candidates
-    from app.api.element_api import _generate_non_actor_reference
+    from app.api.drama_api import _file_character_looks, _file_crowd_wardrobe, _import_production_asset_candidates
+    from app.api.element_api import _generate_look_image, _generate_non_actor_reference
 
     store = PlatformStore(settings.database_url())
     generated = 0
     failed: list[str] = []
     try:
-        for kind in ASSET_KINDS:
+        # 群演也归档：成队的戏服和妆效要画在群演图上。
+        for kind in (*ASSET_KINDS, "extra"):
             await _import_production_asset_candidates(
                 task_id=task_id,
                 kind=kind,
@@ -69,23 +74,33 @@ async def _complete(task: dict, owner_id: str, task_id: str, generate_missing: b
                 owner_id=owner_id,
                 store=store,
             )
+        await _file_character_looks(task=task, task_id=task_id, owner_id=owner_id, store=store)
+        await _file_crowd_wardrobe(task=task, task_id=task_id, owner_id=owner_id, store=store)
         if generate_missing:
             limit = max(0, int(os.getenv("STAGE3_ASSET_IMAGE_LIMIT", "60")))
+            summaries = await project_element_summaries(store, owner_id, task_id)
+            # 定妆图排前面：缺它进不了分镜，上限先让给它。
+            crowd = {normalized_asset_name(item["name"]) for item in crowd_wardrobe(task)}
             pending = [
-                summary for summary in await project_element_summaries(store, owner_id, task_id)
-                if summary["kind"] in NON_ACTOR_KINDS and not summary["has_image"]
+                *(item for item in summaries if not item["has_image"] and is_current_look(item)),
+                # 成队的戏服和妆效画在群演图上，和定妆图一样提前备好。
+                *(item for item in summaries if item["kind"] == "extra" and not item["has_image"] and normalized_asset_name(item["name"]) in crowd),
+                *(item for item in summaries if item["kind"] in NON_ACTOR_KINDS and not item["has_image"]),
             ][:limit]
             for summary in pending:
                 item = await store.get_element(summary["id"], owner_id)
                 if item is None:
                     continue
                 try:
-                    await _generate_non_actor_reference(
-                        item=item,
-                        owner_id=owner_id,
-                        store=store,
-                        extra_prompt="按剧本资产描述生成可直接用于本项目的完整参考图",
-                    )
+                    if is_look(summary):
+                        await _generate_look_image(item=item, owner_id=owner_id, store=store)
+                    else:
+                        await _generate_non_actor_reference(
+                            item=item,
+                            owner_id=owner_id,
+                            store=store,
+                            extra_prompt="按剧本资产描述生成可直接用于本项目的完整参考图",
+                        )
                     generated += 1
                 except Exception as exc:  # one failed image must not stop the others
                     failed.append(summary["name"])
@@ -133,7 +148,7 @@ def _run_blocking(factory: Callable[[], Awaitable[Any]]) -> Any:
     except RuntimeError:
         return asyncio.run(factory())
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(lambda: asyncio.run(factory())).result()
+        return pool.submit(contextvars.copy_context().run, lambda: asyncio.run(factory())).result()
 
 
 async def _read(owner_id: str, task_id: str) -> list[dict[str, Any]]:

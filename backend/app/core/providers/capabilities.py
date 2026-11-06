@@ -38,6 +38,7 @@ class ProviderCapabilityRegistry:
                     "images": profile.max_reference_images,
                     "videos": profile.max_reference_videos,
                     "audios": profile.max_reference_audios,
+                    "native_audio": profile.native_audio,
                 },
                 aliases=profile.aliases,
                 verification_status=profile.verification_status,
@@ -58,7 +59,7 @@ class ProviderCapabilityRegistry:
                 limits={
                     "images": 9, "videos": 3, "audios": 3, "mixed_files": 12,
                     "min_duration_seconds": 4, "max_duration_seconds": 15,
-                    "native_audio": True, "max_resolution": "2k",
+                    "native_audio": True, "max_resolution": "2k", "resolutions": "480p,768p,2k",
                 },
                 aliases=video_profiles["minimax_h3"].aliases,
                 verification_status="integrated",

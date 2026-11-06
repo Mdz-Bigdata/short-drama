@@ -91,8 +91,9 @@ def plan_transition(previous: ContinuityState, current: ContinuityState) -> Tran
     return TransitionPlan(
         accepted=score >= 0.72,
         score=max(score, 0),
-        video_transition="hard_cut" if score >= 0.88 else "crossfade",
+        # 连续性越好越该无缝：高分用匹配衔接(短融合)，不用硬切。
+        video_transition="match_cut" if score >= 0.88 else "crossfade",
         audio_transition="l_cut" if previous.audio_bed == current.audio_bed else "crossfade",
-        duration_seconds=0.0 if score >= 0.88 else 0.3,
+        duration_seconds=0.12 if score >= 0.88 else 0.3,
         reasons=reasons or ["六项连续性锚点可接受。"],
     )

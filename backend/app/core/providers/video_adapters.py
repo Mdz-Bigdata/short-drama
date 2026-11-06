@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
 from app import settings
 from app.core.providers.defaults import PROVIDER_DEFAULT_BASE_URLS
+from app.core.video_references import max_shot_seconds
 from app.platform.runtime_models import runtime_model_registry
 
 
@@ -161,7 +162,7 @@ class KlingVideoAdapter(VideoProviderAdapter):
     family = "kling"
     provider_label = "Kling"
     default_base_url = PROVIDER_DEFAULT_BASE_URLS["kling"]
-    default_model = "kling-v2-1"
+    default_model = "kling-v3"
     supported_modes = frozenset({"text", "first_frame", "first_last_frame", "multi_reference"})
     success_statuses = frozenset({"succeed", "succeeded", "success"})
     failure_statuses = frozenset({"failed"})
@@ -217,13 +218,20 @@ class KlingVideoAdapter(VideoProviderAdapter):
         model = (request.model or "").strip()
         return model if model.lower().startswith("kling-") else self.default_model
 
+    @staticmethod
+    def _duration(model: str, seconds: int) -> str:
+        """Kling 3.0 takes any whole second from 3 to 15; earlier models only "5" or "10"."""
+        if max_shot_seconds(model) >= 15:
+            return str(min(max(seconds, 3), 15))
+        return "10" if seconds > 5 else "5"
+
     def _payload(self, request: VideoJobRequest, mode: VideoMode) -> tuple[str, dict[str, Any]]:
+        model = self._model_name(request)
         body: dict[str, Any] = {
-            "model_name": self._model_name(request),
+            "model_name": model,
             "prompt": request.prompt,
             "mode": self.generation_mode,
-            # Kling only accepts "5" or "10" second clips.
-            "duration": "10" if request.duration_seconds > 5 else "5",
+            "duration": self._duration(model, request.duration_seconds),
             "aspect_ratio": request.aspect_ratio,
         }
         if mode == "text":

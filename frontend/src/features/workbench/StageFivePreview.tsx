@@ -2,6 +2,7 @@ import { ImageIcon, Video } from 'lucide-react';
 import { useState } from 'react';
 
 import { ShotVisualWorkspace } from './ShotVisualWorkspace';
+import type { EpisodeMeta } from './shotVisual';
 import './StageFivePreview.css';
 import { t } from '../../i18n';
 
@@ -15,6 +16,8 @@ export interface ProductionShot {
   end_frame_url?: string;
   video_url?: string;
   contract_fingerprint?: string;
+  /** 首尾帧接力的接缝质检：接上了 / 可疑 / 跳了，附差异分。 */
+  seam?: { score: number; verdict: 'good' | 'suspect' | 'jump'; label: string; detail: string } | null;
   video_route_decision?: {
     mode?: string;
     provider_family?: string;
@@ -31,6 +34,10 @@ interface Props {
   /** With a task the stage renders the per-shot camera workspace; without one, the read-only clip cards. */
   taskId?: string;
   onRerun?: () => void;
+  /** 各集的标题与成片状态，给左栏的分集卡。 */
+  episodes?: EpisodeMeta[];
+  /** 项目的视频模型在视觉工作区里被换掉之后，让外层同步自己的配置。 */
+  onVideoModelChange?: (model: string) => void;
 }
 
 interface MediaPaneProps {
@@ -112,6 +119,11 @@ function ShotCard({ shot, index, videoModel, imageModel }: {
         </div>
       )}
 
+      {shot.seam && shot.seam.verdict !== 'good' && (
+        <p className={`stage-five-seam is-${shot.seam.verdict}`} role="status" aria-label={`${shotLabel} 接缝质检`}>
+          接缝{shot.seam.label}：{shot.seam.detail}
+        </p>
+      )}
       <div className={`stage-five-media-grid${readyMediaCount === 1 ? ' is-single' : ''}`}>
         {hasVideo && (
           <MediaPane
@@ -146,13 +158,13 @@ function ShotCard({ shot, index, videoModel, imageModel }: {
 }
 
 
-export function StageFivePreview({ asset, videoModel, imageModel, taskId, onRerun }: Props) {
+export function StageFivePreview({ asset, videoModel, imageModel, taskId, onRerun, onVideoModelChange, episodes }: Props) {
   const shots = Array.isArray(asset) ? asset : asset ? [asset] : [];
 
   if (taskId) {
     return (
       <div className="stage-five-preview-content">
-        <ShotVisualWorkspace taskId={taskId} videoModel={videoModel} imageModel={imageModel} onRerun={onRerun} />
+        <ShotVisualWorkspace taskId={taskId} videoModel={videoModel} imageModel={imageModel} onRerun={onRerun} onVideoModelChange={onVideoModelChange} episodes={episodes} />
       </div>
     );
   }

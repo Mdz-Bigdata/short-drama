@@ -19,7 +19,7 @@ from typing import Any
 
 from app import settings
 from app.core.production_knowledge import load_section, stage_lessons_block
-from app.core import creation_modes
+from app.core import creation_modes, emotion_points, literary, llm_profile, poetry_library
 from app.core.screenwriting import review
 from app.core.screenwriting.durations import resolve_episode_target_seconds
 from app.core.screenwriting.engine import ENGINE_NAME, ScreenwritingEngine, detect_source_kind
@@ -47,14 +47,16 @@ LEGACY_ENGINE = "legacy"
 # pipeline. The pipeline makes several calls per episode, so each section is
 # budgeted instead of injected in full like the single-shot legacy prompt.
 WRITER_KNOWLEDGE_SECTIONS: tuple[str, ...] = (
-    "cinema-craft-redlines", "golden-narrative", "episode-hook-ladder", "dialogue-pacing", "performance-details",
+    "cinema-craft-redlines", "golden-narrative", "episode-hook-ladder", "scene-craft-dialogue", "dialogue-pacing",
+    "performance-details",
 )
 
 WRITER_METHODOLOGY = (
     "Role: AI 专业短剧编剧智能体 (Writer Agent)\n"
     "Methodology: 只写摄影机能拍到的画面和能听到的声音，杜绝任何心理描写和括号暗示，对话高度口语化、单句不超过 15 个字。\n"
     "每一集都按黄金叙事结构落地：前 3 秒强钩子 → 交代冲突 → 压迫升级 → 反击 / 反转 / 情绪爆点 → 结尾 5 秒悬念钩子；"
-    "每集至少命中一个爽 / 燃 / 虐 / 怒 / 甜 / 惊情绪点，结尾留「必须看下一集」的问题。\n"
+    f"情绪点类型固定为 {emotion_points.names()}；每集至少命中一个（信息交代不算），结尾留「必须看下一集」的问题。\n"
+    f"{literary.methodology()}\n"
     "剧本按两段式生产：先定稿分镜内容（边界 / 出场资产 / 逐字口播 / 原文锚），再补视觉层（画面 / 动作 / 运镜 / 环境音）；"
     "定稿的分镜内容另写成给人读的小说体正文（叙述段落 + 引号对白，台词逐字不变）。"
     "给出 JSON Schema 的环节严格按 Schema 输出，小说体正文环节只输出纯文本正文。"
@@ -86,7 +88,18 @@ STAGE_KNOWLEDGE: dict[str, tuple[str, ...]] = {
 ENGINE_STAGES_BY_KNOWLEDGE = {"ledger": "write", "plan": "write", "prose": "write", "visual": "visual", "extract": "extract"}
 
 
-def writer_system_prompt(role_prompt: str, shanyin_core: str = "", *, stage: str = "write") -> str:
+def poetry_materials(config: Mapping[str, Any] | None, *, keywords: str = "", budget: int = 3000) -> str:
+    """How to quote and re-create, and what to quote from, when the project named poetry sources. Empty otherwise."""
+    block = poetry_library.writer_block(config, keywords=keywords, budget=budget)
+    if not block:
+        return ""
+    guide = load_section("poetry-recreation", budget=budget)
+    return "\n\n".join(part for part in (f"【诗词取材与二次创作】：\n{guide}" if guide else "", block) if part)
+
+
+def writer_system_prompt(
+    role_prompt: str, shanyin_core: str = "", *, stage: str = "write", config: Mapping[str, Any] | None = None, keywords: str = "",
+) -> str:
     """The Writer persona plus the budgeted creative guidance a ``stage`` of the structured pipeline uses."""
     budget = _int_env("SCREENWRITING_KNOWLEDGE_BUDGET", 2500, 0)
     parts = [role_prompt.strip(), WRITER_METHODOLOGY]
@@ -94,6 +107,7 @@ def writer_system_prompt(role_prompt: str, shanyin_core: str = "", *, stage: str
         "cinema-craft-redlines": "写作红线与 S 级三冲击（情绪 / 视觉 / 场景顶点）",
         "golden-narrative": "黄金叙事结构（单集模型 / 每集三件事 / 钩子公式）",
         "episode-hook-ladder": "前三集钩子阶梯（E1 引爆 / E2 升级 / E3 反转）、集尾悬念五型与付费墙前三步",
+        "scene-craft-dialogue": "场次工艺与对白技法（每集一件新东西 / 爽点三段落台词 / 对手物证 / 一场戏六行 / 台词四型与含蓄四法）",
         "dialogue-pacing": "台词语速情绪与停顿重音标注规范",
         "performance-details": "表演细节与具象物理动作指导",
     }
@@ -104,6 +118,8 @@ def writer_system_prompt(role_prompt: str, shanyin_core: str = "", *, stage: str
             parts.append(f"【{labels[key]}】：\n{text}")
     if shanyin_core and budget and stage == "write":
         parts.append("【山音超级编剧大师核心指导规范（节选）】：\n" + shanyin_core[: budget + 500])
+    if stage == "write" and budget:
+        parts.append(poetry_materials(config, keywords=keywords, budget=budget + 500))
     if stage != "extract":
         lessons = stage_lessons_block(2)
         if lessons:
@@ -111,9 +127,16 @@ def writer_system_prompt(role_prompt: str, shanyin_core: str = "", *, stage: str
     return "\n\n".join(part for part in parts if part)
 
 
-def writer_system_prompts(role_prompt: str, shanyin_core: str = "") -> dict[str, str]:
-    """One system prompt per engine stage (``ledger`` / ``plan`` / ``prose`` / ``visual`` / ``extract``)."""
-    by_kind = {kind: writer_system_prompt(role_prompt, shanyin_core, stage=kind) for kind in STAGE_KNOWLEDGE}
+def writer_system_prompts(
+    role_prompt: str, shanyin_core: str = "", *, config: Mapping[str, Any] | None = None, keywords: str = "",
+) -> dict[str, str]:
+    """One system prompt per engine stage (``ledger`` / ``plan`` / ``prose`` / ``visual`` / ``extract``).
+
+    ``config`` brings the project's poetry sources into the writing stages; the rest of the guidance does not depend on it.
+    """
+    by_kind = {
+        kind: writer_system_prompt(role_prompt, shanyin_core, stage=kind, config=config, keywords=keywords) for kind in STAGE_KNOWLEDGE
+    }
     return {stage: by_kind[kind] for stage, kind in ENGINE_STAGES_BY_KNOWLEDGE.items()}
 
 
@@ -137,7 +160,8 @@ def build_engine(
     shot_style = str(config.get("shot_style") or "")
 
     def caller(system: str, user: str, max_tokens: int) -> str:
-        return call_llm(llm_model, system, user, title, dir_style, shot_style, user_instruction="", max_tokens=max_tokens) or ""
+        with llm_profile.reasoning_scope(llm_profile.reasoning_from_env("SCREENWRITING_REASONING")):
+            return call_llm(llm_model, system, user, title, dir_style, shot_style, user_instruction="", max_tokens=max_tokens) or ""
 
     return ScreenwritingEngine(
         caller,
@@ -159,7 +183,9 @@ def build_engine(
         plan_batch_size=_int_env("SCREENWRITING_PLAN_BATCH", 10, 1),
         visual_batch_size=_int_env("SCREENWRITING_VISUAL_BATCH", 12, 1),
         # Episodes planned / visualised side by side; 1 restores the strictly serial order.
-        episode_concurrency=_int_env("SCREENWRITING_EPISODE_CONCURRENCY", 3, 1),
+        # Six by default: every call runs at the model's fixed output rate, so wall time is the
+        # longest chain, not the sum; a rate-limited host (429) is retried with backoff by the gateway.
+        episode_concurrency=_int_env("SCREENWRITING_EPISODE_CONCURRENCY", 6, 1),
         # Prose told side by side from each plan (default), or chained on the previous episode's prose.
         prose_chain=settings.env_flag("SCREENWRITING_PROSE_CHAIN", False),
         # How much of a long source the one-shot analysis stages read (opening, spaced excerpts, ending).
@@ -361,7 +387,7 @@ def state_response(task: Mapping[str, Any]) -> ScreenwritingStateResponse:
         stale_reason=state.get("stale_reason"),
         title=str(state.get("title") or "")[:500],
         episode_count=int(state.get("episode_count") or 0),
-        overview=ScreenwritingOverview(**{key: str(overview.get(key) or "") for key in ("title", "synopsis", "genre", "theme", "world_setting")}),
+        overview=ScreenwritingOverview(**{key: str(overview.get(key) or "") for key in ScreenwritingOverview.model_fields}),
         inventory={
             bucket: {str(name): dict(entry) if isinstance(entry, Mapping) else {} for name, entry in (inventory.get(bucket) or {}).items()}
             for bucket in ("characters", "scenes", "props")

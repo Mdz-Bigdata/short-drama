@@ -12,12 +12,15 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
+from app.core import breakdown_kinds
+
 # One asset kind -> the labelled sections that describe it in the shooting
 # scripts this project produces (see backend/skills/**/storyboard-format.md).
 _SECTION_LABELS: dict[str, tuple[str, ...]] = {
     "prop": ("关键道具", "道具"),
     "costume": ("服装", "服饰", "造型", "着装"),
     "effect": ("特效", "视效", "效果"),
+    **breakdown_kinds.SECTION_LABELS,
 }
 # `SC01 建康城外乱葬岗` and `建康城外乱葬岗` are the same location written twice.
 _SCENE_CODE_PREFIX = re.compile(r"^(?:SC|SCENE|E\d+S)\s*\d*\s*[-:：]?\s*", re.IGNORECASE)
@@ -78,7 +81,8 @@ def _is_asset_entry(entry: str, kind: str) -> bool:
     # A clause that narrates an action ("…上割下", "…形成对比") describes an
     # asset in use rather than naming one. Effects are the exception: a visual
     # effect ("泥浆飞溅") is itself named by its motion.
-    if kind != "effect" and _ACTION_TAIL.search(entry):
+    # A stunt is an action by definition.
+    if kind not in {"effect", "stunt"} and _ACTION_TAIL.search(entry):
         return False
     # Whole sentences are descriptions of an asset, not the asset itself.
     return entry.count("。") == 0 or (entry.endswith("。") and len(entry) <= 40)
@@ -177,6 +181,7 @@ _STRUCTURED_CATALOG_KEYS = {
     "prop": "props",
     "costume": "costumes",
     "effect": "effects",
+    **breakdown_kinds.CATALOG_KEYS,
 }
 
 
@@ -297,8 +302,8 @@ def _scene_images(shots: list[dict[str, Any]]) -> dict[str, str]:
 
 def extract_production_assets(task: dict[str, Any], kind: str) -> list[dict[str, Any]]:
     """Return the `{name, description, image_url}` assets the screenplay names."""
-    if kind not in {"actor", "scene", "prop", "costume", "effect", "product"}:
-        raise ValueError("仅支持提取 actor、scene、prop、costume、effect 或 product 资产")
+    if kind not in {"actor", "scene", "prop", "costume", "effect", "product", *breakdown_kinds.KINDS}:
+        raise ValueError("仅支持提取 actor、scene、prop、costume、effect、product 和拆解补充类别的资产")
     assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
     config = task.get("config") if isinstance(task.get("config"), dict) else {}
     if kind == "product":
@@ -336,6 +341,15 @@ def extract_production_assets(task: dict[str, Any], kind: str) -> list[dict[str,
             {**item, "image_url": images.get(item["name"], "")}
             for item in located
         ]
+
+    if kind == "extra":
+        # 认不出是谁的戏服和妆效穿在人群身上：写进群演，让群演参考图把它画出来。
+        from app.core.character_looks import crowd_wardrobe
+
+        crowd = {item["name"]: {"name": item["name"], "description": item["description"]} for item in crowd_wardrobe(task)}
+        listed = structured or _extract_labelled(kind, scenes, script)
+        merged = [{**item, **crowd.pop(item["name"], {})} for item in listed]
+        return [{**item, "image_url": ""} for item in [*merged, *crowd.values()]]
 
     # Props, costumes and effects are named in prose; the screenplay carries no
     # image for them, so the user uploads or regenerates one afterwards.

@@ -5,7 +5,8 @@ code copied): one canonical camera move per shot, taken from the vocabulary the
 video providers publish themselves (MiniMax Hailuo ``[command]`` table, Alibaba
 Wan basic/advanced motion table, Kling/Seedance natural-language moves), then
 rendered in the phrasing each provider documents instead of being re-translated
-downstream. Unknown free text degrades to a neutral default and says so.
+downstream. Unknown free text degrades to a neutral default and says so; in a fight
+that default is a follow move, because a locked-off camera is what makes a fight look static.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ SHOT_TYPES: tuple[tuple[str, str], ...] = (
     ("Point-of-view", "主观镜头"),
 )
 DEFAULT_CAMERA_MOTION = "Static"
+FIGHT_DEFAULT_CAMERA_MOTION = "Tracking Shot"
 DEFAULT_SHOT_TYPE = "Medium Shot"
 CAMERA_MOTION_LABELS = dict(CAMERA_MOTIONS)
 SHOT_TYPE_LABELS = dict(SHOT_TYPES)
@@ -107,18 +109,23 @@ for _canonical, _aliases in _SHOT_TYPE_SYNONYMS.items():
         _SHOT_TYPE_BY_KEY.setdefault(_key(_alias), _canonical)
 
 
-def normalize_camera_motion(value: Any) -> tuple[str, bool]:
-    """Canonical motion plus whether the input was recognised (else the neutral default)."""
+def normalize_camera_motion(value: Any, *, fight: bool = False) -> tuple[str, bool]:
+    """Canonical motion plus whether the input was recognised (else the neutral default).
+
+    ``fight`` changes only the fallback: an unrecognised move in a fight shot follows the
+    action instead of silently locking off. A move the table names is kept as written.
+    """
+    default = FIGHT_DEFAULT_CAMERA_MOTION if fight else DEFAULT_CAMERA_MOTION
     key = _key(value)
     if not key:
-        return DEFAULT_CAMERA_MOTION, False
+        return default, False
     hit = _MOTION_BY_KEY.get(key)
     if hit:
         return hit, True
     # A phrase such as "缓慢推近主体" still names exactly one move: the longest
     # alias it contains wins ("推近" over "推"); a tie between different moves is
     # ambiguous and degrades.
-    return _longest_alias(key, _MOTION_BY_KEY, DEFAULT_CAMERA_MOTION)
+    return _longest_alias(key, _MOTION_BY_KEY, default)
 
 
 def _longest_alias(key: str, table: dict[str, str], default: str) -> tuple[str, bool]:
@@ -195,3 +202,49 @@ def vocabulary() -> dict[str, list[dict[str, str]]]:
         "camera_motions": [{"value": value, "label": label} for value, label in CAMERA_MOTIONS],
         "shot_types": [{"value": value, "label": label} for value, label in SHOT_TYPES],
     }
+
+
+# 一镜一主运镜(《运镜库》第 1 条)：复合最多两个不冲突的方向(推 + 轻手持、环绕 + 微升)。
+# 推了又拉、三种以上叠在一起，视频模型只会保一个、其余拍成抖动或变形。
+_MOVE_CLASSES = (
+    ("推近", re.compile(r"推近|推进|推至|推向|缓推|轻推|慢推|急推|前推")),
+    ("拉远", re.compile(r"拉远|后拉|拉开|拉回|拉出")),
+    ("摇", re.compile(r"横摇|[左右上下]摇|摇起|摇向|摇至|跟摇|甩镜|甩向")),
+    # 「移向」单独出现常是人物或道具在动(「随右掌移向木砧」)：只有主语是镜头才算。
+    ("移", re.compile(r"横移|平移|侧移|缓移|微移|跟移|移镜|(?:镜头|机位|机身|摄影机|相机)[^，。；,;→]{0,6}移向")),
+    ("升降", re.compile(r"升镜|微升|上升|升起|降镜|下降|下沉|微降")),
+    ("环绕", re.compile(r"环绕|绕拍|弧形")),
+    ("手持", re.compile(r"手持")),
+)
+# 括注(英文术语、指纹)和否定句(「不拉回」「全程无甩镜」)不是运镜；「无人机」不是否定。
+_MOTION_ASIDE = re.compile(r"[（(][^）)]*[）)]|`[^`]*`|\[[^\]]*\]|(?:不|无(?!人机))[^，。；,;、`\[（(]{0,8}")
+# 移焦(「焦点由剑鞘拉回手部」「拉回焦点」)动的是焦平面，机身没有后退。
+_FOCUS_PULL = re.compile(r"焦点[^，。；,;→]{0,24}(?:拉回|拉开|拉远|拉出)|拉回焦点|拉焦")
+MAX_MOVE_CLASSES = 2
+
+
+def move_classes(motion: Any) -> list[str]:
+    """一句运镜里出现的运动种类(推近 / 拉远 / 摇 / 移 / 升降 / 环绕 / 手持)，按表内顺序。"""
+    text = _FOCUS_PULL.sub(" ", _MOTION_ASIDE.sub(" ", str(motion or "")))
+    return [name for name, pattern in _MOVE_CLASSES if pattern.search(text)]
+
+
+# 一镜到底的武戏按节拍接力(「0–2秒…2–4秒…」)：每个节拍各算一镜。
+_BEAT_SPAN = re.compile(r"\d+(?:\.\d+)?\s*[-–~～至]\s*\d+(?:\.\d+)?\s*秒")
+
+
+# 环绕超过 180 度就自动越轴：两人的左右关系在片内翻转。整圈、一周、360 都是超了。
+_FULL_ORBIT = re.compile(r"360|一周|一圈|整圈|全周|绕到(?:对面|背后)")
+
+
+def motion_problem(motion: Any) -> str:
+    """这句运镜违反一镜一主运镜、或环绕越轴的地方；没问题时为空串。"""
+    for beat in _BEAT_SPAN.split(str(motion or "")):
+        classes = move_classes(beat)
+        if "推近" in classes and "拉远" in classes:
+            return "同一镜里推近又拉远，方向对冲"
+        if len(classes) > MAX_MOVE_CLASSES:
+            return f"同一镜叠了{'、'.join(classes)}{len(classes)}种运镜"
+        if "环绕" in classes and _FULL_ORBIT.search(beat):
+            return "环绕超过180度就越轴，人物左右关系会翻转；限定在半圈以内"
+    return ""

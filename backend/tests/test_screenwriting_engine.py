@@ -8,6 +8,7 @@ what is repaired) rather than any provider.
 
 import json
 import re
+import threading
 import unittest
 from typing import Any, Dict, List
 
@@ -388,17 +389,74 @@ class ProseBodyTests(unittest.TestCase):
         self.assertNotIn("林夏：", text)
         self.assertEqual(script_episode_indexes(text), [1])
 
-    def test_a_soft_finding_earns_one_retry_and_is_then_kept_with_a_warning(self):
+    def test_a_soft_finding_is_kept_on_the_first_round_with_a_warning(self):
         model = FakeModel()
         model.prose_overrides[1] = lambda attempt, prompt: _prose_for(prompt) + "\n\n“谁在那里？”门外有人问。"
         state = _engine(model).write(title="暗室回声", director_plan="大纲", episode_count=1)
 
-        self.assertEqual(model.prose_attempts[1], 2)
+        # Soft findings alone never cost a second model call.
+        self.assertEqual(model.prose_attempts[1], 1)
         entry = state["episodes"]["1"]
         self.assertEqual(entry["prose_origin"], "model")
         self.assertIn("“谁在那里？”", entry["prose"])
         self.assertEqual([v["code"] for v in entry["violations"]], ["prose_unverified"])
         self.assertIn("谁在那里", entry["violations"][0]["message"])
+
+    def test_a_long_series_writes_a_batch_while_the_next_batch_is_planned(self):
+        class _OrderedModel(FakeModel):
+            """Records the order of ledger and plan calls; the second ledger batch waits for a plan of the first to start."""
+
+            def __init__(self):
+                super().__init__()
+                self.order: List[Any] = []
+                self.plan_started = threading.Event()
+                self.overlapped = None
+
+            def __call__(self, system_prompt, user_prompt, max_tokens):
+                is_ledger = "分集大纲" in user_prompt and "episodes 数组长度必须等于" in user_prompt
+                if "字段写作指引" in user_prompt and "scene_description" in user_prompt:
+                    self.order.append(("plan", int(re.search(r"当前正在生成第 (\d+) 集", user_prompt).group(1))))
+                    self.plan_started.set()
+                if is_ledger and "对应第 3 集到第 4 集" in user_prompt:
+                    # Waits (bounded) for an episode plan of batch 1: only an overlapped run sets it in time.
+                    self.overlapped = self.plan_started.wait(5)
+                answer = super().__call__(system_prompt, user_prompt, max_tokens)
+                if is_ledger:
+                    self.order.append(("ledger_done", int(re.search(r"对应第 (\d+) 集", user_prompt).group(1))))
+                return answer
+
+        model = _OrderedModel()
+        state = _engine(model, plan_batch_size=2, episode_concurrency=2).write(title="暗室回声", director_plan="大纲", episode_count=4)
+
+        self.assertTrue(model.overlapped, "episode 1 was not planned while batch 2 of the ledger was still being planned")
+        order = model.order
+        self.assertLess(order.index(("plan", 1)), order.index(("ledger_done", 3)))
+        # The last episode of a batch waits for the next batch: its plan reads the following outline.
+        self.assertGreater(order.index(("plan", 2)), order.index(("ledger_done", 3)))
+        plan_two = next(call["prompt"] for call in model.calls if "当前正在生成第 2 集" in call["prompt"])
+        self.assertIn("<next_episode_outline>\n下集大纲（仅用于设计本集结尾的衔接，不要把下集情节提前写进本集）：\n下集标题：第3集标题", plan_two)
+
+        sequential = _engine(FakeModel(), plan_batch_size=2).write(title="暗室回声", director_plan="大纲", episode_count=4)
+        self.assertEqual(state["ledger"], sequential["ledger"])
+        self.assertEqual(state["inventory"], sequential["inventory"])
+        self.assertEqual(state["episode_count"], 4)
+        for number in ("1", "2", "3", "4"):
+            self.assertEqual(
+                [scene["scene_id"] for scene in state["episodes"][number]["script"]["scenes"]],
+                [scene["scene_id"] for scene in sequential["episodes"][number]["script"]["scenes"]],
+            )
+            self.assertEqual(state["episodes"][number]["prose_origin"], "model")
+
+    def test_a_series_of_one_batch_is_planned_whole_before_any_episode_is_written(self):
+        model = FakeModel()
+        _engine(model, episode_concurrency=2).write(title="暗室回声", director_plan="大纲", episode_count=3)
+
+        kinds = [
+            "ledger" if "episodes 数组长度必须等于" in call["prompt"] else "plan"
+            for call in model.calls
+            if "episodes 数组长度必须等于" in call["prompt"] or ("字段写作指引" in call["prompt"] and "scene_description" in call["prompt"])
+        ]
+        self.assertEqual(kinds, ["ledger", "plan", "plan", "plan"])
 
     def test_the_prose_prompt_can_be_audited_without_a_model_call(self):
         model = FakeModel()
@@ -665,6 +723,14 @@ class PrimitiveTests(unittest.TestCase):
         self.assertEqual(models.normalize_shot_type("wide_shot"), "Medium Shot")
         self.assertEqual(models.normalize_camera_motion("dolly-in"), "Static")
         self.assertEqual(models.normalize_camera_motion("缓推"), "Push In")
+
+    def test_a_fight_shot_without_a_usable_move_follows_the_action(self):
+        fight = "他拔剑与对手交手，刀剑相接，被击退半步"
+        self.assertEqual(models.VideoPrompt(action=fight, camera_motion="dolly-in").camera_motion, "Tracking Shot")
+        self.assertEqual(models.VideoPrompt(action=fight).camera_motion, "Tracking Shot")
+        # A named move stays, and a quiet shot still degrades to the neutral default.
+        self.assertEqual(models.VideoPrompt(action=fight, camera_motion="Static").camera_motion, "Static")
+        self.assertEqual(models.VideoPrompt(action="她低头看信", camera_motion="dolly-in").camera_motion, "Static")
 
     def test_utterance_kind_and_speaker_are_consistent(self):
         with self.assertRaises(ValueError):

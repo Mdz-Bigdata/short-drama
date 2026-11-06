@@ -8,6 +8,8 @@ machine. This writer puts every clip, voice and music file under
 ``materials/``, lays the video track out exactly as the timeline does (trims,
 title card, rejected clips left out), adds the voices on an audio track at the
 clip's start, the music on its own track, and one text segment per subtitle.
+A J-cut or L-cut moves the picture's cut the way the film render does: the same
+plan decides, so the draft and the film agree on which cuts are offset and by how much.
 
 The format is reproduced from the application's own files; this is a best
 effort at the fields JianYing reads, not a vendored schema.
@@ -24,13 +26,14 @@ import zipfile
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from app.core import edit_timeline
+from app.core import edit_timeline, media_compositor
 
 DRAFT_PATH_MARKER = "##_draftpath_##"
 DRAFT_VERSION = 360000
 US = 1_000_000
 
 Resolver = Callable[[str], str | None]
+Probe = Callable[[str], float | None]
 
 
 def _us(seconds: float) -> int:
@@ -55,8 +58,32 @@ def _text_material(material_id: str, text: str) -> dict[str, Any]:
     }
 
 
-def build_draft(timeline: Mapping[str, Any], *, name: str, resolve_local: Resolver, title_card_path: str | None = None) -> dict[str, Any]:
-    """Returns {"draft_content": {...}, "draft_meta_info": {...}, "files": {draft-relative path: local path}, "skipped": [...]}."""
+def _sound_joins(placed: list[dict[str, Any]], probe: Probe | None) -> tuple[list[float], list[float], list[float], list[dict[str, Any]]]:
+    """The film's sound-offset plan over the clips that made it into the draft; a voice of unknown length is not offset."""
+    voices = [probe(clip["voice"]) if probe and clip["voice"] else None for clip in placed]
+    for clip, seconds in zip(placed, voices):
+        clip["voice_seconds"] = seconds
+    joins = [{key: value for key, value in (clip["clip"].get("sound_in") or {}).items() if key in {"join", "seconds"}} or None for clip in placed[1:]]
+    transitions = [clip["clip"].get("transition_in") or {} for clip in placed[1:]]
+    heads, tails, leads, report = media_compositor.plan_sound_joins([clip["seconds"] for clip in placed], voices, joins, transitions)
+    return heads, tails, leads, [{**entry, "shot_id": placed[entry["index"]]["clip"].get("shot_id")} for entry in report]
+
+
+def _without_overlaps(segments: list[dict[str, Any]], end: int) -> None:
+    """One audio track cannot hold two segments at once: a long line stops where the next starts, and at the end of the draft."""
+    for segment, following in zip(segments, [*segments[1:], None]):
+        limit = following["target_timerange"]["start"] if following else end
+        length = max(0, min(segment["target_timerange"]["duration"], limit - segment["target_timerange"]["start"]))
+        segment["target_timerange"]["duration"] = segment["source_timerange"]["duration"] = length
+
+
+def build_draft(
+    timeline: Mapping[str, Any], *, name: str, resolve_local: Resolver, title_card_path: str | None = None, probe: Probe | None = None,
+) -> dict[str, Any]:
+    """Returns {"draft_content": {...}, "draft_meta_info": {...}, "files": {draft-relative path: local path}, "skipped": [...], "sound_joins": [...]}.
+
+    ``probe`` reads a voice file's length; without it the voices keep their clip's length and no cut is offset.
+    """
     plan = edit_timeline.render_plan(timeline)
     clips = [c for c in timeline.get("clips") or [] if isinstance(c, Mapping) and (c.get("review") or {}).get("decision") != "rejected" and c.get("video_url")]
     files: dict[str, str] = {}
@@ -87,20 +114,30 @@ def build_draft(timeline: Mapping[str, Any], *, name: str, resolve_local: Resolv
                               "target_timerange": {"start": cursor, "duration": _us(title_seconds)}, "visible": True, "extra_material_refs": []})
         cursor += _us(title_seconds)
 
-    for index, clip in enumerate(clips):
+    placed: list[dict[str, Any]] = []
+    for clip in clips:
         local = resolve_local(str(clip["video_url"]))
         if not local or not os.path.isfile(local):
             skipped.append(f"镜头 {clip.get('shot_id')}：片段不在本机，未打包")
             continue
-        seconds = edit_timeline.clip_seconds(clip) or float(clip.get("duration") or 0) or 5.0
+        voice = clip.get("voice_path")
+        placed.append({
+            "clip": clip, "local": local, "seconds": edit_timeline.clip_seconds(clip) or float(clip.get("duration") or 0) or 5.0,
+            "voice": str(voice) if voice and not clip.get("muted") and os.path.isfile(str(voice)) else None,
+        })
+    heads, tails, leads, sound_joins = _sound_joins(placed, probe)
+
+    for index, entry in enumerate(placed):
+        clip, local = entry["clip"], entry["local"]
+        seconds = entry["seconds"] - heads[index] - tails[index]
         rel = f"materials/shot_{clip.get('shot_id')}{os.path.splitext(local)[1] or '.mp4'}"
         files[rel] = local
         material_id = _uid()
         videos.append({"id": material_id, "type": "video", "path": f"{DRAFT_PATH_MARKER}/{rel}", "material_name": os.path.basename(rel),
-                       "duration": _us(float(clip.get("duration") or seconds)), "width": width, "height": height, "has_audio": True, "crop_ratio": "free", "crop_scale": 1.0})
+                       "duration": _us(float(clip.get("duration") or entry["seconds"])), "width": width, "height": height, "has_audio": True, "crop_ratio": "free", "crop_scale": 1.0})
         segment = {
             "id": _uid(), "material_id": material_id,
-            "source_timerange": {"start": _us(float(clip.get("in") or 0)), "duration": _us(seconds)},
+            "source_timerange": {"start": _us(float(clip.get("in") or 0) + heads[index]), "duration": _us(seconds)},
             "target_timerange": {"start": cursor, "duration": _us(seconds)},
             "speed": 1.0, "volume": 0.0 if clip.get("muted") else 1.0, "visible": True, "extra_material_refs": [],
         }
@@ -108,14 +145,15 @@ def build_draft(timeline: Mapping[str, Any], *, name: str, resolve_local: Resolv
         if isinstance(transition, Mapping) and transition.get("type") not in (None, "hard_cut", "match_cut"):
             segment["transition"] = {"type": str(transition.get("type")), "duration": _us(float(transition.get("duration") or 0.22))}
         video_segments.append(segment)
-        voice = clip.get("voice_path")
-        if voice and not clip.get("muted") and os.path.isfile(str(voice)):
-            rel_voice = f"materials/voice_{clip.get('shot_id')}{os.path.splitext(str(voice))[1] or '.mp3'}"
-            files[rel_voice] = str(voice)
+        voice = entry["voice"]
+        if voice:
+            rel_voice = f"materials/voice_{clip.get('shot_id')}{os.path.splitext(voice)[1] or '.mp3'}"
+            files[rel_voice] = voice
             audio_id = _uid()
-            audios.append({"id": audio_id, "type": "extract_music", "path": f"{DRAFT_PATH_MARKER}/{rel_voice}", "name": os.path.basename(rel_voice), "duration": _us(seconds)})
-            voice_segments.append({"id": _uid(), "material_id": audio_id, "source_timerange": {"start": 0, "duration": _us(seconds)},
-                                   "target_timerange": {"start": cursor, "duration": _us(seconds)}, "speed": 1.0, "volume": 1.0, "visible": True, "extra_material_refs": []})
+            spoken = entry.get("voice_seconds") or seconds
+            audios.append({"id": audio_id, "type": "extract_music", "path": f"{DRAFT_PATH_MARKER}/{rel_voice}", "name": os.path.basename(rel_voice), "duration": _us(spoken)})
+            voice_segments.append({"id": _uid(), "material_id": audio_id, "source_timerange": {"start": 0, "duration": _us(spoken)},
+                                   "target_timerange": {"start": max(0, cursor - _us(leads[index])), "duration": _us(spoken)}, "speed": 1.0, "volume": 1.0, "visible": True, "extra_material_refs": []})
         subtitle = str(clip.get("subtitle") or "").strip()
         if subtitle:
             text_id = _uid()
@@ -124,6 +162,7 @@ def build_draft(timeline: Mapping[str, Any], *, name: str, resolve_local: Resolv
                                   "target_timerange": {"start": cursor, "duration": _us(seconds)}, "visible": True, "extra_material_refs": []})
         cursor += _us(seconds)
 
+    _without_overlaps(voice_segments, cursor)
     tracks: list[dict[str, Any]] = [{"id": _uid(), "type": "video", "attribute": 0, "flag": 0, "segments": video_segments}]
     if voice_segments:
         tracks.append({"id": _uid(), "type": "audio", "attribute": 0, "flag": 0, "segments": voice_segments})
@@ -167,7 +206,7 @@ def build_draft(timeline: Mapping[str, Any], *, name: str, resolve_local: Resolv
             for a in audios
         ]}],
     }
-    return {"draft_content": content, "draft_meta_info": meta, "files": files, "skipped": skipped, "duration_seconds": round(cursor / US, 2)}
+    return {"draft_content": content, "draft_meta_info": meta, "files": files, "skipped": skipped, "sound_joins": sound_joins, "duration_seconds": round(cursor / US, 2)}
 
 
 def pack(draft: Mapping[str, Any], *, folder_name: str) -> bytes:

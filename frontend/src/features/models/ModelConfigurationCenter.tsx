@@ -128,7 +128,7 @@ const VIDEO_ENDPOINT_EXAMPLE = {
 
 interface Props {
   open: boolean;
-  role?: string;
+  canManage?: boolean;
   mustChangePassword?: boolean;
   onClose: () => void;
   onSelect?: (category: ModelCategory, modelId: string) => void;
@@ -155,7 +155,7 @@ const AUDIO_LABELS: Record<string, string> = {
 
 export function ModelConfigurationCenter({
   open,
-  role = 'user',
+  canManage: canManageRole = false,
   mustChangePassword = false,
   onClose,
   onSelect,
@@ -277,7 +277,7 @@ export function ModelConfigurationCenter({
   const enabledSavedCount = savedModelRows.filter(
     ({ configuration, model }) => configuration.enabled && model.enabled,
   ).length;
-  const canManage = role === 'admin' && !mustChangePassword;
+  const canManage = canManageRole && !mustChangePassword;
 
   const reloadMarket = useCallback(async () => {
     const [sources, entries, installs] = await Promise.all([

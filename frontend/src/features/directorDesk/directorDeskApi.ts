@@ -20,6 +20,8 @@ export interface DeskCapture {
   labelled: boolean;
   /** A grayscale depth picture: layers, blocking and camera motion only. A depth still cannot be applied. */
   depth: boolean;
+  /** A control frame: '' the whole stage, 'background' the empty set, 'mask' the cast white on black. */
+  layer: string;
   createdAt: string;
   stale: boolean;
   /** What the server has to say about this capture (a limbed white model needs its motion spelled out). */
@@ -46,6 +48,8 @@ export interface CaptureUpload {
   labelled: boolean;
   /** Rendered as linear depth (near bright, far dark). Refused on a backdrop. */
   depth?: boolean;
+  /** Stills only: a control frame instead of the whole stage. */
+  layer?: string;
   /** Clips only. */
   durationS?: number;
   fps?: number;
@@ -104,6 +108,7 @@ export function normalizeCapture(raw: unknown): DeskCapture {
     monochrome: Boolean(source.monochrome),
     labelled: Boolean(source.labelled),
     depth: Boolean(source.depth),
+    layer: String(source.layer ?? ''),
     createdAt: String(field(source, 'createdAt', 'created_at') ?? ''),
     stale: Boolean(source.stale),
     warning: String(source.warning ?? ''),
@@ -154,12 +159,50 @@ export function uploadCapture(taskId: string, sceneId: string, upload: CaptureUp
   form.append('labelled', String(upload.labelled));
   // A backdrop is a picture of a place, never a depth map; the server refuses the field on one.
   if (upload.kind !== 'backdrop') form.append('depth', String(Boolean(upload.depth)));
+  if (upload.layer) form.append('layer', upload.layer);
   if (clip) {
     form.append('duration_s', String(upload.durationS));
     form.append('fps', String(upload.fps));
   }
   return apiRequest<unknown>(base(taskId, sceneId), { method: 'POST', body: form })
     .then(raw => normalizeCapture((raw as Loose | null)?.capture ?? raw));
+}
+
+export interface BlockoutPiece {
+  name: string;
+  kind: 'prop' | 'furniture' | 'architecture' | 'light';
+  shape: 'box' | 'cylinder' | 'sphere' | 'cone' | 'wedge' | 'plane';
+  center: [number, number];
+  /** Width (X), depth (Z), height (Y) in metres. */
+  size: [number, number, number];
+  yaw_deg: number;
+  elevation_m: number;
+  color: string;
+  /** A library model or a list of volumes, drawn inside `size` instead of the one shape. Sent back as given. */
+  kit?: string;
+  parts?: unknown[];
+  size_given?: boolean;
+}
+
+export interface BlockoutProposal {
+  summary: string;
+  extent_m: [number, number] | null;
+  reference_camera: { position: [number, number, number]; target: [number, number, number]; lens_mm: number } | null;
+  pieces: BlockoutPiece[];
+  dropped: number;
+  model: string;
+}
+
+/** Ask a vision model to read the picture into set pieces; nothing reaches the stage until `apply_blockout`. */
+export function analyzeBlockout(taskId: string, sceneId: string, file: File, options: { hint?: string; widthM?: number; signal?: AbortSignal } = {}) {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  if (options.hint?.trim()) form.append('hint', options.hint.trim());
+  if (options.widthM) form.append('width_m', String(options.widthM));
+  return apiRequest<BlockoutProposal>(
+    `/api/drama/${encodeURIComponent(taskId)}/director-desk/scenes/${encodeURIComponent(sceneId)}/blockout/analyze`,
+    { method: 'POST', body: form, signal: options.signal },
+  );
 }
 
 // Every change answers with the scene's whole capture state, so the panel never has to ask again.

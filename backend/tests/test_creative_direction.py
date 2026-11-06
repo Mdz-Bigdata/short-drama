@@ -6,6 +6,7 @@ main one must be dropped rather than averaged in, and a story with no stated
 feeling must still get direction from its genre.
 """
 
+import re
 import unittest
 
 from app.core import creative_intent as intent
@@ -139,11 +140,39 @@ class StageFourWiringTests(unittest.TestCase):
 
         for marker in (
             "genre_clusters.direction_from_task(config, genre=genre, text=scene_content)",
-            'user_prompt += "\\n" + direction.brief()',
+            'user_prompt += "\\n" + direction.brief(scene_id)',
             "direction.cluster.rhythm_profile",
             '"direction": direction.as_dict()',
         ):
             self.assertIn(marker, source, f"第4阶段题材/感觉接线点丢失：{marker}")
+
+
+class SceneCameraVarietyTests(unittest.TestCase):
+    def _lead(self, scene):
+        return re.search(r"优先用「(.+?)」", intent.decode(primary="tension").brief(scene)).group(1)
+
+    def test_neighbouring_scenes_lead_with_different_moves(self):
+        leads = [self._lead(f"E1S{number:02d}") for number in range(1, 9)]
+        self.assertTrue(all(first != second for first, second in zip(leads, leads[1:])))
+        self.assertGreaterEqual(len(set(leads)), 4)
+
+    def test_the_same_scene_always_asks_the_same_question(self):
+        self.assertEqual(intent.decode(primary="tension").brief("E1S03"), intent.decode(primary="tension").brief("E1S03"))
+
+    def test_every_option_stays_on_offer_and_a_scene_with_no_number_still_gets_one(self):
+        line = intent.decode(primary="tension").camera_line("E1S02")
+        for option in ("缓慢推进", "被遮挡的窥视式横移", "固定长镜蓄力", "静止到骤动"):
+            self.assertIn(option, line)
+        self.assertIn("优先用", intent.decode(primary="tension").camera_line("序章"))
+
+    def test_without_a_scene_the_brief_reads_as_before(self):
+        self.assertIn("运镜倾向：缓慢推进、被遮挡的窥视式横移", intent.decode(primary="tension").brief())
+
+    def test_a_list_with_a_heading_offers_the_moves_not_the_heading(self):
+        for feeling in intent.INTENTS:
+            line = intent.IntentPlan(primary=feeling).camera_line("E1S01")
+            if "优先用" in line:
+                self.assertNotIn("：", line.split("运镜倾向：", 1)[1], feeling.id)
 
 
 if __name__ == "__main__":

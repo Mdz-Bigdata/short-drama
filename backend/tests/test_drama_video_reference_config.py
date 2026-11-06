@@ -42,6 +42,11 @@ class _MemoryRepo:
         assert task_id == "task-1"
         self.task = task
 
+    def mutate_task(self, task_id, mutation):
+        if task_id != "task-1":
+            return None
+        return mutation(self.task)
+
 
 class DramaVideoReferenceConfigTests(unittest.TestCase):
     def test_new_project_config_rejects_removed_first_frame_mode(self):
