@@ -23,7 +23,7 @@ from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore
 from app.repository.task_repo import TaskRepository
 from main import app
-from test_platform_api import VALID_PNG
+from tests.test_platform_api import VALID_PNG
 
 SHEN = "沈无咎"
 FACE = "身份锚点：沉默少年；骨相：窄长脸；五官：单眼皮；发型：黑发；服装：灰布短褐"
