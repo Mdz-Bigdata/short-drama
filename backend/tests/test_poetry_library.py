@@ -20,7 +20,6 @@ REQUESTED = (
     "李煜", "姜夔", "滕王阁序", "岳阳楼记", "毛泽东", "李清照", "曹植", "陶渊明", "周敦颐", "王昌龄", "陆游", "韩愈", "元稹", "杨慎",
 )
 
-
 # The wider shelf asked for afterwards (古今中外), by collection id.
 EXPANDED = (
     "shijing", "lunyu", "mengzi", "zhuangzi", "sunzi", "yijing", "liji", "quyuan",
@@ -133,7 +132,10 @@ class FindingTests(unittest.TestCase):
         yan = poetry_library.library().by_collection("yanjidao")
         self.assertEqual(len(yan), 255, "小山词 全本")
         bulk = [poem for poem in yan if not poem.entry.curated]
-        self.assertEqual(len(bulk), 181, "246 added in bulk, 65 of them since curated by hand")
+        self.assertEqual(len(bulk), 0, "246 added in bulk, all of them since curated by hand")
+        # Every chapter of the 道德经 carries lines a writer can quote, not only its opening.
+        laozi = poetry_library.library().by_collection("laozi")
+        self.assertTrue(all(poem.entry.famous_lines and poem.entry.drama_uses for poem in laozi))
         self.assertTrue(all("未逐首人工审读" in poem.entry.note for poem in bulk))
         self.assertIn("强欢殢酒图消遣", poetry_library.find_titled("风入松·心心念念忆相逢")[0].entry.text)
         self.assertIn("倚处阑干月", poetry_library.find_titled("点绛唇·明日征鞭")[0].entry.text)
@@ -148,7 +150,7 @@ class FindingTests(unittest.TestCase):
     def test_the_nalan_shelf_follows_tongzhitang_ji_and_puts_the_curated_works_first(self):
         nalan = poetry_library.library().by_collection("nalanxingde")
         self.assertEqual(len(nalan), 243, "15 hand-written entries + 228 from the Zhihu list's works")
-        self.assertEqual(sum(1 for poem in nalan if not poem.entry.curated), 138, "218 added in bulk, 80 of them since curated by hand")
+        self.assertEqual(sum(1 for poem in nalan if not poem.entry.curated), 0, "218 added in bulk, all of them since curated by hand")
         self.assertIn("屧粉衣香何处", titled_text := next(p.entry.text for p in nalan if p.entry.text.startswith("黄叶青苔")))
         self.assertIn("今夜相思几许", titled_text)
         self.assertIn("爇尽水沈烟", next(p.entry.text for p in nalan if p.entry.text.startswith("东风不解愁")))
@@ -162,7 +164,7 @@ class FindingTests(unittest.TestCase):
         titled = {poem.title: poem.entry for poem in nalan}
         # The tune the transcription dropped is restored; the title split across the heading and the verse is joined.
         self.assertEqual(titled["蝶恋花·出塞"].tune, "蝶恋花")
-        self.assertTrue(titled["蕉园"].text.startswith("见说斋坛"))
+        self.assertTrue(titled["蕉园"].text.startswith("见说斋坛閟，"))
         # The long preface is the preface, not the first verse; the edition's reading wins over the Zhihu one.
         self.assertTrue(titled["沁园春·丁巳重阳前三日"].text.startswith("瞬息浮生"))
         self.assertIn("而今真个悔多情", titled["山花子·风絮飘残已化萍"].text)
