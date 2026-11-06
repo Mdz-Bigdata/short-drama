@@ -292,6 +292,7 @@ class ScreenwritingEngine:
         source_text: str | None = None,
         source_kind: str | None = None,
         own_episodes: Sequence[Mapping[str, Any]] | None = None,
+        outline_only: bool = False,
     ) -> dict[str, Any]:
         """Run the whole pipeline and return the persisted state dict.
 
@@ -300,6 +301,9 @@ class ScreenwritingEngine:
         episode: ``{"text", "source_kind", "name"}``); they are not cut, they never
         occupy the whole source, and they follow the planned episodes in broadcast
         order. A project may have both, either, or neither.
+
+        ``outline_only`` stops once the overview, the asset inventory and the whole ledger
+        are in: no episode is written, and ``write_planned`` writes them later.
         """
         own = _own_episode_inputs(own_episodes)
         kind = source_kind or detect_source_kind(source_text)
@@ -363,7 +367,7 @@ class ScreenwritingEngine:
         # The asset inventory and the ledger both read only the overview and the source, so
         # they are extracted side by side; the serial setting keeps the one-call-at-a-time order.
         self.progress(10, "编剧 · 提取角色 / 场景 / 道具资产")
-        if self.episode_concurrency > 1 and not normalized_source and planned_count > self.plan_batch_size:
+        if not outline_only and self.episode_concurrency > 1 and not normalized_source and planned_count > self.plan_batch_size:
             # A long series planned from the outline: each ledger batch's episodes are written
             # while the next batch is still being planned (a source is cut in one pass instead).
             self._write_pipelined(state, planned_count, own, episode_count, analysis_source=analysis_source, kind=kind, overview=overview)
@@ -385,9 +389,26 @@ class ScreenwritingEngine:
         if not state["ledger"]:
             raise ScreenwritingError("没有可写的集：既无源文可切分，也无逐集原文")
         state["episode_count"] = max(episode_count, len(state["ledger"]))
+        if outline_only:
+            state["updated_at"] = _now()
+            return state
 
         numbers = [int(entry["episode"]) for entry in state["ledger"]]
         self._write_episodes(state, numbers, base_percent=20, span_percent=70)
+        state["updated_at"] = _now()
+        return state
+
+    @_in_output_language
+    def write_planned(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Write every ledger episode ``state`` has not written yet, in place.
+
+        In place, so whatever episodes were stored before a failure are still on ``state``.
+        """
+        written = {int(number) for number in (state.get("episodes") or {}) if str(number).isdigit()}
+        numbers = [int(entry["episode"]) for entry in state.get("ledger") or []
+                   if isinstance(entry, Mapping) and int(entry["episode"]) not in written]
+        if numbers:
+            self._write_episodes(state, numbers, base_percent=5, span_percent=90)
         state["updated_at"] = _now()
         return state
 

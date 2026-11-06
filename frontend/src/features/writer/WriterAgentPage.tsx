@@ -31,6 +31,8 @@ import { ScreenplayReader } from './ScreenplayReader';
 import { ScreenwritingPanel } from './ScreenwritingPanel';
 import { ScriptLibrary } from './ScriptLibrary';
 import { ScriptOutline } from './ScriptOutline';
+import { LedgerOutline, ScriptDetailBanner } from './ScriptDetailStatus';
+import { scriptDetailPhase, type ScriptDetailRecord } from './scriptDetail';
 import { groupEpisodeGaps, normalizeMissingEpisodes } from './episodeGaps';
 import { WriterTimeline } from './WriterTimeline';
 import { summarizeEpisodeTitle } from './textSummary';
@@ -170,6 +172,7 @@ export function WriterAgentPage({
   onOpenScenes,
   onOpenActors,
   defaultView = 'board',
+  scriptDetail,
 }: {
   title?: string;
   taskId?: string;
@@ -209,6 +212,8 @@ export function WriterAgentPage({
   onOpenActors?: () => void;
   /** Which tab opens first: the board, or the character network page. */
   defaultView?: WriterView;
+  /** The background screenplay run (``assets["2_detail"]``): the outline shows until it is done. */
+  scriptDetail?: unknown;
 }) {
   // One block for the story: its events (editable nodes) and, on the other tab, the same events laid along the scenes as a beat map.
   const [storyView, setStoryView] = useState<'events' | 'beats'>('events');
@@ -280,7 +285,10 @@ export function WriterAgentPage({
     : scriptedEpisodes && plannedEpisodes > scriptedEpisodes
       ? plannedEpisodes - scriptedEpisodes
       : 0;
-  const continueButton = missingEpisodeCount > 0 && onContinueScript ? (
+  const detailPhase = scriptDetailPhase(scriptDetail);
+  // While the episodes are written aside the screenplay is empty on purpose: nothing is missing yet.
+  const detailWriting = detailPhase === 'writing';
+  const continueButton = missingEpisodeCount > 0 && onContinueScript && !detailWriting ? (
     <button
       className="writer-outline-button is-primary"
       type="button"
@@ -475,6 +483,14 @@ export function WriterAgentPage({
         )}
       </nav>
 
+      {detailPhase && (
+        <ScriptDetailBanner
+          record={scriptDetail as ScriptDetailRecord}
+          phase={detailPhase}
+          onShowOutline={view === 'outline' ? undefined : () => setView('outline')}
+        />
+      )}
+
       <dl className="writer-stats">
         {stats.map(stat => (
           <div key={stat.label}>
@@ -521,13 +537,15 @@ export function WriterAgentPage({
             <div><span>01</span><div><small>SCRIPT BREAKDOWN</small><h2 id="writer-outline-title">{t('剧本大纲')}</h2></div></div>
             <div className="writer-section__actions">{continueButton}</div>
           </div>
-          {missingEpisodeCount > 0 && (
+          {missingEpisodeCount > 0 && !detailWriting && (
             <p className="writer-outline-warning" role="status">
               {missingEpisodeLabel ? `剧本缺少第 ${missingEpisodeLabel} 集正文。` : `剧本尚缺 ${missingEpisodeCount} 集正文。`}
               已有内容已保留，补齐后再继续制作。
             </p>
           )}
-          <ScriptOutline scenes={scenes} missingEpisodes={missingEpisodes} />
+          {detailPhase && taskId && scenes.length === 0
+            ? <LedgerOutline taskId={taskId} refreshKey={String((scriptDetail as ScriptDetailRecord).status)} />
+            : <ScriptOutline scenes={scenes} missingEpisodes={detailWriting ? [] : missingEpisodes} />}
         </section>
       ) : (
       <>

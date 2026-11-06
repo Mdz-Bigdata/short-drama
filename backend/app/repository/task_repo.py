@@ -31,6 +31,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError, SQLAlchemyError
 
 from app import settings
+from app.core import script_detail
 from app.core.inline_media import strip_stage_five_routes
 
 logger = logging.getLogger("app.repository.task_repo")
@@ -68,11 +69,12 @@ _MIGRATION_MARKER = "legacy_json_migrated"
 # qc_reports: 剧本阶段的后台质检报告由质检线程写入，阶段自己的整份快照不覆盖它。
 SINK_OWNED_TASK_KEYS = ("usage_records", "qc_reports")
 # 8_acquisition: 宣发获客的评论、线索与跟进只经 mutate_task 写，阶段快照不覆盖。
-SINK_OWNED_ASSET_KEYS = ("5_jobs", "5_queue", "5_failures", "8_acquisition")
+# 2_detail: 后台撰写详细剧本的记录；剧本落库之前的快照也不能把大纲版剧本写回去。
+SINK_OWNED_ASSET_KEYS = ("5_jobs", "5_queue", "5_failures", "8_acquisition", script_detail.KEY)
 
 
 def _keep_sink_owned(incoming: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
-    merged = dict(incoming)
+    merged = script_detail.keep_applied_script(dict(incoming), current)
     for key in SINK_OWNED_TASK_KEYS:
         if key in current:
             merged[key] = deepcopy(current[key])

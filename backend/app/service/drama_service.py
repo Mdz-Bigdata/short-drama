@@ -2,6 +2,7 @@
 import logging
 import uuid
 import asyncio
+import functools
 import contextvars
 import contextlib
 import json
@@ -21,7 +22,7 @@ from app import settings
 from app.repository.task_repo import StaleTaskWriteError, TaskRepository
 from app.core.face_card import state_face_fragments
 from app.core.model_gateway import ModelGateway
-from app.core import inline_media, literary, poetry_library, usage_ledger, video_failures, video_jobs
+from app.core import inline_media, literary, poetry_library, script_detail, usage_ledger, video_failures, video_jobs
 from app.platform.billing_book import BillingRefused, active_book
 from app.core.providers.pricing import pricing_table
 from app.core.video_admission import assess_video_batch
@@ -3272,6 +3273,11 @@ class DramaService:
             return None
         config = task.get("config") if isinstance(task.get("config"), dict) else {}
         assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
+        if script_detail.writing(task):
+            raise ValueError("详细剧本正在后台撰写，写完后会自动显示")
+        if script_detail.pending(task):
+            # Interrupted (a restart) or failed part way: the same background writer picks up the gaps.
+            return self._resume_script_detail(task)
         script = str(assets.get("2") or "")
         if not script.strip():
             raise ValueError("剧本尚未生成，请先执行第 2 阶段")
@@ -3426,6 +3432,7 @@ class DramaService:
         def progress(percent: int, label: str) -> None:
             self._progress_step(task, max(8, min(92, percent)), label)
 
+        outline_first = bool(task_id) and script_detail.enabled()
         try:
             engine = self._structured_writer_engine(task, config, title, guidance, progress)
             state = engine.write(
@@ -3435,6 +3442,7 @@ class DramaService:
                 source_text=source_text,
                 source_kind=source_kind,
                 own_episodes=own_episodes,
+                outline_only=outline_first,
             )
         except (ScreenwritingError, ValueError) as error:
             if not screenwriting.fallback_enabled():
@@ -3449,6 +3457,20 @@ class DramaService:
             task["assets"].pop(screenwriting.STATE_KEY, None)
             return False
 
+        if outline_first:
+            # The cast, the places and the ledger are what the character stage needs; the
+            # episodes are written aside and the screenplay appears when all of them are in.
+            screenwriting.apply_state(task["assets"], state)
+            task["scripted_episode_count"] = 0
+            ledger = state.get("ledger") or []
+            task["logs"]["2"] = (
+                f"📋 **剧本大纲已完成**：共 {len(ledger)} 集的分集账本、角色与场景资产已就绪，可以先进入角色设计。\n\n"
+                "详细剧本正在后台逐集撰写，全部写完后一次性显示；分镜阶段会等它写完再开始。"
+            )
+            self._start_script_detail(task, state, config, title, guidance)
+            logger.info("[Stage2] 剧本大纲完成：%s 集，详细剧本转入后台撰写 (task=%s)", len(ledger), task_id)
+            return True
+
         text, _breakdown = screenwriting.apply_state(task["assets"], state)
         task["scripted_episode_count"] = self._audit_scripted_episodes(text, ep_count, task_id)
         self._progress_step(task, 93, "剧本一致性质检自检")
@@ -3456,6 +3478,132 @@ class DramaService:
         written = screenwriting.written_episode_numbers(state)
         logger.info("[Stage2] 结构化编剧完成：%s 模式，%s/%s 集 (task=%s)", state.get("source_kind"), len(written), ep_count, task_id)
         return True
+
+    # ---------------- 详细剧本后台撰写：大纲先行，逐集正文写完后一次性落库 ----------------
+
+    class _ScriptDetailSuperseded(RuntimeError):
+        """The background screenplay was cancelled: stage 2 ran again or the script was replaced."""
+
+    def _start_script_detail(self, task: Dict[str, Any], state: Dict[str, Any], config: Dict[str, Any],
+                             title: str, guidance: str = "") -> None:
+        """Record a new background run on the task and write ``state``'s unwritten episodes on a side thread."""
+        task_id = str(task["task_id"])
+        written = len(screenwriting.written_episode_numbers(state))
+        record = script_detail.start_record(uuid.uuid4().hex, len(state.get("ledger") or []), _task_script_revision(task))
+        record["written"] = written
+
+        def begin(current: Dict[str, Any]) -> bool:
+            current.setdefault("assets", {})[script_detail.KEY] = deepcopy(record)
+            return True
+
+        self.repo.mutate_task(task_id, begin)
+        task.setdefault("assets", {})[script_detail.KEY] = deepcopy(record)
+        # The thread works on its own copies: the stage goes on with ``task`` and saves it.
+        work = functools.partial(
+            self._write_script_detail, task_id, record["run_id"], deepcopy(task), deepcopy(state),
+            dict(config), title, guidance,
+        )
+        threading.Thread(target=usage_ledger.carrying_context(work), daemon=True,
+                         name=f"script-detail-{task_id[:8]}").start()
+
+    def _write_script_detail(self, task_id: str, run_id: str, task_copy: Dict[str, Any], state: Dict[str, Any],
+                             config: Dict[str, Any], title: str, guidance: str) -> None:
+        last = {"at": 0.0}
+
+        def report(percent: int, label: str) -> None:
+            now = time.time()
+            if now - last["at"] < 2:
+                return
+            last["at"] = now
+            written = len(screenwriting.written_episode_numbers(state))
+
+            def tick(current: Dict[str, Any]) -> bool:
+                record = script_detail.record_of(current)
+                if not record or record.get("run_id") != run_id:
+                    raise self._ScriptDetailSuperseded(run_id)
+                record.update(percent=max(0, min(99, int(percent))), label=label, written=written, updated_at=now)
+                return True
+
+            if not self.repo.mutate_task(task_id, tick):
+                raise self._ScriptDetailSuperseded(run_id)
+
+        error: Optional[str] = None
+        try:
+            with usage_ledger.bind_task(task_id, "stage_2"):
+                engine = self._structured_writer_engine(task_copy, config, title, guidance, report)
+                engine.write_planned(state)
+        except self._ScriptDetailSuperseded:
+            logger.info("[Stage2] 详细剧本后台撰写已被新的编剧任务取代 (task=%s)", task_id)
+            return
+        except (Exception, BillingRefused) as exc:  # noqa: BLE001 - the record says why; written episodes are kept
+            error = self._safe_error_text(f"{type(exc).__name__}: {exc}")
+            logger.warning("[Stage2] 详细剧本后台撰写失败 (task=%s): %s", task_id, error)
+        try:
+            self._apply_script_detail(task_id, run_id, state, error, config, title)
+        except Exception as exc:  # noqa: BLE001 - a daemon thread has nobody to raise to
+            logger.error("[Stage2] 详细剧本落库失败 (task=%s): %s", task_id, self._safe_error_text(exc))
+
+    def _apply_script_detail(self, task_id: str, run_id: str, state: Dict[str, Any], error: Optional[str],
+                             config: Dict[str, Any], title: str) -> None:
+        """Put the written screenplay on the task in one piece; a failed run keeps the episodes it wrote."""
+        written = screenwriting.written_episode_numbers(state)
+
+        def apply(current: Dict[str, Any]) -> bool:
+            record = script_detail.record_of(current)
+            if not record or record.get("run_id") != run_id:
+                return False
+            now = time.time()
+            assets = current.setdefault("assets", {})
+            if written:
+                stored = screenwriting.state_of(current)
+                if stored is not None and isinstance(stored.get("overview"), dict):
+                    # An overview edited on the writer board while the episodes were written stays.
+                    state["overview"] = stored["overview"]
+                text, _breakdown = screenwriting.apply_state(assets, state)
+                current["scripted_episode_count"] = self._audit_scripted_episodes(
+                    text, _bounded_episode_count((current.get("config") or {}).get("episode_count")), task_id,
+                )
+                assets["2_writer_dashboard"] = compile_writer_dashboard(current).model_dump(mode="json", by_alias=True)
+                record["applied_at"] = now
+            record.update(
+                status=script_detail.FAILED if error else script_detail.DONE, error=error,
+                written=len(written), percent=record.get("percent", 0) if error else 100,
+                label="后台撰写失败" if error else "详细剧本已完成", updated_at=now,
+            )
+            return bool(written)
+
+        applied = self.repo.mutate_task(task_id, apply)
+        if not applied:
+            return
+        logger.info("[Stage2] 详细剧本%s：%s 集已落库 (task=%s)", "部分完成" if error else "完成", len(written), task_id)
+        if error:
+            return
+        task = self.repo.get_task(task_id)
+        if task is not None:
+            # The self-check reads the finished screenplay. Its report goes where the background
+            # check puts its own: a stage snapshot older than this moment cannot take it back.
+            report = self._stage_quality_report(task, 2, "编剧剧本创作", config, title, task_id)
+            fingerprint = self._qc_fingerprint(task["assets"].get("2"))
+
+            def record_log(current: Dict[str, Any]) -> bool:
+                current.setdefault("logs", {})["2"] = report
+                if report != self.QC_PENDING_TEXT:
+                    reports = current.get("qc_reports") if isinstance(current.get("qc_reports"), dict) else {}
+                    reports["2"] = {"fingerprint": fingerprint, "report": report}
+                    current["qc_reports"] = reports
+                return True
+
+            self.repo.mutate_task(task_id, record_log)
+
+    def _resume_script_detail(self, task: Dict[str, Any]) -> WriterDashboardResponse:
+        """Write the episodes an interrupted or failed background run left out, again in the background."""
+        state = screenwriting.state_of(task)
+        if state is None or not state.get("ledger"):
+            raise ValueError("没有可续写的分集账本，请重跑第 2 阶段")
+        config = task.get("config") if isinstance(task.get("config"), dict) else {}
+        title = str(config.get("title_suggestion") or "未命名短剧")
+        self._start_script_detail(task, deepcopy(state), config, title)
+        return compile_writer_dashboard(task)
 
     def _continue_structured_script(self, task: Dict[str, Any], task_id: str, missing: List[int],
                                     requested: int, base_source_hash: str) -> Optional[WriterDashboardResponse]:
@@ -3677,6 +3825,8 @@ class DramaService:
             raise LookupError("该任务没有结构化编剧记录")
         if self._has_running_generation(task):
             raise ScriptUpdateConflictError("项目仍有生成任务运行，请等待结束后再改分集")
+        if script_detail.writing(task):
+            raise ScriptUpdateConflictError("详细剧本正在后台按当前分集撰写，请等它写完再改分集")
         op = request.operation
         if op == "split":
             change = ledger_ops.split_episode(state, int(request.episode or 0), int(request.offset or 0), request.title)
@@ -3764,6 +3914,8 @@ class DramaService:
             raise LookupError("该任务没有结构化编剧记录")
         if self._has_running_generation(task):
             raise ScriptUpdateConflictError("项目仍有生成任务运行，请等待结束后再采纳")
+        if script_detail.writing(task):
+            raise ScriptUpdateConflictError("详细剧本正在后台按当前分集撰写，请等它写完再采纳")
         change = ledger_ops.adopt_candidate(state, delete_replaced=request.delete_replaced)
         return self._persist_ledger_change(
             task_id, task, change, confirm_discard=request.confirm_discard, confirm_invalidate=request.confirm_invalidate,
@@ -4409,6 +4561,8 @@ class DramaService:
                 assets["2_breakdown"] = deepcopy(breakdown_override)
 
             assets["2"] = content
+            # A saved or uploaded screenplay replaces whatever the background writer was doing.
+            assets.pop(script_detail.KEY, None)
             config["script_content"] = content
             if file_name is not None:
                 config["script_name"] = file_name
@@ -5029,6 +5183,10 @@ class DramaService:
             if match and int(match.group(1)) > stage and not (cycle and key == "5"):
                 assets.pop(key, None)
 
+        if stage <= 2:
+            # A new screenplay run cancels the background writer of the old one.
+            assets.pop(script_detail.KEY, None)
+
         logs = task.get("logs") if isinstance(task.get("logs"), dict) else {}
         for key in list(logs):
             if str(key).isdigit() and int(key) >= stage:
@@ -5082,7 +5240,10 @@ class DramaService:
         )
         if unsuccessful and not completed_here and task.get("current_stage") == stage:
             missing.append("当前执行尚未成功完成")
-        if stage == 2 and isinstance(assets.get("2"), str):
+        if stage == 2 and script_detail.pending(task) and screenwriting.state_of(task) is not None:
+            # The outline is stage 2's result; the episodes are being written aside (stage 4 waits for them).
+            missing = [key for key in missing if key != "2"]
+        elif stage == 2 and isinstance(assets.get("2"), str):
             gaps = script_episode_gaps(assets["2"], (task.get("config") or {}).get("episode_count", 0))
             if gaps:
                 missing.append("剧本缺少第" + "、".join(map(str, gaps)) + "集")
@@ -5145,6 +5306,10 @@ class DramaService:
             raise ValueError("阶段必须介于 1 到 8")
         if stage == 1:
             return
+        if stage >= 4:
+            waiting = script_detail.blocking_reason(task)
+            if waiting:
+                raise StagePrerequisiteError(waiting)
         previous = stage - 1
         missing = self._missing_stage_outputs(task, previous)
         if missing:
@@ -6865,8 +7030,12 @@ class DramaService:
                 )
             except ValueError:
                 character_context_limit = 24000
+            outline_state = screenwriting.state_of(task) if script_detail.pending(task) else None
             character_script_context = str(
-                task["assets"].get("2") or config.get("script_content") or ""
+                task["assets"].get("2")
+                # The episodes are still being written: the ledger tells the story so far.
+                or (script_detail.outline_text(outline_state) if outline_state else "")
+                or config.get("script_content") or ""
             )[:character_context_limit]
             user_prompt = (
                 prompt_data.text("agent_prompts", "character_dna_request")
@@ -9086,6 +9255,18 @@ class DramaService:
         self.repo.save_task(task_id, task)
         return task
 
+    SCRIPT_DETAIL_POLL_SECONDS = 5.0
+
+    async def _await_script_detail(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """Hold an automatic run until the background screenplay is in; ``None`` when paused meanwhile."""
+        while True:
+            await asyncio.sleep(self.SCRIPT_DETAIL_POLL_SECONDS)
+            current = await asyncio.to_thread(self.repo.get_task, task_id)
+            if not current or (current.get("workflow_control") or {}).get("pause_requested"):
+                return None
+            if not script_detail.writing(current):
+                return current
+
     async def execute_all_stages(self, task_id: str, *, _first_claimed: Optional[Dict[str, Any]] = None):
         """Continue from the first incomplete contract, including partial Stage 4."""
         task = self.repo.get_task(task_id)
@@ -9111,6 +9292,10 @@ class DramaService:
                 next_stage = self.workflow_snapshot(current)["next_stage"]
                 if next_stage is None:
                     return
+                if next_stage >= 4 and script_detail.writing(current):
+                    current = await self._await_script_detail(task_id)
+                    if current is None or _task_script_revision(current) != revision:
+                        return
                 if next_stage == stage:
                     after = json.dumps((current.get("assets") or {}).get("4_progress"), sort_keys=True)
                     if stage != 4 or before == after:

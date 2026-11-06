@@ -529,6 +529,8 @@ export default function App() {
     // the screenplay's title instead of the chat prompt the project was created from.
     (taskData?.assets["2_writer_dashboard"] as { title?: string } | undefined)?.title,
   ), [taskData]);
+  // The background screenplay's status: the writer board refetches when the episodes land.
+  const scriptDetailStatus = String((taskData?.assets["2_detail"] as { status?: string } | undefined)?.status || '');
   const taskDataRef = useRef<TaskResponse | null>(null);
   const [uploadedScript, setUploadedScript] = useState<File | null>(null);
   const [scriptContent, setScriptContent] = useState<string>('');
@@ -2485,7 +2487,7 @@ export default function App() {
             ) : activeTabStage === 2 ? (
               <WriterAgentPageContainer
                 taskId={taskId}
-                refreshKey={`${taskData?.currentStage}:${taskData?.status}:${Boolean(taskData?.assets["2_writer_dashboard"])}`}
+                refreshKey={`${taskData?.currentStage}:${taskData?.status}:${Boolean(taskData?.assets["2_writer_dashboard"])}:${scriptDetailStatus}`}
                 displayTitle={scriptDisplayName}
                 title={taskData?.config.titleSuggestion}
                 fallbackBreakdown={taskData?.assets["2_breakdown"]}
@@ -2499,6 +2501,7 @@ export default function App() {
                 onScriptSaved={handleWriterScriptSaved}
                 onOpenScenes={() => { setCharacterAssetKind('scene'); setActiveTabStage(3); }}
                 onOpenActors={() => { setCharacterAssetKind('actor'); setActiveTabStage(3); }}
+                scriptDetail={taskData?.assets["2_detail"]}
               />
             ) : activeTabStage === 3 ? (
               <CharacterDesignerPageContainer

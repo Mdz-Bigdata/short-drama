@@ -1066,3 +1066,29 @@
 .writer-relationship-canvas__exit { position: absolute; top: 16px; right: 16px; display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 14px; color: var(--danger); border: 1px solid rgba(var(--accent-rgb), 0.35); border-radius: 10px; background: rgba(var(--surface-rgb), 0.92); font: inherit; font-size: 0.8rem; cursor: pointer; }
 .writer-relationship-canvas__exit:hover { background: var(--surface-2); }
 .writer-relationship-canvas__exit svg { width: 15px; height: 15px; }
+
+/* ---- 大纲先行：详细剧本在后台撰写时的状态条与分集大纲 ---- */
+.writer-detail-banner { display: flex; align-items: flex-start; gap: 12px; margin: 0; padding: 14px 16px; border-bottom: 1px solid var(--writer-line); background: rgba(var(--accent-rgb), 0.05); }
+.writer-detail-banner.is-warning { background: rgba(var(--warning-rgb), 0.07); }
+.writer-detail-banner__icon { flex: none; width: 18px; height: 18px; margin-top: 2px; color: var(--writer-coral-strong); }
+.writer-detail-banner.is-warning .writer-detail-banner__icon { color: var(--warning); }
+.writer-detail-banner__icon.is-spinning { animation: spin 1s linear infinite; }
+.writer-detail-banner__body { flex: 1; min-width: 0; display: grid; gap: 6px; }
+.writer-detail-banner__body strong { font-size: 0.85rem; }
+.writer-detail-banner__body p { margin: 0; font-size: 0.75rem; line-height: 1.7; color: var(--text-muted); overflow-wrap: anywhere; }
+.writer-detail-banner__body small { font-size: 0.68rem; color: var(--text-muted); }
+.writer-detail-banner__bar { height: 4px; border-radius: 2px; background: var(--writer-line); overflow: hidden; }
+.writer-detail-banner__bar span { display: block; height: 100%; background: var(--writer-coral-strong); transition: width 0.4s ease; }
+.writer-detail-banner .writer-outline-button { flex: none; }
+.writer-ledger-outline { margin: 0; padding: 0; list-style: none; display: grid; }
+.writer-ledger-outline > li { padding: 14px 16px; border-bottom: 1px solid var(--writer-line); display: grid; gap: 6px; }
+.writer-ledger-outline header { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.writer-ledger-outline header span { color: var(--writer-coral-strong); font: 700 0.68rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.writer-ledger-outline header strong { font-size: 0.85rem; }
+.writer-ledger-outline p, .writer-ledger-outline ul { margin: 0; font-size: 0.75rem; line-height: 1.7; overflow-wrap: anywhere; }
+.writer-ledger-outline ul { padding-left: 1.2em; color: var(--text-muted); }
+.writer-ledger-outline__teaser { color: var(--text-muted); }
+.writer-ledger-outline__empty { margin: 0; padding: 1rem; font-size: 0.75rem; color: var(--text-muted); }
+@media (max-width: 640px) {
+  .writer-detail-banner { flex-wrap: wrap; }
+}

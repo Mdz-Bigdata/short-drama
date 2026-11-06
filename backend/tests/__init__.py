@@ -12,3 +12,5 @@ os.environ.setdefault("ASSISTANT_AGENT_ROUTING", "0")
 os.environ.setdefault("VIDEO_MODE_JUDGE", "0")
 # 分集大纲出来后让文本模型对着概述校对一遍事实：测试默认关掉，专门测它的用例自己打开。
 os.environ.setdefault("SCREENWRITING_FACT_CHECK", "0")
+# 第 2 阶段大纲先行、详细剧本转后台线程撰写：测试默认整段写完，专门测它的用例自己打开。
+os.environ.setdefault("SCRIPT_OUTLINE_FIRST", "0")

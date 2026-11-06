@@ -44,6 +44,7 @@ export function WriterAgentPageContainer({
   onOpenScenes,
   onOpenActors,
   defaultView,
+  scriptDetail,
 }: {
   taskId: string;
   refreshKey?: string;
@@ -61,6 +62,7 @@ export function WriterAgentPageContainer({
   onOpenScenes?: () => void;
   onOpenActors?: () => void;
   defaultView?: WriterView;
+  scriptDetail?: unknown;
 }) {
   const [dashboardState, setDashboardState] = useState<{
     taskId: string;
@@ -372,6 +374,7 @@ export function WriterAgentPageContainer({
         onOpenScenes={onOpenScenes}
         onOpenActors={onOpenActors}
         defaultView={defaultView}
+        scriptDetail={scriptDetail}
       />
     </div>
   );

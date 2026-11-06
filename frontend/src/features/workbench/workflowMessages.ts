@@ -1,4 +1,5 @@
 import type { TaskChatEntry, TaskResponse } from '../../types';
+import { scriptDetailPhase } from '../writer/scriptDetail';
 
 export interface WorkflowChatMessage {
   id: string;
@@ -126,6 +127,8 @@ export function workflowBoardTransition(previous: TaskResponse | null, next: Tas
 }
 
 export function shouldPollWorkflow(task: TaskResponse): boolean {
+  // The screenplay written aside after stage 2 lands with no stage running: keep watching for it.
+  if (scriptDetailPhase(task.assets?.['2_detail']) === 'writing') return true;
   return task.workflow ? task.workflow.mode === 'running' : task.status === 'running';
 }
 
