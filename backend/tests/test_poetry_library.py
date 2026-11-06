@@ -76,7 +76,7 @@ class ShelfTests(unittest.TestCase):
 
     def test_protected_works_say_so_and_are_whole(self):
         # Mao's poems are stored in full (from the 2017 全编鉴赏 text layer) and stay flagged until the term ends.
-        protected = [poem for poem in self.lib.poems if poem.entry.rights == "protected"]
+        protected = [poem for poem in self.lib.poems if poem.entry.rights == "protected" and poem.collection == "maozedong"]
         self.assertGreaterEqual(len(protected), 71)
         for poem in protected:
             with self.subTest(poem.key):
@@ -84,7 +84,24 @@ class ShelfTests(unittest.TestCase):
                 self.assertGreaterEqual(len(poem.entry.text), 28)
                 self.assertNotIn("[", poem.entry.text)  # the book's note markers must not leak in
                 self.assertIn("写作时间", poem.entry.note)
-        self.assertTrue(all(poem.author == "毛泽东" for poem in protected))
+        # Apart from Mao and the living author of 剑来, everything on the shelf is public domain.
+        others = {poem.collection for poem in self.lib.poems if poem.entry.rights == "protected"} - {"maozedong", "jianlai"}
+        self.assertEqual(others, set())
+
+    def test_jianlai_lines_are_reference_only_and_say_so(self):
+        lines = self.lib.by_collection("jianlai")
+        self.assertEqual(len(lines), 14, "15 listed, the two wordings of 强者的自由 merged")
+        by_head = {poem.title: poem.entry for poem in lines}
+        borrowed = by_head["剑来·千年暗室"]
+        self.assertEqual(borrowed.rights, "public_domain", "the line is from the 坛经, not the novel")
+        self.assertIn("一灯能除千年暗", borrowed.note)
+        for poem in lines:
+            if poem.entry.rights == "protected":
+                with self.subTest(poem.key):
+                    self.assertIn("著作权在保护期内", poem.entry.rights_note)
+                    self.assertIn("不直接用原句", poem.entry.rights_note)
+        self.assertIn("未能核实", by_head["剑来·世间文字八万个"].note, "an attribution that could not be checked says so")
+        self.assertTrue(poetry_library.resolve_sources(["剑来"], self.lib)[0])
 
     def test_collection_ids_and_keys_are_unique(self):
         keys = [poem.key for poem in self.lib.poems]
