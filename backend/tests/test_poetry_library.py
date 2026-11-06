@@ -111,7 +111,7 @@ class FindingTests(unittest.TestCase):
         yan = poetry_library.library().by_collection("yanjidao")
         self.assertEqual(len(yan), 255, "小山词 全本")
         bulk = [poem for poem in yan if not poem.entry.curated]
-        self.assertEqual(len(bulk), 246)
+        self.assertEqual(len(bulk), 230, "246 added in bulk, 16 of them since curated by hand")
         self.assertTrue(all("未逐首人工审读" in poem.entry.note for poem in bulk))
         self.assertIn("强欢殢酒图消遣", poetry_library.find_titled("风入松·心心念念忆相逢")[0].entry.text)
         # A bulk entry's tags can out-score a curated one; the Writer still sees the curated works first.
@@ -121,6 +121,27 @@ class FindingTests(unittest.TestCase):
         self.assertEqual(curated, sorted(curated, reverse=True), "no bulk entry before a curated one")
         self.assertIn("鹧鸪天·彩袖殷勤捧玉钟", [poem.title for poem in chosen])
         self.assertEqual(poetry_library.search("桃源梦", author="晏几道")[0].title, "采桑子·无端恼破桃源梦", "search still finds them")
+
+    def test_the_nalan_shelf_follows_tongzhitang_ji_and_puts_the_curated_works_first(self):
+        nalan = poetry_library.library().by_collection("nalanxingde")
+        self.assertEqual(len(nalan), 243, "15 hand-written entries + 228 from the Zhihu list's works")
+        self.assertEqual(sum(1 for poem in nalan if not poem.entry.curated), 199, "218 added in bulk, 19 of them since curated by hand")
+        # A curated work carries the lines a writer can quote and no longer says it was tagged by keyword.
+        rain = next(poem.entry for poem in nalan if poem.entry.text.startswith("别绪如丝"))
+        self.assertTrue(rain.curated)
+        self.assertIn("因听紫塞三更雨，却忆红楼半夜灯", rain.famous_lines)
+        self.assertIn("呵手封题处", rain.text)
+        self.assertNotIn("未逐首人工审读", rain.note)
+        titled = {poem.title: poem.entry for poem in nalan}
+        # The tune the transcription dropped is restored; the title split across the heading and the verse is joined.
+        self.assertEqual(titled["蝶恋花·出塞"].tune, "蝶恋花")
+        self.assertTrue(titled["蕉园"].text.startswith("见说斋坛"))
+        # The long preface is the preface, not the first verse; the edition's reading wins over the Zhihu one.
+        self.assertTrue(titled["沁园春·丁巳重阳前三日"].text.startswith("瞬息浮生"))
+        self.assertIn("而今真个悔多情", titled["山花子·风絮飘残已化萍"].text)
+        self.assertIn("拟古四十首·其十三", titled)
+        chosen = poetry_library.pick(nalan, "悼亡 梦 边塞", limit=12)
+        self.assertTrue(all(poem.entry.curated for poem in chosen[:12] if poem.entry.curated) and chosen[0].entry.curated)
 
     def test_every_writing_stage_gets_it(self):
         prompts = screenwriting_service.writer_system_prompts("role", config={poetry_library.CONFIG_KEY: ["全部"]})
