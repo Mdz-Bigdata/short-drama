@@ -126,7 +126,7 @@ class FindingTests(unittest.TestCase):
     def test_the_nalan_shelf_follows_tongzhitang_ji_and_puts_the_curated_works_first(self):
         nalan = poetry_library.library().by_collection("nalanxingde")
         self.assertEqual(len(nalan), 243, "15 hand-written entries + 228 from the Zhihu list's works")
-        self.assertEqual(sum(1 for poem in nalan if not poem.entry.curated), 158, "218 added in bulk, 60 of them since curated by hand")
+        self.assertEqual(sum(1 for poem in nalan if not poem.entry.curated), 138, "218 added in bulk, 80 of them since curated by hand")
         self.assertIn("屧粉衣香何处", titled_text := next(p.entry.text for p in nalan if p.entry.text.startswith("黄叶青苔")))
         self.assertIn("今夜相思几许", titled_text)
         self.assertIn("爇尽水沈烟", next(p.entry.text for p in nalan if p.entry.text.startswith("东风不解愁")))
