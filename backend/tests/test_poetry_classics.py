@@ -6,7 +6,7 @@ import unittest
 from app.core import poetry_library
 
 # Added for 仙侠/武侠 writing, by collection id.
-COLLECTIONS = ("xunzi", "mozi", "hanfeizi", "liezi", "shiji", "fojing", "zhangzai", "wangyangming")
+COLLECTIONS = ("xunzi", "mozi", "hanfeizi", "liezi", "shiji", "fojing", "zhangzai", "wangyangming", "wang-han", "yang-jiong")
 
 # Lines a writer reaches for, and the collection each must come from.
 LINES = (
@@ -28,6 +28,14 @@ LINES = (
     ("zhuangzi", "有天子剑，有诸侯剑，有庶人剑"),
     ("zhuangzi", "天地与我并生，而万物与我为一"),
     ("du-fu", "一舞剑器动四方"),
+    ("wangyangming", "破山中贼易，破心中贼难"),
+    ("wang-wei", "纵死犹闻侠骨香"),
+    ("wang-wei", "一身转战三千里，一剑曾当百万师"),
+    ("libai", "仰天大笑出门去，我辈岂是蓬蒿人"),
+    ("libai", "笑尽一杯酒，杀人都市中"),
+    ("libai", "愿将腰下剑，直为斩楼兰"),
+    ("wang-han", "醉卧沙场君莫笑，古来征战几人回"),
+    ("yang-jiong", "宁为百夫长，胜作一书生"),
 )
 
 
@@ -71,6 +79,10 @@ class ClassicsTests(unittest.TestCase):
         self.assertNotIn("伪", xi_ming)
         shuo_jian = poetry_library.find_titled("说剑", lib=self.lib)[0].entry.text
         self.assertNotIn("（", shuo_jian)
+        lao_jiang = poetry_library.find_titled("老将行", lib=self.lib)[0].entry.text
+        self.assertIn("射杀山中白额虎", lao_jiang)
+        self.assertIn("蹉跎", lao_jiang)
+        self.assertIn("廓清平定", poetry_library.find_titled("与杨仕德薛尚谦（节选）", lib=self.lib)[0].entry.text)
 
 
 if __name__ == "__main__":
