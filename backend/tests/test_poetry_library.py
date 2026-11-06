@@ -125,9 +125,11 @@ class FindingTests(unittest.TestCase):
     def test_the_nalan_shelf_follows_tongzhitang_ji_and_puts_the_curated_works_first(self):
         nalan = poetry_library.library().by_collection("nalanxingde")
         self.assertEqual(len(nalan), 243, "15 hand-written entries + 228 from the Zhihu list's works")
-        self.assertEqual(sum(1 for poem in nalan if not poem.entry.curated), 179, "218 added in bulk, 39 of them since curated by hand")
+        self.assertEqual(sum(1 for poem in nalan if not poem.entry.curated), 158, "218 added in bulk, 60 of them since curated by hand")
         self.assertIn("屧粉衣香何处", titled_text := next(p.entry.text for p in nalan if p.entry.text.startswith("黄叶青苔")))
         self.assertIn("今夜相思几许", titled_text)
+        self.assertIn("爇尽水沈烟", next(p.entry.text for p in nalan if p.entry.text.startswith("东风不解愁")))
+        self.assertIn("忆秦娥·龙潭口", {p.title for p in nalan})
         # A curated work carries the lines a writer can quote and no longer says it was tagged by keyword.
         rain = next(poem.entry for poem in nalan if poem.entry.text.startswith("别绪如丝"))
         self.assertTrue(rain.curated)
