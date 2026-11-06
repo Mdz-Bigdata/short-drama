@@ -111,7 +111,7 @@ class FindingTests(unittest.TestCase):
         yan = poetry_library.library().by_collection("yanjidao")
         self.assertEqual(len(yan), 255, "小山词 全本")
         bulk = [poem for poem in yan if not poem.entry.curated]
-        self.assertEqual(len(bulk), 203, "246 added in bulk, 43 of them since curated by hand")
+        self.assertEqual(len(bulk), 181, "246 added in bulk, 65 of them since curated by hand")
         self.assertTrue(all("未逐首人工审读" in poem.entry.note for poem in bulk))
         self.assertIn("强欢殢酒图消遣", poetry_library.find_titled("风入松·心心念念忆相逢")[0].entry.text)
         self.assertIn("倚处阑干月", poetry_library.find_titled("点绛唇·明日征鞭")[0].entry.text)
