@@ -111,7 +111,7 @@ class FindingTests(unittest.TestCase):
         yan = poetry_library.library().by_collection("yanjidao")
         self.assertEqual(len(yan), 255, "小山词 全本")
         bulk = [poem for poem in yan if not poem.entry.curated]
-        self.assertEqual(len(bulk), 230, "246 added in bulk, 16 of them since curated by hand")
+        self.assertEqual(len(bulk), 225, "246 added in bulk, 21 of them since curated by hand")
         self.assertTrue(all("未逐首人工审读" in poem.entry.note for poem in bulk))
         self.assertIn("强欢殢酒图消遣", poetry_library.find_titled("风入松·心心念念忆相逢")[0].entry.text)
         # A bulk entry's tags can out-score a curated one; the Writer still sees the curated works first.
@@ -125,7 +125,9 @@ class FindingTests(unittest.TestCase):
     def test_the_nalan_shelf_follows_tongzhitang_ji_and_puts_the_curated_works_first(self):
         nalan = poetry_library.library().by_collection("nalanxingde")
         self.assertEqual(len(nalan), 243, "15 hand-written entries + 228 from the Zhihu list's works")
-        self.assertEqual(sum(1 for poem in nalan if not poem.entry.curated), 199, "218 added in bulk, 19 of them since curated by hand")
+        self.assertEqual(sum(1 for poem in nalan if not poem.entry.curated), 179, "218 added in bulk, 39 of them since curated by hand")
+        self.assertIn("屧粉衣香何处", titled_text := next(p.entry.text for p in nalan if p.entry.text.startswith("黄叶青苔")))
+        self.assertIn("今夜相思几许", titled_text)
         # A curated work carries the lines a writer can quote and no longer says it was tagged by keyword.
         rain = next(poem.entry for poem in nalan if poem.entry.text.startswith("别绪如丝"))
         self.assertTrue(rain.curated)
