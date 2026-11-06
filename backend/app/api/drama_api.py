@@ -611,8 +611,8 @@ async def import_production_assets(
     if kind not in _EXTRACTABLE_ASSET_KINDS:
         raise HTTPException(status_code=404, detail="不支持的资产类型")
     if kind in ("costume", "makeup"):
-        # 不单独入库：拆解目录里的服装和化妆由 _file_character_looks 登记成角色妆造。
-        raise HTTPException(status_code=422, detail="服装和化妆已并入角色妆造，不再单独入库")
+        # 不单独入库：拆解目录里的服装和化妆由 _file_character_looks 登记成表演妆造。
+        raise HTTPException(status_code=422, detail="服装和化妆已并入表演妆造，不再单独入库")
     if kind == "effect":
         # The writer may never have listed these; read them off the screenplay first.
         try:

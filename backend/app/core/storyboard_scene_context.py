@@ -152,7 +152,7 @@ def costume_owner(item: dict, name: str) -> bool:
 
 
 def costume_wearers(references: list[dict], characters: Sequence[str], aliases: Mapping[str, str] | None = None) -> list[tuple[str, str]]:
-    """本镜各人穿什么：(穿着者, 造型名)。角色妆造直接写造型名；旧项目的服装图，名字或描述里叫的是称呼(侯府嫡女)时也认得出是谁。"""
+    """本镜各人穿什么：(穿着者, 造型名)。表演妆造直接写造型名；旧项目的服装图，名字或描述里叫的是称呼(侯府嫡女)时也认得出是谁。"""
     aliases = dict(aliases or {})
     cast = [str(name).strip() for name in characters if str(name).strip()]
     labels = [(name, name) for name in cast] + [(title, owner) for title, owner in aliases.items() if owner in cast]

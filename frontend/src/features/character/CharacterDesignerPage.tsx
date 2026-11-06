@@ -6,7 +6,7 @@ import {
   UserRoundPlus,
   WandSparkles,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { apiRequest } from '../../api/client';
 import { ElementLibraryPage } from '../elements/ElementLibraryPage';
@@ -18,6 +18,7 @@ import { characterAssetTabLabels } from './assetTabLabels';
 import { CharacterFiveViewViewer } from './CharacterFiveViewViewer';
 import { CharacterDetailDialog } from './CharacterDetailDialog';
 import { CharacterOverview, type CharacterOverviewDetail } from './CharacterOverview';
+import { identityDisplayViews } from './identityDisplay';
 import {
   CharacterEvidencePanels,
   CharacterInspector,
@@ -283,6 +284,26 @@ export function CharacterDesignerPage({
     if (!assetGenerationBusy) setAssetGenerationToken(current => current + 1);
   };
 
+  // 角色库 · 主视图 · 档案三栏；选了一套表演妆造时，主视图换成这套定妆图。
+  const renderWorkspace = (lookStage: ReactNode | null) => character && (
+    <div className="character-designer__workspace">
+      <CharacterLibrary
+        characters={dashboard.characters}
+        selectedId={character.characterId}
+        onSelect={setSelectedId}
+      />
+      {lookStage ?? (
+        <CharacterFiveViewViewer
+          key={character.characterId}
+          character={character}
+          contract={dashboard.viewContract}
+          onFillDetails={onRegenerateCharacter ? () => onRegenerateCharacter(character.name, 'details') : undefined}
+        />
+      )}
+      <CharacterInspector key={`inspector-${character.characterId}`} character={character} onRegenerate={onRegenerateCharacter} />
+    </div>
+  );
+
   return (
     <main
       className="character-designer"
@@ -427,28 +448,18 @@ export function CharacterDesignerPage({
 
           {character ? (
             <>
-              <div className="character-designer__workspace">
-                <CharacterLibrary
-                  characters={dashboard.characters}
-                  selectedId={character.characterId}
-                  onSelect={setSelectedId}
-                />
-                <CharacterFiveViewViewer
-                  key={character.characterId}
-                  character={character}
-                  contract={dashboard.viewContract}
-                  onFillDetails={onRegenerateCharacter ? () => onRegenerateCharacter(character.name, 'details') : undefined}
-                />
-                <CharacterInspector key={`inspector-${character.characterId}`} character={character} onRegenerate={onRegenerateCharacter} />
-              </div>
-              {taskId && (
+              {taskId ? (
+                // 表演妆造签在工作区上方：选一套，中间一栏就换成这套的定妆图。
                 <CharacterLooks
                   taskId={taskId}
                   characterName={character.name}
                   refreshToken={looksToken}
                   onGenerated={() => { void refreshAssetReadiness(); }}
-                />
-              )}
+                  baseImageUrl={identityDisplayViews(character, dashboard.viewContract).find(view => view.imageUrl)?.imageUrl || undefined}
+                >
+                  {lookStage => renderWorkspace(lookStage)}
+                </CharacterLooks>
+              ) : renderWorkspace(null)}
               <CharacterEvidencePanels dashboard={dashboard} character={character} />
             </>
           ) : (

@@ -1,9 +1,10 @@
-import { RefreshCcw, Shirt, Trash2, WandSparkles } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { Eye, RefreshCcw, Shirt, Trash2, WandSparkles } from 'lucide-react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import { apiRequest, apiUrl } from '../../api/client';
 import { t } from '../../i18n';
 import AssetImageViewer, { type AssetImageViewerAsset } from '../elements/AssetImageViewer';
+import { CharacterDetailDialog } from './CharacterDetailDialog';
 import { findPoster, isLook, lookCheckProblems, variantOf, type ElementItem } from '../elements/elementTypes';
 
 interface UntimedMakeup {
@@ -39,17 +40,98 @@ function episodesText(item: ElementItem): string {
     : `${when}（第 ${variant.starts[0]} 集从第 ${variant.starts[1]} 场起）`;
 }
 
-/** 角色妆造：剧本里每套戏服和妆效，都是这名角色化好妆、穿好它的一张定妆图；分镜和视频按集数或剧情换上。 */
+/** One look in the main viewer's place: the picture on the white card, its description behind 查看描述. */
+function PerformanceLookStage({
+  look,
+  busy,
+  onRegenerate,
+  onView,
+  onDescribe,
+}: {
+  look: ElementItem;
+  busy: string;
+  onRegenerate: (item: ElementItem) => void;
+  onView: (asset: AssetImageViewerAsset) => void;
+  onDescribe: (item: ElementItem) => void;
+}) {
+  const poster = findPoster(look);
+  const imageUrl = poster?.url ? apiUrl(poster.url) : '';
+  const label = variantOf(look)?.label || look.name;
+  const episodes = episodesText(look);
+  const problems = lookCheckProblems(look);
+  const working = busy === look.id;
+  return (
+    <section className="character-viewer character-look-viewer" aria-labelledby="character-look-title">
+      <header className="character-viewer__header">
+        <div>
+          <span className="character-section-kicker">PERFORMANCE LOOK</span>
+          <h2 id="character-look-title">{label}</h2>
+        </div>
+        {episodes && <small className="character-look-viewer__episodes">{episodes}</small>}
+      </header>
+      {Boolean(look.metadata?.needs_redraw) && <p className="character-looks__stale">{t('设定改过，这张图还是旧写法，建议重新生成')}</p>}
+      {problems.length > 0 && <p className="character-looks__stale">{t('妆效核对没过：{0}。建议重新生成，或把妆效写得更具体', [problems.join('；')])}</p>}
+      <div className="character-viewer__identity character-look-viewer__identity">
+        <div
+          id="character-look-stage"
+          role="tabpanel"
+          aria-label={label}
+          className={`character-viewer__stage ${imageUrl ? 'is-ready' : 'is-missing'}`}
+        >
+          {imageUrl ? (
+            <button
+              type="button"
+              className="character-viewer__image-trigger"
+              aria-label={t('查看定妆图“{0}”', [look.name])}
+              onClick={() => onView({ kind: 'actor', name: look.name, description: look.description || '', imageUrl })}
+            >
+              <img decoding="async" src={imageUrl} alt={look.name} />
+            </button>
+          ) : (
+            <div className="character-look-viewer__empty">
+              <Shirt size={28} aria-hidden="true" />
+              <span>{t('定妆图待生成')}</span>
+            </div>
+          )}
+          <div className="character-viewer__badge"><strong>{t('表演妆造')}</strong></div>
+          <button
+            type="button"
+            className={`character-look-viewer__regenerate${imageUrl ? '' : ' is-text'}`}
+            onClick={() => onRegenerate(look)}
+            disabled={Boolean(busy)}
+            aria-label={t('重新生成“{0}”的定妆图', [look.name])}
+            title={imageUrl ? t('重新生成') : t('生成')}
+          >
+            <RefreshCcw size={16} className={working ? 'is-spinning' : ''} aria-hidden="true" />
+            {!imageUrl && <span>{working ? t('生成中…') : t('生成')}</span>}
+          </button>
+          <button type="button" className="character-look-viewer__describe" aria-haspopup="dialog" onClick={() => onDescribe(look)}>
+            <Eye size={15} aria-hidden="true" /> {t('查看描述')}
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** 表演妆造：剧本里每套戏服和妆效，都是这名角色化好妆、穿好它的一张定妆图；分镜和视频按集数或剧情换上。
+ *  顶上一排妆造签，选「设定集」看数字演员本身，选一套就在主视图位置看这套定妆图；描述收在「查看描述」里。
+ *  ``children`` 拿到选中那套的主视图（选设定集时是 ``null``），由页面放进工作区中间一栏。 */
 export function CharacterLooks({
   taskId,
   characterName,
   refreshToken = 0,
   onGenerated,
+  baseImageUrl,
+  children,
 }: {
   taskId: string;
   characterName: string;
   refreshToken?: number;
   onGenerated?: () => void;
+  /** 设定集签上的头像：数字演员本身的正脸。 */
+  baseImageUrl?: string;
+  children?: (lookStage: ReactNode | null) => ReactNode;
 }) {
   const [looks, setLooks] = useState<ElementItem[]>([]);
   const [earlier, setEarlier] = useState<ElementItem[]>([]);
@@ -59,6 +141,9 @@ export function CharacterLooks({
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [viewing, setViewing] = useState<AssetImageViewerAsset | null>(null);
+  // 选中的那套只对当时那名角色有效；换了角色就回到设定集。
+  const [picked, setPicked] = useState<{ of: string; id: string } | null>(null);
+  const [describing, setDescribing] = useState<ElementItem | null>(null);
 
   const load = useCallback(async () => {
     const found: ElementItem[] = [];
@@ -82,13 +167,17 @@ export function CharacterLooks({
   useEffect(() => {
     let live = true;
     const handle = window.setTimeout(() => {
-      load().catch(err => { if (live) setError(err instanceof Error ? err.message : t('读取角色妆造失败')); });
+      load().catch(err => { if (live) setError(err instanceof Error ? err.message : t('读取表演妆造失败')); });
     }, 0);
     return () => { live = false; window.clearTimeout(handle); };
   }, [load, refreshToken]);
 
   const own = looks.filter(item => variantOf(item)?.of === characterName);
   const missing = looks.filter(item => !findPoster(item)).length;
+  // 换了角色或这套被退掉时，回到设定集。
+  const selected = picked?.of === characterName ? own.find(item => item.id === picked.id) : undefined;
+  const needsAttention = (item: ElementItem) => !findPoster(item)
+    || Boolean(item.metadata?.needs_redraw) || lookCheckProblems(item).length > 0;
 
   const generateMissing = async () => {
     if (busy) return;
@@ -177,68 +266,76 @@ export function CharacterLooks({
     }
   };
 
+  const lookStage = selected ? (
+    <PerformanceLookStage
+      look={selected}
+      busy={busy}
+      onRegenerate={item => { void regenerate(item); }}
+      onView={setViewing}
+      onDescribe={setDescribing}
+    />
+  ) : null;
+  const hasExtras = untimed.some(item => item.of === characterName) || earlier.length > 0;
+
   return (
-    <section className="character-looks" aria-labelledby="character-looks-title">
-      <header className="character-looks__head">
-        <div>
-          <h2 id="character-looks-title"><Shirt size={16} aria-hidden="true" /> {t('角色妆造')}</h2>
-          <p>{t('按剧情给每个人物化好妆、穿好每套戏服。分镜和视频按集数或剧情自动换上，不用另管服装和化妆。')}</p>
+    <>
+      <div className="character-looks__bar">
+        <span className="character-looks__bar-label" title={t('按剧情给每个人物化好妆、穿好每套戏服。分镜和视频按集数或剧情自动换上，不用另管服装和化妆。')}>
+          <Shirt size={15} aria-hidden="true" /> {t('表演妆造')}
+        </span>
+        <div className="character-looks__chips" role="tablist" aria-label={t('{0}的表演妆造', [characterName])}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={!selected}
+            className={`character-looks__chip${selected ? '' : ' is-active'}`}
+            title={t('数字演员设定集')}
+            onClick={() => setPicked(null)}
+          >
+            <span className="character-looks__chip-avatar" aria-hidden="true">
+              {baseImageUrl ? <img src={baseImageUrl} alt="" loading="lazy" /> : <Shirt size={14} />}
+            </span>
+            <span>{t('设定集')}</span>
+          </button>
+          {own.map(item => {
+            const poster = findPoster(item);
+            const label = variantOf(item)?.label || item.name;
+            const active = item.id === selected?.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                aria-controls={active ? 'character-look-stage' : undefined}
+                className={`character-looks__chip${active ? ' is-active' : ''}`}
+                title={[episodesText(item) || label, needsAttention(item) ? t('待处理') : ''].filter(Boolean).join(' · ')}
+                onClick={() => setPicked({ of: characterName, id: item.id })}
+              >
+                <span className="character-looks__chip-avatar" aria-hidden="true">
+                  {poster?.url ? <img src={apiUrl(poster.url)} alt="" loading="lazy" /> : <Shirt size={14} />}
+                </span>
+                <span>{label}</span>
+                {needsAttention(item) && <i className="character-looks__chip-dot" aria-hidden="true" />}
+              </button>
+            );
+          })}
         </div>
+        {own.length === 0 && (
+          <small className="character-looks__none">{t('剧本里没有写{0}换装或特殊妆效，全程是设定集上的样子。', [characterName])}</small>
+        )}
         <div className="character-looks__actions">
           <small>{t('全剧 {0} 套，已生成 {1} 套', [looks.length, looks.length - missing])}</small>
           <button type="button" onClick={() => { void generateMissing(); }} disabled={Boolean(busy) || missing === 0}>
             <WandSparkles size={14} aria-hidden="true" /> {busy === 'all' ? t('生成中…') : t('生成缺失定妆图')}
           </button>
         </div>
-      </header>
+      </div>
       {notice && <p className="character-looks__notice" role="status">{notice}</p>}
       {error && <p className="character-looks__error" role="alert">{error}</p>}
-      {own.length === 0 ? (
-        <p className="character-looks__empty">
-          {t('剧本里没有写{0}换装或特殊妆效，全程是设定集上的样子。', [characterName])}
-        </p>
-      ) : (
-        <ul className="character-looks__grid" aria-label={t('{0}的定妆图', [characterName])}>
-          {own.map(item => {
-            const poster = findPoster(item);
-            const imageUrl = poster?.url ? apiUrl(poster.url) : '';
-            const label = variantOf(item)?.label || item.name;
-            const episodes = episodesText(item);
-            return (
-              <li key={item.id} className="character-looks__card">
-                {imageUrl ? (
-                  <button
-                    type="button"
-                    className="character-looks__image"
-                    aria-label={t('查看定妆图“{0}”', [item.name])}
-                    onClick={() => setViewing({ kind: 'actor', name: item.name, description: item.description || '', imageUrl })}
-                  >
-                    <img src={imageUrl} alt={item.name} loading="lazy" />
-                  </button>
-                ) : (
-                  <div className="character-looks__image is-empty">{t('定妆图待生成')}</div>
-                )}
-                <div className="character-looks__meta">
-                  <strong>{label}</strong>
-                  {Boolean(item.metadata?.needs_redraw) && <small className="character-looks__stale">{t('设定改过，这张图还是旧写法，建议重新生成')}</small>}
-                  {lookCheckProblems(item).length > 0 && <small className="character-looks__stale">{t('妆效核对没过：{0}。建议重新生成，或把妆效写得更具体', [lookCheckProblems(item).join('；')])}</small>}
-                  {episodes && <small>{episodes}</small>}
-                  {item.description && <p>{item.description}</p>}
-                  <button
-                    type="button"
-                    onClick={() => { void regenerate(item); }}
-                    disabled={Boolean(busy)}
-                    aria-label={t('重新生成“{0}”的定妆图', [item.name])}
-                  >
-                    <RefreshCcw size={13} className={busy === item.id ? 'is-spinning' : ''} aria-hidden="true" />
-                    {busy === item.id ? t('生成中…') : poster ? t('重新生成') : t('生成')}
-                  </button>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      {children ? children(lookStage) : lookStage}
+      {hasExtras && (
+      <section className="character-looks" aria-label={t('妆造补充')}>
       {untimed.some(item => item.of === characterName) && (
         <section className="character-looks__untimed" aria-label={t('还没定时间的妆效')}>
           <h3>{t('还没定时间的妆效')}</h3>
@@ -299,7 +396,18 @@ export function CharacterLooks({
           </ul>
         </section>
       )}
+      </section>
+      )}
       {viewing && <AssetImageViewer asset={viewing} onClose={() => setViewing(null)} />}
-    </section>
+      {describing && (
+        <CharacterDetailDialog
+          title={t('{0} · 妆造描述', [variantOf(describing)?.label || describing.name])}
+          onClose={() => setDescribing(null)}
+        >
+          {episodesText(describing) && <p className="character-dialog__project-value"><strong>{t('穿戴时间')}：</strong>{episodesText(describing)}</p>}
+          <p className="character-dialog__project-value">{describing.description || t('这套妆造还没有描述。')}</p>
+        </CharacterDetailDialog>
+      )}
+    </>
   );
 }

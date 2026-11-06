@@ -501,9 +501,9 @@ class BreakdownSheetTests(unittest.TestCase):
         ])
         worn = [sheet["elements"]["look"] for sheet in breakdown["scenes"]]
         self.assertEqual(worn, [["沈无咎：麻灰拭剑奴衣"], ["沈无咎：染血残衣·左颊剑伤"], ["沈无咎：麻灰拭剑奴衣·左颊剑伤·老年妆"]])
-        self.assertEqual({item["label"] for item in breakdown["elements"] if item["kind"] == "look"}, {"角色妆造"})
+        self.assertEqual({item["label"] for item in breakdown["elements"] if item["kind"] == "look"}, {"表演妆造"})
         self.assertFalse([kind for sheet in breakdown["scenes"] for kind in sheet["elements"] if kind in ("costume", "makeup")])
-        self.assertIn("角色妆造", script_breakdown.render_csv(breakdown))
+        self.assertIn("表演妆造", script_breakdown.render_csv(breakdown))
         self.assertNotIn("化妆", script_breakdown.render_csv(breakdown))
 
     def test_a_wound_taken_mid_scene_lists_before_and_after(self):
@@ -543,9 +543,9 @@ class ReadinessTests(unittest.TestCase):
     def test_a_missing_look_holds_the_storyboard(self):
         readiness = evaluate_asset_readiness(_task(), self._summaries(drawn=("月白守冢袍",)))
         look = readiness["kinds"]["look"]
-        self.assertEqual((look["label"], look["total"], look["ready"]), ("角色妆造", 3, 1))
+        self.assertEqual((look["label"], look["total"], look["ready"]), ("表演妆造", 3, 1))
         self.assertTrue(look["enforced"])
-        self.assertTrue(any(reason.startswith("3.角色妆造缺少参考图（2项）") for reason in readiness_reasons(readiness)))
+        self.assertTrue(any(reason.startswith("3.表演妆造缺少参考图（2项）") for reason in readiness_reasons(readiness)))
 
     def test_a_costume_without_a_wearer_never_blocks(self):
         readiness = evaluate_asset_readiness(_task(), self._summaries())

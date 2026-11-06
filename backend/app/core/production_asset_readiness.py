@@ -29,7 +29,7 @@ KIND_LABELS = {
     "actor": "数字演员",
     "scene": "拍摄场地",
     "prop": "拍摄道具",
-    "look": "角色妆造",
+    "look": "表演妆造",
     "effect": "特效",
     "product": "商品",
     **breakdown_kinds.LABELS,

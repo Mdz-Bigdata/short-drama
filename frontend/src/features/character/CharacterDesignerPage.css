@@ -2227,35 +2227,13 @@
   .character-viewer__identity .character-viewer__tab { width: 5rem; }
 }
 
-/* 角色妆造：每套戏服一张定妆图，挂在当前角色下面 */
+/* 表演妆造的补充：还没定时间的妆效、之前的服装和妆效图 */
 .character-looks {
   margin-top: 1rem;
   padding: 1rem;
   background: var(--character-surface);
   border: 1px solid var(--character-line);
   border-radius: 0.5rem;
-}
-
-.character-looks__head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.character-looks__head h2 {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  margin: 0;
-  font-size: 1rem;
-}
-
-.character-looks__head p {
-  margin: 0.25rem 0 0;
-  color: var(--text-muted);
-  font-size: 0.8rem;
 }
 
 .character-looks__actions {
@@ -2278,9 +2256,8 @@
 }
 
 .character-looks__notice,
-.character-looks__error,
-.character-looks__empty {
-  margin: 0.6rem 0 0;
+.character-looks__error {
+  margin: 0 0 0.6rem;
   font-size: 0.82rem;
   color: var(--text-muted);
 }
@@ -2289,60 +2266,114 @@
   color: var(--danger);
 }
 
-.character-looks__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
-  gap: 0.9rem;
-  margin: 0.8rem 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.character-looks__card {
-  overflow: hidden;
+/* 表演妆造签：工作区上方一排，选哪套中间一栏就看哪套 */
+.character-looks__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 0.9rem;
+  margin: 0 0 0.75rem;
+  padding: 0.55rem 0.8rem;
+  background: var(--character-surface);
   border: 1px solid var(--character-line);
-  border-radius: 0.5rem;
+  border-radius: 0.7rem;
 }
 
-.character-looks__image {
-  display: block;
-  width: 100%;
-  padding: 0;
-  aspect-ratio: 16 / 9;
-  background: var(--character-line);
-  border: 0;
+.character-looks__bar-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
-.character-looks__image img {
-  display: block;
+.character-looks__none {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.character-looks__bar .character-looks__actions {
+  margin-left: auto;
+  font-size: 0.78rem;
+}
+
+.character-looks__bar button,
+.character-looks button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+}
+
+.character-looks__bar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.character-looks__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.character-looks__bar .character-looks__chip {
+  position: relative;
+  gap: 0.45rem;
+  max-width: 100%;
+  padding: 0.25rem 0.85rem 0.25rem 0.25rem;
+  color: var(--text-main);
+  font-size: 0.85rem;
+  background: var(--character-surface-raised);
+  border: 1px solid var(--character-line);
+  border-radius: 999px;
+}
+
+.character-looks__bar .character-looks__chip:hover {
+  border-color: var(--character-line-strong);
+}
+
+.character-looks__bar .character-looks__chip.is-active {
+  color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.15);
+}
+
+.character-looks__chip > span:last-of-type {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.character-looks__chip-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  overflow: hidden;
+  color: var(--text-muted);
+  background: #fff;
+  border-radius: 50%;
+}
+
+.character-looks__chip-avatar img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: top;
 }
 
-.character-looks__image.is-empty {
-  display: grid;
-  place-items: center;
-  color: var(--text-muted);
-  font-size: 0.82rem;
-}
-
-.character-looks__meta {
-  display: grid;
-  justify-items: start;
-  gap: 0.3rem;
-  padding: 0.7rem;
-}
-
-.character-looks__meta small {
-  color: var(--text-muted);
-}
-
-.character-looks__meta p {
-  margin: 0;
-  font-size: 0.8rem;
-  line-height: 1.5;
-  color: var(--text-muted);
+.character-looks__chip-dot {
+  position: absolute;
+  top: 0.15rem;
+  right: 0.3rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  background: var(--warning);
+  border-radius: 50%;
 }
 
 .character-looks__earlier {
@@ -2454,4 +2485,87 @@
   border-radius: 0.3rem;
   background: transparent;
   color: inherit;
+}
+
+/* 表演妆造的主视图：沿用设定集主卡（白底圆角、左上徽标、右上圆钮、底部胶囊），只有一张定妆图 */
+.character-look-viewer__identity {
+  grid-template-columns: auto;
+}
+
+.character-look-viewer__episodes {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.character-look-viewer .character-looks__stale {
+  margin: 0.4rem 0 0;
+  font-size: 0.75rem;
+}
+
+.character-look-viewer__empty {
+  display: grid;
+  place-items: center;
+  gap: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.character-look-viewer__regenerate {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-width: 2.75rem;
+  height: 2.75rem;
+  padding: 0 0.85rem;
+  color: #fff;
+  cursor: pointer;
+  background: rgba(var(--ink-rgb), 0.72);
+  border: 0;
+  border-radius: 999px;
+  box-shadow: 0 6px 16px rgba(var(--shadow-rgb), 0.25);
+}
+
+.character-look-viewer__regenerate:not(.is-text) {
+  width: 2.75rem;
+  padding: 0;
+}
+
+.character-look-viewer__regenerate:hover:not(:disabled) {
+  background: var(--accent);
+}
+
+.character-look-viewer__regenerate:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.character-look-viewer__describe {
+  position: absolute;
+  bottom: 1.1rem;
+  left: 50%;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem 1rem;
+  color: #fff;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  cursor: pointer;
+  background: rgba(var(--ink-rgb), 0.55);
+  border: 0;
+  border-radius: 999px;
+  transform: translateX(-50%);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.character-look-viewer__describe:hover {
+  background: rgba(var(--ink-rgb), 0.72);
 }

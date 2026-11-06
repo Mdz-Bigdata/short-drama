@@ -9,7 +9,7 @@
 * 页长按「一页约一分钟」从分镜时长折算成 1/8 页；
 * 日夜从时段词归一，判不出来就留空，不猜；
 * 元素按名字在这一场文字里是否出现来挂，没点名的不算；
-* 角色妆造一栏不看点名，和分镜用同一套规则算这一场每个人是哪身，写明戏服和妆效。
+* 表演妆造一栏不看点名，和分镜用同一套规则算这一场每个人是哪身，写明戏服和妆效。
 
 没有剧情日：项目里还没有这个数据。本模块只做文本，不调模型。
 """
@@ -31,7 +31,7 @@ from app.core.writer_dashboard import episode_from_scene_id, parse_duration_seco
 
 #: 拆解单上的元素类别，按第 6.2 节的顺序。
 ELEMENT_KINDS: tuple[tuple[str, str], ...] = (
-    ("extra", "群演"), ("stunt", "特技"), ("vehicle", "车辆"), ("prop", "道具"), ("effect", "特效"), ("look", "角色妆造"),
+    ("extra", "群演"), ("stunt", "特技"), ("vehicle", "车辆"), ("prop", "道具"), ("effect", "特效"), ("look", "表演妆造"),
     ("set_dressing", "置景"), ("product", "商品"),
 )
 _EN_HEADING = re.compile(r"^(INT\./EXT|INT/EXT|I/E|INT|EXT)\.?\s+(.+?)(?:\s+-\s+(.+?))?$", re.I)

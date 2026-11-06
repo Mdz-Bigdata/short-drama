@@ -61,17 +61,45 @@ afterEach(() => {
 });
 
 describe('CharacterLooks', () => {
-  it('shows only this character\'s costume looks and when each is worn', async () => {
+  it('lists this character\'s looks after the sheet and swaps the main view to the picked one', async () => {
+    mockApi();
+    render(
+      <CharacterLooks taskId="t1" characterName="沈无咎">
+        {lookStage => lookStage ?? <p>设定集主视图</p>}
+      </CharacterLooks>,
+    );
+
+    const chips = await screen.findByRole('tablist', { name: '沈无咎的表演妆造' });
+    await within(chips).findByText('麻灰拭剑奴衣');
+    const tabs = within(chips).getAllByRole('tab');
+    expect(tabs.map(tab => tab.textContent)).toEqual(['设定集', '麻灰拭剑奴衣', '染血残衣']);
+    expect(tabs[0].getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('设定集主视图')).toBeTruthy();
+    expect(within(chips).queryByText('少年')).toBeNull();
+    expect(screen.getByText('全剧 3 套，已生成 2 套')).toBeTruthy();
+
+    await userEvent.click(tabs[1]);
+    expect(screen.queryByText('设定集主视图')).toBeNull();
+    const stage = screen.getByRole('tabpanel', { name: '麻灰拭剑奴衣' });
+    expect(within(stage).getByText('表演妆造')).toBeTruthy();
+    expect(screen.getByText('第 1–8、11–45 集')).toBeTruthy();
+
+    await userEvent.click(tabs[2]);
+    expect(within(screen.getByRole('tabpanel', { name: '染血残衣' })).getByText('定妆图待生成')).toBeTruthy();
+    await userEvent.click(tabs[0]);
+    expect(screen.getByText('设定集主视图')).toBeTruthy();
+  });
+
+  it('keeps the description behind 查看描述', async () => {
     mockApi();
     render(<CharacterLooks taskId="t1" characterName="沈无咎" />);
 
-    const grid = await screen.findByRole('list', { name: '沈无咎的定妆图' });
-    expect(within(grid).getAllByRole('listitem')).toHaveLength(2);
-    expect(within(grid).getByText('麻灰拭剑奴衣')).toBeTruthy();
-    expect(within(grid).getByText('第 1–8、11–45 集')).toBeTruthy();
-    expect(within(grid).getByText('定妆图待生成')).toBeTruthy();
-    expect(within(grid).queryByText('少年')).toBeNull();
-    expect(screen.getByText('全剧 3 套，已生成 2 套')).toBeTruthy();
+    await userEvent.click(await screen.findByRole('tab', { name: '麻灰拭剑奴衣' }));
+    expect(screen.queryByText('麻灰拭剑奴衣的穿戴')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: '查看描述' }));
+    const dialog = screen.getByRole('dialog', { name: '麻灰拭剑奴衣 · 妆造描述' });
+    expect(within(dialog).getByText('麻灰拭剑奴衣的穿戴')).toBeTruthy();
+    expect(within(dialog).getByText('第 1–8、11–45 集')).toBeTruthy();
   });
 
   it('marks a look in the library as a look, without asking for the five identity views', async () => {
@@ -93,6 +121,7 @@ describe('CharacterLooks', () => {
     mockApi();
     items.push(look('s', '路人甲', '带伤', { episodes: [9, 10], starts: [9, 2] }));
     render(<CharacterLooks taskId="t1" characterName="路人甲" />);
+    await userEvent.click(await screen.findByRole('tab', { name: '带伤' }));
     const found = await screen.findByText('第 9–10 集（第 9 集从第 2 场起）');
     items.pop();
     expect(found).toBeTruthy();
@@ -103,6 +132,7 @@ describe('CharacterLooks', () => {
     const stale = look('t', '路人甲', '旧写法');
     items.push({ ...stale, metadata: { ...stale.metadata, needs_redraw: true } as typeof stale.metadata });
     render(<CharacterLooks taskId="t1" characterName="路人甲" />);
+    await userEvent.click(await screen.findByRole('tab', { name: '旧写法' }));
     const flag = await screen.findByText('设定改过，这张图还是旧写法，建议重新生成');
     items.pop();
     expect(flag).toBeTruthy();
@@ -117,6 +147,9 @@ describe('CharacterLooks', () => {
       { ...passed, metadata: { ...passed.metadata, look_check: { passed: true, problems: [] } } as typeof passed.metadata },
     );
     render(<CharacterLooks taskId="t1" characterName="路人甲" />);
+    await userEvent.click(await screen.findByRole('tab', { name: '麻衣' }));
+    expect(screen.queryByText(/妆效核对没过/)).toBeNull();
+    await userEvent.click(screen.getByRole('tab', { name: '左颊刀伤' }));
     const flag = await screen.findByText('妆效核对没过：正脸特写右颊多了一道伤；血色鲜红。建议重新生成，或把妆效写得更具体');
     items.splice(-2);
     expect(flag).toBeTruthy();
@@ -150,9 +183,9 @@ describe('CharacterLooks', () => {
     mockApi();
     items.push(look('r', '沈无咎', '已退役', { retired: true }));
     render(<CharacterLooks taskId="t1" characterName="沈无咎" />);
-    const grid = await screen.findByRole('list', { name: '沈无咎的定妆图' });
+    const chips = await screen.findByRole('tablist', { name: '沈无咎的表演妆造' });
     items.pop();
-    expect(within(grid).queryByText('已退役')).toBeNull();
+    expect(within(chips).queryByText('已退役')).toBeNull();
     expect(screen.getByText('全剧 3 套，已生成 2 套')).toBeTruthy();
   });
 
@@ -183,6 +216,7 @@ describe('CharacterLooks', () => {
   it('reads an open-ended range as "from that episode"', async () => {
     mockApi();
     render(<CharacterLooks taskId="t1" characterName="苏问剑" />);
+    await userEvent.click(await screen.findByRole('tab', { name: '月白守冢袍' }));
     expect(await screen.findByText('第 5 集起')).toBeTruthy();
   });
 
@@ -212,10 +246,12 @@ describe('CharacterLooks', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<CharacterLooks taskId="t1" characterName="沈无咎" />);
 
-    await userEvent.click(await screen.findByRole('button', { name: '重新生成“沈无咎·麻灰拭剑奴衣”的定妆图' }));
+    await userEvent.click(await screen.findByRole('tab', { name: '麻灰拭剑奴衣' }));
+    await userEvent.click(screen.getByRole('button', { name: '重新生成“沈无咎·麻灰拭剑奴衣”的定妆图' }));
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(calls.some(call => call.url.includes('/regenerate'))).toBe(false);
 
+    await userEvent.click(screen.getByRole('tab', { name: '染血残衣' }));
     await userEvent.click(screen.getByRole('button', { name: '重新生成“沈无咎·染血残衣”的定妆图' }));
     expect(confirm).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(calls.some(call => call.url.includes('/api/elements/b/regenerate'))).toBe(true));

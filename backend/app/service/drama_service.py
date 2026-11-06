@@ -7313,7 +7313,7 @@ class DramaService:
                 self._date_wardrobe(task)
             except Exception as exc:  # undated wardrobe still works
                 logger.warning("[Stage3] 妆造时间定位失败（不阻断）: %s", type(exc).__name__)
-            self._progress_step(task, 92, "同步拍摄资产、生成角色妆造并补齐参考图")
+            self._progress_step(task, 92, "同步拍摄资产、生成表演妆造并补齐参考图")
             task["assets"][READINESS_KEY] = complete_project_assets(task, generate_missing=True)
 
             self._progress_step(task, 95, "角色造型一致性质检自检")

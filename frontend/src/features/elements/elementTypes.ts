@@ -8,7 +8,7 @@ export interface ElementVariant {
   episodes: [number, number] | null;
   /** 分散的几段集数；只有一段时看 episodes。 */
   spans?: Array<[number, number]>;
-  /** 'costume'：这是角色化好妆、穿好戏服的定妆图（角色妆造）。 */
+  /** 'costume'：这是角色化好妆、穿好戏服的定妆图（表演妆造）。 */
   source?: string;
   /** 从这一集的这一场开始才穿：[集, 场]。 */
   starts?: [number, number];

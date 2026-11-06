@@ -497,7 +497,7 @@ class PlatformApiTests(unittest.TestCase):
             refused = self.client.post(f"/api/elements/{costume['id']}/regenerate", json={"prompt": ""}, cookies=cookie)
             bulk = self.client.post("/api/elements/generation-jobs", json={"kind": "costume"}, cookies=cookie)
         self.assertEqual(refused.status_code, 422)
-        self.assertIn("角色妆造", refused.json()["detail"])
+        self.assertIn("表演妆造", refused.json()["detail"])
         self.assertEqual(bulk.status_code, 422)
         generate_image.assert_not_called()
         self.assertEqual(self.client.get(f"/api/elements/{costume['id']}", cookies=cookie).status_code, 200)

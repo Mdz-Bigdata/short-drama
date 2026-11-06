@@ -69,7 +69,7 @@ describe('ElementLibraryPage', () => {
     const scrollList = within(workspace).getByRole('region', { name: '场景资产列表，可上下滚动' });
     expect(scrollList.getAttribute('tabindex')).toBe('0');
 
-    // 戏服和妆效并入了角色妆造，资产库不再有单独的服装页和化妆页。
+    // 戏服和妆效并入了表演妆造，资产库不再有单独的服装页和化妆页。
     expect(screen.queryByRole('tab', { name: '服装' })).toBeNull();
     expect(screen.queryByRole('tab', { name: '化妆' })).toBeNull();
     await userEvent.click(screen.getByRole('tab', { name: '特效' }));

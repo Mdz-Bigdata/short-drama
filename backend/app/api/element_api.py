@@ -1663,7 +1663,7 @@ async def regenerate_element(
     if not element:
         raise HTTPException(status_code=404, detail="元素不存在")
     if str(element.kind) in ("costume", "makeup"):
-        raise HTTPException(status_code=422, detail="服装和化妆已并入角色妆造，请在角色设计的定妆图里重新生成")
+        raise HTTPException(status_code=422, detail="服装和化妆已并入表演妆造，请在角色设计的定妆图里重新生成")
     if _is_look(element):
         return await _generate_look_image(item=element, owner_id=user["user_id"], store=store, extra_prompt=request.prompt)
     if str(element.kind) in _NON_ACTOR_KINDS:

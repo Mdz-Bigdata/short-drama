@@ -131,7 +131,7 @@ def _only_gives(references: Sequence[Mapping[str, Any]]) -> str:
 
 
 def _costume_notes(people: Sequence[str], references: Sequence[Mapping[str, Any]], assets: Sequence[Mapping[str, Any]]) -> dict[str, str]:
-    """每个人物穿什么、以哪张图为准。角色妆造上的造型名写明；旧项目的戏服图优先于定妆照；定妆照上的衣服名也写上，换装造型才不会被认错。"""
+    """每个人物穿什么、以哪张图为准。表演妆造上的造型名写明；旧项目的戏服图优先于定妆照；定妆照上的衣服名也写上，换装造型才不会被认错。"""
     described = {(str(item.get("kind")), str(item.get("name"))): str(item.get("description") or "") for item in assets}
     pictured = {str(item.get("name")): number for number, item in enumerate(references, 1) if item.get("kind") == "actor"}
     looks = {str(item.get("name")): str(item.get("variant")) for item in references if item.get("kind") == "actor" and item.get("variant")}
