@@ -1,0 +1,194 @@
+{
+  "collection": "heine",
+  "author": "海涅",
+  "aliases": [
+    "Heinrich Heine",
+    "Heine",
+    "亨利希·海涅"
+  ],
+  "dynasty": "德国·19世纪",
+  "profile": "德国浪漫派晚期诗人，民歌体抒情诗清新哀婉，又以讽刺与政治诗著称，后半生流亡巴黎。适合相思、初恋、凄美传说、流亡思乡与乱世警句。",
+  "source": "文本据《歌集》（1827，Project Gutenberg 本）、《新诗集》1844 年初版与《悲剧集》1823 年初版（德文维基文库），只收德文原文。作者 1856 年去世，已进入公有领域。",
+  "entries": [
+    {
+      "id": "ein-fichtenbaum-steht-einsam",
+      "title": "Ein Fichtenbaum steht einsam",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Ein Fichtenbaum steht einsam\nIm Norden auf kahler Höh.\nIhn schläfert; mit weißer Decke\nUmhüllen ihn Eis und Schnee.\n\nEr träumt von einer Palme,\nDie, fern im Morgenland,\nEinsam und schweigend trauert\nAuf brennender Felsenwand.",
+      "themes": [
+        "相思",
+        "孤独",
+        "异地恋",
+        "雪",
+        "远方"
+      ],
+      "emotions": [
+        "孤寂",
+        "怅惘",
+        "缠绵"
+      ],
+      "famous_lines": [
+        "Ein Fichtenbaum steht einsam",
+        "Er träumt von einer Palme"
+      ],
+      "drama_uses": [
+        "南北异地恋人分隔两地的平行蒙太奇旁白",
+        "雪山孤松与沙漠棕榈的对切空镜",
+        "集名：北方的松树"
+      ],
+      "note": "收入《歌集》（Buch der Lieder，1827）《抒情插曲》第三十三首。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "du-bist-wie-eine-blume",
+      "title": "Du bist wie eine Blume",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Du bist wie eine Blume,\nSo hold und schön und rein;\nIch schau dich an, und Wehmut\nSchleicht mir ins Herz hinein.\n\nMir ist, als ob ich die Hände\nAufs Haupt dir legen sollt,\nBetend, daß Gott dich erhalte\nSo rein und schön und hold.",
+      "themes": [
+        "爱情",
+        "纯真",
+        "守护",
+        "祝福"
+      ],
+      "emotions": [
+        "温柔",
+        "感伤",
+        "怜惜"
+      ],
+      "famous_lines": [
+        "Du bist wie eine Blume, So hold und schön und rein"
+      ],
+      "drama_uses": [
+        "男主看着熟睡女主的内心独白",
+        "父亲送女儿出嫁前的祝福",
+        "纯爱剧的片头题记"
+      ],
+      "note": "收入《歌集》（Buch der Lieder，1827）《还乡集》第四十七首；舒曼、李斯特等谱曲。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "die-lorelei",
+      "title": "Die Lorelei（Ich weiß nicht, was soll es bedeuten）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Ich weiß nicht, was soll es bedeuten,\nDaß ich so traurig bin;\nEin Märchen aus alten Zeiten,\nDas kommt mir nicht aus dem Sinn.\n\nDie Luft ist kühl und es dunkelt,\nUnd ruhig fließt der Rhein;\nDer Gipfel des Berges funkelt\nIm Abendsonnenschein.\n\nDie schönste Jungfrau sitzet\nDort oben wunderbar,\nIhr goldnes Geschmeide blitzet,\nSie kämmt ihr goldenes Haar.\n\nSie kämmt es mit goldenem Kamme,\nUnd singt ein Lied dabei;\nDas hat eine wundersame,\nGewaltige Melodei.\n\nDen Schiffer im kleinen Schiffe\nErgreift es mit wildem Weh;\nEr schaut nicht die Felsenriffe,\nEr schaut nur hinauf in die Höh.\n\nIch glaube, die Wellen verschlingen\nAm Ende Schiffer und Kahn;\nUnd das hat mit ihrem Singen\nDie Lore-Lei getan.",
+      "themes": [
+        "传说",
+        "诱惑",
+        "河",
+        "黄昏",
+        "致命之美",
+        "宿命"
+      ],
+      "emotions": [
+        "哀婉",
+        "神秘",
+        "凄美"
+      ],
+      "famous_lines": [
+        "Ich weiß nicht, was soll es bedeuten, Daß ich so traurig bin",
+        "Und ruhig fließt der Rhein"
+      ],
+      "drama_uses": [
+        "蛇蝎美人登场的黄昏江景旁白",
+        "为爱沉沦、船毁人亡的悲剧结局",
+        "民间传说改编剧的开场",
+        "集名：罗蕾莱"
+      ],
+      "note": "收入《歌集》（Buch der Lieder，1827）《还乡集》第二首，咏莱茵河畔罗蕾莱礁的传说；西尔歇尔谱曲后家喻户晓。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "im-wunderschoenen-monat-mai",
+      "title": "Im wunderschönen Monat Mai",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Im wunderschönen Monat Mai,\nAls alle Knospen sprangen,\nDa ist in meinem Herzen\nDie Liebe aufgegangen.\n\nIm wunderschönen Monat Mai,\nAls alle Vögel sangen,\nDa hab ich ihr gestanden\nMein Sehnen und Verlangen.",
+      "themes": [
+        "爱情",
+        "春",
+        "告白",
+        "初恋"
+      ],
+      "emotions": [
+        "欣喜",
+        "甜蜜",
+        "悸动"
+      ],
+      "famous_lines": [
+        "Im wunderschönen Monat Mai",
+        "Da ist in meinem Herzen Die Liebe aufgegangen."
+      ],
+      "drama_uses": [
+        "五月花开时的告白戏",
+        "初恋回忆的明亮闪回",
+        "青春剧集名：美丽的五月"
+      ],
+      "note": "收入《歌集》（Buch der Lieder，1827）《抒情插曲》第一首；舒曼《诗人之恋》首曲。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "nachtgedanken",
+      "title": "Nachtgedanken",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Denk ich an Deutschland in der Nacht,\nDann bin ich um den Schlaf gebracht,\nIch kann nicht mehr die Augen schließen,\nUnd meine heißen Thränen fließen.\n\nDie Jahre kommen und vergehn!\nSeit ich die Mutter nicht gesehn\nZwölf Jahre sind schon hingegangen;\nEs wächst mein Sehnen und Verlangen.\n\nMein Sehnen und Verlangen wächst.\nDie alte Frau hat mich behext,\nIch denke immer an die alte,\nDie alte Frau, die Gott erhalte!\n\nDie alte Frau hat mich so lieb,\nUnd in den Briefen, die sie schrieb,\nSeh’ ich wie ihre Hand gezittert,\nWie tief das Mutterherz erschüttert.\n\nDie Mutter liegt mir stets im Sinn.\nZwölf lange Jahre floßen hin,\nZwölf lange Jahre sind verflossen,\nSeit ich sie nicht an’s Herz geschlossen.\n\nDeutschland hat ewigen Bestand,\nEs ist ein kerngesundes Land,\nMit seinen Eichen, seinen Linden,\nWerd’ ich es immer wiederfinden.\n\nNach Deutschland lechzt’ ich nicht so sehr,\nWenn nicht die Mutter dorten wär’;\nDas Vaterland wird nie verderben,\nJedoch die alte Frau kann sterben.\n\nSeit ich das Land verlassen hab’,\nSo viele sanken dort in’s Grab,\nDie ich geliebt – wenn ich sie zähle,\nSo will verbluten meine Seele.\n\nUnd zählen muß ich – Mit der Zahl\nSchwillt immer höher meine Qual,\nMir ist als wälzten sich die Leichen\nAuf meine Brust – Gottlob! sie weichen!\n\nGottlob! durch meine Fenster bricht\nFranzösisch heit’res Tageslicht;\nEs kommt mein Weib, schön wie der Morgen,\nUnd lächelt fort die deutschen Sorgen.",
+      "themes": [
+        "思乡",
+        "流亡",
+        "母亲",
+        "故国",
+        "失眠",
+        "夜"
+      ],
+      "emotions": [
+        "思念",
+        "沉痛",
+        "辗转"
+      ],
+      "famous_lines": [
+        "Denk ich an Deutschland in der Nacht, Dann bin ich um den Schlaf gebracht",
+        "Jedoch die alte Frau kann sterben."
+      ],
+      "drama_uses": [
+        "流亡海外的主角深夜读母亲来信",
+        "游子多年未归、母亲病危的催泪段落",
+        "清晨妻子推窗、愁绪消散的转场",
+        "集名：夜思"
+      ],
+      "note": "收入《新诗集》（Neue Gedichte，1844），作于流亡巴黎期间；据 1844 年初版拼写。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "almansor-buecher",
+      "title": "Almansor（节选）：dort wo man Bücher verbrennt",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Almansor.\nWir hörten daß der furchtbare Ximenes,\nInmitten auf dem Markte, zu Granada –\nMir starrt die Zung’ im Munde – den Koran\nIn eines Scheiterhaufens Flamme warf!\n\nHassan.\nDas war ein Vorspiel nur, dort wo man Bücher\nVerbrennt, verbrennt man auch am Ende Menschen.",
+      "themes": [
+        "焚书",
+        "暴政",
+        "预言",
+        "信仰",
+        "历史"
+      ],
+      "emotions": [
+        "悲愤",
+        "警醒",
+        "冷峻"
+      ],
+      "famous_lines": [
+        "dort wo man Bücher Verbrennt, verbrennt man auch am Ende Menschen."
+      ],
+      "drama_uses": [
+        "焚书场面的画外警句",
+        "乱世将至时智者的预言台词",
+        "历史剧片头字幕"
+      ],
+      "note": "出自诗体悲剧《阿尔曼索尔》（Almansor，1823），写格拉纳达陷落后红衣主教希梅内斯焚烧《古兰经》；据 1823 年 Dümmler 初版。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

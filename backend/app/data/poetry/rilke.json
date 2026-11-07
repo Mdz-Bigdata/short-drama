@@ -1,0 +1,231 @@
+{
+  "collection": "rilke",
+  "author": "里尔克",
+  "aliases": [
+    "Rainer Maria Rilke",
+    "Rilke",
+    "赖纳·马利亚·里尔克"
+  ],
+  "dynasty": "奥地利·20世纪",
+  "profile": "生于布拉格的德语诗人，以“物诗”凝视事物内在，语言精密而充满存在之思；书信温柔深邃。适合秋日、孤独、囚困、顿悟与成长的旁白和题记。",
+  "source": "文本据《图像集》1906 年版、《新诗集》1907/1908 年 Insel 初版、《时辰祈祷书》1905 年版与《给青年诗人的信》1929 年版，只收德文原文。作者 1926 年去世，已进入公有领域。",
+  "entries": [
+    {
+      "id": "herbsttag",
+      "title": "Herbsttag",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Herr: es ist Zeit. Der Sommer war sehr groß.\nLeg Deinen Schatten auf die Sonnenuhren\nund auf den Fluren laß die Winde los.\n\nBefiehl den letzten Früchten voll zu sein;\ngieb ihnen noch zwei südlichere Tage\ndränge sie zur Vollendung hin und jage\ndie letzte Süße in den schweren Wein.\n\nWer jetzt kein Haus hat baut sich keines mehr.\nWer jetzt allein ist wird es lange bleiben,\nwird wachen, lesen, lange Briefe schreiben\nund wird in den Alleen hin und her\nunruhig wandern wenn die Blätter treiben.",
+      "themes": [
+        "秋",
+        "孤独",
+        "时间",
+        "收获",
+        "无家",
+        "落叶"
+      ],
+      "emotions": [
+        "肃穆",
+        "孤寂",
+        "怅惘"
+      ],
+      "famous_lines": [
+        "Herr: es ist Zeit. Der Sommer war sehr groß.",
+        "Wer jetzt kein Haus hat baut sich keines mehr.",
+        "Wer jetzt allein ist wird es lange bleiben"
+      ],
+      "drama_uses": [
+        "入秋转场：林荫道落叶的空镜旁白",
+        "独居主角深夜写长信的蒙太奇",
+        "错过时机、孤身终老的人物结局字幕",
+        "集名：秋日"
+      ],
+      "note": "收入《图像集》（Das Buch der Bilder），据 1906 年第二版（保留原版拼写 Deinen、gieb 与标点；后出版本作 deinen、gib 并补逗号）。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "herbst",
+      "title": "Herbst",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Die Blätter fallen, fallen wie von weit,\nals welkten in den Himmeln ferne Gärten;\nsie fallen mit verneinender Gebärde.\n\nUnd in den Nächten fällt die schwere Erde\naus allen Sternen in die Einsamkeit.\n\nWir alle fallen. Diese Hand da fällt.\nUnd sieh dir andre an: es ist in allen.\n\nUnd doch ist Einer welcher dieses Fallen\nunendlich sanft in seinen Händen hält.",
+      "themes": [
+        "秋",
+        "落叶",
+        "坠落",
+        "无常",
+        "救赎",
+        "孤独"
+      ],
+      "emotions": [
+        "哀婉",
+        "悲悯",
+        "温柔"
+      ],
+      "famous_lines": [
+        "Wir alle fallen.",
+        "unendlich sanft in seinen Händen hält"
+      ],
+      "drama_uses": [
+        "人物从高处跌落后的慢镜头旁白",
+        "葬礼后落叶纷飞的片尾",
+        "绝望中被人接住的救赎戏题眼"
+      ],
+      "note": "收入《图像集》（Das Buch der Bilder），据 1906 年第二版。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "der-panther",
+      "title": "Der Panther",
+      "form": "诗",
+      "tune": "",
+      "preface": "Im Jardin des Plantes, Paris",
+      "text": "Sein Blick ist vom Vorübergehn der Stäbe\nso müd geworden, daß er nichts mehr hält.\nIhm ist, als ob es tausend Stäbe gäbe\nund hinter tausend Stäben keine Welt.\n\nDer weiche Gang geschmeidig starker Schritte,\nder sich im allerkleinsten Kreise dreht,\nist wie ein Tanz von Kraft um eine Mitte,\nin der betäubt ein großer Wille steht.\n\nNur manchmal schiebt der Vorhang der Pupille\nsich lautlos auf –. Dann geht ein Bild hinein,\ngeht durch der Glieder angespannte Stille –\nund hört im Herzen auf zu sein.",
+      "themes": [
+        "囚禁",
+        "自由",
+        "困兽",
+        "意志",
+        "压抑"
+      ],
+      "emotions": [
+        "压抑",
+        "悲凉",
+        "隐忍"
+      ],
+      "famous_lines": [
+        "Ihm ist, als ob es tausend Stäbe gäbe",
+        "und hinter tausend Stäben keine Welt",
+        "in der betäubt ein großer Wille steht"
+      ],
+      "drama_uses": [
+        "狱中或软禁中主角来回踱步的长镜头旁白",
+        "被困豪门、职场的人物心境写照",
+        "困兽觉醒前的蓄势段落",
+        "集名：铁栏之后"
+      ],
+      "note": "收入《新诗集》（Neue Gedichte，1907），副题 Im Jardin des Plantes, Paris。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "archaischer-torso-apollos",
+      "title": "Archaïscher Torso Apollos",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Wir kannten nicht sein unerhörtes Haupt,\ndarin die Augenäpfel reiften. Aber\nsein Torso glüht noch wie ein Kandelaber,\nin dem sein Schauen, nur zurückgeschraubt,\n\nsich hält und glänzt. Sonst könnte nicht der Bug\nder Brust dich blenden, und im leisen Drehen\nder Lenden könnte nicht ein Lächeln gehen\nzu jener Mitte, die die Zeugung trug.\n\nSonst stünde dieser Stein entstellt und kurz\nunter der Schultern durchsichtigem Sturz\nund flimmerte nicht so wie Raubtierfelle;\n\nund bräche nicht aus allen seinen Rändern\naus wie ein Stern: denn da ist keine Stelle,\ndie dich nicht sieht. Du mußt dein Leben ändern.",
+      "themes": [
+        "艺术",
+        "觉醒",
+        "改变",
+        "残缺之美",
+        "雕塑"
+      ],
+      "emotions": [
+        "震撼",
+        "肃穆",
+        "决绝"
+      ],
+      "famous_lines": [
+        "denn da ist keine Stelle, die dich nicht sieht.",
+        "Du mußt dein Leben ändern."
+      ],
+      "drama_uses": [
+        "主角在博物馆残像前顿悟的高光戏",
+        "人生转折点的一句定场台词",
+        "片名或集名：你必须改变你的生活"
+      ],
+      "note": "收入《新诗集》下卷（Der neuen Gedichte anderer Teil，1908），据 1918 年 Insel 版。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "ich-lebe-mein-leben",
+      "title": "Ich lebe mein Leben in wachsenden Ringen",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Ich lebe mein Leben in wachsenden Ringen,\ndie sich über die Dinge ziehn.\nIch werde den letzten vielleicht nicht vollbringen,\naber versuchen will ich ihn.\n\nIch kreise um Gott, um den uralten Turm,\nund ich kreise jahrtausendelang;\nund ich weiß noch nicht: bin ich ein Falke, ein Sturm\noder ein großer Gesang.",
+      "themes": [
+        "人生",
+        "追求",
+        "信仰",
+        "成长",
+        "自我"
+      ],
+      "emotions": [
+        "坚定",
+        "辽阔",
+        "求索"
+      ],
+      "famous_lines": [
+        "Ich lebe mein Leben in wachsenden Ringen",
+        "aber versuchen will ich ihn",
+        "bin ich ein Falke, ein Sturm oder ein großer Gesang"
+      ],
+      "drama_uses": [
+        "主角立志时的开场独白",
+        "鹰隼盘旋高塔的空镜字幕",
+        "成长三部曲每季开篇题记"
+      ],
+      "note": "收入《时辰祈祷书》（Das Stunden-Buch，1905）第一部《修士生活之书》。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "briefe-geduld",
+      "title": "Briefe an einen jungen Dichter（节选一）：Geduld gegen alles Ungelöste",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Sie sind so jung, so vor allem Anfang, und ich möchte Sie, so gut ich es kann, bitten, lieber Herr, Geduld zu haben gegen alles Ungelöste in Ihrem Herzen und zu versuchen, die Fragen selbst liebzuhaben wie verschlossene Stuben und wie Bücher, die in einer sehr fremden Sprache geschrieben sind.\nForschen Sie jetzt nicht nach den Antworten, die Ihnen nicht gegeben werden können, weil Sie sie nicht leben könnten.\nUnd es handelt sich darum, alles zu leben.\nLeben Sie jetzt die Fragen.\nVielleicht leben Sie dann allmählich, ohne es zu merken, eines fernen Tages in die Antwort hinein.",
+      "themes": [
+        "青春",
+        "迷茫",
+        "耐心",
+        "成长",
+        "人生"
+      ],
+      "emotions": [
+        "温柔",
+        "宽慰",
+        "沉静"
+      ],
+      "famous_lines": [
+        "Geduld zu haben gegen alles Ungelöste in Ihrem Herzen",
+        "Leben Sie jetzt die Fragen."
+      ],
+      "drama_uses": [
+        "长辈写给迷茫晚辈的信件旁白",
+        "青春剧主角深夜读信的戏",
+        "片尾升华：先活出问题，答案自会到来"
+      ],
+      "note": "出自《给青年诗人的信》第四封（1903 年 7 月 16 日，沃尔普斯韦德），书信集 1929 年出版，作者 1926 年去世。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "briefe-gehen-sie-in-sich",
+      "title": "Briefe an einen jungen Dichter（节选二）：Gehen Sie in sich",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Niemand kann Ihnen raten und helfen, niemand.\nEs gibt nur ein einziges Mittel.\nGehen Sie in sich.\nErforschen Sie den Grund, der Sie schreiben heißt; prüfen Sie, ob er in der tiefsten Stelle Ihres Herzens seine Wurzeln ausstreckt, gestehen Sie sich ein, ob Sie sterben müßten, wenn es Ihnen versagt würde zu schreiben.\nDieses vor allem: fragen Sie sich in der stillsten Stunde Ihrer Nacht: muß ich schreiben?\nGraben Sie in sich nach einer tiefen Antwort.",
+      "themes": [
+        "创作",
+        "理想",
+        "自省",
+        "使命",
+        "孤独"
+      ],
+      "emotions": [
+        "沉静",
+        "庄重",
+        "坚定"
+      ],
+      "famous_lines": [
+        "Gehen Sie in sich.",
+        "fragen Sie sich in der stillsten Stunde Ihrer Nacht: muß ich schreiben?"
+      ],
+      "drama_uses": [
+        "追梦主角夜里扪心自问的独白",
+        "导师拒绝替徒弟做决定的台词",
+        "艺术家传记剧的集名：走向内心"
+      ],
+      "note": "出自《给青年诗人的信》第一封（1903 年 2 月 17 日，巴黎）。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

@@ -1,0 +1,351 @@
+{
+  "collection": "goethe",
+  "author": "歌德",
+  "aliases": [
+    "Johann Wolfgang von Goethe",
+    "Goethe",
+    "约翰·沃尔夫冈·冯·歌德"
+  ],
+  "dynasty": "德国·18–19世纪",
+  "profile": "德国古典文学巨擘，抒情诗清澈如民歌，《浮士德》写人在欲望、奋斗与救赎间的一生。适合宁静归宿、相思远方、灵魂交易、奋斗信条与史诗式结局。",
+  "source": "文本据《歌德文集》1789 年版、最后审定版 1827 年版（德文维基文库）、Project Gutenberg 所收《浮士德》与《威廉·迈斯特的学习时代》，只收德文原文。作者 1832 年去世，已进入公有领域。",
+  "entries": [
+    {
+      "id": "ein-gleiches",
+      "title": "Wandrers Nachtlied II（Ein gleiches）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Ueber allen Gipfeln\nIst Ruh’,\nIn allen Wipfeln\nSpürest du\nKaum einen Hauch;\nDie Vögelein schweigen im Walde.\nWarte nur, balde\nRuhest du auch.",
+      "themes": [
+        "夜",
+        "山",
+        "宁静",
+        "死亡",
+        "归宿",
+        "旅人"
+      ],
+      "emotions": [
+        "宁静",
+        "肃穆",
+        "安详"
+      ],
+      "famous_lines": [
+        "Ueber allen Gipfeln Ist Ruh’",
+        "Warte nur, balde Ruhest du auch."
+      ],
+      "drama_uses": [
+        "山顶夜色的空镜旁白",
+        "老人安然离世前的最后一镜",
+        "旅人终于停下脚步的片尾",
+        "集名：群峰之巅"
+      ],
+      "note": "1780 年题于伊尔梅瑙基克尔汉山猎屋板壁；据《歌德全集》最后审定版第一卷（1827）。通称《漫游者夜歌》其二。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "gefunden",
+      "title": "Gefunden",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Ich ging im Walde\nSo für mich hin,\nUnd nichts zu suchen\nDas war mein Sinn.\n\nIm Schatten sah’ ich\nEin Blümchen stehn,\nWie Sterne leuchtend,\nWie Aeuglein schön.\n\nIch wollt’ es brechen,\nDa sagt’ es fein:\nSoll ich zum Welken\nGebrochen seyn?\n\nIch grub’s mit allen\nDen Würzlein aus,\nZum Garten trug ich’s\nAm hübschen Haus.\n\nUnd pflanzt’ es wieder\nAm stillen Ort;\nNun zweigt es immer\nUnd blüht so fort.",
+      "themes": [
+        "爱情",
+        "珍惜",
+        "邂逅",
+        "婚姻",
+        "花",
+        "林"
+      ],
+      "emotions": [
+        "温柔",
+        "恬淡",
+        "欣喜"
+      ],
+      "famous_lines": [
+        "Ich ging im Walde So für mich hin",
+        "Soll ich zum Welken Gebrochen seyn?"
+      ],
+      "drama_uses": [
+        "林间偶遇心上人的清新开场",
+        "男主选择守护而非占有的转折戏",
+        "金婚纪念的回忆旁白"
+      ],
+      "note": "1813 年作，赠妻子克里斯蒂安娜；据最后审定版第一卷（1827）。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "heidenroeslein",
+      "title": "Heidenröslein",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Sah ein Knab’ ein Röslein stehn,\nRöslein auf der Heiden,\nWar so jung und morgenschön,\nLief er schnell es nah zu sehn,\nSah’s mit vielen Freuden.\nRöslein, Röslein, Röslein roth,\nRöslein auf der Heiden.\n\nKnabe sprach: ich breche dich,\nRöslein auf der Heiden!\nRöslein sprach: ich steche dich,\nDaß du ewig denkst an mich,\nUnd ich will’s nicht leiden.\nRöslein, Röslein, Röslein roth,\nRöslein auf der Heiden.\n\nUnd der wilde Knabe brach\n’s Röslein auf der Heiden;\nRöslein wehrte sich und stach,\nHalf ihr doch kein Weh und Ach,\nMußte es eben leiden.\nRöslein, Röslein, Röslein roth,\nRöslein auf der Heiden.",
+      "themes": [
+        "爱情",
+        "青春",
+        "伤害",
+        "花",
+        "民歌"
+      ],
+      "emotions": [
+        "哀婉",
+        "天真",
+        "怅然"
+      ],
+      "famous_lines": [
+        "Sah ein Knab’ ein Röslein stehn",
+        "Röslein, Röslein, Röslein roth"
+      ],
+      "drama_uses": [
+        "少年鲁莽伤害初恋的寓言式旁白",
+        "童谣式反复作为悬疑剧的诡异配乐词",
+        "青春伤痛剧集名：野玫瑰"
+      ],
+      "note": "民歌体，约 1771 年作；据《歌德文集》第八卷（1789）初刊本，保留原版拼写，后出各本个别字句与拼写略有出入。舒伯特等谱曲。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "erlkoenig",
+      "title": "Erlkönig",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Wer reitet so spät durch Nacht und Wind?\nEs ist der Vater mit seinem Kind;\nEr hat den Knaben wohl in dem Arm,\nEr faßt ihn sicher, er hält ihn warm.\n\nMein Sohn, was birgst du so bang dein Gesicht? —\nSiehst, Vater, du den Erlkönig nicht?\nDen Erlenkönig mit Kron’ und Schweif? —\nMein Sohn, es ist ein Nebelstreif. —\n\n„Du liebes Kind, komm, geh mit mir!\nGar schöne Spiele spiel’ ich mit dir;\nManch’ bunte Blumen sind an dem Strand,\nMeine Mutter hat manch gülden Gewand.“ —\n\nMein Vater, mein Vater, und hörest du nicht,\nWas Erlenkönig mir leise verspricht? —\nSei ruhig, bleibe ruhig, mein Kind;\nIn dürren Blättern säuselt der Wind. —\n\n„Willst, feiner Knabe, du mit mir gehn?\nMeine Töchter sollen dich warten schön;\nMeine Töchter führen den nächtlichen Reihn\nUnd wiegen und tanzen und singen dich ein.“ —\n\nMein Vater, mein Vater, und siehst du nicht dort\nErlkönigs Töchter am düstern Ort? —\nMein Sohn, mein Sohn, ich seh’ es genau:\nEs scheinen die alten Weiden so grau. —\n\n„Ich liebe dich, mich reizt deine schöne Gestalt;\nUnd bist du nicht willig, so brauch’ ich Gewalt.“ —\nMein Vater, mein Vater, jetzt faßt er mich an!\nErlkönig hat mir ein Leids getan! —\n\nDem Vater grauset’s; er reitet geschwind,\nEr hält in Armen das ächzende Kind,\nErreicht den Hof mit Mühe und Not;\nIn seinen Armen das Kind war tot.",
+      "themes": [
+        "父子",
+        "死亡",
+        "夜",
+        "鬼魅",
+        "诱惑",
+        "惊悚"
+      ],
+      "emotions": [
+        "惊惧",
+        "悲恸",
+        "紧张"
+      ],
+      "famous_lines": [
+        "Wer reitet so spät durch Nacht und Wind?",
+        "In seinen Armen das Kind war tot."
+      ],
+      "drama_uses": [
+        "父亲抱病儿夜奔求医的惊悚段落",
+        "悬疑或灵异剧的开场旁白",
+        "孩子看见大人看不见之物的恐怖戏",
+        "集名：魔王"
+      ],
+      "note": "叙事谣曲，1782 年作，原载歌唱剧《渔家女》；此据十九世纪通行选本，按四行一节分段。舒伯特谱曲。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "mignon-kennst-du-das-land",
+      "title": "Mignon（Kennst du das Land）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Kennst du das Land, wo die Zitronen blühn,\nIm dunkeln Laub die Goldorangen glühn,\nEin sanfter Wind vom blauen Himmel weht,\nDie Myrte still und hoch der Lorbeer steht,\nKennst du es wohl?\nDahin! Dahin\nMöcht ich mit dir, o mein Geliebter, ziehn!\n\nKennst du das Haus, auf Säulen ruht sein Dach,\nEs glänzt der Saal, es schimmert das Gemach,\nUnd Marmorbilder stehn und sehn mich an:\nWas hat man dir, du armes Kind, getan?\nKennst du es wohl?\nDahin! Dahin\nMöcht ich mit dir, o mein Beschützer, ziehn!\n\nKennst du den Berg und seinen Wolkensteg?\nDas Maultier sucht im Nebel seinen Weg,\nIn Höhlen wohnt der Drachen alte Brut,\nEs stürzt der Fels und über ihn die Flut:\nKennst du ihn wohl?\nDahin! Dahin\nGeht unser Weg; o Vater, laß uns ziehn!",
+      "themes": [
+        "思乡",
+        "远方",
+        "南国",
+        "身世",
+        "流浪",
+        "向往"
+      ],
+      "emotions": [
+        "向往",
+        "哀婉",
+        "凄楚"
+      ],
+      "famous_lines": [
+        "Kennst du das Land, wo die Zitronen blühn",
+        "Dahin! Dahin Möcht ich mit dir, o mein Geliebter, ziehn!"
+      ],
+      "drama_uses": [
+        "被拐卖的孤女回忆故乡的独白",
+        "私奔前夜恋人间的问答",
+        "寻亲剧的主题曲词或片名：你可知道那地方"
+      ],
+      "note": "出自小说《威廉·迈斯特的学习时代》（1795–1796）第三卷第一章，迷娘之歌。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "nur-wer-die-sehnsucht-kennt",
+      "title": "Nur wer die Sehnsucht kennt",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Nur wer die Sehnsucht kennt,\nWeiß, was ich leide!\nAllein und abgetrennt\nVon aller Freude,\nSeh ich ans Firmament\nNach jener Seite.\nAch! der mich liebt und kennt,\nIst in der Weite.\nEs schwindelt mir, es brennt\nMein Eingeweide.\nNur wer die Sehnsucht kennt,\nWeiß, was ich leide!",
+      "themes": [
+        "相思",
+        "离别",
+        "孤独",
+        "远方"
+      ],
+      "emotions": [
+        "哀婉",
+        "煎熬",
+        "缠绵"
+      ],
+      "famous_lines": [
+        "Nur wer die Sehnsucht kennt, Weiß, was ich leide!"
+      ],
+      "drama_uses": [
+        "异地相思的深夜独白",
+        "望月思人的空镜字幕",
+        "集名：唯有相思人"
+      ],
+      "note": "出自《威廉·迈斯特的学习时代》第四卷第十一章，迷娘与竖琴老人合唱；柴可夫斯基等谱曲。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "faust-zwei-seelen",
+      "title": "Faust I: Vor dem Tor（节选）：Zwei Seelen wohnen, ach! in meiner Brust",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "FAUST.\nDu bist dir nur des einen Triebs bewußt,\nO lerne nie den andern kennen!\nZwei Seelen wohnen, ach! in meiner Brust,\nDie eine will sich von der andern trennen;\nDie eine hält, in derber Liebeslust,\nSich an die Welt mit klammernden Organen;\nDie andre hebt gewaltsam sich vom Dust\nZu den Gefilden hoher Ahnen.",
+      "themes": [
+        "矛盾",
+        "欲望",
+        "理想",
+        "灵与肉",
+        "挣扎"
+      ],
+      "emotions": [
+        "矛盾",
+        "痛苦",
+        "激越"
+      ],
+      "famous_lines": [
+        "Zwei Seelen wohnen, ach! in meiner Brust",
+        "Die eine will sich von der andern trennen"
+      ],
+      "drama_uses": [
+        "主角在欲望与理想之间挣扎的独白",
+        "双面人物的人设题记",
+        "黑化前夜的内心戏"
+      ],
+      "note": "出自《浮士德》第一部（Faust. Der Tragödie erster Teil，1808）《城门前》，浮士德对瓦格纳语。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "faust-verweile-doch-wette",
+      "title": "Faust I: Studierzimmer（节选）：Verweile doch! du bist so schön!",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "FAUST.\nWerd’ ich zum Augenblicke sagen:\nVerweile doch! du bist so schön!\nDann magst du mich in Fesseln schlagen,\nDann will ich gern zugrunde gehn!\nDann mag die Totenglocke schallen,\nDann bist du deines Dienstes frei,\nDie Uhr mag stehn, der Zeiger fallen,\nEs sei die Zeit für mich vorbei!",
+      "themes": [
+        "赌约",
+        "灵魂交易",
+        "满足",
+        "时间",
+        "命运"
+      ],
+      "emotions": [
+        "决绝",
+        "狂傲",
+        "激越"
+      ],
+      "famous_lines": [
+        "Verweile doch! du bist so schön!",
+        "Die Uhr mag stehn, der Zeiger fallen"
+      ],
+      "drama_uses": [
+        "主角与反派立下生死契约的戏",
+        "恶魔交易题材的开场",
+        "集名：停一停吧，你真美"
+      ],
+      "note": "出自《浮士德》第一部（Faust. Der Tragödie erster Teil，1808）《书斋》（二），浮士德与梅菲斯特的赌约。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "faust-letzte-rede",
+      "title": "Faust II: Großer Vorhof des Palasts（节选）：浮士德临终之言",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "FAUST.\nJa! diesem Sinne bin ich ganz ergeben,\nDas ist der Weisheit letzter Schluß:\nNur der verdient sich Freiheit wie das Leben,\nDer täglich sie erobern muß.\nUnd so verbringt, umrungen von Gefahr,\nHier Kindheit, Mann und Greis sein tüchtig Jahr.\nSolch ein Gewimmel möcht’ ich sehn,\nAuf freiem Grund mit freiem Volke stehn.\nZum Augenblicke dürft’ ich sagen:\nVerweile doch, du bist so schön!\nEs kann die Spur von meinen Erdetagen\nNicht in Äonen untergehn. –\nIm Vorgefühl von solchem hohen Glück\nGenieß’ ich jetzt den höchsten Augenblick.",
+      "themes": [
+        "自由",
+        "奋斗",
+        "理想",
+        "临终",
+        "人民",
+        "不朽"
+      ],
+      "emotions": [
+        "崇高",
+        "壮阔",
+        "安详"
+      ],
+      "famous_lines": [
+        "Nur der verdient sich Freiheit wie das Leben, Der täglich sie erobern muß.",
+        "Auf freiem Grund mit freiem Volke stehn.",
+        "Verweile doch, du bist so schön!"
+      ],
+      "drama_uses": [
+        "开拓者临终望见新城的片尾独白",
+        "人物信条：自由须每日争取",
+        "史诗剧大结局的升华旁白"
+      ],
+      "note": "出自《浮士德》第二部（1832）第五幕，浮士德倒地前的最后台词。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "faust-chorus-mysticus",
+      "title": "Faust II: Chorus mysticus（全剧结尾）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "CHORUS MYSTICUS.\nAlles Vergängliche\nIst nur ein Gleichnis;\nDas Unzulängliche,\nHier wird’s Ereignis;\nDas Unbeschreibliche,\nHier ist’s getan;\nDas Ewig-Weibliche\nZieht uns hinan.",
+      "themes": [
+        "救赎",
+        "永恒",
+        "女性",
+        "无常",
+        "升华"
+      ],
+      "emotions": [
+        "肃穆",
+        "崇高",
+        "空灵"
+      ],
+      "famous_lines": [
+        "Alles Vergängliche Ist nur ein Gleichnis",
+        "Das Ewig-Weibliche Zieht uns hinan."
+      ],
+      "drama_uses": [
+        "全剧终的合唱式片尾字幕",
+        "女主以爱救赎男主的升华戏",
+        "集名：永恒之女性"
+      ],
+      "note": "出自《浮士德》第二部（1832）最后八行，神秘合唱。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "faust-mingju",
+      "title": "Faust（名句辑录）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "DER HERR.\nEs irrt der Mensch so lang er strebt.\n\nMEPHISTOPHELES.\nGrau, teurer Freund, ist alle Theorie,\nUnd grün des Lebens goldner Baum.\n\nENGEL.\nGerettet ist das edle Glied\nDer Geisterwelt vom Bösen,\nWer immer strebend sich bemüht,\nDen können wir erlösen.",
+      "themes": [
+        "奋斗",
+        "犯错",
+        "理论与实践",
+        "救赎",
+        "人生"
+      ],
+      "emotions": [
+        "豁达",
+        "睿智",
+        "宽容"
+      ],
+      "famous_lines": [
+        "Es irrt der Mensch so lang er strebt.",
+        "Grau, teurer Freund, ist alle Theorie, Und grün des Lebens goldner Baum.",
+        "Wer immer strebend sich bemüht, Den können wir erlösen."
+      ],
+      "drama_uses": [
+        "导师宽慰犯错学生的台词",
+        "书呆子主角走出书斋的转折旁白",
+        "奋斗者终获救赎的片尾字幕"
+      ],
+      "note": "三段分别出自《浮士德》第一部《天上序幕》、第一部《书斋》（梅菲斯特对学生语）与第二部第五幕《山谷》（天使语）。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

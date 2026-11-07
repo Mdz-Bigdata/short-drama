@@ -1,0 +1,251 @@
+{
+  "collection": "thoreau",
+  "author": "梭罗",
+  "aliases": [
+    "Henry David Thoreau",
+    "Thoreau",
+    "亨利·戴维·梭罗"
+  ],
+  "dynasty": "美国·19世纪",
+  "profile": "美国超验主义作家，1845–1847 年独居瓦尔登湖畔，以散文写简朴生活、自然与精神独立，句子警策可单独成格言。适合归隐、断舍离、逃离都市、坚持自我的旁白与人物信条。",
+  "source": "文本据 Walden（1854）通行英文本（Project Gutenberg 本），只收英文原文。作者 1862 年去世，已进入公有领域。",
+  "entries": [
+    {
+      "id": "i-went-to-the-woods",
+      "title": "Walden: Where I Lived, and What I Lived For（节选）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "I went to the woods because I wished to live deliberately, to front only the essential facts of life, and see if I could not learn what it had to teach, and not, when I came to die, discover that I had not lived.\nI did not wish to live what was not life, living is so dear; nor did I wish to practise resignation, unless it was quite necessary.\nI wanted to live deep and suck out all the marrow of life, to live so sturdily and Spartan-like as to put to rout all that was not life, to cut a broad swath and shave close, to drive life into a corner, and reduce it to its lowest terms, and, if it proved to be mean, why then to get the whole and genuine meanness of it, and publish its meanness to the world; or if it were sublime, to know it by experience, and be able to give a true account of it in my next excursion.",
+      "themes": [
+        "隐逸",
+        "人生",
+        "自然",
+        "独处",
+        "觉醒",
+        "简朴"
+      ],
+      "emotions": [
+        "坚定",
+        "清醒",
+        "决绝"
+      ],
+      "famous_lines": [
+        "I went to the woods because I wished to live deliberately",
+        "I wanted to live deep and suck out all the marrow of life"
+      ],
+      "drama_uses": [
+        "主角辞职归隐、独自上山的开场旁白",
+        "人物信条：活得清醒，不枉此生",
+        "临终前回望一生的独白对照",
+        "片名或集名：林中一年"
+      ],
+      "note": "出自《瓦尔登湖》（Walden; or, Life in the Woods，1854）第二章《我生活的地方；我为何生活》。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "quiet-desperation",
+      "title": "Walden: Economy（节选）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "The mass of men lead lives of quiet desperation.\nWhat is called resignation is confirmed desperation.\nFrom the desperate city you go into the desperate country, and have to console yourself with the bravery of minks and muskrats.\nA stereotyped but unconscious despair is concealed even under what are called the games and amusements of mankind.\nThere is no play in them, for this comes after work.\nBut it is a characteristic of wisdom not to do desperate things.",
+      "themes": [
+        "人生",
+        "都市",
+        "绝望",
+        "劳碌",
+        "觉醒"
+      ],
+      "emotions": [
+        "压抑",
+        "冷峻",
+        "清醒"
+      ],
+      "famous_lines": [
+        "The mass of men lead lives of quiet desperation.",
+        "But it is a characteristic of wisdom not to do desperate things."
+      ],
+      "drama_uses": [
+        "都市打工人通勤蒙太奇的画外音",
+        "主角决定逃离格子间前的内心独白",
+        "职场剧集名：平静的绝望"
+      ],
+      "note": "出自《瓦尔登湖》（Walden; or, Life in the Woods，1854）第一章《经济篇》。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "simplify-simplify",
+      "title": "Walden: Simplify, simplify（节选）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Our life is frittered away by detail.\nAn honest man has hardly need to count more than his ten fingers, or in extreme cases he may add his ten toes, and lump the rest.\nSimplicity, simplicity, simplicity!\nI say, let your affairs be as two or three, and not a hundred or a thousand; instead of a million count half a dozen, and keep your accounts on your thumb nail.\nIn the midst of this chopping sea of civilized life, such are the clouds and storms and quicksands and thousand-and-one items to be allowed for, that a man has to live, if he would not founder and go to the bottom and not make his port at all, by dead reckoning, and he must be a great calculator indeed who succeeds.\nSimplify, simplify.\nInstead of three meals a day, if it be necessary eat but one; instead of a hundred dishes, five; and reduce other things in proportion.",
+      "themes": [
+        "简朴",
+        "断舍离",
+        "人生",
+        "生活方式"
+      ],
+      "emotions": [
+        "清醒",
+        "洒脱"
+      ],
+      "famous_lines": [
+        "Our life is frittered away by detail.",
+        "Simplicity, simplicity, simplicity!",
+        "Simplify, simplify."
+      ],
+      "drama_uses": [
+        "主角清空房间、只留几件物品的断舍离蒙太奇",
+        "导师劝诫忙乱主角的台词",
+        "生活方式类短剧的片头字幕"
+      ],
+      "note": "出自《瓦尔登湖》（Walden; or, Life in the Woods，1854）第二章。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "time-is-but-the-stream",
+      "title": "Walden: Time is but the stream（节选）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Time is but the stream I go a-fishing in.\nI drink at it; but while I drink I see the sandy bottom and detect how shallow it is.\nIts thin current slides away, but eternity remains.\nI would drink deeper; fish in the sky, whose bottom is pebbly with stars.",
+      "themes": [
+        "时间",
+        "永恒",
+        "溪流",
+        "星空",
+        "哲理"
+      ],
+      "emotions": [
+        "旷达",
+        "空灵"
+      ],
+      "famous_lines": [
+        "Time is but the stream I go a-fishing in.",
+        "Its thin current slides away, but eternity remains."
+      ],
+      "drama_uses": [
+        "溪边垂钓、星空倒影的空镜旁白",
+        "时间流逝主题的转场字幕",
+        "片尾升华：流水去而永恒在"
+      ],
+      "note": "出自《瓦尔登湖》（Walden; or, Life in the Woods，1854）第二章结尾。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "heaven-under-our-feet",
+      "title": "Walden: The Pond in Winter（摘句）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Heaven is under our feet as well as over our heads.",
+      "themes": [
+        "自然",
+        "冬",
+        "湖",
+        "天地",
+        "哲理"
+      ],
+      "emotions": [
+        "澄明",
+        "喜悦"
+      ],
+      "famous_lines": [
+        "Heaven is under our feet as well as over our heads."
+      ],
+      "drama_uses": [
+        "冰湖倒映天空的航拍空镜字幕",
+        "主角在困境中重新发现身边美好的台词"
+      ],
+      "note": "出自《瓦尔登湖》（Walden; or, Life in the Woods，1854）《冬天的湖》。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "different-drummer",
+      "title": "Walden: Conclusion（节选一）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Why should we be in such desperate haste to succeed, and in such desperate enterprises?\nIf a man does not keep pace with his companions, perhaps it is because he hears a different drummer.\nLet him step to the music which he hears, however measured or far away.\nIt is not important that he should mature as soon as an apple-tree or an oak.\nShall he turn his spring into summer?",
+      "themes": [
+        "个性",
+        "不从众",
+        "成长",
+        "人生节奏",
+        "自我"
+      ],
+      "emotions": [
+        "坚定",
+        "从容",
+        "温和"
+      ],
+      "famous_lines": [
+        "If a man does not keep pace with his companions, perhaps it is because he hears a different drummer.",
+        "Let him step to the music which he hears, however measured or far away."
+      ],
+      "drama_uses": [
+        "被同龄人甩在身后的主角自我安慰",
+        "父母终于理解孩子选择的和解戏台词",
+        "励志剧集名：不同的鼓点"
+      ],
+      "note": "出自《瓦尔登湖》（Walden; or, Life in the Woods，1854）末章《结束语》。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "love-your-life",
+      "title": "Walden: Conclusion（节选二）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "However mean your life is, meet it and live it; do not shun it and call it hard names.\nIt is not so bad as you are.\nIt looks poorest when you are richest.\nThe fault-finder will find faults even in paradise.\nLove your life, poor as it is.\nYou may perhaps have some pleasant, thrilling, glorious hours, even in a poor-house.\nThe setting sun is reflected from the windows of the alms-house as brightly as from the rich man's abode; the snow melts before its door as early in the spring.",
+      "themes": [
+        "贫穷",
+        "热爱生活",
+        "人生",
+        "知足",
+        "平等"
+      ],
+      "emotions": [
+        "温暖",
+        "豁达"
+      ],
+      "famous_lines": [
+        "However mean your life is, meet it and live it",
+        "Love your life, poor as it is."
+      ],
+      "drama_uses": [
+        "落魄主角在出租屋看夕阳的旁白",
+        "长辈劝慰失意晚辈的台词",
+        "底层逆袭剧的片尾升华"
+      ],
+      "note": "出自《瓦尔登湖》（Walden; or, Life in the Woods，1854）末章《结束语》。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "only-that-day-dawns",
+      "title": "Walden: Conclusion（结尾）",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "I do not say that John or Jonathan will realize all this; but such is the character of that morrow which mere lapse of time can never make to dawn.\nThe light which puts out our eyes is darkness to us.\nOnly that day dawns to which we are awake.\nThere is more day to dawn.\nThe sun is but a morning star.",
+      "themes": [
+        "觉醒",
+        "黎明",
+        "希望",
+        "新生",
+        "哲理"
+      ],
+      "emotions": [
+        "澄明",
+        "期许",
+        "肃穆"
+      ],
+      "famous_lines": [
+        "Only that day dawns to which we are awake.",
+        "There is more day to dawn.",
+        "The sun is but a morning star."
+      ],
+      "drama_uses": [
+        "全剧最后一镜：日出时的片尾字幕",
+        "主角大彻大悟后的独白",
+        "季终集名：还有更多的黎明"
+      ],
+      "note": "出自《瓦尔登湖》（Walden; or, Life in the Woods，1854）全书最后一段。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

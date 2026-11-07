@@ -1,0 +1,174 @@
+{
+  "collection": "rumi",
+  "author": "鲁米",
+  "aliases": [
+    "Jalal al-Din Rumi",
+    "Rumi",
+    "Mawlana",
+    "莫拉维",
+    "贾拉鲁丁·鲁米"
+  ],
+  "dynasty": "波斯·13世纪",
+  "profile": "13 世纪波斯苏菲派诗人，以芦笛、醇酒、恋人喻灵魂对神的思慕，热烈而超脱。此处只收 1898 年公有领域英译。适合离别思归、灵魂超越、生死与合一之爱的旁白和誓词。",
+  "source": "原作为波斯文。英译只用公有领域本：E. H. Whinfield 节译《玛斯纳维》（1898 年第二版）与 R. A. Nicholson《沙姆斯·大不里士诗选》（1898）；未用 Coleman Barks 等受版权保护的现代改写本。",
+  "entries": [
+    {
+      "id": "masnavi-song-of-the-reed",
+      "title": "Masnavi, Book I: Prologue（芦笛之歌，Whinfield 英译）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Hearken to the reed-flute, how it discourses\nWhen complaining of the pains of separation—\n“Ever since they tore me from my osier bed,\nMy plaintive notes have moved men and women to tears.\nI burst my breast, striving to give vent to sighs,\nAnd to express the pangs of my yearning for my home.\nHe who abides far away from his home\nIs ever longing for the day he shall return.\nMy wailing is heard in every throng,\nIn concert with them that rejoice and them that weep.\nEach interprets my notes in harmony with his own feelings,\nBut not one fathoms the secrets of my heart.\nMy secrets are not alien from my plaintive notes,\nYet they are not manifest to the sensual ear.\nBody is not veiled from soul, neither soul from body,\nYet no man hath ever seen a soul.”\nThis plaint of the flute is fire, not mere air.\nLet him who lacks this fire be accounted dead!\n’Tis the fire of love that inspires the flute,\n’Tis the ferment of love that possesses the wine.\nThe flute is the confidant of all unhappy lovers;\nYea, its strains lay bare my inmost secrets.\nWho hath seen a poison and an antidote like the flute?\nWho hath seen a sympathetic consoler like the flute?\nThe flute tells the tale of love’s bloodstained path,\nIt recounts the story of Majnun’s love toils.\nNone is privy to these feelings save one distracted,\nAs ear inclines to the whispers of the tongue.\nThrough grief my days are as labour and sorrow,\nMy days move on, hand in hand with anguish.\nYet, though my days vanish thus, ’tis no matter,\nDo thou abide, O Incomparable Pure One!\nBut all who are not fishes are soon tired of water;\nAnd they who lack daily bread find the day very long;\nSo the “Raw” comprehend not the state of the “Ripe;”\nTherefore it behoves me to shorten my discourse.\nArise, O son! burst thy bonds and be free!\nHow long wilt thou be captive to silver and gold?\nThough thou pour the ocean into thy pitcher,\nIt can hold no more than one day’s store.\nThe pitcher of the desire of the covetous never fills,\nThe oyster-shell fills not with pearls till it is content;\nOnly he whose garment is rent by the violence of love\nIs wholly pure from covetousness and sin.\nHail to thee, then, O LOVE, sweet madness!\nThou who healest all our infirmities!\nWho art the physician of our pride and self-conceit!\nWho art our Plato and our Galen!\nLove exalts our earthly bodies to heaven,\nAnd makes the very hills to dance with joy!\nO lover, ’twas love that gave life to Mount Sinai,\nWhen “it quaked, and Moses fell down in a swoon.”\nDid my Beloved only touch me with his lips,\nI too, like the flute, would burst out in melody.\nBut he who is parted from them that speak his tongue,\nThough he possess a hundred voices, is perforce dumb.\nWhen the rose has faded and the garden is withered,\nThe song of the nightingale is no longer to be heard.\nThe Beloved is all in all, the lover only veils Him;\nThe Beloved is all that lives, the lover a dead thing.\nWhen the lover feels no longer Love’s quickening,\nHe becomes like a bird who has lost its wings. Alas!\nHow can I retain my senses about me,\nWhen the Beloved shows not the light of His countenance?\nLove desires that this secret should be revealed,\nFor if a mirror reflects not, of what use is it?\nKnowest thou why thy mirror reflects not?\nBecause the rust has not been scoured from its face.\nIf it were purified from all rust and defilement,\nIt would reflect the shining of the SUN of God.\nO friends, ye have now heard this tale,\nWhich sets forth the very essence of my case.",
+      "themes": [
+        "离别",
+        "思乡",
+        "爱情",
+        "苏菲",
+        "灵魂",
+        "贪欲",
+        "音乐"
+      ],
+      "emotions": [
+        "哀婉",
+        "炽热",
+        "超脱"
+      ],
+      "famous_lines": [
+        "Hearken to the reed-flute, how it discourses When complaining of the pains of separation",
+        "He who abides far away from his home Is ever longing for the day he shall return.",
+        "This plaint of the flute is fire, not mere air.",
+        "Arise, O son! burst thy bonds and be free!"
+      ],
+      "drama_uses": [
+        "异域题材开场：笛声响起的画外旁白",
+        "游子离乡多年、思归的独白",
+        "乐师吹笛诉情的戏",
+        "劝人挣脱财富枷锁的导师台词"
+      ],
+      "note": "《玛斯纳维》第一卷开篇“芦笛之歌”（序诗全文）。英译据 E. H. Whinfield 节译本 Masnavi I Ma'navi（Trübner's Oriental Series，1898 年第二版；初版 1887），译者 1922 年去世，译文已进入公有领域。 波斯文原作与此英译均为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "masnavi-i-died-as-a-mineral",
+      "title": "Masnavi, Book III（节选，Whinfield 英译）：I died as a mineral",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "I died as a mineral and arose a plant,\nI died as a plant and rose again an animal.\nI died as an animal and arose a man.\nWhy then should I fear to become less by dying?\nI shall die once again as a man\nTo rise an angel perfect from head to foot!\nAgain when I suffer dissolution as an angel,\nI shall become what passes the conception of man!\nLet me then become non-existent, for non-existence\nSings to me in organ tones, ‘To him shall we return.’",
+      "themes": [
+        "死亡",
+        "轮回",
+        "超越",
+        "灵魂",
+        "进化"
+      ],
+      "emotions": [
+        "旷达",
+        "超脱",
+        "庄严"
+      ],
+      "famous_lines": [
+        "I died as a mineral and arose a plant",
+        "Why then should I fear to become less by dying?"
+      ],
+      "drama_uses": [
+        "主角直面死亡、从容赴死的独白",
+        "葬礼上智者的悼词",
+        "片尾升华：死亡不过是又一次上升"
+      ],
+      "note": "出自《玛斯纳维》第三卷“布哈拉代理人”故事中的插叙。英译据 E. H. Whinfield 节译本 Masnavi I Ma'navi（Trübner's Oriental Series，1898 年第二版；初版 1887），译者 1922 年去世，译文已进入公有领域。 波斯文原作与此英译均为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "divan-xii-every-form",
+      "title": "Divani Shamsi Tabriz XII（Nicholson 英译）：Every form you see",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Every form you see has its archetype in the placeless world;\nIf the form perished, no matter, since its original is everlasting.\nEvery fair shape you have seen, every deep saying you have heard,\nBe not cast down that it perished; for that is not so.\nWhereas the spring-head is undying, its branch gives water continually;\nSince neither can cease, why are you lamenting?\nConceive the Soul as a fountain, and these created things as rivers:\nWhile the fountain flows, the rivers run from it.\nPut grief out of your head and keep quaffing this river-water;\nDo not think of the water failing; for this water is without end.\nFrom the moment you came into the world of being,\nA ladder was placed before you that you might escape.\nFirst you were mineral, later you turned to plant,\nThen you became animal: how should this be a secret to you?\nAfterwards you were made man, with knowledge, reason, faith;\nBehold the body, which is a portion of the dust-pit, how perfect it has grown!\nWhen you have travelled on from man, you will doubtless become an angel;\nAfter that you are done with this earth: your station is in heaven.\nPass again even from angelhood: enter that ocean,\nThat your drop may become a sea which is a hundred seas of ‘Oman.\nLeave this ‘Son,’ say ever ‘One’ with all your soul;\nIf your body has aged, what matter, when the soul is young?",
+      "themes": [
+        "无常",
+        "永恒",
+        "灵魂",
+        "丧失",
+        "劝慰",
+        "超越"
+      ],
+      "emotions": [
+        "宽慰",
+        "旷达",
+        "澄明"
+      ],
+      "famous_lines": [
+        "Every form you see has its archetype in the placeless world",
+        "Conceive the Soul as a fountain, and these created things as rivers",
+        "If your body has aged, what matter, when the soul is young?"
+      ],
+      "drama_uses": [
+        "失去亲人后长者的劝慰台词",
+        "泉水与河流的转场空镜旁白",
+        "暮年主角心犹年少的片尾独白"
+      ],
+      "note": "《沙姆斯·大不里士诗集》颂诗第十二首。英译据 Reynold A. Nicholson, Selected Poems from the Divani Shamsi Tabriz（Cambridge，1898），1898 年出版的译文已进入公有领域（勿与 Coleman Barks 等现代改写本混用）；人名地名转写的变音符号从简。 波斯文原作与此英译均为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "divan-xxxi-i-do-not-recognise-myself",
+      "title": "Divani Shamsi Tabriz XXXI（Nicholson 英译）：I am neither Christian, nor Jew",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "What is to be done, O Moslems? for I do not recognise myself.\nI am neither Christian, nor Jew, nor Gabr, nor Moslem.\nI am not of the East, nor of the West, nor of the land, nor of the sea;\nI am not of Nature’s mint, nor of the circling heavens.\nI am not of earth, nor of water, nor of air, nor of fire;\nI am not of the empyrean, nor of the dust, nor of existence, nor of entity.\nI am not of India, nor of China, nor of Bulgaria, nor of Saqsin;\nI am not of the kingdom of ‘Iraqain, nor of the country of Khorasan.\nI am not of this world, nor of the next, nor of Paradise, nor of Hell;\nI am not of Adam, nor of Eve, nor of Eden and Rizwan.\nMy place is the Placeless, my trace is the Traceless;\n’Tis neither body nor soul, for I belong to the soul of the Beloved.\nI have put duality away, I have seen that the two worlds are one;\nOne I seek, One I know, One I see, One I call.\nHe is the first, He is the last, He is the outward, He is the inward;\nI know none other except ‘Ya Hu’ and ‘Ya man Hu.’\nI am intoxicated with Love’s cup, the two worlds have passed out of my ken;\nI have no business save carouse and revelry.\nIf once in my life I spent a moment without thee,\nFrom that time and from that hour I repent of my life.\nIf once in this world I win a moment with thee,\nI will trample on both worlds, I will dance in triumph for ever.\nO Shamsi Tabriz, I am so drunken in this world,\nThat except of drunkenness and revelry I have no tale to tell.",
+      "themes": [
+        "身份",
+        "超越",
+        "爱情",
+        "信仰",
+        "无我",
+        "迷醉"
+      ],
+      "emotions": [
+        "狂喜",
+        "超脱",
+        "炽热"
+      ],
+      "famous_lines": [
+        "I do not recognise myself.",
+        "I am not of the East, nor of the West",
+        "My place is the Placeless, my trace is the Traceless"
+      ],
+      "drama_uses": [
+        "失忆或身份崩塌主角的独白",
+        "超越国族与门第之爱的宣言",
+        "旋转舞者的长镜头配词"
+      ],
+      "note": "《沙姆斯·大不里士诗集》颂诗第三十一首。英译据 Reynold A. Nicholson, Selected Poems from the Divani Shamsi Tabriz（Cambridge，1898），1898 年出版的译文已进入公有领域（勿与 Coleman Barks 等现代改写本混用）；人名地名转写的变音符号从简。 波斯文原作与此英译均为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "divan-xxxviii-thou-and-i",
+      "title": "Divani Shamsi Tabriz XXXVIII（Nicholson 英译）：thou and I",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Happy the moment when we are seated in the palace, thou and I,\nWith two forms and with two figures but with one soul, thou and I.\nThe colours of the grove and the voice of the birds will bestow immortality\nAt the time when we come into the garden, thou and I.\nThe stars of heaven will come to gaze upon us;\nWe shall show them the moon itself, thou and I.\nThou and I, individuals no more, shall be mingled in ecstasy,\nJoyful, and secure from foolish babble, thou and I.\nAll the bright-plumed birds of heaven will devour their hearts with envy\nIn the place where we shall laugh in such a fashion, thou and I.\nThis is the greatest wonder, that thou and I, sitting here in the same nook,\nAre at this moment both in ‘Iraq and Khorasan, thou and I.",
+      "themes": [
+        "爱情",
+        "合一",
+        "相守",
+        "花园",
+        "星月"
+      ],
+      "emotions": [
+        "甜蜜",
+        "欣喜",
+        "缠绵"
+      ],
+      "famous_lines": [
+        "With two forms and with two figures but with one soul, thou and I."
+      ],
+      "drama_uses": [
+        "婚礼誓词或求婚台词",
+        "恋人花园共处的唯美段落旁白",
+        "异地恋人同心的分屏蒙太奇"
+      ],
+      "note": "《沙姆斯·大不里士诗集》颂诗第三十八首。英译据 Reynold A. Nicholson, Selected Poems from the Divani Shamsi Tabriz（Cambridge，1898），1898 年出版的译文已进入公有领域（勿与 Coleman Barks 等现代改写本混用）；人名地名转写的变音符号从简。 波斯文原作与此英译均为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

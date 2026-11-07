@@ -1,0 +1,201 @@
+{
+  "collection": "tennyson",
+  "author": "丁尼生",
+  "aliases": [
+    "Alfred Tennyson",
+    "Alfred, Lord Tennyson",
+    "Tennyson",
+    "阿尔弗雷德·丁尼生"
+  ],
+  "dynasty": "英国·19世纪",
+  "profile": "维多利亚时代桂冠诗人，音律圆熟，长于悼亡、暮年壮志与英雄挽歌。适合临终告别、老骥伏枥的动员、失去挚爱的独白与战争冲锋场面。",
+  "source": "文本据 Demeter and Other Poems（1889）初版、Early Poems、In Memoriam 与 Maud, and Other Poems（Project Gutenberg / 英文维基文库本），只收英文原文。作者 1892 年去世，已进入公有领域。",
+  "entries": [
+    {
+      "id": "crossing-the-bar",
+      "title": "Crossing the Bar",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Sunset and evening star,\nAnd one clear call for me!\nAnd may there be no moaning of the bar,\nWhen I put out to sea,\n\nBut such a tide as moving seems asleep,\nToo full for sound and foam,\nWhen that which drew from out the boundless deep\nTurns again home.\n\nTwilight and evening bell,\nAnd after that the dark!\nAnd may there be no sadness of farewell,\nWhen I embark;\n\nFor tho' from out our bourne of Time and Place\nThe flood may bear me far,\nI hope to see my Pilot face to face\nWhen I have crost the bar.",
+      "themes": [
+        "临终",
+        "告别",
+        "海",
+        "黄昏",
+        "归宿",
+        "信仰"
+      ],
+      "emotions": [
+        "安详",
+        "肃穆",
+        "释然"
+      ],
+      "famous_lines": [
+        "Sunset and evening star, And one clear call for me!",
+        "And may there be no sadness of farewell, When I embark",
+        "I hope to see my Pilot face to face"
+      ],
+      "drama_uses": [
+        "老人临终前对家人的告别台词",
+        "海上葬礼或骨灰撒海的片尾",
+        "全剧最后一集的集名：渡过沙洲"
+      ],
+      "note": "1889 年作，收入 Demeter and Other Poems（1889）；诗人嘱咐此诗永远置于其诗集末尾。据 1889 年初版。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "ulysses-ending",
+      "title": "Ulysses（结尾）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "The lights begin to twinkle from the rocks:\nThe long day wanes: the slow moon climbs: the deep\nMoans round with many voices. Come, my friends,\n’Tis not too late to seek a newer world.\nPush off, and sitting well in order smite\nThe sounding furrows; for my purpose holds\nTo sail beyond the sunset, and the baths\nOf all the western stars, until I die.\nIt may be that the gulfs will wash us down:\nIt may be we shall touch the Happy Isles,\nAnd see the great Achilles, whom we knew.\nTho’ much is taken, much abides; and tho’\nWe are not now that strength which in old days\nMoved earth and heaven; that which we are, we are;\nOne equal temper of heroic hearts,\nMade weak by time and fate, but strong in will\nTo strive, to seek, to find, and not to yield.",
+      "themes": [
+        "暮年",
+        "冒险",
+        "英雄",
+        "奋斗",
+        "出海",
+        "不屈"
+      ],
+      "emotions": [
+        "豪迈",
+        "悲壮",
+        "坚毅"
+      ],
+      "famous_lines": [
+        "’Tis not too late to seek a newer world.",
+        "Tho’ much is taken, much abides",
+        "To strive, to seek, to find, and not to yield."
+      ],
+      "drama_uses": [
+        "老将重新出山、召集旧部的动员台词",
+        "暮年主角扬帆远去的片尾",
+        "人物信条：去奋斗，去追寻，去发现，绝不屈服"
+      ],
+      "note": "1833 年作，收入 Poems（1842），借荷马英雄尤利西斯暮年再航之志。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "break-break-break",
+      "title": "Break, Break, Break",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Break, break, break,\nOn thy cold gray stones, O Sea!\nAnd I would that my tongue could utter\nThe thoughts that arise in me.\n\nO well for the fisherman’s boy,\nThat he shouts with his sister at play!\nO well for the sailor lad,\nThat he sings in his boat on the bay!\n\nAnd the stately ships go on\nTo their haven under the hill;\nBut O for the touch of a vanish’d hand,\nAnd the sound of a voice that is still!\n\nBreak, break, break,\nAt the foot of thy crags, O Sea!\nBut the tender grace of a day that is dead\nWill never come back to me.",
+      "themes": [
+        "悼亡",
+        "海",
+        "友情",
+        "怀念",
+        "逝去"
+      ],
+      "emotions": [
+        "哀恸",
+        "怅惘",
+        "悲凉"
+      ],
+      "famous_lines": [
+        "But O for the touch of a vanish’d hand, And the sound of a voice that is still!",
+        "But the tender grace of a day that is dead Will never come back to me."
+      ],
+      "drama_uses": [
+        "痛失挚友后独坐海边的独白",
+        "往昔欢乐回不来的闪回对照",
+        "悼亡剧集名：碎吧，碎吧，碎吧"
+      ],
+      "note": "悼亡友哈勒姆（Arthur Hallam）之作，1842 年刊。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "in-memoriam-xxvii",
+      "title": "In Memoriam A. H. H.（XXVII）",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "I envy not in any moods\nThe captive void of noble rage,\nThe linnet born within the cage\nThat never knew the summer woods:\n\nI envy not the beast that takes\nHis license in the field of time,\nUnfetter’d by the sense of crime,\nTo whom a conscience never wakes;\n\nNor, what may count itself as blest,\nThe heart that never plighted troth\nBut stagnates in the weeds of sloth,\nNor any want-begotten rest.\n\nI hold it true, whate’er befall;\nI feel it, when I sorrow most;\n’Tis better to have loved and lost\nThan never to have loved at all.",
+      "themes": [
+        "爱情",
+        "失去",
+        "悼亡",
+        "人生",
+        "无悔"
+      ],
+      "emotions": [
+        "哀婉",
+        "坚定",
+        "释然"
+      ],
+      "famous_lines": [
+        "’Tis better to have loved and lost Than never to have loved at all."
+      ],
+      "drama_uses": [
+        "失恋或丧偶者回望爱情的独白",
+        "朋友劝慰时的经典台词",
+        "片尾升华：爱过而失去，胜过从未爱过"
+      ],
+      "note": "长篇哀歌《悼念集》（1850）第二十七首，悼亡友哈勒姆。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "in-memoriam-ring-out-wild-bells",
+      "title": "In Memoriam A. H. H.（CVI，节选）：Ring out, wild bells",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Ring out wild bells to the wild sky,\nThe flying cloud, the frosty light:\nThe year is dying in the night;\nRing out, wild bells, and let him die.\n\nRing out the old, ring in the new,\nRing, happy bells, across the snow:\nThe year is going, let him go;\nRing out the false, ring in the true.\n\nRing out the grief that saps the mind,\nFor those that here we see no more;\nRing out the feud of rich and poor,\nRing in redress to all mankind.",
+      "themes": [
+        "新年",
+        "钟声",
+        "除旧布新",
+        "雪",
+        "希望"
+      ],
+      "emotions": [
+        "昂扬",
+        "肃穆",
+        "期许"
+      ],
+      "famous_lines": [
+        "Ring out the old, ring in the new",
+        "Ring out the false, ring in the true."
+      ],
+      "drama_uses": [
+        "除夕钟声响起的跨年戏",
+        "主角告别过去、重新开始的转场字幕",
+        "新年特别篇的片头"
+      ],
+      "note": "《悼念集》（1850）通行本第一百零六首（初版编号 CIV），首三节。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "the-charge-of-the-light-brigade",
+      "title": "The Charge of the Light Brigade",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Half a league, half a league,\nHalf a league onward,\nAll in the valley of Death\nRode the six hundred.\n\"Forward, the Light Brigade!\nCharge for the guns!\" he said:\nInto the valley of Death\nRode the six hundred.\n\n\"Forward, the Light Brigade!\"\nWas there a man dismay'd?\nNot tho' the soldier knew\nSome one had blunder'd:\nTheir's not to make reply,\nTheir's not to reason why,\nTheir's but to do and die,\nInto the valley of Death\nRode the six hundred.\n\nCannon to right of them,\nCannon to left of them,\nCannon in front of them\nVolley'd and thunder'd;\nStorm'd at with shot and shell,\nBoldly they rode and well,\nInto the jaws of Death,\nInto the mouth of Hell\nRode the six hundred.\n\nFlash'd all their sabres bare,\nFlash'd as they turn'd in air,\nSabring the gunners there,\nCharging an army, while\nAll the world wonder'd:\nPlunged in the battery-smoke\nRight thro' the line they broke;\nCossack and Russian\nReel'd from the sabre-stroke\nShatter'd and sunder'd.\nThen they rode back, but not\nNot the six hundred.\n\nCannon to right of them,\nCannon to left of them,\nCannon behind them\nVolley'd and thunder'd;\nStorm'd at with shot and shell,\nWhile horse and hero fell,\nThey that had fought so well\nCame thro' the jaws of Death\nBack from the mouth of Hell,\nAll that was left of them,\nLeft of six hundred.\n\nWhen can their glory fade?\nO the wild charge they made!\nAll the world wonder'd.\nHonour the charge they made!\nHonour the Light Brigade,\nNoble six hundred!",
+      "themes": [
+        "战争",
+        "冲锋",
+        "牺牲",
+        "军令",
+        "英雄",
+        "荣耀"
+      ],
+      "emotions": [
+        "悲壮",
+        "激昂",
+        "肃穆"
+      ],
+      "famous_lines": [
+        "Into the valley of Death Rode the six hundred.",
+        "Their's not to reason why, Their's but to do and die",
+        "Honour the Light Brigade, Noble six hundred!"
+      ],
+      "drama_uses": [
+        "骑兵或敢死队冲锋的战争场面画外音",
+        "明知是错误军令仍赴死的悲剧戏",
+        "战后清点幸存者的片尾",
+        "集名：死亡之谷"
+      ],
+      "note": "咏 1854 年克里米亚战争巴拉克拉瓦之役英军轻骑旅冲锋；据 Maud, and Other Poems 新版（1856）文本，保留原版 Their's 拼写，后出版本作 Theirs。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

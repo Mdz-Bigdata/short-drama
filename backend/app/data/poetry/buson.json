@@ -1,0 +1,175 @@
+{
+  "collection": "buson",
+  "author": "与谢芜村",
+  "aliases": [
+    "Yosa Buson",
+    "Buson",
+    "芜村",
+    "谢寅"
+  ],
+  "dynasty": "日本·江户中期",
+  "profile": "江户中期俳人兼文人画家，句如画，色彩明丽、构图开阔，又有浪漫与市井温情。适合画面感强的空镜字幕、田园与海边慢生活、落花与临终意象。",
+  "source": "文本据芜村句集通行表记，只收日文原文。作者 1784 年去世，已进入公有领域。",
+  "entries": [
+    {
+      "id": "na-no-hana-ya",
+      "title": "菜の花や",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "菜の花や月は東に日は西に",
+      "themes": [
+        "春",
+        "田园",
+        "月",
+        "黄昏",
+        "天地"
+      ],
+      "emotions": [
+        "开阔",
+        "明丽"
+      ],
+      "famous_lines": [
+        "菜の花や月は東に日は西に"
+      ],
+      "drama_uses": [
+        "油菜花田日月同天的航拍空镜",
+        "田园剧开场旁白",
+        "男女主一东一西分离的象征镜头"
+      ],
+      "note": "罗马字：na no hana ya / tsuki wa higashi ni / hi wa nishi ni。安永三年（1774）作于摄津。 日文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "haru-no-umi",
+      "title": "春の海",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "春の海終日のたりのたりかな",
+      "themes": [
+        "春",
+        "海",
+        "闲适",
+        "慢生活"
+      ],
+      "emotions": [
+        "闲适",
+        "慵懒"
+      ],
+      "famous_lines": [
+        "春の海終日のたりのたりかな"
+      ],
+      "drama_uses": [
+        "海边小镇慢生活的开场空镜",
+        "主角放下一切、发呆看海的段落"
+      ],
+      "note": "罗马字：haru no umi / hinemosu notari / notari kana。一说作于丹后与谢海边，作年诸说不一。 日文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "botan-chirite",
+      "title": "牡丹散りて",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "牡丹散りて打かさなりぬ二三片",
+      "themes": [
+        "花落",
+        "夏",
+        "凋零",
+        "美"
+      ],
+      "emotions": [
+        "哀婉",
+        "静美"
+      ],
+      "famous_lines": [
+        "牡丹散りて打かさなりぬ二三片"
+      ],
+      "drama_uses": [
+        "美人逝去后的落花特写",
+        "盛极而衰的转场意象"
+      ],
+      "note": "罗马字：botan chirite / uchikasanarinu / ni san pen。明和年间（1764–1772）作。 日文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "samidare-ya-taiga",
+      "title": "五月雨や",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "五月雨や大河を前に家二軒",
+      "themes": [
+        "雨",
+        "河",
+        "夏",
+        "孤危",
+        "相依"
+      ],
+      "emotions": [
+        "紧张",
+        "孤寂"
+      ],
+      "famous_lines": [
+        "五月雨や大河を前に家二軒"
+      ],
+      "drama_uses": [
+        "洪水将至、两户人家相依的危机戏",
+        "大势面前小人物相守的象征镜头"
+      ],
+      "note": "罗马字：samidare ya / taiga wo mae ni / ie ni ken。安永六年（1777）前后作。 日文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "tsuki-tenshin",
+      "title": "月天心",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "月天心貧しき町を通りけり",
+      "themes": [
+        "月",
+        "贫穷",
+        "夜",
+        "市井",
+        "秋"
+      ],
+      "emotions": [
+        "清冷",
+        "悲悯"
+      ],
+      "famous_lines": [
+        "月天心貧しき町を通りけり"
+      ],
+      "drama_uses": [
+        "月光照着贫民街巷的夜景空镜",
+        "穷困主角夜归的旁白"
+      ],
+      "note": "罗马字：tsuki tenshin / mazushiki machi wo / toorikeri。明和五年（1768）作。 日文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "shiraume-ni",
+      "title": "白梅に",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "白梅に明くる夜ばかりとなりにけり",
+      "themes": [
+        "临终",
+        "梅",
+        "黎明",
+        "春"
+      ],
+      "emotions": [
+        "安详",
+        "清寂"
+      ],
+      "famous_lines": [
+        "白梅に明くる夜ばかりとなりにけり"
+      ],
+      "drama_uses": [
+        "老画家临终窗外白梅的最后一镜",
+        "长夜将尽、黎明到来的片尾"
+      ],
+      "note": "罗马字：shiraume ni / akuru yo bakari to / nari ni keri。天明三年（1783）十二月临终所吟，为芜村绝笔。 日文原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

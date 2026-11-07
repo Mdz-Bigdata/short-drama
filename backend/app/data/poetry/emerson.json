@@ -1,0 +1,271 @@
+{
+  "collection": "emerson",
+  "author": "爱默生",
+  "aliases": [
+    "Ralph Waldo Emerson",
+    "Emerson",
+    "拉尔夫·沃尔多·爱默生"
+  ],
+  "dynasty": "美国·19世纪",
+  "profile": "美国超验主义领袖、散文家与诗人，倡导自立、个人良知与自然中的神性，语句铿锵，极易摘为格言。适合人物信条、逆境自励、独立宣言式台词与纪念场面。",
+  "source": "文本据 Essays: First Series（1841）、Nature（1836）与 Poems 通行英文本（Project Gutenberg 本），只收英文原文。作者 1882 年去世，已进入公有领域。",
+  "entries": [
+    {
+      "id": "self-reliance-genius",
+      "title": "Self-Reliance（节选一）：To believe your own thought",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "To believe your own thought, to believe that what is true for you in your private heart is true for all men,—that is genius.\nSpeak your latent conviction, and it shall be the universal sense; for the inmost in due time becomes the outmost, and our first thought is rendered back to us by the trumpets of the Last Judgment.",
+      "themes": [
+        "自信",
+        "天才",
+        "独立",
+        "信念",
+        "自我"
+      ],
+      "emotions": [
+        "坚定",
+        "昂扬"
+      ],
+      "famous_lines": [
+        "To believe your own thought",
+        "Speak your latent conviction, and it shall be the universal sense"
+      ],
+      "drama_uses": [
+        "天才少年不被理解时的内心独白",
+        "创业者路演前给自己打气的台词",
+        "人物信条：相信你自己的念头"
+      ],
+      "note": "出自随笔《论自立》（Self-Reliance，收入 Essays: First Series，1841）。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "self-reliance-envy-is-ignorance",
+      "title": "Self-Reliance（节选二）：envy is ignorance",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "There is a time in every man's education when he arrives at the conviction that envy is ignorance; that imitation is suicide; that he must take himself for better for worse as his portion; that though the wide universe is full of good, no kernel of nourishing corn can come to him but through his toil bestowed on that plot of ground which is given to him to till.\nThe power which resides in him is new in nature, and none but he knows what that is which he can do, nor does he know until he has tried.",
+      "themes": [
+        "成长",
+        "嫉妒",
+        "模仿",
+        "耕耘",
+        "自我"
+      ],
+      "emotions": [
+        "清醒",
+        "坚韧"
+      ],
+      "famous_lines": [
+        "envy is ignorance",
+        "imitation is suicide",
+        "nor does he know until he has tried"
+      ],
+      "drama_uses": [
+        "主角放下嫉妒、回到自己一亩三分地的转折戏",
+        "师父教徒弟别学别人的台词",
+        "成长剧集名：嫉妒即无知"
+      ],
+      "note": "出自随笔《论自立》（Self-Reliance，收入 Essays: First Series，1841）。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "self-reliance-trust-thyself",
+      "title": "Self-Reliance（节选三）：Trust thyself",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Trust thyself: every heart vibrates to that iron string.\nAccept the place the divine providence has found for you, the society of your contemporaries, the connection of events.",
+      "themes": [
+        "自信",
+        "命运",
+        "时代",
+        "自我"
+      ],
+      "emotions": [
+        "坚定",
+        "庄重"
+      ],
+      "famous_lines": [
+        "Trust thyself: every heart vibrates to that iron string."
+      ],
+      "drama_uses": [
+        "主角孤注一掷前的画外音",
+        "片头题记：相信你自己",
+        "导师临别赠言"
+      ],
+      "note": "出自随笔《论自立》（Self-Reliance，收入 Essays: First Series，1841）。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "self-reliance-nonconformist",
+      "title": "Self-Reliance（节选四）：Whoso would be a man",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Whoso would be a man, must be a nonconformist.\nHe who would gather immortal palms must not be hindered by the name of goodness, but must explore if it be goodness.\nNothing is at last sacred but the integrity of your own mind.\nAbsolve you to yourself, and you shall have the suffrage of the world.",
+      "themes": [
+        "不从众",
+        "独立",
+        "良知",
+        "叛逆",
+        "自我"
+      ],
+      "emotions": [
+        "孤傲",
+        "坚定"
+      ],
+      "famous_lines": [
+        "Whoso would be a man, must be a nonconformist.",
+        "Nothing is at last sacred but the integrity of your own mind."
+      ],
+      "drama_uses": [
+        "叛逆主角对抗家族规矩的宣言",
+        "反派以“为你好”压人时主角的回击",
+        "人物信条：心灵的完整高于一切"
+      ],
+      "note": "出自随笔《论自立》（Self-Reliance，收入 Essays: First Series，1841）。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "self-reliance-foolish-consistency",
+      "title": "Self-Reliance（节选五）：A foolish consistency",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "A foolish consistency is the hobgoblin of little minds, adored by little statesmen and philosophers and divines.\nWith consistency a great soul has simply nothing to do.\nHe may as well concern himself with his shadow on the wall.\nSpeak what you think now in hard words and to-morrow speak what to-morrow thinks in hard words again, though it contradict every thing you said to-day.—'Ah, so you shall be sure to be misunderstood.'—Is it so bad then to be misunderstood?\nPythagoras was misunderstood, and Socrates, and Jesus, and Luther, and Copernicus, and Galileo, and Newton, and every pure and wise spirit that ever took flesh.\nTo be great is to be misunderstood.",
+      "themes": [
+        "误解",
+        "伟大",
+        "变通",
+        "孤独",
+        "哲理"
+      ],
+      "emotions": [
+        "孤傲",
+        "豁达"
+      ],
+      "famous_lines": [
+        "A foolish consistency is the hobgoblin of little minds",
+        "To be great is to be misunderstood."
+      ],
+      "drama_uses": [
+        "被众人误解的主角深夜独白",
+        "主角推翻自己旧立场时的辩白台词",
+        "传记剧集名：伟大即被误解"
+      ],
+      "note": "出自随笔《论自立》（Self-Reliance，收入 Essays: First Series，1841）。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "self-reliance-in-the-crowd",
+      "title": "Self-Reliance（节选六）：the independence of solitude",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "It is easy in the world to live after the world's opinion; it is easy in solitude to live after our own; but the great man is he who in the midst of the crowd keeps with perfect sweetness the independence of solitude.",
+      "themes": [
+        "独立",
+        "独处",
+        "人群",
+        "修养"
+      ],
+      "emotions": [
+        "从容",
+        "淡定"
+      ],
+      "famous_lines": [
+        "the great man is he who in the midst of the crowd keeps with perfect sweetness the independence of solitude"
+      ],
+      "drama_uses": [
+        "闹市中人物静立的慢镜头字幕",
+        "名利场里保持本心的人物信条"
+      ],
+      "note": "出自随笔《论自立》（Self-Reliance，收入 Essays: First Series，1841）。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "self-reliance-peace",
+      "title": "Self-Reliance（结尾）：Nothing can bring you peace but yourself",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "A political victory, a rise of rents, the recovery of your sick or the return of your absent friend, or some other favorable event raises your spirits, and you think good days are preparing for you.\nDo not believe it.\nNothing can bring you peace but yourself.\nNothing can bring you peace but the triumph of principles.",
+      "themes": [
+        "内心",
+        "安宁",
+        "原则",
+        "命运"
+      ],
+      "emotions": [
+        "清醒",
+        "平静"
+      ],
+      "famous_lines": [
+        "Nothing can bring you peace but yourself.",
+        "Nothing can bring you peace but the triumph of principles."
+      ],
+      "drama_uses": [
+        "好运降临时清醒人物的冷静台词",
+        "片尾升华：安宁只能靠自己",
+        "心理治愈类短剧的题记"
+      ],
+      "note": "出自随笔《论自立》（Self-Reliance，收入 Essays: First Series，1841）全文结尾。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "nature-transparent-eyeball",
+      "title": "Nature（节选）：I become a transparent eye-ball",
+      "form": "文",
+      "tune": "",
+      "preface": "",
+      "text": "Standing on the bare ground,—my head bathed by the blithe air, and uplifted into infinite space,—all mean egotism vanishes.\nI become a transparent eye-ball; I am nothing; I see all; the currents of the Universal Being circulate through me; I am part or particle of God.",
+      "themes": [
+        "自然",
+        "天人合一",
+        "超越",
+        "顿悟"
+      ],
+      "emotions": [
+        "空灵",
+        "狂喜",
+        "澄明"
+      ],
+      "famous_lines": [
+        "I become a transparent eye-ball; I am nothing; I see all"
+      ],
+      "drama_uses": [
+        "主角登顶后张开双臂的高光镜头旁白",
+        "顿悟时刻的内心独白",
+        "自然纪录风空镜字幕"
+      ],
+      "note": "出自《论自然》（Nature，1836）第一章。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "concord-hymn",
+      "title": "Concord Hymn",
+      "form": "诗",
+      "tune": "",
+      "preface": "Sung at the Completion of the Battle Monument, July 4, 1837",
+      "text": "By the rude bridge that arched the flood,\nTheir flag to April's breeze unfurled,\nHere once the embattled farmers stood\nAnd fired the shot heard round the world.\n\nThe foe long since in silence slept;\nAlike the conqueror silent sleeps;\nAnd Time the ruined bridge has swept\nDown the dark stream which seaward creeps.\n\nOn this green bank, by this soft stream,\nWe set to-day a votive stone;\nThat memory may their deed redeem,\nWhen, like our sires, our sons are gone.\n\nSpirit, that made those heroes dare\nTo die, and leave their children free,\nBid Time and Nature gently spare\nThe shaft we raise to them and thee.",
+      "themes": [
+        "咏史",
+        "战争",
+        "纪念",
+        "英雄",
+        "自由",
+        "春"
+      ],
+      "emotions": [
+        "肃穆",
+        "悲壮",
+        "庄重"
+      ],
+      "famous_lines": [
+        "And fired the shot heard round the world.",
+        "To die, and leave their children free"
+      ],
+      "drama_uses": [
+        "纪念碑揭幕或祭奠先烈的戏",
+        "起义第一枪响起时的旁白",
+        "战争剧片尾：英雄已逝、山河犹在"
+      ],
+      "note": "1837 年 7 月 4 日康科德战役纪念碑落成时演唱，咏 1775 年莱克星顿-康科德之战。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}

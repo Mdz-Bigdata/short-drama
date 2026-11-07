@@ -1,0 +1,167 @@
+{
+  "collection": "longfellow",
+  "author": "朗费罗",
+  "aliases": [
+    "Henry Wadsworth Longfellow",
+    "Longfellow",
+    "亨利·沃兹沃斯·朗费罗"
+  ],
+  "dynasty": "美国·19世纪",
+  "profile": "19 世纪美国最受欢迎的诗人，音韵流畅、格言醒目，长于励志、友情与黄昏抒怀。适合励志致辞、重逢、雨夜慰藉与擦肩而过的旁白。",
+  "source": "文本据 The Complete Poetical Works of Henry Wadsworth Longfellow（Project Gutenberg 本），只收英文原文。作者 1882 年去世，已进入公有领域。",
+  "entries": [
+    {
+      "id": "a-psalm-of-life",
+      "title": "A Psalm of Life",
+      "form": "诗",
+      "tune": "",
+      "preface": "What the Heart of the Young Man Said to the Psalmist.",
+      "text": "Tell me not, in mournful numbers,\nLife is but an empty dream!\nFor the soul is dead that slumbers,\nAnd things are not what they seem.\n\nLife is real! Life is earnest!\nAnd the grave is not its goal;\nDust thou art, to dust returnest,\nWas not spoken of the soul.\n\nNot enjoyment, and not sorrow,\nIs our destined end or way;\nBut to act, that each to-morrow\nFind us farther than to-day.\n\nArt is long, and Time is fleeting,\nAnd our hearts, though stout and brave,\nStill, like muffled drums, are beating\nFuneral marches to the grave.\n\nIn the world’s broad field of battle,\nIn the bivouac of Life,\nBe not like dumb, driven cattle!\nBe a hero in the strife!\n\nTrust no Future, howe’er pleasant!\nLet the dead Past bury its dead!\nAct,—act in the living Present!\nHeart within, and God o’erhead!\n\nLives of great men all remind us\nWe can make our lives sublime,\nAnd, departing, leave behind us\nFootprints on the sands of time;—\n\nFootprints, that perhaps another,\nSailing o’er life’s solemn main,\nA forlorn and shipwrecked brother,\nSeeing, shall take heart again.\n\nLet us, then, be up and doing,\nWith a heart for any fate;\nStill achieving, still pursuing,\nLearn to labor and to wait.",
+      "themes": [
+        "人生",
+        "励志",
+        "奋斗",
+        "时间",
+        "榜样",
+        "当下"
+      ],
+      "emotions": [
+        "昂扬",
+        "坚定",
+        "激励"
+      ],
+      "famous_lines": [
+        "Life is real! Life is earnest!",
+        "Art is long, and Time is fleeting",
+        "Act,—act in the living Present!",
+        "Footprints on the sands of time",
+        "Learn to labor and to wait."
+      ],
+      "drama_uses": [
+        "毕业典礼或出征前的励志致辞",
+        "主角颓废后重新振作的转折独白",
+        "沙滩脚印的片尾空镜字幕",
+        "集名：时间沙滩上的足迹"
+      ],
+      "note": "1838 年作，收入 Voices of the Night（1839）。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "the-arrow-and-the-song",
+      "title": "The Arrow and the Song",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "I shot an arrow into the air,\nIt fell to earth, I knew not where;\nFor, so swiftly it flew, the sight\nCould not follow it in its flight.\n\nI breathed a song into the air,\nIt fell to earth, I knew not where;\nFor who has sight so keen and strong,\nThat it can follow the flight of song?\n\nLong, long afterward, in an oak\nI found the arrow, still unbroke;\nAnd the song, from beginning to end,\nI found again in the heart of a friend.",
+      "themes": [
+        "友情",
+        "重逢",
+        "善意",
+        "回响",
+        "歌"
+      ],
+      "emotions": [
+        "温暖",
+        "欣慰",
+        "感动"
+      ],
+      "famous_lines": [
+        "I shot an arrow into the air",
+        "I found again in the heart of a friend."
+      ],
+      "drama_uses": [
+        "多年后老友唱出当年那首歌的重逢戏",
+        "无心善举终获回报的伏笔回收",
+        "友情剧集名：箭与歌"
+      ],
+      "note": "1845 年作，收入 The Belfry of Bruges and Other Poems（1846）。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "the-day-is-done",
+      "title": "The Day Is Done",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "The day is done, and the darkness\nFalls from the wings of Night,\nAs a feather is wafted downward\nFrom an eagle in his flight.\n\nI see the lights of the village\nGleam through the rain and the mist,\nAnd a feeling of sadness comes o’er me\nThat my soul cannot resist:\n\nA feeling of sadness and longing,\nThat is not akin to pain,\nAnd resembles sorrow only\nAs the mist resembles the rain.\n\nCome, read to me some poem,\nSome simple and heartfelt lay,\nThat shall soothe this restless feeling,\nAnd banish the thoughts of day.\n\nNot from the grand old masters,\nNot from the bards sublime,\nWhose distant footsteps echo\nThrough the corridors of Time.\n\nFor, like strains of martial music,\nTheir mighty thoughts suggest\nLife’s endless toil and endeavor;\nAnd to-night I long for rest.\n\nRead from some humbler poet,\nWhose songs gushed from his heart,\nAs showers from the clouds of summer,\nOr tears from the eyelids start;\n\nWho, through long days of labor,\nAnd nights devoid of ease,\nStill heard in his soul the music\nOf wonderful melodies.\n\nSuch songs have power to quiet\nThe restless pulse of care,\nAnd come like the benediction\nThat follows after prayer.\n\nThen read from the treasured volume\nThe poem of thy choice,\nAnd lend to the rhyme of the poet\nThe beauty of thy voice.\n\nAnd the night shall be filled with music,\nAnd the cares, that infest the day,\nShall fold their tents, like the Arabs,\nAnd as silently steal away.",
+      "themes": [
+        "黄昏",
+        "夜",
+        "疲惫",
+        "慰藉",
+        "读诗",
+        "雨"
+      ],
+      "emotions": [
+        "忧郁",
+        "温柔",
+        "宁静"
+      ],
+      "famous_lines": [
+        "The day is done, and the darkness Falls from the wings of Night",
+        "Shall fold their tents, like the Arabs, And as silently steal away."
+      ],
+      "drama_uses": [
+        "加班归家后爱人为其读书的温馨夜戏",
+        "雨夜村庄灯火的空镜旁白",
+        "治愈系短剧的片尾"
+      ],
+      "note": "1844 年作，为 The Waif（1845）选集序诗。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "the-rainy-day",
+      "title": "The Rainy Day",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "The day is cold, and dark, and dreary;\nIt rains, and the wind is never weary;\nThe vine still clings to the mouldering wall,\nBut at every gust the dead leaves fall,\nAnd the day is dark and dreary.\n\nMy life is cold, and dark, and dreary;\nIt rains, and the wind is never weary;\nMy thoughts still cling to the mouldering Past,\nBut the hopes of youth fall thick in the blast,\nAnd the days are dark and dreary.\n\nBe still, sad heart! and cease repining;\nBehind the clouds is the sun still shining;\nThy fate is the common fate of all,\nInto each life some rain must fall,\nSome days must be dark and dreary.",
+      "themes": [
+        "雨",
+        "低谷",
+        "青春",
+        "希望",
+        "命运"
+      ],
+      "emotions": [
+        "忧郁",
+        "宽慰"
+      ],
+      "famous_lines": [
+        "Behind the clouds is the sun still shining",
+        "Into each life some rain must fall"
+      ],
+      "drama_uses": [
+        "雨天窗前失意主角的独白",
+        "长辈安慰受挫晚辈的台词",
+        "雨过天晴的转场字幕"
+      ],
+      "note": "1841 年作，收入 Ballads and Other Poems（1841）。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    },
+    {
+      "id": "ships-that-pass-in-the-night",
+      "title": "Tales of a Wayside Inn: Elizabeth（节选）：Ships that pass in the night",
+      "form": "诗",
+      "tune": "",
+      "preface": "",
+      "text": "Ships that pass in the night, and speak each other in passing,\nOnly a signal shown and a distant voice in the darkness;\nSo on the ocean of life we pass and speak one another,\nOnly a look and a voice, then darkness again and a silence.",
+      "themes": [
+        "相遇",
+        "错过",
+        "海",
+        "夜",
+        "人生"
+      ],
+      "emotions": [
+        "怅惘",
+        "寂寥"
+      ],
+      "famous_lines": [
+        "Ships that pass in the night, and speak each other in passing"
+      ],
+      "drama_uses": [
+        "陌生人一夜相逢又分别的结尾旁白",
+        "擦肩而过的平行剪辑",
+        "集名：夜航船"
+      ],
+      "note": "出自《路畔旅舍故事》第三部《神学家的故事：伊丽莎白》第四节（1873）。 原文为公有领域；中译本多数仍在版权期，剧中使用请自行翻译或化用。"
+    }
+  ]
+}
