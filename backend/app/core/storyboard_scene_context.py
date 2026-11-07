@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from app.core import breakdown_kinds, character_variants, emotion_points, literary
+from app.core import breakdown_kinds, character_variants, emotion_points, literary, prompt_data
 from app.core.scene_turnaround import SCENE_VIEW_LABELS, SCENE_VIEW_PURPOSES
 
 KINDS = {"scene": "scenes", "prop": "props", "costume": "costumes", "effect": "effects", "product": "products", **breakdown_kinds.CATALOG_KEYS}
@@ -306,6 +306,18 @@ def compile_scene_context(
     return context
 
 
+def look_makeup(description: str) -> str:
+    """一身妆造(或穿着它的角色设定)里的妆效文字；没写妆效时是空串。"""
+    _before, marker, after = str(description or "").partition("妆效：")
+    return after.strip(" ；;。") if marker else ""
+
+
+def look_makeup_note(makeup: str, *, panel: bool = False) -> str:
+    """跟在参考图那句后面的妆效：定妆图把左右画反了，也按文字画。句中不用「；」「。」。措辞在 character_looks.json。"""
+    text = re.sub(r"[；;。]+", "，", str(makeup or "")).strip("，")
+    return prompt_data.text("character_looks", "panel_look_makeup" if panel else "shot_look_makeup").format(text) if text else ""
+
+
 def reference_note(number: int, reference: dict, *, label: str = "") -> str:
     """参考图N 只锁一件资产的那句话。
 
@@ -323,6 +335,7 @@ def reference_note(number: int, reference: dict, *, label: str = "") -> str:
         makeup = re.sub(r"[；;。]+", "，", str(reference.get("makeup") or "")).strip("，")
         return (
             f"参考图{number}仅锁定{label}「{name}」{f'（造型：{variant}）' if variant else ''}的脸型、发型、体型与服装，不采用图中背景、版式与其他人物，不是额外剧情或额外人物"
+            + look_makeup_note(str(reference.get("look_makeup") or ""))
             + (f"，图上没有的妆效按文字加上：{makeup}" if makeup else "")
         )
     if kind != "scene":
@@ -485,6 +498,9 @@ def panel_context(context: dict, shot: dict, *, layout: str = "") -> dict:
             reference = {"kind": item["kind"], "name": item["name"], "image_url": url}
             if item.get("variant"):
                 reference["variant"] = str(item["variant"])
+                # 定妆图上画了的妆效也写进提示词：图上左右画反了，按文字改回来。
+                if worn := look_makeup(str(item.get("description") or "")):
+                    reference["look_makeup"] = worn
             if item["kind"] == "actor":
                 # 没画进定妆图的妆效：这一镜提到它，就按文字加在当时那身上。
                 added = [

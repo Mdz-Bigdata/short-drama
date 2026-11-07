@@ -35,6 +35,7 @@ from app.core.prop_turnaround import (
     prop_instruction,
     split_prop_sheet,
 )
+from app.core.look_board import LAYOUT_MAKEUP, LAYOUT_PLAIN, LOOK_VIEW_SLOTS, split_look_board
 from app.core.scene_turnaround import (
     SCENE_TURNAROUND_CLOSING,
     SCENE_TURNAROUND_INSTRUCTION,
@@ -85,6 +86,8 @@ element_task_repository = TaskRepository()
 NEEDS_REDRAW = "needs_redraw"
 #: 定妆图画完后看图模型核对妆效的结论 ``{passed, problems}``；重画一次仍不合格就留在卡片上给人看。
 LOOK_CHECK = "look_check"
+# 定妆图展示板用的版式：决定切出来的三格特写各叫什么(见 core/look_board)。
+LOOK_LAYOUT = "look_layout"
 #: 看图模型多半先推理再作答：给少了答案还没写出来就被截断。
 LOOK_CHECK_MAX_TOKENS = 8000
 LOOK_CHECK_ATTEMPTS = 2
@@ -1151,11 +1154,19 @@ async def _generate_look_image(*, item, owner_id: str, store: PlatformStore, ext
             drawn_suffix, drawn_mime = await run_in_threadpool(_validated_generated_image, drawn)
             return drawn, drawn_suffix, drawn_mime
 
-        content, suffix, mime = await draw()
+        # 上一张没过核对：这次一开始就带着它的问题画，不白花第一张。描述改过的，旧问题不算数。
+        earlier_check = _element_metadata(item).get(LOOK_CHECK)
+        earlier_fix = (
+            look_fix_prompt(list(earlier_check.get("problems") or []), wardrobe)
+            if wears_makeup(wardrobe) and not _element_metadata(item).get(NEEDS_REDRAW)
+            and isinstance(earlier_check, dict) and earlier_check.get("passed") is False and earlier_check.get("problems")
+            else ""
+        )
+        content, suffix, mime = await draw(earlier_fix)
         check = await _check_look(content, wardrobe) if wears_makeup(wardrobe) else None
         if check is not None and not check["passed"]:
             try:
-                redrawn = await draw(look_fix_prompt(check["problems"]))
+                redrawn = await draw(look_fix_prompt(check["problems"], wardrobe))
             except (OSError, RuntimeError, ValueError) as exc:  # 重画没出来，留第一张和它的问题
                 logger.warning("定妆图按核对问题重画失败: element=%s error=%s", item.id, type(exc).__name__)
             else:
@@ -1166,11 +1177,30 @@ async def _generate_look_image(*, item, owner_id: str, store: PlatformStore, ext
     except (OSError, RuntimeError, ValueError) as exc:
         logger.warning("角色定妆图生成失败: element=%s error=%s", item.id, type(exc).__name__)
         raise HTTPException(status_code=502, detail="定妆图生成失败，图像模型未返回可验证的图片；请检查模型配置后重试") from exc
-    # 演员条目只收身份视图槽位；定妆图是整张展示板，放在分镜优先取的正面槽。
+    # 定妆图是整张展示板，放在分镜优先取的正面槽；切出来的七张单独存，给人点开放大看。
     await _persist_element_file(
         element_id=item.id, owner_id=owner_id, slot="front", suffix=suffix, mime=mime, content=content, store=store,
     )
-    return _element(await store.merge_element_metadata(item.id, owner_id, {NEEDS_REDRAW: False, LOOK_CHECK: check}))
+    await _persist_look_views(item.id, owner_id, store, content)
+    layout = LAYOUT_MAKEUP if wears_makeup(wardrobe) else LAYOUT_PLAIN
+    return _element(await store.merge_element_metadata(item.id, owner_id, {NEEDS_REDRAW: False, LOOK_CHECK: check, LOOK_LAYOUT: layout}))
+
+
+async def _persist_look_views(element_id: str, owner_id: str, store: PlatformStore, content: bytes) -> None:
+    """把展示板切成四格全身、三格特写存进各自的槽位。切不开时去掉旧板留下的那几张，免得和新板对不上。"""
+    try:
+        views = await run_in_threadpool(split_look_board, content)
+    except (OSError, ValueError) as exc:
+        logger.warning("定妆图展示板切分失败，只留整板: element=%s error=%s", element_id, type(exc).__name__)
+        current = await store.get_element(element_id, owner_id)
+        for file in (current.files if current else []):
+            if file.slot in LOOK_VIEW_SLOTS:
+                await _drop_element_file(element_id, file.id, owner_id, store)
+        return
+    for slot, image in views.items():
+        await _persist_element_file(
+            element_id=element_id, owner_id=owner_id, slot=slot, suffix=".png", mime="image/png", content=image, store=store,
+        )
 
 
 async def _check_look(content: bytes, wardrobe: str) -> dict | None:
@@ -1648,6 +1678,30 @@ async def _regenerate_library_actor(element_id: str, owner_id: str, store: Platf
         await store.merge_element_metadata(element_id, owner_id, {**patch, ACTOR_REGENERATION_KEY: state})
     except ValueError:
         logger.warning("资产库数字演员重新生成结果写回失败: element=%s", element_id)
+
+
+@router.post("/{element_id}/look-views")
+async def split_look_views(
+    element_id: str,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """把已经画好的定妆图展示板切成单张；不调用模型。较早的展示板按当时的版式(腰带、袖口特写)命名。"""
+    element = await store.get_element(element_id, user["user_id"])
+    if not element or not _is_look(element):
+        raise HTTPException(status_code=404, detail="定妆图不存在")
+    board = next((file for file in element.files if file.slot == "front" and str(file.mime_type or "").startswith("image/")), None)
+    if board is None:
+        raise HTTPException(status_code=422, detail="这套定妆图还没生成")
+    try:
+        absolute, _ = _owned_reference_path(board.storage_path, element.owner_id, element.id)
+        content = await run_in_threadpool(absolute.read_bytes)
+    except (HTTPException, OSError) as exc:
+        raise HTTPException(status_code=422, detail="读不到这套定妆图") from exc
+    await _persist_look_views(element.id, user["user_id"], store, content)
+    patch = {} if _element_metadata(element).get(LOOK_LAYOUT) else {LOOK_LAYOUT: LAYOUT_PLAIN}
+    updated = await store.merge_element_metadata(element.id, user["user_id"], patch) if patch else await store.get_element(element.id, user["user_id"])
+    return _element(updated)
 
 
 @router.post("/{element_id}/regenerate")

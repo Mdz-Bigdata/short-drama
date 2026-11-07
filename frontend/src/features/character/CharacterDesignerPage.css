@@ -2488,8 +2488,34 @@
 }
 
 /* 表演妆造的主视图：沿用设定集主卡（白底圆角、左上徽标、右上圆钮、底部胶囊），只有一张定妆图 */
-.character-look-viewer__identity {
+.character-look-viewer__identity:not(.has-views) {
   grid-template-columns: auto;
+}
+
+/* 徽标第二行写当前看的是哪一张 */
+.character-look-viewer .character-viewer__badge small {
+  font-weight: 600;
+}
+
+.character-look-viewer__problems {
+  margin: 0.4rem 0 0.2rem;
+  padding: 0.45rem 0.7rem;
+  color: var(--warning);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  background: rgba(var(--warning-rgb), 0.07);
+  border: 1px solid rgba(var(--warning-rgb), 0.25);
+  border-radius: 0.5rem;
+}
+
+.character-look-viewer__problems summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.character-look-viewer__problems ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.2em;
 }
 
 .character-look-viewer__episodes {

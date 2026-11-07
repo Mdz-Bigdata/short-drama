@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,7 +14,8 @@ from app.api import drama_api
 from app.api.auth_api import auth_service
 from app.api.drama_api import _file_character_looks, _file_crowd_wardrobe
 from app.core import character_looks, character_variants, project_asset_completion, script_breakdown
-from app.core.character_looks import LOOK_BOARD_SIZE, episode_spans, look_prompt, parse_look_check, plan_looks, wardrobe_text
+from app.core.character_looks import LOOK_BOARD_SIZE, episode_spans, look_fix_prompt, look_prompt, parse_look_check, plan_looks, wardrobe_text
+from app.core.look_board import LOOK_VIEW_SLOTS, split_look_board
 from app.core.panel_still_prompt import _costume_notes
 from app.core.production_asset_readiness import evaluate_asset_readiness, readiness_reasons
 from app.core.production_asset_extractor import extract_production_assets
@@ -24,6 +26,29 @@ from app.platform.store import PlatformStore
 from app.repository.task_repo import TaskRepository
 from main import app
 from tests.test_platform_api import VALID_PNG
+from PIL import Image, ImageDraw
+
+
+def _board(*, white_seams: bool) -> bytes:
+    """A 2848x1600 look board: four full-body cells, a white seam, three close-ups.
+
+    With ``white_seams`` every cell is set apart by a white line, as the layout asks; without, the four
+    bodies only differ in backdrop tone, as image models often draw them.
+    """
+    image = Image.new("RGB", (2848, 1600), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    gap = 14 if white_seams else 0
+    edges = [0, 640, 1060, 1660, 2200]
+    for index, (left, right) in enumerate(zip(edges, edges[1:])):
+        shade = (150, 175, 200, 165)[index]
+        draw.rectangle((left + (gap if index else 0), 0, right - 1, 1599), fill=(shade,) * 3)
+        middle = (left + right) // 2
+        draw.rectangle((middle - 60, 120, middle + 60, 1500), fill=(40, 50, 70))
+    for index, (top, bottom) in enumerate(((0, 530), (530 + gap, 1060), (1060 + gap, 1600))):
+        draw.rectangle((2216, top, 2847, bottom - 1), fill=((90, 130, 170)[index],) * 3)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 SHEN = "沈无咎"
 FACE = "身份锚点：沉默少年；骨相：窄长脸；五官：单眼皮；发型：黑发；服装：灰布短褐"
@@ -130,6 +155,53 @@ class LookCheckTests(unittest.TestCase):
     def test_an_unclear_answer_counts_as_unchecked(self):
         for answer in (None, "", "看起来不错", '{"problems": []}', '{"passed": "yes"}', "{passed: true"):
             self.assertIsNone(parse_look_check(answer), answer)
+
+
+class LookBoardTests(unittest.TestCase):
+    def _widths(self, content: bytes) -> list:
+        views = split_look_board(content)
+        self.assertEqual(list(views), list(LOOK_VIEW_SLOTS))
+        return [Image.open(io.BytesIO(views[slot])).size for slot in LOOK_VIEW_SLOTS]
+
+    def test_a_board_is_cut_on_its_white_seams(self):
+        sizes = self._widths(_board(white_seams=True))
+        self.assertEqual([width for width, _ in sizes[:4]], [640, 420 - 14, 600 - 14, 540 - 14])
+        self.assertEqual([height for _, height in sizes[4:]], [530, 530 - 14, 540 - 14])
+
+    def test_bodies_drawn_side_by_side_are_cut_where_the_backdrop_changes(self):
+        sizes = self._widths(_board(white_seams=False))
+        for (width, _), expected in zip(sizes[:4], (640, 420, 600, 540)):
+            self.assertLessEqual(abs(width - expected), 4, sizes)
+
+    def test_a_picture_that_is_not_a_board_is_refused(self):
+        with self.assertRaises(ValueError):
+            split_look_board(VALID_PNG)
+
+
+class LookPromptTests(unittest.TestCase):
+    def test_a_wound_gets_its_own_close_up_and_the_side_is_the_characters_own(self):
+        prompt = look_prompt("常九斤·右手断指", "靛蓝短褂；妆效：右手小指与无名指各缺半截")
+        self.assertIn("妆效所在部位的近景", prompt)
+        self.assertNotIn("袖口或下摆的面料纹理", prompt)
+        self.assertIn("人物的右手、右脸和右腿在画面左侧", prompt)
+        plain = look_prompt("沈无咎·麻衣", "麻灰短褐")
+        self.assertIn("袖口或下摆的面料纹理", plain)
+        self.assertNotIn("不是画面的左右", plain)
+
+    def test_a_redraw_reminds_which_side_is_which(self):
+        self.assertIn("正面视图里人物的右手在画面左侧", look_fix_prompt(["伤画到了左手"], "妆效：右手断指"))
+        self.assertNotIn("画面左侧", look_fix_prompt(["血色鲜红"], "妆效：额头淤青"))
+
+    def test_problems_lose_their_own_full_stops(self):
+        check = parse_look_check('{"passed": false, "problems": ["正面格：小指完整。", "背面格：缺损不一致；"]}')
+        self.assertEqual(check["problems"], ["正面格：小指完整", "背面格：缺损不一致"])
+
+    def test_the_shot_prompt_carries_the_makeup_of_the_look_worn(self):
+        note = reference_note(2, {"kind": "actor", "name": "常九斤", "variant": "靛蓝旧皮甲·右手断指", "look_makeup": "右手小指与无名指各缺半截；断口发亮"})
+        self.assertIn("妆效以文字为准（左右指人物自己的左右）：右手小指与无名指各缺半截，断口发亮", note)
+        self.assertNotIn("；", note)
+        notes = _costume_notes(["常九斤"], [{"kind": "actor", "name": "常九斤", "variant": "靛蓝旧皮甲·右手断指", "look_makeup": "右手小指缺半截"}], [])
+        self.assertIn("穿图1 的「靛蓝旧皮甲·右手断指」，妆效以文字为准", notes["常九斤"])
 
 
 class WearingTests(unittest.TestCase):
@@ -948,6 +1020,49 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(result["metadata"]["look_check"]["problems"], ["血色鲜红"])
         self.assertFalse(result["metadata"]["look_check"]["passed"])
         self.assertEqual([file["slot"] for file in result["files"]], ["front"])
+
+    def test_regenerating_a_look_that_failed_starts_from_what_was_wrong(self):
+        look = self._wounded_look()
+        self._checked_draw(look, ['{"passed": false, "problems": ["伤画到了右颊"]}', '{"passed": false, "problems": ["伤画到了右颊"]}'])
+        _result, calls, _checks = self._checked_draw(look, ['{"passed": true, "problems": []}'])
+        self.assertEqual(len(calls), 1)
+        self.assertIn("上一张的妆效有这些问题，这次务必改正：伤画到了右颊", calls[0]["prompt"])
+        self.assertIn("正面视图里人物的右手在画面左侧", calls[0]["prompt"])
+
+    def test_a_drawn_board_is_kept_whole_and_cut_into_its_seven_views(self):
+        look = self._wounded_look()
+        with (
+            self._drawing([]),
+            patch("app.api.element_api.element_image_gateway.describe_image", return_value=('{"passed": true, "problems": []}', "deepseek-flash")),
+            patch("app.api.element_api.fetch_remote_image_bytes", return_value=_board(white_seams=True)),
+        ):
+            response = self.client.post(f"/api/elements/{look['id']}/regenerate", json={"prompt": ""}, cookies=self.cookie)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([file["slot"] for file in response.json()["files"]], ["front", *LOOK_VIEW_SLOTS])
+        self.assertEqual(response.json()["metadata"]["look_layout"], "makeup")
+
+    def test_an_earlier_board_is_cut_without_drawing_and_only_looks_take_those_slots(self):
+        self._base_actor()
+        self._file_looks()
+        look = self._actors()["沈无咎·染血残衣"]
+        uploaded = self.client.post(
+            f"/api/elements/{look['id']}/files", data={"slot": "front"},
+            files={"file": ("board.png", _board(white_seams=False), "image/png")}, cookies=self.cookie,
+        )
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+        with patch("app.api.element_api.element_image_gateway.generate_image") as generate:
+            response = self.client.post(f"/api/elements/{look['id']}/look-views", cookies=self.cookie)
+        generate.assert_not_called()
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([file["slot"] for file in response.json()["files"]], ["front", *LOOK_VIEW_SLOTS])
+        self.assertEqual(response.json()["metadata"]["look_layout"], "plain")
+        person = self._actors()[SHEN]
+        refused = self.client.post(
+            f"/api/elements/{person['id']}/files", data={"slot": "look_front"},
+            files={"file": ("x.png", VALID_PNG, "image/png")}, cookies=self.cookie,
+        )
+        self.assertNotEqual(refused.status_code, 200)
+        self.assertEqual(self.client.post(f"/api/elements/{person['id']}/look-views", cookies=self.cookie).status_code, 404)
 
     def test_with_no_model_that_can_see_the_look_is_kept_unchecked(self):
         look = self._wounded_look()

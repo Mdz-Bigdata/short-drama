@@ -39,7 +39,9 @@ from app.core.media_compositor import MEDIA_DIR
 from app.core.production_asset_extractor import extract_production_assets
 from app.core.storyboard_assets import compose_nine_grid, fetch_remote_image_bytes
 from app.core.writer_dashboard import compile_writer_dashboard
-from app.api.element_api import NEEDS_REDRAW, _first_image_bytes, _persist_element_file, sync_project_actor_to_library
+from app.api.element_api import (
+    LOOK_LAYOUT, NEEDS_REDRAW, _first_image_bytes, _persist_element_file, _persist_look_views, sync_project_actor_to_library,
+)
 from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore
 from app import settings
@@ -437,6 +439,11 @@ async def _copy_first_image(source: Any, element_id: str, owner_id: str, store: 
         element_id=element_id, owner_id=owner_id, slot="front",
         suffix=_IMAGE_SUFFIX_BY_MIME.get(str(file.mime_type), ".png"), mime=str(file.mime_type), content=content, store=store,
     )
+    # 定妆图展示板连同切出来的单张一起带过来，版式也跟着。
+    await _persist_look_views(element_id, owner_id, store, content)
+    layout = (getattr(source, "metadata_json", None) or {}).get(LOOK_LAYOUT)
+    if layout:
+        await store.merge_element_metadata(element_id, owner_id, {LOOK_LAYOUT: layout})
     return True
 
 

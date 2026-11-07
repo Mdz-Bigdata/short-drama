@@ -2462,4 +2462,13 @@ export const vi: Record<string, string> = {
   '这套妆造还没有描述。': 'Bộ tạo hình này chưa có mô tả.',
   '设定集': 'Bộ thiết lập',
   '妆造补充': 'Bổ sung tạo hình',
+  '妆效核对没过 {0} 处，重新生成时会照这些问题改': 'Kiểm tra tạo hình thấy {0} lỗi; tạo lại sẽ sửa theo các lỗi này',
+  '放大查看“{0}”的{1}': 'Phóng to {1} của “{0}”',
+  '“{0}”的单张': 'Các ảnh riêng của “{0}”',
+  '正面全身': 'Toàn thân chính diện',
+  '三分之四侧面': 'Góc ba phần tư',
+  '正脸胸像': 'Chân dung chính diện',
+  '妆效部位': 'Cận cảnh hóa trang',
+  '腰带与配饰': 'Thắt lưng và phụ kiện',
+  '袖口或下摆': 'Cổ tay áo hoặc gấu áo',
 };

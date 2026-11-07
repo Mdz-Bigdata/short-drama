@@ -67,6 +67,7 @@ from app.platform.models import (
     McpToken,
 )
 from app.repository.user_repo import hash_password, verify_password
+from app.core.look_board import LOOK_VIEW_SLOTS
 from app.schema.production import IDENTITY_VIEW_ORDER, LEGACY_IDENTITY_VIEW_ORDER
 
 
@@ -80,6 +81,10 @@ LEGACY_ACTOR_VIEW_SLOTS = LEGACY_IDENTITY_VIEW_ORDER
 ACTOR_VIEW_SLOT_ORDER = LEGACY_ACTOR_VIEW_SLOTS + tuple(
     slot for slot in ACTOR_VIEW_SLOTS if slot not in LEGACY_ACTOR_VIEW_SLOTS
 )
+
+
+# 表演妆造的定妆图整板(front)切出来的七张(见 core/look_board)：只给人看，排在身份视图后面，分镜仍取整板。
+ACTOR_FILE_SLOT_ORDER = ACTOR_VIEW_SLOT_ORDER + LOOK_VIEW_SLOTS
 
 
 def _wants_identity_views(element: "ElementAsset") -> bool:
@@ -1400,9 +1405,10 @@ class PlatformStore:
                 if slot == "model_glb" and not is_3d_model:
                     raise ValueError("model_glb 槽位只接受 GLB 3D 模型")
                 if element.kind == "actor":
-                    if slot not in ACTOR_VIEW_SLOT_ORDER:
+                    look_view = slot in LOOK_VIEW_SLOTS and not _wants_identity_views(element)
+                    if slot not in ACTOR_VIEW_SLOT_ORDER and not look_view:
                         raise ValueError("演员图片必须使用规定的身份视图槽位")
-                    position = ACTOR_VIEW_SLOT_ORDER.index(slot)
+                    position = ACTOR_FILE_SLOT_ORDER.index(slot)
                 else:
                     if not re.fullmatch(r"[a-z0-9_-]{1,64}", slot):
                         raise ValueError("文件槽位无效")
@@ -1514,7 +1520,7 @@ class PlatformStore:
                 element.files.remove(target)
                 if element.kind == "actor":
                     for item in element.files:
-                        item.position = ACTOR_VIEW_SLOT_ORDER.index(item.slot)
+                        item.position = ACTOR_FILE_SLOT_ORDER.index(item.slot)
                 else:
                     for position, item in enumerate(element.files):
                         item.position = position

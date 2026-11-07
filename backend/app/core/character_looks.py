@@ -15,31 +15,28 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from app.core import prompt_data
 from app.core.character_variants import LOOK_SOURCE, VariantError, clean_variant, episode_of, scene_of
 from app.core.storyboard_scene_context import cast_aliases, costume_owner, mentioned
 
 # 16:9 且不超过 Seedream 单张约 462 万像素的上限。
 LOOK_BOARD_SIZE = "2848x1600"
-LOOK_BOARD_INSTRUCTION = (
-    "生成一张影视角色定妆照展示板：16:9 横向画布，浅灰到中灰的影棚无缝背景，同一中性柔光。"
-    "严格参考所给参考图里的同一个人：脸型、五官比例、痣与疤的位置、肤色和体型完全一致，只按下面这身妆造换装，"
-    "发型、头饰、妆面和伤口血迹按它的写法画在写明的位置，没写的保持参考图原样；服装呈现真实穿着体积、肩线与自然垂坠，人物端正站立；围巾、面巾、披风等搭在颈肩的东西不挡住领口的形制。"
-    "画面左侧约四分之三宽度横排四格全身视图，格与格之间一条纯白细缝，依次为正面、左侧90度侧面、背面、"
-    "右前方45度三分之四侧面；四格同一比例尺，脚底在同一条基线上，头顶到双脚完整入画，表情平静。"
-    "画面右侧约四分之一宽度竖排三格特写：正脸胸像(看得清五官、领口与发型)、腰带系结与配饰、袖口或下摆的面料纹理与磨损。"
-    "完整呈现领口、上装、下装、袖口、下摆、鞋履、材质、纹样、配饰、妆效及剧情状态。"
-)
-# 模型爱给伤口加戏：多画几道划痕、血色画得新鲜。有妆效时把字面要求说死。
-LOOK_MAKEUP_RULE = (
-    "妆效严格照字面：写几道伤就只画几道，长度、走向和位置照写；不加文字没写的划痕、爪痕、擦伤或飞溅血点；"
-    "写了半干、结痂或旧伤，血色画成暗红到褐色，不画鲜红的湿血。"
-    "伤在哪一侧，每个看得到那一侧脸或身体的视图和特写都要画上，各格里形状、长度、血量和颜色完全一样，不在某一格加重或省掉。\n"
-)
-LOOK_BOARD_CLOSING = (
-    "统一要求：四个视图和三格特写是同一个人、同一套服装、同一配色与磨损状态，人物完整位于各自格内安全区，"
-    "高清写实影棚摄影质感；严禁任何文字、标签、编号、字幕、水印、Logo；不出现其他人物、道具陈列和剧情场景，不用人台或假人。"
-)
+# 出图、核对和改正的措辞在 app/data/prompt/character_looks.json。
+_WORDING = "character_looks"
 
+
+def _say(key: str) -> str:
+    return prompt_data.text(_WORDING, key)
+
+
+LOOK_BOARD_INSTRUCTION = _say("board_instruction_head") + _say("board_closeups_plain") + _say("board_instruction_tail")
+# 有妆效时右边第三格改拍妆效所在的部位：手上的伤只在全身格里，小到看不清，也核对不出来。
+LOOK_BOARD_INSTRUCTION_MAKEUP = _say("board_instruction_head") + _say("board_closeups_makeup") + _say("board_instruction_tail")
+# 模型爱给伤口加戏：多画几道划痕、血色画得新鲜。有妆效时把字面要求说死。
+LOOK_MAKEUP_RULE = _say("makeup_rule")
+# 「右手」是人物自己的右手；模型常按画面左右画反，核对也是按人物自己的左右判的。
+LOOK_SIDE_RULE = _say("side_rule")
+LOOK_BOARD_CLOSING = _say("board_closing")
 _NUMBER = r"[\d一二两三四五六七八九十百]{1,5}"
 _RANGE = re.compile(rf"第\s*({_NUMBER})\s*(?:集)?\s*(?:[-–—~～至到]\s*第?\s*({_NUMBER})\s*)?集\s*(起|开始|之后|以后|至剧终|到剧终|至结局|到结局)?")
 _SCENE_REF = re.compile(
@@ -405,12 +402,7 @@ def crowd_wardrobe(task: Mapping[str, Any], *, cast: Sequence[str] | None = None
 
 
 # 画完再看一眼：模型常把伤口画错数量、画到另一侧，或在某一格漏掉。不合格的照问题重画一次。
-LOOK_CHECK_SYSTEM = (
-    "你是影视剧组的化妆指导，核对一张角色定妆照展示板上的妆效是否和文字一致。"
-    "展示板左边四格全身：正面、左侧面、背面、右前方三分之四侧面；右边三格特写：正脸胸像、腰带、袖口或下摆。"
-    "左右一律指人物自己的左右：正面和正脸特写里，人物的左脸在画面右侧。"
-    "只看妆效，不评价服装、构图和画风。"
-)
+LOOK_CHECK_SYSTEM = _say("check_system")
 
 
 def wears_makeup(wardrobe: str) -> bool:
@@ -418,16 +410,14 @@ def wears_makeup(wardrobe: str) -> bool:
     return "妆效：" in wardrobe
 
 
+def names_a_side(wardrobe: str) -> bool:
+    """文字写了左或右：出图时说清是人物自己的左右。"""
+    return any(word in wardrobe for word in prompt_data.words(_WORDING, "side_words"))
+
+
 def look_check_prompt(wardrobe: str) -> str:
     """让看图模型核对妆效的提示词；答案用 ``parse_look_check`` 读。"""
-    return (
-        f"这身妆造的文字：{wardrobe.strip()}\n"
-        "逐格核对：1. 伤口或妆效的数量、长度、走向和位置是否和文字一致；"
-        "2. 是否只在写明的一侧，另一侧和其他部位干净；"
-        "3. 每个看得到那一侧的格子是否都画了，各格形状、血量和颜色是否一致；"
-        "4. 文字写了半干、结痂或旧伤时，血色是否是暗红到褐色。\n"
-        '只输出一行 JSON：{"passed": true 或 false, "problems": ["哪一格、哪里不对，一句话一条"]}。都对时 problems 为空。'
-    )
+    return f"{_say('check_wardrobe_label')}{wardrobe.strip()}\n{_say('check_steps')}{_say('check_output')}"
 
 
 def parse_look_check(answer: str | None) -> dict[str, Any] | None:
@@ -441,32 +431,41 @@ def parse_look_check(answer: str | None) -> dict[str, Any] | None:
         return None
     if not isinstance(data, dict) or not isinstance(data.get("passed"), bool):
         return None
-    problems = [str(item).strip()[:120] for item in data.get("problems") or [] if str(item).strip()][:6]
+    # 每条自己带的句末标点去掉，拼起来才不会出现「。；」。
+    problems = [str(item).strip().rstrip("。；;.，, ")[:120] for item in data.get("problems") or []]
+    problems = [item for item in problems if item][:6]
     passed = data["passed"] and not problems
-    return {"passed": passed, "problems": [] if passed else problems or ["妆效和文字对不上"]}
+    return {"passed": passed, "problems": [] if passed else problems or [_say("check_unclear_problem")]}
 
 
-def look_fix_prompt(problems: list[str]) -> str:
-    """重画时补在提示词后面的改正要求。"""
-    return "上一张的妆效有这些问题，这次务必改正：" + "；".join(problems)
+def look_fix_prompt(problems: list[str], wardrobe: str = "") -> str:
+    """重画时补在提示词后面的改正要求；``wardrobe`` 写了左右时，再提醒一次左右的算法。"""
+    fix = _say("fix_lead") + "；".join(problems)
+    return f"{fix}\n{_say('fix_side_reminder')}" if names_a_side(wardrobe) else fix
 
 
 def look_prompt(name: str, wardrobe: str, project_style: str = "", extra_prompt: str = "", *, earlier_designs: int = 0) -> str:
     """一张定妆图的提示词；描述已是只留穿戴的文字。``earlier_designs`` 是身份参考之后另附的旧服装图、旧妆效图张数。"""
-    prompt = f"{LOOK_BOARD_INSTRUCTION}\n造型名称：{name.strip()}\n这身妆造：{wardrobe.strip() or name.strip()}\n"
-    if wears_makeup(wardrobe):
+    makeup = wears_makeup(wardrobe)
+    prompt = (
+        f"{LOOK_BOARD_INSTRUCTION_MAKEUP if makeup else LOOK_BOARD_INSTRUCTION}\n"
+        f"{_say('look_name_label')}{name.strip()}\n{_say('wardrobe_label')}{wardrobe.strip() or name.strip()}\n"
+    )
+    if makeup:
         prompt += LOOK_MAKEUP_RULE
+    if names_a_side(wardrobe):
+        prompt += LOOK_SIDE_RULE
     if earlier_designs:
-        prompt += "第1张参考图是这个人；后面的参考图是已确认的服装或妆效设计，只取款式、颜色、材质和伤口的位置形态，不取其中的人台和人脸。\n"
+        prompt += _say("earlier_designs_note")
     if project_style:
-        prompt += f"项目视觉基准：{project_style}\n"
+        prompt += f"{_say('project_style_label')}{project_style}\n"
     if extra_prompt.strip():
-        prompt += f"本次补充要求：{extra_prompt.strip()}\n"
+        prompt += f"{_say('extra_prompt_label')}{extra_prompt.strip()}\n"
     return prompt + LOOK_BOARD_CLOSING
 
 
 __all__ = [
-    "LOOK_BOARD_CLOSING", "LOOK_BOARD_INSTRUCTION", "LOOK_BOARD_SIZE", "LOOK_CHECK_SYSTEM", "LOOK_MAKEUP_RULE", "crowd_wardrobe", "episode_spans",
-    "look_check_prompt", "look_fix_prompt", "look_prompt", "parse_look_check", "plan_looks", "timing_is_readable", "undated",
-    "untimed_makeup", "wardrobe_text", "wears_makeup",
+    "LOOK_BOARD_CLOSING", "LOOK_BOARD_INSTRUCTION", "LOOK_BOARD_INSTRUCTION_MAKEUP", "LOOK_BOARD_SIZE", "LOOK_CHECK_SYSTEM", "LOOK_MAKEUP_RULE",
+    "LOOK_SIDE_RULE", "crowd_wardrobe", "episode_spans", "look_check_prompt", "look_fix_prompt", "look_prompt", "names_a_side",
+    "parse_look_check", "plan_looks", "timing_is_readable", "undated", "untimed_makeup", "wardrobe_text", "wears_makeup",
 ]

@@ -23,7 +23,7 @@ from app.core.action_grammar import concrete_ending, has_structure
 from app.core.face_card import parse_face_card
 from app.core.scene_turnaround import SCENE_VIEW_LABELS, SCENE_VIEW_PURPOSES
 from app.core.shot_motion_contract import CompiledShotPrompt, ShotMotionContract
-from app.core.storyboard_scene_context import EMPTY_ACTOR, costume_owner, is_uncast
+from app.core.storyboard_scene_context import EMPTY_ACTOR, costume_owner, is_uncast, look_makeup_note
 
 MERGED_BEATS = "；随后"
 _NOBODY = {EMPTY_ACTOR, "无", "无人", "无人物", "空镜", "—", "-"}
@@ -136,14 +136,19 @@ def _costume_notes(people: Sequence[str], references: Sequence[Mapping[str, Any]
     pictured = {str(item.get("name")): number for number, item in enumerate(references, 1) if item.get("kind") == "actor"}
     looks = {str(item.get("name")): str(item.get("variant")) for item in references if item.get("kind") == "actor" and item.get("variant")}
     added = {str(item.get("name")): _clip(item.get("makeup"), 80) for item in references if item.get("kind") == "actor" and item.get("makeup")}
+    # 定妆图上已经画了的妆效：照样写出来，图上画反了左右也按文字。
+    drawn = {
+        str(item.get("name")): look_makeup_note(_clip(item.get("look_makeup"), 120), panel=True)
+        for item in references if item.get("kind") == "actor" and item.get("look_makeup")
+    }
     notes: dict[str, str] = {}
     for person in people:
         if person in added and person in pictured:
             worn = f"穿图{pictured[person]} 的「{looks[person]}」" if person in looks else f"服装以图{pictured[person]} 定妆照为准"
-            notes[person] = f"「{person}」{worn}，图上没有的妆效按文字加上：{added[person]}"
+            notes[person] = f"「{person}」{worn}{drawn.get(person, '')}，图上没有的妆效按文字加上：{added[person]}"
             continue
         if person in looks and person in pictured:
-            notes[person] = f"「{person}」穿图{pictured[person]} 的「{looks[person]}」"
+            notes[person] = f"「{person}」穿图{pictured[person]} 的「{looks[person]}」{drawn.get(person, '')}"
             continue
         worn = next((
             (number, item) for number, item in enumerate(references, 1) if item.get("kind") == "costume"

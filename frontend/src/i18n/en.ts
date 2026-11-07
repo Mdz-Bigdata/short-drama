@@ -2462,4 +2462,13 @@ export const en: Record<string, string> = {
   '这套妆造还没有描述。': 'This look has no description yet.',
   '设定集': 'Actor sheet',
   '妆造补充': 'More on looks',
+  '妆效核对没过 {0} 处，重新生成时会照这些问题改': 'Makeup check found {0} problems; regenerating fixes them',
+  '放大查看“{0}”的{1}': 'Zoom into {1} of “{0}”',
+  '“{0}”的单张': 'Single views of “{0}”',
+  '正面全身': 'Front full body',
+  '三分之四侧面': 'Three-quarter view',
+  '正脸胸像': 'Face and chest',
+  '妆效部位': 'Makeup close-up',
+  '腰带与配饰': 'Belt and accessories',
+  '袖口或下摆': 'Cuff or hem',
 };

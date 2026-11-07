@@ -40,7 +40,52 @@ function episodesText(item: ElementItem): string {
     : `${when}（第 ${variant.starts[0]} 集从第 ${variant.starts[1]} 场起）`;
 }
 
-/** One look in the main viewer's place: the picture on the white card, its description behind 查看描述. */
+// 定妆图展示板切出来的单张(后端 core/look_board)：四格全身，再三格特写；特写叫什么看出图时的版式。
+const LOOK_BODY_VIEWS: ReadonlyArray<readonly [slot: string, label: string]> = [
+  ['look_front', '正面全身'],
+  ['look_left', '左侧面'],
+  ['look_back', '背面'],
+  ['look_three_quarter', '三分之四侧面'],
+];
+const LOOK_CLOSEUP_SLOTS = ['look_closeup_1', 'look_closeup_2', 'look_closeup_3'] as const;
+const LOOK_CLOSEUP_LABELS: Record<string, readonly string[]> = {
+  makeup: ['正脸胸像', '妆效部位', '腰带与配饰'],
+  plain: ['正脸胸像', '腰带与配饰', '袖口或下摆'],
+};
+const LOOK_BOARD = 'front';
+
+/** 这套定妆图能看的每一张：整板在前，切出来的单张跟在后面。 */
+function lookPictures(look: ElementItem): Array<{ slot: string; label: string; url: string }> {
+  const urls = new Map(look.files.flatMap(file => (file.media_kind === 'image' && file.url ? [[file.slot, apiUrl(file.url)] as const] : [])));
+  const poster = findPoster(look)?.url;
+  const board = urls.get(LOOK_BOARD) || (poster ? apiUrl(poster) : '');
+  const layout = String(look.metadata?.look_layout || 'plain');
+  const closeups = LOOK_CLOSEUP_LABELS[layout] || LOOK_CLOSEUP_LABELS.plain;
+  const named: Array<readonly [string, string]> = [
+    ...LOOK_BODY_VIEWS,
+    ...LOOK_CLOSEUP_SLOTS.map((slot, index) => [slot, closeups[index]] as const),
+  ];
+  return [
+    ...(board ? [{ slot: LOOK_BOARD, label: '整板', url: board }] : []),
+    ...named.flatMap(([slot, label]) => (urls.get(slot) ? [{ slot, label, url: urls.get(slot) as string }] : [])),
+  ];
+}
+
+/** 妆造签上的头像：切出来的正脸胸像，没有就用整板。 */
+function lookAvatar(look: ElementItem): string {
+  const face = look.files.find(file => file.slot === LOOK_CLOSEUP_SLOTS[0] && file.url);
+  const poster = face?.url || findPoster(look)?.url;
+  return poster ? apiUrl(poster) : '';
+}
+
+/** 画好了、但还没切成单张的旧展示板。 */
+function needsSplitting(look: ElementItem): boolean {
+  return Boolean(look.files.some(file => file.slot === LOOK_BOARD && file.media_kind === 'image'))
+    && !look.files.some(file => file.slot === LOOK_BODY_VIEWS[0][0]);
+}
+
+/** One look in the main viewer's place: the picture on the white card, the board's single views beside it,
+ *  its description behind 查看描述. Every picture opens in the zoom viewer. */
 function PerformanceLookStage({
   look,
   busy,
@@ -54,12 +99,16 @@ function PerformanceLookStage({
   onView: (asset: AssetImageViewerAsset) => void;
   onDescribe: (item: ElementItem) => void;
 }) {
-  const poster = findPoster(look);
-  const imageUrl = poster?.url ? apiUrl(poster.url) : '';
+  const pictures = lookPictures(look);
+  const [picked, setPicked] = useState<{ look: string; slot: string } | null>(null);
+  // 默认看正面全身(切开了的话)，不然看整板；换了一套就回到默认。
+  const shown = pictures.find(item => picked?.look === look.id && item.slot === picked.slot)
+    || pictures.find(item => item.slot === LOOK_BODY_VIEWS[0][0]) || pictures[0];
   const label = variantOf(look)?.label || look.name;
   const episodes = episodesText(look);
   const problems = lookCheckProblems(look);
   const working = busy === look.id;
+  const drawn = pictures.length > 0;
   return (
     <section className="character-viewer character-look-viewer" aria-labelledby="character-look-title">
       <header className="character-viewer__header">
@@ -70,22 +119,27 @@ function PerformanceLookStage({
         {episodes && <small className="character-look-viewer__episodes">{episodes}</small>}
       </header>
       {Boolean(look.metadata?.needs_redraw) && <p className="character-looks__stale">{t('设定改过，这张图还是旧写法，建议重新生成')}</p>}
-      {problems.length > 0 && <p className="character-looks__stale">{t('妆效核对没过：{0}。建议重新生成，或把妆效写得更具体', [problems.join('；')])}</p>}
-      <div className="character-viewer__identity character-look-viewer__identity">
+      {problems.length > 0 && (
+        <details className="character-look-viewer__problems">
+          <summary>{t('妆效核对没过 {0} 处，重新生成时会照这些问题改', [problems.length])}</summary>
+          <ul>{problems.map((problem, index) => <li key={index}>{problem}</li>)}</ul>
+        </details>
+      )}
+      <div className={`character-viewer__identity character-look-viewer__identity${pictures.length > 1 ? ' has-views' : ''}`}>
         <div
           id="character-look-stage"
           role="tabpanel"
           aria-label={label}
-          className={`character-viewer__stage ${imageUrl ? 'is-ready' : 'is-missing'}`}
+          className={`character-viewer__stage ${drawn ? 'is-ready' : 'is-missing'}`}
         >
-          {imageUrl ? (
+          {shown ? (
             <button
               type="button"
               className="character-viewer__image-trigger"
-              aria-label={t('查看定妆图“{0}”', [look.name])}
-              onClick={() => onView({ kind: 'actor', name: look.name, description: look.description || '', imageUrl })}
+              aria-label={t('放大查看“{0}”的{1}', [look.name, t(shown.label)])}
+              onClick={() => onView({ kind: 'actor', name: `${look.name} · ${t(shown.label)}`, description: look.description || '', imageUrl: shown.url })}
             >
-              <img decoding="async" src={imageUrl} alt={look.name} />
+              <img decoding="async" src={shown.url} alt={`${look.name} ${t(shown.label)}`} />
             </button>
           ) : (
             <div className="character-look-viewer__empty">
@@ -93,22 +147,45 @@ function PerformanceLookStage({
               <span>{t('定妆图待生成')}</span>
             </div>
           )}
-          <div className="character-viewer__badge"><strong>{t('表演妆造')}</strong></div>
+          <div className="character-viewer__badge">
+            <strong>{t('表演妆造')}</strong>
+            {shown && <small>{t(shown.label)}</small>}
+          </div>
           <button
             type="button"
-            className={`character-look-viewer__regenerate${imageUrl ? '' : ' is-text'}`}
+            className={`character-look-viewer__regenerate${drawn ? '' : ' is-text'}`}
             onClick={() => onRegenerate(look)}
             disabled={Boolean(busy)}
             aria-label={t('重新生成“{0}”的定妆图', [look.name])}
-            title={imageUrl ? t('重新生成') : t('生成')}
+            title={drawn ? t('重新生成') : t('生成')}
           >
             <RefreshCcw size={16} className={working ? 'is-spinning' : ''} aria-hidden="true" />
-            {!imageUrl && <span>{working ? t('生成中…') : t('生成')}</span>}
+            {!drawn && <span>{working ? t('生成中…') : t('生成')}</span>}
           </button>
           <button type="button" className="character-look-viewer__describe" aria-haspopup="dialog" onClick={() => onDescribe(look)}>
             <Eye size={15} aria-hidden="true" /> {t('查看描述')}
           </button>
         </div>
+        {pictures.length > 1 && (
+          <div className="character-viewer__tabs" role="tablist" aria-label={t('“{0}”的单张', [label])}>
+            {pictures.map(item => {
+              const selected = item.slot === shown?.slot;
+              return (
+                <button
+                  key={item.slot}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  className={`character-viewer__tab ${selected ? 'is-selected' : ''}`}
+                  onClick={() => setPicked({ look: look.id, slot: item.slot })}
+                >
+                  <span className="character-viewer__tab-image"><img loading="lazy" decoding="async" src={item.url} alt="" /></span>
+                  <span className="character-viewer__tab-copy"><strong>{t(item.label)}</strong></span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
     </section>
   );
@@ -153,6 +230,15 @@ export function CharacterLooks({
       );
       found.push(...response.items.filter(item => isLook(item) && !variantOf(item)?.retired));
       if (!response.items.length || page * 100 >= response.total) break;
+    }
+    // 早先画好的展示板还没切成单张：切一次(不调用模型)，之后每张都能单独放大看。
+    for (const [index, item] of found.entries()) {
+      if (!needsSplitting(item)) continue;
+      try {
+        found[index] = await apiRequest<ElementItem>(`/api/elements/${encodeURIComponent(item.id)}/look-views`, { method: 'POST' });
+      } catch {
+        // 切不开就只看整板。
+      }
     }
     setLooks(found);
     // 旧项目留下的服装图和妆效图：资产库已经没有入口，在这里看得到、删得掉。
@@ -298,7 +384,7 @@ export function CharacterLooks({
             <span>{t('设定集')}</span>
           </button>
           {own.map(item => {
-            const poster = findPoster(item);
+            const avatar = lookAvatar(item);
             const label = variantOf(item)?.label || item.name;
             const active = item.id === selected?.id;
             return (
@@ -313,7 +399,7 @@ export function CharacterLooks({
                 onClick={() => setPicked({ of: characterName, id: item.id })}
               >
                 <span className="character-looks__chip-avatar" aria-hidden="true">
-                  {poster?.url ? <img src={apiUrl(poster.url)} alt="" loading="lazy" /> : <Shirt size={14} />}
+                  {avatar ? <img src={avatar} alt="" loading="lazy" /> : <Shirt size={14} />}
                 </span>
                 <span>{label}</span>
                 {needsAttention(item) && <i className="character-looks__chip-dot" aria-hidden="true" />}

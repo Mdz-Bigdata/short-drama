@@ -3576,6 +3576,7 @@ class DramaService:
         if not applied:
             return
         logger.info("[Stage2] 详细剧本%s：%s 集已落库 (task=%s)", "部分完成" if error else "完成", len(written), task_id)
+        self._refile_assets_from_script(task_id)
         if error:
             return
         task = self.repo.get_task(task_id)
@@ -3594,6 +3595,20 @@ class DramaService:
                 return True
 
             self.repo.mutate_task(task_id, record_log)
+
+    def _refile_assets_from_script(self, task_id: str) -> None:
+        """角色设计已按大纲做过：照写好的剧本再登记一遍拍摄资产和表演妆造(按真实场次定穿戴时间、补上新出现的)，不出图。"""
+        task = self.repo.get_task(task_id)
+        if not task or not (task.get("assets") or {}).get("3_characters"):
+            return
+        readiness = complete_project_assets(task, generate_missing=False)
+
+        def record(current: Dict[str, Any]) -> bool:
+            current.setdefault("assets", {})[READINESS_KEY] = readiness
+            return True
+
+        self.repo.mutate_task(task_id, record)
+        logger.info("[Stage2] 详细剧本落库后已按剧本重新登记拍摄资产与表演妆造 (task=%s)", task_id)
 
     def _resume_script_detail(self, task: Dict[str, Any]) -> WriterDashboardResponse:
         """Write the episodes an interrupted or failed background run left out, again in the background."""

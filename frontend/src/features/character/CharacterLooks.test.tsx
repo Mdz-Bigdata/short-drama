@@ -33,6 +33,19 @@ function mockApi(older: Array<ReturnType<typeof look>> = [], untimed: Array<{ of
       drawn = true;
       return { ok: true, status: 202, json: async () => ({ id: 'job', status: 'completed', total: 1, processed: 1, succeeded: 1, failed: 0 }) } as Response;
     }
+    if (url.includes('/look-views')) {
+      // 切开旧展示板：整板之外多出七张单张。
+      const id = url.split('/api/elements/')[1].split('/')[0];
+      const served = drawn ? items.map(entry => (entry.id === 'b' ? look('b', '沈无咎', '染血残衣', { episodes: [9, 10] }) : entry)) : items;
+      const item = served.find(entry => entry.id === id);
+      const views = ['look_front', 'look_left', 'look_back', 'look_three_quarter', 'look_closeup_1', 'look_closeup_2', 'look_closeup_3'];
+      const split = item && {
+        ...item,
+        metadata: { ...item.metadata, look_layout: 'plain' },
+        files: [...item.files, ...views.map(slot => ({ ...item.files[0], id: `${id}-${slot}`, slot, url: `/media/${id}-${slot}.png` }))],
+      };
+      return { ok: true, json: async () => split } as Response;
+    }
     if (url.includes('/character-looks/untimed')) {
       return { ok: true, json: async () => ({ items: untimed }) } as Response;
     }
@@ -88,6 +101,22 @@ describe('CharacterLooks', () => {
     expect(within(screen.getByRole('tabpanel', { name: '染血残衣' })).getByText('定妆图待生成')).toBeTruthy();
     await userEvent.click(tabs[0]);
     expect(screen.getByText('设定集主视图')).toBeTruthy();
+  });
+
+  it('splits an earlier board once and lets every picture open large', async () => {
+    const calls = mockApi();
+    render(<CharacterLooks taskId="t1" characterName="沈无咎" />);
+
+    await userEvent.click(await screen.findByRole('tab', { name: '麻灰拭剑奴衣' }));
+    expect(calls.filter(call => call.url.includes('/look-views')).map(call => call.url.split('/api/elements/')[1])).toEqual(['a/look-views', 'c/look-views']);
+    const views = screen.getByRole('tablist', { name: '“麻灰拭剑奴衣”的单张' });
+    expect(within(views).getAllByRole('tab').map(tab => tab.textContent)).toEqual(
+      ['整板', '正面全身', '左侧面', '背面', '三分之四侧面', '正脸胸像', '腰带与配饰', '袖口或下摆'],
+    );
+    expect(within(views).getByRole('tab', { name: '正面全身' }).getAttribute('aria-selected')).toBe('true');
+    await userEvent.click(within(views).getByRole('tab', { name: '背面' }));
+    await userEvent.click(screen.getByRole('button', { name: '放大查看“沈无咎·麻灰拭剑奴衣”的背面' }));
+    expect(screen.getByRole('dialog').textContent).toContain('沈无咎·麻灰拭剑奴衣 · 背面');
   });
 
   it('keeps the description behind 查看描述', async () => {
@@ -150,9 +179,11 @@ describe('CharacterLooks', () => {
     await userEvent.click(await screen.findByRole('tab', { name: '麻衣' }));
     expect(screen.queryByText(/妆效核对没过/)).toBeNull();
     await userEvent.click(screen.getByRole('tab', { name: '左颊刀伤' }));
-    const flag = await screen.findByText('妆效核对没过：正脸特写右颊多了一道伤；血色鲜红。建议重新生成，或把妆效写得更具体');
+    const flag = await screen.findByText('妆效核对没过 2 处，重新生成时会照这些问题改');
     items.splice(-2);
     expect(flag).toBeTruthy();
+    expect(screen.getByText('正脸特写右颊多了一道伤')).toBeTruthy();
+    expect(screen.getByText('血色鲜红')).toBeTruthy();
     expect(screen.getAllByText(/妆效核对没过/)).toHaveLength(1);
   });
 
