@@ -103,6 +103,15 @@
       ]
     },
     {
+      "key": "high-tension-shots",
+      "title": "高张力镜头：蓄而不发",
+      "file": "references/high-tension-shots.md",
+      "budget": 3000,
+      "stages": [
+        4
+      ]
+    },
+    {
       "key": "emotion-expression",
       "title": "短剧情绪与面部表情提示词库",
       "file": "references/emotion-expression.md",

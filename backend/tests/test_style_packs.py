@@ -367,6 +367,13 @@ class VideoPromptTests(unittest.TestCase):
         self.assertIn("NOT slow motion for the whole clip", fight)
         self.assertNotIn("打斗铁律", compile_shot_prompt(style_packs.FILM_35MM, _shot(), model="seedance2.5").text)
 
+    def test_a_quiet_shot_does_its_actions_in_order_and_a_fight_keeps_its_own_rule(self):
+        quiet = compile_shot_prompt(style_packs.FILM_35MM, _shot(), model="seedance2.5").text.split("【关键约束】", 1)[1]
+        self.assertIn("动作顺序铁律：画面里的动作按写明的先后一步一步完成", quiet)
+        self.assertIn("大小与远近以画面里的参照物为准", quiet)
+        fight = compile_shot_prompt(style_packs.FILM_35MM, _shot(situations=["fight"]), model="seedance2.5").text
+        self.assertNotIn("动作顺序铁律", fight)
+
     def test_a_fight_shot_picks_up_the_previous_landing_at_the_head_of_its_picture(self):
         text = compile_shot_prompt(
             style_packs.FILM_35MM,

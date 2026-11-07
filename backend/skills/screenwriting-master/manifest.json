@@ -91,6 +91,16 @@
         1,
         2
       ]
+    },
+    {
+      "key": "character-relationship-craft",
+      "title": "主角拷问与人物关系架法",
+      "file": "references/character-relationship-craft.md",
+      "budget": 2500,
+      "stages": [
+        1,
+        2
+      ]
     }
   ]
 }

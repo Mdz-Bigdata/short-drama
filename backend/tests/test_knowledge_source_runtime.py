@@ -35,6 +35,7 @@ class EveryKnowledgeSourceReachesRuntimeTests(unittest.TestCase):
         "performance-details",     # AI短剧表演细节与提示词指南.md · 阶段2/3
         "continuity-design",       # AI短剧连续性设计指南.md · 阶段2/4
         "scene-design",            # 场景设计提示词.md · 阶段4
+        "high-tension-shots",      # 高张力镜头：蓄而不发 · 阶段4 高张力场次
         "highlight-detection",     # 影视剧高光时刻识别方案.md · 阶段8
         "visual-style",            # 画质风格类型总结.md · 阶段5
         "emotion-expression",      # 短剧情绪与面部表情提示词库.md · 阶段4
@@ -44,6 +45,7 @@ class EveryKnowledgeSourceReachesRuntimeTests(unittest.TestCase):
         "episode-hook-ladder",     # 前三集钩子阶梯与付费墙卡点 · 阶段1/2
         "scene-craft-dialogue",    # 场次工艺与对白技法 · 阶段2
         "payoff-arc-craft",        # 爽点谱系与主角强弱两段弧 · 阶段1/2
+        "character-relationship-craft",  # 主角拷问与人物关系架法 · 阶段1/2
         "frame-handoff-action-light-tone",  # 首尾帧衔接：接动作、接光线、接色调 · 阶段4
         "shot-group-and-handoff-checks",    # 镜头组与连镜对表：站位、道具、组合禁忌 · 阶段4
         "cut-connection-ideas",             # 接镜思路与接不上的诊断 · 阶段4

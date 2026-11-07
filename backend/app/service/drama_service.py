@@ -22,7 +22,7 @@ from app import settings
 from app.repository.task_repo import StaleTaskWriteError, TaskRepository
 from app.core.face_card import state_face_fragments
 from app.core.model_gateway import ModelGateway
-from app.core import inline_media, literary, poetry_library, script_detail, usage_ledger, video_failures, video_jobs
+from app.core import inline_media, literary, poetry_library, scene_tension, script_detail, usage_ledger, video_failures, video_jobs
 from app.platform.billing_book import BillingRefused, active_book
 from app.core.providers.pricing import pricing_table
 from app.core.video_admission import assess_video_batch
@@ -1138,6 +1138,8 @@ class _HdDone(Exception):
 
 # 分镜系统提示词里只有打戏才装载的那一段的占位。
 FIGHT_GUIDE_SLOT = "\x00fight-guide\x00"
+# 高张力镜头章节只给对峙、逼问、埋伏这类场次(app/core/scene_tension)，其余场次这里换成空串。
+TENSION_GUIDE_SLOT = "\x00tension-guide\x00"
 
 class DramaService:
     """
@@ -6838,6 +6840,7 @@ class DramaService:
             narrative_structure = load_section("golden-narrative", budget=0)
             hook_ladder = load_section("episode-hook-ladder", budget=0)
             payoff_arc = load_section("payoff-arc-craft", budget=0)
+            character_craft = load_section("character-relationship-craft", budget=0)
             sys_prompt = (
                 self._agent_role_prompt(task, AgentRole.EXECUTIVE_DIRECTOR)
                 + "\n\n"
@@ -6846,6 +6849,7 @@ class DramaService:
                 + f"【黄金叙事结构(单集与整部结构/情绪峰值/钩子公式)如下】：\n{narrative_structure}\n\n"
                 f"【前三集钩子阶梯与付费墙卡点(E1 引爆/E2 升级/E3 反转，E8–E10 虚假胜利→崩塌→黑屏钩子)如下】：\n{hook_ladder}\n\n"
                 f"【爽点底线与主角强弱两段弧(杀伐果断横推/不按套路/弱时智谋苟道、强时杀伐/爽点谱系)如下】：\n{payoff_arc}\n\n"
+                f"【主角拷问与人物关系架法(一句话梗概/拷问主角/关系六性/一条主线)如下】：\n{character_craft}\n\n"
                 f"【全局短剧制作注意事项与关键元素规范如下】：\n{guide_elements}\n\n"
                 f"【短剧题材与爆款题材结构指导如下】：\n{genre_summary}\n"
             )
@@ -7370,6 +7374,8 @@ class DramaService:
             emotion_lib = load_section("emotion-expression", budget=guide_budget("emotion-expression"))
             action_guide = load_section("martial-arts", budget=guide_budget("martial-arts"))
             scene_design = load_section("scene-design", budget=guide_budget("scene-design"))
+            # 高张力镜头(静大于动 / 失衡构图 / 暗多亮少 / 细节藏情)：只附在判为高张力的场次上。
+            tension_guide = load_section("high-tension-shots", budget=guide_budget("high-tension-shots"))
             # 技能前缀按本场戏的类型(打戏/文戏)另装章节，所以提示词按场次类型各编译一份：
             # 头尾两段与场次无关，中间夹的技能前缀才是变量。
             sys_prompt_head = self._agent_role_prompt(task, AgentRole.STORYBOARD_ARTIST) + "\n\n"
@@ -7382,6 +7388,7 @@ class DramaService:
                 f"【导演拍摄分镜完全指南与运镜标准如下】：\n{director_guide}\n\n"
                 f"【情绪与面部表情提示词库(把抽象情绪转为可观察微表情/眼神/肢体)如下】：\n{emotion_lib}\n\n"
                 f"{FIGHT_GUIDE_SLOT}"
+                f"{TENSION_GUIDE_SLOT}"
                 f"【情节与镜头连贯性提示词(六锚点/连续性圣经/承接上一镜)如下】：\n{shot_continuity}\n\n"
                 f"【连续性与180度轴线防跳轴规范如下】：\n{continuity_guide}\n\n"
                 f"【首尾帧衔接：接动作、接光线、接色调】：\n{frame_handoff_guide}\n\n"
@@ -7410,18 +7417,22 @@ class DramaService:
             sys_prompt_by_kind: Dict[str, str] = {}
             fight_guide_section = f"【电影级武打镜头设计指南(力学受力反馈/五镜动作链/防越轴/慢动作卡点)如下】：\n{action_guide}\n\n"
 
-            def _sys_prompt_for(scene_kind: str) -> str:
-                """打戏/文戏各编译一份系统提示词，同类场次复用，不重复读技能包。"""
-                cached = sys_prompt_by_kind.get(scene_kind)
+            tension_section = f"【高张力镜头：蓄而不发(本场判为高张力场次)如下】：\n{tension_guide}\n\n" if tension_guide else ""
+
+            def _sys_prompt_for(scene_kind: str, tense: bool = False) -> str:
+                """打戏/文戏、高张力与否各编译一份系统提示词，同类场次复用，不重复读技能包。"""
+                cache_key = f"{scene_kind}:tense" if tense else scene_kind
+                cached = sys_prompt_by_kind.get(cache_key)
                 if cached is None:
                     # 不随项目变的放最前面：供应商的提示词缓存按前缀匹配，项目信息夹在开头会让
                     # 每个项目都从头算一遍。武打指南只有打戏用得上，文戏一场省下约 5000 字。
                     cached = (
                         sys_prompt_tail.replace(FIGHT_GUIDE_SLOT, fight_guide_section if scene_kind == "fight" else "")
+                        .replace(TENSION_GUIDE_SLOT, tension_section if tense else "")
                         + self.storyboard_skill_prefix(config, scene_kind=scene_kind)
                         + "\n\n" + sys_prompt_head
                     )
-                    sys_prompt_by_kind[scene_kind] = cached
+                    sys_prompt_by_kind[cache_key] = cached
                 return cached
 
             # 剧本大纲(2_breakdown.scenes)是分镜的唯一基准：一集一集推进，每集为每个场景生成一张九宫格。
@@ -7498,13 +7509,15 @@ class DramaService:
                             str(scene.get("content") or ""), genre, scene.get("action_intensity"),
                         )
                         entry["scene_kind"] = scene_kind
+                        tense = scene_tension.looks_tense(str(scene.get("content") or ""))
+                        entry["tense"] = tense
                         logger.info(
                             "[Stage4] 场景 %s 按 %s 场次装载分镜技能章节 (sections=%s)",
                             scene_id, scene_kind,
                             "/".join(self.storyboard_skill_sections(
                                 str(config.get("video_model") or ""), scene_kind=scene_kind)),
                         )
-                        scene_prompts[scene_id] = _sys_prompt_for(scene_kind)
+                        scene_prompts[scene_id] = _sys_prompt_for(scene_kind, tense)
                     self._progress_save(task)
 
                 def _draw_scene(scene_id: str, turns: SceneTurns) -> Dict[str, Any]:

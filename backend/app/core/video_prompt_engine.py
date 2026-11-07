@@ -273,8 +273,11 @@ def compile_shot_prompt(
         if shot.dialogue.strip() else "无台词，人物闭口。"
     )
     end_state = f"落幅：{shot.end_state}"
-    # 打戏镜头多一条打斗铁律：拳拳到肉、飘逸流畅、连贯不断档。
-    rule_ids = ["physics", "form", *(["fight"] if "fight" in situations else []), *(["lip_sync"] if shot.dialogue.strip() else [])]
+    # 打戏镜头多一条打斗铁律：拳拳到肉、飘逸流畅、连贯不断档；文戏镜头换成动作顺序铁律：按写明的先后一步一步做。
+    rule_ids = [
+        "physics", "form", "fight" if "fight" in situations else "action_chain",
+        *(["lip_sync"] if shot.dialogue.strip() else []),
+    ]
     rules = iron_rules(pack, subjects=list(shot.characters), reference_kinds=list(shot.reference_kinds), rule_ids=rule_ids)
     rules.extend(str(item).strip() for item in shot.continuity_constants if str(item).strip())
 

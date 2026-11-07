@@ -200,7 +200,8 @@ CAPABILITIES: Final[tuple[CapabilityRecord, ...]] = (
          ("genre-summary", "production-guidelines", "industrial-production"),
          "从题材库选择主类型/混合元素，记录受众、平台、付费与成本边界。", "validate_director_artifacts", ("genre_audience_strategy",)),
     _cap("golden_narrative", "黄金叙事结构与多集弧", (_C.EXECUTIVE_DIRECTOR, _C.WRITER),
-         ("golden-narrative", "production-guidelines", "cinema-craft-redlines", "episode-hook-ladder", "scene-craft-dialogue", "payoff-arc-craft"),
+         ("golden-narrative", "production-guidelines", "cinema-craft-redlines", "episode-hook-ladder", "scene-craft-dialogue", "payoff-arc-craft",
+          "character-relationship-craft"),
          "强制前3秒钩子、周期冲突/反转、单集情绪点与尾5秒钩子；每集情绪/视觉/场景各有一次顶点(S级三冲击)，强情节必须因果成立；"
          "前三集按引爆/升级/反转分工，集尾悬念与下一集开场咬合，付费墙前三集走虚假胜利→崩塌→黑屏钩子；"
          "爽剧主角弱时智谋苟道、强时杀伐果断横推，相邻两集换爽法、解围前有伏笔。", "validate_narrative_contract", ("series_narrative_arc", "episode_scripts")),
@@ -232,7 +233,7 @@ CAPABILITIES: Final[tuple[CapabilityRecord, ...]] = (
          ("scene-design", "continuity-design"),
          "为场景锁定剧情功能、布局、出入口、站位、关键道具、光向色温、材质与前中后景。", "validate_scene_contract", ("scene_bibles", "visual_bible")),
     _cap("shot_grammar", "景别、构图、机位、焦段与运镜语法", (_C.STORYBOARD_ARTIST,),
-         ("director-shot-guide", "visual-style"),
+         ("director-shot-guide", "visual-style", "high-tension-shots"),
          "每镜说明景别/角度/焦段/构图/运镜路径/速度/起止点/叙事原因，禁止无动机炫技。", "validate_storyboard_contract", ("shot_motion_contracts",)),
     _cap("blocking_axis", "站位、视线与180度轴线", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR),
          ("director-shot-guide", "continuity-design", "shot-group-and-handoff-checks"),
