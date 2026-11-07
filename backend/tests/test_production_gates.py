@@ -71,7 +71,10 @@ class PropContinuityTests(unittest.TestCase):
 
 class PayoffFormulaTests(unittest.TestCase):
     def test_only_payoff_genres_get_it(self):
-        self.assertIn("反派三连嘲", prompts._payoff_block({"genre": "赘婿复仇古装"}))
+        block = prompts._payoff_block({"genre": "赘婿复仇古装"})
+        for rule in ("杀伐果断", "横推无敌", "弱时苟、强时杀", "不按套路"):
+            self.assertIn(rule, block)
+        self.assertIn("杀伐果断", prompts._payoff_block({"genre": "凡人修仙"}))
         self.assertEqual(prompts._payoff_block({"genre": "家庭伦理"}), "")
         self.assertEqual(prompts._payoff_block(None), "")
 

@@ -81,6 +81,16 @@
       "stages": [
         2
       ]
+    },
+    {
+      "key": "payoff-arc-craft",
+      "title": "爽点谱系与主角强弱两段弧",
+      "file": "references/payoff-arc-craft.md",
+      "budget": 4500,
+      "stages": [
+        1,
+        2
+      ]
     }
   ]
 }

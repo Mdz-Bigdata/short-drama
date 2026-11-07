@@ -22,7 +22,7 @@ from contextvars import ContextVar
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from app.core import breakdown_kinds, emotion_points, literary
+from app.core import breakdown_kinds, emotion_points, literary, prompt_data
 from app.core.episode_shape import EpisodeShape
 from app.core.fight_design import plan_rules_for, visual_rules_for
 from app.core.screenwriting.durations import render_episode_target_rule
@@ -465,21 +465,13 @@ def spoken_density_rule(spoken_shot_ratio: float, creation_mode: str = "drama") 
 _SOURCE_TEXT_GUIDE = "逐字摘录本分镜对应的原文片段，尽量与原文一致、宁缺毋造（无把握可留空）。"
 _SOURCE_TEXT_OUTLINE = "填写本分镜覆盖的故事节点原文（从本集大纲的 story_beats 里逐字摘录），便于追溯。"
 
-_PAYOFF_GENRES = re.compile(r"逆袭|复仇|打脸|赘婿|战神|重生|爽|虐渣|退婚|龙王|神医|下山")
-_PAYOFF_FORMULA = (
-    "# 爽点公式（本剧题材适用）\n"
-    "- 开篇双炸点：第一个画面是反常的视觉，第一句对白就带冲突，前 7 秒内触发身份反差、羞辱或危机之一。\n"
-    "- 每集走完「压→怒→爽→悬」四段。\n"
-    "- 打脸之前反派三连嘲：看不起→羞辱→动手或下最后通牒，把愤怒推到顶再反击。\n"
-    "- 主角三不：不解释、不废话、不墨迹，打脸只用 1–2 个动作加一句台词。\n"
-    "- 爽点之后给配角反应三连：路人惊呼、反派脸白、重要配角震惊凝视。\n"
-    "- 集尾双钩子：一个悬念画面，加一句钩子台词。\n"
-    "- 每集埋一条至少跨 3 集才回收的主线伏笔。"
-)
+_PAYOFF_GENRES = prompt_data.pattern("payoff", "genres")
+_PAYOFF_FORMULA = "\n".join(prompt_data.words("payoff", "formula"))
 
 
 def _payoff_block(overview: Mapping[str, Any] | None) -> str:
-    """爽剧的写法只给爽剧：正剧和悬疑套三连嘲会串味，所以按题材词判断，判不出来就不加。"""
+    """爽剧的写法只给爽剧：正剧和悬疑套打脸与杀伐会串味，所以按题材词判断，判不出来就不加。
+    题材词与公式都在 ``app/data/prompt/payoff.json``。"""
     genre = str((overview or {}).get("genre") or "")
     return f"\n\n{_PAYOFF_FORMULA}" if _PAYOFF_GENRES.search(genre) else ""
 

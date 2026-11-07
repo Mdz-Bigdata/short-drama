@@ -200,9 +200,10 @@ CAPABILITIES: Final[tuple[CapabilityRecord, ...]] = (
          ("genre-summary", "production-guidelines", "industrial-production"),
          "从题材库选择主类型/混合元素，记录受众、平台、付费与成本边界。", "validate_director_artifacts", ("genre_audience_strategy",)),
     _cap("golden_narrative", "黄金叙事结构与多集弧", (_C.EXECUTIVE_DIRECTOR, _C.WRITER),
-         ("golden-narrative", "production-guidelines", "cinema-craft-redlines", "episode-hook-ladder", "scene-craft-dialogue"),
+         ("golden-narrative", "production-guidelines", "cinema-craft-redlines", "episode-hook-ladder", "scene-craft-dialogue", "payoff-arc-craft"),
          "强制前3秒钩子、周期冲突/反转、单集情绪点与尾5秒钩子；每集情绪/视觉/场景各有一次顶点(S级三冲击)，强情节必须因果成立；"
-         "前三集按引爆/升级/反转分工，集尾悬念与下一集开场咬合，付费墙前三集走虚假胜利→崩塌→黑屏钩子。", "validate_narrative_contract", ("series_narrative_arc", "episode_scripts")),
+         "前三集按引爆/升级/反转分工，集尾悬念与下一集开场咬合，付费墙前三集走虚假胜利→崩塌→黑屏钩子；"
+         "爽剧主角弱时智谋苟道、强时杀伐果断横推，相邻两集换爽法、解围前有伏笔。", "validate_narrative_contract", ("series_narrative_arc", "episode_scripts")),
     _cap("highlight_detection", "高光识别与传播强度", (_C.EXECUTIVE_DIRECTOR, _C.PR_AGENT),
          ("highlight-detection",),
          "按情节/情绪/叙事/视听/观众行为打1-10分，7分以上进入候选并保留上下文理由。", "validate_highlight_map", ("highlight_map", "highlight_clips")),

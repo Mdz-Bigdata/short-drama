@@ -6837,6 +6837,7 @@ class DramaService:
             genre_summary = load_section("genre-summary", budget=0)
             narrative_structure = load_section("golden-narrative", budget=0)
             hook_ladder = load_section("episode-hook-ladder", budget=0)
+            payoff_arc = load_section("payoff-arc-craft", budget=0)
             sys_prompt = (
                 self._agent_role_prompt(task, AgentRole.EXECUTIVE_DIRECTOR)
                 + "\n\n"
@@ -6844,6 +6845,7 @@ class DramaService:
                 + literary.thesis_card() + "\n\n"
                 + f"【黄金叙事结构(单集与整部结构/情绪峰值/钩子公式)如下】：\n{narrative_structure}\n\n"
                 f"【前三集钩子阶梯与付费墙卡点(E1 引爆/E2 升级/E3 反转，E8–E10 虚假胜利→崩塌→黑屏钩子)如下】：\n{hook_ladder}\n\n"
+                f"【爽点底线与主角强弱两段弧(杀伐果断横推/不按套路/弱时智谋苟道、强时杀伐/爽点谱系)如下】：\n{payoff_arc}\n\n"
                 f"【全局短剧制作注意事项与关键元素规范如下】：\n{guide_elements}\n\n"
                 f"【短剧题材与爆款题材结构指导如下】：\n{genre_summary}\n"
             )
@@ -6917,6 +6919,7 @@ class DramaService:
                 craft_redlines = load_section("cinema-craft-redlines", budget=0)
                 hook_ladder = load_section("episode-hook-ladder", budget=0)
                 scene_craft = load_section("scene-craft-dialogue", budget=0)
+                payoff_arc = load_section("payoff-arc-craft", budget=0)
                 sys_prompt = (
                     self._agent_role_prompt(task, AgentRole.WRITER)
                     + "\n\n"
@@ -6925,6 +6928,7 @@ class DramaService:
                     f"【黄金叙事结构(单集黄金结构/每集三件事/短剧公式/一集模板)如下】：\n{narrative_structure}\n\n"
                     f"【前三集钩子阶梯(E1 引爆/E2 升级/E3 反转)、集尾悬念五型、付费墙前三步如下】：\n{hook_ladder}\n\n"
                     f"【场次工艺与对白技法(每集一件新东西/爽点三段落台词/对手转向物证/一场戏六行/台词四型与含蓄四法)如下】：\n{scene_craft}\n\n"
+                    f"【爽点底线与主角强弱两段弧(杀伐果断横推/不按套路/弱时智谋苟道、强时杀伐/爽点谱系)如下】：\n{payoff_arc}\n\n"
                     f"【短剧表演细节与具象物理动作指导如下】：\n{performance_guide}\n\n"
                     f"【跨镜头与场景动作连续性设计指导如下】：\n{continuity_guide}\n\n"
                     f"【短剧注意事项与合规/剪辑节奏规范如下】：\n{guide_elements}\n\n"

@@ -47,8 +47,8 @@ LEGACY_ENGINE = "legacy"
 # pipeline. The pipeline makes several calls per episode, so each section is
 # budgeted instead of injected in full like the single-shot legacy prompt.
 WRITER_KNOWLEDGE_SECTIONS: tuple[str, ...] = (
-    "cinema-craft-redlines", "golden-narrative", "episode-hook-ladder", "scene-craft-dialogue", "dialogue-pacing",
-    "performance-details",
+    "cinema-craft-redlines", "golden-narrative", "episode-hook-ladder", "scene-craft-dialogue", "payoff-arc-craft",
+    "dialogue-pacing", "performance-details",
 )
 
 WRITER_METHODOLOGY = (
@@ -108,6 +108,7 @@ def writer_system_prompt(
         "golden-narrative": "黄金叙事结构（单集模型 / 每集三件事 / 钩子公式）",
         "episode-hook-ladder": "前三集钩子阶梯（E1 引爆 / E2 升级 / E3 反转）、集尾悬念五型与付费墙前三步",
         "scene-craft-dialogue": "场次工艺与对白技法（每集一件新东西 / 爽点三段落台词 / 对手物证 / 一场戏六行 / 台词四型与含蓄四法）",
+        "payoff-arc-craft": "爽点底线与主角强弱两段弧（杀伐果断横推 / 不按套路 / 弱时智谋苟道、强时杀伐 / 爽点谱系）",
         "dialogue-pacing": "台词语速情绪与停顿重音标注规范",
         "performance-details": "表演细节与具象物理动作指导",
     }

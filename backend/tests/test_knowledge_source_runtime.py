@@ -43,6 +43,7 @@ class EveryKnowledgeSourceReachesRuntimeTests(unittest.TestCase):
         "cinema-craft-redlines",   # 星云AI编剧大师(山音二创)红线与S级三冲击 · 阶段2
         "episode-hook-ladder",     # 前三集钩子阶梯与付费墙卡点 · 阶段1/2
         "scene-craft-dialogue",    # 场次工艺与对白技法 · 阶段2
+        "payoff-arc-craft",        # 爽点谱系与主角强弱两段弧 · 阶段1/2
         "frame-handoff-action-light-tone",  # 首尾帧衔接：接动作、接光线、接色调 · 阶段4
         "shot-group-and-handoff-checks",    # 镜头组与连镜对表：站位、道具、组合禁忌 · 阶段4
         "cut-connection-ideas",             # 接镜思路与接不上的诊断 · 阶段4
