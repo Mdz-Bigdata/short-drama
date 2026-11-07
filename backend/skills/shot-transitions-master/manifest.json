@@ -37,6 +37,15 @@
       "stages": [
         4
       ]
+    },
+    {
+      "key": "segment-relay-and-fight-keyframes",
+      "title": "分段接力与打斗关键帧",
+      "file": "references/segment-relay-and-fight-keyframes.md",
+      "budget": 3000,
+      "stages": [
+        4
+      ]
     }
   ]
 }

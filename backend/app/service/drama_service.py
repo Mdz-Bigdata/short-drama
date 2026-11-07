@@ -7360,6 +7360,8 @@ class DramaService:
             shot_group_guide = load_section("shot-group-and-handoff-checks", budget=guide_budget("shot-group-and-handoff-checks"))
             # 接镜思路：为什么切、六类关系、切出 / 接入状态分开写(同样不用硬切)。
             cut_ideas_guide = load_section("cut-connection-ideas", budget=guide_budget("cut-connection-ideas"))
+            # 分段接力：同一镜头切段时交接帧选在停得住的那一帧、三种焊接方式；打斗绕开接触点与贴身交错。
+            relay_guide = load_section("segment-relay-and-fight-keyframes", budget=guide_budget("segment-relay-and-fight-keyframes"))
             shot_continuity = load_section("plot-shot-coherence", budget=guide_budget("plot-shot-coherence"))
             emotion_lib = load_section("emotion-expression", budget=guide_budget("emotion-expression"))
             action_guide = load_section("martial-arts", budget=guide_budget("martial-arts"))
@@ -7381,6 +7383,7 @@ class DramaService:
                 f"【首尾帧衔接：接动作、接光线、接色调】：\n{frame_handoff_guide}\n\n"
                 f"【镜头组与连镜对表：站位、道具、组合禁忌】：\n{shot_group_guide}\n\n"
                 f"【接镜思路与接不上的诊断】：\n{cut_ideas_guide}\n\n"
+                f"【分段接力与打斗关键帧】：\n{relay_guide}\n\n"
                 "【本阶段输出覆盖规则】：上述补充提示词中的拆镜、时长、八要素、入镜角色与场景标识规则全部生效；"
                 "为适配本阶段的九宫格产线，本次用尽量少的格子讲清整场戏，最多9镜，不凑数。"
                 "每一格是阶段五的一段连续视频（时长范围见本场的格数上限）：同一地点、同一组人物里连续发生的动作写进同一格，"

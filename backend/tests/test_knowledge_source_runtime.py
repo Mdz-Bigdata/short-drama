@@ -46,6 +46,7 @@ class EveryKnowledgeSourceReachesRuntimeTests(unittest.TestCase):
         "frame-handoff-action-light-tone",  # 首尾帧衔接：接动作、接光线、接色调 · 阶段4
         "shot-group-and-handoff-checks",    # 镜头组与连镜对表：站位、道具、组合禁忌 · 阶段4
         "cut-connection-ideas",             # 接镜思路与接不上的诊断 · 阶段4
+        "segment-relay-and-fight-keyframes",  # 分段接力与打斗关键帧 · 阶段4
     )
 
     def test_each_guide_is_read_into_a_stage_prompt(self):
