@@ -13,7 +13,7 @@ from typing import Any
 from PIL import Image, UnidentifiedImageError
 
 from app import settings
-from app.core import character_variants
+from app.core import character_variants, real_person
 from app.core.prop_turnaround import PROP_DISPLAY_ONLY_SLOTS
 from app.core.element_scope import element_in_task
 from app.core.media_compositor import MEDIA_DIR
@@ -188,6 +188,13 @@ async def _load_project_elements(
             item["image_url"] = _image_data_uri(reference, owner_id, item["id"], roots)
             if item["image_url"]:
                 break
+        if item["kind"] == "actor" and real_person.usable(item.get("metadata")):
+            # 真人演员：正脸照另作一张参考随角色走(换上定妆图也带着它)，相貌按照片。
+            face = next((entry for entry in files_by_id[item["id"]] if getattr(entry, "slot", "") == real_person.FACE_SLOT), None)
+            face_url = _image_data_uri(face, owner_id, item["id"], roots) if face is not None else ""
+            if face_url:
+                item["real_person"] = True
+                item["face_url"] = face_url
         if item["kind"] == "scene":
             # 场地四视角里除主全景(即主参考图)之外的三张，按用途另行绑定。
             views: dict[str, str] = {}

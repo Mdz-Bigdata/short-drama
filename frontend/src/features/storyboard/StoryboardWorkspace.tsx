@@ -41,7 +41,12 @@ export interface StoryboardShot {
   scene_id?: string;
   sceneId?: string;
   cut_in?: StoryboardCutIn | null;
+  /** 真人演员像不像本人：看图模型对本人照片和这一格打的分(10 分制)，不像会重画一次。 */
+  likeness?: Array<{ name?: string; score?: number; same_person?: boolean; differences?: string[]; redrawn?: boolean }>;
 }
+
+// 与后端 data/prompt/real_person.json 的 likeness_min_score 一致。
+const LIKENESS_MIN_SCORE = 7;
 
 // 后端 assets["4_scene_boards"] 中单个场景九宫格的生成状态（覆盖剧本明细全部场景）。
 export interface SceneBoardStatus {
@@ -616,6 +621,22 @@ export function StoryboardWorkspace({
                         {shot.cut_in.label}{shot.cut_in.sound_join ? ` · ${shot.cut_in.sound_join === 'j_cut' ? 'J' : 'L'}` : ''}
                       </span>
                     )}
+                    {(shot.likeness || []).map(check => {
+                      const close = Boolean(check.same_person) && Number(check.score) >= LIKENESS_MIN_SCORE;
+                      return (
+                        <span
+                          key={check.name}
+                          className={`storyboard-frame__likeness ${close ? '' : 'is-off'}`}
+                          title={[
+                            t('「{0}」和本人照片的相似度 {1}/10', [check.name || '', String(check.score ?? '—')]),
+                            check.redrawn ? t('不像，已重画一次') : '',
+                            ...(check.differences || []),
+                          ].filter(Boolean).join('\n')}
+                        >
+                          {close ? t('像本人 {0}', [String(check.score)]) : t('不像本人 {0}', [String(check.score)])}
+                        </span>
+                      );
+                    })}
                     <span className="storyboard-frame__number">{number}</span>
                     <span className="storyboard-frame__meta">{shot.size || '景别待定'} · {shot.motion || '运镜待定'}</span>
                   </span>

@@ -7,6 +7,8 @@ import { actorRegeneration, findPoster, findViewImage, isLook, lookCheckProblems
 import { ElementFolderBar, ElementFolderSelect } from './ElementFolderBar';
 import { moveElementsToFolder, UNFILED, useElementFolders } from './elementFolders';
 import { VoicePanel } from './VoicePanel';
+import { RealPersonField } from './RealPersonField';
+import { realPersonOf, type RealPersonPayload } from './realPerson';
 import './ElementLibraryPage.css';
 import { t } from '../../i18n';
 
@@ -674,6 +676,27 @@ export function ElementLibraryPage({
     }
   };
 
+  const setRealPerson = async (item: ElementItem, payload: RealPersonPayload | null) => {
+    const targetKind = item.kind;
+    const busyKey = `real:${item.id}`;
+    if (!startMutation(busyKey)) return;
+    setError('');
+    try {
+      const updated = await apiRequest<ElementItem>(`/api/elements/${item.id}/real-person`, payload
+        ? { method: 'PUT', body: JSON.stringify(payload) }
+        : { method: 'DELETE' });
+      if (targetKind !== kindRef.current) return;
+      setItems(current => current.map(entry => entry.id === item.id ? updated : entry));
+      setNotice(payload
+        ? t('已把“{0}”设为真人演员，分镜和视频按本人照片生成。', [item.name])
+        : t('已取消“{0}”的真人演员设置。', [item.name]));
+    } catch (err) {
+      if (targetKind === kindRef.current) setError(err instanceof Error ? err.message : t('真人演员设置保存失败，请稍后重试。'));
+    } finally {
+      finishMutation(busyKey);
+    }
+  };
+
   const deleteElement = async (item: ElementItem) => {
     if (creatingRef.current || busyRef.current) return;
     const label = kindMeta[item.kind].label;
@@ -1018,7 +1041,9 @@ export function ElementLibraryPage({
                     <p>{descriptionText}</p>
                   </>
                 )}
-                {kind === 'actor' && !look && <small>身份视图 {item.files.length}/5</small>}
+                {kind === 'actor' && !look && (realPersonOf(item)
+                  ? <small>{t('真人照片 {0} 张', [item.files.length])}</small>
+                  : <small>身份视图 {item.files.length}/5</small>)}
                 {Boolean(item.metadata?.needs_redraw) && <small className="element-regeneration-error">{t('设定改过，这张图还是旧写法，建议重新生成')}</small>}
                 {lookCheckProblems(item).length > 0 && <small className="element-regeneration-error">{t('妆效核对没过：{0}。建议重新生成，或把妆效写得更具体', [lookCheckProblems(item).join('；')])}</small>}
                 {kind === 'actor' && actorRegeneration(item).running && (
@@ -1039,6 +1064,14 @@ export function ElementLibraryPage({
                     </small>
                   );
                 })()}
+                {kind === 'actor' && !look && !variantOf(item) && (
+                  <RealPersonField
+                    key={`${item.id}:${String(item.version)}`}
+                    item={item}
+                    locked={creating || Boolean(busy)}
+                    onSave={payload => { void setRealPerson(item, payload); }}
+                  />
+                )}
                 {kind === 'actor' && variantFor === item.id && (
                   <form
                     className="element-variant-form"
@@ -1082,7 +1115,8 @@ export function ElementLibraryPage({
                   <button
                     type="button"
                     onClick={() => void regenerate(item)}
-                    disabled={creating || Boolean(busy) || (item.kind === 'actor' && actorRegeneration(item).running)}
+                    disabled={creating || Boolean(busy) || (item.kind === 'actor' && (actorRegeneration(item).running || Boolean(realPersonOf(item))))}
+                    title={item.kind === 'actor' && realPersonOf(item) ? t('真人演员以本人照片为准，不重新生成') : undefined}
                     aria-label={item.kind === 'actor' ? `重新生成“${item.name}”的数字演员设定集` : undefined}
                   >
                     <RefreshCw size={14} className={item.kind === 'actor' && actorRegeneration(item).running ? 'spin' : undefined} />

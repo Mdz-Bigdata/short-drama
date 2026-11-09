@@ -148,6 +148,16 @@ class RegenerateElementRequest(BaseModel):
     prompt: str = Field(default="", max_length=4000)
 
 
+class RealPersonRequest(BaseModel):
+    """真人演员：照片上是谁、授权用途与期限、火山方舟真人人像库素材；``confirmed`` 是确认持有本人肖像授权。"""
+
+    person: str = Field(min_length=1, max_length=60)
+    scope: str = Field(default="", max_length=200)
+    expires: str = Field(default="", max_length=10)
+    ark_assets: list[str] = Field(default_factory=list, max_length=9)
+    confirmed: bool = False
+
+
 class BulkRegenerateElementsRequest(BaseModel):
     kind: ElementKind
     task_id: str | None = Field(default=None, max_length=160)

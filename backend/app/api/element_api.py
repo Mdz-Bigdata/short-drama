@@ -35,6 +35,7 @@ from app.core.prop_turnaround import (
     prop_instruction,
     split_prop_sheet,
 )
+from app.core import real_person
 from app.core.look_board import LAYOUT_MAKEUP, LAYOUT_PLAIN, LOOK_VIEW_SLOTS, split_look_board
 from app.core.scene_turnaround import (
     SCENE_TURNAROUND_CLOSING,
@@ -65,6 +66,7 @@ from app.schema.production import IDENTITY_VIEW_ORDER
 from app.repository.task_repo import TaskRepository, TaskStoreUnavailableError
 from app.schema.platform import (
     BulkRegenerateElementsRequest,
+    RealPersonRequest,
     ElementCreateRequest,
     PropSizeRequest,
     ElementFolderCreateRequest,
@@ -1589,7 +1591,8 @@ async def _sync_project_actor(
         if not element_in_task(metadata, task_id) or wanted not in element_name_keys(item.name, metadata):
             continue
         # 资产库那边发起的重新生成会自己把结果归档(它正标着 running)，这里不重复写。
-        if _actor_regenerating(metadata):
+        # 真人演员的照片就是身份，项目里画出来的视图不能换掉它。
+        if _actor_regenerating(metadata) or real_person.is_real_person(metadata):
             continue
         try:
             patch = await _file_actor_views(
@@ -1682,6 +1685,43 @@ async def _regenerate_library_actor(element_id: str, owner_id: str, store: Platf
         logger.warning("资产库数字演员重新生成结果写回失败: element=%s", element_id)
 
 
+@router.put("/{element_id}/real-person")
+async def set_real_person(
+    element_id: str,
+    request: RealPersonRequest,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """设为真人演员：本人照片就是身份，按照片出分镜和视频。必须确认持有肖像授权。"""
+    element = await store.get_element(element_id, user["user_id"])
+    if not element or str(element.kind) != "actor" or _is_look(element):
+        raise HTTPException(status_code=404, detail="数字演员不存在")
+    try:
+        record = real_person.clean_record(
+            person=request.person, scope=request.scope, expires=request.expires, ark_assets=request.ark_assets,
+            confirmed=request.confirmed, confirmed_by=user["user_id"],
+        )
+        return _element(await store.set_real_person(element.id, user["user_id"], record))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.delete("/{element_id}/real-person")
+async def clear_real_person(
+    element_id: str,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """取消真人演员：照片留着，之后可以照常重新生成设定集。"""
+    element = await store.get_element(element_id, user["user_id"])
+    if not element or str(element.kind) != "actor":
+        raise HTTPException(status_code=404, detail="数字演员不存在")
+    try:
+        return _element(await store.set_real_person(element.id, user["user_id"], None))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.post("/{element_id}/look-views")
 async def split_look_views(
     element_id: str,
@@ -1722,6 +1762,8 @@ async def regenerate_element(
         raise HTTPException(status_code=422, detail="服装和化妆已并入表演妆造，请在角色设计的定妆图里重新生成")
     if _is_look(element):
         return await _generate_look_image(item=element, owner_id=user["user_id"], store=store, extra_prompt=request.prompt)
+    if str(element.kind) == "actor" and real_person.is_real_person(_element_metadata(element)):
+        raise HTTPException(status_code=409, detail="真人演员以本人照片为准，不重新生成；要换照片请直接上传")
     if str(element.kind) in _NON_ACTOR_KINDS:
         return await _generate_non_actor_reference(
             item=element,

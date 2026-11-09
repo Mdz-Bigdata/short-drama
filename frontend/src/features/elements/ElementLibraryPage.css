@@ -1234,6 +1234,21 @@
 .element-variant-form > div { grid-column: 1 / -1; display: flex; gap: 6px; }
 .element-variant-form button { min-height: 26px; padding: 0 10px; color: inherit; border: 1px solid var(--border-color, var(--line)); border-radius: 5px; background: transparent; font: inherit; cursor: pointer; }
 
+/* 真人演员：本人照片做身份，授权与火山方舟真人素材 */
+.asset-real-person { margin-top: 8px; padding: 8px 10px; display: grid; gap: 6px; font-size: 0.72rem; line-height: 1.6; color: var(--text-muted); border: 1px dashed var(--border-color, var(--line)); border-radius: 6px; }
+.asset-real-person.is-on { border-style: solid; border-color: rgba(var(--success-rgb), 0.45); background: rgba(var(--success-rgb), 0.05); }
+.asset-real-person header { display: flex; align-items: center; gap: 5px; color: var(--success); }
+.asset-real-person p { margin: 0; }
+.asset-real-person .is-warning { color: var(--warning); }
+.asset-real-person label { display: grid; gap: 3px; }
+.asset-real-person label > span { color: var(--text-main); }
+.asset-real-person input:not([type="checkbox"]), .asset-real-person textarea { width: 100%; box-sizing: border-box; padding: 5px 7px; color: inherit; border: 1px solid var(--border-color, var(--line)); border-radius: 5px; background: rgba(var(--shadow-rgb), 0.165); font: inherit; }
+.asset-real-person textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.asset-real-person .asset-real-person__consent { display: flex; align-items: flex-start; gap: 6px; color: var(--text-main); }
+.asset-real-person__actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.asset-real-person button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 26px; padding: 0 10px; color: inherit; border: 1px solid var(--border-color, var(--line)); border-radius: 5px; background: transparent; font: inherit; cursor: pointer; }
+.asset-real-person button:disabled { cursor: not-allowed; opacity: 0.5; }
+
 /* 拍摄道具的视图(几张看物件)、场地四视角，点一张换到主预览。 */
 /* 每格按视图自身比例出缩略图(场地 16:9 是横条、道具多为竖图)，整张可见、不裁成细长条。 */
 .asset-prop-views {

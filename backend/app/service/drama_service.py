@@ -22,7 +22,7 @@ from app import settings
 from app.repository.task_repo import StaleTaskWriteError, TaskRepository
 from app.core.face_card import state_face_fragments
 from app.core.model_gateway import ModelGateway
-from app.core import inline_media, literary, poetry_library, scene_tension, script_detail, usage_ledger, video_failures, video_jobs
+from app.core import inline_media, likeness_check, literary, poetry_library, real_person, scene_tension, script_detail, usage_ledger, video_failures, video_jobs
 from app.platform.billing_book import BillingRefused, active_book
 from app.core.providers.pricing import pricing_table
 from app.core.video_admission import assess_video_batch
@@ -36,6 +36,7 @@ from app.core.storyboard_assets import (
     FRAME_DIRECTORY,
     complete_actor_sheet_cells,
     compose_nine_grid,
+    fetch_remote_image_bytes,
     persist_storyboard_frame,
     split_actor_sheet,
 )
@@ -1774,6 +1775,49 @@ class DramaService:
         """Which version of a stage's asset a report checked: a rerun or an edit makes the report stale."""
         text = asset if isinstance(asset, str) else json.dumps(asset, ensure_ascii=False, sort_keys=True, default=str)
         return hashlib.sha256(str(text).encode("utf-8")).hexdigest()
+
+    # ---------------- 真人演员：分镜像不像本人 ----------------
+
+    @staticmethod
+    def likeness_check_enabled() -> bool:
+        """REAL_PERSON_LIKENESS_CHECK=0 关掉：不再为真人演员的每一格多问一次看图模型、不重画。"""
+        return settings.env_flag("REAL_PERSON_LIKENESS_CHECK", True)
+
+    @staticmethod
+    def _real_person_faces(references: List[Dict[str, Any]]) -> List[Tuple[str, bytes]]:
+        """这一格里真人演员的本人正脸照(名字, 图片字节)；参考里带的是内嵌图。"""
+        faces: List[Tuple[str, bytes]] = []
+        for item in references:
+            if item.get("real_person") and item.get("view") == "face":
+                content = likeness_check.data_uri_bytes(str(item.get("image_url") or ""))
+                if content:
+                    faces.append((str(item.get("name") or ""), content))
+        return faces
+
+    def _check_likeness(self, image_url: str, faces: List[Tuple[str, bytes]]) -> List[Dict[str, Any]]:
+        """每名真人演员一次看图核对；读不到图或没有看图模型时这一格记成没核对(空)。"""
+        try:
+            panel = likeness_check.data_uri_bytes(image_url) or fetch_remote_image_bytes(image_url)
+        except Exception as error:  # noqa: BLE001 - 核对是旁路，读不到图不拦出图
+            logger.warning("[Stage4] 真人相似度核对读不到分镜图: %s", type(error).__name__)
+            return []
+        results = []
+        for name, photo in faces:
+            try:
+                result = likeness_check.check(
+                    lambda system, prompt, image: self.gateway.describe_image("", system, prompt, image, max_tokens=800),
+                    name, photo, panel,
+                )
+            except Exception as error:  # noqa: BLE001
+                logger.warning("[Stage4] 真人相似度核对失败(%s): %s", name, type(error).__name__)
+                result = None
+            if result:
+                results.append(result)
+        return results
+
+    @staticmethod
+    def _likeness_total(checks: List[Dict[str, Any]]) -> float:
+        return sum(float(item.get("score") or 0) for item in checks)
 
     def _stage_quality_report(self, task: Dict[str, Any], stage: int, stage_name: str, config: dict,
                               title: str, task_id: str) -> str:
@@ -4634,6 +4678,11 @@ class DramaService:
                 for item in assets.get("3_characters") or []
             ):
                 raise LookupError(f"没有名为「{name}」的角色")
+            if any(
+                isinstance(item, dict) and str(item.get("name") or "").strip() == name and item.get("real_person")
+                for item in assets.get("3_characters") or []
+            ):
+                raise ValueError(f"「{name}」是真人演员，以本人照片为准，不重新生成；要换照片请到资产库上传")
             progress = assets.setdefault(REGENERATION_KEY, {})
             if character_regenerating(progress.get(name)):
                 raise ValueError(f"「{name}」正在重新生成，请稍候")
@@ -6688,9 +6737,13 @@ class DramaService:
                 absent=[name for name in context["characters"] if name not in binding["characters"]],
             )
             previous_panel = panel
+            identity_neg = style_packs.identity_negative(board_style_pack, self.gateway.PANEL_IDENTITY_NEGATIVE)
+            if any(item.get("real_person") for item in binding["references"]):
+                # 真人演员按本人照片画：「别像证件照、别像真人」这几条负面词和照片对着干，去掉。
+                identity_neg = real_person.keep_likeness(identity_neg)
             img_prompt = (
                 f"{compiled_image_prompt.prompt}\n"
-                f"{lock_neg}{style_packs.identity_negative(board_style_pack, self.gateway.PANEL_IDENTITY_NEGATIVE)}"
+                f"{lock_neg}{identity_neg}"
                 f"{self.gateway.SCENE_STABILITY_NEGATIVE}{self.gateway.EMOTION_FACE_NEGATIVE}"
                 f"{storyboard_negative}"
             )
@@ -6699,13 +6752,30 @@ class DramaService:
             )
             image_requests.append((shot["shot_id"], contract, ref_sheets, img_prompt, binding))
 
+        likeness_checks: Dict[Any, List[Dict[str, Any]]] = {}
+
         def _render_panel(request):
-            shot_id, _contract, ref_sheets, img_prompt, _binding = request
+            shot_id, _contract, ref_sheets, img_prompt, binding = request
             try:
                 img_url, _ = self.gateway.generate_image(
                     config["image_model"], img_prompt, ref_images=ref_sheets,
                     enhance_prompt=False, require_reference_support=True,
                 )
+                faces = self._real_person_faces(binding["references"])
+                if img_url and faces and self.likeness_check_enabled():
+                    # 真人演员：这一格和本人照片比一比，不像就带着差别重画一次，两张留像的那张。
+                    checks = self._check_likeness(img_url, faces)
+                    if not all(likeness_check.passed(item) for item in checks):
+                        failing = [item for item in checks if not likeness_check.passed(item)]
+                        retry_url, _ = self.gateway.generate_image(
+                            config["image_model"], f"{img_prompt}\n{likeness_check.fix_prompt(failing)}", ref_images=ref_sheets,
+                            enhance_prompt=False, require_reference_support=True,
+                        )
+                        if retry_url:
+                            retry_checks = self._check_likeness(retry_url, faces)
+                            if self._likeness_total(retry_checks) >= self._likeness_total(checks):
+                                img_url, checks = retry_url, [{**item, "redrawn": True} for item in retry_checks]
+                    likeness_checks[shot_id] = checks
                 return img_url
             except ValueError:
                 # Configuration/reference errors are actionable and deterministic;
@@ -6738,6 +6808,10 @@ class DramaService:
                 )
             panel_sources.append(str(saved) if saved is not None else image_url)
             shot["image_url"] = image_url
+            if _shot_id in likeness_checks:
+                shot["likeness"] = likeness_checks[_shot_id]
+            else:
+                shot.pop("likeness", None)
             bound_contract = contract.model_copy(update={
                 "storyboard_image": shot["image_url"],
                 # Private inline bytes are transient provider inputs, not copied
@@ -8062,6 +8136,15 @@ class DramaService:
                         "[Stage5] 镜头%s 的分镜图按导演台第 %s 版画，当前是第 %s 版：提示词用当前版，首帧仍是旧站位，建议先按站位重绘",
                         shot_id, drawn_revision, scene_plan.revision,
                     )
+                # Seedance 不收直接上传的真人脸：真人演员换成火山方舟真人人像库素材，分镜帧(画着他的脸)不当首帧发。
+                real_frameless = False
+                if normalize_video_provider(str(config.get("video_model") or "")).family == "seedance" and real_person.names_in(library_references):
+                    real_names = set(real_person.names_in(library_references))
+                    library_references, unregistered = real_person.for_seedance(library_references)
+                    real_frameless = True
+                    img_url, sequence_images = None, []
+                    for person in unregistered:
+                        logger.warning("[Stage5] 镜头%s：%s", shot_id, real_person.say("missing_assets_warning", person))
                 sheet_pairs = identity_sheets(
                     char_sheets,
                     [
@@ -8070,6 +8153,8 @@ class DramaService:
                     ] or [(name, url) for name, url in char_sheets.items() if url in ref_sheets],
                     library_references, shot, cast_aliases(task),
                 )
+                if real_frameless:
+                    sheet_pairs = [(person, url) for person, url in sheet_pairs if person not in real_names]
                 identity_images, reference_notes = merge_video_references(sheet_pairs, library_references)
                 # 提示词里的 @[名字]：本镜每个参考图对应的资产，第 N 项就是参考图 N。
                 reference_entries = video_reference_entries(sheet_pairs, library_references)
@@ -8237,11 +8322,15 @@ class DramaService:
                     "sound_checks": sound_checks, "base_seed": base_seed, "candidate_count": candidate_count,
                     "target_frame": None, "candidate_urls": [], "route_decision": {},
                     "sheet_pairs": sheet_pairs, "library_references": library_references, "shot_sound": shot_sound,
+                    "real_person_frameless": real_frameless,
                     "stage_lines": stage_lines,
                 }
 
             def _frames_item(req: dict) -> dict:
                 """The first frame when stage 4 left none, and the exact end frame when the shot needs one."""
+                if req.get("real_person_frameless"):
+                    # 画出来的首尾帧会带着真人演员的脸，Seedance 照样拒收：这一镜只带真人素材和场地参考。
+                    return req
                 img_url = req["img_url"]
                 if not img_url:
                     img_url, _ = self.gateway.generate_image(

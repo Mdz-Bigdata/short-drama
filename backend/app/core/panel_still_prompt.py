@@ -18,7 +18,7 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Literal
 
-from app.core import breakdown_kinds
+from app.core import breakdown_kinds, real_person
 from app.core.action_grammar import concrete_ending, has_structure
 from app.core.face_card import parse_face_card
 from app.core.scene_turnaround import SCENE_VIEW_LABELS, SCENE_VIEW_PURPOSES
@@ -105,6 +105,9 @@ def _reference_line(references: Sequence[Mapping[str, Any]]) -> str:
         if kind == "first_frame":
             names.append(f"图{number} 本格首帧")
             continue
+        if kind == "actor" and view == "face":
+            names.append(f"图{number} 「{name}」本人正脸照")
+            continue
         extra = str(item.get("variant") or "") or (SCENE_VIEW_LABELS.get(view, "") if view != "scene_main" else "")
         names.append(f"图{number} 「{name}」{_PICTURE_NOUN.get(kind, '参考图')}" + (f"（{extra}）" if extra else ""))
     return f"参考图：{'、'.join(names)}。" if names else "参考图：无，按下面的文字设定生成。"
@@ -117,6 +120,9 @@ def _only_gives(references: Sequence[Mapping[str, Any]]) -> str:
         clauses.append("首帧图只提供人物身份、服装、场景和光色，动作与姿态以本格结束状态为准")
     if "actor" in kinds:
         clauses.append("定妆照只提供脸型骨相、五官、发型发色、体型比例与服装，不提供背景、光线、版式和其他人物")
+    real = list(dict.fromkeys(str(item.get("name") or "") for item in references if item.get("real_person")))
+    if real:
+        clauses.append(real_person.say("panel_line", "、".join(f"「{name}」" for name in real)))
     scenes = [item for item in references if item.get("kind") == "scene"]
     main = next((item for item in scenes if not item.get("view")), None)
     if scenes:
@@ -133,7 +139,7 @@ def _only_gives(references: Sequence[Mapping[str, Any]]) -> str:
 def _costume_notes(people: Sequence[str], references: Sequence[Mapping[str, Any]], assets: Sequence[Mapping[str, Any]]) -> dict[str, str]:
     """每个人物穿什么、以哪张图为准。表演妆造上的造型名写明；旧项目的戏服图优先于定妆照；定妆照上的衣服名也写上，换装造型才不会被认错。"""
     described = {(str(item.get("kind")), str(item.get("name"))): str(item.get("description") or "") for item in assets}
-    pictured = {str(item.get("name")): number for number, item in enumerate(references, 1) if item.get("kind") == "actor"}
+    pictured = {str(item.get("name")): number for number, item in enumerate(references, 1) if item.get("kind") == "actor" and item.get("view") != "face"}
     looks = {str(item.get("name")): str(item.get("variant")) for item in references if item.get("kind") == "actor" and item.get("variant")}
     added = {str(item.get("name")): _clip(item.get("makeup"), 80) for item in references if item.get("kind") == "actor" and item.get("makeup")}
     # 定妆图上已经画了的妆效：照样写出来，图上画反了左右也按文字。
@@ -166,7 +172,7 @@ def _costume_notes(people: Sequence[str], references: Sequence[Mapping[str, Any]
 
 def _hair_line(people: Sequence[str], references: Sequence[Mapping[str, Any]], assets: Sequence[Mapping[str, Any]]) -> str:
     described = {str(item.get("name")): str(item.get("description") or "") for item in assets if item.get("kind") == "actor"}
-    pictured = {str(item.get("name")): number for number, item in enumerate(references, 1) if item.get("kind") == "actor"}
+    pictured = {str(item.get("name")): number for number, item in enumerate(references, 1) if item.get("kind") == "actor" and item.get("view") != "face"}
     parts = []
     for person in people:
         hair = "、".join(parse_face_card(described.get(person, "")).hair)

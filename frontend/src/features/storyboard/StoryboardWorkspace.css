@@ -471,3 +471,18 @@
 }
 .storyboard-grid-empty strong { color: var(--storyboard-cyan); font-size: 0.95rem; }
 .storyboard-grid-empty span { max-width: 32rem; font-size: 0.8rem; line-height: 1.6; overflow-wrap: anywhere; }
+
+/* 真人演员像不像本人的分数 */
+.storyboard-frame__likeness {
+  padding: 0 0.35rem;
+  color: var(--success);
+  font-size: 0.68rem;
+  line-height: 1.5;
+  white-space: nowrap;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+}
+
+.storyboard-frame__likeness.is-off {
+  color: var(--warning);
+}

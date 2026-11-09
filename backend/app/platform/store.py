@@ -67,6 +67,7 @@ from app.platform.models import (
     McpToken,
 )
 from app.repository.user_repo import hash_password, verify_password
+from app.core import real_person
 from app.core.look_board import LOOK_VIEW_SLOTS
 from app.schema.production import IDENTITY_VIEW_ORDER, LEGACY_IDENTITY_VIEW_ORDER
 
@@ -91,6 +92,15 @@ def _wants_identity_views(element: "ElementAsset") -> bool:
     """数字演员要齐五个身份视图才算就绪；角色穿戏服的定妆图是一张展示板，有图就算。"""
     variant = (element.metadata_json or {}).get("variant")
     return element.kind == "actor" and not (isinstance(variant, dict) and variant.get("source") == "costume")
+
+
+def _actor_ready(element: "ElementAsset", slots: set[str]) -> bool:
+    """定妆图有图就算；真人演员有正脸照就算；普通数字演员要齐一整套身份视图。"""
+    if not _wants_identity_views(element):
+        return bool(slots)
+    if real_person.is_real_person(element.metadata_json):
+        return real_person.actor_ready(slots)
+    return actor_views_complete(slots)
 
 
 def actor_views_complete(slots: set[str]) -> bool:
@@ -1288,6 +1298,32 @@ class PlatformStore:
             assert loaded is not None
             return loaded
 
+    async def set_real_person(self, element_id: str, owner_id: str, record: dict | None) -> ElementAsset:
+        """把数字演员设成(或取消)真人演员，并按新规则重算它是否就绪；留审计。"""
+        async with self.sessions() as session:
+            element = await session.scalar(
+                select(ElementAsset).options(selectinload(ElementAsset.files)).where(ElementAsset.id == element_id).with_for_update()
+            )
+            if not element or element.owner_id != owner_id or element.kind != "actor" or not _wants_identity_views(element):
+                raise ValueError("只有数字演员本人可以设为真人演员")
+            metadata = dict(element.metadata_json or {})
+            if record is None:
+                metadata.pop(real_person.KEY, None)
+            else:
+                metadata[real_person.KEY] = dict(record)
+            element.metadata_json = metadata
+            element.status = "ready" if _actor_ready(element, {item.slot for item in element.files}) else "draft"
+            element.version += 1
+            session.add(AuditEvent(
+                actor_id=owner_id, action="element.real_person.set" if record else "element.real_person.clear",
+                resource_type="element", resource_id=element.id,
+                details={"person": (record or {}).get("person", ""), "assets": len((record or {}).get("ark_assets") or [])},
+            ))
+            await session.commit()
+            loaded = await self._loaded_element(session, element.id)
+            assert loaded is not None
+            return loaded
+
     async def link_element_to_task(self, element_id: str, owner_id: str, task_id: str) -> ElementAsset:
         """Make an existing library asset visible to another project without copying it."""
         async with self.sessions() as session:
@@ -1452,9 +1488,7 @@ class PlatformStore:
                     element.metadata_json = {**(element.metadata_json or {}), "model3d": model_metadata}
                 slots = {item.slot for item in element.files}
                 slots.add(slot)
-                element.status = "ready" if (
-                    not _wants_identity_views(element) or actor_views_complete(slots)
-                ) else "draft"
+                element.status = "ready" if _actor_ready(element, slots) else "draft"
                 storage_cleanup = (
                     await before_commit((replaced_file,))
                     if before_commit is not None and replaced_file is not None
@@ -1529,8 +1563,8 @@ class PlatformStore:
                     metadata.pop("model3d", None)
                     element.metadata_json = metadata
                 slots = {item.slot for item in element.files}
-                if _wants_identity_views(element):
-                    element.status = "ready" if actor_views_complete(slots) else "draft"
+                if element.kind == "actor":
+                    element.status = "ready" if _actor_ready(element, slots) else "draft"
                 else:
                     element.status = "ready" if element.files else "draft"
                 element.version += 1

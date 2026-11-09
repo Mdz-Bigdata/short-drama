@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from app.core import breakdown_kinds, character_variants, emotion_points, literary, prompt_data, prop_scale
+from app.core import breakdown_kinds, character_variants, emotion_points, literary, prompt_data, prop_scale, real_person
 from app.core.scene_turnaround import SCENE_VIEW_LABELS, SCENE_VIEW_PURPOSES
 
 KINDS = {"scene": "scenes", "prop": "props", "costume": "costumes", "effect": "effects", "product": "products", **breakdown_kinds.CATALOG_KEYS}
@@ -312,6 +312,12 @@ def look_makeup(description: str) -> str:
     return after.strip(" ；;。") if marker else ""
 
 
+def look_outfit(description: str) -> str:
+    """穿着妆造的角色设定里那身衣服的文字(「服装：」到「妆效：」之间)；没写时是空串。"""
+    _before, marker, after = str(description or "").partition("服装：")
+    return after.split("妆效：")[0].strip(" ；;。") if marker else ""
+
+
 def look_makeup_note(makeup: str, *, panel: bool = False) -> str:
     """跟在参考图那句后面的妆效：定妆图把左右画反了，也按文字画。句中不用「；」「。」。措辞在 character_looks.json。"""
     text = re.sub(r"[；;。]+", "，", str(makeup or "")).strip("，")
@@ -338,12 +344,21 @@ def reference_note(number: int, reference: dict, *, label: str = "") -> str:
     label = label or LABELS.get(kind, kind)
     if kind in breakdown_kinds.KINDS:
         return breakdown_kinds.reference_note(number, kind, name) + real_size_note(kind, name)
+    if kind == "actor" and reference.get("real_person") and reference.get("view") == "face":
+        outfit = re.sub(r"[；;。]+", "，", str(reference.get("outfit") or "")).strip("，")
+        variant = re.sub(r"[；;。]+", "，", str(reference.get("variant") or "")).strip("，")
+        return (
+            real_person.say("reference_face", number, name)
+            + (real_person.say("outfit_by_text", variant or "本场造型", outfit) if outfit else "")
+            + look_makeup_note(str(reference.get("look_makeup") or ""))
+        )
     if kind == "actor":
         variant = re.sub(r"[；;。]+", "，", str(reference.get("variant") or "")).strip("，")
         makeup = re.sub(r"[；;。]+", "，", str(reference.get("makeup") or "")).strip("，")
         return (
             f"参考图{number}仅锁定{label}「{name}」{f'（造型：{variant}）' if variant else ''}的脸型、发型、体型与服装，不采用图中背景、版式与其他人物，不是额外剧情或额外人物"
             + look_makeup_note(str(reference.get("look_makeup") or ""))
+            + (real_person.say("reference_body") if reference.get("real_person") else "")
             + (f"，图上没有的妆效按文字加上：{makeup}" if makeup else "")
         )
     if kind != "scene":
@@ -519,8 +534,20 @@ def panel_context(context: dict, shot: dict, *, layout: str = "") -> dict:
                     reference["makeup"] = "，".join(added)
             if item["kind"] == "scene" and layout.strip():
                 reference["layout"] = layout.strip()
+            if item.get("real_person"):
+                reference["real_person"] = True
+                assets = real_person.ark_assets(item.get("metadata"))
+                if assets:
+                    reference["ark_assets"] = assets
+                if item.get("variant") and (outfit := look_outfit(str(item.get("description") or ""))):
+                    reference["outfit"] = outfit
             references.append(reference)
             seen_urls.add(url)
+            # 真人演员的正脸照紧跟在他那张图后面：全身照或定妆图管服装，正脸照管相貌。
+            face_url = item.get("face_url")
+            if item.get("real_person") and face_url and face_url not in seen_urls and len(references) < 9:
+                references.append({"kind": "actor", "name": item["name"], "image_url": face_url, "real_person": True, "view": "face"})
+                seen_urls.add(face_url)
     # The set's extra views come last: they only take the places the cast and props leave free.
     for item in context["scenes"]:
         for view, url in (item.get("views") or {}).items():

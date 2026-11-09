@@ -13,10 +13,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
+from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
 from app import settings
+from app.core import real_person
 from app.core.element_scope import element_in_task, element_name_keys, normalized_asset_name
 from app.core.media_compositor import MEDIA_DIR
 from app.platform.store import PlatformStore
@@ -58,6 +61,38 @@ def _approved_views(metadata: dict) -> list[dict[str, str]]:
     return []
 
 
+def _real_person_views(item: Any) -> list[dict[str, str]]:
+    """真人演员的五个身份锚点直接用本人照片(缺的拿正脸或全身顶上)，复制到本地媒体目录供各阶段读取。
+
+    没有正脸照、授权过期或读不到照片时返回空，按普通演员处理。
+    """
+    metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+    if not real_person.usable(metadata):
+        return []
+    from app.api.element_api import _owned_reference_path
+
+    files = {file.slot: file for file in item.files or [] if str(file.mime_type or "").startswith("image/")}
+    if not real_person.actor_ready(set(files)):
+        return []
+    picks = real_person.view_slots(set(files))
+    folder = Path(MEDIA_DIR) / "real_person" / str(item.id)
+    urls: dict[str, str] = {}
+    for slot in dict.fromkeys(picks.values()):
+        stored = files[slot]
+        try:
+            source, _root = _owned_reference_path(stored.storage_path, item.owner_id, item.id)
+        except Exception:  # noqa: BLE001 - 读不到就当没有照片
+            return []
+        if not source.is_file():
+            return []
+        target = folder / f"{slot}-{str(stored.sha256 or '')[:12] or 'photo'}{source.suffix or '.png'}"
+        if not target.is_file():
+            folder.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+        urls[slot] = settings.MEDIA_PREFIX + target.relative_to(Path(MEDIA_DIR)).as_posix()
+    return [{"view": view, "image_url": urls[picks[view]]} for view in REQUIRED_VIEWS]
+
+
 def _sheet_type(views: list[dict[str, str]]) -> str:
     """复用来的资产是哪一代排版——旧五视图整板不要冒充分格设定集。"""
     matched = tuple(item["view"] for item in views)
@@ -77,7 +112,9 @@ async def _find(owner_id: str, task_id: str, names: list[str]) -> dict[str, dict
             )
             if not name or name in found:
                 continue
-            views = _approved_views(metadata)
+            # 真人演员的照片优先于以前画过的视图：照片就是这个人。
+            photos = await asyncio.to_thread(_real_person_views, item)
+            views = photos or _approved_views(metadata)
             if not views:
                 continue
             sheet = str(metadata.get("sheet_url") or "").strip()
@@ -89,8 +126,9 @@ async def _find(owner_id: str, task_id: str, names: list[str]) -> dict[str, dict
                 "name": name,
                 "role": str(metadata.get("role") or ""),
                 "desc": str(item.description or ""),
-                "sheet": sheet,
-                "sheet_type": _sheet_type(views),
+                "sheet": "" if photos else sheet,
+                "sheet_type": "real_person_photos" if photos else _sheet_type(views),
+                **({"real_person": True, "real_person_element_id": str(item.id)} if photos else {}),
                 "views": views,
                 "five_view_quality": {
                     "passed": True,
