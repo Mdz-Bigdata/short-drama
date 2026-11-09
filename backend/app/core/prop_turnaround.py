@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from PIL import Image
 
+from app.core import prompt_data, prop_scale
 from app.core.actor_sheet_cutter import _runs, _SeparatorMap
 
 #: 槽位 → (中文名, 给图像模型的角度说明)。顺序即前端展示顺序，与 elementTypes.PROP_VIEW_SLOTS 一致。
@@ -105,6 +106,8 @@ _DEFAULT_FAMILY = _Family(
     "放正，整体完整入格", {},
 )
 _DEFAULT_LENGTH_CM = 30.0
+# 按形状认出来的类别：名字结尾就是这种形状时，参照表的类别不改它的排版。
+_SHAPE_FAMILIES = (_FAMILIES["flat"], _FAMILIES["round"], _FAMILIES["tiny"], _FAMILIES["box"])
 _BY_NOUN = sorted(
     ((noun, length, family) for family in _FAMILIES.values() for noun, length in family.nouns.items()),
     key=lambda entry: -len(entry[0]),
@@ -129,6 +132,10 @@ class PropPlan:
     longest_cm: float
     size_stated: bool
     figure: bool
+    # 尺寸从哪来：manual 人填的 / description 描述里写的 / table 道具标尺参照表 / estimate 按物件类别估的。
+    size_source: str = "estimate"
+    # 参照表里的长宽高说法(「长100×宽4×高2厘米」)；不是从表里查到的为空。
+    size_text: str = ""
 
     @property
     def slots(self) -> tuple[str, ...]:
@@ -163,25 +170,33 @@ def plan_prop(name: str, description: str = "", *, length_cm: float | None = Non
     """这件道具该画哪几个视图、用手还是人形比、最长边多长。
 
     名字的结尾说的才是这是什么(「拭剑旧布」是布，不是剑)，结尾认不出再看名字里有没有。
-    尺寸依次看：人填的 ``length_cm``、描述里写明的、物件类别的常见大小。
+    尺寸依次看：人填的 ``length_cm``、描述里写明的、道具标尺参照表里的真实尺寸、物件类别的常见大小。
+    参照表认出了类别(车辆、动物、饰品……)就按类别排版；名字结尾是扁的、圆的、小的东西(盾、杯、戒指)仍按形状排。
     """
     bare = re.sub(r"[（(][^）)]*[）)]", "", name or "").strip()
-    found = next((entry for entry in _BY_NOUN if bare.endswith(entry[0])), None)
-    found = found or next((entry for entry in _BY_NOUN if entry[0] in bare), None)
+    by_end = next((entry for entry in _BY_NOUN if bare.endswith(entry[0])), None)
+    found = by_end or next((entry for entry in _BY_NOUN if entry[0] in bare), None)
     noun_length, family = (found[1], found[2]) if found else (_DEFAULT_LENGTH_CM, _DEFAULT_FAMILY)
+    scale = prop_scale.lookup(bare)
+    if scale is not None and scale.family and not (by_end and by_end[2] in _SHAPE_FAMILIES):
+        family = _DEFAULT_FAMILY if scale.family == "default" else _FAMILIES[scale.family]
     stated = length_cm or stated_length_cm(description)
-    longest = stated or noun_length
+    longest = stated or (scale.longest_cm if scale is not None else noun_length)
+    source = "manual" if length_cm else "description" if stated else "table" if scale is not None else "estimate"
     return PropPlan(
         views=family.views, measured=family.measured, rows=family.rows, columns=family.columns, size=family.size,
         pose=family.pose, longest_cm=float(longest), size_stated=stated is not None,
         figure=family.figure or longest >= FIGURE_FROM_CM,
+        size_source=source, size_text=scale.size_text() if scale is not None and not stated else "",
     )
 
 
 def prop_instruction(plan: PropPlan) -> str:
     """给图像模型的版式说明。只要它画，不要它写字。"""
     cells = "；".join(f"第 {index} 格：{PROP_VIEWS[slot][0]}，{PROP_VIEWS[slot][1]}" for index, slot in enumerate(plan.views, start=1))
-    length = f"这件道具最长边约 {plan.longest_cm:g} 厘米"
+    length = f"这件道具最长边约 {plan.longest_cm:g} 厘米" + (
+        prompt_data.text("prop_scale", "board_size").format(plan.size_text) if plan.size_text else ""
+    )
     last = len(plan.slots)
     # 只说厘米模型容易画走样，把两者的倍数也说出来。
     reference = (

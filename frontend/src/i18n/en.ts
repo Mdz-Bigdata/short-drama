@@ -2471,4 +2471,5 @@ export const en: Record<string, string> = {
   '妆效部位': 'Makeup close-up',
   '腰带与配饰': 'Belt and accessories',
   '袖口或下摆': 'Cuff or hem',
+  '来自道具标尺参照表：{0}': 'From the prop scale table: {0}',
 };

@@ -1,0 +1,5 @@
+{
+  "_doc": "道具真实尺寸进提示词的说法；尺寸来自 app/data/props/scale_reference.json。",
+  "board_size": "(真实尺寸约{0})",
+  "reference_size": "，真实尺寸约{0}，和人物同框时按这个比例画"
+}

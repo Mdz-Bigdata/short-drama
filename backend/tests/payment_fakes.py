@@ -14,6 +14,7 @@ import json
 import secrets
 import time
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode
 
@@ -24,6 +25,13 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.platform.payments.alipay import Alipay, AlipayConfig
 from app.platform.payments.wechat import WeChatPay, WeChatPayConfig
+
+
+# When the fake channels say a payment was made: 10:00 China time today, or yesterday before 10:30.
+# A fixed date makes reconciliation call those bills missing once it is more than two days old.
+_CHINA = timezone(timedelta(hours=8))
+_NOW = datetime.now(_CHINA)
+PAID_AT = (_NOW if _NOW.hour * 60 + _NOW.minute >= 630 else _NOW - timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
 
 
 def _new_key():
@@ -163,7 +171,7 @@ class FakeWeChat:
         self.trades[out].update(trade_state="SUCCESS", transaction_id="wx" + out[-20:])
 
     def notification(self, out: str, *, key=None, serial=None, age: int = 0, signature=None, event_id="", **overrides) -> tuple[dict, bytes]:
-        plain = json.dumps({**self._transaction(out), "success_time": "2026-11-05T10:00:00+08:00", **overrides}).encode()
+        plain = json.dumps({**self._transaction(out), "success_time": PAID_AT.isoformat(), **overrides}).encode()
         nonce, aad = "abcdefghijkl", "transaction"
         envelope = {
             "id": event_id or secrets.token_hex(8), "event_type": "TRANSACTION.SUCCESS", "resource_type": "encrypt-resource",
@@ -248,7 +256,7 @@ class FakeAlipay:
                 return self._reply(method, {"code": "40004", "msg": "Business Failed", "sub_code": "ACQ.TRADE_NOT_EXIST"})
             return self._reply(method, {
                 "code": "10000", "out_trade_no": out, "trade_no": trade.get("trade_no", ""), "trade_status": trade["status"],
-                "total_amount": trade["total_amount"], "send_pay_date": "2026-11-05 10:00:00",
+                "total_amount": trade["total_amount"], "send_pay_date": PAID_AT.strftime("%Y-%m-%d %H:%M:%S"),
             })
         if method == "alipay.trade.close":
             self.closed.append(out)
@@ -274,7 +282,7 @@ class FakeAlipay:
         params = {
             "notify_id": event_id or secrets.token_hex(8), "notify_type": "trade_status_sync", "notify_time": "2026-11-05 10:00:01",
             "app_id": self.app_id, "seller_id": self.seller_id, "out_trade_no": out, "trade_no": trade.get("trade_no", ""),
-            "total_amount": trade["total_amount"], "trade_status": trade["status"] or "WAIT_BUYER_PAY", "gmt_payment": "2026-11-05 10:00:00",
+            "total_amount": trade["total_amount"], "trade_status": trade["status"] or "WAIT_BUYER_PAY", "gmt_payment": PAID_AT.strftime("%Y-%m-%d %H:%M:%S"),
             "subject": "创作 会员 & 积分", **overrides,
         }
         for name in drop:

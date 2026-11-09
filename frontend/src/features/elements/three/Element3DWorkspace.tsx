@@ -112,7 +112,9 @@ function PropSizeField({ item, locked, onSave }: { item: ElementItem; locked: bo
     ? t('手动设置')
     : scale.source === 'description'
       ? t('来自描述：{0} cm', [String(scale.longest_cm)])
-      : t('按物件类别估算：约 {0} cm', [String(scale.longest_cm)]);
+      : scale.source === 'table'
+        ? t('来自道具标尺参照表：{0}', [scale.size_text || `${scale.longest_cm} cm`])
+        : t('按物件类别估算：约 {0} cm', [String(scale.longest_cm)]);
   return (
     <form
       className="asset-prop-size"

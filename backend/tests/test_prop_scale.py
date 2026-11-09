@@ -240,3 +240,46 @@ class HelpersTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScaleReferenceTableTests(unittest.TestCase):
+    """道具标尺参照表(LF_D2P V1.12)：按名字查真实尺寸，比按名字结尾的字猜准得多。"""
+
+    def test_props_the_noun_guess_got_wrong_get_their_real_size(self):
+        from app.core.prop_turnaround import plan_prop
+
+        pistol = plan_prop("半自动手枪")  # 以前按结尾的「枪」当成两米多的长枪
+        self.assertEqual((pistol.longest_cm, pistol.figure, pistol.size_source), (20.0, False, "table"))
+        self.assertIn("prop_left_45", pistol.views, "a pistol is not laid out like a spear")
+        tank = plan_prop("主战坦克二型")
+        self.assertEqual((tank.longest_cm, tank.figure), (950.0, True))
+        self.assertEqual(plan_prop("马").longest_cm, 250.0)
+        self.assertEqual(plan_prop("冰箱").longest_cm, 180.0)
+        self.assertIn("长20×宽4×高14厘米", prop_instruction(pistol))
+
+    def test_shape_and_what_a_person_wrote_still_win(self):
+        from app.core.prop_turnaround import plan_prop
+
+        self.assertEqual(plan_prop("盾牌").views, plan_prop("令牌").views, "a shield is still drawn flat")
+        self.assertEqual(plan_prop("拭剑旧布").size_source, "estimate", "a cloth is not the sword it wipes")
+        self.assertEqual(plan_prop("马车").size_source, "estimate", "a cart is not a horse")
+        self.assertEqual(plan_prop("宝剑", "全长八十厘米").longest_cm, 80.0)
+        self.assertEqual(plan_prop("宝剑", length_cm=90).size_source, "manual")
+
+    def test_the_table_has_each_prop_once_with_its_typo_fixed(self):
+        import json
+
+        from app.core import prop_scale
+
+        entries = json.loads(prop_scale.TABLE.read_text(encoding="utf-8"))["entries"]
+        names = [entry["name"] for entry in entries]
+        self.assertEqual(len(names), len(set(names)))
+        self.assertEqual(prop_scale.lookup("智能手机二型").dims_cm, (15.5, 7.5, 0.8))
+
+    def test_a_shot_keeps_a_prop_to_scale_beside_people(self):
+        from app.core.storyboard_scene_context import reference_note
+
+        note = reference_note(3, {"kind": "prop", "name": "半自动手枪"})
+        self.assertIn("真实尺寸约长20×宽4×高14厘米", note)
+        self.assertNotIn("；", note)
+        self.assertNotIn("真实尺寸", reference_note(5, {"kind": "prop", "name": "拭剑旧布"}))

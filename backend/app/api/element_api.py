@@ -276,7 +276,9 @@ def _prop_scale(item) -> dict:
     return {
         "longest_cm": plan.longest_cm,
         "manual_cm": manual,
-        "source": "manual" if manual else "description" if plan.size_stated else "estimate",
+        "source": plan.size_source,
+        # 参照表里查到的长宽高，给人看是按什么定的。
+        "size_text": plan.size_text,
     }
 
 

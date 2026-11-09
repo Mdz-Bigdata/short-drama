@@ -15,6 +15,7 @@ from app.platform.payments import get_payment_channels
 from app.platform.payments.alipay import _to_minor, signed_part_of_response
 from app.platform.payments.base import CLOSED, PAID, UNPAID, ChannelError, NotificationRejected, new_merchant_no
 from app.platform.payments.wechat import WeChatPay
+from tests import payment_fakes
 from tests.payment_fakes import STRANGER_KEY, FakeAlipay, FakeWeChat
 
 
@@ -75,7 +76,7 @@ class WeChatTests(Base):
         event = self.channel.parse_notification(*self.fake.notification(out, event_id="evt-1"))
         self.assertEqual(event.event_id, "evt-1")
         self.assertEqual((event.trade.state, event.trade.amount_minor, event.trade.out_trade_no), (PAID, 2990, out))
-        self.assertEqual(event.trade.paid_at, datetime.fromisoformat("2026-11-05T10:00:00+08:00"))
+        self.assertEqual(event.trade.paid_at, payment_fakes.PAID_AT)
 
     def test_notifications_that_fail_verification(self):
         out = self._trade()
@@ -195,7 +196,7 @@ class AlipayTests(Base):
         self.assertEqual(event.event_id, "n-1")
         self.assertEqual((event.trade.state, event.trade.amount_minor), (PAID, 2990))
         self.assertEqual(event.trade.merchant_id, self.channel.merchant_id)
-        self.assertEqual(event.trade.paid_at, datetime.fromisoformat("2026-11-05T10:00:00+08:00"))
+        self.assertEqual(event.trade.paid_at, payment_fakes.PAID_AT)
 
     def test_a_notification_without_seller_id_is_still_checked_on_app_id(self):
         out = self._trade()

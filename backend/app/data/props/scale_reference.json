@@ -1,0 +1,4056 @@
+{
+ "_doc": "道具真实尺寸参照表(LF_D2P 道具标尺参照表 V1.12，按中文名去重；智能手机二型的厚度 0.8m 改为 0.8cm；毛笔钢笔对比不是单件道具，未收)。dims_cm 是长、宽、高(只写了一两个数的照原样)，单位厘米；diameter 为真表示写的是直径。用途：定道具比例图的最长边与比对物，写进道具出图和分镜/视频提示词的真实尺寸。",
+ "version": "V1.12",
+ "category_family": {
+  "车辆": "large",
+  "装甲车辆": "large",
+  "飞机": "large",
+  "直升机": "large",
+  "军舰": "large",
+  "古代战船": "large",
+  "船舶": "large",
+  "航天器": "large",
+  "动物": "large",
+  "家具": "large",
+  "家居": "large",
+  "家电": "large",
+  "服务器设备": "large",
+  "古代兵器": "slender",
+  "武器": "slender",
+  "现代兵器": "slender",
+  "饰品": "tiny",
+  "宗教饰品": "tiny",
+  "手表": "tiny",
+  "证件": "flat",
+  "枪械": "default"
+ },
+ "entries": [
+  {
+   "name": "100公斤通用炸弹",
+   "en": "100kg General Purpose Bomb",
+   "category": "武器",
+   "dims_cm": [
+    150.0,
+    40.0
+   ],
+   "diameter": false,
+   "size_text": "约1.5m×0.4m",
+   "description": "航空炸弹，用于对地攻击",
+   "scenes": "战争片、军事题材"
+  },
+  {
+   "name": "100公斤炸弹",
+   "en": "100kg Bomb",
+   "category": "武器",
+   "dims_cm": [
+    150.0,
+    40.0
+   ],
+   "diameter": false,
+   "size_text": "约1.5m×0.4m",
+   "description": "航空炸弹",
+   "scenes": "战争片、军事题材"
+  },
+  {
+   "name": "108佛珠",
+   "en": "108 Buddhist Prayer Beads",
+   "category": "宗教饰品",
+   "dims_cm": [
+    15.0
+   ],
+   "diameter": true,
+   "size_text": "直径约15cm",
+   "description": "佛教念珠",
+   "scenes": "古装、宗教、修炼场景"
+  },
+  {
+   "name": "20寸登机行李箱",
+   "en": "20-inch Carry-on Luggage",
+   "category": "箱包",
+   "dims_cm": [
+    55.0,
+    35.0,
+    22.0
+   ],
+   "diameter": false,
+   "size_text": "55cm×35cm×22cm",
+   "description": "小型登机箱",
+   "scenes": "旅行、商务场景"
+  },
+  {
+   "name": "24寸中号行李箱",
+   "en": "24-inch Medium Suitcase",
+   "category": "箱包",
+   "dims_cm": [
+    65.0,
+    42.0,
+    26.0
+   ],
+   "diameter": false,
+   "size_text": "65cm×42cm×26cm",
+   "description": "中型行李箱",
+   "scenes": "旅行场景"
+  },
+  {
+   "name": "28寸大号行李箱",
+   "en": "28-inch Large Suitcase",
+   "category": "箱包",
+   "dims_cm": [
+    75.0,
+    48.0,
+    30.0
+   ],
+   "diameter": false,
+   "size_text": "75cm×48cm×30cm",
+   "description": "大型行李箱",
+   "scenes": "长途旅行"
+  },
+  {
+   "name": "42U满载机柜",
+   "en": "42U Server Rack",
+   "category": "服务器设备",
+   "dims_cm": [
+    200.0,
+    60.0,
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约2m×0.6m×1m",
+   "description": "数据中心机柜",
+   "scenes": "科技、数据中心场景"
+  },
+  {
+   "name": "48U高密度机柜",
+   "en": "48U High-density Rack",
+   "category": "服务器设备",
+   "dims_cm": [
+    220.0,
+    60.0,
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约2.2m×0.6m×1m",
+   "description": "高密度服务器机柜",
+   "scenes": "科技、AI场景"
+  },
+  {
+   "name": "500公斤通用炸弹",
+   "en": "500kg General Purpose Bomb",
+   "category": "武器",
+   "dims_cm": [
+    200.0,
+    50.0
+   ],
+   "diameter": false,
+   "size_text": "约2m×0.5m",
+   "description": "重型航空炸弹",
+   "scenes": "战争片"
+  },
+  {
+   "name": "A4纸",
+   "en": "A4 Paper",
+   "category": "办公用品",
+   "dims_cm": [
+    29.7,
+    21.0
+   ],
+   "diameter": false,
+   "size_text": "29.7cm×21cm",
+   "description": "标准办公用纸",
+   "scenes": "办公室场景"
+  },
+  {
+   "name": "DGX AI服务器",
+   "en": "DGX AI Server",
+   "category": "服务器设备",
+   "dims_cm": [
+    80.0,
+    40.0,
+    50.0
+   ],
+   "diameter": false,
+   "size_text": "约0.8m×0.4m×0.5m",
+   "description": "NVIDIA AI服务器",
+   "scenes": "科技、AI研发场景"
+  },
+  {
+   "name": "Grace Hopper AI服务器",
+   "en": "Grace Hopper AI Server",
+   "category": "服务器设备",
+   "dims_cm": [
+    80.0,
+    40.0,
+    50.0
+   ],
+   "diameter": false,
+   "size_text": "约0.8m×0.4m×0.5m",
+   "description": "NVIDIA AI服务器",
+   "scenes": "科技场景"
+  },
+  {
+   "name": "HGX AI服务器",
+   "en": "HGX AI Server",
+   "category": "服务器设备",
+   "dims_cm": [
+    80.0,
+    40.0,
+    50.0
+   ],
+   "diameter": false,
+   "size_text": "约0.8m×0.4m×0.5m",
+   "description": "AI服务器",
+   "scenes": "科技场景"
+  },
+  {
+   "name": "VIP公务直升机",
+   "en": "VIP Helicopter",
+   "category": "直升机",
+   "dims_cm": [
+    1500.0,
+    1200.0,
+    400.0
+   ],
+   "diameter": false,
+   "size_text": "约15m×12m×4m",
+   "description": "商务直升机",
+   "scenes": "商务、高端场景"
+  },
+  {
+   "name": "XR-27静默凤凰飞船",
+   "en": "XR-27 Silent Phoenix",
+   "category": "航天器",
+   "dims_cm": [
+    2500.0,
+    1200.0,
+    800.0
+   ],
+   "diameter": false,
+   "size_text": "约25m×12m×8m",
+   "description": "科幻飞船",
+   "scenes": "科幻片"
+  },
+  {
+   "name": "安宅船",
+   "en": "Atakebune",
+   "category": "古代战船",
+   "dims_cm": [
+    4000.0,
+    800.0,
+    1200.0
+   ],
+   "diameter": false,
+   "size_text": "约40m×8m×12m",
+   "description": "日本古代战船",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "安宅船式战船",
+   "en": "Atakebune-style Warship",
+   "category": "古代战船",
+   "dims_cm": [
+    4000.0,
+    800.0,
+    1200.0
+   ],
+   "diameter": false,
+   "size_text": "约40m×8m×12m",
+   "description": "古代战船",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "按摩垫",
+   "en": "Massage Cushion",
+   "category": "家居",
+   "dims_cm": [
+    40.0,
+    40.0,
+    15.0
+   ],
+   "diameter": false,
+   "size_text": "40cm×40cm×15cm",
+   "description": "便携按摩垫",
+   "scenes": "家居、办公场景"
+  },
+  {
+   "name": "白犀牛",
+   "en": "White Rhinoceros",
+   "category": "动物",
+   "dims_cm": [
+    400.0,
+    200.0,
+    180.0
+   ],
+   "diameter": false,
+   "size_text": "约4m×2m×1.8m",
+   "description": "非洲白犀牛",
+   "scenes": "自然、纪录片"
+  },
+  {
+   "name": "办公按摩椅",
+   "en": "Office Massage Chair",
+   "category": "家居",
+   "dims_cm": [
+    110.0,
+    65.0,
+    70.0
+   ],
+   "diameter": false,
+   "size_text": "110cm×65cm×70cm",
+   "description": "办公用按摩椅",
+   "scenes": "办公场景"
+  },
+  {
+   "name": "办公打印机",
+   "en": "Office Printer",
+   "category": "办公用品",
+   "dims_cm": [
+    40.0,
+    35.0,
+    25.0
+   ],
+   "diameter": false,
+   "size_text": "40cm×35cm×25cm",
+   "description": "激光打印机",
+   "scenes": "办公室场景"
+  },
+  {
+   "name": "办公椅",
+   "en": "Office Chair",
+   "category": "家具",
+   "dims_cm": [
+    60.0,
+    60.0,
+    110.0
+   ],
+   "diameter": false,
+   "size_text": "约60cm×60cm×110cm",
+   "description": "办公椅",
+   "scenes": "办公室场景"
+  },
+  {
+   "name": "半自动手枪",
+   "en": "Semi-automatic Pistol",
+   "category": "枪械",
+   "dims_cm": [
+    20.0,
+    4.0,
+    14.0
+   ],
+   "diameter": false,
+   "size_text": "约20cm×4cm×14cm",
+   "description": "手枪",
+   "scenes": "动作、犯罪片"
+  },
+  {
+   "name": "半自动手枪二型",
+   "en": "Semi-automatic Pistol Type 2",
+   "category": "枪械",
+   "dims_cm": [
+    20.0,
+    4.0,
+    14.0
+   ],
+   "diameter": false,
+   "size_text": "约20cm×4cm×14cm",
+   "description": "手枪",
+   "scenes": "动作、犯罪片"
+  },
+  {
+   "name": "宝剑",
+   "en": "Chinese Sword",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0,
+    4.0,
+    2.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm×4cm×2cm",
+   "description": "中国传统宝剑",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "笔记本电脑",
+   "en": "Laptop Computer",
+   "category": "电子产品",
+   "dims_cm": [
+    35.0,
+    24.0,
+    2.0
+   ],
+   "diameter": false,
+   "size_text": "35cm×24cm×2cm",
+   "description": "笔记本",
+   "scenes": "现代、商务场景"
+  },
+  {
+   "name": "笔筒",
+   "en": "Pen Holder",
+   "category": "办公用品",
+   "dims_cm": [
+    12.0,
+    8.0
+   ],
+   "diameter": false,
+   "size_text": "约12cm×8cm",
+   "description": "笔筒",
+   "scenes": "办公室场景"
+  },
+  {
+   "name": "壁灯",
+   "en": "Wall Lamp",
+   "category": "照明",
+   "dims_cm": [
+    25.0,
+    15.0,
+    20.0
+   ],
+   "diameter": false,
+   "size_text": "25cm×15cm×20cm",
+   "description": "壁挂灯",
+   "scenes": "室内场景"
+  },
+  {
+   "name": "边缘AI服务器",
+   "en": "Edge AI Server",
+   "category": "服务器设备",
+   "dims_cm": [
+    50.0,
+    30.0,
+    20.0
+   ],
+   "diameter": false,
+   "size_text": "约0.5m×0.3m×0.2m",
+   "description": "边缘计算服务器",
+   "scenes": "科技场景"
+  },
+  {
+   "name": "鞭",
+   "en": "Whip",
+   "category": "古代兵器",
+   "dims_cm": [
+    200.0
+   ],
+   "diameter": false,
+   "size_text": "约2m",
+   "description": "软鞭",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "濒海战斗舰",
+   "en": "Littoral Combat Ship",
+   "category": "军舰",
+   "dims_cm": [
+    12000.0,
+    1500.0,
+    3500.0
+   ],
+   "diameter": false,
+   "size_text": "约120m×15m×35m",
+   "description": "现代军舰",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "冰箱",
+   "en": "Refrigerator",
+   "category": "家电",
+   "dims_cm": [
+    180.0,
+    70.0,
+    70.0
+   ],
+   "diameter": false,
+   "size_text": "180cm×70cm×70cm",
+   "description": "家用冰箱",
+   "scenes": "家居场景"
+  },
+  {
+   "name": "波浪金手镯",
+   "en": "Wavy Gold Bracelet",
+   "category": "饰品",
+   "dims_cm": [
+    6.0
+   ],
+   "diameter": true,
+   "size_text": "直径约6cm",
+   "description": "金手镯",
+   "scenes": "现代、古装场景"
+  },
+  {
+   "name": "补给舰",
+   "en": "Supply Ship",
+   "category": "军舰",
+   "dims_cm": [
+    17000.0,
+    2400.0,
+    4500.0
+   ],
+   "diameter": false,
+   "size_text": "约170m×24m×45m",
+   "description": "海军补给舰",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "补水精华瓶",
+   "en": "Hydrating Serum",
+   "category": "护肤品",
+   "dims_cm": [
+    15.0,
+    5.0
+   ],
+   "diameter": false,
+   "size_text": "约15cm×5cm",
+   "description": "护肤品",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "餐桌",
+   "en": "Dining Table",
+   "category": "家具",
+   "dims_cm": [
+    180.0,
+    90.0,
+    75.0
+   ],
+   "diameter": false,
+   "size_text": "180cm×90cm×75cm",
+   "description": "餐桌",
+   "scenes": "家居场景"
+  },
+  {
+   "name": "茶几",
+   "en": "Coffee Table",
+   "category": "家具",
+   "dims_cm": [
+    120.0,
+    60.0,
+    45.0
+   ],
+   "diameter": false,
+   "size_text": "120cm×60cm×45cm",
+   "description": "茶几",
+   "scenes": "家居场景"
+  },
+  {
+   "name": "朝鲜龟船",
+   "en": "Turtle Ship",
+   "category": "古代战船",
+   "dims_cm": [
+    3000.0,
+    800.0,
+    600.0
+   ],
+   "diameter": false,
+   "size_text": "约30m×8m×6m",
+   "description": "朝鲜龟船",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "成年绵羊",
+   "en": "Adult Sheep",
+   "category": "动物",
+   "dims_cm": [
+    150.0,
+    60.0,
+    80.0
+   ],
+   "diameter": false,
+   "size_text": "约1.5m×0.6m×0.8m",
+   "description": "绵羊",
+   "scenes": "农村、自然场景"
+  },
+  {
+   "name": "冲浪板",
+   "en": "Surfboard",
+   "category": "运动器材",
+   "dims_cm": [
+    220.0,
+    50.0,
+    10.0
+   ],
+   "diameter": false,
+   "size_text": "约2.2m×0.5m×0.1m",
+   "description": "冲浪板",
+   "scenes": "海边、运动场景"
+  },
+  {
+   "name": "传统发簪",
+   "en": "Traditional Hairpin",
+   "category": "饰品",
+   "dims_cm": [
+    15.0
+   ],
+   "diameter": false,
+   "size_text": "约15cm",
+   "description": "古代发簪",
+   "scenes": "古装场景"
+  },
+  {
+   "name": "传统箭",
+   "en": "Traditional Arrow",
+   "category": "古代兵器",
+   "dims_cm": [
+    80.0
+   ],
+   "diameter": false,
+   "size_text": "约80cm",
+   "description": "弓箭",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "传统猎弓",
+   "en": "Traditional Hunting Bow",
+   "category": "古代兵器",
+   "dims_cm": [
+    160.0
+   ],
+   "diameter": false,
+   "size_text": "约160cm",
+   "description": "猎弓",
+   "scenes": "古装、狩猎场景"
+  },
+  {
+   "name": "传统折扇",
+   "en": "Folding Fan",
+   "category": "日用",
+   "dims_cm": [
+    30.0
+   ],
+   "diameter": false,
+   "size_text": "约30cm",
+   "description": "折扇",
+   "scenes": "古装场景"
+  },
+  {
+   "name": "吹风机",
+   "en": "Hair Dryer",
+   "category": "护理用品",
+   "dims_cm": [
+    25.0,
+    8.0,
+    20.0
+   ],
+   "diameter": false,
+   "size_text": "25cm×8cm×20cm",
+   "description": "电吹风",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "垂直发射地对空导弹",
+   "en": "Vertical Launch SAM",
+   "category": "武器",
+   "dims_cm": [
+    400.0,
+    30.0
+   ],
+   "diameter": false,
+   "size_text": "约4m×0.3m",
+   "description": "防空导弹",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "打刀",
+   "en": "Uchigatana",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "日本武士刀",
+   "scenes": "古装、武士题材"
+  },
+  {
+   "name": "大刀",
+   "en": "Great Dao",
+   "category": "古代兵器",
+   "dims_cm": [
+    150.0
+   ],
+   "diameter": false,
+   "size_text": "约150cm",
+   "description": "长柄大刀",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "大型补给舰",
+   "en": "Large Supply Ship",
+   "category": "军舰",
+   "dims_cm": [
+    17000.0,
+    2400.0,
+    4500.0
+   ],
+   "diameter": false,
+   "size_text": "约170m×24m×45m",
+   "description": "补给舰",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "大型福船",
+   "en": "Large Fuchuan",
+   "category": "古代战船",
+   "dims_cm": [
+    4000.0,
+    1000.0,
+    800.0
+   ],
+   "diameter": false,
+   "size_text": "约40m×10m×8m",
+   "description": "中国古代福船",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "大型豪华轿车",
+   "en": "Large Luxury Sedan",
+   "category": "车辆",
+   "dims_cm": [
+    520.0,
+    190.0,
+    150.0
+   ],
+   "diameter": false,
+   "size_text": "约5.2m×1.9m×1.5m",
+   "description": "豪华轿车",
+   "scenes": "现代、商务场景"
+  },
+  {
+   "name": "大型货车",
+   "en": "Large Truck",
+   "category": "车辆",
+   "dims_cm": [
+    1200.0,
+    250.0,
+    400.0
+   ],
+   "diameter": false,
+   "size_text": "约12m×2.5m×4m",
+   "description": "半挂卡车",
+   "scenes": "现代场景"
+  },
+  {
+   "name": "大型平板电脑",
+   "en": "Large Tablet",
+   "category": "电子产品",
+   "dims_cm": [
+    28.0,
+    21.5,
+    0.65
+   ],
+   "diameter": false,
+   "size_text": "28cm×21.5cm×0.65cm",
+   "description": "平板电脑",
+   "scenes": "现代、商务场景"
+  },
+  {
+   "name": "大型现代卫星",
+   "en": "Large Modern Satellite",
+   "category": "航天器",
+   "dims_cm": [
+    500.0,
+    300.0,
+    300.0
+   ],
+   "diameter": false,
+   "size_text": "约5m×3m×3m",
+   "description": "人造卫星",
+   "scenes": "科幻、科技场景"
+  },
+  {
+   "name": "大型越野SUV",
+   "en": "Large SUV",
+   "category": "车辆",
+   "dims_cm": [
+    510.0,
+    200.0,
+    180.0
+   ],
+   "diameter": false,
+   "size_text": "约5.1m×2m×1.8m",
+   "description": "大型SUV",
+   "scenes": "现代场景"
+  },
+  {
+   "name": "单发喷气战斗机",
+   "en": "Single-engine Jet Fighter",
+   "category": "飞机",
+   "dims_cm": [
+    1500.0,
+    1000.0,
+    450.0
+   ],
+   "diameter": false,
+   "size_text": "约15m×10m×4.5m",
+   "description": "现代战斗机",
+   "scenes": "战争片"
+  },
+  {
+   "name": "导弹巡洋舰",
+   "en": "Missile Cruiser",
+   "category": "军舰",
+   "dims_cm": [
+    18000.0,
+    2200.0,
+    5000.0
+   ],
+   "diameter": false,
+   "size_text": "约180m×22m×50m",
+   "description": "巡洋舰",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "道教宝剑",
+   "en": "Taoist Sword",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "道士用剑",
+   "scenes": "古装、修仙场景"
+  },
+  {
+   "name": "道士剑",
+   "en": "Taoist Priest Sword",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "道士剑",
+   "scenes": "古装、修仙场景"
+  },
+  {
+   "name": "地对地弹道导弹",
+   "en": "Ballistic Missile",
+   "category": "武器",
+   "dims_cm": [
+    1200.0,
+    150.0
+   ],
+   "diameter": false,
+   "size_text": "约12m×1.5m",
+   "description": "弹道导弹",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "低可探测战斗机",
+   "en": "Stealth Fighter",
+   "category": "飞机",
+   "dims_cm": [
+    1900.0,
+    1300.0,
+    400.0
+   ],
+   "diameter": false,
+   "size_text": "约19m×13m×4m",
+   "description": "隐身战斗机",
+   "scenes": "战争片"
+  },
+  {
+   "name": "电动剃须刀",
+   "en": "Electric Shaver",
+   "category": "护理用品",
+   "dims_cm": [
+    15.0,
+    5.0,
+    5.0
+   ],
+   "diameter": false,
+   "size_text": "15cm×5cm×5cm",
+   "description": "电动剃须刀",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "电动牙刷",
+   "en": "Electric Toothbrush",
+   "category": "护理用品",
+   "dims_cm": [
+    23.0
+   ],
+   "diameter": false,
+   "size_text": "约23cm",
+   "description": "电动牙刷",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "电饭煲",
+   "en": "Rice Cooker",
+   "category": "家电",
+   "dims_cm": [
+    28.0,
+    25.0
+   ],
+   "diameter": false,
+   "size_text": "28cm×25cm",
+   "description": "电饭煲",
+   "scenes": "家居场景"
+  },
+  {
+   "name": "电脑键盘",
+   "en": "Keyboard",
+   "category": "电子产品",
+   "dims_cm": [
+    45.0,
+    15.0,
+    3.0
+   ],
+   "diameter": false,
+   "size_text": "45cm×15cm×3cm",
+   "description": "键盘",
+   "scenes": "办公场景"
+  },
+  {
+   "name": "电脑显示器",
+   "en": "Monitor",
+   "category": "电子产品",
+   "dims_cm": [
+    60.0,
+    35.0,
+    5.0
+   ],
+   "diameter": false,
+   "size_text": "60cm×35cm×5cm",
+   "description": "显示器",
+   "scenes": "办公场景"
+  },
+  {
+   "name": "电视柜",
+   "en": "TV Stand",
+   "category": "家具",
+   "dims_cm": [
+    160.0,
+    40.0,
+    50.0
+   ],
+   "diameter": false,
+   "size_text": "160cm×40cm×50cm",
+   "description": "电视柜",
+   "scenes": "家居场景"
+  },
+  {
+   "name": "雕花长枪",
+   "en": "Ornate Spear",
+   "category": "古代兵器",
+   "dims_cm": [
+    200.0
+   ],
+   "diameter": false,
+   "size_text": "约200cm",
+   "description": "长枪",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "吊灯",
+   "en": "Chandelier",
+   "category": "照明",
+   "dims_cm": [
+    40.0,
+    35.0
+   ],
+   "diameter": false,
+   "size_text": "约40cm×35cm",
+   "description": "吊灯",
+   "scenes": "家居场景"
+  },
+  {
+   "name": "订书机",
+   "en": "Stapler",
+   "category": "办公用品",
+   "dims_cm": [
+    15.0,
+    5.0,
+    3.0
+   ],
+   "diameter": false,
+   "size_text": "15cm×5cm×3cm",
+   "description": "订书机",
+   "scenes": "办公室场景"
+  },
+  {
+   "name": "短刀",
+   "en": "Short Blade",
+   "category": "古代兵器",
+   "dims_cm": [
+    40.0
+   ],
+   "diameter": false,
+   "size_text": "约40cm",
+   "description": "短刀",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "短佛珠项链",
+   "en": "Short Prayer Bead Necklace",
+   "category": "宗教饰品",
+   "dims_cm": [
+    40.0
+   ],
+   "diameter": false,
+   "size_text": "约40cm",
+   "description": "佛珠项链",
+   "scenes": "古装、宗教场景"
+  },
+  {
+   "name": "短剑",
+   "en": "Short Sword",
+   "category": "古代兵器",
+   "dims_cm": [
+    60.0
+   ],
+   "diameter": false,
+   "size_text": "约60cm",
+   "description": "短剑",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "盾牌",
+   "en": "Shield",
+   "category": "古代兵器",
+   "dims_cm": [
+    80.0,
+    50.0
+   ],
+   "diameter": false,
+   "size_text": "约80cm×50cm",
+   "description": "盾牌",
+   "scenes": "古装、战争场景"
+  },
+  {
+   "name": "多用途武装直升机",
+   "en": "Multi-role Attack Helicopter",
+   "category": "直升机",
+   "dims_cm": [
+    1500.0,
+    1200.0,
+    400.0
+   ],
+   "diameter": false,
+   "size_text": "约15m×12m×4m",
+   "description": "武装直升机",
+   "scenes": "战争片"
+  },
+  {
+   "name": "多用途战斗轰炸机",
+   "en": "Multi-role Fighter-Bomber",
+   "category": "飞机",
+   "dims_cm": [
+    1600.0,
+    1100.0,
+    450.0
+   ],
+   "diameter": false,
+   "size_text": "约16m×11m×4.5m",
+   "description": "战斗轰炸机",
+   "scenes": "战争片"
+  },
+  {
+   "name": "多用途战斗机",
+   "en": "Multi-role Fighter",
+   "category": "飞机",
+   "dims_cm": [
+    1600.0,
+    1100.0,
+    450.0
+   ],
+   "diameter": false,
+   "size_text": "约16m×11m×4.5m",
+   "description": "多用途战机",
+   "scenes": "战争片"
+  },
+  {
+   "name": "峨眉刺",
+   "en": "Emei Piercers",
+   "category": "古代兵器",
+   "dims_cm": [
+    25.0
+   ],
+   "diameter": false,
+   "size_text": "约25cm",
+   "description": "峨眉刺",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "儿童鞋",
+   "en": "Children's Shoes",
+   "category": "鞋类",
+   "dims_cm": [
+    18.0,
+    7.0,
+    5.0
+   ],
+   "diameter": false,
+   "size_text": "18cm×7cm×5cm",
+   "description": "儿童运动鞋",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "儿童运动鞋",
+   "en": "Children's Sneakers",
+   "category": "鞋类",
+   "dims_cm": [
+    18.0,
+    7.0,
+    5.0
+   ],
+   "diameter": false,
+   "size_text": "18cm×7cm×5cm",
+   "description": "儿童运动鞋",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "儿童运动鞋二型",
+   "en": "Children's Sneakers Type 2",
+   "category": "鞋类",
+   "dims_cm": [
+    18.0,
+    7.0,
+    5.0
+   ],
+   "diameter": false,
+   "size_text": "18cm×7cm×5cm",
+   "description": "儿童运动鞋",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "耳钉",
+   "en": "Stud Earrings",
+   "category": "饰品",
+   "dims_cm": [
+    1.0
+   ],
+   "diameter": false,
+   "size_text": "约1cm",
+   "description": "耳钉",
+   "scenes": "现代场景"
+  },
+  {
+   "name": "二战VIIC型潜艇",
+   "en": "WWII Type VIIC Submarine",
+   "category": "军舰",
+   "dims_cm": [
+    6700.0,
+    600.0,
+    900.0
+   ],
+   "diameter": false,
+   "size_text": "约67m×6m×9m",
+   "description": "二战潜艇",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "二战航空母舰",
+   "en": "WWII Aircraft Carrier",
+   "category": "军舰",
+   "dims_cm": [
+    25000.0,
+    3000.0,
+    4000.0
+   ],
+   "diameter": false,
+   "size_text": "约250m×30m×40m",
+   "description": "二战航母",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "二战航空母舰二型",
+   "en": "WWII Aircraft Carrier Type 2",
+   "category": "军舰",
+   "dims_cm": [
+    25000.0,
+    3000.0,
+    4000.0
+   ],
+   "diameter": false,
+   "size_text": "约250m×30m×40m",
+   "description": "二战航母",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "二战舰载战斗机",
+   "en": "WWII Carrier Fighter",
+   "category": "飞机",
+   "dims_cm": [
+    1000.0,
+    1100.0,
+    350.0
+   ],
+   "diameter": false,
+   "size_text": "约10m×11m×3.5m",
+   "description": "舰载战斗机",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "二战螺旋桨战斗机",
+   "en": "WWII Propeller Fighter",
+   "category": "飞机",
+   "dims_cm": [
+    1000.0,
+    1100.0,
+    350.0
+   ],
+   "diameter": false,
+   "size_text": "约10m×11m×3.5m",
+   "description": "螺旋桨战斗机",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "二战潜艇",
+   "en": "WWII Submarine",
+   "category": "军舰",
+   "dims_cm": [
+    7000.0,
+    700.0,
+    800.0
+   ],
+   "diameter": false,
+   "size_text": "约70m×7m×8m",
+   "description": "二战潜艇",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "二战轻巡洋舰",
+   "en": "WWII Light Cruiser",
+   "category": "军舰",
+   "dims_cm": [
+    18000.0,
+    1800.0,
+    4000.0
+   ],
+   "diameter": false,
+   "size_text": "约180m×18m×40m",
+   "description": "轻巡洋舰",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "二战轻巡洋舰二型",
+   "en": "WWII Light Cruiser Type 2",
+   "category": "军舰",
+   "dims_cm": [
+    18000.0,
+    1800.0,
+    4000.0
+   ],
+   "diameter": false,
+   "size_text": "约180m×18m×40m",
+   "description": "轻巡洋舰",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "二战驱逐舰",
+   "en": "WWII Destroyer",
+   "category": "军舰",
+   "dims_cm": [
+    11000.0,
+    1100.0,
+    3000.0
+   ],
+   "diameter": false,
+   "size_text": "约110m×11m×30m",
+   "description": "二战驱逐舰",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "二战驱逐舰二型",
+   "en": "WWII Destroyer Type 2",
+   "category": "军舰",
+   "dims_cm": [
+    11000.0,
+    1100.0,
+    3000.0
+   ],
+   "diameter": false,
+   "size_text": "约110m×11m×30m",
+   "description": "二战驱逐舰",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "二战双发轰炸机",
+   "en": "WWII Twin-engine Bomber",
+   "category": "飞机",
+   "dims_cm": [
+    2000.0,
+    2000.0,
+    600.0
+   ],
+   "diameter": false,
+   "size_text": "约20m×20m×6m",
+   "description": "双发轰炸机",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "二战四发重型轰炸机",
+   "en": "WWII Four-engine Heavy Bomber",
+   "category": "飞机",
+   "dims_cm": [
+    3000.0,
+    3000.0,
+    800.0
+   ],
+   "diameter": false,
+   "size_text": "约30m×30m×8m",
+   "description": "重型轰炸机",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "二战战列舰",
+   "en": "WWII Battleship",
+   "category": "军舰",
+   "dims_cm": [
+    25000.0,
+    3500.0,
+    5500.0
+   ],
+   "diameter": false,
+   "size_text": "约250m×35m×55m",
+   "description": "二战战列舰",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "二战战列舰二型",
+   "en": "WWII Battleship Type 2",
+   "category": "军舰",
+   "dims_cm": [
+    25000.0,
+    3500.0,
+    5500.0
+   ],
+   "diameter": false,
+   "size_text": "约250m×35m×55m",
+   "description": "二战战列舰",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "二战重巡洋舰",
+   "en": "WWII Heavy Cruiser",
+   "category": "军舰",
+   "dims_cm": [
+    20000.0,
+    2000.0,
+    4500.0
+   ],
+   "diameter": false,
+   "size_text": "约200m×20m×45m",
+   "description": "重巡洋舰",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "二战重巡洋舰二型",
+   "en": "WWII Heavy Cruiser Type 2",
+   "category": "军舰",
+   "dims_cm": [
+    20000.0,
+    2000.0,
+    4500.0
+   ],
+   "diameter": false,
+   "size_text": "约200m×20m×45m",
+   "description": "重巡洋舰",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "发夹",
+   "en": "Hair Clip",
+   "category": "饰品",
+   "dims_cm": [
+    5.0
+   ],
+   "diameter": false,
+   "size_text": "约5cm",
+   "description": "发夹",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "法剑",
+   "en": "Ritual Sword",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "法剑",
+   "scenes": "古装、修仙场景"
+  },
+  {
+   "name": "帆板",
+   "en": "Windsurf Board",
+   "category": "运动器材",
+   "dims_cm": [
+    250.0,
+    70.0,
+    10.0
+   ],
+   "diameter": false,
+   "size_text": "约2.5m×0.7m×0.1m",
+   "description": "帆板",
+   "scenes": "海边、运动场景"
+  },
+  {
+   "name": "方天画戟",
+   "en": "Fang Tian Hua Ji",
+   "category": "古代兵器",
+   "dims_cm": [
+    250.0,
+    15.0,
+    5.0
+   ],
+   "diameter": false,
+   "size_text": "约250cm×15cm×5cm",
+   "description": "长柄戟",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "方形智能手表",
+   "en": "Square Smartwatch",
+   "category": "手表",
+   "dims_cm": [
+    4.0,
+    4.0,
+    1.0
+   ],
+   "diameter": false,
+   "size_text": "4cm×4cm×1cm",
+   "description": "智能手表",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "飞翼隐身无人攻击机",
+   "en": "Flying Wing Stealth UAV",
+   "category": "飞机",
+   "dims_cm": [
+    1500.0,
+    1500.0,
+    200.0
+   ],
+   "diameter": false,
+   "size_text": "约15m×15m×2m",
+   "description": "隐身无人机",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "非洲象",
+   "en": "African Elephant",
+   "category": "动物",
+   "dims_cm": [
+    600.0,
+    300.0,
+    350.0
+   ],
+   "diameter": false,
+   "size_text": "约6m×3m×3.5m",
+   "description": "非洲象",
+   "scenes": "自然、纪录片"
+  },
+  {
+   "name": "分段纯阳剑",
+   "en": "Segmented Pure Yang Sword",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "九节剑",
+   "scenes": "古装、修仙场景"
+  },
+  {
+   "name": "复合弓",
+   "en": "Compound Bow",
+   "category": "现代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "复合弓",
+   "scenes": "现代、狩猎场景"
+  },
+  {
+   "name": "复合弓套装",
+   "en": "Compound Bow Set",
+   "category": "现代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "复合弓套装",
+   "scenes": "现代、狩猎场景"
+  },
+  {
+   "name": "钢笔",
+   "en": "Fountain Pen",
+   "category": "文具",
+   "dims_cm": [
+    14.0
+   ],
+   "diameter": false,
+   "size_text": "约14cm",
+   "description": "钢笔",
+   "scenes": "现代、商务场景"
+  },
+  {
+   "name": "高尔夫球",
+   "en": "Golf Ball",
+   "category": "运动器材",
+   "dims_cm": [
+    4.3
+   ],
+   "diameter": true,
+   "size_text": "直径4.3cm",
+   "description": "高尔夫球",
+   "scenes": "运动场景"
+  },
+  {
+   "name": "高空侦察机",
+   "en": "High-altitude Reconnaissance Aircraft",
+   "category": "飞机",
+   "dims_cm": [
+    3000.0,
+    3500.0,
+    800.0
+   ],
+   "diameter": false,
+   "size_text": "约30m×35m×8m",
+   "description": "侦察机",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "工作牌",
+   "en": "ID Badge",
+   "category": "证件",
+   "dims_cm": [
+    8.5,
+    5.4,
+    0.1
+   ],
+   "diameter": false,
+   "size_text": "8.5cm×5.4cm×0.1cm",
+   "description": "工作证件卡",
+   "scenes": "办公、现代场景"
+  },
+  {
+   "name": "工作证",
+   "en": "Work ID Card",
+   "category": "证件",
+   "dims_cm": [
+    8.5,
+    5.4,
+    0.1
+   ],
+   "diameter": false,
+   "size_text": "8.5cm×5.4cm×0.1cm",
+   "description": "工作证",
+   "scenes": "办公场景"
+  },
+  {
+   "name": "工作证二型",
+   "en": "Work ID Card Type 2",
+   "category": "证件",
+   "dims_cm": [
+    8.5,
+    5.4,
+    0.1
+   ],
+   "diameter": false,
+   "size_text": "8.5cm×5.4cm×0.1cm",
+   "description": "工作证",
+   "scenes": "办公场景"
+  },
+  {
+   "name": "工作证三型",
+   "en": "Work ID Card Type 3",
+   "category": "证件",
+   "dims_cm": [
+    8.5,
+    5.4,
+    0.1
+   ],
+   "diameter": false,
+   "size_text": "8.5cm×5.4cm×0.1cm",
+   "description": "工作证",
+   "scenes": "办公场景"
+  },
+  {
+   "name": "公文包",
+   "en": "Briefcase",
+   "category": "箱包",
+   "dims_cm": [
+    40.0,
+    30.0,
+    10.0
+   ],
+   "diameter": false,
+   "size_text": "40cm×30cm×10cm",
+   "description": "公文包",
+   "scenes": "商务场景"
+  },
+  {
+   "name": "攻击直升机",
+   "en": "Attack Helicopter",
+   "category": "直升机",
+   "dims_cm": [
+    1500.0,
+    1200.0,
+    400.0
+   ],
+   "diameter": false,
+   "size_text": "约15m×12m×4m",
+   "description": "武装直升机",
+   "scenes": "战争片"
+  },
+  {
+   "name": "钩镰",
+   "en": "Hook Sickle",
+   "category": "古代兵器",
+   "dims_cm": [
+    50.0
+   ],
+   "diameter": false,
+   "size_text": "约50cm",
+   "description": "钩镰",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "钩镰枪",
+   "en": "Hook Spear",
+   "category": "古代兵器",
+   "dims_cm": [
+    200.0
+   ],
+   "diameter": false,
+   "size_text": "约200cm",
+   "description": "钩镰枪",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "古埃及战船",
+   "en": "Ancient Egyptian Warship",
+   "category": "古代战船",
+   "dims_cm": [
+    3000.0,
+    600.0,
+    500.0
+   ],
+   "diameter": false,
+   "size_text": "约30m×6m×5m",
+   "description": "古埃及战船",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "古埃及战船二型",
+   "en": "Ancient Egyptian Warship Type 2",
+   "category": "古代战船",
+   "dims_cm": [
+    3000.0,
+    600.0,
+    500.0
+   ],
+   "diameter": false,
+   "size_text": "约30m×6m×5m",
+   "description": "古埃及战船",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "古代战船",
+   "en": "Ancient Warship",
+   "category": "古代战船",
+   "dims_cm": [
+    4000.0,
+    800.0,
+    1200.0
+   ],
+   "diameter": false,
+   "size_text": "约40m×8m×12m",
+   "description": "古代战船",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "古代中国宝船",
+   "en": "Ancient Chinese Treasure Ship",
+   "category": "古代战船",
+   "dims_cm": [
+    5000.0,
+    1200.0,
+    1000.0
+   ],
+   "diameter": false,
+   "size_text": "约50m×12m×10m",
+   "description": "宝船",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "古式弩",
+   "en": "Ancient Crossbow",
+   "category": "古代兵器",
+   "dims_cm": [
+    80.0
+   ],
+   "diameter": false,
+   "size_text": "约80cm",
+   "description": "弩",
+   "scenes": "古装、战争场景"
+  },
+  {
+   "name": "古希腊三列桨战船",
+   "en": "Ancient Greek Trireme",
+   "category": "古代战船",
+   "dims_cm": [
+    3500.0,
+    500.0,
+    400.0
+   ],
+   "diameter": false,
+   "size_text": "约35m×5m×4m",
+   "description": "三列桨战船",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "关刀",
+   "en": "Guan Dao",
+   "category": "古代兵器",
+   "dims_cm": [
+    200.0
+   ],
+   "diameter": false,
+   "size_text": "约200cm",
+   "description": "关刀",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "国际空间站",
+   "en": "International Space Station",
+   "category": "航天器",
+   "dims_cm": [
+    10000.0,
+    7000.0,
+    3000.0
+   ],
+   "diameter": false,
+   "size_text": "约100m×70m×30m",
+   "description": "空间站",
+   "scenes": "科幻、科技场景"
+  },
+  {
+   "name": "海军补给油船",
+   "en": "Naval Supply Tanker",
+   "category": "军舰",
+   "dims_cm": [
+    17000.0,
+    2400.0,
+    4500.0
+   ],
+   "diameter": false,
+   "size_text": "约170m×24m×45m",
+   "description": "补给油船",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "汉代剑",
+   "en": "Han Dynasty Sword",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "汉剑",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "汉剑",
+   "en": "Han Sword",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "汉剑",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "航空母舰",
+   "en": "Aircraft Carrier",
+   "category": "军舰",
+   "dims_cm": [
+    33000.0,
+    7800.0,
+    7000.0
+   ],
+   "diameter": false,
+   "size_text": "约330m×78m×70m",
+   "description": "现代航空母舰",
+   "scenes": "军事题材、战争片"
+  },
+  {
+   "name": "豪华商务MPV",
+   "en": "Luxury Business MPV",
+   "category": "车辆",
+   "dims_cm": [
+    520.0,
+    190.0,
+    180.0
+   ],
+   "diameter": false,
+   "size_text": "约5.2m×1.9m×1.8m",
+   "description": "商务车",
+   "scenes": "商务场景"
+  },
+  {
+   "name": "豪华商务MPV二型",
+   "en": "Luxury Business MPV Type 2",
+   "category": "车辆",
+   "dims_cm": [
+    520.0,
+    190.0,
+    180.0
+   ],
+   "diameter": false,
+   "size_text": "约5.2m×1.9m×1.8m",
+   "description": "商务车",
+   "scenes": "商务场景"
+  },
+  {
+   "name": "豪华手表",
+   "en": "Luxury Watch",
+   "category": "手表",
+   "dims_cm": [
+    4.0,
+    4.0,
+    1.0
+   ],
+   "diameter": false,
+   "size_text": "4cm×4cm×1cm",
+   "description": "高级手表",
+   "scenes": "商务、高端场景"
+  },
+  {
+   "name": "豪华游艇",
+   "en": "Luxury Yacht",
+   "category": "船舶",
+   "dims_cm": [
+    4000.0,
+    800.0,
+    1200.0
+   ],
+   "diameter": false,
+   "size_text": "约40m×8m×12m",
+   "description": "豪华游艇",
+   "scenes": "高端场景"
+  },
+  {
+   "name": "和弓",
+   "en": "Japanese Yumi",
+   "category": "古代兵器",
+   "dims_cm": [
+    220.0
+   ],
+   "diameter": false,
+   "size_text": "约220cm",
+   "description": "日本弓",
+   "scenes": "古装、武士题材"
+  },
+  {
+   "name": "河马",
+   "en": "Hippopotamus",
+   "category": "动物",
+   "dims_cm": [
+    400.0,
+    200.0,
+    150.0
+   ],
+   "diameter": false,
+   "size_text": "约4m×2m×1.5m",
+   "description": "河马",
+   "scenes": "自然场景"
+  },
+  {
+   "name": "恒星级主力飞船",
+   "en": "Star-class Capital Ship",
+   "category": "航天器",
+   "dims_cm": [
+    80000.0,
+    20000.0,
+    15000.0
+   ],
+   "diameter": false,
+   "size_text": "约800m×200m×150m",
+   "description": "大型科幻飞船",
+   "scenes": "科幻片"
+  },
+  {
+   "name": "轰炸机",
+   "en": "Bomber",
+   "category": "飞机",
+   "dims_cm": [
+    4000.0,
+    3500.0,
+    1000.0
+   ],
+   "diameter": false,
+   "size_text": "约40m×35m×10m",
+   "description": "战略轰炸机",
+   "scenes": "战争片"
+  },
+  {
+   "name": "红木手串",
+   "en": "Rosewood Bead Bracelet",
+   "category": "饰品",
+   "dims_cm": [
+    18.0
+   ],
+   "diameter": true,
+   "size_text": "直径约18cm",
+   "description": "手串",
+   "scenes": "现代、古装场景"
+  },
+  {
+   "name": "红色半挂卡车",
+   "en": "Red Semi-trailer Truck",
+   "category": "车辆",
+   "dims_cm": [
+    1200.0,
+    250.0,
+    400.0
+   ],
+   "diameter": false,
+   "size_text": "约12m×2.5m×4m",
+   "description": "半挂卡车",
+   "scenes": "现代场景"
+  },
+  {
+   "name": "红色半挂卡车二型",
+   "en": "Red Semi-trailer Truck Type 2",
+   "category": "车辆",
+   "dims_cm": [
+    1200.0,
+    250.0,
+    400.0
+   ],
+   "diameter": false,
+   "size_text": "约12m×2.5m×4m",
+   "description": "半挂卡车",
+   "scenes": "现代场景"
+  },
+  {
+   "name": "红色半挂卡车三型",
+   "en": "Red Semi-trailer Truck Type 3",
+   "category": "车辆",
+   "dims_cm": [
+    1200.0,
+    250.0,
+    400.0
+   ],
+   "diameter": false,
+   "size_text": "约12m×2.5m×4m",
+   "description": "半挂卡车",
+   "scenes": "现代场景"
+  },
+  {
+   "name": "红穗陌刀",
+   "en": "Red Tassel Mo Dao",
+   "category": "古代兵器",
+   "dims_cm": [
+    180.0,
+    6.0,
+    3.0
+   ],
+   "diameter": false,
+   "size_text": "约180cm×6cm×3cm",
+   "description": "陌刀",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "护肤精华瓶",
+   "en": "Skincare Serum",
+   "category": "护肤品",
+   "dims_cm": [
+    15.0,
+    5.0
+   ],
+   "diameter": false,
+   "size_text": "约15cm×5cm",
+   "description": "护肤品",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "护身挂坠",
+   "en": "Protective Pendant",
+   "category": "饰品",
+   "dims_cm": [
+    5.0
+   ],
+   "diameter": false,
+   "size_text": "约5cm",
+   "description": "挂坠",
+   "scenes": "现代、古装场景"
+  },
+  {
+   "name": "花朵项链",
+   "en": "Flower Necklace",
+   "category": "饰品",
+   "dims_cm": [
+    45.0
+   ],
+   "diameter": false,
+   "size_text": "约45cm",
+   "description": "项链",
+   "scenes": "现代场景"
+  },
+  {
+   "name": "花纹猎弓",
+   "en": "Patterned Hunting Bow",
+   "category": "古代兵器",
+   "dims_cm": [
+    160.0
+   ],
+   "diameter": false,
+   "size_text": "约160cm",
+   "description": "猎弓",
+   "scenes": "古装、狩猎场景"
+  },
+  {
+   "name": "环首刀",
+   "en": "Ring-pommel Dao",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "环首刀",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "灰绿复合弓",
+   "en": "Gray-green Compound Bow",
+   "category": "现代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "复合弓",
+   "scenes": "现代、狩猎场景"
+  },
+  {
+   "name": "回音壁",
+   "en": "Soundbar",
+   "category": "音响",
+   "dims_cm": [
+    90.0,
+    8.0,
+    10.0
+   ],
+   "diameter": false,
+   "size_text": "90cm×8cm×10cm",
+   "description": "回音壁",
+   "scenes": "家居、影音场景"
+  },
+  {
+   "name": "货轮",
+   "en": "Cargo Ship",
+   "category": "船舶",
+   "dims_cm": [
+    20000.0,
+    3000.0,
+    4000.0
+   ],
+   "diameter": false,
+   "size_text": "约200m×30m×40m",
+   "description": "货轮",
+   "scenes": "现代场景"
+  },
+  {
+   "name": "货轮二型",
+   "en": "Cargo Ship Type 2",
+   "category": "船舶",
+   "dims_cm": [
+    20000.0,
+    3000.0,
+    4000.0
+   ],
+   "diameter": false,
+   "size_text": "约200m×30m×40m",
+   "description": "货轮",
+   "scenes": "现代场景"
+  },
+  {
+   "name": "货轮三型",
+   "en": "Cargo Ship Type 3",
+   "category": "船舶",
+   "dims_cm": [
+    20000.0,
+    3000.0,
+    4000.0
+   ],
+   "diameter": false,
+   "size_text": "约200m×30m×40m",
+   "description": "货轮",
+   "scenes": "现代场景"
+  },
+  {
+   "name": "戟",
+   "en": "Ji Halberd",
+   "category": "古代兵器",
+   "dims_cm": [
+    250.0
+   ],
+   "diameter": false,
+   "size_text": "约250cm",
+   "description": "戟",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "计算器",
+   "en": "Calculator",
+   "category": "办公用品",
+   "dims_cm": [
+    15.0,
+    8.0,
+    1.0
+   ],
+   "diameter": false,
+   "size_text": "15cm×8cm×1cm",
+   "description": "计算器",
+   "scenes": "办公场景"
+  },
+  {
+   "name": "加长豪华轿车",
+   "en": "Stretch Limousine",
+   "category": "车辆",
+   "dims_cm": [
+    650.0,
+    190.0,
+    150.0
+   ],
+   "diameter": false,
+   "size_text": "约6.5m×1.9m×1.5m",
+   "description": "礼宾车",
+   "scenes": "高端商务场景"
+  },
+  {
+   "name": "家猫",
+   "en": "Domestic Cat",
+   "category": "动物",
+   "dims_cm": [
+    50.0,
+    20.0,
+    25.0
+   ],
+   "diameter": false,
+   "size_text": "约50cm×20cm×25cm",
+   "description": "家猫",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "家鸭",
+   "en": "Domestic Duck",
+   "category": "动物",
+   "dims_cm": [
+    40.0,
+    20.0,
+    25.0
+   ],
+   "diameter": false,
+   "size_text": "约40cm×20cm×25cm",
+   "description": "家鸭",
+   "scenes": "农村场景"
+  },
+  {
+   "name": "家用按摩椅",
+   "en": "Home Massage Chair",
+   "category": "家居",
+   "dims_cm": [
+    120.0,
+    80.0,
+    140.0
+   ],
+   "diameter": false,
+   "size_text": "120cm×80cm×140cm",
+   "description": "全身按摩椅",
+   "scenes": "家居场景"
+  },
+  {
+   "name": "家猪",
+   "en": "Domestic Pig",
+   "category": "动物",
+   "dims_cm": [
+    150.0,
+    60.0,
+    70.0
+   ],
+   "diameter": false,
+   "size_text": "约1.5m×0.6m×0.7m",
+   "description": "家猪",
+   "scenes": "农村场景"
+  },
+  {
+   "name": "舰载直升机",
+   "en": "Shipboard Helicopter",
+   "category": "直升机",
+   "dims_cm": [
+    1500.0,
+    1200.0,
+    400.0
+   ],
+   "diameter": false,
+   "size_text": "约15m×12m×4m",
+   "description": "舰载直升机",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "箭",
+   "en": "Arrow",
+   "category": "古代兵器",
+   "dims_cm": [
+    80.0
+   ],
+   "diameter": false,
+   "size_text": "约80cm",
+   "description": "箭",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "箭袋",
+   "en": "Quiver",
+   "category": "古代兵器",
+   "dims_cm": [
+    50.0
+   ],
+   "diameter": false,
+   "size_text": "约50cm",
+   "description": "箭袋",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "脚链",
+   "en": "Anklet",
+   "category": "饰品",
+   "dims_cm": [
+    25.0
+   ],
+   "diameter": false,
+   "size_text": "约25cm",
+   "description": "脚链",
+   "scenes": "现代场景"
+  },
+  {
+   "name": "金刚杵",
+   "en": "Vajra",
+   "category": "宗教饰品",
+   "dims_cm": [
+    15.0
+   ],
+   "diameter": false,
+   "size_text": "约15cm",
+   "description": "金刚杵",
+   "scenes": "宗教、修炼场景"
+  },
+  {
+   "name": "金刚杵与铃",
+   "en": "Vajra and Bell",
+   "category": "宗教饰品",
+   "dims_cm": [
+    15.0
+   ],
+   "diameter": false,
+   "size_text": "约15cm",
+   "description": "金刚杵与铃",
+   "scenes": "宗教、修炼场景"
+  },
+  {
+   "name": "金刚铃",
+   "en": "Vajra Bell",
+   "category": "宗教饰品",
+   "dims_cm": [
+    12.0
+   ],
+   "diameter": false,
+   "size_text": "约12cm",
+   "description": "金刚铃",
+   "scenes": "宗教、修炼场景"
+  },
+  {
+   "name": "金色手镯",
+   "en": "Gold Bracelet",
+   "category": "饰品",
+   "dims_cm": [
+    6.0
+   ],
+   "diameter": true,
+   "size_text": "直径约6cm",
+   "description": "金手镯",
+   "scenes": "现代、古装场景"
+  },
+  {
+   "name": "金饰方天画戟",
+   "en": "Gold-decorated Fang Tian Hua Ji",
+   "category": "古代兵器",
+   "dims_cm": [
+    250.0,
+    15.0,
+    5.0
+   ],
+   "diameter": false,
+   "size_text": "约250cm×15cm×5cm",
+   "description": "方天画戟",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "金水晶项链",
+   "en": "Gold Crystal Necklace",
+   "category": "饰品",
+   "dims_cm": [
+    45.0
+   ],
+   "diameter": false,
+   "size_text": "约45cm",
+   "description": "项链",
+   "scenes": "现代场景"
+  },
+  {
+   "name": "金叶耳坠",
+   "en": "Gold Leaf Earrings",
+   "category": "饰品",
+   "dims_cm": [
+    5.0
+   ],
+   "diameter": false,
+   "size_text": "约5cm",
+   "description": "耳坠",
+   "scenes": "现代场景"
+  },
+  {
+   "name": "紧凑型面包车",
+   "en": "Compact Van",
+   "category": "车辆",
+   "dims_cm": [
+    420.0,
+    170.0,
+    190.0
+   ],
+   "diameter": false,
+   "size_text": "约4.2m×1.7m×1.9m",
+   "description": "面包车",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "近距空中支援攻击机",
+   "en": "Close Air Support Aircraft",
+   "category": "飞机",
+   "dims_cm": [
+    1600.0,
+    1700.0,
+    450.0
+   ],
+   "diameter": false,
+   "size_text": "约16m×17m×4.5m",
+   "description": "攻击机",
+   "scenes": "战争片"
+  },
+  {
+   "name": "精装书",
+   "en": "Hardcover Book",
+   "category": "文具",
+   "dims_cm": [
+    20.0,
+    14.0,
+    2.0
+   ],
+   "diameter": false,
+   "size_text": "20cm×14cm×2cm",
+   "description": "精装书",
+   "scenes": "现代、古装场景"
+  },
+  {
+   "name": "精装书二型",
+   "en": "Hardcover Book Type 2",
+   "category": "文具",
+   "dims_cm": [
+    20.0,
+    14.0,
+    2.0
+   ],
+   "diameter": false,
+   "size_text": "20cm×14cm×2cm",
+   "description": "精装书",
+   "scenes": "现代、古装场景"
+  },
+  {
+   "name": "九节纯阳剑",
+   "en": "Nine-section Pure Yang Sword",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "九节剑",
+   "scenes": "古装、修仙场景"
+  },
+  {
+   "name": "狙击步枪",
+   "en": "Sniper Rifle",
+   "category": "枪械",
+   "dims_cm": [
+    120.0,
+    8.0,
+    20.0
+   ],
+   "diameter": false,
+   "size_text": "约120cm×8cm×20cm",
+   "description": "狙击步枪",
+   "scenes": "动作、军事题材"
+  },
+  {
+   "name": "狙击步枪二型",
+   "en": "Sniper Rifle Type 2",
+   "category": "枪械",
+   "dims_cm": [
+    120.0,
+    8.0,
+    20.0
+   ],
+   "diameter": false,
+   "size_text": "约120cm×8cm×20cm",
+   "description": "狙击步枪",
+   "scenes": "动作、军事题材"
+  },
+  {
+   "name": "军用气垫船",
+   "en": "Military Hovercraft",
+   "category": "军舰",
+   "dims_cm": [
+    2000.0,
+    800.0,
+    600.0
+   ],
+   "diameter": false,
+   "size_text": "约20m×8m×6m",
+   "description": "气垫艇",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "军用运输机",
+   "en": "Military Transport Aircraft",
+   "category": "飞机",
+   "dims_cm": [
+    4000.0,
+    4000.0,
+    1200.0
+   ],
+   "diameter": false,
+   "size_text": "约40m×40m×12m",
+   "description": "运输机",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "咖啡机",
+   "en": "Coffee Machine",
+   "category": "家电",
+   "dims_cm": [
+    35.0,
+    25.0,
+    30.0
+   ],
+   "diameter": false,
+   "size_text": "35cm×25cm×30cm",
+   "description": "咖啡机",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "开放式机架",
+   "en": "Open Frame Rack",
+   "category": "服务器设备",
+   "dims_cm": [
+    200.0,
+    60.0,
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约2m×0.6m×1m",
+   "description": "开放式机架",
+   "scenes": "科技场景"
+  },
+  {
+   "name": "空调室内机",
+   "en": "Air Conditioner Indoor Unit",
+   "category": "家电",
+   "dims_cm": [
+    80.0,
+    30.0,
+    20.0
+   ],
+   "diameter": false,
+   "size_text": "80cm×30cm×20cm",
+   "description": "空调室内机",
+   "scenes": "家居场景"
+  },
+  {
+   "name": "空对地导弹",
+   "en": "Air-to-Ground Missile",
+   "category": "武器",
+   "dims_cm": [
+    300.0,
+    30.0
+   ],
+   "diameter": false,
+   "size_text": "约3m×0.3m",
+   "description": "空对地导弹",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "空对地导弹二型",
+   "en": "Air-to-Ground Missile Type 2",
+   "category": "武器",
+   "dims_cm": [
+    300.0,
+    30.0
+   ],
+   "diameter": false,
+   "size_text": "约3m×0.3m",
+   "description": "空对地导弹",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "空对空导弹",
+   "en": "Air-to-Air Missile",
+   "category": "武器",
+   "dims_cm": [
+    300.0,
+    20.0
+   ],
+   "diameter": false,
+   "size_text": "约3m×0.2m",
+   "description": "空对空导弹",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "空对空导弹二型",
+   "en": "Air-to-Air Missile Type 2",
+   "category": "武器",
+   "dims_cm": [
+    300.0,
+    20.0
+   ],
+   "diameter": false,
+   "size_text": "约3m×0.2m",
+   "description": "空对空导弹",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "空气净化器",
+   "en": "Air Purifier",
+   "category": "家电",
+   "dims_cm": [
+    40.0,
+    25.0,
+    60.0
+   ],
+   "diameter": false,
+   "size_text": "约40cm×25cm×60cm",
+   "description": "空气净化器",
+   "scenes": "家居场景"
+  },
+  {
+   "name": "空气炸锅",
+   "en": "Air Fryer",
+   "category": "家电",
+   "dims_cm": [
+    32.0,
+    28.0,
+    30.0
+   ],
+   "diameter": false,
+   "size_text": "32cm×28cm×30cm",
+   "description": "空气炸锅",
+   "scenes": "家居场景"
+  },
+  {
+   "name": "空优战斗机",
+   "en": "Air Superiority Fighter",
+   "category": "飞机",
+   "dims_cm": [
+    1500.0,
+    1000.0,
+    450.0
+   ],
+   "diameter": false,
+   "size_text": "约15m×10m×4.5m",
+   "description": "空优战机",
+   "scenes": "战争片"
+  },
+  {
+   "name": "空中加油机",
+   "en": "Aerial Refueling Tanker",
+   "category": "飞机",
+   "dims_cm": [
+    4000.0,
+    4000.0,
+    1200.0
+   ],
+   "diameter": false,
+   "size_text": "约40m×40m×12m",
+   "description": "加油机",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "拉布拉多犬",
+   "en": "Labrador Retriever",
+   "category": "动物",
+   "dims_cm": [
+    60.0,
+    30.0,
+    55.0
+   ],
+   "diameter": false,
+   "size_text": "约60cm×30cm×55cm",
+   "description": "拉布拉多犬",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "蓝宝石金戒指",
+   "en": "Sapphire Gold Ring",
+   "category": "饰品",
+   "dims_cm": [
+    2.0
+   ],
+   "diameter": true,
+   "size_text": "直径约2cm",
+   "description": "戒指",
+   "scenes": "现代、古装场景"
+  },
+  {
+   "name": "蓝面机械表",
+   "en": "Blue Dial Mechanical Watch",
+   "category": "手表",
+   "dims_cm": [
+    4.0,
+    4.0,
+    1.0
+   ],
+   "diameter": false,
+   "size_text": "4cm×4cm×1cm",
+   "description": "机械表",
+   "scenes": "商务、高端场景"
+  },
+  {
+   "name": "蓝牙便携音箱",
+   "en": "Bluetooth Portable Speaker",
+   "category": "音响",
+   "dims_cm": [
+    18.0,
+    8.0,
+    7.0
+   ],
+   "diameter": false,
+   "size_text": "18cm×8cm×7cm",
+   "description": "便携音箱",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "篮球",
+   "en": "Basketball",
+   "category": "运动器材",
+   "dims_cm": [
+    24.0
+   ],
+   "diameter": true,
+   "size_text": "直径24cm",
+   "description": "篮球",
+   "scenes": "运动场景"
+  },
+  {
+   "name": "老虎",
+   "en": "Tiger",
+   "category": "动物",
+   "dims_cm": [
+    250.0,
+    80.0,
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约2.5m×0.8m×1m",
+   "description": "老虎",
+   "scenes": "自然场景"
+  },
+  {
+   "name": "立方星卫星",
+   "en": "CubeSat",
+   "category": "航天器",
+   "dims_cm": [
+    10.0,
+    10.0,
+    10.0
+   ],
+   "diameter": false,
+   "size_text": "约10cm×10cm×10cm",
+   "description": "立方星",
+   "scenes": "科技场景"
+  },
+  {
+   "name": "利布尔纳战船",
+   "en": "Liburnian Galley",
+   "category": "古代战船",
+   "dims_cm": [
+    2500.0,
+    400.0,
+    300.0
+   ],
+   "diameter": false,
+   "size_text": "约25m×4m×3m",
+   "description": "古罗马战船",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "猎鹰9号运载火箭",
+   "en": "Falcon 9 Rocket",
+   "category": "航天器",
+   "dims_cm": [
+    7000.0,
+    370.0
+   ],
+   "diameter": false,
+   "size_text": "约70m×3.7m",
+   "description": "运载火箭",
+   "scenes": "科幻、科技场景"
+  },
+  {
+   "name": "菱格唐刀",
+   "en": "Diamond Pattern Tang Dao",
+   "category": "古代兵器",
+   "dims_cm": [
+    105.0,
+    4.0,
+    2.0
+   ],
+   "diameter": false,
+   "size_text": "约105cm×4cm×2cm",
+   "description": "唐刀",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "流星锤",
+   "en": "Meteor Hammer",
+   "category": "古代兵器",
+   "dims_cm": [
+    200.0
+   ],
+   "diameter": false,
+   "size_text": "约2m",
+   "description": "流星锤",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "柳叶刀",
+   "en": "Willow Leaf Dao",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "柳叶刀",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "罗马五列桨战船",
+   "en": "Roman Quinquereme",
+   "category": "古代战船",
+   "dims_cm": [
+    4500.0,
+    600.0,
+    500.0
+   ],
+   "diameter": false,
+   "size_text": "约45m×6m×5m",
+   "description": "五列桨战船",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "螺旋桨教练机",
+   "en": "Propeller Trainer Aircraft",
+   "category": "飞机",
+   "dims_cm": [
+    1000.0,
+    1100.0,
+    300.0
+   ],
+   "diameter": false,
+   "size_text": "约10m×11m×3m",
+   "description": "教练机",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "落地灯",
+   "en": "Floor Lamp",
+   "category": "照明",
+   "dims_cm": [
+    160.0
+   ],
+   "diameter": false,
+   "size_text": "约160cm",
+   "description": "落地灯",
+   "scenes": "家居场景"
+  },
+  {
+   "name": "落地音箱",
+   "en": "Floor-standing Speaker",
+   "category": "音响",
+   "dims_cm": [
+    110.0,
+    30.0,
+    35.0
+   ],
+   "diameter": false,
+   "size_text": "110cm×30cm×35cm",
+   "description": "落地音箱",
+   "scenes": "家居、影音场景"
+  },
+  {
+   "name": "马",
+   "en": "Horse",
+   "category": "动物",
+   "dims_cm": [
+    250.0,
+    60.0,
+    160.0
+   ],
+   "diameter": false,
+   "size_text": "约2.5m×0.6m×1.6m",
+   "description": "马",
+   "scenes": "古装、现代场景"
+  },
+  {
+   "name": "毛笔",
+   "en": "Chinese Calligraphy Brush",
+   "category": "文具",
+   "dims_cm": [
+    25.0
+   ],
+   "diameter": false,
+   "size_text": "约25cm",
+   "description": "毛笔",
+   "scenes": "古装、书法场景"
+  },
+  {
+   "name": "迷你便携音箱",
+   "en": "Mini Portable Speaker",
+   "category": "音响",
+   "dims_cm": [
+    12.0,
+    6.0,
+    6.0
+   ],
+   "diameter": false,
+   "size_text": "12cm×6cm×6cm",
+   "description": "迷你音箱",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "明代剑",
+   "en": "Ming Dynasty Sword",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "明剑",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "明剑",
+   "en": "Ming Sword",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "明剑",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "陌刀",
+   "en": "Mo Dao",
+   "category": "古代兵器",
+   "dims_cm": [
+    180.0,
+    6.0,
+    3.0
+   ],
+   "diameter": false,
+   "size_text": "约180cm×6cm×3cm",
+   "description": "唐代陌刀",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "母鸡",
+   "en": "Hen",
+   "category": "动物",
+   "dims_cm": [
+    40.0,
+    20.0,
+    30.0
+   ],
+   "diameter": false,
+   "size_text": "约40cm×20cm×30cm",
+   "description": "母鸡",
+   "scenes": "农村场景"
+  },
+  {
+   "name": "木珠手串",
+   "en": "Wooden Bead Bracelet",
+   "category": "饰品",
+   "dims_cm": [
+    18.0
+   ],
+   "diameter": true,
+   "size_text": "直径约18cm",
+   "description": "手串",
+   "scenes": "现代、古装场景"
+  },
+  {
+   "name": "奶牛",
+   "en": "Dairy Cow",
+   "category": "动物",
+   "dims_cm": [
+    250.0,
+    100.0,
+    140.0
+   ],
+   "diameter": false,
+   "size_text": "约2.5m×1m×1.4m",
+   "description": "奶牛",
+   "scenes": "农村场景"
+  },
+  {
+   "name": "男士皮鞋",
+   "en": "Men's Leather Shoes",
+   "category": "鞋类",
+   "dims_cm": [
+    28.0,
+    10.0,
+    8.0
+   ],
+   "diameter": false,
+   "size_text": "28cm×10cm×8cm",
+   "description": "男士皮鞋",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "男士鞋",
+   "en": "Men's Shoes",
+   "category": "鞋类",
+   "dims_cm": [
+    28.0,
+    10.0,
+    8.0
+   ],
+   "diameter": false,
+   "size_text": "28cm×10cm×8cm",
+   "description": "男士鞋",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "弩",
+   "en": "Crossbow",
+   "category": "古代兵器",
+   "dims_cm": [
+    80.0
+   ],
+   "diameter": false,
+   "size_text": "约80cm",
+   "description": "弩",
+   "scenes": "古装、战争场景"
+  },
+  {
+   "name": "女士鞋",
+   "en": "Women's Shoes",
+   "category": "鞋类",
+   "dims_cm": [
+    25.0,
+    9.0,
+    7.0
+   ],
+   "diameter": false,
+   "size_text": "25cm×9cm×7cm",
+   "description": "女士鞋",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "女式高跟鞋",
+   "en": "Women's High Heels",
+   "category": "鞋类",
+   "dims_cm": [
+    25.0,
+    9.0,
+    10.0
+   ],
+   "diameter": false,
+   "size_text": "25cm×9cm×10cm",
+   "description": "高跟鞋",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "排球",
+   "en": "Volleyball",
+   "category": "运动器材",
+   "dims_cm": [
+    21.0
+   ],
+   "diameter": true,
+   "size_text": "直径21cm",
+   "description": "排球",
+   "scenes": "运动场景"
+  },
+  {
+   "name": "排球二型",
+   "en": "Volleyball Type 2",
+   "category": "运动器材",
+   "dims_cm": [
+    21.0
+   ],
+   "diameter": true,
+   "size_text": "直径21cm",
+   "description": "排球",
+   "scenes": "运动场景"
+  },
+  {
+   "name": "跑步机",
+   "en": "Treadmill",
+   "category": "运动器材",
+   "dims_cm": [
+    160.0,
+    75.0,
+    140.0
+   ],
+   "diameter": false,
+   "size_text": "160cm×75cm×140cm",
+   "description": "跑步机",
+   "scenes": "健身场景"
+  },
+  {
+   "name": "佩刀",
+   "en": "Sidearm Dao",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "佩刀",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "喷气教练机",
+   "en": "Jet Trainer",
+   "category": "飞机",
+   "dims_cm": [
+    1200.0,
+    900.0,
+    400.0
+   ],
+   "diameter": false,
+   "size_text": "约12m×9m×4m",
+   "description": "教练机",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "喷气快艇",
+   "en": "Jet Ski",
+   "category": "运动器材",
+   "dims_cm": [
+    300.0,
+    120.0,
+    110.0
+   ],
+   "diameter": false,
+   "size_text": "约3m×1.2m×1.1m",
+   "description": "摩托艇",
+   "scenes": "海边、运动场景"
+  },
+  {
+   "name": "盆栽绿植五种",
+   "en": "Five Types of Potted Plants",
+   "category": "植物",
+   "dims_cm": [
+    45.0
+   ],
+   "diameter": false,
+   "size_text": "约30-45cm",
+   "description": "盆栽植物",
+   "scenes": "家居、办公场景"
+  },
+  {
+   "name": "盆栽植物",
+   "en": "Potted Plant",
+   "category": "植物",
+   "dims_cm": [
+    30.0,
+    25.0
+   ],
+   "diameter": false,
+   "size_text": "约30cm×25cm",
+   "description": "盆栽",
+   "scenes": "家居、办公场景"
+  },
+  {
+   "name": "盆栽植物多视图",
+   "en": "Potted Plant Multi-view",
+   "category": "植物",
+   "dims_cm": [
+    30.0,
+    25.0
+   ],
+   "diameter": false,
+   "size_text": "约30cm×25cm",
+   "description": "盆栽",
+   "scenes": "家居、办公场景"
+  },
+  {
+   "name": "平板电脑",
+   "en": "Tablet",
+   "category": "电子产品",
+   "dims_cm": [
+    28.0,
+    21.5,
+    0.65
+   ],
+   "diameter": false,
+   "size_text": "28cm×21.5cm×0.65cm",
+   "description": "平板电脑",
+   "scenes": "现代、商务场景"
+  },
+  {
+   "name": "平板电视",
+   "en": "Flat Screen TV",
+   "category": "家电",
+   "dims_cm": [
+    120.0,
+    70.0,
+    8.0
+   ],
+   "diameter": false,
+   "size_text": "120cm×70cm×8cm",
+   "description": "平板电视",
+   "scenes": "家居场景"
+  },
+  {
+   "name": "平板扫描仪",
+   "en": "Flatbed Scanner",
+   "category": "办公用品",
+   "dims_cm": [
+    40.0,
+    30.0,
+    10.0
+   ],
+   "diameter": false,
+   "size_text": "40cm×30cm×10cm",
+   "description": "扫描仪",
+   "scenes": "办公室场景"
+  },
+  {
+   "name": "朴刀",
+   "en": "Pu Dao",
+   "category": "古代兵器",
+   "dims_cm": [
+    150.0
+   ],
+   "diameter": false,
+   "size_text": "约150cm",
+   "description": "朴刀",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "枪",
+   "en": "Spear",
+   "category": "古代兵器",
+   "dims_cm": [
+    200.0
+   ],
+   "diameter": false,
+   "size_text": "约200cm",
+   "description": "长枪",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "青铜金刚杵铃",
+   "en": "Bronze Vajra Bell",
+   "category": "宗教饰品",
+   "dims_cm": [
+    15.0
+   ],
+   "diameter": false,
+   "size_text": "约15cm",
+   "description": "金刚杵铃",
+   "scenes": "宗教、修炼场景"
+  },
+  {
+   "name": "轻型攻击机",
+   "en": "Light Attack Aircraft",
+   "category": "飞机",
+   "dims_cm": [
+    1200.0,
+    1000.0,
+    400.0
+   ],
+   "diameter": false,
+   "size_text": "约12m×10m×4m",
+   "description": "攻击机",
+   "scenes": "战争片"
+  },
+  {
+   "name": "轻型通用直升机",
+   "en": "Light Utility Helicopter",
+   "category": "直升机",
+   "dims_cm": [
+    1200.0,
+    1000.0,
+    350.0
+   ],
+   "diameter": false,
+   "size_text": "约12m×10m×3.5m",
+   "description": "通用直升机",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "轻型侦察直升机",
+   "en": "Light Reconnaissance Helicopter",
+   "category": "直升机",
+   "dims_cm": [
+    1200.0,
+    1000.0,
+    350.0
+   ],
+   "diameter": false,
+   "size_text": "约12m×10m×3.5m",
+   "description": "侦察直升机",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "曲头蛇矛",
+   "en": "Curved Snake Spear",
+   "category": "古代兵器",
+   "dims_cm": [
+    200.0,
+    8.0,
+    4.0
+   ],
+   "diameter": false,
+   "size_text": "约200cm×8cm×4cm",
+   "description": "蛇矛",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "驱逐舰",
+   "en": "Destroyer",
+   "category": "军舰",
+   "dims_cm": [
+    15500.0,
+    2000.0,
+    4500.0
+   ],
+   "diameter": false,
+   "size_text": "约155m×20m×45m",
+   "description": "现代驱逐舰",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "全尺寸越野SUV",
+   "en": "Full-size SUV",
+   "category": "车辆",
+   "dims_cm": [
+    530.0,
+    200.0,
+    190.0
+   ],
+   "diameter": false,
+   "size_text": "约5.3m×2m×1.9m",
+   "description": "全尺寸SUV",
+   "scenes": "现代场景"
+  },
+  {
+   "name": "全尺寸越野车",
+   "en": "Full-size Off-road Vehicle",
+   "category": "车辆",
+   "dims_cm": [
+    530.0,
+    200.0,
+    190.0
+   ],
+   "diameter": false,
+   "size_text": "约5.3m×2m×1.9m",
+   "description": "全尺寸越野车",
+   "scenes": "现代场景"
+  },
+  {
+   "name": "人造卫星",
+   "en": "Artificial Satellite",
+   "category": "航天器",
+   "dims_cm": [
+    500.0,
+    300.0,
+    300.0
+   ],
+   "diameter": false,
+   "size_text": "约5m×3m×3m",
+   "description": "卫星",
+   "scenes": "科幻、科技场景"
+  },
+  {
+   "name": "软壳行李箱",
+   "en": "Soft-shell Suitcase",
+   "category": "箱包",
+   "dims_cm": [
+    65.0,
+    42.0,
+    26.0
+   ],
+   "diameter": false,
+   "size_text": "65cm×42cm×26cm",
+   "description": "软壳行李箱",
+   "scenes": "旅行场景"
+  },
+  {
+   "name": "三叉戟",
+   "en": "Trident",
+   "category": "古代兵器",
+   "dims_cm": [
+    200.0
+   ],
+   "diameter": false,
+   "size_text": "约200cm",
+   "description": "三叉戟",
+   "scenes": "古装、神话场景"
+  },
+  {
+   "name": "沙滩全地形车",
+   "en": "ATV",
+   "category": "车辆",
+   "dims_cm": [
+    220.0,
+    120.0,
+    120.0
+   ],
+   "diameter": false,
+   "size_text": "约2.2m×1.2m×1.2m",
+   "description": "沙滩车",
+   "scenes": "户外、海边场景"
+  },
+  {
+   "name": "沙滩全地形车二型",
+   "en": "ATV Type 2",
+   "category": "车辆",
+   "dims_cm": [
+    220.0,
+    120.0,
+    120.0
+   ],
+   "diameter": false,
+   "size_text": "约2.2m×1.2m×1.2m",
+   "description": "沙滩车",
+   "scenes": "户外、海边场景"
+  },
+  {
+   "name": "双人皮划艇",
+   "en": "Two-person Kayak",
+   "category": "运动器材",
+   "dims_cm": [
+    400.0,
+    80.0,
+    40.0
+   ],
+   "diameter": false,
+   "size_text": "约4m×0.8m×0.4m",
+   "description": "皮划艇",
+   "scenes": "户外、水上场景"
+  },
+  {
+   "name": "双刃剑",
+   "en": "Double-edged Sword",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "双刃剑",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "双肩包",
+   "en": "Backpack",
+   "category": "箱包",
+   "dims_cm": [
+    45.0,
+    30.0,
+    15.0
+   ],
+   "diameter": false,
+   "size_text": "45cm×30cm×15cm",
+   "description": "双肩包",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "双发喷气战斗机",
+   "en": "Twin-engine Jet Fighter",
+   "category": "飞机",
+   "dims_cm": [
+    1600.0,
+    1100.0,
+    450.0
+   ],
+   "diameter": false,
+   "size_text": "约16m×11m×4.5m",
+   "description": "双发战斗机",
+   "scenes": "战争片"
+  },
+  {
+   "name": "双宽GPU服务器",
+   "en": "Dual-wide GPU Server",
+   "category": "服务器设备",
+   "dims_cm": [
+    80.0,
+    40.0,
+    50.0
+   ],
+   "diameter": false,
+   "size_text": "约0.8m×0.4m×0.5m",
+   "description": "GPU服务器",
+   "scenes": "科技场景"
+  },
+  {
+   "name": "水杯",
+   "en": "Cup",
+   "category": "日用",
+   "dims_cm": [
+    15.0,
+    8.0
+   ],
+   "diameter": false,
+   "size_text": "15cm×8cm",
+   "description": "陶瓷水杯",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "水洗玉珠",
+   "en": "Washed Jade Beads",
+   "category": "饰品",
+   "dims_cm": [
+    18.0
+   ],
+   "diameter": true,
+   "size_text": "直径约18cm",
+   "description": "玉珠手串",
+   "scenes": "现代、古装场景"
+  },
+  {
+   "name": "智能手机",
+   "en": "Smartphone",
+   "category": "电子产品",
+   "dims_cm": [
+    15.5,
+    7.5,
+    0.8
+   ],
+   "diameter": false,
+   "size_text": "15.5cm×7.5cm×0.8cm",
+   "description": "智能手机",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "智能手机二型",
+   "en": "Smartphone Type 2",
+   "category": "电子产品",
+   "dims_cm": [
+    15.5,
+    7.5,
+    0.8
+   ],
+   "diameter": false,
+   "size_text": "15.5cm×7.5cm×0.8cm",
+   "description": "智能手机",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "智能手表",
+   "en": "Smartwatch",
+   "category": "手表",
+   "dims_cm": [
+    4.0,
+    4.0,
+    1.0
+   ],
+   "diameter": false,
+   "size_text": "4cm×4cm×1cm",
+   "description": "智能手表",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "薙刀",
+   "en": "Naginata",
+   "category": "古代兵器",
+   "dims_cm": [
+    200.0
+   ],
+   "diameter": false,
+   "size_text": "约200cm",
+   "description": "薙刀",
+   "scenes": "古装、武士题材"
+  },
+  {
+   "name": "中国剑",
+   "en": "Chinese Jian",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "中国剑",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "中国剑二型",
+   "en": "Chinese Jian Type 2",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0
+   ],
+   "diameter": false,
+   "size_text": "约100cm",
+   "description": "中国剑",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "中型飞船",
+   "en": "Medium Spaceship",
+   "category": "航天器",
+   "dims_cm": [
+    2500.0,
+    1200.0,
+    800.0
+   ],
+   "diameter": false,
+   "size_text": "约25m×12m×8m",
+   "description": "科幻飞船",
+   "scenes": "科幻片"
+  },
+  {
+   "name": "中型飞翼隐身无人攻击机",
+   "en": "Medium Flying Wing Stealth UAV",
+   "category": "飞机",
+   "dims_cm": [
+    1200.0,
+    1200.0,
+    200.0
+   ],
+   "diameter": false,
+   "size_text": "约12m×12m×2m",
+   "description": "隐身无人机",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "中型轰炸机",
+   "en": "Medium Bomber",
+   "category": "飞机",
+   "dims_cm": [
+    2500.0,
+    2000.0,
+    600.0
+   ],
+   "diameter": false,
+   "size_text": "约25m×20m×6m",
+   "description": "中型轰炸机",
+   "scenes": "战争片"
+  },
+  {
+   "name": "中型轿车",
+   "en": "Mid-size Sedan",
+   "category": "车辆",
+   "dims_cm": [
+    480.0,
+    180.0,
+    150.0
+   ],
+   "diameter": false,
+   "size_text": "约4.8m×1.8m×1.5m",
+   "description": "家用轿车",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "中型游艇",
+   "en": "Medium Yacht",
+   "category": "船舶",
+   "dims_cm": [
+    2000.0,
+    500.0,
+    600.0
+   ],
+   "diameter": false,
+   "size_text": "约20m×5m×6m",
+   "description": "中型游艇",
+   "scenes": "高端场景"
+  },
+  {
+   "name": "中型越野车",
+   "en": "Mid-size SUV",
+   "category": "车辆",
+   "dims_cm": [
+    470.0,
+    190.0,
+    170.0
+   ],
+   "diameter": false,
+   "size_text": "约4.7m×1.9m×1.7m",
+   "description": "SUV",
+   "scenes": "现代场景"
+  },
+  {
+   "name": "中型运输直升机",
+   "en": "Medium Transport Helicopter",
+   "category": "直升机",
+   "dims_cm": [
+    1800.0,
+    1400.0,
+    450.0
+   ],
+   "diameter": false,
+   "size_text": "约18m×14m×4.5m",
+   "description": "运输直升机",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "中型中国古战船",
+   "en": "Medium Ancient Chinese Warship",
+   "category": "古代战船",
+   "dims_cm": [
+    3500.0,
+    800.0,
+    600.0
+   ],
+   "diameter": false,
+   "size_text": "约35m×8m×6m",
+   "description": "古战船",
+   "scenes": "历史战争片"
+  },
+  {
+   "name": "重型运输直升机",
+   "en": "Heavy Transport Helicopter",
+   "category": "直升机",
+   "dims_cm": [
+    2500.0,
+    2000.0,
+    600.0
+   ],
+   "diameter": false,
+   "size_text": "约25m×20m×6m",
+   "description": "重型运输直升机",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "主战坦克",
+   "en": "Main Battle Tank",
+   "category": "装甲车辆",
+   "dims_cm": [
+    950.0,
+    360.0,
+    240.0
+   ],
+   "diameter": false,
+   "size_text": "约9.5m×3.6m×2.4m",
+   "description": "现代主战坦克",
+   "scenes": "战争片、军事题材"
+  },
+  {
+   "name": "主战坦克二型",
+   "en": "Main Battle Tank Type 2",
+   "category": "装甲车辆",
+   "dims_cm": [
+    950.0,
+    360.0,
+    240.0
+   ],
+   "diameter": false,
+   "size_text": "约9.5m×3.6m×2.4m",
+   "description": "现代主战坦克",
+   "scenes": "战争片"
+  },
+  {
+   "name": "主战坦克三型",
+   "en": "Main Battle Tank Type 3",
+   "category": "装甲车辆",
+   "dims_cm": [
+    950.0,
+    360.0,
+    240.0
+   ],
+   "diameter": false,
+   "size_text": "约9.5m×3.6m×2.4m",
+   "description": "现代主战坦克",
+   "scenes": "战争片"
+  },
+  {
+   "name": "转经轮",
+   "en": "Prayer Wheel",
+   "category": "宗教饰品",
+   "dims_cm": [
+    20.0
+   ],
+   "diameter": false,
+   "size_text": "约20cm",
+   "description": "转经轮",
+   "scenes": "宗教、修炼场景"
+  },
+  {
+   "name": "桌面音箱",
+   "en": "Desktop Speaker",
+   "category": "音响",
+   "dims_cm": [
+    25.0,
+    12.0,
+    15.0
+   ],
+   "diameter": false,
+   "size_text": "25cm×12cm×15cm",
+   "description": "桌面音箱",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "足球",
+   "en": "Soccer Ball",
+   "category": "运动器材",
+   "dims_cm": [
+    22.0
+   ],
+   "diameter": true,
+   "size_text": "直径22cm",
+   "description": "足球",
+   "scenes": "运动场景"
+  },
+  {
+   "name": "坐舱皮划艇",
+   "en": "Sit-in Kayak",
+   "category": "运动器材",
+   "dims_cm": [
+    350.0,
+    70.0,
+    40.0
+   ],
+   "diameter": false,
+   "size_text": "约3.5m×0.7m×0.4m",
+   "description": "皮划艇",
+   "scenes": "户外、水上场景"
+  },
+  {
+   "name": "战术手电筒",
+   "en": "Tactical Flashlight",
+   "category": "日用",
+   "dims_cm": [
+    15.0
+   ],
+   "diameter": false,
+   "size_text": "约15cm",
+   "description": "战术手电",
+   "scenes": "现代、军事场景"
+  },
+  {
+   "name": "战术手电筒二型",
+   "en": "Tactical Flashlight Type 2",
+   "category": "日用",
+   "dims_cm": [
+    15.0
+   ],
+   "diameter": false,
+   "size_text": "约15cm",
+   "description": "战术手电",
+   "scenes": "现代、军事场景"
+  },
+  {
+   "name": "战术手电筒三型",
+   "en": "Tactical Flashlight Type 3",
+   "category": "日用",
+   "dims_cm": [
+    15.0
+   ],
+   "diameter": false,
+   "size_text": "约15cm",
+   "description": "战术手电",
+   "scenes": "现代、军事场景"
+  },
+  {
+   "name": "运动鞋",
+   "en": "Sneakers",
+   "category": "鞋类",
+   "dims_cm": [
+    28.0,
+    10.0,
+    10.0
+   ],
+   "diameter": false,
+   "size_text": "28cm×10cm×10cm",
+   "description": "运动鞋",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "运动鞋二型",
+   "en": "Sneakers Type 2",
+   "category": "鞋类",
+   "dims_cm": [
+    28.0,
+    10.0,
+    10.0
+   ],
+   "diameter": false,
+   "size_text": "28cm×10cm×10cm",
+   "description": "运动鞋",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "运动鞋三型",
+   "en": "Sneakers Type 3",
+   "category": "鞋类",
+   "dims_cm": [
+    28.0,
+    10.0,
+    10.0
+   ],
+   "diameter": false,
+   "size_text": "28cm×10cm×10cm",
+   "description": "运动鞋",
+   "scenes": "现代生活场景"
+  },
+  {
+   "name": "运动轿车",
+   "en": "Sports Sedan",
+   "category": "车辆",
+   "dims_cm": [
+    480.0,
+    180.0,
+    140.0
+   ],
+   "diameter": false,
+   "size_text": "约4.8m×1.8m×1.4m",
+   "description": "运动轿车",
+   "scenes": "现代、动作片"
+  },
+  {
+   "name": "运动轿车二型",
+   "en": "Sports Sedan Type 2",
+   "category": "车辆",
+   "dims_cm": [
+    480.0,
+    180.0,
+    140.0
+   ],
+   "diameter": false,
+   "size_text": "约4.8m×1.8m×1.4m",
+   "description": "运动轿车",
+   "scenes": "现代、动作片"
+  },
+  {
+   "name": "运动轿车三型",
+   "en": "Sports Sedan Type 3",
+   "category": "车辆",
+   "dims_cm": [
+    480.0,
+    180.0,
+    140.0
+   ],
+   "diameter": false,
+   "size_text": "约4.8m×1.8m×1.4m",
+   "description": "运动轿车",
+   "scenes": "现代、动作片"
+  },
+  {
+   "name": "运动手表",
+   "en": "Sports Watch",
+   "category": "手表",
+   "dims_cm": [
+    4.5,
+    4.5,
+    1.2
+   ],
+   "diameter": false,
+   "size_text": "4.5cm×4.5cm×1.2cm",
+   "description": "运动手表",
+   "scenes": "运动、现代场景"
+  },
+  {
+   "name": "羽毛球",
+   "en": "Badminton Shuttlecock",
+   "category": "运动器材",
+   "dims_cm": [
+    7.0
+   ],
+   "diameter": false,
+   "size_text": "约7cm",
+   "description": "羽毛球",
+   "scenes": "运动场景"
+  },
+  {
+   "name": "预警机",
+   "en": "AWACS Aircraft",
+   "category": "飞机",
+   "dims_cm": [
+    4000.0,
+    4000.0,
+    1200.0
+   ],
+   "diameter": false,
+   "size_text": "约40m×40m×12m",
+   "description": "预警机",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "圆盾",
+   "en": "Round Shield",
+   "category": "古代兵器",
+   "dims_cm": [
+    60.0
+   ],
+   "diameter": true,
+   "size_text": "直径约60cm",
+   "description": "圆盾",
+   "scenes": "古装、战争场景"
+  },
+  {
+   "name": "圆形降落伞",
+   "en": "Round Parachute",
+   "category": "户外装备",
+   "dims_cm": [
+    800.0
+   ],
+   "diameter": true,
+   "size_text": "直径约8m",
+   "description": "降落伞",
+   "scenes": "跳伞、军事场景"
+  },
+  {
+   "name": "斩马刀",
+   "en": "Zhan Ma Dao",
+   "category": "古代兵器",
+   "dims_cm": [
+    150.0
+   ],
+   "diameter": false,
+   "size_text": "约150cm",
+   "description": "斩马刀",
+   "scenes": "古装、武侠片"
+  },
+  {
+   "name": "战略轰炸机",
+   "en": "Strategic Bomber",
+   "category": "飞机",
+   "dims_cm": [
+    5000.0,
+    5000.0,
+    1200.0
+   ],
+   "diameter": false,
+   "size_text": "约50m×50m×12m",
+   "description": "战略轰炸机",
+   "scenes": "战争片"
+  },
+  {
+   "name": "长航时侦察无人机",
+   "en": "Long-endurance Reconnaissance UAV",
+   "category": "飞机",
+   "dims_cm": [
+    1500.0,
+    2000.0,
+    300.0
+   ],
+   "diameter": false,
+   "size_text": "约15m×20m×3m",
+   "description": "侦察无人机",
+   "scenes": "军事题材"
+  },
+  {
+   "name": "长征二号F运载火箭",
+   "en": "Long March 2F Rocket",
+   "category": "航天器",
+   "dims_cm": [
+    6000.0,
+    350.0
+   ],
+   "diameter": false,
+   "size_text": "约60m×3.5m",
+   "description": "运载火箭",
+   "scenes": "科幻、科技场景"
+  },
+  {
+   "name": "长征五号运载火箭",
+   "en": "Long March 5 Rocket",
+   "category": "航天器",
+   "dims_cm": [
+    5700.0,
+    500.0
+   ],
+   "diameter": false,
+   "size_text": "约57m×5m",
+   "description": "运载火箭",
+   "scenes": "科幻、科技场景"
+  },
+  {
+   "name": "长征五号火箭",
+   "en": "Long March 5 Rocket",
+   "category": "航天器",
+   "dims_cm": [
+    5700.0,
+    500.0
+   ],
+   "diameter": false,
+   "size_text": "约57m×5m",
+   "description": "运载火箭",
+   "scenes": "科幻、科技场景"
+  },
+  {
+   "name": "折扇",
+   "en": "Folding Fan",
+   "category": "日用",
+   "dims_cm": [
+    30.0
+   ],
+   "diameter": false,
+   "size_text": "约30cm",
+   "description": "折扇",
+   "scenes": "古装场景"
+  },
+  {
+   "name": "制空战斗机",
+   "en": "Air Superiority Fighter",
+   "category": "飞机",
+   "dims_cm": [
+    1500.0,
+    1000.0,
+    450.0
+   ],
+   "diameter": false,
+   "size_text": "约15m×10m×4.5m",
+   "description": "制空战机",
+   "scenes": "战争片"
+  },
+  {
+   "name": "直升机",
+   "en": "Helicopter",
+   "category": "飞机",
+   "dims_cm": [
+    1500.0,
+    1200.0,
+    400.0
+   ],
+   "diameter": false,
+   "size_text": "约15m×12m×4m",
+   "description": "军用直升机",
+   "scenes": "军事题材"
+  }
+ ]
+}

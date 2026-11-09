@@ -316,7 +316,7 @@ class PlatformApiTests(unittest.TestCase):
         image_root = Path(self.temp.name) / "prop-size"
         with patch("app.api.element_api.ELEMENT_MEDIA_ROOT", image_root):
             element = self._regenerated_prop(cookie, image_root, name="青铜令牌", description="刻虎纹")
-            self.assertEqual(element["prop_scale"], {"longest_cm": 10.0, "manual_cm": None, "source": "estimate"})
+            self.assertEqual(element["prop_scale"], {"longest_cm": 10.0, "manual_cm": None, "source": "estimate", "size_text": ""})
             board = next(file for file in element["files"] if file["slot"] == "prop_board")
             front = next(file for file in element["files"] if file["slot"] == "prop_front")
             with patch("app.api.element_api.element_image_gateway.generate_image") as generate_image:
@@ -325,13 +325,13 @@ class PlatformApiTests(unittest.TestCase):
                 )
             self.assertEqual(sized.status_code, 200, sized.text)
             generate_image.assert_not_called()
-            self.assertEqual(sized.json()["prop_scale"], {"longest_cm": 22.5, "manual_cm": 22.5, "source": "manual"})
+            self.assertEqual(sized.json()["prop_scale"], {"longest_cm": 22.5, "manual_cm": 22.5, "source": "manual", "size_text": ""})
             files = {file["slot"]: file for file in sized.json()["files"]}
             self.assertNotEqual(files["prop_board"]["sha256"], board["sha256"], "the board was drawn again")
             self.assertEqual(files["prop_front"]["sha256"], front["sha256"], "the views were left alone")
 
             cleared = self.client.put(f"/api/elements/{element['id']}/prop-size", json={"length_cm": None}, cookies=cookie)
-            self.assertEqual(cleared.json()["prop_scale"], {"longest_cm": 10.0, "manual_cm": None, "source": "estimate"})
+            self.assertEqual(cleared.json()["prop_scale"], {"longest_cm": 10.0, "manual_cm": None, "source": "estimate", "size_text": ""})
 
     def test_a_size_in_the_description_counts_and_changing_it_redraws_the_board(self):
         cookie = self._cookie(self.user.id)

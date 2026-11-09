@@ -214,10 +214,12 @@ describe('CharacterLooks', () => {
     mockApi();
     items.push(look('r', '沈无咎', '已退役', { retired: true }));
     render(<CharacterLooks taskId="t1" characterName="沈无咎" />);
-    const chips = await screen.findByRole('tablist', { name: '沈无咎的表演妆造' });
+    // The chip row is there before the looks load: wait for the count, which only shows once they have.
+    await screen.findByText('全剧 3 套，已生成 2 套');
     items.pop();
+    const chips = screen.getByRole('tablist', { name: '沈无咎的表演妆造' });
+    expect(within(chips).getByText('麻灰拭剑奴衣')).toBeTruthy();
     expect(within(chips).queryByText('已退役')).toBeNull();
-    expect(screen.getByText('全剧 3 套，已生成 2 套')).toBeTruthy();
   });
 
   it('shows earlier costume and makeup images, and deletes one only after asking', async () => {

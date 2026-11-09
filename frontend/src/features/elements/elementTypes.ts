@@ -107,7 +107,13 @@ export interface ElementItem {
   files: ElementFile[];
   model3d: ElementModel3D | null;
   /** 道具的最长边：人填的、描述里写的，或按物件类别估的。 */
-  prop_scale?: { longest_cm: number; manual_cm: number | null; source: 'manual' | 'description' | 'estimate' };
+  prop_scale?: {
+    longest_cm: number;
+    manual_cm: number | null;
+    /** table：道具标尺参照表里查到的真实尺寸。 */
+    source: 'manual' | 'description' | 'table' | 'estimate';
+    size_text?: string;
+  };
   /** Set on listings; an element outside any folder is simply unfiled. */
   folder_id?: string | null;
 }

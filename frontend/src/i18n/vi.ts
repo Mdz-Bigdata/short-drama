@@ -2471,4 +2471,5 @@ export const vi: Record<string, string> = {
   '妆效部位': 'Cận cảnh hóa trang',
   '腰带与配饰': 'Thắt lưng và phụ kiện',
   '袖口或下摆': 'Cổ tay áo hoặc gấu áo',
+  '来自道具标尺参照表：{0}': 'Theo bảng kích thước đạo cụ: {0}',
 };

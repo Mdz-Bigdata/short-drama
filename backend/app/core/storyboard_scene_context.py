@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from app.core import breakdown_kinds, character_variants, emotion_points, literary, prompt_data
+from app.core import breakdown_kinds, character_variants, emotion_points, literary, prompt_data, prop_scale
 from app.core.scene_turnaround import SCENE_VIEW_LABELS, SCENE_VIEW_PURPOSES
 
 KINDS = {"scene": "scenes", "prop": "props", "costume": "costumes", "effect": "effects", "product": "products", **breakdown_kinds.CATALOG_KEYS}
@@ -318,6 +318,14 @@ def look_makeup_note(makeup: str, *, panel: bool = False) -> str:
     return prompt_data.text("character_looks", "panel_look_makeup" if panel else "shot_look_makeup").format(text) if text else ""
 
 
+def real_size_note(kind: str, name: str) -> str:
+    """道具和车辆在参照表里的真实尺寸，跟在参考图那句后面；查不到是空串。句中不用「；」「。」。"""
+    if kind not in ("prop", "vehicle"):
+        return ""
+    scale = prop_scale.lookup(name)
+    return prompt_data.text("prop_scale", "reference_size").format(scale.size_text()) if scale is not None else ""
+
+
 def reference_note(number: int, reference: dict, *, label: str = "") -> str:
     """参考图N 只锁一件资产的那句话。
 
@@ -329,7 +337,7 @@ def reference_note(number: int, reference: dict, *, label: str = "") -> str:
     kind, name = str(reference.get("kind") or ""), str(reference.get("name") or "")
     label = label or LABELS.get(kind, kind)
     if kind in breakdown_kinds.KINDS:
-        return breakdown_kinds.reference_note(number, kind, name)
+        return breakdown_kinds.reference_note(number, kind, name) + real_size_note(kind, name)
     if kind == "actor":
         variant = re.sub(r"[；;。]+", "，", str(reference.get("variant") or "")).strip("，")
         makeup = re.sub(r"[；;。]+", "，", str(reference.get("makeup") or "")).strip("，")
@@ -339,7 +347,7 @@ def reference_note(number: int, reference: dict, *, label: str = "") -> str:
             + (f"，图上没有的妆效按文字加上：{makeup}" if makeup else "")
         )
     if kind != "scene":
-        return f"参考图{number}仅锁定{label}「{name}」的外形、材质与颜色，不采用图中背景与人物，不是额外剧情或额外人物"
+        return f"参考图{number}仅锁定{label}「{name}」的外形、材质与颜色，不采用图中背景与人物，不是额外剧情或额外人物" + real_size_note(kind, name)
     view = str(reference.get("view") or "")
     layout = re.sub(r"[；;。]+", "，", _text(reference.get("layout"))).strip("，")
     scope = (
