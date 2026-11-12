@@ -21,9 +21,21 @@ from dataclasses import dataclass
 
 from app.core import prompt_data
 
+
+_WORDING_FILE = "fight_exchange"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/fight_exchange.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
 _DATA = "fight_exchange"
-_U_START = re.compile(r"U\s*(\d+)(?:\s*[–\-~～至]\s*U?\s*\d+)?\s*[（(]")
-_NUMERALS = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+_U_START = re.compile(_text_of("module.u_start"))
+_NUMERALS = {_text_of("module.numerals"): 1, _text_of("module.numerals.2"): 2, _text_of("module.numerals.3"): 3, _text_of("module.numerals.4"): 4, _text_of("module.numerals.5"): 5, _text_of("module.numerals.6"): 6, _text_of("module.numerals.7"): 7, _text_of("module.numerals.8"): 8, _text_of("module.numerals.9"): 9, _text_of("module.numerals.10"): 10}
 
 
 @dataclass(frozen=True)
@@ -135,9 +147,9 @@ def _number(raw: str) -> int:
     """「3」「三」「十」「十二」「二十一」 as a number."""
     if raw.isdigit():
         return int(raw)
-    if "十" not in raw:
+    if _text_of("_number.text") not in raw:
         return _NUMERALS.get(raw, 0)
-    tens, _, ones = raw.partition("十")
+    tens, _, ones = raw.partition(_text_of("_number.text.2"))
     return (_NUMERALS.get(tens, 0) if tens else 1) * 10 + (_NUMERALS.get(ones, 0) if ones else 0)
 
 
@@ -172,7 +184,7 @@ def audit_rounds(fight_shots: Sequence[tuple[object, str]]) -> list[tuple[object
 def _cast_of(shot: Mapping[str, object]) -> list[str]:
     raw = shot.get("characters")
     names = raw if isinstance(raw, list) else re.split(r"[、，,/\s]+", str(raw or ""))
-    return [str(name).strip() for name in names if str(name).strip() and str(name).strip() not in {"无", "空镜"}]
+    return [str(name).strip() for name in names if str(name).strip() and str(name).strip() not in {_text_of("_cast_of.text"), _text_of("_cast_of.text.2")}]
 
 
 def table_issues(shots: Sequence[Mapping[str, object]]) -> list[str]:

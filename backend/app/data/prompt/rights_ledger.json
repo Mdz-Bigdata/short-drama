@@ -1,0 +1,20 @@
+{
+  "_note": "素材来源与授权记录（app/core/rights_ledger.py 读取）：成片里用到的配乐、字幕字体、配音音色、视频片段各记一条「从哪来、能怎么用」。来源由系统按项目数据自动写；说不清使用范围的(上传的配乐、系统字体、本机兜底配音)列为「需人工确认」，人在验收单上记下授权说明以后就不再列出。真人演员的肖像授权在元素库的真人记录里(授权用途、到期日、确认人)，不在这里重复。这里只记来源和用途说明，不替人判断是否合法。",
+  "open_fonts": [["NotoSansCJK", "SIL Open Font License 1.1（可嵌入、可商用）"], ["SourceHan", "SIL Open Font License 1.1（可嵌入、可商用）"], ["思源", "SIL Open Font License 1.1（可嵌入、可商用）"], ["wqy", "GPL 附字体例外（文泉驿，可嵌入）"]],
+  "says": {
+    "music_generated": "配乐：第 6 阶段用 {model} 生成（来源可查；使用范围按服务商套餐条款）",
+    "music_library_generated": "配乐「{name}」：配乐库里的生成曲（来源可查；使用范围按服务商套餐条款）",
+    "music_library_upload": "配乐「{name}」：配乐库里人工上传的曲子，没有授权记录——发布前写明来源和授权范围",
+    "font_open": "字幕字体 {font}：{license}",
+    "font_system": "字幕字体 {font}：系统自带字体，嵌进视频画面商用前要确认授权(或换成思源黑体这类开源字体)",
+    "font_none": "字幕字体：没找到中文字体，字幕不会烧进画面",
+    "voice_designed": "{name} 的音色：ElevenLabs 音色设计、本账号自建（来源可查；使用范围按服务商套餐条款）",
+    "voice_library": "{name} 的音色：ElevenLabs 账号音色库（来源可查；使用范围按服务商套餐条款）",
+    "voice_native": "人声：视频模型 {model} 随画面生成的原声（来源可查；使用范围按服务商套餐条款）",
+    "voice_local": "配音：本机系统语音兜底合成，商用前要确认系统语音的授权",
+    "video": "视频片段：{count} 镜由 {model} 生成（来源可查；使用范围按服务商套餐条款）",
+    "noted": "（已记：{note}）",
+    "issue": "{detail}"
+  },
+  "max_note": 300
+}

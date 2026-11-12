@@ -1,0 +1,8 @@
+{
+  "_doc": "app/schema/platform.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "require_credentials.text": "API Key 或已有配置 ID 至少提供一项",
+  "validate_model_ids.text": "模型 ID 无效",
+  "validate_model_ids.text.2": "模型 ID 不能重复",
+  "known_buckets.text": "任务类型桶只能是 text / image / video / audio",
+  "validate_key.text": "幂等键只允许字母、数字、点、横线、下划线和冒号"
+}

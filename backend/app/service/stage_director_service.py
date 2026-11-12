@@ -25,6 +25,19 @@ from app.core.spatial_stage.models import StagePlan
 from app.core.spatial_stage.planner import refresh
 from app.service import spatial_stage_service as spatial
 from app.service.director_desk_service import mark_captures_stale
+from app.core import prompt_data
+
+
+_WORDING_FILE = "stage_director_service"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/stage_director_service.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.service.stage_director")
 
@@ -82,13 +95,13 @@ def _llm(service, task: Mapping[str, Any], model: str = "") -> director_ai.LLM:
 def _load(service, task_id: str, scene_id: str) -> tuple[dict[str, Any], StagePlan]:
     task = service.repo.get_task(task_id)
     if not task:
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("_load.text"))
     if spatial.scene_record(task, scene_id) is None and spatial.load_plan(task, scene_id) is None:
-        raise LookupError(f"场景 {scene_id} 不在剧本大纲里")
+        raise LookupError(_text_of("_load.text.2").format(scene_id))
     # A preview of a plan not stored yet must not be written back by a read.
     plan = spatial.load_plan(task, scene_id) or spatial.ensure_plan(deepcopy(task), scene_id)
     if plan is None:
-        raise LookupError(f"场景 {scene_id} 不在剧本大纲里")
+        raise LookupError(_text_of("_load.text.3").format(scene_id))
     return task, plan
 
 
@@ -106,7 +119,7 @@ def _scene_text(task: Mapping[str, Any], scene_id: str) -> str:
 
 def _check_revision(plan: StagePlan, base_revision: int) -> None:
     if plan.revision != int(base_revision):
-        raise spatial.StageConflict("空间方案已在其他页面更新，请刷新后重试")
+        raise spatial.StageConflict(_text_of("_check_revision.text"))
 
 
 def diff_plans(before: StagePlan, after: StagePlan) -> dict[str, list[Any]]:
@@ -135,13 +148,13 @@ def _commit(
 
     def mutate(task: dict[str, Any]) -> dict[str, Any]:
         if service._has_running_generation(task):
-            raise spatial.StageConflict("任务正在执行阶段，暂不能修改空间调度")
+            raise spatial.StageConflict(_text_of("mutate.text"))
         project_memory.absorb(task, remember)
         current = spatial.load_plan(task, scene_id)
         if current is None:
             current = spatial.ensure_plan(task, scene_id)
         if current is None:
-            raise LookupError(f"场景 {scene_id} 不在剧本大纲里")
+            raise LookupError(_text_of("mutate.text.2").format(scene_id))
         _check_revision(current, base_revision)
         entry = _entry(task, scene_id)
         entry["snapshots"] = [*entry["snapshots"], {
@@ -158,7 +171,7 @@ def _commit(
 
     response = service.repo.mutate_task(task_id, mutate)
     if not response:
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("_commit.text"))
     return {**response, "snapshot_id": snapshot_id}
 
 
@@ -201,7 +214,7 @@ def state(service, task_id: str, scene_id: str) -> dict[str, Any]:
 
 def set_pipeline_planner(service, task_id: str, mode: str) -> dict[str, Any]:
     if mode not in ("model", "rules"):
-        raise DirectorAIError("mode 只能是 model 或 rules")
+        raise DirectorAIError(_text_of("set_pipeline_planner.text"))
 
     def mutate(task: dict[str, Any]) -> dict[str, Any]:
         task.setdefault("config", {})[STAGE_PLANNER_KEY] = mode
@@ -209,7 +222,7 @@ def set_pipeline_planner(service, task_id: str, mode: str) -> dict[str, Any]:
 
     result = service.repo.mutate_task(task_id, mutate)
     if not result:
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("set_pipeline_planner.text.2"))
     return result
 
 
@@ -247,7 +260,7 @@ def plan_scene(
         return True
 
     service.repo.mutate_task(task_id, mutate)
-    note = "" if from_model else "模型没有给出可用的方案（未配置文本模型，或它的回复无法解析），这里只有规则方案。"
+    note = "" if from_model else _text_of("plan_scene.note")
     return {
         "candidates": candidates, "recommended": ranked[0].id, "used_model": bool(from_model), "note": note,
         "current": scoring.score_plan(current),
@@ -259,19 +272,19 @@ def adopt_candidate(service, task_id: str, scene_id: str, *, candidate_id: str, 
     _check_revision(current, base_revision)
     chosen = next((item for item in _candidate_rows(_peek(task, scene_id)) if item.get("id") == candidate_id), None)
     if chosen is None:
-        raise LookupError("这个方案已经不在了，请重新规划")
+        raise LookupError(_text_of("adopt_candidate.text"))
     plan = StagePlan.model_validate(chosen["plan"])
     snapshot_id = uuid.uuid4().hex[:12]
 
     def update(entry: dict[str, Any]) -> None:
         entry["candidates"] = []
         entry["chat"] = [*entry["chat"], {
-            "role": "assistant", "text": f"采用了方案「{chosen.get('title')}」：{chosen.get('rationale') or ''}",
+            "role": "assistant", "text": _text_of("update.text").format(chosen.get('title'), chosen.get('rationale') or ''),
             "at": _now(), "changed": diff_plans(current, plan), "compare": scoring.compare(scoring.score_plan(current), scoring.score_plan(plan)),
             "snapshot_id": snapshot_id,
         }][-MAX_CHAT:]
 
-    return _commit(service, task_id, scene_id, base_revision, plan, label=f"方案：{chosen.get('title')}", entry_update=update, snapshot_id=snapshot_id)
+    return _commit(service, task_id, scene_id, base_revision, plan, label=_text_of("adopt_candidate.label").format(chosen.get('title')), entry_update=update, snapshot_id=snapshot_id)
 
 
 def _scope_of(names: Sequence[str] | None, shot_id: int | None) -> Scope:
@@ -285,7 +298,7 @@ def chat(
     """One message of the conversation about this stage."""
     text = str(message or "").strip()
     if not text:
-        raise DirectorAIError("请输入要调整的内容")
+        raise DirectorAIError(_text_of("chat.text"))
     task, current = _load(service, task_id, scene_id)
     _check_revision(current, base_revision)
     entry = _peek(task, scene_id)
@@ -318,7 +331,7 @@ def _finish_turn(
     if _content(before) == _content(after):
         # A model can say it moved a lens and leave it exactly where it was: the stage is what counts.
         if outcome["applied"]:
-            row["text"] = f"{outcome['reply']}\n（这些操作执行后舞台没有实际变化。）"
+            row["text"] = _text_of("_finish_turn.text").format(outcome['reply'])
         _append_chat(service, task_id, scene_id, asked, row, remember=noted)
         return {"message": row, "changed": False, "measured": was, "failing": repair.failing(before.checks)}
     row["changed"], row["compare"], row["snapshot_id"] = changed, scoring.compare(was, now), uuid.uuid4().hex[:12]
@@ -342,28 +355,28 @@ def optimize(
         current, _llm(service, task, model), goal=goal, scene_text=_scene_text(task, scene_id), scope=scope,
         memory=project_memory.block(task, goal),
     )
-    asked = {"role": "user", "text": goal.strip()[:director_ai.MAX_MESSAGE] or "自动优化这版舞台", "at": _now()}
-    return _finish_turn(service, task_id, scene_id, base_revision, current, outcome, asked=asked, label="自动优化")
+    asked = {"role": "user", "text": goal.strip()[:director_ai.MAX_MESSAGE] or _text_of("optimize.asked.text"), "at": _now()}
+    return _finish_turn(service, task_id, scene_id, base_revision, current, outcome, asked=asked, label=_text_of("optimize.label"))
 
 
 def revert(service, task_id: str, scene_id: str, *, snapshot_id: str, base_revision: int) -> dict[str, Any]:
     """Take back one model step; what came after it goes with it, since each snapshot is the whole stage."""
     def mutate(task: dict[str, Any]) -> dict[str, Any]:
         if service._has_running_generation(task):
-            raise spatial.StageConflict("任务正在执行阶段，暂不能修改空间调度")
+            raise spatial.StageConflict(_text_of("mutate.text.3"))
         current = spatial.load_plan(task, scene_id)
         if current is None:
-            raise LookupError(f"场景 {scene_id} 还没有空间方案")
+            raise LookupError(_text_of("mutate.text.4").format(scene_id))
         _check_revision(current, base_revision)
         entry = _entry(task, scene_id)
         index = next((at for at, item in enumerate(entry["snapshots"]) if item.get("id") == snapshot_id), None)
         if index is None:
-            raise LookupError("这一步已经撤销不了了：只保留最近几步")
+            raise LookupError(_text_of("mutate.text.5"))
         snapshot = entry["snapshots"][index]
         restored = StagePlan.model_validate(snapshot["plan"]).model_copy(update={"revision": current.revision + 1})
         restored = refresh(restored)
         entry["snapshots"] = entry["snapshots"][:index]
-        entry["chat"] = [*entry["chat"], {"role": "assistant", "text": f"已撤销「{snapshot.get('label')}」。", "at": _now()}][-MAX_CHAT:]
+        entry["chat"] = [*entry["chat"], {"role": "assistant", "text": _text_of("mutate.text.6").format(snapshot.get('label')), "at": _now()}][-MAX_CHAT:]
         spatial.save_plan(task, restored)
         spatial.mark_board_stale(task, scene_id)
         mark_captures_stale(task, scene_id, before=current, after=restored)
@@ -371,7 +384,7 @@ def revert(service, task_id: str, scene_id: str, *, snapshot_id: str, base_revis
 
     response = service.repo.mutate_task(task_id, mutate)
     if not response:
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("revert.text"))
     return response
 
 
@@ -382,7 +395,7 @@ def clear_chat(service, task_id: str, scene_id: str) -> dict[str, Any]:
 
     result = service.repo.mutate_task(task_id, mutate)
     if not result:
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("clear_chat.text"))
     return result
 
 
@@ -393,7 +406,7 @@ def propose_model(
     """Build one object from words (and a picture, when given). Nothing goes on the stage until the desk places it."""
     text = str(description or "").strip()
     if not text and not image:
-        raise DirectorAIError("请描述要搭的东西，或给一张参考图")
+        raise DirectorAIError(_text_of("propose_model.text"))
     task, _ = _load(service, task_id, scene_id)
     config = task.get("config") if isinstance(task.get("config"), Mapping) else {}
     if image is None:
@@ -402,10 +415,10 @@ def propose_model(
         if found is not None and text.lower() in {found.id, found.name.lower(), *map(str.lower, found.aliases)}:
             kit, parts, overall = model_kit.build_kit(found.id, size)
             return {
-                "name": found.name, "kind": found.kind, "kit": kit.id, "size": overall, "summary": "模型库内置，不调用模型。",
+                "name": found.name, "kind": found.kind, "kit": kit.id, "size": overall, "summary": _text_of("propose_model.summary"),
                 "parts": [part.model_dump(mode="json") for part in parts], "dropped": 0, "model": "",
             }
-    system, user = director_ai.model_prompt(text or "参考图里的主要物体", size)
+    system, user = director_ai.model_prompt(text or _text_of("propose_model.text.2"), size)
     if image is not None:
         with usage_ledger.bind_task(task_id, _DIRECTOR_PURPOSE):
             answer, used = service.gateway.describe_image(
@@ -413,12 +426,12 @@ def propose_model(
                 service._reference_image_uri(image, content_type), max_tokens=director_ai.MODEL_MAX_TOKENS,
             )
         if not used:
-            raise NoModelError("没有可看图的文本模型：请在模型配置里启用一个标为「多模态」的文本模型")
+            raise NoModelError(_text_of("propose_model.text.3"))
     else:
         answer, used = _llm(service, task, model)(system, user, director_ai.MODEL_MAX_TOKENS), model or str(config.get("llm_model") or "")
     if not answer:
-        raise NoModelError("模型没有返回结果（未配置文本模型或请求失败），可以先从模型库里选，或稍后重试")
-    return {**director_ai.read_model_reply(answer, text or "模型", size), "model": used}
+        raise NoModelError(_text_of("propose_model.text.4"))
+    return {**director_ai.read_model_reply(answer, text or _text_of("propose_model.text.5"), size), "model": used}
 
 
 def describe_blockout(
@@ -427,12 +440,12 @@ def describe_blockout(
     """A grey-box set from words, in the same shape a reference image gives, so the desk treats both alike."""
     text = str(description or "").strip()
     if not text:
-        raise stage_blockout.BlockoutError("请描述这个场景")
+        raise stage_blockout.BlockoutError(_text_of("describe_blockout.text"))
     task, _ = _load(service, task_id, scene_id)
     system, user = stage_blockout.text_prompt(text, width_m)
     answer = _llm(service, task, model)(system, user, stage_blockout.BLOCKOUT_MAX_TOKENS)
     if not answer:
-        raise NoModelError("模型没有返回结果（未配置文本模型或请求失败），请检查模型配置后重试")
+        raise NoModelError(_text_of("describe_blockout.text.2"))
     config = task.get("config") if isinstance(task.get("config"), Mapping) else {}
     return {**stage_blockout.parse_blockout(answer).model_dump(mode="json"), "model": model or str(config.get("llm_model") or "")}
 
@@ -441,8 +454,8 @@ def export_model(service, task_id: str, scene_id: str, landmark_id: str) -> tupl
     _, plan = _load(service, task_id, scene_id)
     piece = next((item for item in plan.landmarks if item.id == landmark_id), None)
     if piece is None:
-        raise LookupError("舞台上没有这个模型")
-    safe = re.sub(r"[^\w一-鿿-]+", "_", piece.name).strip("_") or piece.id
+        raise LookupError(_text_of("export_model.text"))
+    safe = re.sub(_text_of("export_model.safe"), "_", piece.name).strip("_") or piece.id
     return f"{safe}.glb", glb.landmark_glb(piece)
 
 
@@ -465,7 +478,7 @@ def blocking_model(service, task: Mapping[str, Any], plan: StagePlan | None) -> 
         return None
 
 
-_PIPELINE_ONLY_BLOCKING = "这一轮分镜表还没写，只做搭景、站位、轴线和姿势，不要写任何机位和运动操作（solve_camera、best_camera、move_camera、add_camera、use_camera、frame_shot、apply_camera_move、set_path、auto_route、set_timeline）。"
+_PIPELINE_ONLY_BLOCKING = _text_of("module.pipeline_only_blocking")
 _CAMERA_OPS = frozenset({
     "solve_camera", "best_camera", "move_camera", "add_camera", "use_camera", "frame_shot", "apply_camera_move", "set_path", "auto_route",
     "set_timeline", "remove_camera", "clear_timeline",

@@ -1,0 +1,10 @@
+{
+  "_doc": "app/core/image_pool.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "_generated.text": "{0} 镜头 {1}",
+  "_generated.text.2": "{0} 九宫格",
+  "_generated.text.3": "分镜总览",
+  "_cells_on_disk.label": "切图",
+  "_assert_revision.text": "图片池已被更新（当前版本 {0}），请刷新后再试",
+  "cut.label": "切图",
+  "add_cells.text": "图片池最多 {0} 张切图，请先清理"
+}

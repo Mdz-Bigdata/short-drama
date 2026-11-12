@@ -1,0 +1,9 @@
+{
+  "_doc": "app/core/spoken_lines.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.no_dialogue": "无",
+  "module.no_dialogue.2": "无台词",
+  "module.no_dialogue.3": "（无）",
+  "module.no_dialogue.4": "(无)",
+  "module.stage_direction": "[，,]?\\s*(?:停顿一拍|停顿片刻|停了一拍|顿了顿|停顿|沉默片刻|沉默)\\s*[，,]?",
+  "spoken_lines.text": "无+"
+}

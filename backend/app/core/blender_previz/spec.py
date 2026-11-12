@@ -10,6 +10,19 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from app.core import prompt_data
+
+
+_WORDING_FILE = "blender_previz_spec"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/blender_previz_spec.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 Vec3 = tuple[float, float, float]
 Shape = Literal["capsule", "box", "cylinder", "sphere", "cone"]
@@ -26,7 +39,7 @@ class _Model(BaseModel):
 
 def _inside(values) -> None:
     if any(not -WORLD_LIMIT <= float(v) <= WORLD_LIMIT for v in values):
-        raise ValueError(f"坐标超出 ±{WORLD_LIMIT:g} 米")
+        raise ValueError(_text_of("_inside.text").format(WORLD_LIMIT))
 
 
 class Key(_Model):
@@ -90,7 +103,7 @@ class Target(_Model):
     @model_validator(mode="after")
     def _one(self) -> "Target":
         if bool(self.proxy) == bool(self.keys):
-            raise ValueError("target 只能二选一：跟随代理 或 自己的路径")
+            raise ValueError(_text_of("_one.text"))
         return self
 
 
@@ -148,32 +161,32 @@ class BlockingSpec(_Model):
     def _consistent(self) -> "BlockingSpec":
         ids = [p.id for p in self.proxies]
         if len(set(ids)) != len(ids):
-            raise ValueError("代理 id 重复")
+            raise ValueError(_text_of("_consistent.text"))
         principals = [p.color.lower() for p in self.proxies if p.binds.kind != "extra"]
         if len(set(principals)) != len(principals):
-            raise ValueError("两个主要代理用了同一种颜色：视频参考里分不清谁是谁")
+            raise ValueError(_text_of("_consistent.text.2"))
         cams = {c.id for c in self.cameras}
         if len(cams) != len(self.cameras):
-            raise ValueError("摄影机 id 重复")
+            raise ValueError(_text_of("_consistent.text.3"))
         for cam in self.cameras:
             if cam.target.proxy and cam.target.proxy not in ids:
-                raise ValueError(f"摄影机 {cam.id} 的目标代理 {cam.target.proxy} 不存在")
+                raise ValueError(_text_of("_consistent.text.4").format(cam.id, cam.target.proxy))
         frames = [cut.frame for cut in self.cuts]
         if len(set(frames)) != len(frames):
-            raise ValueError("同一帧上有两个切点")
+            raise ValueError(_text_of("_consistent.text.5"))
         for cut in self.cuts:
             if cut.camera not in cams:
-                raise ValueError(f"切点用到的摄影机 {cut.camera} 不存在")
+                raise ValueError(_text_of("_consistent.text.6").format(cut.camera))
             if cut.frame > self.frames:
-                raise ValueError(f"切点帧 {cut.frame} 超出总帧数 {self.frames}")
+                raise ValueError(_text_of("_consistent.text.7").format(cut.frame, self.frames))
         if self.cuts and min(frames) != 1:
-            raise ValueError("第一个切点必须在第 1 帧")
+            raise ValueError(_text_of("_consistent.text.8"))
         for slot in self.reserved:
             if not 1 <= slot.start <= slot.end <= self.frames:
-                raise ValueError(f"空段「{slot.label}」的起止帧无效")
+                raise ValueError(_text_of("_consistent.text.9").format(slot.label))
         width, height = self.resolution
         if not (256 <= width <= 3840 and 256 <= height <= 3840):
-            raise ValueError("分辨率须在 256–3840 之间")
+            raise ValueError(_text_of("_consistent.text.10"))
         return self
 
     def segments(self) -> list[dict]:

@@ -1,0 +1,6 @@
+{
+  "_doc": "app/core/asset_dependents.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.placeholder": "^(?:本格无|空镜|无$|无人|无出场|[—\\-]$)",
+  "module.stale_reason": "资产「{name}」已修改，需重画本场分镜、重跑第 5 阶段后生效",
+  "module.merged_reason": "资产「{name}」已并入「{survivor}」，需重画本场分镜、重跑第 5 阶段后生效"
+}

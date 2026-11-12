@@ -309,5 +309,20 @@
       "打向",
       "击向"
     ]
-  }
+  },
+  "module.u_start": "U\\s*(\\d+)(?:\\s*[–\\-~～至]\\s*U?\\s*\\d+)?\\s*[（(]",
+  "module.numerals": "一",
+  "module.numerals.2": "二",
+  "module.numerals.3": "三",
+  "module.numerals.4": "四",
+  "module.numerals.5": "五",
+  "module.numerals.6": "六",
+  "module.numerals.7": "七",
+  "module.numerals.8": "八",
+  "module.numerals.9": "九",
+  "module.numerals.10": "十",
+  "_number.text": "十",
+  "_number.text.2": "十",
+  "_cast_of.text": "无",
+  "_cast_of.text.2": "空镜"
 }

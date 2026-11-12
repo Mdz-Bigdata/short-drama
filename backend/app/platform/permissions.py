@@ -10,6 +10,19 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
+from app.core import prompt_data
+
+
+_WORDING_FILE = "platform_permissions"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/platform_permissions.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 ROLE_ASSIGN = "role:assign"
 USER_READ = "user:read"
@@ -55,11 +68,11 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
 }
 
 ROLE_LABELS = {
-    SUPER_ADMIN: ("超级管理员", "全部权限，包括授予角色"),
-    "ops": ("运维", "模型、技能、能力配置，可操作他人项目"),
-    "finance": ("财务", "套餐定价、退款与积分调整审批、对账"),
-    "support": ("客服", "查看和停用用户、查看订单和项目、发起退款"),
-    "auditor": ("审计", "只读：用户、订单、项目、对账、审计记录"),
+    SUPER_ADMIN: _words_of("module.role_labels"),
+    "ops": _words_of("module.role_labels.ops"),
+    "finance": _words_of("module.role_labels.finance"),
+    "support": _words_of("module.role_labels.support"),
+    "auditor": _words_of("module.role_labels.auditor"),
 }
 
 
@@ -109,13 +122,13 @@ def authorize(
     only an operator may touch. Not owning something answers 404, so the answer never shows that it exists.
     """
     if actor.get("status", "active") != "active":
-        return _deny(401, "account_suspended", "用户账户不存在或已停用")
+        return _deny(401, "account_suspended", _text_of("authorize.text"))
     has_changed_password = not actor.get("must_change_password")
     if permission is not None:
         if not has_permission(actor, permission):
-            return _deny(403, "permission_denied", "没有执行这项操作的权限")
+            return _deny(403, "permission_denied", _text_of("authorize.text.2"))
         if not has_changed_password:
-            return _deny(403, "must_change_password", "首次登录必须先在用户中心修改管理员密码")
+            return _deny(403, "must_change_password", _text_of("authorize.text.3"))
     if owner_id is None:
         return Decision(True)
     user_id = str(actor.get("user_id") or "")
@@ -124,4 +137,4 @@ def authorize(
     needed = PROJECT_WRITE_ANY if write else PROJECT_READ_ANY
     if has_permission(actor, needed) and has_changed_password:
         return Decision(True, cross_account=True)
-    return _deny(404, "not_found", "任务不存在")
+    return _deny(404, "not_found", _text_of("authorize.text.4"))

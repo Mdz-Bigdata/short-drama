@@ -143,6 +143,27 @@ def downloaded_clip(task: Mapping[str, Any], shot_id: int, *, candidate: int, fi
     return str(job["video_url"])
 
 
+def maybe_accepted(error: BaseException) -> bool:
+    """Whether a failed create request may still have reached the provider and started a paid job.
+
+    A read timeout or a reply cut off half-way means the request was sent and may have been
+    accepted: sending it again can pay twice. Only a failure before anything was sent (no
+    connection, a failed TLS handshake, a connect timeout) is safe to retry.
+    """
+    import requests
+
+    if isinstance(error, requests.exceptions.ConnectTimeout):
+        return False
+    if isinstance(error, (requests.exceptions.ReadTimeout, requests.exceptions.ChunkedEncodingError)):
+        return True
+    if isinstance(error, requests.exceptions.SSLError):
+        return False
+    if isinstance(error, requests.exceptions.ConnectionError):
+        text = str(error)
+        return any(word in text for word in ("Connection aborted", "RemoteDisconnected", "reset by peer", "Read timed out"))
+    return isinstance(error, requests.exceptions.Timeout)
+
+
 def resume_outcome(job: Mapping[str, Any], resumer: Callable[[Mapping[str, Any]], str | None]) -> dict[str, Any]:
     """Ask the provider about one accepted job; the outcome is recorded, never re-submitted."""
     family = str(job.get("family") or "")
@@ -160,6 +181,6 @@ def resume_outcome(job: Mapping[str, Any], resumer: Callable[[Mapping[str, Any]]
 
 __all__ = [
     "DOWNLOADED", "FAILED", "JOBS_KEY", "RESUMABLE_FAMILIES", "SUBMITTED",
-    "apply_to_task", "bind_shot", "configure_sink", "downloaded_clip", "job_key",
+    "apply_to_task", "bind_shot", "configure_sink", "downloaded_clip", "job_key", "maybe_accepted",
     "note_failed", "note_finished", "note_submitted", "pending_jobs", "resume_outcome",
 ]

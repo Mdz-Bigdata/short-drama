@@ -1,0 +1,292 @@
+{
+  "_about": "Seedance 2.5 导演层(app/core/seedance_video_director.py)的词表与说法。char_cap 是导演层正文的字符上限，超过就按优先级从低到高整段丢弃。dialogue_markers/acting_markers/physical_markers/sports_markers/fight_markers/mass_battle_markers/audio_markers/transition_markers 是在镜头提示词与素材说明里认戏的词(任一出现即算)：台词、表演、肢体碰撞、综艺赛事、打戏(比 physical 严，「御剑」里的「剑」不算)、群敌清场、声音素材、转场。timestamp_pattern 认提示词里已经写好的秒级时间段(只认「-」「–」「~」「至」，不认长破折号「—」)，认到就选 timestamp-30s 主模式。precedence_note 是放在导演层最前面的接入说明，按行写，代码用换行连接。sections 是导演层可能带上的每一段：键是代码里用的英文名，值是 [段名, 二级标题]，段名进 DirectorLayer.sections(日志与测试比对)，二级标题是在技能参考文件里按「## 标题」找那一段用的原文。",
+  "char_cap": 24000,
+  "dialogue_markers": [
+    "台词",
+    "对白",
+    "说道",
+    "说：",
+    "喊道",
+    "低声",
+    "旁白",
+    "独白",
+    "「",
+    "“"
+  ],
+  "acting_markers": [
+    "表情",
+    "眼神",
+    "哭",
+    "笑",
+    "颤抖",
+    "情绪",
+    "愤怒",
+    "泪",
+    "拥抱",
+    "吻",
+    "对峙"
+  ],
+  "physical_markers": [
+    "打",
+    "踢",
+    "摔",
+    "撞",
+    "碰撞",
+    "推开",
+    "拳",
+    "刀",
+    "剑",
+    "跌",
+    "坠",
+    "扑",
+    "劈",
+    "砍",
+    "格挡",
+    "冲刺"
+  ],
+  "sports_markers": [
+    "比赛",
+    "综艺",
+    "赛道",
+    "障碍",
+    "直播",
+    "解说",
+    "观众席"
+  ],
+  "fight_markers": [
+    "打斗",
+    "交手",
+    "对打",
+    "互打",
+    "拳",
+    "踢",
+    "劈",
+    "砍",
+    "斩",
+    "刺向",
+    "格挡",
+    "对撞",
+    "出招",
+    "厮杀",
+    "击飞",
+    "大招",
+    "连招",
+    "反杀"
+  ],
+  "mass_battle_markers": [
+    "割草",
+    "群敌",
+    "群战",
+    "混战",
+    "围攻",
+    "一打多",
+    "以一敌",
+    "敌群",
+    "杂兵",
+    "千军",
+    "大军",
+    "士兵们",
+    "清场"
+  ],
+  "audio_markers": [
+    "音频",
+    "@音频",
+    "@Audio",
+    "音色"
+  ],
+  "transition_markers": [
+    "转场",
+    "切镜"
+  ],
+  "timestamp_pattern": "(?<!\\d)\\d{1,2}\\s*[-–~至]\\s*\\d{1,2}\\s*(?:s|秒)",
+  "precedence_note": [
+    "# 导演层：seedance-2-5-video-director（仅 Seedance 2.5 生效）",
+    "",
+    "下面几段来自 MIT 授权的 seedance-2-5-video-director 技能，只作为 Seedance 2.5 的",
+    "模式上限、素材要求、时序/引用规则与真人表演约束；接口参数分离（画幅、总时长、",
+    "分辨率、帧率、声音开关不进 Prompt）与素材引用保真仍以上文 sd25-pe 主规范为准。",
+    "主模式已由项目按镜头时长与提示词形态选定（见「当前调用约定」），不要再提问、",
+    "不要输出导演方案或诊断，只把这些约束体现在最终的中文提示词正文里。",
+    "",
+    "写正文时，排除项少而精、尽量正着说：写画面里有什么（「双手各握一把刀」），而不是「不要 X」，",
+    "被排除的那个名词不在正文里重复出现；容易被模型按常见印象误读的名词，改写成形状、材质与空间关系。"
+  ],
+  "sections": {
+    "mode_limits": [
+      "limits/Mode limits",
+      "Mode limits"
+    ],
+    "timing_rules": [
+      "skill/Timing and reference rules",
+      "Timing and reference rules"
+    ],
+    "blueprint_timestamp": [
+      "blueprints/Exact 30-second timestamp video",
+      "Exact 30-second timestamp video"
+    ],
+    "blueprint_basic": [
+      "blueprints/Basic multimodal",
+      "Basic multimodal"
+    ],
+    "assembly_order": [
+      "blueprints/Shared assembly order",
+      "Shared assembly order"
+    ],
+    "validation_behavior": [
+      "limits/Validation behavior",
+      "Validation behavior"
+    ],
+    "final_audit": [
+      "skill/Final audit",
+      "Final audit"
+    ],
+    "contradiction_audit": [
+      "realistic/Contradiction audit",
+      "Contradiction audit"
+    ],
+    "asset_lock_table": [
+      "multimodal/Asset lock table",
+      "Asset lock table"
+    ],
+    "reference_grammar": [
+      "multimodal/Reference grammar",
+      "Reference grammar"
+    ],
+    "person_reference_scope": [
+      "multimodal/Person-reference scope",
+      "Person-reference scope"
+    ],
+    "realistic_people": [
+      "multimodal/Realistic people",
+      "Realistic people"
+    ],
+    "multiple_people": [
+      "multimodal/Multiple people",
+      "Multiple people"
+    ],
+    "input_requirements": [
+      "limits/Input requirements",
+      "Input requirements"
+    ],
+    "stability_guidance": [
+      "limits/Stability guidance",
+      "Stability guidance"
+    ],
+    "timbre_and_dialogue": [
+      "multimodal/Timbre and dialogue",
+      "Timbre and dialogue"
+    ],
+    "natural_performance": [
+      "realistic/Natural human performance",
+      "Natural human performance"
+    ],
+    "dialogue_conflict": [
+      "realistic/Dialogue and emotional conflict",
+      "Dialogue and emotional conflict"
+    ],
+    "relationship_camera": [
+      "realistic/Relationship-drama camera grammar",
+      "Relationship-drama camera grammar"
+    ],
+    "physical_causality": [
+      "realistic/Physical causality",
+      "Physical causality"
+    ],
+    "combat_core": [
+      "combat/核心原则",
+      "一、核心原则"
+    ],
+    "combat_mass_battle": [
+      "combat/割草专章",
+      "三、割草专章(群敌清场)"
+    ],
+    "combat_duel": [
+      "combat/单挑机位公式",
+      "二、单挑机位公式"
+    ],
+    "combat_speed": [
+      "combat/速度档位词",
+      "四、速度档位词(写进运镜句)"
+    ],
+    "combat_assembly": [
+      "combat/拼接公式",
+      "五、拼接公式(一段打戏一条 prompt)"
+    ],
+    "xianxia_energy": [
+      "xianxia/能量四态",
+      "二、能量四态：先定形，再有光"
+    ],
+    "xianxia_closing": [
+      "xianxia/收束协议",
+      "五、收束协议：一段打戏只能用四种方式结束"
+    ],
+    "xianxia_scale": [
+      "xianxia/尺度四件套",
+      "三、尺度四件套：大招必须量得出来"
+    ],
+    "xianxia_vfx_shots": [
+      "xianxia/特效镜头",
+      "六、特效镜头：四拍时序、特效光与制作规格"
+    ],
+    "xianxia_spectacle": [
+      "xianxia/非打斗奇观",
+      "七、非打斗奇观：渡劫、突破、御剑、阵法、法宝、结界、召唤、炼丹"
+    ],
+    "sports_coverage": [
+      "realistic/Sports and variety live coverage",
+      "Sports and variety live coverage"
+    ],
+    "handbook_formulas": [
+      "cn-handbook/四种提示词公式",
+      "一、四种提示词公式"
+    ],
+    "handbook_thirty_seconds": [
+      "cn-handbook/30 秒长视频的三个模块",
+      "二、30 秒长视频的三个模块"
+    ],
+    "handbook_transitions": [
+      "cn-handbook/中文转场用语",
+      "五、中文转场用语"
+    ],
+    "handbook_looks": [
+      "cn-handbook/人物造型细分公式",
+      "三、人物造型细分公式（真人与动画通用）"
+    ],
+    "handbook_phrases": [
+      "cn-handbook/其他可直接用的说法",
+      "六、其他可直接用的说法"
+    ],
+    "camera_style_rules": [
+      "camera-style/选运镜的总规则",
+      "一、选运镜的总规则"
+    ],
+    "camera_move_rules": [
+      "camera-move/写法总则",
+      "一、写法总则"
+    ],
+    "camera_move_formulas": [
+      "camera-move/组合公式",
+      "三、六个组合公式(整句填入运镜位)"
+    ],
+    "composition_use": [
+      "composition/怎么用",
+      "一、怎么用"
+    ],
+    "composition_action": [
+      "composition/动作张力",
+      "四、动作张力：把速度、压迫与爆点组织清楚"
+    ],
+    "composition_mood": [
+      "composition/电影氛围",
+      "三、电影氛围：让光线、天气与遮挡参与叙事"
+    ],
+    "handoff_continuity": [
+      "four-lock/动作连贯三原则",
+      "五、动作连贯三原则"
+    ],
+    "handoff_storyboard": [
+      "four-lock/故事板交给视频模型时的五条设置",
+      "六、故事板交给视频模型时的五条设置"
+    ]
+  }
+}

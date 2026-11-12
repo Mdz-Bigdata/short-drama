@@ -24,6 +24,19 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.core import style_packs
 from app.core.screenwriting.structured_llm import extract_json_object
+from app.core import prompt_data
+
+
+_WORDING_FILE = "style_analysis"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/style_analysis.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 Medium = Literal["live_action", "anime_2d", "anime_3d", "mixed"]
 _HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
@@ -60,9 +73,9 @@ class StyleProfile(BaseModel):
     summary: str = Field(min_length=1, max_length=300)
     lighting: str = Field(min_length=1, max_length=200)
     palette: list[ProfileColour] = Field(default_factory=list, max_length=6)
-    contrast: str = Field("中等", max_length=20)
-    temperature: str = Field("中性", max_length=20)
-    saturation: str = Field("中等", max_length=20)
+    contrast: str = Field(_text_of("StyleProfile.contrast"), max_length=20)
+    temperature: str = Field(_text_of("StyleProfile.temperature"), max_length=20)
+    saturation: str = Field(_text_of("StyleProfile.saturation"), max_length=20)
     camera_body: str = Field("", max_length=120)
     lens: str = Field("", max_length=120)
     grain: str = Field("", max_length=60)
@@ -83,43 +96,32 @@ class StyleProfile(BaseModel):
 
 
 _FIELDS = (
-    "name（2–12 字的风格名）、medium（live_action 真人实拍 / anime_2d 二维动画 / anime_3d 三维动画 / mixed 混合）、"
-    "summary（一句话概括这种质感）、lighting（光源方向、软硬、时段）、palette（3–6 个主色，每个含 name、hex（#RRGGBB）、role：它落在画面里的什么东西上）、"
-    "contrast / temperature / saturation（各用两三个字：高 / 中等 / 低、冷 / 中性 / 暖 …）、camera_body、lens、grain（机身、焦段与景深、颗粒）、"
-    "texture（材质与笔触，如胶片颗粒、赛璐璐平涂、厚涂）、composition（构图习惯）、era（年代感，没有就留空）、mood（情绪基调）、"
-    "lock（3–5 条锁定短语，中英文并写，每条是“特征A + 特征B”的形式，这是每一张图都必须复现的东西）、"
-    "positives（最多 12 条应当出现的画面特征）、negatives（最多 12 条必须避免的特征，如与该风格冲突的画法）、"
-    "style_caption（一段 60–200 字、可直接放进生图提示词开头的风格锚定句，中英文并写）"
+    _text_of("module.fields")
 )
 
 
 def analysis_prompt(hint: str = "") -> tuple[str, str]:
     """(system, user) for a vision model looking at one reference image."""
     system = (
-        "你是影视美术指导，负责把一张参考图的画面风格拆解成可复用的风格锁。"
-        "只描述画面的视觉风格（媒介、光线、色彩、镜头、质感、构图），不要描述图中的具体人物、情节或文字内容；"
-        "不要编造图中看不到的东西。只输出一个 JSON 对象。"
+        _text_of("analysis_prompt.system")
     )
     user = (
-        "请分析这张参考图的画面风格，输出一个 JSON 对象，字段如下：\n"
-        f"{_FIELDS}。\n"
-        "要求：hex 必须从画面中实际取色；lock 与 style_caption 只写风格，不写人物身份、服装细节或剧情；"
-        "不要出现任何真实人名、作品名或品牌名。"
+        _text_of("analysis_prompt.user").format(_FIELDS)
     )
     if hint.strip():
-        user += f"\n使用者的补充说明（仅作参考，以画面为准）：{hint.strip()[:300]}"
+        user += _text_of("analysis_prompt.text").format(hint.strip()[:300])
     return system, user
 
 
 def parse_profile(answer: str) -> StyleProfile:
     data = extract_json_object(answer or "")
     if not data:
-        raise StyleAnalysisError("模型没有返回可读的风格描述（不是 JSON）；请换一个支持看图的模型再试")
+        raise StyleAnalysisError(_text_of("parse_profile.text"))
     try:
         return StyleProfile.model_validate(data)
     except ValidationError as exc:
         fields = "、".join(sorted({str(err["loc"][0]) for err in exc.errors() if err.get("loc")}))
-        raise StyleAnalysisError(f"风格描述缺少或写错了字段：{fields}") from exc
+        raise StyleAnalysisError(_text_of("parse_profile.text.2").format(fields)) from exc
 
 
 def custom_pack_id(task_id: str) -> str:
@@ -130,13 +132,13 @@ def to_pack(profile: StyleProfile, *, task_id: str) -> style_packs.StylePack:
     """A project-only style lock: the profile's look over the built-in lock of the same medium."""
     base = style_packs.get_pack(_BASE_FOR_MEDIUM[profile.medium]) or style_packs.get_pack(style_packs.DEFAULT_PACK_ID)
     assert base is not None
-    knobs = {"contrast": profile.contrast, "temperature": profile.temperature, "saturation": profile.saturation, "vignette": base.palette.knobs.get("vignette", "轻微")}
+    knobs = {"contrast": profile.contrast, "temperature": profile.temperature, "saturation": profile.saturation, "vignette": base.palette.knobs.get("vignette", _text_of("to_pack.knobs.vignette"))}
     colours = [style_packs.PaletteColour(name=c.name, hex=c.hex, bound_to=c.role[:80]) for c in profile.palette]
     tone = " + ".join(part for part in (profile.mood, profile.lighting, "9:16") if part)
     positives = list(dict.fromkeys([*profile.positives, *(p for p in (profile.texture, profile.composition) if p)]))[:30]
     return base.model_copy(update={
         "id": custom_pack_id(task_id),
-        "name": f"参考图·{profile.name}"[:60],
+        "name": _text_of("to_pack.update.name").format(profile.name)[:60],
         "medium": profile.medium,
         "summary": profile.summary,
         "lock": profile.lock,
@@ -148,7 +150,7 @@ def to_pack(profile: StyleProfile, *, task_id: str) -> style_packs.StylePack:
         "palette": base.palette.model_copy(update={"through_colours": colours, "knobs": knobs}),
         "positives": positives,
         "negatives": list(dict.fromkeys([*profile.negatives, *base.negatives]))[:40],
-        "extension_restatement": f"全片保持「{profile.name}」的画面质感与色彩基调不变。"[:300],
+        "extension_restatement": _text_of("to_pack.update.extension_restatement").format(profile.name)[:300],
         "style_caption": profile.style_caption,
         "aliases": [],
     })

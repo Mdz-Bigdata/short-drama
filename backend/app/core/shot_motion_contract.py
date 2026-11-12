@@ -10,6 +10,19 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
 from app.schema.production import StoryboardPanel
+from app.core import prompt_data
+
+
+_WORDING_FILE = "shot_motion_contract"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/shot_motion_contract.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 class CompiledShotPrompt(BaseModel):
@@ -118,29 +131,19 @@ class ShotMotionContract(BaseModel):
 
 def _invariants(contract: ShotMotionContract) -> str:
     return (
-        f"角色：{'、'.join(contract.characters)}；场景：{contract.scene}；"
-        f"道具：{'、'.join(contract.props)}；特效：{'、'.join(contract.effects)}；"
-        f"景别：{contract.shot_size}；机位：{contract.camera_angle}；"
-        f"镜头：{contract.lens_mm}mm {contract.aperture}；构图：{contract.composition}；"
-        f"动作轴线：{contract.action_axis}；视线：{contract.eyeline}；调度：{contract.blocking}；"
-        f"动作：{contract.subject_action}；表情：{contract.expression}；灯光：{contract.lighting}；"
-        f"开始状态：{contract.start_state}；结束状态：{contract.end_state}；"
-        f"入镜连续性：{contract.continuity_in or '建立镜头'}；出镜连续性：{contract.continuity_out}。"
+        _text_of("_invariants.text").format('、'.join(contract.characters), contract.scene, '、'.join(contract.props), '、'.join(contract.effects), contract.shot_size, contract.camera_angle, contract.lens_mm, contract.aperture, contract.composition, contract.action_axis, contract.eyeline, contract.blocking, contract.subject_action, contract.expression, contract.lighting, contract.start_state, contract.end_state, contract.continuity_in or '建立镜头', contract.continuity_out)
     )
 
 
 def compile_storyboard_image_prompt(
     contract: ShotMotionContract,
     *,
-    visual_style: str = "写实真人电影质感，9:16竖屏",
+    visual_style: str = _text_of("compile_storyboard_image_prompt.text"),
     frame_state: Literal["start", "end"] = "start",
 ) -> CompiledShotPrompt:
     state = contract.start_state if frame_state == "start" else contract.end_state
     prompt = (
-        f"镜头{contract.shot_id}的{'首帧' if frame_state == 'start' else '尾帧'}分镜图片。"
-        f"{_invariants(contract)}当前必须呈现：{state}。视觉风格：{visual_style}。"
-        "严格锁定数字演员设定集、场景布局、道具归属、特效规则、摄影轴线、光向与色温；"
-        "禁止变脸、换装、道具换手、镜像翻转、文字、水印和无关人物。"
+        _text_of("compile_storyboard_image_prompt.prompt").format(contract.shot_id, '首帧' if frame_state == 'start' else '尾帧', _invariants(contract), state, visual_style)
     )
     return CompiledShotPrompt(
         kind="storyboard_image",
@@ -151,10 +154,7 @@ def compile_storyboard_image_prompt(
 
 def compile_motion_prompt(contract: ShotMotionContract) -> CompiledShotPrompt:
     prompt = (
-        f"{_invariants(contract)}"
-        f"相机以“{contract.camera_movement}”运动。"
-        "保持真实物理运动、稳定面部、手指和服装纹理，禁止无动机切镜、瞬移、变脸、"
-        "道具换手、轴线翻转或新增画面元素。"
+        _text_of("compile_motion_prompt.prompt").format(_invariants(contract), contract.camera_movement)
     )
     return CompiledShotPrompt(
         kind="motion_video",

@@ -302,5 +302,32 @@ class PanelContextTests(unittest.TestCase):
         self.assertIn({"kind": "prop", "name": "玉牌", "description": "青白玉"}, binding["assets"])
 
 
+
+class SceneDirectionLabelTests(unittest.TestCase):
+    """The still prompt names the front and the reverse plate as such when both go out (as the video prompt does)."""
+
+    def _line(self, references):
+        from app.core.panel_still_prompt import _only_gives, _reference_line
+
+        return _reference_line(references), _only_gives(references)
+
+    def test_a_pair_is_named_front_and_reverse_and_the_back_side_check_gets_no_use_line(self):
+        names, gives = self._line([
+            {"kind": "scene", "name": "磨刀铺内", "frame": "composition"},
+            {"kind": "scene", "name": "磨刀铺内", "view": "scene_reverse", "frame": "reverse_space"},
+        ])
+        self.assertIn("（正面）", names)
+        self.assertIn("（反打（与正面相对））", names)
+        self.assertNotIn("反打镜头：", gives)
+
+    def test_without_the_pair_the_view_names_stay_as_before(self):
+        names, _ = self._line([
+            {"kind": "scene", "name": "磨刀铺内"},
+            {"kind": "scene", "name": "磨刀铺内", "view": "scene_45", "frame": "composition"},
+        ])
+        self.assertNotIn("正面", names)
+        self.assertIn("45°斜角", names)
+
+
 if __name__ == "__main__":
     unittest.main()

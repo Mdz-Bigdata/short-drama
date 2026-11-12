@@ -36,32 +36,31 @@ import re
 
 from app.core import knowledge_registry, prompt_data
 
+
+_WORDING_FILE = "fight_design"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/fight_design.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
 # Only fights use these words.
-STRONG_SIGNALS: tuple[str, ...] = (
-    "打斗", "打戏", "武打", "动作戏", "对打", "过招", "交手", "缠斗", "混战", "厮杀",
-    "格斗", "搏斗", "械斗", "单挑", "群殴", "出招", "招式", "拳脚", "挥拳", "出拳",
-    "飞踢", "踢腿", "肘击", "膝撞", "擒拿", "反手夺刀", "拔剑", "拔刀", "刀光", "剑光",
-    "刀剑相接", "短兵相接", "拳拳到肉", "受击", "被击退", "重拳", "扫腿", "腾空跃起",
-    # A xianxia fight is often written in energy attacks alone: 「劈出一道紫电刀气横斩」.
-    "剑气", "刀气", "斩向", "劈向", "刺向", "击飞", "震飞", "反杀", "连招", "大招",
-)
+STRONG_SIGNALS: tuple[str, ...] = _words_of("module.strong_signals")
 # Conflict words a dialogue scene uses too: they only add weight to a strong signal.
-WEAK_SIGNALS: tuple[str, ...] = (
-    "冲突", "对峙", "扭打", "推搡", "撕扯", "追逐", "围攻", "反击", "格挡", "闪身",
-    "倒地", "翻滚", "血迹", "兵器", "长剑", "匕首", "刀刃",
-)
+WEAK_SIGNALS: tuple[str, ...] = _words_of("module.weak_signals")
 # A genre alone is no evidence (a wuxia drama has long dialogue scenes); it adds one point.
 FIGHT_GENRES = frozenset({"wuxia", "xianxia", "military", "sports", "action"})
 FIGHT_THRESHOLD = 3
 # Words that make a fight a xianxia one (with the Seedance 2.5 director layer, which reads the same list).
-XIANXIA_MARKERS: tuple[str, ...] = (
-    "剑气", "刀气", "拳气", "灵力", "真气", "法阵", "飞剑", "法术", "神通", "法相", "修仙", "仙", "妖", "魔",
-    "雷劫", "雷柱", "天雷", "紫电", "御剑", "符文", "结界", "灵光", "光刃", "大招",
-)
+XIANXIA_MARKERS: tuple[str, ...] = _words_of("module.xianxia_markers")
 XIANXIA_REFERENCE = "xianxia-combat-vfx"
 # Heading keywords of that reference: what the plan decides, and what each shot has to show.
-XIANXIA_PLAN_SECTIONS = ("三轮攻守", "收束协议")
-XIANXIA_VISUAL_SECTIONS = ("能量四态", "尺度四件套", "近景对招")
+XIANXIA_PLAN_SECTIONS = _words_of("module.xianxia_plan_sections")
+XIANXIA_VISUAL_SECTIONS = _words_of("module.xianxia_visual_sections")
 
 
 def fight_score(text: str, genre: str = "") -> int:
@@ -139,8 +138,8 @@ def plan_rules_for(*texts: str, genre: str = "") -> str:
     # 回合与招招写实从剧本就开始：分镜师接到的是已经按回合排好的打戏。
     rules = f"{PLAN_RULES}\n{fight_exchange.writer_rule()}\n"
     return _with_xianxia(
-        rules, text, genre, XIANXIA_PLAN_SECTIONS, "玄幻打戏补充（本集为玄幻打戏时适用）",
-        note="原文或大纲已写定的胜负、出招顺序与结尾优先；下面的三轮骨架与收束协议只用来补全原文没写定的部分。",
+        rules, text, genre, XIANXIA_PLAN_SECTIONS, _text_of("plan_rules_for.text"),
+        note=_text_of("plan_rules_for.note"),
     )
 
 
@@ -152,7 +151,7 @@ def visual_rules_for(*texts: str, genre: str = "") -> str:
     text = "\n".join(str(item or "") for item in texts)
     if not looks_like_fight(text, genre):
         return ""
-    return _with_xianxia(VISUAL_RULES, text, genre, XIANXIA_VISUAL_SECTIONS, "玄幻打斗分镜补充（玄幻打斗分镜适用）")
+    return _with_xianxia(VISUAL_RULES, text, genre, XIANXIA_VISUAL_SECTIONS, _text_of("visual_rules_for.text"))
 
 
 __all__ = [

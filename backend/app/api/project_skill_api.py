@@ -19,9 +19,22 @@ from app.schema.platform import (
     ProjectSkillCreateRequest,
     ProjectSkillUpdateRequest,
 )
+from app.core import prompt_data
 
 
-router = APIRouter(prefix="/api/project-skills", tags=["项目 Markdown Skills"])
+_WORDING_FILE = "api_project_skill_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_project_skill_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+
+router = APIRouter(prefix="/api/project-skills", tags=list(_words_of("module.tags")))
 
 
 def _serialize(item) -> dict:
@@ -152,7 +165,7 @@ async def update_project_skill(
         await _refresh(store)
         return _serialize(item)
     except ValueError as exc:
-        status = 404 if str(exc) == "Skill 不存在" else 400
+        status = 404 if str(exc) == _text_of("update_project_skill.status") else 400
         raise HTTPException(status_code=status, detail=str(exc)) from exc
 
 
@@ -170,5 +183,5 @@ async def toggle_project_skill(
         await _refresh(store)
         return _serialize(item)
     except ValueError as exc:
-        status = 404 if str(exc) == "Skill 不存在" else 400
+        status = 404 if str(exc) == _text_of("toggle_project_skill.status") else 400
         raise HTTPException(status_code=status, detail=str(exc)) from exc

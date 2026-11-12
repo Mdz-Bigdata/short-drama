@@ -6,12 +6,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CharacterFaceSculpt } from './CharacterFaceSculpt';
 
 const catalog = {
-  layers: [{ key: 'bone', label: '骨相' }, { key: 'features', label: '五官' }],
+  layers: [{ key: 'bone', label: '骨相' }, { key: 'features', label: '五官' }, { key: 'skin', label: '皮肤' }],
   controls: [
     { key: 'face_shape', layer: 'bone', label: '脸型', type: 'choice', options: [{ value: 'melon', label: '瓜子脸' }, { value: 'oval', label: '鹅蛋脸' }] },
     { key: 'eye_size', layer: 'features', label: '眼睛大小', type: 'scale', steps: ['眼睛偏小', '眼睛略小', '', '眼睛略大', '眼睛大而明亮'] },
+    { key: 'skin_tone', layer: 'skin', label: '肤色', type: 'choice', options: [{ value: 'wheat', label: '小麦' }] },
   ],
-  presets: [{ key: 'heroine_cool', label: '古装女主·清冷', values: { face_shape: 'melon', eye_size: 1 } }],
+  presets: [
+    { key: 'heroine_cool', label: '古装女主·清冷', values: { face_shape: 'melon', eye_size: 1 } },
+    { key: 'look_soft', label: '五官·柔和杏眼', values: { face_shape: 'oval', eye_size: 1 }, scope: ['bone', 'features'], focus: 'eye_size' },
+  ],
+  focus_layers: ['bone', 'features'],
   expression_controls: [{ key: 'eyes', label: '眼', options: [{ value: 'crescent', label: '弯成月牙' }] }],
   expressions: [{ key: 'smile', label: '笑', words: ['笑'] }, { key: 'cry', label: '哭', words: ['哭'] }],
   limits: { note_chars: 60, tell_chars: 40, habit_chars: 40 },
@@ -96,6 +101,19 @@ describe('CharacterFaceSculpt', () => {
     await userEvent.selectOptions(screen.getByRole('combobox', { name: '眼' }), 'crescent');
     await waitFor(() => expect(screen.getByText('林婉笑时：眼睛弯成月牙')).toBeTruthy());
     expect(screen.getByRole('option', { name: '笑' }).className).toContain('is-sculpted');
+  });
+
+  it('a features-only preset keeps the skin and brings its focal feature', async () => {
+    const calls = mockApi();
+    render(<CharacterFaceSculpt taskId="t1" characterName="林婉" />);
+    await userEvent.selectOptions(await screen.findByRole('combobox', { name: '肤色' }), 'wheat');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /从预设开始/ }), 'look_soft');
+    const focus = screen.getByRole('combobox', { name: /突出点/ }) as HTMLSelectElement;
+    expect(focus.value).toBe('eye_size');
+    expect([...focus.options].map(option => option.value)).toEqual(['', 'face_shape', 'eye_size']);
+    await waitFor(() => expect(calls.some(call => call.url.endsWith('/preview') && (call.body as { preset?: string } | undefined)?.preset === 'look_soft')).toBe(true));
+    const previewCall = calls.filter(call => call.url.endsWith('/preview')).at(-1);
+    expect(previewCall?.body).toMatchObject({ face: { skin_tone: 'wheat', face_shape: 'oval', eye_size: 1 }, preset: 'look_soft', focus: 'eye_size' });
   });
 
   it('choosing the middle of a scale means "keep the original description"', async () => {

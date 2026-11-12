@@ -1,5 +1,5 @@
 {
-  "_about": "音画同生模型的声音设计(app/core/h3_sound_design.py)的全部措辞：H3 声音三层(center / ambient / music)的标签和英文写法、角色音色锁定句、本镜情绪叠加句、发送前的声音检查说明，以及读角色卡定音色的词表。says 是句子模板，花括号里是代码填进去的值({cps:g} 带格式)，只改措辞、不改占位符。timbre_rules 按顺序比对，先命中的那条定音色与音区，都不中用 default_timbre；锁定句的写法一旦改动，模型会听成另一个演员，所以改它等于给所有角色换嗓子。center_tone 把音色词写成 center 层里的英文，没列的音色用 center_tone_default。delivery_by_emotion 把镜头情绪映射成 [语速档, center 层情绪词]，语速档的名字(正常 / 急切 / 沉重)是 h3_sound_design.PACE_BY_DELIVERY 的键，不在这里定义、也不能改名。锁定句里接参考音频的「音色参考」几个字读 voice_reference.json 的 lock_lead(video_references 按它删掉发不出去的音频)，不在这里；lock_separator 也是它前面那个逗号，改了要同步改 video_references 的正则。patterns 是正则：age 读年龄，latin_word 与 han 估算字数(han_chars_per_word 个汉字算一个词)，layer 取出某一层的正文({tag} 是层名)。limits.sound_words 是声音提示词的词数预算，voice_desc_chars 是设计音色短描述的截断长度。",
+  "_about": "音画同生模型的声音设计(app/core/h3_sound_design.py)的全部措辞：H3 声音三层(center / ambient / music)的标签和英文写法、角色音色锁定句、本镜情绪叠加句、发送前的声音检查说明，以及读角色卡定音色的词表。says 是句子模板，花括号里是代码填进去的值，只改措辞、不改占位符。锁定句只锁音色与音区、不写语速：语速按每句台词的情绪(speech_pace.json 分档)走。timbre_rules 按顺序比对，先命中的那条定音色与音区，都不中用 default_timbre；锁定句的写法一旦改动，模型会听成另一个演员，所以改它等于给所有角色换嗓子。center_tone 把音色词写成 center 层里的英文，没列的音色用 center_tone_default。delivery_by_emotion 把镜头情绪映射成 [语速档, center 层情绪词]，语速档的名字(正常 / 急切 / 沉重)是 h3_sound_design.PACE_BY_DELIVERY 的键，不在这里定义、也不能改名。锁定句里接参考音频的「音色参考」几个字读 voice_reference.json 的 lock_lead(video_references 按它删掉发不出去的音频)，不在这里；lock_separator 也是它前面那个逗号，改了要同步改 video_references 的正则。patterns 是正则：age 读年龄，latin_word 与 han 估算字数(han_chars_per_word 个汉字算一个词)，layer 取出某一层的正文({tag} 是层名)。limits.sound_words 是声音提示词的词数预算，voice_desc_chars 是设计音色短描述的截断长度。",
   "tags": {"center": "center", "ambient": "ambient", "music": "music"},
   "limits": {"sound_words": 60, "han_chars_per_word": 2, "voice_desc_chars": 40},
   "music_words": [
@@ -46,7 +46,6 @@
     "persona_age": "{years}岁",
     "persona": "{age}{timbre}{voice}",
     "lock_head": "{name}：{voice}",
-    "lock_pace": "语速每秒{cps:g}字",
     "lock_tail": "；全片音色、音调与声线不变",
     "center_term": "{voice} {tone}",
     "overlay": "{names}本镜情绪（{notes}）只改变语气、力度与停顿，基础音色、音调与声线照上面的锁定句不变",

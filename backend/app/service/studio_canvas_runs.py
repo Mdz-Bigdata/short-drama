@@ -39,6 +39,19 @@ from app.schema.studio import (
     CanvasPutRequest,
     CanvasRecord,
 )
+from app.core import prompt_data
+
+
+_WORDING_FILE = "studio_canvas_runs"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/studio_canvas_runs.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.service.studio_canvas_runs")
 
@@ -60,11 +73,11 @@ def frames_ratio_problem(first: Any, last: Any) -> str:
     ratios = [width / max(1, height) for width, height in sizes]
     if abs(ratios[0] - ratios[1]) <= FRAME_RATIO_TOLERANCE:
         return ""
-    return f"首帧 {sizes[0][0]}×{sizes[0][1]}、尾帧 {sizes[1][0]}×{sizes[1][1]} 比例不同，先统一比例再生成"
+    return _text_of("frames_ratio_problem.text").format(sizes[0][0], sizes[0][1], sizes[1][0], sizes[1][1])
 
 
 FRAME_RATIO_TOLERANCE = 0.02
-CONTINUATION_LINE = "本段是同一镜头的后半段：从首帧这个画面接着往下演，动作、光线、色调都延续上一段，不要重新起势、不要切换机位。"
+CONTINUATION_LINE = _text_of("module.continuation_line")
 
 # generation_queue.run bounds one run; two batches started side by side must still share a provider's ceiling.
 _gates: dict[str, threading.BoundedSemaphore] = {}
@@ -152,7 +165,7 @@ def _keep_media(url: Any, medium: str, tag: str) -> dict[str, Any]:
     """A provider's URL is signed and expires; history is only worth keeping if the file stays. Copy it under /media."""
     value = str(url or "").strip()
     if not value:
-        raise RuntimeError("服务没有返回结果")
+        raise RuntimeError(_text_of("_keep_media.text"))
     if media_compositor.local_media_path(value):
         return {"url": value}
     os.makedirs(media_compositor.MEDIA_DIR, exist_ok=True)
@@ -162,7 +175,7 @@ def _keep_media(url: Any, medium: str, tag: str) -> dict[str, Any]:
         try:
             content = base64.b64decode(encoded, validate=True)
         except binascii.Error as exc:
-            raise RuntimeError("服务返回的内嵌图无法解析") from exc
+            raise RuntimeError(_text_of("_keep_media.text.2")) from exc
         extension = "jpg" if "jpeg" in header else "webp" if "webp" in header else "png"
         name = f"{stem}.{extension}"
         with open(os.path.join(media_compositor.MEDIA_DIR, name), "wb") as handle:
@@ -223,11 +236,11 @@ class CanvasRunner:
             },
             "kinds": {
                 "image_gen": {"runnable": True, "reason": ""},
-                "video_gen": {"runnable": True, "reason": "这个平台不做纯文生视频：至少连一张参考图、一段视频或一个预演截取"},
-                "audio_gen": {"runnable": True, "reason": "" if elevenlabs else "没有配置 ElevenLabs：配音走本机合成，配乐和音效无法运行",
+                "video_gen": {"runnable": True, "reason": _text_of("options.kinds.video_gen.reason")},
+                "audio_gen": {"runnable": True, "reason": "" if elevenlabs else _text_of("options.kinds.audio_gen.reason"),
                               "modes": {"speech": True, "music": elevenlabs, "sfx": elevenlabs}},
                 "tool": {"runnable": True, "reason": ""},
-                "video_compose": {"runnable": ffmpeg, "reason": "本机拼接（ffmpeg），不调用模型、不计费，输出竖屏" if ffmpeg else "服务器上没有 ffmpeg，无法合成"},
+                "video_compose": {"runnable": ffmpeg, "reason": _text_of("options.kinds.video_compose.reason") if ffmpeg else _text_of("options.kinds.video_compose.reason.2")},
             },
         }
 
@@ -245,7 +258,7 @@ class CanvasRunner:
         config = task.get("config") if isinstance(task.get("config"), Mapping) else {}
         missing = [item for item in node_ids if item not in nodes]
         if missing:
-            raise ValueError(f"画布上没有这些节点（先保存再运行）：{'、'.join(missing)}")
+            raise ValueError(_text_of("assess.text").format('、'.join(missing)))
         ordered, _ = studio_canvas.batch_order(node_ids, edges)
         rows: dict[str, dict[str, Any]] = {}
         video_groups: dict[str, list[str]] = {}
@@ -259,7 +272,7 @@ class CanvasRunner:
             }
             rows[node_id] = row
             if kind != "tool" and kind not in studio_canvas.RUNNABLE:
-                row["problems"].append({"code": "not_runnable", "message": "这种节点不需要运行", "blocking": True})
+                row["problems"].append({"code": "not_runnable", "message": _text_of("assess.message"), "blocking": True})
                 row["paid"] = False
                 continue
             inputs = studio_canvas.resolve_inputs(node, nodes, edges, runs, captures_of, in_batch=node_ids)
@@ -278,11 +291,11 @@ class CanvasRunner:
                 video_groups.setdefault(row["model"], []).append(node_id)
                 recipe = str(_params(node).get("cameraRecipe") or "")
                 if recipe and recipe not in {item["value"] for item in _camera_recipes()}:
-                    row["problems"].append({"code": "camera_recipe", "message": f"不认识的运镜模板 {recipe}", "blocking": True})
+                    row["problems"].append({"code": "camera_recipe", "message": _text_of("assess.message.2").format(recipe), "blocking": True})
                 if not prompt:
-                    row["problems"].append({"code": "no_prompt", "message": "还没写提示词", "blocking": True})
+                    row["problems"].append({"code": "no_prompt", "message": _text_of("assess.message.3"), "blocking": True})
                 if not inputs.has_visual_reference() and not inputs.pending:
-                    row["problems"].append({"code": "no_reference", "message": "禁止文生视频：至少连一张参考图、一段参考视频或一个预演截取", "blocking": True})
+                    row["problems"].append({"code": "no_reference", "message": _text_of("assess.message.4"), "blocking": True})
                 ratio_problem = frames_ratio_problem(inputs.first_frame, inputs.last_frame) if inputs.first_frame and inputs.last_frame else ""
                 if ratio_problem:
                     row["problems"].append({"code": "frame_ratio", "message": ratio_problem, "blocking": True})
@@ -290,9 +303,9 @@ class CanvasRunner:
                 self._assess_audio(row, node, config, prompt)
             elif kind == "video_compose":
                 if not media_compositor._ffmpeg():
-                    row["problems"].append({"code": "no_ffmpeg", "message": "服务器上没有 ffmpeg，无法合成", "blocking": True})
+                    row["problems"].append({"code": "no_ffmpeg", "message": _text_of("assess.message.5"), "blocking": True})
                 if not inputs.clips and not inputs.pending:
-                    row["problems"].append({"code": "no_clips", "message": "至少连一段视频", "blocking": True})
+                    row["problems"].append({"code": "no_clips", "message": _text_of("assess.message.6"), "blocking": True})
         confirmations = self._assess_videos(rows, nodes, video_groups, config, confirmed, drama)
         return self._decide(rows, ordered, confirmations)
 
@@ -312,11 +325,11 @@ class CanvasRunner:
         pictures = len(inputs.ref_images) + (1 if inputs.first_frame else 0)
         waiting = len(inputs.pending)
         if pictures + waiting < tool.images:
-            problems.append({"code": "no_image", "message": f"{tool.label}需要连 {tool.images} 张图片，现在有 {pictures} 张", "blocking": True})
+            problems.append({"code": "no_image", "message": _text_of("_assess_tool.message").format(tool.label, tool.images, pictures), "blocking": True})
         if len(inputs.ref_videos) + waiting < tool.videos:
-            problems.append({"code": "no_video", "message": f"{tool.label}需要连一段视频", "blocking": True})
+            problems.append({"code": "no_video", "message": _text_of("_assess_tool.message.2").format(tool.label), "blocking": True})
         if tool.needs_prompt and not prompt and not waiting:
-            problems.append({"code": "no_prompt", "message": "还没写提示词，也没有连文本", "blocking": True})
+            problems.append({"code": "no_prompt", "message": _text_of("_assess_tool.message.3"), "blocking": True})
         params = _params(node)
         if tool.engine == "image":
             # What would not run anyway is said now, before anyone is asked to pay for it.
@@ -330,35 +343,35 @@ class CanvasRunner:
         if tool.id == "voice_isolate":
             row["model"] = "elevenlabs/audio-isolation"
             if not media_compositor._elevenlabs_available():
-                problems.append({"code": "no_provider", "message": "人声分离需要 ElevenLabs，当前没有配置；只要原声可以用「提取音轨」", "blocking": True})
+                problems.append({"code": "no_provider", "message": _text_of("_assess_tool.message.4"), "blocking": True})
             if not media_compositor._ffmpeg():
-                problems.append({"code": "no_ffmpeg", "message": "服务器上没有 ffmpeg，无法运行", "blocking": True})
+                problems.append({"code": "no_ffmpeg", "message": _text_of("_assess_tool.message.5"), "blocking": True})
             row["estimate"] = usage_ledger.estimate("elevenlabs/audio-isolation", "audio", {"files": 1})
             return
         if tool.engine == "vision":
             choice = runtime_model_registry.vision_model(str(params.get("model") or config.get("llm_model") or ""))
             if choice is None:
-                problems.append({"code": "no_vision", "message": "没有可看图的文本模型：请在模型配置里启用一个标为「多模态」的文本模型", "blocking": True})
+                problems.append({"code": "no_vision", "message": _text_of("_assess_tool.message.6"), "blocking": True})
             row["model"] = choice[1] if choice else ""
             row["estimate"] = usage_ledger.estimate(row["model"], "text", {"images": 1})
             if tool.id == "shot_analysis" and not media_compositor._ffmpeg():
-                problems.append({"code": "no_ffmpeg", "message": "服务器上没有 ffmpeg，无法运行", "blocking": True})
+                problems.append({"code": "no_ffmpeg", "message": _text_of("_assess_tool.message.7"), "blocking": True})
             return
         if tool.engine == "text":
             row["model"] = str(params.get("model") or config.get("llm_model") or "")
             if not row["model"]:
-                problems.append({"code": "model", "message": "项目还没有选文本模型", "blocking": True})
+                problems.append({"code": "model", "message": _text_of("_assess_tool.message.8"), "blocking": True})
             row["estimate"] = usage_ledger.estimate(row["model"], "text", {"input_chars": len(prompt)})
             return
         row["paid"] = False
         row["model"] = "local"
         if tool.videos and not media_compositor._ffmpeg():
-            problems.append({"code": "no_ffmpeg", "message": "服务器上没有 ffmpeg，无法运行", "blocking": True})
+            problems.append({"code": "no_ffmpeg", "message": _text_of("_assess_tool.message.9"), "blocking": True})
 
     @staticmethod
     def _assess_image(row: dict[str, Any], node: Mapping[str, Any], config: Mapping[str, Any], prompt: str, inputs: studio_canvas.Inputs, drama: Any) -> None:
         if not prompt:
-            row["problems"].append({"code": "no_prompt", "message": "还没写提示词", "blocking": True})
+            row["problems"].append({"code": "no_prompt", "message": _text_of("_assess_image.message"), "blocking": True})
         CanvasRunner._assess_model_image(row, _params(node), config, [*inputs.ref_images, *([inputs.first_frame] if inputs.first_frame else [])], drama)
 
     @staticmethod
@@ -378,12 +391,12 @@ class CanvasRunner:
         provider, model = media_compositor.effective_audio_model(str(params.get("model") or config.get("tts_model") or ""))
         row["model"] = model or provider
         if mode not in {"speech", "music", "sfx"}:
-            row["problems"].append({"code": "mode", "message": f"不认识的音频类型 {mode}", "blocking": True})
+            row["problems"].append({"code": "mode", "message": _text_of("_assess_audio.message").format(mode), "blocking": True})
             return
         if not prompt:
-            row["problems"].append({"code": "no_prompt", "message": "还没写文本", "blocking": True})
+            row["problems"].append({"code": "no_prompt", "message": _text_of("_assess_audio.message.2"), "blocking": True})
         if mode != "speech" and not media_compositor._elevenlabs_available():
-            row["problems"].append({"code": "no_provider", "message": "配乐和音效需要 ElevenLabs，当前没有配置", "blocking": True})
+            row["problems"].append({"code": "no_provider", "message": _text_of("_assess_audio.message.3"), "blocking": True})
         row["estimate"] = usage_ledger.estimate(model, "audio", {"characters": len(prompt)})
 
     @staticmethod
@@ -434,7 +447,7 @@ class CanvasRunner:
                 row["quote"] = "blocked"
                 continue
             if blocked:
-                row["problems"].append({"code": WITHHELD, "message": "这个节点本可运行，但同批有节点受阻，整批未提交", "blocking": False})
+                row["problems"].append({"code": WITHHELD, "message": _text_of("_decide.message"), "blocking": False})
             if not row["paid"]:
                 continue
             paid += 1
@@ -555,7 +568,7 @@ class CanvasRunner:
             logger.exception("[Canvas] 批次 %s 中断", batch_id)
             for item in queue.items():
                 if item.status not in generation_queue.FINAL:
-                    self.repository.update_canvas_run(project_id, item.key, status="failed", error="运行中断，请重试")
+                    self.repository.update_canvas_run(project_id, item.key, status="failed", error=_text_of("_execute.error"))
         finally:
             stop.set()
 
@@ -599,7 +612,7 @@ class CanvasRunner:
                 # The seam of one continuous shot: the last frame is read now, from the clip as it is, and refused rather than guessed.
                 first_frame = media_compositor.extract_last_frame_b64(media_compositor.local_media_path(inputs.continue_from) or inputs.continue_from)
                 if not first_frame:
-                    raise RuntimeError("取不到上一段的最后一帧（视频文件失效或服务器没有 ffmpeg），本段首帧必须接上一段尾帧，不能生成")
+                    raise RuntimeError(_text_of("_run_one.text"))
                 # The picture carries the pose, light and tone across; the words say what that pose is and what comes next.
                 prompt = f"{CONTINUATION_LINE}\n{action_grammar.continuation_text(inputs.continue_from_prompt, prompt)}"
             url = drama.gateway.generate_video(
@@ -608,7 +621,7 @@ class CanvasRunner:
             )
             if not url:
                 probe = getattr(drama.gateway, "last_video_failure", None)
-                raise RuntimeError((probe() if callable(probe) else "") or "视频服务没有返回结果")
+                raise RuntimeError((probe() if callable(probe) else "") or _text_of("_run_one.text.2"))
             if inputs.continue_from:
                 seam = _seam_report(first_frame, url)
         elif kind == "audio_gen":
@@ -616,7 +629,7 @@ class CanvasRunner:
         elif kind == "video_compose":
             url = self._compose(inputs, tag)
         else:
-            raise ValueError("这种节点不需要运行")
+            raise ValueError(_text_of("_run_one.text.3"))
         kept = _keep_media(url, record.medium, tag)
         output = {
             "medium": record.medium, **kept, **({"seam": seam} if seam else {}),
@@ -653,7 +666,7 @@ class CanvasRunner:
                 [(text, gender, str(params.get("emotion") or "neutral"))], tts_model=str(params.get("model") or project_tts), tag=f"canvas_{tag}",
             )
         if not url:
-            raise RuntimeError("音频服务没有返回结果")
+            raise RuntimeError(_text_of("_synthesize.text"))
         return url
 
     @staticmethod
@@ -663,7 +676,7 @@ class CanvasRunner:
         soundtrack = media_compositor.local_media_path(inputs.soundtrack) if inputs.soundtrack else None
         url = media_compositor.compose_film(clips, [""] * len(clips), soundtrack, tag=f"canvas_{tag}", title=None, bgm=False)
         if not url:
-            raise RuntimeError("本机合成失败：片段下载或 ffmpeg 出错")
+            raise RuntimeError(_text_of("_compose.text"))
         return url
 
     def cancel(self, project_id: str, batch_id: str, key: str | None) -> dict[str, Any]:
@@ -693,7 +706,7 @@ class CanvasRunner:
         for node_id in dict.fromkeys(node_ids):
             node = nodes.get(node_id)
             if node is None:
-                raise ValueError(f"画布上没有节点 {node_id}")
+                raise ValueError(_text_of("preview_commit.text").format(node_id))
             row = self._commit_row(node, nodes, edges, runs, shots)
             rows.append(row)
             counts[row["state"]] += 1
@@ -721,19 +734,19 @@ class CanvasRunner:
         has_result = bool(run and run.get("output")) or node.get("artifact_id") or (isinstance(held, Mapping) and held.get("url"))
         if medium == "text":
             row["state"] = "no_result"
-            row["reason"] = "文本结果留在画布上，不提交到项目"
+            row["reason"] = _text_of("_commit_row.text")
             row["impact"] = {"count": 0, "shots": []}
             return row
         if source is None:
             row["state"] = "no_provenance" if has_result else "no_result"
-            row["reason"] = "这个结果没有来源记录，不能提交" if has_result else "这个节点还没有结果"
+            row["reason"] = _text_of("_commit_row.text.2") if has_result else _text_of("_commit_row.text.3")
             row["impact"] = {"count": 0, "shots": []}
             return row
         committed = studio_canvas.payload_of(node).get("committed")
         marker = source.get("run_id") or source.get("artifact_id") or (output or {}).get("url")
         if isinstance(committed, Mapping) and committed.get("marker") == marker:
             row["state"] = "already"
-            row["reason"] = "这个结果已经提交过了"
+            row["reason"] = _text_of("_commit_row.text.4")
         return row
 
     def commit(
@@ -759,7 +772,7 @@ class CanvasRunner:
                     update, applied = self._commit_one(project_id, owner_id, nodes[node_id], nodes, edges, runs, row, task_id, drama)
                 except Exception as exc:  # noqa: BLE001 - one node's failure is reported for retry; the others still land
                     logger.warning("[Canvas] 提交节点 %s 失败：%s", node_id, str(exc)[:200])
-                    results.append({"node_id": node_id, "label": row["label"], "status": "failed", "reason": str(exc)[:300] or "提交失败"})
+                    results.append({"node_id": node_id, "label": row["label"], "status": "failed", "reason": str(exc)[:300] or _text_of("commit.reason")})
                     continue
                 updates[node_id] = update
                 results.append({"node_id": node_id, "label": row["label"], "status": "committed", "artifact_id": update["artifact_id"], "applied_shots": applied})
@@ -799,7 +812,7 @@ class CanvasRunner:
         if not artifact_id:
             kind = row.get("target_kind")
             if not kind:
-                raise ValueError("这种结果不能写回项目")
+                raise ValueError(_text_of("_commit_one.text"))
             artifact_kind = ArtifactKind(kind)
             parents = [
                 str(nodes[str(edge["source"])].get("artifact_id"))
@@ -845,7 +858,7 @@ class CanvasRunner:
 
         applied = drama.repo.mutate_task(task_id, mutate)
         if applied is None:
-            raise RuntimeError("项目不存在，写回失败")
+            raise RuntimeError(_text_of("_apply_to_shots.text"))
         return int(applied)
 
 

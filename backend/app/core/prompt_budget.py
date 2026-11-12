@@ -81,7 +81,6 @@ def hard_limit(model: str) -> int | None:
     return None
 
 
-_SENTENCE_END = re.compile(r"[。！？；.!?;\n]")
 
 
 def sound_heads() -> tuple[str, ...]:
@@ -94,9 +93,8 @@ def fit_hard_limit(prompt: str, model: str, *, plain: str = "") -> tuple[str, li
 
     ``plain`` is the same prompt without the gateway's enhancement words, the first thing to give up. Then the generic
     boilerplate goes in the order of ``hard_fit_drop`` (English negative lists, the English style lock, style and sheet
-    rules, the picture-quality line …); the shot's own description stays. Still over: cut at a sentence end and put the
-    lines that must close every prompt (portrait safety, 禁止出现, the global negatives) back at the end. A model that
-    makes its own sound (Seedance 2.x) keeps its whole sound section too; only the picture text is cut.
+    rules, the picture-quality line …); the shot's own description, its camera moves and its sound stay. Still over: the
+    prompt goes as it is and ``over_limit_kept`` says so — storyboard and camera content are never cut.
     """
     limit = hard_limit(model)
     text = str(prompt or "")
@@ -115,33 +113,8 @@ def fit_hard_limit(prompt: str, model: str, *, plain: str = "") -> tuple[str, li
             text = re.sub(r"\n{3,}", "\n\n", shorter)
             removed.append(f"drop{index + 1}")
     if len(text) > limit:
-        keep_heads = prompt_data.words(_DATA, "hard_fit_keep_tail")
-        # 出声的模型(Seedance 2.x)：声音段整段留着(标题行连同下面的行，到下一个【】标题为止)，只截画面正文。
-        heads = sound_heads() if video_native_audio(model) else ()
-        tail: list[str] = []
-        sound: list[str] = []
-        rest: list[str] = []
-        in_sound = False
-        for line in text.split("\n"):
-            stripped = line.strip()
-            if stripped.startswith(keep_heads):
-                tail.append(line)
-                in_sound = False
-            elif heads and stripped.startswith(heads):
-                sound.append(line)
-                in_sound = True
-            elif in_sound and stripped and not stripped.startswith("【"):
-                sound.append(line)
-            else:
-                in_sound = False
-                rest.append(line)
-        body = "\n".join(rest).rstrip()
-        room = max(0, limit - sum(len(line) + 1 for line in [*sound, *tail]))
-        head = body[:room]
-        ends = [match.end() for match in _SENTENCE_END.finditer(head)]
-        head = head[: ends[-1]] if ends and ends[-1] > room // 2 else head
-        text = "\n".join([head.rstrip(), *sound, *tail])[:limit]
-        removed.append("truncated")
+        # 分镜与运镜内容一个字都不删：套话删完仍超上限，就原样发出去并记一笔(由调用方写日志)，不截画面正文。
+        removed.append("over_limit_kept")
     return text, removed
 
 

@@ -57,6 +57,8 @@ LLM = Callable[[str, str, int], "str | None"]
 _SEGMENT = re.compile(r"([；;。\n]+)")
 _FRAGMENT = re.compile(r"([，,、]+)")
 _NEGATION = re.compile(r"^(不要|避免|禁止|切勿|不能|不得)")
+# 用户一句话里的分句：「保持杏眼」这种叫某处别动的分句单独认出来。
+_CLAUSE = re.compile(r"[，,。；;！!？?\n]+")
 _LAYER_LABELS = {key: label for key, label in FACE_LAYERS}
 _LABEL_LAYERS = {label: key for key, label in FACE_LAYERS}
 # 状态卡字段 → 资产卡层(状态卡里体态叫 body)。
@@ -93,17 +95,27 @@ class Catalog:
     controls: tuple[Control, ...]
     presets: Mapping[str, Mapping[str, Any]]
     preset_labels: Mapping[str, str]
+    # 预设只铺这几层(五官方向只铺骨相与五官，年龄、皮肤、毛发照旧)；不在这里的预设整张脸重铺。
+    preset_scopes: Mapping[str, tuple[str, ...]]
+    preset_focus: Mapping[str, str]
     expression_controls: Mapping[str, tuple[tuple[str, str, str], ...]]
     expression_control_labels: Mapping[str, str]
     expressions: tuple[tuple[str, str, tuple[str, ...]], ...]   # (key, label, words)
     limits: Mapping[str, int]
     wording: Mapping[str, Any]
+    harmony: Mapping[str, Any]
 
     def control(self, key: str) -> Control:
         for control in self.controls:
             if control.key == key:
                 return control
         raise SculptError(f"没有这个捏脸控件：{key}")
+
+    def focus_control(self, key: Any) -> Control | None:
+        """能做突出点的控件(骨相与五官)；按键或名字认。"""
+        text = str(key or "").strip()
+        layers = self.harmony["focus_layers"]
+        return next((item for item in self.controls if item.layer in layers and text in (item.key, item.label)), None)
 
     def expression_label(self, key: str) -> str:
         return next((label for item, label, _words in self.expressions if item == key), key)
@@ -129,15 +141,21 @@ def catalog() -> Catalog:
         item["key"]: tuple((option["value"], option["label"], option["phrase"]) for option in item["options"])
         for item in data["expression_controls"]
     }
+    for item in data["presets"]:
+        if set(item.get("scope") or ()) - layers:
+            raise SculptError(f"预设 {item['key']} 的层不存在")
     return Catalog(
         controls=tuple(controls),
         presets={item["key"]: item["values"] for item in data["presets"]},
         preset_labels={item["key"]: item["label"] for item in data["presets"]},
+        preset_scopes={item["key"]: tuple(item["scope"]) for item in data["presets"] if item.get("scope")},
+        preset_focus={item["key"]: item["focus"] for item in data["presets"] if item.get("focus")},
         expression_controls=expression_controls,
         expression_control_labels={item["key"]: item["label"] for item in data["expression_controls"]},
         expressions=tuple((item["key"], item["label"], tuple(item["words"])) for item in data["expressions"]),
         limits=data["limits"],
         wording=data["wording"],
+        harmony=data["harmony"],
     )
 
 
@@ -155,7 +173,13 @@ def describe_catalog() -> dict[str, Any]:
             }
             for control in cat.controls
         ],
-        "presets": [{"key": key, "label": cat.preset_labels[key], "values": dict(values)} for key, values in cat.presets.items()],
+        "presets": [
+            {"key": key, "label": cat.preset_labels[key], "values": dict(values),
+             **({"scope": list(cat.preset_scopes[key])} if key in cat.preset_scopes else {}),
+             **({"focus": cat.preset_focus[key]} if key in cat.preset_focus else {})}
+            for key, values in cat.presets.items()
+        ],
+        "focus_layers": list(cat.harmony["focus_layers"]),
         "expression_controls": [
             {"key": key, "label": cat.expression_control_labels[key],
              "options": [{"value": value, "label": label} for value, label, _phrase in options]}
@@ -186,6 +210,8 @@ class Sculpt:
     notes: Mapping[str, str]
     expressions: Mapping[str, Expression]
     preset: str = ""
+    # 这张脸的突出点(一个骨相或五官控件键)：其余控件围着它做配合，对话改脸不换它的值；只有突出点不算捏过。
+    focus: str = ""
 
     @property
     def empty(self) -> bool:
@@ -200,6 +226,7 @@ class Sculpt:
                 for key, item in self.expressions.items()
             },
             "preset": self.preset,
+            "focus": self.focus,
         }
 
 
@@ -273,24 +300,43 @@ def validate(raw: Mapping[str, Any] | None) -> Sculpt:
     preset = str(raw.get("preset") or "")
     if preset and preset not in cat.presets:
         raise SculptError(f"没有这个预设：{preset}")
-    return Sculpt(face=face, notes=notes, expressions=expressions, preset=preset)
+    focus = str(raw.get("focus") or "")
+    if focus:
+        control = cat.focus_control(focus)
+        if control is None:
+            raise SculptError(f"没有这个捏脸控件，不能做突出点：{focus}")
+        focus = control.key
+    return Sculpt(face=face, notes=notes, expressions=expressions, preset=preset, focus=focus)
 
 
 def preset_sculpt(key: str) -> Sculpt:
     cat = catalog()
     if key not in cat.presets:
         raise SculptError(f"没有这个预设：{key}")
-    return validate({"face": cat.presets[key], "preset": key})
+    return validate({"face": cat.presets[key], "preset": key, "focus": cat.preset_focus.get(key, "")})
+
+
+def _with_preset(face: Mapping[str, Any], focus: str, key: str) -> tuple[dict[str, Any], str]:
+    """当前的脸铺上一个预设：只铺 scope 里的层(其余层照旧)，没有 scope 就整张脸换掉。
+
+    预设带突出点就用它的；不带时，原突出点还有值才留着。
+    """
+    cat = catalog()
+    scope = cat.preset_scopes.get(key)
+    kept = {name: value for name, value in face.items() if scope and cat.control(name).layer not in scope}
+    merged = {**kept, **cat.presets[key]}
+    focus = cat.preset_focus.get(key) or (focus if focus in merged else "")
+    return merged, focus
 
 
 # ---------------------------------------------------------------------------- face layers
 
 
 def layer_fragments(sculpt: Sculpt) -> dict[str, list[str]]:
-    """每一层捏出来的片段，按控件表顺序；补充备注跟在该层最后。否定说法单独归到 negatives。"""
+    """每一层捏出来的片段，按控件表顺序，突出点排在它那层最前；补充备注跟在该层最后。否定说法单独归到 negatives。"""
     cat = catalog()
     layers: dict[str, list[str]] = {}
-    for control in cat.controls:
+    for control in sorted(cat.controls, key=lambda item: item.key != sculpt.focus):
         if control.key in sculpt.face:
             phrase = control.phrase(sculpt.face[control.key])
             if phrase:
@@ -625,6 +671,41 @@ def _downstream(task: Mapping[str, Any], record: Mapping[str, Any], face_changed
     return {"clips_marked": marked, "sheet_stale": sheet_is_stale(record, task)}
 
 
+def _value_label(control: Control, value: Any) -> str:
+    """一个取值给人看的说法：写进提示词的短语的头一段(「下巴尖细」「杏眼」)；刻度中间档没有短语，用控件名。"""
+    return _FRAGMENT.split(control.phrase(value))[0].strip() or control.label
+
+
+def _group_hit(face: Mapping[str, Any], group: Mapping[str, Sequence[Any]]) -> bool:
+    return any(key in face and face[key] in values for key, values in group.items())
+
+
+def harmony_issues(sculpt: Sculpt) -> list[dict[str, str]]:
+    """五官搭配的协调提醒：一张脸留一个突出点，其余做配合。抢眼的项太多、突出点没捏、几处说法打架时各报一条，不改捏脸。"""
+    cat = catalog()
+    rules = cat.harmony
+    messages = rules["messages"]
+    face = sculpt.face
+    issues: list[dict[str, str]] = []
+    strong = [control for control in cat.controls if control.key in face and face[control.key] in rules["strong"].get(control.key, ())]
+    focus = cat.focus_control(sculpt.focus) if sculpt.focus else None
+    if focus is not None and focus.key not in face:
+        issues.append({"code": "face_harmony_focus_empty", "message": _fill(messages["focus_empty"], focus=focus.label)})
+    others = [control for control in strong if focus is None or control.key != focus.key]
+    limit = rules["max_strong_besides_focus"] if focus is not None else rules["max_strong"]
+    if len(others) > limit:
+        features = "、".join(_value_label(control, face[control.key]) for control in others)
+        if focus is not None:
+            name = _value_label(focus, face[focus.key]) if focus.key in face else focus.label
+            issues.append({"code": "face_harmony_crowded", "message": _fill(messages["crowded_focus"], focus=name, features=features)})
+        else:
+            issues.append({"code": "face_harmony_crowded", "message": _fill(messages["crowded"], features=features)})
+    for rule in rules["rules"]:
+        if all(_group_hit(face, group) for group in rule["when"]) and not any(_group_hit(face, group) for group in rule.get("unless") or ()):
+            issues.append({"code": f"face_harmony_{rule['key']}", "message": rule["message"]})
+    return issues
+
+
 def preview(record: Mapping[str, Any], sculpt: Sculpt, task: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """捏出来的效果：新描述、近景实际进提示词的脸、资产卡警告、每个表情的写法。不改任何数据。"""
     name = str(record.get("name") or "").strip()
@@ -637,8 +718,8 @@ def preview(record: Mapping[str, Any], sculpt: Sculpt, task: Mapping[str, Any] |
         "face_text": render_face_card(card, "close", include_other=False),
         "layers": {key: "、".join(values) for key, values in fragments.items()},
         "issues": [
-            {"code": f"face_card_{issue.code}", "message": f"{issue.message}{issue.suggestion}"}
-            for issue in audit_face_card(card)
+            *({"code": f"face_card_{issue.code}", "message": f"{issue.message}{issue.suggestion}"} for issue in audit_face_card(card)),
+            *harmony_issues(sculpt),
         ],
         "expressions": {
             key: expression_line(name, key, expression) for key, expression in sculpt.expressions.items()
@@ -941,6 +1022,36 @@ class _Filter:
             return
         self.patch["preset"] = key
 
+    def focus(self, raw: Any) -> None:
+        """突出点：控件键或名字；空串表示去掉，None 表示这次不改。"""
+        if raw is None:
+            return
+        if not str(raw).strip():
+            self.patch["focus"] = ""
+            return
+        control = self.cat.focus_control(raw)
+        if control is None:
+            self._reject("unknown_focus", key=raw)
+            return
+        self.patch["focus"] = control.key
+
+    def keep_focus(self, focus: str, instruction: str) -> None:
+        """对话改脸不换突出点的值：这句话没说到它(名字、选项、原描述里的叫法都没提)、也没换突出点时，把这项改动退回去。
+
+        「保持杏眼、眼距」这种分句是叫它别动，不算说到。
+        """
+        if not focus or focus not in self.patch["face"] or self.patch.get("focus", focus) != focus or self.patch["preset"]:
+            return
+        control = self.cat.control(focus)
+        words = {re.sub(r"[(（].*", "", control.label), *(label for _option, label, _phrase in control.options),
+                 *(word for word in control.replaces if len(word) >= 2)}
+        keep = tuple(self.cat.harmony["keep_words"])
+        asked = [clause for clause in _CLAUSE.split(instruction) if not any(word in clause for word in keep)]
+        if any(word and word in clause for clause in asked for word in words):
+            return
+        del self.patch["face"][focus]
+        self._reject("focus_kept", label=control.label)
+
     @property
     def empty(self) -> bool:
         """一条可用改动都没有：表情项要么去掉(None)，要么带选中的控件或 tell / habit 才算。"""
@@ -948,15 +1059,17 @@ class _Filter:
         usable = any(
             item is None or item.get("choices") or any(field in item for field in ("tell", "habit")) for item in expressions.values()
         )
-        return not usable and not any(self.patch[key] for key in ("face", "notes", "preset"))
+        return not usable and "focus" not in self.patch and not any(self.patch[key] for key in ("face", "notes", "preset"))
 
 
 def _merge_patch(base: Sculpt, patch: Mapping[str, Any]) -> dict[str, Any]:
     """当前捏脸 ⊕ 改动：预设先铺底，再逐键覆盖；值为 None 的键去掉。"""
     merged = base.dump()
     if patch.get("preset"):
-        merged["face"] = dict(catalog().presets[patch["preset"]])
+        merged["face"], merged["focus"] = _with_preset(merged["face"], merged["focus"], patch["preset"])
         merged["preset"] = patch["preset"]
+    if "focus" in patch:
+        merged["focus"] = patch["focus"] or ""
     for section in ("face", "notes"):
         for key, value in (patch.get(section) or {}).items():
             if value is None:
@@ -986,6 +1099,8 @@ def _describe_patch(patch: Mapping[str, Any]) -> str:
     parts: list[str] = []
     if patch.get("preset"):
         parts.append(cat.preset_labels[patch["preset"]])
+    if "focus" in patch:
+        parts.append(f"{cat.wording['focus_label']}→{cat.control(patch['focus']).label}" if patch["focus"] else f"{cat.wording['focus_label']}×")
     for key, value in (patch.get("face") or {}).items():
         control = cat.control(key)
         if value is None:
@@ -1027,6 +1142,8 @@ def apply_instruction(task: Mapping[str, Any], name: str, instruction: str, llm:
     accepted.face(data.get("face"))
     accepted.notes(data.get("notes"))
     accepted.expressions(data.get("expressions"))
+    accepted.focus(data.get("focus"))
+    accepted.keep_focus(base.focus, str(instruction or ""))
     if accepted.empty:
         reasons = "；".join(accepted.unknown)
         raise SculptError(f"{words['nothing_usable']}：{reasons}" if reasons else words["nothing_usable"])
@@ -1046,7 +1163,7 @@ def apply_instruction(task: Mapping[str, Any], name: str, instruction: str, llm:
 __all__ = [
     "HISTORY_LIMIT", "LLM", "RECORD_KEY", "SHEET_KEY", "record_of", "Catalog", "Control", "Expression", "Sculpt", "SculptError",
     "apply_instruction", "catalog", "compact_catalog", "current", "describe_catalog", "expression_key_for",
-    "expression_line", "expression_phrases", "layer_fragments", "mark_character_clips_stale", "merge_description",
+    "expression_line", "expression_phrases", "harmony_issues", "layer_fragments", "mark_character_clips_stale", "merge_description",
     "merge_state_fields", "note_sheet_drawn", "preset_sculpt", "preview", "reset", "revert", "save", "sheet_is_stale",
     "shot_expression_lines", "shot_expression_note", "stored_sculpt", "validate",
 ]

@@ -1,0 +1,22 @@
+{
+  "_doc": "app/core/poetry_library.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.all_sources": "全部",
+  "module.all_sources.2": "自动",
+  "consistent.text": "《{0}》的名句「{1}」不在正文里",
+  "consistent.text.2": "《{0}》标为受保护作品，必须写明 rights_note",
+  "get.text": "诗词库里没有 {0!r}",
+  "load_library.text": "诗词库目录不存在：{0}",
+  "load_library.text.2": "{0}: 集合 id {1!r} 重复",
+  "load_library.text.3": "{0}: 作品 id {1!r} 重复",
+  "load_library.text.4": "诗词库目录里没有作品：{0}",
+  "render_poem.text": "序：{0}",
+  "render_poem.text.2": "名句：",
+  "render_poem.text.3": "题旨：",
+  "render_poem.text.4": "；情绪：",
+  "render_poem.text.5": "可用于：",
+  "render_poem.text.6": "版权提示：",
+  "module.materials_header": "【诗词库·可取材素材】",
+  "module.truncation_mark": "（素材清单已按预算截断）",
+  "writer_block.intro": "本项目指定取材：{0}。下面每条给出名句与用法。引用只用这里给出的文字，不要凭记忆补写名句以外的句子（能调用工具时可用 get_poem 取全文）；化用须保留原句的意象与节奏；不要把作者或朝代张冠李戴。",
+  "writer_block.text": "（诗词库里没有：{0}）"
+}

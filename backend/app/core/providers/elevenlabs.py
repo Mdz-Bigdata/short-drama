@@ -15,6 +15,19 @@ from pydantic import BaseModel, Field
 from app.core.providers.defaults import default_base_url
 from app.platform.runtime_models import runtime_model_registry
 from app.core import usage_ledger
+from app.core import prompt_data
+
+
+_WORDING_FILE = "providers_elevenlabs"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/providers_elevenlabs.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 def _speech_units(_client, text, *_args, model_id="eleven_multilingual_v2", **_kwargs):
@@ -124,8 +137,8 @@ class ElevenLabsClient:
     def _voice_settings(emotion: str, speed: float) -> dict:
         if not 0.7 <= speed <= 1.2:
             raise ValueError("ElevenLabs speed must be between 0.7 and 1.2")
-        intense = any(word in emotion.lower() for word in ("怒", "崩溃", "激动", "fear", "angry"))
-        restrained = any(word in emotion.lower() for word in ("克制", "压抑", "平静", "restrained"))
+        intense = any(word in emotion.lower() for word in _words_of("_voice_settings.intense"))
+        restrained = any(word in emotion.lower() for word in _words_of("_voice_settings.restrained"))
         return {
             "stability": 0.35 if intense else (0.68 if restrained else 0.5),
             "similarity_boost": 0.78,
@@ -137,8 +150,8 @@ class ElevenLabsClient:
     @staticmethod
     def _emotion_tag(emotion: str) -> str:
         mapping = {
-            "愤怒": "angry", "激动": "excited", "悲伤": "sad", "温柔": "gentle",
-            "压抑": "restrained", "克制悲伤": "restrained and sad", "恐惧": "fearful",
+            _text_of("_emotion_tag.mapping"): "angry", _text_of("_emotion_tag.mapping.2"): "excited", _text_of("_emotion_tag.mapping.3"): "sad", _text_of("_emotion_tag.mapping.4"): "gentle",
+            _text_of("_emotion_tag.mapping.5"): "restrained", _text_of("_emotion_tag.mapping.6"): "restrained and sad", _text_of("_emotion_tag.mapping.7"): "fearful",
         }
         tag = mapping.get(emotion.strip(), emotion.strip())
         return f"[{tag}] " if tag and tag.lower() != "neutral" else ""

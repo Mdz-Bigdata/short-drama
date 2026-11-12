@@ -19,6 +19,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
+from app.core import prompt_data
 from app.core.clip_skeleton import NOT_FOR_REWRITE
 from app.core.prompt_distiller import is_no_line
 from app.core.spoken_lines import plain as _plain, spoken_lines
@@ -46,33 +47,8 @@ TARGET_CHARS = 4500
 #: 骨架的段名(Pa1 / Pa2 / Pa3)与结尾的禁令同样不带——锚型定义、对白语言、表演锁、回合锁是正面要求，照带。
 SKIP_SECTIONS = frozenset({"rules", "negatives", "closing"}) | NOT_FOR_REWRITE
 
-SYSTEM_PROMPT = (
-    "你是 MiniMax H3 视频提示词导演。把用户给的「分镜片段中文提示词」改写成 H3 官方 Ref2VA 六段式英文提示词，"
-    "只输出提示词本身。\n"
-    "格式(六段，顺序固定，每段以字段名加冒号开头，段与段之间空一行)：\n"
-    "subject_definitions: …\nsummary: …\nretention_analysis: …\ndetailed_description: …\noverall_soundscape: …\nnon_diegetic_music: …\n"
-    "硬规则：\n"
-    "1. 画面、动作、运镜、光线、表演用英文写；台词逐字保留中文原文，写成 (S1) says: <d>[Chinese] 原文</d>，"
-    "同一说话人全片同一个 (S编号)；画外音写 says in an off-screen voiceover，并写明画面人物嘴唇闭合；画面里真实可见的文字用英文双引号逐字保留。\n"
-    "2. 原文里的 @[名字] 标记原样保留(不翻译、不加空格)；原文的「参考图k」一律写成 <Ref k>，每个 <Ref k> 都在 subject_definitions 里"
-    "写清它锁定什么(人物身份、服装、场地的哪个视角、道具)；分镜画面用 <Frame k> 指代，每个 <Frame k> 都要在 subject_definitions 里写一句"
-    "「<Frame k> is the storyboard reference for [Shot k], defining viewpoint, subject placement and composition.」。\n"
-    "3. subject_definitions：每个人物、场地、关键道具一条 <Subject N> 定义，写明它来自哪个 @[名字]，例如 "
-    "<Subject 1> is @[沈无咎], a young swordsman whose face, hair and wardrobe come from his reference picture.\n"
-    "4. summary 以 [reference generation] 开头，一两句说明这段视频讲什么、参考图各管什么。\n"
-    "5. retention_analysis：逐个 <Subject N> 与 <Frame k> 写 fully_preserved / partially_preserved / weak_reference，"
-    "并把一致性要求写成正面约束(同一张脸、同一服装、同一空间方向与主光方向、道具不换手不消失)，不要单列负面词。\n"
-    "6. detailed_description：按镜头顺序写 [Shot 1] …，从第二个镜头起必须逐字使用给定的时间码开头，如 "
-    "[Shot 2] At 00:05.000, the shot transitions to …；不要写硬切(hard cut)，镜头之间写清动作或视线如何顺接。"
-    "每个镜头写清主体与站位、动作因果(准备→发力→受力→收势)、表情与视线目标、一个主运镜(类型+幅度+速度+目的)、"
-    "光线(主光方向、光源、色温、光比)。\n"
-    "7. overall_soundscape：H3 自己出声，中文提示词里的声音段(环境声、动作声、非语言人声、各镜的声音层)逐项全部译成英文，"
-    "不删、不并、不限句数，写明在哪个镜头、什么时候响，不重复台词；non_diegetic_music：英文写配乐，没有就写 N/A。"
-    "要压长度就压画面描写的修饰，不压声音。\n"
-    "8. 不丢任何事实(人物、动作先后、站位朝向、景别机位焦段、光线色温、道具状态、起幅落幅、台词)；"
-    "删掉重复、套话和形容词堆砌；不写「8K」「超清」之类空洞画质词；全文尽量控制在 {target} 个字符以内，绝不超过 {limit} 个字符。\n"
-    "9. 只输出六段正文，不要标题、解释、Markdown 或代码块。"
-)
+# 系统提示词的措辞在 app/data/prompt/h3_native.json(逐段拼接；{target} / {limit} 由 system_prompt() 填)。
+SYSTEM_PROMPT = "".join(str(part) for part in prompt_data.value("h3_native", "system_prompt"))
 
 
 @dataclass
@@ -98,15 +74,25 @@ def timecode(seconds: float) -> str:
     return f"{int(minutes):02d}:{rest:06.3f}"
 
 
-def shot_starts(beat_seconds: Sequence[float], total: float) -> list[str]:
-    """每个镜头的起始时间码：按计划秒数等比缩放到片段时长，第 1 镜不写时间码。"""
+def shot_bounds(beat_seconds: Sequence[float], total: float) -> list[float]:
+    """各镜头的分界秒数 ``[0, 第2镜起点, …, 片段时长]``：按计划秒数等比缩放到片段时长。
+
+    H3 的时间码和多瞬间片段块头的时间段(slice_video)都按它算，两边对得上。
+    """
     planned = [max(0.1, float(value)) for value in beat_seconds] or [float(total or 1)]
-    scale = float(total or sum(planned)) / sum(planned)
-    starts, cursor = [""], 0.0
+    end = float(total or sum(planned))
+    scale = end / sum(planned)
+    bounds, cursor = [0.0], 0.0
     for value in planned[:-1]:
         cursor += value * scale
-        starts.append(timecode(cursor))
-    return starts
+        bounds.append(cursor)
+    bounds.append(end)
+    return bounds
+
+
+def shot_starts(beat_seconds: Sequence[float], total: float) -> list[str]:
+    """每个镜头的起始时间码：按计划秒数等比缩放到片段时长，第 1 镜不写时间码。"""
+    return [""] + [timecode(start) for start in shot_bounds(beat_seconds, total)[1:-1]]
 
 
 def request(
@@ -324,8 +310,6 @@ def _with_voice_audios(text: str, audios: Mapping[str, int]) -> str:
     """定角音色样本写进六段式：每段音频一句 subject 定义、一句 retention 关系(reference)。"""
     if not audios:
         return text
-    from app.core import prompt_data
-
     ordered = sorted(audios.items(), key=lambda item: item[1])
     subjects = " ".join(prompt_data.text("voice_reference", "h3_subject").format(n=n, name=name) for name, n in ordered)
     retention = " ".join(prompt_data.text("voice_reference", "h3_retention").format(n=n, name=name) for name, n in ordered)
@@ -338,5 +322,5 @@ def _with_voice_audios(text: str, audios: Mapping[str, int]) -> str:
 __all__ = [
     "MAX_ACCEPT_CHARS", "MAX_CHARS", "MAX_DRAFT_CHARS", "fit", "SECTIONS", "SKIP_SECTIONS", "SYSTEM_PROMPT", "TARGET_CHARS", "Request", "board_text", "check",
     "is_native", "request", "resolve", "spoken_lines",
-    "shot_starts", "system_prompt", "timecode", "user_prompt",
+    "shot_bounds", "shot_starts", "system_prompt", "timecode", "user_prompt",
 ]

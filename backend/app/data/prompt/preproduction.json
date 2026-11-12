@@ -1,0 +1,7 @@
+{
+  "_doc": "app/core/preproduction.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.chapter_heading": "^\\s*(?:第[零〇一二三四五六七八九十百千万两\\d]+[章回节卷]|chapter\\s+[0-9ivxlcdm]+)\\b.*$",
+  "module.episode_heading": "^\\s*(?:第[零〇一二三四五六七八九十百千万两\\d]+集|ep(?:isode)?\\s*[-_ ]?\\d+)\\b.*$",
+  "analyze_novel.title": "全文",
+  "index_episodes.title": "第 {0} 集"
+}

@@ -22,6 +22,19 @@ from pathlib import Path
 from typing import Any
 
 from app.core import knowledge_evolution, knowledge_registry
+from app.core import prompt_data
+
+
+_WORDING_FILE = "production_knowledge"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/production_knowledge.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 logger = logging.getLogger("app.core.production_knowledge")
@@ -48,7 +61,7 @@ def stage_sections() -> dict[int, tuple[str, ...]]:
 
 
 # 行边界截断后追加的标记；其长度计入预算，保证注入量绝不超过登记预算。
-TRUNCATION_MARK = "\n\n（本节已按上下文预算截断）"
+TRUNCATION_MARK = _text_of("module.truncation_mark")
 
 
 def _truncate(text: str, budget: int) -> str:
@@ -149,11 +162,11 @@ def stage_lessons_block(stage: int, *, budget: int = 900) -> str:
         return ""
     if not lessons:
         return ""
-    header = "【历史生产教训(自动进化，按命中率排序)】：\n"
+    header = _text_of("stage_lessons_block.header")
     lines: list[str] = []
     total = len(header)
     for lesson in lessons:
-        line = f"- [S{lesson.stage}|命中{lesson.hits}] {lesson.rule}"
+        line = _text_of("stage_lessons_block.line").format(lesson.stage, lesson.hits, lesson.rule)
         # 整行进出，超预算即停——教训绝不截半句
         if total + len(line) + 1 > budget and lines:
             break
@@ -165,8 +178,8 @@ def stage_lessons_block(stage: int, *, budget: int = 900) -> str:
 # 统一负面词表在负面提示词指南里的位置：标题含 UNIFIED_NEGATIVE_HEADING 的二级节，
 # 其下标题含「视频」/「静帧」的三级节各有一个 ```text 代码块。词表本身只写在指南里。
 NEGATIVE_GUIDE_KEY = "negative-prompts"
-UNIFIED_NEGATIVE_HEADING = "终极统一负面提示词"
-_UNIFIED_NEGATIVE_MEDIA = {"video": "视频", "image": "静帧"}
+UNIFIED_NEGATIVE_HEADING = _text_of("module.unified_negative_heading")
+_UNIFIED_NEGATIVE_MEDIA = {"video": _text_of("module.unified_negative_media.video"), "image": _text_of("module.unified_negative_media.image")}
 
 
 def _fenced_terms(block: str) -> tuple[str, ...]:
@@ -192,7 +205,7 @@ def global_negatives(medium: str) -> tuple[str, ...]:
     """
     label = _UNIFIED_NEGATIVE_MEDIA.get(medium)
     if not label:
-        raise ValueError(f"未知媒介: {medium}")
+        raise ValueError(_text_of("global_negatives.text").format(medium))
     text = load_section(NEGATIVE_GUIDE_KEY, budget=0)
     heading = text.find(UNIFIED_NEGATIVE_HEADING)
     if heading < 0:

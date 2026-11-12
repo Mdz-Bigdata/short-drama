@@ -45,6 +45,19 @@ from app.platform.payments.base import BillNotReady, ChannelError, PaymentChanne
 from app.platform.permissions import REFUND_APPROVE, REFUND_REQUEST, WALLET_ADJUST_APPROVE, WALLET_ADJUST_REQUEST, permissions_for
 from app.platform.store import PAID_ORDER_STATES, REFUND_ON_REQUEST, REFUND_OPEN, PlatformStore, money_audit
 from app.platform.usage_billing import usage_differences
+from app.core import prompt_data
+
+
+_WORDING_FILE = "platform_reconciliation"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/platform_reconciliation.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.platform.reconciliation")
 
@@ -145,9 +158,9 @@ def check_r1(books: Books, today: date) -> list[Finding]:
         attempt = attempts.get((row.provider, row.out_trade_no))
         reference = f"{row.provider}:{row.out_trade_no}"
         if attempt is None:
-            found.append(Finding("R1", "on_bill_not_here", CRITICAL, reference, "这里有支付单", f"账单 {row.amount_minor} 分"))
+            found.append(Finding("R1", "on_bill_not_here", CRITICAL, reference, _text_of("check_r1.text"), _text_of("check_r1.text.2").format(row.amount_minor)))
         elif attempt.status != "paid":
-            found.append(Finding("R1", "on_bill_not_paid_here", CRITICAL, reference, "已入账", attempt.status, attempt.order_id))
+            found.append(Finding("R1", "on_bill_not_paid_here", CRITICAL, reference, _text_of("check_r1.text.3"), attempt.status, attempt.order_id))
         elif attempt.amount_minor != row.amount_minor:
             found.append(Finding("R1", "amount_differs", CRITICAL, reference, str(attempt.amount_minor), str(row.amount_minor), attempt.order_id))
         elif attempt.channel_trade_no != row.channel_trade_no:
@@ -166,10 +179,10 @@ def check_r1(books: Books, today: date) -> list[Finding]:
         next_bill_here = (attempt.provider, day + timedelta(days=1)) in days
         if end_of_day - _aware(attempt.paid_at) <= _NEAR_MIDNIGHT and not next_bill_here:
             # May well be on tomorrow's bill. This closes itself once that arrives.
-            found.append(Finding("R1", "crosses_midnight", INFO, reference, "在账单上", "等下一天账单", attempt.order_id))
+            found.append(Finding("R1", "crosses_midnight", INFO, reference, _text_of("check_r1.text.4"), _text_of("check_r1.text.5"), attempt.order_id))
         else:
-            found.append(Finding("R1", "paid_here_not_on_bill", CRITICAL, reference, "在账单上", "账单没有", attempt.order_id))
-    found.extend(Finding("R1", "bill_missing", WARNING, f"{provider}:{day}", "已下载", "缺失") for provider, day in sorted(late_days))
+            found.append(Finding("R1", "paid_here_not_on_bill", CRITICAL, reference, _text_of("check_r1.text.6"), _text_of("check_r1.text.7"), attempt.order_id))
+    found.extend(Finding("R1", "bill_missing", WARNING, f"{provider}:{day}", _text_of("check_r1.text.8"), _text_of("check_r1.text.9")) for provider, day in sorted(late_days))
     return found
 
 
@@ -181,23 +194,23 @@ def check_r2(books: Books) -> list[Finding]:
     duplicates = _duplicate_attempts(books)
     for attempt in books.attempts:
         if attempt.status == "mismatch":
-            found.append(Finding("R2", "attempt_mismatch", CRITICAL, attempt.out_trade_no, str(attempt.amount_minor), "通知的金额或商户不符", attempt.order_id))
+            found.append(Finding("R2", "attempt_mismatch", CRITICAL, attempt.out_trade_no, str(attempt.amount_minor), _text_of("check_r2.text"), attempt.order_id))
         if attempt.status != "paid":
             continue
         paid_by_order[attempt.order_id].append(attempt)
         order = orders.get(attempt.order_id)
         if order is None or not _is_paid(order):
-            found.append(Finding("R2", "payment_but_order_not_paid", CRITICAL, attempt.out_trade_no, "已付", order.status if order else "无订单", attempt.order_id))
+            found.append(Finding("R2", "payment_but_order_not_paid", CRITICAL, attempt.out_trade_no, _text_of("check_r2.text.2"), order.status if order else _text_of("check_r2.text.3"), attempt.order_id))
     for order in books.orders:
         if not _is_paid(order) or order.provider == "sandbox":
             continue
         paid = paid_by_order.get(order.id, [])
         first = [item for item in paid if f"{item.provider}:{item.channel_trade_no}" == order.provider_event_id]
         if not first:
-            found.append(Finding("R2", "order_paid_without_payment", CRITICAL, order.id, "一笔已付支付单", str(len(paid)), order.id))
+            found.append(Finding("R2", "order_paid_without_payment", CRITICAL, order.id, _text_of("check_r2.text.4"), str(len(paid)), order.id))
         for extra in paid:
             if extra not in first and extra.id not in duplicates:
-                found.append(Finding("R2", "second_payment_without_refund", CRITICAL, extra.out_trade_no, "有退款单", "没有", order.id))
+                found.append(Finding("R2", "second_payment_without_refund", CRITICAL, extra.out_trade_no, _text_of("check_r2.text.5"), _text_of("check_r2.text.6"), order.id))
     return found
 
 
@@ -207,7 +220,7 @@ def check_r3_r5(differences: Mapping[str, Any]) -> list[Finding]:
         for item in differences["r3"]["samples"] for problem in item["problems"]
     ]
     found.extend(
-        Finding("R5", "balance_differs", CRITICAL, item["user_id"], f"账本 {item['ledger']}", f"批次 {item['lots']} / 余额 {item['balance']}")
+        Finding("R5", "balance_differs", CRITICAL, item["user_id"], _text_of("check_r3_r5.text").format(item['ledger']), _text_of("check_r3_r5.text.2").format(item['lots'], item['balance']))
         for item in differences["r5"]["samples"]
     )
     return found
@@ -240,7 +253,7 @@ def check_r5_lots(books: Books) -> list[Finding]:
     for lot in books.lots:
         frozen_by_user[lot.user_id] += lot.frozen
         if lot.remaining < lot.frozen or lot.frozen < 0:
-            found.append(Finding("R5", "lot_negative", CRITICAL, lot.id, f"剩余 ≥ 冻结 {lot.frozen}", str(lot.remaining), lot.order_id))
+            found.append(Finding("R5", "lot_negative", CRITICAL, lot.id, _text_of("check_r5_lots.text").format(lot.frozen), str(lot.remaining), lot.order_id))
         if lot.frozen != frozen_by_lot.get(lot.id, Decimal(0)):
             found.append(Finding("R5", "frozen_differs", CRITICAL, lot.id, str(frozen_by_lot.get(lot.id, Decimal(0))), str(lot.frozen), lot.order_id))
         if lot.order_id in sandbox:
@@ -265,8 +278,8 @@ def check_r6_r7(books: Books, differences: Mapping[str, Any], usage: Mapping[str
         found.extend(Finding("R6", item["problem"], WARNING, item["usage_id"], item["expected"], item["actual"]) for item in usage["r6"]["samples"])
         found.extend(Finding("R6", "charge_not_taken", WARNING, item["usage_id"], item["expected"], str(item["taken"])) for item in differences["usage_vs_ledger"]["samples"])
     if "R7" in rules:
-        found.extend(Finding("R7", "record_without_charge", WARNING, item["usage_id"], "有计费记录", item["task_id"]) for item in usage["r7"]["records_without_charge"])
-        found.extend(Finding("R7", "charge_not_on_project", WARNING, item["usage_id"], "项目有记录", item["task_id"]) for item in usage["r7"]["charges_not_on_project"])
+        found.extend(Finding("R7", "record_without_charge", WARNING, item["usage_id"], _text_of("check_r6_r7.text"), item["task_id"]) for item in usage["r7"]["records_without_charge"])
+        found.extend(Finding("R7", "charge_not_on_project", WARNING, item["usage_id"], _text_of("check_r6_r7.text.2"), item["task_id"]) for item in usage["r7"]["charges_not_on_project"])
     return found
 
 
@@ -280,7 +293,7 @@ def check_r4(books: Books, now: datetime) -> list[Finding]:
     for key, entry in clawbacks.items():
         refund = by_id.get(key.split(":")[1]) if key.count(":") == 2 else None
         if refund is None or refund.status != "succeeded":
-            found.append(Finding("R4", "points_taken_without_refund", CRITICAL, key, "退款成功", refund.status if refund else "无退款单", entry.order_id))
+            found.append(Finding("R4", "points_taken_without_refund", CRITICAL, key, _text_of("check_r4.text"), refund.status if refund else _text_of("check_r4.text.2"), entry.order_id))
     refunded_on_attempt: dict[str, int] = defaultdict(int)
     refunded_on_order: dict[str, int] = defaultdict(int)
     for refund in books.refunds:
@@ -294,11 +307,11 @@ def check_r4(books: Books, now: datetime) -> list[Finding]:
                 if entry is None or entry.amount != refund.points_clawback:
                     found.append(Finding("R4", "points_not_taken", CRITICAL, refund.id, str(refund.points_clawback), str(entry.amount) if entry else "0", refund.order_id))
         elif refund.status == "failed":
-            found.append(Finding("R4", "refund_failed", CRITICAL, refund.id, "退款成功", refund.detail or "失败", refund.order_id))
+            found.append(Finding("R4", "refund_failed", CRITICAL, refund.id, _text_of("check_r4.text.3"), refund.detail or _text_of("check_r4.text.4"), refund.order_id))
         elif refund.status in ("pending", "processing") and age > _STUCK_AFTER:
-            found.append(Finding("R4", "refund_stuck", WARNING, refund.id, "3 天内完成", refund.status, refund.order_id))
+            found.append(Finding("R4", "refund_stuck", WARNING, refund.id, _text_of("check_r4.text.5"), refund.status, refund.order_id))
         elif refund.status == "requested" and age > _STUCK_AFTER:
-            found.append(Finding("R4", "refund_waiting_for_decision", INFO, refund.id, "3 天内处理", "待审批", refund.order_id))
+            found.append(Finding("R4", "refund_waiting_for_decision", INFO, refund.id, _text_of("check_r4.text.6"), _text_of("check_r4.text.7"), refund.order_id))
     for attempt_id, total in refunded_on_attempt.items():
         attempt = attempts.get(attempt_id)
         if attempt and total > attempt.amount_minor:
@@ -321,17 +334,17 @@ def check_r4(books: Books, now: datetime) -> list[Finding]:
         on_bill.add(row.out_refund_no)
         refund = by_number.get(row.out_refund_no)
         if refund is None:
-            found.append(Finding("R4", "refund_on_bill_not_here", CRITICAL, f"{row.provider}:{row.out_refund_no}", "有退款单", f"账单 {row.amount_minor} 分"))
+            found.append(Finding("R4", "refund_on_bill_not_here", CRITICAL, f"{row.provider}:{row.out_refund_no}", _text_of("check_r4.text.8"), _text_of("check_r4.text.9").format(row.amount_minor)))
         elif refund.refund_minor != row.amount_minor:
             found.append(Finding("R4", "refund_amount_differs", CRITICAL, refund.id, str(refund.refund_minor), str(row.amount_minor), refund.order_id))
         elif refund.status in ("requested", "rejected"):
-            found.append(Finding("R4", "refund_on_bill_not_approved", CRITICAL, refund.id, "已批准", refund.status, refund.order_id))
+            found.append(Finding("R4", "refund_on_bill_not_approved", CRITICAL, refund.id, _text_of("check_r4.text.10"), refund.status, refund.order_id))
     for refund in books.refunds:
         if refund.status == "succeeded" and refund.finished_at and refund.out_refund_no not in on_bill:
             latest = latest_bill.get(refund.provider)
             # Billed by the day it was asked for, so a day's margin before calling it missing.
             if latest and _china_day(refund.finished_at) < latest:
-                found.append(Finding("R4", "refund_not_on_bill", CRITICAL, refund.id, "在账单上", "账单没有", refund.order_id))
+                found.append(Finding("R4", "refund_not_on_bill", CRITICAL, refund.id, _text_of("check_r4.text.11"), _text_of("check_r4.text.12"), refund.order_id))
     return found
 
 
@@ -343,7 +356,7 @@ def check_r8(books: Books, now: datetime) -> list[Finding]:
         order = orders.get(term.order_id)
         running = term.status == "active" and _aware(term.expires_at) > now
         if running and (order is None or order.status not in ("paid", "partially_refunded")):
-            found.append(Finding("R8", "term_without_paid_order", CRITICAL, term.id, "有已付订单", order.status if order else "无订单", term.order_id))
+            found.append(Finding("R8", "term_without_paid_order", CRITICAL, term.id, _text_of("check_r8.text"), order.status if order else _text_of("check_r8.text.2"), term.order_id))
         if term.status != "active" and order is not None and order.status != "refunded":
             found.append(Finding("R8", "term_ended_order_not_refunded", WARNING, term.id, order.status, term.status, term.order_id))
     terms_by_user: dict[str, list[Any]] = defaultdict(list)
@@ -403,7 +416,7 @@ def check_r9(books: Books) -> list[Finding]:
         return []
     return [Finding(
         "R9", "money_and_points_differ", CRITICAL, "all",
-        f"净收 {position['net_minor']}", f"已确认+递延 {position['earned_minor'] + position['deferred_minor'] + position['kept_on_refunds_minor']}",
+        _text_of("check_r9.text").format(position['net_minor']), _text_of("check_r9.text.2").format(position['earned_minor'] + position['deferred_minor'] + position['kept_on_refunds_minor']),
     )]
 
 
@@ -415,9 +428,9 @@ def check_r10(books: Books) -> list[Finding]:
     def check(reference: str, action: str, actor: str | None, permission: str, order_id: str | None = None) -> None:
         event = audits.get((action, reference))
         if event is None or event.actor_id != actor:
-            found.append(Finding("R10", "no_audit_record", CRITICAL, f"{action}:{reference}", str(actor), str(event.actor_id) if event else "没有", order_id))
+            found.append(Finding("R10", "no_audit_record", CRITICAL, f"{action}:{reference}", str(actor), str(event.actor_id) if event else _text_of("check.text"), order_id))
         elif permission not in permissions_for((event.details or {}).get("actor_roles") or ()):
-            found.append(Finding("R10", "not_allowed_at_the_time", CRITICAL, f"{action}:{reference}", permission, ",".join((event.details or {}).get("actor_roles") or ()) or "无角色", order_id))
+            found.append(Finding("R10", "not_allowed_at_the_time", CRITICAL, f"{action}:{reference}", permission, ",".join((event.details or {}).get("actor_roles") or ()) or _text_of("check.text.2"), order_id))
 
     for refund in books.refunds:
         if refund.reason != REFUND_ON_REQUEST:
@@ -426,18 +439,18 @@ def check_r10(books: Books) -> list[Finding]:
         if refund.approved_by:
             check(refund.id, "refund.approve", refund.approved_by, REFUND_APPROVE, refund.order_id)
             if refund.approved_by == refund.requested_by:
-                found.append(Finding("R10", "same_person", CRITICAL, refund.id, "两个人", refund.approved_by, refund.order_id))
+                found.append(Finding("R10", "same_person", CRITICAL, refund.id, _text_of("check_r10.text"), refund.approved_by, refund.order_id))
     for adjustment in books.adjustments:
         check(adjustment.id, "wallet.adjust_request", adjustment.requested_by, WALLET_ADJUST_REQUEST)
         if adjustment.approved_by:
             check(adjustment.id, "wallet.adjust_approve", adjustment.approved_by, WALLET_ADJUST_APPROVE)
             if adjustment.approved_by == adjustment.requested_by:
-                found.append(Finding("R10", "same_person", CRITICAL, adjustment.id, "两个人", adjustment.approved_by))
+                found.append(Finding("R10", "same_person", CRITICAL, adjustment.id, _text_of("check_r10.text.2"), adjustment.approved_by))
     role_changes = {(event.resource_id, event.actor_id) for event in books.audits if event.action == "user.roles_change"}
     for grant in books.grants:
         # Grants with no one named came from the migration that created the table, not from a person.
         if grant.granted_by and (grant.user_id, grant.granted_by) not in role_changes:
-            found.append(Finding("R10", "role_grant_not_audited", CRITICAL, f"{grant.user_id}:{grant.role}", grant.granted_by, "没有"))
+            found.append(Finding("R10", "role_grant_not_audited", CRITICAL, f"{grant.user_id}:{grant.role}", grant.granted_by, _text_of("check_r10.text.3")))
     return found
 
 
@@ -478,7 +491,7 @@ async def fetch_bills(store: PlatformStore, channels: Mapping[str, PaymentChanne
                 continue
             except ChannelError as exc:
                 logger.warning("账单下载失败 %s %s: %s", name, day, exc)
-                found.append(Finding("R1", "bill_unusable", WARNING, f"{name}:{day}", "可读的账单", str(exc)[:200]))
+                found.append(Finding("R1", "bill_unusable", WARNING, f"{name}:{day}", _text_of("fetch_bills.text"), str(exc)[:200]))
                 continue
             await _save_bill(store, name, day, bill)
     return found
@@ -531,7 +544,7 @@ async def _record_findings(store: PlatformStore, run: ReconRun, rules: Sequence[
                     logger.error("对账严重差异 %s: %s %s", finding.rule, finding.kind, finding.reference)
             for item in existing:
                 if item.status == "open" and item.fingerprint not in wanted:
-                    item.status, item.resolved_at, item.resolution = "auto_resolved", now, "复核时已对上"
+                    item.status, item.resolved_at, item.resolution = "auto_resolved", now, _text_of("_record_findings.text")
             if new_critical:
                 session.add(AuditEvent(
                     actor_id=None, action="recon.critical", resource_type="recon_run", resource_id=run.id, details={"new": new_critical},
@@ -600,20 +613,20 @@ async def run_checks(
 async def resolve_item(store: PlatformStore, *, item_id: str, actor: Mapping, status: str, resolution: str) -> ReconItem:
     """A person's explanation. It changes nothing in the books: a correction is a separate adjustment, with two people."""
     if status not in ("resolved", "ignored"):
-        raise ValueError("处理结果只能是已解决或忽略")
+        raise ValueError(_text_of("resolve_item.text"))
     if not resolution.strip():
-        raise ValueError("必须填写处理原因")
+        raise ValueError(_text_of("resolve_item.text.2"))
     async with store.sessions() as session:
         item = await session.get(ReconItem, item_id)
         if not item:
-            raise LookupError("差异单不存在")
+            raise LookupError(_text_of("resolve_item.text.3"))
         moved = await session.execute(
             update(ReconItem).where(ReconItem.id == item_id, ReconItem.status == "open").values(
                 status=status, resolved_by=actor["user_id"], resolution=resolution[:500], resolved_at=datetime.now(timezone.utc),
             )
         )
         if moved.rowcount != 1:
-            raise ValueError("差异单已处理")
+            raise ValueError(_text_of("resolve_item.text.4"))
         money_audit(session, actor, "recon.resolve", "recon_item", item_id, status=status, rule=item.rule, kind=item.kind, resolution=resolution[:200])
         await session.commit()
         await session.refresh(item)

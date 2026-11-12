@@ -8,6 +8,19 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from app import settings
+from app.core import prompt_data
+
+
+_WORDING_FILE = "schema_platform"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/schema_platform.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 ElementKind = Literal["actor", "prop", "scene", "costume", "effect", "product", "extra", "vehicle", "stunt", "set_dressing", "makeup"]
@@ -48,7 +61,7 @@ class ModelDiscoveryRequest(BaseModel):
     @model_validator(mode="after")
     def require_credentials(self):
         if not self.api_key and not self.configuration_id:
-            raise ValueError("API Key 或已有配置 ID 至少提供一项")
+            raise ValueError(_text_of("require_credentials.text"))
         return self
 
 
@@ -60,9 +73,9 @@ class ModelTestRequest(ModelDiscoveryRequest):
     def validate_model_ids(cls, values: list[str]) -> list[str]:
         cleaned = [value.strip() for value in values]
         if any(not value or len(value) > 200 or any(ord(char) < 32 for char in value) for value in cleaned):
-            raise ValueError("模型 ID 无效")
+            raise ValueError(_text_of("validate_model_ids.text"))
         if len(set(cleaned)) != len(cleaned):
-            raise ValueError("模型 ID 不能重复")
+            raise ValueError(_text_of("validate_model_ids.text.2"))
         return cleaned
 
 
@@ -81,7 +94,7 @@ class ModelCredentialCreateRequest(BaseModel):
         cleaned = [v.strip().lower() for v in values if v and v.strip()]
         unknown = [v for v in cleaned if v not in {"text", "image", "video", "audio"}]
         if unknown:
-            raise ValueError("任务类型桶只能是 text / image / video / audio")
+            raise ValueError(_text_of("known_buckets.text"))
         return list(dict.fromkeys(cleaned))
 
 
@@ -210,7 +223,7 @@ class OrderCreateRequest(BaseModel):
     @classmethod
     def validate_key(cls, value: str) -> str:
         if not re.fullmatch(r"[A-Za-z0-9._:-]+", value):
-            raise ValueError("幂等键只允许字母、数字、点、横线、下划线和冒号")
+            raise ValueError(_text_of("validate_key.text"))
         return value
 
 

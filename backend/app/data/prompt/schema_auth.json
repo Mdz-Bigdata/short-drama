@@ -1,0 +1,12 @@
+{
+  "_doc": "app/schema/auth.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "RegisterRequest.description": "注册绑定的邮箱",
+  "RegisterRequest.description.2": "注册绑定的手机号",
+  "RegisterRequest.description.3": "密码，最少 {0} 位字符",
+  "validate_email.text": "邮箱格式不正确",
+  "PasswordLoginRequest.description": "登录账号，支持邮箱或手机号",
+  "PasswordLoginRequest.description.2": "登录密码",
+  "SendCodeRequest.description": "接收验证码的邮箱或手机号",
+  "CodeLoginRequest.description": "登录所用的邮箱或手机号",
+  "CodeLoginRequest.description.2": "接收到的 6 位验证码"
+}

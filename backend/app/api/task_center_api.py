@@ -12,12 +12,25 @@ from fastapi.responses import JSONResponse
 from app.api import drama_api
 from app.core import generation_queue
 from app.service import task_center_service
+from app.core import prompt_data
+
+
+_WORDING_FILE = "api_task_center_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_task_center_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.api.task_center_api")
 
 router = APIRouter(
     prefix="/api/drama",
-    tags=["任务中心"],
+    tags=list(_words_of("module.tags")),
     dependencies=[Depends(drama_api.require_owned_drama_task)],
 )
 
@@ -26,10 +39,10 @@ _background: set[asyncio.Task] = set()
 
 
 @router.get("/{task_id}/tasks")
-def list_jobs(task_id: str, status: str = Query("", max_length=80, description="逗号分隔的状态；不给时全部返回")):
+def list_jobs(task_id: str, status: str = Query("", max_length=80, description=_text_of("list_jobs.description"))):
     task = drama_api.service.repo.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("list_jobs.detail"))
     return task_center_service.jobs_view(task, statuses=[part.strip() for part in status.split(",")])
 
 

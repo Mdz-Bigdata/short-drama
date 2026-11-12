@@ -1,0 +1,13 @@
+{
+  "_doc": "app/api/panorama_api.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.tags": [
+    "360 全景"
+  ],
+  "_scene_task.detail": "任务不存在",
+  "_scene_task.detail.2": "场景 {0} 不在剧本大纲里",
+  "generate_panorama.description": "可选的参考图：按它的地点与色调扩展成全景",
+  "generate_panorama.detail": "参考图不能超过 10 MB",
+  "generate_panorama.detail.2": "参考图只支持 PNG、JPEG、WebP；文件内容不是其中任何一种",
+  "generate_panorama.detail.3": "图像模型未能生成全景，请稍后重试",
+  "generate_panorama.detail.4": "任务不存在"
+}

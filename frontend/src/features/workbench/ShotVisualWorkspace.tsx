@@ -40,7 +40,7 @@ import {
 import { DeskLoading } from '../directorDesk/DeskLoading';
 import { useAssetsChanged } from '../elements/assetEvents';
 import { ShotAssetChips } from './ShotAssetChips';
-import { DraftModeToggle, ShotFixPanel } from './ShotFixPanel';
+import { DraftModeToggle, ShotFixPanel, SpendLimits } from './ShotFixPanel';
 import { ShotControlTable, type ControlRow } from './ShotControlTable';
 import { t } from '../../i18n';
 
@@ -615,6 +615,11 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
         <DraftModeToggle<Workspace>
           taskId={taskId} enabled={Boolean((workspace as { draft_mode?: boolean }).draft_mode)} locked={locked}
           onWorkspace={setWorkspace} onError={setError}
+        />
+        <SpendLimits<Workspace>
+          taskId={taskId} locked={locked} onWorkspace={setWorkspace} onError={setError}
+          budgetCap={(workspace as { video_budget_cap?: number | null }).video_budget_cap ?? null}
+          maxAttempts={(workspace as { video_max_attempts?: number | null }).video_max_attempts ?? null}
         />
         {onRerun && (
           <button type="button" className="primary-action shot-workspace__rerun" onClick={rerun} disabled={Boolean(workspace.running) || batchAsked}>

@@ -8,6 +8,19 @@ import zipfile
 from decimal import Decimal, InvalidOperation
 
 from app.platform.payments.base import BillRow, BillUnreadable
+from app.core import prompt_data
+
+
+_WORDING_FILE = "payments_bills"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/payments_bills.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 _MAX_BILL_BYTES = 50 * 1024 * 1024
 
@@ -16,9 +29,9 @@ def _fen(text: str) -> int:
     try:
         value = Decimal(text.strip().lstrip("`").replace(",", "")) * 100
     except InvalidOperation as exc:
-        raise BillUnreadable(f"账单金额无法解析: {text[:20]!r}") from exc
+        raise BillUnreadable(_text_of("_fen.text").format(text[:20])) from exc
     if not value.is_finite() or value != value.to_integral_value():
-        raise BillUnreadable(f"账单金额不是整数分: {text[:20]!r}")
+        raise BillUnreadable(_text_of("_fen.text.2").format(text[:20]))
     return abs(int(value))
 
 
@@ -31,44 +44,44 @@ def parse_wechat_trade_bill(raw: bytes) -> tuple[BillRow, ...]:
     try:
         lines = [line for line in raw.decode("utf-8-sig").splitlines() if line.strip()]
     except UnicodeDecodeError as exc:
-        raise BillUnreadable("微信账单编码无法识别") from exc
+        raise BillUnreadable(_text_of("parse_wechat_trade_bill.text")) from exc
     if not lines:
-        raise BillUnreadable("微信账单是空文件")
+        raise BillUnreadable(_text_of("parse_wechat_trade_bill.text.2"))
     header = [name.strip().lstrip("`") for name in next(csv.reader([lines[0]]))]
-    needed = ("微信订单号", "商户订单号", "交易状态", "订单金额", "商户退款单号", "申请退款金额")
+    needed = _words_of("parse_wechat_trade_bill.needed")
     if any(name not in header for name in needed):
-        raise BillUnreadable("微信账单缺少必要的列")
+        raise BillUnreadable(_text_of("parse_wechat_trade_bill.text.3"))
     position = {name: header.index(name) for name in needed}
-    totals_at = next((index for index, line in enumerate(lines) if line.lstrip("`").startswith("总交易单数")), None)
+    totals_at = next((index for index, line in enumerate(lines) if line.lstrip("`").startswith(_text_of("parse_wechat_trade_bill.totals_at"))), None)
     if totals_at is None or totals_at + 1 >= len(lines):
-        raise BillUnreadable("微信账单缺少汇总行，可能不完整")
+        raise BillUnreadable(_text_of("parse_wechat_trade_bill.text.4"))
     rows = []
     for line in lines[1:totals_at]:
         cells = [cell.strip().lstrip("`") for cell in next(csv.reader([line]))]
         if len(cells) != len(header):
-            raise BillUnreadable("微信账单的列数与表头不符")
-        state = cells[position["交易状态"]]
+            raise BillUnreadable(_text_of("parse_wechat_trade_bill.text.5"))
+        state = cells[position[_text_of("parse_wechat_trade_bill.state")]]
         if state == "SUCCESS":
-            rows.append(BillRow("payment", cells[position["商户订单号"]], _fen(cells[position["订单金额"]]), cells[position["微信订单号"]]))
+            rows.append(BillRow("payment", cells[position[_text_of("parse_wechat_trade_bill.text.6")]], _fen(cells[position[_text_of("parse_wechat_trade_bill.text.7")]]), cells[position[_text_of("parse_wechat_trade_bill.text.8")]]))
         elif state in ("REFUND", "REVOKED"):
             rows.append(BillRow(
-                "refund", cells[position["商户订单号"]], _fen(cells[position["申请退款金额"]]), cells[position["微信订单号"]],
-                cells[position["商户退款单号"]],
+                "refund", cells[position[_text_of("parse_wechat_trade_bill.text.9")]], _fen(cells[position[_text_of("parse_wechat_trade_bill.text.10")]]), cells[position[_text_of("parse_wechat_trade_bill.text.11")]],
+                cells[position[_text_of("parse_wechat_trade_bill.text.12")]],
             ))
         else:
-            raise BillUnreadable(f"微信账单有未知的交易状态: {state[:20]!r}")
+            raise BillUnreadable(_text_of("parse_wechat_trade_bill.text.13").format(state[:20]))
     labels = [name.strip().lstrip("`") for name in next(csv.reader([lines[totals_at]]))]
     values = [cell.strip().lstrip("`") for cell in next(csv.reader([lines[totals_at + 1]]))]
     totals = dict(zip(labels, values))
     try:
-        stated = int(totals["总交易单数"])
-        stated_paid, stated_refund = _fen(totals["订单总金额"]), _fen(totals["申请退款总金额"])
+        stated = int(totals[_text_of("parse_wechat_trade_bill.stated")])
+        stated_paid, stated_refund = _fen(totals[_text_of("parse_wechat_trade_bill.text.14")]), _fen(totals[_text_of("parse_wechat_trade_bill.text.15")])
     except (KeyError, ValueError) as exc:
-        raise BillUnreadable("微信账单汇总行无法解析") from exc
+        raise BillUnreadable(_text_of("parse_wechat_trade_bill.text.16")) from exc
     paid = sum(row.amount_minor for row in rows if row.kind == "payment")
     refunded = sum(row.amount_minor for row in rows if row.kind == "refund")
     if (stated, stated_paid, stated_refund) != (len(rows), paid, refunded):
-        raise BillUnreadable("微信账单明细与汇总对不上，可能不完整")
+        raise BillUnreadable(_text_of("parse_wechat_trade_bill.text.17"))
     return tuple(rows)
 
 
@@ -78,7 +91,7 @@ def _decode(data: bytes) -> str:
             return data.decode(encoding)
         except UnicodeDecodeError:
             continue
-    raise BillUnreadable("支付宝账单编码无法识别")
+    raise BillUnreadable(_text_of("_decode.text"))
 
 
 def parse_alipay_trade_bill(raw: bytes) -> tuple[BillRow, ...]:
@@ -90,39 +103,39 @@ def parse_alipay_trade_bill(raw: bytes) -> tuple[BillRow, ...]:
     try:
         archive = zipfile.ZipFile(io.BytesIO(raw))
     except zipfile.BadZipFile as exc:
-        raise BillUnreadable("支付宝账单不是有效的压缩包") from exc
+        raise BillUnreadable(_text_of("parse_alipay_trade_bill.text")) from exc
     with archive:
         if sum(info.file_size for info in archive.infolist()) > _MAX_BILL_BYTES:
-            raise BillUnreadable("支付宝账单解压后过大")
+            raise BillUnreadable(_text_of("parse_alipay_trade_bill.text.2"))
         texts = [_decode(archive.read(info)) for info in archive.infolist() if not info.is_dir()]
-    needed = ("支付宝交易号", "商户订单号", "业务类型", "订单金额（元）", "商家实收（元）")
+    needed = _words_of("parse_alipay_trade_bill.needed")
     for text in texts:
         records = [row for row in csv.reader(io.StringIO(text)) if row and not row[0].lstrip().startswith("#")]
         records = [[cell.strip() for cell in row] for row in records]
-        header_at = next((index for index, row in enumerate(records) if "商户订单号" in row and "支付宝交易号" in row), None)
+        header_at = next((index for index, row in enumerate(records) if _text_of("parse_alipay_trade_bill.header_at") in row and _text_of("parse_alipay_trade_bill.header_at.2") in row), None)
         if header_at is None:
             continue
         header = records[header_at]
         if any(name not in header for name in needed):
-            raise BillUnreadable("支付宝账单缺少必要的列，请在商家平台的账单下载设置里保留它们")
-        position = {name: header.index(name) for name in (*needed, "退款批次号") if name in header}
+            raise BillUnreadable(_text_of("parse_alipay_trade_bill.text.3"))
+        position = {name: header.index(name) for name in (*needed, _text_of("parse_alipay_trade_bill.position")) if name in header}
         rows = []
         for record in records[header_at + 1:]:
             if len(record) != len(header):
-                if record[0].startswith("业务明细列表结束") or len(record) == 1:
+                if record[0].startswith(_text_of("parse_alipay_trade_bill.text.4")) or len(record) == 1:
                     continue
-                raise BillUnreadable("支付宝账单的列数与表头不符")
-            kind = record[position["业务类型"]]
-            if kind == "交易":
-                rows.append(BillRow("payment", record[position["商户订单号"]], _fen(record[position["订单金额（元）"]]), record[position["支付宝交易号"]]))
-            elif kind == "退款":
-                if "退款批次号" not in position:
-                    raise BillUnreadable("支付宝账单缺少退款批次号列")
+                raise BillUnreadable(_text_of("parse_alipay_trade_bill.text.5"))
+            kind = record[position[_text_of("parse_alipay_trade_bill.kind")]]
+            if kind == _text_of("parse_alipay_trade_bill.text.6"):
+                rows.append(BillRow("payment", record[position[_text_of("parse_alipay_trade_bill.text.7")]], _fen(record[position[_text_of("parse_alipay_trade_bill.text.8")]]), record[position[_text_of("parse_alipay_trade_bill.text.9")]]))
+            elif kind == _text_of("parse_alipay_trade_bill.text.10"):
+                if _text_of("parse_alipay_trade_bill.text.11") not in position:
+                    raise BillUnreadable(_text_of("parse_alipay_trade_bill.text.12"))
                 rows.append(BillRow(
-                    "refund", record[position["商户订单号"]], _fen(record[position["商家实收（元）"]]), record[position["支付宝交易号"]],
-                    record[position["退款批次号"]],
+                    "refund", record[position[_text_of("parse_alipay_trade_bill.text.13")]], _fen(record[position[_text_of("parse_alipay_trade_bill.text.14")]]), record[position[_text_of("parse_alipay_trade_bill.text.15")]],
+                    record[position[_text_of("parse_alipay_trade_bill.text.16")]],
                 ))
             else:
-                raise BillUnreadable(f"支付宝账单有未知的业务类型: {kind[:20]!r}")
+                raise BillUnreadable(_text_of("parse_alipay_trade_bill.text.17").format(kind[:20]))
         return tuple(rows)
-    raise BillUnreadable("支付宝账单里没有找到明细表")
+    raise BillUnreadable(_text_of("parse_alipay_trade_bill.text.18"))

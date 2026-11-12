@@ -42,11 +42,24 @@ from app.schema.minimax_audio import (
     MiniMaxTTSRequest,
 )
 from app.ingest.parsers import SourceIngestError, SourceIngestor
+from app.core import prompt_data
+
+
+_WORDING_FILE = "api_production_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_production_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 router = APIRouter(
     prefix="/api/production",
-    tags=["AI短剧工业化能力"],
+    tags=list(_words_of("module.tags")),
     dependencies=[Depends(get_current_user)],
 )
 service = ProductionService()
@@ -54,8 +67,8 @@ service = ProductionService()
 
 def _provider_error(provider: str, exc: Exception) -> HTTPException:
     if isinstance(exc, ValueError):
-        return HTTPException(status_code=422, detail=f"{provider} 请求不可执行: {exc}")
-    return HTTPException(status_code=502, detail=f"{provider} 服务暂不可用")
+        return HTTPException(status_code=422, detail=_text_of("_provider_error.detail").format(provider, exc))
+    return HTTPException(status_code=502, detail=_text_of("_provider_error.detail.2").format(provider))
 
 
 def _validate_upload(
@@ -70,12 +83,12 @@ def _validate_upload(
     known_extension = filename.lower().endswith(extensions)
     known_media_type = any(content_type.startswith(prefix) for prefix in media_prefixes)
     if not (known_extension or known_media_type):
-        raise ValueError("上传文件类型不受支持")
+        raise ValueError(_text_of("_validate_upload.text"))
     file.file.seek(0, 2)
     size = file.file.tell()
     file.file.seek(0)
     if size <= 0 or size > maximum_bytes:
-        raise ValueError(f"上传文件必须介于 1 字节和 {maximum_bytes // (1024 * 1024)} MB 之间")
+        raise ValueError(_text_of("_validate_upload.text.2").format(maximum_bytes // (1024 * 1024)))
     return filename, size
 
 
@@ -231,7 +244,7 @@ def compile_storyboard_director(request: StoryboardDirectorRequest):
 async def compile_script_prompt_file(
     file: UploadFile = File(...),
     title: str = Query("", max_length=300),
-    visual_style: str = Query("写实真人电影质感", min_length=1, max_length=2000),
+    visual_style: str = Query(_text_of("compile_script_prompt_file.text"), min_length=1, max_length=2000),
     prompt_language: str = Query("zh-CN", min_length=1, max_length=40),
     output_language: str = Query("zh-CN", min_length=1, max_length=40),
     video_model: str = Query("Seedance 2.5", min_length=1, max_length=120),
@@ -593,7 +606,7 @@ def elevenlabs_audio_native(
             if not isinstance(candidate, dict) or set(candidate) != {
                 "pronunciation_dictionary_id", "version_id"
             } or not all(isinstance(value, str) and 1 <= len(value) <= 200 for value in candidate.values()):
-                raise ValueError("发音词典 locator 必须包含有效的 dictionary ID 与 version ID")
+                raise ValueError(_text_of("elevenlabs_audio_native.text"))
             locators.append(candidate)
         return service.create_audio_native(
             name=name,
@@ -607,7 +620,7 @@ def elevenlabs_audio_native(
             pronunciation_dictionary_locators=locators,
         )
     except (json.JSONDecodeError, TypeError) as exc:
-        raise HTTPException(status_code=422, detail="发音词典 locator 不是有效 JSON") from exc
+        raise HTTPException(status_code=422, detail=_text_of("elevenlabs_audio_native.detail")) from exc
     except Exception as exc:
         raise _provider_error("ElevenLabs Audio Native", exc) from exc
 

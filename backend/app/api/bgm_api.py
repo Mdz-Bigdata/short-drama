@@ -9,8 +9,21 @@ from app.api.auth_api import get_current_user
 from app.platform.access_audit import record_access_from_thread
 from app.platform.permissions import authorize
 from app.core import bgm_library
+from app.core import prompt_data
 
-router = APIRouter(prefix="/api/library/bgm", tags=["配乐库"])
+
+_WORDING_FILE = "api_bgm_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_bgm_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+router = APIRouter(prefix="/api/library/bgm", tags=list(_words_of("module.tags")))
 
 
 def _public(track: dict) -> dict:
@@ -45,7 +58,7 @@ async def upload_bgm(
 def stream_bgm(track_id: str, _: dict = Depends(get_current_user)):
     track = bgm_library.get_track(track_id)
     if not track:
-        raise HTTPException(status_code=404, detail="配乐不存在")
+        raise HTTPException(status_code=404, detail=_text_of("stream_bgm.detail"))
     return FileResponse(track["path"], filename=f"{track['name']}{track['path'][track['path'].rfind('.'):]}")
 
 
@@ -53,12 +66,12 @@ def stream_bgm(track_id: str, _: dict = Depends(get_current_user)):
 def delete_bgm(track_id: str, current_user: dict = Depends(get_current_user)):
     track = bgm_library.get_track(track_id)
     if not track:
-        raise HTTPException(status_code=404, detail="配乐不存在")
+        raise HTTPException(status_code=404, detail=_text_of("delete_bgm.detail"))
     owner_id = str(track.get("owner_id") or "")
     if owner_id:
         decision = authorize(current_user, owner_id=owner_id, write=True)
         if not decision.allowed:
-            raise HTTPException(status_code=403, detail="只能删除自己上传的配乐")
+            raise HTTPException(status_code=403, detail=_text_of("delete_bgm.detail.2"))
         if decision.cross_account:
             record_access_from_thread(current_user, resource_id=f"bgm:{track_id}", owner_id=owner_id, write=True, via="bgm.delete")
     bgm_library.remove_track(track_id)

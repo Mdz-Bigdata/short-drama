@@ -17,9 +17,22 @@ from app.platform.store import PlatformStore
 from app.schema.drama import DEFAULT_EPISODE_COUNT, EPISODE_COUNT_MAX, EPISODE_COUNT_MIN
 from app.schema.auth import CodeLoginRequest, PasswordLoginRequest, RegisterRequest, SendCodeRequest
 from app.service.auth_service import AuthService
+from app.core import prompt_data
 
 
-router = APIRouter(prefix="/api/auth", tags=["用户身份认证"])
+_WORDING_FILE = "api_auth_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_auth_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+
+router = APIRouter(prefix="/api/auth", tags=list(_words_of("module.tags")))
 auth_service = AuthService()
 
 
@@ -44,13 +57,13 @@ async def get_current_user(
     store: PlatformStore = Depends(get_platform_store),
 ) -> dict:
     if not auth_token:
-        raise HTTPException(status_code=401, detail="未登录，请先登录")
+        raise HTTPException(status_code=401, detail=_text_of("get_current_user.detail"))
     user_id = auth_service.verify_token(auth_token)
     if not user_id:
-        raise HTTPException(status_code=401, detail="会话已过期，请重新登录")
+        raise HTTPException(status_code=401, detail=_text_of("get_current_user.detail.2"))
     user = await store.get_user(user_id)
     if not user or user.status != "active":
-        raise HTTPException(status_code=401, detail="用户账户不存在或已停用")
+        raise HTTPException(status_code=401, detail=_text_of("get_current_user.detail.3"))
     usage_ledger.bind_user(user.id)
     return _public_user(user)
 
@@ -105,13 +118,13 @@ def _set_session(response: Response, user_id: str) -> None:
 def send_code(req: SendCodeRequest):
     login_id = req.login_id.strip()
     if not login_id:
-        raise HTTPException(status_code=400, detail="邮箱或手机号不能为空")
+        raise HTTPException(status_code=400, detail=_text_of("send_code.detail"))
     success, development_code = auth_service.send_verification_code(login_id)
     if not success:
-        raise HTTPException(status_code=503, detail="验证码发送服务暂不可用")
+        raise HTTPException(status_code=503, detail=_text_of("send_code.detail.2"))
     payload = {
         "status": "success",
-        "message": f"验证码已成功发送至 {login_id}",
+        "message": _text_of("send_code.payload.message").format(login_id),
         "cooldown_seconds": settings.code_cooldown_seconds(),
     }
     if development_code:
@@ -128,7 +141,7 @@ async def register_user(req: RegisterRequest, store: PlatformStore = Depends(get
             password=req.password,
         )
         if not created:
-            raise HTTPException(status_code=409, detail="邮箱或手机号已被注册")
+            raise HTTPException(status_code=409, detail=_text_of("register_user.detail"))
         return {"status": "success", "user": _public_user(user)}
     except HTTPException:
         raise
@@ -144,7 +157,7 @@ async def login_by_password(
 ):
     user = await store.verify_login(req.login_id, req.password)
     if not user:
-        raise HTTPException(status_code=401, detail="账号或密码错误")
+        raise HTTPException(status_code=401, detail=_text_of("login_by_password.detail"))
     _set_session(response, user.id)
     return {"status": "success", "user": _public_user(user)}
 
@@ -209,4 +222,4 @@ def logout_user(response: Response):
         secure=settings.cookie_secure(),
         path="/",
     )
-    return {"status": "success", "message": "已成功退出登录"}
+    return {"status": "success", "message": _text_of("logout_user.message")}

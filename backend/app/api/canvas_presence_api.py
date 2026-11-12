@@ -27,8 +27,21 @@ from app.service.canvas_presence import (
     PresenceUnknownClient,
 )
 from app.service.studio_service import StudioService
+from app.core import prompt_data
 
-router = APIRouter(prefix="/api/studio", tags=["画布在线状态"])
+
+_WORDING_FILE = "api_canvas_presence_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_canvas_presence_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+router = APIRouter(prefix="/api/studio", tags=list(_words_of("module.tags")))
 
 MAX_BODY_BYTES = 32 * 1024
 _STREAM_HEADERS = {"Cache-Control": "no-store", "X-Accel-Buffering": "no"}
@@ -80,7 +93,7 @@ async def _owned_board(service: StudioService, project_id: str, owner_id: str, c
     except Exception as exc:
         raise _safe_error(exc) from exc
     if not any(str(board.get("id")) == canvas_id for board in boards):
-        raise HTTPException(status_code=404, detail="资源不存在")
+        raise HTTPException(status_code=404, detail=_text_of("_owned_board.detail"))
 
 
 @router.get("/projects/{project_id}/canvases/{canvas_id}/presence/stream")
@@ -97,7 +110,7 @@ async def presence_stream(
 ):
     origin = request.headers.get("origin")
     if origin and origin not in allowed_origins:
-        return JSONResponse(status_code=403, content={"detail": "请求来源不受信任"})
+        return JSONResponse(status_code=403, content={"detail": _text_of("presence_stream.content.detail")})
     owner_id = _owner(current_user)
     await _owned_board(service, project_id, owner_id, canvas_id)
     try:
@@ -130,7 +143,7 @@ async def presence_message(
     """No database read: the room is keyed by the caller's own account, so only its own open streams match."""
     body = await _read_limited(request)
     if body is None:
-        return JSONResponse(status_code=413, content={"detail": "消息过大"})
+        return JSONResponse(status_code=413, content={"detail": _text_of("presence_message.content.detail")})
     try:
         message = PresenceMessage.model_validate_json(body or b"{}")
     except ValidationError as exc:
@@ -138,7 +151,7 @@ async def presence_message(
     try:
         hub.publish(_owner(current_user), project_id, canvas_id, message.client_id, message.model_dump(mode="json"))
     except PresenceUnknownClient as exc:
-        raise HTTPException(status_code=404, detail="资源不存在") from exc
+        raise HTTPException(status_code=404, detail=_text_of("presence_message.detail")) from exc
     except PresenceRateLimited:
-        return JSONResponse(status_code=429, content={"detail": "消息过于频繁"}, headers={"Retry-After": "1"})
+        return JSONResponse(status_code=429, content={"detail": _text_of("presence_message.content.detail.2")}, headers={"Retry-After": "1"})
     return Response(status_code=204)

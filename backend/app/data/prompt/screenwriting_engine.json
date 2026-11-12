@@ -1,0 +1,81 @@
+{
+  "_about": "结构化编剧引擎(app/core/screenwriting/engine.py)自己说的话：进度条上的步骤、给人看的报错和警告、校验不过时退回给模型的理由、修复草稿时追加给模型的要求、新登记资产的占位描述，以及写进日志的话。各阶段提示词本身在 screenwriting_prompts.json，不在这里。字符串是句子模板，花括号里是代码填进去的值({kind!r} 带引号原样写出)；log 下是日志模板，%s / %d 由 logging 填，个数和顺序不能改；repair_section 是逐行模板，代码用换行连起来再填值。preview_stages 按阶段代码(prose / visual)取预览提示词时的阶段名；labels 是违约条目里标明位置的写法；separators.findings 连接正文里几处待核对的内容；fallback_scene 是分镜没有画面描述时兜底视觉层用的词。",
+  "progress": {
+    "overview": "编剧 · 提炼项目概述",
+    "overview_again": "编剧 · 重新提炼项目概述",
+    "inventory": "编剧 · 创作看板：提取角色 / 人物关系 / 场景 / 道具",
+    "ledger": "编剧 · 规划分集账本（标题 / 钩子 / 故事节点）",
+    "replan_from": "编剧 · 从第 {episode} 集起重新规划分集",
+    "outline_batch": "编剧 · 规划第 {first}-{last} 集分集大纲",
+    "outline_overturned_facts": "编剧 · 第 {first}-{last} 集大纲推翻了已定事实，重规划",
+    "anchored": "编剧 · 按原文规划分集（已规划 {planned} 集）",
+    "plan": "编剧 · 第 {episode} 集分镜内容规划（共 {count} 集）",
+    "plan_done": "编剧 · 第 {episode} 集分镜内容规划完成",
+    "prose": "编剧 · 第 {episode} 集小说体正文",
+    "visual": "编剧 · 第 {episode} 集视觉层（画面 / 动作 / 运镜）",
+    "parallel": "编剧 · 并行编写 {count} 集（{width} 路）",
+    "repair": "编剧 · 修复第 {episode} 集草稿"
+  },
+  "errors": {
+    "repair_not_improved": "第 {episode} 集修复后违约没有减少，保留原草稿：{reasons}",
+    "own_episode_kind": "逐集原文的体裁必须是 novel 或 screenplay，不是 {kind!r}",
+    "source_required": "novel / screenplay 模式需要提供源文",
+    "nothing_to_write": "没有可写的集：既无源文可切分，也无逐集原文",
+    "ledger_gap_in_source_mode": "分集账本缺少第 {episodes} 集，源文模式下无法凭空补写",
+    "not_written": "第 {episode} 集尚未写出，无法编辑其分镜规划",
+    "no_plan_to_preview": "第 {episode} 集尚无分镜规划，无法预览{stage}提示词",
+    "no_located_episode": "分集规划未产出任何可定位的集",
+    "unplannable_source": "源文为空或无法规划分集",
+    "not_a_draft": "第 {episode} 集不是带违约的草稿，无需修复",
+    "not_in_ledger": "分集账本中没有第 {episode} 集",
+    "plan_failed": "第 {episode} 集分镜内容规划失败：{error}",
+    "visual_merge_failed": "第 {episode} 集视觉层合并失败：{error}"
+  },
+  "preview_stages": {
+    "prose": "小说体正文",
+    "visual": "视觉层"
+  },
+  "retry": {
+    "episode_count": "episodes 数组长度必须等于 {expected}（对应第 {first} 集到第 {last} 集），当前为 {got}",
+    "visual_missing": "缺少这些分镜的视觉层：{ids}（只需补齐这些分镜；已输出的分镜不必重复）",
+    "visual_orphans": "出现了分镜内容中不存在的 scene_id：{ids}，scene_id 必须照抄分镜内容里的编号"
+  },
+  "warnings": {
+    "source_left_over": "源文在第 {episodes} 集之后仍有剩余内容，已并入末集（请求集数 {requested} 已用尽）",
+    "prose_fallback": "小说体正文由分镜内容机械合成，建议重写",
+    "prose_unverified": "小说体正文保留了待核对的内容：{findings}",
+    "visual_fallback": "视觉层由分镜内容机械合成，建议重写"
+  },
+  "labels": {
+    "episode": "第 {episode} 集",
+    "shot": "分镜 {scene_id}",
+    "batch_episode": "本批第 {number} 集",
+    "episode_title": "第{episode}集"
+  },
+  "separators": {
+    "findings": "；"
+  },
+  "new_assets": {
+    "character_description": "需补充外貌与服装细节",
+    "character_position": "其它角色",
+    "scene_description": "需补充空间与光线描述",
+    "prop_description": "需补充外观描述"
+  },
+  "repair_section": [
+    "## 修复上一版草稿",
+    "上一版分镜规划没有通过校验，问题如下；请针对这些问题修改，情节走向、出场人物与台词内容尽量保持不变：",
+    "{reasons}",
+    "上一版草稿（JSON，仅供对照；本次仍须输出完整规划）：",
+    "{previous}"
+  ],
+  "fallback_scene": "画面",
+  "log": {
+    "board_early_failed": "[Screenwriting] 创作看板提前展示失败：%s",
+    "overview_failed": "[Screenwriting] 概述提炼失败，使用空概述: %s",
+    "inventory_failed": "[Screenwriting] 资产提取失败，使用空资产表: %s",
+    "plan_truncated": "[Screenwriting] 规划输出 %d 集超过每批上限 %d，截断",
+    "plan_kept_draft": "[Screenwriting] 第 %d 集内容规划保留带违约草稿: %s",
+    "prose_fallback": "[Screenwriting] 第 %d 集小说体正文未通过校验，按分镜内容合成兜底: %s",
+    "visual_fallback": "[Screenwriting] 第 %d 集视觉层生成未完整覆盖，缺失分镜按内容合成兜底: %s"
+  }
+}

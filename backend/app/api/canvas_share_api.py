@@ -15,9 +15,22 @@ from app.service.canvas_share_service import (
     SlidingWindowLimiter,
 )
 from app.service.studio_service import StudioService
+from app.core import prompt_data
 
-router = APIRouter(prefix="/api/studio", tags=["画布分享"])
-public_router = APIRouter(prefix="/api/public", tags=["画布分享"])
+
+_WORDING_FILE = "api_canvas_share_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_canvas_share_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+router = APIRouter(prefix="/api/studio", tags=list(_words_of("module.tags")))
+public_router = APIRouter(prefix="/api/public", tags=list(_words_of("module.tags.2")))
 
 # A share page is someone's unpublished work behind a capability URL: never cached, never indexed.
 _PUBLIC_HEADERS = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex"}
@@ -84,7 +97,7 @@ def read_canvas_share(
     client = f"ip:{request.client.host if request.client else 'unknown'}"
     if not limiter.allow(client):
         return JSONResponse(
-            status_code=429, content={"detail": "访问过于频繁，请稍后再试"},
+            status_code=429, content={"detail": _text_of("read_canvas_share.content.detail")},
             headers={**_PUBLIC_HEADERS, "Retry-After": str(limiter.retry_after(client))},
         )
     try:

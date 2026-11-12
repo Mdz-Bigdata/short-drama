@@ -20,6 +20,19 @@ from urllib.parse import urlparse
 from app.core import canvas_layout, canvas_tools
 from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
 from app.schema.studio import CANVAS_COORD_LIMIT, CANVAS_SIZE_LIMIT, canvas_group_problem
+from app.core import prompt_data
+
+
+_WORDING_FILE = "studio_canvas"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/studio_canvas.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 RUNNABLE = {"image_gen": "image", "video_gen": "video", "audio_gen": "audio", "video_compose": "video"}
 # Kinds an agent (or anyone but the importer) may create.
@@ -50,8 +63,8 @@ DEFAULT_SIZES = {
     "video_compose": (300, 240), "style_ref": (240, 220), "panorama": (340, 260), "previz": (320, 300), "tool": (300, 340),
 }
 KIND_LABELS = {
-    "artifact": "产物", "candidate": "候选", "media": "上传素材", "note": "文本注释", "group": "分组", "image_gen": "图像生成",
-    "video_gen": "视频生成", "audio_gen": "音频生成", "video_compose": "视频合成", "style_ref": "风格参考", "panorama": "360° 全景", "previz": "预演", "tool": "工具",
+    "artifact": _text_of("module.kind_labels.artifact"), "candidate": _text_of("module.kind_labels.candidate"), "media": _text_of("module.kind_labels.media"), "note": _text_of("module.kind_labels.note"), "group": _text_of("module.kind_labels.group"), "image_gen": _text_of("module.kind_labels.image_gen"),
+    "video_gen": _text_of("module.kind_labels.video_gen"), "audio_gen": _text_of("module.kind_labels.audio_gen"), "video_compose": _text_of("module.kind_labels.video_compose"), "style_ref": _text_of("module.kind_labels.style_ref"), "panorama": _text_of("module.kind_labels.panorama"), "previz": _text_of("module.kind_labels.previz"), "tool": _text_of("module.kind_labels.tool"),
 }
 
 
@@ -111,17 +124,17 @@ def output_type(node: Mapping[str, Any]) -> str | None:
 def connection(source: Mapping[str, Any], target: Mapping[str, Any], *, role: str | None = None) -> tuple[str, str]:
     """(edge kind, role) of this connection; raises ``CanvasOperationError`` saying why it is not allowed."""
     if source.get("id") == target.get("id"):
-        raise CanvasOperationError("节点不能连接自己")
+        raise CanvasOperationError(_text_of("connection.text"))
     produced = output_type(source)
     if produced is None:
-        raise CanvasOperationError(f"「{KIND_LABELS.get(str(source.get('kind')), source.get('kind'))}」还没有可以输出的内容")
+        raise CanvasOperationError(_text_of("connection.text.2").format(KIND_LABELS.get(str(source.get('kind')), source.get('kind'))))
     inputs = inputs_of(target)
     if not inputs or produced not in inputs:
-        raise CanvasOperationError(f"「{KIND_LABELS.get(str(target.get('kind')), target.get('kind'))}」不接受这种输入（{produced}）")
+        raise CanvasOperationError(_text_of("connection.text.3").format(KIND_LABELS.get(str(target.get('kind')), target.get('kind')), produced))
     edge_kind, default_role = inputs[produced]
     if role and role != default_role:
         if role not in _ROLE_CHOICES.get((str(target.get("kind")), produced), ()):
-            raise CanvasOperationError(f"这条连接不能用作 {role}")
+            raise CanvasOperationError(_text_of("connection.text.4").format(role))
         return edge_kind, role
     return edge_kind, default_role
 
@@ -259,7 +272,7 @@ def resolve_inputs(
                 elif source_id in batch:
                     resolved.pending.append(source_id)
                 else:
-                    resolved.problems.append(f"上游节点 {_label(source)} 还没有结果")
+                    resolved.problems.append(_text_of("resolve_inputs.text").format(_label(source)))
                 continue
             text = str(payload_of(source).get("text") or "").strip()
             if text:
@@ -268,7 +281,7 @@ def resolve_inputs(
         if produced == "capture":
             captures = selected_captures(source, captures_of)
             if not captures:
-                resolved.problems.append(f"预演节点 {_label(source)} 没有选中可用的截取")
+                resolved.problems.append(_text_of("resolve_inputs.text.2").format(_label(source)))
             for capture in captures:
                 _take_capture(resolved, capture, source_id, node)
             continue
@@ -285,17 +298,17 @@ def resolve_inputs(
             if source_id in batch:
                 resolved.pending.append(source_id)
             else:
-                resolved.problems.append(f"上游节点 {_label(source)} 还没有结果")
+                resolved.problems.append(_text_of("resolve_inputs.text.3").format(_label(source)))
             continue
         _add_url(resolved, role, output.get("url"), source_id)
         if role == "continue_from":
             resolved.continue_from_prompt = str(payload_of(source).get("prompt") or "")
     if len(resolved.ref_images) > MAX_REFERENCE_IMAGES:
-        resolved.problems.append(f"参考图最多 {MAX_REFERENCE_IMAGES} 张，现在连了 {len(resolved.ref_images)} 张")
+        resolved.problems.append(_text_of("resolve_inputs.text.4").format(MAX_REFERENCE_IMAGES, len(resolved.ref_images)))
     if len(resolved.ref_videos) > MAX_REFERENCE_VIDEOS:
-        resolved.problems.append(f"参考视频最多 {MAX_REFERENCE_VIDEOS} 段，现在连了 {len(resolved.ref_videos)} 段")
+        resolved.problems.append(_text_of("resolve_inputs.text.5").format(MAX_REFERENCE_VIDEOS, len(resolved.ref_videos)))
     if len(resolved.ref_audios) > MAX_REFERENCE_AUDIOS:
-        resolved.problems.append(f"参考音频最多 {MAX_REFERENCE_AUDIOS} 段，现在连了 {len(resolved.ref_audios)} 段")
+        resolved.problems.append(_text_of("resolve_inputs.text.6").format(MAX_REFERENCE_AUDIOS, len(resolved.ref_audios)))
     return resolved
 
 
@@ -307,18 +320,18 @@ def _takes_mask(node: Mapping[str, Any]) -> bool:
 def _take_capture(resolved: Inputs, capture: Mapping[str, Any], source_id: str, node: Mapping[str, Any]) -> None:
     capture_kind = str(capture.get("kind") or "")
     if capture.get("stale"):
-        resolved.problems.append("所选截取是按旧站位拍的，请回导演台重新截取")
+        resolved.problems.append(_text_of("_take_capture.text"))
         return
     compose = node.get("kind") == "video_compose"
     if capture_kind == "clip":
         _add_url(resolved, "clip" if compose else "ref_video", capture.get("url"), source_id)
     elif capture_kind == "still" and not compose:
         if capture.get("layer") == "mask" and not _takes_mask(node):
-            resolved.problems.append("人物遮罩是黑白控制图，不能作为参考图；请改选普通静帧或空景，或连到「贴回人物」工具")
+            resolved.problems.append(_text_of("_take_capture.text.2"))
             return
         if capture.get("depth"):
             # The same refusal the desk gives: a video model would copy a depth picture as a grey frame.
-            resolved.problems.append("深度静帧不能作为参考图；请改选普通静帧或深度视频")
+            resolved.problems.append(_text_of("_take_capture.text.3"))
             return
         _add_url(resolved, "ref_image", capture.get("url"), source_id)
 
@@ -326,12 +339,12 @@ def _take_capture(resolved: Inputs, capture: Mapping[str, Any], source_id: str, 
 def _add_url(resolved: Inputs, role: str, value: Any, source_id: str) -> None:
     url = safe_media_url(value)
     if not url:
-        resolved.problems.append("上游节点的结果地址不可用")
+        resolved.problems.append(_text_of("_add_url.text"))
         return
     resolved.sources.append({"node_id": source_id, "role": role, "url": url})
     if role == "first_frame":
         if resolved.continue_from:
-            resolved.problems.append("首帧只能有一个：要么接上一段的尾帧，要么连一张首帧图")
+            resolved.problems.append(_text_of("_add_url.text.2"))
         resolved.first_frame = url
     elif role == "last_frame":
         resolved.last_frame = url
@@ -341,7 +354,7 @@ def _add_url(resolved: Inputs, role: str, value: Any, source_id: str) -> None:
         resolved.ref_videos.append(url)
     elif role == "continue_from":
         if resolved.continue_from or resolved.first_frame:
-            resolved.problems.append("首帧只能有一个：要么接上一段的尾帧，要么连一张首帧图")
+            resolved.problems.append(_text_of("_add_url.text.3"))
         resolved.continue_from = url
     elif role == "ref_audio":
         resolved.ref_audios.append(url)
@@ -371,7 +384,7 @@ def batch_order(node_ids: Sequence[str], edges: Sequence[Mapping[str, Any]]) -> 
     while remaining:
         ready = [item for item in remaining if all(dep in placed for dep in upstream[item])]
         if not ready:
-            raise ValueError("所选节点之间有环，无法排出运行顺序")
+            raise ValueError(_text_of("batch_order.text"))
         for item in ready:
             ordered.append(item)
             placed.add(item)
@@ -517,14 +530,14 @@ OPERATIONS = ("add_node", "update_node", "delete_node", "connect", "disconnect",
 def _coordinate(value: Any, name: str) -> float:
     number = float(value)
     if not math.isfinite(number) or abs(number) > CANVAS_COORD_LIMIT:
-        raise CanvasOperationError(f"{name} 必须是有限数，且在 ±{CANVAS_COORD_LIMIT:.0e} 以内")
+        raise CanvasOperationError(_text_of("_coordinate.text").format(name, CANVAS_COORD_LIMIT))
     return number
 
 
 def _size(value: Any, name: str) -> float:
     number = float(value)
     if not math.isfinite(number) or not 0 < number <= CANVAS_SIZE_LIMIT:
-        raise CanvasOperationError(f"{name} 必须大于 0 且不超过 {CANVAS_SIZE_LIMIT:.0e}")
+        raise CanvasOperationError(_text_of("_size.text").format(name, CANVAS_SIZE_LIMIT))
     return number
 
 
@@ -537,7 +550,7 @@ def _ids(operation: Mapping[str, Any], *keys: str) -> list[Any]:
         value = operation.get(key)
         if isinstance(value, list) and value:
             return value
-    raise CanvasOperationError(f"需要非空的 {keys[0]} 列表")
+    raise CanvasOperationError(_text_of("_ids.text").format(keys[0]))
 
 
 def _check_nesting(nodes: Sequence[Mapping[str, Any]]) -> None:
@@ -556,7 +569,7 @@ def _set_group(node: dict[str, Any], group_id: str | None) -> None:
 def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], dict[str, str]]:
     """Apply every operation or none: returns the new document and ``ref -> node id`` for what was added."""
     if not operations:
-        raise CanvasOperationError("operations 不能为空")
+        raise CanvasOperationError(_text_of("apply_operations.text"))
     nodes: list[dict[str, Any]] = [dict(item) for item in document.get("nodes") or []]
     edges: list[dict[str, Any]] = [dict(item) for item in document.get("edges") or []]
     refs: dict[str, str] = {}
@@ -570,7 +583,7 @@ def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[s
         for node in nodes:
             if node.get("id") == node_id:
                 return node
-        raise CanvasOperationError(f"画布上没有节点 {value}")
+        raise CanvasOperationError(_text_of("find.text").format(value))
 
     for index, operation in enumerate(operations, start=1):
         op = str(operation.get("op") or "")
@@ -578,7 +591,7 @@ def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[s
             if op == "add_node":
                 kind = str(operation.get("kind") or "")
                 if kind not in CREATABLE:
-                    raise CanvasOperationError(f"不能添加 {kind or '未知'} 类型的节点；可用：{'、'.join(sorted(CREATABLE))}")
+                    raise CanvasOperationError(_text_of("apply_operations.text.2").format(kind or '未知', '、'.join(sorted(CREATABLE))))
                 width, height = DEFAULT_SIZES[kind]
                 x, y = _place(nodes)
                 payload: dict[str, Any] = {key: operation[key] for key in _TEXT_FIELDS if operation.get(key) not in (None, "")}
@@ -603,15 +616,15 @@ def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[s
                     payload["params"] = {**(payload.get("params") or {}), **operation["params"]}
                 if "collapsed" in operation or "expandedSize" in operation:
                     if node.get("kind") != "group":
-                        raise CanvasOperationError("只有分组可以折叠或展开")
+                        raise CanvasOperationError(_text_of("apply_operations.text.3"))
                     if "expandedSize" in operation:
                         size = operation["expandedSize"]
                         if not isinstance(size, (list, tuple)) or len(size) != 2:
-                            raise CanvasOperationError("expandedSize 要写成 [宽, 高]")
+                            raise CanvasOperationError(_text_of("apply_operations.text.4"))
                         payload["expandedSize"] = [_size(size[0], "expandedSize"), _size(size[1], "expandedSize")]
                     if "collapsed" in operation:
                         if not isinstance(operation["collapsed"], bool):
-                            raise CanvasOperationError("collapsed 只能是 true 或 false")
+                            raise CanvasOperationError(_text_of("apply_operations.text.5"))
                         if operation["collapsed"] and not payload.get("collapsed") and "expandedSize" not in payload:
                             # Remember the open frame, so unfolding gives back the size it had.
                             payload["expandedSize"] = [float(node["width"]), float(node["height"])]
@@ -636,25 +649,25 @@ def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[s
                 source, target = find(operation.get("source")), find(operation.get("target"))
                 edge_kind, role = connection(source, target, role=operation.get("role"))
                 if creates_cycle(edges, source["id"], target["id"]):
-                    raise CanvasOperationError("这条连接会形成环")
+                    raise CanvasOperationError(_text_of("apply_operations.text.6"))
                 if not any(item.get("source") == source["id"] and item.get("target") == target["id"] for item in edges):
                     edges.append({"id": f"e_{uuid.uuid4().hex[:16]}", "source": source["id"], "target": target["id"], "kind": edge_kind, "payload": {"role": role}})
             elif op == "disconnect":
                 source_id, target_id = resolve(operation.get("source")), resolve(operation.get("target"))
                 kept = [item for item in edges if not (item.get("id") == operation.get("edge_id") or (item.get("source") == source_id and item.get("target") == target_id))]
                 if len(kept) == len(edges):
-                    raise CanvasOperationError("没有这条连接")
+                    raise CanvasOperationError(_text_of("apply_operations.text.7"))
                 edges = kept
             elif op == "group":
                 members = [find(item) for item in operation.get("ids") or operation.get("node_ids") or []]
                 if not members:
-                    raise CanvasOperationError("group 需要 ids")
+                    raise CanvasOperationError(_text_of("apply_operations.text.8"))
                 parent_ref = operation.get("parent") or operation.get("group_id")
                 parent = find(parent_ref) if parent_ref else None
                 if parent is not None and parent.get("kind") != "group":
-                    raise CanvasOperationError(f"{parent_ref} 不是分组")
+                    raise CanvasOperationError(_text_of("apply_operations.text.9").format(parent_ref))
                 if parent is not None and any(item["id"] == parent["id"] for item in members):
-                    raise CanvasOperationError("分组不能放进自己")
+                    raise CanvasOperationError(_text_of("apply_operations.text.10"))
                 if parent is None and not parent_ref:
                     # Grouping things that already share a group keeps the new group inside it.
                     shared = {canvas_layout.group_of(item) for item in members}
@@ -666,7 +679,7 @@ def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[s
                 bottom = max(float(item["y"]) + float(item["height"]) for item in members) + 40
                 group = {
                     "id": _new_id(), "kind": "group", "track": "freezone", "x": left, "y": top, "width": right - left, "height": bottom - top,
-                    "artifact_id": None, "payload": {"label": str(operation.get("label") or "分组")},
+                    "artifact_id": None, "payload": {"label": str(operation.get("label") or _text_of("apply_operations.group.payload.label"))},
                 }
                 # Groups draw first, so their frames stay behind what they hold; an outer group before an inner one.
                 nodes.insert(next((i + 1 for i, item in enumerate(nodes) if parent is not None and item is parent), 0), group)
@@ -685,9 +698,9 @@ def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[s
                 target_ref = operation.get("group_id")
                 target = find(target_ref) if target_ref else None
                 if target is not None and target.get("kind") != "group":
-                    raise CanvasOperationError(f"{target_ref} 不是分组")
+                    raise CanvasOperationError(_text_of("apply_operations.text.11").format(target_ref))
                 if target is not None and any(item["id"] == target["id"] for item in members):
-                    raise CanvasOperationError("分组不能放进自己")
+                    raise CanvasOperationError(_text_of("apply_operations.text.12"))
                 for member in members:
                     _set_group(member, str(target["id"]) if target is not None else None)
                 _check_nesting(nodes)
@@ -707,11 +720,11 @@ def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[s
                 by_id = {str(item.get("id")): item for item in nodes}
                 canvas_layout.fit_groups(nodes, [canvas_layout.group_of(by_id[item]) for item in ids if item in by_id])
             else:
-                raise CanvasOperationError(f"未知操作 {op or '（缺 op）'}；可用：{'、'.join(OPERATIONS)}")
+                raise CanvasOperationError(_text_of("apply_operations.text.13").format(op or '（缺 op）', '、'.join(OPERATIONS)))
         except CanvasOperationError as exc:
-            raise CanvasOperationError(f"第 {index} 个操作（{op or '?'}）：{exc}；整批未生效") from exc
+            raise CanvasOperationError(_text_of("apply_operations.text.14").format(index, op or '?', exc)) from exc
         except (TypeError, ValueError) as exc:
-            raise CanvasOperationError(f"第 {index} 个操作（{op or '?'}）字段不合法：{exc}；整批未生效") from exc
+            raise CanvasOperationError(_text_of("apply_operations.text.15").format(index, op or '?', exc)) from exc
     return {"nodes": nodes, "edges": edges}, refs
 
 

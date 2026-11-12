@@ -511,3 +511,18 @@
 .storyboard-frame__likeness.is-off {
   color: var(--warning);
 }
+
+/* 改过一版后仍没过的打戏与占位复核：收起时一行提示，展开逐条看。 */
+.storyboard-craft-issues {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border: 1px solid rgba(var(--warning-rgb), 0.35);
+  border-radius: 10px;
+  background: rgba(var(--warning-rgb), 0.08);
+  color: var(--text-main);
+  font-size: 0.8rem;
+}
+.storyboard-craft-issues summary { cursor: pointer; color: var(--warning-ink); font-weight: 600; }
+.storyboard-craft-issues ul { margin: 6px 0; padding-left: 18px; }
+.storyboard-craft-issues li { margin: 2px 0; line-height: 1.5; }
+.storyboard-craft-issues p { margin: 0; color: var(--text-muted); }

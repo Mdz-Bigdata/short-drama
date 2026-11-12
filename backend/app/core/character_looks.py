@@ -19,6 +19,18 @@ from app.core import prompt_data
 from app.core.character_variants import LOOK_SOURCE, VariantError, clean_variant, episode_of, scene_of
 from app.core.storyboard_scene_context import cast_aliases, costume_owner, mentioned
 
+
+_WORDING_FILE = "character_looks"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/character_looks.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
 # 16:9 且不超过 Seedream 单张约 462 万像素的上限。
 LOOK_BOARD_SIZE = "2848x1600"
 # 出图、核对和改正的措辞在 app/data/prompt/character_looks.json。
@@ -37,17 +49,16 @@ LOOK_MAKEUP_RULE = _say("makeup_rule")
 # 「右手」是人物自己的右手；模型常按画面左右画反，核对也是按人物自己的左右判的。
 LOOK_SIDE_RULE = _say("side_rule")
 LOOK_BOARD_CLOSING = _say("board_closing")
-_NUMBER = r"[\d一二两三四五六七八九十百]{1,5}"
-_RANGE = re.compile(rf"第\s*({_NUMBER})\s*(?:集)?\s*(?:[-–—~～至到]\s*第?\s*({_NUMBER})\s*)?集\s*(起|开始|之后|以后|至剧终|到剧终|至结局|到结局)?")
+_NUMBER = _text_of("module.number")
+_RANGE = re.compile(_text_of("module.range").format(_NUMBER, _NUMBER))
 _SCENE_REF = re.compile(
-    rf"(?P<from>从)?\s*(?:第\s*(?P<episode>{_NUMBER})\s*集\s*)?第\s*(?P<scene>{_NUMBER})\s*场\s*(?P<onward>起|开始|之后|以后)?"
-    r"|E(?P<id_episode>\d+)S(?P<id_scene>\d+)"
+    _text_of("module.scene_ref").format(_NUMBER, _NUMBER)
 )
-_DIGITS = dict(zip("一二两三四五六七八九", (1, 2, 2, 3, 4, 5, 6, 7, 8, 9)))
+_DIGITS = dict(zip(_text_of("module.digits"), (1, 2, 2, 3, 4, 5, 6, 7, 8, 9)))
 # 变体的集数上限(见 schema ElementVariantRequest)：「第11集起」一直穿到剧终。
 _OPEN_END = 500
 #: 「第1集演武场受辱」这样讲剧情的分句，以及开头的「某某穿着」，都不是穿戴，不进定妆图。
-_WEARER_LEAD = re.compile(r"^\s*(?P<name>[^；;，,：:。\s]{1,20}?)(?:穿着|身穿|所穿)\s*[；;，,：:]?\s*")
+_WEARER_LEAD = re.compile(_text_of("module.wearer_lead"))
 
 
 def _merged(spans: list[list[int]]) -> list[list[int]]:
@@ -66,10 +77,10 @@ def _episode_number(text: str) -> int:
         return int(text)
     total, current = 0, 0
     for char in text:
-        if char == "百":
+        if char == _text_of("_episode_number.text"):
             total += (current or 1) * 100
             current = 0
-        elif char == "十":
+        elif char == _text_of("_episode_number.text.2"):
             total += (current or 1) * 10
             current = 0
         elif char in _DIGITS:
@@ -114,7 +125,7 @@ def _wearer(entry: Mapping[str, Any], cast: Sequence[str], aliases: Mapping[str,
     item = {"name": str(entry.get("name") or ""), "description": str(entry.get("description") or "")}
     description = item["description"]
     for label, owner in [*((name, name) for name in cast), *aliases.items()]:
-        if owner in cast and (costume_owner(item, label) or description.startswith((f"{label}穿着", f"{label}身穿"))):
+        if owner in cast and (costume_owner(item, label) or description.startswith((_text_of("_wearer.text").format(label), _text_of("_wearer.text.2").format(label)))):
             return owner
     return ""
 
@@ -214,7 +225,7 @@ def _look(
     name = "·".join([pieces[0]["name"], *(piece["label"] for piece in pieces[1:])])
     label = "·".join(piece["label"] for piece in pieces)
     worn = "；".join(piece["text"] for piece in makeups)
-    description = "；".join(part for part in (outfit["text"] if outfit else "", f"妆效：{worn}" if makeups else "") if part)
+    description = "；".join(part for part in (outfit["text"] if outfit else "", _text_of("_look.description").format(worn) if makeups else "") if part)
     triggers = list(dict.fromkeys(word for piece in pieces for word in (piece["name"], piece["label"])))
     try:
         facts = clean_variant(
@@ -401,7 +412,7 @@ def crowd_wardrobe(task: Mapping[str, Any], *, cast: Sequence[str] | None = None
         name = str(entry.get("name") or "").strip()
         crowd = next((known for known in listed if known in name or name in known), "") or _crowd_name(name, script)
         text = wardrobe_text(str(entry.get("description") or "")) or name
-        crowds.setdefault(crowd, []).append(f"妆效：{text}" if entry["_catalog"] == "makeup" else f"服装：{text}")
+        crowds.setdefault(crowd, []).append(_text_of("crowd_wardrobe.text").format(text) if entry["_catalog"] == "makeup" else _text_of("crowd_wardrobe.text.2").format(text))
     return [
         {"name": crowd, "description": "；".join(part for part in (listed.get(crowd, ""), *parts) if part), "parts": parts}
         for crowd, parts in crowds.items()
@@ -414,7 +425,7 @@ LOOK_CHECK_SYSTEM = _say("check_system")
 
 def wears_makeup(wardrobe: str) -> bool:
     """这身妆造写了妆效：出图要守妆效规则，画完要核对。"""
-    return "妆效：" in wardrobe
+    return _text_of("wears_makeup.text") in wardrobe
 
 
 def names_a_side(wardrobe: str) -> bool:

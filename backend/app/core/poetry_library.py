@@ -29,6 +29,19 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from app.core import prompt_data
+
+
+_WORDING_FILE = "poetry_library"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/poetry_library.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 POETRY_DIR = Path(__file__).resolve().parents[1] / "data" / "poetry"
 
@@ -38,7 +51,7 @@ Rights = Literal["public_domain", "protected"]
 # The project config key: author names, aliases, collection ids or work titles the Writer may draw on.
 CONFIG_KEY = "poetry_sources"
 # Any of these means "the whole shelf".
-ALL_SOURCES = frozenset({"全部", "all", "*", "auto", "自动"})
+ALL_SOURCES = frozenset({_text_of("module.all_sources"), "all", "*", "auto", _text_of("module.all_sources.2")})
 
 _SPLIT = re.compile(r"[\s,，、;；/|]+")
 _PUNCT = re.compile(r"[\s，。！？；：、“”‘’（）()《》〈〉…—\-·,.!?;:\"'\[\]]+")
@@ -74,9 +87,9 @@ class Entry(BaseModel):
         flat = _PUNCT.sub("", self.text)
         for line in self.famous_lines:
             if _PUNCT.sub("", line) not in flat:
-                raise ValueError(f"《{self.title}》的名句「{line}」不在正文里")
+                raise ValueError(_text_of("consistent.text").format(self.title, line))
         if self.rights == "protected" and not self.rights_note.strip():
-            raise ValueError(f"《{self.title}》标为受保护作品，必须写明 rights_note")
+            raise ValueError(_text_of("consistent.text.2").format(self.title))
         return self
 
 
@@ -124,7 +137,7 @@ class Library:
         for poem in self.poems:
             if poem.key == key:
                 return poem
-        raise LookupError(f"诗词库里没有 {key!r}")
+        raise LookupError(_text_of("get.text").format(key))
 
     def by_collection(self, collection: str) -> list[Poem]:
         return [poem for poem in self.poems if poem.collection == collection]
@@ -137,7 +150,7 @@ def _normal(text: str) -> str:
 def load_library(folder: Path | None = None) -> Library:
     folder = folder or POETRY_DIR
     if not folder.is_dir():
-        raise PoetryLibraryError(f"诗词库目录不存在：{folder}")
+        raise PoetryLibraryError(_text_of("load_library.text").format(folder))
     collections: list[Collection] = []
     poems: list[Poem] = []
     seen_collections: set[str] = set()
@@ -148,12 +161,12 @@ def load_library(folder: Path | None = None) -> Library:
         except (OSError, ValueError, ValidationError) as exc:
             raise PoetryLibraryError(f"{path.name}: {exc}") from exc
         if collection.collection in seen_collections:
-            raise PoetryLibraryError(f"{path.name}: 集合 id {collection.collection!r} 重复")
+            raise PoetryLibraryError(_text_of("load_library.text.2").format(path.name, collection.collection))
         seen_collections.add(collection.collection)
         ids: set[str] = set()
         for entry in collection.entries:
             if entry.id in ids:
-                raise PoetryLibraryError(f"{path.name}: 作品 id {entry.id!r} 重复")
+                raise PoetryLibraryError(_text_of("load_library.text.3").format(path.name, entry.id))
             ids.add(entry.id)
             poems.append(Poem(
                 key=f"{collection.collection}/{entry.id}", collection=collection.collection, author=collection.author,
@@ -161,7 +174,7 @@ def load_library(folder: Path | None = None) -> Library:
             ))
         collections.append(collection)
     if not poems:
-        raise PoetryLibraryError(f"诗词库目录里没有作品：{folder}")
+        raise PoetryLibraryError(_text_of("load_library.text.4").format(folder))
     return Library(poems=tuple(poems), collections=tuple(collections))
 
 
@@ -395,23 +408,23 @@ def render_poem(poem: Poem, *, full: bool = False) -> str:
     lines = [head]
     if full:
         if entry.preface:
-            lines.append(f"序：{entry.preface}")
+            lines.append(_text_of("render_poem.text").format(entry.preface))
         lines.append(entry.text)
     elif entry.famous_lines:
-        lines.append("名句：" + "／".join(entry.famous_lines))
+        lines.append(_text_of("render_poem.text.2") + "／".join(entry.famous_lines))
     else:
         lines.append(entry.text.splitlines()[0])
     if entry.themes:
-        lines.append("题旨：" + "、".join(entry.themes) + ("；情绪：" + "、".join(entry.emotions) if entry.emotions else ""))
+        lines.append(_text_of("render_poem.text.3") + "、".join(entry.themes) + (_text_of("render_poem.text.4") + "、".join(entry.emotions) if entry.emotions else ""))
     if entry.drama_uses:
-        lines.append("可用于：" + "；".join(entry.drama_uses))
+        lines.append(_text_of("render_poem.text.5") + "；".join(entry.drama_uses))
     if entry.rights_note:
-        lines.append("版权提示：" + entry.rights_note)
+        lines.append(_text_of("render_poem.text.6") + entry.rights_note)
     return "\n".join(lines)
 
 
-MATERIALS_HEADER = "【诗词库·可取材素材】"
-TRUNCATION_MARK = "（素材清单已按预算截断）"
+MATERIALS_HEADER = _text_of("module.materials_header")
+TRUNCATION_MARK = _text_of("module.truncation_mark")
 
 
 def materials_block(
@@ -458,11 +471,10 @@ def writer_block(
     chosen = pick(poems, keywords, limit=limit)
     names = "、".join(dict.fromkeys(poem.author for poem in chosen))
     intro = (
-        f"本项目指定取材：{names}。下面每条给出名句与用法。引用只用这里给出的文字，不要凭记忆补写名句以外的句子"
-        "（能调用工具时可用 get_poem 取全文）；化用须保留原句的意象与节奏；不要把作者或朝代张冠李戴。"
+        _text_of("writer_block.intro").format(names)
     )
     if unknown:
-        intro += f"（诗词库里没有：{'、'.join(unknown)}）"
+        intro += _text_of("writer_block.text").format('、'.join(unknown))
     return materials_block(chosen, budget=budget, intro=intro)
 
 

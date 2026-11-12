@@ -22,6 +22,19 @@ from app.platform.billing_book import active_book
 from app.platform.permissions import legacy_role, permissions_for
 from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore
+from app.core import prompt_data
+
+
+_WORDING_FILE = "api_mcp_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_mcp_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 router = APIRouter(tags=["MCP"])
 PROTOCOL_VERSION = "2025-03-26"
@@ -55,7 +68,7 @@ async def create_mcp_token(request: McpTokenCreateRequest, current_user: dict = 
 @router.delete("/api/mcp/tokens/{token_id}")
 async def revoke_mcp_token(token_id: str, current_user: dict = Depends(get_current_user), store: PlatformStore = Depends(get_platform_store)):
     if not await store.revoke_mcp_token(current_user["user_id"], token_id):
-        raise HTTPException(status_code=404, detail="令牌不存在或已撤销")
+        raise HTTPException(status_code=404, detail=_text_of("revoke_mcp_token.detail"))
     return {"id": token_id, "revoked": True}
 
 
@@ -65,10 +78,10 @@ def _rpc_error(request_id: Any, code: int, message: str, status: int = 200) -> J
 
 async def _mcp_user(authorization: str | None, store: PlatformStore) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="缺少 MCP 令牌")
+        raise HTTPException(status_code=401, detail=_text_of("_mcp_user.detail"))
     user = await store.verify_mcp_token(authorization.removeprefix("Bearer ").strip())
     if user is None:
-        raise HTTPException(status_code=401, detail="MCP 令牌无效或已撤销")
+        raise HTTPException(status_code=401, detail=_text_of("_mcp_user.detail.2"))
     usage_ledger.bind_user(user.id)
     book = active_book()
     if book is not None:
@@ -107,7 +120,7 @@ async def mcp_endpoint(request: Request, authorization: str | None = Header(None
     if method == "initialize":
         return JSONResponse({"jsonrpc": "2.0", "id": request_id, "result": {
             "protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {"listChanged": False}}, "serverInfo": SERVER_INFO,
-            "instructions": "付费工具（run_stage / run_all / repair_episode / render_timeline）必须显式传 confirm=true 才会执行。",
+            "instructions": _text_of("mcp_endpoint.result.instructions"),
         }})
     if method == "ping":
         return JSONResponse({"jsonrpc": "2.0", "id": request_id, "result": {}})
@@ -134,4 +147,4 @@ async def mcp_endpoint(request: Request, authorization: str | None = Header(None
 
 @router.get("/mcp")
 async def mcp_stream_unsupported():
-    raise HTTPException(status_code=405, detail="此 MCP 服务只接受 POST（Streamable HTTP，无服务端推流）")
+    raise HTTPException(status_code=405, detail=_text_of("mcp_stream_unsupported.detail"))

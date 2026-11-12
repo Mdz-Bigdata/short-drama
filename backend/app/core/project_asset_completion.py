@@ -29,6 +29,19 @@ from app.core.production_asset_readiness import (
     evaluate_asset_readiness,
 )
 from app.platform.store import PlatformStore
+from app.core import prompt_data
+
+
+_WORDING_FILE = "project_asset_completion"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/project_asset_completion.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger(__name__)
 _PAGE_SIZE = 100
@@ -104,7 +117,7 @@ async def _complete(task: dict, owner_id: str, task_id: str, generate_missing: b
                             item=item,
                             owner_id=owner_id,
                             store=store,
-                            extra_prompt="按剧本资产描述生成可直接用于本项目的完整参考图",
+                            extra_prompt=_text_of("_complete.extra_prompt"),
                         )
                     generated += 1
                 except Exception as exc:  # one failed image must not stop the others
@@ -133,7 +146,7 @@ def complete_project_assets(task: dict, *, generate_missing: bool = True) -> dic
     except RuntimeError:
         pass
     else:
-        return evaluate_asset_readiness(task, None, library_error="必须在同步阶段工作线程中完成资产库同步")
+        return evaluate_asset_readiness(task, None, library_error=_text_of("complete_project_assets.library_error"))
     try:
         return asyncio.run(_complete(task, owner_id, task_id, generate_missing))
     except Exception as exc:

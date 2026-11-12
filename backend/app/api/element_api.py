@@ -84,7 +84,19 @@ from app.schema.platform import (
 )
 
 
-router = APIRouter(prefix="/api/elements", tags=["演员道具场景特效元素库"])
+_WORDING_FILE = "element_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/element_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+
+router = APIRouter(prefix="/api/elements", tags=list(_words_of("module.tags")))
 logger = logging.getLogger(__name__)
 element_image_gateway = ModelGateway()
 element_task_repository = TaskRepository()
@@ -133,10 +145,7 @@ _GENERATION_KIND_PROMPTS = {
     # 场地出一张空景四视角(主场景全景 / 45°斜角 / 纵深视角 / 关键细节)的 2×2 四宫格，切成四张，见 core/scene_turnaround。
     "scene": SCENE_TURNAROUND_INSTRUCTION,
     "effect": (
-        "生成一张影视视觉特效定帧参考图，画面唯一视觉主体必须是特效现象本身，不是道具，"
-        "不是场景，也不是普通环境空镜。准确表现剧本指定特效的形态、尺度、颜色、能量层次、"
-        "粒子或流体结构、运动方向、触发点、扩散边界及光影交互；仅保留判断尺度所需的极少中性"
-        "环境参照，写实可合成，无人物，无独立陈列物品，单一完整画面，不做拼贴。"
+        _text_of("module.generation_kind_prompts.effect")
     ),
 }
 
@@ -187,14 +196,12 @@ def _element_reference_prompt(item, extra_prompt: str, project_style: str) -> st
         else _GENERATION_KIND_PROMPTS.get(str(item.kind), "")
     )
     prompt = (
-        f"{kind_instruction}\n"
-        f"资产名称：{str(item.name).strip()}\n"
-        f"剧本依据：{description or '按资产名称建立清晰、完整、可复用的影视参考设计'}\n"
+        _text_of("_element_reference_prompt.prompt").format(kind_instruction, str(item.name).strip(), description or '按资产名称建立清晰、完整、可复用的影视参考设计')
     )
     if project_style:
-        prompt += f"项目视觉基准：{project_style}\n"
+        prompt += _text_of("_element_reference_prompt.text").format(project_style)
     if extra_prompt.strip():
-        prompt += f"本次补充要求：{extra_prompt.strip()}\n"
+        prompt += _text_of("_element_reference_prompt.text.2").format(extra_prompt.strip())
     if str(item.kind) == "effect":
         # 修仙特效先定形、分三层、颜色材质成对；武侠的内力画受力，不画发光体。
         prompt += wuxia_vfx.reference_rules(str(item.name or ""), description) + "\n"
@@ -209,8 +216,7 @@ def _element_reference_prompt(item, extra_prompt: str, project_style: str) -> st
         return prompt + f"{scale_line}\n" + (f"{place_line}\n" if place_line else "") + SCENE_TURNAROUND_CLOSING
     return (
         prompt
-        + "统一要求：主体完整位于画面安全区，结构清晰，透视正确，材质真实，细节丰富，高清写实电影质感；"
-        "严禁任何文字、标签、字幕、水印、Logo、边框、九宫格、接触表和重复物体。"
+        + _text_of("_element_reference_prompt.text.3")
     )
 
 
@@ -221,13 +227,13 @@ def _load_generated_image_bytes(url: str) -> bytes:
             encoded = value.split(",", 1)[1]
             content = base64.b64decode(encoded, validate=True)
         except (IndexError, ValueError) as exc:
-            raise ValueError("图像模型返回了无效的 data URI") from exc
+            raise ValueError(_text_of("_load_generated_image_bytes.text")) from exc
         if len(content) > MAX_REMOTE_IMAGE_BYTES:
-            raise ValueError("生成图片超过 30 MB")
+            raise ValueError(_text_of("_load_generated_image_bytes.text.2"))
         return content
     if value.startswith(("https://", "http://")):
         return fetch_remote_image_bytes(value)
-    raise ValueError("图像模型没有返回可下载的 HTTP(S) 图片地址")
+    raise ValueError(_text_of("_load_generated_image_bytes.text.3"))
 
 
 def _validated_generated_image(content: bytes) -> tuple[str, str]:
@@ -238,14 +244,14 @@ def _validated_generated_image(content: bytes) -> tuple[str, str]:
     )
     detected = next((entry for entry in signatures if content.startswith(entry[0])), None)
     if detected is None:
-        raise ValueError("图像模型返回的文件不是受支持的 PNG、JPEG 或 WebP 图片")
+        raise ValueError(_text_of("_validated_generated_image.text"))
     _, suffix, mime = detected
     validate_image_upload(f"generated{suffix}", mime, content, max_bytes=MAX_REMOTE_IMAGE_BYTES)
     try:
         with Image.open(io.BytesIO(content)) as image:
             image.verify()
     except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as exc:
-        raise ValueError("图像模型返回的图片已损坏") from exc
+        raise ValueError(_text_of("_validated_generated_image.text.2")) from exc
     return suffix, mime
 
 
@@ -370,7 +376,7 @@ async def list_elements(
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=100),
     task_id: str | None = Query(None, max_length=120),
-    folder: str | None = Query(None, max_length=36, description="文件夹 id，或 unfiled 表示未归档；不给时列出全部"),
+    folder: str | None = Query(None, max_length=36, description=_text_of("list_elements.description")),
     user: dict = Depends(get_current_user),
     store: PlatformStore = Depends(get_platform_store),
 ):
@@ -477,7 +483,7 @@ async def update_element_folder(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if folder is None:
-        raise HTTPException(status_code=404, detail="文件夹不存在")
+        raise HTTPException(status_code=404, detail=_text_of("update_element_folder.detail"))
     return {"id": folder.id, "name": folder.name, "cover_element_id": folder.cover_element_id}
 
 
@@ -489,7 +495,7 @@ async def delete_element_folder(
 ):
     """Delete the folder only; its elements go back to unfiled."""
     if not await store.delete_element_folder(user["user_id"], folder_id):
-        raise HTTPException(status_code=404, detail="文件夹不存在")
+        raise HTTPException(status_code=404, detail=_text_of("delete_element_folder.detail"))
     return {"deleted": True}
 
 
@@ -501,7 +507,7 @@ async def get_element(
 ):
     item = await store.get_element(element_id, user["user_id"])
     if not item:
-        raise HTTPException(status_code=404, detail="元素不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_element.detail"))
     placed = await store.element_folder_ids(user["user_id"], [item.id])
     return {**_element(item), "folder_id": placed.get(item.id)}
 
@@ -516,7 +522,7 @@ async def set_element_variant(
     """Make an actor element a derived look of another character (少年 / 婚纱 / 受伤后 …)."""
     item = await store.get_element(element_id, user["user_id"])
     if not item:
-        raise HTTPException(status_code=404, detail="元素不存在")
+        raise HTTPException(status_code=404, detail=_text_of("set_element_variant.detail"))
     try:
         # 表单只有一段集数和这几个字段：定妆图的来源和分散的集数跟着条目走，见 clean_variant。
         # 改过的定妆图记下来，之后同步剧本不再覆盖。
@@ -599,7 +605,7 @@ async def set_prop_size(
             lambda hook: store.set_prop_length(element_id, user["user_id"], request.length_cm, before_commit=hook),
         )
     except ValueError as exc:
-        status = 404 if "不存在" in str(exc) else 422
+        status = 404 if _text_of("set_prop_size.status") in str(exc) else 422
         raise HTTPException(status_code=status, detail=str(exc)) from exc
     result = await _redraw_prop_board(updated, user["user_id"], store) or _element(updated)
     return await _synced(result, user["user_id"], "prop_size")
@@ -614,12 +620,12 @@ async def draw_scene_scale(
     """给已有主场景全景的场地画人物比例参照(比例尺、人形、尺寸)。只在本地画，不调用图像模型。"""
     item = await store.get_element(element_id, user["user_id"])
     if item is None:
-        raise HTTPException(status_code=404, detail="资产不存在")
+        raise HTTPException(status_code=404, detail=_text_of("draw_scene_scale.detail"))
     if str(item.kind) != "scene":
-        raise HTTPException(status_code=422, detail="只有拍摄场地有人物比例参照")
+        raise HTTPException(status_code=422, detail=_text_of("draw_scene_scale.detail.2"))
     result = await _redraw_scene_scale(item, user["user_id"], store)
     if result is None:
-        raise HTTPException(status_code=409, detail="这处场地还没有主场景全景，先生成参考图")
+        raise HTTPException(status_code=409, detail=_text_of("draw_scene_scale.detail.3"))
     return await _synced(result, user["user_id"], "file")
 
 
@@ -632,9 +638,9 @@ async def draw_scene_reverse(
     """给已有主场景全景的场地补一张反打视角空景(调用图像模型，一张图)。"""
     item = await store.get_element(element_id, user["user_id"])
     if item is None:
-        raise HTTPException(status_code=404, detail="资产不存在")
+        raise HTTPException(status_code=404, detail=_text_of("draw_scene_reverse.detail"))
     if str(item.kind) != "scene":
-        raise HTTPException(status_code=422, detail="只有拍摄场地有反打视角")
+        raise HTTPException(status_code=422, detail=_text_of("draw_scene_reverse.detail.2"))
     return await _synced(await _draw_scene_reverse(item, user["user_id"], store), user["user_id"], "file")
 
 
@@ -648,7 +654,7 @@ async def upload_element_file(
 ):
     element = await store.get_element(element_id, user["user_id"])
     if not element:
-        raise HTTPException(status_code=404, detail="元素不存在")
+        raise HTTPException(status_code=404, detail=_text_of("upload_element_file.detail"))
 
     filename = file.filename or ""
     content = await file.read(MAX_IMAGE_UPLOAD_BYTES + 1)
@@ -677,7 +683,7 @@ def _safe_media_path(relative_path: Path | str, storage_root: Path | None = None
     root = (storage_root or ELEMENT_MEDIA_ROOT).resolve()
     absolute = (root / relative_path).resolve()
     if root not in absolute.parents:
-        raise HTTPException(status_code=422, detail="无效存储路径")
+        raise HTTPException(status_code=422, detail=_text_of("_safe_media_path.detail"))
     return absolute
 
 
@@ -690,10 +696,10 @@ def _safe_owned_media_path(
     root = storage_root.resolve()
     owned_element_root = (root / owner_id / element_id).resolve()
     if root not in owned_element_root.parents:
-        raise HTTPException(status_code=422, detail="无效存储路径")
+        raise HTTPException(status_code=422, detail=_text_of("_safe_owned_media_path.detail"))
     absolute = _safe_media_path(relative_path, storage_root)
     if owned_element_root not in absolute.parents:
-        raise HTTPException(status_code=422, detail="无效存储路径")
+        raise HTTPException(status_code=422, detail=_text_of("_safe_owned_media_path.detail.2"))
     return absolute
 
 
@@ -721,7 +727,7 @@ def _owned_reference_path(
         if candidate.is_file():
             return candidate, resolved_root
     if not candidates:
-        raise HTTPException(status_code=422, detail="无效存储路径")
+        raise HTTPException(status_code=422, detail=_text_of("_owned_reference_path.detail"))
     return candidates[0]
 
 
@@ -865,7 +871,7 @@ class _DeletionQuarantine:
                 self.restore()
             except OSError:
                 self.log_stranded("failed to restore partially quarantined element files")
-            raise HTTPException(status_code=500, detail="资产文件隔离失败，删除未执行") from exc
+            raise HTTPException(status_code=500, detail=_text_of("stage.detail")) from exc
         return {
             "quarantined_count": len(self._files),
             "skipped_unowned_file_ids": skipped_ids,
@@ -890,7 +896,7 @@ class _DeletionQuarantine:
                 remaining.append(item)
         self._files = list(reversed(remaining))
         if failures:
-            raise OSError("一个或多个隔离文件恢复失败") from failures[0]
+            raise OSError(_text_of("restore.text")) from failures[0]
 
     def purge(self) -> None:
         remaining: list[_QuarantinedFile] = []
@@ -930,7 +936,7 @@ def _ensure_disk_capacity(storage_root: Path, incoming_bytes: int) -> None:
         projected_free < ELEMENT_STORAGE_MIN_FREE_BYTES
         or projected_used_percent >= ELEMENT_STORAGE_MAX_USED_PERCENT
     ):
-        raise HTTPException(status_code=507, detail="资产存储空间不足，已触发磁盘高水位保护")
+        raise HTTPException(status_code=507, detail=_text_of("_ensure_disk_capacity.detail"))
 
 
 async def _persist_element_file(
@@ -1026,12 +1032,12 @@ async def get_element_file_content(
 ):
     element = await store.get_element(element_id, user["user_id"])
     if not element:
-        raise HTTPException(status_code=404, detail="元素不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_element_file_content.detail"))
     if version != element.version:
-        raise HTTPException(status_code=404, detail="参考图版本已更新")
+        raise HTTPException(status_code=404, detail=_text_of("get_element_file_content.detail.2"))
     reference = next((entry for entry in element.files if entry.id == file_id), None)
     if not reference or reference.mime_type not in {"image/png", "image/jpeg", "image/webp"}:
-        raise HTTPException(status_code=404, detail="参考图不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_element_file_content.detail.3"))
     try:
         absolute, _ = _owned_reference_path(
             reference.storage_path,
@@ -1039,9 +1045,9 @@ async def get_element_file_content(
             element_id,
         )
     except HTTPException as exc:
-        raise HTTPException(status_code=404, detail="参考图文件不存在") from exc
+        raise HTTPException(status_code=404, detail=_text_of("get_element_file_content.detail.4")) from exc
     if not absolute.is_file():
-        raise HTTPException(status_code=404, detail="参考图文件不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_element_file_content.detail.5"))
     return FileResponse(
         absolute,
         media_type=reference.mime_type,
@@ -1089,9 +1095,9 @@ async def upload_element_model(
 ):
     element = await store.get_element(element_id, user["user_id"])
     if not element:
-        raise HTTPException(status_code=404, detail="元素不存在")
+        raise HTTPException(status_code=404, detail=_text_of("upload_element_model.detail"))
     if element.kind not in {"prop", "scene"}:
-        raise HTTPException(status_code=422, detail="只有场景和道具元素可以上传 3D 模型")
+        raise HTTPException(status_code=422, detail=_text_of("upload_element_model.detail.2"))
 
     content = await file.read(MAX_MODEL_UPLOAD_BYTES + 1)
     max_triangles = 1_000_000 if element.kind == "prop" else 2_000_000
@@ -1109,9 +1115,9 @@ async def upload_element_model(
     recommended_triangles = 150_000 if element.kind == "prop" else 500_000
     warnings = []
     if stats["triangles"] > recommended_triangles:
-        warnings.append(f"建议将三角面优化到 {recommended_triangles:,} 以下")
+        warnings.append(_text_of("upload_element_model.text").format(recommended_triangles))
     if len(content) > 5 * 1024 * 1024:
-        warnings.append("建议将 Web 展示模型优化到 5 MB 以下")
+        warnings.append(_text_of("upload_element_model.text.2"))
     sha256 = hashlib.sha256(content).hexdigest()
     stored = await _persist_element_file(
         element_id=element_id,
@@ -1144,15 +1150,15 @@ async def get_element_model_content(
 ):
     element = await store.get_element(element_id, user["user_id"])
     if not element:
-        raise HTTPException(status_code=404, detail="元素不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_element_model_content.detail"))
     if version is not None and version != element.version:
-        raise HTTPException(status_code=404, detail="3D 模型版本已更新")
+        raise HTTPException(status_code=404, detail=_text_of("get_element_model_content.detail.2"))
     model = next((entry for entry in element.files if entry.slot == "model_glb"), None)
     if not model:
-        raise HTTPException(status_code=404, detail="3D 模型不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_element_model_content.detail.3"))
     absolute = _safe_media_path(model.storage_path, ELEMENT_MODEL_ROOT)
     if not absolute.is_file():
-        raise HTTPException(status_code=404, detail="3D 模型文件不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_element_model_content.detail.4"))
     return FileResponse(
         absolute,
         media_type="model/gltf-binary",
@@ -1175,7 +1181,7 @@ async def _generate_non_actor_reference(
     extra_prompt: str = "",
 ) -> dict:
     if str(item.kind) not in _NON_ACTOR_KINDS:
-        raise HTTPException(status_code=422, detail="数字演员设定集请在角色设计工作区生成")
+        raise HTTPException(status_code=422, detail=_text_of("_generate_non_actor_reference.detail"))
     image_model, project_style = await _element_generation_context(item, owner_id)
     prompt = _element_reference_prompt(item, extra_prompt, project_style)
     prop_plan = _prop_plan(item, extra_prompt) if str(item.kind) == "prop" else None
@@ -1188,7 +1194,7 @@ async def _generate_non_actor_reference(
             **({"size": size} if size else {}),
         )
         if not generated_url:
-            raise RuntimeError("所有已配置图像模型均未返回图片")
+            raise RuntimeError(_text_of("_generate_non_actor_reference.text"))
         content = await run_in_threadpool(_load_generated_image_bytes, generated_url)
         suffix, mime = await run_in_threadpool(_validated_generated_image, content)
     except HTTPException:
@@ -1203,7 +1209,7 @@ async def _generate_non_actor_reference(
         )
         raise HTTPException(
             status_code=502,
-            detail="参考图生成失败，图像模型未返回可验证的图片；请检查模型配置后重试",
+            detail=_text_of("_generate_non_actor_reference.detail.2"),
         ) from exc
     if prop_plan:
         return await _persist_prop_views(
@@ -1212,7 +1218,7 @@ async def _generate_non_actor_reference(
     if str(item.kind) == "scene":
         result = await _persist_board_views(
             item=item, owner_id=owner_id, store=store, content=content, suffix=suffix, mime=mime,
-            split=split_scene_turnaround, slots=SCENE_GRID_SLOTS, what="场景四视角",
+            split=split_scene_turnaround, slots=SCENE_GRID_SLOTS, what=_text_of("_generate_non_actor_reference.what"),
         )
         current = await store.get_element(item.id, owner_id)
         result = (await _redraw_scene_scale(current, owner_id, store) if current else None) or result
@@ -1261,7 +1267,7 @@ async def _generate_look_image(*, item, owner_id: str, store: PlatformStore, ext
         if reference:
             break
     if not reference:
-        raise HTTPException(status_code=422, detail=f"「{facts.get('of')}」还没有可用的身份视图，请先生成数字演员设定集")
+        raise HTTPException(status_code=422, detail=_text_of("_generate_look_image.detail").format(facts.get('of')))
     # 旧项目已经确认过的服装图、妆效图不白费：一起给模型当设计参考。
     earlier: list[bytes] = []
     worn = {normalized_asset_name(name) for name in character_variants.worn_names({"name": item.name, "metadata": _element_metadata(item)})}
@@ -1286,7 +1292,7 @@ async def _generate_look_image(*, item, owner_id: str, store: PlatformStore, ext
                 )
             )
             if not generated_url:
-                raise RuntimeError("所有已配置图像模型均未返回图片")
+                raise RuntimeError(_text_of("draw.text"))
             drawn = await run_in_threadpool(_load_generated_image_bytes, generated_url)
             drawn_suffix, drawn_mime = await run_in_threadpool(_validated_generated_image, drawn)
             return drawn, drawn_suffix, drawn_mime
@@ -1313,7 +1319,7 @@ async def _generate_look_image(*, item, owner_id: str, store: PlatformStore, ext
         raise
     except (OSError, RuntimeError, ValueError) as exc:
         logger.warning("角色定妆图生成失败: element=%s error=%s", item.id, type(exc).__name__)
-        raise HTTPException(status_code=502, detail="定妆图生成失败，图像模型未返回可验证的图片；请检查模型配置后重试") from exc
+        raise HTTPException(status_code=502, detail=_text_of("_generate_look_image.detail.2")) from exc
     # 定妆图是整张展示板，放在分镜优先取的正面槽；切出来的七张单独存，给人点开放大看。
     await _persist_element_file(
         element_id=item.id, owner_id=owner_id, slot="front", suffix=suffix, mime=mime, content=content, store=store,
@@ -1458,10 +1464,10 @@ def _scene_reverse_prompt(item, extra_prompt: str, project_style: str) -> str:
     description = str(item.description or "").strip()
     lines = [
         EMPTY_SCENE_PREFIX + prompt_data.text("scene_views", "reverse_view_instruction"),
-        f"资产名称：{str(item.name).strip()}",
-        f"剧本依据：{description or '按资产名称建立清晰、完整、可复用的影视参考设计'}",
-        f"项目视觉基准：{project_style}" if project_style else "",
-        f"本次补充要求：{extra_prompt.strip()}" if extra_prompt.strip() else "",
+        _text_of("_scene_reverse_prompt.lines").format(str(item.name).strip()),
+        _text_of("_scene_reverse_prompt.lines.2").format(description or '按资产名称建立清晰、完整、可复用的影视参考设计'),
+        _text_of("_scene_reverse_prompt.lines.3").format(project_style) if project_style else "",
+        _text_of("_scene_reverse_prompt.lines.4").format(extra_prompt.strip()) if extra_prompt.strip() else "",
         scene_scale.prompt_line(scene_scale.plan(str(item.name), description)),
         xianxia_props.place_rules(str(item.name or ""), description),
         prompt_data.text("scene_views", "reverse_view_closing") + EMPTY_SCENE_SUFFIX,
@@ -1473,7 +1479,7 @@ async def _draw_scene_reverse(item, owner_id: str, store: PlatformStore, *, extr
     """以已存的主场景全景为参考，出一张反打视角空景存进 ``scene_reverse``(付费，一张图)。"""
     main = next((file for file in item.files if file.slot == SCENE_VIEW_SLOTS[0]), None)
     if main is None:
-        raise HTTPException(status_code=409, detail="这处场地还没有主场景全景，先生成参考图")
+        raise HTTPException(status_code=409, detail=_text_of("_draw_scene_reverse.detail"))
     image_model, project_style = await _element_generation_context(item, owner_id)
     prompt = _scene_reverse_prompt(item, extra_prompt, project_style)
     try:
@@ -1486,14 +1492,14 @@ async def _draw_scene_reverse(item, owner_id: str, store: PlatformStore, *, extr
             )
         )
         if not generated_url:
-            raise RuntimeError("所有已配置图像模型均未返回图片")
+            raise RuntimeError(_text_of("_draw_scene_reverse.text"))
         content = await run_in_threadpool(_load_generated_image_bytes, generated_url)
         suffix, mime = await run_in_threadpool(_validated_generated_image, content)
     except HTTPException:
         raise
     except (OSError, RuntimeError, ValueError) as exc:
         logger.warning("场地反打视角生成失败: element=%s error=%s", item.id, type(exc).__name__)
-        raise HTTPException(status_code=502, detail="反打视角生成失败，图像模型未返回可验证的图片；请检查模型配置后重试") from exc
+        raise HTTPException(status_code=502, detail=_text_of("_draw_scene_reverse.detail.2")) from exc
     return await _persist_element_file(
         element_id=item.id, owner_id=owner_id, slot=SCENE_REVERSE_SLOT, suffix=suffix, mime=mime,
         content=content, store=store,
@@ -1579,7 +1585,7 @@ async def _run_generation_job(
             try:
                 current = await store.get_element(item.id, owner_id)
                 if not current:
-                    raise ValueError("资产不存在")
+                    raise ValueError(_text_of("generate_one.text"))
                 if any(file.mime_type.startswith("image/") for file in current.files) and not replace_existing:
                     job["succeeded"] = int(job["succeeded"]) + 1
                 elif _is_look(current):
@@ -1590,7 +1596,7 @@ async def _run_generation_job(
                         item=current,
                         owner_id=owner_id,
                         store=store,
-                        extra_prompt="按剧本资产描述生成可直接用于本项目的完整参考图",
+                        extra_prompt=_text_of("generate_one.extra_prompt"),
                     )
                     await _synced(generated, owner_id, "file")
                     job["succeeded"] = int(job["succeeded"]) + 1
@@ -1627,7 +1633,7 @@ async def start_element_generation_job(
 ):
     looks_only = request.looks and request.kind == "actor"
     if request.kind not in _NON_ACTOR_KINDS and not looks_only:
-        raise HTTPException(status_code=422, detail="批量参考图生成不支持数字演员和商品")
+        raise HTTPException(status_code=422, detail=_text_of("start_element_generation_job.detail"))
     owner_id = user["user_id"]
     items = await store.list_all_elements(owner_id, request.kind)
     task_id = str(request.task_id or "").strip()
@@ -1688,7 +1694,7 @@ async def get_element_generation_job(
 ):
     job = _generation_jobs.get(job_id)
     if not job or job.get("owner_id") != user["user_id"]:
-        raise HTTPException(status_code=404, detail="图片生成任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_element_generation_job.detail"))
     return _public_generation_job(job)
 
 
@@ -1742,11 +1748,11 @@ def _media_url_bytes(url: str) -> bytes:
     """设定集切出的身份格都落在本地 /media 下；只读媒体根之内的文件。"""
     path = urlparse(str(url or "")).path
     if not path.startswith(settings.MEDIA_PREFIX):
-        raise ValueError("身份视图不在本地媒体目录")
+        raise ValueError(_text_of("_media_url_bytes.text"))
     media_root = os.path.realpath(MEDIA_DIR)
     absolute = os.path.realpath(os.path.join(media_root, unquote(path[len(settings.MEDIA_PREFIX):])))
     if not absolute.startswith(media_root + os.sep) or not os.path.isfile(absolute):
-        raise ValueError("身份视图文件不存在")
+        raise ValueError(_text_of("_media_url_bytes.text.2"))
     with open(absolute, "rb") as handle:
         return handle.read()
 
@@ -1764,7 +1770,7 @@ async def _file_actor_views(
     }
     missing = [view for view in IDENTITY_VIEW_ORDER if not by_view.get(view)]
     if missing:
-        raise RuntimeError("新设定集缺少身份视图：" + "、".join(missing))
+        raise RuntimeError(_text_of("_file_actor_views.text") + "、".join(missing))
     prepared = []
     for view in IDENTITY_VIEW_ORDER:
         content = await run_in_threadpool(_media_url_bytes, by_view[view])
@@ -1856,7 +1862,7 @@ async def _regenerate_library_actor(element_id: str, owner_id: str, store: Platf
     try:
         item = await store.get_element(element_id, owner_id)
         if not item:
-            raise RuntimeError("资产不存在")
+            raise RuntimeError(_text_of("_regenerate_library_actor.text"))
         metadata = _element_metadata(item)
         reference = await run_in_threadpool(_actor_reference_bytes, item)
         result = await run_in_threadpool(
@@ -1878,7 +1884,7 @@ async def _regenerate_library_actor(element_id: str, owner_id: str, store: Platf
             await _synced(_element(refreshed), owner_id, "file")
     except (Exception, BillingRefused) as exc:  # noqa: BLE001 - 失败只记在该演员名下，旧图不动
         detail = exc.detail if isinstance(exc, (HTTPException, BillingRefused)) else str(exc)
-        error = str(detail or "").strip()[:260] or "数字演员设定集重新生成失败"
+        error = str(detail or "").strip()[:260] or _text_of("_regenerate_library_actor.error")
         logger.warning("资产库数字演员重新生成失败: element=%s error=%s", element_id, error)
     state = (
         {"status": "failed", "error": error, "finished_epoch": time.time()}
@@ -1900,7 +1906,7 @@ async def set_real_person(
     """设为真人演员：本人照片就是身份，按照片出分镜和视频。必须确认持有肖像授权。"""
     element = await store.get_element(element_id, user["user_id"])
     if not element or str(element.kind) != "actor" or _is_look(element):
-        raise HTTPException(status_code=404, detail="数字演员不存在")
+        raise HTTPException(status_code=404, detail=_text_of("set_real_person.detail"))
     try:
         record = real_person.clean_record(
             person=request.person, scope=request.scope, expires=request.expires, ark_assets=request.ark_assets,
@@ -1924,7 +1930,7 @@ async def clear_real_person(
     """取消真人演员：照片留着，之后可以照常重新生成设定集。"""
     element = await store.get_element(element_id, user["user_id"])
     if not element or str(element.kind) != "actor":
-        raise HTTPException(status_code=404, detail="数字演员不存在")
+        raise HTTPException(status_code=404, detail=_text_of("clear_real_person.detail"))
     try:
         updated = await _trimming_history(
             user["user_id"], element.id,
@@ -1944,15 +1950,15 @@ async def split_look_views(
     """把已经画好的定妆图展示板切成单张；不调用模型。较早的展示板按当时的版式(腰带、袖口特写)命名。"""
     element = await store.get_element(element_id, user["user_id"])
     if not element or not _is_look(element):
-        raise HTTPException(status_code=404, detail="定妆图不存在")
+        raise HTTPException(status_code=404, detail=_text_of("split_look_views.detail"))
     board = next((file for file in element.files if file.slot == "front" and str(file.mime_type or "").startswith("image/")), None)
     if board is None:
-        raise HTTPException(status_code=422, detail="这套定妆图还没生成")
+        raise HTTPException(status_code=422, detail=_text_of("split_look_views.detail.2"))
     try:
         absolute, _ = _owned_reference_path(board.storage_path, element.owner_id, element.id)
         content = await run_in_threadpool(absolute.read_bytes)
     except (HTTPException, OSError) as exc:
-        raise HTTPException(status_code=422, detail="读不到这套定妆图") from exc
+        raise HTTPException(status_code=422, detail=_text_of("split_look_views.detail.3")) from exc
     await _persist_look_views(element.id, user["user_id"], store, content)
     patch = {} if _element_metadata(element).get(LOOK_LAYOUT) else {LOOK_LAYOUT: LAYOUT_PLAIN}
     updated = await store.merge_element_metadata(element.id, user["user_id"], patch) if patch else await store.get_element(element.id, user["user_id"])
@@ -1970,14 +1976,14 @@ async def regenerate_element(
 ):
     element = await store.get_element(element_id, user["user_id"])
     if not element:
-        raise HTTPException(status_code=404, detail="元素不存在")
+        raise HTTPException(status_code=404, detail=_text_of("regenerate_element.detail"))
     if str(element.kind) in ("costume", "makeup"):
-        raise HTTPException(status_code=422, detail="服装和化妆已并入表演妆造，请在角色设计的定妆图里重新生成")
+        raise HTTPException(status_code=422, detail=_text_of("regenerate_element.detail.2"))
     if _is_look(element):
         generated = await _generate_look_image(item=element, owner_id=user["user_id"], store=store, extra_prompt=request.prompt)
         return await _synced(generated, user["user_id"], "file")
     if str(element.kind) == "actor" and real_person.is_real_person(_element_metadata(element)):
-        raise HTTPException(status_code=409, detail="真人演员以本人照片为准，不重新生成；要换照片请直接上传")
+        raise HTTPException(status_code=409, detail=_text_of("regenerate_element.detail.3"))
     if str(element.kind) in _NON_ACTOR_KINDS:
         generated = await _generate_non_actor_reference(
             item=element,
@@ -1988,7 +1994,7 @@ async def regenerate_element(
         return await _synced(generated, user["user_id"], "file")
     # 数字演员：后台重出一张设定集（付费），五个身份视图通过质检后替换；列表里的 metadata.regeneration 报进度。
     if _actor_regenerating(_element_metadata(element)):
-        raise HTTPException(status_code=409, detail=f"「{element.name}」正在重新生成，请稍候")
+        raise HTTPException(status_code=409, detail=_text_of("regenerate_element.detail.4").format(element.name))
     updated = await store.merge_element_metadata(
         element_id,
         user["user_id"],
@@ -2044,10 +2050,10 @@ async def get_element_revision_file_content(
 ):
     item = await store.get_element_revision(user["user_id"], element_id, revision)
     if item is None:
-        raise HTTPException(status_code=404, detail="这一版不存在或已清理")
+        raise HTTPException(status_code=404, detail=_text_of("get_element_revision_file_content.detail"))
     entry = next((entry for entry in item.files_json or [] if isinstance(entry, dict) and entry.get("slot") == slot), None)
     if entry is None:
-        raise HTTPException(status_code=404, detail="这一版没有这个槽位的文件")
+        raise HTTPException(status_code=404, detail=_text_of("get_element_revision_file_content.detail.2"))
     mime = str(entry.get("mime_type") or "")
     try:
         if mime == "model/gltf-binary":
@@ -2055,11 +2061,11 @@ async def get_element_revision_file_content(
         elif mime in {"image/png", "image/jpeg", "image/webp"}:
             absolute, _ = _owned_reference_path(entry.get("storage_path") or "", user["user_id"], element_id)
         else:
-            raise HTTPException(status_code=404, detail="历史文件不存在")
+            raise HTTPException(status_code=404, detail=_text_of("get_element_revision_file_content.detail.3"))
     except HTTPException as exc:
-        raise HTTPException(status_code=404, detail="历史文件不存在") from exc
+        raise HTTPException(status_code=404, detail=_text_of("get_element_revision_file_content.detail.4")) from exc
     if not absolute.is_file():
-        raise HTTPException(status_code=404, detail="历史文件不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_element_revision_file_content.detail.5"))
     return FileResponse(
         absolute,
         media_type=mime,
@@ -2082,7 +2088,7 @@ async def restore_element_revision(
     """回到某个旧版本；现在这一版先记进历史，所以恢复本身也能再撤回。"""
     before = await store.get_element(element_id, user["user_id"])
     if before is None:
-        raise HTTPException(status_code=404, detail="元素不存在")
+        raise HTTPException(status_code=404, detail=_text_of("restore_element_revision.detail"))
     try:
         restored = await _trimming_history(
             user["user_id"], element_id,
@@ -2107,6 +2113,6 @@ async def list_element_usages(
     """哪些项目的哪些镜头用了这个资产。"""
     item = await store.get_element(element_id, user["user_id"])
     if item is None:
-        raise HTTPException(status_code=404, detail="元素不存在")
+        raise HTTPException(status_code=404, detail=_text_of("list_element_usages.detail"))
     items = await run_in_threadpool(asset_sync.usages, _element_snapshot(_element(item), user["user_id"]))
     return {"items": items}

@@ -122,7 +122,7 @@ class VoiceAnchor:
         return _says("persona", age=age, timbre=self.timbre, voice=voice)
 
     def lock_line(self) -> str:
-        """The sentence restated verbatim in every prompt that gives this character a line.
+        """The sentence restated verbatim in every prompt that gives this character a line: timbre and pitch, never a pace.
 
         The reference-audio lead is voice_reference.json's ``lock_lead``: video_references finds
         the placeholder by it and removes both when the sample is not sent.
@@ -130,7 +130,8 @@ class VoiceAnchor:
         if self.designed:
             parts = [_says("lock_head", name=self.name, voice=self.designed)]
         else:
-            parts = [_says("lock_head", name=self.name, voice=self.persona), self.pitch, _says("lock_pace", cps=self.pace_cps)]
+            # 锁音色与音区，不锁语速：语速跟着每句台词的情绪走(speech_pace 的分档、台词表达)，锁死一个数会和它打架。
+            parts = [_says("lock_head", name=self.name, voice=self.persona), self.pitch]
         if self.ref_audio:
             parts.append(prompt_data.text("voice_reference", "lock_lead") + self.ref_audio)
         return _word("lock_separator").join(parts) + _says("lock_tail")

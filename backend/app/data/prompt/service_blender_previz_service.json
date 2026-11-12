@@ -1,0 +1,21 @@
+{
+  "_doc": "app/service/blender_previz_service.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "_plan.text": "场景 {0} 还没有空间方案；先完成第 4 阶段分镜或在导演台重建方案",
+  "render_scene.text": "任务不存在",
+  "set_options.text": "空段最多 {0} 个",
+  "set_options.text.2": "空段需要 shot_id、from_s、to_s",
+  "set_options.text.3": "空段的 from_s / to_s 须满足 0 ≤ from_s < to_s ≤ 30",
+  "set_options.label": "专项效果",
+  "set_options.text.4": "手持镜头太多",
+  "set_options.text.5": "任务不存在",
+  "attach_to_shots.text": "任务不存在",
+  "attach_to_shots.text.2": "这一场还没有渲染过 Blender 预演；先渲染",
+  "attach_to_shots.text.3": "站位或机位在渲染之后改过了；先重新渲染预演，再交给分镜",
+  "attach_to_shots.text.4": "预演视频文件不见了；请重新渲染",
+  "attach_to_shots.text.5": "任务不存在",
+  "push_live.text": "任务不存在",
+  "push_live.text.2": "没连上 Blender：请在 Blender 里启用「Short Drama Previz Bridge」插件，并在 N 面板「短剧预演」点「开始连接」",
+  "push_live.text.3": "Blender 重建场景失败：{0}",
+  "pull_live.text": "任务不存在",
+  "pull_live.text.2": "没连上 Blender，或 Blender 里还没有预演场景；先「推到 Blender」"
+}

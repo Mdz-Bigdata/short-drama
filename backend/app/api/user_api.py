@@ -18,9 +18,22 @@ from app.platform.dependencies import get_platform_store
 from app.platform.bootstrap import bootstrap_admin_login, remove_bootstrap_credential_file
 from app.platform.store import PlatformStore
 from app.schema.platform import AdminUserUpdateRequest, PasswordChangeRequest, ProfileUpdateRequest, UserRolesRequest
+from app.core import prompt_data
 
 
-router = APIRouter(tags=["用户中心与管理"])
+_WORDING_FILE = "api_user_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_user_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+
+router = APIRouter(tags=list(_words_of("module.tags")))
 
 
 @router.get("/api/users/me")
@@ -100,7 +113,7 @@ async def admin_update_user(
     target = await store.get_user(user_id)
     # 客服可以停用客户，但不能通过停用别的管理人员来绕过角色授予。
     if target and target.roles and not has_permission(admin, ROLE_ASSIGN):
-        raise HTTPException(status_code=403, detail="只有可授予角色的人才能更改管理人员的账号状态")
+        raise HTTPException(status_code=403, detail=_text_of("admin_update_user.detail"))
     try:
         user = await store.set_user_status(admin["user_id"], user_id, request.status)
     except ValueError as exc:
@@ -120,7 +133,7 @@ async def admin_delete_user(
     """Who they were goes for good. Orders, ledger and audit stay, because those records are not theirs alone to remove."""
     target = await store.get_user(user_id)
     if target and target.roles and not has_permission(admin, ROLE_ASSIGN):
-        raise HTTPException(status_code=403, detail="只有可授予角色的人才能删除管理人员的账号")
+        raise HTTPException(status_code=403, detail=_text_of("admin_delete_user.detail"))
     try:
         user = await store.delete_account(actor_id=admin["user_id"], user_id=user_id)
     except LookupError as exc:

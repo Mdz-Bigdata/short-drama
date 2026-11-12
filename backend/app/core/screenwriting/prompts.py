@@ -25,7 +25,7 @@ from contextvars import ContextVar
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from app.core import acting, breakdown_kinds, character_block, emotion_points, literary, prompt_data, xianxia_lore
+from app.core import acting, breakdown_kinds, character_block, emotion_points, literary, prompt_data, visual_wording, xianxia_lore
 from app.core.episode_shape import EpisodeShape
 from app.core.fight_design import plan_rules_for, visual_rules_for
 from app.core.wuxia_vfx import plan_rules_for as spectacle_plan_rules
@@ -492,6 +492,10 @@ def spoken_density_rule(spoken_shot_ratio: float, creation_mode: str = "drama") 
 
 
 _SOURCE_TEXT_GUIDE = _says("script_plan.source_text_guide")
+_VISIBLE_WORDING_RULE = _says(
+    "script_plan.visible_wording_rule",
+    subjective=visual_wording.subjective_examples(), fast=visual_wording.fast_motion_examples(),
+)
 _SOURCE_TEXT_OUTLINE = _says("script_plan.source_text_director_plan")
 
 _CAST = "screenwriting_cast"
@@ -618,7 +622,8 @@ def build_script_plan_prompt(
         language_rule = _says("script_plan.language_rule_director_plan", language=output_language_name())
 
     # 可拍性：视频提示词里不再重复的通用约束(画面文字、形态突变、瞬移、格内换装、摆拍、同人同框、画风)，写剧本时就满足。
-    scene_rule = f"{scene_rule}{filmability.writing_rule()}"
+    # 再加画面写法：不写主观评价词，非打斗动作慢而稳(词表在 visual_wording.json，校验器用同一张表)。
+    scene_rule = f"{scene_rule}{filmability.writing_rule()}{_VISIBLE_WORDING_RULE}"
     character_names = _names(characters)
     scene_names = _names(scenes)
     prop_names = _names(props)
@@ -667,8 +672,10 @@ def build_script_plan_prompt(
 # --------------------------------------------------------------------------- stage B: visual layer
 
 
-_SCENE_WRITING_GUIDE = _says("visual.scene_writing_guide")
-_ACTION_WRITING_GUIDE = _says("visual.action_writing_guide")
+# 不写主观评价词、非打斗动作慢而稳：词取自 visual_wording.json，与分镜内容的提示用同一张表。
+_SCENE_WRITING_GUIDE = _says("visual.scene_writing_guide", subjective=visual_wording.subjective_examples())
+_ACTION_WRITING_GUIDE = _says("visual.action_writing_guide", fast=visual_wording.fast_motion_examples())
+_CAMERA_GUIDE = _says("visual.camera_guide")
 _LIGHTING_GUIDE = _says("visual.lighting_guide")
 _AMBIANCE_GUIDE = _says("visual.ambiance_guide")
 _AMBIANCE_AUDIO_GUIDE = _says("visual.ambiance_audio_guide")
@@ -750,6 +757,7 @@ def build_visual_prompt(
         kelvin_guide=prompt_data.text('clip_prompt', 'light_kelvin_guide'),
         ambiance_guide=_AMBIANCE_GUIDE,
         action_guide=_ACTION_WRITING_GUIDE,
+        camera_guide=_CAMERA_GUIDE,
         audio_guide=_AMBIANCE_AUDIO_GUIDE,
         fight_block=_fight_visual_block(content_scenes),
     )

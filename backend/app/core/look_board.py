@@ -13,24 +13,37 @@ from __future__ import annotations
 import io
 
 from PIL import Image
+from app.core import prompt_data
+
+
+_WORDING_FILE = "look_board"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/look_board.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 #: (槽位, 中文名)。顺序即展示顺序，也是展示板的阅读顺序。三格特写的名字随版式不同，见 ``closeup_labels``。
 LOOK_VIEWS: tuple[tuple[str, str], ...] = (
-    ("look_front", "正面全身"),
-    ("look_left", "左侧面"),
-    ("look_back", "背面"),
-    ("look_three_quarter", "三分之四侧面"),
-    ("look_closeup_1", "特写一"),
-    ("look_closeup_2", "特写二"),
-    ("look_closeup_3", "特写三"),
+    _words_of("module.look_views"),
+    _words_of("module.look_views.2"),
+    _words_of("module.look_views.3"),
+    _words_of("module.look_views.4"),
+    _words_of("module.look_views.5"),
+    _words_of("module.look_views.6"),
+    _words_of("module.look_views.7"),
 )
 LOOK_VIEW_SLOTS: tuple[str, ...] = tuple(slot for slot, _ in LOOK_VIEWS)
 #: 版式：有妆效的展示板第二格特写拍妆效所在的部位；较早的、没有妆效的拍腰带和袖口。
 LAYOUT_MAKEUP = "makeup"
 LAYOUT_PLAIN = "plain"
 CLOSEUP_LABELS = {
-    LAYOUT_MAKEUP: ("正脸胸像", "妆效部位", "腰带与配饰"),
-    LAYOUT_PLAIN: ("正脸胸像", "腰带与配饰", "袖口或下摆"),
+    LAYOUT_MAKEUP: _words_of("module.closeup_labels"),
+    LAYOUT_PLAIN: _words_of("module.closeup_labels.2"),
 }
 
 # 一列(行)里至少这么多像素是白的才算白缝；白的门槛是灰度值。
@@ -125,7 +138,7 @@ def _cuts(flags: list[bool], start: int, end: int, parts: int, steps: list[float
         cursor = high
     bounds.append((start + cursor, end))
     if any(high - low < length / parts * MIN_CELL_SHARE for low, high in bounds):
-        raise ValueError("定妆图展示板切分得到过窄的格子")
+        raise ValueError(_text_of("_cuts.text"))
     return bounds
 
 
@@ -157,7 +170,7 @@ def split_look_board(content: bytes) -> dict[str, bytes]:
     views: dict[str, bytes] = {}
     for slot, box in zip(LOOK_VIEW_SLOTS, boxes):
         if box[2] <= box[0] or box[3] <= box[1]:
-            raise ValueError("定妆图展示板切分得到空白格")
+            raise ValueError(_text_of("split_look_board.text"))
         buffer = io.BytesIO()
         image.crop(box).save(buffer, format="PNG", optimize=True)
         views[slot] = buffer.getvalue()

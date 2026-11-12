@@ -1,0 +1,5 @@
+{
+  "_doc": "app/core/storyboard_assets.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "split_actor_sheet.text": "数字演员设定集必须是 {0} 超宽横版（宽高比需在 {1:g}–{2:g} 之间），当前为 {3:.2f}，不予拆分。",
+  "split_actor_sheet.text.2": "数字演员设定集分辨率过低，无法拆出各个格子。"
+}

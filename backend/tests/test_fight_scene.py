@@ -2,6 +2,7 @@
 """打戏：按小节给武打指南、按戏挑骨架、多人同场的编排、动接动、打戏片段抽帧核对。"""
 
 import inspect
+import json
 import unittest
 from unittest.mock import patch
 
@@ -42,7 +43,10 @@ class MultiFighterTests(unittest.TestCase):
         self.assertEqual(fight_scene.multi_fighter_brief(2), "")
 
     def test_exchange_units_no_longer_cap_to_one_exchange(self):
-        source = inspect.getsource(exchange_units)
+        # 措辞已从代码移到 app/data/prompt/exchange_units.json：代码和数据一起看。
+        from app.core import prompt_data
+
+        source = inspect.getsource(exchange_units) + json.dumps(prompt_data.load("exchange_units"), ensure_ascii=False)
         self.assertNotIn("只写一个主交锋", source)
         self.assertIn("每一对都写清谁接谁的哪一招", source)
 

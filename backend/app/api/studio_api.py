@@ -38,9 +38,22 @@ from app.schema.studio import (
 )
 from app.service.project_archive import ProjectArchiveService
 from app.service.studio_service import MAX_CANVAS_VIDEO_BYTES, StudioService
+from app.core import prompt_data
 
 
-router = APIRouter(prefix="/api/studio", tags=["可追溯短剧工作室"])
+_WORDING_FILE = "api_studio_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_studio_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+
+router = APIRouter(prefix="/api/studio", tags=list(_words_of("module.tags")))
 
 
 @lru_cache(maxsize=1)
@@ -66,12 +79,12 @@ def _canvas_id(canvas_id: CanvasId = Query(CANVAS_MAIN_ID)) -> str:
 
 def _safe_error(exc: Exception) -> HTTPException:
     if isinstance(exc, PermissionError):
-        return HTTPException(status_code=404, detail="资源不存在")
+        return HTTPException(status_code=404, detail=_text_of("_safe_error.detail"))
     if isinstance(exc, ConcurrencyError):
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, (ValueError, SourceIngestError)):
         return HTTPException(status_code=422, detail=str(exc))
-    return HTTPException(status_code=500, detail="工作室服务暂不可用")
+    return HTTPException(status_code=500, detail=_text_of("_safe_error.detail.2"))
 
 
 @router.post("/projects")
@@ -279,10 +292,10 @@ def open_task_canvas_project(
     owner_id = str((task or {}).get("owner_user_id") or "")
     decision = authorize(current_user, owner_id=owner_id, write=True) if task else None
     if not decision or not decision.allowed:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("open_task_canvas_project.detail"))
     if decision.cross_account:
         record_access_from_thread(current_user, resource_id=task_id, owner_id=owner_id, write=True, via="studio.task_canvas")
-    title = str((task.get("config") or {}).get("title_suggestion") or "画布")
+    title = str((task.get("config") or {}).get("title_suggestion") or _text_of("open_task_canvas_project.title"))
     try:
         return service.task_canvas_project(task_id, user_id, title)
     except Exception as exc:

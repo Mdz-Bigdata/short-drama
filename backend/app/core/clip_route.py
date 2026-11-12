@@ -27,6 +27,19 @@ from __future__ import annotations
 
 from collections.abc import Hashable, Iterable, Sequence
 from dataclasses import dataclass
+from app.core import prompt_data
+
+
+_WORDING_FILE = "clip_route"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/clip_route.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 FIRST_LAST = "first_last"       # 首尾帧(长镜头段内)
 TAILFRAME = "tailframe"         # 上一段尾帧当本段首帧
@@ -141,68 +154,66 @@ def _route(
     if clip.frameless:
         if clip.parts > 1:
             return ClipRoute(None, "real_person", error=(
-                f"长镜头段第 {clip.part}/{clip.parts} 段只能用首尾帧，但真人演员在所选模型上不能带画面帧；"
-                "请把这一镜移出长镜头段，或换模型"
+                _text_of("_route.error").format(clip.part, clip.parts)
             ))
         if not references:
-            return ClipRoute(None, "real_person", error="真人演员只能带真人素材走多模态参考，所选视频模型不支持多模态参考")
-        return ClipRoute(REFERENCE, "real_person", "真人演员：只带真人素材与场地参考走多模态参考，不接尾帧、不带分镜帧",
+            return ClipRoute(None, "real_person", error=_text_of("_route.error.2"))
+        return ClipRoute(REFERENCE, "real_person", _text_of("_route.text"),
                          attached_media=clip.attached_media and "multimodal" in modes)
 
     # 1. 一镜式长镜头段内：只能首尾帧，做不到就报错。
     if clip.parts > 1:
-        where = f"长镜头段第 {clip.part}/{clip.parts} 段"
+        where = _text_of("_route.where").format(clip.part, clip.parts)
         if clip.attached_media:
             return ClipRoute(None, "long_take", error=(
-                f"{where}只能用首尾帧接住前后段，附的参考视频 / 参考音频送不进去；"
-                "请去掉参考素材，或把这一镜移出长镜头段"
+                _text_of("_route.error.3").format(where)
             ))
         if "first_last_frame" not in modes:
             return ClipRoute(None, "long_take", error=(
-                f"{where}只能用首尾帧，所选视频模型不支持首尾帧；请换支持首尾帧的模型，或把这一镜移出长镜头段"
+                _text_of("_route.error.4").format(where)
             ))
         if clip.storyboards < 2:
             return ClipRoute(None, "long_take", error=(
-                f"{where}只有一张分镜，尾帧固定不了；请补一张落幅分镜、换单段更长的模型，或把这一镜移出长镜头段"
+                _text_of("_route.error.5").format(where)
             ))
         # 段内第 2 段起首帧就是前一段尾帧；第 1 段在同场接着上一镜时也从上一镜尾帧开场。
-        return ClipRoute(FIRST_LAST, "long_take", f"{where}：首帧接前一段尾帧、尾帧落在本段最后一张分镜", chain_from=chain)
+        return ClipRoute(FIRST_LAST, "long_take", _text_of("_route.text.2").format(where), chain_from=chain)
 
     # 4. 出品人附的参考视频 / 音频：只能多模态参考，收不下就报错。
     if clip.attached_media:
         if "multimodal" not in modes:
             return ClipRoute(None, "attached_media", error=(
-                "出品人附了参考视频或参考音频，只能用多模态参考，所选视频模型收不下；请换支持多模态参考的模型或去掉参考素材"
+                _text_of("_route.error.6")
             ))
         if chain is not None:
-            return ClipRoute(TAILREF, "attached_media", "附了参考音视频：上一镜尾帧当参考图 1，连同参考素材走多模态参考",
+            return ClipRoute(TAILREF, "attached_media", _text_of("_route.text.3"),
                              chain_from=chain, attached_media=True,
                              fallbacks=_chain_fallbacks(TAILREF, references=True, can_extend=can_extend))
-        return ClipRoute(REFERENCE, "attached_media", "附了参考音视频：只能多模态参考", attached_media=True)
+        return ClipRoute(REFERENCE, "attached_media", _text_of("_route.text.4"), attached_media=True)
 
     # 2. 同场连续出片，第 2 段起：接上一镜。
     if chain is not None:
         entering = [name for name in clip.characters if name not in set(previous.characters)] if previous else []
         if (entering or clip.hero_prop) and references:
-            why = f"新角色进场（{'、'.join(entering)}）" if entering else "主角道具镜头"
-            return ClipRoute(TAILREF, "scene_chain", f"{why}：上一镜尾帧当参考图 1，并挂定妆照", chain_from=chain,
+            why = _text_of("_route.why").format('、'.join(entering)) if entering else _text_of("_route.why.2")
+            return ClipRoute(TAILREF, "scene_chain", _text_of("_route.text.5").format(why), chain_from=chain,
                              fallbacks=_chain_fallbacks(TAILREF, references=True, can_extend=can_extend))
-        return ClipRoute(TAILFRAME, "scene_chain", "同场接上一镜：上一镜最后一帧当本镜首帧，不挂定妆照和场景图", chain_from=chain,
+        return ClipRoute(TAILFRAME, "scene_chain", _text_of("_route.text.6"), chain_from=chain,
                          fallbacks=_chain_fallbacks(TAILFRAME, references=references, can_extend=can_extend))
 
     # 3. 一场戏只有这一段：有参考图就直接定多模态参考。
     if solo and references and (clip.subject_refs or clip.storyboards >= 2):
-        return ClipRoute(REFERENCE, "solo_scene", "一场戏只有这一镜：多模态参考，分镜在前")
+        return ClipRoute(REFERENCE, "solo_scene", _text_of("_route.text.7"))
 
     # 5. 主角道具镜头：道具母版图只能经多模态参考送到模型。
     if clip.hero_prop and references:
-        return ClipRoute(REFERENCE, "hero_prop", "主角道具镜头：道具母版图经多模态参考送到模型")
+        return ClipRoute(REFERENCE, "hero_prop", _text_of("_route.text.8"))
 
     # 6. 只有一张分镜。
     if clip.storyboards == 1:
         if clip.subject_refs and references:
-            return ClipRoute(REFERENCE, "single_storyboard", "只有一张分镜：多模态参考，分镜排第一，图 1 是开场画面")
-        return ClipRoute(FIRST_FRAME, "single_storyboard", "只有一张分镜、没有主体参考：把它当首帧起步")
+            return ClipRoute(REFERENCE, "single_storyboard", _text_of("_route.text.9"))
+        return ClipRoute(FIRST_FRAME, "single_storyboard", _text_of("_route.text.10"))
 
     return ClipRoute(None)
 

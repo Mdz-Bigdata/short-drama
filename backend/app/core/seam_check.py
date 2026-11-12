@@ -20,6 +20,19 @@ from dataclasses import dataclass
 from typing import Any
 
 from PIL import Image, ImageOps
+from app.core import prompt_data
+
+
+_WORDING_FILE = "seam_check"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/seam_check.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 _THUMB = (32, 18)
 #: 缩略图上一个像素灰度变了这么多才算「变了」(0…255)。
@@ -27,7 +40,7 @@ _CHANGED = 32
 #: 差异分到这里算可疑，到这里算跳了。小于 SUSPECT 的接缝人眼一般看不出来。
 SUSPECT = 0.15
 JUMP = 0.35
-VERDICT_ZH = {"good": "接上了", "suspect": "接缝可疑", "jump": "接缝跳了"}
+VERDICT_ZH = {"good": _text_of("module.verdict_zh.good"), "suspect": _text_of("module.verdict_zh.suspect"), "jump": _text_of("module.verdict_zh.jump")}
 
 
 @dataclass(frozen=True)
@@ -46,10 +59,10 @@ class SeamReport:
 
     @property
     def detail(self) -> str:
-        worst = max(("构图或人物位置", self.structure), ("明暗", self.exposure), ("色调", self.tone), key=lambda item: item[1])
+        worst = max((_text_of("detail.worst"), self.structure), (_text_of("detail.worst.2"), self.exposure), (_text_of("detail.worst.3"), self.tone), key=lambda item: item[1])
         if self.verdict == "good":
-            return f"前后两帧基本一致（差异 {self.score:.2f}）"
-        return f"差异 {self.score:.2f}，主要在{worst[0]}；看一眼接缝，不对就重跑后一段"
+            return _text_of("detail.text").format(self.score)
+        return _text_of("detail.text.2").format(self.score, worst[0])
 
 
 def _open(picture: bytes | str) -> Image.Image:

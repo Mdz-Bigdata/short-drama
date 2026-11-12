@@ -1,0 +1,15 @@
+{
+  "_doc": "app/core/knowledge_registry.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "_section.text": "{0} 必须是对象",
+  "_section.text.2": "{0} 的 key {1!r} 不合法：小写字母、数字与连字符，2–64 个字符",
+  "_section.text.3": "{0} 缺少 title",
+  "_section.text.4": "{0} 的 file {1!r} 必须是技能目录内的相对路径",
+  "_section.text.5": "{0} 的 budget 必须是非负整数",
+  "_section.text.6": "{0} 的 stages 必须是 1–{1} 的阶段号列表",
+  "_section.text.7": "{0} 的 scope 只能是 {1}",
+  "_section.text.8": "{0} 是技能内部参考（scope=skill），不能登记阶段",
+  "_read_manifest.text": "{0}/{1} 无法读取：{2}",
+  "_read_manifest.text.2": "{0}/{1} 的 version 必须是 {2}",
+  "_read_manifest.text.3": "{0}/{1} 的 sections 必须是列表",
+  "_index.text": "知识章节 {0!r} 同时登记在 {1} 与 {2}"
+}

@@ -31,6 +31,19 @@ from app import settings
 from typing import Callable, Literal
 
 from pydantic import BaseModel, Field
+from app.core import prompt_data
+
+
+_WORDING_FILE = "knowledge_evolution"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/knowledge_evolution.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 logger = logging.getLogger("app.core.knowledge_evolution")
@@ -63,11 +76,7 @@ CANDIDATE_TTL_DAYS = 30
 MAX_RETIRED_PER_STAGE = 50
 
 _HARVEST_SYS_PROMPT = (
-    "你是短剧生产流水线的教训蒸馏器。从质检报告提取可复用的生产教训："
-    "每条 ≤200 字祈使句，只提有证据的失败模式（低分项、明确指出的缺陷），"
-    "禁止空泛套话，禁止复述得分正常的项。"
-    '输出 JSON 数组 [{"rule": "祈使句教训", "evidence": "报告中的原始证据"}]，'
-    "没有可提取的教训时输出 []。除 JSON 外不要输出任何内容。"
+    _text_of("module.harvest_sys_prompt")
 )
 
 
@@ -212,8 +221,7 @@ def harvest_from_qc(
         if llm is None or not (qc_report or "").strip():
             return []
         user_prompt = (
-            f"阶段：第 {stage} 阶段（任务 {task_id}）\n"
-            f"以下是本阶段的质检报告，请提取生产教训：\n\n{qc_report}"
+            _text_of("harvest_from_qc.user_prompt").format(stage, task_id, qc_report)
         )
         try:
             raw = llm(_HARVEST_SYS_PROMPT, user_prompt)

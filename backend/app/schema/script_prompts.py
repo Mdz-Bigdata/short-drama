@@ -15,6 +15,19 @@ from app.schema.production import (
     identity_view_order_is_valid,
 )
 from app.schema.storyboard_director import StoryboardDirectorResult
+from app.core import prompt_data
+
+
+_WORDING_FILE = "schema_script_prompts"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/schema_script_prompts.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 ScriptElementType = Literal[
@@ -84,10 +97,10 @@ class CharacterPromptProfile(BaseModel):
 
 class SceneLightingProfile(BaseModel):
     source_type: Literal["natural", "artificial", "mixed", "unspecified"] = "unspecified"
-    direction: Annotated[str, Field(min_length=1, max_length=300)] = "按剧本或场景参考锁定"
-    intensity: Annotated[str, Field(min_length=1, max_length=120)] = "按剧本可见状态"
-    color_temperature: Annotated[str, Field(min_length=1, max_length=120)] = "按剧本时段"
-    quality: Annotated[str, Field(min_length=1, max_length=120)] = "自然连续"
+    direction: Annotated[str, Field(min_length=1, max_length=300)] = _text_of("SceneLightingProfile.direction")
+    intensity: Annotated[str, Field(min_length=1, max_length=120)] = _text_of("SceneLightingProfile.intensity")
+    color_temperature: Annotated[str, Field(min_length=1, max_length=120)] = _text_of("SceneLightingProfile.color_temperature")
+    quality: Annotated[str, Field(min_length=1, max_length=120)] = _text_of("SceneLightingProfile.quality")
 
 
 class ScenePromptProfile(BaseModel):
@@ -217,7 +230,7 @@ class ScriptPromptCompileRequest(BaseModel):
     script_text: Annotated[str, Field(min_length=1, max_length=2_000_000)]
     source_format: Literal["text", "markdown", "docx", "pdf", "fdx", "fountain"] = "text"
     source_sha256: Annotated[str | None, Field(pattern=r"^[a-fA-F0-9]{64}$")] = None
-    visual_style: Annotated[str, Field(min_length=1, max_length=2_000)] = "写实真人电影质感"
+    visual_style: Annotated[str, Field(min_length=1, max_length=2_000)] = _text_of("ScriptPromptCompileRequest.visual_style")
     prompt_language: Annotated[str, Field(min_length=1, max_length=40)] = "zh-CN"
     output_language: Annotated[str, Field(min_length=1, max_length=40)] = "zh-CN"
     video_model: Annotated[str, Field(min_length=1, max_length=120)] = "Seedance 2.5"

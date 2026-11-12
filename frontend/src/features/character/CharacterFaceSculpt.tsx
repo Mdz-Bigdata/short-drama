@@ -25,7 +25,10 @@ interface FaceControl {
 interface Catalog {
   layers: { key: string; label: string }[];
   controls: FaceControl[];
-  presets: { key: string; label: string; values: Record<string, string | number> }[];
+  /** scope：预设只铺这几层(年龄、皮肤、毛发照旧)；没有就整张脸重铺。focus：预设自带的突出点。 */
+  presets: { key: string; label: string; values: Record<string, string | number>; scope?: string[]; focus?: string }[];
+  /** 能做突出点的层。 */
+  focus_layers?: string[];
   expression_controls: { key: string; label: string; options: Option[] }[];
   expressions: { key: string; label: string; words: string[] }[];
   limits: { note_chars: number; tell_chars: number; habit_chars: number };
@@ -36,6 +39,8 @@ export interface FaceSculptValue {
   notes: Record<string, string>;
   expressions: Record<string, ExpressionValue>;
   preset: string;
+  /** 这张脸的突出点：一个骨相或五官控件键，其余控件围着它做配合。 */
+  focus: string;
 }
 interface Preview {
   description: string;
@@ -62,7 +67,7 @@ interface Current {
   library?: { updated: boolean; element_id?: string; error?: string };
 }
 
-const EMPTY: FaceSculptValue = { face: {}, notes: {}, expressions: {}, preset: '' };
+const EMPTY: FaceSculptValue = { face: {}, notes: {}, expressions: {}, preset: '', focus: '' };
 const EMPTY_EXPRESSION: ExpressionValue = { choices: {}, tell: '', habit: '' };
 const SCALE_VALUES = [-2, -1, 0, 1, 2];
 const HISTORY_SHOWN = 6;
@@ -99,7 +104,9 @@ function normalize(value: Partial<FaceSculptValue> | undefined): FaceSculptValue
   for (const [key, item] of Object.entries(value?.expressions || {})) {
     expressions[key] = { choices: { ...(item?.choices || {}) }, tell: item?.tell || '', habit: item?.habit || '' };
   }
-  return { face: { ...(value?.face || {}) }, notes: { ...(value?.notes || {}) }, expressions, preset: value?.preset || '' };
+  return {
+    face: { ...(value?.face || {}) }, notes: { ...(value?.notes || {}) }, expressions, preset: value?.preset || '', focus: value?.focus || '',
+  };
 }
 
 export function CharacterFaceSculpt({ taskId, characterName, onSaved, onDirtyChange }: {
@@ -174,8 +181,21 @@ export function CharacterFaceSculpt({ taskId, characterName, onSaved, onDirtyCha
   const applyPreset = (key: string) => {
     const preset = catalog.presets.find(item => item.key === key);
     if (!preset) return;
-    setValue(current => ({ ...current, face: { ...preset.values }, preset: key }));
+    setValue(current => {
+      const scope = preset.scope;
+      const kept = scope
+        ? Object.fromEntries(Object.entries(current.face).filter(([control]) => {
+          const layer = catalog.controls.find(item => item.key === control)?.layer;
+          return !layer || !scope.includes(layer);
+        }))
+        : {};
+      const face = { ...kept, ...preset.values };
+      const focus = preset.focus || (current.focus in face ? current.focus : '');
+      return { ...current, face, preset: key, focus };
+    });
   };
+  const focusLayers = catalog.focus_layers || [];
+  const focusControls = catalog.controls.filter(control => focusLayers.includes(control.layer));
   const expression = value.expressions[expressionKey] || EMPTY_EXPRESSION;
   const setExpression = (patch: Partial<ExpressionValue>) => setValue(current => {
     const next = { ...(current.expressions[expressionKey] || EMPTY_EXPRESSION), ...patch };
@@ -277,6 +297,15 @@ export function CharacterFaceSculpt({ taskId, characterName, onSaved, onDirtyCha
                 {catalog.presets.map(preset => <option key={preset.key} value={preset.key}>{preset.label}</option>)}
               </select>
             </label>
+            {focusControls.length > 0 && (
+              <label className="face-sculpt__preset" title={t('一张脸留一个突出点，其余五官收一收做配合；对话改脸时不会换掉它。')}>
+                <span>{t('突出点')}</span>
+                <select value={value.focus} onChange={event => setValue(current => ({ ...current, focus: event.target.value }))}>
+                  <option value="">{t('不定突出点')}</option>
+                  {focusControls.map(control => <option key={control.key} value={control.key}>{control.label}</option>)}
+                </select>
+              </label>
+            )}
             {catalog.layers.map(layer => {
               const controls = catalog.controls.filter(control => control.layer === layer.key);
               return (

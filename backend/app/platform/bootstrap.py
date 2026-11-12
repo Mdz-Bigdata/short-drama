@@ -4,6 +4,19 @@ import os
 
 from app import settings
 from app.platform.store import PlatformStore
+from app.core import prompt_data
+
+
+_WORDING_FILE = "platform_bootstrap"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/platform_bootstrap.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 BOOTSTRAP_CREDENTIAL_FILE = settings.RUNTIME_DIR / "bootstrap-admin.txt"
@@ -40,10 +53,10 @@ async def initialize_platform(store: PlatformStore) -> dict:
 
     if bootstrap_enabled and production:
         if password == DEVELOPMENT_DEFAULT_ADMIN_PASSWORD:
-            raise RuntimeError("生产环境禁止使用默认管理员密码 admin@123")
+            raise RuntimeError(_text_of("initialize_platform.text"))
         if len(password) < settings.PRODUCTION_ADMIN_PASSWORD_MIN_LENGTH:
             raise RuntimeError(
-                f"生产环境启用管理员初始化时必须配置至少 {settings.PRODUCTION_ADMIN_PASSWORD_MIN_LENGTH} 位独立强密码"
+                _text_of("initialize_platform.text.2").format(settings.PRODUCTION_ADMIN_PASSWORD_MIN_LENGTH)
             )
 
     await store.create_schema()

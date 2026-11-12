@@ -6,15 +6,27 @@ import json
 import re
 from typing import Any, Callable
 
+
+_WORDING_FILE = "workflow_guide"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/workflow_guide.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
 STAGE_GUIDANCE = {
-    1: "先确定题材、受众、人物冲突和整季方向。请检查总导演方案是否符合您的创作目标。",
-    2: "将方案写成分集剧本和场景大纲。请检查集数连续、剧情与对白完整。",
-    3: "建立数字演员（每身戏服和妆效各有一张定妆图）、场地、道具和特效资产。请检查角色造型与剧本设定一致。",
-    4: "按每集、每场剧情制作分镜，并关联本场演员与拍摄资产。请检查画面内容和镜头衔接。",
-    5: "把确认的分镜制作成视频镜头。请检查人物一致性、动作与画面连续性。",
-    6: "剪辑合成师先做声音：视频模型出了原声的镜头直接用原声，没出声的才配音，再配上音乐。请检查台词、情绪、音量与画面对齐。",
-    7: "剪辑合成师接着出成片：剪辑、转场、字幕和音轨合成。请预览成片，再提交质量验收。",
-    8: "生成宣发文案与发布素材。最后完成成片质量验收和八 Agent 发布终审。",
+    1: _text_of("module.stage_guidance.1"),
+    2: _text_of("module.stage_guidance.2"),
+    3: _text_of("module.stage_guidance.3"),
+    4: _text_of("module.stage_guidance.4"),
+    5: _text_of("module.stage_guidance.5"),
+    6: _text_of("module.stage_guidance.6"),
+    7: _text_of("module.stage_guidance.7"),
+    8: _text_of("module.stage_guidance.8"),
 }
 
 
@@ -29,7 +41,7 @@ def display_step(stage: int) -> int:
 
 
 def step_text(stage: int) -> str:
-    return f"第 {display_step(stage)}/{DISPLAY_STEPS} 步"
+    return _text_of("step_text.text").format(display_step(stage), DISPLAY_STEPS)
 
 
 def steps_done(completed: list[int]) -> int:
@@ -98,45 +110,44 @@ def append_stage_guidance(
     if phase == "start":
         # The reservation announces the stage once. The chat reply reuses this
         # very message so one click never renders two near-identical bubbles.
-        content = f"开始{step_text(stage)}：{labels[stage]}。\n{STAGE_GUIDANCE[stage]}"
+        content = _text_of("append_stage_guidance.content").format(step_text(stage), labels[stage], STAGE_GUIDANCE[stage])
         if control.get("automatic"):
-            content += "\n当前是自动制作模式，无需逐步确认；我会继续说明每一步的结果，您也可以随时请求暂停。"
+            content += _text_of("append_stage_guidance.text")
         else:
-            content += "\n完成后我会说明本阶段结果，再引导您确认或继续。"
+            content += _text_of("append_stage_guidance.text.2")
     elif phase == "failed":
-        content = f"{step_text(stage)}：{labels[stage]}本轮未完成，已停止推进。\n已有内容会保留。请查看错误提示，处理后说「继续」从未完成处恢复。"
+        content = _text_of("append_stage_guidance.content.2").format(step_text(stage), labels[stage])
     elif phase == "interrupted":
         # 服务重启会杀掉正在执行的阶段，却没有任何异常能写进聊天；不交代一句，
         # 用户只会看到「已完成 0/7 步」，以为流程卡死了。
         content = (
-            f"{step_text(stage)}：{labels[stage]}执行到一半时服务重启，本轮被打断，未能完成。\n"
-            "已有内容会保留。回复「继续」重新执行这一步，完成后会自动进入下一步的看板。"
+            _text_of("append_stage_guidance.content.3").format(step_text(stage), labels[stage])
         )
     elif phase == "done" and snapshot:
         complete = stage in snapshot["completed_stages"]
         content = (
-            f"{step_text(stage)}：{labels[stage]}的产物已生成。"
+            _text_of("append_stage_guidance.content.4").format(step_text(stage), labels[stage])
             if complete
-            else f"{step_text(stage)}：{labels[stage]}本轮处理已结束，但本阶段仍有待完成内容。"
+            else _text_of("append_stage_guidance.content.5").format(step_text(stage), labels[stage])
         )
         next_stage = snapshot["next_stage"]
         if control.get("stop_requested"):
-            content += "\n已收到结束请求，当前阶段结束后停止后续制作，已有内容保留。"
+            content += _text_of("append_stage_guidance.text.3")
         elif control.get("pause_requested"):
-            content += "\n已收到暂停请求，当前阶段结束后暂停后续制作，已有内容保留。"
+            content += _text_of("append_stage_guidance.text.4")
         elif next_stage is None:
             content += "\n" + snapshot["hint"]
         elif control.get("automatic"):
-            verb = "仍需补齐" if next_stage <= stage else "下一步是"
-            content += f"\n接下来{verb}{step_text(next_stage)}：{labels[next_stage]}。{STAGE_GUIDANCE[next_stage]}"
-            content += "\n我会先检查暂停或结束请求；没有收到时才继续制作，无需手动确认。"
+            verb = _text_of("append_stage_guidance.verb") if next_stage <= stage else _text_of("append_stage_guidance.verb.2")
+            content += _text_of("append_stage_guidance.text.5").format(verb, step_text(next_stage), labels[next_stage], STAGE_GUIDANCE[next_stage])
+            content += _text_of("append_stage_guidance.text.6")
         elif complete and stage == 6 and next_stage == 7:
             # 剪辑合成师一个人干两步：声音做完不停，接着合成成片(见 DramaService._compose_after_sound)。
-            content += f"\n剪辑合成师接着出成片「{labels[7]}」。{STAGE_GUIDANCE[7]}"
+            content += _text_of("append_stage_guidance.text.7").format(labels[7], STAGE_GUIDANCE[7])
         else:
             if complete:
                 # 手动模式：看板停在这一步，等用户审核产物后再说「继续」。
-                content += f"\n已停在第 {display_step(stage)} 步看板，请先审核本步产物；确认无误后回复「继续」进入下一步，需要调整请说「修改……」。"
+                content += _text_of("append_stage_guidance.text.8").format(display_step(stage))
             content += "\n" + snapshot["hint"]
     else:
         return None
@@ -186,54 +197,48 @@ def build_workflow_snapshot(
     actions: list[dict[str, Any]] = []
     if running:
         mode = "running"
-        hint = f"正在进行{step_text(current)}：{labels.get(current, '准备制作')}。{STAGE_GUIDANCE.get(current, '')}"
+        hint = _text_of("build_workflow_snapshot.hint").format(step_text(current), labels.get(current, '准备制作'), STAGE_GUIDANCE.get(current, ''))
         if control.get("stop_requested"):
-            hint += "\n已请求结束任务。当前阶段结束后停止后续制作，已有产物和聊天记录会保留。"
+            hint += _text_of("build_workflow_snapshot.text")
         elif control.get("pause_requested"):
-            hint += "\n已收到暂停请求；当前阶段执行结束后会停下，不再启动后续阶段。本阶段内的模型调用可能仍会继续。"
+            hint += _text_of("build_workflow_snapshot.text.2")
         else:
-            hint += "\n完成这一轮后，我会根据实际产物提示下一步；您可以随时查询进度或请求暂停。"
+            hint += _text_of("build_workflow_snapshot.text.3")
             actions.append(
-                {"kind": "pause", "label": "暂停后续制作", "message": "暂停"}
+                {"kind": "pause", "label": _text_of("build_workflow_snapshot.label"), "message": _text_of("build_workflow_snapshot.message")}
             )
     elif release_ready and status == "completed":
         mode = "completed"
         hint = (
-            "成片已验收并确认发布，整个项目完成。\n"
-            "成片在「剪辑合成师」看板，宣发文案与短链在第 7 步「宣发Agent引流」看板；"
-            "想换个版本可以说「重跑第 7 阶段」重新合成。"
+            _text_of("build_workflow_snapshot.hint.2")
         )
         actions.append(
-            {"kind": "rerun", "label": "重新合成成片", "message": "重跑第 7 阶段", "stage": 7}
+            {"kind": "rerun", "label": _text_of("build_workflow_snapshot.label.2"), "message": _text_of("build_workflow_snapshot.message.2"), "stage": 7}
         )
     elif production_complete:
         # 八步产物齐了：先验收成片(看图模型自动打分)，人看过之后说「确认发布」项目完成。
         mode = "review"
         if not video_gate:
             hint = (
-                "7 个 Agent 的制作产物已生成，成片在第 6 步「剪辑合成师」看板。\n"
-                "说「验收成片」，我会从成片里截帧交给看图模型检查人物一致、肢体、表情、写实感和连贯性；"
-                "一键成片会在做完后自动验收。验收之后您看一遍成片，说「确认发布」项目即完成。"
+                _text_of("build_workflow_snapshot.hint.3")
             )
-            actions.append({"kind": "review", "label": "验收成片", "message": "验收成片"})
+            actions.append({"kind": "review", "label": _text_of("build_workflow_snapshot.label.3"), "message": _text_of("build_workflow_snapshot.message.3")})
         elif video_gate.get("passed") is True:
             hint = (
-                f"成片自动验收已通过（综合 {round(float(video_gate.get('overall_score') or 0) * 100)} 分）。\n"
-                "请在第 6 步「剪辑合成师」看板看一遍成片，没问题就说「确认发布」，项目即完成。"
+                _text_of("build_workflow_snapshot.hint.4").format(round(float(video_gate.get('overall_score') or 0) * 100))
             )
-            actions.append({"kind": "release", "label": "确认发布", "message": "确认发布"})
+            actions.append({"kind": "release", "label": _text_of("build_workflow_snapshot.label.4"), "message": _text_of("build_workflow_snapshot.message.4")})
         else:
             hint = (
-                "成片自动验收未通过：" + "、".join(video_gate.get("failed_dimensions") or []) + "。\n"
-                "可以说「重跑第 5 阶段」重做视频镜头，处理后说「验收成片」重新验收；也可以看过成片后直接说「确认发布」由您拍板。"
+                _text_of("build_workflow_snapshot.hint.5") + "、".join(video_gate.get("failed_dimensions") or []) + _text_of("build_workflow_snapshot.hint.6")
             )
-            actions.append({"kind": "review", "label": "重新验收", "message": "验收成片"})
-            actions.append({"kind": "release", "label": "仍然发布", "message": "确认发布"})
+            actions.append({"kind": "review", "label": _text_of("build_workflow_snapshot.label.5"), "message": _text_of("build_workflow_snapshot.message.5")})
+            actions.append({"kind": "release", "label": _text_of("build_workflow_snapshot.label.6"), "message": _text_of("build_workflow_snapshot.message.6")})
         actions.append(
-            {"kind": "rerun", "label": "重新合成成片", "message": "重跑第 7 阶段", "stage": 7}
+            {"kind": "rerun", "label": _text_of("build_workflow_snapshot.label.7"), "message": _text_of("build_workflow_snapshot.message.7"), "stage": 7}
         )
         if status in {"quality_failed", "council_quality_failed"}:
-            hint += "\n上次验收未通过，请先查看未通过项并修正，再提交验收。"
+            hint += _text_of("build_workflow_snapshot.text.4")
     else:
         assert next_stage is not None
         mode = (
@@ -241,16 +246,16 @@ def build_workflow_snapshot(
             if status in {"paused", "interrupted", "stopped"}
             else "blocked" if status == "failed" else "ready"
         )
-        hint = f"已完成 {steps_done(completed)}/{DISPLAY_STEPS} 步。接下来是{step_text(next_stage)}：{labels[next_stage]}。\n{STAGE_GUIDANCE[next_stage]}"
+        hint = _text_of("build_workflow_snapshot.hint.7").format(steps_done(completed), DISPLAY_STEPS, step_text(next_stage), labels[next_stage], STAGE_GUIDANCE[next_stage])
         if next_stage == 2:
-            gaps = [item for item in missing[2] if item.startswith("剧本缺少第")]
+            gaps = [item for item in missing[2] if item.startswith(_text_of("build_workflow_snapshot.gaps"))]
             if gaps:
-                hint += "\n" + "；".join(gaps) + "。请先在剧本大纲点击「补写缺失的集数」，保留已有剧本和镜头。回复「继续」则会重新执行编剧阶段。"
+                hint += "\n" + "；".join(gaps) + _text_of("build_workflow_snapshot.text.5")
         if next_stage == 3:
             # Soft review gate: production may start, but say which episodes nobody has confirmed.
             review_view = _review_summary(assets)
             if review_view and review_view.get("message"):
-                hint += f"\n{review_view['message']}。审核门不拦截，但建议先在编剧面板逐集确认，再进入角色设计。"
+                hint += _text_of("build_workflow_snapshot.text.6").format(review_view['message'])
         cycle_line = episode_cycle.status_line(task)
         if cycle_line:
             hint += "\n" + cycle_line
@@ -261,32 +266,31 @@ def build_workflow_snapshot(
                 for item in episodes
             )
             if episodes:
-                hint += f"\n分镜目前完成 {done}/{len(episodes)} 集，需要继续补齐本阶段，暂不进入视频制作。"
+                hint += _text_of("build_workflow_snapshot.text.7").format(done, len(episodes))
         if status == "stopped":
-            hint = "任务已结束，已有产物和聊天记录已保留。\n" + hint
+            hint = _text_of("build_workflow_snapshot.hint.8") + hint
         elif mode in {"paused", "blocked"}:
-            hint += "\n上次执行已暂停、中断或失败；继续时会从尚未完成的步骤恢复。"
+            hint += _text_of("build_workflow_snapshot.text.8")
         hint += (
-            "\n回复「继续」执行这一步；说「一键成片」则从这一步自动做到成片，中间不再逐步确认。"
-            "也可以先告诉我您想了解的内容。要调整已有结果，请明确说「修改……」。"
+            _text_of("build_workflow_snapshot.text.9")
         )
         actions.extend(
             [
                 {
                     "kind": "continue",
-                    "label": f"继续：{labels[next_stage]}",
-                    "message": "继续",
+                    "label": _text_of("build_workflow_snapshot.label.8").format(labels[next_stage]),
+                    "message": _text_of("build_workflow_snapshot.message.8"),
                     "stage": next_stage,
                 },
                 {
                     "kind": "run_all",
-                    "label": "自动完成剩余制作",
-                    "message": "一键成片",
+                    "label": _text_of("build_workflow_snapshot.label.9"),
+                    "message": _text_of("build_workflow_snapshot.message.9"),
                     "stage": next_stage,
                 },
             ]
         )
-    actions.append({"kind": "status", "label": "查看流程进度", "message": "进度"})
+    actions.append({"kind": "status", "label": _text_of("build_workflow_snapshot.label.10"), "message": _text_of("build_workflow_snapshot.message.10")})
     stages = [
         {
             "stage": stage,
@@ -342,88 +346,88 @@ def assistant_intent(message: str) -> tuple[str, int | None]:
     msg = message.strip().rstrip("。！! ")
     slash_commands = {
         "/pause": ("pause", None),
-        "/暂停": ("pause", None),
+        _text_of("assistant_intent.slash_commands"): ("pause", None),
         "/resume": ("resume", None),
-        "/恢复": ("resume", None),
+        _text_of("assistant_intent.slash_commands.2"): ("resume", None),
         "/stop": ("stop", None),
-        "/结束任务": ("stop", None),
+        _text_of("assistant_intent.slash_commands.3"): ("stop", None),
         "/start": ("continue", None),
-        "/开启": ("continue", None),
+        _text_of("assistant_intent.slash_commands.4"): ("continue", None),
         "/compose": ("compose", 7),
-        "/合成视频": ("compose", 7),
+        _text_of("assistant_intent.slash_commands.5"): ("compose", 7),
         "/auto": ("run_all", None),
-        "/一键成片": ("run_all", None),
+        _text_of("assistant_intent.slash_commands.6"): ("run_all", None),
         "/status": ("status", None),
-        "/进度": ("status", None),
+        _text_of("assistant_intent.slash_commands.7"): ("status", None),
         "/help": ("help", None),
-        "/帮助": ("help", None),
+        _text_of("assistant_intent.slash_commands.8"): ("help", None),
     }
     if msg.startswith("/"):
         return slash_commands.get(msg.lower(), ("help", None))
     if re.search(
-        r"[?？]|(?:怎么|如何|为什么|是否|能否|能不能|可不可以|可以吗|吗$|介绍|解释)",
+        _text_of("assistant_intent.text"),
         msg,
     ):
         return "question", None
     # 「不用确认，直接做完」「别停」说的就是自动做完：它们带否定词，但否定的是逐步确认，不是生成。
-    if _says("no_confirm", msg) and not re.search(r"(?:先不|暂不|不想|不能|不可以)", msg):
+    if _says("no_confirm", msg) and not re.search(_text_of("assistant_intent.text.2"), msg):
         return "run_all", None
     if re.search(
-        r"(?:不要|别|不用|不需要|不想|先不|暂不|无需|不再|不能|不可以|别再)", msg
+        _text_of("assistant_intent.text.3"), msg
     ):
         return "read", None
-    command = re.sub(r"^(?:请帮我|请|帮我|麻烦你|麻烦)", "", msg).strip()
+    command = re.sub(_text_of("assistant_intent.command"), "", msg).strip()
     # 八步做完之后：「验收成片」自动验收，「确认发布」是人看过成片后的拍板。
     if _says("review", command):
         return "review", None
     if _says("release", command):
         return "release", None
-    if command in {"暂停", "暂停任务", "停止", "停止生成"}:
+    if command in {_text_of("assistant_intent.text.4"), _text_of("assistant_intent.text.5"), _text_of("assistant_intent.text.6"), _text_of("assistant_intent.text.7")}:
         return "pause", None
-    if command in {"结束", "结束任务", "终止任务"}:
+    if command in {_text_of("assistant_intent.text.8"), _text_of("assistant_intent.text.9"), _text_of("assistant_intent.text.10")}:
         return "stop", None
-    if command in {"恢复", "恢复任务"}:
+    if command in {_text_of("assistant_intent.text.11"), _text_of("assistant_intent.text.12")}:
         return "resume", None
-    if command in {"合成视频", "合成成片"}:
+    if command in {_text_of("assistant_intent.text.13"), _text_of("assistant_intent.text.14")}:
         return "compose", 7
     if command in {
-        "继续",
-        "下一步",
-        "继续下一步",
-        "开始吧",
-        "开始",
-        "执行",
-        "推进",
-        "恢复",
-        "继续制作",
+        _text_of("assistant_intent.text.15"),
+        _text_of("assistant_intent.text.16"),
+        _text_of("assistant_intent.text.17"),
+        _text_of("assistant_intent.text.18"),
+        _text_of("assistant_intent.text.19"),
+        _text_of("assistant_intent.text.20"),
+        _text_of("assistant_intent.text.21"),
+        _text_of("assistant_intent.text.22"),
+        _text_of("assistant_intent.text.23"),
     }:
         return "continue", None
     if command in {
-        "一键成片",
-        "一键生成",
-        "全部生成",
-        "自动跑完",
-        "开始生成",
-        "自动完成剩余制作",
+        _text_of("assistant_intent.text.24"),
+        _text_of("assistant_intent.text.25"),
+        _text_of("assistant_intent.text.26"),
+        _text_of("assistant_intent.text.27"),
+        _text_of("assistant_intent.text.28"),
+        _text_of("assistant_intent.text.29"),
     }:
         return "run_all", None
     rerun = re.fullmatch(
-        r"(?:重跑|重新生成|重新执行|重做)\s*第?\s*([1-8一二三四五六七八])\s*(阶段|步|环节)?",
+        _text_of("assistant_intent.rerun"),
         command,
     )
     if rerun:
         number = rerun.group(1)
-        stage = int(number) if number.isdigit() else "一二三四五六七八".index(number) + 1
+        stage = int(number) if number.isdigit() else _text_of("assistant_intent.stage").index(number) + 1
         # 「第 7 步」是用户看到的宣发；「第 7 阶段」才是内部的成片合成。
-        if rerun.group(2) == "步" and stage == DISPLAY_STEPS:
+        if rerun.group(2) == _text_of("assistant_intent.text.30") and stage == DISPLAY_STEPS:
             stage = 8
         return "rerun", stage
-    if re.match(r"^(?:修改|调整|改成|把.+改|将.+改|帮我修改|请修改)", command):
+    if re.match(_text_of("assistant_intent.text.31"), command):
         return "edit", None
     # 「帮我从头到尾自动生成成片」「剩下的全部做完」：说法表在 app/data/prompt/assistant_intents.json。
     if _says("run_all", command):
         return "run_all", None
-    if any(term in msg for term in ("进度", "状态", "到哪", "流程")):
+    if any(term in msg for term in _words_of("assistant_intent.text.32")):
         return "status", None
     return "read", None
 

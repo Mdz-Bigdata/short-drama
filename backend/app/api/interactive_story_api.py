@@ -21,10 +21,23 @@ from app.service.interactive_story_service import (
     StoryInputError,
     StoryPlanError,
 )
+from app.core import prompt_data
+
+
+_WORDING_FILE = "api_interactive_story_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_interactive_story_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 router = APIRouter(
     prefix="/api/drama/{task_id}/interactive-story",
-    tags=["互动剧"],
+    tags=list(_words_of("module.tags")),
     dependencies=[Depends(drama_api.require_owned_drama_task)],
 )
 
@@ -141,11 +154,11 @@ def list_media(task_id: str):
 @router.post("/media")
 def upload_media(
     task_id: str,
-    file: UploadFile = File(..., description="图片（PNG / JPEG / WebP ≤ 10 MB）或视频（MP4 / WebM ≤ 200 MB）"),
+    file: UploadFile = File(..., description=_text_of("upload_media.description")),
     duration_s: float = Form(0.0, ge=0),
 ):
     if file.size is not None and file.size > MAX_VIDEO_UPLOAD_BYTES:
-        raise HTTPException(status_code=422, detail=f"文件不能超过 {MAX_VIDEO_UPLOAD_BYTES // (1024 * 1024)} MB")
+        raise HTTPException(status_code=422, detail=_text_of("upload_media.detail").format(MAX_VIDEO_UPLOAD_BYTES // (1024 * 1024)))
     return _guarded(lambda: _service().add_upload(task_id, file.file, filename=file.filename or "", duration_s=duration_s))
 
 

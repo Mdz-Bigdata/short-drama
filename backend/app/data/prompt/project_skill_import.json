@@ -1,0 +1,19 @@
+{
+  "_doc": "app/core/project_skill_import.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "read_upload_limited.text": "上传文件超过大小上限",
+  "_decode_markdown.text": "Markdown 文件必须为 1 字节至 128 KiB",
+  "_decode_markdown.text.2": "Markdown 文件必须使用 UTF-8 编码",
+  "_decode_markdown.text.3": "Markdown 文件不能包含 NUL 字节",
+  "parse_markdown_upload.text": "只允许上传 .md Markdown 文件",
+  "parse_skill_archive.text": "Skill 包必须为 .zip 文件",
+  "parse_skill_archive.text.2": "ZIP 文件无效或超过 2 MiB",
+  "parse_skill_archive.text.3": "ZIP 文件损坏",
+  "parse_skill_archive.text.4": "ZIP 文件数量必须为 1-32 个",
+  "parse_skill_archive.text.5": "ZIP 条目路径无效",
+  "parse_skill_archive.text.6": "ZIP 包含路径穿越或绝对路径",
+  "parse_skill_archive.text.7": "ZIP 不允许符号链接",
+  "parse_skill_archive.text.8": "ZIP 不允许加密条目",
+  "parse_skill_archive.text.9": "Skill 包只能包含 Markdown 文件和目录",
+  "parse_skill_archive.text.10": "ZIP 解压后超过 512 KiB",
+  "parse_skill_archive.text.11": "Skill 包必须且只能包含一个 SKILL.md"
+}

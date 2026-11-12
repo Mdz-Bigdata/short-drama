@@ -10,6 +10,19 @@ from pathlib import Path
 from typing import Optional, Dict, Tuple, Any
 from app import settings
 from app.repository.user_repo import UserRepository, verify_password
+from app.core import prompt_data
+
+
+_WORDING_FILE = "service_auth_service"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/service_auth_service.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.service.auth_service")
 
@@ -200,11 +213,11 @@ class AuthService:
         if email:
             existing = self.user_repo.get_user_by_email(email)
             if existing:
-                raise ValueError("该邮箱已被注册")
+                raise ValueError(_text_of("register.text"))
         if phone:
             existing = self.user_repo.get_user_by_phone(phone)
             if existing:
-                raise ValueError("该手机号已被注册")
+                raise ValueError(_text_of("register.text.2"))
                 
         user = self.user_repo.create_user(email, phone, password_plain)
         return {
@@ -228,17 +241,17 @@ class AuthService:
             user = self.user_repo.get_user_by_phone(login_id_clean)
             
         if not user:
-            raise ValueError("账号或密码错误")
+            raise ValueError(_text_of("login_by_password.text"))
         if (
             user.get("user_id") == "admin_user_id_100"
             and user.get("email") == "admin@example.com"
             and os.getenv("AUTH_ALLOW_LEGACY_ADMIN", "0") != "1"
         ):
-            raise ValueError("内置演示管理员已禁用，请注册独立账号")
+            raise ValueError(_text_of("login_by_password.text.2"))
             
         encoded = str(user.get("password_hash") or "")
         if not verify_password(password_plain, encoded, user.get("salt")):
-            raise ValueError("账号或密码错误")
+            raise ValueError(_text_of("login_by_password.text.3"))
         if not encoded.startswith("scrypt$"):
             self.user_repo.upgrade_password(user["user_id"], password_plain)
             
@@ -283,17 +296,17 @@ class AuthService:
         login_id_clean = login_id.strip()
         code_clean = code.strip()
         if not login_id_clean or not code_clean:
-            raise ValueError("参数不能为空")
+            raise ValueError(_text_of("consume_verification_code.text"))
         saved = MOCK_CODES_DB.get(login_id_clean)
         if not saved or int(saved.get("expires_at", 0)) < int(time.time()):
             MOCK_CODES_DB.pop(login_id_clean, None)
-            raise ValueError("验证码不正确或已过期")
+            raise ValueError(_text_of("consume_verification_code.text.2"))
         saved["attempts"] = int(saved.get("attempts", 0)) + 1
         if saved["attempts"] > settings.VERIFICATION_CODE_MAX_ATTEMPTS:
             MOCK_CODES_DB.pop(login_id_clean, None)
-            raise ValueError("验证码不正确或已过期")
+            raise ValueError(_text_of("consume_verification_code.text.3"))
         supplied = _code_digest(login_id_clean, code_clean)
         if not hmac.compare_digest(str(saved.get("digest") or ""), supplied):
-            raise ValueError("验证码不正确或已过期")
+            raise ValueError(_text_of("consume_verification_code.text.4"))
         MOCK_CODES_DB.pop(login_id_clean, None)
         return login_id_clean

@@ -1,0 +1,17 @@
+{
+  "_doc": "app/core/shot_design_skill.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.section_excerpts.performance-action": [
+    "四、动作戏设计",
+    "出招-受击",
+    "攻防轮转规则",
+    "动能运镜",
+    "节奏档位",
+    "防越轴",
+    "动作戏负面词",
+    "剧本阶段就标危险等级",
+    "翻车急救表",
+    "动作戏 Checklist",
+    "专项打戏骨架"
+  ],
+  "_truncate.text": "\n\n（本节已按上下文预算截断）"
+}

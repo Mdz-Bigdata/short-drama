@@ -16,6 +16,19 @@ from functools import lru_cache
 from app import settings
 from app.core import knowledge_registry
 from typing import Mapping, Sequence
+from app.core import prompt_data
+
+
+_WORDING_FILE = "shot_design_skill"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/shot_design_skill.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 logger = logging.getLogger("app.core.shot_design_skill")
@@ -62,24 +75,7 @@ DIALOGUE_PROMPT_CHAR_CAP = 26_000
 # 这里按小节标题锚点抽取，锚点是标题里的子串(不含编号)，附录重新编号也不会失配。
 # 顺序即优先级：预算不够时从尾部丢，所以必进的内容排在前面。
 SECTION_EXCERPTS: dict[str, tuple[str, ...]] = {
-    "performance-action": (
-        "四、动作戏设计",   # 正文压缩版：七原则/拆镜/打击感五件套/攻防轮转/硬性约束/完整模板
-        "出招-受击",        # 三镜拆分法
-        "攻防轮转规则",     # 附录展开版：防"单方面挨打"
-        "动能运镜",
-        "节奏档位",         # 三档速度方案(标准/极速/慢节奏) + 量化节拍(交锋次数/镜数/微动作数)
-        "防越轴",           # 打戏场次不装 continuity-consistency，轴线规范只剩这一处
-        # SKILL.md 正文明写「打戏防崩坏后缀见 performance-action §3.13」，那一串的权威定义
-        # 就在这一节里。前移到危险等级/急救表之前：实测旧顺序 + 7900 预算下它整节被截掉，
-        # 核心里的交叉引用因此指向一段永远到不了提示词的内容。
-        "动作戏负面词",     # 不能只写"负面词"，那会先命中表情章节的同名小节
-        "剧本阶段就标危险等级",
-        "翻车急救表",
-        "动作戏 Checklist",
-        # §3.16 六种专项打戏骨架(4830 字符)：当前任何一档打戏预算都装不下，排在末尾
-        # 只是声明优先级——预算一旦放宽它就自动进来，不必再改锚点表。
-        "专项打戏骨架",
-    ),
+    "performance-action": _words_of("module.section_excerpts.performance-action"),
 }
 
 # scene_kind(+H3 与否) -> {章节: 预算}。空表示沿用 DEFAULT_SECTION_BUDGET 与
@@ -172,7 +168,7 @@ def _truncate(text: str, budget: int) -> str:
         return text
     head = text[:budget]
     cut = head.rfind("\n")
-    return (head[:cut] if cut > budget // 2 else head).rstrip() + "\n\n（本节已按上下文预算截断）"
+    return (head[:cut] if cut > budget // 2 else head).rstrip() + _text_of("_truncate.text")
 
 
 @lru_cache(maxsize=32)

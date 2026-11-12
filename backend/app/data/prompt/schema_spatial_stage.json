@@ -1,0 +1,15 @@
+{
+  "_doc": "app/schema/spatial_stage.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "SpatialOverviewResponse.description": "人物 → 首次确立的画左 / 画右",
+  "SpatialOverviewResponse.description.2": "地点 → 已固定的地标数",
+  "SpatialPlanResponse.description": "false 表示该场尚未保存空间方案，返回的是按当前剧本即时规划的预览",
+  "SpatialPlanResponse.description.2": "站位已修改，已完成的九宫格仍按旧站位绘制",
+  "SpatialPlanResponse.description.3": "StagePlan（字段保持 snake_case）",
+  "SpatialPlanPatchRequest.description": "编辑前读取到的 plan.revision，用于乐观并发",
+  "SpatialPlanPatchRequest.description.2": "false：本次编辑不得顺带重解任何机位（视口拖拽时用）；true：操作完成后重解全部机位；省略：由操作本身决定",
+  "SpatialImportRequest.description": "3D 导演台工程（version 1）或 CoStage 文档（version 2）",
+  "SpatialRepair.description": "清除该项检查要提交的操作",
+  "SpatialRepair.description.2": "无法自动修正时，需要人决定的事",
+  "SpatialRepairsResponse.description": "提案所依据的 plan.revision；提交时作为 base_revision",
+  "SpatialRepairsResponse.description.2": "全部自动修正去重后的操作，按序提交即可"
+}

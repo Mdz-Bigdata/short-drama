@@ -16,9 +16,22 @@ from app.core import media_compositor, panorama
 from app.core.storyboard_assets import fetch_remote_image_bytes
 from app.service import director_desk_service as desk
 from app.service.spatial_stage_service import scene_record
+from app.core import prompt_data
+
+
+_WORDING_FILE = "service_panorama_service"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/service_panorama_service.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 STORE_KEY = "scene_panoramas"
-SEAM_NOTE = "全景左右两端差异较大，接缝可能看得出来；可在导演台转动接缝方向把它藏到背后，或重新生成"
+SEAM_NOTE = _text_of("module.seam_note")
 
 
 def _records(task: Mapping[str, Any], scene_id: str) -> list[dict[str, Any]]:
@@ -48,7 +61,7 @@ def _bytes_of(result: str) -> bytes:
             return handle.read()
     if value.startswith(("http://", "https://")):
         return fetch_remote_image_bytes(value)
-    raise ValueError("图像模型没有返回可下载的图片")
+    raise ValueError(_text_of("_bytes_of.text"))
 
 
 def generate(
@@ -60,7 +73,7 @@ def generate(
         return None
     scene = scene_record(task, scene_id)
     if scene is None:
-        raise LookupError(f"场景 {scene_id} 不在剧本大纲里")
+        raise LookupError(_text_of("generate.text").format(scene_id))
     desk.ensure_room(task, scene_id, "backdrop")
     prompt = panorama.panorama_prompt(description, scene=scene, has_reference=bool(reference))
     references = None
@@ -73,7 +86,7 @@ def generate(
         require_reference_support=bool(reference),
     )
     if not url:
-        raise RuntimeError("图像模型没有出图")
+        raise RuntimeError(_text_of("generate.text.2"))
     fitted = panorama.fit_panorama(_bytes_of(url))
     stored_url = desk.store_media(task_id, scene_id, fitted.content, "image/jpeg")
 

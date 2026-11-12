@@ -17,8 +17,21 @@ from app.platform.store import PlatformStore
 from app.platform.usage_billing import RATE_KINDS, UsageSpool, usage_differences
 from app.repository.task_repo import TaskRepository
 from app.schema.platform import PointRateCreateRequest
+from app.core import prompt_data
 
-router = APIRouter(prefix="/api/admin", tags=["用量计费"])
+
+_WORDING_FILE = "api_usage_admin_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_usage_admin_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+router = APIRouter(prefix="/api/admin", tags=list(_words_of("module.tags")))
 _tasks = TaskRepository()
 #: Records this recent may still be on their way from the spool.
 _SETTLING = timedelta(minutes=5)
@@ -59,9 +72,9 @@ async def add_rate(
     now = datetime.now(timezone.utc)
     effective = request.effective_from or now
     if effective.tzinfo is None:
-        raise HTTPException(status_code=422, detail="生效时间必须带时区")
+        raise HTTPException(status_code=422, detail=_text_of("add_rate.detail"))
     if effective < now - timedelta(minutes=1):
-        raise HTTPException(status_code=422, detail="费率不能追溯生效：历史调用按当时的费率记录")
+        raise HTTPException(status_code=422, detail=_text_of("add_rate.detail.2"))
     fields = request.model_dump(exclude={"effective_from"})
     fields["model"] = fields["model"].strip().lower()
     fields["resolution"] = fields["resolution"].strip().lower()

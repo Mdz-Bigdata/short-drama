@@ -5,6 +5,19 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from app.core import prompt_data
+
+
+_WORDING_FILE = "skill_registry"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/skill_registry.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 _SAFE_NAME = re.compile(r"^[\w.-]+$", re.UNICODE)
@@ -39,9 +52,9 @@ class SkillRegistry:
     @staticmethod
     def _kind(name: str, text: str) -> str:
         lowered = f"{name}\n{text[:1200]}".lower()
-        if "prompt optimizer" in lowered or "提示词" in lowered or name == "sd25-pe":
+        if "prompt optimizer" in lowered or _text_of("_kind.text") in lowered or name == "sd25-pe":
             return "prompt_compiler"
-        if "storyboard" in lowered or "分镜" in lowered:
+        if "storyboard" in lowered or _text_of("_kind.text.2") in lowered:
             return "storyboard"
         return "workflow"
 

@@ -187,6 +187,17 @@ class DialoguePolishRequest(DramaBaseSchema):
     extra: str = Field("", max_length=300, description="这次额外的要求，如「再冷一点」")
 
 
+class PronunciationRow(DramaBaseSchema):
+    word: str = Field(..., min_length=1, max_length=20, description="剧本里的写法，如「行长」")
+    say: str = Field(..., min_length=1, max_length=20, description="配音时的念法，用同音字写，如「航长」")
+
+
+class PronunciationsUpdate(DramaBaseSchema):
+    """项目读音表：配音时把词换成登记的念法，字幕不动。整张表一起存。"""
+
+    readings: list[PronunciationRow] = Field(default_factory=list, max_length=200)
+
+
 class ScreenwritingPromptPreviewResponse(DramaBaseSchema):
     task_id: str = Field(..., min_length=1, max_length=120)
     episode: int = Field(..., ge=1, le=200)

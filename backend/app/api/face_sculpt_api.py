@@ -38,6 +38,8 @@ class FaceSculptBody(BaseModel):
     notes: dict[str, str] = Field(default_factory=dict, max_length=8)
     expressions: dict[str, Any] = Field(default_factory=dict, max_length=32)
     preset: str = Field("", max_length=40)
+    # 这张脸的突出点(一个骨相或五官控件键)，空串表示没定。
+    focus: str = Field("", max_length=40)
     # 这一步怎么来的，进撤销历史；不填按「手动调整」。
     label: str = Field("", max_length=60)
 

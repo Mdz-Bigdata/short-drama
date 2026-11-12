@@ -1,17 +1,17 @@
-/* 剪辑合成师：深色后期机房。只在这一块里换成深色，颜色仍跟主题的强调色走。 */
+/* 剪辑合成师：和其它看板同一套浅色底、卡片与文字色；只有播放器和缩略图上的叠层保持深色(它们压在画面上)。 */
 .pp, .pp-dialog {
-  --pp-bg: #17121a;
-  --pp-panel: #211a25;
-  --pp-panel-2: #2a2230;
-  --pp-line: rgba(255, 255, 255, 0.09);
-  --pp-line-strong: rgba(255, 255, 255, 0.18);
-  --pp-text: #f3eef5;
-  --pp-muted: #b9adbf;
-  --pp-dim: #9a8da1;
-  --pp-native: #3ecf8e;
-  --pp-tts: #f5b84a;
-  --pp-none: #8d8295;
-  --pp-rejected: #ff6b81;
+  --pp-bg: transparent; /* 直接坐在看板的卡片里，和其它阶段一样不再套一层底 */
+  --pp-panel: rgba(var(--accent-rgb), 0.04);
+  --pp-panel-2: rgba(var(--accent-rgb), 0.07);
+  --pp-line: var(--line);
+  --pp-line-strong: var(--line-strong);
+  --pp-text: var(--text-main);
+  --pp-muted: var(--text-muted);
+  --pp-dim: var(--text-dim);
+  --pp-native: var(--success-ink);
+  --pp-tts: var(--warning-ink);
+  --pp-none: var(--text-dim);
+  --pp-rejected: var(--danger-ink);
 }
 
 .pp {
@@ -19,8 +19,6 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 16px;
-  border-radius: 18px;
   background: var(--pp-bg);
   color: var(--pp-text);
   font-size: 0.85rem;
@@ -67,7 +65,7 @@
 .pp-chip--sound { color: var(--pp-native); }
 
 .pp-notice { margin: 0; padding: 8px 12px; border-radius: 9px; background: rgba(var(--accent-rgb), 0.16); color: var(--pp-text); }
-.pp-alert { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(245, 184, 74, 0.45); background: rgba(245, 184, 74, 0.12); }
+.pp-alert { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(var(--warning-rgb), 0.35); background: rgba(var(--warning-rgb), 0.08); }
 .pp-alert p { margin: 0; color: var(--pp-tts); }
 .pp-empty { padding: 24px; text-align: center; color: var(--text-muted); }
 .pp-muted { margin: 0; color: var(--pp-dim); font-size: 0.78rem; }
@@ -102,7 +100,7 @@
   overflow: hidden;
 }
 .pp-stage video { display: block; width: 100%; max-height: min(62vh, 640px); background: #000; }
-.pp-stage__empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 32px 16px; color: var(--pp-muted); text-align: center; }
+.pp-stage__empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 32px 16px; color: rgba(255, 255, 255, 0.78); text-align: center; }
 .pp-stage__empty p { margin: 0; }
 
 .pp-caption {
@@ -145,7 +143,7 @@
 .pp-strip img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .pp-strip__blank { display: grid; place-items: center; height: 100%; color: var(--pp-dim); }
 .pp-strip li.is-selected button { border-color: var(--accent-soft); }
-.pp-strip li.is-playing button { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.7); }
+.pp-strip li.is-playing button { box-shadow: 0 0 0 2px var(--accent); }
 .pp-strip li.is-rejected img { opacity: 0.35; filter: grayscale(1); }
 .pp-strip__num {
   position: absolute;
@@ -164,7 +162,7 @@
   padding: 0 4px;
   border-radius: 4px;
   background: rgba(0, 0, 0, 0.65);
-  color: var(--pp-tts);
+  color: #f5b84a; /* 压在缩略图的深色角标上 */
   font-size: 0.62rem;
   font-style: normal;
 }
@@ -177,7 +175,7 @@
 .pp-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0; color: var(--pp-dim); font-size: 0.72rem; }
 .pp-legend > i:not(.pp-dot) { display: inline-block; width: 12px; height: 2px; }
 .pp-legend > i.is-music { background: var(--pp-tts); }
-.pp-legend > i.is-playhead { background: #fff; }
+.pp-legend > i.is-playhead { background: var(--ink); }
 
 .pp-shot {
   display: flex;
@@ -196,10 +194,6 @@
 .pp .pp-segment button + button { border-left: 1px solid var(--pp-line-strong); }
 .pp .pp-segment button[aria-checked='true'] { background: var(--accent); color: var(--on-accent); }
 
-/* 交付前验收挂在深色里：沿用它自己的样式，只把底色压暗。 */
-.pp .delivery-check { background: var(--pp-panel); color: var(--pp-text); border-color: var(--pp-line); }
-.pp .delivery-check__ok { color: var(--pp-native); }
-.pp .delivery-check__rule { background: rgba(245, 184, 74, 0.16); color: var(--pp-tts); }
 
 .pp-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .pp-card { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 14px; background: var(--pp-panel); }
@@ -237,7 +231,7 @@
 .pp-now { display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 10px; background: var(--pp-panel-2); }
 .pp-now__name { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .pp-now__name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pp-now__name small { color: var(--pp-dim); font-size: 0.72rem; }
+.pp-now__name small { color: var(--pp-muted); font-size: 0.72rem; }
 :is(.pp, .pp-dialog) .pp-icon { width: 32px; padding: 0; justify-content: center; flex: none; }
 .pp .pp-ghost { background: transparent; }
 .pp-row { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -257,7 +251,7 @@
 .pp-track strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .pp-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .pp-tags b { color: var(--pp-native); font-size: 0.7rem; font-weight: 600; }
-.pp-tags em { padding: 0 6px; border-radius: 999px; background: var(--pp-panel-2); color: var(--pp-muted); font-size: 0.68rem; font-style: normal; }
+.pp-tags em { padding: 0 6px; border-radius: 999px; background: var(--pp-panel-2); color: var(--pp-text); font-size: 0.68rem; font-style: normal; }
 
 .pp-model { display: flex; justify-content: space-between; gap: 8px; margin: 0; color: var(--pp-muted); font-size: 0.78rem; }
 .pp-model b { color: var(--pp-text); font-weight: 600; text-align: right; }
@@ -266,7 +260,7 @@
 .pp-curve__fill { fill: rgba(var(--accent-rgb), 0.22); }
 .pp-curve__line { fill: none; stroke: var(--accent-soft); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .pp-curve__music { stroke: var(--pp-tts); stroke-width: 1.5; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
-.pp-curve__playhead { stroke: #fff; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.pp-curve__playhead { stroke: var(--ink); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 
 .pp-foot {
   display: flex;

@@ -10,7 +10,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from typing import Any
 
-from app.core import acting, creation_modes
+from app.core import acting, creation_modes, prompt_data
 from app.core.episode_shape import EpisodeShape
 from app.schema.writer_dashboard import (
     WriterDashboardEpisode,
@@ -24,31 +24,58 @@ from app.schema.writer_dashboard import (
     WriterOverview,
 )
 
+# The patterns a screenplay is read with, the label words it must not take for names, and the
+# board's default wording: app/data/prompt/writer_dashboard.json.
+_WORDING = "writer_dashboard"
+
+
+def _entry(key: str) -> Any:
+    """The entry at the dotted ``key`` ("section.name") of the wording table."""
+    node: Any = prompt_data.load(_WORDING)
+    for part in key.split("."):
+        node = node[part]
+    return node
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A template of the wording table, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return str(_entry(key)).format(**values)
+
+
+def _word(key: str) -> str:
+    """A word of the wording table, used as it stands."""
+    return str(_entry(key))
+
+
+def _table(key: str) -> Any:
+    """A word table of the wording table, used as it stands."""
+    return _entry(key)
+
+
+def _pattern(key: str, flags: int = 0) -> re.Pattern[str]:
+    """A regex of the wording table, compiled with the flags the code gives it."""
+    return re.compile(_word(key), flags)
+
 
 # The single episode-heading parser for the whole pipeline. Screenplay generation,
 # the dashboard's episode count and the "append the missing episodes" repair all
 # read the same headings, so a second, weaker copy of this regex would make a
 # complete script look truncated and offer a repair that can never succeed.
-EPISODE_HEADING = re.compile(
-    r"^[ \t]*(?:#{1,6}[ \t]*)?(?:\*{1,3}[ \t]*)?(?:【[ \t]*)?"
-    r"第[ \t]*([0-9]{1,3}|[一二三四五六七八九十]{1,4})[ \t]*集"
-    r"(?:[ \t]*】)?[ \t]*[:：\-—]?[ \t]*(.*)$",
-    re.M,
-)
-_CN_EPISODE_DIGITS = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
-                      "六": 6, "七": 7, "八": 8, "九": 9}
+EPISODE_HEADING = _pattern("patterns.episode_heading", re.M)
+_CN_EPISODE_DIGITS = {str(digit): int(value) for digit, value in _table("episode_digits").items()}
+_TEN = _word("ten")
 
 
 def episode_label_number(label: str) -> int:
     """Read 「12」 and 「十二」 alike; 0 when the label cannot be read."""
     if label.isdigit():
         return int(label)
-    if label == "十":
+    if label == _TEN:
         return 10
-    if label.startswith("十"):
+    if label.startswith(_TEN):
         return 10 + _CN_EPISODE_DIGITS.get(label[1:2], 0)
-    if "十" in label:
-        tens, _, ones = label.partition("十")
+    if _TEN in label:
+        tens, _, ones = label.partition(_TEN)
         return (
             _CN_EPISODE_DIGITS.get(tens, 0) * 10
             + (_CN_EPISODE_DIGITS.get(ones, 0) if ones else 0)
@@ -97,25 +124,15 @@ def split_script_by_episode(script: str) -> dict[int, str]:
         end = matches[position + 1].start() if position + 1 < len(matches) else len(script)
         episodes[number] = script[match.start():end].strip()
     return episodes
-_SCENE_HEADING = re.compile(
-    r"^\s*(?:#{1,6}\s*)?(?:【\s*)?(?:场景|SCENE)\s*([0-9]{0,4})(?:\s*】)?\s*[:：\-—]?\s*(.*)$",
-    re.IGNORECASE,
-)
-_INT_EXT_HEADING = re.compile(r"^\s*(?:INT\.|EXT\.|内景|外景)[：:\s-]", re.IGNORECASE)
-_SPEAKER = re.compile(r"(?:^|\n)[ \t]*(?:【)?([一-龥A-Za-z][一-龥A-Za-z· \t]{0,15})(?:】)?[ \t]*[：:]")
-_NON_SPEAKERS = {"场景", "时间", "地点", "画面", "动作", "音效", "音乐", "环境音", "旁白", "镜头", "时长", "节奏"}
+_SCENE_HEADING = _pattern("patterns.scene_heading", re.IGNORECASE)
+_INT_EXT_HEADING = _pattern("patterns.int_ext_heading", re.IGNORECASE)
+_SPEAKER = _pattern("patterns.speaker")
+_NON_SPEAKERS = {str(word) for word in _table("non_speakers")}
 # Screenplays carry structural labels in the same "标签：内容" shape as dialogue
 # ("双轨节奏：…", "情绪钩子：…"), so the speaker pattern reads them as characters
 # and they end up as nodes in the relationship graph.  Character names are short
 # and never built from these production morphemes.
-_LABEL_MORPHEMES = (
-    "节奏", "时长", "时间", "地点", "场景", "画面", "动作", "音效", "音乐", "环境",
-    "镜头", "旁白", "字幕", "道具", "服装", "化妆", "灯光", "转场", "景别", "特写",
-    "情绪", "情节", "情感", "钩子", "主题", "结构", "说明", "备注", "要点", "要求",
-    "集数", "台词", "对白", "预估", "输入", "输出", "来源", "风格", "视觉", "规范",
-    "冲突", "目标", "假设", "风险", "交付", "标题", "副标", "总结", "提示", "清单",
-    "分镜", "机位", "剪辑", "调度", "配乐", "尺度", "合规", "复用", "付费",
-)
+_LABEL_MORPHEMES = tuple(str(word) for word in _table("label_morphemes"))
 _MAX_CHARACTER_NAME_CHARS = 8
 
 # Public aliases: whoever asks "does this text already read as a screenplay?" must
@@ -180,6 +197,10 @@ def episode_from_scene_id(scene_id: str) -> int:
     return max(1, min(200, int(match.group(1)))) if match else 1
 
 
+_MINUTES = _pattern("patterns.minutes")
+_SECONDS = _pattern("patterns.seconds")
+
+
 def parse_duration_seconds(value: Any) -> int:
     raw = _text(value, 80).lower()
     if not raw:
@@ -187,8 +208,8 @@ def parse_duration_seconds(value: Any) -> int:
     colon = re.fullmatch(r"(\d{1,3}):(\d{1,2})", raw)
     if colon:
         return min(86400, int(colon.group(1)) * 60 + int(colon.group(2)))
-    minutes = re.search(r"(\d+(?:\.\d+)?)\s*(?:m|min|分钟|分)", raw)
-    seconds = re.search(r"(\d+(?:\.\d+)?)\s*(?:s|sec|秒)", raw)
+    minutes = _MINUTES.search(raw)
+    seconds = _SECONDS.search(raw)
     if minutes or seconds:
         total = float(minutes.group(1)) * 60 if minutes else 0
         total += float(seconds.group(1)) if seconds else 0
@@ -206,15 +227,8 @@ def _characters(text: str) -> list[str]:
     return names[:100]
 
 
-_METADATA_LINE = re.compile(
-    r"^\s*(?:[-*+#>]|\d+[.、)]|[【\[(（])|"
-    r"^\s*(?:输入来源|关键假设|假设|未解决风险|风险|交付物|输出|规范|要求|备注|说明|"
-    r"场景复用|核心角色|辅助角色|付费墙|平台|受众|题材|时长|集数|版本|作者)\s*[：:]"
-)
-_SYNOPSIS_HEADING = re.compile(
-    r"(?:故事梗概|剧情梗概|核心梗概|核心剧情|故事大纲|一句话梗概|logline)\s*[：:]\s*(.+)",
-    re.IGNORECASE,
-)
+_METADATA_LINE = _pattern("patterns.metadata_line")
+_SYNOPSIS_HEADING = _pattern("patterns.synopsis_heading", re.IGNORECASE)
 
 
 def _script_synopsis(script: str, limit: int = 320) -> str:
@@ -244,17 +258,9 @@ def _script_synopsis(script: str, limit: int = 320) -> str:
 # A project is created from a chat prompt, so title_suggestion is often the request
 # itself ("请帮我生成一个古装权谋短剧") rather than a name. Such a string must never be
 # rendered as the drama's title.
-_INSTRUCTION_TITLE = re.compile(
-    r"(?:^|[\s，。、])(?:请|帮我|帮忙|给我|替我|麻烦你?|我想|我要|需要你?|来一个|来一部)"
-    r"|(?:生成|创作|编写|写|做|来)(?:一)?(?:个|部|篇|集|下)"
-    r"|(?:剧本|短剧|故事)(?:大纲|梗概)?\s*$"
-)
-_SCRIPT_TITLE_LABEL = re.compile(
-    r"^[ \t]*(?:#{1,6}[ \t]*)?(?:\*{1,3}[ \t]*)?(?:剧名|片名|剧本名|剧本名称|作品名|项目名称|标题)"
-    r"[ \t]*[：:][ \t]*(.+?)[ \t]*$",
-    re.M,
-)
-_BOOK_TITLE = re.compile(r"《([^》\n]{1,32})》")
+_INSTRUCTION_TITLE = _pattern("patterns.instruction_title")
+_SCRIPT_TITLE_LABEL = _pattern("patterns.script_title_label", re.M)
+_BOOK_TITLE = _pattern("patterns.book_title")
 
 
 def is_instruction_like(value: str) -> bool:
@@ -267,7 +273,7 @@ def is_instruction_like(value: str) -> bool:
 
 def clean_title(value: Any, limit: int = 60) -> str:
     """Strip book-title marks and markdown decoration from a candidate title."""
-    return _text(value, limit).strip("《》〈〉“”\"'*＊#【】 ").strip()
+    return _text(value, limit).strip(_word("title_marks")).strip()
 
 
 def script_title(script: str) -> str:
@@ -285,7 +291,7 @@ def script_title(script: str) -> str:
     for match in _BOOK_TITLE.finditer(head):
         candidate = clean_title(match.group(1))
         # 《黄金叙事结构》-style references to guideline documents are not the drama.
-        if candidate and not is_instruction_like(candidate) and "结构" not in candidate:
+        if candidate and not is_instruction_like(candidate) and _word("reference_word") not in candidate:
             return candidate
     return ""
 
@@ -301,7 +307,7 @@ def resolve_drama_title(overview_title: Any, script: str, configured: Any) -> st
     configured_title = clean_title(configured, 500)
     if configured_title and not is_instruction_like(configured_title):
         return configured_title
-    return "未命名短剧"
+    return _word("says.untitled")
 
 
 def _episode_titles(script: str) -> dict[int, str]:
@@ -311,8 +317,8 @@ def _episode_titles(script: str) -> dict[int, str]:
         if match:
             number = _episode_number(match.group(1))
             # A bold heading leaves its closing ** on the title.
-            title = _text(match.group(2), 500).strip("*＊ ").strip()
-            result[number] = title or f"第 {number} 集"
+            title = _text(match.group(2), 500).strip(_word("episode_title_marks")).strip()
+            result[number] = title or _says("says.episode_title", number=number)
     return result
 
 
@@ -419,9 +425,10 @@ def _episode_issues(scene_count: int, total_seconds: int, shape: EpisodeShape) -
 
 
 # A speaker's line in a parsed shot: 沈昭：[沈昭][释然-克制][慢速] 戏唱完了。 — up to the next speaker or 【…】.
-_SPOKEN = re.compile(r"(?:^|[\s。！？!?；;])([\u4e00-\u9fff·]{1,8})[：:]\s*(.+?)(?=(?:[\s。！？!?；;][\u4e00-\u9fff·]{1,8}[：:])|【|$)", re.S)
-_CUES = re.compile(r"\[[^\]]*\]|（[^）]*）|\([^)]*\)")
-_NOT_SPEAKERS = frozenset({"镜头", "画面", "时长", "景别", "运镜", "场景", "内景", "外景", "动作", "音效", "备注"})
+_SPOKEN = _pattern("patterns.spoken", re.S)
+_CUES = _pattern("patterns.cues")
+_QUOTED = _pattern("patterns.quoted")
+_NOT_SPEAKERS = frozenset(str(word) for word in _table("not_speakers"))
 # Action-only shots: the plan's own rhythm (2.5-3.2 s a shot) rounded up to what the model renders.
 _ACTION_SHOT_SECONDS = 3.0
 # Breath after the last word, so a line is not cut on its final syllable.
@@ -438,12 +445,12 @@ def spoken_text(content: str) -> str:
         speaker, words = match.group(1), match.group(2)
         if speaker in _NOT_SPEAKERS:
             continue
-        lines.append(_CUES.sub("", words).strip().strip("“”\"").strip())
+        lines.append(_CUES.sub("", words).strip().strip(_word("quote_marks")).strip())
         rest.append(text[cursor:match.start(1)])
         cursor = match.end()
     rest.append(text[cursor:])
     # A quotation outside any speaker's line is spoken too ("她低声说“走吧”" without a colon).
-    lines.extend(re.findall(r"“([^”]{1,400})”", _CUES.sub("", "".join(rest))))
+    lines.extend(_QUOTED.findall(_CUES.sub("", "".join(rest))))
     return " ".join(line for line in lines if line)
 
 
@@ -514,7 +521,7 @@ def _normalize_scenes(
         if estimated:
             # Shots parsed from free script text have no planned length: estimate one the video model can render.
             duration = estimated_shot_seconds(_text(item.get("content"), 6000), video_model, language)
-            duration_label = f"{duration}秒（按视频模型估算）"
+            duration_label = _says("says.estimated_duration", seconds=duration)
         result.append({
             "scene_id": scene_id,
             "episode_index": episode_from_scene_id(scene_id),
@@ -546,10 +553,10 @@ def _fallback_events(scenes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return []
     count = min(8, len(scenes))
     indexes = sorted({round(index * (len(scenes) - 1) / max(count - 1, 1)) for index in range(count)})
-    phases = ["故事开始", "进展纠葛", "危机", "高潮", "结局"]
+    phases = [str(phase) for phase in _table("phases")]
     return [{
         "phase": phases[min(round(position * (len(phases) - 1) / max(len(indexes) - 1, 1)), len(phases) - 1)],
-        "title": _text(scenes[scene_index].get("content"), 120) or f"剧情节点 {position + 1}",
+        "title": _text(scenes[scene_index].get("content"), 120) or _says("says.plot_point", number=position + 1),
         "desc": "",
         "points": [],
     } for position, scene_index in enumerate(indexes)]
@@ -567,8 +574,8 @@ def _normalize_events(raw_events: Any, scenes: list[dict[str, Any]]) -> list[Wri
         events.append(WriterDashboardEvent(
             event_id=f"event-{index + 1:03d}",
             order=index + 1,
-            phase=_text(item.get("phase"), 120) or "剧情节点",
-            title=_text(item.get("title"), 500) or f"剧情节点 {index + 1}",
+            phase=_text(item.get("phase"), 120) or _word("says.plot_point_phase"),
+            title=_text(item.get("title"), 500) or _says("says.plot_point", number=index + 1),
             desc=_text(item.get("desc"), 4000),
             points=_text_list(item.get("points"), limit=30, item_limit=500),
             scene_id=scene.get("scene_id") if scene else None,
@@ -587,7 +594,7 @@ def _normalize_relationships(value: Any) -> list[WriterDashboardRelationship]:
             continue
         source = _text(item.get("from") if "from" in item else item.get("from_"), 80)
         target = _text(item.get("to"), 80)
-        relation = _text(item.get("relation"), 120) or "剧情关联"
+        relation = _text(item.get("relation"), 120) or _word("says.default_relation")
         key = (source, target, relation)
         if not is_character_name(source) or not is_character_name(target):
             continue
@@ -643,7 +650,7 @@ def _infer_relationships_from_scenes(scenes: list[dict[str, Any]]) -> list[Write
         WriterDashboardRelationship(
             from_=source,
             to=target,
-            relation=f"同场互动 · {count} 场",
+            relation=_says("says.shared_scenes", count=count),
             bidirectional=True,
         )
         for (source, target), count in pair_counts.items()
@@ -665,14 +672,14 @@ def _normalize_roles(
             if isinstance(item, dict):
                 name = _text(item.get("name"), 80)
                 if is_character_name(name):
-                    roles[name] = _text(item.get("position"), 120) or "剧情角色"
+                    roles[name] = _text(item.get("position"), 120) or _word("says.default_role")
     discovered = [name for scene in scenes for name in scene.get("characters", [])]
     discovered.extend(_characters(script))
     for edge in relationships:
         discovered.extend([edge.from_, edge.to])
     for name in discovered:
         if is_character_name(name):
-            roles.setdefault(name, "剧情角色")
+            roles.setdefault(name, _word("says.default_role"))
     return [WriterDashboardRole(name=name, position=position) for name, position in list(roles.items())[:500] if name not in hidden_names]
 
 
@@ -752,12 +759,12 @@ def compile_writer_dashboard(task: dict[str, Any]) -> WriterDashboardResponse:
     for index in range(1, total_episodes + 1):
         stored = stored_episodes.get(index, {})
         episode_scenes = scenes_by_episode[index]
-        fallback_title = _text(episode_scenes[0].content, 120) if episode_scenes else f"第 {index} 集"
+        fallback_title = _text(episode_scenes[0].content, 120) if episode_scenes else _says("says.episode_title", number=index)
         status = str(stored.get("status") or "idle")
         episode_seconds = min(_MAX_DASHBOARD_SECONDS, sum(scene.duration_seconds for scene in episode_scenes))
         episodes.append(WriterDashboardEpisode(
             index=index,
-            title=_text(stored.get("title") or title_map.get(index) or fallback_title, 500) or f"第 {index} 集",
+            title=_text(stored.get("title") or title_map.get(index) or fallback_title, 500) or _says("says.episode_title", number=index),
             scene_count=len(episode_scenes),
             duration_seconds=episode_seconds,
             # An episode is judged on planned lengths only: an estimate is a guess, not a finding.
@@ -803,7 +810,7 @@ def compile_writer_dashboard(task: dict[str, Any]) -> WriterDashboardResponse:
         main_event_count=len(timeline),
         relationship_count=len(relationships),
         total_duration_seconds=min(_MAX_DASHBOARD_SECONDS, sum(scene.duration_seconds for scene in scenes)),
-        tone=overview.genre or "待分析",
+        tone=overview.genre or _word("says.tone_pending"),
     )
     return WriterDashboardResponse(
         task_id=_text(task.get("task_id"), 120) or "unknown-task",

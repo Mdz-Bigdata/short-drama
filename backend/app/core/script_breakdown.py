@@ -23,30 +23,66 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from app.core import breakdown_kinds, character_variants
+from app.core import breakdown_kinds, character_variants, prompt_data
 from app.core.character_looks import crowd_wardrobe, plan_looks, untimed_makeup
 from app.core.production_asset_extractor import extract_production_assets
 from app.core.storyboard_scene_context import EMPTY_ACTOR, is_uncast, mentioned
 from app.core.writer_dashboard import episode_from_scene_id, parse_duration_seconds
 
-#: 拆解单上的元素类别，按第 6.2 节的顺序。
-ELEMENT_KINDS: tuple[tuple[str, str], ...] = (
-    ("extra", "群演"), ("stunt", "特技"), ("vehicle", "车辆"), ("prop", "道具"), ("effect", "特效"), ("look", "表演妆造"),
-    ("set_dressing", "置景"), ("product", "商品"),
-)
+# The words a heading is read with, the labels of the sheet and its export templates: app/data/prompt/script_breakdown.json.
+_WORDING = "script_breakdown"
+
+
+def _entry(key: str) -> Any:
+    """The entry at the dotted ``key`` ("section.name") of the wording table."""
+    node: Any = prompt_data.load(_WORDING)
+    for part in key.split("."):
+        node = node[part]
+    return node
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A template of the wording table, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return str(_entry(key)).format(**values)
+
+
+def _word(key: str) -> str:
+    """A word or label of the wording table, used as it stands."""
+    return str(_entry(key))
+
+
+def _table(key: str) -> Any:
+    """A word table of the wording table, used as it stands."""
+    return _entry(key)
+
+
+def _pattern(key: str, flags: int = 0) -> re.Pattern[str]:
+    return re.compile(_word(key), flags)
+
+
+#: 拆解单上的元素类别，按第 6.2 节的顺序；名字在 script_breakdown.json 的 element_labels。
+_ELEMENT_ORDER = ("extra", "stunt", "vehicle", "prop", "effect", "look", "set_dressing", "product")
+ELEMENT_KINDS: tuple[tuple[str, str], ...] = tuple((kind, str(_table("element_labels")[kind])) for kind in _ELEMENT_ORDER)
+_SIDE_CODES = ("INT", "EXT", "INT/EXT")
 _EN_HEADING = re.compile(r"^(INT\./EXT|INT/EXT|I/E|INT|EXT)\.?\s+(.+?)(?:\s+-\s+(.+?))?$", re.I)
-_CN_HEADING = re.compile(r"^(内外景|内景|外景)\s*[：:]?\s*(.+?)(?:\s*[-–—]\s*(.+?))?$")
-_SPLIT = re.compile(r"[\s·,，、/]+")
-_LEADING_HEADING = re.compile(r"^((?:INT|EXT|I/E|内景|外景|内外景)\S*\s*[^。！？!?]*?\s[-–—]\s\S+)")
-_SIDES = {"内景": "INT", "外景": "EXT", "内外景": "INT/EXT", "内": "INT", "外": "EXT"}
-_SIDE_LABELS = {"INT": "内", "EXT": "外", "INT/EXT": "内外"}
-_NIGHT_WORDS = ("夜", "晚", "凌晨", "NIGHT", "MIDNIGHT")
-_DAY_WORDS = ("日", "昼", "天", "晨", "早", "午", "黄昏", "傍晚", "黎明", "拂晓", "DAY", "MORNING", "NOON", "AFTERNOON", "DAWN", "DUSK", "SUNSET", "SUNRISE")
-_TIME_TOKEN = re.compile(r"^[雨雪风]?(?:深|午|入)?夜$|^(?:夜晚|夜间|夜里|白天|白日|日间|清晨|早晨|上午|中午|午后|下午|黄昏|傍晚|日暮|黎明|拂晓|凌晨|日|晨|昏|晚|早|午)$")
-_DAY_NIGHT_LABELS = {"DAY": "日", "NIGHT": "夜"}
+_CN_HEADING = _pattern("patterns.cn_heading")
+_SPLIT = _pattern("patterns.split")
+_LEADING_HEADING = _pattern("patterns.leading_heading")
+# 内景 / 外景 / 内外景 first, then the one-character 内 / 外.
+_SIDES = {
+    **{str(_table("side_words")[code]): code for code in _SIDE_CODES},
+    **{str(_table("side_short_words")[code]): code for code in ("INT", "EXT")},
+}
+_SIDE_LABELS = {code: str(_table("side_labels")[code]) for code in _SIDE_CODES}
+_NIGHT_WORDS = tuple(str(word) for word in _table("night_words"))
+_DAY_WORDS = tuple(str(word) for word in _table("day_words"))
+_TIME_TOKEN = _pattern("patterns.time_token")
+_SENTENCE_END = _pattern("patterns.sentence_end")
+_DAY_NIGHT_LABELS = {code: str(_table("day_night_labels")[code]) for code in ("DAY", "NIGHT")}
 #: 堪布条的通行配色：内日白、外日黄、内夜蓝、外夜绿。
 _STRIP_COLOURS = {("INT", "DAY"): "white", ("EXT", "DAY"): "yellow", ("INT", "NIGHT"): "blue", ("EXT", "NIGHT"): "green"}
-_STRIP_LABELS = {"white": "白", "yellow": "黄", "blue": "蓝", "green": "绿"}
+_STRIP_LABELS = {colour: str(_table("strip_labels")[colour]) for colour in _STRIP_COLOURS.values()}
+_LIST = _word("separators.list")
 _SECONDS_PER_PAGE = 60
 _SUMMARY_CHARS = 60
 _CSV_FORMULA = ("=", "+", "-", "@")
@@ -219,8 +255,8 @@ def compile_breakdown(task: Mapping[str, Any], raw_scenes: Sequence[Mapping[str,
         })
     # 哪一场都没提到、也定不下时间的妆效，汇总里也要看得到，免得漏准备。
     for item in loose_makeup:
-        if not any(key_kind == "look" and f"{item['of']}：" in name and item["label"] in name for key_kind, name in needed):
-            needed[("look", f"{item['of']}：{item['label']}（未定时间）")] = []
+        if not any(key_kind == "look" and _says("says.look_owner", name=item["of"]) in name and item["label"] in name for key_kind, name in needed):
+            needed[("look", _says("says.untimed_look", name=item["of"], label=item["label"]))] = []
     total = sum(sheet["eighths"] for sheet in sheets)
     return {
         "schema_version": "script-breakdown.v1",
@@ -251,15 +287,16 @@ def _looks_in_scene(
             if chosen:
                 worn[str(chosen["label"])] = None
         added = [item["label"] for item in loose_makeup if item["of"] == name and mentioned({"name": item["name"]}, text)]
-        parts = ["·".join([label, *added]) for label in worn] or (["·".join(added)] if added else [])
+        joiner = _word("separators.look")
+        parts = [joiner.join([label, *added]) for label in worn] or ([joiner.join(added)] if added else [])
         if parts:
-            rows.append(f"{name}：{'、'.join(parts)}")
+            rows.append(_says("says.look_row", name=name, looks=_LIST.join(parts)))
     return rows
 
 
 def _summary(text: str) -> str:
-    sentence = re.split(r"(?<=[。！？!?])", " ".join(text.split()), maxsplit=1)[0]
-    return sentence if len(sentence) <= _SUMMARY_CHARS else sentence[: _SUMMARY_CHARS - 1].rstrip("，、；;") + "…"
+    sentence = _SENTENCE_END.split(" ".join(text.split()), maxsplit=1)[0]
+    return sentence if len(sentence) <= _SUMMARY_CHARS else sentence[: _SUMMARY_CHARS - 1].rstrip(_word("summary_trim")) + _word("ellipsis")
 
 
 def _safe_cell(value: Any) -> str:
@@ -269,19 +306,19 @@ def _safe_cell(value: Any) -> str:
 
 
 def _cast_line(sheet: Mapping[str, Any]) -> str:
-    return "、".join(f"{item['number']}.{item['name']}" for item in sheet.get("cast") or [])
+    return _LIST.join(f"{item['number']}.{item['name']}" for item in sheet.get("cast") or [])
 
 
 def render_csv(breakdown: Mapping[str, Any]) -> str:
     """One row per scene. A BOM up front so Excel reads the Chinese as UTF-8."""
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(["场号", "内外", "日夜", "时段", "地点", "页长", "秒数", "堪布条", "概要", "演员", *(label for _kind, label in ELEMENT_KINDS)])
+    writer.writerow([*(str(column) for column in _table("csv_header")), *(label for _kind, label in ELEMENT_KINDS)])
     for sheet in breakdown.get("scenes") or []:
         writer.writerow([_safe_cell(cell) for cell in (
             sheet["number"], _SIDE_LABELS.get(sheet["int_ext"], ""), _DAY_NIGHT_LABELS.get(sheet["day_night"], ""), sheet["time"], sheet["location"],
             sheet["page_length"], sheet["seconds"], _STRIP_LABELS.get(sheet["strip"], ""), sheet["summary"], _cast_line(sheet),
-            *("、".join(sheet["elements"].get(kind) or []) for kind, _label in ELEMENT_KINDS),
+            *(_LIST.join(sheet["elements"].get(kind) or []) for kind, _label in ELEMENT_KINDS),
         )])
     return "\ufeff" + buffer.getvalue()
 
@@ -292,42 +329,49 @@ def _md(value: Any) -> str:
 
 def render_markdown(breakdown: Mapping[str, Any]) -> str:
     """The sheets to read: the strip list first, then one block per scene, then who and what across scenes."""
-    title = str(breakdown.get("title") or "未命名短剧")
+    title = str(breakdown.get("title") or _word("markdown.untitled"))
     lines = [
-        f"# {_md(title)} · 拆解单", "",
-        f"共 {breakdown.get('total_scenes', 0)} 场，约 {breakdown.get('total_pages') or 0} 页。页长按一页约一分钟估算，排期前请按实际拍摄稿复核。", "",
-        "## 场次总表", "",
-        "| 场号 | 内外 | 日夜 | 地点 | 页长 | 堪布条 | 演员 | 概要 |", "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        _says("markdown.title", title=_md(title)), "",
+        _says("markdown.totals", scenes=breakdown.get("total_scenes", 0), pages=breakdown.get("total_pages") or 0), "",
+        _word("markdown.strips_heading"), "",
+        *(str(line) for line in _table("markdown.strips_table")),
     ]
     for sheet in breakdown.get("scenes") or []:
-        lines.append(
-            f"| {sheet['number']} | {_SIDE_LABELS.get(sheet['int_ext'], '')} | {_DAY_NIGHT_LABELS.get(sheet['day_night'], '')} | {_md(sheet['location'])} | {sheet['page_length']} "
-            f"| {_STRIP_LABELS.get(sheet['strip'], '')} | {_md(_cast_line(sheet))} | {_md(sheet['summary'])} |"
-        )
-    lines.extend(["", "## 每场拆解单", ""])
+        lines.append(_says(
+            "markdown.strip_row", number=sheet["number"], side=_SIDE_LABELS.get(sheet["int_ext"], ""),
+            day_night=_DAY_NIGHT_LABELS.get(sheet["day_night"], ""), location=_md(sheet["location"]), page_length=sheet["page_length"],
+            strip=_STRIP_LABELS.get(sheet["strip"], ""), cast=_md(_cast_line(sheet)), summary=_md(sheet["summary"]),
+        ))
+    lines.extend(["", _word("markdown.sheets_heading"), ""])
     for sheet in breakdown.get("scenes") or []:
-        place = " · ".join(part for part in (_SIDE_LABELS.get(sheet["int_ext"], ""), _DAY_NIGHT_LABELS.get(sheet["day_night"], ""), sheet["location"]) if part)
-        lines.extend([f"### 第 {sheet['number']} 场{f'：{_md(place)}' if place else ''}", ""])
+        place = _word("separators.place").join(part for part in (_SIDE_LABELS.get(sheet["int_ext"], ""), _DAY_NIGHT_LABELS.get(sheet["day_night"], ""), sheet["location"]) if part)
+        lines.extend([_says("markdown.sheet_heading", number=sheet["number"], place=_says("markdown.sheet_place", place=_md(place)) if place else ""), ""])
         if sheet["time"]:
-            lines.append(f"- 时段：{_md(sheet['time'])}")
+            lines.append(_says("markdown.time", time=_md(sheet["time"])))
         if sheet["page_length"]:
-            lines.append(f"- 页长：{sheet['page_length']}（{sheet['seconds']} 秒）")
-        lines.append(f"- 分镜：{'、'.join(sheet['scene_ids'])}")
+            lines.append(_says("markdown.page_length", page_length=sheet["page_length"], seconds=sheet["seconds"]))
+        lines.append(_says("markdown.shots", shots=_LIST.join(sheet["scene_ids"])))
         if sheet["summary"]:
-            lines.append(f"- 概要：{_md(sheet['summary'])}")
+            lines.append(_says("markdown.summary", summary=_md(sheet["summary"])))
         if sheet["cast"]:
-            lines.append(f"- 演员：{_md(_cast_line(sheet))}")
+            lines.append(_says("markdown.cast", cast=_md(_cast_line(sheet))))
         for kind, label in ELEMENT_KINDS:
             if sheet["elements"].get(kind):
-                lines.append(f"- {label}：{_md('、'.join(sheet['elements'][kind]))}")
+                lines.append(_says("markdown.element", label=label, names=_md(_LIST.join(sheet["elements"][kind]))))
         lines.append("")
     if breakdown.get("cast"):
-        lines.extend(["## 演员出场", "", "| 编号 | 演员 | 场次数 | 场号 |", "| --- | --- | --- | --- |"])
-        lines.extend(f"| {item['number']} | {_md(item['name'])} | {len(item['scenes'])} | {'、'.join(item['scenes'])} |" for item in breakdown["cast"])
+        lines.extend([_word("markdown.cast_heading"), "", *(str(line) for line in _table("markdown.cast_table"))])
+        lines.extend(
+            _says("markdown.cast_row", number=item["number"], name=_md(item["name"]), count=len(item["scenes"]), scenes=_LIST.join(item["scenes"]))
+            for item in breakdown["cast"]
+        )
         lines.append("")
     if breakdown.get("elements"):
-        lines.extend(["## 元素汇总", "", "| 类别 | 元素 | 场次数 | 场号 |", "| --- | --- | --- | --- |"])
-        lines.extend(f"| {item['label']} | {_md(item['name'])} | {len(item['scenes'])} | {'、'.join(item['scenes'])} |" for item in breakdown["elements"])
+        lines.extend([_word("markdown.elements_heading"), "", *(str(line) for line in _table("markdown.elements_table"))])
+        lines.extend(
+            _says("markdown.element_row", label=item["label"], name=_md(item["name"]), count=len(item["scenes"]), scenes=_LIST.join(item["scenes"]))
+            for item in breakdown["elements"]
+        )
         lines.append("")
     return "\n".join(lines)
 

@@ -3,7 +3,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { DraftModeToggle, ShotFixPanel } from './ShotFixPanel';
+import { DraftModeToggle, ShotFixPanel, SpendLimits } from './ShotFixPanel';
 import type { ShotVisualRecord } from './shotVisual';
 
 const shot = (extra: Record<string, unknown> = {}) => ({
@@ -26,6 +26,26 @@ function stubFetch() {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+});
+
+describe('SpendLimits', () => {
+  it('saves the run budget and the per-shot cap, and blank means no limit', async () => {
+    const calls = stubFetch();
+    const onWorkspace = vi.fn();
+    const user = userEvent.setup();
+    render(<SpendLimits taskId="t1" budgetCap={null} maxAttempts={null} locked={false} onWorkspace={onWorkspace} onError={vi.fn()} />);
+    await user.type(screen.getByLabelText('本轮视频预算上限（元）'), '20');
+    await user.type(screen.getByLabelText('每镜最多尝试次数'), '3');
+    await user.click(screen.getByRole('button', { name: '保存上限' }));
+    expect(calls.at(-1)).toMatchObject({ url: expect.stringContaining('/api/drama/t1/shots/spend-limits'), method: 'PUT', body: { budget_cap: 20, max_attempts: 3 } });
+    expect(onWorkspace).toHaveBeenCalled();
+  });
+
+  it('shows how many times a shot has been submitted', () => {
+    render(<ShotFixPanel taskId="t1" shot={{ ...shot(), attempts: 2 } as never} repairSupported={false} locked={false}
+      onWorkspace={vi.fn()} onNotice={vi.fn()} onError={vi.fn()} />);
+    expect(screen.getByText('这一镜已提交视频 2 次')).toBeTruthy();
+  });
 });
 
 describe('ShotFixPanel', () => {

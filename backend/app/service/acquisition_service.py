@@ -16,6 +16,19 @@ from uuid import uuid4
 
 from app.core import lead_acquisition as la
 from app.core.providers.defaults import GATEWAY_DEFAULT_MODELS
+from app.core import prompt_data
+
+
+_WORDING_FILE = "acquisition_service"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/acquisition_service.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.service.acquisition")
 
@@ -102,8 +115,8 @@ class AcquisitionService:
     def _drama(task: Dict[str, Any]) -> tuple[str, str]:
         assets = task.get("assets") or {}
         config = task.get("config") or {}
-        pr_title = re.search(r"大字标题：([^\n]+)", str((assets.get("8") or {}).get("pr_content") or task.get("pr_content") or ""))
-        title = (pr_title.group(1).strip() if pr_title else "") or str(config.get("script_name") or config.get("title_suggestion") or "本剧")
+        pr_title = re.search(_text_of("_drama.pr_title"), str((assets.get("8") or {}).get("pr_content") or task.get("pr_content") or ""))
+        title = (pr_title.group(1).strip() if pr_title else "") or str(config.get("script_name") or config.get("title_suggestion") or _text_of("_drama.title"))
         return title, str(assets.get("1") or "")
 
     @staticmethod
@@ -123,19 +136,19 @@ class AcquisitionService:
         for item in items:
             if item.get("id") == item_id:
                 return item
-        raise LookupError(f"{what}不存在")
+        raise LookupError(_text_of("_find.text").format(what))
 
     # ------------------------------------------------------------ 已发布作品
 
     def add_work(self, task_id: str, platform: str, url: str, *, episode: Optional[int] = None, title: str = "") -> Optional[Dict[str, Any]]:
         if platform not in la.CHANNEL_IDS:
-            raise ValueError("不支持的平台")
+            raise ValueError(_text_of("add_work.text"))
         url = str(url or "").strip()
         if not re.match(r"^https?://", url):
-            raise ValueError("请填作品的完整链接（http 或 https 开头）")
+            raise ValueError(_text_of("add_work.text.2"))
         video_id = la.youtube_video_id(url) if platform == "youtube" else None
         if platform == "youtube" and not video_id:
-            raise ValueError("这不是 YouTube 视频链接")
+            raise ValueError(_text_of("add_work.text.3"))
         work = {
             "id": "w" + hashlib.sha1(url.encode("utf-8")).hexdigest()[:10],
             "platform": platform, "url": url, "episode": episode, "title": str(title or "").strip()[:80],
@@ -144,14 +157,14 @@ class AcquisitionService:
 
         def change(state: Dict[str, Any]) -> None:
             if any(item.get("url") == url for item in state["works"]):
-                raise ValueError("这个链接已经登记过")
+                raise ValueError(_text_of("change.text"))
             state["works"].append(work)
 
         return self._after(task_id, change)
 
     def remove_work(self, task_id: str, work_id: str) -> Optional[Dict[str, Any]]:
         def change(state: Dict[str, Any]) -> None:
-            self._find(state["works"], work_id, "作品")
+            self._find(state["works"], work_id, _text_of("change.text.2"))
             state["works"] = [item for item in state["works"] if item.get("id") != work_id]
             # 人（线索）留着：联系记录和跟进不能因为删了一个作品链接就丢。
             state["comments"] = [item for item in state["comments"] if item.get("work_id") != work_id]
@@ -163,7 +176,7 @@ class AcquisitionService:
                  if key in ("views", "likes", "comments", "shares", "favorites") and value is not None}
 
         def change(state: Dict[str, Any]) -> None:
-            work = self._find(state["works"], work_id, "作品")
+            work = self._find(state["works"], work_id, _text_of("change.work"))
             work["metrics"] = {**(work.get("metrics") or {}), **clean}
             work["metrics_at"] = self._now()
             work["metrics_source"] = "manual"
@@ -186,10 +199,10 @@ class AcquisitionService:
         if not task:
             return None
         state = _state(task)
-        work = self._find(state["works"], work_id, "作品")
+        work = self._find(state["works"], work_id, _text_of("import_comments.work"))
         rows = la.parse_import(text)
         if not rows:
-            raise ValueError("没有读到评论：每行一条，格式「昵称：评论」，或从表格复制的「昵称<Tab>评论」")
+            raise ValueError(_text_of("import_comments.text"))
         now = self._now()
         comments = [{
             "id": row.get("id") or la.comment_id(work["platform"], work_id, row["author"], row["text"]),
@@ -215,7 +228,7 @@ class AcquisitionService:
         comments: List[Dict[str, Any]] = []
         stats: Dict[str, Dict[str, int]] = {}
         if targets and not client.can_read:
-            errors.append("没有配置 YOUTUBE_API_KEY，无法自动读取 YouTube")
+            errors.append(_text_of("sync.text"))
         elif targets:
             try:
                 stats = client.statistics([work["video_id"] for work in targets])
@@ -325,7 +338,7 @@ class AcquisitionService:
                 return 0
         state["leads"].append({
             "id": "l" + uuid4().hex[:12], "key": key, "platform": comment["platform"],
-            "author_id": comment.get("author_id") or "", "author_name": comment.get("author_name") or "匿名",
+            "author_id": comment.get("author_id") or "", "author_name": comment.get("author_name") or _text_of("_lead_from.author_name"),
             "intent": comment["intent"], "score": verdict.get("score", 0), "judged_by": verdict.get("by", "rules"),
             "status": "new", "reply": verdict.get("reply", ""), "dm": verdict.get("dm", ""),
             "reply_to": comment["id"] if comment.get("source") != "inbox" else "",
@@ -339,10 +352,10 @@ class AcquisitionService:
     def update_lead(self, task_id: str, lead_id: str, changes: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         status = changes.get("status")
         if status is not None and status not in la.LEAD_STATUSES:
-            raise ValueError("状态不对")
+            raise ValueError(_text_of("update_lead.text"))
 
         def change(state: Dict[str, Any]) -> None:
-            lead = self._find(state["leads"], lead_id, "线索")
+            lead = self._find(state["leads"], lead_id, _text_of("change.lead"))
             for field in ("reply", "dm", "note"):
                 if changes.get(field) is not None:
                     lead[field] = str(changes[field])[:1500]
@@ -363,20 +376,20 @@ class AcquisitionService:
         """Post the lead's reply under its YouTube comment, once; an unclear result blocks a resend."""
         client = self.youtube()
         if not client.can_reply:
-            raise ValueError("没有配置 YouTube 频道授权（YOUTUBE_CLIENT_ID / SECRET / REFRESH_TOKEN），请复制回复到 YouTube 手动发")
+            raise ValueError(_text_of("send_reply.text"))
         claimed: Dict[str, str] = {}
 
         def claim(state: Dict[str, Any]) -> None:
-            lead = self._find(state["leads"], lead_id, "线索")
+            lead = self._find(state["leads"], lead_id, _text_of("claim.lead"))
             if lead.get("platform") != "youtube" or not lead.get("reply_to"):
-                raise ValueError("只有 YouTube 评论线索能直接发送")
+                raise ValueError(_text_of("claim.text"))
             if lead.get("send_state") in ("sending", "unknown"):
-                raise ValueError("上一次发送结果不明：先到 YouTube 核对，再标记已发出或未发出")
+                raise ValueError(_text_of("claim.text.2"))
             if lead.get("send_state") == "sent":
-                raise ValueError("这条回复已经发过了")
+                raise ValueError(_text_of("claim.text.3"))
             text = " ".join(str(lead.get("reply") or "").split())
             if not text:
-                raise ValueError("回复是空的")
+                raise ValueError(_text_of("claim.text.4"))
             lead["send_state"] = "sending"  # 先落下发送意图，进程中途死掉也不会被当成没发过
             claimed.update(parent=lead["reply_to"], text=text)
 
@@ -390,7 +403,7 @@ class AcquisitionService:
             outcome.update(state="failed" if error.definite else "unknown", error=str(error))
 
         def record(state: Dict[str, Any]) -> None:
-            lead = self._find(state["leads"], lead_id, "线索")
+            lead = self._find(state["leads"], lead_id, _text_of("record.lead"))
             lead["send_state"] = "" if outcome["state"] == "failed" else outcome["state"]
             lead["send_error"] = outcome.get("error", "")
             entry = {"at": self._now(), "action": f"youtube_reply:{outcome['state']}", "by": "youtube_api", "text": claimed["text"]}
@@ -411,9 +424,9 @@ class AcquisitionService:
     def resolve_send(self, task_id: str, lead_id: str, sent: bool) -> Optional[Dict[str, Any]]:
         """A person checked YouTube after an unclear send and says whether the reply is there."""
         def change(state: Dict[str, Any]) -> None:
-            lead = self._find(state["leads"], lead_id, "线索")
+            lead = self._find(state["leads"], lead_id, _text_of("change.lead.2"))
             if lead.get("send_state") not in ("sending", "unknown"):
-                raise ValueError("这条线索没有待核对的发送")
+                raise ValueError(_text_of("change.text.3"))
             lead["send_state"] = "sent" if sent else ""
             lead["send_error"] = ""
             lead["history"] = (lead.get("history") or []) + [{"at": self._now(), "action": f"verified:{'sent' if sent else 'not_sent'}", "by": "manual"}]
@@ -428,12 +441,12 @@ class AcquisitionService:
     def schedule_follow_up(self, task_id: str, lead_id: str, when: str, reason: str = "") -> Optional[Dict[str, Any]]:
         due = la.follow_up_time(when, self.clock())
         if due is None:
-            raise ValueError("没看懂跟进时间：写「明天」「下周」「11月3日 15点」或 2026-11-03 15:00")
+            raise ValueError(_text_of("schedule_follow_up.text"))
         if due <= self.clock() - timedelta(minutes=1):
-            raise ValueError("跟进时间已经过去了")
+            raise ValueError(_text_of("schedule_follow_up.text.2"))
 
         def change(state: Dict[str, Any]) -> None:
-            lead = self._find(state["leads"], lead_id, "线索")
+            lead = self._find(state["leads"], lead_id, _text_of("change.lead.3"))
             self._replace_follow_up(state, lead, due, reason or when)
 
         return self._after(task_id, change)
@@ -454,10 +467,10 @@ class AcquisitionService:
 
     def update_follow_up(self, task_id: str, follow_up_id: str, status: str) -> Optional[Dict[str, Any]]:
         if status not in la.FOLLOW_UP_STATUSES:
-            raise ValueError("状态不对")
+            raise ValueError(_text_of("update_follow_up.text"))
 
         def change(state: Dict[str, Any]) -> None:
-            item = self._find(state["follow_ups"], follow_up_id, "跟进")
+            item = self._find(state["follow_ups"], follow_up_id, _text_of("change.item"))
             item["status"] = status
             if status in ("completed", "cancelled"):
                 item["completed_at"] = self._now()
@@ -476,10 +489,10 @@ class AcquisitionService:
     def answer_inbox(self, task_id: str, platform: str, author: str, text: str) -> Optional[Dict[str, Any]]:
         """Draft the reply to someone who wrote in, keep them as a lead, and book the follow-up they asked for."""
         if platform not in la.CHANNEL_IDS:
-            raise ValueError("不支持的平台")
+            raise ValueError(_text_of("answer_inbox.text"))
         text = str(text or "").strip()
         if not text:
-            raise ValueError("先粘贴对方的消息")
+            raise ValueError(_text_of("answer_inbox.text.2"))
         task = self.repo.get_task(task_id)
         if not task:
             return None
@@ -508,8 +521,8 @@ class AcquisitionService:
         def change(state: Dict[str, Any]) -> None:
             now = self._now()
             state["inbox"] = (state["inbox"] + [
-                {"id": message_id, "key": key, "platform": platform, "author": author or "匿名", "from": "对方", "text": text[:2000], "at": now, "intent": intent},
-                {"id": message_id + "r", "key": key, "platform": platform, "author": author or "匿名", "from": "草稿", "text": reply, "at": now, "intent": intent},
+                {"id": message_id, "key": key, "platform": platform, "author": author or _text_of("change.author"), "from": _text_of("change.from"), "text": text[:2000], "at": now, "intent": intent},
+                {"id": message_id + "r", "key": key, "platform": platform, "author": author or _text_of("change.author.2"), "from": _text_of("change.from.2"), "text": reply, "at": now, "intent": intent},
             ])[-MAX_INBOX * 2:]
             if la.is_lead(intent):
                 comment = {"id": message_id, "platform": platform, "work_id": None, "author_id": "", "author_name": author,
@@ -521,7 +534,7 @@ class AcquisitionService:
                 lead["reply"] = reply  # 私信里来的人，回复就是给这条私信的
                 outcome["leadId"] = lead["id"]
                 if due is not None:
-                    outcome["followUp"] = self._replace_follow_up(state, lead, due, f"对方说「{phrase}」")
+                    outcome["followUp"] = self._replace_follow_up(state, lead, due, _text_of("change.text.4").format(phrase))
 
         if self._mutate(task_id, change) is None:
             return None

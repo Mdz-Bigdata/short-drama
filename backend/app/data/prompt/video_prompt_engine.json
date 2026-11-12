@@ -22,6 +22,11 @@
   "distinct_one": "画面里只有这一个人，只出现一次；",
   "same_person": "同一人物的多张参考图属于同一个人。",
   "turn_taking": "，按台词顺序轮流开口，同一时刻只有一人出声",
+  "hold_verb_false": ["保持", "坚持", "持续", "维持", "支持", "持久", "主持", "挟持", "僵持", "矜持"],
+  "shorthand_trim": "，,；;。 ",
+  "reaction_words": 4,
+  "reaction_words_slack": 1,
+  "off_screen_labels": ["画外", "画外音", "OS", "VO", "O.S.", "V.O."],
   "says": {
     "bridge": "以所给尾帧结束：首帧到尾帧不换机位高度、不换光源、不换人物与道具，变化只由运镜（{move}）与动作{landing}完成，尾帧构图在最后一帧完整落定，不提前出现、不中途跳变",
     "bridge_landing": "（走到“{landing}”）",
@@ -68,7 +73,12 @@
     "extend": "参考{source}的内容，延长视频{seconds}s向后延长。要求延长自然、动作衔接流畅，禁止生硬切镜、禁止物体凭空出现。",
     "extend_light": "光线：主光{light}，延长片段内主光方向与色温不变。",
     "extend_space": "【空间快照】{snapshot}",
-    "extend_mask": "需要在切镜处使用“遮罩转场”：{mask}完全遮挡镜头使画面变暗，随后镜头穿过{mask}拉开，直接显现出下一个场景。"
+    "extend_mask": "需要在切镜处使用“遮罩转场”：{mask}完全遮挡镜头使画面变暗，随后镜头穿过{mask}拉开，直接显现出下一个场景。",
+    "expression_reading": "外化为{reading}",
+    "reaction_after": "听到“{words}”之后才{reaction}，此前保持原状",
+    "expression_back": "{text}，背面只演肩、背、重心与站姿，不演眼神口鼻，全程背对镜头，不转身",
+    "expression_back_bare": "背面只演肩、背、重心与站姿，不演眼神口鼻，全程背对镜头，不转身",
+    "off_screen_absent": "；{names}在画外，不出现在画面里"
   },
   "patterns": {
     "sentence_split": "[。！？!?\\n]",
@@ -81,6 +91,10 @@
     "handoff_clause_split": "[，,。；;]",
     "brief_clause_split": "[；;。]",
     "lead_clause_split": "[，,。；;！？!?\\n]",
-    "quoted_line": "[{｛「『“]"
+    "quoted_line": "[{｛「『“]",
+    "shorthand_gap": "([，,；;。])[，,；;。\\s]+",
+    "reading_split": "([，,、；;])",
+    "mouth_open": "(?<![不别没未])(?:嘴唇微张|嘴微张|微张着嘴|张嘴|张口|张着嘴|张开嘴|张大嘴|嘴巴张开|嘴唇张开)",
+    "trigger_clause_split": "[，,。！？!?；;、…—\\s]+"
   }
 }

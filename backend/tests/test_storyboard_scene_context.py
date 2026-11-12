@@ -122,7 +122,9 @@ class SceneContextTests(unittest.TestCase):
             return [(ref.get("view") or "scene_main", ref.get("frame")) for ref in panel["references"] if ref["kind"] == "scene"]
 
         self.assertEqual(sent(size="全景"), [("scene_main", None)])
-        self.assertEqual(sent(size="中景", angle="过肩"), [("scene_main", "space_only"), ("scene_45", "composition")])
+        # 过肩是正反打里的一镜：场地有反打视角时成对发正面与反打(没有反打视角时照旧挑 45°，见 test_reference_numbering)。
+        self.assertEqual(sent(size="中景", angle="过肩"), [("scene_main", "composition"), ("scene_reverse", "reverse_space")])
+        self.assertEqual(sent(size="中景", angle="侧面"), [("scene_main", "space_only"), ("scene_45", "composition")])
         self.assertEqual(sent(size="近景", angle="反打"), [("scene_main", "space_only"), ("scene_reverse", "composition")])
 
     def test_a_crowd_stays_on_set_between_the_shots_that_name_it(self):
@@ -198,6 +200,108 @@ class SceneContextTests(unittest.TestCase):
         self.assertEqual(context["costumes"], [])
 
 
+class ShotReversePairTests(unittest.TestCase):
+    """一组正反打里的一镜：场地有反打视角时，正面(主场景全景)与反打成对发出，各自写明方向。"""
+
+    FRONT = "参考图{}仅锁定拍摄场地「磨刀铺内」正面的空间布局"
+    BACK = "参考图{}仅锁定拍摄场地「磨刀铺内」反打（与正面相对）的空间布局"
+    PAIR = "正面与反打是同一场地、同一画风，左右按机位方向互换"
+
+    def _context(self, reverse=True, props=0):
+        slots = ("scene_45", "scene_depth", "scene_detail", *(("scene_reverse",) if reverse else ()))
+        views = {slot: f"data:{slot}" for slot in slots}
+        names = [f"刀{i}" for i in range(props)]
+        task = {"assets": {
+            "3_characters": [{"name": "沈砚", "desc": "墨青长袍"}, {"name": "贺兰霆", "desc": "玄黑官袍"}],
+            "3_sheets": {"沈砚": "data:shen", "贺兰霆": "data:he"},
+        }}
+        scene = {"scene_id": "E1S02", "characters": ["沈砚", "贺兰霆"], "content": "磨刀铺内，沈砚与贺兰霆对坐。" + "".join(names)}
+        elements = [{"kind": "scene", "id": "shop", "name": "磨刀铺内", "description": "", "image_url": "data:main", "views": views}]
+        elements += [{"kind": "prop", "name": name, "image_url": f"data:{name}"} for name in names]
+        return compile_scene_context(task, scene, elements), names
+
+    def _send(self, shot, **kwargs):
+        context, names = self._context(**kwargs)
+        shot = {"desc": "、".join(shot["characters"]) + "在铺里" + "".join(names), **shot}
+        references = panel_context(context, shot, layout="磨刀石在画面左侧")["references"]
+        scenes = [(ref.get("view") or "scene_main", ref.get("frame")) for ref in references if ref["kind"] == "scene"]
+        images, notes = merge_video_references([], references)
+        return references, scenes, images, notes
+
+    def _number(self, references, view):
+        return next(number for number, ref in enumerate(references, 1) if ref["kind"] == "scene" and (ref.get("view") or "scene_main") == view)
+
+    def test_a_dialogue_two_shot_sends_front_and_reverse_with_their_duties(self):
+        references, scenes, _, notes = self._send({"characters": ["沈砚", "贺兰霆"], "size": "中景", "dialogue": "沈砚：刀磨好了。"})
+        self.assertEqual(scenes, [("scene_main", "composition"), ("scene_reverse", "reverse_space")])
+        front, back = self._number(references, "scene_main"), self._number(references, "scene_reverse")
+        self.assertIn(self.FRONT.format(front) + "，光线与天色以本场为准、不照搬此图（磨刀石在画面左侧），是本镜唯一的场景构图来源", notes)
+        self.assertIn(self.BACK.format(back) + "，光线与天色以本场为准、不照搬此图，是反打方向（机位身后一侧），只核对那一侧的陈设，本镜不拍这一侧", notes)
+        self.assertEqual(notes.count(self.PAIR), 1)
+        self.assertNotIn("；", notes.split(self.BACK.format(back))[1].split("不是额外剧情或额外人物")[0], "the pair note stays inside its line")
+        self.assertNotIn("反打视角，用于", notes)
+
+    def test_a_reverse_shot_frames_on_the_reverse_plate_and_still_sends_the_front(self):
+        references, scenes, _, notes = self._send({"characters": ["贺兰霆"], "size": "近景", "angle": "反打"})
+        self.assertEqual(scenes, [("scene_main", "space_only"), ("scene_reverse", "composition")])
+        self.assertIn(self.BACK.format(self._number(references, "scene_reverse")) + "，光线与天色以本场为准、不照搬此图，是本镜唯一的场景构图来源", notes)
+        self.assertIn(self.FRONT.format(self._number(references, "scene_main")), notes)
+        self.assertEqual(notes.count(self.PAIR), 1)
+
+    def test_over_the_shoulder_framing_alone_makes_an_exchange(self):
+        _, scenes, _, notes = self._send({"characters": ["沈砚"], "size": "中近景", "framing": "正反打"})
+        self.assertEqual(scenes, [("scene_main", "composition"), ("scene_reverse", "reverse_space")])
+        self.assertIn(self.PAIR, notes)
+        # 「正反打」不说这一镜是反打那一侧；写了「过肩反打」才是。
+        _, scenes, _, _ = self._send({"characters": ["沈砚"], "angle": "过肩反打"})
+        self.assertEqual(scenes, [("scene_main", "space_only"), ("scene_reverse", "composition")])
+
+    def test_a_lone_close_up_sends_only_the_front_as_before(self):
+        references, scenes, _, notes = self._send({"characters": ["沈砚"], "size": "特写", "dialogue": "沈砚：刀磨好了。"})
+        self.assertEqual(scenes, [("scene_main", None)])
+        self.assertIn(self.FRONT.format(self._number(references, "scene_main")) + "，光线与天色以本场为准、不照搬此图（磨刀石在画面左侧），图中人物不作参考", notes)
+        self.assertNotIn("反打", notes)
+        # 两人同框却没有台词：不算正反打。
+        _, scenes, _, _ = self._send({"characters": ["沈砚", "贺兰霆"], "size": "全景"})
+        self.assertEqual(scenes, [("scene_main", None)])
+
+    def test_without_a_reverse_plate_the_views_are_sent_as_before(self):
+        dialogue = {"characters": ["沈砚", "贺兰霆"], "size": "中景", "dialogue": "沈砚：刀磨好了。"}
+        _, scenes, _, notes = self._send(dialogue, reverse=False)
+        self.assertEqual(scenes, [("scene_main", None)])
+        self.assertNotIn(self.PAIR, notes)
+        _, scenes, _, _ = self._send({**dialogue, "angle": "过肩"}, reverse=False)
+        self.assertEqual(scenes, [("scene_main", "space_only"), ("scene_45", "composition")])
+        _, scenes, _, _ = self._send({"characters": ["贺兰霆"], "angle": "反打"}, reverse=False)
+        self.assertEqual(scenes, [("scene_main", "reverse")])
+
+    def test_the_cast_and_props_keep_their_places_within_nine(self):
+        dialogue = {"characters": ["沈砚", "贺兰霆"], "size": "中景", "dialogue": "沈砚：刀磨好了。"}
+        # 两位演员 + 主场景 + 5 件道具 = 8：反打视角坐第 9 张。
+        references, scenes, _, notes = self._send(dialogue, props=5)
+        self.assertEqual(len(references), 9)
+        self.assertEqual(references[-1].get("view"), "scene_reverse")
+        self.assertIn(self.PAIR, notes)
+        # 再多一件道具就满了：道具优先，反打视角不发，也不说成对。
+        references, scenes, _, notes = self._send(dialogue, props=6)
+        self.assertEqual(len(references), 9)
+        self.assertEqual(sum(1 for ref in references if ref["kind"] == "prop"), 6)
+        self.assertEqual(scenes, [("scene_main", None)])
+        self.assertNotIn(self.PAIR, notes)
+
+    def test_the_pair_note_leaves_with_the_reverse_plate(self):
+        references, _, images, notes = self._send({"characters": ["沈砚", "贺兰霆"], "size": "中景", "dialogue": "沈砚：刀磨好了。"})
+        prompt = "【参考素材职责】\n" + notes + "。"
+        both = VideoReferencePlan(mode="multi_reference", provider_family="seedance", provider_status="x", reference_images=images)
+        self.assertEqual(renumber_reference_mentions(prompt, images, both).count(self.PAIR), 1)
+        reverse = images[self._number(references, "scene_reverse") - 1]
+        front_only = both.model_copy(update={"reference_images": [url for url in images if url != reverse]})
+        text = renumber_reference_mentions(prompt, images, front_only)
+        self.assertNotIn(self.PAIR, text)
+        self.assertNotIn("反打（与正面相对）", text)
+        self.assertIn("「磨刀铺内」正面的空间布局", text)
+
+
 class SceneFrameTests(unittest.TestCase):
     """几张场地视角图一起发：一张是本镜唯一的场景构图来源，其余只核对陈设。"""
 
@@ -231,6 +335,13 @@ class SceneFrameTests(unittest.TestCase):
         frames = {item.get("view") or "scene_main": item["frame"] for item in references if item["kind"] == "scene"}
         self.assertEqual(frames["scene_reverse"], "composition")
         self.assertEqual(list(frames.values()).count("composition"), 1)
+
+    def test_front_and_reverse_split_the_duties_by_the_shot_direction(self):
+        pair = [{"kind": "scene", "name": "大殿", "image_url": "main"}, {"kind": "scene", "name": "大殿", "image_url": "rev", "view": "scene_reverse"}]
+        bind_scene_frames(pair, {"size": "中景"}, empty_shot=False)
+        self.assertEqual([(item["frame"], item.get("pair")) for item in pair], [("composition", None), ("reverse_space", True)])
+        bind_scene_frames(pair, {"angle": "反打"}, empty_shot=False)
+        self.assertEqual([(item["frame"], item.get("pair")) for item in pair], [("space_only", None), ("composition", True)])
 
     def test_an_actor_is_sent_as_front_full_body_then_front_headshot(self):
         from app.core.storyboard_scene_context import reference_note

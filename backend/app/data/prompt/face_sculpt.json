@@ -147,13 +147,19 @@
         "方脸",
         "圆脸",
         "长脸",
-        "心形"
+        "心形",
+        "椭圆"
       ],
       "options": [
         {
           "value": "oval",
           "label": "鹅蛋脸",
           "phrase": "鹅蛋脸"
+        },
+        {
+          "value": "ellipse",
+          "label": "椭圆脸",
+          "phrase": "椭圆脸"
         },
         {
           "value": "melon",
@@ -194,9 +200,7 @@
       "type": "scale",
       "replaces": [
         "脸短",
-        "脸长",
-        "面中短",
-        "面中长"
+        "脸长"
       ],
       "steps": [
         "面部偏短",
@@ -204,6 +208,77 @@
         "",
         "面部略长",
         "面部偏长"
+      ]
+    },
+    {
+      "key": "face_width",
+      "layer": "bone",
+      "label": "脸宽",
+      "type": "scale",
+      "replaces": [
+        "脸宽",
+        "脸窄",
+        "宽脸",
+        "窄脸"
+      ],
+      "steps": [
+        "脸型窄",
+        "脸略窄",
+        "",
+        "脸略宽",
+        "脸型宽"
+      ]
+    },
+    {
+      "key": "midface",
+      "layer": "bone",
+      "label": "中庭(眉到鼻底)",
+      "type": "scale",
+      "replaces": [
+        "中庭",
+        "面中",
+        "鼻底"
+      ],
+      "steps": [
+        "面中偏短、鼻底位置偏高",
+        "面中略短",
+        "",
+        "面中略长",
+        "面中偏长、鼻底位置偏低"
+      ]
+    },
+    {
+      "key": "philtrum",
+      "layer": "bone",
+      "label": "人中(鼻底到嘴)",
+      "type": "scale",
+      "replaces": [
+        "人中"
+      ],
+      "steps": [
+        "人中短、鼻底贴近上唇",
+        "人中略短",
+        "",
+        "人中略长",
+        "人中偏长"
+      ]
+    },
+    {
+      "key": "chin_length",
+      "layer": "bone",
+      "label": "下巴长短(嘴到下巴)",
+      "type": "scale",
+      "replaces": [
+        "下巴长",
+        "下巴短",
+        "下庭"
+      ],
+      "steps": [
+        "下巴短、嘴到下巴距离短",
+        "下巴略短",
+        "",
+        "下巴略长",
+        "下巴偏长"
       ]
     },
     {
@@ -221,6 +296,24 @@
         "",
         "颧骨略高",
         "颧骨高而外显"
+      ]
+    },
+    {
+      "key": "cheek_fullness",
+      "layer": "bone",
+      "label": "面颊到下颌",
+      "type": "scale",
+      "replaces": [
+        "面颊",
+        "脸颊",
+        "两颊"
+      ],
+      "steps": [
+        "面颊凹陷",
+        "面颊略瘦削",
+        "",
+        "面颊到下颌衔接饱满",
+        "面颊丰润饱满"
       ]
     },
     {
@@ -280,6 +373,11 @@
           "value": "square",
           "label": "方",
           "phrase": "下巴方正"
+        },
+        {
+          "value": "broad",
+          "label": "有宽度",
+          "phrase": "下巴保留宽度、不削尖"
         },
         {
           "value": "lifted",
@@ -367,6 +465,11 @@
           "value": "almond",
           "label": "杏眼",
           "phrase": "杏眼、眼头圆眼尾微收"
+        },
+        {
+          "value": "long_almond",
+          "label": "长杏眼",
+          "phrase": "杏眼偏长、眼裂横向舒展"
         },
         {
           "value": "peach",
@@ -551,7 +654,9 @@
         "远山眉",
         "剑眉",
         "平眉",
-        "挑眉"
+        "挑眉",
+        "弧眉",
+        "弓眉"
       ],
       "options": [
         {
@@ -563,6 +668,11 @@
           "value": "mountain",
           "label": "远山眉",
           "phrase": "远山眉、眉色淡而长"
+        },
+        {
+          "value": "natural",
+          "label": "自然弧眉",
+          "phrase": "眉形自然微弓"
         },
         {
           "value": "sword",
@@ -621,6 +731,11 @@
           "phrase": "鼻头小巧"
         },
         {
+          "value": "button",
+          "label": "小圆鼻尖",
+          "phrase": "鼻尖小而圆润"
+        },
+        {
           "value": "round",
           "label": "圆钝",
           "phrase": "鼻尖圆钝"
@@ -643,6 +758,22 @@
       ]
     },
     {
+      "key": "nose_width",
+      "layer": "features",
+      "label": "鼻翼宽窄",
+      "type": "scale",
+      "replaces": [
+        "鼻翼"
+      ],
+      "steps": [
+        "鼻翼窄",
+        "鼻翼紧凑",
+        "",
+        "鼻翼略宽",
+        "鼻翼宽"
+      ]
+    },
+    {
       "key": "lips",
       "layer": "features",
       "label": "唇形",
@@ -656,7 +787,8 @@
         "唇薄",
         "厚唇",
         "薄唇",
-        "丰唇"
+        "丰唇",
+        "唇珠"
       ],
       "options": [
         {
@@ -683,7 +815,60 @@
           "value": "small",
           "label": "樱桃小口",
           "phrase": "嘴小而唇色红润"
+        },
+        {
+          "value": "pearl",
+          "label": "唇珠",
+          "phrase": "上唇带微凸唇珠"
+        },
+        {
+          "value": "full_lower",
+          "label": "下唇饱满",
+          "phrase": "下唇饱满圆润"
         }
+      ]
+    },
+    {
+      "key": "lip_thickness",
+      "layer": "features",
+      "label": "唇厚(上下高度)",
+      "type": "scale",
+      "replaces": [
+        "唇中等",
+        "唇厚",
+        "唇薄",
+        "厚唇",
+        "薄唇",
+        "丰唇",
+        "唇饱满",
+        "唇形饱满"
+      ],
+      "steps": [
+        "上下唇很薄",
+        "上下唇偏薄",
+        "",
+        "上下唇略厚",
+        "上下唇饱满偏厚"
+      ]
+    },
+    {
+      "key": "mouth_width",
+      "layer": "features",
+      "label": "嘴宽(两嘴角距离)",
+      "type": "scale",
+      "replaces": [
+        "嘴宽",
+        "嘴大",
+        "嘴小",
+        "小口",
+        "大嘴"
+      ],
+      "steps": [
+        "嘴宽偏小",
+        "嘴宽略收",
+        "",
+        "嘴略宽",
+        "嘴宽偏大"
       ]
     },
     {
@@ -1263,6 +1448,192 @@
         "build": "plump",
         "posture": "upright"
       }
+    },
+    {
+      "key": "look_clear_round",
+      "label": "五官·澄澈圆眼",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "focus": "eye_shape",
+      "values": {
+        "eye_shape": "almond",
+        "eye_size": 1,
+        "gaze": "clear",
+        "brow_shape": "straight",
+        "nose_tip": "button",
+        "lips": "bow",
+        "mouth_width": -1,
+        "face_shape": "oval",
+        "face_length": -1,
+        "chin": "round",
+        "chin_length": -1
+      }
+    },
+    {
+      "key": "look_delicate",
+      "label": "五官·清秀小巧",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "values": {
+        "eye_shape": "almond",
+        "gaze": "clear",
+        "brow_shape": "willow",
+        "nose_bridge": 1,
+        "nose_width": -1,
+        "lips": "m",
+        "mouth_width": -1,
+        "face_shape": "ellipse",
+        "face_width": -1,
+        "cheek_fullness": 1,
+        "jaw": "soft"
+      }
+    },
+    {
+      "key": "look_soft_almond",
+      "label": "五官·柔和杏眼",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "focus": "eye_shape",
+      "values": {
+        "eye_shape": "almond",
+        "gaze": "soft",
+        "brow_ridge": "flat",
+        "brow_shape": "natural",
+        "nose_tip": "button",
+        "lips": "full_lower",
+        "face_shape": "oval",
+        "jaw": "soft",
+        "cheek_fullness": 1
+      }
+    },
+    {
+      "key": "look_bright_open",
+      "label": "五官·明艳舒展",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "values": {
+        "eye_shape": "almond",
+        "eye_size": 1,
+        "gaze": "clear",
+        "brow_shape": "natural",
+        "nose_bridge": 1,
+        "lip_thickness": 1,
+        "mouth_width": 1,
+        "face_shape": "ellipse",
+        "face_width": 1,
+        "jaw": "clear",
+        "chin": "broad"
+      }
+    },
+    {
+      "key": "look_gentle_full",
+      "label": "五官·温柔丰盈",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "values": {
+        "eye_shape": "round",
+        "gaze": "soft",
+        "brow_shape": "willow",
+        "nose_tip": "round",
+        "mouth_corner": "up",
+        "face_shape": "ellipse",
+        "cheek_fullness": 2,
+        "chin": "round",
+        "chin_length": -1
+      }
+    },
+    {
+      "key": "look_crisp_heroic",
+      "label": "五官·利落英气",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "values": {
+        "eye_shape": "long_almond",
+        "gaze": "sharp",
+        "brow_shape": "arched",
+        "nose_bridge": 1,
+        "lips": "m",
+        "face_shape": "ellipse",
+        "face_length": 1,
+        "jaw": "clear",
+        "chin": "broad"
+      }
+    },
+    {
+      "key": "look_cool_slender",
+      "label": "五官·清冷修长",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "focus": "eye_shape",
+      "values": {
+        "eye_shape": "narrow",
+        "eye_tail": "up",
+        "gaze": "cold",
+        "brow_shape": "straight",
+        "nose_bridge": 1,
+        "nose_width": -1,
+        "lips": "bow",
+        "face_shape": "oval",
+        "face_length": 1,
+        "jaw": "clear"
+      }
+    },
+    {
+      "key": "look_upright_full",
+      "label": "五官·端正饱满",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "values": {
+        "eye_shape": "long_almond",
+        "eye_size": 1,
+        "brow_shape": "straight",
+        "nose_bridge": 1,
+        "nose_tip": "button",
+        "lip_thickness": 1,
+        "face_shape": "oval",
+        "cheekbone": 1,
+        "jaw": "clear"
+      }
+    },
+    {
+      "key": "look_lively_upturned",
+      "label": "五官·俏丽上挑",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "focus": "eye_tail",
+      "values": {
+        "eye_shape": "almond",
+        "eye_tail": "up",
+        "gaze": "clear",
+        "brow_ridge": "flat",
+        "brow_shape": "mountain",
+        "nose_bridge": 1,
+        "nose_width": -1,
+        "lips": "full_lower",
+        "face_shape": "oval",
+        "face_width": -1,
+        "jaw": "soft",
+        "chin": "round",
+        "chin_length": -1
+      }
     }
   ],
   "expression_controls": [
@@ -1749,7 +2120,7 @@
     "history_revert": "撤销到「{label}」",
     "history_missing": "这一步已经撤销不了了：只保留最近几步",
     "instruct": {
-      "system": "你是短剧角色的捏脸师。用户用一句话说想怎么改这个人的脸或表情习惯，你把它翻译成控件表里的取值。只能用控件表里列出的键与选项值：choice 控件填选项的 value，scale 控件填 -2 到 2 的整数(0 为不写)；没有对应控件的要求写进对应层的 notes(每层一句，不超过 {note_chars} 字)。表情习惯写进 expressions：键是情绪键，choices 用表情控件的选项值，tell 是这个人独有的面部特征，habit 是习惯小动作，各不超过 {tell_chars} 字。只写用户这句话要改的东西，没提到的控件不要动；用户要去掉某项就把它的值写成 null。只输出一个 JSON 对象，格式：{\"face\": {\"控件键\": 值或null}, \"notes\": {\"层键\": 文字或null}, \"expressions\": {\"情绪键\": {\"choices\": {\"表情控件键\": \"选项值\"}, \"tell\": \"\", \"habit\": \"\"} 或 null}, \"preset\": \"预设键或空\", \"reply\": \"一句话说明你改了什么\"}。",
+      "system": "你是短剧角色的捏脸师。用户用一句话说想怎么改这个人的脸或表情习惯，你把它翻译成控件表里的取值。只能用控件表里列出的键与选项值：choice 控件填选项的 value，scale 控件填 -2 到 2 的整数(0 为不写)；没有对应控件的要求写进对应层的 notes(每层一句，不超过 {note_chars} 字)。表情习惯写进 expressions：键是情绪键，choices 用表情控件的选项值，tell 是这个人独有的面部特征，habit 是习惯小动作，各不超过 {tell_chars} 字。只写用户这句话要改的东西，没提到的控件不要动；用户要去掉某项就把它的值写成 null。当前捏脸里的 focus 是这张脸的突出点(一个控件键)：改动都围着它做配合，不要换它的值，除非用户明说要换；保留的是它的特点，它的大小、位置(如眼睛大小、眼距)仍可为整脸比例微调。用户说「以某处为突出点」「保留某处」时把 focus 设成那个控件键。唇厚(上下高度)和嘴宽(两嘴角距离)是两件事：「减薄嘴唇」改 lip_thickness，「嘴收窄」改 mouth_width；只说「嘴小一点」时只收嘴宽，并在 reply 里说明唇厚没动。调整顺序：先定突出点，再改最影响协调的两处(常见是鼻唇、脸廓)，最后精修三庭(midface 眉到鼻底、philtrum 鼻底到嘴、chin_length 嘴到下巴)与横向间距(eye_spacing、nose_width、mouth_width、face_width)。刻度一句话每个控件最多挪一档，用户明说要大改除外；想改善尖窄的下半脸，先用 cheek_fullness 补顺面颊到下颌的过渡，不要直接把 face_width 拉满。改了脸廓或五官大小时，在 reply 里提醒下一步回看三庭和眼距。只输出一个 JSON 对象，格式：{\"face\": {\"控件键\": 值或null}, \"notes\": {\"层键\": 文字或null}, \"expressions\": {\"情绪键\": {\"choices\": {\"表情控件键\": \"选项值\"}, \"tell\": \"\", \"habit\": \"\"} 或 null}, \"preset\": \"预设键或空\", \"focus\": \"突出点控件键；不改就不写这个键，去掉写空串\", \"reply\": \"一句话说明你改了什么\"}。",
       "user_template": "【控件表】\n{catalog}\n\n【当前捏脸】\n{current}\n\n【角色现在的描述】\n{description}\n\n【用户的要求】\n{instruction}\n\n只输出 JSON 对象。",
       "reply_fallback": "按你的要求改了：{changes}",
       "reply_nothing": "这句话里没有能改的地方",
@@ -1762,7 +2133,254 @@
       "unknown_expression_option": "表情「{label}」的{control}没有选项 {value}",
       "unknown_preset": "没有这个预设：{key}",
       "bad_shape": "{key} 不是对象，略过",
-      "nothing_usable": "模型没有给出可用的捏脸改动"
-    }
+      "nothing_usable": "模型没有给出可用的捏脸改动",
+      "focus_kept": "「{label}」是这张脸的突出点，这句话没说要换它，没改",
+      "unknown_focus": "没有这个捏脸控件，不能做突出点：{key}"
+    },
+    "focus_label": "突出点"
+  },
+  "harmony": {
+    "_comment": "协调检查：一张脸留一个突出点，其余做配合。strong 是抢眼的取值(刻度写整数，选项写 value)；抢眼的项超过 max_strong(没定突出点)或突出点之外超过 max_strong_besides_focus 时提醒。rules 每条 when 的各组都要命中、unless 任一组命中就不报；组内任一控件取到列出的值就算命中。只提醒，不改捏脸。",
+    "strong": {
+      "eye_size": [
+        2
+      ],
+      "nose_bridge": [
+        2
+      ],
+      "cheekbone": [
+        2
+      ],
+      "lip_thickness": [
+        2
+      ],
+      "mouth_width": [
+        2
+      ],
+      "eye_shape": [
+        "peach",
+        "fox"
+      ],
+      "lips": [
+        "full"
+      ],
+      "nose_tip": [
+        "aquiline"
+      ],
+      "brow_ridge": [
+        "deep"
+      ],
+      "brow_shape": [
+        "sword",
+        "thick"
+      ],
+      "chin": [
+        "pointed"
+      ]
+    },
+    "max_strong": 2,
+    "max_strong_besides_focus": 1,
+    "messages": {
+      "crowded": "{features}都很抢眼，好看的五官堆在一起不一定协调：挑一个做突出点，其余收一档做配合。",
+      "crowded_focus": "突出点是「{focus}」，可{features}也很抢眼：配合点收一档，给突出点让位。",
+      "focus_empty": "突出点「{focus}」还没选值：先把它捏出来，再调配合点。"
+    },
+    "rules": [
+      {
+        "key": "sharp_contour",
+        "when": [
+          {
+            "cheekbone": [
+              1,
+              2
+            ]
+          },
+          {
+            "chin": [
+              "pointed"
+            ],
+            "face_shape": [
+              "melon",
+              "heart",
+              "diamond"
+            ]
+          }
+        ],
+        "unless": [
+          {
+            "cheek_fullness": [
+              1,
+              2
+            ]
+          }
+        ],
+        "message": "颧骨外显、下半脸又收得尖窄，宽窄之间转折生硬：先让面颊到下颌衔接饱满，再把尖下巴放圆，不要一次把下颌撑宽。"
+      },
+      {
+        "key": "full_center",
+        "when": [
+          {
+            "lips": [
+              "full"
+            ],
+            "lip_thickness": [
+              1,
+              2
+            ]
+          },
+          {
+            "nose_bridge": [
+              2
+            ]
+          }
+        ],
+        "message": "鼻梁高挺、嘴唇又厚，脸部中央显得满：两者留一个做主，另一个收一档，给鼻底、嘴唇和下巴之间留出空间。"
+      },
+      {
+        "key": "lips_thin_thick",
+        "when": [
+          {
+            "lips": [
+              "thin"
+            ]
+          },
+          {
+            "lip_thickness": [
+              1,
+              2
+            ]
+          }
+        ],
+        "message": "唇形选了薄唇，唇厚却往厚里调：唇厚只留一个说法，唇形换成唇峰、唇珠这类形状。"
+      },
+      {
+        "key": "lips_full_thin",
+        "when": [
+          {
+            "lips": [
+              "full"
+            ]
+          },
+          {
+            "lip_thickness": [
+              -2,
+              -1
+            ]
+          }
+        ],
+        "message": "唇形选了丰唇，唇厚却往薄里调：唇厚只留一个说法，唇形换成唇峰、唇珠这类形状。"
+      },
+      {
+        "key": "mouth_small_wide",
+        "when": [
+          {
+            "lips": [
+              "small"
+            ]
+          },
+          {
+            "mouth_width": [
+              1,
+              2
+            ]
+          }
+        ],
+        "message": "樱桃小口和嘴宽放大说法相反：嘴宽只留一个说法。"
+      },
+      {
+        "key": "eyes_crowded",
+        "when": [
+          {
+            "eye_size": [
+              1,
+              2
+            ]
+          },
+          {
+            "eye_spacing": [
+              -2,
+              -1
+            ]
+          }
+        ],
+        "message": "眼睛放大、眼距又收近，眼间显得拥挤：放大眼睛时眼距跟着放开一点。"
+      },
+      {
+        "key": "eyes_fill_face",
+        "when": [
+          {
+            "eye_size": [
+              2
+            ]
+          },
+          {
+            "face_width": [
+              -2,
+              -1
+            ],
+            "face_shape": [
+              "melon"
+            ]
+          }
+        ],
+        "message": "眼睛放到最大、脸又窄，五官挤满了脸：眼睛收一档，或先放柔脸廓再回看眼睛占脸的比例。"
+      },
+      {
+        "key": "long_face",
+        "when": [
+          {
+            "face_length": [
+              1,
+              2
+            ],
+            "face_shape": [
+              "long"
+            ]
+          },
+          {
+            "chin_length": [
+              1,
+              2
+            ],
+            "chin": [
+              "pointed"
+            ]
+          }
+        ],
+        "message": "脸已经偏长，下巴又尖或长，纵向被一再拉长：先看长在哪一段，眉到鼻底偏长就上移鼻底，嘴到下巴偏长就缩短下巴。"
+      },
+      {
+        "key": "wide_jump",
+        "when": [
+          {
+            "face_width": [
+              2
+            ]
+          },
+          {
+            "jaw": [
+              "wide"
+            ]
+          }
+        ],
+        "message": "脸宽和宽厚下颌叠在一起，下半脸一下撑得太开，容易改掉原来的长相方向：先补顺面颊到下颌的过渡，再判断宽度。"
+      }
+    ],
+    "focus_layers": [
+      "bone",
+      "features"
+    ],
+    "keep_words": [
+      "保持",
+      "保留",
+      "不动",
+      "别动",
+      "沿用",
+      "维持",
+      "不改",
+      "不要改",
+      "别改",
+      "暂不"
+    ]
   }
 }

@@ -14,9 +14,22 @@ from app.platform.payments import get_payment_channels
 from app.platform.payments.base import PAID, ChannelError, NotificationRejected
 from app.platform.store import PaymentInFlight, PlatformStore
 from app.schema.platform import OrderCreateRequest, OrderPayRequest
+from app.core import prompt_data
 
 
-router = APIRouter(prefix="/api/billing", tags=["会员积分与支付"])
+_WORDING_FILE = "api_billing_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_billing_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+
+router = APIRouter(prefix="/api/billing", tags=list(_words_of("module.tags")))
 logger = logging.getLogger("app.api.billing")
 
 #: A notification is a few KB. This route is public, so nothing larger gets read.
@@ -102,7 +115,7 @@ async def create_order(
     store: PlatformStore = Depends(get_platform_store),
 ):
     if request.provider not in (None, "sandbox") and request.provider not in get_payment_channels():
-        raise HTTPException(status_code=422, detail="该支付渠道暂不可用")
+        raise HTTPException(status_code=422, detail=_text_of("create_order.detail"))
     try:
         item = await store.create_order(
             user_id=user["user_id"], plan_id=request.plan_id,
@@ -116,7 +129,7 @@ async def create_order(
 async def _own_order(order_id: str, user: dict, store: PlatformStore):
     order = await store.get_order(order_id)
     if not order or order.user_id != user["user_id"]:
-        raise HTTPException(status_code=404, detail="订单不存在")
+        raise HTTPException(status_code=404, detail=_text_of("_own_order.detail"))
     return order
 
 
@@ -137,7 +150,7 @@ async def pay_order(
     await _own_order(order_id, user, store)
     channel = get_payment_channels().get(request.provider)
     if channel is None:
-        raise HTTPException(status_code=422, detail="该支付渠道暂不可用")
+        raise HTTPException(status_code=422, detail=_text_of("pay_order.detail"))
     try:
         attempt = await payment_flow.pay(store, get_payment_channels(), channel, order_id=order_id, user_id=user["user_id"])
     except PaymentInFlight as exc:
@@ -146,7 +159,7 @@ async def pay_order(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ChannelError as exc:
         logger.warning("出码失败: %s", exc)
-        raise HTTPException(status_code=502, detail="支付渠道暂时不可用，请稍后重试或换一种支付方式") from exc
+        raise HTTPException(status_code=502, detail=_text_of("pay_order.detail.2")) from exc
     return _order_with_attempt(await store.get_order(order_id), attempt)
 
 
@@ -173,7 +186,7 @@ async def cancel_order(
         await payment_flow.cancel(store, get_payment_channels(), order_id)
     except ChannelError as exc:
         logger.warning("关单失败: %s", exc)
-        raise HTTPException(status_code=502, detail="支付渠道暂时不可用，请稍后再取消") from exc
+        raise HTTPException(status_code=502, detail=_text_of("cancel_order.detail")) from exc
     return _order(await store.get_order(order_id))
 
 
@@ -184,12 +197,12 @@ async def sandbox_confirm(
     store: PlatformStore = Depends(get_platform_store),
 ):
     if not settings.payment_sandbox_enabled():
-        raise HTTPException(status_code=404, detail="沙箱支付未开启")
+        raise HTTPException(status_code=404, detail=_text_of("sandbox_confirm.detail"))
     order = await store.get_order(order_id)
     if not order or order.user_id != user["user_id"]:
-        raise HTTPException(status_code=404, detail="订单不存在")
+        raise HTTPException(status_code=404, detail=_text_of("sandbox_confirm.detail.2"))
     if order.provider != "sandbox":
-        raise HTTPException(status_code=422, detail="仅沙箱订单支持本地确认")
+        raise HTTPException(status_code=422, detail=_text_of("sandbox_confirm.detail.3"))
     try:
         return _order(await store.confirm_paid_order(order.id, f"sandbox:{order.id}"))
     except ValueError as exc:
@@ -200,7 +213,7 @@ def _notification_reply(provider: str, ok: bool, status: int = 500) -> Response:
     """Each channel has its own idea of an acknowledgement, and retries until it hears exactly that."""
     if provider == "alipay":
         return PlainTextResponse("success" if ok else "fail")
-    return Response(status_code=204) if ok else JSONResponse({"code": "FAIL", "message": "失败"}, status_code=status)
+    return Response(status_code=204) if ok else JSONResponse({"code": "FAIL", "message": _text_of("_notification_reply.message")}, status_code=status)
 
 
 @router.post("/webhooks/{provider}")
@@ -211,7 +224,7 @@ async def payment_webhook(
 ):
     channel = get_payment_channels().get(provider)
     if channel is None:
-        raise HTTPException(status_code=404, detail="支付渠道不存在")
+        raise HTTPException(status_code=404, detail=_text_of("payment_webhook.detail"))
     body = await request.body()
     if len(body) > _MAX_NOTIFICATION_BYTES:
         return _notification_reply(provider, False, 413)

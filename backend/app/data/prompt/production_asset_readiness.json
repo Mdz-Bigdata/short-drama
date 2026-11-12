@@ -1,0 +1,12 @@
+{
+  "_doc": "app/core/production_asset_readiness.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.kind_labels.actor": "数字演员",
+  "module.kind_labels.scene": "拍摄场地",
+  "module.kind_labels.prop": "拍摄道具",
+  "module.kind_labels.look": "表演妆造",
+  "module.kind_labels.effect": "特效",
+  "module.kind_labels.product": "商品",
+  "readiness_reasons.text": "3.资产库读取失败：{0}",
+  "readiness_reasons.text.2": "3.{0}缺少参考图（{1}项）：{2}",
+  "readiness_reasons.text.3": "3.拍摄资产尚未全部生成"
+}

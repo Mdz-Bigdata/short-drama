@@ -33,6 +33,19 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError, SQLAlch
 from app import settings
 from app.core import script_detail
 from app.core.inline_media import strip_stage_five_routes
+from app.core import prompt_data
+
+
+_WORDING_FILE = "repository_task_repo"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/repository_task_repo.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.repository.task_repo")
 
@@ -228,7 +241,7 @@ class TaskRepository:
             except TaskStoreUnavailableError:
                 raise
             except (SQLAlchemyError, OSError) as exc:
-                raise TaskStoreUnavailableError(f"任务库初始化失败: {exc}") from exc
+                raise TaskStoreUnavailableError(_text_of("_ensure_ready.text").format(exc)) from exc
             _READY_URLS.add(self._database_url)
 
     def _migrate_legacy_json(self) -> None:
@@ -247,11 +260,11 @@ class TaskRepository:
                     # Refuse to run against a store whose legacy data cannot be
                     # read: starting "empty" here would silently orphan it.
                     raise TaskStoreUnavailableError(
-                        f"旧版任务库 {self.db_path.name} 无法读取，已停止迁移以避免数据丢失"
+                        _text_of("_migrate_legacy_json.text").format(self.db_path.name)
                     ) from exc
                 if not isinstance(legacy, dict):
                     raise TaskStoreUnavailableError(
-                        f"旧版任务库 {self.db_path.name} 格式异常，已停止迁移以避免数据丢失"
+                        _text_of("_migrate_legacy_json.text.2").format(self.db_path.name)
                     )
                 now = time.time_ns()
                 for offset, (task_id, task) in enumerate(legacy.items()):
@@ -292,7 +305,7 @@ class TaskRepository:
 
     @staticmethod
     def _translate(exc: Exception) -> TaskStoreUnavailableError:
-        return TaskStoreUnavailableError(f"任务库不可用: {exc.__class__.__name__}")
+        return TaskStoreUnavailableError(_text_of("_translate.text").format(exc.__class__.__name__))
 
     def _retry_once(self, operation: Callable[[], _ResultT], label: str) -> _ResultT:
         """Run ``operation``; a connection the server dropped mid-statement is retried once on a fresh one.
@@ -347,7 +360,7 @@ class TaskRepository:
                     sa.select(_TASKS.c.payload).where(_TASKS.c.task_id == task_id)
                 ).scalar()
 
-        raw = self._retry_once(read, "读取任务")
+        raw = self._retry_once(read, _text_of("get_task.raw"))
         return self._load_payload(raw) if raw is not None else None
 
     def list_all_tasks(self) -> List[Dict[str, Any]]:
@@ -390,7 +403,7 @@ class TaskRepository:
                     ).first()
                     current_revision = current.script_revision if current is not None else None
                     if current_revision is not None and int(current_revision) > incoming_revision:
-                        raise StaleTaskWriteError("任务剧本已更新，拒绝旧快照覆盖")
+                        raise StaleTaskWriteError(_text_of("save_task.text"))
                     payload = self._snapshot_payload(task_data, current.payload if current is not None else None)
                     now = time.time_ns()
                     if current_revision is None:
@@ -420,7 +433,7 @@ class TaskRepository:
                         ).first()
                         current_revision = current.script_revision if current is not None else None
                         if current_revision is not None and int(current_revision) > incoming_revision:
-                            raise StaleTaskWriteError("任务剧本已更新，拒绝旧快照覆盖")
+                            raise StaleTaskWriteError(_text_of("save_task.text.2"))
                         payload = self._snapshot_payload(task_data, current.payload if current is not None else None)
                         connection.execute(
                             _TASKS.update()
@@ -471,7 +484,7 @@ class TaskRepository:
 
         # The transaction re-reads the row, so a retried mutation starts from the stored task again.
         with _WRITE_LOCK:
-            return self._retry_once(transact, "修改任务")
+            return self._retry_once(transact, _text_of("mutate_task.text"))
 
     def delete_task(self, task_id: str) -> bool:
         self._ensure_ready()

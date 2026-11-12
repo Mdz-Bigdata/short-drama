@@ -13,21 +13,32 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.core import edit_timeline, episode_cycle
+from app.core import prompt_data
 
-TITLE_LABEL = "【封面大字标题】"
-BODY_LABEL = "【黄金引流文案】"
+
+_WORDING_FILE = "promo_facts"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/promo_facts.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+TITLE_LABEL = _text_of("module.title_label")
+BODY_LABEL = _text_of("module.body_label")
 
 #: 交给宣发 Agent 的输出约定：放在用户提示词末尾。
 OUTPUT_CONTRACT = (
-    "方案正文写完后，最后单独输出两行，供系统直接上线使用，不要加引号、编号或 Markdown：\n"
-    f"{TITLE_LABEL}一句 4–14 字的主推封面标题\n"
-    f"{BODY_LABEL}一段 30–80 字的主推引流文案，只用正片里真实发生的情节和台词"
+    _text_of("module.output_contract").format(TITLE_LABEL, BODY_LABEL)
 )
 
 LINES_PER_EPISODE = 4
 MAX_LINE_CHARS = 40
 
-_EPISODE_PREFIX = re.compile(r"^第\s*\d+\s*集\s*")
+_EPISODE_PREFIX = re.compile(_text_of("module.episode_prefix"))
 
 
 def _screenplay_episodes(task: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -46,7 +57,7 @@ def _dialogue(plan: Mapping[str, Any]) -> list[str]:
             if not isinstance(utterance, Mapping) or utterance.get("kind") != "dialogue":
                 continue
             text = str(utterance.get("text") or "").strip()
-            line = f"{utterance.get('speaker') or '旁白'}：「{text[:MAX_LINE_CHARS]}」"
+            line = f"{utterance.get('speaker') or _text_of('_dialogue.line')}：「{text[:MAX_LINE_CHARS]}」"
             if text and line not in lines:
                 lines.append(line)
     return lines
@@ -61,17 +72,17 @@ def production_facts(task: Mapping[str, Any]) -> str:
     for index, episode in enumerate(episodes, start=1):
         number = int(episode.get("episode") or index)
         plan = episode.get("plan") if isinstance(episode.get("plan"), Mapping) else {}
-        title = _EPISODE_PREFIX.sub("", str(plan.get("title") or "")).strip() or "未命名"
+        title = _EPISODE_PREFIX.sub("", str(plan.get("title") or "")).strip() or _text_of("production_facts.title")
         if episode_cycle.film_of(task, number):
             films += 1
             timeline = episode_cycle.record(task, number).get("timeline")
             seconds = edit_timeline.summary(timeline).get("seconds") if isinstance(timeline, Mapping) else None
-            state = f"成片已合成，{seconds:.0f} 秒" if seconds else "成片已合成"
+            state = _text_of("production_facts.state").format(seconds) if seconds else _text_of("production_facts.state.2")
         else:
-            state = "成片未合成"
-        rows.append(f"- 第{number}集「{title}」：{state}")
+            state = _text_of("production_facts.state.3")
+        rows.append(_text_of("production_facts.text").format(number, title, state))
         rows.extend(f"  · {line}" for line in _dialogue(plan)[:LINES_PER_EPISODE])
-    head = f"本剧已写定 {len(episodes)} 集，其中 {films} 集成片已合成。以下为正片事实，宣传主张只能从这里取："
+    head = _text_of("production_facts.head").format(len(episodes), films)
     return head + "\n" + "\n".join(rows)
 
 

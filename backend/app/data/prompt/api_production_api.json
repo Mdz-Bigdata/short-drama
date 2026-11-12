@@ -1,0 +1,13 @@
+{
+  "_doc": "app/api/production_api.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.tags": [
+    "AI短剧工业化能力"
+  ],
+  "_provider_error.detail": "{0} 请求不可执行: {1}",
+  "_provider_error.detail.2": "{0} 服务暂不可用",
+  "_validate_upload.text": "上传文件类型不受支持",
+  "_validate_upload.text.2": "上传文件必须介于 1 字节和 {0} MB 之间",
+  "compile_script_prompt_file.text": "写实真人电影质感",
+  "elevenlabs_audio_native.text": "发音词典 locator 必须包含有效的 dictionary ID 与 version ID",
+  "elevenlabs_audio_native.detail": "发音词典 locator 不是有效 JSON"
+}

@@ -1,0 +1,11 @@
+{
+  "_doc": "app/core/seam_check.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.verdict_zh.good": "接上了",
+  "module.verdict_zh.suspect": "接缝可疑",
+  "module.verdict_zh.jump": "接缝跳了",
+  "detail.worst": "构图或人物位置",
+  "detail.worst.2": "明暗",
+  "detail.worst.3": "色调",
+  "detail.text": "前后两帧基本一致（差异 {0:.2f}）",
+  "detail.text.2": "差异 {0:.2f}，主要在{1}；看一眼接缝，不对就重跑后一段"
+}

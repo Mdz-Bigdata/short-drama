@@ -1,0 +1,39 @@
+{
+  "_doc": "app/core/creation_modes.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.mode_info.drama": "剧情短剧",
+  "module.mode_info.drama.2": "角色在画面里说话，按集推进剧情",
+  "module.mode_info.narration": "旁白解说",
+  "module.mode_info.narration.2": "旁白讲述故事，角色只表演不开口，适合小说解说与故事号",
+  "module.mode_info.ad": "广告短片",
+  "module.mode_info.ad.2": "按产品简报做 15–60 秒的短片：开场抓人、产品清楚、结尾行动号召",
+  "writer_guidance.text": "创作类型：旁白解说。整部作品由旁白讲述——每个有口播的分镜只用 voiceover（旁白）一种口播，角色在画面里只做动作与表情、不开口说台词；旁白用第三人称，交代人物心思与前因后果，画面负责把旁白说的事演出来。没有旁白的分镜可以只有画面。",
+  "writer_guidance.lines": [
+    "创作类型：广告短片。这是一支短片而不是连续剧：",
+    "1. 第一个分镜在 3 秒内抛出痛点或悬念，让人停下来；",
+    "2. 中段让产品清楚出现，演示卖点带来的变化，不要只靠口播夸；",
+    "3. 最后一个分镜给出行动号召，画面与口播都要落在它上面；",
+    "4. 口播短而有力，一个分镜一句话；不得编造产品没有的功效或数据。"
+  ],
+  "writer_guidance.labelled": [
+    "product",
+    "产品"
+  ],
+  "writer_guidance.labelled.2": [
+    "selling_points",
+    "卖点"
+  ],
+  "writer_guidance.labelled.3": [
+    "audience",
+    "目标人群"
+  ],
+  "writer_guidance.labelled.4": [
+    "call_to_action",
+    "行动号召"
+  ],
+  "writer_guidance.text.2": "产品简报（以此为准）：",
+  "plan_problems.text": "旁白解说模式下角色不开口：把这句台词改写成旁白，或删去",
+  "plan_problems.text.2": "最后一个分镜要落在行动号召「{0}」上（画面或口播里出现它）",
+  "promotion_guidance.text": "这是一部旁白解说作品：文案突出故事悬念与讲述感，不要写成角色对白体。",
+  "promotion_guidance.tail": "行动号召必须是「{0}」。",
+  "promotion_guidance.text.2": "这是一支广告短片：文案围绕产品{0}的真实卖点，结尾给出行动号召，不得夸大功效。{1}"
+}

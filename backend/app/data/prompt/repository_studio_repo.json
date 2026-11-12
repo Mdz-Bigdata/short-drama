@@ -1,0 +1,16 @@
+{
+  "_doc": "app/repository/studio_repo.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "project_for_task.name": "画布",
+  "project_for_task.name.2": "画布",
+  "list_canvases.title": "主画布",
+  "create_canvas.text": "画布",
+  "create_canvas.title": "画布",
+  "patch_canvas.text": "主画布",
+  "patch_canvas.text.2": "画布",
+  "delete_canvas.text": "主画布不能删除",
+  "canvas_title.text": "主画布",
+  "canvas_title.text.2": "画布",
+  "expire_canvas_runs.cursor": "服务重启，这次生成没有取回结果；可以重新运行（运行中的那次可能已经计费）",
+  "restore_canvas_run.text": "这次生成没有结果，无法恢复",
+  "delete_canvas_run.text": "这次生成还没结束，不能删除"
+}

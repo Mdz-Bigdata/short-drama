@@ -31,5 +31,18 @@
   "panel_look_drawn": "「{0}」穿图{1} 的「{2}」（{3}）",
   "panel_look_undrawn": "「{0}」图{1} 只取脸型、发型与体型，本格穿「{2}」：{3}，服装按这段文字画，不照图上的衣服",
   "outfit_limit": 80,
-  "shot_headshot": "参考图{0}仅锁定{1}「{2}」正面大头照里的脸型骨相、五官形状与间距、肤色和痣疤，发型、头饰与服装以这个人的正面全身照为准，不采用图中背景与光线，不是额外剧情或额外人物"
+  "shot_headshot": "参考图{0}仅锁定{1}「{2}」正面大头照里的脸型骨相、五官形状与间距、肤色和痣疤，发型、头饰与服装以这个人的正面全身照为准，不采用图中背景与光线，不是额外剧情或额外人物",
+  "module.number": "[\\d一二两三四五六七八九十百]{1,5}",
+  "module.range": "第\\s*({0})\\s*(?:集)?\\s*(?:[-–—~～至到]\\s*第?\\s*({1})\\s*)?集\\s*(起|开始|之后|以后|至剧终|到剧终|至结局|到结局)?",
+  "module.scene_ref": "(?P<from>从)?\\s*(?:第\\s*(?P<episode>{0})\\s*集\\s*)?第\\s*(?P<scene>{1})\\s*场\\s*(?P<onward>起|开始|之后|以后)?|E(?P<id_episode>\\d+)S(?P<id_scene>\\d+)",
+  "module.digits": "一二两三四五六七八九",
+  "module.wearer_lead": "^\\s*(?P<name>[^；;，,：:。\\s]{1,20}?)(?:穿着|身穿|所穿)\\s*[；;，,：:]?\\s*",
+  "_episode_number.text": "百",
+  "_episode_number.text.2": "十",
+  "_wearer.text": "{0}穿着",
+  "_wearer.text.2": "{0}身穿",
+  "_look.description": "妆效：{0}",
+  "crowd_wardrobe.text": "妆效：{0}",
+  "crowd_wardrobe.text.2": "服装：{0}",
+  "wears_makeup.text": "妆效："
 }

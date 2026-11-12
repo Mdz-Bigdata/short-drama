@@ -1,0 +1,15 @@
+{
+  "_doc": "app/core/style_analysis.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "StyleProfile.contrast": "中等",
+  "StyleProfile.temperature": "中性",
+  "StyleProfile.saturation": "中等",
+  "module.fields": "name（2–12 字的风格名）、medium（live_action 真人实拍 / anime_2d 二维动画 / anime_3d 三维动画 / mixed 混合）、summary（一句话概括这种质感）、lighting（光源方向、软硬、时段）、palette（3–6 个主色，每个含 name、hex（#RRGGBB）、role：它落在画面里的什么东西上）、contrast / temperature / saturation（各用两三个字：高 / 中等 / 低、冷 / 中性 / 暖 …）、camera_body、lens、grain（机身、焦段与景深、颗粒）、texture（材质与笔触，如胶片颗粒、赛璐璐平涂、厚涂）、composition（构图习惯）、era（年代感，没有就留空）、mood（情绪基调）、lock（3–5 条锁定短语，中英文并写，每条是“特征A + 特征B”的形式，这是每一张图都必须复现的东西）、positives（最多 12 条应当出现的画面特征）、negatives（最多 12 条必须避免的特征，如与该风格冲突的画法）、style_caption（一段 60–200 字、可直接放进生图提示词开头的风格锚定句，中英文并写）",
+  "analysis_prompt.system": "你是影视美术指导，负责把一张参考图的画面风格拆解成可复用的风格锁。只描述画面的视觉风格（媒介、光线、色彩、镜头、质感、构图），不要描述图中的具体人物、情节或文字内容；不要编造图中看不到的东西。只输出一个 JSON 对象。",
+  "analysis_prompt.user": "请分析这张参考图的画面风格，输出一个 JSON 对象，字段如下：\n{0}。\n要求：hex 必须从画面中实际取色；lock 与 style_caption 只写风格，不写人物身份、服装细节或剧情；不要出现任何真实人名、作品名或品牌名。",
+  "analysis_prompt.text": "\n使用者的补充说明（仅作参考，以画面为准）：{0}",
+  "parse_profile.text": "模型没有返回可读的风格描述（不是 JSON）；请换一个支持看图的模型再试",
+  "parse_profile.text.2": "风格描述缺少或写错了字段：{0}",
+  "to_pack.knobs.vignette": "轻微",
+  "to_pack.update.name": "参考图·{0}",
+  "to_pack.update.extension_restatement": "全片保持「{0}」的画面质感与色彩基调不变。"
+}

@@ -2,5 +2,16 @@
 .delivery-check h4 { margin: 0 0 0.4rem; font-size: 0.875rem; }
 .delivery-check ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.35rem; }
 .delivery-check li { display: flex; flex-wrap: wrap; gap: 0.4rem; font-size: 0.8125rem; line-height: 1.5; }
-.delivery-check__rule { padding: 0 0.35rem; border-radius: 4px; background: var(--warning-soft, #fff3d6); color: var(--warning, #8a5a00); }
+.delivery-check__rule { padding: 0 0.35rem; border-radius: 4px; background: rgba(var(--warning-rgb), 0.12); color: var(--warning-ink); }
 .delivery-check__ok { margin: 0; font-size: 0.8125rem; color: var(--success, #2f7d4a); }
+.delivery-check__layer + .delivery-check__layer, .delivery-check__unverified { margin-top: 0.5rem; }
+.delivery-check h5 { margin: 0 0 0.25rem; font-size: 0.8125rem; color: var(--text-muted); }
+.delivery-check__tier { padding: 0 0.35rem; border-radius: 4px; font-size: 0.75rem; background: rgba(var(--ink-rgb), 0.06); }
+.delivery-check__tier--must { background: rgba(var(--danger-rgb), 0.12); color: var(--danger-ink); }
+.delivery-check__tier--suggest { background: rgba(var(--info-rgb), 0.12); color: var(--info-ink); }
+.delivery-check__tier--manual { background: rgba(var(--warning-rgb), 0.12); color: var(--warning-ink); }
+/* 剪辑合成师页是深色底：浅色字配同色淡底。 */
+.delivery-check__unverified li { color: var(--text-muted); }
+.delivery-check__cost { margin: 0.5rem 0 0; padding-top: 0.4rem; border-top: 1px dashed var(--line); font-size: 0.8125rem; color: var(--text-muted); }
+.delivery-check__rights { display: inline-flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; flex-basis: 100%; }
+.delivery-check__rights input { flex: 1 1 14rem; min-width: 0; }

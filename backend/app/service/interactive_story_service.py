@@ -30,6 +30,19 @@ from app.core.interactive_story import StoryInputError
 from app.core.screenwriting.prompts import language_scope
 from app.core.screenwriting.structured_llm import StructuredOutputError, call_structured
 from app.service.director_desk_service import sniff_media
+from app.core import prompt_data
+
+
+_WORDING_FILE = "interactive_story_service"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/interactive_story_service.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.service.interactive_story")
 
@@ -57,19 +70,7 @@ class StoryPlanError(ValueError):
     """The model never produced a usable story; the message says what was wrong with its last answer."""
 
 
-PLAN_SYSTEM_PROMPT = """你是互动短剧的故事架构师。根据创作要求，设计一张观众可以做选择的分支剧情图。
-
-要求：
-- 先写 outline（5 到 12 条大纲节拍），再把它展开成 segments。
-- 每个片段写 title 和 narration（旁白或场景描述），需要台词时写 dialogue。片段是 30 到 90 秒可拍摄的一场戏，不要写成长篇小说。
-- 抉择点放在 choices 里，每个选项的 text 写观众要做的事，target 填目标片段的 id；选项要让故事真正走向不同，不要给假选择。
-- 不同的选择可以通过 effects 累积到 variables（例如好感度用 number、是否拿到关键道具用 flag）：add 只用于 number，set 用于两种类型。
-- 用 condition 让后面的选项或路线依赖这些变量；被挡住的选项用 when_locked 决定隐藏（hide）还是显示为锁定（lock），锁定时写 locked_hint。条件只能写成 {var, op, value}，或放进 all / any；op 取 eq、ne、gt、gte、lt、lte。
-- routes 是不需要观众操作的自动路线，按顺序取第一条成立的，适合用变量决定走向哪个结局；condition 为空表示一定走。
-- 需要紧张感的抉择点可以设 timer（seconds 为 5 到 30，default_choice 填该片段里一个不带条件的选项 id）。
-- 结局片段的 kind 写 ending，并写 ending_label；结局不能再有 choices 或 routes。其他片段必须有出口，所有路线最终都要能走到结局。允许回环，但回环必须有出口。
-- start 填开场片段的 id。variables 里声明用到的每个变量。
-- media、position 不要写。segment 的 id 用简短的 s1、s2 这种形式。"""
+PLAN_SYSTEM_PROMPT = _text_of("module.plan_system_prompt")
 
 
 def _now() -> str:
@@ -159,7 +160,7 @@ def _allowed_urls(task: Mapping[str, Any]) -> set[str]:
 def _check_media(graph: Mapping[str, Any], allowed: set[str]) -> None:
     foreign = sorted(story.media_urls(graph) - allowed)
     if foreign:
-        raise StoryInputError(f"片段的媒体必须来自本项目的镜头、成片或上传文件；不认识：{foreign[0][:120]}")
+        raise StoryInputError(_text_of("_check_media.text").format(foreign[0][:120]))
 
 
 # --------------------------------------------------------------------------- fetching media for an export
@@ -232,7 +233,7 @@ class InteractiveStoryService:
     def _task(self, task_id: str) -> dict[str, Any]:
         task = self.repo.get_task(task_id)
         if not task:
-            raise LookupError("任务不存在")
+            raise LookupError(_text_of("_task.text"))
         return task
 
     # ----------------------------------------------------------------------- reading and saving
@@ -264,15 +265,15 @@ class InteractiveStoryService:
         """
         task = self.repo.get_task(task_id)
         if not task:
-            raise LookupError("项目不存在")
+            raise LookupError(_text_of("canvas_handoff.text"))
         graph = self.view(task_id)["graph"]
         segment = next((item for item in graph.get("segments", []) if item.get("id") == segment_id), None)
         if segment is None:
-            raise LookupError("没有这个片段")
+            raise LookupError(_text_of("canvas_handoff.text.2"))
         lines = [f"{line.get('speaker') or ''}：{line.get('text') or ''}".strip("：") for line in segment.get("dialogue") or [] if line.get("text")]
         prompt = "\n".join(part for part in (str(segment.get("narration") or "").strip(), *lines) if part)[:4000]
         if not prompt:
-            raise StoryInputError("这个片段还没有旁白或台词，先写一点再去画布生成")
+            raise StoryInputError(_text_of("canvas_handoff.text.3"))
         media = segment.get("media") or {}
         binding: dict[str, Any] = {}
         if media.get("source") == "shot" and media.get("shot_uid"):
@@ -281,10 +282,10 @@ class InteractiveStoryService:
                 binding = {"binding": {"sceneId": shot["scene_id"], "shotId": shot["shot_id"]}}
         title = str(segment.get("title") or segment_id)[:60]
         config = task.get("config") if isinstance(task.get("config"), Mapping) else {}
-        project_id = studio.repository.project_for_task(task_id, owner_id, str(config.get("title_suggestion") or "画布")).id
+        project_id = studio.repository.project_for_task(task_id, owner_id, str(config.get("title_suggestion") or _text_of("canvas_handoff.project_id"))).id
         done = studio.edit_canvas(project_id, owner_id, [
-            {"op": "add_node", "ref": "frame", "kind": "image_gen", "label": f"{title} · 首帧", "prompt": prompt},
-            {"op": "add_node", "ref": "clip", "kind": "video_gen", "label": f"{title} · 视频", "prompt": prompt, "params": binding},
+            {"op": "add_node", "ref": "frame", "kind": "image_gen", "label": _text_of("canvas_handoff.done.label").format(title), "prompt": prompt},
+            {"op": "add_node", "ref": "clip", "kind": "video_gen", "label": _text_of("canvas_handoff.done.label.2").format(title), "prompt": prompt, "params": binding},
             {"op": "connect", "source": "frame", "target": "clip", "role": "first_frame"},
         ])
         return {"project_id": project_id, "canvas_id": "main", "nodes": done["created"], "bound": bool(binding), "version": done["version"]}
@@ -299,7 +300,7 @@ class InteractiveStoryService:
             store = store_of(task)
             # Checked inside the row lock: two tabs saving at once cannot both pass.
             if int(store.get("revision") or 0) != int(base_revision):
-                raise StoryConflict("互动剧已在其他页面更新，请刷新后重试")
+                raise StoryConflict(_text_of("mutate.text"))
             _check_media(graph, _allowed_urls(task))
             store["graph"] = graph
             store["revision"] = int(store.get("revision") or 0) + 1
@@ -308,7 +309,7 @@ class InteractiveStoryService:
 
         saved = self.repo.mutate_task(task_id, mutate)
         if saved is None:
-            raise LookupError("任务不存在")
+            raise LookupError(_text_of("save.text"))
         return self._view(saved)
 
     def analyze(self, raw_graph: Any) -> dict[str, Any]:
@@ -323,7 +324,7 @@ class InteractiveStoryService:
         """Draft a story from a brief. It is only returned: replacing the graph is the author's decision."""
         task = self._task(task_id)
         if self.gateway is None:
-            raise StoryPlanError("没有可用的文本模型")
+            raise StoryPlanError(_text_of("plan.text"))
         config = task.get("config") if isinstance(task.get("config"), Mapping) else {}
         title = str(config.get("title_suggestion") or "")
         model = str(config.get("llm_model") or "")
@@ -335,7 +336,7 @@ class InteractiveStoryService:
             ) or ""
 
         endings = max(2, min(int(endings), 12))
-        sections = [f"# 创作要求\n{brief.strip()}", f"# 规模\n结局不少于 {endings} 个；每条完整路线的观看时长约 {max(1, int(minutes))} 分钟。"]
+        sections = [_text_of("plan.sections").format(brief.strip()), _text_of("plan.sections.2").format(endings, max(1, int(minutes)))]
         if use_project:
             sections.append(self._project_context(task))
         try:
@@ -347,10 +348,10 @@ class InteractiveStoryService:
                 )
         except StructuredOutputError as error:
             logger.warning("[InteractiveStory] 规划失败 task=%s: %s", task_id, str(error)[:400])
-            raise StoryPlanError("模型连续 3 次没有给出可用的分支剧情：" + "；".join(error.reasons)[:600]) from error
+            raise StoryPlanError(_text_of("plan.text.2") + "；".join(error.reasons)[:600]) from error
         except (RuntimeError, ValueError, OSError) as error:
             logger.warning("[InteractiveStory] 模型调用失败 task=%s: %s", task_id, type(error).__name__)
-            raise StoryPlanError("调用文本模型失败，请稍后重试或在模型配置里换一个模型") from error
+            raise StoryPlanError(_text_of("plan.text.3")) from error
         graph = story.parse_graph(result.data)
         return {"draft": graph, "analysis": self._public_analysis(self._analysis(graph)), "attempts": result.attempts}
 
@@ -361,10 +362,10 @@ class InteractiveStoryService:
         names = [str(item.get("name")) for item in assets.get("3_characters") or [] if isinstance(item, Mapping) and item.get("name")][:16]
         lines = []
         if config.get("title_suggestion"):
-            lines.append(f"剧名：{config['title_suggestion']}")
+            lines.append(_text_of("_project_context.text").format(config['title_suggestion']))
         if names:
-            lines.append("已有角色：" + "、".join(names))
-        return "# 本项目已有的设定（尽量沿用）\n" + "\n".join(lines) if lines else ""
+            lines.append(_text_of("_project_context.text.2") + "、".join(names))
+        return _text_of("_project_context.text.3") + "\n".join(lines) if lines else ""
 
     # ----------------------------------------------------------------------- media
 
@@ -377,7 +378,7 @@ class InteractiveStoryService:
         head = source.read(4096)
         proven = sniff_media(head)
         if proven not in _EXTENSIONS:
-            raise StoryInputError("只支持 PNG、JPEG、WebP 图片或 MP4、WebM 视频；文件内容不是其中任何一种")
+            raise StoryInputError(_text_of("add_upload.text"))
         kind = proven.split("/", 1)[0]
         limit = MAX_IMAGE_UPLOAD_BYTES if kind == "image" else MAX_VIDEO_UPLOAD_BYTES
         os.makedirs(media_compositor.MEDIA_DIR, exist_ok=True)
@@ -389,7 +390,7 @@ class InteractiveStoryService:
                 chunk = head
                 while chunk:
                     if size > limit:
-                        raise StoryInputError(f"{'图片' if kind == 'image' else '视频'}不能超过 {limit // _MEBIBYTE} MB")
+                        raise StoryInputError(_text_of("add_upload.text.2").format('图片' if kind == 'image' else '视频', limit // _MEBIBYTE))
                     handle.write(chunk)
                     chunk = source.read(_MEBIBYTE)
                     size += len(chunk)
@@ -402,12 +403,12 @@ class InteractiveStoryService:
             def mutate(task: dict[str, Any]) -> dict[str, Any]:
                 uploads = store_of(task)["uploads"]
                 if len(uploads) >= MAX_UPLOADS:
-                    raise StoryInputError(f"一部互动剧最多上传 {MAX_UPLOADS} 个文件，先删掉用不上的")
+                    raise StoryInputError(_text_of("mutate.text.2").format(MAX_UPLOADS))
                 uploads.append(record)
                 return record
 
             if self.repo.mutate_task(task_id, mutate) is None:
-                raise LookupError("任务不存在")
+                raise LookupError(_text_of("add_upload.text.3"))
         except Exception:
             if os.path.exists(path):
                 os.remove(path)
@@ -419,16 +420,16 @@ class InteractiveStoryService:
             store = store_of(task)
             found = next((item for item in store["uploads"] if isinstance(item, dict) and item.get("id") == upload_id), None)
             if found is None:
-                raise LookupError("这个上传文件不存在")
+                raise LookupError(_text_of("mutate.text.3"))
             graph = store.get("graph")
             if isinstance(graph, Mapping) and found.get("url") in story.media_urls(graph):
-                raise StoryConflict("还有片段在用这个文件，先把它从片段上换掉")
+                raise StoryConflict(_text_of("mutate.text.4"))
             store["uploads"] = [item for item in store["uploads"] if item is not found]
             return str(found.get("url") or "")
 
         url = self.repo.mutate_task(task_id, mutate)
         if url is None:
-            raise LookupError("任务不存在")
+            raise LookupError(_text_of("remove_upload.text"))
         # Only files this feature wrote; a stored URL never gets to choose what is deleted.
         name = os.path.basename(url)
         if name.startswith(_UPLOAD_PREFIX) and media_compositor.local_media_path(url):
@@ -442,13 +443,13 @@ class InteractiveStoryService:
             store = store_of(task)
             graph = store.get("graph")
             if not isinstance(graph, Mapping):
-                raise LookupError("这个项目还没有互动剧")
+                raise LookupError(_text_of("mutate.text.5"))
             store["stats"] = story.record_playtest(store.get("stats"), graph, run)
             return dict(store)
 
         saved = self.repo.mutate_task(task_id, mutate)
         if saved is None:
-            raise LookupError("任务不存在")
+            raise LookupError(_text_of("record_playtest.text"))
         return story.stats_view(saved.get("stats"), saved["graph"], story.analyze_paths(saved["graph"]))
 
     def reset_playtest(self, task_id: str) -> dict[str, Any]:
@@ -459,7 +460,7 @@ class InteractiveStoryService:
 
         saved = self.repo.mutate_task(task_id, mutate)
         if saved is None:
-            raise LookupError("任务不存在")
+            raise LookupError(_text_of("reset_playtest.text"))
         graph = saved.get("graph")
         return story.stats_view(saved["stats"], graph) if isinstance(graph, Mapping) else story.stats_view(saved["stats"], {})
 
@@ -468,10 +469,10 @@ class InteractiveStoryService:
     def _exportable(self, task_id: str) -> dict[str, Any]:
         graph = _peek(self._task(task_id)).get("graph")
         if not isinstance(graph, Mapping):
-            raise StoryInputError("这个项目还没有互动剧")
+            raise StoryInputError(_text_of("_exportable.text"))
         problems = [item["message"] for item in story.validate_graph(graph) if item["severity"] == "error"]
         if problems:
-            raise StoryInputError("故事还有问题，导出的播放器会走不通：" + "；".join(problems[:5]))
+            raise StoryInputError(_text_of("_exportable.text.2") + "；".join(problems[:5]))
         return dict(graph)
 
     def export_preview(self, task_id: str) -> dict[str, Any]:
@@ -538,10 +539,7 @@ class InteractiveStoryService:
                         os.remove(path)
                 page = story.render_player_html(story.player_story(graph, bundled), lang=lang, bundled=True)
                 bundle.writestr("index.html", page, compress_type=zipfile.ZIP_DEFLATED)
-                notes = [
-                    "Open index.html in a browser to play. Keep the media folder beside it.",
-                    "打开 index.html 即可播放；media 文件夹要放在它旁边。",
-                ]
+                notes = list(_words_of("export_zip.notes"))
                 if left_out:
                     notes += ["", f"{len(left_out)} media file(s) could not be included and play as text cards:", *[f"- {_visible_address(url)}" for url in left_out]]
                 bundle.writestr("README.txt", "\n".join(notes) + "\n", compress_type=zipfile.ZIP_DEFLATED)

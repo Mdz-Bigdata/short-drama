@@ -1,0 +1,9 @@
+{
+  "_doc": "app/service/spatial_stage_service.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "shot_specs.size": "中景",
+  "director_context.landmarks.form_and_count": "1处，位置固定",
+  "director_context.landmarks.form_and_count.2": "1处，{0}，位置固定",
+  "edit_plan.text": "场景 {0} 不在剧本大纲里",
+  "edit_plan.text.2": "空间方案已在其他页面更新，请刷新后重试",
+  "rebuild_plan.text": "场景 {0} 不在剧本大纲里"
+}

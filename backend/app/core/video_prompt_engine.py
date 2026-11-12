@@ -51,6 +51,7 @@ workspace can show what was cut.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -61,17 +62,30 @@ from app.core.face_card import framing_for_shot_size, parse_face_card, render_fa
 from app.core.prompt_distiller import dedupe, is_no_line
 from app.core.screenwriting.speech import is_narrator
 from app.core.spatial_stage import clip_brief
-from app.core.spoken_lines import dialogue_segments, split_speech
+from app.core.spatial_stage.models import StagePlan
+from app.core.spatial_stage.projection import CameraView
+from app.core.spatial_stage.prompting import prompt_landmarks
+from app.core.spoken_lines import dialogue_segments, split_speech, spoken_lines
 from app.core.sound_events import ContactSound, build_sound_events, split_cues
 from app.core.storyboard_director import space_restatement
 from app.core.style_packs import SIGNAGE_RULE, StylePack, iron_rules, negatives_for, style_lock_block
 from app.core.video_references import MIN_SHOT_SECONDS
+
+logger = logging.getLogger(__name__)
 
 # 词表、标签、句式都是数据(app/data/prompt/clip_prompt.json)：这里只读。
 _DATA = "clip_prompt"
 _LOCK_TAGS = prompt_data.pairs(_DATA, "lock_tags")
 # A clip prompt stands on its own: it may not refer back to a batch the model never saw.
 _FORBIDDEN_SHORTHANDS = prompt_data.words(_DATA, "forbidden_shorthands")
+# 只认单独成词的省略语：「双手按在合同上」里的「同上」前面是汉字，是别的词的一部分，不算。
+_SHORTHAND = re.compile(
+    "|".join(prompt_data.text(_DATA, "shorthand_guard") + re.escape(word) for word in sorted(_FORBIDDEN_SHORTHANDS, key=len, reverse=True))
+)
+# 背对镜头的画面：只演看得见的肩背与站姿。
+_BACK_VIEW_WORDS = prompt_data.words(_DATA, "back_view_words")
+# 「背对(着/向)林夏」：背对的是另一个人，不是镜头。
+_BACK_VIEW_LEAD = prompt_data.pattern(_DATA, "back_view_lead")
 # 这个模块自己写的句子、标签、分隔符和分句正则：app/data/prompt/video_prompt_engine.json。
 _WORDING = "video_prompt_engine"
 
@@ -171,6 +185,14 @@ class ShotPromptInput:
     portrait_safe: bool = False
     # 有自己一张参考图的服装名(旧项目的服装资产)；妆造画在人物图上的不在这里。
     costume_images: Sequence[str] = ()
+    # 情绪在画面里看得见的样子(情绪判读：脸、身体)，写在表情后面「外化为…」；背对镜头时不写，听的人去掉张嘴的那几项。
+    expression_reading: str = ""
+    # 写在表演最后的个人表情习惯(捏过脸的人)；背对镜头时看不见，不写。
+    expression_notes: str = ""
+    # 导演台上位置全程不变的布景(家具、建筑、落地的道具)，看得见的、点到名的在前(见 fixed_set_pieces)：Pa1 的固定项一句。
+    fixed_items: Sequence[str] = ()
+    # 本镜带着有效的导演台白模(静帧或白模视频)：站位与家具位置归白模，场景锚点不再说空间布局。
+    desk_layers: bool = False
 
 
 @dataclass
@@ -201,6 +223,8 @@ _HOLD_VERBS = prompt_data.words(_DATA, "hold_verbs")
 
 
 _IN_HAND = prompt_data.pattern(_DATA, "in_hand")
+# 含「持」却不是拿着的词(「原文台词保持不变」的「保持」)：判断持物前先从分句里去掉。
+_HOLD_FALSE = tuple(sorted(prompt_data.words(_WORDING, "hold_verb_false"), key=len, reverse=True))
 
 
 def prop_holders(props: Sequence[str], characters: Sequence[str], *texts: str) -> list[str]:
@@ -218,10 +242,13 @@ def prop_holders(props: Sequence[str], characters: Sequence[str], *texts: str) -
                 last = named or last
                 if not last:
                     continue
+                holding = clause
+                for word in _HOLD_FALSE:
+                    holding = holding.replace(word, "")
                 for prop in props:
                     prop = str(prop).strip()
                     if prop and prop not in holders and prop in clause and (
-                        any(verb in clause for verb in _HOLD_VERBS) or _IN_HAND.search(clause)
+                        any(verb in holding for verb in _HOLD_VERBS) or _IN_HAND.search(holding)
                     ):
                         holders[prop] = last
     return [_says("prop_held", prop=prop, holder=holders[prop]) if prop in holders else prop for prop in (str(item).strip() for item in props) if prop]
@@ -297,18 +324,19 @@ def compile_shot_prompt(
     ceiling = max(MIN_SHOT_SECONDS, int(max_duration_seconds or 0) or 15)
     if not MIN_SHOT_SECONDS <= shot.duration_seconds <= ceiling:
         raise ValueError(f"clip duration must be between {MIN_SHOT_SECONDS} and {ceiling} seconds")
-    restated = f"{shot.scene} {shot.blocking} {shot.start_state}"
-    if any(shortcut in restated for shortcut in _FORBIDDEN_SHORTHANDS):
-        raise ValueError("space, blocking and start state must be restated in full")
+    shot = _without_shorthands(shot)
     situations = list(shot.situations)
     if len(shot.characters) >= 2 and "multi_person" not in situations:
         situations.append("multi_person")
     negatives = negatives_for(pack, situations, shot.extra_negatives)
     cut = dict(shot.cut_in or {})
     cut_label = str(cut.get("label") or "")
-    # No absolute seconds in the text: the clip length travels as the request's duration, and
-    # video models (Seedance's own prompt rules among them) follow shot order and the start /
-    # end frame far more reliably than "0-8秒" ranges, which they treat as frame-exact cues.
+    fight = "fight" in situations
+    back = back_view(shot)
+    listening = listener_shot(shot)
+    # A single clip carries no absolute seconds: its length travels as the request's duration. A clip
+    # of several moments writes each moment's span in its block head (slice_video, 「7—10秒」, the
+    # user's choice): the spans cover 0 to the end with no gap and say which moment comes when.
     structure = [
         _says("structure_single", aspect=shot.aspect_ratio),
         _word("first_frame") if shot.first_frame else _word("no_first_frame"),
@@ -319,9 +347,14 @@ def compile_shot_prompt(
         structure.append(bridge_line(shot.camera_movement, shot.end_state))
     if cut_label:
         structure.append(_says("cut_in", label=cut_label))
+        # 切机位不是让人动：换了角度，人物站位与朝向照旧。
+        structure.append(prompt_data.text(_DATA, "cut_keeps_blocking"))
     anchors = [note.strip().rstrip(_FULL_STOP) + _FULL_STOP for note in shot.reference_notes if str(note).strip()]
     timeline = f"{shot.carry_in}{shot.subject_action}".strip()
-    camera = _says("camera", size=shot.shot_size, move=shot.camera_movement)
+    camera = _CLAUSE_SEP.join(filter(None, (
+        _says("camera", size=shot.shot_size, move=shot.camera_movement),
+        clip_skeleton.listener_camera(shot.shot_size, shot.camera_movement, listening=listening),
+    )))
     dialogue_label = _word("dialogue_label_native") if shot.native_audio else _word("dialogue_label_silent")
     dialogue = (
         _says(
@@ -332,9 +365,10 @@ def compile_shot_prompt(
     )
     end_state = _says("end_state", end_state=shot.end_state)
     # 打戏镜头多一条打斗铁律：拳拳到肉、飘逸流畅、连贯不断档；文戏镜头换成动作顺序铁律：按写明的先后一步一步做。
+    # 背对镜头看不见嘴：不写口型同步。
     rule_ids = [
-        "physics", "form", "fight" if "fight" in situations else "action_chain",
-        *(["lip_sync"] if shot.dialogue.strip() else []),
+        "physics", "form", "fight" if fight else "action_chain",
+        *(["lip_sync"] if shot.dialogue.strip() and not back else []),
     ]
     rules = iron_rules(pack, subjects=list(shot.characters), reference_kinds=list(shot.reference_kinds), rule_ids=rule_ids)
     rules.extend(str(item).strip() for item in shot.continuity_constants if str(item).strip())
@@ -342,9 +376,13 @@ def compile_shot_prompt(
 
     sections: dict[str, str] = {
         **_asset_anchor_sections(shot),
-        **_skeleton_sections(shot, family, fight="fight" in situations),
+        **_skeleton_sections(shot, family, fight=fight, back=back),
         "anchors": _says("anchors", notes="\n".join(anchors)) if anchors else "",
         "structure": _says("structure", items=" + ".join(structure)),
+        # 一段只做一个主要变化；没写的动作不加，停顿也可以。写在 Pa1(Pa3 的铁律在 2000 字上限下多半被截掉)；打戏有自己的节奏。
+        "one_change": "" if fight else prompt_data.text(_DATA, "one_change") + _FULL_STOP,
+        # 固定项和动作项分开写：哪些布景位置全程不变、人物不换位(打戏也写，家具同样不能跳)。Pa1，2000 字截断也留得住。
+        "fixed_items": fixed_items_line(shot.fixed_items, people=any(str(name).strip() for name in shot.characters)),
         "style_lock": style_lock_block(pack, shot.tone),
         "appearance": appearance_lines(shot.cast_looks or {}, shot.characters, shot.shot_size),
         "quality": pack.quality.strip(),
@@ -354,7 +392,7 @@ def compile_shot_prompt(
         "subject": _says("subject", timeline=timeline.rstrip(_FULL_STOP)),
         "motion": shot.motion_prompt.strip(),
         "motive": shot.motive.strip(),
-        "expression": _says("expression", text=shot.expression.strip()) if shot.expression.strip() else "",
+        "expression": _expression(shot, back=back, listening=listening),
         "composition": _says("composition", text=shot.composition.strip()) if shot.composition.strip() else "",
         "environment": _says("environment", text=shot.environment.strip()) if shot.environment.strip() else "",
         "colour": "\n".join(line.strip() for line in shot.palette_lines if str(line).strip()),
@@ -380,33 +418,170 @@ def compile_shot_prompt(
         if sections.get(key):
             sections[key] = mark_mentions(sections[key], names)
     # 重复和占位话任何模型都不发。超预算时有精炼器就精炼(内容不丢)，没有才逐段裁剪。
-    kept, report = prompt_budget.compress(dedupe(sections), model, distill=distill)
+    kept, report = prompt_budget.compress(dedupe(sections), model, fixed=prompt_budget.fixed_for(model) | UNMEASURED, distill=distill)
     text = _render(kept)
     report.total_length = prompt_budget.prompt_length(text)
     return CompiledVideoPrompt(text=text, sections=kept, pressure=report, style_pack=pack.id, negatives=negatives)
 
 
-def dialogue_speakers(dialogue: str, characters: Sequence[str]) -> tuple[list[str], list[str], int]:
-    """``(画面里开口的人, 画外开口的人, 台词句数)``；旁白算一句台词，不算一个人。"""
+_OFF_SCREEN_LABELS = frozenset(word.upper() for word in prompt_data.words(_WORDING, "off_screen_labels"))
+
+
+def _off_screen_label(note: str | None) -> bool:
+    """说话人后面的括注写着画外(「陈默（画外）：」「陈默（OS）：」)。"""
+    return str(note or "").strip().upper() in _OFF_SCREEN_LABELS
+
+
+def dialogue_voices(dialogue: str, characters: Sequence[str]) -> tuple[list[tuple[str, bool]], int]:
+    """``([(说话人, 是否在画外), …] 按开口顺序, 台词句数)``；旁白算一句台词，不算一个人。
+
+    认得「名字：」「名字（语气）：」「名字（画外）：」：括注写着画外的人即使在本镜人物里也算画外；
+    不在本镜人物里的说话人一律在画外。
+    """
     known = sorted({str(name).strip() for name in characters if str(name).strip()}, key=len, reverse=True)
-    on_screen: list[str] = []
-    off_screen: list[str] = []
+    voices: list[tuple[str, bool]] = []
     turns = 0
     for line in dialogue_segments(dialogue):
         if is_no_line(line):
             continue
         turns += 1
+        labelled = _OTHER_SPEAKER.match(line)
         name = next((name for name in known if re.match(re.escape(name) + _SPEAKER_LABEL, line)), "")
         if name:
-            on_screen.append(name)
-            continue
-        labelled = _OTHER_SPEAKER.match(line)
-        if labelled and not is_narrator(labelled.group(1)):
-            off_screen.append(labelled.group(1))
+            note = labelled.group(2) if labelled and labelled.group(1) == name else None
+            voices.append((name, _off_screen_label(note)))
+        elif labelled and not is_narrator(labelled.group(1)):
+            voices.append((labelled.group(1), True))
+    return list(dict.fromkeys(voices)), turns
+
+
+def dialogue_speakers(dialogue: str, characters: Sequence[str]) -> tuple[list[str], list[str], int]:
+    """``(画面里开口的人, 画外开口的人, 台词句数)``；旁白算一句台词，不算一个人。"""
+    voices, turns = dialogue_voices(dialogue, characters)
+    on_screen = [name for name, off in voices if not off]
+    off_screen = [name for name, off in voices if off and name not in on_screen]
     return list(dict.fromkeys(on_screen)), list(dict.fromkeys(off_screen)), turns
 
 
-def _skeleton_sections(shot: ShotPromptInput, family: str, *, fight: bool) -> dict[str, str]:
+def _without_shorthands(shot: ShotPromptInput) -> ShotPromptInput:
+    """空间、调度、起始状态里的「同上」「同前」这类省略语：模型没看过上一批，删掉并记一笔，不让一镜拖垮整个阶段。
+
+    只认单独成词的(前面不是汉字)：「双手按在合同上」的「同上」不算。
+    """
+    fields = {"scene": shot.scene, "blocking": shot.blocking, "start_state": shot.start_state}
+    found = [match.group(0) for value in fields.values() for match in _SHORTHAND.finditer(str(value or ""))]
+    if not found:
+        return shot
+    logger.warning(
+        "shot %s: shorthand %s removed from its space / blocking / start state; restate them in full",
+        shot.shot_index, _LIST_SEP.join(dict.fromkeys(found)),
+    )
+    cleaned = {
+        key: re.sub(_pattern("shorthand_gap"), r"\1", _SHORTHAND.sub("", str(value or ""))).strip(_word("shorthand_trim"))
+        for key, value in fields.items()
+    }
+    return replace(shot, **cleaned)
+
+
+def _picture_text(shot: ShotPromptInput) -> str:
+    """看画面是什么样的文字：构图与画面描述(去掉抄进来的台词原文——台词里说「你背后」不是背影)。"""
+    action = str(shot.subject_action or "")
+    if shot.dialogue.strip():
+        action = action.replace(shot.dialogue.strip(), "")
+    return f"{shot.composition} {action}"
+
+
+def back_view(shot: ShotPromptInput) -> bool:
+    """这一镜拍的是背面：构图或画面写了背对镜头、背影、背后、背对。
+
+    「背对林夏」「背对着陈默」是背对另一个人，不是背对镜头，不算。
+    """
+    text = _picture_text(shot)
+    others = [str(name).strip() for name in (*shot.characters, *shot.cast_refs) if str(name).strip()]
+    for word in _BACK_VIEW_WORDS:
+        for match in re.finditer(re.escape(word), text):
+            rest = _BACK_VIEW_LEAD.sub("", text[match.end():])
+            if not any(rest.startswith(name) for name in others):
+                return True
+    return False
+
+
+def listener_shot(shot: ShotPromptInput) -> bool:
+    """画面里的人都在听：开口的是画外的人(「陈默（画外）：」、或不在本镜人物里的人)，画面里没有人开口。
+
+    认不出说话人的台词(没有「名字：」)和旁白不算：不知道是谁在说，也就说不上谁在听。
+    """
+    if not any(str(name).strip() for name in shot.characters):
+        return False
+    on_screen, off_screen, _turns = dialogue_speakers(shot.dialogue, shot.characters)
+    return bool(off_screen) and not on_screen
+
+
+def _closed_mouth(reading: str) -> str:
+    """听的人的情绪判读里去掉张嘴的那几项(「嘴唇微张」)：他闭口不出声。"""
+    pieces = re.split(_pattern("reading_split"), str(reading or ""))
+    items, seps = pieces[0::2], pieces[1::2]
+    out = ""
+    for index, item in enumerate(items):
+        if not item.strip() or re.search(_pattern("mouth_open"), item):
+            continue
+        if out:
+            out += seps[index - 1]
+        out += item
+    return out.strip()
+
+
+def trigger_words(dialogue: str) -> str:
+    """听的人等的那一句的最后几个字：最后一句台词的最后一个分句，长了只取末尾几个字。"""
+    lines = [line for line in spoken_lines([str(dialogue or "")]) if line.strip()]
+    if not lines:
+        return ""
+    clauses = [part for part in re.split(_pattern("trigger_clause_split"), lines[-1]) if part.strip()]
+    if not clauses:
+        return ""
+    last = clauses[-1].strip()
+    most = prompt_data.number(_WORDING, "reaction_words")
+    return last if len(last) <= most + prompt_data.number(_WORDING, "reaction_words_slack") else last[-most:]
+
+
+def _trigger_lead() -> tuple[str, str]:
+    """「听到“{words}”之后才…」模板里台词前后的两截字面量，用来在提示词里认出触发句。"""
+    template = str(prompt_data.load(_WORDING)["says"]["reaction_after"])
+    head, _, tail = template.partition("{words}")
+    return head.split("}")[-1], tail.split("{")[0]
+
+
+def reaction_triggers(sections: Mapping[str, str]) -> set[str]:
+    """提示词里写着的反应触发句(「听到“我查不到”之后才」)：精炼时必须原样留着，不然反应又挪回镜头开头。"""
+    head, tail = _trigger_lead()
+    if not head or not tail:
+        return set()
+    pattern = re.compile(re.escape(head) + r"[^\n]{1,24}?" + re.escape(tail))
+    return {match.group(0) for value in sections.values() for match in pattern.finditer(str(value or ""))}
+
+
+def _expression(shot: ShotPromptInput, *, back: bool, listening: bool) -> str:
+    """表演一节：情绪、它在画面里看得见的样子、个人习惯。
+
+    背对镜头只写肩背、重心与站姿(不写外化的眼神口鼻)，全程不转身；画面里的人在听时，反应写在触发它的那句台词之后，
+    此前保持原状，并去掉张嘴的判读。
+    """
+    reading = "" if back else (_closed_mouth(shot.expression_reading) if listening else str(shot.expression_reading or "").strip())
+    text = _CLAUSE_SEP.join(part for part in (
+        shot.expression.strip(),
+        _says("expression_reading", reading=reading) if reading else "",
+        "" if back else shot.expression_notes.strip(),
+    ) if part)
+    if back:
+        text = _says("expression_back", text=text) if text else _says("expression_back_bare")
+    words = trigger_words(shot.dialogue) if listening and text else ""
+    if words:
+        text = _says("reaction_after", words=words, reaction=text)
+    return _says("expression", text=text) if text else ""
+
+
+def _skeleton_sections(shot: ShotPromptInput, family: str, *, fight: bool, back: bool = False) -> dict[str, str]:
+
     """《系统实际下发提示词骨架》每条都重申的固定句：这一镜该写哪几句(见 clip_skeleton)。"""
     on_screen, off_screen, turns = dialogue_speakers(shot.dialogue, shot.characters)
     references = any(str(name).strip() for name in (*shot.cast_refs, *shot.scene_refs, *shot.prop_refs))
@@ -425,7 +600,7 @@ def _skeleton_sections(shot: ShotPromptInput, family: str, *, fight: bool) -> di
         "lens": clip_skeleton.lens(fight=fight, camera_movement=shot.camera_movement),
         "impact_sound": clip_skeleton.impact_sound(family) if fight and shot.native_audio else "",
         "performance_lock": clip_skeleton.performance_lock(
-            family, short=shot.duration_seconds < clip_skeleton.SHORT_SECONDS, script=f"{shot.subject_action}{shot.dialogue}",
+            family, short=shot.duration_seconds < clip_skeleton.SHORT_SECONDS, script=f"{shot.subject_action}{shot.dialogue}", back=back,
         ) if people else "",
         "chain_lock": clip_skeleton.chain_lock(fight=fight, camera_fixed=camera_fixed, turns=turns),
         "voice_ban": clip_skeleton.voice_ban(native_audio=shot.native_audio),
@@ -439,9 +614,9 @@ def _skeleton_sections(shot: ShotPromptInput, family: str, *, fight: bool) -> di
 # Pa3：铁律、表演锁、回合锁、禁令与负向词，最后是肖像、画面文字、禁止出现三段。
 _ORDER = (
     "pa1", "anchor_types", "anchor_cast", "anchor_costumes", "same_instance", "anchor_scene", "anchor_props", "anchors",
-    "dialogue_language", "structure", "locks", "stage",
+    "dialogue_language", "structure", "one_change", "fixed_items", "locks", "stage",
     "sequence_head", "camera", "composition", "subject", "motion", "motive", "expression", "environment",
-    "colour", "effects", "contact", "handoff", "dialogue", "dialogue_notes", "end_state",
+    "colour", "effects", "contact", "handoff", "dialogue", "dialogue_notes", "end_state", "end_hold",
     "pa2", "style_lock", "space_axis", "appearance", "quality", "lens", "sound_layers", "sound", "impact_sound", "closing",
     "pa3", "rules", "performance_lock", "chain_lock", "voice_ban", "negatives", "portrait_safety", "text_policy", "ban_list",
 )
@@ -454,6 +629,71 @@ _MARKED_SECTIONS = (
     "locks", "stage", "camera", "composition", "subject", "motion", "motive", "expression", "environment", "effects", "contact",
     "handoff", "dialogue", "dialogue_notes", "end_state",
 )
+
+
+#: 每条重申的固定句、但不在骨架(clip_skeleton.SECTIONS)里的小节：同样不计入正文预算。
+UNMEASURED: frozenset[str] = frozenset({"fixed_items"})
+_FIXED_ITEMS = prompt_data.value(_DATA, "fixed_items")
+# 布景看不看得见：中心点在镜头前方、画框之内(含镜头运动的终点)。
+_IN_FRONT_M = 0.2
+
+
+def _seen_by(view: CameraView, landmark) -> bool:
+    across, up, depth = view.project((landmark.position[0], landmark.elevation_m + landmark.size[2] / 2, landmark.position[1]))
+    return depth > _IN_FRONT_M and abs(across) <= 1.0 and abs(up) <= 1.0
+
+
+def fixed_set_pieces(
+    plan: StagePlan | None, shot_ids: Sequence[object], *, text: str = "", handled: Sequence[str] = (),
+) -> tuple[list[str], list[str]]:
+    """导演台上位置全程不变的布景：``(看得见或点到名的, 其余)``，各按方案里的顺序。
+
+    布景是家具、建筑和落在地上的道具与灯具(炭盆、落地灯)；有人拿着、搁在别的东西上、或是本镜要拿的道具(``handled``)
+    会动，不算。``shot_ids`` 是这一段里的几个镜头：任一镜头的画框里看得见(机位起止都算)，或 ``text`` 里点到名字，就排前面。
+    """
+    if plan is None:
+        return [], []
+    moving = {contact.target for contact in plan.contacts if contact.kind in ("hold", "rest")}
+    moving |= {str(name).strip() for name in handled if str(name).strip()}
+    pieces = [
+        item for item in prompt_landmarks(plan)
+        if item.name not in moving and (item.kind in ("furniture", "architecture") or item.elevation_m <= 0)
+    ]
+    views: list[CameraView] = []
+    for shot_id in shot_ids:
+        try:
+            shot = plan.shot(int(shot_id))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+        camera = plan.camera(shot.camera_id) if shot is not None else None
+        if camera is not None:
+            views += [CameraView.of(camera), CameraView.of(camera, end=True)]
+    front: list[str] = []
+    rest: list[str] = []
+    for item in pieces:
+        if item.name in front or item.name in rest:
+            continue
+        seen = (item.name in text) or any(_seen_by(view, item) for view in views)
+        (front if seen else rest).append(item.name)
+    return front, rest
+
+
+def fixed_items_line(names: Sequence[str], *, people: bool = True) -> str:
+    """固定项一句：「固定：书案、窗、扶手椅位置全程不变，人物不换位。」
+
+    名字按给的顺序写，整句放不下 ``max_chars`` 就不再往后加(句子长短的限制，不是镜头里能有几样东西)；至少写一样。
+    """
+    names = list(dict.fromkeys(str(name).strip() for name in names if str(name).strip()))
+    if not names:
+        return ""
+    template = str(_FIXED_ITEMS["line" if people else "line_no_people"])
+    separator, limit = str(_FIXED_ITEMS["separator"]), int(_FIXED_ITEMS["max_chars"])
+    kept = names[:1]
+    for name in names[1:]:
+        if len(template.format(names=separator.join([*kept, name]))) > limit:
+            break
+        kept.append(name)
+    return template.format(names=separator.join(kept))
 
 
 # Verbs that put a prop in someone's hand, and the kind of contact each one asks for.
@@ -470,6 +710,9 @@ def contact_line(action: str, props: Sequence[str]) -> str:
     the action actually handles one of the shot's props.
     """
     action = str(action or "")
+    # 「原文台词保持不变」的「保持」不是拿着：先去掉这类含「持」的词再认动作。
+    for word in _HOLD_FALSE:
+        action = action.replace(word, "")
     named = [str(item).strip() for item in props if str(item).strip() and str(item).strip() in action]
     if not named or not any(verb in action for verb in (*_SUPPORT_VERBS, *_REST_VERBS, *_GRIP_VERBS)):
         return ""
@@ -535,7 +778,11 @@ def _asset_anchor_sections(shot: ShotPromptInput) -> dict[str, str]:
     return {
         "anchor_cast": _says("anchor_cast", cast=cast, distinct=distinct) if cast else "",
         "anchor_costumes": _says("anchor_costumes", costumes=costumes) if costumes else "",
-        "anchor_scene": _says("anchor_scene", scenes=scenes) if scenes else "",
+        "anchor_scene": (
+            # 带着导演台白模时场景锚点不说空间布局(句子在 scene_views.json，与场地图那句同一处)。
+            (prompt_data.text("scene_views", "anchor_scene_desk").format(scenes=scenes) if shot.desk_layers else _says("anchor_scene", scenes=scenes))
+            if scenes else ""
+        ),
         "anchor_props": _says("anchor_props", props=props) if props else "",
     }
 
@@ -672,7 +919,12 @@ def format_dialogue(
     only = _says("only_speaker", names=_LIST_SEP.join(named))
     if len(named) > 1:
         only += _word("turn_taking")
-    return _says("speaker_note", text=text, only=only, silent=_says("silent_cast", names=silent) if silent else "")
+    # 画外开口的人不出现在画面里(「陈默（画外）：」，或不在本镜人物里的人)。
+    _on, away, _turns = dialogue_speakers(dialogue, cast)
+    absent = _says("off_screen_absent", names=_LIST_SEP.join(mention(name) if name in cast else name for name in away)) if away else ""
+    return _says(
+        "speaker_note", text=text, only=only, silent=(_says("silent_cast", names=silent) if silent else "") + absent,
+    )
 
 
 def _render(sections: Mapping[str, str]) -> str:
@@ -715,6 +967,6 @@ def extension_prompt(
 
 
 __all__ = [
-    "CompiledVideoPrompt", "ShotPromptInput", "bridge_line", "compile_shot_prompt", "dialogue_speakers", "extension_prompt",
-    "format_dialogue", "handoff_line",
+    "CompiledVideoPrompt", "ShotPromptInput", "back_view", "bridge_line", "compile_shot_prompt", "dialogue_speakers", "dialogue_voices",
+    "extension_prompt", "format_dialogue", "handoff_line", "listener_shot", "reaction_triggers", "trigger_words",
 ]

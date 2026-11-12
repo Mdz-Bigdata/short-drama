@@ -9,9 +9,22 @@ from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore
 from app.schema.platform import CapabilityToggleRequest, CommandRequest
 from app.core.provenance import upstream_source_by_id
+from app.core import prompt_data
 
 
-router = APIRouter(prefix="/api/platform", tags=["全局能力与命令"])
+_WORDING_FILE = "api_platform_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_platform_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+
+router = APIRouter(prefix="/api/platform", tags=list(_words_of("module.tags")))
 _CAPABILITY_EVIDENCE = {
     (record["source_id"], record["capability_id"]): record
     for record in capability_command_catalog()
@@ -114,5 +127,5 @@ async def invoke_command(
 ):
     result = await _resolve(request, store)
     result["status"] = "accepted"
-    result["message"] = "命令已通过全局能力白名单，可由对应入口继续处理"
+    result["message"] = _text_of("invoke_command.text")
     return result

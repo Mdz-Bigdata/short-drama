@@ -10,14 +10,27 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from app.core import prompt_data
+
+
+_WORDING_FILE = "spoken_lines"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/spoken_lines.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 _DIALOGUE = re.compile(r"[{｛]([^{}｛｝]+)[}｝]")
-NO_DIALOGUE = frozenset({"无", "无台词", "-", "—", "（无）", "(无)"})
+NO_DIALOGUE = frozenset({_text_of("module.no_dialogue"), _text_of("module.no_dialogue.2"), "-", "—", _text_of("module.no_dialogue.3"), _text_of("module.no_dialogue.4")})
 _SPEAKER = re.compile(r"^[^：:「“\"]{1,12}?(?:[（(][^）)]*[）)])?\s*[：:]\s*")
 _NOTE = re.compile(r"[（(][^）)]*[）)]")
 _NEXT_SPEAKER = re.compile(r"([。！？!?…」”])\s*([\u4e00-\u9fff]{1,6}[：:])")
 #: 台词里夹的舞台说明(没有用括号括起来)：不是说出口的话，按它拆开。
-_STAGE_DIRECTION = re.compile(r"[，,]?\s*(?:停顿一拍|停顿片刻|停了一拍|顿了顿|停顿|沉默片刻|沉默)\s*[，,]?")
+_STAGE_DIRECTION = re.compile(_text_of("module.stage_direction"))
 _QUOTES = re.compile(r"[「」『』“”\"'‘’{}｛｝\s]")
 
 
@@ -38,7 +51,7 @@ def spoken_lines(dialogue: Sequence[str]) -> list[str]:
                 line = _NOTE.sub("", part)
                 line = re.sub(r"[（(][^）)]*$", "", line)          # 被截断、没有收口的语气说明
                 line = _QUOTES.sub("", line).strip("；;，, ")
-                if line and line not in NO_DIALOGUE and not re.fullmatch(r"无+", line) and line not in lines:
+                if line and line not in NO_DIALOGUE and not re.fullmatch(_text_of("spoken_lines.text"), line) and line not in lines:
                     lines.append(line)
     return lines
 

@@ -14,6 +14,19 @@ from typing import Any
 
 from app.core import episode_cycle
 from app.core.element_scope import normalized_asset_name
+from app.core import prompt_data
+
+
+_WORDING_FILE = "asset_dependents"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/asset_dependents.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 # 资产在素材库里的种类 → 分镜表镜头上点名它的字段。
 SHOT_FIELDS: dict[str, str] = {"actor": "characters", "prop": "props", "effect": "effects", "scene": "scene"}
@@ -23,10 +36,10 @@ IDENTITY_KINDS: dict[str, str] = {"character": "actor", "scene": "scene", "prop"
 _SCENE_SEPARATOR = re.compile(r"[；;]")
 _MAX_NAME_LENGTH = 40
 # 分镜表里「本格无额外道具」「空镜（无人物）」这类占位不是资产。
-_PLACEHOLDER = re.compile(r"^(?:本格无|空镜|无$|无人|无出场|[—\-]$)")
+_PLACEHOLDER = re.compile(_text_of("module.placeholder"))
 
-STALE_REASON = "资产「{name}」已修改，需重画本场分镜、重跑第 5 阶段后生效"
-MERGED_REASON = "资产「{name}」已并入「{survivor}」，需重画本场分镜、重跑第 5 阶段后生效"
+STALE_REASON = _text_of("module.stale_reason")
+MERGED_REASON = _text_of("module.merged_reason")
 
 
 def _key(value: Any) -> str:

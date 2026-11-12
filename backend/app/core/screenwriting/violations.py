@@ -15,6 +15,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from app.core import fight_design, visual_wording
 from app.core.episode_shape import EpisodeShape
 from app.core.screenwriting import filmability
 from app.core.screenwriting.prose import spoken_verbatim_in
@@ -132,6 +133,23 @@ def smallest_tier_at_least(seconds: float, supported: Iterable[int]) -> int | No
     return None
 
 
+def _visual_texts(scene: Mapping[str, Any]) -> list[str]:
+    """What the camera is asked to show in one shot: its description and, once written, its image and video prompts."""
+    texts = [str(scene.get("scene_description") or "")]
+    image = scene.get("image_prompt")
+    if isinstance(image, Mapping):
+        texts.append(str(image.get("scene") or ""))
+    video = scene.get("video_prompt")
+    if isinstance(video, Mapping):
+        texts.append(str(video.get("action") or ""))
+    return texts
+
+
+def _is_fight_shot(scene: Mapping[str, Any]) -> bool:
+    """A fight shot, judged the way the visual layer judges one (``fight_design.looks_like_fight``), its source excerpt included."""
+    return fight_design.looks_like_fight("\n".join([*_visual_texts(scene), str(scene.get("source_text") or "")]))
+
+
 def check_script_plan(scenes: list[dict[str, Any]], ctx: PlanCheckContext, *, repair: bool = True) -> PlanCheckResult:
     """Validate (and optionally mechanically repair) a script plan in place.
 
@@ -229,6 +247,10 @@ def check_script_plan(scenes: list[dict[str, Any]], ctx: PlanCheckContext, *, re
             severity = "warning" if ctx.source_kind == "screenplay" else problem.severity
             violation = DraftViolation(problem.code, problem.message, f"{label}·{problem.label}", severity, raw_id)  # type: ignore[arg-type]
             (result.errors if severity == "error" else result.warnings).append(violation)
+
+        # ---- 画面写法：主观评价词、非打斗快动作。只是提示，任何模式都不报错、不退回模型。
+        for finding in visual_wording.findings(*_visual_texts(scene), fight=_is_fight_shot(scene)):
+            result.warnings.append(DraftViolation(finding.code, finding.message, f"{label}·{finding.rule}", "warning", raw_id))
 
         # ---- source anchor (best effort)
         anchor = str(scene.get("source_text") or "")

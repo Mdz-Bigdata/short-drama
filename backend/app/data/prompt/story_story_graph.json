@@ -1,0 +1,21 @@
+{
+  "_doc": "app/story/story_graph.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "StoryGraphBuilder.scene_cn": "(?m)^\\s*(?:#+\\s*)?场景\\s*[:：]\\s*([^\\n]+)",
+  "StoryGraphBuilder.scene_cn_side": "(?m)^\\s*((?:内景|外景|内外景)\\s*[:：]\\s*[^\\n]+)",
+  "StoryGraphBuilder.scene_cn_numbered": "(?m)^\\s*(第\\s*[零〇一二三四五六七八九十百千万两\\d]+\\s*[场幕]\\s*[^\\n:：]+)$",
+  "StoryGraphBuilder.reserved": "场景",
+  "StoryGraphBuilder.reserved.2": "地点",
+  "StoryGraphBuilder.reserved.3": "时间",
+  "StoryGraphBuilder.reserved.4": "动作",
+  "StoryGraphBuilder.reserved.5": "旁白",
+  "StoryGraphBuilder.reserved.6": "音效",
+  "StoryGraphBuilder.reserved.7": "音乐",
+  "StoryGraphBuilder.reserved.8": "镜头",
+  "StoryGraphBuilder.reserved.9": "内景",
+  "StoryGraphBuilder.reserved.10": "外景",
+  "StoryGraphBuilder.reserved.11": "内外景",
+  "StoryGraphBuilder.reserved.12": "转场",
+  "StoryGraphBuilder.reserved.13": "淡入",
+  "StoryGraphBuilder.reserved.14": "淡出",
+  "StoryGraphBuilder.reserved.15": "切至"
+}

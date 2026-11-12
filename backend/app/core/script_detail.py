@@ -17,6 +17,19 @@ import time
 from typing import Any, Mapping
 
 from app import settings
+from app.core import prompt_data
+
+
+_WORDING_FILE = "script_detail"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/script_detail.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 KEY = "2_detail"
 
@@ -49,7 +62,7 @@ def start_record(run_id: str, total: int, script_revision: int) -> dict[str, Any
     now = time.time()
     return {
         "status": WRITING, "run_id": run_id, "total": int(total), "written": 0,
-        "percent": 0, "label": "等待撰写", "error": None,
+        "percent": 0, "label": _text_of("start_record.label"), "error": None,
         "script_revision": int(script_revision), "started_at": now, "updated_at": now,
     }
 
@@ -81,11 +94,11 @@ def blocking_reason(task: Mapping[str, Any]) -> str | None:
     total = int(record.get("total") or 0)
     written = int(record.get("written") or 0)
     if stalled(record):
-        return f"详细剧本的后台撰写已中断（{written}/{total} 集），请在编剧页点「补写剧本」继续"
+        return _text_of("blocking_reason.text").format(written, total)
     if record.get("status") == FAILED:
-        reason = str(record.get("error") or "未知原因")
-        return f"详细剧本后台撰写失败（{written}/{total} 集）：{reason}；请在编剧页点「补写剧本」继续"
-    return f"详细剧本仍在后台撰写（{written}/{total} 集），写完后才能进入分镜"
+        reason = str(record.get("error") or _text_of("blocking_reason.reason"))
+        return _text_of("blocking_reason.text.2").format(written, total, reason)
+    return _text_of("blocking_reason.text.3").format(written, total)
 
 
 def applied_at(task: Mapping[str, Any]) -> float | None:
@@ -118,20 +131,20 @@ def outline_text(state: Mapping[str, Any]) -> str:
     lines: list[str] = []
     synopsis = str(overview.get("synopsis") or "").strip()
     if synopsis:
-        lines += ["【故事梗概】", synopsis, ""]
+        lines += [_text_of("outline_text.text"), synopsis, ""]
     for entry in state.get("ledger") or []:
         if not isinstance(entry, Mapping):
             continue
-        lines.append(f"第{int(entry.get('episode') or 0)}集 {str(entry.get('title') or '').strip()}".rstrip())
+        lines.append(_text_of("outline_text.text.2").format(int(entry.get('episode') or 0), str(entry.get('title') or '').strip()).rstrip())
         hook = str(entry.get("hook") or "").strip()
         if hook:
-            lines.append(f"钩子：{hook}")
+            lines.append(_text_of("outline_text.text.3").format(hook))
         for beat in entry.get("story_beats") or []:
             if str(beat).strip():
                 lines.append(f"- {str(beat).strip()}")
         teaser = str(entry.get("next_episode_teaser") or "").strip()
         if teaser:
-            lines.append(f"下集预告：{teaser}")
+            lines.append(_text_of("outline_text.text.4").format(teaser))
         lines.append("")
     return "\n".join(lines).strip()
 

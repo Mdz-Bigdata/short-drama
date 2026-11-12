@@ -1,0 +1,9 @@
+{
+  "_doc": "app/api/voice_asset_api.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.tags": [
+    "声音资产"
+  ],
+  "_answered.detail": "任务不存在",
+  "_guarded.status_code": "正在",
+  "_guarded.detail": "音色设计服务暂不可用"
+}

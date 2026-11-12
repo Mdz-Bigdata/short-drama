@@ -21,7 +21,7 @@ from typing import Any, Literal
 from app.core import breakdown_kinds, prompt_data, real_person, wuxia_vfx
 from app.core.action_grammar import concrete_ending, has_structure
 from app.core.face_card import parse_face_card
-from app.core.scene_turnaround import SCENE_VIEW_LABELS, SCENE_VIEW_PURPOSES
+from app.core.scene_turnaround import SCENE_REVERSE_SLOT, SCENE_VIEW_LABELS, SCENE_VIEW_PURPOSES
 from app.core.shot_motion_contract import CompiledShotPrompt, ShotMotionContract
 from app.core.storyboard_scene_context import EMPTY_ACTOR, costume_owner, is_uncast, look_makeup_note
 
@@ -120,6 +120,17 @@ def previous_ending(end_state: str, action: str) -> str:
     return concrete_ending(_says_something(end_state)) or concrete_ending(_beat(action, "end")[0])
 
 
+def _scene_view_label(kind: str, view: str, references: Sequence[Mapping[str, Any]]) -> str:
+    """The name a set picture goes by: 正面 / 反打 when the front and the reverse go out as a pair, else its view's name."""
+    if kind != "scene":
+        return ""
+    paired = any(str(item.get("view") or "") == SCENE_REVERSE_SLOT for item in references if item.get("kind") == "scene")
+    directions = prompt_data.value("scene_views", "direction_labels")
+    if paired and (view or "scene_main") in directions:
+        return str(directions[view or "scene_main"])
+    return SCENE_VIEW_LABELS.get(view, "") if view and view != "scene_main" else ""
+
+
 def _reference_line(references: Sequence[Mapping[str, Any]]) -> str:
     names = []
     for number, item in enumerate(references, 1):
@@ -134,7 +145,7 @@ def _reference_line(references: Sequence[Mapping[str, Any]]) -> str:
             continue
         # 还没画的造型：这张图还是设定集，不在图名上写造型。
         variant = "" if item.get("look_undrawn") else str(item.get("variant") or "")
-        extra = variant or (SCENE_VIEW_LABELS.get(view, "") if view != "scene_main" else "")
+        extra = variant or _scene_view_label(kind, view, references)
         noun = _PICTURE_NOUN.get(kind, _word("picture_default"))
         names.append(_says("ref_picture", number=number, name=name, noun=noun) + (_says("paren", text=extra) if extra else ""))
     return _says("references", names=_LIST.join(names)) if names else _says("no_references")
@@ -157,7 +168,8 @@ def _only_gives(references: Sequence[Mapping[str, Any]]) -> str:
         clauses.append(_says("scene_gives", layout=_says("paren", text=layout) if layout else ""))
     for number, item in enumerate(references, 1):
         view = str(item.get("view") or "")
-        if view in SCENE_VIEW_PURPOSES and view != "scene_main":
+        # A view sent only to check the other side's set dressing is not this shot's framing: no "用于…" for it.
+        if view in SCENE_VIEW_PURPOSES and view != "scene_main" and item.get("frame") not in ("space_only", "reverse_space"):
             clauses.append(_says("view_use", number=number, purpose=SCENE_VIEW_PURPOSES[view]))
     clauses.extend(_ONLY_GIVES[kind] for kind in _ONLY_GIVES if kind in kinds)
     return _CLAUSES.join(clauses)

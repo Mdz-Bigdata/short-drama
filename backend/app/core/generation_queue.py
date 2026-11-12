@@ -25,6 +25,19 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app import settings
+from app.core import prompt_data
+
+
+_WORDING_FILE = "generation_queue"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/generation_queue.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.core.generation_queue")
 
@@ -116,10 +129,10 @@ class Queue:
     def add(self, item: Item) -> Item:
         with self._lock:
             if item.key in self._items:
-                raise ValueError(f"队列里已有 {item.key}")
+                raise ValueError(_text_of("add.text").format(item.key))
             unknown = [dep for dep in [*item.depends_on, *item.after] if dep not in self._items]
             if unknown:
-                raise ValueError(f"{item.key} 依赖的 {', '.join(unknown)} 不在队列里（依赖必须先入队）")
+                raise ValueError(_text_of("add.text.2").format(item.key, ', '.join(unknown)))
             self._items[item.key] = item
             return item
 
@@ -149,15 +162,15 @@ class Queue:
         with self._lock:
             item = self._items.get(key)
             if item is None:
-                raise CancelError(f"队列里没有 {key}")
+                raise CancelError(_text_of("cancel.text").format(key))
             if item.status == RUNNING:
-                raise CancelError(f"{item.label} 已在供应商那里运行，不能取消；等它结束后可以重做")
+                raise CancelError(_text_of("cancel.text.2").format(item.label))
             if item.status in FINAL:
-                raise CancelError(f"{item.label} 已经{STATUS_LABEL[item.status]}，无需取消")
+                raise CancelError(_text_of("cancel.text.3").format(item.label, STATUS_LABEL[item.status]))
             item.status = CANCELLED
             item.reason = reason
             item.finished_at = _now()
-            return [key, *self._skip_dependents(key, f"依赖的 {item.label} 已取消")]
+            return [key, *self._skip_dependents(key, _text_of("cancel.text.4").format(item.label))]
 
     def cancel_queued(self, *, reason: str = "cancelled") -> list[str]:
         """Withdraw every item still waiting; running ones finish and keep their result."""
@@ -197,7 +210,7 @@ class Queue:
             item.status = FAILED
             item.error = str(error)[:300]
             item.finished_at = _now()
-            return [key, *self._skip_dependents(key, f"依赖的 {item.label} 失败")]
+            return [key, *self._skip_dependents(key, _text_of("mark_failed.text").format(item.label))]
 
     def running_per_bucket(self) -> dict[str, int]:
         counts: dict[str, int] = {}
@@ -235,7 +248,7 @@ class Queue:
         return queue
 
 
-STATUS_LABEL = {QUEUED: "排队中", RUNNING: "运行中", DONE: "完成", FAILED: "失败", CANCELLED: "已取消", SKIPPED: "已跳过"}
+STATUS_LABEL = {QUEUED: _text_of("module.status_label"), RUNNING: _text_of("module.status_label.2"), DONE: _text_of("module.status_label.3"), FAILED: _text_of("module.status_label.4"), CANCELLED: _text_of("module.status_label.5"), SKIPPED: _text_of("module.status_label.6")}
 
 
 class RunCancelled(RuntimeError):
@@ -245,8 +258,8 @@ class RunCancelled(RuntimeError):
         self.cancelled = list(cancelled)
         self.skipped = list(skipped)
         self.paused = paused
-        head = "已按暂停请求停止派发" if paused else "已按请求取消排队中的项"
-        super().__init__(f"{head}：取消 {len(self.cancelled)} 项，连带跳过 {len(self.skipped)} 项；已完成的保留，重跑本阶段只补剩余")
+        head = _text_of("__init__.head") if paused else _text_of("__init__.head.2")
+        super().__init__(_text_of("__init__.text").format(head, len(self.cancelled), len(self.skipped)))
 
 
 def _in_context(work: Work) -> Callable[[Item], Any]:
@@ -378,14 +391,14 @@ def request_cancel(task: dict[str, Any], key: str) -> dict[str, Any]:
     """Record a cancel request on the stored queue; the runner honours it before its next dispatch."""
     data = snapshot_of(task)
     if not data:
-        raise CancelError("当前没有生成队列")
+        raise CancelError(_text_of("request_cancel.text"))
     item = next((i for i in data.get("items") or [] if isinstance(i, Mapping) and i.get("key") == key), None)
     if item is None:
-        raise CancelError(f"队列里没有 {key}")
+        raise CancelError(_text_of("request_cancel.text.2").format(key))
     if item.get("status") == RUNNING:
-        raise CancelError(f"{item.get('label')} 已在供应商那里运行，不能取消；等它结束后可以重做")
+        raise CancelError(_text_of("request_cancel.text.3").format(item.get('label')))
     if item.get("status") in FINAL:
-        raise CancelError(f"{item.get('label')} 已经{STATUS_LABEL.get(str(item.get('status')), '结束')}，无需取消")
+        raise CancelError(_text_of("request_cancel.text.4").format(item.get('label'), STATUS_LABEL.get(str(item.get('status')), '结束')))
     withdraw = [str(k) for k in data.get("withdraw") or []]
     if key not in withdraw:
         withdraw.append(key)
@@ -397,10 +410,10 @@ def request_cancel(task: dict[str, Any], key: str) -> dict[str, Any]:
 def request_cancel_queued(task: dict[str, Any]) -> dict[str, Any]:
     data = snapshot_of(task)
     if not data:
-        raise CancelError("当前没有生成队列")
+        raise CancelError(_text_of("request_cancel_queued.text"))
     queued = [str(i.get("key")) for i in data.get("items") or [] if isinstance(i, Mapping) and i.get("status") == QUEUED]
     if not queued:
-        raise CancelError("队列里没有排队中的项")
+        raise CancelError(_text_of("request_cancel_queued.text.2"))
     data["withdraw"] = sorted(set([str(k) for k in data.get("withdraw") or []] + queued))
     task.setdefault("assets", {})[QUEUE_KEY] = data
     return data
@@ -410,14 +423,14 @@ def assert_retryable(task: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     """The stored failed item. A skipped one has nothing of its own to retry: the item it waited on does."""
     data = snapshot_of(task)
     if not data:
-        raise RetryError("当前没有生成队列")
+        raise RetryError(_text_of("assert_retryable.text"))
     item = next((i for i in data.get("items") or [] if isinstance(i, Mapping) and i.get("key") == key), None)
     if item is None:
-        raise RetryError(f"队列里没有 {key}")
+        raise RetryError(_text_of("assert_retryable.text.2").format(key))
     if item.get("status") == SKIPPED:
-        raise RetryError(f"{item.get('label')} 是被依赖项连带跳过的，重试它依赖的失败项即可")
+        raise RetryError(_text_of("assert_retryable.text.3").format(item.get('label')))
     if item.get("status") != FAILED:
-        raise RetryError(f"{item.get('label')} {STATUS_LABEL.get(str(item.get('status')), '未失败')}，只有失败的项可以重试")
+        raise RetryError(_text_of("assert_retryable.text.4").format(item.get('label'), STATUS_LABEL.get(str(item.get('status')), '未失败')))
     return item
 
 

@@ -15,6 +15,19 @@ from __future__ import annotations
 
 import re
 from typing import Any, Mapping, Sequence
+from app.core import prompt_data
+
+
+_WORDING_FILE = "episode_cycle"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/episode_cycle.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 CYCLE_KEY = "episode_cycle"
 TIMELINE_KEY = "7_timeline"
@@ -169,22 +182,22 @@ def missing(task: Mapping[str, Any], stage: int) -> list[str] | None:
     if stage == 4:
         upto = current if current is not None else max(episode_numbers(task))
         gaps = [n for n in episode_numbers(task) if n <= upto and not storyboard_complete(task, n)]
-        return [f"第{','.join(map(str, gaps))}集分镜尚未完成"] if gaps else []
+        return [_text_of("missing.text").format(','.join(map(str, gaps)))] if gaps else []
     if stage == 8:
-        return [f"第{current}集尚未做完成片(逐集制作：全部集完成后才宣发)"] if current is not None else []
+        return [_text_of("missing.text.2").format(current)] if current is not None else []
     if current is None:
         return []
     if stage == 5:
         shots = episode_shots(task, current)
         done = {uid for clip in episode_clips(task, current) if clip.get("video_url") for uid in covered_uids(clip)}
         if not shots or any(shot_uid(shot) not in done for shot in shots):
-            return [f"第{current}集视觉(运镜视频)尚未完成"]
+            return [_text_of("missing.text.3").format(current)]
         return []
     if stage == 6:
         audio = record(task, current).get("audio")
-        return [] if isinstance(audio, Mapping) and audio else [f"第{current}集音频尚未完成"]
+        return [] if isinstance(audio, Mapping) and audio else [_text_of("missing.text.4").format(current)]
     if stage == 7:
-        return [f"第{current}集成片尚未合成"]
+        return [_text_of("missing.text.5").format(current)]
     return None
 
 
@@ -251,8 +264,7 @@ def status_line(task: Mapping[str, Any]) -> str:
     current = current_episode(task)
     done = finished(task)
     if current is None:
-        return f"逐集制作：全部 {len(numbers)} 集成片均已完成。"
+        return _text_of("status_line.text").format(len(numbers))
     return (
-        f"逐集制作：正在做第 {current} 集（共 {len(numbers)} 集，已完成成片 {len(done)} 集）。"
-        "每一集按 分镜 → 视觉 → 音频 → 合成 做完出成片，才开始下一集；全部完成后再宣发。"
+        _text_of("status_line.text.2").format(current, len(numbers), len(done))
     )

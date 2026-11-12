@@ -1,0 +1,7 @@
+{
+  "_doc": "app/service/panorama_service.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.seam_note": "全景左右两端差异较大，接缝可能看得出来；可在导演台转动接缝方向把它藏到背后，或重新生成",
+  "_bytes_of.text": "图像模型没有返回可下载的图片",
+  "generate.text": "场景 {0} 不在剧本大纲里",
+  "generate.text.2": "图像模型没有出图"
+}

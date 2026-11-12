@@ -8,7 +8,11 @@
 * 连着几镜同一景别；整条成片景别不到三档；
 * 同一场戏里主光换了边、色温冷暖跳了(没有开灯、天黑这类变化)；
 * 相邻两镜道具凭空换手变样、人物姿态无因跳变(镜间衔接账本 :mod:`app.core.shot_ledger`)；
-* 正反打的两个单人镜头里，两人都看向画面同一侧。
+* 正反打的两个单人镜头里，两人都看向画面同一侧；
+* 原片自带开口说话的口型，却换成了配音(嘴型可能对不上)。
+
+每条问题标上它属于哪一层(内容、连续性、表演、阅读、技术、包装、授权)、哪一档(必须修复 / 建议优化 /
+需人工确认)；:func:`report` 再把机器没查的层列成「未验证」，不让一张空清单看起来像全部通过。
 
 措辞和阈值在 data/prompt/delivery_check.json。
 """
@@ -126,7 +130,7 @@ def check(task: Mapping[str, Any], timeline: Mapping[str, Any], *, plans: Any = 
     def flag(clip: Mapping[str, Any], rule: str, detail: str) -> None:
         issues.append({
             "shot_uid": clip.get("shot_uid"), "scene_id": str(clip.get("scene_id") or ""), "shot_id": clip.get("shot_id"),
-            "rule": rule, "detail": detail,
+            "rule": rule, "detail": detail, **_grade(rule),
         })
 
     minimum = float(prompt_data.value(_DATA, "min_shot_seconds"))
@@ -180,16 +184,56 @@ def check(task: Mapping[str, Any], timeline: Mapping[str, Any], *, plans: Any = 
             # 正反打：两个单人镜头，一人一镜；两人都看向画面同一侧就没对上。
             if len(first) == 1 and len(second) == 1 and first != second and before_fact.get("gaze") and before_fact.get("gaze") == fact.get("gaze"):
                 flag(clip, "gaze_mismatch", _say("gaze_mismatch", first=first[0], second=second[0], side=fact["gaze"]))
+        # 原片自带开口说话的口型，却换成了配音：嘴型、镜头长度可能和配音对不上。
+        if edit_timeline.audio_source(clip) == "tts" and clip.get("native_available") and str(clip.get("subtitle") or "").strip():
+            flag(clip, "dub_over_face", _say("dub_over_face"))
         previous_clip = clip
     distinct = list(dict.fromkeys(groups.get(size, size) for size in sizes_used))
     if clips and sizes_used and len(distinct) < int(prompt_data.value(_DATA, "min_sizes_in_cut")):
         issues.append({"shot_uid": None, "scene_id": "", "shot_id": None, "rule": "few_sizes",
-                       "detail": _say("few_sizes", sizes="、".join(dict.fromkeys(sizes_used)))})
+                       "detail": _say("few_sizes", sizes="、".join(dict.fromkeys(sizes_used))), **_grade("few_sizes")})
     return issues
+
+
+def _grade(rule: str) -> dict[str, str]:
+    """一条规则属于哪一层、哪一档：{layer, tier, tier_label}。"""
+    layer, tier = prompt_data.value(_DATA, "rule_layers").get(rule, ("", "manual"))
+    return {"layer": layer, "tier": tier, "tier_label": prompt_data.value(_DATA, "tiers")[tier]}
+
+
+def report(task: Mapping[str, Any], timeline: Mapping[str, Any], *, plans: Any = None) -> list[dict[str, Any]]:
+    """验收单：逐镜的问题(按层的顺序、同层里必须修复在前)，再加机器没查的层(「未验证」，需人工确认)，
+    最后一行是可用镜头单价(:mod:`app.core.unit_cost`)。"""
+    layers = list(prompt_data.value(_DATA, "layers"))
+    order = list(prompt_data.value(_DATA, "tiers"))
+    issues = sorted(
+        check(task, timeline, plans=plans),
+        key=lambda issue: (layers.index(issue["layer"]) if issue.get("layer") in layers else len(layers), order.index(issue["tier"])),
+    )
+    # 授权层：成片里每样素材的来源记录(rights_ledger)；说不清使用范围的列出来要人记下授权说明。查过了就不再算「未验证」。
+    from app.core import rights_ledger
+
+    rights = [
+        {"shot_uid": None, "scene_id": "", "shot_id": None, "rule": "rights", "detail": item["detail"], "rights_key": item["key"], **_grade("rights")}
+        for item in rights_ledger.items(task, timeline) if item["status"] == "confirm"
+    ]
+    issues = [*issues, *rights]
+    unverified = [
+        {"shot_uid": None, "scene_id": "", "shot_id": None, "rule": "unverified", "detail": detail,
+         "layer": layer, "tier": "manual", "tier_label": prompt_data.value(_DATA, "tiers")["manual"]}
+        for layer, detail in prompt_data.value(_DATA, "unverified") if layer != "授权"
+    ]
+    # 可用镜头单价：不是问题，是这一轮的账，放在最后一行。
+    from app.core import unit_cost
+
+    cost = unit_cost.summary(task)
+    money = {"shot_uid": None, "scene_id": "", "shot_id": None, "rule": "unit_cost", "detail": cost["line"],
+             "layer": "", "tier": "info", "tier_label": "", "per_usable": cost["per_usable"], "usable": cost["usable"]}
+    return [*issues, *unverified, money]
 
 
 def counts(issues: Sequence[Mapping[str, Any]]) -> dict[str, int]:
     return {rule: sum(1 for issue in issues if issue.get("rule") == rule) for rule in dict.fromkeys(issue.get("rule") for issue in issues)}
 
 
-__all__ = ["check", "counts", "gaze_side", "light_side", "opening_size", "tone"]
+__all__ = ["check", "counts", "gaze_side", "light_side", "opening_size", "report", "tone"]

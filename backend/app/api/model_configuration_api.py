@@ -32,9 +32,22 @@ from app.schema.platform import (
     ModelTestRequest,
     VideoEndpointSaveRequest,
 )
+from app.core import prompt_data
 
 
-router = APIRouter(prefix="/api/model-configurations", tags=["模型配置"])
+_WORDING_FILE = "api_model_configuration_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_model_configuration_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+
+router = APIRouter(prefix="/api/model-configurations", tags=list(_words_of("module.tags")))
 MODEL_CATEGORIES = ("text", "image", "video", "audio")
 
 
@@ -148,11 +161,11 @@ async def _resolve_key(
     assert request.configuration_id is not None
     configuration = await store.get_model_configuration(request.configuration_id)
     if not configuration:
-        raise ValueError("模型配置不存在")
+        raise ValueError(_text_of("_resolve_key.text"))
     if configuration.category != request.category or configuration.provider != request.provider:
-        raise ValueError("已有配置与当前分类或供应商不匹配")
+        raise ValueError(_text_of("_resolve_key.text.2"))
     if configuration.base_url.rstrip("/") != request.base_url.rstrip("/"):
-        raise ValueError("修改基础 URL 时必须重新输入 API Key")
+        raise ValueError(_text_of("_resolve_key.text.3"))
     return cipher.decrypt(configuration.api_key_ciphertext)
 
 
@@ -225,7 +238,7 @@ async def save_video_endpoint(
     existing = next((raw for raw in current if isinstance(raw, dict) and (raw.get("spec") or {}).get("family") == family), None)
     key = request.api_key.get_secret_value().strip() if request.api_key else ""
     if not key and not (existing or {}).get("api_key_ciphertext"):
-        raise HTTPException(status_code=422, detail="首次声明端点时必须提供 API Key")
+        raise HTTPException(status_code=422, detail=_text_of("save_video_endpoint.detail"))
     entry = {
         "spec": spec.model_dump(mode="json"),
         "enabled": request.enabled,
@@ -248,7 +261,7 @@ async def delete_video_endpoint(
     current = (await store.get_setting("video_endpoints")).get("items") or []
     items = [raw for raw in current if isinstance(raw, dict) and (raw.get("spec") or {}).get("family") != family]
     if len(items) == len(current):
-        raise HTTPException(status_code=404, detail="没有这个声明式端点")
+        raise HTTPException(status_code=404, detail=_text_of("delete_video_endpoint.detail"))
     await store.put_setting("video_endpoints", {"items": items}, actor_id=admin["user_id"])
     # Uninstalling a market entry is deleting its endpoint: the install record goes with it.
     await Market(store).forget_install(family, actor_id=admin["user_id"])
@@ -269,7 +282,7 @@ async def add_model_credential(
 ):
     key = request.api_key.get_secret_value().strip()
     if len(key) < 6:
-        raise HTTPException(status_code=422, detail="API Key 太短")
+        raise HTTPException(status_code=422, detail=_text_of("add_model_credential.detail"))
     try:
         credential = await store.add_model_credential(
             configuration_id, actor_id=admin["user_id"], label=request.label.strip(),
@@ -357,13 +370,13 @@ async def test_model_connection(
         discovered = {item.model_id for item in result.models}
         missing = [model_id for model_id in request.selected_model_ids if model_id not in discovered]
         if missing:
-            raise ValueError("所选模型已不在供应商返回的动态列表中")
+            raise ValueError(_text_of("test_model_connection.text"))
         return {
             "connected": True,
             "message": (
-                f"连接成功，已验证 {len(request.selected_model_ids)} 个模型"
+                _text_of("test_model_connection.message").format(len(request.selected_model_ids))
                 if result.credential_verified
-                else f"已加载 {len(request.selected_model_ids)} 个官方目录模型；该供应商不提供模型枚举接口，凭据将在首次生成时验证"
+                else _text_of("test_model_connection.message.2").format(len(request.selected_model_ids))
             ),
             "credential_verified": result.credential_verified,
             "selected_model_ids": request.selected_model_ids,
@@ -392,7 +405,7 @@ async def save_model_configuration(
         )
         by_id = {item.model_id: item for item in result.models}
         if any(model_id not in by_id for model_id in request.selected_model_ids):
-            raise ValueError("所选模型已不在供应商返回的动态列表中")
+            raise ValueError(_text_of("save_model_configuration.text"))
         saved = await store.save_model_configuration(
             actor_id=admin["user_id"],
             category=request.category,

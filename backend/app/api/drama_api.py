@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from typing import List, Dict, Any, Optional
 from app.schema.shot_visual import (
     DraftModeUpdate,
+    SpendLimitsUpdate,
     ShotHdRequest,
     ShotRepairRequest,
     ShotRetakeRequest,
@@ -78,9 +79,10 @@ from app.schema.writer_dashboard import (
     WriterVersionRestoreRequest,
 )
 from app.schema.character_dashboard import CharacterDashboardResponse
-from app.schema.production import TimelineOperationRequest, TimelineRenderRequest
+from app.schema.production import RightsNoteRequest, TimelineOperationRequest, TimelineRenderRequest
 from app.schema.screenwriting import (
     DialoguePolishRequest,
+    PronunciationsUpdate,
     ScreenwritingReviewRequest,
     ScreenwritingRepairRequest,
     ReplanRequest,
@@ -111,6 +113,19 @@ from app.service.director_desk_service import MAX_CLIP_BYTES, CaptureError, Capt
 from app.service.spatial_stage_service import StageConflict
 from app.service import stage_director_service as stage_director
 from app.core import project_memory
+from app.core import prompt_data
+
+
+_WORDING_FILE = "drama_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/drama_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.api.drama_api")
 service = DramaService()
@@ -133,14 +148,14 @@ async def require_owned_drama_task(
     if not task:
         # Fail closed: a transient repository read failure must never let the
         # handler perform a second, unauthorised read that happens to succeed.
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("require_owned_drama_task.detail"))
 
     write = request.method not in {"GET", "HEAD", "OPTIONS"}
     owner_user_id = str(task.get("owner_user_id") or "")
     decision = authorize(current_user, owner_id=owner_user_id, write=write)
     if not decision.allowed:
         # Hide task existence from users who do not own it.
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("require_owned_drama_task.detail.2"))
     if decision.cross_account:
         await record_access(
             store, current_user, resource_id=str(task_id), owner_id=owner_user_id, write=write,
@@ -152,7 +167,7 @@ async def require_owned_drama_task(
 # 登录校验与任务归属校验在同一路由边界内统一执行。
 router = APIRouter(
     prefix="/api/drama",
-    tags=["AI短剧制作"],
+    tags=list(_words_of("module.tags")),
     dependencies=[Depends(require_owned_drama_task)],
 )
 
@@ -171,7 +186,7 @@ def create_new_task(req: DramaCreateRequest, current_user: dict = Depends(get_cu
         task_data = service.create_task(req, owner_user_id=current_user.get("user_id"))
         return task_data
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"创建任务失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=_text_of("create_new_task.detail").format(str(e)))
 
 @router.get("/list", response_model=List[DramaTaskSummary])
 def get_all_tasks(current_user: dict = Depends(get_current_user)):
@@ -203,7 +218,7 @@ def get_task_status(task_id: str, request: Request):
     """
     task = service.get_task_status(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_task_status.detail"))
 
     payload = DramaTaskResponse.model_validate(task).model_dump(mode="json", by_alias=True)
     body = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
@@ -221,7 +236,7 @@ def export_writer_dashboard(task_id: str):
     """Download the normalized Writer Agent dashboard as versioned JSON."""
     dashboard = service.get_writer_dashboard(task_id)
     if not dashboard:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("export_writer_dashboard.detail"))
     return JSONResponse(
         content=dashboard.model_dump(mode="json", by_alias=True),
         headers={"Content-Disposition": 'attachment; filename="writer-dashboard.json"'},
@@ -233,7 +248,7 @@ def download_script_breakdown(task_id: str, format: str = Query("json", pattern=
     """The scene-by-scene breakdown: JSON to read, CSV for a spreadsheet, Markdown to hand around."""
     breakdown = service.script_breakdown(task_id)
     if breakdown is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("download_script_breakdown.detail"))
     if format == "csv":
         return Response(
             content=script_breakdown.render_csv(breakdown), media_type="text/csv; charset=utf-8",
@@ -252,7 +267,7 @@ def get_writer_dashboard(task_id: str):
     """Return the Writer Agent timeline, episodes, statistics and relationship graph contract."""
     dashboard = service.get_writer_dashboard(task_id)
     if not dashboard:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_writer_dashboard.detail"))
     return dashboard
 
 
@@ -555,7 +570,7 @@ def untimed_character_makeup(task_id: str):
     """定不下时间的妆效：角色页列出来，人可以补上集数。"""
     task = service.repo.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("untimed_character_makeup.detail"))
     return {"items": untimed_makeup(task)}
 
 
@@ -568,7 +583,7 @@ async def sync_character_looks(
     """按拆解目录把每套戏服和妆效登记成定妆图(包括剧本还没写到的那几集)；不出图。"""
     task = await run_in_threadpool(service.repo.get_task, task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("sync_character_looks.detail"))
     return await _file_character_looks(task=task, task_id=task_id, owner_id=current_user["user_id"], store=store)
 
 
@@ -582,7 +597,7 @@ async def set_character_look_timing(
     """人给一处妆效定时间；这处妆效随即合进当时穿的那身。不出图，出图还是用户点。"""
     words = request.episodes.strip()
     if not timing_is_readable(words):
-        raise HTTPException(status_code=422, detail="没读懂这个时间，可以写：第9集起、第9-12集、第2集第3场起")
+        raise HTTPException(status_code=422, detail=_text_of("set_character_look_timing.detail"))
     name = request.name.strip()
 
     def record(current: Dict[str, Any]) -> bool:
@@ -594,7 +609,7 @@ async def set_character_look_timing(
         return True
 
     if not await run_in_threadpool(service.repo.mutate_task, task_id, record):
-        raise HTTPException(status_code=404, detail="这处妆效不在本剧的拆解目录里")
+        raise HTTPException(status_code=404, detail=_text_of("set_character_look_timing.detail.2"))
     task = await run_in_threadpool(service.repo.get_task, task_id)
     await _file_character_looks(task=task, task_id=task_id, owner_id=current_user["user_id"], store=store)
     return {"readiness": await _persist_asset_readiness(task_id, task, current_user["user_id"], store)}
@@ -610,7 +625,7 @@ async def production_asset_readiness(
     """Whether every actor, costume look, scene, prop and effect has a reference image."""
     task = service.repo.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("production_asset_readiness.detail"))
     return await _persist_asset_readiness(task_id, task, current_user["user_id"], store)
 
 
@@ -618,10 +633,10 @@ async def production_asset_readiness(
 def preview_production_assets(task_id: str, kind: str):
     """Preview the shooting assets of one kind that the screenplay names."""
     if kind not in _EXTRACTABLE_ASSET_KINDS:
-        raise HTTPException(status_code=404, detail="不支持的资产类型")
+        raise HTTPException(status_code=404, detail=_text_of("preview_production_assets.detail"))
     task = service.repo.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("preview_production_assets.detail.2"))
     assets = extract_production_assets(task, kind)
     return {"kind": kind, "items": assets, "total": len(assets)}
 
@@ -635,10 +650,10 @@ async def import_production_assets(
 ):
     """Import screenplay-derived shooting assets into the user's element library."""
     if kind not in _EXTRACTABLE_ASSET_KINDS:
-        raise HTTPException(status_code=404, detail="不支持的资产类型")
+        raise HTTPException(status_code=404, detail=_text_of("import_production_assets.detail"))
     if kind in ("costume", "makeup"):
         # 不单独入库：拆解目录里的服装和化妆由 _file_character_looks 登记成表演妆造。
-        raise HTTPException(status_code=422, detail="服装和化妆已并入表演妆造，不再单独入库")
+        raise HTTPException(status_code=422, detail=_text_of("import_production_assets.detail.2"))
     if kind == "effect":
         # The writer may never have listed these; read them off the screenplay first.
         try:
@@ -647,7 +662,7 @@ async def import_production_assets(
             logger.warning("特效清单补全失败: task_id=%s error=%s", task_id, type(exc).__name__)
     task = service.repo.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("import_production_assets.detail.3"))
 
     return await _import_production_asset_candidates(
         task_id=task_id,
@@ -671,15 +686,15 @@ async def sync_production_assets(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("拍摄资产目录同步失败: task_id=%s", task_id)
-        raise HTTPException(status_code=502, detail="拍摄资产分析服务暂不可用，请稍后重试") from exc
+        raise HTTPException(status_code=502, detail=_text_of("sync_production_assets.detail")) from exc
     if catalog is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("sync_production_assets.detail.2"))
 
     # Reload after the repair pass so the shared extractor sees the persisted
     # structured catalog and keeps preview/import behavior identical.
     task = service.repo.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("sync_production_assets.detail.3"))
 
     # Actors are filed too, so a finished five-view set becomes reusable by the
     # next project instead of living only inside this task's assets.
@@ -729,7 +744,7 @@ def list_script_documents(task_id: str):
     """List the project's screenplay library (.txt / .md reference documents)."""
     documents = service.list_script_documents(task_id)
     if documents is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("list_script_documents.detail"))
     return ScriptLibraryResponse(documents=documents, total=len(documents))
 
 
@@ -743,7 +758,7 @@ def create_script_document(task_id: str, req: ScriptDocumentCreateRequest):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if document is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("create_script_document.detail"))
     return document
 
 
@@ -752,7 +767,7 @@ def get_script_document(task_id: str, document_id: str):
     """Read one screenplay document, including its full text."""
     document = service.get_script_document(task_id, document_id)
     if document is None:
-        raise HTTPException(status_code=404, detail="剧本文件不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_script_document.detail"))
     return document
 
 
@@ -760,7 +775,7 @@ def get_script_document(task_id: str, document_id: str):
 def update_script_document(task_id: str, document_id: str, req: ScriptDocumentUpdateRequest):
     """Rename or rewrite one screenplay document."""
     if req.name is None and req.content is None and req.role is None and req.source_kind is None and req.order is None:
-        raise HTTPException(status_code=422, detail="请至少提供一项要修改的内容")
+        raise HTTPException(status_code=422, detail=_text_of("update_script_document.detail"))
     try:
         document = service.update_script_document(
             task_id, document_id, name=req.name, content=req.content,
@@ -769,7 +784,7 @@ def update_script_document(task_id: str, document_id: str, req: ScriptDocumentUp
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if document is None:
-        raise HTTPException(status_code=404, detail="剧本文件不存在")
+        raise HTTPException(status_code=404, detail=_text_of("update_script_document.detail.2"))
     return document
 
 
@@ -778,9 +793,9 @@ def delete_script_document(task_id: str, document_id: str):
     """Permanently remove one screenplay document from the library."""
     removed = service.delete_script_document(task_id, document_id)
     if removed is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("delete_script_document.detail"))
     if not removed:
-        raise HTTPException(status_code=404, detail="剧本文件不存在")
+        raise HTTPException(status_code=404, detail=_text_of("delete_script_document.detail.2"))
     return {"deleted": True, "id": document_id}
 
 
@@ -796,7 +811,7 @@ async def list_mentionable(
 
     task = await run_in_threadpool(service.repo.get_task, task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("list_mentionable.detail"))
     task = {**task, "task_id": str(task.get("task_id") or task_id)}
     return {"items": await mention_catalog.mentionable_async(store, task, query=q, limit=limit)}
 
@@ -824,7 +839,7 @@ def _change_identity(task_id: str, operation: str, req: AssetIdentityRequest, cu
     except ScriptUpdateConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("_change_identity.detail"))
     return result
 
 
@@ -835,7 +850,7 @@ def assess_shots_admission(task_id: str, req: VideoAdmissionRequest):
         task_id, confirmed_request_durations=req.confirmed_request_durations, persist_confirmations=req.persist,
     )
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("assess_shots_admission.detail"))
     return result
 
 
@@ -861,7 +876,7 @@ def _memory_call(call):
     except project_memory.MemoryError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     if view is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("_memory_call.detail"))
     return view
 
 
@@ -901,7 +916,7 @@ def get_usage(task_id: str, limit: int = Query(50, ge=1, le=500)):
     """Provider calls this project has made, with their reference cost."""
     result = service.usage_summary(task_id, limit=limit)
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_usage.detail"))
     return result
 
 
@@ -913,7 +928,7 @@ def get_subtitles(task_id: str, episode: int = Query(..., ge=1, le=200), format:
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_subtitles.detail"))
     if format == "srt":
         filename = f"episode_{episode}.srt"
         return Response(
@@ -932,7 +947,7 @@ def get_publish_preparation(task_id: str):
     """The share panel: the platforms on offer and the last prepared packages."""
     result = service.get_publish_preparation(task_id)
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_publish_preparation.detail"))
     return result
 
 
@@ -944,7 +959,7 @@ def prepare_publish(task_id: str, req: PublishPrepareRequest):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("prepare_publish.detail"))
     return result
 
 
@@ -961,7 +976,7 @@ def _acquired(call, *args, **kwargs):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("_acquired.detail"))
     return result
 
 
@@ -1098,9 +1113,9 @@ def regenerate_character(task_id: str, req: CharacterRegenerateRequest):
         dashboard = service.regenerate_character(task_id, req.name, mode=req.mode)
     except ValueError as exc:
         detail = str(exc)
-        raise HTTPException(status_code=409 if ("正在" in detail) else 422, detail=detail) from exc
+        raise HTTPException(status_code=409 if (_text_of("regenerate_character.status_code") in detail) else 422, detail=detail) from exc
     if dashboard is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("regenerate_character.detail"))
     return dashboard.model_dump(mode="json", by_alias=True)
 
 
@@ -1123,12 +1138,12 @@ def audition_character_voice(task_id: str, req: CharacterVoiceAuditionRequest):
         result = service.audition_character_voice(task_id, req.name, voice_prompt=req.voice_prompt, seed=req.seed)
     except ValueError as exc:
         detail = str(exc)
-        raise HTTPException(status_code=409 if ("正在" in detail) else 422, detail=detail) from exc
+        raise HTTPException(status_code=409 if (_text_of("audition_character_voice.status_code") in detail) else 422, detail=detail) from exc
     except Exception as exc:
         logger.warning("角色音色试听失败: %s", type(exc).__name__)
-        raise HTTPException(status_code=502, detail="音色设计服务暂不可用") from exc
+        raise HTTPException(status_code=502, detail=_text_of("audition_character_voice.detail")) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("audition_character_voice.detail.2"))
     return result
 
 
@@ -1139,12 +1154,12 @@ def cast_character_voice(task_id: str, req: CharacterVoiceCastRequest):
         dashboard = service.cast_character_voice(task_id, req.name, req.generated_voice_id)
     except ValueError as exc:
         detail = str(exc)
-        raise HTTPException(status_code=409 if ("正在" in detail) else 422, detail=detail) from exc
+        raise HTTPException(status_code=409 if (_text_of("cast_character_voice.status_code") in detail) else 422, detail=detail) from exc
     except Exception as exc:
         logger.warning("角色音色定版失败: %s", type(exc).__name__)
-        raise HTTPException(status_code=502, detail="音色设计服务暂不可用") from exc
+        raise HTTPException(status_code=502, detail=_text_of("cast_character_voice.detail")) from exc
     if dashboard is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("cast_character_voice.detail.2"))
     return dashboard.model_dump(mode="json", by_alias=True)
 
 
@@ -1158,7 +1173,7 @@ def preview_character_voice_relink(task_id: str, name: str, voice: str = Query("
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("preview_character_voice_relink.detail"))
     return result
 
 
@@ -1167,39 +1182,39 @@ def get_shot_visual_workspace(task_id: str):
     """Stage-5 shot workspace: camera motion, shot type, duration, media and prompts per shot."""
     workspace = service.get_shot_visual_workspace(task_id)
     if not workspace:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_shot_visual_workspace.detail"))
     return workspace
 
 
 @router.put("/{task_id}/shots/{shot_id}/visual", response_model=ShotVisualWorkspaceResponse)
 def update_shot_visual(
     task_id: str, shot_id: int, req: ShotVisualSettings,
-    scene_id: str = Query("", max_length=40, description="镜头所在场次(如 E1S03)；各场镜号都从 1 起，不给时镜号须全剧唯一"),
-    shot_uid: int | None = Query(None, ge=1, description="全剧唯一的镜头编号，给了就按它找"),
+    scene_id: str = Query("", max_length=40, description=_text_of("update_shot_visual.description")),
+    shot_uid: int | None = Query(None, ge=1, description=_text_of("update_shot_visual.description.2")),
 ):
     """Persist one shot's camera settings; the workflow stays at its current stage."""
     try:
         workspace = service.update_shot_visual(task_id, shot_id, req, scene_id=scene_id, shot_uid=shot_uid)
     except ValueError as exc:
-        raise HTTPException(status_code=409 if "正在执行" in str(exc) else 422, detail=str(exc)) from exc
+        raise HTTPException(status_code=409 if _text_of("update_shot_visual.status_code") in str(exc) else 422, detail=str(exc)) from exc
     if not workspace:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("update_shot_visual.detail"))
     return workspace
 
 
 @router.put("/{task_id}/shots/{shot_id}/video-prompt", response_model=ShotVisualWorkspaceResponse)
 def update_shot_video_prompt(
     task_id: str, shot_id: int, req: ShotVideoPromptUpdate,
-    scene_id: str = Query("", max_length=40, description="镜头所在场次(如 E1S03)；各场镜号都从 1 起，不给时镜号须全剧唯一"),
-    shot_uid: int | None = Query(None, ge=1, description="全剧唯一的镜头编号，给了就按它找"),
+    scene_id: str = Query("", max_length=40, description=_text_of("update_shot_video_prompt.description")),
+    shot_uid: int | None = Query(None, ge=1, description=_text_of("update_shot_video_prompt.description.2")),
 ):
     """Save a hand-edited video prompt for one shot (empty restores the compiled one); its clip goes stale."""
     try:
         workspace = service.set_shot_video_prompt(task_id, shot_id, req.prompt, scene_id=scene_id, shot_uid=shot_uid)
     except ValueError as exc:
-        raise HTTPException(status_code=409 if "正在执行" in str(exc) else 422, detail=str(exc)) from exc
+        raise HTTPException(status_code=409 if _text_of("update_shot_video_prompt.status_code") in str(exc) else 422, detail=str(exc)) from exc
     if not workspace:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("update_shot_video_prompt.detail"))
     return workspace
 
 
@@ -1209,9 +1224,9 @@ def set_project_video_model(task_id: str, req: ProjectVideoModelUpdate):
     try:
         workspace = service.set_project_video_model(task_id, req.video_model)
     except ValueError as exc:
-        raise HTTPException(status_code=409 if "正在执行" in str(exc) else 422, detail=str(exc)) from exc
+        raise HTTPException(status_code=409 if _text_of("set_project_video_model.status_code") in str(exc) else 422, detail=str(exc)) from exc
     if not workspace:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("set_project_video_model.detail"))
     return workspace
 
 
@@ -1221,17 +1236,17 @@ def assign_shot_seeds(task_id: str):
     try:
         workspace = service.assign_shot_seeds(task_id)
     except ValueError as exc:
-        raise HTTPException(status_code=409 if "正在执行" in str(exc) else 422, detail=str(exc)) from exc
+        raise HTTPException(status_code=409 if _text_of("assign_shot_seeds.status_code") in str(exc) else 422, detail=str(exc)) from exc
     if not workspace:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("assign_shot_seeds.detail"))
     return workspace
 
 
 @router.put("/{task_id}/shots/{shot_id}/visual/select", response_model=ShotVisualWorkspaceResponse)
 def select_shot_candidate(
     task_id: str, shot_id: int, req: ShotCandidateSelection,
-    scene_id: str = Query("", max_length=40, description="镜头所在场次(如 E1S03)；各场镜号都从 1 起，不给时镜号须全剧唯一"),
-    shot_uid: int | None = Query(None, ge=1, description="全剧唯一的镜头编号，给了就按它找"),
+    scene_id: str = Query("", max_length=40, description=_text_of("select_shot_candidate.description")),
+    shot_uid: int | None = Query(None, ge=1, description=_text_of("select_shot_candidate.description.2")),
 ):
     """Choose one of the rendered candidates as the shot's clip."""
     try:
@@ -1239,12 +1254,12 @@ def select_shot_candidate(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not workspace:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("select_shot_candidate.detail"))
     return workspace
 
 
 class PilotShotRequest(BaseModel):
-    shot_uid: Optional[int] = Field(None, ge=1, description="指定试拍哪一镜；不给就挑人和动作最少的一段")
+    shot_uid: Optional[int] = Field(None, ge=1, description=_text_of("PilotShotRequest.description"))
     redo: bool = False
     problems: List[str] = Field(default_factory=list, max_length=8)
 
@@ -1259,15 +1274,15 @@ async def start_pilot_shot(task_id: str, req: Optional[PilotShotRequest] = None)
     except StagePrerequisiteError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if workspace is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("start_pilot_shot.detail"))
     return workspace
 
 
 @router.post("/{task_id}/shots/{shot_id}/regenerate", response_model=ShotVisualWorkspaceResponse)
 def regenerate_shot(
     task_id: str, shot_id: int, req: ShotRegenerateRequest | None = None,
-    scene_id: str = Query("", max_length=40, description="镜头所在场次(如 E1S03)；各场镜号都从 1 起，不给时镜号须全剧唯一"),
-    shot_uid: int | None = Query(None, ge=1, description="全剧唯一的镜头编号，给了就按它找"),
+    scene_id: str = Query("", max_length=40, description=_text_of("regenerate_shot.description")),
+    shot_uid: int | None = Query(None, ge=1, description=_text_of("regenerate_shot.description.2")),
 ):
     """Mark one shot's clip (its whole board clip) for regeneration; the next stage-5 run redoes only it."""
     try:
@@ -1277,7 +1292,7 @@ def regenerate_shot(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not workspace:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("regenerate_shot.detail"))
     return workspace
 
 
@@ -1287,12 +1302,18 @@ def _shot_fix(call) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not workspace:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("_shot_fix.detail"))
     return workspace
 
 
-_SCENE_QUERY = Query("", max_length=40, description="镜头所在场次(如 E1S03)；各场镜号都从 1 起，不给时镜号须全剧唯一")
-_UID_QUERY = Query(None, ge=1, description="全剧唯一的镜头编号，给了就按它找")
+_SCENE_QUERY = Query("", max_length=40, description=_text_of("module.description"))
+_UID_QUERY = Query(None, ge=1, description=_text_of("module.description.2"))
+
+
+@router.put("/{task_id}/shots/spend-limits", response_model=ShotVisualWorkspaceResponse)
+def set_spend_limits(task_id: str, req: SpendLimitsUpdate):
+    """本轮视频预算上限(元)和每镜最多尝试次数；留空就是不限。"""
+    return _shot_fix(lambda: service.set_spend_limits(task_id, budget_cap=req.budget_cap, max_attempts=req.max_attempts))
 
 
 @router.put("/{task_id}/shots/draft-mode", response_model=ShotVisualWorkspaceResponse)
@@ -1328,8 +1349,8 @@ def repair_shot(task_id: str, shot_id: int, req: ShotRepairRequest, scene_id: st
 @router.post("/{task_id}/shots/{shot_id}/visual/recipe")
 def compose_shot_recipe(
     task_id: str, shot_id: int, req: ShotRecipeRequest,
-    scene_id: str = Query("", max_length=40, description="镜头所在场次(如 E1S03)；各场镜号都从 1 起，不给时镜号须全剧唯一"),
-    shot_uid: int | None = Query(None, ge=1, description="全剧唯一的镜头编号，给了就按它找"),
+    scene_id: str = Query("", max_length=40, description=_text_of("compose_shot_recipe.description")),
+    shot_uid: int | None = Query(None, ge=1, description=_text_of("compose_shot_recipe.description.2")),
 ):
     """Compose a camera-move recipe for one shot; nothing is persisted until the user saves."""
     try:
@@ -1339,7 +1360,7 @@ def compose_shot_recipe(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not recipe:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("compose_shot_recipe.detail"))
     return recipe
 
 
@@ -1353,7 +1374,7 @@ def update_writer_relationships(task_id: str, req: WriterRelationshipUpdateReque
     ]
     dashboard = service.update_relationships(task_id, relationships)
     if not dashboard:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("update_writer_relationships.detail"))
     return dashboard
 
 
@@ -1362,7 +1383,7 @@ def update_writer_overview(task_id: str, req: WriterOverviewUpdateRequest):
     """Edit the project overview (synopsis / genre / theme / world setting) by hand."""
     dashboard = service.update_overview(task_id, req.model_dump(exclude_none=True))
     if not dashboard:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("update_writer_overview.detail"))
     return dashboard
 
 
@@ -1375,9 +1396,9 @@ def regenerate_writer_overview(task_id: str):
         raise HTTPException(status_code=409, detail=str(error))
     except Exception:
         logger.exception("[Writer] 概述重新创作失败 task_id=%s", task_id)
-        raise HTTPException(status_code=502, detail="概述重新创作暂不可用，请稍后重试")
+        raise HTTPException(status_code=502, detail=_text_of("regenerate_writer_overview.detail"))
     if not dashboard:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("regenerate_writer_overview.detail.2"))
     return dashboard
 
 
@@ -1386,7 +1407,7 @@ def update_writer_timeline(task_id: str, req: WriterTimelineUpdateRequest):
     """Replace the story event timeline with the person's arrangement of nodes."""
     dashboard = service.update_timeline(task_id, [event.model_dump(mode="json") for event in req.events])
     if not dashboard:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("update_writer_timeline.detail"))
     return dashboard
 
 
@@ -1395,7 +1416,7 @@ def update_writer_roles(task_id: str, req: WriterRolesUpdateRequest):
     """Set the cast: positions, added names, names kept out."""
     dashboard = service.update_roles(task_id, [role.model_dump(mode="json") for role in req.roles], list(req.hidden))
     if not dashboard:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("update_writer_roles.detail"))
     return dashboard
 
 
@@ -1403,7 +1424,7 @@ def update_writer_roles(task_id: str, req: WriterRolesUpdateRequest):
 def list_writer_script_versions(task_id: str):
     versions = service.list_script_versions(task_id)
     if versions is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("list_writer_script_versions.detail"))
     return {"items": versions}
 
 
@@ -1415,7 +1436,7 @@ def save_writer_script_version(task_id: str, req: WriterVersionCreateRequest):
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error))
     if not dashboard:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("save_writer_script_version.detail"))
     return dashboard
 
 
@@ -1434,7 +1455,7 @@ def restore_writer_script_version(
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error))
     if not dashboard:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("restore_writer_script_version.detail"))
     return dashboard
 
 
@@ -1447,9 +1468,9 @@ def continue_writer_script(task_id: str):
         raise HTTPException(status_code=409, detail=str(error))
     except Exception:
         logger.exception("[Writer] 剧本补写失败 task_id=%s", task_id)
-        raise HTTPException(status_code=502, detail="剧本补写服务暂不可用，请稍后重试")
+        raise HTTPException(status_code=502, detail=_text_of("continue_writer_script.detail"))
     if not dashboard:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("continue_writer_script.detail.2"))
     return dashboard
 
 
@@ -1461,7 +1482,7 @@ def get_screenwriting_ledger(task_id: str):
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_screenwriting_ledger.detail"))
     return result
 
 
@@ -1473,7 +1494,7 @@ def get_ledger_source_slice(task_id: str, start: int = Query(0, ge=0), end: int 
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_ledger_source_slice.detail"))
     return result
 
 
@@ -1485,7 +1506,7 @@ def preview_ledger_impact(task_id: str, episodes: list[int] = Query(..., alias="
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("preview_ledger_impact.detail"))
     return result
 
 
@@ -1503,7 +1524,7 @@ def apply_ledger_operation(task_id: str, req: LedgerOperationRequest, current_us
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("apply_ledger_operation.detail"))
     return result
 
 
@@ -1519,7 +1540,7 @@ def plan_replan(task_id: str, req: ReplanRequest):
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("plan_replan.detail"))
     return result
 
 
@@ -1537,7 +1558,7 @@ def adopt_replan(task_id: str, req: ReplanAdoptRequest, current_user: dict = Dep
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("adopt_replan.detail"))
     return result
 
 
@@ -1548,7 +1569,7 @@ def discard_replan(task_id: str):
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("discard_replan.detail"))
     return result
 
 
@@ -1557,7 +1578,7 @@ def get_style_reference(task_id: str):
     """The last analysed reference image's style, and the lock the project uses now."""
     result = service.get_style_reference(task_id)
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_style_reference.detail"))
     return result
 
 
@@ -1581,7 +1602,7 @@ async def analyze_style_reference(
     except style_analysis.StyleAnalysisError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("analyze_style_reference.detail"))
     return result
 
 
@@ -1592,7 +1613,7 @@ def apply_style_reference(task_id: str, current_user: dict = Depends(require_own
     except style_analysis.StyleAnalysisError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("apply_style_reference.detail"))
     return result
 
 
@@ -1603,6 +1624,15 @@ def revert_style_reference(task_id: str, current_user: dict = Depends(require_ow
     except style_analysis.StyleAnalysisError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if result is None:
+        raise HTTPException(status_code=404, detail=_text_of("revert_style_reference.detail"))
+    return result
+
+
+@router.put("/{task_id}/rights/note")
+def note_rights(task_id: str, req: RightsNoteRequest, current_user: dict = Depends(require_owned_drama_task)):
+    """给成片里一样素材记下授权说明(来源、授权范围、凭证在哪)；返回新的剪辑台数据。"""
+    result = service.note_rights(task_id, req.key, req.note)
+    if result is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     return result
 
@@ -1612,7 +1642,7 @@ def get_timeline(task_id: str):
     """The edit timeline the final cut is rendered from, plus the music library to pick from."""
     result = service.get_timeline(task_id)
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_timeline.detail"))
     return result
 
 
@@ -1624,7 +1654,7 @@ def edit_timeline_route(task_id: str, req: TimelineOperationRequest, current_use
     except edit_timeline.TimelineError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("edit_timeline_route.detail"))
     return result
 
 
@@ -1638,7 +1668,7 @@ def render_timeline(task_id: str, req: Optional[TimelineRenderRequest] = None, c
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("render_timeline.detail"))
     return result
 
 
@@ -1650,7 +1680,7 @@ def download_jianying_draft(task_id: str, current_user: dict = Depends(require_o
         book.require_feature(str(current_user.get("user_id") or ""), "export.jianying")
     result = service.jianying_draft(task_id)
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("download_jianying_draft.detail"))
     payload, info = result
     headers = {
         "Content-Disposition": f'attachment; filename="jianying_{task_id[:8]}.zip"',
@@ -1665,7 +1695,7 @@ def get_generation_queue(task_id: str):
     """The generation queue of the current or last stage-5 run: items, buckets and their ceilings."""
     result = service.get_generation_queue(task_id)
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_generation_queue.detail"))
     return result
 
 
@@ -1677,7 +1707,7 @@ def cancel_queued_generation(task_id: str, current_user: dict = Depends(require_
     except generation_queue.CancelError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("cancel_queued_generation.detail"))
     return result
 
 
@@ -1689,7 +1719,7 @@ def cancel_generation_item(task_id: str, key: str, current_user: dict = Depends(
     except generation_queue.CancelError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("cancel_generation_item.detail"))
     return result
 
 
@@ -1701,7 +1731,7 @@ def get_screenwriting_review(task_id: str):
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_screenwriting_review.detail"))
     return result
 
 
@@ -1715,7 +1745,7 @@ def review_screenwriting_episode(task_id: str, episode: int, req: ScreenwritingR
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("review_screenwriting_episode.detail"))
     return result
 
 
@@ -1734,7 +1764,7 @@ def repair_screenwriting_episode(task_id: str, episode: int, req: ScreenwritingR
     except ScreenwritingError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("repair_screenwriting_episode.detail"))
     return result
 
 
@@ -1743,7 +1773,7 @@ def get_screenwriting_state(task_id: str):
     """Episode ledger, asset inventory, duration constraints and per-episode status."""
     state = service.get_screenwriting_state(task_id)
     if not state:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_screenwriting_state.detail"))
     return state
 
 
@@ -1755,7 +1785,7 @@ def get_screenwriting_episode(task_id: str, episode: int):
     except LookupError as error:
         raise HTTPException(status_code=404, detail=str(error))
     if not payload:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_screenwriting_episode.detail"))
     return payload
 
 
@@ -1763,7 +1793,7 @@ def get_screenwriting_episode(task_id: str, episode: int):
 def preview_screenwriting_prompt(task_id: str, episode: int, stage: str = "plan"):
     """The exact prompt the Writer would send for this episode; no model call, no cost."""
     if stage not in PROMPT_STAGES:
-        raise HTTPException(status_code=422, detail="stage 只能是 plan、prose 或 visual")
+        raise HTTPException(status_code=422, detail=_text_of("preview_screenwriting_prompt.detail"))
     try:
         prompt = service.preview_screenwriting_prompt(task_id, episode, stage)
     except LookupError as error:
@@ -1771,8 +1801,26 @@ def preview_screenwriting_prompt(task_id: str, episode: int, stage: str = "plan"
     except (ScreenwritingError, ValueError) as error:
         raise HTTPException(status_code=409, detail=str(error))
     if prompt is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("preview_screenwriting_prompt.detail.2"))
     return ScreenwritingPromptPreviewResponse(task_id=task_id, episode=episode, stage=stage, prompt=prompt)
+
+
+@router.get("/{task_id}/pronunciations")
+def get_pronunciations(task_id: str):
+    """项目读音表：这部剧里这个词配音时念什么。"""
+    result = service.get_pronunciations(task_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
+@router.put("/{task_id}/pronunciations")
+def set_pronunciations(task_id: str, req: PronunciationsUpdate):
+    """整张读音表一起存：配音时把词换成登记的念法(同音字)，字幕不动。"""
+    readings = service.set_pronunciations(task_id, [row.model_dump() for row in req.readings])
+    if readings is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {"readings": readings}
 
 
 @router.post("/{task_id}/screenwriting/episodes/{episode}/polish-dialogue")
@@ -1787,7 +1835,7 @@ def polish_dialogue(task_id: str, episode: int, req: DialoguePolishRequest):
     except RuntimeError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("polish_dialogue.detail"))
     return result
 
 
@@ -1812,22 +1860,22 @@ def patch_screenwriting_plan(
     except PlanEditError as error:
         where = []
         if error.operation_index is not None:
-            where.append(f"第 {error.operation_index + 1} 个操作")
+            where.append(_text_of("patch_screenwriting_plan.text").format(error.operation_index + 1))
         if error.scene_id:
-            where.append(f"分镜 {error.scene_id}")
+            where.append(_text_of("patch_screenwriting_plan.text.2").format(error.scene_id))
         suffix = f"（{'，'.join(where)}）" if where else ""
         raise HTTPException(status_code=422, detail=f"{error}{suffix}")
     except PlanRejected as error:
-        raise HTTPException(status_code=409, detail=f"分镜规划未通过内容校验：\n{error}")
+        raise HTTPException(status_code=409, detail=_text_of("patch_screenwriting_plan.detail").format(error))
     except LookupError as error:
         raise HTTPException(status_code=404, detail=str(error))
     except (ScriptUpdateConflictError, ScreenwritingError, ValueError) as error:
         raise HTTPException(status_code=409, detail=str(error))
     except Exception:
         logger.exception("[Writer] 分镜规划编辑失败 task_id=%s episode=%s", task_id, episode)
-        raise HTTPException(status_code=502, detail="分镜规划编辑服务暂不可用，请稍后重试")
+        raise HTTPException(status_code=502, detail=_text_of("patch_screenwriting_plan.detail.2"))
     if not payload:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("patch_screenwriting_plan.detail.3"))
     return payload
 
 
@@ -1836,7 +1884,7 @@ def get_spatial_overview(task_id: str):
     """Every scene's spatial stage at a glance, plus the cross-scene side and location memories."""
     overview = service.get_spatial_overview(task_id)
     if not overview:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_spatial_overview.detail"))
     return overview
 
 
@@ -1851,9 +1899,9 @@ def _spatial_call(task_id: str, scene_id: str, call):
         raise HTTPException(status_code=422, detail=str(error))
     except Exception:
         logger.exception("[Spatial] 空间调度操作失败 task_id=%s scene_id=%s", task_id, scene_id)
-        raise HTTPException(status_code=502, detail="空间调度服务暂不可用，请稍后重试")
+        raise HTTPException(status_code=502, detail=_text_of("_spatial_call.detail"))
     if not payload:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("_spatial_call.detail.2"))
     return payload
 
 
@@ -1950,7 +1998,7 @@ def report_shot_feedback(task_id: str, shot_id: str, req: ShotFeedbackRequest):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not payload:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("report_shot_feedback.detail"))
     return payload
 
 
@@ -1959,17 +2007,17 @@ def get_generation_feedback(task_id: str):
     """本项目的翻车台账：各类失败次数、该模型已确认的弱点、已验证有效的修正手段。"""
     payload = service.get_generation_feedback(task_id)
     if not payload:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_generation_feedback.detail"))
     return payload
 
 
 @router.get("/{task_id}/prompt-packages")
 def get_prompt_packages(
     task_id: str,
-    scene_id: str = Query("", max_length=80, description="只导出这一场；留空则整集"),
-    package_seconds: int = Query(15, description="单条提示词时长：10 / 15 / 20 / 30 秒"),
+    scene_id: str = Query("", max_length=80, description=_text_of("get_prompt_packages.description")),
+    package_seconds: int = Query(15, description=_text_of("get_prompt_packages.description.2")),
     variant: str = Query("standard", pattern="^(standard|continuous|fight|script_doc)$"),
-    delivery: str = Query("正常", pattern="^(正常|急切|沉重)$", description="台词语速档，全篇统一"),
+    delivery: str = Query(_text_of("get_prompt_packages.text"), pattern=_text_of("get_prompt_packages.pattern"), description=_text_of("get_prompt_packages.description.3")),
 ):
     """把已定稿的分镜重新切成可直接粘贴的 Seedance 提示词分包（或分段脚本文档）。"""
     try:
@@ -1979,7 +2027,7 @@ def get_prompt_packages(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not payload:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_prompt_packages.detail"))
     return payload
 
 
@@ -1988,7 +2036,7 @@ def get_asset_sheets(task_id: str):
     """人物 / 场景 / 道具 / 色板四类设定图：每项都带稳定识别锚点、可直接生成的提示词与固定版式。"""
     payload = service.compile_asset_sheets(task_id)
     if not payload:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_asset_sheets.detail"))
     return payload
 
 
@@ -2030,7 +2078,7 @@ def redraw_spatial_scene(task_id: str, scene_id: str):
 def export_spatial_plan(task_id: str, scene_id: str, format: str = "director-desk"):
     """The stage as a 3D director-desk project or a CoStage document."""
     if format not in {"director-desk", "costage"}:
-        raise HTTPException(status_code=422, detail="format 只能是 director-desk 或 costage")
+        raise HTTPException(status_code=422, detail=_text_of("export_spatial_plan.detail"))
     return _spatial_call(task_id, scene_id, lambda: service.export_spatial_plan(task_id, scene_id, format))
 
 
@@ -2164,7 +2212,7 @@ async def propose_stage_model(
     depth_m: Optional[float] = Form(None, gt=0, le=200),
     height_m: Optional[float] = Form(None, gt=0, le=200),
     model: str = Form("", max_length=160),
-    file: Optional[UploadFile] = File(None, description="可选：物体的参考图"),
+    file: Optional[UploadFile] = File(None, description=_text_of("propose_stage_model.description")),
 ):
     """One object built from words or a picture. A library model named exactly costs nothing; the stage does not change."""
     image = None
@@ -2193,7 +2241,7 @@ def export_stage_model(task_id: str, scene_id: str, landmark_id: str):
 async def analyze_desk_blockout(
     task_id: str,
     scene_id: str,
-    file: UploadFile = File(..., description="场景参考图（概念图、实景照片、航拍）"),
+    file: UploadFile = File(..., description=_text_of("analyze_desk_blockout.description")),
     hint: str = Form("", max_length=300),
     width_m: Optional[float] = Form(None, gt=0, le=500),
     model: str = Form("", max_length=160),
@@ -2217,7 +2265,7 @@ def list_desk_captures(task_id: str, scene_id: str):
 async def upload_desk_capture(
     task_id: str,
     scene_id: str,
-    file: UploadFile = File(..., description="静帧（PNG / JPEG / WebP ≤ 10 MB）或白模视频（MP4 / WebM ≤ 60 MB，≤ 30 秒）"),
+    file: UploadFile = File(..., description=_text_of("upload_desk_capture.description")),
     shot_id: int = Form(...),
     kind: str = Form(...),
     camera_id: str = Form(""),
@@ -2289,9 +2337,9 @@ def analyze_writer_relationships(task_id: str):
         raise HTTPException(status_code=409, detail=str(error))
     except Exception:
         logger.exception("[Writer] 人物关系分析失败 task_id=%s", task_id)
-        raise HTTPException(status_code=502, detail="人物关系分析服务暂不可用，请稍后重试")
+        raise HTTPException(status_code=502, detail=_text_of("analyze_writer_relationships.detail"))
     if not dashboard:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("analyze_writer_relationships.detail.2"))
     return dashboard
 
 
@@ -2320,7 +2368,7 @@ def _storyboard_attachment(url: str, filename_base: str):
             os.path.join(media_root, unquote(parsed.path[len(settings.MEDIA_PREFIX):]))
         )
         if not local_path.startswith(media_root + os.sep) or not os.path.isfile(local_path):
-            raise HTTPException(status_code=404, detail="分镜图文件不存在")
+            raise HTTPException(status_code=404, detail=_text_of("_storyboard_attachment.detail"))
         return FileResponse(
             local_path,
             media_type=media_type,
@@ -2331,13 +2379,13 @@ def _storyboard_attachment(url: str, filename_base: str):
         try:
             payload = fetch_remote_image_bytes(url)
         except Exception:
-            raise HTTPException(status_code=502, detail="分镜图下载失败，请稍后重试")
+            raise HTTPException(status_code=502, detail=_text_of("_storyboard_attachment.detail.2"))
         return Response(
             content=payload,
             media_type=media_type,
             headers={"Content-Disposition": disposition},
         )
-    raise HTTPException(status_code=404, detail="分镜图地址无效")
+    raise HTTPException(status_code=404, detail=_text_of("_storyboard_attachment.detail.3"))
 
 
 def _scene_grid_attachment(shots: list, scene_id: str):
@@ -2348,7 +2396,7 @@ def _scene_grid_attachment(shots: list, scene_id: str):
         if isinstance(entry, dict) and str(entry.get("image_url") or "").strip()
     ][:9]
     if not sources:
-        raise HTTPException(status_code=404, detail="该分镜场景尚未生成图片")
+        raise HTTPException(status_code=404, detail=_text_of("_scene_grid_attachment.detail"))
     safe_scene = "".join(ch for ch in scene_id if ch.isalnum() or ch in "-_")[:40] or "scene"
     digest = hashlib.sha256("\n".join(sources).encode("utf-8")).hexdigest()[:16]
     target_path = os.path.join(MEDIA_DIR, "storyboards", f"scene_{safe_scene}_{digest}.png")
@@ -2356,7 +2404,7 @@ def _scene_grid_attachment(shots: list, scene_id: str):
         try:
             compose_nine_grid(sources, target_path)
         except Exception:
-            raise HTTPException(status_code=502, detail="分镜场景合成失败，请稍后重试")
+            raise HTTPException(status_code=502, detail=_text_of("_scene_grid_attachment.detail.2"))
     filename = f"storyboard-{safe_scene}.png"
     disposition = f"attachment; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}"
     return FileResponse(
@@ -2376,40 +2424,40 @@ def download_storyboard_image(
     """Download the whole board, one scene's own board, or a single frame."""
     task = service.repo.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("download_storyboard_image.detail"))
     assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
 
     if target == "grid":
         grid_url = assets.get("4_grid")
         if not isinstance(grid_url, str) or not grid_url.strip():
-            raise HTTPException(status_code=404, detail="分镜合成图尚未生成")
+            raise HTTPException(status_code=404, detail=_text_of("download_storyboard_image.detail.2"))
         return _storyboard_attachment(grid_url.strip(), "storyboard-grid")
 
     if target == "scene":
         scene_id = scene.strip()
         if not scene_id:
-            raise HTTPException(status_code=404, detail="缺少分镜场景标识")
+            raise HTTPException(status_code=404, detail=_text_of("download_storyboard_image.detail.3"))
         shots = assets.get("4")
         if not isinstance(shots, list):
-            raise HTTPException(status_code=404, detail="分镜画格不存在")
+            raise HTTPException(status_code=404, detail=_text_of("download_storyboard_image.detail.4"))
         scene_shots = [
             entry for entry in shots
             if isinstance(entry, dict)
             and str(entry.get("scene_id") or entry.get("sceneId") or "").strip() == scene_id
         ]
         if not scene_shots:
-            raise HTTPException(status_code=404, detail="该分镜场景不存在")
+            raise HTTPException(status_code=404, detail=_text_of("download_storyboard_image.detail.5"))
         return _scene_grid_attachment(scene_shots, scene_id)
 
     if target != "shot":
-        raise HTTPException(status_code=404, detail="不支持的下载目标")
+        raise HTTPException(status_code=404, detail=_text_of("download_storyboard_image.detail.6"))
     shots = assets.get("4")
     if not isinstance(shots, list) or not 0 <= shot < len(shots):
-        raise HTTPException(status_code=404, detail="分镜画格不存在")
+        raise HTTPException(status_code=404, detail=_text_of("download_storyboard_image.detail.7"))
     entry = shots[shot] if isinstance(shots[shot], dict) else {}
     image_url = entry.get("image_url")
     if not isinstance(image_url, str) or not image_url.strip():
-        raise HTTPException(status_code=404, detail="该分镜画格尚未生成图片")
+        raise HTTPException(status_code=404, detail=_text_of("download_storyboard_image.detail.8"))
     scene_id = str(entry.get("scene_id") or entry.get("sceneId") or "scene").strip() or "scene"
     safe_scene = "".join(ch for ch in scene_id if ch.isalnum() or ch in "-_")[:40] or "scene"
     return _storyboard_attachment(image_url.strip(), f"storyboard-{safe_scene}-{shot + 1:02d}")
@@ -2435,7 +2483,7 @@ def update_script(
     except ScriptUpdateConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not dashboard:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("update_script.detail"))
     return dashboard
 
 
@@ -2444,7 +2492,7 @@ def export_character_dashboard(task_id: str):
     """Download the normalized Character Designer five-view contract as JSON."""
     dashboard = service.get_character_dashboard(task_id)
     if not dashboard:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("export_character_dashboard.detail"))
     return JSONResponse(
         content=dashboard.model_dump(mode="json", by_alias=True),
         headers={
@@ -2460,7 +2508,7 @@ def get_character_dashboard(task_id: str):
     """Return the Character Designer cards, fixed five-view slots and quality state."""
     dashboard = service.get_character_dashboard(task_id)
     if not dashboard:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("get_character_dashboard.detail"))
     return dashboard
 
 @router.post("/{task_id}/next", response_model=DramaTaskResponse)
@@ -2476,7 +2524,7 @@ async def run_next_stage(task_id: str, current_stage: int):
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"执行第 {current_stage} 阶段出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=_text_of("run_next_stage.detail").format(current_stage, str(e)))
 
 @router.post("/{task_id}/pause", response_model=DramaTaskResponse)
 def pause_running_task(task_id: str):
@@ -2485,7 +2533,7 @@ def pause_running_task(task_id: str):
     """
     task = service.pause_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("pause_running_task.detail"))
     return task
 
 @router.post("/{task_id}/resume", response_model=DramaTaskResponse)
@@ -2494,8 +2542,8 @@ async def resume_paused_task(task_id: str, background_tasks: BackgroundTasks):
     恢复被暂停的任务，并自动在后台线程中继续一键生成
     """
     if not service.repo.get_task(task_id):
-        raise HTTPException(status_code=404, detail="任务不存在")
-    return (await service.assistant_message(task_id, "一键成片"))["task"]
+        raise HTTPException(status_code=404, detail=_text_of("resume_paused_task.detail"))
+    return (await service.assistant_message(task_id, _text_of("resume_paused_task.text")))["task"]
 
 @router.post("/{task_id}/run_all", response_model=DramaTaskResponse)
 async def run_all_stages_one_click(task_id: str, background_tasks: BackgroundTasks):
@@ -2503,8 +2551,8 @@ async def run_all_stages_one_click(task_id: str, background_tasks: BackgroundTas
     一键成片模式：异步在后台连续串行运行 1 到 8 步骤
     """
     if not service.repo.get_task(task_id):
-        raise HTTPException(status_code=404, detail="任务不存在")
-    return (await service.assistant_message(task_id, "一键成片"))["task"]
+        raise HTTPException(status_code=404, detail=_text_of("run_all_stages_one_click.detail"))
+    return (await service.assistant_message(task_id, _text_of("run_all_stages_one_click.text")))["task"]
 
 @router.post("/{task_id}/episodes/plan")
 def plan_episodes_route(task_id: str):
@@ -2518,14 +2566,14 @@ def plan_episodes_route(task_id: str):
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"分集失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=_text_of("plan_episodes_route.detail").format(str(e)))
 
 @router.get("/{task_id}/episodes")
 def list_episodes_route(task_id: str):
     """获取多集制作清单与各集状态、成片地址。"""
     task = service.get_task_status(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("list_episodes_route.detail"))
     eps = task.get("episodes", []) or []
     return {
         "sourceHash": compile_writer_dashboard(task).source_hash,
@@ -2541,12 +2589,12 @@ def produce_episode_route(task_id: str, ep_index: int, background_tasks: Backgro
     """逐集制作：后台异步生成指定集 (分镜->尾帧链式逐镜生成->情绪配音->合成2.5-3min单集)。"""
     task = service.get_task_status(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("produce_episode_route.detail"))
     if not task.get("episodes"):
-        raise HTTPException(status_code=400, detail="请先调用 /episodes/plan 进行分集")
+        raise HTTPException(status_code=400, detail=_text_of("produce_episode_route.detail.2"))
     ep = next((e for e in task["episodes"] if e.get("index") == ep_index), None)
     if not ep:
-        raise HTTPException(status_code=404, detail=f"第{ep_index}集不存在")
+        raise HTTPException(status_code=404, detail=_text_of("produce_episode_route.detail.3").format(ep_index))
 
     async def _run():
         try:
@@ -2558,7 +2606,7 @@ def produce_episode_route(task_id: str, ep_index: int, background_tasks: Backgro
     background_tasks.add_task(_run)
     ep["status"] = "running"
     repo.save_task(task_id, task)
-    return {"status": "running", "episode": ep_index, "message": f"第{ep_index}集已开始后台制作，请轮询 /episodes 查看进度"}
+    return {"status": "running", "episode": ep_index, "message": _text_of("produce_episode_route.message").format(ep_index)}
 
 @router.post("/{task_id}/assistant")
 async def assistant_chat(task_id: str, payload: Dict[str, Any], current_user: dict = Depends(require_owned_drama_task)):
@@ -2569,7 +2617,7 @@ async def assistant_chat(task_id: str, payload: Dict[str, Any], current_user: di
     """
     message = str(payload.get("message") or "").strip()
     if not message:
-        raise HTTPException(status_code=400, detail="消息内容不能为空")
+        raise HTTPException(status_code=400, detail=_text_of("assistant_chat.detail"))
     raw_context = payload.get("context")
     context = {
         key: value for key, value in (raw_context.items() if isinstance(raw_context, dict) else ())
@@ -2590,7 +2638,7 @@ async def assistant_chat(task_id: str, payload: Dict[str, Any], current_user: di
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"对话处理失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=_text_of("assistant_chat.detail.2").format(str(e)))
 
 
 @router.post("/{task_id}/chat", response_model=DramaTaskResponse)
@@ -2600,14 +2648,14 @@ async def chat_with_agent(task_id: str, payload: Dict[str, str]):
     """
     message = payload.get("message", "").strip()
     if not message:
-        raise HTTPException(status_code=400, detail="消息内容不能为空")
+        raise HTTPException(status_code=400, detail=_text_of("chat_with_agent.detail"))
     try:
         updated_task = await service.chat_instruction(task_id, message)
         return updated_task
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"对话处理失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=_text_of("chat_with_agent.detail.2").format(str(e)))
 
 
 @router.post("/{task_id}/quality/video", response_model=DramaTaskResponse)
@@ -2638,17 +2686,17 @@ def update_task_config(task_id: str, req: DramaCreateRequest):
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"更新配置失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=_text_of("update_task_config.detail").format(str(e)))
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("update_task_config.detail.2"))
     return task
 
 @router.post("/import_skill")
 async def import_new_skill(
-    import_type: str = Form(..., description="导入类型: github, clawhub, npx, zip"),
-    url: Optional[str] = Form(None, description="GitHub或Clawhub链接"),
-    package_name: Optional[str] = Form(None, description="NPX包名"),
-    file: Optional[UploadFile] = File(None, description="上传的ZIP技能包文件"),
+    import_type: str = Form(..., description=_text_of("import_new_skill.description")),
+    url: Optional[str] = Form(None, description=_text_of("import_new_skill.description.2")),
+    package_name: Optional[str] = Form(None, description=_text_of("import_new_skill.description.3")),
+    file: Optional[UploadFile] = File(None, description=_text_of("import_new_skill.description.4")),
     _admin: dict = Depends(require_permission(SKILL_MANAGE)),
 ):
     """
@@ -2658,7 +2706,7 @@ async def import_new_skill(
         result = await service.import_skill_logic(import_type, url, package_name, file)
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"导入Skill失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=_text_of("import_new_skill.detail").format(str(e)))
 
 @router.get("/skills", response_model=List[Dict[str, Any]])
 def get_imported_skills():
@@ -2676,7 +2724,7 @@ def delete_imported_skill(skill_name: str, _admin: dict = Depends(require_permis
         result = service.delete_skill_logic(skill_name)
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"删除Skill失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=_text_of("delete_imported_skill.detail").format(str(e)))
 
 @router.delete("/{task_id}")
 def delete_drama_task(task_id: str):
@@ -2686,12 +2734,12 @@ def delete_drama_task(task_id: str):
     try:
         success = service.delete_task(task_id)
         if not success:
-            raise HTTPException(status_code=404, detail="任务不存在")
-        return {"status": "success", "message": f"任务 {task_id} 已成功删除"}
+            raise HTTPException(status_code=404, detail=_text_of("delete_drama_task.detail"))
+        return {"status": "success", "message": _text_of("delete_drama_task.message").format(task_id)}
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"删除任务失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=_text_of("delete_drama_task.detail.2").format(str(e)))
 
 @router.post("/seedance2_video")
 async def seedance2_video_route(payload: Dict[str, Any]):
@@ -2711,9 +2759,9 @@ async def seedance2_video_route(payload: Dict[str, Any]):
     optimize = payload.get("optimize", True)
     if not (first_frame or ref_images or ref_videos):
         # 禁止文生视频：只有提示词、没有首帧或参考素材的请求不提交。
-        raise HTTPException(status_code=400, detail="禁止文生视频：至少需要首帧、参考图或参考视频之一")
+        raise HTTPException(status_code=400, detail=_text_of("seedance2_video_route.detail"))
     if ref_audios and not (ref_images or ref_videos or first_frame):
-        raise HTTPException(status_code=400, detail="不可单独输入音频，应至少包含 1 个参考视频或图片")
+        raise HTTPException(status_code=400, detail=_text_of("seedance2_video_route.detail.2"))
     try:
         result = await service.generate_seedance2_video(
             prompt, first_frame=first_frame, last_frame=last_frame,
@@ -2721,10 +2769,10 @@ async def seedance2_video_route(payload: Dict[str, Any]):
         )
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Seedance2.0 生视频失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=_text_of("seedance2_video_route.detail.3").format(str(e)))
 
 @router.post("/parse_script")
-async def parse_script_file_route(file: UploadFile = File(..., description="上传的剧本文件")):
+async def parse_script_file_route(file: UploadFile = File(..., description=_text_of("parse_script_file_route.description"))):
     """
     手动上传剧本文件解析接口，支持 .txt, .md, .docx, .pdf, .fdx, .fountain, .spmd。
     """
@@ -2733,7 +2781,7 @@ async def parse_script_file_route(file: UploadFile = File(..., description="上�
         maximum = SourceIngestor.MAX_BYTES
         file_bytes = await file.read(maximum + 1)
         if len(file_bytes) > maximum:
-            raise ValueError(f"剧本文件不能超过 {maximum // (1024 * 1024)}MB")
+            raise ValueError(_text_of("parse_script_file_route.text").format(maximum // (1024 * 1024)))
         safe_name = file.filename or "script.txt"
         content = service.parse_script_file(safe_name, file_bytes)
         return {
@@ -2744,4 +2792,4 @@ async def parse_script_file_route(file: UploadFile = File(..., description="上�
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"解析剧本文件失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=_text_of("parse_script_file_route.detail").format(str(e)))

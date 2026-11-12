@@ -114,6 +114,8 @@ class ShotVisualRecord(BaseModel):
     assets: list[ShotAsset] = Field(default_factory=list)
     # 样片：按什么分辨率出的(480p；空表示全分辨率)，是否已本地放大，是否已要求重出高清。
     draft_resolution: str = ""
+    # 这一镜一共提交过几次视频(各轮累计)，「每镜最多尝试」按它算。
+    attempts: int = 0
     draft_upscaled: bool = False
     hd_retake: bool = False
     # 局部修：要求从第几秒往后重做(重跑第 5 阶段时执行)，以及区域修补的进度与结果。
@@ -139,6 +141,14 @@ class ProjectVideoModelUpdate(BaseModel):
 
 class ShotRegenerateRequest(BaseModel):
     reason: str = Field("", max_length=300)
+
+
+class SpendLimitsUpdate(BaseModel):
+    """本轮视频预算上限(元)和每镜最多尝试次数；留空(null / 0)就是不限。"""
+    model_config = ConfigDict(extra="forbid")
+
+    budget_cap: float | None = Field(None, ge=0, le=1_000_000)
+    max_attempts: int | None = Field(None, ge=0, le=50)
 
 
 class DraftModeUpdate(BaseModel):
@@ -208,3 +218,6 @@ class ShotVisualWorkspaceResponse(BaseModel):
     # 样片模式是否开着；当前视频模型能不能做区域修补(要能收参考视频)。
     draft_mode: bool = False
     repair_supported: bool = False
+    # 本轮视频预算上限(元)、每镜最多尝试次数；None 是不限。
+    video_budget_cap: float | None = None
+    video_max_attempts: int | None = None

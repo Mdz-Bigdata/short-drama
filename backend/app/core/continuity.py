@@ -5,6 +5,19 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from app.core import prompt_data
+
+
+_WORDING_FILE = "continuity"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/continuity.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 class ContinuityState(BaseModel):
@@ -56,11 +69,11 @@ def plan_transition(previous: ContinuityState, current: ContinuityState) -> Tran
     )
     if axis_flip:
         score -= 0.55
-        reasons.append("检测到180度轴线翻转，需要中性机位桥接后才能合成。")
+        reasons.append(_text_of("plan_transition.text"))
 
     if previous.scene != current.scene:
         score -= 0.12
-        reasons.append("场景变化，采用声画错位引导新空间。")
+        reasons.append(_text_of("plan_transition.text.2"))
         return TransitionPlan(
             accepted=not axis_flip,
             score=max(score, 0),
@@ -72,10 +85,10 @@ def plan_transition(previous: ContinuityState, current: ContinuityState) -> Tran
 
     if previous.lighting != current.lighting:
         score -= 0.12
-        reasons.append("相邻镜头光向或色温不一致。")
+        reasons.append(_text_of("plan_transition.text.3"))
     if previous.audio_bed != current.audio_bed:
         score -= 0.08
-        reasons.append("环境声底发生变化，需音频交叉淡化。")
+        reasons.append(_text_of("plan_transition.text.4"))
 
     if axis_flip:
         return TransitionPlan(
@@ -88,7 +101,7 @@ def plan_transition(previous: ContinuityState, current: ContinuityState) -> Tran
         )
 
     if _is_handoff(previous, current):
-        reasons.append("关键道具发生连续交接，使用动作匹配剪辑。")
+        reasons.append(_text_of("plan_transition.text.5"))
         return TransitionPlan(
             accepted=score >= 0.72,
             score=max(score, 0),
@@ -105,5 +118,5 @@ def plan_transition(previous: ContinuityState, current: ContinuityState) -> Tran
         video_transition="match_cut" if score >= 0.88 else "crossfade",
         audio_transition="l_cut" if previous.audio_bed == current.audio_bed else "crossfade",
         duration_seconds=0.12 if score >= 0.88 else 0.3,
-        reasons=reasons or ["六项连续性锚点可接受。"],
+        reasons=reasons or list(_words_of("plan_transition.reasons")),
     )

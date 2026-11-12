@@ -14,6 +14,19 @@ from dataclasses import dataclass
 from typing import Literal
 
 from app import settings
+from app.core import prompt_data
+
+
+_WORDING_FILE = "episode_shape"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/episode_shape.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 # 一集的最小成形标准：至少两个分镜、合计不少于一分钟；超过六分钟只提醒，不拦截。
@@ -45,20 +58,19 @@ class EpisodeShape:
         if scene_count < self.min_scenes:
             found.append(EpisodeShapeIssue(
                 "episode_too_few_scenes",
-                f"本集只有 {scene_count} 个分镜，至少需要 {self.min_scenes} 个：把这一集的情节拆成多个分镜",
+                _text_of("issues.text").format(scene_count, self.min_scenes),
                 "error",
             ))
         if total_seconds < self.min_seconds:
             found.append(EpisodeShapeIssue(
                 "episode_too_short",
-                f"本集各分镜时长合计 {total_seconds} 秒，不能少于 {self.min_seconds} 秒："
-                "补足情节与分镜，或把现有分镜取更长的时长档位",
+                _text_of("issues.text.2").format(total_seconds, self.min_seconds),
                 "error",
             ))
         elif total_seconds > self.max_seconds:
             found.append(EpisodeShapeIssue(
                 "episode_over_recommended",
-                f"本集各分镜时长合计 {total_seconds} 秒，超过建议上限 {self.max_seconds} 秒",
+                _text_of("issues.text.3").format(total_seconds, self.max_seconds),
                 "warning",
             ))
         return found
@@ -66,8 +78,7 @@ class EpisodeShape:
     def rule(self) -> str:
         """The sentence every planning prompt carries, so the model knows the frame before it is checked."""
         return (
-            f"单集成形的硬性要求：本集至少 {self.min_scenes} 个分镜，各分镜时长合计不少于 {self.min_seconds} 秒"
-            f"（建议控制在 {self.min_seconds}–{self.max_seconds} 秒之间）；不满足会被退回重写"
+            _text_of("rule.text").format(self.min_scenes, self.min_seconds, self.min_seconds, self.max_seconds)
         )
 
 

@@ -46,6 +46,19 @@ from app.core.spatial_stage.prompting import (
 from app.core.storyboard_scene_context import compile_scene_context
 from app.core.writer_dashboard import parse_duration_seconds
 from app.service.director_desk_service import mark_captures_stale
+from app.core import prompt_data
+
+
+_WORDING_FILE = "service_spatial_stage_service"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/service_spatial_stage_service.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.service.spatial_stage")
 
@@ -185,7 +198,7 @@ def shot_specs(shots: Sequence[Mapping[str, Any]], cast: Sequence[str]) -> list[
             shot_id=int(shot.get("shot_id") or index),
             subjects=[str(name).strip() for name in names if str(name).strip() not in EMPTY_CAST],
             speaker=speaker_of(str(shot.get("dialogue") or ""), cast),
-            size=str(shot.get("size") or "中景"),
+            size=str(shot.get("size") or _text_of("shot_specs.size")),
             angle=str(shot.get("angle") or ""),
             motion=str(shot.get("motion") or ""),
             desc=str(shot.get("desc") or "")[:1000],
@@ -319,7 +332,7 @@ def director_context(plan: StagePlan) -> dict[str, Any]:
         "landmarks": [
             {
                 "name": item.name, "relative_position": landmark_relative_position(plan, item),
-                "form_and_count": "1处，位置固定" if is_stand_in(item) else f"1处，{landmark_size(item)}，位置固定",
+                "form_and_count": _text_of("director_context.landmarks.form_and_count") if is_stand_in(item) else _text_of("director_context.landmarks.form_and_count.2").format(landmark_size(item)),
             }
             for item in plan.landmarks
         ][:50],
@@ -362,9 +375,9 @@ def edit_plan(
 ) -> StagePlan:
     plan = ensure_plan(task, scene_id)
     if plan is None:
-        raise LookupError(f"场景 {scene_id} 不在剧本大纲里")
+        raise LookupError(_text_of("edit_plan.text").format(scene_id))
     if plan.revision != int(base_revision):
-        raise StageConflict("空间方案已在其他页面更新，请刷新后重试")
+        raise StageConflict(_text_of("edit_plan.text.2"))
     edited = apply_operations(plan, operations, solve=solve)
     save_plan(task, edited)
     mark_board_stale(task, scene_id)
@@ -375,7 +388,7 @@ def edit_plan(
 def rebuild_plan(task: dict[str, Any], scene_id: str) -> StagePlan:
     scene = scene_record(task, scene_id)
     if scene is None:
-        raise LookupError(f"场景 {scene_id} 不在剧本大纲里")
+        raise LookupError(_text_of("rebuild_plan.text").format(scene_id))
     prior = load_plan(task, scene_id)
     plan = plan_scene(task, scene, scene_shots(task, scene_id), keep_edits=False)
     if prior is not None:

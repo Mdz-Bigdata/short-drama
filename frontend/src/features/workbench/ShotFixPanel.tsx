@@ -8,6 +8,8 @@ import './ShotFixPanel.css';
 /** 样片与局部修的字段（后端 ShotVisualRecord 上新加的几项）。 */
 export interface ShotFixFields {
   draft_resolution?: string;
+  /** 这一镜一共提交过几次视频（各轮累计）。 */
+  attempts?: number;
   draft_upscaled?: boolean;
   hd_retake?: boolean;
   retake_from?: number | null;
@@ -52,6 +54,63 @@ export function DraftModeToggle<W>({ taskId, enabled, locked, onWorkspace, onErr
       <input type="checkbox" checked={enabled} disabled={locked || busy} onChange={event => { void flip(event.target.checked); }} />
       {t('样片模式（480P）')}
     </label>
+  );
+}
+
+interface LimitsProps<W> {
+  taskId: string;
+  budgetCap: number | null;
+  maxAttempts: number | null;
+  locked: boolean;
+  onWorkspace: (workspace: W) => void;
+  onError: (message: string) => void;
+}
+
+/** 本轮视频预算上限、每镜最多尝试：写下来，第 5 阶段每提交一次前先过闸，到了就停并说明停在哪。留空就是不限。 */
+export function SpendLimits<W>({ taskId, budgetCap, maxAttempts, locked, onWorkspace, onError }: LimitsProps<W>) {
+  const [budget, setBudget] = useState(budgetCap ? String(budgetCap) : '');
+  const [attempts, setAttempts] = useState(maxAttempts ? String(maxAttempts) : '');
+  const [busy, setBusy] = useState(false);
+  // 存下来的上限变了(保存成功、换了项目)：输入框跟着回到存下的值。渲染时比对，不在 effect 里 setState。
+  const saved = `${budgetCap ?? ''}|${maxAttempts ?? ''}`;
+  const [seen, setSeen] = useState(saved);
+  if (seen !== saved) {
+    setSeen(saved);
+    setBudget(budgetCap ? String(budgetCap) : '');
+    setAttempts(maxAttempts ? String(maxAttempts) : '');
+  }
+  const changed = budget !== (budgetCap ? String(budgetCap) : '') || attempts !== (maxAttempts ? String(maxAttempts) : '');
+  const save = async () => {
+    setBusy(true);
+    try {
+      onWorkspace(await apiRequest<W>(`/api/drama/${encodeURIComponent(taskId)}/shots/spend-limits`, {
+        method: 'PUT',
+        body: JSON.stringify({ budget_cap: budget.trim() ? Number(budget) : null, max_attempts: attempts.trim() ? Number(attempts) : null }),
+      }));
+    } catch (err) {
+      onError(err instanceof Error ? err.message : t('上限保存失败'));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="shot-fix__limits" title={t('第 5 阶段每提交一次视频前先算：本轮已花的估价加这一次超过预算就停；这一镜试到上限也停。留空就是不限。')}>
+      <label>
+        {t('本轮预算')}
+        <input type="number" min={0} step={1} inputMode="decimal" value={budget} placeholder={t('不限')} disabled={locked || busy}
+          aria-label={t('本轮视频预算上限（元）')} onChange={event => setBudget(event.target.value)} />
+        {t('元')}
+      </label>
+      <label>
+        {t('每镜最多')}
+        <input type="number" min={0} max={50} step={1} inputMode="numeric" value={attempts} placeholder={t('不限')} disabled={locked || busy}
+          aria-label={t('每镜最多尝试次数')} onChange={event => setAttempts(event.target.value)} />
+        {t('次')}
+      </label>
+      {changed && (
+        <button type="button" className="secondary-action" disabled={locked || busy} onClick={() => { void save(); }}>{t('保存上限')}</button>
+      )}
+    </span>
   );
 }
 
@@ -112,6 +171,7 @@ export function ShotFixPanel<W extends { shots?: FixShot[] }>({ taskId, shot, re
 
   return (
     <section className="shot-fix" aria-label={t('样片与局部修')}>
+      {Boolean(shot.attempts) && <p className="shot-fix__attempts">{t('这一镜已提交视频 {0} 次', [String(shot.attempts)])}</p>}
       {isDraft && (
         <div className="shot-fix__row">
           <span className="shot-fix__badge">{t('样片')} {shot.draft_resolution?.toUpperCase()}{shot.draft_upscaled ? ` · ${t('已本地放大')}` : ''}</span>

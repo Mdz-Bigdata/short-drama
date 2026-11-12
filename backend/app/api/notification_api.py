@@ -7,8 +7,21 @@ from fastapi import APIRouter, Depends
 from app.api.auth_api import get_current_user
 from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore
+from app.core import prompt_data
 
-router = APIRouter(prefix="/api/notifications", tags=["站内通知"])
+
+_WORDING_FILE = "api_notification_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_notification_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+router = APIRouter(prefix="/api/notifications", tags=list(_words_of("module.tags")))
 
 
 @router.get("")

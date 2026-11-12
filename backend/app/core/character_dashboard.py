@@ -35,6 +35,19 @@ from app.schema.character_dashboard import (
     CharacterViewContract,
 )
 from app.schema.production import resolve_identity_views
+from app.core import prompt_data
+
+
+_WORDING_FILE = "character_dashboard"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/character_dashboard.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 # 文本 → 存量视图键。归一化规则见 _canonical_view_key：小写、去掉 -/_/空格。
@@ -45,8 +58,8 @@ _VIEW_ALIASES = {
     "front": "front",
     "frontview": "front",
     "frontfullbody": "front",
-    "正面": "front",
-    "正面全身": "front",
+    _text_of("module.view_aliases"): "front",
+    _text_of("module.view_aliases.2"): "front",
     "0": "front",
     "0°": "front",
     # —— 全身侧面 ——
@@ -56,10 +69,10 @@ _VIEW_ALIASES = {
     "standardprofileview": "profile",
     "side": "profile",
     "sideview": "profile",
-    "侧面": "profile",
-    "侧面全身": "profile",
-    "标准侧面": "profile",
-    "标准侧面视图": "profile",
+    _text_of("module.view_aliases.3"): "profile",
+    _text_of("module.view_aliases.4"): "profile",
+    _text_of("module.view_aliases.5"): "profile",
+    _text_of("module.view_aliases.6"): "profile",
     "90": "profile",
     "90°": "profile",
     # —— 全身背面 ——
@@ -68,36 +81,36 @@ _VIEW_ALIASES = {
     "backfullbody": "back",
     "rear": "back",
     "rearview": "back",
-    "背面": "back",
-    "背面全身": "back",
+    _text_of("module.view_aliases.7"): "back",
+    _text_of("module.view_aliases.8"): "back",
     "180": "back",
     "180°": "back",
     # —— 正脸特写 ——
     "facefront": "face_front",
     "facefrontview": "face_front",
     "frontface": "face_front",
-    "正脸": "face_front",
-    "正脸特写": "face_front",
+    _text_of("module.view_aliases.9"): "face_front",
+    _text_of("module.view_aliases.10"): "face_front",
     # —— 3/4 侧脸 ——
     "facethreequarter": "face_three_quarter",
     "facethreequarterview": "face_three_quarter",
     "face3quarter": "face_three_quarter",
-    "3-4侧脸": "face_three_quarter",
-    "34侧脸": "face_three_quarter",
-    "四分之三侧脸": "face_three_quarter",
+    _text_of("module.view_aliases.11"): "face_three_quarter",
+    _text_of("module.view_aliases.12"): "face_three_quarter",
+    _text_of("module.view_aliases.13"): "face_three_quarter",
     # —— 旧五视图专有角度：保留原键，换算交给 resolve_identity_views ——
     "frontthreequarter": "front_three_quarter",
     "frontthreequarterview": "front_three_quarter",
     "front3quarter": "front_three_quarter",
-    "正面四分之三": "front_three_quarter",
-    "正面四分之三视图": "front_three_quarter",
+    _text_of("module.view_aliases.14"): "front_three_quarter",
+    _text_of("module.view_aliases.15"): "front_three_quarter",
     "45": "front_three_quarter",
     "45°": "front_three_quarter",
     "rearthreequarter": "rear_three_quarter",
     "rearthreequarterview": "rear_three_quarter",
     "backthreequarter": "rear_three_quarter",
-    "背面四分之三": "rear_three_quarter",
-    "背面四分之三视图": "rear_three_quarter",
+    _text_of("module.view_aliases.16"): "rear_three_quarter",
+    _text_of("module.view_aliases.17"): "rear_three_quarter",
     "135": "rear_three_quarter",
     "135°": "rear_three_quarter",
 }
@@ -110,17 +123,12 @@ _CELL_GROUPS = {
 
 
 _ROLE_HEADER = re.compile(
-    r"(?m)^[ \t]{0,3}(?:#{1,6}[ \t]+|\*\*)"
-    r"(?:\d{1,3}[.、][ \t]*)?"
-    r"(?:核心角色|主角|男主|女主|对手角色|反派对手|大反派|反派|男配角|女配角|男配|女配|配角|角色)"
-    r"[ \t]*(?:[（(][^：:）)\n]{1,12}[）)])?[ \t]*"
-    r"[:：][ \t]*(?P<name>[\u3400-\u9fff][\u3400-\u9fff·]{1,7})"
-    r"(?:\*\*)?[ \t]*(?:$|[（(])"
+    _text_of("module.role_header")
 )
 _NON_CHARACTER_NAMES = {
-    "角色方案", "角色设计", "角色设定", "角色清单", "人物关系", "项目基准",
-    "风险清单", "五视图", "声音设定", "色彩设定", "身份设定", "角色档案",
-    "总表", "角色总表", "角色UID总表", "主角", "反派", "配角",
+    _text_of("module.non_character_names"), _text_of("module.non_character_names.2"), _text_of("module.non_character_names.3"), _text_of("module.non_character_names.4"), _text_of("module.non_character_names.5"), _text_of("module.non_character_names.6"),
+    _text_of("module.non_character_names.7"), _text_of("module.non_character_names.8"), _text_of("module.non_character_names.9"), _text_of("module.non_character_names.10"), _text_of("module.non_character_names.11"), _text_of("module.non_character_names.12"),
+    _text_of("module.non_character_names.13"), _text_of("module.non_character_names.14"), _text_of("module.non_character_names.15"), _text_of("module.non_character_names.16"), _text_of("module.non_character_names.17"), _text_of("module.non_character_names.18"),
 }
 
 
@@ -334,7 +342,7 @@ def _normalize_states(character_name: str, value: Any) -> list[CharacterDesignSt
     for item in value[:50]:
         if not isinstance(item, dict):
             continue
-        title = _text(item.get("title"), 200) or "默认造型状态"
+        title = _text(item.get("title"), 200) or _text_of("_normalize_states.title")
         state_id = _stable_state_id(character_name, item.get("state_id", item.get("stateId")), title)
         if state_id in seen:
             continue
@@ -576,7 +584,7 @@ def compile_character_dashboard(task: dict[str, Any]) -> CharacterDashboardRespo
         characters.append(CharacterDashboardCharacter(
             character_id=_stable_character_id(name),
             name=name,
-            role=_text(character.get("role"), 120) or "剧情角色",
+            role=_text(character.get("role"), 120) or _text_of("compile_character_dashboard.role"),
             description=description,
             identity=_text(dna_character.get("identity"), 1000, multiline=True),
             voice_id=_text(dna_character.get("voice_id", dna_character.get("voiceId")), 160),
@@ -627,7 +635,7 @@ def compile_character_dashboard(task: dict[str, Any]) -> CharacterDashboardRespo
     return CharacterDashboardResponse(
         task_id=_text(task.get("task_id"), 120) or "unknown-task",
         source_hash=_source_hash(assets),
-        title=_text(config.get("title_suggestion"), 500) or "未命名短剧",
+        title=_text(config.get("title_suggestion"), 500) or _text_of("compile_character_dashboard.title"),
         state=dashboard_state,
         view_contract=_view_contract(),
         stats=stats,

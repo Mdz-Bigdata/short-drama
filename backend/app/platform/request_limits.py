@@ -14,6 +14,19 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app import settings
 from app.platform.uploads import MAX_IMAGE_UPLOAD_BYTES, MAX_MODEL_UPLOAD_BYTES, MEBIBYTE
 from app.service.auth_service import verify_session_token
+from app.core import prompt_data
+
+
+_WORDING_FILE = "platform_request_limits"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/platform_request_limits.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 MODEL_UPLOAD_REQUEST_MAX_BYTES = settings.env_int(
@@ -129,16 +142,16 @@ class ScriptUpdateGuardMiddleware:
                     if not attempts and self._active_by_key.get(key, 0) == 0:
                         self._attempts_by_key.pop(key, None)
             if self._active_total >= self.global_concurrency:
-                return "剧本编辑服务繁忙，请稍后重试"
+                return _text_of("_reserve.text")
             for key in keys:
                 if self._active_by_key.get(key, 0) >= self.client_concurrency:
-                    return "同一账号或网络的并发剧本编辑过多"
+                    return _text_of("_reserve.text.2")
                 attempts = self._attempts_by_key.setdefault(key, deque())
                 while attempts and attempts[0] <= cutoff:
                     attempts.popleft()
                 limit = self.ip_rate_limit if key.startswith("ip:") else self.session_rate_limit
                 if len(attempts) >= limit:
-                    return "剧本编辑请求过于频繁，请稍后重试"
+                    return _text_of("_reserve.text.3")
             self._active_total += 1
             for key in keys:
                 self._active_by_key[key] = self._active_by_key.get(key, 0) + 1
@@ -163,17 +176,17 @@ class ScriptUpdateGuardMiddleware:
         headers = self._headers(scope)
         keys = self._client_keys(scope, headers)
         if keys is None:
-            await self._reject(scope, receive, send, 401, "未登录或会话已过期")
+            await self._reject(scope, receive, send, 401, _text_of("__call__.text"))
             return
         content_length = headers.get("content-length")
         if content_length:
             try:
                 declared_length = int(content_length)
             except ValueError:
-                await self._reject(scope, receive, send, 400, "Content-Length 无效")
+                await self._reject(scope, receive, send, 400, _text_of("__call__.text.2"))
                 return
             if declared_length < 0 or declared_length > self.max_bytes:
-                await self._reject(scope, receive, send, 413, "剧本请求体超过大小限制")
+                await self._reject(scope, receive, send, 413, _text_of("__call__.text.3"))
                 return
 
         reservation_error = await self._reserve(keys)
@@ -220,10 +233,10 @@ class ScriptUpdateGuardMiddleware:
             await self.app(scope, limited_receive, tracked_send)
         except _RequestBodyTooLarge:
             if not response_started:
-                await self._reject(scope, receive, send, 413, "剧本请求体超过大小限制")
+                await self._reject(scope, receive, send, 413, _text_of("__call__.text.4"))
         except _RequestBodyTimedOut:
             if not response_started:
-                await self._reject(scope, receive, send, 408, "剧本请求体等待超时")
+                await self._reject(scope, receive, send, 408, _text_of("__call__.text.5"))
         finally:
             await self._release(keys)
 
@@ -317,10 +330,10 @@ class ElementUploadGuardMiddleware:
                     if not attempts and self._active_by_key.get(key, 0) == 0:
                         self._attempts_by_key.pop(key, None)
             if self._active_total >= self.global_concurrency:
-                return "3D 资产上传服务繁忙，请稍后重试"
+                return _text_of("_reserve.text.4")
             for key in keys:
                 if self._active_by_key.get(key, 0) >= self.client_concurrency:
-                    return "同一账号或网络的并发上传过多"
+                    return _text_of("_reserve.text.5")
                 attempts = self._attempts_by_key.setdefault(key, deque())
                 while attempts and attempts[0][0] <= cutoff:
                     attempts.popleft()
@@ -328,9 +341,9 @@ class ElementUploadGuardMiddleware:
                 request_limit = self.ip_rate_limit if is_ip else self.session_rate_limit
                 byte_limit = self.ip_byte_limit if is_ip else self.session_byte_limit
                 if len(attempts) >= request_limit:
-                    return "上传请求过于频繁，请稍后重试"
+                    return _text_of("_reserve.text.6")
                 if sum(size for _, size in attempts) + reserved_bytes > byte_limit:
-                    return "上传流量已达到当前时间窗口上限"
+                    return _text_of("_reserve.text.7")
             self._active_total += 1
             for key in keys:
                 self._active_by_key[key] = self._active_by_key.get(key, 0) + 1
@@ -364,15 +377,15 @@ class ElementUploadGuardMiddleware:
             try:
                 declared_length = int(content_length)
             except ValueError:
-                await self._reject(scope, receive, send, 400, "Content-Length 无效")
+                await self._reject(scope, receive, send, 400, _text_of("__call__.text.6"))
                 return
             if declared_length < 0 or declared_length > body_limit:
-                await self._reject(scope, receive, send, 413, "上传请求体超过大小限制")
+                await self._reject(scope, receive, send, 413, _text_of("__call__.text.7"))
                 return
 
         keys = self._client_keys(scope, headers)
         if keys is None:
-            await self._reject(scope, receive, send, 401, "未登录或会话已过期")
+            await self._reject(scope, receive, send, 401, _text_of("__call__.text.8"))
             return
         reserved_bytes = declared_length if content_length else body_limit
         reservation_error = await self._reserve(keys, reserved_bytes)
@@ -387,11 +400,11 @@ class ElementUploadGuardMiddleware:
             try:
                 message = await asyncio.wait_for(receive(), timeout=self.idle_timeout_seconds)
             except TimeoutError as exc:
-                raise HTTPException(status_code=408, detail="上传数据等待超时") from exc
+                raise HTTPException(status_code=408, detail=_text_of("limited_receive.detail")) from exc
             if message.get("type") == "http.request":
                 received += len(message.get("body", b""))
                 if received > body_limit:
-                    raise HTTPException(status_code=413, detail="上传请求体超过大小限制")
+                    raise HTTPException(status_code=413, detail=_text_of("limited_receive.detail.2"))
             return message
 
         response_started = False
@@ -409,6 +422,6 @@ class ElementUploadGuardMiddleware:
             )
         except TimeoutError:
             if not response_started:
-                await self._reject(scope, receive, send, 408, "上传处理超过总时限")
+                await self._reject(scope, receive, send, 408, _text_of("__call__.text.9"))
         finally:
             await self._release(keys)

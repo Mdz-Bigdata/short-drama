@@ -15,6 +15,19 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from app.core.element_scope import normalized_asset_name
+from app.core import prompt_data
+
+
+_WORDING_FILE = "asset_mentions"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/asset_mentions.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 #: ``@[名字]`` 里名字最多几个字；更长的名字放不进引用。
 MENTION_NAME_LIMIT = 40
@@ -51,7 +64,7 @@ def resolve_mentions(text: str, reference_numbers: Mapping[str, int]) -> str:
     def replace(match: re.Match[str]) -> str:
         name = match.group(1).strip()
         number = reference_numbers.get(name)
-        return f"{name}（参考图{number}）" if number else name
+        return _text_of("replace.text").format(name, number) if number else name
 
     return MENTION.sub(replace, text or "")
 

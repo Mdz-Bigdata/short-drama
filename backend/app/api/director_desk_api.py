@@ -12,8 +12,21 @@ from app.core.spatial_stage.models import StagePose
 from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore
 from app.schema.director_desk import DeskUserPosesResponse, DeskUserSavePoseRequest
+from app.core import prompt_data
 
-router = APIRouter(prefix="/api/director-desk", tags=["3D 导演台"])
+
+_WORDING_FILE = "api_director_desk_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_director_desk_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+router = APIRouter(prefix="/api/director-desk", tags=list(_words_of("module.tags")))
 
 
 def _serialize(item) -> dict:
@@ -50,7 +63,7 @@ async def save_user_pose(
         pose = StagePose.model_validate(req.pose)
     except ValidationError as error:
         raise HTTPException(
-            status_code=422, detail="姿态数据不合法：关节角度须在 ±180° 内、最多 120 个关节，clip_phase 在 0 到 1 之间",
+            status_code=422, detail=_text_of("save_user_pose.detail"),
         ) from error
     try:
         await store.save_desk_pose(user["user_id"], req.name, pose.model_dump(mode="json"))
@@ -64,5 +77,5 @@ async def delete_user_pose(
     pose_id: str, user: dict = Depends(get_current_user), store: PlatformStore = Depends(get_platform_store),
 ):
     if not await store.delete_desk_pose(user["user_id"], pose_id):
-        raise HTTPException(status_code=404, detail="这个姿势不存在，可能已被删除")
+        raise HTTPException(status_code=404, detail=_text_of("delete_user_pose.detail"))
     return await _library(store, user["user_id"])

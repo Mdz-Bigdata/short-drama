@@ -24,6 +24,19 @@ from app.core.blender_previz import build_spec, live, operations_from_snapshot, 
 from app.core.spatial_stage.models import StagePlan
 from app.service import director_desk_service as director_desk
 from app.service import spatial_stage_service as spatial_stage
+from app.core import prompt_data
+
+
+_WORDING_FILE = "service_blender_previz_service"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/service_blender_previz_service.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.service.blender_previz")
 
@@ -58,7 +71,7 @@ def _peek(task: Mapping[str, Any], scene_id: str) -> Mapping[str, Any]:
 def _plan(task: Mapping[str, Any], scene_id: str) -> StagePlan:
     plan = spatial_stage.load_plan(task, scene_id)
     if plan is None:
-        raise PrevizError(f"场景 {scene_id} 还没有空间方案；先完成第 4 阶段分镜或在导演台重建方案")
+        raise PrevizError(_text_of("_plan.text").format(scene_id))
     return plan
 
 
@@ -123,7 +136,7 @@ def render_scene(service, task_id: str, scene_id: str, *, shot_ids: list[int] | 
     """渲染一场的白模预演并记下来；同一份规格已经渲过就直接复用。"""
     task = service.repo.get_task(task_id)
     if not task:
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("render_scene.text"))
     plan, spec, segments = _spec(task, scene_id, shot_ids=shot_ids, long_edge=long_edge)
     digest = hashlib.sha256(spec.model_dump_json().encode("utf-8")).hexdigest()[:12]
     out_dir = Path(media_compositor.MEDIA_DIR) / MEDIA_SUBDIR / _safe(task_id) / _safe(scene_id) / f"r{plan.revision}-{digest}"
@@ -167,19 +180,19 @@ def set_options(service, task_id: str, scene_id: str, *, handheld_shots: list[in
     clean_reserved: list[dict[str, Any]] | None = None
     if reserved is not None:
         if len(reserved) > MAX_RESERVED:
-            raise PrevizError(f"空段最多 {MAX_RESERVED} 个")
+            raise PrevizError(_text_of("set_options.text").format(MAX_RESERVED))
         clean_reserved = []
         for slot in reserved:
             try:
                 start, end = float(slot.get("from_s", 0)), float(slot.get("to_s", 0))
                 shot_id = int(slot["shot_id"])
             except (KeyError, TypeError, ValueError) as exc:
-                raise PrevizError("空段需要 shot_id、from_s、to_s") from exc
+                raise PrevizError(_text_of("set_options.text.2")) from exc
             if not 0 <= start < end <= 30:
-                raise PrevizError("空段的 from_s / to_s 须满足 0 ≤ from_s < to_s ≤ 30")
-            clean_reserved.append({"shot_id": shot_id, "from_s": start, "to_s": end, "label": str(slot.get("label") or "专项效果")[:40]})
+                raise PrevizError(_text_of("set_options.text.3"))
+            clean_reserved.append({"shot_id": shot_id, "from_s": start, "to_s": end, "label": str(slot.get("label") or _text_of("set_options.label"))[:40]})
     if handheld_shots is not None and len(handheld_shots) > MAX_HANDHELD_SHOTS:
-        raise PrevizError("手持镜头太多")
+        raise PrevizError(_text_of("set_options.text.4"))
 
     def change(task: dict[str, Any]) -> dict[str, Any]:
         _plan(task, scene_id)
@@ -192,7 +205,7 @@ def set_options(service, task_id: str, scene_id: str, *, handheld_shots: list[in
 
     task = service.repo.mutate_task(task_id, change)
     if not task:
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("set_options.text.5"))
     return get_previz(task, scene_id)
 
 
@@ -203,13 +216,13 @@ def attach_to_shots(service, task_id: str, scene_id: str, *, shot_ids: list[int]
     """把最近一次预演按镜头切片，登记成导演台截取并应用到分镜：第 5 阶段用它当运动参考视频。"""
     task = service.repo.get_task(task_id)
     if not task:
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("attach_to_shots.text"))
     plan = _plan(task, scene_id)
     latest = _peek(task, scene_id).get("latest")
     if not latest:
-        raise PrevizError("这一场还没有渲染过 Blender 预演；先渲染")
+        raise PrevizError(_text_of("attach_to_shots.text.2"))
     if int(latest.get("plan_revision") or -1) != plan.revision:
-        raise PrevizError("站位或机位在渲染之后改过了；先重新渲染预演，再交给分镜")
+        raise PrevizError(_text_of("attach_to_shots.text.3"))
     video = director_desk.media_path(str(latest.get("video_url") or ""))
     video_path = Path(video) if video else None
     if video_path is None or not video_path.is_file():
@@ -217,7 +230,7 @@ def attach_to_shots(service, task_id: str, scene_id: str, *, shot_ids: list[int]
         relative = str(latest.get("video_url") or "").split("/media/", 1)[-1]
         video_path = Path(media_compositor.MEDIA_DIR) / relative
     if not video_path.is_file():
-        raise PrevizError("预演视频文件不见了；请重新渲染")
+        raise PrevizError(_text_of("attach_to_shots.text.4"))
     wanted = {int(v) for v in shot_ids} if shot_ids else None
     width, height = latest["resolution"]
     attached, failed = [], []
@@ -235,7 +248,7 @@ def attach_to_shots(service, task_id: str, scene_id: str, *, shot_ids: list[int]
                 )
                 capture = service.add_desk_capture(task_id, scene_id, upload)
                 if capture is None:
-                    raise PrevizError("任务不存在")
+                    raise PrevizError(_text_of("attach_to_shots.text.5"))
                 service.apply_desk_capture(task_id, scene_id, capture["id"])
                 attached.append({"shot_id": shot_id, "capture_id": capture["id"], "url": capture["url"]})
             except (runner.RenderFailed, director_desk.CaptureError, PrevizError, LookupError) as exc:
@@ -249,13 +262,13 @@ def attach_to_shots(service, task_id: str, scene_id: str, *, shot_ids: list[int]
 def push_live(service, task_id: str, scene_id: str) -> dict[str, Any]:
     task = service.repo.get_task(task_id)
     if not task:
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("push_live.text"))
     _, spec, segments = _spec(task, scene_id)
     answer = live.push(spec)
     if not answer:
-        raise PrevizError("没连上 Blender：请在 Blender 里启用「Short Drama Previz Bridge」插件，并在 N 面板「短剧预演」点「开始连接」")
+        raise PrevizError(_text_of("push_live.text.2"))
     if not answer.get("ok"):
-        raise PrevizError(f"Blender 重建场景失败：{answer.get('error')}")
+        raise PrevizError(_text_of("push_live.text.3").format(answer.get('error')))
     return {"scene_id": scene_id, "segments": segments, "proxies": answer.get("proxies"), "cameras": answer.get("cameras")}
 
 
@@ -263,11 +276,11 @@ def pull_live(service, task_id: str, scene_id: str, *, apply: bool = False) -> d
     """读回在 Blender 里拖过的站位、布景与机位，换成方案的语义操作；apply=True 时写回方案。"""
     task = service.repo.get_task(task_id)
     if not task:
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("pull_live.text"))
     plan, _, segments = _spec(task, scene_id)
     shot = live.snapshot()
     if not shot or not shot.get("ok"):
-        raise PrevizError("没连上 Blender，或 Blender 里还没有预演场景；先「推到 Blender」")
+        raise PrevizError(_text_of("pull_live.text.2"))
     operations = operations_from_snapshot(plan, shot, segments)
     result: dict[str, Any] = {"scene_id": scene_id, "operations": operations, "applied": False}
     if apply and operations:

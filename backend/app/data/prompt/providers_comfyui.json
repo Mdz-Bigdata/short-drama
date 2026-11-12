@@ -1,0 +1,13 @@
+{
+  "_doc": "app/core/providers/comfyui.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "status.text": "未设置 {0}",
+  "status.text.2": "未提供工作流：设置 {0} 指向 ComfyUI 导出的 API 格式 JSON",
+  "status.text.3": "工作流文件不存在：{0}",
+  "status.text.4": "{0} 里缺少 prompt 绑定（形如 {{\"prompt\": \"6.inputs.text\"}}）",
+  "status.label": "ComfyUI（自托管工作流）",
+  "status.how_to": "导出 ComfyUI 工作流（Save (API Format)），设置 COMFYUI_WORKFLOW_PATH 与 COMFYUI_BINDINGS 后重启；无工作流时不会向 ComfyUI 发送任何请求。",
+  "load_workflow.text": "工作流文件无法读取或不是合法 JSON：{0}",
+  "load_workflow.text.2": "工作流必须是 ComfyUI 的 API 格式（节点号 → {class_type, inputs}），请用「Save (API Format)」导出",
+  "bind.text": "绑定 {0}={1} 指向的节点或输入不存在",
+  "from_environment.text": "ComfyUI 未就绪："
+}

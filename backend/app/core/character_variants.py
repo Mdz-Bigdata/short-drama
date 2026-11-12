@@ -24,6 +24,19 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from app.core.face_card import parse_face_card, render_face_card
+from app.core import prompt_data
+
+
+_WORDING_FILE = "character_variants"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/character_variants.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 VARIANT_KEY = "variant"
 MAX_TRIGGERS = 12
@@ -51,9 +64,9 @@ def clean_variant(payload: Mapping[str, Any], *, element_name: str = "") -> dict
     """Validated variant facts: the base character, a label, trigger words, optional episode ranges."""
     base = str(payload.get("of") or "").strip()
     if not base:
-        raise VariantError("衍生形象必须指明来源角色")
+        raise VariantError(_text_of("clean_variant.text"))
     if element_name and base == element_name.strip():
-        raise VariantError("衍生形象不能以自己为来源角色")
+        raise VariantError(_text_of("clean_variant.text.2"))
     label = str(payload.get("label") or "").strip()[:40]
     raw = payload.get("triggers") or []
     if isinstance(raw, str):
@@ -69,14 +82,14 @@ def clean_variant(payload: Mapping[str, Any], *, element_name: str = "") -> dict
             first = int(start) if start not in (None, "") else 1
             last = int(end) if end not in (None, "") else first
         except (TypeError, ValueError) as exc:
-            raise VariantError("集数范围必须是整数") from exc
+            raise VariantError(_text_of("clean_variant.text.3")) from exc
         if first < 1 or last < first:
-            raise VariantError("集数范围无效：起始集要 ≥ 1 且不大于结束集")
+            raise VariantError(_text_of("clean_variant.text.4"))
         episodes = [first, last]
     elif spans:
         episodes = [spans[0][0], max(span[1] for span in spans)]
     if not triggers and episodes is None:
-        raise VariantError("至少给一个触发词或一个集数范围，否则这个形象永远不会被用上")
+        raise VariantError(_text_of("clean_variant.text.5"))
     facts: dict[str, Any] = {"of": base, "label": label, "triggers": triggers, "episodes": episodes}
     # The form edits one range: scattered ranges only survive while that outer range is unchanged.
     if spans and episodes == [spans[0][0], max(span[1] for span in spans)]:
@@ -222,7 +235,7 @@ def apply(actor: Mapping[str, Any], variant: Mapping[str, Any] | None) -> dict[s
     if description and facts.get("source") == LOOK_SOURCE:
         # 妆造只换衣服和妆效：脸还是这个人的，设定里原来那身衣服不再写。
         face = render_face_card(parse_face_card(str(actor.get("description") or "")), include_other=False)
-        worn = description if description.startswith("妆效：") else f"服装：{description}"
+        worn = description if description.startswith(_text_of("apply.worn")) else _text_of("apply.worn.2").format(description)
         description = f"{face}；{worn}" if face else description
     return {
         **actor,

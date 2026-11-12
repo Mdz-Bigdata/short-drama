@@ -1,0 +1,10 @@
+{
+  "_doc": "app/core/production_knowledge.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.truncation_mark": "\n\n（本节已按上下文预算截断）",
+  "stage_lessons_block.header": "【历史生产教训(自动进化，按命中率排序)】：\n",
+  "stage_lessons_block.line": "- [S{0}|命中{1}] {2}",
+  "module.unified_negative_heading": "终极统一负面提示词",
+  "module.unified_negative_media.video": "视频",
+  "module.unified_negative_media.image": "静帧",
+  "global_negatives.text": "未知媒介: {0}"
+}

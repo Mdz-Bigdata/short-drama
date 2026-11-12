@@ -16,6 +16,19 @@ from app.core.actor_sheet_layout import (
     actor_sheet_cell_paths,
 )
 from app.schema.production import IDENTITY_VIEW_ORDER
+from app.core import prompt_data
+
+
+_WORDING_FILE = "image_quality"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/image_quality.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 class ImageQualityIssue(BaseModel):
@@ -125,7 +138,7 @@ def validate_actor_sheet_images(paths: list[str | Path]) -> FiveViewQualityRepor
             unique_view_hashes=0,
             issues=[ImageQualityIssue(
                 code="cell_count",
-                message=f"设定集缺少必需格子：{'、'.join(missing)}。",
+                message=_text_of("validate_actor_sheet_images.message").format('、'.join(missing)),
             )],
         )
     images: dict[str, Image.Image] = {}
@@ -138,18 +151,18 @@ def validate_actor_sheet_images(paths: list[str | Path]) -> FiveViewQualityRepor
             image.load()
         except Exception as exc:
             issues.append(ImageQualityIssue(
-                code="unreadable", message=f"格子无法读取：{type(exc).__name__}", view_index=index,
+                code="unreadable", message=_text_of("validate_actor_sheet_images.message.2").format(type(exc).__name__), view_index=index,
             ))
             continue
         images[cell] = image
         entropies.append(round(_entropy(image), 4))
         if image.width < 64 or image.height < 64:
             issues.append(ImageQualityIssue(
-                code="low_resolution", message="格子分辨率低于64×64。", view_index=index,
+                code="low_resolution", message=_text_of("validate_actor_sheet_images.message.3"), view_index=index,
             ))
         if _is_near_uniform(image):
             issues.append(ImageQualityIssue(
-                code="blank_cell", message="格子疑似空白或纯色，模型未在该格作画。", view_index=index,
+                code="blank_cell", message=_text_of("validate_actor_sheet_images.message.4"), view_index=index,
             ))
     if len(images) != len(cells):
         return FiveViewQualityReport(
@@ -161,18 +174,18 @@ def validate_actor_sheet_images(paths: list[str | Path]) -> FiveViewQualityRepor
     if len(identity_hashes) < 3:
         issues.append(ImageQualityIssue(
             code="duplicate_views",
-            message="五个身份锚点中至少三个疑似重复，未形成有效转面。",
+            message=_text_of("validate_actor_sheet_images.message.5"),
         ))
     full_body_hashes = [_difference_hash(images[view]) for view in FULL_BODY_CELLS]
     if len(set(full_body_hashes)) < len(FULL_BODY_CELLS):
         issues.append(ImageQualityIssue(
             code="duplicate_full_body",
-            message="正面/侧面/背面三张全身视图中存在重复，三视图未真正转面。",
+            message=_text_of("validate_actor_sheet_images.message.6"),
         ))
     if _difference_hash(images["portrait"]) == _difference_hash(images["face_front"]):
         issues.append(ImageQualityIssue(
             code="portrait_matches_face",
-            message="左区大正面与细节矩阵正脸特写是同一张裁切，细节矩阵未按版面作画。",
+            message=_text_of("validate_actor_sheet_images.message.7"),
         ))
     # 色彩漂移只在三张全身之间比——头部特写和全身的配色天然不同，
     # 混在一起比只会让每张合格的设定集都被判服装漂移。
@@ -184,7 +197,7 @@ def validate_actor_sheet_images(paths: list[str | Path]) -> FiveViewQualityRepor
     if palette_similarity < 0.65:
         issues.append(ImageQualityIssue(
             code="palette_drift",
-            message="三张全身视图之间色彩/服装调色差异过大，疑似人物或服装漂移。",
+            message=_text_of("validate_actor_sheet_images.message.8"),
         ))
     return FiveViewQualityReport(
         passed=not issues,
@@ -206,7 +219,7 @@ def validate_five_view_images(paths: list[str | Path]) -> FiveViewQualityReport:
             entropy=[],
             palette_similarity=0,
             unique_view_hashes=0,
-            issues=[ImageQualityIssue(code="view_count", message="必须恰好提供5个视图。")],
+            issues=[ImageQualityIssue(code="view_count", message=_text_of("validate_five_view_images.message"))],
         )
     images: list[Image.Image] = []
     issues: list[ImageQualityIssue] = []
@@ -217,19 +230,19 @@ def validate_five_view_images(paths: list[str | Path]) -> FiveViewQualityReport:
             image.load()
         except Exception as exc:
             issues.append(ImageQualityIssue(
-                code="unreadable", message=f"视图无法读取：{type(exc).__name__}", view_index=index,
+                code="unreadable", message=_text_of("validate_five_view_images.message.2").format(type(exc).__name__), view_index=index,
             ))
             continue
         images.append(image)
         if image.width < 128 or image.height < 256:
             issues.append(ImageQualityIssue(
-                code="low_resolution", message="视图分辨率低于128×256。", view_index=index,
+                code="low_resolution", message=_text_of("validate_five_view_images.message.3"), view_index=index,
             ))
         entropy = _entropy(image)
         entropies.append(round(entropy, 4))
         if entropy < 1.2:
             issues.append(ImageQualityIssue(
-                code="low_entropy", message="视图疑似空白或细节严重不足。", view_index=index,
+                code="low_entropy", message=_text_of("validate_five_view_images.message.4"), view_index=index,
             ))
     if len(images) != 5:
         return FiveViewQualityReport(
@@ -245,13 +258,13 @@ def validate_five_view_images(paths: list[str | Path]) -> FiveViewQualityReport:
     if palette_similarity < 0.65:
         issues.append(ImageQualityIssue(
             code="palette_drift",
-            message="相邻视图色彩/服装调色差异过大，疑似人物或服装漂移。",
+            message=_text_of("validate_five_view_images.message.5"),
         ))
     unique_hashes = len({_difference_hash(image) for image in images})
     if unique_hashes < 3:
         issues.append(ImageQualityIssue(
             code="duplicate_views",
-            message="五视图中至少三个角度疑似重复，未形成有效转面。",
+            message=_text_of("validate_five_view_images.message.6"),
         ))
     return FiveViewQualityReport(
         passed=not issues,

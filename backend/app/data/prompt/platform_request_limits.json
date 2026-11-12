@@ -1,0 +1,21 @@
+{
+  "_doc": "app/platform/request_limits.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "_reserve.text": "剧本编辑服务繁忙，请稍后重试",
+  "_reserve.text.2": "同一账号或网络的并发剧本编辑过多",
+  "_reserve.text.3": "剧本编辑请求过于频繁，请稍后重试",
+  "__call__.text": "未登录或会话已过期",
+  "__call__.text.2": "Content-Length 无效",
+  "__call__.text.3": "剧本请求体超过大小限制",
+  "__call__.text.4": "剧本请求体超过大小限制",
+  "__call__.text.5": "剧本请求体等待超时",
+  "_reserve.text.4": "3D 资产上传服务繁忙，请稍后重试",
+  "_reserve.text.5": "同一账号或网络的并发上传过多",
+  "_reserve.text.6": "上传请求过于频繁，请稍后重试",
+  "_reserve.text.7": "上传流量已达到当前时间窗口上限",
+  "__call__.text.6": "Content-Length 无效",
+  "__call__.text.7": "上传请求体超过大小限制",
+  "__call__.text.8": "未登录或会话已过期",
+  "limited_receive.detail": "上传数据等待超时",
+  "limited_receive.detail.2": "上传请求体超过大小限制",
+  "__call__.text.9": "上传处理超过总时限"
+}

@@ -1,0 +1,7 @@
+{
+  "_doc": "app/platform/payment_flow.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "pay.description": "{0} 会员",
+  "pay.text": "订单已变更，请刷新后重试",
+  "_push_refund.reason": "重复支付退款",
+  "_push_refund.reason.2": "会员订单退款"
+}

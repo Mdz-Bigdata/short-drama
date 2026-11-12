@@ -1,0 +1,7 @@
+.pronunciations { margin: 0.5rem 0; font-size: 0.8125rem; }
+.pronunciations summary { cursor: pointer; color: var(--text-muted); }
+.pronunciations ul { margin: 0.4rem 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.25rem; }
+.pronunciations li { display: flex; align-items: center; gap: 0.4rem; }
+.pronunciations__add { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.pronunciations__add input { width: 9rem; max-width: 100%; }
+.pronunciations__notice { margin: 0.3rem 0 0; color: var(--text-muted); }

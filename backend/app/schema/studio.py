@@ -16,6 +16,19 @@ from app.schema.production import (
     IdentityViewName,
     identity_view_order_is_valid,
 )
+from app.core import prompt_data
+
+
+_WORDING_FILE = "schema_studio"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/schema_studio.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 def utc_now_iso() -> str:
@@ -221,17 +234,17 @@ def canvas_group_problem(nodes: list[dict[str, Any]] | list["CanvasNode"]) -> st
     parents = canvas_group_parents(rows)
     for node_id, parent in parents.items():
         if parent == node_id:
-            return f"分组 {node_id} 不能放进自己"
+            return _text_of("canvas_group_problem.text").format(node_id)
         seen, chain, current = {node_id}, 0, parent
         while current:
             if current in seen:
-                return f"分组 {current} 不能放进它自己的成员里"
+                return _text_of("canvas_group_problem.text.2").format(current)
             seen.add(current)
             chain += 1
             current = parents.get(current, "")
         limit = CANVAS_GROUP_DEPTH - 1 if kinds.get(node_id) == "group" else CANVAS_GROUP_DEPTH
         if chain > limit:
-            return "分组最多嵌套一层：分组里可以有分组，但里面的分组不能再放分组"
+            return _text_of("canvas_group_problem.text.3")
     return None
 
 
@@ -669,9 +682,7 @@ class CharacterReference(BaseModel):
         # 新契约的五个身份锚点，或存量记录的旧五视图顺序——两者都放行。
         if not identity_view_order_is_valid(tuple(view.view for view in self.views)):
             raise ValueError(
-                "character references require the exact ordered identity views "
-                f"({', '.join(IDENTITY_VIEW_ORDER)}) 或旧版五视图顺序"
-                f"（{', '.join(LEGACY_IDENTITY_VIEW_ORDER)}）"
+                _text_of("exact_identity_views.text").format(', '.join(IDENTITY_VIEW_ORDER), ', '.join(LEGACY_IDENTITY_VIEW_ORDER))
             )
         return self
 

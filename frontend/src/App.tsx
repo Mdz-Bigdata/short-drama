@@ -197,7 +197,7 @@ function useNowWhile(active: boolean): number {
 function StageProgressPanel({ progress, onOpenBilling }: { progress: StageProgress; onOpenBilling?: () => void }) {
   const now = useNowWhile(progress.status === 'running');
   const totalMs = liveElapsed(progress, now);
-  const label = progress.stage_label || progress.stageLabel || `阶段${progress.stage}`;
+  const label = progress.stage_label || progress.stageLabel || tr('阶段{0}', [progress.stage]);
   const pct = Math.max(0, Math.min(100, Math.round(progress.percent || 0)));
   const isError = progress.status === 'error';
   const accent = isError ? 'var(--danger)' : progress.status === 'success' ? 'var(--success)' : 'var(--accent)';
@@ -423,8 +423,8 @@ export default function App() {
         const developmentCode = typeof data.development_code === 'string' ? data.development_code : '';
         setMockVerificationCode(developmentCode);
         setAuthSuccess(developmentCode
-          ? `验证码发送成功（本地开发码：${developmentCode}）`
-          : '验证码发送成功，请查看短信或邮件。');
+          ? tr('验证码发送成功（本地开发码：{0}）', [developmentCode])
+          : tr('验证码发送成功，请查看短信或邮件。'));
         setCodeCountdown(typeof data.cooldown_seconds === 'number' && data.cooldown_seconds > 0
           ? Math.ceil(data.cooldown_seconds)
           : clientConfig.verificationCode.cooldownSeconds);
@@ -859,7 +859,7 @@ export default function App() {
         setImportSkillFile(null);
       } else {
         const err = await res.json();
-        alert(tr('导入失败: {0}', [err.detail || '接口解析错误']));
+        alert(tr('导入失败: {0}', [err.detail || tr('接口解析错误')]));
       }
     } catch {
       alert(tr('无法连接至后端，请先确保后端启动运行中。'));
@@ -883,7 +883,7 @@ export default function App() {
         }
       } else {
         const err = await res.json();
-        alert(tr('删除失败: {0}', [err.detail || '接口错误']));
+        alert(tr('删除失败: {0}', [err.detail || tr('接口错误')]));
       }
     } catch {
       alert(tr('删除失败，无法连接至后端。'));
@@ -912,7 +912,7 @@ export default function App() {
         }
       } else {
         const err = await res.json();
-        alert(tr('删除失败: {0}', [err.detail || '接口解析错误']));
+        alert(tr('删除失败: {0}', [err.detail || tr('接口解析错误')]));
       }
     } catch {
       alert(tr('物理删除失败，无法连接至后端。'));
@@ -1156,13 +1156,13 @@ export default function App() {
     };
     
     const displayMsg = uploadedScript 
-      ? `📖 已手动载入剧本《${uploadedScript.name}》生成短剧。${text.trim() ? `\n附加要求：${text.trim()}` : ''}`
+      ? tr('📖 已手动载入剧本《{0}》生成短剧。', [uploadedScript.name]) + (text.trim() ? tr('\n附加要求：{0}', [text.trim()]) : '')
       : titleText;
       
     // 初始化聊天流
     setChatMessages([
       { id: '1', sender: 'user', text: displayMsg },
-      { id: '2', sender: 'ai', text: '正在创建项目。创建后，我会从总导演开始，按顺序陪您完成八大 Agent 流程。' }
+      { id: '2', sender: 'ai', text: tr('正在创建项目。创建后，我会从总导演开始，按顺序陪您完成八大 Agent 流程。') }
     ]);
 
     try {
@@ -1369,7 +1369,7 @@ export default function App() {
 
     setChatMessages(prev => [
       ...prev,
-      { id: pendingId, sender: 'ai', text: '🧠 正在理解您的指令...' }
+      { id: pendingId, sender: 'ai', text: tr('🧠 正在理解您的指令...') }
     ]);
 
     try {
@@ -1486,7 +1486,7 @@ export default function App() {
     // The summary intentionally omits assets. Do not infer completion or the
     // next stage until the full authoritative workflow and history arrive.
     setChatMessages([
-      { id: 'loading-history', sender: 'ai', text: `正在为您恢复《${task.config.titleSuggestion}》的对话和八大 Agent 流程进度…` }
+      { id: 'loading-history', sender: 'ai', text: tr('正在为您恢复《{0}》的对话和八大 Agent 流程进度…', [task.config.titleSuggestion]) }
     ]);
     progressRef.current = task.stageProgress ? { stage: task.stageProgress.stage, status: task.stageProgress.status } : null;
   };
@@ -1509,7 +1509,7 @@ export default function App() {
           // 改模型被拒(如阶段运行中)时要说出来，不能让界面显示新模型、项目却还在用旧的。
           const detail = await res.json().then(body => (typeof body?.detail === 'string' ? body.detail : ''), () => '');
           setConfig(config);
-          alert(detail || `同步配置失败（HTTP ${res.status}）`);
+          alert(detail || tr('同步配置失败（HTTP {0}）', [res.status]));
         }
       } catch (e) {
         console.error('同步配置到后端失败', e);
@@ -1566,7 +1566,7 @@ export default function App() {
     // 初始化工作台聊天提示
     setChatMessages([
       { id: '1', sender: 'user', text: newProjectName },
-      { id: '2', sender: 'ai', text: '正在创建项目。创建后，我会从总导演开始，按顺序陪您完成八大 Agent 流程。' }
+      { id: '2', sender: 'ai', text: tr('正在创建项目。创建后，我会从总导演开始，按顺序陪您完成八大 Agent 流程。') }
     ]);
 
     const currentConfig = {
@@ -1771,7 +1771,7 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>{clientConfig.verificationCode.length}位验证码</label>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>{tr('{0}位验证码', [clientConfig.verificationCode.length])}</label>
                   <div style={{ display: 'flex', gap: '10px' }}>
                     <input
                       type="text"
@@ -1789,7 +1789,7 @@ export default function App() {
                       className="capsule-btn"
                       style={{ padding: '0 16px', fontSize: '0.75rem', whiteSpace: 'nowrap', minWidth: '110px', justifyContent: 'center' }}
                     >
-                      {codeCountdown > 0 ? `${codeCountdown}s 重发` : '获取验证码'}
+                      {codeCountdown > 0 ? tr('{0}s 重发', [codeCountdown]) : tr('获取验证码')}
                     </button>
                   </div>
                 </div>
@@ -1823,7 +1823,7 @@ export default function App() {
                   <input
                     type="password"
                     required
-                    placeholder={`设置登录密码，不少于${clientConfig.passwordMinLength}位`}
+                    placeholder={tr('设置登录密码，不少于{0}位', [clientConfig.passwordMinLength])}
                     value={authForm.password}
                     onChange={e => setAuthForm({ ...authForm, password: e.target.value })}
                     style={{ width: '100%', padding: '10px 14px', background: 'rgba(var(--shadow-rgb), 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem', outline: 'none' }}
@@ -1861,7 +1861,7 @@ export default function App() {
           {bootstrapAdminLogin && (
             <div style={{ marginTop: '20px', borderTop: '1px solid rgba(var(--accent-rgb), 0.088)', paddingTop: '14px', fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <div>{tr('🔐 本地默认管理员：')}<strong>{bootstrapAdminLogin}</strong></div>
-              <div>登录配置位于后端 `.env`；首次登录必须修改。生产环境禁止使用开发默认密码。</div>
+              <div>{tr('登录配置位于后端 `.env`；首次登录必须修改。生产环境禁止使用开发默认密码。')}</div>
             </div>
           )}
         </div>
@@ -1916,7 +1916,7 @@ export default function App() {
             <NotificationBell onOpenBilling={() => setActivePortal('billing')} onOpenFinance={() => setActivePortal('finance')} />
             {walletPoints !== null && (
               <span title={tr('可用创作积分')} className="lobby-credits">
-                <Zap size={13} aria-hidden="true" /> {walletPoints} 积分
+                <Zap size={13} aria-hidden="true" /> {tr('{0} 积分', [walletPoints])}
               </span>
             )}
             <div
@@ -1945,10 +1945,10 @@ export default function App() {
               {showUserMenu && currentUser && (
                 <div className="glass-panel account-menu">
                   <div className="account-menu__name">
-                    👤 {currentUser.username || '当前用户'}
+                    👤 {currentUser.username || tr('当前用户')}
                   </div>
                   <div className="account-menu__id">
-                    {currentUser.email || currentUser.phone || '未绑定账号'}
+                    {currentUser.email || currentUser.phone || tr('未绑定账号')}
                   </div>
                   <button className="account-menu-action" onClick={() => { setActivePortal('user'); setShowUserMenu(false); }}>
                     {tr('用户中心')}
@@ -1974,7 +1974,7 @@ export default function App() {
           {/* 标题 */}
           <div className="hero">
             <h2 className="hero-title">
-              {PRODUCT_TITLE} - 你的专属AI视频创作Agent
+              {tr('{0} - 你的专属AI视频创作Agent', [PRODUCT_TITLE])}
             </h2>
             <p className="hero-sub">
               {tr('把品味和习惯写进Skill，让精力回归创意')}
@@ -2012,7 +2012,7 @@ export default function App() {
                     className={`capsule-btn ${showModelConfiguration ? 'active' : ''}`}
                     onClick={() => { setActivePopover('none'); setShowModelConfiguration(true); }}
                   >
-                    <Cpu size={14} /> 模型: {hasEnabledGlobalModel ? tr('已配置') : tr('未配置')}
+                    <Cpu size={14} /> {tr('模型: {0}', [hasEnabledGlobalModel ? tr('已配置') : tr('未配置')])}
                   </button>
 
                   {/* Skill 选择按钮 */}
@@ -2046,14 +2046,14 @@ export default function App() {
                   {activePopover === 'element' && (
                     <div className="element-menu" role="menu" aria-label={tr('选择元素类型')}>
                       {([
-                        ['actor', '演员', '设定集与表演身份锚点'],
-                        ['scene', '场景', '空间、时段、天气和灯光'],
-                        ['prop', '道具', '归属、位置和状态连续性'],
-                        ['effect', '特效', '时间、目标和结束状态'],
-                        ['extra', '群演', '没有台词的背景人物'],
-                        ['vehicle', '车辆', '入画的车、船、马车'],
-                        ['stunt', '特技', '有风险的动作过程'],
-                        ['set_dressing', '置景', '角色不碰的陈设'],
+                        ['actor', tr('演员'), tr('设定集与表演身份锚点')],
+                        ['scene', tr('场景'), tr('空间、时段、天气和灯光')],
+                        ['prop', tr('道具'), tr('归属、位置和状态连续性')],
+                        ['effect', tr('特效'), tr('时间、目标和结束状态')],
+                        ['extra', tr('群演'), tr('没有台词的背景人物')],
+                        ['vehicle', tr('车辆'), tr('入画的车、船、马车')],
+                        ['stunt', tr('特技'), tr('有风险的动作过程')],
+                        ['set_dressing', tr('置景'), tr('角色不碰的陈设')],
                       ] as Array<[ElementKind, string, string]>).map(([value, label, hint]) => (
                         <button key={value} type="button" role="menuitem" onClick={() => { setActivePortal(value); setActivePopover('none'); }}>
                           <span>{label}</span><small>{hint}</small><ChevronRight size={15} />
@@ -2069,7 +2069,7 @@ export default function App() {
                     style={{ position: 'relative' }}
                     title={uploadedScript ? tr('已加载手动剧本，点击可重新上传') : tr('上传手动剧本并一键生成短剧')}
                   >
-                    <Upload size={14} /> {uploadedScript ? `已选剧本: ${uploadedScript.name.substring(0, 10)}${uploadedScript.name.length > 10 ? '...' : ''}` : '上传剧本'}
+                    <Upload size={14} /> {uploadedScript ? tr('已选剧本: {0}', [`${uploadedScript.name.substring(0, 10)}${uploadedScript.name.length > 10 ? '...' : ''}`]) : tr('上传剧本')}
                     {uploadedScript && (
                       <span 
                         onClick={(e) => {
@@ -2230,8 +2230,8 @@ export default function App() {
                     >
                       <X size={10} />
                     </button>
-                    <strong className="skill-card__title">{item.title}</strong>
-                    <span className="skill-card__desc">{item.desc}</span>
+                    <strong className="skill-card__title">{tr(item.title)}</strong>
+                    <span className="skill-card__desc">{tr(item.desc)}</span>
                   </div>
                 ))}
               </div>
@@ -2322,7 +2322,7 @@ export default function App() {
                           <span>{tr('🎉 已完成一键成片 (100%)')}</span>
                         ) : (
                           <span>
-                            当前进度: 第 {displayStep(task.currentStage)}/{DISPLAY_STEPS} 步 ({task.stageName})
+                            {tr('当前进度: 第 {0}/{1} 步 ({2})', [displayStep(task.currentStage), DISPLAY_STEPS, task.stageName])}
                             {isRunning ? (
                               <span className="is-live"> {tr('- 正在生成...')}</span>
                             ) : (
@@ -2481,15 +2481,15 @@ export default function App() {
                     {newProjectCreationMode === 'ad' && (
                       <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px' }} aria-label={tr('广告简报')}>
                         {([
-                          ['product', '产品', '如：静音吹风机'],
-                          ['sellingPoints', '卖点', '如：三分钟速干，45 分贝'],
-                          ['audience', '目标人群', '如：合租年轻人'],
-                          ['callToAction', '行动号召', '如：立即下单'],
+                          ['product', tr('产品'), tr('如：静音吹风机')],
+                          ['sellingPoints', tr('卖点'), tr('如：三分钟速干，45 分贝')],
+                          ['audience', tr('目标人群'), tr('如：合租年轻人')],
+                          ['callToAction', tr('行动号召'), tr('如：立即下单')],
                         ] as const).map(([key, label, placeholder]) => (
                           <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                             {label}
                             <input
-                              aria-label={`广告${label}`}
+                              aria-label={tr('广告{0}', [label])}
                               value={newProjectAdBrief[key]}
                               placeholder={placeholder}
                               onChange={e => setNewProjectAdBrief(current => ({ ...current, [key]: e.target.value }))}
@@ -2549,7 +2549,7 @@ export default function App() {
                       {EPISODE_COUNT_PRESETS
                         .filter(n => n >= clientConfig.episodeCount.min && n <= clientConfig.episodeCount.max)
                         .map(n => (
-                          <option key={n} value={n}>{n} 集</option>
+                          <option key={n} value={n}>{tr('{0} 集', [n])}</option>
                         ))}
                       <option value="custom">{tr('✏️ 手动填写集数…')}</option>
                     </select>
@@ -2560,7 +2560,7 @@ export default function App() {
                         max={clientConfig.episodeCount.max}
                         value={newProjectEpisodes}
                         onChange={e => setNewProjectEpisodes(clampEpisodeCount(e.target.value, clientConfig.episodeCount))}
-                        placeholder={`${clientConfig.episodeCount.min}-${clientConfig.episodeCount.max} 集`}
+                        placeholder={tr('{0}-{1} 集', [clientConfig.episodeCount.min, clientConfig.episodeCount.max])}
                         style={{ width: '100%', marginTop: '8px', padding: '10px', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem' }}
                       />
                     )}
@@ -2606,7 +2606,7 @@ export default function App() {
               <div className="asset-stage-nav__identity">
                 <Film size={22} color="var(--neon-cyan)" />
                 <h2>
-                  《{scriptDisplayName}》 - 看板展示大厅
+                  {tr('《{0}》 - 看板展示大厅', [scriptDisplayName])}
                 </h2>
               </div>
               <div className="asset-stage-nav__tools" role="group" aria-label={tr('项目工具')}>
@@ -2714,12 +2714,12 @@ export default function App() {
                 <div
                   className={`glass-panel stage-asset-preview${activeTabStage === 5 ? ' stage-asset-preview--visual' : ''}`}
                   role="region"
-                  aria-label={`Stage ${activeTabStage} 阶段资产预览`}
+                  aria-label={tr('Stage {0} 阶段资产预览', [activeTabStage])}
                 >
                   {!isEditorStage(activeTabStage) && (
                     <div className="stage-preview-head">
                       <span className="stage-preview-head__icon"><Monitor size={16} /></span>
-                      <span className="stage-preview-head__title">Stage {activeTabStage} 阶段资产预览</span>
+                      <span className="stage-preview-head__title">{tr('Stage {0} 阶段资产预览', [activeTabStage])}</span>
                     </div>
                   )}
 
@@ -2787,7 +2787,7 @@ export default function App() {
                         <p style={{ fontSize: '0.8rem', lineHeight: '1.4' }}>
                           {(() => {
                             const bodyMatch = taskData.prContent?.match(/📌 黄金引流文案：‘([^’]+)’/);
-                            return bodyMatch ? bodyMatch[1] : (taskData.prContent || "暂无文案");
+                            return bodyMatch ? bodyMatch[1] : (taskData.prContent || tr('暂无文案'));
                           })()}
                         </p>
                       </div>
@@ -3022,7 +3022,7 @@ export default function App() {
                   style={{ padding: '4px 10px', fontSize: '0.7rem' }}
                   onClick={() => { setActivePopover('none'); setShowModelConfiguration(true); }}
                 >
-                  模型: {hasEnabledGlobalModel ? tr('已配置') : tr('未配置')}
+                  {tr('模型: {0}', [hasEnabledGlobalModel ? tr('已配置') : tr('未配置')])}
                 </button>
                 <button 
                   type="button"
@@ -3157,7 +3157,7 @@ export default function App() {
                     style={{ width: '100%', padding: '10px', background: 'rgba(var(--shadow-rgb), 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.9rem' }}
                   />
                   <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '8px' }}>
-                    系统将在后台通过 `npx -y` 载入并安装指定的包。
+                    {tr('系统将在后台通过 `npx -y` 载入并安装指定的包。')}
                   </p>
                 </div>
               )}
@@ -3191,7 +3191,7 @@ export default function App() {
                     />
                     <div style={{ fontSize: '2.5rem', marginBottom: '10px' }}>📦</div>
                     <span style={{ fontSize: '0.85rem', display: 'block', color: importSkillFile ? 'var(--neon-green)' : 'var(--surface-2)' }}>
-                      {importSkillFile ? `已选择: ${importSkillFile.name} (${Math.round(importSkillFile.size / 1024)} KB)` : '点击选择或拖拽本地 ZIP 压缩文件上传'}
+                      {importSkillFile ? tr('已选择: {0} ({1} KB)', [importSkillFile.name, Math.round(importSkillFile.size / 1024)]) : tr('点击选择或拖拽本地 ZIP 压缩文件上传')}
                     </span>
                   </div>
                 </div>

@@ -36,6 +36,9 @@ _DATA = "clip_skeleton"
 SECTIONS: tuple[str, ...] = (
     "pa1", "anchor_types", "same_instance", "dialogue_language", "sequence_head", "pa2", "space_axis", "lens", "impact_sound",
     "pa3", "performance_lock", "chain_lock", "voice_ban", "portrait_safety", "text_policy", "ban_list",
+    # 结构声明后面的「一段只做一个主要变化」、多瞬间片段最后一块之后的「到达后保持到片尾」：同样是每条重申的固定句，
+    # 不计入正文预算(video_prompt_engine / slice_video 写)。
+    "one_change", "end_hold",
 )
 #: 只有一个标题的分节：标题前空一行，标题后紧跟正文。
 HEADERS: frozenset[str] = frozenset({"pa1", "pa2", "pa3", "sequence_head"})
@@ -154,6 +157,27 @@ def fixed_camera(camera_movement: str) -> bool:
     return bool(_FIXED_CAMERA.search(str(camera_movement or "")))
 
 
+def close_size(shot_size: str) -> bool:
+    """近景、特写一类的景别(CU / MCU / 特写 / 近景…)：脸上的细微反应看得见的景别。"""
+    size = str(shot_size or "").upper()
+    return any(str(word).upper() in size for word in _data("close_sizes"))
+
+
+def listener_camera_line() -> str:
+    """「表情细微，机位固定或极慢推近」这句本身(片段拼块时据此认出单镜运镜一行里写过它)。"""
+    return prompt_data.text(_DATA, "listener_camera")
+
+
+def listener_camera(shot_size: str, camera_movement: str, *, listening: bool) -> str:
+    """听的人的近景反应镜头又在动机位时补一句：表情细微，机位固定或极慢推近——机位不和细微的表演抢。
+
+    运镜本身不改；固定机位、不是近景、或画面里的人自己在说话时不写。
+    """
+    if not listening or fixed_camera(camera_movement) or not str(camera_movement or "").strip() or not close_size(shot_size):
+        return ""
+    return listener_camera_line()
+
+
 def lens(*, fight: bool, camera_movement: str = "") -> str:
     """打戏的运镜一句：镜头跟着动作走。本镜定了固定机位时不写，不和它打架。"""
     return prompt_data.text(_DATA, "lens_fight") if fight and not fixed_camera(camera_movement) else ""
@@ -182,11 +206,14 @@ def impact_sound(family_: str) -> str:
     return str(_data("impact_sound")[family_])
 
 
-def performance_lock(family_: str, *, short: bool = False, script: str = "") -> str:
-    """表演锁：脸一直在变、听的人也在演。短片段只留第一句；H3 另加不叹气，剧本自己写了叹气时不加。"""
+def performance_lock(family_: str, *, short: bool = False, script: str = "", back: bool = False) -> str:
+    """表演锁：脸一直在变、听的人也在演。短片段只留第一句；H3 另加不叹气，剧本自己写了叹气时不加。
+
+    ``back``：背对镜头的镜头看不见脸，不写「面部全程在变」，只写肩背与站姿、不转身。
+    """
     data = _data("performance_lock")
-    lines = [str(line) for line in data[family_]]
-    if short:
+    lines = [str(line) for line in data["back" if back else family_]]
+    if short and not back:
         lines = lines[:1]
     if family_ == "h3" and not _SIGH.search(str(script or "")):
         lines.append(str(data["no_sigh"]))
@@ -335,11 +362,14 @@ def merge(
     off_screen = [name for name in off_screen if name != unnamed]
     locks = [str(beat.get("performance_lock") or "") for beat in beats if str(beat.get("performance_lock") or "").strip()]
     no_sigh = str(_data("performance_lock")["no_sigh"])
+    # 背对镜头的瞬间写的是背面的表演锁；整段都是背面才只写它，有一镜看得见脸就写完整的表演锁。
+    back_head = str(_data("performance_lock")["back"][0])
+    fronts = [lock for lock in locks if not lock.startswith(back_head)]
     # 多个瞬间的一段不算短片段：表演锁两句都写。只有一个瞬间时用它自己的。
     performance = ""
     if locks:
         performance = locks[0] if len(beats) == 1 else performance_lock(
-            family_, script="" if all(no_sigh in lock for lock in locks) else "叹气",
+            family_, script="" if all(no_sigh in lock for lock in locks) else "叹气", back=not fronts,
         )
     chain = _data("chain_lock")
     dialogue_policy = str(_data("text_policy")["dialogue"])
@@ -365,7 +395,8 @@ def merge(
 
 
 __all__ = [
-    "HEADERS", "NOT_FOR_REWRITE", "SECTIONS", "SHORT_SECONDS", "anchor_types", "chain_lock", "dialogue_language", "family", "first_sound_marked",
-    "fixed_camera", "headers", "impact_sound", "lens", "merge", "performance_lock", "same_instance", "settle", "sfx_marks", "space_axis",
+    "HEADERS", "NOT_FOR_REWRITE", "SECTIONS", "SHORT_SECONDS", "anchor_types", "chain_lock", "close_size", "dialogue_language", "family",
+    "first_sound_marked", "fixed_camera", "headers", "impact_sound", "lens", "listener_camera", "listener_camera_line", "merge",
+    "performance_lock", "same_instance", "settle", "sfx_marks", "space_axis",
     "tail", "voice_ban",
 ]

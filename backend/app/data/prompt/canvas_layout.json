@@ -1,0 +1,11 @@
+{
+  "_doc": "app/core/canvas_layout.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "_units.text": "画布上没有节点 {0}",
+  "align.text": "align 的 mode 只能是：{0}",
+  "align.text.2": "align 至少需要两个节点（同一分组里的成员随分组移动，不单独算）",
+  "distribute.text": "distribute 的 axis 只能是：{0}",
+  "distribute.text.2": "distribute 至少需要三个节点",
+  "arrange.text": "arrange 的 layout 只能是：{0}",
+  "arrange.text.2": "gap 要在 0 到 {0:g} 之间",
+  "arrange.text.3": "arrange 至少需要两个节点"
+}

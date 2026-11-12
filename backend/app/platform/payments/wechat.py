@@ -41,6 +41,19 @@ from app.platform.payments.base import (
     NotificationRejected,
 )
 from app.platform.payments.bills import parse_wechat_trade_bill
+from app.core import prompt_data
+
+
+_WORDING_FILE = "platform_payments_wechat"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/platform_payments_wechat.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 API_ROOT = "https://api.mch.weixin.qq.com"
 _BILL_HOSTS = {"api.mch.weixin.qq.com", "api2.mch.weixin.qq.com"}
@@ -94,7 +107,7 @@ class WeChatPay:
 
     def __init__(self, config: WeChatPayConfig, *, transport: httpx.BaseTransport | None = None) -> None:
         if len(config.api_v3_key.encode()) != 32:
-            raise ChannelError("微信支付 APIv3 密钥必须是 32 字节")
+            raise ChannelError(_text_of("__init__.text"))
         self._config = config
         self._private_key = keys.load_private_key(config.private_key_path)
         self._public_key = keys.load_public_key(config.public_key_path)
@@ -128,10 +141,10 @@ class WeChatPay:
                 },
             )
         except httpx.HTTPError as exc:
-            raise ChannelError(f"微信支付请求失败: {type(exc).__name__}") from exc
+            raise ChannelError(_text_of("_request.text").format(type(exc).__name__)) from exc
         if response.status_code < 400 and not self._signed_by_wechat(response.headers, response.content):
             # An answer that cannot be shown to be from WeChat is discarded, as the docs require.
-            raise ChannelError("微信支付应答验签失败")
+            raise ChannelError(_text_of("_request.text.2"))
         data = response.json() if response.content else {}
         return response.status_code, data if isinstance(data, dict) else {}
 
@@ -143,7 +156,7 @@ class WeChatPay:
             "amount": {"total": amount_minor, "currency": "CNY"},
         })
         if status >= 400 or not data.get("code_url"):
-            raise ChannelError(f"微信支付下单失败: {data.get('code') or status}")
+            raise ChannelError(_text_of("create_qr.text").format(data.get('code') or status))
         return str(data["code_url"])
 
     def query(self, out_trade_no: str) -> ChannelTrade:
@@ -151,25 +164,25 @@ class WeChatPay:
         if status == 404:
             return ChannelTrade(state=UNPAID, out_trade_no=out_trade_no)
         if status >= 400:
-            raise ChannelError(f"微信支付查单失败: {data.get('code') or status}")
+            raise ChannelError(_text_of("query.text").format(data.get('code') or status))
         return _trade(data)
 
     def close(self, out_trade_no: str) -> None:
         status, data = self._request("POST", f"/v3/pay/transactions/out-trade-no/{out_trade_no}/close", {"mchid": self._config.mch_id})
         if status >= 400:
-            raise ChannelError(f"微信支付关单失败: {data.get('code') or status}")
+            raise ChannelError(_text_of("close.text").format(data.get('code') or status))
 
     def parse_notification(self, headers: Mapping[str, str], body: bytes) -> ChannelEvent:
         lowered = {key.lower(): value for key, value in headers.items()}
         # Probe signatures need no special case: they are verified like any other and fail like any other.
         if not self._signed_by_wechat(lowered, body):
-            raise NotificationRejected("微信支付通知验签失败")
+            raise NotificationRejected(_text_of("parse_notification.text"))
         try:
             sent_at = int(lowered.get("wechatpay-timestamp") or 0)
         except ValueError as exc:
-            raise NotificationRejected("微信支付通知时间戳无效") from exc
+            raise NotificationRejected(_text_of("parse_notification.text.2")) from exc
         if abs(time.time() - sent_at) > _NOTIFICATION_WINDOW_SECONDS:
-            raise NotificationRejected("微信支付通知已过期")
+            raise NotificationRejected(_text_of("parse_notification.text.3"))
         try:
             envelope = json.loads(body)
             event_id = str(envelope.get("id") or "")
@@ -182,29 +195,29 @@ class WeChatPay:
             )
             return ChannelEvent(event_id=event_id, trade=_trade(json.loads(plain)))
         except (InvalidTag, KeyError, ValueError, TypeError, AttributeError) as exc:
-            raise NotificationRejected("微信支付通知无法解密") from exc
+            raise NotificationRejected(_text_of("parse_notification.text.4")) from exc
 
     def download_bill(self, day: date) -> DayBill:
         """https://pay.weixin.qq.com/doc/v3/merchant/4013071227 and /4013071238. The file itself comes unsigned; a hash covers it."""
         status, data = self._request("GET", f"/v3/bill/tradebill?bill_date={day.isoformat()}&bill_type=ALL")
         if status >= 400:
             if data.get("code") in ("NO_STATEMENT_EXIST", "STATEMENT_CREATING"):
-                raise BillNotReady(f"微信账单尚未生成: {data['code']}")
-            raise ChannelError(f"微信账单申请失败: {data.get('code') or status}")
+                raise BillNotReady(_text_of("download_bill.text").format(data['code']))
+            raise ChannelError(_text_of("download_bill.text.2").format(data.get('code') or status))
         target = urlsplit(str(data.get("download_url") or ""))
         if target.scheme != "https" or target.hostname not in _BILL_HOSTS:
             # This request carries our signature, so it only ever goes to WeChat.
-            raise ChannelError("微信账单下载地址不可信")
+            raise ChannelError(_text_of("download_bill.text.3"))
         path = f"{target.path}?{target.query}"
         try:
             response = self._client.get(path, headers={"Authorization": self._authorization("GET", path, ""), "Accept": "*/*"})
         except httpx.HTTPError as exc:
-            raise ChannelError(f"微信账单下载失败: {type(exc).__name__}") from exc
+            raise ChannelError(_text_of("download_bill.text.4").format(type(exc).__name__)) from exc
         if response.status_code >= 400:
-            raise ChannelError(f"微信账单下载失败: HTTP {response.status_code}")
+            raise ChannelError(_text_of("download_bill.text.5").format(response.status_code))
         kind, expected = str(data.get("hash_type") or "").upper(), str(data.get("hash_value") or "").lower()
         if kind != "SHA1" or hashlib.sha1(response.content, usedforsecurity=False).hexdigest() != expected:
-            raise BillUnreadable("微信账单哈希不一致，下载不完整")
+            raise BillUnreadable(_text_of("download_bill.text.6"))
         return DayBill(response.content, parse_wechat_trade_bill(response.content))
 
     def refund(self, *, out_trade_no: str, out_refund_no: str, refund_minor: int, total_minor: int, reason: str) -> ChannelRefund:
@@ -213,7 +226,7 @@ class WeChatPay:
             "amount": {"refund": refund_minor, "total": total_minor, "currency": "CNY"},
         })
         if status >= 400:
-            raise ChannelError(f"微信支付退款失败: {data.get('code') or status}")
+            raise ChannelError(_text_of("refund.text").format(data.get('code') or status))
         return ChannelRefund(_REFUND_STATES.get(str(data.get("status")), REFUND_PROCESSING), str(data.get("refund_id") or "") or None)
 
     def query_refund(self, *, out_trade_no: str, out_refund_no: str) -> ChannelRefund:
@@ -221,5 +234,5 @@ class WeChatPay:
         if status == 404:
             return ChannelRefund(REFUND_NOT_RECEIVED)
         if status >= 400:
-            raise ChannelError(f"微信支付退款查询失败: {data.get('code') or status}")
+            raise ChannelError(_text_of("query_refund.text").format(data.get('code') or status))
         return ChannelRefund(_REFUND_STATES.get(str(data.get("status")), REFUND_PROCESSING), str(data.get("refund_id") or "") or None)

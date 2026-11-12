@@ -1,0 +1,7 @@
+{
+  "_doc": "app/core/grid_split.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "split_grid.text": "行列数必须在 1 到 {0} 之间",
+  "split_grid.text.2": "至少要切成两格",
+  "split_grid.text.3": "图片只有 {0}×{1}，切不出 {2}×{3} 格",
+  "split_grid.text.4": "这张图切不出有内容的格子"
+}

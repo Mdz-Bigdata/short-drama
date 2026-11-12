@@ -1,0 +1,12 @@
+{
+  "_doc": "app/core/continuity_audit.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "audit_prompt_detail.failures.detail": "场景缺少分镜提示词详情，无法执行连续性自检。",
+  "gate_reasons.text": "未通过",
+  "audit_markdown.lines": [
+    "| 场景 | 检查项 | 级别 | 说明 |",
+    "|---|---|---|---|"
+  ],
+  "audit_markdown.text": "| … | 另有 {0} 条 | | |",
+  "audit_markdown.text.2": "| 全部场景 | 连续性自检 | 通过 | 无失败项 |",
+  "audit_markdown.header": "已对 {0} 个场景执行机器连续性自检：error {1} 项、warning {2} 项，未通过场景 {3} 个。"
+}

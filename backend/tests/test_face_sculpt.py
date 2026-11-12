@@ -257,6 +257,18 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(any(control["type"] == "scale" for control in data["controls"]))
         self.assertEqual(len(data["expressions"]), len(fs.catalog().expressions))
 
+    def test_focus_and_harmony_through_the_routes(self):
+        data = self.client.get("/api/face-sculpt/catalog").json()
+        self.assertEqual(data["focus_layers"], ["bone", "features"])
+        self.assertIn("look_soft_almond", {item["key"] for item in data["presets"] if item.get("scope")})
+        body = {"face": {"eye_shape": "peach", "lips": "full", "nose_bridge": 2}, "focus": "eye_shape"}
+        preview = self.client.post(f"{self.base}/preview", json=body).json()
+        self.assertIn("face_harmony_crowded", {issue["code"] for issue in preview["issues"]})
+        saved = self.client.put(self.base, json=body).json()
+        self.assertEqual(saved["sculpt"]["focus"], "eye_shape")
+        self.assertEqual(self.client.get(self.base).json()["sculpt"]["focus"], "eye_shape")
+        self.assertEqual(self.client.put(self.base, json={**body, "focus": "hair_color"}).status_code, 422)
+
     def test_preview_save_and_reset_round_trip(self):
         body = {"face": {"eye_shape": "phoenix", "nose_bridge": 1}, "expressions": {"smile": {"choices": {"eyes": "crescent"}}}}
         preview = self.client.post(f"{self.base}/preview", json=body).json()
@@ -707,3 +719,102 @@ class ActorSheetStyleTests(unittest.TestCase):
         self.assertEqual(actor_sheet_style.era_clause(""), "")
         self.assertIn("{era_costume}", data["era_clause"])
         self.assertEqual(actor_sheet_style.era_clause("古代"), data["era_clause"].replace("{era_costume}", "古代"))
+
+
+class HarmonyTests(unittest.TestCase):
+    """一个突出点、两个配合点：好看的五官堆在一起会提醒，几处说法打架会提醒，突出点在对话改脸里不被换掉。"""
+
+    def test_rule_keys_and_values_exist_in_the_catalog(self):
+        cat = fs.catalog()
+        harmony = cat.harmony
+
+        def check(key, values):
+            control = cat.control(key)
+            allowed = range(fs.SCALE_RANGE[0], fs.SCALE_RANGE[1] + 1) if control.kind == "scale" else {o for o, _l, _p in control.options}
+            for value in values:
+                self.assertIn(value, allowed, f"{key}={value}")
+
+        for key, values in harmony["strong"].items():
+            check(key, values)
+        for rule in harmony["rules"]:
+            for group in [*rule["when"], *rule.get("unless", ())]:
+                for key, values in group.items():
+                    check(key, values)
+        for key, focus in cat.preset_focus.items():
+            self.assertIn(focus, cat.presets[key], "预设的突出点要在预设里有值")
+
+    def test_every_preset_passes_its_own_harmony_check(self):
+        for key in fs.catalog().presets:
+            with self.subTest(key):
+                self.assertEqual(fs.harmony_issues(fs.preset_sculpt(key)), [])
+
+    def test_a_face_of_every_favourite_feature_is_flagged(self):
+        sculpt = fs.validate({"face": {"eye_shape": "almond", "eye_size": 2, "nose_bridge": 2, "lips": "full",
+                                       "cheekbone": 2, "chin": "pointed"}})
+        codes = {item["code"] for item in fs.harmony_issues(sculpt)}
+        self.assertTrue({"face_harmony_crowded", "face_harmony_sharp_contour", "face_harmony_full_center"} <= codes, codes)
+        smoothed = fs.validate({"face": {**sculpt.face, "cheek_fullness": 1}})
+        self.assertNotIn("face_harmony_sharp_contour", {item["code"] for item in fs.harmony_issues(smoothed)}, "面颊衔接补顺后不再报")
+
+    def test_with_a_focus_only_the_supports_count(self):
+        face = {"eye_shape": "peach", "lips": "full"}
+        self.assertEqual(fs.harmony_issues(fs.validate({"face": face})), [])
+        issues = fs.harmony_issues(fs.validate({"face": {**face, "nose_bridge": 2}, "focus": "眼型"}))
+        crowded = next(item for item in issues if item["code"] == "face_harmony_crowded")
+        self.assertIn("「桃花眼」", crowded["message"])
+        self.assertNotIn("桃花眼、", crowded["message"], "突出点自己不算进抢眼的配合点")
+        empty = fs.harmony_issues(fs.validate({"face": {"lips": "thin"}, "focus": "eye_shape"}))
+        self.assertEqual([item["code"] for item in empty], ["face_harmony_focus_empty"])
+
+    def test_lip_thickness_and_mouth_width_are_separate_and_contradictions_are_flagged(self):
+        merged = fs.merge_description(REAL, fs.validate({"face": {"lip_thickness": -1, "mouth_width": -1}}))
+        self.assertIn("上下唇偏薄", merged)
+        self.assertIn("嘴宽略收", merged)
+        self.assertNotIn("唇中等厚", merged)
+        self.assertIn("唇色淡朱", merged, "唇色不是唇厚，留着")
+        codes = {item["code"] for item in fs.harmony_issues(fs.validate({"face": {"lips": "thin", "lip_thickness": 1}}))}
+        self.assertIn("face_harmony_lips_thin_thick", codes)
+
+    def test_the_focus_leads_its_layer_and_is_stored(self):
+        sculpt = fs.validate({"face": {"eye_shape": "almond", "nose_bridge": 1, "lip_thickness": -1}, "focus": "lip_thickness"})
+        self.assertEqual(fs.layer_fragments(sculpt)["features"][0], "上下唇偏薄")
+        self.assertEqual(sculpt.dump()["focus"], "lip_thickness")
+        with self.assertRaisesRegex(fs.SculptError, "不能做突出点"):
+            fs.validate({"face": {}, "focus": "hair_color"})
+        task = _task()
+        fs.save(task, "林婉", sculpt)
+        self.assertEqual(fs.stored_sculpt(fs.record_of(task, "林婉")).focus, "lip_thickness")
+
+    def test_a_scoped_preset_keeps_age_skin_and_hair(self):
+        base = fs.validate({"face": {"age": "30s", "skin_tone": "wheat", "eye_shape": "fox", "lips": "full"}, "focus": "lips"})
+        merged = fs.validate(fs._merge_patch(base, {"preset": "look_soft_almond"}))
+        self.assertEqual(merged.face["age"], "30s")
+        self.assertEqual(merged.face["skin_tone"], "wheat")
+        self.assertEqual(merged.face["eye_shape"], "almond")
+        self.assertEqual(merged.face["lips"], "full_lower", "骨相与五官整层换成预设")
+        self.assertEqual(merged.focus, "eye_shape", "预设带的突出点")
+        whole = fs.validate(fs._merge_patch(base, {"preset": "scholar"}))
+        self.assertEqual(whole.face, fs.catalog().presets["scholar"], "整脸预设照旧整张换")
+        self.assertEqual(whole.focus, "lips", "原突出点在新脸上还有值就留着")
+        catalog = fs.describe_catalog()
+        soft = next(item for item in catalog["presets"] if item["key"] == "look_soft_almond")
+        self.assertEqual((soft["scope"], soft["focus"]), (["bone", "features"], "eye_shape"))
+        self.assertEqual(catalog["focus_layers"], ["bone", "features"])
+
+    def test_instruct_does_not_swap_the_focus_unless_asked(self):
+        task = _task()
+        fs.save(task, "林婉", fs.validate({"face": {"eye_shape": "almond", "lips": "full"}, "focus": "eye_shape"}))
+        answer = '{"face": {"eye_shape": "round", "lip_thickness": -1, "lips": null}, "reply": "减薄嘴唇"}'
+        result = fs.apply_instruction(task, "林婉", "减薄这张人像的上下唇，保持杏眼、眼距与脸廓", lambda s, u, m: answer)
+        self.assertNotIn("eye_shape", result["patch"]["face"])
+        self.assertEqual(result["sculpt"].face["eye_shape"], "almond")
+        self.assertEqual(result["sculpt"].face["lip_thickness"], -1)
+        self.assertEqual(result["unknown"], ["「眼型」是这张脸的突出点，这句话没说要换它，没改"])
+        asked = fs.apply_instruction(task, "林婉", "眼睛换成圆眼", lambda s, u, m: '{"face": {"eye_shape": "round"}}')
+        self.assertEqual(asked["sculpt"].face["eye_shape"], "round", "说到了就照改")
+        moved = fs.apply_instruction(task, "林婉", "以唇为突出点，眼睛随意",
+                                     lambda s, u, m: '{"face": {"eye_shape": "round"}, "focus": "lips"}')
+        self.assertEqual((moved["sculpt"].focus, moved["sculpt"].face["eye_shape"]), ("lips", "round"), "换了突出点，旧的就不守了")
+        self.assertIn("突出点→唇形", fs._describe_patch(moved["patch"]))
+        with self.assertRaisesRegex(fs.SculptError, "突出点"):
+            fs.apply_instruction(task, "林婉", "好看一点", lambda s, u, m: '{"face": {"eye_shape": "round"}}')

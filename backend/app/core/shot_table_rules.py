@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
-from app.core import exchange_units, fight_design, fight_exchange, prompt_data
+from app.core import exchange_units, fight_design, fight_exchange, prompt_data, visual_wording
 from app.core.camera_motion import normalize_camera_motion
 from app.core.camera_recipes import repeated_move_signature
 from app.core.frame_position import flipped_subjects, parse_frame_positions, uses_frame_grammar
@@ -279,6 +279,13 @@ def audit_shot_table(
         if _has_any(desc, ABSTRACT_EMOTION_TERMS) and not _has_any(desc, PHYSICAL_CUE_TERMS):
             hit = next(term for term in ABSTRACT_EMOTION_TERMS if term in desc)
             audit.issues.append(_issue(shot_id, "abstract_emotion", hit=hit))
+
+        # 画面写法(visual_wording.json)：不写主观评价词；非打斗的动作与运镜慢而稳。只是提示(warning)。
+        # 打斗场的镜头、或画面本身读得出是打斗的镜头，按打戏规则走，不发快动作提示。
+        moving = _text(shot.get("motion"))
+        fight_like = fight or fight_design.looks_like_fight(f"{desc}\n{moving}")
+        for finding in visual_wording.findings(desc, moving, fight=fight_like):
+            audit.issues.append(ShotIssue(shot_id, finding.rule, finding.message))
 
         # 站位与视线写成观众看到的画面坐标，而不是人物自己的左右。
         characters = [

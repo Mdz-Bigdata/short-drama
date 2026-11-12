@@ -13,6 +13,19 @@ from typing import Any
 from app.core import voice_casting
 from app.core.screenwriting.speech import narration_delivery
 from app.schema.elevenlabs import VoiceCreateRequest
+from app.core import prompt_data
+
+
+_WORDING_FILE = "service_voice_asset_service"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/service_voice_asset_service.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 def _rounds(assets: Mapping[str, Any], name: str) -> list[dict[str, Any]]:
@@ -67,13 +80,13 @@ def voices_view(task: Mapping[str, Any]) -> dict[str, Any]:
 def _idle_task(service: Any, task_id: str, *, action: str) -> dict[str, Any] | None:
     task = service.repo.get_task(task_id)
     if task and service._has_running_generation(task):
-        raise ValueError(f"任务正在执行阶段，等它结束后再{action}")
+        raise ValueError(_text_of("_idle_task.text").format(action))
     return task
 
 
 def audition_narrator(service: Any, task_id: str, *, voice_prompt: str = "", seed: int | None = None) -> dict[str, Any] | None:
     """One round of narrator takes (a paid provider call); calling again re-rolls."""
-    task = _idle_task(service, task_id, action="试听旁白音色")
+    task = _idle_task(service, task_id, action=_text_of("audition_narrator.action"))
     if not task:
         return None
     assets = task.get("assets") or {}
@@ -90,12 +103,12 @@ def audition_narrator(service: Any, task_id: str, *, voice_prompt: str = "", see
 
 def cast_narrator(service: Any, task_id: str, generated_voice_id: str) -> dict[str, Any] | None:
     """Keep one auditioned take as the narrator's voice."""
-    task = _idle_task(service, task_id, action="定旁白音色")
+    task = _idle_task(service, task_id, action=_text_of("cast_narrator.action"))
     if not task:
         return None
     found = voice_casting.find_preview(task.get("assets") or {}, voice_casting.NARRATOR_NAME, generated_voice_id)
     if found is None:
-        raise ValueError("旁白没有试听过这一版声音，请先试听再选")
+        raise ValueError(_text_of("cast_narrator.text"))
     entry, preview = found
     title = str((task.get("config") or {}).get("title_suggestion") or "").strip()
     created = service._voice_studio().create_designed_voice(VoiceCreateRequest(
@@ -106,7 +119,7 @@ def cast_narrator(service: Any, task_id: str, generated_voice_id: str) -> dict[s
     ))
     voice_id = str((created or {}).get("voice_id") or "").strip()
     if not voice_id:
-        raise RuntimeError("音色设计服务没有返回 voice_id")
+        raise RuntimeError(_text_of("cast_narrator.text.2"))
 
     def save(current: dict[str, Any]) -> dict[str, Any]:
         voice_casting.set_narrator_voice(
@@ -120,7 +133,7 @@ def cast_narrator(service: Any, task_id: str, generated_voice_id: str) -> dict[s
 
 def choose_narrator(service: Any, task_id: str, *, voice_id: str, label: str = "") -> dict[str, Any] | None:
     """Narrate in a voice the project or the account already has; free, nothing is designed."""
-    if not _idle_task(service, task_id, action="定旁白音色"):
+    if not _idle_task(service, task_id, action=_text_of("choose_narrator.action")):
         return None
 
     def save(current: dict[str, Any]) -> dict[str, Any]:
@@ -131,7 +144,7 @@ def choose_narrator(service: Any, task_id: str, *, voice_id: str, label: str = "
 
 
 def clear_narrator(service: Any, task_id: str) -> dict[str, Any] | None:
-    if not _idle_task(service, task_id, action="定旁白音色"):
+    if not _idle_task(service, task_id, action=_text_of("clear_narrator.action")):
         return None
 
     def forget(current: dict[str, Any]) -> dict[str, Any]:

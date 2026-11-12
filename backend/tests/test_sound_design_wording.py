@@ -220,7 +220,7 @@ class SharedReferenceLeadTests(unittest.TestCase):
         separator = prompt_data.text(_DATA, "lock_separator")
         line = replace(self.anchor, ref_audio="@音频1").lock_line()
         self.assertIn(f"{separator}{lead}@音频1", line)
-        self.assertEqual(line, "沈砚：沉稳男声，中低音区，语速每秒3字，音色参考@音频1；全片音色、音调与声线不变")
+        self.assertEqual(line, "沈砚：沉稳男声，中低音区，音色参考@音频1；全片音色、音调与声线不变")
 
     def test_an_unsent_sample_leaves_the_line_without_a_reference(self):
         plan = plan_video_references("first_last_frame", first_frame="https://x/a.png", last_frame="https://x/b.png", model="seedance2.0")
@@ -233,7 +233,7 @@ class SharedReferenceLeadTests(unittest.TestCase):
         )
         self.assertEqual(
             renumber_audio_mentions(self.placed.lock_line(), self.voices, plan),
-            "沈砚：沉稳男声，中低音区，语速每秒3字，音色参考：参考音频1（只取音色，语速与情绪按本镜表达）；全片音色、音调与声线不变",
+            "沈砚：沉稳男声，中低音区，音色参考：参考音频1（只取音色，语速与情绪按本镜表达）；全片音色、音调与声线不变",
         )
 
 
@@ -241,7 +241,7 @@ class SaysWhatTheTableSaysTests(unittest.TestCase):
     def test_the_lines_read_as_before(self):
         lin = sound.build_voice_anchor("林夏", description="22岁记者", gender="female")
         designed = sound.build_voice_anchor("周教授", voice_desc="55岁男声，低沉微哑", delivery="急切")
-        self.assertEqual(lin.lock_line(), "林夏：22岁清亮女声，中音区，语速每秒3字；全片音色、音调与声线不变")
+        self.assertEqual(lin.lock_line(), "林夏：22岁清亮女声，中音区；全片音色、音调与声线不变")
         self.assertEqual(designed.lock_line(), "周教授：55岁男声，低沉微哑；全片音色、音调与声线不变")
         self.assertEqual((designed.gender, designed.timbre, designed.center_term()), ("male", "沙哑", "male hoarse"))
         self.assertEqual(
@@ -286,7 +286,7 @@ class SaysWhatTheTableSaysTests(unittest.TestCase):
         original = prompt_data.load
         with patch.object(prompt_data, "load", lambda name: reworded if name == _DATA else original(name)):
             line = sound.build_voice_anchor("林夏").lock_line()
-        self.assertEqual(line, "林夏：清亮女声，中音区，语速每秒3字；嗓音全片不变")
+        self.assertEqual(line, "林夏：清亮女声，中音区；嗓音全片不变")
 
 
 if __name__ == "__main__":

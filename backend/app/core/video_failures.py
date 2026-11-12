@@ -10,6 +10,19 @@ from __future__ import annotations
 import re
 import time
 from typing import Any, Iterable
+from app.core import prompt_data
+
+
+_WORDING_FILE = "video_failures"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/video_failures.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 FAILURES_KEY = "5_failures"
 
@@ -37,9 +50,9 @@ def classify(message: str) -> tuple[str, str]:
     elif "minimax" in lowered or "status=failed" in lowered or "base_resp" in lowered:
         found = _MINIMAX_CODE.search(text)
         code = found.group(1) if found else ""
-    if code == "1026" and ("image" in lowered or "图" in text) and ("sensitive" in lowered or "敏感" in text):
+    if code == "1026" and ("image" in lowered or _text_of("classify.text") in text) and ("sensitive" in lowered or _text_of("classify.text.2") in text):
         return INPUT_IMAGE_SENSITIVE, code
-    if "input image sensitive" in lowered or "输入图片敏感" in text or "输入图敏感" in text:
+    if "input image sensitive" in lowered or _text_of("classify.text.3") in text or _text_of("classify.text.4") in text:
         return INPUT_IMAGE_SENSITIVE, code
     return PROVIDER_ERROR, code
 
@@ -141,30 +154,24 @@ def by_shot(assets: dict) -> dict[int, dict]:
 
 
 KIND_LABELS = {
-    INPUT_IMAGE_SENSITIVE: "输入图被判敏感",
-    PROVIDER_ERROR: "供应商未出片",
+    INPUT_IMAGE_SENSITIVE: _text_of("module.kind_labels"),
+    PROVIDER_ERROR: _text_of("module.kind_labels.2"),
 }
 
 
 def hint(entry: dict) -> str:
     """给人看的下一步。"""
-    scene = str(entry.get("scene_id") or "本场")
+    scene = str(entry.get("scene_id") or _text_of("hint.scene"))
     if entry.get("kind") == INPUT_IMAGE_SENSITIVE:
         if entry.get("retried_with_stand_ins") and entry.get("retried_without_frames"):
             return (
-                f"供应商拒收了其中一张输入图；{scene} 的分镜画面换成彩色影子、再去掉分镜画面后都仍被拒，"
-                "问题多半在定妆照本身(实拍的清晰正脸会被判疑似真人)：把演员的授权素材配到 ARK_AUTHORIZED_FACE_ASSETS，"
-                "或到角色页换一张定妆照后重跑第 5 阶段。"
+                _text_of("hint.text").format(scene)
             )
         if entry.get("retried_without_frames"):
             return (
-                f"供应商拒收了其中一张输入图；去掉 {scene} 的分镜画面只带角色与场地参考后仍被拒，"
-                "问题多半在本镜用到的参考图：到角色 / 资产页检查并替换后，重跑第 5 阶段。"
+                _text_of("hint.text.2").format(scene)
             )
         return (
-            f"供应商拒收了其中一张输入图。本镜的角色参考图在其他场次通常能通过，多半是 {scene} 的分镜画面"
-            "(下面的缩略图)需要重画：在分镜阶段打开「空间调度」，点「按当前站位重画本场」，"
-            "或改写本场分镜描述避开血迹、伤口等画面，再重跑第 5 阶段。"
-            "实拍的清晰正脸也可能被判疑似真人，这种情况重画不一定有用，可以把演员的授权素材配到 ARK_AUTHORIZED_FACE_ASSETS。"
+            _text_of("hint.text.3").format(scene)
         )
-    return "供应商没有返回视频，原话见上；按提示处理后重跑第 5 阶段。"
+    return _text_of("hint.text.4")

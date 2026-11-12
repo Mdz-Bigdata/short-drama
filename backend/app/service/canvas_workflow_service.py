@@ -18,6 +18,19 @@ from pydantic import ValidationError
 from app.core import canvas_workflow, studio_canvas, usage_ledger
 from app.core.canvas_workflow import WorkflowPlan
 from app.core.screenwriting.structured_llm import StructuredOutputError, call_structured
+from app.core import prompt_data
+
+
+_WORDING_FILE = "service_canvas_workflow_service"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/service_canvas_workflow_service.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.service.canvas_workflow_service")
 
@@ -45,9 +58,9 @@ class CanvasWorkflowService:
         """Ask the text model for a plan and keep it as a draft. Nothing on the canvas changes."""
         text = " ".join(str(brief or "").split())
         if not text:
-            raise WorkflowError("先写一下要做什么")
+            raise WorkflowError(_text_of("plan.text"))
         if len(text) > MAX_BRIEF_CHARS:
-            raise WorkflowError(f"需求太长了，请控制在 {MAX_BRIEF_CHARS} 字以内")
+            raise WorkflowError(_text_of("plan.text.2").format(MAX_BRIEF_CHARS))
         task_id, task = self.studio._canvas_task(project_id, owner_id, drama, user)
         config = task.get("config") if isinstance(task.get("config"), Mapping) else {}
         title = str(config.get("title_suggestion") or "")
@@ -68,10 +81,10 @@ class CanvasWorkflowService:
                 )
         except StructuredOutputError as error:
             logger.warning("[CanvasWorkflow] 规划失败 project=%s: %s", project_id, str(error)[:400])
-            raise WorkflowError(f"模型连续 {PLAN_ATTEMPTS} 次没有给出能用的流程：" + "；".join(error.reasons)[:600]) from error
+            raise WorkflowError(_text_of("plan.text.3").format(PLAN_ATTEMPTS) + "；".join(error.reasons)[:600]) from error
         except (RuntimeError, OSError) as error:
             logger.warning("[CanvasWorkflow] 模型调用失败 project=%s: %s", project_id, type(error).__name__)
-            raise WorkflowError("调用文本模型失败，请稍后重试或在模型配置里换一个模型") from error
+            raise WorkflowError(_text_of("plan.text.4")) from error
         return self._create(project_id, owner_id, canvas_id, text, WorkflowPlan.model_validate(result.data), existing)
 
     def create(self, project_id: str, owner_id: str, *, canvas_id: str, brief: str, plan: Mapping[str, Any]) -> dict[str, Any]:
@@ -85,7 +98,7 @@ class CanvasWorkflowService:
             return WorkflowPlan.model_validate(plan)
         except ValidationError as error:
             first = error.errors()[0]
-            raise WorkflowError(f"流程格式不对：{'.'.join(str(part) for part in first['loc'])} {first['msg']}") from error
+            raise WorkflowError(_text_of("_parse.text").format('.'.join(str(part) for part in first['loc']), first['msg'])) from error
 
     def _create(self, project_id: str, owner_id: str, canvas_id: str, brief: str, plan: WorkflowPlan, existing: list[dict[str, Any]]) -> dict[str, Any]:
         now = datetime.now(timezone.utc).isoformat()
@@ -100,7 +113,7 @@ class CanvasWorkflowService:
     def update(self, project_id: str, owner_id: str, workflow_id: str, plan: Mapping[str, Any]) -> dict[str, Any]:
         record = self._get(project_id, owner_id, workflow_id)
         if record["applied"]:
-            raise WorkflowError("这个流程已经铺到画布上了；要改请直接改节点")
+            raise WorkflowError(_text_of("update.text"))
         parsed = self._parse(plan)
         existing = self._document(project_id, owner_id, record["canvas_id"])["nodes"]
         record.update(plan=parsed.model_dump(mode="json"), problems=canvas_workflow.validate_plan(parsed, existing=existing), updated_at=datetime.now(timezone.utc).isoformat())
@@ -132,7 +145,7 @@ class CanvasWorkflowService:
         with self.repository.canvas_write_lock():
             record = self._get(project_id, owner_id, workflow_id)
             if record["applied"]:
-                raise WorkflowError("这个流程已经铺到画布上了")
+                raise WorkflowError(_text_of("apply.text"))
             plan = WorkflowPlan.model_validate(record["plan"])
             canvas_id = record["canvas_id"]
             document = self._document(project_id, owner_id, canvas_id)
@@ -142,7 +155,7 @@ class CanvasWorkflowService:
             if refused:
                 record.update(problems=problems)
                 self.repository.save_canvas_workflow(record)
-                raise WorkflowError("流程还有问题，先改好：" + "；".join(refused)[:600])
+                raise WorkflowError(_text_of("apply.text.2") + "；".join(refused)[:600])
             nodes = document["nodes"]
             origin = (max((float(node["x"]) + float(node["width"]) for node in nodes), default=-_ORIGIN_GAP) + _ORIGIN_GAP, min((float(node["y"]) for node in nodes), default=0.0))
             try:
@@ -150,7 +163,7 @@ class CanvasWorkflowService:
                     project_id, owner_id, canvas_workflow.compile_operations(plan, origin=origin), canvas_id=canvas_id, base_version=base_version,
                 )
             except studio_canvas.CanvasOperationError as error:
-                raise WorkflowError(f"铺到画布时失败：{error}") from error
+                raise WorkflowError(_text_of("apply.text.3").format(error)) from error
             record.update(applied=True, nodes=dict(done["created"]), problems=[], updated_at=datetime.now(timezone.utc).isoformat())
             self.repository.save_canvas_workflow(record)
         return {**self.status(project_id, owner_id, workflow_id), "version": done["version"]}

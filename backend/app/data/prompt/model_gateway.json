@@ -1,0 +1,1244 @@
+{
+  "_about": "model_gateway 的措辞与词表：提示词片段(prompts)、给人看的失败原因(errors)、日志(logs，%s 型按 logger 参数填，{name} 型先填好再记)、词表与正则(tables)。first-match 的表按顺序生效。",
+  "prompts": {
+    "default_style_caption": "真实电影质感，实拍写真，photorealistic live-action cinematic film still, real human skin texture, natural lighting, 35mm film grain, shallow depth of field; 绝非动画、绝非卡通、绝非3D渲染、绝非插画、绝非草图 (not anime, not cartoon, not 3d render, not illustration, not sketch, not concept art)",
+    "global_negative_label": "【全局负面】",
+    "sheet_problem_negative": "(严格规避多视图设定集五大常见问题——①五官漂移：多视角间五官形状/比例不一；②服装走样：褶皱、配件位置在各视角紊乱不符；③背景不一：各视角背景不统一；④手部崩塌：手指数量/姿态错误、多指畸形；⑤配色不稳：颜色偏差、风格不统一。no face drift, inconsistent facial features across views, changing outfit details between views, inconsistent background, deformed hands, extra or missing fingers, color inconsistency, oversized head, big head small body, chibi, bobblehead, child-like proportions, short legs, multiple different persons, watermark, text, logo)",
+    "actor_sheet_tail": " photorealistic, live-action, 35mm film. ",
+    "sheet_lock_positive": "严格参考数字演员设定集和角色状态卡，保持同一个人物身份、同一张脸、同一个发型、同一个发色、同一套服装、同一个体型、同一个年龄感和同样的标志性配饰",
+    "sheet_lock_negative": "(避免：不同人物、换脸、五官变化、发型变化、发色变化、服装变化、服装颜色变化、体型变化、年龄变化、随机配饰、多余人物、角色混淆、脸部变形、手部畸形、多余手指、文字、水印、logo)",
+    "deid_positive": "，保持照片级写实实拍电影质感(photorealistic, live-action, cinematic film still, 35mm film grain, real human skin, natural lighting)，但采用不展示清晰可识别正面人脸的电影化构图：优先人物背影、强逆光剪影、过肩后方视角、侧脸、面部转离镜头或被发丝/前景道具/阴影自然遮挡、或人物在环境中占比偏小的写实远中景；角色为虚构人物(fictional character, not a real celebrity)，画面无任何文字、无水印、无logo",
+    "deid_negative": "(避免：清晰可识别的正面真人脸、正脸特写、直视镜头的高锐度清晰五官、证件照/写真式人脸、护照照片、headshot、passport photo、真实名人、真实可识别的个人身份；并严禁任何非写实风格：动画、卡通、二次元、3D渲染、游戏CG、Unreal Engine、插画、漫画、概念草图 anime, cartoon, 2d/3d cartoon, 3d render, cgi, game cg, unreal engine, illustration, comic, concept art, sketch)",
+    "panel_identity_negative": "(避免：证件照/写真式人脸、护照照片、headshot、passport photo、真实名人、真实可识别的个人身份；并严禁任何非写实风格：动画、卡通、二次元、3D渲染、游戏CG、Unreal Engine、插画、漫画、概念草图 anime, cartoon, 2d/3d cartoon, 3d render, cgi, game cg, unreal engine, illustration, comic, concept art, sketch)",
+    "scene_stability_positive": "，场景服务剧情且空间关系固定：前景-中景-背景三层电影感纵深，主光方向与色温统一，关键道具位置固定并参与叙事，人物左右站位与画面方向稳定 (layered foreground-middle-background depth, consistent location, same room layout, same furniture and prop placement, same lighting direction and color temperature, stable composition)",
+    "scene_stability_negative": "(规避场景失稳：random background, cluttered composition, inconsistent room layout, changing furniture, changing props, changing lighting direction, inconsistent color tone, messy objects, empty meaningless background, no spatial depth, background flickering)",
+    "continuity_positive": "，严守跨镜连贯六锚点：同一人物同一张脸同一发型同一服装、同一场景与左右画面方向、动作从上一镜自然延续、情绪逐级递进不突变、道具始终在同一只手同一位置、光影色温时间一致，正反打遵守180度轴线 (same character, same outfit, same hairstyle, same location, same screen direction, prop continuity, gradual emotional continuity, obey 180-degree rule)",
+    "continuity_negative": "(规避跨镜断裂：jump cut, time skip, sudden pose change, teleporting, changing background, changing outfit, changing hairstyle, changing face, inconsistent lighting, axis flip, broken eyeline, disappearing prop, duplicated prop, mismatched action, abrupt emotion change, random camera angle, spatial discontinuity, flickering, scene reset)",
+    "continuity_carry": "directly continues from the final frame of the previous shot, matching action and screen direction, 承接上一镜最后一帧、动作与站位无缝衔接",
+    "clone_negative": "，视频全程禁止出现外形、着装、配饰完全一致的人物，禁止生成同款分身、双胞胎效果，同一画面中仅保留单个对应人物，不出现人物重复复刻 (no duplicated character, no twin, no clone, no repeated identical person, single instance per character)",
+    "emotion_face_negative": "(规避表情/面部崩坏：bad anatomy, distorted face, asymmetrical eyes, crossed eyes, extra teeth, deformed mouth, frozen face, plastic skin, uncanny smile, exaggerated expression, changing face, blurred facial features, extra fingers, extra hands, flickering)",
+    "user_instruction": [
+      "",
+      "",
+      "【用户最新对话修改/微调指引】：",
+      "{user_instruction}",
+      "请严格根据上文已生成的资产和这一最新指引对后续内容进行修改或重构，并确保符合所有编剧导演法则（无心理描写红线、双轨节奏等）。"
+    ],
+    "optimizer_director_hint": "- 目标模型为 Seedance 2.5，主模式已选定为「{primary_mode}」；按导演层该模式的蓝图组织正文，导演层里的提问、导演方案与诊断输出模式一律不适用。\n",
+    "optimizer_task_mode": "\n\n## 当前调用约定\n- 任务模式：{mode_hint}。{asset_hint}\n",
+    "optimizer_multi_beat": "- 这是同一场戏连续 {beats} 个镜头的一段多镜头视频：逐个保留「【镜头k/{beats}｜…】」镜头块、顺序与衔接方式，不得合并、删减或改写成单镜头；保持素材逐份职责、主体映射、每个镜头的起止状态与对白账本。\n",
+    "optimizer_single_beat": "- 这是单镜头、单一连续动作的简单视频；保持素材逐份职责、主体映射、事件开始/结束状态与对白账本。\n",
+    "optimizer_closing": "- 画幅、总时长、分辨率、帧率和声音开关属于接口参数，不写入 Prompt。\n- 直接只输出优化后提示词那一段工程化中文提示词正文本身，不要输出优化问题/相关原则/任何标题/解释/Markdown，不要加引号或代码块。",
+    "optimizer_user": "请按已加载的 Seedance 2.5 Prompt Optimizer 规则编译下面的视频提示词：\n{raw_prompt}",
+    "offline_genre_desc": "{genre}类型热播短剧，主要面向抖音快手及视频号受众，强调高对比冲突与反差",
+    "offline_writer": [
+      "【场景1：{location}入口 / 日 / 高对比度 {lighting}】",
+      "情节节奏：紧 ；情感节奏：重 ；预估时长：35秒",
+      "",
+      "描述：{char1}独自站立在{location}门口，细雨落在他肩膀的深色风衣上。",
+      "{char2}带着手下在一旁高调拦路，手里抓着撕成两半的公文，随手甩在{char1}脚边。",
+      "{char2}斜眼冷笑，满面不屑。",
+      "{char1}一言不发，神色平静，右指捏紧了风衣衣角，毫无退意。",
+      "对白：",
+      "{char2}：{speech_char2}",
+      "环境空间 Blocking 调度：采用了 **{blocking}** 与 **{comp_1}**。",
+      "",
+      "【场景2：{location}会场内 / 日 / {visual_term}】",
+      "情节节奏：松 ；情感节奏：轻 ；预估时长：45秒",
+      "",
+      "描述：{char1}在大厅内慢步前行，环视四周。",
+      "台下突然发生骚动，背景大屏幕开始闪烁红色的安全警报，显示出关键反转数据。",
+      "{char2}脸色突然由狂妄转为浮肿的惨白，穿着高跟鞋连连倒退两步，撞翻了身后的水晶酒杯。",
+      "{char1}淡淡看着对方，嘴角勾起一丝冷峻的弧度。",
+      "",
+      "【场景3：{location}台前 / 日 / 聚光灯汇聚】",
+      "情节节奏：紧 ；情感节奏：重 ；预估时长：40秒",
+      "",
+      "描述：{char1}拿出一枚金色质感的修罗令（或核心文件），用力按在演讲台上。",
+      "大理石台面瞬间震落了杯盏，全场保全人员齐刷刷向{char1}低头行礼。",
+      "{char2}软瘫在碎玻璃渣中，手指止不住地颤抖。",
+      "{char1}站在高高的石阶上，俯视着瘫倒的对手，神色如铁石一般坚冷。",
+      "对白：",
+      "{char1}：{speech_char1}",
+      "环境空间 Blocking 调度：采用了 **{comp_2}**。"
+    ],
+    "offline_executive": [
+      "### 核心卖点",
+      "- 题材与目标平台：{genre_desc}",
+      "- 核心爽点/虐点/笑点：底层绝地逆袭，揭穿对手虚伪面具，实力悬殊下的翻盘",
+      "- 前 2 秒 Hook 定位：【Pattern Interrupt 模式打破】民政局/发布会门口，十辆黑金劳斯莱斯车队死死围住大门，雨水在半空中发生倒流",
+      "",
+      "### 结构大纲",
+      "- 核心冲突：{char1}被{char2}强行剥夺地位与资产，{char1}在关键签字会场逆天打脸，唤醒沉眠背景夺回主控权",
+      "- 三幕结构：",
+      "  - 开端：{location}入口冲突爆发，{char1}被肆意羞辱，前2秒流量钩子触发",
+      "  - 发展：{location}大厅博弈，警报红灯大作，底牌线索悄然铺垫",
+      "  - 高潮：{char1}扔出终极物证（修罗令/遗诏/加密数据），全场保全倒戈，{char2}瘫软倒地",
+      "  - 结局：{char1}功成身退，背影融入黑伞与大雨，留给江州一个无声的传说"
+    ],
+    "offline_character": [
+      "### 角色造型与五维 DNA 锁定方案",
+      "",
+      "#### 👨‍🎤 核心角色：{char1} (执行逆袭的主体)",
+      "- **面部**：剑眉星目，左眼下方有一颗不易察觉的泪痣，`consistent facial structure`，`locked face identity`。",
+      "- **发型**：干练利落的黑色碎发，略带一点凌乱，保持跨镜头发型一致。",
+      "- **体型**：九头身，体型偏瘦，身高180cm，在风雨中身姿依然坚挺拔。",
+      "- **服饰**：身穿经典款黑色长风衣，里面搭配一件净白 T 恤，左手食指戴单枚素银戒指。",
+      "- **表情眼神**：眼神冷峻深邃，嘴角常挂着一抹看似克制而冷漠的微笑。",
+      "",
+      "#### 🦹 对手角色：{char2} (阻碍力量的化身)",
+      "- **面部**：颧骨突出，双眼狭长，眼神中闪烁着傲慢与隐约的癫狂。",
+      "- **发型**：打理得一丝不苟的油光背头，发丝紧贴，泛着冰冷的胶水质感。",
+      "- **体型**：身材发福，神色傲慢，走起路来带有习惯性的居高临下感。",
+      "- **服饰**：配戴奢华大金链与名贵腕表，身穿一套灰色奢华条纹西装，歪系着领带。",
+      "- **表情眼神**：表情浮肿，经常斜视主角，咬牙切齿时两颊肌肉明显抽搐。"
+    ],
+    "offline_storyboard": [
+      "镜号 | 景别 | 机位角度 | 运镜 | 画面内容 | 台词对白 | 声音 | 时长 | 叙事目的",
+      "1 | 全景 | 平视 | Establishing Shot | {char1}撑伞站在{location}入口，大雨滂沱打湿衣角。 | | 风雨声与凄凉古风琴声 | 3秒 | 交代场景与整体氛围，建立开端",
+      "2 | 中景 | 仰视 | {shot_1_mov} | {char2}指着{char1}的鼻子肆意嘲讽，保镖在身侧列队合围。 | “{speech_char2}” | 嘈杂雨声与反派狂笑 | 6秒 | 引入冲突，展示角色站位与阻碍力量",
+      "3 | 近景 | 俯视 | {shot_3_mov} | {char1}猛地一扬手扔出金色令徽，{char2}惊恐倒退撞翻酒架。 | “{speech_char1}” | 震撼雷鸣声，摇滚重低音BGM瞬间起燃 | 6秒 | 动作高潮与正义翻盘，动作收尾留悬念"
+    ],
+    "offline_pr_title": "{creative_title}：隐藏大佬的暴爽翻盘！",
+    "offline_pr_body": "太爽了！前妻/恶毒总监当众撕毁签字合同，逼迫主角净身出户！殊不知主角就是身家千亿的龙王/总裁，一通电话全省财阀大雨中跪迎！逆袭风暴点爆全场，点击免费看全集！💥",
+    "offline_pr": [
+      "【封面大字PR标题】",
+      "🔥 《{pr_title}》",
+      "",
+      "【黄金引流文案】",
+      "📌 ‘{pr_body}’"
+    ],
+    "offline_done": "*(AI 智能内容生成完成)*"
+  },
+  "errors": {
+    "reference_unsupported": "当前图像模型未接入参考图生图，请选择支持参考图的 Seedream 模型",
+    "ark_maybe_accepted": "提交视频任务后等回包超时：任务可能已经在火山方舟创建并开始计费，为免重复扣费没有自动重发；请先到方舟控制台按时间核对这一镜，确认没有任务再重新生成",
+    "ark_wait_timed_out": "Ark 任务 {task_id} 等待超时，仍在生成；下次运行按任务号接着取，不重新提交",
+    "ark_no_video": "Ark 任务 {task_id} 未出片(超时或轮询失败)",
+    "ark_unreachable": "Ark 视频接口不可达: {error_type}: {error}",
+    "ark_task_ended": "任务 {task_id} {status}: {error}",
+    "no_frame": "本镜没有首帧/参考图/参考视频，不提交(禁止文生视频)",
+    "h3_no_video": "MiniMax H3 未返回视频",
+    "h3_failure_detail": "：{failure}",
+    "h3_failed": "MiniMax H3 请求失败: {error_type}: {error}",
+    "adapter_no_credentials": "{family} 未配置运行时凭据，本镜不提交（禁止改投其他供应商）",
+    "adapter_init_failed": "{family} 适配器初始化失败: {error}",
+    "adapter_failed": "{family} 视频生成失败: {detail}",
+    "adapter_no_credential_accepted": "no credential accepted",
+    "video_family_unready": "视频模型族 {family} 没有可用的运行时凭据"
+  },
+  "logs": {
+    "centre_fallback": "[ModelGateway] %s 模型 %s 未在模型配置中心启用，改用配置中心的 %s",
+    "credential_refused": "[ModelGateway] %s 的凭据 %s 被供应商拒绝（HTTP %s），改用下一把",
+    "chat_rate_limited": "[ModelGateway] chat(%s) 被限流 (429)，%.1f 秒后第 %d/%d 次重试",
+    "chat_deadline": "[ModelGateway] chat(%s) 超过 %.0f 秒仍未返回完整结果，放弃本次调用并降级",
+    "chat_truncated": "[ModelGateway] chat(%s) 输出达到 max_tokens=%s 被截断（completion_tokens=%s，其中推理 %s）",
+    "chat_shrink": "[ModelGateway] chat(%s) 不接受 max_tokens=%s，按其上限 %s 重试",
+    "image_skipped": "[ModelGateway] image(%s) 跳过：%s 刚刚连接失败，暂不重试",
+    "image_rate_limited": "[ModelGateway] image(%s) 被限流 (429)，%.1f 秒后第 %d/%d 次重试",
+    "image_resized": "[ModelGateway] image(%s) 不接受尺寸 %s（上限 %s 像素），等比缩小为 %s 重试",
+    "image_timeout": "[ModelGateway] image(%s) 超过 %s 秒未返回，本次放弃(可调 IMAGE_REQUEST_TIMEOUT_SECONDS)",
+    "agnes_no_mp4": "[ModelGateway] Agnes 视频已完成但未找到 mp4 直链",
+    "sd25_loaded": "[ModelGateway] 已载入 sd25-pe + sd-2-5-prompt 集成规则",
+    "director_loaded": "[ModelGateway] Seedance 2.5 导演层已装载 (mode=%s, sections=%d, chars=%d)",
+    "ark_maybe_accepted": "[ModelGateway] Ark 视频创建结果不明(%s)，不自动重发",
+    "ark_create_refused": "[ModelGateway] Ark 视频创建被拒(%s 张图): %s",
+    "text_model_switched": "[ModelGateway] 文本模型 %s 未在模型配置中心启用，改用全局选择的 %s (provider=%s)",
+    "runtime_text_ok": "[ModelGateway] 动态文本模型生成成功 (provider=%s, model=%s)",
+    "text_offline": "[ModelGateway] 所有在线文本 provider 均不可用，平滑退回离线引擎",
+    "runtime_image_ok": "[ModelGateway] 动态图像模型生成成功 (provider=%s, model=%s)",
+    "runtime_image_failed": "[ModelGateway] 图像模型 %s 未出图，本格失败(不改用其它图像模型)",
+    "image_all_failed": "[ModelGateway] 所有在线文生图 provider 均不可用，本格没有图(不使用占位图，也不改走文生视频)",
+    "sheet_retry": "[ModelGateway] 设定集 %s 出图失败，按 %s 重试",
+    "prompt_over_limit": "[ModelGateway] %s 提示词 %s 字超出整条上限 %s，已删 %s，发 %s 字",
+    "video_note": "[ModelGateway] %s",
+    "seedance_env_model": "[ModelGateway] 项目视频模型 %s 未在模型配置中心启用，改用 .env 的 Seedance 凭据与型号 %s",
+    "video_all_failed": "[ModelGateway] 图生视频未通过%s，本镜失败(禁止降级为文生视频)",
+    "comfy_not_ready": "[ModelGateway] ComfyUI 未就绪：%s",
+    "comfy_failed": "[ModelGateway] ComfyUI 工作流失败: %s",
+    "adapter_credential_refused": "[ModelGateway] %s 的凭据 %s 被拒绝（HTTP %s），改用下一把",
+    "adapter_no_url": "[ModelGateway] %s 任务结束但没有可下载的视频 URL",
+    "adapter_failed": "[ModelGateway] %s 生成失败: %s: %s",
+    "dotenv_loaded": "[ModelGateway] 成功从根目录载入 .env 配置文件: {root_dotenv}",
+    "config_loaded": "[ModelGateway] 成功从 {path} 载入模型补充配置",
+    "config_failed": "[ModelGateway] 读取配置文件 {path} 失败: {error}",
+    "host_cooled": "[ModelGateway] {host} 冷却到期，恢复试探调用。",
+    "host_broken": "[ModelGateway] {host} 连续 {n} 次 SSL 不可达，熔断短路 {cooldown:.0f}s (到期自动半开重试，其它厂商不受影响)。",
+    "chat_error": "[ModelGateway] chat({api_model}) 响应错误 {status}: {error_text}",
+    "chat_retry": "[ModelGateway] chat({api_model}) 瞬时网络抖动第{attempt}次重试: {error}",
+    "chat_unreachable": "[ModelGateway] chat({api_model}) 不可达(重试耗尽，将自动降级): {error}",
+    "image_error": "[ModelGateway] image({api_model}) 响应错误 {status}: {error_text}",
+    "image_retry": "[ModelGateway] image({api_model}) 瞬时网络抖动第{attempt}次重试: {error}",
+    "image_unreachable": "[ModelGateway] image({api_model}) 不可达: {error_type}: {error}",
+    "agnes_create_retry": "[ModelGateway] Agnes 视频创建瞬时抖动重试: {error}",
+    "agnes_create_refused": "[ModelGateway] Agnes 视频创建未通过 {status}: {text}",
+    "agnes_task_created": "[ModelGateway] Agnes 视频任务已创建: {task_id}，开始轮询...",
+    "agnes_poll_retry": "[ModelGateway] Agnes 视频轮询抖动(任务仍在生成中)，重试: {error}",
+    "agnes_video_ok": "[ModelGateway] Agnes 视频生成成功: {url}...",
+    "agnes_retry_whole": "[ModelGateway] Agnes 视频生成失败({reason})，整次重试 {attempt}/{gen_attempts}…",
+    "agnes_failed": "[ModelGateway] Agnes 视频生成失败: {reason}",
+    "agnes_timeout": "[ModelGateway] Agnes 视频生成超时 ({max_wait}s)",
+    "agnes_unreachable": "[ModelGateway] Agnes 视频接口异常(将自动降级): {error}",
+    "prompt_optimized": "[ModelGateway] Seedance2 提示词已优化 ({before}->{after}字)",
+    "ark_create_retry": "[ModelGateway] Ark 视频创建瞬时抖动第{attempt}次重试: {error}",
+    "ark_task_created": "[ModelGateway] Ark 视频任务已创建: {task_id} (ratio={ratio}, {resolution}, {duration}s)，开始轮询...",
+    "ark_unreachable": "[ModelGateway] Ark 视频接口不可达(将自动降级): {error}",
+    "ark_poll_retry": "[ModelGateway] Ark 轮询抖动第 {poll_errs} 次(任务 {task_id} 仍在生成中)，重试: {error}",
+    "ark_poll_gave_up": "[ModelGateway] Ark 轮询连续 {poll_errs} 次失败，放弃任务 {task_id}",
+    "ark_video_ok": "[ModelGateway] Ark 视频生成成功: {url}...",
+    "ark_no_video_url": "[ModelGateway] Ark 视频成功但无 video_url: {poll}",
+    "ark_task_refused": "[ModelGateway] Ark 视频生成未通过: {note}",
+    "ark_timeout": "[ModelGateway] Ark 视频生成超时 ({max_wait}s)",
+    "text_ok": "[ModelGateway] 文本生成成功 (provider={name}, model={api_model})",
+    "image_ok": "[ModelGateway] 文生图成功 (provider={name}, model={model}, 参考图={refs}): {url}...",
+    "sheet_done": "[ModelGateway] 数字演员设定集生成 ({name}, genre={genre}): {url}...",
+    "seedance_video_ok": "[ModelGateway] Seedance 图生视频成功 (mode={mode}): {url}...",
+    "agnes_image_video_ok": "[ModelGateway] Agnes 图生视频成功 (mode={mode}): {url}...",
+    "adapter_ok": "[ModelGateway] {family} 生成成功: {url}...",
+    "rewrite_over_limit": "[ModelGateway] %s 改写后的提示词 %d 字，超过上限 %d 字：改用改写前的 %d 字版本"
+  },
+  "tables": {
+    "max_tokens_words": [
+      "max_tokens",
+      "max_completion_tokens",
+      "max_output_tokens",
+      "max_new_tokens",
+      "completion tokens",
+      "output tokens",
+      "maximum",
+      "too large",
+      "exceed",
+      "context length",
+      "最大",
+      "上限",
+      "超出"
+    ],
+    "blocking_stands": [
+      "核心镜头站位 (主角居中心，配角四周对称平衡)",
+      "对话切换站位 (正反打OTS过肩站位)",
+      "三角关系站位 (主角居中景，配角居前景与背景形成三角形)",
+      "空间象征站位 (利用物理高度差仰俯拍表现权力阶级)",
+      "运动固定站位 (角色沿中轴线同向移动，追踪镜头)",
+      "对称仪式站位 (沿画面中轴线完美对称排列)",
+      "冲突对峙站位 (两方对立左右，留白大面积张力空间)",
+      "前后中景层次站位 (前景虚化，中景主角，背景环境)"
+    ],
+    "compositions": [
+      "长廊尽头镜头 (纵深线条制造压迫感)",
+      "空旷广场镜头 (角色在大空间极度缩小展现孤立)",
+      "窗边停顿镜头 (窗框为界，思考与思念场景)",
+      "桥面远景镜头 (延伸空间体现分别或离开宿命感)",
+      "街口等待镜头 (都市复杂十字街头等待霓虹闪烁)",
+      "过道跟拍镜头 (狭长跟拍，急迫行走与临场感)",
+      "楼顶俯视镜头 (俯瞰繁华城市夜景表现虚无与孤单)",
+      "电梯开门镜头 (电梯开关动作制造揭示与出场感)",
+      "室内角落镜头 (角色置于狭窄边角展现被困局促感)",
+      "门口压迫镜头 (用门框封锁角色形成对峙张力)",
+      "巷道纵深镜头 (狭窄通道暗示跟踪或跟踪追捕)",
+      "雾中小路镜头 (低能见度营造梦幻或朦胧宿命)",
+      "雨巷倒影镜头 (地面大量积水反光折射霓虹增加层次)",
+      "森林穿行镜头 (树木斑驳光影及遮挡营造探索)",
+      "地下通道镜头 (封闭昏暗地下走廊营造黑暗追逐)",
+      "海边留白镜头 (海面天空大面积空白人物极小，诗意收尾)"
+    ],
+    "camera_movements": [
+      "Slow Dolly In (慢推近景)",
+      "Slow Dolly Out (慢拉远)",
+      "Crane Up (低升俯视)",
+      "Steadicam Side Follow (贴身跟移)",
+      "360-degree Orbit (环绕凝视)",
+      "Dutch Angle & Spin (斜角旋转)",
+      "Rear Chase Shot (背后追拍)",
+      "Frontal Tracking Retreat (正面退拍)",
+      "Lateral Tracking (侧面平行跟拍)",
+      "Over-the-shoulder Chase (过肩跟拍)",
+      "POV Traverse (第一人称穿行)",
+      "Handheld Shake (手持晃动)",
+      "Zoom / Snap Push (快速突进)",
+      "Zolly / Fast Pull Back (冲击拉远)",
+      "Drone Dive (俯冲下降)",
+      "Low-angle Push (低机位仰拍推进)",
+      "High-angle Follow (高机位压迫跟拍)",
+      "Extreme Close-up Dolly (极近特写推进)",
+      "Pan Reveal (慢摇揭示)",
+      "Whip Pan (甩镜转场)",
+      "Foreground Occlusion (前景遮挡转场)",
+      "Empty Track Transition (空镜推轨转场)",
+      "Match Cut (匹配转场)",
+      "Out-of-focus Bokeh (变焦散景转场)",
+      "Rack Focus (焦点转移)",
+      "Macro Sweeping (微距扫过)",
+      "Depth of Field Drift (景深漂移)",
+      "Detail Tracking (细节追踪)",
+      "Light Sweep (光影扫描)",
+      "Reverse Rack Focus (反向焦点折返)",
+      "Establishing Shot (远景建立)",
+      "Static Stare (静止凝视)",
+      "Floating (漂浮移动)",
+      "Bullet Time Dolly (时间凝固推进)",
+      "Enclosing Push (环境压迫推进)",
+      "Dolly Zoom (希区柯克变焦)"
+    ],
+    "genre_templates": {
+      "romance": {
+        "short_link": "romance_contract_love",
+        "genre_desc": "豪门言情甜宠剧，适合微信视频号/抖音快手"
+      },
+      "rebirth_revenge": {
+        "short_link": "rebirth_queen_revenge",
+        "genre_desc": "重生打脸复仇剧"
+      },
+      "campus": {
+        "short_link": "campus_secret_love",
+        "genre_desc": "青春校园暗恋剧"
+      },
+      "family": {
+        "short_link": "family_mother_awake",
+        "genre_desc": "都市家庭主妇觉醒剧"
+      },
+      "retro_romance": {
+        "short_link": "retro_army_love",
+        "genre_desc": "年代怀旧情感剧"
+      },
+      "male_counterattack": {
+        "short_link": "male_dragon_king",
+        "genre_desc": "男频赘婿战神归来逆袭剧"
+      },
+      "mystery": {
+        "short_link": "mystery_abyss_stare",
+        "genre_desc": "悬疑推理犯罪剧"
+      },
+      "time_travel": {
+        "short_link": "time_travel_sign",
+        "genre_desc": "穿越架空系统流爽剧"
+      },
+      "palace_intrigue": {
+        "short_link": "palace_queen_revenge",
+        "genre_desc": "古装宫斗权谋剧"
+      },
+      "xianxia": {
+        "short_link": "xianxia_demon_rise",
+        "genre_desc": "仙侠修真热血短剧"
+      },
+      "urban_realism": {
+        "short_link": "urban_lawyer_win",
+        "genre_desc": "都市商战律政悬疑剧"
+      },
+      "sci_fi": {
+        "short_link": "scifi_cyborg_awake",
+        "genre_desc": "赛博朋克科幻爽剧"
+      },
+      "horror": {
+        "short_link": "horror_paper_coffin",
+        "genre_desc": "民俗灵异恐怖剧"
+      },
+      "military": {
+        "short_link": "military_lone_wolf",
+        "genre_desc": "特种兵硬汉反恐短剧"
+      },
+      "sports": {
+        "short_link": "sports_iron_punch",
+        "genre_desc": "格斗竞技热血爽剧"
+      },
+      "food": {
+        "short_link": "food_healing_face",
+        "genre_desc": "都市治愈美食生活剧"
+      },
+      "overseas_us": {
+        "short_link": "overseas_wolf_love",
+        "genre_desc": "出海欧美狼人爱情剧"
+      },
+      "overseas_other": {
+        "short_link": "overseas_east_love",
+        "genre_desc": "出海中东异域爱情剧"
+      },
+      "interactive": {
+        "short_link": "interactive_choice",
+        "genre_desc": "互动多结局创新短剧"
+      },
+      "comedy": {
+        "short_link": "comedy_funny_boy",
+        "genre_desc": "反转沙雕爆笑喜剧"
+      },
+      "car": {
+        "short_link": "car_ark_accessory",
+        "genre_desc": "科技车载方舟极客剧"
+      },
+      "general": {
+        "short_link": "general_revenge_king",
+        "genre_desc": "都市情感逆袭短剧"
+      }
+    },
+    "face_role_aliases": {
+      "主角": "protagonist",
+      "反派": "antagonist"
+    },
+    "primary_credential_label": "主凭据",
+    "optimizer_mode_hints": {
+      "first_frame": "图生视频-首帧 (已提供首帧图 @图片1)",
+      "first_last_frame": "图生视频-首尾帧 (已提供 @图片1 首帧、@图片2 尾帧)",
+      "text_to_video": "文生视频 (无参考素材)",
+      "multi_ref": "多模态参考生视频 (已提供多张参考图/视频/音频)"
+    },
+    "optimizer_mode_hint_default": "图生视频-首帧",
+    "optimizer_preamble": "^(优化后提示词[:：]?|【优化后提示词】)\\s*",
+    "hero_surnames": [
+      "叶",
+      "林",
+      "顾",
+      "苏",
+      "萧",
+      "沈",
+      "陆",
+      "周",
+      "云",
+      "楚",
+      "姜",
+      "秦",
+      "白",
+      "慕容",
+      "上官",
+      "司徒"
+    ],
+    "hero_names": [
+      "凡",
+      "野",
+      "溪",
+      "舒",
+      "渊",
+      "雨",
+      "尘",
+      "风",
+      "逸",
+      "羽",
+      "寒",
+      "月",
+      "澜",
+      "天",
+      "歌",
+      "痕"
+    ],
+    "villain_surnames": [
+      "王",
+      "赵",
+      "李",
+      "张",
+      "高",
+      "年",
+      "金",
+      "钱",
+      "孙",
+      "郑",
+      "何",
+      "黄"
+    ],
+    "villain_names": [
+      "天华",
+      "霸天",
+      "建国",
+      "大少",
+      "梅",
+      "贵妃",
+      "无赖",
+      "强",
+      "成",
+      "雄",
+      "彪",
+      "龙"
+    ],
+    "story_defaults": {
+      "char1_role": "核心主角",
+      "char2_role": "反派对手",
+      "location": "签字大厅",
+      "action": "绝地反击"
+    },
+    "story_locations": {
+      "romance": "千亿签字大厅",
+      "rebirth_revenge": "豪门签约会展",
+      "campus": "雨后学校操场",
+      "xianxia": "仙宗锁仙台",
+      "palace_intrigue": "雪落冷宫庭院",
+      "horror": "昏暗扎纸铺",
+      "sci_fi": "赛博回收工厂",
+      "overseas_us": "月圆之夜的古堡"
+    },
+    "story_title_noise": "请帮我生成一个|请生成一个|短剧|，走完流程。|走完整个流程。",
+    "story_split": {
+      "at": "在",
+      "doing": "做",
+      "of": "之"
+    },
+    "story_protagonist_after_of": "我(?:是|在)([\\u4e00-\\u9fa5\\w]+)",
+    "story_rename_protagonist": "(?:把主角|将主角|主角)(?:改名(?:叫|为)|改为|换成|叫做|是)\\s*([\\u4e00-\\u9fa5\\w]+)",
+    "story_rename_antagonist": "(?:把反派|将反派|把对手|对手|反派)(?:改名(?:叫|为)|改为|换成|叫做|是)\\s*([\\u4e00-\\u9fa5\\w]+)",
+    "story_rename_location": "(?:把场景|将场景|场景|把环境|环境)(?:改(?:为|成)|换成|设定为)\\s*([\\u4e00-\\u9fa5\\w]+)",
+    "preamble_greeting": "^\\s*(?:你好|您好|嗨|哈喽|hi|hello|hey|好的|当然|没问题|收到|明白|很高兴)[!！,，.。、\\s]*",
+    "preamble_chatter": [
+      "我是",
+      "我叫",
+      "agnes",
+      "sapiens",
+      "智能体",
+      "大模型",
+      "语言模型",
+      "我将为",
+      "我会为",
+      "我来为",
+      "我将基于",
+      "为您拆解",
+      "为您打造",
+      "为您创作",
+      "为您生成",
+      "为您呈现",
+      "为您带来",
+      "很荣幸",
+      "developed by",
+      "created by",
+      "i am "
+    ],
+    "preamble_sentence": "\\s*([^。！？\\n#]{0,200}?[。！？!?])\\s*",
+    "offline_style_default": {
+      "lighting": "丁达尔效应/体积光 (Tyndall Effect)，金属玻璃硬质反光，自然光照",
+      "visual_term": "大片级写实硬核调 (Cinematic Reality Style)"
+    },
+    "offline_styles": {
+      "cyberpunk": {
+        "lighting": "霓虹冷色频闪，高对比度明暗 Chiaroscuro 对峙，冷蓝色温与猩红色温对撞",
+        "visual_term": "赛博朋克深冷调 (Deep Cyan & Neon Red)"
+      },
+      "retro": {
+        "lighting": "伦勃朗光 (Rembrandt Lighting) 脸颊亮区，黄金时刻逆光 (Golden hour backlight)，暖黄色调",
+        "visual_term": "怀旧胶片风格 (Golden Warm Film Style)"
+      },
+      "sci_fi_future": {
+        "lighting": "冷金属硬质反光，幽蓝色全息投影微光，超高色温冷白强背光",
+        "visual_term": "科幻未来极冷调 (Sci-Fi Holographic Style)"
+      },
+      "palace": {
+        "lighting": "红墙黛瓦古典自然散射光，金色屋脊漫反射，深红与暗金暖色调",
+        "visual_term": "古风宫廷优雅调 (Traditional Palace Style)"
+      },
+      "mystery_dark": {
+        "lighting": "极端弱光与大面积黑影，局部蜡烛微弱暖光，剪影明暗对峙",
+        "visual_term": "悬疑黑色电影调 (Dark Film Noir Style)"
+      },
+      "anime": {
+        "lighting": "明亮动漫自然天光，高饱和色彩漫反射，梦幻丁达尔边缘光",
+        "visual_term": "动漫二次元色彩调 (Niji Anime Style)"
+      },
+      "horror_folk": {
+        "lighting": "民俗高饱和红绿高对比冷光频闪，香烛惨白冷光，诡异阴沉黑调",
+        "visual_term": "民俗惊悚诡秘调 (Folk Horror Tone)"
+      }
+    },
+    "offline_shot_moves": {
+      "first": {
+        "cinematic": "Extreme Close-up Dolly",
+        "other": "Slow Dolly In"
+      },
+      "third": {
+        "cinematic": "Dolly Zoom",
+        "other": "Lateral Tracking"
+      }
+    },
+    "offline_speech_default": {
+      "char2": "你不过是个无权无势的底层小人物，也配站在这里？！",
+      "char1": "睁大眼看清楚，这才是我的底牌！今日，属于我的一切我都会拿回来！"
+    },
+    "offline_speech": {
+      "xianxia": {
+        "char2": "萧凡，你已全身筋脉尽碎，交出魔骨，仙门容不得你！",
+        "char1": "清虚老儿！你们道貌岸然剥我仙骨，今日我便一剑踏平你这仙山！"
+      },
+      "romance": {
+        "char2": "顾安然，你只是个被扫地出门的养女，这设计稿你不配署名！",
+        "char1": "陆霆骁是我的底气，但没有他，我也能让你们身败名裂！"
+      },
+      "horror": {
+        "char2": "林九，半夜扎纸铺不迎活客？今天我就砸了你这纸人店！",
+        "char1": "人有归路，鬼有黄泉。赵虎，这副大木黑漆棺，是留给你的！"
+      }
+    },
+    "offline_markers": {
+      "writer": [
+        "编剧",
+        "writer-agent"
+      ],
+      "executive": [
+        "总导演",
+        "executive-director"
+      ],
+      "character": [
+        "角色设计师",
+        "character-designer"
+      ],
+      "storyboard": [
+        "分镜师",
+        "storyboard-artist"
+      ],
+      "pr": [
+        "宣发",
+        "pr-agent"
+      ]
+    },
+    "offline_pr_by_genre": {
+      "xianxia": {
+        "title": "《仙骨已碎，剑开天门！》",
+        "body": "虚伪仙尊强挖去我的魔骨给义子？他没想到我竟然唤醒了体内的九幽魔皇元神，当着全天下宗门弟子的面一剑震碎仙山！热血仙侠狂暴反扑！点击免费看大结局！"
+      },
+      "horror": {
+        "title": "《深夜纸人抬棺：民俗禁忌起！》",
+        "body": "深夜恶霸强行抢夺扎纸铺的玉佛，少掌柜默默摇动三清铜铃，满屋纸扎童男童女瞬间走下货架列队抬棺！惊悚重重，点击免费看爆爽灵异大戏！💥"
+      }
+    },
+    "agnes_panel_markers": {
+      "opening": "【落笔】",
+      "after": "不是概念图。",
+      "closing": "【收边】"
+    },
+    "agnes_brackets": "[（(][^（()）]*[)）]",
+    "agnes_negative_clause": "(避免|严禁|不要|不得|杜绝)[^。.;；\\n]*[。.;；\\n]?",
+    "agnes_trigger_words": [
+      "换脸",
+      "脸部变形",
+      "手部畸形",
+      "多余手指",
+      "passport photo",
+      "headshot",
+      "not a real person",
+      "not a real celebrity",
+      "真实名人",
+      "可识别的个人身份",
+      "暴力",
+      "gore",
+      "blood",
+      "打脸",
+      "渣男",
+      "复仇",
+      "报仇",
+      "癫狂",
+      "羞辱",
+      "死",
+      "尸"
+    ],
+    "agnes_strip_chars": " ，,。.；;",
+    "agnes_prompt_limit": 600,
+    "enhance_expressions": [
+      [
+        "sad_crying",
+        [
+          "哭",
+          "泪",
+          "悲伤",
+          "伤心",
+          "痛苦",
+          "哀伤",
+          "cry",
+          "sad",
+          "pain",
+          "grief",
+          "weeping"
+        ],
+        "lower eyelids slightly swollen and red, tears welling in the bottom of eyes, under-lip tensed and gently bitten by teeth, subtle chin muscles trembling"
+      ],
+      [
+        "angry_fierce",
+        [
+          "怒",
+          "愤怒",
+          "咆哮",
+          "狰狞",
+          "杀气",
+          "生气的",
+          "angry",
+          "fierce",
+          "rage",
+          "furious",
+          "teeth gritted"
+        ],
+        "eyebrows knitted together tightly forming deep vertical wrinkles, nostrils flaring slightly, corners of the mouth pulled downward and tensed, teeth gritted, intense fierce glare"
+      ],
+      [
+        "shocked_scared",
+        [
+          "惊",
+          "震惊",
+          "恐惧",
+          "害怕",
+          "颤抖",
+          "惊恐",
+          "shocked",
+          "scared",
+          "fear",
+          "terrified",
+          "shivering"
+        ],
+        "pupils dilated, eyelids wide open, mouth slightly agape, Adam's apple slowly bobbing, subtle body shivering under light"
+      ],
+      [
+        "joyful_smirking",
+        [
+          "笑",
+          "喜悦",
+          "奸笑",
+          "狂妄",
+          "邪魅",
+          "自信的",
+          "smirk",
+          "smile",
+          "joy",
+          "laugh",
+          "arrogant",
+          "confident grin"
+        ],
+        "one eyebrow slightly arched, single corner of the mouth curved upward in a smirking grin, gaze full of contempt, confident expression"
+      ],
+      [
+        "contemplative_silent",
+        [
+          "忍",
+          "克制",
+          "沉思",
+          "沉默",
+          "忧郁",
+          "refrain",
+          "contemplative",
+          "silent",
+          "brooding",
+          "suppressed"
+        ],
+        "gaze downward and wandering, lips pressed tightly in a thin line, facial muscles slightly rigid and tense"
+      ]
+    ],
+    "enhance_colors": [
+      [
+        "teal_orange",
+        [
+          "打斗",
+          "格斗",
+          "武打",
+          "对决",
+          "交锋",
+          "出拳",
+          "踢",
+          "剑",
+          "刀",
+          "兵器",
+          "fight",
+          "clash",
+          "punch",
+          "kick",
+          "sword",
+          "blade",
+          "combat",
+          "action scene"
+        ],
+        "Teal and Orange color grading, high contrast cinema grading, warm highlights and cool cyan shadows, cinematic blockbuster look"
+      ],
+      [
+        "muted_greens",
+        [
+          "雨",
+          "雪",
+          "阴天",
+          "冷",
+          "杀",
+          "死",
+          "悲",
+          "克制",
+          "rain",
+          "snow",
+          "cold",
+          "kill",
+          "sad",
+          "refrain",
+          "bleach bypass"
+        ],
+        "bleach bypass film style, desaturated colors, muted mossy greens and cold blue tones, raw film texture"
+      ],
+      [
+        "golden_hour",
+        [
+          "阳光",
+          "温暖",
+          "温馨",
+          "黄昏",
+          "傍晚",
+          "回忆",
+          "sunlight",
+          "warm",
+          "golden hour",
+          "sunset",
+          "evening",
+          "memory"
+        ],
+        "Golden Hour lighting, warm sunset glowing hues, soft orange light rays, Kodak Portra 400 film tones"
+      ],
+      [
+        "neon_magenta",
+        [
+          "都市",
+          "繁华",
+          "赛博",
+          "霓虹",
+          "酒吧",
+          "街头",
+          "city",
+          "neon",
+          "cyber",
+          "bar",
+          "street",
+          "midnight"
+        ],
+        "neon color scheme, vibrant teal and magenta reflected glow on wet ground, cross-processed colors, cyber atmosphere"
+      ],
+      [
+        "sodium_vapor",
+        [
+          "废墟",
+          "荒凉",
+          "废土",
+          "历史",
+          "古老",
+          "ruin",
+          "wasteland",
+          "desert",
+          "ancient",
+          "historical"
+        ],
+        "sodium vapor monochromatic tones, deep high-contrast dark-yellow lighting, gritty rusty textures"
+      ]
+    ],
+    "enhance_default_color": "film color graded, natural volumetric movie lighting",
+    "enhance_props": [
+      [
+        "flying_sword",
+        [
+          "飞剑",
+          "flying sword"
+        ],
+        "metallic flying sword floating in mid-air, ancient runes glowing on the blade, surrounded by crackling electric sparks, kinetic wind distortion trails"
+      ],
+      [
+        "demon_seal",
+        [
+          "魔印",
+          "上古魔印",
+          "demon seal",
+          "magic stamp"
+        ],
+        "rough black basalt seal with flowing magma-red molten runes, emitting dark volumetric smoke, micro space fissures warping the background"
+      ],
+      [
+        "magic_circle",
+        [
+          "法宝",
+          "法阵",
+          "阵法",
+          "magic circle",
+          "astrolabe",
+          "talisman"
+        ],
+        "rotating miniature gold astrolabe, galaxy-like stardust swirling inside, projection of transparent colored magic circles"
+      ],
+      [
+        "common_blade",
+        [
+          "剑",
+          "刀",
+          "兵器",
+          "金属",
+          "sword",
+          "blade",
+          "weapon",
+          "metal parry"
+        ],
+        "sharp metallic gleam, volumetric light reflection on steel, parry sparks suspended, kinetic wind distortion"
+      ]
+    ],
+    "enhance_blade_yields": {
+      "row": "common_blade",
+      "marker": "flying_sword",
+      "word": "飞剑"
+    },
+    "enhance_rim_words": [
+      "clash",
+      "fight",
+      "strike",
+      "dark",
+      "night",
+      "shadow",
+      "格斗",
+      "打斗",
+      "黑夜",
+      "暗"
+    ],
+    "enhance_rim_light": "sharp intense rim light outlining the figure's silhouette, strong contrast, dark shadow depth",
+    "enhance_background": "cinematic depth of field, blurred bokeh background, 85mm f/1.8 lens effect, subtle organic 35mm film grain, realistic surface textures, raw photo quality",
+    "enhance_background_skip": [
+      "depth of field",
+      "bokeh"
+    ],
+    "era_costume": {
+      "xianxia": "古代仙侠时代背景，角色必须身着古装（道袍/汉服/广袖仙袍/云纹长袍），古典发髻发饰，严禁出现西装、夹克、衬衫、牛仔裤、卫衣、手表、眼镜、手机等任何现代服饰与现代元素",
+      "wuxia": "古代江湖武侠时代背景，角色必须身着古代侠客装束（劲装/长衫/披风/束发），古典发型，严禁出现任何现代服饰、现代配饰与现代元素",
+      "palace_intrigue": "古代宫廷时代背景，角色必须身着华美古装宫廷服饰（朝服/官袍/凤冠华服锦袍），古典发髻头饰，严禁出现任何现代服饰与现代元素",
+      "retro_romance": "上世纪七八九十年代怀旧时代背景，角色身着该年代感服饰发型，严禁出现当代潮流元素",
+      "overseas_us": "欧美时代背景，角色为欧美人物造型与对应服饰"
+    },
+    "sheet_no_url": "无",
+    "list_joiner": "、",
+    "problem_joiner": "；",
+    "genre_rules": [
+      [
+        "overseas_us",
+        [
+          "狼人",
+          "吸血鬼",
+          "mafia",
+          "黑帮",
+          "alpha",
+          "omega",
+          "亿万富翁",
+          "欧美",
+          "wolf",
+          "vampire",
+          "lucas",
+          "elena"
+        ]
+      ],
+      [
+        "overseas_other",
+        [
+          "东南亚",
+          "中东",
+          "拉美",
+          "酋长",
+          "沙漠",
+          "异域",
+          "王子",
+          "物理",
+          "楚云溪",
+          "哈曼"
+        ]
+      ],
+      [
+        "interactive",
+        [
+          "互动",
+          "投票",
+          "多结局",
+          "沉浸式",
+          "选项",
+          "刺客",
+          "抉择"
+        ]
+      ],
+      [
+        "military",
+        [
+          "军事",
+          "特种兵",
+          "谍战",
+          "卧底",
+          "特工",
+          "维和",
+          "战火",
+          "毒枭",
+          "战风",
+          "卡洛斯"
+        ]
+      ],
+      [
+        "sports",
+        [
+          "体育",
+          "竞技",
+          "电竞",
+          "格斗",
+          "赛车",
+          "篮球",
+          "足球",
+          "铁拳",
+          "八角笼",
+          "毁灭者"
+        ]
+      ],
+      [
+        "food",
+        [
+          "美食",
+          "深夜食堂",
+          "治愈",
+          "厨师",
+          "小店",
+          "菜肴",
+          "长寿面",
+          "面条",
+          "食客"
+        ]
+      ],
+      [
+        "horror",
+        [
+          "恐怖",
+          "灵异",
+          "怪谈",
+          "鬼",
+          "诡异",
+          "老宅",
+          "禁忌",
+          "邪祟",
+          "纸人",
+          "扎纸",
+          "林九"
+        ]
+      ],
+      [
+        "xianxia",
+        [
+          "修真",
+          "仙侠",
+          "飞升",
+          "魔尊",
+          "仙女",
+          "废材修仙",
+          "洞府",
+          "渡劫",
+          "萧凡",
+          "仙门",
+          "清虚"
+        ]
+      ],
+      [
+        "wuxia",
+        [
+          "武侠",
+          "江湖",
+          "剑侠",
+          "剑客",
+          "剑意",
+          "决战",
+          "门派",
+          "武林",
+          "退隐",
+          "剑",
+          "侠",
+          "夜归人"
+        ]
+      ],
+      [
+        "palace_intrigue",
+        [
+          "宫斗",
+          "权谋",
+          "帝王",
+          "夺嫡",
+          "冷宫",
+          "妃子",
+          "权臣",
+          "太子",
+          "古装",
+          "甄姬",
+          "贵妃"
+        ]
+      ],
+      [
+        "time_travel",
+        [
+          "穿越",
+          "穿书",
+          "快穿",
+          "系统",
+          "签到",
+          "系统流",
+          "觉醒",
+          "攻略",
+          "皇后",
+          "女配",
+          "云舒"
+        ]
+      ],
+      [
+        "mystery",
+        [
+          "悬疑",
+          "推理",
+          "密室",
+          "连环杀人",
+          "心理",
+          "人格",
+          "催眠",
+          "反转",
+          "凶手",
+          "绑架",
+          "失踪",
+          "冤案",
+          "侦探",
+          "法医",
+          "张警官"
+        ]
+      ],
+      [
+        "male_counterattack",
+        [
+          "赘婿",
+          "战神",
+          "神医",
+          "龙王",
+          "兵王",
+          "下山",
+          "归来",
+          "回城",
+          "大佬",
+          "扮猪吃虎",
+          "首富",
+          "叶凡"
+        ]
+      ],
+      [
+        "family",
+        [
+          "婆媳",
+          "出轨",
+          "全职妈妈",
+          "离婚",
+          "育儿",
+          "家暴",
+          "家庭",
+          "小三",
+          "沈秋月"
+        ]
+      ],
+      [
+        "campus",
+        [
+          "校园",
+          "暗恋",
+          "学霸",
+          "学渣",
+          "校花",
+          "校草",
+          "青梅竹马",
+          "同桌",
+          "毕业",
+          "陆星野",
+          "林溪"
+        ]
+      ],
+      [
+        "rebirth_revenge",
+        [
+          "重生",
+          "复仇",
+          "逆袭",
+          "打脸",
+          "渣男",
+          "渣女",
+          "改命",
+          "前世",
+          "当年",
+          "代价",
+          "报仇",
+          "顾渊",
+          "林雪"
+        ]
+      ],
+      [
+        "romance",
+        [
+          "霸总",
+          "总裁",
+          "千金",
+          "契约",
+          "闪婚",
+          "豪门",
+          "甜宠",
+          "虐恋",
+          "替身",
+          "白月光",
+          "金主",
+          "恋爱",
+          "追妻",
+          "追爱",
+          "顾安然",
+          "陆霆骁"
+        ]
+      ],
+      [
+        "car",
+        [
+          "车",
+          "车载",
+          "配件",
+          "极客",
+          "座舱",
+          "车王",
+          "方舟"
+        ]
+      ],
+      [
+        "sci_fi",
+        [
+          "科幻",
+          "末日",
+          "废土",
+          "荒岛",
+          "太空",
+          "全息",
+          "AI",
+          "智能",
+          "平行时空",
+          "外星人",
+          "超能力",
+          "仿生人",
+          "零号"
+        ]
+      ],
+      [
+        "comedy",
+        [
+          "喜剧",
+          "搞笑",
+          "幽默",
+          "沙雕",
+          "无厘头",
+          "整蛊",
+          "爆笑",
+          "反差",
+          "互换"
+        ]
+      ],
+      [
+        "retro_romance",
+        [
+          "年代",
+          "知青",
+          "怀旧",
+          "军婚",
+          "90年代",
+          "风口",
+          "创业",
+          "九零",
+          "周向东",
+          "苏曼"
+        ]
+      ],
+      [
+        "urban_realism",
+        [
+          "律师",
+          "庭审",
+          "辩护",
+          "法庭",
+          "律政",
+          "被告",
+          "高公子",
+          "陆律师",
+          "商战",
+          "大少"
+        ]
+      ]
+    ]
+  }
+}

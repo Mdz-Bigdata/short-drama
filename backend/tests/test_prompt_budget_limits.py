@@ -79,12 +79,13 @@ class HardLimitTest(unittest.TestCase):
         fitted, removed = prompt_budget.fit_hard_limit(plain + "，film grain" * 50, "seedance2.0", plain=plain)
         self.assertEqual((fitted, removed), (plain, ["enhancement"]))
 
-    def test_a_shot_longer_than_the_limit_is_cut_at_a_sentence_and_keeps_its_closing_lines(self):
-        prompt = self._prompt(shot="画面：沈砚推门而入，铁链垂落。" * 160)
+    def test_storyboard_and_camera_content_is_never_cut(self):
+        shot = "画面：沈砚推门而入，铁链垂落。运镜：缓推。" * 160
+        prompt = self._prompt(shot=shot)
         fitted, removed = prompt_budget.fit_hard_limit(prompt, "seedance2.0")
-        self.assertLessEqual(len(fitted), 2000)
-        self.assertIn("truncated", removed)
-        self.assertTrue(fitted.split("\n")[0].endswith("。"))
+        self.assertIn(shot, fitted, "every word of the shot and its camera moves stays")
+        self.assertEqual(removed[-1], "over_limit_kept")
+        self.assertNotIn("truncated", removed)
         self.assertIn(ModelGateway.GLOBAL_NEGATIVE_LABEL, fitted)
         self.assertIn("人物肖像安全约束", fitted)
 
@@ -101,6 +102,34 @@ class HardLimitTest(unittest.TestCase):
             gateway.generate_video("seedance2.0", "https://cdn.test/frame.jpeg", f"{SHOT}\n\n{BOILERPLATE}", style_pack="film_35mm")
         self.assertLessEqual(len(sent["prompt"]), 2000)
         self.assertIn(SHOT, sent["prompt"])
+
+    def _sent_after_rewrite(self, rewrite):
+        gateway = ModelGateway()
+        sent, calls = {}, []
+
+        def fake_ark(api_key, base_url, prompt, **kwargs):
+            sent["prompt"] = prompt
+            return "http://video.test/clip.mp4"
+
+        def optimizer(text, **_):
+            calls.append(text)
+            return rewrite(text)
+
+        with patch.object(gateway, "_ark_video", side_effect=fake_ark), patch.object(gateway, "_is_valid_key", return_value=True), \
+             patch.object(gateway, "optimize_video_prompt", side_effect=optimizer):
+            gateway.generate_video("seedance2.0", "https://cdn.test/frame.jpeg", f"{SHOT}\n\n{BOILERPLATE}", style_pack="film_35mm")
+        self.assertEqual(len(calls), 1, "改写确实走到了")
+        return sent["prompt"], calls[0]
+
+    def test_a_rewrite_over_the_limit_falls_back_to_the_fitted_prompt(self):
+        prompt, fitted = self._sent_after_rewrite(lambda text: text + "，镜头稳定" * 600)
+        self.assertLessEqual(len(prompt), 2000)
+        self.assertEqual(prompt, fitted, "退回改写前已经按上限收过的那条，不截断改写结果")
+
+    def test_a_rewrite_inside_the_limit_is_used(self):
+        prompt, _fitted = self._sent_after_rewrite(lambda text: "改写：" + SHOT)
+        self.assertTrue(prompt.startswith("改写：" + SHOT))
+        self.assertLessEqual(len(prompt), 2000)
 
 
 if __name__ == "__main__":

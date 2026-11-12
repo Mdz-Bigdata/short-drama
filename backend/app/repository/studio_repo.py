@@ -52,6 +52,19 @@ from app.schema.studio import (
     ReviewRecord,
     utc_now_iso,
 )
+from app.core import prompt_data
+
+
+_WORDING_FILE = "repository_studio_repo"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/repository_studio_repo.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 class ConcurrencyError(RuntimeError):
@@ -755,7 +768,7 @@ class StudioRepository:
                 project = self.get_project(str(row["project_id"]), owner_id)
                 if project:
                     return project
-            project = self.create_project(owner_id, ProjectCreate(name=(title or "画布")[:160] or "画布", description=f"drama task {task_id}"))
+            project = self.create_project(owner_id, ProjectCreate(name=(title or _text_of("project_for_task.name"))[:160] or _text_of("project_for_task.name.2"), description=f"drama task {task_id}"))
             with self._connection:
                 self._connection.execute(
                     "INSERT OR REPLACE INTO task_canvas_projects(task_id, owner_id, project_id, created_at) VALUES(?, ?, ?, ?)",
@@ -790,7 +803,7 @@ class StudioRepository:
         ).fetchall()
         boards = [self._board_from_row(row, project_id) for row in rows]
         if not any(board.id == CANVAS_MAIN_ID for board in boards):
-            boards.insert(0, CanvasBoardRecord(id=CANVAS_MAIN_ID, project_id=project_id, title="主画布", version=self._latest_canvas_version(project_id, CANVAS_MAIN_ID)))
+            boards.insert(0, CanvasBoardRecord(id=CANVAS_MAIN_ID, project_id=project_id, title=_text_of("list_canvases.title"), version=self._latest_canvas_version(project_id, CANVAS_MAIN_ID)))
         return sorted(boards, key=lambda board: (board.id != CANVAS_MAIN_ID, board.created_at, board.id))
 
     def create_canvas(self, project_id: str, owner_id: str, title: str) -> CanvasBoardRecord:
@@ -801,9 +814,9 @@ class StudioRepository:
         with self._lock, self._connection:
             self._connection.execute(
                 "INSERT INTO canvas_boards(project_id, id, title, created_at, updated_at) VALUES(?, ?, ?, ?, ?)",
-                (project_id, board_id, title.strip()[:80] or "画布", now, now),
+                (project_id, board_id, title.strip()[:80] or _text_of("create_canvas.text"), now, now),
             )
-        return CanvasBoardRecord(id=board_id, project_id=project_id, title=title.strip()[:80] or "画布", created_at=now, updated_at=now)
+        return CanvasBoardRecord(id=board_id, project_id=project_id, title=title.strip()[:80] or _text_of("create_canvas.title"), created_at=now, updated_at=now)
 
     def patch_canvas(
         self, project_id: str, owner_id: str, canvas_id: str, *, title: str | None = None, bookmarks: list[CanvasBookmark] | None = None,
@@ -817,12 +830,12 @@ class StudioRepository:
             if canvas_id == CANVAS_MAIN_ID:
                 self._connection.execute(
                     "INSERT OR IGNORE INTO canvas_boards(project_id, id, title, created_at, updated_at) VALUES(?, ?, ?, ?, ?)",
-                    (project_id, CANVAS_MAIN_ID, "主画布", "", now),
+                    (project_id, CANVAS_MAIN_ID, _text_of("patch_canvas.text"), "", now),
                 )
             if title is not None:
                 self._connection.execute(
                     "UPDATE canvas_boards SET title = ?, updated_at = ? WHERE project_id = ? AND id = ?",
-                    (title.strip()[:80] or "画布", now, project_id, canvas_id),
+                    (title.strip()[:80] or _text_of("patch_canvas.text.2"), now, project_id, canvas_id),
                 )
             if bookmarks is not None:
                 self._connection.execute(
@@ -834,7 +847,7 @@ class StudioRepository:
 
     def delete_canvas(self, project_id: str, owner_id: str, canvas_id: str) -> None:
         if canvas_id == CANVAS_MAIN_ID:
-            raise ValueError("主画布不能删除")
+            raise ValueError(_text_of("delete_canvas.text"))
         if not self.get_project(project_id, owner_id):
             raise PermissionError("project not found or not owned by actor")
         self._require_board(project_id, canvas_id)
@@ -909,7 +922,7 @@ class StudioRepository:
         ).fetchone()
         if row and str(row["title"] or "").strip():
             return str(row["title"])
-        return "主画布" if canvas_id == CANVAS_MAIN_ID else "画布"
+        return _text_of("canvas_title.text") if canvas_id == CANVAS_MAIN_ID else _text_of("canvas_title.text.2")
 
     # ------------------------------------------------------------------ canvas revision history
 
@@ -1031,7 +1044,7 @@ class StudioRepository:
                    WHERE project_id = ? AND status IN ('queued', 'running') AND batch_id IN (
                      SELECT id FROM canvas_run_batches WHERE project_id = ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)
                    )""",
-                ("服务重启，这次生成没有取回结果；可以重新运行（运行中的那次可能已经计费）", now, project_id, project_id, now),
+                (_text_of("expire_canvas_runs.cursor"), now, project_id, project_id, now),
             )
             return int(cursor.rowcount or 0)
 
@@ -1084,7 +1097,7 @@ class StudioRepository:
             raise PermissionError("canvas run not found")
         run = self._run_from_row(row)
         if run.status != "done" or not run.output:
-            raise ValueError("这次生成没有结果，无法恢复")
+            raise ValueError(_text_of("restore_canvas_run.text"))
         with self._lock, self._connection:
             self._connection.execute(
                 "INSERT OR REPLACE INTO canvas_node_active(project_id, canvas_id, node_id, run_id, updated_at) VALUES(?, ?, ?, ?, ?)",
@@ -1103,7 +1116,7 @@ class StudioRepository:
             if not row:
                 raise PermissionError("canvas run not found")
             if row["status"] in {"queued", "running"}:
-                raise ValueError("这次生成还没结束，不能删除")
+                raise ValueError(_text_of("delete_canvas_run.text"))
             self._connection.execute(
                 "UPDATE canvas_node_runs SET deleted_at = ? WHERE project_id = ? AND id = ?", (utc_now_iso(), project_id, run_id),
             )

@@ -10,21 +10,34 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
+from app.core import prompt_data
+
+
+_WORDING_FILE = "stage_locator"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/stage_locator.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 # 与 drama_service 解析分镜表「场景」列用的是同一条正则：场景号在前，名字在后。
 SCENE_HEAD = re.compile(r"^(E\d+S\d+)\s*[-—:：]?\s*(.*)$", re.I)
 _SCENE_ID = re.compile(r"E\s*(\d+)\s*S\s*(\d+)", re.I)
-_NUMBER = r"[\d零〇一二两三四五六七八九十百]+"
-_EPISODE_WORD = re.compile(rf"第\s*({_NUMBER})\s*集")
-_SCENE_WORD = re.compile(rf"第\s*({_NUMBER})\s*场")
-_SHOT_WORD = re.compile(rf"(?:第\s*({_NUMBER})\s*镜|#\s*(\d+)|^\s*(\d+)\s*$|镜\s*(\d+))")
+_NUMBER = _text_of("module.number")
+_EPISODE_WORD = re.compile(_text_of("module.episode_word").format(_NUMBER))
+_SCENE_WORD = re.compile(_text_of("module.scene_word").format(_NUMBER))
+_SHOT_WORD = re.compile(_text_of("module.shot_word").format(_NUMBER))
 # 「X 说话的那镜」「X 的那一镜」「X 的镜头」：去掉这些尾巴剩下的就是名字。
-_SHOT_TAIL = re.compile(r"(说话|讲话|开口|台词)?(的)?(那|这)?(一)?(镜头?|个镜头)\s*$")
-_SPEAKS = ("说话", "讲话", "开口", "台词", "说的")
+_SHOT_TAIL = re.compile(_text_of("module.shot_tail"))
+_SPEAKS = _words_of("module.speaks")
 MAX_CANDIDATES = 8
 ACTION_CHARS = 60
 
-_DIGITS = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+_DIGITS = {_text_of("module.digits"): 0, "〇": 0, _text_of("module.digits.2"): 1, _text_of("module.digits.3"): 2, _text_of("module.digits.4"): 2, _text_of("module.digits.5"): 3, _text_of("module.digits.6"): 4, _text_of("module.digits.7"): 5, _text_of("module.digits.8"): 6, _text_of("module.digits.9"): 7, _text_of("module.digits.10"): 8, _text_of("module.digits.11"): 9}
 
 
 def parse_number(token: str) -> int | None:
@@ -34,14 +47,14 @@ def parse_number(token: str) -> int | None:
         return None
     if text.isdigit():
         return int(text)
-    if any(char not in _DIGITS and char not in "十百" for char in text):
+    if any(char not in _DIGITS and char not in _text_of("parse_number.text") for char in text):
         return None
     total, current = 0, 0
     for char in text:
-        if char == "百":
+        if char == _text_of("parse_number.text.2"):
             total += (current or 1) * 100
             current = 0
-        elif char == "十":
+        elif char == _text_of("parse_number.text.3"):
             total += (current or 1) * 10
             current = 0
         else:
@@ -154,7 +167,7 @@ def resolve_scene_id(task: Mapping[str, Any], text: str, *, default_episode: int
     asked = str(text or "").strip()
     scenes = scenes_of(task)
     if not asked:
-        raise LookupError("请说明是哪一场" + _candidates(scenes))
+        raise LookupError(_text_of("resolve_scene_id.text") + _candidates(scenes))
     match = _SCENE_ID.search(asked)
     if match:
         episode, number = int(match.group(1)), int(match.group(2))
@@ -163,7 +176,7 @@ def resolve_scene_id(task: Mapping[str, Any], text: str, *, default_episode: int
             return found["scene_id"]
         if not scenes:
             return f"E{episode}S{number:02d}"
-        raise LookupError(f"没有 E{episode}S{number:02d} 这一场" + _candidates(scenes))
+        raise LookupError(_text_of("resolve_scene_id.text.2").format(episode, number) + _candidates(scenes))
     scene_word = _SCENE_WORD.search(asked)
     if scene_word:
         number = parse_number(scene_word.group(1))
@@ -176,24 +189,24 @@ def resolve_scene_id(task: Mapping[str, Any], text: str, *, default_episode: int
             if len(episodes) == 1:
                 episode = episodes[0]
             else:
-                raise LookupError(f"有 {len(episodes)} 集，请说明「第{number}场」是哪一集的" + _candidates(scenes))
+                raise LookupError(_text_of("resolve_scene_id.text.3").format(len(episodes), number) + _candidates(scenes))
         if number is None:
-            raise LookupError("没读出是第几场" + _candidates(scenes))
+            raise LookupError(_text_of("resolve_scene_id.text.4") + _candidates(scenes))
         found = _by_number(scenes, int(episode), number)
         if found is None:
-            raise LookupError(f"第{episode}集没有第{number}场" + _candidates([scene for scene in scenes if scene["episode"] == episode] or scenes))
+            raise LookupError(_text_of("resolve_scene_id.text.5").format(episode, number) + _candidates([scene for scene in scenes if scene["episode"] == episode] or scenes))
         return found["scene_id"]
     by_name = [scene for scene in scenes if _name_matches(scene["name"], asked)]
     if len(by_name) == 1:
         return by_name[0]["scene_id"]
     if len(by_name) > 1:
-        raise LookupError(f"「{asked}」对得上 {len(by_name)} 场，请说清楚是哪一场" + _candidates(by_name))
+        raise LookupError(_text_of("resolve_scene_id.text.6").format(asked, len(by_name)) + _candidates(by_name))
     by_cast = [scene for scene in scenes if any(name == asked or name in asked for name in scene["characters"])]
     if len(by_cast) == 1:
         return by_cast[0]["scene_id"]
     if len(by_cast) > 1:
-        raise LookupError(f"「{asked}」出现在 {len(by_cast)} 场里，请说明是哪一场" + _candidates(by_cast))
-    raise LookupError(f"没找到「{asked}」对应的场景" + _candidates(scenes))
+        raise LookupError(_text_of("resolve_scene_id.text.7").format(asked, len(by_cast)) + _candidates(by_cast))
+    raise LookupError(_text_of("resolve_scene_id.text.8").format(asked) + _candidates(scenes))
 
 
 def _field(shot: Any, *keys: str) -> Any:
@@ -216,7 +229,7 @@ def _shot_row(shot: Any) -> dict[str, Any]:
 
 
 def _shot_candidates(rows: Sequence[Mapping[str, Any]]) -> str:
-    shown = [f"第{row['shot_id']}镜 {'、'.join(row['subjects']) or row['action'][:20]}".strip() for row in rows[:MAX_CANDIDATES]]
+    shown = [_text_of("_shot_candidates.shown").format(row['shot_id'], '、'.join(row['subjects']) or row['action'][:20]).strip() for row in rows[:MAX_CANDIDATES]]
     more = "…" if len(rows) > MAX_CANDIDATES else ""
     return "（" + "、".join(shown) + more + "）" if shown else ""
 
@@ -226,23 +239,23 @@ def resolve_shot_id(shots: Sequence[Any], text: str) -> int:
     asked = str(text or "").strip()
     rows = [_shot_row(shot) for shot in shots]
     if not asked:
-        raise LookupError("请说明是哪一镜" + _shot_candidates(rows))
+        raise LookupError(_text_of("resolve_shot_id.text") + _shot_candidates(rows))
     match = _SHOT_WORD.search(asked)
     if match:
         number = parse_number(next(group for group in match.groups() if group))
         if number is not None:
             if not rows or any(row["shot_id"] == number for row in rows):
                 return number
-            raise LookupError(f"没有第{number}镜" + _shot_candidates(rows))
+            raise LookupError(_text_of("resolve_shot_id.text.2").format(number) + _shot_candidates(rows))
     speaking = any(word in asked for word in _SPEAKS)
     subject = _SHOT_TAIL.sub("", asked).strip()
     for word in _SPEAKS:
         subject = subject.replace(word, "").strip()
-    subject = subject.rstrip("的").strip()
+    subject = subject.rstrip(_text_of("resolve_shot_id.subject")).strip()
     known = {name for row in rows for name in [*row["subjects"], row["speaker"]] if name}
     named = [name for name in known if name == subject or (name and name in asked)]
     if not named:
-        raise LookupError(f"没找到「{asked}」对应的镜头" + _shot_candidates(rows))
+        raise LookupError(_text_of("resolve_shot_id.text.3").format(asked) + _shot_candidates(rows))
 
     def mentions(row: Mapping[str, Any]) -> bool:
         if speaking:
@@ -255,8 +268,8 @@ def resolve_shot_id(shots: Sequence[Any], text: str) -> int:
     if len(hits) == 1:
         return hits[0]["shot_id"]
     if not hits:
-        raise LookupError(f"没有「{'、'.join(named)}」的镜头" + _shot_candidates(rows))
-    raise LookupError(f"「{'、'.join(named)}」在 {len(hits)} 个镜头里，请说明是第几镜" + _shot_candidates(hits))
+        raise LookupError(_text_of("resolve_shot_id.text.4").format('、'.join(named)) + _shot_candidates(rows))
+    raise LookupError(_text_of("resolve_shot_id.text.5").format('、'.join(named), len(hits)) + _shot_candidates(hits))
 
 
 __all__ = [

@@ -1,0 +1,6 @@
+{
+  "_doc": "app/schema/agent_council.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "CouncilCompileRequest.audience": "18-35 岁短剧观众",
+  "CouncilCompileRequest.visual_style": "写实电影感",
+  "ProductionConstitution.severity_policy": "S=0、A=0、B<=3；任一结构性硬门禁失败即禁止发布"
+}

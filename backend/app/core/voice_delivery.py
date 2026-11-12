@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import re
 
+from collections.abc import Mapping
+from typing import Any
+
 from app.core import prompt_data
 
 _DATA = "voice_delivery"
@@ -56,6 +59,104 @@ def performed_text(text: str, emotion: str = "neutral", notes: str = "") -> str:
     return before + line + after
 
 
+def _integer(text: str) -> str:
+    """整数的中文读法：105 → 一百零五，10 → 十，20000 → 两万。"""
+    table = prompt_data.value(_DATA, "numbers")
+    digits, units, big = table["digits"], table["units"], table["big_units"]
+    value = int(text)
+    if value == 0:
+        return digits[0]
+
+    def four(group: int) -> str:
+        out, zero = "", False
+        for position in range(3, -1, -1):
+            digit = group // (10 ** position) % 10
+            if digit == 0:
+                zero = bool(out)
+                continue
+            if zero:
+                out += digits[0]
+                zero = False
+            out += digits[digit] + units[position]
+        return out
+
+    parts: list[str] = []
+    groups = []
+    while value:
+        groups.append(value % 10000)
+        value //= 10000
+    for index in range(len(groups) - 1, -1, -1):
+        group = groups[index]
+        if not group:
+            continue
+        if parts and group < 1000:
+            parts.append(digits[0])
+        parts.append(four(group) + big[index] if index < len(big) else four(group))
+    spoken = "".join(parts)
+    # 十几只念「十」开头，不念「一十」。
+    return spoken[1:] if spoken.startswith(digits[1] + units[1]) else spoken
+
+
+def _spell(text: str) -> str:
+    digits = prompt_data.value(_DATA, "numbers")["digits"]
+    return "".join(digits[int(char)] for char in text if char.isdigit())
+
+
+def _number(match: re.Match[str]) -> str:
+    table = prompt_data.value(_DATA, "numbers")
+    whole, fraction, after = match.group(1), match.group(2), match.group(3) or ""
+    counted = bool(after) and after[0] in table["measure_words"]
+    # 长串号码(电话、编号)逐位念；后面跟着量词的是数量(20000块 → 两万块)。
+    if len(whole) >= int(table["spell_out_from"]) and not fraction and not counted:
+        return _spell(whole) + after
+    spoken = _integer(whole)
+    if len(spoken) > 1 and spoken[0] == table["digits"][2] and spoken[1] in table["two_before"]:
+        spoken = table["two"] + spoken[1:]
+    if fraction:
+        spoken += table["point"] + _spell(fraction)
+    elif whole == "2" and counted:
+        spoken = table["two"]
+    return spoken + after
+
+
+def spoken_form(text: str, readings: Any = None) -> str:
+    """送去配音的那一句：数字按中文读法写出来，项目读音表里的词换成登记的念法。字幕不用这个。
+
+    百分数(50% → 百分之五十)、时刻(7:30 → 七点三十)、年份(2026年 → 二零二六年)、小数(3.5 → 三点五)、
+    五位以上的号码逐位念，量词前的 2 念「两」(2个 → 两个)。``readings`` 是 [{word, say}] 或 {word: say}。
+    """
+    table = prompt_data.value(_DATA, "numbers")
+    line = str(text or "")
+    pairs = readings.items() if isinstance(readings, Mapping) else (
+        (str(item.get("word") or ""), str(item.get("say") or "")) for item in readings or [] if isinstance(item, Mapping)
+    )
+    for word, say in sorted(((str(w).strip(), str(v).strip()) for w, v in pairs), key=lambda item: len(item[0]), reverse=True):
+        if word and say:
+            line = line.replace(word, say)
+    line = re.sub(r"(\d+(?:\.\d+)?)\s*[%％]", lambda m: table["percent"].format(n=_number(re.match(r"(\d+)(?:\.(\d+))?()", m.group(1)))), line)
+
+    def clock(match: re.Match[str]) -> str:
+        hour, minute = int(match.group(1)), int(match.group(2))
+        minutes = "" if minute == 0 else _integer(str(minute)) if minute >= 10 else table["digits"][0] + _integer(str(minute))
+        return table["time"].format(h=_integer(str(hour)), m=minutes)
+
+    line = re.sub(r"(?<!\d)(\d{1,2})[:：](\d{2})(?!\d)", clock, line)
+    line = re.sub(r"(?<!\d)(\d{4})(?=年)", lambda m: _spell(m.group(1)), line)
+    return re.sub(r"(\d+)(?:\.(\d+))?(\D)?", _number, line)
+
+
+def clean_readings(readings: Any) -> list[dict[str, str]]:
+    """读音表：去空、去重(同一个词以后写的为准)，每条 {word, say}，最多 max_readings 条。"""
+    rows: dict[str, str] = {}
+    for item in readings if isinstance(readings, list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        word, say = str(item.get("word") or "").strip()[:20], str(item.get("say") or "").strip()[:20]
+        if word and say and word != say:
+            rows[word] = say
+    return [{"word": word, "say": say} for word, say in list(rows.items())[: prompt_data.number(_DATA, "max_readings")]]
+
+
 def age_bucket(description: str) -> str:
     """声音设计里的年龄(「38岁男声」「老年」)落在音色库的哪个年龄段：young / middle_aged / old；看不出是空串。"""
     ages = prompt_data.value(_DATA, "voice_ages")
@@ -74,4 +175,4 @@ def age_distance(wanted: str, offered: str) -> int:
     return abs(order.index(wanted) - order.index(offered))
 
 
-__all__ = ["age_bucket", "age_distance", "delivery_tags", "performed_text"]
+__all__ = ["age_bucket", "age_distance", "clean_readings", "delivery_tags", "performed_text", "spoken_form"]

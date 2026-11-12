@@ -318,7 +318,7 @@ export function PostProductionStudio({
             </div>
           )}
 
-          <DeliveryChecklist issues={data.acceptance ?? []} />
+          <DeliveryChecklist<StudioResponse> issues={data.acceptance ?? []} taskId={taskId} onTimeline={setData} />
         </div>
 
         <StudioSidebar

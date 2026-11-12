@@ -13,6 +13,19 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
+from app.core import prompt_data
+
+
+_WORDING_FILE = "prompt_compact"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/prompt_compact.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 _RULE_LINE = re.compile(r"^[\s─-╿]+$")
 _BOX_SIDES = re.compile(r"[│┃║]")
@@ -22,7 +35,7 @@ _TABLE_RULE = re.compile(r"^\s*\|[\s:|-]+\|\s*$")
 _FRONTMATTER = re.compile(r"^---\nname:.*?\n---$", re.M | re.S)
 # Two sentences this long being identical is a repeat; a short one may be a list item that means something in each place.
 _MIN_REPEAT_CHARS = 30
-_CJK = re.compile(r"[⺀-鿿가-힯＀-￯]")
+_CJK = re.compile(_text_of("module.cjk"))
 
 
 def estimate_tokens(text: str) -> int:

@@ -24,6 +24,19 @@ from typing import Any
 
 from app.core import episode_cycle
 from app.core.spoken_lines import spoken_lines
+from app.core import prompt_data
+
+
+_WORDING_FILE = "edit_timeline"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/edit_timeline.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 TIMELINE_KEY = "7_timeline"
 VERSION = 1
@@ -209,7 +222,7 @@ def _clip(timeline: dict[str, Any], shot_id: Any, shot_uid: Any = None) -> dict[
     for clip in clips:
         if str(clip.get("shot_id")) == str(shot_id):
             return clip
-    raise TimelineError(f"时间线上没有镜头 {shot_id if shot_id is not None else shot_uid}")
+    raise TimelineError(_text_of("_clip.text").format(shot_id if shot_id is not None else shot_uid))
 
 
 # ---------------------------------------------------------------------------- edits
@@ -223,11 +236,11 @@ def trim(timeline: Mapping[str, Any], shot_id: int | None, *, start: float, end:
     if end is not None:
         end = float(end)
         if end <= start + 0.5:
-            raise TimelineError("出点至少要比入点晚 0.5 秒")
+            raise TimelineError(_text_of("trim.text"))
         if duration and end > float(duration) + 0.01:
-            raise TimelineError(f"出点超过了片段长度 {duration} 秒")
+            raise TimelineError(_text_of("trim.text.2").format(duration))
     if duration and start >= float(duration):
-        raise TimelineError("入点超过了片段长度")
+        raise TimelineError(_text_of("trim.text.3"))
     clip["in"], clip["out"] = round(start, 3), (round(end, 3) if end is not None else None)
     _touch(new)
     return new
@@ -235,11 +248,11 @@ def trim(timeline: Mapping[str, Any], shot_id: int | None, *, start: float, end:
 
 def set_transition(timeline: Mapping[str, Any], shot_id: int | None, *, kind: str, duration: float = 0.22, shot_uid: int | None = None) -> dict[str, Any]:
     if kind not in TRANSITIONS:
-        raise TimelineError(f"未知转场 {kind}；可用：{', '.join(TRANSITIONS)}")
+        raise TimelineError(_text_of("set_transition.text").format(kind, ', '.join(TRANSITIONS)))
     new = deepcopy(dict(timeline))
     clip = _clip(new, shot_id, shot_uid)
     if new["clips"] and new["clips"][0] is clip:
-        raise TimelineError("第一镜之前没有转场")
+        raise TimelineError(_text_of("set_transition.text.2"))
     clip["transition_in"] = {"type": kind, "duration": max(0.04, min(float(duration), 1.0))}
     _touch(new)
     return new
@@ -248,11 +261,11 @@ def set_transition(timeline: Mapping[str, Any], shot_id: int | None, *, kind: st
 def set_sound_join(timeline: Mapping[str, Any], shot_id: int | None, *, join: str, seconds: float | None = None, shot_uid: int | None = None) -> dict[str, Any]:
     """这一刀声音和画面错不错开：j_cut 下一镜的声音先到，l_cut 上一镜的声音留下，空串是同切。"""
     if join not in {"", *SOUND_JOINS}:
-        raise TimelineError(f"未知的声画错开方式 {join}；可用：{', '.join(SOUND_JOINS)}")
+        raise TimelineError(_text_of("set_sound_join.text").format(join, ', '.join(SOUND_JOINS)))
     new = deepcopy(dict(timeline))
     clip = _clip(new, shot_id, shot_uid)
     if new["clips"] and new["clips"][0] is clip:
-        raise TimelineError("第一镜之前没有切点")
+        raise TimelineError(_text_of("set_sound_join.text.2"))
     clip["sound_in"] = {"join": join, "edited": True}
     if join and seconds is not None:
         clip["sound_in"]["seconds"] = max(0.1, min(float(seconds), 1.5))
@@ -289,11 +302,11 @@ def audio_source(clip: Mapping[str, Any]) -> str:
 def set_audio_source(timeline: Mapping[str, Any], shot_id: int | None, source: str, *, shot_uid: int | None = None) -> dict[str, Any]:
     """原声 / 配音 / 不要：一镜一选。选配音而这一镜还没配过音的，合成前补配(见 ``needs_voice``)。"""
     if source not in AUDIO_SOURCES:
-        raise TimelineError(f"人声来源只能是 {', '.join(AUDIO_SOURCES)}")
+        raise TimelineError(_text_of("set_audio_source.text").format(', '.join(AUDIO_SOURCES)))
     new = deepcopy(dict(timeline))
     clip = _clip(new, shot_id, shot_uid)
     if source == "native" and not clip.get("native_available"):
-        raise TimelineError("这一镜的片段没有原声，只能配音")
+        raise TimelineError(_text_of("set_audio_source.text.2"))
     clip["audio_source"], clip["audio_source_edited"] = source, True
     _touch(new)
     return new
@@ -319,7 +332,7 @@ def settings_of(timeline: Mapping[str, Any]) -> dict[str, bool]:
 def set_settings(timeline: Mapping[str, Any], changes: Mapping[str, Any]) -> dict[str, Any]:
     unknown = [key for key in changes if key not in SETTINGS]
     if unknown:
-        raise TimelineError(f"未知的基础设定 {', '.join(map(str, unknown))}；可用：{', '.join(SETTINGS)}")
+        raise TimelineError(_text_of("set_settings.text").format(', '.join(map(str, unknown)), ', '.join(SETTINGS)))
     new = deepcopy(dict(timeline))
     new["settings"] = {**settings_of(new), **{key: bool(value) for key, value in changes.items()}}
     _touch(new)
@@ -344,7 +357,7 @@ def choose_candidate(timeline: Mapping[str, Any], shot_id: int | None, video_url
     new = deepcopy(dict(timeline))
     clip = _clip(new, shot_id, shot_uid)
     if video_url not in (clip.get("candidates") or []):
-        raise TimelineError("只能在这一镜已生成的候选版本里选")
+        raise TimelineError(_text_of("choose_candidate.text"))
     clip["video_url"] = video_url
     _touch(new)
     return new
@@ -353,7 +366,7 @@ def choose_candidate(timeline: Mapping[str, Any], shot_id: int | None, video_url
 def review(timeline: Mapping[str, Any], shot_id: int | None, *, decision: str, note: str = "", shot_uid: int | None = None) -> dict[str, Any]:
     """The reviewer's word on a clip: a rejected one is left out of the cut until it is remade."""
     if decision not in REVIEW_DECISIONS:
-        raise TimelineError(f"审看结论只能是 {', '.join(REVIEW_DECISIONS)}")
+        raise TimelineError(_text_of("review.text").format(', '.join(REVIEW_DECISIONS)))
     new = deepcopy(dict(timeline))
     _clip(new, shot_id, shot_uid)["review"] = {"decision": decision, "note": str(note or "")[:500], "decided_at": _now() if decision != "pending" else None}
     _touch(new)
@@ -371,7 +384,7 @@ def set_title(timeline: Mapping[str, Any], text: str | None) -> dict[str, Any]:
 def set_bgm(timeline: Mapping[str, Any], *, source: str, path: str | None = None, url: str | None = None, library_id: str | None = None,
             name: str | None = None, volume: float | None = None, duck: bool | None = None, start: float | None = None) -> dict[str, Any]:
     if source not in BGM_SOURCES:
-        raise TimelineError(f"配乐来源只能是 {', '.join(BGM_SOURCES)}")
+        raise TimelineError(_text_of("set_bgm.text").format(', '.join(BGM_SOURCES)))
     new = deepcopy(dict(timeline))
     current = dict(new.get("bgm") or {})
     current.update({"source": source, "path": path if source != "none" else None, "url": url if source != "none" else None,

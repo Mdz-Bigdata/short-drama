@@ -101,7 +101,7 @@ class SceneBindingTests(unittest.TestCase):
         )
         _, notes = merge_video_references(SHEETS[:1], binding["references"])
         self.assertIn("参考图1仅锁定数字演员设定集「林夏」的脸型、发型、体型与服装，不采用图中背景、版式与其他人物，不是额外剧情或额外人物", notes)
-        self.assertIn("参考图2仅锁定拍摄场地「地下实验室」的空间布局，光线与天色以本场为准、不照搬此图（铁门在画面左侧、观察窗在画面右侧）", notes)
+        self.assertIn("参考图2仅锁定拍摄场地「地下实验室」正面的空间布局，光线与天色以本场为准、不照搬此图（铁门在画面左侧、观察窗在画面右侧）", notes)
         # Without a plan the line still binds the space, just without the sides.
         self.assertIn("场景图只提供空间结构、陈设与材质，不提供光线、天色和人物", _still(self._binding()))
 
@@ -121,7 +121,7 @@ class SceneBindingTests(unittest.TestCase):
         images, notes = merge_video_references(SHEETS[:1], binding["references"])
         plan = VideoReferencePlan(mode="multi_reference", reference_images=["https://cdn/frame.png", *images[:2]])
         sent = renumber_reference_mentions(notes, images, plan)
-        self.assertIn("参考图3仅锁定拍摄场地「地下实验室」的空间布局，光线与天色以本场为准、不照搬此图（铁门在画面左侧）", sent)
+        self.assertIn("参考图3仅锁定拍摄场地「地下实验室」正面的空间布局，光线与天色以本场为准、不照搬此图（铁门在画面左侧）", sent)
         self.assertNotIn("45°斜角", sent, "a view the request does not carry loses its whole line")
 
     def test_the_views_never_push_out_the_cast_or_the_props(self):

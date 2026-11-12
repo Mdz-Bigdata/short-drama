@@ -25,13 +25,25 @@ from typing import Any
 from app.core import prompt_data
 from app.core.genre_clusters import CLUSTERS, GenreCluster, cluster_for, get_cluster
 
+
+_WORDING_FILE = "frame_handoff"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/frame_handoff.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
 #: 说光的结构的词：出现一个就算在说光。
-_LIGHT_STRUCTURE = re.compile(r"主光|光源|光比|色温|侧逆光|逆光|侧光|顶光|底光|轮廓光|补光|明暗交界")
+_LIGHT_STRUCTURE = re.compile(_text_of("module.light_structure"))
 #: 具体的光：要和方向一起出现(「冷青天光自右前方」)才算在定光，单说「在冷光里」是在写物件。
-_LIGHT_NOUN = re.compile(r"硬光|柔光|暖光|冷光|天光|月光|日光|晨光|夕照|火光|烛光|灯光|白光|橙光|青光")
-_DIRECTION = re.compile(r"画面[左右上下]|[左右][上下前后]方|[左右]侧|高处|低位|斜|自|从|来自")
+_LIGHT_NOUN = re.compile(_text_of("module.light_noun"))
+_DIRECTION = re.compile(_text_of("module.direction"))
 #: 这些分句说的是机位、构图或人物动作，不是光——即使顺带提到了光。
-_NOT_LIGHT = re.compile(r"镜头|机位|推近|拉远|摇|跟拍|景别|构图|转身|抬手|握|看向|视线|拇指|扳指|刀背")
+_NOT_LIGHT = re.compile(_text_of("module.not_light"))
 _CLAUSE = re.compile(r"[^，,。；;！？!?\n]+")
 #: 光线词最长多少字(写进每一镜的锁定行，要短)。
 MAX_LIGHT_CHARS = 90
@@ -72,7 +84,7 @@ def scene_light_phrases(shots: Sequence[Mapping[str, Any]]) -> dict[str, str]:
 
 
 #: 分场标题里说时段天气的词(「演武场 雨夜 外景」里的「雨夜」)：整词匹配，「雨夜长街」这种地名不算。
-_TIME_TOKEN = re.compile(r"[雨雪风]?[深入午]?夜|白日|白天|日间|[清早]晨|黎明|拂晓|黄昏|傍晚|日暮|正午|午后")
+_TIME_TOKEN = re.compile(_text_of("module.time_token"))
 #: 分镜帧的灯光行没有可写的时段与主光时沿用的说法。
 DEFAULT_BOARD_LIGHTING = prompt_data.text("clip_prompt", "default_board_lighting")
 
@@ -81,7 +93,7 @@ def scene_time(heading: str) -> str:
     """分场标题(「地点 [子地点] 时段 内/外景 …」)里的时段天气与内外景，如「雨夜，外景」；没有时为空串。"""
     tokens = str(heading or "").split()[:6]
     when = [token for token in tokens if _TIME_TOKEN.fullmatch(token)]
-    setting = [token for token in tokens if token in ("内景", "外景")][:1]
+    setting = [token for token in tokens if token in _words_of("scene_time.setting")][:1]
     return "，".join([*dict.fromkeys(when), *setting]) if when else ""
 
 
@@ -94,11 +106,11 @@ def board_lighting(heading: str, light: str = "") -> str:
     when = scene_time(heading)
     parts = []
     if when:
-        night = "，是夜景，不得画成白天或阴天的天光" if "夜" in when else ""
-        parts.append(f"本场时段天气：{when}，全场每一格保持同一时段与天色{night}")
+        night = _text_of("board_lighting.night") if _text_of("board_lighting.night.2") in when else ""
+        parts.append(_text_of("board_lighting.text").format(when, night))
     if light:
-        parts.append(f"主光：{light}")
-    return "；".join(parts) + "；人物脸部保持自然层次" if parts else DEFAULT_BOARD_LIGHTING
+        parts.append(_text_of("board_lighting.text.2").format(light))
+    return "；".join(parts) + _text_of("board_lighting.text.3") if parts else DEFAULT_BOARD_LIGHTING
 
 
 def scene_ref_slots(entries: Sequence[Sequence[Any]]) -> list[tuple[int, str]]:
@@ -183,14 +195,14 @@ def tone_for(pack: Any, cluster: GenreCluster | None, *, fight: bool = False) ->
     default = str(getattr(pack, "tone_default", "") or "")
     slots = list(getattr(pack, "tone_slots", []) or [])
     parts = [part.strip() for part in default.split("+")]
-    if cluster is not None and slots and slots[0] == "类型调性":
-        genre_tone = f"{cluster.name}调性"
+    if cluster is not None and slots and slots[0] == _text_of("tone_for.text"):
+        genre_tone = _text_of("tone_for.genre_tone").format(cluster.name)
         if parts and parts[0]:
             parts[0] = genre_tone
         else:
             parts = [genre_tone, *parts[1:]]
     if fight:
-        tempo = next((index for index, slot in enumerate(slots) if "节奏" in slot), -1)
+        tempo = next((index for index, slot in enumerate(slots) if _text_of("tone_for.tempo") in slot), -1)
         if 0 <= tempo < len(parts):
             parts[tempo] = FIGHT_TEMPO
         elif tempo >= 0:

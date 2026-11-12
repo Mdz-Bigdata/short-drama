@@ -33,6 +33,19 @@ from app.platform.payments.base import (
     NotificationRejected,
 )
 from app.platform.payments.bills import parse_alipay_trade_bill
+from app.core import prompt_data
+
+
+_WORDING_FILE = "platform_payments_alipay"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/platform_payments_alipay.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 GATEWAY = "https://openapi.alipay.com/gateway.do"
 _CHINA = timezone(timedelta(hours=8))
@@ -122,24 +135,24 @@ class Alipay:
                 headers={"Content-Type": "application/x-www-form-urlencoded;charset=utf-8"},
             )
         except httpx.HTTPError as exc:
-            raise ChannelError(f"支付宝请求失败: {type(exc).__name__}") from exc
+            raise ChannelError(_text_of("_call.text").format(type(exc).__name__)) from exc
         raw = response.text
         key = method.replace(".", "_") + "_response"
         try:
             envelope = json.loads(raw)
         except ValueError as exc:
-            raise ChannelError(f"支付宝应答无法解析: HTTP {response.status_code}") from exc
+            raise ChannelError(_text_of("_call.text.2").format(response.status_code)) from exc
         answer = envelope.get(key)
         if not isinstance(answer, dict):
-            raise ChannelError(f"支付宝应答异常: {str((envelope.get('error_response') or {}).get('sub_code') or 'unknown')}")
+            raise ChannelError(_text_of("_call.text.3").format(str((envelope.get('error_response') or {}).get('sub_code') or 'unknown')))
         part = signed_part_of_response(raw, key)
         if not part or not keys.verify(self._public_key, part.encode(), str(envelope.get("sign") or "")):
-            raise ChannelError("支付宝应答验签失败")
+            raise ChannelError(_text_of("_call.text.4"))
         return answer
 
     @staticmethod
     def _failed(answer: dict, what: str) -> ChannelError:
-        return ChannelError(f"支付宝{what}失败: {answer.get('sub_code') or answer.get('code')}")
+        return ChannelError(_text_of("_failed.text").format(what, answer.get('sub_code') or answer.get('code')))
 
     def create_qr(self, *, out_trade_no: str, amount_minor: int, description: str, expires_at: datetime) -> str:
         answer = self._call("alipay.trade.precreate", {
@@ -147,7 +160,7 @@ class Alipay:
             "subject": description.translate(_NOT_ALLOWED_IN_SUBJECT)[:256], "product_code": "QR_CODE_OFFLINE",
         }, notify=True)
         if answer.get("code") != "10000" or not answer.get("qr_code"):
-            raise self._failed(answer, "下单")
+            raise self._failed(answer, _text_of("create_qr.text"))
         return str(answer["qr_code"])
 
     def query(self, out_trade_no: str) -> ChannelTrade:
@@ -155,7 +168,7 @@ class Alipay:
         if answer.get("sub_code") == _NOT_YET_A_TRADE:
             return ChannelTrade(state=UNPAID, out_trade_no=out_trade_no)
         if answer.get("code") != "10000":
-            raise self._failed(answer, "查单")
+            raise self._failed(answer, _text_of("query.text"))
         return ChannelTrade(
             state=_TRADE_STATES.get(str(answer.get("trade_status")), UNPAID),
             out_trade_no=str(answer.get("out_trade_no") or out_trade_no),
@@ -170,17 +183,17 @@ class Alipay:
         answer = self._call("alipay.trade.close", {"out_trade_no": out_trade_no})
         if answer.get("code") == "10000" or answer.get("sub_code") == _NOT_YET_A_TRADE:
             return
-        raise self._failed(answer, "关单")
+        raise self._failed(answer, _text_of("close.text"))
 
     def parse_notification(self, headers: Mapping[str, str], body: bytes) -> ChannelEvent:
         try:
             params = dict(parse_qsl(body.decode("utf-8"), keep_blank_values=True, strict_parsing=True))
         except ValueError as exc:
-            raise NotificationRejected("支付宝通知格式无效") from exc
+            raise NotificationRejected(_text_of("parse_notification.text")) from exc
         signature = params.pop("sign", "")
         params.pop("sign_type", None)
         if not signature or not keys.verify(self._public_key, signing_string(params), signature):
-            raise NotificationRejected("支付宝通知验签失败")
+            raise NotificationRejected(_text_of("parse_notification.text.2"))
         return ChannelEvent(
             event_id=params.get("notify_id") or "",
             trade=ChannelTrade(
@@ -199,17 +212,17 @@ class Alipay:
         answer = self._call("alipay.data.dataservice.bill.downloadurl.query", {"bill_type": "trade", "bill_date": day.isoformat()})
         if answer.get("code") != "10000" or not answer.get("bill_download_url"):
             # The documentation names no code for "not generated yet", so any refusal is retried until it counts as missing.
-            raise BillNotReady(f"支付宝账单暂不可用: {answer.get('sub_code') or answer.get('code')}")
+            raise BillNotReady(_text_of("download_bill.text").format(answer.get('sub_code') or answer.get('code')))
         target = urlsplit(str(answer["bill_download_url"]))
         host = target.hostname or ""
         if target.scheme not in ("http", "https") or not (host == "alipay.com" or host.endswith(".alipay.com")):
-            raise ChannelError("支付宝账单下载地址不可信")
+            raise ChannelError(_text_of("download_bill.text.2"))
         try:
             response = self._client.get(str(answer["bill_download_url"]))
         except httpx.HTTPError as exc:
-            raise ChannelError(f"支付宝账单下载失败: {type(exc).__name__}") from exc
+            raise ChannelError(_text_of("download_bill.text.3").format(type(exc).__name__)) from exc
         if response.status_code >= 400:
-            raise ChannelError(f"支付宝账单下载失败: HTTP {response.status_code}")
+            raise ChannelError(_text_of("download_bill.text.4").format(response.status_code))
         return DayBill(response.content, parse_alipay_trade_bill(response.content))
 
     def refund(self, *, out_trade_no: str, out_refund_no: str, refund_minor: int, total_minor: int, reason: str) -> ChannelRefund:
@@ -218,12 +231,12 @@ class Alipay:
             "refund_amount": f"{Decimal(refund_minor) / 100:.2f}", "refund_reason": reason[:256],
         })
         if answer.get("code") != "10000":
-            raise self._failed(answer, "退款")
+            raise self._failed(answer, _text_of("refund.text"))
         return ChannelRefund(REFUND_SUCCEEDED if answer.get("fund_change") == "Y" else REFUND_PROCESSING, str(answer.get("trade_no") or "") or None)
 
     def query_refund(self, *, out_trade_no: str, out_refund_no: str) -> ChannelRefund:
         answer = self._call("alipay.trade.fastpay.refund.query", {"out_trade_no": out_trade_no, "out_request_no": out_refund_no})
         if answer.get("code") != "10000":
-            raise self._failed(answer, "退款查询")
+            raise self._failed(answer, _text_of("query_refund.text"))
         # 10000 only means the query worked. Without REFUND_SUCCESS the refund did not happen, and the docs say to resend it.
         return ChannelRefund(REFUND_SUCCEEDED if answer.get("refund_status") == "REFUND_SUCCESS" else REFUND_NOT_RECEIVED, str(answer.get("trade_no") or "") or None)

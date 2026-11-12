@@ -1,0 +1,8 @@
+{
+  "_doc": "app/api/task_center_api.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.tags": [
+    "任务中心"
+  ],
+  "list_jobs.description": "逗号分隔的状态；不给时全部返回",
+  "list_jobs.detail": "任务不存在"
+}

@@ -182,7 +182,7 @@ export function TimelinePanel({ taskId, onRendered }: Props) {
         </a>
       </header>
       {notice && <p className="timeline__notice" role="status">{notice}</p>}
-      <DeliveryChecklist issues={data.acceptance ?? []} />
+      <DeliveryChecklist<TimelineResponse> issues={data.acceptance ?? []} taskId={taskId} onTimeline={setData} />
 
       <div className="timeline__row">
         <label>{t('片头标题')}

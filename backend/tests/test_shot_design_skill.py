@@ -137,8 +137,10 @@ class ClipCeilingWiringTests(unittest.TestCase):
             self._compile(MIN_SHOT_SECONDS - 1, "seedance2.5")
 
     def test_a_clip_prompt_may_not_point_back_at_a_batch_the_model_never_saw(self):
-        with self.assertRaises(ValueError):
-            self._compile(6, "seedance2.5", blocking="同上")
+        # The shorthand is taken out (and logged) instead of aborting the whole stage over one shot.
+        with self.assertLogs("app.core.video_prompt_engine", level="WARNING"):
+            compiled = self._compile(6, "seedance2.5", blocking="同上")
+        self.assertNotIn("同上", compiled.text)
 
 
 class StoryboardStageWiringTests(unittest.TestCase):

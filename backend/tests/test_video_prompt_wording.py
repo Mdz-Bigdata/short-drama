@@ -107,6 +107,8 @@ VPE_FIELDS = {
     "appearance_line": {"name", "look"}, "appearance": {"lines"}, "delivery_note": {"note"}, "lead": {"name", "action"},
     "off_screen_only": {"text"}, "only_speaker": {"names"}, "silent_cast": {"names"}, "speaker_note": {"text", "only", "silent"},
     "extend": {"source", "seconds"}, "extend_light": {"light"}, "extend_space": {"snapshot"}, "extend_mask": {"mask"},
+    "expression_reading": {"reading"}, "reaction_after": {"words", "reaction"}, "expression_back": {"text"},
+    "expression_back_bare": set(), "off_screen_absent": {"names"},
 }
 PP_FIELDS = {
     "few_shots": {"package", "count", "seconds", "low", "high"},

@@ -1,0 +1,10 @@
+{
+  "_doc": "app/service/voice_asset_service.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "_idle_task.text": "任务正在执行阶段，等它结束后再{0}",
+  "audition_narrator.action": "试听旁白音色",
+  "cast_narrator.action": "定旁白音色",
+  "cast_narrator.text": "旁白没有试听过这一版声音，请先试听再选",
+  "cast_narrator.text.2": "音色设计服务没有返回 voice_id",
+  "choose_narrator.action": "定旁白音色",
+  "clear_narrator.action": "定旁白音色"
+}

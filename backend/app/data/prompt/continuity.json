@@ -1,0 +1,11 @@
+{
+  "_doc": "app/core/continuity.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "plan_transition.text": "检测到180度轴线翻转，需要中性机位桥接后才能合成。",
+  "plan_transition.text.2": "场景变化，采用声画错位引导新空间。",
+  "plan_transition.text.3": "相邻镜头光向或色温不一致。",
+  "plan_transition.text.4": "环境声底发生变化，需音频交叉淡化。",
+  "plan_transition.text.5": "关键道具发生连续交接，使用动作匹配剪辑。",
+  "plan_transition.reasons": [
+    "六项连续性锚点可接受。"
+  ]
+}

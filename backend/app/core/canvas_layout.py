@@ -16,6 +16,19 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from typing import Any
+from app.core import prompt_data
+
+
+_WORDING_FILE = "canvas_layout"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/canvas_layout.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 ALIGN_MODES = ("left", "hcenter", "right", "top", "vcenter", "bottom")
 DISTRIBUTE_AXES = ("horizontal", "vertical")
@@ -76,7 +89,7 @@ def _units(nodes: Sequence[Node], node_ids: Sequence[str]) -> list[Node]:
     wanted = list(dict.fromkeys(str(item) for item in node_ids))
     missing = [item for item in wanted if item not in by_id]
     if missing:
-        raise ValueError(f"画布上没有节点 {'、'.join(missing[:5])}")
+        raise ValueError(_text_of("_units.text").format('、'.join(missing[:5])))
     selected = set(wanted)
     units = []
     for node_id in wanted:
@@ -111,10 +124,10 @@ def _move(nodes: Sequence[Node], unit: Node, x: float, y: float, changed: set[st
 def align(nodes: Sequence[Node], node_ids: Sequence[str], mode: str) -> set[str]:
     """Line the selection up on one side or centre line of its bounding box. Returns the ids that moved."""
     if mode not in ALIGN_MODES:
-        raise ValueError(f"align 的 mode 只能是：{'、'.join(ALIGN_MODES)}")
+        raise ValueError(_text_of("align.text").format('、'.join(ALIGN_MODES)))
     units = _units(nodes, node_ids)
     if len(units) < 2:
-        raise ValueError("align 至少需要两个节点（同一分组里的成员随分组移动，不单独算）")
+        raise ValueError(_text_of("align.text.2"))
     box = bounds(units) or {"x": 0, "y": 0, "width": 0, "height": 0}
     changed: set[str] = set()
     for unit in units:
@@ -138,10 +151,10 @@ def align(nodes: Sequence[Node], node_ids: Sequence[str], mode: str) -> set[str]
 def distribute(nodes: Sequence[Node], node_ids: Sequence[str], axis: str) -> set[str]:
     """Even gaps along an axis; the first and the last stay where they are."""
     if axis not in DISTRIBUTE_AXES:
-        raise ValueError(f"distribute 的 axis 只能是：{'、'.join(DISTRIBUTE_AXES)}")
+        raise ValueError(_text_of("distribute.text").format('、'.join(DISTRIBUTE_AXES)))
     units = _units(nodes, node_ids)
     if len(units) < 3:
-        raise ValueError("distribute 至少需要三个节点")
+        raise ValueError(_text_of("distribute.text.2"))
     horizontal = axis == "horizontal"
     start, size = (0, 2) if horizontal else (1, 3)
     ordered = sorted(units, key=lambda unit: (_box(unit)[start], _box(unit)[1 - start], str(unit.get("id"))))
@@ -193,14 +206,14 @@ def arrange(
 ) -> set[str]:
     """Lay the selection out from its top-left corner."""
     if layout not in ARRANGE_LAYOUTS:
-        raise ValueError(f"arrange 的 layout 只能是：{'、'.join(ARRANGE_LAYOUTS)}")
+        raise ValueError(_text_of("arrange.text").format('、'.join(ARRANGE_LAYOUTS)))
     if gap is not None:
         gap = float(gap)
         if not math.isfinite(gap) or not 0 <= gap <= MAX_GAP:
-            raise ValueError(f"gap 要在 0 到 {MAX_GAP:g} 之间")
+            raise ValueError(_text_of("arrange.text.2").format(MAX_GAP))
     units = _units(nodes, node_ids)
     if len(units) < 2:
-        raise ValueError("arrange 至少需要两个节点")
+        raise ValueError(_text_of("arrange.text.3"))
     box = bounds(units) or {"x": 0, "y": 0}
     left, top = box["x"], box["y"]
     changed: set[str] = set()

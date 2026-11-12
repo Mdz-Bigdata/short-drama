@@ -10,6 +10,19 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from app.core import prompt_data
+
+
+_WORDING_FILE = "fountain"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/fountain.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 _REMOVED = "\x01"
 _BONEYARD = re.compile(r"/\*.*?\*/", re.S)
@@ -17,50 +30,49 @@ _NOTE = re.compile(r"\[\[.*?\]\]", re.S)
 
 _TITLE_KEYS = {
     "title", "credit", "author", "authors", "source", "draft date", "date", "contact", "copyright",
-    "notes", "revision", "标题", "片名", "剧名", "作者", "编剧", "来源", "日期", "联系方式", "版权", "备注",
+    "notes", "revision", _text_of("module.title_keys"), _text_of("module.title_keys.2"), _text_of("module.title_keys.3"), _text_of("module.title_keys.4"), _text_of("module.title_keys.5"), _text_of("module.title_keys.6"), _text_of("module.title_keys.7"), _text_of("module.title_keys.8"), _text_of("module.title_keys.9"), _text_of("module.title_keys.10"),
 }
 _TITLE_LINE = re.compile(r"^([^\s:：][^:：]{0,30})[:：]\s*(.*)$")
-_TITLE_NAMES = ("title", "标题", "片名", "剧名")
+_TITLE_NAMES = _words_of("module.title_names")
 
 _EN_HEADING = re.compile(r"^(INT\./EXT|INT/EXT|I/E|INT|EXT|EST)(?:\.|\s)\s*(.*)$", re.I)
 _SCENE_NUMBER = re.compile(r"\s*#[\w.\-]+#\s*$")
-_CN_INT_EXT = re.compile(r"^(内外景|内景|外景)(?:[\s:：.。·,，、/\-–—]+)?(.*)$")
-_CN_NUMBERED = re.compile(r"^(第\s*[零〇一二三四五六七八九十百千万两\d]+\s*[场幕]|场景\s*[零〇一二三四五六七八九十百千万两\d]*)\s*[:：]?\s*(.+)$")
+_CN_INT_EXT = re.compile(_text_of("module.cn_int_ext"))
+_CN_NUMBERED = re.compile(_text_of("module.cn_numbered"))
 _CN_LEADING_NUMBER = re.compile(r"^\d+(?:\s*[-－—.]\s*\d+)?[\s、.．]+(.+)$")
 _CN_SEPARATOR = re.compile(r"[\s·,，、/\-–—]+")
 _CN_TIMES = {
-    "日", "夜", "晨", "昏", "晚", "早", "午", "白天", "夜晚", "日间", "夜间", "清晨", "早晨", "上午", "中午", "下午",
-    "傍晚", "黄昏", "黎明", "凌晨", "深夜", "午夜", "夜里", "白日",
+    _text_of("module.cn_times"), _text_of("module.cn_times.2"), _text_of("module.cn_times.3"), _text_of("module.cn_times.4"), _text_of("module.cn_times.5"), _text_of("module.cn_times.6"), _text_of("module.cn_times.7"), _text_of("module.cn_times.8"), _text_of("module.cn_times.9"), _text_of("module.cn_times.10"), _text_of("module.cn_times.11"), _text_of("module.cn_times.12"), _text_of("module.cn_times.13"), _text_of("module.cn_times.14"), _text_of("module.cn_times.15"), _text_of("module.cn_times.16"),
+    _text_of("module.cn_times.17"), _text_of("module.cn_times.18"), _text_of("module.cn_times.19"), _text_of("module.cn_times.20"), _text_of("module.cn_times.21"), _text_of("module.cn_times.22"), _text_of("module.cn_times.23"), _text_of("module.cn_times.24"),
 }
-_CN_SIDES = {"内": "内景", "外": "外景", "内景": "内景", "外景": "外景", "内外": "内外景", "内外景": "内外景"}
+_CN_SIDES = {_text_of("module.cn_sides"): _text_of("module.cn_sides.2"), _text_of("module.cn_sides.3"): _text_of("module.cn_sides.4"), _text_of("module.cn_sides.5"): _text_of("module.cn_sides.6"), _text_of("module.cn_sides.7"): _text_of("module.cn_sides.8"), _text_of("module.cn_sides.9"): _text_of("module.cn_sides.10"), _text_of("module.cn_sides.11"): _text_of("module.cn_sides.12")}
 
 _SECTION = re.compile(r"^#{1,6}\s*(.*)$")
-_EPISODE_CN = re.compile(r"第\s*(?:[0-9]{1,3}|[一二三四五六七八九十]{1,4})\s*集")
+_EPISODE_CN = re.compile(_text_of("module.episode_cn"))
 _EPISODE_EN = re.compile(r"^(?:episode|ep\.?)\s*(\d{1,3})\b[\s:：.\-–—]*(.*)$", re.I)
 _PAGE_BREAK = re.compile(r"^={3,}\s*$")
 
 _TRANSITION_EN = re.compile(r"^[^a-z]*\bTO:$")
-_TRANSITION_CN = re.compile(r"^(?:淡入|淡出|切至|转场|叠化|闪回)(?:[:：].*)?$")
+_TRANSITION_CN = re.compile(_text_of("module.transition_cn"))
 # What the screenplay parser recognises as a transition; anything else gets the 转场 label it also recognises.
 _TRANSITION_KNOWN = re.compile(
-    r"^(?:FADE\s+IN:|FADE\s+OUT\.?|CUT\s+TO:|DISSOLVE\s+TO:|SMASH\s+CUT(?:\s+TO)?:|MATCH\s+CUT(?:\s+TO)?:|淡入|淡出|切至|转场)",
+    _text_of("module.transition_known"),
     re.I,
 )
 
 _PARENTHETICAL = re.compile(r"^[（(](.+)[）)]$")
 _CUE_EXTENSION = re.compile(r"\s*[（(]([^）)]*)[）)]\s*$")
-_CJK_NAME = re.compile(r"^[一-鿿·]{2,4}$")
-_NOT_A_NAME_START = "他她它我你这那有在是把从向"
-_CONTINUED = re.compile(r"^(?:cont'?d|continued|续)\.?$", re.I)
+_CJK_NAME = re.compile(_text_of("module.cjk_name"))
+_NOT_A_NAME_START = _text_of("module.not_a_name_start")
+_CONTINUED = re.compile(_text_of("module.continued"), re.I)
 # Names the parser can read as ``NAME: text``; others need the cue on its own line.
-_INLINE_NAME = re.compile(r"^[A-Za-z一-鿿][A-Za-z0-9一-鿿· ._-]{0,40}$")
+_INLINE_NAME = re.compile(_text_of("module.inline_name"))
 # Action the parser would otherwise take for a cue, a heading or a parenthetical.
 _MISREAD_ACTION = re.compile(
-    r"^(?:[A-Z][A-Z0-9 ._'’-]{0,50}(?:\s*\([^)]*\))?$|(?:INT|EXT|I/E)|[（(].*[）)]$"
-    r"|(?:内景|外景|内外景)\s*[：:]|(?:场景\s*[零〇一二三四五六七八九十百千万两\d]+|第\s*[零〇一二三四五六七八九十百千万两\d]+\s*[场幕]))",
+    _text_of("module.misread_action"),
     re.I,
 )
-_ACTION_LABEL = "动作："
+_ACTION_LABEL = _text_of("module.action_label")
 
 _EMPHASIS = (
     (re.compile(r"(?<!\\)\*\*\*(?=\S)(.+?)(?<=\S)(?<!\\)\*\*\*"), r"\1"),
@@ -177,7 +189,7 @@ def _heading(line: str, *, forced: bool, scene_number: int) -> str | None:
     tokens = [token for token in _CN_SEPARATOR.split(bare) if token]
     time = tokens[-1] if len(tokens) > 1 and tokens[-1] in _CN_TIMES else ""
     location = " ".join(tokens[:-1]) if time else bare
-    return f"第{scene_number}场 {location} - {time}" if time else f"第{scene_number}场 {location}"
+    return _text_of("_heading.text").format(scene_number, location, time) if time else _text_of("_heading.text.2").format(scene_number, location)
 
 
 def _cue(line: str, *, previous_blank: bool, next_blank: bool) -> tuple[str, str] | None:
@@ -201,7 +213,7 @@ def _cue(line: str, *, previous_blank: bool, next_blank: bool) -> tuple[str, str
     if not forced:
         letters = re.sub(r"[^A-Za-z]", "", body)
         if letters:
-            if letters != letters.upper() or re.search(r"[一-鿿]", body) or body.endswith("TO:"):
+            if letters != letters.upper() or re.search(_text_of("_cue.text"), body) or body.endswith("TO:"):
                 return None
         elif not _CJK_NAME.match(body) or body[0] in _NOT_A_NAME_START:
             # Chinese has no capitals to mark a cue, so only a bare name-sized line qualifies.
@@ -246,7 +258,7 @@ def _guarded(action: str) -> str:
 
 def _transition_line(value: str) -> str:
     value = _plain(value)
-    return value if _TRANSITION_KNOWN.match(value) else f"转场：{value}"
+    return value if _TRANSITION_KNOWN.match(value) else _text_of("_transition_line.text").format(value)
 
 
 def parse_fountain(source: str) -> FountainScript:
@@ -282,7 +294,7 @@ def parse_fountain(source: str) -> FountainScript:
             heading = _plain(section.group(1))
             episode = _EPISODE_EN.match(heading)
             if episode:
-                blocks.append(f"第{int(episode.group(1))}集 {episode.group(2).strip()}".rstrip())
+                blocks.append(_text_of("parse_fountain.text").format(int(episode.group(1)), episode.group(2).strip()).rstrip())
             elif _EPISODE_CN.search(heading):
                 blocks.append(heading)
             continue
@@ -292,7 +304,7 @@ def parse_fountain(source: str) -> FountainScript:
             action.append(f"{_ACTION_LABEL}{forced_action}" if forced_action else "")
             continue
 
-        forced_heading = line.startswith(".") and len(line) > 1 and (line[1].isalnum() or "一" <= line[1] <= "鿿")
+        forced_heading = line.startswith(".") and len(line) > 1 and (line[1].isalnum() or _text_of("parse_fountain.forced_heading") <= line[1] <= _text_of("parse_fountain.forced_heading.2"))
         heading = None
         if forced_heading:
             heading = _heading(_plain(line[1:]), forced=True, scene_number=scene_number + 1)

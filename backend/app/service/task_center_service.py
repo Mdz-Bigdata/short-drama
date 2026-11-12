@@ -13,6 +13,19 @@ from typing import Any
 from app.core import generation_queue, video_failures, video_jobs
 from app.core.generation_queue import FAILED, QUEUED, RUNNING, STATUS_LABEL
 from app.service.drama_service import StagePrerequisiteError
+from app.core import prompt_data
+
+
+_WORDING_FILE = "service_task_center_service"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/service_task_center_service.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 _TERMINAL_FOR_PROGRESS = frozenset({generation_queue.DONE, generation_queue.FAILED, generation_queue.CANCELLED, generation_queue.SKIPPED})
 
@@ -64,13 +77,13 @@ def _log(item: Mapping[str, Any], job: Mapping[str, Any] | None, retries: Iterab
     """The item's life in order, as it can be told from what the project recorded."""
     log: list[tuple[str, str]] = []
     for retry in retries:
-        log.append((str(retry.get("at") or ""), f"重试；上一次的错误：{retry.get('error') or '未记录'}"))
+        log.append((str(retry.get("at") or ""), _text_of("_log.text").format(retry.get('error') or '未记录')))
     if item.get("queued_at"):
-        log.append((str(item["queued_at"]), "进入队列"))
+        log.append((str(item["queued_at"]), _text_of("_log.text.2")))
     if item.get("started_at"):
-        log.append((str(item["started_at"]), "开始运行"))
+        log.append((str(item["started_at"]), _text_of("_log.text.3")))
     if job and job.get("job_id"):
-        log.append((str(job.get("submitted_at") or item.get("started_at") or ""), f"供应商任务 {job['job_id']}：{job.get('status')}"))
+        log.append((str(job.get("submitted_at") or item.get("started_at") or ""), _text_of("_log.text.4").format(job['job_id'], job.get('status'))))
     if item.get("finished_at"):
         text = STATUS_LABEL.get(str(item.get("status")), str(item.get("status")))
         detail = item.get("error") or item.get("reason")
@@ -128,10 +141,10 @@ def claim_retry(service: Any, task_id: str, key: str) -> dict[str, Any]:
     """
     task = service.repo.get_task(task_id)
     if not task:
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("claim_retry.text"))
     generation_queue.assert_retryable(task, key)
     if _run_is_going(task):
-        raise RetryRefused("第 5 阶段正在运行，等它结束后再重试")
+        raise RetryRefused(_text_of("claim_retry.text.2"))
     admission = service.assess_video_admission(task_id)
     if admission and admission.get("decision") != "admitted":
         raise RetryRefused(_refusal_text(admission), admission)
@@ -154,10 +167,10 @@ def _refusal_text(admission: Mapping[str, Any]) -> str:
             f"{item.get('scripted_seconds')}s→{item.get('requested_seconds')}s" for item in admission.get("confirmations") or []
             if isinstance(item, Mapping)
         )
-        return f"重试前需先确认请求时长档位：{tiers}"
+        return _text_of("_refusal_text.text").format(tiers)
     problems = [
         problem.get("message") for shot in admission.get("shots") or [] if isinstance(shot, Mapping)
         for problem in shot.get("problems") or [] if isinstance(problem, Mapping) and problem.get("blocking")
     ]
     unique = list(dict.fromkeys(str(message) for message in problems if message))
-    return "批量视频准入受阻，未重试：" + ("；".join(unique[:5]) or "请查看准入详情")
+    return _text_of("_refusal_text.text.2") + ("；".join(unique[:5]) or _text_of("_refusal_text.text.3"))

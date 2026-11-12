@@ -1,0 +1,17 @@
+{
+  "_doc": "app/core/edit_timeline.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "_clip.text": "时间线上没有镜头 {0}",
+  "trim.text": "出点至少要比入点晚 0.5 秒",
+  "trim.text.2": "出点超过了片段长度 {0} 秒",
+  "trim.text.3": "入点超过了片段长度",
+  "set_transition.text": "未知转场 {0}；可用：{1}",
+  "set_transition.text.2": "第一镜之前没有转场",
+  "set_sound_join.text": "未知的声画错开方式 {0}；可用：{1}",
+  "set_sound_join.text.2": "第一镜之前没有切点",
+  "set_audio_source.text": "人声来源只能是 {0}",
+  "set_audio_source.text.2": "这一镜的片段没有原声，只能配音",
+  "set_settings.text": "未知的基础设定 {0}；可用：{1}",
+  "choose_candidate.text": "只能在这一镜已生成的候选版本里选",
+  "review.text": "审看结论只能是 {0}",
+  "set_bgm.text": "配乐来源只能是 {0}"
+}

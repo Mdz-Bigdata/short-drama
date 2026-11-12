@@ -1,0 +1,5 @@
+{
+  "_doc": "app/export/jianying.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "build_draft.text": "{0} 镜头 {1}：片段不在本机，未打包",
+  "pack.text": "把整个文件夹放进剪映的草稿目录（如 ~/Movies/JianyingPro/User Data/Projects/com.lveditor.draft/）后重新打开剪映。\n"
+}

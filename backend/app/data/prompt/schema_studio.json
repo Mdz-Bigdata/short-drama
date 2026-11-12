@@ -1,0 +1,7 @@
+{
+  "_doc": "app/schema/studio.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "canvas_group_problem.text": "分组 {0} 不能放进自己",
+  "canvas_group_problem.text.2": "分组 {0} 不能放进它自己的成员里",
+  "canvas_group_problem.text.3": "分组最多嵌套一层：分组里可以有分组，但里面的分组不能再放分组",
+  "exact_identity_views.text": "character references require the exact ordered identity views ({0}) 或旧版五视图顺序（{1}）"
+}

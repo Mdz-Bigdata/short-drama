@@ -14,6 +14,19 @@ from app.platform.models import PaymentAttempt, PaymentOrder, PaymentRefund
 from app.platform.payments import get_payment_channels
 from app.platform.payments.base import CLOSED, PAID, REFUNDED, UNPAID, ChannelError, PaymentChannel
 from app.platform.store import PlatformStore
+from app.core import prompt_data
+
+
+_WORDING_FILE = "platform_payment_flow"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/platform_payment_flow.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.platform.payment_flow")
 
@@ -87,13 +100,13 @@ async def pay(
     try:
         qr_code = await asyncio.to_thread(
             channel.create_qr, out_trade_no=attempt.out_trade_no, amount_minor=attempt.amount_minor,
-            description=f"{plan.name if plan else order.plan_id} 会员", expires_at=_aware(attempt.expires_at),
+            description=_text_of("pay.description").format(plan.name if plan else order.plan_id), expires_at=_aware(attempt.expires_at),
         )
     except ChannelError:
         await store.end_attempt(attempt.id, "failed")
         raise
     if not await store.set_attempt_qr(attempt.id, qr_code):
-        raise ValueError("订单已变更，请刷新后重试")
+        raise ValueError(_text_of("pay.text"))
     attempt.qr_code = qr_code
     return attempt
 
@@ -183,7 +196,7 @@ async def _push_refund(store: PlatformStore, channel: PaymentChannel, refund: Pa
                 channel.refund, out_trade_no=refund.out_trade_no, out_refund_no=refund.out_refund_no,
                 refund_minor=refund.refund_minor, total_minor=refund.total_minor,
                 # The customer may see this, so it is not the note the operators wrote to each other.
-                reason="重复支付退款" if refund.reason == "duplicate_payment" else "会员订单退款",
+                reason=_text_of("_push_refund.reason") if refund.reason == "duplicate_payment" else _text_of("_push_refund.reason.2"),
             )
         else:
             result = await asyncio.to_thread(

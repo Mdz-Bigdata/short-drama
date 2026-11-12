@@ -1,0 +1,12 @@
+{
+  "_doc": "app/service/task_center_service.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "_log.text": "重试；上一次的错误：{0}",
+  "_log.text.2": "进入队列",
+  "_log.text.3": "开始运行",
+  "_log.text.4": "供应商任务 {0}：{1}",
+  "claim_retry.text": "任务不存在",
+  "claim_retry.text.2": "第 5 阶段正在运行，等它结束后再重试",
+  "_refusal_text.text": "重试前需先确认请求时长档位：{0}",
+  "_refusal_text.text.2": "批量视频准入受阻，未重试：",
+  "_refusal_text.text.3": "请查看准入详情"
+}

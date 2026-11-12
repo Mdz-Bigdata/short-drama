@@ -6,6 +6,19 @@ from typing import Any, Literal
 from pydantic import Field
 
 from app.schema.drama import DramaBaseSchema
+from app.core import prompt_data
+
+
+_WORDING_FILE = "schema_director_desk"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/schema_director_desk.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 class DeskCapture(DramaBaseSchema):
@@ -14,25 +27,25 @@ class DeskCapture(DramaBaseSchema):
     # 0 is a scene-level背景图: it belongs to the stage, not to one镜头.
     shot_id: int = Field(..., ge=0, le=10_000)
     camera_id: str = Field("", max_length=80)
-    url: str = Field(..., max_length=2000, description="绝对 http(s) 地址")
+    url: str = Field(..., max_length=2000, description=_text_of("DeskCapture.description"))
     width: int = Field(0, ge=0, le=8192)
     height: int = Field(0, ge=0, le=8192)
     duration_s: float = Field(0.0, ge=0, le=30)
     fps: int = Field(0, ge=0, le=60)
-    plan_revision: int = Field(0, ge=0, description="截取时的 plan.revision")
-    shows_limbs: bool = Field(False, description="画面里的替身带四肢；白模规则 2 要求提示词写出分段动作序列")
-    warning: str = Field("", max_length=200, description="带四肢的截取附带的提示")
+    plan_revision: int = Field(0, ge=0, description=_text_of("DeskCapture.description.2"))
+    shows_limbs: bool = Field(False, description=_text_of("DeskCapture.description.3"))
+    warning: str = Field("", max_length=200, description=_text_of("DeskCapture.description.4"))
     monochrome: bool = False
     labelled: bool = False
-    layer: str = Field("", max_length=20, description="控制帧：空表示完整画面，background 是空景，mask 是黑底白人遮罩")
-    depth: bool = Field(False, description="导演台导出的灰度深度画面；深度静帧不能应用为首帧参考，深度视频应用后提示词说明只取层次与运镜")
+    layer: str = Field("", max_length=20, description=_text_of("DeskCapture.description.5"))
+    depth: bool = Field(False, description=_text_of("DeskCapture.description.6"))
     created_at: str = Field("", max_length=64)
-    stale: bool = Field(False, description="截取之后站位已修改")
+    stale: bool = Field(False, description=_text_of("DeskCapture.description.7"))
 
 
 class DeskAppliedSlots(DramaBaseSchema):
-    still: str | None = Field(None, max_length=64, description="已写入该镜 sequence_images 的静帧 capture id")
-    clip: str | None = Field(None, max_length=64, description="已写入该镜 reference_videos 的白模视频 capture id")
+    still: str | None = Field(None, max_length=64, description=_text_of("DeskAppliedSlots.description"))
+    clip: str | None = Field(None, max_length=64, description=_text_of("DeskAppliedSlots.description.2"))
 
 
 class DeskCapturesResponse(DramaBaseSchema):
@@ -41,13 +54,13 @@ class DeskCapturesResponse(DramaBaseSchema):
     scene_id: str = Field(..., max_length=80)
     # 60 stills / clips plus the scene's背景图, which are capped on their own.
     captures: list[DeskCapture] = Field(default_factory=list, max_length=80)
-    applied: dict[str, DeskAppliedSlots] = Field(default_factory=dict, description="镜头编号（字符串）→ 已应用的截取")
+    applied: dict[str, DeskAppliedSlots] = Field(default_factory=dict, description=_text_of("DeskCapturesResponse.description"))
 
 
 class DeskSavedPose(DramaBaseSchema):
     id: str = Field(..., min_length=1, max_length=64)
     name: str = Field(..., min_length=1, max_length=80)
-    pose: dict[str, Any] = Field(..., description="StagePose（字段保持 snake_case）")
+    pose: dict[str, Any] = Field(..., description=_text_of("DeskSavedPose.description"))
     created_at: str = Field("", max_length=64)
 
 
@@ -65,7 +78,7 @@ class DeskSavePoseRequest(DramaBaseSchema):
 class DeskUserSavedPose(DramaBaseSchema):
     id: str = Field(..., min_length=1, max_length=64)
     name: str = Field(..., min_length=1, max_length=40)
-    pose: dict[str, Any] = Field(..., description="StagePose（字段保持 snake_case）")
+    pose: dict[str, Any] = Field(..., description=_text_of("DeskUserSavedPose.description"))
     created_at: str = Field("", max_length=64)
 
 

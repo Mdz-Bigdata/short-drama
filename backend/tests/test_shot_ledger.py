@@ -49,6 +49,22 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual([issue["rule"] for issue in self.entry(4).issues], ["posture_jump"], "standing, then sitting with no 坐下")
         self.assertEqual(self.entry(2).issues + self.entry(5).issues, [], "放在 and 站起身 / 接过 explain the changes")
 
+    def test_words_that_only_look_like_holding_or_placing_are_ignored(self):
+        shots = [
+            _shot(1, "陈默把合同放在桌上。", props=("合同",), cast=("陈默",)),
+            _shot(2, "陈默双手放在合同两侧，原文台词保持不变：「合同我签。」", props=("合同",), cast=("陈默",)),
+        ]
+        ledger = shot_ledger.walk(shots, ["陈默"])
+        self.assertEqual(shot_ledger.end_props(ledger["S1:2"]), {"合同": "合同在桌上"})
+        self.assertEqual(ledger["S1:2"].issues, [])
+
+    def test_the_clip_prompt_does_not_hand_a_prop_named_in_the_dialogue_to_the_speaker(self):
+        from app.core.video_prompt_engine import prop_holders
+
+        text = "陈默看着桌面，原文台词保持不变：「合同我签。」"
+        self.assertEqual(prop_holders(["合同"], ["陈默"], text), ["合同"], "保持 is not a hold verb")
+        self.assertNotEqual(prop_holders(["合同"], ["陈默"], "陈默右手持合同"), ["合同"], "持 on its own still is")
+
     def test_a_new_scene_starts_a_new_ledger(self):
         ledger = shot_ledger.walk([*OFFICE[:2], _shot(1, "周烈双手拿着文件夹。", scene="S2", cast=("周烈",))], CAST)
         self.assertEqual(ledger[shot_ledger.key("S2", 1)].issues, [])
@@ -132,6 +148,46 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn((6, "gaze_mismatch"), found)
         self.assertEqual(delivery_check.tone("主光 3200K"), "warm")
         self.assertEqual(delivery_check.tone("月光 6500K"), "cool")
+
+
+class LayeredReportTests(unittest.TestCase):
+    def test_every_issue_has_a_layer_and_a_tier_and_unchecked_layers_are_listed(self):
+        clips = [_clip("S1", 1, "全景"), _clip("S1", 2, "中景", dialogue="林夏：我等了你整整三年，你一句话都没有给过我。", seconds=2)]
+        timeline = _timeline(clips)
+        # 第 1 镜原片自带开口说话，这里换成了配音。
+        timeline["clips"][0].update({"subtitle": "你来了。", "native_available": True, "audio_source": "tts"})
+        items = delivery_check.report(_task(clips, []), timeline)
+        issues = [item for item in items if item["rule"] != "unverified"]
+        self.assertTrue(all(item["layer"] and item["tier_label"] for item in items if item["rule"] != "unit_cost"))
+        self.assertIn(("dub_over_face", "表演", "需人工确认"), {(i["rule"], i["layer"], i["tier_label"]) for i in issues})
+        self.assertIn(("dialogue", "阅读", "必须修复"), {(i["rule"], i["layer"], i["tier_label"]) for i in issues})
+        unverified = {item["layer"] for item in items if item["rule"] == "unverified"}
+        self.assertTrue({"技术", "包装"} <= unverified, "what the machine did not check is listed, not passed")
+        self.assertNotIn("授权", unverified, "the rights layer is checked from the source records now")
+        self.assertEqual(items[-2]["rule"], "unverified")
+        self.assertEqual(items[-1]["rule"], "unit_cost")
+
+    def test_unit_cost_is_spend_over_approved_shots_and_says_so_when_none_passed(self):
+        from app.core import unit_cost
+
+        task = {
+            "usage_records": [
+                {"media_type": "video", "status": "success", "priced": True, "currency": "CNY", "cost": 6.0},
+                {"media_type": "video", "status": "failed"},
+                {"media_type": "text", "status": "success", "priced": True, "currency": "CNY", "cost": 1.0},
+            ],
+            "assets": {
+                "7_timeline": {"clips": [{"shot_uid": 1, "review": {"decision": "approved"}}, {"shot_uid": 2, "review": {"decision": "pending"}}]},
+                "episode_cycle": {"episodes": {"1": {"timeline": {"clips": [{"shot_uid": 1, "review": {"decision": "approved"}}, {"shot_uid": 3, "review": {"decision": "approved"}}]}}}},
+            },
+        }
+        summary = unit_cost.summary(task)
+        self.assertEqual((summary["calls"], summary["failed"], summary["usable"]), (2, 1, 2))
+        self.assertEqual(summary["per_usable"], {"CNY": 3.0})
+        for clip in task["assets"]["7_timeline"]["clips"] + task["assets"]["episode_cycle"]["episodes"]["1"]["timeline"]["clips"]:
+            clip["review"]["decision"] = "pending"
+        self.assertIsNone(unit_cost.summary(task)["per_usable"])
+        self.assertIn("还没跑通", unit_cost.summary(task)["line"])
 
 
 if __name__ == "__main__":

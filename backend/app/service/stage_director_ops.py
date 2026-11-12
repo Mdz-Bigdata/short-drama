@@ -22,6 +22,19 @@ from app.core.spatial_stage.director_ai import Scope
 from app.core.spatial_stage.models import StagePlan
 from app.service import spatial_stage_service as spatial
 from app.service import stage_director_service as director
+from app.core import prompt_data
+
+
+_WORDING_FILE = "stage_director_ops"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/stage_director_ops.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.service.stage_director_ops")
 
@@ -29,16 +42,16 @@ PINNED_KEY = "pinned_snapshots"
 MAX_PINNED = 12
 # 一次批量优化最多多少场：每场 1–3 次付费调用，且整批在同一个请求里顺序跑。
 MAX_BATCH = 12
-RUNNING_MESSAGE = "任务正在执行阶段，暂不能修改空间调度"
-DEFAULT_LABEL = "助手改动"
-KEEP_LABEL = "撤销前"
-RESTORE_LABEL = "恢复「{name}」"
-NOTE_FROM_CURRENT = "这次以当前舞台为底稿（保留了已有改动）。"
-NOTE_NO_MODEL = "模型没有给出可用的方案（未配置文本模型，或它的回复无法解析），这里只有规则方案。"
-OPTIMIZE_ASKED = "自动优化这版舞台"
-OPTIMIZE_LABEL = "自动优化"
+RUNNING_MESSAGE = _text_of("module.running_message")
+DEFAULT_LABEL = _text_of("module.default_label")
+KEEP_LABEL = _text_of("module.keep_label")
+RESTORE_LABEL = _text_of("module.restore_label")
+NOTE_FROM_CURRENT = _text_of("module.note_from_current")
+NOTE_NO_MODEL = _text_of("module.note_no_model")
+OPTIMIZE_ASKED = _text_of("module.optimize_asked")
+OPTIMIZE_LABEL = _text_of("module.optimize_label")
 # 舞台改过之后，这一场已出的片段上写的过期原因（drama_service 里其他改动的同类文案）。
-STALE_CLIP_REASON = "所属场景的站位或机位已由助手修改，需重跑第 5 阶段后生效"
+STALE_CLIP_REASON = _text_of("module.stale_clip_reason")
 
 
 def _now() -> str:
@@ -115,7 +128,7 @@ def _mark_stale(service, task_id: str, scene_id: str) -> int:
     """舞台落地之后把这一场的片段标为过期。_commit 的 entry_update 只拿到导演台条目、拿不到任务，所以紧跟着单独写一次。"""
     count = service.repo.mutate_task(task_id, lambda task: mark_scene_clips_stale(task, scene_id))
     if count is None:
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("_mark_stale.text"))
     return int(count)
 
 
@@ -190,7 +203,7 @@ def _rows(entry: Mapping[str, Any]) -> list[dict[str, Any]]:
 def list_snapshots(service, task_id: str, scene_id: str) -> list[dict[str, Any]]:
     task = service.repo.get_task(task_id)
     if not task:
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("list_snapshots.text"))
     return _rows(_peek(task, scene_id))
 
 
@@ -208,9 +221,9 @@ def pin_snapshot(service, task_id: str, scene_id: str, *, snapshot_id: str, name
         already = next((item for item in entry[PINNED_KEY] if isinstance(item, Mapping) and str(item.get("id")) == wanted), None)
         source = already or next((item for item in entry["snapshots"] if isinstance(item, Mapping) and str(item.get("id")) == wanted), None)
         if source is None:
-            raise LookupError("这一步的快照已经不在了，只能固定最近几步")
+            raise LookupError(_text_of("mutate.text"))
         if already is None and len(kept) >= MAX_PINNED:
-            raise ValueError(f"最多固定 {MAX_PINNED} 个快照，请先取消一些")
+            raise ValueError(_text_of("mutate.text.2").format(MAX_PINNED))
         row = {
             "id": wanted, "name": title or str(source.get("name") or source.get("label") or ""), "label": str(source.get("label") or ""),
             "at": source.get("at") or _now(), "revision": source.get("revision"), "plan": deepcopy(source.get("plan")), "pinned": True,
@@ -220,7 +233,7 @@ def pin_snapshot(service, task_id: str, scene_id: str, *, snapshot_id: str, name
 
     result = service.repo.mutate_task(task_id, mutate)
     if not result:
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("pin_snapshot.text"))
     return result
 
 
@@ -238,7 +251,7 @@ def _append_kept(service, task_id: str, scene_id: str, kept: Mapping[str, Any]) 
 
     count = service.repo.mutate_task(task_id, mutate)
     if count is None:
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("_append_kept.text"))
     return int(count)
 
 
@@ -252,7 +265,7 @@ def restore_snapshot(service, task_id: str, scene_id: str, *, snapshot_id: str, 
     pinned = next((item for item in _pinned_rows(entry) if str(item.get("id")) == wanted), None)
     in_service = any(str(item.get("id")) == wanted for item in _service_rows(entry))
     if pinned is None and not in_service:
-        raise LookupError("没有这个快照：它可能已被更早的步骤挤掉，固定下来的快照不会丢")
+        raise LookupError(_text_of("restore_snapshot.text"))
     if pinned is None:
         # revert 会把目标之后的快照都裁掉，「撤销前」先留会被挤掉（列表满时还会挤掉目标本身）：恢复完再写。
         # revert 自己会在锁里做占用与修订号检查，被拒绝时还没写任何东西。
@@ -267,7 +280,7 @@ def restore_snapshot(service, task_id: str, scene_id: str, *, snapshot_id: str, 
     label = RESTORE_LABEL.format(name=name)
     snapshot_id = uuid.uuid4().hex[:12]
     row = {
-        "role": "assistant", "text": f"已{label}。", "at": _now(), "changed": director.diff_plans(current, restored),
+        "role": "assistant", "text": _text_of("restore_snapshot.row.text").format(label), "at": _now(), "changed": director.diff_plans(current, restored),
         "compare": scoring.compare(scoring.score_plan(current), scoring.score_plan(restored)), "snapshot_id": snapshot_id,
     }
 
@@ -316,7 +329,7 @@ def plan_from_current(
         return True
 
     if not service.repo.mutate_task(task_id, mutate):
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("plan_from_current.text"))
     note = NOTE_FROM_CURRENT if from_model else f"{NOTE_FROM_CURRENT}{NOTE_NO_MODEL}"
     return {
         "candidates": candidates, "recommended": ranked[0].id, "used_model": bool(from_model), "note": note,
@@ -354,8 +367,8 @@ def batch_scope(task: Mapping[str, Any], *, scene_ids: Sequence[str] | None = No
             if episode is None or int(scene["episode"]) == int(episode)
         ]
     if len(wanted) > MAX_BATCH:
-        where = f"第{int(episode)}集" if episode is not None else "全剧"
-        raise ValueError(f"{where}有 {len(wanted)} 场，一次最多优化 {MAX_BATCH} 场，请用 scene_ids 指定要优化的场")
+        where = _text_of("batch_scope.where").format(int(episode)) if episode is not None else _text_of("batch_scope.where.2")
+        raise ValueError(_text_of("batch_scope.text").format(where, len(wanted), MAX_BATCH))
     return wanted
 
 
@@ -368,7 +381,7 @@ def optimize_scenes(
     """
     task = service.repo.get_task(task_id)
     if not task:
-        raise LookupError("任务不存在")
+        raise LookupError(_text_of("optimize_scenes.text"))
     wanted = batch_scope(task, scene_ids=scene_ids, episode=episode)
     if wanted:
         ensure_idle(service, task)

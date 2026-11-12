@@ -24,6 +24,19 @@ from PIL import Image, ImageChops
 
 from app.core.actor_sheet_cutter import _runs, _SeparatorMap
 from app.core.actor_sheet_layout import FULL_BODY_PROPORTION_RULE
+from app.core import prompt_data
+
+
+_WORDING_FILE = "actor_hd_views"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/actor_hd_views.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 #: 头像三联、全身三联的出图尺寸(总像素都在供应商 4096×4096 上限之内)。
 HD_FACE_SIZE = "3072x1024"
@@ -55,11 +68,7 @@ HD_GROUPS: tuple[HdGroup, ...] = (
         cells=HD_FACE_CELLS,
         size=HD_FACE_SIZE,
         layout=(
-            "横向 1 行 3 格的头肩特写三联，格与格之间一条纯白细缝，浅灰到纯白的干净背景。"
-            "三格是同一个人、同一光线、同一景别(头顶到锁骨完整入画)、同一高度。"
-            "左格：正脸，直视镜头；中格：整个头部向画面左侧转 45°，露出右侧脸颊与右耳；"
-            "右格：整个头部向画面右侧转 45°，露出左侧脸颊与左耳。三格的朝向必须明显不同。"
-            "五官、皮肤纹理、发丝、发饰与领口高清锐利，焦点落在眼睛上。"
+            _text_of("module.layout")
         ),
         require_distinct=True,
     ),
@@ -68,12 +77,7 @@ HD_GROUPS: tuple[HdGroup, ...] = (
         size=HD_BODY_SIZE,
         layout=(
             # 浅灰底：白衣服、白靴、银剑在纯白底上和背景连成一片，切图时会被当成留白切掉。
-            "横向 1 行 3 格的全身三视图，格与格之间一条纯白细缝，浅灰色(不是纯白)纯色干净背景。"
-            "手持的兵器、道具与垂下的衣袖、披帛、流苏都完整留在本格之内，不越过格缝。"
-            "左格：正面全身；中格：90 度标准侧面全身；右格：背面全身。"
-            "三格同一比例，脚底在同一条基线上，头顶在同一高度，头顶到双脚完整入画。"
-            f"{FULL_BODY_PROPORTION_RULE}"
-            "服装面料、纹样、配饰与鞋履高清锐利。"
+            _text_of("module.layout.2").format(FULL_BODY_PROPORTION_RULE)
         ),
         distinct_pairs=((0, 1),),
         distinct_level=18.0,
@@ -83,10 +87,7 @@ HD_GROUPS: tuple[HdGroup, ...] = (
 
 def hd_prompt(group: HdGroup, *, name: str, desc: str, style: str) -> str:
     return (
-        f"为角色{name}制作高清身份视图。{group.layout}"
-        f"严格参考所给参考图里的同一个人：脸型、五官比例、痣与疤的位置、发际线、发型发色、发饰、服装与配饰完全一致。"
-        f"角色设定：{desc}。视觉风格：{style}。"
-        "禁止出现文字、标签、编号、水印、logo，禁止第二个人物、额外肢体、多余手指和场景道具。"
+        _text_of("hd_prompt.text").format(name, group.layout, desc, style)
     )
 
 

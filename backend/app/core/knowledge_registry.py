@@ -34,6 +34,19 @@ from functools import lru_cache
 from pathlib import Path
 
 from app import settings
+from app.core import prompt_data
+
+
+_WORDING_FILE = "knowledge_registry"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/knowledge_registry.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.core.knowledge_registry")
 
@@ -71,30 +84,30 @@ def skills_root() -> Path:
 def _section(skill_dir: Path, skill: str, raw: object, index: int) -> KnowledgeSection:
     where = f"{skill}/{MANIFEST_NAME} sections[{index}]"
     if not isinstance(raw, Mapping):
-        raise KnowledgeManifestError(f"{where} 必须是对象")
+        raise KnowledgeManifestError(_text_of("_section.text").format(where))
     key = str(raw.get("key") or "")
     if not _KEY.fullmatch(key):
-        raise KnowledgeManifestError(f"{where} 的 key {key!r} 不合法：小写字母、数字与连字符，2–64 个字符")
+        raise KnowledgeManifestError(_text_of("_section.text.2").format(where, key))
     title = str(raw.get("title") or "").strip()
     if not title:
-        raise KnowledgeManifestError(f"{where} 缺少 title")
+        raise KnowledgeManifestError(_text_of("_section.text.3").format(where))
     relative = str(raw.get("file") or "")
     target = (skill_dir / relative).resolve()
     if not relative or (target != skill_dir and skill_dir not in target.parents):
-        raise KnowledgeManifestError(f"{where} 的 file {relative!r} 必须是技能目录内的相对路径")
+        raise KnowledgeManifestError(_text_of("_section.text.4").format(where, relative))
     budget = raw.get("budget", 0)
     if isinstance(budget, bool) or not isinstance(budget, int) or budget < 0:
-        raise KnowledgeManifestError(f"{where} 的 budget 必须是非负整数")
+        raise KnowledgeManifestError(_text_of("_section.text.5").format(where))
     stages = raw.get("stages", [])
     if not isinstance(stages, list) or any(
         isinstance(stage, bool) or not isinstance(stage, int) or not 1 <= stage <= _MAX_STAGE for stage in stages
     ):
-        raise KnowledgeManifestError(f"{where} 的 stages 必须是 1–{_MAX_STAGE} 的阶段号列表")
+        raise KnowledgeManifestError(_text_of("_section.text.6").format(where, _MAX_STAGE))
     scope = str(raw.get("scope") or "knowledge")
     if scope not in SCOPES:
-        raise KnowledgeManifestError(f"{where} 的 scope 只能是 {' / '.join(SCOPES)}")
+        raise KnowledgeManifestError(_text_of("_section.text.7").format(where, ' / '.join(SCOPES)))
     if scope == "skill" and stages:
-        raise KnowledgeManifestError(f"{where} 是技能内部参考（scope=skill），不能登记阶段")
+        raise KnowledgeManifestError(_text_of("_section.text.8").format(where))
     return KnowledgeSection(
         key=key, title=title, skill=skill, path=target, budget=budget, stages=tuple(sorted(set(stages))), scope=scope,
     )
@@ -105,12 +118,12 @@ def _read_manifest(skill_dir: Path) -> list[KnowledgeSection]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise KnowledgeManifestError(f"{skill_dir.name}/{MANIFEST_NAME} 无法读取：{error}") from error
+        raise KnowledgeManifestError(_text_of("_read_manifest.text").format(skill_dir.name, MANIFEST_NAME, error)) from error
     if not isinstance(payload, Mapping) or payload.get("version") != MANIFEST_VERSION:
-        raise KnowledgeManifestError(f"{skill_dir.name}/{MANIFEST_NAME} 的 version 必须是 {MANIFEST_VERSION}")
+        raise KnowledgeManifestError(_text_of("_read_manifest.text.2").format(skill_dir.name, MANIFEST_NAME, MANIFEST_VERSION))
     sections = payload.get("sections", [])
     if not isinstance(sections, list):
-        raise KnowledgeManifestError(f"{skill_dir.name}/{MANIFEST_NAME} 的 sections 必须是列表")
+        raise KnowledgeManifestError(_text_of("_read_manifest.text.3").format(skill_dir.name, MANIFEST_NAME))
     return [_section(skill_dir.resolve(), skill_dir.name, raw, index) for index, raw in enumerate(sections)]
 
 
@@ -125,7 +138,7 @@ def _index(root: str) -> dict[str, KnowledgeSection]:
         for section in _read_manifest(manifest.parent):
             if section.key in found:
                 other = found[section.key]
-                raise KnowledgeManifestError(f"知识章节 {section.key!r} 同时登记在 {other.skill} 与 {section.skill}")
+                raise KnowledgeManifestError(_text_of("_index.text").format(section.key, other.skill, section.skill))
             found[section.key] = section
     return found
 

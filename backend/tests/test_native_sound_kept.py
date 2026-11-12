@@ -43,10 +43,10 @@ class HardLimitTests(unittest.TestCase):
         prompt = "\n".join(["【画面】" + "沈砚推门而入，灯焰被风压低。" * 200, sound, "【关键约束】同一张脸。", "禁止出现：字幕。"])
         model = "doubao-seedance-2-0-pro-250528"
         fitted, removed = prompt_budget.fit_hard_limit(prompt, model)
-        self.assertLessEqual(len(fitted), prompt_budget.hard_limit(model))
-        self.assertIn("truncated", removed)
+        # 分镜与运镜内容不删：超上限也整段原样发，声音段自然也在。
+        self.assertEqual(fitted, prompt)
+        self.assertEqual(removed, ["over_limit_kept"])
         self.assertIn(sound, fitted)
-        self.assertTrue(fitted.rstrip().endswith("禁止出现：字幕。"))
 
 
 class SliceTests(unittest.TestCase):

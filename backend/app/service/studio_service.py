@@ -40,6 +40,19 @@ from app.service import canvas_presence
 from app.service.project_archive import ProjectArchiveService
 from app.service.studio_canvas_runs import CanvasRunner
 from app.story.story_graph import StoryGraphBuilder
+from app.core import prompt_data
+
+
+_WORDING_FILE = "service_studio_service"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/service_studio_service.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 MAX_CANVAS_VIDEO_BYTES = 200 * 1024 * 1024
 
@@ -203,7 +216,7 @@ class StudioService:
             )
             result = outcome["results"][0]
             if result["status"] != "committed":
-                raise ValueError(result.get("reason") or "提交失败")
+                raise ValueError(result.get("reason") or _text_of("promote_canvas_node.text"))
             return outcome["canvas"]
         record = self.repository.promote_canvas_node(
             project_id,
@@ -318,7 +331,7 @@ class StudioService:
         """A restore is a new version with the old content: history only ever grows, and the restore can itself be undone."""
         older = self.repository.get_canvas_version(project_id, owner_id, version, canvas_id=canvas_id)
         if older is None:
-            raise ValueError(f"画布没有第 {version} 版（可能已被清理）")
+            raise ValueError(_text_of("restore_canvas_version.text").format(version))
         record = self.repository.put_canvas(
             project_id, owner_id, CanvasPutRequest(expected_version=expected_version, nodes=older.nodes, edges=older.edges), canvas_id=canvas_id,
         )
@@ -346,14 +359,14 @@ class StudioService:
                 except UploadValidationError as exc:
                     raise ValueError(str(exc)) from exc
                 if len(content) > MAX_IMAGE_UPLOAD_BYTES:
-                    raise ValueError(f"图片不能超过 {MAX_IMAGE_UPLOAD_BYTES // (1024 * 1024)} MB")
+                    raise ValueError(_text_of("store_canvas_upload.text").format(MAX_IMAGE_UPLOAD_BYTES // (1024 * 1024)))
                 medium, extension = "image", {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}[sniffed]
             elif sniffed.startswith("video/"):
                 if len(content) > MAX_CANVAS_VIDEO_BYTES:
-                    raise ValueError(f"视频不能超过 {MAX_CANVAS_VIDEO_BYTES // (1024 * 1024)} MB")
+                    raise ValueError(_text_of("store_canvas_upload.text.2").format(MAX_CANVAS_VIDEO_BYTES // (1024 * 1024)))
                 medium, extension = "video", "webm" if sniffed.endswith("webm") else "mp4"
             else:
-                raise ValueError("只支持图片（PNG、JPEG、WebP）、视频（MP4、WebM）和音频（MP3、WAV、M4A、AAC、OGG）")
+                raise ValueError(_text_of("store_canvas_upload.text.3"))
         os.makedirs(media_compositor.MEDIA_DIR, exist_ok=True)
         name = f"canvas_up_{uuid.uuid4().hex}.{extension}"
         with open(os.path.join(media_compositor.MEDIA_DIR, name), "wb") as handle:
@@ -367,7 +380,7 @@ class StudioService:
         """The drama task behind a canvas, checked against the person asking: running spends that project's money."""
         task_id = self.repository.task_for_project(project_id, owner_id)
         if not task_id or drama is None:
-            raise ValueError("这个画布没有关联项目，只能编辑，不能运行或写回")
+            raise ValueError(_text_of("_canvas_task.text"))
         task = drama.repo.get_task(task_id)
         if not task:
             raise PermissionError("task not found")

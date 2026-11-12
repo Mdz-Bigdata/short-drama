@@ -206,7 +206,7 @@ def synthesize_dialogue_track(segments, tag: str = "voice") -> Tuple[Optional[st
     ff = _ffmpeg()
     segs = []
     for seg in (segments or []):
-        t = re.sub(r"\s+", " ", (seg[0] or "")).strip()
+        t = voice_delivery.spoken_form(re.sub(r"\s+", " ", (seg[0] or "")).strip(), _readings.get())
         g = seg[1] if len(seg) > 1 else "female"
         emo = seg[2] if len(seg) > 2 else "neutral"
         if t:
@@ -272,6 +272,8 @@ def _elevenlabs_available() -> bool:
 
 _ACCOUNT_POOLS: dict[str, dict[str, list[dict[str, str]]]] = {}
 _speaker_voices: ContextVar[Mapping[str, str]] = ContextVar("speaker_voices", default={})
+# 项目读音表(词 → 念法)：配音时替换进去，字幕不动。
+_readings: ContextVar[Any] = ContextVar("pronunciations", default=())
 
 
 def elevenlabs_voice_pool() -> dict[str, list[dict[str, str]]]:
@@ -334,6 +336,16 @@ def effective_audio_model(tts_model: str) -> Tuple[str, str]:
 
 
 @contextmanager
+def bind_readings(readings: Any) -> Iterator[None]:
+    """这个项目登记的读音表，给这一块里的配音用(工作线程跟着继承)。"""
+    token = _readings.set(readings or ())
+    try:
+        yield
+    finally:
+        _readings.reset(token)
+
+
+@contextmanager
 def bind_speaker_voices(voices: Mapping[str, str] | None) -> Iterator[None]:
     """The voices a project has cast, for the dubbing done inside this block (worker threads inherit the context)."""
     token = _speaker_voices.set(dict(voices or {}))
@@ -377,7 +389,8 @@ def synthesize_elevenlabs_dialogue_track(segments, tag: str = "eleven_voice") ->
             # 情绪和语气说明一起翻成表演标签写在台词前面，情绪不再单独加一次。
             lines.append(DialogueLine(
                 voice_id=str(cast.get(speaker) or voice_map.get(speaker) or (male_voice if gender == "male" else female_voice)),
-                text=voice_delivery.performed_text(text, emotion, notes),
+                # 数字按中文读法、读音表里的词按登记的念法送去配音；字幕仍是原文。
+                text=voice_delivery.performed_text(voice_delivery.spoken_form(text, _readings.get()), emotion, notes),
                 emotion="neutral",
             ))
         if not lines:

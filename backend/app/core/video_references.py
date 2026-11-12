@@ -397,7 +397,9 @@ def _frames_only_wording(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text)
 
 
-def renumber_reference_mentions(prompt: str, identity_images: list[str], plan: "VideoReferencePlan") -> str:
+def renumber_reference_mentions(
+    prompt: str, identity_images: list[str], plan: "VideoReferencePlan", *, desk_still: str = "",
+) -> str:
     """Number every 参考图N by the image the request actually carries.
 
     The prompt is written before routing and counts only the identity images
@@ -407,6 +409,10 @@ def renumber_reference_mentions(prompt: str, identity_images: list[str], plan: "
     frame modes). Each mention is renumbered to the image's real position, and a
     mention of an image that is not sent is removed, so no number points at the
     wrong picture. When the first frame travels as an image it is named as such.
+
+    ``desk_still`` is the director-desk still applied to this shot (a grey blockout), when there is
+    one: it only decides the room's structure, the positions and the furniture, never the materials,
+    colours or light, and the prompt says so for the number it actually goes out under.
     """
     sent = list(plan.reference_images or [])
     position = {url: index for index, url in enumerate(sent, start=1)}
@@ -433,7 +439,11 @@ def renumber_reference_mentions(prompt: str, identity_images: list[str], plan: "
     if frames_only:
         text = _frames_only_wording(text)
     if plan.first_frame is None and sent and sent[0] not in identity_images:
-        lead = "参考图1是开场画面，只决定开场构图、站位与光线；"
+        lead = prompt_data.text("clip_prompt", "opening_picture")
+        if desk_still and desk_still in position:
+            # 导演台白模只给空间骨架：白模排第一就是它开场，排在分镜画面后面就接着说它管什么。
+            desk = prompt_data.text("clip_prompt", "opening_desk").format(n=position[desk_still])
+            lead = desk if position[desk_still] == 1 else lead + desk
         # 开场画面已经定了构图：场地视角图不再自称本镜的构图来源，两者不抢。
         for old, new in prompt_data.pairs("scene_views", "with_opening"):
             text = text.replace(old, new)

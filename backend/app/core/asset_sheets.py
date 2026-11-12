@@ -24,7 +24,6 @@ infers conservatively from period, role and setting, and says nothing it cannot 
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
@@ -35,38 +34,46 @@ from app.core.style_packs import PaletteCard, PaletteColour, StylePack, build_pa
 
 AssetKind = Literal["character", "scene", "prop", "palette"]
 
-# A scene name has to be recognisable on its own: two traits plus the place.
-MIN_SCENE_NAME_CHARS = 4
-# Every scene prompt opens with this, or the model puts a person in the room.
-EMPTY_SCENE_PREFIX = "不能出现其他人, 无人, 纯场景,"
-EMPTY_SCENE_SUFFIX = "no humans, empty, landscape only"
+# Every sentence, layout, word table and length limit of the sheets: app/data/prompt/asset_sheets.json.
+_WORDING = "asset_sheets"
 
-CHARACTER_LAYOUT = (
-    "版式：画面左侧三分之一为超大高清正面面部特写；右侧三分之二并排三张全身三视图，依次为正面(FRONT)、"
-    "侧面(PROFILE)、背面(BACK)；人物下方另排服装细节与配饰展示图。纯白背景，构图工整。"
-    "所有视角的身高、五官位置、服装褶皱严格一致。"
-    f"{FULL_BODY_PROPORTION_RULE}画面内不得出现任何文字。"
-)
-SCENE_LAYOUT = (
-    "版式：同一张图四宫格输出四个视角——高角度航拍俯瞰、低角度仰视、侧面视角、反面视角；"
-    "每格画面内标注该视角名称。"
-)
+
+def _says(key: str, /, **values: object) -> str:
+    """A sentence of the sheets' wording table, filled in (a long one is stored as lines joined with nothing)."""
+    body = prompt_data.load(_WORDING)["says"][key]
+    return ("".join(body) if isinstance(body, list) else str(body)).format(**values)
+
+
+def _word(key: str) -> str:
+    """A word of the table used as it stands (a separator, the empty-scene phrases)."""
+    return prompt_data.text(_WORDING, key)
+
+
+def _limit(key: str) -> int:
+    return int(prompt_data.value(_WORDING, "limits")[key])
+
+
+# A scene name has to be recognisable on its own: two traits plus the place.
+MIN_SCENE_NAME_CHARS = _limit("min_scene_name")
+# Every scene prompt opens with this, or the model puts a person in the room.
+EMPTY_SCENE_PREFIX = _word("empty_scene_prefix")
+EMPTY_SCENE_SUFFIX = _word("empty_scene_suffix")
+
+CHARACTER_LAYOUT = _says("character_layout", proportion_rule=FULL_BODY_PROPORTION_RULE)
+SCENE_LAYOUT = _says("scene_layout")
 # 和道具设定图(core/prop_turnaround)出的那张一致：说法在 app/data/prompt/prop_sheet.json。
 PROP_LAYOUT = prompt_data.text("prop_sheet", "asset_layout")
 
 # Words that say what a character looks like, and words that only say how they feel.
-_APPEARANCE_HINTS = (
-    "岁", "身高", "体型", "发", "眼", "眉", "脸", "肤", "痣", "疤", "胡", "妆", "穿", "衣", "袍", "裙",
-    "裤", "鞋", "帽", "镜", "链", "戒", "表", "包", "制服", "西装", "大衣", "围巾",
-)
-_FEELING_WORDS = ("性格", "内心", "情绪", "善良", "冷漠", "温柔", "狠", "爱", "恨", "悲", "喜", "野心", "自卑")
+_APPEARANCE_HINTS = prompt_data.words(_WORDING, "appearance_hints")
+_FEELING_WORDS = prompt_data.words(_WORDING, "feeling_words")
 # A prop the story leans on is a key prop; every prop still gets its sheet.
-_PROP_SIGNALS = ("特写", "递", "接", "抢", "藏", "打开", "关上", "掏出", "握", "摔", "碎", "签", "证据", "信", "钥匙", "照片")
-_SCENE_TRAIT_WORDS = (
-    ("暖光", "冷光", "顶灯", "烛光", "霓虹", "阳光", "月光", "灯火"),          # light
-    ("木", "玻璃", "水泥", "砖", "铁皮", "石", "地毯", "瓷砖", "纸"),          # material
-    ("清晨", "正午", "黄昏", "深夜", "雨夜", "雪天", "阴天"),                  # time
-)
+_PROP_SIGNALS = prompt_data.words(_WORDING, "prop_signals")
+# light, material, time: each group gives the first of its words the name or description holds.
+_SCENE_TRAIT_WORDS = tuple(tuple(str(word) for word in group) for group in prompt_data.value(_WORDING, "scene_trait_words"))
+_PIECE_SPLIT = prompt_data.pattern(_WORDING, "piece_split")
+_SENTENCE_SPLIT = prompt_data.pattern(_WORDING, "sentence_split")
+_PIECE = _word("piece_separator")
 
 
 @dataclass
@@ -111,14 +118,14 @@ class SheetSet:
         }
 
 
-def _clean(text: object, limit: int = 400) -> str:
+def _clean(text: object, limit: int = _limit("description")) -> str:
     return " ".join(str(text or "").split())[:limit]
 
 
 def _visual_only(description: str) -> tuple[str, list[str]]:
     """Keep what a camera can see; report what was dropped as feeling rather than look."""
     kept, dropped = [], []
-    for part in re.split(r"[，,；;。]", description):
+    for part in _PIECE_SPLIT.split(description):
         piece = part.strip()
         if not piece:
             continue
@@ -126,31 +133,29 @@ def _visual_only(description: str) -> tuple[str, list[str]]:
             dropped.append(piece)
             continue
         kept.append(piece)
-    return "，".join(kept), dropped
+    return _PIECE.join(kept), dropped
 
 
 def character_sheet(name: str, description: str = "", *, role: str = "", pack: StylePack | None = None) -> AssetSheet:
     """A character's turnaround sheet: looks only, never temperament."""
     visual, dropped = _visual_only(_clean(description))
-    anchors = [piece for piece in visual.split("，") if piece][:8]
-    style = f"{pack.style_caption}；" if pack else ""
-    prompt = (
-        f"{style}角色设定板：{name}。{visual or '按题材、身份与场合保守补全常驻造型'}。"
-        "同一人物、同一服装、同一发型、同一体型；五官位置、痣与疤痕位置固定。"
-        f"{CHARACTER_LAYOUT}"
+    anchors = [piece for piece in visual.split(_PIECE) if piece][: _limit("character_anchors")]
+    style = _says("style", caption=pack.style_caption) if pack else ""
+    prompt = _says(
+        "character_prompt", style=style, name=name, visual=visual or _says("character_visual_fallback"), layout=CHARACTER_LAYOUT,
     )
-    notes = [f"未写进提示词的性格描述（只用于反推造型）：{'、'.join(dropped)}"] if dropped else []
+    notes = [_says("character_dropped_note", dropped=_word("dropped_separator").join(dropped))] if dropped else []
     if not anchors:
-        notes.append("剧本没有给出外形信息：请补一句外形描述，否则每集都会换脸")
+        notes.append(_says("character_no_looks_note"))
     return AssetSheet(
-        kind="character", name=name, function=role or "剧本具名角色",
+        kind="character", name=name, function=role or _says("character_function"),
         anchors=anchors, prompt=prompt, layout=CHARACTER_LAYOUT, notes=notes,
     )
 
 
 def scene_name(raw: str, description: str = "") -> str:
     """A scene name that identifies the place: two traits plus the place itself."""
-    base = _clean(raw, 40) or "场景"
+    base = _clean(raw, _limit("name")) or _says("scene_name_fallback")
     if len(base) >= MIN_SCENE_NAME_CHARS:
         return base
     haystack = f"{raw} {description}"
@@ -158,59 +163,53 @@ def scene_name(raw: str, description: str = "") -> str:
         next((word for word in group if word in haystack), "")
         for group in _SCENE_TRAIT_WORDS
     ]
-    prefix = "".join(trait for trait in traits if trait)[:4]
-    return f"{prefix}{base}" if prefix else f"无人{base}"
+    prefix = "".join(trait for trait in traits if trait)[: _limit("scene_traits")]
+    return f"{prefix}{base}" if prefix else _says("scene_name_traitless", base=base)
 
 
 def scene_sheet(name: str, description: str = "", *, function: str = "", pack: StylePack | None = None) -> AssetSheet:
     """A scene's four-view sheet. The frame holds the room and nothing else."""
     full_name = scene_name(name, description)
-    body = _clean(description) or "按题材与时代补全空间类型、时间、光线结构与主要材质"
-    style = f"{pack.style_caption}；" if pack else ""
-    prompt = (
-        f"{EMPTY_SCENE_PREFIX} {style}{full_name}：{body}。"
-        f"写清空间类型、确切时间、光线结构（方向、色温、光比）、前中后景的标志性材质与物件。"
-        f"{SCENE_LAYOUT} {EMPTY_SCENE_SUFFIX}"
+    body = _clean(description) or _says("scene_body_fallback")
+    style = _says("style", caption=pack.style_caption) if pack else ""
+    prompt = _says(
+        "scene_prompt", prefix=EMPTY_SCENE_PREFIX, style=style, name=full_name, body=body, layout=SCENE_LAYOUT, suffix=EMPTY_SCENE_SUFFIX,
     )
     notes: list[str] = []
     if len(full_name) < MIN_SCENE_NAME_CHARS:
-        notes.append("场景名过短，建议用「光线 / 材质 / 时间 + 地点」组合命名")
+        notes.append(_says("scene_short_name_note"))
     return AssetSheet(
-        kind="scene", name=full_name, function=function or "剧情实际发生的空间",
-        anchors=[piece for piece in body.split("，") if piece][:8],
+        kind="scene", name=full_name, function=function or _says("scene_function"),
+        anchors=[piece for piece in body.split(_PIECE) if piece][: _limit("scene_anchors")],
         prompt=prompt, layout=SCENE_LAYOUT, notes=notes,
     )
 
 
 def prop_sheet(name: str, description: str = "", *, function: str = "", pack: StylePack | None = None) -> AssetSheet:
     """A prop sheet: the 2×3 design sheet every prop gets."""
-    body = _clean(description) or "按题材与用途保守补全材质、颜色、新旧与使用方式"
-    style = f"{pack.style_caption}；" if pack else ""
+    body = _clean(description) or _says("prop_body_fallback")
+    style = _says("style", caption=pack.style_caption) if pack else ""
     return AssetSheet(
-        kind="prop", name=_clean(name, 40), function=function or prompt_data.text("prop_sheet", "function_key"),
-        anchors=[piece for piece in body.split("，") if piece][:6],
-        prompt=f"{style}道具设定图：{_clean(name, 40)}。{body}。{PROP_LAYOUT}",
+        kind="prop", name=_clean(name, _limit("name")), function=function or prompt_data.text("prop_sheet", "function_key"),
+        anchors=[piece for piece in body.split(_PIECE) if piece][: _limit("prop_anchors")],
+        prompt=_says("prop_prompt", style=style, name=_clean(name, _limit("name")), body=body, layout=PROP_LAYOUT),
         layout=PROP_LAYOUT,
     )
 
 
 def palette_sheet(card: PaletteCard, *, pack: StylePack, segment: str = "") -> AssetSheet:
     """The colour card as a sheet: a flat swatch board, never a scene."""
-    colours = "；".join(f"{colour.bound_to}{colour.name}{colour.hex}" for colour in card.colours)
-    structure = (
-        f"色板结构：主色 {card.colours[0].hex}；辅色 {card.colours[1].hex if len(card.colours) > 1 else '—'}；"
-        f"高光与阴影按本片光比；承前 {card.carried} 色，新增 {len(card.colours) - card.carried} 色；"
-        f"对比与色温按{pack.name}的影调设定。"
+    colours = _word("palette_colour_separator").join(f"{colour.bound_to}{colour.name}{colour.hex}" for colour in card.colours)
+    structure = _says(
+        "palette_structure", main=card.colours[0].hex,
+        second=card.colours[1].hex if len(card.colours) > 1 else _word("palette_no_second"),
+        carried=card.carried, added=len(card.colours) - card.carried, pack=pack.name,
     )
-    prompt = (
-        f"色卡参考图：{card.title}。白底平色块，横向排列 {len(card.colours)} 个色块，"
-        f"每块下方留出物件名位置（生成时不要写文字）。色值：{colours}。"
-        "不是场景图、不是渲染图，只做色值参考。"
-    )
+    prompt = _says("palette_prompt", title=card.title, count=len(card.colours), colours=colours)
     return AssetSheet(
-        kind="palette", name=card.title, function=segment or "整段色彩母板",
+        kind="palette", name=card.title, function=segment or _says("palette_function"),
         anchors=[f"{colour.name}{colour.hex}" for colour in card.colours],
-        prompt=prompt, layout="版式：白底 16:9 平色块色卡，色块等宽排列。", notes=[structure],
+        prompt=prompt, layout=_says("palette_layout"), notes=[structure],
     )
 
 
@@ -236,7 +235,7 @@ def _handled_near(script: str, name: str) -> bool:
     opened or smashed is. The unit is the sentence, so a hand-over in the line before
     does not vouch for a teacup sitting on the table in this one.
     """
-    for sentence in re.split(r"[。！？!?\n]", script):
+    for sentence in _SENTENCE_SPLIT.split(script):
         if name in sentence and any(signal in sentence for signal in _PROP_SIGNALS):
             return True
     return False
@@ -267,7 +266,7 @@ def extract_sheets(
     for item in assets.get("3_characters") or []:
         if not isinstance(item, Mapping):
             continue
-        name = _clean(item.get("name"), 40)
+        name = _clean(item.get("name"), _limit("name"))
         if not name or name in seen:
             continue
         seen.add(name)
@@ -277,12 +276,12 @@ def extract_sheets(
         ))
 
     for item in _named_assets(task, "scenes"):
-        name = _clean(item.get("name"), 40)
+        name = _clean(item.get("name"), _limit("name"))
         if name:
             result.scenes.append(scene_sheet(name, str(item.get("description") or ""), pack=pack))
 
     for item in _named_assets(task, "props"):
-        name = _clean(item.get("name"), 40)
+        name = _clean(item.get("name"), _limit("name"))
         if not name:
             continue
         # 每件道具都出设定图：只出现一次的也要在镜头里前后一致。剧情倚重的标为关键道具。
@@ -292,45 +291,47 @@ def extract_sheets(
 
     if palette_colours:
         card = build_palette_card(
-            pack, project=project or str((task.get("config") or {}).get("title_suggestion") or "本片"),
-            episode=episode, segment=segment, subject=result.scenes[0].name if result.scenes else "全片",
+            pack, project=project or str((task.get("config") or {}).get("title_suggestion") or _says("project_fallback")),
+            episode=episode, segment=segment, subject=result.scenes[0].name if result.scenes else _says("subject_fallback"),
             new_colours=list(palette_colours),
         )
         result.palette = palette_sheet(card, pack=pack)
 
     if not result.characters:
-        result.warnings.append("还没有角色卡：先跑完第3阶段，再出设定图")
+        result.warnings.append(_says("no_characters"))
     return result
 
 
 def render_markdown(sheets: SheetSet, *, title: str = "") -> str:
     """The sheet set as a document a person can work from."""
-    lines = [f"# {title or '资产设定图'}"]
-    for heading, items in (("人物资产", sheets.characters), ("场景资产", sheets.scenes), ("道具资产", sheets.props)):
+    lines = [_says("markdown_title", title=title or _says("markdown_title_fallback"))]
+    joined = _word("markdown_list_separator").join
+    for attribute, heading in prompt_data.value(_WORDING, "markdown_sections"):
+        items = getattr(sheets, attribute)
         if not items:
             continue
-        lines.extend(["", f"## 【{heading}】"])
+        lines.extend(["", _says("markdown_section", heading=heading)])
         for order, sheet in enumerate(items, start=1):
             lines.extend([
                 "",
-                f"### {order}. {sheet.name}",
-                f"- 功能定位：{sheet.function}",
-                f"- 稳定识别锚点：{'；'.join(sheet.anchors) or '（剧本未给出，需补充）'}",
-                f"- 描述提示词：{sheet.prompt}",
-                f"- 固定格式输出：{sheet.layout}",
+                _says("markdown_sheet", order=order, name=sheet.name),
+                _says("markdown_function", function=sheet.function),
+                _says("markdown_anchors", anchors=joined(sheet.anchors) or _says("markdown_no_anchors")),
+                _says("markdown_prompt", prompt=sheet.prompt),
+                _says("markdown_layout", layout=sheet.layout),
             ])
-            lines.extend(f"- 备注：{note}" for note in sheet.notes)
+            lines.extend(_says("markdown_note", note=note) for note in sheet.notes)
     if sheets.palette:
         lines.extend([
-            "", "## 【色板资产】", "",
-            f"### {sheets.palette.name}",
-            f"- 功能定位：{sheets.palette.function}",
-            f"- 色值：{'；'.join(sheets.palette.anchors)}",
-            f"- 描述提示词：{sheets.palette.prompt}",
-            *(f"- 色板结构说明：{note}" for note in sheets.palette.notes),
+            "", _says("markdown_palette_section"), "",
+            _says("markdown_palette_name", name=sheets.palette.name),
+            _says("markdown_function", function=sheets.palette.function),
+            _says("markdown_palette_colours", colours=joined(sheets.palette.anchors)),
+            _says("markdown_prompt", prompt=sheets.palette.prompt),
+            *(_says("markdown_palette_note", note=note) for note in sheets.palette.notes),
         ])
     if sheets.warnings:
-        lines.extend(["", "## 【提示】", *(f"- {warning}" for warning in sheets.warnings)])
+        lines.extend(["", _says("markdown_warning_section"), *(_says("markdown_warning", warning=warning) for warning in sheets.warnings)])
     return "\n".join(lines)
 
 

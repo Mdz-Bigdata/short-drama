@@ -1,0 +1,15 @@
+{
+  "_doc": "app/core/blender_previz/spec.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "_inside.text": "坐标超出 ±{0:g} 米",
+  "_one.text": "target 只能二选一：跟随代理 或 自己的路径",
+  "_consistent.text": "代理 id 重复",
+  "_consistent.text.2": "两个主要代理用了同一种颜色：视频参考里分不清谁是谁",
+  "_consistent.text.3": "摄影机 id 重复",
+  "_consistent.text.4": "摄影机 {0} 的目标代理 {1} 不存在",
+  "_consistent.text.5": "同一帧上有两个切点",
+  "_consistent.text.6": "切点用到的摄影机 {0} 不存在",
+  "_consistent.text.7": "切点帧 {0} 超出总帧数 {1}",
+  "_consistent.text.8": "第一个切点必须在第 1 帧",
+  "_consistent.text.9": "空段「{0}」的起止帧无效",
+  "_consistent.text.10": "分辨率须在 256–3840 之间"
+}

@@ -78,6 +78,8 @@ export interface SceneBoardStatus {
   error?: string;
   prompt_detail?: StoryboardPromptDetail;
   grid_prompt?: string;
+  /** 分镜表改过一版后仍没过的打戏与占位复核(镜N 规则：说明)。 */
+  craft_issues?: string[];
 }
 
 // 后端 assets["4_progress"] 中单集的契约进度：total 来自剧本明细，不是已生成数。
@@ -588,6 +590,14 @@ export function StoryboardWorkspace({
               <p className="storyboard-scene-summary">{selectedScene.title}</p>
             )}
           </div>
+
+          {selectedBoard?.craft_issues && selectedBoard.craft_issues.length > 0 && (
+            <details className="storyboard-craft-issues">
+              <summary>{t('分镜复核还有 {0} 条没过（已自动改过一版）', [selectedBoard.craft_issues.length])}</summary>
+              <ul>{selectedBoard.craft_issues.map(issue => <li key={issue}>{issue}</li>)}</ul>
+              <p>{t('可以在右侧对话里说「重画这一场」，或直接改这一格的画面内容。')}</p>
+            </details>
+          )}
 
           {selectedScene.shots.length === 0 ? (
             <div className="storyboard-grid-empty" role="status">

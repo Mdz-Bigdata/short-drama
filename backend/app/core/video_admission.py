@@ -29,6 +29,19 @@ from app.core.storyboard_scene_context import cast_aliases, is_uncast
 from app.core.screenwriting.durations import renderable_shot_durations
 from app.core.screenwriting.speech import speech_problems
 from app.core.video_references import MIN_SHOT_SECONDS, max_shot_seconds, normalize_video_provider
+from app.core import prompt_data
+
+
+_WORDING_FILE = "video_admission"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/video_admission.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 Decision = Literal["admitted", "confirmation_required", "blocked"]
 Quote = Literal["generate", "reuse", "blocked"]
@@ -118,13 +131,13 @@ class BatchAdmission:
             parts = []
             for shot in self.shots:
                 if shot.quote == "blocked":
-                    label = f"{shot.scene_id} 镜头 {shot.shot_id}" if shot.scene_id else f"镜头 {shot.shot_id}"
+                    label = _text_of("summary.label").format(shot.scene_id, shot.shot_id) if shot.scene_id else _text_of("summary.label.2").format(shot.shot_id)
                     parts.append(f"{label}：" + "；".join(problem.message for problem in shot.problems if problem.blocking))
-            return "批量视频准入受阻，未提交任何镜头：" + " / ".join(parts[:8]) + ("…" if len(parts) > 8 else "")
+            return _text_of("summary.text") + " / ".join(parts[:8]) + ("…" if len(parts) > 8 else "")
         if self.decision == "confirmation_required":
             tiers = "、".join(f"{item['scripted_seconds']}s→{item['requested_seconds']}s×{item['shot_count']}" for item in self.confirmations)
-            return f"有镜头的剧本时长不在模型支持的档位内，需先确认请求档位：{tiers}"
-        return "批量视频准入通过"
+            return _text_of("summary.text.2").format(tiers)
+        return _text_of("summary.text.3")
 
 
 def _int(value: Any, default: int = 0) -> int:
@@ -155,7 +168,7 @@ def scripted_seconds(shot: Mapping[str, Any], model: str) -> int:
     dialogue = str(shot.get("dialogue") or "")
     desc = str(shot.get("desc") or "")
     seconds = _int(len(dialogue) / 3.5) + 2 if dialogue else _int(len(desc) / 8) + 2
-    stated = _int(str(shot.get("duration") or "").rstrip("s秒"))
+    stated = _int(str(shot.get("duration") or "").rstrip(_text_of("scripted_seconds.stated")))
     if stated > 0:
         seconds = stated
     return max(MIN_SHOT_SECONDS, min(ceiling, seconds))
@@ -229,11 +242,11 @@ def assess_video_batch(
     )
     model_problem: ShotProblem | None = None
     if not model:
-        model_problem = ShotProblem(UNRESOLVABLE_MODEL, "项目未选择视频模型，无法决定提交给谁")
+        model_problem = ShotProblem(UNRESOLVABLE_MODEL, _text_of("assess_video_batch.model_problem"))
     elif provider_problem is not None and (problem := provider_problem(profile.family, model)):
         model_problem = ShotProblem(PROVIDER_NOT_READY, problem)
     elif provider_ready is not None and not provider_ready(profile.family, model):
-        model_problem = ShotProblem(PROVIDER_NOT_READY, f"视频模型族 {profile.family} 没有可用的运行时凭据")
+        model_problem = ShotProblem(PROVIDER_NOT_READY, _text_of("assess_video_batch.model_problem.2").format(profile.family))
 
     assessments: list[ShotAssessment] = []
     for index, shot in enumerate(shots, start=1):
@@ -255,16 +268,16 @@ def assess_video_batch(
         if model_problem:
             problems.append(model_problem)
         if stage_running:
-            problems.append(ShotProblem(ACTIVE_TASK, "第 5 阶段正在运行，等它结束再提交"))
+            problems.append(ShotProblem(ACTIVE_TASK, _text_of("assess_video_batch.text")))
         scene = scenes.get(scene_id)
         if scene is not None:
             if scene.get("needs_replan"):
-                problems.append(ShotProblem(NEEDS_REPLAN, f"分镜 {scene_id} 的台词装不进任何时长档位，需先在分镜规划里重拆"))
+                problems.append(ShotProblem(NEEDS_REPLAN, _text_of("assess_video_batch.text.2").format(scene_id)))
             for code, message in speech_problems(scene):
                 problems.append(ShotProblem(code, message))
         missing = [name for name in _characters_in(shot) if sheets and aliases.get(name, name) not in sheets]
         if missing:
-            problems.append(ShotProblem(MISSING_ASSETS, "出场角色尚无身份视图：" + "、".join(missing)))
+            problems.append(ShotProblem(MISSING_ASSETS, _text_of("assess_video_batch.text.3") + "、".join(missing)))
         clip = clips.get(shot_uid({**shot, "shot_id": shot_id})) or legacy_clips.get(str(shot_id))
         if slicing:
             # 只有分镜片段视频能复用；按单个瞬间出的旧片不是同一个请求。
@@ -279,7 +292,7 @@ def assess_video_batch(
         if quote == "generate" and adjustment != "exact" and (scripted, requested) not in confirmed:
             problems.append(ShotProblem(
                 DURATION_CONFIRMATION,
-                f"剧本时长 {scripted} 秒不在模型档位内，将按 {requested} 秒请求（不裁剪）",
+                _text_of("assess_video_batch.text.4").format(scripted, requested),
                 blocking=False,
             ))
         estimate = usage_ledger.estimate(model, "video", {"seconds": requested * candidates}) if quote == "generate" and requested else {"priced": True, "cost": 0.0, "currency": None}
@@ -294,7 +307,7 @@ def assess_video_batch(
         for shot in assessments:
             if shot.quote != "blocked":
                 shot.withheld_by = list(blocking_ids)
-                shot.problems.append(ShotProblem(WITHHELD, "本镜本可生成，但同批有镜头受阻，整批未提交", blocking=False))
+                shot.problems.append(ShotProblem(WITHHELD, _text_of("assess_video_batch.text.5"), blocking=False))
         decision: Decision = "blocked"
     elif any(problem.code == DURATION_CONFIRMATION for shot in assessments for problem in shot.problems):
         decision = "confirmation_required"

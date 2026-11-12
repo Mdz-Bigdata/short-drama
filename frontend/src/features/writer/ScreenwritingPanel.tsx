@@ -4,6 +4,7 @@ import { AlertTriangle, BookOpenText, CheckCircle2, ChevronDown, ChevronRight, C
 import { ApiError, isUnauthorized } from '../../api/client';
 import { EpisodeLedgerTools } from './EpisodeLedgerTools';
 import { DialoguePolishReview } from './DialoguePolishReview';
+import { PronunciationTable } from './PronunciationTable';
 import { draftOfScene, planOperations, type PlanDraft } from './planOperations';
 import {
   fetchScreenwritingEpisode,
@@ -331,6 +332,7 @@ export function ScreenwritingPanel({ taskId, onOpenEpisodeText }: {
                           void fetchScreenwritingState(taskId).then(setState).catch(() => undefined);
                         }}
                       />
+                      <PronunciationTable taskId={taskId} />
                       {episode.review?.draft && (
                         <div className="writer-screenwriting__draft" role="note">
                           <AlertTriangle aria-hidden="true" />

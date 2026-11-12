@@ -1,0 +1,12 @@
+{
+  "_doc": "app/core/script_detail.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "start_record.label": "等待撰写",
+  "blocking_reason.text": "详细剧本的后台撰写已中断（{0}/{1} 集），请在编剧页点「补写剧本」继续",
+  "blocking_reason.reason": "未知原因",
+  "blocking_reason.text.2": "详细剧本后台撰写失败（{0}/{1} 集）：{2}；请在编剧页点「补写剧本」继续",
+  "blocking_reason.text.3": "详细剧本仍在后台撰写（{0}/{1} 集），写完后才能进入分镜",
+  "outline_text.text": "【故事梗概】",
+  "outline_text.text.2": "第{0}集 {1}",
+  "outline_text.text.3": "钩子：{0}",
+  "outline_text.text.4": "下集预告：{0}"
+}

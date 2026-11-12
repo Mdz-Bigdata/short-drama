@@ -8,8 +8,21 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.auth_api import get_current_user
 from app.core import poetry_library
+from app.core import prompt_data
 
-router = APIRouter(prefix="/api/poetry", tags=["诗词库"])
+
+_WORDING_FILE = "api_poetry_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_poetry_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+router = APIRouter(prefix="/api/poetry", tags=list(_words_of("module.tags")))
 
 
 @router.get("")

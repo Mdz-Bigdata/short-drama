@@ -31,8 +31,21 @@ from app.schema.platform import (
     RefundCreateRequest,
     WalletAdjustmentRequest,
 )
+from app.core import prompt_data
 
-router = APIRouter(prefix="/api/admin", tags=["财务后台"])
+
+_WORDING_FILE = "api_finance_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_finance_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+router = APIRouter(prefix="/api/admin", tags=list(_words_of("module.tags")))
 
 
 def _http_error(exc: Exception) -> HTTPException:
@@ -161,7 +174,7 @@ async def approve_refund(
     existing = await store.get_refund(refund_id)
     if existing and existing.provider not in channels:
         # Approving would release nothing and go nowhere, with the customer's points still set aside.
-        raise HTTPException(status_code=409, detail="该支付渠道当前未配置，暂时无法退款")
+        raise HTTPException(status_code=409, detail=_text_of("approve_refund.detail"))
     try:
         refund = await store.approve_refund(refund_id=refund_id, actor=user, amount_minor=request.amount_minor, note=request.note)
     except (LookupError, PermissionError, ValueError) as exc:

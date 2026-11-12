@@ -1,0 +1,8 @@
+{
+  "_doc": "app/api/user_api.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.tags": [
+    "用户中心与管理"
+  ],
+  "admin_update_user.detail": "只有可授予角色的人才能更改管理人员的账号状态",
+  "admin_delete_user.detail": "只有可授予角色的人才能删除管理人员的账号"
+}

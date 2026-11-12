@@ -145,6 +145,9 @@ def _read_prop(clause: str, before: str, prop: str, names: Sequence[str], props:
 
     分句里没提任何道具、只写了「翻开」「合上」这类改状态的动作，算在同一句前文最近提到的那件道具上。
     """
+    # 「保持」「坚持」里的「持」不是拿着：先去掉再认。
+    for word in prompt_data.words(_DATA, "hold_false"):
+        clause = clause.replace(word, "")
     at = clause.find(prop)
     if at < 0:
         if any(other in clause for other in props) or _last_prop(before, props or (prop,)) != prop:
@@ -168,7 +171,8 @@ def _read_prop(clause: str, before: str, prop: str, names: Sequence[str], props:
             if holder:
                 change.update(holder=holder, hand=_hand(clause), place="", down=False)
                 kinds.add("move")
-        elif put:
+        elif put and at < put.start():
+            # 道具在动词前面才是被放下的东西；「双手放在合同两侧」里合同是位置参照。
             place = _place(put.end(), clause)
             change.update(holder="", hand="", place=place, down=not place)
             kinds.add("move")

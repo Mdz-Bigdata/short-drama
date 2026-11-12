@@ -1,0 +1,15 @@
+{
+  "_doc": "app/schema/director_desk.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "DeskCapture.description": "绝对 http(s) 地址",
+  "DeskCapture.description.2": "截取时的 plan.revision",
+  "DeskCapture.description.3": "画面里的替身带四肢；白模规则 2 要求提示词写出分段动作序列",
+  "DeskCapture.description.4": "带四肢的截取附带的提示",
+  "DeskCapture.description.5": "控制帧：空表示完整画面，background 是空景，mask 是黑底白人遮罩",
+  "DeskCapture.description.6": "导演台导出的灰度深度画面；深度静帧不能应用为首帧参考，深度视频应用后提示词说明只取层次与运镜",
+  "DeskCapture.description.7": "截取之后站位已修改",
+  "DeskAppliedSlots.description": "已写入该镜 sequence_images 的静帧 capture id",
+  "DeskAppliedSlots.description.2": "已写入该镜 reference_videos 的白模视频 capture id",
+  "DeskCapturesResponse.description": "镜头编号（字符串）→ 已应用的截取",
+  "DeskSavedPose.description": "StagePose（字段保持 snake_case）",
+  "DeskUserSavedPose.description": "StagePose（字段保持 snake_case）"
+}
