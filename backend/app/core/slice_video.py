@@ -21,7 +21,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from app.core import action_grammar, prompt_budget, prompt_data
+from app.core import action_grammar, clip_skeleton, prompt_budget, prompt_data
 from app.core.prompt_distiller import dedupe_blocks, repeated_clauses_out
 from app.core.episode_cycle import covered_uids, shot_uid  # noqa: F401 - re-exported
 from app.core.transition_catalog import smooth_text
@@ -37,9 +37,12 @@ DEFAULT_JOIN = prompt_data.text("clip_prompt", "default_join")
 # 打戏相反：张力来自剪切密度，叠化和淡入淡出会立刻变软；每一刀落在接触帧上。
 # 一整句不带「；」：去重按分句比，带了分号后半句会在第二个瞬间之后被当成重复删掉。
 FIGHT_JOIN = prompt_data.text("clip_prompt", "fight_join")
+# 打戏片内的镜头之间：动接动，切在动作途中，不停、不跳。
+FIGHT_STRUCTURE = prompt_data.text("clip_prompt", "fight_structure")
 # 每个瞬间的正文按这个顺序拼进片段；空的跳过。单镜的「运镜契约」整段(motion)不进片段：它把画面、
 # 机位、轴线再写一遍，还带着「承接上一镜最后一帧」——同一段视频里的几个瞬间之间没有上一镜。
-_BEAT_SECTIONS = ("camera", "composition", "subject", "expression", "contact", "handoff", "dialogue", "dialogue_notes", "end_state")
+# 特效紧跟画面写：剑气、掌风、法术在这一镜里出在哪、打向哪。
+_BEAT_SECTIONS = ("camera", "composition", "subject", "effects", "motive", "expression", "contact", "handoff", "dialogue", "dialogue_notes", "end_state")
 
 
 def enabled(config: Mapping[str, Any] | None) -> bool:
@@ -147,7 +150,7 @@ def _block(
     number: int, total: int, beat: Beat, *, include_motion: bool = False, drop_phrases: Sequence[str] = (), fight: bool = False,
 ) -> str:
     head = f"{BEAT_HEAD}{number}/{total}｜{beat.size or '景别承接'}｜{beat.motion or '运镜承接'}】"
-    # 文戏片内不硬切：旧看板里规划的「硬切·顺接」按连贯衔接写；打戏每一刀都是硬切。
+    # 文戏片内不硬切：旧看板里规划的「硬切·顺接」按连贯衔接写；打戏切在动作途中(动接动)，力道和方向带进下一镜。
     if number == 1:
         join = ""
     elif fight:
@@ -180,6 +183,30 @@ def _lines(values: Sequence[str]) -> list[str]:
     return seen
 
 
+def _beat_sounds(beats: Sequence[Beat], key: str) -> str:
+    """各镜的同一类声音合成一段：各镜都有的行写一次；只属于某一镜的行，在声音标题后标上镜头号，
+    出声的模型才知道这一声在哪个镜头里响。"""
+    from app.core.prompt_budget import sound_heads
+
+    per_beat = [_lines([beat.sections.get(key) or ""]) for beat in beats]
+    if len(beats) == 1:
+        return "\n".join(per_beat[0])
+    heads = sound_heads()
+    out: list[str] = []
+    seen: set[str] = set()
+    for number, lines in enumerate(per_beat, start=1):
+        for line in lines:
+            if line in seen:
+                continue
+            seen.add(line)
+            head = next((item for item in heads if line.startswith(item)), "")
+            if head and not all(line in other for other in per_beat):
+                close = line.index("】") + 1 if "】" in line else len(head)
+                line = line[:close] + prompt_data.text("clip_prompt", "sound_beat_label").format(beat=number, beats=len(beats)) + line[close:]
+            out.append(line)
+    return "\n".join(out)
+
+
 def compile_prompt(
     beats: Sequence[Beat], *, model: str, aspect_ratio: str = "9:16", cast: Sequence[str] = (),
     scenes: Sequence[str] = (), props: Sequence[str] = (), costumes: Sequence[tuple[str, str]] = (), reference_notes: str = "",
@@ -187,7 +214,7 @@ def compile_prompt(
     part: int = 1, parts: int = 1, style_pack: str = "", include_motion: bool = False, drop_phrases: Sequence[str] = (),
     fight: bool = False, previous_end: str = "", last_frame: bool = False,
 ) -> CompiledVideoPrompt:
-    """几个连续瞬间的一条多镜头提示词。``fight`` 的场次镜头之间硬切，打击点落在特写。
+    """几个连续瞬间的一条多镜头提示词。``fight`` 的场次镜头之间动接动(切在动作途中)，打击点落在特写。
 
     风格锁、锚点、空间锁只写一次；每个瞬间一个镜头块，块里是它自己已按单镜预算裁好的正文，
     所以片段越长不会把后面的瞬间裁掉。只有一个瞬间时退化为普通单镜结构。
@@ -205,7 +232,7 @@ def compile_prompt(
     elif storyboard_frames == 1:
         structure.append("以所给分镜画面为开场构图")
     if total > 1 and fight:
-        structure.append("镜头之间全部硬切，不叠化、不淡入淡出、不黑场；每次击中落在特写或大特写，切点压在接触帧上")
+        structure.append(FIGHT_STRUCTURE)
     elif total > 1:
         structure.append("镜头之间按标注的衔接方式在片内平滑过渡，不硬切、不黑场、不跳帧")
     if parts > 1:
@@ -237,8 +264,9 @@ def compile_prompt(
         "style_lock": str(first.get("style_lock") or ""),
         "appearance": f"人物外貌：{appearance}" if appearance else "",
         "quality": str(first.get("quality") or ""),
-        "sound_layers": str(first.get("sound_layers") or ""),
-        "sound": str(first.get("sound") or ""),
+        # 每一镜的声音都写上：只取第一镜，后面几镜的环境声、动作声就丢了，出声的模型拍不出来。
+        "sound_layers": _beat_sounds(beats, "sound_layers"),
+        "sound": _beat_sounds(beats, "sound"),
         "closing": str(first.get("closing") or ""),
         "rules": repeated_clauses_out("【关键约束】\n" + "\n".join(
             line for line in _lines([beat.sections.get("rules") or "" for beat in beats]) if line != "【关键约束】"
@@ -246,6 +274,11 @@ def compile_prompt(
         "negatives": " + ".join(dict.fromkeys(
             part.strip() for beat in beats for part in str(beat.sections.get("negatives") or "").split(" + ") if part.strip()
         )),
+        # 骨架的固定句整段只写一次：段名、锚型定义、对白语言、空间坐标、表演锁、回合锁、禁令与结尾三段。
+        **clip_skeleton.merge(
+            [beat.sections for beat in beats], model=model, cast=cast, scenes=scenes, props=props, costumes=costumes,
+            fight=fight, motions=[beat.motion for beat in beats],
+        ),
     }
     return render({key: value for key, value in sections.items() if value}, model=model, beats=total, style_pack=style_pack)
 
@@ -287,9 +320,8 @@ def render(sections: Mapping[str, str], *, model: str, beats: int, style_pack: s
     """片段的分节拼成提示词并算压力：片段的预算是单镜预算 × 瞬间数。"""
     kept = {key: str(value) for key, value in sections.items() if str(value or "")}
     text = _render(kept)
-    budget = prompt_budget.prompt_budget(model)
     body = sum(prompt_budget.prompt_length(value) for key, value in kept.items() if key not in prompt_budget.FIXED_SECTIONS)
-    scaled = budget * beats if budget else None
+    scaled = prompt_budget.clip_budget(model, beats)
     report = prompt_budget.PressureReport(
         model=model, budget=scaled, length=body, tier=prompt_budget.tier_for(body, scaled),
         total_length=prompt_budget.prompt_length(text), distilled=distilled,

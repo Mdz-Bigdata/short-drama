@@ -1,9 +1,8 @@
-import { Text } from '@react-three/drei';
 import type { ThreeEvent } from '@react-three/fiber';
 
 import type { StageActor } from '../../../spatial/spatialTypes';
-import { HELPER_FLAG } from '../../lib/capture';
 import { SELECTION_COLOR, actorColor, standingHeight } from '../stageLook';
+import { FigureMarks } from './FigureMarks';
 
 interface Props {
   actor: StageActor;
@@ -41,20 +40,7 @@ export function StandIn({ actor, subject, selected, labelled, onPick }: Props) {
           <meshStandardMaterial color="#221b1e" />
         </mesh>
       </group>
-      {selected && (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]} userData={{ [HELPER_FLAG]: true }}>
-          <ringGeometry args={[0.34, 0.4, 40]} />
-          <meshBasicMaterial color={SELECTION_COLOR} />
-        </mesh>
-      )}
-      {labelled && (
-        <Text
-          position={[0, height + 0.28, 0]} fontSize={0.16} color="#e87084" anchorX="center" anchorY="bottom"
-          outlineWidth={0.012} outlineColor="#fcedef" userData={{ [HELPER_FLAG]: true }}
-        >
-          {actor.name}
-        </Text>
-      )}
+      <FigureMarks name={actor.name} top={height} selected={selected} labelled={labelled} />
     </group>
   );
 }

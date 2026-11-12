@@ -20,6 +20,7 @@ from functools import lru_cache
 from app import settings
 from app.core import knowledge_registry
 from app.core import fight_design
+from app.core import wuxia_vfx
 
 from app.core.video_references import _normalize_model_token
 
@@ -244,6 +245,14 @@ def build_director_layer(
         candidates.append((3, "xianxia/能量四态", _section(xianxia, "二、能量四态：先定形，再有光")))
         candidates.append((3, "xianxia/收束协议", _section(xianxia, "五、收束协议：一段打戏只能用四种方式结束")))
         candidates.append((4, "xianxia/尺度四件套", _section(xianxia, "三、尺度四件套：大招必须量得出来")))
+    # 修仙特效(打戏和渡劫、突破、御剑、阵法这类非打斗奇观)：四拍时序、特效当光源、大制作感的看得见的几件事。
+    if wuxia_vfx.kind_of(corpus) == wuxia_vfx.XIANXIA:
+        candidates.append((3, "xianxia/特效镜头", _section(xianxia, "六、特效镜头：四拍时序、特效光与制作规格")))
+        if not has_xianxia:
+            candidates.append((3, "xianxia/能量四态", _section(xianxia, "二、能量四态：先定形，再有光")))
+        # 渡劫、御剑、阵法……常带「劈」「砸」这类字被认成打戏，奇观写法照样要。
+        if wuxia_vfx.is_spectacle(corpus):
+            candidates.append((4, "xianxia/非打斗奇观", _section(xianxia, "七、非打斗奇观：渡劫、突破、御剑、阵法、法宝、结界、召唤、炼丹")))
     if has_sports:
         candidates.append((4, "realistic/Sports and variety live coverage", _section(realistic, "Sports and variety live coverage")))
     candidates.append((3, "cn-handbook/四种提示词公式", _section(handbook, "一、四种提示词公式")))

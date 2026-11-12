@@ -20,7 +20,7 @@ from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, create_model, model_validator
 
-from app.core import fight_design, literary
+from app.core import acting, fight_design, literary
 
 _LITERARY_FIELDS = dict(literary.OVERVIEW_FIELDS)
 
@@ -365,6 +365,7 @@ class SceneContent(BaseModel):
     key_line: Annotated[str, BeforeValidator(_none_to_text)] = Field(
         default="", description="本集的题眼台词：逐字等于本分镜 utterances 里的某一句 text；一集最多一句，不是题眼的分镜留空"
     )
+    subtext: Annotated[str, BeforeValidator(_none_to_text)] = Field(default="", description=acting.subtext_schema())
     setting: Annotated[str, BeforeValidator(_none_to_text)] = Field(
         default="", description="场景标题行：地点 时间 内景/外景，如「市井长街 黄昏 外景」"
     )

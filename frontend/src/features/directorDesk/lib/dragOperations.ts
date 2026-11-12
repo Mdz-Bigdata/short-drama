@@ -37,7 +37,8 @@ export function anchorOf(plan: StagePlan, shot: StageShot | undefined, ref: Sele
     }
     case 'landmark': {
       const landmark = plan.landmarks.find(item => item.name === ref.name);
-      return landmark ? at([landmark.position[0], 0, landmark.position[1]], landmark.yaw_deg ?? 0) : null;
+      // A piece resting on a table or hung on a wall has its handle where it is, not on the floor under it.
+      return landmark ? at([landmark.position[0], landmark.elevation_m ?? 0, landmark.position[1]], landmark.yaw_deg ?? 0) : null;
     }
     case 'crowd': {
       const crowd = crowdOf(plan, ref.id);
@@ -107,7 +108,8 @@ function translate(plan: StagePlan, shot: StageShot | undefined, selection: Sele
       }
     }
   });
-  return { anchor: { ...now, position: [round2(ground[0]), 0, round2(ground[1])] as SpacePoint }, operations };
+  // The drag is along the floor: the handle keeps the height it started at.
+  return { anchor: { ...now, position: [round2(ground[0]), start.position[1], round2(ground[1])] as SpacePoint }, operations };
 }
 
 export function dragOperations(input: {

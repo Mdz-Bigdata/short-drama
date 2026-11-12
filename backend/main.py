@@ -58,6 +58,9 @@ from app.api.panorama_api import router as panorama_router
 from app.api.recipe_api import router as recipe_router
 from app.api.interactive_story_api import router as interactive_story_router
 from app.api.canvas_workflow_api import router as canvas_workflow_router
+from app.api.canvas_share_api import public_router as canvas_share_public_router, router as canvas_share_router
+from app.api.canvas_presence_api import router as canvas_presence_router
+from app.api.face_sculpt_api import catalog_router as face_sculpt_catalog_router, router as face_sculpt_router
 from app.core.media_compositor import MEDIA_DIR
 from app.repository.task_repo import TaskStoreUnavailableError
 from app.platform.bootstrap import initialize_platform
@@ -163,6 +166,11 @@ app.include_router(panorama_router)
 app.include_router(recipe_router)
 app.include_router(interactive_story_router)
 app.include_router(canvas_workflow_router)
+app.include_router(canvas_share_router)
+app.include_router(canvas_share_public_router)
+app.include_router(canvas_presence_router)
+app.include_router(face_sculpt_catalog_router)
+app.include_router(face_sculpt_router)
 
 
 @app.on_event("startup")
@@ -398,4 +406,6 @@ if __name__ == "__main__":
         host=settings.server_host(),
         port=settings.server_port(),
         reload=settings.server_reload(),
+        # 推送连接(画布多窗口)会定期换新；兜底：停机或自动重启时最多等 5 秒，不无限等连接关闭。
+        timeout_graceful_shutdown=5,
     )

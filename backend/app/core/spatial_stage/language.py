@@ -10,16 +10,18 @@ from __future__ import annotations
 
 import re
 
-ENTRANCE_WORDS = re.compile(r"走进|进门|冲进|推门|闯入|闯进|赶到|赶来|入场|进入|踏入|迈入|跨进")
-_APPROACH = "走向|走到|走近|冲向|扑向|逼近|上前|跑向|奔向|迎上|凑近"
-_RETREAT = "后退|退后|倒退|退开"
+from app.core import prompt_data
+
+# The verbs, posture words and clause-ending marks: app/data/prompt/stage_vocabulary.json.
+_VERBS = prompt_data.value("stage_vocabulary", "blocking_verbs")
+ENTRANCE_WORDS = re.compile("|".join(_VERBS["entrance"]))
+_APPROACH = "|".join(_VERBS["approach"])
+_RETREAT = "|".join(_VERBS["retreat"])
 TRAVEL_WORDS = re.compile(f"{_APPROACH}|{_RETREAT}")
 RETREAT_WORDS = frozenset(_RETREAT.split("|"))
-POSTURE_RULES: tuple[tuple[str, str], ...] = (
-    (r"起身|站起|站直|爬起", "stand"), (r"跪", "kneel"), (r"倒地|倒在|躺|昏倒|瘫", "lie"),
-    (r"蹲|伏低", "crouch"), (r"坐|落座|伏案", "sit"),
-)
-_CLAUSE_GAP = r"[^，,。；！？\n]{0,%d}?"
+# First match wins, in the order the table lists them.
+POSTURE_RULES: tuple[tuple[str, str], ...] = tuple(("|".join(words), str(posture)) for words, posture in _VERBS["postures"])
+_CLAUSE_GAP = "[^" + _VERBS["clause_stops"] + "]{0,%d}?"
 
 
 def _after_name(name: str, pattern: str, text: str, gap: int) -> re.Match[str] | None:

@@ -1,13 +1,19 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { Fragment, lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Boxes, Camera, FileSearch, ImagePlus, LoaderCircle, Maximize2, Mic, Pencil, Plus, RefreshCw, Shirt, Trash2, Upload } from 'lucide-react';
 
 import { apiRequest, apiUrl } from '../../api/client';
 import AssetImageViewer, { type AssetImageViewerAsset } from './AssetImageViewer';
-import { actorRegeneration, findPoster, findViewImage, isLook, lookCheckProblems, variantOf, type ElementFile, type ElementItem, type ElementKind } from './elementTypes';
+import { actorRegeneration, findPoster, findViewImage, isLook, lookCheckProblems, referenceCopyOf, variantOf, type ElementFile, type ElementItem, type ElementKind } from './elementTypes';
 import { ElementFolderBar, ElementFolderSelect } from './ElementFolderBar';
 import { moveElementsToFolder, UNFILED, useElementFolders } from './elementFolders';
 import { VoicePanel } from './VoicePanel';
 import { RealPersonField } from './RealPersonField';
+import { notifyAssetsChanged, type AssetsChangedDetail } from './assetEvents';
+import { ElementFilterBar } from './ElementFilterBar';
+import { EMPTY_FILTERS, filterElements, groupByBase, type ElementFilters } from './elementFilters';
+import { ElementVersionHistory } from './ElementVersionHistory';
+import { affectedShots, syncCounts } from './elementVersions';
+import { RenameAssetDialog } from './RenameAssetDialog';
 import { realPersonOf, type RealPersonPayload } from './realPerson';
 import './ElementLibraryPage.css';
 import { t } from '../../i18n';
@@ -32,6 +38,8 @@ interface Props {
   /** 变化一次就把本类资产的参考图全部重新生成一遍(已有的也换掉)。 */
   replaceAllToken?: number;
   onGenerationStateChange?: (generating: boolean) => void;
+  /** 项目里嵌入时也显示文件夹(默认不显示：文件夹属于个人资产库)。 */
+  showFolders?: boolean;
 }
 
 interface ExtractionResult {
@@ -95,6 +103,48 @@ function actorSlotLabel(slot: string): string {
   return actorSlots.find(([value]) => value === slot)?.[1] || '正面全身';
 }
 
+// 后端一页最多 100 条。清单要翻到取完，否则工具栏写着 87 个，页面上只有第一页那些。
+const LIST_PAGE_SIZE = 100;
+
+/** 一类资产的整份清单；``stale`` 说这次请求已经过时就中途放弃，返回 null。 */
+async function fetchElementList(
+  kind: ElementKind,
+  scope: { taskId?: string; folder?: string },
+  stale: () => boolean,
+): Promise<ElementResponse | null> {
+  // Inside a project only its own and linked assets are listed; the standalone
+  // library (no taskId) still shows everything the owner has ever produced.
+  const filters = (scope.taskId ? `&task_id=${encodeURIComponent(scope.taskId)}` : '')
+    + (scope.folder ? `&folder=${encodeURIComponent(scope.folder)}` : '');
+  const readEveryPage = async (): Promise<ElementResponse | null> => {
+    const items: ElementItem[] = [];
+    const seen = new Set<string>();
+    let total: number;
+    for (let page = 1; ; page += 1) {
+      const data = await apiRequest<ElementResponse>(`/api/elements?kind=${kind}&page=${page}&page_size=${LIST_PAGE_SIZE}${filters}`);
+      if (stale()) return null;
+      const fresh = data.items.filter(item => !seen.has(item.id));
+      for (const item of fresh) seen.add(item.id);
+      items.push(...fresh);
+      total = data.total;
+      // 这一页没带来新条目(到头了，或翻页途中清单变了)就停；总数读不出来时只取这一页。
+      if (!fresh.length || !Number.isFinite(total) || items.length >= total) break;
+    }
+    return { items, total: Number.isFinite(total) ? total : items.length };
+  };
+  const listing = await readEveryPage();
+  // 清单按最近改动排在前：翻页途中有资产刚画完，它挪到最前，后面的各退一位，它自己哪一页都没赶上。
+  // 取到的比总数少就是碰上了这种情况，从头再读一遍。
+  return listing && listing.items.length < listing.total ? readEveryPage() : listing;
+}
+
+/** 改动响应里带的 sync 不是资产本身的字段，放进清单前去掉。 */
+function withoutSync<T>(value: T): T {
+  if (!value || typeof value !== 'object' || !('sync' in value)) return value;
+  const copy = { ...value } as T & { sync?: unknown };
+  delete copy.sync;
+  return copy;
+}
 
 export function ElementLibraryPage({
   initialKind,
@@ -105,6 +155,7 @@ export function ElementLibraryPage({
   regenerateAllToken = 0,
   replaceAllToken = 0,
   onGenerationStateChange,
+  showFolders = false,
 }: Props) {
   const [kind, setKind] = useState<ElementKind>(initialKind);
   const [items, setItems] = useState<ElementItem[]>([]);
@@ -122,10 +173,13 @@ export function ElementLibraryPage({
   const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
   const [selectedId, setSelectedId] = useState('');
   const [imageViewerAsset, setImageViewerAsset] = useState<AssetImageViewerAsset | null>(null);
-  // Folders belong to the person's library, so a project's embedded view does not show them.
-  const foldersEnabled = !embedded;
+  // Folders belong to the person's library; a project's embedded view shows them only when asked to.
+  const foldersEnabled = !embedded || showFolders;
   const [folder, setFolder] = useState('');
   const [voicesOpen, setVoicesOpen] = useState(false);
+  const [filters, setFilters] = useState<ElementFilters>(EMPTY_FILTERS);
+  const [versionsFor, setVersionsFor] = useState('');
+  const [renaming, setRenaming] = useState('');
   const { listing: folderListing, reload: reloadFolders } = useElementFolders(kind, foldersEnabled);
   const imageInput = useRef<HTMLInputElement>(null);
   const modelInput = useRef<HTMLInputElement>(null);
@@ -161,6 +215,23 @@ export function ElementLibraryPage({
     setBusy(current => current === key ? '' : current);
   };
 
+  /** 资产改了：告诉分镜、镜头工作区重读；返回后端标成过期的镜头和片段数。 */
+  const announce = (
+    item: { id: string; kind: ElementKind; name: string },
+    reason: AssetsChangedDetail['reason'],
+    response?: unknown,
+  ) => {
+    const counts = syncCounts(response);
+    notifyAssetsChanged({ elementId: item.id, kind: item.kind, name: item.name, reason, ...counts });
+    return counts;
+  };
+
+  /** 接在提示后面：「3 个镜头需重画或重跑。」；没有就是空串。 */
+  const staleNote = (counts: { shotsMarked: number; clipsMarked: number }) => {
+    const shots = affectedShots(counts);
+    return shots > 0 ? t('{0} 个镜头需重画或重跑。', [shots]) : '';
+  };
+
   const load = async (targetKind = kind) => {
     if (targetKind !== kindRef.current) return;
     const sequence = ++loadSequence.current;
@@ -168,16 +239,15 @@ export function ElementLibraryPage({
     setError('');
     setNotice('');
     try {
-      // Inside a project only its own and linked assets are listed; the standalone
-      // library (no taskId) still shows everything the owner has ever produced.
-      const scope = taskId ? `&task_id=${encodeURIComponent(taskId)}` : '';
-      const inFolder = folder ? `&folder=${encodeURIComponent(folder)}` : '';
-      const data = await apiRequest<ElementResponse>(`/api/elements?kind=${targetKind}&page=1&page_size=50${scope}${inFolder}`);
-      if (sequence !== loadSequence.current || targetKind !== kindRef.current) return;
-      const nextTotal = Number.isFinite(data.total) ? data.total : data.items.length;
+      const data = await fetchElementList(
+        targetKind,
+        { taskId, folder },
+        () => sequence !== loadSequence.current || targetKind !== kindRef.current,
+      );
+      if (!data) return;
       setItems(data.items);
-      setTotal(nextTotal);
-      if (!folder) onCountChange?.(targetKind, nextTotal);
+      setTotal(data.total);
+      if (!folder) onCountChange?.(targetKind, data.total);
       void reloadFolders();
       setSelectedId(current => data.items.some(item => item.id === current) ? current : (data.items[0]?.id ?? ''));
     } catch (err) {
@@ -220,7 +290,19 @@ export function ElementLibraryPage({
     setPendingUpload(null);
     setSelectedId('');
     setImageViewerAsset(null);
+    setFilters(EMPTY_FILTERS);
+    setVersionsFor('');
+    setRenaming('');
     setUploadSlot(next === 'actor' ? 'front' : 'reference');
+  };
+
+  const selectFolder = (next: string) => {
+    if (next === folder) return;
+    // 换文件夹就是换一份清单：先清空，免得上一个文件夹的卡片留在新文件夹名下。
+    loadSequence.current += 1;
+    setFolder(next);
+    setItems([]);
+    setLoading(true);
   };
 
   const moveToFolder = async (item: ElementItem, folderId: string | null) => {
@@ -242,7 +324,7 @@ export function ElementLibraryPage({
     const endpoint = pending.type === 'model'
       ? `/api/elements/${target}/model`
       : `/api/elements/${target}/files`;
-    await apiRequest(endpoint, { method: 'POST', body: form });
+    return apiRequest<unknown>(endpoint, { method: 'POST', body: form });
   };
 
   const closeCreateForm = () => {
@@ -294,6 +376,8 @@ export function ElementLibraryPage({
       return;
     }
 
+    announce({ id: created.id, kind: targetKind, name: created.name || name.trim() }, 'create');
+
     // Made while looking into a folder: it belongs there, or it would vanish from view on save.
     if (folder && folder !== UNFILED) {
       await moveElementsToFolder([created.id], folder).catch(() => undefined);
@@ -328,7 +412,8 @@ export function ElementLibraryPage({
 
     let uploadError = '';
     try {
-      await sendUpload(uploadAttempt, created.id, targetKind);
+      const uploaded = await sendUpload(uploadAttempt, created.id, targetKind);
+      announce({ id: created.id, kind: targetKind, name: created.name }, 'image', uploaded);
     } catch (err) {
       const fallback = uploadAttempt.type === 'model' ? '3D 模型上传失败' : '参考图上传失败';
       uploadError = err instanceof Error ? err.message : fallback;
@@ -362,7 +447,8 @@ export function ElementLibraryPage({
     setCreateInFlight(true);
     setError('');
     try {
-      await sendUpload(uploadAttempt, target.id, target.kind);
+      const uploaded = await sendUpload(uploadAttempt, target.id, target.kind);
+      announce({ id: target.id, kind: target.kind, name: items.find(entry => entry.id === target.id)?.name ?? '' }, 'image', uploaded);
       if (isCurrentUploadWorkflow(uploadAttempt)) {
         closeCreateForm();
         await load(target.kind);
@@ -424,11 +510,19 @@ export function ElementLibraryPage({
     const busyKey = `${type === 'model' ? 'model' : 'upload'}:${target}`;
     if (!startMutation(busyKey)) return;
     setError('');
+    // 大文件要传一阵：先说正在传哪个文件，免得整页按钮变灰却看不出在做什么。
+    const progress = type === 'model'
+      ? t('正在上传 3D 模型“{0}”…', [file.name])
+      : t('正在上传参考图“{0}”…', [file.name]);
+    setNotice(progress);
     try {
-      await sendUpload(uploadAttempt, target, targetKind);
+      const uploaded = await sendUpload(uploadAttempt, target, targetKind);
+      const counts = announce({ id: target, kind: targetKind, name: items.find(entry => entry.id === target)?.name ?? '' }, 'image', uploaded);
       if (isCurrentUploadWorkflow(uploadAttempt)) {
         if (replacesTrackedUpload) closeCreateForm();
         await load(targetKind);
+        const note = staleNote(counts);
+        if (note && targetKind === kindRef.current) setNotice(note);
       }
     } catch (err) {
       if (isCurrentUploadWorkflow(uploadAttempt)) {
@@ -436,6 +530,7 @@ export function ElementLibraryPage({
         setError(err instanceof Error ? err.message : fallback);
       }
     } finally {
+      setNotice(current => current === progress ? '' : current);
       finishMutation(busyKey);
     }
   };
@@ -577,13 +672,14 @@ export function ElementLibraryPage({
     if (!actorRegenerating) return;
     const timer = window.setInterval(() => {
       if (document.hidden) return;  // 后台标签页不轮询，切回来后下一拍补上
-      const scope = taskId ? `&task_id=${encodeURIComponent(taskId)}` : '';
-      void apiRequest<ElementResponse>(`/api/elements?kind=actor&page=1&page_size=50${scope}`)
-        .then(data => { if (kindRef.current === 'actor') setItems(data.items); })
+      // 轮询不占用 load() 的序号：这一拍还没回来就有新的 load() 起跑，结果作废。
+      const sequence = loadSequence.current;
+      void fetchElementList('actor', { taskId, folder }, () => sequence !== loadSequence.current || kindRef.current !== 'actor')
+        .then(data => { if (data) setItems(data.items); })
         .catch(() => undefined);
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [actorRegenerating, taskId]);
+  }, [actorRegenerating, taskId, folder]);
 
   // 衍生形象：把一个演员元素标成另一个角色的另一种造型（少年 / 婚纱 / 受伤后 …）。
   const [variantFor, setVariantFor] = useState('');
@@ -606,7 +702,7 @@ export function ElementLibraryPage({
     if (!startMutation(busyKey)) return;
     setError('');
     try {
-      await apiRequest(`/api/elements/${item.id}/variant`, clear
+      const saved = await apiRequest<unknown>(`/api/elements/${item.id}/variant`, clear
         ? { method: 'DELETE' }
         : {
           method: 'PUT',
@@ -619,6 +715,7 @@ export function ElementLibraryPage({
           }),
         });
       setVariantFor('');
+      announce(item, 'edit', saved);
       await load('actor');
       setNotice(clear ? `“${item.name}”已恢复为独立角色。` : `“${item.name}”已设为“${variantDraft.of}”的衍生形象。`);
     } catch (err) {
@@ -628,30 +725,17 @@ export function ElementLibraryPage({
     }
   };
 
-  const renameElement = async (item: ElementItem) => {
+  const renameElement = (item: ElementItem) => {
     if (creatingRef.current || busyRef.current) return;
-    const label = kindMeta[item.kind].label;
-    const nextName = window.prompt(`重命名${label}资产`, item.name);
-    if (nextName === null) return;
-    const trimmed = nextName.trim();
-    if (!trimmed || trimmed === item.name) return;
+    setRenaming(item.id);
+  };
+
+  const afterRename = async (item: ElementItem, result: { updated: ElementItem | null; name: string; counts: { shotsMarked: number; clipsMarked: number } }) => {
+    notifyAssetsChanged({ elementId: item.id, kind: item.kind, name: result.name, reason: 'rename', ...result.counts });
     const targetKind = kindRef.current;
-    const busyKey = `rename:${item.id}`;
-    if (!startMutation(busyKey)) return;
-    setError('');
-    try {
-      await apiRequest(`/api/elements/${item.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ name: trimmed }),
-      });
-      if (targetKind !== kindRef.current) return;
-      await load(targetKind);
-      if (targetKind === kindRef.current) setNotice(t('已重命名为“{0}”。', [trimmed]));
-    } catch (err) {
-      if (targetKind === kindRef.current) setError(err instanceof Error ? err.message : `重命名${label}资产失败`);
-    } finally {
-      finishMutation(busyKey);
-    }
+    if (targetKind !== item.kind) return;
+    await load(targetKind);
+    if (targetKind === kindRef.current) setNotice(t('已重命名为“{0}”。', [result.name]) + staleNote(result.counts));
   };
 
   const setPropSize = async (item: ElementItem, lengthCm: number | null) => {
@@ -664,13 +748,50 @@ export function ElementLibraryPage({
         method: 'PUT',
         body: JSON.stringify({ length_cm: lengthCm }),
       });
+      const counts = announce(item, 'edit', updated);
       if (targetKind !== kindRef.current) return;
-      setItems(current => current.map(entry => entry.id === item.id ? updated : entry));
-      setNotice(lengthCm === null
+      setItems(current => current.map(entry => entry.id === item.id ? withoutSync(updated) : entry));
+      setNotice((lengthCm === null
         ? t('已清除“{0}”手动填写的尺寸。', [item.name])
-        : t('已把“{0}”的最长边设为 {1} cm。', [item.name, String(lengthCm)]));
+        : t('已把“{0}”的最长边设为 {1} cm。', [item.name, String(lengthCm)])) + staleNote(counts));
     } catch (err) {
       if (targetKind === kindRef.current) setError(err instanceof Error ? err.message : t('尺寸保存失败，请稍后重试。'));
+    } finally {
+      finishMutation(busyKey);
+    }
+  };
+
+  const drawSceneScale = async (item: ElementItem) => {
+    const targetKind = item.kind;
+    const busyKey = `scale:${item.id}`;
+    if (!startMutation(busyKey)) return;
+    setError('');
+    try {
+      const updated = await apiRequest<ElementItem>(`/api/elements/${item.id}/scene-scale`, { method: 'POST' });
+      announce(item, 'image', updated);
+      if (targetKind !== kindRef.current) return;
+      setItems(current => current.map(entry => entry.id === item.id ? withoutSync(updated) : entry));
+      setNotice(t('已给“{0}”画好人物比例参照。', [item.name]));
+    } catch (err) {
+      if (targetKind === kindRef.current) setError(err instanceof Error ? err.message : t('人物比例参照生成失败，请稍后重试。'));
+    } finally {
+      finishMutation(busyKey);
+    }
+  };
+
+  const drawSceneReverse = async (item: ElementItem) => {
+    const targetKind = item.kind;
+    const busyKey = `reverse:${item.id}`;
+    if (!startMutation(busyKey)) return;
+    setError('');
+    try {
+      const updated = await apiRequest<ElementItem>(`/api/elements/${item.id}/scene-reverse`, { method: 'POST' });
+      announce(item, 'image', updated);
+      if (targetKind !== kindRef.current) return;
+      setItems(current => current.map(entry => entry.id === item.id ? withoutSync(updated) : entry));
+      setNotice(t('已给“{0}”补好反打视角。', [item.name]));
+    } catch (err) {
+      if (targetKind === kindRef.current) setError(err instanceof Error ? err.message : t('反打视角生成失败，请稍后重试。'));
     } finally {
       finishMutation(busyKey);
     }
@@ -685,8 +806,9 @@ export function ElementLibraryPage({
       const updated = await apiRequest<ElementItem>(`/api/elements/${item.id}/real-person`, payload
         ? { method: 'PUT', body: JSON.stringify(payload) }
         : { method: 'DELETE' });
+      announce(item, 'edit', updated);
       if (targetKind !== kindRef.current) return;
-      setItems(current => current.map(entry => entry.id === item.id ? updated : entry));
+      setItems(current => current.map(entry => entry.id === item.id ? withoutSync(updated) : entry));
       setNotice(payload
         ? t('已把“{0}”设为真人演员，分镜和视频按本人照片生成。', [item.name])
         : t('已取消“{0}”的真人演员设置。', [item.name]));
@@ -706,7 +828,8 @@ export function ElementLibraryPage({
     if (!startMutation(busyKey)) return;
     setError('');
     try {
-      await apiRequest(`/api/elements/${item.id}`, { method: 'DELETE' });
+      const removedResponse = await apiRequest<unknown>(`/api/elements/${item.id}`, { method: 'DELETE' });
+      const counts = announce(item, 'delete', removedResponse);
       if (targetKind !== kindRef.current) return;
       setItems(current => current.filter(entry => entry.id !== item.id));
       setSelectedId(current => current === item.id ? '' : current);
@@ -714,7 +837,7 @@ export function ElementLibraryPage({
       if (pendingUpload?.target?.id === item.id) closeCreateForm();
       await load(targetKind);
       if (targetKind === kindRef.current) {
-        setNotice(t('已删除{0}资产“{1}”。', [label, item.name]));
+        setNotice(t('已删除{0}资产“{1}”。', [label, item.name]) + staleNote(counts));
         window.setTimeout(() => toolbarCreateButton.current?.focus(), 0);
       }
     } catch (err) {
@@ -724,26 +847,46 @@ export function ElementLibraryPage({
     }
   };
 
-  const deleteReference = async (item: ElementItem, poster: ElementFile, label = '参考图') => {
+  // ``copy``：主参考图里存着的同一张图(见 referenceCopyOf)，跟着一起删。
+  const deleteReference = async (item: ElementItem, poster: ElementFile, label = '参考图', copy?: ElementFile) => {
     if (creatingRef.current || busyRef.current) return;
     if (!window.confirm(t('确定删除“{0}”的{1}吗？此操作不可撤销。', [item.name, label]))) return;
     const targetKind = kindRef.current;
     const busyKey = `delete-file:${poster.id}`;
     if (!startMutation(busyKey)) return;
     setError('');
-    try {
-      await apiRequest(`/api/elements/${item.id}/files/${poster.id}`, { method: 'DELETE' });
-      if (targetKind !== kindRef.current) return;
+    const removed = new Set<string>();
+    const refresh = async () => {
       setItems(current => current.map(entry => entry.id === item.id
-        ? { ...entry, files: entry.files.filter(file => file.id !== poster.id) }
+        ? { ...entry, files: entry.files.filter(file => !removed.has(file.id)) }
         : entry));
       await load(targetKind);
+    };
+    try {
+      const first = await apiRequest<unknown>(`/api/elements/${item.id}/files/${poster.id}`, { method: 'DELETE' });
+      removed.add(poster.id);
+      announce(item, 'image', first);
+      if (copy) {
+        await apiRequest(`/api/elements/${item.id}/files/${copy.id}`, { method: 'DELETE' });
+        removed.add(copy.id);
+      }
+      if (targetKind !== kindRef.current) return;
+      await refresh();
       if (targetKind === kindRef.current) {
         setNotice(t('已删除“{0}”的{1}。', [item.name, label]));
         window.setTimeout(() => toolbarImageButton.current?.focus(), 0);
       }
     } catch (err) {
-      if (targetKind === kindRef.current) setError(err instanceof Error ? err.message : `删除${label}失败`);
+      if (targetKind !== kindRef.current) return;
+      if (!removed.size) {
+        setError(err instanceof Error ? err.message : `删除${label}失败`);
+        return;
+      }
+      // 这张已经删掉，只是主参考图里的那一份没删成：画面先跟上，剩下的那份才看得到、能再删。
+      await refresh();
+      if (targetKind === kindRef.current) {
+        setError(t('“{0}”的{1}已删除，但主参考图里还留着同一张，没删掉。请再删一次主参考图。', [item.name, label]));
+      }
     } finally {
       finishMutation(busyKey);
     }
@@ -761,14 +904,20 @@ export function ElementLibraryPage({
     const busyKey = `regenerate:${item.id}`;
     if (!startMutation(busyKey)) return;
     setError('');
+    // 数字演员在后台出图，请求马上返回；其余的要等图画完，先说清楚在等什么。
+    const background = item.kind === 'actor' && !isLook(item);
+    const progress = background ? '' : t('正在为“{0}”生成参考图，通常需要几十秒…', [item.name]);
+    if (progress) setNotice(progress);
     try {
       const regenerated = await apiRequest<ElementItem | { status: string }>(`/api/elements/${item.id}/regenerate`, {
         method: 'POST',
         body: JSON.stringify({ prompt: `保持 ${item.name} 的身份、状态和视觉锚点，重新生成当前版本` }),
       });
-      if (item.kind === 'actor' && !isLook(item)) {
+      // 数字演员在后台出图：这里还没换图，等轮询到新图再说。
+      const counts = background ? { shotsMarked: 0, clipsMarked: 0 } : announce(item, 'image', regenerated);
+      if (background) {
         if ('id' in regenerated) {
-          setItems(current => current.map(entry => entry.id === item.id ? regenerated : entry));
+          setItems(current => current.map(entry => entry.id === item.id ? withoutSync(regenerated) : entry));
         }
         setNotice(t('“{0}”的数字演员设定集正在后台重新生成，完成后自动刷新。', [item.name]));
         return;
@@ -776,15 +925,232 @@ export function ElementLibraryPage({
       const targetKind = kindRef.current;
       if (targetKind !== item.kind) return;
       if ('id' in regenerated) {
-        setItems(current => current.map(entry => entry.id === item.id ? regenerated : entry));
+        setItems(current => current.map(entry => entry.id === item.id ? withoutSync(regenerated) : entry));
       }
       await load(targetKind);
-      if (targetKind === kindRef.current) setNotice(t('已重新生成“{0}”的参考图。', [item.name]));
+      if (targetKind === kindRef.current) setNotice(t('已重新生成“{0}”的参考图。', [item.name]) + staleNote(counts));
     } catch (err) {
       setError(err instanceof Error ? err.message : '重新生成请求失败');
     } finally {
+      if (progress) setNotice(current => current === progress ? '' : current);
       finishMutation(busyKey);
     }
+  };
+
+  const restored = async (updated: ElementItem, counts: { shotsMarked: number; clipsMarked: number }, version: number) => {
+    setItems(current => current.map(entry => entry.id === updated.id ? updated : entry));
+    setVersionsFor('');
+    notifyAssetsChanged({ elementId: updated.id, kind: updated.kind, name: updated.name, reason: 'restore', ...counts });
+    const shots = affectedShots(counts);
+    const message = shots > 0
+      ? t('已恢复到 v{0}，{1} 个镜头需重画或重跑', [version, shots])
+      : t('已恢复到 v{0}。', [version]);
+    if (updated.kind !== kindRef.current) return;
+    await load(updated.kind);
+    if (updated.kind === kindRef.current) setNotice(message);
+  };
+
+  const versionsItem = versionsFor ? items.find(entry => entry.id === versionsFor) : undefined;
+  const renamingItem = renaming ? items.find(entry => entry.id === renaming) : undefined;
+  const filteredItems = filterElements(items, filters);
+  const cardGroups = groupByBase(filteredItems);
+
+  const versionButton = (item: ElementItem) => (
+    <button
+      type="button"
+      className="element-version-button"
+      onClick={() => setVersionsFor(item.id)}
+      aria-label={t('“{0}”的版本记录', [item.name])}
+    >{`v${item.version} · ${t('版本记录')}`}</button>
+  );
+
+  const renderCard = (item: ElementItem) => {
+    // The actor slot selector doubles as the preview switch: whichever
+    // five-view slot it names is the image every card shows.
+    // 定妆图只有一张展示板，没有五个身份视图。
+    const look = isLook(item);
+    const previewFile = kind === 'actor' && !look ? findViewImage(item, uploadSlot) : findPoster(item);
+    const previewLabel = look ? '定妆图' : kind === 'actor' ? `${actorSlotLabel(uploadSlot)}视图` : '参考图';
+    const descriptionText = item.description || kindMeta[kind].hint;
+    // 服装/特效沿用全景卡布局；数字演员保持原卡面，仅叠加放大入口。
+    const panoramaLayout = item.kind === 'costume' || item.kind === 'effect' || look;
+    const imageUrl = previewFile?.url ? apiUrl(previewFile.url) : '';
+    const regenerating = busy === `regenerate:${item.id}` || (item.kind === 'actor' && actorRegeneration(item).running);
+    const openViewerLabel = item.kind === 'costume'
+      ? `查看服装资产“${item.name}”全景图`
+      : item.kind === 'effect'
+        ? `查看特效资产“${item.name}”细节图`
+        : `查看数字演员“${item.name}”的${previewLabel}`;
+    return (
+      <article
+        className={`element-card element-card--${item.kind}`}
+        aria-label={`${kindMeta[item.kind].label}资产“${item.name}”`}
+        key={item.id}
+      >
+        <div className={`element-preview${panoramaLayout ? ' element-preview--panorama' : ''}`}>
+          {previewFile?.url
+            ? (
+              <button
+                type="button"
+                className="element-preview__open"
+                aria-label={openViewerLabel}
+                onClick={() => setImageViewerAsset({
+                  kind: item.kind,
+                  name: item.name,
+                  // 数字演员按当前身份视图逐图放大，标注正在查看的视图。
+                  description: item.kind === 'actor' ? `${previewLabel} · ${descriptionText}` : descriptionText,
+                  imageUrl,
+                })}
+              >
+                <img src={imageUrl} alt={`${item.name} ${previewLabel}`} loading="lazy" decoding="async" />
+                <span className="element-preview__open-hint"><Maximize2 aria-hidden="true" /> {t('点击查看全景细节')}</span>
+              </button>
+            )
+            : (
+              <span className="element-preview__missing">
+                <Camera size={34} aria-hidden="true" />
+                {kind === 'actor' && <small>{previewLabel}未上传</small>}
+              </span>
+            )}
+          <span className={`status-badge ${item.status}`}>{item.status === 'ready' ? t('已就绪') : t('待完善')}</span>
+        </div>
+        {panoramaLayout && (
+          <div className="element-card-summary">
+            <div><h2>{item.name}</h2>{versionButton(item)}</div>
+            <p>{descriptionText}</p>
+          </div>
+        )}
+        <div className={`element-card-body${panoramaLayout ? ' element-card-body--actions-only' : ''}`}>
+          {!panoramaLayout && (
+            <>
+              <div><h2>{item.name}</h2>{versionButton(item)}</div>
+              <p>{descriptionText}</p>
+            </>
+          )}
+          {kind === 'actor' && !look && (realPersonOf(item)
+            ? <small>{t('真人照片 {0} 张', [item.files.length])}</small>
+            : <small>身份视图 {item.files.length}/5</small>)}
+          {Boolean(item.metadata?.needs_redraw) && <small className="element-regeneration-error">{t('设定改过，这张图还是旧写法，建议重新生成')}</small>}
+          {lookCheckProblems(item).length > 0 && <small className="element-regeneration-error">{t('妆效核对没过：{0}。建议重新生成，或把妆效写得更具体', [lookCheckProblems(item).join('；')])}</small>}
+          {kind === 'actor' && actorRegeneration(item).running && (
+            <small className="element-regeneration-status" role="status">{t('设定集后台生成中，完成后自动刷新')}</small>
+          )}
+          {kind === 'actor' && !actorRegeneration(item).running && actorRegeneration(item).error && (
+            <small className="element-regeneration-error" role="alert">
+              {t('上次重新生成未成功：{0}（已保留原图）', [actorRegeneration(item).error])}
+            </small>
+          )}
+          {kind === 'actor' && variantOf(item) && (() => {
+            const variant = variantOf(item)!;
+            return (
+              <small className="element-variant-badge">
+                衍生自「{variant.of}」{variant.label ? ` · ${variant.label}` : ''}
+                {variant.triggers.length > 0 && ` · 触发：${variant.triggers.join('、')}`}
+                {variant.episodes && ` · 第 ${(variant.spans?.length ? variant.spans : [variant.episodes]).map(([first, last]) => (first === last ? `${first}` : `${first}–${last}`)).join('、')} 集`}
+              </small>
+            );
+          })()}
+          {kind === 'actor' && !look && !variantOf(item) && (
+            <RealPersonField
+              key={`${item.id}:${String(item.version)}`}
+              item={item}
+              locked={creating || Boolean(busy)}
+              onSave={payload => { void setRealPerson(item, payload); }}
+            />
+          )}
+          {kind === 'actor' && variantFor === item.id && (
+            <form
+              className="element-variant-form"
+              aria-label={`设置“${item.name}”的衍生形象`}
+              onSubmit={event => { event.preventDefault(); void saveVariant(item); }}
+            >
+              <label>{t('来源角色')}
+                <select aria-label={t('来源角色')} value={variantDraft.of} onChange={event => setVariantDraft(current => ({ ...current, of: event.target.value }))}>
+                  <option value="">{t('选择角色')}</option>
+                  {items.filter(other => other.id !== item.id && !variantOf(other)).map(other => <option key={other.id} value={other.name}>{other.name}</option>)}
+                </select>
+              </label>
+              <label>{t('造型名')}<input aria-label={t('造型名')} value={variantDraft.label} placeholder={t('如：少年 / 婚纱 / 受伤后')} onChange={event => setVariantDraft(current => ({ ...current, label: event.target.value }))} /></label>
+              <label>{t('触发词')}<input aria-label={t('触发词')} value={variantDraft.triggers} placeholder={t('剧本里出现这些词时换上该造型，用顿号分隔')} onChange={event => setVariantDraft(current => ({ ...current, triggers: event.target.value }))} /></label>
+              <label>{t('从第几集')}<input aria-label={t('起始集')} type="number" min={1} value={variantDraft.from} onChange={event => setVariantDraft(current => ({ ...current, from: event.target.value }))} /></label>
+              <label>{t('到第几集')}<input aria-label={t('结束集')} type="number" min={1} value={variantDraft.to} onChange={event => setVariantDraft(current => ({ ...current, to: event.target.value }))} /></label>
+              <div>
+                <button type="submit" disabled={!variantDraft.of || Boolean(busy)}>{t('保存衍生形象')}</button>
+                <button type="button" onClick={() => setVariantFor('')}>{t('取消')}</button>
+              </div>
+            </form>
+          )}
+          {foldersEnabled && (
+            <ElementFolderSelect
+              item={item}
+              folders={folderListing.folders}
+              disabled={Boolean(busy)}
+              onMove={(target, folderId) => { void moveToFolder(target, folderId); }}
+            />
+          )}
+          <div className="element-actions">
+            <button
+              type="button"
+              onClick={() => beginImageUpload(item.id)}
+              disabled={creating || Boolean(busy)}
+              aria-label={t('添加上传')}
+              aria-busy={busy === `upload:${item.id}`}
+            >
+              {busy === `upload:${item.id}` ? <LoaderCircle className="spin" size={14} /> : <Upload size={14} />}
+              {' '}{busy === `upload:${item.id}` ? t('上传中…') : t('添加上传')}
+            </button>
+            <button
+              type="button"
+              onClick={() => renameElement(item)}
+              disabled={creating || Boolean(busy)}
+              aria-label={`重命名${kindMeta[item.kind].label}资产“${item.name}”`}
+            >
+              <Pencil size={14} /> {busy === `rename:${item.id}` ? '重命名中' : '重命名'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void regenerate(item)}
+              disabled={creating || Boolean(busy) || (item.kind === 'actor' && (actorRegeneration(item).running || Boolean(realPersonOf(item))))}
+              title={item.kind === 'actor' && realPersonOf(item) ? t('真人演员以本人照片为准，不重新生成') : undefined}
+              aria-label={item.kind === 'actor' ? `重新生成“${item.name}”的数字演员设定集` : t('重新生成')}
+              aria-busy={regenerating}
+            >
+              <RefreshCw size={14} className={regenerating ? 'spin' : undefined} />
+              {regenerating ? t('生成中…') : t('重新生成')}
+            </button>
+            {item.kind === 'actor' && !isLook(item) && (variantOf(item)
+              ? <button type="button" onClick={() => void saveVariant(item, true)} disabled={creating || Boolean(busy)} aria-label={`取消“${item.name}”的衍生形象`}><Shirt size={14} /> {t('取消衍生')}</button>
+              : <button type="button" onClick={() => openVariantEditor(item)} disabled={creating || Boolean(busy)} aria-label={`把“${item.name}”设为衍生形象`}><Shirt size={14} /> {t('衍生形象')}</button>)}
+            {previewFile && (
+              <button
+                type="button"
+                className="element-delete-action"
+                onClick={() => void deleteReference(item, previewFile, previewLabel)}
+                disabled={creating || Boolean(busy)}
+                aria-label={busy === `delete-file:${previewFile.id}`
+                  ? `正在删除“${item.name}”的${previewLabel}`
+                  : `删除“${item.name}”的${previewLabel}`}
+              >
+                {busy === `delete-file:${previewFile.id}` ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}
+                {busy === `delete-file:${previewFile.id}` ? `正在删除${previewLabel}` : `删除${previewLabel}`}
+              </button>
+            )}
+            <button
+              type="button"
+              className="element-delete-action"
+              onClick={() => void deleteElement(item)}
+              disabled={creating || Boolean(busy)}
+              aria-label={busy === `delete:${item.id}`
+                ? `正在删除${kindMeta[item.kind].label}资产“${item.name}”`
+                : `删除${kindMeta[item.kind].label}资产“${item.name}”`}
+            >
+              {busy === `delete:${item.id}` ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}
+              {busy === `delete:${item.id}` ? '正在删除资产' : '删除资产'}
+            </button>
+          </div>
+        </div>
+      </article>
+    );
   };
 
   const spatialKind = kind === 'scene' || kind === 'prop';
@@ -830,7 +1196,7 @@ export function ElementLibraryPage({
           items={items}
           selected={spatialKind ? items.find(item => item.id === selectedId) : undefined}
           disabled={Boolean(busy)}
-          onSelect={setFolder}
+          onSelect={selectFolder}
           onMove={(item, folderId) => { void moveToFolder(item, folderId); }}
           onChanged={() => { void load(kindRef.current); }}
           onError={setError}
@@ -838,7 +1204,10 @@ export function ElementLibraryPage({
       )}
 
       <section className="element-toolbar">
-        <div><strong>{total}</strong><span> 个{kindMeta[kind].label}元素</span></div>
+        <div>
+          <strong>{total}</strong><span> 个{kindMeta[kind].label}元素</span>
+          {loading && items.length > 0 && <LoaderCircle className="spin element-refreshing" size={14} aria-hidden="true" />}
+        </div>
         <div>
           {kind === 'actor' && (
             <label className="slot-select">{t('上传视图')}
@@ -942,9 +1311,10 @@ export function ElementLibraryPage({
 
       {error && <div className="inline-error" role="alert">{error}</div>}
       {notice && <div className="element-success" role="status" aria-live="polite">{notice}</div>}
-      {loading ? (
+      {/* 已有清单时刷新不换成整页加载：卡片、选中项和 3D 视口都留在原处，只标记 aria-busy。 */}
+      {loading && items.length === 0 ? (
         <div className="empty-library"><LoaderCircle className="spin" /> 正在加载{kindMeta[kind].label}库…</div>
-      ) : spatialKind ? (
+      ) : <div className="element-library-content" aria-busy={loading}>{spatialKind ? (
         <Suspense fallback={<div className="empty-library"><LoaderCircle className="spin" /> {t('正在启动 3D 资产工作台…')}</div>}>
           <Element3DWorkspace
             kind={kind}
@@ -957,11 +1327,11 @@ export function ElementLibraryPage({
             onUploadPoster={beginImageUpload}
             onRegenerate={item => { void regenerate(item); }}
             onDelete={item => { void deleteElement(item); }}
-            onDeletePoster={item => {
-              const poster = findPoster(item);
-              if (poster) void deleteReference(item, poster);
-            }}
+            onDeletePoster={(item, file, label) => { void deleteReference(item, file, label, referenceCopyOf(item, file)); }}
             onSetPropSize={(item, lengthCm) => { void setPropSize(item, lengthCm); }}
+            onDrawSceneScale={item => { void drawSceneScale(item); }}
+            onDrawSceneReverse={item => { void drawSceneReverse(item); }}
+            onOpenVersions={item => setVersionsFor(item.id)}
             onInspectPoster={(item, shown) => {
               // 与服装/特效同构：有参考图才提供放大查看入口。
               const poster = shown ?? findPoster(item);
@@ -978,188 +1348,43 @@ export function ElementLibraryPage({
       ) : items.length === 0 ? (
         <div className="empty-library"><ImagePlus size={44} /><strong>还没有{kindMeta[kind].label}元素</strong><span>点击“添加{kindMeta[kind].label}”建立版本化资产，再上传参考图。</span></div>
       ) : (
-        <div className="element-card-grid">
-          {items.map(item => {
-            // The actor slot selector doubles as the preview switch: whichever
-            // five-view slot it names is the image every card shows.
-            // 定妆图只有一张展示板，没有五个身份视图。
-            const look = isLook(item);
-            const previewFile = kind === 'actor' && !look ? findViewImage(item, uploadSlot) : findPoster(item);
-            const previewLabel = look ? '定妆图' : kind === 'actor' ? `${actorSlotLabel(uploadSlot)}视图` : '参考图';
-            const descriptionText = item.description || kindMeta[kind].hint;
-            // 服装/特效沿用全景卡布局；数字演员保持原卡面，仅叠加放大入口。
-            const panoramaLayout = item.kind === 'costume' || item.kind === 'effect' || look;
-            const imageUrl = previewFile?.url ? apiUrl(previewFile.url) : '';
-            const openViewerLabel = item.kind === 'costume'
-              ? `查看服装资产“${item.name}”全景图`
-              : item.kind === 'effect'
-                ? `查看特效资产“${item.name}”细节图`
-                : `查看数字演员“${item.name}”的${previewLabel}`;
-            return (
-            <article
-              className={`element-card element-card--${item.kind}`}
-              aria-label={`${kindMeta[item.kind].label}资产“${item.name}”`}
-              key={item.id}
-            >
-              <div className={`element-preview${panoramaLayout ? ' element-preview--panorama' : ''}`}>
-                {previewFile?.url
-                  ? (
-                    <button
-                      type="button"
-                      className="element-preview__open"
-                      aria-label={openViewerLabel}
-                      onClick={() => setImageViewerAsset({
-                        kind: item.kind,
-                        name: item.name,
-                        // 数字演员按当前身份视图逐图放大，标注正在查看的视图。
-                        description: item.kind === 'actor' ? `${previewLabel} · ${descriptionText}` : descriptionText,
-                        imageUrl,
-                      })}
-                    >
-                      <img src={imageUrl} alt={`${item.name} ${previewLabel}`} loading="lazy" decoding="async" />
-                      <span className="element-preview__open-hint"><Maximize2 aria-hidden="true" /> {t('点击查看全景细节')}</span>
-                    </button>
-                  )
-                  : (
-                    <span className="element-preview__missing">
-                      <Camera size={34} aria-hidden="true" />
-                      {kind === 'actor' && <small>{previewLabel}未上传</small>}
-                    </span>
-                  )}
-                <span className={`status-badge ${item.status}`}>{item.status === 'ready' ? t('已就绪') : t('待完善')}</span>
-              </div>
-              {panoramaLayout && (
-                <div className="element-card-summary">
-                  <div><h2>{item.name}</h2><span>v{item.version}</span></div>
-                  <p>{descriptionText}</p>
-                </div>
-              )}
-              <div className={`element-card-body${panoramaLayout ? ' element-card-body--actions-only' : ''}`}>
-                {!panoramaLayout && (
-                  <>
-                    <div><h2>{item.name}</h2><span>v{item.version}</span></div>
-                    <p>{descriptionText}</p>
-                  </>
-                )}
-                {kind === 'actor' && !look && (realPersonOf(item)
-                  ? <small>{t('真人照片 {0} 张', [item.files.length])}</small>
-                  : <small>身份视图 {item.files.length}/5</small>)}
-                {Boolean(item.metadata?.needs_redraw) && <small className="element-regeneration-error">{t('设定改过，这张图还是旧写法，建议重新生成')}</small>}
-                {lookCheckProblems(item).length > 0 && <small className="element-regeneration-error">{t('妆效核对没过：{0}。建议重新生成，或把妆效写得更具体', [lookCheckProblems(item).join('；')])}</small>}
-                {kind === 'actor' && actorRegeneration(item).running && (
-                  <small className="element-regeneration-status" role="status">{t('设定集后台生成中，完成后自动刷新')}</small>
-                )}
-                {kind === 'actor' && !actorRegeneration(item).running && actorRegeneration(item).error && (
-                  <small className="element-regeneration-error" role="alert">
-                    {t('上次重新生成未成功：{0}（已保留原图）', [actorRegeneration(item).error])}
-                  </small>
-                )}
-                {kind === 'actor' && variantOf(item) && (() => {
-                  const variant = variantOf(item)!;
-                  return (
-                    <small className="element-variant-badge">
-                      衍生自「{variant.of}」{variant.label ? ` · ${variant.label}` : ''}
-                      {variant.triggers.length > 0 && ` · 触发：${variant.triggers.join('、')}`}
-                      {variant.episodes && ` · 第 ${(variant.spans?.length ? variant.spans : [variant.episodes]).map(([first, last]) => (first === last ? `${first}` : `${first}–${last}`)).join('、')} 集`}
-                    </small>
-                  );
-                })()}
-                {kind === 'actor' && !look && !variantOf(item) && (
-                  <RealPersonField
-                    key={`${item.id}:${String(item.version)}`}
-                    item={item}
-                    locked={creating || Boolean(busy)}
-                    onSave={payload => { void setRealPerson(item, payload); }}
-                  />
-                )}
-                {kind === 'actor' && variantFor === item.id && (
-                  <form
-                    className="element-variant-form"
-                    aria-label={`设置“${item.name}”的衍生形象`}
-                    onSubmit={event => { event.preventDefault(); void saveVariant(item); }}
-                  >
-                    <label>{t('来源角色')}
-                      <select aria-label={t('来源角色')} value={variantDraft.of} onChange={event => setVariantDraft(current => ({ ...current, of: event.target.value }))}>
-                        <option value="">{t('选择角色')}</option>
-                        {items.filter(other => other.id !== item.id && !variantOf(other)).map(other => <option key={other.id} value={other.name}>{other.name}</option>)}
-                      </select>
-                    </label>
-                    <label>{t('造型名')}<input aria-label={t('造型名')} value={variantDraft.label} placeholder={t('如：少年 / 婚纱 / 受伤后')} onChange={event => setVariantDraft(current => ({ ...current, label: event.target.value }))} /></label>
-                    <label>{t('触发词')}<input aria-label={t('触发词')} value={variantDraft.triggers} placeholder={t('剧本里出现这些词时换上该造型，用顿号分隔')} onChange={event => setVariantDraft(current => ({ ...current, triggers: event.target.value }))} /></label>
-                    <label>{t('从第几集')}<input aria-label={t('起始集')} type="number" min={1} value={variantDraft.from} onChange={event => setVariantDraft(current => ({ ...current, from: event.target.value }))} /></label>
-                    <label>{t('到第几集')}<input aria-label={t('结束集')} type="number" min={1} value={variantDraft.to} onChange={event => setVariantDraft(current => ({ ...current, to: event.target.value }))} /></label>
-                    <div>
-                      <button type="submit" disabled={!variantDraft.of || Boolean(busy)}>{t('保存衍生形象')}</button>
-                      <button type="button" onClick={() => setVariantFor('')}>{t('取消')}</button>
+        <>
+          <ElementFilterBar items={items} filters={filters} shown={filteredItems.length} onChange={setFilters} />
+          {filteredItems.length === 0 ? (
+            <div className="element-filter-empty">
+              <strong>{t('没有符合条件的{0}', [kindMeta[kind].label])}</strong>
+              <button type="button" className="secondary-action" onClick={() => setFilters(EMPTY_FILTERS)}>{t('清除筛选')}</button>
+            </div>
+          ) : (
+            <div className="element-card-grid">
+              {cardGroups.map(group => (
+                <Fragment key={group.base.id}>
+                  {renderCard(group.base)}
+                  {group.variants.length > 0 && (
+                    <div className="element-card-group__variants" role="group" aria-label={t('“{0}”的衍生形象', [group.base.name])}>
+                      <p className="element-card-group__label">{t('衍生形象')}</p>
+                      {group.variants.map(renderCard)}
                     </div>
-                  </form>
-                )}
-                {foldersEnabled && (
-                  <ElementFolderSelect
-                    item={item}
-                    folders={folderListing.folders}
-                    disabled={Boolean(busy)}
-                    onMove={(target, folderId) => { void moveToFolder(target, folderId); }}
-                  />
-                )}
-                <div className="element-actions">
-                  <button type="button" onClick={() => beginImageUpload(item.id)} disabled={creating || Boolean(busy)}><Upload size={14} /> {t('添加上传')}</button>
-                  <button
-                    type="button"
-                    onClick={() => void renameElement(item)}
-                    disabled={creating || Boolean(busy)}
-                    aria-label={`重命名${kindMeta[item.kind].label}资产“${item.name}”`}
-                  >
-                    <Pencil size={14} /> {busy === `rename:${item.id}` ? '重命名中' : '重命名'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void regenerate(item)}
-                    disabled={creating || Boolean(busy) || (item.kind === 'actor' && (actorRegeneration(item).running || Boolean(realPersonOf(item))))}
-                    title={item.kind === 'actor' && realPersonOf(item) ? t('真人演员以本人照片为准，不重新生成') : undefined}
-                    aria-label={item.kind === 'actor' ? `重新生成“${item.name}”的数字演员设定集` : undefined}
-                  >
-                    <RefreshCw size={14} className={item.kind === 'actor' && actorRegeneration(item).running ? 'spin' : undefined} />
-                    {item.kind === 'actor' && actorRegeneration(item).running ? t('生成中…') : t('重新生成')}
-                  </button>
-                  {item.kind === 'actor' && !isLook(item) && (variantOf(item)
-                    ? <button type="button" onClick={() => void saveVariant(item, true)} disabled={creating || Boolean(busy)} aria-label={`取消“${item.name}”的衍生形象`}><Shirt size={14} /> {t('取消衍生')}</button>
-                    : <button type="button" onClick={() => openVariantEditor(item)} disabled={creating || Boolean(busy)} aria-label={`把“${item.name}”设为衍生形象`}><Shirt size={14} /> {t('衍生形象')}</button>)}
-                  {previewFile && (
-                    <button
-                      type="button"
-                      className="element-delete-action"
-                      onClick={() => void deleteReference(item, previewFile, previewLabel)}
-                      disabled={creating || Boolean(busy)}
-                      aria-label={busy === `delete-file:${previewFile.id}`
-                        ? `正在删除“${item.name}”的${previewLabel}`
-                        : `删除“${item.name}”的${previewLabel}`}
-                    >
-                      {busy === `delete-file:${previewFile.id}` ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}
-                      {busy === `delete-file:${previewFile.id}` ? `正在删除${previewLabel}` : `删除${previewLabel}`}
-                    </button>
                   )}
-                  <button
-                    type="button"
-                    className="element-delete-action"
-                    onClick={() => void deleteElement(item)}
-                    disabled={creating || Boolean(busy)}
-                    aria-label={busy === `delete:${item.id}`
-                      ? `正在删除${kindMeta[item.kind].label}资产“${item.name}”`
-                      : `删除${kindMeta[item.kind].label}资产“${item.name}”`}
-                  >
-                    {busy === `delete:${item.id}` ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}
-                    {busy === `delete:${item.id}` ? '正在删除资产' : '删除资产'}
-                  </button>
-                </div>
-              </div>
-            </article>
-            );
-          })}
-        </div>
-      )}
+                </Fragment>
+              ))}
+            </div>
+          )}
+        </>
+      )}</div>}
       {imageViewerAsset && (
         <AssetImageViewer asset={imageViewerAsset} onClose={() => setImageViewerAsset(null)} />
+      )}
+      {versionsItem && (
+        <ElementVersionHistory item={versionsItem} onClose={() => setVersionsFor('')} onRestored={(updated, counts, version) => { void restored(updated, counts, version); }} />
+      )}
+      {renamingItem && (
+        <RenameAssetDialog
+          item={renamingItem}
+          kindLabel={kindMeta[renamingItem.kind].label}
+          onClose={() => setRenaming('')}
+          onRenamed={result => { void afterRename(renamingItem, result); }}
+        />
       )}
     </Root>
   );

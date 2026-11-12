@@ -28,120 +28,67 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping
 
-# 锁定的五层(皮肤与毛发拆成两层，镜头裁切时它们的去留不同)，顺序即渲染顺序。
-FACE_LAYERS: tuple[tuple[str, str], ...] = (
-    ("identity", "身份锚点"),
-    ("bone", "骨相"),
-    ("features", "五官"),
-    ("skin", "皮肤"),
-    ("hair", "毛发"),
-    ("physique", "体态"),
-)
-OTHER_LABEL = "其他固定特征"
-NEGATIVE_LABEL = "画面避免"
-# 解析时认得的段首层名：解析自己渲染出的文本，片段回到原层。
-_SEGMENT_LABELS = {label: key for key, label in FACE_LAYERS} | {OTHER_LABEL: "other", NEGATIVE_LABEL: "negatives"}
+from app.core import prompt_data
 
-# 半身像只留 2—3 个皮肤词；再多 AI 会过度纹理化，脸变脏。
-MAX_SKIN_TERMS = 3
+# The layer names, the word tables, the split rules and what the audit says:
+# app/data/prompt/face_card.json (its _about says why each table is ordered the way it is).
+_WORDING = "face_card"
 
 Framing = Literal["close", "full", "all"]
 BoneSystem = Literal["east_asian", "european"]
 
+
+def _word_table(key: str) -> dict[BoneSystem, tuple[str, ...]]:
+    """A ``{system: words}`` table of the card's data, in file order."""
+    return {name: tuple(str(word) for word in words) for name, words in prompt_data.value(_WORDING, key).items()}
+
+
+def _rules(key: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """A first-match ``[[name, [words…]], …]`` table of the card's data, in file order."""
+    return tuple((str(name), tuple(str(word) for word in words)) for name, words in prompt_data.value(_WORDING, key))
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A sentence of the audit's wording, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return str(prompt_data.load(_WORDING)["issues"][key]).format(**values)
+
+
+# 锁定的六层(皮肤与毛发拆成两层)，顺序即渲染顺序。
+FACE_LAYERS: tuple[tuple[str, str], ...] = prompt_data.pairs(_WORDING, "layers")
+OTHER_LABEL = prompt_data.text(_WORDING, "other_label")
+NEGATIVE_LABEL = prompt_data.text(_WORDING, "negative_label")
+_LABEL_SEP = prompt_data.text(_WORDING, "label_separator")
+_LIST_SEP = prompt_data.text(_WORDING, "list_separator")
+_SEGMENT_SEP = prompt_data.text(_WORDING, "segment_separator")
+# 解析时认得的段首层名：解析自己渲染出的文本，片段回到原层。
+_SEGMENT_LABELS = {label: key for key, label in FACE_LAYERS} | {OTHER_LABEL: "other", NEGATIVE_LABEL: "negatives"}
+
+# 半身像只留这么多皮肤词；再多 AI 会过度纹理化，脸变脏。
+MAX_SKIN_TERMS = prompt_data.number(_WORDING, "max_skin_terms")
+
 # ---------------- 骨相系统词库 ----------------
-# 只收两套系统里「有区分度」的锚点；脸型、眼睛这类两边都用的通用词不收。
-# 「高鼻梁」「五官深邃」在中文语境里也常用来写东亚角色，收进来会误报，故不收。
-_BONE_SYSTEM_TERMS: dict[BoneSystem, tuple[str, ...]] = {
-    "east_asian": (
-        "浅眼窝", "眼窝浅", "平缓眉弓", "眉弓平缓", "低鼻根", "鼻根低", "内眦褶", "内双",
-        "单眼皮", "面中平缓", "面部中前区平缓", "扁平脸", "短鼻梁", "圆钝鼻尖", "鼻尖圆钝",
-        "宽鼻翼", "下巴后缩", "颧弓外扩",
-        "shallow eye socket", "low nasal root", "epicanthal fold", "inner double eyelid",
-        "monolid", "flat midface", "short nasal bridge", "rounded nasal tip",
-    ),
-    "european": (
-        "深眼窝", "眼窝深", "高眉弓", "强眉弓", "眉弓突出", "高鼻根", "鼻根高", "欧式大双",
-        "平行双", "无内眦褶", "尖锐鼻尖", "鼻尖尖锐", "窄鼻翼", "面中突出", "面部中前区突出",
-        "下巴前翘",
-        "deep-set eye", "deeper-set eye", "high nasal root", "higher nasal root",
-        "strong brow ridge", "parallel double eyelid", "sharper nasal tip", "sharp nasal tip",
-        "narrow nasal wing", "no epicanthal fold",
-    ),
+_BONE_SYSTEM_TERMS: dict[BoneSystem, tuple[str, ...]] = _word_table("bone_system_terms")
+# 单一系统的卡自动把对面系统最容易「拉混血」的锚点写进负面提示。键是卡自己的系统。
+_MIXING_NEGATIVES: dict[BoneSystem, tuple[str, ...]] = _word_table("mixing_negatives")
+_POPULATION_LABELS: dict[BoneSystem, tuple[str, ...]] = _word_table("population_labels")
+_SYSTEM_NAMES: dict[BoneSystem, str] = {
+    name: str(label) for name, label in prompt_data.value(_WORDING, "system_names").items()
 }
-# 单一系统的卡自动把对面系统最容易「拉混血」的锚点写进负面提示(文章模板里的 --no)。
-# 键是卡自己的系统，值是这张卡要避开的对面锚点。
-_MIXING_NEGATIVES: dict[BoneSystem, tuple[str, ...]] = {
-    "east_asian": ("深眼窝", "高鼻根", "强眉弓"),
-    "european": ("面中平缓", "内眦褶"),
-}
-_POPULATION_LABELS: dict[BoneSystem, tuple[str, ...]] = {
-    "east_asian": ("东亚", "中国", "华人", "汉族", "日本", "韩国", "east asian", "chinese", "japanese", "korean"),
-    "european": (
-        "北欧", "南欧", "东欧", "西欧", "高加索", "白人", "european", "caucasian", "nordic", "scandinavian",
-    ),
-}
-_SYSTEM_NAMES: dict[BoneSystem, str] = {"east_asian": "东亚", "european": "欧洲"}
 # 「亚洲」「欧洲」本身太宽：前面没有东/南/西/北限定时视为大而空的标签。
-_VAGUE_LABELS = (
-    re.compile(r"(?<![东南西北])亚洲"),
-    re.compile(r"(?<![东南西北])欧洲"),
-    re.compile(r"(?<!east )(?<!south )(?<!southeast )\basian\b", re.I),
-    re.compile(r"(?<!northern )(?<!southern )(?<!eastern )(?<!western )\beuropean\b", re.I),
+_VAGUE_LABELS = tuple(
+    re.compile(str(item["pattern"]), re.I if item["ignore_case"] else 0)
+    for item in prompt_data.value(_WORDING, "vague_labels")
 )
 
 # ---------------- 分层关键词 ----------------
-# 按优先级归层：服装配饰先拦下(否则「眼镜」会被认成五官)，皮肤质感先于五官(「眼下细纹」是皮肤)，
-# 骨相专词先于五官(「眉弓」不是「眉」)，泛化的「脸」垫后，体态最后(「瘦削的脸」是骨相不是体态)。
-_LAYER_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("other", (
-        "穿", "衣", "服", "裙", "裤", "鞋", "靴", "帽", "袍", "衫", "装", "围巾", "披风", "盔甲",
-        "眼镜", "项链", "耳环", "耳坠", "戒指", "手表", "手镯", "腰带", "配饰", "道具",
-        "wear", "dress", "shirt", "coat", "jacket", "glasses", "costume",
-    )),
-    ("identity", ("气质",)),  # 「散发着清冷气质」不是发型
-    ("skin", (
-        "肤", "毛孔", "绒毛", "细纹", "瑕疵", "雀斑", "泛红", "哑光", "磨皮", "油光", "颗粒",
-        "痘", "skin", "pore", "freckle", "redness", "matte", "fine lines", "blemish",
-    )),
-    ("bone", (
-        "颧", "下颌", "下颚", "颌", "眉弓", "眼窝", "面中", "骨相", "骨骼", "脸型", "折叠", "轮廓",
-        "额头", "扁平脸", "jaw", "cheekbone", "brow ridge", "eye socket", "midface", "bone structure",
-        "face shape", "lower face",
-    )),
-    ("features", (
-        "眼", "眸", "睫", "眦", "内双", "双眼皮", "单眼皮", "鼻", "唇", "嘴", "下巴", "痣", "疤",
-        "酒窝", "梨涡", "牙", "耳", "眉", "eyelid", "eyes", "nasal", "nose", "lips", "chin", "mole",
-        "scar", "dimple", "epicanthal", "monolid", "brow",
-    )),
-    ("hair", (
-        "发", "马尾", "辫", "刘海", "鬓", "胡", "须", "寸头", "光头", "丸子头", "体毛",
-        "hair", "beard", "ponytail", "bangs",
-    )),
-    ("bone", ("脸", "face")),
-    ("physique", (
-        "身高", "肩", "躯干", "四肢", "腿", "臂", "重心", "体型", "体态", "身材", "高挑", "矮小",
-        "魁梧", "健壮", "苗条", "微胖", "精瘦", "清瘦", "瘦", "头身", "骨架", "腰身", "细腰", "骨盆",
-        "shoulder", "torso", "limb", "build", "tall", "slender", "petite",
-    )),
-    ("identity", (
-        "岁", "少年", "青年", "中年", "老年", "少女", "男", "女", "气质", "身份", "混血", "人",
-        "woman", "man", "girl", "boy", "years old",
-    )),
-)
-# 远景/全身里看不见的皮肤质感词；肤色词(暖黄调、冷白皮)仍然保留。
-_SKIN_TEXTURE_TERMS = (
-    "毛孔", "绒毛", "细纹", "瑕疵", "颗粒", "纹理", "质感", "哑光", "雀斑", "泛红", "肤色不均",
-    "痘", "光泽", "油光", "细腻", "粗糙", "磨皮",
-    "pore", "peach fuzz", "fine lines", "blemish", "grain", "texture", "matte", "freckle", "redness",
-)
-# 肤色词：远景里仍看得见。「暖黄调半哑光皮肤」这种片段带着肤色，远景也保留。
-_SKIN_TONE_TERMS = (
-    "调", "白皙", "冷白", "暖黄", "黝黑", "小麦", "古铜", "苍白", "tone", "fair", "tan", "pale",
-)
-# 「别致」「勿忘我」不是否定，所以单字「别」「勿」不算。
-_NEGATION = re.compile(r"^(不要|避免|禁止|切勿|不能|不得|no\s|avoid\s|without\s)", re.I)
-_SEGMENT_SPLIT = re.compile(r"[；;。\n]+")
-_FRAGMENT_SPLIT = re.compile(r"[，,、]+")
+# 按优先级归层，先命中的层胜出(顺序的理由见 face_card.json 的 _about)。
+_LAYER_RULES: tuple[tuple[str, tuple[str, ...]], ...] = _rules("layer_rules")
+# 远景/全身里看不见的皮肤质感词；肤色词仍然保留。
+_SKIN_TEXTURE_TERMS = prompt_data.words(_WORDING, "skin_texture_terms")
+_SKIN_TONE_TERMS = prompt_data.words(_WORDING, "skin_tone_terms")
+_NEGATION = prompt_data.pattern(_WORDING, "negation", re.I)
+_SEGMENT_SPLIT = prompt_data.pattern(_WORDING, "segment_split")
+_FRAGMENT_SPLIT = prompt_data.pattern(_WORDING, "fragment_split")
 
 
 @dataclass
@@ -173,6 +120,16 @@ class FaceCardIssue:
     suggestion: str
 
 
+def _issue(code: str, /, **values: object) -> FaceCardIssue:
+    """One audit finding: its message and suggestion read from the card's data, filled in."""
+    wording = prompt_data.load(_WORDING)["issues"][code]
+    return FaceCardIssue(
+        code=code,  # type: ignore[arg-type]
+        message=str(wording["message"]).format(**values),
+        suggestion=str(wording["suggestion"]).format(**values),
+    )
+
+
 def _classify(fragment: str) -> str:
     lowered = fragment.lower()
     for layer, terms in _LAYER_RULES:
@@ -197,11 +154,11 @@ def parse_face_card(text: str) -> FaceCard:
         segment = segment.strip()
         if not segment:
             continue
-        label, sep, rest = segment.partition("：")
+        label, sep, rest = segment.partition(_LABEL_SEP)
         forced = _SEGMENT_LABELS.get(label.strip()) if sep else None
         if forced:
             # 上游有时自己已经带了层名(「骨相：骨相：瓜子脸」)，多出来的那层一并剥掉。
-            segment = rest.removeprefix(f"{label.strip()}：")
+            segment = rest.removeprefix(f"{label.strip()}{_LABEL_SEP}")
         for fragment in _FRAGMENT_SPLIT.split(segment):
             fragment = fragment.strip()
             if not fragment:
@@ -230,11 +187,11 @@ def _match_terms(text: str, terms_by_key: dict[BoneSystem, tuple[str, ...]]) -> 
 
 def bone_systems(card: FaceCard) -> dict[BoneSystem, list[str]]:
     """卡里骨相层与五官层命中的系统锚点。"""
-    return _match_terms("、".join(card.bone + card.features), _BONE_SYSTEM_TERMS)
+    return _match_terms(_LIST_SEP.join(card.bone + card.features), _BONE_SYSTEM_TERMS)
 
 
 def population_systems(card: FaceCard) -> set[BoneSystem]:
-    return set(_match_terms("、".join(card.identity), _POPULATION_LABELS))
+    return set(_match_terms(_LIST_SEP.join(card.identity), _POPULATION_LABELS))
 
 
 def card_negatives(card: FaceCard) -> list[str]:
@@ -265,36 +222,23 @@ def audit_face_card(card: FaceCard) -> list[FaceCardIssue]:
     issues: list[FaceCardIssue] = []
     systems = bone_systems(card)
     if len(systems) > 1:
-        detail = "；".join(f"{_SYSTEM_NAMES[key]}：{'、'.join(terms)}" for key, terms in systems.items())
-        issues.append(FaceCardIssue(
-            code="mixed_bone_system",
-            message=f"骨相与五官里混用了两套骨相锚点（{detail}），模型容易拉出一张混血脸。",
-            suggestion="人群标签只配同一套骨相锚点；确实要混血角色，就在身份锚点里写明混血再选一套为主。",
-        ))
+        detail = _SEGMENT_SEP.join(
+            _says("system_terms", system=_SYSTEM_NAMES[key], terms=_LIST_SEP.join(terms)) for key, terms in systems.items()
+        )
+        issues.append(_issue("mixed_bone_system", detail=detail))
     labels = population_systems(card)
     if len(systems) == 1 and labels and not labels & set(systems):
         (system,) = systems
-        issues.append(FaceCardIssue(
-            code="label_anchor_conflict",
-            message=(
-                f"身份锚点写的是{'、'.join(_SYSTEM_NAMES[key] for key in labels)}，"
-                f"骨相锚点却全来自{_SYSTEM_NAMES[system]}一套。"
-            ),
-            suggestion="人群标签和骨相锚点放在同一套系统里，哪层不对改哪层，不要继续加词。",
+        issues.append(_issue(
+            "label_anchor_conflict",
+            labels=_LIST_SEP.join(_SYSTEM_NAMES[key] for key in labels),
+            system=_SYSTEM_NAMES[system],
         ))
     if _skin_texture_count(card) > MAX_SKIN_TERMS:
-        issues.append(FaceCardIssue(
-            code="skin_overload",
-            message=f"皮肤质感词超过{MAX_SKIN_TERMS}个，近景里脸会被过度纹理化、显脏。",
-            suggestion="想自然写「轻微肤色不均、眼下细纹」，想干净写「半哑光、细腻肤质」，二三个即可。",
-        ))
-    identity_text = "、".join(card.identity)
+        issues.append(_issue("skin_overload", limit=MAX_SKIN_TERMS))
+    identity_text = _LIST_SEP.join(card.identity)
     if identity_text and not labels and any(pattern.search(identity_text) for pattern in _VAGUE_LABELS):
-        issues.append(FaceCardIssue(
-            code="vague_population_label",
-            message="只写了「亚洲」「欧洲」这类大而空的人群标签，模型只会给出最平均的模板脸。",
-            suggestion="限定到东亚、北欧这类具体标签，并补上脸型、眼窝、鼻根、下颌等骨相锚点。",
-        ))
+        issues.append(_issue("vague_population_label"))
     return issues
 
 
@@ -319,17 +263,14 @@ def render_face_card(card: FaceCard, framing: Framing = "all", *, include_other:
         elif key == "skin" and framing == "close":
             values = values[:MAX_SKIN_TERMS]
         if values:
-            parts.append(f"{label}：{'、'.join(values)}")
+            parts.append(f"{label}{_LABEL_SEP}{_LIST_SEP.join(values)}")
     if include_other and card.other:
-        parts.append(f"{OTHER_LABEL}：{'、'.join(card.other)}")
-    return "；".join(parts)
+        parts.append(f"{OTHER_LABEL}{_LABEL_SEP}{_LIST_SEP.join(card.other)}")
+    return _SEGMENT_SEP.join(parts)
 
 
-# 景别 → 裁切。「中近景」「中景」先于「近景」判断，否则会被当成特写。
-_FRAMING_PATTERNS: tuple[tuple[Framing, tuple[str, ...]], ...] = (
-    ("full", ("全景", "远景", "全身", "七分身", "大全景", "wide", "full shot", "long shot", "establishing")),
-    ("close", ("中近景", "中景", "半身", "近景", "特写", "medium", "close", "bust", "mcu", "ecu")),
-)
+# 景别 → 裁切，按顺序判断：「中近景」「中景」先于「近景」，否则会被当成特写。
+_FRAMING_PATTERNS: tuple[tuple[Framing, tuple[str, ...]], ...] = _rules("framing_patterns")
 
 
 def framing_for_shot_size(shot_size: str) -> Framing:
@@ -342,9 +283,7 @@ def framing_for_shot_size(shot_size: str) -> Framing:
 
 
 # 阶段 3 角色状态卡里的分层字段 → 层名(「body」在状态卡里叫体型，在资产卡里是体态层)。
-STATE_LAYER_FIELDS: tuple[tuple[str, str], ...] = (
-    ("bone", "骨相"), ("features", "五官"), ("skin", "皮肤"), ("hair", "毛发"), ("body", "体态"),
-)
+STATE_LAYER_FIELDS: tuple[tuple[str, str], ...] = prompt_data.pairs(_WORDING, "state_layer_fields")
 
 
 def state_face_fragments(state: Mapping[str, Any]) -> list[str]:
@@ -353,7 +292,7 @@ def state_face_fragments(state: Mapping[str, Any]) -> list[str]:
     设定集描述(drama_service)和看板质检(character_dashboard)都从这里取，两边归层一致。
     """
     fragments = [
-        f"{label}：{str(state[key]).strip()}"
+        f"{label}{_LABEL_SEP}{str(state[key]).strip()}"
         for key, label in STATE_LAYER_FIELDS
         if str(state.get(key) or "").strip()
     ]

@@ -352,6 +352,19 @@ class WriterDashboardApiTests(unittest.TestCase):
         self.assertIsNone(claimed["short_link"])
         self.assertIsNone(claimed["pr_content"])
 
+    def test_an_emptied_relationship_list_is_reported_as_authored(self):
+        # Empty and never analysed look the same in the list; only this flag tells the page not to analyse again.
+        with patch.object(drama_api, "service", self.service):
+            before = self.client.get("/api/drama/writer-task-1/writer-dashboard").json()
+            response = self.client.put("/api/drama/writer-task-1/relationships", json={"relationships": []})
+            reloaded = self.client.get("/api/drama/writer-task-1/writer-dashboard").json()
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(before["relationshipsAuthored"])
+        self.assertTrue(response.json()["relationshipsAuthored"])
+        self.assertTrue(response.json()["relationshipsInferred"])
+        self.assertTrue(reloaded["relationshipsAuthored"])
+
     def test_relationship_update_rejects_invalid_payloads(self):
         with patch.object(drama_api, "service", self.service):
             blank = self.client.put(
@@ -1437,6 +1450,17 @@ class CharacterExtractionTests(unittest.TestCase):
     def test_analysed_relations_are_not_flagged(self):
         self.assertFalse(compile_writer_dashboard(_task()).relationships_inferred)
 
+    def test_relations_count_as_authored_only_once_the_breakdown_says_so(self):
+        task = _task()
+        self.assertFalse(compile_writer_dashboard(task).relationships_authored)
+        task["assets"]["2_breakdown"]["relationships"] = []
+        task["assets"]["2_breakdown"]["relationships_authored"] = True
+
+        dashboard = compile_writer_dashboard(task)
+
+        self.assertTrue(dashboard.relationships_authored)
+        self.assertTrue(dashboard.relationships_inferred)
+
 
 class StorySynopsisFallbackTests(unittest.TestCase):
     """Without a breakdown the brief used to show the raw file head."""
@@ -1510,6 +1534,7 @@ class RelationshipAnalysisTests(unittest.TestCase):
         dashboard = self.service.analyze_relationships("writer-task-1")
 
         self.assertFalse(dashboard.relationships_inferred)
+        self.assertTrue(dashboard.relationships_authored)
         self.assertEqual(
             [(edge.from_, edge.to, edge.relation) for edge in dashboard.relationships],
             [("林夏", "周教授", "师徒反目")],

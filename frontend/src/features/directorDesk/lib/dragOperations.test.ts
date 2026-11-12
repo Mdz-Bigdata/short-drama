@@ -85,6 +85,17 @@ describe('dragOperations', () => {
     expect(aimed.operations).toEqual([{ op: 'move_camera', camera_id: 'cam-01', target: [0.5, 1.2, 0] }]);
   });
 
+  it('keeps the handle of a raised piece at its own height', () => {
+    const plan: StagePlan = { ...PLAN, landmarks: [{ ...PLAN.landmarks[0], elevation_m: 0.75 }] };
+    const primary = { kind: 'landmark', name: '录音笔' } as const;
+    const start = anchorOf(plan, undefined, primary)!;
+    expect(start.position).toEqual([0, 0.75, -0.9]);
+    const moved = dragOperations({ plan, shot: undefined, selection: [primary], primary, mode: 'translate', snap: FREE, start, now: at(0.4, 0.75, -0.5) });
+    // The move is along the floor: the operation carries no height, and the handle stays level.
+    expect(moved.operations).toEqual([{ op: 'transform_landmark', name: '录音笔', position: [0.4, -0.5] }]);
+    expect(moved.anchor.position).toEqual([0.4, 0.75, -0.5]);
+  });
+
   it('turns and re-spaces a crowd as one', () => {
     const primary = { kind: 'crowd', id: 'crowd-01' } as const;
     const start = anchorOf(CROWDED, undefined, primary)!;

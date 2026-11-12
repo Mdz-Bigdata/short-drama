@@ -33,12 +33,14 @@ class WorkflowTranscriptTests(unittest.TestCase):
             asyncio.run(self.service.execute_all_stages("workflow"))
         history = self.service.get_task_status("workflow")["chat_history"]
         for stage in range(1, 9):
+            # 用户看到七步：声音、成片都是第 6 步(剪辑合成师)，宣发是第 7 步。
+            step = stage if stage <= 6 else stage - 1
             self.assertTrue(
-                any(f"开始第 {stage}/8 步" in item["content"] for item in history)
+                any(f"开始第 {step}/7 步：{self.service.STAGE_LABELS[stage]}" in item["content"] for item in history)
             )
             self.assertTrue(
                 any(
-                    f"第 {stage}/8 步" in item["content"]
+                    f"第 {step}/7 步：{self.service.STAGE_LABELS[stage]}" in item["content"]
                     and "产物已生成" in item["content"]
                     for item in history
                 )
@@ -84,7 +86,7 @@ class WorkflowTranscriptTests(unittest.TestCase):
             self.assertEqual(saved["status"], "stopped" if stop else "paused")
             contents = [item["content"] for item in saved["chat_history"]]
             self.assertFalse(any("自动进入" in text for text in contents))
-            self.assertFalse(any("开始第 2/8 步" in text for text in contents))
+            self.assertFalse(any("开始第 2/7 步" in text for text in contents))
             self.assertIn("结束" if stop else "暂停", contents[-1])
 
     def test_partial_storyboard_never_claims_the_entire_stage_is_complete(self):
@@ -101,7 +103,7 @@ class WorkflowTranscriptTests(unittest.TestCase):
         self.service._progress_done(task)
         content = task["chat_history"][-1]["content"]
         self.assertIn("本轮", content)
-        self.assertIn("4/8", content)
+        self.assertIn("4/7", content)
         self.assertNotIn("自动进入第 5", content)
         self.assertIn("分镜", content)
 
@@ -117,7 +119,7 @@ class WorkflowTranscriptTests(unittest.TestCase):
         history = self.service.repo.get_task("workflow")["chat_history"]
         assistant = [item["content"] for item in history if item["role"] == "assistant"]
         self.assertEqual(len(assistant), 1)
-        self.assertIn("开始第 1/8 步", assistant[0])
+        self.assertIn("开始第 1/7 步", assistant[0])
         self.assertEqual(result["reply"], assistant[0])
         self.assertEqual(len(history), len({item["id"] for item in history}))
 
@@ -137,7 +139,7 @@ class WorkflowTranscriptTests(unittest.TestCase):
         snapshot = self.service.workflow_snapshot(self.service.repo.get_task("workflow"))
         self.assertEqual(snapshot["completed_stages"], [1])
         self.assertEqual(snapshot["next_stage"], 2)
-        self.assertIn("第 2/8 步：编剧剧本创作", snapshot["hint"])
+        self.assertIn("第 2/7 步：编剧剧本创作", snapshot["hint"])
 
     def test_replaying_a_stage_still_reports_it_as_unfinished_while_it_runs(self):
         worker = self.service._claim_stage_task("workflow", 1)

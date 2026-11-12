@@ -43,7 +43,7 @@ from typing import Any
 from app.core import breakdown_kinds, emotion_points, literary
 from app.core.episode_shape import EpisodeShape
 from app.core import creation_modes
-from app.core.screenwriting import fact_check, ledger_ops, review
+from app.core.screenwriting import fact_check, filmability, ledger_ops, review
 from app.core.screenwriting.anchors import AnchorRejected, normalize_source_text, resolve_boundaries
 from app.core.screenwriting.durations import (
     DEFAULT_EPISODE_TARGET_SECONDS,
@@ -117,7 +117,8 @@ def _in_context(fn, *args):
     return lambda: context.run(fn, *args)
 # Violations the model is asked to fix on retry, but which a human edit may keep
 # (the shot is flagged ``needs_replan`` instead of the whole draft being refused).
-_SOFT_ON_HUMAN_EDIT = frozenset({"speech_exceeds_max", "utterance_not_verbatim", "mixed_speech", creation_modes.NARRATION_DIALOGUE})
+# 可拍性问题对人只提示：人改的剧本由人拍板。
+_SOFT_ON_HUMAN_EDIT = frozenset({"speech_exceeds_max", "utterance_not_verbatim", "mixed_speech", creation_modes.NARRATION_DIALOGUE}) | filmability.codes()
 
 ProgressFn = Callable[[int, str], None]
 
@@ -293,6 +294,7 @@ class ScreenwritingEngine:
         source_kind: str | None = None,
         own_episodes: Sequence[Mapping[str, Any]] | None = None,
         outline_only: bool = False,
+        on_cast: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Run the whole pipeline and return the persisted state dict.
 
@@ -304,6 +306,10 @@ class ScreenwritingEngine:
 
         ``outline_only`` stops once the overview, the asset inventory and the whole ledger
         are in: no episode is written, and ``write_planned`` writes them later.
+
+        Order: the overview and the asset inventory (cast, positions, relationships) come first and
+        ``on_cast(state)`` is told at once, so the writer board and the relationship graph show while
+        the rest is planned; the ledger and every episode are then planned from that cast.
         """
         own = _own_episode_inputs(own_episodes)
         kind = source_kind or detect_source_kind(source_text)
@@ -364,23 +370,21 @@ class ScreenwritingEngine:
                 entry.source_origin = "none"
             return entries
 
-        # The asset inventory and the ledger both read only the overview and the source, so
-        # they are extracted side by side; the serial setting keeps the one-call-at-a-time order.
-        self.progress(10, "编剧 · 提取角色 / 场景 / 道具资产")
+        # 创作看板与人物关系先出：角色、戏剧位置和人物关系定下来，分集账本和逐集剧本都照它写。
+        self.progress(10, "编剧 · 创作看板：提取角色 / 人物关系 / 场景 / 道具")
+        state["inventory"] = self._inventory(analysis_source, kind, overview)
+        if on_cast is not None:
+            try:
+                on_cast(state)
+            except Exception as error:  # noqa: BLE001 - showing the board early must not cost the screenplay
+                logger.warning("[Screenwriting] 创作看板提前展示失败：%s", type(error).__name__)
         if not outline_only and self.episode_concurrency > 1 and not normalized_source and planned_count > self.plan_batch_size:
             # A long series planned from the outline: each ledger batch's episodes are written
             # while the next batch is still being planned (a source is cut in one pass instead).
-            self._write_pipelined(state, planned_count, own, episode_count, analysis_source=analysis_source, kind=kind, overview=overview)
+            self._write_pipelined(state, planned_count, own, episode_count)
             state["updated_at"] = _now()
             return state
-        if self.episode_concurrency > 1:
-            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="screenwriting-inventory") as pool:
-                inventory_future = pool.submit(_in_context(self._inventory, analysis_source, kind, overview))
-                planned = plan_ledger()
-                state["inventory"] = inventory_future.result()
-        else:
-            state["inventory"] = self._inventory(analysis_source, kind, overview)
-            planned = plan_ledger()
+        planned = plan_ledger()
         state["ledger"] = [entry.model_dump(mode="json") for entry in planned]
         state["ledger"].extend(
             self._own_ledger_entry(len(planned) + offset + 1, entry).model_dump(mode="json")
@@ -414,7 +418,6 @@ class ScreenwritingEngine:
 
     def _write_pipelined(
         self, state: dict[str, Any], planned_count: int, own: Sequence[Mapping[str, Any]], episode_count: int,
-        *, analysis_source: str, kind: str, overview: Mapping[str, Any],
     ) -> None:
         """``write`` for a long outline-mode series: batch k is written while batch k+1 is planned.
 
@@ -437,12 +440,10 @@ class ScreenwritingEngine:
         written = 0
         pending: list[int] = []
         ahead = None
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="screenwriting-plan-ahead") as pool:
-            inventory_future = pool.submit(_in_context(self._inventory, analysis_source, kind, overview))
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="screenwriting-plan-ahead") as pool:
             self.progress(14, "编剧 · 规划分集账本（标题 / 钩子 / 故事节点）")
             ahead = pool.submit(_in_context(functools.partial(self._plan_outline_batch, plan_view, *batches[0], total=total_planned, earlier=[])))
             try:
-                state["inventory"] = inventory_future.result()
                 for index, (first, last) in enumerate(batches):
                     entries = ahead.result()
                     for entry in entries:
@@ -471,9 +472,8 @@ class ScreenwritingEngine:
                         written += len(numbers)
             except BaseException:
                 # A batch that has not started is dropped; one in flight is waited for on the way out.
-                for future in (inventory_future, ahead):
-                    if future is not None:
-                        future.cancel()
+                if ahead is not None:
+                    ahead.cancel()
                 raise
 
     @_in_output_language
@@ -650,6 +650,7 @@ class ScreenwritingEngine:
             title=title, director_plan=director_plan, overview=state.get("overview"),
             first=first, last=last, total=total, context_entries=context,
             target_seconds=self.episode_target_seconds, instructions=self.instructions,
+            cast=state.get("inventory"),
         )
 
         def _count_validator(data: dict[str, Any]) -> list[str]:
@@ -658,7 +659,11 @@ class ScreenwritingEngine:
                 return [f"episodes 数组长度必须等于 {expected}（对应第 {first} 集到第 {last} 集），当前为 {got}"]
             return [
                 problem for offset, draft in enumerate(data.get("episodes") or [])
-                for problem in emotion_points.beat_problems((draft or {}).get("story_beats") or [], label=f"第 {first + offset} 集")
+                for problem in [
+                    *emotion_points.beat_problems((draft or {}).get("story_beats") or [], label=f"第 {first + offset} 集"),
+                    # 剧本之初就质检可拍性：大纲的故事节点里就不写画面文字、瞬移、形态突变。
+                    *filmability.beat_problems((draft or {}).get("story_beats") or [], label=f"第 {first + offset} 集"),
+                ]
             ]
 
         def _ask(user_prompt: str) -> list[LedgerEntry]:
@@ -723,6 +728,7 @@ class ScreenwritingEngine:
                 window=window, window_is_final=final, overview=state.get("overview"), source_kind=kind,
                 context_entries=[entry.model_dump() for entry in entries[-5:]], target_volume=target_volume,
                 max_episodes=max_episodes, remaining_episodes=remaining_episodes, instructions=self.instructions,
+                cast=state.get("inventory"),
             )
             resolved: dict[str, list[int]] = {}
 
@@ -980,6 +986,12 @@ class ScreenwritingEngine:
             "next_episode_teaser": entry.get("next_episode_teaser"),
         }
 
+    @staticmethod
+    def _relationships(state: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+        """创作看板上已定的人物关系(资产表里的 relationships)，逐集撰写都照它写。"""
+        inventory = state.get("inventory") if isinstance(state.get("inventory"), Mapping) else {}
+        return [item for item in inventory.get("relationships") or [] if isinstance(item, Mapping)]
+
     def _script_plan_prompt(self, state: Mapping[str, Any], episode: int, ledger: Mapping[str, Any]) -> str:
         characters, scenes, props = self._inventory_maps(state)
         return build_script_plan_prompt(
@@ -991,6 +1003,7 @@ class ScreenwritingEngine:
             episode_outline=self._outline_of(ledger), next_episode_outline=self._outline_of(self._next_ledger_entry(state, episode)),
             language=self.language, speech_rate_override=self.speech_rate_override,
             spoken_shot_ratio=self.spoken_shot_ratio, creation_mode=str(self.creation.get("creation_mode") or "drama"),
+            relationships=self._relationships(state),
         )
 
     def _check_context(self, state: Mapping[str, Any], episode: int) -> PlanCheckContext:
@@ -1138,6 +1151,7 @@ class ScreenwritingEngine:
             characters=present or characters, content_scenes=content_scenes,
             episode_outline=self._outline_of(self._ledger_entry(state, episode)),
             previous_ending=previous_ending, previous_is_plan=previous_is_plan, language=self.language,
+            relationships=self._relationships(state),
         )
 
     def _author_prose(

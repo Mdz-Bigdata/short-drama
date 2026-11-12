@@ -9,12 +9,14 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core import prompt_data
+from app.core import clip_skeleton, prompt_data
 from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS, MAX_SEQUENCE_IMAGES
 
 
+# "first_frame" 不是出品人能选的项目设置(见 _USER_VIDEO_REFERENCE_MODES)：只由第 5 阶段的接法规则(clip_route)
+# 明确指定——同场接上一镜尾帧、唯一一张分镜当首帧起步。
 VideoReferenceMode = Literal[
-    "auto", "first_last_frame", "multi_reference", "multimodal",
+    "auto", "first_frame", "first_last_frame", "multi_reference", "multimodal",
 ]
 ExecutableVideoMode = Literal[
     "text", "first_frame", "first_last_frame", "multi_reference", "multimodal",
@@ -341,12 +343,17 @@ def video_native_audio(model: str) -> bool:
 def uses_native_soundtrack(config: Mapping[str, Any]) -> bool:
     """Whether this project's clips keep the sound the video model made, with no dubbing over it.
 
-    Only MiniMax H3 so far: it is the one this was listened to on. ``native_audio: false`` goes back to dubbing.
+    Every model that renders sound with the picture (MiniMax H3, Seedance 2.x, Grok, LTX …): the model's own voices
+    match its lip movement, a dub laid over them does not. A clip that comes back with no sound is still dubbed, shot
+    by shot (see ``media_compositor.clip_has_sound``). ``native_audio: false`` goes back to dubbing everything;
+    ``MINIMAX_H3_NATIVE_AUDIO=0`` does so for H3 alone.
     """
     model = str(config.get("video_model") or "")
-    if os.getenv("MINIMAX_H3_NATIVE_AUDIO", "1") in {"0", "false", "False"}:  # the clips come back silent
+    if config.get("native_audio") is False or not video_native_audio(model):
         return False
-    return config.get("native_audio") is not False and video_native_audio(model) and normalize_video_provider(model).family == "minimax_h3"
+    if normalize_video_provider(model).family == "minimax_h3" and os.getenv("MINIMAX_H3_NATIVE_AUDIO", "1") in {"0", "false", "False"}:
+        return False  # the H3 clips come back silent
+    return True
 
 
 def normalize_video_provider(model: str) -> VideoProviderProfile:
@@ -373,7 +380,11 @@ def normalize_video_provider(model: str) -> VideoProviderProfile:
 
 
 _NUMBERED_MENTION = re.compile(r"（参考图(\d+)）")
-_REFERENCE_NOTE = re.compile(r"参考图(\d+)(仅锁定[^；。]*?不是额外剧情或额外人物)([；。]?)")
+# 一句参考图职责：「参考图N仅锁定……」或真人正脸照的「参考图N是……」，连同指着这张图的真人提示一起改号或删掉；
+# 后面的服装文字、真实尺寸不跟着删(图没发出去，文字还要管用)。
+_REFERENCE_NOTE = re.compile(
+    r"参考图(\d+)((?:仅锁定|是)[^；。]*?不是额外剧情或额外人物(?:" + re.escape(prompt_data.text("real_person", "reference_body")) + r")?)([；。]?)"
+)
 
 
 def _frames_only_wording(text: str) -> str:
@@ -416,13 +427,51 @@ def renumber_reference_mentions(prompt: str, identity_images: list[str], plan: "
 
     text = _REFERENCE_NOTE.sub(note, _NUMBERED_MENTION.sub(mention, prompt or ""))
     text = re.sub(r"；{2,}", "；", text)
-    if plan.first_frame and not sent:
+    frames_only = bool(plan.first_frame and not sent)
+    # 锚型定义按实际发出的图收拾：没发出去的图不留行，只有首(尾)帧时整段不写。
+    text = clip_skeleton.settle(text, frames_only=frames_only)
+    if frames_only:
         text = _frames_only_wording(text)
     if plan.first_frame is None and sent and sent[0] not in identity_images:
-        lead = "参考图1是本镜首帧画面，只决定开场构图、站位与光线；"
+        lead = "参考图1是开场画面，只决定开场构图、站位与光线；"
+        # 开场画面已经定了构图：场地视角图不再自称本镜的构图来源，两者不抢。
+        for old, new in prompt_data.pairs("scene_views", "with_opening"):
+            text = text.replace(old, new)
         if not text.startswith(lead):
             text = lead + text
     return text
+
+
+#: 说话角色定角音色样本的占位符：提示词写在路由之前，那时还不知道这段音频排第几(或发不发得出去)。
+#: 按名字占位，同一段多镜头片段里几个瞬间合并后也不撞号；发送前由 renumber_audio_mentions 换成真实编号。
+_VOICE_SAMPLE_MARK = "〈音频:{name}〉"
+_VOICE_SAMPLE = re.compile(
+    "(，?" + re.escape(prompt_data.text("voice_reference", "lock_lead")) + r")?〈音频:([^〉]+)〉"
+)
+
+
+def voice_placeholder(name: str) -> str:
+    """The placeholder a speaking character's voice anchor carries as ``ref_audio`` until routing is done."""
+    return _VOICE_SAMPLE_MARK.format(name=str(name or "").strip())
+
+
+def renumber_audio_mentions(prompt: str, voices: list[tuple[str, str]] | tuple, plan: "VideoReferencePlan") -> str:
+    """Number every voice-sample placeholder by the audio the request actually carries.
+
+    ``voices`` is ``[(name, url)]``: the cast voice samples offered for this shot. A sample the
+    routed plan carries becomes 参考音频N (its position in ``plan.reference_audios``, after the shot's
+    own reference audios); one it does not carry (first / first+last frame modes, a model that takes
+    no audio, over the limit) is removed together with its 音色参考 lead, so no number points at an
+    audio that is not there.
+    """
+    position = {url: index for index, url in enumerate(plan.reference_audios or [], start=1)}
+    urls = {str(name).strip(): url for name, url in voices or ()}
+
+    def sample(match: re.Match[str]) -> str:
+        number = position.get(urls.get(match.group(2).strip(), ""))
+        return prompt_data.text("voice_reference", "clause").format(n=number) if number else ""
+
+    return _VOICE_SAMPLE.sub(sample, prompt or "")
 
 
 def _asset_marker(kind: str, count: int) -> str:
@@ -491,14 +540,10 @@ def plan_video_references(
                 )
             fallbacks.append(f"{profile.family} 不支持当前视频/音频参考，转入视觉参考候选")
 
-        multi_image_signal = len(visual_refs) >= 2 and (
-            bool(sequences)
-            or intent.narrative_image_sequence
-            or intent.identity_consistency_required
-        )
-        if multi_image_signal and "multi_reference" in profile.modes:
-            score = 100 if intent.narrative_image_sequence or intent.multi_shot_output else 76
-            candidates.append((score, "multi_reference", "存在连续分镜或角色/场景多图，需要多图一致性约束"))
+        # 多图参考是默认：手里有一张图就带上它，分镜画面、人物、场地都进请求；
+        # 首尾帧只在结尾必须精确落定(或人工指定)时才压过它。
+        if visual_refs and "multi_reference" in profile.modes:
+            candidates.append((100, "multi_reference", "带上分镜画面与角色/场景参考图，多图一致性约束"))
 
         if "text" in profile.modes:
             candidates.append((5, "text", "没有更强的兼容视觉锚点，使用文本生成"))

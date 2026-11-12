@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
@@ -188,6 +189,51 @@ class ReviewRecord(BaseModel):
 
 CanvasTrack = Literal["mainline", "freezone"]
 
+# The node canvas is infinite: positions only have to stay finite and sane, not inside a page.
+CANVAS_COORD_LIMIT = 1_000_000_000
+CANVAS_SIZE_LIMIT = 1_000_000
+CANVAS_BOOKMARK_LIMIT = 10_000_000_000
+CANVAS_ZOOM_MIN, CANVAS_ZOOM_MAX = 0.01, 16
+CANVAS_MAX_NODES, CANVAS_MAX_EDGES = 5000, 12000
+# A group may hold a group, which may not hold another: a member's chain of groups is at most two long.
+CANVAS_GROUP_DEPTH = 2
+_CanvasCoord = Annotated[float, Field(ge=-CANVAS_COORD_LIMIT, le=CANVAS_COORD_LIMIT, allow_inf_nan=False)]
+_CanvasSize = Annotated[float, Field(gt=0, le=CANVAS_SIZE_LIMIT, allow_inf_nan=False)]
+
+
+def canvas_group_parents(nodes: list[dict[str, Any]] | list["CanvasNode"]) -> dict[str, str]:
+    """node id -> the group it sits in. A ``groupId`` naming no group (left over from a deletion) is ignored."""
+    rows = [item.model_dump() if isinstance(item, BaseModel) else item for item in nodes]
+    groups = {str(row.get("id")) for row in rows if row.get("kind") == "group"}
+    parents = {}
+    for row in rows:
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        parent = str(payload.get("groupId") or "")
+        if parent in groups:
+            parents[str(row.get("id"))] = parent
+    return parents
+
+
+def canvas_group_problem(nodes: list[dict[str, Any]] | list["CanvasNode"]) -> str | None:
+    """Why this nesting is not allowed, or ``None``: no group inside itself or its own member, at most one level of nesting."""
+    rows = [item.model_dump() if isinstance(item, BaseModel) else item for item in nodes]
+    kinds = {str(row.get("id")): row.get("kind") for row in rows}
+    parents = canvas_group_parents(rows)
+    for node_id, parent in parents.items():
+        if parent == node_id:
+            return f"分组 {node_id} 不能放进自己"
+        seen, chain, current = {node_id}, 0, parent
+        while current:
+            if current in seen:
+                return f"分组 {current} 不能放进它自己的成员里"
+            seen.add(current)
+            chain += 1
+            current = parents.get(current, "")
+        limit = CANVAS_GROUP_DEPTH - 1 if kinds.get(node_id) == "group" else CANVAS_GROUP_DEPTH
+        if chain > limit:
+            return "分组最多嵌套一层：分组里可以有分组，但里面的分组不能再放分组"
+    return None
+
 
 class CanvasNode(BaseModel):
     id: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$")]
@@ -197,10 +243,10 @@ class CanvasNode(BaseModel):
         "image_gen", "video_gen", "audio_gen", "video_compose", "style_ref", "panorama", "previz", "tool",
     ]
     track: CanvasTrack
-    x: Annotated[float, Field(ge=-1_000_000, le=1_000_000)]
-    y: Annotated[float, Field(ge=-1_000_000, le=1_000_000)]
-    width: Annotated[float, Field(gt=0, le=100_000)]
-    height: Annotated[float, Field(gt=0, le=100_000)]
+    x: _CanvasCoord
+    y: _CanvasCoord
+    width: _CanvasSize
+    height: _CanvasSize
     artifact_id: Annotated[str | None, Field(max_length=120)] = None
     payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -208,6 +254,20 @@ class CanvasNode(BaseModel):
     def artifact_backed_nodes_have_an_artifact(self) -> "CanvasNode":
         if self.kind in {"artifact", "candidate"} and not self.artifact_id:
             raise ValueError("artifact and candidate canvas nodes require artifact_id")
+        return self
+
+    @model_validator(mode="after")
+    def group_fold_state_is_well_formed(self) -> "CanvasNode":
+        if self.kind != "group":
+            return self
+        if "collapsed" in self.payload and not isinstance(self.payload["collapsed"], bool):
+            raise ValueError("group payload.collapsed must be a boolean")
+        size = self.payload.get("expandedSize")
+        if size is not None:
+            if not (isinstance(size, (list, tuple)) and len(size) == 2 and all(
+                isinstance(item, (int, float)) and not isinstance(item, bool) and math.isfinite(item) and 0 < item <= CANVAS_SIZE_LIMIT for item in size
+            )):
+                raise ValueError("group payload.expandedSize must be [width, height] with positive finite sizes")
         return self
 
 
@@ -221,8 +281,8 @@ class CanvasEdge(BaseModel):
 
 class CanvasPutRequest(BaseModel):
     expected_version: Annotated[int, Field(ge=0)]
-    nodes: Annotated[list[CanvasNode], Field(max_length=2000)] = Field(default_factory=list)
-    edges: Annotated[list[CanvasEdge], Field(max_length=5000)] = Field(default_factory=list)
+    nodes: Annotated[list[CanvasNode], Field(max_length=CANVAS_MAX_NODES)] = Field(default_factory=list)
+    edges: Annotated[list[CanvasEdge], Field(max_length=CANVAS_MAX_EDGES)] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_graph(self) -> "CanvasPutRequest":
@@ -233,6 +293,9 @@ class CanvasPutRequest(BaseModel):
         known = set(node_ids)
         if any(edge.source not in known or edge.target not in known for edge in self.edges):
             raise ValueError("canvas edges must reference existing nodes")
+        problem = canvas_group_problem(self.nodes)
+        if problem:
+            raise ValueError(problem)
         return self
 
 
@@ -272,9 +335,9 @@ class CanvasDuplicateRequest(BaseModel):
 
 class CanvasBookmark(BaseModel):
     slot: Annotated[int, Field(ge=1, le=9)]
-    x: Annotated[float, Field(ge=-10_000_000, le=10_000_000)]
-    y: Annotated[float, Field(ge=-10_000_000, le=10_000_000)]
-    zoom: Annotated[float, Field(gt=0, le=16)]
+    x: Annotated[float, Field(ge=-CANVAS_BOOKMARK_LIMIT, le=CANVAS_BOOKMARK_LIMIT, allow_inf_nan=False)]
+    y: Annotated[float, Field(ge=-CANVAS_BOOKMARK_LIMIT, le=CANVAS_BOOKMARK_LIMIT, allow_inf_nan=False)]
+    zoom: Annotated[float, Field(ge=CANVAS_ZOOM_MIN, le=CANVAS_ZOOM_MAX, allow_inf_nan=False)]
     label: Annotated[str, Field(max_length=60)] = ""
 
 
@@ -371,6 +434,40 @@ class CanvasNodeRun(BaseModel):
     created_at: str
     updated_at: str
     deleted_at: str | None = None
+
+
+class CanvasShareCreate(BaseModel):
+    """A read-only link to one canvas; null days = it lasts until stopped or rotated."""
+
+    expires_days: Literal[1, 7, 30] | None = None
+
+
+class CanvasShareRecord(BaseModel):
+    """What the owner sees of the link: the token and its viewer path are theirs to copy again."""
+
+    token: str
+    url_path: str
+    expires_at: str | None = None
+    created_at: str
+
+
+class CanvasShareOutput(BaseModel):
+    medium: str = ""
+    url: str | None = None
+    text: str | None = None
+    filename: str | None = None
+
+
+class PublicCanvasShare(BaseModel):
+    """The canvas as an anonymous viewer gets it: layout and words, no bindings or provenance."""
+
+    title: str
+    canvas_id: str
+    version: int
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+    outputs: dict[str, CanvasShareOutput]
+    expires_at: str | None = None
 
 
 class Vec3(BaseModel):

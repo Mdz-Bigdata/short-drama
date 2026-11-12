@@ -4,6 +4,7 @@ import {
   Box,
   CheckCircle2,
   Database,
+  Image as ImageIcon,
   ImagePlus,
   Landmark,
   Layers3,
@@ -20,7 +21,7 @@ import {
 } from 'lucide-react';
 
 import { apiUrl } from '../../../api/client';
-import { findPoster, formatFileSize, formatMetric, propViews, sceneViews, type ElementFile, type ElementItem } from '../elementTypes';
+import { findPoster, formatFileSize, formatMetric, propViews, REFERENCE_VIEW, SCENE_REVERSE_SLOT, SCENE_SCALE_SLOT, sceneViews, uploadedReference, type ElementFile, type ElementItem } from '../elementTypes';
 import { t } from '../../../i18n';
 
 
@@ -93,14 +94,41 @@ interface Props {
   onUploadPoster: (id?: string) => void;
   onRegenerate: (item: ElementItem) => void;
   onDelete: (item: ElementItem) => void;
-  onDeletePoster: (item: ElementItem) => void;
+  /** 删主预览里正放着的那张；``label`` 是它在确认框和提示里的叫法。 */
+  onDeletePoster: (item: ElementItem, file: ElementFile, label: string) => void;
   /** ``shown`` 是主预览里当前放的那张，放大时看的就是它。 */
   onInspectPoster: (item: ElementItem, shown?: ElementFile) => void;
   /** 改道具的最长边，``null`` 退回描述或估算。 */
   onSetPropSize?: (item: ElementItem, lengthCm: number | null) => void;
+  /** 用已有的主场景全景画人物比例参照(本地画，不调图像模型)。 */
+  onDrawSceneScale?: (item: ElementItem) => void;
+  /** 照已有的主场景全景补一张反打视角(调图像模型，一张图)。 */
+  onDrawSceneReverse?: (item: ElementItem) => void;
+  /** 打开这件资产的版本记录(给了才把版本号做成按钮)。 */
+  onOpenVersions?: (item: ElementItem) => void;
 }
 
-function PropSizeField({ item, locked, onSave }: { item: ElementItem; locked: boolean; onSave: (lengthCm: number | null) => void }) {
+function SceneScaleNote({ item }: { item: ElementItem }) {
+  const scale = item.scene_scale;
+  if (!scale?.text) return null;
+  return (
+    <div className="asset-prop-size asset-scene-scale">
+      <strong>{t('场地尺寸')}</strong>
+      <span>{scale.text}</span>
+      <small>{scale.source === 'description'
+        ? t('来自描述；成年人人形按 1.75 米画在比例尺旁。')
+        : t('按场地类型估算；在描述里写明尺寸(如「门高约3米、面宽约6米」)后按描述重画。')}</small>
+    </div>
+  );
+}
+
+function PropSizeField({ item, locked, saving, onSave }: {
+  item: ElementItem;
+  locked: boolean;
+  /** 这件道具的尺寸正在保存(比例总览同时在重画)。 */
+  saving?: boolean;
+  onSave: (lengthCm: number | null) => void;
+}) {
   const scale = item.prop_scale;
   const [draft, setDraft] = useState(scale?.manual_cm ? String(scale.manual_cm) : '');
   if (!scale) return null;
@@ -138,7 +166,10 @@ function PropSizeField({ item, locked, onSave }: { item: ElementItem; locked: bo
         />
         <span>cm</span>
       </label>
-      <button type="submit" disabled={locked || !changed}>{t('保存尺寸')}</button>
+      <button type="submit" disabled={locked || !changed} aria-label={t('保存尺寸')} aria-busy={saving}>
+        {saving && <LoaderCircle className="spin" size={13} aria-hidden="true" />}
+        {saving ? t('正在保存…') : t('保存尺寸')}
+      </button>
       {scale.manual_cm !== null && (
         <button type="button" disabled={locked} onClick={() => onSave(null)}>{t('清除')}</button>
       )}
@@ -168,6 +199,9 @@ export default function Element3DWorkspace({
   onDeletePoster,
   onInspectPoster,
   onSetPropSize,
+  onDrawSceneScale,
+  onDrawSceneReverse,
+  onOpenVersions,
 }: Props) {
   const [view, setView] = useState<'project' | 'museum'>('project');
   const [query, setQuery] = useState('');
@@ -180,7 +214,14 @@ export default function Element3DWorkspace({
   const poster = selected ? findPoster(selected) : undefined;
   // 道具视图 / 场地四视角：选中哪一张就在主预览里放哪一张，换资产后回到第一张(比例总览 / 全景)。
   const [viewChoice, setViewChoice] = useState<{ itemId: string; slot: string } | null>(null);
-  const selectedViews = selected ? (kind === 'prop' ? propViews(selected) : sceneViews(selected)) : [];
+  const generatedViews = selected ? (kind === 'prop' ? propViews(selected) : sceneViews(selected)) : [];
+  const filledViews = generatedViews.filter(view => view.file).length;
+  // 有了视图以后人又自己传了一张主参考图：它不是哪张视图的副本，单列在最后一格，否则主预览里永远轮不到它。
+  // 一张视图都没有时主预览放的本来就是它，不用再列。
+  const ownReference = selected && filledViews > 0 ? uploadedReference(selected) : undefined;
+  const selectedViews = ownReference
+    ? [...generatedViews, { slot: REFERENCE_VIEW[0], label: REFERENCE_VIEW[1], file: ownReference }]
+    : generatedViews;
   const activeView = selectedViews.find(view => (
     view.file && viewChoice?.itemId === selected?.id && view.slot === viewChoice?.slot
   )) ?? selectedViews.find(view => view.file);
@@ -188,8 +229,20 @@ export default function Element3DWorkspace({
   const stats = model?.stats ?? {};
   const referenceImages = selected?.files.filter(file => file.media_kind === 'image' && Boolean(file.url)) ?? [];
   const shownReference = activeView?.file ?? poster;
+  // 有 3D 模型时主预览默认放模型；各视图、比例图和尺寸仍在给提示词用，所以能切回参考图。换资产后回到模型。
+  const [referenceStageFor, setReferenceStageFor] = useState('');
+  const canSwitchStage = Boolean(model && poster?.url);
+  const showModel = Boolean(model) && !(canSwitchStage && referenceStageFor === selected?.id);
+  // 「删除」删的是主预览里正放着的那张；主预览是模型时，删的是主参考图。
+  const deletable = showModel ? poster : shownReference;
+  const deletableView = !showModel && activeView?.file ? activeView : undefined;
+  const deletingFile = Boolean(deletable) && busy === `delete-file:${deletable?.id}`;
+  const uploadingModel = Boolean(selected) && busy === `model:${selected?.id}`;
+  const uploadingPoster = Boolean(selected) && busy === `upload:${selected?.id}`;
+  const regenerating = Boolean(selected) && busy === `regenerate:${selected?.id}`;
+  const drawingScale = Boolean(selected) && busy === `scale:${selected?.id}`;
+  const drawingReverse = Boolean(selected) && busy === `reverse:${selected?.id}`;
   const shownSize = useImageSize(shownReference?.url ? apiUrl(shownReference.url) : undefined);
-  const filledViews = selectedViews.filter(view => view.file).length;
   const label = kind === 'scene' ? '场景' : '道具';
   // 放大查看器沿用制片口径命名，与查看器标题里的类别一致。
   const viewerLabel = kind === 'scene' ? '拍摄场地' : '拍摄道具';
@@ -199,6 +252,21 @@ export default function Element3DWorkspace({
   const locked = Boolean(busy);
   const KindIcon = kind === 'scene' ? Map : Package;
   const [workspaceRef, workspaceHeight] = useFillViewportHeight<HTMLElement>(view);
+  // 场地尺寸和道具长度写进提示词，有没有 3D 模型都要能看、能改。
+  const sizeControls = selected && (
+    <>
+      {kind === 'scene' && <SceneScaleNote item={selected} />}
+      {kind === 'prop' && onSetPropSize && selected.prop_scale && (
+        <PropSizeField
+          key={`${selected.id}:${selected.prop_scale.manual_cm ?? ''}`}
+          item={selected}
+          locked={locked}
+          saving={busy === `size:${selected.id}`}
+          onSave={lengthCm => onSetPropSize(selected, lengthCm)}
+        />
+      )}
+    </>
+  );
 
   return (
     <div className="element-3d-module">
@@ -307,7 +375,19 @@ export default function Element3DWorkspace({
       <div className="asset-stage">
         <div className="asset-stage-chrome">
           <div><span>DATA ASSET / {kind.toUpperCase()}</span><strong>{selected?.name ?? `未选择${label}`}</strong></div>
-          <div className="asset-live-status"><i /> {model ? 'MODEL ONLINE' : 'AWAITING MODEL'}</div>
+          <div className="asset-stage-chrome__side">
+            <div className="asset-live-status"><i /> {model ? 'MODEL ONLINE' : 'AWAITING MODEL'}</div>
+            {selected && canSwitchStage && (
+              <div className="asset-stage-switch" role="group" aria-label={t('主预览显示')}>
+                <button type="button" aria-pressed={showModel} onClick={() => setReferenceStageFor('')}>
+                  <Box size={13} aria-hidden="true" /> {t('看 3D 模型')}
+                </button>
+                <button type="button" aria-pressed={!showModel} onClick={() => setReferenceStageFor(selected.id)}>
+                  <ImageIcon size={13} aria-hidden="true" /> {t('看参考图')}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {!selected ? (
@@ -316,7 +396,7 @@ export default function Element3DWorkspace({
             <span>建立第一项{label}资产后，即可导入 GLB 并在浏览器中检查空间与材质。</span>
             <button type="button" onClick={onCreate} disabled={locked}><Plus size={16} /> 添加{label}</button>
           </div>
-        ) : model ? (
+        ) : model && showModel ? (
           <Suspense fallback={<div className="model-fetch-state" role="status"><Layers3 className="spin" /> {t('正在启动 3D 引擎…')}</div>}>
             <ElementModelViewport name={selected.name} contentUrl={model.contentUrl} posterUrl={poster?.url ?? undefined} />
           </Suspense>
@@ -344,28 +424,35 @@ export default function Element3DWorkspace({
             <div
               className={`asset-prop-views${kind === 'scene' ? ' asset-prop-views--scene' : ''}`}
               role="tablist"
-              aria-label={`${selected.name} ${kind === 'prop' ? '视图' : '四视角'}`}
+              aria-label={`${selected.name} ${kind === 'prop' ? '视图' : '视角'}`}
             >
-              {selectedViews.map(view => (
-                <button
-                  key={view.slot}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeView?.slot === view.slot}
-                  className={activeView?.slot === view.slot ? 'is-active' : ''}
-                  disabled={!view.file}
-                  onClick={() => setViewChoice({ itemId: selected.id, slot: view.slot })}
-                >
-                  {view.file?.url
-                    ? <img src={apiUrl(view.file.url)} alt="" />
-                    : <span className="asset-prop-views__empty">{t('待生成')}</span>}
-                  <small>{view.label}</small>
-                </button>
-              ))}
+              {selectedViews.map(view => {
+                // 老场地有全景、还没有人物比例或反打视角：点一下照全景补出来。
+                const draw = view.slot === SCENE_SCALE_SLOT ? onDrawSceneScale : view.slot === SCENE_REVERSE_SLOT ? onDrawSceneReverse : undefined;
+                const drawable = !view.file && Boolean(draw) && selected.files.some(file => file.slot === 'scene_main');
+                const drawing = view.slot === SCENE_REVERSE_SLOT ? drawingReverse : drawingScale;
+                return (
+                  <button
+                    key={view.slot}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeView?.slot === view.slot}
+                    className={activeView?.slot === view.slot ? 'is-active' : ''}
+                    disabled={!view.file && (!drawable || locked)}
+                    aria-busy={drawable && drawing}
+                    onClick={() => (drawable ? draw?.(selected) : setViewChoice({ itemId: selected.id, slot: view.slot }))}
+                  >
+                    {view.file?.url
+                      ? <img src={apiUrl(view.file.url)} alt="" />
+                      : <span className="asset-prop-views__empty">{drawable ? (drawing ? t('正在生成…') : t('点此生成')) : t('待生成')}</span>}
+                    <small>{t(view.label)}</small>
+                  </button>
+                );
+              })}
               {!selectedViews.some(view => view.file) && (
                 <p className="asset-prop-views__hint">{kind === 'prop'
                   ? t('点「重生成参考图」按物件生成视图、比例尺和手或人形参照。')
-                  : t('点「重生成参考图」生成主场景全景、45°斜角、纵深视角、关键细节四张空景视角。')}</p>
+                  : t('点「重生成参考图」生成主场景全景、45°斜角、纵深视角、关键细节四张空景视角，再照全景出一张反打视角。')}</p>
               )}
             </div>
             <div className="asset-reference-preview__details">
@@ -374,7 +461,11 @@ export default function Element3DWorkspace({
                 <h3>{selected.name}</h3>
                 <p>{selectedDescription}</p>
               </div>
-              <button type="button" onClick={() => onUploadModel(selected.id)} disabled={locked}><Upload size={16} /> {t('上传 3D 模型')}</button>
+              {!model && (
+                <button type="button" onClick={() => onUploadModel(selected.id)} disabled={locked} aria-label={t('上传 3D 模型')} aria-busy={uploadingModel}>
+                  {uploadingModel ? <LoaderCircle className="spin" size={16} /> : <Upload size={16} />} {uploadingModel ? t('上传中…') : t('上传 3D 模型')}
+                </button>
+              )}
             </div>
           </section>
         ) : (
@@ -397,13 +488,24 @@ export default function Element3DWorkspace({
         {selected ? (
           <>
             <div className="inspector-title">
-              <div><h2>{selected.name}</h2><span>VERSION {String(selected.version).padStart(2, '0')}</span></div>
+              <div>
+                <h2>{selected.name}</h2>
+                {onOpenVersions ? (
+                  <button
+                    type="button"
+                    className="element-version-button"
+                    onClick={() => onOpenVersions(selected)}
+                    aria-label={t('“{0}”的版本记录', [selected.name])}
+                  >{`VERSION ${String(selected.version).padStart(2, '0')} · ${t('版本记录')}`}</button>
+                ) : <span>VERSION {String(selected.version).padStart(2, '0')}</span>}
+              </div>
               <span className={`status-badge ${selected.status}`}>{model ? t('3D 已就绪') : t('待导入模型')}</span>
             </div>
             <p className="inspector-description">{selectedDescription}</p>
 
             {model ? (
               <>
+                {sizeControls}
                 <div className="inspector-section-title"><Layers3 size={14} /> {t('模型统计')}</div>
                 <div className="model-stat-grid">
                   <div><span>{t('三角面')}</span><strong>{formatMetric(stats.triangles)}</strong></div>
@@ -439,14 +541,7 @@ export default function Element3DWorkspace({
                   <div><span>{t('3D 模型')}</span><strong>{t('未导入')}</strong></div>
                 </div>
 
-                {kind === 'prop' && onSetPropSize && selected.prop_scale && (
-                  <PropSizeField
-                    key={`${selected.id}:${selected.prop_scale.manual_cm ?? ''}`}
-                    item={selected}
-                    locked={locked}
-                    onSave={lengthCm => onSetPropSize(selected, lengthCm)}
-                  />
-                )}
+                {sizeControls}
 
                 <div className="asset-contract-list">
                   <div><span>{t('格式')}</span><strong>{shownReference ? `${imageFormat(shownReference.mime_type)} · ${t('2D 参考')}` : '—'}</strong></div>
@@ -474,17 +569,44 @@ export default function Element3DWorkspace({
             ))}
 
             <div className="inspector-actions">
-              <button type="button" className="primary-action" onClick={() => onUploadModel(selected.id)} disabled={locked || busy === `model:${selected.id}`}>
-                <Upload size={15} /> {model ? t('替换 GLB') : t('上传 GLB')}
+              {/* 进行中的那个按钮转圈并换成进度字样；aria-label 不变，读屏和测试认的还是原名。 */}
+              <button
+                type="button"
+                className="primary-action"
+                onClick={() => onUploadModel(selected.id)}
+                disabled={locked}
+                aria-label={model ? t('替换 GLB') : t('上传 GLB')}
+                aria-busy={uploadingModel}
+              >
+                {uploadingModel ? <LoaderCircle className="spin" size={15} /> : <Upload size={15} />}
+                {' '}{uploadingModel ? t('上传中…') : model ? t('替换 GLB') : t('上传 GLB')}
               </button>
-              <button type="button" onClick={() => onUploadPoster(selected.id)} disabled={locked}><ImagePlus size={15} /> {t('参考图')}</button>
-              {poster && (
-                <button type="button" className="danger-action" onClick={() => onDeletePoster(selected)} disabled={locked} aria-busy={busy === `delete-file:${poster.id}`}>
-                  {busy === `delete-file:${poster.id}` ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
-                  {busy === `delete-file:${poster.id}` ? '正在删除参考图' : '删除参考图'}
+              <button type="button" onClick={() => onUploadPoster(selected.id)} disabled={locked} aria-label={t('参考图')} aria-busy={uploadingPoster}>
+                {uploadingPoster ? <LoaderCircle className="spin" size={15} /> : <ImagePlus size={15} />}
+                {' '}{uploadingPoster ? t('上传中…') : t('参考图')}
+              </button>
+              {deletable && (
+                <button
+                  type="button"
+                  className="danger-action"
+                  onClick={() => onDeletePoster(
+                    selected,
+                    deletable,
+                    deletableView ? t('「{0}」这张图', [t(deletableView.label)]) : t('参考图'),
+                  )}
+                  disabled={locked}
+                  aria-busy={deletingFile}
+                >
+                  {deletingFile ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
+                  {deletableView
+                    ? (deletingFile ? t('正在删除：{0}', [t(deletableView.label)]) : t('删除这张：{0}', [t(deletableView.label)]))
+                    : (deletingFile ? '正在删除参考图' : '删除参考图')}
                 </button>
               )}
-              <button type="button" onClick={() => onRegenerate(selected)} disabled={locked || busy === `regenerate:${selected.id}`}><RefreshCw size={15} /> {t('重生成参考图')}</button>
+              <button type="button" onClick={() => onRegenerate(selected)} disabled={locked} aria-label={t('重生成参考图')} aria-busy={regenerating}>
+                <RefreshCw size={15} className={regenerating ? 'spin' : undefined} />
+                {' '}{regenerating ? t('正在生成…') : t('重生成参考图')}
+              </button>
               <button type="button" className="danger-action asset-delete-action" onClick={() => onDelete(selected)} disabled={locked} aria-busy={busy === `delete:${selected.id}`}>
                 {busy === `delete:${selected.id}` ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
                 {busy === `delete:${selected.id}` ? '正在删除资产' : '删除资产'}

@@ -8,6 +8,9 @@ import { HELPER_FLAG } from '../lib/capture';
 import { chainOf, effectorOf, ikControls, solveTwoBone, type TwoBoneChain } from '../lib/ik';
 import { EFFECTORS, effectorBones, groundLift, solveBones, type EffectorId } from '../lib/mannequinRig';
 import { jointsOf, type Joints } from '../lib/poses';
+import type { PointerHandlers } from './CameraRig';
+import { hitOnTop } from './hitOnTop';
+import { ScreenSized } from './ScreenSized';
 import { SELECTION_COLOR } from './stageLook';
 
 interface Props {
@@ -18,6 +21,8 @@ interface Props {
   /** Set when the edit belongs to one shot only. */
   shotId?: number;
   footLock: boolean;
+  /** What the pointer shows over a handle. A handle held out over bare floor has nothing behind it to say it can be grabbed. */
+  pointer?: Pick<PointerHandlers, 'onPointerOver' | 'onPointerOut'>;
   onDragState: (dragging: boolean) => void;
   onPreview: (operations: StageOperation[] | null) => void;
   onCommit: (operations: StageOperation[]) => void;
@@ -34,6 +39,9 @@ interface Grab {
   operation: StageOperation | null;
 }
 
+const HANDLE_RADIUS_M = 0.055;
+const HANDLE_PIXELS = 16;
+
 function actorFrame(actor: StageActor, joints: Joints): Matrix4 {
   const lift = groundLift(joints, actor.body_type) * actor.height_m + (joints['body.offsetY'] ?? 0);
   return new Matrix4().compose(
@@ -44,7 +52,7 @@ function actorFrame(actor: StageActor, joints: Joints): Matrix4 {
 }
 
 /** Wrist and ankle handles of the selected jointed figure: drag one and the limb follows by IK. */
-export function PoseHandles({ actor, baseActor, shotId, footLock, onDragState, onPreview, onCommit }: Props) {
+export function PoseHandles({ actor, baseActor, shotId, footLock, pointer, onDragState, onPreview, onCommit }: Props) {
   const camera = useThree(state => state.camera);
   const canvas = useThree(state => state.gl.domElement);
   const grab = useRef<Grab | null>(null);
@@ -109,10 +117,13 @@ export function PoseHandles({ actor, baseActor, shotId, footLock, onDragState, o
   return (
     <group userData={{ [HELPER_FLAG]: true }}>
       {handles.map(handle => (
-        <mesh key={handle.id} name={`pose-handle-${handle.id}`} position={handle.point} renderOrder={10} onPointerDown={begin(handle.id, handle.limb)} onClick={event => event.stopPropagation()}>
-          <sphereGeometry args={[0.055, 16, 12]} />
-          <meshBasicMaterial color={SELECTION_COLOR} transparent opacity={0.85} depthTest={false} />
-        </mesh>
+        // An 11 cm ball is a few pixels once the view backs off to take in the set: it never draws smaller than a fingertip.
+        <ScreenSized key={handle.id} position={handle.point} size={HANDLE_RADIUS_M * 2} minPixels={HANDLE_PIXELS}>
+          <mesh name={`pose-handle-${handle.id}`} renderOrder={10} raycast={hitOnTop} onPointerDown={begin(handle.id, handle.limb)} onClick={event => event.stopPropagation()} {...pointer}>
+            <sphereGeometry args={[HANDLE_RADIUS_M, 16, 12]} />
+            <meshBasicMaterial color={SELECTION_COLOR} transparent opacity={0.85} depthTest={false} />
+          </mesh>
+        </ScreenSized>
       ))}
     </group>
   );

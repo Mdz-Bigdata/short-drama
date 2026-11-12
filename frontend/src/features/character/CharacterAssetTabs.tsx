@@ -1,4 +1,4 @@
-import { Box, Landmark, Sparkles, UsersRound, type LucideIcon } from 'lucide-react';
+import { Armchair, Box, Car, Flame, Landmark, ShoppingBag, Sparkles, Users, UsersRound, type LucideIcon } from 'lucide-react';
 import type { KeyboardEvent } from 'react';
 
 import type { ElementKind } from '../elements/elementTypes';
@@ -17,6 +17,11 @@ const characterAssetTabs: AssetTabDefinition[] = [
   { kind: 'scene', label: characterAssetTabLabels.scene, icon: Landmark },
   { kind: 'prop', label: characterAssetTabLabels.prop, icon: Box },
   { kind: 'effect', label: characterAssetTabLabels.effect, icon: Sparkles },
+  { kind: 'product', label: characterAssetTabLabels.product, icon: ShoppingBag },
+  { kind: 'extra', label: characterAssetTabLabels.extra, icon: Users },
+  { kind: 'vehicle', label: characterAssetTabLabels.vehicle, icon: Car },
+  { kind: 'set_dressing', label: characterAssetTabLabels.set_dressing, icon: Armchair },
+  { kind: 'stunt', label: characterAssetTabLabels.stunt, icon: Flame },
 ];
 
 export function CharacterAssetTabs({

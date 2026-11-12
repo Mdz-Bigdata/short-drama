@@ -1,0 +1,128 @@
+/* Adapted from open-ai-canvas (MIT, © 2026 ddcat and Open AI Canvas contributors), web/src/components/canvas/canvas-zoom-controls.tsx. */
+.cz-root {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 4px 14px rgba(var(--shadow-rgb, 0, 0, 0), 0.12);
+  color: var(--text-muted);
+  font-size: 12px;
+  user-select: none;
+}
+
+.cz-button,
+.cz-percent,
+.cz-preset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.cz-button {
+  width: 28px;
+  height: 28px;
+}
+
+.cz-percent {
+  min-width: 50px;
+  height: 28px;
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.cz-button:hover:not(:disabled),
+.cz-percent:hover,
+.cz-percent[aria-expanded='true'] {
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--accent, inherit);
+}
+
+.cz-button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.cz-button:focus-visible,
+.cz-percent:focus-visible,
+.cz-preset:focus-visible,
+.cz-range:focus-visible {
+  outline: 2px solid rgba(var(--accent-rgb), 0.5);
+  outline-offset: 1px;
+}
+
+.cz-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 3px;
+  background: var(--line);
+}
+
+.cz-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: 216px;
+  max-width: calc(100vw - 32px);
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(var(--shadow-rgb, 0, 0, 0), 0.16);
+}
+
+.cz-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.cz-popover-value {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--accent, inherit);
+  font-variant-numeric: tabular-nums;
+}
+
+.cz-range {
+  width: 100%;
+  margin: 10px 0 8px;
+  accent-color: rgb(var(--accent-rgb));
+}
+
+.cz-presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.cz-preset {
+  height: 26px;
+  border: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.cz-preset:hover,
+.cz-preset[aria-pressed='true'] {
+  border-color: rgba(var(--accent-rgb), 0.4);
+  background: rgba(var(--accent-rgb), 0.08);
+  color: var(--accent, inherit);
+}

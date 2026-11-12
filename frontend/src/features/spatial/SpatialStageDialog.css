@@ -14,9 +14,9 @@
   --spatial-line: rgba(var(--ink-rgb), 0.16);
   --spatial-surface: var(--surface);
   --spatial-text: var(--text-main);
-  --spatial-amber: #e6a000;
+  --spatial-amber: var(--warning);
   --spatial-red: #e60000;
-  --spatial-green: #21c584;
+  --spatial-green: var(--success);
   width: min(96rem, 100%);
   height: min(100%, 64rem);
   max-height: calc(100dvh - 2rem);
@@ -95,7 +95,8 @@
 }
 
 .spatial-dialog__banner.is-warning {
-  color: var(--spatial-amber);
+  color: var(--spatial-text);
+  border-left: 3px solid var(--spatial-amber);
   background: rgba(var(--gold-rgb), 0.07);
 }
 
@@ -221,8 +222,9 @@
   border: 1px solid var(--spatial-line);
 }
 
-.spatial-badge.is-ok { color: var(--spatial-green); }
-.spatial-badge.is-neutral { color: var(--spatial-amber); }
+/* Status sits on the border; the words stay in body ink so they read on the light surface. */
+.spatial-badge.is-ok { color: var(--spatial-text); border-color: var(--spatial-green); }
+.spatial-badge.is-neutral { color: var(--spatial-text); border-color: var(--spatial-amber); }
 .spatial-badge.is-bad { color: var(--spatial-red); border-color: var(--spatial-red); }
 
 .spatial-shot__flag { width: 0.95rem; height: 0.95rem; flex: none; }
@@ -440,8 +442,10 @@
   background: rgba(var(--ink-rgb), 0.05);
 }
 
-.spatial-checks li.is-passed strong { color: var(--spatial-green); }
-.spatial-checks li.is-warning strong { color: var(--spatial-amber); }
+.spatial-checks li strong { color: var(--spatial-text); }
+.spatial-checks li.is-passed { border-left: 3px solid var(--spatial-green); }
+.spatial-checks li.is-warning { border-left: 3px solid var(--spatial-amber); }
+.spatial-checks li.is-error { border-left: 3px solid var(--spatial-red); }
 .spatial-checks li.is-error strong { color: var(--spatial-red); }
 .spatial-checks li.is-error { background: rgba(var(--danger-rgb), 0.08); }
 

@@ -1,0 +1,29 @@
+.element-versions__backdrop { position: fixed; inset: 0; z-index: 100000; display: grid; place-items: center; padding: 16px; background: rgba(var(--surface-tint-rgb), 0.82); backdrop-filter: blur(0.5rem); }
+.element-versions { width: min(640px, 100%); max-height: min(86vh, 760px); display: flex; flex-direction: column; gap: 12px; overflow: auto; padding: 16px 18px; color: var(--text-main); background: var(--surface); border: 1px solid rgba(var(--accent-rgb), 0.25); border-radius: 14px; box-shadow: 0 1.5rem 4rem rgba(var(--shadow-rgb), 0.3); }
+.element-versions__header { display: flex; align-items: center; gap: 10px; }
+.element-versions__header h2 { display: inline-flex; flex: 1; min-width: 0; align-items: center; gap: 6px; margin: 0; font-size: 1rem; }
+.element-versions__header span { font-size: 0.75rem; opacity: 0.7; }
+.element-versions__header button, .element-revision__head button, .element-rename-dialog button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; color: inherit; font-size: 0.75rem; background: transparent; border: 1px solid rgba(var(--ink-rgb), 0.16); border-radius: 6px; cursor: pointer; }
+.element-versions button:disabled, .element-rename-dialog button:disabled { opacity: 0.5; cursor: not-allowed; }
+.element-versions__section h3 { margin: 0 0 6px; font-size: 0.82rem; }
+.element-versions__empty { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 0.78rem; opacity: 0.72; }
+.element-revision-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.element-revision-list li { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid rgba(var(--ink-rgb), 0.12); border-radius: 10px; }
+.element-revision-list li.is-current { border-color: rgba(var(--accent-rgb), 0.4); background: rgba(var(--accent-rgb), 0.05); }
+.element-revision__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 0.8rem; }
+.element-revision__head span { flex: 1; min-width: 0; opacity: 0.72; }
+.element-revision__diff { margin: 0; font-size: 0.75rem; opacity: 0.85; overflow-wrap: anywhere; }
+.element-revision__files { display: flex; flex-wrap: wrap; gap: 6px; }
+.element-revision__files img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid rgba(var(--ink-rgb), 0.12); }
+.element-usage-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 0.78rem; }
+.element-usage-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.element-usage-list li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.element-usage-flag { padding: 1px 6px; font-size: 0.66rem; border-radius: 999px; background: rgba(var(--accent-rgb), 0.12); color: var(--accent); }
+.element-version-button { padding: 0 4px; color: inherit; font: inherit; background: transparent; border: 0; border-bottom: 1px dashed currentColor; cursor: pointer; }
+.element-rename-dialog { width: min(440px, 100%); }
+.element-rename-dialog form { display: grid; gap: 10px; }
+.element-rename-dialog label { display: grid; gap: 4px; font-size: 0.8rem; }
+.element-rename-dialog input { padding: 6px 10px; color: inherit; font-size: 0.85rem; background: var(--surface); border: 1px solid rgba(var(--ink-rgb), 0.2); border-radius: 6px; }
+.element-rename-dialog__note { margin: 0; font-size: 0.76rem; opacity: 0.8; }
+.element-rename-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; }
+@media (max-width: 560px) { .element-versions { padding: 12px; } }

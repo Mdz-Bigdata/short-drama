@@ -137,7 +137,7 @@ class PlatformApiTests(unittest.TestCase):
         user_cookie = self._cookie(self.user.id)
         listed = self.client.get("/api/platform/capabilities", cookies=user_cookie)
         self.assertEqual(listed.status_code, 200)
-        self.assertEqual(listed.json()["total"], 23)
+        self.assertEqual(listed.json()["total"], 24)  # + open-ai-canvas (2026-11-10)
         ability = listed.json()["items"][0]["abilities"][0]
         source_id = listed.json()["items"][0]["source_id"]
 
@@ -289,14 +289,17 @@ class PlatformApiTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200, response.text)
         slots = {item["slot"] for item in response.json()["files"]}
-        self.assertEqual(slots, {"prop_front", "prop_back", "prop_side", "prop_in_use", "prop_board", "reference"})
+        self.assertEqual(slots, {
+            "prop_front", "prop_back", "prop_side", "prop_top", "prop_left_45", "prop_in_use", "prop_board", "reference",
+        })
         prompt = generate_image.call_args.args[1]
-        self.assertIn("2 行 × 2 列网格", prompt)
+        self.assertIn("2 行 × 3 列网格", prompt)
         self.assertIn("第 2 格：背面", prompt)
+        self.assertIn("第 5 格：3/4", prompt)
         self.assertIn("一只成年人的手", prompt)
         self.assertIn("严禁任何文字、数字、刻度", prompt)
         self.assertNotIn("九宫格、接触表和重复物体", prompt)
-        self.assertEqual(generate_image.call_args.kwargs["size"], "2048x2048")
+        self.assertEqual(generate_image.call_args.kwargs["size"], "2848x1600")
 
     def _regenerated_prop(self, cookie, image_root, **fields):
         element = self.client.post("/api/elements", json={"kind": "prop", **fields}, cookies=cookie).json()
@@ -442,17 +445,76 @@ class PlatformApiTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200, response.text)
         files = {item["slot"]: item for item in response.json()["files"]}
-        self.assertEqual(set(files), {"scene_main", "scene_45", "scene_depth", "scene_detail", "reference"})
+        self.assertEqual(set(files), {"scene_main", "scene_45", "scene_depth", "scene_detail", "scene_reverse", "reference", "scene_scale"})
+        # 反打视角另出一张：以切好的主场景全景为参考图。
+        self.assertEqual(generate_image.call_count, 2)
+        reverse = generate_image.call_args_list[1]
+        self.assertIn("反打视角空景", reverse.args[1])
+        self.assertIn("深夜书房", reverse.args[1])
+        self.assertTrue(reverse.kwargs["ref_images"][0].startswith("data:image/png;base64,"))
+        self.assertTrue(reverse.kwargs["require_reference_support"])
         # 主场景全景同时是卡片上的主参考图。
         self.assertEqual(files["reference"]["sha256"], files["scene_main"]["sha256"])
-        prompt = generate_image.call_args.args[1]
+        self.assertNotEqual(files["scene_scale"]["sha256"], files["scene_main"]["sha256"], "the human-scale board is drawn under the panorama")
+        self.assertEqual(response.json()["scene_scale"]["source"], "table")
+        prompt = generate_image.call_args_list[0].args[1]
         for phrase in (
             "无人, 纯场景", "no humans", "不出现任何人物", "左上格：主场景全景", "右上格：45°斜角",
             "左下格：纵深视角", "右下格：关键细节", "画面左侧是什么、右侧是什么", "色温与时段", "材质", "门高约2米",
+            "本场地尺寸：室内层高约3米、房间面宽约4.5米", "成年人身高约 1.75 米",
         ):
             self.assertIn(phrase, prompt)
         self.assertNotIn("不出现抢眼人物", prompt)
         self.assertEqual(generate_image.call_args.kwargs["size"], "2848x1600")
+
+        # 写明尺寸后人物比例当场按描述重画，不再调用图像模型。
+        with (
+            patch("app.api.element_api.element_image_gateway.generate_image") as again,
+            patch("app.api.element_api.ELEMENT_MEDIA_ROOT", Path(self.temp.name) / "generated-scene-views"),
+        ):
+            edited = self.client.patch(
+                f"/api/elements/{element['id']}", json={"description": "深夜书房，面宽约6米、进深约8米、层高约3.2米"}, cookies=cookie,
+            )
+            drawn = self.client.post(f"/api/elements/{element['id']}/scene-scale", cookies=cookie)
+        again.assert_not_called()
+        self.assertEqual(edited.status_code, 200, edited.text)
+        self.assertEqual(edited.json()["scene_scale"], {"text": "面宽约6米、进深约8米、层高约3.2米", "source": "description"})
+        redrawn = {item["slot"]: item for item in edited.json()["files"]}
+        self.assertNotEqual(redrawn["scene_scale"]["sha256"], files["scene_scale"]["sha256"])
+        self.assertEqual(drawn.status_code, 200, drawn.text)
+
+    def test_a_scene_without_a_panorama_has_no_human_scale_board_to_draw(self):
+        cookie = self._cookie(self.user.id)
+        scene = self.client.post("/api/elements", json={"kind": "scene", "name": "旧城门", "description": ""}, cookies=cookie).json()
+        prop = self.client.post("/api/elements", json={"kind": "prop", "name": "铜镜", "description": ""}, cookies=cookie).json()
+        self.assertEqual(self.client.post(f"/api/elements/{scene['id']}/scene-scale", cookies=cookie).status_code, 409)
+        self.assertEqual(self.client.post(f"/api/elements/{prop['id']}/scene-scale", cookies=cookie).status_code, 422)
+
+    def test_a_scene_without_a_panorama_has_no_reverse_view_to_draw(self):
+        cookie = self._cookie(self.user.id)
+        scene = self.client.post("/api/elements", json={"kind": "scene", "name": "旧城门", "description": ""}, cookies=cookie).json()
+        prop = self.client.post("/api/elements", json={"kind": "prop", "name": "铜镜", "description": ""}, cookies=cookie).json()
+        with patch("app.api.element_api.element_image_gateway.generate_image") as generate_image:
+            self.assertEqual(self.client.post(f"/api/elements/{scene['id']}/scene-reverse", cookies=cookie).status_code, 409)
+            self.assertEqual(self.client.post(f"/api/elements/{prop['id']}/scene-reverse", cookies=cookie).status_code, 422)
+        generate_image.assert_not_called()
+
+    def test_a_failed_reverse_view_keeps_the_four_views_and_drops_the_stale_one(self):
+        cookie = self._cookie(self.user.id)
+        element = self.client.post("/api/elements", json={"kind": "scene", "name": "雨夜书房", "description": "深夜书房"}, cookies=cookie).json()
+        board = ("https://assets.example.test/study-views.png", "seedream")
+        with (
+            patch("app.api.element_api.element_image_gateway.generate_image", side_effect=[board, board, board, (None, None)]),
+            patch("app.api.element_api.fetch_remote_image_bytes", return_value=_scene_turnaround_png()),
+            patch("app.api.element_api.ELEMENT_MEDIA_ROOT", Path(self.temp.name) / "reverse-fails"),
+        ):
+            first = self.client.post(f"/api/elements/{element['id']}/regenerate", json={"prompt": ""}, cookies=cookie)
+            self.assertIn("scene_reverse", {item["slot"] for item in first.json()["files"]})
+            second = self.client.post(f"/api/elements/{element['id']}/regenerate", json={"prompt": ""}, cookies=cookie)
+        self.assertEqual(second.status_code, 200, second.text)
+        slots = {item["slot"] for item in second.json()["files"]}
+        self.assertIn("scene_main", slots)
+        self.assertNotIn("scene_reverse", slots)
 
     def test_effect_prompt_enforces_its_visual_asset_boundary(self):
         cookie = self._cookie(self.user.id)
@@ -813,7 +875,8 @@ class PlatformApiTests(unittest.TestCase):
             self.assertEqual(self.client.get(contract["contentUrl"], cookies=cookie).status_code, 404)
             current_url = replaced.json()["model3d"]["contentUrl"]
             self.assertEqual(self.client.get(current_url, cookies=cookie).content, replacement)
-            self.assertEqual(len(list(model_root.rglob("*.glb"))), 1)
+            # 换掉的模型留在历史版本里(可以恢复)，不再当场删除：磁盘上新旧两份。
+            self.assertEqual(len(list(model_root.rglob("*.glb"))), 2)
             self.assertEqual(len(list(image_root.rglob("*.glb"))), 0)
 
             actor = self.client.post(
@@ -879,6 +942,11 @@ class PlatformApiTests(unittest.TestCase):
                 cookies=owner_cookie,
             )
             self.assertEqual(deleted.status_code, 200, deleted.text)
+            # 删掉的文件留在历史版本里；整个资产删除时才连同历史一起删掉。
+            self.assertTrue(absolute_path.exists())
+            self.assertEqual(
+                self.client.delete(f"/api/elements/{element['id']}", cookies=owner_cookie).status_code, 200,
+            )
             self.assertFalse(absolute_path.exists())
         finally:
             shutil.rmtree(absolute_path.parent, ignore_errors=True)
@@ -941,7 +1009,8 @@ class PlatformApiTests(unittest.TestCase):
             )
             self.assertEqual(deleted_image.status_code, 200, deleted_image.text)
             self.assertEqual(deleted_image.json()["version"], original_version + 1)
-            self.assertEqual(len(list(image_root.rglob("*.png"))), 0)
+            # 删掉的文件留在历史版本里，可以恢复；删整个资产时才清掉。
+            self.assertEqual(len(list(image_root.rglob("*.png"))), 1)
 
             deleted_model = self.client.delete(
                 f"/api/elements/{element_id}/files/{model_file['id']}",
@@ -952,7 +1021,7 @@ class PlatformApiTests(unittest.TestCase):
             self.assertNotIn("model3d", deleted_model.json()["metadata"])
             self.assertEqual(deleted_model.json()["status"], "draft")
             self.assertEqual(deleted_model.json()["version"], original_version + 2)
-            self.assertEqual(len(list(model_root.rglob("*.glb"))), 0)
+            self.assertEqual(len(list(model_root.rglob("*.glb"))), 1)
             self.assertEqual(self.client.get(model_url, cookies=owner_cookie).status_code, 404)
 
             self.client.post(
@@ -966,8 +1035,8 @@ class PlatformApiTests(unittest.TestCase):
                 files={"file": ("again.glb", _triangle_glb(), "model/gltf-binary")},
                 cookies=owner_cookie,
             )
-            self.assertEqual(len(list(image_root.rglob("*.png"))), 1)
-            self.assertEqual(len(list(model_root.rglob("*.glb"))), 1)
+            self.assertEqual(len(list(image_root.rglob("*.png"))), 2)
+            self.assertEqual(len(list(model_root.rglob("*.glb"))), 2)
 
             still_forbidden = self.client.delete(
                 f"/api/elements/{element_id}", cookies=stranger_cookie
@@ -1054,11 +1123,11 @@ class PlatformApiTests(unittest.TestCase):
             file_id = uploaded["files"][0]["id"]
             public_file = next(image_root.rglob("*.png"))
 
+            # 删单个文件会留进历史、不动磁盘；删整个资产才隔离文件。
             with patch("app.api.element_api.os.replace", side_effect=OSError("rename failed")):
                 with self.assertRaises(HTTPException) as raised:
-                    asyncio.run(delete_element_file_endpoint(
+                    asyncio.run(delete_element_endpoint(
                         element["id"],
-                        file_id,
                         user={"user_id": self.user.id},
                         store=self.store,
                     ))
@@ -1098,11 +1167,11 @@ class PlatformApiTests(unittest.TestCase):
                 self.assertEqual(len(list(quarantine_root.rglob("*.json"))), 1)
                 raise RuntimeError("commit failed")
 
+            # 删整个资产才会隔离文件(删单个文件留进历史)。
             with patch.object(AsyncSession, "commit", fail_commit):
                 with self.assertRaisesRegex(RuntimeError, "commit failed"):
-                    asyncio.run(delete_element_file_endpoint(
+                    asyncio.run(delete_element_endpoint(
                         element["id"],
-                        file_id,
                         user={"user_id": self.user.id},
                         store=self.store,
                     ))
@@ -1195,17 +1264,21 @@ class PlatformApiTests(unittest.TestCase):
                     sha256=f"protected-{index}",
                 ))
 
-                with self.assertLogs("app.api.element_api", level="WARNING") as logs:
-                    replaced = self.client.post(
-                        f"/api/elements/{target['id']}/files",
-                        data={"slot": "reference"},
-                        files={"file": ("replacement.png", b"\x89PNG\r\n\x1a\nnew", "image/png")},
-                        cookies=owner_cookie,
-                    )
-
+                replaced = self.client.post(
+                    f"/api/elements/{target['id']}/files",
+                    data={"slot": "reference"},
+                    files={"file": ("replacement.png", b"\x89PNG\r\n\x1a\nnew", "image/png")},
+                    cookies=owner_cookie,
+                )
                 self.assertEqual(replaced.status_code, 200, replaced.text)
                 self.assertTrue(protected_path.is_file())
-                self.assertTrue(any("replacement cleanup skipped" in entry for entry in logs.output))
+
+                # 换掉的路径进了历史版本；删整个资产清理历史文件时，别人的路径照样不碰。
+                with self.assertLogs("app.api.element_api", level="WARNING") as logs:
+                    deleted = self.client.delete(f"/api/elements/{target['id']}", cookies=owner_cookie)
+                self.assertEqual(deleted.status_code, 200, deleted.text)
+                self.assertTrue(protected_path.is_file())
+                self.assertTrue(any("delete cleanup skipped" in entry for entry in logs.output))
 
     def test_post_commit_close_error_never_restores_deleted_public_files(self):
         owner_cookie = self._cookie(self.user.id)
@@ -1254,9 +1327,11 @@ class PlatformApiTests(unittest.TestCase):
                     persisted = asyncio.run(self.store.get_element(element["id"], self.user.id))
                     if delete_whole_asset:
                         self.assertIsNone(persisted)
+                        self.assertFalse(public_file.exists())
                     else:
                         self.assertEqual(persisted.files, [])
-                    self.assertFalse(public_file.exists())
+                        # 删单个文件不隔离：文件留在历史版本里，可以恢复。
+                        self.assertTrue(public_file.exists())
 
     def test_partial_quarantine_restore_failure_keeps_durable_path_manifest(self):
         owner_cookie = self._cookie(self.user.id)
@@ -1337,20 +1412,29 @@ class PlatformApiTests(unittest.TestCase):
             old_public_file = next(image_root.rglob("*.png"))
             old_public_path = old_public_file.resolve()
 
-            with (
-                patch("app.api.element_api._remove_file", return_value=False),
-                self.assertLogs("app.api.element_api", level="WARNING") as logs,
-            ):
-                replaced = self.client.post(
+            # 换图时旧图留进历史；只留一版时，再换一次就把引用旧图的那一版裁掉，旧图这时才清理。
+            with patch("app.platform.store.REVISION_LIMIT", 1):
+                self.client.post(
                     f"/api/elements/{element['id']}/files",
                     data={"slot": "reference"},
                     files={"file": ("new.png", b"\x89PNG\r\n\x1a\nnew", "image/png")},
                     cookies=owner_cookie,
                 )
+                self.assertTrue(old_public_file.exists())
+                with (
+                    patch("app.api.element_api._remove_file", return_value=False),
+                    self.assertLogs("app.api.element_api", level="WARNING") as logs,
+                ):
+                    replaced = self.client.post(
+                        f"/api/elements/{element['id']}/files",
+                        data={"slot": "reference"},
+                        files={"file": ("newer.png", b"\x89PNG\r\n\x1a\nnewer", "image/png")},
+                        cookies=owner_cookie,
+                    )
 
             self.assertEqual(replaced.status_code, 200, replaced.text)
             self.assertFalse(old_public_file.exists())
-            self.assertEqual(len(list(image_root.rglob("*.png"))), 1)
+            self.assertEqual(len(list(image_root.rglob("*.png"))), 2)
             manifests = list(quarantine_root.rglob("*.json"))
             self.assertEqual(len(manifests), 1)
             mapping = json.loads(manifests[0].read_text())

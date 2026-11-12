@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ScrollText, X } from 'lucide-react';
 
 import { splitScriptEpisodes } from './scriptOutlineUtils';
+import { useDialogFocus } from './useDialogFocus';
 import { t } from '../../i18n';
 
 export function EpisodeTextDialog({
@@ -22,6 +23,7 @@ export function EpisodeTextDialog({
       : episodes[0]?.number ?? 1
   ));
   const active = episodes.find(episode => episode.number === activeNumber) || episodes[0];
+  const closeRef = useDialogFocus<HTMLButtonElement>();
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -45,7 +47,7 @@ export function EpisodeTextDialog({
             <small>EPISODE SCRIPTS</small>
             <h2><ScrollText aria-hidden="true" /> 分集剧本 · {title}</h2>
           </div>
-          <button type="button" aria-label={t('关闭分集剧本')} onClick={onClose}><X aria-hidden="true" /></button>
+          <button ref={closeRef} type="button" aria-label={t('关闭分集剧本')} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
         {episodes.length ? (
           <div className="writer-episode-dialog__body">

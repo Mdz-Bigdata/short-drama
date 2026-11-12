@@ -15,43 +15,43 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from app.core import prompt_data
 from app.core.spatial_stage import axis as axis_rules
 from app.core.spatial_stage import geometry as geo
 from app.core.spatial_stage.models import CameraMove, StageActor, StageAxis, StageCamera, StageLandmark
 from app.core.spatial_stage.projection import SHOT_SIZE_HEIGHTS, posture_height, screen_states
 
 _SIZE_HEIGHT = dict(SHOT_SIZE_HEIGHTS)
-# Longest names first so 中近景 is not read as 近景.
-_SIZE_ALIASES: tuple[tuple[str, str], ...] = (
-    ("大特写", "大特写"), ("极特写", "大特写"), ("extreme close", "大特写"),
-    ("中近景", "中近景"), ("medium close", "中近景"),
-    ("中全景", "中全景"), ("medium long", "中全景"), ("medium full", "中全景"), ("cowboy", "中全景"),
-    ("大远景", "大远景"), ("extreme long", "大远景"), ("extreme wide", "大远景"),
-    ("大全景", "远景"), ("远景", "远景"), ("long shot", "远景"), ("wide", "远景"), ("establishing", "远景"),
-    ("全景", "全景"), ("全身", "全景"), ("full shot", "全景"),
-    ("特写", "特写"), ("close-up", "特写"), ("close up", "特写"), ("closeup", "特写"),
-    ("近景", "近景"), ("胸像", "近景"),
-    ("过肩", "近景"), ("越肩", "近景"), ("over-the-shoulder", "近景"), ("over the shoulder", "近景"),
-    ("中景", "中景"), ("medium", "中景"), ("半身", "中景"),
+_MOVE_WORDS = "stage_camera_moves"
+# Size words, lenses, angle words and camera names: app/data/prompt/stage_vocabulary.json.
+_VOCABULARY = "stage_vocabulary"
+_SIZES: dict = prompt_data.value(_VOCABULARY, "shot_sizes")
+_ANGLES: dict = prompt_data.value(_VOCABULARY, "angles")
+# Longest names first so 中近景 is not read as 近景: the table's order is the reading order.
+_SIZE_ALIASES: tuple[tuple[str, str], ...] = tuple(
+    (str(alias), str(size)) for aliases, size in _SIZES["aliases"] for alias in aliases
 )
-_SIZE_LENS: dict[str, float] = {
-    "大特写": 100, "特写": 85, "近景": 65, "中近景": 50, "中景": 50,
-    "中全景": 35, "全景": 28, "远景": 24, "大远景": 18,
-}
+_SIZE_LENS: dict[str, float] = dict(_SIZES["lens_mm"])
 # Where on the subject the lens aims, as a fraction of their height.
-_SIZE_AIM: dict[str, float] = {
-    "大特写": 0.93, "特写": 0.92, "近景": 0.85, "中近景": 0.79, "中景": 0.69,
-    "中全景": 0.56, "全景": 0.52, "远景": 0.7, "大远景": 0.9,
-}
-_TIGHT_SIZES = frozenset({"大特写", "特写", "近景", "中近景"})
-_WIDE_SIZES = frozenset({"中全景", "全景", "远景", "大远景"})
-_OVER_SHOULDER_WORDS = ("过肩", "越肩", "肩后", "over-the-shoulder", "over the shoulder", "ots")
+_SIZE_AIM: dict[str, float] = dict(_SIZES["aim"])
+_TIGHT_SIZES = frozenset(_SIZES["tight"])
+_WIDE_SIZES = frozenset(_SIZES["wide"])
+_OVER_SHOULDER_WORDS = tuple(str(word) for word in _ANGLES["over_shoulder_words"])
+_DEFAULT_SIZE = str(_SIZES["default"])
+_DEFAULT_ANGLE = str(_ANGLES["default"])
+_HIGH_ANGLE = str(_ANGLES["high"])
+# Checked in order: the first mode whose words the angle names decides the pitch.
+_PITCH_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
+    (str(mode), tuple(str(word) for word in words)) for mode, words in _ANGLES["pitch_words"]
+)
+_PITCH_DEG = {"top": 90.0, "ground": 0.0, "high": 28.0, "low": -22.0}
 _OPERATOR_HEIGHT_M = 1.45
 _SINGLE_OFF_AXIS_DEG = 32.0
 _SHOULDER_BACK_M = 1.1
 _SHOULDER_SIDE_M = 0.34
 _EYE_LINE = 0.93
 _OVERHEAD_OFFSET_M = 0.01
+_INSERT_CLEARANCE_M = 0.2
 _CLEARANCE_M = 0.45
 _GROUP_EDGE = 0.95
 _PULL_BACK = 1.18
@@ -73,7 +73,7 @@ class ShotSpec:
     shot_id: int
     subjects: list[str] = field(default_factory=list)
     speaker: str = ""
-    size: str = "中景"
+    size: str = _DEFAULT_SIZE
     angle: str = ""
     motion: str = ""
     desc: str = ""
@@ -83,10 +83,7 @@ class ShotSpec:
 
 # Shot-list shorthand, matched as whole tokens (a bare "cu" also lives inside "mcu" and "focus").
 _SIZE_ABBREVIATIONS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
-    (re.compile(rf"(?<![a-z]){pattern}(?![a-z])"), size) for pattern, size in (
-        ("(?:ecu|xcu|bcu)", "大特写"), ("mcu", "中近景"), ("cu", "特写"), ("(?:mls|mws|mfs)", "中全景"),
-        ("(?:els|ews|xls|xws)", "大远景"), ("(?:ls|ws)", "远景"), ("fs", "全景"), ("ms", "中景"),
-    )
+    (re.compile(rf"(?<![a-z]){pattern}(?![a-z])"), str(size)) for pattern, size in _SIZES["abbreviations"]
 )
 
 
@@ -107,7 +104,7 @@ def named_size(value: str) -> str | None:
 
 def canonical_size(value: str) -> str:
     """The size a table cell names; a cell that names none is a 中景."""
-    return named_size(value) or "中景"
+    return named_size(value) or _DEFAULT_SIZE
 
 
 def size_rank(value: str) -> int:
@@ -163,34 +160,37 @@ def wants_over_shoulder(spec: ShotSpec) -> bool:
 
 
 def move_kind(motion: str) -> str:
+    """Which way the camera travels for a 运镜 note; the wording table is ``stage_camera_moves.json``.
+
+    Negations (不推拉), what a person does (人物靠近镜头) and terms that keep the camera where it is
+    (升格 is slow motion, 跟焦 a focus pull, 摇晃 a shake) are taken out first, then phrases outrank
+    single characters so 拉近 pushes in. 靠近 / 逼近 / 后退 are a camera move only where the note says
+    the camera does it. Whatever travel word is left decides: 「先固定，后缓推」 still pushes.
+    """
     text = str(motion or "").lower()
-    rules: tuple[tuple[tuple[str, ...], str], ...] = (
-        (("环绕", "弧", "orbit", "arc"), "orbit"),
-        (("跟", "follow"), "follow"),
-        (("推", "push", "dolly in", "zoom in"), "push"),
-        (("拉", "pull", "dolly out", "zoom out"), "pull"),
-        (("升", "crane up", "rise", "pedestal up"), "rise"),
-        (("降", "crane down", "fall", "pedestal down"), "fall"),
-        (("横移", "平移", "移", "track", "truck", "slide"), "track"),
-        (("摇", "pan", "tilt"), "pan"),
-    )
-    for words, kind in rules:
+    table = prompt_data.load(_MOVE_WORDS)
+    for expression in table["drop_patterns"]:
+        text = re.sub(expression, " ", text)
+    for phrase in sorted(table["drop_phrases"], key=len, reverse=True):
+        text = text.replace(phrase, " ")
+    for words, kind in table["phrases"]:
         if any(word in text for word in words):
-            return kind
+            return str(kind)
+    for expression, kind in table["camera_patterns"]:
+        if re.search(expression, text):
+            return str(kind)
+    for words, kind in table["words"]:
+        if any(word in text for word in words):
+            return str(kind)
     return "static"
 
 
 def _pitch(angle: str) -> tuple[str, float]:
     """``(mode, pitch degrees)``; positive pitch puts the lens above its target."""
     text = str(angle or "")
-    if any(word in text for word in ("顶拍", "鸟瞰", "上帝视角", "正俯", "top-down", "overhead", "bird")):
-        return "top", 90.0
-    if any(word in text for word in ("贴地", "低位", "low ground")):
-        return "ground", 0.0
-    if any(word in text for word in ("俯", "high angle", "high-angle")):
-        return "high", 28.0
-    if any(word in text for word in ("仰", "low angle", "low-angle")):
-        return "low", -22.0
+    for mode, words in _PITCH_WORDS:
+        if any(word in text for word in words):
+            return mode, _PITCH_DEG[mode]
     return "eye", 0.0
 
 
@@ -458,6 +458,7 @@ def solve_camera(
     )
     counterpart: StageActor | None = None
     function = "single"
+    angle = spec.angle or _DEFAULT_ANGLE
 
     # The set piece a shot of nobody is about is the one its description names first.
     named = [] if subjects else [item for item in landmarks if item.name and item.name in spec.desc]
@@ -465,16 +466,31 @@ def solve_camera(
     if insert is not None:
         # A shot of nobody that names a set piece is an insert of that piece, not a view of the room.
         function = "detail"
-        size = size if size in _TIGHT_SIZES else "特写"
+        # An insert with no angle written looks down at the piece; the camera records that, so solving it again gives the same lens.
+        angle = spec.angle or _HIGH_ANGLE
+        size = size if size in _TIGHT_SIZES else str(_SIZES["insert"])
         lens = _lens_for(size, aspect, False)
         fov = geo.vertical_fov(lens, aspect)
-        target = (round(insert.position[0], 3), round(insert.size[2] * 0.8, 3), round(insert.position[1], 3))
+        # The piece is shot where it lies: a cup on a table is a table's height above the floor,
+        # and the lens stays above that table top instead of looking up through it.
+        surface = insert.elevation_m
+        target = (round(insert.position[0], 3), round(surface + insert.size[2] * 0.8, 3), round(insert.position[1], 3))
         covered = max(_SIZE_HEIGHT[size], insert.size[2] * 1.2)
         reach = geo.framing_distance(covered, fov)
-        position = keep_side(_place(target, normal, reach, size, spec.angle or "俯拍", footprint=(covered, covered), fov=fov, aspect=aspect), axis, target)
+        placed = _place(target, normal, reach, size, angle, footprint=(covered, covered), fov=fov, aspect=aspect)
+        placed = (placed[0], max(placed[1], round(surface + _INSERT_CLEARANCE_M, 3)), placed[2])
+        position = keep_side(placed, axis, target)
+        # A lens that ends up farther than the framing distance (sent back out to the camera side by a piece upstage
+        # of the axis, or raised over the piece) is lengthened, so the piece still fills the frame the shot asks for.
+        # Moving in instead would take it across the axis. Overhead, the height _place rose to so the piece fits
+        # across the narrow side of the frame is framing too, not slack to take up with the lens.
+        framed = geo.framing_distance(covered / min(1.0, aspect), fov) if _pitch(angle)[0] == "top" else reach
+        fov = _tighter(fov, framed, position, target)
+        lens = _lens_of(fov, aspect)
+        fov = geo.vertical_fov(lens, aspect)
     elif not subjects:
         function = "empty"
-        size = size if size in _WIDE_SIZES else "全景"
+        size = size if size in _WIDE_SIZES else str(_SIZES["empty"])
         lens = _lens_for(size, aspect, True)
         fov = geo.vertical_fov(lens, aspect)
         target = (stage_center[0], 1.0, stage_center[1])
@@ -483,7 +499,7 @@ def solve_camera(
     elif len(subjects) >= 2:
         function = "establish" if first_shot or (size in _WIDE_SIZES and all(name in spec.subjects for name in principals)) else "relation"
         # Two people cannot share a close-up: the frame is at least a medium close-up, whatever the table called it.
-        framing = size if size not in {"大特写", "特写", "近景"} else "中近景"
+        framing = size if size not in _SIZES["pair_too_tight"] else str(_SIZES["pair"])
         lens = _lens_for(framing, aspect, True)
         fov = geo.vertical_fov(lens, aspect)
         centre = geo.centroid([(actor.position[0], actor.position[1]) for actor in subjects])
@@ -526,7 +542,7 @@ def solve_camera(
         target = (round(ground[0], 3), _aim_height(size, posture_height(subject)), round(ground[1], 3))
         reach = geo.framing_distance(_SIZE_HEIGHT[size], fov)
         single_print = (max(_SIZE_HEIGHT[size], 0.7), max(_SIZE_HEIGHT[size], 0.7))
-        if size == "大特写":
+        if size == _SIZES["detail"]:
             function = "detail"
         elif spec.speaker and spec.speaker != subject.name and spec.speaker in by_name:
             function = "reaction"
@@ -543,7 +559,7 @@ def solve_camera(
             # The distance is dictated by the shoulder, so the lens is what makes the size; an
             # over-the-shoulder never frames tighter than a medium close-up or the shoulder is lost.
             reach = math.dist(position, target)
-            covered = max(_SIZE_HEIGHT[size], _SIZE_HEIGHT["中近景"])
+            covered = max(_SIZE_HEIGHT[size], _SIZE_HEIGHT[_SIZES["over_shoulder_min"]])
             fov = math.degrees(2 * math.atan(covered / (2 * max(reach, 0.3))))
             lens = _lens_of(fov, aspect)
             fov = geo.vertical_fov(lens, aspect)
@@ -555,7 +571,7 @@ def solve_camera(
             else:
                 toward = geo.forward_of(subject.yaw_deg)
             eye = posture_height(subject) * _EYE_LINE
-            first_angle = 25.0 if size in {"特写", "大特写"} else _SINGLE_OFF_AXIS_DEG
+            first_angle = 25.0 if size in _SIZES["close_up"] else _SINGLE_OFF_AXIS_DEG
             position = None
             # Swing away from the partner (always toward the established side) until the lens stands
             # clear of everyone and nobody nearer the lens hides the subject.
@@ -581,7 +597,7 @@ def solve_camera(
             if position is None:
                 radians = math.radians(first_angle)
                 direction = geo.unit(geo.add(geo.scale(toward, math.cos(radians)), geo.scale(normal, math.sin(radians))), normal)
-                position = keep_side(_place(target, direction, reach, size, "俯拍", eye, single_print, fov, aspect), axis, target)
+                position = keep_side(_place(target, direction, reach, size, _HIGH_ANGLE, eye, single_print, fov, aspect), axis, target)
             # A lens pushed back to keep its side is lengthened, so the shot keeps the size the table asked for.
             fov = _tighter(fov, planned_reach, position, target)
             lens = _lens_of(fov, aspect)
@@ -596,7 +612,7 @@ def solve_camera(
         fov_deg=round(fov, 2),
         aspect=aspect_ratio,
         shot_size=(spec.size or size)[:80],
-        angle=(spec.angle or "平视")[:120],
+        angle=angle[:120],
         function=function,
         subjects=[actor.name for actor in subjects],
         move=CameraMove(kind=move_kind(spec.motion)),
@@ -617,15 +633,15 @@ def _counterpart(
     return others[0] if others and subject.name in principals else None
 
 
-_FUNCTION_LABELS = {
-    "establish": "建立", "relation": "关系", "single": "单人", "over_shoulder": "过肩",
-    "reaction": "反应", "detail": "细节", "empty": "空镜",
-}
+_LABELS: dict = prompt_data.value(_VOCABULARY, "camera_labels")
+_FUNCTION_LABELS: dict[str, str] = {str(key): str(word) for key, word in _LABELS["functions"].items()}
 
 
 def _label(shot_id: int, function: str, names: Sequence[str], size: str) -> str:
-    who = "、".join(names[:3]) or "环境"
-    return f"{shot_id:02d} {_FUNCTION_LABELS.get(function, function)}-{who}-{size}"[:160]
+    who = str(_LABELS["name_separator"]).join(names[:3]) or str(_LABELS["nobody"])
+    return str(_LABELS["template"]).format(
+        shot_id=shot_id, function=_FUNCTION_LABELS.get(function, function), who=who, size=size,
+    )[:160]
 
 
 __all__ = [

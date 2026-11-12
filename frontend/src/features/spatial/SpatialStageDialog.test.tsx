@@ -98,6 +98,48 @@ describe('SpatialStageDialog', () => {
     expect(operations[0].position).toHaveLength(2);
   });
 
+  it('treats a press that does not travel as a click and saves nothing', async () => {
+    render(<SpatialStageDialog taskId="t1" sceneId="E1S01" onClose={() => {}} />);
+    const floor = await screen.findByRole('img', { name: 'E1S01 空间调度俯视图' });
+    vi.spyOn(floor, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 720, height: 540, right: 720, bottom: 540, x: 0, y: 0, toJSON: () => ({}) });
+
+    for (const mark of [floor.querySelector('.spatial-floor__actor.is-principal'), floor.querySelector('.spatial-floor__camera.is-selected')] as SVGGElement[]) {
+      fireEvent.pointerDown(mark, { clientX: 100, clientY: 100, pointerId: 1 });
+      fireEvent.pointerMove(floor, { clientX: 102, clientY: 101, pointerId: 1 });
+      fireEvent.pointerUp(floor, { clientX: 102, clientY: 101, pointerId: 1 });
+    }
+
+    expect(requests().some(item => item.method === 'PATCH')).toBe(false);
+  });
+
+  it('leaves a dragged mark where it was dropped until the saved plan answers', async () => {
+    let answer: (response: Response) => void = () => {};
+    fetchMock.mockImplementation((_input: RequestInfo | URL, init?: RequestInit) => (
+      init?.method === 'PATCH' ? new Promise<Response>(resolve => { answer = resolve; }) : jsonResponse(planResponse())
+    ));
+    render(<SpatialStageDialog taskId="t1" sceneId="E1S01" onClose={() => {}} />);
+    const floor = await screen.findByRole('img', { name: 'E1S01 空间调度俯视图' });
+    vi.spyOn(floor, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 720, height: 540, right: 720, bottom: 540, x: 0, y: 0, toJSON: () => ({}) });
+    const spot = () => {
+      const circle = floor.querySelector('.spatial-floor__actor.is-principal circle') as SVGCircleElement;
+      return `${circle.getAttribute('cx')},${circle.getAttribute('cy')}`;
+    };
+    const before = spot();
+
+    fireEvent.pointerDown(floor.querySelector('.spatial-floor__actor.is-principal') as SVGGElement, { clientX: 100, clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(floor, { clientX: 140, clientY: 260, pointerId: 1 });
+    const dropped = spot();
+    expect(dropped).not.toBe(before);
+    fireEvent.pointerUp(floor, { clientX: 140, clientY: 260, pointerId: 1 });
+
+    await waitFor(() => expect(requests().some(item => item.method === 'PATCH')).toBe(true));
+    expect(spot()).toBe(dropped);
+
+    // The server's plan wins once it arrives; this one puts the mark back where it was.
+    answer(new Response(JSON.stringify(planResponse({}, { revision: 4 })), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    await waitFor(() => expect(spot()).toBe(before));
+  });
+
   it('explains a conflict and lets the user read the plan again', async () => {
     fetchMock.mockImplementation((_input: RequestInfo | URL, init?: RequestInit) => (
       init?.method === 'PATCH' ? jsonResponse({ detail: '空间方案已在其他页面更新，请刷新后重试' }, 409) : jsonResponse(planResponse())
@@ -137,6 +179,32 @@ describe('SpatialStageDialog', () => {
     expect(await screen.findByText(/当前为按剧本即时规划的预览/)).toBeTruthy();
     expect(screen.getByText('标准覆盖预览')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /按当前站位重画本场/ })).toBeNull();
+  });
+
+  it('keeps focus where the user put it when the caller renders again', async () => {
+    const { rerender } = render(<SpatialStageDialog taskId="t1" sceneId="E1S01" onClose={() => {}} />);
+    await screen.findByRole('img', { name: 'E1S01 空间调度俯视图' });
+    const distance = screen.getByLabelText('相距（米）');
+    distance.focus();
+
+    const onClose = vi.fn();
+    rerender(<SpatialStageDialog taskId="t1" sceneId="E1S01" onClose={onClose} />);
+
+    expect(document.activeElement).toBe(distance);
+    await userEvent.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers the way to the 3D desk only where the caller can open it', async () => {
+    const onOpenDesk = vi.fn();
+    const { rerender } = render(<SpatialStageDialog taskId="t1" sceneId="E1S01" onClose={() => {}} />);
+    await screen.findByRole('img', { name: 'E1S01 空间调度俯视图' });
+    expect(screen.queryByRole('button', { name: /在 3D 导演台中编辑/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /导出 3D 导演台工程/ })).toBeTruthy();
+
+    rerender(<SpatialStageDialog taskId="t1" sceneId="E1S01" onClose={() => {}} onOpenDesk={onOpenDesk} />);
+    await userEvent.click(screen.getByRole('button', { name: /在 3D 导演台中编辑/ }));
+    expect(onOpenDesk).toHaveBeenCalledTimes(1);
   });
 
   it('reports a load failure and closes on Escape', async () => {

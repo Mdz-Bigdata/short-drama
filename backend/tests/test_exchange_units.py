@@ -1,5 +1,6 @@
-import inspect
+import ast
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from app.core import exchange_units as eu
@@ -188,20 +189,29 @@ class ShotAuditTests(unittest.TestCase):
         self.assertIn("对话少于一个来回", {issue.rule for issue in audit.issues})
 
 
+def _method_source(name: str) -> str:
+    """DramaService.<name> as the file says now.
+
+    inspect.getsource pairs the file on disk with line numbers taken at import, so an edit to drama_service.py
+    during a long test run (other sessions work in this checkout) made it read the wrong lines.
+    """
+    path = Path(__file__).resolve().parents[1] / "app" / "service" / "drama_service.py"
+    text = path.read_text(encoding="utf-8")
+    service = next(node for node in ast.parse(text).body if isinstance(node, ast.ClassDef) and node.name == "DramaService")
+    method = next(node for node in service.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name)
+    return ast.get_source_segment(text, method) or ""
+
+
 class StageFourWiringTests(unittest.TestCase):
     def test_the_scene_board_briefs_the_writer_and_audits_with_the_same_plan(self):
-        from app.service.drama_service import DramaService
-
-        source = inspect.getsource(DramaService._generate_scene_board)
+        source = _method_source("_generate_scene_board")
 
         self.assertIn("exchange_units.scene_plan(", source)
         self.assertIn("exchange.brief()", source)
         self.assertIn("exchange=exchange", source)
 
     def test_stage_five_hands_a_fight_shot_the_previous_landing_unless_it_shares_a_video(self):
-        from app.service.drama_service import DramaService
-
-        source = inspect.getsource(DramaService._execute_stage_blocking)
+        source = _method_source("_execute_stage_blocking")
 
         self.assertIn('prompt_data.text("clip_prompt", "fight_carry").format(landing=', source)
         self.assertIn("in fight_scenes and episode_cycle.shot_uid(shot) not in sliced_uids", source)

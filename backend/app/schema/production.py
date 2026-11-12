@@ -614,10 +614,16 @@ class Sd25PromptAuditResult(BaseModel):
     prompt_sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 
 
+class TimelineRenderRequest(BaseModel):
+    """Which episode to render again; none is the episode the timeline shows by default."""
+    episode: Optional[int] = Field(None, ge=1)
+
+
 class TimelineOperationRequest(BaseModel):
     """One edit on the stage-7 timeline; which fields matter depends on ``operation``."""
-    operation: Literal["trim", "transition", "sound_join", "subtitle", "mute", "candidate", "review", "title", "bgm"]
+    operation: Literal["trim", "transition", "sound_join", "subtitle", "mute", "candidate", "review", "title", "bgm", "audio_source", "settings"]
     shot_id: Optional[int] = Field(None, ge=1)
+    shot_uid: Optional[int] = Field(None, ge=1, description="全剧唯一的镜头编号，给了就按它找；各场镜号都从 1 起")
     start: Optional[float] = Field(None, ge=0)
     end: Optional[float] = Field(None, ge=0)
     kind: Optional[str] = Field(None, max_length=40)
@@ -633,3 +639,7 @@ class TimelineOperationRequest(BaseModel):
     library_id: Optional[str] = Field(None, max_length=40)
     volume: Optional[float] = Field(None, ge=0, le=1)
     duck: Optional[bool] = None
+    bgm_start: Optional[float] = Field(None, ge=0, le=3600, description="音乐定位：配乐从成片第几秒进")
+    music_version: Optional[str] = Field(None, max_length=2000, description="source=generated 时选之前生成过的哪一版配乐(它的 url)")
+    audio_source: Optional[Literal["native", "tts", "none"]] = Field(None, description="这一镜的人声：原声 / 配音 / 不要")
+    settings: Optional[dict[str, bool]] = Field(None, description="基础设定：transitions / dialogue / subtitles / title_card")

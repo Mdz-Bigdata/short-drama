@@ -71,7 +71,7 @@ export const CANVAS_TOOLS: CanvasToolSpec[] = [
   },
   { id: 'enhance', label: () => t('高清修复'), group: 'image', engine: 'image', output: 'image', inputs: IMAGE_INPUT, prompt: () => t('补充说明（可选）'), note: () => t('由图像模型重新生成，细节可能有细微变化') },
   {
-    id: 'upscale_image', label: () => t('放大（本地）'), group: 'image', engine: 'local', output: 'image', inputs: IMAGE_INPUT,
+    id: 'upscale_image', label: () => t('图片放大（本地）'), group: 'image', engine: 'local', output: 'image', inputs: IMAGE_INPUT,
     params: [{ key: 'factor', label: () => t('倍数'), type: 'select', fallback: '2', options: [['2', () => '2×'], ['3', () => '3×'], ['4', () => '4×']] }],
     note: () => t('本机插值放大，不增加真实细节；要补细节用「高清修复」'),
   },
@@ -87,7 +87,7 @@ export const CANVAS_TOOLS: CanvasToolSpec[] = [
   { id: 'reverse_prompt', label: () => t('反推提示词'), group: 'image', engine: 'vision', output: 'text', inputs: IMAGE_INPUT },
   { id: 'mark_detect', label: () => t('水印字幕检测'), group: 'image', engine: 'vision', output: 'text', inputs: IMAGE_INPUT },
   {
-    id: 'video_upscale', label: () => t('放大（本地）'), group: 'video', engine: 'local', output: 'video', inputs: VIDEO_INPUT,
+    id: 'video_upscale', label: () => t('视频放大（本地）'), group: 'video', engine: 'local', output: 'video', inputs: VIDEO_INPUT,
     params: [{ key: 'factor', label: () => t('倍数'), type: 'select', fallback: '2', options: [['1.5', () => '1.5×'], ['2', () => '2×'], ['3', () => '3×']] }],
     note: () => t('本机插值放大加锐化，不增加真实细节'),
   },

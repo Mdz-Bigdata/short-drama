@@ -7,7 +7,7 @@ a footprint and a height. The result is a proposal; ``apply_blockout`` (operatio
 the stage as ordinary set pieces a person can then move, scale or delete one by one.
 
 Nothing here calls a model; ``analysis_prompt`` is what to send and ``parse_blockout`` reads what
-came back. A reply is taken apart piece by piece so one malformed row costs that row, not the
+came back; their wording is in ``app/data/prompt/stage_blockout.json``. A reply is taken apart piece by piece so one malformed row costs that row, not the
 whole set: models write these lists long and a reply can be cut off at the token limit.
 
 Behavioural reference: the 3D director stage shown in DramaClaw's README (Elastic License 2.0,
@@ -24,10 +24,24 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from app.core import prompt_data
 from app.core.spatial_stage.model_kit import catalog_text, find_kit
 from app.core.spatial_stage.models import LandmarkKind, LandmarkShape, MAX_LANDMARKS, SpacePoint
 
-REFERENCE_CAMERA_LABEL = "参考机位"
+_WORDING = "stage_blockout"
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A sentence of ``stage_blockout.json``'s ``says`` with its values filled in."""
+    return str(prompt_data.load(_WORDING)["says"][key]).format(**values)
+
+
+def _text(key: str) -> str:
+    """A text of ``stage_blockout.json`` used as it stands (its braces are JSON examples, not placeholders)."""
+    return prompt_data.text(_WORDING, key)
+
+
+REFERENCE_CAMERA_LABEL = _text("reference_camera_label")
 # Enough for a whole street; the rest of the stage's capacity stays for what a person adds by hand.
 MAX_BLOCKOUT_PIECES = 200
 MAX_ARRAY_COUNT = 40
@@ -37,44 +51,9 @@ MAX_DESCRIPTION = 2000
 _HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 _SIZE_RANGE = (0.02, 200.0)
 
-_SYSTEM = (
-    "你是电影美术的白模师。你看一张场景参考图，把它拆成可以在 3D 软件里搭出来的简单体块，"
-    "用来做机位和走位预演，不追求细节，追求空间关系和比例准确。只输出一个 JSON 对象，不要任何解释或代码块标记。"
-)
+_SYSTEM = _text("system")
 
-_INSTRUCTIONS = """把这张参考图还原成一张俯视平面图上的体块清单。
-
-坐标约定（米，真实世界比例）：
-- 地面是 XZ 平面，场地中心在原点。
-- 站在拍摄这张图的位置看过去：+X 是画面右侧，-X 是画面左侧，+Z 朝向拍摄者（画面近处），-Z 是画面深处。
-- 用画面里的常见物体估算比例：门高约 2.1 米，一层楼约 3 米，人高约 1.7 米，树高 4 到 8 米。
-
-输出这个 JSON：
-{
-  "summary": "一句话说明这是什么地方",
-  "extent_m": [场地宽, 场地深],
-  "reference_camera": {"position": [x, y, z], "target": [x, y, z], "lens_mm": 35},
-  "pieces": [
-    {"name": "北侧外墙", "kind": "architecture", "shape": "box", "center": [x, z], "size": [宽, 进深, 高], "yaw_deg": 0, "elevation_m": 0},
-    {"name": "廊柱", "kind": "architecture", "shape": "cylinder", "center": [x, z], "size": [0.6, 0.6, 4], "array": {"count": 6, "dx": 3, "dz": 0}}
-  ]
-}
-
-字段说明：
-- name：中文名，说清它是什么、在哪一侧，同类用「段 1」「段 2」区分，不要重复。
-- kind：architecture（墙、楼、地台、台阶）、furniture（桌椅、柜台、车辆）、prop（小物件、盆栽、箱子）、light（灯具）。
-- shape：box、cylinder、sphere、cone、wedge（斜坡或单坡屋顶，高的一边在 -Z）。
-- center 是体块底面中心；size 是 [X 向宽度, Z 向进深, 高度]；yaw_deg 绕竖直轴转，0 表示不转。
-- elevation_m：体块底面离地高度，屋顶、二层、架在别的东西上的才填，贴地可省略。
-- array：可选，一排重复的东西（柱子、窗、树、座位）写一条再加 array，不要逐个罗列；count 是总数，dx / dz 是相邻两个的间距。
-- reference_camera：估算拍摄这张图的机位、看向的点和等效全画幅焦距；y 是离地高度，航拍可以很高。
-
-拆分要求：
-- 先铺地面：用一块很薄的 box（高 0.05 米）表示主要地面或广场；地面只占一块，别的体块都站在它上面。
-- 再放决定空间结构的大件（外墙、建筑体量、通道两侧的墙），它们围出人能走的路；墙要有真实的厚度（0.2 到 1 米），不要让体块互相穿插。
-- 长墙有门洞或转折就拆成几段，留出缺口，这样人物走位才走得通。
-- 最后放能遮挡视线或被人物利用的中小件。画面看不到的地方不要编造。
-- 总数控制在 """ + str(MAX_BLOCKOUT_PIECES) + """ 块以内：宁可合并远处的小东西，也不要漏掉近处的结构。"""
+_INSTRUCTIONS = _text("instructions") + _says("piece_limit", max_pieces=MAX_BLOCKOUT_PIECES)
 
 
 class BlockoutError(ValueError):
@@ -152,33 +131,25 @@ class Blockout(_Model):
         return str(value or "")[:300]
 
 
-_TEXT_SYSTEM = (
-    "你是电影美术的白模师。你读一段场景描述，把它搭成可以在 3D 软件里摆出来的简单体块，"
-    "用来做机位和走位预演，不追求细节，追求空间关系和比例准确。只输出一个 JSON 对象，不要任何解释或代码块标记。"
-)
+_TEXT_SYSTEM = _text("text_system")
 
-_TEXT_NOTES = """这次没有参考图：按描述想象这个地方，把它搭出来；描述没写的只补这类地方必需的东西（一间屋子要有墙和门），不要加戏。
-- 把上面说的「站在拍摄位置看过去」理解成：站在场地南侧（+Z）朝北（-Z）看，reference_camera 就给一个能看清全场的机位。
-- 优先用模型库：一件东西在下面的库里有，就写 "kit": "库里的 id"，并给 center；只有实际尺寸和库里明显不同才写 size。墙、地面、大体块仍可以用 shape + size。
-
-模型库（id（名称 宽×深×高，米））：
-"""
+_TEXT_NOTES = _text("text_notes")
 
 
 def text_prompt(description: str, width_m: float | None = None) -> tuple[str, str]:
     """The same floor-plan contract as a reference image, from words, with the model library on offer."""
     prompt = _INSTRUCTIONS + "\n\n" + _TEXT_NOTES + catalog_text()
     if width_m:
-        prompt += f"\n\n操作者已知这个场地宽约 {width_m:g} 米：以此为准定比例。"
-    return _TEXT_SYSTEM, f"{prompt}\n\n场景描述：\n{description.strip()[:MAX_DESCRIPTION]}"
+        prompt += _says("width", width_m=width_m)
+    return _TEXT_SYSTEM, prompt + _says("description", description=description.strip()[:MAX_DESCRIPTION])
 
 
 def analysis_prompt(hint: str = "", width_m: float | None = None) -> tuple[str, str]:
     prompt = _INSTRUCTIONS
     if width_m:
-        prompt += f"\n\n操作者已知这个场地宽约 {width_m:g} 米：以此为准定比例。"
+        prompt += _says("width", width_m=width_m)
     if hint.strip():
-        prompt += f"\n\n操作者的补充说明（只用来判断画面内容）：{hint.strip()[:_MAX_HINT]}"
+        prompt += _says("hint", hint=hint.strip()[:_MAX_HINT])
     return _SYSTEM, prompt
 
 
@@ -187,14 +158,14 @@ def _json_of(text: str) -> Mapping[str, Any]:
     body = re.sub(r"^```(?:json)?|```$", "", str(text or "").strip(), flags=re.MULTILINE).strip()
     start = body.find("{")
     if start < 0:
-        raise BlockoutError("模型没有返回可解析的白模清单，请重试或换一个多模态模型")
+        raise BlockoutError(_text("unreadable"))
     body = body[start:]
     try:
         parsed = json.JSONDecoder().raw_decode(body)[0]
     except json.JSONDecodeError:
         parsed = _salvage(body)
     if not isinstance(parsed, Mapping):
-        raise BlockoutError("模型没有返回可解析的白模清单，请重试或换一个多模态模型")
+        raise BlockoutError(_text("unreadable"))
     return parsed
 
 
@@ -203,7 +174,7 @@ def _salvage(body: str) -> Mapping[str, Any]:
     opening = body.find('"pieces"')
     bracket = body.find("[", opening) if opening >= 0 else -1
     if bracket < 0:
-        raise BlockoutError("模型的回答被截断，没有读到任何体块，请重试")
+        raise BlockoutError(_text("truncated"))
     depth, in_string, escaped, last = 0, False, False, -1
     for index in range(bracket + 1, len(body)):
         char = body[index]
@@ -224,11 +195,11 @@ def _salvage(body: str) -> Mapping[str, Any]:
             if depth == 0:
                 last = index
     if last < 0:
-        raise BlockoutError("模型的回答被截断，没有读到任何体块，请重试")
+        raise BlockoutError(_text("truncated"))
     try:
         return json.loads(body[: last + 1] + "]}")
     except json.JSONDecodeError as error:
-        raise BlockoutError("模型的回答被截断且无法修复，请重试") from error
+        raise BlockoutError(_text("unrepairable")) from error
 
 
 def _expand(rows: Sequence[Any]) -> list[Any]:
@@ -296,10 +267,10 @@ def parse_blockout(text: str) -> Blockout:
     data = _json_of(text)
     rows = data.get("pieces")
     if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
-        raise BlockoutError("模型的回答里没有体块清单，请重试")
+        raise BlockoutError(_text("no_list"))
     pieces, dropped = _read_rows(rows)
     if not pieces:
-        raise BlockoutError("模型没有给出可用的体块，请换一张空间关系更清楚的参考图，或补充说明后重试")
+        raise BlockoutError(_text("no_pieces"))
     camera = None
     try:
         camera = BlockoutCamera.model_validate(data["reference_camera"]) if data.get("reference_camera") else None
@@ -318,12 +289,12 @@ def parse_blockout(text: str) -> Blockout:
 def read_pieces(rows: Any) -> list[BlockoutPiece]:
     """The pieces of an ``apply_blockout`` operation; unlike a model's reply, a submitted row must be right."""
     if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)) or not rows:
-        raise BlockoutError("pieces 必须是非空的体块列表")
+        raise BlockoutError(_text("pieces_not_list"))
     if len(rows) > MAX_LANDMARKS:
-        raise BlockoutError(f"一份白模最多 {MAX_LANDMARKS} 块")
+        raise BlockoutError(_says("too_many_pieces", limit=MAX_LANDMARKS))
     pieces, dropped = _read_rows(rows)
     if dropped:
-        raise BlockoutError(f"有 {dropped} 个体块的字段不合法（需要 name、center:[x,z]、size:[宽,进深,高]）")
+        raise BlockoutError(_says("bad_rows", count=dropped))
     return pieces
 
 

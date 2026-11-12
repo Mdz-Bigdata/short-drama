@@ -15,54 +15,41 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core import prompt_data
+
+# The editing types, the media categories, their aliases, the hard-cut rewrites, the prompt guide
+# and the sentence templates: app/data/prompt/transition_catalog.json.
+_WORDING = "transition_catalog"
+_TYPE_COLUMNS = ("value", "label", "en", "usage", "emotions", "pacing")
+_CATEGORY_COLUMNS = ("value", "label", "purpose", "media")
+# The formula's slots in the order they are written; each is a ``says`` template filled with ``{text}``.
+_FORMULA_SLOTS = ("outgoing_action", "medium", "camera_move", "incoming_scene", "light")
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A sentence of the catalog's wording, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return str(prompt_data.load(_WORDING)["says"][key]).format(**values)
+
+
+def _rows(table: str, columns: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
+    """A table of the catalog's data as tuples of its columns, in file order."""
+    return tuple(tuple(str(row[column]) for column in columns) for row in prompt_data.value(_WORDING, table))
+
+
+def _aliases(table: str) -> dict[str, tuple[str, ...]]:
+    return {str(name): tuple(str(alias) for alias in aliases) for name, aliases in prompt_data.value(_WORDING, table).items()}
+
+
 # value, zh label, en, usage, emotions, pacing
-TRANSITION_TYPES: tuple[tuple[str, str, str, str, str, str], ...] = (
-    ("cut", "硬切", "hard cut", "同场景动作衔接、正反打、节奏推进", "干脆、直接", "any"),
-    ("fade", "淡入淡出", "fade in/out", "开场结尾、回忆梦境、时间跳转", "宁和、怅惘、怀念", "slow"),
-    ("dissolve", "叠化", "dissolve", "时间流逝、回忆过渡、季节变化", "平实、缱绻、念旧", "slow"),
-    ("flash", "闪白/闪黑", "flash white/black", "闪回回忆、打斗冲击后、激烈碰撞", "强烈、惊惧、屏息", "fast"),
-    ("wipe", "划像", "wipe", "风格化表达、节奏增强、时空跳跃", "跃动、干脆、摩登", "fast"),
-    ("push_pull", "推拉转场", "push/pull", "进入新场景、情绪递进、强调空间关系", "顺滑、连贯、代入", "medium"),
-    ("match_cut", "匹配剪辑", "match cut", "同场景动作 / 视线 / 姿态延续衔接、创意叙事、时空跳跃", "连贯、顺畅、自然", "medium"),
-    ("montage", "蒙太奇", "montage", "时间压缩、场景累积、故事快进", "密实、燃情、激荡", "fast"),
-    ("sound_bridge", "声音先行", "sound bridge (J-cut)", "悬疑、回忆、梦境；声音先于画面进入", "暗流、期待", "medium"),
-)
+TRANSITION_TYPES: tuple[tuple[str, str, str, str, str, str], ...] = _rows("types", _TYPE_COLUMNS)  # type: ignore[assignment]
 # value, zh label, purpose, media examples
-TRANSITION_CATEGORIES: tuple[tuple[str, str, str, str], ...] = (
-    ("occlusion", "遮挡蒙太奇", "前景物象短暂遮挡镜头，遮挡移开后已是新场景", "衣袖、手掌、门框、雨幕、花瓣、纸页、面具、镜面、雾气、火焰"),
-    ("camera_move", "镜头运动", "用镜头位移跨越时空边界", "俯冲、甩镜、下坠、环绕、侧移、抬升、后退、穿隙、推进、拉远、贴地"),
-    ("action", "动作叙事", "人物动作的轨迹延续到下一场景", "转身、拔剑、挥刀、跃起、抬手、抬眸、奔袭、起身、闭眼睁眼、伸手触碰、甩袖"),
-    ("light", "光影氛围", "光线变化承担切换", "月色漫染、闪电、霓虹闪烁、过曝、金光、烛焰、强光溢散、天光破晓、冷光铺满"),
-    ("time", "时空流变", "同一机位内时间流逝", "四季更迭、昼夜流转、城建变迁、器物岁月、人物成长、记忆闪回"),
-    ("emotion", "情绪驱动", "情绪节点触发切换", "惊醒、梦境破碎、泪滴垂落、心跳加速、呼出白雾、情绪残影、情绪爆发"),
-    ("space", "空间跃迁", "穿越媒介进入另一空间", "冲出海面、推开门、升空、洞穴穿行、镜中世界、云海宫殿、传送门、画中世界"),
-    ("narrative", "电影高级叙事", "剪辑语法本身成为转场", "双线平行、视线引导、遮挡物匹配、长镜连贯、虚实景深、声音先行、穿廊长镜、图形匹配"),
-    ("opening", "开篇转场", "第一镜就完成世界观交代", "暗影现身、异象降临、瞳眸苏醒、战场残响、雨幕登场、破碎开场、重门启幕、梦境预警"),
-)
+TRANSITION_CATEGORIES: tuple[tuple[str, str, str, str], ...] = _rows("categories", _CATEGORY_COLUMNS)  # type: ignore[assignment]
 _TYPE_BY_KEY = {value: value for value, *_ in TRANSITION_TYPES}
-_TYPE_SYNONYMS = {
-    "cut": ("硬切", "直切", "切", "cut", "hard cut", "动作匹配硬切", "视线匹配硬切", "正反打"),
-    "fade": ("淡入", "淡出", "淡入淡出", "fade", "渐黑", "黑场", "fade in", "fade out"),
-    "dissolve": ("叠化", "叠画", "溶", "dissolve", "cross dissolve", "交叉叠化"),
-    "flash": ("闪白", "闪黑", "flash", "白闪", "黑闪"),
-    "wipe": ("划像", "划变", "wipe", "擦除"),
-    "push_pull": ("推拉", "推拉转场", "push pull", "推进转场", "拉出转场"),
-    "match_cut": ("匹配剪辑", "匹配", "match cut", "图形匹配", "遮挡物匹配", "动作匹配"),
-    "montage": ("蒙太奇", "montage", "快切", "快剪"),
-    "sound_bridge": ("声音先行", "声音先导", "声桥", "sound bridge", "j cut", "j-cut", "声音延续"),
-}
+_TYPE_SYNONYMS = _aliases("type_synonyms")
 _CATEGORY_LABELS = {value: label for value, label, _, _ in TRANSITION_CATEGORIES}
-_CATEGORY_SYNONYMS = {
-    "occlusion": ("遮挡", "拂过", "掠过", "覆盖", "吞没", "遮镜", "面具", "镜面置换", "起雾"),
-    "camera_move": ("俯冲", "甩镜", "下坠", "环绕", "侧移", "抬升", "后退", "穿隙", "贴地", "旋转镜头"),
-    "action": ("转身", "拔剑", "挥刀", "跃起", "抬手", "抬眸", "奔袭", "起身", "睁眼", "触碰", "甩袖", "回身"),
-    "light": ("月色", "闪电", "霓虹", "过曝", "金光", "烛", "溢散", "破晓", "冷光", "光晕", "火光"),
-    "time": ("四季", "昼夜", "变迁", "岁月", "成长", "闪回", "回溯", "加速"),
-    "emotion": ("惊醒", "梦境", "泪", "心跳", "白雾", "残影", "情绪爆发", "入梦"),
-    "space": ("冲天", "门后", "升空", "洞穴", "镜中", "云巅", "传送门", "画中", "堕入"),
-    "narrative": ("双线", "视线引导", "长镜", "景深", "声音先行", "穿廊", "图形匹配"),
-    "opening": ("开篇", "开场", "登场", "现身", "苏醒", "启幕"),
-}
+_CATEGORY_SYNONYMS = _aliases("category_synonyms")
+# 认不出类型时的标签：不用硬切，一律按匹配剪辑处理。
+_FALLBACK_LABEL = prompt_data.text(_WORDING, "fallback_label")
 
 
 def _key(value: Any) -> str:
@@ -142,14 +129,12 @@ def compose_transition(
     canonical = smooth_kind(normalize_transition_type(kind)[0])
     _, label, _en, usage, emotions, _pacing = next(row for row in TRANSITION_TYPES if row[0] == canonical)
     category = category if category in _CATEGORY_LABELS else classify_transition_category(medium or outgoing_action)
+    separator = _says("separator")
     parts = [
-        f"前镜收尾：{outgoing_action.strip()}" if outgoing_action.strip() else "",
-        f"转场媒介：{medium.strip()}" if medium.strip() else "",
-        f"镜头运动：{camera_move.strip()}" if camera_move.strip() else "",
-        f"切入：{incoming_scene.strip()}" if incoming_scene.strip() else "",
-        f"光影氛围：{light.strip()}" if light.strip() else "",
+        _says(slot, text=text.strip()) if text.strip() else ""
+        for slot, text in zip(_FORMULA_SLOTS, (outgoing_action, medium, camera_move, incoming_scene, light))
     ]
-    prompt = f"{label}（{usage}）；" + "；".join(part for part in parts if part)
+    prompt = _says("prompt_head", label=label, usage=usage) + separator.join(part for part in parts if part)
     return TransitionSpec(
         kind=canonical,
         kind_label=label,
@@ -157,12 +142,12 @@ def compose_transition(
         category_label=_CATEGORY_LABELS.get(category, ""),
         usage=usage,
         emotions=emotions,
-        prompt=prompt.rstrip("；"),
+        prompt=prompt.rstrip(separator),
     )
 
 
 def transition_label(kind: str) -> str:
-    return next((label for value, label, *_ in TRANSITION_TYPES if value == smooth_kind(kind)), "匹配剪辑")
+    return next((label for value, label, *_ in TRANSITION_TYPES if value == smooth_kind(kind)), _FALLBACK_LABEL)
 
 
 def smooth_kind(kind: str) -> str:
@@ -170,14 +155,17 @@ def smooth_kind(kind: str) -> str:
     return "match_cut" if kind == "cut" else kind
 
 
-_HARD_CUT_WORDS = re.compile(r"(?:声音先行)?(?:硬切|直切|直接切(?:出|入)?|跳切)")
-# 交接说明里的剪切动词换成连贯的说法(只用于转场交接文字，那里它们都指切镜)。
-_CUT_VERBS = (("切入", "进入"), ("切出", "带出"), ("切回", "回到"), ("切到", "转到"), ("切点", "衔接点"))
+_HARD_CUT_WORDS = prompt_data.pattern(_WORDING, "hard_cut_words")
+_SOUND_FIRST = prompt_data.text(_WORDING, "sound_first")
+_SOUND_FIRST_JOIN = prompt_data.text(_WORDING, "sound_first_join")
+_SMOOTH_JOIN = prompt_data.text(_WORDING, "smooth_join")
+# 交接说明里的剪切动词换成连贯的说法(只用于转场交接文字，那里它们都指切镜)，按顺序替换。
+_CUT_VERBS = prompt_data.pairs(_WORDING, "cut_verbs")
 
 
 def smooth_text(text: Any) -> str:
     """转场说明里出现的「硬切 / 直切 / 跳切 / 切入切出」改写成连贯衔接的说法，旧数据进视频提示词前也不带硬切。"""
-    out = _HARD_CUT_WORDS.sub(lambda m: "声音先行衔接" if m.group(0).startswith("声音先行") else "连贯衔接", str(text or ""))
+    out = _HARD_CUT_WORDS.sub(lambda m: _SOUND_FIRST_JOIN if m.group(0).startswith(_SOUND_FIRST) else _SMOOTH_JOIN, str(text or ""))
     for old, new in _CUT_VERBS:
         out = out.replace(old, new)
     return out
@@ -189,22 +177,16 @@ def describe_transition(value: Any) -> str:
     canonical = smooth_kind(canonical)
     _, label, _en, usage, emotions, _pacing = next(row for row in TRANSITION_TYPES if row[0] == canonical)
     category = classify_transition_category(value)
-    note = f"{label}：{usage}（{emotions}）"
+    note = _says("note", label=label, usage=usage, emotions=emotions)
     if category:
-        note += f"；媒介类别：{_CATEGORY_LABELS[category]}"
+        note += _says("note_category", category=_CATEGORY_LABELS[category])
     if not matched:
-        note += "；未在转场词典内，按动作匹配衔接处理"
+        note += _says("note_unmatched")
     return note
 
 
-TRANSITION_PROMPT_GUIDE = (
-    "转场按两层写：剪辑类型（硬切/淡入淡出/叠化/闪白闪黑/划像/推拉/匹配剪辑/蒙太奇/声音先行）决定节奏；"
-    "AI 片段内的转场用媒介完成——遮挡（衣袖、手掌、门框、雨幕、花瓣）、镜头运动（俯冲、甩镜、穿隙）、"
-    "动作延续（转身、拔剑、跃起）、光影（闪电、过曝、烛焰）、时空流变（四季、昼夜）、情绪节点（惊醒、泪滴）、"
-    "空间跃迁（推门、镜中、传送门）。写法固定为：前镜人物动作 + 转场媒介 + 镜头运动 + 新场景 + 光影氛围。"
-    "同场景直接硬切；换场景才用穿越、甩镜或叠化；上一镜情绪未结束不炫技。"
-)
-_FORMULA_PATTERN = re.compile(r"(转场媒介|遮挡|甩镜|穿|叠化|淡入|淡出|闪白|闪黑|划像|匹配|蒙太奇|声音先行)")
+TRANSITION_PROMPT_GUIDE = "".join(prompt_data.words(_WORDING, "prompt_guide"))
+_FORMULA_PATTERN = prompt_data.pattern(_WORDING, "formula_pattern")
 
 
 def uses_transition_grammar(text: Any) -> bool:

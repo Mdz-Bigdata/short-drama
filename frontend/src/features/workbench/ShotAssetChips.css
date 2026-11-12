@@ -1,0 +1,25 @@
+/* 本镜用到的资产：人物 / 场景 / 道具 / 特效 / 其他，窄时换行。 */
+.shot-assets { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.5rem; min-width: 0; max-width: 100%; font-size: 0.72rem; line-height: 1.25; }
+.shot-assets.is-compact { gap: 0.25rem; font-size: 0.64rem; }
+.shot-assets__group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.25rem; min-width: 0; max-width: 100%; }
+.shot-assets__group-label { color: var(--text-muted); font-size: 0.66rem; }
+.shot-assets__chip { display: inline-flex; align-items: center; gap: 0.25rem; min-width: 0; max-width: 100%; padding: 0.12rem 0.4rem; color: inherit; border: 1px solid var(--line); border-radius: 999px; background: rgba(var(--accent-rgb), 0.08); }
+.shot-assets__chip.is-people { border-color: rgba(var(--accent-rgb), 0.38); }
+.shot-assets__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shot-assets.is-compact .shot-assets__name { max-width: 6.5em; }
+.shot-assets__badge,
+.shot-assets__marker { flex: none; padding: 0 0.25rem; color: var(--text-muted); border: 1px solid var(--line); border-radius: 0.25rem; font-size: 0.86em; }
+.shot-assets__chip.is-stale { color: var(--warning); border-color: rgba(var(--warning-rgb), 0.6); background: rgba(var(--warning-rgb), 0.12); }
+.shot-assets__more { flex: none; padding: 0.12rem 0.35rem; color: var(--text-muted); border: 1px dashed var(--line); border-radius: 999px; }
+.shot-assets__stale { flex: none; padding: 0.12rem 0.45rem; color: var(--warning); border: 1px solid rgba(var(--warning-rgb), 0.7); border-radius: 0.3rem; background: rgba(var(--warning-rgb), 0.16); font-weight: 700; }
+
+/* 叠在分镜画面上：放在「景别 · 运镜」上方，底色压住画面好读。 */
+.shot-assets.is-overlay { position: absolute; left: 0.625rem; right: 0.625rem; bottom: 2.6rem; pointer-events: auto; }
+.shot-assets.is-overlay .shot-assets__chip,
+.shot-assets.is-overlay .shot-assets__more { background: rgba(var(--surface-rgb), 0.86); }
+.shot-assets.is-overlay .shot-assets__chip.is-stale { background: rgba(var(--surface-rgb), 0.9); }
+.shot-assets.is-overlay .shot-assets__stale { background: rgba(var(--surface-rgb), 0.92); }
+
+/* 镜头工作区标题栏里占一整行；路由没带上的参考跟在后面。 */
+.shot-workspace__detail-title > .shot-assets { flex-basis: 100%; }
+.shot-assets__unused { flex-basis: 100%; color: var(--warning); font-size: 0.72rem; }

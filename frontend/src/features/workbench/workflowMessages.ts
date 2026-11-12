@@ -1,5 +1,6 @@
 import type { TaskChatEntry, TaskResponse } from '../../types';
 import { scriptDetailPhase } from '../writer/scriptDetail';
+import { chatCardsFromHistory, type ChatCard } from './chatCards';
 
 export interface WorkflowChatMessage {
   id: string;
@@ -7,6 +8,8 @@ export interface WorkflowChatMessage {
   text: string;
   stage?: number;
   isSystem?: boolean;
+  /** 贴在这条回复下面的卡片：来自服务端存下的界面事件与等确认的提议。 */
+  cards?: ChatCard[];
 }
 
 /**
@@ -24,11 +27,15 @@ export function restoreWorkflowHistory(task: TaskResponse): WorkflowChatMessage[
     seen.add(entry.id);
     return true;
   });
-  const bubble = (entry: TaskChatEntry): WorkflowChatMessage => ({
-    id: `history:${entry.id}`,
-    sender: entry.role === 'user' ? 'user' : 'ai',
-    text: entry.content,
-  });
+  const bubble = (entry: TaskChatEntry): WorkflowChatMessage => {
+    const cards = entry.role === 'assistant' ? chatCardsFromHistory(entry.ui_actions, entry.proposal) : [];
+    return {
+      id: `history:${entry.id}`,
+      sender: entry.role === 'user' ? 'user' : 'ai',
+      text: entry.content,
+      ...(cards.length ? { cards } : {}),
+    };
+  };
   const shown = new Set<string>();
   const restored: WorkflowChatMessage[] = [];
   for (let index = 0; index < entries.length; index += 1) {
@@ -83,22 +90,26 @@ export function mergeWorkflowHistory(messages: WorkflowChatMessage[], task: Task
 export function workflowIntroMessage(task: TaskResponse): WorkflowChatMessage | null {
   const workflow = task.workflow;
   if (!workflow?.stages.length) return null;
-  const sequence = workflow.stages.map(stage => `${stage.stage}.${stage.label}`).join(' → ');
-  const done = workflow.completed_stages.length;
-  const total = workflow.stages.length;
+  // 按用户看到的步数说：声音、成片两个阶段同属剪辑合成师，合成一步「6.剪辑合成师」。
+  const stepOf = (stage: number) => workflow.stages[stage - 1]?.step ?? stage;
+  const steps = new Map<number, string[]>();
+  for (const stage of workflow.stages) steps.set(stepOf(stage.stage), [...(steps.get(stepOf(stage.stage)) ?? []), stage.label]);
+  const sequence = [...steps].map(([step, labels]) => `${step}.${labels.length > 1 ? labels[0].split('·')[0] : labels[0]}`).join(' → ');
+  const done = workflow.steps_done ?? workflow.completed_stages.length;
+  const total = workflow.steps_total ?? workflow.stages.length;
   const active = workflow.active_stage;
   const next = workflow.next_stage;
   const where = active
-    ? `正在执行第 ${active}/${total} 步：${workflow.stages[active - 1].label}。`
+    ? `正在执行第 ${stepOf(active)}/${total} 步：${workflow.stages[active - 1].label}。`
     : next
-      ? `已完成 ${done}/${total} 步，下一步是第 ${next}/${total} 步：${workflow.stages[next - 1].label}。`
+      ? `已完成 ${done}/${total} 步，下一步是第 ${stepOf(next)}/${total} 步：${workflow.stages[next - 1].label}。`
       : `${total} 个阶段的产物都已生成，只剩成片验收与发布终审。`;
   return {
     id: `workflow-intro:${task.taskId}:${workflow.event_id}`,
     sender: 'ai',
     isSystem: true,
     text: [
-      `这个项目由 8 个 Agent 依次完成：${sequence}。`,
+      `这个项目由 ${total} 个 Agent 依次完成：${sequence}。`,
       where,
       '每一步我都会说明这一阶段做了什么、产出在左侧哪个看板，再引导您确认或继续；'
       + '您也可以随时说「进度」查询、说「暂停」停下，或直接说出修改意见。',
@@ -129,6 +140,9 @@ export function workflowBoardTransition(previous: TaskResponse | null, next: Tas
 export function shouldPollWorkflow(task: TaskResponse): boolean {
   // The screenplay written aside after stage 2 lands with no stage running: keep watching for it.
   if (scriptDetailPhase(task.assets?.['2_detail']) === 'writing') return true;
+  // 成片自动验收在后台跑：结论稍后写进聊天，等它出来。超过 10 分钟的标记当作已中断。
+  const review = (task.assets?.['7'] as { auto_review_pending?: { started_at?: number } } | undefined)?.auto_review_pending;
+  if (review?.started_at && Date.now() / 1000 - review.started_at < 600) return true;
   return task.workflow ? task.workflow.mode === 'running' : task.status === 'running';
 }
 

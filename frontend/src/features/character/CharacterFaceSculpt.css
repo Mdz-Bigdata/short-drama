@@ -1,0 +1,309 @@
+.character-dialog.character-dialog--sculpt {
+  width: min(68rem, 96vw);
+}
+
+.face-sculpt {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(16rem, 1fr);
+  gap: 1rem;
+  min-height: 0;
+}
+
+.face-sculpt__editor,
+.face-sculpt__preview {
+  min-width: 0;
+}
+
+.face-sculpt__status {
+  padding: 1rem;
+  color: var(--text-muted);
+}
+
+.face-sculpt__status.is-error {
+  color: var(--danger);
+}
+
+.face-sculpt__tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.face-sculpt__tabs button,
+.face-sculpt__chips button,
+.face-sculpt__scale button,
+.face-sculpt__actions button {
+  border: 1px solid var(--character-line);
+  background: rgba(var(--surface-rgb), 0.6);
+  color: var(--text-main);
+  border-radius: 0.45rem;
+  cursor: pointer;
+}
+
+.face-sculpt__tabs button {
+  padding: 0.4rem 0.9rem;
+  font-weight: 600;
+}
+
+.face-sculpt__tabs button.is-active,
+.face-sculpt__chips button.is-active,
+.face-sculpt__scale button.is-active {
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--ink);
+}
+
+.face-sculpt__preset {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.face-sculpt__preset span {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+
+.face-sculpt__layer {
+  margin: 0 0 0.75rem;
+  padding: 0.6rem 0.75rem 0.75rem;
+  border: 1px solid var(--character-line);
+  border-radius: 0.6rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: 0.5rem 0.75rem;
+}
+
+.face-sculpt__layer legend {
+  padding: 0 0.35rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.face-sculpt__control,
+.face-sculpt__note {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.face-sculpt__note {
+  grid-column: 1 / -1;
+}
+
+.face-sculpt select,
+.face-sculpt input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--character-line);
+  border-radius: 0.4rem;
+  background: rgba(var(--surface-rgb), 0.85);
+  color: var(--text-main);
+  font: inherit;
+}
+
+.face-sculpt__scale {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.2rem;
+}
+
+.face-sculpt__scale button {
+  padding: 0.3rem 0;
+  font-size: 0.78rem;
+}
+
+.face-sculpt__hint {
+  margin: 0 0 0.6rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.face-sculpt__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+.face-sculpt__chips button {
+  padding: 0.25rem 0.65rem;
+  font-size: 0.82rem;
+}
+
+.face-sculpt__chips button.is-sculpted::after {
+  content: '•';
+  margin-left: 0.25rem;
+  color: var(--accent);
+}
+
+.face-sculpt__preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--character-line);
+  border-radius: 0.6rem;
+  background: rgba(var(--surface-tint-rgb), 0.6);
+  align-self: start;
+  position: sticky;
+  top: 0;
+}
+
+.face-sculpt__preview h3 {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.face-sculpt__face-text {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  color: var(--text-main);
+  word-break: break-word;
+}
+
+.face-sculpt__issue,
+.face-sculpt__stale {
+  display: flex;
+  gap: 0.35rem;
+  align-items: flex-start;
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  border-radius: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--warning);
+  background: rgba(var(--warning-rgb), 0.1);
+}
+
+.face-sculpt__issue svg,
+.face-sculpt__stale svg {
+  flex: none;
+  margin-top: 0.15rem;
+}
+
+.face-sculpt__description summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.face-sculpt__description p {
+  margin: 0.4rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-dim);
+  word-break: break-word;
+}
+
+.face-sculpt__message {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.face-sculpt__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.face-sculpt__actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.45rem 0.8rem;
+  font-weight: 600;
+}
+
+.face-sculpt__actions button.is-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.face-sculpt__actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.face-sculpt__history {
+  display: grid;
+  gap: 0.35rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--line);
+}
+
+.face-sculpt__history h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.face-sculpt__history ol {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.face-sculpt__history li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+}
+
+.face-sculpt__history-label {
+  overflow: hidden;
+  color: var(--text-main);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.face-sculpt__history-time {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.face-sculpt__history button {
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  background: rgba(var(--accent-rgb), 0.08);
+  color: var(--text-main);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.face-sculpt__history button:hover:not(:disabled) {
+  background: rgba(var(--accent-rgb), 0.18);
+}
+
+.face-sculpt__history button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 760px) {
+  .face-sculpt {
+    grid-template-columns: 1fr;
+  }
+
+  .face-sculpt__preview {
+    position: static;
+  }
+}

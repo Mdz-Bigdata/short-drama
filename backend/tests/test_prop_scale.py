@@ -3,10 +3,11 @@
 
 import io
 import unittest
+from dataclasses import replace
 
 from PIL import Image, ImageChops, ImageDraw
 
-from app.core.prop_board import _hand, _object_box, _on_white, compose_prop_board
+from app.core.prop_board import _hand, _object_box, _on_white, _views_grid, compose_prop_board, format_length
 from app.core.prop_turnaround import (
     PROP_DISPLAY_ONLY_SLOTS,
     SQUARE_SIZE,
@@ -41,12 +42,13 @@ def _sheet(plan, *, object_size=(60, 400), size=(2848, 1600)) -> bytes:
 
 
 class PlanTest(unittest.TestCase):
-    def test_the_number_of_views_depends_on_the_object(self):
-        self.assertEqual(plan_prop("长剑").views, ("prop_front", "prop_side", "prop_back"))
-        self.assertEqual(plan_prop("青铜令牌").views, ("prop_front", "prop_back", "prop_side"))
-        self.assertEqual(plan_prop("茶碗").views, ("prop_front", "prop_top", "prop_left_45"))
-        self.assertEqual(len(plan_prop("雕花木桌").views), 5)
-        self.assertEqual(len(plan_prop("不知道是什么").views), 5)
+    def test_every_prop_gets_the_five_views_of_a_design_sheet(self):
+        standard = ("prop_front", "prop_back", "prop_side", "prop_top", "prop_left_45")
+        for name in ("长剑", "青铜令牌", "汇票", "囚车", "雕花木桌", "不知道是什么"):
+            self.assertEqual(plan_prop(name).views, standard, name)
+            self.assertEqual(plan_prop(name).measured, standard[:4], name)
+        # 回转体的侧面就是正面，换成细节特写。
+        self.assertEqual(plan_prop("茶碗").views, ("prop_front", "prop_back", "prop_top", "prop_left_45", "prop_detail"))
 
     def test_what_the_name_ends_in_says_what_it_is(self):
         self.assertEqual(plan_prop("拭剑旧布").longest_cm, 40)
@@ -55,10 +57,13 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(plan_prop("青白玉扳指").longest_cm, 3)
         self.assertEqual(plan_prop("长剑（断裂）").longest_cm, 100)
 
-    def test_long_objects_are_one_row_and_compact_ones_a_square_grid(self):
-        sword, token = plan_prop("长剑"), plan_prop("令牌")
-        self.assertEqual((sword.rows, sword.columns, sword.size), (1, 4, WIDE_SIZE))
-        self.assertEqual((token.rows, token.columns, token.size), (2, 2, SQUARE_SIZE))
+    def test_every_sheet_is_two_rows_of_three_and_long_things_lie_flat(self):
+        for name in ("长剑", "令牌", "茶碗", "囚车"):
+            plan = plan_prop(name)
+            self.assertEqual((plan.rows, plan.columns, plan.size, len(plan.slots)), (2, 3, WIDE_SIZE, 6), name)
+        self.assertTrue(plan_prop("长剑").lying)
+        self.assertIn("水平", plan_prop("长剑").pose)
+        self.assertFalse(plan_prop("令牌").lying)
 
     def test_hand_for_what_a_hand_can_measure_and_figure_for_the_rest(self):
         self.assertFalse(plan_prop("长剑").figure)
@@ -79,7 +84,9 @@ class PlanTest(unittest.TestCase):
 
     def test_prompt_asks_for_pictures_not_writing(self):
         text = prop_instruction(plan_prop("长枪"))
-        self.assertIn("1 行 × 4 列", text)
+        self.assertIn("2 行 × 3 列", text)
+        self.assertIn("第 5 格：3/4", text)
+        self.assertIn("正面的左右就是顶面的左右", text)
         self.assertIn("人台", text)
         self.assertIn("220 厘米", text)
         self.assertNotIn("真人面孔", text)
@@ -96,7 +103,8 @@ class PlanTest(unittest.TestCase):
 class StatedLengthTest(unittest.TestCase):
     def test_units_and_chinese_numbers(self):
         for text, expected in (("长约80厘米", 80), ("全长1.2米", 120), ("高两米", 200), ("三尺长", 99), ("七寸", 23.1),
-                               ("直径 30 mm", 3), ("长二十五厘米", 25), ("宽5cm，全长100cm", 100)):
+                               ("直径 30 mm", 3), ("长二十五厘米", 25), ("宽5cm，全长100cm", 100),
+                               ("三尺二寸窄长直剑", 105.6), ("三尺六寸长剑", 118.8)):
             self.assertAlmostEqual(stated_length_cm(text), expected, places=1, msg=text)
 
     def test_size_words(self):
@@ -121,10 +129,11 @@ class SplitTest(unittest.TestCase):
 
     def test_no_cell_carries_a_piece_of_the_seam(self):
         plan = plan_prop("令牌")
-        image = Image.new("RGB", (1000, 1000), (30, 30, 30))  # a picture that fills every cell
+        image = Image.new("RGB", (1500, 1000), (30, 30, 30))  # a picture that fills every cell
         draw = ImageDraw.Draw(image)
-        draw.rectangle((492, 0, 508, 1000), fill=(255, 255, 255))
-        draw.rectangle((0, 492, 1000, 508), fill=(255, 255, 255))
+        for x in (500, 1000):
+            draw.rectangle((x - 8, 0, x + 8, 1000), fill=(255, 255, 255))
+        draw.rectangle((0, 492, 1500, 508), fill=(255, 255, 255))
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         for slot, content in split_prop_sheet(buffer.getvalue(), plan).items():
@@ -152,28 +161,50 @@ class BoardTest(unittest.TestCase):
             self.assertEqual(board.width, 2400, name)
             self.assertGreater(board.height, 800, name)
 
-    def test_the_object_in_the_strip_is_to_scale_with_the_hand(self):
-        plan, board = self._board("长剑", object_size=(60, 900))
-        # The band just above the ruler, below both labels.
-        band = board.crop((0, board.height - 470 + 215, board.width, board.height - 470 + 352)).convert("L")
-        sword = band.point(lambda value: 255 if value < 70 else 0).getbbox()
-        rest = band.crop((sword[2] + 4, 0, band.width, band.height))
-        hand = rest.point(lambda value: 255 if 185 <= value <= 200 else 0).getbbox()
-        self.assertAlmostEqual((sword[2] - sword[0]) / (hand[2] - hand[0]), plan.longest_cm / 18, delta=0.15)
+    def test_the_object_in_the_band_is_to_scale_with_the_hand(self):
+        plan, board = self._board("长剑", object_size=(900, 60))
+        # The band's baseline sits 120 px above the bottom; the scale bar hangs just below it, the sword
+        # and the hand stand on it. A 1 m sword gets a 1 m bar, so the three can be measured against each other.
+        gray = board.convert("L")
+        base = board.height - 120
+        bar = gray.crop((0, base + 18, board.width, base + 20)).point(lambda value: 255 if value < 70 else 0).getbbox()
+        bar_px = bar[2] - bar[0]
+        sword = gray.crop((0, base - 6, board.width, base - 1)).point(lambda value: 255 if value < 70 else 0).getbbox()
+        self.assertAlmostEqual((sword[2] - sword[0]) / bar_px, 1.0, delta=0.02, msg="the sword spans the 1 m bar")
+        # The hand is filled with one slightly blue grey (190, 195, 204); anti-aliased text is neutral grey.
+        region = board.convert("RGB").crop((sword[2] + 4, base - 200, board.width, base))
+        columns = [
+            x for x in range(region.width)
+            if any(abs(r - 190) <= 3 and abs(g - 195) <= 3 and abs(b - 204) <= 3
+                   for r, g, b in (region.getpixel((x, y)) for y in range(0, region.height, 2)))
+        ]
+        hand_px = max(columns) - min(columns) + 1
+        self.assertAlmostEqual(hand_px / bar_px, 18 / plan.longest_cm, delta=0.02, msg="the hand is 18 cm on that bar")
 
-    def test_measured_views_share_one_scale(self):
+    def test_orthographic_views_share_one_scale_and_carry_length_and_height(self):
         plan = plan_prop("长剑")
-        views = split_prop_sheet(_sheet(plan, object_size=(60, 900)), plan)
-        with Image.open(io.BytesIO(compose_prop_board(plan, views))) as opened:
-            board = opened.convert("L")
-        cell = (2400 - 28 * 5) // 4
-        heights = []
-        for index in range(3):
-            x = 28 + index * (cell + 28)
-            dark = board.crop((x + 60, 30, x + cell, 28 + round(cell * 2.1) - 70)).point(lambda value: 255 if value < 70 else 0)
-            box = dark.getbbox()
-            heights.append(box[3] - box[1])
-        self.assertLessEqual(max(heights) - min(heights), 2)
+        views = split_prop_sheet(_sheet(plan, object_size=(900, 60)), plan)
+        images = {slot: _on_white(Image.open(io.BytesIO(content)).convert("RGB")) for slot, content in views.items()}
+        from app.core.prop_board import _font
+        _grid, dimensions = _views_grid(images, plan, (_font(30), _font(24)))
+        self.assertEqual(set(dimensions), set(plan.measured))
+        for slot, (width, height) in dimensions.items():
+            self.assertAlmostEqual(width, 100, delta=2, msg=slot)  # every face of a lying sword is one length
+            self.assertLess(height, 15, slot)
+
+    def test_a_table_size_snaps_the_measured_numbers(self):
+        plan = replace(plan_prop("囚车"), dims_cm=(400, 150, 200))
+        def view(width, height):
+            image = Image.new("RGB", (1000, 1000), (250, 250, 250))
+            ImageDraw.Draw(image).rectangle((100, 100, 100 + width, 100 + height), fill=(90, 60, 40))
+            return image
+        # front (end) 290×400, side 780×400: drawn a little off; the table's 150 / 200 / 400 cm come back.
+        images = {"prop_front": view(290, 400), "prop_back": view(300, 400), "prop_side": view(780, 400),
+                  "prop_top": view(300, 800), "prop_left_45": view(600, 400), "prop_in_use": view(500, 500)}
+        from app.core.prop_board import _font
+        _grid, dimensions = _views_grid(images, plan, (_font(30), _font(24)))
+        self.assertEqual(dimensions["prop_side"], (400, 200))
+        self.assertEqual(dimensions["prop_front"], (150, 200))
 
     def test_the_ruler_stays_on_the_board(self):
         for name, object_size, size in (("长剑", (60, 900), (2848, 1600)), ("青白玉扳指", (300, 300), (2048, 2048))):
@@ -194,16 +225,16 @@ class BoardTest(unittest.TestCase):
         views["prop_side"] = view(320, 400)
         views["prop_top"] = view(200, 120)
         with Image.open(io.BytesIO(compose_prop_board(plan, views))) as opened:
-            green = opened.convert("RGB").split()[1]  # the red objects are dark here; the grey labels are not as dark
-            red = opened.convert("RGB").split()[0]
-        cell = (2400 - 28 * 7) // 6
+            red, green, _blue = opened.convert("RGB").split()
+        cell_w, cell_h = (2400 - 28 * 4) // 3, 640
         def extent(index):
-            x = 28 + index * (cell + 28)
-            area = (x + 4, 32, x + cell - 4, 28 + cell)
+            row, column = divmod(index, 3)
+            x, y = 28 + column * (cell_w + 28), 28 + row * (cell_h + 28)
+            area = (x + 4, y + 4, x + cell_w - 4, y + cell_h - 4)
             only_red = ImageChops.subtract(red.crop(area), green.crop(area)).point(lambda value: 255 if value > 100 else 0)
             box = only_red.getbbox()
             return box[2] - box[0], box[3] - box[1]
-        front, side, top = extent(0), extent(1), extent(3)
+        front, side, top = extent(0), extent(2), extent(3)
         self.assertAlmostEqual(front[1], side[1], delta=3)
         self.assertAlmostEqual(front[0], top[0], delta=3)
 
@@ -216,6 +247,12 @@ class BoardTest(unittest.TestCase):
 
 
 class HelpersTest(unittest.TestCase):
+    def test_lengths_read_in_metres_from_one_metre_up(self):
+        self.assertEqual(format_length(400), "4.00 m")
+        self.assertEqual(format_length(150, estimate=True), "约 1.50 m")
+        self.assertEqual(format_length(15), "15 cm")
+        self.assertEqual(format_length(2.54), "2.5 cm")
+
     def test_a_grey_background_becomes_white_and_a_scene_stays(self):
         grey = Image.new("RGB", (40, 40), (230, 232, 228))
         self.assertEqual(_on_white(grey).getpixel((5, 5)), (255, 255, 255))

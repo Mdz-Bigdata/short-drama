@@ -27,11 +27,31 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
+from app.core import prompt_data
 from app.core.h3_sound_design import PACE_BY_DELIVERY
 from app.core.style_packs import StylePack, negatives_for
 from app.core.writer_dashboard import parse_duration_seconds
 
 Variant = Literal["standard", "continuous", "fight", "script_doc"]
+
+# 分包的全部措辞(各段重心、四种写法的标签与固定句、缺省补写的话、排期提醒)：app/data/prompt/prompt_packages.json。
+_WORDING = "prompt_packages"
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A sentence template of the wording table, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return str(prompt_data.load(_WORDING)["says"][key]).format(**values)
+
+
+def _word(key: str) -> str:
+    """A fixed word, sentence or separator of the wording table."""
+    return prompt_data.text(_WORDING, key)
+
+
+def _pattern(key: str) -> re.Pattern[str]:
+    """A regular expression of the wording table."""
+    return re.compile(str(prompt_data.load(_WORDING)["patterns"][key]))
+
 
 # One generated shot holds about this much continuous action; past it the model drifts.
 MAX_GENERATED_SECONDS = 4.0
@@ -44,7 +64,15 @@ MAX_SEGMENT_SECONDS = 15
 MAX_SEGMENT_SHOTS = 8
 DIVIDER = "-" * 38
 # What a package's locks emphasise, by where it falls in the scene.
-_PHASES = ("建立与打量", "压力上升", "失衡与反击", "揭底与收束")
+_PHASES = prompt_data.words(_WORDING, "phases")
+_BEAT_SPLIT = _pattern("beat_split")
+_SPOKEN_CHAR = _pattern("spoken_char")
+# 人物栏里这些写法表示「没有人」，不算出场人物。
+_NO_CAST = frozenset(prompt_data.words(_WORDING, "no_cast_words"))
+# 节拍里出现这些字的那一拍说台词。
+_SPEECH_WORDS = prompt_data.words(_WORDING, "speech_words")
+_WALK_WORDS = prompt_data.words(_WORDING, "walk_words")
+_FIGHT_NEGATIVES = prompt_data.words(_WORDING, "fight_negative_words")
 
 
 @dataclass
@@ -129,8 +157,8 @@ def _clock(seconds: float) -> str:
 
 def _clauses(text: str) -> list[str]:
     """The beats of a shot description, in order."""
-    parts = [part.strip() for part in re.split(r"[。；;！!？?]|，(?=[^，]{6,})", str(text or "")) if part.strip()]
-    return parts or [str(text or "").strip() or "保持上一镜的动作继续"]
+    parts = [part.strip() for part in _BEAT_SPLIT.split(str(text or "")) if part.strip()]
+    return parts or [str(text or "").strip() or _word("beat_fallback")]
 
 
 def recut(shot: Mapping[str, object], *, max_seconds: float = MAX_GENERATED_SECONDS) -> list[GeneratedShot]:
@@ -147,14 +175,14 @@ def recut(shot: Mapping[str, object], *, max_seconds: float = MAX_GENERATED_SECO
         merged: list[str] = list(beats)
         while len(merged) > wanted:
             shortest = min(range(len(merged) - 1), key=lambda index: len(merged[index]) + len(merged[index + 1]))
-            merged[shortest : shortest + 2] = [merged[shortest] + "，" + merged[shortest + 1]]
+            merged[shortest : shortest + 2] = [merged[shortest] + _word("beat_join") + merged[shortest + 1]]
         beats = merged
 
     weights = [max(len(beat), 6) for beat in beats]
     total_weight = sum(weights)
     shot_id = int(shot.get("shot_id") or 0)
     characters = tuple(
-        str(name).strip() for name in (shot.get("characters") or []) if str(name).strip() not in {"", "无", "空镜"}
+        str(name).strip() for name in (shot.get("characters") or []) if str(name).strip() not in _NO_CAST
     )
     dialogue = str(shot.get("dialogue") or "").strip()
     pieces: list[GeneratedShot] = []
@@ -163,7 +191,7 @@ def recut(shot: Mapping[str, object], *, max_seconds: float = MAX_GENERATED_SECO
         length = round(max(MIN_GENERATED_SECONDS, min(max_seconds, share)), 1)
         pieces.append(GeneratedShot(
             source_shot_id=shot_id, beat=index, seconds=length,
-            size=str(shot.get("size") or "中景"), motion=str(shot.get("motion") or "固定"),
+            size=str(shot.get("size") or _word("default_size")), motion=str(shot.get("motion") or _word("default_motion")),
             action=beat, sound=str(shot.get("sound") or ""), characters=characters,
             # A line is spoken inside one generation shot, never split across two.
             dialogue=dialogue if index == _dialogue_slot(beats) else "",
@@ -174,7 +202,7 @@ def recut(shot: Mapping[str, object], *, max_seconds: float = MAX_GENERATED_SECO
 def _dialogue_slot(beats: Sequence[str]) -> int:
     """Which beat carries the line: the one that mentions speaking, else the longest."""
     for index, beat in enumerate(beats, start=1):
-        if any(word in beat for word in ("说", "问", "喊", "道", "开口", "低声", "答")):
+        if any(word in beat for word in _SPEECH_WORDS):
             return index
     return max(range(1, len(beats) + 1), key=lambda index: len(beats[index - 1]))
 
@@ -232,19 +260,18 @@ def plan_packages(
     warnings: list[str] = []
     for package in packages[:-1]:
         if len(package.shots) < low:
-            warnings.append(
-                f"第{package.index}条提示词只有{len(package.shots)}个生成镜头，{package_seconds}秒建议{low}-{high}个；"
-                "补反应镜或把长镜再拆一层",
-            )
+            warnings.append(_says(
+                "few_shots", package=package.index, count=len(package.shots), seconds=package_seconds, low=low, high=high,
+            ))
     rate = PACE_BY_DELIVERY[delivery]
     for package in packages:
         for shot in package.shots:
-            spoken = len(re.findall(r"[一-鿿]", shot.dialogue)) / rate if shot.dialogue else 0.0
+            spoken = len(_SPOKEN_CHAR.findall(shot.dialogue)) / rate if shot.dialogue else 0.0
             if spoken and spoken > shot.seconds:
-                warnings.append(
-                    f"第{package.index}条镜头{shot.index}（分镜{shot.source_shot_id}）的台词按「{delivery}」语速需 {spoken:.1f}s，"
-                    f"超过本镜 {shot.seconds}s；拆句或加长本镜",
-                )
+                warnings.append(_says(
+                    "slow_line", package=package.index, shot=shot.index, source=shot.source_shot_id, delivery=delivery,
+                    spoken=spoken, seconds=shot.seconds,
+                ))
     return PackagePlan(
         packages=packages, variant=variant, package_seconds=package_seconds,
         total_seconds=round(elapsed, 1), delivery=delivery, warnings=warnings,
@@ -277,64 +304,66 @@ class PackageContext:
 
 def render_package(package: PromptPackage, context: PackageContext, plan: PackagePlan) -> str:
     """One pasteable Seedance package in the default shape."""
-    cast = "｜".join(f"{name}：{context.cast_locks.get(name, '按设定图渲染，不可改造')}" for name in package.cast) or "本段无人物"
+    cast = _word("cast_sep").join(
+        _says("cast_item", name=name, lock=context.cast_locks.get(name, _word("cast_lock_default"))) for name in package.cast
+    ) or _word("no_cast")
     negatives = negatives_for(context.pack, ["multi_person"] if len(package.cast) >= 2 else [], context.extra_negatives)
     lines = [
-        f"【提示词{package.index}】【{_clock(package.episode_start)} - {_clock(package.episode_end)}】",
+        _says("package_head", index=package.index, start=_clock(package.episode_start), end=_clock(package.episode_end)),
         "<Asset_Setup>",
-        f"全局风格锁：{context.pack.style_caption}；本段重心：{package.phase}。",
-        f"出场资产锁：{cast}",
-        f"光影基调锁：{context.lighting or '延续本场主光方向、色温与光比'}",
-        f"物理状态遗留：{context.carried_state or '服装、伤痕与道具归属延续上一段，不自行恢复'}",
+        _says("style_lock", style=context.pack.style_caption, phase=package.phase),
+        _says("cast_lock", cast=cast),
+        _says("light_lock", lighting=context.lighting or _word("lighting_default")),
+        _says("carried_lock", state=context.carried_state or _word("carried_default")),
         "</Asset_Setup>",
-        f"【空间坐标与专属背景锁】：{context.spatial_lock or context.scene or '沿用本场既定站位与地标，禁止越轴'}",
+        _says("spatial_lock", lock=context.spatial_lock or context.scene or _word("spatial_default")),
     ]
     for shot in package.shots:
-        lines.append(
-            f"【镜头 {shot.index}】【{_clock(shot.start_seconds)} - {_clock(shot.end_seconds)}】"
-            f"{shot.size}·{shot.motion}｜{shot.action}"
-            + (f"｜台词（逐字不变，口型同步）：{shot.dialogue}" if shot.dialogue else "｜无台词，人物闭口")
-            + "｜光线延续，画面无字幕"
-        )
-    lines.append(f"【负面词约束】基础负面词：{' + '.join(negatives[:8])}")
-    lines.append(f"　　　　　　动态负面词：{_dynamic_negatives(package)}")
+        lines.append(_says(
+            "package_shot", index=shot.index, start=_clock(shot.start_seconds), end=_clock(shot.end_seconds),
+            size=shot.size, motion=shot.motion, action=shot.action,
+            line=_says("package_line", dialogue=shot.dialogue) if shot.dialogue else _word("package_no_line"),
+        ))
+    lines.append(_says("negatives_base", negatives=" + ".join(negatives[:8])))
+    lines.append(_says("negatives_dynamic", risks=_dynamic_negatives(package)))
     lines.append(DIVIDER)
     return "\n".join(lines)
 
 
 def _dynamic_negatives(package: PromptPackage) -> str:
     """What this particular段 is most likely to drift on."""
-    risks = ["禁止人物换装", "禁止道具凭空出现或消失"]
+    risks = list(prompt_data.words(_WORDING, "risk_always"))
     if len(package.cast) >= 2:
-        risks.append("禁止两人面部特征互换")
+        risks.append(_word("risk_two"))
     if any(shot.dialogue for shot in package.shots):
-        risks.append("禁止口型与台词不同步")
-    if any("走" in shot.action or "跑" in shot.action for shot in package.shots):
-        risks.append("禁止无因果瞬移")
+        risks.append(_word("risk_dialogue"))
+    if any(any(word in shot.action for word in _WALK_WORDS) for shot in package.shots):
+        risks.append(_word("risk_walk"))
     return " + ".join(risks)
 
 
 def render_continuous(package: PromptPackage, context: PackageContext, plan: PackagePlan) -> str:
     """The continuous-take variant: one unbroken action chain, no cut language."""
-    cast = "｜".join(f"{name}：{context.cast_locks.get(name, '按设定图渲染')}" for name in package.cast) or "本段无人物"
+    cast = _word("cast_sep").join(
+        _says("cast_item", name=name, lock=context.cast_locks.get(name, _word("cast_lock_plain"))) for name in package.cast
+    ) or _word("no_cast")
     lines = [
-        f"【连续镜头 {package.index}】总时长 {package.seconds:g} 秒｜{package.phase}",
-        "【全局锁定】",
-        f"人物：{cast}",
-        f"空间：{context.spatial_lock or context.scene or '沿用本场既定站位与地标'}",
-        f"光线：{context.lighting or '同一镜内色温与光比不变'}",
-        f"质感：{context.pack.style_caption}",
+        _says("continuous_head", index=package.index, seconds=package.seconds, phase=package.phase),
+        _word("continuous_lock_head"),
+        _says("continuous_cast", cast=cast),
+        _says("continuous_space", space=context.spatial_lock or context.scene or _word("continuous_space_default")),
+        _says("continuous_light", light=context.lighting or _word("continuous_light_default")),
+        _says("continuous_style", style=context.pack.style_caption),
     ]
     for shot in package.shots:
-        lines.append(
-            f"【{_clock(shot.start_seconds)} - {_clock(shot.end_seconds)}】{shot.size}，"
-            f"镜头沿路径{shot.motion}：{shot.action}"
-            + (f"；此处说：{shot.dialogue}" if shot.dialogue else "")
-        )
+        lines.append(_says(
+            "continuous_shot", start=_clock(shot.start_seconds), end=_clock(shot.end_seconds), size=shot.size,
+            motion=shot.motion, action=shot.action,
+            line=_says("continuous_line", dialogue=shot.dialogue) if shot.dialogue else "",
+        ))
     lines.extend([
-        "【连续性总约束】人物身份与服装不变；空间关系与轴线不变；机位沿一条路径移动，不得切镜；"
-        "情绪按段落递进，不跳档；质感与色彩全程一致。",
-        f"【负面词约束】{' + '.join(negatives_for(context.pack, ['extension'], context.extra_negatives)[:10])} + 禁止切镜 + 禁止焦点跳跃",
+        _word("continuous_rules"),
+        _says("continuous_negatives", negatives=" + ".join(negatives_for(context.pack, ["extension"], context.extra_negatives)[:10])),
         DIVIDER,
     ])
     return "\n".join(lines)
@@ -342,26 +371,24 @@ def render_continuous(package: PromptPackage, context: PackageContext, plan: Pac
 
 def render_fight(package: PromptPackage, context: PackageContext, plan: PackagePlan) -> str:
     """The fight variant: the whole fight's rules once, then short uneven beats."""
-    fighters = "；".join(f"{name}：{context.cast_locks.get(name, '按设定图渲染')}" for name in package.cast) or "对战双方"
+    fighters = _word("fighter_sep").join(
+        _says("cast_item", name=name, lock=context.cast_locks.get(name, _word("cast_lock_plain"))) for name in package.cast
+    ) or _word("no_fighters")
     lines = [
-        f"【整体战斗设定】{package.index}／{len(plan.packages)}｜{package.phase}",
-        f"风格：{context.pack.style_caption}",
-        f"人物识别锚：{fighters}",
-        f"场地响应：{context.scene or '场地'}——每次命中都要在环境上留下痕迹，破坏逐级升级，不跳级",
-        "整体运动规则：持续走位、切角绕后、侧闪反进；接触点清楚、先因后果；只有碰撞瞬间允许极短顿挫，随即回速。",
-        "【分镜】",
+        _says("fight_head", index=package.index, count=len(plan.packages), phase=package.phase),
+        _says("fight_style", style=context.pack.style_caption),
+        _says("fight_cast", fighters=fighters),
+        _says("fight_ground", scene=context.scene or _word("fight_ground_default")),
+        _word("fight_motion_rules"),
+        _word("fight_board_head"),
     ]
     for shot in package.shots:
-        lines.append(
-            f"{_clock(shot.start_seconds)}-{_clock(shot.end_seconds)}（{shot.seconds:g}s）"
-            f"｜{shot.size}·{shot.motion}｜{shot.action}"
-        )
+        lines.append(_says(
+            "fight_shot", start=_clock(shot.start_seconds), end=_clock(shot.end_seconds), seconds=shot.seconds,
+            size=shot.size, motion=shot.motion, action=shot.action,
+        ))
     lines.extend([
-        "【负面提示词】" + " + ".join([
-            "禁止站桩轮流出招", "禁止无因果瞬移", "禁止长时间蓄力", "禁止动作糊成光团",
-            "禁止无故换轴", "禁止特效遮挡接触点", "禁止肢体穿模或多出肢体", "禁止面部与服装互换",
-            "禁止定格、停格、子弹时间", "无字幕", "无水印",
-        ]),
+        _says("fight_negatives", negatives=" + ".join(_FIGHT_NEGATIVES)),
         DIVIDER,
     ])
     return "\n".join(lines)
@@ -371,42 +398,49 @@ def render_script_document(plan: PackagePlan, context: PackageContext, *, title:
     """The segmented short-drama script: assets, the whole dialogue, then Shot rows."""
     shots = [shot for package in plan.packages for shot in package.shots]
     cast = list(dict.fromkeys(name for shot in shots for name in shot.characters))
-    lines = [f"# {title or '分镜脚本'}", "", "## 角色与场景资产清单"]
-    lines.extend(f"@{name}：{context.cast_locks.get(name, '按设定图渲染，全片不变')}" for name in cast)
-    lines.append(f"@场景：{context.scene or '本场景'}；{context.spatial_lock or '固定参照物与站位见空间锁'}")
-    lines.append(f"@光效：{context.lighting or '本场主光方向、色温与光比全段不变'}")
+    lines = [_says("script_title", title=title or _word("script_title_default")), "", _word("script_assets_head")]
+    lines.extend(_says("script_cast", name=name, lock=context.cast_locks.get(name, _word("cast_lock_film"))) for name in cast)
+    lines.append(_says(
+        "script_scene", scene=context.scene or _word("script_scene_default"), lock=context.spatial_lock or _word("script_spatial_default"),
+    ))
+    lines.append(_says("script_light", light=context.lighting or _word("script_light_default")))
     lines.append("")
-    lines.append("## 完整台词本")
+    lines.append(_word("script_lines_head"))
     spoken = [shot for shot in shots if shot.dialogue]
     for order, shot in enumerate(spoken, start=1):
-        lines.append(f"台词{order:02d}（镜{shot.source_shot_id}）：{shot.dialogue}")
-    lines.append(f"（共 {len(spoken)} 句，逐字保持原文，不改称谓与语序）")
+        lines.append(_says("script_line", order=order, shot=shot.source_shot_id, dialogue=shot.dialogue))
+    lines.append(_says("script_line_count", count=len(spoken)))
     lines.append("")
 
     segments = _segments(shots)
-    lines.append(f"## 分镜脚本（{plan.total_seconds:g} 秒）")
+    lines.append(_says("script_board_head", seconds=plan.total_seconds))
     for order, segment in enumerate(segments, start=1):
         seconds = round(sum(shot.seconds for shot in segment), 1)
         lines.extend([
             "",
-            f"【分段{order} - 总时长预估 {seconds:g} 秒】",
-            f"【全局光效控制标准 - {context.scene or '本场景'}】{context.lighting or '主光方向、色温与光比在本分段内不变'}",
+            _says("segment_head", order=order, seconds=seconds),
+            _says(
+                "segment_light", scene=context.scene or _word("script_scene_default"),
+                light=context.lighting or _word("segment_light_default"),
+            ),
         ])
         for position, shot in enumerate(segment, start=1):
             lines.extend([
-                f"Shot {order}.{position}（时长：{shot.seconds:g} 秒）[{shot.size}]",
-                f"  场景：{context.scene or '本场景'}",
-                f"  出场人物：{('、'.join(f'@{name}' for name in shot.characters)) or '无'}",
-                f"  主体：{('@' + shot.characters[0]) if shot.characters else '环境'}",
-                f"  动作：{shot.action}",
-                f"  台词：{shot.dialogue or '无台词'}",
-                f"  镜头：{shot.motion}",
-                f"  氛围光影：{context.lighting or '延续本分段光效标准'}",
-                f"  音频指令：{shot.sound or '环境底噪延续；无台词处保留死寂底噪'}",
-                f"  风格约束：{context.pack.style_caption}；9:16；画面干净无字幕",
-                f"  → 动作桥接：结束于{_landing(shot)}，下一镜从此状态继续",
+                _says("shot_head", order=order, position=position, seconds=shot.seconds, size=shot.size),
+                _says("shot_scene", scene=context.scene or _word("script_scene_default")),
+                _says("shot_cast", cast=_word("list_sep").join(_says("mention", name=name) for name in shot.characters) or _word("no_one")),
+                _says("shot_subject", subject=_says("mention", name=shot.characters[0]) if shot.characters else _word("no_subject")),
+                _says("shot_action", action=shot.action),
+                _says("shot_line", dialogue=shot.dialogue or _word("no_line")),
+                _says("shot_motion", motion=shot.motion),
+                _says("shot_light", light=context.lighting or _word("shot_light_default")),
+                _says("shot_sound", sound=shot.sound or _word("shot_sound_default")),
+                _says("shot_style", style=context.pack.style_caption),
+                _says("shot_bridge", landing=_landing(shot)),
             ])
-        lines.append(f"【分段时长核验】{len(segment)} 镜 / {seconds:g} 秒（上限 {MAX_SEGMENT_SHOTS} 镜 / {MAX_SEGMENT_SECONDS} 秒）")
+        lines.append(_says(
+            "segment_check", count=len(segment), seconds=seconds, max_shots=MAX_SEGMENT_SHOTS, max_seconds=MAX_SEGMENT_SECONDS,
+        ))
     return "\n".join(lines)
 
 
@@ -425,8 +459,8 @@ def _segments(shots: Sequence[GeneratedShot]) -> list[list[GeneratedShot]]:
 
 
 def _landing(shot: GeneratedShot) -> str:
-    tail = shot.action.split("，")[-1].strip()
-    return tail or "本镜结束时的姿态与道具归属"
+    tail = shot.action.split(_word("beat_join"))[-1].strip()
+    return tail or _word("landing_default")
 
 
 _RENDERERS = {"standard": render_package, "continuous": render_continuous, "fight": render_fight}
@@ -437,9 +471,9 @@ def render(plan: PackagePlan, context: PackageContext, *, title: str = "") -> st
     if plan.variant == "script_doc":
         return render_script_document(plan, context, title=title)
     renderer = _RENDERERS[plan.variant]
-    header = (
-        f"# {title or 'Seedance 提示词'}｜{plan.variant}｜单条 {plan.package_seconds} 秒 × "
-        f"{len(plan.packages)} 条｜共 {plan.total_seconds:g} 秒｜语速档「{plan.delivery}」"
+    header = _says(
+        "render_head", title=title or _word("render_title_default"), variant=plan.variant, seconds=plan.package_seconds,
+        count=len(plan.packages), total=plan.total_seconds, delivery=plan.delivery,
     )
     body = "\n".join(renderer(package, context, plan) for package in plan.packages)
     return f"{header}\n\n{body}"

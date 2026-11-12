@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from app.core import breakdown_kinds
+from app.core import acting, breakdown_kinds
 from app.core.screenwriting.prose import has_episode_heading, prose_from_scenes
 
 _PHASES = ("故事开始", "进展纠葛", "危机", "高潮", "结局")
@@ -138,7 +138,7 @@ def scene_breakdown_entry(scene: Mapping[str, Any]) -> dict[str, Any]:
             "text": _text(utterance.get("text"), 500),
             "verbatim": verbatim,
             # How the line is played (emotion / pace / stress / body): read by the video prompt and the voice.
-            "delivery": _text(utterance.get("delivery"), 120),
+            "delivery": _text(utterance.get("delivery"), acting.DELIVERY_MAX_CHARS),
         }
         for utterance in (scene.get("utterances") or [])
         if isinstance(utterance, Mapping) and _text(utterance.get("text"), 500)
@@ -153,6 +153,8 @@ def scene_breakdown_entry(scene: Mapping[str, Any]) -> dict[str, Any]:
         "emotion_point": _text(scene.get("emotion_point"), 20),
         # 本集的题眼台词落在这一格时那一句：分镜师给它留停留，导演台上能一眼看到。
         "key_line": _text(scene.get("key_line"), 120),
+        # 每个入镜人物此刻为什么这样演(知道什么、不知道什么)：视频提示词把它当演员的动机，不进画面。
+        "subtext": acting.subtext_of(scene),
         "dialogue": dialogue[:30],
         "characters": [name for name in (scene.get("characters_in_scene") or []) if isinstance(name, str) and name.strip()],
     }

@@ -141,6 +141,27 @@ class StoryboardElementContextTests(unittest.TestCase):
         self.assertEqual(result[0]["metadata"], {"task_id": "task-one"})
         self.assertEqual(result[0]["description"], item.description)
 
+    def test_an_actor_and_a_look_carry_a_front_headshot_beside_the_front_full_body(self):
+        def digest(uri):
+            return hashlib.sha256(base64.b64decode(uri.split(",", 1)[1])).hexdigest()
+
+        actor = self.element("actor-one")
+        _, body = self.reference(actor, slot="front", content=_image_bytes("navy"))
+        _, face = self.reference(actor, slot="face_front", content=_image_bytes("olive"))
+        look = self.element("look-one")
+        look.metadata_json = {"task_id": "task-one", "variant": {"of": actor.name, "source": "costume", "label": "染血残衣"}}
+        self.reference(look, slot="front", content=_image_bytes("red"))  # 整张展示板不当参考
+        _, look_body = self.reference(look, slot="look_front", content=_image_bytes("maroon"))
+        _, bust = self.reference(look, slot="look_closeup_1", content=_image_bytes("teal"))
+        bare = self.element("actor-two")
+        self.reference(bare, slot="front")
+        result, _ = self.load([actor, look, bare])
+        by_id = {entry["id"]: entry for entry in result}
+        self.assertEqual((digest(by_id["actor-one"]["image_url"]), digest(by_id["actor-one"]["face_url"])), (body.sha256, face.sha256))
+        self.assertNotIn("real_person", by_id["actor-one"])
+        self.assertEqual((digest(by_id["look-one"]["image_url"]), digest(by_id["look-one"]["face_url"])), (look_body.sha256, bust.sha256))
+        self.assertNotIn("face_url", by_id["actor-two"])
+
     def test_a_scene_carries_its_extra_views_beside_the_main_reference(self):
         item = self.element("scene-one", kind="scene")
         _, main = self.reference(item, slot="reference", content=_image_bytes("navy"))

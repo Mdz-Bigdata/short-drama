@@ -45,8 +45,8 @@ class EffectiveAudioModelTests(unittest.TestCase):
 
 class AccountVoiceTests(unittest.TestCase):
     def setUp(self):
-        mc._ACCOUNT_VOICES.clear()
-        self.addCleanup(mc._ACCOUNT_VOICES.clear)
+        mc._ACCOUNT_POOLS.clear()
+        self.addCleanup(mc._ACCOUNT_POOLS.clear)
         self.addCleanup(runtime_model_registry.replace, _centre(_audio()))
 
     def test_without_env_voice_ids_the_account_voice_library_is_used_once(self):

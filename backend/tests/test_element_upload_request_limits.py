@@ -1,4 +1,5 @@
 import asyncio
+import unittest
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
@@ -36,64 +37,65 @@ def _guarded_app(
     return app
 
 
-def test_rejects_declared_oversized_upload_before_route_body_parsing():
-    with TestClient(_guarded_app()) as client:
-        response = client.post(
-            "/api/elements/scene-1/model", content=b"x" * 33, cookies={"auth_token": "valid"}
-        )
-    assert response.status_code == 413
+class ElementUploadGuardTests(unittest.TestCase):
+    def test_rejects_declared_oversized_upload_before_route_body_parsing(self):
+        with TestClient(_guarded_app()) as client:
+            response = client.post(
+                "/api/elements/scene-1/model", content=b"x" * 33, cookies={"auth_token": "valid"}
+            )
+        self.assertEqual(response.status_code, 413)
 
 
-def test_rejects_chunked_upload_when_actual_stream_crosses_limit():
-    def chunks():
-        yield b"x" * 20
-        yield b"y" * 20
+    def test_rejects_chunked_upload_when_actual_stream_crosses_limit(self):
+        def chunks():
+            yield b"x" * 20
+            yield b"y" * 20
 
-    with TestClient(_guarded_app()) as client:
-        response = client.post(
-            "/api/elements/scene-1/model",
-            content=chunks(),
-            headers={"Transfer-Encoding": "chunked"},
-            cookies={"auth_token": "valid"},
-        )
-    assert response.status_code == 413
-
-
-def test_rate_limits_repeated_upload_attempts_before_reading_more_bodies():
-    with TestClient(_guarded_app(maximum=128, rate_limit=1)) as client:
-        first = client.post(
-            "/api/elements/scene-1/model", content=b"ok", cookies={"auth_token": "valid"}
-        )
-        second = client.post(
-            "/api/elements/scene-1/model", content=b"again", cookies={"auth_token": "valid"}
-        )
-    assert first.status_code == 200
-    assert second.status_code == 429
+        with TestClient(_guarded_app()) as client:
+            response = client.post(
+                "/api/elements/scene-1/model",
+                content=chunks(),
+                headers={"Transfer-Encoding": "chunked"},
+                cookies={"auth_token": "valid"},
+            )
+        self.assertEqual(response.status_code, 413)
 
 
-def test_rejects_unauthenticated_upload_before_reading_the_body():
-    with TestClient(_guarded_app(maximum=128)) as client:
-        response = client.post("/api/elements/scene-1/model", content=b"small")
-    assert response.status_code == 401
+    def test_rate_limits_repeated_upload_attempts_before_reading_more_bodies(self):
+        with TestClient(_guarded_app(maximum=128, rate_limit=1)) as client:
+            first = client.post(
+                "/api/elements/scene-1/model", content=b"ok", cookies={"auth_token": "valid"}
+            )
+            second = client.post(
+                "/api/elements/scene-1/model", content=b"again", cookies={"auth_token": "valid"}
+            )
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)
 
 
-def test_enforces_total_processing_timeout_and_byte_budget():
-    with TestClient(_guarded_app(maximum=128, byte_limit=6, total_timeout=0.01)) as client:
-        timed_out = client.post(
-            "/api/elements/scene-1/model?delay=1",
-            content=b"ok",
-            cookies={"auth_token": "valid"},
-        )
-        within_budget = client.post(
-            "/api/elements/scene-1/model",
-            content=b"abc",
-            cookies={"auth_token": "valid"},
-        )
-        over_budget = client.post(
-            "/api/elements/scene-1/model",
-            content=b"de",
-            cookies={"auth_token": "valid"},
-        )
-    assert timed_out.status_code == 408
-    assert within_budget.status_code == 200
-    assert over_budget.status_code == 429
+    def test_rejects_unauthenticated_upload_before_reading_the_body(self):
+        with TestClient(_guarded_app(maximum=128)) as client:
+            response = client.post("/api/elements/scene-1/model", content=b"small")
+        self.assertEqual(response.status_code, 401)
+
+
+    def test_enforces_total_processing_timeout_and_byte_budget(self):
+        with TestClient(_guarded_app(maximum=128, byte_limit=6, total_timeout=0.01)) as client:
+            timed_out = client.post(
+                "/api/elements/scene-1/model?delay=1",
+                content=b"ok",
+                cookies={"auth_token": "valid"},
+            )
+            within_budget = client.post(
+                "/api/elements/scene-1/model",
+                content=b"abc",
+                cookies={"auth_token": "valid"},
+            )
+            over_budget = client.post(
+                "/api/elements/scene-1/model",
+                content=b"de",
+                cookies={"auth_token": "valid"},
+            )
+        self.assertEqual(timed_out.status_code, 408)
+        self.assertEqual(within_budget.status_code, 200)
+        self.assertEqual(over_budget.status_code, 429)

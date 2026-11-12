@@ -15,6 +15,7 @@ from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from app.core import episode_cycle
 from app.core.screenwriting.speech import is_narrator
 
 AssetKind = Literal["character", "scene", "prop"]
@@ -24,6 +25,8 @@ STATE_KEY = "2_screenwriting"
 _INVENTORY_BUCKET = {"character": "characters", "scene": "scenes", "prop": "props"}
 _PLAN_LIST = {"character": "characters_in_scene", "scene": "scenes", "prop": "props"}
 _BREAKDOWN_ASSET_KIND = {"scene": "scenes", "prop": "props"}
+# The kind a storyboard binding (``shot["asset_bindings"]``) and the element library use for each identity kind.
+_BINDING_KIND = {"character": "actor", "scene": "scene", "prop": "prop"}
 
 
 class AssetIdentityError(ValueError):
@@ -231,18 +234,35 @@ def _apply(task: MutableMapping[str, Any], kind: str, old: str, new: str, *, imp
                 if write:
                     item["name"] = new
     # Shots name their cast; a clip generated for the old name is still that clip, but its prompt is not.
+    stale_uids: set[int] = set()
+    legacy_ids: set[str] = set()
     for shot in assets.get("4") or []:
         if not isinstance(shot, MutableMapping):
             continue
         before = dict(impact.references)
         rewrite_list(shot, "characters" if kind == "character" else _PLAN_LIST[kind], "shots", None)
+        if write:
+            # The storyboard's bindings name the asset too; they follow the rename without counting as a reference.
+            for binding in shot.get("asset_bindings") or []:
+                if isinstance(binding, MutableMapping) and binding.get("kind") == _BINDING_KIND[kind] and canonical_name(binding.get("name")) == old:
+                    binding["name"] = new
         if impact.references != before:
             shot_id = shot.get("shot_id")
             if isinstance(shot_id, int) and shot_id not in impact.stale_shots:
                 impact.stale_shots.append(shot_id)
-    if write and impact.stale_shots:
+            stale_uids.add(episode_cycle.shot_uid(shot))
+            if shot_id not in (None, ""):
+                legacy_ids.add(str(shot_id))
+    if write and stale_uids:
+        # Shot numbers restart at 1 in every scene: clips are matched by the shots they cover, legacy clips by number.
         for clip in assets.get("5") or []:
-            if isinstance(clip, MutableMapping) and clip.get("shot_id") in impact.stale_shots and clip.get("video_url"):
+            if not isinstance(clip, MutableMapping) or not clip.get("video_url"):
+                continue
+            if clip.get("scene_id") or clip.get("shot_uids"):
+                hit = not stale_uids.isdisjoint(episode_cycle.covered_uids(clip))
+            else:
+                hit = str(clip.get("shot_id")) in legacy_ids
+            if hit:
                 clip["stale"] = True
                 clip["stale_reason"] = f"资产「{old}」已改为「{new}」，提示词需重新编译后重跑第 5 阶段"
 

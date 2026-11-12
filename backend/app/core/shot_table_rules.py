@@ -16,68 +16,76 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
-from app.core import exchange_units, fight_design
+from app.core import exchange_units, fight_design, fight_exchange, prompt_data
 from app.core.camera_motion import normalize_camera_motion
 from app.core.camera_recipes import repeated_move_signature
 from app.core.frame_position import flipped_subjects, parse_frame_positions, uses_frame_grammar
-from app.core.screenwriting.speech_rate import estimate_spoken_seconds
+from app.core.emotion_table import read_emotion
+from app.core.screenwriting.speech_rate import line_seconds
 from app.core.video_references import MIN_SHOT_SECONDS, max_shot_seconds, split_shot_seconds
 from app.core.writer_dashboard import parse_duration_seconds
 
 
 logger = logging.getLogger("app.core.shot_table_rules")
 
+# The word tables, limits, patterns, issue names and sentences of the audit:
+# app/data/prompt/shot_table_rules.json.
+_WORDING = "shot_table_rules"
+
+
+def _body(template: object) -> str:
+    """A template written as one string or as an array of lines."""
+    return "".join(str(line) for line in template) if isinstance(template, list) else str(template)
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A sentence of the table's ``says``, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return _body(prompt_data.load(_WORDING)["says"][key]).format(**values)
+
+
+def _pattern(key: str) -> re.Pattern[str]:
+    return re.compile(str(prompt_data.load(_WORDING)["patterns"][key]))
+
+
 # 景别取词表，与 skills/shot-design-master/references/shot-grammar.md 的主表对应。
-SHOT_SIZE_TERMS: tuple[str, ...] = (
-    "大远景", "远景", "全景", "中远景", "中全景", "中景", "中近景", "近景",
-    "特写", "大特写", "极特写", "侧脸特写", "眼部特写", "嘴部特写", "手部特写",
-    "局部特写", "道具特写", "背影", "过肩", "双人", "主观", "空镜",
-    "EWS", "WS", "LS", "FS", "MLS", "MS", "MCU", "CU", "BCU", "ECU", "OTS", "POV",
-)
+SHOT_SIZE_TERMS: tuple[str, ...] = prompt_data.words(_WORDING, "shot_size_terms")
 
 # 情绪必须写成可观察的身体细节；这些词单独出现说明只写了结论没写画面。
-ABSTRACT_EMOTION_TERMS: tuple[str, ...] = (
-    "悲伤", "愤怒", "害怕", "感动", "开心", "难过", "生气", "恐惧",
-    "紧张", "兴奋", "失望", "绝望", "震惊", "尴尬", "焦虑", "痛苦",
-)
+ABSTRACT_EMOTION_TERMS: tuple[str, ...] = prompt_data.words(_WORDING, "abstract_emotion_terms")
 # 只要同句出现具象身体线索，就认为情绪已经落地。
-PHYSICAL_CUE_TERMS: tuple[str, ...] = (
-    "眉", "眼", "唇", "嘴", "下颌", "牙关", "鼻翼", "呼吸", "肩", "手", "指",
-    "背", "喉", "脸颊", "泪", "颤", "攥", "握", "咬", "抿", "垂", "瞳",
-)
+PHYSICAL_CUE_TERMS: tuple[str, ...] = prompt_data.words(_WORDING, "physical_cue_terms")
 # 心理描写红线：摄影机拍不到的内容。
-INNER_MONOLOGUE_TERMS: tuple[str, ...] = (
-    "心想", "内心", "心里", "暗想", "回忆起", "想起", "觉得", "认为", "希望",
-)
+INNER_MONOLOGUE_TERMS: tuple[str, ...] = prompt_data.words(_WORDING, "inner_monologue_terms")
 
-MIN_DESC_CHARS = 50
-MAX_SAME_SIZE_RUN = 2
+MIN_DESC_CHARS = prompt_data.number(_WORDING, "min_desc_chars")
+MAX_SAME_SIZE_RUN = prompt_data.number(_WORDING, "max_same_size_run")
 # 张力法则：镜头默认静止，运动只留给开头、呼吸和爆发；一场里带运动的镜头超过这个比例
 # 就成了"监控回放"。
-MAX_MOVING_SHOT_RATIO = 0.7
+MAX_MOVING_SHOT_RATIO = float(prompt_data.value(_WORDING, "max_moving_shot_ratio"))
 # 爆发前要有静置蓄力：前一镜至少停这么久、且镜头不动。
-MIN_BUILDUP_SECONDS = 3
-BURST_TERMS: tuple[str, ...] = (
-    "爆发", "挥剑", "挥刀", "砍", "劈", "冲上", "冲向", "撞", "摔", "怒吼", "开枪", "爆炸", "扑向", "出拳", "踢",
-)
+MIN_BUILDUP_SECONDS = prompt_data.number(_WORDING, "min_buildup_seconds")
+BURST_TERMS: tuple[str, ...] = prompt_data.words(_WORDING, "burst_terms")
 # 爆发镜越短越有冲击力：6 秒的爆发像放烟花，不像打人。
-MAX_BURST_SECONDS = 4
-# 一句台词要在本镜内说完，且两端各留一点静默；同一镜不安排两个人说话。
-SPEECH_HEADROOM = 0.7
+MAX_BURST_SECONDS = prompt_data.number(_WORDING, "max_burst_seconds")
 # 分镜表里台词写成「角色名：台词」；说话人名很短，正文里的冒号句（他说：…）不会被当成第二个说话人。
-_SPEAKER_LINE = re.compile(r"([\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z·]{0,5})\s*[：:]")
+_SPEAKER_LINE = _pattern("speaker_line")
 # 特写是标点不是正文：一场戏里给得太多，冲击力就贬值了。
-MAX_CLOSE_UPS_PER_SCENE = 3
-MAX_CLOSE_UPS_PER_FIGHT_SCENE = 2
-CLOSE_UP_TERMS: tuple[str, ...] = ("大特写", "极特写", "特写", "ECU", "BCU", "CU")
+MAX_CLOSE_UPS_PER_SCENE = prompt_data.number(_WORDING, "max_close_ups_per_scene")
+MAX_CLOSE_UPS_PER_FIGHT_SCENE = prompt_data.number(_WORDING, "max_close_ups_per_fight_scene")
+CLOSE_UP_TERMS: tuple[str, ...] = prompt_data.words(_WORDING, "close_up_terms")
 # 视频模型没有逐帧控制力：写「定格」只会让画面真的停住。冲击靠白闪、震镜、径向模糊做。
-FROZEN_FRAME_TERMS: tuple[str, ...] = (
-    "定格", "停格", "顿帧", "凝滞", "静滞", "子弹时间", "时间静止", "时停", "画面冻结", "绝对静默", "hit-stop",
-)
+FROZEN_FRAME_TERMS: tuple[str, ...] = prompt_data.words(_WORDING, "frozen_frame_terms")
 # 声音一层是底噪、一层是动作；层数堆多了混成一团。
-MAX_AMBIENT_LAYERS = 2
-MAX_ACTION_SOUNDS = 2
-_SOUND_SPLIT = re.compile(r"[·、，,+＋]|以及|还有")
+MAX_AMBIENT_LAYERS = prompt_data.number(_WORDING, "max_ambient_layers")
+MAX_ACTION_SOUNDS = prompt_data.number(_WORDING, "max_action_sounds")
+_SOUND_SPLIT = _pattern("sound_split")
+# 声音栏的分段、人物栏的拆分、比对点题金句时去掉的空白与标点。
+_SOUND_CELLS = _pattern("sound_cells")
+_CHARACTER_SPLIT = _pattern("character_split")
+_LINE_NOISE = _pattern("line_noise")
+# 人物栏里表示没人、声音栏里表示没声音的写法。
+_NO_CHARACTER = frozenset(prompt_data.words(_WORDING, "no_character"))
+_SILENT_SOUND = frozenset(prompt_data.words(_WORDING, "silent_sound"))
 
 
 @dataclass
@@ -86,6 +94,12 @@ class ShotIssue:
     rule: str
     detail: str
     severity: str = "warning"
+
+
+def _issue(shot_id: Any, key: str, /, *, severity: str = "warning", **values: object) -> ShotIssue:
+    """The table's ``issues[key]``: its rule name, and its detail filled in (``key`` is positional)."""
+    spec = prompt_data.load(_WORDING)["issues"][key]
+    return ShotIssue(shot_id, str(spec["rule"]), _body(spec["detail"]).format(**values), severity)
 
 
 @dataclass
@@ -100,13 +114,15 @@ class ShotTableAudit:
 
     def summary(self) -> str:
         if self.ok:
-            return "分镜表通过全部硬性规则检查"
+            return _says("passed")
         by_rule: dict[str, int] = {}
         for issue in self.issues:
             by_rule[issue.rule] = by_rule.get(issue.rule, 0) + 1
-        parts = "；".join(f"{rule} × {count}" for rule, count in sorted(by_rule.items()))
-        repaired = f"，已自动修复 {self.repaired} 处超长镜头" if self.repaired else ""
-        return f"分镜表检查发现 {len(self.issues)} 项问题：{parts}{repaired}"
+        parts = prompt_data.text(_WORDING, "part_separator").join(
+            _says("part", rule=rule, count=count) for rule, count in sorted(by_rule.items())
+        )
+        repaired = _says("repaired", repaired=self.repaired) if self.repaired else ""
+        return _says("found", count=len(self.issues), parts=parts, repaired=repaired)
 
 
 def _text(value: Any) -> str:
@@ -133,21 +149,53 @@ def _spoken_text(dialogue: str) -> str:
     return _SPEAKER_LINE.sub(" ", dialogue)
 
 
+_PARENTHETICAL = _pattern("parenthetical")
+
+
+def dialogue_seconds(dialogue: str, *notes: str, key_line: str = "") -> float:
+    """这一镜的台词在画面里要占多久：逐句按情绪语速算(悲伤慢、暴怒快)，加句首句尾留白。
+
+    台词栏按说话人拆成一句句(说话人、语气说明、舞台说明、花括号都不算字数)。每句的情绪先看它的
+    语气说明(「（哽咽）」)，再看镜头写的表情；都没有按日常语速。本场的点题金句(``key_line``)一律降速。
+    """
+    from app.core.spoken_lines import labelled_lines, spoken_lines
+
+    anchor = _LINE_NOISE.sub("", key_line or "")
+    text = str(dialogue or "")
+    utterances = [(note, line) for _name, note, line in labelled_lines(text)] or [
+        (" ".join(_PARENTHETICAL.findall(text)), line) for line in spoken_lines([text])
+    ]
+    total = 0.0
+    for note, spoken in utterances:
+        if not spoken.strip():
+            continue
+        reading = read_emotion(note, *notes)
+        is_key = len(anchor) >= 4 and anchor in _LINE_NOISE.sub("", spoken)
+        total += line_seconds(spoken, reading.voice if reading.matched else None, key_line=is_key)
+    return total
+
+
 def _sound_layers(sound: str) -> tuple[int, int]:
     """``(ambience layers, action sounds)`` of one shot's sound cell."""
     ambience, action = "", ""
-    for part in re.split(r"[；;]", sound):
-        label, _, body = part.partition("：")
-        if not body:
-            label, _, body = part.partition(":")
-        if "环境" in label or "底噪" in label:
+    separators = prompt_data.words(_WORDING, "sound_label_separators")
+    ambience_labels = prompt_data.words(_WORDING, "ambience_labels")
+    action_labels = prompt_data.words(_WORDING, "action_labels")
+    effect_labels = prompt_data.words(_WORDING, "effect_labels")
+    for part in _SOUND_CELLS.split(sound):
+        # 「标签：内容」按分隔符的顺序找；都找不到时整段是标签、内容为空。
+        for separator in separators:
+            label, _, body = part.partition(separator)
+            if body:
+                break
+        if _has_any(label, ambience_labels):
             ambience = body
-        elif "动作" in label or "音效" in label and not ambience:
+        elif _has_any(label, action_labels) or _has_any(label, effect_labels) and not ambience:
             action = body
     if not ambience and not action:
         ambience = sound
     def _count(text: str) -> int:
-        return len([item for item in _SOUND_SPLIT.split(text) if item.strip() and item.strip() not in {"无", "none"}])
+        return len([item for item in _SOUND_SPLIT.split(text) if item.strip() and item.strip() not in _SILENT_SOUND])
     return _count(ambience), _count(action)
 
 
@@ -158,6 +206,7 @@ def audit_shot_table(
     repair: bool = True,
     scene_kind: str = "",
     exchange: exchange_units.ScenePlan | None = None, whole_episode: bool = True,
+    key_line: str = "",
 ) -> ShotTableAudit:
     """Check a parsed shot table against the skill's mechanically checkable rules.
 
@@ -186,6 +235,7 @@ def audit_shot_table(
     previous_shot: dict[str, Any] | None = None
     moving_shots = 0
     motion_declared = 0
+    fight_shots: list[tuple[Any, str]] = []
 
     for index, raw in enumerate(shots):
         if not isinstance(raw, dict):
@@ -197,70 +247,53 @@ def audit_shot_table(
 
         seconds = parse_duration_seconds(shot.get("duration"))
         if seconds > cap:
-            audit.issues.append(ShotIssue(
-                shot_id, "时长超模型上限",
-                f"{seconds}s 超过 {video_model or '未指定模型'} 的单镜上限 {cap}s",
-                "error",
+            audit.issues.append(_issue(
+                shot_id, "too_long", severity="error",
+                seconds=seconds, model=video_model or prompt_data.text(_WORDING, "unnamed_model"), cap=cap,
             ))
             if repair:
                 slices = split_shot_seconds(seconds, video_model)
                 shot["duration"] = f"{slices[0]}s" if slices else f"{cap}s"
                 audit.repaired += 1
         elif seconds and seconds < MIN_SHOT_SECONDS:
-            audit.issues.append(ShotIssue(
-                shot_id, "时长低于下限",
-                f"{seconds}s 低于可提交下限 {MIN_SHOT_SECONDS}s",
-            ))
+            audit.issues.append(_issue(shot_id, "too_short", seconds=seconds, floor=MIN_SHOT_SECONDS))
 
         if size and not _has_any(size.upper(), (term.upper() for term in SHOT_SIZE_TERMS)):
-            audit.issues.append(ShotIssue(shot_id, "景别不在词典内", f"「{size}」不是标准景别术语"))
+            audit.issues.append(_issue(shot_id, "unknown_size", size=size))
 
         if size and size == previous_size:
             same_size_run += 1
             if same_size_run >= MAX_SAME_SIZE_RUN:
-                audit.issues.append(ShotIssue(
-                    shot_id, "同景别连续堆叠",
-                    f"连续 {same_size_run + 1} 镜都是「{size}」，需远近交替",
-                ))
+                audit.issues.append(_issue(shot_id, "same_size_run", count=same_size_run + 1, size=size))
         else:
             same_size_run = 0
         previous_size = size
 
         if desc and len(desc) < MIN_DESC_CHARS:
-            audit.issues.append(ShotIssue(
-                shot_id, "画面内容过短", f"{len(desc)} 字，规范要求不少于 {MIN_DESC_CHARS} 字",
-            ))
+            audit.issues.append(_issue(shot_id, "short_desc", chars=len(desc), minimum=MIN_DESC_CHARS))
 
         if _has_any(desc, INNER_MONOLOGUE_TERMS):
             hit = next(term for term in INNER_MONOLOGUE_TERMS if term in desc)
-            audit.issues.append(ShotIssue(
-                shot_id, "出现心理描写", f"「{hit}」是摄影机拍不到的内容", "error",
-            ))
+            audit.issues.append(_issue(shot_id, "inner_monologue", severity="error", hit=hit))
 
         if _has_any(desc, ABSTRACT_EMOTION_TERMS) and not _has_any(desc, PHYSICAL_CUE_TERMS):
             hit = next(term for term in ABSTRACT_EMOTION_TERMS if term in desc)
-            audit.issues.append(ShotIssue(
-                shot_id, "情绪未具象化", f"只写了「{hit}」，没有可观察的面部或肢体细节",
-            ))
+            audit.issues.append(_issue(shot_id, "abstract_emotion", hit=hit))
 
         # 站位与视线写成观众看到的画面坐标，而不是人物自己的左右。
         characters = [
             name.strip() for name in (
                 shot.get("characters") if isinstance(shot.get("characters"), list)
-                else re.split(r"[、，,/]", _text(shot.get("characters")))
-            ) if str(name).strip() and str(name).strip() not in {"无", "空镜"}
+                else _CHARACTER_SPLIT.split(_text(shot.get("characters")))
+            ) if str(name).strip() and str(name).strip() not in _NO_CHARACTER
         ]
         positions = parse_frame_positions(desc, characters) if characters and desc else []
         if characters and desc and not uses_frame_grammar(desc):
-            audit.issues.append(ShotIssue(
-                shot_id, "构图未用镜头坐标",
-                "人物站位请写成画面区域 + 深度层 + 屏幕朝向（如：画面左侧三分之一的中景，朝向画面右侧）",
-            ))
+            audit.issues.append(_issue(shot_id, "no_frame_grammar"))
         flipped = flipped_subjects(previous_positions, positions)
-        if flipped and not _has_any(desc, ("越轴", "转身", "回身", "中性镜头", "换位")):
-            audit.issues.append(ShotIssue(
-                shot_id, "视线左右翻转",
-                f"{'、'.join(flipped)} 的屏幕朝向与上一镜相反，疑似越轴；要么保持上一镜站位，要么写明转身或中性过渡镜",
+        if flipped and not _has_any(desc, prompt_data.words(_WORDING, "turn_words")):
+            audit.issues.append(_issue(
+                shot_id, "eyeline_flip", names=prompt_data.text(_WORDING, "name_separator").join(flipped),
             ))
         if positions:
             previous_positions = positions
@@ -273,22 +306,23 @@ def audit_shot_table(
             exchange, seconds=seconds, characters=characters, dialogue=dialogue, desc=desc, fight_shot=fight_shot,
         ):
             audit.issues.append(ShotIssue(shot_id, unit_issue.rule, unit_issue.detail))
-        spoken = estimate_spoken_seconds(_spoken_text(dialogue))
-        if spoken and seconds and spoken > seconds * SPEECH_HEADROOM:
-            audit.issues.append(ShotIssue(
-                shot_id, "台词超出本镜时长",
-                f"台词约需 {spoken:.1f}s，本镜 {seconds}s（可用 {seconds * SPEECH_HEADROOM:.1f}s，两端各留静默）；"
-                "请加长本镜或按语气停顿拆句",
-            ))
+        if fight_shot:
+            # 招招写实：每个 U 写清谁、从哪发力、怎么走、打在谁身上哪里、结果与力；多人不站着、不排队。
+            for exchange_issue in fight_exchange.audit_shot(desc, characters):
+                audit.issues.append(ShotIssue(shot_id, exchange_issue.rule, exchange_issue.detail))
+            fight_shots.append((shot_id, desc))
+        # 按情绪语速算(悲伤约 1.8 字/秒、暴怒约 4 字/秒)，句首句尾留白已经算在里面。
+        spoken = dialogue_seconds(dialogue, _text(shot.get("expression")), _text(shot.get("emotion")), key_line=key_line)
+        if spoken and seconds and spoken > seconds:
+            audit.issues.append(_issue(shot_id, "dialogue_overrun", spoken=spoken, seconds=seconds))
 
         sound_text = _text(shot.get("sound"))
         if sound_text:
             ambience, action = _sound_layers(sound_text)
             if ambience > MAX_AMBIENT_LAYERS or action > MAX_ACTION_SOUNDS:
-                audit.issues.append(ShotIssue(
-                    shot_id, "声音层数超标",
-                    f"环境音 {ambience} 层、动作音 {action} 个；一镜最多 {MAX_AMBIENT_LAYERS} 层环境音与 "
-                    f"{MAX_ACTION_SOUNDS} 个动作音，多了会混成一团",
+                audit.issues.append(_issue(
+                    shot_id, "sound_layers", ambience=ambience, action=action,
+                    max_ambience=MAX_AMBIENT_LAYERS, max_action=MAX_ACTION_SOUNDS,
                 ))
 
         if size and _has_any(size.upper(), (term.upper() for term in CLOSE_UP_TERMS)):
@@ -296,16 +330,10 @@ def audit_shot_table(
 
         if _has_any(desc, FROZEN_FRAME_TERMS):
             hit = next(term for term in FROZEN_FRAME_TERMS if term in desc)
-            audit.issues.append(ShotIssue(
-                shot_id, "写了模型做不到的定格",
-                f"「{hit}」会让画面真的停住；冲击点改用白闪一两帧 + 镜头猛震 + 命中点径向模糊 + 速度线",
-            ))
+            audit.issues.append(_issue(shot_id, "frozen_frame", hit=hit))
 
         if _has_any(desc, BURST_TERMS) and seconds > MAX_BURST_SECONDS:
-            audit.issues.append(ShotIssue(
-                shot_id, "爆发镜过长",
-                f"爆发镜 {seconds}s，超过 {MAX_BURST_SECONDS}s 就散了；把余韵拆到下一镜去",
-            ))
+            audit.issues.append(_issue(shot_id, "long_burst", seconds=seconds, maximum=MAX_BURST_SECONDS))
 
         motion_text = _text(shot.get("motion"))
         if motion_text:
@@ -319,10 +347,7 @@ def audit_shot_table(
         if _has_any(desc, BURST_TERMS) and index > 0 and (
             not previous_static or (previous_seconds and previous_seconds < MIN_BUILDUP_SECONDS)
         ):
-            audit.issues.append(ShotIssue(
-                shot_id, "爆发前缺少静置蓄力",
-                f"爆发镜前一镜应至少静止 {MIN_BUILDUP_SECONDS}s 蓄力，再用短促急推或骤停放大冲击",
-            ))
+            audit.issues.append(_issue(shot_id, "no_buildup", minimum=MIN_BUILDUP_SECONDS))
         previous_static = is_static
         previous_seconds = seconds
 
@@ -331,45 +356,45 @@ def audit_shot_table(
         if previous_shot is not None and motion_text:
             shared = repeated_move_signature(previous_shot, current)
             if shared:
-                audit.issues.append(ShotIssue(
-                    shot_id, "相邻镜运镜撞款",
-                    f"与上一镜同为「{shared}」，请换掉运动、角度或节奏中的一项",
-                ))
+                audit.issues.append(_issue(shot_id, "repeated_move", signature=shared))
         previous_shot = current
 
         audit.shots.append(shot)
 
     if motion_declared >= 4 and moving_shots / motion_declared > MAX_MOVING_SHOT_RATIO:
-        audit.issues.append(ShotIssue(
-            audit.shots[-1].get("shot_id", len(audit.shots)), "运镜过密",
-            f"{moving_shots}/{motion_declared} 镜带镜头运动，超过 {int(MAX_MOVING_SHOT_RATIO * 100)}%；"
-            "以固定镜头为主，运动只留给开头、呼吸式微动和爆发瞬间",
+        audit.issues.append(_issue(
+            audit.shots[-1].get("shot_id", len(audit.shots)), "too_much_motion",
+            moving=moving_shots, declared=motion_declared, percent=int(MAX_MOVING_SHOT_RATIO * 100),
         ))
+
+    # 打戏分回合：每个打戏格标回合，回合只进不退，最后写清胜负。
+    if fight:
+        for round_shot, round_issue in fight_exchange.audit_rounds(fight_shots):
+            audit.issues.append(ShotIssue(round_shot, round_issue.rule, round_issue.detail))
 
     close_up_cap = MAX_CLOSE_UPS_PER_FIGHT_SCENE if fight else MAX_CLOSE_UPS_PER_SCENE
     if close_ups > close_up_cap and audit.shots:
-        audit.issues.append(ShotIssue(
-            audit.shots[-1].get("shot_id", len(audit.shots)), "特写超配额",
-            f"本场 {close_ups} 个特写，超过{'武戏' if fight else ''}配额 {close_up_cap} 个；"
-            "特写是标点，只留给冲击峰值与转折帧",
+        audit.issues.append(_issue(
+            audit.shots[-1].get("shot_id", len(audit.shots)), "close_up_quota",
+            count=close_ups, kind=prompt_data.text(_WORDING, "fight_quota") if fight else "", cap=close_up_cap,
         ))
 
     if whole_episode and len(audit.shots) == 1:
-        audit.issues.append(ShotIssue(
-            audit.shots[0].get("shot_id", 1), "整集仅一个镜头", "一集必须拆成多个镜头", "error",
-        ))
+        audit.issues.append(_issue(audit.shots[0].get("shot_id", 1), "single_shot", severity="error"))
 
     return audit
 
 
 def audit_and_log(
     shots: Sequence[dict[str, Any]], *, video_model: str, task_id: str = "", scene_kind: str = "",
-    exchange: exchange_units.ScenePlan | None = None, whole_episode: bool = True,
+    exchange: exchange_units.ScenePlan | None = None, whole_episode: bool = True, key_line: str = "",
 ) -> list[dict[str, Any]]:
     """Audit, log the findings, and return the (possibly repaired) shot list."""
-    audit = audit_shot_table(shots, video_model=video_model, scene_kind=scene_kind, exchange=exchange, whole_episode=whole_episode)
+    audit = audit_shot_table(
+        shots, video_model=video_model, scene_kind=scene_kind, exchange=exchange, whole_episode=whole_episode, key_line=key_line,
+    )
     if audit.issues:
         logger.warning("[Stage4] %s (task=%s)", audit.summary(), task_id or "-")
         for issue in audit.issues[:20]:
-            logger.info("[Stage4] 镜%s %s：%s", issue.shot_id, issue.rule, issue.detail)
+            logger.info(prompt_data.text(_WORDING, "log_issue"), issue.shot_id, issue.rule, issue.detail)
     return audit.shots

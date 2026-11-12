@@ -3,6 +3,7 @@ import { History, RotateCcw, Search, Trash2, X } from 'lucide-react';
 
 import { apiUrl } from '../../api/client';
 import { t } from '../../i18n';
+import { CanvasCompareDialog } from './CanvasCompareDialog';
 import { deleteRun, fetchNodeHistory, listVersions, restoreRun } from './canvasApi';
 import { RUNNABLE_KINDS, roleChoices } from './canvasGraph';
 import { toolOf } from './canvasTools';
@@ -109,12 +110,40 @@ export function VersionsPanel({ projectId, canvasId, version, onRestore }: {
 
 // ---------------------------------------------------------------- one node
 
-function RunThumb({ run }: { run: NodeRun }) {
+function RunThumb({ run, still }: { run: NodeRun; still?: boolean }) {
+  if (still && run.output && !run.output.url && run.output.text) return <span className="cn-thumb ccd-pick-still">{run.output.text.slice(0, 40)}</span>;
   if (!run.output?.url) return <span className={`cn-thumb cn-thumb--empty is-${run.status}`}>{statusLabel(run.status)}</span>;
   const url = apiUrl(run.output.url);
   if (run.medium === 'image') return <img className="cn-thumb" src={url} alt="" loading="lazy" />;
   if (run.medium === 'video') return <video className="cn-thumb" src={url} muted preload="metadata" />;
+  // Inside the pick button a player would be a control within a control.
+  if (still) return <span className="cn-thumb ccd-pick-still">{t('音频')}</span>;
   return <audio className="cn-thumb-audio" src={url} controls preload="none" />;
+}
+
+/** Runs that finished with something to look at can be compared. */
+function comparable(run: NodeRun) {
+  return run.status === 'done' && Boolean(run.output && (run.output.url || run.output.text));
+}
+
+/** Slots A and B, and which one was filled last, so a third pick replaces the older one. */
+interface ComparePicks { slots: [string | null, string | null]; last: 0 | 1 | null }
+const NO_PICKS: ComparePicks = { slots: [null, null], last: null };
+
+function pickForCompare(picks: ComparePicks, id: string): ComparePicks {
+  const [first, second] = picks.slots;
+  if (first === id) return { slots: [null, second], last: second ? 1 : null };
+  if (second === id) return { slots: [first, null], last: first ? 0 : null };
+  const slot: 0 | 1 = first === null ? 0 : second === null ? 1 : picks.last === 0 ? 1 : 0;
+  const slots: [string | null, string | null] = [first, second];
+  slots[slot] = id;
+  return { slots, last: slot };
+}
+
+function keepPicks(picks: ComparePicks, runs: readonly NodeRun[]): ComparePicks {
+  const slots = picks.slots.map(id => (id && runs.some(run => run.id === id) ? id : null)) as [string | null, string | null];
+  const last = picks.last !== null && slots[picks.last] ? picks.last : slots[0] ? 0 : slots[1] ? 1 : null;
+  return { slots, last };
 }
 
 /** A node's generations. Append-only on the server: delete only hides one, restore only points back at one. */
@@ -123,6 +152,9 @@ export function HistoryStrip({ projectId, canvasId, nodeId, latest, onChanged }:
 }) {
   const [history, setHistory] = useState<NodeHistory | null>(null);
   const [problem, setProblem] = useState('');
+  const [comparing, setComparing] = useState(false);
+  const [picks, setPicks] = useState<ComparePicks>(NO_PICKS);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const stamp = `${latest?.run_id ?? ''}:${latest?.status ?? ''}`;
 
   useEffect(() => {
@@ -138,31 +170,75 @@ export function HistoryStrip({ projectId, canvasId, nodeId, latest, onChanged }:
     void work.then(next => { setHistory(next); onChanged(); }).catch(error => setProblem(messageOf(error, failure)));
   };
 
+  const runs = history?.runs ?? [];
+  const candidates = runs.filter(comparable);
+  // A pick whose run was deleted since simply drops out.
+  const [pickA, pickB] = picks.slots.map(id => candidates.find(run => run.id === id) ?? null);
+  const canCompare = candidates.length >= 2;
+  const showPicks = comparing && canCompare;
+  const stopComparing = () => { setComparing(false); setPicks(NO_PICKS); setDialogOpen(false); };
+
   return (
     <div className="cn-history">
-      <h3><History aria-hidden="true" /> {t('生成记录')}</h3>
+      <div className="ccd-strip-head">
+        <h3><History aria-hidden="true" /> {t('生成记录')}</h3>
+        {canCompare && (
+          <button
+            type="button" className={`cn-button is-quiet ccd-strip-toggle${showPicks ? ' is-on' : ''}`} aria-pressed={showPicks}
+            onClick={() => (showPicks ? stopComparing() : setComparing(true))}
+          >{t('对比')}</button>
+        )}
+      </div>
       {problem && <p className="cn-error" role="alert">{problem}</p>}
       {history?.runs.length === 0 && <p className="cn-hint">{t('还没有运行过。')}</p>}
+      {showPicks && (
+        <div className="ccd-strip-bar">
+          <small>{t('点两次生成选出 A 和 B')}</small>
+          <button type="button" className="cn-button is-primary" disabled={!pickA || !pickB} onClick={() => setDialogOpen(true)}>{t('并排对比')}</button>
+        </div>
+      )}
       <ul>
-        {history?.runs.map(run => (
-          <li key={run.id} className={run.id === history.active_run_id ? 'is-active' : ''}>
-            <RunThumb run={run} />
-            <small>{when(run.created_at)}{run.id === history.active_run_id ? ` · ${t('当前')}` : ''}</small>
-            {run.output?.remote && <small className="cn-warn">{t('只存了供应商链接，可能过期')}</small>}
-            {run.error && <small className="cn-error" title={run.error}>{run.error}</small>}
-            <div className="cn-history__actions">
-              {run.status === 'done' && run.id !== history.active_run_id && (
-                <button type="button" className="cn-button" onClick={() => act(restoreRun(projectId, canvasId, nodeId, run.id), t('恢复失败'))}>{t('恢复')}</button>
-              )}
-              {run.status !== 'queued' && run.status !== 'running' && (
-                <button type="button" className="cn-button is-quiet" aria-label={t('删除这次生成')} onClick={() => act(deleteRun(projectId, canvasId, nodeId, run.id), t('删除失败'))}>
-                  <Trash2 aria-hidden="true" />
+        {history?.runs.map(run => {
+          const slot = run.id === pickA?.id ? 'A' : run.id === pickB?.id ? 'B' : '';
+          return (
+            <li key={run.id} className={run.id === history.active_run_id ? 'is-active' : ''}>
+              {showPicks && comparable(run) ? (
+                <button
+                  type="button" className={`ccd-pick${slot ? ' is-picked' : ''}`} aria-pressed={Boolean(slot)}
+                  aria-label={slot ? t('对比 {0}：{1}', [slot, when(run.created_at)]) : t('选来对比：{0}', [when(run.created_at)])}
+                  onClick={() => setPicks(previous => pickForCompare(keepPicks(previous, candidates), run.id))}
+                >
+                  <RunThumb run={run} still />
+                  {slot && <span className="ccd-badge">{slot}</span>}
                 </button>
-              )}
-            </div>
-          </li>
-        ))}
+              ) : <RunThumb run={run} />}
+              <small>{when(run.created_at)}{run.id === history.active_run_id ? ` · ${t('当前')}` : ''}</small>
+              {run.output?.remote && <small className="cn-warn">{t('只存了供应商链接，可能过期')}</small>}
+              {run.error && <small className="cn-error" title={run.error}>{run.error}</small>}
+              <div className="cn-history__actions">
+                {run.status === 'done' && run.id !== history.active_run_id && (
+                  <button type="button" className="cn-button" onClick={() => act(restoreRun(projectId, canvasId, nodeId, run.id), t('恢复失败'))}>{t('恢复')}</button>
+                )}
+                {run.status !== 'queued' && run.status !== 'running' && (
+                  <button type="button" className="cn-button is-quiet" aria-label={t('删除这次生成')} onClick={() => act(deleteRun(projectId, canvasId, nodeId, run.id), t('删除失败'))}>
+                    <Trash2 aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+            </li>
+          );
+        })}
       </ul>
+      {dialogOpen && pickA && pickB && (
+        <CanvasCompareDialog
+          a={pickA} b={pickB} activeId={history?.active_run_id}
+          onClose={() => setDialogOpen(false)}
+          onRestore={id => {
+            stopComparing();
+            act(restoreRun(projectId, canvasId, nodeId, id), t('恢复失败'));
+          }}
+        />
+      )}
     </div>
   );
 }

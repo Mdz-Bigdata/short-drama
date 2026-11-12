@@ -12,7 +12,7 @@ from app.core.scene_turnaround import (
     SCENE_TURNAROUND_CLOSING,
     SCENE_TURNAROUND_INSTRUCTION,
     SCENE_TURNAROUND_SIZE,
-    SCENE_VIEW_SLOTS,
+    SCENE_GRID_SLOTS,
     split_scene_turnaround,
 )
 
@@ -35,7 +35,7 @@ def _board(width=1424, height=800, seam=(706, 718, 394, 406)) -> bytes:
 class SceneTurnaroundTests(unittest.TestCase):
     def test_the_board_is_cut_on_its_seams_into_four_full_views(self):
         views = split_scene_turnaround(_board())
-        self.assertEqual(tuple(views), SCENE_VIEW_SLOTS)
+        self.assertEqual(tuple(views), SCENE_GRID_SLOTS)
         for slot, content in views.items():
             with Image.open(io.BytesIO(content)) as view:
                 width, height = view.size

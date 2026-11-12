@@ -172,6 +172,49 @@ export function patchScreenwritingPlan(
   });
 }
 
+/** 一句台词的润色结果（后端逐句对回原句，不写回）。 */
+export interface PolishedLine {
+  id: string;
+  scene_id: string;
+  index: number;
+  speaker: string;
+  before: string;
+  after: string;
+}
+
+export interface DialoguePolishResult {
+  task_id: string;
+  episode: number;
+  plan_revision: string;
+  items: PolishedLine[];
+  /** 每个分镜原来的整组台词：采纳时只换被采纳那几句的 text，整组写回。 */
+  scenes: Record<string, ScreenwritingUtterance[]>;
+}
+
+/** 润色台词：一次文本模型调用，逐句给出改前改后，不保存；采纳后用 patchScreenwritingPlan 写回。 */
+export function polishEpisodeDialogue(
+  taskId: string,
+  episode: number,
+  body: { sceneIds?: string[]; sceneKind?: string; extra?: string } = {},
+) {
+  return apiRequest<DialoguePolishResult>(`${base(taskId)}/episodes/${episode}/polish-dialogue`, {
+    method: 'POST',
+    body: JSON.stringify({ scene_ids: body.sceneIds ?? [], scene_kind: body.sceneKind ?? '', extra: body.extra ?? '' }),
+  });
+}
+
+/** 被采纳的几句按分镜整组替换 utterances，变成分镜规划的 update 操作。 */
+export function polishOperations(result: DialoguePolishResult, accepted: ReadonlySet<string>): PlanOperation[] {
+  const byScene = new Map<string, ScreenwritingUtterance[]>();
+  for (const item of result.items) {
+    if (!accepted.has(item.id) || item.after === item.before) continue;
+    const utterances = byScene.get(item.scene_id) ?? (result.scenes[item.scene_id] ?? []).map(utterance => ({ ...utterance }));
+    if (utterances[item.index]) utterances[item.index] = { ...utterances[item.index], text: item.after };
+    byScene.set(item.scene_id, utterances);
+  }
+  return [...byScene].map(([id, utterances]) => ({ op: 'update', id, fields: { utterances } }));
+}
+
 export function reviewScreenwritingEpisode(taskId: string, episode: number, action: 'confirm' | 'reopen') {
   return apiRequest<ScreenwritingEpisode>(`${base(taskId)}/episodes/${episode}/review`, {
     method: 'POST',

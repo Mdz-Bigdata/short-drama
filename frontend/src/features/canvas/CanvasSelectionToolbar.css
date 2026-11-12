@@ -1,0 +1,69 @@
+/* Floating toolbar over a multi-selection (class prefix cst-). */
+.cst-toolbar {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.2rem 0.3rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg-popover);
+  color: var(--text-main);
+  box-shadow: 0 6px 18px var(--shadow);
+  transform: translate(-50%, -100%);
+  white-space: nowrap;
+  user-select: none;
+  backdrop-filter: blur(12px);
+}
+.cst-toolbar.is-below { transform: translate(-50%, 0); }
+.cst-count {
+  padding: 0 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+.cst-section { display: flex; align-items: center; gap: 0.1rem; }
+.cst-section + .cst-section { margin-left: 0.15rem; padding-left: 0.25rem; border-left: 1px solid var(--line); }
+.cst-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.cst-button:hover:not(:disabled) { background: rgba(var(--accent-rgb), 0.14); color: var(--accent); }
+.cst-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cst-button:disabled { opacity: 0.35; cursor: default; }
+.cst-button.is-danger:hover:not(:disabled) { background: rgba(var(--danger-rgb), 0.14); color: var(--danger); }
+/* The tooltip: the button's own label, shown on hover and keyboard focus. */
+.cst-button::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.15rem 0.45rem;
+  border-radius: 5px;
+  background: var(--text-main);
+  color: var(--surface);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease 0.25s;
+}
+.cst-toolbar.is-below .cst-button::after { bottom: auto; top: calc(100% + 6px); }
+.cst-button:hover::after, .cst-button:focus-visible::after { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .cst-button::after { transition: none; } }
+
+/* 拖动节点时先藏起来，落定后在新位置出现 */
+[data-canvas-dragging] .cst-toolbar { opacity: 0; pointer-events: none; transition: none; }

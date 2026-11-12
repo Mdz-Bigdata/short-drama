@@ -151,7 +151,7 @@ def _commit(
         written = plan.model_copy(update={"revision": current.revision + 1, "source": "edited"})
         spatial.save_plan(task, written)
         spatial.mark_board_stale(task, scene_id)
-        mark_captures_stale(task, scene_id)
+        mark_captures_stale(task, scene_id, before=current, after=written)
         if entry_update is not None:
             entry_update(entry)
         return service._spatial_response(task, scene_id, written, persisted=True)
@@ -366,7 +366,7 @@ def revert(service, task_id: str, scene_id: str, *, snapshot_id: str, base_revis
         entry["chat"] = [*entry["chat"], {"role": "assistant", "text": f"已撤销「{snapshot.get('label')}」。", "at": _now()}][-MAX_CHAT:]
         spatial.save_plan(task, restored)
         spatial.mark_board_stale(task, scene_id)
-        mark_captures_stale(task, scene_id)
+        mark_captures_stale(task, scene_id, before=current, after=restored)
         return service._spatial_response(task, scene_id, restored, persisted=True)
 
     response = service.repo.mutate_task(task_id, mutate)

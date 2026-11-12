@@ -33,13 +33,16 @@ class ChoiceTests(unittest.TestCase):
         )
         self.assertEqual(judge.parse("不是 JSON", ["c1"], extract=extract_json_object), {})
 
-    def test_the_prompt_does_not_push_every_clip_to_one_mode(self):
+    def test_the_prompt_makes_multi_reference_the_default_and_first_last_the_exception(self):
+        # 尽量多走多图参考：首尾帧只留给结尾必须精确落定、下一镜靠这一帧接上的镜头；落幅字眼不是理由。
         from app.core import prompt_data
 
         system = prompt_data.text("video_mode_judge", "system")
-        self.assertIn("不要因为人物身份就一律选多图参考", system)
-        self.assertNotIn("拿不准", system)
-        self.assertNotIn("少数", system)
+        self.assertIn("默认用多图参考，首尾帧是例外", system)
+        self.assertIn("拿不准就选它", system)
+        self.assertIn("下一镜就靠这一帧接上", system)
+        self.assertIn("本身不是理由", system)
+        self.assertIn("逐段按这一段的戏判断", system)
 
     def test_a_failed_batch_costs_only_that_batch(self):
         clips = [judge.Clip(id=f"c{n}", beats=("画面",)) for n in range(1, 42)]
@@ -142,22 +145,39 @@ class StageFiveTests(StageFiveQueueTests):
         task["config"].pop("video_granularity", None)
         return task
 
-    def test_a_board_judged_first_last_sends_its_two_frames_and_says_so(self):
-        answer = json.dumps({"clips": [{"id": "c1", "mode": "first_last_frame", "reason": "结尾定格在门内"}]})
-        stored = self._judged_run(self._board(), answer)
-        self.assertEqual(len(self.questions), 1)
-        self.assertIn('"瞬间数": 3', self.questions[0])
-        [request] = self.requests
-        self.assertEqual(request["last_frame"], "https://cdn/end.png")
-        self.assertNotIn("所给3张分镜画面", request["prompt"], "only the first and last frames are sent")
-        self.assertIn("以所给尾帧结束：它是镜头3的落幅", request["prompt"])
-        [clip] = stored["assets"]["5"]
-        self.assertEqual(clip["video_route_decision"]["mode"], "first_last_frame")
-        self.assertEqual(clip["video_route_decision"]["reasons"], ["模型判定：结尾定格在门内"])
+    def _open_scene(self, count=3):
+        """逐镜出片、同一场三镜：第 1 镜带两张分镜，接法规则管不到，交给文本模型判定；第 2 镜起接上一镜。"""
+        task = _task(count)
+        task["assets"]["4"][0]["sequence_images"] = ["/media/p1b.png"]
+        return task
 
-    def test_a_board_judged_multi_reference_pays_for_no_end_frame(self):
+    def _run_open_scene(self, answer):
+        # 替身成片不是真文件，取不到尾帧：第 2 镜起独立出，判定只看第 1 镜。
+        with patch("app.service.drama_service.media_compositor.extract_last_frame_b64", return_value=None):
+            return self._judged_run(self._open_scene(), answer)
+
+    def test_a_board_that_is_its_scenes_only_clip_is_routed_without_asking(self):
+        stored = self._judged_run(self._board(), json.dumps({"clips": [{"id": "c1", "mode": "first_last_frame", "reason": "x"}]}))
+        self.assertEqual(self.questions, [], "一场戏只有这一段：有参考图就直接定，不再问文本模型")
+        [clip] = stored["assets"]["5"]
+        self.assertEqual(clip["clip_route"]["rule"], "solo_scene")
+        self.assertEqual(clip["video_route_decision"]["mode"], "multi_reference")
+        self.images.assert_not_called()
+
+    def test_a_clip_judged_first_last_sends_its_two_frames(self):
+        answer = json.dumps({"clips": [{"id": "c1", "mode": "first_last_frame", "reason": "结尾定格在门内"}]})
+        stored = self._run_open_scene(answer)
+        self.assertEqual(len(self.questions), 1)
+        self.assertEqual(self.requests[0]["last_frame"], "https://cdn/end.png")
+        first = stored["assets"]["5"][0]
+        self.assertEqual(first["video_route_decision"]["mode"], "first_last_frame")
+        self.assertEqual(first["video_route_decision"]["reasons"], ["模型判定：结尾定格在门内"])
+        self.assertIsNone(first.get("clip_route"))
+        self.assertEqual([clip["clip_route"]["kind"] for clip in stored["assets"]["5"][1:]], ["tailframe", "tailframe"])
+
+    def test_a_clip_judged_multi_reference_pays_for_no_end_frame(self):
         answer = json.dumps({"clips": [{"id": "c1", "mode": "multi_reference", "reason": "多瞬间"}]})
-        stored = self._judged_run(self._board(), answer)
+        stored = self._run_open_scene(answer)
         self.assertFalse(self.requests[0].get("last_frame"))
         self.images.assert_not_called()
         self.assertEqual(stored["assets"]["5"][0]["video_route_decision"]["reasons"], ["模型判定：多瞬间"])
@@ -169,12 +189,12 @@ class StageFiveTests(StageFiveQueueTests):
 
     def test_the_same_question_is_not_paid_for_twice(self):
         answer = json.dumps({"clips": [{"id": "c1", "mode": "multi_reference", "reason": "多瞬间"}]})
-        stored = self._judged_run(self._board(), answer)
+        stored = self._run_open_scene(answer)
         self.assertEqual(len(self.questions), 1)
-        again = _task(3)
-        again["config"].pop("video_granularity", None)
+        again = self._open_scene()
         again["llm_memo"] = stored["llm_memo"]
-        self._judged_run(again, answer)
+        with patch("app.service.drama_service.media_compositor.extract_last_frame_b64", return_value=None):
+            self._judged_run(again, answer)
         self.assertEqual(self.questions, [], "the memo answered")
 
     def test_a_chosen_mode_is_not_second_guessed(self):

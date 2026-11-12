@@ -71,6 +71,10 @@ describe('EpisodeLedgerTools', () => {
     expect(screen.getByLabelText('合并第 1 集与下一集')).toBeTruthy();
     expect(screen.queryByLabelText('合并第 2 集与下一集')).toBeNull();
     expect(screen.getByLabelText('从第 2 集起重新规划')).toBeTruthy();
+    // Six columns do not fit a narrow board: the table scrolls sideways inside a region the keyboard can reach.
+    const scroller = screen.getByRole('region', { name: '分集账本表，可横向滚动' });
+    expect(scroller.tabIndex).toBe(0);
+    expect(within(scroller).getByRole('table')).toBeTruthy();
   });
 
   it('opens a written episode\'s full screenplay from its 来源 cell', async () => {
@@ -152,6 +156,8 @@ describe('EpisodeLedgerTools', () => {
     expect(posted[0]).toMatchObject({ operation: 'split', episode: 1, offset: expectedOffset, title: '回头', confirm_discard: [] });
     expect(posted[1]).toMatchObject({ operation: 'split', episode: 1, offset: expectedOffset, confirm_discard: [2] });
     expect(confirmations[0]).toMatch(/第 2 集《反击》：2 个分镜/);
+    // The episodes sit on their own lines, not behind a printed backslash-n.
+    expect(confirmations[0]).toBe('拆分第 1 集会丢掉以下已写出的集，并重新写出受影响的集：\n第 2 集《反击》：2 个分镜\n是否继续？');
     expect(screen.getByText(/丢弃了第 2 集/)).toBeTruthy();
   });
 
@@ -175,6 +181,86 @@ describe('EpisodeLedgerTools', () => {
     await waitFor(() => expect(screen.getByText('已取消。')).toBeTruthy());
     expect(posted).toHaveLength(1);
     expect(onChanged).not.toHaveBeenCalled();
+  });
+
+  it('says which step is running while the model works, then reports the result', async () => {
+    let finish!: (response: Response) => void;
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/ledger/ops')) return new Promise<Response>(resolve => { finish = resolve; });
+      if (url.endsWith('/screenwriting/ledger')) return jsonResponse(LEDGER);
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    render(<EpisodeLedgerTools taskId="t1" onChanged={onChanged} />);
+
+    await userEvent.click(await screen.findByLabelText('合并第 1 集与下一集'));
+
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toMatch(/^正在合并第 1、2 集…/);
+    expect(screen.getByLabelText('拆分第 1 集').hasAttribute('disabled')).toBe(true);
+
+    finish(await jsonResponse({ ...LEDGER, created: [1] }));
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('合并第 1、2 集完成，新写出第 1 集。'));
+    expect(screen.getByLabelText('拆分第 1 集').hasAttribute('disabled')).toBe(false);
+  });
+
+  it('asks before deleting an episode that has not been written, and leaves it when declined', async () => {
+    const posted: Record<string, unknown>[] = [];
+    const planned = {
+      ...LEDGER,
+      entries: [LEDGER.entries[0], { ...LEDGER.entries[1], origin: 'own' as const, source_range: null, written: false, ledger_status: 'planned' }],
+    };
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/ledger/ops')) {
+        posted.push(bodyOf(init));
+        return jsonResponse({ ...LEDGER, entries: [LEDGER.entries[0]] });
+      }
+      if (url.endsWith('/screenwriting/ledger')) return jsonResponse(planned);
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    const answers = [false, true];
+    const questions: string[] = [];
+    vi.stubGlobal('confirm', (message: string) => { questions.push(message); return answers.shift() ?? true; });
+    render(<EpisodeLedgerTools taskId="t1" onChanged={onChanged} />);
+
+    await userEvent.click(await screen.findByLabelText('删除第 2 集'));
+    expect(questions).toEqual(['确定删除第 2 集吗？这一集自带的原文会一起删除，后面的集依次前移。']);
+    expect(posted).toHaveLength(0);
+
+    await userEvent.click(screen.getByLabelText('删除第 2 集'));
+    await waitFor(() => expect(screen.getByText('删除第 2 集完成。')).toBeTruthy());
+    expect(posted[0]).toMatchObject({ operation: 'delete', episode: 2 });
+    expect(onChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds a step back when the panel refuses to lose its unsaved edits', async () => {
+    const onBeforeChange = vi.fn(() => false);
+    render(<EpisodeLedgerTools taskId="t1" onChanged={onChanged} onBeforeChange={onBeforeChange} />);
+
+    await userEvent.click(await screen.findByLabelText('合并第 1 集与下一集'));
+
+    expect(onBeforeChange).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.filter(call => String(call[0]).endsWith('/ledger/ops'))).toHaveLength(0);
+    expect(onChanged).not.toHaveBeenCalled();
+  });
+
+  it('offers a retry when the ledger cannot be read', async () => {
+    let fail = true;
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/screenwriting/ledger')) return fail ? jsonResponse({ detail: 'boom' }, 500) : jsonResponse(LEDGER);
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    render(<EpisodeLedgerTools taskId="t1" onChanged={onChanged} />);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('分集账本读取失败。');
+    fail = false;
+    await userEvent.click(within(alert).getByRole('button', { name: '重试' }));
+
+    expect(await screen.findByText('对峙')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('plans a candidate, compares it with the old cut and adopts it after the archive confirmation', async () => {

@@ -213,7 +213,15 @@ reach it, so every number was committed by blurring instead.
 
 ### Notes
 
-- A blocking edit marks captures stale but does not remove their URLs from the shot slots; stage 5 filters stale clips at read time, and `unapply` / `delete` still work on a stale capture.
+- A plan edit dates only the captures it could show in: every capture of the scene when the edit changes the cast's marks or the set (actors, landmarks, crowds, axis, backdrop, aspect); otherwise a capture whose own shot, shot timeline, shot lens or capture lens changed, or whose shot left the plan. Edits confined to other shots leave it fresh; a rebuild dates the whole scene (`director_desk_service.mark_captures_stale(task, scene, before=, after=)`). Marking stale does not remove their URLs from the shot slots; stage 5 filters stale clips at read time, and `unapply` / `delete` still work on a stale capture.
 - A backdrop is the one capture kind that is never dated by a blocking edit and can never be applied to a shot.
 - One desk still and one desk clip per shot: applying a newer one replaces the older one in the slot.
 - Uploads, apply / unapply and delete are refused (409) while a stage is running, like spatial edits.
+
+### 2026-11-10 — 侧栏助手与 MCP 的舞台控制、捏脸与下游过期
+
+- 新增 `backend/app/service/stage_director_ops.py`：`commit_operations`（一组语义操作 = 助手的一步，留快照、记一条对话，没变就不写）、`pin_snapshot / list_snapshots / restore_snapshot`（固定的快照放在 `pinned_snapshots`，≤ 12，不被服务层裁剪挤掉；恢复前留「撤销前」）、`plan_from_current`、`optimize_scenes / batch_scope / ensure_idle`（≤ 12 场，跑阶段时拒绝）、`mark_scene_clips_stale` 与 `STALE_CLIP_REASON`。新增 `backend/app/core/stage_locator.py`：场景号 / 第 N 场（第 M 集）/ 场名片段 / 只出现在一场的人物名 → 场景号，「第 2 镜」「#2」「X 说话的那镜」→ 镜号，有歧义时列出候选。
+- `agent_tools.py` 舞台工具：`edit_stage / repair_stage / adopt_stage_plan / build_stage_model / revert_stage_step` 经 `commit_operations` / `restore_snapshot`，`direct_stage / optimize_stage` 经 `stage_director_service.chat / optimize`，`optimize_scenes` 为付费提议；回执 `{revision, failing_checks, snapshot_id, changed, stale_clips}`，`ui_action: stage_changed` 只在 diff 非空时出现。每次落地后这一场的第 5 阶段片段标 `stale`（标记是 `_commit` 之后的第二次 `mutate_task`，不与方案写入同一事务）。
+- 捏脸（`docs/face-sculpt/`）：`face_sculpt.save / revert / reset` 返回 `downstream: {clips_marked, sheet_stale}`，`face_sculpt_sync` 把新描述写回元素库里的同名演员，`GET …/sheet-prompt` 与工具 `get_sheet_prompt` 不花钱地看重出设定集会用的画面描述；捏脸工具回执带 `downstream / library`。
+- 助手路由：`edit / question` 除对象词外也认项目名字（角色名、别名、场景号、场名）；助手那条 `chat_history` 存 `ui_actions / proposal`，状态接口原样带出。
+- 验证（本机，假模型）：`tests.test_face_sculpt + test_face_sculpt_sync + test_stage_director_ops` 75 通过；`tests.test_embedded_agent + test_storyboard_agent_control` 51 通过；`vitest` 捏脸两个组件 7 通过、聊天卡片两个文件 13 通过。没有在浏览器里走通：`App.tsx` 还没接卡片与 `context`，`CharacterFaceSculpt` 还没挂一句话捏脸与撤销历史。

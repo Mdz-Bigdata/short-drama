@@ -101,6 +101,32 @@ class VocabularyTests(unittest.TestCase):
         self.assertEqual(speaker_of("黄琰（惨叫）：抓住他！", ["沈砚", "黄琰"]), "黄琰")
         self.assertEqual(speaker_of("远处的钟声", ["沈砚"]), "")
 
+    def test_a_move_note_is_read_by_what_the_camera_does_not_by_one_character(self):
+        readings = {
+            # 拉近 closes in; a single 拉 on its own still pulls back.
+            "拉近": "push", "缓慢拉近人物": "push", "推近": "push", "拉远": "pull", "镜头缓缓拉开": "pull",
+            # Frame rates, focus pulls and shake leave the camera where it is.
+            "升格慢动作": "static", "降格": "static", "跟焦": "static", "拉焦": "static", "移焦": "static",
+            "焦点转移": "static", "焦点从前景转移到后景": "static", "摇晃": "static", "手持晃动": "static",
+            # A negated move is no move.
+            "不移动": "static", "固定，不推拉": "static", "推拉摇移全无": "static", "static, no push or pull": "static",
+            # What is left after those still decides.
+            "先固定，后缓推": "push", "不推不拉，缓慢横移": "track", "手持跟拍": "follow", "无人机环绕": "orbit",
+            "不断推近": "push", "上摇": "pan", "升": "rise", "降": "fall", "跟拍": "follow", "": "static",
+            # What a person does is not what the camera does.
+            "固定，人物靠近镜头": "static", "沈砚靠近，镜头不动": "static", "固定，人物后退": "static",
+            "固定，沈砚后退两步": "static", "人物向镜头逼近": "static", "固定机位，人物移动": "static",
+            "人物移动，镜头固定": "static", "无明显移动": "static", "没有明显移动": "static",
+            "人物向镜头走来，镜头后拉": "pull", "镜头跟随人物移动": "follow",
+            # 靠近 / 逼近 / 后退 move the camera only where the note says the camera does it.
+            "镜头逼近": "push", "镜头缓慢靠近人物": "push", "机位后退": "pull", "逼近": "static", "后退": "static",
+            # 先…后… is first and then, not a move backward: the first move is the one kept.
+            "先推后拉": "push",
+        }
+        for note, kind in readings.items():
+            with self.subTest(note=note):
+                self.assertEqual(move_kind(note), kind)
+
     def test_a_verb_belongs_to_the_clause_that_names_the_character(self):
         text = "沈砚后退一步，黄琰上前逼近"
         self.assertEqual(language.travel_in("沈砚", text), "retreat")
@@ -590,7 +616,8 @@ class ProseTests(unittest.TestCase):
         self.assertIn("书案：宽约1.4米、进深约0.7米、高约0.8米", plan.scene_bible)
         self.assertIn("沈砚：站立，身高约170cm", plan.scene_bible)
         # The tallest fixture is the ruler, and the same ratio rides in every shot that has a lead.
-        self.assertIn("比例尺：沈砚身高约170cm；门高约2.4米，沈砚站在门旁，头顶比门顶低约0.7米（约三个头）", plan.scene_bible)
+        # The door is across the room, so nobody is said to stand beside it.
+        self.assertIn("比例尺：沈砚身高约170cm；门高约2.4米，沈砚头顶比门顶低约0.7米（约三个头）", plan.scene_bible)
         for shot_id in (1, 2, 4):
             self.assertIn("比例：沈砚身高约170cm；门高约2.4米", plan.shot(shot_id).text.blocking)
 

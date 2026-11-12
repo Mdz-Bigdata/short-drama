@@ -70,8 +70,14 @@ function headingText(line: string): string | null {
 }
 
 export function parseMarkdownBlocks(source: string): MarkdownBlock[] {
+  return scanMarkdown(source).blocks;
+}
+
+/** The blocks, and for each table where its header line and every kept row line start in the source. */
+function scanMarkdown(source: string): { blocks: MarkdownBlock[]; tableLineStarts: number[][] } {
   const cursor = createLineCursor(String(source || ''));
   const blocks: MarkdownBlock[] = [];
+  const tableLineStarts: number[][] = [];
   let textLines: string[] = [];
   let textCharacters = 0;
   let latestHeading = '';
@@ -108,6 +114,7 @@ export function parseMarkdownBlocks(source: string): MarkdownBlock[] {
       continue;
     }
     flushText();
+    const lineStarts = [cursor.position()];
     const headerLine = cursor.take() as string;
     const dividerLine = cursor.take() as string;
     const tableLines = [headerLine, dividerLine];
@@ -115,12 +122,14 @@ export function parseMarkdownBlocks(source: string): MarkdownBlock[] {
     const rows: string[][] = [];
     let omittedRows = 0;
     while (cursor.peek() !== undefined && cursor.peek()?.trim() && cursor.peek()?.includes('|')) {
+      const rowStart = cursor.position();
       const rowLine = cursor.take() as string;
       if (
         totalTableRows < MARKDOWN_PARSE_BUDGETS.maxTotalTableRows
         && totalTableCells + headers.length <= MARKDOWN_PARSE_BUDGETS.maxTotalTableCells
       ) {
         tableLines.push(rowLine);
+        lineStarts.push(rowStart);
         const values = splitPipeRow(rowLine);
         rows.push(headers.map((_, cellIndex) => values[cellIndex] || ''));
         totalTableRows += 1;
@@ -130,6 +139,7 @@ export function parseMarkdownBlocks(source: string): MarkdownBlock[] {
       }
     }
     tableCount += 1;
+    tableLineStarts.push(lineStarts);
     blocks.push({
       kind: 'table',
       source: tableLines.join('\n'),
@@ -140,20 +150,24 @@ export function parseMarkdownBlocks(source: string): MarkdownBlock[] {
     });
   }
   flushText();
-  return blocks;
+  return { blocks, tableLineStarts };
 }
 
 interface MarkdownLineCursor {
   peek(offset?: number): string | undefined;
   take(): string | undefined;
+  /** Where the line `peek()` returns starts in the source. */
+  position(): number;
 }
 
 function createLineCursor(source: string): MarkdownLineCursor {
   const buffer: string[] = [];
+  const starts: number[] = [];
   let sourceIndex = 0;
 
   const readLine = (): string | undefined => {
     if (sourceIndex > source.length) return undefined;
+    starts.push(sourceIndex);
     if (sourceIndex === source.length) {
       sourceIndex += 1;
       return '';
@@ -183,8 +197,14 @@ function createLineCursor(source: string): MarkdownLineCursor {
     },
     take() {
       const line = this.peek();
-      if (line !== undefined) buffer.shift();
+      if (line !== undefined) {
+        buffer.shift();
+        starts.shift();
+      }
       return line;
+    },
+    position() {
+      return this.peek() === undefined ? source.length : starts[0];
     },
   };
 }
@@ -261,6 +281,50 @@ export function paginateMarkdown(source: string, targetCharacters = 1200): Markd
   });
   flush();
   return pages.length ? pages : [[]];
+}
+
+/**
+ * Where each page of `paginateMarkdown(source)` starts in the source: a text page by its first
+ * line, a table page by the header line or the first row it shows. -1 when the start is not found.
+ */
+export function markdownPageOffsets(source: string, pages: MarkdownBlock[][]): number[] {
+  const { tableLineStarts } = scanMarkdown(source);
+  let from = 0;
+  let table = 0;
+  let row = 0;
+  return pages.map(page => {
+    const first = page[0];
+    if (first?.kind === 'table') {
+      // Table slices come in source order, one to a page; a slice after the first opens at its first row.
+      const lineStarts = tableLineStarts[table] || [];
+      const found = lineStarts[row === 0 ? 0 : row + 1] ?? -1;
+      row += first.rows.length;
+      // Text after the slice is looked for past its last line, so a name in a cell is not taken for it.
+      const lastLine = lineStarts[Math.min(row, lineStarts.length - 1)] ?? -1;
+      if (lastLine >= 0) {
+        const lineBreak = /[\r\n]/g;
+        lineBreak.lastIndex = lastLine;
+        from = Math.max(from, lineBreak.exec(source)?.index ?? source.length);
+      }
+      if (row >= lineStarts.length - 1) {
+        table += 1;
+        row = 0;
+      }
+      return found;
+    }
+    let anchor = '';
+    let textLength = 0;
+    page.forEach(block => {
+      if (block.kind !== 'text') return;
+      if (!anchor) anchor = block.source.split('\n', 1)[0].slice(0, 80);
+      textLength += block.source.length;
+    });
+    const found = anchor ? source.indexOf(anchor, from) : -1;
+    // The page's own text lies between this start and the next one, so a repeated line
+    // inside it (a speaker's name, a scene heading) cannot be taken for the next page.
+    if (found >= 0) from = found + textLength;
+    return found;
+  });
 }
 
 function tableRowsPerPage(columnCount: number): number {

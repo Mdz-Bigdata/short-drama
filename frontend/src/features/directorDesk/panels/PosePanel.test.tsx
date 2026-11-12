@@ -83,6 +83,27 @@ describe('PosePanel', () => {
     expect(onCommit.mock.calls[0][0].label).toBe('林夏：单膝跪');
   });
 
+  it('keeps one release listener on the window however many keys move a joint, and none once it is let go', () => {
+    const added = vi.spyOn(window, 'addEventListener');
+    const removed = vi.spyOn(window, 'removeEventListener');
+    const ups = (spy: typeof added) => spy.mock.calls.filter(([type]) => type === 'pointerup').length;
+    const { unmount } = render(panel(withActor({ figure: 'mannequin', pose: { preset: 'walk', joints: {} } })));
+    const slider = screen.getByLabelText('左膝 弯曲') as HTMLInputElement;
+    const before = ups(added);
+    for (const value of ['5', '10', '15']) {
+      fireEvent.change(slider, { target: { value } });
+      fireEvent.keyUp(slider, { key: 'ArrowRight' });
+    }
+    expect(committed()).toHaveLength(3);
+    // Each key press arms and the key's release takes the listener down again.
+    expect(ups(added) - before).toBe(ups(removed));
+    fireEvent.change(slider, { target: { value: '20' } });
+    unmount();
+    expect(ups(added) - before).toBe(ups(removed));
+    added.mockRestore();
+    removed.mockRestore();
+  });
+
   it('previews a joint while the slider moves and saves once, clamped, when it is let go', () => {
     render(panel(withActor({ figure: 'mannequin', body_type: 'child', pose: { preset: 'walk', joints: { 'leftKnee.bend': 12 } } })));
     const groups = screen.getAllByRole('group').filter(node => node.tagName === 'DETAILS');

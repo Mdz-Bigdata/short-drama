@@ -145,6 +145,8 @@ export interface WriterDashboardResponse {
   relationships: WriterRelationship[];
   /** True while the graph is only same-scene co-occurrence, not analysed relations. */
   relationshipsInferred?: boolean;
+  /** The relation list was saved by hand or by an analysis, even when it is now empty. */
+  relationshipsAuthored?: boolean;
   /** The event timeline was arranged by hand and no longer follows the ledger. */
   timelineAuthored?: boolean;
   creationMode?: string;

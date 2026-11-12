@@ -1,0 +1,176 @@
+/* Colours only from the app's tokens; inside .canvas-workspace the dark theme redefines them. */
+.ccd-backdrop {
+  position: fixed;
+  inset: 0;
+  /* Above the canvas workspace (2900), under the director desk (3000). */
+  z-index: 2950;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 16px;
+  background: rgba(var(--shadow-rgb), 0.3);
+}
+
+.ccd-dialog {
+  width: min(72rem, 100%);
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: 0.8rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg-popover);
+  box-shadow: 0 16px 40px var(--shadow);
+  outline: none;
+}
+
+.ccd-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+.ccd-head strong { color: var(--ink); font-size: 0.9rem; }
+.ccd-modes { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 6px; overflow: hidden; }
+.ccd-mode { padding: 0.2rem 0.6rem; border: 0; font: inherit; color: var(--text-main); background: transparent; cursor: pointer; }
+.ccd-mode.is-on { color: var(--on-accent); background: var(--accent); }
+.ccd-close { margin-left: auto; display: grid; place-items: center; padding: 0.2rem; border: 0; color: var(--text-muted); background: transparent; cursor: pointer; }
+.ccd-close svg { width: 1rem; height: 1rem; }
+.ccd-close:hover { color: var(--accent); }
+
+.ccd-body { flex: 1; min-height: 0; overflow: auto; padding: 0.75rem; }
+
+.ccd-panes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
+.ccd-pane {
+  position: relative;
+  margin: 0;
+  min-height: 8rem;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.ccd-pane img, .ccd-pane video { display: block; max-width: 100%; max-height: 60vh; object-fit: contain; }
+.ccd-zoom img { transition: transform 60ms linear; cursor: zoom-in; }
+.ccd-corner {
+  position: absolute;
+  top: 0.35rem;
+  left: 0.35rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 4px;
+  color: var(--on-accent);
+  font-weight: 700;
+  background: rgba(var(--accent-rgb), 0.85);
+  pointer-events: none;
+}
+.ccd-corner.is-right { left: auto; right: 0.35rem; }
+
+.ccd-bar { margin: 0.45rem 0 0; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; color: var(--text-dim); }
+.ccd-text .ccd-bar { margin: 0 0 0.45rem; }
+
+.ccd-slider-stage {
+  position: relative;
+  height: min(60vh, 36rem);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  touch-action: none;
+  user-select: none;
+  cursor: ew-resize;
+}
+.ccd-slider-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+.ccd-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  outline: none;
+}
+.ccd-divider-grip {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 1.1rem;
+  height: 2rem;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--accent);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.ccd-divider:focus-visible .ccd-divider-grip { box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.35); }
+
+.ccd-sound {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 0.7rem;
+  color: var(--text-main);
+  background: var(--surface);
+  cursor: pointer;
+}
+.ccd-sound.is-on { border-color: var(--accent); color: var(--on-accent); background: var(--accent); }
+
+.ccd-transport { margin-top: 0.55rem; display: flex; align-items: center; gap: 0.5rem; }
+.ccd-transport svg { width: 0.9rem; height: 0.9rem; }
+.ccd-scrub { flex: 1; min-width: 0; accent-color: var(--accent); }
+.ccd-clock { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.ccd-audio { display: grid; gap: 0.5rem; }
+.ccd-audio-row { display: flex; align-items: center; gap: 0.5rem; }
+.ccd-audio-row audio { flex: 1; min-width: 0; }
+
+.ccd-lines {
+  margin: 0;
+  padding: 0.35rem 0 0.35rem 2.4rem;
+  max-height: 60vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  background: var(--surface);
+}
+.ccd-lines li { padding: 0 0.5rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ccd-lines li::marker { color: var(--text-dim); }
+.ccd-lines li.is-changed { background: rgba(var(--warning-rgb), 0.16); box-shadow: inset 3px 0 0 var(--warning); }
+.ccd-plain { margin: 0; padding: 0.5rem; width: 100%; max-height: 60vh; overflow: auto; white-space: pre-wrap; font-size: 0.74rem; }
+
+.ccd-foot {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+  padding: 0.55rem 0.75rem;
+  border-top: 1px solid var(--line);
+}
+.ccd-meta { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
+.ccd-meta small { flex: 1; min-width: 0; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ccd-badge { flex: none; padding: 0.05rem 0.4rem; border-radius: 4px; color: var(--on-accent); font-weight: 700; background: var(--accent); }
+.ccd-current { color: var(--accent); font-weight: 600; }
+
+/* The history strip's compare mode. */
+.ccd-strip-head { display: flex; align-items: center; justify-content: space-between; gap: 0.3rem; }
+.ccd-strip-toggle.is-on { border-color: var(--accent); color: var(--accent); }
+.ccd-pick { position: relative; display: block; width: 100%; padding: 0; border: 2px solid transparent; border-radius: 6px; background: transparent; cursor: pointer; }
+.ccd-pick.is-picked { border-color: var(--accent); }
+.ccd-pick:focus-visible { outline: 2px solid rgba(var(--accent-rgb), 0.5); }
+.ccd-pick .ccd-badge { position: absolute; top: 0.2rem; left: 0.2rem; }
+.ccd-pick-still { display: grid; place-items: center; min-height: 3rem; padding: 0.25rem; color: var(--text-dim); font-size: 0.66rem; overflow: hidden; }
+.ccd-strip-bar { margin-top: 0.35rem; display: flex; align-items: center; justify-content: space-between; gap: 0.3rem; }
+.ccd-strip-bar small { color: var(--text-dim); font-size: 0.66rem; }
+
+@media (max-width: 640px) {
+  .ccd-panes, .ccd-foot { grid-template-columns: minmax(0, 1fr); }
+}

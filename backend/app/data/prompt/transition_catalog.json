@@ -1,0 +1,187 @@
+{
+  "_about": "转场词典(app/core/transition_catalog.py)。types 是剪辑类型(管节奏)，categories 是 AI 片段内完成转场的媒介类别(管怎么转)，两张表的顺序就是给前端列出的顺序；value 是代码认的 id，pacing 是 any / slow / medium / fast。type_synonyms / category_synonyms 是从自由文本认类型、认媒介的别名，最长的命中胜出(类型同长时按 id 排序取后者)。hard_cut_words 是正则：转场交接文字里的硬切说法，以 sound_first 开头的换成 sound_first_join，其余换成 smooth_join；cut_verbs 是按顺序替换的剪切动词 [原词, 换成]，只用于转场交接文字，那里它们都指切镜。fallback_label 是认不出类型时的标签(不用硬切，一律按匹配剪辑处理)。prompt_guide 是写进提示词的转场写法说明，各行直接相连。formula_pattern 是正则：文字里出现这些词就算用了转场写法。says 是句子模板，花括号里是代码填进去的值：prompt_head 和 outgoing_action…light 组出通用公式(前镜动作 + 媒介 + 镜头运动 + 新场景 + 光影)，各段用 separator 连接；note / note_category / note_unmatched 组出给提示词和检查用的转场说明。",
+  "types": [
+    {
+      "value": "cut",
+      "label": "硬切",
+      "en": "hard cut",
+      "usage": "同场景动作衔接、正反打、节奏推进",
+      "emotions": "干脆、直接",
+      "pacing": "any"
+    },
+    {
+      "value": "fade",
+      "label": "淡入淡出",
+      "en": "fade in/out",
+      "usage": "开场结尾、回忆梦境、时间跳转",
+      "emotions": "宁和、怅惘、怀念",
+      "pacing": "slow"
+    },
+    {
+      "value": "dissolve",
+      "label": "叠化",
+      "en": "dissolve",
+      "usage": "时间流逝、回忆过渡、季节变化",
+      "emotions": "平实、缱绻、念旧",
+      "pacing": "slow"
+    },
+    {
+      "value": "flash",
+      "label": "闪白/闪黑",
+      "en": "flash white/black",
+      "usage": "闪回回忆、打斗冲击后、激烈碰撞",
+      "emotions": "强烈、惊惧、屏息",
+      "pacing": "fast"
+    },
+    {
+      "value": "wipe",
+      "label": "划像",
+      "en": "wipe",
+      "usage": "风格化表达、节奏增强、时空跳跃",
+      "emotions": "跃动、干脆、摩登",
+      "pacing": "fast"
+    },
+    {
+      "value": "push_pull",
+      "label": "推拉转场",
+      "en": "push/pull",
+      "usage": "进入新场景、情绪递进、强调空间关系",
+      "emotions": "顺滑、连贯、代入",
+      "pacing": "medium"
+    },
+    {
+      "value": "match_cut",
+      "label": "匹配剪辑",
+      "en": "match cut",
+      "usage": "同场景动作 / 视线 / 姿态延续衔接、创意叙事、时空跳跃",
+      "emotions": "连贯、顺畅、自然",
+      "pacing": "medium"
+    },
+    {
+      "value": "montage",
+      "label": "蒙太奇",
+      "en": "montage",
+      "usage": "时间压缩、场景累积、故事快进",
+      "emotions": "密实、燃情、激荡",
+      "pacing": "fast"
+    },
+    {
+      "value": "sound_bridge",
+      "label": "声音先行",
+      "en": "sound bridge (J-cut)",
+      "usage": "悬疑、回忆、梦境；声音先于画面进入",
+      "emotions": "暗流、期待",
+      "pacing": "medium"
+    }
+  ],
+  "categories": [
+    {
+      "value": "occlusion",
+      "label": "遮挡蒙太奇",
+      "purpose": "前景物象短暂遮挡镜头，遮挡移开后已是新场景",
+      "media": "衣袖、手掌、门框、雨幕、花瓣、纸页、面具、镜面、雾气、火焰"
+    },
+    {
+      "value": "camera_move",
+      "label": "镜头运动",
+      "purpose": "用镜头位移跨越时空边界",
+      "media": "俯冲、甩镜、下坠、环绕、侧移、抬升、后退、穿隙、推进、拉远、贴地"
+    },
+    {
+      "value": "action",
+      "label": "动作叙事",
+      "purpose": "人物动作的轨迹延续到下一场景",
+      "media": "转身、拔剑、挥刀、跃起、抬手、抬眸、奔袭、起身、闭眼睁眼、伸手触碰、甩袖"
+    },
+    {
+      "value": "light",
+      "label": "光影氛围",
+      "purpose": "光线变化承担切换",
+      "media": "月色漫染、闪电、霓虹闪烁、过曝、金光、烛焰、强光溢散、天光破晓、冷光铺满"
+    },
+    {
+      "value": "time",
+      "label": "时空流变",
+      "purpose": "同一机位内时间流逝",
+      "media": "四季更迭、昼夜流转、城建变迁、器物岁月、人物成长、记忆闪回"
+    },
+    {
+      "value": "emotion",
+      "label": "情绪驱动",
+      "purpose": "情绪节点触发切换",
+      "media": "惊醒、梦境破碎、泪滴垂落、心跳加速、呼出白雾、情绪残影、情绪爆发"
+    },
+    {
+      "value": "space",
+      "label": "空间跃迁",
+      "purpose": "穿越媒介进入另一空间",
+      "media": "冲出海面、推开门、升空、洞穴穿行、镜中世界、云海宫殿、传送门、画中世界"
+    },
+    {
+      "value": "narrative",
+      "label": "电影高级叙事",
+      "purpose": "剪辑语法本身成为转场",
+      "media": "双线平行、视线引导、遮挡物匹配、长镜连贯、虚实景深、声音先行、穿廊长镜、图形匹配"
+    },
+    {
+      "value": "opening",
+      "label": "开篇转场",
+      "purpose": "第一镜就完成世界观交代",
+      "media": "暗影现身、异象降临、瞳眸苏醒、战场残响、雨幕登场、破碎开场、重门启幕、梦境预警"
+    }
+  ],
+  "type_synonyms": {
+    "cut": ["硬切", "直切", "切", "cut", "hard cut", "动作匹配硬切", "视线匹配硬切", "正反打"],
+    "fade": ["淡入", "淡出", "淡入淡出", "fade", "渐黑", "黑场", "fade in", "fade out"],
+    "dissolve": ["叠化", "叠画", "溶", "dissolve", "cross dissolve", "交叉叠化"],
+    "flash": ["闪白", "闪黑", "flash", "白闪", "黑闪"],
+    "wipe": ["划像", "划变", "wipe", "擦除"],
+    "push_pull": ["推拉", "推拉转场", "push pull", "推进转场", "拉出转场"],
+    "match_cut": ["匹配剪辑", "匹配", "match cut", "图形匹配", "遮挡物匹配", "动作匹配"],
+    "montage": ["蒙太奇", "montage", "快切", "快剪"],
+    "sound_bridge": ["声音先行", "声音先导", "声桥", "sound bridge", "j cut", "j-cut", "声音延续"]
+  },
+  "category_synonyms": {
+    "occlusion": ["遮挡", "拂过", "掠过", "覆盖", "吞没", "遮镜", "面具", "镜面置换", "起雾"],
+    "camera_move": ["俯冲", "甩镜", "下坠", "环绕", "侧移", "抬升", "后退", "穿隙", "贴地", "旋转镜头"],
+    "action": ["转身", "拔剑", "挥刀", "跃起", "抬手", "抬眸", "奔袭", "起身", "睁眼", "触碰", "甩袖", "回身"],
+    "light": ["月色", "闪电", "霓虹", "过曝", "金光", "烛", "溢散", "破晓", "冷光", "光晕", "火光"],
+    "time": ["四季", "昼夜", "变迁", "岁月", "成长", "闪回", "回溯", "加速"],
+    "emotion": ["惊醒", "梦境", "泪", "心跳", "白雾", "残影", "情绪爆发", "入梦"],
+    "space": ["冲天", "门后", "升空", "洞穴", "镜中", "云巅", "传送门", "画中", "堕入"],
+    "narrative": ["双线", "视线引导", "长镜", "景深", "声音先行", "穿廊", "图形匹配"],
+    "opening": ["开篇", "开场", "登场", "现身", "苏醒", "启幕"]
+  },
+  "hard_cut_words": "(?:声音先行)?(?:硬切|直切|直接切(?:出|入)?|跳切)",
+  "sound_first": "声音先行",
+  "sound_first_join": "声音先行衔接",
+  "smooth_join": "连贯衔接",
+  "cut_verbs": [
+    ["切入", "进入"],
+    ["切出", "带出"],
+    ["切回", "回到"],
+    ["切到", "转到"],
+    ["切点", "衔接点"]
+  ],
+  "fallback_label": "匹配剪辑",
+  "prompt_guide": [
+    "转场按两层写：剪辑类型（硬切/淡入淡出/叠化/闪白闪黑/划像/推拉/匹配剪辑/蒙太奇/声音先行）决定节奏；",
+    "AI 片段内的转场用媒介完成——遮挡（衣袖、手掌、门框、雨幕、花瓣）、镜头运动（俯冲、甩镜、穿隙）、",
+    "动作延续（转身、拔剑、跃起）、光影（闪电、过曝、烛焰）、时空流变（四季、昼夜）、情绪节点（惊醒、泪滴）、",
+    "空间跃迁（推门、镜中、传送门）。写法固定为：前镜人物动作 + 转场媒介 + 镜头运动 + 新场景 + 光影氛围。",
+    "同场景直接硬切；换场景才用穿越、甩镜或叠化；上一镜情绪未结束不炫技。"
+  ],
+  "formula_pattern": "(转场媒介|遮挡|甩镜|穿|叠化|淡入|淡出|闪白|闪黑|划像|匹配|蒙太奇|声音先行)",
+  "says": {
+    "prompt_head": "{label}（{usage}）；",
+    "outgoing_action": "前镜收尾：{text}",
+    "medium": "转场媒介：{text}",
+    "camera_move": "镜头运动：{text}",
+    "incoming_scene": "切入：{text}",
+    "light": "光影氛围：{text}",
+    "separator": "；",
+    "note": "{label}：{usage}（{emotions}）",
+    "note_category": "；媒介类别：{category}",
+    "note_unmatched": "；未在转场词典内，按动作匹配衔接处理"
+  }
+}

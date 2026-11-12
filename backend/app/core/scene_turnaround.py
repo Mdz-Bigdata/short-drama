@@ -4,6 +4,9 @@
 一次出图画一张 16:9 的 2×2 四宫格(省钱，也让四格同一光线、同一陈设)，再切成四张单独的视角：
 分割线从画面中线出发吸附到真实的白缝上(与道具四视图同一套分隔判定)。场景铺满整格，不像道具那样
 收紧到主体，只去掉白缝本身。四张都是空景底板，主场景全景同时作为场地的主参考图。
+
+反打视角不在四宫格里：它以切好的主场景全景为参考另出一张单图，从全景画面的深处拍回主机位一侧，
+正反打的反打镜头照它定背景(措辞在 data/prompt/scene_views.json)。
 """
 
 from __future__ import annotations
@@ -21,8 +24,12 @@ SCENE_VIEWS: tuple[tuple[str, str, str], ...] = (
     ("scene_45", "45°斜角", "走位与转身时的透视"),
     ("scene_depth", "纵深视角", "纵深调度：走廊、门洞与前后景"),
     ("scene_detail", "关键细节", "特写与插入镜头的陈设材质"),
+    ("scene_reverse", "反打视角", "反打镜头：从全景深处拍回主机位一侧的背景"),
 )
 SCENE_VIEW_SLOTS: tuple[str, ...] = tuple(slot for slot, _, _ in SCENE_VIEWS)
+#: 四宫格切出来的四张；反打视角另出一张。
+SCENE_GRID_SLOTS: tuple[str, ...] = SCENE_VIEW_SLOTS[:4]
+SCENE_REVERSE_SLOT = "scene_reverse"
 SCENE_VIEW_LABELS: dict[str, str] = {slot: label for slot, label, _ in SCENE_VIEWS}
 SCENE_VIEW_PURPOSES: dict[str, str] = {slot: purpose for slot, _, purpose in SCENE_VIEWS}
 #: 四宫格出图尺寸：16:9 横向，每格仍是 16:9；不超过图像模型单张约 462 万像素的上限。
@@ -77,7 +84,7 @@ def split_scene_turnaround(content: bytes) -> dict[str, bytes]:
         (0, bottom, left, height), (right, bottom, width, height),
     )
     views: dict[str, bytes] = {}
-    for slot, box in zip(SCENE_VIEW_SLOTS, quadrants):
+    for slot, box in zip(SCENE_GRID_SLOTS, quadrants):
         if box[2] <= box[0] or box[3] <= box[1]:
             raise ValueError("场景四视角切分得到空白格")
         buffer = io.BytesIO()

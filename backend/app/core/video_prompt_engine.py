@@ -34,8 +34,15 @@ thing in the same place every time. It is the three paragraphs of the 《运镜�
 7. **Named rules** (physics over the reference, form continuity, identity, lip sync…) and the
    negative list.
 
-The budget applies to the body: the style lock, anchors, rules, negatives and the closing
-sentence are restated on every prompt and are not measured. The optional body sections
+The three paragraphs open with the literal headers ``Pa1`` / ``Pa2`` / ``Pa3`` and carry the
+fixed sentences of 《系统实际下发提示词骨架》 (:mod:`app.core.clip_skeleton`): 锚型定义 and the
+same-person line in Pa1, the dialogue language before the shot sequence (``2 Conti Movs：``),
+the fixed space axis and the fight camera / impact-sound lines in Pa2, and in Pa3 the
+performance lock, the round lock, the voice and text bans, then portrait safety, the on-screen
+text policy and the ban list.
+
+The budget applies to the body: the style lock, anchors, rules, negatives, the closing
+sentence and the skeleton's fixed sentences are restated on every prompt and are not measured. The optional body sections
 (sound layers, environment detail, colour, effects, delivery notes) are cut in that order
 when the body is over the target model's budget; the locks, the subject, the action, the
 camera and the dialogue never are. The result carries a pressure report so the shot
@@ -48,14 +55,14 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
-from app.core import prompt_budget, prompt_data
+from app.core import character_locks, clip_skeleton, prompt_budget, prompt_data
 from app.core.asset_mentions import mark_mentions, mention
 from app.core.face_card import framing_for_shot_size, parse_face_card, render_face_card
 from app.core.prompt_distiller import dedupe, is_no_line
 from app.core.screenwriting.speech import is_narrator
 from app.core.spatial_stage import clip_brief
 from app.core.spoken_lines import dialogue_segments, split_speech
-from app.core.sound_events import build_sound_events, split_cues
+from app.core.sound_events import ContactSound, build_sound_events, split_cues
 from app.core.storyboard_director import space_restatement
 from app.core.style_packs import SIGNAGE_RULE, StylePack, iron_rules, negatives_for, style_lock_block
 from app.core.video_references import MIN_SHOT_SECONDS
@@ -65,6 +72,39 @@ _DATA = "clip_prompt"
 _LOCK_TAGS = prompt_data.pairs(_DATA, "lock_tags")
 # A clip prompt stands on its own: it may not refer back to a batch the model never saw.
 _FORBIDDEN_SHORTHANDS = prompt_data.words(_DATA, "forbidden_shorthands")
+# 这个模块自己写的句子、标签、分隔符和分句正则：app/data/prompt/video_prompt_engine.json。
+_WORDING = "video_prompt_engine"
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A sentence template of the wording table, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return str(prompt_data.load(_WORDING)["says"][key]).format(**values)
+
+
+def _word(key: str) -> str:
+    """A fixed word, sentence or separator of the wording table."""
+    return prompt_data.text(_WORDING, key)
+
+
+def _pattern(key: str) -> str:
+    """A regular expression of the wording table, as text (some are appended to an escaped name)."""
+    return str(prompt_data.load(_WORDING)["patterns"][key])
+
+
+_LIST_SEP = _word("list_sep")
+_CLAUSE_SEP = _word("clause_sep")
+_FULL_STOP = _word("full_stop")
+_SENTENCE_SPLIT = re.compile(_pattern("sentence_split"))
+_CLAUSE_SPLIT = re.compile(_pattern("clause_split"))
+_SEMICOLON_SPLIT = re.compile(_pattern("semicolon_split"))
+_CAPTION_CLAUSE = re.compile(_pattern("caption_clause"))
+_SOUND_CLAUSE = re.compile(_pattern("sound_clause"))
+_SPEAKER_LABEL = _pattern("speaker_label")
+_SPEAKER_LINE = _pattern("speaker_line")
+_HANDOFF_CLAUSE_SPLIT = re.compile(_pattern("handoff_clause_split"))
+_BRIEF_CLAUSE_SPLIT = re.compile(_pattern("brief_clause_split"))
+_LEAD_CLAUSE_SPLIT = re.compile(_pattern("lead_clause_split"))
+_QUOTED_LINE = re.compile(_pattern("quoted_line"))
 
 
 @dataclass
@@ -88,6 +128,8 @@ class ShotPromptInput:
     sound_layers: str = ""
     dialogue: str = ""
     dialogue_notes: str = ""
+    # 每个入镜人物此刻为什么这样演(分镜内容的 subtext，已带「只作动机」的说明)。
+    motive: str = ""
     effects: Sequence[str] = ()
     environment: str = ""
     expression: str = ""
@@ -121,6 +163,14 @@ class ShotPromptInput:
     # 本镜是否规划了配乐 / 旁白：规划了就不把它们写进排除项。
     music_planned: bool = False
     narration_planned: bool = False
+    # 本镜的动作轴线(运动合同)：写进 Pa2「空间坐标全程固定」。
+    action_axis: str = ""
+    # 入镜的是登记过的真人演员：不写「均为原创虚构角色」，也不禁真人肖像。
+    real_person: bool = False
+    # 过审构图(少给正脸近景)。默认关：本项目的镜头要看得清脸。
+    portrait_safe: bool = False
+    # 有自己一张参考图的服装名(旧项目的服装资产)；妆造画在人物图上的不在这里。
+    costume_images: Sequence[str] = ()
 
 
 @dataclass
@@ -136,18 +186,14 @@ class CompiledVideoPrompt:
 
 
 def _join(items: Sequence[str]) -> str:
-    return "、".join(str(item).strip() for item in items if str(item).strip())
+    return _LIST_SEP.join(str(item).strip() for item in items if str(item).strip())
 
 
 def bridge_line(camera_movement: str, end_state: str) -> str:
     """首帧怎么走到尾帧：运镜与动作是桥，不换机位高度、不换光源、不换人物与道具。"""
-    move = str(camera_movement or "").strip() or "固定机位"
-    landing = str(end_state or "").strip().rstrip("。")
-    return (
-        f"以所给尾帧结束：首帧到尾帧不换机位高度、不换光源、不换人物与道具，变化只由运镜（{move}）与动作"
-        + (f"（走到“{landing}”）" if landing else "")
-        + "完成，尾帧构图在最后一帧完整落定，不提前出现、不中途跳变"
-    )
+    move = str(camera_movement or "").strip() or _word("fixed_camera")
+    landing = str(end_state or "").strip().rstrip(_FULL_STOP)
+    return _says("bridge", move=move, landing=_says("bridge_landing", landing=landing) if landing else "")
 
 
 # 道具归属：谁拿着、谁穿着、谁身上的——「车钩」句，动作、起始状态和调度里写了谁和它在一个分句里就算谁的。
@@ -165,9 +211,9 @@ def prop_holders(props: Sequence[str], characters: Sequence[str], *texts: str) -
     names = sorted({str(name).strip() for name in characters if str(name).strip()}, key=len, reverse=True)
     holders: dict[str, str] = {}
     for text in texts:
-        for sentence in re.split(r"[。！？!?\n]", str(text or "")):
+        for sentence in _SENTENCE_SPLIT.split(str(text or "")):
             last = ""
-            for clause in re.split(r"[，,；;]", sentence):
+            for clause in _CLAUSE_SPLIT.split(sentence):
                 named = next((name for name in names if name in clause), "")
                 last = named or last
                 if not last:
@@ -178,33 +224,36 @@ def prop_holders(props: Sequence[str], characters: Sequence[str], *texts: str) -
                         any(verb in clause for verb in _HOLD_VERBS) or _IN_HAND.search(clause)
                     ):
                         holders[prop] = last
-    return [f"{prop}：{holders[prop]}持有" if prop in holders else prop for prop in (str(item).strip() for item in props) if prop]
+    return [_says("prop_held", prop=prop, holder=holders[prop]) if prop in holders else prop for prop in (str(item).strip() for item in props) if prop]
 
 
 def _lock_lines(shot: ShotPromptInput) -> str:
-    props = _join(prop_holders(shot.props, shot.characters, shot.start_state, shot.subject_action, shot.blocking)) or "无关键道具"
-    cast = _join(shot.characters) or "本镜人物"
+    props = _join(prop_holders(shot.props, shot.characters, shot.start_state, shot.subject_action, shot.blocking)) or _word("no_props")
+    cast = _join(shot.characters) or _word("cast_fallback")
     values = {
-        "space": f"{shot.scene}；{shot.blocking}",
-        "state": f"{cast}：{shot.start_state}" + (f"；视线：{shot.eyeline}" if shot.eyeline else ""),
+        "space": _says("lock_space", scene=shot.scene, blocking=shot.blocking),
+        "state": _says(
+            "lock_state", cast=cast, state=shot.start_state,
+            eyeline=_says("lock_eyeline", eyeline=shot.eyeline) if shot.eyeline else "",
+        ),
         "props": props,
-        "light": shot.lighting or "延续上一镜主光方向、色温与光比",
+        "light": shot.lighting or _word("light_fallback"),
         # 声音锁只锁环境铺底；接触音效绑在具体动作上，写在声音设计里。
-        "sound": "、".join(split_cues(shot.sound)[0]) or "延续上一镜环境底噪",
+        "sound": _LIST_SEP.join(split_cues(shot.sound)[0]) or _word("sound_fallback"),
     }
     return "\n".join(f"{tag}{values[key]}" for key, tag in _LOCK_TAGS if shot.native_audio or key != "sound")
 
 
 def _closing_line(sentence: str) -> str:
     """收尾句里的「无字幕」换成写清楚的那句：原有招牌留着，叠加的字幕水印不要。"""
-    parts = [part for part in re.split(r"[；;]", sentence.rstrip("。")) if part.strip() and not re.search(r"字幕|水印", part)]
-    return "；".join([*parts, SIGNAGE_RULE.rstrip("。")]) + "。"
+    parts = [part for part in _SEMICOLON_SPLIT.split(sentence.rstrip(_FULL_STOP)) if part.strip() and not _CAPTION_CLAUSE.search(part)]
+    return _CLAUSE_SEP.join([*parts, SIGNAGE_RULE.rstrip(_FULL_STOP)]) + _FULL_STOP
 
 
 def _silent_closing(sentence: str) -> str:
     """收尾句去掉声音相关的分句，只留字幕、水印这类画面要求。"""
-    kept = [part for part in re.split(r"[；;]", sentence.rstrip("。")) if part.strip() and not re.search(r"音|BGM|配乐", part)]
-    return "；".join(kept) + "。" if kept else ""
+    kept = [part for part in _SEMICOLON_SPLIT.split(sentence.rstrip(_FULL_STOP)) if part.strip() and not _SOUND_CLAUSE.search(part)]
+    return _CLAUSE_SEP.join(kept) + _FULL_STOP if kept else ""
 
 
 def _stage_section(shot: ShotPromptInput) -> str:
@@ -213,18 +262,24 @@ def _stage_section(shot: ShotPromptInput) -> str:
     return "\n".join([clip_brief.title(), *lines]) if lines else ""
 
 
-def _sound_section(shot: ShotPromptInput) -> str:
-    """音画同生的模型：环境铺底 + 绑定可见事件的关键接触音；H3 已有三层，只补接触音。"""
+def _sound_section(shot: ShotPromptInput, family: str = "") -> str:
+    """音画同生的模型：环境铺底 + 绑定可见事件的关键接触音；H3 已有三层，只补接触音。
+
+    Seedance 的音效写在尖括号里：铺底一对，每个接触音一对；静默规则和人声不括。
+    """
     if not shot.native_audio:
         return ""
     plan = build_sound_events(
         shot.sound, action=shot.subject_action, props=[*shot.props, *shot.prop_refs], shot_size=shot.shot_size,
         dialogue=bool(shot.dialogue.strip()), narration=shot.narration_planned, music=shot.music_planned,
     )
+    if family == "seedance":
+        plan.bed = clip_skeleton.sfx_marks(plan.bed)
+        plan.contacts = [ContactSound(contact.event, clip_skeleton.first_sound_marked(contact.sound)) for contact in plan.contacts]
     if shot.sound_layers.strip():
         lines = plan.contact_lines()
-        return "【声音事件】" + "\n".join(lines) if lines else ""
-    return "【声音设计】" + plan.text
+        return _word("sound_events_head") + "\n".join(lines) if lines else ""
+    return _word("sound_design_head") + plan.text
 
 
 def compile_shot_prompt(
@@ -255,24 +310,27 @@ def compile_shot_prompt(
     # video models (Seedance's own prompt rules among them) follow shot order and the start /
     # end frame far more reliably than "0-8秒" ranges, which they treat as frame-exact cues.
     structure = [
-        f"单镜连续画面，一镜到底不切镜 + 画幅{shot.aspect_ratio}",
-        "以所给首帧起始" if shot.first_frame else "无首帧，按描述建立画面",
+        _says("structure_single", aspect=shot.aspect_ratio),
+        _word("first_frame") if shot.first_frame else _word("no_first_frame"),
     ]
     if shot.last_frame:
         # 首尾帧之间要有一条走得通的路(《首尾帧衔接》)：两帧不跨机位、不跨光源、不跨人物道具，
         # 中间的变化只由本镜的运镜和动作完成，尾帧在最后一帧落定，不提前出现、不中途跳变。
         structure.append(bridge_line(shot.camera_movement, shot.end_state))
     if cut_label:
-        structure.append(f"切入本镜：{cut_label}")
-    anchors = [note.strip().rstrip("。") + "。" for note in shot.reference_notes if str(note).strip()]
+        structure.append(_says("cut_in", label=cut_label))
+    anchors = [note.strip().rstrip(_FULL_STOP) + _FULL_STOP for note in shot.reference_notes if str(note).strip()]
     timeline = f"{shot.carry_in}{shot.subject_action}".strip()
-    camera = f"景别：{shot.shot_size}；运镜：{shot.camera_movement}"
-    dialogue_label = "台词（逐字保持原文，口型同步）" if shot.native_audio else "台词口型（逐字对应原文，只做口型）"
+    camera = _says("camera", size=shot.shot_size, move=shot.camera_movement)
+    dialogue_label = _word("dialogue_label_native") if shot.native_audio else _word("dialogue_label_silent")
     dialogue = (
-        f"{dialogue_label}：{format_dialogue(shot.dialogue, shot.characters, action=shot.subject_action, on_screen=shot.characters)}"
-        if shot.dialogue.strip() else "无台词，人物闭口。"
+        _says(
+            "dialogue", label=dialogue_label,
+            lines=format_dialogue(shot.dialogue, shot.characters, action=shot.subject_action, on_screen=shot.characters),
+        )
+        if shot.dialogue.strip() else _word("no_dialogue")
     )
-    end_state = f"落幅：{shot.end_state}"
+    end_state = _says("end_state", end_state=shot.end_state)
     # 打戏镜头多一条打斗铁律：拳拳到肉、飘逸流畅、连贯不断档；文戏镜头换成动作顺序铁律：按写明的先后一步一步做。
     rule_ids = [
         "physics", "form", "fight" if "fight" in situations else "action_chain",
@@ -280,36 +338,41 @@ def compile_shot_prompt(
     ]
     rules = iron_rules(pack, subjects=list(shot.characters), reference_kinds=list(shot.reference_kinds), rule_ids=rule_ids)
     rules.extend(str(item).strip() for item in shot.continuity_constants if str(item).strip())
+    family = clip_skeleton.family(model)
 
     sections: dict[str, str] = {
         **_asset_anchor_sections(shot),
-        "anchors": ("【参考素材职责】\n" + "\n".join(anchors)) if anchors else "",
-        "structure": "【结构声明】" + " + ".join(structure) + "。",
+        **_skeleton_sections(shot, family, fight="fight" in situations),
+        "anchors": _says("anchors", notes="\n".join(anchors)) if anchors else "",
+        "structure": _says("structure", items=" + ".join(structure)),
         "style_lock": style_lock_block(pack, shot.tone),
         "appearance": appearance_lines(shot.cast_looks or {}, shot.characters, shot.shot_size),
         "quality": pack.quality.strip(),
         "locks": _lock_lines(shot),
         "stage": _stage_section(shot),
         "camera": camera,
-        "subject": f"画面：{timeline.rstrip('。')}。",
+        "subject": _says("subject", timeline=timeline.rstrip(_FULL_STOP)),
         "motion": shot.motion_prompt.strip(),
-        "expression": f"表演：{shot.expression.strip()}" if shot.expression.strip() else "",
-        "composition": f"构图：{shot.composition.strip()}" if shot.composition.strip() else "",
-        "environment": f"背景：{shot.environment.strip()}" if shot.environment.strip() else "",
+        "motive": shot.motive.strip(),
+        "expression": _says("expression", text=shot.expression.strip()) if shot.expression.strip() else "",
+        "composition": _says("composition", text=shot.composition.strip()) if shot.composition.strip() else "",
+        "environment": _says("environment", text=shot.environment.strip()) if shot.environment.strip() else "",
         "colour": "\n".join(line.strip() for line in shot.palette_lines if str(line).strip()),
-        "effects": f"特效：{_join(shot.effects)}" if _join(shot.effects) else "",
+        "effects": _says("effects", text=_join(shot.effects)) if _join(shot.effects) else "",
         "contact": contact_line(shot.subject_action, [*shot.props, *shot.prop_refs]),
         "handoff": handoff_line(
             shot.subject_action, shot.characters, props=[*shot.props, *shot.prop_refs],
             setting=f"{shot.scene} {shot.blocking}",
         ),
         "dialogue": dialogue,
-        "dialogue_notes": f"台词表达：{shot.dialogue_notes.strip()}" if shot.dialogue_notes.strip() and shot.dialogue.strip() else "",
+        "dialogue_notes": (
+            _says("dialogue_notes", text=shot.dialogue_notes.strip()) if shot.dialogue_notes.strip() and shot.dialogue.strip() else ""
+        ),
         "end_state": end_state,
-        "sound_layers": f"【声音设计·三层】{shot.sound_layers.strip()}" if shot.sound_layers.strip() and shot.native_audio else "",
-        "sound": _sound_section(shot),
+        "sound_layers": _says("sound_layers", text=shot.sound_layers.strip()) if shot.sound_layers.strip() and shot.native_audio else "",
+        "sound": _sound_section(shot, family),
         "closing": _closing_line(pack.sound.closing_sentence if shot.native_audio else _silent_closing(pack.sound.closing_sentence)),
-        "rules": "【关键约束】\n" + "\n".join(rules),
+        "rules": _says("rules", rules="\n".join(rules)),
         "negatives": " + ".join(negatives),
     }
     names = [*shot.cast_refs, *shot.scene_refs, *shot.prop_refs]
@@ -323,18 +386,72 @@ def compile_shot_prompt(
     return CompiledVideoPrompt(text=text, sections=kept, pressure=report, style_pack=pack.id, negatives=negatives)
 
 
-# Pa1：锚点、结构、锁、镜头块；Pa2：风格锁、外貌、画质、声音；Pa3：铁律与负向词。
+def dialogue_speakers(dialogue: str, characters: Sequence[str]) -> tuple[list[str], list[str], int]:
+    """``(画面里开口的人, 画外开口的人, 台词句数)``；旁白算一句台词，不算一个人。"""
+    known = sorted({str(name).strip() for name in characters if str(name).strip()}, key=len, reverse=True)
+    on_screen: list[str] = []
+    off_screen: list[str] = []
+    turns = 0
+    for line in dialogue_segments(dialogue):
+        if is_no_line(line):
+            continue
+        turns += 1
+        name = next((name for name in known if re.match(re.escape(name) + _SPEAKER_LABEL, line)), "")
+        if name:
+            on_screen.append(name)
+            continue
+        labelled = _OTHER_SPEAKER.match(line)
+        if labelled and not is_narrator(labelled.group(1)):
+            off_screen.append(labelled.group(1))
+    return list(dict.fromkeys(on_screen)), list(dict.fromkeys(off_screen)), turns
+
+
+def _skeleton_sections(shot: ShotPromptInput, family: str, *, fight: bool) -> dict[str, str]:
+    """《系统实际下发提示词骨架》每条都重申的固定句：这一镜该写哪几句(见 clip_skeleton)。"""
+    on_screen, off_screen, turns = dialogue_speakers(shot.dialogue, shot.characters)
+    references = any(str(name).strip() for name in (*shot.cast_refs, *shot.scene_refs, *shot.prop_refs))
+    people = any(str(name).strip() for name in shot.characters)
+    camera_fixed = clip_skeleton.fixed_camera(shot.camera_movement)
+    return {
+        **clip_skeleton.headers(),
+        "anchor_types": clip_skeleton.anchor_types(
+            shot.cast_refs, shot.scene_refs, shot.prop_refs, shot.costume_refs, shot.costume_images,
+        ),
+        "same_instance": clip_skeleton.same_instance(
+            shot.cast_refs, shot.costume_refs, shot.costume_images, references=references,
+        ),
+        "dialogue_language": clip_skeleton.dialogue_language(family, on_screen, off_screen) if shot.native_audio and turns else "",
+        "space_axis": clip_skeleton.space_axis(shot.action_axis, fight_pair=fight and len(shot.characters) >= 2),
+        "lens": clip_skeleton.lens(fight=fight, camera_movement=shot.camera_movement),
+        "impact_sound": clip_skeleton.impact_sound(family) if fight and shot.native_audio else "",
+        "performance_lock": clip_skeleton.performance_lock(
+            family, short=shot.duration_seconds < clip_skeleton.SHORT_SECONDS, script=f"{shot.subject_action}{shot.dialogue}",
+        ) if people else "",
+        "chain_lock": clip_skeleton.chain_lock(fight=fight, camera_fixed=camera_fixed, turns=turns),
+        "voice_ban": clip_skeleton.voice_ban(native_audio=shot.native_audio),
+        **clip_skeleton.tail(
+            people=people, real_person=shot.real_person, review_safe=shot.portrait_safe, dialogue=turns > 0,
+        ),
+    }
+
+
+# Pa1：锚型与锚点、同一人声明、对白语言、结构、锁、镜头序列；Pa2：风格锁、空间坐标、外貌、画质、声音；
+# Pa3：铁律、表演锁、回合锁、禁令与负向词，最后是肖像、画面文字、禁止出现三段。
 _ORDER = (
-    "anchor_cast", "anchor_costumes", "anchor_scene", "anchor_props", "anchors", "structure", "locks", "stage", "camera",
-    "composition", "subject", "motion", "expression", "environment",
+    "pa1", "anchor_types", "anchor_cast", "anchor_costumes", "same_instance", "anchor_scene", "anchor_props", "anchors",
+    "dialogue_language", "structure", "locks", "stage",
+    "sequence_head", "camera", "composition", "subject", "motion", "motive", "expression", "environment",
     "colour", "effects", "contact", "handoff", "dialogue", "dialogue_notes", "end_state",
-    "style_lock", "appearance", "quality", "sound_layers", "sound", "closing",
-    "rules", "negatives",
+    "pa2", "style_lock", "space_axis", "appearance", "quality", "lens", "sound_layers", "sound", "impact_sound", "closing",
+    "pa3", "rules", "performance_lock", "chain_lock", "voice_ban", "negatives", "portrait_safety", "text_policy", "ban_list",
 )
-_BLANK_BEFORE = frozenset({"structure", "locks", "stage", "camera", "style_lock", "sound_layers", "sound", "rules"})
+_BLANK_BEFORE = frozenset({
+    "structure", "locks", "stage", "camera", "style_lock", "sound_layers", "sound", "rules",
+    *clip_skeleton.HEADERS, "portrait_safety", "text_policy", "ban_list",
+})
 # 正文里出现资产名字就标成 @[名字] 的小节；风格锁、素材职责、铁律和负面词不标。
 _MARKED_SECTIONS = (
-    "locks", "stage", "camera", "composition", "subject", "motion", "expression", "environment", "effects", "contact",
+    "locks", "stage", "camera", "composition", "subject", "motion", "motive", "expression", "environment", "effects", "contact",
     "handoff", "dialogue", "dialogue_notes", "end_state",
 )
 
@@ -358,12 +475,12 @@ def contact_line(action: str, props: Sequence[str]) -> str:
         return ""
     prop = named[0]
     if any(verb in action for verb in _SUPPORT_VERBS):
-        how = f"掌心朝上呈碗状承住{prop}的下半部，指腹贴住下侧，{prop}底部与手掌接触不悬空"
+        how = _says("contact_support", prop=prop)
     elif any(verb in action for verb in _REST_VERBS):
-        how = f"掌根与放松的手指平贴在{prop}的受力面上，手腕自然弯曲，身体重量不压在手上"
+        how = _says("contact_rest", prop=prop)
     else:
-        how = f"四指环绕{prop}的握持处、拇指与其余手指相对，前侧手指自然遮住一部分{prop}，{prop}从手的上下两端露出且方向连贯"
-    return f"持物接触：{how}；左右按角色自身的身体判断，接触处清楚，手腕与前臂自然相连。"
+        how = _says("contact_grip", prop=prop)
+    return _says("contact", how=how)
 
 
 # 人物之间递交物件的动作：模型最容易让手或物件穿过柜台、玻璃和门。
@@ -383,52 +500,43 @@ def handoff_line(action: str, characters: Sequence[str], *, props: Sequence[str]
     pair = (named if len(named) >= 2 else list(dict.fromkeys([*named, *cast])))[:2]
     if len(pair) < 2:
         return ""
-    clause = next((part for part in re.split(r"[，,。；;]", action) if any(verb in part for verb in _HANDOFF_VERBS)), action)
+    clause = next((part for part in _HANDOFF_CLAUSE_SPLIT.split(action) if any(verb in part for verb in _HANDOFF_VERBS)), action)
     names = [str(prop).strip() for prop in props if str(prop).strip()]
-    item = next((name for name in names if name in clause), next((name for name in names if name in action), "物件"))
+    item = next((name for name in names if name in clause), next((name for name in names if name in action), _word("handoff_item")))
     context = f"{setting}{action}"
     surface = next((word for word in _OPEN_SURFACES if word in context), "")
     sealed = [word for word in _SEALED_BARRIERS if word in context][:2]
     if surface:
-        where = f"同在一个空间里，中间只隔一张开放的{surface}，台面上方无遮挡"
+        where = _says("handoff_open", surface=surface)
     elif not sealed:
-        where = "之间没有遮挡"
+        where = _word("handoff_clear")
     else:
-        where = "同在一个空间里"
-    behind = f"；{'、'.join(sealed)}只在背景，不在两人之间，也不在手与{item}之间" if sealed else ""
-    return (
-        f"递接路径：{pair[0]}与{pair[1]}{where}、相距约一臂；{item}在两人伸手可及处，"
-        f"从一只手直接交到另一只手，手臂与{item}只经过两人之间的开阔处{behind}。"
-    )
+        where = _word("handoff_same_room")
+    behind = _says("handoff_behind", barriers=_LIST_SEP.join(sealed), item=item) if sealed else ""
+    return _says("handoff", a=pair[0], b=pair[1], where=where, item=item, behind=behind)
 
 
 def _asset_anchor_sections(shot: ShotPromptInput) -> dict[str, str]:
     """锚点行：本镜锁定的人物、场景、道具，各自以 @[名字] 列出，写明锁什么、放开什么。"""
     def names(items: Sequence[str]) -> str:
-        return "、".join(mention(str(item).strip()) for item in dict.fromkeys(items) if str(item).strip())
+        return _LIST_SEP.join(mention(str(item).strip()) for item in dict.fromkeys(items) if str(item).strip())
 
     cast, scenes, props = names(shot.cast_refs), names(shot.scene_refs), names(shot.prop_refs)
     people = [str(item).strip() for item in dict.fromkeys(shot.cast_refs) if str(item).strip()]
     # 同一人 / 相异声明：几个人就是几个人，各自只出现一次；一个人的几张参考图是同一个人，不是分身。
     distinct = (
-        f"{'、'.join(mention(name) for name in people)}是{len(people)}个不同的人，互不相像，各自在画面里只出现一次；"
-        if len(people) >= 2 else "画面里只有这一个人，只出现一次；"
-    ) + "同一人物的多张参考图属于同一个人。"
-    costumes = "；".join(
-        f"{mention(str(wearer).strip())}全程穿{mention(str(costume).strip())}"
+        _says("distinct_many", names=_LIST_SEP.join(mention(name) for name in people), count=len(people))
+        if len(people) >= 2 else _word("distinct_one")
+    ) + _word("same_person")
+    costumes = _CLAUSE_SEP.join(
+        _says("costume_pair", wearer=mention(str(wearer).strip()), costume=mention(str(costume).strip()))
         for wearer, costume in dict.fromkeys((str(w), str(c)) for w, c in shot.costume_refs) if str(wearer).strip() and str(costume).strip()
     )
     return {
-        "anchor_cast": (
-            f"【人物锚点·锁脸】{cast}。脸型、发型、服装与体型以参考图为准，"
-            f"只随剧情改变表情、姿态与动作，情绪前后连贯。{distinct}"
-        ) if cast else "",
-        "anchor_costumes": f"【服装绑定】{costumes}，款式、颜色与配饰以参考图为准，不换装、不增减配饰。" if costumes else "",
-        "anchor_scene": (
-            f"【场景锚点·锁场景】{scenes}。灯光色调、空间布局与环境动态保持一致；"
-            "换到新场景时先交代它的主光方向与空间。"
-        ) if scenes else "",
-        "anchor_props": f"【道具锚点】{props}。外形、材质、颜色与持有关系保持一致。" if props else "",
+        "anchor_cast": _says("anchor_cast", cast=cast, distinct=distinct) if cast else "",
+        "anchor_costumes": _says("anchor_costumes", costumes=costumes) if costumes else "",
+        "anchor_scene": _says("anchor_scene", scenes=scenes) if scenes else "",
+        "anchor_props": _says("anchor_props", props=props) if props else "",
     }
 
 
@@ -442,38 +550,41 @@ _NOT_A_LOOK = prompt_data.pattern(_DATA, "not_a_look")
 
 def appearance_brief(look: str, shot_size: str, *, name: str = "", limit: int = APPEARANCE_LIMIT) -> str:
     """一位人物的外貌简述：人物卡按本镜景别只留看得见的层，去掉名字与戏份，再逐项凑到 ``limit`` 字。"""
-    text = re.sub(r"\s+", " ", str(look or "")).strip().rstrip("。；;")
+    text = re.sub(r"\s+", " ", str(look or "")).strip().rstrip(_word("brief_trim"))
     if not text:
         return ""
     card = parse_face_card(text)
     if card.has_face_layers:
-        text = render_face_card(card, framing_for_shot_size(shot_size)).rstrip("。；;")
+        text = render_face_card(card, framing_for_shot_size(shot_size)).rstrip(_word("brief_trim"))
     kept: list[list[str]] = []
     length = 0
-    for clause in re.split(r"[；;。]", text):
+    for clause in _BRIEF_CLAUSE_SPLIT.split(text):
         # 人物卡渲染出来带层名(骨相：…)；简述只要内容，层是给质检看的。
-        items = [item.strip() for item in _LAYER_LABEL.sub("", clause.strip()).split("、")]
+        items = [item.strip() for item in _LAYER_LABEL.sub("", clause.strip()).split(_LIST_SEP)]
         items = [item for item in items if item and not _NOT_A_LOOK.search(item) and not (name and name in item)]
         group: list[str] = []
         for item in items:
             extra = len(item) + (1 if group or kept else 0)
             if kept and length + extra > limit:
-                return "；".join("、".join(part) for part in [*kept, group] if part)
+                return _CLAUSE_SEP.join(_LIST_SEP.join(part) for part in [*kept, group] if part)
             group.append(item)
             length += extra
         if group:
             kept.append(group)
-    return "；".join("、".join(part) for part in kept)
+    return _CLAUSE_SEP.join(_LIST_SEP.join(part) for part in kept)
 
 
 def appearance_lines(looks: Mapping[str, str], characters: Sequence[str], shot_size: str) -> str:
     """Pa2 的人物外貌段：本镜每位人物一句，没有人物卡的人不写。"""
     lines = []
     for name in dict.fromkeys(str(item).strip() for item in characters if str(item).strip()):
-        brief = appearance_brief(str(looks.get(name) or ""), shot_size, name=name)
-        if brief:
-            lines.append(f"{mention(name)}：{brief}。")
-    return ("人物外貌：" + "".join(lines)) if lines else ""
+        # 禁用项(剑始终在右手、战袍不变色)单列在外貌后面：外貌会按字数截短，这几条不能被截掉。
+        look, _written = character_locks.split_locks(str(looks.get(name) or ""))
+        brief = appearance_brief(look, shot_size, name=name)
+        locks = character_locks.lock_line(character_locks.locks_of(str(looks.get(name) or "")))
+        if brief or locks:
+            lines.append(_says("appearance_line", name=mention(name), look=_CLAUSE_SEP.join(part for part in (brief, locks) if part)))
+    return _says("appearance", lines="".join(lines)) if lines else ""
 
 
 # 这些分句本身就是"说话"，不能当作开口前的动作；台词原文接在动作后面时到此为止。
@@ -491,7 +602,7 @@ def _lead_actions(action: str, names: Sequence[str]) -> dict[str, str]:
     宁可不写，也不写成「某人先无多余手指，随后开口」。
     """
     leads: dict[str, str] = {}
-    for clause in re.split(r"[，,。；;！？!?\n]", str(action or "")):
+    for clause in _LEAD_CLAUSE_SPLIT.split(str(action or "")):
         clause = clause.strip()
         if any(mark in clause for mark in _LINES_START):
             break
@@ -527,11 +638,11 @@ def format_dialogue(
             continue
         for name in known:
             # 「姜照：……」或「姜照（平静）：……」——语气写在说话人后面、台词的花括号外面。
-            matched = re.match(re.escape(name) + r"\s*(?:[（(]([^）)]*)[）)])?\s*[：:]\s*(.*)$", line, re.S)
+            matched = re.match(re.escape(name) + _SPEAKER_LINE, line, re.S)
             if matched:
                 notes, speech = split_speech(matched.group(2))
-                delivery = "".join(f"（{note}）" for note in [*filter(None, [matched.group(1)]), *notes])
-                lead = f"{mention(name)}先{leads[name]}，随后" if name in leads and name not in spoken else ""
+                delivery = "".join(_says("delivery_note", note=note) for note in [*filter(None, [matched.group(1)]), *notes])
+                lead = _says("lead", name=mention(name), action=leads[name]) if name in leads and name not in spoken else ""
                 lines.append(f"{lead}{mention(name)}{delivery}{speech}")
                 spoken.append(name)
                 break
@@ -540,13 +651,13 @@ def format_dialogue(
             labelled = _OTHER_SPEAKER.match(line)
             if labelled:
                 notes, speech = split_speech(labelled.group(3))
-                delivery = "".join(f"（{note}）" for note in [*filter(None, [labelled.group(2)]), *notes])
+                delivery = "".join(_says("delivery_note", note=note) for note in [*filter(None, [labelled.group(2)]), *notes])
                 lines.append(f"{labelled.group(1)}{delivery}{speech}")
                 if not is_narrator(labelled.group(1)):
                     others.append(labelled.group(1))
-            elif re.search(r"[{｛「『“]", line):
+            elif _QUOTED_LINE.search(line):
                 notes, speech = split_speech(line)
-                lines.append("".join(f"（{note}）" for note in notes) + speech)
+                lines.append("".join(_says("delivery_note", note=note) for note in notes) + speech)
             else:
                 lines.append(f"{{{line}}}")
     text = " ".join(lines)
@@ -554,25 +665,28 @@ def format_dialogue(
     if not cast or not lines:
         return text
     talkers = list(dict.fromkeys(spoken))
-    silent = "、".join(mention(name) for name in cast if name not in talkers)
+    silent = _LIST_SEP.join(mention(name) for name in cast if name not in talkers)
     named = [mention(name) for name in talkers] + list(dict.fromkeys(others))
     if not named:
-        return f"{text}（画外声，画面人物闭口不出声）"
-    only = f"只有{'、'.join(named)}说话"
+        return _says("off_screen_only", text=text)
+    only = _says("only_speaker", names=_LIST_SEP.join(named))
     if len(named) > 1:
-        only += "，按台词顺序轮流开口，同一时刻只有一人出声"
-    return f"{text}（{only}{f'；{silent}闭口不出声' if silent else ''}）"
+        only += _word("turn_taking")
+    return _says("speaker_note", text=text, only=only, silent=_says("silent_cast", names=silent) if silent else "")
 
 
 def _render(sections: Mapping[str, str]) -> str:
     lines: list[str] = []
+    after_header = False
     for key in _ORDER:
         value = str(sections.get(key) or "").strip()
         if not value:
             continue
-        if key in _BLANK_BEFORE and lines:
+        # 段名(Pa1 / Pa2 / Pa3、2 Conti Movs：)前空一行，段名下面紧跟正文。
+        if key in _BLANK_BEFORE and lines and not after_header:
             lines.append("")
         lines.append(value)
+        after_header = key in clip_skeleton.HEADERS
     return "\n".join(lines)
 
 
@@ -586,22 +700,21 @@ def extension_prompt(
     is restated only on the chain positions :func:`space_restatement` picks (``chain_index`` is 1-based).
     """
     parts = [
-        f"参考{source_ref}的内容，延长视频{seconds}s向后延长。要求延长自然、动作衔接流畅，禁止生硬切镜、禁止物体凭空出现。",
+        _says("extend", source=source_ref, seconds=seconds),
         continuation.strip(),
     ]
     if key_light.strip():
-        parts.append(f"光线：主光{key_light.strip()}，延长片段内主光方向与色温不变。")
+        parts.append(_says("extend_light", light=key_light.strip()))
     if space_snapshot.strip() and chain_index and space_restatement(chain_index) != "same":
-        parts.append(f"【空间快照】{space_snapshot.strip()}")
+        parts.append(_says("extend_space", snapshot=space_snapshot.strip()))
     if mask.strip():
-        parts.append(
-            f"需要在切镜处使用“遮罩转场”：{mask.strip()}完全遮挡镜头使画面变暗，随后镜头穿过{mask.strip()}拉开，直接显现出下一个场景。"
-        )
+        parts.append(_says("extend_mask", mask=mask.strip()))
     parts.append(pack.extension_restatement)
     parts.append(pack.sound.closing_sentence)
     return "\n".join(part for part in parts if part)
 
 
 __all__ = [
-    "CompiledVideoPrompt", "ShotPromptInput", "bridge_line", "compile_shot_prompt", "extension_prompt", "format_dialogue", "handoff_line",
+    "CompiledVideoPrompt", "ShotPromptInput", "bridge_line", "compile_shot_prompt", "dialogue_speakers", "extension_prompt",
+    "format_dialogue", "handoff_line",
 ]

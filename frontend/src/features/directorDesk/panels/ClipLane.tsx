@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 
 import { moveBlock, trimBlock, type Block } from '../lib/timelineClips';
 
@@ -21,11 +21,13 @@ interface Props {
   onPick: (id: string) => void;
   /** Called once, when a drag is let go. */
   onChange: (blocks: LaneBlock[]) => void;
+  /** Delete or Backspace on a focused block. Without it the key does nothing here. */
+  onRemove?: (id: string) => void;
   onScrub: (event: ReactPointerEvent<HTMLElement>) => void;
 }
 
 /** One block track: slide a block by its body, trim it by either end. A drag draws locally and is written when let go. */
-export function ClipLane({ blocks, tone, label, pickedId, durationS, fps, time, disabled, onPick, onChange, onScrub }: Props) {
+export function ClipLane({ blocks, tone, label, pickedId, durationS, fps, time, disabled, onPick, onChange, onRemove, onScrub }: Props) {
   const [dragged, setDragged] = useState<LaneBlock[] | null>(null);
   const held = useRef<{ id: string; grip: Grip; lane: HTMLElement; startX: number; start: number; moved: boolean } | null>(null);
   const shown = dragged ?? blocks;
@@ -60,6 +62,21 @@ export function ClipLane({ blocks, tone, label, pickedId, durationS, fps, time, 
     setDragged(null);
   };
 
+  // Keys on a focused block stay in the timeline: the desk's own Delete removes the object selected on the stage,
+  // and its Space toggles playback. A key held down removes this block and no more.
+  const onBlockKey = (block: LaneBlock) => (event: ReactKeyboardEvent) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      event.stopPropagation();
+      onPick(block.id);
+    }
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!disabled && !event.repeat) onRemove?.(block.id);
+    }
+  };
+
   return (
     <div className="desk-timeline__lane is-blocks" aria-label={`${label}轨`} onPointerDown={onScrub} onPointerMove={event => { if (!held.current) onScrub(event); }}>
       {shown.map(block => (
@@ -68,7 +85,7 @@ export function ClipLane({ blocks, tone, label, pickedId, durationS, fps, time, 
           style={{ left: percent(block.start), width: `${((Math.min(block.end, durationS) - block.start) / durationS) * 100}%` }}
           role="button" tabIndex={0} aria-label={`${label}片段 ${block.label} ${block.start.toFixed(2)} 到 ${block.end.toFixed(2)} 秒`} aria-pressed={block.id === pickedId}
           onPointerDown={grab(block, 'move')} onPointerMove={drag} onPointerUp={drop} onPointerCancel={drop}
-          onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onPick(block.id); } }}
+          onKeyDown={onBlockKey(block)}
         >
           <i className="desk-timeline__grip is-start" aria-hidden="true" onPointerDown={grab(block, 'start')} onPointerMove={drag} onPointerUp={drop} onPointerCancel={drop} />
           <span>{block.label}</span>

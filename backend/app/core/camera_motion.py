@@ -14,37 +14,34 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.core import prompt_data
+
 from app.core.video_references import MIN_SHOT_SECONDS, max_shot_seconds
 
-CAMERA_MOTIONS: tuple[tuple[str, str], ...] = (
-    ("Static", "固定"),
-    ("Pan Left", "左摇"),
-    ("Pan Right", "右摇"),
-    ("Tilt Up", "上摇"),
-    ("Tilt Down", "下摇"),
-    ("Zoom In", "推近"),
-    ("Zoom Out", "拉远"),
-    ("Push In", "推镜"),
-    ("Pull Out", "拉镜"),
-    ("Truck Left", "左移"),
-    ("Truck Right", "右移"),
-    ("Pedestal Up", "升镜"),
-    ("Pedestal Down", "降镜"),
-    ("Orbit", "环绕"),
-    ("Tracking Shot", "跟踪"),
-    ("Shake", "晃动"),
+# The vocabulary's Chinese labels, aliases, phrasings and lint sentences: app/data/prompt/camera_amounts.json
+# (alongside the move amounts it already held). The English ids below are the provider vocabulary: code values.
+_WORDING = "camera_amounts"
+
+
+def _table(key: str) -> Any:
+    return prompt_data.value(_WORDING, key)
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A sentence of the motion lint's wording table, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return str(_table("problems")[key]).format(**values)
+
+
+_MOTION_IDS: tuple[str, ...] = (
+    "Static", "Pan Left", "Pan Right", "Tilt Up", "Tilt Down", "Zoom In", "Zoom Out", "Push In", "Pull Out",
+    "Truck Left", "Truck Right", "Pedestal Up", "Pedestal Down", "Orbit", "Tracking Shot", "Shake",
 )
-SHOT_TYPES: tuple[tuple[str, str], ...] = (
-    ("Extreme Close-up", "大特写"),
-    ("Close-up", "特写"),
-    ("Medium Close-up", "中特写"),
-    ("Medium Shot", "中景"),
-    ("Medium Long Shot", "中远景"),
-    ("Long Shot", "远景"),
-    ("Extreme Long Shot", "大远景"),
-    ("Over-the-shoulder", "过肩镜头"),
-    ("Point-of-view", "主观镜头"),
+_SHOT_TYPE_IDS: tuple[str, ...] = (
+    "Extreme Close-up", "Close-up", "Medium Close-up", "Medium Shot", "Medium Long Shot", "Long Shot",
+    "Extreme Long Shot", "Over-the-shoulder", "Point-of-view",
 )
+CAMERA_MOTIONS: tuple[tuple[str, str], ...] = tuple((value, str(_table("motion_labels")[value])) for value in _MOTION_IDS)
+SHOT_TYPES: tuple[tuple[str, str], ...] = tuple((value, str(_table("shot_type_labels")[value])) for value in _SHOT_TYPE_IDS)
 DEFAULT_CAMERA_MOTION = "Static"
 FIGHT_DEFAULT_CAMERA_MOTION = "Tracking Shot"
 DEFAULT_SHOT_TYPE = "Medium Shot"
@@ -52,9 +49,13 @@ CAMERA_MOTION_LABELS = dict(CAMERA_MOTIONS)
 SHOT_TYPE_LABELS = dict(SHOT_TYPES)
 
 
+# A bracketed aside (「推近（Push In）」) is not part of the name.
+_KEY_ASIDE = re.compile(str(_table("key_aside")))
+
+
 def _key(value: Any) -> str:
     text = str(value or "")
-    text = re.sub(r"[（(][^）)]*[）)]", " ", text)
+    text = _KEY_ASIDE.sub(" ", text)
     return " ".join(text.replace("_", " ").replace("-", " ").split()).casefold()
 
 
@@ -65,27 +66,7 @@ _MOTION_BY_KEY.update({_key(label): value for value, label in CAMERA_MOTIONS})
 _CANONICAL_KEYS = set(_MOTION_BY_KEY)
 # Storyboard tables and older projects write moves in many spellings; these are
 # the ones seen in practice, mapped onto the provider vocabulary.
-_MOTION_SYNONYMS = {
-    "Static": ("static shot", "fixed", "fixed shot", "locked", "locked off", "固定镜头", "固定机位", "静止",
-               "establishing shot", "establishing", "无运镜", "不动"),
-    "Pan Left": ("pan l", "左横摇", "向左摇", "左平摇"),
-    "Pan Right": ("pan r", "右横摇", "向右摇", "右平摇"),
-    "Tilt Up": ("仰摇", "向上摇", "上仰"),
-    "Tilt Down": ("俯摇", "向下摇", "下俯"),
-    "Zoom In": ("zoom", "变焦推近", "变焦推", "焦距推近", "推特写", "extreme close up dolly", "extreme close-up dolly"),
-    "Zoom Out": ("变焦拉远", "变焦拉", "焦距拉远"),
-    "Push In": ("dolly in", "slow dolly in", "dolly forward", "push", "推进", "推", "推镜头", "缓推", "慢推",
-                "dolly zoom", "希区柯克变焦"),
-    "Pull Out": ("dolly out", "slow dolly out", "dolly back", "pull", "pull back", "拉出", "拉", "拉镜头", "缓拉", "慢拉"),
-    "Truck Left": ("truck l", "横移左", "向左横移", "左平移", "lateral tracking left"),
-    "Truck Right": ("truck r", "横移右", "向右横移", "右平移", "lateral tracking right", "lateral tracking"),
-    "Pedestal Up": ("crane up", "boom up", "升", "上升", "摇臂上升", "升起", "升降上"),
-    "Pedestal Down": ("crane down", "boom down", "降", "下降", "摇臂下降", "降下", "升降下"),
-    "Orbit": ("arc", "arc shot", "orbit shot", "环绕镜头", "弧线", "弧形运动", "围绕", "环拍", "360"),
-    "Tracking Shot": ("tracking", "track", "follow", "follow shot", "follow the subject", "跟拍", "跟随", "跟镜",
-                      "跟踪拍摄", "跟随拍摄", "steadicam"),
-    "Shake": ("handheld", "hand held", "手持", "抖动", "晃镜", "震动"),
-}
+_MOTION_SYNONYMS = {canonical: tuple(str(alias) for alias in _table("motion_synonyms")[canonical]) for canonical in _MOTION_IDS}
 for _canonical, _aliases in _MOTION_SYNONYMS.items():
     for _alias in _aliases:
         _MOTION_BY_KEY.setdefault(_key(_alias), _canonical)
@@ -94,15 +75,7 @@ _SHOT_TYPE_BY_KEY = {_key(value): value for value, _ in SHOT_TYPES}
 _SHOT_TYPE_BY_KEY.update({_key(label): value for value, label in SHOT_TYPES})
 _CANONICAL_KEYS |= set(_SHOT_TYPE_BY_KEY)
 _SHOT_TYPE_SYNONYMS = {
-    "Extreme Close-up": ("ecu", "xcu", "extreme closeup", "大特", "极特写"),
-    "Close-up": ("cu", "closeup", "close up", "近景", "特写镜头"),
-    "Medium Close-up": ("mcu", "medium closeup", "中近景", "中近", "近中景"),
-    "Medium Shot": ("ms", "mid shot", "medium", "中景镜头", "半身"),
-    "Medium Long Shot": ("mls", "medium wide", "medium wide shot", "中全景", "中远", "七分身"),
-    "Long Shot": ("ls", "fs", "full shot", "wide", "wide shot", "全景", "全身", "远景镜头"),
-    "Extreme Long Shot": ("els", "ews", "extreme wide", "extreme wide shot", "大全景", "大远", "远景大全景"),
-    "Over-the-shoulder": ("ots", "over the shoulder", "over shoulder", "过肩", "过肩镜"),
-    "Point-of-view": ("pov", "point of view", "主观", "主观视角", "第一人称"),
+    canonical: tuple(str(alias) for alias in _table("shot_type_synonyms")[canonical]) for canonical in _SHOT_TYPE_IDS
 }
 for _canonical, _aliases in _SHOT_TYPE_SYNONYMS.items():
     for _alias in _aliases:
@@ -156,40 +129,20 @@ def normalize_shot_type(value: Any) -> tuple[str, bool]:
 
 # MiniMax Hailuo documents fifteen bracketed camera commands; Orbit is the one
 # vocabulary entry without a command and is written out in words.
-_MINIMAX_COMMANDS = {
-    "Static": "[Static shot]", "Pan Left": "[Pan left]", "Pan Right": "[Pan right]",
-    "Tilt Up": "[Tilt up]", "Tilt Down": "[Tilt down]", "Zoom In": "[Zoom in]", "Zoom Out": "[Zoom out]",
-    "Push In": "[Push in]", "Pull Out": "[Pull out]", "Truck Left": "[Truck left]", "Truck Right": "[Truck right]",
-    "Pedestal Up": "[Pedestal up]", "Pedestal Down": "[Pedestal down]", "Tracking Shot": "[Tracking shot]",
-    "Shake": "[Shake]",
-}
-_PHRASES = {
-    "Static": "固定机位，镜头保持不动",
-    "Pan Left": "镜头向左摇",
-    "Pan Right": "镜头向右摇",
-    "Tilt Up": "镜头向上摇",
-    "Tilt Down": "镜头向下摇",
-    "Zoom In": "镜头变焦推近",
-    "Zoom Out": "镜头变焦拉远",
-    "Push In": "镜头缓慢推进",
-    "Pull Out": "镜头缓慢拉出",
-    "Truck Left": "镜头向左横移",
-    "Truck Right": "镜头向右横移",
-    "Pedestal Up": "镜头垂直升起",
-    "Pedestal Down": "镜头垂直下降",
-    "Orbit": "镜头围绕主体环绕",
-    "Tracking Shot": "镜头跟随主体移动",
-    "Shake": "轻微手持晃动",
-}
+_MINIMAX_COMMANDS = {canonical: str(command) for canonical, command in _table("minimax_commands").items()}
+_PHRASES = {canonical: str(_table("phrases")[canonical]) for canonical in _MOTION_IDS}
 
 
 def render_camera_motion(motion: str, provider_family: str = "") -> str:
     """Provider-documented phrasing for one move; the rule stays one move per shot."""
     canonical, _ = normalize_camera_motion(motion)
-    phrase = _PHRASES[canonical]
+    # 幅度写成落幅时画面变了多少，不写副词也不写秒数(见 data/prompt/camera_amounts.json)。
+    amount = _table("amounts").get(canonical, "")
+    render = _table("render")
+    phrase = str(render["with_amount"]).format(phrase=_PHRASES[canonical], amount=amount) if amount else _PHRASES[canonical]
     if provider_family == "minimax_h3" and canonical in _MINIMAX_COMMANDS:
-        return f"{_MINIMAX_COMMANDS[canonical]} {phrase}"
-    return f"{phrase}（{canonical}）"
+        return str(render["minimax"]).format(command=_MINIMAX_COMMANDS[canonical], phrase=phrase)
+    return str(render["named"]).format(phrase=phrase, canonical=canonical)
 
 
 def duration_options(video_model: str) -> list[int]:
@@ -206,20 +159,13 @@ def vocabulary() -> dict[str, list[dict[str, str]]]:
 
 # 一镜一主运镜(《运镜库》第 1 条)：复合最多两个不冲突的方向(推 + 轻手持、环绕 + 微升)。
 # 推了又拉、三种以上叠在一起，视频模型只会保一个、其余拍成抖动或变形。
-_MOVE_CLASSES = (
-    ("推近", re.compile(r"推近|推进|推至|推向|缓推|轻推|慢推|急推|前推")),
-    ("拉远", re.compile(r"拉远|后拉|拉开|拉回|拉出")),
-    ("摇", re.compile(r"横摇|[左右上下]摇|摇起|摇向|摇至|跟摇|甩镜|甩向")),
-    # 「移向」单独出现常是人物或道具在动(「随右掌移向木砧」)：只有主语是镜头才算。
-    ("移", re.compile(r"横移|平移|侧移|缓移|微移|跟移|移镜|(?:镜头|机位|机身|摄影机|相机)[^，。；,;→]{0,6}移向")),
-    ("升降", re.compile(r"升镜|微升|上升|升起|降镜|下降|下沉|微降")),
-    ("环绕", re.compile(r"环绕|绕拍|弧形")),
-    ("手持", re.compile(r"手持")),
-)
+_MOVE_CLASSES = tuple((str(name), re.compile(str(pattern))) for name, pattern in _table("move_classes"))
 # 括注(英文术语、指纹)和否定句(「不拉回」「全程无甩镜」)不是运镜；「无人机」不是否定。
-_MOTION_ASIDE = re.compile(r"[（(][^）)]*[）)]|`[^`]*`|\[[^\]]*\]|(?:不|无(?!人机))[^，。；,;、`\[（(]{0,8}")
+_MOTION_ASIDE = re.compile(str(_table("motion_aside")))
 # 移焦(「焦点由剑鞘拉回手部」「拉回焦点」)动的是焦平面，机身没有后退。
-_FOCUS_PULL = re.compile(r"焦点[^，。；,;→]{0,24}(?:拉回|拉开|拉远|拉出)|拉回焦点|拉焦")
+_FOCUS_PULL = re.compile(str(_table("focus_pull")))
+_PUSH_CLASS, _PULL_CLASS = (str(name) for name in _table("opposed_classes"))
+_ORBIT_CLASS = str(_table("orbit_class"))
 MAX_MOVE_CLASSES = 2
 
 
@@ -230,21 +176,21 @@ def move_classes(motion: Any) -> list[str]:
 
 
 # 一镜到底的武戏按节拍接力(「0–2秒…2–4秒…」)：每个节拍各算一镜。
-_BEAT_SPAN = re.compile(r"\d+(?:\.\d+)?\s*[-–~～至]\s*\d+(?:\.\d+)?\s*秒")
+_BEAT_SPAN = re.compile(str(_table("beat_span")))
 
 
 # 环绕超过 180 度就自动越轴：两人的左右关系在片内翻转。整圈、一周、360 都是超了。
-_FULL_ORBIT = re.compile(r"360|一周|一圈|整圈|全周|绕到(?:对面|背后)")
+_FULL_ORBIT = re.compile(str(_table("full_orbit")))
 
 
 def motion_problem(motion: Any) -> str:
     """这句运镜违反一镜一主运镜、或环绕越轴的地方；没问题时为空串。"""
     for beat in _BEAT_SPAN.split(str(motion or "")):
         classes = move_classes(beat)
-        if "推近" in classes and "拉远" in classes:
-            return "同一镜里推近又拉远，方向对冲"
+        if _PUSH_CLASS in classes and _PULL_CLASS in classes:
+            return _says("opposed")
         if len(classes) > MAX_MOVE_CLASSES:
-            return f"同一镜叠了{'、'.join(classes)}{len(classes)}种运镜"
-        if "环绕" in classes and _FULL_ORBIT.search(beat):
-            return "环绕超过180度就越轴，人物左右关系会翻转；限定在半圈以内"
+            return _says("stacked", classes=_says("class_joiner").join(classes), count=len(classes))
+        if _ORBIT_CLASS in classes and _FULL_ORBIT.search(beat):
+            return _says("orbit")
     return ""

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import hmac
 import logging
@@ -51,6 +52,7 @@ from app.platform.models import (
     ElementFile,
     ElementFolder,
     ElementFolderMember,
+    ElementRevision,
     LedgerEntry,
     MembershipPlan,
     ModelProviderConfiguration,
@@ -184,6 +186,13 @@ MAX_ELEMENT_STORAGE_BYTES = settings.env_int(
 MAX_GLOBAL_ELEMENT_STORAGE_BYTES = settings.env_int(
     "ELEMENT_GLOBAL_STORAGE_QUOTA_BYTES", 20 * 1024**3, minimum=1024**3, maximum=1024**5
 )
+# 每个资产最多留这么多个旧版本；更早的连同只有它们还在用的文件一起清掉。
+REVISION_LIMIT = 20
+ELEMENT_REVISION_REASONS = frozenset({
+    "edit", "rename", "file", "file_delete", "variant", "prop_size", "real_person", "restore",
+})
+# 恢复旧版本时不跟着回退的元数据：项目关联和进行中的生成状态说的是现在，不是资产长什么样。
+_RESTORE_KEEPS_METADATA = ("task_id", "task_ids", "regeneration")
 
 
 @dataclass(frozen=True)
@@ -259,6 +268,66 @@ def _deleted_element_file_record(item: ElementFile) -> DeletedElementFileRecord:
         mime_type=item.mime_type,
         size_bytes=item.size_bytes,
     )
+
+
+def _revision_files(files) -> list[dict]:
+    return [
+        {
+            "slot": item.slot,
+            "storage_path": item.storage_path,
+            "sha256": item.sha256,
+            "mime_type": item.mime_type,
+            "size_bytes": item.size_bytes,
+            "position": item.position,
+        }
+        for item in files
+    ]
+
+
+def _element_state(element: ElementAsset) -> dict:
+    """改动前要记下的那一版；``version`` 是这一版当时的版本号。"""
+    return {
+        "version": element.version,
+        "name": element.name,
+        "description": element.description or "",
+        "metadata": copy.deepcopy(element.metadata_json or {}),
+        "files": _revision_files(element.files),
+    }
+
+
+def _same_content(before: dict, element: ElementAsset) -> bool:
+    now = _element_state(element)
+    return all(before[key] == now[key] for key in ("name", "description", "metadata", "files"))
+
+
+def _revision_file_record(revision: ElementRevision, entry: Mapping) -> DeletedElementFileRecord:
+    return DeletedElementFileRecord(
+        id=f"{revision.id}:{entry.get('slot')}",
+        element_id=revision.element_id,
+        slot=str(entry.get("slot") or ""),
+        storage_path=str(entry.get("storage_path") or ""),
+        mime_type=str(entry.get("mime_type") or ""),
+        size_bytes=int(entry.get("size_bytes") or 0),
+    )
+
+
+@dataclass(frozen=True)
+class _RevisionTrim:
+    """裁掉的旧版本引用过的文件，和还留着的版本引用的路径；哪些能删要等改动做完、看过现行文件再定。"""
+
+    dropped: tuple[DeletedElementFileRecord, ...] = ()
+    kept_paths: frozenset[str] = frozenset()
+
+    def unreferenced(self, element: ElementAsset) -> tuple[DeletedElementFileRecord, ...]:
+        live = {item.storage_path for item in element.files}
+        seen: set[str] = set()
+        result = []
+        for record in self.dropped:
+            path = record.storage_path
+            if path and path not in live and path not in self.kept_paths and path not in seen:
+                seen.add(path)
+                result.append(record)
+        return tuple(result)
 
 
 async def _commit_deletion_with_cancellation_boundary(session) -> bool:
@@ -1231,6 +1300,197 @@ class PlatformStore:
             .execution_options(populate_existing=True)
         )
 
+    async def _record_revision(
+        self, session, element: ElementAsset, before: dict, reason: str, *, discard_files: bool,
+    ) -> tuple[DeletedElementFileRecord, ...]:
+        """改动已经做在 ``element`` 上之后、提交之前调用：把改动前那一版(``before``)记下，裁掉超出 REVISION_LIMIT 的最旧版本。
+
+        返回裁掉的版本引用、现行文件和留下的版本又都不再用的文件，由调用方在提交前隔离。
+        ``discard_files`` 为假(调用方没法删文件)时只裁那些文件别处还在用的旧版本：宁可多留几版，不留没人管的文件。
+        """
+        if reason not in ELEMENT_REVISION_REASONS:
+            raise ValueError("无效的版本记录原因")
+        revisions = list((await session.scalars(
+            select(ElementRevision).where(ElementRevision.element_id == element.id).order_by(ElementRevision.revision)
+        )).all())
+        latest = ElementRevision(
+            element_id=element.id,
+            owner_id=element.owner_id,
+            revision=(revisions[-1].revision + 1) if revisions else 1,
+            version=before["version"],
+            name=before["name"],
+            description=before["description"],
+            metadata_json=before["metadata"],
+            files_json=before["files"],
+            reason=reason,
+        )
+        session.add(latest)
+        revisions.append(latest)
+        excess = len(revisions) - REVISION_LIMIT
+        if excess <= 0:
+            return ()
+        live = {item.storage_path for item in element.files}
+
+        def paths(revision: ElementRevision) -> set[str]:
+            return {str(entry.get("storage_path") or "") for entry in revision.files_json or []}
+
+        kept = list(revisions)
+        dropped: list[ElementRevision] = []
+        for old in revisions[:excess]:
+            others = live.union(*(paths(item) for item in kept if item is not old))
+            if discard_files or paths(old) <= others:
+                kept.remove(old)
+                dropped.append(old)
+        referenced = live.union(*(paths(item) for item in kept))
+        orphans: dict[str, DeletedElementFileRecord] = {}
+        for old in dropped:
+            for entry in old.files_json or []:
+                record = _revision_file_record(old, entry)
+                if record.storage_path and record.storage_path not in referenced:
+                    orphans.setdefault(record.storage_path, record)
+            await session.delete(old)
+        return tuple(orphans.values())
+
+    async def _element_storage_usage(self, session, owner_id: str | None = None) -> int:
+        """现行文件和历史版本文件按 (资产, 路径) 去重后的总字节数：同一个文件被几版引用只算一次。"""
+        live = select(ElementFile.element_id, ElementFile.storage_path, ElementFile.size_bytes)
+        history = select(ElementRevision.element_id, ElementRevision.files_json)
+        if owner_id is not None:
+            live = live.join(ElementAsset, ElementFile.element_id == ElementAsset.id).where(ElementAsset.owner_id == owner_id)
+            history = history.where(ElementRevision.owner_id == owner_id)
+        sizes = {(element_id, path): int(size or 0) for element_id, path, size in (await session.execute(live)).all()}
+        for element_id, files in (await session.execute(history)).all():
+            for entry in files if isinstance(files, list) else ():
+                key = (element_id, str(entry.get("storage_path") or ""))
+                sizes.setdefault(key, int(entry.get("size_bytes") or 0))
+        return sum(sizes.values())
+
+    async def _change_element(
+        self,
+        element_id: str,
+        owner_id: str,
+        reason: str,
+        change: Callable[..., Awaitable[str | None]],
+        *,
+        before_commit: DeletionStorageHook | None = None,
+    ) -> ElementAsset:
+        """锁住资产，``change(session, element)`` 校验并改动(可返回更准确的原因)，内容变了就记下改动前那一版，版本号加一，一个事务提交。"""
+        committed: ElementAsset | None = None
+        cancellation_requested = False
+        try:
+            async with self.sessions() as session:
+                element = await session.scalar(
+                    select(ElementAsset).options(selectinload(ElementAsset.files))
+                    .where(ElementAsset.id == element_id)
+                    .with_for_update()
+                )
+                if not element or element.owner_id != owner_id:
+                    raise ValueError("元素不存在")
+                before = _element_state(element)
+                reason = await change(session, element) or reason
+                orphans: tuple[DeletedElementFileRecord, ...] = ()
+                if not _same_content(before, element):
+                    orphans = await self._record_revision(
+                        session, element, before, reason, discard_files=before_commit is not None,
+                    )
+                element.version += 1
+                if orphans and before_commit is not None:
+                    storage_cleanup = await before_commit(orphans)
+                    session.add(AuditEvent(
+                        actor_id=owner_id,
+                        action="element.revision.trim",
+                        resource_type="element",
+                        resource_id=element.id,
+                        details={"file_count": len(orphans), **({"storage_cleanup": storage_cleanup} if storage_cleanup else {})},
+                    ))
+                    cancellation_requested = await _commit_deletion_with_cancellation_boundary(session)
+                else:
+                    await session.commit()
+                committed = element
+                loaded = await self._loaded_element(session, element.id)
+                assert loaded is not None
+        except BaseException as exc:
+            # 提交过了还要让调用方知道：隔离的文件该清掉，而不是放回去。没给钩子的调用方照旧拿到原来的异常。
+            if committed is not None and before_commit is not None:
+                raise StorageMutationCommittedWithError(committed, exc) from exc
+            raise
+        if cancellation_requested:
+            raise StorageMutationCommittedWithError(loaded, asyncio.CancelledError())
+        return loaded
+
+    async def list_element_revisions(self, owner_id: str, element_id: str) -> list[ElementRevision]:
+        """这个资产留着的旧版本，最新的在前。"""
+        async with self.sessions() as session:
+            element = await session.get(ElementAsset, element_id)
+            if not element or element.owner_id != owner_id:
+                raise ValueError("元素不存在")
+            return list((await session.scalars(
+                select(ElementRevision).where(ElementRevision.element_id == element_id)
+                .order_by(ElementRevision.revision.desc())
+            )).all())
+
+    async def get_element_revision(self, owner_id: str, element_id: str, revision: int) -> ElementRevision | None:
+        async with self.sessions() as session:
+            return await session.scalar(
+                select(ElementRevision)
+                .join(ElementAsset, ElementAsset.id == ElementRevision.element_id)
+                .where(
+                    ElementRevision.element_id == element_id,
+                    ElementRevision.revision == revision,
+                    ElementAsset.owner_id == owner_id,
+                )
+            )
+
+    async def restore_element_revision(
+        self, owner_id: str, element_id: str, revision: int, *, before_commit: DeletionStorageHook | None = None,
+    ) -> ElementAsset:
+        """回到第 ``revision`` 版：先把现在这一版记下(原因 restore)，再恢复名称、描述、元数据，各槽位指回当时的文件。
+
+        当时没有的槽位去掉；项目关联和进行中的生成状态保持现在的样子。
+        """
+
+        async def change(session, element: ElementAsset) -> None:
+            target = await session.scalar(
+                select(ElementRevision).where(
+                    ElementRevision.element_id == element.id, ElementRevision.revision == revision,
+                )
+            )
+            if target is None:
+                raise ValueError("这一版不存在或已清理")
+            current = element.metadata_json or {}
+            metadata = {
+                key: value for key, value in copy.deepcopy(target.metadata_json or {}).items()
+                if key not in _RESTORE_KEEPS_METADATA
+            }
+            metadata.update({key: copy.deepcopy(current[key]) for key in _RESTORE_KEEPS_METADATA if key in current})
+            element.name = target.name
+            element.description = target.description or ""
+            element.metadata_json = metadata
+            wanted = {str(entry.get("slot")): entry for entry in target.files_json or []}
+            for item in [item for item in element.files if item.slot not in wanted]:
+                element.files.remove(item)
+            for slot, entry in wanted.items():
+                row = next((item for item in element.files if item.slot == slot), None)
+                fields = {
+                    "storage_path": str(entry.get("storage_path") or ""),
+                    "mime_type": str(entry.get("mime_type") or ""),
+                    "size_bytes": int(entry.get("size_bytes") or 0),
+                    "sha256": str(entry.get("sha256") or ""),
+                    "position": int(entry.get("position") or 0),
+                }
+                if row is None:
+                    element.files.append(ElementFile(element_id=element.id, slot=slot, **fields))
+                else:
+                    for key, value in fields.items():
+                        setattr(row, key, value)
+            element.status = "ready" if _actor_ready(element, set(wanted)) else "draft"
+            session.add(AuditEvent(
+                actor_id=owner_id, action="element.revision.restore", resource_type="element",
+                resource_id=element.id, details={"revision": revision, "version": target.version},
+            ))
+
+        return await self._change_element(element_id, owner_id, "restore", change, before_commit=before_commit)
+
     async def get_element(self, element_id: str, owner_id: str) -> ElementAsset | None:
         async with self.sessions() as session:
             return await session.scalar(
@@ -1247,7 +1507,7 @@ class PlatformStore:
             return list((await session.scalars(
                 select(ElementAsset).options(selectinload(ElementAsset.files))
                 .where(ElementAsset.owner_id == owner_id, ElementAsset.kind == kind)
-                .order_by(ElementAsset.updated_at.desc())
+                .order_by(ElementAsset.updated_at.desc(), ElementAsset.id)
             )).all())
 
     async def list_elements(
@@ -1280,7 +1540,8 @@ class PlatformStore:
             total = int(await session.scalar(select(func.count()).select_from(ElementAsset).where(*where)) or 0)
             items = list((await session.scalars(
                 select(ElementAsset).options(selectinload(ElementAsset.files)).where(*where)
-                .order_by(ElementAsset.updated_at.desc()).offset((page - 1) * page_size).limit(page_size)
+                # id 兜底：同一时刻改过的几项在翻页时顺序不变。
+                .order_by(ElementAsset.updated_at.desc(), ElementAsset.id).offset((page - 1) * page_size).limit(page_size)
             )).all())
             return items, total
 
@@ -1298,13 +1559,13 @@ class PlatformStore:
             assert loaded is not None
             return loaded
 
-    async def set_real_person(self, element_id: str, owner_id: str, record: dict | None) -> ElementAsset:
+    async def set_real_person(
+        self, element_id: str, owner_id: str, record: dict | None, *, before_commit: DeletionStorageHook | None = None,
+    ) -> ElementAsset:
         """把数字演员设成(或取消)真人演员，并按新规则重算它是否就绪；留审计。"""
-        async with self.sessions() as session:
-            element = await session.scalar(
-                select(ElementAsset).options(selectinload(ElementAsset.files)).where(ElementAsset.id == element_id).with_for_update()
-            )
-            if not element or element.owner_id != owner_id or element.kind != "actor" or not _wants_identity_views(element):
+
+        async def change(session, element: ElementAsset) -> None:
+            if element.kind != "actor" or not _wants_identity_views(element):
                 raise ValueError("只有数字演员本人可以设为真人演员")
             metadata = dict(element.metadata_json or {})
             if record is None:
@@ -1313,16 +1574,18 @@ class PlatformStore:
                 metadata[real_person.KEY] = dict(record)
             element.metadata_json = metadata
             element.status = "ready" if _actor_ready(element, {item.slot for item in element.files}) else "draft"
-            element.version += 1
             session.add(AuditEvent(
                 actor_id=owner_id, action="element.real_person.set" if record else "element.real_person.clear",
                 resource_type="element", resource_id=element.id,
                 details={"person": (record or {}).get("person", ""), "assets": len((record or {}).get("ark_assets") or [])},
             ))
-            await session.commit()
-            loaded = await self._loaded_element(session, element.id)
-            assert loaded is not None
-            return loaded
+
+        try:
+            return await self._change_element(element_id, owner_id, "real_person", change, before_commit=before_commit)
+        except ValueError as exc:
+            if str(exc) == "元素不存在":
+                raise ValueError("只有数字演员本人可以设为真人演员") from exc
+            raise
 
     async def link_element_to_task(self, element_id: str, owner_id: str, task_id: str) -> ElementAsset:
         """Make an existing library asset visible to another project without copying it."""
@@ -1348,29 +1611,34 @@ class PlatformStore:
             assert loaded is not None
             return loaded
 
-    async def update_element(self, element_id: str, owner_id: str, *, name: str | None, description: str | None) -> ElementAsset:
-        async with self.sessions() as session:
-            element = await session.get(ElementAsset, element_id)
-            if not element or element.owner_id != owner_id:
-                raise ValueError("元素不存在")
+    async def update_element(
+        self,
+        element_id: str,
+        owner_id: str,
+        *,
+        name: str | None,
+        description: str | None,
+        before_commit: DeletionStorageHook | None = None,
+    ) -> ElementAsset:
+        async def change(_session, element: ElementAsset) -> str:
+            renamed = False
             if name is not None:
                 if not name.strip():
                     raise ValueError("元素名称不能为空")
+                renamed = name.strip()[:160] != element.name
                 element.name = name.strip()[:160]
             if description is not None:
                 element.description = description.strip()
-            element.version += 1
-            await session.commit()
-            loaded = await self._loaded_element(session, element.id)
-            assert loaded is not None
-            return loaded
+            return "rename" if renamed else "edit"
 
-    async def set_element_variant(self, element_id: str, owner_id: str, variant: dict | None) -> ElementAsset:
+        return await self._change_element(element_id, owner_id, "edit", change, before_commit=before_commit)
+
+    async def set_element_variant(
+        self, element_id: str, owner_id: str, variant: dict | None, *, before_commit: DeletionStorageHook | None = None,
+    ) -> ElementAsset:
         """Set or clear an actor element's derived-look facts; nothing else on its metadata moves."""
-        async with self.sessions() as session:
-            element = await session.get(ElementAsset, element_id)
-            if not element or element.owner_id != owner_id:
-                raise ValueError("元素不存在")
+
+        async def change(_session, element: ElementAsset) -> None:
             if element.kind != "actor":
                 raise ValueError("只有数字演员可以设为衍生形象")
             metadata = dict(element.metadata_json or {})
@@ -1379,18 +1647,15 @@ class PlatformStore:
             else:
                 metadata["variant"] = dict(variant)
             element.metadata_json = metadata
-            element.version += 1
-            await session.commit()
-            loaded = await self._loaded_element(session, element.id)
-            assert loaded is not None
-            return loaded
 
-    async def set_prop_length(self, element_id: str, owner_id: str, length_cm: float | None) -> ElementAsset:
+        return await self._change_element(element_id, owner_id, "variant", change, before_commit=before_commit)
+
+    async def set_prop_length(
+        self, element_id: str, owner_id: str, length_cm: float | None, *, before_commit: DeletionStorageHook | None = None,
+    ) -> ElementAsset:
         """Set or clear a prop's stated longest side; nothing else on its metadata moves."""
-        async with self.sessions() as session:
-            element = await session.get(ElementAsset, element_id)
-            if not element or element.owner_id != owner_id:
-                raise ValueError("元素不存在")
+
+        async def change(_session, element: ElementAsset) -> None:
             if element.kind != "prop":
                 raise ValueError("只有拍摄道具可以设置尺寸")
             metadata = dict(element.metadata_json or {})
@@ -1399,11 +1664,8 @@ class PlatformStore:
             else:
                 metadata["prop_length_cm"] = float(length_cm)
             element.metadata_json = metadata
-            element.version += 1
-            await session.commit()
-            loaded = await self._loaded_element(session, element.id)
-            assert loaded is not None
-            return loaded
+
+        return await self._change_element(element_id, owner_id, "prop_size", change, before_commit=before_commit)
 
     async def add_element_file(
         self,
@@ -1450,23 +1712,11 @@ class PlatformStore:
                         raise ValueError("文件槽位无效")
                     position = len(element.files)
                 existing = next((item for item in element.files if item.slot == slot), None)
-                owner_usage = int(await session.scalar(
-                    select(func.coalesce(func.sum(ElementFile.size_bytes), 0))
-                    .select_from(ElementFile)
-                    .join(ElementAsset, ElementFile.element_id == ElementAsset.id)
-                    .where(ElementAsset.owner_id == owner_id)
-                ) or 0)
-                projected_usage = owner_usage - (existing.size_bytes if existing else 0) + size_bytes
-                if size_bytes < 0 or projected_usage > MAX_ELEMENT_STORAGE_BYTES:
+                if size_bytes < 0:
                     raise ValueError("元素资产存储空间已达到账号配额")
-                global_usage = int(await session.scalar(
-                    select(func.coalesce(func.sum(ElementFile.size_bytes), 0)).select_from(ElementFile)
-                ) or 0)
-                projected_global_usage = global_usage - (existing.size_bytes if existing else 0) + size_bytes
-                if projected_global_usage > MAX_GLOBAL_ELEMENT_STORAGE_BYTES:
-                    raise ValueError("元素资产已达到服务全局存储配额")
+                before = _element_state(element)
+                # 被换掉的文件记进改动前那一版，不再删；配额按现行文件加历史版本文件算，所以放在改动之后。
                 replaced_storage_path = existing.storage_path if existing else None
-                replaced_file = _deleted_element_file_record(existing) if existing else None
                 if existing:
                     existing.storage_path = storage_path
                     existing.mime_type = mime_type
@@ -1489,9 +1739,16 @@ class PlatformStore:
                 slots = {item.slot for item in element.files}
                 slots.add(slot)
                 element.status = "ready" if _actor_ready(element, slots) else "draft"
+                orphans = await self._record_revision(
+                    session, element, before, "file", discard_files=before_commit is not None,
+                )
+                if await self._element_storage_usage(session, owner_id) > MAX_ELEMENT_STORAGE_BYTES:
+                    raise ValueError("元素资产存储空间已达到账号配额")
+                if await self._element_storage_usage(session) > MAX_GLOBAL_ELEMENT_STORAGE_BYTES:
+                    raise ValueError("元素资产已达到服务全局存储配额")
                 storage_cleanup = (
-                    await before_commit((replaced_file,))
-                    if before_commit is not None and replaced_file is not None
+                    await before_commit(orphans)
+                    if before_commit is not None and orphans
                     else None
                 )
                 audit_details: dict[str, object] = {
@@ -1551,6 +1808,7 @@ class PlatformStore:
                     raise ValueError("元素文件不存在")
 
                 deleted_file = _deleted_element_file_record(target)
+                before = _element_state(element)
                 element.files.remove(target)
                 if element.kind == "actor":
                     for item in element.files:
@@ -1567,10 +1825,14 @@ class PlatformStore:
                     element.status = "ready" if _actor_ready(element, slots) else "draft"
                 else:
                     element.status = "ready" if element.files else "draft"
+                # 删掉的文件留在改动前那一版里，恢复时还能指回去；只清理裁掉的旧版本独占的文件。
+                orphans = await self._record_revision(
+                    session, element, before, "file_delete", discard_files=before_commit is not None,
+                )
                 element.version += 1
                 storage_cleanup = (
-                    await before_commit((deleted_file,))
-                    if before_commit is not None
+                    await before_commit(orphans)
+                    if before_commit is not None and orphans
                     else None
                 )
                 audit_details: dict[str, object] = {
@@ -1622,10 +1884,20 @@ class PlatformStore:
                 if not element:
                     raise ValueError("元素不存在")
 
-                deleted_files = tuple(_deleted_element_file_record(item) for item in element.files)
+                # 现行文件连同历史版本的文件一起删；几版共用的同一个文件只删一次。
+                by_path = {item.storage_path: _deleted_element_file_record(item) for item in element.files}
+                for revision in (await session.scalars(
+                    select(ElementRevision).where(ElementRevision.element_id == element.id)
+                )).all():
+                    for entry in revision.files_json or []:
+                        record = _revision_file_record(revision, entry)
+                        if record.storage_path:
+                            by_path.setdefault(record.storage_path, record)
+                deleted_files = tuple(by_path.values())
                 await session.execute(
                     delete(RegenerationRequest).where(RegenerationRequest.element_id == element.id)
                 )
+                await session.execute(delete(ElementRevision).where(ElementRevision.element_id == element.id))
                 await session.delete(element)
                 storage_cleanup = (
                     await before_commit(deleted_files)

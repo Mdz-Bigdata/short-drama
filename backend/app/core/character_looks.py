@@ -319,21 +319,28 @@ def _pieces(task: Mapping[str, Any], cast: Sequence[str]) -> tuple[dict[str, dic
     return pieces, unowned
 
 
-def plan_looks(task: Mapping[str, Any], *, cast: Sequence[str] | None = None) -> list[dict[str, Any]]:
+def plan_looks(
+    task: Mapping[str, Any], *, cast: Sequence[str] | None = None, include_later: bool = False,
+) -> list[dict[str, Any]]:
     """本剧要出的每一张定妆图：``{name, of, label, description, facts}``，按角色，顺序同拆解目录。
 
     分场大纲写了谁在哪集出场时，只留用得上的：这个人一场都没有的那几集，不为它出图。``cast`` 默认是第 3 步的角色。
+    ``include_later``：剧本还没写到的那几集穿的也返回(``facts["later"]``)，入库登记、照样能出图，只是现在的镜头用不上。
     """
     names = list(cast) if cast is not None else _cast_of(task)
     pieces, _unowned = _pieces(task, names)
     scenes = _story_scenes(task)
     seen = _appearances(names, cast_aliases(dict(task)), scenes) if scenes else None
+    written = {int(scene["episode"]) for scene in scenes}
     looks: list[dict[str, Any]] = []
     for wearer, worn in pieces.items():
         for look in _wearer_looks(wearer, worn["costumes"], worn["makeup"]):
             spans = look["facts"].get("spans") or []
             if seen is None or (seen[wearer] and not spans) or any(first <= episode <= last for first, last in spans for episode in seen[wearer]):
                 looks.append(look)
+            elif include_later and (not spans or any(episode not in written for first, last in spans for episode in range(first, last + 1))):
+                # 剧本还没写到的集里会穿；写好的集里他都没穿这身的，才真用不上。
+                looks.append({**look, "facts": {**look["facts"], "later": True}})
     return looks
 
 

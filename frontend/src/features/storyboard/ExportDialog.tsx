@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ClipboardCopy, Download, Loader2, X } from 'lucide-react';
 
 import { apiRequest } from '../../api/client';
@@ -76,6 +77,12 @@ export function ExportDialog({ taskId, sceneId, kind, onClose }: ExportDialogPro
     return () => { cancelled = true; };
   }, [path]);
 
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   const copy = () => {
     void navigator.clipboard?.writeText(text).then(() => {
       setCopied(true);
@@ -93,7 +100,8 @@ export function ExportDialog({ taskId, sceneId, kind, onClose }: ExportDialogPro
     URL.revokeObjectURL(url);
   };
 
-  return (
+  // On the page root, so the stage nav and the chat sidebar stay under the dialog.
+  return createPortal(
     <div className="export-dialog" role="dialog" aria-label={kind === 'packages' ? t('提示词分包') : t('资产设定图')} aria-modal="true">
       <div className="export-dialog__panel">
         <header className="export-dialog__head">
@@ -153,6 +161,7 @@ export function ExportDialog({ taskId, sceneId, kind, onClose }: ExportDialogPro
           {busy && <Loader2 className="export-dialog__spin" aria-hidden="true" />}
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

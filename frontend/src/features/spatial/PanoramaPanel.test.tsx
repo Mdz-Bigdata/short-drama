@@ -38,6 +38,8 @@ describe('PanoramaPanel', () => {
     route([PANO]);
     render(<PanoramaPanel taskId="t1" sceneId="E1S01" onClose={() => {}} />);
     expect((await screen.findByTestId('viewer')).textContent).toBe(PANO.url);
+    // On the page root, so nothing in the workspace's own stacking context can cover it.
+    expect(screen.getByRole('dialog', { name: '360° 全景' }).parentElement).toBe(document.body);
   });
 
   it('says when a scene has none and offers no backdrop action', async () => {

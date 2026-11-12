@@ -28,9 +28,11 @@ export function fetchCanvas(projectId: string, canvasId: string, signal?: AbortS
   return apiRequest<CanvasRecord>(`${project(projectId)}/canvas?${board(canvasId)}`, { signal });
 }
 
-export function saveCanvas(projectId: string, canvasId: string, expectedVersion: number, doc: CanvasDoc) {
+/** `clientId` names the window saving, so the presence stream does not tell that same window about its own save. */
+export function saveCanvas(projectId: string, canvasId: string, expectedVersion: number, doc: CanvasDoc, clientId?: string) {
   return apiRequest<CanvasRecord>(`${project(projectId)}/canvas?${board(canvasId)}`, {
     method: 'PUT', body: json({ expected_version: expectedVersion, nodes: doc.nodes, edges: doc.edges }),
+    ...(clientId ? { headers: { 'X-Canvas-Client': clientId } } : {}),
   });
 }
 

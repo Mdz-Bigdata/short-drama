@@ -69,6 +69,7 @@ def build(
     inputs: Iterable[str],
     inline_inputs: int = 0,
     retried_without_frames: bool = False,
+    retried_with_stand_ins: bool = False,
     at: float | None = None,
 ) -> dict:
     """一条失败记录。``frames`` 是本看板发出去的分镜画面，``inputs`` 是这次请求发出去的全部图。"""
@@ -83,6 +84,7 @@ def build(
         "inputs": list(dict.fromkeys(str(url) for url in inputs if url)),
         "inline_inputs": int(inline_inputs or 0),
         "retried_without_frames": bool(retried_without_frames),
+        "retried_with_stand_ins": bool(retried_with_stand_ins),
         "at": float(at if at is not None else time.time()),
     }
 
@@ -148,6 +150,12 @@ def hint(entry: dict) -> str:
     """给人看的下一步。"""
     scene = str(entry.get("scene_id") or "本场")
     if entry.get("kind") == INPUT_IMAGE_SENSITIVE:
+        if entry.get("retried_with_stand_ins") and entry.get("retried_without_frames"):
+            return (
+                f"供应商拒收了其中一张输入图；{scene} 的分镜画面换成彩色影子、再去掉分镜画面后都仍被拒，"
+                "问题多半在定妆照本身(实拍的清晰正脸会被判疑似真人)：把演员的授权素材配到 ARK_AUTHORIZED_FACE_ASSETS，"
+                "或到角色页换一张定妆照后重跑第 5 阶段。"
+            )
         if entry.get("retried_without_frames"):
             return (
                 f"供应商拒收了其中一张输入图；去掉 {scene} 的分镜画面只带角色与场地参考后仍被拒，"

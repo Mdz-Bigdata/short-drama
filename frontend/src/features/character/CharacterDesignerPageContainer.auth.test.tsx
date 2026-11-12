@@ -54,7 +54,8 @@ describe('CharacterDesignerPageContainer under an expired session', () => {
     // Let the app idle well past any retry cadence.
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
 
-    expect(afterMount).toBeLessThanOrEqual(4);
+    // 一次演员清单 + 八类拍摄资产各一次计数(场地、道具、特效、商品、群演、车辆、置景、特技)。
+    expect(afterMount).toBeLessThanOrEqual(9);
     expect(elementCalls()).toBe(afterMount);
   });
 

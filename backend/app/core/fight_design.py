@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import re
 
-from app.core import knowledge_registry
+from app.core import knowledge_registry, prompt_data
 
 # Only fights use these words.
 STRONG_SIGNALS: tuple[str, ...] = (
@@ -65,19 +65,20 @@ XIANXIA_VISUAL_SECTIONS = ("能量四态", "尺度四件套", "近景对招")
 
 
 def fight_score(text: str, genre: str = "") -> int:
-    """Two points per strong signal (at most three), one per weak signal (at most two), one for the genre.
+    """Two points per strong signal (at most three), one per weak signal or contact verb (at most two each), one for the genre.
 
-    Without a strong signal the score is 0: a standoff full of conflict words is not a fight.
+    Without a strong signal a scene needs several distinct contact verbs (data/prompt/fight_scene.json) to count:
+    a standoff full of conflict words is not a fight, a beat-by-beat exchange of blows is.
     """
     content = text or ""
     strong = sum(1 for word in STRONG_SIGNALS if word in content)
+    # 不写「打斗」二字、直接写招的打戏(「挥刀劈向他的肩头，他侧身格开，反手一掌」)：接触动作够多就算。
+    contact = sum(1 for word in prompt_data.words("fight_scene", "contact_verbs") if word in content)
+    genre_point = 1 if str(genre or "").strip().lower() in FIGHT_GENRES else 0
     if not strong:
-        return 0
+        return FIGHT_THRESHOLD + genre_point if contact >= prompt_data.number("fight_scene", "contact_for_fight") else 0
     weak = sum(1 for word in WEAK_SIGNALS if word in content)
-    score = 2 * min(strong, 3) + min(weak, 2)
-    if str(genre or "").strip().lower() in FIGHT_GENRES:
-        score += 1
-    return score
+    return 2 * min(strong, 3) + min(weak, 2) + min(contact, 2) + genre_point
 
 
 def looks_like_fight(text: str, genre: str = "") -> bool:
@@ -112,35 +113,9 @@ def xianxia_sections(keywords: tuple[str, ...]) -> str:
     return "\n\n".join(picked)
 
 
-PLAN_RULES = """# 打戏设计（本集含打斗时适用）
+PLAN_RULES = prompt_data.text("fight_scene", "plan_rules")
 
-原文或大纲已经写定的人物、阵营、武器、能力、出招顺序、胜负与结尾一律照办；下面只管把这场打戏写得成立、好拍。
-1. **先定因果再写招**：交代谁为什么动手、各自想要什么；冲突逐级升级，中段至少一次攻守易位；胜负必须来自前文已经露出的破绽、伤势、地形或条件，不能临场爆发、凭空翻盘。
-2. **每人一套打法**：给每个参战角色定好起手架势、擅长距离、移动方式、主攻手段、破招办法、受击反应与收招方式；两人的打法一眼就能分开。
-3. **一个回合一条因果链**：出手意图 → 起势与轨迹 → 对手怎么应对 → 命中 / 落空 / 被格挡 → 受力反馈（身体、兵器、衣物、环境）→ 位移与状态结果。这个结果就是下一回合的起点，回合之间一路接下去，不各自复位重来（武是接化发：上一招的发就是下一招的来招）。交锋多密按流派与人物的交互力量档定：截拳道约 0.75 秒一个半单元、散打约 1.5 秒、太极约 2.5 秒，高手比常人快、老人慢、病重的人不进交锋——两个高手 9 秒至少过四招；写清参战人物的身份、武功与伤病，分镜阶段据此排单元。
-4. **空间要有路线**：交代起点、转折处与终点，至少用上一次场景里的可交互物（柱子、桌案、台阶、水面、栏杆）；双方的左右关系保持稳定，要换边就让人物在画面里走过去。
-5. **一打多不排队**：围攻方同时施压、互相掩护，主角靠走位和地形把局面拆成一对一，而不是敌人轮流上前挨打。
-6. **特殊能力四段成立**：法术、异能、法器写成 前置条件 → 发动 → 作用 → 结束；它需要的法器、血契、介质或代价必须在本集或前文出现过，不得临场补设。
-7. **快进快出**：第一个打斗分镜的第一拍就是有效动作，第一次接触落在开场 1.5 秒前后，不拖长对峙；打戏最后一个分镜里仍有人物、镜头或环境余波在动（尘土落下、衣摆回摆、刀尖滴血），不要定格摆拍。
-8. **台词嵌在攻防间隙**：打斗中的台词短而有力、一两句，放在拉开距离或僵持的瞬间，用来亮明立场、挑衅或揭示破绽，不要边打边长篇对白。
-"""
-
-VISUAL_RULES = """# 打斗分镜的视觉写法（打斗分镜适用，优先于上文「低缓细微动作」的一般要求）
-
-- **按时长分段**：一条分镜就是一次生成。4–6 秒分 1–2 段，7–10 秒分 2–3 段，11–15 秒分 3–5 段；每段 2.5–4 秒，最短的一段也要 2.5 秒。成片上更碎的快切是剪辑台从这些段里裁出来的，生成时不写。
-- **密度**：第一拍就是有效动作，第一次接触落在 1.5 秒前后；交锋次数按流派节奏 × 交互力量档（宗师 ×0.85、高手 ×1、习武 ×1.1、孩童 ×1.35、常人 ×1.5、老人 ×2），每段装若干个环扣的半单元（接→化→发），中段至少一次攻守易位。
-- **video_prompt.action** 每段一个主动作，按「攻方动作 → 守方反应 → 接触结果 → 受力反馈 → 落点姿态」写成连贯句子，不叠加第二套动作。
-- **接触是路径上的一个点**：写满「起势 → 加速 → 接触 → 受力形变 → 继续推进 → 滑开 / 擦过 → 转入下一动作」，句子不停在接触那一下；同一瞬间的细节一起写齐：接触点的火花或碎屑、双方身体各自的反应、衣摆与发丝、脚下地面、旁边被带动的物件。
-- 写身体路径而不是招式名：发力部位、轨迹方向（画面左 / 右 / 纵深）、接触点与对手被推开的方向；不要只写「使出一招××」。
-- **每段重述站位**：谁在画左、谁在画右、各自朝向、相隔多远（至少半个身位）；接触点给出画面位置，如「接触点位于画面正中偏上」。双方左右关系与观察轴全程不变。
-- 双方肢体与兵器轮廓分明、彼此之间留出空隙；刀光、法术光效让开关键接触点。
-- 承接上一分镜的落点姿态、伤势与兵器状态（断刃、脱手、沾血），已有的损伤在后面每一段都照写；手里的兵器与持握的手保持原样。
-- **打击感只给关键处**：2–3 帧黑白或白闪冲击帧只给关键击与终结击；镜头震动放在接触之后，只震一次；动态模糊落在环境与运动边缘，接触点保持清晰；慢动作只放在最后 1–2 秒。
-- **特效跟着招式的形状走**：横斩扫出一道宽扇形，上撩是向上扬起的月牙，下劈是沉重的楔形；大特效只给大幅度的挥砍，轻击只溅火花；每个角色固定一种特效颜色，全场不换。特效从兵器或接触点发出，找不到来源就不加。
-- **video_prompt.camera_motion** 选跟随动作的运镜（跟拍、横移、环绕、推拉），速度贴着攻击方向，运动强度可以高；固定机位只留给开打前的对峙。
-- **image_prompt.scene** 就是这条分镜的首帧：定格在出手前的起势姿态（重心下沉、兵器扬起、双方对视），两人轮廓分开，给动作留出画面空间。
-- **负面要求少写、正着写**：写画面里有什么（「两人之间隔着半个身位」），不写「不要 X」，也不把要避开的那个名词再写一遍；容易被误读的名词改写成形状与空间关系。
-"""
+VISUAL_RULES = prompt_data.text("fight_scene", "visual_rules")
 
 
 def _with_xianxia(rules: str, text: str, genre: str, keywords: tuple[str, ...], title: str, note: str = "") -> str:
@@ -159,8 +134,12 @@ def plan_rules_for(*texts: str, genre: str = "") -> str:
     text = "\n".join(str(item or "") for item in texts)
     if not looks_like_fight(text, genre):
         return ""
+    from app.core import fight_exchange
+
+    # 回合与招招写实从剧本就开始：分镜师接到的是已经按回合排好的打戏。
+    rules = f"{PLAN_RULES}\n{fight_exchange.writer_rule()}\n"
     return _with_xianxia(
-        PLAN_RULES, text, genre, XIANXIA_PLAN_SECTIONS, "玄幻打戏补充（本集为玄幻打戏时适用）",
+        rules, text, genre, XIANXIA_PLAN_SECTIONS, "玄幻打戏补充（本集为玄幻打戏时适用）",
         note="原文或大纲已写定的胜负、出招顺序与结尾优先；下面的三轮骨架与收束协议只用来补全原文没写定的部分。",
     )
 

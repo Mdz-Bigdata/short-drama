@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from app.core import breakdown_kinds, character_variants, emotion_points, literary, prompt_data, prop_scale, real_person
-from app.core.scene_turnaround import SCENE_VIEW_LABELS, SCENE_VIEW_PURPOSES
+from app.core.face_card import parse_face_card, render_face_card
+from app.core import wuxia_vfx
+from app.core.scene_turnaround import SCENE_REVERSE_SLOT, SCENE_VIEW_LABELS, SCENE_VIEW_PURPOSES
 
 KINDS = {"scene": "scenes", "prop": "props", "costume": "costumes", "effect": "effects", "product": "products", **breakdown_kinds.CATALOG_KEYS}
 LABELS = {
@@ -159,6 +161,9 @@ def costume_wearers(references: list[dict], characters: Sequence[str], aliases: 
     out: list[tuple[str, str]] = []
     for item in references:
         if item.get("kind") == "actor" and item.get("variant") and _text(item.get("name")) in cast:
+            # 还没画的造型：参考图上不是这身，不绑「以参考图为准」，衣服由参考图那句的文字说。
+            if item.get("look_undrawn"):
+                continue
             if (item["name"], str(item["variant"])) not in out:
                 out.append((item["name"], str(item["variant"])))
             continue
@@ -227,6 +232,7 @@ def compile_scene_context(
         if own_variants:
             actor["variants"] = own_variants
             actor["base_description"], actor["base_image_url"] = actor["description"], actor["image_url"]
+            actor["base_face_url"] = actor.get("face_url") or ""
         chosen = character_variants.pick(
             own_variants, text=script, episode=character_variants.episode_of(scene_id), scene=character_variants.scene_of(scene_id),
         )
@@ -324,6 +330,35 @@ def look_makeup_note(makeup: str, *, panel: bool = False) -> str:
     return prompt_data.text("character_looks", "panel_look_makeup" if panel else "shot_look_makeup").format(text) if text else ""
 
 
+def look_outfit_note(name: str, variant: str, outfit: str, *, drawn: bool = True) -> str:
+    """跟在参考图那句后面：这个人这一镜按剧情穿的那身是什么。还没画成定妆图时写明衣服只按文字。
+
+    句中不用「；」「。」，参考图被路由去掉时这句留下，衣服的文字照样在提示词里。措辞在 character_looks.json。
+    """
+    text = re.sub(r"[；;。]+", "，", str(outfit or "")).strip("，")[: prompt_data.number("character_looks", "outfit_limit")]
+    if not (variant and text):
+        return ""
+    return prompt_data.text("character_looks", "shot_look_outfit").format(name, variant, text) + (
+        "" if drawn else prompt_data.text("character_looks", "shot_look_by_text")
+    )
+
+
+def dress_cast_looks(looks: Mapping[str, str], references: Sequence[Mapping[str, Any]]) -> dict[str, str]:
+    """视频提示词「人物外貌」用的人物卡：本镜按剧情换了妆造的人，设定集上那身衣服换成这身。"""
+    worn = {
+        str(item.get("name")): str(item.get("outfit"))
+        for item in references if item.get("kind") == "actor" and item.get("variant") and item.get("outfit")
+    }
+    dressed = dict(looks)
+    for name, outfit in worn.items():
+        if name not in dressed:
+            continue
+        card = parse_face_card(str(dressed[name] or ""))
+        face = render_face_card(card, include_other=False) if card.has_face_layers else str(dressed[name] or "").strip("；;。 ")
+        dressed[name] = "；".join(part for part in (face, f"服装：{outfit}") if part)
+    return dressed
+
+
 def real_size_note(kind: str, name: str) -> str:
     """道具和车辆在参照表里的真实尺寸，跟在参考图那句后面；查不到是空串。句中不用「；」「。」。"""
     if kind not in ("prop", "vehicle"):
@@ -352,29 +387,121 @@ def reference_note(number: int, reference: dict, *, label: str = "") -> str:
             + (real_person.say("outfit_by_text", variant or "本场造型", outfit) if outfit else "")
             + look_makeup_note(str(reference.get("look_makeup") or ""))
         )
+    if kind == "actor" and reference.get("view") == "face":
+        return prompt_data.text("character_looks", "shot_headshot").format(number, label, name)
     if kind == "actor":
         variant = re.sub(r"[；;。]+", "，", str(reference.get("variant") or "")).strip("，")
         makeup = re.sub(r"[；;。]+", "，", str(reference.get("makeup") or "")).strip("，")
+        outfit = look_outfit_note(name, variant, str(reference.get("outfit") or ""), drawn=not reference.get("look_undrawn"))
+        if variant and reference.get("look_undrawn"):
+            lead = prompt_data.text("character_looks", "shot_look_undrawn").format(number, label, name)
+        else:
+            lead = f"参考图{number}仅锁定{label}「{name}」{f'（造型：{variant}）' if variant else ''}的脸型、发型、体型与服装，不采用图中背景、版式与其他人物，不是额外剧情或额外人物"
         return (
-            f"参考图{number}仅锁定{label}「{name}」{f'（造型：{variant}）' if variant else ''}的脸型、发型、体型与服装，不采用图中背景、版式与其他人物，不是额外剧情或额外人物"
+            lead + outfit
             + look_makeup_note(str(reference.get("look_makeup") or ""))
             + (real_person.say("reference_body") if reference.get("real_person") else "")
             + (f"，图上没有的妆效按文字加上：{makeup}" if makeup else "")
         )
     if kind != "scene":
-        return f"参考图{number}仅锁定{label}「{name}」的外形、材质与颜色，不采用图中背景与人物，不是额外剧情或额外人物" + real_size_note(kind, name)
+        # 特效图只是一瞬：写明它在镜头里什么时候出现、怎么照人(措辞在 wuxia_vfx.json)。
+        timing = prompt_data.text("wuxia_vfx", "shot_effect_reference") if kind == "effect" else ""
+        return f"参考图{number}仅锁定{label}「{name}」的外形、材质与颜色，不采用图中背景与人物，不是额外剧情或额外人物" + timing + real_size_note(kind, name)
     view = str(reference.get("view") or "")
     layout = re.sub(r"[；;。]+", "，", _text(reference.get("layout"))).strip("，")
+    frame = str(reference.get("frame") or "")
+    # 只核对陈设的视角图不再写它平时用来做什么(「用于走位透视」)，免得和「不决定本镜构图」打架。
+    purpose = "" if frame in ("space_only", "reverse") else f"，用于{SCENE_VIEW_PURPOSES.get(view, '')}"
     scope = (
-        f"的{SCENE_VIEW_LABELS[view]}，用于{SCENE_VIEW_PURPOSES[view]}"
+        f"的{SCENE_VIEW_LABELS[view]}{purpose}"
         if view in SCENE_VIEW_PURPOSES and view != "scene_main"
         else "的空间布局，光线与天色以本场为准、不照搬此图"
     )
     return (
         f"参考图{number}仅锁定{label}「{name}」{scope}"
         + (f"（{layout}）" if layout else "")
+        + (prompt_data.text("scene_views", frame) if frame else "")
         + "，图中人物不作参考，不是额外剧情或额外人物"
     )
+
+
+def scene_frame_view(shot: Mapping[str, Any], available: set[str], *, empty_shot: bool) -> str | None:
+    """这一镜用场地的哪张视角图定构图；反打镜头没有反打视角时返回 None(没有一张对得上方向)。
+
+    按景别、角度、运镜的关键词挑，挑中的视角没有就退回主场景全景；细节图只给无人的插入镜头。
+    关键词在 scene_views.json。
+    """
+    framing = " ".join(_text(shot.get(key)) for key in ("size", "angle", "motion", "framing"))
+    if any(word in framing for word in prompt_data.words("scene_views", "reverse_words")):
+        return SCENE_REVERSE_SLOT if SCENE_REVERSE_SLOT in available else None
+    fallback = "scene_main" if "scene_main" in available else next(iter(sorted(available)), None)
+    return next(
+        (
+            view for view, words in prompt_data.value("scene_views", "pick")
+            if view in available and (view != "scene_detail" or empty_shot) and any(word in framing for word in words)
+        ),
+        fallback,
+    )
+
+
+def bind_scene_frames(references: list[dict], shot: Mapping[str, Any], *, empty_shot: bool) -> None:
+    """同一场地发了几张视角图时，给每张写明这一镜里的职责(``frame``)。
+
+    几张图不分职责一起发，模型会把另一个方向的前景(反向那张图里的台阶、门)混进本镜。一张是本镜唯一的
+    场景构图来源，其余只核对陈设；反打镜头没有反打视角时，全部只核对陈设、写明方向相反。
+    """
+    scenes = [item for item in references if item.get("kind") == "scene"]
+    for name in dict.fromkeys(str(item.get("name") or "") for item in scenes):
+        group = [item for item in scenes if item.get("name") == name]
+        chosen = scene_frame_view(shot, {str(item.get("view") or "scene_main") for item in group}, empty_shot=empty_shot)
+        if chosen is None:
+            for item in group:
+                item["frame"] = "reverse"
+        elif len(group) > 1:
+            for item in group:
+                item["frame"] = "composition" if str(item.get("view") or "scene_main") == chosen else "space_only"
+
+
+def _crowd_moves(item: dict, text: str, key: str) -> bool:
+    """这段文字里，这批群演的名字后面不远处有没有进场 / 离场的词。"""
+    name = _text(item.get("name"))
+    stem = re.split(r"[（(]", name)[0]
+    window = prompt_data.number("crowd_presence", "window")
+    words = prompt_data.words("crowd_presence", key)
+    for alias in dict.fromkeys(alias for alias in (name, stem, *_names(item.get("aliases"))) if len(alias) >= 2):
+        for match in re.finditer(re.escape(alias), text):
+            if any(word in text[match.end(): match.end() + window] for word in words):
+                return True
+    return False
+
+
+def crowd_on_set(context: dict, shots: Sequence[Mapping[str, Any]]) -> list[set[str]]:
+    """一场戏里每一镜在场的群演名字，按镜头顺序。
+
+    群演只在点到名字的那一镜绑上，前一镜教室还空着、后一镜突然坐满。这里按剧本把在场的时段连起来：
+    本场剧本提到的群演从第一镜起就在场；第一次露面那一镜写的是进场(涌入、走进)，就从那一镜起在场；
+    某一镜写了离场(退下、散去)，那一镜之后就不在。词表在 crowd_presence.json。
+    """
+    actions = [_text(shot.get("desc")) for shot in shots]
+    on_set: list[set[str]] = [set() for _ in shots]
+    for item in context.get("extras") or []:
+        first = next((index for index, action in enumerate(actions) if mentioned(item, action)), None)
+        start = first if first is not None and _crowd_moves(item, actions[first], "enter_words") else 0
+        for index in range(start, len(shots)):
+            on_set[index].add(item["name"])
+            if mentioned(item, actions[index]) and _crowd_moves(item, actions[index], "leave_words"):
+                break
+    return on_set
+
+
+def crowd_lines(context: dict, shot: Mapping[str, Any], on_set: Iterable[str]) -> list[str]:
+    """这一镜没点名、但本场还在场的群演，写成一句话放进视频提示词(没有参考图时只能靠这句)。"""
+    names = set(on_set)
+    action = _text(shot.get("desc"))
+    return [
+        prompt_data.text("crowd_presence", "shot_line").format(item["name"], _text(item.get("description")) or "沿用本场人数与站位")
+        for item in context.get("extras") or [] if item["name"] in names and not mentioned(item, action)
+    ]
 
 
 def identity_sheets(
@@ -444,7 +571,21 @@ def video_reference_entries(
     ]
 
 
-def panel_context(context: dict, shot: dict, *, layout: str = "") -> dict:
+def _identity(item: Mapping[str, Any]) -> dict[str, Any]:
+    """参考图来自素材库哪个元素的哪一版：资产改了之后，用过它的镜头和片段靠这个认出来。只在项目里的资产不带。"""
+    element_id = _text(item.get("id"))
+    if not element_id:
+        return {}
+    identity: dict[str, Any] = {"id": element_id, "version": item.get("version") if isinstance(item.get("version"), int) else 0}
+    variant_id = _text(item.get("variant_element_id"))
+    if variant_id:
+        look = next((entry for entry in item.get("variants") or [] if isinstance(entry, Mapping) and _text(entry.get("id")) == variant_id), {})
+        identity["variant_element_id"] = variant_id
+        identity["variant_version"] = look.get("version") if isinstance(look.get("version"), int) else 0
+    return identity
+
+
+def panel_context(context: dict, shot: dict, *, layout: str = "", crowd: Iterable[str] = ()) -> dict:
     """Respect the shot's cast column and bind references with type/name labels.
 
     ``layout`` is the set's screen sides from the spatial stage (门在画面右侧、窗在画面左侧); the
@@ -494,36 +635,50 @@ def panel_context(context: dict, shot: dict, *, layout: str = "") -> dict:
             character_variants.episode_of(context["scene_id"]), character_variants.scene_of(context["scene_id"]),
         )
         if asked is not None and asked.get("id") != item.get("variant_element_id"):
-            base = {**item, "description": item.get("base_description", item.get("description")), "image_url": item.get("base_image_url", item.get("image_url"))}
+            base = {
+                **item, "description": item.get("base_description", item.get("description")),
+                "image_url": item.get("base_image_url", item.get("image_url")), "face_url": item.get("base_face_url", item.get("face_url")),
+            }
             item = character_variants.apply(base, asked)
         selected.append(item)
     selected += context["scenes"]
     props = [item for item in context["props"] if mentioned(item, action)]
     products = [item for item in context.get("products", []) if mentioned(item, action)]
     effects = [item for item in context["effects"] if mentioned(item, action)]
+    # 「雷劫劈下」写的就是「九霄雷劫」：核心词只属于本场一个特效时也绑上。
+    effects += wuxia_vfx.bound_by_term(context["effects"], action, [item["name"] for item in effects])
     costumes = [
         item
         for item in context["costumes"]
         if any(costume_owner(item, name) for name in characters)
         or mentioned(item, action)
     ]
+    on_set = set(crowd)
     # 群演、车辆、特技、置景按动作里点到的名字绑；妆效只要这场戏提到了，就跟着它长在谁身上。
     extras_on_set = [
         item for kind, key in breakdown_kinds.CATALOG_KEYS.items() for item in context.get(key, [])
         if mentioned(item, action) or (kind == "makeup" and any(costume_owner(item, name) for name in characters))
+        # 本场在场的群演(见 crowd_on_set)：这一镜没点名也照样在背景里。
+        or (kind == "extra" and item["name"] in on_set)
     ]
-    selected += props + products + costumes + effects + extras_on_set
+    # 特效图排在旧服装图前面：九张的上限先让给特效(戏服已经画在定妆图上了)。
+    selected += props + products + effects + costumes + extras_on_set
     references: list[dict[str, str]] = []
     seen_urls = set()
     for item in selected:
         url = item.get("image_url")
         if url and url not in seen_urls and len(references) < 9:
-            reference = {"kind": item["kind"], "name": item["name"], "image_url": url}
+            reference = {"kind": item["kind"], "name": item["name"], "image_url": url, **_identity(item)}
             if item.get("variant"):
                 reference["variant"] = str(item["variant"])
                 # 定妆图上画了的妆效也写进提示词：图上左右画反了，按文字改回来。
                 if worn := look_makeup(str(item.get("description") or "")):
                     reference["look_makeup"] = worn
+                # 这一场按剧情穿的那身，衣服的文字跟着这张参考图一起进提示词。
+                if outfit := look_outfit(str(item.get("description") or "")):
+                    reference["outfit"] = outfit
+                if item.get("variant_drawn") is False:
+                    reference["look_undrawn"] = True
             if item["kind"] == "actor":
                 # 没画进定妆图的妆效：这一镜提到它，就按文字加在当时那身上。
                 added = [
@@ -539,21 +694,27 @@ def panel_context(context: dict, shot: dict, *, layout: str = "") -> dict:
                 assets = real_person.ark_assets(item.get("metadata"))
                 if assets:
                     reference["ark_assets"] = assets
-                if item.get("variant") and (outfit := look_outfit(str(item.get("description") or ""))):
-                    reference["outfit"] = outfit
             references.append(reference)
             seen_urls.add(url)
-            # 真人演员的正脸照紧跟在他那张图后面：全身照或定妆图管服装，正脸照管相貌。
+            # 正面大头照紧跟在这个人的正面全身照后面：全身照管体型、发型与服装，大头照管相貌。
             face_url = item.get("face_url")
-            if item.get("real_person") and face_url and face_url not in seen_urls and len(references) < 9:
-                references.append({"kind": "actor", "name": item["name"], "image_url": face_url, "real_person": True, "view": "face"})
+            if item["kind"] == "actor" and face_url and face_url not in seen_urls and len(references) < 9:
+                references.append({
+                    "kind": "actor", "name": item["name"], "image_url": face_url, "view": "face",
+                    **({"real_person": True} if item.get("real_person") else {}), **_identity(item),
+                })
                 seen_urls.add(face_url)
     # The set's extra views come last: they only take the places the cast and props leave free.
+    # 只带这一镜定构图的那一张：用不上的视角图不发，免得它们的前景串进本镜。主场景全景照常发，核对陈设。
+    empty_shot = not any(item["kind"] == "actor" for item in references)
     for item in context["scenes"]:
-        for view, url in (item.get("views") or {}).items():
-            if view in SCENE_VIEW_PURPOSES and url and url not in seen_urls and len(references) < 9:
-                references.append({"kind": "scene", "name": item["name"], "image_url": url, "view": view})
-                seen_urls.add(url)
+        views = {view: url for view, url in (item.get("views") or {}).items() if view in SCENE_VIEW_PURPOSES and url}
+        chosen = scene_frame_view(shot, {*views, *(["scene_main"] if item.get("image_url") else [])}, empty_shot=empty_shot)
+        url = views.get(chosen or "")
+        if chosen != "scene_main" and url and url not in seen_urls and len(references) < 9:
+            references.append({"kind": "scene", "name": item["name"], "image_url": url, "view": chosen, **_identity(item)})
+            seen_urls.add(url)
+    bind_scene_frames(references, shot, empty_shot=empty_shot)
     return {
         "characters": characters or [EMPTY_ACTOR],
         "props": [item["name"] for item in props] or ["本格无额外道具"],

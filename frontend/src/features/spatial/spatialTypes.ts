@@ -245,6 +245,30 @@ export interface ShotTimeline {
   cuts?: CameraCut[];
 }
 
+export type ContactKind = 'hold' | 'sit' | 'rest';
+/** '' means the right hand. */
+export type ContactHand = 'left' | 'right' | 'both' | '';
+
+/**
+ * A body touching a thing, kept through edits and playback. hold: `actor` holds the prop `target`;
+ * sit: `actor` sits on the seat `target`; rest: `target` rests on `support`.
+ */
+export interface StageContact {
+  id: string;
+  kind: ContactKind;
+  /** hold, sit: the actor; rest: ''. */
+  actor: string;
+  target: string;
+  /** rest: the piece it rests on; hold, sit: ''. */
+  support: string;
+  /** hold only. */
+  hand: ContactHand;
+  /** Empty: the whole scene; else only these shots. */
+  shot_ids: number[];
+  /** auto contacts may be re-derived on re-plan; manual ones are kept. */
+  source: 'auto' | 'manual';
+}
+
 export interface StagePlan {
   version: 1;
   scene_id: string;
@@ -270,6 +294,8 @@ export interface StagePlan {
   /** Keyed by shot id as a string. */
   timelines?: Record<string, ShotTimeline>;
   blockout_standin_limbs?: boolean;
+  /** Absent in a plan stored before the stage kept contacts. */
+  contacts?: StageContact[];
 }
 
 export interface SpatialPlanResponse {

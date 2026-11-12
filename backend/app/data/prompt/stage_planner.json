@@ -1,0 +1,46 @@
+{
+  "_about": "规则排位(app/core/spatial_stage/planner.py)用的词表和句子。empty_cast 是角色栏里表示「没有人」的写法；名字里含 crowd_markers 任一词的是群体(群演、士兵们)，站后景错落分布；道具栏含 placeholder_props 任一词的不是道具。separation_rules 按顺序比，场景文字里先出现在哪一组 words 的，两位主角就相距那组的 metres 米，站位叫那组的 label；都没有就用 default_separation。文字里有 side_by_side 任一词的，两人同向并肩站，否则面对面——这两个词取自 stage_brief.json 的 pair_relations.facing / side_by_side，校验「面对面的人是否相向」读同一个键，这里不另写。time_of_day_suffixes 是场景地点末尾的时间、内外景写法，去掉之后地点相同的两场共用一个景(长词写在短词前面)。reasons 是规则排位让人离开站位的理由：entrance 入场、approach 走近、retreat 后退、offstage 入场前的镜头不在场，hold_approach / hold_retreat 是走近、后退那一镜之前各镜站在起点的理由。formations 是整场站位的一句话：empty 空镜，pair 两人(relation 为面对面或同向并肩，mood 为站位的 label，separation 为米数)，single 单人；有配角加 supporting(一位配角 shape 为 supporting_shapes.one，多位为 many)，有群体加 crowd，人名之间用 name_joiner 隔开。crowd_note 是群体那个标记上的说明。empty_scene_shot 是没有分镜表的空镜场景自动补的那一镜的画面描述。",
+  "empty_cast": ["空镜（无人物）", "空镜", "无", "无人", "无人物", ""],
+  "crowd_markers": [
+    "群演", "众", "们", "士兵", "追兵", "路人", "人群", "敌人", "杂兵", "护卫", "侍卫",
+    "家丁", "打手", "军士", "士卒", "小兵", "匪徒", "围观", "群众", "百姓", "宾客", "随从"
+  ],
+  "placeholder_props": ["本场无", "无额外", "无关键", "无道具"],
+  "separation_rules": [
+    {"words": ["拥抱", "相拥", "依偎", "搂", "耳语", "贴近", "亲吻", "搀扶", "抱住", "扶住"], "metres": 0.7, "label": "贴身"},
+    {"words": ["对峙", "拔刀", "拔剑", "持剑", "剑指", "交手", "打斗", "厮杀", "搏斗", "追杀", "对战", "举枪", "挥拳"], "metres": 2.6, "label": "对峙"},
+    {"words": ["跪", "叩首", "叩拜", "参拜", "行礼"], "metres": 2.2, "label": "上下位"}
+  ],
+  "default_separation": {"metres": 1.5, "label": "对话"},
+  "side_by_side": ["并肩", "并排", "同行", "携手", "一同走", "并辔", "结伴"],
+  "time_of_day_suffixes": [
+    "凌晨", "清晨", "早晨", "上午", "中午", "午后", "下午", "黄昏", "傍晚", "深夜", "夜晚", "白天", "内景", "外景",
+    "日", "夜", "晨", "昼"
+  ],
+  "reasons": {
+    "entrance": "从画外一侧入场，走到既定站位",
+    "approach": "走近到既定站位",
+    "retreat": "后退到既定站位",
+    "offstage": "尚未入场",
+    "hold_approach": "还站在稍远处，尚未走近",
+    "hold_retreat": "还站在近处，尚未退开"
+  },
+  "formations": {
+    "empty": "空镜：无人物站位",
+    "pair": "{relation}·{mood}·相距{separation:.1f}米",
+    "single": "单人·居中偏左，视线与动作朝画右留出空间",
+    "supporting": "；{names}在两人后方成{shape}",
+    "supporting_shapes": {"one": "倒三角", "many": "弧形"},
+    "crowd": "；{names}在后景错落分布",
+    "name_joiner": "、"
+  },
+  "crowd_note": "群体，按错落队形分布在此标记周围",
+  "empty_scene_shot": "环境建立",
+  "contact_verbs": {
+    "hold": ["握着", "握住", "握紧", "握", "拿着", "拿起", "拿出", "攥着", "攥紧", "攥", "举起", "举着", "手持", "捧着", "捧起", "提着", "拎着", "端着", "端起", "抓着", "抓起", "捏着", "托着"],
+    "sit": ["坐在", "坐到", "坐上", "坐回", "坐进", "坐于", "落座于", "落座在"]
+  },
+  "contact_hands": [["左手", "left"], ["右手", "right"], ["双手", "both"], ["两手", "both"]],
+  "contact_gaps": {"name": 10, "object": 6},
+  "seat_reach_m": 1.5
+}

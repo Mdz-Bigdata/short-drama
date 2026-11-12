@@ -165,9 +165,19 @@ class StageFourIntegrationTests(unittest.TestCase):
         scene = detail["foundation"]["scene_and_props"]
         self.assertIn("林夏：站立，身高约168cm", scene["spatial_structure"])
         forms = {item["name"]: item["form_and_count"] for item in scene["landmarks"]}
-        self.assertRegex(forms["录音笔"], r"^1处，宽约\d\.\d米.*高约\d\.\d米，位置固定$")
+        # A hand prop is told at the size of the thing, not as the half-metre stand-in box.
+        self.assertEqual(forms["录音笔"], "1处，宽约14厘米、高约3厘米，位置固定")
         self.assertIn("录音笔：", detail["still_prompts"][0]["prompt"])
         self.assertIn("高约", detail["still_prompts"][0]["prompt"])
+
+    def test_a_stand_in_prop_reaches_the_director_without_a_size(self):
+        _generate(self.service, self.task, "E1S01")
+        plan = spatial_stage.load_plan(self.task, "E1S01")
+        stand_in = plan.landmarks[0].model_copy(update={"name": "祭坛", "kind": "prop", "size": (0.5, 0.5, 0.5), "elevation_m": 0.0})
+        context = spatial_stage.director_context(plan.model_copy(update={"landmarks": [*plan.landmarks, stand_in]}))
+        forms = {item["name"]: item["form_and_count"] for item in context["landmarks"]}
+        self.assertEqual(forms["祭坛"], "1处，位置固定")
+        self.assertIn("厘米", forms["录音笔"])
 
     def test_an_error_level_spatial_failure_holds_the_scene_back_from_stage_five(self):
         payload = _generate(self.service, self.task, "E1S01")
@@ -277,6 +287,61 @@ class StageFourIntegrationTests(unittest.TestCase):
         self.assertEqual(spatial_stage.screen_direction(spatial_stage.ensure_plan(self.task, "E1S01"), 99), "neutral")
         self.assertIsNone(spatial_stage.ensure_plan(self.task, "E9S99"))
         self.assertEqual(spatial_stage.panel_fields(spatial_stage.ensure_plan(self.task, "E1S01"), 99), {})
+
+
+class StageFourDeskCaptureTests(unittest.TestCase):
+    """The stage-4 run writes the model's blocking and its refined lenses straight to the store: each write dates
+    the desk pictures against the plan it replaces, so only the pictures that write could show in are dated."""
+
+    ANSWER = json.dumps({"rationale": "隔案对峙", "operations": [
+        {"op": "add_landmark", "name": "长案", "kit": "desk", "position": [0, -2]},
+        {"op": "set_pose", "name": "林夏", "preset": "cross-arms"},
+    ]}, ensure_ascii=False)
+
+    def test_both_direct_writes_date_captures_against_the_stored_plan(self):
+        from app.service import director_desk_service as director_desk
+
+        service, task = DramaService(), _task()
+        task["config"]["stage_planner"] = "model"
+        scene = spatial_stage.breakdown_scene(task, "E1S01")
+        saved: list = []
+        marked: list = []
+        save_plan, mark_captures_stale = spatial_stage.save_plan, director_desk.mark_captures_stale
+
+        def save(task_, plan):
+            saved.append((spatial_stage.load_plan(task_, plan.scene_id), plan))
+            save_plan(task_, plan)
+
+        def mark(task_, scene_id, *, before=None, after=None):
+            marked.append((scene_id, before, after))
+            mark_captures_stale(task_, scene_id, before=before, after=after)
+
+        def llm(model, system, user, *args, **kwargs):
+            return self.ANSWER if "这一场的剧本" in user else _table("E1S01")
+
+        with patch.object(spatial_stage, "save_plan", side_effect=save), \
+                patch.object(director_desk, "mark_captures_stale", side_effect=mark), \
+                patch.object(service.gateway, "has_text_model", return_value=True), \
+                patch.object(service.gateway, "last_answer_was_offline", return_value=False), \
+                patch.object(service.gateway, "call_llm", side_effect=llm), \
+                patch.object(service.gateway, "generate_image", return_value=("http://img.test/x.png", "meta")), \
+                patch("app.service.drama_service.load_storyboard_elements", return_value=[]), \
+                patch("app.service.drama_service.compose_nine_grid", lambda sources, path: path):
+            service._generate_scene_board(
+                task, task["config"], scene, sys_prompt="s", storyboard_negative="", title="暗室回声",
+                genre="mystery", dir_style="noir", shot_style="cinematic", guidance="", char_info=("林夏", "", "周教授", ""),
+            )
+
+        self.assertEqual(spatial_stage.load_plan(task, "E1S01").planner, "model")
+        # Saved in turn: the rule preview, the model's blocking, the plan solved on it (plan_scene dates that one
+        # itself), and that plan with its lenses refined. The second and the last are this run's own writes.
+        self.assertEqual([written.planner for _stored, written in saved], ["rules", "model", "model", "model"])
+        self.assertEqual(len(marked), 2)
+        for (scene_id, before, after), (stored, written) in zip(marked, (saved[1], saved[-1])):
+            self.assertEqual(scene_id, "E1S01")
+            self.assertIs(after, written)
+            self.assertIsNotNone(stored)
+            self.assertEqual(before.model_dump(exclude={"updated_at"}), stored.model_dump(exclude={"updated_at"}))
 
 
 class SpatialApiTests(unittest.TestCase):

@@ -46,10 +46,15 @@ class EveryKnowledgeSourceReachesRuntimeTests(unittest.TestCase):
         "scene-craft-dialogue",    # 场次工艺与对白技法 · 阶段2
         "payoff-arc-craft",        # 爽点谱系与主角强弱两段弧 · 阶段1/2
         "character-relationship-craft",  # 主角拷问与人物关系架法 · 阶段1/2
+        "causal-chain-craft",      # 因果链：把「然后」换成「所以」 · 阶段1/2
+        "tension-craft",           # 紧张感：控制观众的预期 · 阶段1/2
         "frame-handoff-action-light-tone",  # 首尾帧衔接：接动作、接光线、接色调 · 阶段4
         "shot-group-and-handoff-checks",    # 镜头组与连镜对表：站位、道具、组合禁忌 · 阶段4
         "cut-connection-ideas",             # 接镜思路与接不上的诊断 · 阶段4
         "segment-relay-and-fight-keyframes",  # 分段接力与打斗关键帧 · 阶段4
+        "xianxia-power-system",    # 修仙 / 武侠力量体系 · 阶段1 总导演、阶段2 编剧(修仙、武侠题材)
+        "xianxia-catalog",         # 修仙设定谱：功法、丹药、宗门、法宝道具 · 阶段1 总导演、阶段2 编剧
+        "xianxia-world",           # 修仙世界：妖兽、称谓礼数、宗门服饰、坊市灵石 · 阶段1 总导演、阶段2 编剧(修仙)
     )
 
     def test_each_guide_is_read_into_a_stage_prompt(self):

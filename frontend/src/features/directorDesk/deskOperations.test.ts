@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { PLAN } from '../spatial/spatialFixtures';
 import { actorsInShot, type StageLandmark, type StagePlan } from '../spatial/spatialTypes';
 import { actorMoveOperation, applyAll, applyLocal, inverseFromDiff, inverseOf, poseOperation } from './deskOperations';
+import { verticalFov } from './lib/stageMath';
 
 const CROWD = { id: 'crowd-01', label: '围观', rows: 1, columns: 2, spacing: 1, center: [4, 4] as [number, number], yaw_deg: 0, body_type: 'standard', seed: 7 };
 const STAGE: StagePlan = {
@@ -47,6 +48,17 @@ describe('applyLocal', () => {
     expect(next.shots[0]).toMatchObject({ camera_id: 'alt-01-01', alt_camera_ids: ['cam-01'] });
   });
 
+  it('takes the cuts through a removed candidate with it, as the server does', () => {
+    const cuts = [{ id: 'cut-1', camera_id: 'alt-01-01', start: 1, end: 2 }, { id: 'cut-2', camera_id: 'cam-02', start: 3, end: 4 }];
+    const cutting: StagePlan = { ...STAGE, timelines: { 1: { duration_s: 5, fps: 24, camera: [], actors: {}, cuts }, 2: { duration_s: 4, fps: 24, camera: [], actors: {} } } };
+    const next = applyLocal(cutting, { op: 'remove_camera', camera_id: 'alt-01-01' });
+    expect(next.cameras.map(camera => camera.id)).not.toContain('alt-01-01');
+    expect(next.timelines?.['1'].cuts).toEqual([cuts[1]]);
+    expect(next.timelines?.['2']).toBe(cutting.timelines?.['2']);
+    // No cut named it: the timelines are left as they were.
+    expect(applyLocal(cutting, { op: 'remove_camera', camera_id: 'alt-01-09' }).timelines).toBe(cutting.timelines);
+  });
+
   it('sets the scene backdrop field by field and undoes it to what was there', () => {
     const lit = applyLocal(STAGE, { op: 'set_backdrop', kind: 'color', color: '#101820' });
     expect(lit.backdrop).toEqual({ kind: 'color', color: '#101820', url: '', yaw_deg: 0, opacity: 1 });
@@ -65,6 +77,18 @@ describe('applyLocal', () => {
   it('leaves the plan alone for what only the server can resolve', () => {
     expect(applyLocal(STAGE, { op: 'frame_shot', shot_id: 1, size: '近景' })).toBe(STAGE);
     expect(applyLocal(STAGE, { op: 'add_camera', shot_id: 1 })).toBe(STAGE);
+    // A lens that names an id the server would refuse is not drawn: one in use, another shot's, a filming lens's, any other shape.
+    expect(applyLocal(STAGE, { op: 'add_camera', shot_id: 1, camera_id: 'alt-01-01' })).toBe(STAGE);
+    expect(applyLocal(STAGE, { op: 'add_camera', shot_id: 1, camera_id: 'alt-02-01' })).toBe(STAGE);
+    expect(applyLocal(STAGE, { op: 'add_camera', shot_id: 1, camera_id: 'cam-02' })).toBe(STAGE);
+    expect(applyLocal(STAGE, { op: 'add_camera', shot_id: 1, camera_id: 'cam-9' })).toBe(STAGE);
+    expect(applyLocal(STAGE, { op: 'add_camera', shot_id: 1, camera_id: 'lens-01' })).toBe(STAGE);
+  });
+
+  it('draws a free cam- id back as a candidate, the way add_camera takes one', () => {
+    const next = applyLocal(STAGE, { op: 'add_camera', shot_id: 1, camera_id: 'cam-09', position: [2, 1.5, 2] });
+    expect(next.cameras.find(camera => camera.id === 'cam-09')).toMatchObject({ position: [2, 1.5, 2], move: { kind: 'static' } });
+    expect(next.shots[0].alt_camera_ids).toEqual(['alt-01-01', 'cam-09']);
   });
 
   it('draws a new crowd before the server answers, under the id it will get', () => {
@@ -102,7 +126,7 @@ describe('inverseOf', () => {
       { op: 'add_landmark', name: '录音笔', kind: 'prop', position: [0, -0.9], size: [0.5, 0.5, 0.5], yaw_deg: 0, shape: 'box', color: '' },
     ]);
     expect(inverseOf(STAGE, [{ op: 'remove_camera', camera_id: 'alt-01-01' }])).toEqual([
-      { op: 'add_camera', shot_id: 1, label: '候选', position: [3, 1.5, 3], target: [0, 0.9, 0], lens_mm: 28 },
+      { op: 'add_camera', shot_id: 1, label: '候选', position: [3, 1.5, 3], target: [0, 0.9, 0], lens_mm: 28, sensor_mm: 36, camera_id: 'alt-01-01' },
     ]);
     expect(inverseOf(STAGE, [{ op: 'remove_crowd', crowd_id: 'crowd-01' }])).toEqual([
       { op: 'add_crowd', label: '围观', rows: 1, columns: 2, spacing: 1, center: [4, 4], yaw_deg: 0, body_type: 'standard', seed: 7 },
@@ -111,6 +135,76 @@ describe('inverseOf', () => {
     expect(inverseOf(STAGE, [{ op: 'frame_shot', shot_id: 1, size: '特写' }])).toEqual([
       { op: 'move_camera', camera_id: 'cam-01', position: [0, 1.45, 5.2], target: [0, 0.9, 0], lens_mm: 28 },
     ]);
+  });
+
+  it('brings a removed candidate back under its own id, and its cuts with it', () => {
+    const cuts = [{ id: 'cut-1', camera_id: 'alt-01-01', start: 1, end: 2 }, { id: 'cut-2', camera_id: 'cam-01', start: 3, end: 4 }];
+    const cutting: StagePlan = { ...STAGE, timelines: { 1: { duration_s: 5, fps: 24, camera: [], actors: {}, cuts } } };
+    const rebuilt = { op: 'add_camera', shot_id: 1, label: '候选', position: [3, 1.5, 3], target: [0, 0.9, 0], lens_mm: 28, sensor_mm: 36, camera_id: 'alt-01-01' };
+    const inverse = inverseOf(cutting, [{ op: 'remove_camera', camera_id: 'alt-01-01' }]);
+    expect(inverse).toEqual([rebuilt, { op: 'set_timeline', shot_id: 1, cuts }]);
+
+    // The lens is drawn before the answer, so the desk holds every cut and the next cut edit is built on all of them.
+    const removed = applyLocal(cutting, { op: 'remove_camera', camera_id: 'alt-01-01' });
+    const undone = applyAll(removed, inverse!);
+    expect(undone.cameras.find(camera => camera.id === 'alt-01-01')).toMatchObject({ label: '候选', position: [3, 1.5, 3], lens_mm: 28, move: { kind: 'static' } });
+    expect(undone.shots[0].alt_camera_ids).toEqual(['alt-01-01']);
+    expect(undone.timelines?.['1'].cuts).toEqual(cuts);
+
+    // A later candidate holds a higher number; the rebuilt lens still asks for its own id, so the cuts find it.
+    const later: StagePlan = {
+      ...cutting,
+      cameras: [...cutting.cameras, { ...PLAN.cameras[0], id: 'alt-01-02' }],
+      shots: [{ ...cutting.shots[0], alt_camera_ids: ['alt-01-01', 'alt-01-02'] }, cutting.shots[1]],
+    };
+    expect(inverseOf(later, [{ op: 'remove_camera', camera_id: 'alt-01-01' }])).toEqual([rebuilt, { op: 'set_timeline', shot_id: 1, cuts }]);
+    expect(inverseOf(later, [{ op: 'remove_camera', camera_id: 'alt-01-02' }])).toHaveLength(1);   // no cut went through it
+
+  });
+
+  it('brings a former filming lens back as a candidate under its own cam- id, cuts and all', () => {
+    // A lens that used to film the shot keeps its cam- id as a candidate; older history entries name it by that id.
+    const swapped = applyLocal(STAGE, { op: 'use_camera', shot_id: 1, camera_id: 'alt-01-01' });
+    const rebuilt = { op: 'add_camera', shot_id: 1, label: '01 建立', position: [0, 1.45, 5.2], target: [0, 0.9, 0], lens_mm: 28, sensor_mm: 36, camera_id: 'cam-01' };
+    expect(inverseOf(swapped, [{ op: 'remove_camera', camera_id: 'cam-01' }])).toEqual([rebuilt]);
+
+    const cuts = [{ id: 'cut-1', camera_id: 'cam-01', start: 1, end: 2 }, { id: 'cut-2', camera_id: 'alt-01-01', start: 3, end: 4 }];
+    const cutting: StagePlan = { ...swapped, timelines: { 1: { duration_s: 5, fps: 24, camera: [], actors: {}, cuts } } };
+    const inverse = inverseOf(cutting, [{ op: 'remove_camera', camera_id: 'cam-01' }]);
+    expect(inverse).toEqual([rebuilt, { op: 'set_timeline', shot_id: 1, cuts }]);
+    const undone = applyAll(applyLocal(cutting, { op: 'remove_camera', camera_id: 'cam-01' }), inverse!);
+    expect(undone.shots[0]).toMatchObject({ camera_id: 'alt-01-01', alt_camera_ids: ['cam-01'] });
+    expect(undone.timelines?.['1'].cuts).toEqual(cuts);
+    // A history entry made before the removal still finds the lens it names.
+    expect(applyLocal(undone, { op: 'move_camera', camera_id: 'cam-01', lens_mm: 50 }).cameras.find(camera => camera.id === 'cam-01')?.lens_mm).toBe(50);
+  });
+
+  it('asks for the next free candidate id for a lens under any other id, so its cuts can follow', () => {
+    const odd: StagePlan = {
+      ...STAGE,
+      cameras: [...STAGE.cameras, { ...PLAN.cameras[0], id: 'lens-a', label: '旧机位' }],
+      shots: [{ ...STAGE.shots[0], alt_camera_ids: ['alt-01-01', 'lens-a'] }, STAGE.shots[1]],
+    };
+    const bare = inverseOf(odd, [{ op: 'remove_camera', camera_id: 'lens-a' }]);
+    expect(bare).toHaveLength(1);
+    expect(bare![0]).not.toHaveProperty('camera_id');
+
+    const cuts = [{ id: 'cut-1', camera_id: 'lens-a', start: 1, end: 2 }];
+    const cutting: StagePlan = { ...odd, timelines: { 1: { duration_s: 5, fps: 24, camera: [], actors: {}, cuts } } };
+    expect(inverseOf(cutting, [{ op: 'remove_camera', camera_id: 'lens-a' }])).toEqual([
+      { op: 'add_camera', shot_id: 1, label: '旧机位', position: [0, 1.45, 5.2], target: [0, 0.9, 0], lens_mm: 28, sensor_mm: 36, camera_id: 'alt-01-02' },
+      { op: 'set_timeline', shot_id: 1, cuts: [{ ...cuts[0], camera_id: 'alt-01-02' }] },
+    ]);
+  });
+
+  it('brings a candidate back with its own sensor, not the filming lens’s', () => {
+    const wide: StagePlan = { ...STAGE, cameras: STAGE.cameras.map(camera => (camera.id === 'alt-01-01' ? { ...camera, sensor_mm: 24.9, fov_deg: 48 } : camera)) };
+    const inverse = inverseOf(wide, [{ op: 'remove_camera', camera_id: 'alt-01-01' }]);
+    expect(inverse![0]).toMatchObject({ op: 'add_camera', camera_id: 'alt-01-01', sensor_mm: 24.9 });
+    const undone = applyAll(applyLocal(wide, { op: 'remove_camera', camera_id: 'alt-01-01' }), inverse!);
+    const back = undone.cameras.find(camera => camera.id === 'alt-01-01')!;
+    expect(back.sensor_mm).toBe(24.9);
+    expect(back.fov_deg).toBeCloseTo(verticalFov(28, 9 / 16, 24.9), 2);
   });
 
   it('puts a shot override back, or clears one that was not there', () => {

@@ -46,6 +46,13 @@ class PromptTests(unittest.TestCase):
             "rules": "【关键约束】\n物理真实", "negatives": "变脸 + 穿模",
         }, size="MS", motion="推")
 
+    def test_each_moment_carries_its_effects_right_after_the_picture(self):
+        swing = self._beat("挥剑")
+        swing.sections["effects"] = "特效：剑气横扫"
+        text = slice_video.compile_prompt([swing, self._beat("后撤")], model="seedance2.0", fight=True).text
+        self.assertIn("画面：挥剑。特效：剑气横扫。", text)
+        self.assertEqual(text.count("特效："), 1, "a moment without effects adds no effects line")
+
     def test_every_moment_keeps_its_own_block_and_joins_smoothly(self):
         compiled = slice_video.compile_prompt(
             [self._beat("按手印"), self._beat("睁眼"), self._beat("松手")], model="seedance2.0", cast=["沈知微"], storyboard_frames=3,
@@ -61,7 +68,8 @@ class PromptTests(unittest.TestCase):
         self.assertEqual(text.count("[STYLE LOCK]"), 1)
         self.assertEqual(text.count("物理真实"), 1)
         self.assertEqual(slice_video.beat_count(text), 3)
-        self.assertEqual(compiled.pressure.budget, 600 * 3)
+        # Seedance 2.0 的 2000 管整条提示词：三瞬间片段也是 2000，不按瞬间数放大。
+        self.assertEqual(compiled.pressure.budget, 2000)
 
     def test_a_slice_writes_the_costume_binding_and_each_persons_look_once(self):
         beats = [self._beat("按手印"), self._beat("睁眼")]
@@ -77,16 +85,19 @@ class PromptTests(unittest.TestCase):
         self.assertEqual(text.count("画质："), 1)
         self.assertLess(text.index("【镜头2/2"), text.index("[STYLE LOCK]"), "the look paragraph comes after the shot blocks")
 
-    def test_a_fight_cuts_hard_between_its_moments(self):
+    def test_a_fight_cuts_motion_to_motion_between_its_moments(self):
         compiled = slice_video.compile_prompt(
             [self._beat("出拳"), self._beat("格挡"), self._beat("肘击")], model="seedance2.0", cast=["沈知微"], fight=True,
         )
         text = compiled.text
-        self.assertIn("镜头之间全部硬切，不叠化、不淡入淡出", text)
+        self.assertIn(slice_video.FIGHT_STRUCTURE, text)
+        self.assertIn("动接动", text)
+        self.assertIn("不叠化、不淡入淡出", text)
         self.assertIn("每次击中落在特写或大特写", text)
-        self.assertNotIn("不硬切", text)
+        self.assertNotIn("硬切", text)
         self.assertEqual(text.count(slice_video.FIGHT_JOIN), 2)
-        self.assertIn("从上一个瞬间的收势直接起势、不重新摆架", text)
+        self.assertIn("收势就是起势", text)
+        self.assertIn("不重新摆架", text)
         self.assertEqual(text.count(slice_video.DEFAULT_JOIN), 0)
         # A planned soft join from the board does not soften a fight.
         soft = self._beat("格挡")

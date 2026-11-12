@@ -10,6 +10,7 @@ import {
   applyCapture, deleteCapture, downloadCapture, isApplied, listCaptures, unapplyCapture, uploadCapture,
   type DeskCapture, type DeskCaptureList,
 } from '../directorDeskApi';
+import { useEscapeToClose } from './useEscapeToClose';
 
 interface Props {
   taskId: string;
@@ -58,6 +59,17 @@ export function CapturesPanel({ taskId, sceneId, shotId, camera, cameras, planRe
   const [depth, setDepth] = useState(false);
   const [layer, setLayer] = useState<CaptureLayer>('');
   const [viewing, setViewing] = useState<DeskCapture | null>(null);
+  // The button that opened the viewer gets the focus back when it closes.
+  const viewedFrom = useRef<HTMLElement | null>(null);
+  const view = (capture: DeskCapture, from: HTMLElement) => {
+    viewedFrom.current = from;
+    setViewing(capture);
+  };
+  const closeViewer = () => {
+    setViewing(null);
+    viewedFrom.current?.focus();
+  };
+  useEscapeToClose(viewing !== null, closeViewer);
   // 0…1 while a clip is being rendered; the controller is how 取消 reaches the frame loop.
   const [progress, setProgress] = useState<number | null>(null);
   const exporting = useRef<AbortController | null>(null);
@@ -184,7 +196,7 @@ export function CapturesPanel({ taskId, sceneId, shotId, camera, cameras, planRe
           const title = `第 ${capture.shotId} 镜 · ${cameraLabel(capture.cameraId)}`;
           return (
             <li key={capture.id} className={capture.stale ? 'is-stale' : ''}>
-              <button type="button" className="desk-captures__thumb" aria-label={`查看 ${title}`} onClick={() => setViewing(capture)}>
+              <button type="button" className="desk-captures__thumb" aria-label={`查看 ${title}`} onClick={event => view(capture, event.currentTarget)}>
                 {capture.kind === 'still' ? <img src={capture.url} alt="" loading="lazy" /> : <video src={capture.url} muted loop playsInline preload="metadata" aria-label={`${title} 白模视频`} onMouseEnter={event => { if (!reducedMotion) void event.currentTarget.play().catch(() => {}); }} onMouseLeave={event => event.currentTarget.pause()} />}
               </button>
               <div className="desk-captures__meta">
@@ -203,26 +215,26 @@ export function CapturesPanel({ taskId, sceneId, shotId, camera, cameras, planRe
                 {(capture.showsLimbs || capture.depth) && <small className="desk-captures__warning" role="note">{capture.warning || (capture.depth ? DEPTH_WARNING : LIMBS_WARNING)}</small>}
               </div>
               <div className="desk-captures__actions">
-                <button type="button" className="desk-icon" aria-label={`查看 ${title}`} onClick={() => setViewing(capture)}><Eye aria-hidden="true" /></button>
+                <button type="button" className="desk-icon" aria-label={`查看 ${title}`} title="放大查看" onClick={event => view(capture, event.currentTarget)}><Eye aria-hidden="true" /></button>
                 {applied ? (
-                  <button type="button" className="desk-icon" aria-label={`取消应用 ${title}`} disabled={busy} onClick={() => { void run(() => unapplyCapture(taskId, sceneId, capture.id), '已从分镜中取消应用。'); }}><Undo2 aria-hidden="true" /></button>
+                  <button type="button" className="desk-icon" aria-label={`取消应用 ${title}`} title="从分镜中取消应用" disabled={busy} onClick={() => { void run(() => unapplyCapture(taskId, sceneId, capture.id), '已从分镜中取消应用。'); }}><Undo2 aria-hidden="true" /></button>
                 ) : (
                   <button
                     type="button" className="desk-icon" aria-label={`应用至分镜 ${title}`} disabled={busy || capture.stale || (capture.depth && capture.kind === 'still')}
                     title={
                       capture.depth && capture.kind === 'still' ? DEPTH_STILL_REFUSAL
                         : capture.stale ? '这条是按旧站位拍的，请重新截取后再应用'
-                          : capture.kind === 'clip' ? (capture.depth ? '应用后本镜按多模态生成，视频模型只从深度视频里取层次与运动' : '应用后本镜按多模态生成，实测机位句让位给白模视频') : undefined
+                          : capture.kind === 'clip' ? (capture.depth ? '应用后本镜按多模态生成，视频模型只从深度视频里取层次与运动' : '应用后本镜按多模态生成，实测机位句让位给白模视频') : '应用至分镜'
                     }
                     onClick={() => { void run(() => applyCapture(taskId, sceneId, capture.id), capture.kind === 'clip' ? `已应用到第 ${capture.shotId} 镜：第 5 阶段将按多模态使用这条白模视频，实测机位句不再写入本镜提示词。` : `已应用到第 ${capture.shotId} 镜。`); }}
                   ><Check aria-hidden="true" /></button>
                 )}
                 <button
-                  type="button" className="desk-icon" aria-label={`下载 ${title}`} disabled={busy}
+                  type="button" className="desk-icon" aria-label={`下载 ${title}`} title="下载" disabled={busy}
                   onClick={() => { void run(async () => { if (!await downloadCapture(capture)) throw new Error('下载失败，请稍后重试。'); }, ''); }}
                 ><Download aria-hidden="true" /></button>
                 <button
-                  type="button" className="desk-icon" aria-label={`删除 ${title}`} disabled={busy}
+                  type="button" className="desk-icon" aria-label={`删除 ${title}`} title="删除" disabled={busy}
                   onClick={() => { if (window.confirm(applied ? '这张截图正在被分镜使用，删除后会同时从分镜中移除。继续吗？' : '删除这张截图？')) void run(() => deleteCapture(taskId, sceneId, capture.id), '已删除。'); }}
                 ><Trash2 aria-hidden="true" /></button>
               </div>
@@ -232,9 +244,9 @@ export function CapturesPanel({ taskId, sceneId, shotId, camera, cameras, planRe
       </ul>
 
       {viewing && (
-        <div className="desk-modal__backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setViewing(null); }}>
+        <div className="desk-modal__backdrop" onMouseDown={event => { if (event.target === event.currentTarget) closeViewer(); }}>
           <figure className="desk-captures__viewer" role="dialog" aria-modal="true" aria-label="查看截图">
-            <button type="button" className="desk-icon" aria-label="关闭查看" onClick={() => setViewing(null)}><X aria-hidden="true" /></button>
+            <button type="button" className="desk-icon" aria-label="关闭查看" title="关闭（Esc）" autoFocus onClick={closeViewer}><X aria-hidden="true" /></button>
             {viewing.kind === 'still' ? <img src={viewing.url} alt={`第 ${viewing.shotId} 镜截图`} /> : <video src={viewing.url} controls autoPlay loop muted playsInline aria-label={`第 ${viewing.shotId} 镜白模视频`} />}
             <figcaption>第 {viewing.shotId} 镜 · {cameraLabel(viewing.cameraId)} · 第 {viewing.planRevision} 版{viewing.stale ? ' · 已过期' : ''}</figcaption>
           </figure>

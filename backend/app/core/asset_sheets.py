@@ -14,7 +14,8 @@ usable later:
 - **scene**: one image as a 2×2 grid of four angles, and a prompt that opens by saying
   the frame holds no people at all — a scene sheet with an actor in it locks the actor,
   not the room.
-- **prop**: only the objects the story actually turns on, shot clean for reuse.
+- **prop**: every object the breakdown lists, as the 2×3 design sheet (five views and a scale cell);
+  the ones the story leans on are marked as key props.
 - **palette**: the colour card, with every colour bound to something visible.
 
 What a sheet may say is bounded by the script. Where the script is silent the sheet
@@ -28,6 +29,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
+from app.core import prompt_data
 from app.core.actor_sheet_layout import FULL_BODY_PROPORTION_RULE
 from app.core.style_packs import PaletteCard, PaletteColour, StylePack, build_palette_card
 
@@ -49,7 +51,8 @@ SCENE_LAYOUT = (
     "版式：同一张图四宫格输出四个视角——高角度航拍俯瞰、低角度仰视、侧面视角、反面视角；"
     "每格画面内标注该视角名称。"
 )
-PROP_LAYOUT = "版式：纯色背景产品级特写，单体居中，正面与四分之三侧各一，展示材质、磨损与使用痕迹。画面内不得出现人物与文字。"
+# 和道具设定图(core/prop_turnaround)出的那张一致：说法在 app/data/prompt/prop_sheet.json。
+PROP_LAYOUT = prompt_data.text("prop_sheet", "asset_layout")
 
 # Words that say what a character looks like, and words that only say how they feel.
 _APPEARANCE_HINTS = (
@@ -57,7 +60,7 @@ _APPEARANCE_HINTS = (
     "裤", "鞋", "帽", "镜", "链", "戒", "表", "包", "制服", "西装", "大衣", "围巾",
 )
 _FEELING_WORDS = ("性格", "内心", "情绪", "善良", "冷漠", "温柔", "狠", "爱", "恨", "悲", "喜", "野心", "自卑")
-# A prop earns a sheet only if the story leans on it.
+# A prop the story leans on is a key prop; every prop still gets its sheet.
 _PROP_SIGNALS = ("特写", "递", "接", "抢", "藏", "打开", "关上", "掏出", "握", "摔", "碎", "签", "证据", "信", "钥匙", "照片")
 _SCENE_TRAIT_WORDS = (
     ("暖光", "冷光", "顶灯", "烛光", "霓虹", "阳光", "月光", "灯火"),          # light
@@ -180,11 +183,11 @@ def scene_sheet(name: str, description: str = "", *, function: str = "", pack: S
 
 
 def prop_sheet(name: str, description: str = "", *, function: str = "", pack: StylePack | None = None) -> AssetSheet:
-    """A prop sheet, for the objects the story actually turns on."""
+    """A prop sheet: the 2×3 design sheet every prop gets."""
     body = _clean(description) or "按题材与用途保守补全材质、颜色、新旧与使用方式"
     style = f"{pack.style_caption}；" if pack else ""
     return AssetSheet(
-        kind="prop", name=_clean(name, 40), function=function or "推动剧情或承担连续性的关键道具",
+        kind="prop", name=_clean(name, 40), function=function or prompt_data.text("prop_sheet", "function_key"),
         anchors=[piece for piece in body.split("，") if piece][:6],
         prompt=f"{style}道具设定图：{_clean(name, 40)}。{body}。{PROP_LAYOUT}",
         layout=PROP_LAYOUT,
@@ -253,8 +256,8 @@ def extract_sheets(
     """Read a task once and produce the sheets it needs before anything is generated.
 
     Characters come from the cast the project already extracted; scenes and props come
-    from the breakdown's production assets, with props filtered down to the ones the
-    script actually leans on.
+    from the breakdown's production assets. Every prop gets a sheet; the ones the script
+    leans on are marked as key props.
     """
     assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
     script = _script_text(task)
@@ -282,12 +285,10 @@ def extract_sheets(
         name = _clean(item.get("name"), 40)
         if not name:
             continue
-        mentions = script.count(name)
-        leaned_on = mentions > 1 or _handled_near(script, name)
-        if not leaned_on:
-            result.warnings.append(f"道具「{name}」在剧本里只出现一次且没有被强调，未出设定图")
-            continue
-        result.props.append(prop_sheet(name, str(item.get("description") or ""), pack=pack))
+        # 每件道具都出设定图：只出现一次的也要在镜头里前后一致。剧情倚重的标为关键道具。
+        leaned_on = script.count(name) > 1 or _handled_near(script, name)
+        function = prompt_data.text("prop_sheet", "function_key" if leaned_on else "function_passing")
+        result.props.append(prop_sheet(name, str(item.get("description") or ""), function=function, pack=pack))
 
     if palette_colours:
         card = build_palette_card(

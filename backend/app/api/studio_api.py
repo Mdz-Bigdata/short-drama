@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile
 
 from app.api.auth_api import get_current_user
 from app.platform.access_audit import record_access_from_thread
@@ -359,11 +359,13 @@ def put_canvas(
     project_id: str,
     request: CanvasPutRequest,
     canvas_id: str = Depends(_canvas_id),
+    canvas_client: str | None = Header(None, alias="X-Canvas-Client"),
     current_user: dict = Depends(get_current_user),
     service: StudioService = Depends(get_studio_service),
 ):
+    # Which window saved (a malformed id is announced as null, never refused): its own `saved` confirms, the others reload.
     try:
-        return service.put_canvas(project_id, _owner(current_user), request, canvas_id=canvas_id)
+        return service.put_canvas(project_id, _owner(current_user), request, canvas_id=canvas_id, client_id=canvas_client)
     except Exception as exc:
         raise _safe_error(exc) from exc
 

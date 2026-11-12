@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { API_BASE, apiRequest, apiUrl, isUnauthorized } from '../../api/client';
 import type { ElementKind } from '../elements/elementTypes';
-import { CharacterDesignerPage } from './CharacterDesignerPage';
+import { CharacterDesignerPage, type CharacterSculptRequest } from './CharacterDesignerPage';
 import {
   buildLegacyCharacterDashboard,
   normalizeCharacterDashboard,
@@ -45,6 +45,8 @@ export function CharacterDesignerPageContainer({
   onRefresh,
   onRegenerate,
   onContinue,
+  sculptRequest,
+  onFocusCharacter,
 }: {
   taskId: string;
   refreshKey?: string;
@@ -57,6 +59,10 @@ export function CharacterDesignerPageContainer({
   onRefresh: () => void;
   onRegenerate: () => void;
   onContinue: () => void;
+  /** 打开某个角色的捏脸窗，原样交给 CharacterDesignerPage。 */
+  sculptRequest?: CharacterSculptRequest | null;
+  /** 屏幕上正在看的角色名，原样交给 CharacterDesignerPage。 */
+  onFocusCharacter?: (name: string | null) => void;
 }) {
   const fallback = useMemo(() => resolveDashboardMedia(buildLegacyCharacterDashboard({
     title,
@@ -212,6 +218,8 @@ export function CharacterDesignerPageContainer({
       onRegenerateCharacters={taskId ? names => { void regenerateCharacters(names); } : undefined}
       onExport={() => { void exportDashboard(); }}
       onContinue={onContinue}
+      sculptRequest={sculptRequest}
+      onFocusCharacter={onFocusCharacter}
     />
   );
 }

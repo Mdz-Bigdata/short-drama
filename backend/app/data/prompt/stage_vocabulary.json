@@ -1,0 +1,106 @@
+{
+  "_about": "3D 导演台读分镜表、给机位起名、写工程备注和报错时用的词。shot_sizes 是景别：aliases 按先后比对(长的叫法排在前面，所以「中近景」不会被读成「近景」；中文叫法先比，再比 abbreviations 里的分镜缩写(只认整词，正则)，最后比英文叫法)，没写景别的格子按 default 算。lens_mm 是每种景别的默认焦距，aim 是镜头瞄在人身高的几成处；tight / wide 是紧景别和宽景别，close_up 是单人镜头起手偏角更小的特写，detail 是单人里算细节镜头的景别，insert 是只拍物件时最松的景别，empty 是空镜最紧的景别，pair_too_tight 里的景别两个人挤不下、改用 pair，over_shoulder_min 是过肩镜头最紧只到哪一级。这里出现的每个景别名都必须是 app/core/spatial_stage/projection.py 里 SHOT_SIZE_HEIGHTS 的九个名字之一(大特写、特写、近景、中近景、中景、中全景、全景、远景、大远景)，改那边的名字要同时改这里。angles 是机位角度：default 是没写角度时的平视，high 是物件插入镜头和找不到干净机位时用的俯拍，pitch_words 按先后比对(顶拍、贴地、俯、仰)，over_shoulder_words 里的词出现在景别、角度或描述里就算过肩。camera_labels 是机位名：template 里 function 是镜头功能的叫法(functions)，who 是用 name_separator 连起来的前三个人名，一个人都没有就写 nobody。blocking_verbs 是分镜描述里人物走位的动词：只在点到这个人名的那一小句里算数，clause_stops 是正则字符组里断句的标点；entrance 是入场，approach / retreat 是靠近和后退，postures 按先后比对，先中的就是这个人保持的姿态；这些词会用 | 连成正则，词里不要带正则符号。path_errors 是画路线、排关键帧、自动寻路失败时说的话，option_separator 连接可选值。interchange 是导出给别的导演台的工程里写的备注(backdrops 是背景种类的叫法，no_detail 是背景没有颜色也没有地址时的占位)，以及导入别家工程失败时说的话。花括号里是代码填进去的值，{x:g} 带格式，{x!r} 带引号原样写出。",
+  "shot_sizes": {
+    "default": "中景",
+    "aliases": [
+      [["大特写", "极特写", "extreme close"], "大特写"],
+      [["中近景", "medium close"], "中近景"],
+      [["中全景", "medium long", "medium full", "cowboy"], "中全景"],
+      [["大远景", "extreme long", "extreme wide"], "大远景"],
+      [["大全景", "远景", "long shot", "wide", "establishing"], "远景"],
+      [["全景", "全身", "full shot"], "全景"],
+      [["特写", "close-up", "close up", "closeup"], "特写"],
+      [["近景", "胸像", "过肩", "越肩", "over-the-shoulder", "over the shoulder"], "近景"],
+      [["中景", "medium", "半身"], "中景"]
+    ],
+    "abbreviations": [
+      ["(?:ecu|xcu|bcu)", "大特写"],
+      ["mcu", "中近景"],
+      ["cu", "特写"],
+      ["(?:mls|mws|mfs)", "中全景"],
+      ["(?:els|ews|xls|xws)", "大远景"],
+      ["(?:ls|ws)", "远景"],
+      ["fs", "全景"],
+      ["ms", "中景"]
+    ],
+    "lens_mm": {
+      "大特写": 100, "特写": 85, "近景": 65, "中近景": 50, "中景": 50,
+      "中全景": 35, "全景": 28, "远景": 24, "大远景": 18
+    },
+    "aim": {
+      "大特写": 0.93, "特写": 0.92, "近景": 0.85, "中近景": 0.79, "中景": 0.69,
+      "中全景": 0.56, "全景": 0.52, "远景": 0.7, "大远景": 0.9
+    },
+    "tight": ["大特写", "特写", "近景", "中近景"],
+    "wide": ["大远景", "远景", "全景", "中全景"],
+    "close_up": ["特写", "大特写"],
+    "detail": "大特写",
+    "insert": "特写",
+    "empty": "全景",
+    "pair_too_tight": ["大特写", "特写", "近景"],
+    "pair": "中近景",
+    "over_shoulder_min": "中近景"
+  },
+  "angles": {
+    "default": "平视",
+    "high": "俯拍",
+    "pitch_words": [
+      ["top", ["顶拍", "鸟瞰", "上帝视角", "正俯", "top-down", "overhead", "bird"]],
+      ["ground", ["贴地", "低位", "low ground"]],
+      ["high", ["俯", "high angle", "high-angle"]],
+      ["low", ["仰", "low angle", "low-angle"]]
+    ],
+    "over_shoulder_words": ["过肩", "越肩", "肩后", "over-the-shoulder", "over the shoulder", "ots"]
+  },
+  "camera_labels": {
+    "template": "{shot_id:02d} {function}-{who}-{size}",
+    "functions": {
+      "establish": "建立", "relation": "关系", "single": "单人", "over_shoulder": "过肩",
+      "reaction": "反应", "detail": "细节", "empty": "空镜"
+    },
+    "name_separator": "、",
+    "nobody": "环境"
+  },
+  "blocking_verbs": {
+    "entrance": ["走进", "进门", "冲进", "推门", "闯入", "闯进", "赶到", "赶来", "入场", "进入", "踏入", "迈入", "跨进"],
+    "approach": ["走向", "走到", "走近", "冲向", "扑向", "逼近", "上前", "跑向", "奔向", "迎上", "凑近"],
+    "retreat": ["后退", "退后", "倒退", "退开"],
+    "postures": [
+      [["起身", "站起", "站直", "爬起"], "stand"],
+      [["跪"], "kneel"],
+      [["倒地", "倒在", "躺", "昏倒", "瘫"], "lie"],
+      [["蹲", "伏低"], "crouch"],
+      [["坐", "落座", "伏案"], "sit"]
+    ],
+    "clause_stops": "，,。；！？\\n"
+  },
+  "path_errors": {
+    "not_a_number": "{label} 必须是有限数字",
+    "off_stage": "{label} 超出场地范围（±500 米）",
+    "not_a_list": "points 必须是点的列表",
+    "point_count": "路径需要 {low} 到 {high} 个点",
+    "point_shape": "points[{index}] 必须是 [x, z] 或 [x, y, z]",
+    "no_length": "路径的起点和终点不能重合",
+    "one_of": "{label} 只能是 {options}",
+    "option_separator": " / ",
+    "time_span": "start_s 必须小于 end_s，且都在 0 到 30 秒之间",
+    "too_dense": "路径的点太密，无法在这段时间内分配关键帧",
+    "goal_taken": "终点被布景或其他人物占着，请换一个终点",
+    "too_far": "寻路范围太大，请分段走位",
+    "no_route": "没有找到能绕开布景的路线"
+  },
+  "interchange": {
+    "backdrops": {"none": "无", "color": "纯色", "image": "参考图", "panorama": "全景图"},
+    "no_detail": "—",
+    "backdrop_note": "本场背景：{kind}（{detail}，偏转 {yaw:g}°、不透明度 {opacity:g}）；导演台专有，导入时会被忽略",
+    "element_note": "「{name}」绑定元素库模型 {element_id}；导演台专有，导入时会被忽略",
+    "errors": {
+      "desk_objects": "导演台工程缺少 objects 或对象过多",
+      "costage_scenes": "CoStage 文档缺少 scenes",
+      "costage_too_many": "CoStage 场景对象过多",
+      "not_an_object": "工程文件必须是 JSON 对象",
+      "unknown_document": "无法识别的工程文件：需要 3D 导演台工程（含 objects，version 1 / 2）或 CoStage 文档（含 scenes，version 2）",
+      "nothing_matched": "工程文件里没有与本场同名的人物、地标或同编号的机位"
+    }
+  }
+}

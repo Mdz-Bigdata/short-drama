@@ -14,13 +14,15 @@
 .task-center__action:disabled { opacity: 0.5; cursor: not-allowed; }
 .task-center__spacer { flex: 1; }
 .task-center__notice { margin: 0; padding: 8px 10px; font-size: 0.75rem; color: var(--text-main); background: rgba(var(--ink-rgb), 0.06); border-radius: 6px; }
-.task-center__error { margin: 0; padding: 8px 10px; font-size: 0.78rem; color: var(--danger); background: rgba(var(--danger-rgb), 0.12); border-radius: 6px; }
+/* Danger text on a danger tint falls under 4.5:1; on the plain surface it passes, so the tint goes to the border. */
+.task-center__error { margin: 0; padding: 8px 10px; font-size: 0.78rem; color: var(--danger); background: var(--surface); border: 1px solid rgba(var(--danger-rgb), 0.45); border-radius: 6px; }
 .task-center__list { flex: 1; min-height: 160px; margin: 0; padding: 0; overflow: auto; list-style: none; border-top: 1px solid rgba(var(--ink-rgb), 0.1); }
 .task-center__job { padding: 10px 2px; border-bottom: 1px solid rgba(var(--ink-rgb), 0.1); }
 .task-center__row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .task-center__toggle { display: inline-flex; flex: 1; min-width: 200px; align-items: center; gap: 6px; padding: 0; color: inherit; font-size: 0.8rem; text-align: left; background: none; border: 0; cursor: pointer; }
 .task-center__status { padding: 1px 7px; font-size: 0.7rem; border: 1px solid currentColor; border-radius: 999px; }
-.task-center__status--running { color: var(--accent); }
+/* Accent text reads at 3.8:1 on the surface; the accent stays on the ring and the tint. */
+.task-center__status--running { color: var(--text-main); border-color: var(--accent); background: rgba(var(--accent-rgb), 0.1); }
 .task-center__status--failed { color: var(--danger); }
 .task-center__status--skipped, .task-center__status--cancelled, .task-center__status--done, .task-center__status--queued { color: var(--text-main); }
 .task-center__bucket-name { font-size: 0.7rem; color: var(--text-main); }

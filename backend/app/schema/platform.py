@@ -12,6 +12,8 @@ from app import settings
 
 ElementKind = Literal["actor", "prop", "scene", "costume", "effect", "product", "extra", "vehicle", "stunt", "set_dressing", "makeup"]
 ModelCategory = Literal["text", "image", "video", "audio"]
+# 资产每一版是因为什么改动记下的。
+ElementRevisionReason = Literal["edit", "rename", "file", "file_delete", "variant", "prop_size", "real_person", "restore"]
 
 
 class CapabilityToggleRequest(BaseModel):

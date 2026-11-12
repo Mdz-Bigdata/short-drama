@@ -174,6 +174,19 @@ describe('CapturesPanel', () => {
     await userEvent.click(screen.getAllByRole('button', { name: '查看 第 2 镜 · 02 单人' })[0]);
     expect(within(screen.getByRole('dialog', { name: '查看截图' })).getByRole('img').getAttribute('src')).toBe(NEW.url);
     await userEvent.click(screen.getByRole('button', { name: '关闭查看' }));
+    expect(screen.queryByRole('dialog', { name: '查看截图' })).toBeNull();
+
+    // Escape closes the viewer and goes no further: the desk under it would clear the selection or close.
+    const desk = vi.fn();
+    window.addEventListener('keydown', desk);
+    await userEvent.click(screen.getAllByRole('button', { name: '查看 第 2 镜 · 02 单人' })[0]);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '关闭查看' }));
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: '查看截图' })).toBeNull();
+    expect(desk).not.toHaveBeenCalled();
+    // The button that opened the viewer has the focus again.
+    expect(document.activeElement).toBe(screen.getAllByRole('button', { name: '查看 第 2 镜 · 02 单人' })[0]);
+    window.removeEventListener('keydown', desk);
 
     await userEvent.click(screen.getByRole('button', { name: '下载 第 2 镜 · 02 单人' }));
     await waitFor(() => expect(createObjectURL).toHaveBeenCalled());

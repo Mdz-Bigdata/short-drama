@@ -56,6 +56,12 @@ class ClassificationTests(unittest.TestCase):
             ("后面伤口消失了", "damage_reset", "action"),
             ("首尾帧过渡扭曲", "endframe_warp", "reference"),
             ("光效凭空出现", "vfx_unsourced", "action"),
+            # Timeline symptoms: fixed at the layer that went wrong, not by rewriting the whole prompt.
+            ("对方话还没说完就提前转身了", "early_action", "action"),
+            ("该切没切，一直一个机位", "missed_cut", "camera"),
+            ("听的人在动嘴", "silent_mouth", "sound"),
+            ("前几秒全演完了", "crammed_actions", "action"),
+            ("结尾自己加戏", "tail_extra", "action"),
         ):
             with self.subTest(report):
                 plan = feedback.plan_fix(report)
@@ -188,6 +194,31 @@ class LedgerTests(unittest.TestCase):
         written = feedback.record(self.task, shot_id=9, result="failed", text="接触点看不清", model="seedance2.5")
 
         self.assertEqual(written["plan"]["variable"], "action")
+
+    def test_the_same_shot_number_in_two_scenes_keeps_two_histories(self):
+        # 报告按全剧编号(集·场·镜)记：E1S01 的镜头 1 是 100101，E1S03 的镜头 1 是 100301。
+        feedback.record(self.task, shot_id="100101", result="failed", text="脸崩了", model="seedance2.5")
+        feedback.record(self.task, shot_id="100101", result="failed", text="脸崩了", model="seedance2.5")
+        other = feedback.record(self.task, shot_id="100301", result="failed", text="脸崩了", model="seedance2.5")
+
+        self.assertEqual(other["attempt"], 1)
+        self.assertEqual(feedback.summary(self.task)["shots"]["100101"]["attempts"], 2)
+
+    def test_reports_filed_under_the_bare_shot_number_keep_counting(self):
+        self.task["assets"][feedback.LEDGER_KEY] = {"shots": {"3": [
+            {"result": "failed", "category": "face_collapse", "attempt": 1, "variable": "action"},
+            {"result": "failed", "category": "face_collapse", "attempt": 2, "variable": "action"},
+        ]}}
+
+        written = feedback.record(self.task, shot_id="100203", result="failed", text="脸崩了", model="seedance2.5")
+
+        self.assertEqual(written["attempt"], 3)
+        shots = self.task["assets"][feedback.LEDGER_KEY]["shots"]
+        self.assertEqual((len(shots["100203"]), "3" in shots), (3, False), "the old entries move with the shot instead of being counted twice")
+        # 没有场号的旧项目，全剧编号就是镜号本身，原样接着记。
+        self.assertEqual(feedback.record(self.task, shot_id=7, result="failed", text="脸崩了")["attempt"], 1)
+        self.assertEqual(feedback.record(self.task, shot_id="7", result="failed", text="脸崩了")["attempt"], 2)
+        self.assertEqual(feedback.summary(self.task)["stats"]["failed"], 3)
 
     def test_the_same_failure_twice_becomes_that_models_weakness(self):
         for _ in range(feedback.PROMOTE_AFTER):

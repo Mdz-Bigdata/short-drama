@@ -1423,7 +1423,7 @@
   margin-top: 0.6rem;
   overflow: auto;
   color: var(--text-dim);
-  font-family: 'Noto Sans SC', sans-serif;
+  font-family: inherit;
   font-size: 0.59rem;
   line-height: 1.65;
   white-space: pre-wrap;
@@ -1567,7 +1567,7 @@
 
 .character-dialog__pre {
   color: var(--text-muted);
-  font-family: 'Noto Sans SC', sans-serif;
+  font-family: inherit;
   font-size: 0.72rem;
   line-height: 1.8;
   white-space: pre-wrap;
@@ -2266,6 +2266,20 @@
   color: var(--danger);
 }
 
+.character-looks__error p {
+  margin: 0;
+}
+
+.character-looks__error ul {
+  margin: 0.3rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--text-muted);
+}
+
+.character-looks__error li strong {
+  color: var(--text-main);
+}
+
 /* 表演妆造签：工作区上方一排，选哪套中间一栏就看哪套 */
 .character-looks__bar {
   display: flex;
@@ -2522,6 +2536,12 @@
   color: var(--text-muted);
   font-size: 0.75rem;
   white-space: nowrap;
+}
+
+.character-look-viewer .character-looks__later {
+  margin: 0.4rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
 }
 
 .character-look-viewer .character-looks__stale {

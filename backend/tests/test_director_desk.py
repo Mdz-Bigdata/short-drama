@@ -6,6 +6,7 @@ Geometry is asserted against calculations written out here, not against the code
 """
 
 import math
+import re
 import struct
 import tempfile
 import unittest
@@ -18,8 +19,8 @@ from pydantic import ValidationError
 
 from app.api import drama_api
 from app.api.auth_api import auth_service, get_current_user
-from app.core import media_compositor
-from app.core.spatial_stage import SceneBrief, ShotSpec, build_plan, camera_moves, crowds, interchange
+from app.core import media_compositor, prompt_data
+from app.core.spatial_stage import SceneBrief, ShotSpec, build_plan, camera_moves, crowds, director_ai, interchange
 from app.core.spatial_stage import axis as axis_rules
 from app.core.spatial_stage.models import (
     ActorKey,
@@ -266,6 +267,38 @@ class LandmarkAndFigureOperationTests(unittest.TestCase):
         _rejects(self, self.plan, {"op": "set_pose", "name": "沈砚", "preset": "sit", "shot_id": 99}, "99")
         _rejects(self, self.plan, {"op": "set_pose", "name": "无名氏", "preset": "sit"}, "无名氏")
 
+    def test_a_preset_on_its_own_has_to_be_one_the_desk_can_draw(self):
+        # "kneel" is a posture, not a preset id: saved as it is, the mannequin would stand in its default stance.
+        _rejects(self, self.plan, {"op": "set_pose", "name": "沈砚", "preset": "kneel"}, "未知的姿态预设「kneel」", "kneel-one", "kneel-two")
+        _rejects(self, self.plan, {"op": "set_pose", "name": "沈砚", "preset": "dance", "shot_id": 2}, "dance", "可用")
+        _rejects(self, self.plan, {"op": "set_pose", "name": "沈砚", "preset": "dance", "joints": {}}, "dance")
+
+        for preset, _label in director_ai.POSE_PRESETS:
+            posed = apply_operations(self.plan, [{"op": "set_pose", "name": "沈砚", "preset": preset}])
+            self.assertEqual(posed.actor("沈砚").pose, StagePose(preset=preset))
+
+        # A saved pose carries its own angles, and a clip its own motion: the name is only a label then.
+        own = apply_operations(self.plan, [
+            {"op": "set_pose", "name": "沈砚", "preset": "单膝持剑", "joints": {"leftKnee.bend": 86}},
+            {"op": "set_pose", "name": "黄琰", "preset": "dance", "clip": "human-walk-v1"},
+        ])
+        self.assertEqual(own.actor("沈砚").pose, StagePose(preset="单膝持剑", joints={"leftKnee.bend": 86.0}))
+        self.assertEqual(own.actor("黄琰").pose.preset, "dance")
+
+    def test_the_presets_named_to_the_model_are_the_ones_the_desk_draws(self):
+        source = Path(__file__).resolve().parents[2] / "frontend/src/features/directorDesk/lib/poses.ts"
+        if not source.is_file():
+            self.skipTest("the desk's source is not beside the backend here")
+        text = source.read_text(encoding="utf-8")
+        table = text[text.index("export const POSE_PRESETS"):text.index("export function presetById")]
+        self.assertEqual(set(re.findall(r"\bid: '([^']+)'", table)), {preset for preset, _label in director_ai.POSE_PRESETS})
+
+    def test_the_poses_the_planner_gives_out_are_presets_too(self):
+        known = {preset for preset, _label in director_ai.POSE_PRESETS}
+        staging = prompt_data.load("stage_performance")
+        self.assertLessEqual({preset for _pattern, preset in staging["gestures"]}, known)
+        self.assertLessEqual(set(staging["posture_presets"].values()), known)
+
 
 class BackdropTests(unittest.TestCase):
     def setUp(self):
@@ -458,6 +491,47 @@ class CameraOperationTests(unittest.TestCase):
         trimmed = apply_operations(promoted, [{"op": "remove_camera", "camera_id": "cam-02"}])
         self.assertEqual(trimmed.shot(2).alt_camera_ids, ["alt-02-01"])
         self.assertIsNone(trimmed.camera("cam-02"))
+
+    def test_a_removed_candidate_comes_back_under_its_own_id_with_its_cuts(self):
+        added = apply_operations(self.plan, [{"op": "add_camera", "shot_id": 2}, {"op": "add_camera", "shot_id": 2}])
+        cuts = [{"id": "cut-1", "camera_id": "alt-02-01", "start": 0.5, "end": 1.5}]
+        cutting = apply_operations(added, [{"op": "set_timeline", "shot_id": 2, "cuts": cuts}])
+        removed = apply_operations(cutting, [{"op": "remove_camera", "camera_id": "alt-02-01"}])
+        self.assertEqual(removed.timelines["2"].cuts, [])
+
+        # Counting on from the highest number would name it alt-02-03, and the cuts could not find it.
+        restored = apply_operations(removed, [
+            {"op": "add_camera", "shot_id": 2, "camera_id": "alt-02-01"},
+            {"op": "set_timeline", "shot_id": 2, "cuts": cuts},
+        ])
+        self.assertEqual(restored.shot(2).alt_camera_ids, ["alt-02-02", "alt-02-01"])
+        self.assertEqual([cut.camera_id for cut in restored.timelines["2"].cuts], ["alt-02-01"])
+        self.assertEqual(apply_operations(restored, [{"op": "add_camera", "shot_id": 2}]).shot(2).alt_camera_ids[-1], "alt-02-03")
+
+        _rejects(self, removed, {"op": "add_camera", "shot_id": 2, "camera_id": "alt-02-02"}, "alt-02-02")   # in use
+        _rejects(self, removed, {"op": "add_camera", "shot_id": 2, "camera_id": "alt-01-01"}, "alt-01-01")   # another shot's
+        for malformed in ("cam-9", "cam-x1", "camera-09", "alt-02-1"):
+            _rejects(self, removed, {"op": "add_camera", "shot_id": 2, "camera_id": malformed}, malformed, "须为 alt-02- 或 cam- 加两位数字")
+        _rejects(self, removed, {"op": "add_camera", "shot_id": 2, "camera_id": "cam-01"}, "cam-01", "没有被其他机位占用")   # shot 1 films with it
+
+    def test_undo_brings_back_a_former_filming_lens_under_its_cam_id(self):
+        promoted = apply_operations(self.plan, [
+            {"op": "add_camera", "shot_id": 2},
+            {"op": "use_camera", "shot_id": 2, "camera_id": "alt-02-01"},
+        ])
+        former = promoted.camera("cam-02")
+        removed = apply_operations(promoted, [{"op": "remove_camera", "camera_id": "cam-02"}])
+        self.assertIsNone(removed.camera("cam-02"))
+
+        restored = apply_operations(removed, [{
+            "op": "add_camera", "shot_id": 2, "camera_id": "cam-02", "label": former.label,
+            "position": former.position, "target": former.target, "lens_mm": former.lens_mm,
+        }])
+        self.assertEqual(restored.shot(2).alt_camera_ids, ["cam-02"])
+        self.assertEqual(restored.shot(2).camera_id, "alt-02-01")
+        self.assertEqual((restored.camera("cam-02").position, restored.camera("cam-02").label), (former.position, former.label))
+        # Any cam- id no camera of the plan holds is free.
+        self.assertIn("cam-09", apply_operations(removed, [{"op": "add_camera", "shot_id": 2, "camera_id": "cam-09"}]).shot(2).alt_camera_ids)
 
     def test_candidate_lens_operations_refuse_bad_values(self):
         _rejects(self, self.plan, {"op": "add_camera", "shot_id": 99}, "99")
@@ -1036,6 +1110,18 @@ class DirectorDeskApiTests(unittest.TestCase):
         })
         self.assertEqual((patched.status_code, stale_flags()), (200, [True]))
         self.assertFalse(self.client.get(f"{self.base}/scenes/E1S02/captures").json()["captures"][0]["stale"], elsewhere)
+
+        # Framing shot 2 is not a change to the picture of shot 1.
+        fresh()
+        framed = self.client.patch("/api/drama/desk-api/spatial/scenes/E1S01", json={
+            "baseRevision": self._revision(), "solve": False,
+            "operations": [{"op": "move_camera", "camera_id": "cam-02", "position": [2.0, 1.6, 3.0], "target": [0.0, 1.2, 0.0]}],
+        })
+        self.assertEqual((framed.status_code, stale_flags()), (200, [False]))
+        self.assertEqual(self.client.post(f"{self.base}/scenes/E1S01/captures/{clip['id']}/apply").status_code, 200)
+        self.client.patch("/api/drama/desk-api/spatial/scenes/E1S01", json={
+            "baseRevision": self._revision(), "solve": False, "operations": [{"op": "move_actor", "name": "林夏", "position": [-2.0, 0.6]}],
+        })
         # A stale capture cannot be applied afresh, but it can still be taken out.
         again = self.client.post(f"{self.base}/scenes/E1S01/captures/{clip['id']}/apply")
         self.assertEqual(again.status_code, 422)
@@ -1047,6 +1133,8 @@ class DirectorDeskApiTests(unittest.TestCase):
 
         fresh()
         document = self.client.get("/api/drama/desk-api/spatial/scenes/E1S01/export?format=director-desk").json()["document"]
+        # An import is the edits that bring the stage to the document, so it dates what those edits date.
+        next(item for item in document["objects"] if item.get("name") == "林夏")["transform"]["position"][0] += 0.6
         imported = self.client.post("/api/drama/desk-api/spatial/scenes/E1S01/import", json={"baseRevision": self._revision(), "document": document})
         self.assertEqual((imported.status_code, stale_flags()), (200, [True]))
         self.assertEqual(self.client.post(f"{self.base}/scenes/E1S01/captures/{clip['id']}/unapply").status_code, 200)

@@ -18,7 +18,7 @@ from typing import Any, Awaitable, Callable
 
 from app import settings
 from app.core.character_looks import crowd_wardrobe
-from app.core.character_variants import is_current_look, is_look
+from app.core.character_variants import is_current_look, is_look, variant_of
 from app.core.element_scope import normalized_asset_name
 from app.core.production_asset_extractor import extract_production_assets
 from app.core.production_asset_readiness import (
@@ -81,11 +81,16 @@ async def _complete(task: dict, owner_id: str, task_id: str, generate_missing: b
             summaries = await project_element_summaries(store, owner_id, task_id)
             # 定妆图排前面：缺它进不了分镜，上限先让给它。
             crowd = {normalized_asset_name(item["name"]) for item in crowd_wardrobe(task)}
+            def later(item: dict) -> bool:
+                return bool((variant_of(item) or {}).get("later"))
+
             pending = [
-                *(item for item in summaries if not item["has_image"] and is_current_look(item)),
+                *(item for item in summaries if not item["has_image"] and is_current_look(item) and not later(item)),
                 # 成队的戏服和妆效画在群演图上，和定妆图一样提前备好。
                 *(item for item in summaries if item["kind"] == "extra" and not item["has_image"] and normalized_asset_name(item["name"]) in crowd),
                 *(item for item in summaries if item["kind"] in NON_ACTOR_KINDS and not item["has_image"]),
+                # 剧本还没写到的那几集穿的：进分镜用不上，排在最后。
+                *(item for item in summaries if not item["has_image"] and is_current_look(item) and later(item)),
             ][:limit]
             for summary in pending:
                 item = await store.get_element(summary["id"], owner_id)

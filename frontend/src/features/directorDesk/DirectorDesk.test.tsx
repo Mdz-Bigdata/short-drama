@@ -12,12 +12,14 @@ import type { CompareRendererProps } from './three/CompareRenderer';
 import type { DeskViewportProps } from './three/DeskViewport';
 import type { LensViewportProps } from './three/LensViewport';
 
+const { frameSelection } = vi.hoisted(() => ({ frameSelection: vi.fn() }));
+
 // The viewports are the three.js boundary. The stand-ins expose what the desk hands them and let
 // a test play the part of the gizmo: preview while "dragging", one commit on release.
 vi.mock('./three/DeskViewport', () => ({
   default: function MockDeskViewport({ plan, tool, readOnly, actorPaths, pathTarget, pathRefusal, onPreview, onCommit, onSelect, onPath, onReady }: DeskViewportProps) {
     useEffect(() => {
-      onReady?.({ viewPose: () => ({ position: [4, 3, 6], target: [0.6, 1, -0.4] }) });
+      onReady?.({ viewPose: () => ({ position: [4, 3, 6], target: [0.6, 1, -0.4] }), frameSelection });
       return () => onReady?.(null);
     }, [onReady]);
     const drag = [{ op: 'move_actor', name: '林夏', position: [0.5, 1] }];
@@ -77,6 +79,10 @@ describe('DirectorDesk', () => {
 
   beforeEach(() => {
     stage = planResponse().plan;
+    frameSelection.mockClear();
+    // The timeline opens the way it was last left, and folded on a short window: start each test tall and unremembered.
+    window.localStorage.clear();
+    window.innerHeight = 900;
     fetchMock.mockReset();
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).includes('/director-desk/')) return json({ captures: [], applied: {} });
@@ -381,13 +387,27 @@ describe('DirectorDesk', () => {
     expect(within(screen.getByLabelText('时间线')).getByRole('button', { name: '暂停' })).toBeTruthy();
     fireEvent.keyDown(window, { key: ' ' });
     expect(within(screen.getByLabelText('时间线')).getByRole('button', { name: '播放' })).toBeTruthy();
+    // On a focused button Space presses that button; it does not also start playback.
+    const fold = screen.getByRole('button', { name: '快捷键' });
+    fold.focus();
+    fireEvent.keyDown(fold, { key: ' ' });
+    expect(within(screen.getByLabelText('时间线')).getByRole('button', { name: '播放' })).toBeTruthy();
 
-    // The shortcut card is the first thing Escape closes, then the measurement, then the selection.
+    // F aims the director view at what is selected.
+    fireEvent.keyDown(window, { key: 'f' });
+    expect(frameSelection).toHaveBeenCalledTimes(1);
+
+    // The shortcut card is the first thing Escape closes, then the comparison strip, then the measurement, then the selection.
     fireEvent.keyDown(window, { key: '?' });
     expect(screen.getByRole('dialog', { name: '快捷键' })).toBeTruthy();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: '快捷键' })).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'pick 林夏' }));
+    fireEvent.keyDown(window, { key: '4' });
+    expect(await screen.findByRole('region', { name: '机位对比' })).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('region', { name: '机位对比' })).toBeNull();
+    expect(screen.getByRole('contentinfo').textContent).toContain('已选：林夏');
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByRole('contentinfo').textContent).toContain('未选择');
@@ -421,9 +441,22 @@ describe('DirectorDesk', () => {
     await waitFor(() => expect(patches()).toHaveLength(1));
     expect(patches()[0].operations).toEqual([{ op: 'set_backdrop', kind: 'color' }]);
 
-    await userEvent.upload(within(panel).getByLabelText('上传背景图文件'), new File([new Uint8Array([1, 2, 3])], 'wall.png', { type: 'image/png' }));
+    // The swatch opens on the colour the lens is drawing. Closing the picker without choosing sends nothing,
+    // dragging inside it sends nothing, and the colour it is closed on is sent once.
+    const swatch = within(panel).getByLabelText('背景色') as HTMLInputElement;
+    expect(swatch.value).toBe('#fdf0f2');
+    swatch.dispatchEvent(new Event('change', { bubbles: true }));
+    fireEvent.blur(swatch);
+    fireEvent.input(swatch, { target: { value: '#aa0000' } });
+    fireEvent.input(swatch, { target: { value: '#102030' } });
+    expect(patches()).toHaveLength(1);
+    fireEvent.change(swatch, { target: { value: '#102030' } });
     await waitFor(() => expect(patches()).toHaveLength(2));
-    expect(patches()[1].operations).toEqual([{ op: 'set_backdrop', kind: 'image', url: 'http://img.test/wall.jpg' }]);
+    expect(patches()[1].operations).toEqual([{ op: 'set_backdrop', color: '#102030' }]);
+
+    await userEvent.upload(within(panel).getByLabelText('上传背景图文件'), new File([new Uint8Array([1, 2, 3])], 'wall.png', { type: 'image/png' }));
+    await waitFor(() => expect(patches()).toHaveLength(3));
+    expect(patches()[2].operations).toEqual([{ op: 'set_backdrop', kind: 'image', url: 'http://img.test/wall.jpg' }]);
     expect(within(panel).getByRole('slider', { name: '背景不透明度' })).toBeTruthy();
     expect(screen.queryByRole('slider', { name: '全景接缝方向' })).toBeNull();
 
@@ -485,7 +518,12 @@ describe('DirectorDesk', () => {
 
     await userEvent.click(screen.getByRole('button', { name: '导出 3D 导演台工程' }));
     await waitFor(() => expect(created).toHaveBeenCalled());
-    expect(await screen.findByText('导出说明')).toBeTruthy();
+    // Something done is news, not a warning; and it can be put away.
+    const news = (await screen.findByText('导出说明')).closest('p')!;
+    expect(news.getAttribute('role')).toBe('status');
+    expect(news.className).not.toContain('is-warning');
+    await userEvent.click(within(news).getByRole('button', { name: '关闭提示' }));
+    expect(screen.queryByText('导出说明')).toBeNull();
 
     const before = fetchMock.mock.calls.length;
     await userEvent.upload(screen.getByLabelText('导入导演台工程文件'), new File([JSON.stringify({ version: 1, objects: [] })], 'p.json', { type: 'application/json' }));
@@ -497,13 +535,178 @@ describe('DirectorDesk', () => {
     expect(await screen.findByText(/背景与模型绑定不在工程格式里，保持不变/)).toBeTruthy();
   });
 
+  it('shows a problem as an alert in the warning tone, and lets it be dismissed too', async () => {
+    const inner = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => (
+      String(input).includes('/export?format=') ? json({ detail: '本场还没有可导出的空间方案' }, 409) : inner(input, init) as Promise<Response>
+    ));
+    await open();
+    await userEvent.click(screen.getByRole('button', { name: '导出 CoStage 工程' }));
+    const problem = await screen.findByRole('alert');
+    expect(problem.textContent).toContain('本场还没有可导出的空间方案');
+    expect(problem.className).toContain('is-warning');
+    await userEvent.click(within(problem).getByRole('button', { name: '关闭提示' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('deletes every selected prop in one edit, and says what Delete does not remove', async () => {
+    const base = planResponse().plan;
+    stage = { ...base, landmarks: [...base.landmarks, { ...base.landmarks[0], id: 'mark-02', name: '茶杯', position: [1, -0.9] }] };
+    await open();
+    const outline = screen.getByRole('complementary', { name: '场景大纲' });
+    await userEvent.click(within(outline).getByRole('button', { name: /^录音笔/ }));
+    fireEvent.click(within(outline).getByRole('button', { name: /^茶杯/ }), { shiftKey: true });
+    expect(screen.getByRole('contentinfo').textContent).toContain('已选 2 项');
+    fireEvent.keyDown(window, { key: 'Delete' });
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    expect(patches()[0].operations).toEqual([{ op: 'remove_landmark', name: '录音笔' }, { op: 'remove_landmark', name: '茶杯' }]);
+
+    // A character is not removed with one key: the desk says so instead of staying silent.
+    await userEvent.click(screen.getByRole('button', { name: 'pick 林夏' }));
+    fireEvent.keyDown(window, { key: 'Backspace' });
+    expect((await screen.findByRole('alert')).textContent).toContain('Delete 只删除道具和本镜的候选机位');
+    expect(patches()).toHaveLength(1);
+  });
+
+  it('closes the crowd dialog with Escape and leaves the desk open', async () => {
+    const onClose = vi.fn();
+    render(<DirectorDesk taskId="t1" sceneId="E1S01" onClose={onClose} />);
+    await screen.findByTestId('desk-viewport');
+    await userEvent.click(screen.getByRole('button', { name: 'pick 林夏' }));
+    await userEvent.click(screen.getByRole('button', { name: '添加群演阵列' }));
+    const dialog = screen.getByRole('dialog', { name: '添加群演阵列' });
+    expect(document.activeElement).toBe(within(dialog).getByLabelText('名称'));
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: '添加群演阵列' })).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('contentinfo').textContent).toContain('已选：林夏');
+    // The button that opened the dialog has the focus again.
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '添加群演阵列' }));
+  });
+
+  it('keeps the crowd dialog open when Escape only dismisses an input method’s candidates', async () => {
+    const onClose = vi.fn();
+    render(<DirectorDesk taskId="t1" sceneId="E1S01" onClose={onClose} />);
+    await screen.findByTestId('desk-viewport');
+    await userEvent.click(screen.getByRole('button', { name: '添加群演阵列' }));
+    const name = within(screen.getByRole('dialog', { name: '添加群演阵列' })).getByLabelText('名称');
+    fireEvent.keyDown(name, { key: 'Escape', isComposing: true });
+    fireEvent.keyDown(name, { key: 'Escape', keyCode: 229 });
+    expect(screen.getByRole('dialog', { name: '添加群演阵列' })).toBeTruthy();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(name, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '添加群演阵列' })).toBeNull();
+  });
+
+  it('gives Escape to the dialog on top, then to the move settings under it', async () => {
+    const onClose = vi.fn();
+    render(<DirectorDesk taskId="t1" sceneId="E1S01" onClose={onClose} />);
+    await screen.findByTestId('desk-viewport');
+    await userEvent.click(screen.getByRole('button', { name: '运镜预设' }));
+    await userEvent.click(screen.getByRole('button', { name: '添加群演阵列' }));
+    const name = within(screen.getByRole('dialog', { name: '添加群演阵列' })).getByLabelText('名称');
+    expect(document.activeElement).toBe(name);
+
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: '添加群演阵列' })).toBeNull();
+    expect(screen.getByRole('form', { name: '运镜预设' })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '添加群演阵列' }));
+
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('form', { name: '运镜预设' })).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('makes the player of a clip at full size a Tab stop, and keeps the desk’s keys off it', async () => {
+    const clip = {
+      id: 'cap-clip', kind: 'clip', shot_id: 1, camera_id: stage.shots[0].camera_id, url: 'http://img.test/desk_clip.mp4', width: 720, height: 1280,
+      duration_s: 4, fps: 24, plan_revision: stage.revision, shows_limbs: true, monochrome: true, labelled: false, created_at: '2026-09-20T02:00:00Z', stale: false, warning: '',
+    };
+    const inner = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => (
+      String(input).includes('/director-desk/') ? json({ captures: [clip], applied: {} }) : inner(input, init) as Promise<Response>
+    ));
+    // jsdom lays nothing out, so every element reports no offsetParent; the trap reads that as hidden.
+    const layout = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetParent');
+    Object.defineProperty(HTMLElement.prototype, 'offsetParent', { configurable: true, get: () => document.body });
+    try {
+      await open();
+      await userEvent.click(screen.getByRole('tab', { name: '截图库' }));
+      await userEvent.click((await screen.findAllByRole('button', { name: /^查看 第 1 镜/ }))[0]);
+      const viewer = screen.getByRole('dialog', { name: '查看截图' });
+      const close = within(viewer).getByRole('button', { name: '关闭查看' });
+      expect(document.activeElement).toBe(close);
+      // The player comes after the close button: Tab is left to the browser, which goes on into its controls.
+      expect(fireEvent.keyDown(close, { key: 'Tab' })).toBe(true);
+      // On the player Space pauses the clip and M mutes it: neither is a desk shortcut while it is open.
+      const player = within(viewer).getByLabelText('第 1 镜白模视频');
+      expect(fireEvent.keyDown(player, { key: ' ' })).toBe(true);
+      fireEvent.keyDown(player, { key: 'm' });
+      expect(screen.getByTestId('desk-viewport').dataset.tool).toBe('select');
+    } finally {
+      if (layout) Object.defineProperty(HTMLElement.prototype, 'offsetParent', layout);
+    }
+  });
+
+  it('keeps Tab inside the crowd dialog while it is open', async () => {
+    // jsdom lays nothing out, so every element reports no offsetParent; the trap reads that as hidden.
+    const layout = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetParent');
+    Object.defineProperty(HTMLElement.prototype, 'offsetParent', { configurable: true, get: () => document.body });
+    try {
+      render(<DirectorDesk taskId="t1" sceneId="E1S01" onClose={vi.fn()} />);
+      await screen.findByTestId('desk-viewport');
+      await userEvent.click(screen.getByRole('button', { name: '添加群演阵列' }));
+      const dialog = screen.getByRole('dialog', { name: '添加群演阵列' });
+      const stops = [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled])')];
+      const [first, last] = [stops[0], stops[stops.length - 1]];
+      last.focus();
+      await userEvent.tab();
+      expect(document.activeElement).toBe(first);
+      await userEvent.tab({ shift: true });
+      expect(document.activeElement).toBe(last);
+    } finally {
+      if (layout) Object.defineProperty(HTMLElement.prototype, 'offsetParent', layout);
+    }
+  });
+
+  it('remembers whether the timeline was folded, and opens folded on a short window', async () => {
+    await open();
+    await userEvent.click(screen.getByRole('button', { name: '收起时间线' }));
+    expect(screen.getByRole('button', { name: /^时间线 · / }).getAttribute('aria-expanded')).toBe('false');
+    cleanup();
+
+    await open();
+    expect(screen.queryByRole('button', { name: '收起时间线' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /^时间线 · / }));
+    expect(screen.getByRole('button', { name: '收起时间线' })).toBeTruthy();
+    cleanup();
+
+    // Opened by hand last time: a short window does not fold it again.
+    window.innerHeight = 700;
+    await open();
+    expect(screen.getByRole('button', { name: '收起时间线' })).toBeTruthy();
+    cleanup();
+
+    // Never chosen: the short window gives the height to the stage.
+    window.localStorage.clear();
+    await open();
+    expect(screen.queryByRole('button', { name: '收起时间线' })).toBeNull();
+    expect(screen.getByRole('button', { name: /^时间线 · / })).toBeTruthy();
+  });
+
   it('lists the keyboard shortcuts behind the ? button', async () => {
     await open();
     await userEvent.click(screen.getByRole('button', { name: '快捷键' }));
     const card = screen.getByRole('dialog', { name: '快捷键' });
     expect(within(card).getAllByRole('term').map(item => item.textContent)).toEqual([
-      'V', 'W', 'E', 'R', 'M', 'J', 'P', '1 / 2 / 3', '4', '空格', 'Delete', 'Ctrl / ⌘ + Z', 'Ctrl / ⌘ + Shift + Z', 'Esc',
+      'V', 'W', 'E', 'R', 'M', 'J', 'P', '1 / 2 / 3', '4', 'F', '空格', 'Delete', '← / →',
+      'Ctrl / ⌘ + Z', 'Ctrl / ⌘ + Shift + Z', 'Ctrl / ⌘ + Y', '?', 'Esc',
     ]);
+    // Icon-only buttons say what they do, and their key, on hover.
+    expect(screen.getByRole('button', { name: '关闭 3D 导演台' }).getAttribute('title')).toBe('关闭 3D 导演台（Esc）');
+    expect(screen.getByRole('button', { name: '重新读取' }).getAttribute('title')).toBeTruthy();
+    expect(screen.getByRole('radio', { name: /并排/ }).getAttribute('title')).toBe('并排视图（2）');
+    expect(within(screen.getByLabelText('时间线')).getByRole('button', { name: '播放' }).getAttribute('title')).toBe('播放（空格）');
     await userEvent.click(within(card).getByRole('button', { name: '知道了' }));
     expect(screen.queryByRole('dialog', { name: '快捷键' })).toBeNull();
   });
@@ -572,6 +775,17 @@ describe('DirectorDesk', () => {
       expect(patches()[0].operations).toEqual([{ op: 'set_path', shot_id: 1, target: 'camera', points: ROUTE, look_at: '林夏', speed_mps: 1.4 }]);
     });
 
+    it('keeps the pace field in the status bar, shown only while the path tool is in hand', async () => {
+      await open();
+      expect(screen.queryByLabelText('路径速度（米/秒）')).toBeNull();
+      await userEvent.click(screen.getByRole('button', { name: 'pick 林夏' }));
+      await userEvent.click(pathButton());
+      // In the status bar, so that picking the tool does not re-wrap the top bar and move the stage.
+      expect(screen.getByRole('contentinfo').contains(screen.getByLabelText('路径速度（米/秒）'))).toBe(true);
+      await userEvent.click(screen.getByRole('radio', { name: /选择/ }));
+      expect(screen.queryByLabelText('路径速度（米/秒）')).toBeNull();
+    });
+
     it('hands every moving actor track of the shot to the director view', async () => {
       stage = { ...stage, timelines: { 1: { duration_s: 5, fps: 24, camera: [], actors: { 林夏: [{ time: 0, position: [-1.3, 0], easing: 'linear' }, { time: 2, position: [0.7, 0], easing: 'linear' }] as never } } } };
       await open();
@@ -601,7 +815,7 @@ describe('DirectorDesk', () => {
 
     // 选中 hands the lens to the desk: the inspector follows it.
     await userEvent.click(within(cards[1]).getByRole('button', { name: /^选中/ }));
-    expect(screen.getByRole('contentinfo').textContent).toContain('已选：alt-01-01');
+    expect(screen.getByRole('contentinfo').textContent).toContain('已选：01 建立 · 候选1');
     expect(screen.getByRole('tab', { name: '属性' }).getAttribute('aria-selected')).toBe('true');
 
     await userEvent.click(within(cards[1]).getByRole('button', { name: /使用此机位/ }));
@@ -668,6 +882,55 @@ describe('DirectorDesk', () => {
       expect(patches()[0].operations).toEqual([{ op: 'move_actor', name: '林夏', position: [0.5, 1] }]);
       // The keys still decide what is on screen at this instant.
       expect(screen.getByTestId('actor-林夏').textContent).toBe('-0.3,0');
+    });
+
+    it('keeps Delete and Space on a focused clip inside the timeline: the clip goes, the selected prop stays', async () => {
+      stage = { ...stage, timelines: { 1: { ...stage.timelines![1], clips: { 林夏: [{ id: 'clip-1', clip: 'human-walk-v1', start: 0, end: 1 }] } } } };
+      await open();
+      await userEvent.click(within(screen.getByRole('complementary', { name: '场景大纲' })).getByRole('button', { name: /^录音笔/ }));
+      const block = screen.getByRole('button', { name: /「林夏」动作片段 行走/ });
+      block.focus();
+      fireEvent.keyDown(block, { key: ' ' });
+      expect(block.getAttribute('aria-pressed')).toBe('true');
+      expect(within(screen.getByLabelText('时间线')).getByRole('button', { name: '播放' })).toBeTruthy();
+
+      fireEvent.keyDown(block, { key: 'Delete' });
+      await waitFor(() => expect(patches()).toHaveLength(1));
+      expect(patches()[0].operations).toEqual([{ op: 'set_timeline', shot_id: 1, clips: { 林夏: [] } }]);
+      expect(within(screen.getByRole('complementary', { name: '场景大纲' })).getByText('录音笔')).toBeTruthy();
+
+      // The clip took the focus with it. It stays on the timeline, so the key held down or pressed again
+      // does not go on to the prop selected on the stage.
+      const timeline = screen.getByLabelText('时间线');
+      expect(document.activeElement).toBe(timeline);
+      fireEvent.keyDown(document.activeElement!, { key: 'Delete', repeat: true });
+      fireEvent.keyDown(document.activeElement!, { key: 'Delete' });
+      expect((await within(timeline).findByRole('alert')).textContent).toContain('没有删除任何内容');
+      expect(within(screen.getByRole('complementary', { name: '场景大纲' })).getByText('录音笔')).toBeTruthy();
+      expect(patches()).toHaveLength(1);
+    });
+
+    it('takes Delete on the bar of a picked clip as that clip, and a held Delete on the stage as one press', async () => {
+      stage = { ...stage, timelines: { 1: { ...stage.timelines![1], clips: { 林夏: [{ id: 'clip-1', clip: 'human-walk-v1', start: 0, end: 1 }] } } } };
+      await open();
+      const outline = screen.getByRole('complementary', { name: '场景大纲' });
+      await userEvent.click(within(outline).getByRole('button', { name: /^录音笔/ }));
+      await userEvent.click(screen.getByRole('button', { name: /「林夏」动作片段 行走/ }));
+      // The bin on the clip's bar says（Delete）: with focus on it the key means the clip.
+      const bin = screen.getByRole('button', { name: '删除动作片段' });
+      bin.focus();
+      fireEvent.keyDown(bin, { key: 'Delete' });
+      await waitFor(() => expect(patches()).toHaveLength(1));
+      expect(patches()[0].operations).toEqual([{ op: 'set_timeline', shot_id: 1, clips: { 林夏: [] } }]);
+      expect(within(outline).getByText('录音笔')).toBeTruthy();
+
+      // Back on the stage, a key that is still held down removes nothing; pressed, it removes the prop.
+      (document.activeElement as HTMLElement).blur();
+      fireEvent.keyDown(window, { key: 'Delete', repeat: true });
+      expect(within(outline).getByText('录音笔')).toBeTruthy();
+      fireEvent.keyDown(window, { key: 'Delete' });
+      await waitFor(() => expect(patches()).toHaveLength(2));
+      expect(patches()[1].operations).toEqual([{ op: 'remove_landmark', name: '录音笔' }]);
     });
 
     it('keys the selected actor from the timeline through the same PATCH queue', async () => {

@@ -8,9 +8,10 @@ This module keeps the *pictures taken of it* under ``assets["4_director_desk"]``
 
 Applying a capture writes its URL into the two per-shot slots stage 5 already reads — a still
 to the front of ``sequence_images``, a clip to the front of ``reference_videos`` — and remembers
-it in ``applied`` so it can be taken back out. A capture is a photograph of one revision of the
-blocking: once the blocking is edited every capture of the scene is ``stale``, and stage 5
-refuses a stale applied clip the same way it refuses a stale board.
+it in ``applied`` so it can be taken back out. A capture is a photograph of one shot in one
+revision of the blocking: an edit that could show in it makes it ``stale`` (the cast's marks, the
+set, its own shot, timeline or lens; a rebuild dates the whole scene), and stage 5 refuses a stale
+applied clip the same way it refuses a stale board.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from typing import Any
 
 from app.core.reference_limits import MAX_REFERENCE_VIDEOS, MAX_SEQUENCE_IMAGES
 from app.core import media_compositor
-from app.core.spatial_stage.models import StagePose
+from app.core.spatial_stage.models import StagePlan, StagePose
 from app.core.spatial_stage.prompting import without_camera_pose
 
 logger = logging.getLogger("app.service.director_desk")
@@ -52,6 +53,11 @@ _KINDS = ("still", "clip", "backdrop")
 _SLOT = {"still": "sequence_images", "clip": "reference_videos"}
 _IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
 _SAFE = re.compile(r"[^A-Za-z0-9_-]")
+# What a plan carries that no picture of it shows: its own bookkeeping, and what ``refresh`` measures or
+# words from the rest. Everything not named here counts, so a field the plan gains later dates captures
+# until it is put here on purpose.
+_PLAN_BOOKKEEPING = frozenset({"revision", "updated_at", "source", "checks", "scene_bible", "planner", "planner_note"})
+_SHOT_DERIVED = frozenset({"screen", "text", "axis_side", "crossing"})
 # Blockout rule 2: a video model copies a white model's limbs, so limbs on screen need their motion spelled out.
 LIMBS_WARNING = "白模带四肢：请在动作描述里写清分段肢体动作，否则四肢容易僵化"
 DEPTH_WARNING = "深度画面：近亮远暗的灰度图，只约束空间层次、走位与运镜，不约束颜色与材质"
@@ -364,12 +370,78 @@ def delete_capture(task: dict[str, Any], scene_id: str, capture_id: str) -> tupl
     return scene_view(task, scene_id), url
 
 
-def mark_captures_stale(task: dict[str, Any], scene_id: str) -> None:
-    """The blocking changed: every picture taken of the old one says so until it is taken again."""
+@dataclass(frozen=True)
+class _Shown:
+    """One revision of a stage, cut into the pieces a picture of one shot depends on."""
+
+    scene: dict[str, Any]
+    shots: dict[int, dict[str, Any]]
+    timelines: dict[str, Any]
+    cameras: dict[str, Any]
+    whole: bool
+
+    @classmethod
+    def of(cls, plan: StagePlan) -> "_Shown":
+        stated = plan.model_dump(mode="json", exclude=set(_PLAN_BOOKKEEPING))
+        shots, cameras, timelines = stated.pop("shots"), stated.pop("cameras"), stated.pop("timelines")
+        by_shot = {int(shot["shot_id"]): {key: value for key, value in shot.items() if key not in _SHOT_DERIVED} for shot in shots}
+        by_camera = {str(camera["id"]): camera for camera in cameras}
+        return cls(
+            scene=stated, shots=by_shot, timelines={str(key): value for key, value in timelines.items()}, cameras=by_camera,
+            # Two records under one id cannot be told apart below.
+            whole=len(by_shot) == len(shots) and len(by_camera) == len(cameras),
+        )
+
+    def lenses(self, shot_id: int) -> set[str]:
+        shot = self.shots.get(shot_id) or {}
+        return {str(item) for item in (shot.get("camera_id"), *(shot.get("alt_camera_ids") or [])) if item}
+
+
+def _outdated(before: StagePlan, after: StagePlan):
+    """Whether a capture was taken of something the edit ``before`` -> ``after`` changed.
+
+    Decided by exclusion: a picture stays good only when the whole difference lies in other shots, their
+    timelines, and lenses neither its shot nor the picture itself looks through. Anything else the two plans
+    disagree on dates every picture, so a dependency nobody thought of can only date too many.
+    """
+    old, new = _Shown.of(before), _Shown.of(after)
+    if not (old.whole and new.whole) or old.scene != new.scene:
+        return lambda _capture: True
+    moved = {key for key in old.cameras.keys() | new.cameras.keys() if old.cameras.get(key) != new.cameras.get(key)}
+
+    def shot_changed(shot_id: int) -> bool:
+        return (
+            shot_id not in new.shots
+            or old.shots.get(shot_id) != new.shots[shot_id]
+            or old.timelines.get(str(shot_id)) != new.timelines.get(str(shot_id))
+            or bool(moved & (old.lenses(shot_id) | new.lenses(shot_id)))
+        )
+
+    changed = {shot_id: shot_changed(shot_id) for shot_id in old.shots.keys() | new.shots.keys()}
+
+    def outdated(capture: Mapping[str, Any]) -> bool:
+        try:
+            shot_id = int(capture.get("shot_id"))
+        except (TypeError, ValueError):
+            return True
+        return changed.get(shot_id, True) or str(capture.get("camera_id") or "") in moved
+
+    return outdated
+
+
+def mark_captures_stale(
+    task: dict[str, Any], scene_id: str, *, before: StagePlan | None = None, after: StagePlan | None = None,
+) -> None:
+    """The blocking changed: the pictures taken of the old one say so until they are taken again.
+
+    Given the plan on both sides of an edit, a picture the edit could not show in stays good. Without them
+    (a rebuild) every picture of the scene is dated.
+    """
     entry = (_peek(task).get("scenes") or {}).get(scene_id)
+    outdated = _outdated(before, after) if before is not None and after is not None else (lambda _capture: True)
     for capture in (entry.get("captures") or []) if isinstance(entry, Mapping) else []:
         # A backdrop is not a picture *of* the blocking, so moving someone does not date it.
-        if isinstance(capture, dict) and capture.get("kind") != "backdrop":
+        if isinstance(capture, dict) and capture.get("kind") != "backdrop" and outdated(capture):
             capture["stale"] = True
 
 

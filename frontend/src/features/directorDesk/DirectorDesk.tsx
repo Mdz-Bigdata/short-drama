@@ -5,16 +5,19 @@ import {
   Rotate3d, Route, Ruler, Undo2, Upload, X,
 } from 'lucide-react';
 
+import { ApiError } from '../../api/client';
 import { parseAspect } from '../spatial/floorPlanGeometry';
 import { exportSpatialPlan, importSpatialPlan, type SpatialExportFormat } from '../spatial/spatialApi';
-import { FUNCTION_LABELS, actorsInShot, type LandmarkShape, type StageOperation } from '../spatial/spatialTypes';
+import { FUNCTION_LABELS, actorsInShot, type LandmarkShape, type StageOperation, type StagePlan } from '../spatial/spatialTypes';
 import { applyAll, backdropOf } from './deskOperations';
-import { refKey, type DeskLayout, type DeskTool, type DeskViewHandle, type LensFrameInfo, type LensHandle, type SelectionRef } from './deskTypes';
+import { type DeskLayout, type DeskTool, type DeskViewHandle, type LensFrameInfo, type LensHandle, type SelectionRef } from './deskTypes';
 import { anglePresetCamera, type AnglePresetId } from './lib/anglePresets';
+import { detachOperations, type HandLocator } from './lib/contacts';
 import type { ClipStage } from './lib/clipExport';
 import { pathEdit, pathRefusal, pathTargetOf } from './lib/pathTool';
 import { actorPathsOf, cameraPathOf, cutCameraAt, stagePlanAt, timelineOf } from './lib/sampling';
 import { snapToGrid } from './lib/snapping';
+import { crowdOf } from './lib/stageMath';
 import { figureForAction } from './lib/timelineClips';
 import { keyIndexAtFrame, retargetToKeys } from './lib/timelineEdits';
 import { CompositionGuides } from './overlays/CompositionGuides';
@@ -31,6 +34,7 @@ import { Inspector } from './panels/Inspector';
 import { Outliner } from './panels/Outliner';
 import { PosePanel } from './panels/PosePanel';
 import { TimelinePanel } from './panels/TimelinePanel';
+import { pressable, typing } from './panels/typing';
 import { SHAPE_LABELS } from './three/stageLook';
 import { useDeskPlayback } from './useDeskPlayback';
 import { useDeskSession } from './useDeskSession';
@@ -55,23 +59,25 @@ const TOOLS: Array<{ id: DeskTool; label: string; key: string; icon: typeof Eye 
 ];
 const SHORTCUTS: Array<[string, string]> = [
   ['V', '选择'], ['W', '移动'], ['E', '旋转'], ['R', '缩放'], ['M', '测量'], ['J', '姿势'], ['P', '手绘路径'],
-  ['1 / 2 / 3', '导演 / 并排 / 机位视图'], ['4', '机位对比'], ['空格', '播放或暂停'], ['Delete', '删除所选'],
-  ['Ctrl / ⌘ + Z', '撤销'], ['Ctrl / ⌘ + Shift + Z', '重做'], ['Esc', '依次退出测量、选择，再关闭导演台'],
+  ['1 / 2 / 3', '导演 / 并排 / 机位视图'], ['4', '机位对比'], ['F', '聚焦所选'], ['空格', '播放或暂停'],
+  ['Delete', '删除所选道具或候选机位；焦点在关键帧、片段或它们的设置条上时，删除该关键帧或片段'], ['← / →', '焦点在关键帧上时前后移一帧，在播放头上时逐帧走'],
+  ['Ctrl / ⌘ + Z', '撤销'], ['Ctrl / ⌘ + Shift + Z', '重做'], ['Ctrl / ⌘ + Y', '重做'], ['?', '打开或关闭本卡片'],
+  ['Esc', '依次关闭本卡片、机位对比，退出测量、选择，再关闭导演台'],
 ];
 /** A project file bigger than this is not one of ours; the same limit the spatial dialog uses. */
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
-const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex]:not([tabindex="-1"])';
+// A player with controls is a stop of its own: from it the browser's keys pause, seek and go full screen.
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,video[controls],audio[controls],[tabindex]:not([tabindex="-1"])';
 const SIDE_TABS: Array<{ id: SideTab; label: string }> = [{ id: 'inspector', label: '属性' }, { id: 'director', label: 'AI 导演' }, { id: 'pose', label: '姿势' }, { id: 'camera', label: '机位' }, { id: 'blockout', label: '白模' }, { id: 'captures', label: '截图库' }, { id: 'blender', label: 'Blender' }];
 // A lens scene that has not shown the instant it was asked for within this long never will.
 const FRAME_TIMEOUT_MS = 8000;
-const SAVE_LABELS = { idle: '', saving: '保存中…', saved: '已保存', error: '未保存' } as const;
+const SAVE_LABELS = { idle: '', saving: '保存中…', saved: '已保存', error: '保存失败' } as const;
+const TIMELINE_FOLD_KEY = 'directorDesk.timelineCollapsed';
+/** Under this window height an open timeline leaves the stage too little room. */
+const SHORT_WINDOW_PX = 800;
 const DEFAULT_SIZES: Record<LandmarkShape, [number, number, number]> = {
   box: [1, 1, 1], cylinder: [0.6, 0.6, 1], sphere: [0.6, 0.6, 0.6], cone: [0.6, 0.6, 1], wedge: [1, 1.5, 0.5], plane: [2, 0.05, 2],
 };
-
-function typing(target: EventTarget | null) {
-  return target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
-}
 
 function freeName(base: string, taken: Set<string>) {
   let number = 1;
@@ -79,8 +85,27 @@ function freeName(base: string, taken: Set<string>) {
   return `${base} ${number}`;
 }
 
+/** Only the server's own words are shown; a browser's network error ("Failed to fetch") says nothing to the user. */
 function messageOf(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback;
+  return error instanceof ApiError && error.message ? error.message : fallback;
+}
+
+/** The timeline opens the way this browser last left it; never left either way, it opens folded on a short window. */
+function timelineStartsCollapsed() {
+  try {
+    const stored = window.localStorage.getItem(TIMELINE_FOLD_KEY);
+    if (stored !== null) return stored === '1';
+  } catch {
+    // Storage can be unavailable (private mode): go by the window alone.
+  }
+  return window.innerHeight < SHORT_WINDOW_PX;
+}
+
+/** The name the outliner shows: a lens or a crowd is known by its label, not by its id. */
+function selectionLabel(plan: StagePlan | null | undefined, ref: SelectionRef) {
+  if (ref.kind === 'camera' || ref.kind === 'camera-target') return plan?.cameras.find(camera => camera.id === ref.id)?.label || ref.id;
+  if (ref.kind === 'crowd') return (plan && crowdOf(plan, ref.id)?.label) || ref.id;
+  return ref.name;
 }
 
 export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, initialReference, onClose }: {
@@ -93,7 +118,7 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
   initialReference?: { url: string };
   onClose: () => void;
 }) {
-  const { state, dispatch, commit, undo, redo, reload, editable } = useDeskSession(taskId, sceneId);
+  const { state, dispatch, commit, undo, redo, canUndo, canRedo, reload, editable } = useDeskSession(taskId, sceneId);
   // The drag (or slider) in progress: drawn in both views, sent to nobody until it is let go.
   const [preview, setPreview] = useState<StageOperation[] | null>(null);
   const [sideTab, setSideTab] = useState<SideTab>(initialSideTab ?? 'inspector');
@@ -116,9 +141,25 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
   const closeRef = useRef<HTMLButtonElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const projectFile = useRef<HTMLInputElement>(null);
+  // What had the focus when the crowd dialog opened; it gets the focus back when the dialog closes.
+  const crowdOpener = useRef<HTMLElement | null>(null);
   const wantedShot = useRef(initialShotId);
 
-  const [timelineCollapsed, setTimelineCollapsed] = useState(false);
+  const [timelineCollapsed, setTimelineCollapsed] = useState(timelineStartsCollapsed);
+  const foldTimeline = useCallback((collapsed: boolean) => {
+    setTimelineCollapsed(collapsed);
+    try {
+      window.localStorage.setItem(TIMELINE_FOLD_KEY, collapsed ? '1' : '0');
+    } catch {
+      // Not remembered this time; the fold still holds for this visit.
+    }
+  }, []);
+  // The reducer keeps one notice. What reports a thing done is remembered here, so the banner can tell news from a problem.
+  const [news, setNews] = useState('');
+  const announce = useCallback((message: string) => {
+    setNews(message);
+    dispatch({ type: 'notice', message });
+  }, [dispatch]);
   // A clip export drives the stage one instant at a time; while it does, the playhead is not asked.
   const [exportFrame, setExportFrame] = useState<{ stamp: number; time: number } | null>(null);
   const frameWaiters = useRef(new Map<number, (info: LensFrameInfo) => void>());
@@ -126,14 +167,26 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
 
   const { plan: basePlan, selection, tool, layout } = state;
   const shotId = state.shotId;
+  // A posed jointed figure holds things in its real hand. That hand is read off the rig, which needs
+  // three.js, so it comes along once the stage has a contact to keep; until then the formula hand stands in.
+  const [handLocator, setHandLocator] = useState<{ locate: HandLocator } | null>(null);
+  const keepsContacts = Boolean(basePlan?.contacts?.length);
+  useEffect(() => {
+    if (!keepsContacts || handLocator) return undefined;
+    let live = true;
+    void import('./lib/handBones').then(module => { if (live) setHandLocator({ locate: module.mannequinHandPoint }); });
+    return () => { live = false; };
+  }, [handLocator, keepsContacts]);
+  const contactOptions = useMemo(() => (handLocator ? { hand: handLocator.locate } : undefined), [handLocator]);
   // Three plans: `basePlan` is what is stored (unconfirmed edits included), `storedPlan` adds the
   // drag in progress, and `plan` is `storedPlan` as it looks at the playhead — what gets drawn.
   const storedPlan = useMemo(() => (basePlan && preview ? applyAll(basePlan, preview) : basePlan), [basePlan, preview]);
   const timeline = useMemo(() => timelineOf(storedPlan ?? {}, shotId), [shotId, storedPlan]);
   const playback = useDeskPlayback(timeline.duration_s, timeline.fps, `${sceneId}:${shotId ?? ''}`);
   const now = exportFrame ? exportFrame.time : playback.time;
-  const plan = useMemo(() => (storedPlan ? stagePlanAt(storedPlan, shotId, now) : storedPlan), [now, shotId, storedPlan]);
-  const stagedBase = useMemo(() => (basePlan ? stagePlanAt(basePlan, shotId, now) : basePlan), [basePlan, now, shotId]);
+  // Contacts are kept after the sample and after the drag in progress: a held prop follows the hand while its holder moves.
+  const plan = useMemo(() => (storedPlan ? stagePlanAt(storedPlan, shotId, now, undefined, contactOptions) : storedPlan), [contactOptions, now, shotId, storedPlan]);
+  const stagedBase = useMemo(() => (basePlan ? stagePlanAt(basePlan, shotId, now, undefined, contactOptions) : basePlan), [basePlan, contactOptions, now, shotId]);
   const shot = useMemo(() => plan?.shots.find(item => item.shot_id === shotId), [plan, shotId]);
   const storedShot = useMemo(() => storedPlan?.shots.find(item => item.shot_id === shotId), [shotId, storedPlan]);
   // Nothing picked by hand: the lens view follows the cuts, so playback and a clip export show the cut.
@@ -210,11 +263,19 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
     };
   }, [pausePlayback]);
 
+  // Delete takes away what one key may take away: props, and this shot's candidate lenses. People, crowds and
+  // the filming lens are removed where the consequences are spelled out, so here they are named instead.
   const removeSelected = useCallback(() => {
-    if (!basePlan || !primary || !editable) return;
-    if (primary.kind === 'landmark') commitEdit({ label: `删除 ${primary.name}`, operations: [{ op: 'remove_landmark', name: primary.name }] });
-    if (primary.kind === 'camera' && shot?.alt_camera_ids?.includes(primary.id)) commitEdit({ label: '删除候选机位', operations: [{ op: 'remove_camera', camera_id: primary.id }], barrier: true });
-  }, [basePlan, commitEdit, editable, primary, shot]);
+    if (!basePlan || !selection.length || !editable) return;
+    const props = selection.flatMap(ref => (ref.kind === 'landmark' ? [ref.name] : []));
+    const lenses = selection.flatMap(ref => (ref.kind === 'camera' && shot?.alt_camera_ids?.includes(ref.id) ? [ref.id] : []));
+    // Several props go in one edit, so one undo brings them all back.
+    // A contact that names a piece goes first, so the undo brings the piece back and then the contact.
+    const detach = [...new Map(props.flatMap(name => detachOperations(basePlan, name)).map(op => [String(op.target), op])).values()];
+    if (props.length) commitEdit({ label: props.length === 1 ? `删除 ${props[0]}` : `删除 ${props.length} 个道具`, operations: [...detach, ...props.map(name => ({ op: 'remove_landmark', name }))] });
+    lenses.forEach(id => commitEdit({ label: '删除候选机位', operations: [{ op: 'remove_camera', camera_id: id }], barrier: true }));
+    if (!props.length && !lenses.length) dispatch({ type: 'notice', message: 'Delete 只删除道具和本镜的候选机位；角色、群演和主机位请在右侧面板里处理。' });
+  }, [basePlan, commitEdit, dispatch, editable, selection, shot]);
 
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -225,14 +286,16 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
     const trap = (event: KeyboardEvent) => {
       const root = rootRef.current;
       if (event.key !== 'Tab' || !root) return;
-      const stops = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(item => item.offsetParent !== null || item === document.activeElement);
+      // A dialog opened over the desk (群演, a capture at full size) keeps Tab to itself the same way.
+      const scope = [...root.querySelectorAll<HTMLElement>('[aria-modal="true"]')].pop() ?? root;
+      const stops = [...scope.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(item => item.offsetParent !== null || item === document.activeElement);
       if (!stops.length) return;
       const [first, last] = [stops[0], stops[stops.length - 1]];
       const active = document.activeElement;
-      if (!event.shiftKey && (active === last || !root.contains(active))) {
+      if (!event.shiftKey && (active === last || !scope.contains(active))) {
         event.preventDefault();
         first.focus();
-      } else if (event.shiftKey && (active === first || !root.contains(active))) {
+      } else if (event.shiftKey && (active === first || !scope.contains(active))) {
         event.preventDefault();
         last.focus();
       }
@@ -256,7 +319,8 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
   const togglePlay = playback.playing ? playback.pause : playback.play;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (typing(event.target) || crowdOpen || exporting) return;
+      // A dialog open over the desk (群演, a capture at full size) owns the keys: they are not about the stage behind it.
+      if (typing(event.target) || exporting || rootRef.current?.querySelector('[aria-modal="true"]')) return;
       const key = event.key.toLowerCase();
       if ((event.metaKey || event.ctrlKey) && key === 'z') {
         event.preventDefault();
@@ -268,15 +332,18 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
       // Escape backs out one step at a time; the last step is closing the desk.
       if (key === 'escape') {
         if (shortcutsOpen) setShortcutsOpen(false);
+        else if (compareOpen) setCompareOpen(false);
         else if (state.measure.length) dispatch({ type: 'clearMeasure' });
         else if (selection.length) dispatch({ type: 'clearSelection' });
         else onClose();
         return;
       }
-      if (key === 'delete' || key === 'backspace') { removeSelected(); return; }
-      if (key === ' ') { event.preventDefault(); togglePlay(); return; }
+      // A key held down removes one thing: what takes the selection's place is not what the press was about.
+      if (key === 'delete' || key === 'backspace') { if (!event.repeat) removeSelected(); return; }
+      if (key === ' ') { if (pressable(event.target)) return; event.preventDefault(); togglePlay(); return; }
       if (key === '?' || (key === '/' && event.shiftKey)) { setShortcutsOpen(value => !value); return; }
       if (key === '4') { setCompareOpen(value => !value); return; }
+      if (key === 'f') { event.preventDefault(); deskHandle.current?.frameSelection?.(); return; }
       const layout = LAYOUTS[['1', '2', '3'].indexOf(key)];
       if (layout) { dispatch({ type: 'setLayout', layout: layout.id }); return; }
       const wanted = TOOLS.find(item => item.key === key);
@@ -284,7 +351,7 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [crowdOpen, dispatch, exporting, onClose, pickTool, redo, removeSelected, selection.length, shortcutsOpen, state.measure.length, togglePlay, undo]);
+  }, [compareOpen, dispatch, exporting, onClose, pickTool, redo, removeSelected, selection.length, shortcutsOpen, state.measure.length, togglePlay, undo]);
 
   const downloadProject = (format: SpatialExportFormat) => {
     if (transferBusy) return;
@@ -297,7 +364,7 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
         anchor.download = data.fileName;
         anchor.click();
         URL.revokeObjectURL(url);
-        dispatch({ type: 'notice', message: data.note || '已导出本场工程。' });
+        announce(data.note || '已导出本场工程。');
       })
       .catch(error => dispatch({ type: 'notice', message: messageOf(error, '导出失败。') }))
       .finally(() => setTransferBusy(false));
@@ -320,7 +387,7 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
       await importSpatialPlan(taskId, sceneId, basePlan.revision, document);
       // The import is a server-side edit of its own, so the session starts again from what it wrote.
       await reload();
-      dispatch({ type: 'notice', message: '已按工程文件更新站位与机位；背景与模型绑定不在工程格式里，保持不变。' });
+      announce('已按工程文件更新站位与机位；背景与模型绑定不在工程格式里，保持不变。');
     } catch (error) {
       dispatch({ type: 'notice', message: messageOf(error, '导入失败。') });
     } finally {
@@ -353,8 +420,17 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
     setSideTab('inspector');
   };
 
-  const addCrowd = (request: CrowdRequest) => {
+  const openCrowd = () => {
+    crowdOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setCrowdOpen(true);
+  };
+  const closeCrowd = () => {
     setCrowdOpen(false);
+    crowdOpener.current?.focus();
+  };
+
+  const addCrowd = (request: CrowdRequest) => {
+    closeCrowd();
     commitEdit({ label: `添加群演 ${request.label}`, operations: [{ op: 'add_crowd', ...request, center: dropPoint(), yaw_deg: 0 }], barrier: true });
   };
 
@@ -378,6 +454,7 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
     : null;
 
   const canEdit = editable && !exporting;
+  const isNews = state.notice !== '' && state.notice === news;
 
   const body = () => {
     if (state.loadError) {
@@ -397,7 +474,7 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
           onSelect={select}
           onToggleHidden={key => dispatch({ type: 'toggleHidden', key })}
           onToggleLocked={key => dispatch({ type: 'toggleLocked', key })}
-          onAddProp={addProp} onAddCrowd={() => setCrowdOpen(true)}
+          onAddProp={addProp} onAddCrowd={openCrowd}
         />
         <main className={`desk-stage is-${layout}`}>
           {layout !== 'lens' && (
@@ -408,7 +485,7 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
                 poseShotOnly={poseShotOnly} footLock={footLock} cameraPath={cameraPath} playing={playback.playing}
                 actorPaths={actorPaths} pathTarget={pathTarget} pathRefusal={pathNote}
                 onSelect={select} onClearSelection={() => dispatch({ type: 'clearSelection' })}
-                onPreview={previewEdit}
+                onPreview={previewEdit} onRefuse={message => dispatch({ type: 'notice', message })}
                 onCommit={operations => commitEdit({ label: tool === 'pose' ? '摆姿势' : tool === 'rotate' ? '旋转' : tool === 'scale' ? '缩放' : '移动', operations })}
                 onPath={points => {
                   if (!pathTarget || !storedShot) return;
@@ -433,8 +510,8 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
           )}
           {layout === 'quad' && (
             <Suspense fallback={loading}>
-              <OrthoViewport plan={plan} shot={shot} hidden={state.hidden} side="top" />
-              <OrthoViewport plan={plan} shot={shot} hidden={state.hidden} side="front" />
+              <OrthoViewport plan={plan} framing={basePlan} shot={shot} hidden={state.hidden} selection={selection} side="top" />
+              <OrthoViewport plan={plan} framing={basePlan} shot={shot} hidden={state.hidden} selection={selection} side="front" />
             </Suspense>
           )}
           {compareOpen && (
@@ -526,8 +603,12 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
           </label>
         )}
         <div className="desk-segment" role="radiogroup" aria-label="视图布局">
-          {LAYOUTS.map(item => (
-            <button key={item.id} type="button" role="radio" aria-checked={layout === item.id} className={layout === item.id ? 'is-active' : ''} onClick={() => dispatch({ type: 'setLayout', layout: item.id })}>
+          {/* Only the first three layouts have a number key; 4 is 机位对比. */}
+          {LAYOUTS.map((item, index) => (
+            <button
+              key={item.id} type="button" role="radio" aria-checked={layout === item.id} className={layout === item.id ? 'is-active' : ''}
+              title={index < 3 ? `${item.label}视图（${index + 1}）` : item.label} onClick={() => dispatch({ type: 'setLayout', layout: item.id })}
+            >
               <item.icon aria-hidden="true" /> {item.label}
             </button>
           ))}
@@ -543,13 +624,6 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
             </button>
           ))}
         </div>
-        {tool === 'path' && (
-          <label className="desk-topbar__speed" title="画完路径后按这个速度走完，并自动铺上行走或慢跑动作；填 0 则把路径拉满整个镜头">
-            <span>速度</span>
-            <input type="number" aria-label="路径速度（米/秒）" min={0} max={30} step={0.1} value={pathSpeed} onChange={event => setPathSpeed(Math.min(30, Math.max(0, Number(event.target.value) || 0)))} />
-            <span>m/s</span>
-          </label>
-        )}
         <div className="desk-topbar__snap" role="group" aria-label="吸附">
           <Magnet aria-hidden="true" />
           <label><input type="checkbox" checked={state.snap.grid} onChange={event => dispatch({ type: 'setSnap', snap: { grid: event.target.checked } })} /> 网格</label>
@@ -560,8 +634,8 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
           <label><input type="checkbox" checked={state.snap.angle} onChange={event => dispatch({ type: 'setSnap', snap: { angle: event.target.checked } })} /> 15°</label>
         </div>
         <div className="desk-topbar__actions">
-          <button type="button" className="desk-icon" aria-label="撤销" title={state.undo.length ? `撤销：${state.undo[state.undo.length - 1].label}` : '撤销'} disabled={!editable || !state.undo.length} onClick={undo}><Undo2 aria-hidden="true" /></button>
-          <button type="button" className="desk-icon" aria-label="重做" title={state.redo.length ? `重做：${state.redo[state.redo.length - 1].label}` : '重做'} disabled={!editable || !state.redo.length} onClick={redo}><Redo2 aria-hidden="true" /></button>
+          <button type="button" className="desk-icon" aria-label="撤销" title={state.undo.length ? `撤销：${state.undo[state.undo.length - 1].label}（Ctrl / ⌘ + Z）` : '撤销（Ctrl / ⌘ + Z）'} disabled={!canUndo} onClick={undo}><Undo2 aria-hidden="true" /></button>
+          <button type="button" className="desk-icon" aria-label="重做" title={state.redo.length ? `重做：${state.redo[state.redo.length - 1].label}（Ctrl / ⌘ + Shift + Z）` : '重做（Ctrl / ⌘ + Shift + Z）'} disabled={!canRedo} onClick={redo}><Redo2 aria-hidden="true" /></button>
           <span className={`desk-topbar__save is-${state.saveState}`} role="status" aria-label="保存状态">
             {SAVE_LABELS[state.saveState]}{basePlan ? `${SAVE_LABELS[state.saveState] ? ' · ' : ''}第 ${basePlan.revision} 版` : ''}
           </span>
@@ -572,8 +646,8 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
             <input ref={projectFile} type="file" accept="application/json,.json" hidden aria-label="导入导演台工程文件" onChange={event => { void uploadProject(event); }} />
           </div>
           <button type="button" className="desk-icon" aria-label="快捷键" aria-expanded={shortcutsOpen} title="快捷键（?）" onClick={() => setShortcutsOpen(value => !value)}><Keyboard aria-hidden="true" /></button>
-          <button type="button" className="desk-icon" aria-label="重新读取" onClick={() => { void reload(); }}><RefreshCw aria-hidden="true" /></button>
-          <button ref={closeRef} type="button" className="desk-icon" aria-label="关闭 3D 导演台" onClick={onClose}><X aria-hidden="true" /></button>
+          <button type="button" className="desk-icon" aria-label="重新读取" title="重新读取服务器上的最新方案" onClick={() => { void reload(); }}><RefreshCw aria-hidden="true" /></button>
+          <button ref={closeRef} type="button" className="desk-icon" aria-label="关闭 3D 导演台" title="关闭 3D 导演台（Esc）" onClick={onClose}><X aria-hidden="true" /></button>
         </div>
         {shortcutsOpen && (
           <div className="desk-shortcuts" role="dialog" aria-label="快捷键">
@@ -592,19 +666,32 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
       )}
       {state.response && !state.response.persisted && <p className="desk-banner">本场尚未保存空间方案，当前为按剧本即时规划的预览；第一次调整后会保存。</p>}
       {state.response?.boardStale && <p className="desk-banner is-warning">站位已修改，本场已完成的九宫格仍按旧站位绘制。</p>}
-      {state.notice && <p className="desk-banner is-warning" role="status">{state.notice}</p>}
+      {state.notice && (
+        <p className={`desk-banner is-notice ${isNews ? '' : 'is-warning'}`} role={isNews ? 'status' : 'alert'}>
+          <span>{state.notice}</span>
+          <button type="button" className="desk-icon desk-banner__close" aria-label="关闭提示" title="关闭提示" onClick={() => dispatch({ type: 'notice', message: '' })}><X aria-hidden="true" /></button>
+        </p>
+      )}
       {exporting && <p className="desk-banner is-warning" role="status">正在逐帧导出白模视频，舞台暂时不能编辑。</p>}
       {body()}
       {storedPlan && (
         <TimelinePanel
           plan={storedPlan} shot={storedShot} playback={playback} selection={selection} editable={canEdit}
-          collapsed={timelineCollapsed} onCollapsed={setTimelineCollapsed} onCommit={commitEdit} onSelect={select}
+          collapsed={timelineCollapsed} onCollapsed={foldTimeline} onCommit={commitEdit} onSelect={select}
         />
       )}
       <footer className="desk-statusbar">
         <span>
-          {selection.length === 0 ? '未选择' : selection.length === 1 ? `已选：${refKey(primary).split(':').slice(1).join(':')}` : `已选 ${selection.length} 项`}
+          {selection.length === 0 ? '未选择' : selection.length === 1 ? `已选：${selectionLabel(storedPlan, primary)}` : `已选 ${selection.length} 项`}
         </span>
+        {/* Tool readouts live here, not in the top bar: showing one must not re-wrap the bar and move the stage. */}
+        {tool === 'path' && (
+          <label className="desk-statusbar__speed" title="画完路径后按这个速度走完，并自动铺上行走或慢跑动作；填 0 则把路径拉满整个镜头">
+            <span>路径速度</span>
+            <input type="number" aria-label="路径速度（米/秒）" min={0} max={30} step={0.1} value={pathSpeed} onChange={event => setPathSpeed(Math.min(30, Math.max(0, Number(event.target.value) || 0)))} />
+            <span>m/s</span>
+          </label>
+        )}
         {tool === 'measure' && (
           <span role="status" aria-label="测量结果">
             {measured !== null ? `${state.measure[0].label} → ${state.measure[1].label}：${measured.toFixed(2)} m` : state.measure.length === 1 ? `起点：${state.measure[0].label}，再点一个终点` : '测量：点击起点'}
@@ -614,7 +701,7 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
       {crowdOpen && basePlan && (
         <CrowdDialog
           defaultLabel={freeName('群演', new Set((basePlan.crowds || []).map(crowd => crowd.label)))}
-          onSubmit={addCrowd} onClose={() => setCrowdOpen(false)}
+          onSubmit={addCrowd} onClose={closeCrowd}
         />
       )}
     </div>,

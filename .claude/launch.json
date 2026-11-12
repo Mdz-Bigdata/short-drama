@@ -21,7 +21,7 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-lc",
-        "cd backend && exec .venv/bin/python -u main.py"
+        "cd backend && .venv/bin/python -u main.py"
       ],
       "port": 8000
     }

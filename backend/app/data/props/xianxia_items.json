@@ -1,0 +1,558 @@
+{
+  "_doc": "修仙题材的道具尺寸，补充道具标尺参照表(scale_reference.json)。查法同一张表：名字一样最好，不一样找名字结尾、再找名字里包含的。",
+  "category_family": {
+    "修仙法宝兵器": "slender",
+    "修仙丹药": "tiny",
+    "修仙储物": "tiny",
+    "修仙符箓": "flat",
+    "修仙器具": "large"
+  },
+  "entries": [
+    {
+      "name": "飞剑",
+      "category": "修仙法宝兵器",
+      "dims_cm": [
+        100.0,
+        4.0,
+        2.0
+      ],
+      "diameter": false,
+      "description": "修士御使的飞剑，可藏于丹田"
+    },
+    {
+      "name": "本命飞剑",
+      "category": "修仙法宝兵器",
+      "dims_cm": [
+        100.0,
+        4.0,
+        2.0
+      ],
+      "diameter": false,
+      "description": "温养于丹田的本命法宝"
+    },
+    {
+      "name": "丹药",
+      "category": "修仙丹药",
+      "dims_cm": [
+        1.5
+      ],
+      "diameter": true,
+      "description": "丹丸，龙眼大小以下"
+    },
+    {
+      "name": "丹丸",
+      "category": "修仙丹药",
+      "dims_cm": [
+        1.2
+      ],
+      "diameter": true,
+      "description": "小粒丹丸"
+    },
+    {
+      "name": "灵丹",
+      "category": "修仙丹药",
+      "dims_cm": [
+        1.5
+      ],
+      "diameter": true,
+      "description": "丹丸"
+    },
+    {
+      "name": "丹瓶",
+      "category": "修仙器物",
+      "dims_cm": [
+        8.0,
+        4.0
+      ],
+      "diameter": false,
+      "description": "装丹药的小玉瓶或瓷瓶"
+    },
+    {
+      "name": "玉瓶",
+      "category": "修仙器物",
+      "dims_cm": [
+        8.0,
+        4.0
+      ],
+      "diameter": false,
+      "description": "装丹药的小玉瓶"
+    },
+    {
+      "name": "丹炉",
+      "category": "修仙器具",
+      "dims_cm": [
+        120.0,
+        90.0,
+        90.0
+      ],
+      "diameter": false,
+      "description": "三足或四足炼丹炉"
+    },
+    {
+      "name": "炼丹炉",
+      "category": "修仙器具",
+      "dims_cm": [
+        120.0,
+        90.0,
+        90.0
+      ],
+      "diameter": false,
+      "description": "三足或四足炼丹炉"
+    },
+    {
+      "name": "丹鼎",
+      "category": "修仙器具",
+      "dims_cm": [
+        80.0,
+        70.0,
+        70.0
+      ],
+      "diameter": false,
+      "description": "炼丹用的鼎"
+    },
+    {
+      "name": "储物戒",
+      "category": "修仙储物",
+      "dims_cm": [
+        2.2
+      ],
+      "diameter": true,
+      "description": "戴在手指上的储物戒指"
+    },
+    {
+      "name": "储物戒指",
+      "category": "修仙储物",
+      "dims_cm": [
+        2.2
+      ],
+      "diameter": true,
+      "description": "戴在手指上的储物戒指"
+    },
+    {
+      "name": "储物袋",
+      "category": "修仙储物",
+      "dims_cm": [
+        15.0,
+        10.0
+      ],
+      "diameter": false,
+      "description": "系在腰间的小布袋"
+    },
+    {
+      "name": "乾坤袋",
+      "category": "修仙储物",
+      "dims_cm": [
+        15.0,
+        10.0
+      ],
+      "diameter": false,
+      "description": "系在腰间的小布袋"
+    },
+    {
+      "name": "灵兽袋",
+      "category": "修仙储物",
+      "dims_cm": [
+        20.0,
+        12.0
+      ],
+      "diameter": false,
+      "description": "装灵兽的袋子"
+    },
+    {
+      "name": "符箓",
+      "category": "修仙符箓",
+      "dims_cm": [
+        20.0,
+        7.0,
+        0.1
+      ],
+      "diameter": false,
+      "description": "长条符纸"
+    },
+    {
+      "name": "符纸",
+      "category": "修仙符箓",
+      "dims_cm": [
+        20.0,
+        7.0,
+        0.1
+      ],
+      "diameter": false,
+      "description": "长条符纸"
+    },
+    {
+      "name": "传音符",
+      "category": "修仙符箓",
+      "dims_cm": [
+        15.0,
+        6.0,
+        0.1
+      ],
+      "diameter": false,
+      "description": "传讯用的符"
+    },
+    {
+      "name": "玉简",
+      "category": "修仙符箓",
+      "dims_cm": [
+        12.0,
+        3.0,
+        1.0
+      ],
+      "diameter": false,
+      "description": "记载功法的玉片"
+    },
+    {
+      "name": "玉符",
+      "category": "修仙符箓",
+      "dims_cm": [
+        8.0,
+        4.0,
+        0.8
+      ],
+      "diameter": false,
+      "description": "玉质符牌"
+    },
+    {
+      "name": "阵盘",
+      "category": "修仙法宝",
+      "dims_cm": [
+        30.0
+      ],
+      "diameter": true,
+      "description": "刻满阵纹的圆盘"
+    },
+    {
+      "name": "阵旗",
+      "category": "修仙法宝兵器",
+      "dims_cm": [
+        60.0,
+        30.0
+      ],
+      "diameter": false,
+      "description": "布阵用的小旗"
+    },
+    {
+      "name": "灵石",
+      "category": "修仙储物",
+      "dims_cm": [
+        5.0,
+        3.0,
+        3.0
+      ],
+      "diameter": false,
+      "description": "半透明晶石，修士的货币"
+    },
+    {
+      "name": "葫芦",
+      "category": "修仙法宝",
+      "dims_cm": [
+        30.0,
+        15.0
+      ],
+      "diameter": false,
+      "description": "法宝葫芦"
+    },
+    {
+      "name": "紫金葫芦",
+      "category": "修仙法宝",
+      "dims_cm": [
+        30.0,
+        15.0
+      ],
+      "diameter": false,
+      "description": "法宝葫芦"
+    },
+    {
+      "name": "法钟",
+      "category": "修仙法宝",
+      "dims_cm": [
+        40.0,
+        30.0
+      ],
+      "diameter": false,
+      "description": "可放大罩人的钟"
+    },
+    {
+      "name": "宝镜",
+      "category": "修仙法宝",
+      "dims_cm": [
+        20.0
+      ],
+      "diameter": true,
+      "description": "照妖、反射术法的镜"
+    },
+    {
+      "name": "宝塔",
+      "category": "修仙法宝",
+      "dims_cm": [
+        30.0,
+        12.0
+      ],
+      "diameter": false,
+      "description": "托在掌上的小塔，可放大收人"
+    },
+    {
+      "name": "玲珑塔",
+      "category": "修仙法宝",
+      "dims_cm": [
+        30.0,
+        12.0
+      ],
+      "diameter": false,
+      "description": "托在掌上的小塔"
+    },
+    {
+      "name": "法印",
+      "category": "修仙法宝",
+      "dims_cm": [
+        8.0,
+        8.0,
+        8.0
+      ],
+      "diameter": false,
+      "description": "方印，可放大压下"
+    },
+    {
+      "name": "宝珠",
+      "category": "修仙法宝",
+      "dims_cm": [
+        6.0
+      ],
+      "diameter": true,
+      "description": "定风避水的宝珠"
+    },
+    {
+      "name": "招魂幡",
+      "category": "修仙法宝兵器",
+      "dims_cm": [
+        180.0,
+        50.0
+      ],
+      "diameter": false,
+      "description": "长杆挂幡"
+    },
+    {
+      "name": "拂尘",
+      "category": "修仙法宝兵器",
+      "dims_cm": [
+        70.0,
+        5.0
+      ],
+      "diameter": false,
+      "description": "马尾拂尘"
+    },
+    {
+      "name": "玉如意",
+      "category": "修仙法宝",
+      "dims_cm": [
+        40.0,
+        8.0
+      ],
+      "diameter": false,
+      "description": "玉质如意"
+    },
+    {
+      "name": "傀儡",
+      "category": "修仙器具",
+      "dims_cm": [
+        170.0,
+        45.0
+      ],
+      "diameter": false,
+      "description": "人形傀儡"
+    },
+    {
+      "name": "妖丹",
+      "category": "修仙丹药",
+      "dims_cm": [
+        3.5
+      ],
+      "diameter": true,
+      "description": "妖兽修为凝成的晶珠"
+    },
+    {
+      "name": "内丹",
+      "category": "修仙丹药",
+      "dims_cm": [
+        3.5
+      ],
+      "diameter": true,
+      "description": "妖兽修为凝成的晶珠"
+    },
+    {
+      "name": "灵草",
+      "category": "修仙储物",
+      "dims_cm": [
+        25.0,
+        8.0
+      ],
+      "diameter": false,
+      "description": "连根带土的灵草"
+    },
+    {
+      "name": "灵果",
+      "category": "修仙丹药",
+      "dims_cm": [
+        6.0
+      ],
+      "diameter": true,
+      "description": "拳头大小以下的灵果"
+    },
+    {
+      "name": "身份玉牌",
+      "category": "修仙符箓",
+      "dims_cm": [
+        8.0,
+        5.0,
+        0.8
+      ],
+      "diameter": false,
+      "description": "宗门身份玉牌"
+    },
+    {
+      "name": "宗门令牌",
+      "category": "修仙符箓",
+      "dims_cm": [
+        10.0,
+        6.0,
+        1.0
+      ],
+      "diameter": false,
+      "description": "宗门令牌"
+    },
+    {
+      "name": "灵兽卵",
+      "category": "修仙储物",
+      "dims_cm": [
+        25.0,
+        18.0
+      ],
+      "diameter": false,
+      "description": "灵兽的卵"
+    },
+    {
+      "name": "朱果",
+      "category": "修仙丹药",
+      "dims_cm": [
+        6.0
+      ],
+      "diameter": true,
+      "description": "灵果"
+    },
+    {
+      "name": "灵芝",
+      "category": "修仙储物",
+      "dims_cm": [
+        15.0,
+        12.0
+      ],
+      "diameter": false,
+      "description": "灵芝"
+    },
+    {
+      "name": "雪莲",
+      "category": "修仙储物",
+      "dims_cm": [
+        20.0,
+        12.0
+      ],
+      "diameter": false,
+      "description": "天山雪莲"
+    },
+    {
+      "name": "精血",
+      "category": "修仙储物",
+      "dims_cm": [
+        8.0,
+        3.0
+      ],
+      "diameter": false,
+      "description": "一小瓶妖兽精血"
+    },
+    {
+      "name": "兽骨",
+      "category": "修仙法宝兵器",
+      "dims_cm": [
+        60.0,
+        8.0
+      ],
+      "diameter": false,
+      "description": "妖兽骨"
+    },
+    {
+      "name": "兽角",
+      "category": "修仙法宝兵器",
+      "dims_cm": [
+        40.0,
+        8.0
+      ],
+      "diameter": false,
+      "description": "妖兽角"
+    },
+    {
+      "name": "鳞片",
+      "category": "修仙储物",
+      "dims_cm": [
+        10.0,
+        8.0,
+        0.5
+      ],
+      "diameter": false,
+      "description": "妖兽鳞片"
+    },
+    {
+      "name": "龙鳞",
+      "category": "修仙储物",
+      "dims_cm": [
+        15.0,
+        12.0,
+        0.6
+      ],
+      "diameter": false,
+      "description": "龙鳞"
+    },
+    {
+      "name": "羽毛",
+      "category": "修仙储物",
+      "dims_cm": [
+        40.0,
+        6.0
+      ],
+      "diameter": false,
+      "description": "灵禽长羽"
+    },
+    {
+      "name": "毒囊",
+      "category": "修仙储物",
+      "dims_cm": [
+        10.0,
+        6.0
+      ],
+      "diameter": false,
+      "description": "妖兽毒囊"
+    },
+    {
+      "name": "传承玉简",
+      "category": "修仙符箓",
+      "dims_cm": [
+        12.0,
+        3.0,
+        1.0
+      ],
+      "diameter": false,
+      "description": "传承玉简"
+    },
+    {
+      "name": "传承石碑",
+      "category": "修仙器具",
+      "dims_cm": [
+        300.0,
+        120.0,
+        40.0
+      ],
+      "diameter": false,
+      "description": "刻着传承的石碑"
+    }
+  ]
+}

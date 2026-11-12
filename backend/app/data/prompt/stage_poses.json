@@ -1,0 +1,30 @@
+{
+  "_about": "导演台人偶的姿势预设：id 与前端 frontend/src/features/directorDesk/lib/poses.ts 的 POSE_PRESETS 一一对应(关节角度在前端)，中文名写进给 AI 导演的操作说明和片段提示词。set_pose 只给 preset、不带关节角度时，id 必须在这张表里；前端加了新预设要在这里补一行。",
+  "presets": [
+    ["stand", "站立"],
+    ["t-pose", "T型"],
+    ["walk", "行走"],
+    ["run", "跑步"],
+    ["sit", "坐姿"],
+    ["crouch", "蹲下"],
+    ["kneel-one", "单膝跪"],
+    ["kneel-two", "双膝跪"],
+    ["hands-on-hips", "叉腰"],
+    ["lean", "倚靠"],
+    ["bow", "鞠躬"],
+    ["think", "思考"],
+    ["fight", "格斗"],
+    ["kick", "踢腿"],
+    ["throw", "投掷"],
+    ["push", "推"],
+    ["wave", "招手"],
+    ["reach", "伸手"],
+    ["cross-arms", "抱臂"],
+    ["phone", "看手机"],
+    ["lie", "卧倒"],
+    ["hands-behind", "背手站立"],
+    ["look-back", "侧身回头"],
+    ["point-ahead", "抬手指向"],
+    ["punch", "出拳"]
+  ]
+}

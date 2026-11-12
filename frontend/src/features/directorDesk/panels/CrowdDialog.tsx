@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Dices, X } from 'lucide-react';
 
 import { BODY_TYPES } from '../three/stageLook';
+import { useEscapeToClose } from './useEscapeToClose';
 
 export interface CrowdRequest {
   label: string;
@@ -26,6 +27,7 @@ export function CrowdDialog({ defaultLabel, onSubmit, onClose }: { defaultLabel:
   const [spacing, setSpacing] = useState(1);
   const [bodyType, setBodyType] = useState('standard');
   const [seed, setSeed] = useState(randomSeed);
+  useEscapeToClose(true, onClose);
   const count = rows * columns;
   const valid = label.trim() !== '' && rows >= 1 && rows <= 20 && columns >= 1 && columns <= 20 && count <= MAX_CROWD && spacing >= 0.3 && spacing <= 10;
 
@@ -39,9 +41,9 @@ export function CrowdDialog({ defaultLabel, onSubmit, onClose }: { defaultLabel:
       <form className="desk-modal" role="dialog" aria-modal="true" aria-labelledby="desk-crowd-title" onSubmit={submit}>
         <header>
           <h2 id="desk-crowd-title">添加群演阵列</h2>
-          <button type="button" className="desk-icon" aria-label="关闭" onClick={onClose}><X aria-hidden="true" /></button>
+          <button type="button" className="desk-icon" aria-label="关闭" title="关闭（Esc）" onClick={onClose}><X aria-hidden="true" /></button>
         </header>
-        <label className="desk-field"><span>名称</span><input value={label} maxLength={40} onChange={event => setLabel(event.target.value)} /></label>
+        <label className="desk-field"><span>名称</span><input autoFocus value={label} maxLength={40} onChange={event => setLabel(event.target.value)} /></label>
         <div className="desk-modal__grid">
           <label className="desk-field"><span>行数</span><input type="number" min={1} max={20} value={rows} onChange={event => setRows(Math.round(Number(event.target.value)))} /></label>
           <label className="desk-field"><span>列数</span><input type="number" min={1} max={20} value={columns} onChange={event => setColumns(Math.round(Number(event.target.value)))} /></label>

@@ -1,0 +1,237 @@
+/* 聊天气泡里的卡片：只管气泡内部，不碰气泡本身的宽度与对齐。 */
+.chat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: rgba(var(--surface-rgb), 0.55);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.chat-card + .chat-card {
+  margin-top: 0.5rem;
+}
+
+.chat-card--face { border-left: 3px solid rgba(var(--accent-rgb), 0.7); }
+.chat-card--stage { border-left: 3px solid var(--success); }
+.chat-card--proposal { border-left: 3px solid var(--warning); }
+
+.chat-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+}
+
+.chat-card__title {
+  font-size: 0.86rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.chat-card__meta {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.chat-card__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 99px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chat-card__badge.is-warning {
+  color: var(--warning);
+  background: rgba(var(--warning-rgb), 0.12);
+}
+
+.chat-card__badge.is-danger {
+  color: var(--danger);
+  background: rgba(var(--danger-rgb), 0.1);
+}
+
+.chat-card__summary {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-card__args {
+  margin: 0;
+  font-size: 0.72rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.chat-card__row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.5rem;
+  align-items: start;
+}
+
+.chat-card__label {
+  padding-top: 0.05rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.chat-card__row-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.chat-card__clamp {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.chat-card__clamp.is-collapsed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.chat-card__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.chat-card__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.chat-card__chip {
+  padding: 0.08rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: rgba(var(--surface-rgb), 0.8);
+  font-size: 0.74rem;
+  overflow-wrap: anywhere;
+}
+
+.chat-card__chip.is-added {
+  border-color: rgba(var(--success-rgb), 0.5);
+  color: var(--success);
+}
+
+.chat-card__chip.is-changed {
+  border-color: rgba(var(--accent-rgb), 0.5);
+}
+
+.chat-card__chip.is-removed {
+  border-color: rgba(var(--danger-rgb), 0.4);
+  color: var(--danger);
+  text-decoration: line-through;
+}
+
+.chat-card__checks {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+}
+
+.chat-card__checks ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.chat-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding-top: 0.15rem;
+}
+
+.chat-card__btn {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.76rem;
+}
+
+.chat-card__btn.is-primary {
+  color: var(--on-accent);
+  border-color: transparent;
+  background: var(--accent);
+}
+
+.chat-card__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 工具调用汇总：一行小字，点开才列清单。 */
+.chat-card--tools {
+  padding: 0.35rem 0.6rem;
+  gap: 0.3rem;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.chat-card__tools-line {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.chat-card__tools-line::-webkit-details-marker { display: none; }
+
+.chat-card__tools {
+  margin: 0.3rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.chat-card__tools li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: baseline;
+  overflow-wrap: anywhere;
+}
+
+.chat-card__tools code {
+  font-size: 0.72rem;
+  padding: 0 0.3rem;
+  border-radius: 0.25rem;
+  background: rgba(var(--accent-rgb), 0.08);
+}
+
+.chat-card__tools li.is-ok span { color: var(--success); }
+.chat-card__tools li.is-failed span { color: var(--danger); }

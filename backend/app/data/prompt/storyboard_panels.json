@@ -1,0 +1,30 @@
+{
+  "_about": "分镜表落成画格(app/core/storyboard_panels.py)时认的词与接句子用的连接词。standalone_beats：叙事目的里带这些词的拍点要单独一格；reverse_setups：机位里带这些词(不分大小写)是切到对面去拍，必须另起一格；size_ranks 是景别从远(0)到近(7)的刻度，按顺序先命中先算(所以「大特写」在「特写」前、「中近景」在「近景」前)；no_line 是不算台词的写法；vacant_words 是模型把空格子写成表格行时用的词；camera_heights 按顺序先命中先算，slight_angle 匹配的「略仰、微俯」先删掉、仍算平视；film_seconds 从时长里取成片秒数(两个分组：前写数字或后写数字)，noise 是比较画面描述前要删的标点与空白；joiners 是并格时接画面、声音、台词、叙事目的、运镜的连接词(joiners.desc 也是 panel_still.json 的 merged_beats 与 app/core/pilot_shot.py 拆拍时认的写法，改它要一起改)；says.push_in / pull_out 是景别变了时补的推拉。",
+  "standalone_beats": ["反转", "揭露", "真相", "转场", "时间跳", "闪回", "回忆", "插叙"],
+  "reverse_setups": ["过肩", "反打", "越轴", "OTS", "OVER"],
+  "size_ranks": [
+    [["大特写", "局部特写", "ECU", "EXTREME CLOSE"], 7],
+    [["中近景", "MCU"], 4],
+    [["特写", "CU", "CLOSE"], 6],
+    [["近景"], 5],
+    [["远中景", "中全景", "MLS", "MWS"], 2],
+    [["中景", "MS", "MEDIUM"], 3],
+    [["大远景", "ELS", "EWS"], 0],
+    [["远景", "LS", "WS", "LONG", "WIDE"], 0],
+    [["全景", "FS", "FULL"], 1]
+  ],
+  "no_line": ["无", "-", "—", "（无）", "(无)"],
+  "vacant_words": ["留白", "空格", "待补", "空位"],
+  "camera_heights": [["low", ["仰", "低机位", "低角度"]], ["high", ["俯", "高机位", "顶拍", "鸟瞰"]]],
+  "slight_angle": "(略|微|稍|偏)[仰俯高低]",
+  "film_seconds": "(\\d+(?:\\.\\d+)?)\\s*(?:秒|s)?\\s*[（(]?\\s*成片|成片\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)",
+  "noise": "[\\s，,。；;：:、！!？?“”\\\"'（）()【】\\[\\]《》<>·\\-—_/|]+",
+  "joiners": {
+    "desc": "；随后",
+    "sound": "；",
+    "dialogue": "；",
+    "purpose": "→",
+    "motion": "，随后"
+  },
+  "says": {"push_in": "推近至{size}", "pull_out": "拉远至{size}"}
+}

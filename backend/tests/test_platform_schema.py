@@ -13,7 +13,8 @@ from app.platform.migrate import BASELINE_REVISION
 from app.platform.models import PlatformUser
 from app.platform.store import PlatformStore
 
-HEAD = "0004_refund_approvals"
+# 0005 加了资产版本历史表 element_revisions；新库由 create_all 建好后直接盖到这个版本。
+HEAD = "0005_element_revisions"
 FINANCIAL = ("payment_orders", "billing_ledger", "user_memberships")
 
 # The financial tables as ``create_all`` made them before this rule.

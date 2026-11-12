@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import re
 
+from app.core import prompt_data
+
 ACTION_PARTS = ("起始姿态", "主动作", "身体联动", "结束姿态")
 ENDING_MAX_CHARS = 160
 # 「上一段结尾：」说的是上一段，不是这段自己的结尾。
@@ -32,12 +34,9 @@ STRUCTURE_RULE = (
 )
 CONTINUATION_RULE = "延续动作时先接住上一段的结尾——把上一段的结束状态原样写在开头——再写清下一步，不要只写「接着往下演」。"
 
-BREAKDOWN_SYSTEM = "你是动作指导。把一句笼统的动作描写拆成视频模型能稳定生成的四步。只输出这四行，不要解释。"
-BREAKDOWN_PROMPT = (
-    "按这四行输出，每行一个标签加冒号：\n起始姿态：动作开始前的身体姿势、重心、面向\n主动作：这一下到底做了什么，谁对谁，用了哪只手哪条腿\n"
-    "身体联动：手、脚、躯干、头和视线怎么跟着动，重心怎么移\n结束姿态：动作停下来时的姿势，要具体到能当下一段的开场\n\n"
-    "只写看得见的身体动作，不写心理、不写镜头术语；一行一句，总共不超过 200 字。{context}\n\n动作：{action}"
-)
+# 「拆动作」的措辞在 data/prompt/action_breakdown.json：四行里写齐姿态、动线、时序、对位、节奏。
+BREAKDOWN_SYSTEM = prompt_data.text("action_breakdown", "system")
+BREAKDOWN_PROMPT = prompt_data.text("action_breakdown", "prompt")
 
 
 def ending_of(text: str, limit: int = ENDING_MAX_CHARS) -> str:
@@ -87,7 +86,7 @@ def breakdown_prompt(action: str, *, previous_ending: str = "") -> str:
     action = " ".join(str(action or "").split())
     if not action:
         raise ValueError("先写一下要拆的动作")
-    context = f"\n上一段的结尾是：{previous_ending}，起始姿态要从这里接。" if previous_ending.strip() else ""
+    context = prompt_data.text("action_breakdown", "previous_ending").format(previous_ending) if previous_ending.strip() else ""
     return BREAKDOWN_PROMPT.format(action=action, context=context)
 
 

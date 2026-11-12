@@ -1,0 +1,103 @@
+/* Colours only from the app's tokens; inside .canvas-workspace the dark theme redefines them. */
+.csd-backdrop {
+  position: fixed;
+  inset: 0;
+  /* Above the canvas workspace (2900), under the director desk (3000). */
+  z-index: 2950;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 12vh 16px 16px;
+  background: rgba(var(--shadow-rgb), 0.12);
+}
+
+.csd-dialog {
+  width: min(36rem, 100%);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: 0.8rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg-popover);
+  box-shadow: 0 16px 40px var(--shadow);
+}
+
+.csd-field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+.csd-field svg { width: 1rem; height: 1rem; flex: none; color: var(--text-muted); }
+.csd-field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  padding: 0.2rem 0;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--ink);
+  background: transparent;
+}
+
+.csd-count { padding: 0.35rem 0.75rem 0; color: var(--text-dim); }
+
+.csd-results {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0.3rem;
+  overflow-y: auto;
+  list-style: none;
+}
+.csd-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.csd-result.is-active { background: var(--surface-3); }
+
+.csd-kind {
+  flex: none;
+  width: 5.2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+.csd-kind svg { width: 0.9rem; height: 0.9rem; flex: none; }
+.csd-kind span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.csd-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+.csd-title { color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.csd-snippet { color: var(--text-muted); overflow-wrap: anywhere; line-height: 1.4; }
+.csd-field-name {
+  margin-right: 0.35rem;
+  padding: 0 0.3rem;
+  border-radius: 4px;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  font-size: 0.7rem;
+}
+.csd-result mark {
+  padding: 0 1px;
+  border-radius: 2px;
+  color: inherit;
+  background: rgba(var(--accent-rgb), 0.22);
+}
+
+.csd-hint {
+  padding: 0.35rem 0.75rem;
+  border-top: 1px solid var(--line);
+  color: var(--text-dim);
+  font-size: 0.72rem;
+}

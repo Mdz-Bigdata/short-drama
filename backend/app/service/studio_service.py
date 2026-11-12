@@ -36,6 +36,7 @@ from app.schema.studio import (
     DirectorWorldPutRequest,
     ReviewCreateRequest,
 )
+from app.service import canvas_presence
 from app.service.project_archive import ProjectArchiveService
 from app.service.studio_canvas_runs import CanvasRunner
 from app.story.story_graph import StoryGraphBuilder
@@ -158,10 +159,17 @@ class StudioService:
             for record in self.repository.list_reviews(artifact_id, owner_id)
         ]
 
+    @staticmethod
+    def _announce_saved(project_id: str, owner_id: str, canvas_id: str, version: int, client_id: str | None = None) -> None:
+        """Every open window of the board hears about the new version at once; never fails the write."""
+        canvas_presence.hub.saved(project_id, canvas_id, version, client_id, owner_id=owner_id)
+
     def put_canvas(
-        self, project_id: str, owner_id: str, request: CanvasPutRequest, *, canvas_id: str = CANVAS_MAIN_ID
+        self, project_id: str, owner_id: str, request: CanvasPutRequest, *, canvas_id: str = CANVAS_MAIN_ID, client_id: str | None = None,
     ) -> dict[str, Any]:
-        return self.repository.put_canvas(project_id, owner_id, request, canvas_id=canvas_id).model_dump(mode="json")
+        record = self.repository.put_canvas(project_id, owner_id, request, canvas_id=canvas_id)
+        self._announce_saved(project_id, owner_id, canvas_id, record.version, client_id)
+        return record.model_dump(mode="json")
 
     def get_canvas(self, project_id: str, owner_id: str, *, canvas_id: str = CANVAS_MAIN_ID) -> dict[str, Any]:
         record = self.repository.get_canvas(project_id, owner_id, canvas_id=canvas_id)
@@ -197,14 +205,16 @@ class StudioService:
             if result["status"] != "committed":
                 raise ValueError(result.get("reason") or "提交失败")
             return outcome["canvas"]
-        return self.repository.promote_canvas_node(
+        record = self.repository.promote_canvas_node(
             project_id,
             owner_id,
             node_id=request.node_id,
             target_kind=request.target_kind,
             expected_version=request.expected_version,
             canvas_id=canvas_id,
-        ).model_dump(mode="json")
+        )
+        self._announce_saved(project_id, owner_id, canvas_id, record.version)
+        return record.model_dump(mode="json")
 
     def duplicate_canvas_nodes(
         self, project_id: str, owner_id: str, request: CanvasDuplicateRequest, *, canvas_id: str = CANVAS_MAIN_ID
@@ -259,7 +269,9 @@ class StudioService:
             nodes=[*canvas.nodes, *duplicates],
             edges=[*canvas.edges, *duplicate_edges],
         )
-        return self.repository.put_canvas(project_id, owner_id, put, canvas_id=canvas_id).model_dump(mode="json")
+        record = self.repository.put_canvas(project_id, owner_id, put, canvas_id=canvas_id)
+        self._announce_saved(project_id, owner_id, canvas_id, record.version)
+        return record.model_dump(mode="json")
 
     def canvas_outline(self, project_id: str, owner_id: str, *, canvas_id: str = CANVAS_MAIN_ID) -> dict[str, Any]:
         canvas = self.repository.get_canvas(project_id, owner_id, canvas_id=canvas_id)
@@ -307,9 +319,11 @@ class StudioService:
         older = self.repository.get_canvas_version(project_id, owner_id, version, canvas_id=canvas_id)
         if older is None:
             raise ValueError(f"画布没有第 {version} 版（可能已被清理）")
-        return self.repository.put_canvas(
+        record = self.repository.put_canvas(
             project_id, owner_id, CanvasPutRequest(expected_version=expected_version, nodes=older.nodes, edges=older.edges), canvas_id=canvas_id,
-        ).model_dump(mode="json")
+        )
+        self._announce_saved(project_id, owner_id, canvas_id, record.version)
+        return record.model_dump(mode="json")
 
     def store_canvas_upload(self, project_id: str, owner_id: str, filename: str, content_type: str, content: bytes) -> dict[str, Any]:
         """Check the bytes, not the claim, then store under a name the server made up."""
@@ -445,9 +459,13 @@ class StudioService:
         self, project_id: str, owner_id: str, *, canvas_id: str, node_ids: list[str], expected_version: int, drama: Any = None, user: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         task_id, task = self._optional_task(project_id, owner_id, drama, user)
-        return self.canvas_runs.commit(
+        outcome = self.canvas_runs.commit(
             project_id=project_id, owner_id=owner_id, canvas_id=canvas_id, node_ids=node_ids, expected_version=expected_version, task=task, task_id=task_id, drama=drama,
         )
+        # Nothing committed leaves the canvas at expected_version: no new version, nothing to announce.
+        if outcome.get("canvas") and int(outcome.get("version") or 0) != int(expected_version):
+            self._announce_saved(project_id, owner_id, canvas_id, int(outcome["version"]))
+        return outcome
 
     def summarize_canvas(self, project_id: str, owner_id: str, *, canvas_id: str = CANVAS_MAIN_ID) -> dict[str, Any]:
         canvas = self.repository.get_canvas(project_id, owner_id, canvas_id=canvas_id)
@@ -473,6 +491,7 @@ class StudioService:
             record = self.repository.put_canvas(
                 project_id, owner_id, CanvasPutRequest(expected_version=latest, nodes=changed["nodes"], edges=changed["edges"]), canvas_id=canvas_id,
             )
+        self._announce_saved(project_id, owner_id, canvas_id, record.version)
         return {"version": record.version, "created": refs, "node_count": len(record.nodes), "edge_count": len(record.edges)}
 
     def put_director_world(

@@ -362,6 +362,9 @@ export function WriterAgentPageContainer({
         onAnalyzeRelationships={taskId ? analyzeRelationships : undefined}
         onContinueScript={taskId ? continueScript : undefined}
         relationshipsInferred={dashboard?.relationshipsInferred === true}
+        // Until the dashboard answers, the list counts as decided: an analysis started on the
+        // fallback breakdown would refill a list the writer emptied before the flag arrives.
+        relationshipsAuthored={dashboard ? dashboard.relationshipsAuthored === true : true}
         timelineAuthored={dashboard?.timelineAuthored === true}
         creationMode={dashboard?.creationMode}
         versions={dashboard?.versions || []}

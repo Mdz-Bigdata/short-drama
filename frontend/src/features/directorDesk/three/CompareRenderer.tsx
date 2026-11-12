@@ -86,6 +86,8 @@ export default function CompareRenderer({ plan, shot, hidden, aspect, onReady, o
   const [contextLost, setContextLost] = useState(false);
   const actors = useMemo(() => visibleActors(plan, shot, hidden), [hidden, plan, shot]);
   const { width, height } = captureSize(aspect, THUMBNAIL_LONG_EDGE);
+  // Lit as the camera view is, so a thumbnail has the shadows the frame will have.
+  const lit = useMemo(() => stageReach({ actors, landmarks: plan.landmarks }), [actors, plan.landmarks]);
 
   useEffect(() => {
     if (!canRender) onUnavailable?.('当前浏览器或设备不支持 WebGL，无法生成机位缩略图。');
@@ -100,7 +102,7 @@ export default function CompareRenderer({ plan, shot, hidden, aspect, onReady, o
       <ViewportBoundary fallback={null}>
         {/* Nothing draws on its own: every frame is one requested thumbnail. */}
         <Canvas shadows dpr={1} frameloop="never" gl={{ antialias: true, preserveDrawingBuffer: true }}>
-          <StageLights reach={stageReach({ actors: [], landmarks: plan.landmarks }).radius} />
+          <StageLights reach={lit.radius} center={lit.center} />
           <PerspectiveCamera makeDefault fov={40} near={0.05} far={500} position={[0, 1.5, 5]} />
           <RenderBridge width={width} height={height} onReady={onReady} />
           <ContextLossGuard onLost={() => setContextLost(true)} />

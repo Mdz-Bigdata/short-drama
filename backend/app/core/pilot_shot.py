@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from app.core import prompt_data
 from app.core.episode_cycle import covered_uids
 from app.core.storyboard_scene_context import EMPTY_ACTOR
 
@@ -65,7 +66,9 @@ def _cast(req: Mapping[str, Any]) -> list[str]:
 def _actions(req: Mapping[str, Any]) -> int:
     beats = (req.get("slice") or {}).get("beats") or []
     descriptions = [str(beat.get("desc") or "") for beat in beats] or [str(req.get("desc") or "")]
-    return sum(1 + text.count("；随后") for text in descriptions)
+    # Each merged beat's description is joined with the storyboard merge joiner (storyboard_panels.json): one action per piece.
+    joiner = prompt_data.value("storyboard_panels", "joiners")["desc"]
+    return sum(1 + text.count(joiner) for text in descriptions)
 
 
 def _rank(number: int, req: Mapping[str, Any]) -> tuple[int, int, int]:
@@ -74,9 +77,18 @@ def _rank(number: int, req: Mapping[str, Any]) -> tuple[int, int, int]:
     return (3 if people == 0 else min(people - 1, 2), _actions(req), number)
 
 
+# 同场接上一镜(clip_route 的 tailframe / tailref)是软接力：没有上一镜的尾帧时本镜照样独立出，能单独试拍。
+_SOFT_CHAINS = frozenset({"tailframe", "tailref"})
+
+
+def _hard_chain(req: Mapping[str, Any]) -> bool:
+    """必须先有前一段末帧才能开拍的接力：长镜头段的后几段。"""
+    return bool(req.get("chain_from")) and (req.get("clip_route") or {}).get("kind") not in _SOFT_CHAINS
+
+
 def _root(requests: Mapping[int, Mapping[str, Any]], number: int) -> int:
     """接力段要先有前一段的末帧才能开拍，试拍就从这串的第一段开始。"""
-    while requests[number].get("chain_from") in requests:
+    while _hard_chain(requests[number]) and requests[number].get("chain_from") in requests:
         number = requests[number]["chain_from"]
     return number
 
@@ -87,7 +99,7 @@ def pick(requests: Mapping[int, Mapping[str, Any]], wanted_uid: int | None = Non
         chosen = next((number for number, req in requests.items() if int(wanted_uid) in _uids(req)), None)
         if chosen is not None:
             return _root(requests, chosen), "你选的这一镜"
-    unchained = {number: req for number, req in requests.items() if not req.get("chain_from")} or dict(requests)
+    unchained = {number: req for number, req in requests.items() if not _hard_chain(req)} or dict(requests)
     chosen = min(unchained, key=lambda number: _rank(number, unchained[number]))
     req = unchained[chosen]
     people, actions = len(_cast(req)), _actions(req)

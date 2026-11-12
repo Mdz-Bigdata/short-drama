@@ -179,6 +179,14 @@ class ScreenwritingPlanPatchRequest(DramaBaseSchema):
     confirm_invalidate: bool = Field(False, description="确认归档并使当前剧本的下游制作资产失效")
 
 
+class DialoguePolishRequest(DramaBaseSchema):
+    """润色台词：这一集里的哪些分镜(不给就是整集)、戏路、额外要求。结果只给人看，不写回。"""
+
+    scene_ids: list[str] = Field(default_factory=list, max_length=200)
+    scene_kind: str = Field("", max_length=20, description="戏路：吵架 / 和解 / 安慰 / 暧昧 / 重逢 / 家人；空串表示不限")
+    extra: str = Field("", max_length=300, description="这次额外的要求，如「再冷一点」")
+
+
 class ScreenwritingPromptPreviewResponse(DramaBaseSchema):
     task_id: str = Field(..., min_length=1, max_length=120)
     episode: int = Field(..., ge=1, le=200)

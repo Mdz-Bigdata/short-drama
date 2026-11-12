@@ -16,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from typing import Any
 
-from app.core import project_memory
+from app.core import project_memory, prompt_data
 from app.core.agent_tools import ToolError, catalog
 from app.core.screenwriting.structured_llm import extract_json_object
 
@@ -110,13 +110,28 @@ def system_prompt() -> str:
         "回答用户时不要出现工具名和参数(如 redraw_scene、run_stage(stage=4))，用界面上的说法："
         "「重画这一场」「重跑分镜阶段」「打开空间调度」「渲染 Blender 预演」。\n"
         "参数名后带 * 的必填；参数细节不清楚时，先看消息里给的细节，没有就按名字传，出错时系统会告诉你正确的格式。\n"
+        f"{_guides()}"
         f"可用工具：\n{_tool_index()}\n"
     )
+
+
+def _guides() -> str:
+    """捏脸、舞台这些新功能的用法说明，一行一条，措辞在 agent_prompts.json 的 tool_assistant_guides 里。"""
+    lines = [str(item).strip() for item in prompt_data.value("agent_prompts", "tool_assistant_guides") if str(item).strip()]
+    return "".join(f"{line}\n" for line in lines)
 
 
 def _short(value: Any, limit: int) -> str:
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
     return text if len(text) <= limit else f"{text[:limit]}…（已截断）"
+
+
+def _result_limit(tool_name: str) -> int:
+    """最新一条工具结果允许的长度：带控件表 / 操作说明的读工具自己说要多长，别的用默认。"""
+    try:
+        return max(TOOL_RESULT_CHARS, int(catalog.get(tool_name).result_chars or 0))
+    except ToolError:
+        return TOOL_RESULT_CHARS
 
 
 def stored_result(result: Any) -> Any:
@@ -143,7 +158,7 @@ def _history_text(history: Sequence[Mapping[str, Any]]) -> str:
             continue
         role = item.get("role")
         if role == "tool":
-            limit = TOOL_RESULT_CHARS if index == last_tool else OLD_RESULT_CHARS
+            limit = _result_limit(str(item.get("tool") or "")) if index == last_tool else OLD_RESULT_CHARS
             lines.append(f"[工具 {item.get('tool')} 返回] {_short(item.get('result'), limit)}")
         else:
             lines.append(f"[{'用户' if role == 'user' else '助手'}] {item.get('content')}")

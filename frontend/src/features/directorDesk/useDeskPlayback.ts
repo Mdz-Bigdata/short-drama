@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import { frameCount, snapToFrame } from './lib/sampling';
+import { lastPlayheadFrame, playheadFrame, snapToFrame } from './lib/sampling';
 
 // A stalled tab comes back with one enormous frame delta; playing it out would jump the shot.
 // Anything shorter is a slow frame, and is played in full: previs is watched for its timing, so
@@ -8,8 +8,9 @@ import { frameCount, snapToFrame } from './lib/sampling';
 const MAX_STEP_S = 0.25;
 
 export interface DeskPlayback {
-  /** Seconds, always on a whole frame of the shot. */
+  /** Seconds, always on a whole frame of the shot, or on its very end. */
   time: number;
+  /** 0 … `lastPlayheadFrame`: the end of the shot is a frame the playhead can stand on. */
   frame: number;
   playing: boolean;
   loop: boolean;
@@ -29,8 +30,13 @@ export function useDeskPlayback(durationS: number, fps: number, shotKey: string)
   const [clock, setClock] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [loop, setLoop] = useState(false);
-  const limits = useRef({ durationS, loop });
-  useEffect(() => { limits.current = { durationS, loop }; }, [durationS, loop]);
+  // Layout effects throughout: the clock must not tick between a commit and what follows from it.
+  const limits = useRef({ durationS, fps, loop });
+  useLayoutEffect(() => { limits.current = { durationS, fps, loop }; }, [durationS, fps, loop]);
+  // The clock as it runs. `clock` only takes it when the frame on screen changes: a display
+  // refreshes two to five times per frame of a shot, and each commit redraws the whole desk.
+  const exact = useRef(0);
+  const setTime = useCallback((next: number) => { exact.current = next; setClock(next); }, []);
 
   // Another shot is another timeline.
   const [shownShot, setShownShot] = useState(shotKey);
@@ -39,44 +45,52 @@ export function useDeskPlayback(durationS: number, fps: number, shotKey: string)
     setClock(0);
     setPlaying(false);
   }
+  useLayoutEffect(() => { exact.current = 0; }, [shotKey]);
 
-  // Reaching the end of a shot that does not loop is what stops it; nothing has to notice and say so.
+  // Reaching the end of a shot that does not loop stops it for good: a longer duration or a ticked
+  // loop afterwards must not set it going again by itself.
   const running = playing && (loop || clock < durationS - 1e-6);
+  if (playing && !running) setPlaying(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!running) return undefined;
     let handle = 0;
     let last: number | null = null;
     const tick = (now: number) => {
       const delta = last === null ? 0 : Math.min(MAX_STEP_S, Math.max(0, (now - last) / 1000));
       last = now;
-      setClock(current => {
-        const next = current + delta;
-        if (next < limits.current.durationS) return next;
-        return limits.current.loop ? next % limits.current.durationS : limits.current.durationS;
-      });
+      const { durationS: end, fps: rate, loop: around } = limits.current;
+      const before = exact.current;
+      const reached = before + delta >= end - 1e-6;
+      const next = !reached ? before + delta : around ? (before + delta) % end : end;
+      exact.current = next;
+      // The end is committed even when it lands on the frame already shown: it is what stops the clock.
+      if (reached || playheadFrame(next, rate, end) !== playheadFrame(before, rate, end)) setClock(next);
       handle = requestAnimationFrame(tick);
     };
     handle = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(handle);
   }, [running]);
 
-  const time = snapToFrame(Math.min(clock, durationS), fps, durationS);
-  const last = (frameCount(durationS, fps) - 1) / fps;
+  const time = snapToFrame(clock, fps, durationS);
+  const frame = playheadFrame(clock, fps, durationS);
 
   const play = useCallback(() => {
-    // Play from the end means play again.
-    setClock(current => (current >= limits.current.durationS - 1e-6 ? 0 : current));
+    // Play from the end means play again. The last frame is the end, however little of the shot runs on after it.
+    const { durationS: end, fps: rate } = limits.current;
+    if (playheadFrame(exact.current, rate, end) === lastPlayheadFrame(end, rate)) setTime(0);
     setPlaying(true);
-  }, []);
+  }, [setTime]);
   const pause = useCallback(() => setPlaying(false), []);
-  const stop = useCallback(() => { setPlaying(false); setClock(0); }, []);
-  const seek = useCallback((next: number) => setClock(Math.min(Math.max(0, Number.isFinite(next) ? next : 0), limits.current.durationS)), []);
+  const stop = useCallback(() => { setPlaying(false); setTime(0); }, [setTime]);
+  const seek = useCallback((next: number) => setTime(Math.min(Math.max(0, Number.isFinite(next) ? next : 0), limits.current.durationS)), [setTime]);
   const step = useCallback((frames: number) => {
     setPlaying(false);
-    setClock(current => Math.min(last, Math.max(0, (Math.floor(current * fps + 1e-6) + frames) / fps)));
-  }, [fps, last]);
+    const last = lastPlayheadFrame(durationS, fps);
+    const target = Math.min(last, Math.max(0, playheadFrame(exact.current, fps, durationS) + frames));
+    setTime(target === last ? durationS : target / fps);
+  }, [durationS, fps, setTime]);
 
-  return useMemo(() => ({ time, frame: Math.round(time * fps), playing: running, loop, play, pause, stop, seek, step, setLoop }),
-    [fps, loop, pause, play, running, seek, step, stop, time]);
+  return useMemo(() => ({ time, frame, playing: running, loop, play, pause, stop, seek, step, setLoop }),
+    [frame, loop, pause, play, running, seek, step, stop, time]);
 }

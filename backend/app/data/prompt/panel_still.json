@@ -1,0 +1,190 @@
+{
+  "_doc": "每格分镜图提示词里的固定句。三段的行序与其余固定句（锚续、任务句、物理优先、画幅、六锁、本拍排除、收尾禁令）在 app/core/panel_still_prompt.py 里早已按同一份骨架写成；这里是对照 ArcReel《系统实际下发提示词骨架》（docs/prompt-templates/系统实际下发提示词骨架.md）第一节补齐的几句：同一性声明、有对白格的口型句、没有参考图的资产总起句、道具母版行、技法基准行、六锁的固定尾句与缺值默认。逐行对照见 docs/prompt-template-full-integration/skeleton-coverage.md。",
+  "same_instance": {
+    "with_costume": "每个角色的定妆照与戏服图是该角色本人",
+    "looks_only": "每个角色的定妆照是该角色本人",
+    "distinct": "{people}是不同的角色，脸和服装都不互相借用"
+  },
+  "mouth": {
+    "label": "口型",
+    "speaker": "「{speaker}」是说话的人",
+    "spoken": "说话的人这句刚说完、嘴自然合上",
+    "listeners": "听的人闭着嘴在听（或正要开口）",
+    "never": "不画张嘴吐字的一瞬",
+    "silent": "闭口，不说话",
+    "off_screen": "画内人物闭口，不说话"
+  },
+  "unreferenced": {
+    "lead": "以下资产没有参考图，按文字绘制，不要因为没有图就省略：{names}"
+  },
+  "prop_master": {
+    "label": "道具（形制照母版）",
+    "row": "「{name}」照{pictures}（道具母版）画，改位置不改形制",
+    "picture": "图{number}"
+  },
+  "technique": {
+    "label": "技法基准",
+    "lens": "焦段 {lens}mm",
+    "aperture": "光圈 {aperture}",
+    "ratio": "光比[^；;，,。]*",
+    "temperature": "色温[^；;，,。]*|\\d{4,5}\\s*[Kk]",
+    "light": "光位 {light}"
+  },
+  "six_locks": {
+    "identity": "{people}，同一张脸同一发型同一体型",
+    "wardrobe": "{wardrobe}，破损浸润凌乱只增不减",
+    "wardrobe_default": "承接定妆照与上一格",
+    "prop": "{props}，磨损消耗只增不减",
+    "facing_default": "承接上一格的身体朝向与视线",
+    "facing_first": "以本格调度为准",
+    "light_default": "沿用本场建立镜，承接上一格的主光方向与色温",
+    "light_first": "沿用本场建立镜的主光方向与色温",
+    "palette_default": "沿用本场建立镜，承接参考图与上一格的主色次色点缀色",
+    "palette_first": "沿用本场建立镜与参考图的主色次色点缀色"
+  },
+  "_about_wording": "其余的固定句、标签、词表和正则也在这里，app/core/panel_still_prompt.py 只负责拼接：says 是句子模板（花括号里是代码填进去的值），labels 是各行的栏名，words 是单个词，marks 是分隔符和裁边用的标点，patterns 是读表用的正则（step 先填 {part} 再编译），其余是词表。",
+  "merged_beats": "；随后",
+  "nobody": [
+    "无",
+    "无人",
+    "无人物",
+    "空镜",
+    "—",
+    "-"
+  ],
+  "no_asset": [
+    "本格无额外",
+    "本场无额外"
+  ],
+  "no_line": [
+    "",
+    "无",
+    "-",
+    "—",
+    "（无）",
+    "(无)"
+  ],
+  "says_nothing": [
+    "建立空间与人物关系",
+    "承接上一格最后动作、视线和屏幕方向",
+    "动作停在进行中，留给下一镜完成",
+    "运镜落幅稳住，人物姿态与视线定格在可承接的状态",
+    "人物姿态、视线与道具停在下一镜可以直接承接的状态",
+    "形成下一格可承接的可见状态",
+    "与本镜触发事件对应的可观察微表情与呼吸变化",
+    "沿场景圣经指定轴线，人物不越180度轴线"
+  ],
+  "picture_noun": {
+    "actor": "定妆照",
+    "scene": "场景图",
+    "prop": "道具图",
+    "costume": "服装图",
+    "effect": "特效图",
+    "product": "商品图"
+  },
+  "only_gives": {
+    "prop": "道具图只提供形制、材质与磨损，不提供人物和场景",
+    "costume": "服装图只提供款式、面料与颜色，不提供人物和背景",
+    "effect": "特效图只提供形态、色彩与强度，不提供人物和场景",
+    "product": "商品图只提供外形、材质与颜色，不提供人物和背景"
+  },
+  "patterns": {
+    "speaker": "^([^：:\\n]{1,40})[：:]",
+    "contact": "握|持|攥|抓|拿|捧|端|扶|按|抱|搭|牵|拽|扣|夹|提着|背着|挎|举|递|接过|抵|放在|放下",
+    "phase_turn": "→|->|转为|转成|变为|变成|随后|继而|再到",
+    "result_verb": "放到|放在|放下|放回|搁到|搁在|摆到|递给|交给|塞给|扔给|抛给|还给|扔到|扔在|丢到|丢在|摔在|摔碎|插进|插回|收进|塞进|装进|打开|翻开|拆开|合上|关上|点燃|点亮|熄灭|吹灭|掐灭|撕碎|撕开|折断|砸碎|戴上|摘下|穿上|脱下|拔出|抽出|掏出|拿起|捡起|端起|接过|夺过|抢过",
+    "clause": "[^，,。；;！!？?\\n]+",
+    "main_light": "主光[：:][^；;。]+",
+    "outfit_breaks": "[；;。]+",
+    "step": "{part}[：:]\\s*([^\\n]+)"
+  },
+  "marks": {
+    "list": "、",
+    "clause": "；",
+    "comma": "，",
+    "period": "。",
+    "clip_edges": "。；;，, ",
+    "clip_tail": "，、；;",
+    "phase_edges": "，,；; "
+  },
+  "words": {
+    "says_nothing_prefix": "上一镜结束时的人物姿态",
+    "step_event": "主动作",
+    "step_start": "起始姿态",
+    "step_end": "结束姿态",
+    "step_body": "身体联动",
+    "picture_default": "参考图",
+    "not_given": "未提供",
+    "main_light_prefix": "主光：",
+    "key_default": "沿用本场建立镜",
+    "lock_nobody": "空镜，无人物",
+    "lock_none": "无"
+  },
+  "labels": {
+    "handoff": "上一格结束状态",
+    "effects": "特效",
+    "effect_moment": "特效时刻",
+    "blocking": "调度",
+    "time_light": "时段与光线",
+    "acting": "表演",
+    "expression": "表情定格",
+    "hair": "发型",
+    "contact": "持有物与接触点",
+    "continuity": "同场戏跨镜头一致",
+    "atmosphere": "氛围",
+    "medium": "介质与渲染标准",
+    "lock_identity": "身份",
+    "lock_wardrobe": "服装",
+    "lock_prop": "道具",
+    "lock_facing": "朝向",
+    "lock_light": "光位",
+    "lock_palette": "色板"
+  },
+  "says": {
+    "row": "{label}：{text}。",
+    "labelled": "{label}：{text}",
+    "quoted": "「{name}」",
+    "paren": "（{text}）",
+    "ref_first_frame": "图{number} 本格首帧",
+    "ref_face_real": "图{number} 「{name}」本人正脸照",
+    "ref_face": "图{number} 「{name}」正面大头照（只看相貌）",
+    "ref_picture": "图{number} 「{name}」{noun}",
+    "references": "参考图：{names}。",
+    "no_references": "参考图：无，按下面的文字设定生成。",
+    "first_frame_gives": "首帧图只提供人物身份、服装、场景和光色，动作与姿态以本格结束状态为准",
+    "actor_gives": "定妆照只提供脸型骨相、五官、发型发色、体型比例与服装，不提供背景、光线、版式和其他人物",
+    "scene_gives": "场景图只提供空间结构、陈设与材质{layout}，不提供光线、天色和人物，光线以本格为准",
+    "view_use": "图{number} 用于{purpose}",
+    "wears": "「{person}」穿图{number} 的「{name}」",
+    "added_makeup": "，图上没有的妆效按文字加上：{makeup}",
+    "dressed_by_photo": "「{person}」服装以图{number} 定妆照为准",
+    "no_costume": "「{person}」本格没有单独戏服，服装以图{number} 定妆照为准",
+    "costume_as_written": "「{person}」服装按设定：{clothes}",
+    "hair_by_photo": "{person} 以图{number} 定妆照为准",
+    "scene_setting": "「{name}」设定：{text}",
+    "unpictured": "「{name}」没有参考图，按设定：{text}",
+    "props_carried": "{props}的位置与归属沿用上一格，不换手",
+    "no_extra_holding": "不额外添加手持物",
+    "rim": "；轮廓光（rim）在主光对侧，勾出人物边缘，把人物和背景分开",
+    "three_lights": "三灯布光：主光（key）{key}；补光（fill）压低，暗部留细节不发灰{rim}。光质、光比、色温沿用本场建立镜，不临场改变。",
+    "empty_heads": "空镜，不生成面孔、肢体或人物服装",
+    "at_most": "画面中最多{count}个人物",
+    "only": "画面中只保留{count}个人物",
+    "task_end": "生成这一格的结束画面，供视频模型作尾帧，动作已经停稳；单帧、独立、完整。",
+    "task_first": "生成一格分镜示例图，供视频模型据此接拍，这是本场第一格，建立空间与人物关系；单帧、独立、完整。",
+    "task_next": "生成一格分镜示例图，供视频模型据此接拍，承接上一格的结束状态；单帧、独立、完整。",
+    "not_a": "不是宫格拼版，不是海报，不是资产图，不是概念图。",
+    "anchor": "锚续：身份、服装、道具、朝向、光位、色板六项跨格不变。",
+    "blocking": "地点{scene}；{blocking}",
+    "expression_default": "只取这一拍正在发生的一个表情阶段，不叠加前后情绪",
+    "absent": "不出现{name}",
+    "not_yet": "不提前呈现：{beat}",
+    "result_not_yet": "首帧停在动作开始的那一瞬：{beat}之后才有的结果（道具到了新位置、换了人手、状态变了）不提前画，留给尾帧",
+    "physics": "物理优先：刚体保形，绳链受重下垂，不为对齐参考图违背重力。",
+    "frame": "画幅 9:16，二K 交付档，四边留安全区，主体不贴边不裁切。{framing}。",
+    "locks": "本格结束状态六锁：{locks}。",
+    "exclusions": "本拍排除：{exclusions}。",
+    "closing": "一格只演一个正在进行的可见动作，不演完整场戏。不要身份漂移，不要服装自愈，不要道具自愈，不要越轴，不要文字、字幕与水印，不要在一张图里同时呈现两拍表情，不要用形容词代替可见事实。禁止宫格、拼贴、分屏、边框与编号，不复制参考图的多视角版式。",
+    "prompt": "【落笔】\n{drafting}\n【调色】\n{grading}\n【收边】\n{edge}"
+  }
+}

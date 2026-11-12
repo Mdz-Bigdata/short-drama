@@ -1,0 +1,116 @@
+/* The page behind a share link: the canvas fills the screen under one slim header. Colours only from the app's tokens. */
+.scp-root {
+  --cn-canvas: var(--bg-0);
+  --cn-node: var(--surface);
+  --cn-field: var(--surface-2);
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  color: var(--text-main);
+  font-size: 0.8rem;
+  background: var(--cn-canvas);
+}
+.scp-root svg:not(.cn-edges) { width: 0.95rem; height: 0.95rem; flex: none; }
+
+.scp-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 1rem;
+  padding: 0.5rem 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.scp-heading { min-width: 0; display: flex; align-items: center; gap: 0.5rem; }
+.scp-title { margin: 0; overflow: hidden; color: var(--ink); font-size: 0.95rem; white-space: nowrap; text-overflow: ellipsis; }
+.scp-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 0.7rem;
+  background: rgba(var(--accent-rgb), 0.12);
+}
+.scp-meta { flex: none; display: flex; flex-wrap: wrap; gap: 0.25rem 0.8rem; color: var(--text-muted); font-size: 0.72rem; }
+
+.scp-stage { position: relative; flex: 1; min-height: 0; display: flex; }
+.scp-viewport { flex: 1; }
+.scp-viewport .cn-surface { cursor: grab; }
+.scp-viewport.is-grabbing .cn-surface { cursor: grabbing; }
+/* The surface's own empty hint speaks to an editor; this page has its own. */
+.scp-viewport .cn-empty { display: none; }
+.scp-empty {
+  position: absolute;
+  inset: 50% 0 auto;
+  margin: 0;
+  color: var(--text-dim);
+  text-align: center;
+  pointer-events: none;
+}
+
+.scp-node .scp-node__head { cursor: inherit; }
+.scp-node .cn-node__body { gap: 0.4rem; }
+.scp-media { flex: 1 1 auto; }
+.scp-text {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+  color: var(--text-main);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.scp-placeholder {
+  height: 100%;
+  min-height: 3rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+}
+.scp-group {
+  width: 100%;
+  height: 100%;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  background: rgba(var(--accent-rgb), 0.04);
+}
+.scp-group__label { display: inline-block; padding: 0.3rem 0.55rem; color: var(--text-muted); font-size: 0.74rem; }
+
+.scp-state {
+  margin: auto;
+  padding: 1.5rem 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-align: center;
+}
+.scp-state p { margin: 0; }
+.scp-retry {
+  padding: 0.38rem 0.9rem;
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.8rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.scp-retry:hover { border-color: var(--accent); color: var(--accent); }
+
+@media (max-width: 640px) {
+  .scp-root { height: 100dvh; }
+  .scp-header { flex-direction: column; align-items: flex-start; }
+  .scp-meta { flex: initial; }
+}

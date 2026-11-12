@@ -1,0 +1,10 @@
+.shot-controls { margin-top: 0.5rem; font-size: 0.8125rem; }
+.shot-controls summary { cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 0.4rem; }
+.shot-controls__flag { font-weight: 400; padding: 0 0.35rem; border-radius: 4px; background: var(--warning-soft, #fff3d6); color: var(--warning, #8a5a00); }
+.shot-controls table { width: 100%; border-collapse: collapse; margin-top: 0.35rem; }
+.shot-controls th { text-align: left; font-weight: 500; white-space: nowrap; padding: 0.25rem 0.6rem 0.25rem 0; vertical-align: top; color: var(--text-muted, #777); }
+.shot-controls td { padding: 0.25rem 0; }
+.shot-controls tr.is-duplicate td, .shot-controls tr.is-missing td { color: var(--warning, #8a5a00); }
+.shot-controls tr.is-none td { color: var(--text-muted, #999); }
+.shot-controls__status { margin-left: 0.4rem; padding: 0 0.3rem; border: 1px solid currentColor; border-radius: 3px; font-size: 0.75rem; }
+.shot-controls__note { margin: 0.15rem 0 0; }

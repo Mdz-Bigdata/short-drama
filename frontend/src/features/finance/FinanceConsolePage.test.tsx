@@ -72,6 +72,36 @@ describe('FinanceConsolePage', () => {
     expect(JSON.parse(call?.body ?? '{}').amount_minor).toBe(1990);
   });
 
+  it('keeps a refund locked while its approval is out, even after another refund finishes', async () => {
+    const second = { ...REFUND, id: 'r2', email: 'other@example.com' };
+    const posts: string[] = [];
+    const release: Record<string, () => void> = {};
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'POST') {
+        posts.push(url);
+        await new Promise<void>(resolve => { release[url.split('/refunds/')[1]] = resolve; });
+        return { ok: true, status: 200, json: async () => ({}) } as Response;
+      }
+      return { ok: true, status: 200, json: async () => ({ items: [REFUND, second], total: 2 }) } as Response;
+    });
+    render(<FinanceConsolePage user={{ user_id: 'other', permissions: ['order:read_any', 'refund:approve'] }} onBack={() => undefined} />);
+    fireEvent.click(screen.getByRole('tab', { name: '退款审批' }));
+    await screen.findByText(/other@example.com/);
+    const [first, next] = screen.getAllByRole('button', { name: '批准并退款' }) as HTMLButtonElement[];
+    fireEvent.click(first);
+    fireEvent.click(next);
+    await waitFor(() => expect(posts).toHaveLength(2));
+    release['r2/approve']();
+    await waitFor(() => expect(next.disabled).toBe(false));
+    // r2 is done; r1's request is still out, so its button stays off.
+    expect(first.disabled).toBe(true);
+    fireEvent.click(first);
+    expect(posts.filter(url => url.endsWith('/refunds/r1/approve'))).toHaveLength(1);
+    release['r1/approve']();
+    await waitFor(() => expect(first.disabled).toBe(false));
+  });
+
   it('will not let a difference be closed without a reason', async () => {
     const item = { id: 'i1', rule: 'R1', kind: 'amount_differs', severity: 'critical', order_id: 'o1', reference: 'alipay:P1', expected: '2900', actual: '100', status: 'open', resolution: '', created_at: '2026-11-05T00:00:00' };
     const calls = serve({ '/recon/items': { items: [item], total: 1 } });
@@ -85,6 +115,49 @@ describe('FinanceConsolePage', () => {
     expect(done.disabled).toBe(false);
     fireEvent.click(done);
     await waitFor(() => expect(calls.some(call => call.url.endsWith('/items/i1/resolve'))).toBe(true));
+  });
+
+  it('files a points adjustment once however often it is clicked, and keeps the form when filing fails', async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    let release: () => void = () => undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      calls.push({ url, method });
+      if (method === 'POST') {
+        await new Promise<void>(resolve => { release = resolve; });
+        return { ok: false, status: 400, json: async () => ({ detail: '用户不存在' }) } as Response;
+      }
+      return { ok: true, status: 200, json: async () => ({ items: [], total: 0 }) } as Response;
+    });
+    render(<FinanceConsolePage user={{ user_id: 'u', permissions: ['wallet:adjust_request'] }} onBack={() => undefined} />);
+    expect(await screen.findByText('还没有积分调整')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('用户 ID'), { target: { value: 'nobody' } });
+    fireEvent.change(screen.getByLabelText('积分'), { target: { value: '50' } });
+    fireEvent.change(screen.getByLabelText('原因'), { target: { value: '补偿' } });
+    const send = screen.getByRole('button', { name: '提交审批' }) as HTMLButtonElement;
+    fireEvent.click(send);
+    await waitFor(() => expect(send.disabled).toBe(true));
+    fireEvent.click(send);
+    release();
+    expect((await screen.findByRole('alert')).textContent).toContain('用户不存在');
+    expect(calls.filter(call => call.method === 'POST')).toHaveLength(1);
+    expect((screen.getByLabelText('用户 ID') as HTMLInputElement).value).toBe('nobody');
+    expect(send.disabled).toBe(false);
+  });
+
+  it('writes order amounts the way every other amount is written, and names the rules a run found', async () => {
+    const order = { id: 'o1', user_id: 'b', email: 'buyer@example.com', plan_id: 'studio', provider: 'alipay', amount: 1299, status: 'paid', created_at: '2026-11-05T00:00:00', paid_at: null };
+    serve({
+      '/admin/orders?': { items: [order], total: 1 },
+      '/finance/summary': SUMMARY,
+      '/recon/runs': { items: [{ id: 'run1', period: '2026-11-04', status: 'done', summary: { found: { R1: 2, R11: 1 } }, started_at: '2026-11-05T01:00:00', finished_at: null }], bills: [] },
+    });
+    render(<FinanceConsolePage user={{ user_id: 'u', permissions: ['order:read_any', 'recon:read'] }} onBack={() => undefined} />);
+    // A rule the table does not name yet keeps its code once.
+    expect(await screen.findByText('R1 渠道账单与支付单：2 条，R11：1 条')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: '订单' }));
+    expect(await screen.findByText('¥1,299.00')).toBeTruthy();
   });
 
   it('opens an order, shows why it cannot be refunded, or offers the refund form with the suggested amount', async () => {

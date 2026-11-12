@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ActorKey, FollowClip, ShotTimeline, StageActor, StageCamera, StagePlan, StageShot } from '../../spatial/spatialTypes';
-import { actionBlockAt, cutCameraAt, followPose, sampleActor, sampleShot } from './sampling';
+import { actionBlockAt, cutCameraAt, followPose, sampleActor, sampleShot, timeOfFrame } from './sampling';
 import { addAction, addCut, addFollow, bakeFollow, figureForAction, moveBlock, nextBlockId, placeBlock, trimBlock, FOLLOW_PRESETS } from './timelineClips';
 import { verticalFov } from './stageMath';
 
@@ -43,6 +43,38 @@ describe('moving and trimming blocks', () => {
     expect(moved.end - moved.start).toBeCloseTo(1, 6);
   });
 
+  it('a slid block keeps its length in frames, so it hands over on the frame its length says', () => {
+    // At 24 fps frame 2 is stamped 0.083 s (a third of a millisecond early) and frame 25 1.042 s (a third late):
+    // 23 frames that measure 0.959 s. Slid to frame 1, the block must end on frame 24, not a millisecond after it.
+    [24, 25, 30].forEach(fps => {
+      for (let from = 0; from < 2 * fps; from += 1) {
+        for (const length of [1, fps - 1, fps + 1, 2 * fps + 1]) {
+          const held = [{ id: 'a', start: timeOfFrame(from, fps), end: timeOfFrame(from + length, fps) }];
+          for (const to of [from - 1, from + 1, from + 2]) {
+            if (to < 0) continue;
+            const [moved] = moveBlock(held, 'a', to / fps, fps, 10);
+            expect([moved.start, moved.end]).toEqual([timeOfFrame(to, fps), timeOfFrame(to + length, fps)]);
+            expect(cutCameraAt({ cuts: [{ ...moved, id: 'c', camera_id: 'alt' }] }, (to + length - 1) / fps)).toBe('alt');
+            expect(cutCameraAt({ cuts: [{ ...moved, id: 'c', camera_id: 'alt' }] }, (to + length) / fps)).toBeUndefined();
+          }
+        }
+      }
+    });
+  });
+
+  it('in a shot that is not a whole number of frames long, no block is placed, trimmed or slid past its end', () => {
+    // 2.5 s at 25 fps is 62.5 frames: the frame nearest the end is stamped 2.52 s, which the server refuses.
+    const [fps, durationS] = [25, 2.5];
+    expect(placeBlock([], 1.5, 3, fps, durationS)).toEqual({ start: 1.52, end: 2.5 });
+    expect(trimBlock([{ id: 'a', start: 1, end: 2 }], 'a', 'end', 9, fps, durationS)[0].end).toBe(2.5);
+    // Slid to the end, a 25-frame block still covers 25 of the frames an export draws (38 to 62).
+    const [moved] = moveBlock([{ id: 'a', start: 0, end: 1 }], 'a', 9, fps, durationS);
+    expect(moved).toEqual({ id: 'a', start: 1.52, end: 2.5 });
+    // A block that already runs to the end keeps doing so when it is slid back there.
+    const [back] = moveBlock([{ id: 'a', start: 1.52, end: 2.5 }], 'a', 0.5, fps, durationS);
+    expect(moveBlock([back], 'a', 9, fps, durationS)[0]).toEqual({ id: 'a', start: 1.52, end: 2.5 });
+  });
+
   it('trimming stops at the neighbour and never inverts the block', () => {
     expect(trimBlock(blocks, 'a', 'end', 9, FPS, 5)[0].end).toBe(3);
     const short = trimBlock(blocks, 'a', 'end', 0, FPS, 5)[0];
@@ -82,6 +114,16 @@ describe('action clips', () => {
     const clips = [{ id: 'c', clip: 'human-walk-v1', start: 1, end: 3 }];
     expect(actionBlockAt(clips, 1)?.id).toBe('c');
     expect(actionBlockAt(clips, 3)).toBeUndefined();
+    expect(actionBlockAt(clips, 3, 5)).toBeUndefined();
+  });
+
+  it('a block that runs to the end of the shot still plays on its last instant', () => {
+    const clips = [{ id: 'c', clip: 'human-walk-v1', start: 1, end: 5 }];
+    expect(actionBlockAt(clips, 5, 5)?.id).toBe('c');
+    const plan = planWith({ clips: { 林晚: clips } });
+    expect(sampleShot(plan, shot, 5).actors['林晚'].pose?.clip).toBe('human-walk-v1');
+    // Asked without the shot's length, the rule is the plain one.
+    expect(sampleActor(actor, [], 5, false, clips).pose?.clip).toBe('human-idle-v1');
   });
 
   it('a one-off holds its last frame instead of looping', () => {
@@ -153,6 +195,12 @@ describe('follow clips', () => {
     expect(sampleShot(plan, shot, 3.5).camera?.position).toEqual(camera.position);
   });
 
+  it('a follow that runs to the end of the shot still holds the lens on its last instant', () => {
+    const plan = planWith({ actors: { 林晚: walk }, follow: [{ ...behind, start: 1, end: 5 }] });
+    expect(sampleShot(plan, shot, 5).camera?.position).toEqual(sampleShot(plan, shot, 4.999).camera?.position);
+    expect(sampleShot(plan, shot, 5).camera?.position).not.toEqual(camera.position);
+  });
+
   it('a blend eases between the lens and the follow pose', () => {
     const plan = planWith({ follow: [{ ...behind, start: 0, end: 4, blend_s: 2 }] });
     const midway = sampleShot(plan, shot, 1).camera!;
@@ -220,6 +268,13 @@ describe('camera cuts', () => {
     expect(cutCameraAt(timeline, 1)).toBe('alt');
     expect(cutCameraAt(timeline, 3)).toBeUndefined();
     expect(cutCameraAt({}, 1)).toBeUndefined();
+  });
+
+  it('a cut that runs to the end of the shot keeps its lens on the last instant', () => {
+    const cuts = [{ id: 'c', camera_id: 'alt', start: 3, end: 5 }];
+    expect(cutCameraAt({ cuts, duration_s: 5 }, 5)).toBe('alt');
+    expect(cutCameraAt({ cuts: [{ ...cuts[0], end: 4 }], duration_s: 5 }, 4)).toBeUndefined();
+    expect(sampleShot(withCuts(cuts), cutShot, 5).camera?.position).toEqual(other.position);
   });
 
   it('a new cut lands at the playhead and runs a couple of seconds', () => {

@@ -36,6 +36,9 @@ describe('timeline edits', () => {
     expect(retimeKey(three, 1, 5, 24, 4)[1].time).toBe(1.958);      // one frame before the key at 2 s
     expect(retimeKey(three, 1, -1, 24, 4)[1].time).toBe(0.042);     // one frame after the key at 0 s
     expect(retimeKey(three, 2, 99, 24, 4)[2].time).toBe(4);
+    // The end of a shot that is not a whole number of frames long is still a place for the last key.
+    expect(retimeKey(three, 2, 99, 25, 2.5)[2].time).toBe(2.5);
+    expect(retimeKey([...three.slice(0, 2), { ...three[2], time: 2.5 }], 2, 2.5 + 1 / 25, 25, 2.5)[2].time).toBe(2.5);
   });
 
   it('refuses a duration that would cut a key off, naming it', () => {

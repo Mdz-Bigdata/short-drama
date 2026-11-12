@@ -15,6 +15,8 @@ export interface ProductionShot {
   image_url?: string;
   end_frame_url?: string;
   video_url?: string;
+  /** The same clip re-voiced after a character's voice changed; play this when present. */
+  preview_url?: string | null;
   contract_fingerprint?: string;
   /** 首尾帧接力的接缝质检：接上了 / 可疑 / 跳了，附差异分。 */
   seam?: { score: number; verdict: 'good' | 'suspect' | 'jump'; label: string; detail: string } | null;
@@ -38,6 +40,8 @@ interface Props {
   episodes?: EpisodeMeta[];
   /** 项目的视频模型在视觉工作区里被换掉之后，让外层同步自己的配置。 */
   onVideoModelChange?: (model: string) => void;
+  /** 变了就重新读工作区和队列：阶段可能是从聊天框里重跑的。 */
+  refreshKey?: string;
 }
 
 interface MediaPaneProps {
@@ -127,9 +131,9 @@ function ShotCard({ shot, index, videoModel, imageModel }: {
       <div className={`stage-five-media-grid${readyMediaCount === 1 ? ' is-single' : ''}`}>
         {hasVideo && (
           <MediaPane
-            key={`video-${shot.video_url}`}
+            key={`video-${shot.preview_url || shot.video_url}`}
             kind="video"
-            url={shot.video_url!}
+            url={(shot.preview_url || shot.video_url)!}
             shotLabel={shotLabel}
             model={videoModel}
           />
@@ -158,13 +162,13 @@ function ShotCard({ shot, index, videoModel, imageModel }: {
 }
 
 
-export function StageFivePreview({ asset, videoModel, imageModel, taskId, onRerun, onVideoModelChange, episodes }: Props) {
+export function StageFivePreview({ asset, videoModel, imageModel, taskId, onRerun, onVideoModelChange, episodes, refreshKey }: Props) {
   const shots = Array.isArray(asset) ? asset : asset ? [asset] : [];
 
   if (taskId) {
     return (
       <div className="stage-five-preview-content">
-        <ShotVisualWorkspace taskId={taskId} videoModel={videoModel} imageModel={imageModel} onRerun={onRerun} onVideoModelChange={onVideoModelChange} episodes={episodes} />
+        <ShotVisualWorkspace taskId={taskId} videoModel={videoModel} imageModel={imageModel} onRerun={onRerun} onVideoModelChange={onVideoModelChange} episodes={episodes} refreshKey={refreshKey} />
       </div>
     );
   }

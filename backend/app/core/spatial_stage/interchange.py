@@ -20,6 +20,7 @@ import math
 from collections.abc import Mapping
 from typing import Any
 
+from app.core import prompt_data
 from app.core.spatial_stage import geometry as geo
 from app.core.spatial_stage.models import StagePlan
 from app.core.spatial_stage.projection import posture_height
@@ -33,10 +34,20 @@ _DESK_POSES = {
 _COSTAGE_PROP_KINDS = {"architecture": "wall", "furniture": "cube", "light": "light", "prop": "cube"}
 _COLORS = ("#E07A5F", "#3D9BE9", "#81B29A", "#F2CC8F", "#9B8AF4", "#E5989B", "#6CC5B0", "#D4A373")
 MAX_IMPORT_OBJECTS = 400
+# The notes an export carries and what a refused import says: app/data/prompt/stage_vocabulary.json.
+_VOCABULARY = "stage_vocabulary"
 
 
 class InterchangeError(ValueError):
     """The document is not a project this module can read."""
+
+
+def _wording() -> dict[str, Any]:
+    return prompt_data.value(_VOCABULARY, "interchange")
+
+
+def _refusal(key: str) -> InterchangeError:
+    return InterchangeError(str(_wording()["errors"][key]))
 
 
 def _vec(value: Any, size: int) -> list[float] | None:
@@ -89,9 +100,6 @@ def _desk_timeline(plan: StagePlan) -> dict[str, Any] | None:
     return {"duration": round(clock, 3), "tracks": [], "cameraTracks": tracks} if tracks else None
 
 
-_BACKDROP_WORDS = {"none": "无", "color": "纯色", "image": "参考图", "panorama": "全景图"}
-
-
 def _local_notes(plan: StagePlan) -> list[str]:
     """What this desk holds that no other desk's document has a field for.
 
@@ -99,17 +107,18 @@ def _local_notes(plan: StagePlan) -> list[str]:
     travel as prose rather than as invented keys — and come back as nothing at all, because an
     import only reads positions, facings and lens poses.
     """
+    wording = _wording()
     notes: list[str] = []
     backdrop = plan.backdrop
     if backdrop.kind != "none":
-        detail = backdrop.color or backdrop.url or "—"
-        notes.append(
-            f"本场背景：{_BACKDROP_WORDS.get(backdrop.kind, backdrop.kind)}（{detail}，"
-            f"偏转 {backdrop.yaw_deg:g}°、不透明度 {backdrop.opacity:g}）；导演台专有，导入时会被忽略"
-        )
+        notes.append(str(wording["backdrop_note"]).format(
+            kind=wording["backdrops"].get(backdrop.kind, backdrop.kind),
+            detail=backdrop.color or backdrop.url or wording["no_detail"],
+            yaw=backdrop.yaw_deg, opacity=backdrop.opacity,
+        ))
     for landmark in plan.landmarks:
         if landmark.element_id:
-            notes.append(f"「{landmark.name}」绑定元素库模型 {landmark.element_id}；导演台专有，导入时会被忽略")
+            notes.append(str(wording["element_note"]).format(name=landmark.name, element_id=landmark.element_id))
     return notes
 
 
@@ -181,7 +190,7 @@ def to_director_desk(plan: StagePlan) -> dict[str, Any]:
 def _from_director_desk(document: Mapping[str, Any]) -> tuple[dict[str, dict], dict[str, dict]]:
     objects = document.get("objects")
     if not isinstance(objects, list) or len(objects) > MAX_IMPORT_OBJECTS:
-        raise InterchangeError("导演台工程缺少 objects 或对象过多")
+        raise _refusal("desk_objects")
     placed: dict[str, dict] = {}
     for item in objects:
         if not isinstance(item, Mapping) or item.get("kind") not in {"character", "prop"}:
@@ -272,7 +281,7 @@ def to_costage(plan: StagePlan) -> dict[str, Any]:
 def _from_costage(document: Mapping[str, Any], scene_id: str) -> tuple[dict[str, dict], dict[str, dict]]:
     scenes = document.get("scenes")
     if not isinstance(scenes, list) or not scenes:
-        raise InterchangeError("CoStage 文档缺少 scenes")
+        raise _refusal("costage_scenes")
     chosen = next(
         (item for item in scenes if isinstance(item, Mapping) and item.get("id") == scene_id),
         next((item for item in scenes if isinstance(item, Mapping) and item.get("id") == document.get("activeSceneId")), scenes[0]),
@@ -281,7 +290,7 @@ def _from_costage(document: Mapping[str, Any], scene_id: str) -> tuple[dict[str,
     placed: dict[str, dict] = {}
     entries = [*(body.get("characters") or []), *(body.get("props") or [])]
     if len(entries) > MAX_IMPORT_OBJECTS:
-        raise InterchangeError("CoStage 场景对象过多")
+        raise _refusal("costage_too_many")
     for item in entries:
         if not isinstance(item, Mapping):
             continue
@@ -309,14 +318,14 @@ def _from_costage(document: Mapping[str, Any], scene_id: str) -> tuple[dict[str,
 def import_operations(plan: StagePlan, document: Mapping[str, Any]) -> list[dict[str, Any]]:
     """The edit operations that bring ``plan`` to the positions of a desk document, matched by name / camera id."""
     if not isinstance(document, Mapping):
-        raise InterchangeError("工程文件必须是 JSON 对象")
+        raise _refusal("not_an_object")
     version = document.get("version")
     if version in (1, 2) and "objects" in document:
         placed, cameras = _from_director_desk(document)
     elif version == 2 and "scenes" in document:
         placed, cameras = _from_costage(document, plan.scene_id)
     else:
-        raise InterchangeError("无法识别的工程文件：需要 3D 导演台工程（含 objects，version 1 / 2）或 CoStage 文档（含 scenes，version 2）")
+        raise _refusal("unknown_document")
     operations: list[dict[str, Any]] = []
     for actor in plan.actors:
         found = placed.get(actor.name)
@@ -354,7 +363,7 @@ def import_operations(plan: StagePlan, document: Mapping[str, Any]) -> list[dict
             operation["lens_mm"] = round(max(8.0, min(600.0, sensor / (2 * math.tan(math.radians(fov) / 2)))), 1)
         operations.append(operation)
     if not operations:
-        raise InterchangeError("工程文件里没有与本场同名的人物、地标或同编号的机位")
+        raise _refusal("nothing_matched")
     return operations
 
 

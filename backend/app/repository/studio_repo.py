@@ -295,6 +295,22 @@ class StudioRepository:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY(project_id, canvas_id, node_id)
                 );
+
+                -- One read-only share link per canvas. The public lookup goes through token_hash only;
+                -- the raw token is kept beside it so the owner can copy the same link again later
+                -- (agent keys are shown once, a share link is not). Accepted trade-off: someone holding
+                -- a copy of this file can open the live links, so rotate or stop them after a leak.
+                -- Creating a link again replaces the row, which is what rotating means.
+                CREATE TABLE IF NOT EXISTS canvas_shares (
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    canvas_id TEXT NOT NULL,
+                    owner_id TEXT NOT NULL,
+                    token TEXT NOT NULL,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    expires_at TEXT,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, canvas_id)
+                );
                 """
             )
             self._ensure_column("generation_jobs", "lease_owner", "TEXT")
@@ -828,6 +844,72 @@ class StudioRepository:
             self._connection.execute(
                 "UPDATE canvas_boards SET deleted_at = ?, updated_at = ? WHERE project_id = ? AND id = ?", (now, now, project_id, canvas_id),
             )
+            # Its share link does not come back with it.
+            self._connection.execute("DELETE FROM canvas_shares WHERE project_id = ? AND canvas_id = ?", (project_id, canvas_id))
+
+    # ------------------------------------------------------------------ read-only share links
+
+    def _owned_board(self, project_id: str, owner_id: str, canvas_id: str) -> None:
+        if not self.get_project(project_id, owner_id):
+            raise PermissionError("project not found or not owned by actor")
+        self._require_board(project_id, canvas_id)
+
+    def get_canvas_share(self, project_id: str, owner_id: str, canvas_id: str) -> dict[str, Any] | None:
+        self._owned_board(project_id, owner_id, canvas_id)
+        row = self._connection.execute(
+            "SELECT * FROM canvas_shares WHERE project_id = ? AND canvas_id = ?", (project_id, canvas_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def put_canvas_share(
+        self, project_id: str, owner_id: str, canvas_id: str, *, token: str, token_hash: str, expires_at: str | None, created_at: str,
+    ) -> dict[str, Any]:
+        """Issue the canvas's link, replacing any earlier one: the old token stops resolving in the same write."""
+        self._owned_board(project_id, owner_id, canvas_id)
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO canvas_shares(project_id, canvas_id, owner_id, token, token_hash, expires_at, created_at)
+                   VALUES(?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(project_id, canvas_id) DO UPDATE SET
+                       owner_id = excluded.owner_id, token = excluded.token, token_hash = excluded.token_hash,
+                       expires_at = excluded.expires_at, created_at = excluded.created_at""",
+                (project_id, canvas_id, owner_id, token, token_hash, expires_at, created_at),
+            )
+        return {
+            "project_id": project_id, "canvas_id": canvas_id, "owner_id": owner_id, "token": token,
+            "token_hash": token_hash, "expires_at": expires_at, "created_at": created_at,
+        }
+
+    def delete_canvas_share(self, project_id: str, owner_id: str, canvas_id: str) -> bool:
+        self._owned_board(project_id, owner_id, canvas_id)
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "DELETE FROM canvas_shares WHERE project_id = ? AND canvas_id = ?", (project_id, canvas_id),
+            )
+        return cursor.rowcount > 0
+
+    def find_canvas_share(self, token_hash: str) -> dict[str, Any] | None:
+        """The live share behind a token hash, while its project is still the issuer's and its board still exists."""
+        row = self._connection.execute(
+            """SELECT s.* FROM canvas_shares s JOIN projects p ON p.id = s.project_id AND p.owner_id = s.owner_id
+               WHERE s.token_hash = ?""",
+            (token_hash,),
+        ).fetchone()
+        if not row or not hmac.compare_digest(str(row["token_hash"]), token_hash):
+            return None
+        if row["canvas_id"] != CANVAS_MAIN_ID and not self._connection.execute(
+            "SELECT 1 FROM canvas_boards WHERE project_id = ? AND id = ? AND deleted_at IS NULL", (row["project_id"], row["canvas_id"]),
+        ).fetchone():
+            return None
+        return dict(row)
+
+    def canvas_title(self, project_id: str, canvas_id: str) -> str:
+        row = self._connection.execute(
+            "SELECT title FROM canvas_boards WHERE project_id = ? AND id = ?", (project_id, canvas_id),
+        ).fetchone()
+        if row and str(row["title"] or "").strip():
+            return str(row["title"])
+        return "主画布" if canvas_id == CANVAS_MAIN_ID else "画布"
 
     # ------------------------------------------------------------------ canvas revision history
 

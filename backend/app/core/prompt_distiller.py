@@ -24,6 +24,25 @@ DISTILLABLE: tuple[str, ...] = (
     "subject", "motion", "expression", "composition", "environment", "colour", "effects",
     "contact", "handoff", "dialogue_notes", "sound_layers", "sound", "end_state",
 )
+
+
+def distillable_for(model: str) -> tuple[str, ...]:
+    """这个模型精炼哪些小节：自己出声的模型(H3、Seedance 2.x)声音小节原样保留，不交给精炼压缩。"""
+    from app.core.prompt_budget import UNCUT_FOR_NATIVE_AUDIO
+    from app.core.video_references import video_native_audio
+
+    if not video_native_audio(model):
+        return DISTILLABLE
+    return tuple(key for key in DISTILLABLE if key not in UNCUT_FOR_NATIVE_AUDIO)
+
+
+def fixed_for(model: str) -> frozenset[str]:
+    """精炼时不计入预算的小节：每镜重申的锁定层；自己出声的模型再加上原样保留的声音小节(它们不和画面抢字数)。"""
+    from app.core import prompt_budget
+
+    return prompt_budget.fixed_for(model)
+
+
 #: 正文目标字数低于此值就不精炼(锁定行已占满预算，再压也写不下事实)。
 MIN_TARGET = 120
 #: 精炼结果至少要短到原文的这个比例才采用(超出目标不算失败：内容优先，宁长勿丢)。

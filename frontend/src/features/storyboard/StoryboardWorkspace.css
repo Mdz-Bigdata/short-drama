@@ -8,7 +8,7 @@
   --storyboard-cyan-soft: rgba(var(--accent-rgb), 0.08);
   --storyboard-text: var(--text-main);
   --storyboard-muted: #725a64;
-  --storyboard-green: #1cca7f;
+  --storyboard-green: var(--success);
   position: relative;
   isolation: isolate;
   flex: 1 1 auto;
@@ -89,6 +89,10 @@
 .storyboard-action:focus-visible,
 .storyboard-scene-card:focus-visible { outline: 2px solid var(--storyboard-cyan); outline-offset: 2px; }
 .storyboard-action:disabled { opacity: 0.42; cursor: not-allowed; transform: none; }
+.storyboard-action--primary,
+.storyboard-action--primary:hover { color: var(--on-accent); border-color: var(--storyboard-cyan); background: var(--storyboard-cyan); }
+.storyboard-action--primary svg { color: inherit; }
+.storyboard-action--primary:hover:not(:disabled) { box-shadow: 0 0.25rem 0.875rem rgba(var(--accent-rgb), 0.32); }
 
 .storyboard-download-notice {
   margin: 0.625rem 1.5rem 0;
@@ -188,14 +192,34 @@
 .storyboard-scene-card__lock-hint { color: var(--text-muted); font-size: 0.68rem; }
 
 .storyboard-main { min-width: 0; min-height: 0; padding: 1.75rem clamp(1.375rem, 4vw, 4.375rem) 3rem; overflow: auto; background: rgba(var(--surface-tint-rgb), 0.56); scrollbar-color: rgba(var(--accent-rgb), 0.25) transparent; scrollbar-width: thin; }
-.storyboard-main-toolbar { margin-bottom: 1.375rem; display: flex; align-items: center; justify-content: space-between; gap: 1.25rem; }
+.storyboard-main-toolbar { margin-bottom: 1.375rem; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem 1.25rem; }
+/* The title keeps a readable width; whatever does not fit beside it drops to the next row. */
+.storyboard-main-title { flex: 1 1 12rem; min-width: min(12rem, 100%); }
+.storyboard-main-title h2 { white-space: nowrap; }
+.storyboard-stage-tools { display: flex; flex-wrap: wrap; gap: 0.625rem; }
+.storyboard-stage-tool { min-height: 2.75rem; padding: 0.3rem 0.85rem; text-align: left; }
+.storyboard-stage-tool > span { display: grid; line-height: 1.3; }
+.storyboard-stage-tool strong { color: var(--storyboard-text); font-size: 0.82rem; }
+.storyboard-stage-tool small { font-size: 0.7rem; white-space: nowrap; }
+.storyboard-stage-tool.storyboard-action--primary strong { color: inherit; }
+.storyboard-main-toolbar .storyboard-main-actions { margin-left: auto; }
+.storyboard-more { position: relative; display: inline-flex; }
+.storyboard-more > .storyboard-action svg { color: inherit; }
+.storyboard-more__menu { position: absolute; top: calc(100% + 0.375rem); right: 0; z-index: 5; min-width: 11rem; padding: 0.3rem; display: grid; gap: 0.125rem; border: 1px solid var(--storyboard-line); border-radius: 0.5rem; background: var(--storyboard-surface); box-shadow: 0 0.75rem 2rem rgba(var(--shadow-rgb), 0.18); }
+.storyboard-more__menu button { min-height: 2.25rem; padding: 0 0.7rem; display: flex; align-items: center; gap: 0.5rem; color: var(--storyboard-text); border: 0; border-radius: 0.35rem; background: transparent; font: inherit; font-size: 0.8rem; text-align: left; white-space: nowrap; cursor: pointer; }
+.storyboard-more__menu button svg { width: 1rem; height: 1rem; color: var(--storyboard-cyan); }
+.storyboard-more__menu button:hover:not(:disabled) { background: var(--storyboard-cyan-soft); }
+.storyboard-more__menu button:focus-visible { outline: 2px solid var(--storyboard-cyan); outline-offset: -2px; }
+.storyboard-more__menu button:disabled { opacity: 0.42; cursor: not-allowed; }
 .storyboard-main-toolbar h2 { color: var(--storyboard-text); font-size: 1.23rem; line-height: 1.3; letter-spacing: -0.02em; }
 .storyboard-main-toolbar p { margin-top: 0.3rem; display: flex; align-items: center; gap: 0.55rem; color: var(--storyboard-muted); font-size: 0.8rem; }
 /* 选中场景的完整描述：主区域宽度充裕，按段落排版不截断。 */
 .storyboard-main-toolbar p.storyboard-scene-summary {
+  /* A full row of its own under the actions; the padding keeps the measure at 68ch. */
+  flex: 1 0 100%;
   display: block;
-  max-width: 68ch;
-  margin-top: 0.5rem;
+  padding-right: max(0px, calc(100% - 68ch));
+  margin-top: 0;
   color: var(--text-muted);
   font-size: 0.82rem;
   line-height: 1.6;
@@ -425,8 +449,9 @@
   .storyboard-header-actions { justify-content: flex-start; }
   .storyboard-body { grid-template-columns: 13.75rem minmax(0, 1fr); }
   .storyboard-main { padding-inline: 1.375rem; }
-  .storyboard-main-toolbar { align-items: flex-start; flex-direction: column; }
-  .storyboard-main-actions { justify-content: flex-start; }
+  .storyboard-main-toolbar { align-items: flex-start; justify-content: flex-start; }
+  .storyboard-main-title { flex-basis: 100%; }
+  .storyboard-main-toolbar .storyboard-main-actions { margin-left: 0; justify-content: flex-start; }
   .storyboard-frame__number { width: 2.125rem; height: 2.125rem; font-size: 0.92rem; }
 }
 

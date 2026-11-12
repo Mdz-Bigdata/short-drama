@@ -144,8 +144,8 @@
     "reviewed_commit": "066e7a505a0af17d31ee6c7a5629ac62ce88c166",
     "reviewed_at": "2026-10-13",
     "license_observation": "AGPL-3.0 with NOTICE/additional terms.",
-    "code_treatment": "clean-room",
-    "attribution": "ArcReel capability reference",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "ArcReel capability reference; prompt skeleton sentences reproduced (AGPL-3.0), see THIRD_PARTY_NOTICES.md",
     "capability_ids": [
       "story-graph",
       "shot-generation",
@@ -417,6 +417,25 @@
     "attribution": "looplj/reveric — https://github.com/looplj/reveric",
     "capability_ids": [
       "agent-operates-the-director-desk"
+    ]
+  },
+  {
+    "id": "open-ai-canvas",
+    "url": "https://github.com/ddcat-ai/open-ai-canvas",
+    "reviewed_commit": "c8d274f43c92f6a3d4aa0355f775b1b14c2fbc25",
+    "reviewed_at": "2026-11-10",
+    "license_observation": "MIT (Copyright (c) 2026 ddcat and Open AI Canvas contributors); Live2D runtime, icon logos and tldraw are under other terms and not used.",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "ddcat-ai/open-ai-canvas — https://github.com/ddcat-ai/open-ai-canvas (MIT)",
+    "capability_ids": [
+      "infinite-canvas-viewport",
+      "canvas-spatial-index",
+      "canvas-media-lod",
+      "canvas-layout-tools",
+      "canvas-nested-groups",
+      "canvas-clipboard",
+      "canvas-search",
+      "canvas-export-import"
     ]
   }
 ]

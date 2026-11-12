@@ -38,6 +38,7 @@ from app.core.spatial_stage.planner import (
 from app.core.spatial_stage.prompting import (
     array_members,
     frame_positions,
+    is_stand_in,
     landmark_relative_position,
     landmark_size,
     master_camera,
@@ -240,6 +241,9 @@ def plan_scene(
         blocking_from=keep,
     )
     save_plan(task, plan)
+    if prior is not None:
+        # The lenses were solved again for the shots given: a desk picture of one that moved is of the old stage.
+        mark_captures_stale(task, brief.scene_id, before=prior, after=plan)
     return plan
 
 
@@ -315,7 +319,7 @@ def director_context(plan: StagePlan) -> dict[str, Any]:
         "landmarks": [
             {
                 "name": item.name, "relative_position": landmark_relative_position(plan, item),
-                "form_and_count": f"1处，{landmark_size(item)}，位置固定",
+                "form_and_count": "1处，位置固定" if is_stand_in(item) else f"1处，{landmark_size(item)}，位置固定",
             }
             for item in plan.landmarks
         ][:50],
@@ -364,7 +368,7 @@ def edit_plan(
     edited = apply_operations(plan, operations, solve=solve)
     save_plan(task, edited)
     mark_board_stale(task, scene_id)
-    mark_captures_stale(task, scene_id)
+    mark_captures_stale(task, scene_id, before=plan, after=edited)
     return edited
 
 

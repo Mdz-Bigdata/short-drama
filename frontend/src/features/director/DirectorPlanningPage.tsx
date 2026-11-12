@@ -3,11 +3,13 @@ import {
   AudioLines,
   Camera,
   Check,
+  Clock,
   Compass,
   Eye,
   Gauge,
   Target,
 } from 'lucide-react';
+import { useState } from 'react';
 
 import { styleName } from '../workbench/creationOptions';
 import { findBrief, localizePlan } from './directorBrief';
@@ -50,6 +52,8 @@ export function DirectorPlanningPage({
   const keywords = findKeywords(source, directorStyle || '');
   const directorStyleLabel = styleName(directorStyle) || '电影级叙事';
   const shotStyleLabel = styleName(shotStyle) || '电影机位';
+  // The set photo is served by another site; when it cannot load the hero keeps its copy and drops the frame.
+  const [photoMissing, setPhotoMissing] = useState(false);
 
   return (
     <main className="director-board" aria-labelledby="director-page-title">
@@ -58,10 +62,12 @@ export function DirectorPlanningPage({
           <span className="director-board__index">DIRECTION / 01</span>
           <span>{t('总导演工作台')}</span>
         </div>
-        <span className="director-board__status"><Check aria-hidden="true" /> {source ? t('策划基线已建立') : t('等待策划生成')}</span>
+        <span className={`director-board__status ${source ? '' : 'is-waiting'}`}>
+          {source ? <Check aria-hidden="true" /> : <Clock aria-hidden="true" />} {source ? t('策划基线已建立') : t('等待策划生成')}
+        </span>
       </div>
 
-      <section className="director-hero" aria-label={t('导演创作宣言')}>
+      <section className={`director-hero ${photoMissing ? 'is-plain' : ''}`} aria-label={t('导演创作宣言')}>
         <div className="director-hero__copy">
           <p className="director-hero__eyebrow">EXECUTIVE DIRECTOR'S DESK</p>
           <h1 id="director-page-title" className="director-hero__title">
@@ -74,17 +80,34 @@ export function DirectorPlanningPage({
           </div>
         </div>
 
-        <figure className="director-hero__visual">
-          <img src={DIRECTOR_SET_IMAGE} alt={t('导演在片场监看拍摄画面')} />
-          <span className="director-hero__reticle" aria-hidden="true" />
-          <div className="director-hero__frame-data" aria-hidden="true">
-            <span>CAM A</span><span>24 FPS</span><span>REC ●</span>
-          </div>
-          <figcaption>
-            SET REFERENCE · <a href="https://unsplash.com/photos/t75-VceQYq8" target="_blank" rel="noreferrer">KYLE LOFTUS / UNSPLASH</a>
-          </figcaption>
-        </figure>
+        {!photoMissing && (
+          <figure className="director-hero__visual">
+            <img src={DIRECTOR_SET_IMAGE} alt={t('导演在片场监看拍摄画面')} onError={() => setPhotoMissing(true)} />
+            <span className="director-hero__reticle" aria-hidden="true" />
+            <div className="director-hero__frame-data" aria-hidden="true">
+              <span>CAM A</span><span>24 FPS</span><span>REC ●</span>
+            </div>
+            <figcaption>
+              SET REFERENCE · <a href="https://unsplash.com/photos/t75-VceQYq8" target="_blank" rel="noreferrer">KYLE LOFTUS / UNSPLASH</a>
+            </figcaption>
+          </figure>
+        )}
       </section>
+
+      <section className="director-notes" aria-labelledby="notes-title">
+        <div className="director-notes__heading">
+          <div><span>DIRECTOR'S NOTE</span><h2 id="notes-title">{t('导演手记')}</h2></div>
+          <p>{t('总导演 Agent 为本片写的策划原文。')}</p>
+        </div>
+        {source
+          ? <PlanMarkdown text={localizePlan(source)} />
+          : <p className="director-notes__empty">{t('策划生成后，完整导演手记将在这里自动归档。')}</p>}
+      </section>
+
+      <p className="director-board__general">
+        <strong>{t('通用导演准则')}</strong>
+        <span>{t('镜头语法和影调取自本项目的风格设置，其余各项对所有项目相同，不随本片策划变化。')}</span>
+      </p>
 
       <section className="director-command" aria-labelledby="creative-compass-title">
         <div className="director-command__intro">
@@ -123,7 +146,7 @@ export function DirectorPlanningPage({
             <div><Aperture aria-hidden="true" /><span>LOOK &amp; TONE</span></div>
             <h2 id="look-title">{t('视听基调')}</h2>
           </div>
-          <div className="director-look__palette" role="img" aria-label={t('深青、墨蓝、灰蓝和琥珀色主色板')}><span /><span /><span /><span /></div>
+          <div className="director-look__palette" role="img" aria-label={t('墨色、紫色、玫红和琥珀色主色板')}><span /><span /><span /><span /></div>
           <dl>
             <div><dt>{t('影调')}</dt><dd>{directorStyleLabel}</dd></div>
             <div><dt>{t('画幅')}</dt><dd>{t('9:16 · 竖屏沉浸')}</dd></div>
@@ -132,22 +155,6 @@ export function DirectorPlanningPage({
           </dl>
         </aside>
       </div>
-
-      <section className="director-notes" aria-labelledby="notes-title">
-        <div className="director-notes__heading">
-          <div><span>DIRECTOR'S NOTE</span><h2 id="notes-title">{t('导演手记')}</h2></div>
-          <p>{t('本页的视觉与执行指令，均以总导演 Agent 的原始策划为准。')}</p>
-        </div>
-        <blockquote>“{brief}”</blockquote>
-        {source ? (
-          <details>
-            <summary>{t('查看完整策划原文')}</summary>
-            <PlanMarkdown text={localizePlan(source)} />
-          </details>
-        ) : (
-          <p className="director-notes__empty">{t('策划生成后，完整导演手记将在这里自动归档。')}</p>
-        )}
-      </section>
     </main>
   );
 }

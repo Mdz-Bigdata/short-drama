@@ -187,7 +187,7 @@ class ShotPromptIntegrationTests(unittest.TestCase):
     def test_without_layers_the_sound_note_becomes_one_ambience_bed(self):
         compiled = compile_shot_prompt(CINEMATIC_REALISM, self._shot(), model="seedance2.5", max_duration_seconds=30)
 
-        self.assertIn("【声音设计】环境铺底：空调低鸣，全程连续", compiled.text)
+        self.assertIn("【声音设计】环境铺底：<空调低鸣>，全程连续", compiled.text)  # Seedance 的音效写在尖括号里
         self.assertNotIn("【声音设计·三层】", compiled.text)
 
     def test_with_layers_only_the_event_bound_contacts_are_added(self):

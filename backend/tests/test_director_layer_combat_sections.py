@@ -39,9 +39,13 @@ class CombatSectionsTests(unittest.TestCase):
         self.assertIn("combat/核心原则", sections)
         self.assertFalse(any(name.startswith("xianxia/") for name in sections))
 
-    def test_a_xianxia_scene_without_a_fight_stays_quiet(self):
+    def test_a_xianxia_scene_without_a_fight_gets_vfx_but_no_fight_rules(self):
         sections = _sections("仙门山巅，她御剑落在云海边，回头看了他一眼")
-        self.assertFalse(any(name.startswith(("combat/", "xianxia/")) for name in sections))
+        self.assertFalse(any(name.startswith("combat/") for name in sections))
+        self.assertNotIn("xianxia/收束协议", sections)
+        # 御剑是特效奇观：四拍时序、特效光、御剑写法照样要。
+        self.assertIn("xianxia/特效镜头", sections)
+        self.assertIn("xianxia/非打斗奇观", sections)
 
     def test_a_duel_gets_the_single_fight_camera_dictionary(self):
         director.reset_seedance_director_cache()

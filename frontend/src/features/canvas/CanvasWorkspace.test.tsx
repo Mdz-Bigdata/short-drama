@@ -17,7 +17,11 @@ vi.mock('../directorDesk/DirectorDesk', () => ({
     </div>
   ),
 }));
-vi.mock('./PanoramaViewer', () => ({ default: ({ url }: { url: string }) => <div data-testid="panorama">{url}</div> }));
+vi.mock('./PanoramaViewer', () => ({
+  default: ({ url, onFail }: { url: string; onFail?: () => void }) => (
+    <div data-testid="panorama">{url}<button type="button" aria-label="panorama fails to load" onClick={onFail} /></div>
+  ),
+}));
 
 const OPTIONS = {
   models: { image: 'seedream', video: 'seedance2.0', audio: 'tts' }, enabled: { image: [], video: [], audio: [] }, video_durations: [5, 6, 7, 8],
@@ -127,6 +131,8 @@ describe('CanvasWorkspace', () => {
       return frame;
     });
     vi.stubGlobal('cancelAnimationFrame', () => undefined);
+    // The minimap draws on a 2D canvas, which jsdom does not have: without this every test logs "not implemented".
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -350,10 +356,13 @@ describe('CanvasWorkspace', () => {
     // Coming in close draws real bodies, and only for what the view can reach.
     fireEvent.click(screen.getByRole('tab', { name: '大纲' }));
     fireEvent.click(await screen.findByRole('button', { name: /节点0\b/ }));
-    await waitFor(() => expect(surface().querySelectorAll('.cn-node').length).toBeGreaterThan(0));
-    const drawn = surface().querySelectorAll('[data-node-id]').length;
-    expect(drawn).toBeGreaterThan(0);
-    expect(drawn).toBeLessThan(100);
+    // 大纲跳转现在是平滑移过去的：等移动结束再数，途中远景会短暂画得多一些。
+    await waitFor(() => {
+      expect(surface().querySelectorAll('.cn-node').length).toBeGreaterThan(0);
+      const drawn = surface().querySelectorAll('[data-node-id]').length;
+      expect(drawn).toBeGreaterThan(0);
+      expect(drawn).toBeLessThan(100);
+    }, { timeout: 3000 });
   });
 
   it('jumps from the outline and saves a numbered bookmark without touching the drawing', async () => {
@@ -585,6 +594,40 @@ describe('CanvasWorkspace', () => {
     });
   });
 
+  it('keeps the upload note until every dropped file has finished, and leaves the reason when one fails', async () => {
+    installServer();
+    const finish: Array<(response: Response) => void> = [];
+    server.handlers.push((method, path) => (
+      method === 'POST' && path.endsWith('/canvas/uploads')
+        ? new Promise<Response>(resolve => { finish.push(resolve); })
+        : undefined
+    ));
+    await openCanvas();
+    const files = [new File(['a'], 'a.png', { type: 'image/png' }), new File(['b'], 'b.png', { type: 'image/png' })];
+    fireEvent.drop(surface(), { dataTransfer: { files } });
+
+    const note = () => document.querySelector('.cn-notice')?.textContent ?? '';
+    await waitFor(() => expect(note()).toContain('上传中：已完成 0/2…'));
+    await waitFor(() => expect(finish).toHaveLength(2));
+
+    // The first one landing does not clear the note for the one still on its way.
+    await act(async () => { finish[0](ok({ medium: 'image', url: '/media/a.png', filename: 'a.png' })); });
+    await waitFor(() => expect(note()).toContain('上传中：已完成 1/2…'));
+
+    await act(async () => {
+      finish[1]({ ok: false, status: 413, json: async () => ({ detail: '文件太大' }) } as Response);
+    });
+    await waitFor(() => expect(note()).toContain('文件太大'));
+
+    // A single file afterwards starts a fresh count and clears the note once it lands.
+    fireEvent.drop(surface(), { dataTransfer: { files: [files[0]] } });
+    await waitFor(() => expect(note()).toContain('上传中…'));
+    expect(note()).not.toContain('已完成');
+    await waitFor(() => expect(finish).toHaveLength(3));
+    await act(async () => { finish[2](ok({ medium: 'image', url: '/media/a2.png', filename: 'a.png' })); });
+    await waitFor(() => expect(document.querySelector('.cn-notice')).toBeNull());
+  });
+
   it('mounts the panorama viewer only on request, so a canvas of them holds one WebGL context', async () => {
     installServer({ version: 1, nodes: [node('p', 'panorama', { payload: { label: '全景', output: { medium: 'image', url: '/media/pano.jpg' } } })] });
     await openCanvas();
@@ -599,9 +642,18 @@ describe('CanvasWorkspace', () => {
     expect(await within(framed).findByText('全景视图打开失败，这个浏览器可能不支持 WebGL。')).toBeTruthy();
     expect(screen.queryByTestId('panorama')).toBeNull();
 
-    getContext.mockReturnValue({} as RenderingContext);
+    // Only WebGL is faked: the minimap's 2D context stays absent (it now shares the canvas element type).
+    getContext.mockImplementation(((kind: string) => (kind === '2d' ? null : {})) as never);
     fireEvent.click(within(framed).getByRole('button', { name: '进入全景' }));
     expect((await screen.findByTestId('panorama')).textContent).toBe('/media/pano.jpg');
+
+    // The picture cannot be read: back to the flat picture with the reason, and entering again clears it.
+    fireEvent.click(screen.getByRole('button', { name: 'panorama fails to load' }));
+    expect(await within(framed).findByText('全景图读取失败，已退回平面图。')).toBeTruthy();
+    expect(screen.queryByTestId('panorama')).toBeNull();
+    fireEvent.click(within(framed).getByRole('button', { name: '进入全景' }));
+    expect(await screen.findByTestId('panorama')).toBeTruthy();
+    expect(within(framed).queryByText('全景图读取失败，已退回平面图。')).toBeNull();
   });
 
   describe('commit', () => {
@@ -667,6 +719,347 @@ describe('CanvasWorkspace', () => {
     await waitFor(() => expect((screen.getByLabelText('文本') as HTMLTextAreaElement).value).toBe('从前'));
     expect(await screen.findByText(/已恢复到第 1 版/)).toBeTruthy();
     expect(server.puts).toEqual([]);
+  });
+
+  describe('infinite canvas', () => {
+    function viewOf() {
+      const world = surface().querySelector<HTMLElement>('.cn-world')!;
+      const match = /translate\((-?[\d.e+-]+)px, (-?[\d.e+-]+)px\) scale\(([\d.e+-]+)\)/.exec(world.style.transform)!;
+      return { x: Number(match[1]), y: Number(match[2]), zoom: Number(match[3]) };
+    }
+
+    /** The world point at the centre of the 1200×800 surface jsdom reports (it has no layout). */
+    function centreOf(view = viewOf()) {
+      return { x: (600 - view.x) / view.zoom, y: (400 - view.y) / view.zoom };
+    }
+
+    function click(element: Element, extra: Record<string, unknown> = {}) {
+      pointer('pointerDown', element, 5, 5, extra);
+      pointer('pointerUp', element, 5, 5, extra);
+    }
+
+    const lastPut = () => server.puts[server.puts.length - 1];
+
+    it('zooms from the controls and the keyboard, and fits all or the selection with Mod+1 / Mod+2', async () => {
+      installServer({ version: 1, nodes: [node('a', 'note', { payload: { label: '甲' } }), node('b', 'note', { x: 3000, y: 2000, payload: { label: '乙' } })] });
+      await openCanvas();
+      await screen.findByTestId('node-a');
+      const fitted = viewOf().zoom;
+      expect(fitted).toBeLessThan(0.5);
+      const percent = () => screen.getByRole('button', { name: '精确缩放' }).textContent;
+
+      fireEvent.click(screen.getByRole('button', { name: '放大' }));
+      await waitFor(() => expect(viewOf().zoom).toBeCloseTo(fitted + 0.1, 2));
+      press('0', { ctrlKey: true, code: 'Digit0' });
+      await waitFor(() => expect(viewOf().zoom).toBe(1));
+      expect(percent()).toBe('100%');
+      press('-', { metaKey: true });
+      await waitFor(() => expect(viewOf().zoom).toBeCloseTo(0.9, 5));
+      press('=', { ctrlKey: true });
+      await waitFor(() => expect(viewOf().zoom).toBeCloseTo(1, 5));
+
+      press('1', { ctrlKey: true, code: 'Digit1' });
+      await waitFor(() => expect(viewOf().zoom).toBeCloseTo(fitted, 5));
+
+      // Mod+2 with nothing selected leaves the view alone; with a node selected it frames that node.
+      press('2', { ctrlKey: true, code: 'Digit2' });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(viewOf().zoom).toBeCloseTo(fitted, 5);
+      click(within(screen.getByTestId('node-b')).getByText('乙'));
+      press('2', { ctrlKey: true, code: 'Digit2' });
+      await waitFor(() => expect(viewOf().zoom).toBeCloseTo(1.25, 5));
+      expect(centreOf().x).toBeCloseTo(3100, 0);
+      expect(centreOf().y).toBeCloseTo(2075, 0);
+      fireEvent.click(screen.getByRole('button', { name: '适应画布' }));
+      await waitFor(() => expect(viewOf().zoom).toBeCloseTo(fitted, 5));
+      expect(server.puts).toEqual([]);
+    });
+
+    it('finds a node with Mod+F, glides to it and selects it', async () => {
+      installServer({ version: 1, nodes: [node('a', 'note', { payload: { label: '甲' } }), node('far', 'note', { x: 5000, y: 3000, payload: { label: '远方', text: '雨夜的码头' } })] });
+      await openCanvas();
+      press('f', { ctrlKey: true });
+      const field = await screen.findByRole('combobox', { name: '搜索节点' });
+      fireEvent.change(field, { target: { value: '码头' } });
+      expect(await screen.findByRole('option', { name: /远方/ })).toBeTruthy();
+      fireEvent.keyDown(field, { key: 'Enter' });
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: '搜索节点' })).toBeNull());
+      // Far out, a hit is shown at a readable zoom (focusRect's 72% floor), centred.
+      await waitFor(() => expect(viewOf().zoom).toBeCloseTo(0.72, 5));
+      expect(centreOf().x).toBeCloseTo(5100, 0);
+      expect(centreOf().y).toBeCloseTo(3075, 0);
+      expect(screen.getByRole('button', { name: /提交所选/ }).textContent).toContain('(1)');
+      expect(await screen.findByTestId('node-far')).toBeTruthy();
+    });
+
+    it('adds a node where the canvas menu was opened, and deletes it from its own menu', async () => {
+      installServer({ version: 1, nodes: [node('a', 'note', { payload: { label: '甲' } })] });
+      await openCanvas();
+      await screen.findByTestId('node-a');
+      const view = viewOf();
+      fireEvent.contextMenu(surface(), { clientX: 300, clientY: 200 });
+      fireEvent.click(await screen.findByRole('menuitem', { name: '添加节点' }));
+      fireEvent.click(await screen.findByRole('menuitem', { name: kindLabel('image_gen') }));
+      expect(screen.queryByRole('menu')).toBeNull();
+      await waitForSave();
+      const made = lastPut().nodes.find(item => item.kind === 'image_gen')!;
+      expect(made.x).toBe(Math.round((300 - view.x) / view.zoom));
+      expect(made.y).toBe(Math.round((200 - view.y) / view.zoom));
+
+      const framed = await screen.findByTestId(`node-${made.id}`);
+      fireEvent.contextMenu(within(framed).getByText(kindLabel('image_gen'), { selector: 'strong' }), { clientX: 310, clientY: 210 });
+      expect(screen.getByRole('menuitem', { name: '重命名' })).toBeTruthy();
+      fireEvent.click(screen.getByRole('menuitem', { name: /^删除/ }));
+      await waitFor(() => expect(screen.queryByTestId(`node-${made.id}`)).toBeNull());
+      await waitFor(() => expect(lastPut().nodes.map(item => item.id)).toEqual(['a']), { timeout: 3000 });
+    });
+
+    it('offers the kinds that take an output when a connection is dropped on empty canvas, and wires the new node', async () => {
+      installServer({ version: 1, nodes: [node('gen', 'image_gen', { payload: { label: '图' } })] });
+      await openCanvas();
+      const port = (await screen.findByTestId('node-gen')).querySelector('[data-port="out"]')!;
+      pointer('pointerDown', port, 200, 75);
+      pointer('pointerMove', port, 700, 300);
+      pointer('pointerUp', port, 700, 300);
+      const picker = await screen.findByRole('menu', { name: '新建并连接' });
+      const offered = within(picker).getAllByRole('menuitem').map(item => item.textContent);
+      expect(offered).toContain(kindLabel('video_gen'));
+      expect(offered).not.toContain(kindLabel('note'));
+      fireEvent.click(within(picker).getByRole('menuitem', { name: kindLabel('video_gen') }));
+      await waitForSave();
+      const made = lastPut().nodes.find(item => item.kind === 'video_gen')!;
+      expect(lastPut().edges).toEqual([expect.objectContaining({ source: 'gen', target: made.id, kind: 'reference' })]);
+    });
+
+    it('aligns a multi-selection from its floating toolbar, as one undoable edit', async () => {
+      installServer({ version: 1, nodes: [node('a', 'note', { payload: { label: '甲' } }), node('b', 'note', { x: 300, y: 120, payload: { label: '乙' } })] });
+      await openCanvas();
+      await screen.findByTestId('node-b');
+      expect(screen.queryByRole('toolbar', { name: '选区工具栏' })).toBeNull();
+      press('a', { ctrlKey: true });
+      const bar = await screen.findByRole('toolbar', { name: '选区工具栏' });
+      fireEvent.click(within(bar).getByRole('button', { name: '顶对齐' }));
+      await waitFor(() => expect(screen.getByTestId('node-b').style.transform).toBe('translate(300px, 0px)'));
+      await waitForSave();
+      expect(lastPut().nodes.find(item => item.id === 'b')).toMatchObject({ x: 300, y: 0 });
+      press('z', { ctrlKey: true });
+      await waitFor(() => expect(screen.getByTestId('node-b').style.transform).toBe('translate(300px, 120px)'));
+    });
+
+    it('folds a group: its members are not drawn and their edges attach to the group', async () => {
+      installServer({
+        version: 1,
+        nodes: [
+          node('a', 'note', { payload: { label: '甲' } }), node('b', 'note', { x: 0, y: 200, payload: { label: '乙' } }),
+          node('gen', 'image_gen', { x: 700, y: 0, payload: { label: '图' } }),
+        ],
+        edges: [{ id: 'e1', source: 'a', target: 'gen', kind: 'dependency', payload: { role: 'prompt' } }],
+      });
+      await openCanvas();
+      click(within(await screen.findByTestId('node-a')).getByText('甲'));
+      click(within(screen.getByTestId('node-b')).getByText('乙'), { shiftKey: true });
+      press('g', { ctrlKey: true });
+      const head = await waitFor(() => {
+        const found = surface().querySelector('.cn-group__head');
+        expect(found).toBeTruthy();
+        return found!;
+      });
+      fireEvent.doubleClick(head);
+      await waitFor(() => expect(screen.queryByTestId('node-a')).toBeNull());
+      expect(screen.queryByTestId('node-b')).toBeNull();
+      expect(surface().querySelector('.cn-group.is-collapsed')?.textContent).toContain('2 个节点');
+      expect(surface().querySelector('[data-edge-id="e1"]')).toBeTruthy();
+      await waitForSave();
+      expect(lastPut().nodes.find(item => item.kind === 'group')?.payload.collapsed).toBe(true);
+
+      fireEvent.click(screen.getByRole('button', { name: '展开分组' }));
+      expect(await screen.findByTestId('node-a')).toBeTruthy();
+    });
+
+    it('pastes a copied result hung on the same upstream node, from the paste event or the Mod+V fallback', async () => {
+      installServer({
+        version: 1,
+        nodes: [node('src', 'note', { payload: { label: '提示', text: '雨夜' } }), node('gen', 'image_gen', { x: 400, payload: { label: '图' } })],
+        edges: [{ id: 'e1', source: 'src', target: 'gen', kind: 'dependency', payload: { role: 'prompt' } }],
+      });
+      await openCanvas();
+      click(within(await screen.findByTestId('node-gen')).getByText('图'));
+      press('c', { ctrlKey: true });
+      const copied = window.sessionStorage.getItem('novara.canvas.clip');
+      expect(copied).toContain('novara-canvas-clip');
+
+      fireEvent.paste(document.body, { clipboardData: { getData: (type: string) => (type === 'text/plain' ? copied : ''), files: [], items: [] } });
+      await waitForSave();
+      const pasted = lastPut().nodes.filter(item => item.kind === 'image_gen' && item.id !== 'gen');
+      expect(pasted).toHaveLength(1);
+      expect(lastPut().edges).toEqual(expect.arrayContaining([expect.objectContaining({ source: 'src', target: pasted[0].id, kind: 'dependency', payload: { role: 'prompt' } })]));
+
+      // No paste event (the browser kept the clipboard to itself): this tab's own copy goes in.
+      press('v', { ctrlKey: true });
+      await waitFor(() => expect(lastPut().nodes.filter(item => item.kind === 'image_gen')).toHaveLength(3), { timeout: 3000 });
+    });
+
+    it('exports the canvas as a file and imports it back beside what is there, undoably', async () => {
+      installServer({
+        version: 1,
+        nodes: [node('src', 'note', { payload: { label: '提示' } }), node('gen', 'image_gen', { x: 400, payload: { label: '图' } })],
+        edges: [{ id: 'e1', source: 'src', target: 'gen', kind: 'dependency', payload: { role: 'prompt' } }],
+      });
+      const blobs: Blob[] = [];
+      const names: string[] = [];
+      Object.assign(URL, { createObjectURL: (blob: Blob) => { blobs.push(blob); return 'blob:canvas'; }, revokeObjectURL: () => undefined });
+      vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { names.push(this.download); });
+      try {
+        await openCanvas();
+        await screen.findByTestId('node-gen');
+        fireEvent.click(screen.getByRole('button', { name: '导出画布' }));
+        expect(names).toEqual(['主画布.novara-canvas.json']);
+        const text = await new Promise<string>(resolve => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.readAsText(blobs[0]);
+        });
+        expect(JSON.parse(text)).toMatchObject({ format: 'novara-canvas', nodes: [{ id: 'src' }, { id: 'gen' }], edges: [{ source: 'src', target: 'gen' }] });
+
+        fireEvent.change(screen.getByLabelText('选择要导入的画布文件'), { target: { files: [new File([text], 'board.json', { type: 'application/json' })] } });
+        await waitForSave();
+        const saved = lastPut();
+        expect(saved.nodes).toHaveLength(4);
+        expect(saved.edges).toHaveLength(2);
+        const imported = saved.nodes.filter(item => item.id !== 'src' && item.id !== 'gen');
+        expect(Math.min(...imported.map(item => item.x))).toBeGreaterThan(600);
+        expect(saved.edges[1]).toMatchObject({ source: imported[0].id, target: imported[1].id });
+        press('z', { ctrlKey: true });
+        await waitFor(() => expect(surface().querySelectorAll('[data-node-id]')).toHaveLength(2));
+      } finally {
+        delete (URL as unknown as Record<string, unknown>).createObjectURL;
+        delete (URL as unknown as Record<string, unknown>).revokeObjectURL;
+      }
+    });
+
+    it('reloads after the assistant writes, and lights up just the nodes it changed', async () => {
+      installServer({ version: 1, nodes: [node('a', 'note', { payload: { label: '甲', text: '旧' } }), node('gen', 'image_gen', { x: 400, payload: { label: '图', prompt: '雨' } })] });
+      server.handlers.push((method, path) => {
+        if (path.endsWith('/canvas/runs/assess')) return ok({ decision: 'admitted', nodes: [], confirmations: [], estimate: { items: 1, paid_items: 0, unpriced_items: 0, totals: [] } });
+        if (method === 'POST' && path.endsWith('/canvas/runs')) return ok({ status: 'started', batch_id: 'b1' });
+        return undefined;
+      });
+      await openCanvas();
+      await screen.findByTestId('node-a');
+      // The assistant edits one node and adds another while the canvas is open.
+      server.version = 2;
+      server.nodes = [node('a', 'note', { payload: { label: '甲', text: '助手改过' } }), server.nodes[1], node('c', 'note', { x: 0, y: 400, payload: { label: '新的' } })];
+      // Starting a run reads the outputs at once, and with them the canvas's new version.
+      fireEvent.click(screen.getByRole('button', { name: '运行' }));
+      await waitFor(() => expect((screen.getAllByLabelText('文本')[0] as HTMLTextAreaElement).value).toBe('助手改过'));
+      expect(await screen.findByText('画布已在别处更新，已载入最新版本。')).toBeTruthy();
+      expect(screen.getByTestId('node-a').classList.contains('cn-flash')).toBe(true);
+      expect((await screen.findByTestId('node-c')).classList.contains('cn-flash')).toBe(true);
+      expect(screen.getByTestId('node-gen').classList.contains('cn-flash')).toBe(false);
+      await waitFor(() => expect(screen.getByTestId('node-a').classList.contains('cn-flash')).toBe(false), { timeout: 3000 });
+      expect(server.puts).toEqual([]);
+    });
+
+    it('lists the shortcuts in groups in the help panel', async () => {
+      installServer({ version: 1 });
+      await openCanvas();
+      press('?');
+      const help = await screen.findByRole('complementary', { name: '快捷键' });
+      for (const heading of ['视图', '选择', '编辑', '运行']) expect(within(help).getByRole('heading', { name: heading })).toBeTruthy();
+      expect(within(help).getByText('搜索节点并跳过去')).toBeTruthy();
+    });
+
+    it('switches the background and remembers it per canvas', async () => {
+      installServer({ version: 1 });
+      await openCanvas();
+      const picker = screen.getByRole('combobox', { name: '画布背景' }) as HTMLSelectElement;
+      expect(picker.value).toBe('dots');
+      fireEvent.change(picker, { target: { value: 'grid' } });
+      expect(window.localStorage.getItem('canvas.background.main')).toBe('grid');
+      expect(surface().querySelector<HTMLElement>('.cn-backdrop')!.style.backgroundImage).toContain('linear-gradient');
+      fireEvent.change(picker, { target: { value: 'blank' } });
+      expect(surface().querySelector<HTMLElement>('.cn-backdrop')!.style.backgroundImage).toBe('none');
+    });
+  });
+
+  describe('other windows on the same canvas', () => {
+    class FakeEventSource {
+      static instances: FakeEventSource[] = [];
+      url: string;
+      private listeners = new Map<string, Set<(event: Event) => void>>();
+      constructor(url: string) {
+        this.url = url;
+        FakeEventSource.instances.push(this);
+      }
+      addEventListener(type: string, listener: (event: Event) => void) {
+        if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+        this.listeners.get(type)!.add(listener);
+      }
+      removeEventListener(type: string, listener: (event: Event) => void) { this.listeners.get(type)?.delete(listener); }
+      close() { /* nothing to close */ }
+      emit(type: string, data: unknown) {
+        const event = new MessageEvent(type, { data: JSON.stringify(data) });
+        act(() => { for (const listener of this.listeners.get(type) ?? []) listener(event); });
+      }
+    }
+
+    const stream = () => FakeEventSource.instances[FakeEventSource.instances.length - 1];
+    const ownId = () => new URL(stream().url).searchParams.get('client_id')!;
+    const canvasReads = () => server.calls.filter(call => call.method === 'GET' && call.path.endsWith('/canvas')).length;
+
+    beforeEach(() => {
+      FakeEventSource.instances = [];
+      vi.stubGlobal('EventSource', FakeEventSource);
+    });
+
+    afterEach(() => {
+      vi.stubGlobal('EventSource', undefined);
+    });
+
+    it('shows the other windows, and reloads at once when one of them saves while nothing here is pending', async () => {
+      installServer({ version: 1, nodes: [node('a', 'note', { payload: { label: '甲', text: '旧' } }), node('b', 'note', { x: 400, payload: { label: '乙', text: '乙' } })] });
+      await openCanvas();
+      await screen.findByTestId('node-a');
+      expect(stream().url).toContain('/api/studio/projects/p1/canvases/main/presence/stream?');
+      stream().emit('peers', { peers: [{ client_id: ownId(), label: 'me', color: '#000' }, { client_id: 'w2', label: '另一个窗口 · Firefox', color: '#ff0000' }] });
+      stream().emit('cursor', { client_id: 'w2', x: 50, y: 60 });
+      expect(await screen.findByText('同时打开：1 个窗口')).toBeTruthy();
+      await waitFor(() => expect(document.querySelector('.cpl-cursor')?.textContent).toBe('另一个窗口 · Firefox'));
+
+      // Its own save coming back is not news.
+      const before = canvasReads();
+      stream().emit('saved', { version: 1, client_id: ownId() });
+      server.version = 2;
+      server.nodes = [node('a', 'note', { payload: { label: '甲', text: '另一个窗口改的' } }), server.nodes[1]];
+      stream().emit('saved', { version: 2, client_id: ownId() });
+      await act(async () => { await Promise.resolve(); });
+      expect(canvasReads()).toBe(before);
+
+      stream().emit('saved', { version: 2, client_id: 'w2' });
+      await waitFor(() => expect((screen.getAllByLabelText('文本')[0] as HTMLTextAreaElement).value).toBe('另一个窗口改的'));
+      expect(canvasReads()).toBe(before + 1);
+      expect(await screen.findByText('画布已在别处更新，已载入最新版本。')).toBeTruthy();
+      expect(screen.getByTestId('node-a').classList.contains('cn-flash')).toBe(true);
+      expect(screen.getByTestId('node-b').classList.contains('cn-flash')).toBe(false);
+      expect(server.puts).toEqual([]);
+    });
+
+    it('leaves a save from elsewhere to the conflict check while it has edits of its own, and names itself on its saves', async () => {
+      installServer({ version: 1, nodes: [node('n', 'note', { payload: { text: '原文' } })] });
+      await openCanvas();
+      fireEvent.change(await screen.findByLabelText('文本'), { target: { value: '我的修改' } });
+      const before = canvasReads();
+      server.version = 2;
+      server.nodes = [node('n', 'note', { payload: { text: '别的窗口' } })];
+      server.conflict = true;
+      stream().emit('saved', { version: 2, client_id: 'w2' });
+      await act(async () => { await Promise.resolve(); });
+      expect(canvasReads()).toBe(before);
+      expect((screen.getByLabelText('文本') as HTMLTextAreaElement).value).toBe('我的修改');
+      expect((await screen.findByRole('alert', {}, { timeout: 3000 })).textContent).toContain('已在别处被修改');
+      const put = vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === 'PUT');
+      expect((put?.[1]?.headers as Record<string, string>)['X-Canvas-Client']).toBe(ownId());
+    });
   });
 
   it('follows a light or dark choice on its own layer', async () => {

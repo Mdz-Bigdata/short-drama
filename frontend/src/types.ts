@@ -97,6 +97,8 @@ export interface StageProgress {
 export interface WorkflowSnapshot {
   stages: Array<{
     stage: number;
+    /** 用户看到的第几步：第 6、7 阶段同属剪辑合成师，都是第 6 步，宣发是第 7 步。 */
+    step?: number;
     label: string;
     state: 'complete' | 'running' | 'pending';
     missing: string[];
@@ -105,6 +107,9 @@ export interface WorkflowSnapshot {
   next_stage: number | null;
   active_stage: number | null;
   completed_stages: number[];
+  /** 用户看到的总步数(7)与已完成步数；旧快照没有，就按阶段数算。 */
+  steps_total?: number;
+  steps_done?: number;
   production_complete: boolean;
   release_ready: boolean;
   mode: 'running' | 'ready' | 'paused' | 'blocked' | 'review' | 'completed';
@@ -117,6 +122,10 @@ export interface TaskChatEntry {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  /** 助手这一轮的界面事件(捏脸已更新、舞台已改)，服务端存下来，重开项目后照样做成卡片。 */
+  ui_actions?: unknown[];
+  /** 助手这一轮提出、等用户确认的付费操作。 */
+  proposal?: unknown;
 }
 
 /** What GET /api/drama/list returns: the lobby row without generated assets.

@@ -100,6 +100,24 @@ class RunTests(unittest.TestCase):
         self.assertEqual((queue.get("a").status, queue.get("b").status), (gq.FAILED, gq.SKIPPED))
         self.assertIn("provider said no", queue.get("a").error)
 
+    def test_a_dependent_starts_only_after_its_dependency_is_on_record_as_done(self):
+        # A dependent reads what came before from the store (the canvas reads finished runs), not from the queue.
+        queue = gq.Queue([_item("a"), _item("b", depends_on=["a"])])
+        stored = {}
+        seen = {}
+
+        def persist(snapshot):
+            time.sleep(0.05)  # a slow store: a write made after b started would land too late for it
+            stored.update({item["key"]: item["status"] for item in snapshot["items"]})
+
+        def work(item):
+            if item.key == "b":
+                seen["a"] = stored.get("a")
+            return item.key
+
+        gq.run(queue, work, persist=persist, pool=ThreadPoolExecutor(max_workers=2))
+        self.assertEqual(seen["a"], gq.DONE)
+
     def test_a_request_to_withdraw_is_honoured_before_the_next_dispatch_and_reported(self):
         queue = gq.Queue([_item("a"), _item("b"), _item("c", depends_on=["b"])])
         withdrawn = {"keys": set()}

@@ -383,7 +383,7 @@ export function DirectorPanel({ taskId, sceneId, plan, shotId, selection, editab
         <div className="desk-director__line">
           <button type="button" className="desk-button is-primary" disabled={locked || !message.trim()} onClick={() => { void send(); }}><Send aria-hidden="true" /> 发送</button>
           <button type="button" className="desk-button" disabled={locked} onClick={() => { void optimize(); }} title="规则先修，模型再优化；评分变低的结果不会保留"><Wand2 aria-hidden="true" /> 自动优化</button>
-          {!!state?.chat.length && <button type="button" className="desk-button" disabled={Boolean(busy)} aria-label="清空对话" onClick={() => { void clear(); }}><Trash2 aria-hidden="true" /></button>}
+          {!!state?.chat.length && <button type="button" className="desk-button" disabled={Boolean(busy)} aria-label="清空对话" title="清空对话" onClick={() => { void clear(); }}><Trash2 aria-hidden="true" /></button>}
         </div>
       </details>
 

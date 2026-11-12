@@ -9,6 +9,7 @@ server is what decides.
 
 from __future__ import annotations
 
+import math
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -16,8 +17,9 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
-from app.core import canvas_tools
+from app.core import canvas_layout, canvas_tools
 from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
+from app.schema.studio import CANVAS_COORD_LIMIT, CANVAS_SIZE_LIMIT, canvas_group_problem
 
 RUNNABLE = {"image_gen": "image", "video_gen": "video", "audio_gen": "audio", "video_compose": "video"}
 # Kinds an agent (or anyone but the importer) may create.
@@ -509,6 +511,46 @@ def _place(nodes: Sequence[Mapping[str, Any]]) -> tuple[float, float]:
 
 
 _TEXT_FIELDS = ("label", "prompt", "text", "styleText", "sceneId", "shotId", "medium")
+OPERATIONS = ("add_node", "update_node", "delete_node", "connect", "disconnect", "group", "set_group", "align", "distribute", "arrange")
+
+
+def _coordinate(value: Any, name: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or abs(number) > CANVAS_COORD_LIMIT:
+        raise CanvasOperationError(f"{name} 必须是有限数，且在 ±{CANVAS_COORD_LIMIT:.0e} 以内")
+    return number
+
+
+def _size(value: Any, name: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or not 0 < number <= CANVAS_SIZE_LIMIT:
+        raise CanvasOperationError(f"{name} 必须大于 0 且不超过 {CANVAS_SIZE_LIMIT:.0e}")
+    return number
+
+
+def _geometry(key: str, value: Any) -> float:
+    return _coordinate(value, key) if key in ("x", "y") else _size(value, key)
+
+
+def _ids(operation: Mapping[str, Any], *keys: str) -> list[Any]:
+    for key in keys:
+        value = operation.get(key)
+        if isinstance(value, list) and value:
+            return value
+    raise CanvasOperationError(f"需要非空的 {keys[0]} 列表")
+
+
+def _check_nesting(nodes: Sequence[Mapping[str, Any]]) -> None:
+    problem = canvas_group_problem([dict(item) for item in nodes])
+    if problem:
+        raise CanvasOperationError(problem)
+
+
+def _set_group(node: dict[str, Any], group_id: str | None) -> None:
+    payload = {key: value for key, value in (node.get("payload") or {}).items() if key != "groupId"}
+    if group_id:
+        payload["groupId"] = group_id
+    node["payload"] = payload
 
 
 def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], dict[str, str]]:
@@ -544,8 +586,8 @@ def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[s
                     payload["params"] = dict(operation["params"])
                 node = {
                     "id": _new_id(), "kind": kind, "track": "freezone",
-                    "x": float(operation.get("x", x)), "y": float(operation.get("y", y)),
-                    "width": float(operation.get("width", width)), "height": float(operation.get("height", height)),
+                    "x": _geometry("x", operation.get("x", x)), "y": _geometry("y", operation.get("y", y)),
+                    "width": _geometry("width", operation.get("width", width)), "height": _geometry("height", operation.get("height", height)),
                     "artifact_id": None, "payload": payload,
                 }
                 nodes.append(node)
@@ -559,18 +601,37 @@ def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[s
                         payload[key] = operation[key]
                 if isinstance(operation.get("params"), Mapping):
                     payload["params"] = {**(payload.get("params") or {}), **operation["params"]}
+                if "collapsed" in operation or "expandedSize" in operation:
+                    if node.get("kind") != "group":
+                        raise CanvasOperationError("只有分组可以折叠或展开")
+                    if "expandedSize" in operation:
+                        size = operation["expandedSize"]
+                        if not isinstance(size, (list, tuple)) or len(size) != 2:
+                            raise CanvasOperationError("expandedSize 要写成 [宽, 高]")
+                        payload["expandedSize"] = [_size(size[0], "expandedSize"), _size(size[1], "expandedSize")]
+                    if "collapsed" in operation:
+                        if not isinstance(operation["collapsed"], bool):
+                            raise CanvasOperationError("collapsed 只能是 true 或 false")
+                        if operation["collapsed"] and not payload.get("collapsed") and "expandedSize" not in payload:
+                            # Remember the open frame, so unfolding gives back the size it had.
+                            payload["expandedSize"] = [float(node["width"]), float(node["height"])]
+                        if not operation["collapsed"] and payload.get("collapsed") and payload.get("expandedSize") and not {"width", "height"} & operation.keys():
+                            node["width"], node["height"] = (float(item) for item in payload["expandedSize"])
+                        payload["collapsed"] = operation["collapsed"]
                 node["payload"] = payload
                 for key in ("x", "y", "width", "height"):
                     if key in operation:
-                        node[key] = float(operation[key])
+                        node[key] = _geometry(key, operation[key])
             elif op == "delete_node":
                 node = find(operation.get("id"))
                 removed = node["id"]
                 nodes = [item for item in nodes if item.get("id") != removed]
                 edges = [item for item in edges if removed not in (item.get("source"), item.get("target"))]
+                # What a deleted group held stays where it was: in the group around it, if there is one.
+                parent = canvas_layout.group_of(node) if node.get("kind") == "group" else ""
                 for item in nodes:
                     if (item.get("payload") or {}).get("groupId") == removed:
-                        item["payload"] = {k: v for k, v in item["payload"].items() if k != "groupId"}
+                        _set_group(item, parent or None)
             elif op == "connect":
                 source, target = find(operation.get("source")), find(operation.get("target"))
                 edge_kind, role = connection(source, target, role=operation.get("role"))
@@ -585,11 +646,20 @@ def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[s
                     raise CanvasOperationError("没有这条连接")
                 edges = kept
             elif op == "group":
-                members = [find(item) for item in operation.get("ids") or []]
+                members = [find(item) for item in operation.get("ids") or operation.get("node_ids") or []]
                 if not members:
                     raise CanvasOperationError("group 需要 ids")
-                if any(item.get("kind") == "group" for item in members):
-                    raise CanvasOperationError("分组不能嵌套")
+                parent_ref = operation.get("parent") or operation.get("group_id")
+                parent = find(parent_ref) if parent_ref else None
+                if parent is not None and parent.get("kind") != "group":
+                    raise CanvasOperationError(f"{parent_ref} 不是分组")
+                if parent is not None and any(item["id"] == parent["id"] for item in members):
+                    raise CanvasOperationError("分组不能放进自己")
+                if parent is None and not parent_ref:
+                    # Grouping things that already share a group keeps the new group inside it.
+                    shared = {canvas_layout.group_of(item) for item in members}
+                    candidate = next(iter(shared)) if len(shared) == 1 else ""
+                    parent = next((item for item in nodes if item.get("id") == candidate and item.get("kind") == "group"), None)
                 left = min(float(item["x"]) for item in members) - 40
                 top = min(float(item["y"]) for item in members) - 60
                 right = max(float(item["x"]) + float(item["width"]) for item in members) + 40
@@ -598,13 +668,46 @@ def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[s
                     "id": _new_id(), "kind": "group", "track": "freezone", "x": left, "y": top, "width": right - left, "height": bottom - top,
                     "artifact_id": None, "payload": {"label": str(operation.get("label") or "分组")},
                 }
-                nodes.insert(0, group)
+                # Groups draw first, so their frames stay behind what they hold; an outer group before an inner one.
+                nodes.insert(next((i + 1 for i, item in enumerate(nodes) if parent is not None and item is parent), 0), group)
                 for member in members:
-                    member["payload"] = {**(member.get("payload") or {}), "groupId": group["id"]}
+                    _set_group(member, group["id"])
+                if parent is not None:
+                    _set_group(group, str(parent["id"]))
+                    if canvas_group_problem([dict(item) for item in nodes]) and not parent_ref:
+                        _set_group(group, None)
+                _check_nesting(nodes)
+                canvas_layout.fit_groups(nodes, [canvas_layout.group_of(group)])
                 if operation.get("ref"):
                     refs[str(operation["ref"])] = group["id"]
+            elif op == "set_group":
+                members = [find(item) for item in _ids(operation, "node_ids", "ids")]
+                target_ref = operation.get("group_id")
+                target = find(target_ref) if target_ref else None
+                if target is not None and target.get("kind") != "group":
+                    raise CanvasOperationError(f"{target_ref} 不是分组")
+                if target is not None and any(item["id"] == target["id"] for item in members):
+                    raise CanvasOperationError("分组不能放进自己")
+                for member in members:
+                    _set_group(member, str(target["id"]) if target is not None else None)
+                _check_nesting(nodes)
+                if target is not None:
+                    canvas_layout.fit_groups(nodes, [str(target["id"])])
+            elif op in ("align", "distribute", "arrange"):
+                ids = [resolve(item) for item in _ids(operation, "node_ids", "ids")]
+                try:
+                    if op == "align":
+                        canvas_layout.align(nodes, ids, str(operation.get("mode") or ""))
+                    elif op == "distribute":
+                        canvas_layout.distribute(nodes, ids, str(operation.get("axis") or ""))
+                    else:
+                        canvas_layout.arrange(nodes, ids, str(operation.get("layout") or ""), gap=operation.get("gap"), edges=edges)
+                except ValueError as exc:
+                    raise CanvasOperationError(str(exc)) from exc
+                by_id = {str(item.get("id")): item for item in nodes}
+                canvas_layout.fit_groups(nodes, [canvas_layout.group_of(by_id[item]) for item in ids if item in by_id])
             else:
-                raise CanvasOperationError(f"未知操作 {op or '（缺 op）'}；可用：add_node、update_node、delete_node、connect、disconnect、group")
+                raise CanvasOperationError(f"未知操作 {op or '（缺 op）'}；可用：{'、'.join(OPERATIONS)}")
         except CanvasOperationError as exc:
             raise CanvasOperationError(f"第 {index} 个操作（{op or '?'}）：{exc}；整批未生效") from exc
         except (TypeError, ValueError) as exc:
@@ -632,8 +735,24 @@ def summarize(document: Mapping[str, Any], runs: Mapping[str, Mapping[str, Any]]
             "output": {"medium": output.get("medium"), "url": output.get("url")} if output else None,
             "last_run": (run or {}).get("status"),
             "track": node.get("track"),
+            "group": canvas_layout.group_of(node) or None,
+            **({"collapsed": bool(payload.get("collapsed"))} if node.get("kind") == "group" else {}),
         })
+    box = canvas_layout.bounds(nodes.values())
     return {
         "node_count": len(nodes), "edge_count": len(edges), "by_kind": by_kind, "nodes": rows, "truncated": len(nodes) > limit,
+        "bounds": box or {"x": 0.0, "y": 0.0, "width": 0.0, "height": 0.0},
         "edges": [{"id": edge.get("id"), "source": edge.get("source"), "target": edge.get("target"), "kind": edge.get("kind"), "role": (edge.get("payload") or {}).get("role")} for edge in edges[:limit * 2]],
     }
+
+
+def changed_node_ids(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[str]:
+    """Nodes that are new or different in ``after``, or gained or lost a connection, in its order: what a UI should bring into view."""
+    old = {str(item.get("id")): item for item in before.get("nodes") or []}
+    def wires(document: Mapping[str, Any]) -> set[tuple[str, str, str]]:
+        return {(str(edge.get("source")), str(edge.get("target")), str(edge.get("id"))) for edge in document.get("edges") or []}
+    touched = {end for wire in wires(before) ^ wires(after) for end in wire[:2]}
+    return [
+        str(item.get("id")) for item in after.get("nodes") or []
+        if old.get(str(item.get("id"))) != item or str(item.get("id")) in touched
+    ]

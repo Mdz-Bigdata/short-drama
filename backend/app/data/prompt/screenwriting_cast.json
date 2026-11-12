@@ -1,0 +1,12 @@
+{
+  "ledger_heading": "# 角色与人物关系（创作看板已定，分集规划以此为准）",
+  "ledger_rule": "- 每集的故事节点围绕这些角色和关系推进：对立、结盟、背叛、和解、身份揭开都要落到具体事件上；不写与这些关系相冲突的情节，确需新角色时在节点里写清他和已有角色是什么关系。",
+  "character_line": "- {name}（{position}）",
+  "relations_label": "人物关系：",
+  "relation_line": "- {source}{arrow}{target}：{relation}",
+  "arrow_one_way": " → ",
+  "arrow_both": " ↔ ",
+  "plan_rule": "人物关系已定：称呼、亲疏、站位、谁压谁一头、台词里的态度都按下面的关系写，不改关系。",
+  "max_characters": 24,
+  "max_relations": 40
+}

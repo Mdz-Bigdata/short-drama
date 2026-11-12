@@ -11,6 +11,8 @@ export interface PendingEdit {
   operations: StageOperation[];
   /** `null`: read it off the server's answer. `false`: this edit cannot be undone. */
   inverse: StageOperation[] | null | false;
+  /** The history entry an undo or redo is replaying: it left its stack when the request was sent. */
+  replayed?: HistoryEntry;
 }
 
 export interface HistoryEntry {
@@ -162,6 +164,7 @@ export function deskReducer(state: DeskState, action: DeskAction): DeskState {
       const edit: PendingEdit = {
         id: action.id, kind: action.kind, label: action.label, operations: action.operations,
         inverse: action.irreversible ? false : inverseOf(state.plan, action.operations),
+        replayed: action.kind === 'undo' ? state.undo[state.undo.length - 1] : action.kind === 'redo' ? state.redo[state.redo.length - 1] : undefined,
       };
       return {
         ...withPlan(state, applyAll(state.plan, action.operations)),
@@ -200,7 +203,15 @@ export function deskReducer(state: DeskState, action: DeskAction): DeskState {
       if (action.status === 422) return { ...dropped, inspectorError: action.message };
       if (action.status === 409 && !isRevisionConflict(action.message)) return { ...dropped, readOnly: action.message, notice: '' };
       if (action.status === 409) return { ...dropped, notice: `${action.message}（已重新读取最新方案，刚才的修改没有保存）`, reloadToken: state.reloadToken + 1 };
-      return { ...dropped, notice: action.message };
+      // The request never got an answer worth keeping (network, 5xx): an undo or redo that went with it
+      // is still owed, so its entry goes back where it came from. A 422 would only be refused again.
+      let { undo, redo } = state;
+      state.pending.filter(edit => action.editIds.includes(edit.id)).reverse().forEach(edit => {
+        if (!edit.replayed) return;
+        if (edit.kind === 'undo') undo = push(undo, edit.replayed);
+        else redo = push(redo, edit.replayed);
+      });
+      return { ...dropped, undo, redo, notice: `${action.message}（刚才的修改没有保存，请重新操作）` };
     }
     default:
       return state;

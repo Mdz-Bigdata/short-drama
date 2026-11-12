@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { BillingCenterPage } from './BillingCenterPage';
@@ -110,6 +110,61 @@ describe('BillingCenterPage', () => {
     expect(await screen.findByRole('button', { name: '继续支付' })).toBeTruthy();
     expect(screen.getByText('已关闭')).toBeTruthy();
     expect(screen.getAllByRole('button', { name: '继续支付' })).toHaveLength(1);
+  });
+
+  it('shows why the page did not load instead of an empty wallet, and loads again on retry', async () => {
+    let down = true;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      if (down && url.includes('/wallet')) return { ok: false, status: 503, json: async () => ({ detail: '服务暂时不可用' }) } as Response;
+      const payload = url.includes('/plans')
+        ? { sandbox_enabled: false, channels: ['alipay'], items: [] }
+        : url.includes('/wallet') ? { points: '132', money: {}, entries: [] } : { items: [] };
+      return { ok: true, json: async () => payload } as Response;
+    });
+    render(<BillingCenterPage onBack={() => undefined} />);
+
+    const failure = await screen.findByRole('alert');
+    expect(failure.textContent).toContain('服务暂时不可用');
+    expect(screen.queryByText('可用创作积分')).toBeNull();
+    expect(screen.queryByText('在线支付暂未开放，暂时无法购买。')).toBeNull();
+
+    down = false;
+    fireEvent.click(within(failure).getByRole('button', { name: '重试' }));
+    expect(await screen.findByText('132')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('暂时没有可购买的会员计划')).toBeTruthy();
+  });
+
+  it('writes plan prices, order amounts and the payment total the same way', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      let payload: unknown = { items: [] };
+      if (url.includes('/plans')) payload = { sandbox_enabled: false, channels: ['alipay'], items: [{ id: 'studio', name: '工作室', description: '', price: '1299.00', currency: 'CNY', points: 30000, duration_days: 30 }] };
+      else if (url.includes('/wallet')) payload = { points: '0', money: {}, entries: [] };
+      else if (url.includes('/orders?')) payload = { items: [{ id: 'o1', plan_id: 'studio', provider: 'alipay', amount: '1299.00', currency: 'CNY', status: 'pending', created_at: '2026-11-05T00:00:00Z' }] };
+      else if (url.endsWith('/pay')) payload = { id: 'o1', status: 'pending', attempt: null };
+      else if (init?.method === 'POST') payload = { id: 'o1', status: 'pending' };
+      return { ok: true, json: async () => payload } as Response;
+    });
+    const { container } = render(<BillingCenterPage onBack={() => undefined} />);
+
+    expect((await screen.findByText('¥1,299.00', { selector: '.plan-price strong' }))).toBeTruthy();
+    const row = container.querySelector('.order-row') as HTMLElement;
+    expect(within(row).getByText('¥1,299.00')).toBeTruthy();
+    // Status and its action sit in one cell, so the row keeps the four columns its grid has.
+    expect(row.children).toHaveLength(4);
+    const resume = within(row).getByRole('button', { name: '继续支付' });
+    resume.focus();
+    fireEvent.click(resume);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('¥1,299.00')).toBeTruthy();
+
+    // The dialog takes focus, Escape closes it, and focus returns to the button that opened it.
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: '关闭' }));
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(resume);
   });
 
   it('shows what can be spent once charging is on', async () => {

@@ -31,38 +31,60 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
+from app.core import prompt_data
+
+# The wording, the word tables and the limits live in app/data/prompt/h3_sound_design.json.
+_DATA = "h3_sound_design"
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A sentence of the sound wording table, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return str(prompt_data.load(_DATA)["says"][key]).format(**values)
+
+
+def _word(key: str) -> str:
+    """A word of the sound wording table (a separator, a default)."""
+    return prompt_data.text(_DATA, key)
+
+
+def _table(key: str):
+    """A word table or a limit of the sound wording table, as it stands."""
+    return prompt_data.value(_DATA, key)
+
+
+def _pattern(key: str) -> str:
+    """A regular expression of the sound wording table, as text."""
+    return str(prompt_data.load(_DATA)["patterns"][key])
+
+
+_LIMITS = _table("limits")
+_TAGS = _table("tags")
 # The article's cap: past ~60 words the model stops telling the layers apart.
-MAX_SOUND_WORDS = 60
-CENTER_TAG, AMBIENT_TAG, MUSIC_TAG = "center", "ambient", "music"
+MAX_SOUND_WORDS = int(_LIMITS["sound_words"])
+CENTER_TAG, AMBIENT_TAG, MUSIC_TAG = str(_TAGS["center"]), str(_TAGS["ambient"]), str(_TAGS["music"])
 # Words that belong to the music layer; inside `center` they blend voice into score.
-_MUSIC_WORDS = (
-    "bgm", "music", "piano", "strings", "guitar", "drum", "percussion", "violin", "cello",
-    "synth", "pad", "orchestra", "melody", "song", "配乐", "音乐", "旋律", "钢琴", "弦乐",
-)
-_LOW_AMBIENT = ("low volume", "low", "quiet", "soft")
-_LOW_MUSIC = ("low frequency", "low freq", "low", "soft", "none")
-_SPACE_WORDS = ("surround", "left-right spread", "spread", "stereo")
-_NONE_VALUES = {"", "none", "无", "no music", "silence"}
+_MUSIC_WORDS = tuple(str(word) for word in _table("music_words"))
+_LOW_AMBIENT = tuple(str(word) for word in _table("low_ambient_words"))
+_LOW_MUSIC = tuple(str(word) for word in _table("low_music_words"))
+_SPACE_WORDS = tuple(str(word) for word in _table("space_words"))
+_NONE_VALUES = {str(word) for word in _table("none_music_values")}
+_HAN_PER_WORD = int(_LIMITS["han_chars_per_word"])
 
 # Voice bands: what the character card says → how the timbre is written. The wording
 # is fixed on purpose — a re-worded persona reads to the model as a different actor.
-_TIMBRE_RULES: tuple[tuple[tuple[str, ...], str, str], ...] = (
-    (("少女", "小女孩", "女孩", "少年", "小男孩", "男孩"), "清亮", "中高音区"),
-    (("老人", "年迈", "苍老", "老年", "白发苍苍"), "苍哑", "低音区"),
-    (("中年", "沉稳", "威严", "将军", "教授", "总裁", "首领"), "沉稳", "中低音区"),
-    (("沙哑", "粗粝", "低沉", "嘶哑"), "沙哑", "低音区"),
-    (("温柔", "治愈", "轻柔", "柔和"), "温柔", "中音区"),
-    (("冷", "清冷", "淡漠", "疏离"), "清冷", "中音区"),
+# First match wins, so the table keeps its order.
+_TIMBRE_RULES: tuple[tuple[tuple[str, ...], str, str], ...] = tuple(
+    (tuple(str(word) for word in words), str(timbre), str(pitch)) for words, timbre, pitch in _table("timbre_rules")
 )
-_DEFAULT_TIMBRE = ("清亮", "中音区")
-_AGE = re.compile(r"(\d{1,2})\s*岁")
-# Reading speed in characters per second, by how the line is delivered.
+_DEFAULT_TIMBRE = tuple(str(word) for word in _table("default_timbre"))
+_GENDER_MARKS = _table("gender_marks")
+_AGE = re.compile(_pattern("age"))
+# Reading speed in characters per second, by how the line is delivered. The tier names are
+# code values: callers pass them (delivery="正常") and prompt_packages checks against these keys.
 PACE_BY_DELIVERY: dict[str, float] = {"正常": 3.0, "急切": 4.0, "沉重": 2.5}
 # How the shot's emotion reads as a pace tier and as the centre layer's mood word.
 _DELIVERY_BY_EMOTION: dict[str, tuple[str, str]] = {
-    "angry": ("急切", "angry"), "shout": ("急切", "shouting"), "tense": ("急切", "tense"),
-    "happy": ("正常", "bright"), "sad": ("沉重", "sorrowful"), "cold": ("沉重", "cold"),
-    "tender": ("正常", "gentle"), "neutral": ("正常", ""),
+    str(emotion): (str(tier), str(mood)) for emotion, (tier, mood) in _table("delivery_by_emotion").items()
 }
 
 
@@ -73,11 +95,11 @@ def delivery_for_emotion(emotion: str) -> tuple[str, str]:
 
 def emotion_overlay(anchors: Sequence["VoiceAnchor"], notes: str) -> str:
     """本镜情绪只叠加在语气、力度与停顿上；基础音色照锁定句不变。"""
-    names = "、".join(dict.fromkeys(anchor.name for anchor in anchors))
+    names = _word("list_separator").join(dict.fromkeys(anchor.name for anchor in anchors))
     notes = " ".join(str(notes or "").split())
     if not names or not notes:
         return ""
-    return f"{names}本镜情绪（{notes}）只改变语气、力度与停顿，基础音色、音调与声线照上面的锁定句不变"
+    return _says("overlay", names=names, notes=notes)
 
 
 @dataclass(frozen=True)
@@ -95,32 +117,34 @@ class VoiceAnchor:
 
     @property
     def persona(self) -> str:
-        age = f"{self.age_years}岁" if self.age_years else ""
-        voice = "女声" if self.gender == "female" else "男声"
-        return f"{age}{self.timbre}{voice}"
+        age = _says("persona_age", years=self.age_years) if self.age_years else ""
+        voice = _table("persona_voice")["female" if self.gender == "female" else "male"]
+        return _says("persona", age=age, timbre=self.timbre, voice=voice)
 
     def lock_line(self) -> str:
-        """The sentence restated verbatim in every prompt that gives this character a line."""
+        """The sentence restated verbatim in every prompt that gives this character a line.
+
+        The reference-audio lead is voice_reference.json's ``lock_lead``: video_references finds
+        the placeholder by it and removes both when the sample is not sent.
+        """
         if self.designed:
-            parts = [f"{self.name}：{self.designed}"]
+            parts = [_says("lock_head", name=self.name, voice=self.designed)]
         else:
-            parts = [f"{self.name}：{self.persona}", self.pitch, f"语速每秒{self.pace_cps:g}字"]
+            parts = [_says("lock_head", name=self.name, voice=self.persona), self.pitch, _says("lock_pace", cps=self.pace_cps)]
         if self.ref_audio:
-            parts.append(f"音色参考{self.ref_audio}")
-        return "，".join(parts) + "；全片音色、音调与声线不变"
+            parts.append(prompt_data.text("voice_reference", "lock_lead") + self.ref_audio)
+        return _word("lock_separator").join(parts) + _says("lock_tail")
 
     def center_term(self) -> str:
         """How this character is named inside the English-tagged center layer."""
-        return f"{'female' if self.gender == 'female' else 'male'} {_CENTER_TONE.get(self.timbre, 'steady')}"
+        voice = _table("center_voice")["female" if self.gender == "female" else "male"]
+        return _says("center_term", voice=voice, tone=_CENTER_TONE.get(self.timbre, _word("center_tone_default")))
 
 
-_CENTER_TONE = {
-    "清亮": "bright", "苍哑": "aged hoarse", "沉稳": "steady", "沙哑": "hoarse",
-    "温柔": "gentle", "清冷": "cold calm",
-}
+_CENTER_TONE = {str(timbre): str(tone) for timbre, tone in _table("center_tone").items()}
 
 
-MAX_VOICE_DESC_CHARS = 40
+MAX_VOICE_DESC_CHARS = int(_LIMITS["voice_desc_chars"])
 
 
 def build_voice_anchor(
@@ -135,8 +159,9 @@ def build_voice_anchor(
     and the rules only read it for the H3 centre-layer words.
     """
     designed = " ".join(str(voice_desc or "").split())[:MAX_VOICE_DESC_CHARS]
-    if designed and ("女" in designed) != ("男" in designed):
-        gender = "female" if "女" in designed else "male"
+    female, male = _GENDER_MARKS["female"], _GENDER_MARKS["male"]
+    if designed and (female in designed) != (male in designed):
+        gender = "female" if female in designed else "male"
     card = f"{name} {description}"
     timbre, pitch = _DEFAULT_TIMBRE
     # 设计过的音色先读，读不出音区再退回角色卡。
@@ -188,9 +213,9 @@ class H3SoundPrompt:
 
 def _words(text: str) -> int:
     """Rough word count across mixed Chinese and English, as the model reads it."""
-    latin = len(re.findall(r"[A-Za-z][A-Za-z'-]*", text))
-    han = len(re.findall(r"[一-鿿]", text))
-    return latin + han // 2
+    latin = len(re.findall(_pattern("latin_word"), text))
+    han = len(re.findall(_pattern("han"), text))
+    return latin + han // _HAN_PER_WORD
 
 
 def _clean(items: Iterable[str]) -> list[str]:
@@ -215,27 +240,30 @@ def compile_sound_prompt(
     belongs; ``silent`` is a shot with no one speaking.
     """
     if silent or not speakers:
-        center = "no dialogue, characters silent, mouths closed"
+        center = _says("center_silent")
     else:
-        voices = " / ".join(dict.fromkeys(anchor.center_term() for anchor in speakers))
-        center = f"{voices}, clear speech, center channel"
-        center += ", voice-over, mouths closed" if narration else ", synced to mouth"
+        voices = _word("voice_separator").join(dict.fromkeys(anchor.center_term() for anchor in speakers))
+        center = _says("center_voices", voices=voices)
+        center += _says("center_narration") if narration else _says("center_synced")
         if foreground:
-            center += ", foreground"
+            center += _says("center_foreground")
         if tone.strip():
-            center += f", {tone.strip()}"
+            center += _says("center_tone", tone=tone.strip())
 
     beds = _clean(ambience)
     if beds:
-        ambient = ", ".join(beds) + ", continuous, low volume"
-        ambient += ", surround" if not spacious else ", surround, low reverb"
+        ambient = _says("ambient_beds", beds=_word("bed_separator").join(beds))
+        ambient += _says("ambient_room") if not spacious else _says("ambient_spacious")
     else:
-        ambient = "room tone only, continuous, low volume, surround"
+        ambient = _says("ambient_empty")
 
     music_text = " ".join(str(music or "").split())
-    music_layer = "none" if music_text.lower() in _NONE_VALUES else f"{music_text}, low frequency, slight spread"
+    music_layer = _says("music_none") if music_text.lower() in _NONE_VALUES else _says("music_bed", music=music_text)
 
-    text = f"{CENTER_TAG}: {center}; {AMBIENT_TAG}: {ambient}; {MUSIC_TAG}: {music_layer}"
+    text = _says(
+        "line", center_tag=CENTER_TAG, center=center, ambient_tag=AMBIENT_TAG, ambient=ambient,
+        music_tag=MUSIC_TAG, music=music_layer,
+    )
     locks = [anchor.lock_line() for anchor in speakers]
     return H3SoundPrompt(
         text=text, center=center, ambient=ambient, music=music_layer,
@@ -245,19 +273,18 @@ def compile_sound_prompt(
 
 def check_sound_prompt(text: str, *, speakers: Sequence[VoiceAnchor] = ()) -> list[SoundCheck]:
     """What goes wrong with H3 sound, checked before the prompt is sent."""
+    joined = _word("list_separator").join
     layers = {tag: _layer_of(text, tag) for tag in (CENTER_TAG, AMBIENT_TAG, MUSIC_TAG)}
     missing = [tag for tag, body in layers.items() if not body]
     checks = [SoundCheck(
         "h3_sound_three_layers", not missing,
-        f"缺少 {'、'.join(missing)} 层；三层都要写，模型才会分层生成。" if missing
-        else "center / ambient / music 三层齐备。",
+        _says("layers_missing", missing=joined(missing)) if missing else _says("layers_ok"),
     )]
 
     leaked = [word for word in _MUSIC_WORDS if word in layers[CENTER_TAG].lower()]
     checks.append(SoundCheck(
         "h3_sound_center_clean", not leaked,
-        f"对白层混进了配乐词「{'、'.join(leaked)}」，人声会和音乐搅在一起。" if leaked
-        else "对白层只写人声，没有混进配乐词。",
+        _says("center_leaked", words=joined(leaked)) if leaked else _says("center_clean"),
     ))
 
     ambient_body, music_body = layers[AMBIENT_TAG].lower(), layers[MUSIC_TAG].lower()
@@ -266,36 +293,34 @@ def check_sound_prompt(text: str, *, speakers: Sequence[VoiceAnchor] = ()) -> li
     )
     checks.append(SoundCheck(
         "h3_sound_low_bed", quiet,
-        "环境音要写 low volume、配乐要写 low frequency 或 none，否则对白会被盖住。" if not quiet
-        else "环境音与配乐都已压低，对白权重最高。",
+        _says("bed_loud") if not quiet else _says("bed_low"),
     ))
 
     spaced = not ambient_body or any(word in ambient_body for word in _SPACE_WORDS)
     checks.append(SoundCheck(
         "h3_sound_space", spaced,
-        "环境音层缺少 surround 或 left-right spread，声音会全挤在中间发平。" if not spaced
-        else "环境音铺在四周，画面有空间感。",
+        _says("space_flat") if not spaced else _says("space_wide"),
     ))
 
     words = _words(text)
     checks.append(SoundCheck(
         "h3_sound_word_budget", words <= MAX_SOUND_WORDS,
-        f"声音提示词约 {words} 词，超过 {MAX_SOUND_WORDS} 词后模型会抓不住主次。" if words > MAX_SOUND_WORDS
-        else f"声音提示词 {words} 词，在 {MAX_SOUND_WORDS} 词预算内。",
+        _says("budget_over", words=words, limit=MAX_SOUND_WORDS) if words > MAX_SOUND_WORDS
+        else _says("budget_ok", words=words, limit=MAX_SOUND_WORDS),
     ))
 
     named = [anchor.name for anchor in speakers]
     locked = not named or all(anchor.persona for anchor in speakers)
     checks.append(SoundCheck(
         "h3_sound_voice_locked", locked,
-        "说话的角色缺少音色锚定，跨镜会音色漂移。" if not locked
-        else ("本镜无台词，不需要音色锚定。" if not named else f"{'、'.join(named)} 的音色、音调与声线已锁定。"),
+        _says("voice_unlocked") if not locked
+        else (_says("voice_silent") if not named else _says("voice_locked", names=joined(named))),
     ))
     return checks
 
 
 def _layer_of(text: str, tag: str) -> str:
-    match = re.search(rf"{tag}\s*[:：]\s*([^;；]*)", text, re.IGNORECASE)
+    match = re.search(_pattern("layer").format(tag=tag), text, re.IGNORECASE)
     return match.group(1).strip() if match else ""
 
 

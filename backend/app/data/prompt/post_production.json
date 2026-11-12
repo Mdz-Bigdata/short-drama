@@ -1,0 +1,183 @@
+{
+  "_doc": "剪辑合成师页面上的推算口径(app/core/post_production.py)：情绪张力曲线每镜怎么打分、配乐库曲目和这部剧的匹配度、成片大小按什么码率估。张力信号词沿用 scene_tension.json 的词表。 第 6 阶段发给音频模型的配乐、环境音提示词也在这里(music_prompt 里的 {style}、{genre}、{palette} 换成项目的导演风格、题材和题材配器)。",
+  "tension": {
+    "base": 0.2,
+    "per_hit": 0.18,
+    "per_exclaim": 0.08,
+    "per_question": 0.05,
+    "exclaim_marks": [
+      "！",
+      "!"
+    ],
+    "question_marks": [
+      "？",
+      "?"
+    ]
+  },
+  "moods": [
+    {
+      "id": "tense",
+      "label": "紧张悬疑",
+      "words": [
+        "紧张",
+        "悬疑",
+        "悬念",
+        "压迫",
+        "暗涌",
+        "对峙",
+        "惊悚",
+        "危机",
+        "复仇",
+        "权谋",
+        "tense",
+        "suspense",
+        "thriller",
+        "dark"
+      ]
+    },
+    {
+      "id": "epic",
+      "label": "燃",
+      "words": [
+        "燃",
+        "激昂",
+        "史诗",
+        "战斗",
+        "打斗",
+        "热血",
+        "爽",
+        "逆袭",
+        "epic",
+        "battle",
+        "action",
+        "drums"
+      ]
+    },
+    {
+      "id": "sad",
+      "label": "虐心",
+      "words": [
+        "悲",
+        "伤",
+        "虐",
+        "泪",
+        "离别",
+        "忧郁",
+        "遗憾",
+        "sad",
+        "melancholy",
+        "piano"
+      ]
+    },
+    {
+      "id": "warm",
+      "label": "温情",
+      "words": [
+        "温情",
+        "温暖",
+        "治愈",
+        "甜",
+        "浪漫",
+        "爱情",
+        "宠",
+        "romance",
+        "warm",
+        "sweet",
+        "love"
+      ]
+    },
+    {
+      "id": "light",
+      "label": "轻快",
+      "words": [
+        "轻快",
+        "喜剧",
+        "搞笑",
+        "欢快",
+        "俏皮",
+        "萌",
+        "comedy",
+        "happy",
+        "upbeat",
+        "playful"
+      ]
+    },
+    {
+      "id": "period",
+      "label": "古风",
+      "words": [
+        "古风",
+        "古装",
+        "仙侠",
+        "武侠",
+        "国风",
+        "宫廷",
+        "江湖",
+        "guzheng",
+        "erhu",
+        "chinese"
+      ]
+    },
+    {
+      "id": "urban",
+      "label": "都市",
+      "words": [
+        "都市",
+        "现代",
+        "职场",
+        "豪门",
+        "总裁",
+        "电子",
+        "urban",
+        "modern",
+        "electronic"
+      ]
+    }
+  ],
+  "match": {
+    "base": 0.35,
+    "spread": 0.6,
+    "tense_from_curve": 0.6
+  },
+  "bitrate_kbps": {
+    "video": 4500,
+    "audio": 128
+  },
+  "music_prompt": "{style} {genre} short drama cinematic score, {palette}, emotion arc with restrained opening, rising tension, clear climax and gentle resolution, instrumental only, leave space for dialogue",
+  "music_language_note": "配乐统一风格：题材定了配乐基调就定了，全剧一套音乐语言。music_palettes 按题材(model_gateway.get_genre 的 id)给配器，填进 music_prompt 的 {palette}；题材只认出 general 时按全剧的类型聚类(frame_handoff.show_cluster，A–G)查 music_cluster_palettes；第一次出配乐时整句提示词锁进项目(6_music_language)，以后各集都用这一句，不再随集变。",
+  "music_series_suffix": "the same musical language for every episode of this series: same instrumentation, same key centre and tempo family, same recurring main motif",
+  "music_palettes": {
+    "xianxia": "orchestral strings driven by heavy taiko and war drums, guzheng and dizi accents, brass swelling on every comeback and turnaround",
+    "wuxia": "erhu and guzheng over low strings, taiko drums under the fights, sparse bamboo flute in the quiet moments",
+    "palace_intrigue": "guqin and pipa over restrained low strings, slow tension pulses, sparse court percussion",
+    "time_travel": "light orchestral with guzheng and pizzicato strings, strings swelling at each twist",
+    "male_counterattack": "hybrid orchestral with heavy drums and sub-bass hits, triumphant brass on every payoff",
+    "rebirth_revenge": "dark strings and a cold piano motif, heavy drums building into cathartic payoffs",
+    "mystery": "low drones and a ticking pulse, muted piano, dissonant string clusters",
+    "horror": "dissonant strings and low drones, a sparse eerie music box, sudden stingers",
+    "romance": "piano and warm strings, soft pads, a light pop rhythm",
+    "family": "intimate piano and cello, gentle acoustic guitar",
+    "campus": "acoustic guitar and light piano, soft indie-pop drums",
+    "food": "warm acoustic guitar, light hand percussion, gentle piano",
+    "military": "snare marches, low brass and epic strings",
+    "sports": "driving electronic beats with rock drums and power chords",
+    "sci_fi": "synth pads, pulsing electronic bass, cinematic hits",
+    "comedy": "pizzicato strings, playful woodwinds, bouncy percussion",
+    "overseas_us": "dark cinematic pop, synth bass under brooding strings",
+    "overseas_other": "regional percussion and plucked strings over cinematic strings",
+    "interactive": "suspenseful hybrid score with clear pulses at each choice point",
+    "car": "sleek electronic pulses, synth bass and modern drums",
+    "default": "cinematic strings with steady drums and a clear main motif"
+  },
+  "music_cluster_palettes": {
+    "A": "piano and warm strings with a modern pop pulse, cello for the hurt, drums only on the payoffs",
+    "B": "guqin, erhu and pipa over low strings, taiko and war drums under the confrontations, a lone dizi in the silences",
+    "C": "orchestral strings driven by heavy taiko and war drums, guzheng and dizi accents, brass swelling on every comeback and turnaround",
+    "D": "hybrid orchestral with heavy drums and sub-bass hits, driving percussion through the action",
+    "E": "low drones and a ticking pulse, muted piano, dissonant string clusters",
+    "F": "synth pads, pulsing electronic bass, cinematic hits",
+    "G": "pizzicato strings, playful woodwinds, bouncy percussion"
+  },
+  "ambience_prompt": "cinematic short drama room tone and environmental ambience, subtle cloth movement, footsteps and natural space, no music, no speech",
+  "max_music_versions": 8
+}

@@ -221,7 +221,9 @@ class StageFiveQueueTests(unittest.TestCase):
             calls.append({"first": image_url, "refs": list(kwargs.get("ref_images") or [])})
             return None if len(calls) == 1 else "https://cdn/fallback.mp4"
 
+        # 彩色影子那一层(test_color_stand_ins 里测)重画失败，落到这里要测的「去掉分镜帧」。
         with patch.object(self.service.gateway, "generate_video", side_effect=generate_video), \
+             patch.object(self.service.gateway, "generate_image", side_effect=RuntimeError("repaint unavailable")), \
              patch.object(self.service.gateway, "last_video_failure", return_value="MiniMax H3 task ended with status=failed: 1026 input new_sensitive, input image sensitive"), \
              patch.object(self.service.gateway, "video_family_ready", return_value=True), \
              patch.object(self.service.gateway, "video_family_modes", return_value=None), \

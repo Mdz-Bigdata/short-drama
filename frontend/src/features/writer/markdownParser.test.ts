@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { MARKDOWN_PARSE_BUDGETS, paginateMarkdown, parseMarkdownBlocks } from './markdownParser';
+import { MARKDOWN_PARSE_BUDGETS, markdownPageOffsets, paginateMarkdown, parseMarkdownBlocks } from './markdownParser';
 
 describe('markdownParser resource bounds', () => {
   it('bounds adversarial table counts and rows while paging large tables', () => {
@@ -109,5 +109,49 @@ describe('markdownParser resource bounds', () => {
       .join('\n');
     expect(pagedText).toContain('x0');
     expect(pagedText).toContain('x19999');
+  });
+});
+
+describe('markdownPageOffsets', () => {
+  it('finds where each page starts, even when a page repeats the line the next one opens with', () => {
+    // Each scene fills one page exactly and names its speaker twice.
+    const scene = (mark: string) => `林夏：\n${mark.repeat(590)}\n林夏：\n${mark.repeat(601)}`;
+    const source = [scene('甲'), scene('乙'), scene('丙')].join('\r\n');
+    const pages = paginateMarkdown(source);
+
+    expect(pages).toHaveLength(3);
+    expect(markdownPageOffsets(source, pages)).toEqual([
+      0,
+      source.indexOf('林夏：\n乙'),
+      source.indexOf('林夏：\n丙'),
+    ]);
+  });
+
+  it('starts a table page at its header line and keeps looking after it', () => {
+    const source = ['开场白。', '', '| 场次 | 地点 |', '| --- | --- |', '| E1S01 | 收场白。 |', '', '收场白。'].join('\n');
+    const pages = paginateMarkdown(source);
+
+    // The closing line is found after the table, not in the cell that quotes it.
+    expect(markdownPageOffsets(source, pages)).toEqual([0, source.indexOf('| 场次'), source.lastIndexOf('收场白。')]);
+  });
+
+  it('starts each later page of a long table at the first row it shows', () => {
+    const table = (name: string, count: number) => [
+      `| ${name} | 内容 |`,
+      '| --- | --- |',
+      ...Array.from({ length: count }, (_, index) => `| ${name}${index} | 场景 |`),
+    ].join('\r\n');
+    const source = ['开场。', '', table('甲', 250), '', table('乙', 0), '', table('丙', 1), '', '收场。'].join('\r\n');
+    const pages = paginateMarkdown(source);
+
+    expect(markdownPageOffsets(source, pages)).toEqual([
+      0,
+      source.indexOf('| 甲 |'),
+      source.indexOf('| 甲100 |'),
+      source.indexOf('| 甲200 |'),
+      source.indexOf('| 乙 |'),
+      source.indexOf('| 丙 |'),
+      source.indexOf('收场。'),
+    ]);
   });
 });

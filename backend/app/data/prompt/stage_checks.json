@@ -1,0 +1,102 @@
+{
+  "checks": {
+    "spatial_actor_spacing": {
+      "pair": "{first}与{second}仅相距{gap:.2f}米",
+      "failed": "{findings}，人物会穿模重叠，请拉开站位。",
+      "passed": "所有人物站位互不重叠。"
+    },
+    "spatial_subjects_in_frame": {
+      "subject": "第{shot}镜的{name}",
+      "failed": "{findings}不在该机位的画面内，请调整机位或站位。",
+      "passed": "每一镜要拍的人物都在该机位画面内。"
+    },
+    "spatial_move_keeps_subjects": {
+      "lost": "第{shot}镜运镜结束时{names}出画",
+      "failed": "{findings}",
+      "passed": "运镜起止两端主体均在画内。"
+    },
+    "spatial_subject_occlusion": {
+      "hidden": "第{shot}镜的{name}被{blocker}挡住",
+      "failed": "{findings}，请错开站位或换机位。",
+      "passed": "主体未被前景人物遮挡。"
+    },
+    "spatial_axis_consistent": {
+      "jump": "第{before}镜→第{after}镜越轴",
+      "failed": "{findings}：两镜之间没有轴线上的中性镜头、越轴运动镜头或重新建立空间的全景，人物左右会翻转。",
+      "passed": "全部机位守在轴线同一侧，或经合法的桥接镜头换边。"
+    },
+    "spatial_screen_sides_stable": {
+      "failed": "第{shots}镜里{first}与{second}的左右位置与既定的画左 / 画右关系相反；{reason}",
+      "opens_mirrored": "本场从第一次同框起就是反的，请换回站位，或重新确立本场的左右关系。",
+      "after_crossing": "这些镜头在合法越轴之后拍摄，左右相反是有意为之，生成时请留意人物不要串位。",
+      "passed": "人物的画左 / 画右关系在所有同框镜头中与既定关系一致。"
+    },
+    "spatial_facing_partner": {
+      "averted": "{name}没有面向{partner}",
+      "failed": "{findings}，与面对面的站位不符。",
+      "passed": "对手戏人物彼此相向。"
+    },
+    "spatial_camera_clearance": {
+      "inside": "第{shot}镜机位距{name}仅{gap:.2f}米",
+      "failed": "{findings}，机位穿入人物。",
+      "passed": "机位与人物保持安全距离。"
+    },
+    "spatial_action_changes_state": {
+      "walk": "第{shot}镜{name}写了走位，站位却没有变化",
+      "posture": "第{shot}镜{name}的姿态应为「{wanted}」，空间方案里是「{current}」",
+      "failed": "{findings}。",
+      "passed": "分镜里写到的走位与姿态变化都落在了空间方案上。"
+    },
+    "spatial_contact_kept": {
+      "hold": "「{target}」离{actor}的{hand}{gap:.2f}米",
+      "rest": "「{target}」没有放在「{support}」上",
+      "sit": "{actor}没有坐在「{target}」上",
+      "seat": "「{target}」座面高{top:.2f}米，坐不上去",
+      "absent": "第{shot}镜{actor}不在场，「{target}」没人接着",
+      "failed": "{findings}：接触没有贴合，人和东西会穿帮。",
+      "passed": "手里的道具、座椅和桌面上的东西都贴合接触。"
+    }
+  },
+  "repairs": {
+    "labels": {
+      "spatial_actor_spacing": "拉开站位",
+      "spatial_facing_partner": "转向对手",
+      "spatial_screen_sides_stable": "换回站位",
+      "spatial_subjects_in_frame": "重解机位",
+      "spatial_subject_occlusion": "重解机位",
+      "spatial_move_keeps_subjects": "重解机位",
+      "spatial_camera_clearance": "重解机位",
+      "spatial_axis_consistent": "重解机位",
+      "spatial_set_clearance": "绕开布景",
+      "spatial_action_changes_state": "补上姿态",
+      "spatial_contact_kept": "贴合接触"
+    },
+    "spacing": "把{names}沿彼此的连线推开到至少 {target:g} 米。",
+    "spacing_manual": "人物重叠但无法自动推开，请手动调整站位。",
+    "facing": "让{names}转身面向对手。",
+    "facing_manual": "找不到对手戏的两个人物，请手动调整朝向。",
+    "screen_sides": "对调{first}与{second}的站位和朝向，恢复既定的画左 / 画右。",
+    "screen_sides_after_crossing_manual": "这些镜头在合法越轴之后拍摄，左右相反是有意为之；若非本意，请在越轴镜头上换边或重解机位。",
+    "screen_sides_missing_manual": "轴线两端的人物不在场上。",
+    "lens": "按景别、角度和主体重新求解{shots}的机位：主体入画、避开前景遮挡、守住轴线同侧。",
+    "lens_manual": "检查没有指向具体镜头，无法自动重解。",
+    "posture": "第{shot}镜{name}改为「{posture}」",
+    "postures_done": "{changes}。",
+    "walk_manual": "第{shot}镜{name}写了走位：请在导演台为其画一条路径，或设置本镜的起始位置",
+    "contact": "把{names}贴回接触的位置。",
+    "contact_manual": "{findings}：请换一件座面合适的布景，或改接触所在的镜头。",
+    "unhandled": "需人工处理",
+    "unhandled_manual": "这项检查没有自动修正。"
+  },
+  "scores": {
+    "out_of_frame": "{names} 不在画内",
+    "hidden_by_person": "{name} 被 {blocker} 挡住",
+    "hidden_by_set": "{name} 被布景「{piece}」挡住",
+    "no_camera": "镜头没有机位",
+    "actor_inside_piece": "{name} 站在「{piece}」里面",
+    "camera_inside_piece": "机位「{camera}」在「{piece}」里面",
+    "shot_note": "第{shot}镜：{note}",
+    "compare": "评分 {before} → {after}（{change}），错误 {errors_before} → {errors_after}，警告 {warnings_before} → {warnings_after}",
+    "unchanged": "不变"
+  }
+}

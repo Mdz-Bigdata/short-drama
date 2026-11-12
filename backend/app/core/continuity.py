@@ -10,6 +10,9 @@ from pydantic import BaseModel, Field
 class ContinuityState(BaseModel):
     characters: list[str]
     scene: str
+    # 剧本场次号(E1S06)。屏幕方向是按这一场自己的导演台机位量的：不同场次即使在同一地点，
+    # 机位也各自重摆，「左到右」不是同一条轴线，不算越轴。旧数据没有场次号时按地点名比。
+    scene_id: str = ""
     screen_direction: Literal["left_to_right", "right_to_left", "neutral", "unknown"]
     action: str
     emotion: str
@@ -34,12 +37,19 @@ def _is_handoff(previous: ContinuityState, current: ContinuityState) -> bool:
     return any(previous.props[name] != current.props[name] for name in common_props)
 
 
+def _same_setup(previous: ContinuityState, current: ContinuityState) -> bool:
+    """两镜是不是同一场戏的同一套机位：有场次号按场次号，没有按地点名。"""
+    if previous.scene_id and current.scene_id:
+        return previous.scene_id == current.scene_id and previous.scene == current.scene
+    return previous.scene == current.scene
+
+
 def plan_transition(previous: ContinuityState, current: ContinuityState) -> TransitionPlan:
     reasons: list[str] = []
     score = 1.0
 
     axis_flip = (
-        previous.scene == current.scene
+        _same_setup(previous, current)
         and previous.screen_direction in {"left_to_right", "right_to_left"}
         and current.screen_direction in {"left_to_right", "right_to_left"}
         and previous.screen_direction != current.screen_direction

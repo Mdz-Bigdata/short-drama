@@ -1166,6 +1166,9 @@
   color: var(--text-main);
 }
 .shot-workspace__candidates li.is-current { border-color: rgba(var(--accent-rgb), 0.5); color: var(--accent); font-weight: 700; }
+.shot-workspace__candidates li em { font-style: normal; font-size: 0.68rem; font-weight: 400; color: var(--text-muted); }
+.shot-workspace__candidates button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.shot-workspace__previewing { margin: 0.35rem 0 0; font-size: 0.74rem; color: var(--warning); }
 
 /* 导演台块放在参考图下面：一张白卡 */
 .shot-workspace__desk {

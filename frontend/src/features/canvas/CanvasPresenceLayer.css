@@ -1,0 +1,56 @@
+/* Idea from open-ai-canvas (MIT, © 2026 ddcat and Open AI Canvas contributors): same-account multi-window presence. */
+.cpl-layer {
+  --cpl-inv: 1;
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  overflow: hidden;
+  pointer-events: none;
+}
+.cpl-world { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; }
+.cpl-ring,
+.cpl-drag,
+.cpl-cursor { position: absolute; left: 0; top: 0; }
+
+.cpl-ring {
+  border-radius: 10px;
+  outline: calc(2px * var(--cpl-inv)) solid var(--cpl-color);
+  outline-offset: calc(3px * var(--cpl-inv));
+  opacity: 0.85;
+}
+.cpl-drag {
+  box-sizing: border-box;
+  border: calc(1.5px * var(--cpl-inv)) dashed var(--cpl-color);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--cpl-color) 8%, transparent);
+}
+
+.cpl-cursor { transition: transform 60ms linear; will-change: transform; }
+.cpl-cursor__body { display: flex; align-items: flex-start; transform: scale(var(--cpl-inv)); transform-origin: 0 0; }
+.cpl-cursor__arrow { flex: none; fill: var(--cpl-color); stroke: #fff; stroke-width: 1.2; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25)); }
+.cpl-cursor__label {
+  margin: 14px 0 0 -2px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--cpl-color);
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.cpl-peers { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--text-dim); font-size: 12px; white-space: nowrap; }
+.cpl-peers__dots { display: inline-flex; }
+.cpl-peers__dot {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--cpl-color);
+}
+.cpl-peers__dot + .cpl-peers__dot { margin-left: -4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cpl-cursor { transition: none; }
+}

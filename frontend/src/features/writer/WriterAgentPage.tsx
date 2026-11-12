@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
   BookOpenText,
@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 
 import { CharacterRelationshipGraph } from './CharacterRelationshipGraph';
+import { RelationshipEditor } from './RelationshipEditor';
 import { namedRelationships } from './relationshipCast';
 import { ScriptVersionMenu } from './ScriptVersionMenu';
 import { StoryEventTimeline } from './StoryEventTimeline';
@@ -142,6 +143,35 @@ function durationSecondsLabel(seconds?: number) {
   return seconds >= 60 ? `${Math.round(seconds / 60)} 分钟` : `${Math.round(seconds)} 秒`;
 }
 
+/**
+ * A stat card's note: two lines, and a 展开 / 收起 toggle once it runs past them (a long 剧本基调
+ * theme does). Whether it runs past depends on the card's width, so the note is measured each time
+ * it resizes rather than guessed from its length. Keyed on the text, so a new note is measured afresh.
+ */
+function StatNote({ text }: { text: string }) {
+  const ref = useRef<HTMLElement | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  useEffect(() => {
+    const note = ref.current;
+    if (!note || expanded || typeof ResizeObserver === 'undefined') return;
+    // The observer reports once as soon as it starts, then on every resize of the card.
+    const observer = new ResizeObserver(() => setOverflowing(note.scrollHeight > note.clientHeight + 1));
+    observer.observe(note);
+    return () => observer.disconnect();
+  }, [expanded]);
+  return (
+    <>
+      <small ref={ref} className={expanded ? 'is-expanded' : undefined}>{text}</small>
+      {(overflowing || expanded) && (
+        <button type="button" className="writer-stats__toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>
+          {expanded ? t('收起') : t('展开')}
+        </button>
+      )}
+    </>
+  );
+}
+
 export function WriterAgentPage({
   title,
   taskId,
@@ -158,8 +188,10 @@ export function WriterAgentPage({
   onPlanEpisodes,
   onProduceEpisode,
   onSaveScript,
+  onSaveRelationships,
   onAnalyzeRelationships,
   onContinueScript,
+  relationshipsAuthored = false,
   timelineAuthored = false,
   creationMode,
   versions = [],
@@ -198,6 +230,8 @@ export function WriterAgentPage({
   onAnalyzeRelationships?: () => Promise<void>;
   onContinueScript?: () => Promise<void>;
   relationshipsInferred?: boolean;
+  /** The relation list is the writer's (or an earlier analysis's): an empty one is not analysed again. */
+  relationshipsAuthored?: boolean;
   timelineAuthored?: boolean;
   creationMode?: string;
   versions?: WriterScriptVersion[];
@@ -353,22 +387,29 @@ export function WriterAgentPage({
 
   // The character network has its own page under the 人物关系 tab.
   const autoAnalyzed = useRef<string | null>(null);
+  const analysisKey = taskId || title || 'writer';
   const hasScript = Boolean(source);
-  useEffect(() => {
-    if (view !== 'characters' || !graphIsInferred || !onAnalyzeRelationships || !hasScript || roles.length < 2) return;
-    const key = taskId || title || 'writer';
-    if (autoAnalyzed.current === key) return;
-    autoAnalyzed.current = key;
-    let active = true;
-    void Promise.resolve()
-      .then(() => {
-        if (active) setRelationshipsAnalyzing(true);
-        return onAnalyzeRelationships();
-      })
+  // The spinner follows the run, not the effect that started it: the parent hands down a new
+  // handler on every render, and a run cut loose by that cleanup used to leave 分析中… up for good.
+  const analysisRun = useRef(0);
+  const analyzeRelationships = useCallback((analyze: () => Promise<void>) => {
+    const run = ++analysisRun.current;
+    setRelationshipsAnalyzing(true);
+    void analyze()
       .catch(() => undefined)
-      .finally(() => { if (active) setRelationshipsAnalyzing(false); });
-    return () => { active = false; };
-  }, [view, graphIsInferred, onAnalyzeRelationships, hasScript, roles.length, taskId, title]);
+      .finally(() => { if (analysisRun.current === run) setRelationshipsAnalyzing(false); });
+  }, []);
+  useEffect(() => {
+    if (view !== 'characters' || !graphIsInferred || relationshipsAuthored || !onAnalyzeRelationships || !hasScript || roles.length < 2) return;
+    if (autoAnalyzed.current === analysisKey) return;
+    autoAnalyzed.current = analysisKey;
+    void Promise.resolve().then(() => analyzeRelationships(onAnalyzeRelationships));
+  }, [view, graphIsInferred, relationshipsAuthored, onAnalyzeRelationships, hasScript, roles.length, analysisKey, analyzeRelationships]);
+  // A list the writer has edited is theirs: emptying it must not start an analysis that refills it.
+  const saveEditedRelationships = onSaveRelationships && ((next: WriterRelationship[]) => {
+    autoAnalyzed.current = analysisKey;
+    return onSaveRelationships(next);
+  });
 
   const characterSection = (
   <section className="writer-section writer-network" aria-labelledby="writer-relationships-title">
@@ -392,12 +433,7 @@ export function WriterAgentPage({
           <button
             type="button"
             disabled={relationshipsAnalyzing}
-            onClick={() => {
-              setRelationshipsAnalyzing(true);
-              void onAnalyzeRelationships()
-                .catch(() => undefined)
-                .finally(() => setRelationshipsAnalyzing(false));
-            }}
+            onClick={() => analyzeRelationships(onAnalyzeRelationships)}
           >
             <Sparkles aria-hidden="true" /> {relationshipsAnalyzing ? t('分析中…') : t('AI 分析人物关系')}
           </button>
@@ -411,6 +447,13 @@ export function WriterAgentPage({
       </header>
       <CharacterRelationshipGraph roles={roles} relationships={displayedRelationships} avatars={avatars} expanded={networkExpanded} />
     </div>
+    {/* Hidden while the analysis runs: its result replaces the whole list. */}
+    {onSaveRelationships && !relationshipsAnalyzing && characterNames.size >= 2 && (
+      <div className="writer-network__block">
+        <h3><Pencil aria-hidden="true" /> {t('人物关系编辑')}</h3>
+        <RelationshipEditor roles={roles} relationships={displayedRelationships} onSave={saveEditedRelationships} />
+      </div>
+    )}
   </section>
   );
 
@@ -495,7 +538,7 @@ export function WriterAgentPage({
         {stats.map(stat => (
           <div key={stat.label}>
             <dt>{stat.label}</dt>
-            <dd>
+            <dd title={typeof stat.value === 'string' && !stat.onOpen ? stat.value : undefined}>
               {stat.onOpen ? (
                 <button
                   type="button"
@@ -508,7 +551,7 @@ export function WriterAgentPage({
                 </button>
               ) : stat.value}
             </dd>
-            <small>{stat.note}</small>
+            <StatNote key={stat.note} text={stat.note} />
           </div>
         ))}
       </dl>

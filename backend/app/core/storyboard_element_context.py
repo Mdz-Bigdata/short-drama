@@ -15,10 +15,15 @@ from PIL import Image, UnidentifiedImageError
 from app import settings
 from app.core import character_variants, real_person
 from app.core.prop_turnaround import PROP_DISPLAY_ONLY_SLOTS
+from app.core.scene_scale import SCENE_SCALE_SLOT
 from app.core.element_scope import element_in_task
 from app.core.media_compositor import MEDIA_DIR
 from app.core import breakdown_kinds
 from app.core.scene_turnaround import SCENE_VIEW_SLOTS
+
+#: 定妆图切出来的正面全身和正脸胸像(两种版式的第一格特写都是正脸胸像，见 core/look_board)。
+LOOK_BODY_SLOT = "look_front"
+LOOK_FACE_SLOT = "look_closeup_1"
 from app.core.storyboard_scene_context import compile_scene_context
 from app.platform.store import PlatformStore
 
@@ -28,6 +33,8 @@ _IMAGE_FORMATS = {"image/png": "PNG", "image/jpeg": "JPEG", "image/webp": "WEBP"
 _MAX_IMAGE_BYTES = 10 * 1024 * 1024
 _MAX_IMAGE_PIXELS = 40_000_000
 _PAGE_SIZE = 100
+# 只给人看的图：上面有手、人形或文字。
+_DISPLAY_ONLY_SLOTS = PROP_DISPLAY_ONLY_SLOTS | {SCENE_SCALE_SLOT}
 
 
 def _identifier(value: object) -> str:
@@ -101,6 +108,13 @@ def _image_data_uri(
     return ""
 
 
+def _version(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 async def _load_project_elements(
     task: dict,
     owner_id: str,
@@ -143,6 +157,8 @@ async def _load_project_elements(
                             "name": str(getattr(item, "name", "") or ""),
                             "description": str(getattr(item, "description", "") or ""),
                             "metadata": dict(metadata),
+                            # 资产每改一次(描述、图、恢复旧版)版本加一：分镜绑定和第 5 阶段片段据此认出用的是哪一版。
+                            "version": _version(getattr(item, "version", 0)),
                             "image_url": "",
                         }
                     )
@@ -178,23 +194,28 @@ async def _load_project_elements(
         ]
     roots = _image_roots()
     for item in result:
-        preferred_slot = "front" if item["kind"] == "actor" else "reference"
-        # 手持、人形和比例总览只给人看：上面有手和文字，不能拿去锁定道具的样子。
+        look = item["kind"] == "actor" and character_variants.is_look(item)
+        # 角色参考统一用「正面全身照 + 正面大头照」：定妆图用切好的正面全身，不拿整张展示板。
+        preferred_slot = (LOOK_BODY_SLOT if look else "front") if item["kind"] == "actor" else "reference"
+        # 手持、人形和比例总览只给人看：上面有手和文字，不能拿去锁定道具的样子；场地的人物比例参照也一样。
         references = sorted(
-            (entry for entry in files_by_id[item["id"]] if getattr(entry, "slot", "") not in PROP_DISPLAY_ONLY_SLOTS),
+            (entry for entry in files_by_id[item["id"]] if getattr(entry, "slot", "") not in _DISPLAY_ONLY_SLOTS),
             key=lambda entry: getattr(entry, "slot", "") != preferred_slot,
         )
         for reference in references:
             item["image_url"] = _image_data_uri(reference, owner_id, item["id"], roots)
             if item["image_url"]:
                 break
-        if item["kind"] == "actor" and real_person.usable(item.get("metadata")):
-            # 真人演员：正脸照另作一张参考随角色走(换上定妆图也带着它)，相貌按照片。
-            face = next((entry for entry in files_by_id[item["id"]] if getattr(entry, "slot", "") == real_person.FACE_SLOT), None)
+        if item["kind"] == "actor":
+            # 正面大头照另作一张参考随角色走：数字演员是设定集的正脸，定妆图是它的正脸胸像，
+            # 真人演员是本人正脸照(相貌按照片)。
+            slot = LOOK_FACE_SLOT if look else real_person.FACE_SLOT
+            face = next((entry for entry in files_by_id[item["id"]] if getattr(entry, "slot", "") == slot), None)
             face_url = _image_data_uri(face, owner_id, item["id"], roots) if face is not None else ""
-            if face_url:
-                item["real_person"] = True
+            if face_url and face_url != item.get("image_url"):
                 item["face_url"] = face_url
+                if real_person.usable(item.get("metadata")):
+                    item["real_person"] = True
         if item["kind"] == "scene":
             # 场地四视角里除主全景(即主参考图)之外的三张，按用途另行绑定。
             views: dict[str, str] = {}

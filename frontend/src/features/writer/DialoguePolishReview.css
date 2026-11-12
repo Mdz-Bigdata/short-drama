@@ -1,0 +1,11 @@
+.dialogue-polish { display: flex; flex-direction: column; gap: 0.5rem; margin: 0.5rem 0; }
+.dialogue-polish__bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.dialogue-polish__bar label { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8125rem; }
+.dialogue-polish__bar input[type="text"] { flex: 1 1 14rem; min-width: 0; }
+.dialogue-polish__notice { margin: 0; font-size: 0.8125rem; }
+.dialogue-polish__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+.dialogue-polish__list li { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.15rem; padding: 0.4rem 0.5rem; border: 1px solid var(--line, #e3d4da); border-radius: 6px; font-size: 0.875rem; }
+.dialogue-polish__list label { display: inline-flex; align-items: center; gap: 0.35rem; }
+.dialogue-polish__where { font-size: 0.75rem; color: var(--text-muted, #777); }
+.dialogue-polish__list del { color: var(--text-muted, #888); }
+.dialogue-polish__list ins { text-decoration: none; font-weight: 500; }

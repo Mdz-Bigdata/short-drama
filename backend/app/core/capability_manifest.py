@@ -237,6 +237,20 @@ UPSTREAM_CAPABILITIES: list[CapabilitySource] = [
             "CoStage document interchange",
         ],
     },
+    {
+        "id": "open-ai-canvas",
+        "source": "https://github.com/ddcat-ai/open-ai-canvas",
+        "capabilities": [
+            "infinite canvas viewport: wheel, trackpad and pinch intent, animated fit and zoom controls",
+            "uniform-grid spatial index with culling and render budgets",
+            "three-level media level of detail with overview hysteresis",
+            "align, distribute and arrange layouts",
+            "collapsible and nested groups",
+            "system clipboard copy and paste that re-links inbound edges",
+            "node search and jump",
+            "canvas export and import",
+        ],
+    },
 ]
 
 
@@ -407,6 +421,16 @@ _IMPLEMENTATION_ENTRYPOINTS: dict[str, list[str]] = {
     "blender-skills": ["app.core.spatial_stage.director_ai.craft_notes"],
     "monoform-previs-studio": ["app.core.spatial_stage.blockout.text_prompt", "app.service.stage_director_service.propose_model"],
     "reveric": ["app.service.stage_director_service.plan_scene"],
+    "open-ai-canvas": [
+        "frontend/src/features/canvas/canvasWheel.ts",
+        "frontend/src/features/canvas/canvasSpatialIndex.ts",
+        "frontend/src/features/canvas/canvasLod.ts",
+        "app.core.canvas_layout",
+        "frontend/src/features/canvas/canvasFrames.ts",
+        "frontend/src/features/canvas/canvasClipboard.ts",
+        "frontend/src/features/canvas/canvasSearch.ts",
+        "frontend/src/features/canvas/canvasExport.ts",
+    ],
     "costage": [
         "app.core.spatial_stage.operations.apply_operations",
         "app.core.spatial_stage.operations.apply_operations",
@@ -441,6 +465,7 @@ _EVIDENCE_BY_SOURCE = {
     "blender-skills": "backend/tests/test_stage_director.py",
     "monoform-previs-studio": "backend/tests/test_stage_director.py",
     "reveric": "backend/tests/test_stage_director.py",
+    "open-ai-canvas": "backend/tests/test_canvas_infinite.py",
     "costage": "backend/tests/test_spatial_stage.py",
 }
 

@@ -6,6 +6,13 @@ export const yuan = (minor: number | string | null | undefined): string => {
   return `¥${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
+/** A decimal amount as the billing API sends it ("29.00", in yuan), written the same way as `yuan`. */
+export const money = (amount: number | string | null | undefined, currency = 'CNY'): string => {
+  const value = Number(amount ?? 0);
+  if (currency === 'CNY') return yuan(Math.round(value * 100));
+  return `${currency} ${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+
 export const when = (moment: string | null | undefined): string => {
   if (!moment) return '—';
   // The server sends UTC; SQLite in development drops the offset.

@@ -1,5 +1,5 @@
 import { ChevronDown, History, Save } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 
 import type { WriterScriptVersion } from './types';
 import { t } from '../../i18n';
@@ -23,14 +23,37 @@ export function ScriptVersionMenu({
   const [label, setLabel] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const menuRef = useRef<HTMLDivElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+
+  // The panel floats over the board: a click elsewhere or Esc puts it away.
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !menuRef.current?.contains(event.target)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setOpen(false);
+      toggleRef.current?.focus();
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
 
   const run = async (key: string, action: () => Promise<void>) => {
     setBusy(key);
     setError('');
     try {
       await action();
+      return true;
     } catch (reason) {
       setError(reason instanceof Error && reason.message ? reason.message : t('版本操作失败，请稍后重试。'));
+      return false;
     } finally {
       setBusy('');
     }
@@ -39,12 +62,13 @@ export function ScriptVersionMenu({
   const save = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!onSave) return;
-    void run('save', () => onSave(label.trim())).then(() => setLabel(''));
+    // A failed save keeps the name the writer typed, ready to try again.
+    void run('save', () => onSave(label.trim())).then(saved => { if (saved) setLabel(''); });
   };
 
   return (
-    <div className={`writer-version-menu ${open ? 'is-open' : ''}`}>
-      <button type="button" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen(current => !current)}>
+    <div ref={menuRef} className={`writer-version-menu ${open ? 'is-open' : ''}`}>
+      <button ref={toggleRef} type="button" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen(current => !current)}>
         <History aria-hidden="true" /> {t('版本')}{versions.length ? ` (${versions.length})` : ''} <ChevronDown aria-hidden="true" />
       </button>
       {open && (

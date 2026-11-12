@@ -150,10 +150,10 @@ class StageFiveHandoffTests(StageFiveQueueTests):
         self.assertNotIn("都市剧情调性", prompts[0])
 
     def test_the_second_part_of_a_split_board_opens_on_the_first_parts_last_frame(self):
-        task = _task(2)
+        task = _task(4)
         task["config"].pop("video_granularity", None)
         for shot in task["assets"]["4"]:
-            shot["duration"] = "10"            # 两个 10 秒瞬间放不进一次 15 秒请求：切成两段
+            shot["duration"] = "7"             # 四个 7 秒瞬间放不进一次 15 秒请求：切成两段，每段两张分镜
         calls: list[dict] = []
 
         def video(model, image_url, prompt, *args, **kwargs):
@@ -182,10 +182,10 @@ class StageFiveHandoffTests(StageFiveQueueTests):
         self.assertIn("video:1", queue["video:2"]["depends_on"])
 
     def test_a_reused_first_part_hands_over_from_its_saved_clip(self):
-        task = _task(2)
+        task = _task(4)
         task["config"].pop("video_granularity", None)
         for shot in task["assets"]["4"]:
-            shot["duration"] = "10"
+            shot["duration"] = "7"             # 四个 7 秒瞬间放不进一次 15 秒请求：切成两段，每段两张分镜
         calls: list[str] = []
         with patch("app.service.drama_service.media_compositor.extract_last_frame_b64", return_value="data:image/jpeg;base64,TEFTVA=="):
             first = self._run_with_video(task, lambda m, i, p, *a, **k: calls.append(p) or f"https://cdn/{len(calls)}.mp4")
@@ -208,10 +208,10 @@ class StageFiveHandoffTests(StageFiveQueueTests):
 
     def test_a_continued_part_without_its_parents_last_frame_is_not_generated(self):
         """The seam of one continuous shot: with no last frame to open on, the second part is refused, never a clip that jumps."""
-        task = _task(2)
+        task = _task(4)
         task["config"].pop("video_granularity", None)
         for shot in task["assets"]["4"]:
-            shot["duration"] = "10"
+            shot["duration"] = "7"             # 四个 7 秒瞬间放不进一次 15 秒请求：切成两段，每段两张分镜
         calls: list[dict] = []
 
         def video(model, image_url, prompt, *args, **kwargs):
@@ -226,6 +226,20 @@ class StageFiveHandoffTests(StageFiveQueueTests):
         queue = {item["key"]: item for item in self.repo.get_task(task["task_id"])["assets"]["5_queue"]["items"]}
         self.assertEqual(queue["video:1"]["status"], "done")
         self.assertEqual(queue["video:2"]["status"], "failed")
+
+    def test_a_long_take_part_with_one_storyboard_is_refused_before_anything_is_paid(self):
+        """长镜头段内只能首尾帧：一段只有一张分镜时尾帧固定不了，直接报错，不降级成别的方式。"""
+        task = _task(2)
+        task["config"].pop("video_granularity", None)
+        for shot in task["assets"]["4"]:
+            shot["duration"] = "10"            # 两个 10 秒瞬间切成两段，每段只有一张分镜
+        calls: list[dict] = []
+        with self.assertRaises(RuntimeError) as failed:
+            self._run_with_video(task, lambda *a, **k: calls.append(a) or "https://cdn/x.mp4")
+        self.assertIn("只有一张分镜", str(failed.exception))
+        self.assertEqual(calls, [])
+        clips = self.repo.get_task(task["task_id"])["assets"].get("5") or []
+        self.assertEqual(clips, [])
 
     def _run_with_video(self, task, video):
         self.repo.save_task(task["task_id"], task)

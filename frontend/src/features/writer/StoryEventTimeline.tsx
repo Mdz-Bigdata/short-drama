@@ -1,5 +1,5 @@
 import { Pencil, Plus, Trash2 } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 
 import { STORY_PHASES, type WriterTimelineEvent } from './types';
 import { t } from '../../i18n';
@@ -34,6 +34,15 @@ export function StoryEventTimeline({
   const [form, setForm] = useState<EventForm | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [formOpened, setFormOpened] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!formOpened) return;
+    formRef.current?.scrollIntoView?.({ block: 'nearest' });
+    titleRef.current?.focus({ preventScroll: true });
+  }, [formOpened]);
 
   const commit = async (next: WriterTimelineEvent[]) => {
     if (!onSave) return;
@@ -72,6 +81,7 @@ export function StoryEventTimeline({
   const startCreate = () => {
     setError('');
     setForm({ index: null, phase: STORY_PHASES[Math.min(events.length, STORY_PHASES.length - 1)], title: '', desc: '', points: '' });
+    setFormOpened(count => count + 1);
   };
 
   const startEdit = (index: number) => {
@@ -84,15 +94,47 @@ export function StoryEventTimeline({
       desc: String(event.desc || ''),
       points: (event.points || []).join('\n'),
     });
+    setFormOpened(count => count + 1);
   };
 
   const remove = (index: number) => {
     if (saving) return;
+    // The removal is saved at once and the timeline keeps no history to bring a node back from.
+    if (!window.confirm(t('确定删除剧情节点“{0}”吗？删除后无法恢复。', [String(events[index]?.title || '')]))) return;
     if (form?.index === index) setForm(null);
     void commit(events.filter((_, position) => position !== index));
   };
 
   const phaseOptions = Array.from(new Set<string>([...STORY_PHASES, ...events.map(event => String(event.phase || '')).filter(Boolean)]));
+
+  // An edit opens inside its own node so the writer keeps their place in a long timeline.
+  const formNode = form && (
+    <form ref={formRef} className="writer-events__form" aria-label={form.index === null ? t('添加剧情节点') : t('编辑剧情节点')} onSubmit={submit}>
+      <label>
+        <span>{t('阶段')}</span>
+        <select value={form.phase} onChange={event => setForm(current => current && { ...current, phase: event.target.value })}>
+          {phaseOptions.map(phase => <option key={phase} value={phase}>{t(phase)}</option>)}
+        </select>
+      </label>
+      <label>
+        <span>{t('标题')}</span>
+        <input ref={titleRef} value={form.title} maxLength={500} onChange={event => setForm(current => current && { ...current, title: event.target.value })} />
+      </label>
+      <label>
+        <span>{t('概述')}</span>
+        <textarea rows={2} value={form.desc} maxLength={4000} onChange={event => setForm(current => current && { ...current, desc: event.target.value })} />
+      </label>
+      <label>
+        <span>{t('要点（每行一条）')}</span>
+        <textarea rows={3} value={form.points} onChange={event => setForm(current => current && { ...current, points: event.target.value })} />
+      </label>
+      {error && <p className="writer-events__error" role="alert">{error}</p>}
+      <div className="writer-events__form-actions">
+        <button type="submit" disabled={saving}>{form.index === null ? t('添加') : t('保存修改')}</button>
+        <button type="button" disabled={saving} onClick={() => { setForm(null); setError(''); }}>{t('取消')}</button>
+      </div>
+    </form>
+  );
 
   return (
     <div className="writer-events" aria-label={t('剧情事件时间轴')}>
@@ -104,33 +146,8 @@ export function StoryEventTimeline({
           </button>
         )}
       </div>
-      {error && <p className="writer-events__error" role="alert">{error}</p>}
-      {form && (
-        <form className="writer-events__form" aria-label={form.index === null ? t('添加剧情节点') : t('编辑剧情节点')} onSubmit={submit}>
-          <label>
-            <span>{t('阶段')}</span>
-            <select value={form.phase} onChange={event => setForm(current => current && { ...current, phase: event.target.value })}>
-              {phaseOptions.map(phase => <option key={phase} value={phase}>{t(phase)}</option>)}
-            </select>
-          </label>
-          <label>
-            <span>{t('标题')}</span>
-            <input value={form.title} maxLength={500} onChange={event => setForm(current => current && { ...current, title: event.target.value })} />
-          </label>
-          <label>
-            <span>{t('概述')}</span>
-            <textarea rows={2} value={form.desc} maxLength={4000} onChange={event => setForm(current => current && { ...current, desc: event.target.value })} />
-          </label>
-          <label>
-            <span>{t('要点（每行一条）')}</span>
-            <textarea rows={3} value={form.points} onChange={event => setForm(current => current && { ...current, points: event.target.value })} />
-          </label>
-          <div className="writer-events__form-actions">
-            <button type="submit" disabled={saving}>{form.index === null ? t('添加') : t('保存修改')}</button>
-            <button type="button" disabled={saving} onClick={() => { setForm(null); setError(''); }}>{t('取消')}</button>
-          </div>
-        </form>
-      )}
+      {!form && error && <p className="writer-events__error" role="alert">{error}</p>}
+      {form?.index === null && formNode}
       {events.length === 0 ? (
         <div className="writer-empty">{t('还没有剧情节点：生成剧本后由分集账本生成，也可以手动添加。')}</div>
       ) : (
@@ -146,14 +163,15 @@ export function StoryEventTimeline({
                     <h3>{event.title}</h3>
                     {onSave && (
                       <span className="writer-events__tools">
-                        <button type="button" aria-label={`编辑节点 ${event.title}`} disabled={saving} onClick={() => startEdit(index)}><Pencil aria-hidden="true" /></button>
-                        <button type="button" aria-label={`删除节点 ${event.title}`} disabled={saving} onClick={() => remove(index)}><Trash2 aria-hidden="true" /></button>
+                        <button type="button" aria-label={t('编辑节点 {0}', [String(event.title || '')])} disabled={saving} onClick={() => startEdit(index)}><Pencil aria-hidden="true" /></button>
+                        <button type="button" aria-label={t('删除节点 {0}', [String(event.title || '')])} disabled={saving} onClick={() => remove(index)}><Trash2 aria-hidden="true" /></button>
                       </span>
                     )}
                   </header>
                   {event.desc && <p>{event.desc}</p>}
                   {points.length > 0 && <ul>{points.map((point, pointIndex) => <li key={`${point}-${pointIndex}`}>{point}</li>)}</ul>}
                 </article>
+                {form?.index === index && formNode}
               </li>
             );
           })}

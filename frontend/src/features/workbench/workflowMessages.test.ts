@@ -26,6 +26,13 @@ describe('authoritative workflow messages', () => {
     expect(appendWorkflowHint([], review)[0].text).toBe(review.workflow.hint);
     expect(shouldPollWorkflow(review)).toBe(false);
   });
+  it('keeps polling while the film review runs, and gives up on a stale marker', () => {
+    const now = Date.now() / 1000;
+    const reviewing = { ...task, workflow: { ...workflow, mode: 'review' as const }, assets: { '7': { auto_review_pending: { started_at: now - 30 } } } } as unknown as TaskResponse;
+    expect(shouldPollWorkflow(reviewing)).toBe(true);
+    const stale = { ...reviewing, assets: { '7': { auto_review_pending: { started_at: now - 3600 } } } } as unknown as TaskResponse;
+    expect(shouldPollWorkflow(stale)).toBe(false);
+  });
   it('does not keep polling a completed single-stage run with legacy running status', () => {
     expect(shouldPollWorkflow(task)).toBe(false);
     expect(shouldPollWorkflow({ ...task, workflow: { ...workflow, mode: 'running', active_stage: 4 } })).toBe(true);
@@ -116,6 +123,20 @@ describe('authoritative workflow messages', () => {
     expect(running.text).toContain('正在执行第 4/8 步：第4个Agent。');
     const review = workflowIntroMessage({ ...task, workflow: { ...workflow, stages, next_stage: null } })!;
     expect(review.text).toContain('只剩成片验收与发布终审');
+  });
+  it('counts the seven steps the user sees: sound and the final cut are one 剪辑合成师 step', () => {
+    const labels = ['总导演策划', '编剧剧本创作', '角色设计师造型', '分镜师分镜拆解', '视觉总监多镜头多帧生成',
+      '剪辑合成师·配音配乐', '剪辑合成师·成片合成', '宣发Agent引流'];
+    const stages = labels.map((label, index) => ({
+      stage: index + 1, step: index < 6 ? index + 1 : index, label, state: 'pending' as const, missing: [], guidance: '',
+    }));
+    const seven = { ...workflow, stages, steps_total: 7 };
+    const intro = workflowIntroMessage({ ...task, workflow: { ...seven, next_stage: 7, completed_stages: [1, 2, 3, 4, 5, 6], steps_done: 5 } })!;
+    expect(intro.text).toContain('这个项目由 7 个 Agent 依次完成');
+    expect(intro.text).toContain('6.剪辑合成师 → 7.宣发Agent引流');
+    expect(intro.text).toContain('已完成 5/7 步，下一步是第 6/7 步：剪辑合成师·成片合成。');
+    const promo = workflowIntroMessage({ ...task, workflow: { ...seven, active_stage: 8 } })!;
+    expect(promo.text).toContain('正在执行第 7/7 步：宣发Agent引流。');
   });
   it('invents no orientation for a project the server has not described', () => {
     expect(workflowIntroMessage({ taskId: 'a', currentStage: 0 } as TaskResponse)).toBeNull();

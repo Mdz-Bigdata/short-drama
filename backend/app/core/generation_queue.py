@@ -80,6 +80,8 @@ class Item:
     family: str
     medium: str
     depends_on: list[str] = field(default_factory=list)
+    # Soft order: wait until these have finished, whatever the outcome; a failure here never skips this item.
+    after: list[str] = field(default_factory=list)
     status: str = QUEUED
     queued_at: str = field(default_factory=_now)
     started_at: str | None = None
@@ -96,7 +98,7 @@ class Item:
     def to_dict(self) -> dict[str, Any]:
         return {
             "key": self.key, "label": self.label, "family": self.family, "medium": self.medium, "bucket": self.bucket,
-            "depends_on": list(self.depends_on), "status": self.status, "queued_at": self.queued_at,
+            "depends_on": list(self.depends_on), "after": list(self.after), "status": self.status, "queued_at": self.queued_at,
             "started_at": self.started_at, "finished_at": self.finished_at, "error": self.error, "reason": self.reason,
             "meta": dict(self.meta),
         }
@@ -115,7 +117,7 @@ class Queue:
         with self._lock:
             if item.key in self._items:
                 raise ValueError(f"队列里已有 {item.key}")
-            unknown = [dep for dep in item.depends_on if dep not in self._items]
+            unknown = [dep for dep in [*item.depends_on, *item.after] if dep not in self._items]
             if unknown:
                 raise ValueError(f"{item.key} 依赖的 {', '.join(unknown)} 不在队列里（依赖必须先入队）")
             self._items[item.key] = item
@@ -134,10 +136,12 @@ class Queue:
         return [item for item in self._items.values() if item.status in statuses]
 
     def runnable(self) -> list[Item]:
-        """Queued items whose every dependency is done, in queue order."""
+        """Queued items whose every dependency is done and every ``after`` item has finished, in queue order."""
         return [
             item for item in self._items.values()
-            if item.status == QUEUED and all(self._items[dep].status == DONE for dep in item.depends_on)
+            if item.status == QUEUED
+            and all(self._items[dep].status == DONE for dep in item.depends_on)
+            and all(self._items[dep].status in FINAL for dep in item.after)
         ]
 
     def cancel(self, key: str, *, reason: str = "cancelled") -> list[str]:
@@ -222,6 +226,7 @@ class Queue:
             item = Item(
                 key=str(raw.get("key")), label=str(raw.get("label") or raw.get("key")), family=str(raw.get("family") or ""),
                 medium=str(raw.get("medium") or "text"), depends_on=[str(d) for d in raw.get("depends_on") or []],
+                after=[str(d) for d in raw.get("after") or []],
                 status=str(raw.get("status") or QUEUED), queued_at=str(raw.get("queued_at") or _now()),
                 started_at=raw.get("started_at"), finished_at=raw.get("finished_at"), error=raw.get("error"), reason=raw.get("reason"),
                 meta=dict(raw.get("meta") or {}),
@@ -279,17 +284,19 @@ def run(
     results: dict[str, Any] = {}
     paused = False
 
-    def dispatch() -> None:
+    def dispatch() -> bool:
+        """Apply withdrawals and a pause, start what may start; whether anything changed."""
         nonlocal paused
+        changed = False
         if withdrawn is not None:
             for key in sorted(withdrawn()):
                 try:
-                    queue.cancel(key, reason="cancelled_by_request")
+                    changed |= bool(queue.cancel(key, reason="cancelled_by_request"))
                 except CancelError:
                     continue
         if pause_requested is not None and pause_requested():
             paused = True
-            queue.cancel_queued(reason="paused")
+            changed |= bool(queue.cancel_queued(reason="paused"))
         running = queue.running_per_bucket()
         for item in queue.runnable():
             if running.get(item.bucket, 0) >= ceiling_for(item.bucket):
@@ -297,6 +304,8 @@ def run(
             queue.mark_started(item.key)
             running[item.bucket] = running.get(item.bucket, 0) + 1
             pending[pool.submit(_in_context(work), item)] = item
+            changed = True
+        return changed
 
     # The waiting list is on record before anything starts, so a cancel can name it.
     persist(queue.snapshot(run_id=run_id))
@@ -317,8 +326,10 @@ def run(
                     queue.mark_done(item.key)
                     if on_done is not None:
                         on_done(item, result)
-            dispatch()
+            # What just finished is on record before its dependents start: they read it from the store, not the queue.
             persist(queue.snapshot(run_id=run_id))
+            if dispatch():
+                persist(queue.snapshot(run_id=run_id))
     except BaseException:
         # Nothing waiting is submitted after a hard failure; running calls are drained, not abandoned.
         for item in queue.by_status(QUEUED):

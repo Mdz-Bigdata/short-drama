@@ -7,7 +7,6 @@ import io
 import json
 import logging
 import os
-import re
 import shutil
 import time
 import uuid
@@ -35,16 +34,20 @@ from app.core.prop_turnaround import (
     prop_instruction,
     split_prop_sheet,
 )
-from app.core import real_person
+from app.core import prompt_data, real_person, scene_scale, xianxia_props
+from app.core.asset_sheets import EMPTY_SCENE_PREFIX, EMPTY_SCENE_SUFFIX
 from app.core.look_board import LAYOUT_MAKEUP, LAYOUT_PLAIN, LOOK_VIEW_SLOTS, split_look_board
 from app.core.scene_turnaround import (
     SCENE_TURNAROUND_CLOSING,
     SCENE_TURNAROUND_INSTRUCTION,
+    SCENE_GRID_SLOTS,
+    SCENE_REVERSE_SLOT,
     SCENE_TURNAROUND_SIZE,
     SCENE_VIEW_SLOTS,
     split_scene_turnaround,
 )
 from app.core import character_variants
+from app.core import wuxia_vfx
 from app.core.character_looks import (
     LOOK_BOARD_SIZE, LOOK_CHECK_SYSTEM, look_check_prompt, look_fix_prompt, look_prompt, parse_look_check, wears_makeup,
 )
@@ -64,6 +67,7 @@ from app.platform.uploads import (
 )
 from app.schema.production import IDENTITY_VIEW_ORDER
 from app.repository.task_repo import TaskRepository, TaskStoreUnavailableError
+from app.service import asset_sync
 from app.schema.platform import (
     BulkRegenerateElementsRequest,
     RealPersonRequest,
@@ -73,6 +77,7 @@ from app.schema.platform import (
     ElementFolderMoveRequest,
     ElementFolderUpdateRequest,
     ElementKind,
+    ElementRevisionReason,
     ElementUpdateRequest,
     ElementVariantRequest,
     RegenerateElementRequest,
@@ -190,10 +195,18 @@ def _element_reference_prompt(item, extra_prompt: str, project_style: str) -> st
         prompt += f"项目视觉基准：{project_style}\n"
     if extra_prompt.strip():
         prompt += f"本次补充要求：{extra_prompt.strip()}\n"
+    if str(item.kind) == "effect":
+        # 修仙特效先定形、分三层、颜色材质成对；武侠的内力画受力，不画发光体。
+        prompt += wuxia_vfx.reference_rules(str(item.name or ""), description) + "\n"
     if str(item.kind) == "prop":
-        return prompt + PROP_CLOSING
+        # 修仙道具：丹药的丹纹丹香、飞剑、符箓、阵盘、法宝品阶的光；寻常器物照常。
+        xianxia = xianxia_props.prop_rules(str(item.name or ""), description)
+        return prompt + (f"{xianxia}\n" if xianxia else "") + PROP_CLOSING
     if str(item.kind) == "scene":
-        return prompt + SCENE_TURNAROUND_CLOSING
+        scale_line = scene_scale.prompt_line(scene_scale.plan(str(item.name), description))
+        # 修仙场地(洞府、秘境、藏经阁……)的样子；寻常场地照常。
+        place_line = xianxia_props.place_rules(str(item.name or ""), description)
+        return prompt + f"{scale_line}\n" + (f"{place_line}\n" if place_line else "") + SCENE_TURNAROUND_CLOSING
     return (
         prompt
         + "统一要求：主体完整位于画面安全区，结构清晰，透视正确，材质真实，细节丰富，高清写实电影质感；"
@@ -284,9 +297,15 @@ def _prop_scale(item) -> dict:
     }
 
 
+def _scene_scale(item) -> dict:
+    plan = scene_scale.plan(str(item.name), str(item.description or ""))
+    return {"text": plan.text(), "source": plan.source}
+
+
 def _element(item) -> dict:
     return {
         **({"prop_scale": _prop_scale(item)} if str(item.kind) == "prop" else {}),
+        **({"scene_scale": _scene_scale(item)} if str(item.kind) == "scene" else {}),
         "id": item.id,
         "kind": item.kind,
         "name": item.name,
@@ -299,6 +318,50 @@ def _element(item) -> dict:
         "created_at": item.created_at,
         "updated_at": item.updated_at,
     }
+
+
+def _element_snapshot(view: dict, owner_id: str) -> dict:
+    """asset_sync 要的那几项，取自刚返回的资产视图。"""
+    return {
+        "id": view.get("id"),
+        "owner_id": owner_id,
+        "kind": str(view.get("kind") or ""),
+        "name": view.get("name"),
+        "description": view.get("description") or "",
+        "version": view.get("version"),
+        "metadata": view.get("metadata") if isinstance(view.get("metadata"), dict) else {},
+    }
+
+
+async def _synced(
+    view, owner_id: str, reason: ElementRevisionReason, *, old_name: str | None = None,
+):
+    """资产改动已提交：通知挂着它的项目，结果放进响应的 ``sync``。同步失败只记日志，不让这次请求失败。"""
+    if not isinstance(view, dict) or not view.get("id"):
+        return view
+    try:
+        sync = await run_in_threadpool(
+            asset_sync.element_changed, _element_snapshot(view, owner_id), reason=reason, old_name=old_name,
+        )
+    except Exception as exc:  # noqa: BLE001 - 资产已改好，项目同步失败不能把请求也拖失败
+        logger.warning("资产改动同步到项目失败: element=%s reason=%s error=%s", view.get("id"), reason, exc)
+        sync = {"error": str(exc) or type(exc).__name__}
+    return {**view, "sync": sync}
+
+
+async def _trimming_history(owner_id: str, element_id: str, mutate):
+    """跑一次会记版本的改动：被裁掉的旧版本独占的文件提交前先隔离，提交成功清掉，失败放回原处。"""
+    quarantine = _DeletionQuarantine(owner_id, element_id, operation="history")
+    try:
+        result = await mutate(quarantine.stage)
+    except StorageMutationCommittedWithError as committed:
+        quarantine.purge()
+        raise committed.original_error from committed
+    except BaseException as exc:
+        _restore_quarantine(quarantine, exc)
+        raise
+    quarantine.purge()
+    return result
 
 
 @router.get("")
@@ -439,7 +502,8 @@ async def get_element(
     item = await store.get_element(element_id, user["user_id"])
     if not item:
         raise HTTPException(status_code=404, detail="元素不存在")
-    return _element(item)
+    placed = await store.element_folder_ids(user["user_id"], [item.id])
+    return {**_element(item), "folder_id": placed.get(item.id)}
 
 
 @router.put("/{element_id}/variant")
@@ -465,11 +529,15 @@ async def set_element_variant(
             },
             element_name=item.name,
         )
-        return _element(await store.set_element_variant(element_id, user["user_id"], facts))
+        updated = await _trimming_history(
+            user["user_id"], element_id,
+            lambda hook: store.set_element_variant(element_id, user["user_id"], facts, before_commit=hook),
+        )
     except character_variants.VariantError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return await _synced(_element(updated), user["user_id"], "variant")
 
 
 @router.delete("/{element_id}/variant")
@@ -479,9 +547,13 @@ async def clear_element_variant(
     store: PlatformStore = Depends(get_platform_store),
 ):
     try:
-        return _element(await store.set_element_variant(element_id, user["user_id"], None))
+        updated = await _trimming_history(
+            user["user_id"], element_id,
+            lambda hook: store.set_element_variant(element_id, user["user_id"], None, before_commit=hook),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return await _synced(_element(updated), user["user_id"], "variant")
 
 
 @router.patch("/{element_id}")
@@ -493,15 +565,24 @@ async def update_element(
 ):
     before = await store.get_element(element_id, user["user_id"])
     try:
-        updated = await store.update_element(
-            element_id, user["user_id"], name=request.name, description=request.description
+        updated = await _trimming_history(
+            user["user_id"], element_id,
+            lambda hook: store.update_element(
+                element_id, user["user_id"], name=request.name, description=request.description, before_commit=hook,
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    renamed = before is not None and before.name != updated.name
+    result = _element(updated)
     # 描述里改了尺寸，比例总览上的数字也要跟着变。
     if str(updated.kind) == "prop" and before and _prop_plan(before).longest_cm != _prop_plan(updated).longest_cm:
-        return await _redraw_prop_board(updated, user["user_id"], store) or _element(updated)
-    return _element(updated)
+        result = await _redraw_prop_board(updated, user["user_id"], store) or result
+    elif str(updated.kind) == "scene" and before and _scene_scale(before) != _scene_scale(updated):
+        result = await _redraw_scene_scale(updated, user["user_id"], store) or result
+    return await _synced(
+        result, user["user_id"], "rename" if renamed else "edit", old_name=before.name if renamed else None,
+    )
 
 
 @router.put("/{element_id}/prop-size")
@@ -513,11 +594,48 @@ async def set_prop_size(
 ):
     """人填的最长边。比例总览当场重画，不调用图像模型；还没有新版视图的道具等下次生成时用。"""
     try:
-        updated = await store.set_prop_length(element_id, user["user_id"], request.length_cm)
+        updated = await _trimming_history(
+            user["user_id"], element_id,
+            lambda hook: store.set_prop_length(element_id, user["user_id"], request.length_cm, before_commit=hook),
+        )
     except ValueError as exc:
         status = 404 if "不存在" in str(exc) else 422
         raise HTTPException(status_code=status, detail=str(exc)) from exc
-    return await _redraw_prop_board(updated, user["user_id"], store) or _element(updated)
+    result = await _redraw_prop_board(updated, user["user_id"], store) or _element(updated)
+    return await _synced(result, user["user_id"], "prop_size")
+
+
+@router.post("/{element_id}/scene-scale")
+async def draw_scene_scale(
+    element_id: str,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """给已有主场景全景的场地画人物比例参照(比例尺、人形、尺寸)。只在本地画，不调用图像模型。"""
+    item = await store.get_element(element_id, user["user_id"])
+    if item is None:
+        raise HTTPException(status_code=404, detail="资产不存在")
+    if str(item.kind) != "scene":
+        raise HTTPException(status_code=422, detail="只有拍摄场地有人物比例参照")
+    result = await _redraw_scene_scale(item, user["user_id"], store)
+    if result is None:
+        raise HTTPException(status_code=409, detail="这处场地还没有主场景全景，先生成参考图")
+    return await _synced(result, user["user_id"], "file")
+
+
+@router.post("/{element_id}/scene-reverse")
+async def draw_scene_reverse(
+    element_id: str,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """给已有主场景全景的场地补一张反打视角空景(调用图像模型，一张图)。"""
+    item = await store.get_element(element_id, user["user_id"])
+    if item is None:
+        raise HTTPException(status_code=404, detail="资产不存在")
+    if str(item.kind) != "scene":
+        raise HTTPException(status_code=422, detail="只有拍摄场地有反打视角")
+    return await _synced(await _draw_scene_reverse(item, user["user_id"], store), user["user_id"], "file")
 
 
 @router.post("/{element_id}/files")
@@ -543,7 +661,7 @@ async def upload_element_file(
         "image/jpeg": ".jpg",
         "image/webp": ".webp",
     }[mime]
-    return await _persist_element_file(
+    stored = await _persist_element_file(
         element_id=element_id,
         owner_id=user["user_id"],
         slot=slot,
@@ -552,6 +670,7 @@ async def upload_element_file(
         content=content,
         store=store,
     )
+    return await _synced(stored, user["user_id"], "file")
 
 
 def _safe_media_path(relative_path: Path | str, storage_root: Path | None = None) -> Path:
@@ -872,7 +991,7 @@ async def delete_element_file(
     user: dict = Depends(get_current_user),
     store: PlatformStore = Depends(get_platform_store),
 ):
-    return await _drop_element_file(element_id, file_id, user["user_id"], store)
+    return await _synced(await _drop_element_file(element_id, file_id, user["user_id"], store), user["user_id"], "file_delete")
 
 
 async def _drop_element_file(element_id: str, file_id: str, owner_id: str, store: PlatformStore) -> dict:
@@ -994,7 +1113,7 @@ async def upload_element_model(
     if len(content) > 5 * 1024 * 1024:
         warnings.append("建议将 Web 展示模型优化到 5 MB 以下")
     sha256 = hashlib.sha256(content).hexdigest()
-    return await _persist_element_file(
+    stored = await _persist_element_file(
         element_id=element_id,
         owner_id=user["user_id"],
         slot="model_glb",
@@ -1013,6 +1132,7 @@ async def upload_element_model(
         },
         storage_root=ELEMENT_MODEL_ROOT,
     )
+    return await _synced(stored, user["user_id"], "file")
 
 
 @router.get("/{element_id}/model/content")
@@ -1090,10 +1210,23 @@ async def _generate_non_actor_reference(
             item=item, owner_id=owner_id, store=store, content=content, suffix=suffix, mime=mime, plan=prop_plan,
         )
     if str(item.kind) == "scene":
-        return await _persist_board_views(
+        result = await _persist_board_views(
             item=item, owner_id=owner_id, store=store, content=content, suffix=suffix, mime=mime,
-            split=split_scene_turnaround, slots=SCENE_VIEW_SLOTS, what="场景四视角",
+            split=split_scene_turnaround, slots=SCENE_GRID_SLOTS, what="场景四视角",
         )
+        current = await store.get_element(item.id, owner_id)
+        result = (await _redraw_scene_scale(current, owner_id, store) if current else None) or result
+        # 反打视角照着刚切好的全景另出一张；没出来不影响四视角，卡片上可以单独补。
+        if current is not None:
+            try:
+                result = await _draw_scene_reverse(current, owner_id, store, extra_prompt=extra_prompt)
+            except HTTPException as exc:
+                logger.warning("场地反打视角生成失败: element=%s detail=%s", item.id, exc.detail)
+                # 旧的反打是照上一版全景画的，和这版对不上：去掉，卡片上显示「点此生成」。
+                for file in current.files:
+                    if file.slot == SCENE_REVERSE_SLOT:
+                        result = await _drop_element_file(item.id, file.id, owner_id, store)
+        return result
     result = await _persist_element_file(
         element_id=item.id,
         owner_id=owner_id,
@@ -1299,6 +1432,74 @@ async def _redraw_prop_board(item, owner_id: str, store: PlatformStore) -> dict 
     )
 
 
+async def _redraw_scene_scale(item, owner_id: str, store: PlatformStore) -> dict | None:
+    """用已存的主场景全景按现在的尺寸画人物比例参照；不调用图像模型。没有全景时返回 None。"""
+    main = next((file for file in item.files if file.slot == SCENE_VIEW_SLOTS[0]), None)
+    if main is None:
+        return None
+    plan = scene_scale.plan(str(item.name), str(item.description or ""))
+
+    def draw() -> bytes:
+        return scene_scale.compose(_owned_reference_path(main.storage_path, owner_id, item.id)[0].read_bytes(), plan)
+
+    try:
+        board = await run_in_threadpool(draw)
+    except (HTTPException, OSError, ValueError) as exc:
+        logger.warning("场地人物比例参照生成失败: element=%s error=%s", item.id, type(exc).__name__)
+        return None
+    return await _persist_element_file(
+        element_id=item.id, owner_id=owner_id, slot=scene_scale.SCENE_SCALE_SLOT, suffix=".png", mime="image/png",
+        content=board, store=store,
+    )
+
+
+def _scene_reverse_prompt(item, extra_prompt: str, project_style: str) -> str:
+    """反打视角空景的提示词：以主场景全景为参考图，场地描述、尺寸和修仙场地的写法与四宫格同一套。"""
+    description = str(item.description or "").strip()
+    lines = [
+        EMPTY_SCENE_PREFIX + prompt_data.text("scene_views", "reverse_view_instruction"),
+        f"资产名称：{str(item.name).strip()}",
+        f"剧本依据：{description or '按资产名称建立清晰、完整、可复用的影视参考设计'}",
+        f"项目视觉基准：{project_style}" if project_style else "",
+        f"本次补充要求：{extra_prompt.strip()}" if extra_prompt.strip() else "",
+        scene_scale.prompt_line(scene_scale.plan(str(item.name), description)),
+        xianxia_props.place_rules(str(item.name or ""), description),
+        prompt_data.text("scene_views", "reverse_view_closing") + EMPTY_SCENE_SUFFIX,
+    ]
+    return "\n".join(line for line in lines if line)
+
+
+async def _draw_scene_reverse(item, owner_id: str, store: PlatformStore, *, extra_prompt: str = "") -> dict:
+    """以已存的主场景全景为参考，出一张反打视角空景存进 ``scene_reverse``(付费，一张图)。"""
+    main = next((file for file in item.files if file.slot == SCENE_VIEW_SLOTS[0]), None)
+    if main is None:
+        raise HTTPException(status_code=409, detail="这处场地还没有主场景全景，先生成参考图")
+    image_model, project_style = await _element_generation_context(item, owner_id)
+    prompt = _scene_reverse_prompt(item, extra_prompt, project_style)
+    try:
+        plate = await run_in_threadpool(lambda: _owned_reference_path(main.storage_path, owner_id, item.id)[0].read_bytes())
+        _suffix, plate_mime = await run_in_threadpool(_validated_generated_image, plate)
+        reference = f"data:{plate_mime};base64,{base64.b64encode(plate).decode('ascii')}"
+        generated_url, _provider = await run_in_threadpool(
+            lambda: element_image_gateway.generate_image(
+                image_model, prompt, ref_images=[reference], size=SCENE_TURNAROUND_SIZE, require_reference_support=True,
+            )
+        )
+        if not generated_url:
+            raise RuntimeError("所有已配置图像模型均未返回图片")
+        content = await run_in_threadpool(_load_generated_image_bytes, generated_url)
+        suffix, mime = await run_in_threadpool(_validated_generated_image, content)
+    except HTTPException:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.warning("场地反打视角生成失败: element=%s error=%s", item.id, type(exc).__name__)
+        raise HTTPException(status_code=502, detail="反打视角生成失败，图像模型未返回可验证的图片；请检查模型配置后重试") from exc
+    return await _persist_element_file(
+        element_id=item.id, owner_id=owner_id, slot=SCENE_REVERSE_SLOT, suffix=suffix, mime=mime,
+        content=content, store=store,
+    )
+
+
 async def _persist_board_views(
     *, item, owner_id: str, store: PlatformStore, content: bytes, suffix: str, mime: str,
     split, slots: tuple[str, ...], what: str,
@@ -1382,15 +1583,16 @@ async def _run_generation_job(
                 if any(file.mime_type.startswith("image/") for file in current.files) and not replace_existing:
                     job["succeeded"] = int(job["succeeded"]) + 1
                 elif _is_look(current):
-                    await _generate_look_image(item=current, owner_id=owner_id, store=store)
+                    await _synced(await _generate_look_image(item=current, owner_id=owner_id, store=store), owner_id, "file")
                     job["succeeded"] = int(job["succeeded"]) + 1
                 else:
-                    await _generate_non_actor_reference(
+                    generated = await _generate_non_actor_reference(
                         item=current,
                         owner_id=owner_id,
                         store=store,
                         extra_prompt="按剧本资产描述生成可直接用于本项目的完整参考图",
                     )
+                    await _synced(generated, owner_id, "file")
                     job["succeeded"] = int(job["succeeded"]) + 1
             except (Exception, asyncio.CancelledError, BillingRefused) as exc:
                 if isinstance(exc, asyncio.CancelledError):
@@ -1671,6 +1873,9 @@ async def _regenerate_library_actor(element_id: str, owner_id: str, store: Platf
             element_id=element_id, owner_id=owner_id, store=store,
             views=result.get("views") or [], sheet=str(result.get("sheet") or ""),
         )
+        refreshed = await store.get_element(element_id, owner_id)
+        if refreshed is not None:
+            await _synced(_element(refreshed), owner_id, "file")
     except (Exception, BillingRefused) as exc:  # noqa: BLE001 - 失败只记在该演员名下，旧图不动
         detail = exc.detail if isinstance(exc, (HTTPException, BillingRefused)) else str(exc)
         error = str(detail or "").strip()[:260] or "数字演员设定集重新生成失败"
@@ -1701,9 +1906,13 @@ async def set_real_person(
             person=request.person, scope=request.scope, expires=request.expires, ark_assets=request.ark_assets,
             confirmed=request.confirmed, confirmed_by=user["user_id"],
         )
-        return _element(await store.set_real_person(element.id, user["user_id"], record))
+        updated = await _trimming_history(
+            user["user_id"], element.id,
+            lambda hook: store.set_real_person(element.id, user["user_id"], record, before_commit=hook),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return await _synced(_element(updated), user["user_id"], "real_person")
 
 
 @router.delete("/{element_id}/real-person")
@@ -1717,9 +1926,13 @@ async def clear_real_person(
     if not element or str(element.kind) != "actor":
         raise HTTPException(status_code=404, detail="数字演员不存在")
     try:
-        return _element(await store.set_real_person(element.id, user["user_id"], None))
+        updated = await _trimming_history(
+            user["user_id"], element.id,
+            lambda hook: store.set_real_person(element.id, user["user_id"], None, before_commit=hook),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return await _synced(_element(updated), user["user_id"], "real_person")
 
 
 @router.post("/{element_id}/look-views")
@@ -1743,7 +1956,7 @@ async def split_look_views(
     await _persist_look_views(element.id, user["user_id"], store, content)
     patch = {} if _element_metadata(element).get(LOOK_LAYOUT) else {LOOK_LAYOUT: LAYOUT_PLAIN}
     updated = await store.merge_element_metadata(element.id, user["user_id"], patch) if patch else await store.get_element(element.id, user["user_id"])
-    return _element(updated)
+    return await _synced(_element(updated), user["user_id"], "file")
 
 
 @router.post("/{element_id}/regenerate")
@@ -1761,16 +1974,18 @@ async def regenerate_element(
     if str(element.kind) in ("costume", "makeup"):
         raise HTTPException(status_code=422, detail="服装和化妆已并入表演妆造，请在角色设计的定妆图里重新生成")
     if _is_look(element):
-        return await _generate_look_image(item=element, owner_id=user["user_id"], store=store, extra_prompt=request.prompt)
+        generated = await _generate_look_image(item=element, owner_id=user["user_id"], store=store, extra_prompt=request.prompt)
+        return await _synced(generated, user["user_id"], "file")
     if str(element.kind) == "actor" and real_person.is_real_person(_element_metadata(element)):
         raise HTTPException(status_code=409, detail="真人演员以本人照片为准，不重新生成；要换照片请直接上传")
     if str(element.kind) in _NON_ACTOR_KINDS:
-        return await _generate_non_actor_reference(
+        generated = await _generate_non_actor_reference(
             item=element,
             owner_id=user["user_id"],
             store=store,
             extra_prompt=request.prompt,
         )
+        return await _synced(generated, user["user_id"], "file")
     # 数字演员：后台重出一张设定集（付费），五个身份视图通过质检后替换；列表里的 metadata.regeneration 报进度。
     if _actor_regenerating(_element_metadata(element)):
         raise HTTPException(status_code=409, detail=f"「{element.name}」正在重新生成，请稍候")
@@ -1782,3 +1997,116 @@ async def regenerate_element(
     background_tasks.add_task(_regenerate_library_actor, element_id, user["user_id"], store)
     response.status_code = 202
     return _element(updated)
+
+
+def _revision_file_url(element_id: str, revision: int, slot: str) -> str:
+    # 历史版本的文件不会再变，不用 ?v= 防缓存。
+    return f"/api/elements/{element_id}/revisions/{revision}/files/{slot}/content"
+
+
+def _revision(element_id: str, item) -> dict:
+    return {
+        "revision": item.revision,
+        "version": item.version,
+        "name": item.name,
+        "description": item.description,
+        "reason": item.reason,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "files": [
+            {"slot": entry.get("slot"), "url": _revision_file_url(element_id, item.revision, str(entry.get("slot")))}
+            for entry in item.files_json or []
+            if isinstance(entry, dict) and entry.get("slot")
+        ],
+    }
+
+
+@router.get("/{element_id}/revisions")
+async def list_element_revisions(
+    element_id: str,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """这个资产留着的旧版本(最多 REVISION_LIMIT 个)，最新的在前。"""
+    try:
+        revisions = await store.list_element_revisions(user["user_id"], element_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"items": [_revision(element_id, item) for item in revisions]}
+
+
+@router.get("/{element_id}/revisions/{revision}/files/{slot}/content")
+async def get_element_revision_file_content(
+    element_id: str,
+    revision: int,
+    slot: str,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    item = await store.get_element_revision(user["user_id"], element_id, revision)
+    if item is None:
+        raise HTTPException(status_code=404, detail="这一版不存在或已清理")
+    entry = next((entry for entry in item.files_json or [] if isinstance(entry, dict) and entry.get("slot") == slot), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="这一版没有这个槽位的文件")
+    mime = str(entry.get("mime_type") or "")
+    try:
+        if mime == "model/gltf-binary":
+            absolute = _safe_owned_media_path(entry.get("storage_path") or "", ELEMENT_MODEL_ROOT, user["user_id"], element_id)
+        elif mime in {"image/png", "image/jpeg", "image/webp"}:
+            absolute, _ = _owned_reference_path(entry.get("storage_path") or "", user["user_id"], element_id)
+        else:
+            raise HTTPException(status_code=404, detail="历史文件不存在")
+    except HTTPException as exc:
+        raise HTTPException(status_code=404, detail="历史文件不存在") from exc
+    if not absolute.is_file():
+        raise HTTPException(status_code=404, detail="历史文件不存在")
+    return FileResponse(
+        absolute,
+        media_type=mime,
+        headers={
+            "Cache-Control": "private, no-store",
+            "ETag": f'"{entry.get("sha256") or ""}"',
+            "Vary": "Cookie",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.post("/{element_id}/revisions/{revision}/restore")
+async def restore_element_revision(
+    element_id: str,
+    revision: int,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """回到某个旧版本；现在这一版先记进历史，所以恢复本身也能再撤回。"""
+    before = await store.get_element(element_id, user["user_id"])
+    if before is None:
+        raise HTTPException(status_code=404, detail="元素不存在")
+    try:
+        restored = await _trimming_history(
+            user["user_id"], element_id,
+            lambda hook: store.restore_element_revision(user["user_id"], element_id, revision, before_commit=hook),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    placed = await store.element_folder_ids(user["user_id"], [restored.id])
+    renamed = before.name != restored.name
+    return await _synced(
+        {**_element(restored), "folder_id": placed.get(restored.id)}, user["user_id"], "restore",
+        old_name=before.name if renamed else None,
+    )
+
+
+@router.get("/{element_id}/usages")
+async def list_element_usages(
+    element_id: str,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """哪些项目的哪些镜头用了这个资产。"""
+    item = await store.get_element(element_id, user["user_id"])
+    if item is None:
+        raise HTTPException(status_code=404, detail="元素不存在")
+    items = await run_in_threadpool(asset_sync.usages, _element_snapshot(_element(item), user["user_id"]))
+    return {"items": items}

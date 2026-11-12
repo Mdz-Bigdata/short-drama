@@ -14,7 +14,9 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Collection
+from typing import Any
 
+from app.core import prompt_data
 from app.core.frame_position import FramePosition, render_frame_positions
 from app.core.spatial_stage import axis as axis_rules
 from app.core.spatial_stage import geometry as geo
@@ -27,25 +29,39 @@ from app.core.spatial_stage.models import (
     StageShot,
 )
 from app.core.spatial_stage.projection import CameraView, posture_height
+from app.core.spatial_stage.wording import hand_zh, move_zh, phrase, posture_zh
 
-_POSTURE_ZH = {
-    "stand": "站立", "walk": "行走", "run": "奔跑", "sit": "坐着", "crouch": "蹲伏",
-    "kneel": "跪地", "lie": "倒卧", "fight": "格斗架势", "bow": "躬身", "lean": "倚靠",
-}
-_MOVE_ZH = {
-    "static": "固定机位", "push": "推近", "pull": "拉远", "pan": "摇镜", "track": "横移",
-    "orbit": "弧形环绕", "rise": "升", "fall": "降", "follow": "跟拍",
-}
-_CROSSING_ZH = {
-    "neutral": "本镜机位落在轴线上，属中性镜头，可作为换边的桥",
-    "moving": "本镜机位带着观众越过轴线，越轴过程完整可见",
-    "reestablish": "本镜为重新建立空间的全景，可在此后换边",
-}
+_BRIEF = "stage_brief"
+_PROPS = "stage_props"
+# Every sentence and word table here: app/data/prompt/stage_panel.json; the marks that join clauses and
+# the frame sides shared with the clip brief: stage_brief.json.
+_PANEL = "stage_panel"
+
+
+def _entry(*path: str) -> Any:
+    """The entry of the panel's wording table at ``path``: a sentence or a word table."""
+    found: Any = prompt_data.load(_PANEL)
+    for key in path:
+        found = found[key]
+    return found
+
+
+def _say(*path: str, **values: object) -> str:
+    """A sentence of the panel's wording table, filled in."""
+    return str(_entry(*path)).format(**values)
+
+
+def _brief(*path: str) -> str:
+    """A mark or a frame side of the stage brief's table."""
+    found: Any = prompt_data.load(_BRIEF)
+    for key in path:
+        found = found[key]
+    return str(found)
 
 
 def _clip(text: str, limit: int) -> str:
     text = " ".join(str(text or "").split())
-    return text if len(text) <= limit else text[: limit - 1].rstrip("，；、 ") + "…"
+    return text if len(text) <= limit else text[: limit - 1].rstrip(_brief("marks", "trim")) + _brief("marks", "ellipsis")
 
 
 # How many pieces of a reference-image blockout a prompt may name. A hundred wall sections would
@@ -67,23 +83,23 @@ def bearing_from(actor: StageActor, point: geo.Vec2) -> tuple[str, float]:
     delta = geo.sub(point, origin)
     meters = geo.length(delta)
     if meters < 0.05:
-        return "身旁", 0.0
+        return _say("bearing", "beside"), 0.0
     forward = geo.forward_of(actor.yaw_deg)
     ahead = geo.dot(geo.unit(delta), forward)
     to_right = geo.dot(geo.unit(delta), geo.right_of(forward))
     angle = math.degrees(math.atan2(to_right, ahead))
-    side = "右" if angle > 0 else "左"
+    side = str(_entry("bearing_sides")["right" if angle > 0 else "left"])
     magnitude = abs(angle)
     if magnitude <= 22.5:
-        label = "前方"
+        label = _say("bearing", "ahead")
     elif magnitude <= 67.5:
-        label = f"{side}前方"
+        label = _say("bearing", "side_ahead", side=side)
     elif magnitude <= 112.5:
-        label = f"{side}侧"
+        label = _say("bearing", "side", side=side)
     elif magnitude <= 157.5:
-        label = f"{side}后方"
+        label = _say("bearing", "side_behind", side=side)
     else:
-        label = "后方"
+        label = _say("bearing", "behind")
     return label, meters
 
 
@@ -106,10 +122,12 @@ def _master_side(plan: StagePlan, landmark: StageLandmark) -> str:
     master = master_camera(plan)
     if master is None:
         return ""
-    x, _, depth = CameraView.of(master).project((landmark.position[0], landmark.size[2] / 2, landmark.position[1]))
+    x, _, depth = CameraView.of(master).project(
+        (landmark.position[0], landmark.elevation_m + landmark.size[2] / 2, landmark.position[1]),
+    )
     if depth <= 0.2:
         return ""
-    return "左侧" if x < -0.12 else "右侧" if x > 0.12 else "中央"
+    return str(_entry("screen_sides")["left" if x < -0.12 else "right" if x > 0.12 else "centre"])
 
 
 def landmark_relative_position(plan: StagePlan, landmark: StageLandmark) -> str:
@@ -118,51 +136,67 @@ def landmark_relative_position(plan: StagePlan, landmark: StageLandmark) -> str:
     point = (landmark.position[0], landmark.position[1])
     if anchor is None:
         centre = geo.centroid([(item.position[0], item.position[1]) for item in plan.landmarks])
-        return _clip(f"距场地中心约{geo.distance(point, centre):.1f}米，位置固定不镜像", 500)
+        return _clip(_say("landmark", "from_centre", meters=geo.distance(point, centre)), 500)
     bearing, meters = bearing_from(anchor, point)
-    text = f"位于{anchor.name}{bearing}约{meters:.1f}米"
+    text = _say("landmark", "from_anchor", anchor=anchor.name, bearing=bearing, meters=meters)
     if side := _master_side(plan, landmark):
-        text += f"，主机位画面{side}"
+        text += _say("landmark", "master_side", side=side)
     return _clip(text, 500)
 
 
 def layout_facts(plan: StagePlan, limit: int = 4) -> str:
     """The set as one line of screen sides: 门在画面右侧、窗在画面左侧. Fixtures first, small props last."""
     pieces = sorted(prompt_landmarks(plan), key=lambda item: (item.kind not in {"architecture", "furniture"}, -item.size[2]))
-    facts = [f"{item.name}在画面{side}" for item in pieces if (side := _master_side(plan, item))]
-    return _clip("、".join(facts[:limit]), 200)
+    facts = [_say("landmark", "layout_fact", name=item.name, side=side) for item in pieces if (side := _master_side(plan, item))]
+    return _clip(_brief("marks", "list").join(facts[:limit]), 200)
+
+
+def is_stand_in(landmark: StageLandmark) -> bool:
+    """A prop the planner knew no size for stands on the stage as the stand-in box, and that box is not its size."""
+    stand_in = [float(value) for value in prompt_data.value(_PROPS, "stand_in_m")]
+    return landmark.kind == "prop" and [float(value) for value in landmark.size] == stand_in
 
 
 def landmark_size(landmark: StageLandmark) -> str:
     """The set piece's real size, so the frame holds one scale: 宽约1.4米、高约2.4米."""
     width, depth, height = landmark.size
-    parts = [f"宽约{width:.1f}米"]
+    parts = [_say("size", "width", span=_span(width))]
     if depth >= 0.5:
-        parts.append(f"进深约{depth:.1f}米")
-    parts.append(f"高约{height:.1f}米")
-    return "、".join(parts)
+        parts.append(_say("size", "depth", span=_span(depth)))
+    parts.append(_say("size", "height", span=_span(height)))
+    return _brief("marks", "list").join(parts)
 
 
-# A standing body in fractions of its height: where the top of a set piece meets it.
-_BODY_MARKS = ((0.92, "与{name}头顶齐平"), (0.78, "约齐{name}肩"), (0.62, "约齐{name}胸口"), (0.45, "约齐{name}腰"), (0.25, "约到{name}大腿"))
-_HEADS_ZH = {0.5: "半个头", 1.0: "一个头", 1.5: "一个半头", 2.0: "两个头", 2.5: "两个半头", 3.0: "三个头"}
+def _span(metres: float) -> str:
+    """1.4米, and centimetres for something held in the hand: a pen is not 0.1米 wide and 0.0米 high."""
+    return _say("size", "metres", metres=metres) if metres >= 0.3 else _say("size", "centimetres", centimetres=round(metres * 100))
+
+
+def _body_marks() -> tuple[tuple[float, str], ...]:
+    """A standing body in fractions of its height: where the top of a set piece meets it (``{name}`` is the person)."""
+    return tuple((float(share), str(text)) for share, text in _entry("scale", "body_marks"))
+
+
+def _heads_words() -> dict[float, str]:
+    """How many heads taller a piece is, in words: 0.5 → 半个头."""
+    return {float(heads): str(words) for heads, words in _entry("scale", "heads_words")}
 
 
 def _scale_piece(plan: StagePlan) -> StageLandmark | None:
     """The set piece a person is measured against: the tallest fixture, a door before a table."""
-    pieces = [item for item in prompt_landmarks(plan) if item.kind != "light" and item.size[2] >= 0.3]
+    pieces = [item for item in prompt_landmarks(plan) if item.kind != "light" and item.size[2] >= 0.3 and not is_stand_in(item)]
     return max(pieces, key=lambda item: (item.kind == "architecture", item.size[2]), default=None)
 
 
 def scale_reference(plan: StagePlan, actor: StageActor | None = None, landmark: StageLandmark | None = None) -> str:
-    """One fixed person-to-set ratio: 林晚身高约168cm；门高约2.4米，林晚站在门旁头顶比门顶低约一个头.
+    """One fixed person-to-set ratio: 林晚身高约168cm；门高约2.4米，林晚站在门旁，头顶比门顶低约0.7米（约三个头）.
 
     Every shot of the scene says the same ratio, so a door never shrinks to a cupboard between cuts.
     """
     actor = actor or _anchor_actor(plan)
     if actor is None or actor.crowd_id:
         return ""
-    head = f"{actor.name}身高约{round(actor.height_m * 100)}cm"
+    head = _say("scale", "height", name=actor.name, centimetres=round(actor.height_m * 100))
     landmark = landmark or _scale_piece(plan)
     if landmark is None:
         return head
@@ -171,14 +205,21 @@ def scale_reference(plan: StagePlan, actor: StageActor | None = None, landmark: 
     if ratio >= 1.08:
         gap = height - actor.height_m
         # 一个头约为身高的 1/7.5。
-        heads = _HEADS_ZH.get(round(gap / (actor.height_m / 7.5) * 2) / 2)
-        relation = f"{actor.name}站在{landmark.name}旁，头顶比{landmark.name}顶低约{gap:.1f}米" + (f"（约{heads}）" if heads else "")
+        heads = _heads_words().get(round(gap / (actor.height_m / 7.5) * 2) / 2)
+        # 「站在门旁」 is only said of someone who is: across the room it is the two heights that compare.
+        beside = geo.inside_piece(actor.position, landmark, float(prompt_data.value(_BRIEF, "near_piece_m")))
+        relation = phrase(
+            "scale_beside" if beside else "scale_apart", actor=actor.name, piece=landmark.name, gap=f"{gap:.1f}",
+        ) + (_say("scale", "heads", heads=heads) if heads else "")
     else:
         relation = next(
-            (f"{landmark.name}顶{text.format(name=actor.name)}" for share, text in _BODY_MARKS if ratio >= share),
-            f"{landmark.name}不及{actor.name}膝盖",
+            (
+                _say("scale", "body_mark", piece=landmark.name, mark=text.format(name=actor.name))
+                for share, text in _body_marks() if ratio >= share
+            ),
+            _say("scale", "below_knee", piece=landmark.name, name=actor.name),
         )
-    return f"{head}；{landmark.name}高约{height:.1f}米，{relation}"
+    return _say("scale", "line", person=head, piece=landmark.name, height=height, relation=relation)
 
 
 def array_members(plan: StagePlan) -> frozenset[str]:
@@ -205,11 +246,11 @@ def frame_positions(
     for state in visible:
         occlusion, keep = "", ""
         if camera.function == "over_shoulder" and state.name not in order:
-            edge = "左侧" if state.x < 0 else "右侧"
-            occlusion = f"肩背虚化，遮挡画面{edge}约四分之一"
-            keep = f"保留{camera.subjects[0]}的完整面部" if camera.subjects else ""
+            edge = str(_entry("screen_sides")["left" if state.x < 0 else "right"])
+            occlusion = _say("frame", "shoulder", edge=edge)
+            keep = _say("frame", "keep_face", name=camera.subjects[0]) if camera.subjects else ""
         elif state.occluded_by and camera.function != "over_shoulder":
-            occlusion = f"被{state.occluded_by}遮挡约二分之一"
+            occlusion = _say("frame", "occluded", blocker=state.occluded_by)
         positions.append(FramePosition(
             subject=state.name[:120], region=state.region, depth=state.depth_layer,
             facing=state.facing, occlusion=occlusion, keep_visible=keep,
@@ -227,19 +268,20 @@ def _axis_angle(plan: StagePlan, camera: StageCamera) -> float:
 def _axis_text(plan: StagePlan, shot: StageShot, camera: StageCamera) -> str:
     axis = plan.axis
     if not axis_rules.has_axis(axis):
-        return "本场无人物关系轴线；以场景地标的左右位置为准，任何镜头不得左右镜像"
+        return _say("axis", "none")
     left, right = (axis.from_name, axis.to_name) if axis.camera_side >= 0 else (axis.to_name, axis.from_name)
     if axis.kind == "gaze":
-        head = f"视线轴线为{axis.from_name}→{axis.to_name}；全场机位守在轴线同一侧，{left}恒在画左、{right}恒在画右"
+        head = _say("axis", "gaze", source=axis.from_name, target=axis.to_name, left=left, right=right)
     elif axis.kind == "motion":
-        head = f"运动轴线沿{axis.from_name}→{axis.to_name}；全场机位守在轴线同一侧，运动方向恒为画面由左向右"
+        head = _say("axis", "motion", source=axis.from_name, target=axis.to_name)
     else:
-        head = f"关系轴线为{axis.from_name}—{axis.to_name}连线；全场机位守在轴线同一侧，{left}恒在画左、{right}恒在画右"
-    if shot.crossing in _CROSSING_ZH:
-        tail = _CROSSING_ZH[shot.crossing]
+        head = _say("axis", "relation", source=axis.from_name, target=axis.to_name, left=left, right=right)
+    crossings = _entry("axis", "crossings")
+    if shot.crossing in crossings:
+        tail = str(crossings[shot.crossing])
     else:
-        tail = f"本镜机位在既定一侧，与轴线夹角约{_axis_angle(plan, camera):.0f}度，不越轴"
-    return _clip(f"{head}；{tail}", 500)
+        tail = _say("axis", "held", angle=_axis_angle(plan, camera))
+    return _clip(_brief("marks", "clause").join((head, tail)), 500)
 
 
 def _eyeline_text(plan: StagePlan, shot: StageShot, camera: StageCamera) -> str:
@@ -251,29 +293,101 @@ def _eyeline_text(plan: StagePlan, shot: StageShot, camera: StageCamera) -> str:
         state = states.get(name)
         if state is None or not state.visible:
             continue
-        clause = f"{name}视线{state.facing}"
+        clause = _say("eyeline", "gaze", name=name, facing=state.facing)
         partner_name = (
             plan.axis.to_name if name == plan.axis.from_name
             else plan.axis.from_name if name == plan.axis.to_name else ""
         )
         partner = states.get(partner_name)
-        if partner is not None and partner_name in actors:
+        # Someone whose back is to the partner is not looking at them: the facing already said is the whole eyeline.
+        away = name in actors and partner_name in actors and _turned_from(actors[name], actors[partner_name])
+        if away:
+            pass
+        elif partner is not None and partner_name in actors:
             if partner.visible:
-                clause += f"，看向画内的{partner_name}"
+                clause += _say("eyeline", "partner_in_frame", partner=partner_name)
             else:
                 side = view.offscreen_side((actors[partner_name].position[0], actors[partner_name].position[1]))
-                clause += f"，看向画外{'右' if side == 'right' else '左'}侧的{partner_name}"
+                clause += _say("eyeline", "partner_off_right" if side == "right" else "partner_off_left", partner=partner_name)
         elif partner_name and plan.axis.kind == "gaze":
-            clause += f"，看向{partner_name}"
+            clause += _say("eyeline", "partner", partner=partner_name)
         clauses.append(clause)
     if not clauses:
-        return "本镜无人物视线；保持场景地标与光向的左右关系"
+        return _say("eyeline", "none")
     lead = actors.get(camera.subjects[0]) if camera.subjects else None
     if lead is not None:
         delta = camera.position[1] - posture_height(lead) * 0.93
-        level = "镜头与视线齐平" if abs(delta) < 0.18 else "镜头高于视线，略俯" if delta > 0 else "镜头低于视线，略仰"
-        clauses.append(level)
-    return _clip("；".join(clauses), 500)
+        clauses.append(_say("eyeline", "level" if abs(delta) < 0.18 else "above" if delta > 0 else "below"))
+    return _clip(_brief("marks", "clause").join(clauses), 500)
+
+
+# How squarely one person has to be turned for it to count: within 60 degrees of the line between the two.
+_TOWARD = 0.5
+
+
+def _toward(actor: StageActor, other: StageActor) -> float | None:
+    """1 when ``actor`` faces ``other`` squarely, -1 with the back turned; ``None`` when they share a mark."""
+    delta = geo.sub((other.position[0], other.position[1]), (actor.position[0], actor.position[1]))
+    if geo.length(delta) < 0.05:
+        return None
+    return geo.dot(geo.forward_of(actor.yaw_deg), geo.unit(delta))
+
+
+def _turned_from(actor: StageActor, other: StageActor) -> bool:
+    toward = _toward(actor, other)
+    return toward is not None and toward < -_TOWARD
+
+
+def _pair_relation(first: StageActor, second: StageActor) -> str:
+    """How two people stand to each other, read from where they are and which way each is turned.
+
+    面对面 needs both to face the other, 背对背 both to face away, 同向并肩 the same heading with the other
+    at the shoulder. Anything else that is clear is said by name (who faces whom); the rest is left unsaid
+    rather than guessed, since each person's screen facing is stated on its own.
+    """
+    ahead, back = _toward(first, second), _toward(second, first)
+    if ahead is None or back is None:
+        return ""
+    words = prompt_data.value(_BRIEF, "pair_relations")
+    if ahead > _TOWARD and back > _TOWARD:
+        return str(words["facing"])
+    if ahead < -_TOWARD and back < -_TOWARD:
+        return str(words["back_to_back"])
+    if ahead > _TOWARD or back > _TOWARD:
+        facer, other, turn = (first, second, back) if ahead > _TOWARD else (second, first, ahead)
+        return str(words["turned_away" if turn < -_TOWARD else "one_faces"]).format(facer=facer.name, other=other.name)
+    same_heading = geo.dot(geo.forward_of(first.yaw_deg), geo.forward_of(second.yaw_deg)) > _TOWARD
+    return str(words["side_by_side"]) if same_heading and abs(ahead) < _TOWARD and abs(back) < _TOWARD else ""
+
+
+def _in_view(view: CameraView, piece: StageLandmark) -> bool:
+    """Whether the middle of a set piece falls inside the frame."""
+    x, y, depth = view.project((piece.position[0], piece.elevation_m + piece.size[2] / 2, piece.position[1]))
+    return depth > 0.2 and abs(x) <= 1.0 and abs(y) <= 1.0
+
+
+def contact_clauses(plan: StagePlan, shot: StageShot, camera: StageCamera) -> list[str]:
+    """One clause per contact the frame shows: 林夏右手握着录音笔、周教授坐在扶手椅上、录音笔放在书案上.
+
+    A hold or a sit is shown when its person is in frame (``shot.screen``); a thing at rest when it is.
+    """
+    current = [contact for contact in plan.contacts if contact.applies_to(shot.shot_id)]
+    if not current:
+        return []
+    seen = {state.name for state in shot.screen if state.visible}
+    view = CameraView.of(camera)
+    pieces: dict[str, StageLandmark] = {}
+    for item in plan.landmarks_in(shot):
+        pieces.setdefault(item.name, item)
+    clauses: list[str] = []
+    for contact in current:
+        if contact.kind == "hold" and contact.actor in seen:
+            clauses.append(_say("contacts", "hold", actor=contact.actor, hand=hand_zh(contact.hand), target=contact.target))
+        elif contact.kind == "sit" and contact.actor in seen:
+            clauses.append(_say("contacts", "sit", actor=contact.actor, target=contact.target))
+        elif contact.kind == "rest" and contact.target in pieces and _in_view(view, pieces[contact.target]):
+            clauses.append(_say("contacts", "rest", target=contact.target, support=contact.support))
+    return clauses
 
 
 def _blocking_text(plan: StagePlan, shot: StageShot, camera: StageCamera) -> str:
@@ -283,40 +397,39 @@ def _blocking_text(plan: StagePlan, shot: StageShot, camera: StageCamera) -> str
     first, second = by_name.get(plan.axis.from_name), by_name.get(plan.axis.to_name)
     if first is not None and second is not None:
         gap = geo.distance((first.position[0], first.position[1]), (second.position[0], second.position[1]))
-        facing_each_other = geo.dot(geo.forward_of(first.yaw_deg), geo.forward_of(second.yaw_deg)) < -0.5
-        relation = "面对面" if facing_each_other else "同向并肩"
-        parts.append(
-            f"{first.name}（{_POSTURE_ZH.get(first.posture, '站立')}）与{second.name}"
-            f"（{_POSTURE_ZH.get(second.posture, '站立')}）相距{gap:.1f}米{relation}"
-        )
+        parts.append(_say(
+            "blocking", "pair", first=first.name, first_posture=posture_zh(first.posture),
+            second=second.name, second_posture=posture_zh(second.posture), gap=gap, relation=_pair_relation(first, second),
+        ))
     anchor = first or (actors[0] if actors else None)
     for actor in actors:
         if anchor is None or actor.name in {plan.axis.from_name, plan.axis.to_name} or actor is anchor or actor.crowd_id:
             continue
         bearing, meters = bearing_from(anchor, (actor.position[0], actor.position[1]))
-        parts.append(f"{actor.name}（{_POSTURE_ZH.get(actor.posture, '站立')}）在{anchor.name}{bearing}{meters:.1f}米")
+        parts.append(_say(
+            "blocking", "other", name=actor.name, posture=posture_zh(actor.posture), anchor=anchor.name, bearing=bearing, meters=meters,
+        ))
     for crowd in plan.crowds:
         if anchor is not None:
             bearing, meters = bearing_from(anchor, (crowd.center[0], crowd.center[1]))
-            parts.append(f"{crowd.label}{crowd.rows * crowd.columns}人列阵于{anchor.name}{bearing}{meters:.1f}米")
+            parts.append(_say(
+                "blocking", "crowd", label=crowd.label, count=crowd.rows * crowd.columns, anchor=anchor.name, bearing=bearing, meters=meters,
+            ))
     if anchor is not None and first is None:
-        parts.insert(0, f"{anchor.name}（{_POSTURE_ZH.get(anchor.posture, '站立')}）位于场地中央")
+        parts.insert(0, _say("blocking", "centre", name=anchor.name, posture=posture_zh(anchor.posture)))
     for change in shot.overrides:
         if change.reason:
-            parts.append(f"本镜{change.name}{change.reason}")
+            parts.append(_say("blocking", "override", name=change.name, reason=change.reason))
+    parts.extend(contact_clauses(plan, shot, camera))
     lead = by_name.get(camera.subjects[0]) if camera.subjects else anchor
     if lead is not None:
         reach = geo.distance((camera.position[0], camera.position[2]), (lead.position[0], lead.position[1]))
-        parts.append(f"机位距{lead.name}{reach:.1f}米、机高{camera.position[1]:.1f}米")
+        parts.append(_say("blocking", "lens_clause", name=lead.name, reach=reach, height=camera.position[1]))
     for landmark in prompt_landmarks(plan)[:3]:
-        parts.append(f"{landmark.name}{landmark_relative_position(plan, landmark)}")
+        parts.append(_say("blocking", "landmark", name=landmark.name, position=landmark_relative_position(plan, landmark)))
     if lead is not None and plan.landmarks and not lead.crowd_id:
-        parts.append(f"比例：{scale_reference(plan, lead)}")
-    return _clip("；".join(parts) or "空镜：按场景圣经保持地标位置", 800)
-
-
-# The one clause of ``blocking`` that states where the lens is. Kept next to the code that writes it.
-_CAMERA_POSE_CLAUSE = re.compile(r"(?:^|；)机位距[^；。]*?机高\d+(?:\.\d+)?米")
+        parts.append(_say("blocking", "scale", scale=scale_reference(plan, lead)))
+    return _clip(_brief("marks", "clause").join(parts) or _say("blocking", "empty"), 800)
 
 
 def without_camera_pose(text: str) -> str:
@@ -324,79 +437,109 @@ def without_camera_pose(text: str) -> str:
 
     A blockout clip owns the camera track (blockout rule 3): a sentence that also states where the
     lens stands is a second, competing camera instruction, so it is withheld while a clip is applied.
+    The clause is found by ``blocking.lens_clause_pattern``, kept in the table next to the sentence it finds.
     """
-    return _CAMERA_POSE_CLAUSE.sub("", str(text or "")).lstrip("；")
+    clause = re.compile(str(_entry("blocking", "lens_clause_pattern")))
+    return clause.sub("", str(text or "")).lstrip(_brief("marks", "clause"))
 
 
 def _camera_pose_text(plan: StagePlan, shot: StageShot, camera: StageCamera, *, end: bool) -> str:
     position = camera.move.end_position if end and camera.move.end_position else camera.position
     by_name = {actor.name: actor for actor in plan.actors_in(shot)}
     lead = by_name.get(camera.subjects[0]) if camera.subjects else _anchor_actor(plan)
-    where = f"机高{position[1]:.1f}米"
+    where = _say("camera", "height", height=position[1])
     if lead is not None:
         bearing, meters = bearing_from(lead, (position[0], position[2]))
-        where = f"位于{lead.name}{bearing}{meters:.1f}米、" + where
-    return _clip(f"{where}，{camera.equivalent_lens_mm:g}mm，{camera.angle}", 500)
+        where = _say("camera", "from_lead", name=lead.name, bearing=bearing, meters=meters, height=where)
+    return _clip(_say("camera", "pose", where=where, lens=camera.equivalent_lens_mm, angle=camera.angle), 500)
 
 
 def shot_text(plan: StagePlan, shot: StageShot, camera: StageCamera) -> ShotText:
     positions = frame_positions(shot, camera, array_members(plan))
     placed = render_frame_positions(positions)
-    composition = f"{camera.shot_size}，{camera.equivalent_lens_mm:g}mm"
+    clause = _brief("marks", "clause")
+    composition = _say("composition", "frame", size=camera.shot_size, lens=camera.equivalent_lens_mm)
     if placed:
-        composition += f"；{placed}"
+        composition += clause + placed
     else:
         view = CameraView.of(camera)
         seen = []
+        # Where each piece is in this shot (a held prop is in the hand), matched by position in the list: names may repeat.
+        placed_now = {id(item): now for item, now in zip(plan.landmarks, plan.landmarks_in(shot))}
         for landmark in prompt_landmarks(plan):
+            landmark = placed_now.get(id(landmark), landmark)
             x, y, depth = view.project((landmark.position[0], landmark.elevation_m + landmark.size[2] / 2, landmark.position[1]))
             if depth > 0.2 and abs(x) <= 1.0 and abs(y) <= 1.2:
-                seen.append(f"{landmark.name}位于{'画面左侧' if x < -0.12 else '画面右侧' if x > 0.12 else '画面中央'}")
-        composition += "；空镜，不出现人物" + (f"；{'，'.join(seen[:4])}" if seen else "；按场景圣经的地标左右位置构图")
-    move = _MOVE_ZH.get(camera.move.kind, "固定机位")
+                side = _brief("frame_sides", "left" if x < -0.12 else "right" if x > 0.12 else "centre")
+                seen.append(_say("composition", "landmark", name=landmark.name, side=side))
+        composition += clause + _say("composition", "empty") + clause + (
+            _brief("marks", "comma").join(seen[:4]) if seen else _say("composition", "by_bible")
+        )
+    move = move_zh(camera.move.kind)
     return ShotText(
-        camera_angle=_clip(camera.angle or "平视", 120),
+        camera_angle=_clip(camera.angle or _say("camera", "default_angle"), 120),
         composition=_clip(composition, 1000),
         action_axis=_axis_text(plan, shot, camera),
         eyeline=_eyeline_text(plan, shot, camera),
         blocking=_blocking_text(plan, shot, camera),
         camera_start=_camera_pose_text(plan, shot, camera, end=False),
         camera_end=(
-            f"{move}至：" + _camera_pose_text(plan, shot, camera, end=True)
-            if camera.move.kind != "static" else f"{move}，机位不变"
+            _say("camera", "moves_to", move=move, pose=_camera_pose_text(plan, shot, camera, end=True))
+            if camera.move.kind != "static" else _say("camera", "holds", move=move)
         )[:500],
     )
 
 
 def scene_bible(plan: StagePlan) -> str:
     """The scene's spatial bible: one paragraph every shot of the scene inherits."""
-    lines = [f"【空间圣经】{plan.location or plan.scene_id}；单位米；左右一律以主机位的画面为准，任何镜头不得镜像。"]
+    lines = [_say("bible", "head", place=plan.location or plan.scene_id)]
     if plan.formation:
-        lines.append(f"站位：{plan.formation}。")
+        lines.append(_say("bible", "formation", formation=plan.formation))
+    sides = _entry("bible", "sides")
     for actor in plan.actors:
         if actor.crowd_id:
             continue
-        side = {"left": "恒在画左", "right": "恒在画右"}.get(actor.screen_side, "")
-        lines.append(
-            f"{actor.name}：{_POSTURE_ZH.get(actor.posture, '站立')}，身高约{round(actor.height_m * 100)}cm，"
-            f"地面坐标({actor.position[0]:.1f}, {actor.position[1]:.1f})"
-            + (f"，{side}" if side else "") + "。"
-        )
+        side = str(sides.get(actor.screen_side, ""))
+        lines.append(_say(
+            "bible", "actor", name=actor.name, posture=posture_zh(actor.posture), centimetres=round(actor.height_m * 100),
+            x=actor.position[0], z=actor.position[1], side=_say("bible", "actor_side", side=side) if side else "",
+        ))
     for crowd in plan.crowds:
-        lines.append(
-            f"{crowd.label}：{crowd.rows}排×{crowd.columns}列共{crowd.rows * crowd.columns}人，"
-            f"阵心地面坐标({crowd.center[0]:.1f}, {crowd.center[1]:.1f})，间距{crowd.spacing:.1f}米。"
-        )
+        lines.append(_say(
+            "bible", "crowd", label=crowd.label, rows=crowd.rows, columns=crowd.columns, count=crowd.rows * crowd.columns,
+            x=crowd.center[0], z=crowd.center[1], spacing=crowd.spacing,
+        ))
     for landmark in prompt_landmarks(plan):
-        lines.append(f"{landmark.name}：{landmark_size(landmark)}，{landmark_relative_position(plan, landmark)}。")
+        size = "" if is_stand_in(landmark) else _say("bible", "landmark_size", size=landmark_size(landmark))
+        lines.append(_say("bible", "landmark", name=landmark.name, size=size, position=landmark_relative_position(plan, landmark)))
     if (scale := scale_reference(plan)) and plan.landmarks:
-        lines.append(f"比例尺：{scale}；全场人物与陈设保持这一比例，不随景别缩放。")
+        lines.append(_say("bible", "scale", scale=scale))
     if axis_rules.has_axis(plan.axis):
-        lines.append(
-            f"轴线：{plan.axis.from_name}—{plan.axis.to_name}；全部机位位于轴线同一侧，"
-            "换边必须先经过轴线上的中性镜头、越轴运动镜头或重新建立空间的全景。"
-        )
+        lines.append(_say("bible", "axis", source=plan.axis.from_name, target=plan.axis.to_name))
     return _clip("".join(lines), 4000)
+
+
+def _supporting_places(plan: StagePlan, leads: list[StageActor]) -> list[str]:
+    """Where the supporting cast stands from the leads as the master lens sees it: behind, in front, or at their side."""
+    named = {actor.name for actor in leads}
+    others = [actor for actor in plan.actors if actor.role != "principal" and not actor.crowd_id and actor.name not in named]
+    if not leads or not others:
+        return []
+    centre = geo.centroid([(actor.position[0], actor.position[1]) for actor in leads])
+    master = master_camera(plan)
+    if master is not None and geo.distance((master.position[0], master.position[2]), centre) > 0.05:
+        downstage = geo.unit(geo.sub((master.position[0], master.position[2]), centre))
+    elif axis_rules.has_axis(plan.axis):
+        downstage = axis_rules.camera_side_normal(plan.axis)
+    else:
+        downstage = geo.forward_of(leads[0].yaw_deg)
+    groups: dict[str, list[str]] = {"behind": [], "front": [], "beside": []}
+    for actor in others:
+        offset = geo.dot(geo.sub((actor.position[0], actor.position[1]), centre), downstage)
+        groups["behind" if offset < -0.3 else "front" if offset > 0.3 else "beside"].append(actor.name)
+    words = prompt_data.value(_BRIEF, "table_supporting")
+    whom = prompt_data.text(_BRIEF, "table_pair") if len(leads) == 2 else leads[0].name
+    return [str(words[key]).format(names=_brief("marks", "list").join(names), leads=whom) for key, names in groups.items() if names]
 
 
 def table_brief(plan: StagePlan) -> str:
@@ -408,28 +551,31 @@ def table_brief(plan: StagePlan) -> str:
             else (plan.axis.to_name, plan.axis.from_name)
         )
         gap = geo.distance((plan.axis.start[0], plan.axis.start[1]), (plan.axis.end[0], plan.axis.end[1]))
-        parts.append(f"{left}恒在画左、{right}恒在画右，相距约{gap:.1f}米（{plan.formation.split('；')[0]}）")
+        formation = plan.formation.split(_brief("marks", "clause"))[0]
+        parts.append(_say("table", "pair", left=left, right=right, gap=gap, formation=formation))
+        leads = [actor for name in (plan.axis.from_name, plan.axis.to_name) if (actor := plan.actor(name)) is not None]
     elif plan.actors:
         lead = plan.actors[0]
-        parts.append(f"{lead.name}{'恒在画左' if lead.screen_side == 'left' else '恒在画右' if lead.screen_side == 'right' else '居中'}")
-    others = [actor.name for actor in plan.actors if actor.role != "principal"]
-    if others:
-        parts.append(f"{'、'.join(others[:6])}在两人后方")
+        sides = _entry("table", "sides")
+        side = sides["left" if lead.screen_side == "left" else "right" if lead.screen_side == "right" else "center"]
+        parts.append(_say("table", "lead", name=lead.name, side=side))
+        leads = [lead]
+    else:
+        leads = []
+    parts.extend(_supporting_places(plan, leads))
     for landmark in prompt_landmarks(plan)[:4]:
-        parts.append(f"{landmark.name}{landmark_relative_position(plan, landmark)}")
+        parts.append(_say("table", "landmark", name=landmark.name, position=landmark_relative_position(plan, landmark)))
     if not parts:
         return ""
-    return _clip(
-        "【空间调度（系统已定站位，机位由系统按此求解）】" + "；".join(parts)
-        + "。画面内容里的左右、朝向与远近须与此一致，不写越轴与镜像；景别、机位角度照常填写。",
-        600,
-    )
+    return _clip(_say("table", "brief", parts=_brief("marks", "clause").join(parts)), 600)
 
 
 __all__ = [
     "array_members",
     "bearing_from",
+    "contact_clauses",
     "frame_positions",
+    "is_stand_in",
     "landmark_relative_position",
     "landmark_size",
     "layout_facts",

@@ -56,7 +56,7 @@ class ContactSound:
     sound: str
 
     def line(self) -> str:
-        return f"{self.event}的瞬间：{self.sound}。"
+        return prompt_data.text(_DATA, "contact_line").format(event=self.event, sound=self.sound.rstrip("。"))
 
 
 @dataclass
@@ -72,14 +72,14 @@ class SoundEventPlan:
         if not self.contacts:
             return []
         lines = [contact.line() for contact in self.contacts]
-        lines.append("每声只在该瞬间响一次，随后的动作不再重复这一声。")
+        lines.append(prompt_data.text(_DATA, "contact_once"))
         return lines
 
     def lines(self) -> list[str]:
-        lines = [f"环境铺底：{self.bed}，全程连续、音量压低，只作背景。"]
+        lines = [prompt_data.text(_DATA, "bed_line").format(bed=self.bed)]
         lines.extend(self.contact_lines())
         if self.dialogue:
-            lines.append("对白清晰，始终在环境铺底之上。")
+            lines.append(prompt_data.text(_DATA, "dialogue_line"))
         if self.exclusions:
             lines.append("、".join(self.exclusions) + "。")
         return lines

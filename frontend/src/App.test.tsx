@@ -434,6 +434,44 @@ describe('App model configuration status', () => {
   });
 });
 
+describe('App top-up notice', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('offers 去充值 when a paid action is refused and can be dismissed', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/session')) return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          authenticated: true,
+          user: { user_id: 'user-1', username: 'writer', role: 'user', must_change_password: false },
+        }),
+      } as Response;
+      if (url.endsWith('/api/drama/list') || url.endsWith('/api/drama/skills')) return {
+        ok: true, status: 200, json: async () => [],
+      } as Response;
+      throw new Error(`unexpected fetch ${url}`);
+    });
+
+    render(<App />);
+    expect(await screen.findByRole('button', { name: /模型: / })).toBeTruthy();
+
+    const { notifyBillingRequired } = await import('./api/client');
+    notifyBillingRequired('积分不足：本次生成需要 30 积分');
+
+    const notice = (await screen.findByText('积分不足：本次生成需要 30 积分')).closest('.billing-required') as HTMLElement;
+    expect(notice.getAttribute('role')).toBe('alert');
+    expect(within(notice).getByRole('button', { name: '去充值' })).toBeTruthy();
+
+    await userEvent.click(within(notice).getByRole('button', { name: '关闭' }));
+    expect(screen.queryByText('积分不足：本次生成需要 30 积分')).toBeNull();
+  });
+});
+
 describe('App session expiry from a feature panel', () => {
   afterEach(() => {
     cleanup();

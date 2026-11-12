@@ -13,6 +13,7 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from app.core import prompt_data
 from app.core.spatial_stage import axis as axis_rules
 from app.core.spatial_stage import geometry as geo
 from app.core.spatial_stage.coverage import canonical_size, keep_side, lens_bearing
@@ -22,8 +23,7 @@ from app.core.spatial_stage.projection import SHOT_SIZE_HEIGHTS, posture_height,
 _ERROR_COST = 12.0
 _WARNING_COST = 4.0
 _SIZE_COVER = dict(SHOT_SIZE_HEIGHTS)
-# A flat floor or rug under the action blocks nothing.
-_LOW_PIECE_M = 0.25
+_LOW_PIECE_M = geo.LOW_PIECE_M
 _BODY_RADIUS_M = 0.22
 # Screen x runs -1 … +1 across the frame; a subject past this has no room left on its side.
 _FRAME_EDGE = 0.8
@@ -33,40 +33,18 @@ _REACH_FACTORS = (1.0, 0.88, 1.14)
 _WORTH_MOVING = 2.0
 # Actors above this are crowds; a search that costs seconds per shot is not worth it for them.
 _SEARCH_ACTOR_LIMIT = 40
+_WORDING = "stage_checks"
 
 
-def _local(point: Sequence[float], piece: StageLandmark) -> tuple[float, float]:
-    """``point`` (x, z) in the piece's own axes, with its yaw taken off."""
-    dx, dz = point[0] - piece.position[0], point[1] - piece.position[1]
-    yaw = math.radians(piece.yaw_deg)
-    return (dx * math.cos(yaw) - dz * math.sin(yaw), dx * math.sin(yaw) + dz * math.cos(yaw))
+# The set-piece tests live with the rest of the geometry so the checks can use them too; the names stay here
+# for the callers that learnt them here.
+inside_piece = geo.inside_piece
+piece_blocks_ray = geo.piece_blocks_ray
 
 
-def inside_piece(point: Sequence[float], piece: StageLandmark, margin: float = 0.0) -> bool:
-    x, z = _local(point, piece)
-    return abs(x) <= piece.size[0] / 2 + margin and abs(z) <= piece.size[1] / 2 + margin
-
-
-def piece_blocks_ray(start: Sequence[float], end: Sequence[float], piece: StageLandmark) -> bool:
-    """Does the straight line ``start`` → ``end`` (x, y, z) pass through this piece's bounding volume?"""
-    bottom, top = piece.elevation_m, piece.elevation_m + piece.size[2]
-    if top - bottom < _LOW_PIECE_M and bottom < _LOW_PIECE_M:
-        return False
-    x0, z0 = _local((start[0], start[2]), piece)
-    x1, z1 = _local((end[0], end[2]), piece)
-    low, high = 0.0, 1.0
-    for origin, stop, half in ((x0, x1, piece.size[0] / 2), (z0, z1, piece.size[1] / 2), (start[1] - (top + bottom) / 2, end[1] - (top + bottom) / 2, (top - bottom) / 2)):
-        delta = stop - origin
-        if abs(delta) < 1e-9:
-            if abs(origin) > half:
-                return False
-            continue
-        first, second = (-half - origin) / delta, (half - origin) / delta
-        low, high = max(low, min(first, second)), min(high, max(first, second))
-        if low > high:
-            return False
-    # Starting or ending inside the piece is reported by the standing checks instead.
-    return high - low > 1e-3 and low > 1e-3 and high < 1 - 1e-3
+def _says(key: str, **values: object) -> str:
+    """A scoring note (``app/data/prompt/stage_checks.json``), filled in."""
+    return str(prompt_data.load(_WORDING)["scores"][key]).format(**values)
 
 
 def _expected_fraction(actor: StageActor, size: str) -> float:
@@ -89,19 +67,19 @@ def score_camera(
     visible = [state for state in wanted if state.visible]
     sight = 40.0 * len(visible) / len(wanted)
     if len(visible) < len(wanted):
-        notes.append("、".join(state.name for state in wanted if not state.visible) + " 不在画内")
+        notes.append(_says("out_of_frame", names="、".join(state.name for state in wanted if not state.visible)))
     clear = 25.0
     for state in visible:
         if state.occluded_by and not over_shoulder:
             clear -= 25.0 / len(wanted)
-            notes.append(f"{state.name} 被 {state.occluded_by} 挡住")
+            notes.append(_says("hidden_by_person", name=state.name, blocker=state.occluded_by))
     for name in subjects:
         actor = by_name[name]
         chest = (actor.position[0], posture_height(actor) * 0.72, actor.position[1])
-        blocker = next((piece for piece in landmarks if piece_blocks_ray(camera.position, chest, piece)), None)
+        blocker = next((piece for piece in landmarks if geo.piece_blocks_sight(camera.position, chest, piece)), None)
         if blocker is not None:
             clear -= 25.0 / len(wanted)
-            notes.append(f"{name} 被布景「{blocker.name}」挡住")
+            notes.append(_says("hidden_by_set", name=name, piece=blocker.name))
     framing = 20.0
     # In a narrow frame a group is held by its width, not its height: being small is what fitting them takes.
     tolerance = 6.0 if len(wanted) > 1 else 12.0
@@ -120,19 +98,23 @@ def score_camera(
 def score_shot(plan: StagePlan, shot: StageShot) -> tuple[float, list[str]]:
     camera = next((item for item in plan.cameras if item.id == shot.camera_id), None)
     if camera is None:
-        return 0.0, ["镜头没有机位"]
-    return score_camera(camera, plan.actors_in(shot), plan.landmarks, over_shoulder=camera.function == "over_shoulder")
+        return 0.0, [_says("no_camera")]
+    return score_camera(camera, plan.actors_in(shot), plan.landmarks_in(shot), over_shoulder=camera.function == "over_shoulder")
 
 
 def _standing_problems(plan: StagePlan) -> list[str]:
     problems: list[str] = []
+    # Someone seated on a piece is on it on purpose.
+    seats = {(contact.actor, contact.target) for contact in plan.contacts if contact.kind == "sit"}
     for actor in plan.actors:
         if actor.crowd_id:
             continue
         for piece in plan.landmarks:
+            if (actor.name, piece.name) in seats:
+                continue
             solid = piece.elevation_m < posture_height(actor) and piece.size[2] > _LOW_PIECE_M and piece.shape != "plane"
             if solid and inside_piece(actor.position, piece):
-                problems.append(f"{actor.name} 站在「{piece.name}」里面")
+                problems.append(_says("actor_inside_piece", name=actor.name, piece=piece.name))
                 break
     used = {shot.camera_id for shot in plan.shots}
     for camera in plan.cameras:
@@ -141,7 +123,7 @@ def _standing_problems(plan: StagePlan) -> list[str]:
         for piece in plan.landmarks:
             within = piece.elevation_m <= camera.position[1] <= piece.elevation_m + piece.size[2]
             if within and piece.shape != "plane" and inside_piece((camera.position[0], camera.position[2]), piece):
-                problems.append(f"机位「{camera.label}」在「{piece.name}」里面")
+                problems.append(_says("camera_inside_piece", camera=camera.label, piece=piece.name))
                 break
     return problems
 
@@ -182,7 +164,7 @@ def score_plan(plan: StagePlan) -> dict[str, Any]:
     for shot in plan.shots:
         value, said = score_shot(plan, shot)
         shot_scores[str(shot.shot_id)] = round(value, 1)
-        notes.extend(f"第{shot.shot_id}镜：{item}" for item in said)
+        notes.extend(_says("shot_note", shot=shot.shot_id, note=item) for item in said)
     average = sum(shot_scores.values()) / len(shot_scores) if shot_scores else 70.0
     standing = _standing_problems(plan)
     notes = standing + notes
@@ -219,7 +201,7 @@ def candidate_cameras(plan: StagePlan, shot: StageShot, *, limit: int = 3) -> li
     camera = next((item for item in plan.cameras if item.id == shot.camera_id), None)
     if camera is None:
         return []
-    actors, landmarks = plan.actors_in(shot), plan.landmarks
+    actors, landmarks = plan.actors_in(shot), plan.landmarks_in(shot)
     over_shoulder = camera.function == "over_shoulder"
     target = camera.target
     dx, dz = camera.position[0] - target[0], camera.position[2] - target[2]
@@ -264,8 +246,12 @@ def best_lens_is_worth_it(found: Sequence[tuple[float, StageCamera]], current: S
 def compare(before: Mapping[str, Any], after: Mapping[str, Any]) -> str:
     """One line for a person: what a change did to the stage."""
     delta = float(after["score"]) - float(before["score"])
-    change = "不变" if abs(delta) < 0.05 else f"{'+' if delta > 0 else ''}{delta:.1f}"
-    return f"评分 {before['score']} → {after['score']}（{change}），错误 {before['errors']} → {after['errors']}，警告 {before['warnings']} → {after['warnings']}"
+    change = _says("unchanged") if abs(delta) < 0.05 else f"{'+' if delta > 0 else ''}{delta:.1f}"
+    return _says(
+        "compare", before=before["score"], after=after["score"], change=change,
+        errors_before=before["errors"], errors_after=after["errors"],
+        warnings_before=before["warnings"], warnings_after=after["warnings"],
+    )
 
 
 __all__ = [

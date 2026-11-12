@@ -118,7 +118,7 @@ def build_draft(
     for clip in clips:
         local = resolve_local(str(clip["video_url"]))
         if not local or not os.path.isfile(local):
-            skipped.append(f"镜头 {clip.get('shot_id')}：片段不在本机，未打包")
+            skipped.append(f"{clip.get('scene_id') or ''} 镜头 {clip.get('shot_id')}：片段不在本机，未打包".strip())
             continue
         voice = clip.get("voice_path")
         placed.append({
@@ -130,7 +130,9 @@ def build_draft(
     for index, entry in enumerate(placed):
         clip, local = entry["clip"], entry["local"]
         seconds = entry["seconds"] - heads[index] - tails[index]
-        rel = f"materials/shot_{clip.get('shot_id')}{os.path.splitext(local)[1] or '.mp4'}"
+        # Shot numbers start over in every scene; the film-wide id keeps one scene's file from replacing another's.
+        material = clip.get("shot_uid") or clip.get("shot_id")
+        rel = f"materials/shot_{material}{os.path.splitext(local)[1] or '.mp4'}"
         files[rel] = local
         material_id = _uid()
         videos.append({"id": material_id, "type": "video", "path": f"{DRAFT_PATH_MARKER}/{rel}", "material_name": os.path.basename(rel),
@@ -147,7 +149,7 @@ def build_draft(
         video_segments.append(segment)
         voice = entry["voice"]
         if voice:
-            rel_voice = f"materials/voice_{clip.get('shot_id')}{os.path.splitext(voice)[1] or '.mp3'}"
+            rel_voice = f"materials/voice_{material}{os.path.splitext(voice)[1] or '.mp3'}"
             files[rel_voice] = voice
             audio_id = _uid()
             spoken = entry.get("voice_seconds") or seconds

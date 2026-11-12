@@ -9,6 +9,10 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, Form, File, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 from typing import List, Dict, Any, Optional
 from app.schema.shot_visual import (
+    DraftModeUpdate,
+    ShotHdRequest,
+    ShotRepairRequest,
+    ShotRetakeRequest,
     ShotRegenerateRequest,
     ShotVideoPromptUpdate,
     ProjectVideoModelUpdate,
@@ -74,8 +78,9 @@ from app.schema.writer_dashboard import (
     WriterVersionRestoreRequest,
 )
 from app.schema.character_dashboard import CharacterDashboardResponse
-from app.schema.production import TimelineOperationRequest
+from app.schema.production import TimelineOperationRequest, TimelineRenderRequest
 from app.schema.screenwriting import (
+    DialoguePolishRequest,
     ScreenwritingReviewRequest,
     ScreenwritingRepairRequest,
     ReplanRequest,
@@ -453,7 +458,8 @@ async def _file_character_looks(*, task: Dict[str, Any], task_id: str, owner_id:
     A look belongs to its project: another project's look of the same name is shared only while it says the
     same thing. When only the episodes differ this project gets its own entry with a copy of the picture.
     """
-    looks = plan_looks(task)
+    # 剧本还没写到的那几集穿的也登记：每套戏服都有定妆图可出，写到那几集时不用再补登。
+    looks = plan_looks(task, include_later=True)
     planned = {normalized_asset_name(look["name"]) for look in looks}
     actors = await store.list_all_elements(owner_id, "actor")
     created: List[Dict[str, Any]] = []
@@ -551,6 +557,19 @@ def untimed_character_makeup(task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return {"items": untimed_makeup(task)}
+
+
+@router.post("/{task_id}/character-looks/sync")
+async def sync_character_looks(
+    task_id: str,
+    current_user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """按拆解目录把每套戏服和妆效登记成定妆图(包括剧本还没写到的那几集)；不出图。"""
+    task = await run_in_threadpool(service.repo.get_task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return await _file_character_looks(task=task, task_id=task_id, owner_id=current_user["user_id"], store=store)
 
 
 @router.put("/{task_id}/character-looks/timing")
@@ -763,6 +782,23 @@ def delete_script_document(task_id: str, document_id: str):
     if not removed:
         raise HTTPException(status_code=404, detail="剧本文件不存在")
     return {"deleted": True, "id": document_id}
+
+
+@router.get("/{task_id}/mentionable")
+async def list_mentionable(
+    task_id: str,
+    q: str = Query("", max_length=40),
+    limit: int = Query(50, ge=1, le=200),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """「@」的候选：项目角色、挂在本项目的资产库元素和分镜里的场，按 actor、scene、prop、其他排。"""
+    from app.core import mention_catalog
+
+    task = await run_in_threadpool(service.repo.get_task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    task = {**task, "task_id": str(task.get("task_id") or task_id)}
+    return {"items": await mention_catalog.mentionable_async(store, task, query=q, limit=limit)}
 
 
 @router.post("/{task_id}/assets/rename")
@@ -1112,6 +1148,20 @@ def cast_character_voice(task_id: str, req: CharacterVoiceCastRequest):
     return dashboard.model_dump(mode="json", by_alias=True)
 
 
+@router.get("/{task_id}/characters/{name}/voice-relink-preview")
+def preview_character_voice_relink(task_id: str, name: str, voice: str = Query("", max_length=200)):
+    """What recasting this character's voice would re-dub across the drama (read-only, nothing is paid for)."""
+    from app.service import voice_relink
+
+    try:
+        result = voice_relink.preview_of(service, task_id, name, voice=voice)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
+
+
 @router.get("/{task_id}/shots/visual", response_model=ShotVisualWorkspaceResponse)
 def get_shot_visual_workspace(task_id: str):
     """Stage-5 shot workspace: camera motion, shot type, duration, media and prompts per shot."""
@@ -1229,6 +1279,50 @@ def regenerate_shot(
     if not workspace:
         raise HTTPException(status_code=404, detail="任务不存在")
     return workspace
+
+
+def _shot_fix(call) -> dict:
+    try:
+        workspace = call()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not workspace:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return workspace
+
+
+_SCENE_QUERY = Query("", max_length=40, description="镜头所在场次(如 E1S03)；各场镜号都从 1 起，不给时镜号须全剧唯一")
+_UID_QUERY = Query(None, ge=1, description="全剧唯一的镜头编号，给了就按它找")
+
+
+@router.put("/{task_id}/shots/draft-mode", response_model=ShotVisualWorkspaceResponse)
+def set_draft_mode(task_id: str, req: DraftModeUpdate):
+    """样片模式：第 5 阶段按 480p 出片，看过再逐镜出高清。"""
+    return _shot_fix(lambda: service.set_draft_mode(task_id, req.enabled))
+
+
+@router.post("/{task_id}/shots/{shot_id}/hd", response_model=ShotVisualWorkspaceResponse)
+def shot_to_hd(task_id: str, shot_id: int, req: ShotHdRequest, scene_id: str = _SCENE_QUERY, shot_uid: int | None = _UID_QUERY):
+    """样片转高清：upscale 当场本地放大；regenerate 标记这一镜，重跑第 5 阶段时按全分辨率、同提示词同种子重出。"""
+    if req.mode == "upscale":
+        return _shot_fix(lambda: service.upscale_shot(task_id, shot_id, scene_id=scene_id, shot_uid=shot_uid))
+    return _shot_fix(lambda: service.regenerate_shot(task_id, shot_id, scene_id=scene_id, shot_uid=shot_uid, hd=True))
+
+
+@router.post("/{task_id}/shots/{shot_id}/retake", response_model=ShotVisualWorkspaceResponse)
+def retake_shot(task_id: str, shot_id: int, req: ShotRetakeRequest, scene_id: str = _SCENE_QUERY, shot_uid: int | None = _UID_QUERY):
+    """从第几秒往后重做：之前的画面保留，重跑第 5 阶段时只重出后面这几秒再接回去。"""
+    return _shot_fix(lambda: service.regenerate_shot(
+        task_id, shot_id, scene_id=scene_id, shot_uid=shot_uid, retake_from=req.from_seconds, note=req.note,
+    ))
+
+
+@router.post("/{task_id}/shots/{shot_id}/repair", response_model=ShotVisualWorkspaceResponse)
+def repair_shot(task_id: str, shot_id: int, req: ShotRepairRequest, scene_id: str = _SCENE_QUERY, shot_uid: int | None = _UID_QUERY):
+    """区域修补：只改框出来的那一块，其余原样；后台跑，进度看本镜的 repair 字段。"""
+    return _shot_fix(lambda: service.repair_shot(
+        task_id, shot_id, box=req.box.model_dump(), note=req.note, start=req.start, end=req.end, scene_id=scene_id, shot_uid=shot_uid,
+    ))
 
 
 @router.post("/{task_id}/shots/{shot_id}/visual/recipe")
@@ -1535,10 +1629,10 @@ def edit_timeline_route(task_id: str, req: TimelineOperationRequest, current_use
 
 
 @router.post("/{task_id}/timeline/render")
-def render_timeline(task_id: str, current_user: dict = Depends(require_owned_drama_task)):
-    """Render the film again from the timeline as edited, without re-running stage 7."""
+def render_timeline(task_id: str, req: Optional[TimelineRenderRequest] = None, current_user: dict = Depends(require_owned_drama_task)):
+    """Render the film again from the timeline as edited, without re-running stage 7; ``episode`` picks a finished episode."""
     try:
-        result = service.render_timeline(task_id)
+        result = service.render_timeline(task_id, episode=req.episode if req else None)
     except ScriptUpdateConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
@@ -1679,6 +1773,22 @@ def preview_screenwriting_prompt(task_id: str, episode: int, stage: str = "plan"
     if prompt is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     return ScreenwritingPromptPreviewResponse(task_id=task_id, episode=episode, stage=stage, prompt=prompt)
+
+
+@router.post("/{task_id}/screenwriting/episodes/{episode}/polish-dialogue")
+def polish_dialogue(task_id: str, episode: int, req: DialoguePolishRequest):
+    """润色台词(一次文本模型调用)：逐句给出改前改后，不写回；采纳后用分镜规划的编辑接口写回。"""
+    try:
+        result = service.polish_dialogue(task_id, episode, scene_ids=req.scene_ids, scene_kind=req.scene_kind, extra=req.extra)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    if result is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return result
 
 
 @router.patch("/{task_id}/screenwriting/episodes/{episode}/plan", response_model=ScreenwritingEpisodeResponse)
@@ -2013,6 +2123,21 @@ async def optimize_stage(task_id: str, scene_id: str, req: StageChatRequest):
 @router.post("/{task_id}/director-desk/scenes/{scene_id}/director/revert")
 def revert_stage_step(task_id: str, scene_id: str, req: StageRevertRequest):
     return _spatial_call(task_id, scene_id, lambda: stage_director.revert(
+        service, task_id, scene_id, snapshot_id=req.snapshot_id, base_revision=req.base_revision,
+    ))
+
+
+class StageRestoreRequest(BaseModel):
+    snapshot_id: str = Field(..., min_length=1, max_length=40)
+    base_revision: Optional[int] = Field(None, ge=0)
+
+
+@router.post("/{task_id}/director-desk/scenes/{scene_id}/director/restore")
+def restore_stage_snapshot(task_id: str, scene_id: str, req: StageRestoreRequest, current_user: dict = Depends(require_owned_drama_task)):
+    """侧栏卡片上的「撤销这一步」：回到某个快照(含钉住的)，换下来的舞台另存一步，可以再撤回来。不调模型。"""
+    from app.service import stage_director_ops
+
+    return _spatial_call(task_id, scene_id, lambda: stage_director_ops.restore_snapshot(
         service, task_id, scene_id, snapshot_id=req.snapshot_id, base_revision=req.base_revision,
     ))
 
@@ -2436,16 +2561,22 @@ def produce_episode_route(task_id: str, ep_index: int, background_tasks: Backgro
     return {"status": "running", "episode": ep_index, "message": f"第{ep_index}集已开始后台制作，请轮询 /episodes 查看进度"}
 
 @router.post("/{task_id}/assistant")
-async def assistant_chat(task_id: str, payload: Dict[str, str], current_user: dict = Depends(require_owned_drama_task)):
+async def assistant_chat(task_id: str, payload: Dict[str, Any], current_user: dict = Depends(require_owned_drama_task)):
     """
     自然语言流程助手：意图识别 (执行下一步/重跑阶段N/暂停/查询进度/微调/答疑)，
     执行类动作后台异步启动并立即返回；前端轮询 /status 的 stageProgress 展示调用过程与进度条。
+    payload.context 是侧栏带来的界面状态(scene_id / shot_id / character / view / stage)，只告诉工具助手当前打开了什么。
     """
-    message = payload.get("message", "").strip()
+    message = str(payload.get("message") or "").strip()
     if not message:
         raise HTTPException(status_code=400, detail="消息内容不能为空")
+    raw_context = payload.get("context")
+    context = {
+        key: value for key, value in (raw_context.items() if isinstance(raw_context, dict) else ())
+        if key in ("scene_id", "shot_id", "character", "view", "stage") and isinstance(value, (str, int)) and not isinstance(value, bool)
+    } or None
     try:
-        result = await service.assistant_message(task_id, message, user=current_user)
+        result = await service.assistant_message(task_id, message, user=current_user, context=context)
         return {
             "reply": result["reply"],
             "action": result["action"],

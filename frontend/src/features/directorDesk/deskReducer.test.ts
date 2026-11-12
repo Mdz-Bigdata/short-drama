@@ -100,6 +100,34 @@ describe('optimistic edits and history', () => {
     expect(state.redo[0].forward[0]).toMatchObject({ op: 'add_camera', shot_id: 1, position: [0, 1.45, 5.2] });
   });
 
+  it('keeps the cuts an undo is bringing back when a cut is edited before the answer', () => {
+    const cuts = [{ id: 'cut-1', camera_id: 'alt-01-01', start: 1, end: 2 }, { id: 'cut-2', camera_id: 'cam-01', start: 3, end: 4 }];
+    const base = planResponse().plan;
+    const held = {
+      cameras: [...base.cameras, { ...base.cameras[0], id: 'alt-01-01', label: '候选' }],
+      shots: [{ ...base.shots[0], alt_camera_ids: ['alt-01-01'] }, base.shots[1]],
+      timelines: { 1: { duration_s: 5, fps: 24 as const, camera: [], actors: {}, cuts } },
+    };
+    const without = { revision: 4, timelines: { 1: { ...held.timelines[1], cuts: [cuts[1]] } } };
+    let state = run(initialDeskState, { type: 'loaded', response: planResponse({}, held) },
+      edit(1, [{ op: 'remove_camera', camera_id: 'alt-01-01' }], 'edit', '删除机位'), { type: 'applied', response: planResponse({}, without), editIds: [1] });
+    expect(state.plan?.timelines?.['1'].cuts).toEqual([cuts[1]]);
+
+    // Ctrl+Z is on its way; the lens and both cuts are already on the desk.
+    state = run(state, edit(2, state.undo[0].inverse, 'undo', '删除机位'));
+    expect(state.plan?.cameras.map(camera => camera.id)).toContain('alt-01-01');
+    expect(state.plan?.timelines?.['1'].cuts).toEqual(cuts);
+
+    // The timeline panel sends the whole list of cuts, built from what the desk shows.
+    const trimmed = [cuts[0], { ...cuts[1], end: 4.5 }];
+    state = run(state, edit(3, [{ op: 'set_timeline', shot_id: 1, cuts: trimmed }], 'edit', '调整切机位'));
+    expect(state.pending[1].operations[0].cuts).toEqual(trimmed);
+    expect(state.pending[1].inverse).toEqual([{ op: 'set_timeline', shot_id: 1, cuts }]);
+    state = run(state, { type: 'applied', response: planResponse({}, { ...held, revision: 5 }), editIds: [2] });
+    expect(state.plan?.timelines?.['1'].cuts).toEqual(trimmed);
+    expect(state.redo[0].forward).toEqual([{ op: 'remove_camera', camera_id: 'alt-01-01' }]);
+  });
+
   it('clears the history after an edit that cannot be taken back', () => {
     let state = run(loaded(), edit(1, [moveTo(1)]), { type: 'applied', response: serverAt(4, 1), editIds: [1] });
     state = run(state, { type: 'edit', id: 2, kind: 'edit', label: '删除群演', operations: [{ op: 'remove_crowd', crowd_id: 'crowd-01' }], irreversible: true }, { type: 'applied', response: serverAt(5, 1), editIds: [2] });
@@ -139,7 +167,36 @@ describe('rejections', () => {
     expect(invalid.plan?.actors[0].position).toEqual([-1.3, 0]);
     expect(run(invalid, { type: 'select', ref: { kind: 'actor', name: '周教授' } }).inspectorError).toBe('');
 
-    expect(run(pendingTwo(), { type: 'rejected', editIds: [1, 2], status: 502, message: '空间调度服务暂不可用，请稍后重试' }).notice).toBe('空间调度服务暂不可用，请稍后重试');
+    // The save light alone is easy to miss: the notice says outright that the edit is gone.
+    expect(run(pendingTwo(), { type: 'rejected', editIds: [1, 2], status: 502, message: '空间调度服务暂不可用，请稍后重试' }).notice)
+      .toBe('空间调度服务暂不可用，请稍后重试（刚才的修改没有保存，请重新操作）');
+  });
+
+  it('gives an undo or redo that never reached the server its history entry back', () => {
+    const two = run(loaded(), edit(1, [moveTo(1)], 'edit', '第一步'), { type: 'applied', response: serverAt(4, 1), editIds: [1] },
+      edit(2, [moveTo(2)], 'edit', '第二步'), { type: 'applied', response: serverAt(5, 2), editIds: [2] });
+    const history = two.undo;
+
+    // Two Ctrl+Z in one batch, lost with the connection: both entries return, in their old order.
+    const undoing = run(two, edit(3, history[1].inverse, 'undo', '第二步'), edit(4, history[0].inverse, 'undo', '第一步'));
+    expect(undoing.undo).toEqual([]);
+    const lost = run(undoing, { type: 'rejected', editIds: [3, 4], status: 0, message: '保存失败，请稍后重试。' });
+    expect(lost.undo).toEqual(history);
+    expect(lost.redo).toEqual([]);
+    expect(lost.plan?.actors[0].position).toEqual([2, 0]);
+
+    // The same for a redo.
+    const undone = run(two, edit(3, history[1].inverse, 'undo', '第二步'), { type: 'applied', response: serverAt(6, 1), editIds: [3] });
+    const redoEntry = undone.redo[0];
+    const redoing = run(undone, edit(4, redoEntry.forward, 'redo', '第二步'), { type: 'rejected', editIds: [4], status: 502, message: '空间调度服务暂不可用，请稍后重试' });
+    expect(redoing.redo).toEqual([redoEntry]);
+    expect(redoing.undo).toEqual([history[0]]);
+
+    // A refusal is an answer: replaying it would only be refused again, and a conflict re-reads the plan.
+    const refused = run(two, edit(3, history[1].inverse, 'undo', '第二步'), { type: 'rejected', editIds: [3], status: 422, message: 'position 超出场地范围' });
+    expect(refused.undo).toEqual([history[0]]);
+    const conflict = run(two, edit(3, history[1].inverse, 'undo', '第二步'), { type: 'rejected', editIds: [3], status: 409, message: '空间方案已在其他页面更新，请刷新后重试' });
+    expect(conflict.undo).toEqual([history[0]]);
   });
 
   it('tells a newer revision from a generation lock', () => {

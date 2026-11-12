@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -364,4 +364,220 @@ describe('ModelConfigurationCenter', () => {
     expect(screen.queryByTestId('provider-key-hint')).toBeNull();
   });
 
+  it('takes focus when it opens and closes on Escape, dropping the unsaved key', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/providers')) return { ok: true, json: async () => providers } as Response;
+      return { ok: true, json: async () => ({ items: [], summary: { text: 0, image: 0, video: 0, audio: 0 } }) } as Response;
+    });
+    const onClose = vi.fn();
+    render(<ModelConfigurationCenter open canManage onClose={onClose} />);
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: /文本模型/ }));
+    await userEvent.selectOptions(await screen.findByLabelText('AI 供应商'), 'openai');
+    const secret = screen.getByLabelText('API 密钥') as HTMLInputElement;
+    await userEvent.type(secret, 'unsaved-api-secret');
+    fireEvent.keyDown(secret, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(secret.value).toBe('');
+  });
+
+  it('brings a failed save into view instead of leaving it under the footer', async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    try {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.endsWith('/providers')) return { ok: true, json: async () => providers } as Response;
+        if (url.endsWith('/discover')) return { ok: true, json: async () => ({
+          items: [{ model_id: 'writer', display_name: 'Writer', description: '', category: 'text', subcategory: null, capabilities: ['text'] }], total: 1,
+        }) } as Response;
+        if (init?.method === 'POST') return { ok: false, status: 400, json: async () => ({ detail: '密钥被供应商拒绝' }) } as Response;
+        return { ok: true, json: async () => ({ items: [], summary: { text: 0, image: 0, video: 0, audio: 0 } }) } as Response;
+      });
+      render(<ModelConfigurationCenter open canManage onClose={() => undefined} />);
+      await userEvent.selectOptions(await screen.findByLabelText('AI 供应商'), 'openai');
+      await userEvent.type(screen.getByLabelText('API 密钥'), 'api-key-from-form');
+      await userEvent.click(screen.getByRole('button', { name: '加载模型' }));
+      await userEvent.click(await screen.findByRole('checkbox', { name: /Writer/ }));
+      scrollIntoView.mockClear();
+      await userEvent.click(screen.getByRole('button', { name: '保存配置' }));
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain('密钥被供应商拒绝');
+      expect(scrollIntoView.mock.contexts).toContain(alert);
+      expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: 'center' }));
+      // What was typed stays for another try.
+      expect((screen.getByLabelText('API 密钥') as HTMLInputElement).value).toBe('api-key-from-form');
+    } finally {
+      delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
+  it('leaves the dialog where it is when models load by themselves while a key is typed', async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    try {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = String(input);
+        if (url.endsWith('/providers')) return { ok: true, json: async () => providers } as Response;
+        if (url.endsWith('/discover')) return { ok: true, json: async () => ({
+          items: [{ model_id: 'writer', display_name: 'Writer', description: '', category: 'text', subcategory: null, capabilities: ['text'] }], total: 1,
+        }) } as Response;
+        return { ok: true, json: async () => ({ items: [], summary: { text: 0, image: 0, video: 0, audio: 0 } }) } as Response;
+      });
+      render(<ModelConfigurationCenter open canManage onClose={() => undefined} />);
+      await userEvent.selectOptions(await screen.findByLabelText('AI 供应商'), 'openai');
+      await userEvent.type(screen.getByLabelText('API 密钥'), 'typed-api-key');
+      expect(await screen.findByText('已加载 1 个可用模型', {}, { timeout: 3000 })).toBeTruthy();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+
+      // Pressing the button is asking for the outcome, so that one is brought into view.
+      await userEvent.click(screen.getByRole('button', { name: '加载模型' }));
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+    } finally {
+      delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
+  it('stays put when a second load that started by itself ends after the first', async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    const answers: Array<(total: number) => void> = [];
+    try {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = String(input);
+        if (url.endsWith('/providers')) return { ok: true, json: async () => providers } as Response;
+        if (url.endsWith('/discover')) {
+          const total = await new Promise<number>(resolve => { answers.push(resolve); });
+          const items = Array.from({ length: total }, (_, index) => ({ model_id: `m${index}`, display_name: `M${index}`, description: '', category: 'text', subcategory: null, capabilities: ['text'] }));
+          return { ok: true, json: async () => ({ items, total }) } as Response;
+        }
+        return { ok: true, json: async () => ({ items: [], summary: { text: 0, image: 0, video: 0, audio: 0 } }) } as Response;
+      });
+      render(<ModelConfigurationCenter open canManage onClose={() => undefined} />);
+      await userEvent.selectOptions(await screen.findByLabelText('AI 供应商'), 'openai');
+      const secret = screen.getByLabelText('API 密钥');
+      await userEvent.type(secret, 'typed-api-key');
+      await waitFor(() => expect(answers).toHaveLength(1), { timeout: 3000 });
+      // The provider is slow and the person goes on typing: a second load starts before the first ends.
+      await userEvent.type(secret, '-2');
+      await waitFor(() => expect(answers).toHaveLength(2), { timeout: 3000 });
+      answers[0](1);
+      await new Promise(resolve => setTimeout(resolve, 50));
+      // The first load is for a key that has changed since, so it writes nothing.
+      expect(screen.queryByText('已加载 1 个可用模型')).toBeNull();
+      answers[1](2);
+      expect(await screen.findByText('已加载 2 个可用模型')).toBeTruthy();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    } finally {
+      delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
+  it('brings a failure from the saved list into view while a load that started by itself is still out', async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    const saved = {
+      id: 'cfg-1', category: 'text', provider: 'openai', provider_label: 'OpenAI', base_url: 'https://api.openai.com/v1', has_api_key: true, key_hint: '****main', enabled: true,
+      models: [{ id: 'entry-1', model_id: 'remote-omni', display_name: 'Remote Omni', description: '', category: 'text', subcategory: null, capabilities: ['text'], enabled: true }],
+    };
+    let discovering = 0;
+    try {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.endsWith('/providers')) return { ok: true, json: async () => providers } as Response;
+        if (url.endsWith('/discover')) {
+          discovering += 1;
+          return new Promise<Response>(() => undefined);
+        }
+        if (init?.method === 'PATCH') return { ok: false, status: 500, json: async () => ({ detail: '状态没有改成' }) } as Response;
+        return { ok: true, json: async () => ({ items: [saved], summary: { text: 1, image: 0, video: 0, audio: 0 } }) } as Response;
+      });
+      render(<ModelConfigurationCenter open canManage onClose={() => undefined} />);
+      await userEvent.selectOptions(await screen.findByLabelText('AI 供应商'), 'openai');
+      await userEvent.type(screen.getByLabelText('API 密钥'), 'typed-api-key');
+      await waitFor(() => expect(discovering).toBe(1), { timeout: 3000 });
+
+      await userEvent.click(screen.getByRole('switch', { name: 'Remote Omni 全局启用' }));
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain('状态没有改成');
+      expect(scrollIntoView.mock.contexts).toContain(alert);
+    } finally {
+      delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
+  it('keeps the outcome for the corrected key when the load for the mistyped one ends last', async () => {
+    const answers: Array<{ key: string; answer: (ok: boolean) => void }> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/providers')) return { ok: true, json: async () => providers } as Response;
+      if (url.endsWith('/discover')) {
+        const key = JSON.parse(String(init?.body)).api_key as string;
+        const ok = await new Promise<boolean>(resolve => { answers.push({ key, answer: resolve }); });
+        return ok
+          ? { ok: true, json: async () => ({ items: [{ model_id: 'writer', display_name: 'Writer', description: '', category: 'text', subcategory: null, capabilities: ['text'] }], total: 1 }) } as Response
+          : { ok: false, status: 401, json: async () => ({ detail: '密钥被供应商拒绝' }) } as Response;
+      }
+      return { ok: true, json: async () => ({ items: [], summary: { text: 0, image: 0, video: 0, audio: 0 } }) } as Response;
+    });
+    render(<ModelConfigurationCenter open canManage onClose={() => undefined} />);
+    await userEvent.selectOptions(await screen.findByLabelText('AI 供应商'), 'openai');
+    const secret = screen.getByLabelText('API 密钥');
+    await userEvent.type(secret, 'mistyped-key');
+    await waitFor(() => expect(answers).toHaveLength(1), { timeout: 3000 });
+    await userEvent.clear(secret);
+    await userEvent.type(secret, 'corrected-key');
+    await waitFor(() => expect(answers).toHaveLength(2), { timeout: 3000 });
+    expect(answers.map(item => item.key)).toEqual(['mistyped-key', 'corrected-key']);
+
+    answers[1].answer(true);
+    expect(await screen.findByRole('checkbox', { name: /Writer/ })).toBeTruthy();
+    answers[0].answer(false);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('checkbox', { name: /Writer/ })).toBeTruthy();
+    expect(screen.getByText('已加载 1 个可用模型')).toBeTruthy();
+  });
+
+  it('sends no update when the person chooses to export a modified endpoint first, and deletes an endpoint once', async () => {
+    const settings = {
+      video_endpoints: [{ family: 'acme_video', label: 'Acme', base_url: 'https://video.acme.test', model_ids: ['acme-v1'], modes: ['text'], has_api_key: true, key_hint: '****key', enabled: true, ready: true, spec: {} }],
+      video_endpoint_placeholders: ['prompt'],
+      comfyui: { family: 'comfyui', label: 'ComfyUI', configured: false, workflow: '', ready: false, problems: [], how_to: '' },
+    };
+    const entry = { slug: 'acme-video', name: 'Acme 视频端点', version: '1.1.0', kind: 'video_endpoint', summary: '', author: '', tags: [], source_id: 'src1', source_key: 'github:acme/market@main', source_label: 'Acme', installed: true, installed_family: 'acme_video', installed_version: '1.0.0', market_status: 'update_available', modified: true };
+    const sent: Array<{ url: string; method: string; body?: unknown }> = [];
+    let releaseDelete: () => void = () => undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (method !== 'GET') sent.push({ url: url.split('/api')[1], method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (method === 'DELETE') await new Promise<void>(resolve => { releaseDelete = resolve; });
+      if (url.endsWith('/providers')) return { ok: true, json: async () => providers } as Response;
+      if (url.endsWith('/api/market/sources')) return { ok: true, json: async () => ({ items: [] }) } as Response;
+      if (url.endsWith('/api/market/entries')) return { ok: true, json: async () => ({ items: [entry] }) } as Response;
+      if (url.endsWith('/api/market/installed')) return { ok: true, json: async () => ({ items: [] }) } as Response;
+      return { ok: true, json: async () => ({ items: [], summary: { text: 0, image: 0, video: 0, audio: 0 }, settings }) } as Response;
+    });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    render(<ModelConfigurationCenter open canManage onClose={() => undefined} />);
+    await userEvent.click(await screen.findByRole('tab', { name: /视频模型/ }));
+    const update = await screen.findByRole('button', { name: '更新 acme-video' });
+
+    await userEvent.click(update);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(sent).toEqual([]);
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    await userEvent.click(update);
+    await waitFor(() => expect(sent.some(call => call.url.endsWith('/acme-video/install'))).toBe(true));
+    expect(sent.find(call => call.url.endsWith('/acme-video/install'))?.body).toEqual({ overwrite: false, discard_local: true });
+
+    const remove = screen.getByRole('button', { name: '删除端点 acme_video' }) as HTMLButtonElement;
+    fireEvent.click(remove);
+    await waitFor(() => expect(remove.disabled).toBe(true));
+    fireEvent.click(remove);
+    releaseDelete();
+    expect(sent.filter(call => call.method === 'DELETE')).toHaveLength(1);
+  });
 });

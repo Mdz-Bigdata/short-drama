@@ -10,6 +10,10 @@ export const LANDMARK_COLOR: Record<StageLandmark['kind'], string> = {
   prop: '#ce8818', furniture: '#6d555f', architecture: '#927481', light: '#e68100',
 };
 export const SELECTION_COLOR = '#e6a000';
+/** The floor as a lens films it: what stills, depth passes and clips are made from. */
+export const FLOOR_COLOR = '#d9d9dd';
+/** The floor under the director's own view, a step darker so a pale figure keeps its outline against it. Nothing is captured from that view. */
+export const DESK_FLOOR_COLOR = '#9fa0a9';
 
 export const SHAPE_LABELS: Record<LandmarkShape, string> = {
   box: '立方体', cylinder: '圆柱', sphere: '球体', cone: '圆锥', wedge: '楔形', plane: '平面',
@@ -27,6 +31,9 @@ const HEX = /^#[0-9a-f]{6}$/i;
 export function actorColor(actor: Pick<StageActor, 'color' | 'role'>): string {
   return actor.color && HEX.test(actor.color) ? actor.color : ROLE_COLOR[actor.role];
 }
+
+/** What the lens draws for a plain-colour backdrop with no colour chosen yet. */
+export const BACKDROP_UNSET_COLOR = '#fdf0f2';
 
 /** A reference-image blockout is a grey box until somebody paints a piece. */
 export const BLOCKOUT_COLOR = '#b4b4b8';

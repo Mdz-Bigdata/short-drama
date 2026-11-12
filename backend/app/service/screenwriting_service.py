@@ -19,7 +19,7 @@ from typing import Any
 
 from app import settings
 from app.core.production_knowledge import load_section, stage_lessons_block
-from app.core import creation_modes, emotion_points, literary, llm_profile, poetry_library
+from app.core import creation_modes, emotion_points, literary, llm_profile, poetry_library, prompt_data, technique_look
 from app.core.screenwriting import review
 from app.core.screenwriting.durations import resolve_episode_target_seconds
 from app.core.screenwriting.engine import ENGINE_NAME, ScreenwritingEngine, detect_source_kind
@@ -48,7 +48,7 @@ LEGACY_ENGINE = "legacy"
 # budgeted instead of injected in full like the single-shot legacy prompt.
 WRITER_KNOWLEDGE_SECTIONS: tuple[str, ...] = (
     "cinema-craft-redlines", "golden-narrative", "episode-hook-ladder", "scene-craft-dialogue", "payoff-arc-craft",
-    "character-relationship-craft", "dialogue-pacing", "performance-details",
+    "character-relationship-craft", "causal-chain-craft", "tension-craft", "dialogue-pacing", "performance-details",
 )
 
 WRITER_METHODOLOGY = (
@@ -110,6 +110,8 @@ def writer_system_prompt(
         "scene-craft-dialogue": "场次工艺与对白技法（每集一件新东西 / 爽点三段落台词 / 对手物证 / 一场戏六行 / 台词四型与含蓄四法）",
         "payoff-arc-craft": "爽点底线与主角强弱两段弧（杀伐果断横推 / 不按套路 / 弱时智谋苟道、强时杀伐 / 爽点谱系）",
         "character-relationship-craft": "主角拷问与人物关系架法（一句话梗概 / 拷问主角 / 关系六性 / 一条主线 / 小事折射大事）",
+        "causal-chain-craft": "因果链（节点之间连「所以」/ 每个节点改变目标、关系、认知或处境 / 关键转折由人物选择触发 / 写完一场过三问）",
+        "tension-craft": "紧张感（信息差让观众先知道 / 延迟兑现 / 平静→异常→逼近→爆发与被打破的缓冲 / 写完问三句）",
         "dialogue-pacing": "台词语速情绪与停顿重音标注规范",
         "performance-details": "表演细节与具象物理动作指导",
     }
@@ -118,6 +120,22 @@ def writer_system_prompt(
         text = load_section(key, budget=budget) if budget else ""
         if text:
             parts.append(f"【{labels[key]}】：\n{text}")
+    story = " ".join(str((config or {}).get(key) or "") for key in ("title_suggestion", "guidance_instruction")) + f" {keywords}"
+    if budget and stage != "extract" and technique_look.power_system_applies(text=story):
+        # 修仙 / 武侠：境界、功法品级、代价全剧一套，术法起名就想好它长什么样。
+        power_system = load_section("xianxia-power-system", budget=budget + 1500)
+        if power_system:
+            parts.append(f"【{prompt_data.text('technique_look', 'power_system_title')}】：\n{power_system}")
+        # 设定谱(功法、丹药、宗门、法宝条目)只给定计划和写正文的两步，画面层与抽取用不上。
+        # 只给修仙 / 武侠故事：整份给，条目截掉一半不如不给。
+        catalog = load_section("xianxia-catalog", budget=0) if stage == "write" else ""
+        if catalog:
+            parts.append(f"【{prompt_data.text('technique_look', 'catalog_title')}】：\n{catalog}")
+    if budget and stage == "write" and technique_look.world_applies(text=story):
+        # 修仙世界的称谓、服饰、妖兽、坊市：写台词和场面时用得上。
+        world = load_section("xianxia-world", budget=0)
+        if world:
+            parts.append(f"【{prompt_data.text('technique_look', 'world_title')}】：\n{world}")
     if shanyin_core and budget and stage == "write":
         parts.append("【山音超级编剧大师核心指导规范（节选）】：\n" + shanyin_core[: budget + 500])
     if stage == "write" and budget:
@@ -232,9 +250,13 @@ def carry_authored(previous: Mapping[str, Any] | None, breakdown: dict[str, Any]
         return breakdown
     # Relations a person edited or asked the analyser for win; ones the inventory produced are
     # re-read from the state, so a newer inventory is not shadowed by an older projection.
-    if previous.get("relationships") and (previous.get("relationships_authored") or not breakdown.get("relationships")):
+    # An authored list comes across even when the person emptied it, so a re-projection cannot refill it.
+    if previous.get("relationships_authored") and isinstance(previous.get("relationships"), list):
         breakdown["relationships"] = list(previous["relationships"])
-        breakdown["relationships_authored"] = bool(previous.get("relationships_authored"))
+        breakdown["relationships_authored"] = True
+    elif previous.get("relationships") and not breakdown.get("relationships"):
+        breakdown["relationships"] = list(previous["relationships"])
+        breakdown["relationships_authored"] = False
     if previous.get("hidden_roles"):
         breakdown["hidden_roles"] = list(previous["hidden_roles"])
     positions = previous.get("role_positions") if isinstance(previous.get("role_positions"), Mapping) else {}
@@ -264,6 +286,14 @@ def apply_state(assets: dict[str, Any], state: dict[str, Any]) -> tuple[str, dic
     assets["2"] = text
     assets["2_breakdown"] = breakdown
     return text, breakdown
+
+
+def board_breakdown(assets: Mapping[str, Any], state: Mapping[str, Any]) -> dict[str, Any]:
+    """创作看板与人物关系：概述、角色和关系定下来就能显示的那部分拆解，剧本正文还没有。
+
+    人手改过的关系、角色位置照样保留；分镜场次要等逐集剧本写完才有，这里是空的。
+    """
+    return carry_authored(assets.get("2_breakdown"), render_breakdown(state))
 
 
 def written_episode_numbers(state: Mapping[str, Any]) -> list[int]:

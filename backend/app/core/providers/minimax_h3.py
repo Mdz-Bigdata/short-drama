@@ -221,8 +221,9 @@ class MiniMaxH3Client:
             "resolution": h3_resolution(request.resolution).upper(),
         }
         # H3 derives image/reference aspect ratios from the supplied media.
-        # Only pure text generation requires an explicit non-adaptive ratio.
-        if request.inferred_mode == "text":
+        # Only pure text generation requires an explicit non-adaptive ratio —
+        # and 480P drafts: there H3 refuses ref2va without one (1000 aspect ratio "" is not supported).
+        if request.inferred_mode == "text" or h3_resolution(request.resolution) == "480p":
             payload["ratio"] = request.aspect_ratio
         if request.seed is not None:
             payload["seed"] = request.seed

@@ -2,7 +2,6 @@
    redefines those same tokens for this layer, so a future app-wide dark theme needs no change here. */
 .canvas-workspace {
   --cn-canvas: var(--bg-0);
-  --cn-dot: rgba(var(--ink-rgb), 0.14);
   --cn-node: var(--surface);
   --cn-field: var(--surface-2);
   position: fixed;
@@ -39,7 +38,7 @@
   color-scheme: dark;
 }
 
-.canvas-workspace svg:not(.cn-edges, .cn-minimap) { width: 0.95rem; height: 0.95rem; flex: none; }
+.canvas-workspace svg:not(.cn-edges) { width: 0.95rem; height: 0.95rem; flex: none; }
 
 .cn-topbar {
   padding: 0.45rem 0.85rem;
@@ -160,9 +159,12 @@
   user-select: none;
   cursor: default;
   background-color: var(--cn-canvas);
-  background-image: radial-gradient(var(--cn-dot) 1px, transparent 1px);
 }
-.cn-surface[data-grid='off'] { background-image: none; }
+/* The surface and what floats over it (selection toolbar, zoom controls) share this box and its coordinates. */
+.cn-viewport { position: relative; flex: 1; min-height: 0; display: flex; }
+.cn-viewport > .cn-surface { flex: 1; min-width: 0; }
+/* Bled past the top-left so the pattern stays anchored to world (0, 0); see canvasBackground.ts. */
+.cn-backdrop { position: absolute; inset: -64px 0 0 -64px; pointer-events: none; }
 .cn-surface.is-panning { cursor: grab; }
 .cn-world { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; }
 .cn-edges { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
@@ -273,6 +275,7 @@
 }
 .cn-group.is-selected { border-color: var(--accent); }
 .cn-group__head {
+  max-width: 100%;
   width: fit-content;
   padding: 0.25rem 0.55rem;
   display: flex;
@@ -299,6 +302,8 @@
 .cn-kind--previz { --cn-kind: rgba(var(--accent-2-rgb), 0.3); }
 
 .cn-marquee { position: absolute; border: 1px solid var(--accent); background: rgba(var(--accent-rgb), 0.1); pointer-events: none; }
+/* Dragged leftwards it takes whatever it touches: drawn dashed, the way design tools tell the two apart. */
+.cn-marquee.is-intersect { border-style: dashed; background: rgba(var(--accent-rgb), 0.06); }
 .cn-guide { position: absolute; left: 0; top: 0; background: var(--accent); pointer-events: none; }
 .cn-guide--x { width: 1px; }
 .cn-guide--y { height: 1px; }
@@ -314,17 +319,6 @@
   pointer-events: none;
 }
 .cn-overlay-bottom > * { pointer-events: auto; }
-.cn-minimap {
-  width: 11rem;
-  height: 7.5rem;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  background: var(--surface);
-  cursor: pointer;
-}
-.cn-mini { fill: var(--cn-kind, var(--line-strong)); }
-.cn-mini.cn-kind--group { fill: transparent; stroke: var(--line-strong); }
-.cn-mini-window { fill: rgba(var(--accent-rgb), 0.12); stroke: var(--accent); stroke-width: 1.5; }
 .cn-bookmarks { display: flex; gap: 0.15rem; padding: 0.2rem; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
 .cn-bookmarks button {
   width: 1.45rem;
@@ -370,6 +364,8 @@
   box-shadow: 0 10px 28px var(--shadow);
 }
 .cn-help h3 { margin: 0 0 0.4rem; font-size: 0.85rem; color: var(--ink); }
+.cn-help h4 { margin: 0.5rem 0 0.15rem; color: var(--text-muted); font-size: 0.72rem; font-weight: 600; }
+.cn-help section:first-of-type h4 { margin-top: 0; }
 .cn-help dl { margin: 0; }
 .cn-help dl > div { padding: 0.15rem 0; display: flex; justify-content: space-between; gap: 0.8rem; }
 .cn-help dt { color: var(--text-main); font-weight: 600; white-space: nowrap; }
@@ -492,7 +488,6 @@
 
 @media (max-width: 900px) {
   .cn-side { position: absolute; right: 0; top: 0; bottom: 0; z-index: 5; }
-  .cn-minimap { display: none; }
 }
 
 /* The tool node */
@@ -535,3 +530,41 @@
 .cn-htmlframe { flex: 1; width: 100%; min-height: 8rem; background: #fff; border: 1px solid var(--border-color); border-radius: 0.25rem; }
 .cn-seam.is-suspect { color: var(--warning); }
 .cn-seam.is-jump { color: var(--danger); }
+
+/* Levels of detail: a preview is the card without its editors or players. */
+.cn-node.is-preview .cn-node__body { gap: 0.25rem; }
+.cn-preview-tile { position: relative; display: flex; align-items: center; justify-content: center; color: var(--text-dim); }
+.cn-preview-tile > svg { width: 1.6rem; height: 1.6rem; }
+.cn-preview-text { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+
+/* Groups fold to a small card; the whole card can then be grabbed. */
+.cn-frame--group.is-collapsed { pointer-events: auto; }
+.cn-group.is-collapsed { display: flex; flex-direction: column; border-style: solid; background: var(--cn-node); box-shadow: 0 6px 18px var(--shadow); }
+.cn-group__count { padding: 0 0.6rem; }
+.cn-group__toggle {
+  width: 1.2rem;
+  height: 1.2rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.cn-group__toggle:hover { color: var(--accent); background: var(--surface-2); }
+
+.cn-title-input { flex: 1; min-width: 0; padding: 0.05rem 0.3rem !important; font-weight: 600; }
+.cn-bg-select { width: auto; max-width: 6rem; }
+
+/* Changed by someone else (the assistant, another window): lit up for a moment. */
+.cn-frame.cn-flash { border-radius: 10px; animation: cn-flash 1200ms ease-out; }
+@keyframes cn-flash {
+  0%, 30% { box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.7); }
+  100% { box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cn-frame.cn-flash { animation: none; box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.6); }
+}

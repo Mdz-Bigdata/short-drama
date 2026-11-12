@@ -1,10 +1,10 @@
 import { useEffect, useMemo } from 'react';
-import { Text } from '@react-three/drei';
 import type { ThreeEvent } from '@react-three/fiber';
 import { BufferGeometry, Color, DoubleSide, Float32BufferAttribute, FrontSide } from 'three';
 
 import type { LandmarkPart, StageLandmark } from '../../../spatial/spatialTypes';
 import { HELPER_FLAG } from '../../lib/capture';
+import { StageLabel } from '../StageLabel';
 import { SELECTION_COLOR, landmarkColor } from '../stageLook';
 
 interface Props {
@@ -51,6 +51,9 @@ function ShapeGeometry({ shape }: { shape: StageLandmark['shape'] }) {
 }
 
 const DEGREES = Math.PI / 180;
+/** A piece smaller than this on every side (a pen, a ring, a cup) is too small a target to click from across the set. */
+const HARD_TO_PICK_M = 0.25;
+const PICK_REACH_M = 0.14;
 const TONE_FACTOR = { '': 1, dark: 0.62, light: 1.28 } as const;
 
 function partColor(base: string, tone: LandmarkPart['tone']) {
@@ -90,21 +93,29 @@ export function PrimitiveProp({ landmark, selected, labelled, onPick }: Props) {
   const shape = landmark.shape ?? 'box';
   // A plane is an upright panel (a backdrop, a screen, a window): width by height, no depth.
   const scale: [number, number, number] = shape === 'plane' ? [width, height, 1] : [width, height, depth];
+  const hardToPick = Boolean(onPick) && Math.max(width, depth, height) < HARD_TO_PICK_M;
   return (
     <group position={[landmark.position[0], landmark.elevation_m ?? 0, landmark.position[1]]} rotation={[0, ((landmark.yaw_deg ?? 0) * Math.PI) / 180, 0]} onClick={onPick}>
       {landmark.parts?.length ? <PartsProp landmark={landmark} selected={selected} /> : (
         <mesh position={[0, height / 2, 0]} scale={scale} castShadow receiveShadow>
           <ShapeGeometry shape={shape} />
           <meshStandardMaterial
-            color={landmarkColor(landmark)} roughness={0.8} transparent={landmark.origin !== 'blockout'} opacity={landmark.origin === 'blockout' ? 1 : 0.88} side={shape === 'plane' || shape === 'wedge' ? DoubleSide : FrontSide}
+            color={landmarkColor(landmark)} roughness={0.8} side={shape === 'plane' || shape === 'wedge' ? DoubleSide : FrontSide}
             emissive={selected ? SELECTION_COLOR : '#fcebee'} emissiveIntensity={selected ? 0.35 : 0}
           />
         </mesh>
       )}
+      {/* A hand prop at its real size is a few centimetres: this unseen ball around it is what a click lands on, and what glows when it is picked. */}
+      {hardToPick && (
+        <mesh position={[0, height / 2, 0]} userData={{ [HELPER_FLAG]: true }}>
+          <sphereGeometry args={[PICK_REACH_M, 16, 12]} />
+          <meshBasicMaterial transparent opacity={selected ? 0.22 : 0} depthWrite={false} color={SELECTION_COLOR} />
+        </mesh>
+      )}
       {labelled && (
-        <Text position={[0, height + 0.18, 0]} fontSize={0.13} color={selected ? SELECTION_COLOR : '#46373e'} anchorX="center" anchorY="bottom" userData={{ [HELPER_FLAG]: true }}>
+        <StageLabel position={[0, height + 0.18, 0]} fontSize={0.13} color={selected ? SELECTION_COLOR : '#46373e'} kind="prop" selected={selected}>
           {landmark.name}
-        </Text>
+        </StageLabel>
       )}
     </group>
   );

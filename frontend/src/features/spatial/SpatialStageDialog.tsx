@@ -1,10 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  ArrowLeftRight, Axis3d, Camera, CircleCheck, Download, Eye, LayoutGrid, RefreshCw, RotateCcw, TriangleAlert, Upload, Users, X,
+  ArrowLeftRight, Axis3d, Camera, CircleCheck, Clapperboard, Download, Eye, LayoutGrid, RefreshCw, RotateCcw, TriangleAlert, Upload, Users, X,
 } from 'lucide-react';
 
 import { ApiError } from '../../api/client';
+import { dragRefusal, resolveContacts } from '../directorDesk/lib/contacts';
 import { FloorPlan, type FloorMove } from './FloorPlan';
 import { isOverhead } from './floorPlanGeometry';
 import {
@@ -41,12 +42,14 @@ function axisBadge(shot: StageShot, establishedSide: number) {
     : { label: shot.crossing === 'none' ? t('越轴') : t('对侧'), tone: shot.crossing === 'none' ? 'bad' : 'neutral' };
 }
 
-export function SpatialStageDialog({ taskId, sceneId, onClose, onRedrawRequested }: {
+export function SpatialStageDialog({ taskId, sceneId, onClose, onRedrawRequested, onOpenDesk }: {
   taskId: string;
   sceneId: string;
   onClose: () => void;
   /** The scene was sent back to stage 4; the workspace should refresh its boards. */
   onRedrawRequested?: () => void;
+  /** Leave this view for the 3D director desk of the same scene. */
+  onOpenDesk?: () => void;
 }) {
   const [response, setResponse] = useState<SpatialPlanResponse | null>(null);
   const [loadError, setLoadError] = useState('');
@@ -58,6 +61,9 @@ export function SpatialStageDialog({ taskId, sceneId, onClose, onRedrawRequested
   const [pairDistance, setPairDistance] = useState('');
   const closeRef = useRef<HTMLButtonElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Callers pass a fresh onClose on every render; the dialog must not take focus back each time.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; });
 
   // State is only set from the request's callbacks, never synchronously inside the effect.
   const load = useCallback((signal?: AbortSignal) => (
@@ -84,18 +90,21 @@ export function SpatialStageDialog({ taskId, sceneId, onClose, onRedrawRequested
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     closeRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onCloseRef.current(); };
     window.addEventListener('keydown', onKey);
     return () => {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', onKey);
       previousFocus?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   const plan = response?.plan;
   const shot = useMemo(() => plan?.shots.find(item => item.shot_id === shotId), [plan, shotId]);
   const camera = plan?.cameras.find(item => item.id === shot?.camera_id);
+  // Drawn with its contacts kept: a held prop in the hand that holds it, someone seated on the seat.
+  const drawn = useMemo(() => (plan ? resolveContacts(plan, shotId) : plan), [plan, shotId]);
+  const drawnShot = useMemo(() => drawn?.shots.find(item => item.shot_id === shotId), [drawn, shotId]);
   const failed = useMemo(() => (plan?.checks || []).filter(check => !check.passed), [plan]);
   const flagged = useMemo(() => new Map(failed.flatMap(check => check.shot_ids.map(id => [id, check.severity] as const))), [failed]);
   const principals = plan && plan.axis.kind === 'dialogue' ? [plan.axis.from_name, plan.axis.to_name] : [];
@@ -136,9 +145,13 @@ export function SpatialStageDialog({ taskId, sceneId, onClose, onRedrawRequested
       return;
     }
     if (move.kind === 'landmark') {
+      const refusal = dragRefusal(plan, shotId, { kind: 'landmark', name: move.name }, 'translate');
+      if (refusal) { setNotice(refusal); return; }
       apply([{ op: 'move_landmark', name: move.name, position: move.position }]);
       return;
     }
+    const seated = dragRefusal(plan, shotId, { kind: 'actor', name: move.name }, 'translate');
+    if (seated) { setNotice(seated); return; }
     const operations: StageOperation[] = [{ op: 'move_actor', name: move.name, position: move.position }];
     // People playing a scene to each other keep facing each other when one of them is moved.
     if (principals.includes(move.name) && plan.formation.startsWith('面对面')) {
@@ -255,10 +268,10 @@ export function SpatialStageDialog({ taskId, sceneId, onClose, onRedrawRequested
           </div>
           <div className="spatial-stage__canvas">
             {view === 'plan' ? (
-              <FloorPlan plan={plan} shot={shot} locked={busy} onSelectShot={setShotId} onMove={handleMove} />
+              <FloorPlan plan={drawn ?? plan} shot={drawnShot ?? shot} locked={busy} onSelectShot={setShotId} onMove={handleMove} />
             ) : (
               <Suspense fallback={<p className="spatial-dialog__empty" role="status">{t('正在加载 3D 视图…')}</p>}>
-                <SpatialStageViewport plan={plan} shot={shot} mode={view} />
+                <SpatialStageViewport plan={drawn ?? plan} shot={drawnShot ?? shot} mode={view} />
               </Suspense>
             )}
           </div>
@@ -348,7 +361,7 @@ export function SpatialStageDialog({ taskId, sceneId, onClose, onRedrawRequested
           <section>
             <h2>{t('工程')}</h2>
             <div className="spatial-inspector__actions">
-              <button type="button" className="spatial-button" disabled={busy} onClick={() => { void download('director-desk'); }}><Download aria-hidden="true" /> {t('导出 3D 导演台')}</button>
+              <button type="button" className="spatial-button" disabled={busy} onClick={() => { void download('director-desk'); }}><Download aria-hidden="true" /> {t('导出 3D 导演台工程')}</button>
               <button type="button" className="spatial-button" disabled={busy} onClick={() => { void download('costage'); }}><Download aria-hidden="true" /> {t('导出 CoStage')}</button>
               <button type="button" className="spatial-button" disabled={busy} onClick={() => fileRef.current?.click()}><Upload aria-hidden="true" /> {t('导入工程')}</button>
               <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={event => { void importFile(event); }} aria-label={t('导入导演台工程文件')} />
@@ -377,6 +390,11 @@ export function SpatialStageDialog({ taskId, sceneId, onClose, onRedrawRequested
             {plan && <p>{plan.location || '未命名场地'} · {plan.aspect_ratio} · {plan.source === 'edited' ? t('已手动调整') : t('自动规划')} · 第 {plan.revision} 版</p>}
           </div>
           <div className="spatial-dialog__header-actions">
+            {onOpenDesk && (
+              <button type="button" className="spatial-button is-primary" onClick={onOpenDesk} title={t('这里是 2D 俯视图，用来核对站位与轴线；摆人物姿势、架机位、截图请到 3D 导演台')}>
+                <Clapperboard aria-hidden="true" /> {t('在 3D 导演台中编辑')}
+              </button>
+            )}
             <button type="button" className="spatial-button" onClick={() => { void load(); }} disabled={busy}><RefreshCw aria-hidden="true" /> {t('重新读取')}</button>
             <button ref={closeRef} type="button" className="spatial-dialog__close" onClick={onClose} aria-label={t('关闭空间调度')}><X aria-hidden="true" /></button>
           </div>

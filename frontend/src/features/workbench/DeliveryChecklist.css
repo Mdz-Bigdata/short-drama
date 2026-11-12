@@ -1,0 +1,6 @@
+.delivery-check { margin: 0.75rem 0; padding: 0.6rem 0.8rem; border: 1px solid var(--line, #e3d4da); border-radius: 8px; }
+.delivery-check h4 { margin: 0 0 0.4rem; font-size: 0.875rem; }
+.delivery-check ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.35rem; }
+.delivery-check li { display: flex; flex-wrap: wrap; gap: 0.4rem; font-size: 0.8125rem; line-height: 1.5; }
+.delivery-check__rule { padding: 0 0.35rem; border-radius: 4px; background: var(--warning-soft, #fff3d6); color: var(--warning, #8a5a00); }
+.delivery-check__ok { margin: 0; font-size: 0.8125rem; color: var(--success, #2f7d4a); }

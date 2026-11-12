@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.core.episode_shape import EpisodeShape
+from app.core.screenwriting import filmability
 from app.core.screenwriting.prose import spoken_verbatim_in
 from app.core.screenwriting.speech import speech_problems
 from app.core.screenwriting.speech_rate import estimate_spoken_seconds
@@ -222,6 +223,12 @@ def check_script_plan(scenes: list[dict[str, Any]], ctx: PlanCheckContext, *, re
         for name in cast:
             if known_characters and name not in known_characters and name not in result.unknown_characters:
                 result.unknown_characters.append(name)
+
+        # ---- 可拍性：视频提示词里不再重复的通用约束，剧本里就要满足。上传的成品剧本只提示(内容是作者的)。
+        for problem in filmability.scene_problems(scene):
+            severity = "warning" if ctx.source_kind == "screenplay" else problem.severity
+            violation = DraftViolation(problem.code, problem.message, f"{label}·{problem.label}", severity, raw_id)  # type: ignore[arg-type]
+            (result.errors if severity == "error" else result.warnings).append(violation)
 
         # ---- source anchor (best effort)
         anchor = str(scene.get("source_text") or "")

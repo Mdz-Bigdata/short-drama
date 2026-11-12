@@ -759,3 +759,52 @@ describe('StoryboardWorkspace 场景描述可读性', () => {
     expect(document.querySelector('.storyboard-scene-summary')).toBeNull();
   });
 });
+
+describe('StoryboardWorkspace shot assets', () => {
+  afterEach(cleanup);
+
+  it('shows the assets each frame uses and flags frames whose assets changed', () => {
+    render(
+      <StoryboardWorkspace
+        title="古装权谋短剧"
+        shots={[
+          {
+            shot_id: 1, scene_id: 'E1S01', image_url: 'https://img.test/1.png', scene: '太常寺',
+            characters: ['沈砚'], props: ['青铜剑'], effects: [],
+            asset_bindings: [{ kind: 'actor', name: '沈砚', element_id: 'el-1', element_version: 2 }],
+            asset_stale: true,
+          },
+          { shot_id: 2, scene_id: 'E1S01', image_url: 'https://img.test/2.png', characters: ['贺兰霆'] },
+        ]}
+        taskId="task-1"
+        onRefresh={vi.fn()}
+        onRegenerate={vi.fn()}
+      />,
+    );
+    const first = screen.getByRole('button', { name: '下载分镜 1' });
+    const firstChips = first.querySelector('.shot-assets') as HTMLElement;
+    expect(firstChips.getAttribute('aria-label')).toBe('本镜用到的资产');
+    expect([...firstChips.querySelectorAll('.shot-assets__name')].map(node => node.textContent)).toEqual(['沈砚', '太常寺', '青铜剑']);
+    expect(within(first).getByText('资产已改')).toBeTruthy();
+    expect(first.querySelectorAll('button')).toHaveLength(0);
+
+    const second = screen.getByRole('button', { name: '下载分镜 2' });
+    expect(within(second).getByText('贺兰霆')).toBeTruthy();
+    expect(within(second).queryByText('资产已改')).toBeNull();
+  });
+
+  it('refreshes when an asset changes elsewhere', () => {
+    const onRefresh = vi.fn();
+    render(
+      <StoryboardWorkspace
+        title="古装权谋短剧"
+        shots={[{ shot_id: 1, scene_id: 'E1S01', image_url: 'https://img.test/1.png' }]}
+        onRefresh={onRefresh}
+        onRegenerate={vi.fn()}
+      />,
+    );
+    expect(onRefresh).not.toHaveBeenCalled();
+    window.dispatchEvent(new CustomEvent('novara:assets-changed', { detail: { reason: 'rename' } }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+});

@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 import { apiRequest, apiUrl } from '../../api/client';
@@ -105,7 +106,8 @@ export function PanoramaPanel({ taskId, sceneId, onClose }: Props) {
   };
 
   const disabled = Boolean(busy);
-  return (
+  // On the page root, so the stage nav and the chat sidebar stay under the dialog.
+  return createPortal(
     <div className="panorama-panel" role="dialog" aria-modal="true" aria-label={t('360° 全景')}>
       <div className="panorama-panel__body">
         <header className="panorama-panel__head">
@@ -176,6 +178,7 @@ export function PanoramaPanel({ taskId, sceneId, onClose }: Props) {
           </ul>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

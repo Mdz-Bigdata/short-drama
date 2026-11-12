@@ -12,14 +12,19 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from typing import Any
 
+from app.core import prompt_data, prop_scale
 from app.core.spatial_stage import axis as axis_rules
+from app.core.spatial_stage import contacts as contact_rules
 from app.core.spatial_stage import geometry as geo
 from app.core.spatial_stage import performance
-from app.core.spatial_stage.coverage import ShotSpec, fit_move, keep_side, lens_bearing, repeats_the_angle, solve_camera
+from app.core.spatial_stage.coverage import ShotSpec, fit_move, solve_camera
+from app.core.spatial_stage.cutting import carry_camera, vary_angle
 from app.core.spatial_stage.language import enters_in, posture_in, travel_in
 from app.core.spatial_stage.models import (
     ActorOverride,
@@ -27,49 +32,74 @@ from app.core.spatial_stage.models import (
     StageAxis,
     StageBackdrop,
     StageCamera,
+    StageContact,
     StageLandmark,
     StagePlan,
     StageShot,
 )
 from app.core.spatial_stage.projection import screen_states
 from app.core.spatial_stage.prompting import scene_bible, shot_text
-from app.core.spatial_stage.validation import MIN_ACTOR_SPACING_M, check_plan
+from app.core.spatial_stage.validation import MIN_ACTOR_SPACING_M, check_plan, pair_relation, set_obstructions
 
-EMPTY_CAST = frozenset({"空镜（无人物）", "空镜", "无", "无人", "无人物", ""})
-CROWD_MARKERS: tuple[str, ...] = (
-    "群演", "众", "们", "士兵", "追兵", "路人", "人群", "敌人", "杂兵", "护卫", "侍卫",
-    "家丁", "打手", "军士", "士卒", "小兵", "匪徒", "围观", "群众", "百姓", "宾客", "随从",
+# Who counts as nobody or as a crowd, how far apart a pair stands, the reasons and the formation
+# sentences: app/data/prompt/stage_planner.json.
+_WORDING = "stage_planner"
+
+
+def _words(*path: str) -> Any:
+    """The entry of the planner's wording table at ``path``."""
+    found: Any = prompt_data.load(_WORDING)
+    for key in path:
+        found = found[key]
+    return found
+
+
+def _phrase(key: str, **values: object) -> str:
+    """A formation sentence, filled in."""
+    return str(_words("formations", key)).format(**values)
+
+
+EMPTY_CAST = frozenset(str(name) for name in _words("empty_cast"))
+CROWD_MARKERS: tuple[str, ...] = tuple(str(word) for word in _words("crowd_markers"))
+_PLACEHOLDER_PROPS = tuple(str(word) for word in _words("placeholder_props"))
+_SEPARATION_RULES: tuple[tuple[tuple[str, ...], float, str], ...] = tuple(
+    (tuple(str(word) for word in rule["words"]), float(rule["metres"]), str(rule["label"]))
+    for rule in _words("separation_rules")
 )
-_PLACEHOLDER_PROPS = ("本场无", "无额外", "无关键", "无道具")
-_SEPARATION_RULES: tuple[tuple[tuple[str, ...], float, str], ...] = (
-    (("拥抱", "相拥", "依偎", "搂", "耳语", "贴近", "亲吻", "搀扶", "抱住", "扶住"), 0.7, "贴身"),
-    (("对峙", "拔刀", "拔剑", "持剑", "剑指", "交手", "打斗", "厮杀", "搏斗", "追杀", "对战", "举枪", "挥拳"), 2.6, "对峙"),
-    (("跪", "叩首", "叩拜", "参拜", "行礼"), 2.2, "上下位"),
+_DEFAULT_SEPARATION: tuple[float, str] = (
+    float(_words("default_separation", "metres")), str(_words("default_separation", "label")),
 )
-_SIDE_BY_SIDE = ("并肩", "并排", "同行", "携手", "一同走", "并辔", "结伴")
-# Set dressing: (name on the stage, words that name it in a prop list, phrases that imply it in
-# running script text, kind, size w/d/h, slot). Script phrases are whole words on purpose — a bare
-# 门 / 案 / 几 also lives inside 门派 / 方案 / 几个.
-_SET_PIECES: tuple[tuple[str, tuple[str, ...], tuple[str, ...], str, tuple[float, float, float], str], ...] = (
-    ("门", ("门",), ("殿门", "宫门", "大门", "院门", "房门", "门口", "门外", "门内", "推门", "进门", "入口"),
-     "architecture", (1.4, 0.2, 2.4), "upstage_right_far"),
-    ("窗", ("窗",), ("窗前", "窗边", "窗外", "窗棂", "窗纸", "窗户"), "architecture", (1.6, 0.15, 1.4), "upstage_left_far"),
-    ("屏风", ("屏风",), ("屏风",), "furniture", (2.4, 0.12, 1.9), "upstage_far"),
-    ("床榻", ("床", "榻"), ("床榻", "床边", "床上", "卧榻", "病榻", "龙榻"), "furniture", (2.0, 1.4, 0.55), "upstage_left"),
-    ("台阶", ("台阶", "石阶"), ("台阶", "石阶", "阶下", "阶前"), "architecture", (4.0, 1.2, 0.5), "upstage_deep"),
-    ("柱", ("柱",), ("廊柱", "柱子", "殿柱", "石柱"), "architecture", (0.5, 0.5, 3.2), "stage_right"),
-    ("树", ("树",), ("大树", "树下", "古树", "老树", "树影"), "architecture", (1.2, 1.2, 4.0), "upstage_left_far"),
-    ("书案", ("书案", "案几", "桌", "案"), ("书案", "案几", "伏案", "案上", "案前", "桌上", "桌前", "桌边"),
-     "furniture", (1.4, 0.7, 0.75), "between"),
-    ("灯火", ("炭盆", "火盆", "火炉", "烛", "灯", "篝火"), ("炭盆", "火盆", "火炉", "烛台", "烛火", "灯笼", "油灯", "篝火"),
-     "light", (0.4, 0.4, 0.6), "near_left"),
-)
+_SIDE_BY_SIDE = tuple(str(word) for word in _words("side_by_side"))
+_TIME_OF_DAY = re.compile("(" + "|".join(re.escape(str(word)) for word in _words("time_of_day_suffixes")) + ")$")
+# Set dressing a prop list or the script text names (a door, a window, a desk): app/data/prompt/stage_set_pieces.json.
+_SET_PIECES = "stage_set_pieces"
 _PROP_SLOTS = ("between", "near_left", "near_right", "upstage_left", "upstage_right", "upstage_far")
+_UPSTAGE_SLOTS = ("upstage_left", "upstage_right", "upstage_far")
+# A prop with a side longer than this is furniture-sized: it stands upstage, never among the cast.
+_BIG_PROP_M = 1.0
+# How big a prop stands on the stage and what it may rest on: app/data/prompt/stage_props.json.
+_PROPS = "stage_props"
+_NOTE_IN_BRACKETS = re.compile(r"[（(][^）)]*[）)]")
+# A set piece keeps this much air around anyone's mark: half a body and a little more.
+_CLEAR_OF_CAST_M = 0.3
+_CLEAR_STEP_M = 0.6
+_CLEAR_STEPS = 8
 # Why the planner itself puts someone off their mark for a shot.
-ENTRANCE_REASON = "从画外一侧入场，走到既定站位"
-APPROACH_REASON = "走近到既定站位"
-RETREAT_REASON = "后退到既定站位"
-_HOLD_REASONS = {APPROACH_REASON: "还站在稍远处，尚未走近", RETREAT_REASON: "还站在近处，尚未退开"}
+ENTRANCE_REASON = str(_words("reasons", "entrance"))
+APPROACH_REASON = str(_words("reasons", "approach"))
+RETREAT_REASON = str(_words("reasons", "retreat"))
+_HOLD_REASONS = {APPROACH_REASON: str(_words("reasons", "hold_approach")), RETREAT_REASON: str(_words("reasons", "hold_retreat"))}
+# What a shot's words say someone holds or sits on: the verbs, the hand words, and how many characters may stand
+# between the name and the verb and between the verb and the thing (one clause; the clause marks are the
+# blocking vocabulary's).
+_HOLD_VERBS = tuple(sorted((str(word) for word in _words("contact_verbs", "hold")), key=len, reverse=True))
+_SIT_VERBS = tuple(sorted((str(word) for word in _words("contact_verbs", "sit")), key=len, reverse=True))
+_CONTACT_HANDS = tuple((str(word), str(hand)) for word, hand in _words("contact_hands"))
+_NAME_GAP = int(_words("contact_gaps", "name"))
+_OBJECT_GAP = int(_words("contact_gaps", "object"))
+_CLAUSE_STOPS = str(prompt_data.value("stage_vocabulary", "blocking_verbs")["clause_stops"])
+# A seat already on the set (from the location, an earlier plan, a person) is only sat on from this close to the mark.
+_SEAT_REACH_M = float(_words("seat_reach_m"))
 
 
 @dataclass
@@ -99,9 +129,8 @@ def height_from_text(text: str) -> float | None:
 def location_key(location: str) -> str:
     """Two scenes share a set when their location reads the same once time of day and INT/EXT are dropped."""
     text = re.sub(r"[\s/／|｜·,，;；:：\-—]+", "", str(location or ""))
-    suffix = re.compile(r"(凌晨|清晨|早晨|上午|中午|午后|下午|黄昏|傍晚|深夜|夜晚|白天|内景|外景|日|夜|晨|昼)$")
-    while len(text) > 1 and suffix.search(text):
-        text = suffix.sub("", text)
+    while len(text) > 1 and _TIME_OF_DAY.search(text):
+        text = _TIME_OF_DAY.sub("", text)
     return text[:200]
 
 
@@ -147,7 +176,7 @@ def _separation(text: str) -> tuple[float, str]:
     for words, meters, label in _SEPARATION_RULES:
         if any(word in text for word in words):
             return meters, label
-    return 1.5, "对话"
+    return _DEFAULT_SEPARATION
 
 
 def _posture(name: str, text: str, default: str = "stand") -> str:
@@ -174,11 +203,104 @@ def _slot(slot: str, left: geo.Vec2, right: geo.Vec2, normal: geo.Vec2, index: i
     return geo.add(base, geo.scale(along, 1.1 * index)) if index else base
 
 
+def _set_piece(name: str) -> Mapping[str, Any] | None:
+    """The set piece a prop name names, read from the end of the name (the longest ending wins), or ``None``.
+
+    A name is what its ending says it is: 档案 and 图案 are not a 书案, 门牌 is not a 门, 灯笼 is not a 灯火.
+    """
+    table = prompt_data.load(_SET_PIECES)
+    bare = _NOTE_IN_BRACKETS.sub("", name).strip()
+    readings: list[tuple[str, Mapping[str, Any] | None]] = [(word, None) for word in table["not_pieces"] if bare.endswith(word)]
+    for piece in table["pieces"]:
+        readings.extend((word, piece) for word in piece["names"] if word == bare)
+        readings.extend((word, piece) for word in piece["endings"] if bare.endswith(word))
+    return max(readings, key=lambda reading: len(reading[0]), default=("", None))[1]
+
+
+def _prop_size(name: str) -> tuple[float, float, float]:
+    """Width, depth and height (metres, lying flat) of a prop the set-piece table does not name.
+
+    Its real size from the prop scale table, else the usual size of a thing of that name, else the stand-in box.
+    A character that also ends the names of other things (牌 in 招牌, 坛 in 祭坛) only counts as the whole name.
+    """
+    table = prompt_data.load(_PROPS)
+    stand_in = tuple(float(value) for value in table["stand_in_m"])
+    scale = prop_scale.lookup(name)
+    if scale is None:
+        bare = _NOTE_IN_BRACKETS.sub("", name).strip()
+        endings = sorted(((word, size) for words, size in table["by_ending"] for word in words), key=lambda item: -len(item[0]))
+        size = next(
+            (size for words, size in table["by_name"] if bare in words),
+            next((size for word, size in endings if bare.endswith(word)), stand_in),
+        )
+    elif scale.longest_cm / 100 > float(table["stage_limit_m"]):
+        size = stand_in
+    else:
+        metres = [value / 100 for value in scale.dims_cm]
+        if scale.diameter:
+            size = (metres[0], metres[0], metres[-1])
+        elif len(metres) >= 3:
+            size = metres[:3]
+        elif len(metres) == 2 and any(scale.name.endswith(word) for word in table["sheets"]):
+            # The two sides of something flat: a sheet of paper, a shield. The floor thickness is added below.
+            size = (metres[0], metres[1], 0.0)
+        elif len(metres) == 2:
+            # Length and girth: a bottle, a bomb, a gourd.
+            size = (metres[0], metres[1], metres[1])
+        else:
+            # Only the length is known: a pen, a sword, a hairpin.
+            size = (metres[0], metres[0] / 10, metres[0] / 10)
+    floor = float(table["floor_m"])
+    return tuple(round(max(floor, float(value)), 3) for value in size)  # type: ignore[return-value]
+
+
+def _piece_size(piece: Mapping[str, Any]) -> tuple[float, float, float]:
+    width, depth, height = (float(value) for value in piece["size_m"])
+    return (width, depth, height)
+
+
+def _rests_on_a_table(kind: str, size: Sequence[float]) -> bool:
+    return kind == "prop" and max(size) <= float(prompt_data.load(_PROPS)["hand_prop_m"])
+
+
+def _is_table(name: str, size: Sequence[float]) -> bool:
+    """Something with a top at table height, wide enough to lay a prop on, and named as a table."""
+    table = prompt_data.load(_PROPS)
+    low, high = table["table_height_m"]
+    bare = _NOTE_IN_BRACKETS.sub("", name).strip()
+    return (
+        float(low) <= size[2] <= float(high) and size[0] >= float(table["table_min_width_m"])
+        and (bare in table["table_names"] or any(bare.endswith(word) for word in table["tables"]))
+    )
+
+
+def _clear_of_cast(point: geo.Vec2, size: Sequence[float], actors: Sequence[StageActor], normal: geo.Vec2) -> geo.Vec2:
+    """Step a piece upstage until nobody's mark is inside its footprint: nothing is dressed onto someone."""
+    for _ in range(_CLEAR_STEPS):
+        footprint = SimpleNamespace(position=point, size=size, yaw_deg=0.0)
+        if not any(geo.inside_piece(actor.position, footprint, _CLEAR_OF_CAST_M) for actor in actors):
+            break
+        point = geo.add(point, geo.scale(normal, -_CLEAR_STEP_M))
+    return point
+
+
+def _on_table(table: StageLandmark, size: Sequence[float], index: int) -> geo.Vec2:
+    """Where the ``index``-th small prop lies on the table top: the middle first, then alternating toward the ends."""
+    reach = max(0.0, table.size[0] / 2 - size[0] / 2 - 0.05)
+    step = (index + 1) // 2 * (1 if index % 2 else -1)
+    lanes = max(1, int(reach // 0.3))
+    along = reach * max(-1.0, min(1.0, step / lanes))
+    return geo.add((table.position[0], table.position[1]), geo.rotate((along, 0.0), table.yaw_deg))
+
+
 def _landmarks(
     brief: SceneBrief, left: geo.Vec2, right: geo.Vec2, normal: geo.Vec2,
     actors: Sequence[StageActor], inherited: Sequence[StageLandmark],
 ) -> list[StageLandmark]:
-    """Set pieces: what the location already holds from an earlier scene, then this scene's props and named set dressing."""
+    """Set pieces: what the location already holds from an earlier scene, then this scene's props and named set dressing.
+
+    A prop small enough to hold lies on the scene's table when there is one, not on the floor between the cast.
+    """
     placed: dict[str, StageLandmark] = {item.name: item for item in inherited}
     text = f"{brief.location} {brief.text}"
     wanted: list[tuple[str, str, tuple[float, float, float], str]] = []
@@ -187,35 +309,274 @@ def _landmarks(
         name = str(prop or "").strip()
         if not name or any(marker in name for marker in _PLACEHOLDER_PROPS) or name in EMPTY_CAST:
             continue
-        match = next((entry for entry in _SET_PIECES if any(word in name for word in entry[1])), None)
-        if match:
-            covered.add(match[0])
-        wanted.append((name[:120], match[3] if match else "prop", match[4] if match else (0.5, 0.5, 0.5), match[5] if match else ""))
-    for piece, prop_words, phrases, kind, size, slot in _SET_PIECES:
-        already = piece in covered or any(any(word in name for word in prop_words) for name in placed)
-        if not already and any(phrase in text for phrase in phrases):
-            wanted.append((piece, kind, size, slot))
+        match = _set_piece(name)
+        if match is None:
+            wanted.append((name[:120], "prop", _prop_size(name), ""))
+            continue
+        covered.add(str(match["name"]))
+        wanted.append((name[:120], str(match["kind"]), _piece_size(match), str(match["slot"])))
+    for match in prompt_data.load(_SET_PIECES)["pieces"]:
+        piece = str(match["name"])
+        already = piece in covered or any((found := _set_piece(name)) is not None and found["name"] == piece for name in placed)
+        if not already and any(phrase in text for phrase in match["phrases"]):
+            wanted.append((piece, str(match["kind"]), _piece_size(match), str(match["slot"])))
     used: dict[str, int] = {}
     free = list(_PROP_SLOTS)
-    for name, kind, size, slot in wanted:
-        if name in placed or len(placed) >= 24:
-            continue
-        chosen = slot or (free.pop(0) if free else "upstage_far")
-        if chosen in free:
-            free.remove(chosen)
-        point = _slot(chosen, left, right, normal, used.get(chosen, 0))
-        used[chosen] = used.get(chosen, 0) + 1
-        # Nothing is dressed onto a mark someone stands on.
-        while any(geo.distance(point, (actor.position[0], actor.position[1])) < 0.55 for actor in actors):
-            point = geo.add(point, geo.scale(normal, -0.6))
+
+    def place(name: str, kind: str, size: Sequence[float], point: geo.Vec2, elevation: float = 0.0) -> None:
         taken = {item.id for item in placed.values()}
         number = len(placed) + 1
         while f"mark-{number:02d}" in taken:
             number += 1
         placed[name] = StageLandmark(
-            id=f"mark-{number:02d}", name=name, kind=kind, position=geo.rounded(point), size=list(size),
+            id=f"mark-{number:02d}", name=name, kind=kind, position=geo.rounded(point), size=list(size), elevation_m=elevation,
         )
+
+    has_table = any(_is_table(item.name, item.size) for item in placed.values()) or any(
+        _is_table(name, size) for name, _kind, size, _slot_name in wanted
+    )
+    small: list[tuple[str, str, tuple[float, float, float]]] = []
+    for name, kind, size, slot in wanted:
+        if name in placed or len(placed) >= 24:
+            continue
+        if has_table and not slot and _rests_on_a_table(kind, size):
+            small.append((name, kind, size))
+            continue
+        # A horse or a car is not parked between the principals and the lens: it takes a slot upstage.
+        open_slots = [item for item in free if item in _UPSTAGE_SLOTS] if max(size) > _BIG_PROP_M else free
+        chosen = slot or (open_slots[0] if open_slots else "upstage_far")
+        if chosen in free:
+            free.remove(chosen)
+        point = _slot(chosen, left, right, normal, used.get(chosen, 0))
+        used[chosen] = used.get(chosen, 0) + 1
+        place(name, kind, size, _clear_of_cast(point, size, actors, normal))
+    table = next((item for item in placed.values() if _is_table(item.name, item.size)), None)
+    for index, (name, kind, size) in enumerate(small):
+        if name in placed or len(placed) >= 24:
+            continue
+        if table is not None:
+            place(name, kind, size, _on_table(table, size, index), round(table.elevation_m + table.size[2], 3))
+            continue
+        chosen = free.pop(0) if free else "upstage_far"
+        point = _slot(chosen, left, right, normal, used.get(chosen, 0))
+        used[chosen] = used.get(chosen, 0) + 1
+        place(name, kind, size, _clear_of_cast(point, size, actors, normal))
     return list(placed.values())
+
+
+def _riders(landmarks: Sequence[StageLandmark], piece: StageLandmark) -> set[str]:
+    """Ids of what lies on top of ``piece``; it goes wherever the piece goes."""
+    top = round(piece.elevation_m + piece.size[2], 3)
+    return {
+        item.id for item in landmarks
+        if item.id != piece.id and item.elevation_m == top and geo.inside_piece(item.position, piece)
+    }
+
+
+def _carried(landmarks: Sequence[StageLandmark], ids: Collection[str], shift: geo.Vec2) -> list[StageLandmark]:
+    """``landmarks`` with the named pieces moved by ``shift`` on the floor."""
+    return [
+        item.model_copy(update={"position": geo.rounded(geo.add((item.position[0], item.position[1]), shift))})
+        if item.id in ids else item
+        for item in landmarks
+    ]
+
+
+def _contact_words(name: str, verbs: Sequence[str], thing: str, text: str, others: Collection[str]) -> list[tuple[str, int, int]]:
+    """Each place the clause naming ``name`` says verb + ``thing``: the words between the name and the verb, and where
+    ``thing`` stands in ``text``.
+
+    A clause where someone else is named between the person and the verb is that someone's, not theirs.
+    """
+    if not name or not thing:
+        return []
+    pattern = (
+        re.escape(name) + f"([^{_CLAUSE_STOPS}]{{0,{_NAME_GAP}}}?)(?:" + "|".join(re.escape(verb) for verb in verbs)
+        + f")[^{_CLAUSE_STOPS}]{{0,{_OBJECT_GAP}}}?" + re.escape(thing)
+    )
+    return [
+        (match.group(1), match.end() - len(thing), match.end())
+        for match in re.finditer(pattern, str(text or ""))
+        if not any(other and other in match.group(1) for other in others)
+    ]
+
+
+def _named_after(name: str, verbs: Sequence[str], pieces: Sequence[StageLandmark], text: str, others: Collection[str]):
+    """``(piece, words before the verb)`` for each piece the clause says ``name`` acts on.
+
+    Where a name is part of a longer one named at the same place (笔 in 录音笔), the longer one is meant.
+    """
+    found = {id(piece): _contact_words(name, verbs, piece.name, text, others) for piece in pieces}
+    spans = [(piece.name, start, end) for piece in pieces for _, start, end in found[id(piece)]]
+    named: list[tuple[StageLandmark, str]] = []
+    for piece in pieces:
+        own = [
+            between for between, start, end in found[id(piece)]
+            if not any(other != piece.name and len(other) > len(piece.name) and low <= start and end <= high for other, low, high in spans)
+        ]
+        if own:
+            named.append((piece, own[0]))
+    return named
+
+
+def derive_contacts(
+    specs: Sequence[ShotSpec], actors: Sequence[StageActor], landmarks: Sequence[StageLandmark],
+    kept: Sequence[StageContact] = (),
+    movable: Collection[str] = (),
+) -> tuple[list[StageContact], dict[str, str]]:
+    """The contacts the shot table implies, after the ``kept`` (a person's own, which win any clash), and the seats
+    this run dresses that go under their sitter: ``{seat name: sitter}``.
+
+    - hold: a hold verb after a character's name and before a prop of the stage: 林夏右手握着录音笔.
+      The hand is the hand word written before the verb (左手 / 右手 / 双手), else the right.
+    - sit: a sit verb before a piece someone can sit on: 周教授坐在扶手椅上. They stay seated in the shots after
+      it until a shot gives them another posture, a walk, or another seat. A seat this run dresses (named in
+      ``movable``) is set under its first sitter's mark, so the sitter keeps their place and facing; a seat already on
+      the set stays put and is only sat on by someone whose mark is within ``seat_reach_m`` of it.
+    - rest: a prop small enough for the hand lying on a table's top stays on it, except in the shots it is held.
+
+    A prop only named (林夏看着桌上的录音笔) is in no contact. There is no limit on how many contacts a shot has.
+    """
+    names = [actor.name for actor in actors if actor.role != "crowd"]
+    props = [piece for piece in landmarks if piece.kind == "prop"]
+    seats = [piece for piece in landmarks if contact_rules.is_seat(piece)]
+    shot_ids = [spec.shot_id for spec in specs]
+    taken: dict[str, set[int]] = {}
+    holds: dict[tuple[str, str, str], list[int]] = {}
+    sits: dict[tuple[str, str], list[int]] = {}
+
+    def claim(target: str, shot_id: int) -> bool:
+        if shot_id in taken.setdefault(target, set()):
+            return False
+        taken[target].add(shot_id)
+        return True
+
+    for spec in specs:
+        for name in names:
+            others = [other for other in names if other != name]
+            for piece, between in _named_after(name, _HOLD_VERBS, props, spec.desc, others):
+                hand = next((value for word, value in _CONTACT_HANDS if word in between), "")
+                if claim(piece.name, spec.shot_id):
+                    holds.setdefault((name, piece.name, hand), []).append(spec.shot_id)
+    marks = {actor.name: (actor.position[0], actor.position[1]) for actor in actors}
+    standing = {piece.name: (piece.position[0], piece.position[1]) for piece in seats}
+    owners: dict[str, str] = {}
+    for name in names:
+        others = [other for other in names if other != name]
+        seat: StageLandmark | None = None
+        for spec in specs:
+            named = _named_after(name, _SIT_VERBS, seats, spec.desc, others)
+            if named:
+                chosen = named[0][0]
+                if chosen.name in movable and chosen.name not in owners:
+                    owners[chosen.name] = name
+                    standing[chosen.name] = marks[name]
+                # Too far to reach: the seat stays where it is and the person stays on their mark.
+                seat = chosen if geo.distance(standing[chosen.name], marks[name]) <= _SEAT_REACH_M else None
+            elif seat is not None and (
+                posture_in(name, spec.desc, "sit") != "sit" or travel_in(name, spec.desc) or enters_in(name, spec.desc)
+            ):
+                seat = None
+            if seat is not None and claim(seat.name, spec.shot_id):
+                sits.setdefault((name, seat.name), []).append(spec.shot_id)
+    tables = [piece for piece in landmarks if _is_table(piece.name, piece.size)]
+    rests: list[tuple[str, str, list[int]]] = []
+    for piece in landmarks:
+        table = next((table for table in tables if piece.id in _riders(landmarks, table)), None)
+        if table is None or not _rests_on_a_table(piece.kind, piece.size):
+            continue
+        held_in = taken.get(piece.name, set())
+        free = [] if not held_in else [shot_id for shot_id in shot_ids if shot_id not in held_in]
+        if free or not held_in:
+            rests.append((piece.name, table.name, free))
+
+    contacts = list(kept)
+    derived: list[StageContact] = []
+    for (name, target, hand), shots in holds.items():
+        derived.append(StageContact(id="pending", kind="hold", actor=name, target=target, hand=hand, shot_ids=shots))
+    for (name, target), shots in sits.items():
+        derived.append(StageContact(id="pending", kind="sit", actor=name, target=target, shot_ids=shots))
+    for target, support, shots in rests:
+        derived.append(StageContact(id="pending", kind="rest", target=target, support=support, shot_ids=shots))
+    for person in kept:
+        derived = contact_rules.without_shots(derived, person.target, person.shot_ids or shot_ids, shot_ids)
+    for contact in derived:
+        contacts.append(contact.model_copy(update={"id": contact_rules.next_id(contacts)}))
+    sat = {contact.target for contact in contacts if contact.kind == "sit"}
+    return contacts, {seat: sitter for seat, sitter in owners.items() if seat in sat}
+
+
+def _seats_under_sitters(landmarks: Sequence[StageLandmark], actors: Sequence[StageActor], owners: Mapping[str, str]) -> list[StageLandmark]:
+    """Each seat this run dressed set on its sitter's mark, turned the way they face; what lies on it goes along."""
+    people = {actor.name: actor for actor in actors}
+    placed = list(landmarks)
+    for seat_name, sitter in owners.items():
+        seat = next((item for item in placed if item.name == seat_name), None)
+        if seat is None or sitter not in people:
+            continue
+        actor = people[sitter]
+        riders = _riders(placed, seat)
+        shift = geo.sub((actor.position[0], actor.position[1]), (seat.position[0], seat.position[1]))
+        placed = [
+            item.model_copy(update={"position": geo.rounded(actor.position), "yaw_deg": geo.normalize_yaw(actor.yaw_deg)})
+            if item.id == seat.id else item
+            for item in _carried(placed, riders, shift)
+        ]
+    return placed
+
+
+def _kept_contacts(plan: StagePlan | None, specs: Sequence[ShotSpec]) -> list[StageContact]:
+    """A person's contacts of an earlier plan, in the shots this one still has; one left with none of its shots is gone."""
+    if plan is None:
+        return []
+    known = {spec.shot_id for spec in specs}
+    kept: list[StageContact] = []
+    for contact in plan.contacts:
+        if contact.source != "manual":
+            continue
+        shots = [shot_id for shot_id in contact.shot_ids if shot_id in known]
+        if contact.shot_ids and not shots:
+            continue
+        kept.append(contact.model_copy(update={"shot_ids": shots}))
+    return kept
+
+
+def _clear_the_lenses(
+    plan: StagePlan, movable: Collection[str], normal: geo.Vec2 = (0.0, 1.0),
+    reshoot: Callable[[StagePlan, Collection[str]], StagePlan] | None = None,
+) -> StagePlan:
+    """Set dressing this run placed gives way to the lens.
+
+    A piece that hides a shot's subject, or that a camera was solved into, steps upstage (with whatever lies on
+    it) until no shot is troubled by it; a piece that cannot get clear within a few steps stays where it was.
+    ``reshoot`` solves again the shots that are about a piece that moved (given by name), so an insert of the
+    piece follows it instead of framing the floor it left.
+    """
+    def in_the_way(staged: StagePlan) -> set[str]:
+        cameras = {camera.id: camera for camera in staged.cameras}
+        return {
+            piece.id for shot in staged.shots if shot.camera_id in cameras
+            for _name, piece in set_obstructions(staged, shot, cameras[shot.camera_id])
+        }
+
+    tried: set[str] = set()
+    # One piece at a time: a lens can sit in two pieces at once, and only the first of them shows until it moves.
+    while pending := sorted((in_the_way(plan) & set(movable)) - tried):
+        tried.add(pending[0])
+        piece = next(item for item in plan.landmarks if item.id == pending[0])
+        going = {piece.id, *_riders(plan.landmarks, piece)}
+        names = {item.name for item in plan.landmarks if item.id in going}
+        point = (piece.position[0], piece.position[1])
+        for _ in range(_CLEAR_STEPS):
+            point = _clear_of_cast(geo.add(point, geo.scale(normal, -_CLEAR_STEP_M)), piece.size, plan.actors, normal)
+            shift = geo.sub(point, (piece.position[0], piece.position[1]))
+            moved = plan.model_copy(update={"landmarks": _carried(plan.landmarks, going, shift)})
+            if reshoot is not None:
+                moved = reshoot(moved, names)
+            if not in_the_way(moved) & going:
+                plan = moved
+                break
+    return plan
 
 
 def _supporting_marks(count: int, separation: float) -> list[geo.Vec2]:
@@ -246,7 +607,7 @@ def _stage_actors(
     normal: geo.Vec2 = (0.0, 1.0)
     actors: list[StageActor] = []
     axis = StageAxis()
-    formation = "空镜：无人物站位"
+    formation = _phrase("empty")
 
     if len(principals) >= 2:
         first, second = principals[0], principals[1]
@@ -264,7 +625,9 @@ def _stage_actors(
             kind="dialogue", from_name=first, to_name=second,
             start=geo.rounded(left_mark), end=geo.rounded(right_mark), camera_side=1,
         )
-        formation = ("同向并肩" if side_by_side else "面对面") + f"·{mood}·相距{separation:.1f}米"
+        # The same words the facing check reads (stage_brief.json pair_relations), so the two cannot drift apart.
+        relation = pair_relation("side_by_side" if side_by_side else "facing")
+        formation = _phrase("pair", relation=relation, mood=mood, separation=separation)
     elif len(principals) == 1:
         name = principals[0]
         actors.append(StageActor(
@@ -272,7 +635,7 @@ def _stage_actors(
             posture=_posture(name, brief.text), role="principal",
             screen_side=side_memory.get(name) if side_memory.get(name) in {"left", "right"} else "left",
         ))
-        formation = "单人·居中偏左，视线与动作朝画右留出空间"
+        formation = _phrase("single")
 
     centre = (0.0, 0.0)
     supporting = [name for name in cast if name not in principals and not is_crowd(name)]
@@ -283,7 +646,8 @@ def _stage_actors(
                 id=_slug(len(actors) + 1), name=name, position=geo.rounded(mark),
                 yaw_deg=geo.yaw_toward(mark, centre), posture=_posture(name, brief.text), role="supporting",
             ))
-        formation += f"；{'、'.join(supporting)}在两人后方成{'倒三角' if len(supporting) == 1 else '弧形'}"
+        shape = _words("formations", "supporting_shapes", "one" if len(supporting) == 1 else "many")
+        formation += _phrase("supporting", names=_words("formations", "name_joiner").join(supporting), shape=shape)
     crowds = [name for name in cast if is_crowd(name)]
     if crowds:
         depth = max(3.4, separation / 2 + 2.8)
@@ -293,9 +657,9 @@ def _stage_actors(
         for name, mark in zip(crowds, marks):
             actors.append(StageActor(
                 id=_slug(len(actors) + 1), name=name, position=geo.rounded(mark),
-                yaw_deg=geo.yaw_toward(mark, centre), role="crowd", note="群体，按错落队形分布在此标记周围",
+                yaw_deg=geo.yaw_toward(mark, centre), role="crowd", note=str(_words("crowd_note")),
             ))
-        formation += f"；{'、'.join(crowds)}在后景错落分布"
+        formation += _phrase("crowd", names=_words("formations", "name_joiner").join(crowds))
     if len(actors) > 1:
         apart = geo.separate([(actor.position[0], actor.position[1]) for actor in actors], 0.6)
         actors = [actor.model_copy(update={"position": geo.rounded(mark)}) for actor, mark in zip(actors, apart)]
@@ -334,7 +698,9 @@ def _shot_overrides(plan: StagePlan, specs: Sequence[ShotSpec]) -> dict[int, lis
         )
         start = geo.add(mark, geo.scale(away, 2.2))
         for earlier in specs[:index]:
-            overrides.setdefault(earlier.shot_id, {})[name] = ActorOverride(name=name, offstage=True, reason="尚未入场")
+            overrides.setdefault(earlier.shot_id, {})[name] = ActorOverride(
+                name=name, offstage=True, reason=str(_words("reasons", "offstage")),
+            )
         overrides.setdefault(spec.shot_id, {})[name] = ActorOverride(
             name=name, position=geo.rounded(start), yaw_deg=geo.yaw_toward(start, mark, actor.yaw_deg),
             posture="walk", reason=ENTRANCE_REASON,
@@ -399,28 +765,6 @@ def _shot_overrides(plan: StagePlan, specs: Sequence[ShotSpec]) -> dict[int, lis
     return {shot_id: list(changes.values()) for shot_id, changes in overrides.items() if changes}
 
 
-def _carry_camera(camera: StageCamera, shot: StageShot, plan: StagePlan) -> StageCamera:
-    """A moving camera on a subject who walks to their mark travels with them and lands on the mark."""
-    if camera.move.kind == "static" or not camera.subjects:
-        return camera
-    change = next((item for item in shot.overrides if item.name == camera.subjects[0] and item.position and not item.hold), None)
-    actor = plan.actor(camera.subjects[0])
-    if change is None or actor is None:
-        return camera
-    shift = geo.sub((actor.position[0], actor.position[1]), (change.position[0], change.position[1]))
-    end_target = camera.move.end_target or camera.target
-    end_position = camera.move.end_position or camera.position
-    target = [end_target[0] + shift[0], end_target[1], end_target[2] + shift[1]]
-    position = list(end_position) if camera.move.kind == "pan" else [
-        end_position[0] + shift[0], end_position[1], end_position[2] + shift[1],
-    ]
-    if not axis_rules.is_overhead(camera):
-        position = list(keep_side(tuple(position), plan.axis))
-    return camera.model_copy(update={"move": camera.move.model_copy(update={
-        "end_position": geo.rounded(position), "end_target": geo.rounded(target),
-    })})
-
-
 def fit_moves(plan: StagePlan) -> StagePlan:
     """Every moving camera ends with the people it frames still in frame."""
     cameras = {camera.id: camera for camera in plan.cameras}
@@ -435,7 +779,7 @@ def template_shots(principals: Sequence[str], cast: Sequence[str]) -> list[ShotS
     """Standard coverage for a scene that has no storyboard table yet."""
     people = [name for name in cast if name not in EMPTY_CAST]
     if not people:
-        return [ShotSpec(shot_id=1, size="全景", desc="环境建立")]
+        return [ShotSpec(shot_id=1, size="全景", desc=str(_words("empty_scene_shot")))]
     if len(principals) < 2:
         lead = principals[0] if principals else people[0]
         return [
@@ -526,6 +870,8 @@ def build_plan(
         specs, coverage = template_shots(principals, cast), "template"
 
     kept_crowds = list(blocking_from.crowds) if blocking_from is not None else []
+    # Set pieces this run places itself; what the location or an earlier plan already holds stays put.
+    dressed: set[str] = set()
     backdrop = blocking_from.backdrop if blocking_from is not None else StageBackdrop()
     if blocking_from is not None:
         actors, axis, formation = list(blocking_from.actors), blocking_from.axis, blocking_from.formation
@@ -535,6 +881,7 @@ def build_plan(
         left = (axis.start[0], axis.start[1]) if axis_rules.has_axis(axis) else (-0.75, 0.0)
         right = (axis.end[0], axis.end[1]) if axis_rules.has_axis(axis) else (0.75, 0.0)
         landmarks = _landmarks(brief, left, right, (0.0, 1.0), actors, location_landmarks)
+        dressed = {item.id for item in landmarks} - {item.id for item in location_landmarks}
         # A lone character plays to the first thing on the set: that gaze is the scene's axis.
         if len(principals) == 1 and landmarks and actors:
             lead, focus = actors[0], landmarks[0]
@@ -543,7 +890,9 @@ def build_plan(
                 # Keep the character screen left of what they look at.
                 if point[0] < lead.position[0]:
                     point = (lead.position[0] + abs(point[0] - lead.position[0]) + 0.8, point[1])
-                    landmarks[0] = focus.model_copy(update={"position": geo.rounded(point)})
+                    # What lies on the piece crosses the stage with it.
+                    shift = geo.sub(point, (focus.position[0], focus.position[1]))
+                    landmarks = _carried(landmarks, {focus.id, *_riders(landmarks, focus)}, shift)
                 actors[0] = lead.model_copy(update={"yaw_deg": geo.yaw_toward((lead.position[0], lead.position[1]), point)})
                 axis = StageAxis(
                     kind="gaze", from_name=lead.name, to_name=focus.name,
@@ -552,19 +901,44 @@ def build_plan(
 
     centre = geo.centroid([(actor.position[0], actor.position[1]) for actor in actors if actor.role != "crowd"])
     known = {actor.name for actor in actors}
+    # Who holds what and sits where, from the shot table; a person's own contacts from the plan re-planned are kept.
+    kept = contact_rules.resolvable(
+        _kept_contacts(blocking_from, specs), (actor.name for actor in actors), (item.name for item in landmarks),
+    )
+    dressed_names = {item.name for item in landmarks if item.id in dressed}
+    contacts, owners = derive_contacts(specs, actors, landmarks, kept, dressed_names)
+    if owners:
+        # A seat dressed for someone to sit on is set under them, not in a prop slot across the room; it is theirs,
+        # so it no longer steps aside for the lens or the cast.
+        landmarks = _seats_under_sitters(landmarks, actors, owners)
+        dressed = dressed - {item.id for item in landmarks if item.name in owners}
     cameras: list[StageCamera] = []
     shots: list[StageShot] = []
     pair = [name for name in (axis.from_name, axis.to_name) if name in known] or principals
 
-    def solve(index: int, spec: ShotSpec, staged: Sequence[StageActor], avoid: geo.Vec2 | None = None) -> StageCamera:
+    def solve(
+        index: int, spec: ShotSpec, staged: Sequence[StageActor], avoid: geo.Vec2 | None = None,
+        pieces: Sequence[StageLandmark] | None = None,
+    ) -> StageCamera:
+        # A held prop is framed where the hand is.
+        placed = contact_rules.place_landmarks(landmarks, staged, contacts, spec.shot_id) if pieces is None else pieces
         return solve_camera(
             spec, staged, axis, aspect_ratio=brief.aspect_ratio, principals=pair,
-            landmarks=landmarks, stage_center=centre, first_shot=index == 0, avoid_bearing=avoid,
+            landmarks=placed, stage_center=centre, first_shot=index == 0, avoid_bearing=avoid,
         )
+
+    def reshoot(staged: StagePlan, names: Collection[str]) -> StagePlan:
+        """A shot of nobody that names a piece that moved is solved again where the piece now is."""
+        again = {
+            shot.camera_id: solve(index, spec, staged.actors_in(shot), pieces=staged.landmarks_in(shot))
+            for index, (spec, shot) in enumerate(zip(specs, staged.shots))
+            if not spec.subjects and any(name and name in spec.desc for name in names)
+        }
+        return staged.model_copy(update={"cameras": [again.get(camera.id, camera) for camera in staged.cameras]}) if again else staged
 
     for index, spec in enumerate(specs):
         spec.subjects = [name for name in dict.fromkeys(spec.subjects) if name in known]
-        cameras.append(solve(index, spec, actors))
+        cameras.append(solve(index, spec, contact_rules.seat_actors(actors, landmarks, contacts, spec.shot_id)))
         shots.append(StageShot(
             shot_id=spec.shot_id, camera_id=cameras[-1].id, subjects=list(spec.subjects),
             speaker=spec.speaker[:120], action=spec.desc[:1000],
@@ -575,7 +949,7 @@ def build_plan(
         aspect_ratio=brief.aspect_ratio, formation=formation, coverage=coverage,
         # A crowd array is carried with its members: an actor that names a crowd the plan does not
         # hold is not a valid stage, so dropping the record would refuse the re-plan outright.
-        actors=actors, crowds=kept_crowds, landmarks=landmarks, axis=axis, backdrop=backdrop,
+        actors=actors, crowds=kept_crowds, landmarks=landmarks, axis=axis, backdrop=backdrop, contacts=contacts,
         planner=blocking_from.planner if blocking_from is not None else "rules",
         planner_note=blocking_from.planner_note if blocking_from is not None else "",
         cameras=cameras, shots=shots,
@@ -592,7 +966,7 @@ def build_plan(
         resolved = []
         for index, (spec, camera, shot) in enumerate(zip(specs, plan.cameras, plan.shots)):
             if shot.overrides:
-                camera = _carry_camera(solve(index, spec, plan.actors_in(shot)), shot, plan)
+                camera = carry_camera(solve(index, spec, plan.actors_in(shot)), shot, plan)
             resolved.append(camera)
         plan = plan.model_copy(update={"cameras": resolved})
 
@@ -600,14 +974,15 @@ def build_plan(
     # is taken from somewhere else on the same side instead, so the cut does not read as a jump.
     varied = list(plan.cameras)
     for index in range(1, len(varied)):
-        if not repeats_the_angle(varied[index - 1], varied[index]):
-            continue
-        avoid = lens_bearing(varied[index - 1], (varied[index].target[0], varied[index].target[2]))
         shot = plan.shots[index]
-        varied[index] = _carry_camera(solve(index, specs[index], plan.actors_in(shot), avoid), shot, plan)
+        varied[index] = vary_angle(
+            varied[index - 1], varied[index],
+            lambda avoid, index=index, shot=shot: carry_camera(solve(index, specs[index], plan.actors_in(shot), avoid), shot, plan),
+        )
     plan = plan.model_copy(update={"cameras": varied})
     # 站位和机位定了，再按画面文字排每个人的姿势与动作轨道；人在导演台上排过的镜照旧。
-    return refresh(fit_moves(performance.stage(plan, specs, keep=blocking_from)))
+    # 机位都落定之后，本次自己摆的陈设给镜头让路。
+    return refresh(_clear_the_lenses(fit_moves(performance.stage(plan, specs, keep=blocking_from)), dressed, reshoot=reshoot))
 
 
 __all__ = [
@@ -616,6 +991,7 @@ __all__ = [
     "SceneBrief",
     "build_plan",
     "cast_fingerprint",
+    "derive_contacts",
     "fit_moves",
     "is_crowd",
     "location_key",

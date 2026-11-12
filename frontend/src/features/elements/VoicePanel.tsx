@@ -4,6 +4,7 @@ import { X } from 'lucide-react';
 import { apiRequest, apiUrl } from '../../api/client';
 import { t } from '../../i18n';
 import './VoicePanel.css';
+import { fetchRelinkPreview, relinkOutcome, relinkQuestion, waitForRelink, type VoiceRelinkResult } from './voiceRelink';
 
 interface VoicePreview {
   generated_voice_id: string;
@@ -123,8 +124,38 @@ export function VoicePanel({ taskId, onClose }: Props) {
     void run(`audition:${character.name}`, () => post('/characters/voice/audition', { name: character.name, voice_prompt }), t('已生成一轮试听。'));
   };
 
-  const castCharacter = (name: string, generated_voice_id: string) => {
-    void run(`cast:${name}`, () => post('/characters/voice/cast', { name, generated_voice_id }), t('已定下“{0}”的声音，之后的配音都用它。', [name]));
+  const castCharacter = async (name: string, generated_voice_id: string) => {
+    // 换声音会自动重配这个角色说过的每一句：先看要动多少，花钱或要改原声镜头时先问。
+    let preview = null;
+    try {
+      preview = await fetchRelinkPreview(base, name, generated_voice_id);
+    } catch (err) {
+      if (!window.confirm(t('没能估算换声音要重配多少台词（{0}）。仍然要换吗？', [err instanceof Error ? err.message : '']))) return;
+    }
+    if (preview?.taken_by) {
+      setStatus('');
+      setError(t('这个声音已经给了「{0}」，每个角色的声音要各不相同。', [preview.taken_by]));
+      return;
+    }
+    const question = relinkQuestion(preview);
+    if (question && !window.confirm(question)) return;
+    const rerender = preview?.films_to_rerender.length ? t('已有成片需要重新合成。') : '';
+    const cast: { relink: VoiceRelinkResult | null } = { relink: null };
+    await run(`cast:${name}`, async () => {
+      const answer = await post('/characters/voice/cast', { name, generated_voice_id }) as { voiceRelink?: VoiceRelinkResult | null } | null;
+      cast.relink = answer?.voiceRelink ?? null;
+    }, `${t('已定下“{0}”的声音，之后的配音都用它。', [name])}${rerender}`);
+    // 重配当场做完就直接报结果；放到后台的，等它做完再报。
+    let finished: VoiceRelinkResult | null = cast.relink;
+    if (finished && (finished.status === 'queued' || finished.status === 'running')) {
+      setStatus(t('已定下“{0}”的声音，正在后台重配说过的台词…', [name]));
+      finished = await waitForRelink(base, name);
+      if (!finished) { setStatus(t('重配还在后台进行，稍后刷新查看。')); return; }
+    }
+    if (finished) {
+      const { ok, text } = relinkOutcome(finished);
+      if (ok) { setError(''); setStatus(text); } else { setStatus(''); setError(text); }
+    }
   };
 
   const auditionNarrator = () => {
@@ -226,7 +257,7 @@ export function VoicePanel({ taskId, onClose }: Props) {
                   </button>
                   {prompt.trim().length < 20 && <span className="voice-panel__note">{t('提示词至少 20 字')}</span>}
                 </div>
-                <Takes rounds={character.rounds} disabled={disabled} onPick={id => castCharacter(character.name, id)} />
+                <Takes rounds={character.rounds} disabled={disabled} onPick={id => { void castCharacter(character.name, id); }} />
               </li>
             );
           })}

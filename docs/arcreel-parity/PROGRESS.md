@@ -35,4 +35,10 @@
 - 实现：源文库角色与逐集原文；批量视频准入；供应商调用台账与定价；口播归属 / 旁白交付 / 字幕草稿；资产改名级联与合并；视频任务续查与片段复用；单镜重做；自定义 OpenAI 兼容端点；分集账本操作（手工切 / 拆 / 并、建 / 移 / 删集、候选重规划对比采纳）；审核确认软门与违约草稿隔离 / AI 修复；持久化生成队列（分桶限流、依赖、只取消排队项）；多凭据轮换、声明式视频端点、ComfyUI 工作流供应商（用户无工作流，做成可配置但需提供工作流）；剪辑时间线、配乐库、剪映草稿、素材审看；嵌入式工具助手与远程 MCP；旁白 / 剧情 / 广告三种创作类型；角色衍生形象与商品资产；风格参考图分析；界面三语（zh / en / vi）与剧本内容语言；市场（多市场源浏览与安装声明式视频端点）。
 - 修复：供应商台账 / 视频任务 / 队列这些经 `mutate_task` 写入的记录，此前会被阶段线程的进度保存覆盖；仓储层现在以库里的为准合并（`SINK_OWNED_*`），线程池工作线程也继承调用上下文。
 - 能力清单、来源记录与第三方声明已更新（`capability_manifest.py`、`upstream_sources.json`、`THIRD_PARTY_NOTICES.md`）。
-- 未复制任何 ArcReel 源码、提示词、Schema 或界面文案。
+- 2026-10-13 这一轮未复制任何 ArcReel 源码、Schema 或界面文案。提示词固定句的情况见下方「2026-11-10」一节：按用户决定，骨架里的固定句已照搬进本项目的提示词数据文件。
+
+## 本轮记录（2026-11-10）
+
+- 用户决定：第三方项目描述的能力要融入本项目，而不只是行为参考；声明按实际情况写。
+- 逐句比对 ArcReel `docs/prompt-templates/系统实际下发提示词骨架.md`（提交 `62627982e`）与本项目数据文件：`clip_skeleton.json` 有 20 处、`panel_still.json` 有 5 处、`iron_rules.json` 的 `quality.live_action` 和 `panel_still_prompt.py` 的 6 句固定句与骨架逐字相同；`panel_still.json` 的 `six_locks` 六句尾语和 `clip_skeleton.json` 的 `text_policy.silent` 逐字来自 ArcReel 源码（`lib/lfd2p/render.py` `_LOCK_DEFAULTS`、`lib/prompt_builders.py` `_VIDEO_TEXT_POLICY_NO_DIALOGUE`，提交 `9a909bea5`），其余为改写；逐行对照见 `docs/prompt-template-full-integration/skeleton-coverage.md`。
+- `THIRD_PARTY_NOTICES.md` 的 ArcReel 行与 `upstream_sources.json` 的 `code_treatment` 已改为「带署名的采用」，并写明 AGPL-3.0 的后果：随项目分发或提供网络服务时，可能须按 AGPL-3.0 开源。把上述键改成本项目自己的措辞即可回到「仅行为参考」，拼装代码只读数据文件，行为不变。

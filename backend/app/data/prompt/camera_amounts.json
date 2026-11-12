@@ -1,0 +1,349 @@
+{
+  "_note": "运镜的幅度写成「到落幅时画面变了多少」，不写「快速、缓缓」这类副词(模型基本忽略)，也不写秒数(模型会把秒数当成逐帧指令)。跟在运镜写法后面（app/core/camera_motion.render_camera_motion 读取）；固定机位没有幅度。",
+  "amounts": {
+    "Pan Left": "到落幅时摇过约三分之一个画面",
+    "Pan Right": "到落幅时摇过约三分之一个画面",
+    "Tilt Up": "到落幅时摇过约三分之一个画面高",
+    "Tilt Down": "到落幅时摇过约三分之一个画面高",
+    "Zoom In": "到落幅时画面放大约四分之一，机位不动",
+    "Zoom Out": "到落幅时画面缩小约四分之一，机位不动",
+    "Push In": "到落幅时画面推近约四分之一，主体在画面里明显变大",
+    "Pull Out": "到落幅时画面拉开约四分之一，周围环境露出来",
+    "Truck Left": "到落幅时横移约半个画面宽",
+    "Truck Right": "到落幅时横移约半个画面宽",
+    "Pedestal Up": "到落幅时升起约半个人高",
+    "Pedestal Down": "到落幅时降下约半个人高",
+    "Orbit": "到落幅时绕主体转约 90 度，停在主体侧面",
+    "Tracking Shot": "与主体保持同样的距离同速移动",
+    "Shake": "晃动幅度很小，画面边缘只轻微抖动"
+  },
+  "_note_vocabulary": "运镜与景别词表(app/core/camera_motion.py 读取)：键名是 provider 词表里的英文运镜 / 景别 id(代码值)，labels 是界面上的中文名，synonyms 是分镜表里见过的写法(按顺序登记，先登记者胜)，phrases 是每种运镜的中文写法，minimax_commands 是 MiniMax Hailuo 文档里的方括号指令(环绕没有指令)。move_classes 按表内顺序列出一句运镜里可能出现的运动种类；problems 是一镜一主运镜检查的结论句，{占位符} 由代码填入。",
+  "motion_labels": {
+    "Static": "固定",
+    "Pan Left": "左摇",
+    "Pan Right": "右摇",
+    "Tilt Up": "上摇",
+    "Tilt Down": "下摇",
+    "Zoom In": "推近",
+    "Zoom Out": "拉远",
+    "Push In": "推镜",
+    "Pull Out": "拉镜",
+    "Truck Left": "左移",
+    "Truck Right": "右移",
+    "Pedestal Up": "升镜",
+    "Pedestal Down": "降镜",
+    "Orbit": "环绕",
+    "Tracking Shot": "跟踪",
+    "Shake": "晃动"
+  },
+  "shot_type_labels": {
+    "Extreme Close-up": "大特写",
+    "Close-up": "特写",
+    "Medium Close-up": "中特写",
+    "Medium Shot": "中景",
+    "Medium Long Shot": "中远景",
+    "Long Shot": "远景",
+    "Extreme Long Shot": "大远景",
+    "Over-the-shoulder": "过肩镜头",
+    "Point-of-view": "主观镜头"
+  },
+  "motion_synonyms": {
+    "Static": [
+      "static shot",
+      "fixed",
+      "fixed shot",
+      "locked",
+      "locked off",
+      "固定镜头",
+      "固定机位",
+      "静止",
+      "establishing shot",
+      "establishing",
+      "无运镜",
+      "不动"
+    ],
+    "Pan Left": [
+      "pan l",
+      "左横摇",
+      "向左摇",
+      "左平摇"
+    ],
+    "Pan Right": [
+      "pan r",
+      "右横摇",
+      "向右摇",
+      "右平摇"
+    ],
+    "Tilt Up": [
+      "仰摇",
+      "向上摇",
+      "上仰"
+    ],
+    "Tilt Down": [
+      "俯摇",
+      "向下摇",
+      "下俯"
+    ],
+    "Zoom In": [
+      "zoom",
+      "变焦推近",
+      "变焦推",
+      "焦距推近",
+      "推特写",
+      "extreme close up dolly",
+      "extreme close-up dolly"
+    ],
+    "Zoom Out": [
+      "变焦拉远",
+      "变焦拉",
+      "焦距拉远"
+    ],
+    "Push In": [
+      "dolly in",
+      "slow dolly in",
+      "dolly forward",
+      "push",
+      "推进",
+      "推",
+      "推镜头",
+      "缓推",
+      "慢推",
+      "dolly zoom",
+      "希区柯克变焦"
+    ],
+    "Pull Out": [
+      "dolly out",
+      "slow dolly out",
+      "dolly back",
+      "pull",
+      "pull back",
+      "拉出",
+      "拉",
+      "拉镜头",
+      "缓拉",
+      "慢拉"
+    ],
+    "Truck Left": [
+      "truck l",
+      "横移左",
+      "向左横移",
+      "左平移",
+      "lateral tracking left"
+    ],
+    "Truck Right": [
+      "truck r",
+      "横移右",
+      "向右横移",
+      "右平移",
+      "lateral tracking right",
+      "lateral tracking"
+    ],
+    "Pedestal Up": [
+      "crane up",
+      "boom up",
+      "升",
+      "上升",
+      "摇臂上升",
+      "升起",
+      "升降上"
+    ],
+    "Pedestal Down": [
+      "crane down",
+      "boom down",
+      "降",
+      "下降",
+      "摇臂下降",
+      "降下",
+      "升降下"
+    ],
+    "Orbit": [
+      "arc",
+      "arc shot",
+      "orbit shot",
+      "环绕镜头",
+      "弧线",
+      "弧形运动",
+      "围绕",
+      "环拍",
+      "360"
+    ],
+    "Tracking Shot": [
+      "tracking",
+      "track",
+      "follow",
+      "follow shot",
+      "follow the subject",
+      "跟拍",
+      "跟随",
+      "跟镜",
+      "跟踪拍摄",
+      "跟随拍摄",
+      "steadicam"
+    ],
+    "Shake": [
+      "handheld",
+      "hand held",
+      "手持",
+      "抖动",
+      "晃镜",
+      "震动"
+    ]
+  },
+  "shot_type_synonyms": {
+    "Extreme Close-up": [
+      "ecu",
+      "xcu",
+      "extreme closeup",
+      "大特",
+      "极特写"
+    ],
+    "Close-up": [
+      "cu",
+      "closeup",
+      "close up",
+      "近景",
+      "特写镜头"
+    ],
+    "Medium Close-up": [
+      "mcu",
+      "medium closeup",
+      "中近景",
+      "中近",
+      "近中景"
+    ],
+    "Medium Shot": [
+      "ms",
+      "mid shot",
+      "medium",
+      "中景镜头",
+      "半身"
+    ],
+    "Medium Long Shot": [
+      "mls",
+      "medium wide",
+      "medium wide shot",
+      "中全景",
+      "中远",
+      "七分身"
+    ],
+    "Long Shot": [
+      "ls",
+      "fs",
+      "full shot",
+      "wide",
+      "wide shot",
+      "全景",
+      "全身",
+      "远景镜头"
+    ],
+    "Extreme Long Shot": [
+      "els",
+      "ews",
+      "extreme wide",
+      "extreme wide shot",
+      "大全景",
+      "大远",
+      "远景大全景"
+    ],
+    "Over-the-shoulder": [
+      "ots",
+      "over the shoulder",
+      "over shoulder",
+      "过肩",
+      "过肩镜"
+    ],
+    "Point-of-view": [
+      "pov",
+      "point of view",
+      "主观",
+      "主观视角",
+      "第一人称"
+    ]
+  },
+  "key_aside": "[（(][^）)]*[）)]",
+  "minimax_commands": {
+    "Static": "[Static shot]",
+    "Pan Left": "[Pan left]",
+    "Pan Right": "[Pan right]",
+    "Tilt Up": "[Tilt up]",
+    "Tilt Down": "[Tilt down]",
+    "Zoom In": "[Zoom in]",
+    "Zoom Out": "[Zoom out]",
+    "Push In": "[Push in]",
+    "Pull Out": "[Pull out]",
+    "Truck Left": "[Truck left]",
+    "Truck Right": "[Truck right]",
+    "Pedestal Up": "[Pedestal up]",
+    "Pedestal Down": "[Pedestal down]",
+    "Tracking Shot": "[Tracking shot]",
+    "Shake": "[Shake]"
+  },
+  "phrases": {
+    "Static": "固定机位，镜头保持不动",
+    "Pan Left": "镜头向左摇",
+    "Pan Right": "镜头向右摇",
+    "Tilt Up": "镜头向上摇",
+    "Tilt Down": "镜头向下摇",
+    "Zoom In": "镜头变焦推近",
+    "Zoom Out": "镜头变焦拉远",
+    "Push In": "镜头缓慢推进",
+    "Pull Out": "镜头缓慢拉出",
+    "Truck Left": "镜头向左横移",
+    "Truck Right": "镜头向右横移",
+    "Pedestal Up": "镜头垂直升起",
+    "Pedestal Down": "镜头垂直下降",
+    "Orbit": "镜头围绕主体环绕",
+    "Tracking Shot": "镜头跟随主体移动",
+    "Shake": "轻微手持晃动"
+  },
+  "render": {
+    "with_amount": "{phrase}，{amount}",
+    "minimax": "{command} {phrase}",
+    "named": "{phrase}（{canonical}）"
+  },
+  "move_classes": [
+    [
+      "推近",
+      "推近|推进|推至|推向|缓推|轻推|慢推|急推|前推"
+    ],
+    [
+      "拉远",
+      "拉远|后拉|拉开|拉回|拉出"
+    ],
+    [
+      "摇",
+      "横摇|[左右上下]摇|摇起|摇向|摇至|跟摇|甩镜|甩向"
+    ],
+    [
+      "移",
+      "横移|平移|侧移|缓移|微移|跟移|移镜|(?:镜头|机位|机身|摄影机|相机)[^，。；,;→]{0,6}移向"
+    ],
+    [
+      "升降",
+      "升镜|微升|上升|升起|降镜|下降|下沉|微降"
+    ],
+    [
+      "环绕",
+      "环绕|绕拍|弧形"
+    ],
+    [
+      "手持",
+      "手持"
+    ]
+  ],
+  "opposed_classes": [
+    "推近",
+    "拉远"
+  ],
+  "orbit_class": "环绕",
+  "motion_aside": "[（(][^）)]*[）)]|`[^`]*`|\\[[^\\]]*\\]|(?:不|无(?!人机))[^，。；,;、`\\[（(]{0,8}",
+  "focus_pull": "焦点[^，。；,;→]{0,24}(?:拉回|拉开|拉远|拉出)|拉回焦点|拉焦",
+  "beat_span": "\\d+(?:\\.\\d+)?\\s*[-–~～至]\\s*\\d+(?:\\.\\d+)?\\s*秒",
+  "full_orbit": "360|一周|一圈|整圈|全周|绕到(?:对面|背后)",
+  "problems": {
+    "opposed": "同一镜里推近又拉远，方向对冲",
+    "stacked": "同一镜叠了{classes}{count}种运镜",
+    "class_joiner": "、",
+    "orbit": "环绕超过180度就越轴，人物左右关系会翻转；限定在半圈以内"
+  }
+}

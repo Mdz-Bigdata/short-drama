@@ -1,8 +1,8 @@
 import { ChevronLeft, ChevronRight, Eye, FileUp, Pencil, Save, X } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
 
 import { MarkdownBlocks } from './MarkdownDocument';
-import { paginateMarkdown } from './markdownParser';
+import { markdownPageOffsets, paginateMarkdown } from './markdownParser';
 import { t } from '../../i18n';
 
 function paginationItems(total: number, current: number): Array<number | 'ellipsis-left' | 'ellipsis-right'> {
@@ -46,6 +46,61 @@ function plainTextPages(source: string, maxCharacters = 2200) {
   return pages;
 }
 
+function plainTextPageOffsets(pages: string[]) {
+  let offset = 0;
+  return pages.map(page => {
+    const start = offset;
+    offset += page.length;
+    return start;
+  });
+}
+
+/** The page a position in the script falls on; null when no page start is known. */
+function pageAtOffset(offsets: number[], position: number): number | null {
+  let page: number | null = null;
+  for (let index = 0; index < offsets.length; index += 1) {
+    if (offsets[index] < 0) continue;
+    if (offsets[index] > position) return page ?? 0;
+    page = index;
+  }
+  return page;
+}
+
+function pageStartOffset(offsets: number[], page: number) {
+  for (let index = Math.min(page, offsets.length - 1); index >= 0; index -= 1) {
+    if (offsets[index] >= 0) return offsets[index];
+  }
+  return 0;
+}
+
+/** How many leading characters two versions of the text share: where an edit begins. */
+function commonPrefixLength(before: string, after: string) {
+  const limit = Math.min(before.length, after.length);
+  let index = 0;
+  while (index < limit && before.charCodeAt(index) === after.charCodeAt(index)) index += 1;
+  return index;
+}
+
+// A textarea holds \n only and counts the caret on that text, so the script is kept the same way:
+// with \r\n left in, every page start would sit later than the caret by the line breaks before it.
+function normalizeLineBreaks(text: string) {
+  return text.includes('\r') ? text.replace(/\r\n?/g, '\n') : text;
+}
+
+function placeCaret(editor: HTMLTextAreaElement, offset: number) {
+  const value = editor.value;
+  const caret = Math.max(0, Math.min(value.length, offset));
+  // A textarea cannot say where a character sits, so lay out only the text before the caret
+  // and read its height.
+  editor.value = value.slice(0, caret);
+  const heightBefore = editor.scrollHeight;
+  editor.value = value;
+  editor.setSelectionRange(caret, caret);
+  editor.scrollTop = heightBefore > editor.clientHeight
+    ? heightBefore - Math.round(editor.clientHeight / 4)
+    : 0;
+}
+
 async function readScriptFile(file: File) {
   const extension = file.name.toLowerCase().match(/\.[^.]+$/)?.[0];
   if (extension !== '.md' && extension !== '.txt') {
@@ -71,12 +126,12 @@ async function readScriptFile(file: File) {
       throw new Error(t('文件包含不支持的控制字符。'));
     }
   }
-  return content.replace(/^\uFEFF/, '');
+  return normalizeLineBreaks(content.replace(/^\uFEFF/, ''));
 }
 
 export function ScreenplayReader({
   title,
-  script,
+  script: incomingScript,
   initialFileName,
   sourceHash,
   onClose,
@@ -93,6 +148,7 @@ export function ScreenplayReader({
     baseSourceHash: string,
   ) => string | void | Promise<string | void>;
 }) {
+  const script = useMemo(() => normalizeLineBreaks(incomingScript), [incomingScript]);
   const incomingFileName = initialFileName?.trim() || defaultFileName(title);
   const incomingSourceHash = normalizeSourceHash(sourceHash);
   const [draftState, setDraftState] = useState({
@@ -135,17 +191,25 @@ export function ScreenplayReader({
   const markdownPages = useMemo(() => paginateMarkdown(previewSource), [previewSource]);
   const textPages = useMemo(() => plainTextPages(previewSource), [previewSource]);
   const pageCount = isPlainText ? textPages.length : markdownPages.length;
-  const pageKey = `${fileName}\u0000${draft}`;
+  // Keyed by the file alone: an edit must not send the reader back to page 1.
+  const pageKey = fileName;
   const [pageSelection, setPageSelection] = useState({ script: pageKey, index: 0 });
+  const [editorCaret, setEditorCaret] = useState<{ offset: number; focus: boolean } | null>(null);
   const pageIndex = pageSelection.script === pageKey ? pageSelection.index : 0;
   const activePageIndex = Math.min(pageIndex, pageCount - 1);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const pageRef = useRef<HTMLElement>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
   const latestDraftRef = useRef(draft);
   const latestFileNameRef = useRef(fileName);
   const saveInFlightRef = useRef(false);
   const fileReadSequenceRef = useRef(0);
+  // Where the latest change to the text began, and where it left the caret.
+  const lastEditRef = useRef<{ start: number; caret: number } | null>(null);
+  // The text the editor last showed and the caret the writer (or the page jump) left in it.
+  const editorTextRef = useRef(draft);
+  const editorCaretRef = useRef(0);
   latestDraftRef.current = draft;
   latestFileNameRef.current = fileName;
   const isDirty = draft !== lastSavedDraft || fileName !== lastSavedFileName;
@@ -169,6 +233,51 @@ export function ScreenplayReader({
   useEffect(() => {
     pageRef.current?.scrollTo?.({ top: 0 });
   }, [activePageIndex]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editorCaret || !editor) return;
+    placeCaret(editor, editorCaret.offset);
+    editorCaretRef.current = editor.selectionStart;
+    if (editorCaret.focus) editor.focus({ preventScroll: true });
+  }, [editorCaret]);
+
+  // A script saved elsewhere replaces an untouched draft; the browser then moves the caret to the
+  // end, and the next preview would open there. Put the caret back where it was before the swap.
+  useLayoutEffect(() => {
+    const replaced = editorTextRef.current !== draft;
+    editorTextRef.current = draft;
+    const editor = editorRef.current;
+    if (!replaced || mode !== 'edit' || !editor) return;
+    placeCaret(editor, editorCaretRef.current);
+    editorCaretRef.current = editor.selectionStart;
+  }, [draft, mode]);
+
+  // Editing opens where the reader was, and the preview comes back to where the writer worked.
+  const toggleMode = () => {
+    setError('');
+    if (mode === 'preview') {
+      const offsets = isPlainText ? plainTextPageOffsets(textPages) : markdownPageOffsets(draft, markdownPages);
+      setPageSelection({ script: pageKey, index: activePageIndex });
+      setEditorCaret({ offset: pageStartOffset(offsets, activePageIndex), focus: true });
+      lastEditRef.current = null;
+      setMode('edit');
+      return;
+    }
+    const caret = editorRef.current?.selectionStart ?? 0;
+    const edit = lastEditRef.current;
+    // Nothing typed and the caret still where it was put: the page that was open stays open.
+    const untouched = !edit && editorCaret !== null && caret === editorCaret.offset;
+    if (!untouched) {
+      const offsets = isPlainText
+        ? plainTextPageOffsets(plainTextPages(draft))
+        : markdownPageOffsets(draft, paginateMarkdown(draft));
+      // A paste leaves the caret at its end; what was pasted is read from where it begins.
+      const page = pageAtOffset(offsets, edit && caret === edit.caret ? edit.start : caret);
+      if (page !== null) setPageSelection({ script: pageKey, index: page });
+    }
+    setMode('preview');
+  };
 
   const requestClose = () => {
     if (isDirty && !window.confirm(t('当前剧本有未保存修改，确定放弃并关闭吗？'))) return;
@@ -226,6 +335,7 @@ export function ScreenplayReader({
       if (readSequence !== fileReadSequenceRef.current) return;
       latestDraftRef.current = content;
       latestFileNameRef.current = file.name;
+      editorTextRef.current = content;
       setDraftState({
         source: activeSource,
         sourceFileName: activeSourceFileName,
@@ -237,7 +347,10 @@ export function ScreenplayReader({
         savedFileName: lastSavedFileName,
       });
       setMode('edit');
-      setPageSelection({ script: `${file.name}\u0000${content}`, index: 0 });
+      setPageSelection({ script: file.name, index: 0 });
+      // Replacing the text leaves the caret at its end; a newly opened file starts at the top.
+      setEditorCaret({ offset: 0, focus: false });
+      lastEditRef.current = null;
     } catch (loadError) {
       if (readSequence !== fileReadSequenceRef.current) return;
       setError(loadError instanceof Error ? loadError.message : '文件读取失败。');
@@ -320,10 +433,7 @@ export function ScreenplayReader({
             <button
               type="button"
               aria-label={mode === 'edit' ? t('预览剧本') : t('编辑剧本')}
-              onClick={() => {
-                setError('');
-                setMode(current => current === 'edit' ? 'preview' : 'edit');
-              }}
+              onClick={toggleMode}
             >
               {mode === 'edit' ? <Eye aria-hidden="true" /> : <Pencil aria-hidden="true" />}
               {mode === 'edit' ? t('预览') : t('编辑')}
@@ -350,11 +460,19 @@ export function ScreenplayReader({
           <div className="writer-reader__editor">
             <label htmlFor="writer-script-editor">{t('剧本内容')}</label>
             <textarea
+              ref={editorRef}
               id="writer-script-editor"
               aria-label={t('剧本内容')}
               value={draft}
               spellCheck={false}
+              onSelect={event => { editorCaretRef.current = event.currentTarget.selectionStart; }}
               onChange={event => {
+                lastEditRef.current = {
+                  start: commonPrefixLength(draft, event.target.value),
+                  caret: event.target.selectionStart,
+                };
+                editorTextRef.current = event.target.value;
+                editorCaretRef.current = event.target.selectionStart;
                 latestDraftRef.current = event.target.value;
                 latestFileNameRef.current = fileName;
                 setDraftState({
@@ -384,7 +502,11 @@ export function ScreenplayReader({
             <div className="writer-reader__paper">
               {isPlainText
                 ? <pre className="writer-reader__plain-text">{textPages[activePageIndex] || ''}</pre>
-                : <MarkdownBlocks blocks={markdownPages[activePageIndex] || []} />}
+                : (
+                  <div className="writer-markdown-document writer-reader__document">
+                    <MarkdownBlocks blocks={markdownPages[activePageIndex] || []} />
+                  </div>
+                )}
             </div>
           </section>
         )}

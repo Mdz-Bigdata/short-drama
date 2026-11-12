@@ -1,0 +1,34 @@
+{
+  "_doc": "定角音色样本当参考音频随请求发给音画同生的视频模型(见 app/core/voice_reference.py)。lock_lead 与 h3_sound_design.VoiceAnchor.lock_line 里接 ref_audio 的那几个字一致；clause 换掉它和占位符，{n} 是这段音频在请求里的位置。",
+  "lock_lead": "音色参考",
+  "clause": "，音色参考：参考音频{n}（只取音色，语速与情绪按本镜表达）",
+  "route_reason": "带上说话角色的定角音色样本当参考音频，跨镜同一副嗓子",
+  "h3_subject": "<Audio {n}> is the voice-timbre reference for {name}: only the timbre is taken, pace and emotion follow each line.",
+  "h3_retention": "<Audio {n}>: reference - only the voice timbre of {name} is referenced, nothing is copied.",
+  "h3_summary_types": [
+    "[reference generation]",
+    "[reference generation + audio reference]"
+  ],
+  "audio_limits": {
+    "_about": "参考音频的时长限制，按视频模型家族：每段 min–max 秒，同一请求里所有参考音频合计不超过 total 秒；inline 为 true 的家族在样本没有公网地址时把它内嵌进请求(data:audio)。MiniMax H3 实测：audio duration expected [2000, 15000] ms(2026-11-11 试跑)。没列的家族用 default。",
+    "default": {
+      "min": 2,
+      "max": 15,
+      "total": 15,
+      "inline": false
+    },
+    "minimax_h3": {
+      "min": 2,
+      "max": 15,
+      "total": 15,
+      "inline": false
+    },
+    "seedance": {
+      "min": 2,
+      "max": 15,
+      "total": 15,
+      "inline": false
+    }
+  },
+  "sample_cap_seconds": 10
+}

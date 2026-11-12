@@ -6,15 +6,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StoryboardWorkspace, type StoryboardShot } from './StoryboardWorkspace';
 
 vi.mock('../spatial/SpatialStageDialog', () => ({
-  SpatialStageDialog: ({ taskId, sceneId, onClose, onRedrawRequested }: {
-    taskId: string; sceneId: string; onClose: () => void; onRedrawRequested?: () => void;
+  SpatialStageDialog: ({ taskId, sceneId, onClose, onRedrawRequested, onOpenDesk }: {
+    taskId: string; sceneId: string; onClose: () => void; onRedrawRequested?: () => void; onOpenDesk?: () => void;
   }) => (
     <div role="dialog" aria-label="空间调度">
       {taskId}/{sceneId}
       <button type="button" onClick={onRedrawRequested}>redraw</button>
+      <button type="button" onClick={onOpenDesk}>to desk</button>
       <button type="button" onClick={onClose}>close</button>
     </div>
   ),
+}));
+vi.mock('../directorDesk/DirectorDesk', () => ({
+  DirectorDesk: ({ sceneId }: { sceneId: string }) => <div role="dialog" aria-label="3D 导演台">{sceneId}</div>,
 }));
 
 const shots: StoryboardShot[] = [
@@ -35,6 +39,16 @@ describe('StoryboardWorkspace spatial stage entry', () => {
     await userEvent.click(screen.getByRole('button', { name: 'redraw' }));
     expect(onRefresh).toHaveBeenCalled();
     await userEvent.click(screen.getByRole('button', { name: 'close' }));
+    expect(screen.queryByRole('dialog', { name: '空间调度' })).toBeNull();
+  });
+
+  it('hands the scene over to the 3D desk from inside the spatial stage', async () => {
+    render(<StoryboardWorkspace title="暗室回声" shots={shots} taskId="task-1" onRefresh={vi.fn()} onRegenerate={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole('button', { name: '空间调度' }));
+    await userEvent.click(screen.getByRole('button', { name: 'to desk' }));
+
+    expect((await screen.findByRole('dialog', { name: '3D 导演台' })).textContent).toBe('E1S01');
     expect(screen.queryByRole('dialog', { name: '空间调度' })).toBeNull();
   });
 

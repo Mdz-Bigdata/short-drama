@@ -71,7 +71,7 @@ class SilentModelPromptTests(unittest.TestCase):
         text = compile_shot_prompt(style_packs.FILM_35MM, _shot(), model="seedance2.5").text
 
         self.assertIn("[声音锁]空调低鸣", text)
-        self.assertIn("【声音设计】环境铺底：空调低鸣", text)
+        self.assertIn("【声音设计】环境铺底：<空调低鸣>", text)  # Seedance 的音效写在尖括号里
         self.assertIn("仅生成动作音效", text)
 
 

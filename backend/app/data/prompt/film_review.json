@@ -1,0 +1,182 @@
+{
+  "_doc": "成片自动验收：从成片按时间均匀截帧拼成一张联系表，交给能看图的模型按画面打分。只评画面看得到的；听不到的声音不靠猜。八 Agent 发布门禁按项目里真实存在的产物出一份报告，只提示、不拦。",
+  "frames": 8,
+  "columns": 4,
+  "cell_width": 640,
+  "max_tokens": 8000,
+  "system": "你是短剧成片的质检员。你会看到一张联系表：从同一部成片里按时间顺序均匀截出的若干帧，从左到右、从上到下排列，每格左上角标了编号和时间。只按画面里看得清的东西打分：看得清的问题要扣分，看不清、拿不准的不要猜，也不要当成问题。只输出一个 JSON 对象，不要任何解释。",
+  "prompt": "给这部成片的画面质量打分，每项 0 到 1 的小数。分数参照：0.9 以上=看不出问题；0.8 左右=有小瑕疵但不影响观看；0.6 左右=明显问题；0.4 以下=严重问题。\n- identity_consistency：同一个角色在不同格里是不是同一张脸、同一身衣服、同样的发型；只出现一次的角色不算。\n- anatomy_integrity：手、手指、四肢、身体有没有清楚可见的畸形、多指、错位、穿模；小到看不清的手不算。\n- expression_fidelity：表情是否自然、是否符合画面里的情境，有没有僵硬或怪异的表情。\n- photorealism：像不像真人实拍的电影画面。看起来是真人演员、真实光线就给高分；只有塑料皮肤、明显 CG 感、过度磨皮才扣分。\n- temporal_continuity：相邻格之间场景、光线、服装、道具、站位方向是否连贯，有没有突然跳变；画面大半是黑的、撕裂或花屏也算在这里扣分。\n- dialogue_emotion_timing：画面里有字幕时，画面里的人的表情和姿态是否配得上这句台词的情绪；说话人可能在画外，不确定是谁说的不扣分。\n- lip_sync：有字幕且能确定说话人就在画面里、脸看得清时，他的嘴是不是在说话的样子；说话人可能在画外的格不算。\n- hard_defects：一眼就能确认的硬伤，每条写清第几格、画面哪个位置、是什么(如「第3格右下角握剑的手有六根手指」「第6格画面上半部全黑」)；看不清、拿不准的不要写；格子里没有的东西绝不能写。没有就给空数组。\n- notes：一句话总评，不超过 60 字。\n输出格式：{\"identity_consistency\": 0.0, \"anatomy_integrity\": 0.0, \"expression_fidelity\": 0.0, \"photorealism\": 0.0, \"temporal_continuity\": 0.0, \"dialogue_emotion_timing\": 0.0, \"lip_sync\": 0.0, \"hard_defects\": [], \"notes\": \"\"}",
+  "assessor": "成片联系表看图验收",
+  "artifact_sources": {
+    "director_constitution": [
+      "1"
+    ],
+    "genre_audience_strategy": [
+      "1"
+    ],
+    "series_narrative_arc": [
+      "1"
+    ],
+    "highlight_map": [],
+    "production_risk_register": [],
+    "director_approval": [],
+    "series_bible": [
+      "2_screenwriting.overview"
+    ],
+    "episode_scripts": [
+      "2"
+    ],
+    "character_arcs": [],
+    "dialogue_sheet": [
+      "2_breakdown.scenes"
+    ],
+    "foreshadow_ledger": [],
+    "writer_compliance_pass": [
+      "2_review_gate"
+    ],
+    "character_bible": [
+      "3_characters"
+    ],
+    "five_view_turnarounds": [
+      "3_sheets"
+    ],
+    "character_state_cards": [
+      "3_dna"
+    ],
+    "costume_makeup_ledger": [],
+    "prop_ownership": [],
+    "voice_identity_brief": [
+      "6.voice_profile"
+    ],
+    "scene_bibles": [
+      "4_scene_boards"
+    ],
+    "exact_nine_grid_storyboards": [
+      "4_storyboard",
+      "4_grid"
+    ],
+    "shot_motion_contracts": [
+      "4"
+    ],
+    "continuity_ledger": [
+      "4_continuity_audit"
+    ],
+    "action_choreography": [],
+    "storyboard_qc": [
+      "4_quality"
+    ],
+    "visual_bible": [],
+    "style_palette_lighting_lock": [],
+    "negative_prompt_plan": [
+      "4_negative_prompt_modules"
+    ],
+    "reference_binding_plan": [],
+    "generated_keyframes": [
+      "4"
+    ],
+    "video_route_plans": [
+      "5"
+    ],
+    "visual_qc": [
+      "7.auto_review"
+    ],
+    "voice_cards": [
+      "6.voice_profile"
+    ],
+    "dialogue_timing": [
+      "6.dialogue_directions"
+    ],
+    "elevenlabs_job_plan": [
+      "6.elevenlabs_job_plan"
+    ],
+    "sfx_foley_cues": [
+      "6.sfx_url"
+    ],
+    "bgm_music_plan": [
+      "6.bgm_url"
+    ],
+    "lipsync_plan": [],
+    "audio_mix_plan": [
+      "6.audio_url"
+    ],
+    "audio_qc": [],
+    "edit_decision_list": [
+      "7_timeline"
+    ],
+    "transition_plan": [
+      "7.transition_quality"
+    ],
+    "subtitle_package": [
+      "7.subtitles"
+    ],
+    "mastered_timeline": [
+      "7_timeline"
+    ],
+    "export_profiles": [
+      "7.delivery_profile"
+    ],
+    "delivery_archive": [
+      "7.final_video_url"
+    ],
+    "final_qc": [
+      "7.quality_gate"
+    ],
+    "highlight_clips": [],
+    "cover_title_variants": [],
+    "trailer_plan": [],
+    "platform_copy_tags": [
+      "8_publish",
+      "8.pr_content"
+    ],
+    "ab_test_plan": [],
+    "localization_package": [],
+    "rights_ai_disclosure": [],
+    "campaign_kpis": [
+      "8.campaign_kpis"
+    ]
+  },
+  "role_stages": {
+    "executive_director": 1,
+    "writer": 2,
+    "character_designer": 3,
+    "storyboard_artist": 4,
+    "visual_director": 5,
+    "audio_director": 6,
+    "composer_publisher": 7,
+    "pr_agent": 8
+  },
+  "scan": {
+    "_doc": "整片扫描(ffmpeg，不调模型)：全黑、上方或下方大片纯黑边(横版素材塞进竖屏的样子)、定格。片头标题卡和片尾淡出不算。 只有一边黑的可能是构图(拱门下、暗处前景)，至少持续 4 秒才算；上下都黑的超过 1 秒就算。",
+    "scale_width": 320,
+    "black_picture_ratio": 0.98,
+    "freeze_min_seconds": 3.0,
+    "freeze_noise": 0.003,
+    "skip_head_seconds": 4.0,
+    "skip_tail_seconds": 2.0,
+    "regions": [
+      {
+        "crop": "",
+        "label": "画面全黑",
+        "pixel_threshold": 0.1,
+        "min_seconds": 0.4
+      },
+      {
+        "crop": "crop=iw:ih*0.3:0:0",
+        "label": "画面上方大片黑边",
+        "pixel_threshold": 0.05,
+        "min_seconds": 1.0
+      },
+      {
+        "crop": "crop=iw:ih*0.3:0:ih*0.7",
+        "label": "画面下方大片黑边",
+        "pixel_threshold": 0.05,
+        "min_seconds": 1.0
+      }
+    ],
+    "freeze_label": "画面定格不动",
+    "defect": "{start}–{end} {label}（{seconds:.1f} 秒，整片扫描）",
+    "max_defects": 8,
+    "both_bands_label": "画面上下都是黑边，疑似横版素材塞进竖屏",
+    "single_band_min_seconds": 4.0
+  }
+}

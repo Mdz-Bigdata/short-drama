@@ -10,7 +10,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from typing import Any
 
-from app.core import creation_modes
+from app.core import acting, creation_modes
 from app.core.episode_shape import EpisodeShape
 from app.schema.writer_dashboard import (
     WriterDashboardEpisode,
@@ -479,7 +479,7 @@ def _normalize_lines(value: Any) -> list[dict[str, Any]]:
             "speaker": _text(item.get("speaker"), 80),
             "text": text,
             "verbatim": bool(item.get("verbatim")),
-            "delivery": _text(item.get("delivery"), 120),
+            "delivery": _text(item.get("delivery"), acting.DELIVERY_MAX_CHARS),
         })
     return lines
 
@@ -528,6 +528,7 @@ def _normalize_scenes(
             "description": _text(item.get("description"), 6000),
             "emotion_point": _text(item.get("emotion_point"), 20),
             "key_line": _text(item.get("key_line"), 120),
+            "subtext": acting.subtext_of(item),
             "dialogue": _normalize_lines(item.get("dialogue")),
             "image_url": (images or {}).get(scene_id) or None,
             "characters": [
@@ -816,6 +817,7 @@ def compile_writer_dashboard(task: dict[str, Any]) -> WriterDashboardResponse:
         roles=roles,
         relationships=relationships,
         relationships_inferred=relationships_inferred,
+        relationships_authored=bool(breakdown.get("relationships_authored")),
         timeline_authored=bool(breakdown.get("timeline_authored")),
         creation_mode=creation_modes.mode_of(config),
         versions=version_summaries(assets),

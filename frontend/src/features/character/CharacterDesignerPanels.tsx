@@ -13,6 +13,7 @@ import {
   UserRound,
   WandSparkles,
   XCircle,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { useState, type CSSProperties } from 'react';
 
@@ -134,10 +135,12 @@ function DefinitionRow({ label, value }: { label: string; value?: string }) {
   );
 }
 
-export function CharacterInspector({ character, onRegenerate }: {
+export function CharacterInspector({ character, onRegenerate, onSculpt }: {
   character: CharacterDashboardCharacter;
   /** 只为这一名角色重新出设定集(mode=sheet)或只补高清身份视图(mode=hd)，都付费；不传则不显示按钮。 */
   onRegenerate?: (name: string, mode: CharacterRegenerateMode) => void;
+  /** 打开捏脸 / 捏表情；只改文字资产、不花钱。不传则不显示按钮。 */
+  onSculpt?: (name: string) => void;
 }) {
   const [stateId, setStateId] = useState('');
   const [themeSelection, setThemeSelection] = useState({ characterId: character.characterId, index: 0 });
@@ -172,6 +175,17 @@ export function CharacterInspector({ character, onRegenerate }: {
         >
           <Maximize2 size={14} aria-hidden="true" /> {t('完整档案')}
         </button>
+        {onSculpt && (
+          <button
+            type="button"
+            className="character-detail-trigger"
+            aria-haspopup="dialog"
+            aria-label={`为${character.name}捏脸和捏表情`}
+            onClick={() => onSculpt(character.name)}
+          >
+            <SlidersHorizontal size={14} aria-hidden="true" /> {t('捏脸 · 捏表情')}
+          </button>
+        )}
       </section>
 
       {onRegenerate && (

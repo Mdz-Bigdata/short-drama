@@ -15,7 +15,12 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.core import prompt_data
+
 PLAN_VERSION = 1
+# What a camera records when the storyboard names no size or angle: app/data/prompt/stage_vocabulary.json.
+_DEFAULT_SHOT_SIZE = str(prompt_data.value("stage_vocabulary", "shot_sizes")["default"])
+_DEFAULT_ANGLE = str(prompt_data.value("stage_vocabulary", "angles")["default"])
 
 Meters = Annotated[float, Field(ge=-500, le=500)]
 GroundPoint = Annotated[list[Meters], Field(min_length=2, max_length=2)]
@@ -50,6 +55,13 @@ HexColor = Annotated[str, Field(pattern=r"^(?:#[0-9A-Fa-f]{6})?$")]
 JointKey = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_.:-]{0,59}$")]
 JointDegrees = Annotated[float, Field(ge=-180, le=180)]
 Yaw = Annotated[float, Field(ge=-360, le=360)]
+# Physical contact between a body and an object, kept by the stage apart from any lock: a prop in a hand,
+# someone on a seat, a thing lying on a table. See :mod:`app.core.spatial_stage.contacts`.
+ContactKind = Literal["hold", "sit", "rest"]
+# "" is the right hand.
+ContactHand = Literal["left", "right", "both", ""]
+# "auto" contacts are re-derived from the shot text on a re-plan; "manual" ones are a person's and are kept.
+ContactSource = Literal["auto", "manual"]
 KeyTime = Annotated[float, Field(ge=0, le=30)]
 
 MAX_ACTORS = 200
@@ -61,6 +73,8 @@ MAX_TRACK_CLIPS = 40
 MAX_LANDMARK_PARTS = 64
 # Every piece of a stage together: plans are stored and sent whole on each edit.
 MAX_STAGE_PARTS = 2400
+# Contacts of one scene; a bound on the stored list, not on how many any one shot has.
+MAX_CONTACTS = 400
 
 
 class StageModel(BaseModel):
@@ -205,8 +219,8 @@ class StageCamera(StageModel):
     sensor_mm: Annotated[float, Field(ge=4, le=80)] = 36.0
     fov_deg: Annotated[float, Field(ge=1, le=170)] = 39.6
     aspect: Annotated[str, Field(pattern=r"^\d{1,3}(?:\.\d+)?:\d{1,3}(?:\.\d+)?$")] = "9:16"
-    shot_size: Annotated[str, Field(max_length=80)] = "中景"
-    angle: Annotated[str, Field(max_length=120)] = "平视"
+    shot_size: Annotated[str, Field(max_length=80)] = _DEFAULT_SHOT_SIZE
+    angle: Annotated[str, Field(max_length=120)] = _DEFAULT_ANGLE
     function: ShotFunction = "single"
     subjects: Annotated[list[Name], Field(max_length=40)] = Field(default_factory=list)
     move: CameraMove = Field(default_factory=CameraMove)
@@ -415,6 +429,43 @@ class ShotTimeline(StageModel):
         return self
 
 
+class StageContact(StageModel):
+    """One physical contact on the stage.
+
+    ``hold``: ``actor`` holds the prop ``target`` in ``hand``. ``sit``: ``actor`` sits on the seat ``target``.
+    ``rest``: ``target`` lies on ``support``. ``shot_ids`` empty means the whole scene.
+    """
+
+    id: Identifier
+    kind: ContactKind
+    actor: Annotated[str, Field(max_length=120)] = ""
+    target: Name
+    support: Annotated[str, Field(max_length=120)] = ""
+    hand: ContactHand = ""
+    shot_ids: Annotated[list[Annotated[int, Field(ge=1, le=10_000)]], Field(max_length=200)] = Field(default_factory=list)
+    source: ContactSource = "auto"
+
+    @model_validator(mode="after")
+    def fields_fit_the_kind(self) -> "StageContact":
+        if self.kind in {"hold", "sit"} and (not self.actor or self.support):
+            raise ValueError("a hold or sit contact names its actor and no support")
+        if self.kind == "rest" and (self.actor or not self.support or self.support == self.target):
+            raise ValueError("a rest contact names a support other than its target and no actor")
+        if self.kind != "hold" and self.hand:
+            raise ValueError("only a hold contact names a hand")
+        if len(self.shot_ids) != len(set(self.shot_ids)):
+            raise ValueError("a contact's shot ids must be distinct")
+        return self
+
+    def applies_to(self, shot_id: int | None) -> bool:
+        """Whether the contact holds in shot ``shot_id``; ``None`` asks about the scene as a whole."""
+        return not self.shot_ids if shot_id is None else (not self.shot_ids or int(shot_id) in self.shot_ids)
+
+    def overlaps(self, other: "StageContact") -> bool:
+        """Whether the two contacts share a shot."""
+        return not self.shot_ids or not other.shot_ids or bool(set(self.shot_ids) & set(other.shot_ids))
+
+
 class StageCheck(StageModel):
     code: Annotated[str, Field(pattern=r"^[a-z0-9_]{3,80}$")]
     passed: bool
@@ -445,6 +496,8 @@ class StagePlan(StageModel):
     checks: Annotated[list[StageCheck], Field(max_length=40)] = Field(default_factory=list)
     # Keyed by shot id as a string (JSON object keys are strings).
     timelines: Annotated[dict[str, ShotTimeline], Field(max_length=200)] = Field(default_factory=dict)
+    # Plans saved before contacts existed have none and load unchanged.
+    contacts: Annotated[list[StageContact], Field(max_length=MAX_CONTACTS)] = Field(default_factory=list)
     scene_bible: Annotated[str, Field(max_length=4000)] = ""
     source: PlanSource = "auto"
     planner: PlanPlanner = "rules"
@@ -486,6 +539,18 @@ class StagePlan(StageModel):
             timeline = self.timelines.get(str(shot.shot_id))
             if timeline and any(cut.camera_id not in {shot.camera_id, *shot.alt_camera_ids} for cut in timeline.cuts):
                 raise ValueError("every camera cut must use the shot's own lens or one of its candidates")
+        contact_ids = [contact.id for contact in self.contacts]
+        if len(contact_ids) != len(set(contact_ids)):
+            raise ValueError("spatial stage contact ids must be unique")
+        pieces = {item.name for item in self.landmarks}
+        for contact in self.contacts:
+            if contact.target not in pieces or (contact.support and contact.support not in pieces):
+                raise ValueError("every contact's target and support must be set pieces of the stage")
+            if contact.actor and contact.actor not in names:
+                raise ValueError("every contact's actor must be a character on the stage")
+        for index, contact in enumerate(self.contacts):
+            if any(other.target == contact.target and contact.overlaps(other) for other in self.contacts[index + 1:]):
+                raise ValueError("two contacts cannot hold the same target in the same shot")
         return self
 
     def actor(self, name: str) -> StageActor | None:
@@ -496,6 +561,9 @@ class StagePlan(StageModel):
 
     def shot(self, shot_id: int) -> StageShot | None:
         return next((shot for shot in self.shots if shot.shot_id == int(shot_id)), None)
+
+    def landmark(self, name: str) -> StageLandmark | None:
+        return next((item for item in self.landmarks if item.name == name), None)
 
     def actors_in(self, shot: StageShot, *, at_end: bool = False) -> list[StageActor]:
         """The cast as it stands during ``shot``: marks, with that shot's overrides applied.
@@ -516,7 +584,20 @@ class StagePlan(StageModel):
             staged.append(actor.model_copy(update={
                 key: value for key, value in (*moved, ("posture", change.posture), ("pose", change.pose)) if value is not None
             }))
-        return staged
+        if not self.contacts:
+            return staged
+        # Someone on a seat is on it wherever the shot's change put them (contacts come after overrides).
+        from app.core.spatial_stage import contacts
+
+        return contacts.seat_actors(staged, self.landmarks, self.contacts, shot.shot_id)
+
+    def landmarks_in(self, shot: StageShot, *, at_end: bool = False) -> list[StageLandmark]:
+        """The set as it stands during ``shot``: a held prop in the hand, a thing laid on its support."""
+        if not self.contacts:
+            return self.landmarks
+        from app.core.spatial_stage import contacts
+
+        return contacts.place_landmarks(self.landmarks, self.actors_in(shot, at_end=at_end), self.contacts, shot.shot_id)
 
 
 __all__ = [
@@ -526,6 +607,7 @@ __all__ = [
     "MAX_TRACK_KEYS",
     "MAX_TRACK_CLIPS",
     "MAX_LANDMARKS",
+    "MAX_CONTACTS",
     "ActionClip",
     "ActorKey",
     "CameraCut",
@@ -542,6 +624,7 @@ __all__ = [
     "StageBackdrop",
     "StageCamera",
     "StageCheck",
+    "StageContact",
     "StageCrowd",
     "StageLandmark",
     "StagePlan",

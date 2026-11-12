@@ -13,10 +13,25 @@ export type FloorMove =
   | { kind: 'landmark'; name: string; position: GroundPoint }
   | { kind: 'camera'; cameraId: string; position: GroundPoint };
 
+// Pointer travel, in screen pixels, below which a press is a click and not a drag.
+const DRAG_THRESHOLD_PX = 4;
+
 interface DragState {
   kind: FloorMove['kind'];
   key: string;
   point: GroundPoint;
+  startX: number;
+  startY: number;
+  /** Where on the mark it was grabbed, so the mark does not jump under the pointer. */
+  grab: GroundPoint;
+  active: boolean;
+}
+
+interface PendingMove {
+  kind: FloorMove['kind'];
+  key: string;
+  point: GroundPoint;
+  revision: number;
 }
 
 interface Props {
@@ -35,6 +50,13 @@ interface Props {
 export function FloorPlan({ plan, shot, locked = false, onSelectShot, onMove }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
+  // The last drop, shown until the plan that answers it arrives.
+  const [pending, setPending] = useState<PendingMove | null>(null);
+  const [wasLocked, setWasLocked] = useState(locked);
+  if (wasLocked !== locked) {
+    setWasLocked(locked);
+    if (!locked) setPending(null);
+  }
   const actors = useMemo(() => actorsInShot(plan, shot), [plan, shot]);
   const bounds = useMemo(() => floorBounds(plan, actors), [plan, actors]);
   const transform = useMemo(() => floorTransform(bounds, WIDTH, HEIGHT), [bounds]);
@@ -58,25 +80,42 @@ export function FloorPlan({ plan, shot, locked = false, onSelectShot, onMove }: 
     if (locked) return;
     event.stopPropagation();
     (event.currentTarget as Element).setPointerCapture?.(event.pointerId);
-    setDrag({ kind, key, point });
+    const at = worldPoint(event);
+    setPending(null);
+    setDrag({
+      kind, key, point,
+      startX: event.clientX,
+      startY: event.clientY,
+      grab: at ? [point[0] - at[0], point[1] - at[1]] : [0, 0],
+      active: false,
+    });
   };
 
   const move = (event: ReactPointerEvent) => {
     if (!drag) return;
-    const point = worldPoint(event);
-    if (point) setDrag({ ...drag, point });
+    // A press that barely travels is a click: it must not move the mark or save anything.
+    if (!drag.active && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < DRAG_THRESHOLD_PX) return;
+    const at = worldPoint(event);
+    if (at) setDrag({ ...drag, active: true, point: [at[0] + drag.grab[0], at[1] + drag.grab[1]] });
   };
 
   const end = () => {
     if (!drag) return;
     const finished = drag;
     setDrag(null);
+    if (!finished.active) return;
+    setPending({ kind: finished.kind, key: finished.key, point: finished.point, revision: plan.revision });
     if (finished.kind === 'camera') onMove({ kind: 'camera', cameraId: finished.key, position: finished.point });
     else onMove({ kind: finished.kind, name: finished.key, position: finished.point });
   };
 
-  const placed = (kind: FloorMove['kind'], key: string, fallback: GroundPoint): GroundPoint =>
-    drag && drag.kind === kind && drag.key === key ? drag.point : fallback;
+  // While the drop is being saved the mark stays where it was dropped; a failed save unlocks
+  // the plan at the same revision and the mark goes back.
+  const held = pending && locked && pending.revision === plan.revision ? pending : null;
+  const placed = (kind: FloorMove['kind'], key: string, fallback: GroundPoint): GroundPoint => {
+    if (drag?.active && drag.kind === kind && drag.key === key) return drag.point;
+    return held && held.kind === kind && held.key === key ? held.point : fallback;
+  };
 
   const gridLines: number[] = [];
   for (let value = Math.ceil(bounds.minX); value <= Math.floor(bounds.maxX); value += 1) gridLines.push(value);

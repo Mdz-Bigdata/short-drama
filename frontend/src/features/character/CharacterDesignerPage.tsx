@@ -14,6 +14,7 @@ import type { ElementKind } from '../elements/elementTypes';
 import { assetGateReason, type AssetReadiness } from './assetReadiness';
 import { CharacterAssetTabs } from './CharacterAssetTabs';
 import { CharacterLooks } from './CharacterLooks';
+import { CharacterFaceSculpt } from './CharacterFaceSculpt';
 import { characterAssetTabLabels } from './assetTabLabels';
 import { CharacterFiveViewViewer } from './CharacterFiveViewViewer';
 import { CharacterDetailDialog } from './CharacterDetailDialog';
@@ -28,7 +29,16 @@ import type { CharacterDashboardResponse, CharacterRegenerateMode } from './type
 import './CharacterDesignerPage.css';
 import { t } from '../../i18n';
 
-const nonActorAssetKinds = ['scene', 'prop', 'effect'] as const satisfies readonly ElementKind[];
+// 与 CharacterAssetTabs 的页签一一对应(演员的数目来自角色看板)。
+const nonActorAssetKinds = ['scene', 'prop', 'effect', 'product', 'extra', 'vehicle', 'set_dressing', 'stunt'] as const satisfies readonly ElementKind[];
+
+/** 外面(如侧栏助手)要求打开某个角色的捏脸窗；nonce 变一次只开一次。 */
+export interface CharacterSculptRequest {
+  name: string;
+  nonce: number;
+}
+
+const looseName = (name: string) => name.replace(/\s+/g, '').toLowerCase();
 
 interface ElementCountResponse {
   items: unknown[];
@@ -63,6 +73,8 @@ export function CharacterDesignerPage({
   onRegenerateCharacters,
   onExport,
   onContinue,
+  sculptRequest,
+  onFocusCharacter,
 }: {
   dashboard: CharacterDashboardResponse;
   syncMessage?: string;
@@ -78,6 +90,10 @@ export function CharacterDesignerPage({
   onRegenerateCharacters?: (names: string[]) => void;
   onExport: () => void;
   onContinue: () => void;
+  /** 打开这个角色的捏脸窗：名字先精确匹配，再忽略大小写和空格匹配；同一个 nonce 只生效一次。 */
+  sculptRequest?: CharacterSculptRequest | null;
+  /** 屏幕上正在看的角色：捏脸窗开着时是它，否则是选中的角色，都没有时为 null。 */
+  onFocusCharacter?: (name: string | null) => void;
 }) {
   const [selectedId, setSelectedId] = useState('');
   const [activeAssetKind, setActiveAssetKind] = useState<ElementKind>(initialAssetKind);
@@ -93,8 +109,38 @@ export function CharacterDesignerPage({
   const [assetGenerationBusy, setAssetGenerationBusy] = useState(false);
   const [assetReadiness, setAssetReadiness] = useState<AssetReadiness | null>(null);
   const [looksToken, setLooksToken] = useState(0);
+  // 正在捏脸的角色名；为空时不显示捏脸窗口。
+  const [sculpting, setSculpting] = useState('');
+  const sculptDirty = useRef(false);
+  const reportSculptDirty = useCallback((dirty: boolean) => { sculptDirty.current = dirty; }, []);
+  const closeSculpt = () => {
+    if (sculptDirty.current && !window.confirm(t('捏脸改动还没保存，确定关闭吗？'))) return;
+    sculptDirty.current = false;
+    setSculpting('');
+  };
   const synchronizedTaskId = useRef('');
   const character = dashboard.characters.find(item => item.characterId === selectedId) || dashboard.characters[0];
+  const appliedSculptNonce = useRef<number | null>(null);
+  useEffect(() => {
+    if (!sculptRequest || !taskId || appliedSculptNonce.current === sculptRequest.nonce) return;
+    const wanted = sculptRequest.name.trim();
+    const match = dashboard.characters.find(item => item.name === wanted)
+      || dashboard.characters.find(item => looseName(item.name) === looseName(wanted));
+    // 名字还没出现在看板上(看板还在读)时先不记账，等它出现再开。
+    if (!match) return;
+    appliedSculptNonce.current = sculptRequest.nonce;
+    if (sculpting === match.name) return;
+    if (sculpting && sculptDirty.current && !window.confirm(t('捏脸改动还没保存，确定关闭吗？'))) return;
+    sculptDirty.current = false;
+    setActiveAssetKind('actor');
+    setSelectedId(match.characterId);
+    setSculpting(match.name);
+  }, [dashboard.characters, sculptRequest, sculpting, taskId]);
+
+  const focusName = sculpting || character?.name || null;
+  const reportFocus = useRef(onFocusCharacter);
+  useEffect(() => { reportFocus.current = onFocusCharacter; }, [onFocusCharacter]);
+  useEffect(() => { reportFocus.current?.(focusName); }, [focusName]);
   // 数字演员、定妆图、场地、道具、特效没出齐就离开第 3 步，下游分镜拿不到锁人物的
   // 身份视图，只能自己编一个人出来。看板契约 READY 之前不放行，成片一致性才守得住。
   // The library gate covers costume looks, scenes, props and effects; while it is
@@ -300,7 +346,12 @@ export function CharacterDesignerPage({
           onFillDetails={onRegenerateCharacter ? () => onRegenerateCharacter(character.name, 'details') : undefined}
         />
       )}
-      <CharacterInspector key={`inspector-${character.characterId}`} character={character} onRegenerate={onRegenerateCharacter} />
+      <CharacterInspector
+        key={`inspector-${character.characterId}`}
+        character={character}
+        onRegenerate={onRegenerateCharacter}
+        onSculpt={taskId ? setSculpting : undefined}
+      />
     </div>
   );
 
@@ -461,6 +512,21 @@ export function CharacterDesignerPage({
                 </CharacterLooks>
               ) : renderWorkspace(null)}
               <CharacterEvidencePanels dashboard={dashboard} character={character} />
+              {taskId && sculpting && (
+                <CharacterDetailDialog
+                  title={`${t('捏脸 · 捏表情')} · ${sculpting}`}
+                  className="character-dialog--sculpt"
+                  onClose={closeSculpt}
+                >
+                  <CharacterFaceSculpt
+                    key={sculpting}
+                    taskId={taskId}
+                    characterName={sculpting}
+                    onSaved={onRefresh}
+                    onDirtyChange={reportSculptDirty}
+                  />
+                </CharacterDetailDialog>
+              )}
             </>
           ) : (
             <section className="character-designer__empty" role="status">
@@ -482,6 +548,7 @@ export function CharacterDesignerPage({
             key={activeAssetKind}
             initialKind={activeAssetKind}
             embedded
+            showFolders
             taskId={taskId}
             regenerateAllToken={assetGenerationToken}
             replaceAllToken={assetReplaceToken}

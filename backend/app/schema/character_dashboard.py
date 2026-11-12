@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import Field, model_validator
 
@@ -248,3 +248,5 @@ class CharacterDashboardResponse(DramaBaseSchema):
     risks: list[CharacterRisk] = Field(default_factory=list, max_length=100)
     characters: list[CharacterDashboardCharacter] = Field(default_factory=list, max_length=500)
     raw_text: str = Field("", max_length=2_000_000)
+    # 定音色的回应才有：换了已配过音的角色的音色，全剧联动重配的结果(或后台重配的排队状态)，见 app/service/voice_relink.py。
+    voice_relink: Optional[dict[str, Any]] = None

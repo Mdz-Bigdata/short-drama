@@ -9,6 +9,7 @@ import threading
 from typing import Any, Dict, Mapping, Optional
 
 from app.core import llm_profile
+from app.core import fight_safety
 from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
 from app import settings
 from app.core import production_knowledge, reference_fit, style_packs, usage_ledger, video_jobs
@@ -28,12 +29,18 @@ from app.core.video_references import max_shot_seconds
 from app.core.credential_pool import CREDENTIAL_REJECTED, credential_pool
 from app.core.providers import comfyui
 from app.platform.runtime_models import runtime_model_registry
-from app.core import prompt_compact
+from app.core import prompt_budget, prompt_compact
 from app.platform.runtime_skills import runtime_skill_registry
 
 logger = logging.getLogger("app.core.model_gateway")
 # 每个出片线程最近一次 Ark 视频请求被拒的原因：图生视频失败时要说清为什么，而不是只说「暂不可用」。
 _ark_notes = threading.local()
+# 这一次视频请求要的分辨率(样片 480p)：generate_video 在调用期间设好，各家读分辨率的地方先看它，没有才读环境变量。
+_video_resolution = threading.local()
+
+
+def _wanted_video_resolution(env_name: str, default: str) -> str:
+    return getattr(_video_resolution, "value", None) or os.getenv(env_name) or default
 
 # 单张图的请求上限：Seedream 5.0 pro 画九宫格分镜(大尺寸 + 多张参考图)常要两三分钟。
 IMAGE_REQUEST_TIMEOUT_SECONDS = 300
@@ -672,22 +679,31 @@ class ModelGateway:
     def generate_video(self, model: str, image_url: str, prompt: str, prefer_provider: str = None,
                        last_frame: str = None, ref_images: list = None,
                        ref_videos: list = None, ref_audios: list = None, duration: int = 5,
-                       seed: int | None = None, style_pack: str | None = None) -> str:
-        """Video generation, recorded as one provider call priced by requested seconds."""
+                       seed: int | None = None, style_pack: str | None = None, resolution: str | None = None) -> str:
+        """Video generation, recorded as one provider call priced by requested seconds.
+
+        ``resolution`` (如样片的 480p) 只管这一次请求；不给时各家照环境变量的档位出片。
+        """
         runtime, called = _centre_runtime(model, "video", keep=ModelGateway._keeps_own_video_config, quiet=True)
         provider = runtime.provider if runtime else self._detect_provider(model, prefer_provider or "seedance")
         video_units: dict[str, Any] = {"seconds": int(duration or 0)}
+        _video_resolution.value = resolution or None
         if "h3" in (called or "").lower():
             from app.core.providers.minimax_h3 import h3_resolution
-            video_units["resolution"] = h3_resolution(os.getenv("MINIMAX_H3_RESOLUTION") or "768p")
-        with usage_ledger.timed_call("video", provider=provider, model=called or "", units=video_units) as outcome:
-            url = self._generate_video_unmetered(
-                model, image_url, prompt, prefer_provider, last_frame, ref_images, ref_videos, ref_audios, duration, seed, style_pack,
-            )
-            if not url:
-                outcome["failed"] = True
-                outcome["error"] = "no provider returned a video"
-            return url
+            video_units["resolution"] = h3_resolution(_wanted_video_resolution("MINIMAX_H3_RESOLUTION", "768p"))
+        elif resolution:
+            video_units["resolution"] = resolution
+        try:
+            with usage_ledger.timed_call("video", provider=provider, model=called or "", units=video_units) as outcome:
+                url = self._generate_video_unmetered(
+                    model, image_url, prompt, prefer_provider, last_frame, ref_images, ref_videos, ref_audios, duration, seed, style_pack,
+                )
+                if not url:
+                    outcome["failed"] = True
+                    outcome["error"] = "no provider returned a video"
+                return url
+        finally:
+            _video_resolution.value = None
 
     def describe_image(self, model: str, system_prompt: str, prompt: str, image: str, *, max_tokens: int = 2000) -> tuple[Optional[str], str]:
         """Ask a text model that can see about one image; returns (answer, model used).
@@ -1221,7 +1237,7 @@ class ModelGateway:
             body = {
                 "model": model_name or self.seedance_model_name,
                 "content": content,
-                "resolution": resolution or os.getenv("SEEDANCE_VIDEO_RESOLUTION") or SEEDANCE_DEFAULT_RESOLUTION,
+                "resolution": resolution or _wanted_video_resolution("SEEDANCE_VIDEO_RESOLUTION", SEEDANCE_DEFAULT_RESOLUTION),
                 "duration": self.ark_clip_seconds(model_name, duration),
                 "ratio": ratio or os.getenv("VIDEO_ASPECT_RATIO") or DEFAULT_ASPECT_RATIO,
                 "watermark": False,
@@ -1760,11 +1776,13 @@ class ModelGateway:
             p = re.sub(r'[（(][^（()）]*[)）]', '', p)
         # 删除以 避免/严禁/不要 等引导、直到句末的负面从句
         p = re.sub(r'(避免|严禁|不要|不得|杜绝)[^。.;；\n]*[。.;；\n]?', '', p)
-        # 删除已知触发内容审核的词 (DEID 身份词 / 身体畸变词 / 戏剧暴力与冲突词)
+        # 血、杀、伤口、尸体先换成拍得出的说法(打戏不因此断句)；拳、踹、扇、撕这类打击词不是违规词，不删。
+        p = fight_safety.soften(p)
+        # 删除已知触发内容审核的词 (DEID 身份词 / 身体畸变词 / 戏剧冲突词)，以及换完还剩下的死、尸
         for kw in ["换脸", "脸部变形", "手部畸形", "多余手指", "passport photo", "headshot",
                    "not a real person", "not a real celebrity", "真实名人", "可识别的个人身份",
-                   "血泊", "血", "尸体", "暴力", "gore", "blood", "打脸", "渣男", "复仇", "报仇",
-                   "癫狂", "羞辱", "厮杀", "杀", "死", "尸", "拳", "踹", "扇", "撕"]:
+                   "暴力", "gore", "blood", "打脸", "渣男", "复仇", "报仇",
+                   "癫狂", "羞辱", "死", "尸"]:
             p = p.replace(kw, "")
         p = re.sub(r'\s+', ' ', p).strip(" ，,。.；;")
         # Agnes 对超长提示词(如嵌 3000 字设定集模板)易判违规，截断到稳妥长度，保留前部核心描述
@@ -2060,23 +2078,19 @@ class ModelGateway:
         对照规避"五官漂移/服装走样/背景不一/手部崩塌/配色不稳"五大问题。
         genre：剧情题材(来自 get_genre)，锁定符合时代背景的服饰造型(如修仙/武侠须古装)。
         """
-        # 时代服饰约束优先：题材若属古装/年代/欧美类，强制对应时代造型；否则按导演视听风格取风格词
+        # 时代服饰约束优先：题材若属古装/年代/欧美类，强制对应时代造型，画质风格词也不再用"现代都市"基调；
+        # 否则按导演视听风格取风格词。词表与时代服饰句在 app/data/prompt/actor_sheet.json(core/actor_sheet_style)，
+        # 捏脸页不花钱看一眼的 sheet-prompt 读的是同一份。
+        from app.core import actor_sheet_style
         era_costume = self.GENRE_ERA_COSTUME.get(genre, "")
-        style_word = {
-            "cyberpunk": "赛博朋克写实电影感", "retro": "年代怀旧胶片质感", "palace": "古装东方美学写实影视感",
-            "mystery_dark": "悬疑低饱和写实电影感", "anime": "2D日漫风格", "horror_folk": "民俗惊悚写实质感",
-            "sci_fi_future": "硬核科幻写实质感",
-        }.get(dir_style, "现代都市短剧写实电影感")
-        # 古装/年代/欧美题材下，画质风格词不再使用"现代都市"基调，避免与时代服饰冲突
-        if era_costume:
-            style_word = "符合时代背景的写实影视质感"
+        style_word = actor_sheet_style.style_word(dir_style, era_costume)
 
         # 干净的描述式设定集提示词：直接描述要画的画面本身。
         # 关键修复：绝不把 markdown 文档模板 / README 引用 / 中文元指令塞进文生图模型——
         # 那会被 Agnes 内容审核判 content_policy_violation 拒(Ark SSL 不可达时设定图会全失败、
         # 退化为纯文本，前端只剩文字看不到图)。人物一致性"方法论"只喂给上游 LLM(阶段3 sys_prompt)，
         # 此处只给图像模型干净可执行的画面描述。
-        era_clause = f" The character must wear period-accurate costume — {era_costume}." if era_costume else ""
+        era_clause = actor_sheet_style.era_clause(era_costume)
         from app.core.actor_sheet_layout import ACTOR_SHEET_LAYOUT
         from app.core.storyboard_quality import build_actor_sheet_prompt
         # extra_negative：角色设计师配药单编译出的模块化负面词(agent_council.compile_negative_prompt)，
@@ -2222,6 +2236,12 @@ class ModelGateway:
         # 全局强制负面词(全量)：H3、各家适配器、ComfyUI、Seedance 与 Agnes 都从这里取提示词。
         if not native:
             prompt = self._with_global_negatives(prompt, "video")
+            # 供应商的整条硬上限(含负面词，Seedance 2.0 为 2000 字)：超了先删通用套话，镜头内容留到最后。
+            fitted, removed = prompt_budget.fit_hard_limit(prompt, model, plain=self._with_global_negatives(plain_prompt, "video"))
+            if removed:
+                logger.warning("[ModelGateway] %s 提示词 %s 字超出整条上限 %s，已删 %s，发 %s 字",
+                               model, len(prompt), prompt_budget.hard_limit(model), "、".join(removed), len(fitted))
+                prompt = fitted
         # 禁止文生视频：没有首帧、参考图或参考视频的请求一律不提交，任何供应商都一样。
         if not (image_url or ref_images or ref_videos):
             _ark_notes.last = "本镜没有首帧/参考图/参考视频，不提交(禁止文生视频)"
@@ -2274,7 +2294,7 @@ class ModelGateway:
                     reference_audios=list(dict.fromkeys(ref_audios or []))[:MAX_REFERENCE_AUDIOS],
                     duration_seconds=max(4, min(15, int(duration or 6))),
                     # H3 只接受 480P / 768P / 2K：通用默认的 1080p 会被整批拒单。
-                    resolution=h3_resolution(os.getenv("MINIMAX_H3_RESOLUTION") or "768p"),
+                    resolution=h3_resolution(_wanted_video_resolution("MINIMAX_H3_RESOLUTION", "768p")),
                     aspect_ratio=os.getenv("MINIMAX_H3_ASPECT_RATIO", DEFAULT_ASPECT_RATIO),
                     native_audio=os.getenv("MINIMAX_H3_NATIVE_AUDIO", "1") not in {"0", "false", "False"},
                     seed=seed,
@@ -2444,7 +2464,7 @@ class ModelGateway:
             reference_audios=list(dict.fromkeys(ref_audios or []))[:MAX_REFERENCE_AUDIOS],
             duration_seconds=max(1, min(30, int(duration or 5))),
             aspect_ratio=os.getenv("VIDEO_ASPECT_RATIO", DEFAULT_ASPECT_RATIO),
-            resolution=os.getenv("VIDEO_RESOLUTION", DEFAULT_VIDEO_RESOLUTION),
+            resolution=_wanted_video_resolution("VIDEO_RESOLUTION", DEFAULT_VIDEO_RESOLUTION),
             seed=seed,
         )
         provider = video_adapters.RUNTIME_PROVIDER_FOR_FAMILY.get(family)

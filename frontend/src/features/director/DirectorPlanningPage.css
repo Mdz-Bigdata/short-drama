@@ -2,8 +2,11 @@
   --director-bg: var(--surface);
   --director-surface: var(--surface);
   --director-line: rgba(101, 80, 89, 0.16);
-  --director-cyan: #e4586f;
-  --director-amber: #d6910f;
+  --director-cyan: var(--accent); /* 原 #e4586f 白底只有 3.5:1 */
+  --director-amber: #8f5e07; /* 原 #d6910f 白底只有 2.7:1 */
+  /* The board sits beside the chat panel, which can be dragged up to 700px wide, so its layout
+     follows the board's own width (container queries below), not the window's. */
+  container: director-board / inline-size;
   width: min(100%, 1440px);
   margin: 0 auto;
   color: var(--accent);
@@ -28,18 +31,25 @@
 .director-board__index { color: var(--director-cyan); }
 .director-board__status { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); letter-spacing: 0.05em; }
 .director-board__status svg { width: 13px; height: 13px; padding: 2px; color: var(--on-accent); border-radius: 50%; background: var(--success); }
+.director-board__status.is-waiting svg { padding: 0; color: var(--text-muted); background: transparent; }
 
 .director-hero { min-height: 470px; display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(320px, 0.88fr); border-bottom: 1px solid var(--director-line); }
-.director-hero__copy { position: relative; z-index: 1; min-width: 0; padding: clamp(36px, 4.5vw, 64px); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; overflow: hidden; background: var(--director-bg); }
-.director-hero__copy::before { position: absolute; left: clamp(36px, 4.5vw, 64px); top: 20%; width: 42%; height: 1px; content: ''; background: linear-gradient(90deg, var(--director-cyan), transparent); opacity: 0.45; }
+.director-hero.is-plain { min-height: 0; grid-template-columns: 1fr; }
+.director-hero.is-plain .director-hero__copy::after { display: none; }
+.director-hero__copy { position: relative; z-index: 1; min-width: 0; padding: clamp(36px, 4.5cqi, 64px); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; overflow: hidden; background: var(--director-bg); }
+.director-hero__copy::before { position: absolute; left: clamp(36px, 4.5cqi, 64px); top: 20%; width: 42%; height: 1px; content: ''; background: linear-gradient(90deg, var(--director-cyan), transparent); opacity: 0.45; }
 .director-hero__copy::after { content: ''; position: absolute; right: -72px; top: 0; z-index: -1; width: 74px; height: 100%; background: linear-gradient(90deg, var(--director-bg), transparent); }
 .director-hero__eyebrow { margin-bottom: 24px; color: var(--director-cyan); font: 700 0.68rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.22em; }
-.director-hero__title { max-width: 100%; margin: 0; display: flex; align-items: baseline; gap: 0.15em; color: var(--accent); font-size: clamp(2.75rem, 5.3vw, 5.5rem); font-weight: 760; line-height: 1.04; letter-spacing: -0.06em; white-space: nowrap; text-wrap: balance; }
+/* Sized on the board's width (cqi), not the window's: the copy column is about 47% of the board
+   once its padding is off, and 「总导演策划」 is about 4.85em wide, so 6.5cqi leaves it room.
+   A longer translation wraps between (and inside) the two words instead of running out of the column. */
+.director-hero__title { max-width: 100%; margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.1em 0.15em; color: var(--accent); font-size: clamp(2.75rem, 6.5cqi, 5.5rem); font-weight: 760; line-height: 1.04; letter-spacing: -0.06em; overflow-wrap: anywhere; text-wrap: balance; }
+.director-hero__title span { min-width: 0; }
 .director-hero__title span:first-child { color: var(--text-muted); font-weight: 520; }
 .director-hero__title span:last-child { position: relative; color: var(--accent); font-weight: 820; }
 .director-hero__title span:last-child::after { position: absolute; left: 0.08em; right: 0; bottom: -0.12em; height: 0.06em; content: ''; background: linear-gradient(90deg, var(--director-cyan), transparent 82%); box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.18); }
 .director-hero__project { max-width: 100%; margin: 28px 0 0; color: var(--director-amber); font-size: 0.9rem; font-weight: 650; line-height: 1.6; letter-spacing: 0.05em; overflow-wrap: anywhere; }
-.director-hero__statement { max-width: 620px; margin: 18px 0 0; color: var(--text-muted); font-size: clamp(0.9rem, 1.1vw, 1.05rem); line-height: 1.85; }
+.director-hero__statement { max-width: 620px; margin: 18px 0 0; color: var(--text-muted); font-size: clamp(0.9rem, 1.1cqi, 1.05rem); line-height: 1.85; }
 .director-keywords { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 8px; }
 .director-keywords span { padding: 6px 9px; color: var(--text-muted); border-left: 1px solid var(--director-cyan); background: rgba(var(--accent-rgb), 0.05); font-size: 0.69rem; letter-spacing: 0.06em; }
 
@@ -50,11 +60,14 @@
 .director-hero__reticle::before, .director-hero__reticle::after { content: ''; position: absolute; left: 50%; top: 50%; background: rgba(var(--accent-rgb), 0.484); transform: translate(-50%, -50%); }
 .director-hero__reticle::before { width: 34px; height: 1px; }
 .director-hero__reticle::after { width: 1px; height: 34px; }
-.director-hero__frame-data { position: absolute; inset: 18px 20px auto; z-index: 3; display: flex; justify-content: space-between; color: rgba(var(--success-rgb), 0.65); font: 700 0.62rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.08em; }
+.director-hero__frame-data { position: absolute; inset: 18px 20px auto; z-index: 3; display: flex; justify-content: space-between; color: var(--success-ink); font: 700 0.62rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.08em; }
 .director-hero__frame-data span:last-child { color: var(--danger); }
-.director-hero__visual figcaption { position: absolute; left: 20px; right: 20px; bottom: 17px; z-index: 3; color: rgba(var(--success-rgb), 0.7); font: 600 0.56rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.08em; }
+.director-hero__visual figcaption { position: absolute; left: 20px; right: 20px; bottom: 17px; z-index: 3; color: var(--success-ink); font: 600 0.56rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.08em; }
 .director-hero__visual figcaption a { color: var(--ink); text-decoration: none; }
 .director-hero__visual figcaption a:focus-visible { outline: 2px solid var(--director-cyan); outline-offset: 3px; }
+
+.director-board__general { margin: 0; padding: 14px 32px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; color: var(--text-muted); border-bottom: 1px solid var(--director-line); background: rgba(var(--accent-rgb), 0.04); font-size: 0.74rem; line-height: 1.6; }
+.director-board__general strong { color: var(--text-main); font-size: 0.8rem; font-weight: 700; }
 
 .director-command { display: grid; grid-template-columns: minmax(210px, 0.68fr) minmax(0, 2.32fr); border-bottom: 1px solid var(--director-line); background: var(--director-surface); }
 .director-command__intro { padding: 32px; border-right: 1px solid var(--director-line); }
@@ -87,8 +100,8 @@
 
 .director-look { background: var(--surface); }
 .director-look__palette { height: 56px; margin: 32px 0 26px; display: grid; grid-template-columns: 1.7fr 1fr 0.72fr 0.48fr; border: 1px solid rgba(var(--accent-rgb), 0.176); }
-.director-look__palette span:nth-child(1) { background: var(--surface); }
-.director-look__palette span:nth-child(2) { background: var(--surface); }
+.director-look__palette span:nth-child(1) { background: var(--ink); }
+.director-look__palette span:nth-child(2) { background: var(--accent-3); }
 .director-look__palette span:nth-child(3) { background: var(--accent); }
 .director-look__palette span:nth-child(4) { background: var(--director-amber); }
 .director-look dl { display: grid; gap: 0; }
@@ -96,14 +109,11 @@
 .director-look dt { color: var(--text-muted); font-size: 0.7rem; }
 .director-look dd { color: var(--text-muted); font-size: 0.73rem; text-align: right; }
 
-.director-notes { padding: 38px 32px 42px; background: var(--director-surface); }
+.director-notes { padding: 38px 32px 42px; border-bottom: 1px solid var(--director-line); background: var(--director-surface); }
 .director-notes__heading { display: flex; justify-content: space-between; gap: 30px; }
 .director-notes__heading > p { max-width: 370px; color: var(--text-muted); font-size: 0.72rem; line-height: 1.6; text-align: right; }
-.director-notes blockquote { max-width: 980px; margin: 38px 0; padding-left: 24px; color: var(--text-muted); border-left: 2px solid var(--director-amber); font-size: clamp(1.05rem, 1.55vw, 1.4rem); font-weight: 300; line-height: 1.8; }
-.director-notes details { border-top: 1px solid var(--director-line); }
-.director-notes summary { padding: 18px 0; color: var(--text-muted); font-size: 0.75rem; cursor: pointer; }
-.director-notes summary:focus-visible { outline: 2px solid var(--director-cyan); outline-offset: 4px; }
-.director-notes .plan-markdown { max-height: 640px; overflow: auto; padding: 22px 26px; color: var(--text-muted); border: 1px solid var(--director-line); background: var(--surface); font: 0.8rem/1.85 'Noto Sans SC', sans-serif; overflow-wrap: anywhere; }
+/* The plan is the page's own content, so it reads at full height in body ink instead of scrolling inside a box. */
+.director-notes .plan-markdown { margin-top: 26px; padding: 22px 26px; color: var(--text-main); border: 1px solid var(--director-line); background: var(--surface); font-size: 0.84rem; line-height: 1.85; overflow-wrap: anywhere; }
 .plan-markdown h3, .plan-markdown h4, .plan-markdown h5, .plan-markdown h6 { margin: 22px 0 8px; color: var(--text-main); font-weight: 700; line-height: 1.5; }
 .plan-markdown h3 { font-size: 1.05rem; }
 .plan-markdown h4 { font-size: 0.95rem; color: var(--director-cyan); }
@@ -114,15 +124,21 @@
 .plan-markdown code { padding: 1px 6px; color: var(--accent); border-radius: 4px; background: rgba(var(--accent-rgb), 0.08); font: 0.76rem ui-monospace, SFMono-Regular, Menlo, monospace; }
 .plan-markdown hr { margin: 20px 0; border: 0; border-top: 1px solid var(--director-line); }
 .plan-markdown ul, .plan-markdown ol { margin: 8px 0; padding-left: 22px; }
-.director-notes .plan-markdown blockquote { max-width: none; margin: 12px 0; padding: 8px 14px; color: var(--text-muted); border-left: 2px solid var(--director-amber); background: rgba(var(--gold-rgb), 0.05); font-size: 0.8rem; font-weight: 400; line-height: 1.8; }
+.director-notes .plan-markdown blockquote { margin: 12px 0; padding: 8px 14px; color: var(--text-muted); border-left: 2px solid var(--director-amber); background: rgba(var(--gold-rgb), 0.05); font-size: 0.8rem; font-weight: 400; line-height: 1.8; }
 .plan-table { margin: 10px 0 14px; overflow-x: auto; }
 .plan-table table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
 .plan-table th, .plan-table td { padding: 7px 10px; border: 1px solid var(--director-line); text-align: left; vertical-align: top; }
 .plan-table th { color: var(--text-main); background: rgba(var(--accent-rgb), 0.066); font-weight: 600; white-space: nowrap; }
 .director-notes__empty { margin-top: 34px; padding: 18px 0; color: var(--text-muted); border-top: 1px solid var(--director-line); font-size: 0.76rem; }
 
-@media (max-width: 1160px) {
+/* Board widths, not window widths. The board is the window minus the chat panel (300-700px, 380px
+   by default) and the stage's 30px padding each side: at 1280px with the chat at its default it is
+   840px. Below 960px the hero copy, the four compass axes and the rhythm chart no longer fit side by
+   side, so each stacks; 640px and 380px are the old 680px / 420px window steps less the 20px padding
+   the stage keeps once the chat moves under it. */
+@container director-board (max-width: 960px) {
   .director-hero { grid-template-columns: 1fr; }
+  .director-hero__title { font-size: clamp(2.5rem, 8cqi, 4.5rem); }
   .director-hero__copy::after { display: none; }
   .director-hero__visual { min-height: 340px; }
   .director-command { grid-template-columns: 1fr; }
@@ -135,16 +151,18 @@
   .director-rhythm { border-right: 0; border-bottom: 1px solid var(--director-line); }
 }
 
-@media (max-width: 680px) {
+@container director-board (max-width: 640px) {
   .director-board__masthead { padding: 0 15px; }
   .director-board__masthead > div > span:last-child { display: none; }
   .director-board__status { font-size: 0.58rem; }
   .director-hero__copy { padding: 42px 24px 36px; }
   .director-hero__copy::before { left: 24px; top: 20px; width: 35%; }
-  .director-hero__title { gap: 0.12em; font-size: clamp(2.3rem, 12vw, 3.7rem); letter-spacing: -0.055em; }
+  .director-hero__title { column-gap: 0.12em; font-size: clamp(2.25rem, 10cqi, 3.7rem); letter-spacing: -0.055em; }
   .director-hero__project { margin-top: 24px; font-size: 0.82rem; }
   .director-hero__visual { min-height: 300px; }
   .director-command__intro, .director-rhythm, .director-look, .director-notes { padding: 28px 22px; }
+  .director-board__general { padding: 12px 22px; }
+  .director-notes .plan-markdown { padding: 16px; }
   .director-command__axes { grid-template-columns: 1fr; }
   .director-command__axes article { min-height: 160px; border-right: 0; border-bottom: 1px solid var(--director-line); }
   .director-command__axes article:last-child { border-bottom: 0; }
@@ -155,10 +173,9 @@
   .director-notes__heading > p { text-align: left; }
 }
 
-@media (max-width: 420px) {
+@container director-board (max-width: 380px) {
   .director-board__status { font-size: 0; }
-  .director-hero__title { width: 100%; flex-wrap: wrap; font-size: clamp(2.25rem, 11vw, 3.1rem); white-space: normal; }
-  .director-hero__title span { flex: none; }
+  .director-hero__title { width: 100%; }
   .director-hero__project,
   .director-hero__statement { width: 100%; }
 }

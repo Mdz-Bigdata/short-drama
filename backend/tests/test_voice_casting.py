@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.api import drama_api
 from app.api.auth_api import get_current_user
-from app.core import voice_casting
+from app.core import episode_cycle, voice_casting
 from app.repository.task_repo import TaskRepository
 from app.service.drama_service import DramaService
 from main import app
@@ -138,6 +138,63 @@ class CastingServiceTests(unittest.TestCase):
             self.service.cast_character_voice("cast-task", "沈知微", "gen-1-1")
         with self.assertRaises(ValueError):
             self.service.audition_character_voice("cast-task", "沈知微")
+
+    def _dub(self, *, cycle: bool):
+        task = self.service.repo.get_task("cast-task")
+        if cycle:
+            task["assets"][episode_cycle.CYCLE_KEY] = {"episodes": {"1": {"audio": {"shot_voices": ["/tmp/v1.mp3", None]}}, "2": {}}}
+        else:
+            task["assets"]["6"] = {"audio_url": "https://cdn.test/dub.mp3", "shot_voices": []}
+        self.service.repo.save_task("cast-task", task)
+
+    def test_a_voice_heard_in_dubbed_episodes_can_be_changed_and_auditioned_again(self):
+        # 允许换，但全剧统一：没有台词的配音轨换音色不用重配，回应里没有联动结果。
+        self.service.audition_character_voice("cast-task", "沈知微")
+        self.service.cast_character_voice("cast-task", "沈知微", "gen-1-1")
+        self._dub(cycle=False)
+
+        again = self.service.audition_character_voice("cast-task", "沈知微")
+        dashboard = self.service.cast_character_voice("cast-task", "沈知微", again["previews"][0]["generated_voice_id"])
+
+        self.assertEqual(len(self.studio.designs), 2)
+        dna = voice_casting.dna_character(self.service.repo.get_task("cast-task")["assets"], "沈知微")
+        self.assertEqual(dna["voice_id"], "voice-for-gen-2-1")
+        self.assertIsNone(dashboard.voice_relink)
+
+    def test_episode_by_episode_dubbing_no_longer_blocks_a_recast(self):
+        self.service.audition_character_voice("cast-task", "沈知微")
+        self.service.cast_character_voice("cast-task", "沈知微", "gen-1-1")
+        self._dub(cycle=True)
+        self.service.cast_character_voice("cast-task", "沈知微", "gen-1-2")
+        dna = voice_casting.dna_character(self.service.repo.get_task("cast-task")["assets"], "沈知微")
+        self.assertEqual(dna["voice_id"], "voice-for-gen-1-2")
+
+    def test_a_voice_another_character_has_is_still_refused(self):
+        self.service.audition_character_voice("cast-task", "沈知微")
+        self.service.cast_character_voice("cast-task", "沈知微", "gen-1-1")
+        task = self.service.repo.get_task("cast-task")
+        voice_casting.dna_character(task["assets"], "陆行远")["voice_id"] = "voice-for-gen-1-2"
+        self.service.repo.save_task("cast-task", task)
+
+        with self.assertRaisesRegex(ValueError, "陆行远"):
+            self.service.cast_character_voice("cast-task", "沈知微", "gen-1-2")
+        dna = voice_casting.dna_character(self.service.repo.get_task("cast-task")["assets"], "沈知微")
+        self.assertEqual(dna["voice_id"], "voice-for-gen-1-1")
+
+    def test_a_first_voice_can_still_be_cast_after_dubbing(self):
+        # Someone with no voice yet was dubbed with a stand-in; giving them their own voice changes nothing heard as theirs.
+        self._dub(cycle=False)
+        self.service.audition_character_voice("cast-task", "陆行远", voice_prompt=VOICE_PROMPT)
+        self.service.cast_character_voice("cast-task", "陆行远", "gen-1-1")
+        dna = voice_casting.dna_character(self.service.repo.get_task("cast-task")["assets"], "陆行远")
+        self.assertEqual(dna["voice_id"], "voice-for-gen-1-1")
+
+    def test_recasting_before_any_dubbing_is_free(self):
+        self.service.audition_character_voice("cast-task", "沈知微")
+        self.service.cast_character_voice("cast-task", "沈知微", "gen-1-1")
+        self.service.cast_character_voice("cast-task", "沈知微", "gen-1-2")
+        dna = voice_casting.dna_character(self.service.repo.get_task("cast-task")["assets"], "沈知微")
+        self.assertEqual(dna["voice_id"], "voice-for-gen-1-2")
 
     def test_stage_five_reads_the_designed_voice_descriptions(self):
         voices = DramaService._designed_voices(self.service.repo.get_task("cast-task"))

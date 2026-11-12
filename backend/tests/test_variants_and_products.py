@@ -72,7 +72,11 @@ class SceneBindingTests(unittest.TestCase):
         self.assertEqual(context["actors"][0]["variant"], "婚纱")
         flashback = panel_context(context, {"desc": "闪回：少年林夏在操场上奔跑", "characters": ["林夏"]})
         actor_refs = [r for r in flashback["references"] if r["kind"] == "actor"]
-        self.assertEqual(actor_refs, [{"kind": "actor", "name": "林夏", "image_url": "data:young", "variant": "少年"}])
+        # 参考带着素材库身份：底下是这个人(a-base)，图来自少年造型(a-young)；资产改了，用过它的镜头据此认出来。
+        self.assertEqual(actor_refs, [{
+            "kind": "actor", "name": "林夏", "image_url": "data:young", "variant": "少年",
+            "id": "a-base", "version": 0, "variant_element_id": "a-young", "variant_version": 0,
+        }])
 
         images, notes = merge_video_references([("林夏", "https://cdn/base-sheet.png")], flashback["references"])
         self.assertNotIn("https://cdn/base-sheet.png", images, "the dressed character is locked by its variant, not the base sheet")
@@ -85,7 +89,7 @@ class SceneBindingTests(unittest.TestCase):
         self.assertEqual([p["name"] for p in context["products"]], ["静音吹风机"])
         self.assertIn("【商品】", context["prompt"])
         shot = panel_context(context, {"desc": "特写：林夏按下静音吹风机的开关", "characters": ["林夏"]})
-        self.assertIn({"kind": "product", "name": "静音吹风机", "image_url": "data:dryer"}, shot["references"])
+        self.assertIn({"kind": "product", "name": "静音吹风机", "image_url": "data:dryer", "id": "p-1", "version": 0}, shot["references"])
         quiet = panel_context(context, {"desc": "林夏看向镜子", "characters": ["林夏"]})
         self.assertNotIn("product", [r["kind"] for r in quiet["references"]])
 

@@ -117,4 +117,39 @@ describe('WriterAgentPage episode overview interactions', () => {
     await user.click(within(dialog).getByRole('button', { name: '关闭场景明细' }));
     expect(screen.queryByRole('dialog')).toBeNull();
   });
+
+  it('takes the keyboard into an episode dialog and gives it back to the card on Esc', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const title = screen.getByRole('button', { name: /关键事件3/ });
+    await user.click(title);
+    const textDialog = screen.getByRole('dialog', { name: '十二小时 分集剧本文本' });
+    expect(document.activeElement).toBe(within(textDialog).getByRole('button', { name: '关闭分集剧本' }));
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(title);
+
+    const count = screen.getByRole('button', { name: '查看第 2 集的 1 个场景' });
+    await user.click(count);
+    const sceneDialog = screen.getByRole('dialog', { name: '第 2 集场景明细' });
+    expect(document.activeElement).toBe(within(sceneDialog).getByRole('button', { name: '关闭场景明细' }));
+    await user.keyboard('{Escape}');
+    expect(document.activeElement).toBe(count);
+  });
+
+  it('keeps Tab and Shift+Tab inside an open episode dialog', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole('button', { name: /关键事件3/ }));
+    const dialog = screen.getByRole('dialog', { name: '十二小时 分集剧本文本' });
+    const close = within(dialog).getByRole('button', { name: '关闭分集剧本' });
+    const text = within(dialog).getByLabelText('第 3 集剧本文本');
+
+    await user.tab({ shift: true });
+    expect(document.activeElement).toBe(text);
+    await user.tab();
+    expect(document.activeElement).toBe(close);
+  });
 });

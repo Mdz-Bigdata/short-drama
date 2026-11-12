@@ -1,0 +1,89 @@
+/* 「@」补全菜单：绝对定位在输入框外层的 relative 容器里。 */
+.mention-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  max-width: 22rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--surface);
+  box-shadow: 0 0.6rem 1.6rem rgba(var(--shadow-rgb, 0, 0, 0), 0.2);
+}
+
+.mention-menu.is-below { top: calc(100% + 0.25rem); }
+.mention-menu.is-above { bottom: calc(100% + 0.5rem); }
+
+.mention-menu__list {
+  max-height: 16rem;
+  margin: 0;
+  padding: 0.25rem;
+  overflow-y: auto;
+  list-style: none;
+  overscroll-behavior: contain;
+}
+
+.mention-menu__option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 0.4rem;
+  color: var(--text-main);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.mention-menu__option[aria-selected="true"] {
+  background: rgba(var(--accent-rgb), 0.1);
+  border-color: rgba(var(--accent-rgb), 0.35);
+}
+
+.mention-menu__thumb {
+  flex: none;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 0.3rem;
+  object-fit: cover;
+  background: rgba(var(--accent-rgb), 0.08);
+}
+
+.mention-menu__dot {
+  flex: none;
+  width: 0.6rem;
+  height: 0.6rem;
+  margin: 0 0.5rem;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.mention-menu__dot.is-actor { background: rgb(var(--info-rgb, 56, 139, 253)); }
+.mention-menu__dot.is-scene { background: rgb(var(--success-rgb, 46, 160, 67)); }
+.mention-menu__dot.is-prop,
+.mention-menu__dot.is-product { background: rgb(var(--gold-rgb, 210, 153, 34)); }
+.mention-menu__dot.is-costume,
+.mention-menu__dot.is-effect { background: rgb(var(--accent-3-rgb, 163, 113, 247)); }
+
+.mention-menu__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-menu__kind { flex: none; color: var(--text-muted); font-size: 0.7rem; }
+
+.mention-menu__empty,
+.mention-menu__footnote {
+  margin: 0;
+  padding: 0.45rem 0.6rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.mention-menu__footnote { border-top: 1px solid var(--line); }

@@ -2,12 +2,13 @@
 //
 // The model is fetched with the session cookie (the library serves it privately), parsed once per
 // element however many pieces point at it, and normalised into the landmark's own size box so a
-// model authored in any scale still reads as a piece of this set.
+// model authored in any scale still reads as a piece of this set. Every piece on every canvas draws
+// its own copy of the parsed scene graph: an object has one parent, so the parsed one itself could
+// only ever show in the last place that mounted it.
 
 import { useEffect, useMemo, useState } from 'react';
-import { Text } from '@react-three/drei';
 import type { ThreeEvent } from '@react-three/fiber';
-import { Box3, Vector3, type Object3D } from 'three';
+import { Box3, Vector3, type Mesh, type Object3D } from 'three';
 // three-stdlib's loaders do not embed `new URL` decoder fallbacks (see ElementModelViewport).
 import { GLTFLoader } from 'three-stdlib';
 
@@ -16,6 +17,7 @@ import { disposeModelResources } from '../../../elements/three/disposeModelResou
 import type { StageLandmark } from '../../../spatial/spatialTypes';
 import { modelPath } from '../../elementLibraryApi';
 import { HELPER_FLAG } from '../../lib/capture';
+import { StageLabel } from '../StageLabel';
 import { SELECTION_COLOR } from '../stageLook';
 import { PrimitiveProp } from './PrimitiveProp';
 
@@ -55,6 +57,12 @@ function acquire(elementId: string): Promise<Source> {
     .then(async response => {
       if (!response.ok) throw new Error(`模型读取失败 (${response.status})`);
       const gltf = await new GLTFLoader().parseAsync(await response.arrayBuffer(), '');
+      // A bound model belongs to the set like any primitive: it throws a shadow and takes one.
+      gltf.scene.traverse(object => {
+        if (!(object as Mesh).isMesh) return;
+        object.castShadow = true;
+        object.receiveShadow = true;
+      });
       const box = new Box3().setFromObject(gltf.scene);
       const span = box.getSize(new Vector3());
       const middle = box.getCenter(new Vector3());
@@ -75,6 +83,18 @@ function acquire(elementId: string): Promise<Source> {
     });
   cache.set(elementId, entry);
   return entry.pending;
+}
+
+/**
+ * One piece's own copy of the model. Geometry and materials stay the cache's (a clone shares them),
+ * so releasing the element still frees them exactly once. The library refuses skinned models, so a
+ * plain clone is a faithful one.
+ */
+function instanceOf(source: Source): Object3D {
+  const copy = source.scene.clone(true);
+  // Picking goes through the piece's box: ray-testing a whole GLB per pointer move is wasted work.
+  copy.traverse(object => { if ((object as Mesh).isMesh) object.raycast = () => {}; });
+  return copy;
 }
 
 function release(elementId: string) {
@@ -108,18 +128,16 @@ export function ElementModelProp({ landmark, selected, labelled, onPick }: Props
   const scale = useMemo(() => (
     source ? Math.min(width / source.size[0], height / source.size[1], depth / source.size[2]) : 1
   ), [depth, height, source, width]);
+  const model = useMemo(() => (source ? instanceOf(source) : null), [source]);
 
-  if (!source) {
+  if (!source || !model) {
     return (
       <group>
         <PrimitiveProp landmark={landmark} selected={selected} labelled={labelled} onPick={onPick} />
         {failed && (
-          <Text
-            position={[landmark.position[0], height + 0.36, landmark.position[1]]} fontSize={0.12} color="#e60000"
-            anchorX="center" anchorY="bottom" userData={{ [HELPER_FLAG]: true }}
-          >
+          <StageLabel position={[landmark.position[0], (landmark.elevation_m ?? 0) + height + 0.36, landmark.position[1]]} fontSize={0.12} color="#e60000" kind="prop" selected={selected}>
             模型加载失败
-          </Text>
+          </StageLabel>
         )}
       </group>
     );
@@ -128,9 +146,9 @@ export function ElementModelProp({ landmark, selected, labelled, onPick }: Props
   return (
     <group position={[landmark.position[0], landmark.elevation_m ?? 0, landmark.position[1]]} rotation={[0, ((landmark.yaw_deg ?? 0) * Math.PI) / 180, 0]} onClick={onPick}>
       {/* The model's own centre goes over the mark and its lowest point onto the floor. */}
-      <primitive object={source.scene} scale={scale} position={[-source.center[0] * scale, -source.center[1] * scale, -source.center[2] * scale]} />
-      {/* Picking and the selection glow go through this box: ray-testing a whole GLB per move is wasted work. */}
-      <mesh position={[0, (source.size[1] * scale) / 2, 0]} scale={[source.size[0] * scale, source.size[1] * scale, source.size[2] * scale]}>
+      <primitive object={model} scale={scale} position={[-source.center[0] * scale, -source.center[1] * scale, -source.center[2] * scale]} />
+      {/* Picking and the selection glow go through this box. It is the operator's, not the set's: a capture that paints every mesh one colour would otherwise film a solid block. */}
+      <mesh position={[0, (source.size[1] * scale) / 2, 0]} scale={[source.size[0] * scale, source.size[1] * scale, source.size[2] * scale]} userData={{ [HELPER_FLAG]: true }}>
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial
           transparent opacity={selected ? 0.12 : 0} depthWrite={false}
@@ -138,9 +156,9 @@ export function ElementModelProp({ landmark, selected, labelled, onPick }: Props
         />
       </mesh>
       {labelled && (
-        <Text position={[0, source.size[1] * scale + 0.18, 0]} fontSize={0.13} color={selected ? SELECTION_COLOR : '#46373e'} anchorX="center" anchorY="bottom" userData={{ [HELPER_FLAG]: true }}>
+        <StageLabel position={[0, source.size[1] * scale + 0.18, 0]} fontSize={0.13} color={selected ? SELECTION_COLOR : '#46373e'} kind="prop" selected={selected}>
           {landmark.name}
-        </Text>
+        </StageLabel>
       )}
     </group>
   );

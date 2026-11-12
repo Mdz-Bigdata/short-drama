@@ -13,7 +13,7 @@ import { figureHeight } from '../lib/figureHeight';
 import { visibleActors } from '../lib/visibleActors';
 import { LensStage } from './LensStage';
 import { webglAvailable } from './stageLook';
-import { stageReach } from '../lib/stageMath';
+import { lightReach } from '../lib/stageMath';
 import { ContextLossGuard, StageLights, ViewportBoundary, ViewportUnavailable } from './ViewportShell';
 
 export interface LensViewportProps {
@@ -113,6 +113,9 @@ export default function LensViewport({ plan, shot, camera, hidden, overlay, onRe
   const actors = useMemo(() => visibleActors(plan, shot, hidden), [hidden, plan, shot]);
   const target = useMemo<[number, number, number]>(() => (camera ? [camera.target[0], camera.target[1], camera.target[2]] : [0, 1, 0]), [camera]);
   const range = useMemo(() => depthRange(plan, camera, shot), [camera, plan, shot]);
+  // The set and the cast together: a figure standing away from every set piece still has to cast its shadow in the frame.
+  // Sized from the shot's keys too, so a clip's shadows do not step while the cast walks.
+  const lit = useMemo(() => lightReach(plan, shot?.shot_id, actors), [actors, plan, shot?.shot_id]);
 
   if (!canRender) return <ViewportUnavailable message="当前浏览器或设备不支持 WebGL，无法显示机位画面。" />;
   if (contextLost) return <ViewportUnavailable message="图形上下文已中断。" onRetry={() => setContextLost(false)} />;
@@ -126,7 +129,7 @@ export default function LensViewport({ plan, shot, camera, hidden, overlay, onRe
           <div className="desk-viewport__frame" style={{ '--desk-aspect': String(aspect) } as CSSProperties}>
             {/* The drawing buffer is kept so a still can be read back after the render that made it. */}
             <Canvas shadows dpr={[1, 1.5]} frameloop="demand" gl={{ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true }}>
-              <StageLights reach={stageReach({ actors: [], landmarks: plan.landmarks }).radius} />
+              <StageLights reach={lit.radius} center={lit.center} />
               <PerspectiveCamera makeDefault fov={camera.fov_deg} near={0.05} far={500} position={camera.position} />
               <LookAt target={target} />
               <CaptureBridge aspect={aspect} actors={actors} range={range} onReady={onReady} />

@@ -12,7 +12,12 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping
+from typing import Any
 
+from app.core.element_scope import normalized_asset_name
+
+#: ``@[名字]`` 里名字最多几个字；更长的名字放不进引用。
+MENTION_NAME_LIMIT = 40
 MENTION = re.compile(r"@\[([^\[\]\n]{1,40})\]")
 
 
@@ -49,3 +54,37 @@ def resolve_mentions(text: str, reference_numbers: Mapping[str, int]) -> str:
         return f"{name}（参考图{number}）" if number else name
 
     return MENTION.sub(replace, text or "")
+
+
+def resolve_mention_refs(text: str, entries: Iterable[Mapping[str, Any]]) -> dict[str, list]:
+    """把正文里的 ``@[名字]`` 对上候选(mention_catalog 的条目：name、kind、element_id、aliases)。
+
+    名字和别名都去掉空格标点、不分大小写比。同一个名字对上两类东西(演员「林夏」和场景「林夏」)算有歧义，
+    不替人挑；同一类里对上几条时取名字正好相同的那条，没有就取第一条。
+    返回 ``{refs: [{name, kind, element_id}], ambiguous: [{name, kinds}], unknown: [name]}``，按首次出现排序。
+    """
+    pool = [entry for entry in entries or () if isinstance(entry, Mapping) and str(entry.get("name") or "").strip()]
+    refs: list[dict[str, str]] = []
+    ambiguous: list[dict[str, Any]] = []
+    unknown: list[str] = []
+    for typed in parse_mentions(text):
+        key = normalized_asset_name(typed)
+        exact: list[Mapping[str, Any]] = []
+        aliased: list[Mapping[str, Any]] = []
+        for entry in pool:
+            if normalized_asset_name(entry.get("name")) == key:
+                exact.append(entry)
+            elif any(normalized_asset_name(alias) == key for alias in entry.get("aliases") or () if isinstance(alias, str)):
+                aliased.append(entry)
+        found = exact + aliased
+        kinds = list(dict.fromkeys(str(entry.get("kind") or "") for entry in found))
+        if not key or not found:
+            unknown.append(typed)
+        elif len(kinds) > 1:
+            ambiguous.append({"name": typed, "kinds": kinds})
+        else:
+            hit = found[0]
+            ref = {"name": str(hit.get("name") or "").strip(), "kind": kinds[0], "element_id": str(hit.get("element_id") or "")}
+            if ref not in refs:
+                refs.append(ref)
+    return {"refs": refs, "ambiguous": ambiguous, "unknown": unknown}

@@ -1,0 +1,74 @@
+/* 一句话捏脸：一行输入 + 发送，放在捏脸面板的各层控件上方。 */
+.face-instruct {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--character-line, var(--line));
+  border-radius: 0.6rem;
+  background: rgba(var(--accent-rgb), 0.05);
+}
+
+.face-instruct__row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.face-instruct__icon {
+  flex: none;
+  color: var(--accent);
+}
+
+.face-instruct .face-instruct__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--character-line, var(--line));
+  border-radius: 0.45rem;
+  background: rgba(var(--surface-rgb), 0.9);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.84rem;
+}
+
+.face-instruct .face-instruct__input:focus-visible {
+  outline: 2px solid rgba(var(--accent-rgb), 0.45);
+  outline-offset: 1px;
+}
+
+.face-instruct__send {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--accent);
+  border-radius: 0.45rem;
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.face-instruct__send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.face-instruct__reply,
+.face-instruct__unknown,
+.face-instruct__error {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.face-instruct__reply { color: var(--text-main); }
+.face-instruct__unknown { color: var(--warning); }
+.face-instruct__error { color: var(--danger); }

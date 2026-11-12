@@ -1,0 +1,82 @@
+{
+  "_about": "音画同生模型的声音设计(app/core/h3_sound_design.py)的全部措辞：H3 声音三层(center / ambient / music)的标签和英文写法、角色音色锁定句、本镜情绪叠加句、发送前的声音检查说明，以及读角色卡定音色的词表。says 是句子模板，花括号里是代码填进去的值({cps:g} 带格式)，只改措辞、不改占位符。timbre_rules 按顺序比对，先命中的那条定音色与音区，都不中用 default_timbre；锁定句的写法一旦改动，模型会听成另一个演员，所以改它等于给所有角色换嗓子。center_tone 把音色词写成 center 层里的英文，没列的音色用 center_tone_default。delivery_by_emotion 把镜头情绪映射成 [语速档, center 层情绪词]，语速档的名字(正常 / 急切 / 沉重)是 h3_sound_design.PACE_BY_DELIVERY 的键，不在这里定义、也不能改名。锁定句里接参考音频的「音色参考」几个字读 voice_reference.json 的 lock_lead(video_references 按它删掉发不出去的音频)，不在这里；lock_separator 也是它前面那个逗号，改了要同步改 video_references 的正则。patterns 是正则：age 读年龄，latin_word 与 han 估算字数(han_chars_per_word 个汉字算一个词)，layer 取出某一层的正文({tag} 是层名)。limits.sound_words 是声音提示词的词数预算，voice_desc_chars 是设计音色短描述的截断长度。",
+  "tags": {"center": "center", "ambient": "ambient", "music": "music"},
+  "limits": {"sound_words": 60, "han_chars_per_word": 2, "voice_desc_chars": 40},
+  "music_words": [
+    "bgm", "music", "piano", "strings", "guitar", "drum", "percussion", "violin", "cello",
+    "synth", "pad", "orchestra", "melody", "song", "配乐", "音乐", "旋律", "钢琴", "弦乐"
+  ],
+  "low_ambient_words": ["low volume", "low", "quiet", "soft"],
+  "low_music_words": ["low frequency", "low freq", "low", "soft", "none"],
+  "space_words": ["surround", "left-right spread", "spread", "stereo"],
+  "none_music_values": ["", "none", "无", "no music", "silence"],
+  "timbre_rules": [
+    [["少女", "小女孩", "女孩", "少年", "小男孩", "男孩"], "清亮", "中高音区"],
+    [["老人", "年迈", "苍老", "老年", "白发苍苍"], "苍哑", "低音区"],
+    [["中年", "沉稳", "威严", "将军", "教授", "总裁", "首领"], "沉稳", "中低音区"],
+    [["沙哑", "粗粝", "低沉", "嘶哑"], "沙哑", "低音区"],
+    [["温柔", "治愈", "轻柔", "柔和"], "温柔", "中音区"],
+    [["冷", "清冷", "淡漠", "疏离"], "清冷", "中音区"]
+  ],
+  "default_timbre": ["清亮", "中音区"],
+  "gender_marks": {"female": "女", "male": "男"},
+  "persona_voice": {"female": "女声", "male": "男声"},
+  "center_voice": {"female": "female", "male": "male"},
+  "center_tone": {
+    "清亮": "bright", "苍哑": "aged hoarse", "沉稳": "steady", "沙哑": "hoarse",
+    "温柔": "gentle", "清冷": "cold calm"
+  },
+  "center_tone_default": "steady",
+  "delivery_by_emotion": {
+    "angry": ["急切", "angry"], "shout": ["急切", "shouting"], "tense": ["急切", "tense"],
+    "happy": ["正常", "bright"], "sad": ["沉重", "sorrowful"], "cold": ["沉重", "cold"],
+    "tender": ["正常", "gentle"], "neutral": ["正常", ""]
+  },
+  "patterns": {
+    "age": "(\\d{1,2})\\s*岁",
+    "latin_word": "[A-Za-z][A-Za-z'-]*",
+    "han": "[一-鿿]",
+    "layer": "{tag}\\s*[:：]\\s*([^;；]*)"
+  },
+  "list_separator": "、",
+  "lock_separator": "，",
+  "voice_separator": " / ",
+  "bed_separator": ", ",
+  "says": {
+    "persona_age": "{years}岁",
+    "persona": "{age}{timbre}{voice}",
+    "lock_head": "{name}：{voice}",
+    "lock_pace": "语速每秒{cps:g}字",
+    "lock_tail": "；全片音色、音调与声线不变",
+    "center_term": "{voice} {tone}",
+    "overlay": "{names}本镜情绪（{notes}）只改变语气、力度与停顿，基础音色、音调与声线照上面的锁定句不变",
+
+    "center_silent": "no dialogue, characters silent, mouths closed",
+    "center_voices": "{voices}, clear speech, center channel",
+    "center_narration": ", voice-over, mouths closed",
+    "center_synced": ", synced to mouth",
+    "center_foreground": ", foreground",
+    "center_tone": ", {tone}",
+    "ambient_beds": "{beds}, continuous, low volume",
+    "ambient_room": ", surround",
+    "ambient_spacious": ", surround, low reverb",
+    "ambient_empty": "room tone only, continuous, low volume, surround",
+    "music_none": "none",
+    "music_bed": "{music}, low frequency, slight spread",
+    "line": "{center_tag}: {center}; {ambient_tag}: {ambient}; {music_tag}: {music}",
+
+    "layers_missing": "缺少 {missing} 层；三层都要写，模型才会分层生成。",
+    "layers_ok": "center / ambient / music 三层齐备。",
+    "center_leaked": "对白层混进了配乐词「{words}」，人声会和音乐搅在一起。",
+    "center_clean": "对白层只写人声，没有混进配乐词。",
+    "bed_loud": "环境音要写 low volume、配乐要写 low frequency 或 none，否则对白会被盖住。",
+    "bed_low": "环境音与配乐都已压低，对白权重最高。",
+    "space_flat": "环境音层缺少 surround 或 left-right spread，声音会全挤在中间发平。",
+    "space_wide": "环境音铺在四周，画面有空间感。",
+    "budget_over": "声音提示词约 {words} 词，超过 {limit} 词后模型会抓不住主次。",
+    "budget_ok": "声音提示词 {words} 词，在 {limit} 词预算内。",
+    "voice_unlocked": "说话的角色缺少音色锚定，跨镜会音色漂移。",
+    "voice_silent": "本镜无台词，不需要音色锚定。",
+    "voice_locked": "{names} 的音色、音调与声线已锁定。"
+  }
+}

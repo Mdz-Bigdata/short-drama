@@ -83,7 +83,7 @@ def clean_variant(payload: Mapping[str, Any], *, element_name: str = "") -> dict
         facts["spans"] = spans
     if str(payload.get("source") or "") == LOOK_SOURCE:
         facts["source"] = LOOK_SOURCE
-    for key in ("outfit", "makeups", "starts", "edited"):
+    for key in ("outfit", "makeups", "starts", "edited", "later"):
         if payload.get(key):
             facts[key] = payload[key]
     return facts
@@ -228,8 +228,13 @@ def apply(actor: Mapping[str, Any], variant: Mapping[str, Any] | None) -> dict[s
         **actor,
         "description": description or actor.get("description") or "",
         "image_url": variant.get("image_url") or actor.get("image_url") or "",
+        # 定妆图有自己的正脸胸像就用它；没有就还用这个人的正面大头照(大头照只锁相貌，发型衣服看全身照)。
+        # 真人演员的相貌只认本人照片，画出来的胸像不顶替它。
+        "face_url": (actor.get("face_url") if actor.get("real_person") else variant.get("face_url") or actor.get("face_url")) or "",
         "variant": facts.get("label") or str(variant.get("name") or ""),
         "variant_element_id": variant.get("id"),
+        # 这套造型还没画：图还是设定集上那身，衣服只能按文字。
+        "variant_drawn": bool(variant.get("image_url")),
     }
 
 

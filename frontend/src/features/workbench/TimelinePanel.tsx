@@ -4,6 +4,7 @@ import { CheckCircle2, Clapperboard, Download, Music, RefreshCcw, Scissors, Uplo
 import { ApiError, apiRequest, apiUrl } from '../../api/client';
 import './TimelinePanel.css';
 import { t } from '../../i18n';
+import { DeliveryChecklist, type AcceptanceIssue } from './DeliveryChecklist';
 
 export interface SoundJoin {
   join: '' | 'j_cut' | 'l_cut';
@@ -14,6 +15,9 @@ export interface SoundJoin {
 
 export interface TimelineClip {
   shot_id: number;
+  /** 全剧唯一的镜头编号(集·场·镜)；各场镜号都从 1 起。旧时间线上可能没有。 */
+  shot_uid?: number;
+  scene_id?: string;
   video_url: string;
   candidates: string[];
   duration: number | null;
@@ -42,6 +46,8 @@ interface TimelineResponse {
   summary: { clips: number; included: number; review: Record<string, number>; seconds: number; bgm: string; revision: number };
   transitions: string[];
   bgm_library: BgmTrack[];
+  // 成片交付前验收：按现在的修剪逐镜过一遍(后端 delivery_check)。
+  acceptance?: AcceptanceIssue[];
 }
 
 const TRANSITION_LABELS: Record<string, string> = {
@@ -50,6 +56,13 @@ const TRANSITION_LABELS: Record<string, string> = {
 const SOUND_JOIN_SECONDS = [0.3, 0.5, 0.8, 1.2];
 const DEFAULT_SOUND_JOIN_SECONDS = { j_cut: 0.4, l_cut: 0.5 } as const;
 const DECISION_LABELS = { pending: '待审看', approved: '通过', rejected: '打回' } as const;
+
+/** What the user has typed and not saved yet; a field left alone shows the saved value. */
+type ClipDraft = { in?: string; out?: string; subtitle?: string };
+
+const clipKey = (clip: TimelineClip) => clip.shot_uid ?? clip.shot_id;
+const clipRef = (clip: TimelineClip) => (clip.shot_uid ? { shot_id: clip.shot_id, shot_uid: clip.shot_uid } : { shot_id: clip.shot_id });
+const clipName = (clip: TimelineClip) => `${clip.scene_id ? `${clip.scene_id} · ` : ''}镜头 ${clip.shot_id}`;
 
 interface Props {
   taskId: string;
@@ -62,27 +75,35 @@ export function TimelinePanel({ taskId, onRendered }: Props) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState('');
-  const [drafts, setDrafts] = useState<Record<number, { in: string; out: string; subtitle: string }>>({});
-  const [titleDraft, setTitleDraft] = useState('');
+  const [drafts, setDrafts] = useState<Record<number, ClipDraft>>({});
+  const [titleDraft, setTitleDraft] = useState<string | null>(null);
+  const [volumeDraft, setVolumeDraft] = useState<number | null>(null);
+  const [draftsOf, setDraftsOf] = useState(taskId);
   const [uploadName, setUploadName] = useState('');
   const fileInput = useRef<HTMLInputElement | null>(null);
 
-  const apply = useCallback((response: TimelineResponse) => {
-    setData(response);
-    setTitleDraft(response.timeline.title.text);
-    setDrafts(Object.fromEntries(response.timeline.clips.map(clip => [clip.shot_id, {
-      in: String(clip.in ?? 0), out: clip.out === null ? '' : String(clip.out), subtitle: clip.subtitle,
-    }])));
-  }, []);
+  if (draftsOf !== taskId) {
+    setDraftsOf(taskId);
+    setDrafts({});
+    setTitleDraft(null);
+    setVolumeDraft(null);
+  }
+
+  const editDraft = (id: number, patch: ClipDraft) => setDrafts(current => ({ ...current, [id]: { ...current[id], ...patch } }));
+  const dropDraft = (id: number, ...fields: Array<keyof ClipDraft>) => setDrafts(current => {
+    const rest = { ...current[id] };
+    for (const field of fields) delete rest[field];
+    return { ...current, [id]: rest };
+  });
 
   const load = useCallback(async () => {
     try {
-      apply(await apiRequest<TimelineResponse>(`/api/drama/${encodeURIComponent(taskId)}/timeline`));
+      setData(await apiRequest<TimelineResponse>(`/api/drama/${encodeURIComponent(taskId)}/timeline`));
       setError('');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '时间线读取失败');
     }
-  }, [apply, taskId]);
+  }, [taskId]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => { void load(); }, 0);
@@ -93,14 +114,16 @@ export function TimelinePanel({ taskId, onRendered }: Props) {
     setBusy(label);
     setNotice('');
     try {
-      apply(await apiRequest<TimelineResponse>(`/api/drama/${encodeURIComponent(taskId)}/timeline/ops`, { method: 'POST', body: JSON.stringify(body) }));
+      setData(await apiRequest<TimelineResponse>(`/api/drama/${encodeURIComponent(taskId)}/timeline/ops`, { method: 'POST', body: JSON.stringify(body) }));
       setNotice(t('{0}已更新，重新合成后生效。', [label]));
+      return true;
     } catch (caught) {
       setNotice(caught instanceof ApiError ? caught.message : `${label}失败`);
+      return false;
     } finally {
       setBusy('');
     }
-  }, [apply, taskId]);
+  }, [taskId]);
 
   const render = useCallback(async () => {
     setBusy('render');
@@ -136,6 +159,14 @@ export function TimelinePanel({ taskId, onRendered }: Props) {
   if (error) return <p className="timeline__empty" role="status">{error}</p>;
   if (!data) return <p className="timeline__empty">{t('正在读取剪辑时间线…')}</p>;
   const { timeline, summary, transitions } = data;
+  const titleText = titleDraft ?? timeline.title.text;
+  const volume = volumeDraft ?? timeline.bgm.volume;
+  // 拖动时只动本地的值，松手才提交一次。
+  const commitVolume = () => {
+    if (volumeDraft === null || busy !== '') return;
+    if (volumeDraft === timeline.bgm.volume) { setVolumeDraft(null); return; }
+    void operate({ operation: 'bgm', source: timeline.bgm.source, library_id: timeline.bgm.library_id, volume: volumeDraft }, '配乐音量').then(() => setVolumeDraft(null));
+  };
 
   return (
     <section className="timeline" aria-label={t('剪辑时间线')}>
@@ -151,48 +182,57 @@ export function TimelinePanel({ taskId, onRendered }: Props) {
         </a>
       </header>
       {notice && <p className="timeline__notice" role="status">{notice}</p>}
+      <DeliveryChecklist issues={data.acceptance ?? []} />
 
       <div className="timeline__row">
         <label>{t('片头标题')}
-          <input aria-label={t('片头标题')} value={titleDraft} onChange={event => setTitleDraft(event.target.value)} placeholder={t('留空则无片头')} />
+          <input aria-label={t('片头标题')} value={titleText} onChange={event => setTitleDraft(event.target.value)} placeholder={t('留空则无片头')} />
         </label>
-        <button type="button" disabled={busy !== '' || titleDraft === timeline.title.text} onClick={() => { void operate({ operation: 'title', text: titleDraft }, '片头'); }}>{t('保存片头')}</button>
+        <button type="button" disabled={busy !== '' || titleText === timeline.title.text} onClick={() => { void operate({ operation: 'title', text: titleText }, '片头').then(saved => { if (saved) setTitleDraft(null); }); }}>{t('保存片头')}</button>
       </div>
 
       <ol className="timeline__clips">
         {timeline.clips.map((clip, index) => {
-          const draft = drafts[clip.shot_id] ?? { in: '0', out: '', subtitle: clip.subtitle };
+          const id = clipKey(clip);
+          const ref = clipRef(clip);
+          const name = clipName(clip);
+          const draft = drafts[id] ?? {};
+          const saved = { in: String(clip.in ?? 0), out: clip.out === null ? '' : String(clip.out) };
+          const trimIn = draft.in ?? saved.in;
+          const trimOut = draft.out ?? saved.out;
+          const subtitle = draft.subtitle ?? clip.subtitle;
           const decision = clip.review.decision;
           return (
-            <li key={clip.shot_id} className={`is-${decision}`}>
+            <li key={id} className={`is-${decision}`}>
               <div className="timeline__clip-head">
                 <Clapperboard aria-hidden="true" />
-                <strong>镜头 {clip.shot_id}</strong>
+                <strong>{name}</strong>
                 <span className="timeline__badge">{DECISION_LABELS[decision]}</span>
                 <small>{clip.duration ? `${clip.duration} 秒` : '时长未知'}{clip.muted ? ' · 已静音' : ''}</small>
-                <button type="button" aria-label={`通过镜头 ${clip.shot_id}`} disabled={busy !== ''} onClick={() => { void operate({ operation: 'review', shot_id: clip.shot_id, decision: 'approved' }, '审看'); }}><CheckCircle2 aria-hidden="true" /> {t('通过')}</button>
-                <button type="button" aria-label={`打回镜头 ${clip.shot_id}`} disabled={busy !== ''} onClick={() => {
-                  const note = window.prompt('打回原因（可选）', clip.review.note || '') ?? '';
-                  void operate({ operation: 'review', shot_id: clip.shot_id, decision: 'rejected', note }, '审看');
+                <button type="button" aria-label={`通过${name}`} disabled={busy !== ''} onClick={() => { void operate({ operation: 'review', ...ref, decision: 'approved' }, '审看'); }}><CheckCircle2 aria-hidden="true" /> {t('通过')}</button>
+                <button type="button" aria-label={`打回${name}`} disabled={busy !== ''} onClick={() => {
+                  const note = window.prompt('打回原因（可选）', clip.review.note || '');
+                  if (note === null) return;
+                  void operate({ operation: 'review', ...ref, decision: 'rejected', note }, '审看');
                 }}><XCircle aria-hidden="true" /> {t('打回')}</button>
               </div>
               {clip.review.note && <p className="timeline__note">审看备注：{clip.review.note}</p>}
               <div className="timeline__clip-body">
                 <video src={clip.video_url} controls preload="metadata" />
                 <div className="timeline__fields">
-                  <label>{t('入点（秒）')}<input type="number" min={0} step={0.1} aria-label={`镜头 ${clip.shot_id} 入点`} value={draft.in} onChange={event => setDrafts(current => ({ ...current, [clip.shot_id]: { ...draft, in: event.target.value } }))} /></label>
-                  <label>{t('出点（秒）')}<input type="number" min={0} step={0.1} aria-label={`镜头 ${clip.shot_id} 出点`} value={draft.out} placeholder={t('到结尾')} onChange={event => setDrafts(current => ({ ...current, [clip.shot_id]: { ...draft, out: event.target.value } }))} /></label>
-                  <button type="button" disabled={busy !== ''} onClick={() => { void operate({ operation: 'trim', shot_id: clip.shot_id, start: Number(draft.in) || 0, end: draft.out === '' ? null : Number(draft.out) }, '裁剪'); }}>{t('应用裁剪')}</button>
+                  <label>{t('入点（秒）')}<input type="number" min={0} step={0.1} aria-label={`${name} 入点`} value={trimIn} onChange={event => editDraft(id, { in: event.target.value })} /></label>
+                  <label>{t('出点（秒）')}<input type="number" min={0} step={0.1} aria-label={`${name} 出点`} value={trimOut} placeholder={t('到结尾')} onChange={event => editDraft(id, { out: event.target.value })} /></label>
+                  <button type="button" className={trimIn !== saved.in || trimOut !== saved.out ? 'is-unsaved' : undefined} disabled={busy !== ''} onClick={() => { void operate({ operation: 'trim', ...ref, start: Number(trimIn) || 0, end: trimOut === '' ? null : Number(trimOut) }, '裁剪').then(done => { if (done) dropDraft(id, 'in', 'out'); }); }}>{t('应用裁剪')}</button>
                   {index > 0 && (
                     <label>{t('转入转场')}
-                      <select aria-label={`镜头 ${clip.shot_id} 转场`} value={clip.transition_in?.type ?? 'crossfade'} disabled={busy !== ''} onChange={event => { void operate({ operation: 'transition', shot_id: clip.shot_id, kind: event.target.value, duration: clip.transition_in?.duration ?? 0.22 }, '转场'); }}>
+                      <select aria-label={`${name} 转场`} value={clip.transition_in?.type ?? 'crossfade'} disabled={busy !== ''} onChange={event => { void operate({ operation: 'transition', ...ref, kind: event.target.value, duration: clip.transition_in?.duration ?? 0.22 }, '转场'); }}>
                         {transitions.map(kind => <option key={kind} value={kind}>{TRANSITION_LABELS[kind] ?? kind}</option>)}
                       </select>
                     </label>
                   )}
                   {index > 0 && (
                     <label>{t('声音错开')}
-                      <select aria-label={`镜头 ${clip.shot_id} 声音错开`} value={clip.sound_in?.join ?? ''} disabled={busy !== ''} onChange={event => { void operate({ operation: 'sound_join', shot_id: clip.shot_id, join: event.target.value }, '声音'); }}>
+                      <select aria-label={`${name} 声音错开`} value={clip.sound_in?.join ?? ''} disabled={busy !== ''} onChange={event => { void operate({ operation: 'sound_join', ...ref, join: event.target.value }, '声音'); }}>
                         <option value="">{t('声画同切')}</option>
                         <option value="j_cut">{t('J-cut：这一镜的声音先到')}</option>
                         <option value="l_cut">{t('L-cut：上一镜的声音留下')}</option>
@@ -201,7 +241,7 @@ export function TimelinePanel({ taskId, onRendered }: Props) {
                   )}
                   {index > 0 && clip.sound_in?.join && (
                     <label>{t('错开秒数')}
-                      <select aria-label={`镜头 ${clip.shot_id} 错开秒数`} value={clip.sound_in.seconds ?? DEFAULT_SOUND_JOIN_SECONDS[clip.sound_in.join]} disabled={busy !== ''} onChange={event => { void operate({ operation: 'sound_join', shot_id: clip.shot_id, join: clip.sound_in?.join, seconds: Number(event.target.value) }, '声音'); }}>
+                      <select aria-label={`${name} 错开秒数`} value={clip.sound_in.seconds ?? DEFAULT_SOUND_JOIN_SECONDS[clip.sound_in.join]} disabled={busy !== ''} onChange={event => { void operate({ operation: 'sound_join', ...ref, join: clip.sound_in?.join, seconds: Number(event.target.value) }, '声音'); }}>
                         {[...new Set([...SOUND_JOIN_SECONDS, clip.sound_in.seconds ?? DEFAULT_SOUND_JOIN_SECONDS[clip.sound_in.join]])].sort((a, b) => a - b).map(value => <option key={value} value={value}>{value} {t('秒')}</option>)}
                       </select>
                     </label>
@@ -212,12 +252,16 @@ export function TimelinePanel({ taskId, onRendered }: Props) {
                     </p>
                   )}
                   <label className="timeline__wide">{t('字幕')}
-                    <input aria-label={`镜头 ${clip.shot_id} 字幕`} value={draft.subtitle} onChange={event => setDrafts(current => ({ ...current, [clip.shot_id]: { ...draft, subtitle: event.target.value } }))} onBlur={() => { if (draft.subtitle !== clip.subtitle) void operate({ operation: 'subtitle', shot_id: clip.shot_id, text: draft.subtitle }, '字幕'); }} />
+                    <input aria-label={`${name} 字幕`} value={subtitle} onChange={event => editDraft(id, { subtitle: event.target.value })} onBlur={() => {
+                      if (draft.subtitle === undefined) return;
+                      if (subtitle === clip.subtitle) dropDraft(id, 'subtitle');
+                      else void operate({ operation: 'subtitle', ...ref, text: subtitle }, '字幕').then(done => { if (done) dropDraft(id, 'subtitle'); });
+                    }} />
                   </label>
-                  <label className="timeline__check"><input type="checkbox" checked={clip.muted} disabled={busy !== ''} onChange={event => { void operate({ operation: 'mute', shot_id: clip.shot_id, muted: event.target.checked }, '静音'); }} /> {t('本镜配音静音')}</label>
+                  <label className="timeline__check"><input type="checkbox" checked={clip.muted} disabled={busy !== ''} onChange={event => { void operate({ operation: 'mute', ...ref, muted: event.target.checked }, '静音'); }} /> {t('本镜配音静音')}</label>
                   {clip.candidates.length > 1 && (
                     <label>{t('候选版本')}
-                      <select aria-label={`镜头 ${clip.shot_id} 候选版本`} value={clip.video_url} disabled={busy !== ''} onChange={event => { void operate({ operation: 'candidate', shot_id: clip.shot_id, video_url: event.target.value }, '候选'); }}>
+                      <select aria-label={`${name} 候选版本`} value={clip.video_url} disabled={busy !== ''} onChange={event => { void operate({ operation: 'candidate', ...ref, video_url: event.target.value }, '候选'); }}>
                         {clip.candidates.map((url, position) => <option key={url} value={url}>版本 {position + 1}</option>)}
                       </select>
                     </label>
@@ -230,11 +274,11 @@ export function TimelinePanel({ taskId, onRendered }: Props) {
       </ol>
 
       <section className="timeline__bgm" aria-label={t('配乐')}>
-        <header><Music aria-hidden="true" /><strong>{t('配乐')}</strong><span>当前：{timeline.bgm.source === 'none' ? '无配乐' : timeline.bgm.name ?? timeline.bgm.source} · 音量 {Math.round(timeline.bgm.volume * 100)}%{timeline.bgm.duck ? ' · 台词闪避' : ''}</span></header>
+        <header><Music aria-hidden="true" /><strong>{t('配乐')}</strong><span>当前：{timeline.bgm.source === 'none' ? '无配乐' : timeline.bgm.name ?? timeline.bgm.source} · 音量 {Math.round(volume * 100)}%{timeline.bgm.duck ? ' · 台词闪避' : ''}</span></header>
         <div className="timeline__row">
           <button type="button" disabled={busy !== ''} onClick={() => { void operate({ operation: 'bgm', source: 'none' }, '配乐'); }}>{t('无配乐')}</button>
           <button type="button" disabled={busy !== ''} onClick={() => { void operate({ operation: 'bgm', source: 'generated' }, '配乐'); }}>{t('第 6 阶段生成的配乐')}</button>
-          <label>{t('音量')}<input type="range" min={0} max={1} step={0.02} aria-label={t('配乐音量')} value={timeline.bgm.volume} onChange={event => { void operate({ operation: 'bgm', source: timeline.bgm.source, library_id: timeline.bgm.library_id, volume: Number(event.target.value) }, '配乐音量'); }} /></label>
+          <label>{t('音量')}<input type="range" min={0} max={1} step={0.02} aria-label={t('配乐音量')} value={volume} disabled={busy !== ''} onChange={event => setVolumeDraft(Number(event.target.value))} onPointerUp={commitVolume} onKeyUp={commitVolume} onBlur={commitVolume} /></label>
         </div>
         <ul className="timeline__library" aria-label={t('配乐库')}>
           {data.bgm_library.length === 0 && <li className="timeline__empty">{t('配乐库还是空的：上传一段音乐，或把第 6 阶段生成的配乐留在库里。')}</li>}

@@ -1,6 +1,5 @@
-import { Text } from '@react-three/drei';
-
 import { HELPER_FLAG } from '../../lib/capture';
+import { StageLabel } from '../StageLabel';
 import { SELECTION_COLOR } from '../stageLook';
 
 /** The operator's marks around a figure — selection ring and name — which a capture never shows. */
@@ -13,14 +12,7 @@ export function FigureMarks({ name, top, selected, labelled }: { name: string; t
           <meshBasicMaterial color={SELECTION_COLOR} />
         </mesh>
       )}
-      {labelled && (
-        <Text
-          position={[0, top + 0.28, 0]} fontSize={0.16} color="#e87084" anchorX="center" anchorY="bottom"
-          outlineWidth={0.012} outlineColor="#fcedef" userData={{ [HELPER_FLAG]: true }}
-        >
-          {name}
-        </Text>
-      )}
+      {labelled && <StageLabel position={[0, top + 0.28, 0]} fontSize={0.16} color="#e87084" kind="actor" selected={selected}>{name}</StageLabel>}
     </>
   );
 }

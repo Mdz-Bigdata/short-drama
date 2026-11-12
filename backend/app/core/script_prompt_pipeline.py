@@ -15,8 +15,10 @@ import json
 import re
 import zipfile
 from dataclasses import dataclass
+from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
+from app.core import prompt_data
 from app.core.face_card import audit_face_card, parse_face_card, render_face_card
 from app.core.sd25_compiler import Sd25PromptCompiler
 from app.core.shot_motion_contract import (
@@ -69,70 +71,71 @@ from app.schema.storyboard_director import (
 )
 
 
-_EN_SCENE = re.compile(
-    r"^(INT\.?|EXT\.?|INT/EXT\.?|I/E\.?)\s*(.+?)(?:\s*[-–—]\s*(.+))?$",
-    re.IGNORECASE,
-)
-_CN_NUMBERED_SCENE = re.compile(
-    r"^(?:场景\s*[零〇一二三四五六七八九十百千万两\d]+|第\s*[零〇一二三四五六七八九十百千万两\d]+\s*[场幕])"
-    r"\s*[：:]?\s*(.+)$"
-)
-_CN_SCENE = re.compile(r"^(内景|外景|内外景)\s*[：:]\s*(.+?)(?:\s*[-–—]\s*(.+))?$")
-_TRANSITION = re.compile(
-    r"^(?:FADE\s+IN:|FADE\s+OUT\.?|CUT\s+TO:|DISSOLVE\s+TO:|SMASH\s+CUT(?:\s+TO)?:|"
-    r"MATCH\s+CUT(?:\s+TO)?:|淡入|淡出|切至|转场)",
-    re.IGNORECASE,
-)
-_PARENTHETICAL = re.compile(r"^[（(](.+)[）)]$")
-_BRACKET_DIALOGUE = re.compile(r"^【([^】]{1,120})】\s*(.*)$")
-_INLINE_DIALOGUE = re.compile(r"^([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff· ._-]{0,40})[：:]\s*(.+)$")
-_UPPER_CHARACTER = re.compile(r"^[A-Z][A-Z0-9 ._'’-]{0,50}(?:\s*\([^)]*\))?$")
-_CN_ACTION_CHARACTER = re.compile(
-    r"^([\u4e00-\u9fff·]{2,12})[（(]([^）)]*(?:岁|男性|女性|男|女|发|穿着|身穿)[^）)]*)[）)]"
-)
-_NON_CHARACTER_LABELS = {
-    "场景", "内景", "外景", "内外景", "备注", "注", "时间", "地点", "动作", "镜头",
-    "道具", "特效", "场景描述", "人物", "角色", "对白", "旁白", "音效", "音乐",
-}
+# The sentences, templates, word tables and screenplay patterns of this module:
+# app/data/prompt/script_prompt_pipeline.json.
+_WORDING = "script_prompt_pipeline"
 
-_APPEARANCE_TERMS = (
-    "岁", "青年", "少年", "中年", "老年", "男人", "女人", "男孩", "女孩", "男性", "女性",
-    "高挑", "矮小", "瘦", "苗条", "微胖", "健壮", "魁梧", "长发", "短发", "卷发", "直发",
-    "马尾", "丸子头", "寸头", "光头", "黑发", "白发", "灰发", "金发", "棕发", "脸", "眼",
-    "眉", "鼻", "唇", "痣", "疤", "雀斑", "眼镜", "胡须", "肤色", "身高", "体型",
-)
-_COSTUME_TERMS = (
-    "穿着", "身穿", "换上", "脱下", "外套", "风衣", "西装", "衬衫", "裙", "裤", "鞋", "帽",
-    "围巾", "制服", "校服", "礼服", "睡衣", "夹克", "毛衣", "背心", "盔甲", "披风", "围裙",
-)
-_PROP_TERMS = (
-    "手机", "信封", "信", "钥匙", "杯", "咖啡", "伞", "书", "文件", "箱", "包", "戒指", "项链",
-    "手表", "照片", "刀", "剑", "枪", "棍", "车", "桌", "椅", "门", "电脑", "录音笔", "存储卡",
-)
-_EFFECT_TERMS = (
-    "雨", "雪", "雾", "烟", "火", "爆炸", "闪电", "魔法", "能量", "光束", "粒子", "全息", "风沙",
-)
-_INDOOR_LOCATIONS = (
-    "办公室", "卧室", "客厅", "厨房", "餐厅", "咖啡厅", "酒吧", "医院", "教室", "会议室", "电梯", "走廊",
-)
-_OUTDOOR_LOCATIONS = (
-    "街道", "公园", "海滩", "森林", "山", "天台", "停车场", "校园", "广场",
-)
-_COLOR_TERMS = (
-    "黑色", "白色", "灰色", "红色", "橙色", "黄色", "绿色", "蓝色", "紫色", "粉色", "棕色",
-    "金色", "银色", "青色", "米白", "藏蓝", "酒红",
-)
-_MOOD_VISUALS = {
-    "克制": "呼吸受控、动作幅度收小、情绪只通过眼神和细微肌肉变化外露",
-    "紧张": "肩颈收紧、呼吸变浅、视线短促移动",
-    "焦虑": "手指轻微反复动作、呼吸不稳、视线回避",
-    "愤怒": "眉间收紧、下颌绷紧、目光固定",
-    "悲伤": "眼睑下垂、呼吸放慢、肩部略微下沉",
-    "恐惧": "瞳孔方向骤变、呼吸急促、身体后撤",
-    "温柔": "眼神放松、嘴角轻微上扬、动作幅度收小",
-    "开心": "眼角与嘴角同步上扬、身体姿态打开",
-    "冷静": "呼吸均匀、视线稳定、动作节制",
-}
+
+def _entry(key: str) -> Any:
+    """The entry at the dotted ``key`` ("section.name") of the wording table."""
+    node: Any = prompt_data.load(_WORDING)
+    for part in key.split("."):
+        node = node[part]
+    return node
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A sentence or word of the wording table, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return str(_entry(key)).format(**values)
+
+
+def _table(key: str) -> Any:
+    """A word table, a list or a set of model fields of the wording table, used as it stands."""
+    return _entry(key)
+
+
+def _pattern(key: str, flags: int = 0) -> re.Pattern[str]:
+    """A screenplay pattern of the wording table, compiled."""
+    return re.compile(str(_entry(key)), flags)
+
+
+_EN_SCENE = _pattern("patterns.en_scene", re.IGNORECASE)
+_CN_NUMBERED_SCENE = _pattern("patterns.cn_numbered_scene")
+_CN_SCENE = _pattern("patterns.cn_scene")
+_HEADING_SPLIT = _pattern("patterns.heading_split")
+_TRANSITION = _pattern("patterns.transition", re.IGNORECASE)
+_PARENTHETICAL = _pattern("patterns.parenthetical")
+_BRACKET_DIALOGUE = _pattern("patterns.bracket_dialogue")
+_INLINE_DIALOGUE = _pattern("patterns.inline_dialogue")
+_UPPER_CHARACTER = _pattern("patterns.upper_character")
+_CUE_EXTENSION = _pattern("patterns.cue_extension")
+_CN_ACTION_CHARACTER = _pattern("patterns.cn_action_character")
+_DIALOGUE_DIRECTION = _pattern("patterns.dialogue_direction")
+_IDENTITY_PARENTHETICAL = _pattern("patterns.identity_parenthetical")
+_FACT_SEPARATORS = _pattern("patterns.fact_separators")
+_AGE_MARKER = _pattern("patterns.age_marker")
+# English heading words that name both sides read as INT/EXT; the Chinese heading words map, in order, to these codes.
+_EN_COMBINED = frozenset(_table("heading.en_combined_words"))
+_CN_INT_EXT = dict(zip(_table("heading.cn_int_ext_words"), ("INT", "EXT", "INT/EXT"), strict=True))
+_NON_CHARACTER_LABELS = set(_table("non_character_labels"))
+
+_APPEARANCE_TERMS = tuple(_table("appearance_terms"))
+_COSTUME_TERMS = tuple(_table("costume_terms"))
+_PROP_TERMS = tuple(_table("prop_terms"))
+_EFFECT_TERMS = tuple(_table("effect_terms"))
+_INDOOR_LOCATIONS = tuple(_table("indoor_locations"))
+_OUTDOOR_LOCATIONS = tuple(_table("outdoor_locations"))
+_COLOR_TERMS = tuple(_table("color_terms"))
+_ACCESSORY_TERMS = tuple(_table("accessory_terms"))
+# First match wins: the order of these tables is the order they are tried in.
+_WEATHER_TERMS = tuple(_table("weather_terms"))
+_SEASON_TERMS = tuple(_table("season_terms"))
+_DAYLIGHT_WORDS = tuple(_table("daylight_words"))
+_NIGHT_WORDS = tuple(_table("night_words"))
+_MOOD_VISUALS = dict(_table("mood_visuals"))
+_CLAUSE = _says("joiners.clause")
+_LIST = _says("joiners.list")
+_SPEAKER = _says("joiners.speaker")
 
 
 @dataclass(frozen=True)
@@ -183,7 +186,7 @@ def _markdown_text(value: object) -> str:
 
 
 def _split_parenthetical_dialogue(value: str) -> tuple[str, str]:
-    match = re.match(r"^[（(]([^）)]{1,500})[）)]\s*(.*)$", value.strip())
+    match = _DIALOGUE_DIRECTION.match(value.strip())
     return (match.group(1).strip(), match.group(2).strip()) if match else ("", value.strip())
 
 
@@ -298,21 +301,23 @@ class ScriptPromptPipeline:
         match = _EN_SCENE.match(line)
         if match:
             raw = match.group(1).upper().rstrip(".")
-            int_ext = "INT/EXT" if raw in {"INT/EXT", "I/E"} else raw
-            return int_ext, match.group(2).strip(), (match.group(3) or "UNSPECIFIED").strip()
+            int_ext = "INT/EXT" if raw in _EN_COMBINED else raw
+            return int_ext, match.group(2).strip(), (match.group(3) or _says("heading.en_unknown_time")).strip()
         match = _CN_SCENE.match(line)
         if match:
-            int_ext = {"内景": "INT", "外景": "EXT", "内外景": "INT/EXT"}[match.group(1)]
-            return int_ext, match.group(2).strip(), (match.group(3) or "未注明时段").strip()
+            int_ext = _CN_INT_EXT[match.group(1)]
+            return int_ext, match.group(2).strip(), (match.group(3) or _says("heading.unknown_time")).strip()
         match = _CN_NUMBERED_SCENE.match(line)
         if match:
             body = match.group(1).strip()
-            chunks = re.split(r"\s*[-–—]\s*", body, maxsplit=1)
-            location = chunks[0] or "未注明地点"
-            time_of_day = chunks[1] if len(chunks) == 2 and chunks[1] else "未注明时段"
+            chunks = _HEADING_SPLIT.split(body, maxsplit=1)
+            location = chunks[0] or _says("heading.unknown_location")
+            time_of_day = chunks[1] if len(chunks) == 2 and chunks[1] else _says("heading.unknown_time")
             int_ext = (
-                "EXT" if "外" in location or any(term in location for term in _OUTDOOR_LOCATIONS)
-                else "INT" if "内" in location or any(term in location for term in _INDOOR_LOCATIONS)
+                "EXT" if _says("heading.exterior_mark") in location
+                or any(term in location for term in _OUTDOOR_LOCATIONS)
+                else "INT" if _says("heading.interior_mark") in location
+                or any(term in location for term in _INDOOR_LOCATIONS)
                 else "UNKNOWN"
             )
             return int_ext, location, time_of_day
@@ -325,7 +330,9 @@ class ScriptPromptPipeline:
         pending_speaker = ""
 
         def new_scene(heading: str, parsed: tuple[str, str, str] | None = None) -> dict[str, object]:
-            int_ext, location, time_of_day = parsed or ("UNKNOWN", "未注明地点", "未注明时段")
+            int_ext, location, time_of_day = parsed or (
+                "UNKNOWN", _says("heading.unknown_location"), _says("heading.unknown_time")
+            )
             return {
                 "number": len(scenes) + 1,
                 "heading": heading,
@@ -372,7 +379,7 @@ class ScriptPromptPipeline:
                 pending_speaker = ""
                 continue
             if current is None:
-                current = new_scene("SCENE 1")
+                current = new_scene(_says("heading.opening_heading"))
 
             elements: list[ScriptElement] = current["elements"]  # type: ignore[assignment]
             characters: list[str] = current["characters"]  # type: ignore[assignment]
@@ -429,7 +436,7 @@ class ScriptPromptPipeline:
                 pending_speaker = speaker
                 continue
             if _UPPER_CHARACTER.fullmatch(line) and len(line) <= 52:
-                speaker = re.sub(r"\s*\([^)]*\)\s*$", "", line).strip()
+                speaker = _CUE_EXTENSION.sub("", line).strip()
                 if speaker not in characters:
                     characters.append(speaker)
                 elements.append(ScriptElement(
@@ -474,10 +481,10 @@ class ScriptPromptPipeline:
     @staticmethod
     def _identity_fact_fragments(name: str, content: str) -> list[str]:
         fragments: list[str] = []
-        for parenthetical in re.findall(r"[（(]([^）)]{1,500})[）)]", content):
+        for parenthetical in _IDENTITY_PARENTHETICAL.findall(content):
             if any(term in parenthetical for term in _APPEARANCE_TERMS + _COSTUME_TERMS):
                 fragments.append(parenthetical.strip())
-        for fragment in re.split(r"[，,。；;]", content):
+        for fragment in _FACT_SEPARATORS.split(content):
             cleaned = fragment.strip().removeprefix(name).strip()
             if cleaned and any(term in cleaned for term in _APPEARANCE_TERMS + _COSTUME_TERMS):
                 fragments.append(cleaned)
@@ -514,15 +521,12 @@ class ScriptPromptPipeline:
                 identity_dna = identity_override
                 identity_status = "bound"
             elif appearance_facts:
-                identity_dna = _clip("；".join(appearance_facts[:8]), 3_800)
+                identity_dna = _clip(_CLAUSE.join(appearance_facts[:8]), 3_800)
                 identity_status = "bound"
             else:
-                identity_dna = (
-                    f"仅锁定角色名{name}；剧本未提供足够外貌、发型、服装和体型事实，"
-                    "生成前必须补充身份DNA或绑定已批准参考图"
-                )
+                identity_dna = _says("character.identity_placeholder", name=name)
                 identity_status = "needs_review"
-                warnings.append(f"角色{name}缺少可验证身份DNA，设定集提示词已保留待补充边界")
+                warnings.append(_says("character.missing_dna_warning", name=name))
 
             costumes: list[CharacterCostumeProfile] = []
             for scene_number in sorted({scene for scene, _line, _content in evidence}):
@@ -534,12 +538,12 @@ class ScriptPromptPipeline:
                     if any(term in fragment for term in _COSTUME_TERMS)
                 ])
                 if descriptions:
-                    joined = _clip("；".join(descriptions[:5]), 1_800)
+                    joined = _clip(_CLAUSE.join(descriptions[:5]), 1_800)
                     costumes.append(CharacterCostumeProfile(
                         scene_numbers=[scene_number],
                         description=joined,
                         colors=[color for color in _COLOR_TERMS if color in joined],
-                        accessories=[term for term in ("眼镜", "项链", "耳环", "手表", "帽", "围巾") if term in joined],
+                        accessories=[term for term in _ACCESSORY_TERMS if term in joined],
                     ))
             props = _unique([
                 term for _scene, _line, content in evidence for term in _PROP_TERMS if term in content
@@ -568,9 +572,8 @@ class ScriptPromptPipeline:
                 evidence_lines=sorted({line for _scene, line, _content in evidence}),
                 five_view_order=list(IDENTITY_VIEW_ORDER),
                 five_view_prompt=actor_sheet,
-                consistency_seed=(
-                    f"[CHARACTER:{name}] {_layered_identity(identity_dna)}；"
-                    "保持同一人物、同一面部结构、同一发型与当前场次服装"
+                consistency_seed=_says(
+                    "character.consistency_seed", name=name, identity=_layered_identity(identity_dna)
                 ),
             ))
         return profiles, warnings
@@ -587,40 +590,33 @@ class ScriptPromptPipeline:
             text = self._scene_text(scene)
             key_props = _unique([term for term in _PROP_TERMS if term in text])
             effects = _unique([term for term in _EFFECT_TERMS if term in text])
-            weather = next((term for term in ("暴风雨", "雨", "雪", "雾", "晴", "阴天") if term in text), "")
-            season = next((term for term in ("春季", "夏季", "秋季", "冬季", "春天", "夏天", "秋天", "冬天") if term in text), "")
+            weather = next((term for term in _WEATHER_TERMS if term in text), "")
+            season = next((term for term in _SEASON_TERMS if term in text), "")
             explicit_moods = [mood for mood in _MOOD_VISUALS if mood in text]
             colors = [color for color in _COLOR_TERMS if color in text]
             time_upper = scene.time_of_day.upper()
-            if scene.int_ext == "EXT" and any(term in time_upper for term in ("DAY", "MORNING", "AFTERNOON", "白天", "早", "下午")):
+            if scene.int_ext == "EXT" and any(term in time_upper for term in _DAYLIGHT_WORDS):
                 source_type = "natural"
-            elif any(term in time_upper for term in ("NIGHT", "EVENING", "夜", "傍晚")):
+            elif any(term in time_upper for term in _NIGHT_WORDS):
                 source_type = "artificial" if scene.int_ext == "INT" else "mixed"
             else:
                 source_type = "unspecified"
-            spatial = _clip(overrides.get(scene.number, "").strip(), 2_800) or (
-                f"以{scene.location}为固定空间；门窗、稳定家具、人物站位、关键道具位置与前中后景层次"
-                "以剧本首次可见状态为场景圣经，后续镜头不得镜像翻转或随机迁移"
+            spatial = _clip(overrides.get(scene.number, "").strip(), 2_800) or _says(
+                "scene.spatial_default", location=scene.location
             )
-            lighting = SceneLightingProfile(
-                source_type=source_type,
-                direction="锁定本场首次建立镜头的主光方向",
-                intensity="保持本场时段与天气对应的可见亮度",
-                color_temperature="保持本场首次建立镜头的色温",
-                quality="人物与环境受光连续，阴影方向一致",
-            )
+            lighting = SceneLightingProfile(source_type=source_type, **_table("scene.lighting_fields"))
             visual_parts = [
-                f"{scene.int_ext} {scene.location}",
-                f"时段：{scene.time_of_day}",
-                f"空间：{spatial}",
+                _says("scene.visual_place", int_ext=scene.int_ext, location=scene.location),
+                _says("scene.visual_time", time_of_day=scene.time_of_day),
+                _says("scene.visual_space", spatial=spatial),
             ]
             if key_props:
-                visual_parts.append(f"关键道具：{'、'.join(key_props)}")
+                visual_parts.append(_says("scene.visual_props", props=_LIST.join(key_props)))
             if effects:
-                visual_parts.append(f"环境动态或特效：{'、'.join(effects)}")
+                visual_parts.append(_says("scene.visual_effects", effects=_LIST.join(effects)))
             if explicit_moods:
-                visual_parts.append(f"剧本明确氛围：{'、'.join(explicit_moods)}")
-            visual_prompt = "；".join(visual_parts)
+                visual_parts.append(_says("scene.visual_moods", moods=_LIST.join(explicit_moods)))
+            visual_prompt = _CLAUSE.join(visual_parts)
             results.append(ScenePromptProfile(
                 scene_number=scene.number,
                 heading=scene.heading,
@@ -636,8 +632,8 @@ class ScriptPromptPipeline:
                 color_palette=colors,
                 mood_keywords=explicit_moods,
                 visual_prompt=visual_prompt,
-                consistency_seed=(
-                    f"[SCENE:{scene.number}] {visual_prompt}；保持空间布局、道具位置、主光方向和色温一致"
+                consistency_seed=_says(
+                    "scene.consistency_seed", number=scene.number, visual_prompt=visual_prompt
                 ),
             ))
         return results
@@ -651,15 +647,22 @@ class ScriptPromptPipeline:
                 pending_parenthetical[element.speaker] = element.content
             elif element.type == "dialogue":
                 direction = pending_parenthetical.pop(element.speaker, "")
-                prefix = f"{element.speaker}{f'（{direction}）' if direction else ''}说"
+                said = (
+                    _says(
+                        "beat.dialogue_directed",
+                        speaker=element.speaker, direction=direction, line=element.content,
+                    )
+                    if direction
+                    else _says("beat.dialogue", speaker=element.speaker, line=element.content)
+                )
                 beats.append(_Beat(
-                    text=_clip(f"{prefix}：{element.content}", 1_200), kind="dialogue",
+                    text=_clip(said, 1_200), kind="dialogue",
                     speaker=element.speaker, dialogue=_clip(element.content, 800),
                 ))
             elif element.type in {"action", "transition"}:
                 beats.append(_Beat(text=_clip(element.content, 1_200), kind=element.type))
         if not beats:
-            beats.append(_Beat(text=f"建立{scene.location}的剧本开场状态", kind="action"))
+            beats.append(_Beat(text=_says("beat.opening", location=scene.location), kind="action"))
         return beats
 
     def compile_director_plan(
@@ -684,39 +687,33 @@ class ScriptPromptPipeline:
                     item.description for item in character.costumes
                     if scene.number in item.scene_numbers
                 ),
-                "剧本未提供本场服装（需确认）",
+                _says("common.unknown_costume"),
             )
-            costume_locks.append(f"{character.name}：{costume}")
+            costume_locks.append(_says("director.costume_lock", name=character.name, costume=costume))
             age = next(
-                iter(re.findall(r"\d{1,3}岁|少年|青年|中年|老年", character.identity_dna)),
-                "年龄感未注明（需确认）",
+                iter(_AGE_MARKER.findall(character.identity_dna)),
+                _says("director.age_unknown"),
             )
             director_characters.append(DirectorCharacter(
                 name=character.name,
-                identity="按角色档案与剧本身份",
                 age_impression=age,
                 appearance=character.identity_dna,
                 costume=costume,
-                accessories="仅保留角色档案和剧本明确配饰",
-                physical_state="保持本场剧本已明确的伤痕、污渍、湿度与疲劳状态",
                 psychological_state=(
-                    "、".join(character.personality_expressions)
-                    or "只用可观察表情、视线、呼吸和姿态呈现"
+                    _LIST.join(character.personality_expressions)
+                    or _says("director.psychological_default")
                 ),
+                **_table("director.character_fields"),
             ))
         if not director_characters:
             director_characters.append(DirectorCharacter(
-                name="未识别角色（需确认）",
-                appearance="剧本未提供可绑定的角色外貌（需确认）",
-                costume="剧本未提供本场服装（需确认）",
+                name=_says("common.unknown_character"),
+                appearance=_says("director.unknown_appearance"),
+                costume=_says("common.unknown_costume"),
             ))
-        props = profile.key_props or ["无关键道具"]
+        props = profile.key_props or [_says("common.no_props")]
         director_props = [
-            DirectorProp(
-                name=name,
-                initial_state="保持剧本首次可见状态",
-                initial_position="锁定剧本首次可见位置与持有者",
-            )
+            DirectorProp(name=name, **_table("director.prop_fields"))
             for name in props
         ]
         source_beats = self._beats(scene)
@@ -729,117 +726,90 @@ class ScriptPromptPipeline:
             )
             for beat in source_beats
         ]
-        palette = profile.color_palette or ["场景既定主色", "场景既定辅助色"]
+        palette = profile.color_palette or list(_table("director.palette_fallback"))
         # 面部锚点只锁看得见脸的几层，体态层归体态锚点：两条锁各管各的，不重复堆词。
         cards = {character.name: parse_face_card(character.identity_dna) for character in scene_characters}
-        face_anchor = "；".join(
-            f"{character.name}：{render_face_card(cards[character.name], 'close', include_other=False)}"
-            if cards[character.name].has_face_layers else f"{character.name}：{character.identity_dna}"
+        face_anchor = _CLAUSE.join(
+            _says(
+                "director.face_anchor",
+                name=character.name,
+                anchor=(
+                    render_face_card(cards[character.name], 'close', include_other=False)
+                    if cards[character.name].has_face_layers else character.identity_dna
+                ),
+            )
             for character in scene_characters
-        ) or "角色身份信息缺失（需确认）"
-        physiques = "；".join(
-            f"{name}：{'、'.join(card.physique)}" for name, card in cards.items() if card.physique
+        ) or _says("director.face_anchor_missing")
+        physiques = _CLAUSE.join(
+            _says("director.physique", name=name, physique=_LIST.join(card.physique))
+            for name, card in cards.items() if card.physique
         )
         duration = _bounded(
             scene.estimated_duration_seconds or len(events) * 2.0, 0.5, 300
         )
         request = StoryboardDirectorRequest(
             project_name=title,
-            episode="由项目集数元数据继承",
             scene_number=scene.number,
             shot_number=f"S{scene.number:03d}",
             duration_seconds=round(duration, 3),
             script_text=_clip(self._scene_text(scene), 100_000),
-            narrative_goal="逐字保留剧本信息，以可见动作、反应和声音完成本场叙事功能",
             characters=director_characters,
             scene=DirectorScene(
                 time=scene.time_of_day,
                 location=profile.location,
-                weather=profile.weather or "未注明天气",
+                weather=profile.weather or _says("director.weather_unknown"),
                 spatial_structure=profile.spatial_layout,
                 props=director_props,
-                environmental_sound="保持本场连续环境声与剧本明确动作声，不编造对白",
+                **_table("director.scene_fields"),
             ),
             events=events,
             global_visual=GlobalVisualRules(
                 visual_style=visual_style,
-                era_and_region="严格继承剧本时代、地域和已批准美术资产",
-                art_direction="场景圣经、数字演员设定集、服装和道具版本为硬约束",
-                rendering_texture="电影摄影质感、可信材质、自然景深与皮肤纹理",
-                overall_atmosphere="、".join(profile.mood_keywords) or "按本场剧本氛围",
+                overall_atmosphere=_LIST.join(profile.mood_keywords) or _says("director.atmosphere_default"),
+                **_table("director.global_visual_fields"),
             ),
             continuity=ContinuityLocks(
                 face_anchor=face_anchor,
                 body_anchor=(
-                    "保持数字演员设定集确定的身高感、肩宽、体型与比例"
-                    + (f"（{physiques}）" if physiques else "")
+                    _says("director.body_anchor")
+                    + (_says("director.body_anchor_physiques", physiques=physiques) if physiques else "")
                 ),
-                costume_anchor="；".join(costume_locks) or "本场服装版本待确认",
+                costume_anchor=_CLAUSE.join(costume_locks) or _says("director.costume_anchor_missing"),
                 scene_structure=profile.spatial_layout,
-                prop_positions="；".join(
-                    f"{item.name}：{item.initial_position}，{item.initial_state}"
+                prop_positions=_CLAUSE.join(
+                    _says(
+                        "director.prop_position",
+                        name=item.name, position=item.initial_position, state=item.initial_state,
+                    )
                     for item in director_props
                 ),
                 key_light_direction=profile.lighting.direction,
-                camera_axis="沿首次建立的180度动作轴线，除非明确展示越轴过程",
-                screen_direction="角色朝向、视线和出入画方向连续",
-                spatial_orientation="人物、摄影机、门窗、家具和道具的左右前后远近关系保持连续",
+                **_table("director.continuity_fields"),
             ),
             shot_visual=ShotVisualDesign(
-                base_content=f"{profile.location}中的{'、'.join(item.name for item in director_characters)}；关键道具{'、'.join(props)}",
-                composition="主体与关键道具位于叙事视觉中心，前中后景和留白服务当前事件",
-                shot_size="按事件信息量从建立景别连续过渡到关键反应景别",
-                lens="35—75mm范围内按叙事目的选择，镜头内不得无原因跳变",
-                camera_angle="遵守既定轴线的平视机位",
-                camera_height="角色视线高度",
-                depth_of_field="主体清晰、空间关系可读的受控景深",
-                spatial_layers=f"前景遮挡受控；中景为角色动作；背景保持{profile.spatial_layout}",
+                base_content=_says(
+                    "director.base_content",
+                    location=profile.location,
+                    characters=_LIST.join(item.name for item in director_characters),
+                    props=_LIST.join(props),
+                ),
+                spatial_layers=_says("director.spatial_layers", layout=profile.spatial_layout),
+                **_table("director.shot_visual_fields"),
             ),
             color=ColorDesign(
                 primary_color=palette[0],
                 secondary_color=palette[1] if len(palette) > 1 else palette[0],
                 accent_color=palette[-1],
                 color_temperature=profile.lighting.color_temperature,
-                start_state="本场首次建立的曝光、色温和主辅色状态",
-                change_reason="人物移动、门窗开合或剧本明确光源变化；没有依据时不变化",
-                peak_state="叙事峰值仍保持同一调色系统，仅允许有来源的明暗变化",
-                end_state="承接下一镜所需的最终曝光、色温和色彩状态",
+                **_table("director.color_fields"),
             ),
-            dynamics=DynamicsDesign(
-                subject_direction="按剧本动作与已建立屏幕方向",
-                subject_trajectory="只执行剧本可见动作所需的直线或自然弧线",
-                force_source="人物主动发力、重力或剧本明确的环境力",
-                speed_curve="缓起—发展—峰值—自然减速或收势",
-                center_of_gravity="随动作真实转移，不瞬移、不重置",
-                visual_flow="观众视线从动作发起者移动到动作目标或反应者",
-                secondary_motion="衣摆、发丝和环境只响应主体动作或真实环境力",
-                inertia_and_follow_through="动作结束保留符合质量和速度的惯性、回落与余振",
-                motion_blur="仅快速运动部位允许轻微动态模糊",
-                stable_regions="角色面部、身份锚点和关键道具保持清晰稳定",
-            ),
-            camera=CameraDesign(
-                movement_type="由叙事事件自动选择固定、推拉、摇移或跟拍",
-                start_position="既定轴线一侧的建立机位",
-                end_position="同轴线一侧、能够交付最终事件状态的机位",
-                path="连续直线或受控弧线，不穿越角色和场景实体",
-                direction="服从主体动线和屏幕方向",
-                speed_curve="缓入、按事件发展调整、缓出；禁止无原因急停",
-                subject_following="保持核心主体可读，必要时延迟跟随以交付反应",
-                composition_change="景别和主体位置随叙事信息连续变化，不跳切、不漂移",
-                focus_change="跟焦主体；只有明确视线或线索转移时才转焦",
-                stability="稳定器质感；仅剧情要求时允许轻微手持",
-                forbidden_behaviors="禁止无动机旋转、突然推近、越轴、镜像翻转和随机变焦",
-            ),
+            dynamics=DynamicsDesign(**_table("director.dynamics_fields")),
+            camera=CameraDesign(**_table("director.camera_fields")),
             transitions=TransitionDesign(
-                entry=TransitionEdge(
-                    visual_handoff="从上一镜构图、动作、颜色或光源承接；无上一镜时建立本场",
-                    audio_handoff="保留环境声桥；无声音依据时不添加",
-                ),
-                exit=TransitionEdge(
-                    visual_handoff="以最终姿势、视线、运动方向、光影或构图交给下一镜",
-                    audio_handoff="保留尾音或明确的下一镜声音先入",
-                ),
+                entry=TransitionEdge(**_table("director.entry_fields")),
+                exit=TransitionEdge(**_table("director.exit_fields")),
             ),
+            **_table("director.request_fields"),
         )
         return self.director.compile(request)
 
@@ -852,10 +822,12 @@ class ScriptPromptPipeline:
         director_plan: StoryboardDirectorResult,
     ) -> list[NineGridStoryboard]:
         source_beats = self._beats(scene)
-        characters = scene.characters or ["未识别角色（需确认）"]
-        props = profile.key_props or ["无关键道具"]
+        characters = scene.characters or [_says("common.unknown_character")]
+        props = profile.key_props or [_says("common.no_props")]
         scene_text = self._scene_text(scene)
-        effects = _unique([term for term in _EFFECT_TERMS if term in scene_text]) or ["无额外视觉特效"]
+        effects = _unique([term for term in _EFFECT_TERMS if term in scene_text]) or [_says("storyboard.no_effects")]
+        # Shot size and camera movement per kind of beat; the shot purpose, lens and aperture are codes.
+        coverage = _table("storyboard.coverage")
         boards: list[NineGridStoryboard] = []
         for page in director_plan.grid_pages:
             page_beats = [beat for beat in director_plan.beats if beat.page_number == page.page_number]
@@ -865,49 +837,36 @@ class ScriptPromptPipeline:
                 is_first = beat.index == 1
                 is_last = beat.index == len(director_plan.beats)
                 if is_first:
-                    purpose, size, movement, lens, aperture = (
-                        "information", "全景", "受控建立或缓慢推进", 35, "T4.0"
-                    )
+                    purpose, kind, lens, aperture = "information", "first", 35, "T4.0"
                 elif source.kind == "dialogue":
-                    purpose, size, movement, lens, aperture = (
-                        "tension", "中近景", "轴线内轻微推近或稳定跟随", 50, "T2.8"
-                    )
+                    purpose, kind, lens, aperture = "tension", "dialogue", 50, "T2.8"
                 elif is_last:
-                    purpose, size, movement, lens, aperture = (
-                        "emotion", "近景", "稳定停留或缓慢拉远", 75, "T2.0"
-                    )
+                    purpose, kind, lens, aperture = "emotion", "last", 75, "T2.0"
                 elif source.kind == "transition":
-                    purpose, size, movement, lens, aperture = (
-                        "information", "远景", "连续转场运动", 35, "T4.0"
-                    )
+                    purpose, kind, lens, aperture = "information", "transition", 35, "T4.0"
                 else:
-                    purpose, size, movement, lens, aperture = (
-                        "information", "中景", "按主体动线稳定跟随", 50, "T2.8"
-                    )
+                    purpose, kind, lens, aperture = "information", "other", 50, "T2.8"
+                size, movement = coverage[kind]["shot_size"], coverage[kind]["movement"]
                 panel_characters = _unique([
                     character for character in characters
                     if character in source.text or len(characters) == 1
                 ]) or characters[:2]
                 expression = next(
                     (observable for mood, observable in _MOOD_VISUALS.items() if mood in source.text),
-                    "自然表演；情绪只通过剧本可见的眼神、呼吸、姿态和肌肉变化呈现",
+                    _says("storyboard.expression_default"),
                 )
                 panels.append(StoryboardPanel(
                     index=beat.page_slot,
                     characters=panel_characters,
                     shot_size=size,
-                    camera_angle="遵守180度轴线的平视机位",
-                    camera_movement=f"{movement}（{beat.action_phase}阶段）",
-                    camera_reason=_clip(
-                        f"清楚交付唯一事件“{beat.core_event}”，不做无动机炫技", 500
-                    ),
+                    camera_movement=_says("storyboard.camera_movement", movement=movement, phase=beat.action_phase),
+                    camera_reason=_clip(_says("storyboard.camera_reason", event=beat.core_event), 500),
                     lens_mm=lens,
                     aperture=aperture,
-                    composition="主体、动作目标和关键道具构成清晰视觉动线，前中后景保持场景圣经布局",
-                    action_axis="沿本场已建立的180度轴线；人物左右关系和出入画方向连续",
-                    eyeline="说话人、聆听者与动作目标的视线方向、高度和反打关系连续",
                     shot_purpose=purpose,
-                    story_beat=_clip(f"{beat.action_phase}｜{beat.core_event}", 500),
+                    story_beat=_clip(
+                        _says("storyboard.story_beat", phase=beat.action_phase, event=beat.core_event), 500
+                    ),
                     duration_seconds=beat.duration_seconds,
                     subject_action=_clip(beat.core_event, 2_000),
                     expression=expression,
@@ -915,17 +874,22 @@ class ScriptPromptPipeline:
                     props=props,
                     effects=effects,
                     dialogue=beat.verbatim_line,
-                    sound=f"{beat.environmental_sound}；台词逐字保留且只作时间与表演依据",
-                    lighting=_clip((
-                        f"{profile.lighting.direction}；{profile.lighting.intensity}；"
-                        f"{profile.lighting.color_temperature}；{profile.lighting.quality}；"
-                        f"本拍状态：{beat.color_state}"
+                    sound=_says("storyboard.sound", environment=beat.environmental_sound),
+                    lighting=_clip(_says(
+                        "storyboard.lighting",
+                        direction=profile.lighting.direction,
+                        intensity=profile.lighting.intensity,
+                        color_temperature=profile.lighting.color_temperature,
+                        quality=profile.lighting.quality,
+                        color_state=beat.color_state,
                     ), 800),
                     edit_in=_clip((
-                        "按入场转场建立本镜头" if is_first else f"从上一拍结束状态连续进入：{beat.start_state}"
+                        _says("storyboard.edit_in_first") if is_first
+                        else _says("storyboard.edit_in", state=beat.start_state)
                     ), 500),
                     edit_out=_clip((
-                        "按出场转场交付下一镜" if is_last else f"在关键状态可读后连续进入下一拍：{beat.end_state}"
+                        _says("storyboard.edit_out_last") if is_last
+                        else _says("storyboard.edit_out", state=beat.end_state)
                     ), 500),
                     generation_mode="auto",
                     blocking=_clip(profile.spatial_layout, 800),
@@ -933,12 +897,15 @@ class ScriptPromptPipeline:
                     end_state=_clip(beat.end_state, 1_000),
                     continuity_in=(
                         "" if is_first
-                        else _clip(f"承接上一拍结束状态：{beat.start_state}", 1_000)
+                        else _clip(_says("storyboard.continuity_in", state=beat.start_state), 1_000)
                     ),
                     continuity_out=_clip(beat.end_state, 1_000),
+                    **_table("storyboard.panel_fields"),
                 ))
             boards.append(NineGridStoryboard(
-                title=_clip(f"{title}｜场景{scene.number}｜第{page.page_number}页", 200),
+                title=_clip(
+                    _says("storyboard.board_title", title=title, scene=scene.number, page=page.page_number), 200
+                ),
                 scene_number=scene.number,
                 page_number=page.page_number,
                 total_pages=len(director_plan.grid_pages),
@@ -955,9 +922,9 @@ class ScriptPromptPipeline:
 
     @staticmethod
     def _dialogue_entry(panel: StoryboardPanel) -> list[Sd25DialogueEntry]:
-        if not panel.dialogue or "：" not in panel.dialogue:
+        if not panel.dialogue or _SPEAKER not in panel.dialogue:
             return []
-        speaker, text = panel.dialogue.split("：", 1)
+        speaker, text = panel.dialogue.split(_SPEAKER, 1)
         if not speaker.strip() or not text.strip():
             return []
         return [Sd25DialogueEntry(
@@ -993,11 +960,11 @@ class ScriptPromptPipeline:
                     ),
                     "",
                 )
-                detailed_image_prompt = (
-                    f"{director_still}\n【共享镜头契约】{image_prompt.prompt}"
+                detailed_image_prompt = _says(
+                    "shot.image_prompt", still=director_still, contract=image_prompt.prompt
                 )
                 detailed_motion_prompt = (
-                    f"{director_segment}\n【共享镜头契约】{motion_prompt.prompt}"
+                    _says("shot.motion_prompt", segment=director_segment, contract=motion_prompt.prompt)
                     if director_segment else motion_prompt.prompt
                 )
                 assignment = assignments.get(
@@ -1044,7 +1011,7 @@ class ScriptPromptPipeline:
                     route_plan = reference_plan.model_dump(mode="json")
                     if reference_plan.provider_status != "integrated":
                         warnings.append(
-                            f"{reference_plan.provider_family}需要适配器或运行时能力探测，当前仅生成路由计划"
+                            _says("shot.route_only_warning", family=reference_plan.provider_family)
                         )
                 bundles.append(ShotPromptBundle(
                     scene_number=board.scene_number,
@@ -1077,25 +1044,25 @@ class ScriptPromptPipeline:
             issues.append(PromptConsistencyIssue(
                 code="missing_character_cast",
                 severity="error",
-                location="全项目",
-                description="未识别到任何角色，无法满足数字演员设定集和人物一致性要求。",
-                suggestion="使用标准角色名/对白格式或补充角色档案后重新编译。",
+                location=_says("consistency.whole_project"),
+                description=_says("consistency.missing_character_cast.description"),
+                suggestion=_says("consistency.missing_character_cast.suggestion"),
             ))
         for character in characters:
             if character.identity_status == "needs_review":
                 issues.append(PromptConsistencyIssue(
                     code="missing_identity_dna",
                     severity="error",
-                    location=f"角色 {character.name}",
-                    description="剧本没有提供足够身份事实，无法安全锁定同一人物。",
-                    suggestion="补充角色身份DNA或绑定已批准参考图后再提交生成。",
+                    location=_says("consistency.character_location", name=character.name),
+                    description=_says("consistency.missing_identity_dna.description"),
+                    suggestion=_says("consistency.missing_identity_dna.suggestion"),
                 ))
             if character.identity_status == "bound":
                 for card_issue in audit_face_card(parse_face_card(character.identity_dna)):
                     issues.append(PromptConsistencyIssue(
                         code=f"face_card_{card_issue.code}",
                         severity="warning",
-                        location=f"角色 {character.name}",
+                        location=_says("consistency.character_location", name=character.name),
                         description=card_issue.message,
                         suggestion=card_issue.suggestion,
                     ))
@@ -1103,9 +1070,9 @@ class ScriptPromptPipeline:
                 issues.append(PromptConsistencyIssue(
                     code="costume_change_tracked",
                     severity="warning",
-                    location=f"角色 {character.name}",
-                    description="检测到跨场次服装描述，已按场次保留而未合并为同一套服装。",
-                    suggestion="生成每场镜头前确认对应服装版本和参考图。",
+                    location=_says("consistency.character_location", name=character.name),
+                    description=_says("consistency.costume_change_tracked.description"),
+                    suggestion=_says("consistency.costume_change_tracked.suggestion"),
                 ))
         for board in storyboards:
             report = validate_storyboard_continuity(board.panels)
@@ -1113,18 +1080,18 @@ class ScriptPromptPipeline:
                 issues.append(PromptConsistencyIssue(
                     code=f"storyboard_{issue.code}",
                     severity="error",
-                    location=f"{board.title} 第{issue.panel_index}格",
+                    location=_says("consistency.panel_location", title=board.title, panel=issue.panel_index),
                     description=issue.message,
-                    suggestion="补全分镜状态后重新编译图片和运镜 Prompt。",
+                    suggestion=_says("consistency.storyboard_suggestion"),
                 ))
         expected_count = sum(len(board.panels) for board in storyboards)
         if len(shot_prompts) != expected_count:
             issues.append(PromptConsistencyIssue(
                 code="shot_prompt_count_mismatch",
                 severity="error",
-                location="全项目",
-                description="分镜数量与镜头 Prompt 数量不一致。",
-                suggestion="重新编译完整项目，禁止跳过任一九宫格面板。",
+                location=_says("consistency.whole_project"),
+                description=_says("consistency.shot_prompt_count_mismatch.description"),
+                suggestion=_says("consistency.shot_prompt_count_mismatch.suggestion"),
             ))
         board_panels = {
             (board.scene_number, board.page_number, panel.index): panel
@@ -1139,12 +1106,12 @@ class ScriptPromptPipeline:
                 issues.append(PromptConsistencyIssue(
                     code="shot_contract_drift",
                     severity="error",
-                    location=(
-                        f"场景 {bundle.scene_number} / 第{bundle.page_number}页 / "
-                        f"镜头 {bundle.panel_index}"
+                    location=_says(
+                        "consistency.shot_location",
+                        scene=bundle.scene_number, page=bundle.page_number, panel=bundle.panel_index,
                     ),
-                    description="分镜图片与运镜提示词不再来自同一语义契约。",
-                    suggestion="废弃该镜头缓存并从对应九宫格面板重新编译。",
+                    description=_says("consistency.shot_contract_drift.description"),
+                    suggestion=_says("consistency.shot_contract_drift.suggestion"),
                 ))
         return PromptConsistencyReport(
             passed=not any(issue.severity == "error" for issue in issues),
@@ -1170,50 +1137,53 @@ class ScriptPromptPipeline:
     @staticmethod
     def _render_markdown(payload: dict[str, object]) -> str:
         screenplay: dict = payload["screenplay"]  # type: ignore[assignment]
-        lines = [f"# {_markdown_cell(screenplay['title'])} - AI视频提示词生产包", ""]
+        lines = [_says("markdown.title", title=_markdown_cell(screenplay["title"])), ""]
         lines.extend([
-            "## 项目元数据", "",
-            f"- 源文件 SHA-256：`{payload['source_sha256']}`",
-            f"- 场景数：{len(screenplay['scenes'])}",
-            f"- 预估时长：{screenplay['total_duration_seconds']} 秒", "",
-            "## 数字演员设定集", "",
+            _says("markdown.metadata_heading"), "",
+            _says("markdown.source_sha256", sha256=payload["source_sha256"]),
+            _says("markdown.scene_count", count=len(screenplay["scenes"])),
+            _says("markdown.duration", seconds=screenplay["total_duration_seconds"]), "",
+            _says("markdown.characters_heading"), "",
         ])
         for character in payload["characters"]:  # type: ignore[index]
             lines.extend([
                 f"### {_markdown_cell(character['name'])}", "",
-                f"- 身份状态：{_markdown_cell(character['identity_status'])}",
-                f"- 身份DNA：{_markdown_cell(character['identity_dna'])}", "",
+                _says("markdown.identity_status", status=_markdown_cell(character["identity_status"])),
+                _says("markdown.identity_dna", dna=_markdown_cell(character["identity_dna"])), "",
                 _markdown_text(character["five_view_prompt"]), "",
             ])
-        lines.extend(["## 九宫格分镜与运镜", ""])
+        lines.extend([_says("markdown.storyboards_heading"), ""])
         for board in payload["storyboards"]:  # type: ignore[index]
             lines.extend([
                 f"### {_markdown_cell(board['title'])}", "",
-                "| 格 | 目的 | 人物 | 景别 | 运镜 | 动作 | 开始状态 | 结束状态 |",
+                _says("markdown.panel_table_header"),
                 "|---:|---|---|---|---|---|---|---|",
             ])
             for panel in board["panels"]:
                 lines.append(
                     f"| {panel['index']} | {_markdown_cell(panel['shot_purpose'])} | "
-                    f"{_markdown_cell('、'.join(panel['characters']))} | {_markdown_cell(panel['shot_size'])} | "
+                    f"{_markdown_cell(_LIST.join(panel['characters']))} | {_markdown_cell(panel['shot_size'])} | "
                     f"{_markdown_cell(panel['camera_movement'])} | {_markdown_cell(panel['subject_action'])} | "
                     f"{_markdown_cell(panel['start_state'])} | {_markdown_cell(panel['end_state'])} |"
                 )
             lines.append("")
-        lines.extend(["## 分镜师时间拍点与连续性自检", ""])
+        lines.extend([_says("markdown.plans_heading"), ""])
         for plan in payload["director_plans"]:  # type: ignore[index]
             lines.extend([
-                f"### 场景 {plan['scene_number']} / 镜头 {_markdown_cell(plan['shot_number'])}", "",
-                f"- 实际拍点：{len(plan['beats'])}",
-                f"- 分页数：{len(plan['grid_pages'])}",
-                f"- 相邻关键帧视频段：{len(plan['video_segments'])}",
-                f"- 计划指纹：`{plan['plan_fingerprint']}`", "",
+                _says("markdown.plan_heading", scene=plan["scene_number"], shot=_markdown_cell(plan["shot_number"])), "",
+                _says("markdown.plan_beats", count=len(plan["beats"])),
+                _says("markdown.plan_pages", count=len(plan["grid_pages"])),
+                _says("markdown.plan_segments", count=len(plan["video_segments"])),
+                _says("markdown.plan_fingerprint", fingerprint=plan["plan_fingerprint"]), "",
             ])
-        lines.extend(["## 可提交 SD25 Prompt", ""])
+        lines.extend([_says("markdown.shots_heading"), ""])
         for shot in payload["shot_prompts"]:  # type: ignore[index]
             lines.extend([
-                f"### 场景 {shot['scene_number']} / 第{shot['page_number']}页 / "
-                f"镜头 {shot['panel_index']} / 连续瞬间 {shot['beat_index']}", "",
+                _says(
+                    "markdown.shot_heading",
+                    scene=shot["scene_number"], page=shot["page_number"],
+                    panel=shot["panel_index"], beat=shot["beat_index"],
+                ), "",
                 _markdown_text(shot["sd25_prompt"]), "",
             ])
         return "\n".join(lines).rstrip() + "\n"
@@ -1230,8 +1200,8 @@ class ScriptPromptPipeline:
             panel = boards[(shot["scene_number"], shot["page_number"], shot["panel_index"])]
             rows.append([
                 shot["scene_number"], shot["page_number"], shot["panel_index"], shot["beat_index"],
-                "、".join(panel["characters"]),
-                panel["scene"], "、".join(panel["props"]), "、".join(panel["effects"]),
+                _LIST.join(panel["characters"]),
+                panel["scene"], _LIST.join(panel["props"]), _LIST.join(panel["effects"]),
                 panel["shot_size"], panel["camera_angle"], panel["camera_movement"],
                 panel["subject_action"], panel["expression"], panel["dialogue"], panel["sound"],
                 panel["duration_seconds"], panel["start_state"], panel["end_state"],
@@ -1243,11 +1213,7 @@ class ScriptPromptPipeline:
     def _render_csv(self, payload: dict[str, object]) -> str:
         output = io.StringIO(newline="")
         writer = csv.writer(output, lineterminator="\n")
-        writer.writerow([
-            "场景编号", "页码", "镜头编号", "全局拍点编号", "角色", "场景", "道具", "特效", "景别", "机位", "运镜",
-            "动作", "表演", "对白", "声音", "时长(秒)", "开始状态", "结束状态", "SD25模式",
-            "分镜图片提示词", "运镜提示词", "SD25可提交提示词", "分镜计划指纹", "契约指纹",
-        ])
+        writer.writerow(list(_table("sheet.headers")))
         for row in self._shot_rows(payload):
             writer.writerow([_safe_sheet_text(value) for value in row])
         return "\ufeff" + output.getvalue()
@@ -1260,12 +1226,20 @@ class ScriptPromptPipeline:
         for shot in payload["shot_prompts"]:  # type: ignore[index]
             cards.append(
                 '<article class="shot">'
-                f"<h3>场景 {int(shot['scene_number'])} / 第{int(shot['page_number'])}页 / "
-                f"镜头 {int(shot['panel_index'])}</h3>"
-                f"<p><strong>模式：</strong>{html.escape(str(shot['sd25_mode']))}</p>"
+                "<h3>"
+                + _says(
+                    "html.shot_heading",
+                    scene=int(shot["scene_number"]), page=int(shot["page_number"]), panel=int(shot["panel_index"]),
+                )
+                + "</h3>"
+                f"<p><strong>{_says('html.mode_label')}</strong>{html.escape(str(shot['sd25_mode']))}</p>"
                 f"<pre>{html.escape(str(shot['sd25_prompt']))}</pre>"
-                f"<small>分镜计划指纹：{html.escape(str(shot['director_plan_fingerprint']))}</small><br>"
-                f"<small>契约指纹：{html.escape(str(shot['contract_fingerprint']))}</small>"
+                "<small>"
+                + _says("html.plan_fingerprint", fingerprint=html.escape(str(shot["director_plan_fingerprint"])))
+                + "</small><br>"
+                "<small>"
+                + _says("html.contract_fingerprint", fingerprint=html.escape(str(shot["contract_fingerprint"])))
+                + "</small>"
                 "</article>"
             )
         character_cards = "".join(
@@ -1279,23 +1253,24 @@ class ScriptPromptPipeline:
         return (
             "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            f"<title>{title} - AI视频提示词</title><style>"
+            f"<title>{_says('html.page_title', title=title)}</title><style>"
             "body{font-family:system-ui,sans-serif;max-width:1100px;margin:auto;padding:24px;background:#f6f7f9;color:#18202a}"
             "article{background:white;border:1px solid #dce1e7;border-radius:10px;padding:16px;margin:12px 0}"
             "pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f4f7;padding:12px;border-radius:6px}"
             "small{overflow-wrap:anywhere}</style></head><body>"
-            f"<h1>{title}</h1><p>场景数：{len(screenplay['scenes'])}；"
-            f"预估时长：{float(screenplay['total_duration_seconds']):g} 秒</p>"
-            f"<h2>数字演员设定集</h2>{character_cards}<h2>镜头提示词</h2>{''.join(cards)}"
+            f"<h1>{title}</h1><p>"
+            + _says(
+                "html.summary",
+                scenes=len(screenplay["scenes"]), duration=float(screenplay["total_duration_seconds"]),
+            )
+            + "</p>"
+            f"<h2>{_says('html.characters_heading')}</h2>{character_cards}"
+            f"<h2>{_says('html.shots_heading')}</h2>{''.join(cards)}"
             "</body></html>"
         )
 
     def _render_xlsx(self, payload: dict[str, object]) -> bytes:
-        headers = [
-            "场景编号", "页码", "镜头编号", "全局拍点编号", "角色", "场景", "道具", "特效", "景别", "机位", "运镜",
-            "动作", "表演", "对白", "声音", "时长(秒)", "开始状态", "结束状态", "SD25模式",
-            "分镜图片提示词", "运镜提示词", "SD25可提交提示词", "分镜计划指纹", "契约指纹",
-        ]
+        headers = list(_table("sheet.headers"))
         rows = [headers] + self._shot_rows(payload)
 
         def column_name(index: int) -> str:
@@ -1333,11 +1308,12 @@ class ScriptPromptPipeline:
             '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
             '</Relationships>'
         )
+        sheet_name = xml_escape(_says("sheet.name"), {'"': '&quot;'})
         workbook = (
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
             'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-            '<sheets><sheet name="分镜提示词" sheetId="1" r:id="rId1"/></sheets></workbook>'
+            f'<sheets><sheet name="{sheet_name}" sheetId="1" r:id="rId1"/></sheets></workbook>'
         )
         workbook_rels = (
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'

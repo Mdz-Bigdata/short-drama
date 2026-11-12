@@ -1,0 +1,46 @@
+/* Right-click menus on the canvas (class prefix ccm-). */
+.ccm-host { position: fixed; inset: 0 auto auto 0; z-index: 3000; }
+.ccm-menu {
+  position: fixed;
+  min-width: 180px;
+  max-width: 280px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 0.25rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg-popover);
+  color: var(--text-main);
+  box-shadow: 0 10px 28px var(--shadow);
+  backdrop-filter: blur(14px);
+  outline: none;
+  user-select: none;
+}
+.ccm-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.35rem 0.55rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+}
+.ccm-item.is-active:not(:disabled), .ccm-item:focus-visible { background: rgba(var(--accent-rgb), 0.14); outline: none; }
+.ccm-item:disabled { opacity: 0.4; cursor: default; }
+.ccm-item.is-danger { color: var(--danger); }
+.ccm-item.is-danger.is-active:not(:disabled) { background: rgba(var(--danger-rgb), 0.14); }
+.ccm-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ccm-shortcut {
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+.ccm-chevron { flex: none; color: var(--text-dim); }
+.ccm-separator { height: 1px; margin: 0.25rem 0.35rem; background: var(--line); }

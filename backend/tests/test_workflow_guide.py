@@ -285,7 +285,71 @@ class WorkflowGuideTests(unittest.TestCase):
         for prefix in ("请", "请帮我", "帮我", "麻烦你"):
             self.assertEqual(assistant_intent(prefix + "继续"), ("continue", None))
             self.assertEqual(assistant_intent(prefix + "重跑第 4 阶段"), ("rerun", 4))
+            # 「第 7 步」是用户看到的宣发，「第 7 阶段」是内部的成片合成。
+            self.assertEqual(assistant_intent(prefix + "重跑第 7 步"), ("rerun", 8))
+            self.assertEqual(assistant_intent(prefix + "重跑第 7 阶段"), ("rerun", 7))
             self.assertEqual(assistant_intent(prefix + "一键成片"), ("run_all", None))
+
+    def test_natural_requests_to_finish_the_film_run_every_remaining_step(self):
+        for message in (
+            "不用确认，帮我从头到尾自动生成成片",
+            "全自动做完",
+            "一口气把剩下的都做完",
+            "直接出成片",
+            "帮我做一部完整的成片",
+            "自动跑完剩余步骤",
+            "以后不用每步都确认了",
+            "别停，继续做",
+        ):
+            self.assertEqual(assistant_intent(message), ("run_all", None), message)
+        for message in ("能一键成片吗？", "不要一键成片", "先不要自动生成", "请不要暂停", "合成成片"):
+            self.assertNotEqual(assistant_intent(message)[0], "run_all", message)
+
+    def test_one_sentence_in_the_chat_makes_the_whole_film(self):
+        self.save(task_at(0))
+        calls = []
+
+        def fake_worker(task_id, stage, *, _claimed_task):
+            calls.append(stage)
+            task = deepcopy(_claimed_task)
+            task["assets"].update(outputs(stage))
+            task["stage_progress"]["status"] = "success"
+            self.save(task)
+            return task
+
+        async def talk():
+            response = await self.service.assistant_message("workflow", "不用确认，帮我从头到尾自动生成成片")
+            # The run goes on in the background after the reply; let it finish.
+            pending = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+            await asyncio.gather(*pending)
+            return response
+
+        with patch.object(self.service, "_execute_stage_blocking", side_effect=fake_worker):
+            response = asyncio.run(talk())
+        self.assertEqual(response["action"], "run_all")
+        self.assertEqual(calls, list(range(1, 9)), "every stage ran, in order, from one sentence")
+        task = self.service.repo.get_task("workflow")
+        self.assertTrue(task["workflow_control"]["automatic"])
+        self.assertEqual(self.service.get_task_status("workflow")["workflow"]["mode"], "review")
+        said = "\n".join(str(item.get("content") or "") for item in task.get("chat_history") or [])
+        self.assertNotIn("请先审核本步产物", said, "an automatic run never stops to ask")
+        self.assertIn("当前是自动制作模式", said)
+
+    def test_continue_after_an_automatic_run_stopped_carries_on_automatically(self):
+        for automatic, action in ((True, "run_all"), (False, "run_stage")):
+            task = task_at(3)
+            # Its own task each time: the first claim's reservation would refuse a second run on one task.
+            task.update(task_id=f"workflow-{action}", status="failed", workflow_control={"automatic": automatic, "active": False})
+            self.save(task)
+            expected = self.service.workflow_snapshot(task)["next_stage"]  # a failed stage is retried first
+            with patch.object(self.service, "execute_stage"), patch.object(self.service, "execute_all_stages"):
+                response = asyncio.run(self.service.assistant_message(task["task_id"], "继续"))
+            self.assertEqual(response["action"], action)
+            self.assertEqual(response["stage"], expected)
+
+    def test_the_manual_hint_offers_the_one_sentence_way(self):
+        hint = self.service.workflow_snapshot(task_at(3))["hint"]
+        self.assertIn("说「一键成片」则从这一步自动做到成片", hint)
 
     def test_chat_history_is_persisted_and_exposed_by_schema(self):
         self.save(task_at(1))
@@ -428,7 +492,7 @@ class StageDoneReviewMessageTests(unittest.TestCase):
         }
 
     def _snapshot(self) -> dict:
-        return {"completed_stages": [1], "next_stage": 2, "hint": "已完成 1/8 步。接下来是第 2/8 步：编剧剧本创作。"}
+        return {"completed_stages": [1], "next_stage": 2, "hint": "已完成 1/7 步。接下来是第 2/7 步：编剧剧本创作。"}
 
     def test_manual_mode_holds_the_finished_stage_for_review(self):
         from app.core.workflow_guide import append_stage_guidance
@@ -491,3 +555,14 @@ class SelectedTextModelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SevenStepDisplayTest(unittest.TestCase):
+    def test_sound_and_cut_are_one_step_and_count_only_when_both_are_done(self):
+        from app.core.workflow_guide import display_step, step_text, steps_done
+
+        self.assertEqual([display_step(stage) for stage in range(1, 9)], [1, 2, 3, 4, 5, 6, 6, 7])
+        self.assertEqual(step_text(8), "第 7/7 步")
+        self.assertEqual(steps_done([1, 2, 3, 4, 5, 6]), 5)
+        self.assertEqual(steps_done(list(range(1, 8))), 6)
+        self.assertEqual(steps_done(list(range(1, 9))), 7)

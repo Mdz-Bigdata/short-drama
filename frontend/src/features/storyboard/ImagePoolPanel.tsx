@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 import { apiRequest, apiUrl } from '../../api/client';
@@ -139,7 +140,8 @@ export function ImagePoolPanel({ taskId, shot, onAssigned, onClose }: Props) {
   };
 
   const disabled = Boolean(busy);
-  return (
+  // On the page root, so the stage nav and the chat sidebar stay under the dialog.
+  return createPortal(
     <div className="image-pool" role="dialog" aria-modal="true" aria-label={t('图片池')}>
       <div className="image-pool__panel">
         <header className="image-pool__head">
@@ -194,6 +196,7 @@ export function ImagePoolPanel({ taskId, shot, onAssigned, onClose }: Props) {
           ))}
         </ul>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

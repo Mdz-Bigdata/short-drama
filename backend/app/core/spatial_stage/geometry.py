@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import Any
 
 Vec2 = tuple[float, float]
 Vec3 = tuple[float, float, float]
@@ -219,7 +220,120 @@ def rounded(point: Sequence[float], digits: int = 3) -> list[float]:
     return [round(float(value), digits) + 0.0 for value in point]
 
 
+# ---- set pieces as volumes. A piece is anything with ``position`` (x, z), ``size`` (width, depth, height),
+# ---- ``yaw_deg``, ``elevation_m`` and ``parts``: the stage's landmarks, read here without importing them.
+
+# A flat floor or rug under the action blocks nothing.
+LOW_PIECE_M = 0.25
+# Nor does something that thin and no wider than this, wherever it lies: a cup on a table, a sword on a rack.
+_SMALL_PIECE_M = 0.5
+
+
+def local_point(point: Sequence[float], piece: Any) -> Vec2:
+    """``point`` (x, z) in the piece's own axes, with its yaw taken off."""
+    dx, dz = point[0] - piece.position[0], point[1] - piece.position[1]
+    yaw = math.radians(piece.yaw_deg)
+    return (dx * math.cos(yaw) - dz * math.sin(yaw), dx * math.sin(yaw) + dz * math.cos(yaw))
+
+
+def inside_piece(point: Sequence[float], piece: Any, margin: float = 0.0) -> bool:
+    """Is the ground point within the piece's footprint, grown by ``margin`` on every side?"""
+    x, z = local_point(point, piece)
+    return abs(x) <= piece.size[0] / 2 + margin and abs(z) <= piece.size[1] / 2 + margin
+
+
+def _crosses_box(origin: Sequence[float], stop: Sequence[float], half: Sequence[float]) -> bool:
+    """Does the segment pass through the box of half extents ``half`` centred on the origin of its axes?"""
+    low, high = 0.0, 1.0
+    for start, end, reach in zip(origin, stop, half):
+        delta = end - start
+        if abs(delta) < 1e-9:
+            if abs(start) > reach:
+                return False
+            continue
+        first, second = (-reach - start) / delta, (reach - start) / delta
+        low, high = max(low, min(first, second)), min(high, max(first, second))
+        if low > high:
+            return False
+    # Starting or ending inside the volume is a different problem (someone stands in it), reported elsewhere.
+    return high - low > 1e-3 and low > 1e-3 and high < 1 - 1e-3
+
+
+def _in_piece_axes(point: Sequence[float], piece: Any) -> Vec3:
+    """``point`` (x, y, z) in the piece's axes: its ground centre is the origin, y is height above its underside."""
+    x, z = local_point((point[0], point[2]), piece)
+    return (x, point[1] - piece.elevation_m, z)
+
+
+def piece_blocks_ray(start: Sequence[float], end: Sequence[float], piece: Any) -> bool:
+    """Does the straight line ``start`` → ``end`` (x, y, z) pass through this piece's bounding volume?"""
+    height = piece.size[2]
+    if height < LOW_PIECE_M and (piece.elevation_m < LOW_PIECE_M or min(piece.size[0], piece.size[1]) < _SMALL_PIECE_M):
+        return False
+    (x0, y0, z0), (x1, y1, z1) = _in_piece_axes(start, piece), _in_piece_axes(end, piece)
+    return _crosses_box(
+        (x0, y0 - height / 2, z0), (x1, y1 - height / 2, z1), (piece.size[0] / 2, height / 2, piece.size[1] / 2),
+    )
+
+
+def _part_axes(piece: Any, part: Any) -> tuple[Vec3, Vec3, tuple[Vec3, Vec3, Vec3]]:
+    """A part's centre and half extents (x, y, z; metres, in the piece's axes) and the axes it is turned to."""
+    width, depth, height = piece.size
+    centre = (part.center[0] * width, part.center[1] * height, part.center[2] * depth)
+    half = (part.size[0] * width / 2, part.size[2] * height / 2, part.size[1] * depth / 2)
+    a, b, c = (math.radians(value) for value in part.rotation)
+    (sa, ca), (sb, cb), (sc, cc) = (math.sin(a), math.cos(a)), (math.sin(b), math.cos(b)), (math.sin(c), math.cos(c))
+    # The viewport turns a part by x, then y, then z (three.js' default order); these are that turn's columns.
+    axes = (
+        (cb * cc, ca * sc + sa * sb * cc, sa * sc - ca * sb * cc),
+        (-cb * sc, ca * cc - sa * sb * sc, sa * cc + ca * sb * sc),
+        (sb, -sa * cb, ca * cb),
+    )
+    return centre, half, axes
+
+
+def _in_part_axes(point: Vec3, centre: Vec3, axes: tuple[Vec3, Vec3, Vec3]) -> Vec3:
+    offset = (point[0] - centre[0], point[1] - centre[1], point[2] - centre[2])
+    return tuple(sum(offset[index] * axis[index] for index in range(3)) for axis in axes)  # type: ignore[return-value]
+
+
+def piece_blocks_sight(start: Sequence[float], end: Sequence[float], piece: Any) -> bool:
+    """Is the line ``start`` → ``end`` (x, y, z) cut by something solid of this piece?
+
+    A piece built from parts (a wall with a doorway, a pavilion on posts) is only as solid as its parts, so a
+    lens that looks through the doorway is not blocked; a single-volume piece is its bounding volume.
+    """
+    parts = getattr(piece, "parts", None)
+    if not parts:
+        return piece_blocks_ray(start, end, piece)
+    origin, stop = _in_piece_axes(start, piece), _in_piece_axes(end, piece)
+    for part in parts:
+        centre, half, axes = _part_axes(piece, part)
+        if half[1] * 2 < LOW_PIECE_M and piece.elevation_m + centre[1] - half[1] < LOW_PIECE_M:
+            continue
+        if _crosses_box(_in_part_axes(origin, centre, axes), _in_part_axes(stop, centre, axes), half):
+            return True
+    return False
+
+
+def piece_holds_point(point: Sequence[float], piece: Any) -> bool:
+    """Is ``point`` (x, y, z) inside something solid of this piece (one of its parts when it has them)?"""
+    x, y, z = _in_piece_axes(point, piece)
+    if not (0.0 <= y <= piece.size[2] and abs(x) <= piece.size[0] / 2 and abs(z) <= piece.size[1] / 2):
+        return False
+    parts = getattr(piece, "parts", None)
+    if not parts:
+        return True
+    for part in parts:
+        centre, half, axes = _part_axes(piece, part)
+        local = _in_part_axes((x, y, z), centre, axes)
+        if all(abs(local[index]) <= half[index] for index in range(3)):
+            return True
+    return False
+
+
 __all__ = [
+    "LOW_PIECE_M",
     "SENSOR_LONG_SIDE_MM",
     "Vec2",
     "Vec3",
@@ -234,12 +348,17 @@ __all__ = [
     "framing_distance",
     "grid_positions",
     "horizontal_fov",
+    "inside_piece",
     "length",
     "line_positions",
+    "local_point",
     "midpoint",
     "normalize_yaw",
     "pair_positions",
     "parse_aspect",
+    "piece_blocks_ray",
+    "piece_blocks_sight",
+    "piece_holds_point",
     "right_of",
     "rotate",
     "rounded",

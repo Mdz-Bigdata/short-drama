@@ -74,9 +74,41 @@ describe('StoryEventTimeline', () => {
       { phase: '进展纠葛', title: '悬棺葬俗', desc: '', points: ['楠木凿船棺', '绞盘吊棺上绝壁'] },
     ]);
 
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValue(true);
+    await user.click(screen.getByRole('button', { name: '删除节点 僰人受封' }));
+    expect(confirm).toHaveBeenLastCalledWith('确定删除剧情节点“僰人受封”吗？删除后无法恢复。');
+    expect(onSave).toHaveBeenCalledTimes(1);
+
     await user.click(screen.getByRole('button', { name: '删除节点 僰人受封' }));
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
     expect(onSave.mock.calls[1][0]).toEqual([]);
+  });
+
+  it('opens the edit form inside the node being edited, with the title ready to type', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(<StoryEventTimeline
+      events={[
+        { eventId: 'e1', phase: '故事开始', title: '僰人受封', desc: '', points: [] },
+        { eventId: 'e2', phase: '进展纠葛', title: '悬棺葬俗', desc: '', points: [] },
+      ]}
+      onSave={onSave}
+    />);
+
+    await user.click(screen.getByRole('button', { name: '编辑节点 悬棺葬俗' }));
+    const form = screen.getByRole('form', { name: '编辑剧情节点' });
+    expect(form.closest('li')?.textContent).toContain('悬棺葬俗');
+    expect(form.closest('li')?.textContent).not.toContain('僰人受封');
+    expect(document.activeElement).toBe(screen.getByLabelText('标题'));
+
+    await user.keyboard('（上）');
+    await user.click(screen.getByRole('button', { name: '保存修改' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0][0][1].title).toBe('悬棺葬俗（上）');
+    expect(screen.queryByRole('form')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: '添加节点' }));
+    expect(screen.getByRole('form', { name: '添加剧情节点' }).closest('li')).toBeNull();
   });
 
   it('refuses an empty title and says when the arrangement is hand made', async () => {
@@ -105,6 +137,36 @@ describe('ScriptVersionMenu', () => {
     await waitFor(() => expect(onSave).toHaveBeenCalledWith('初稿'));
     await user.click(screen.getByRole('button', { name: '恢复' }));
     await waitFor(() => expect(onRestore).toHaveBeenCalledWith('v2'));
+  });
+
+  it('keeps the typed name when saving the version fails', async () => {
+    const onSave = vi.fn().mockRejectedValue(new Error('版本保存失败，请稍后重试。'));
+    const user = userEvent.setup();
+    render(<ScriptVersionMenu versions={[]} onSave={onSave} />);
+    await user.click(screen.getByRole('button', { name: /^版本/ }));
+    await user.type(screen.getByLabelText('版本名称'), '定稿前');
+    await user.click(screen.getByRole('button', { name: '保存当前版本' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('版本保存失败');
+    expect((screen.getByLabelText('版本名称') as HTMLInputElement).value).toBe('定稿前');
+  });
+
+  it('puts the panel away on a click elsewhere or Esc, and Esc hands focus back to the button', async () => {
+    const user = userEvent.setup();
+    render(<><p>剧本正文</p><ScriptVersionMenu versions={[]} onSave={vi.fn()} /></>);
+    const toggle = screen.getByRole('button', { name: /^版本/ });
+
+    await user.click(toggle);
+    await user.click(screen.getByLabelText('版本名称'));
+    expect(screen.getByRole('dialog', { name: '剧本版本' })).toBeTruthy();
+    await user.click(screen.getByText('剧本正文'));
+    expect(screen.queryByRole('dialog', { name: '剧本版本' })).toBeNull();
+
+    await user.click(toggle);
+    await user.click(screen.getByLabelText('版本名称'));
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: '剧本版本' })).toBeNull();
+    expect(document.activeElement).toBe(toggle);
   });
 });
 
@@ -281,6 +343,7 @@ describe('WriterAgentPageContainer board callbacks', () => {
 
     expect(await screen.findByText('旁白模式')).toBeTruthy();
 
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     await user.click(screen.getByRole('button', { name: '删除节点 受封' }));
     await waitFor(() => expect(calls.some(call => call.url === '/timeline' && call.method === 'PUT')).toBe(true));
     expect(calls.find(call => call.url === '/timeline')?.body).toEqual({ events: [] });

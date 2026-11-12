@@ -9,6 +9,7 @@ Three things run on the same contract, a JSON reply carrying the stage's own sem
   the checks and the frame, and goes again until it is satisfied or out of rounds. Nothing is saved here.
 - ``read_model_reply`` reads one object written part by part, for the model library.
 
+Every sentence sent to a model or shown to a person is in ``app/data/prompt/stage_director_ai.json``.
 Nothing here calls a provider: ``llm(system, user, max_tokens)`` is handed in, so every path can be driven by a
 stub, and an operation a model got wrong costs that operation with its error sent back rather than the whole turn.
 
@@ -30,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.screenwriting.structured_llm import extract_json_object
-from app.core import project_memory
+from app.core import project_memory, prompt_data
 from app.core.spatial_stage import model_kit, repair, scoring
 from app.core.spatial_stage.models import StagePlan
 from app.core.spatial_stage.operations import MAX_OPERATIONS, StageEditError, apply_operations
@@ -50,38 +51,36 @@ _DIGEST_SHOTS = 40
 _FAILED_OP_COST = 3.0
 _FAILED_OP_LIMIT = 15.0
 
-# The ids the desk draws; ``lib/poses.ts`` holds their angles.
-POSE_PRESETS: tuple[tuple[str, str], ...] = (
-    ("stand", "站立"), ("t-pose", "T型"), ("walk", "行走"), ("run", "跑步"), ("sit", "坐姿"), ("crouch", "蹲下"),
-    ("kneel-one", "单膝跪"), ("kneel-two", "双膝跪"), ("hands-on-hips", "叉腰"), ("lean", "倚靠"), ("bow", "鞠躬"),
-    ("think", "思考"), ("fight", "格斗"), ("kick", "踢腿"), ("throw", "投掷"), ("push", "推"), ("wave", "招手"),
-    ("reach", "伸手"), ("cross-arms", "抱臂"), ("phone", "看手机"), ("lie", "卧倒"), ("hands-behind", "背手站立"),
-    ("look-back", "侧身回头"), ("point-ahead", "抬手指向"), ("punch", "出拳"),
+_WORDING = "stage_director_ai"
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A sentence of ``stage_director_ai.json``'s ``says`` with its values filled in."""
+    return str(prompt_data.load(_WORDING)["says"][key]).format(**values)
+
+
+def _text(key: str) -> str:
+    """A text of ``stage_director_ai.json`` used as it stands (its braces are JSON examples, not placeholders)."""
+    return prompt_data.text(_WORDING, key)
+
+
+def _log(key: str) -> str:
+    """A log line of ``stage_director_ai.json``, filled in by the logger."""
+    return str(prompt_data.load(_WORDING)["logs"][key])
+
+
+# The ids the desk draws (``lib/poses.ts`` holds their angles) and what each is called.
+POSE_PRESETS: tuple[tuple[str, str], ...] = prompt_data.pairs("stage_poses", "presets")
+
+STRATEGIES: tuple[tuple[str, str], ...] = prompt_data.pairs(_WORDING, "strategies")
+
+OP_GUIDE = (
+    _text("op_guide_people")
+    + _says("pose_choices", poses=_text("list_separator").join(_says("pose_choice", preset=key, label=label) for key, label in POSE_PRESETS))
+    + _text("op_guide_set_and_lens")
 )
 
-STRATEGIES: tuple[tuple[str, str], ...] = (
-    ("稳住关系", "把人物关系拍清楚：轴线明确，一个定场镜头交代全部人物，对话用过肩与正反打，机位都在轴线同侧。"),
-    ("纵深调度", "利用场景纵深：前景、中景、后景分层站位，用布景做前景遮挡和框中框，人物不站成一排，镜头有高低和焦段的对比。"),
-    ("动势走位", "让人动起来：关键情绪点安排走位和转身（set_path / auto_route），镜头跟着人物的动势运动（apply_camera_move），动作结束后人物的关系发生变化。"),
-)
-
-OP_GUIDE = """坐标与约定：单位米；地面点 [x, z]，y 为高度；yaw_deg 0 面向 +Z，90 面向 +X；物体的 size 是 [宽(X), 深(Z), 高(Y)]。「画面左右」取决于机位朝向，先看机位 position 与 target 再换算。
-
-人物：move_actor {name, position:[x,z], yaw_deg?, posture?(stand/walk/run/fight/sit/crouch/kneel/lie/bow/lean)}；orient_toward {name, target:"人名"} 或 {name, position:[x,z]}；face_pair {first, second, distance?}；place_relative {name, anchor, relation:(front/behind/left/right/foreground/background), distance?, reference?:(actor/camera/world), camera_id?}；arrange_group {names:[...], layout:(line/arc/circle/grid), spacing?, center?:[x,z], facing?}；set_axis {from_name, to_name}；flip_camera_side {}；add_crowd {rows, columns, center:[x,z], spacing?, label?}；add_extra {name?, position:[x,z]}。
-只改某一镜：set_shot_override {shot_id, name, position?, yaw_deg?, posture?, offstage?, hold?}。
-姿势：set_pose {name, preset, shot_id?}（shot_id 省略则整场生效）；只有 figure 为 mannequin 才看得见四肢，摆姿势前先 set_figure {name, figure:"mannequin"}。preset 可选：""" + "、".join(f"{key}({label})" for key, label in POSE_PRESETS) + """。
-布景与模型：add_landmark {name, kit:"模型库 id", position:[x,z], yaw_deg?, size?}；模型库没有的东西写 add_landmark {name, kind:(prop/furniture/architecture/light), position:[x,z], yaw_deg?, parts:[{shape:(box/cylinder/sphere/cone/wedge), center:[x,y,z], size:[宽,深,高], rotation?:[x,y,z 度], tone?:(dark/light)}]}（parts 的坐标以物体地面中心为原点，米）；单一体块写 add_landmark {name, shape, position, size}。move_landmark {name, position}；transform_landmark {name, position?, size?, yaw_deg?, kit?, parts?}；remove_landmark {name}；array_landmark {name, count, spacing?, layout?:(line/grid/ring)}；align_landmarks {names:[...], axis:(x/z)}。
-机位：solve_camera {shot_id, size?, angle?, subjects?, over_shoulder?, motion?}（让求解器按要求架机，优先用它）；best_camera {shot_id?, alternates?:0-3}（在当前机位附近搜索更好的视角）；frame_shot {shot_id, size:大特写/特写/近景/中近景/中景/中全景/全景/远景/大远景}；move_camera {camera_id, position:[x,y,z], target:[x,y,z], lens_mm?}；add_camera {shot_id, label?, position, target, lens_mm?}（候选机位）；use_camera {shot_id, camera_id}。
-运动：apply_camera_move {shot_id, preset:(push/pull/truck/rise/descend/arc/arc-push/crane-reveal/ground-rise/whip-pan/push-pause/dolly-zoom/roll-recover/reframe), amplitude?, side?}；auto_route {shot_id, name, to:[x,z], speed_mps?, clip?}（自动绕开布景和其他人走到终点，优先用它）；set_path {shot_id, target:"人名或 camera", points:[[x,z],...], speed_mps?, clip?}；set_timeline {shot_id, clips?:{人物名:[{id, clip, start, end}]}, follow?:[{id, actor, start, end}]}。
-修正：repair_checks {}（自动修正未通过的空间检查）。"""
-
-_RULES = """调度原则：
-- 主次：主角站在画面和空间的重心，次要人物不抢位；三人以上不站成一排，用三角形和前后层次。
-- 距离讲关系：亲密 0.5 米内，对话 0.9 到 1.5 米，对峙 1.5 到 3 米。人物之间留出走位空间，通道至少 0.8 米。
-- 视线和轴线：同一组对手戏的机位留在轴线同一侧，除非有明确的越轴理由。
-- 人物不能站进实体布景里，布景也不能挡在机位和主角之间（有意的前景除外，前景要矮或在画边）。舞台上的人物都站在地面，站不到平台或楼梯上，这类布景只用来做背景。
-- 姿势服务于戏：情绪和动作决定姿势，站着说话不需要造型；需要肢体表达的才换 mannequin 并摆姿势。
-- 不改写剧情：人物、场景和动作都来自剧本，不添加剧本没有的人物。"""
+_RULES = _text("rules")
 
 
 class DirectorAIError(ValueError):
@@ -111,10 +110,10 @@ class Scope:
             return ""
         words = []
         if self.names:
-            words.append("对象：" + "、".join(self.names))
+            words.append(_says("scope_names", names=_text("list_separator").join(self.names)))
         if self.shot_id is not None:
-            words.append(f"镜头：第 {self.shot_id} 镜")
-        return "用户这次只选中了 " + "；".join(words) + "。只改这些，其他保持原样。"
+            words.append(_says("scope_shot", shot_id=self.shot_id))
+        return _says("scope", selection=_text("clause_separator").join(words))
 
 
 _SKILL_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -123,11 +122,9 @@ _SKILL_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("camera-cinematography", ("Lens Guide", "Composition Checklist")),
 )
 # Asked for by what the scene is, each under the same budget.
-_SKILL_ROUTES: tuple[tuple[tuple[str, ...], str, tuple[str, ...]], ...] = (
-    (("车", "船", "马车", "摩托", "飞机"), "vehicle-artist", ("Design Principles", "Blockout Checklist")),
-    (("街", "城", "村", "广场", "庭院", "府", "宫", "山", "林", "废墟"), "environment-artist", ("Core Principles", "Composition Guidelines")),
-    (("恐怖", "惊悚", "诡", "鬼", "凶"), "horror-style", ("Design Philosophy", "Sparse Detail Rule")),
-    (("悬疑", "侦探", "黑帮"), "noir-style", ("Tenets",)),
+_SKILL_ROUTES: tuple[tuple[tuple[str, ...], str, tuple[str, ...]], ...] = tuple(
+    (tuple(str(word) for word in route["words"]), str(route["skill"]), tuple(str(heading) for heading in route["headings"]))
+    for route in prompt_data.value(_WORDING, "skill_routes")
 )
 _SKILL_BUDGET = 2400
 
@@ -211,10 +208,12 @@ def digest(plan: StagePlan) -> str:
 def _report(plan: StagePlan) -> str:
     """What the checks and the score say about a stage right now."""
     measured = scoring.score_plan(plan)
-    failing = [f"{check.code}（{check.severity}）：{check.detail[:200]}" for check in plan.checks if not check.passed]
-    lines = [f"当前评分 {measured['score']}/100。"]
-    lines += [f"未通过：{item}" for item in failing]
-    lines += [f"问题：{item}" for item in measured["notes"]]
+    lines = [_says("report_score", score=measured["score"])]
+    lines += [
+        _says("report_failed", code=check.code, severity=check.severity, detail=check.detail[:200])
+        for check in plan.checks if not check.passed
+    ]
+    lines += [_says("report_note", note=item) for item in measured["notes"]]
     return "\n".join(lines)
 
 
@@ -268,11 +267,11 @@ def out_of_scope(op: Mapping[str, Any], scope: Scope, plan: StagePlan) -> str:
         return ""
     if scope.shot_id is not None:
         if op.get("shot_id") is not None and int(op["shot_id"]) != scope.shot_id:
-            return f"只能改第 {scope.shot_id} 镜"
+            return _says("out_of_shot", shot_id=scope.shot_id)
         camera_id = op.get("camera_id")
         shot = next((item for item in plan.shots if item.shot_id == scope.shot_id), None)
         if camera_id and shot is not None and camera_id != shot.camera_id and camera_id not in shot.alt_camera_ids:
-            return f"只能改第 {scope.shot_id} 镜用的机位"
+            return _says("out_of_shot_camera", shot_id=scope.shot_id)
     if scope.names:
         kind = str(op.get("op"))
         if kind in ("orient_toward", "set_path", "auto_route"):
@@ -285,7 +284,7 @@ def out_of_scope(op: Mapping[str, Any], scope: Scope, plan: StagePlan) -> str:
             touched = [op.get("name")] if op.get("name") else []
         strays = [str(name) for name in touched if name and name not in scope.names and name != "camera"]
         if strays:
-            return f"{'、'.join(strays)} 不在选中范围内"
+            return _says("out_of_names", names=_text("list_separator").join(strays))
     return ""
 
 
@@ -295,16 +294,16 @@ def apply_each(plan: StagePlan, operations: Sequence[Mapping[str, Any]], scope: 
     for index, op in enumerate(operations, start=1):
         reason = out_of_scope(op, scope, plan)
         if reason:
-            outcome.errors.append(f"第 {index} 个操作 {op.get('op')}：{reason}")
+            outcome.errors.append(_says("op_error", index=index, op=op.get("op"), reason=reason))
             continue
         try:
             outcome.plan = apply_operations(outcome.plan, [op])
         except StageEditError as error:
-            outcome.errors.append(f"第 {index} 个操作 {op.get('op')}：{str(error)[:240]}")
+            outcome.errors.append(_says("op_error", index=index, op=op.get("op"), reason=str(error)[:240]))
             continue
         except Exception as error:  # noqa: BLE001 - a model's op must not be able to fail the turn
-            logger.warning("[DirectorAI] 操作 %s 意外失败: %s", op.get("op"), error)
-            outcome.errors.append(f"第 {index} 个操作 {op.get('op')}：参数不合法")
+            logger.warning(_log("op_crashed"), op.get("op"), error)
+            outcome.errors.append(_says("op_error", index=index, op=op.get("op"), reason=_text("op_invalid")))
             continue
         outcome.applied.append(op)
     return outcome
@@ -337,22 +336,13 @@ def polish(plan: StagePlan) -> StagePlan:
 def _system(extra: str = "", scene_text: str = "") -> str:
     craft = craft_notes(scene_text)
     return (
-        "你是短剧的导演兼摄影指导和美术指导，负责一场戏的 3D 预演：搭景、站位、姿势、机位和运动。"
-        "你通过语义操作修改舞台，操作由程序执行并校验。只输出一个 JSON 对象，不要解释或代码块标记。\n\n"
-        f"{OP_GUIDE}\n\n模型库（id（名称 宽×深×高，米））：\n{model_kit.catalog_text()}\n\n{_RULES}"
-        + (f"\n\n美术与摄影规范：\n{craft}" if craft else "")
+        _says("system", guide=OP_GUIDE, catalog=model_kit.catalog_text(), rules=_RULES)
+        + (_says("system_craft", craft=craft) if craft else "")
         + (f"\n\n{extra}" if extra else "")
     )
 
 
-_PLAN_FORMAT = """输出这个 JSON：
-{"title": "方案名（6 字内）", "rationale": "两三句话，说清为什么这样摆：谁是重心、空间怎么用、镜头怎么讲戏", "operations": [ ... ]}
-要求：
-1. 先搭景：用 add_landmark 把这场戏必需的环境和关键道具摆出来，优先用模型库；已有的布景能用就用，不合适就 remove_landmark 或移动。
-2. 再站位：用 move_actor / face_pair / arrange_group 定每个人的位置和朝向，定好后 set_axis。
-3. 需要肢体表达的人物摆姿势（先 set_figure，再 set_pose）。
-4. 最后给每一镜定机位：solve_camera {shot_id, size, angle, ...}；有运动的镜头加 apply_camera_move 或 auto_route。
-操作按这个顺序写。总数控制在 60 个以内。"""
+_PLAN_FORMAT = _text("plan_format")
 
 
 @dataclass
@@ -380,11 +370,10 @@ def _strategies(count: int) -> Sequence[tuple[str, str]]:
 
 def plan_prompt(baseline: StagePlan, scene_text: str, strategy: tuple[str, str], goal: str = "", memory: str = "") -> str:
     return (
-        f"这一场的剧本：\n{scene_text[:6000]}\n\n"
-        + (f"{memory}\n\n" if memory else "") +
-        f"程序先按规则排了一版舞台，你可以推翻其中任何部分：\n{digest(baseline)}\n\n"
-        f"这版的方案方向是「{strategy[0]}」：{strategy[1]}\n"
-        + (f"导演的额外要求：{goal.strip()[:MAX_MESSAGE]}\n" if goal.strip() else "")
+        _says("plan_script", script=scene_text[:6000])
+        + (f"{memory}\n\n" if memory else "")
+        + _says("plan_baseline", stage=digest(baseline), name=strategy[0], direction=strategy[1])
+        + (_says("plan_goal", goal=goal.strip()[:MAX_MESSAGE]) if goal.strip() else "")
         + f"\n{_PLAN_FORMAT}"
     )
 
@@ -400,16 +389,16 @@ def build_candidate(
         return None
     done = apply_each(baseline, reply["operations"])
     if not done.applied:
-        logger.warning("[DirectorAI] 方案 %s 的 %d 个操作全部失败: %s", strategy[0], len(reply["operations"]), done.errors[:3])
+        logger.warning(_log("plan_failed"), strategy[0], len(reply["operations"]), done.errors[:3])
         return None
     plan, errors, rounds = done.plan, done.errors, 1
     # One round to answer for what failed: the errors are specific, and a fix is much cheaper than a new plan.
     failing = repair.failing(plan.checks) or scoring.score_plan(plan)["notes"]
     if errors or failing:
         follow_up = (
-            f"你刚才的操作执行后，舞台变成：\n{digest(plan)}\n\n{_report(plan)}\n"
-            + ("执行失败的操作：\n" + "\n".join(errors) + "\n" if errors else "")
-            + '\n只输出修正这些问题所需的增量操作：{"operations": [ ... ]}。没有要改的就输出 {"operations": []}。'
+            _says("follow_up", stage=digest(plan), report=_report(plan))
+            + (_says("follow_up_errors", errors="\n".join(errors)) if errors else "")
+            + _text("follow_up_ask")
         )
         again = read_reply(llm(system, follow_up, TURN_MAX_TOKENS))
         rounds = 2
@@ -439,7 +428,7 @@ def rank(candidates: Sequence[Candidate]) -> list[Candidate]:
 def rules_candidate(baseline: StagePlan) -> Candidate:
     plan = polish(baseline)
     return Candidate(
-        id="rules", title="规则基线", rationale="规则规划器的方案：不调用模型，按人物关系和剧本动作套用调度模板再求解机位。",
+        id="rules", title=_text("rules_title"), rationale=_text("rules_rationale"),
         source="rules", plan=plan, measured=scoring.score_plan(plan), rounds=0,
     )
 
@@ -449,14 +438,14 @@ def run_turn(
     scene_text: str = "", max_rounds: int = MAX_TURN_ROUNDS, memory: str = "",
 ) -> dict[str, Any]:
     """One message: edit a working copy until the model is done or the rounds run out; nothing is saved."""
-    system = _system(
-        '每次输出：{"reply": "对用户说的话，简短说明你做了什么、为什么；没改东西就直接回答", "operations": [ ... ], "done": true}。'
-        "用户只是提问时 operations 留空。改动后程序会把结果读给你，还有问题就把 done 写成 false 并继续；满意了 done 写 true。"
-        "用户明确要求的改动，即使让某项检查不通过也照做，但要在 reply 里说明后果。"
-        + project_memory.REMEMBER_INSTRUCTION,
-        scene_text,
+    system = _system(_text("turn_format") + project_memory.REMEMBER_INSTRUCTION, scene_text)
+    past = "\n".join(
+        _says(
+            "history_line", speaker=_text("speaker_user") if item.get("role") == "user" else _text("speaker_model"),
+            text=str(item.get("text") or "")[:400],
+        )
+        for item in history[-8:]
     )
-    past = "\n".join(f"{'用户' if item.get('role') == 'user' else '你'}：{str(item.get('text') or '')[:400]}" for item in history[-8:])
     working, errors, reply_text, applied = plan, [], "", []
     remembered: list[Any] = []
     rounds = 0
@@ -464,18 +453,18 @@ def run_turn(
     for rounds in range(1, max(1, max_rounds) + 1):
         # The script and the past conversation do not change between rounds of one turn: once is enough.
         prompt = (
-            (f"剧本：\n{scene_text[:3000]}\n\n" if scene_text and rounds == 1 else "")
+            (_says("turn_script", script=scene_text[:3000]) if scene_text and rounds == 1 else "")
             + (f"{memory}\n\n" if memory and rounds == 1 else "")
-            + (f"之前的对话：\n{past}\n\n" if past and rounds == 1 else "")
-            + f"当前舞台：\n{digest(working)}\n\n{_report(working)}\n\n"
+            + (_says("turn_history", history=past) if past and rounds == 1 else "")
+            + _says("turn_stage", stage=digest(working), report=_report(working))
             + (f"{scope.describe()}\n" if scope.limited else "")
-            + f"用户说：{message.strip()[:MAX_MESSAGE]}"
+            + _says("turn_message", message=message.strip()[:MAX_MESSAGE])
             + (f"\n\n{feedback}" if feedback else "")
         )
         reply = read_reply(llm(system, prompt, TURN_MAX_TOKENS))
         if reply is None:
             if rounds == 1:
-                raise DirectorAIError("模型没有返回结果，舞台没有改动；请检查模型配置或稍后重试")
+                raise DirectorAIError(_text("no_reply"))
             break
         reply_text = reply["reply"] or reply_text
         remembered.extend(reply["remember"])
@@ -489,28 +478,25 @@ def run_turn(
         if reply["done"] and not errors and not introduced:
             break
         feedback = (
-            "你上一轮的操作已经执行，上面的「当前舞台」就是执行后的状态。\n"
-            + (("失败的操作：\n" + "\n".join(errors) + "\n") if errors else "")
-            + (f"新出现的检查问题：{'、'.join(sorted(introduced))}\n" if introduced else "")
-            + "只输出还需要的增量操作；不需要再改就让 operations 为空，并在 reply 里告诉用户最终做了什么。"
+            _text("feedback_head")
+            + (_says("feedback_errors", errors="\n".join(errors)) if errors else "")
+            + (_says("feedback_introduced", codes=_text("list_separator").join(sorted(introduced))) if introduced else "")
+            + _text("feedback_ask")
         )
     return {
-        "reply": reply_text or ("已按要求调整舞台。" if applied else "这次没有改动舞台。"),
+        "reply": reply_text or (_text("turn_changed") if applied else _text("turn_unchanged")),
         "plan": working, "applied": applied, "errors": errors, "rounds": rounds, "remember": remembered,
     }
 
 
-OPTIMIZE_MESSAGE = (
-    "请检查这版舞台，优化它：先解决未通过的检查和上面列出的问题，再看站位有没有层次、镜头有没有变化、"
-    "人物是否在画面合适的位置。只改确实有帮助的地方，没问题的不要动。"
-)
+OPTIMIZE_MESSAGE = _text("optimize_message")
 
 
 def optimize(plan: StagePlan, llm: LLM | None, *, goal: str = "", scene_text: str = "", scope: Scope = Scope(), memory: str = "") -> dict[str, Any]:
     """Make the stage better: rules first, then the model; a result that scores lower is thrown away."""
     start = scoring.score_plan(plan)
     best = polish(plan) if not scope.limited else plan
-    reply = "用规则修正了能自动修的问题，并在现有机位附近找了更好的视角。"
+    reply = _text("optimize_rules")
     applied: list[Mapping[str, Any]] = []
     errors: list[str] = []
     rounds = 0
@@ -519,14 +505,14 @@ def optimize(plan: StagePlan, llm: LLM | None, *, goal: str = "", scene_text: st
         try:
             outcome = run_turn(best, goal.strip() or OPTIMIZE_MESSAGE, llm, scope=scope, scene_text=scene_text, memory=memory)
         except DirectorAIError:
-            reply += "（模型没有返回结果，这次只用了规则。）"
+            reply += _text("optimize_model_silent")
         else:
             used_model, errors, rounds = True, outcome["errors"], outcome["rounds"]
             trial = _mannequins_for_poses(outcome["plan"]) if outcome["applied"] else outcome["plan"]
             if scoring.score_plan(trial)["score"] >= scoring.score_plan(best)["score"]:
                 best, applied, reply = trial, outcome["applied"], outcome["reply"]
             else:
-                reply = "模型给的改动没有让评分变高，已放弃，只保留了规则修正。"
+                reply = _text("optimize_model_worse")
     finish = scoring.score_plan(best)
     if finish["score"] < start["score"]:
         best, finish = plan, start
@@ -536,27 +522,15 @@ def optimize(plan: StagePlan, llm: LLM | None, *, goal: str = "", scene_text: st
     }
 
 
-_MODEL_SYSTEM = (
-    "你是电影美术的白模师，把一件东西搭成可以放进 3D 预演的简单体块组合：比例对、轮廓一眼认得出，不追求细节。"
-    "只输出一个 JSON 对象，不要解释或代码块标记。"
-)
-_MODEL_FORMAT = """输出：
-{"name": "物体名", "kind": "prop|furniture|architecture|light", "summary": "一句话", "kit": "模型库里正好有这东西时写 id，否则留空", "parts": [
-  {"shape": "box|cylinder|sphere|cone|wedge", "center": [x, y, z], "size": [宽, 深, 高], "rotation": [0, 0, 0], "tone": "|dark|light"}
-]}
-约定：单位米，真实尺寸；原点在物体地面中心，y 向上，+z 是物体正面；center 是体块中心；size 是体块未旋转时的 [X, Z, Y] 尺寸；rotation 是绕 x、y、z 的度数（车轮是竖着的圆柱：rotation [0, 0, 90]）。wedge 的高边在 -Z。tone 用来区分主要部件。
-拆分：先大形（主体），再次形（腿、轮、屋顶），最后最能认出它的一两个细节。总数 6 到 40 块；部件要相互接触，不要悬空。
-如果模型库里有，kit 写 id、parts 留空即可。
-
-模型库（id（名称 宽×深×高，米））：
-"""
+_MODEL_SYSTEM = _text("model_system")
+_MODEL_FORMAT = _text("model_format")
 
 
 def model_prompt(description: str, size: Sequence[float] | None = None) -> tuple[str, str]:
     craft = craft_notes(description)
-    user = f"{_MODEL_FORMAT}{model_kit.catalog_text()}\n\n要搭的东西：{description.strip()[:MAX_MESSAGE]}"
+    user = _says("model_user", format=_MODEL_FORMAT, catalog=model_kit.catalog_text(), description=description.strip()[:MAX_MESSAGE])
     if size:
-        user += f"\n总尺寸约 宽 {size[0]:g} 米、深 {size[1]:g} 米、高 {size[2]:g} 米。"
+        user += _says("model_size", width=size[0], depth=size[1], height=size[2])
     return _MODEL_SYSTEM + (f"\n\n{craft}" if craft else ""), user
 
 
@@ -564,8 +538,8 @@ def read_model_reply(text: Any, description: str, size: Sequence[float] | None =
     """A proposal for one object: its name, overall size and parts, ready for ``add_landmark``."""
     data = extract_json_object(str(text or ""))
     if data is None:
-        raise DirectorAIError("模型没有返回可解析的模型结构，请重试或把描述写具体一些")
-    name = str(data.get("name") or description).strip()[:40] or "模型"
+        raise DirectorAIError(_text("model_unreadable"))
+    name = str(data.get("name") or description).strip()[:40] or _text("model_default_name")
     kind = data.get("kind") if data.get("kind") in ("prop", "furniture", "architecture", "light") else "prop"
     kit_id = str(data.get("kit") or "").strip()
     try:
@@ -576,7 +550,7 @@ def read_model_reply(text: Any, description: str, size: Sequence[float] | None =
             found, parts, overall = model_kit.build_kit(kit_id, size)
             kit, kind, dropped = found.id, found.kind, 0
         else:
-            raise DirectorAIError("模型没有给出任何体块，请重试或把描述写具体一些")
+            raise DirectorAIError(_text("model_no_parts"))
     except model_kit.ModelKitError as error:
         raise DirectorAIError(str(error)) from error
     return {

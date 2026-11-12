@@ -39,6 +39,20 @@ export interface ShotVideoFailure {
   at?: number | null;
 }
 
+/** 本镜用到的一件资产(backend shots/visual 的 assets)；旧数据没有，回落到 mention_kinds / reference_numbers。 */
+export interface ShotAssetUse {
+  kind: 'actor' | 'scene' | 'prop' | 'effect' | 'costume' | 'product' | string;
+  name: string;
+  element_id?: string | null;
+  element_version?: number | null;
+  /** 随请求上传的第几张参考图。 */
+  image_number?: number | null;
+  in_storyboard?: boolean;
+  in_video?: boolean;
+  /** 资产在出图或出片之后改过。 */
+  stale?: boolean;
+}
+
 export interface ShotVisualRecord {
   shot_id: number;
   scene_id: string;
@@ -53,6 +67,8 @@ export interface ShotVisualRecord {
   image_url?: string | null;
   end_frame_url?: string | null;
   video_url?: string | null;
+  /** The same clip re-voiced after a character's voice changed; play this when present. */
+  preview_url?: string | null;
   candidate_urls?: string[];
   image_prompt: string;
   video_prompt: string;
@@ -66,6 +82,8 @@ export interface ShotVisualRecord {
   mention_kinds?: Record<string, string>;
   /** @[名字] 对应本镜随请求上传的第几张参考图。 */
   reference_numbers?: Record<string, number>;
+  /** 本镜用到的资产(人物、场景、道具、特效…)。 */
+  assets?: ShotAssetUse[];
   /** 本镜所在看板最近一次没出片的原因。 */
   failure?: ShotVideoFailure | null;
 }

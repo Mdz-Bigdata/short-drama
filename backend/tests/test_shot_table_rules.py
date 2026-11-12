@@ -259,7 +259,15 @@ class DialogueFitRuleTests(unittest.TestCase):
 
         self.assertIn("台词超出本镜时长", _rules(audit))
         detail = next(issue.detail for issue in audit.issues if issue.rule == "台词超出本镜时长")
-        self.assertIn("两端各留静默", detail)
+        self.assertIn("句首句尾留白", detail)
+
+    def test_the_same_line_needs_longer_when_it_is_sad_than_when_it_is_shouted(self):
+        # 情绪定语速：悲伤约 1.8 字/秒、句尾留白长；暴怒约 4 字/秒。
+        line = "林夏：我等了整整三年，从来没有人给过我一句解释。"
+        sad = audit_shot_table([_shot(duration="8s", characters=["林夏"], dialogue=line.replace("：", "：（哽咽）")), _shot(shot_id=2, size="全景")], video_model="seedance2.5")
+        shouted = audit_shot_table([_shot(duration="8s", characters=["林夏"], dialogue=line.replace("：", "：（怒吼）")), _shot(shot_id=2, size="全景")], video_model="seedance2.5")
+        self.assertIn("台词超出本镜时长", _rules(sad))
+        self.assertNotIn("台词超出本镜时长", _rules(shouted))
 
     def test_a_line_that_fits_passes(self):
         shot = _shot(duration="8s", characters=["林夏"], dialogue="林夏：你到底瞒了什么？")
