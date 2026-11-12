@@ -10,7 +10,7 @@ sounds with angle brackets, H3 has its own shorter performance lock), on what th
 
 import unittest
 
-from app.core import clip_skeleton, h3_native, slice_video, style_packs
+from app.core import clip_skeleton, h3_native, prompt_data, slice_video, style_packs
 from app.core.asset_mentions import resolve_mentions
 from app.core.video_prompt_engine import ShotPromptInput, compile_shot_prompt
 
@@ -128,6 +128,28 @@ class SettleTests(unittest.TestCase):
         nothing = clip_skeleton.settle(resolve_mentions(_text(), {}))
         self.assertNotIn("锚型定义", nothing)
         self.assertNotIn("＝", nothing.split("【结构声明】")[0])
+
+    def test_with_a_desk_still_the_scene_picture_gives_only_its_look(self):
+        # 导演台白模管站位与家具位置：场景图换成只给材质、色调、光影的锚型，定义行跟着换。
+        marker = prompt_data.text("scene_views", "desk_demoted_marker")
+        text = resolve_mentions(_text(), _NUMBERS) + f"\n参考图3仅锁定材质、色调与光影，{marker}。"
+        settled = clip_skeleton.settle(text)
+        self.assertIn("旧茶馆（参考图3）＝场景质感锚", settled)
+        self.assertIn("场景质感锚 材质 色调 光影", settled)
+        self.assertNotIn("＝场景锚", settled)
+        self.assertNotIn("场景锚 环境结构 陈设 材质", settled)
+        self.assertIn("姜照（参考图1）＝身份服装锚", settled, "人物与道具的锚型不变")
+        self.assertIn("纸杯（参考图4）＝道具锚", settled)
+        plain = clip_skeleton.settle(resolve_mentions(_text(), _NUMBERS))
+        self.assertIn("旧茶馆（参考图3）＝场景锚", plain, "没有白模的镜头照旧")
+        self.assertNotIn("场景质感锚", plain)
+
+    def test_with_a_desk_still_an_unsent_scene_picture_still_leaves_no_trace(self):
+        marker = prompt_data.text("scene_views", "desk_demoted_marker")
+        numbers = {name: number for name, number in _NUMBERS.items() if name != "旧茶馆"}
+        settled = clip_skeleton.settle(resolve_mentions(_text(), numbers) + f"\n{marker}")
+        self.assertNotIn("场景质感锚", settled)
+        self.assertNotIn("＝场景", settled)
 
     def test_a_request_with_only_frames_names_no_pictures(self):
         settled = clip_skeleton.settle(resolve_mentions(self._costumed(), _NUMBERS), frames_only=True)

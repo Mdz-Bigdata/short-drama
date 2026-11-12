@@ -54,7 +54,11 @@ def _rules() -> dict[str, Any]:
         "mention_re": re.compile(data["mention"]),
         "anchor_re": re.compile(data["anchor_row"]),
         "costume_re": re.compile(data["costume"]),
-        "drop_res": [re.compile(item) for item in data["drop_lines"]],
+        # 锚型定义行按 clip_skeleton 的锚型表认(「身份服装锚 脸型 发型 体型 服装」)，那边加了锚型这边自动跟上。
+        "drop_res": [
+            *(re.compile(item) for item in data["drop_lines"]),
+            re.compile("^(?:" + "|".join(re.escape(kind) for kind, _gives in anchor["definitions"]) + ") "),
+        ],
         "drop_when_res": [(re.compile(line), re.compile(needs)) for line, needs in data["drop_when"]],
         "keep_mentions_res": [re.compile(item) for item in data["keep_mentions_in"]],
         "inline_res": [re.compile(item) for item in data["inline_drop"]],

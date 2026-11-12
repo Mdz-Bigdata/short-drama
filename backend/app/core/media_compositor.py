@@ -64,8 +64,12 @@ def _ensure_dir():
 
 # 常见安装位置：Homebrew (Apple Silicon / Intel) 与 Linux 发行版
 _BINARY_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin")
+# 项目自带的字幕字体：思源黑体(SIL Open Font License 1.1，可嵌入、可商用)，许可证在同目录。
+# 系统字体嵌进画面商用要另行确认授权，所以先用它；SUBTITLE_FONT_PATH 仍可指定别的。
+BUNDLED_FONT = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "fonts", "SourceHanSansCN-Regular.otf")
 # 字幕与标题卡用的中文字体候选，按平台依次尝试；都没有时用 SUBTITLE_FONT_PATH 指定
 _CJK_FONT_CANDIDATES = (
+    BUNDLED_FONT,
     "/System/Library/Fonts/PingFang.ttc",
     "/System/Library/Fonts/STHeiti Medium.ttc",
     "/System/Library/Fonts/Hiragino Sans GB.ttc",
@@ -571,11 +575,13 @@ def _render_subtitle_png(text: str, out_path: str) -> bool:
             x = (OUT_W - w) / 2
             y = y0 + i * lh
             d.rectangle([x - 16, y - 6, x + w + 16, y + 52], fill=(0, 0, 0, 150))
+            # 字按底条的竖直中线摆(anchor「lm」)：各字体的上行高不一样，按左上角摆，思源黑体会沉到底条外面。
+            mid = y + 23
             for dx in (-2, 0, 2):
                 for dy in (-2, 0, 2):
                     if dx or dy:
-                        d.text((x + dx, y + dy), ln, font=font, fill=(0, 0, 0, 255))
-            d.text((x, y), ln, font=font, fill=(255, 255, 255, 255))
+                        d.text((x + dx, mid + dy), ln, font=font, fill=(0, 0, 0, 255), anchor="lm")
+            d.text((x, mid), ln, font=font, fill=(255, 255, 255, 255), anchor="lm")
         img.save(out_path)
         return True
     except Exception as e:

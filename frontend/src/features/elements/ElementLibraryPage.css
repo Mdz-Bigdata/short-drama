@@ -1437,3 +1437,6 @@
 /* 卡片底部五六个操作按钮：放不下就换行，按钮文字不拆成两行竖排 */
 .element-actions { flex-wrap: wrap; }
 .element-actions button { flex: 1 1 auto; min-width: 4.5rem; white-space: nowrap; font-size: 0.74rem; }
+
+/* 拍摄道具页里一起列出的车辆、商品：名字旁标它本来是哪类。 */
+.element-kind-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 6px; font-size: 0.72rem; line-height: 1.6; vertical-align: middle; background: rgba(var(--info-rgb), 0.12); color: var(--info-ink); }

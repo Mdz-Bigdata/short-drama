@@ -8,7 +8,7 @@ import {
 import { CONTENT_LANGUAGE_OPTIONS, CREATION_MODE_OPTIONS, EMPTY_AD_BRIEF, NARRATION_DELIVERY_OPTIONS, normalizeVideoReferenceMode, type AdBrief, type ContentLanguage, type CreationMode, type NarrationDelivery, type TaskConfig, type TaskResponse, type TaskSummary, type StageProgress } from './types';
 import { CapabilityCenter } from './features/platform/CapabilityCenter';
 import { PoetrySourcePicker } from './features/writer/PoetrySourcePicker';
-import type { ElementKind } from './features/elements/elementTypes';
+import { tabOfKind, type ElementKind } from './features/elements/elementTypes';
 import { NotificationBell } from './features/account/NotificationBell';
 import { hasPermission } from './features/account/permissions';
 import { FINANCE_PERMISSIONS } from './features/finance/financeFormat';
@@ -1892,7 +1892,8 @@ export default function App() {
   }
 
   if (currentUser && ['actor', 'scene', 'prop', 'effect', 'extra', 'vehicle', 'stunt', 'set_dressing'].includes(activePortal)) {
-    return <>{billingNoticeBar}<Suspense fallback={<StageFallback />}><ElementLibraryPage initialKind={activePortal as ElementKind} onBack={() => setActivePortal('home')} /></Suspense></>;
+    // 车辆、商品并在拍摄道具页里(elementTypes 的 TAB_MEMBERS)：从旧入口打开车辆也落到拍摄道具页。
+    return <>{billingNoticeBar}<Suspense fallback={<StageFallback />}><ElementLibraryPage initialKind={tabOfKind(activePortal as ElementKind)} onBack={() => setActivePortal('home')} /></Suspense></>;
   }
 
   return (
@@ -2047,13 +2048,10 @@ export default function App() {
                     <div className="element-menu" role="menu" aria-label={tr('选择元素类型')}>
                       {([
                         ['actor', tr('演员'), tr('设定集与表演身份锚点')],
-                        ['scene', tr('场景'), tr('空间、时段、天气和灯光')],
-                        ['prop', tr('道具'), tr('归属、位置和状态连续性')],
-                        ['effect', tr('特效'), tr('时间、目标和结束状态')],
+                        ['scene', tr('场景'), tr('空间、时段、天气和灯光；置景也在这里')],
+                        ['prop', tr('道具'), tr('归属、位置和状态连续性；车辆、商品也在这里')],
+                        ['effect', tr('特效'), tr('时间、目标和结束状态；特技也在这里')],
                         ['extra', tr('群演'), tr('没有台词的背景人物')],
-                        ['vehicle', tr('车辆'), tr('入画的车、船、马车')],
-                        ['stunt', tr('特技'), tr('有风险的动作过程')],
-                        ['set_dressing', tr('置景'), tr('角色不碰的陈设')],
                       ] as Array<[ElementKind, string, string]>).map(([value, label, hint]) => (
                         <button key={value} type="button" role="menuitem" onClick={() => { setActivePortal(value); setActivePopover('none'); }}>
                           <span>{label}</span><small>{hint}</small><ChevronRight size={15} />

@@ -1,5 +1,21 @@
 export type ElementKind = 'actor' | 'scene' | 'prop' | 'costume' | 'effect' | 'product' | 'extra' | 'vehicle' | 'stunt' | 'set_dressing' | 'makeup';
 
+/**
+ * 几类资产并在一个页签里看：车辆、商品归在「拍摄道具」里，置景归在「拍摄场地」里，特技归在「特效」里。类型本身不变(剧本的车辆清单、带货模式的商品检查
+ * 照旧按类型认)，只是同一页里列出、计数相加。
+ */
+export const TAB_MEMBERS: Partial<Record<ElementKind, ElementKind[]>> = {
+  prop: ['vehicle', 'product'],
+  scene: ['set_dressing'],
+  effect: ['stunt'],
+};
+
+/** 这一类资产在哪个页签里看：车辆、商品 → 拍摄道具，置景 → 拍摄场地，特技 → 特效，其余就是它自己。 */
+export function tabOfKind(kind: ElementKind): ElementKind {
+  const owner = (Object.keys(TAB_MEMBERS) as ElementKind[]).find(tab => TAB_MEMBERS[tab]?.includes(kind));
+  return owner ?? kind;
+}
+
 /** A derived look of a character (backend app/core/character_variants.py), kept on the actor's metadata. */
 export interface ElementVariant {
   of: string;

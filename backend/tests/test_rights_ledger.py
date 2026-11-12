@@ -52,5 +52,21 @@ class RightsTests(unittest.TestCase):
         self.assertEqual(task["config"]["rights_notes"], {}, "an empty note takes it back")
 
 
+class BundledFontTests(unittest.TestCase):
+    def test_subtitles_use_the_bundled_open_licence_font_and_it_needs_no_confirming(self):
+        import os
+
+        from app.core import media_compositor
+
+        with patch.dict(os.environ, {"SUBTITLE_FONT_PATH": ""}):
+            path = media_compositor._font_path()
+        self.assertEqual(path, media_compositor.BUNDLED_FONT)
+        with open(path, "rb") as font:
+            self.assertEqual(font.read(4), b"OTTO", "a real OpenType font, not an error page")
+        self.assertTrue(os.path.exists(os.path.join(os.path.dirname(path), "SourceHanSans-LICENSE.txt")))
+        task, timeline = _cut(source="none")
+        self.assertEqual([item for item in delivery_check.report(task, timeline) if item["rule"] == "rights"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

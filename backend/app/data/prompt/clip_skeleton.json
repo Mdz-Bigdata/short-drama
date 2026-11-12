@@ -1,5 +1,5 @@
 {
-  "_doc": "视频片段提示词里每条都重申的固定句。出处：ArcReel《系统实际下发提示词骨架》（docs/prompt-templates/系统实际下发提示词骨架.md，按 62627982e 渲染）第二、三节。骨架里本项目已有同义写法的行不在这里重复（物理、接触点、落点锁、形态与纹理见 iron_rules.json 的物理铁律、形态铁律；画质见 quality；逐行对照见 docs/prompt-template-full-integration/skeleton-coverage.md）。按模型分三种写法：seedance（声音用尖括号）、h3（MiniMax H3）、plain（其余模型，纯中文）。",
+  "_doc": "视频片段提示词里每条都重申的固定句。出处：ArcReel《系统实际下发提示词骨架》（docs/prompt-templates/系统实际下发提示词骨架.md，按 62627982e 渲染）第二、三节。骨架里本项目已有同义写法的行不在这里重复（物理、接触点、落点锁、形态与纹理见 iron_rules.json 的物理铁律、形态铁律；画质见 quality；逐行对照见 docs/prompt-template-full-integration/skeleton-coverage.md）。按模型分三种写法：seedance（声音用尖括号）、h3（MiniMax H3）、plain（其余模型，纯中文）。 锚型 scene_desk：带导演台白模的镜头里（提示词出现 scene_views.json 的 desk_demoted_marker），站位与家具位置由白模决定：每张场景图的锚型由 scene 换成 scene_desk，只给材质、色调与光影。",
   "headers": {
     "pa1": "Pa1",
     "pa2": "Pa2",
@@ -28,6 +28,10 @@
       [
         "场景锚",
         "环境结构 陈设 材质"
+      ],
+      [
+        "场景质感锚",
+        "材质 色调 光影"
       ]
     ],
     "definition": "{type} {gives}",
@@ -37,7 +41,8 @@
       "cast_with_costume_image": "身份锚",
       "costume": "戏服锚",
       "prop": "道具锚",
-      "scene": "场景锚"
+      "scene": "场景锚",
+      "scene_desk": "场景质感锚"
     }
   },
   "same_instance": {

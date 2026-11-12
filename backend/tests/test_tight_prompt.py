@@ -136,6 +136,22 @@ class CompactTests(unittest.TestCase):
         normal, _fit = tight_prompt.compact(text.replace(marker, "布局照旧"), "seedance2.0")
         self.assertIn("书房＝参考图5（环境结构、陈设、材质）", normal)
 
+    def test_anchor_type_lines_follow_the_skeleton_table(self):
+        """锚型定义行按 clip_skeleton 的锚型表认：带导演台白模时的「场景质感锚」也删，绑定行写它给的东西。"""
+        text = "\n".join([
+            "锚型定义 各图只给本型内容",
+            "身份服装锚 脸型 发型 体型 服装",
+            "场景质感锚 材质 色调 光影",
+            "林夏（参考图3）＝身份服装锚",
+            "书房（参考图5）＝场景质感锚",
+            "画面：林夏（参考图3）在书房（参考图5）里翻书。" + FILLER * 3,
+        ])
+        after, _fit = tight_prompt.compact(text, "seedance2.0")
+        self.assertNotIn("场景质感锚 材质", after)
+        self.assertNotIn("身份服装锚 脸型", after)
+        self.assertNotIn("＝场景质感锚", after)
+        self.assertIn("书房＝参考图5（材质、色调、光影）", after, "新锚型的定义直接进绑定行")
+
     def test_appearance_text_goes_only_for_people_with_a_reference_image(self):
         text = "\n".join([
             "参考图绑定前的正文：姜照（参考图2）推门。" + FILLER * 3,

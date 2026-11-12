@@ -106,6 +106,8 @@ interface Props {
   onDrawSceneReverse?: (item: ElementItem) => void;
   /** 打开这件资产的版本记录(给了才把版本号做成按钮)。 */
   onOpenVersions?: (item: ElementItem) => void;
+  /** 并在这一页里的别类资产(拍摄道具页里的车辆、商品)叫什么；本页自己的类型返回空。 */
+  kindLabelOf?: (item: ElementItem) => string;
 }
 
 function SceneScaleNote({ item }: { item: ElementItem }) {
@@ -202,6 +204,7 @@ export default function Element3DWorkspace({
   onDrawSceneScale,
   onDrawSceneReverse,
   onOpenVersions,
+  kindLabelOf,
 }: Props) {
   const [view, setView] = useState<'project' | 'museum'>('project');
   const [query, setQuery] = useState('');
@@ -335,7 +338,7 @@ export default function Element3DWorkspace({
                   type="button"
                   className="asset-rail-select"
                   aria-current={selected?.id === item.id ? 'true' : undefined}
-                  aria-label={`查看${label}资产“${item.name}”`}
+                  aria-label={`查看${kindLabelOf?.(item) || label}资产“${item.name}”`}
                   onClick={() => onSelect(item.id)}
                 >
                   <span className="asset-index">{String(index + 1).padStart(2, '0')}</span>
@@ -343,7 +346,7 @@ export default function Element3DWorkspace({
                     {itemPoster?.url ? <img src={apiUrl(itemPoster.url)} alt="" /> : <KindIcon size={22} />}
                   </span>
                   <span className="asset-rail-copy">
-                    <strong>{item.name}</strong>
+                    <strong>{item.name}{kindLabelOf?.(item) && <span className="element-kind-tag">{kindLabelOf(item)}</span>}</strong>
                     <small>v{item.version} · {item.model3d ? 'GLB READY' : item.files.length ? '2D ONLY' : 'EMPTY'}</small>
                   </span>
                   <i className={item.model3d ? 'has-model' : ''}>{item.model3d ? '3D' : '2D'}</i>
@@ -355,8 +358,8 @@ export default function Element3DWorkspace({
                   disabled={locked}
                   aria-busy={deletingAsset}
                   aria-label={deletingAsset
-                    ? `正在删除${label}资产“${item.name}”`
-                    : `删除${label}资产“${item.name}”`}
+                    ? `正在删除${kindLabelOf?.(item) || label}资产“${item.name}”`
+                    : `删除${kindLabelOf?.(item) || label}资产“${item.name}”`}
                   title={`删除${label}资产`}
                 >
                   {deletingAsset ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}

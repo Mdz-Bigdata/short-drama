@@ -377,14 +377,20 @@ async def list_elements(
     page_size: int = Query(24, ge=1, le=100),
     task_id: str | None = Query(None, max_length=120),
     folder: str | None = Query(None, max_length=36, description=_text_of("list_elements.description")),
+    include: str | None = Query(None, max_length=120, description="同一页签里一起列出的其它类型，逗号分隔(拍摄道具：vehicle,product)"),
     user: dict = Depends(get_current_user),
     store: PlatformStore = Depends(get_platform_store),
 ):
     # With task_id only the project's own and linked assets are listed; the
     # rest of the owner's library stays stored but out of the project's view.
-    items, total = await store.list_elements(
-        user["user_id"], kind, page, page_size, task_id=(task_id or "").strip() or None, folder=(folder or "").strip() or None,
-    )
+    extra = tuple(part.strip() for part in (include or "").split(",") if part.strip())
+    try:
+        items, total = await store.list_elements(
+            user["user_id"], kind, page, page_size, task_id=(task_id or "").strip() or None, folder=(folder or "").strip() or None,
+            include=extra,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     placed = await store.element_folder_ids(user["user_id"], [item.id for item in items])
     return {
         "items": [{**_element(item), "folder_id": placed.get(item.id)} for item in items],
@@ -415,8 +421,8 @@ def _cover_url(cover) -> str | None:
     return _file(cover.id, cover.version, image)["url"] if image else None
 
 
-async def _folders_view(store: PlatformStore, owner_id: str, kind: ElementKind | None) -> dict:
-    listing = await store.list_element_folders(owner_id, kind)
+async def _folders_view(store: PlatformStore, owner_id: str, kind: ElementKind | None, include: tuple[str, ...] = ()) -> dict:
+    listing = await store.list_element_folders(owner_id, kind, include)
     return {
         "folders": [
             {
@@ -436,10 +442,15 @@ async def _folders_view(store: PlatformStore, owner_id: str, kind: ElementKind |
 @router.get("/folders")
 async def list_element_folders(
     kind: ElementKind | None = None,
+    include: str | None = Query(None, max_length=120, description="同一页签里一起数的其它类型，逗号分隔(拍摄道具：vehicle,product)"),
     user: dict = Depends(get_current_user),
     store: PlatformStore = Depends(get_platform_store),
 ):
-    return await _folders_view(store, user["user_id"], kind)
+    extra = tuple(part.strip() for part in (include or "").split(",") if part.strip())
+    try:
+        return await _folders_view(store, user["user_id"], kind, extra)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.post("/folders", status_code=201)

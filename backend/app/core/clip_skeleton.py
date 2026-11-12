@@ -266,12 +266,27 @@ def settle(text: str, *, frames_only: bool = False) -> str:
 
     ``frames_only``：请求里只有首(尾)帧时整段不写，「同一人 / 各是不同的角色」那行也不写——
     提示词不指向不存在的参考图，长相以首帧为准。
+
+    带导演台白模的镜头(提示词里有 scene_views.json 的 desk_demoted_marker)：站位与家具位置归白模，
+    场景图只给材质、色调与光影，它们的锚型换成 scene_desk，定义行跟着换。
     """
     data = _data("anchor_types")
     same = _data("same_instance")
     kinds = data["kinds"]
     row = _row_pattern()
+    gives = {str(kind): str(given) for kind, given in data["definitions"]}
+    marker = prompt_data.text("scene_views", "desk_demoted_marker")
+    desk = bool(marker) and marker in str(text or "")
     lines = str(text or "").split("\n")
+    if desk:
+        scene, textured = str(kinds["scene"]), str(kinds["scene_desk"])
+        plain = str(data["definition"]).format(type=scene, gives=gives[scene])
+        for index, line in enumerate(lines):
+            matched = row.match(line)
+            if matched and matched.group("type") == scene:
+                lines[index] = str(data["row"]).format(ref=matched.group("ref"), type=textured)
+            elif line == plain:
+                lines[index] = str(data["definition"]).format(type=textured, gives=gives[textured])
     tail_ = str(same["tail"])
     pair_end = str(same["pair"]).rsplit("}", 1)[-1]
     dropped: set[int] = set()

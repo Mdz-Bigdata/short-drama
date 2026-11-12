@@ -286,6 +286,8 @@ class StageFiveDeskTests(unittest.TestCase):
         self.assertTrue(prompt.startswith(OPENING + "Pa1"))
         self.assertIn("「书房」正面的空间布局", prompt)
         self.assertNotIn("导演台白模", prompt)
+        self.assertIn("书房（参考图4）＝场景锚", prompt)
+        self.assertNotIn("场景质感锚", prompt)
         self.assertIn(self._fixed(prompt), prompt.split("Pa2")[0])
 
     def test_a_desk_still_is_named_as_the_spatial_skeleton_and_the_plate_gives_only_the_look(self):
@@ -295,12 +297,17 @@ class StageFiveDeskTests(unittest.TestCase):
         self.assertIn("「书房」正面" + DESK_DUTY, prompt)
         self.assertNotIn("「书房」正面的空间布局", prompt)
         self.assertNotIn("空间布局与环境动态", prompt, "场景锚点也不再说空间布局")
+        self.assertIn("书房（参考图5）＝场景质感锚", prompt, "锚型定义也不让场景图管站位")
+        self.assertIn("场景质感锚 材质 色调 光影", prompt)
+        self.assertNotIn("场景锚 环境结构 陈设 材质", prompt)
 
     def test_a_blockout_clip_alone_demotes_the_plate_too(self):
         prompt, _ = self._run("clip")
         self.assertTrue(prompt.startswith(OPENING + "Pa1"))
         self.assertIn("「书房」正面" + DESK_DUTY, prompt)
         self.assertNotIn("空间布局", prompt)
+        self.assertIn("书房（参考图4）＝场景质感锚", prompt)
+        self.assertNotIn("环境结构 陈设", prompt)
 
     def test_the_fixed_items_line_comes_from_the_stage_plan_once_and_is_absent_without_one(self):
         prompt, _ = self._run()

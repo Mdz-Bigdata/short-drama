@@ -1,4 +1,4 @@
-import { Armchair, Box, Car, Flame, Landmark, ShoppingBag, Sparkles, Users, UsersRound, type LucideIcon } from 'lucide-react';
+import { Box, Landmark, Sparkles, UsersRound, type LucideIcon } from 'lucide-react';
 import type { KeyboardEvent } from 'react';
 
 import type { ElementKind } from '../elements/elementTypes';
@@ -12,16 +12,12 @@ interface AssetTabDefinition {
   icon: LucideIcon;
 }
 
+// 群演不单独成页：和数字演员同在「数字演员」一页里；车辆、商品归在「拍摄道具」，置景归在「拍摄场地」，特技归在「特效」(elementTypes 的 TAB_MEMBERS)。
 const characterAssetTabs: AssetTabDefinition[] = [
   { kind: 'actor', label: characterAssetTabLabels.actor, icon: UsersRound },
   { kind: 'scene', label: characterAssetTabLabels.scene, icon: Landmark },
   { kind: 'prop', label: characterAssetTabLabels.prop, icon: Box },
   { kind: 'effect', label: characterAssetTabLabels.effect, icon: Sparkles },
-  { kind: 'product', label: characterAssetTabLabels.product, icon: ShoppingBag },
-  { kind: 'extra', label: characterAssetTabLabels.extra, icon: Users },
-  { kind: 'vehicle', label: characterAssetTabLabels.vehicle, icon: Car },
-  { kind: 'set_dressing', label: characterAssetTabLabels.set_dressing, icon: Armchair },
-  { kind: 'stunt', label: characterAssetTabLabels.stunt, icon: Flame },
 ];
 
 export function CharacterAssetTabs({

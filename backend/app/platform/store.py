@@ -1525,17 +1525,22 @@ class PlatformStore:
 
     async def list_elements(
         self, owner_id: str, kind: str, page: int, page_size: int, task_id: str | None = None, folder: str | None = None,
+        include: tuple[str, ...] = (),
     ) -> tuple[list[ElementAsset], int]:
-        """``folder`` narrows to one folder's elements, or to the unfiled ones with ``ELEMENT_FOLDER_UNFILED``."""
-        if kind not in ELEMENT_KINDS:
+        """``folder`` narrows to one folder's elements, or to the unfiled ones with ``ELEMENT_FOLDER_UNFILED``.
+
+        ``include`` lists more kinds shown in the same tab (拍摄道具 also lists 车辆 and 商品); newest first across all.
+        """
+        kinds = tuple(dict.fromkeys((kind, *include)))
+        if any(item not in ELEMENT_KINDS for item in kinds):
             raise ValueError(_text_of("list_elements.text"))
         if task_id:
             # Project scope lives in JSON metadata; filtering in Python keeps SQLite
             # and PostgreSQL identical, and the per-owner quota bounds the scan.
-            scoped = [
-                item for item in await self.list_all_elements(owner_id, kind)
-                if element_in_task(item.metadata_json, task_id)
-            ]
+            everything = [item for each in kinds for item in await self.list_all_elements(owner_id, each)]
+            everything.sort(key=lambda item: item.id)
+            everything.sort(key=lambda item: item.updated_at, reverse=True)
+            scoped = [item for item in everything if element_in_task(item.metadata_json, task_id)]
             if folder:
                 placed = await self.element_folder_ids(owner_id, [item.id for item in scoped])
                 scoped = [
@@ -1544,7 +1549,7 @@ class PlatformStore:
                 ]
             start = (page - 1) * page_size
             return scoped[start:start + page_size], len(scoped)
-        where = [ElementAsset.owner_id == owner_id, ElementAsset.kind == kind]
+        where = [ElementAsset.owner_id == owner_id, ElementAsset.kind.in_(kinds)]
         if folder == ELEMENT_FOLDER_UNFILED:
             where.append(ElementAsset.id.not_in(select(ElementFolderMember.element_id)))
         elif folder:
@@ -1955,11 +1960,13 @@ class PlatformStore:
             )
             return {element_id: folder_id for element_id, folder_id in rows.all()}
 
-    async def list_element_folders(self, owner_id: str, kind: str | None = None) -> dict:
+    async def list_element_folders(self, owner_id: str, kind: str | None = None, include: tuple[str, ...] = ()) -> dict:
         """The owner's folders with counts, joined on live elements so a deleted one is never counted."""
-        if kind is not None and kind not in ELEMENT_KINDS:
+        kinds = tuple(dict.fromkeys((kind, *include))) if kind else ()
+        if any(item not in ELEMENT_KINDS for item in kinds):
             raise ValueError(_text_of("list_element_folders.text"))
-        scope = [ElementAsset.owner_id == owner_id, *([ElementAsset.kind == kind] if kind else [])]
+        # include：同一页签里一起数的其它类型(拍摄道具也数车辆、商品)。
+        scope = [ElementAsset.owner_id == owner_id, *([ElementAsset.kind.in_(kinds)] if kinds else [])]
         async with self.sessions() as session:
             folders = list((await session.scalars(
                 select(ElementFolder).where(ElementFolder.owner_id == owner_id).order_by(ElementFolder.created_at, ElementFolder.id)

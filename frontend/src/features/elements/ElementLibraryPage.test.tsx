@@ -421,6 +421,17 @@ describe('ElementLibraryPage', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
       const url = String(input);
       if (url.endsWith('/api/elements/generation-jobs') && options?.method === 'POST') {
+        // 特效页把并进来的特技也一起补：特技这类没有缺图，一出来就完成。
+        if (JSON.parse(String(options.body)).kind === 'stunt') {
+          expect(JSON.parse(String(options.body))).toEqual({ kind: 'stunt', task_id: 'task-effects' });
+          return {
+            ok: true,
+            json: async () => ({
+              id: 'generation-job-2', kind: 'stunt', status: 'completed', total: 0,
+              processed: 0, succeeded: 0, failed: 0, remaining: 0, errors: [],
+            }),
+          } as Response;
+        }
         expect(JSON.parse(String(options.body))).toEqual({ kind: 'effect', task_id: 'task-effects' });
         return {
           ok: true,

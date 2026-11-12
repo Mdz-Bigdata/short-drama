@@ -3,7 +3,7 @@ import { ArrowLeft, Boxes, Camera, FileSearch, ImagePlus, LoaderCircle, Maximize
 
 import { apiRequest, apiUrl } from '../../api/client';
 import AssetImageViewer, { type AssetImageViewerAsset } from './AssetImageViewer';
-import { actorRegeneration, findPoster, findViewImage, isLook, lookCheckProblems, referenceCopyOf, variantOf, type ElementFile, type ElementItem, type ElementKind } from './elementTypes';
+import { TAB_MEMBERS, actorRegeneration, findPoster, findViewImage, isLook, lookCheckProblems, referenceCopyOf, variantOf, type ElementFile, type ElementItem, type ElementKind } from './elementTypes';
 import { ElementFolderBar, ElementFolderSelect } from './ElementFolderBar';
 import { moveElementsToFolder, UNFILED, useElementFolders } from './elementFolders';
 import { VoicePanel } from './VoicePanel';
@@ -115,7 +115,9 @@ async function fetchElementList(
   // Inside a project only its own and linked assets are listed; the standalone
   // library (no taskId) still shows everything the owner has ever produced.
   const filters = (scope.taskId ? `&task_id=${encodeURIComponent(scope.taskId)}` : '')
-    + (scope.folder ? `&folder=${encodeURIComponent(scope.folder)}` : '');
+    + (scope.folder ? `&folder=${encodeURIComponent(scope.folder)}` : '')
+    // 拍摄道具页里也列车辆和商品(TAB_MEMBERS)：它们的类型不变，只是在这一页一起看。
+    + (TAB_MEMBERS[kind] ? `&include=${TAB_MEMBERS[kind]!.join(',')}` : '');
   const readEveryPage = async (): Promise<ElementResponse | null> => {
     const items: ElementItem[] = [];
     const seen = new Set<string>();
@@ -576,10 +578,22 @@ export function ElementLibraryPage({
     if (!startMutation('extract')) return;
     setError('');
     try {
-      const result = await apiRequest<ExtractionResult>(
-        `/api/drama/${encodeURIComponent(taskId)}/production-assets/${targetKind}/import`,
-        { method: 'POST', body: JSON.stringify({}) },
-      );
+      // 页签里并进来的车辆也一起从剧本提取(剧本把车辆单列一份清单)；商品来自带货简报，不从剧本提。
+      const kinds = [targetKind, ...(TAB_MEMBERS[targetKind] ?? []).filter(member => member !== 'product')];
+      const results = [];
+      for (const each of kinds) {
+        results.push(await apiRequest<ExtractionResult>(
+          `/api/drama/${encodeURIComponent(taskId)}/production-assets/${each}/import`,
+          { method: 'POST', body: JSON.stringify({}) },
+        ));
+      }
+      const result = results.reduce((sum, item) => ({
+        ...sum,
+        created: Number(sum.created || 0) + Number(item.created || 0),
+        reused: Number(sum.reused || 0) + Number(item.reused || 0),
+        skipped: Number(sum.skipped || 0) + Number(item.skipped || 0),
+        with_image: Number(sum.with_image || 0) + Number(item.with_image || 0),
+      }));
       if (targetKind !== kindRef.current) return;
       await load(targetKind);
       if (targetKind !== kindRef.current) return;
@@ -616,20 +630,30 @@ export function ElementLibraryPage({
       ? t('正在重新生成全部{0}参考图…', [label])
       : t('正在检查{0}资产的缺失参考图…', [label]));
     try {
-      let job = await apiRequest<GenerationJob>('/api/elements/generation-jobs', {
-        method: 'POST',
-        body: JSON.stringify(replaceExisting
-          ? { kind: targetKind, task_id: taskId || null, replace_existing: true }
-          : { kind: targetKind, task_id: taskId || null }),
-      });
-      while (job.status === 'queued' || job.status === 'running') {
-        if (sequence !== generationSequence.current || targetKind !== kindRef.current) return;
-        setNotice(t('正在生成{0}参考图：{1}/{2}，剩余 {3} 项…', [label, job.processed, job.total, job.remaining]));
-        job = await apiRequest<GenerationJob>(`/api/elements/generation-jobs/${encodeURIComponent(job.id)}`);
-        if (job.status === 'queued' || job.status === 'running') {
-          await new Promise(resolve => window.setTimeout(resolve, 1_200));
+      // 页签里并进来的类型一起补(拍摄道具页也补车辆)；商品要上传实物照片，不拿模型画。
+      const kinds = [targetKind, ...(TAB_MEMBERS[targetKind] ?? []).filter(member => member !== 'product')];
+      const done = { total: 0, succeeded: 0, failed: 0 };
+      let job: GenerationJob | null = null;
+      for (const each of kinds) {
+        job = await apiRequest<GenerationJob>('/api/elements/generation-jobs', {
+          method: 'POST',
+          body: JSON.stringify(replaceExisting
+            ? { kind: each, task_id: taskId || null, replace_existing: true }
+            : { kind: each, task_id: taskId || null }),
+        });
+        while (job.status === 'queued' || job.status === 'running') {
+          if (sequence !== generationSequence.current || targetKind !== kindRef.current) return;
+          setNotice(t('正在生成{0}参考图：{1}/{2}，剩余 {3} 项…', [kindMeta[each].label, job.processed, job.total, job.remaining]));
+          job = await apiRequest<GenerationJob>(`/api/elements/generation-jobs/${encodeURIComponent(job.id)}`);
+          if (job.status === 'queued' || job.status === 'running') {
+            await new Promise(resolve => window.setTimeout(resolve, 1_200));
+          }
         }
+        done.total += job.total;
+        done.succeeded += job.succeeded;
+        done.failed += job.failed;
       }
+      job = { ...(job as GenerationJob), ...done };
       if (sequence !== generationSequence.current || targetKind !== kindRef.current) return;
       await load(targetKind);
       if (sequence !== generationSequence.current || targetKind !== kindRef.current) return;
@@ -955,6 +979,11 @@ export function ElementLibraryPage({
   const filteredItems = filterElements(items, filters);
   const cardGroups = groupByBase(filteredItems);
 
+  // 拍摄道具页里一起列出的车辆、商品：名字旁标一下它本来是哪类。
+  const kindTag = (item: ElementItem) => (
+    item.kind !== kind ? <span className="element-kind-tag">{t(kindMeta[item.kind].label)}</span> : null
+  );
+
   const versionButton = (item: ElementItem) => (
     <button
       type="button"
@@ -1016,14 +1045,14 @@ export function ElementLibraryPage({
         </div>
         {panoramaLayout && (
           <div className="element-card-summary">
-            <div><h2>{item.name}</h2>{versionButton(item)}</div>
+            <div><h2>{item.name}</h2>{kindTag(item)}{versionButton(item)}</div>
             <p>{descriptionText}</p>
           </div>
         )}
         <div className={`element-card-body${panoramaLayout ? ' element-card-body--actions-only' : ''}`}>
           {!panoramaLayout && (
             <>
-              <div><h2>{item.name}</h2>{versionButton(item)}</div>
+              <div><h2>{item.name}</h2>{kindTag(item)}{versionButton(item)}</div>
               <p>{descriptionText}</p>
             </>
           )}
@@ -1331,6 +1360,7 @@ export function ElementLibraryPage({
             onSetPropSize={(item, lengthCm) => { void setPropSize(item, lengthCm); }}
             onDrawSceneScale={item => { void drawSceneScale(item); }}
             onDrawSceneReverse={item => { void drawSceneReverse(item); }}
+            kindLabelOf={item => (item.kind !== kind ? t(kindMeta[item.kind].label) : '')}
             onOpenVersions={item => setVersionsFor(item.id)}
             onInspectPoster={(item, shown) => {
               // 与服装/特效同构：有参考图才提供放大查看入口。

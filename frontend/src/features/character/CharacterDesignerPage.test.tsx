@@ -249,7 +249,8 @@ describe('CharacterDesignerPage', () => {
       const url = new URL(String(input));
       const kind = url.searchParams.get('kind') as keyof typeof totals;
       expect(url.searchParams.get('page')).toBe('1');
-      expect(url.searchParams.get('page_size')).toBe('1');
+      // 群演库就在数字演员页里，自己拉一页清单；其余都是只数个数。
+      if (!(kind === 'extra' && url.searchParams.get('page_size') !== '1')) expect(url.searchParams.get('page_size')).toBe('1');
       return {
         ok: true,
         json: async () => ({ items: [], page: 1, page_size: 1, total: totals[kind] }),
@@ -264,9 +265,12 @@ describe('CharacterDesignerPage', () => {
     expect(within(assetTabs).getByRole('tab', { name: /拍摄道具.*8 个资产/ })).toBeTruthy();
     expect(within(assetTabs).queryByRole('tab', { name: /服装/ })).toBeNull();
     expect(within(assetTabs).getByRole('tab', { name: /特效.*4 个资产/ })).toBeTruthy();
-    expect(within(assetTabs).getByRole('tab', { name: /商品.*0 个资产/ })).toBeTruthy();
-    // 八类拍摄资产各数一次：场地、道具、特效 + 商品、群演、车辆、置景、特技。
-    expect(fetchMock).toHaveBeenCalledTimes(8);
+    // 车辆、商品并在拍摄道具页里，没有自己的页签。
+    expect(within(assetTabs).queryByRole('tab', { name: /商品/ })).toBeNull();
+    expect(within(assetTabs).queryByRole('tab', { name: /车辆/ })).toBeNull();
+    // 八类拍摄资产各数一次：场地、道具、特效 + 商品、群演、车辆、置景、特技(数字演员页里的群演清单和文件夹另算)。
+    const countCalls = fetchMock.mock.calls.filter(call => new URL(String(call[0])).searchParams.get('page_size') === '1');
+    expect(countCalls).toHaveLength(8);
   });
 
   it('syncs every screenplay production asset category before refreshing their counts', async () => {
@@ -327,9 +331,12 @@ describe('CharacterDesignerPage', () => {
     const user = userEvent.setup();
     const callCounts = new Map<string, number>();
     vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
-      const kind = new URL(String(input)).searchParams.get('kind') || '';
-      const callCount = (callCounts.get(kind) || 0) + 1;
-      callCounts.set(kind, callCount);
+      const url = new URL(String(input));
+      const kind = url.searchParams.get('kind') || '';
+      // 只数「数个数」的请求；数字演员页里的群演清单另算。
+      const counting = url.searchParams.get('page_size') === '1';
+      const callCount = (callCounts.get(kind) || 0) + (counting ? 1 : 0);
+      if (counting) callCounts.set(kind, callCount);
       const base = { scene: 1, prop: 2, effect: 4 }[kind] || 0;
       return {
         ok: true,
@@ -598,8 +605,8 @@ describe('CharacterDesignerPage', () => {
     render(<CharacterDesignerPage dashboard={interactiveDashboard} {...actions()} />);
 
     const assetTabs = screen.getByRole('tablist', { name: '角色资产类型' });
-    // 数字演员、拍摄场地、拍摄道具、特效，加上商品、群演、车辆、置景、特技。
-    expect(within(assetTabs).getAllByRole('tab')).toHaveLength(9);
+    // 数字演员(含群演)、拍摄场地(含置景)、拍摄道具(含车辆、商品)、特效(含特技)。
+    expect(within(assetTabs).getAllByRole('tab')).toHaveLength(4);
     expect(within(assetTabs).getByRole('tab', { name: /数字演员.*2/ }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('heading', { level: 2, name: '数字演员设定集' })).toBeTruthy();
 
@@ -623,7 +630,7 @@ describe('CharacterDesignerPage', () => {
     expect(screen.getByRole('heading', { level: 1, name: '沈知微' })).toBeTruthy();
   });
 
-  it('adds product, extra, vehicle, set dressing and stunt pages with counts and folders', async () => {
+  it('lists vehicles and products inside the prop page, set dressing inside scenes, stunts inside effects, extras inside the actor page', async () => {
     const user = userEvent.setup();
     const totals: Record<string, number> = { scene: 1, prop: 2, effect: 3, product: 4, extra: 5, vehicle: 6, set_dressing: 7, stunt: 8 };
     vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
@@ -632,8 +639,11 @@ describe('CharacterDesignerPage', () => {
         return { ok: true, json: async () => ({ folders: [{ id: 'f1', name: '追车组', count: 1, cover_element_id: null, cover_url: null }], total: 1, unfiled: 0 }) } as Response;
       }
       const kind = url.searchParams.get('kind') || '';
-      const item = kind === 'vehicle' ? {
+      // 拍摄道具页一起列车辆和商品(include=vehicle,product)。
+      const item = kind === 'prop' && (url.searchParams.get('include') || '').includes('vehicle') ? {
         id: 'car-1', kind: 'vehicle', name: '黑色轿车', description: '旧款', status: 'draft', version: 1, metadata: {}, files: [], model3d: null,
+      } : kind === 'extra' ? {
+        id: 'extra-1', kind: 'extra', name: '茶馆伙计', description: '两人，粗布短打，端茶穿行', status: 'draft', version: 1, metadata: {}, files: [], model3d: null,
       } : null;
       return {
         ok: true,
@@ -644,15 +654,37 @@ describe('CharacterDesignerPage', () => {
     render(<CharacterDesignerPage dashboard={interactiveDashboard} {...actions()} />);
 
     const assetTabs = screen.getByRole('tablist', { name: '角色资产类型' });
-    expect(await within(assetTabs).findByRole('tab', { name: /商品.*4 个资产/ })).toBeTruthy();
-    expect(within(assetTabs).getByRole('tab', { name: /群演.*5 个资产/ })).toBeTruthy();
-    expect(within(assetTabs).getByRole('tab', { name: /车辆.*6 个资产/ })).toBeTruthy();
-    expect(within(assetTabs).getByRole('tab', { name: /置景.*7 个资产/ })).toBeTruthy();
-    expect(within(assetTabs).getByRole('tab', { name: /特技.*8 个资产/ })).toBeTruthy();
+    expect(await within(assetTabs).findByRole('tab', { name: /拍摄道具.*2 个资产/ })).toBeTruthy();
+    expect(within(assetTabs).queryByRole('tab', { name: /商品/ })).toBeNull();
+    // 群演不单独一页：数量并进数字演员，群演和主演同在角色库里，页面下方不再另开一个群演资产库。
+    expect(within(assetTabs).queryByRole('tab', { name: /群演/ })).toBeNull();
+    expect(within(assetTabs).getByRole('tab', { name: new RegExp(`数字演员.*${interactiveDashboard.characters.length + 5} 个资产`) })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: '群演资产工作区' })).toBeNull();
+    const extras = await screen.findByRole('group', { name: '群演' });
+    const waiter = await within(extras).findByRole('button', { name: /茶馆伙计/ });
+    await user.click(waiter);
+    // 选中群演：中间一栏换成它的参考图与操作，主演都不算选中。
+    expect(screen.getByRole('heading', { level: 2, name: '茶馆伙计' })).toBeTruthy();
+    expect(screen.getByText('两人，粗布短打，端茶穿行')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^生成参考图$/ })).toBeTruthy();
+    expect(within(screen.getByRole('group', { name: '群演' })).getByRole('button', { name: /茶馆伙计/ }).getAttribute('aria-pressed')).toBe('true');
+    const lead = within(screen.getByRole('region', { name: '角色列表，可上下滚动' })).getByRole('button', { name: new RegExp(interactiveDashboard.characters[0].name) });
+    expect(lead.getAttribute('aria-pressed')).toBe('false');
+    await user.click(lead);
+    // 换回主演时工作区重排，按钮要重新取。
+    const library = screen.getByRole('region', { name: '角色列表，可上下滚动' });
+    expect(within(library).getByRole('button', { name: new RegExp(interactiveDashboard.characters[0].name) }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByRole('heading', { level: 2, name: '茶馆伙计' })).toBeNull();
+    expect(within(assetTabs).queryByRole('tab', { name: /车辆/ })).toBeNull();
+    // 置景并在拍摄场地里，特技并在特效里。
+    expect(within(assetTabs).queryByRole('tab', { name: /置景/ })).toBeNull();
+    expect(within(assetTabs).queryByRole('tab', { name: /特技/ })).toBeNull();
 
-    await user.click(within(assetTabs).getByRole('tab', { name: /车辆/ }));
-    expect(await screen.findByRole('region', { name: '车辆资产工作区' })).toBeTruthy();
-    expect(await screen.findByRole('article', { name: '车辆资产“黑色轿车”' })).toBeTruthy();
+    await user.click(within(assetTabs).getByRole('tab', { name: /拍摄道具/ }));
+    expect(await screen.findByRole('region', { name: '道具资产工作区' })).toBeTruthy();
+    // 车辆在拍摄道具页的清单里，标着它本来是车辆。
+    const car = await screen.findByRole('button', { name: '查看车辆资产“黑色轿车”' });
+    expect(within(car).getByText('车辆')).toBeTruthy();
     // 项目里的资产页也分文件夹。
     expect(await screen.findByRole('button', { name: /追车组/ })).toBeTruthy();
   });
@@ -662,7 +694,8 @@ describe('CharacterDesignerPage', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
       const url = String(input);
       if (url.endsWith('/api/elements/generation-jobs') && options?.method === 'POST') {
-        expect(JSON.parse(String(options.body))).toEqual({ kind: 'scene', task_id: null });
+        // 拍摄场地页把并进来的置景也一起补。
+        expect([{ kind: 'scene', task_id: null }, { kind: 'set_dressing', task_id: null }]).toContainEqual(JSON.parse(String(options.body)));
         return {
           ok: true,
           json: async () => ({
@@ -701,7 +734,7 @@ describe('CharacterDesignerPage', () => {
         return {
           ok: true,
           json: async () => ({
-            id: 'prop-job', kind: 'prop', status: 'completed', total: 2,
+            id: 'job', kind: 'prop', status: 'completed', total: 2,
             processed: 2, succeeded: 2, failed: 0, remaining: 0, errors: [],
           }),
         } as Response;
@@ -721,10 +754,13 @@ describe('CharacterDesignerPage', () => {
     expect(bodies).toEqual([]);
     await user.click(screen.getByRole('button', { name: /全部重新生成/ }));
 
-    await waitFor(() => expect(bodies).toEqual([{ kind: 'prop', task_id: null, replace_existing: true }]));
+    // 拍摄道具页把并进来的车辆也一起重出；商品要实物照片，不拿模型画。
+    await waitFor(() => expect(bodies).toEqual([
+      { kind: 'prop', task_id: null, replace_existing: true }, { kind: 'vehicle', task_id: null, replace_existing: true },
+    ]));
     expect(confirm).toHaveBeenCalledTimes(2);
     expect(actionHandlers.onRegenerate).not.toHaveBeenCalled();
-    expect(await screen.findByText('2 项道具参考图已生成完整。')).toBeTruthy();
+    expect(await screen.findByText('4 项道具参考图已生成完整。')).toBeTruthy();
     confirm.mockRestore();
   });
 

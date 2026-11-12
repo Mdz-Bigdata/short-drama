@@ -141,6 +141,9 @@
 
 .character-designer__actions button,
 .character-designer__empty button,
+.character-library__extras-actions button,
+.character-library__extra-form button,
+.character-extra-stage__actions button,
 .character-designer-error button {
   display: inline-flex;
   align-items: center;
@@ -159,6 +162,9 @@
 
 .character-designer__actions button:hover:not(:disabled),
 .character-designer__empty button:hover,
+.character-library__extras-actions button:hover:not(:disabled),
+.character-library__extra-form button:hover:not(:disabled),
+.character-extra-stage__actions button:hover:not(:disabled),
 .character-designer-error button:hover {
   color: var(--text-main);
   background: rgba(var(--ink-rgb), 0.1);
@@ -687,6 +693,172 @@
 
 .character-library__empty span {
   font-size: 0.62rem;
+}
+
+/* 群演和主演同在角色库：主演下面一组「群演」。 */
+.character-library__group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--character-line);
+}
+
+.character-library__group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.character-library__group-head h3 {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  font-weight: 650;
+}
+
+.character-library__group-count {
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6rem;
+}
+
+.character-library__extras-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.character-library__extras-actions button,
+.character-library__extra-form button {
+  min-height: 1.85rem;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.62rem;
+}
+
+.character-library__extras-actions button:disabled,
+.character-library__extra-form button:disabled,
+.character-extra-stage__actions button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.character-library__extra-form {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.character-library__extra-form input,
+.character-library__extra-form textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 0.4rem 0.5rem;
+  color: var(--text-main);
+  background: rgba(var(--surface-rgb), 0.88);
+  border: 1px solid var(--character-line);
+  border-radius: 0.3rem;
+  font: inherit;
+  font-size: 0.66rem;
+  resize: vertical;
+}
+
+.character-library__extras-message,
+.character-extra-stage__message {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.6rem;
+}
+
+/* 选中群演：中间和右边两栏合成一块，放它的参考图和操作。 */
+.character-designer__workspace--extra .character-extra-stage {
+  grid-column: 2 / -1;
+}
+
+.character-extra-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  min-width: 0;
+  min-height: 0;
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.character-extra-stage__head h2 {
+  margin: 0.32rem 0 0.15rem;
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.character-extra-stage__head small {
+  color: var(--text-muted);
+  font-size: 0.64rem;
+}
+
+.character-extra-stage__body {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1.4fr) minmax(13rem, 1fr);
+  gap: 1rem;
+  min-height: 0;
+}
+
+.character-extra-stage__image {
+  display: grid;
+  min-height: 20rem;
+  margin: 0;
+  place-items: center;
+  overflow: hidden;
+  background: rgba(var(--ink-rgb), 0.05);
+  border: 1px solid var(--character-line);
+  border-radius: 0.45rem;
+}
+
+.character-extra-stage__image img {
+  width: 100%;
+  height: 100%;
+  max-height: 32rem;
+  object-fit: contain;
+}
+
+.character-extra-stage__placeholder {
+  display: grid;
+  place-items: center;
+  gap: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.character-extra-stage__info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  min-width: 0;
+}
+
+.character-extra-stage__description {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.74rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.character-extra-stage__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.character-extra-stage__actions .is-accent {
+  color: var(--accent);
+  background: var(--character-cyan-soft);
+  border-color: rgba(var(--accent-rgb), 0.24);
+}
+
+.character-extra-stage__actions .is-danger {
+  color: var(--danger);
 }
 
 .character-viewer {
@@ -1897,6 +2069,14 @@
 
   .character-designer__overview > :nth-child(3) {
     border-right: 0;
+  }
+
+  .character-designer__workspace--extra .character-extra-stage {
+    grid-column: auto;
+  }
+
+  .character-extra-stage__body {
+    grid-template-columns: 1fr;
   }
 
   .character-designer__workspace {

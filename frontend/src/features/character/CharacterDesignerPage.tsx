@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { apiRequest } from '../../api/client';
 import { ElementLibraryPage } from '../elements/ElementLibraryPage';
-import type { ElementKind } from '../elements/elementTypes';
+import { TAB_MEMBERS, tabOfKind, type ElementKind } from '../elements/elementTypes';
 import { assetGateReason, type AssetReadiness } from './assetReadiness';
 import { CharacterAssetTabs } from './CharacterAssetTabs';
 import { CharacterLooks } from './CharacterLooks';
@@ -18,6 +18,8 @@ import { CharacterFaceSculpt } from './CharacterFaceSculpt';
 import { characterAssetTabLabels } from './assetTabLabels';
 import { CharacterFiveViewViewer } from './CharacterFiveViewViewer';
 import { CharacterDetailDialog } from './CharacterDetailDialog';
+import { CharacterExtraStage, ExtrasLibraryTools } from './CharacterExtraStage';
+import { useProjectExtras } from './characterExtras';
 import { CharacterOverview, type CharacterOverviewDetail } from './CharacterOverview';
 import { identityDisplayViews } from './identityDisplay';
 import {
@@ -31,6 +33,11 @@ import { t } from '../../i18n';
 
 // 与 CharacterAssetTabs 的页签一一对应(演员的数目来自角色看板)。
 const nonActorAssetKinds = ['scene', 'prop', 'effect', 'product', 'extra', 'vehicle', 'set_dressing', 'stunt'] as const satisfies readonly ElementKind[];
+
+/** 群演和数字演员在同一页：选群演就落到数字演员页；并进别的页签的类型(车辆、商品 → 拍摄道具)落到那一页。 */
+function actorPageKind(kind: ElementKind): ElementKind {
+  return kind === 'extra' ? 'actor' : tabOfKind(kind);
+}
 
 /** 外面(如侧栏助手)要求打开某个角色的捏脸窗；nonce 变一次只开一次。 */
 export interface CharacterSculptRequest {
@@ -96,7 +103,9 @@ export function CharacterDesignerPage({
   onFocusCharacter?: (name: string | null) => void;
 }) {
   const [selectedId, setSelectedId] = useState('');
-  const [activeAssetKind, setActiveAssetKind] = useState<ElementKind>(initialAssetKind);
+  const [activeAssetKind, setActiveAssetKind] = useState<ElementKind>(actorPageKind(initialAssetKind));
+  // 角色库里选中的群演；为空时选中的是主演。
+  const [selectedExtraId, setSelectedExtraId] = useState('');
   const [assetCounts, setAssetCounts] = useState<Partial<Record<ElementKind, number>>>({});
   const assetCountGenerations = useRef<Partial<Record<ElementKind, number>>>({});
   const [projectDetail, setProjectDetail] = useState<[string, string] | null>(null);
@@ -120,6 +129,9 @@ export function CharacterDesignerPage({
   };
   const synchronizedTaskId = useRef('');
   const character = dashboard.characters.find(item => item.characterId === selectedId) || dashboard.characters[0];
+  const { extras, reload: reloadExtras } = useProjectExtras(taskId);
+  // 还没有主演时默认看第一位群演，角色库照样能用。
+  const selectedExtra = extras.find(item => item.id === selectedExtraId) || (character ? undefined : extras[0]);
   const appliedSculptNonce = useRef<number | null>(null);
   useEffect(() => {
     if (!sculptRequest || !taskId || appliedSculptNonce.current === sculptRequest.nonce) return;
@@ -134,10 +146,11 @@ export function CharacterDesignerPage({
     sculptDirty.current = false;
     setActiveAssetKind('actor');
     setSelectedId(match.characterId);
+    setSelectedExtraId('');
     setSculpting(match.name);
   }, [dashboard.characters, sculptRequest, sculpting, taskId]);
 
-  const focusName = sculpting || character?.name || null;
+  const focusName = sculpting || (selectedExtra ? null : character?.name) || null;
   const reportFocus = useRef(onFocusCharacter);
   useEffect(() => { reportFocus.current = onFocusCharacter; }, [onFocusCharacter]);
   useEffect(() => { reportFocus.current?.(focusName); }, [focusName]);
@@ -176,7 +189,8 @@ export function CharacterDesignerPage({
       kind,
       generation,
       response: await apiRequest<ElementCountResponse>(
-        `/api/elements?kind=${kind}&page=1&page_size=1${taskId ? `&task_id=${encodeURIComponent(taskId)}` : ''}`,
+        // 页签里并进来的类型(拍摄道具也列车辆、商品)一起数，和页里列出来的一致。
+        `/api/elements?kind=${kind}&page=1&page_size=1${TAB_MEMBERS[kind] ? `&include=${TAB_MEMBERS[kind]!.join(',')}` : ''}${taskId ? `&task_id=${encodeURIComponent(taskId)}` : ''}`,
       ),
     })));
 
@@ -285,10 +299,22 @@ export function CharacterDesignerPage({
     }
   };
   const selectAssetKind = (kind: ElementKind) => {
-    setActiveAssetKind(kind);
+    setActiveAssetKind(actorPageKind(kind));
     setAssetGenerationBusy(false);
     setProjectDetail(null);
     setOverviewDetail(null);
+  };
+
+  const rememberAssetCount = (kind: ElementKind, total: number) => {
+    assetCountGenerations.current[kind] = (assetCountGenerations.current[kind] || 0) + 1;
+    setAssetCounts(current => current[kind] === total ? current : { ...current, [kind]: total });
+  };
+
+  /** 群演增删、换图之后：重读清单，页签上的数目和资产门禁跟着更新。 */
+  const refreshExtras = async () => {
+    const list = await reloadExtras();
+    if (list) rememberAssetCount('extra', list.length);
+    void refreshAssetReadiness();
   };
 
   const replaceAllActors = () => {
@@ -331,13 +357,40 @@ export function CharacterDesignerPage({
   };
 
   // 角色库 · 主视图 · 档案三栏；选了一套表演妆造时，主视图换成这套定妆图。
+  const renderLibrary = () => (
+    <CharacterLibrary
+      characters={dashboard.characters}
+      selectedId={character?.characterId ?? ''}
+      onSelect={id => { setSelectedId(id); setSelectedExtraId(''); }}
+      extras={extras}
+      selectedExtraId={selectedExtra?.id ?? ''}
+      onSelectExtra={setSelectedExtraId}
+      extrasTools={(
+        <ExtrasLibraryTools
+          taskId={taskId}
+          onCreated={created => { setSelectedExtraId(created.id); void refreshExtras(); }}
+          onFilled={() => { void refreshExtras(); }}
+        />
+      )}
+    />
+  );
+
+  // 选中群演时：角色库 + 群演的参考图与操作(占中间和右边两栏)。
+  const renderExtraWorkspace = () => selectedExtra && (
+    <div className="character-designer__workspace character-designer__workspace--extra">
+      {renderLibrary()}
+      <CharacterExtraStage
+        key={selectedExtra.id}
+        extra={selectedExtra}
+        onChanged={() => { void refreshExtras(); }}
+        onDeleted={() => { setSelectedExtraId(''); void refreshExtras(); }}
+      />
+    </div>
+  );
+
   const renderWorkspace = (lookStage: ReactNode | null) => character && (
     <div className="character-designer__workspace">
-      <CharacterLibrary
-        characters={dashboard.characters}
-        selectedId={character.characterId}
-        onSelect={setSelectedId}
-      />
+      {renderLibrary()}
       {lookStage ?? (
         <CharacterFiveViewViewer
           key={character.characterId}
@@ -364,7 +417,7 @@ export function CharacterDesignerPage({
     >
       <CharacterAssetTabs
         activeKind={activeAssetKind}
-        counts={{ ...assetCounts, actor: dashboard.characters.length }}
+        counts={{ ...assetCounts, actor: dashboard.characters.length + (assetCounts.extra ?? 0) }}
         onSelect={selectAssetKind}
       />
 
@@ -497,7 +550,15 @@ export function CharacterDesignerPage({
             </CharacterDetailDialog>
           )}
 
-          {character ? (
+          {!character && (
+            <section className="character-designer__empty" role="status">
+              <UserRoundPlus size={42} aria-hidden="true" />
+              <h2>{t('等待角色设计资产')}</h2>
+              <p>{t('编剧阶段识别角色后，这里会生成角色库、设定集视图槽位与身份 DNA 档案。')}</p>
+              <button type="button" onClick={onRegenerate}><WandSparkles size={16} aria-hidden="true" /> {t('启动角色设计')}</button>
+            </section>
+          )}
+          {selectedExtra ? renderExtraWorkspace() : character && (
             <>
               {taskId ? (
                 // 表演妆造签在工作区上方：选一套，中间一栏就换成这套的定妆图。
@@ -528,13 +589,6 @@ export function CharacterDesignerPage({
                 </CharacterDetailDialog>
               )}
             </>
-          ) : (
-            <section className="character-designer__empty" role="status">
-              <UserRoundPlus size={42} aria-hidden="true" />
-              <h2>{t('等待角色设计资产')}</h2>
-              <p>{t('编剧阶段识别角色后，这里会生成角色库、设定集视图槽位与身份 DNA 档案。')}</p>
-              <button type="button" onClick={onRegenerate}><WandSparkles size={16} aria-hidden="true" /> {t('启动角色设计')}</button>
-            </section>
           )}
         </section>
       ) : (
@@ -556,10 +610,7 @@ export function CharacterDesignerPage({
               setAssetGenerationBusy(busy);
               if (!busy) void refreshAssetReadiness();
             }}
-            onCountChange={(kind, total) => {
-              assetCountGenerations.current[kind] = (assetCountGenerations.current[kind] || 0) + 1;
-              setAssetCounts(current => current[kind] === total ? current : { ...current, [kind]: total });
-            }}
+            onCountChange={rememberAssetCount}
           />
         </section>
       )}
