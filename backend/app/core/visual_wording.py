@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """What the camera sees is written as visible things, and ordinary motion is written slow and steady.
 
-Two writing rules for visual text (a shot's description, its image and video prompt, a storyboard
+Three writing rules for visual text (a shot's description, its image and video prompt, a storyboard
 row): no subjective adjectives (a model cannot draw "beautiful"; it can draw a raised mouth corner),
-and no fast or violent speed words for movement that is not a fight (fast motion is what breaks
-first). Fight shots follow their own rules, so the fast-motion check never fires on them.
+no fast or violent speed words for movement that is not a fight (fast motion is what breaks
+first), and no degree words for light (asked to "lift the shadows" a model greys the whole frame;
+asked for "strong contrast" it draws a hard cone with no fall-off). Fight shots follow their own
+rules, so the fast-motion check never fires on them.
 
 The word lists, the longer words a listed word may sit inside without counting, the replacement
 hints and the sentences live in ``app/data/prompt/visual_wording.json``. These are hints: callers
@@ -24,6 +26,7 @@ _DATA = "visual_wording"
 
 SUBJECTIVE_CODE = "subjective_wording"
 FAST_MOTION_CODE = "fast_motion_wording"
+LIGHT_CODE = "light_wording"
 
 
 @dataclass(frozen=True)
@@ -84,6 +87,11 @@ def fast_motion_hits(*texts: Any, fight: bool) -> list[str]:
     return _hits("fast_motion_words", texts)
 
 
+def light_hits(*texts: Any) -> list[str]:
+    """The degree words for light (暗部通透 / 阴影提亮 / 明暗对比强烈 …) written in ``texts``, in the table's order."""
+    return _hits("light_words", texts)
+
+
 def _hints(key: str, words: Sequence[str]) -> str:
     by_word = {str(entry["word"]): str(entry.get("hint") or "") for entry in _entries(key)}
     item = prompt_data.text(_DATA, "hint_item")
@@ -97,7 +105,7 @@ def _finding(code: str, prefix: str, words: Sequence[str]) -> VisualWordingFindi
 
 
 def findings(*texts: Any, fight: bool) -> list[VisualWordingFinding]:
-    """At most one subjective-word finding and one fast-motion finding (none for a fight) for one shot's visual text."""
+    """At most one finding of each kind for one shot's visual text: subjective words, fast motion (none for a fight), light."""
     found: list[VisualWordingFinding] = []
     subjective = subjective_hits(*texts)
     if subjective:
@@ -105,6 +113,9 @@ def findings(*texts: Any, fight: bool) -> list[VisualWordingFinding]:
     fast = fast_motion_hits(*texts, fight=fight)
     if fast:
         found.append(_finding(FAST_MOTION_CODE, "fast_motion", fast))
+    light = light_hits(*texts)
+    if light:
+        found.append(_finding(LIGHT_CODE, "light", light))
     return found
 
 
@@ -119,10 +130,10 @@ def fast_motion_examples() -> str:
 
 
 def codes() -> frozenset[str]:
-    return frozenset({SUBJECTIVE_CODE, FAST_MOTION_CODE})
+    return frozenset({SUBJECTIVE_CODE, FAST_MOTION_CODE, LIGHT_CODE})
 
 
 __all__ = [
-    "FAST_MOTION_CODE", "SUBJECTIVE_CODE", "VisualWordingFinding", "codes", "fast_motion_examples", "fast_motion_hits",
-    "findings", "subjective_examples", "subjective_hits",
+    "FAST_MOTION_CODE", "LIGHT_CODE", "SUBJECTIVE_CODE", "VisualWordingFinding", "codes", "fast_motion_examples",
+    "fast_motion_hits", "findings", "light_hits", "subjective_examples", "subjective_hits",
 ]

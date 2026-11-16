@@ -180,7 +180,8 @@ class RoutingTest(unittest.TestCase):
         carried = voice_reference.carry(plan, [("沈砚", SAMPLE)], model="seedance2.0")
         self.assertEqual((carried.mode, carried.reference_audios, carried.reference_images), ("multimodal", [SAMPLE], ["https://x/a.png"]))
         line = renumber_audio_mentions(self._anchor().lock_line(), [("沈砚", SAMPLE)], carried)
-        self.assertIn("音色参考：参考音频1（只取音色", line)
+        self.assertIn("沈砚：音色照参考音频1（只取音色", line)
+        self.assertNotIn("男声", line, "a carried sample is pointed at, not described beside")
         self.assertNotIn("〈", line)
         self.assertEqual(voice_reference.numbers(carried, [("沈砚", SAMPLE)]), {"沈砚": 1})
         self.assertTrue(voice_reference.voice_only(carried, [("沈砚", SAMPLE)]))
@@ -295,7 +296,7 @@ class StageFiveTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["ref_audios"], [SAMPLE])
         self.assertIn("沈砚", calls[0]["prompt"])
-        self.assertIn("音色参考：参考音频1（只取音色，语速与情绪按本镜表达）；全片音色", calls[0]["prompt"])
+        self.assertIn("音色照参考音频1（只取音色，语速与情绪按本镜表达）；全片音色", calls[0]["prompt"])
         self.assertNotIn("〈音频", calls[0]["prompt"])
         decision = clips[0]["video_route_decision"]
         self.assertEqual((decision["mode"], decision["reference_audios"]), ("multimodal", [SAMPLE]))
@@ -307,7 +308,7 @@ class StageFiveTest(unittest.TestCase):
         task["assets"]["4"][0].pop("contract_fingerprint", None)
         calls, _ = self._run(task)
         self.assertEqual(calls[0]["ref_audios"], [OWN_AUDIO, SAMPLE])
-        self.assertIn("音色参考：参考音频2", calls[0]["prompt"])
+        self.assertIn("音色照参考音频2", calls[0]["prompt"])
         self.assertNotIn("参考音频1（只取音色", calls[0]["prompt"])
 
     def test_a_first_last_frame_shot_drops_the_audio_and_the_mention(self):
@@ -329,7 +330,7 @@ class StageFiveTest(unittest.TestCase):
     def test_an_h3_shot_carries_the_voice_in_the_chinese_prompt(self):
         calls, clips = self._run(self._task(model="MiniMax-H3"))
         self.assertEqual(calls[0]["ref_audios"], [SAMPLE])
-        self.assertIn("音色参考：参考音频1", calls[0]["prompt"])
+        self.assertIn("音色照参考音频1", calls[0]["prompt"])
         self.assertEqual(clips[0]["video_route_decision"]["mode"], "multimodal")
 
     def test_an_h3_six_part_prompt_names_it_audio_one(self):

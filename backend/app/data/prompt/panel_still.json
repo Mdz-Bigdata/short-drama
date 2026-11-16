@@ -20,7 +20,8 @@
   "prop_master": {
     "label": "道具（形制照母版）",
     "row": "「{name}」照{pictures}（道具母版）画，改位置不改形制",
-    "picture": "图{number}"
+    "picture": "图{number}",
+    "size_only": "「{name}」按实物大小画"
   },
   "technique": {
     "label": "技法基准",

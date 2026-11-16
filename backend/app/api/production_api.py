@@ -6,7 +6,9 @@ import json
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
-from app.api.auth_api import get_current_user
+from app.api.auth_api import get_current_user, require_permission
+from app.platform.permissions import MODEL_CONFIG_MANAGE
+from app.service import harness_evolution
 from app.schema.production import (
     CreativePresetCompileRequest,
     DialogueRequest,
@@ -100,6 +102,26 @@ def capabilities():
 @router.get("/capabilities/report")
 def capability_report():
     return service.implementation_report()
+
+
+@router.get("/harness-evolution")
+def harness_evolution_report(_: dict = Depends(require_permission(MODEL_CONFIG_MANAGE))):
+    """What the stage agents have learned from their own executions: per stage and kind of production,
+    the lessons kept, which of them reach the stage prompts, and the latest studies. The library is
+    shared by every project, so only whoever manages the models may read it."""
+    return harness_evolution.report()
+
+
+@router.post("/harness-evolution/retire")
+def harness_evolution_retire(
+    stage: int = Query(ge=1, le=8), domain: str = Query(min_length=1, max_length=80), task_id: str = Query(min_length=1, max_length=80),
+    _: dict = Depends(require_permission(MODEL_CONFIG_MANAGE)),
+):
+    """Stop one task's adopted overlay from reaching later projects of its kind (the entry stays on record);
+    the one adopted before it, if any, is current again."""
+    if not harness_evolution.retire(stage, domain, task_id):
+        raise HTTPException(status_code=404, detail=_text_of("harness_evolution_retire.detail"))
+    return harness_evolution.report()
 
 
 @router.get("/agent-council/capabilities")

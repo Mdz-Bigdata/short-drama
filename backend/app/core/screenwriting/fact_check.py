@@ -73,12 +73,17 @@ def build_prompt(facts: str, entries: Sequence[Mapping[str, Any]]) -> str:
 
 def check(
     caller: LLMCaller, *, facts: str, entries: Sequence[Mapping[str, Any]], temperature: float | None = None,
+    max_tokens: int | None = None,
 ) -> list[Contradiction]:
-    """问一次；答不上来按没有矛盾（校对是加分项，不能让规划失败）。"""
+    """问一次；答不上来按没有矛盾（校对是加分项，不能让规划失败）。
+
+    ``max_tokens`` 是这次调用的输出上限。先推理再作答的模型，推理也算在输出里：上限给小了，推理把它用完、
+    一个字都答不出来，而「答不上来」又按没有矛盾算，校对就悄悄落空（2026-11-16 实测：3000 的上限下返回 0 个字）。
+    所以引擎传自己的上限，表里的数只是兜底。"""
     try:
         result = call_structured(
             caller, system_prompt=prompt_data.text(_DATA, "system"), user_prompt=build_prompt(facts, entries), schema=FactCheckDraft,
-            max_tokens=prompt_data.number(_DATA, "max_tokens"), attempts=1, label=LABEL, temperature=temperature,
+            max_tokens=max(int(max_tokens or 0), prompt_data.number(_DATA, "max_tokens")), attempts=1, label=LABEL, temperature=temperature,
         )
     except StructuredOutputError as error:
         logger.warning("[Screenwriting] 分集大纲事实校对没有可用答案，按无矛盾处理：%s", "；".join(error.reasons)[:200])

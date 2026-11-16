@@ -37,6 +37,10 @@ _SIZE_AIM: dict[str, float] = dict(_SIZES["aim"])
 _TIGHT_SIZES = frozenset(_SIZES["tight"])
 _WIDE_SIZES = frozenset(_SIZES["wide"])
 _OVER_SHOULDER_WORDS = tuple(str(word) for word in _ANGLES["over_shoulder_words"])
+# Lenses a crowd array places (behind it, inside it, facing it); checked in order, only when one is on the stage.
+_CROWD_LENSES: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
+    (str(kind), tuple(str(word).lower() for word in words)) for kind, words in _ANGLES["crowd_lenses"]
+)
 _DEFAULT_SIZE = str(_SIZES["default"])
 _DEFAULT_ANGLE = str(_ANGLES["default"])
 _HIGH_ANGLE = str(_ANGLES["high"])
@@ -46,6 +50,25 @@ _PITCH_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
 )
 _PITCH_DEG = {"top": 90.0, "ground": 0.0, "high": 28.0, "low": -22.0}
 _OPERATOR_HEIGHT_M = 1.45
+_STANDING_M = 1.7
+# A lens behind a crowd stands this far past its last row, high enough to see whoever stands at the front over the
+# seated heads (the stage floor is not raised, so the lens is); looking down from there it rises no higher than a
+# hall allows. In the crowd the lens is an operator on their feet among the seats.
+_BEHIND_CROWD_M = 1.5
+_BEHIND_CROWD_HEIGHT_M = 2.0
+_CROWD_HIGH_MAX_M = 6.0
+_IN_CROWD_HEIGHT_M = 1.6
+# Either lens rises a step at a time, this far at most, until no head in the rows ahead covers its subject.
+_CROWD_RISE_STEP_M = 0.2
+_CROWD_RISE_MAX_M = 1.4
+# Among the seats the lens looks for its gap on a grid this fine, in the back half of one side of the hall: the spot
+# whose line to the stage clears every head within reach ahead by about this share of half the frame's width (as an
+# angle), so the heads flank the subject: nearer the middle they would cover it, farther out they leave the frame. Behind the stage it stands this far back of a lone speaker, who then fills about half
+# the height of a wide frame and leaves the hall around them.
+_CROWD_GAP_GRID_M = 0.1
+_CROWD_GAP_REACH_M = 6.0
+_CROWD_GAP_FRAME_SHARE = 0.6
+_BEHIND_STAGE_M = 2.6
 _SINGLE_OFF_AXIS_DEG = 32.0
 _SHOULDER_BACK_M = 1.1
 _SHOULDER_SIDE_M = 0.34
@@ -159,6 +182,19 @@ def wants_over_shoulder(spec: ShotSpec) -> bool:
     return any(word in text for word in _OVER_SHOULDER_WORDS)
 
 
+def crowd_lens(spec: ShotSpec, actors: Sequence[StageActor]) -> str:
+    """Which crowd lens the shot's angle or description asks for; none unless a crowd array is on the stage."""
+    if not any(actor.crowd_id for actor in actors):
+        return ""
+    text = f"{spec.angle} {spec.desc}".lower()
+    return next((kind for kind, words in _CROWD_LENSES if any(word in text for word in words)), "")
+
+
+def crowd_lens_names() -> list[str]:
+    """What each crowd lens is called when the storyboard writer is told it may ask for one."""
+    return [words[0] for _kind, words in _CROWD_LENSES if words]
+
+
 def move_kind(motion: str) -> str:
     """Which way the camera travels for a 运镜 note; the wording table is ``stage_camera_moves.json``.
 
@@ -240,6 +276,79 @@ def _place(
         round(max(0.2, height), 3),
         round(target[2] + direction[1] * ground_reach, 3),
     )
+
+
+def _crowd_camera(
+    kind: str, spec: ShotSpec, size: str, subjects: Sequence[StageActor], actors: Sequence[StageActor],
+    stage_center: geo.Vec2, aspect: float, aspect_ratio: str,
+) -> tuple[str, geo.Vec3, geo.Vec3, float]:
+    """``(function, position, target, lens)`` of a lens placed by where the crowd arrays sit.
+
+    The crowd is read as a hall: ``away`` runs from what is being watched (the subjects, else the stage
+    centre) out through the middle of the crowd, which for two blocks either side of an aisle is the
+    aisle itself. From behind the last row the lens looks down that line at the stage, just over the
+    heads or raised when the angle also asks to look down; in the crowd it stands in the gap between
+    four neighbours, the rows ahead filling the bottom of the frame; behind the stage it looks back
+    over whoever stands there at the front rows.
+    """
+    members = [(actor.position[0], actor.position[1]) for actor in actors if actor.crowd_id]
+    focus = geo.centroid([(actor.position[0], actor.position[1]) for actor in subjects]) if subjects else stage_center
+    away = geo.unit(geo.sub(geo.centroid(members), focus), (0.0, 1.0))
+    across = geo.right_of(away)
+    depths = [geo.dot(geo.sub(member, focus), away) for member in members]
+    tallest = max((posture_height(actor) for actor in subjects), default=_STANDING_M)
+    group = len(subjects) != 1
+    lens = _lens_for(size, aspect, group)
+    aim = (round(focus[0], 3), _aim_height(size, tallest), round(focus[1], 3))
+
+    def over_the_heads(ground: geo.Vec2, height: float) -> geo.Vec3:
+        """The lens on ``ground``, raised from ``height`` until the rows ahead leave every subject in view."""
+        fov = geo.vertical_fov(lens, aspect)
+        steps = int(_CROWD_RISE_MAX_M / _CROWD_RISE_STEP_M) + 1 if subjects else 1
+        lifted = [(round(ground[0], 3), round(height + step * _CROWD_RISE_STEP_M, 3), round(ground[1], 3)) for step in range(steps)]
+        return next((spot for spot in lifted if not _hides_subject(spot, aim, fov, aspect_ratio, subjects, actors)), lifted[0])
+
+    if kind == "behind_audience":
+        ground = geo.add(focus, geo.scale(away, max(depths) + _BEHIND_CROWD_M))
+        mode, pitch = _pitch(spec.angle)
+        height = _BEHIND_CROWD_HEIGHT_M
+        if mode in {"high", "top"}:
+            height = min(_CROWD_HIGH_MAX_M, aim[1] + geo.distance(ground, focus) * math.tan(math.radians(_PITCH_DEG["high"])))
+        return "establish", over_the_heads(ground, height), aim, lens
+    if kind == "through_crowd":
+        side = [member for member in members if geo.dot(geo.sub(member, focus), across) > 0] or members
+        deep = sorted(geo.dot(geo.sub(member, focus), away) for member in side)
+        wide = sorted(geo.dot(geo.sub(member, focus), across) for member in side)
+
+        def gap(spot: geo.Vec2) -> float:
+            """How far off the line from ``spot`` to the stage the nearest head ahead sits, as the tangent of the angle."""
+            sight = geo.unit(geo.sub(focus, spot), geo.scale(away, -1.0))
+            ahead = [
+                (geo.dot(offset, sight), geo.dot(offset, geo.right_of(sight)))
+                for offset in (geo.sub(member, spot) for member in members)
+            ]
+            return min((abs(off) / along for along, off in ahead if 0.3 < along < _CROWD_GAP_REACH_M), default=1.0)
+
+        def steps(low: float, high: float) -> list[float]:
+            return [low + index * _CROWD_GAP_GRID_M for index in range(int(max(0.0, high - low) / _CROWD_GAP_GRID_M) + 1)]
+
+        # From the middle row back, between the innermost and the outermost seat; never onto a seat.
+        spots = [
+            geo.add(focus, geo.add(geo.scale(away, depth), geo.scale(across, lateral)))
+            for depth in steps(deep[len(deep) // 2] - 0.6, deep[-1] + 0.6) for lateral in steps(wide[0], wide[-1])
+        ]
+        roomy = [spot for spot in spots if min(geo.distance(spot, member) for member in members) >= _CLEARANCE_M]
+        flank = _CROWD_GAP_FRAME_SHARE * math.tan(math.radians(geo.horizontal_fov(geo.vertical_fov(lens, aspect), aspect)) / 2)
+        ground = min(roomy or spots, key=lambda spot: abs(gap(spot) - flank))
+        return ("single" if len(subjects) == 1 else "relation"), over_the_heads(ground, _IN_CROWD_HEIGHT_M), aim, lens
+    # Behind the stage: far enough back to hold everyone standing there, a shoulder's width to one side of a lone speaker.
+    spread = max((abs(geo.dot(geo.sub((actor.position[0], actor.position[1]), focus), across)) for actor in subjects), default=0.0)
+    wide = min(lens, 35.0)
+    back = max(_BEHIND_STAGE_M, (spread + 0.6) / math.tan(math.radians(geo.horizontal_fov(geo.vertical_fov(wide, aspect), aspect)) / 2))
+    ground = geo.add(geo.sub(focus, geo.scale(away, back)), geo.scale(across, _SHOULDER_SIDE_M if len(subjects) == 1 else 0.0))
+    front = geo.add(focus, geo.scale(away, min(depths)))
+    target = (round(front[0], 3), round(tallest * 0.6, 3), round(front[1], 3))
+    return "establish", (round(ground[0], 3), round(tallest * _EYE_LINE + 0.1, 3), round(ground[1], 3)), target, wide
 
 
 def keep_side(position: geo.Vec3, axis: StageAxis, target: Sequence[float] | None = None) -> geo.Vec3:
@@ -463,7 +572,12 @@ def solve_camera(
     # The set piece a shot of nobody is about is the one its description names first.
     named = [] if subjects else [item for item in landmarks if item.name and item.name in spec.desc]
     insert = min(named, key=lambda item: spec.desc.index(item.name)) if named else None
-    if insert is not None:
+    hall = crowd_lens(spec, actors)
+    if hall:
+        # A lens the crowd itself places: it stands where the hall puts it, on whichever side of the axis that is.
+        function, position, target, lens = _crowd_camera(hall, spec, size, subjects, actors, stage_center, aspect, aspect_ratio)
+        fov = geo.vertical_fov(lens, aspect)
+    elif insert is not None:
         # A shot of nobody that names a set piece is an insert of that piece, not a view of the room.
         function = "detail"
         # An insert with no angle written looks down at the piece; the camera records that, so solving it again gives the same lens.
@@ -645,6 +759,7 @@ def _label(shot_id: int, function: str, names: Sequence[str], size: str) -> str:
 
 
 __all__ = [
-    "MIN_ANGLE_CHANGE_DEG", "SIZE_RANK", "ShotSpec", "bearing_change_deg", "canonical_size", "fit_move", "keep_side",
+    "MIN_ANGLE_CHANGE_DEG", "SIZE_RANK", "ShotSpec", "bearing_change_deg", "canonical_size", "crowd_lens", "crowd_lens_names",
+    "fit_move", "keep_side",
     "lens_bearing", "move_kind", "named_size", "repeats_the_angle", "size_rank", "solve_camera", "wants_over_shoulder",
 ]

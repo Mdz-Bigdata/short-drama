@@ -21,6 +21,7 @@ from typing import Annotated, Any, Literal, get_args
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, create_model, model_validator
 
 from app.core import acting, fight_design, literary
+from app.core.screenwriting import story_state
 
 _LITERARY_FIELDS = dict(literary.OVERVIEW_FIELDS)
 
@@ -156,6 +157,22 @@ class Overview(BaseModel):
     ending_image: str = Field(default="", description=_LITERARY_FIELDS["ending_image"])
 
 
+class AdaptationBrief(BaseModel):
+    """How a novel is turned into a drama, settled once before the ledger: what the series sells,
+    whose eyes it is seen through, where it opens, what may not be cut and what may be skipped over."""
+
+    model_config = LENIENT
+
+    selling_point: Annotated[str, BeforeValidator(_none_to_text)] = Field(default="", description="一句话核心卖点")
+    protagonist: Annotated[str, BeforeValidator(_none_to_text)] = Field(default="", description="主视角人物，角色表里的名字，只填一个")
+    situation: Annotated[str, BeforeValidator(_none_to_text)] = Field(default="", description="开篇时主角的处境")
+    main_line: Annotated[str, BeforeValidator(_none_to_text)] = Field(default="", description="贯穿全剧的主线目标，有对象、有阶段")
+    opening: Annotated[str, BeforeValidator(_none_to_text)] = Field(default="", description="原文里最早一场可以直接开场的戏")
+    keep: Annotated[list[str], BeforeValidator(_none_to_list)] = Field(default_factory=list, description="不能删的信息，一条一句")
+    compress: Annotated[list[str], BeforeValidator(_none_to_list)] = Field(default_factory=list, description="可以带过的内容，一条一句")
+    core: Annotated[str, BeforeValidator(_none_to_text)] = Field(default="", description="改编时不能换掉的核心设定与情绪")
+
+
 class CharacterAsset(BaseModel):
     model_config = LENIENT
 
@@ -254,6 +271,8 @@ class EpisodeOutlineDraft(BaseModel):
         min_length=1, description="本集故事节点，按顺序；每条以「【情绪点类型】」开头（钩子/冲突/反转/爽点/暖点/泪点/笑点/揭秘/悬念/抒情/信息交代）",
     )
     next_episode_teaser: str | None = Field(default=None, description="下集预告语；末集后续未知可为 null")
+    # 跨集场记（见 app/core/screenwriting/story_state.py）：这一集演完变了什么，后面的集照它接、写完照它对。
+    state_changes: Annotated[list[str], BeforeValidator(_none_to_list)] = Field(default_factory=list, description=story_state.field())
 
 
 class AnchoredEpisodeDraft(EpisodeOutlineDraft):
@@ -284,6 +303,7 @@ class LedgerEntry(BaseModel):
     hook: str = ""
     story_beats: list[str] = Field(default_factory=list)
     next_episode_teaser: str | None = None
+    state_changes: list[str] = Field(default_factory=list, description="这一集演完之后变了的事（跨集场记），每条以「【类型】」开头")
     source_range: dict[str, int] | None = Field(
         default=None, description="{start, end} 在归一化源文中的字符偏移；无源文时为 null"
     )
@@ -557,6 +577,7 @@ def build_script_plan_model(supported_durations: list[int]) -> type[ScriptPlan]:
 
 
 __all__ = [
+    "AdaptationBrief",
     "AnchoredEpisodeDraft",
     "AnchoredPlanDraft",
     "AssetInventory",

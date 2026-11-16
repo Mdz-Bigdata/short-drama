@@ -45,7 +45,8 @@ REFERENCE_CAMERA_LABEL = _text("reference_camera_label")
 # Enough for a whole street; the rest of the stage's capacity stays for what a person adds by hand.
 MAX_BLOCKOUT_PIECES = 200
 MAX_ARRAY_COUNT = 40
-BLOCKOUT_MAX_TOKENS = 8000
+# 和 director_ai 的上限同理：给推理模型留够思考预算，免得正文没写就被截断(按实际输出计费)。
+BLOCKOUT_MAX_TOKENS = 32000
 _MAX_HINT = 300
 MAX_DESCRIPTION = 2000
 _HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")

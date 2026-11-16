@@ -1584,7 +1584,8 @@ export default function App() {
       contentLanguage: newProjectContentLanguage,
       ...(newProjectCreationMode === 'ad' ? { adBrief: newProjectAdBrief } : {}),
       poetrySources: config.poetrySources ?? [],
-      episodeCount: clampEpisodeCount(newProjectEpisodes, clientConfig.episodeCount), // 一次性生成的剧本集数 (视频按集逐集制作)
+      // 一次性生成的剧本集数 (视频按集逐集制作)；电影短片只有一集。
+      episodeCount: newProjectCreationMode === 'film' ? 1 : clampEpisodeCount(newProjectEpisodes, clientConfig.episodeCount),
       oneClick: newProjectOneClick // 由新建弹窗的「成片方式」选择决定：一键成片 / 分步引导
     };
 
@@ -2533,7 +2534,9 @@ export default function App() {
                   <div>
                     <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>{tr('剧本集数 (一次生成，视频逐集制作)')}</label>
                     <select
-                      value={newProjectEpisodesCustom ? 'custom' : String(newProjectEpisodes)}
+                      // 电影短片只有一集（后端也固定为 1）：集数不让选。
+                      disabled={newProjectCreationMode === 'film'}
+                      value={newProjectCreationMode === 'film' ? 'film' : newProjectEpisodesCustom ? 'custom' : String(newProjectEpisodes)}
                       onChange={e => {
                         if (e.target.value === 'custom') {
                           setNewProjectEpisodesCustom(true); // 切到手动填写，保留当前集数作为初始值
@@ -2550,8 +2553,9 @@ export default function App() {
                           <option key={n} value={n}>{tr('{0} 集', [n])}</option>
                         ))}
                       <option value="custom">{tr('✏️ 手动填写集数…')}</option>
+                      {newProjectCreationMode === 'film' && <option value="film">{tr('电影短片只有 1 集')}</option>}
                     </select>
-                    {newProjectEpisodesCustom && (
+                    {newProjectEpisodesCustom && newProjectCreationMode !== 'film' && (
                       <input
                         type="number"
                         min={clientConfig.episodeCount.min}

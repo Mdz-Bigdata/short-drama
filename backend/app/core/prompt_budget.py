@@ -31,10 +31,12 @@ UNLIMITED_MODELS: tuple[str, ...] = prompt_data.words(_DATA, "unlimited")
 # A model that makes its own sound reads the voices, lip sync and sound layers from these sections
 # (prompt_distiller keeps them out of condensing and out of the measured body for such a model).
 UNCUT_FOR_NATIVE_AUDIO: frozenset[str] = frozenset(prompt_data.words(_DATA, "uncut_for_native_audio"))
+# 防穿模的接触与递接两节(手怎么握、人怎么坐进车里、东西从哪条路递过去)：原样保留，不裁、不交给精炼，也不和画面抢字数。
+UNCUT_PHYSICS: frozenset[str] = frozenset(prompt_data.words(_DATA, "uncut_physics"))
 
-# Optional sections, first to go → last to go. 特效最后才裁：修仙、武侠镜头里特效就是这一镜要拍的东西，
-# 裁掉它模型只拿到名字(或什么都没有)；没有特效的镜头这一节本来就是空的，不占预算。
-CUT_ORDER: tuple[str, ...] = ("sound", "environment", "light_numbers", "colour", "contact", "handoff", "dialogue_notes", "motive", "effects")
+# Optional sections, first to go → last to go. 特效不裁：修仙、武侠镜头里特效就是这一镜要拍的东西，
+# 裁掉它模型只拿到名字(或什么都没有)；接触与递接(UNCUT_PHYSICS)也不裁，裁了就穿模。
+CUT_ORDER: tuple[str, ...] = ("sound", "environment", "light_numbers", "colour", "dialogue_notes", "motive")
 NEVER_CUT: frozenset[str] = frozenset({"style_lock", "locks", "anchors", "subject", "action", "camera", "dialogue", "rules"})
 # Layers restated verbatim on every prompt: they do not count toward the body budget, the
 # way lock tags do not count toward a picture description's length limit.
@@ -44,6 +46,7 @@ FIXED_SECTIONS: frozenset[str] = frozenset({
     "closing", "rules", "negatives",
     # 骨架的固定句(段名、锚型定义、对白语言、表演锁、回合锁、禁令与结尾三段)同样每条重申。
     *clip_skeleton.SECTIONS,
+    *UNCUT_PHYSICS,
 })
 _NUMBER_NOTE = re.compile(r"[（(][^（）()]*?(?:\d+K|\d+:\d+|\d+\s*mm|ISO\s*\d+|\d+\s*stop)[^（）()]*?[）)]")
 
@@ -231,6 +234,6 @@ def compress(
 
 
 __all__ = [
-    "CUT_ORDER", "DEFAULT_BUDGET", "clip_budget", "fit_hard_limit", "hard_limit", "FIXED_SECTIONS", "MODEL_PROMPT_BUDGETS", "NEVER_CUT", "UNCUT_FOR_NATIVE_AUDIO",
+    "CUT_ORDER", "DEFAULT_BUDGET", "clip_budget", "fit_hard_limit", "hard_limit", "FIXED_SECTIONS", "MODEL_PROMPT_BUDGETS", "NEVER_CUT", "UNCUT_FOR_NATIVE_AUDIO", "UNCUT_PHYSICS",
     "PressureReport", "compress", "pressure", "prompt_budget", "prompt_length", "tier_for",
 ]

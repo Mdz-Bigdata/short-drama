@@ -397,7 +397,11 @@ def compile_shot_prompt(
         "environment": _says("environment", text=shot.environment.strip()) if shot.environment.strip() else "",
         "colour": "\n".join(line.strip() for line in shot.palette_lines if str(line).strip()),
         "effects": _says("effects", text=_join(shot.effects)) if _join(shot.effects) else "",
-        "contact": contact_line(shot.subject_action, [*shot.props, *shot.prop_refs]),
+        "contact": "".join(filter(None, (
+            contact_line(shot.subject_action, [*shot.props, *shot.prop_refs]),
+            # 坐进车里、坐上椅子、靠住柱子：身体和物件的接触，道具、车辆、商品和固定陈设都算。
+            body_contact_line(shot.subject_action, [*shot.props, *shot.prop_refs, *shot.fixed_items], shot.characters),
+        ))),
         "handoff": handoff_line(
             shot.subject_action, shot.characters, props=[*shot.props, *shot.prop_refs],
             setting=f"{shot.scene} {shot.blocking}",
@@ -724,6 +728,35 @@ def contact_line(action: str, props: Sequence[str]) -> str:
     else:
         how = _says("contact_grip", prop=prop)
     return _says("contact", how=how)
+
+
+_BODY_CONTACT = prompt_data.value(_DATA, "body_contact")
+_BODY_CLAUSE = re.compile(_pattern("lead_clause_split"))
+
+
+def body_contact_line(action: str, objects: Sequence[str], characters: Sequence[str] = ()) -> str:
+    """人坐进、坐上、骑上、靠住、躺上一件物件时，身体和它怎么接触：不穿进车壁、不陷进座面、不悬空。
+
+    物件是本镜的道具、车辆、商品和固定陈设；动作里同一分句既有这类动词又点到物件名才写。
+    一个分句只认一种(按 order 的先后)，整句最多 max_clauses 条；分句里点到名的人写名字，没点到写「人」。
+    """
+    names = sorted({str(item).strip() for item in objects if str(item).strip()}, key=len, reverse=True)
+    if not names:
+        return ""
+    verbs = _BODY_CONTACT["verbs"]
+    found: list[str] = []
+    for clause in _BODY_CLAUSE.split(str(action or "")):
+        item = next((name for name in names if name in clause), "")
+        how = next((kind for kind in _BODY_CONTACT["order"] if any(verb in clause for verb in verbs[kind])), "") if item else ""
+        if how:
+            who = next((str(name).strip() for name in characters if str(name).strip() and str(name).strip() in clause), _word("body_someone"))
+            found.append(_says(
+                "body_inside" if how == "inside" else "body_ride" if how == "ride" else "body_lie" if how == "lie"
+                else "body_lean" if how == "lean" else "body_seat",
+                item=item, who=who,
+            ))
+    found = list(dict.fromkeys(found))[: int(_BODY_CONTACT["max_clauses"])]
+    return _says("body_contact", how=_CLAUSE_SEP.join(found)) if found else ""
 
 
 # 人物之间递交物件的动作：模型最容易让手或物件穿过柜台、玻璃和门。

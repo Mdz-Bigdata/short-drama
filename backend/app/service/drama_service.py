@@ -23,11 +23,13 @@ from app import settings
 from app.repository.task_repo import StaleTaskWriteError, TaskRepository
 from app.core.face_card import state_face_fragments
 from app.core import acting, character_block, face_sculpt
-from app.core import clip_fixes, clip_route, delivery_check, dialogue_polish
+from app.core import blackout, clip_fixes, clip_route, delivery_check, dialogue_polish
 from app.service.control_table import _desk_still as applied_desk_still, control_table
-from app.core import rights_ledger, shot_ledger, spend_limits, technique_look, voice_delivery, wuxia_vfx
+from app.core import light_setups, rights_ledger, shot_ledger, spend_limits, technique_look, voice_delivery, wuxia_vfx
 from app.core import fight_exchange, fight_safety, fight_state, weapon_moves
 from app.core import film_review
+from app.core import series_rhythm
+from app.core import scene_seconds
 from app.core import tight_prompt
 from app.core import group_blocking, post_production
 from app.core import xianxia_lore
@@ -98,7 +100,9 @@ from app.core.workflow_guide import (
 )
 from app.core.storyboard_prompt_detail import compile_storyboard_prompt_detail, storable_prompt_detail
 from app.core.asset_mentions import resolve_mentions
+from app.core.reference_limits import MAX_REFERENCE_IMAGES
 from app.core.storyboard_scene_context import (
+    OBJECT_KINDS,
     cast_aliases,
     compile_scene_context,
     costume_wearers,
@@ -110,6 +114,7 @@ from app.core.storyboard_scene_context import (
     merge_video_references,
     name_titles,
     panel_context,
+    unpictured_lines,
     video_reference_entries,
 )
 from app.core.camera_recipes import compose_recipe, recipe_catalog
@@ -208,6 +213,7 @@ from app.schema.screenwriting import (
 )
 from app.core.screenwriting.editing import apply_plan_operations
 from app.core import bgm_library, creation_modes, edit_timeline, embedded_agent, generation_queue, style_analysis
+from app.service import harness_evolution
 from app.core.spatial_stage import blockout as stage_blockout
 from app.export import jianying
 from app.core.screenwriting import ledger_ops, review
@@ -1590,6 +1596,7 @@ class DramaService:
             transition_plans=plan["transition_plans"], trims=plan["trims"], bgm_volume=plan["bgm_volume"],
             sound_joins=plan["sound_joins"], sound_report=sound_report,
             bgm_start=plan.get("bgm_start", 0.0), fade_edges=plan.get("fade_edges", False),
+            blackouts=plan.get("blackouts"),
         )
         if not composed:
             raise ValueError(_post_text_of("render_timeline.text.3"))
@@ -2250,7 +2257,8 @@ class DramaService:
                 "ad_brief": req.ad_brief.model_dump() if req.ad_brief else {},
                 poetry_library.CONFIG_KEY: list(req.poetry_sources or []),
                 "one_click": req.one_click,
-                "episode_count": _bounded_episode_count(getattr(req, "episode_count", None)),
+                # 电影短片只有一集，不管表单里填了几集。
+                "episode_count": creation_modes.episode_count_for(req.creation_mode, _bounded_episode_count(getattr(req, "episode_count", None))),
                 "guidance_instruction": "",
                 "script_content": req.script_content,
                 "script_name": req.script_name
@@ -2605,12 +2613,20 @@ class DramaService:
             if video_url not in candidates:
                 raise LookupError("所选版本不在该镜头的候选列表中")
             chosen = video_url
-            if clip.get("voice_path"):
-                chosen = media_compositor.attach_audio_to_clip(
-                    video_url, clip["voice_path"], bgm=False, tag=f"shotav_{task_id[:8]}_s{episode_cycle.shot_uid(clip)}_pick",
-                )
-            elif uses_native_soundtrack(task.get("config") or {}):
-                chosen = media_compositor.keep_clip(video_url, tag=f"shotav_{task_id[:8]}_s{episode_cycle.shot_uid(clip)}_pick")
+            tag = f"shotav_{task_id[:8]}_s{episode_cycle.shot_uid(clip)}_pick"
+            native_project = uses_native_soundtrack(task.get("config") or {})
+            kept = media_compositor.keep_clip(video_url, tag=tag) if native_project else None
+            if kept and clip.get("voice_path") and media_compositor.clip_has_sound(kept) is True:
+                # 原声优先：这一版自己带着声音（口型是它的），不再把先前那条配音盖上去。
+                chosen = kept
+                clip["native_audio"] = True
+                clip.pop("voice_path", None)
+            elif clip.get("voice_path"):
+                chosen = media_compositor.attach_audio_to_clip(video_url, clip["voice_path"], bgm=False, tag=tag)
+            elif native_project:
+                chosen = kept
+                if clip.get("native_audio") is False and media_compositor.clip_has_sound(kept) is True:
+                    clip["native_audio"] = True  # 先前那版没出声被记成无声，这一版有
             clip["video_url"] = chosen
             clip["selected_candidate"] = video_url
             return task
@@ -2821,9 +2837,13 @@ class DramaService:
                 if not kept:
                     probe = getattr(self.gateway, "last_video_failure", None)
                     raise RuntimeError(str(probe() if callable(probe) else "") or "视频模型没有返回片子")
+                sound: Dict[str, Any] = {}
+                if uses_native_soundtrack(config) and media_compositor.clip_has_sound(kept) is True:
+                    # 原声优先：修补回来的片子自己带声音，就用它的；这一镜先前的配音不再盖上去。
+                    sound = {"native_audio": True, "voice_path": None}
                 record(
                     {**started, "status": "done", "previous_url": source},
-                    video_url=kept, candidates=[kept, *[item for item in clip.get("candidates") or [] if item != kept]],
+                    video_url=kept, candidates=[kept, *[item for item in clip.get("candidates") or [] if item != kept]], **sound,
                 )
             except Exception as error:  # noqa: BLE001 - 后台修补失败只记在片上，不影响别的镜头
                 logger.warning("[Repair] 镜头 %s 区域修补失败: %s", shot_id, str(error)[:200])
@@ -2870,11 +2890,13 @@ class DramaService:
 
     def regenerate_shot(
         self, task_id: str, shot_id: int, *, reason: str = "", scene_id: str = "", shot_uid: int | None = None,
-        hd: bool = False, retake_from: float | None = None, note: str = "",
+        hd: bool = False, retake_from: float | None = None, note: str = "", follow_previous: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Ask for one shot's clip to be made again: it is marked stale, the rest stay reused on the next run.
 
         一个分镜片段只有一段视频：重做其中任何一个瞬间，就是重做这段片段视频。
+        ``follow_previous``：重出时接上一段片子的最后一帧开场，哪怕上一段是另一场(同一地点连着演，姿态要接上)。
+        记在分镜这一镜上(不进运镜契约，别的片段的复用不受影响)。
         """
         def mutate(task: Dict[str, Any]) -> Dict[str, Any]:
             assets = task.setdefault("assets", {})
@@ -2899,6 +2921,10 @@ class DramaService:
                 # 样片看过了，这一镜按全分辨率、同提示词同种子再出一次。
                 clip["hd_retake"] = True
                 why = why or "样片转高清"
+            if follow_previous:
+                for board_shot in assets.get("4") or []:
+                    if isinstance(board_shot, dict) and episode_cycle.shot_uid(board_shot) in set(episode_cycle.covered_uids(clip)):
+                        board_shot["follow_previous"] = True
             clip["stale"] = True
             clip["stale_reason"] = (why or "人工要求重新生成") + "，重跑第 5 阶段时" + scope
             # A resumed or recorded job for this clip must not be handed back as the "same request".
@@ -3553,6 +3579,14 @@ class DramaService:
                 seen_names.add(name)
                 description = re.sub(r"\s+", " ", str(item.get("description") or "")).strip()[:2000]
                 entry = {"name": name, "description": description}
+                # 剧本里对它的别的叫法(「滴水」之于「屋檐滴水成珠」)：分镜和视频按这些叫法也认得到它。
+                aliases = [
+                    alias for alias in dict.fromkeys(
+                        re.sub(r"\s+", "", str(raw)) for raw in (item.get("aliases") if isinstance(item.get("aliases"), list) else [])
+                    ) if alias and alias != name and len(alias) <= 20
+                ][:6]
+                if aliases:
+                    entry["aliases"] = aliases
                 wearer = re.sub(r"\s+", " ", str(item.get("character") or "")).strip()[:80]
                 if key == "costumes" and wearer:
                     entry["character"] = wearer
@@ -5754,6 +5788,11 @@ class DramaService:
                 raise StagePrerequisiteError(relinking)
             self._assert_stage_prerequisites(task, stage)
             self._discard_later_stage_outputs(task, stage)
+            # 上一轮这一步失败或被打断、这次接着做：已经付过钱、问题原样不变的创作结果(如角色 DNA)可以接着用。
+            # 这一步做完过、再要求重做，就是要新的，不复用。
+            task["stage_resume"] = stage if progress.get("stage") == stage and (
+                progress.get("status") == "error" or task.get("status") in {"failed", "interrupted"}
+            ) else None
             task["workflow_control"] = {"run_id": run_id or uuid.uuid4().hex, "active": True,
                                         "automatic": automatic, "pause_requested": False}
             task["status"] = "running"
@@ -6392,10 +6431,8 @@ class DramaService:
         ' "relation": "2-6字具体关系，如 君臣/父子/主仆/师徒/暗中背叛"}],\n'
         '  "roles": [{"name": "角色名", "position": "女主角|男主角|反派|男配角|女配角|其它角色"}],\n'
         '  "production_assets": {\n'
-        '    "scenes": [{"name": "实际拍摄地点名", "description": "时段、内外景、空间布局和剧情用途"}],\n'
-        '    "props": [{"name": "具体道具名", "description": "外观、状态、持有人和出现情节"}],\n'
-        '    "costumes": [{"name": "具体服装造型名", "description": "角色、款式、材质、颜色和剧情阶段"}],\n'
-        '    "effects": [{"name": "具体特效名", "description": "归谁(施法者或来源)、能量形态(附着在兵器肢体/离体飞行/成群聚集/气场流向)、颜色与材质、尺度(占画面多少、与人和建筑相比)、触发与余波、环境交互和出现的场次"}],\n'
+        # 场景、道具、服装、特效四类的写法在 app/data/prompt/agent_prompts.json 的 writer_catalog_shapes。
+        + "".join(f"    {shape},\n" for shape in prompt_data.value("agent_prompts", "writer_catalog_shapes").values())
         + "".join(f"    {shape},\n" for shape in breakdown_kinds.CATALOG_SHAPES.values()).rstrip(",\n") + "\n"
         '  }\n'
         "}\n"
@@ -6919,7 +6956,7 @@ class DramaService:
         }
 
     def _extract_character_dna_breakdown(self, config: Dict[str, Any], title: str, dir_style: str,
-                                         shot_style: str, dna_text: str) -> Optional[Dict[str, Any]]:
+                                         shot_style: str, dna_text: str, task: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
         阶段3后置步骤：把「角色 DNA 性格造型锁定包」markdown 结构化为 JSON，
         供看板角色资产图页面图文渲染。失败不阻断主流程，返回 None。
@@ -6931,7 +6968,18 @@ class DramaService:
         )
         user_prompt = f"【短剧标题】：{title}\n\n【角色 DNA 锁定包原文】：\n{dna_text}"
         try:
-            res = self.gateway.call_llm(config["llm_model"], sys_prompt, user_prompt, title, dir_style, shot_style)
+            def ask() -> str:
+                return self.gateway.call_llm(config["llm_model"], sys_prompt, user_prompt, title, dir_style, shot_style)
+
+            # 结构化是摘录(同一份 DNA 原文只有一个正确结构)：问过且解析得出的结果在项目里记着，同一份原文不再问。
+            res = llm_memo.reuse(
+                task, label="dna_structure", model=str(config.get("llm_model") or ""), system=sys_prompt, user=user_prompt,
+                ask=ask, accept=lambda text: extract_json_object(text) is not None,
+            ) if task is not None else ask()
+            if task is not None and res and task.get("task_id"):
+                key = llm_memo.key_of("dna_structure", str(config.get("llm_model") or ""), sys_prompt, user_prompt)
+                if llm_memo.get(task, key):
+                    self.repo.mutate_task(task["task_id"], lambda current, answer=res: (llm_memo.put(current, key, answer), current)[1])
             breakdown = extract_json_object(res)
             if not breakdown:
                 logger.warning("[Stage3] 角色 DNA 结构化分析未解析出 JSON，跳过角色资产图渲染")
@@ -7036,6 +7084,7 @@ class DramaService:
         char_info: tuple,
         turns: Optional[SceneTurns] = None,
         reuse_table: bool = False,
+        evolution: Optional[Tuple[str, str]] = None,
     ) -> Dict[str, Any]:
         """
         单场景九宫格生成(可复用)：LLM 拆表 → audit 复核 → 逐格生图 → 合成 3×3 九宫格。
@@ -7047,7 +7096,8 @@ class DramaService:
         scene_id = str(scene.get("scene_id") or "E1S01").strip() or "E1S01"
         # 分镜图沿用全片风格锁：漫剧项目的九格不再被写实实拍措辞压掉。
         board_style_pack = style_packs.resolve_pack(config)
-        scene_duration = str(scene.get("duration") or "")
+        # 拆解常把 duration 留空、时长只写在正文里(「时长：6秒」)：读不到就按模型宜用的下限一格格堆，片子会被拉长好几倍。
+        scene_duration = scene_seconds.scene_duration(scene)
         turns = turns if turns is not None else SceneTurns([scene_id])
         clock = [time.monotonic()]
 
@@ -7087,6 +7137,8 @@ class DramaService:
         video_model = str(config.get("video_model") or "")
         limit = panel_limit(scene_duration, video_model=video_model)
         clip_floor, clip_cap = preferred_shot_seconds(video_model)
+        # 场比模型宜用的下限还短(4 秒的场，Seedance 2.5 宜用 10–30 秒)：每格按这场的长度出，不把片子拉长。
+        clip_floor = scene_seconds.clip_floor(clip_floor, parse_duration_seconds(scene_duration), MIN_SHOT_SECONDS)
         user_prompt = (
             f"请基于以下剧本场景设计分镜表：用尽量少的格子覆盖该场景完整剧情，不要断开，本场最多{limit}格：\n\n"
             f"【场景编号】：{scene_id}\n"
@@ -7135,6 +7187,11 @@ class DramaService:
         techniques_brief = technique_look.technique_brief(scene_content)
         if techniques_brief:
             user_prompt += "\n" + techniques_brief
+        # 具名光型(light_setups.json)：技能包里的灯光一章排在装得进提示词的那一段之后，分镜表作者读不到；
+        # 这里按本场内容(烛火、窗边、审讯、黄昏……)只发用得上的几种，连同不能叠的组合与防翻车的写法。
+        light_brief = light_setups.scene_brief(scene_content)
+        if light_brief:
+            user_prompt += "\n" + light_brief
         user_prompt += (
             "\n只拆当前场景，不续写下一场。入镜角色列必须逐镜填写真实角色名；空镜填‘无’。"
             "不能用主角、反派、剧情推进分镜等占位词。人物外观及拍摄资产沿用以上资料。"
@@ -7189,6 +7246,8 @@ class DramaService:
         # 定稿表按初稿的提问记在项目上：上次生图失败的场次重跑时，提问一字没变就直接拿定稿，连修订那一轮都省了
         # (「重画这一场」是 pending 不是 failed，仍然重写)。
         table_key = llm_memo.key_of("storyboard_table", table_model, sys_prompt, user_prompt, guidance)
+        # 初稿原文(没经过退回重写的那一版)：自进化研究的是「这份提示词第一次写出了什么」。
+        first_draft = ""
         for draft in range(1, storyboard_revision.MAX_DRAFTS + 1):
             timings["drafts"] = draft
             with turns.warm_up(scene_id):
@@ -7205,6 +7264,8 @@ class DramaService:
                         res = self.gateway.call_llm(
                             config["llm_model"], sys_prompt, user_prompt + feedback, title, dir_style, shot_style, user_instruction=guidance,
                         )
+                    if draft == 1:
+                        first_draft = str(res or "")
             try:
                 drafted, drafted_bindings = _draft(res)
             except ValueError as rejected:
@@ -7233,6 +7294,31 @@ class DramaService:
             feedback = storyboard_revision.revision_note(issues, res)
         _, shots, bindings, res = best
         timings["table_s"] = _lap()
+        if evolution is not None and first_draft:
+            def _table_problems(text: str) -> List[str]:
+                """这份表过本场机器复核时被指出的问题(退回的原因，或衔接、站位、招式自检没过的条目)。"""
+                try:
+                    checked, _bindings = _draft(text)
+                except ValueError as rejected:
+                    return [str(rejected)]
+                return [
+                    *storyboard_revision.handoff_issues(
+                        checked, scene_id=scene_id, fight=scene_kind == "fight", props=[item["name"] for item in context["props"]],
+                    ),
+                    *group_blocking.table_issues(checked),
+                    *(fight_exchange.table_issues(checked) if scene_kind == "fight" else []),
+                ]
+
+            # 自进化：在后台研究这一场分镜表的初稿调用，学到的留给以后同类题材的项目；本场的表、图和进度不受影响。
+            harness_evolution.study_stage(
+                self.gateway, task_id=task_id, stage=4, domain=evolution[0], model=table_model, title=title,
+                system_prompt=sys_prompt, request=user_prompt, output=first_draft, overlay_block=evolution[1],
+                director_style=dir_style, shot_style=shot_style, guidance=guidance,
+                # 表是在这个推理档位里写的：研究时再写一遍也用同一档。
+                reasoning=[llm_profile.reasoning_from_env("STORYBOARD_TABLE_REASONING")],
+                observe=_table_problems,
+                delivered=lambda text: bool(parse_storyboard_table(text, [])),
+            )
         filler_shots = 0
         character_profiles = context["profiles"]
         location = "；".join(item["name"] for item in context["scenes"])
@@ -7588,12 +7674,15 @@ class DramaService:
                 + "\n\n"
                 + prompt_data.text("agent_prompts", "executive_director")
                 + literary.thesis_card() + "\n\n"
+                + series_rhythm.naming_rule() + "\n\n"
+                # 创作类型改变「策划方案是什么」时(电影短片：只有一集、结尾收住)先说在前面；别的类型是空串。
+                + (creation_modes.director_guidance(config) + "\n\n" if creation_modes.director_guidance(config) else "")
                 + f"【黄金叙事结构(单集与整部结构/情绪峰值/钩子公式)如下】：\n{narrative_structure}\n\n"
                 f"【前三集钩子阶梯与付费墙卡点(E1 引爆/E2 升级/E3 反转，E8–E10 虚假胜利→崩塌→黑屏钩子)如下】：\n{hook_ladder}\n\n"
                 f"【爽点底线与主角强弱两段弧(杀伐果断横推/不按套路/弱时智谋苟道、强时杀伐/爽点谱系)如下】：\n{payoff_arc}\n\n"
                 f"【主角拷问与人物关系架法(一句话梗概/拷问主角/关系六性/一条主线)如下】：\n{character_craft}\n\n"
                 f"【因果链(节点之间连「所以」/每个节点改变目标、关系、认知或处境/关键转折由人物选择触发)如下】：\n{causal_chain}\n\n"
-                f"【紧张感(信息差/延迟兑现/有张有弛/写完问三句)如下】：\n{tension}\n\n"
+                f"【紧张感(信息分给谁/延迟兑现/分层揭底/有张有弛/动笔前问四句、写完问三句)如下】：\n{tension}\n\n"
                 f"【全局短剧制作注意事项与关键元素规范如下】：\n{guide_elements}\n\n"
                 f"【短剧题材与爆款题材结构指导如下】：\n{genre_summary}\n"
             )
@@ -7617,6 +7706,10 @@ class DramaService:
             lessons_block = stage_lessons_block(1)
             if lessons_block:
                 sys_prompt += f"\n\n{lessons_block}\n"
+            # 这一类题材经执行对比胜出的补充配置(自进化的经验库)；没有或已关闭时是空串。
+            verified_block = harness_evolution.overlay_for(1, show_cluster.name)
+            if verified_block:
+                sys_prompt += f"\n\n{verified_block}\n"
 
             script_content = config.get("script_content")
             if script_content:
@@ -7632,6 +7725,12 @@ class DramaService:
 
             self._progress_step(task, 25, "调用 LLM · 总导演定调与三幕大纲规划")
             res = self.gateway.call_llm(config["llm_model"], sys_prompt, user_prompt, title, dir_style, shot_style, user_instruction=guidance)
+            # 自进化：在后台拿这同一次调用做「提议–探测–组合」，学到的做法留给以后同类题材的项目；本项目的方案和进度不受影响。
+            harness_evolution.study_stage(
+                self.gateway, task_id=task_id, stage=1, domain=show_cluster.name, model=str(config["llm_model"]), title=title,
+                system_prompt=sys_prompt, request=user_prompt, output=res, overlay_block=verified_block,
+                director_style=dir_style, shot_style=shot_style, guidance=guidance,
+            )
             self._progress_step(task, 85, "剧本一致性质检自检")
             task["assets"]["1"] = res
             
@@ -7790,6 +7889,10 @@ class DramaService:
             lessons_block = stage_lessons_block(3)
             if lessons_block:
                 sys_prompt += f"\n\n{lessons_block}\n"
+            # 这一类题材经执行对比胜出的补充配置(自进化的经验库)；没有或已关闭时是空串。
+            verified_block = harness_evolution.overlay_for(3, show_cluster.name)
+            if verified_block:
+                sys_prompt += f"\n\n{verified_block}\n"
             stage2_breakdown = task["assets"].get("2_breakdown")
             screenplay_roles = (
                 stage2_breakdown.get("roles")
@@ -7830,7 +7933,24 @@ class DramaService:
                 + character_script_context
             )
             self._progress_step(task, 10, "调用 LLM · 角色 DNA 锁定包生成")
-            res = self.gateway.call_llm(config["llm_model"], sys_prompt, user_prompt, title, dir_style, shot_style, user_instruction=guidance)
+            # 角色 DNA 一次约 100 秒：上一轮出完 DNA 后在设定集那一步失败了，接着做时问题一字不变就用上次的，
+            # 不再付一次钱、等一次。立刻存进项目——这一轮后面再失败也不会丢。
+            dna_key = llm_memo.key_of("character_dna", config["llm_model"], sys_prompt, user_prompt, guidance)
+            res = llm_memo.get(task, dna_key) if task.get("stage_resume") == 3 else None
+            if res:
+                llm_memo.note_reuse(config["llm_model"], prompt_chars=len(sys_prompt) + len(user_prompt), prompt_tokens=0, answer=res, label="character_dna")
+                logger.info("[Stage3] 接着上一轮做：角色 DNA 锁定包复用上次的结果，没有调用模型")
+            else:
+                res = self.gateway.call_llm(config["llm_model"], sys_prompt, user_prompt, title, dir_style, shot_style, user_instruction=guidance)
+                if res:
+                    llm_memo.put(task, dna_key, res)
+                    self.repo.mutate_task(task_id, lambda current, answer=res: (llm_memo.put(current, dna_key, answer), current)[1])
+                # 自进化：在后台研究这一次角色设定的调用，学到的留给以后同类题材的项目；本项目的设定和进度不受影响。
+                harness_evolution.study_stage(
+                    self.gateway, task_id=task_id, stage=3, domain=show_cluster.name, model=str(config["llm_model"]), title=title,
+                    system_prompt=sys_prompt, request=user_prompt, output=res, overlay_block=verified_block,
+                    director_style=dir_style, shot_style=shot_style, guidance=guidance,
+                )
             
             # 直接将生成的全动态角色 DNA 设定文本存入 assets，消除预设角色构建框架
             task["assets"]["3"] = res
@@ -7840,7 +7960,7 @@ class DramaService:
             # 只在结构化结果没有可用角色时才回退到严格锚定的 Markdown 角色卡标题。
             self._progress_step(task, 15, "角色 DNA 锁定包结构化提取")
             task["assets"]["3_dna"] = self._extract_character_dna_breakdown(
-                config, title, dir_style, shot_style, res
+                config, title, dir_style, shot_style, res, task=task,
             )
 
             # 为每名角色生成一张数字演员设定集，并物理拆成最多 25 个独立格子资产。
@@ -8101,7 +8221,10 @@ class DramaService:
             except Exception as exc:  # undated wardrobe still works
                 logger.warning("[Stage3] 妆造时间定位失败（不阻断）: %s", type(exc).__name__)
             self._progress_step(task, 92, "同步拍摄资产、生成表演妆造并补齐参考图")
-            task["assets"][READINESS_KEY] = complete_project_assets(task, generate_missing=True)
+            # 换了说法的同一样东西(「裴照的带鞘长剑」「裴照腰佩长剑」)按描述并成一条，交给文本模型分组。
+            task["assets"][READINESS_KEY] = complete_project_assets(task, generate_missing=True, ask=lambda system, user: self.gateway.call_llm(
+                str(config.get("llm_model") or ""), system, user, str(config.get("title_suggestion") or ""),
+            ))
 
             self._progress_step(task, 95, "角色造型一致性质检自检")
             task["logs"]["3"] = self.run_real_consistency_check(3, "角色设计师造型", task["assets"], config, title, task_id=task_id, task=task)
@@ -8183,6 +8306,11 @@ class DramaService:
             if lessons_block:
                 sys_prompt_tail += f"\n\n{lessons_block}\n"
 
+            # 这一类题材经执行对比胜出的补充配置(自进化的经验库)：接在每份分镜提示词的最后；本剧的题材簇在画之前定下，
+            # 画的过程中各场的判定会改变投票结果，研究用的仍是这里读到的那一份。
+            board_domain = show_cluster.name
+            board_overlay = harness_evolution.overlay_for(4, board_domain)
+
             sys_prompt_by_kind: Dict[str, str] = {}
             fight_guide_section = f"【电影级武打镜头设计指南(力学受力反馈/五镜动作链/防越轴/慢动作卡点)如下】：\n{action_guide}\n\n"
 
@@ -8200,6 +8328,7 @@ class DramaService:
                         .replace(TENSION_GUIDE_SLOT, tension_section if tense else "")
                         + self.storyboard_skill_prefix(config, scene_kind=scene_kind)
                         + "\n\n" + sys_prompt_head
+                        + (f"\n\n{board_overlay}\n" if board_overlay else "")
                     )
                     sys_prompt_by_kind[cache_key] = cached
                 return cached
@@ -8299,6 +8428,8 @@ class DramaService:
                         char_info=char_info,
                         turns=turns,
                         reuse_table=retry_scenes.get(scene_id, False),
+                        # 自进化每轮只研究一场(本轮剧情上最靠前的那一场)：一集几十场都研究，文本调用会翻几倍。
+                        evolution=(board_domain, board_overlay) if scene_id == pending_ids[0] else None,
                     )
 
                 def _scene_finished(scene_id: str, payload: Optional[Dict[str, Any]], scene_error: Optional[Exception]) -> None:
@@ -8437,8 +8568,15 @@ class DramaService:
             # 试拍只出一段，其余已有的片段原样留着。
             pilot_kept: list = []
 
+            # 片段按分镜顺序排：试拍重出的那一段要回到它原来的位置，不能排到片头(时间线和成片都按这个顺序剪)。
+            shot_order = {episode_cycle.shot_uid(shot): index for index, shot in enumerate(shots) if isinstance(shot, dict)}
+
             def _clips_now() -> list:
                 finished = [completed[key] for key in sorted(completed)] + pilot_kept
+                if pilot_kept:
+                    finished.sort(key=lambda clip: min(
+                        (shot_order.get(uid, len(shot_order)) for uid in episode_cycle.covered_uids(clip)), default=len(shot_order),
+                    ))
                 return episode_cycle.merged_clips(cycle_others, finished) if cycle_episode is not None else finished
 
             # 数字演员身份视图锚点 (来自阶段3)：优先本地身份视图(正面全身 → 正脸 → 主肖像)，设定集的
@@ -8578,6 +8716,8 @@ class DramaService:
                 native_pending.clear()
 
             # A clip whose file is gone or whose signed link has expired cannot be reused: it is made again.
+            # 本轮全部请求(试拍只留一段时也在)：接上一段的那一段要从这里找它的上一段。
+            all_requests: dict = {}
             earlier_clips = {
                 str(episode_cycle.shot_uid(clip)): clip
                 for clip in (task["assets"].get("5") or [])
@@ -8789,15 +8929,14 @@ class DramaService:
                     "palette": panel_still_prompt.palette_line(style_pack),
                 }
                 ledger_entry = ledger.get(shot_ledger.key(shot.get("scene_id"), shot.get("shot_id")))
+                still_previous_end = "；".join(filter(None, (
+                    shot_ledger.handoff_items(ledger_entry, contract.characters, contract.props),
+                    panel_still_prompt.previous_ending(
+                        str((previous_shot.get("motion_contract") or {}).get("end_state") or ""), str(previous_shot.get("desc") or ""),
+                    ) if previous_shot else "",
+                )))
                 compiled_image = panel_still_prompt.compile_panel_still(
-                    contract, references=still_references,
-                    previous_end="；".join(filter(None, (
-                        shot_ledger.handoff_items(ledger_entry, contract.characters, contract.props),
-                        panel_still_prompt.previous_ending(
-                            str((previous_shot.get("motion_contract") or {}).get("end_state") or ""), str(previous_shot.get("desc") or ""),
-                        ) if previous_shot else "",
-                    ))),
-                    **still_style,
+                    contract, references=still_references, previous_end=still_previous_end, **still_style,
                 )
                 compiled_motion = compile_motion_prompt(contract)
                 assert_prompt_pair_consistent(compiled_image, compiled_motion)
@@ -8891,6 +9030,10 @@ class DramaService:
                 key_note = literary.clip_note(key_line) if key_line and key_line in str(dialogue or "") else ""
                 scene_plan = None
                 crowd_notes: list = []
+                # 第 3 阶段资产库里特效、特技的描述(本镜点到的)：特效那一节按它写，改过资产这里跟着变。
+                shot_effects: dict[str, str] = {}
+                stunts: list[str] = []
+                frame_binding: dict | None = None
                 if scene_record is not None:
                     scene_elements = load_storyboard_elements(task, scene_record)
                     try:
@@ -8899,12 +9042,20 @@ class DramaService:
                         scene_shots = spatial_stage.scene_shots(task, str(shot.get("scene_id") or ""))
                         position = next((index for index, item in enumerate(scene_shots) if str(item.get("shot_id")) == str(shot.get("shot_id"))), None)
                         crowd = crowd_on_set(scene_context, scene_shots)[position] if position is not None else set()
-                        library_references = panel_context(
+                        binding = panel_context(
                             scene_context, shot,
                             layout=spatial_layout_facts(scene_plan) if scene_plan is not None else "",
                             crowd=crowd, desk=desk_layered,
-                        )["references"]
-                        crowd_notes = crowd_lines(scene_context, shot, crowd)
+                        )
+                        library_references = binding["references"]
+                        frame_binding = binding
+                        shot_effects = {
+                            item["name"]: item["description"] for item in binding["assets"]
+                            if item["kind"] in ("effect", "stunt") and str(item.get("description") or "").strip()
+                        }
+                        stunts = [item["name"] for item in binding["assets"] if item["kind"] == "stunt"]
+                        # 没有参考图的物件和置景照设定写一句，跟群演那句放在一起。
+                        crowd_notes = [*crowd_lines(scene_context, shot, crowd), *unpictured_lines(binding)]
                     except ValueError as exc:
                         logger.warning("镜头%s资产绑定跳过: %s", shot_id, exc)
                 # 导演台当前的样子跟着提示词走；白模视频在用时它才是机位参考，文字不再写机位。
@@ -9044,7 +9195,8 @@ class DramaService:
                         eyeline=contract.eyeline,
                         props=contract.props,
                         # 特效名带上它长什么样：视频模型只看到名字时画不出形状和颜色。
-                        effects=wuxia_vfx.effect_lines(contract.effects, task),
+                        # 特技(并在特效页里)是一段有风险的动作过程：点到名的也写进这一节，按资产描述做。
+                        effects=wuxia_vfx.effect_lines([*contract.effects, *stunts], task, described=shot_effects),
                         characters=contract.characters,
                         lighting=scene_lights.get(str(shot.get("scene_id") or "")) or contract.lighting,
                         sound=shot_sound,
@@ -9070,9 +9222,10 @@ class DramaService:
                         composition=contract.composition,
                         cast_refs=[name for kind, name, _ in reference_entries if kind == "actor" and name],
                         scene_refs=[name for kind, name, _ in reference_entries if kind == "scene" and name],
-                        prop_refs=[name for kind, name, _ in reference_entries if kind == "prop" and name],
+                        prop_refs=[name for kind, name, _ in reference_entries if kind in OBJECT_KINDS and name],
                         stage_lines=stage_lines,
-                        fixed_items=[*set_pieces[0], *set_pieces[1]],
+                        # 本镜参考图里的置景也是固定陈设：位置不变，人物绕着走、不穿过它。
+                        fixed_items=[*set_pieces[0], *set_pieces[1], *(name for kind, name, _ in reference_entries if kind == "set_dressing" and name)],
                         desk_layers=desk_layered,
                         costume_refs=costume_wearers(library_references, contract.characters, cast_aliases(task)),
                         # 骨架固定句要用的：有自己一张图的服装(锚型定义)、动作轴线(空间坐标)、是不是真人演员(肖像段)。
@@ -9121,6 +9274,25 @@ class DramaService:
                         shot_id, compiled_video.pressure.model, compiled_video.pressure.length,
                         compiled_video.pressure.budget, "、".join(compiled_video.pressure.dropped) or "无可裁字段",
                     )
+                if frame_binding is not None and frame_binding["references"]:
+                    # 首帧、尾帧要在这里重画时，和第 4 阶段画分镜一样带本镜绑到的全部资产参考：定妆照(表演妆造)、场地、
+                    # 道具、车辆、商品、置景、特效、特技、群演……不只是角色设定集。尾帧还要把首帧排在最前，所以至多 8 张。
+                    frame_refs = list(frame_binding["references"])[: MAX_REFERENCE_IMAGES - 1]
+                    ref_sheets = [item["image_url"] for item in frame_refs]
+                    frame_style = {**still_style, "assets": frame_binding["assets"]}
+                    frame_identity_neg = style_packs.identity_negative(style_pack, self.gateway.PANEL_IDENTITY_NEGATIVE)
+                    if any(item.get("real_person") for item in frame_refs):
+                        frame_identity_neg = real_person.keep_likeness(frame_identity_neg)
+                    frame_tail = (
+                        f"{self.gateway.SHEET_LOCK_NEGATIVE if any(item['kind'] == 'actor' for item in frame_refs) else ''}{frame_identity_neg}"
+                        f"{self.gateway.SCENE_STABILITY_NEGATIVE}{self.gateway.EMOTION_FACE_NEGATIVE}{visual_negative_image}"
+                    )
+                    img_prompt = f"{panel_still_prompt.compile_panel_still(contract, references=frame_refs, previous_end=still_previous_end, **frame_style).prompt}\n{frame_tail}"
+                    if end_prompt:
+                        end_prompt = (
+                            f"{panel_still_prompt.compile_panel_still(contract, references=[{'kind': 'first_frame'}, *frame_refs], frame_state='end', **frame_style).prompt}"
+                            f"\n{frame_tail}"
+                        )
                 # 固定种子 + 多版本择优：同一输入渲染 N 个候选，首个成功版本先入片，
                 # 用户可在视觉工作区改选；任一候选失败即停止，不为一镜烧掉全部预算。
                 base_seed = visual.get("seed") if visual and isinstance(visual.get("seed"), int) else None
@@ -9263,10 +9435,14 @@ class DramaService:
                 vid_prompt = fight_safety.clean_gore(vid_prompt)
                 if req.get("native_prompt"):
                     req["native_prompt"] = fight_safety.clean_gore(req["native_prompt"])
+                # 分镜写的「一帧黑」视频模型画不出(会画成近一秒黑屏)：发出去前去掉，成片合成时由剪辑盖上。
+                vid_prompt = blackout.for_video(vid_prompt)
+                if req.get("native_prompt"):
+                    req["native_prompt"] = blackout.for_video(req["native_prompt"])
                 chained_frame = None
                 if req.get("chain_from"):
                     # 首尾帧接力：前一段已经出片，取它的最后一帧当本段开场画面，排在分镜画面之前。
-                    parent = requests.get(req["chain_from"]) or {}
+                    parent = requests.get(req["chain_from"]) or all_requests.get(req["chain_from"]) or {}
                     # 先取前一段刚出的片；供应商的临时链接失效(复用上一轮的片)时，用本地存好的那条。
                     parent_earlier = earlier_clips.get(str(parent.get("shot_uid"))) or {}
                     handoff = None
@@ -9568,6 +9744,11 @@ class DramaService:
                     vid_url = media_compositor.attach_audio_to_clip(
                         vid_url, voice_path, bgm=False, tag=f"shotav_{task_id[:8]}_s{req['shot_uid']}")
 
+                # 分镜要的「一帧黑」：在存下的片子声音里找撞击那一下，合成成片时从那一刻盖几帧黑(见 blackout)。
+                flash = blackout.plan(
+                    " ".join(str(beat.get("desc") or "") for beat in ((req.get("slice") or {}).get("beats") or [])) or desc,
+                    media_compositor.local_media_path(vid_url) if vid_url else None,
+                )
                 return {
                     "shot_id": shot_id,
                     "scene_id": str(shot.get("scene_id") or ""),
@@ -9576,6 +9757,7 @@ class DramaService:
                     "size": size,
                     "motion": motion,
                     "desc": desc,
+                    **({"blackout": flash} if flash else {}),
                     "dialogue": dialogue,
                     "duration": duration,
                     "image_url": img_url,
@@ -9713,7 +9895,7 @@ class DramaService:
                     model=str(config.get("video_model") or ""),
                     cast=[name for kind, name, _ in entries if kind == "actor" and name],
                     scenes=[name for kind, name, _ in entries if kind == "scene" and name],
-                    props=[name for kind, name, _ in entries if kind == "prop" and name],
+                    props=[name for kind, name, _ in entries if kind in OBJECT_KINDS and name],
                     costumes=costume_wearers(
                         references,
                         list(dict.fromkeys(str(name) for beat in beats for name in (beat["shot"].get("characters") or []) if str(name).strip())),
@@ -9955,6 +10137,8 @@ class DramaService:
                         ),
                         subject_refs=bool(req.get("identity_images")),
                         frameless=bool(req.get("real_person_frameless")),
+                        # 出品人在这一镜上标了「接上一段」(regenerate_shot(follow_previous=True))：跨场也接上一段的尾帧。
+                        follows_previous=bool((req.get("shot") or {}).get("follow_previous")),
                     ))
                 routes = clip_route.route_clips(facts, route_modes, scene_chain=scene_chain)
                 for number, route in routes.items():
@@ -10006,6 +10190,8 @@ class DramaService:
             if distill_pending or native_pending:
                 _distill_all()
                 requests, unit = _build_requests()
+            all_requests.clear()
+            all_requests.update(requests)
             pilot_run = pilot_shot.is_requested(task["assets"])
             pilot_record: dict = {}
             if pilot_run:
@@ -10345,6 +10531,7 @@ class DramaService:
                 transition_plans=plan["transition_plans"], trims=plan["trims"], bgm_volume=plan["bgm_volume"],
                 sound_joins=plan["sound_joins"], sound_report=sound_report,
                 bgm_start=plan.get("bgm_start", 0.0), fade_edges=plan.get("fade_edges", False),
+                blackouts=plan.get("blackouts"),
             )
             timeline = edit_timeline.record_sound_results(timeline, plan["shot_ids"], sound_report)
             self._store_timeline(task, timeline)
@@ -10420,6 +10607,10 @@ class DramaService:
             lessons_block = stage_lessons_block(8)
             if lessons_block:
                 sys_prompt += f"\n\n{lessons_block}\n"
+            # 这一类题材经执行对比胜出的补充配置(自进化的经验库)；没有或已关闭时是空串。
+            verified_block = harness_evolution.overlay_for(8, show_cluster.name)
+            if verified_block:
+                sys_prompt += f"\n\n{verified_block}\n"
             mode_line = creation_modes.promotion_guidance(config)
             if mode_line:
                 sys_prompt += f"\n\n【创作类型】{mode_line}\n"
@@ -10442,6 +10633,12 @@ class DramaService:
                 res = _ask_copy()
                 llm_memo.put(task, llm_memo.key_of("pr_copy", str(config["llm_model"]), sys_prompt, copy_key_user), res or "")
 
+            # 自进化：同阶段 1，在后台研究这一次宣发文案的调用(输入没变、已经研究过的不会再来一遍)。
+            harness_evolution.study_stage(
+                self.gateway, task_id=task_id, stage=8, domain=show_cluster.name, model=str(config["llm_model"]), title=title,
+                system_prompt=sys_prompt, request=user_prompt, output=res, overlay_block=verified_block,
+                director_style=dir_style, shot_style=shot_style, guidance=guidance,
+            )
             pr_title, pr_body = parse_pr_info(res, title, f"《{title}》{tpl['genre_desc']}")
             picked_title, picked_body = promo_facts.labelled_pick(res)
             pr_title, pr_body = picked_title or pr_title, picked_body or pr_body
@@ -10915,6 +11112,7 @@ class DramaService:
         # 2. 尾帧链式逐镜生成
         carry = task.get("_last_frame_carry")  # 上一集最后一帧 base64 (跨集衔接)
         shot_assets, clips, subtitles, shot_voices = [], [], [], []
+        clip_native: List[bool] = []
         for idx, shot in enumerate(shots):
             desc = shot.get("desc", "")
             dialogue = shot.get("dialogue", "")
@@ -10938,8 +11136,14 @@ class DramaService:
                 display_img = base_img
 
             vid_prompt = f"镜头画面：{desc}。人物外观、服装、场景与首帧保持一致，运动自然流畅。"
+            native_project = uses_native_soundtrack(config)
+            if native_project and str(dialogue or "").strip():
+                # 原声优先：会出声的视频模型自己把台词说出来（口型是它的），所以台词要写进提示词。
+                vid_prompt += f"{prompt_data.text('video_prompt_engine', 'dialogue_label_native')}：{str(dialogue).strip()}"
             vid_url = self.gateway.generate_video(config["video_model"], first_frame, vid_prompt,
                                                   prefer_provider="seedance", duration=DURATION)
+            # 这一镜的原声算不算数：项目用原声、片子拿回来听得见（听不出来的远程链接照旧信模型）。
+            heard = bool(vid_url) and native_project and media_compositor.clip_has_sound(vid_url) is not False
 
             # 抽尾帧供下一镜首帧 (尾帧链式衔接)
             new_carry = media_compositor.extract_last_frame_b64(vid_url)
@@ -10956,7 +11160,8 @@ class DramaService:
                 )
                 disp_lines = [segment[0] for segment in seg_lines]
                 if seg_lines:
-                    if not uses_native_soundtrack(config):
+                    if not heard:
+                        # 不出声的模型，或这一镜拿回来是无声的：照旧配音，台词不能丢。
                         _u, voice_path = media_compositor.synthesize_preferred_dialogue_track(
                             seg_lines,
                             tts_model=config["tts_model"],
@@ -10973,6 +11178,7 @@ class DramaService:
                 clips.append(vid_url)
                 subtitles.append(sub_text)
                 shot_voices.append(voice_path)
+                clip_native.append(heard)
             # 实时保存进度
             ep["shots"] = shot_assets
             self.repo.save_task(task_id, task)
@@ -10983,7 +11189,7 @@ class DramaService:
             ep_title = f"第{ep_index}集 {re.sub(r'第.{1,3}集', '', ep['title']).strip(' ：:')[:16]}"
         composed = media_compositor.compose_film(clips, subtitles, None, tag=f"ep{ep_index}_{task_id[:8]}",
                                                  title=ep_title, bgm=True, shot_voices=shot_voices,
-                                                 native_audio=[uses_native_soundtrack(config)] * len(clips))
+                                                 native_audio=clip_native)
         if composed:
             ep["video_url"] = composed
         else:
@@ -11481,7 +11687,7 @@ class DramaService:
         if req.ad_brief is not None:
             task["config"]["ad_brief"] = req.ad_brief.model_dump()
         task["config"]["one_click"] = req.one_click
-        task["config"]["episode_count"] = req.episode_count
+        task["config"]["episode_count"] = creation_modes.episode_count_for(req.creation_mode, req.episode_count)
         task["config"]["title_suggestion"] = req.title_suggestion
         if req.poetry_sources is not None:
             task["config"][poetry_library.CONFIG_KEY] = list(req.poetry_sources)

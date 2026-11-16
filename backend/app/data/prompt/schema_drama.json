@@ -10,7 +10,7 @@
   "DramaCreateRequest.description.8": "选用的语音配音大模型",
   "DramaCreateRequest.description.9": "运镜视频的参考输入模式（自动、首尾帧、多图/宫格或多模态参考）",
   "DramaCreateRequest.description.10": "旁白交付方式：合成旁白配音，或留给后期配音（旁白不进入视频提示词）",
-  "DramaCreateRequest.description.11": "创作类型：剧情短剧、旁白解说、广告短片",
+  "DramaCreateRequest.description.11": "创作类型：剧情短剧、旁白解说、广告短片、电影短片（一集讲完，集数固定为 1）",
   "DramaCreateRequest.description.12": "广告短片的产品简报（其它类型忽略）",
   "DramaCreateRequest.description.13": "编剧可取材的诗词库作者、别名或篇名（如 苏轼、李清照、滕王阁序；“全部”表示整个诗词库）。更新配置时省略表示沿用。",
   "DramaCreateRequest.description.14": "剧本内容语言：标题、钩子、台词、旁白、正文与画面描述用这种语言写",

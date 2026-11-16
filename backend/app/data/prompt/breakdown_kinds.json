@@ -46,12 +46,12 @@
   "module.only_gives.makeup": "妆效图只提供伤口、血迹、假体的位置与形态，不提供脸型和五官",
   "module.writer_rules": "- 群演（extras）：没有台词的背景人物，按职能登记（「码头苦力」「宫女若干」），写人数、服装和在做什么；有台词或反复推动剧情的是角色，不登记在这里。\n- 车辆（vehicles）：入画的车、船、马车、摩托；写车型、颜色、新旧和谁在用。不开动的大船、飞机算场景。\n- 特技（stunts）：有风险的动作过程，整体登记一条（「主角撞破窗户」「坠马」），写谁做、在哪、结果；不拆成替身和道具。\n- 置景（set_dressing）：让场地像那么回事、角色不去碰的陈设：家具、灯具、匾额、帷幔；角色会碰、会用的归道具。\n- 化妆（makeup）：只登记特殊的：伤口、血迹、假体、老年妆、易容；写在谁脸上或身上、什么形态、哪几集带着（写「第9集起」或「第9-12集」，它决定定妆图画在哪身戏服上）。日常妆不登记。",
   "module.catalog_shapes.extras": "\"extras\": [{\"name\": \"群演职能名\", \"description\": \"人数、服装、动作和出现的场次\"}]",
-  "module.catalog_shapes.vehicles": "\"vehicles\": [{\"name\": \"具体车辆名\", \"description\": \"车型、颜色、新旧、谁在用和出现的场次\"}]",
-  "module.catalog_shapes.stunts": "\"stunts\": [{\"name\": \"特技动作名\", \"description\": \"谁做、在哪、过程和结果\"}]",
-  "module.catalog_shapes.set_dressing": "\"set_dressing\": [{\"name\": \"陈设名\", \"description\": \"摆在哪、材质、颜色和出现的场次\"}]",
+  "module.catalog_shapes.vehicles": "\"vehicles\": [{\"name\": \"具体车辆名\", \"aliases\": [\"剧本原文里对它的其他叫法(简称、只写名词的叫法)，没有写空数组\"], \"description\": \"车型、颜色、新旧、谁在用和出现的场次\"}]",
+  "module.catalog_shapes.stunts": "\"stunts\": [{\"name\": \"特技动作名\", \"aliases\": [\"剧本原文里对它的其他叫法(简称、只写名词的叫法)，没有写空数组\"], \"description\": \"谁做、在哪、过程和结果\"}]",
+  "module.catalog_shapes.set_dressing": "\"set_dressing\": [{\"name\": \"陈设名\", \"aliases\": [\"剧本原文里对它的其他叫法(简称、只写名词的叫法)，没有写空数组\"], \"description\": \"摆在哪、材质、颜色和出现的场次\"}]",
   "module.catalog_shapes.makeup": "\"makeup\": [{\"name\": \"角色名·妆效名\", \"description\": \"位置、形态、颜色和哪几集带着（第9集起 / 第9-12集）\"}]",
-  "reference_note.text": "参考图{0}仅锁定{1}「{2}」的服装、体型与人群疏密，不采用图中面孔、背景与主要人物，不是额外剧情",
-  "reference_note.text.2": "参考图{0}仅锁定{1}「{2}」的位置、形态与颜色，不采用图中脸型、五官与背景，不是额外人物",
-  "reference_note.text.3": "参考图{0}仅锁定{1}「{2}」的动作姿态与接触点，不采用图中人物长相与背景，不是额外剧情",
+  "reference_note.text": "参考图{0}仅锁定{1}「{2}」的服装、体型与人群疏密，不采用图中面孔、背景与主要人物，不是额外剧情或额外人物",
+  "reference_note.text.2": "参考图{0}仅锁定{1}「{2}」的位置、形态与颜色，不采用图中脸型、五官与背景，不是额外剧情或额外人物",
+  "reference_note.text.3": "参考图{0}仅锁定{1}「{2}」的动作姿态与接触点，不采用图中人物长相与背景，不是额外剧情或额外人物",
   "reference_note.text.4": "参考图{0}仅锁定{1}「{2}」的外形、材质与颜色，不采用图中背景与人物，不是额外剧情或额外人物"
 }

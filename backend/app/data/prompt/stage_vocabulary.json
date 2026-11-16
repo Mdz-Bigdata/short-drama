@@ -1,5 +1,5 @@
 {
-  "_about": "3D 导演台读分镜表、给机位起名、写工程备注和报错时用的词。shot_sizes 是景别：aliases 按先后比对(长的叫法排在前面，所以「中近景」不会被读成「近景」；中文叫法先比，再比 abbreviations 里的分镜缩写(只认整词，正则)，最后比英文叫法)，没写景别的格子按 default 算。lens_mm 是每种景别的默认焦距，aim 是镜头瞄在人身高的几成处；tight / wide 是紧景别和宽景别，close_up 是单人镜头起手偏角更小的特写，detail 是单人里算细节镜头的景别，insert 是只拍物件时最松的景别，empty 是空镜最紧的景别，pair_too_tight 里的景别两个人挤不下、改用 pair，over_shoulder_min 是过肩镜头最紧只到哪一级。这里出现的每个景别名都必须是 app/core/spatial_stage/projection.py 里 SHOT_SIZE_HEIGHTS 的九个名字之一(大特写、特写、近景、中近景、中景、中全景、全景、远景、大远景)，改那边的名字要同时改这里。angles 是机位角度：default 是没写角度时的平视，high 是物件插入镜头和找不到干净机位时用的俯拍，pitch_words 按先后比对(顶拍、贴地、俯、仰)，over_shoulder_words 里的词出现在景别、角度或描述里就算过肩。camera_labels 是机位名：template 里 function 是镜头功能的叫法(functions)，who 是用 name_separator 连起来的前三个人名，一个人都没有就写 nobody。blocking_verbs 是分镜描述里人物走位的动词：只在点到这个人名的那一小句里算数，clause_stops 是正则字符组里断句的标点；entrance 是入场，approach / retreat 是靠近和后退，postures 按先后比对，先中的就是这个人保持的姿态；这些词会用 | 连成正则，词里不要带正则符号。path_errors 是画路线、排关键帧、自动寻路失败时说的话，option_separator 连接可选值。interchange 是导出给别的导演台的工程里写的备注(backdrops 是背景种类的叫法，no_detail 是背景没有颜色也没有地址时的占位)，以及导入别家工程失败时说的话。花括号里是代码填进去的值，{x:g} 带格式，{x!r} 带引号原样写出。",
+  "_about": "3D 导演台读分镜表、给机位起名、写工程备注和报错时用的词。shot_sizes 是景别：aliases 按先后比对(长的叫法排在前面，所以「中近景」不会被读成「近景」；中文叫法先比，再比 abbreviations 里的分镜缩写(只认整词，正则)，最后比英文叫法)，没写景别的格子按 default 算。lens_mm 是每种景别的默认焦距，aim 是镜头瞄在人身高的几成处；tight / wide 是紧景别和宽景别，close_up 是单人镜头起手偏角更小的特写，detail 是单人里算细节镜头的景别，insert 是只拍物件时最松的景别，empty 是空镜最紧的景别，pair_too_tight 里的景别两个人挤不下、改用 pair，over_shoulder_min 是过肩镜头最紧只到哪一级。这里出现的每个景别名都必须是 app/core/spatial_stage/projection.py 里 SHOT_SIZE_HEIGHTS 的九个名字之一(大特写、特写、近景、中近景、中景、中全景、全景、远景、大远景)，改那边的名字要同时改这里。angles 是机位角度：default 是没写角度时的平视，high 是物件插入镜头和找不到干净机位时用的俯拍，pitch_words 按先后比对(顶拍、贴地、俯、仰)，over_shoulder_words 里的词出现在景别、角度或描述里就算过肩。crowd_lenses 是场上有成排群演时才认的三种群像机位，词出现在角度或描述里就算，按先后比对：behind_audience 从人群最后一排之后、略高于人头、沿中心通道看向主位(角度里另有俯字就升高俯看)，through_crowd 站在人群里几个人之间的缝隙、越过前排人头看向主位，reverse 在主位身后看向人群；每组第一个词是写进分镜提示里的叫法。camera_labels 是机位名：template 里 function 是镜头功能的叫法(functions)，who 是用 name_separator 连起来的前三个人名，一个人都没有就写 nobody。blocking_verbs 是分镜描述里人物走位的动词：只在点到这个人名的那一小句里算数，clause_stops 是正则字符组里断句的标点；entrance 是入场，approach / retreat 是靠近和后退，postures 按先后比对，先中的就是这个人保持的姿态；这些词会用 | 连成正则，词里不要带正则符号。path_errors 是画路线、排关键帧、自动寻路失败时说的话，option_separator 连接可选值。interchange 是导出给别的导演台的工程里写的备注(backdrops 是背景种类的叫法，no_detail 是背景没有颜色也没有地址时的占位)，以及导入别家工程失败时说的话。花括号里是代码填进去的值，{x:g} 带格式，{x!r} 带引号原样写出。",
   "shot_sizes": {
     "default": "中景",
     "aliases": [
@@ -50,7 +50,12 @@
       ["high", ["俯", "high angle", "high-angle"]],
       ["low", ["仰", "low angle", "low-angle"]]
     ],
-    "over_shoulder_words": ["过肩", "越肩", "肩后", "over-the-shoulder", "over the shoulder", "ots"]
+    "over_shoulder_words": ["过肩", "越肩", "肩后", "over-the-shoulder", "over the shoulder", "ots"],
+    "crowd_lenses": [
+      ["behind_audience", ["观众席后方", "观众后方", "人群后方", "台下后方", "会场后方", "从观众席", "后排视角"]],
+      ["through_crowd", ["人群缝隙", "缝隙侧拍", "透过人群", "越过人群", "人缝"]],
+      ["reverse", ["主位后方", "反拍观众", "反拍台下", "台上反拍", "讲者身后", "从台上看"]]
+    ]
   },
   "camera_labels": {
     "template": "{shot_id:02d} {function}-{who}-{size}",

@@ -34,6 +34,16 @@ def menu() -> str:
     return "；".join(f"{kind}（{DEFINITIONS[kind]}）" for kind in KINDS)
 
 
+def names_of_informational() -> str:
+    """只交代信息的类型名，顿号相连。"""
+    return "、".join(kind for kind in KINDS if kind in INFORMATIONAL)
+
+
+def opens_on_exposition(beats: Sequence[Any]) -> bool:
+    """一集的第一个故事节点标的是只交代信息的类型。没标类型的不算。"""
+    return bool(beats) and beat_kind(beats[0]) in INFORMATIONAL
+
+
 def tag(kind: str) -> str:
     return _BEAT_TAG.format(kind=kind)
 

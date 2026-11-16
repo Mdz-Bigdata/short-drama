@@ -23,7 +23,7 @@ from app.core.action_grammar import concrete_ending, has_structure
 from app.core.face_card import parse_face_card
 from app.core.scene_turnaround import SCENE_REVERSE_SLOT, SCENE_VIEW_LABELS, SCENE_VIEW_PURPOSES
 from app.core.shot_motion_contract import CompiledShotPrompt, ShotMotionContract
-from app.core.storyboard_scene_context import EMPTY_ACTOR, costume_owner, is_uncast, look_makeup_note
+from app.core.storyboard_scene_context import OBJECT_KINDS, EMPTY_ACTOR, costume_owner, is_uncast, look_makeup_note, looks_only, real_size_note
 
 # 每格提示词的全部固定句、栏名、词表和正则都在 app/data/prompt/panel_still.json：这里只拼接。
 _DATA = "panel_still"
@@ -252,9 +252,14 @@ def _written_assets(references: Sequence[Mapping[str, Any]], assets: Sequence[Ma
     shown = {(str(item.get("kind")), str(item.get("name"))) for item in references}
     rows: list[str] = []
     unpictured: list[str] = []
+    written = 0
     for item in assets:
-        key, text = (str(item.get("kind")), str(item.get("name"))), _clip(item.get("description"), 160)
+        # 只留长什么样：说哪一集之后会怎样的句子不进这一格，免得提前画出来。
+        key, text = (str(item.get("kind")), str(item.get("name"))), _clip(looks_only(str(item.get("description") or "")), 160)
         if not text:
+            # 没有参考图也没写描述：名字照样点出来，按名字画，不整件漏掉。
+            if key not in shown and key[0] not in ("scene", "actor") and key[1]:
+                unpictured.append(key[1])
             continue
         if key[0] == "scene":
             rows.append(_says("scene_setting", name=key[1], text=text))
@@ -263,10 +268,11 @@ def _written_assets(references: Sequence[Mapping[str, Any]], assets: Sequence[Ma
             rows.append(wuxia_vfx.panel_effect_note(key[1], str(item.get("description") or "")))
         elif key not in shown:
             unpictured.append(key[1])
+            written += 1
             rows.append(_says("unpictured", name=key[1], text=text))
     if unpictured:
-        # 先点名再逐条写：没有图的资产最容易被整件漏画。
-        rows.insert(len(rows) - len(unpictured), str(_fixed("unreferenced")["lead"]).format(names=_LIST.join(unpictured)) + _PERIOD)
+        # 先点名再逐条写：没有图的资产最容易被整件漏画。只有名字、没有描述的也在点名里。
+        rows.insert(len(rows) - written, str(_fixed("unreferenced")["lead"]).format(names=_LIST.join(dict.fromkeys(unpictured))) + _PERIOD)
     return _CLAUSES.join(rows).replace(_PERIOD + _CLAUSES, _PERIOD)
 
 
@@ -301,16 +307,21 @@ def _same_instance(people: Sequence[str], references: Sequence[Mapping[str, Any]
 
 
 def _prop_masters(props: Sequence[str], references: Sequence[Mapping[str, Any]]) -> str:
-    """有自己设定图的道具：形制照那张图，这一格只改它的位置。"""
+    """有自己设定图的道具(连同车辆、商品)：形制照那张图，这一格只改它的位置；参照表里有真实尺寸的，跟人同框按这个比例画。"""
     master = _fixed("prop_master")
     rows = []
     for name in props:
+        own = next((item for item in references if str(item.get("name")) == name and item.get("kind") in OBJECT_KINDS), None)
         pictures = [
             str(master["picture"]).format(number=number)
-            for number, item in enumerate(references, 1) if item.get("kind") == "prop" and str(item.get("name")) == name
+            for number, item in enumerate(references, 1) if item.get("kind") in OBJECT_KINDS and str(item.get("name")) == name
         ]
+        # 参考图带着它自己的大小(设定图按多长画的)；没有参考图的按参照表查。
+        size = str(own.get("size") or "") if own is not None and "size" in own else real_size_note("prop", name)
         if pictures:
-            rows.append(str(master["row"]).format(name=name, pictures=_LIST.join(pictures)))
+            rows.append(str(master["row"]).format(name=name, pictures=_LIST.join(pictures)) + size)
+        elif size:
+            rows.append(str(master["size_only"]).format(name=name) + size)
     return _CLAUSES.join(rows)
 
 

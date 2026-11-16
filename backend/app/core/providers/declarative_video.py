@@ -70,6 +70,8 @@ class VideoEndpointSpec(BaseModel):
     max_reference_images: int = Field(default=0, ge=0, le=20)
     max_reference_videos: int = Field(default=0, ge=0, le=5)
     max_reference_audios: int = Field(default=0, ge=0, le=5)
+    # Whether the model renders dialogue and sound with the picture: its clips then keep their own sound instead of a dub.
+    native_audio: bool = False
     auth_header: str = Field(default="Authorization", max_length=60)
     auth_prefix: str = Field(default="Bearer ", max_length=20)
     submit: HttpStep

@@ -6,6 +6,7 @@ import re
 import unittest
 from unittest.mock import patch
 
+from app.core import prompt_data
 from app.core.screenwriting import fact_check
 
 OVERVIEW = {"title": "拭剑奴", "synopsis": "刀将落下的瞬间，他刚擦过的那把剑自己出鞘三寸，手没有断。", "thesis": "最难的不是拔剑，是承认自己也是刀。"}
@@ -32,6 +33,22 @@ class PromptAndParseTests(unittest.TestCase):
         self.assertEqual(fact_check.check(lambda *a, **k: next(answers), facts="f", entries=LEDGER), [])
         self.assertIn("- 第 1 集「刀落，断手滚落；同一瞬剑自鸣」推翻了「刀将落下的瞬间剑自己出鞘，手没有断」：刀未落，剑先出鞘，手保住", fact_check.retry_block(found))
         self.assertIn("第 1-1 集分集大纲重规划后仍与已定事实相悖", fact_check.warning_text(1, 1, found))
+
+
+    def test_the_call_is_given_room_to_reason_before_it_answers(self):
+        asked: list[int] = []
+
+        def caller(system, user, max_tokens):
+            asked.append(max_tokens)
+            return json.dumps({"contradictions": []})
+
+        fact_check.check(caller, facts="f", entries=LEDGER)
+        fact_check.check(caller, facts="f", entries=LEDGER, max_tokens=1_000_000)
+        fact_check.check(caller, facts="f", entries=LEDGER, max_tokens=2000)
+        floor = prompt_data.number("fact_check", "max_tokens")
+        # A reasoning model given 3,000 tokens thought them all away and answered nothing, which reads as "no contradiction".
+        self.assertGreaterEqual(floor, 60000)
+        self.assertEqual(asked, [floor, 1_000_000, floor])
 
 
 def _engine_with(verdicts):
@@ -72,6 +89,14 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(len(checks), 2)
         self.assertIn("故事梗概：林夏追查实验室真相。", checks[0]["prompt"])
         self.assertIn("总导演方案：林夏的手没有断。", checks[0]["prompt"])
+        # Both checks get the larger of the engine's own output ceiling and the table's fallback: never the old 3,000.
+        floor = prompt_data.number("fact_check", "max_tokens")
+        self.assertEqual({call["max_tokens"] for call in checks}, {max(engine.max_tokens, floor)})
+        engine.max_tokens = 1_000_000
+        model.verdicts = [{"contradictions": []}]
+        with patch.dict("os.environ", {"SCREENWRITING_FACT_CHECK": "1"}):
+            self._write(engine)
+        self.assertEqual([call for call in model.calls if "连续性校对" in call["system"]][-1]["max_tokens"], 1_000_000)
 
     def test_a_ledger_still_contradicting_after_one_retry_is_kept_with_a_warning(self):
         model, engine = _engine_with([FOUND, FOUND])

@@ -130,6 +130,7 @@
       "center": "居中"
     },
     "landmark": "{name}{position}",
+    "crowd_lenses": "{labels}成排在场，机位角度还可以写{lenses}，系统按人群的位置求机位",
     "brief": "【空间调度（系统已定站位，机位由系统按此求解）】{parts}。画面内容里的左右、朝向与远近须与此一致，不写越轴与镜像；景别、机位角度照常填写。"
   },
   "projection": {

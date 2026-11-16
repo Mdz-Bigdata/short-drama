@@ -15,5 +15,5 @@
   "warning": "第 {first}-{last} 集分集大纲重规划后仍与已定事实相悖，请人工核对：{summary}",
   "warning_item": "第 {episode} 集「{beat}」↔「{fact}」",
   "max_items": 6,
-  "max_tokens": 3000
+  "max_tokens": 64000
 }

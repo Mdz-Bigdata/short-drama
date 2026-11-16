@@ -69,6 +69,8 @@ class ClipFacts:
     subject_refs: bool = False          # 有定妆照 / 场景图 / 道具图这类主体参考
     # 真人演员在 Seedance 上：任何画着他真人脸的图(分镜帧、抽出的尾帧、定妆图)都会被拒，只能带真人素材走多模态参考。
     frameless: bool = False
+    # 出品人要这一段接上一段(哪怕换了场)：同一地点连着演、上一场的落幅就是这一场的起幅，按同场接力处理。
+    follows_previous: bool = False
 
 
 @dataclass(frozen=True)
@@ -110,7 +112,7 @@ def _scene_runs(clips: Sequence[ClipFacts]) -> list[list[ClipFacts]]:
     """同一场连续出片的几段：相邻且场次相同的归一组。场次为空的段各自成组。"""
     runs: list[list[ClipFacts]] = []
     for clip in clips:
-        if runs and clip.scene_id and runs[-1][-1].scene_id == clip.scene_id:
+        if runs and (clip.follows_previous or (clip.scene_id and runs[-1][-1].scene_id == clip.scene_id)):
             runs[-1].append(clip)
         else:
             runs.append([clip])
@@ -148,7 +150,7 @@ def _route(
     scene_chain: bool, can_extend: bool,
 ) -> ClipRoute:
     # 上一段画着真人脸时它的尾帧送不出去，本段从自己开头起。
-    chain = previous.key if previous is not None and scene_chain and not previous.frameless else None
+    chain = previous.key if previous is not None and (scene_chain or clip.follows_previous) and not previous.frameless else None
 
     # 真人演员(Seedance)：不能带任何画面帧，长镜头段做不到首尾帧就报错，其余一律多模态参考、不接尾帧。
     if clip.frameless:

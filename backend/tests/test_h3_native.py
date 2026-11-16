@@ -21,7 +21,7 @@ GOOD = (
     "retention_analysis: <Subject 1> fully_preserved; <Subject 2> fully_preserved; <Frame 1> fully_preserved; <Frame 2> fully_preserved.\n\n"
     "detailed_description: [Shot 1] <Subject 1> stands screen-left, lit by a warm orange torch key light from back-left; the camera pushes in slowly. "
     "The young man (S1) says: <d>[Chinese] 剑自己动的。</d> "
-    "[Shot 2] At 00:06.000, the shot transitions to a close-up as <Subject 2> grips the scabbard. The older man (S2) says: <d>[Chinese] 谁动的剑？</d>\n\n"
+    "[Shot 2] At 00:06.125, the shot transitions to a close-up as <Subject 2> grips the scabbard. The older man (S2) says: <d>[Chinese] 谁动的剑？</d>\n\n"
     "overall_soundscape: Dense rain on stone, the scrape of a blade sliding home.\n\n"
     "non_diegetic_music: N/A"
 )
@@ -37,12 +37,33 @@ class RequestTests(unittest.TestCase):
         self.assertEqual(h3_native.shot_starts([4, 4, 4], 15), ["", "00:05.000", "00:10.000"])
         self.assertEqual(h3_native.timecode(65.5), "01:05.500")
 
+    def test_the_timeline_is_laid_over_the_length_the_model_really_delivers(self):
+        # What the stored clips measure, duration by duration: the frame count is always 17k+5 at 24 frames a second.
+        measured = {6: 6.583, 8: 8.0, 9: 9.417, 10: 10.125, 12: 12.25, 13: 13.667, 14: 14.375, 15: 15.083}
+        for requested, actual in measured.items():
+            self.assertAlmostEqual(h3_native.actual_seconds(requested), actual, places=3, msg=str(requested))
+        self.assertAlmostEqual(h3_native.actual_seconds(5), 124 / 24)
+        self.assertAlmostEqual(h3_native.actual_seconds(4), 107 / 24)
+
+        job = h3_native.request(BOARD, beat_seconds=[6, 7], seconds=13, frames=2)
+        self.assertAlmostEqual(job.actual, 328 / 24)
+        # Each shot keeps its share of the clip; the cut moves with the real length (6/13 of 13.667 s).
+        self.assertEqual(job.shot_starts, ["", "00:06.308"])
+        prompt = h3_native.user_prompt(job)
+        self.assertIn("片段实际时长 13.67 秒", prompt)
+        self.assertIn("接口按 13 秒请求", prompt)
+        self.assertIn("长 0.67 秒", prompt)
+
+        exact = h3_native.user_prompt(h3_native.request(BOARD, beat_seconds=[4, 4], seconds=8, frames=2))
+        self.assertIn("片段总时长 8 秒，共 2 个镜头", exact)
+        self.assertIn("[Shot 2] At 00:04.000", exact)
+
     def test_the_job_lists_mentions_and_verbatim_dialogue(self):
         job = _job()
         self.assertEqual(job.mentions, {"@[沈无咎]", "@[演武场]", "@[裴仲玄]"})
         self.assertEqual(job.dialogue, ["剑自己动的。", "谁动的剑？"])
         prompt = h3_native.user_prompt(job)
-        self.assertIn("[Shot 2] At 00:06.000", prompt)
+        self.assertIn("[Shot 2] At 00:06.125", prompt)
         self.assertIn("<Frame 1>、<Frame 2>", prompt)
 
 
@@ -71,7 +92,7 @@ class CheckTests(unittest.TestCase):
         job = _job()
         cases = {
             "缺少段落 retention_analysis": GOOD.replace("retention_analysis:", "retention:"),
-            "没有用给定时间码": GOOD.replace("At 00:06.000", "At 00:05.000"),
+            "没有用给定时间码": GOOD.replace("At 00:06.125", "At 00:05.000"),
             "丢了标记": GOOD.replace("@[裴仲玄]", "Pei"),
             "丢了分镜画面": GOOD.replace("<Frame 2>", "the second frame"),
             "台词没有逐字保留": GOOD.replace("谁动的剑？", "谁动了剑？"),
@@ -155,7 +176,7 @@ class StageFiveNativeTests(StageFiveQueueTests):
                 "subject placement and composition. <Frame 2> is the storyboard reference for [Shot 2], defining viewpoint, subject placement and composition.\n\n"
                 "summary: [reference generation] A man pushes the door open.\n\n"
                 "retention_analysis: <Subject 1> fully_preserved.\n\n"
-                f"detailed_description: [Shot 1] He enters. {dialogue} [Shot 2] At {h3_native.shot_starts([3, 3], 6)[1]}, the shot transitions to his face.\n\n"
+                f"detailed_description: [Shot 1] He enters. {dialogue} [Shot 2] At {h3_native.shot_starts([3, 3], h3_native.actual_seconds(6))[1]}, the shot transitions to his face.\n\n"
                 "overall_soundscape: A chain clinks softly.\n\nnon_diegetic_music: N/A"
             )
 

@@ -137,7 +137,7 @@ class PlatformApiTests(unittest.TestCase):
         user_cookie = self._cookie(self.user.id)
         listed = self.client.get("/api/platform/capabilities", cookies=user_cookie)
         self.assertEqual(listed.status_code, 200)
-        self.assertEqual(listed.json()["total"], 24)  # + open-ai-canvas (2026-11-10)
+        self.assertEqual(listed.json()["total"], 25)  # + harness2 (2026-11-15)
         ability = listed.json()["items"][0]["abilities"][0]
         source_id = listed.json()["items"][0]["source_id"]
 
@@ -319,7 +319,7 @@ class PlatformApiTests(unittest.TestCase):
         image_root = Path(self.temp.name) / "prop-size"
         with patch("app.api.element_api.ELEMENT_MEDIA_ROOT", image_root):
             element = self._regenerated_prop(cookie, image_root, name="青铜令牌", description="刻虎纹")
-            self.assertEqual(element["prop_scale"], {"longest_cm": 10.0, "manual_cm": None, "source": "estimate", "size_text": ""})
+            self.assertEqual(element["prop_scale"], {"longest_cm": 10.0, "manual_cm": None, "source": "table", "size_text": "长10×宽6×高1厘米"})
             board = next(file for file in element["files"] if file["slot"] == "prop_board")
             front = next(file for file in element["files"] if file["slot"] == "prop_front")
             with patch("app.api.element_api.element_image_gateway.generate_image") as generate_image:
@@ -334,7 +334,7 @@ class PlatformApiTests(unittest.TestCase):
             self.assertEqual(files["prop_front"]["sha256"], front["sha256"], "the views were left alone")
 
             cleared = self.client.put(f"/api/elements/{element['id']}/prop-size", json={"length_cm": None}, cookies=cookie)
-            self.assertEqual(cleared.json()["prop_scale"], {"longest_cm": 10.0, "manual_cm": None, "source": "estimate", "size_text": ""})
+            self.assertEqual(cleared.json()["prop_scale"], {"longest_cm": 10.0, "manual_cm": None, "source": "table", "size_text": "长10×宽6×高1厘米"})
 
     def test_a_size_in_the_description_counts_and_changing_it_redraws_the_board(self):
         cookie = self._cookie(self.user.id)
@@ -807,6 +807,12 @@ class PlatformApiTests(unittest.TestCase):
                 f"/media/x/%2e%2e/elements/{relative}",
                 f"/media/x/%2e%2e/ElEmEnTs/{relative}",
                 f"/media/%2f/elements/{relative}",
+                # An encoded "#" or "?" ends request.url.path early, while the static
+                # handler still resolves the dot segments that follow it.
+                f"/media/x%23/%2e%2e/elements/{relative}",
+                f"/media/x%3F/%2e%2e/elements/{relative}",
+                f"/media/%23/%2e%2e/ElEmEnTs/{relative}",
+                f"/media/x%3f/y%23/%2e%2e/%2e%2e/elements/{relative}",
             )
             for blocked_path in blocked_paths:
                 with self.subTest(blocked_path=blocked_path):

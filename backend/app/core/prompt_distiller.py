@@ -22,7 +22,7 @@ from app.core.spoken_lines import dialogue_segments
 #: 进精炼的正文小节(按提示词顺序)。
 DISTILLABLE: tuple[str, ...] = (
     "subject", "motion", "expression", "composition", "environment", "colour", "effects",
-    "contact", "handoff", "dialogue_notes", "sound_layers", "sound", "end_state",
+    "dialogue_notes", "sound_layers", "sound", "end_state",
 )
 
 

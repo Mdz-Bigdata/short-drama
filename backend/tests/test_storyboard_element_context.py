@@ -220,6 +220,10 @@ class StoryboardElementContextTests(unittest.TestCase):
             )
             return original_open(path, *args, **kwargs)
 
+        # 道具尺寸表(按名词认道具用)先读好：这里只核对参考图文件读了哪些。
+        from app.core import prop_scale
+
+        prop_scale.lookup("磨石")
         with patch.object(Path, "open", tracked_open):
             result, store = self.load(selected + unrelated, scene)
         self.assertEqual(

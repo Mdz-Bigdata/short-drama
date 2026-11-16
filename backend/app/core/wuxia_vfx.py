@@ -147,9 +147,12 @@ def effect_sound(name: str, description: str = "") -> str:
     return ""
 
 
-def effect_lines(names: Iterable[Any], task: Mapping[str, Any]) -> list[str]:
-    """视频提示词「特效：」那一节：特效名带上拆解目录里它长什么样和它的声音，都没有时就写名字。"""
-    described = _catalog(task)
+def effect_lines(names: Iterable[Any], task: Mapping[str, Any], *, described: Mapping[str, str] | None = None) -> list[str]:
+    """视频提示词「特效：」那一节：特效名带上它长什么样和它的声音，都没有时就写名字。
+
+    长什么样先看 ``described``(第 3 阶段资产库里这件资产现在的描述，改过资产这里跟着变)，没有再看拆解目录。
+    """
+    described = {**_catalog(task), **{name: text for name, text in (described or {}).items() if str(text or "").strip()}}
     limit = prompt_data.number(_WORDING, "effect_limit")
     lines: list[str] = []
     for name in named_effects(names):

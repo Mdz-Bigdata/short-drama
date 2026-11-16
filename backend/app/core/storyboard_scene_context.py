@@ -6,7 +6,7 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
-from app.core import breakdown_kinds, character_variants, emotion_points, literary, prompt_data, prop_scale, real_person
+from app.core import breakdown_kinds, character_variants, emotion_points, literary, prompt_data, prop_scale, real_person, scene_cast
 from app.core.face_card import parse_face_card, render_face_card
 from app.core import wuxia_vfx
 from app.core.scene_turnaround import SCENE_REVERSE_SLOT, SCENE_VIEW_LABELS, SCENE_VIEW_PURPOSES
@@ -31,6 +31,8 @@ def _pattern(key: str) -> re.Pattern[str]:
     return re.compile("".join(body) if isinstance(body, list) else str(body))
 
 
+#: 人会拿、会碰、会坐进去的物件：视频提示词里和道具一样写成「名字（参考图N）」的道具锚，持有、接触、递接都按它认。
+OBJECT_KINDS = ("prop", "product", "vehicle")
 KINDS = {"scene": "scenes", "prop": "props", "costume": "costumes", "effect": "effects", "product": "products", **breakdown_kinds.CATALOG_KEYS}
 LABELS = {
     **{str(kind): str(label) for kind, label in prompt_data.value(_WORDING, "labels").items()},
@@ -154,9 +156,63 @@ def _scoped(item: dict, scene_id: str) -> bool:
     return not scope or scene_id in _names(scope)
 
 
+#: 按名字里的片段也认得到的类型：拆解目录里的名字常带修饰、方位或并列(「凹坑磨石」「墙角接雨木盆」「长木案与矮条凳」
+#: 「油灯爆灯花」)，剧本和分镜只写「磨石」「接雨木盆」「长木案」「灯花」。特技是一段动作的名字，不按片段认。
+_NOUN_KINDS = (*OBJECT_KINDS, "set_dressing", "effect")
+_BRACKETED_NOTE = _pattern("bracketed_note_pattern")
+_NAME_PARTS = _pattern("name_part_split")
+_PIECE_LEAD = _pattern("name_piece_lead")
+# 光、烟、影这类泛泛的画面词不能单独当认资产的片段：「窗外微光」不是「剑自出鞘三寸微光」。
+_PIECE_STOP = frozenset(prompt_data.value(_WORDING, "name_piece_stop"))
+
+
+def head_noun(item: Mapping[str, Any]) -> str:
+    """物件名字结尾的那个物件名词，按道具尺寸表认(两个字以上)：「凹坑磨石」→ 磨石，「马蹄金与钱袋」→ 钱袋。
+
+    名字本身就是表里那个词、或认不出时是空串(那时整名匹配已经够用)。
+    """
+    bare = _BRACKETED_NOTE.sub("", _text(item.get("name"))).strip()
+    scale = prop_scale.lookup(bare)
+    if scale is None or len(scale.name) < 2 or scale.name == bare or not bare.endswith(scale.name):
+        return ""
+    return scale.name
+
+
+def name_pieces(item: Mapping[str, Any]) -> frozenset[str]:
+    """认这件资产的片段：并列的每一样(按「与」「和」「、」分开)，和每一样两个字以上的结尾，加上尺寸表认出的物件名词。
+
+    「墙角接雨木盆」→ 接雨木盆、木盆……；「长木案与矮条凳」→ 长木案、木案、矮条凳、条凳……。以「的」「之」开头的结尾不算
+    (「未开刃的刀」不靠「的刀」认)，name_piece_stop 里的泛泛画面词(微光、烟雾)也不算。只对道具、商品、车辆、置景和特效。
+    """
+    if str(item.get("kind") or "") not in _NOUN_KINDS:
+        return frozenset()
+    bare = _BRACKETED_NOTE.sub("", _text(item.get("name"))).strip()
+    pieces = {head_noun(item)}
+    for part in _NAME_PARTS.split(bare):
+        part = part.strip()
+        pieces.update(part[start:] for start in range(len(part) - 1) if not _PIECE_LEAD.match(part[start:]))
+    pieces.discard("")
+    pieces.discard(bare)
+    return frozenset(pieces - _PIECE_STOP)
+
+
+def named_by_noun(item: Mapping[str, Any], text: str, peers: Iterable[Mapping[str, Any]]) -> bool:
+    """名字没原样出现、但写了它的一个片段(见 :func:`name_pieces`)，而且同类里只有它有这个片段：分镜写「接雨木盆」就是
+    「墙角接雨木盆」，剧本写「磨石」就是「凹坑磨石」。两件都有这个片段的(「七缺口钝刀」「旧钝刀」都有「钝刀」)谁也不认，免得绑错。
+    """
+    pieces = name_pieces(item)
+    if not pieces:
+        return False
+    text = str(text or "")
+    others = [name_pieces(other) for other in peers if other is not item and _text(other.get("name")) != _text(item.get("name"))]
+    return any(piece in text and not any(piece in other for other in others) for piece in pieces)
+
+
 def mentioned(item: dict, text: str) -> bool:
     name = _text(item.get("name"))
-    aliases = _names(item.get("aliases")) + _names(name)
+    # 素材库条目的别名记在元数据里(并掉的重复条目的旧名字也在这)：剧本写旧名字照样认到它。
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    aliases = _names(item.get("aliases")) + _names(metadata.get("aliases")) + _names(name)
     # Catalog labels commonly append staging annotations to the actual name.
     stem = _STEM_SPLIT.split(name)[0]
     stem = _STEM_SUFFIX.sub("", stem)
@@ -241,6 +297,10 @@ def compile_scene_context(
     characters = _names(scene.get("characters")) or [
         name for name in all_names if _named(name, script, aliases)
     ]
+    if not _names(scene.get("characters")):
+        # 出场名单是空的：剧本只描述外貌没写名字的人(「药白素衣的年轻女子…腕上药渍」)，按他的定妆图(表演妆造)认出来补进来，
+        # 他的定妆照、妆造才进得了提示词。名单写明了人的，那是编剧定的，不补。
+        characters = [*characters, *scene_cast.described(script, variants, characters)]
     characters = list(dict.fromkeys(aliases.get(name, name) for name in characters if name not in _EMPTY_NAMES))
     sheets = assets.get("3_sheets") or {}
     actors: list[dict[str, Any]] = []
@@ -268,6 +328,12 @@ def compile_scene_context(
         actors.append(actor)
 
     catalog = (assets.get("2_breakdown") or {}).get("production_assets") or {}
+    # 物件、置景和特效也按这一场已经写好的分镜认：剧本只写「屋角木盆」，分镜写到「接雨木盆」「墙上铁钩」也算这一场有。
+    shot_text = "\n".join(
+        _text(shot.get("desc")) for shot in (assets.get("4") or [])
+        if isinstance(shot, dict) and _text(shot.get("scene_id")) == scene_id
+    )
+    object_text = f"{script}\n{shot_text}" if shot_text else script
     # 戏服和妆效已经画在定妆图上：这些条目和旧项目的服装图、妆效图不再绑，免得一个人穿两身。
     already_worn = {
         name for looks in variants.values() for item in looks
@@ -295,6 +361,10 @@ def compile_scene_context(
                 if item["name"] not in library_names:
                     candidates[item["name"]] = item
                     library_names.add(item["name"])
+                    # 拆解目录里还写着并掉的旧名字(「裴照腰佩长剑」)：那条由库里留下的这条代表，不再单列一条没图的。
+                    for alias in _names((item.get("metadata") or {}).get("aliases") if isinstance(item.get("metadata"), dict) else None):
+                        if alias != item["name"] and alias in candidates and not candidates[alias].get("id"):
+                            del candidates[alias]
         selected = []
         for item in candidates.values():
             if kind in ("costume", "makeup") and item["name"] in already_worn:
@@ -305,7 +375,8 @@ def compile_scene_context(
                 or (item.get("metadata") or {}).get("scene_ids")
                 or (item.get("metadata") or {}).get("scene_id")
             )
-            matched = bool(explicit_scope) or mentioned(item, script)
+            text = object_text if kind in _NOUN_KINDS else script
+            matched = bool(explicit_scope) or mentioned(item, text) or named_by_noun(item, text, candidates.values())
             if kind == "costume" and not matched:
                 # 服装名可能写名字也可能写称呼(「陆婉（侯府嫡女）·石榴红襦裙」)：两种叫法都算这个人。
                 labels = [*characters, *(title for title, owner in aliases.items() if owner in characters)]
@@ -385,12 +456,48 @@ def dress_cast_looks(looks: Mapping[str, str], references: Sequence[Mapping[str,
     return dressed
 
 
-def real_size_note(kind: str, name: str) -> str:
-    """道具和车辆在参照表里的真实尺寸，跟在参考图那句后面；查不到是空串。句中不用「；」「。」。"""
-    if kind not in ("prop", "vehicle"):
+def real_size_note(kind: str, name: str, description: str = "", metadata: Mapping[str, Any] | None = None) -> str:
+    """道具、商品和车辆的真实大小，跟在参考图那句后面。句中不用「；」「。」。
+
+    参照表里有长宽高就写长宽高；没有时写第 3 阶段画这件物件的设定图时用的最长边(人填的、描述里写明的或按类别估的，
+    见 prop_turnaround.plan_prop)——设定图就是按这个长度画的，镜头里跟人同框也按它。只有名字、连描述都没有的写不出大小，是空串。
+    """
+    if kind not in OBJECT_KINDS:
         return ""
     scale = prop_scale.lookup(name)
-    return prompt_data.text("prop_scale", "reference_size").format(scale.size_text()) if scale is not None else ""
+    if scale is not None:
+        return prompt_data.text("prop_scale", "reference_size").format(scale.size_text())
+    if not str(description or "").strip() and not (metadata or {}).get("prop_length_cm"):
+        return ""
+    from app.core.prop_turnaround import plan_prop
+
+    manual = (metadata or {}).get("prop_length_cm")
+    plan = plan_prop(name, str(description or ""), length_cm=float(manual) if isinstance(manual, (int, float)) and manual > 0 else None)
+    return prompt_data.text("prop_scale", "reference_length").format(f"{plan.longest_cm:g}")
+
+
+def drawn_set(item: Mapping[str, Any]) -> list[str]:
+    """这件资产的图和哪几样配套画在一起(出图时记在元数据 drawn_together / drawn_with 里)：[长的那样, 其余几样…]；没有就是空表。"""
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
+    name = _text(item.get("name"))
+    together = [_text(other) for other in metadata.get("drawn_together") or [] if _text(other)] if isinstance(metadata.get("drawn_together"), list) else []
+    if together:
+        return list(dict.fromkeys([name, *together]))
+    partner = _text(metadata.get("drawn_with"))
+    return list(dict.fromkeys([partner, name])) if partner and partner != name else []
+
+
+def _set_note(number: int, reference: Mapping[str, Any], size: str) -> str:
+    """配套图那一句：图里画了哪几样；本镜只用到其中几样时说明其余的不进画面。只用一样时带上它的真实大小。"""
+    def names(items: Sequence[str]) -> str:
+        return _says("set_joiner").join(_says("set_name", name=name) for name in items)
+
+    members = [str(name) for name in reference.get("set") or []]
+    used = [str(name) for name in reference.get("used") or []]
+    note = _says("set_reference", number=number, names=names(members))
+    if used and set(used) != set(members):
+        note += _says("set_only", used=names(used))
+    return note + (size if len(used) == 1 else "")
 
 
 def reference_note(number: int, reference: dict, *, label: str = "") -> str:
@@ -403,8 +510,11 @@ def reference_note(number: int, reference: dict, *, label: str = "") -> str:
     """
     kind, name = str(reference.get("kind") or ""), str(reference.get("name") or "")
     label = label or LABELS.get(kind, kind)
+    size = str(reference.get("size") if "size" in reference else real_size_note(kind, name))
+    if reference.get("set"):
+        return _set_note(number, reference, size)
     if kind in breakdown_kinds.KINDS:
-        return breakdown_kinds.reference_note(number, kind, name) + real_size_note(kind, name)
+        return breakdown_kinds.reference_note(number, kind, name) + size
     if kind == "actor" and reference.get("real_person") and reference.get("view") == "face":
         outfit = _SENTENCE_MARKS.sub(_CLAUSE, str(reference.get("outfit") or "")).strip(_CLAUSE)
         variant = _SENTENCE_MARKS.sub(_CLAUSE, str(reference.get("variant") or "")).strip(_CLAUSE)
@@ -435,7 +545,7 @@ def reference_note(number: int, reference: dict, *, label: str = "") -> str:
     if kind != "scene":
         # 特效图只是一瞬：写明它在镜头里什么时候出现、怎么照人(措辞在 wuxia_vfx.json)。
         timing = prompt_data.text("wuxia_vfx", "shot_effect_reference") if kind == "effect" else ""
-        return _says("object_reference", number=number, label=label, name=name) + timing + real_size_note(kind, name)
+        return _says("object_reference", number=number, label=label, name=name) + timing + size
     view = str(reference.get("view") or "") or "scene_main"
     layout = _SENTENCE_MARKS.sub(_CLAUSE, _text(reference.get("layout"))).strip(_CLAUSE)
     frame = str(reference.get("frame") or "")
@@ -590,6 +700,30 @@ def crowd_lines(context: dict, shot: Mapping[str, Any], on_set: Iterable[str]) -
     ]
 
 
+_LATER_NOTE = _pattern("later_note_pattern")
+_SENTENCES = _pattern("sentence_split_pattern")
+
+
+def looks_only(description: str) -> str:
+    """资产描述里只留它长什么样：说哪一集、终局、之后会怎样的句子(「第2集末尾挂上钝刀」)不写进这一镜，免得提前画出来。"""
+    return "".join(sentence for sentence in _SENTENCES.split(_text(description)) if sentence.strip() and not _LATER_NOTE.search(sentence))
+
+
+def unpictured_lines(binding: Mapping[str, Any]) -> list[str]:
+    """本镜绑到、却没有参考图的道具、车辆、商品和置景：照资产描述写一句放进视频提示词，模型只看到名字时画不出它。
+
+    特效和特技在「特效」那一节里写，群演见 :func:`crowd_lines`，人物与场地另有锚点。没写描述的不写(名字已在动作里)。
+    """
+    shown = {(str(item.get("kind")), str(item.get("name"))) for item in binding.get("references") or []}
+    lines = []
+    for item in binding.get("assets") or []:
+        kind, name = str(item.get("kind") or ""), str(item.get("name") or "")
+        text = _SENTENCE_MARKS.sub(_CLAUSE, looks_only(_text(item.get("description")))).strip(_CLAUSE)
+        if (kind in OBJECT_KINDS or kind == "set_dressing") and (kind, name) not in shown and text:
+            lines.append(_says("unpictured_asset", name=name, text=text))
+    return list(dict.fromkeys(lines))
+
+
 def desk_layers(references: Sequence[Mapping[str, Any]], *, desk: bool) -> list[dict]:
     """几个瞬间合成一段时按这一段实际带不带导演台白模重标场地图(返回副本，各瞬间自己的参考不动)。"""
     marked: list[dict] = []
@@ -740,9 +874,11 @@ def panel_context(context: dict, shot: dict, *, layout: str = "", crowd: Iterabl
             item = character_variants.apply(base, asked)
         selected.append(item)
     selected += context["scenes"]
-    props = [item for item in context["props"] if mentioned(item, action)]
-    products = [item for item in context.get("products", []) if mentioned(item, action)]
-    effects = [item for item in context["effects"] if mentioned(item, action)]
+    props = [item for item in context["props"] if mentioned(item, action) or named_by_noun(item, action, context["props"])]
+    products = [
+        item for item in context.get("products", []) if mentioned(item, action) or named_by_noun(item, action, context.get("products", []))
+    ]
+    effects = [item for item in context["effects"] if mentioned(item, action) or named_by_noun(item, action, context["effects"])]
     # 「雷劫劈下」写的就是「九霄雷劫」：核心词只属于本场一个特效时也绑上。
     effects += wuxia_vfx.bound_by_term(context["effects"], action, [item["name"] for item in effects])
     costumes = [
@@ -753,20 +889,38 @@ def panel_context(context: dict, shot: dict, *, layout: str = "", crowd: Iterabl
     ]
     on_set = set(crowd)
     # 群演、车辆、特技、置景按动作里点到的名字绑；妆效只要这场戏提到了，就跟着它长在谁身上。
-    extras_on_set = [
+    named_on_set = [
         item for kind, key in breakdown_kinds.CATALOG_KEYS.items() for item in context.get(key, [])
-        if mentioned(item, action) or (kind == "makeup" and any(costume_owner(item, name) for name in characters))
-        # 本场在场的群演(见 crowd_on_set)：这一镜没点名也照样在背景里。
-        or (kind == "extra" and item["name"] in on_set)
+        if mentioned(item, action) or named_by_noun(item, action, context.get(key, []))
+        or (kind == "makeup" and any(costume_owner(item, name) for name in characters))
     ]
-    # 特效图排在旧服装图前面：九张的上限先让给特效(戏服已经画在定妆图上了)。
-    selected += props + products + effects + costumes + extras_on_set
+    # 本场在场的群演(见 crowd_on_set)：这一镜没点名也照样在背景里。
+    crowd_only = [
+        item for item in context.get(breakdown_kinds.CATALOG_KEYS["extra"], [])
+        if item["name"] in on_set and item not in named_on_set
+    ]
+    # 九张的上限：动作里点到名的车辆、特技、置景、群演排在旧服装图前面(戏服已经画在定妆图上了)，
+    # 没点名、只在背景里的群演排最后。
+    selected += props + products + effects + named_on_set + costumes + crowd_only
+    # 车辆、商品和道具一样是人会碰的物件：一起进本镜的物件清单(持有、接触、递接、账本都按它认)。
+    vehicles = [item for item in named_on_set if item["kind"] == "vehicle"]
     references: list[dict[str, str]] = []
     seen_urls = set()
+    # 配套画在一张图里的几样(「长剑」与「长剑剑鞘」)：两条各存了一份同一张图，本镜只发一次，那句职责写成配套图。
+    sets: dict[str, dict[str, Any]] = {}
     for item in selected:
         url = item.get("image_url")
+        members = drawn_set(item)
+        if url and members and members[0] in sets:
+            together = sets[members[0]]
+            together["set"] = list(dict.fromkeys([*together["set"], *members]))
+            together["used"] = list(dict.fromkeys([*together["used"], item["name"]]))
+            continue
         if url and url not in seen_urls and len(references) < 9:
             reference = {"kind": item["kind"], "name": item["name"], "image_url": url, **_identity(item)}
+            # 物件的真实大小跟着参考图走：设定图按多长画的，镜头里就按多长画，跟人同框不穿模、不失比例。
+            if item["kind"] in OBJECT_KINDS and (size := real_size_note(item["kind"], item["name"], str(item.get("description") or ""), item.get("metadata"))):
+                reference["size"] = size
             if item.get("variant"):
                 reference["variant"] = str(item["variant"])
                 # 定妆图上画了的妆效也写进提示词：图上左右画反了，按文字改回来。
@@ -792,6 +946,9 @@ def panel_context(context: dict, shot: dict, *, layout: str = "", crowd: Iterabl
                 assets = real_person.ark_assets(item.get("metadata"))
                 if assets:
                     reference["ark_assets"] = assets
+            if members:
+                reference["set"], reference["used"] = members, [item["name"]]
+                sets[members[0]] = reference
             references.append(reference)
             seen_urls.add(url)
             # 正面大头照紧跟在这个人的正面全身照后面：全身照管体型、发型与服装，大头照管相貌。
@@ -820,7 +977,7 @@ def panel_context(context: dict, shot: dict, *, layout: str = "", crowd: Iterabl
     bind_scene_frames(references, shot, empty_shot=empty_shot, desk=desk)
     return {
         "characters": characters or [EMPTY_ACTOR],
-        "props": [item["name"] for item in props] or [_says("no_props")],
+        "props": [item["name"] for item in (*props, *products, *vehicles)] or [_says("no_props")],
         "effects": [item["name"] for item in effects] or [_says("no_effects")],
         "references": references,
         "assets": [{"kind": item["kind"], "name": item["name"], "description": str(item.get("description") or "")} for item in selected],

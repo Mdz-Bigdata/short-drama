@@ -84,6 +84,21 @@ NO_EMOTION_POINT = "no_emotion_point"
 NO_KEY_LINE = "no_key_line"
 
 
+# A drama adapted from a novel that still tells its story in narration: sent back, then kept and flagged.
+TOO_MANY_NARRATED_SHOTS = "too_many_narrated_shots"
+
+
+def narrated_shots(scenes) -> list[str]:
+    """The ids of the shots that carry narration (a ``voiceover`` utterance with words in it)."""
+    return [
+        str(scene.get("scene_id") or "") for scene in scenes if isinstance(scene, dict)
+        and any(
+            isinstance(item, dict) and item.get("kind") == "voiceover" and str(item.get("text") or "").strip()
+            for item in (scene.get("utterances") or [])
+        )
+    ]
+
+
 def spoken_shot_problem(scenes, spoken_shot_ratio: float) -> str | None:
     """Why an episode is too quiet, or ``None``: fewer than ``spoken_shot_ratio`` of its shots carry speech."""
     ratio = max(0.0, min(1.0, float(spoken_shot_ratio or 0)))
@@ -326,6 +341,8 @@ __all__ = [
     "DraftViolation",
     "EPISODE_SHAPE_CODES",
     "TOO_FEW_SPOKEN_SHOTS",
+    "TOO_MANY_NARRATED_SHOTS",
+    "narrated_shots",
     "spoken_shot_problem",
     "PlanCheckContext",
     "PlanCheckResult",

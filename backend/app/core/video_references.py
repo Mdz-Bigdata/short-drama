@@ -105,7 +105,8 @@ VIDEO_PROVIDER_PROFILES: tuple[VideoProviderProfile, ...] = (
         notes=[
             "audio is not advertised as a conditioning input in the reviewed O1 guide",
             "the adapter executes text, first-frame, first+last-frame and multi-image modes; Video O1 multimodal references fail closed until their fields are verified",
-            "kling-v2-6 / v3 can render sound, but only behind a request flag the adapter does not send, so clips arrive silent",
+            "kling 3.0 / 4.0 render sound only when the request says sound=on (default off); the adapter sends it, and their "
+            "clips keep their own sound, only when the host sets KLING_NATIVE_SOUND=1 - otherwise clips arrive silent and are dubbed",
         ],
     ),
     VideoProviderProfile(
@@ -248,6 +249,24 @@ VIDEO_MODEL_NATIVE_AUDIO: tuple[tuple[str, bool], ...] = (
 )
 
 
+# Kling renders sound with the picture only when the request says ``sound: "on"`` (official legacy
+# /v1/videos endpoints; default "off"), and only on the versions its capability map lists for text and
+# image to video: 3.0, 3.0 Turbo, 4.0, 4.0 Flash. O1 / Omni, 2.6 and 2.5 Turbo are not on that list.
+# The request flag has not been proven against the live API from this project, so it is a host
+# switch that starts off: KLING_NATIVE_SOUND=1 sends the flag and treats those versions as audible.
+KLING_NATIVE_SOUND_ENV = "KLING_NATIVE_SOUND"
+_KLING_AUDIBLE = re.compile(r"kling-?(?:v-?)?(?:3|4)(?!\d)")
+_KLING_SILENT = re.compile(r"o1|omni")
+
+
+def kling_native_sound(model: str) -> bool:
+    """Whether this Kling request should ask for the model's own sound (see ``KLING_NATIVE_SOUND_ENV``)."""
+    if os.getenv(KLING_NATIVE_SOUND_ENV, "0").strip().lower() not in {"1", "true", "on", "yes"}:
+        return False
+    normalized = _normalize_model_token(model)
+    return bool(_KLING_AUDIBLE.search(normalized)) and not _KLING_SILENT.search(normalized)
+
+
 def _normalize_model_token(value: str) -> str:
     return re.sub(r"[\s_.]+", "-", (value or "").strip().lower())
 
@@ -319,6 +338,7 @@ def _declared_profile(model: str) -> VideoProviderProfile | None:
         family=spec.family, aliases=list(spec.model_ids), modes=list(spec.modes),
         max_reference_images=spec.max_reference_images, max_reference_videos=spec.max_reference_videos,
         max_reference_audios=spec.max_reference_audios,
+        native_audio=bool(getattr(spec, "native_audio", False)),
         verification_status="integrated" if declared_video_endpoints.ready(spec.family) else "runtime_configuration_required",
         capability_source=f"declared video endpoint {spec.label}",
         notes=["modes and limits come from the declared spec; the credential is proven on first generation"],
@@ -329,7 +349,7 @@ def video_native_audio(model: str) -> bool:
     """Whether the selected video model renders dialogue and sound with the picture.
 
     A version entry wins over its family (``seedance1.0`` is silent although the family is not);
-    unknown and declared-but-unverified models are treated as silent.
+    unknown models are treated as silent; a declared provider says so itself (``native_audio`` in its spec).
     """
     normalized = _normalize_model_token(model)
     if normalized:
@@ -337,7 +357,10 @@ def video_native_audio(model: str) -> bool:
         for alias, audio in ranked:
             if alias in normalized:
                 return audio
-    return normalize_video_provider(model).native_audio
+    profile = normalize_video_provider(model)
+    if profile.family == "kling":
+        return kling_native_sound(model)
+    return profile.native_audio
 
 
 def uses_native_soundtrack(config: Mapping[str, Any]) -> bool:
@@ -460,6 +483,14 @@ _VOICE_SAMPLE = re.compile(
 )
 
 
+#: 一句完整的音色锁：「名字：形容音色的那一段(，音色参考)〈音频:名字〉」。形容的那一段里不会有冒号、句读和引号，
+#: 所以同一行里更靠前的「名字：台词」不会被当成它的开头。
+_VOICE_LOCK = re.compile(
+    r"(?P<name>[^\s：；。，、？！〈〉“”「」]{1,24})：[^：；。？！\n〈〉“”「」]{0,120}?(?:，?"
+    + re.escape(prompt_data.text("voice_reference", "lock_lead")) + r")?〈音频:(?P=name)〉"
+)
+
+
 def voice_placeholder(name: str) -> str:
     """The placeholder a speaking character's voice anchor carries as ``ref_audio`` until routing is done."""
     return _VOICE_SAMPLE_MARK.format(name=str(name or "").strip())
@@ -473,9 +504,21 @@ def renumber_audio_mentions(prompt: str, voices: list[tuple[str, str]] | tuple, 
     own reference audios); one it does not carry (first / first+last frame modes, a model that takes
     no audio, over the limit) is removed together with its 音色参考 lead, so no number points at an
     audio that is not there.
+
+    A carried sample also turns that character's whole voice lock into a pointer (``pointed`` in
+    voice_reference.json): the adjectives describing the timbre are dropped, because a description
+    next to a reference makes the model draw the voice again. Without the sample they stay.
     """
     position = {url: index for index, url in enumerate(plan.reference_audios or [], start=1)}
     urls = {str(name).strip(): url for name, url in voices or ()}
+    pointed = prompt_data.text("voice_reference", "pointed")
+
+    def lock(match: re.Match[str]) -> str:
+        name = match.group("name").strip()
+        number = position.get(urls.get(name, ""))
+        return pointed.format(name=name, n=number) if number and pointed else match.group(0)
+
+    prompt = _VOICE_LOCK.sub(lock, prompt or "")
 
     def sample(match: re.Match[str]) -> str:
         number = position.get(urls.get(match.group(2).strip(), ""))

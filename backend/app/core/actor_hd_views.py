@@ -16,6 +16,8 @@
 from __future__ import annotations
 
 import io
+import concurrent.futures
+import contextvars
 import os
 from dataclasses import dataclass
 from typing import Callable
@@ -207,14 +209,11 @@ def generate_hd_views(
     ``generate(model 之外的) (prompt, references, size)`` 返回图片地址，``load(url)`` 取回字节——
     由调用方绑定模型与网关，这里只管提示词、切图和取舍。
     """
-    views: dict[str, Image.Image] = {}
-    for group in HD_GROUPS:
-        if only is not None and not set(group.cells) & set(only):
-            continue  # ``only`` 只要某几格时，不相干的那一组不出图、不花钱
+    def one(group) -> dict[str, Image.Image]:
         try:
             url = generate(hd_prompt(group, name=name, desc=desc, style=style), references, group.size)
             if not url:
-                continue
+                return {}
             content = load(url)
             if keep is not None:
                 try:
@@ -223,13 +222,26 @@ def generate_hd_views(
                     pass
             crops = split_triptych(content)
         except Exception:  # noqa: BLE001 - 高清视图是锦上添花，失败就保留设定集裁切
-            continue
+            return {}
         turned = (
             _distinct(crops, group.distinct_pairs, group.distinct_level)
             if group.require_distinct or group.distinct_pairs else True
         )
-        if len(crops) == len(group.cells) and turned:
-            views.update(zip(group.cells, crops))
+        return dict(zip(group.cells, crops)) if len(crops) == len(group.cells) and turned else {}
+
+    # ``only`` 只要某几格时，不相干的那一组不出图、不花钱。
+    groups = [group for group in HD_GROUPS if only is None or set(group.cells) & set(only)]
+    # 头像三联和全身三联互不依赖：两张同时出(各约 100 秒)，按组的先后合并，结果和挨个出一样。
+    # 每个线程带上当前的调用上下文(用量记在哪个项目、哪一阶段)。
+    if len(groups) > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(groups)) as pool:
+            futures = [pool.submit(contextvars.copy_context().run, one, group) for group in groups]
+            results = [future.result() for future in futures]
+    else:
+        results = [one(group) for group in groups]
+    views: dict[str, Image.Image] = {}
+    for found in results:
+        views.update(found)
     return views
 
 

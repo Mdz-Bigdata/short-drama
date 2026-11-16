@@ -25,13 +25,15 @@ from contextvars import ContextVar
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from app.core import light_setups
 from app.core import acting, breakdown_kinds, character_block, emotion_points, literary, prompt_data, visual_wording, xianxia_lore
 from app.core.episode_shape import EpisodeShape
+from app.core import series_rhythm
 from app.core.fight_design import plan_rules_for, visual_rules_for
 from app.core.wuxia_vfx import plan_rules_for as spectacle_plan_rules
-from app.core.screenwriting import filmability
+from app.core.screenwriting import filmability, story_state
 from app.core.screenwriting.durations import render_episode_target_rule
-from app.core.screenwriting.pacing import render_pacing_section
+from app.core.screenwriting.pacing import pacing_for, render_pacing_section
 from app.core.screenwriting.speech_rate import speech_rate_units_per_second
 from app.core.screenwriting.text_metrics import reading_unit_noun
 
@@ -266,6 +268,83 @@ def build_asset_inventory_prompt(
 # --------------------------------------------------------------------------- episode planning
 
 
+# --------------------------------------------------------------------------- novel adaptation brief
+
+
+def adaptation_limit(name: str) -> int:
+    """A limit of the adaptation brief: ``keep`` / ``compress`` entries, ``narrated_shots`` per drama episode."""
+    return int(_table("adaptation.limits")[name])
+
+
+def build_adaptation_prompt(source_content: str, *, overview: Mapping[str, Any] | None, characters: Mapping[str, Any] | None) -> str:
+    """Before a novel is cut into episodes: what it sells, whose story it is, where it opens, what may not be cut."""
+    return _says(
+        "adaptation.body",
+        language=output_language_name(),
+        overview=_overview_block(overview),
+        characters=_format_assets_with_desc(characters),
+        keep=adaptation_limit("keep"),
+        compress=adaptation_limit("compress"),
+        heading=_says("common.heading_novel"),
+        source=neutralize_tags(source_content),
+    )
+
+
+def _brief_text(brief: Mapping[str, Any] | None, name: str) -> str:
+    return neutralize_tags(str(brief.get(name) or "").strip()) if isinstance(brief, Mapping) else ""
+
+
+def _brief_items(brief: Mapping[str, Any] | None, name: str) -> list[str]:
+    if not isinstance(brief, Mapping) or not isinstance(brief.get(name), (list, tuple)):
+        return []
+    items = [neutralize_tags(str(item).strip()) for item in brief[name] if str(item or "").strip()]
+    return items[: adaptation_limit(name)]
+
+
+def _adaptation_ledger_lines(brief: Mapping[str, Any] | None) -> list[str]:
+    """The brief as the ledger planner reads it: everything, the skippable parts included. Nothing without a brief."""
+    lines: list[str] = []
+    if _brief_text(brief, "selling_point"):
+        lines.append(_says("adaptation.selling_point", text=_brief_text(brief, "selling_point")))
+    if _brief_text(brief, "protagonist"):
+        lines.append(_says("adaptation.protagonist", text=_brief_text(brief, "protagonist")))
+    if _brief_text(brief, "situation"):
+        lines.append(_says("adaptation.situation", text=_brief_text(brief, "situation")))
+    if _brief_text(brief, "main_line"):
+        lines.append(_says("adaptation.main_line", text=_brief_text(brief, "main_line")))
+    if _brief_text(brief, "core"):
+        lines.append(_says("adaptation.core", text=_brief_text(brief, "core")))
+    keep = _brief_items(brief, "keep")
+    if keep:
+        lines += [_says("adaptation.keep_ledger"), *(_says("adaptation.item", text=item) for item in keep)]
+    skippable = _brief_items(brief, "compress")
+    if skippable:
+        lines += [_says("adaptation.compress"), *(_says("adaptation.item", text=item) for item in skippable)]
+    return ["", _says("adaptation.heading"), *lines] if lines else []
+
+
+def _adaptation_plan_block(brief: Mapping[str, Any] | None, episode: int) -> str:
+    """What an adapted episode is told: the rules of adapting, and the brief's parts a single episode can act on."""
+    lines: list[str] = []
+    if _brief_text(brief, "protagonist"):
+        lines.append(_says("adaptation.protagonist", text=_brief_text(brief, "protagonist")))
+    if episode == 1 and _brief_text(brief, "situation"):
+        lines.append(_says("adaptation.situation", text=_brief_text(brief, "situation")))
+    if _brief_text(brief, "main_line"):
+        lines.append(_says("adaptation.main_line", text=_brief_text(brief, "main_line")))
+    if _brief_text(brief, "core"):
+        lines.append(_says("adaptation.core", text=_brief_text(brief, "core")))
+    keep = _brief_items(brief, "keep")
+    if keep:
+        lines += [_says("adaptation.keep_plan"), *(_says("adaptation.item", text=item) for item in keep)]
+    parts = [_says("adaptation.plan_wrap", lines="\n".join(lines))] if lines else []
+    rules = _says("script_plan.adaptation_rules")
+    if episode == 1:
+        rules = f"{rules}\n{_says('script_plan.first_episode_novel')}"
+    parts.append(rules)
+    return "\n\n".join(parts) + "\n\n"
+
+
 def _target_volume_line(volume) -> str:
     if volume is None:
         return _says("episode_plan.volume_unset")
@@ -290,6 +369,10 @@ def _context_lines(context_entries: Sequence[Mapping[str, Any]]) -> list[str]:
                 title=neutralize_tags(entry.get('title') or _says("episode_plan.untitled")),
                 hook=neutralize_tags(entry.get('hook') or ''),
             ))
+            # 跨集场记：这一集演完已经定下的事，接着排的集要守住。
+            settled = story_state.context_changes(entry)
+            if settled:
+                lines.append(neutralize_tags(settled))
     return lines
 
 
@@ -358,10 +441,16 @@ def build_anchored_plan_prompt(
     remaining_episodes: int | None,
     instructions: str | None,
     cast: Mapping[str, Any] | None = None,
+    adaptation: Mapping[str, Any] | None = None,
+    opens_series: bool = False,
+    earlier_state: Sequence[str] = (),
 ) -> str:
     """Split a source window into episodes anchored on verbatim ``end_anchor`` snippets.
 
     ``cast`` is the asset inventory: its characters and relationships are settled before the ledger is planned.
+    A novel is re-staged rather than cut by chapter: ``adaptation`` is its brief (see
+    ``build_adaptation_prompt``), and ``opens_series`` says this window holds episode 1.
+    An author's finished screenplay is extracted as before and gets neither.
     """
     is_screenplay = source_kind == "screenplay"
     overview = overview or {}
@@ -369,7 +458,7 @@ def build_anchored_plan_prompt(
     if is_screenplay:
         lines.append(_says("anchored_plan.intro_screenplay"))
     else:
-        lines.append(_says("anchored_plan.intro_source"))
+        lines.append(_says("anchored_plan.intro_novel"))
     lines += ["", _says("common.project_heading"), _says("anchored_plan.creation_type")]
     if overview.get("synopsis"):
         lines.append(_says("common.synopsis_line", synopsis=neutralize_tags(overview['synopsis'])))
@@ -381,6 +470,9 @@ def build_anchored_plan_prompt(
         final = _says("anchored_plan.remaining_final") if window_is_final else ""
         lines.append(_says("anchored_plan.remaining", count=remaining_episodes, final=final))
     lines += _ledger_cast_lines(cast)
+    if not is_screenplay:
+        lines += _adaptation_ledger_lines(adaptation)
+    lines += [neutralize_tags(line) for line in earlier_state]
     lines += _context_lines(context_entries)
     if instructions:
         lines += ["", USER_INSTRUCTIONS_HEADER, instructions]
@@ -395,6 +487,23 @@ def build_anchored_plan_prompt(
     ]
     if is_screenplay:
         lines.append(_says("anchored_plan.screenplay_anchor"))
+    else:
+        # 改编的账本和创作的账本守同几条：节点之间有因果、只写拍得到的事、钩子留了要兑。
+        lines += [
+            _says("anchored_plan.rules_novel"),
+            prompt_data.text("causal_chain", "outline_rule"),
+            _says("outline_plan.no_inner_life"),
+            literary.hook_rule(),
+            # 改编成多集时集尾卡点也换着用；升级与反转的节奏不加——事件照原文，不按日程另编。
+            *series_rhythm.outline_rules(max_episodes, cadence=False),
+        ]
+        if opens_series:
+            opening = _brief_text(adaptation, "opening")
+            lines.append(_says(
+                "anchored_plan.first_episode",
+                informational=emotion_points.names_of_informational(),
+                opening=_says("anchored_plan.first_episode_opening", opening=opening) if opening else "",
+            ))
     lines.append(_says("anchored_plan.anchor_order"))
     if window_is_final:
         lines.append(_says("anchored_plan.final_window"))
@@ -420,8 +529,14 @@ def build_outline_plan_prompt(
     target_seconds: int | None,
     instructions: str | None,
     cast: Mapping[str, Any] | None = None,
+    earlier_state: Sequence[str] = (),
+    creation_mode: str = "drama",
 ) -> str:
-    """Plan a contiguous run of episodes (title / hook / beats / teaser) from the director plan."""
+    """Plan a contiguous run of episodes (title / hook / beats / teaser) from the director plan.
+
+    ``earlier_state`` is the part of the cross-episode sheet older than ``context_entries``
+    (see ``story_state.earlier_lasting``).
+    """
     overview = overview or {}
     if first == last:
         span = _says("outline_plan.span_one", first=first)
@@ -440,11 +555,13 @@ def build_outline_plan_prompt(
     if overview.get("genre"):
         lines.append(_says("common.genre_line", genre=neutralize_tags(overview['genre'])))
     lines.extend(f"- {neutralize_tags(line)}" for line in literary.overview_lines(overview))
-    if _payoff_block(overview):
+    # 电影短片不套连续剧的爽点公式(每集四段、相邻两集换爽法、集尾双钩子)：它的写法在创作类型的说明里。
+    if creation_mode != "film" and _payoff_block(overview):
         lines.append(_PAYOFF_FORMULA)
     if _physique_block(overview):
         lines.append(_physique_block(overview).strip())
     lines += _ledger_cast_lines(cast)
+    lines += [neutralize_tags(line) for line in earlier_state]
     lines += _context_lines(context_entries)
     if instructions:
         lines += ["", USER_INSTRUCTIONS_HEADER, instructions]
@@ -456,6 +573,8 @@ def build_outline_plan_prompt(
         prompt_data.text("causal_chain", "outline_rule"),
         prompt_data.text("tension", "outline_rule"),
         literary.hook_rule(),
+        # 连续剧的节奏(series_rhythm.json)：集尾卡点换着用、多久升级一次、多久一次大反转。
+        *series_rhythm.outline_rules(total),
         _says("outline_plan.finale", total=total),
         _says("outline_plan.no_inner_life"),
         # 剧本之初就讲清可拍性：故事节点里就不写画面文字、瞬移、形态突变(大纲质检会按这几条退回)。
@@ -550,6 +669,24 @@ def _outline_block(episode_outline: Mapping[str, Any] | None, next_outline: Mapp
     return ("\n\n".join(parts) + "\n\n") if parts else ""
 
 
+def _story_so_far_block(
+    source_kind: SourceKind, previous_outline: Mapping[str, Any] | None, sheet: Sequence[str], landing: Sequence[str],
+) -> str:
+    """The cross-episode sheet as one episode's plan reads it; nothing for an extracted screenplay or a first episode."""
+    if source_kind == "screenplay":
+        return ""
+    previous: list[str] = []
+    if previous_outline:
+        if previous_outline.get("title"):
+            previous.append(_says("outline.title", title=neutralize_tags(previous_outline['title'])))
+        previous += _beat_lines(previous_outline.get("story_beats") or [])
+        if previous_outline.get("hook"):
+            previous.append(_says("outline.hook", hook=neutralize_tags(previous_outline['hook'])))
+    return story_state.plan_block(
+        sheet=[neutralize_tags(line) for line in sheet], previous_outline=previous, landing=[neutralize_tags(line) for line in landing],
+    )
+
+
 def build_script_plan_prompt(
     *,
     source_text: str,
@@ -571,11 +708,21 @@ def build_script_plan_prompt(
     spoken_shot_ratio: float = 0.0,
     creation_mode: str = "drama",
     relationships: Sequence[Mapping[str, Any]] | None = None,
+    adaptation: Mapping[str, Any] | None = None,
+    previous_episode_outline: Mapping[str, Any] | None = None,
+    sheet: Sequence[str] = (),
+    landing: Sequence[str] = (),
 ) -> str:
     """Stage A prompt: source (or outline) → structured shot content.
 
     ``spoken_shot_ratio`` (outline mode only) asks for talk-heavy episodes: that share of
     the shots must carry speech. Episodes cut from a source keep the source's own lines.
+    A novel episode is re-staged: it gets the rules of adapting and what ``adaptation`` (the
+    project's brief) settles; in a drama its narration becomes picture and dialogue, in a
+    narrated film it stays narration.
+    ``sheet`` is what the earlier episodes settled (``story_state.table_before``),
+    ``previous_episode_outline`` how the last one ended and ``landing`` what this episode must
+    leave behind; an author's finished screenplay is extracted as it stands and is told none of it.
     """
     durations = sorted({int(value) for value in supported_durations})
     if not durations:
@@ -605,7 +752,10 @@ def build_script_plan_prompt(
     elif source_kind == "novel":
         task = _says("script_plan.task_novel")
         heading, tag = _says("common.heading_novel"), "novel"
-        scene_rule, utter_rule, source_rule = _SCENE_RULE_NOVEL, f"{_UTTERANCES_NOVEL} {acting.delivery_rule()} {acting.pacing_rule()}", _SOURCE_TEXT_GUIDE
+        utterances = _UTTERANCES_NOVEL if creation_mode == "narration" else _says(
+            "script_plan.utterances_novel_drama", limit=adaptation_limit("narrated_shots"),
+        )
+        scene_rule, utter_rule, source_rule = _SCENE_RULE_NOVEL, f"{utterances} {acting.delivery_rule()} {acting.pacing_rule()}", _SOURCE_TEXT_GUIDE
         break_rule = _says("script_plan.break_rule_novel")
         language_rule = _says("script_plan.language_rule_novel", language=output_language_name())
     else:
@@ -623,7 +773,9 @@ def build_script_plan_prompt(
 
     # 可拍性：视频提示词里不再重复的通用约束(画面文字、形态突变、瞬移、格内换装、摆拍、同人同框、画风)，写剧本时就满足。
     # 再加画面写法：不写主观评价词，非打斗动作慢而稳(词表在 visual_wording.json，校验器用同一张表)。
-    scene_rule = f"{scene_rule}{filmability.writing_rule()}{_VISIBLE_WORDING_RULE}"
+    # 人物知道的事要有来处(series_rhythm.json)：场记最常漏的一条。作者上传的成品剧本不加——补镜头、删台词不是提取该做的事。
+    knowledge_rule = "" if source_kind == "screenplay" else series_rhythm.knowledge_rule()
+    scene_rule = f"{scene_rule}{filmability.writing_rule()}{knowledge_rule}{_VISIBLE_WORDING_RULE}"
     character_names = _names(characters)
     scene_names = _names(scenes)
     prop_names = _names(props)
@@ -640,9 +792,9 @@ def build_script_plan_prompt(
         "script_plan.body",
         task=task,
         language_rule=language_rule,
-        pacing=render_pacing_section("drama"),
+        pacing=pacing_for(creation_mode),
         overview=_overview_block(overview),
-        payoff=_payoff_block(overview),
+        payoff="" if creation_mode == "film" else _payoff_block(overview),
         physique=_physique_block(overview),
         style=neutralize_tags(style),
         characters=_format_assets_with_desc(characters),
@@ -652,7 +804,8 @@ def build_script_plan_prompt(
         heading=heading,
         tag=tag,
         source=neutralize_tags(source_text),
-        outline=_outline_block(episode_outline, next_episode_outline),
+        outline=_story_so_far_block(source_kind, previous_episode_outline, sheet, landing) + _outline_block(episode_outline, next_episode_outline),
+        adaptation=_adaptation_plan_block(adaptation, episode) if source_kind == "novel" else "",
         episode=episode,
         duration_rule=duration_rule,
         break_rule=break_rule,
@@ -736,12 +889,13 @@ def build_visual_prompt(
     props: Mapping[str, Any],
     content_scenes: Sequence[Mapping[str, Any]],
     aspect_ratio: str = "9:16",
+    creation_mode: str = "drama",
 ) -> str:
     """Stage B prompt: fixed shot content → image_prompt / video_prompt per scene_id."""
     return _says(
         "visual.body",
         language=output_language_name(),
-        pacing=render_pacing_section("drama"),
+        pacing=pacing_for(creation_mode),
         overview=_overview_block(overview),
         style=neutralize_tags(style),
         style_description=neutralize_tags(style_description),
@@ -753,7 +907,8 @@ def build_visual_prompt(
         shots=render_scene_content_for_visual(content_scenes),
         episode=episode,
         scene_guide=_SCENE_WRITING_GUIDE,
-        lighting_guide=_LIGHTING_GUIDE,
+        # 具名光型(light_setups.json)：按本批分镜内容挑出用得上的几条，连同不能叠的组合和防翻车的写法。
+        lighting_guide=_LIGHTING_GUIDE + light_setups.guide(light_setups.content_of(content_scenes)),
         kelvin_guide=prompt_data.text('clip_prompt', 'light_kelvin_guide'),
         ambiance_guide=_AMBIANCE_GUIDE,
         action_guide=_ACTION_WRITING_GUIDE,
@@ -833,7 +988,9 @@ def build_prose_prompt(
 
 __all__ = [
     "USER_INSTRUCTIONS_HEADER",
+    "adaptation_limit",
     "append_user_instructions",
+    "build_adaptation_prompt",
     "build_anchored_plan_prompt",
     "build_asset_inventory_prompt",
     "build_outline_plan_prompt",

@@ -23,7 +23,7 @@ from typing import Any, List, Optional, Tuple
 from urllib.parse import parse_qs, urljoin, urlparse
 
 from app import settings
-from app.core import voice_delivery
+from app.core import blackout, voice_delivery
 from app.platform.runtime_models import provider_key_available, runtime_model_registry
 
 logger = logging.getLogger("app.core.media_compositor")
@@ -1190,7 +1190,8 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
                  sound_report: Optional[List[dict]] = None,
                  native_audio: Optional[List[bool]] = None,
                  bgm_start: float = 0.0,
-                 fade_edges: bool = False) -> Optional[str]:
+                 fade_edges: bool = False,
+                 blackouts: Optional[List[Optional[dict]]] = None) -> Optional[str]:
     """
     将多镜头视频合成为一条带片头标题卡、字幕、配音与 BGM 的竖屏成片/单集。
     - shot_video_urls: 各镜头视频直链 (http mp4)
@@ -1206,6 +1207,7 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
     - native_audio: 与镜头一一对应；为真的镜头用片段自己的声音(按修剪后的入出点取)，不错开也不配音
     - bgm_start: 配乐从成片第几秒进(淡入)；配乐在片尾淡出
     - fade_edges: 成片开头淡入、结尾淡出(画面和声音一起)
+    - blackouts: 与镜头一一对应；分镜要的「一帧黑」({at, frames}，at 是原片第几秒)，按修剪后的时间盖几帧黑，声音不动
     返回成片对外 URL；任一关键环节失败返回 None。
     """
     ff = _ffmpeg()
@@ -1214,7 +1216,7 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
         logger.warning("[Compositor] 成片合成不可用 (缺 ffmpeg 或无有效视频片段)")
         return None
     _ensure_dir()
-    h = hashlib.md5(("|".join(clips) + "|" + "|".join(subtitles or []) + f"|{native_audio}|{title}|{bgm}|{bool(shot_voices)}|{bgm_path}|{sfx_path}|{trims}|{bgm_volume}|{sound_joins}|{bgm_start}|{fade_edges}").encode("utf-8")).hexdigest()[:16]
+    h = hashlib.md5(("|".join(clips) + "|" + "|".join(subtitles or []) + f"|{native_audio}|{title}|{bgm}|{bool(shot_voices)}|{bgm_path}|{sfx_path}|{trims}|{bgm_volume}|{sound_joins}|{bgm_start}|{fade_edges}|{blackouts}").encode("utf-8")).hexdigest()[:16]
     work = os.path.join(MEDIA_DIR, f"_work_{tag}_{h}")
     os.makedirs(work, exist_ok=True)
     try:
@@ -1303,9 +1305,17 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
                     trim_args += ["-ss", f"{float(start):.3f}"]
                 if end is not None:
                     trim_args += ["-to", f"{float(end):.3f}"]
+            # 分镜要的「一帧黑」：修剪后的那一刻起盖几帧黑(画面全黑，声音照旧)。
+            flash = blackout.window(
+                blackouts[i] if blackouts and i < len(blackouts) else None,
+                trim_start=float(trim[0] or 0.0) if trim else 0.0, fps=float(OUT_FPS),
+            )
+            shot_vf = scale_pad + (
+                f",drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='between(t,{flash[0]:.3f},{flash[1]:.3f})'" if flash else ""
+            )
             try:
                 if has_sub:
-                    overlays, last = [f"[0:v]{scale_pad}[s0]"], "s0"
+                    overlays, last = [f"[0:v]{shot_vf}[s0]"], "s0"
                     for cue_index, (_png, cue_start, cue_end) in enumerate(cue_pngs, start=1):
                         window = "" if len(cue_pngs) == 1 else f":enable='between(t,{cue_start:.3f},{cue_end:.3f})'"
                         overlays.append(f"[{last}][{cue_index}:v]overlay=0:0{window}[s{cue_index}]")
@@ -1314,7 +1324,7 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
                            "-filter_complex", ";".join(overlays), "-map", f"[{last}]",
                            "-r", str(OUT_FPS), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", seg]
                 else:
-                    cmd = [ff, "-y", *trim_args, "-i", raw, "-vf", scale_pad,
+                    cmd = [ff, "-y", *trim_args, "-i", raw, "-vf", shot_vf,
                            "-r", str(OUT_FPS), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", seg]
                 subprocess.run(cmd, check=True, timeout=180, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 seg_files.append(seg)

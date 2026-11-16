@@ -111,7 +111,7 @@ def writer_system_prompt(
         "payoff-arc-craft": "爽点底线与主角强弱两段弧（杀伐果断横推 / 不按套路 / 弱时智谋苟道、强时杀伐 / 爽点谱系）",
         "character-relationship-craft": "主角拷问与人物关系架法（一句话梗概 / 拷问主角 / 关系六性 / 一条主线 / 小事折射大事）",
         "causal-chain-craft": "因果链（节点之间连「所以」/ 每个节点改变目标、关系、认知或处境 / 关键转折由人物选择触发 / 写完一场过三问）",
-        "tension-craft": "紧张感（信息差让观众先知道 / 延迟兑现 / 平静→异常→逼近→爆发与被打破的缓冲 / 写完问三句）",
+        "tension-craft": "紧张感（信息分给谁：观众先知道、人物先知道、同时知道 / 延迟兑现 / 分层揭底 / 平静→异常→逼近→爆发与没有解除危险的缓冲 / 动笔前问四句、写完问三句）",
         "dialogue-pacing": "台词语速情绪与停顿重音标注规范",
         "performance-details": "表演细节与具象物理动作指导",
     }
@@ -187,7 +187,8 @@ def build_engine(
         caller,
         video_model=str(config.get("video_model") or ""),
         language=str(config.get("source_language") or "zh"),
-        episode_target_seconds=resolve_episode_target_seconds(config),
+        # A short film that names no length aims at its own default, not the serial's minute and a half.
+        episode_target_seconds=creation_modes.episode_target_for(config, resolve_episode_target_seconds(config)),
         style=dir_style or "真人电影写实",
         style_description=f"运镜风格：{shot_style}" if shot_style else "",
         aspect_ratio=str(config.get("aspect_ratio") or "9:16"),
@@ -211,7 +212,10 @@ def build_engine(
         # How much of a long source the one-shot analysis stages read (opening, spaced excerpts, ending).
         analysis_chars=_int_env("SCREENWRITING_ANALYSIS_CHARS", 48000, 4000),
         # Talk-heavy episodes: this share of an outline-written episode's shots must carry speech (0 turns it off).
-        spoken_shot_ratio=settings.env_float("SCREENWRITING_MIN_SPOKEN_SHOT_RATIO", 0.7, minimum=0.0, maximum=1.0),
+        # A short film may be quieter than a serial: its own, lower share (creation_modes).
+        spoken_shot_ratio=creation_modes.spoken_shot_ratio_for(
+            config, settings.env_float("SCREENWRITING_MIN_SPOKEN_SHOT_RATIO", 0.7, minimum=0.0, maximum=1.0),
+        ),
         episode_shape=creation_modes.episode_shape_for(config),
         creation={"creation_mode": creation_modes.mode_of(config), "ad_brief": creation_modes.ad_brief(config)},
         progress=progress,

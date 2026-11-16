@@ -1,0 +1,4323 @@
+{
+ "_doc": "常用道具与车辆的尺寸，补充道具标尺参照表(scale_reference.json)：参照表收的多是军械、载具和现代器物，短剧里常见的古装日用器物(油灯、磨刀石、钱袋、铁链、茶杯……)、马车轿子、家具和现代日常物件查不到，这里按常见实物补上。同名以参照表为准。dims_cm 是长、宽、高(厘米)，按普通成年人用的那一种取常见值；圆的东西写直径×直径×高。单字的器物名(刀、剑、布……)不收，按物件类别估(prop_turnaround 的名词表)，导演台另有自己的结尾表，免得「秘书」被当成书、「拭剑布」被当成剑；单字的动物名(牛、驴、狗……)只在名字就是它时认。",
+ "category_family": {
+  "古代车马": "large",
+  "动物": "large",
+  "车辆": "large",
+  "古代兵器": "slender",
+  "刑具锁链": "default",
+  "工具器物": "default",
+  "灯火": "default",
+  "餐具酒具": "round",
+  "钱财": "tiny",
+  "文书": "flat",
+  "饰品配件": "tiny",
+  "布包织物": "default",
+  "家具": "large",
+  "电子医疗": "default",
+  "枪械": "default"
+ },
+ "entries": [
+  {
+   "name": "马车",
+   "category": "古代车马",
+   "dims_cm": [
+    350.0,
+    150.0,
+    220.0
+   ],
+   "diameter": false,
+   "description": "单马拉的带篷车厢，含车辕"
+  },
+  {
+   "name": "双驾马车",
+   "category": "古代车马",
+   "dims_cm": [
+    450.0,
+    170.0,
+    230.0
+   ],
+   "diameter": false,
+   "description": "两匹马拉的大车厢"
+  },
+  {
+   "name": "牛车",
+   "category": "古代车马",
+   "dims_cm": [
+    300.0,
+    150.0,
+    180.0
+   ],
+   "diameter": false,
+   "description": "牛拉的木板车或篷车"
+  },
+  {
+   "name": "驴车",
+   "category": "古代车马",
+   "dims_cm": [
+    250.0,
+    120.0,
+    150.0
+   ],
+   "diameter": false,
+   "description": "驴拉的小板车"
+  },
+  {
+   "name": "囚车",
+   "category": "古代车马",
+   "dims_cm": [
+    400.0,
+    150.0,
+    220.0
+   ],
+   "diameter": false,
+   "description": "木栅栏车笼，带轮"
+  },
+  {
+   "name": "轿子",
+   "category": "古代车马",
+   "dims_cm": [
+    350.0,
+    80.0,
+    180.0
+   ],
+   "diameter": false,
+   "description": "二人或四人抬的轿厢，连轿杠"
+  },
+  {
+   "name": "花轿",
+   "category": "古代车马",
+   "dims_cm": [
+    350.0,
+    90.0,
+    220.0
+   ],
+   "diameter": false,
+   "description": "迎亲的红色轿子，连轿杠"
+  },
+  {
+   "name": "独轮车",
+   "category": "古代车马",
+   "dims_cm": [
+    150.0,
+    60.0,
+    70.0
+   ],
+   "diameter": false,
+   "description": "单轮手推车"
+  },
+  {
+   "name": "板车",
+   "category": "古代车马",
+   "dims_cm": [
+    250.0,
+    120.0,
+    80.0
+   ],
+   "diameter": false,
+   "description": "人拉的平板车"
+  },
+  {
+   "name": "战车",
+   "category": "古代车马",
+   "dims_cm": [
+    300.0,
+    180.0,
+    150.0
+   ],
+   "diameter": false,
+   "description": "马拉的双轮兵车"
+  },
+  {
+   "name": "马鞍",
+   "category": "古代车马",
+   "dims_cm": [
+    60.0,
+    40.0,
+    30.0
+   ],
+   "diameter": false,
+   "description": "骑马用的皮鞍"
+  },
+  {
+   "name": "缰绳",
+   "category": "古代车马",
+   "dims_cm": [
+    300.0,
+    2.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "牵马的皮绳"
+  },
+  {
+   "name": "小船",
+   "category": "古代车马",
+   "dims_cm": [
+    500.0,
+    120.0,
+    60.0
+   ],
+   "diameter": false,
+   "description": "单人或双人划的木船"
+  },
+  {
+   "name": "小舟",
+   "category": "古代车马",
+   "dims_cm": [
+    500.0,
+    120.0,
+    60.0
+   ],
+   "diameter": false,
+   "description": "小木船"
+  },
+  {
+   "name": "乌篷船",
+   "category": "古代车马",
+   "dims_cm": [
+    800.0,
+    150.0,
+    150.0
+   ],
+   "diameter": false,
+   "description": "带竹篷的水乡木船"
+  },
+  {
+   "name": "竹筏",
+   "category": "古代车马",
+   "dims_cm": [
+    600.0,
+    150.0,
+    30.0
+   ],
+   "diameter": false,
+   "description": "竹子扎的筏子"
+  },
+  {
+   "name": "渡船",
+   "category": "古代车马",
+   "dims_cm": [
+    1000.0,
+    250.0,
+    200.0
+   ],
+   "diameter": false,
+   "description": "渡口载人过河的木船"
+  },
+  {
+   "name": "画舫",
+   "category": "古代车马",
+   "dims_cm": [
+    1500.0,
+    400.0,
+    400.0
+   ],
+   "diameter": false,
+   "description": "带船楼的游船"
+  },
+  {
+   "name": "骆驼",
+   "category": "动物",
+   "dims_cm": [
+    300.0,
+    80.0,
+    200.0
+   ],
+   "diameter": false,
+   "description": "单峰骆驼，站立"
+  },
+  {
+   "name": "鸽子",
+   "category": "动物",
+   "dims_cm": [
+    32.0,
+    10.0,
+    15.0
+   ],
+   "diameter": false,
+   "description": "成年鸽子"
+  },
+  {
+   "name": "轿车",
+   "category": "车辆",
+   "dims_cm": [
+    480.0,
+    185.0,
+    147.0
+   ],
+   "diameter": false,
+   "description": "普通三厢家用轿车"
+  },
+  {
+   "name": "小轿车",
+   "category": "车辆",
+   "dims_cm": [
+    450.0,
+    180.0,
+    145.0
+   ],
+   "diameter": false,
+   "description": "小型家用轿车"
+  },
+  {
+   "name": "出租车",
+   "category": "车辆",
+   "dims_cm": [
+    470.0,
+    180.0,
+    150.0
+   ],
+   "diameter": false,
+   "description": "城市出租车"
+  },
+  {
+   "name": "警车",
+   "category": "车辆",
+   "dims_cm": [
+    490.0,
+    190.0,
+    150.0
+   ],
+   "diameter": false,
+   "description": "公安巡逻轿车"
+  },
+  {
+   "name": "救护车",
+   "category": "车辆",
+   "dims_cm": [
+    560.0,
+    200.0,
+    260.0
+   ],
+   "diameter": false,
+   "description": "医用急救车"
+  },
+  {
+   "name": "面包车",
+   "category": "车辆",
+   "dims_cm": [
+    450.0,
+    170.0,
+    190.0
+   ],
+   "diameter": false,
+   "description": "小型厢式客车"
+  },
+  {
+   "name": "跑车",
+   "category": "车辆",
+   "dims_cm": [
+    450.0,
+    195.0,
+    120.0
+   ],
+   "diameter": false,
+   "description": "两门跑车"
+  },
+  {
+   "name": "越野车",
+   "category": "车辆",
+   "dims_cm": [
+    490.0,
+    195.0,
+    190.0
+   ],
+   "diameter": false,
+   "description": "硬派越野车"
+  },
+  {
+   "name": "SUV",
+   "category": "车辆",
+   "dims_cm": [
+    480.0,
+    190.0,
+    170.0
+   ],
+   "diameter": false,
+   "description": "城市SUV"
+  },
+  {
+   "name": "皮卡",
+   "category": "车辆",
+   "dims_cm": [
+    530.0,
+    190.0,
+    185.0
+   ],
+   "diameter": false,
+   "description": "带货斗的皮卡"
+  },
+  {
+   "name": "商务车",
+   "category": "车辆",
+   "dims_cm": [
+    510.0,
+    190.0,
+    190.0
+   ],
+   "diameter": false,
+   "description": "七座商务车"
+  },
+  {
+   "name": "房车",
+   "category": "车辆",
+   "dims_cm": [
+    700.0,
+    230.0,
+    320.0
+   ],
+   "diameter": false,
+   "description": "自行式房车"
+  },
+  {
+   "name": "公交车",
+   "category": "车辆",
+   "dims_cm": [
+    1200.0,
+    250.0,
+    320.0
+   ],
+   "diameter": false,
+   "description": "城市公交车"
+  },
+  {
+   "name": "大巴",
+   "category": "车辆",
+   "dims_cm": [
+    1200.0,
+    255.0,
+    370.0
+   ],
+   "diameter": false,
+   "description": "长途客车"
+  },
+  {
+   "name": "校车",
+   "category": "车辆",
+   "dims_cm": [
+    1000.0,
+    240.0,
+    300.0
+   ],
+   "diameter": false,
+   "description": "校车"
+  },
+  {
+   "name": "消防车",
+   "category": "车辆",
+   "dims_cm": [
+    1000.0,
+    250.0,
+    330.0
+   ],
+   "diameter": false,
+   "description": "水罐消防车"
+  },
+  {
+   "name": "小货车",
+   "category": "车辆",
+   "dims_cm": [
+    550.0,
+    190.0,
+    220.0
+   ],
+   "diameter": false,
+   "description": "轻型厢式货车"
+  },
+  {
+   "name": "卡车",
+   "category": "车辆",
+   "dims_cm": [
+    800.0,
+    250.0,
+    320.0
+   ],
+   "diameter": false,
+   "description": "中型卡车"
+  },
+  {
+   "name": "摩托车",
+   "category": "车辆",
+   "dims_cm": [
+    210.0,
+    80.0,
+    110.0
+   ],
+   "diameter": false,
+   "description": "两轮摩托"
+  },
+  {
+   "name": "电动车",
+   "category": "车辆",
+   "dims_cm": [
+    170.0,
+    65.0,
+    105.0
+   ],
+   "diameter": false,
+   "description": "两轮电动自行车"
+  },
+  {
+   "name": "电瓶车",
+   "category": "车辆",
+   "dims_cm": [
+    170.0,
+    65.0,
+    105.0
+   ],
+   "diameter": false,
+   "description": "两轮电动自行车"
+  },
+  {
+   "name": "自行车",
+   "category": "车辆",
+   "dims_cm": [
+    175.0,
+    60.0,
+    105.0
+   ],
+   "diameter": false,
+   "description": "成人自行车"
+  },
+  {
+   "name": "单车",
+   "category": "车辆",
+   "dims_cm": [
+    175.0,
+    60.0,
+    105.0
+   ],
+   "diameter": false,
+   "description": "成人自行车"
+  },
+  {
+   "name": "三轮车",
+   "category": "车辆",
+   "dims_cm": [
+    250.0,
+    110.0,
+    110.0
+   ],
+   "diameter": false,
+   "description": "人力或电动三轮车"
+  },
+  {
+   "name": "滑板车",
+   "category": "车辆",
+   "dims_cm": [
+    100.0,
+    40.0,
+    110.0
+   ],
+   "diameter": false,
+   "description": "成人滑板车"
+  },
+  {
+   "name": "婴儿车",
+   "category": "车辆",
+   "dims_cm": [
+    90.0,
+    60.0,
+    105.0
+   ],
+   "diameter": false,
+   "description": "推行婴儿车"
+  },
+  {
+   "name": "轮椅",
+   "category": "车辆",
+   "dims_cm": [
+    105.0,
+    65.0,
+    90.0
+   ],
+   "diameter": false,
+   "description": "手推轮椅"
+  },
+  {
+   "name": "长剑",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0,
+    4.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "双刃长剑，含剑柄"
+  },
+  {
+   "name": "佩剑",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0,
+    4.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "随身佩带的剑"
+  },
+  {
+   "name": "断剑",
+   "category": "古代兵器",
+   "dims_cm": [
+    50.0,
+    4.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "折断的剑，剩剑柄一截"
+  },
+  {
+   "name": "剑尖",
+   "category": "古代兵器",
+   "dims_cm": [
+    20.0,
+    4.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "断下的剑尖一截"
+  },
+  {
+   "name": "剑鞘",
+   "category": "古代兵器",
+   "dims_cm": [
+    85.0,
+    6.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "木胎皮包的剑鞘"
+  },
+  {
+   "name": "刀鞘",
+   "category": "古代兵器",
+   "dims_cm": [
+    80.0,
+    7.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "刀鞘"
+  },
+  {
+   "name": "钝刀",
+   "category": "古代兵器",
+   "dims_cm": [
+    90.0,
+    6.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "没开刃或卷了刃的单刀"
+  },
+  {
+   "name": "刑刀",
+   "category": "古代兵器",
+   "dims_cm": [
+    90.0,
+    12.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "行刑用的宽背大刀"
+  },
+  {
+   "name": "鬼头刀",
+   "category": "古代兵器",
+   "dims_cm": [
+    90.0,
+    12.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "刀头宽厚的行刑刀"
+  },
+  {
+   "name": "柴刀",
+   "category": "古代兵器",
+   "dims_cm": [
+    45.0,
+    8.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "砍柴的厚背刀"
+  },
+  {
+   "name": "菜刀",
+   "category": "古代兵器",
+   "dims_cm": [
+    30.0,
+    10.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "厨房切菜刀"
+  },
+  {
+   "name": "飞刀",
+   "category": "古代兵器",
+   "dims_cm": [
+    18.0,
+    3.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "投掷用小刀"
+  },
+  {
+   "name": "斧头",
+   "category": "古代兵器",
+   "dims_cm": [
+    60.0,
+    18.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "单手斧"
+  },
+  {
+   "name": "板斧",
+   "category": "古代兵器",
+   "dims_cm": [
+    80.0,
+    25.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "宽刃战斧"
+  },
+  {
+   "name": "铁锤",
+   "category": "古代兵器",
+   "dims_cm": [
+    40.0,
+    12.0,
+    5.0
+   ],
+   "diameter": false,
+   "description": "单手铁锤"
+  },
+  {
+   "name": "锤子",
+   "category": "古代兵器",
+   "dims_cm": [
+    33.0,
+    12.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "钉锤"
+  },
+  {
+   "name": "小锤",
+   "category": "古代兵器",
+   "dims_cm": [
+    30.0,
+    10.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "小铁锤"
+  },
+  {
+   "name": "大锤",
+   "category": "古代兵器",
+   "dims_cm": [
+    90.0,
+    20.0,
+    10.0
+   ],
+   "diameter": false,
+   "description": "双手大铁锤"
+  },
+  {
+   "name": "木棍",
+   "category": "古代兵器",
+   "dims_cm": [
+    180.0,
+    4.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "木棍"
+  },
+  {
+   "name": "齐眉棍",
+   "category": "古代兵器",
+   "dims_cm": [
+    160.0,
+    3.5,
+    3.5
+   ],
+   "diameter": false,
+   "description": "与眉齐高的长棍"
+  },
+  {
+   "name": "双节棍",
+   "category": "古代兵器",
+   "dims_cm": [
+    60.0,
+    3.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "两节短棍连铁链"
+  },
+  {
+   "name": "袖箭",
+   "category": "古代兵器",
+   "dims_cm": [
+    25.0,
+    4.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "藏在袖中的筒箭"
+  },
+  {
+   "name": "箭袋",
+   "category": "古代兵器",
+   "dims_cm": [
+    70.0,
+    15.0,
+    12.0
+   ],
+   "diameter": false,
+   "description": "背负的箭囊"
+  },
+  {
+   "name": "箭囊",
+   "category": "古代兵器",
+   "dims_cm": [
+    70.0,
+    15.0,
+    12.0
+   ],
+   "diameter": false,
+   "description": "背负的箭囊"
+  },
+  {
+   "name": "铁链",
+   "category": "刑具锁链",
+   "dims_cm": [
+    200.0,
+    5.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "粗铁环链"
+  },
+  {
+   "name": "锁链",
+   "category": "刑具锁链",
+   "dims_cm": [
+    200.0,
+    5.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "铁环锁链"
+  },
+  {
+   "name": "镣铐",
+   "category": "刑具锁链",
+   "dims_cm": [
+    60.0,
+    10.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "手铐脚镣连铁链"
+  },
+  {
+   "name": "手铐",
+   "category": "刑具锁链",
+   "dims_cm": [
+    25.0,
+    9.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "一副手铐"
+  },
+  {
+   "name": "木枷",
+   "category": "刑具锁链",
+   "dims_cm": [
+    70.0,
+    60.0,
+    5.0
+   ],
+   "diameter": false,
+   "description": "套在颈上的方木枷"
+  },
+  {
+   "name": "枷锁",
+   "category": "刑具锁链",
+   "dims_cm": [
+    70.0,
+    60.0,
+    5.0
+   ],
+   "diameter": false,
+   "description": "木枷连锁"
+  },
+  {
+   "name": "刑架",
+   "category": "刑具锁链",
+   "dims_cm": [
+    200.0,
+    60.0,
+    250.0
+   ],
+   "diameter": false,
+   "description": "绑人的木刑架"
+  },
+  {
+   "name": "木砧",
+   "category": "刑具锁链",
+   "dims_cm": [
+    50.0,
+    50.0,
+    40.0
+   ],
+   "diameter": false,
+   "description": "砍剁用的圆木墩"
+  },
+  {
+   "name": "铁砧",
+   "category": "刑具锁链",
+   "dims_cm": [
+    60.0,
+    20.0,
+    30.0
+   ],
+   "diameter": false,
+   "description": "打铁的铁砧"
+  },
+  {
+   "name": "砧板",
+   "category": "刑具锁链",
+   "dims_cm": [
+    40.0,
+    28.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "切菜木板"
+  },
+  {
+   "name": "磨刀石",
+   "category": "工具器物",
+   "dims_cm": [
+    20.0,
+    6.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "长条磨刀石"
+  },
+  {
+   "name": "磨石",
+   "category": "工具器物",
+   "dims_cm": [
+    20.0,
+    6.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "长条磨石"
+  },
+  {
+   "name": "火钳",
+   "category": "工具器物",
+   "dims_cm": [
+    50.0,
+    6.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "夹炭的铁钳"
+  },
+  {
+   "name": "铁钳",
+   "category": "工具器物",
+   "dims_cm": [
+    40.0,
+    8.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "铁匠钳"
+  },
+  {
+   "name": "风箱",
+   "category": "工具器物",
+   "dims_cm": [
+    80.0,
+    40.0,
+    50.0
+   ],
+   "diameter": false,
+   "description": "木制拉杆风箱"
+  },
+  {
+   "name": "锄头",
+   "category": "工具器物",
+   "dims_cm": [
+    140.0,
+    20.0,
+    5.0
+   ],
+   "diameter": false,
+   "description": "农用锄头"
+  },
+  {
+   "name": "镰刀",
+   "category": "工具器物",
+   "dims_cm": [
+    50.0,
+    20.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "割草镰刀"
+  },
+  {
+   "name": "扁担",
+   "category": "工具器物",
+   "dims_cm": [
+    170.0,
+    8.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "挑担木扁担"
+  },
+  {
+   "name": "水桶",
+   "category": "工具器物",
+   "dims_cm": [
+    35.0,
+    35.0,
+    35.0
+   ],
+   "diameter": false,
+   "description": "木或铁水桶"
+  },
+  {
+   "name": "木桶",
+   "category": "工具器物",
+   "dims_cm": [
+    50.0,
+    50.0,
+    55.0
+   ],
+   "diameter": false,
+   "description": "箍木大桶"
+  },
+  {
+   "name": "扫帚",
+   "category": "工具器物",
+   "dims_cm": [
+    130.0,
+    30.0,
+    5.0
+   ],
+   "diameter": false,
+   "description": "竹扫帚"
+  },
+  {
+   "name": "麻绳",
+   "category": "工具器物",
+   "dims_cm": [
+    300.0,
+    1.5,
+    1.5
+   ],
+   "diameter": false,
+   "description": "一捆麻绳展开长"
+  },
+  {
+   "name": "绳子",
+   "category": "工具器物",
+   "dims_cm": [
+    300.0,
+    1.5,
+    1.5
+   ],
+   "diameter": false,
+   "description": "一段绳子"
+  },
+  {
+   "name": "旗杆",
+   "category": "工具器物",
+   "dims_cm": [
+    800.0,
+    15.0,
+    15.0
+   ],
+   "diameter": false,
+   "description": "立在场上的木旗杆"
+  },
+  {
+   "name": "兵器架",
+   "category": "工具器物",
+   "dims_cm": [
+    200.0,
+    50.0,
+    180.0
+   ],
+   "diameter": false,
+   "description": "插放刀枪的木架"
+  },
+  {
+   "name": "木人桩",
+   "category": "工具器物",
+   "dims_cm": [
+    60.0,
+    60.0,
+    170.0
+   ],
+   "diameter": false,
+   "description": "练功木人桩"
+  },
+  {
+   "name": "石锁",
+   "category": "工具器物",
+   "dims_cm": [
+    30.0,
+    20.0,
+    25.0
+   ],
+   "diameter": false,
+   "description": "练力气的石锁"
+  },
+  {
+   "name": "铜铃",
+   "category": "工具器物",
+   "dims_cm": [
+    5.0,
+    5.0,
+    6.0
+   ],
+   "diameter": false,
+   "description": "小铜铃"
+  },
+  {
+   "name": "铃铛",
+   "category": "工具器物",
+   "dims_cm": [
+    5.0,
+    5.0,
+    6.0
+   ],
+   "diameter": false,
+   "description": "小铃铛"
+  },
+  {
+   "name": "镖铃",
+   "category": "工具器物",
+   "dims_cm": [
+    6.0,
+    6.0,
+    7.0
+   ],
+   "diameter": false,
+   "description": "镖车上的铜铃"
+  },
+  {
+   "name": "风铃",
+   "category": "工具器物",
+   "dims_cm": [
+    15.0,
+    15.0,
+    40.0
+   ],
+   "diameter": false,
+   "description": "檐下风铃"
+  },
+  {
+   "name": "油灯",
+   "category": "灯火",
+   "dims_cm": [
+    12.0,
+    12.0,
+    10.0
+   ],
+   "diameter": false,
+   "description": "陶或铜的油灯盏"
+  },
+  {
+   "name": "灯盏",
+   "category": "灯火",
+   "dims_cm": [
+    12.0,
+    12.0,
+    8.0
+   ],
+   "diameter": false,
+   "description": "油灯盏"
+  },
+  {
+   "name": "灯笼",
+   "category": "灯火",
+   "dims_cm": [
+    30.0,
+    30.0,
+    35.0
+   ],
+   "diameter": false,
+   "description": "纸或绢的手提灯笼"
+  },
+  {
+   "name": "宫灯",
+   "category": "灯火",
+   "dims_cm": [
+    40.0,
+    40.0,
+    60.0
+   ],
+   "diameter": false,
+   "description": "六角宫灯"
+  },
+  {
+   "name": "孔明灯",
+   "category": "灯火",
+   "dims_cm": [
+    60.0,
+    60.0,
+    90.0
+   ],
+   "diameter": false,
+   "description": "纸糊的孔明灯"
+  },
+  {
+   "name": "蜡烛",
+   "category": "灯火",
+   "dims_cm": [
+    20.0,
+    2.5,
+    2.5
+   ],
+   "diameter": false,
+   "description": "白蜡烛"
+  },
+  {
+   "name": "烛台",
+   "category": "灯火",
+   "dims_cm": [
+    15.0,
+    15.0,
+    30.0
+   ],
+   "diameter": false,
+   "description": "铜烛台"
+  },
+  {
+   "name": "火把",
+   "category": "灯火",
+   "dims_cm": [
+    60.0,
+    6.0,
+    6.0
+   ],
+   "diameter": false,
+   "description": "缠布浸油的火把"
+  },
+  {
+   "name": "火折子",
+   "category": "灯火",
+   "dims_cm": [
+    15.0,
+    2.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "竹筒火折子"
+  },
+  {
+   "name": "茶杯",
+   "category": "餐具酒具",
+   "dims_cm": [
+    8.0,
+    8.0,
+    6.0
+   ],
+   "diameter": false,
+   "description": "无柄小茶杯"
+  },
+  {
+   "name": "茶盏",
+   "category": "餐具酒具",
+   "dims_cm": [
+    10.0,
+    10.0,
+    5.0
+   ],
+   "diameter": false,
+   "description": "敞口茶盏"
+  },
+  {
+   "name": "茶碗",
+   "category": "餐具酒具",
+   "dims_cm": [
+    11.0,
+    11.0,
+    6.0
+   ],
+   "diameter": false,
+   "description": "茶碗"
+  },
+  {
+   "name": "盖碗",
+   "category": "餐具酒具",
+   "dims_cm": [
+    10.0,
+    10.0,
+    8.0
+   ],
+   "diameter": false,
+   "description": "带盖茶碗"
+  },
+  {
+   "name": "茶壶",
+   "category": "餐具酒具",
+   "dims_cm": [
+    18.0,
+    12.0,
+    12.0
+   ],
+   "diameter": false,
+   "description": "带柄茶壶"
+  },
+  {
+   "name": "紫砂壶",
+   "category": "餐具酒具",
+   "dims_cm": [
+    15.0,
+    10.0,
+    9.0
+   ],
+   "diameter": false,
+   "description": "紫砂小茶壶"
+  },
+  {
+   "name": "酒杯",
+   "category": "餐具酒具",
+   "dims_cm": [
+    5.0,
+    5.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "小酒杯"
+  },
+  {
+   "name": "酒盏",
+   "category": "餐具酒具",
+   "dims_cm": [
+    7.0,
+    7.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "酒盏"
+  },
+  {
+   "name": "酒壶",
+   "category": "餐具酒具",
+   "dims_cm": [
+    12.0,
+    12.0,
+    22.0
+   ],
+   "diameter": false,
+   "description": "执壶"
+  },
+  {
+   "name": "酒坛",
+   "category": "餐具酒具",
+   "dims_cm": [
+    35.0,
+    35.0,
+    45.0
+   ],
+   "diameter": false,
+   "description": "陶酒坛"
+  },
+  {
+   "name": "葫芦",
+   "category": "餐具酒具",
+   "dims_cm": [
+    12.0,
+    12.0,
+    25.0
+   ],
+   "diameter": false,
+   "description": "盛酒的葫芦"
+  },
+  {
+   "name": "瓷碗",
+   "category": "餐具酒具",
+   "dims_cm": [
+    14.0,
+    14.0,
+    7.0
+   ],
+   "diameter": false,
+   "description": "瓷饭碗"
+  },
+  {
+   "name": "药碗",
+   "category": "餐具酒具",
+   "dims_cm": [
+    12.0,
+    12.0,
+    6.0
+   ],
+   "diameter": false,
+   "description": "盛药的碗"
+  },
+  {
+   "name": "盘子",
+   "category": "餐具酒具",
+   "dims_cm": [
+    24.0,
+    24.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "餐盘"
+  },
+  {
+   "name": "筷子",
+   "category": "餐具酒具",
+   "dims_cm": [
+    24.0,
+    0.8,
+    0.8
+   ],
+   "diameter": false,
+   "description": "一双筷子"
+  },
+  {
+   "name": "汤勺",
+   "category": "餐具酒具",
+   "dims_cm": [
+    15.0,
+    4.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "汤勺"
+  },
+  {
+   "name": "食盒",
+   "category": "餐具酒具",
+   "dims_cm": [
+    35.0,
+    25.0,
+    35.0
+   ],
+   "diameter": false,
+   "description": "提梁多层食盒"
+  },
+  {
+   "name": "托盘",
+   "category": "餐具酒具",
+   "dims_cm": [
+    45.0,
+    30.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "端菜托盘"
+  },
+  {
+   "name": "药罐",
+   "category": "餐具酒具",
+   "dims_cm": [
+    20.0,
+    20.0,
+    22.0
+   ],
+   "diameter": false,
+   "description": "熬药陶罐"
+  },
+  {
+   "name": "砂锅",
+   "category": "餐具酒具",
+   "dims_cm": [
+    25.0,
+    25.0,
+    15.0
+   ],
+   "diameter": false,
+   "description": "砂锅"
+  },
+  {
+   "name": "铁锅",
+   "category": "餐具酒具",
+   "dims_cm": [
+    50.0,
+    50.0,
+    15.0
+   ],
+   "diameter": false,
+   "description": "炒锅"
+  },
+  {
+   "name": "蒸笼",
+   "category": "餐具酒具",
+   "dims_cm": [
+    30.0,
+    30.0,
+    10.0
+   ],
+   "diameter": false,
+   "description": "竹蒸笼一层"
+  },
+  {
+   "name": "马克杯",
+   "category": "餐具酒具",
+   "dims_cm": [
+    12.0,
+    8.5,
+    9.5
+   ],
+   "diameter": false,
+   "description": "带柄陶瓷杯"
+  },
+  {
+   "name": "水杯",
+   "category": "餐具酒具",
+   "dims_cm": [
+    7.0,
+    7.0,
+    12.0
+   ],
+   "diameter": false,
+   "description": "玻璃水杯"
+  },
+  {
+   "name": "玻璃杯",
+   "category": "餐具酒具",
+   "dims_cm": [
+    7.0,
+    7.0,
+    12.0
+   ],
+   "diameter": false,
+   "description": "玻璃杯"
+  },
+  {
+   "name": "保温杯",
+   "category": "餐具酒具",
+   "dims_cm": [
+    7.0,
+    7.0,
+    22.0
+   ],
+   "diameter": false,
+   "description": "保温杯"
+  },
+  {
+   "name": "咖啡杯",
+   "category": "餐具酒具",
+   "dims_cm": [
+    12.0,
+    9.0,
+    7.0
+   ],
+   "diameter": false,
+   "description": "带碟咖啡杯"
+  },
+  {
+   "name": "红酒杯",
+   "category": "餐具酒具",
+   "dims_cm": [
+    8.0,
+    8.0,
+    22.0
+   ],
+   "diameter": false,
+   "description": "高脚杯"
+  },
+  {
+   "name": "高脚杯",
+   "category": "餐具酒具",
+   "dims_cm": [
+    8.0,
+    8.0,
+    22.0
+   ],
+   "diameter": false,
+   "description": "高脚杯"
+  },
+  {
+   "name": "酒瓶",
+   "category": "餐具酒具",
+   "dims_cm": [
+    8.0,
+    8.0,
+    30.0
+   ],
+   "diameter": false,
+   "description": "玻璃酒瓶"
+  },
+  {
+   "name": "红酒瓶",
+   "category": "餐具酒具",
+   "dims_cm": [
+    7.5,
+    7.5,
+    30.0
+   ],
+   "diameter": false,
+   "description": "红酒瓶"
+  },
+  {
+   "name": "啤酒瓶",
+   "category": "餐具酒具",
+   "dims_cm": [
+    6.5,
+    6.5,
+    23.0
+   ],
+   "diameter": false,
+   "description": "啤酒瓶"
+  },
+  {
+   "name": "易拉罐",
+   "category": "餐具酒具",
+   "dims_cm": [
+    6.6,
+    6.6,
+    12.2
+   ],
+   "diameter": false,
+   "description": "饮料罐"
+  },
+  {
+   "name": "矿泉水瓶",
+   "category": "餐具酒具",
+   "dims_cm": [
+    6.5,
+    6.5,
+    22.0
+   ],
+   "diameter": false,
+   "description": "矿泉水"
+  },
+  {
+   "name": "奶茶",
+   "category": "餐具酒具",
+   "dims_cm": [
+    9.0,
+    9.0,
+    17.0
+   ],
+   "diameter": false,
+   "description": "一杯奶茶"
+  },
+  {
+   "name": "外卖盒",
+   "category": "餐具酒具",
+   "dims_cm": [
+    20.0,
+    15.0,
+    6.0
+   ],
+   "diameter": false,
+   "description": "打包餐盒"
+  },
+  {
+   "name": "饭盒",
+   "category": "餐具酒具",
+   "dims_cm": [
+    20.0,
+    15.0,
+    7.0
+   ],
+   "diameter": false,
+   "description": "饭盒"
+  },
+  {
+   "name": "药瓶",
+   "category": "餐具酒具",
+   "dims_cm": [
+    5.0,
+    5.0,
+    10.0
+   ],
+   "diameter": false,
+   "description": "小药瓶"
+  },
+  {
+   "name": "瓷瓶",
+   "category": "餐具酒具",
+   "dims_cm": [
+    5.0,
+    5.0,
+    10.0
+   ],
+   "diameter": false,
+   "description": "小瓷瓶"
+  },
+  {
+   "name": "钱袋",
+   "category": "钱财",
+   "dims_cm": [
+    15.0,
+    12.0,
+    5.0
+   ],
+   "diameter": false,
+   "description": "布或皮的钱袋"
+  },
+  {
+   "name": "荷包",
+   "category": "钱财",
+   "dims_cm": [
+    10.0,
+    8.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "随身小荷包"
+  },
+  {
+   "name": "马蹄金",
+   "category": "钱财",
+   "dims_cm": [
+    6.0,
+    4.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "马蹄形金锭"
+  },
+  {
+   "name": "金锭",
+   "category": "钱财",
+   "dims_cm": [
+    7.0,
+    4.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "金锭"
+  },
+  {
+   "name": "银锭",
+   "category": "钱财",
+   "dims_cm": [
+    7.0,
+    4.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "银元宝"
+  },
+  {
+   "name": "元宝",
+   "category": "钱财",
+   "dims_cm": [
+    7.0,
+    4.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "元宝"
+  },
+  {
+   "name": "金条",
+   "category": "钱财",
+   "dims_cm": [
+    12.0,
+    4.0,
+    1.5
+   ],
+   "diameter": false,
+   "description": "金条"
+  },
+  {
+   "name": "银票",
+   "category": "钱财",
+   "dims_cm": [
+    18.0,
+    9.0,
+    0.1
+   ],
+   "diameter": false,
+   "description": "一张银票"
+  },
+  {
+   "name": "钱包",
+   "category": "钱财",
+   "dims_cm": [
+    11.0,
+    9.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "折叠钱包"
+  },
+  {
+   "name": "红包",
+   "category": "钱财",
+   "dims_cm": [
+    17.0,
+    9.0,
+    0.5
+   ],
+   "diameter": false,
+   "description": "红包"
+  },
+  {
+   "name": "支票",
+   "category": "钱财",
+   "dims_cm": [
+    18.0,
+    8.0,
+    0.1
+   ],
+   "diameter": false,
+   "description": "一张支票"
+  },
+  {
+   "name": "名册",
+   "category": "文书",
+   "dims_cm": [
+    25.0,
+    15.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "线装名册"
+  },
+  {
+   "name": "账本",
+   "category": "文书",
+   "dims_cm": [
+    25.0,
+    15.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "线装账本"
+  },
+  {
+   "name": "账册",
+   "category": "文书",
+   "dims_cm": [
+    25.0,
+    15.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "账册"
+  },
+  {
+   "name": "卷轴",
+   "category": "文书",
+   "dims_cm": [
+    60.0,
+    6.0,
+    6.0
+   ],
+   "diameter": false,
+   "description": "卷起的画轴"
+  },
+  {
+   "name": "竹简",
+   "category": "文书",
+   "dims_cm": [
+    25.0,
+    8.0,
+    8.0
+   ],
+   "diameter": false,
+   "description": "卷起的竹简"
+  },
+  {
+   "name": "圣旨",
+   "category": "文书",
+   "dims_cm": [
+    60.0,
+    8.0,
+    8.0
+   ],
+   "diameter": false,
+   "description": "卷起的黄绢圣旨"
+  },
+  {
+   "name": "信封",
+   "category": "文书",
+   "dims_cm": [
+    22.0,
+    11.0,
+    0.5
+   ],
+   "diameter": false,
+   "description": "信封"
+  },
+  {
+   "name": "书信",
+   "category": "文书",
+   "dims_cm": [
+    25.0,
+    18.0,
+    0.1
+   ],
+   "diameter": false,
+   "description": "一页信纸"
+  },
+  {
+   "name": "密信",
+   "category": "文书",
+   "dims_cm": [
+    20.0,
+    12.0,
+    0.1
+   ],
+   "diameter": false,
+   "description": "折起的密信"
+  },
+  {
+   "name": "地图",
+   "category": "文书",
+   "dims_cm": [
+    60.0,
+    45.0,
+    0.2
+   ],
+   "diameter": false,
+   "description": "展开的地图"
+  },
+  {
+   "name": "婚书",
+   "category": "文书",
+   "dims_cm": [
+    30.0,
+    20.0,
+    0.2
+   ],
+   "diameter": false,
+   "description": "折页婚书"
+  },
+  {
+   "name": "状纸",
+   "category": "文书",
+   "dims_cm": [
+    30.0,
+    25.0,
+    0.1
+   ],
+   "diameter": false,
+   "description": "状纸"
+  },
+  {
+   "name": "告示",
+   "category": "文书",
+   "dims_cm": [
+    60.0,
+    45.0,
+    0.1
+   ],
+   "diameter": false,
+   "description": "张贴的告示"
+  },
+  {
+   "name": "通缉令",
+   "category": "文书",
+   "dims_cm": [
+    60.0,
+    45.0,
+    0.1
+   ],
+   "diameter": false,
+   "description": "通缉画像告示"
+  },
+  {
+   "name": "合同",
+   "category": "文书",
+   "dims_cm": [
+    30.0,
+    21.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "A4合同一沓"
+  },
+  {
+   "name": "文件夹",
+   "category": "文书",
+   "dims_cm": [
+    32.0,
+    24.0,
+    1.5
+   ],
+   "diameter": false,
+   "description": "文件夹"
+  },
+  {
+   "name": "病历",
+   "category": "文书",
+   "dims_cm": [
+    30.0,
+    21.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "病历本"
+  },
+  {
+   "name": "秘籍",
+   "category": "文书",
+   "dims_cm": [
+    25.0,
+    16.0,
+    1.5
+   ],
+   "diameter": false,
+   "description": "线装秘籍"
+  },
+  {
+   "name": "剑谱",
+   "category": "文书",
+   "dims_cm": [
+    25.0,
+    16.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "线装剑谱"
+  },
+  {
+   "name": "砚台",
+   "category": "文书",
+   "dims_cm": [
+    18.0,
+    12.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "石砚"
+  },
+  {
+   "name": "墨锭",
+   "category": "文书",
+   "dims_cm": [
+    9.0,
+    2.5,
+    1.0
+   ],
+   "diameter": false,
+   "description": "墨条"
+  },
+  {
+   "name": "宣纸",
+   "category": "文书",
+   "dims_cm": [
+    70.0,
+    35.0,
+    0.1
+   ],
+   "diameter": false,
+   "description": "一张宣纸"
+  },
+  {
+   "name": "算盘",
+   "category": "文书",
+   "dims_cm": [
+    35.0,
+    15.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "木算盘"
+  },
+  {
+   "name": "印章",
+   "category": "文书",
+   "dims_cm": [
+    4.0,
+    4.0,
+    6.0
+   ],
+   "diameter": false,
+   "description": "小方印"
+  },
+  {
+   "name": "玉玺",
+   "category": "文书",
+   "dims_cm": [
+    10.0,
+    10.0,
+    10.0
+   ],
+   "diameter": false,
+   "description": "玉玺"
+  },
+  {
+   "name": "官印",
+   "category": "文书",
+   "dims_cm": [
+    9.0,
+    9.0,
+    9.0
+   ],
+   "diameter": false,
+   "description": "官印"
+  },
+  {
+   "name": "令箭",
+   "category": "文书",
+   "dims_cm": [
+    40.0,
+    4.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "传令的令箭"
+  },
+  {
+   "name": "令牌",
+   "category": "文书",
+   "dims_cm": [
+    10.0,
+    6.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "令牌"
+  },
+  {
+   "name": "铜牌",
+   "category": "文书",
+   "dims_cm": [
+    8.0,
+    5.0,
+    0.5
+   ],
+   "diameter": false,
+   "description": "铜腰牌"
+  },
+  {
+   "name": "腰牌",
+   "category": "文书",
+   "dims_cm": [
+    10.0,
+    6.0,
+    0.5
+   ],
+   "diameter": false,
+   "description": "腰牌"
+  },
+  {
+   "name": "扳指",
+   "category": "饰品配件",
+   "dims_cm": [
+    3.0,
+    3.0,
+    2.5
+   ],
+   "diameter": false,
+   "description": "套在拇指上的玉扳指"
+  },
+  {
+   "name": "玉佩",
+   "category": "饰品配件",
+   "dims_cm": [
+    6.0,
+    5.0,
+    0.8
+   ],
+   "diameter": false,
+   "description": "玉佩"
+  },
+  {
+   "name": "玉镯",
+   "category": "饰品配件",
+   "dims_cm": [
+    8.0,
+    8.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "玉手镯"
+  },
+  {
+   "name": "耳坠",
+   "category": "饰品配件",
+   "dims_cm": [
+    4.0,
+    1.5,
+    0.5
+   ],
+   "diameter": false,
+   "description": "耳坠"
+  },
+  {
+   "name": "步摇",
+   "category": "饰品配件",
+   "dims_cm": [
+    18.0,
+    4.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "步摇发钗"
+  },
+  {
+   "name": "珠钗",
+   "category": "饰品配件",
+   "dims_cm": [
+    16.0,
+    3.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "珠钗"
+  },
+  {
+   "name": "发钗",
+   "category": "饰品配件",
+   "dims_cm": [
+    16.0,
+    2.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "发钗"
+  },
+  {
+   "name": "香囊",
+   "category": "饰品配件",
+   "dims_cm": [
+    8.0,
+    6.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "绣花香囊"
+  },
+  {
+   "name": "铜镜",
+   "category": "饰品配件",
+   "dims_cm": [
+    18.0,
+    18.0,
+    1.5
+   ],
+   "diameter": false,
+   "description": "圆铜镜"
+  },
+  {
+   "name": "梳子",
+   "category": "饰品配件",
+   "dims_cm": [
+    12.0,
+    5.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "木梳"
+  },
+  {
+   "name": "木梳",
+   "category": "饰品配件",
+   "dims_cm": [
+    12.0,
+    5.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "木梳"
+  },
+  {
+   "name": "胭脂盒",
+   "category": "饰品配件",
+   "dims_cm": [
+    5.0,
+    5.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "胭脂盒"
+  },
+  {
+   "name": "钥匙",
+   "category": "饰品配件",
+   "dims_cm": [
+    8.0,
+    2.5,
+    0.3
+   ],
+   "diameter": false,
+   "description": "一把钥匙"
+  },
+  {
+   "name": "钥匙串",
+   "category": "饰品配件",
+   "dims_cm": [
+    12.0,
+    6.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "一串钥匙"
+  },
+  {
+   "name": "铜锁",
+   "category": "饰品配件",
+   "dims_cm": [
+    8.0,
+    4.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "铜挂锁"
+  },
+  {
+   "name": "眼镜",
+   "category": "饰品配件",
+   "dims_cm": [
+    14.0,
+    5.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "眼镜"
+  },
+  {
+   "name": "墨镜",
+   "category": "饰品配件",
+   "dims_cm": [
+    14.0,
+    5.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "墨镜"
+  },
+  {
+   "name": "口红",
+   "category": "饰品配件",
+   "dims_cm": [
+    8.0,
+    2.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "口红"
+  },
+  {
+   "name": "香水",
+   "category": "饰品配件",
+   "dims_cm": [
+    7.0,
+    4.0,
+    10.0
+   ],
+   "diameter": false,
+   "description": "香水瓶"
+  },
+  {
+   "name": "手链",
+   "category": "饰品配件",
+   "dims_cm": [
+    20.0,
+    1.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "手链展开长"
+  },
+  {
+   "name": "项链",
+   "category": "饰品配件",
+   "dims_cm": [
+    45.0,
+    1.0,
+    0.5
+   ],
+   "diameter": false,
+   "description": "项链展开长"
+  },
+  {
+   "name": "胸针",
+   "category": "饰品配件",
+   "dims_cm": [
+    5.0,
+    4.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "胸针"
+  },
+  {
+   "name": "抹布",
+   "category": "布包织物",
+   "dims_cm": [
+    30.0,
+    30.0,
+    0.3
+   ],
+   "diameter": false,
+   "description": "一块抹布"
+  },
+  {
+   "name": "手帕",
+   "category": "布包织物",
+   "dims_cm": [
+    30.0,
+    30.0,
+    0.1
+   ],
+   "diameter": false,
+   "description": "手帕"
+  },
+  {
+   "name": "包袱",
+   "category": "布包织物",
+   "dims_cm": [
+    40.0,
+    30.0,
+    15.0
+   ],
+   "diameter": false,
+   "description": "打成结的布包袱"
+  },
+  {
+   "name": "布包",
+   "category": "布包织物",
+   "dims_cm": [
+    40.0,
+    30.0,
+    15.0
+   ],
+   "diameter": false,
+   "description": "布包"
+  },
+  {
+   "name": "长布包",
+   "category": "布包织物",
+   "dims_cm": [
+    110.0,
+    15.0,
+    10.0
+   ],
+   "diameter": false,
+   "description": "裹长兵器的布包"
+  },
+  {
+   "name": "麻袋",
+   "category": "布包织物",
+   "dims_cm": [
+    90.0,
+    55.0,
+    20.0
+   ],
+   "diameter": false,
+   "description": "装满的麻袋"
+  },
+  {
+   "name": "斗笠",
+   "category": "布包织物",
+   "dims_cm": [
+    50.0,
+    50.0,
+    15.0
+   ],
+   "diameter": false,
+   "description": "竹斗笠"
+  },
+  {
+   "name": "蓑衣",
+   "category": "布包织物",
+   "dims_cm": [
+    100.0,
+    70.0,
+    5.0
+   ],
+   "diameter": false,
+   "description": "棕蓑衣"
+  },
+  {
+   "name": "枕头",
+   "category": "布包织物",
+   "dims_cm": [
+    50.0,
+    30.0,
+    12.0
+   ],
+   "diameter": false,
+   "description": "枕头"
+  },
+  {
+   "name": "雨伞",
+   "category": "布包织物",
+   "dims_cm": [
+    90.0,
+    6.0,
+    6.0
+   ],
+   "diameter": false,
+   "description": "收起的长柄伞"
+  },
+  {
+   "name": "油纸伞",
+   "category": "布包织物",
+   "dims_cm": [
+    85.0,
+    6.0,
+    6.0
+   ],
+   "diameter": false,
+   "description": "收起的油纸伞"
+  },
+  {
+   "name": "团扇",
+   "category": "布包织物",
+   "dims_cm": [
+    35.0,
+    25.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "圆形团扇"
+  },
+  {
+   "name": "背包",
+   "category": "布包织物",
+   "dims_cm": [
+    45.0,
+    30.0,
+    15.0
+   ],
+   "diameter": false,
+   "description": "双肩包"
+  },
+  {
+   "name": "书包",
+   "category": "布包织物",
+   "dims_cm": [
+    42.0,
+    30.0,
+    15.0
+   ],
+   "diameter": false,
+   "description": "书包"
+  },
+  {
+   "name": "手提包",
+   "category": "布包织物",
+   "dims_cm": [
+    30.0,
+    12.0,
+    22.0
+   ],
+   "diameter": false,
+   "description": "女士手提包"
+  },
+  {
+   "name": "太师椅",
+   "category": "家具",
+   "dims_cm": [
+    65.0,
+    55.0,
+    105.0
+   ],
+   "diameter": false,
+   "description": "带扶手的硬木太师椅"
+  },
+  {
+   "name": "圈椅",
+   "category": "家具",
+   "dims_cm": [
+    60.0,
+    50.0,
+    100.0
+   ],
+   "diameter": false,
+   "description": "圈背扶手椅"
+  },
+  {
+   "name": "官帽椅",
+   "category": "家具",
+   "dims_cm": [
+    60.0,
+    50.0,
+    115.0
+   ],
+   "diameter": false,
+   "description": "官帽椅"
+  },
+  {
+   "name": "椅子",
+   "category": "家具",
+   "dims_cm": [
+    45.0,
+    45.0,
+    90.0
+   ],
+   "diameter": false,
+   "description": "靠背椅"
+  },
+  {
+   "name": "凳子",
+   "category": "家具",
+   "dims_cm": [
+    35.0,
+    35.0,
+    45.0
+   ],
+   "diameter": false,
+   "description": "方凳"
+  },
+  {
+   "name": "圆凳",
+   "category": "家具",
+   "dims_cm": [
+    35.0,
+    35.0,
+    45.0
+   ],
+   "diameter": false,
+   "description": "圆凳"
+  },
+  {
+   "name": "长凳",
+   "category": "家具",
+   "dims_cm": [
+    150.0,
+    25.0,
+    45.0
+   ],
+   "diameter": false,
+   "description": "长条凳"
+  },
+  {
+   "name": "条凳",
+   "category": "家具",
+   "dims_cm": [
+    150.0,
+    25.0,
+    45.0
+   ],
+   "diameter": false,
+   "description": "条凳"
+  },
+  {
+   "name": "八仙桌",
+   "category": "家具",
+   "dims_cm": [
+    100.0,
+    100.0,
+    85.0
+   ],
+   "diameter": false,
+   "description": "方形八仙桌"
+  },
+  {
+   "name": "方桌",
+   "category": "家具",
+   "dims_cm": [
+    90.0,
+    90.0,
+    78.0
+   ],
+   "diameter": false,
+   "description": "方桌"
+  },
+  {
+   "name": "书案",
+   "category": "家具",
+   "dims_cm": [
+    150.0,
+    70.0,
+    80.0
+   ],
+   "diameter": false,
+   "description": "书案"
+  },
+  {
+   "name": "案几",
+   "category": "家具",
+   "dims_cm": [
+    120.0,
+    40.0,
+    80.0
+   ],
+   "diameter": false,
+   "description": "长案"
+  },
+  {
+   "name": "供桌",
+   "category": "家具",
+   "dims_cm": [
+    180.0,
+    60.0,
+    90.0
+   ],
+   "diameter": false,
+   "description": "祠堂供桌"
+  },
+  {
+   "name": "神龛",
+   "category": "家具",
+   "dims_cm": [
+    80.0,
+    40.0,
+    100.0
+   ],
+   "diameter": false,
+   "description": "供神龛"
+  },
+  {
+   "name": "香炉",
+   "category": "家具",
+   "dims_cm": [
+    20.0,
+    20.0,
+    18.0
+   ],
+   "diameter": false,
+   "description": "三足香炉"
+  },
+  {
+   "name": "牌位",
+   "category": "家具",
+   "dims_cm": [
+    15.0,
+    5.0,
+    35.0
+   ],
+   "diameter": false,
+   "description": "木牌位"
+  },
+  {
+   "name": "屏风",
+   "category": "家具",
+   "dims_cm": [
+    180.0,
+    3.0,
+    170.0
+   ],
+   "diameter": false,
+   "description": "四扇屏风展开"
+  },
+  {
+   "name": "罗汉床",
+   "category": "家具",
+   "dims_cm": [
+    200.0,
+    100.0,
+    80.0
+   ],
+   "diameter": false,
+   "description": "罗汉床"
+  },
+  {
+   "name": "架子床",
+   "category": "家具",
+   "dims_cm": [
+    210.0,
+    140.0,
+    220.0
+   ],
+   "diameter": false,
+   "description": "带帐架的木床"
+  },
+  {
+   "name": "床榻",
+   "category": "家具",
+   "dims_cm": [
+    200.0,
+    120.0,
+    50.0
+   ],
+   "diameter": false,
+   "description": "床榻"
+  },
+  {
+   "name": "衣柜",
+   "category": "家具",
+   "dims_cm": [
+    120.0,
+    55.0,
+    200.0
+   ],
+   "diameter": false,
+   "description": "衣柜"
+  },
+  {
+   "name": "柜子",
+   "category": "家具",
+   "dims_cm": [
+    100.0,
+    50.0,
+    180.0
+   ],
+   "diameter": false,
+   "description": "柜子"
+  },
+  {
+   "name": "箱子",
+   "category": "家具",
+   "dims_cm": [
+    80.0,
+    50.0,
+    50.0
+   ],
+   "diameter": false,
+   "description": "木箱"
+  },
+  {
+   "name": "木箱",
+   "category": "家具",
+   "dims_cm": [
+    80.0,
+    50.0,
+    50.0
+   ],
+   "diameter": false,
+   "description": "木箱"
+  },
+  {
+   "name": "箱笼",
+   "category": "家具",
+   "dims_cm": [
+    70.0,
+    45.0,
+    45.0
+   ],
+   "diameter": false,
+   "description": "箱笼"
+  },
+  {
+   "name": "首饰盒",
+   "category": "家具",
+   "dims_cm": [
+    20.0,
+    12.0,
+    10.0
+   ],
+   "diameter": false,
+   "description": "首饰盒"
+  },
+  {
+   "name": "梳妆台",
+   "category": "家具",
+   "dims_cm": [
+    100.0,
+    45.0,
+    150.0
+   ],
+   "diameter": false,
+   "description": "带镜梳妆台"
+  },
+  {
+   "name": "摇椅",
+   "category": "家具",
+   "dims_cm": [
+    100.0,
+    60.0,
+    100.0
+   ],
+   "diameter": false,
+   "description": "摇椅"
+  },
+  {
+   "name": "沙发",
+   "category": "家具",
+   "dims_cm": [
+    210.0,
+    90.0,
+    85.0
+   ],
+   "diameter": false,
+   "description": "三人沙发"
+  },
+  {
+   "name": "办公桌",
+   "category": "家具",
+   "dims_cm": [
+    160.0,
+    80.0,
+    75.0
+   ],
+   "diameter": false,
+   "description": "办公桌"
+  },
+  {
+   "name": "床头柜",
+   "category": "家具",
+   "dims_cm": [
+    50.0,
+    40.0,
+    55.0
+   ],
+   "diameter": false,
+   "description": "床头柜"
+  },
+  {
+   "name": "鞋柜",
+   "category": "家具",
+   "dims_cm": [
+    100.0,
+    35.0,
+    100.0
+   ],
+   "diameter": false,
+   "description": "鞋柜"
+  },
+  {
+   "name": "书架",
+   "category": "家具",
+   "dims_cm": [
+    90.0,
+    30.0,
+    200.0
+   ],
+   "diameter": false,
+   "description": "书架"
+  },
+  {
+   "name": "手机",
+   "category": "电子医疗",
+   "dims_cm": [
+    15.0,
+    7.2,
+    0.8
+   ],
+   "diameter": false,
+   "description": "智能手机"
+  },
+  {
+   "name": "对讲机",
+   "category": "电子医疗",
+   "dims_cm": [
+    13.0,
+    6.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "对讲机"
+  },
+  {
+   "name": "录音笔",
+   "category": "电子医疗",
+   "dims_cm": [
+    14.0,
+    3.0,
+    1.5
+   ],
+   "diameter": false,
+   "description": "录音笔"
+  },
+  {
+   "name": "遥控器",
+   "category": "电子医疗",
+   "dims_cm": [
+    20.0,
+    5.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "遥控器"
+  },
+  {
+   "name": "耳机",
+   "category": "电子医疗",
+   "dims_cm": [
+    17.0,
+    15.0,
+    8.0
+   ],
+   "diameter": false,
+   "description": "头戴耳机"
+  },
+  {
+   "name": "充电宝",
+   "category": "电子医疗",
+   "dims_cm": [
+    14.0,
+    7.0,
+    1.5
+   ],
+   "diameter": false,
+   "description": "充电宝"
+  },
+  {
+   "name": "相机",
+   "category": "电子医疗",
+   "dims_cm": [
+    13.0,
+    7.0,
+    9.0
+   ],
+   "diameter": false,
+   "description": "单反相机机身"
+  },
+  {
+   "name": "摄像机",
+   "category": "电子医疗",
+   "dims_cm": [
+    30.0,
+    12.0,
+    15.0
+   ],
+   "diameter": false,
+   "description": "手持摄像机"
+  },
+  {
+   "name": "输液架",
+   "category": "电子医疗",
+   "dims_cm": [
+    50.0,
+    50.0,
+    190.0
+   ],
+   "diameter": false,
+   "description": "输液架"
+  },
+  {
+   "name": "病床",
+   "category": "电子医疗",
+   "dims_cm": [
+    210.0,
+    95.0,
+    60.0
+   ],
+   "diameter": false,
+   "description": "医院病床"
+  },
+  {
+   "name": "药箱",
+   "category": "电子医疗",
+   "dims_cm": [
+    35.0,
+    20.0,
+    25.0
+   ],
+   "diameter": false,
+   "description": "药箱"
+  },
+  {
+   "name": "注射器",
+   "category": "电子医疗",
+   "dims_cm": [
+    12.0,
+    1.5,
+    1.5
+   ],
+   "diameter": false,
+   "description": "注射器"
+  },
+  {
+   "name": "针管",
+   "category": "电子医疗",
+   "dims_cm": [
+    12.0,
+    1.5,
+    1.5
+   ],
+   "diameter": false,
+   "description": "针管"
+  },
+  {
+   "name": "听诊器",
+   "category": "电子医疗",
+   "dims_cm": [
+    70.0,
+    5.0,
+    5.0
+   ],
+   "diameter": false,
+   "description": "听诊器"
+  },
+  {
+   "name": "体温计",
+   "category": "电子医疗",
+   "dims_cm": [
+    12.0,
+    1.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "体温计"
+  },
+  {
+   "name": "手术刀",
+   "category": "电子医疗",
+   "dims_cm": [
+    15.0,
+    1.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "手术刀"
+  },
+  {
+   "name": "银针",
+   "category": "电子医疗",
+   "dims_cm": [
+    8.0,
+    0.1,
+    0.1
+   ],
+   "diameter": false,
+   "description": "针灸银针"
+  },
+  {
+   "name": "飞镖",
+   "category": "古代兵器",
+   "dims_cm": [
+    12.0,
+    2.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "投掷的小飞镖"
+  },
+  {
+   "name": "马鞭",
+   "category": "古代兵器",
+   "dims_cm": [
+    100.0,
+    2.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "骑马用的短鞭"
+  },
+  {
+   "name": "弹弓",
+   "category": "古代兵器",
+   "dims_cm": [
+    18.0,
+    12.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "Y形弹弓"
+  },
+  {
+   "name": "木剑",
+   "category": "古代兵器",
+   "dims_cm": [
+    90.0,
+    4.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "练剑的木剑"
+  },
+  {
+   "name": "匕首",
+   "category": "古代兵器",
+   "dims_cm": [
+    30.0,
+    4.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "短匕首"
+  },
+  {
+   "name": "剪刀",
+   "category": "工具器物",
+   "dims_cm": [
+    20.0,
+    8.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "剪刀"
+  },
+  {
+   "name": "指甲刀",
+   "category": "工具器物",
+   "dims_cm": [
+    8.0,
+    1.5,
+    1.0
+   ],
+   "diameter": false,
+   "description": "指甲剪"
+  },
+  {
+   "name": "水果刀",
+   "category": "工具器物",
+   "dims_cm": [
+    22.0,
+    2.5,
+    1.0
+   ],
+   "diameter": false,
+   "description": "水果刀"
+  },
+  {
+   "name": "剃刀",
+   "category": "工具器物",
+   "dims_cm": [
+    15.0,
+    4.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "剃刀"
+  },
+  {
+   "name": "刮胡刀",
+   "category": "工具器物",
+   "dims_cm": [
+    15.0,
+    4.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "剃须刀"
+  },
+  {
+   "name": "刻刀",
+   "category": "工具器物",
+   "dims_cm": [
+    15.0,
+    1.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "雕刻刀"
+  },
+  {
+   "name": "小刀",
+   "category": "工具器物",
+   "dims_cm": [
+    18.0,
+    2.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "小折刀"
+  },
+  {
+   "name": "拐杖",
+   "category": "工具器物",
+   "dims_cm": [
+    90.0,
+    4.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "手杖"
+  },
+  {
+   "name": "风筝",
+   "category": "工具器物",
+   "dims_cm": [
+    80.0,
+    60.0,
+    5.0
+   ],
+   "diameter": false,
+   "description": "纸风筝"
+  },
+  {
+   "name": "纸鹤",
+   "category": "工具器物",
+   "dims_cm": [
+    10.0,
+    8.0,
+    6.0
+   ],
+   "diameter": false,
+   "description": "折纸鹤"
+  },
+  {
+   "name": "木马",
+   "category": "工具器物",
+   "dims_cm": [
+    100.0,
+    35.0,
+    80.0
+   ],
+   "diameter": false,
+   "description": "儿童摇摇木马"
+  },
+  {
+   "name": "竹马",
+   "category": "工具器物",
+   "dims_cm": [
+    150.0,
+    5.0,
+    5.0
+   ],
+   "diameter": false,
+   "description": "孩童骑的竹竿"
+  },
+  {
+   "name": "手枪",
+   "category": "枪械",
+   "dims_cm": [
+    20.0,
+    4.0,
+    14.0
+   ],
+   "diameter": false,
+   "description": "普通手枪"
+  },
+  {
+   "name": "步枪",
+   "category": "枪械",
+   "dims_cm": [
+    100.0,
+    6.0,
+    20.0
+   ],
+   "diameter": false,
+   "description": "步枪"
+  },
+  {
+   "name": "猎枪",
+   "category": "枪械",
+   "dims_cm": [
+    110.0,
+    5.0,
+    18.0
+   ],
+   "diameter": false,
+   "description": "猎枪"
+  },
+  {
+   "name": "霰弹枪",
+   "category": "枪械",
+   "dims_cm": [
+    100.0,
+    5.0,
+    18.0
+   ],
+   "diameter": false,
+   "description": "霰弹枪"
+  },
+  {
+   "name": "狙击枪",
+   "category": "枪械",
+   "dims_cm": [
+    120.0,
+    8.0,
+    25.0
+   ],
+   "diameter": false,
+   "description": "狙击步枪"
+  },
+  {
+   "name": "冲锋枪",
+   "category": "枪械",
+   "dims_cm": [
+    70.0,
+    6.0,
+    25.0
+   ],
+   "diameter": false,
+   "description": "冲锋枪"
+  },
+  {
+   "name": "火枪",
+   "category": "枪械",
+   "dims_cm": [
+    120.0,
+    5.0,
+    10.0
+   ],
+   "diameter": false,
+   "description": "前膛火枪"
+  },
+  {
+   "name": "火铳",
+   "category": "枪械",
+   "dims_cm": [
+    120.0,
+    5.0,
+    10.0
+   ],
+   "diameter": false,
+   "description": "火铳"
+  },
+  {
+   "name": "水枪",
+   "category": "枪械",
+   "dims_cm": [
+    30.0,
+    8.0,
+    18.0
+   ],
+   "diameter": false,
+   "description": "玩具水枪"
+  },
+  {
+   "name": "玩具枪",
+   "category": "枪械",
+   "dims_cm": [
+    25.0,
+    4.0,
+    15.0
+   ],
+   "diameter": false,
+   "description": "玩具手枪"
+  },
+  {
+   "name": "信号枪",
+   "category": "枪械",
+   "dims_cm": [
+    25.0,
+    5.0,
+    16.0
+   ],
+   "diameter": false,
+   "description": "信号枪"
+  },
+  {
+   "name": "电击枪",
+   "category": "枪械",
+   "dims_cm": [
+    18.0,
+    4.0,
+    12.0
+   ],
+   "diameter": false,
+   "description": "电击枪"
+  },
+  {
+   "name": "麻醉枪",
+   "category": "枪械",
+   "dims_cm": [
+    25.0,
+    4.0,
+    15.0
+   ],
+   "diameter": false,
+   "description": "麻醉手枪"
+  },
+  {
+   "name": "弩箭",
+   "category": "古代兵器",
+   "dims_cm": [
+    40.0,
+    1.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "弩用的短箭"
+  },
+  {
+   "name": "牛",
+   "category": "动物",
+   "dims_cm": [
+    250.0,
+    70.0,
+    150.0
+   ],
+   "diameter": false,
+   "description": "成年黄牛"
+  },
+  {
+   "name": "驴",
+   "category": "动物",
+   "dims_cm": [
+    200.0,
+    50.0,
+    130.0
+   ],
+   "diameter": false,
+   "description": "成年驴"
+  },
+  {
+   "name": "狗",
+   "category": "动物",
+   "dims_cm": [
+    80.0,
+    25.0,
+    55.0
+   ],
+   "diameter": false,
+   "description": "中型犬，站立"
+  },
+  {
+   "name": "猫",
+   "category": "动物",
+   "dims_cm": [
+    45.0,
+    15.0,
+    25.0
+   ],
+   "diameter": false,
+   "description": "成年家猫"
+  },
+  {
+   "name": "鸡",
+   "category": "动物",
+   "dims_cm": [
+    40.0,
+    20.0,
+    40.0
+   ],
+   "diameter": false,
+   "description": "成年公鸡"
+  },
+  {
+   "name": "鹰",
+   "category": "动物",
+   "dims_cm": [
+    55.0,
+    20.0,
+    30.0
+   ],
+   "diameter": false,
+   "description": "收翅的猎鹰"
+  },
+  {
+   "name": "黄牛",
+   "category": "动物",
+   "dims_cm": [
+    250.0,
+    70.0,
+    150.0
+   ],
+   "diameter": false,
+   "description": "成年黄牛"
+  },
+  {
+   "name": "水牛",
+   "category": "动物",
+   "dims_cm": [
+    280.0,
+    80.0,
+    150.0
+   ],
+   "diameter": false,
+   "description": "成年水牛"
+  },
+  {
+   "name": "毛驴",
+   "category": "动物",
+   "dims_cm": [
+    200.0,
+    50.0,
+    130.0
+   ],
+   "diameter": false,
+   "description": "成年毛驴"
+  },
+  {
+   "name": "小狗",
+   "category": "动物",
+   "dims_cm": [
+    50.0,
+    20.0,
+    35.0
+   ],
+   "diameter": false,
+   "description": "小型犬"
+  },
+  {
+   "name": "猎犬",
+   "category": "动物",
+   "dims_cm": [
+    90.0,
+    25.0,
+    65.0
+   ],
+   "diameter": false,
+   "description": "猎犬"
+  },
+  {
+   "name": "狼狗",
+   "category": "动物",
+   "dims_cm": [
+    100.0,
+    30.0,
+    65.0
+   ],
+   "diameter": false,
+   "description": "大型犬"
+  },
+  {
+   "name": "小猫",
+   "category": "动物",
+   "dims_cm": [
+    30.0,
+    10.0,
+    18.0
+   ],
+   "diameter": false,
+   "description": "幼猫"
+  },
+  {
+   "name": "公鸡",
+   "category": "动物",
+   "dims_cm": [
+    40.0,
+    20.0,
+    40.0
+   ],
+   "diameter": false,
+   "description": "公鸡"
+  },
+  {
+   "name": "母鸡",
+   "category": "动物",
+   "dims_cm": [
+    38.0,
+    20.0,
+    35.0
+   ],
+   "diameter": false,
+   "description": "母鸡"
+  },
+  {
+   "name": "横刀",
+   "category": "古代兵器",
+   "dims_cm": [
+    95.0,
+    4.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "唐制直背横刀"
+  },
+  {
+   "name": "长矛",
+   "category": "古代兵器",
+   "dims_cm": [
+    220.0,
+    4.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "长柄矛"
+  },
+  {
+   "name": "木匣",
+   "category": "工具器物",
+   "dims_cm": [
+    30.0,
+    20.0,
+    12.0
+   ],
+   "diameter": false,
+   "description": "木匣子"
+  },
+  {
+   "name": "乌木匣",
+   "category": "工具器物",
+   "dims_cm": [
+    30.0,
+    20.0,
+    12.0
+   ],
+   "diameter": false,
+   "description": "乌木匣"
+  },
+  {
+   "name": "铜匣",
+   "category": "工具器物",
+   "dims_cm": [
+    30.0,
+    20.0,
+    12.0
+   ],
+   "diameter": false,
+   "description": "铜匣"
+  },
+  {
+   "name": "木盒",
+   "category": "工具器物",
+   "dims_cm": [
+    25.0,
+    15.0,
+    10.0
+   ],
+   "diameter": false,
+   "description": "木盒"
+  },
+  {
+   "name": "诏书",
+   "category": "文书",
+   "dims_cm": [
+    60.0,
+    8.0,
+    8.0
+   ],
+   "diameter": false,
+   "description": "卷起的诏书"
+  },
+  {
+   "name": "密报",
+   "category": "文书",
+   "dims_cm": [
+    20.0,
+    12.0,
+    0.1
+   ],
+   "diameter": false,
+   "description": "折起的密报"
+  },
+  {
+   "name": "遗信",
+   "category": "文书",
+   "dims_cm": [
+    25.0,
+    18.0,
+    0.1
+   ],
+   "diameter": false,
+   "description": "遗书一页"
+  },
+  {
+   "name": "遗书",
+   "category": "文书",
+   "dims_cm": [
+    25.0,
+    18.0,
+    0.1
+   ],
+   "diameter": false,
+   "description": "遗书一页"
+  },
+  {
+   "name": "绢帛",
+   "category": "文书",
+   "dims_cm": [
+    60.0,
+    40.0,
+    0.1
+   ],
+   "diameter": false,
+   "description": "一幅绢帛"
+  },
+  {
+   "name": "帛书",
+   "category": "文书",
+   "dims_cm": [
+    40.0,
+    30.0,
+    0.1
+   ],
+   "diameter": false,
+   "description": "写在绢上的书信"
+  },
+  {
+   "name": "布防图",
+   "category": "文书",
+   "dims_cm": [
+    60.0,
+    45.0,
+    0.2
+   ],
+   "diameter": false,
+   "description": "展开的布防图"
+  },
+  {
+   "name": "布局图",
+   "category": "文书",
+   "dims_cm": [
+    60.0,
+    45.0,
+    0.2
+   ],
+   "diameter": false,
+   "description": "展开的布局图"
+  },
+  {
+   "name": "宫城图",
+   "category": "文书",
+   "dims_cm": [
+    60.0,
+    45.0,
+    0.2
+   ],
+   "diameter": false,
+   "description": "展开的宫城图"
+  },
+  {
+   "name": "星图",
+   "category": "文书",
+   "dims_cm": [
+    60.0,
+    60.0,
+    0.2
+   ],
+   "diameter": false,
+   "description": "展开的星图"
+  },
+  {
+   "name": "图纸",
+   "category": "文书",
+   "dims_cm": [
+    40.0,
+    30.0,
+    0.1
+   ],
+   "diameter": false,
+   "description": "一张图纸"
+  },
+  {
+   "name": "古籍",
+   "category": "文书",
+   "dims_cm": [
+    25.0,
+    16.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "线装古籍"
+  },
+  {
+   "name": "笏板",
+   "category": "文书",
+   "dims_cm": [
+    50.0,
+    7.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "朝臣手持的笏"
+  },
+  {
+   "name": "铅笔",
+   "category": "文书",
+   "dims_cm": [
+    17.0,
+    0.7,
+    0.7
+   ],
+   "diameter": false,
+   "description": "铅笔"
+  },
+  {
+   "name": "炭笔",
+   "category": "文书",
+   "dims_cm": [
+    15.0,
+    1.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "炭条笔"
+  },
+  {
+   "name": "木牌",
+   "category": "文书",
+   "dims_cm": [
+    20.0,
+    10.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "木牌"
+  },
+  {
+   "name": "御玺",
+   "category": "文书",
+   "dims_cm": [
+    10.0,
+    10.0,
+    10.0
+   ],
+   "diameter": false,
+   "description": "玉玺"
+  },
+  {
+   "name": "太子印",
+   "category": "文书",
+   "dims_cm": [
+    9.0,
+    9.0,
+    9.0
+   ],
+   "diameter": false,
+   "description": "太子之印"
+  },
+  {
+   "name": "虎符",
+   "category": "文书",
+   "dims_cm": [
+    10.0,
+    4.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "青铜虎形兵符，两半合一"
+  },
+  {
+   "name": "铜符",
+   "category": "文书",
+   "dims_cm": [
+    8.0,
+    5.0,
+    0.5
+   ],
+   "diameter": false,
+   "description": "铜符牌"
+  },
+  {
+   "name": "铜钱",
+   "category": "钱财",
+   "dims_cm": [
+    2.5,
+    2.5,
+    0.2
+   ],
+   "diameter": false,
+   "description": "方孔铜钱"
+  },
+  {
+   "name": "硬币",
+   "category": "钱财",
+   "dims_cm": [
+    2.5,
+    2.5,
+    0.2
+   ],
+   "diameter": false,
+   "description": "硬币"
+  },
+  {
+   "name": "帝冠",
+   "category": "饰品配件",
+   "dims_cm": [
+    25.0,
+    20.0,
+    20.0
+   ],
+   "diameter": false,
+   "description": "帝王冠冕"
+  },
+  {
+   "name": "耳饰",
+   "category": "饰品配件",
+   "dims_cm": [
+    4.0,
+    2.0,
+    0.5
+   ],
+   "diameter": false,
+   "description": "耳饰"
+  },
+  {
+   "name": "纽扣",
+   "category": "饰品配件",
+   "dims_cm": [
+    1.5,
+    1.5,
+    0.3
+   ],
+   "diameter": false,
+   "description": "衣扣"
+  },
+  {
+   "name": "指套",
+   "category": "饰品配件",
+   "dims_cm": [
+    6.0,
+    2.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "套在手指上的金属指套"
+  },
+  {
+   "name": "面具",
+   "category": "饰品配件",
+   "dims_cm": [
+    22.0,
+    17.0,
+    10.0
+   ],
+   "diameter": false,
+   "description": "遮脸面具"
+  },
+  {
+   "name": "小镜子",
+   "category": "饰品配件",
+   "dims_cm": [
+    12.0,
+    9.0,
+    1.0
+   ],
+   "diameter": false,
+   "description": "随身小镜"
+  },
+  {
+   "name": "镜片",
+   "category": "饰品配件",
+   "dims_cm": [
+    10.0,
+    8.0,
+    0.3
+   ],
+   "diameter": false,
+   "description": "一片镜片"
+  },
+  {
+   "name": "玻璃镜",
+   "category": "饰品配件",
+   "dims_cm": [
+    60.0,
+    45.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "方形玻璃大镜"
+  },
+  {
+   "name": "钥片",
+   "category": "饰品配件",
+   "dims_cm": [
+    6.0,
+    3.0,
+    0.2
+   ],
+   "diameter": false,
+   "description": "异形钥片"
+  },
+  {
+   "name": "铜针",
+   "category": "饰品配件",
+   "dims_cm": [
+    8.0,
+    0.2,
+    0.2
+   ],
+   "diameter": false,
+   "description": "细铜针"
+  },
+  {
+   "name": "玉珠",
+   "category": "饰品配件",
+   "dims_cm": [
+    2.0,
+    2.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "玉珠子"
+  },
+  {
+   "name": "银箔",
+   "category": "饰品配件",
+   "dims_cm": [
+    5.0,
+    3.0,
+    0.05
+   ],
+   "diameter": false,
+   "description": "一片银箔"
+  },
+  {
+   "name": "打火机",
+   "category": "工具器物",
+   "dims_cm": [
+    8.0,
+    3.5,
+    1.5
+   ],
+   "diameter": false,
+   "description": "打火机"
+  },
+  {
+   "name": "火折",
+   "category": "工具器物",
+   "dims_cm": [
+    15.0,
+    2.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "竹筒火折子"
+  },
+  {
+   "name": "陶罐",
+   "category": "工具器物",
+   "dims_cm": [
+    20.0,
+    20.0,
+    22.0
+   ],
+   "diameter": false,
+   "description": "陶罐"
+  },
+  {
+   "name": "水袋",
+   "category": "工具器物",
+   "dims_cm": [
+    30.0,
+    20.0,
+    6.0
+   ],
+   "diameter": false,
+   "description": "皮水袋"
+  },
+  {
+   "name": "盐袋",
+   "category": "工具器物",
+   "dims_cm": [
+    60.0,
+    40.0,
+    15.0
+   ],
+   "diameter": false,
+   "description": "装盐的麻袋"
+  },
+  {
+   "name": "麻布",
+   "category": "工具器物",
+   "dims_cm": [
+    100.0,
+    80.0,
+    0.3
+   ],
+   "diameter": false,
+   "description": "一块麻布"
+  },
+  {
+   "name": "滤布",
+   "category": "工具器物",
+   "dims_cm": [
+    40.0,
+    40.0,
+    0.2
+   ],
+   "diameter": false,
+   "description": "过滤用的布"
+  },
+  {
+   "name": "木盆",
+   "category": "工具器物",
+   "dims_cm": [
+    50.0,
+    50.0,
+    20.0
+   ],
+   "diameter": false,
+   "description": "木盆"
+  },
+  {
+   "name": "细绳",
+   "category": "工具器物",
+   "dims_cm": [
+    200.0,
+    0.5,
+    0.5
+   ],
+   "diameter": false,
+   "description": "细绳"
+  },
+  {
+   "name": "竹管",
+   "category": "工具器物",
+   "dims_cm": [
+    30.0,
+    3.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "一节竹管"
+  },
+  {
+   "name": "针线",
+   "category": "工具器物",
+   "dims_cm": [
+    10.0,
+    5.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "针与线团"
+  },
+  {
+   "name": "绣架",
+   "category": "工具器物",
+   "dims_cm": [
+    60.0,
+    40.0,
+    80.0
+   ],
+   "diameter": false,
+   "description": "刺绣用的绷架"
+  },
+  {
+   "name": "人偶",
+   "category": "工具器物",
+   "dims_cm": [
+    30.0,
+    10.0,
+    8.0
+   ],
+   "diameter": false,
+   "description": "木或布人偶"
+  },
+  {
+   "name": "木人偶",
+   "category": "工具器物",
+   "dims_cm": [
+    30.0,
+    10.0,
+    8.0
+   ],
+   "diameter": false,
+   "description": "木人偶"
+  },
+  {
+   "name": "枯枝",
+   "category": "工具器物",
+   "dims_cm": [
+    80.0,
+    3.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "一根枯枝"
+  },
+  {
+   "name": "木杖",
+   "category": "工具器物",
+   "dims_cm": [
+    150.0,
+    4.0,
+    4.0
+   ],
+   "diameter": false,
+   "description": "木手杖"
+  },
+  {
+   "name": "星盘",
+   "category": "工具器物",
+   "dims_cm": [
+    30.0,
+    30.0,
+    3.0
+   ],
+   "diameter": false,
+   "description": "铜星盘"
+  },
+  {
+   "name": "浑天仪",
+   "category": "工具器物",
+   "dims_cm": [
+    100.0,
+    100.0,
+    120.0
+   ],
+   "diameter": false,
+   "description": "铜浑天仪"
+  },
+  {
+   "name": "司天仪",
+   "category": "工具器物",
+   "dims_cm": [
+    100.0,
+    100.0,
+    120.0
+   ],
+   "diameter": false,
+   "description": "观天的铜仪器"
+  },
+  {
+   "name": "铜鹤",
+   "category": "工具器物",
+   "dims_cm": [
+    30.0,
+    20.0,
+    60.0
+   ],
+   "diameter": false,
+   "description": "铜鹤摆件"
+  },
+  {
+   "name": "博山炉",
+   "category": "灯火",
+   "dims_cm": [
+    15.0,
+    15.0,
+    25.0
+   ],
+   "diameter": false,
+   "description": "山形盖的香炉"
+  },
+  {
+   "name": "棺材",
+   "category": "家具",
+   "dims_cm": [
+    210.0,
+    70.0,
+    70.0
+   ],
+   "diameter": false,
+   "description": "木棺"
+  },
+  {
+   "name": "青铜棺",
+   "category": "家具",
+   "dims_cm": [
+    220.0,
+    90.0,
+    80.0
+   ],
+   "diameter": false,
+   "description": "青铜棺椁"
+  },
+  {
+   "name": "陶碗",
+   "category": "餐具酒具",
+   "dims_cm": [
+    14.0,
+    14.0,
+    7.0
+   ],
+   "diameter": false,
+   "description": "陶碗"
+  },
+  {
+   "name": "干饼",
+   "category": "餐具酒具",
+   "dims_cm": [
+    15.0,
+    15.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "干粮饼"
+  },
+  {
+   "name": "风饼",
+   "category": "餐具酒具",
+   "dims_cm": [
+    15.0,
+    15.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "风干的饼"
+  },
+  {
+   "name": "烧饼",
+   "category": "餐具酒具",
+   "dims_cm": [
+    12.0,
+    12.0,
+    2.0
+   ],
+   "diameter": false,
+   "description": "烧饼"
+  }
+ ]
+}

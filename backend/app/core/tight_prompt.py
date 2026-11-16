@@ -64,6 +64,10 @@ def _rules() -> dict[str, Any]:
         "inline_res": [re.compile(item) for item in data["inline_drop"]],
         "constraint_res": [re.compile(item) for item in data["constraint_lines"]],
         "term_res": [re.compile(item) for item in data["term_lines"]],
+        "duty_re": re.compile(data["duty_row"]),
+        "set_re": re.compile(data["duty_set"]),
+        "set_used_re": re.compile(data["duty_set_used"]),
+        "size_re": re.compile(data["duty_size"]),
         # 锚型 → 它给什么(clip_skeleton 的锚型定义表)，绑定行照它写。
         "gives": {kind: gives for kind, gives in anchor["definitions"]},
     }
@@ -118,6 +122,59 @@ def _bindings(lines: list[str]) -> dict[str, dict[str, str]]:
     return found
 
 
+def _duties(lines: list[str], found: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+    """职责句里点到、正文里却没写成「名字（参考图N）」的图：名字、它给的东西、跟在后面的真实尺寸。
+
+    职责句要整行删掉(drop_lines)，这些图的说明就只剩绑定行这一处：按参考图号去重，已经认出来的号不再收。
+    """
+    rules = _rules()
+    words = rules["binding"]
+    taken = {item["n"] for item in found.values()}
+    extra: dict[str, dict[str, str]] = {}
+    for line in lines:
+        # 以「参考图N是」开头的行整行原样留着(keep_mentions_in)，里面的图已经有说明。
+        if any(pattern.search(line.strip()) for pattern in rules["keep_mentions_res"]):
+            continue
+        # 配套图：几样画在一张图里，名字连起来写，括号里说明是配套图、本镜只用哪几样。
+        for match in rules["set_re"].finditer(line):
+            n = match.group("n")
+            if n in taken:
+                continue
+            taken.add(n)
+            names = re.findall(r"「([^」]+)」", match.group("names"))
+            used = rules["set_used_re"].search(match.group("rest"))
+            size = rules["size_re"].search(match.group("rest"))
+            gives = words["set_gives"] + (
+                words["joiner_inner"] + words["set_used"].format(used=words["set_name_joiner"].join(re.findall(r"「([^」]+)」", used.group("used"))))
+                if used else ""
+            )
+            extra[words["set_name_joiner"].join(names)] = {"n": n, "gives": gives, "size": size.group(0).lstrip("，") if size else ""}
+        for match in rules["duty_re"].finditer(line):
+            n, name = match.group("n"), match.group("name").strip()
+            if n in taken or not name:
+                continue
+            taken.add(n)
+            size = rules["size_re"].search(match.group("rest"))
+            extra[name if name not in found and name not in extra else f"{name}#{n}"] = {
+                "n": n, "gives": match.group("gives").strip(), "size": size.group(0).lstrip("，") if size else "",
+            }
+    return extra
+
+
+def _sizes(lines: list[str]) -> dict[str, str]:
+    """参考图号 → 职责句后面跟着的真实尺寸(「真实尺寸约…」「最长边约…厘米」)。职责行要整行删掉，尺寸放进绑定行。"""
+    rules = _rules()
+    found: dict[str, str] = {}
+    for line in lines:
+        if any(pattern.search(line.strip()) for pattern in rules["keep_mentions_res"]):
+            continue
+        for match in rules["duty_re"].finditer(line):
+            size = rules["size_re"].search(match.group("rest"))
+            if size:
+                found.setdefault(match.group("n"), size.group(0).lstrip("，"))
+    return found
+
+
 def _desk_marker() -> str:
     """场景图让位给导演台白模时，它的职责句里带的固定短语(scene_views.json；没有这个键时不生效)。"""
     return str(prompt_data.load("scene_views").get("desk_demoted_marker") or "")
@@ -148,15 +205,27 @@ def _demoted(lines: list[str]) -> set[str]:
     return demoted
 
 
-def _binding_line(found: dict[str, dict[str, str]], demoted: set[str] = frozenset()) -> str:
+def _binding_line(
+    found: dict[str, dict[str, str]], demoted: set[str] = frozenset(), duties: dict[str, dict[str, str]] | None = None,
+    sizes: dict[str, str] | None = None,
+) -> str:
     rules = _rules()
     words = rules["binding"]
     rows = []
+    # 只在职责句里出现的图照职责句写：它给的东西(和真实尺寸)原样放进括号。
+    for name, item in (duties or {}).items():
+        gives = words["joiner_inner"].join(part for part in (item["gives"], item["size"]) if part)
+        rows.append(words["row"].format(name=name.split("#")[0], n=item["n"], gives=gives))
     for name, item in found.items():
         gives = rules["gives"].get(item["kind"]) or (words["gives_scene"] if item["kind"].startswith("场景") else words["gives_default"])
         gives = words["gives_desk_demoted"] if item["n"] in demoted else "、".join(gives.split())
+        # 道具、车辆、商品的真实尺寸跟着它那张图走(职责句删了，尺寸不丢)。
+        if (sizes or {}).get(item["n"]):
+            gives = words["joiner_inner"].join((gives, sizes[item["n"]]))
         template = words["row_costume"] if item["costume"] else words["row"]
         rows.append(template.format(name=name, n=item["n"], gives=gives, costume=item["costume"]))
+    # 按参考图号排：模型读绑定行时图号从小到大。
+    rows.sort(key=lambda row: int(re.search(r"参考图(\d+)", row).group(1)) if re.search(r"参考图(\d+)", row) else 0)
     return words["head"] + words["joiner"].join(rows) + words["tail"] if rows else ""
 
 
@@ -230,6 +299,7 @@ def compact(text: str, model: str) -> tuple[str, Fit]:
     lines = text.split("\n")
     found = _bindings(lines)
     demoted = _demoted(lines)
+    duties = _duties(lines, found)
     present = [line.strip() for line in lines]
     out: list[str] = []
     in_constraints = False
@@ -265,15 +335,16 @@ def compact(text: str, model: str) -> tuple[str, Fit]:
         head = next((index for index, line in enumerate(out) if line.strip().startswith(rules["constraints_head"])), None)
         out.insert(len(out) if head is None else head + 1, rules["constraints"])
     # 名字只在绑定行里带参考图号；「参考图1是开场画面…」这类讲图本身的行照旧。
-    if found:
-        binding = _binding_line(found, demoted)
-        tokens = re.compile("|".join(re.escape(_token(name, item["n"])) for name, item in found.items()))
-        names = {_token(name, item["n"]): name for name, item in found.items()}
-        out = [
-            line if any(pattern.search(line.strip()) for pattern in rules["keep_mentions_res"])
-            else tokens.sub(lambda match: names[match.group(0)], line)
-            for line in out
-        ]
+    if found or duties:
+        binding = _binding_line(found, demoted, duties, _sizes(lines))
+        if found:
+            tokens = re.compile("|".join(re.escape(_token(name, item["n"])) for name, item in found.items()))
+            names = {_token(name, item["n"]): name for name, item in found.items()}
+            out = [
+                line if any(pattern.search(line.strip()) for pattern in rules["keep_mentions_res"])
+                else tokens.sub(lambda match: names[match.group(0)], line)
+                for line in out
+            ]
         # 绑定行放在讲参考图的开头几行之后、正文之前。
         at = 0
         while at < len(out) and any(pattern.search(out[at].strip()) for pattern in rules["keep_mentions_res"]):

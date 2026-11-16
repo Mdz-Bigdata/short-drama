@@ -102,7 +102,8 @@ def build(task: Mapping[str, Any], *, transitions: Sequence[Mapping[str, Any]] |
             "muted": False,
             "subtitle": _subtitle_of(shot),
             "voice_path": voices[index_in_stage] if index_in_stage < len(voices) else None,
-            "native_audio": bool(native[index_in_stage]) if index_in_stage < len(native) else False,
+            # 第 6 阶段记了哪几镜用原声就照它；没记的(没跑第 6 阶段、或记录丢了)看片段自己有没有声音。
+            "native_audio": bool(native[index_in_stage]) if index_in_stage < len(native) else shot.get("native_audio") is True,
             # 片段里有没有能用的原声：第 5 阶段听过的记在片上，更早的按第 6 阶段的选择算。
             "native_available": (shot.get("native_audio") is not False) if "native_audio" in shot
             else (bool(native[index_in_stage]) if index_in_stage < len(native) else False),
@@ -110,6 +111,8 @@ def build(task: Mapping[str, Any], *, transitions: Sequence[Mapping[str, Any]] |
             "sound_in": {"join": str(spec["sound_join"]), "edited": False} if position and (spec or {}).get("sound_join") else None,
             "review": {"decision": "pending", "note": "", "decided_at": None},
             "fingerprint": _clip_fingerprint(shot),
+            # 分镜要的「一帧黑」：第 5 阶段在片子声音里找到的撞击时刻(秒)和盖几帧，合成时盖上(见 blackout)。
+            "blackout": dict(shot["blackout"]) if isinstance(shot.get("blackout"), Mapping) else None,
         })
         clips[-1]["audio_source"] = audio_source(clips[-1])
     bgm_path = audio.get("bgm_path")
@@ -448,6 +451,7 @@ def render_plan(timeline: Mapping[str, Any]) -> dict[str, Any]:
         "shot_voices": [c.get("voice_path") if source == "tts" else None for c, source in zip(clips, sources)],
         "native_audio": [source == "native" for source in sources],
         "trims": [(float(c.get("in") or 0), (float(c["out"]) if c.get("out") is not None else None)) for c in clips],
+        "blackouts": [dict(c["blackout"]) if isinstance(c.get("blackout"), Mapping) else None for c in clips],
         "transition_plans": [dict(c.get("transition_in") or {"type": "crossfade", "duration": 0.22}) if settings["transitions"]
                              else {"type": "hard_cut", "duration": 0.04} for c in clips[1:]],
         "sound_joins": [{key: value for key, value in (c.get("sound_in") or {}).items() if key in {"join", "seconds"}} or None for c in clips[1:]],

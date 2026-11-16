@@ -18,7 +18,7 @@ logger = logging.getLogger("app.core.screenwriting.pacing")
 
 SKILL_NAME = "screenwriting-master"
 SKILL_DIR = settings.skills_root() / SKILL_NAME
-CONTENT_MODES = ("drama", "narration")
+CONTENT_MODES = ("drama", "narration", "film")
 
 
 def pacing_key(content_mode: str) -> str:
@@ -28,7 +28,7 @@ def pacing_key(content_mode: str) -> str:
 
 @lru_cache(maxsize=8)
 def render_pacing_section(content_mode: str = "drama") -> str:
-    """The pacing paragraph for ``content_mode`` (``drama`` or ``narration``), read from the skill."""
+    """The pacing paragraph for ``content_mode`` (``drama``, ``narration`` or ``film``), read from the skill."""
     if content_mode not in CONTENT_MODES:
         raise ValueError(f"unknown content_mode: {content_mode!r}")
     item = knowledge_registry.section(pacing_key(content_mode))
@@ -42,4 +42,9 @@ def render_pacing_section(content_mode: str = "drama") -> str:
         return ""
 
 
-__all__ = ["CONTENT_MODES", "SKILL_DIR", "pacing_key", "render_pacing_section"]
+def pacing_for(creation_mode: str) -> str:
+    """The pacing paragraph a project of this kind plans by: a short film has its own, every other kind the drama's."""
+    return render_pacing_section("film" if str(creation_mode or "") == "film" else "drama")
+
+
+__all__ = ["CONTENT_MODES", "SKILL_DIR", "pacing_for", "pacing_key", "render_pacing_section"]

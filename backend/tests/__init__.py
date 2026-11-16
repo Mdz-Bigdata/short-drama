@@ -12,12 +12,19 @@ os.environ.setdefault("ASSISTANT_AGENT_ROUTING", "0")
 os.environ.setdefault("VIDEO_MODE_JUDGE", "0")
 # 分集大纲出来后让文本模型对着概述校对一遍事实：测试默认关掉，专门测它的用例自己打开。
 os.environ.setdefault("SCREENWRITING_FACT_CHECK", "0")
+# 跨集场记的回查同理：一次额外的模型调用，测试里默认关，test_story_state 自己打开。
+os.environ.setdefault("SCREENWRITING_STATE_CHECK", "0")
+# 一集短片的场记自查同理：test_script_self_check 自己打开。
+os.environ.setdefault("SCREENWRITING_SELF_CHECK", "0")
 # 第 2 阶段大纲先行、详细剧本转后台线程撰写：测试默认整段写完，专门测它的用例自己打开。
 os.environ.setdefault("SCRIPT_OUTLINE_FIRST", "0")
 # 打戏片段出来后抽帧问看图模型、不合格重出：测试默认关掉，专门测它的用例自己打开。
 os.environ.setdefault("FIGHT_CLIP_CHECK", "0")
 # 片段下载失败后的重试间隔：测试里的链接都是假的，等也等不来。
 os.environ.setdefault("MEDIA_DOWNLOAD_RETRY_SECONDS", "0")
+# 阶段 Agent 的自进化会在后台线程里把同一次调用再跑几遍并写经验库：测试默认关掉(后台线程会活过替身的作用域，
+# 还会写进真实的 learned/harness_library)，专门测它的用例自己打开并把经验库指到临时目录。
+os.environ.setdefault("HARNESS_EVOLUTION", "off")
 
 # 兜底：上面的开关只管已知的几处，新加的一步忘了替换网关时，测试也不能真连供应商(花钱，还可能一直卡着)。
 # 真实网络请求一律当断网处理，抛各库自己的连接错误；本机和 TestClient 不受影响。真要连网的手动测试设 TESTS_ALLOW_NETWORK=1。

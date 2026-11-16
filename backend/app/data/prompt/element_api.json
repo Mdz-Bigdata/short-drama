@@ -83,5 +83,8 @@
   "get_element_revision_file_content.detail.4": "历史文件不存在",
   "get_element_revision_file_content.detail.5": "历史文件不存在",
   "restore_element_revision.detail": "元素不存在",
-  "list_element_usages.detail": "元素不存在"
+  "list_element_usages.detail": "元素不存在",
+  "_generate_non_actor_reference.related": "本图把「{0}」和「{1}」画在同一张图里：它们是配套的几样东西，形制、材质、颜色、纹饰和尺寸要互相对上(比如剑鞘按这把剑的长度和宽窄画，刚好能装下；门按这扇门的样式和门洞尺寸画)，几样都要完整、清楚地出现在画面里。",
+  "_generate_non_actor_reference.related_joiner": "」「",
+  "_generate_non_actor_reference.related_reference": "参考图1是已经画好的「{0}」：本图里的「{0}」照它画。"
 }

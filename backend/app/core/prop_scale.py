@@ -15,8 +15,9 @@ from functools import lru_cache
 from pathlib import Path
 
 TABLE = Path(__file__).resolve().parents[1] / "data" / "props" / "scale_reference.json"
-#: 参照表之外的补充：修仙题材的法宝、丹药、符箓、储物(参照表里没有)。同名以参照表为准。
-SUPPLEMENTS = (TABLE.with_name("xianxia_items.json"),)
+#: 参照表之外的补充：修仙题材的法宝、丹药、符箓、储物，和短剧常见的古装日用器物、车马、家具、现代日常物件
+#: (参照表里没有)。同名以参照表为准。
+SUPPLEMENTS = (TABLE.with_name("xianxia_items.json"), TABLE.with_name("everyday_items.json"))
 _TYPE_SUFFIX = re.compile(r"[二三四五六七八九十]型$")
 
 

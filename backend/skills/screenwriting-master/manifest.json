@@ -46,6 +46,14 @@
       "scope": "skill"
     },
     {
+      "key": "episode-pacing-film",
+      "title": "episode-pacing-film.md",
+      "file": "references/episode-pacing-film.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
       "key": "cinema-craft-redlines",
       "title": "电影级编剧红线与 S 级三冲击",
       "file": "references/cinema-craft-redlines.md",

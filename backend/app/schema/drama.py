@@ -82,7 +82,7 @@ class DramaCreateRequest(DramaBaseSchema):
     narration_delivery: Literal["use_tts", "post_production"] = Field(
         "use_tts", description=_text_of("DramaCreateRequest.description.10")
     )
-    creation_mode: Literal["drama", "narration", "ad"] = Field(
+    creation_mode: Literal["drama", "narration", "ad", "film"] = Field(
         "drama", description=_text_of("DramaCreateRequest.description.11")
     )
     ad_brief: Optional[AdBrief] = Field(None, description=_text_of("DramaCreateRequest.description.12"))
@@ -173,7 +173,7 @@ class DramaConfigSchema(DramaBaseSchema):
         "auto", description=_text_of("DramaConfigSchema.description.9")
     )
     narration_delivery: Literal["use_tts", "post_production"] = Field("use_tts", description=_text_of("DramaConfigSchema.description.10"))
-    creation_mode: Literal["drama", "narration", "ad"] = Field("drama", description=_text_of("DramaConfigSchema.description.11"))
+    creation_mode: Literal["drama", "narration", "ad", "film"] = Field("drama", description=_text_of("DramaConfigSchema.description.11"))
     ad_brief: Optional[dict] = Field(None, description=_text_of("DramaConfigSchema.description.12"))
     poetry_sources: List[str] = Field(default_factory=list, description=_text_of("DramaConfigSchema.description.13"))
     content_language: Literal["zh", "en", "vi"] = Field("zh", description=_text_of("DramaConfigSchema.description.14"))

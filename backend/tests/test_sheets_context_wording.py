@@ -290,7 +290,8 @@ class SentencesKeptTests(unittest.TestCase):
         )
         self.assertEqual(
             note(3, {"kind": "prop", "name": "铜针"}),
-            "参考图3仅锁定拍摄道具「铜针」的外形、材质与颜色，不采用图中背景与人物，不是额外剧情或额外人物",
+            # 铜针在尺寸补充表(everyday_items.json)里：参考图那句后面跟着真实尺寸。
+            "参考图3仅锁定拍摄道具「铜针」的外形、材质与颜色，不采用图中背景与人物，不是额外剧情或额外人物，真实尺寸约长8×宽0.2×高0.2厘米，和人物同框时按这个比例画",
         )
         self.assertEqual(
             note(4, {"kind": "scene", "name": "太常寺天文台", "view": "scene_45", "layout": "门在画面左侧；窗在右侧。"}),

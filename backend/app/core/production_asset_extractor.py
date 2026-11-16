@@ -206,6 +206,7 @@ def _extract_structured_catalog(breakdown: dict[str, Any], kind: str) -> list[di
         return []
 
     found: dict[str, str] = {}
+    aliases: dict[str, list[str]] = {}
     for raw_item in raw_items:
         if isinstance(raw_item, dict):
             name = _clean(raw_item.get("name"))[:_MAX_NAME_LENGTH]
@@ -216,9 +217,17 @@ def _extract_structured_catalog(breakdown: dict[str, Any], kind: str) -> list[di
         if not name or name in found:
             continue
         found[name] = description
+        # 剧本里对它的别的叫法，跟着进素材库(元数据 aliases)，分镜按这些叫法也认得到它。
+        raw_aliases = raw_item.get("aliases") if isinstance(raw_item, dict) and isinstance(raw_item.get("aliases"), list) else []
+        named = [alias for alias in dict.fromkeys(_clean(alias)[:_MAX_NAME_LENGTH] for alias in raw_aliases) if alias and alias != name]
+        if named:
+            aliases[name] = named
         if len(found) >= _MAX_ASSETS_PER_KIND:
             break
-    return [{"name": name, "description": description} for name, description in found.items()]
+    return [
+        {"name": name, "description": description, **({"aliases": aliases[name]} if name in aliases else {})}
+        for name, description in found.items()
+    ]
 
 
 def _actor_image(character: dict[str, Any]) -> str:

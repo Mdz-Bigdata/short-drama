@@ -16,7 +16,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
-from app.core import exchange_units, fight_design, fight_exchange, prompt_data, visual_wording
+from app.core import exchange_units, fight_design, fight_exchange, light_setups, prompt_data, visual_wording
+from app.core.frame_handoff import light_phrase
 from app.core.camera_motion import normalize_camera_motion
 from app.core.camera_recipes import repeated_move_signature
 from app.core.frame_position import flipped_subjects, parse_frame_positions, uses_frame_grammar
@@ -286,6 +287,9 @@ def audit_shot_table(
         fight_like = fight or fight_design.looks_like_fight(f"{desc}\n{moving}")
         for finding in visual_wording.findings(desc, moving, fight=fight_like):
             audit.issues.append(ShotIssue(shot_id, finding.rule, finding.message))
+        # 一镜的光影句子里叠了两套互相抵消的光(light_setups.json)：同样只是提示。只看写光的那几句，道具里的烛台不算。
+        for hint in light_setups.clashes(light_phrase(desc)):
+            audit.issues.append(ShotIssue(shot_id, light_setups.CLASH, hint))
 
         # 站位与视线写成观众看到的画面坐标，而不是人物自己的左右。
         characters = [

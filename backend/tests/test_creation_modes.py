@@ -35,7 +35,7 @@ class ModeRulesTests(unittest.TestCase):
         self.assertEqual(creation_modes.mode_of({"creation_mode": "musical"}), "drama")
         self.assertEqual(creation_modes.mode_of(AD), "ad")
         self.assertEqual(creation_modes.writer_guidance({}), "")
-        self.assertEqual([o["id"] for o in creation_modes.options()], ["drama", "narration", "ad"])
+        self.assertEqual([o["id"] for o in creation_modes.options()], ["drama", "narration", "ad", "film"])
 
     def test_an_ad_has_its_own_short_frame_and_a_drama_keeps_the_deployments(self):
         shape = creation_modes.episode_shape_for(AD)

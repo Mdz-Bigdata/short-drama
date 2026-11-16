@@ -92,23 +92,32 @@ app.add_middleware(
 )
 
 
+def _names_private_element_media(path: str) -> bool:
+    """Whether ``path``, normalized the way StaticFiles normalizes it, lies in the private element media."""
+    normalized_path_key = posixpath.normpath("/" + path.replace("\\", "/").lstrip("/")).casefold()
+    private_element_media = f"{settings.MEDIA_ROUTE}/elements"
+    return (
+        normalized_path_key == private_element_media
+        or normalized_path_key.startswith(private_element_media + "/")
+    )
+
+
 @app.middleware("http")
 async def _security_boundary(request: Request, call_next):
     origin = request.headers.get("origin")
     # StaticFiles normalizes duplicate slashes and dot segments before opening
     # a file. Apply the same normalization to the percent-decoded ASGI path so
     # legacy private element images cannot bypass this boundary.
-    normalized_path = posixpath.normpath(
-        "/" + request.url.path.replace("\\", "/").lstrip("/")
-    )
-    normalized_path_key = normalized_path.casefold()
-    private_element_media = f"{settings.MEDIA_ROUTE}/elements"
+    #
+    # That path is scope["path"], the one StaticFiles itself resolves.
+    # request.url.path is not the same thing: the URL is rebuilt as text and
+    # split again, which stops at an encoded "#" or "?", so
+    # /media/x%23/../elements/<file> read as /media/x here while the static
+    # handler went on to serve elements/<file>. The old reading is still
+    # checked so that nothing it refused becomes reachable.
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and origin and origin not in _allowed_origins:
         response = JSONResponse(status_code=403, content={"detail": "请求来源不受信任"})
-    elif (
-        normalized_path_key == private_element_media
-        or normalized_path_key.startswith(private_element_media + "/")
-    ):
+    elif _names_private_element_media(request.scope["path"]) or _names_private_element_media(request.url.path):
         # Element reference images are account-private. Keep the general
         # /media mount for generated audio/video, but never let its static
         # handler bypass the authenticated element file endpoint.
@@ -353,6 +362,15 @@ def _recover_orphan_tasks():
                 log.warning("[启动恢复] 视频任务续查: 取回 %s 条, 失败 %s 条", outcome["downloaded"], outcome["failed"])
         except Exception as error:  # noqa: BLE001 - recovery must never take the server down
             log.error("[启动恢复] 视频任务续查失败: %s", str(error)[:160])
+        try:
+            # 被重启打断的自进化研究：已经问到的回答都在盘上，接着往下做，不重新付费。
+            from app.service import harness_evolution
+
+            resumed = harness_evolution.resume_pending(drama_service.gateway)
+            if resumed:
+                log.warning("[启动恢复] 自进化: 接着做 %s 个被打断的研究", resumed)
+        except Exception as error:  # noqa: BLE001 - recovery must never take the server down
+            log.error("[启动恢复] 自进化续跑失败: %s", str(error)[:160])
 
     threading.Thread(target=_resume, name="video-job-resume", daemon=True).start()
 

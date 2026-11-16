@@ -251,6 +251,20 @@ UPSTREAM_CAPABILITIES: list[CapabilitySource] = [
             "canvas export and import",
         ],
     },
+    {
+        "id": "harness2",
+        "source": "https://github.com/google-research/harness2",
+        "capabilities": [
+            "task-level recursion: propose, probe and compose a stage agent's prompt overlay",
+            "parallel and sequential recursion on a 4k execution / 3k improvement budget",
+            "blind selection over the produced outputs",
+            "reflection into one evidence-supported lesson",
+            "per-domain experience library that later tasks read",
+            "scripts component as machine-run checks of every execution",
+            "baseline control in the blind comparison with automatic rollback",
+            "resumable studies that replay the answers already paid for",
+        ],
+    },
 ]
 
 
@@ -431,6 +445,16 @@ _IMPLEMENTATION_ENTRYPOINTS: dict[str, list[str]] = {
         "frontend/src/features/canvas/canvasSearch.ts",
         "frontend/src/features/canvas/canvasExport.ts",
     ],
+    "harness2": [
+        "app.core.harness_recursion.recursion.run_mode",
+        "app.core.harness_recursion.recursion.Ledger",
+        "app.core.harness_recursion.selection.run_selection",
+        "app.core.harness_recursion.selection.reflect",
+        "app.core.harness_recursion.library.current_overlay",
+        "app.core.harness_recursion.checks.report",
+        "app.core.harness_recursion.library.retire_all",
+        "app.service.harness_evolution.resume_pending",
+    ],
     "costage": [
         "app.core.spatial_stage.operations.apply_operations",
         "app.core.spatial_stage.operations.apply_operations",
@@ -466,6 +490,7 @@ _EVIDENCE_BY_SOURCE = {
     "monoform-previs-studio": "backend/tests/test_stage_director.py",
     "reveric": "backend/tests/test_stage_director.py",
     "open-ai-canvas": "backend/tests/test_canvas_infinite.py",
+    "harness2": "backend/tests/test_harness_recursion.py",
     "costage": "backend/tests/test_spatial_stage.py",
 }
 
@@ -479,6 +504,9 @@ def _implementation_status(source_id: str, capability: str, entrypoint: str) -> 
         return "implemented"
     if source_id == "seedance-2-5-video-director" and "optimizer" in capability:
         # 导演层本身是本地装载，但它生效的那一步要经过 Seedance/DeepSeek 文本模型改写。
+        return "provider-dependent"
+    if source_id == "harness2":
+        # 提议、探测、组合、盲选、反思每一步都是文本模型调用；经验库只有跑过才有内容。
         return "provider-dependent"
     provider_markers = ("/video/", "/audio/", "drama_service", "media_compositor")
     return "provider-dependent" if any(marker in entrypoint for marker in provider_markers) else "implemented"

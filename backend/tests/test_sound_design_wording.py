@@ -233,8 +233,39 @@ class SharedReferenceLeadTests(unittest.TestCase):
         )
         self.assertEqual(
             renumber_audio_mentions(self.placed.lock_line(), self.voices, plan),
-            "沈砚：沉稳男声，中低音区，音色参考：参考音频1（只取音色，语速与情绪按本镜表达）；全片音色、音调与声线不变",
+            "沈砚：音色照参考音频1（只取音色，语速与情绪按本镜表达）；全片音色、音调与声线不变",
+            "a sample that is really sent replaces the adjectives: the voice is pointed at, not described",
         )
+
+    def test_a_voice_whose_sample_is_not_sent_keeps_its_description_and_dialogue_is_never_swallowed(self):
+        from app.core.h3_sound_design import VoiceAnchor
+        from app.core.video_references import VideoReferencePlan, voice_placeholder
+
+        other = VoiceAnchor(name="苏晚", gender="female", age_years=22, timbre="清亮", pitch="中高音区", ref_audio=voice_placeholder("苏晚"))
+        text = "台词：沈砚：先把账对一对，苏晚：账房的事你懂什么！[声音锁]" + self.placed.lock_line() + " " + other.lock_line()
+        voices = [*self.voices, ("苏晚", "https://x/w.mp3")]
+        one = VideoReferencePlan(mode="multimodal", reference_images=["https://x/a.png"], reference_audios=["https://x/s.mp3"])
+        sent = renumber_audio_mentions(text, voices, one)
+        self.assertIn("台词：沈砚：先把账对一对，苏晚：账房的事你懂什么！", sent, "the lines themselves are untouched")
+        self.assertIn("沈砚：音色照参考音频1（只取音色", sent)
+        self.assertIn("苏晚：22岁清亮女声，中高音区；全片音色", sent, "no sample for her in this request, so she is still described")
+        self.assertNotIn("〈音频", sent)
+        unsent = renumber_audio_mentions(text, voices, VideoReferencePlan(mode="first_frame"))
+        self.assertIn("沈砚：沉稳男声，中低音区；全片音色", unsent)
+        self.assertNotIn("参考音频", unsent)
+
+    def test_an_empty_pointer_goes_back_to_describing_beside_the_reference(self):
+        from unittest.mock import patch
+
+        from app.core import prompt_data
+
+        real = prompt_data.text
+        plan = plan_video_references(
+            "multimodal", first_frame=None, reference_images=["https://x/a.png"], reference_audios=["https://x/s.mp3"], model="seedance2.0",
+        )
+        with patch.object(prompt_data, "text", side_effect=lambda name, key: "" if (name, key) == ("voice_reference", "pointed") else real(name, key)):
+            line = renumber_audio_mentions(self.placed.lock_line(), self.voices, plan)
+        self.assertEqual(line, "沈砚：沉稳男声，中低音区，音色参考：参考音频1（只取音色，语速与情绪按本镜表达）；全片音色、音调与声线不变")
 
 
 class SaysWhatTheTableSaysTests(unittest.TestCase):

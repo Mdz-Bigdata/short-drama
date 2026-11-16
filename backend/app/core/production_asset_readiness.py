@@ -15,6 +15,7 @@ from typing import Any
 from app.core import breakdown_kinds
 from app.core.character_looks import plan_looks
 from app.core.character_dashboard import compile_character_dashboard
+from app.core.contained_assets import contained_in
 from app.core.element_scope import element_in_task, element_name_keys, normalized_asset_name
 from app.core.production_asset_extractor import extract_production_assets
 from app.core import prompt_data
@@ -65,6 +66,7 @@ def element_summary(item: Any, owner_id: str, task_id: str) -> dict[str, Any] | 
         "id": str(getattr(item, "id", "") or ""),
         "kind": str(getattr(item, "kind", "") or ""),
         "name": str(getattr(item, "name", "") or ""),
+        "description": str(getattr(item, "description", "") or ""),
         "metadata": dict(metadata),
         "has_image": any(
             str(getattr(file, "mime_type", "") or "").startswith("image/") for file in files
@@ -129,10 +131,15 @@ def evaluate_asset_readiness(
         expected = expected_asset_names(task, kind)
         enforced = summaries is not None
         ready_keys: set[str] = set()
+        ready_names: list[str] = []
         for summary in summaries or []:
             if summary.get("kind") == kind and summary.get("has_image"):
                 ready_keys |= element_name_keys(summary.get("name"), summary.get("metadata"))
-        missing = [name for key, name in expected.items() if key not in ready_keys] if enforced else []
+                ready_names.append(str(summary.get("name") or ""))
+        # 名字被一条有图的同类条目完整包含的(「香头」之于「偏殿香头」)不单独出图，算已备好。
+        missing = [
+            name for key, name in expected.items() if key not in ready_keys and not contained_in(name, ready_names, kind)
+        ] if enforced else []
         kinds[kind] = {
             "label": KIND_LABELS[kind],
             "total": len(expected),
@@ -145,10 +152,14 @@ def evaluate_asset_readiness(
     for kind in OPTIONAL_KINDS:
         expected = expected_asset_names(task, kind)
         ready_keys = set()
+        ready_names = []
         for summary in summaries or []:
             if summary.get("kind") == kind and summary.get("has_image"):
                 ready_keys |= element_name_keys(summary.get("name"), summary.get("metadata"))
-        missing = [name for key, name in expected.items() if key not in ready_keys] if summaries is not None else []
+                ready_names.append(str(summary.get("name") or ""))
+        missing = [
+            name for key, name in expected.items() if key not in ready_keys and not contained_in(name, ready_names, kind)
+        ] if summaries is not None else []
         kinds[kind] = {
             "label": KIND_LABELS[kind], "total": len(expected), "ready": len(expected) - len(missing) if summaries is not None else 0,
             "missing": missing[:_MAX_LISTED], "enforced": False,

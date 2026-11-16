@@ -154,7 +154,7 @@ class BudgetTests(unittest.TestCase):
         sections = {
             "style_lock": "锁" * 200, "locks": "锚" * 120, "subject": "主体" * 100, "camera": "机位近景缓推",
             "dialogue": "台词：你到底瞒了什么？", "sound": "音效" * 40, "environment": "环境" * 40,
-            "light": "光线：冷白顶光（5000K，光比3:1）侧逆光", "colour": "色" * 40, "effects": "特效" * 30,
+            "light": "光线：冷白顶光（5000K，光比3:1）侧逆光", "colour": "色" * 40, "effects": "特效" * 5,
             "dialogue_notes": "情绪" * 20, "rules": "铁律" * 60,
         }
         kept, report = prompt_budget.compress(sections, "jimeng")
@@ -163,6 +163,8 @@ class BudgetTests(unittest.TestCase):
         self.assertNotIn("5000K", kept["light"])
         for key in ("style_lock", "locks", "subject", "camera", "dialogue", "rules"):
             self.assertIn(key, kept, key)
+        # 特效是这一镜要拍的东西，不裁(prompt_budget.CUT_ORDER)。
+        self.assertEqual(kept["effects"], sections["effects"])
         self.assertLessEqual(report.length, report.budget)
         # The fixed layers are restated every time and are not measured against the budget.
         self.assertGreater(report.total_length, report.length)
@@ -397,7 +399,7 @@ class VideoPromptTests(unittest.TestCase):
         self.assertNotIn("film grain visible", compiled.text)
 
     def test_a_tight_budget_cuts_the_optional_layers_and_keeps_the_shot(self):
-        shot = _shot(subject_action="林夏盯着对面" * 30, environment="北侧档案柜" * 20, effects=["烟雾"], dialogue_notes="压低声音")
+        shot = _shot(subject_action="林夏盯着对面" * 28, environment="北侧档案柜" * 20, effects=["烟雾"], dialogue_notes="压低声音")
         compiled = compile_shot_prompt(style_packs.FILM_35MM, shot, model="jimeng")
         self.assertNotEqual(compiled.pressure.tier, "red")
         self.assertLessEqual(compiled.pressure.length, compiled.pressure.budget)

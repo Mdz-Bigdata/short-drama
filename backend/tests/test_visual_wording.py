@@ -58,9 +58,20 @@ class HitsTests(unittest.TestCase):
         self.assertEqual([item.code for item in visual_wording.findings("他很帅气，疯狂奔跑。", fight=True)], [visual_wording.SUBJECTIVE_CODE])
         self.assertEqual(visual_wording.findings("他推门进来。", fight=False), [])
 
+    def test_degree_words_for_light_get_their_own_hint(self):
+        text = "侧光打在她脸上，暗部通透，明暗对比强烈。"
+        self.assertEqual(visual_wording.light_hits(text), ["暗部通透", "明暗对比强烈"])
+        self.assertEqual(visual_wording.light_hits("暖橙硬光自画左斜上方打来，阴影里仍看得清皮肤纹理。"), [])
+        found = visual_wording.findings(text, fight=True)
+        self.assertEqual([item.code for item in found], [visual_wording.LIGHT_CODE], "a fight shot is lit like any other")
+        self.assertEqual(found[0].rule, prompt_data.text("visual_wording", "light_rule"))
+        self.assertIn("「暗部通透」「明暗对比强烈」", found[0].message)
+        self.assertIn("皮肤纹理", found[0].message)
+        self.assertIn(visual_wording.LIGHT_CODE, visual_wording.codes())
+
     def test_every_entry_has_a_word_and_a_hint_and_not_in_contains_its_word(self):
         data = prompt_data.load("visual_wording")
-        for key in ("subjective_words", "fast_motion_words"):
+        for key in ("subjective_words", "fast_motion_words", "light_words"):
             for entry in data[key]:
                 with self.subTest(word=entry.get("word")):
                     self.assertTrue(entry["word"] and entry["hint"])
@@ -137,6 +148,13 @@ class PlanCheckTests(unittest.TestCase):
         result = check_script_plan([_plan_shot("林清缓缓抬起头，嘴角微扬，泪水滑落脸颊。")], _ctx())
         self.assertEqual(self._wording(result), [])
 
+    def test_a_light_degree_word_is_a_warning_too(self):
+        result = check_script_plan([_plan_shot("林清站在窗前，窗光打在侧脸，阴影提亮。")], _ctx())
+        self.assertFalse([item for item in result.errors if item.code == visual_wording.LIGHT_CODE])
+        found = [item for item in result.warnings if item.code == visual_wording.LIGHT_CODE]
+        self.assertEqual(len(found), 1)
+        self.assertIn("「阴影提亮」", found[0].message)
+
     def test_the_visual_fields_are_checked_when_present(self):
         shot = _plan_shot("林清推门进屋。", image_prompt={"scene": "她一身高级感。"}, video_prompt={"action": "她疯狂地奔跑。"})
         codes = {item.code for item in self._wording(check_script_plan([shot], _ctx()))}
@@ -178,6 +196,13 @@ class ShotTableTests(unittest.TestCase):
             (2, prompt_data.text("visual_wording", "fast_motion_rule")),
         ])
         self.assertTrue(all(issue.severity == "warning" for issue in found))
+
+    def test_a_light_degree_word_in_the_table_is_a_warning(self):
+        rule = prompt_data.text("visual_wording", "light_rule")
+        shots = [_table_shot(desc="陈九站在祭坛边，火把照亮他的侧脸，暗部通透，指节扣紧火把木柄，肩背绷直，袍角垂落没有一丝晃动。")]
+        found = [issue for issue in audit_shot_table(shots, video_model="seedance2.0").issues if issue.rule == rule]
+        self.assertEqual([(issue.shot_id, issue.severity) for issue in found], [(1, "warning")])
+        self.assertIn("「暗部通透」", found[0].detail)
 
     def test_a_clean_table_gets_no_hint(self):
         shots = [_table_shot(), _table_shot(shot_id=2, size="全景", motion="缓慢推近")]

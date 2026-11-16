@@ -458,6 +458,53 @@ class TimingTests(unittest.TestCase):
         scene = {"scene_id": scene_id, "content": "沈无咎走来。", "characters": [SHEN]}
         return compile_scene_context(self.task, scene, _looks_as_elements(self.task))["actors"][0].get("variant")
 
+    def test_an_outfit_that_always_carries_its_stain_is_drawn_once(self):
+        # 衣服写着「药渍见妆效」、药渍覆盖他出场的每一集：素的那张没戏可穿，只出带药渍的那张。
+        looks = self._plan(
+            {"name": "沈无咎·右腕药渍", "description": "右腕内侧深褐色药渍。第1集"},
+            scenes=[_scene("E1S01", "沈无咎", SHEN), _scene("E1S02", "沈无咎", SHEN)],
+            costumes=[{"name": "沈无咎·药白长衣", "description": "药白棉麻长衣；右腕药渍见妆效"}],
+        )
+        self.assertEqual(sorted(looks), ["沈无咎·药白长衣·右腕药渍"])
+        self.assertEqual(self._worn("E1S02"), "药白长衣·右腕药渍")
+
+    def test_a_stain_that_comes_later_keeps_the_clean_outfit_for_the_earlier_episodes(self):
+        looks = self._plan(
+            {"name": "沈无咎·右腕药渍", "description": "右腕内侧深褐色药渍。第2集起"},
+            scenes=[_scene("E1S01", "沈无咎", SHEN), _scene("E2S01", "沈无咎", SHEN)],
+            costumes=[{"name": "沈无咎·药白长衣", "description": "药白棉麻长衣"}],
+        )
+        self.assertEqual(sorted(looks), ["沈无咎·药白长衣", "沈无咎·药白长衣·右腕药渍"])
+        self.assertEqual(self._worn("E1S01"), "药白长衣")
+
+    def test_a_stain_that_begins_mid_episode_keeps_the_clean_outfit_for_the_scenes_before(self):
+        looks = self._plan(
+            {"name": "沈无咎·右腕药渍", "description": "右腕药渍。E1S02"},
+            scenes=[_scene("E1S01", "沈无咎", SHEN), _scene("E1S02", "沈无咎", SHEN)],
+            costumes=[{"name": "沈无咎·药白长衣", "description": "药白棉麻长衣"}],
+        )
+        self.assertIn("沈无咎·药白长衣", looks)
+        self.assertEqual(self._worn("E1S01"), "药白长衣")
+
+    def test_an_old_scar_first_written_later_is_there_from_the_start(self):
+        # 旧烫斑第2场才第一次写到，但它是旧伤：从第一场就在，素的那身不再单独出图。
+        looks = self._plan(
+            {"name": "沈无咎·左颧旧烫斑", "description": "左颧一块旧烫斑。E1S02"},
+            scenes=[_scene("E1S01", "沈无咎", SHEN), _scene("E1S02", "沈无咎", SHEN)],
+            costumes=[{"name": "沈无咎·铁匠短褐", "description": "铁灰短褐"}],
+        )
+        self.assertEqual(sorted(looks), ["沈无咎·铁匠短褐·左颧旧烫斑"])
+        self.assertNotIn("starts", looks["沈无咎·铁匠短褐·左颧旧烫斑"]["facts"])
+        self.assertEqual(self._worn("E1S01"), "铁匠短褐·左颧旧烫斑")
+
+    def test_an_old_scar_with_written_episodes_keeps_them(self):
+        looks = self._plan(
+            {"name": "沈无咎·眉骨旧疤", "description": "眉骨旧疤。第2集起"},
+            scenes=[_scene("E1S01", "沈无咎", SHEN), _scene("E2S01", "沈无咎", SHEN)],
+            costumes=[{"name": "沈无咎·铁匠短褐", "description": "铁灰短褐"}],
+        )
+        self.assertEqual(sorted(looks), ["沈无咎·铁匠短褐", "沈无咎·铁匠短褐·眉骨旧疤"])
+
     def test_a_scene_reference_sets_the_episode_and_the_scene(self):
         looks = self._plan({"name": "沈无咎·剑伤", "description": "左颊血口。从第2集第3场起"}, scenes=[_scene("E1S01", "沈无咎", SHEN), _scene("E2S01", "沈无咎", SHEN), _scene("E3S01", "沈无咎", SHEN)])
         facts = looks["沈无咎·奴衣·剑伤"]["facts"]

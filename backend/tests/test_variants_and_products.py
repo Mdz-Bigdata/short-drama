@@ -89,7 +89,12 @@ class SceneBindingTests(unittest.TestCase):
         self.assertEqual([p["name"] for p in context["products"]], ["静音吹风机"])
         self.assertIn("【商品】", context["prompt"])
         shot = panel_context(context, {"desc": "特写：林夏按下静音吹风机的开关", "characters": ["林夏"]})
-        self.assertIn({"kind": "product", "name": "静音吹风机", "image_url": "data:dryer", "id": "p-1", "version": 0}, shot["references"])
+        self.assertIn({
+            "kind": "product", "name": "静音吹风机", "image_url": "data:dryer", "id": "p-1", "version": 0,
+            # 商品和道具一样带着真实大小(参照表里的吹风机)，跟人同框按这个比例画。
+            "size": "，真实尺寸约长25×宽8×高20厘米，和人物同框时按这个比例画",
+        }, shot["references"])
+        self.assertEqual(shot["props"], ["静音吹风机"], "a product is one of the shot's handled objects")
         quiet = panel_context(context, {"desc": "林夏看向镜子", "characters": ["林夏"]})
         self.assertNotIn("product", [r["kind"] for r in quiet["references"]])
 

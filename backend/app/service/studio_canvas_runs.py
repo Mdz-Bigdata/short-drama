@@ -674,7 +674,11 @@ class CanvasRunner:
         prefix = settings.MEDIA_PREFIX
         clips = [media_compositor.public_url(url[len(prefix):]) if url.startswith(prefix) else url for url in inputs.clips]
         soundtrack = media_compositor.local_media_path(inputs.soundtrack) if inputs.soundtrack else None
-        url = media_compositor.compose_film(clips, [""] * len(clips), soundtrack, tag=f"canvas_{tag}", title=None, bgm=False)
+        # 原声优先：片段自己带着声音的（视频模型出的对白与环境声）合成时留着，不再一律去掉。
+        own_sound = [media_compositor.clip_has_sound(url) is True for url in clips]
+        url = media_compositor.compose_film(
+            clips, [""] * len(clips), soundtrack, tag=f"canvas_{tag}", title=None, bgm=False, native_audio=own_sound,
+        )
         if not url:
             raise RuntimeError(_text_of("_compose.text"))
         return url

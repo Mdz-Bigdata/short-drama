@@ -1,5 +1,5 @@
 {
-  "_doc": "app/core/project_asset_completion.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "_doc": "app/core/project_asset_completion.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。 同一类里被另一条名字盖住的条目不单独出图：规则与连接词在 contained_assets.json。",
   "_complete.extra_prompt": "按剧本资产描述生成可直接用于本项目的完整参考图",
   "complete_project_assets.library_error": "必须在同步阶段工作线程中完成资产库同步"
 }

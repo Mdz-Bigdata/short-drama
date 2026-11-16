@@ -4,6 +4,7 @@
     "overview": "编剧 · 提炼项目概述",
     "overview_again": "编剧 · 重新提炼项目概述",
     "inventory": "编剧 · 创作看板：提取角色 / 人物关系 / 场景 / 道具",
+    "adaptation": "编剧 · 定小说改编方案（卖点 / 主视角 / 开场戏 / 不能删的信息）",
     "ledger": "编剧 · 规划分集账本（标题 / 钩子 / 故事节点）",
     "replan_from": "编剧 · 从第 {episode} 集起重新规划分集",
     "outline_batch": "编剧 · 规划第 {first}-{last} 集分集大纲",
@@ -37,11 +38,14 @@
   },
   "retry": {
     "episode_count": "episodes 数组长度必须等于 {expected}（对应第 {first} 集到第 {last} 集），当前为 {got}",
+    "opens_on_exposition": "# 开场要重排\n刚才的规划把第 1 集的第一个故事节点排成了信息交代。全剧开场要直接是冲突、危机、反差或悬念摆上画面的那场戏：把它放到第一个节点，交代并到它后面的节点里，再给出本批的完整规划。",
+    "narrated_shots": "旁白太多：这是角色开口说话的剧，{count} 个分镜用了旁白（最多 {limit} 个）。把这些分镜的旁白改成画面里的动作，或在场人物说出的短台词：{ids}",
     "visual_missing": "缺少这些分镜的视觉层：{ids}（只需补齐这些分镜；已输出的分镜不必重复）",
     "visual_orphans": "出现了分镜内容中不存在的 scene_id：{ids}，scene_id 必须照抄分镜内容里的编号"
   },
   "warnings": {
     "source_left_over": "源文在第 {episodes} 集之后仍有剩余内容，已并入末集（请求集数 {requested} 已用尽）",
+    "opens_on_exposition": "第 1 集的第一个故事节点仍是信息交代，开场没有直接入戏，建议改分集大纲",
     "prose_fallback": "小说体正文由分镜内容机械合成，建议重写",
     "prose_unverified": "小说体正文保留了待核对的内容：{findings}",
     "visual_fallback": "视觉层由分镜内容机械合成，建议重写"
@@ -72,6 +76,8 @@
   "log": {
     "board_early_failed": "[Screenwriting] 创作看板提前展示失败：%s",
     "overview_failed": "[Screenwriting] 概述提炼失败，使用空概述: %s",
+    "state_repair_failed": "[Screenwriting] 第 %d 集按场记重写未成，保留原分镜规划: %s",
+    "adaptation_failed": "[Screenwriting] 改编方案提炼失败，不带改编方案继续: %s",
     "inventory_failed": "[Screenwriting] 资产提取失败，使用空资产表: %s",
     "plan_truncated": "[Screenwriting] 规划输出 %d 集超过每批上限 %d，截断",
     "plan_kept_draft": "[Screenwriting] 第 %d 集内容规划保留带违约草稿: %s",

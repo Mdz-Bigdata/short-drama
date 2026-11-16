@@ -46,7 +46,7 @@ from app.core.scene_turnaround import (
     SCENE_VIEW_SLOTS,
     split_scene_turnaround,
 )
-from app.core import character_variants
+from app.core import character_variants, contained_assets
 from app.core import wuxia_vfx
 from app.core.character_looks import (
     LOOK_BOARD_SIZE, LOOK_CHECK_SYSTEM, look_check_prompt, look_fix_prompt, look_prompt, parse_look_check, wears_makeup,
@@ -111,6 +111,9 @@ LOOK_LAYOUT = "look_layout"
 LOOK_CHECK_MAX_TOKENS = 8000
 LOOK_CHECK_ATTEMPTS = 2
 _NON_ACTOR_KINDS = {"scene", "prop", "effect", "extra", "vehicle", "stunt", "set_dressing"}
+# 配套条目画在同一张图里(「长剑」与「长剑剑鞘」)：长的那条记 drawn_together(一起画进去的名字)，短的记 drawn_with(和谁画在一起)。
+DRAWN_TOGETHER = "drawn_together"
+DRAWN_WITH = "drawn_with"
 _generation_jobs: dict[str, dict[str, object]] = {}
 
 
@@ -1071,6 +1074,21 @@ async def get_element_file_content(
     )
 
 
+async def delete_element_and_files(element_id: str, owner_id: str, store: PlatformStore):
+    """删掉一条素材连同它的文件(先挪到隔离区，库里提交了再清)；第 3 步合并重复条目也走这里。"""
+    quarantine = _DeletionQuarantine(owner_id, element_id)
+    try:
+        deleted = await store.delete_element(element_id, owner_id, before_commit=quarantine.stage)
+    except StorageMutationCommittedWithError as committed:
+        quarantine.purge()
+        raise committed.original_error from committed
+    except BaseException as exc:
+        _restore_quarantine(quarantine, exc)
+        raise
+    quarantine.purge()
+    return deleted
+
+
 @router.delete("/{element_id}")
 async def delete_element(
     element_id: str,
@@ -1184,6 +1202,42 @@ async def get_element_model_content(
     )
 
 
+async def _related_reference(item, owner_id: str, store: PlatformStore) -> tuple[list[dict], tuple[str, bytes] | None]:
+    """要和这一条画进同一张图的配套条目(见 contained_assets.companions)，和其中已经有图的那条(名字, 图)。"""
+    task_ids = element_task_ids(_element_metadata(item))
+    if not task_ids:
+        return [], None
+    rows: list[dict] = []
+    elements: dict = {}
+    for other in await store.list_all_elements(owner_id, str(item.kind)):
+        metadata = _element_metadata(other)
+        if not element_in_task(metadata, task_ids[0]):
+            continue
+        elements[other.id] = other
+        rows.append({
+            "id": other.id, "kind": other.kind, "name": other.name, "metadata": metadata,
+            "has_image": any(str(file.mime_type or "").startswith("image/") for file in other.files or []),
+        })
+    me = {"id": item.id, "kind": item.kind, "name": item.name}
+    together = list(contained_assets.companions(me, rows))
+    partner = contained_assets.related_partner(me, rows)
+    content = await run_in_threadpool(_first_image_bytes, elements[partner["id"]]) if partner else None
+    return together, ((str(partner["name"]), content) if partner and content else None)
+
+
+async def _share_with_companions(item, together: list[dict], owner_id: str, store: PlatformStore, *, content: bytes, suffix: str, mime: str) -> None:
+    """配套的几条用同一张图：还没图的配套条目也存上这张，并记下是和谁画在一起的(第 5 阶段按图去重、写成一张配套图)。"""
+    names = [str(row["name"]) for row in together]
+    await store.merge_element_metadata(item.id, owner_id, {DRAWN_TOGETHER: names})
+    for row in together:
+        await store.merge_element_metadata(row["id"], owner_id, {DRAWN_WITH: str(item.name or "")})
+        if row.get("has_image"):
+            continue
+        await _persist_element_file(
+            element_id=row["id"], owner_id=owner_id, slot="reference", suffix=suffix, mime=mime, content=content, store=store,
+        )
+
+
 async def _generate_non_actor_reference(
     *,
     item,
@@ -1197,17 +1251,33 @@ async def _generate_non_actor_reference(
     prompt = _element_reference_prompt(item, extra_prompt, project_style)
     prop_plan = _prop_plan(item, extra_prompt) if str(item.kind) == "prop" else None
     size = prop_plan.size if prop_plan else _GENERATION_KIND_SIZES.get(str(item.kind))
+    # 字面包含却是另一样东西的(「长剑」与「长剑剑鞘」)：画在同一张图里，不分别出图；短的那条以前有图就带上当参考。
+    together, related = await _related_reference(item, owner_id, store)
+    references: list[str] = []
+    if together:
+        lines = [_text_of("_generate_non_actor_reference.related").format(
+            _text_of("_generate_non_actor_reference.related_joiner").join(str(row["name"]) for row in together), str(item.name or ""),
+        )]
+        if related:
+            partner, picture = related
+            _suffix, picture_mime = await run_in_threadpool(_validated_generated_image, picture)
+            references.append(f"data:{picture_mime};base64,{base64.b64encode(picture).decode('ascii')}")
+            lines.insert(0, _text_of("_generate_non_actor_reference.related_reference").format(partner))
+        prompt = "\n".join([*lines, prompt])
     try:
         generated_url, provider = await run_in_threadpool(
             element_image_gateway.generate_image,
             image_model,
             prompt,
+            **({"ref_images": references} if references else {}),
             **({"size": size} if size else {}),
         )
         if not generated_url:
             raise RuntimeError(_text_of("_generate_non_actor_reference.text"))
         content = await run_in_threadpool(_load_generated_image_bytes, generated_url)
         suffix, mime = await run_in_threadpool(_validated_generated_image, content)
+        if together:
+            await _share_with_companions(item, together, owner_id, store, content=content, suffix=suffix, mime=mime)
     except HTTPException:
         raise
     except (OSError, RuntimeError, ValueError) as exc:
@@ -1591,7 +1661,30 @@ async def _run_generation_job(
     semaphore = asyncio.Semaphore(ELEMENT_IMAGE_GENERATION_CONCURRENCY)
     replace_existing = bool(job.get("replace_existing"))
 
+    # 配套的两样(「长剑」与「长剑剑鞘」)：后画的那张等先画的画完，再带上它一起出(只在同一个项目的一批里排)。
+    waits: dict[str, str] = {}
+    task_id = str(job.get("task_id") or "")
+    if task_id:
+        rows = [
+            {"id": other.id, "kind": other.kind, "name": other.name, "metadata": _element_metadata(other),
+             "has_image": any(str(file.mime_type or "").startswith("image/") for file in other.files or [])}
+            for other in await store.list_all_elements(owner_id, str(job.get("kind") or ""))
+            if element_in_task(_element_metadata(other), task_id)
+        ]
+        waits = contained_assets.draw_after(
+            [{"id": item.id, "kind": item.kind, "name": item.name} for item in items], rows,
+        )
+    finished = {item.id: asyncio.Event() for item in items}
+
     async def generate_one(item) -> None:
+        if item.id in waits:
+            await finished[waits[item.id]].wait()
+        try:
+            await generate_one_now(item)
+        finally:
+            finished[item.id].set()
+
+    async def generate_one_now(item) -> None:
         async with semaphore:
             try:
                 current = await store.get_element(item.id, owner_id)
@@ -1657,6 +1750,13 @@ async def start_element_generation_job(
             or not any(file.mime_type.startswith("image/") for file in item.files)
         )
     ]
+    if task_id:
+        # 名字被同一类另一条完整包含的(「香头」之于「偏殿香头」)不单独出图。
+        skip = contained_assets.skip_ids(
+            {"id": item.id, "kind": item.kind, "name": item.name, "metadata": _element_metadata(item)}
+            for item in items if element_in_task(_element_metadata(item), task_id)
+        )
+        candidates = [item for item in candidates if item.id not in skip]
     for existing in _generation_jobs.values():
         if (
             existing.get("owner_id") == owner_id

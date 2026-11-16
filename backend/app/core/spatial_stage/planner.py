@@ -5,12 +5,16 @@ Deterministic on purpose: the same cast, location and shot table always give the
 same marks, so a re-run does not shuffle who stands where. The rules are the
 staging conventions the shot-design skill already teaches — principals play
 across one axis, a third person closes an inverted triangle upstage, groups arc
-behind, cameras live on one side — turned into coordinates.
+behind, cameras live on one side — turned into coordinates. However a pair
+stands (face to face, shoulder to shoulder, back to back, one a step behind the
+other), both stay on that axis: a shape is a distance and two headings, so the
+cameras, the set and whoever stands upstage never have to know which it is.
 """
 
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -21,6 +25,7 @@ from typing import Any
 from app.core import prompt_data, prop_scale
 from app.core.spatial_stage import axis as axis_rules
 from app.core.spatial_stage import contacts as contact_rules
+from app.core.spatial_stage import crowds as crowd_arrays
 from app.core.spatial_stage import geometry as geo
 from app.core.spatial_stage import performance
 from app.core.spatial_stage.coverage import ShotSpec, fit_move, solve_camera
@@ -33,6 +38,7 @@ from app.core.spatial_stage.models import (
     StageBackdrop,
     StageCamera,
     StageContact,
+    StageCrowd,
     StageLandmark,
     StagePlan,
     StageShot,
@@ -70,6 +76,39 @@ _DEFAULT_SEPARATION: tuple[float, str] = (
     float(_words("default_separation", "metres")), str(_words("default_separation", "label")),
 )
 _SIDE_BY_SIDE = tuple(str(word) for word in _words("side_by_side"))
+# Shoulder to shoulder is a distance of its own: what the scene's words say about mood does not widen it.
+_SIDE_BY_SIDE_M = float(_words("side_by_side_metres"))
+
+
+@dataclass(frozen=True)
+class _PairShape:
+    """A way two people stand that is neither face to face nor shoulder to shoulder."""
+
+    words: tuple[str, ...]
+    label: str
+    relation: str = ""            # the planner's own name for the shape …
+    relation_key: str = ""        # … or the entry of stage_brief.json pair_relations that names it
+    apart_m: float | None = None  # each turned away from the other, this far apart
+    back_m: float = 0.0           # same heading: the one behind stands this far back …
+    side_m: float = 0.0           # … and this far to the side
+    subject_in_front: bool = True  # the person the word's clause is about is the one in front
+
+    def name(self) -> str:
+        return pair_relation(self.relation_key) if self.relation_key else self.relation
+
+
+_PAIR_SHAPES: tuple[_PairShape, ...] = tuple(
+    _PairShape(
+        words=tuple(str(word) for word in shape["words"]), label=str(shape["label"]),
+        relation=str(shape.get("relation") or ""), relation_key=str(shape.get("relation_key") or ""),
+        apart_m=float(shape["metres"]) if "metres" in shape else None,
+        back_m=float(shape.get("back_m") or 0.0), side_m=float(shape.get("side_m") or 0.0),
+        subject_in_front=str(shape.get("subject") or "front") != "behind",
+    )
+    for shape in _words("pair_shapes")
+)
+# How many characters may stand between a principal's name and the word that says how the pair stands.
+_SUBJECT_GAP = int(_words("pair_subject_gap"))
 _TIME_OF_DAY = re.compile("(" + "|".join(re.escape(str(word)) for word in _words("time_of_day_suffixes")) + ")$")
 # Set dressing a prop list or the script text names (a door, a window, a desk): app/data/prompt/stage_set_pieces.json.
 _SET_PIECES = "stage_set_pieces"
@@ -181,6 +220,86 @@ def _separation(text: str) -> tuple[float, str]:
 
 def _posture(name: str, text: str, default: str = "stand") -> str:
     return posture_in(name, text, default) or default
+
+
+def _clause_subject(pair: Sequence[str], words: Sequence[str], text: str, others: Sequence[str]) -> str | None:
+    """Which of the ``pair`` a clause with one of ``words`` is about, when it says how the two stand to each other.
+
+    "柳烟跟在沈砚身后" is about 柳烟, named before the word; "他护着柳烟" is about whoever is not 柳烟, named
+    right after it. With both named before the word the nearer one is the subject ("柳烟被沈砚护在身后"),
+    unless the word goes on to one of the ``others`` ("沈砚和柳烟跟在管家身后" places neither against the other).
+    """
+    pattern = "(?:" + "|".join(re.escape(word) for word in sorted(words, key=len, reverse=True)) + ")"
+    gap = "[^" + _CLAUSE_STOPS + "]{0,%d}?" % _SUBJECT_GAP
+    before = {
+        name: len(found.group(1)) for name in pair
+        if (found := re.search(re.escape(name) + "(" + gap + ")" + pattern, text)) is not None
+    }
+    if len(before) == 1:
+        return next(iter(before))
+    if before:
+        if any(re.search(pattern + gap + re.escape(name), text) for name in others if name):
+            return None
+        return min(before, key=before.__getitem__)
+    after = [name for name in pair if re.search(pattern + gap + re.escape(name), text)]
+    return next(name for name in pair if name != after[0]) if len(after) == 1 else None
+
+
+def _pair_shape(first: str, second: str, others: Sequence[str], text: str) -> tuple[_PairShape, str] | None:
+    """The shape the scene's words put the two principals in and, for a same-heading one, who is in front."""
+    for shape in _PAIR_SHAPES:
+        if shape.apart_m is not None:
+            if any(word in text for word in shape.words):
+                return shape, ""
+            continue
+        subject = _clause_subject((first, second), shape.words, text, others)
+        if subject:
+            return shape, subject if shape.subject_in_front else (second if subject == first else first)
+    return None
+
+
+def _shared_heading(front: geo.Vec2, behind: geo.Vec2, back: float, side: float, normal: geo.Vec2) -> float:
+    """The yaw two people on the axis share when whoever is on ``behind`` stands ``back`` behind and ``side`` beside the other.
+
+    The heading is the line from the one behind to the one in front, turned toward the camera side
+    (``normal``) by as much as the sideways step asks: nobody walks away from the lens, and with no step
+    back at all the two simply face it, shoulder to shoulder.
+    """
+    along = geo.unit(geo.sub(front, behind), (1.0, 0.0))
+    tilt = math.atan2(side, back)
+    heading = geo.add(geo.scale(along, math.cos(tilt)), geo.scale(normal, math.sin(tilt)))
+    return geo.normalize_yaw(math.degrees(math.atan2(heading[0], heading[1])))
+
+
+def _group_shape(text: str) -> str:
+    """``"ring"`` / ``"rows"`` when the scene's words seat the whole group one of those ways."""
+    if any(str(word) in text for word in _words("group_shapes", "ring", "words")):
+        return "ring"
+    if any(str(word) in text for word in _words("group_shapes", "rows", "words")):
+        return "rows"
+    return ""
+
+
+def _ring_marks(count: int, radius: float) -> list[geo.Vec2]:
+    """Upstage marks of a half circle that opens toward the camera, evenly between its two ends at ±``radius``."""
+    return [
+        (-radius * math.cos(math.pi * index / (count + 1)), -radius * math.sin(math.pi * index / (count + 1)))
+        for index in range(1, count + 1)
+    ]
+
+
+def _row_marks(count: int, spacing: float, depth: float) -> tuple[list[geo.Vec2], list[geo.Vec2]]:
+    """Marks for ``count`` more people around a pair seated ``spacing`` apart: who joins the front row, who stands behind.
+
+    The two rows share the group as evenly as they can, the front one taking the odd person. The front row
+    grows outward from the pair, right then left; the back row is centred ``depth`` behind it.
+    """
+    front_extra = (count + 2 + 1) // 2 - 2
+    front = [
+        ((1 if index % 2 == 0 else -1) * spacing * (index // 2 + 1.5), 0.0)
+        for index in range(front_extra)
+    ]
+    return front, geo.line_positions(count - front_extra, (0.0, -depth), (1.0, 0.0), spacing)
 
 
 def _slot(slot: str, left: geo.Vec2, right: geo.Vec2, normal: geo.Vec2, index: int = 0) -> geo.Vec2:
@@ -598,9 +717,39 @@ def _supporting_marks(count: int, separation: float) -> list[geo.Vec2]:
     return slots[:count]
 
 
+def _audience(names: Sequence[str], focus: geo.Vec2) -> tuple[list[StageCrowd], list[StageActor]]:
+    """A hall's audience for the crowd(s) called ``names``: two seated blocks either side of a centre aisle, facing ``focus``.
+
+    The blocks sit on the camera side (+Z) of the stage, so the aisle between them is also the lane a wide
+    lens looks down, and the audience is seen from behind unless a shot turns round to it. Each cast name
+    goes to one of the people nearest the stage: a shot that names the crowd is a shot of that person.
+    """
+    rows, columns = int(_words("venue", "rows")), int(_words("venue", "columns"))
+    spacing, aisle, front = float(_words("venue", "spacing_m")), float(_words("venue", "aisle_m")), float(_words("venue", "front_m"))
+    arrays: list[StageCrowd] = []
+    people: list[StageActor] = []
+    for index, (label, side) in enumerate(((str(_words("venue", "left")), -1.0), (str(_words("venue", "right")), 1.0))):
+        crowd = StageCrowd(
+            id=f"crowd-{index + 1:02d}", label=label.format(name=names[0])[:40], rows=rows, columns=columns, spacing=spacing,
+            center=geo.rounded((focus[0] + side * (aisle / 2 + (columns - 1) * spacing / 2), focus[1] + front + (rows - 1) * spacing / 2)),
+            # Turned to the stage; every member then looks at the 主位 itself, keeping the small turn of their own.
+            yaw_deg=180.0, seed=index * rows * columns,
+        )
+        arrays.append(crowd)
+        for member in crowd_arrays.members(crowd):
+            spot = (member.position[0], member.position[1])
+            people.append(member.model_copy(update={
+                "yaw_deg": geo.normalize_yaw(geo.yaw_toward(spot, focus) + member.yaw_deg - crowd.yaw_deg), "posture": "sit",
+            }))
+    nearest = sorted(range(len(people)), key=lambda index: geo.distance((people[index].position[0], people[index].position[1]), focus))
+    for name, index in zip(names, nearest):
+        people[index] = people[index].model_copy(update={"name": name})
+    return arrays, people
+
+
 def _stage_actors(
     brief: SceneBrief, principals: Sequence[str], side_memory: Mapping[str, str],
-) -> tuple[list[StageActor], StageAxis, str]:
+) -> tuple[list[StageActor], StageAxis, str, list[StageCrowd]]:
     cast = [name for name in dict.fromkeys(name.strip() for name in brief.characters) if name not in EMPTY_CAST]
     separation, mood = _separation(brief.text)
     side_by_side = any(word in brief.text for word in _SIDE_BY_SIDE)
@@ -608,48 +757,107 @@ def _stage_actors(
     actors: list[StageActor] = []
     axis = StageAxis()
     formation = _phrase("empty")
+    arrays: list[StageCrowd] = []
+    crowds = [name for name in cast if is_crowd(name)]
+    # A hall: the crowd is an audience in rows that watches whoever stands at the front.
+    venue = bool(crowds and principals) and any(str(word) in f"{brief.location}{brief.text}" for word in _words("venue", "words"))
+
+    supporting = [name for name in cast if name not in principals and not is_crowd(name)]
+    # How the whole group sits, when the words say so: only a pair with company has a ring or rows to close.
+    group = _group_shape(brief.text) if supporting and len(principals) >= 2 else ""
+    seated = group == "rows" or (group == "ring" and any(str(word) in brief.text for word in _words("group_shapes", "ring", "seated")))
+    sitting = "sit" if seated else "stand"
+    spacing = float(_words("group_shapes", "ring", "spacing_m")) if group == "ring" else float(_words("group_shapes", "rows", "spacing_m"))
 
     if len(principals) >= 2:
         first, second = principals[0], principals[1]
         # A promise made in an earlier scene outranks the default "first named stands screen left".
         if side_memory.get(first) == "right" or (side_memory.get(second) == "left" and side_memory.get(first) != "left"):
             first, second = second, first
+        shaped = None if group else _pair_shape(first, second, [name for name in cast if name not in (first, second)], brief.text)
+        heading: float | None = None   # the yaw both share; None when each is turned by where the other stands
+        if group == "ring":
+            # Neighbours on the half circle stand ``spacing`` apart; the pair closes its two ends.
+            separation = spacing / math.sin(math.pi / (2 * (len(supporting) + 1)))
+        elif group == "rows":
+            separation, heading = spacing, 0.0
+        elif shaped is not None:
+            mood = shaped[0].label
+            separation = shaped[0].apart_m if shaped[0].apart_m is not None else math.hypot(shaped[0].back_m, shaped[0].side_m)
+        elif side_by_side:
+            separation, heading = _SIDE_BY_SIDE_M, 0.0
         left_mark, right_mark = geo.pair_positions((0.0, 0.0), (1.0, 0.0), separation)
+        marks = {first: left_mark, second: right_mark}
+        turned_away = shaped is not None and shaped[0].apart_m is not None
+        if shaped is not None and not turned_away:
+            front = shaped[1]
+            behind = second if front == first else first
+            heading = _shared_heading(marks[front], marks[behind], shaped[0].back_m, shaped[0].side_m, normal)
         for name, mark, other, side in ((first, left_mark, right_mark, "left"), (second, right_mark, left_mark, "right")):
             actors.append(StageActor(
                 id=_slug(len(actors) + 1), name=name, position=geo.rounded(mark),
-                yaw_deg=0.0 if side_by_side else geo.yaw_toward(mark, other),
-                posture=_posture(name, brief.text), role="principal", screen_side=side,
+                yaw_deg=heading if heading is not None else geo.yaw_toward(other, mark) if turned_away else geo.yaw_toward(mark, other),
+                posture=_posture(name, brief.text, sitting), role="principal", screen_side=side,
             ))
         axis = StageAxis(
             kind="dialogue", from_name=first, to_name=second,
             start=geo.rounded(left_mark), end=geo.rounded(right_mark), camera_side=1,
         )
-        # The same words the facing check reads (stage_brief.json pair_relations), so the two cannot drift apart.
-        relation = pair_relation("side_by_side" if side_by_side else "facing")
-        formation = _phrase("pair", relation=relation, mood=mood, separation=separation)
+        if shaped is not None and not turned_away:
+            formation = _phrase(
+                "pair_ahead", relation=shaped[0].name(), mood=mood, front=front, behind=behind,
+                back=shaped[0].back_m, side=shaped[0].side_m,
+            )
+        elif shaped is not None:
+            formation = _phrase("pair", relation=shaped[0].name(), mood=mood, separation=separation)
+        else:
+            # The same words the facing check reads (stage_brief.json pair_relations), so the two cannot drift apart.
+            relation = pair_relation("side_by_side" if heading is not None else "facing")
+            formation = _phrase("pair", relation=relation, mood=mood, separation=separation)
     elif len(principals) == 1:
         name = principals[0]
         actors.append(StageActor(
-            id=_slug(1), name=name, position=[0.0, 0.0], yaw_deg=90.0,
+            # Alone on a set the lead plays across the frame; alone before an audience, out to it.
+            id=_slug(1), name=name, position=[0.0, 0.0], yaw_deg=0.0 if venue else 90.0,
             posture=_posture(name, brief.text), role="principal",
-            screen_side=side_memory.get(name) if side_memory.get(name) in {"left", "right"} else "left",
+            screen_side="center" if venue else side_memory.get(name) if side_memory.get(name) in {"left", "right"} else "left",
         ))
-        formation = _phrase("single")
+        formation = _phrase("venue_single" if venue else "single")
 
     centre = (0.0, 0.0)
-    supporting = [name for name in cast if name not in principals and not is_crowd(name)]
-    if supporting:
-        marks = _supporting_marks(len(supporting), separation)
-        for name, mark in zip(supporting, marks):
+    joiner = str(_words("formations", "name_joiner"))
+    if group == "rows":
+        depth = float(_words("group_shapes", "rows", "depth_m"))
+        front_marks, back_marks = _row_marks(len(supporting), spacing, depth)
+        front_row = supporting[:len(front_marks)]
+        for name, mark in zip(supporting, [*front_marks, *back_marks]):
+            actors.append(StageActor(
+                id=_slug(len(actors) + 1), name=name, position=geo.rounded(mark), yaw_deg=0.0,
+                posture=_posture(name, brief.text, "sit" if name in front_row else "stand"), role="supporting",
+            ))
+        # Read left to right as the camera sees the front row.
+        seats = sorted([first, second, *front_row], key=lambda name: next(actor.position[0] for actor in actors if actor.name == name))
+        formation += _phrase(
+            "rows", front=joiner.join(seats), back=joiner.join(supporting[len(front_marks):]), spacing=spacing, depth=depth,
+        )
+    elif supporting:
+        marks_upstage = _ring_marks(len(supporting), separation / 2) if group == "ring" else _supporting_marks(len(supporting), separation)
+        for name, mark in zip(supporting, marks_upstage):
             actors.append(StageActor(
                 id=_slug(len(actors) + 1), name=name, position=geo.rounded(mark),
-                yaw_deg=geo.yaw_toward(mark, centre), posture=_posture(name, brief.text), role="supporting",
+                yaw_deg=geo.yaw_toward(mark, centre), posture=_posture(name, brief.text, sitting), role="supporting",
             ))
-        shape = _words("formations", "supporting_shapes", "one" if len(supporting) == 1 else "many")
-        formation += _phrase("supporting", names=_words("formations", "name_joiner").join(supporting), shape=shape)
-    crowds = [name for name in cast if is_crowd(name)]
-    if crowds:
+        if group == "ring":
+            formation += _phrase("ring", names=joiner.join(supporting), spacing=spacing)
+        else:
+            shape = _words("formations", "supporting_shapes", "one" if len(supporting) == 1 else "many")
+            formation += _phrase("supporting", names=joiner.join(supporting), shape=shape)
+    if venue:
+        arrays, audience = _audience(crowds, centre)
+        formation += _phrase(
+            "audience", names=joiner.join(crowds), rows=arrays[0].rows, columns=arrays[0].columns, spacing=arrays[0].spacing,
+        )
+    elif crowds:
         depth = max(3.4, separation / 2 + 2.8)
         # Off the centre line, so a crowd is never hidden exactly behind whoever closes the triangle.
         anchor = geo.add(geo.scale(normal, -depth), (1.5 if supporting else 0.0, 0.0))
@@ -659,7 +867,7 @@ def _stage_actors(
                 id=_slug(len(actors) + 1), name=name, position=geo.rounded(mark),
                 yaw_deg=geo.yaw_toward(mark, centre), role="crowd", note=str(_words("crowd_note")),
             ))
-        formation += _phrase("crowd", names=_words("formations", "name_joiner").join(crowds))
+        formation += _phrase("crowd", names=joiner.join(crowds))
     if len(actors) > 1:
         apart = geo.separate([(actor.position[0], actor.position[1]) for actor in actors], 0.6)
         actors = [actor.model_copy(update={"position": geo.rounded(mark)}) for actor, mark in zip(actors, apart)]
@@ -667,7 +875,10 @@ def _stage_actors(
         actor.model_copy(update={"height_m": brief.heights[actor.name]}) if actor.name in brief.heights else actor
         for actor in actors
     ]
-    return actors, axis, formation[:200]
+    if venue:
+        # Seated after the cast has been spread: the rows keep their own spacing.
+        actors.extend(audience)
+    return actors, axis, formation[:200], arrays
 
 
 def _shot_overrides(plan: StagePlan, specs: Sequence[ShotSpec]) -> dict[int, list[ActorOverride]]:
@@ -877,13 +1088,14 @@ def build_plan(
         actors, axis, formation = list(blocking_from.actors), blocking_from.axis, blocking_from.formation
         landmarks = list(blocking_from.landmarks)
     else:
-        actors, axis, formation = _stage_actors(brief, principals, side_memory or {})
+        actors, axis, formation, kept_crowds = _stage_actors(brief, principals, side_memory or {})
         left = (axis.start[0], axis.start[1]) if axis_rules.has_axis(axis) else (-0.75, 0.0)
         right = (axis.end[0], axis.end[1]) if axis_rules.has_axis(axis) else (0.75, 0.0)
         landmarks = _landmarks(brief, left, right, (0.0, 1.0), actors, location_landmarks)
         dressed = {item.id for item in landmarks} - {item.id for item in location_landmarks}
         # A lone character plays to the first thing on the set: that gaze is the scene's axis.
-        if len(principals) == 1 and landmarks and actors:
+        # Before an audience the lead plays to the hall instead, and keeps facing it.
+        if len(principals) == 1 and landmarks and actors and not kept_crowds:
             lead, focus = actors[0], landmarks[0]
             point = (focus.position[0], focus.position[1])
             if geo.distance((lead.position[0], lead.position[1]), point) > 0.3:

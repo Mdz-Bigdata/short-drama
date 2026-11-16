@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field
 from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
 from app import settings
 from app.core.providers.defaults import PROVIDER_DEFAULT_BASE_URLS
-from app.core.video_references import max_shot_seconds
+from app.core.video_references import kling_native_sound, max_shot_seconds
 from app.platform.runtime_models import runtime_model_registry
 
 
@@ -234,6 +234,10 @@ class KlingVideoAdapter(VideoProviderAdapter):
             "duration": self._duration(model, request.duration_seconds),
             "aspect_ratio": request.aspect_ratio,
         }
+        # Judged on the name the project chose, so the request and the dubbing decision read the same string.
+        if kling_native_sound((request.model or "").strip() or model):
+            # The model's own sound, when the host has switched it on (the API's default is "off").
+            body["sound"] = "on"
         if mode == "text":
             return "/v1/videos/text2video", body
         if mode == "multi_reference":

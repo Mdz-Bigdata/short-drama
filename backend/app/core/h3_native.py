@@ -15,6 +15,7 @@ non_diegetic_music；画面描述用英文，台词与画面文字保留原文�
 from __future__ import annotations
 
 import logging
+import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -57,7 +58,8 @@ class Request:
 
     board_text: str                       # 中文提示词(带 @[名字] 标记)
     shot_starts: list[str]                # 每个镜头的起始时间码，第 1 镜为空串
-    seconds: int
+    seconds: int                          # 向接口请求的秒数
+    actual: float = 0.0                   # 这次真正出片的秒数(见 actual_seconds)；时间码按它算
     frames: int = 0                       # 分镜画面张数(<Frame 1> … <Frame n>)
     mentions: set[str] = field(default_factory=set)
     dialogue: list[str] = field(default_factory=list)
@@ -72,6 +74,20 @@ def timecode(seconds: float) -> str:
     whole = max(0.0, float(seconds))
     minutes, rest = divmod(whole, 60)
     return f"{int(minutes):02d}:{rest:06.3f}"
+
+
+def actual_seconds(requested: float) -> float:
+    """H3 按 ``requested`` 秒请求时真正出片的秒数。
+
+    出片的帧数只取 17k+5(24 帧/秒)，不够就往上取：要 13 秒出 328 帧 = 13.667 秒，要 5 秒出 124 帧 = 5.167 秒，
+    只有 8 秒正好。本项目存下的成片逐档如此(6→6.583、9→9.417、10→10.125、12→12.25、13→13.667、14→14.375、
+    15→15.083，2026-11-16 用 ffprobe 核对)。时间轴按请求的秒数写，片尾那一截就没人安排，模型自己发挥。
+    """
+    grid = prompt_data.value("h3_native", "frame_grid")
+    fps, step, offset = float(grid["fps"]), int(grid["step"]), int(grid["offset"])
+    wanted = max(0.0, float(requested)) * fps
+    frames = max(0, math.ceil((wanted - offset) / step - 1e-9)) * step + offset
+    return frames / fps
 
 
 def shot_bounds(beat_seconds: Sequence[float], total: float) -> list[float]:
@@ -105,8 +121,10 @@ def request(
     lines = spoken_lines(dialogue) if dialogue else [
         line.strip() for line in _DIALOGUE.findall(text) if line.strip() and line.strip() not in _NO_DIALOGUE
     ]
+    # 时间码按真正出片的时长排(各镜按计划秒数等比铺满)，不按请求的整秒：多出来的那一截也有镜头管。
+    actual = actual_seconds(seconds)
     return Request(
-        board_text=text, shot_starts=shot_starts(beat_seconds, seconds), seconds=int(seconds), frames=int(frames),
+        board_text=text, shot_starts=shot_starts(beat_seconds, actual), seconds=int(seconds), actual=actual, frames=int(frames),
         mentions={f"@[{name}]" for name in _MENTION.findall(text)}, dialogue=list(dict.fromkeys(lines)),
         refs=sorted({int(k) for k in _SOURCE_REF.findall(text)}),
     )
@@ -131,8 +149,13 @@ def user_prompt(req: Request) -> str:
     frames = "、".join(f"<Frame {k}>" for k in range(1, req.frames + 1)) or "无"
     refs = "、".join(f"参考图{k} → <Ref {k}>" for k in req.refs) or "无"
     lines = "\n".join(f"- {line}" for line in req.dialogue) or "- 无台词"
+    actual = req.actual or float(req.seconds)
+    extra = actual - req.seconds
+    duration = prompt_data.text("h3_native", "duration_snapped" if extra >= 0.01 else "duration_exact").format(
+        actual=f"{actual:.2f}".rstrip("0").rstrip("."), requested=req.seconds, extra=f"{extra:.2f}",
+    )
     return (
-        f"片段总时长 {req.seconds} 秒，共 {req.shots} 个镜头。镜头时间码：{stamps}。\n"
+        f"{duration}，共 {req.shots} 个镜头。镜头时间码：{stamps}。\n"
         f"分镜画面：{frames}（按镜头顺序，<Frame k> 对应 [Shot k]）。\n"
         f"参考图标记：{refs}。\n"
         f"必须逐字保留的台词：\n{lines}\n\n"

@@ -20,6 +20,7 @@ from app.core import prompt_data
 from app.core.frame_position import FramePosition, render_frame_positions
 from app.core.spatial_stage import axis as axis_rules
 from app.core.spatial_stage import geometry as geo
+from app.core.spatial_stage.coverage import crowd_lens_names
 from app.core.spatial_stage.models import (
     ShotText,
     StageActor,
@@ -565,6 +566,12 @@ def table_brief(plan: StagePlan) -> str:
     parts.extend(_supporting_places(plan, leads))
     for landmark in prompt_landmarks(plan)[:4]:
         parts.append(_say("table", "landmark", name=landmark.name, position=landmark_relative_position(plan, landmark)))
+    if plan.crowds and parts:
+        # The lenses only a crowd array can place: named so the table may ask for them in the words the solver reads.
+        joiner = _brief("marks", "list")
+        parts.append(_say(
+            "table", "crowd_lenses", labels=joiner.join(crowd.label for crowd in plan.crowds[:4]), lenses=joiner.join(crowd_lens_names()),
+        ))
     if not parts:
         return ""
     return _clip(_say("table", "brief", parts=_brief("marks", "clause").join(parts)), 600)

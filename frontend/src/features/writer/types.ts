@@ -65,7 +65,7 @@ export interface WriterScriptVersion {
 
 export const ROLE_POSITIONS = ['男主角', '女主角', '男配角', '女配角', '反派', '其它角色'] as const;
 export const STORY_PHASES = ['故事开始', '进展纠葛', '危机', '高潮', '结局'] as const;
-export const CREATION_MODE_LABELS: Record<string, string> = { drama: '剧情模式', narration: '旁白模式', ad: '广告模式' };
+export const CREATION_MODE_LABELS: Record<string, string> = { drama: '剧情模式', narration: '旁白模式', ad: '广告模式', film: '短片模式' };
 
 /** The overview fields a person can edit on the board; the PATCH accepts the same snake_case keys. */
 export interface OverviewFields {

@@ -13,15 +13,21 @@
   "dna_structurer": "你是短剧制片系统的角色资产结构化分析器。阅读给定的「角色 DNA 性格造型锁定包」文档，只输出一个合法 JSON 对象（不要输出 JSON 之外的任何解释文字），字段如下：\n{\n  \"project\": {\"genre\": \"类型定位\", \"platform\": \"平台/受众\", \"delivery_spec\": \"交付基准(如 1080×1920, 9:16, 30fps)\", \"constraints\": \"关键约束一句话\"},\n  \"assumptions\": [\"关键假设，每条一句话\"],\n  \"risks\": [{\"item\": \"风险项名称\", \"status\": \"BLOCKED|PENDING|PASS\", \"note\": \"一句话说明\"}],\n  \"characters\": [{\n    \"character_id\": \"如 char_001\", \"name\": \"角色名\", \"identity\": \"身份(可含多个状态,用/分隔)\",\n    \"voice_id\": \"声音ID(如 VC_xxx)，无则空字符串\",\n    \"voice_prompt\": \"音色设计提示词：身份、性别、年龄、音高、音色质感、咬字习惯、语速；情绪保持中性；干声，不含音乐、音效、环境声与混响\",\n    \"voice_desc\": \"40字以内音色短描述：性别+年龄+音色+语速+气质(如 28岁女声，清亮微冷，语速偏快，干练)\",\n    \"colors\": [{\"name\": \"主色名(如 青灰)\", \"hex\": \"#8A9BA8\"}],\n    \"locks\": [\"禁用项：跨镜头绝不能变的东西，原文写了「禁用项」就照抄，如 长剑始终在右手 / 战袍始终是浅青色\"],\n    \"states\": [{\n      \"state_id\": \"如 modern / beggar_child\", \"title\": \"状态中文名(如 现代博士状态)\",\n      \"dna\": \"身份DNA一段话\",\n      \"bone\": \"脸型、颧弓、下颌角、眉弓、眼窝\", \"features\": \"眼型、鼻根鼻梁鼻尖、唇、下巴、痣疤位置\",\n      \"skin\": \"肤色与至多3个质感词\", \"hair\": \"发型\", \"body\": \"体型\", \"clothing\": \"服装\",\n      \"accessories\": \"配饰\", \"style\": \"视觉风格\",\n      \"anchors\": [{\"view\": \"正面|正面四分之三|标准侧面|背面四分之三|背面\", \"detail\": \"该视图可见身份锚点\"}]\n    }]\n  }]\n}\n要求：忠实提取原文信息不要虚构；hex 色值必须是文档中出现的；bone/features/skin 按人物资产卡分层摘出原文的骨相、五官、皮肤词，原文没写的层留空字符串；states 覆盖每个角色的全部状态卡；anchors 按身份视图顺序排列。voice_prompt 与 voice_desc 是给每个角色设计的声音：原文写了声音就照原文，没写就按身份、年龄与性格设计，同一角色两者描述的必须是同一副嗓子；只写嗓音本身，不写台词、情绪起伏和场景声音。一个角色一个音色、全剧不变：voice_id / voice_prompt / voice_desc 写在角色一级，不随 states 变化，同一角色的各个状态、换装和各集共用同一副嗓子、同一个 voice_id。声音是角色辨识度的一部分，各角色的嗓子要拉得开：主角、反派、每个女角色、每个男角色互相不能像，同性别的两个角色在音高、音色质感、语速里至少有两项明显不同。",
   "workflow_assistant": "你是 AI 短剧制作平台的流程助手。基于给定的任务上下文，用简体中文简洁回答用户问题（不超过200字），并在结尾用一句话给出下一步操作建议（如：回复「继续」执行下一阶段 / 说出修改意见我会重塑当前阶段）。不要编造尚未生成的内容。",
   "keyframe_split": "You are a storyboard artist. Split the given visual description into two consecutive keyframe visual prompts for image generation. Output format: Part 1: [prompt for keyframe 1] | Part 2: [prompt for keyframe 2]. Do not output anything else.",
+  "writer_catalog_shapes": {
+    "scenes": "\"scenes\": [{\"name\": \"实际拍摄地点名\", \"description\": \"时段、内外景、空间布局和剧情用途\"}]",
+    "props": "\"props\": [{\"name\": \"具体道具名\", \"aliases\": [\"剧本原文里对它的其他叫法(简称、只写名词的叫法)，没有写空数组\"], \"description\": \"外观、状态、持有人和出现情节\"}]",
+    "costumes": "\"costumes\": [{\"name\": \"具体服装造型名\", \"description\": \"角色、款式、材质、颜色和剧情阶段\"}]",
+    "effects": "\"effects\": [{\"name\": \"具体特效名\", \"aliases\": [\"剧本原文里对它的其他叫法(简称、只写名词的叫法)，没有写空数组\"], \"description\": \"归谁(施法者或来源)、能量形态(附着在兵器肢体/离体飞行/成群聚集/气场流向)、颜色与材质、尺度(占画面多少、与人和建筑相比)、触发与余波、环境交互和出现的场次\"}]"
+  },
   "asset_breakdown_shapes": {
     "scenes": "\"scenes\": [{\"name\": \"实际拍摄地点名\", \"description\": \"时段、内外景、空间布局和剧情用途\"}]",
-    "props": "\"props\": [{\"name\": \"具体道具名\", \"description\": \"外观、状态、持有人和出现情节\"}]",
+    "props": "\"props\": [{\"name\": \"具体道具名\", \"aliases\": [\"剧本原文里对它的其他叫法(简称、只写名词的叫法)，没有写空数组\"], \"description\": \"外观、状态、持有人和出现情节\"}]",
     "costumes": "\"costumes\": [{\"name\": \"角色名·造型名\", \"character\": \"穿着者\", \"description\": \"款式、颜色、材质、配饰和穿着的剧情阶段\"}]",
-    "effects": "\"effects\": [{\"name\": \"具体特效名\", \"description\": \"归谁(施法者或来源)、能量形态(附着在兵器肢体/离体飞行/成群聚集/气场流向)、颜色与材质、尺度(占画面多少、与人和建筑相比)、触发与余波、环境交互和出现的场次\"}]",
+    "effects": "\"effects\": [{\"name\": \"具体特效名\", \"aliases\": [\"剧本原文里对它的其他叫法(简称、只写名词的叫法)，没有写空数组\"], \"description\": \"归谁(施法者或来源)、能量形态(附着在兵器肢体/离体飞行/成群聚集/气场流向)、颜色与材质、尺度(占画面多少、与人和建筑相比)、触发与余波、环境交互和出现的场次\"}]",
     "extras": "\"extras\": [{\"name\": \"群演职能名\", \"description\": \"人数、服装、动作和出现的场次\"}]",
-    "vehicles": "\"vehicles\": [{\"name\": \"具体车辆名\", \"description\": \"车型、颜色、新旧、谁在用和出现的场次\"}]",
-    "stunts": "\"stunts\": [{\"name\": \"特技动作名\", \"description\": \"谁做、在哪、过程和结果\"}]",
-    "set_dressing": "\"set_dressing\": [{\"name\": \"陈设名\", \"description\": \"摆在哪、材质、颜色和出现的场次\"}]",
+    "vehicles": "\"vehicles\": [{\"name\": \"具体车辆名\", \"aliases\": [\"剧本原文里对它的其他叫法(简称、只写名词的叫法)，没有写空数组\"], \"description\": \"车型、颜色、新旧、谁在用和出现的场次\"}]",
+    "stunts": "\"stunts\": [{\"name\": \"特技动作名\", \"aliases\": [\"剧本原文里对它的其他叫法(简称、只写名词的叫法)，没有写空数组\"], \"description\": \"谁做、在哪、过程和结果\"}]",
+    "set_dressing": "\"set_dressing\": [{\"name\": \"陈设名\", \"aliases\": [\"剧本原文里对它的其他叫法(简称、只写名词的叫法)，没有写空数组\"], \"description\": \"摆在哪、材质、颜色和出现的场次\"}]",
     "makeup": "\"makeup\": [{\"name\": \"角色名·妆效名\", \"description\": \"位置、形态、颜色和哪几集带着（第9集起 / 第9-12集）\"}]"
   },
   "asset_breakdown_rules": {

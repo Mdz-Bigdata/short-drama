@@ -285,6 +285,27 @@ def _wearer_looks(wearer: str, outfits: list[dict[str, Any]], makeups: list[dict
     return [look for look in looks if look]
 
 
+def _covers(look: Mapping[str, Any], episodes: set[int]) -> bool:
+    """这张定妆图从每一集开头就穿着，且这个人出场的每一集都在它的集数里。"""
+    if look["facts"].get("starts"):
+        return False
+    spans = look["facts"].get("spans") or []
+    return not spans or all(any(first <= episode <= last for first, last in spans) for episode in episodes)
+
+
+def _drop_unworn_shorter(looks: list[dict[str, Any]], episodes: set[int]) -> list[dict[str, Any]]:
+    """名字是另一张开头的定妆图(「长衣」之于「长衣·右腕药渍」)，若长的那张覆盖了这个人出场的每一集，短的那张没戏可穿，不出图。
+
+    受伤、沾污这类后来才有的妆效不受影响：短的那张在妆效之前的集里还要穿，照样留着。
+    """
+    if not episodes:
+        return looks
+    return [
+        look for look in looks
+        if not any(other["name"].startswith(look["name"] + "·") and _covers(other, episodes) for other in looks)
+    ]
+
+
 def _appearances(cast: Sequence[str], aliases: Mapping[str, str], scenes: Sequence[Mapping[str, Any]]) -> dict[str, set[int]]:
     """每个人实际出场的集。"""
     seen: dict[str, set[int]] = {name: set() for name in cast}
@@ -323,6 +344,10 @@ def _pieces(task: Mapping[str, Any], cast: Sequence[str]) -> tuple[dict[str, dic
                 unowned.append({**entry, "_catalog": key})
             elif name != wearer:
                 spans, starts = _timing(entry, wearer, aliases, scenes)
+                written = any(episode_spans(str(entry.get(field) or "")) for field in ("description", "timing"))
+                if key == "makeup" and any(word in name for word in _words_of("permanent_marks")) and (starts or not written):
+                    # 旧疤、痣、截肢残端是本来就有的：剧本第22场才第一次写到，也从第一场就在；明写了集数的照写的算。
+                    spans, starts = [[1, _OPEN_END]], None
                 pieces.setdefault(wearer, {"costumes": [], "makeup": []})[key].append({
                     "name": name, "label": _label(name, wearer, aliases), "spans": spans, "starts": starts,
                     "text": wardrobe_text(str(entry.get("description") or ""), wearer) or _label(name, wearer, aliases),
@@ -345,7 +370,10 @@ def plan_looks(
     written = {int(scene["episode"]) for scene in scenes}
     looks: list[dict[str, Any]] = []
     for wearer, worn in pieces.items():
-        for look in _wearer_looks(wearer, worn["costumes"], worn["makeup"]):
+        planned = _wearer_looks(wearer, worn["costumes"], worn["makeup"])
+        if seen is not None:
+            planned = _drop_unworn_shorter(planned, seen[wearer])
+        for look in planned:
             spans = look["facts"].get("spans") or []
             if seen is None or (seen[wearer] and not spans) or any(first <= episode <= last for first, last in spans for episode in seen[wearer]):
                 looks.append(look)

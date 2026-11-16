@@ -40,9 +40,12 @@ logger = logging.getLogger(__name__)
 
 LLM = Callable[[str, str, int], "str | None"]
 
-PLAN_MAX_TOKENS = 8000
-TURN_MAX_TOKENS = 6000
-MODEL_MAX_TOKENS = 4000
+# 输出上限要给推理模型留出思考的预算：8000 / 6000 / 4000 时 deepseek 常常思考就用完了、正文一个字没写
+# (finish_reason=length，内容为空)，这一场的调度算失败，隔几分钟再重来——第 4 阶段大半的时间耗在这上面。
+# 按实际输出计费，上限高不多花钱；仍然写死一个上限，失控的长回答也有边界。
+PLAN_MAX_TOKENS = 32000
+TURN_MAX_TOKENS = 32000
+MODEL_MAX_TOKENS = 32000
 MAX_TURN_ROUNDS = 3
 MAX_CANDIDATES = 3
 MAX_MESSAGE = 2000

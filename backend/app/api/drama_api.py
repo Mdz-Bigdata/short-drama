@@ -352,6 +352,14 @@ def _actor_metadata_patch(kind: str, candidate: Dict[str, Any], metadata: Dict[s
     return patch
 
 
+def _alias_patch(candidate: dict, metadata: dict) -> dict:
+    """剧本里对这件资产的别的叫法并进元数据 aliases(已有的留着)：分镜和视频按这些叫法也认得到它。"""
+    existing = [str(alias) for alias in (metadata.get("aliases") or []) if str(alias).strip()] if isinstance(metadata.get("aliases"), list) else []
+    fresh = [str(alias).strip() for alias in (candidate.get("aliases") or []) if str(alias).strip()]
+    merged = list(dict.fromkeys([*existing, *fresh]))
+    return {"aliases": merged} if merged != existing else {}
+
+
 async def _import_production_asset_candidates(
     *,
     task_id: str,
@@ -370,7 +378,9 @@ async def _import_production_asset_candidates(
         return {"kind": kind, "created": 0, "reused": 0, "skipped": 0, "with_image": 0, "items": [], "reused_items": []}
 
     by_name: Dict[str, Any] = {}
-    for item in await store.list_all_elements(owner_id, kind):
+    # 本项目已有的那条先认：合并重复条目后，被并掉的名字记在留下那条的别名里，别的项目里同名的那条不再被拉回来。
+    everything = await store.list_all_elements(owner_id, kind)
+    for item in sorted(everything, key=lambda item: not element_in_task(item.metadata_json, task_id)):
         for key in element_name_keys(item.name, item.metadata_json):
             by_name.setdefault(key, item)
     created: List[Dict[str, Any]] = []
@@ -386,7 +396,7 @@ async def _import_production_asset_candidates(
         match = by_name.get(normalized_asset_name(name))
         if match is not None:
             metadata = match.metadata_json if isinstance(match.metadata_json, dict) else {}
-            patch = _actor_metadata_patch(kind, candidate, metadata)
+            patch = {**_actor_metadata_patch(kind, candidate, metadata), **_alias_patch(candidate, metadata)}
             already_linked = element_in_task(metadata, task_id)
             if already_linked and not patch and (_has_image(match) or not image_url):
                 skipped += 1
@@ -417,6 +427,7 @@ async def _import_production_asset_candidates(
                     "source": "screenplay-extraction",
                     **link_task({}, task_id),
                     **_actor_metadata_patch(kind, candidate, {}),
+                    **_alias_patch(candidate, {}),
                 },
             )
         except ValueError as exc:

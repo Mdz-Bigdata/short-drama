@@ -66,6 +66,19 @@ def _prose_for(prompt: str) -> str:
     return "\n\n".join(paragraphs)
 
 
+# What the fake model settles before a novel is cut into episodes.
+ADAPTATION_BRIEF = {
+    "selling_point": "实习研究员林夏握着导师造假的录音，却没人肯听",
+    "protagonist": "林夏",
+    "situation": "被导师周教授压着不许发声，已经丢了课题，今晚必须把录音带出实验室",
+    "main_line": "先带出录音，再找到被换掉的原始数据，最后让周教授当众认账",
+    "opening": "林夏在抽屉里摸到录音笔时，周教授已经站在她身后",
+    "keep": ["录音笔里有周教授亲口承认换数据的一段话", "实验室的门禁每晚十点自动落锁"],
+    "compress": ["林夏回忆入学那天的大段叙述"],
+    "core": "小人物手里只有一件证据，对着一个所有人都信的人",
+}
+
+
 class FakeModel:
     """Routes each prompt to a canned answer by the prompt's own headings."""
 
@@ -89,6 +102,8 @@ class FakeModel:
                 "props": {"录音笔": {"description": "银色录音笔"}},
                 "relationships": [{"from": "周教授", "to": "林夏", "relation": "亦师亦友", "bidirectional": True}],
             }, ensure_ascii=False)
+        if "短剧改编统筹" in user_prompt:
+            return json.dumps(ADAPTATION_BRIEF, ensure_ascii=False)
         if "分集大纲" in user_prompt and "episodes 数组长度必须等于" in user_prompt:
             first, last = map(int, re.search(r"对应第 (\d+) 集到第 (\d+) 集|对应第 (\d+) 集", user_prompt).groups(default="0")[:2]) if "集到第" in user_prompt else (0, 0)
             if first == 0:

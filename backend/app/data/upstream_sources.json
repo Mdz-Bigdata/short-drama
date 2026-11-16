@@ -437,5 +437,24 @@
       "canvas-search",
       "canvas-export-import"
     ]
+  },
+  {
+    "id": "harness2",
+    "url": "https://github.com/google-research/harness2",
+    "reviewed_commit": "6868817518876de8fd170c6a8354daca273b6191",
+    "reviewed_at": "2026-11-15",
+    "license_observation": "Apache-2.0 (Copyright 2026 Google LLC; not an officially supported Google product). The benchmark runners under third_party/, the benchmarks and their datasets keep their own upstream licenses and are not used.",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "google-research/harness2 — https://github.com/google-research/harness2 (Apache-2.0); Xu et al., Harness²: Recursive Agent Harnessing for an Open World, arXiv:2610.14224",
+    "capability_ids": [
+      "harness-propose-probe-compose",
+      "harness-recursion-budget-ledger",
+      "harness-blind-selection",
+      "harness-reflection-lesson",
+      "harness-experience-library",
+      "harness-script-checks",
+      "harness-baseline-rollback",
+      "harness-resumable-studies"
+    ]
   }
 ]

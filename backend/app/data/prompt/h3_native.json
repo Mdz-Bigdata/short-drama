@@ -27,4 +27,8 @@
     "删掉重复、套话和形容词堆砌；不写「8K」「超清」之类空洞画质词；全文尽量控制在 {target} 个字符以内，绝不超过 {limit} 个字符。\n",
     "9. 只输出六段正文，不要标题、解释、Markdown 或代码块。"
   ]
+,
+  "frame_grid": {"fps": 24, "step": 17, "offset": 5},
+  "duration_exact": "片段总时长 {actual} 秒",
+  "duration_snapped": "片段实际时长 {actual} 秒（接口按 {requested} 秒请求；H3 出片的帧数只取 17k+5，成片比请求的长 {extra} 秒）。时间轴按 {actual} 秒写满：最后一镜的动作与落幅排到片尾，不留没人安排的空档"
 }

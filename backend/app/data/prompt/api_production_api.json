@@ -9,5 +9,6 @@
   "_validate_upload.text.2": "上传文件必须介于 1 字节和 {0} MB 之间",
   "compile_script_prompt_file.text": "写实真人电影质感",
   "elevenlabs_audio_native.text": "发音词典 locator 必须包含有效的 dictionary ID 与 version ID",
-  "elevenlabs_audio_native.detail": "发音词典 locator 不是有效 JSON"
+  "elevenlabs_audio_native.detail": "发音词典 locator 不是有效 JSON",
+  "harness_evolution_retire.detail": "这一类里没有这个任务留下的补充配置"
 }

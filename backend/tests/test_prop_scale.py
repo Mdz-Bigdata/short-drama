@@ -299,7 +299,8 @@ class ScaleReferenceTableTests(unittest.TestCase):
 
         self.assertEqual(plan_prop("盾牌").views, plan_prop("令牌").views, "a shield is still drawn flat")
         self.assertEqual(plan_prop("拭剑旧布").size_source, "estimate", "a cloth is not the sword it wipes")
-        self.assertEqual(plan_prop("马车").size_source, "estimate", "a cart is not a horse")
+        # 马车收进了补充表(everyday_items.json)：查到的是马车本身，不是马。
+        self.assertEqual(plan_prop("马车").size_text, "长350×宽150×高220厘米", "a cart is not a horse")
         self.assertEqual(plan_prop("宝剑", "全长八十厘米").longest_cm, 80.0)
         self.assertEqual(plan_prop("宝剑", length_cm=90).size_source, "manual")
 

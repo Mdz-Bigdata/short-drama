@@ -36,7 +36,7 @@ export interface TaskConfig {
 
 export type NarrationDelivery = 'use_tts' | 'post_production';
 
-export type CreationMode = 'drama' | 'narration' | 'ad';
+export type CreationMode = 'drama' | 'narration' | 'ad' | 'film';
 
 export interface AdBrief {
   product: string;
@@ -59,6 +59,7 @@ export const CREATION_MODE_OPTIONS: Array<{ id: CreationMode; label: string; hin
   { id: 'drama', label: '剧情短剧', hint: '角色在画面里说话，按集推进剧情' },
   { id: 'narration', label: '旁白解说', hint: '旁白讲述故事，角色只表演不开口' },
   { id: 'ad', label: '广告短片', hint: '按产品简报做 15–60 秒短片：开场抓人、产品清楚、结尾行动号召' },
+  { id: 'film', label: '电影短片', hint: '一集讲完的完整短片：一个人、一个困境、一次回不了头的选择，结尾收住' },
 ];
 
 export const NARRATION_DELIVERY_OPTIONS: Array<{ id: NarrationDelivery; label: string; hint: string }> = [
