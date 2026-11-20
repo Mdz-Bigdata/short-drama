@@ -3,23 +3,34 @@ import {
   Film, Play, Pause, ChevronRight, Network, GitBranch, BrainCircuit, ListChecks, 
   HardDrive, Cpu, Monitor, Sliders,
   X, ArrowUp, Folder, ArrowRight, User,
-  Upload, Bot, BookOpen
+  Upload, Bot, BookOpen, Plus, Zap, Clapperboard
 } from 'lucide-react';
-import { CONTENT_LANGUAGE_OPTIONS, CREATION_MODE_OPTIONS, EMPTY_AD_BRIEF, NARRATION_DELIVERY_OPTIONS, normalizeVideoReferenceMode, type AdBrief, type ContentLanguage, type CreationMode, type NarrationDelivery, type TaskConfig, type TaskResponse, type TaskSummary, type StageProgress } from './types';
+import { CONTENT_LANGUAGE_OPTIONS, CREATION_MODE_OPTIONS, EMPTY_AD_BRIEF, EMPTY_TARGET_AUDIENCE, NARRATION_DELIVERY_OPTIONS, normalizeVideoReferenceMode, type AdBrief, type ContentLanguage, type CreationMode, type NarrationDelivery, type TargetAudience, type TaskConfig, type TaskResponse, type TaskSummary, type StageProgress } from './types';
 import { CapabilityCenter } from './features/platform/CapabilityCenter';
 import { PoetrySourcePicker } from './features/writer/PoetrySourcePicker';
-import type { ElementKind } from './features/elements/elementTypes';
+import { TargetAudiencePicker } from './features/writer/TargetAudiencePicker';
+import { EpisodeCountSlider, ScriptStructurePicker } from './features/writer/ScriptStructurePicker';
+import { StoryDirectionPicker, type StoryDirection } from './features/writer/StoryDirectionPicker';
+import { SerialBriefPicker } from './features/writer/SerialBriefPicker';
+import { EMPTY_SERIAL_BRIEF, serialBriefPayload, type SerialBrief } from './features/writer/serialBrief';
+import { noGoLines } from './features/writer/storyNoGo';
+import { tabOfKind, type ElementKind } from './features/elements/elementTypes';
 import { NotificationBell } from './features/account/NotificationBell';
 import { hasPermission } from './features/account/permissions';
 import { FINANCE_PERMISSIONS } from './features/finance/financeFormat';
 import type { ModelCategory } from './features/models/ModelConfigurationCenter';
 import type { BreakdownSceneRef, SceneBoardStatus, StoryboardProgress, StoryboardShot } from './features/storyboard/StoryboardWorkspace';
 import { storyboardActionFrom, type StoryboardViewAction } from './features/storyboard/storyboardActions';
+import { chatCardsFrom, type ChatCard } from './features/workbench/chatCards';
+import { ChatCardView } from './features/workbench/ChatCardView';
+import { ThinkingDisclosure } from './features/workbench/ThinkingDisclosure';
 import { downloadStoryboardScene } from './features/storyboard/storyboardDownload';
 import { AgentStageTabs } from './features/workbench/AgentStageTabs';
 import { getScriptDisplayName } from './features/workbench/scriptTitle';
 import { VideoReferenceModeSelect } from './features/workbench/VideoReferenceModeSelect';
 import { NOVARA_AGENT_NAME, PRODUCT_TITLE } from './features/workbench/agentBrand';
+import { brandText } from './appearance/appearance';
+import { BrandLogo } from './appearance/BrandLogo';
 import {
   DEFAULT_DIRECTOR_STYLE, DEFAULT_SHOT_STYLE, DIRECTOR_STYLES, FALLBACK_STYLE_PACK, FALLBACK_STYLE_PACKS,
   SHOT_STYLES, parseStylePacks, type StylePackOption,
@@ -47,7 +58,10 @@ const CharacterDesignerPageContainer = lazy(() => import('./features/character/C
 // 第 1、5、7 阶段的面板只在那几步出现，登录页与项目大厅不为它们付下载。
 const StyleReferencePanel = lazy(() => import('./features/workbench/StyleReferencePanel').then(m => ({ default: m.StyleReferencePanel })));
 const StageFivePreview = lazy(() => import('./features/workbench/StageFivePreview').then(m => ({ default: m.StageFivePreview })));
-const TimelinePanel = lazy(() => import('./features/workbench/TimelinePanel').then(m => ({ default: m.TimelinePanel })));
+// 剪辑合成师：第 6、7 步(声音与成片)合成一页。
+import { DISPLAY_STEPS, displayStep, isEditorStage, nextStageTab, previousStageTab, sameStageTab, stageLog } from './features/postproduction/editorStage';
+import { filmsNeedingVoiceRender } from './features/postproduction/postProduction';
+const PostProductionStudio = lazy(() => import('./features/postproduction/PostProductionStudio').then(m => ({ default: m.PostProductionStudio })));
 const PublishPanel = lazy(() => import('./features/workbench/PublishPanel').then(m => ({ default: m.PublishPanel })));
 const AcquisitionPanel = lazy(() => import('./features/workbench/AcquisitionPanel').then(m => ({ default: m.AcquisitionPanel })));
 // 画布、互动剧与任务中心盖在工作台之上，只有打开时才下载。
@@ -64,7 +78,9 @@ import { DEFAULT_CLIENT_CONFIG, parseClientConfig, type ClientConfig } from './a
 import { acceptLanguage, t as tr, useLocale } from './i18n';
 import { LanguageSwitcher } from './i18n/LanguageSwitcher';
 import { MarkdownDocument } from './features/writer/MarkdownDocument';
-import { StageSixPreview } from './features/workbench/StageSixPreview';
+import { loadWebFonts } from './webFonts';
+
+loadWebFonts();
 
 type ChatMessage = WorkflowChatMessage;
 
@@ -103,11 +119,7 @@ const LOBBY_IDLE_POLL_MS = 15000;
 const EPISODE_LIST_POLL_MS = 8000;
 const EPISODE_PRODUCE_RECHECK_MS = 5000;
 
-// 下拉常用档位：小体量逐集递增，长剧按 10 集一档；实际可选范围由服务端下发的集数上下限裁剪
-const EPISODE_COUNT_PRESETS = [
-  1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 24, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150,
-];
-// 工作流共 8 个 Agent 阶段
+// 工作流内部共 8 个阶段(重跑命令按它校验)；给人看的是 7 步，第 6、7 阶段合成「剪辑合成师」一步。
 const WORKFLOW_STAGE_COUNT = 8;
 
 type EpisodeLimits = ClientConfig['episodeCount'];
@@ -190,51 +202,51 @@ function useNowWhile(active: boolean): number {
 function StageProgressPanel({ progress, onOpenBilling }: { progress: StageProgress; onOpenBilling?: () => void }) {
   const now = useNowWhile(progress.status === 'running');
   const totalMs = liveElapsed(progress, now);
-  const label = progress.stage_label || progress.stageLabel || `阶段${progress.stage}`;
+  const label = progress.stage_label || progress.stageLabel || tr('阶段{0}', [progress.stage]);
   const pct = Math.max(0, Math.min(100, Math.round(progress.percent || 0)));
   const isError = progress.status === 'error';
-  const accent = isError ? '#e60029' : progress.status === 'success' ? '#3ddc84' : 'var(--neon-cyan)';
+  const accent = isError ? 'var(--danger)' : progress.status === 'success' ? 'var(--success)' : 'var(--accent)';
   const calls = Array.isArray(progress.calls) ? progress.calls : [];
   const shownCalls = calls.slice(-8);
   return (
-    <div style={{ padding: '12px 14px', background: 'var(--surface)', border: `1px solid ${isError ? 'rgba(230, 0, 41, 0.45)' : 'rgba(var(--accent-rgb), 0.25)'}`, borderRadius: '10px' }}>
+    <div style={{ padding: '12px 14px', background: 'var(--surface)', border: `1px solid ${isError ? 'rgba(var(--danger-rgb), 0.45)' : 'rgba(var(--accent-rgb), 0.25)'}`, borderRadius: '10px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-light)' }}>
+        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--ink)' }}>
           ⚙️ Stage {progress.stage} · {label}
         </span>
         <span style={{ fontSize: '0.82rem', fontWeight: 700, color: accent, fontVariantNumeric: 'tabular-nums' }}>{pct}%</span>
       </div>
       <div style={{ height: '6px', background: 'rgba(var(--accent-rgb), 0.176)', borderRadius: '999px', overflow: 'hidden', margin: '8px 0 10px' }}>
-        <div style={{ width: `${pct}%`, height: '100%', borderRadius: '999px', background: `linear-gradient(90deg, var(--accent), ${isError ? '#e60029' : 'var(--accent)'})`, boxShadow: `0 0 8px ${accent}`, transition: 'width 0.8s ease' }} />
+        <div style={{ width: `${pct}%`, height: '100%', borderRadius: '999px', background: `linear-gradient(90deg, var(--accent), ${isError ? 'var(--danger)' : 'var(--accent)'})`, boxShadow: `0 0 8px ${accent}`, transition: 'width 0.8s ease' }} />
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
         {calls.length > shownCalls.length && (
-          <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>… 前 {calls.length - shownCalls.length} 步已完成</div>
+          <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>{tr('… 前 {0} 步已完成', [calls.length - shownCalls.length])}</div>
         )}
         {shownCalls.map((call, i) => (
-          <div key={`${call.name}-${i}`} style={{ display: 'flex', alignItems: 'flex-start', gap: '6px', fontSize: '0.72rem', lineHeight: '1.5', color: call.status === 'running' ? 'var(--text-light)' : call.status === 'error' ? '#e60029' : 'var(--text-muted)' }}>
+          <div key={`${call.name}-${i}`} style={{ display: 'flex', alignItems: 'flex-start', gap: '6px', fontSize: '0.72rem', lineHeight: '1.5', color: call.status === 'running' ? 'var(--ink)' : call.status === 'error' ? 'var(--danger)' : 'var(--text-muted)' }}>
             <span style={{ flexShrink: 0 }}>{call.status === 'running' ? '⏳' : call.status === 'error' ? '❌' : '✅'}</span>
             <span>{call.name}</span>
             {callElapsed(call, now) !== null && (
               <span style={{ marginLeft: 'auto', color: 'var(--text-dim)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-                {call.status === 'running' ? '已等待 ' : ''}{formatDuration(callElapsed(call, now) ?? 0)}
+                {call.status === 'running' ? `${tr('已等待')} ` : ''}{formatDuration(callElapsed(call, now) ?? 0)}
               </span>
             )}
           </div>
         ))}
         {shownCalls.some(call => call.status === 'running' && (callElapsed(call, now) ?? 0) > SLOW_CALL_MS) && (
           <div role="status" style={{ fontSize: '0.68rem', lineHeight: '1.5', color: 'var(--neon-amber)' }}>
-            模型响应较慢，仍在等待；超过总时限会自动放弃本次调用并换用备用凭据或模型。
+            {tr('模型响应较慢，仍在等待；超过总时限会自动放弃本次调用并换用备用凭据或模型。')}
           </div>
         )}
       </div>
       {totalMs !== null && (
         <div style={{ marginTop: '8px', textAlign: 'right', color: 'var(--text-dim)', fontSize: '0.66rem', fontVariantNumeric: 'tabular-nums' }}>
-          累计耗时 {formatDuration(totalMs)}
+          {tr('累计耗时 {0}', [formatDuration(totalMs)])}
         </div>
       )}
       {isError && progress.error && (
-        <div style={{ marginTop: '8px', fontSize: '0.74rem', lineHeight: '1.6', color: '#e60029', background: 'rgba(230, 0, 41, 0.08)', border: '1px solid rgba(230, 0, 41, 0.3)', borderRadius: '6px', padding: '8px 10px' }}>
+        <div style={{ marginTop: '8px', fontSize: '0.74rem', lineHeight: '1.6', color: 'var(--danger)', background: 'rgba(var(--danger-rgb), 0.08)', border: '1px solid rgba(var(--danger-rgb), 0.3)', borderRadius: '6px', padding: '8px 10px' }}>
           {progress.error}
           {onOpenBilling && /积分不足|升级套餐/.test(progress.error) && (
             <button type="button" className="billing-required__action" onClick={onOpenBilling}>{tr('去充值')}</button>
@@ -266,6 +278,65 @@ function episodeMetaOf(assets: Record<string, unknown>): Array<{ number: number;
     title: (written[String(number)]?.plan?.title ?? '').replace(/^第\s*\d+\s*集\s*/, '').trim() || undefined,
     filmDone: Boolean(cycle[String(number)]?.film?.final_video_url),
   }));
+}
+
+/** 一条片段属于第几集：与服务端 episode_cycle.episode_of 同一规则，显式集号优先，否则看场号。 */
+function episodeOfClip(clip: { episode?: unknown; scene_id?: unknown }): number {
+  if (typeof clip.episode === 'number' && Number.isInteger(clip.episode) && clip.episode > 0) return clip.episode;
+  const match = /E(\d{1,3})/i.exec(String(clip.scene_id ?? ''));
+  return match ? Math.max(1, Math.min(200, Number(match[1]))) : 1;
+}
+
+/**
+ * 重跑分镜前要不要先问一句、问什么；没有会丢的东西就返回 null。
+ * 服务端会清掉后面阶段的产物，分集制作时只清这一步要做的那一集的片段、音频与剪辑，别的集和各集成片都留着。
+ */
+function storyboardRerunWarning(assets: Record<string, unknown>): string | null {
+  const holds = (pattern: RegExp) => Object.entries(assets).some(([key, value]) => Boolean(value) && pattern.test(key));
+  const records = (assets['episode_cycle'] as { episodes?: Record<string, { audio?: unknown; timeline?: unknown; film?: { final_video_url?: string | null } }> } | undefined)?.episodes;
+  const progressEpisodes = (assets['4_progress'] as StoryboardProgress | undefined)?.episodes ?? [];
+  const listed = progressEpisodes
+    .map(episode => episode.number)
+    .filter((number): number is number => Number.isInteger(number));
+  const numbers = [...new Set(listed.length
+    ? listed
+    : Object.keys((assets['4_scene_boards'] as Record<string, unknown> | undefined) ?? {}).map(sceneId => episodeOfClip({ scene_id: sceneId })))]
+    .sort((a, b) => a - b);
+  if (!assets['episode_cycle'] || numbers.length < 2) {
+    return holds(/^[5-8](?:$|_)/)
+      ? tr('重跑分镜阶段只补画未完成或已退回的场次，已完成的分镜页会保留；但第 5 阶段及之后已生成的视频、音频与成片会被清除。继续吗？')
+      : null;
+  }
+  // 分镜这一步要做的那一集(与服务端 episode_cycle.episode_for 同一规则)：还没出成片的集里第一个分镜没做完的，都做完了就是其中第一集。
+  const open = numbers.filter(number => !records?.[String(number)]?.film?.final_video_url);
+  const boarded = new Set(progressEpisodes.filter(episode => episode.complete).map(episode => episode.number));
+  const current = open.find(number => !boarded.has(number)) ?? open[0];
+  if (current !== undefined) {
+    const clips = Array.isArray(assets['5']) ? assets['5'] as Array<{ episode?: unknown; scene_id?: unknown } | null> : [];
+    const record = records?.[String(current)];
+    const ownWork = Boolean(record?.audio) || Boolean(record?.timeline)
+      || clips.some(clip => !(clip && clip.scene_id && episodeOfClip(clip) !== current));
+    if (ownWork) return tr('重跑分镜阶段只补画未完成或已退回的场次，已完成的分镜页会保留；但第 {0} 集已生成的视频、音频与剪辑会被清除，其他各集的视频和成片都保留。继续吗？', [current]);
+  }
+  return holds(/^8(?:$|_)/)
+    ? tr('重跑分镜阶段只补画未完成或已退回的场次，已完成的分镜页会保留；各集成片都保留，但已生成的宣发内容会被清除。继续吗？')
+    : null;
+}
+
+/** 大厅卡片上的状态名与色调：失败、中断、停止各说各的，不都写成「已暂停」。 */
+function projectStatusView(status: TaskSummary['status']): { label: string; tone: 'idle' | 'running' | 'completed' | 'review' | 'failed' } {
+  switch (status) {
+    case 'running': return { label: tr('运行中'), tone: 'running' };
+    case 'completed': return { label: tr('已完成'), tone: 'completed' };
+    case 'awaiting_quality_review': return { label: tr('待质检'), tone: 'review' };
+    case 'quality_failed': return { label: tr('质检未过'), tone: 'failed' };
+    case 'awaiting_council_review': return { label: tr('待评审'), tone: 'review' };
+    case 'council_quality_failed': return { label: tr('评审未过'), tone: 'failed' };
+    case 'failed': return { label: tr('生成失败'), tone: 'failed' };
+    case 'interrupted': return { label: tr('已中断'), tone: 'failed' };
+    case 'stopped': return { label: tr('已停止'), tone: 'idle' };
+    default: return { label: tr('已暂停'), tone: 'idle' };
+  }
 }
 
 export default function App() {
@@ -360,8 +431,8 @@ export default function App() {
         const developmentCode = typeof data.development_code === 'string' ? data.development_code : '';
         setMockVerificationCode(developmentCode);
         setAuthSuccess(developmentCode
-          ? `验证码发送成功（本地开发码：${developmentCode}）`
-          : '验证码发送成功，请查看短信或邮件。');
+          ? tr('验证码发送成功（本地开发码：{0}）', [developmentCode])
+          : tr('验证码发送成功，请查看短信或邮件。'));
         setCodeCountdown(typeof data.cooldown_seconds === 'number' && data.cooldown_seconds > 0
           ? Math.ceil(data.cooldown_seconds)
           : clientConfig.verificationCode.cooldownSeconds);
@@ -492,9 +563,23 @@ export default function App() {
         setGlobalModelDefaults(EMPTY_GLOBAL_MODEL_DEFAULTS);
         setTaskId('');
         setTaskData(null);
+        // 同一个标签页换人登录时，不让上一个账号的项目、对话和积分先闪出来。
+        setHistoryTasks([]);
+        setHistoryLoaded(false);
+        setChatMessages([]);
+        setLobbyIdea('');
+        setChatInput('');
+        setWalletPoints(null);
+        setErrorMessage('');
+        setShowUserMenu(false);
+      } else {
+        setShowUserMenu(false);
+        setErrorMessage(tr('退出登录失败，请重试。'));
       }
     } catch (e) {
       console.error('退出登录失败', e);
+      setShowUserMenu(false);
+      setErrorMessage(tr('退出登录失败，请重试。'));
     }
   };
 
@@ -531,6 +616,9 @@ export default function App() {
   ), [taskData]);
   // The background screenplay's status: the writer board refetches when the episodes land.
   const scriptDetailStatus = String((taskData?.assets["2_detail"] as { status?: string } | undefined)?.status || '');
+  // 创作看板与人物关系在编剧阶段中途就落到任务上(角色、关系先出，账本和剧本随后)：数目一变就重新拉看板。
+  const castBreakdown = taskData?.assets["2_breakdown"] as { roles?: unknown[]; relationships?: unknown[] } | undefined;
+  const castSignature = `${castBreakdown?.roles?.length || 0}/${castBreakdown?.relationships?.length || 0}`;
   const taskDataRef = useRef<TaskResponse | null>(null);
   const [uploadedScript, setUploadedScript] = useState<File | null>(null);
   const [scriptContent, setScriptContent] = useState<string>('');
@@ -540,7 +628,13 @@ export default function App() {
   const [storyboardViewAction, setStoryboardViewAction] = useState<StoryboardViewAction | null>(null);
   // 从编剧统计跳到角色 agent 时，预选中的资产 Tab（数字演员 / 拍摄场地）
   const [characterAssetKind, setCharacterAssetKind] = useState<ElementKind>('actor');
+  // 侧栏卡片「打开角色页」要直接弹出那个角色的捏脸窗；角色页报回当前看着的是谁，告诉助手。
+  const [sculptRequest, setSculptRequest] = useState<{ name: string; nonce: number } | null>(null);
+  const [focusedCharacter, setFocusedCharacter] = useState<string | null>(null);
+  const [cardBusy, setCardBusy] = useState(false);
   const [historyTasks, setHistoryTasks] = useState<TaskSummary[]>([]);
+  // 项目列表读到过一次才算数：没读到之前不说「还没有项目」。
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [isPolling, setIsPolling] = useState<boolean>(false);
   // 阶段执行进度快照 (用于检测 running -> success/error 转变，驱动对话面板状态气泡)
   const progressRef = useRef<{ stage: number; status: string } | null>(null);
@@ -564,11 +658,24 @@ export default function App() {
   // 对话流状态
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState<string>('');
+  const chatInputRef = useRef('');
+  // 大厅的创意输入单独存：建好项目后不会原样躺进项目里的对话框，项目里没发完的话也不会跑回大厅。
+  const [lobbyIdea, setLobbyIdea] = useState<string>('');
   const [chatSending, setChatSending] = useState(false);
 
   // 新项目创建模态窗及 Skills 区状态
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
+  useEffect(() => {
+    if (!showCreateModal) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setShowCreateModal(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showCreateModal]);
   const [newProjectName, setNewProjectName] = useState<string>('');
+  // 创建没成功的原因写在弹窗里：人还在弹窗里，填过的内容都在。
+  const [createError, setCreateError] = useState<string>('');
+  // 卡片操作失败的那句话。它显示在项目大厅里：人这时在看卡片，创意输入框上方那条在视线之外。
+  const [cardActionError, setCardActionError] = useState<string>('');
   const [newProjectDirectorStyle, setNewProjectDirectorStyle] = useState<string>(DEFAULT_DIRECTOR_STYLE);
   const [newProjectStylePack, setNewProjectStylePack] = useState<string>(FALLBACK_STYLE_PACK);
   const [newProjectShotStyle, setNewProjectShotStyle] = useState<string>(DEFAULT_SHOT_STYLE);
@@ -576,9 +683,13 @@ export default function App() {
   const [newProjectCreationMode, setNewProjectCreationMode] = useState<CreationMode>('drama');
   const [newProjectAdBrief, setNewProjectAdBrief] = useState<AdBrief>(EMPTY_AD_BRIEF);
   const [newProjectContentLanguage, setNewProjectContentLanguage] = useState<ContentLanguage>('zh');
+  const [newProjectAudience, setNewProjectAudience] = useState<TargetAudience>(EMPTY_TARGET_AUDIENCE); // 男频 / 女频与年龄段，只对连续剧生效
   const [newProjectOneClick, setNewProjectOneClick] = useState<boolean>(true); // 成片方式：true=一键成片 / false=分步引导
   const [newProjectEpisodes, setNewProjectEpisodes] = useState<number>(DEFAULT_CLIENT_CONFIG.episodeCount.default); // 一次性生成的剧本集数
-  const [newProjectEpisodesCustom, setNewProjectEpisodesCustom] = useState<boolean>(false); // 集数改为手动填写
+  const [newProjectStructure, setNewProjectStructure] = useState<string>(''); // 剧本结构，空值由总导演定
+  const [newProjectDirection, setNewProjectDirection] = useState<StoryDirection | null>(null); // 立项前挑中的故事方向，空值由总导演定
+  const [newProjectNoGo, setNewProjectNoGo] = useState<string>(''); // 创作禁区，一行一条
+  const [newProjectBrief, setNewProjectBrief] = useState<SerialBrief>(EMPTY_SERIAL_BRIEF); // 连载立项：题材、基调、结局、出海、付费卡点
   const [episodeState, setEpisodeState] = useState<EpisodeCollectionState>({
     taskId: '',
     sourceHash: '',
@@ -671,6 +782,10 @@ export default function App() {
     taskDataRef.current = taskData;
   }, [taskData]);
 
+  useEffect(() => {
+    chatInputRef.current = chatInput;
+  }, [chatInput]);
+
   // 挂载时检查一次会话登录态，成功后再拉取任务和Skills。
   useEffect(() => {
     let active = true;
@@ -756,7 +871,7 @@ export default function App() {
         setImportSkillFile(null);
       } else {
         const err = await res.json();
-        alert(tr('导入失败: {0}', [err.detail || '接口解析错误']));
+        alert(tr('导入失败: {0}', [err.detail || tr('接口解析错误')]));
       }
     } catch {
       alert(tr('无法连接至后端，请先确保后端启动运行中。'));
@@ -780,7 +895,7 @@ export default function App() {
         }
       } else {
         const err = await res.json();
-        alert(tr('删除失败: {0}', [err.detail || '接口错误']));
+        alert(tr('删除失败: {0}', [err.detail || tr('接口错误')]));
       }
     } catch {
       alert(tr('删除失败，无法连接至后端。'));
@@ -797,7 +912,8 @@ export default function App() {
         method: 'DELETE'
       });
       if (res.ok) {
-        alert(tr('该任务已成功物理删除！'));
+        // 卡片从大厅消失就是反馈，不再弹框拦一下。
+        setHistoryTasks(prev => prev.filter(task => task.taskId !== targetTaskId));
         fetchHistoryTasks();
         // 如果删除的是当前选中的项目，重置工作区状态
         if (taskId === targetTaskId) {
@@ -808,7 +924,7 @@ export default function App() {
         }
       } else {
         const err = await res.json();
-        alert(tr('删除失败: {0}', [err.detail || '接口解析错误']));
+        alert(tr('删除失败: {0}', [err.detail || tr('接口解析错误')]));
       }
     } catch {
       alert(tr('物理删除失败，无法连接至后端。'));
@@ -928,6 +1044,7 @@ export default function App() {
         // A non-array body (error envelope, proxy page) must not crash the
         // whole workbench when the history list is rendered.
         setHistoryTasks(Array.isArray(data) ? data : []);
+        setHistoryLoaded(true);
       }
     } catch (e) {
       console.error('加载历史任务失败', e);
@@ -1051,13 +1168,13 @@ export default function App() {
     };
     
     const displayMsg = uploadedScript 
-      ? `📖 已手动载入剧本《${uploadedScript.name}》生成短剧。${text.trim() ? `\n附加要求：${text.trim()}` : ''}`
+      ? tr('📖 已手动载入剧本《{0}》生成短剧。', [uploadedScript.name]) + (text.trim() ? tr('\n附加要求：{0}', [text.trim()]) : '')
       : titleText;
       
     // 初始化聊天流
     setChatMessages([
       { id: '1', sender: 'user', text: displayMsg },
-      { id: '2', sender: 'ai', text: '正在创建项目。创建后，我会从总导演开始，按顺序陪您完成八大 Agent 流程。' }
+      { id: '2', sender: 'ai', text: tr('正在创建项目。创建后，我会从总导演开始，按顺序陪您完成八大 Agent 流程。') }
     ]);
 
     try {
@@ -1073,6 +1190,7 @@ export default function App() {
         taskDataRef.current = data;
         setUploadedScript(null);
         setScriptContent('');
+        setLobbyIdea('');
         setActiveTabStage(1);
         await startCreatedWorkflow(data, currentConfig.oneClick);
         fetchHistoryTasks();
@@ -1168,6 +1286,67 @@ export default function App() {
   };
 
   // 发送对话指引微调或生成
+  // 告诉助手界面上现在打开的是什么：哪一步、哪一场、哪个角色。助手据此理解「这一场」「她」指谁。
+  const assistantContext = () => {
+    const context: Record<string, string | number> = { stage: activeTabStage };
+    if (activeTabStage === 4 && storyboardViewAction?.sceneId) {
+      context.scene_id = storyboardViewAction.sceneId;
+      context.view = storyboardViewAction.view;
+    }
+    if (activeTabStage === 3 && focusedCharacter) context.character = focusedCharacter;
+    return context;
+  };
+
+  const openCharacterFromCard = (name: string) => {
+    setCharacterAssetKind('actor');
+    setActiveTabStage(3);
+    setSculptRequest({ name, nonce: Date.now() });
+  };
+
+  const openStageFromCard = (sceneId: string) => {
+    setActiveTabStage(4);
+    setStoryboardViewAction({ sceneId, view: 'desk', nonce: Date.now() });
+  };
+
+  // 卡片上的「撤销这一步」直接回到那一步之前，不经过模型、不花钱；撤完刷新项目。
+  const undoFromCard = async (url: string, body: Record<string, unknown>, done: string) => {
+    if (!taskId || cardBusy) return;
+    const requestTaskId = taskId;
+    setCardBusy(true);
+    setErrorMessage('');
+    try {
+      const res = await apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (selectedTaskIdRef.current !== requestTaskId) return;
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setErrorMessage((err as { detail?: string }).detail || tr('撤销失败'));
+        return;
+      }
+      setChatMessages(prev => [...prev, { id: nextMessageId(), sender: 'ai', text: done }]);
+      await fetchTaskStatus(requestTaskId);
+    } catch {
+      if (selectedTaskIdRef.current === requestTaskId) setErrorMessage(tr('撤销失败，请检查后端网络连接。'));
+    } finally {
+      setCardBusy(false);
+    }
+  };
+
+  const undoStageFromCard = (sceneId: string, snapshotId: string) => void undoFromCard(
+    `${API_BASE}/api/drama/${taskId}/director-desk/scenes/${encodeURIComponent(sceneId)}/director/restore`,
+    { snapshot_id: snapshotId },
+    tr('已撤销 {0} 的这一步舞台改动。', [sceneId]),
+  );
+
+  const undoFaceFromCard = (name: string, snapshotId: string) => void undoFromCard(
+    `${API_BASE}/api/drama/${taskId}/characters/${encodeURIComponent(name)}/face-sculpt/revert`,
+    { snapshot_id: snapshotId },
+    tr('已撤销「{0}」的这一步捏脸。', [name]),
+  );
+
+  // 用户最后一句话之后的助手回复：只有它们带的提议还能确认，再早的已经被处理或作废了。
+  const lastUserIndex = chatMessages.map(message => message.sender).lastIndexOf('user');
+  const openReplyIds = new Set(chatMessages.slice(lastUserIndex + 1).filter(message => message.sender === 'ai').map(message => message.id));
+
   const sendChatInstruction = async (text: string) => {
     if (!text.trim() || text.trim() === '/' || !taskId || chatRequestRef.current?.taskId === taskId) return;
     const requestTaskId = taskId;
@@ -1176,29 +1355,43 @@ export default function App() {
     chatRequestRef.current = requestToken;
     setChatSending(true);
     setErrorMessage('');
-    setChatInput('');
+    // 按钮发的指令(继续、重跑)不是输入框里那段话：输入框里写到一半的内容留着不动。
+    const fromComposer = chatInput === text || chatInput.trimStart().startsWith('/');
+    const draft = chatInput;
+    if (fromComposer) {
+      setChatInput('');
+      chatInputRef.current = '';
+    }
     const userMessageId = nextMessageId();
-    
+    const pendingId = nextMessageId();
+    const knownEntries = new Set((taskDataRef.current?.chatHistory ?? []).map(entry => entry.id));
+    // 没发出去：撤掉这条气泡和等待气泡，把输入框里原来的文字还回去，改完可以直接重发。
+    // 等的时候输入框里又写了别的，就留着这条气泡：两段话都还在屏幕上。
+    const returnUnsent = () => {
+      const typedSince = fromComposer && chatInputRef.current !== '';
+      setChatMessages(prev => prev.filter(m => m.id !== pendingId && (typedSince || m.id !== userMessageId)));
+      if (fromComposer && !typedSince) setChatInput(draft);
+    };
+
     // 添加用户发送的文本气泡
     setChatMessages(prev => [
       ...prev,
       { id: userMessageId, sender: 'user', text: text }
     ]);
-    
-    const pendingId = nextMessageId();
+
     setChatMessages(prev => [
       ...prev,
-      { id: pendingId, sender: 'ai', text: '🧠 正在理解您的指令...' }
+      { id: pendingId, sender: 'ai', text: tr('🧠 正在理解您的指令...') }
     ]);
 
     try {
       const res = await apiFetch(`${API_BASE}/api/drama/${requestTaskId}/assistant`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text })
+        body: JSON.stringify({ message: text, context: assistantContext() })
       });
       if (res.ok) {
-        const data: { reply: string; action: string; stage: number | null; task: TaskResponse; tool_calls?: unknown } = await res.json();
+        const data: { reply: string; action: string; stage: number | null; task: TaskResponse; tool_calls?: unknown; proposal?: unknown } = await res.json();
         if (chatRequestRef.current !== requestToken || selection !== selectionVersionRef.current || !canAcceptTaskResponse(selectedTaskIdRef.current, data.task.taskId)) return;
         appliedStatusRequestRef.current = ++statusRequestRef.current;
         restoreChatRef.current = null;
@@ -1208,10 +1401,13 @@ export default function App() {
         // 替换等待气泡为助手回复
         setChatMessages(prev => {
           const withoutPending = prev.filter(m => m.id !== pendingId);
-          if (!data.task.chatHistory?.length) return [
-            ...withoutPending,
-            { id: nextMessageId(), sender: 'ai', text: data.reply },
-          ];
+          if (!data.task.chatHistory?.length) {
+            const cards = chatCardsFrom(data.tool_calls, data.proposal);
+            return [
+              ...withoutPending,
+              { id: nextMessageId(), sender: 'ai', text: data.reply, ...(cards.length ? { cards } : {}) },
+            ];
+          }
           return mergeWorkflowHistory(withoutPending.filter(m => m.id !== userMessageId), data.task);
         });
 
@@ -1239,13 +1435,22 @@ export default function App() {
       } else {
         const err = await res.json();
         if (chatRequestRef.current !== requestToken || selection !== selectionVersionRef.current || selectedTaskIdRef.current !== requestTaskId) return;
-        setErrorMessage(err.detail || tr('发送指令失败'));
-        setChatMessages(prev => prev.filter(m => m.id !== pendingId));
+        // 服务端先把这句话记进对话再处理，被拒绝时它多半已经存下了。以服务端的记录为准：
+        // 存下了就只留存下的那条气泡，不把文字还回输入框，否则重发会在对话里记两遍。
+        await fetchTaskStatus(requestTaskId);
+        if (chatRequestRef.current !== requestToken || selection !== selectionVersionRef.current || selectedTaskIdRef.current !== requestTaskId) return;
+        const recorded = (taskDataRef.current?.chatHistory ?? []).some(entry => (
+          entry.role === 'user' && entry.content === text.trim() && !knownEntries.has(entry.id)
+        ));
+        if (recorded) setChatMessages(prev => prev.filter(m => m.id !== pendingId && m.id !== userMessageId));
+        else returnUnsent();
+        // 积分不足由顶部的充值提示说明，这里不再重复一条。
+        if (res.status !== 402) setErrorMessage(err.detail || tr('发送指令失败'));
       }
     } catch {
       if (chatRequestRef.current !== requestToken || selection !== selectionVersionRef.current || selectedTaskIdRef.current !== requestTaskId) return;
       setErrorMessage(tr('发送消息失败，请检查后端网络连接。'));
-      setChatMessages(prev => prev.filter(m => m.id !== pendingId));
+      returnUnsent();
     } finally {
       if (chatRequestRef.current === requestToken) {
         chatRequestRef.current = null;
@@ -1256,6 +1461,7 @@ export default function App() {
 
   // 载入已有项目
   const handleLoadTask = (task: TaskSummary) => {
+    setErrorMessage('');
     setTaskId(task.taskId);
     restoreChatRef.current = task.taskId;
     chatRequestRef.current = null;
@@ -1292,7 +1498,7 @@ export default function App() {
     // The summary intentionally omits assets. Do not infer completion or the
     // next stage until the full authoritative workflow and history arrive.
     setChatMessages([
-      { id: 'loading-history', sender: 'ai', text: `正在为您恢复《${task.config.titleSuggestion}》的对话和八大 Agent 流程进度…` }
+      { id: 'loading-history', sender: 'ai', text: tr('正在为您恢复《{0}》的对话和八大 Agent 流程进度…', [task.config.titleSuggestion]) }
     ]);
     progressRef.current = task.stageProgress ? { stage: task.stageProgress.stage, status: task.stageProgress.status } : null;
   };
@@ -1315,7 +1521,7 @@ export default function App() {
           // 改模型被拒(如阶段运行中)时要说出来，不能让界面显示新模型、项目却还在用旧的。
           const detail = await res.json().then(body => (typeof body?.detail === 'string' ? body.detail : ''), () => '');
           setConfig(config);
-          alert(detail || `同步配置失败（HTTP ${res.status}）`);
+          alert(detail || tr('同步配置失败（HTTP {0}）', [res.status]));
         }
       } catch (e) {
         console.error('同步配置到后端失败', e);
@@ -1324,47 +1530,55 @@ export default function App() {
     }
   };
 
-  // 大厅项目卡片暂停操作
-  const handleCardPause = async (id: string) => {
+  // 大厅项目卡片的暂停 / 恢复：没成功就把原因说出来，卡片状态不变不能当作没点到
+  const runCardAction = async (id: string, action: 'pause' | 'resume') => {
+    const fallback = action === 'pause' ? tr('暂停项目失败，请稍后重试。') : tr('恢复项目失败，请稍后重试。');
+    setErrorMessage('');
     try {
-      const res = await apiFetch(`${API_BASE}/api/drama/${id}/pause`, {
+      const res = await apiFetch(`${API_BASE}/api/drama/${id}/${action}`, {
         method: 'POST'
       });
       if (res.ok) {
         fetchHistoryTasks();
+        return;
       }
+      const err = await res.json().catch(() => null);
+      const reason = typeof err?.detail === 'string' && err.detail ? err.detail : fallback;
+      setCardActionError(reason);
+      setErrorMessage(reason);
     } catch (e) {
-      console.error('暂停任务失败', e);
+      console.error(action === 'pause' ? '暂停任务失败' : '恢复任务失败', e);
+      setCardActionError(fallback);
+      setErrorMessage(fallback);
     }
   };
 
+  // 大厅项目卡片暂停操作
+  const handleCardPause = (id: string) => runCardAction(id, 'pause');
+
   // 大厅项目卡片恢复一键成片操作
-  const handleCardResume = async (id: string) => {
-    try {
-      const res = await apiFetch(`${API_BASE}/api/drama/${id}/resume`, {
-        method: 'POST'
-      });
-      if (res.ok) {
-        fetchHistoryTasks();
-      }
-    } catch (e) {
-      console.error('恢复任务失败', e);
-    }
+  const handleCardResume = (id: string) => runCardAction(id, 'resume');
+
+  // 没建成：弹窗重新打开，原因写在里面，填过的内容原样留着，改完可以直接再点创建
+  const reopenCreateModal = (reason: string) => {
+    setCreateError(reason);
+    setShowCreateModal(true);
   };
 
   // 磨砂玻璃 Modal 弹窗确认创建真实短剧项目
   const handleConfirmCreate = async () => {
     if (!newProjectName.trim()) {
-      alert(tr("请输入短剧选题名称！"));
+      setCreateError(tr("请输入短剧选题名称！"));
       return;
     }
     setErrorMessage('');
+    setCreateError('');
     setShowCreateModal(false);
     
     // 初始化工作台聊天提示
     setChatMessages([
       { id: '1', sender: 'user', text: newProjectName },
-      { id: '2', sender: 'ai', text: '正在创建项目。创建后，我会从总导演开始，按顺序陪您完成八大 Agent 流程。' }
+      { id: '2', sender: 'ai', text: tr('正在创建项目。创建后，我会从总导演开始，按顺序陪您完成八大 Agent 流程。') }
     ]);
 
     const currentConfig = {
@@ -1381,8 +1595,17 @@ export default function App() {
       creationMode: newProjectCreationMode,
       contentLanguage: newProjectContentLanguage,
       ...(newProjectCreationMode === 'ad' ? { adBrief: newProjectAdBrief } : {}),
+      ...(newProjectCreationMode === 'drama' || newProjectCreationMode === 'narration' ? { targetAudience: newProjectAudience } : {}),
+      // 剧本结构：广告不用。
+      ...(newProjectCreationMode !== 'ad' && newProjectStructure ? { scriptStructure: newProjectStructure } : {}),
+      // 故事方向与创作禁区：广告不用。
+      ...(newProjectCreationMode !== 'ad' && newProjectDirection ? { storyDirection: newProjectDirection } : {}),
+      ...(newProjectCreationMode !== 'ad' && noGoLines(newProjectNoGo).length ? { storyNoGo: noGoLines(newProjectNoGo) } : {}),
+      // 连载立项：只有连续剧(短剧 / 解说)带。
+      ...(newProjectCreationMode === 'drama' || newProjectCreationMode === 'narration' ? serialBriefPayload(newProjectBrief) : {}),
       poetrySources: config.poetrySources ?? [],
-      episodeCount: clampEpisodeCount(newProjectEpisodes, clientConfig.episodeCount), // 一次性生成的剧本集数 (视频按集逐集制作)
+      // 一次性生成的剧本集数 (视频按集逐集制作)；电影短片只有一集。
+      episodeCount: newProjectCreationMode === 'film' ? 1 : clampEpisodeCount(newProjectEpisodes, clientConfig.episodeCount),
       oneClick: newProjectOneClick // 由新建弹窗的「成片方式」选择决定：一键成片 / 分步引导
     };
 
@@ -1401,12 +1624,15 @@ export default function App() {
         await startCreatedWorkflow(data, newProjectOneClick);
         fetchHistoryTasks();
         setNewProjectName(''); // 清空输入
+        setNewProjectDirection(null);
+        setNewProjectNoGo('');
+        setNewProjectBrief(EMPTY_SERIAL_BRIEF);
       } else {
-        const err = await res.json();
-        setErrorMessage(err.detail || tr('创建项目失败'));
+        const err = await res.json().catch(() => null);
+        reopenCreateModal(typeof err?.detail === 'string' && err.detail ? err.detail : tr('创建项目失败'));
       }
     } catch {
-      setErrorMessage(tr('无法连接至后端，请先确保后端运行中。'));
+      reopenCreateModal(tr('无法连接至后端，请先确保后端运行中。'));
     }
   };
 
@@ -1482,10 +1708,11 @@ export default function App() {
         }}>
           {/* 系统头部 Logo 与名称 */}
           <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+            <BrandLogo className="login-brand-logo" />
             <h2 style={{ fontSize: '1.8rem', fontWeight: 700, letterSpacing: '2px', background: 'linear-gradient(135deg, var(--accent), var(--accent-2))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: '8px' }}>
               {PRODUCT_TITLE}
             </h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{tr('工业级 AI 短剧多智能体协同成片平台')}</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{brandText('login_tagline', tr('工业级 AI 短剧多智能体协同成片平台'))}</p>
             <div style={{ marginTop: '10px' }}><LanguageSwitcher /></div>
           </div>
 
@@ -1569,7 +1796,7 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>{clientConfig.verificationCode.length}位验证码</label>
+                  <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px' }}>{tr('{0}位验证码', [clientConfig.verificationCode.length])}</label>
                   <div style={{ display: 'flex', gap: '10px' }}>
                     <input
                       type="text"
@@ -1587,7 +1814,7 @@ export default function App() {
                       className="capsule-btn"
                       style={{ padding: '0 16px', fontSize: '0.75rem', whiteSpace: 'nowrap', minWidth: '110px', justifyContent: 'center' }}
                     >
-                      {codeCountdown > 0 ? `${codeCountdown}s 重发` : '获取验证码'}
+                      {codeCountdown > 0 ? tr('{0}s 重发', [codeCountdown]) : tr('获取验证码')}
                     </button>
                   </div>
                 </div>
@@ -1621,7 +1848,7 @@ export default function App() {
                   <input
                     type="password"
                     required
-                    placeholder={`设置登录密码，不少于${clientConfig.passwordMinLength}位`}
+                    placeholder={tr('设置登录密码，不少于{0}位', [clientConfig.passwordMinLength])}
                     value={authForm.password}
                     onChange={e => setAuthForm({ ...authForm, password: e.target.value })}
                     style={{ width: '100%', padding: '10px 14px', background: 'rgba(var(--shadow-rgb), 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem', outline: 'none' }}
@@ -1659,13 +1886,24 @@ export default function App() {
           {bootstrapAdminLogin && (
             <div style={{ marginTop: '20px', borderTop: '1px solid rgba(var(--accent-rgb), 0.088)', paddingTop: '14px', fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <div>{tr('🔐 本地默认管理员：')}<strong>{bootstrapAdminLogin}</strong></div>
-              <div>登录配置位于后端 `.env`；首次登录必须修改。生产环境禁止使用开发默认密码。</div>
+              <div>{tr('登录配置位于后端 `.env`；首次登录必须修改。生产环境禁止使用开发默认密码。')}</div>
             </div>
           )}
         </div>
       </div>
     );
   }
+
+  // 素材库里也有扣积分的生成，所以这条提示不只挂在工作台。
+  const billingNoticeBar = billingNotice && (
+    <div className="billing-required" role="alert">
+      <span>{billingNotice}</span>
+      {/积分不足|升级套餐/.test(billingNotice) && (
+        <button type="button" className="billing-required__action" onClick={() => { setBillingNotice(''); setActivePortal('billing'); }}>{tr('去充值')}</button>
+      )}
+      <button type="button" className="billing-required__action" onClick={() => setBillingNotice('')}>{tr('关闭')}</button>
+    </div>
+  );
 
   if (currentUser && activePortal === 'user') {
     return <Suspense fallback={<StageFallback />}><UserCenterPage onBack={() => setActivePortal('home')} onUserChange={setCurrentUser} passwordMinLength={clientConfig.passwordMinLength} /></Suspense>;
@@ -1679,68 +1917,64 @@ export default function App() {
   }
 
   if (currentUser && ['actor', 'scene', 'prop', 'effect', 'extra', 'vehicle', 'stunt', 'set_dressing'].includes(activePortal)) {
-    return <Suspense fallback={<StageFallback />}><ElementLibraryPage initialKind={activePortal as ElementKind} onBack={() => setActivePortal('home')} /></Suspense>;
+    // 车辆、商品并在拍摄道具页里(elementTypes 的 TAB_MEMBERS)：从旧入口打开车辆也落到拍摄道具页。
+    return <>{billingNoticeBar}<Suspense fallback={<StageFallback />}><ElementLibraryPage initialKind={tabOfKind(activePortal as ElementKind)} onBack={() => setActivePortal('home')} /></Suspense></>;
   }
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {billingNotice && (
-        <div className="billing-required" role="alert">
-          <span>{billingNotice}</span>
-          {/积分不足|升级套餐/.test(billingNotice) && (
-            <button type="button" className="billing-required__action" onClick={() => { setBillingNotice(''); setActivePortal('billing'); }}>{tr('去充值')}</button>
-          )}
-          <button type="button" className="billing-required__action" onClick={() => setBillingNotice('')}>{tr('关闭')}</button>
-        </div>
-      )}
+      {billingNoticeBar}
       
 
 
       {/* 1. 未进入项目：主配置大厅 (截图 1, 2) */}
       {taskId === '' ? (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '0 24px' }}>
+        <div className="lobby">
           
-          {/* 右上角快捷导航 */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '16px', padding: '20px 0', alignItems: 'center' }}>
+          {/* 顶栏：左侧品牌，右侧通知、积分与账号 */}
+          <header className="lobby-header">
+            <div className="lobby-brand">
+              <span className="lobby-brand__mark"><BrandLogo fallback={<Clapperboard size={16} aria-hidden="true" />} /></span>
+              <span className="lobby-brand__name">{PRODUCT_TITLE}</span>
+              <span className="lobby-brand__tag">{brandText('lobby_tagline', tr('AI 短剧协同成片'))}</span>
+            </div>
+            <div className="lobby-header__actions">
             <NotificationBell onOpenBilling={() => setActivePortal('billing')} onOpenFinance={() => setActivePortal('finance')} />
             {walletPoints !== null && (
-              <span
-                title={tr('可用创作积分')}
-                style={{ background: 'rgba(var(--accent-rgb), 0.132)', padding: '5px 14px', borderRadius: '20px', fontSize: '0.8rem', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '6px' }}
-              >
-                ⚡ {walletPoints} 积分
+              <span title={tr('可用创作积分')} className="lobby-credits">
+                <Zap size={13} aria-hidden="true" /> {tr('{0} 积分', [walletPoints])}
               </span>
             )}
-            <div 
-              style={{ position: 'relative' }}
+            <div
+              className="lobby-account"
               onMouseEnter={() => setShowUserMenu(true)}
               onMouseLeave={() => setShowUserMenu(false)}
+              onKeyDown={e => {
+                if (e.key !== 'Escape') return;
+                setShowUserMenu(false);
+                // 菜单项随菜单一起消失，焦点交还给头像，键盘用户不用从页首重新找。
+                e.currentTarget.querySelector<HTMLButtonElement>('.lobby-avatar')?.focus();
+              }}
+              onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setShowUserMenu(false); }}
             >
-              <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #e55d74)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+              <button
+                type="button"
+                className="lobby-avatar"
+                aria-haspopup="menu"
+                aria-expanded={showUserMenu}
+                aria-label={tr('账号菜单')}
+                onClick={() => setShowUserMenu(true)}
+              >
                 <User size={16} color="var(--on-accent)" />
-              </div>
+              </button>
               
               {showUserMenu && currentUser && (
-                <div className="glass-panel" style={{
-                  position: 'absolute',
-                  top: '36px',
-                  right: 0,
-                  width: '180px',
-                  padding: '12px',
-                  border: '1px solid rgba(var(--accent-rgb), 0.22)',
-                  boxShadow: '0 10px 20px rgba(var(--shadow-rgb), 0.165)',
-                  zIndex: 1000,
-                  background: 'var(--bg-popover)',
-                  borderRadius: '12px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '8px'
-                }}>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 600, borderBottom: '1px solid rgba(var(--accent-rgb), 0.11)', paddingBottom: '6px', color: 'var(--neon-cyan)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>
-                    👤 {currentUser.username || '当前用户'}
+                <div className="glass-panel account-menu">
+                  <div className="account-menu__name">
+                    👤 {currentUser.username || tr('当前用户')}
                   </div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>
-                    {currentUser.email || currentUser.phone || '未绑定账号'}
+                  <div className="account-menu__id">
+                    {currentUser.email || currentUser.phone || tr('未绑定账号')}
                   </div>
                   <button className="account-menu-action" onClick={() => { setActivePortal('user'); setShowUserMenu(false); }}>
                     {tr('用户中心')}
@@ -1753,33 +1987,20 @@ export default function App() {
                       {tr('财务后台')}
                     </button>
                   )}
-                  <button
-                    onClick={handleLogout}
-                    style={{
-                      background: 'rgba(211, 18, 18, 0.1)',
-                      border: '1px solid rgba(211, 18, 18, 0.2)',
-                      color: 'var(--neon-red)',
-                      fontSize: '0.75rem',
-                      padding: '4px 8px',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      width: '100%',
-                      fontWeight: 600,
-                      marginTop: '4px'
-                    }}
-                  >
+                  <button onClick={handleLogout} className="account-menu-action is-danger">
                     {tr('退出登录')}
                   </button>
                   <div style={{ marginTop: '8px' }}><LanguageSwitcher /></div>
                 </div>
               )}
             </div>
-          </div>
+            </div>
+          </header>
 
           {/* 标题 */}
           <div className="hero">
             <h2 className="hero-title">
-              {PRODUCT_TITLE} - 你的专属AI视频创作Agent
+              {tr('{0} - 你的专属AI视频创作Agent', [PRODUCT_TITLE])}
             </h2>
             <p className="hero-sub">
               {tr('把品味和习惯写进Skill，让精力回归创意')}
@@ -1788,7 +2009,7 @@ export default function App() {
 
           {/* 核心创意输入框 (带气泡) */}
           <div style={{ position: 'relative', width: '100%' }}>
-            {errorMessage && (
+            {errorMessage && errorMessage !== cardActionError && (
               <div className="error-banner">
                 ⚠️ {errorMessage}
               </div>
@@ -1797,19 +2018,19 @@ export default function App() {
               <textarea 
                 className="creative-textarea"
                 placeholder={uploadedScript ? `已加载手动剧本《${uploadedScript.name}》，共 ${scriptContent.length} 字。\n您可在此输入特定导演风格或视觉修改意见，或直接点击发送生成短剧。` : "由一个想法或故事开始..."}
-                value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
+                value={lobbyIdea}
+                onChange={e => setLobbyIdea(e.target.value)}
                 onKeyDown={e => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
-                    initDramaProject(chatInput);
+                    initDramaProject(lobbyIdea);
                   }
                 }}
               />
               
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
+              <div className="creative-toolbar">
                 {/* 左下角三个胶囊按钮 */}
-                <div style={{ display: 'flex', gap: '10px', position: 'relative' }}>
+                <div className="creative-toolbar__tools">
                   
                   {/* 模型选择按钮 */}
                   <button 
@@ -1817,7 +2038,7 @@ export default function App() {
                     className={`capsule-btn ${showModelConfiguration ? 'active' : ''}`}
                     onClick={() => { setActivePopover('none'); setShowModelConfiguration(true); }}
                   >
-                    <Cpu size={14} /> 模型: {hasEnabledGlobalModel ? tr('已配置') : tr('未配置')}
+                    <Cpu size={14} /> {tr('模型: {0}', [hasEnabledGlobalModel ? tr('已配置') : tr('未配置')])}
                   </button>
 
                   {/* Skill 选择按钮 */}
@@ -1851,14 +2072,11 @@ export default function App() {
                   {activePopover === 'element' && (
                     <div className="element-menu" role="menu" aria-label={tr('选择元素类型')}>
                       {([
-                        ['actor', '演员', '设定集与表演身份锚点'],
-                        ['scene', '场景', '空间、时段、天气和灯光'],
-                        ['prop', '道具', '归属、位置和状态连续性'],
-                        ['effect', '特效', '时间、目标和结束状态'],
-                        ['extra', '群演', '没有台词的背景人物'],
-                        ['vehicle', '车辆', '入画的车、船、马车'],
-                        ['stunt', '特技', '有风险的动作过程'],
-                        ['set_dressing', '置景', '角色不碰的陈设'],
+                        ['actor', tr('演员'), tr('设定集与表演身份锚点')],
+                        ['scene', tr('场景'), tr('空间、时段、天气和灯光；置景也在这里')],
+                        ['prop', tr('道具'), tr('归属、位置和状态连续性；车辆、商品也在这里')],
+                        ['effect', tr('特效'), tr('时间、目标和结束状态；特技也在这里')],
+                        ['extra', tr('群演'), tr('没有台词的背景人物')],
                       ] as Array<[ElementKind, string, string]>).map(([value, label, hint]) => (
                         <button key={value} type="button" role="menuitem" onClick={() => { setActivePortal(value); setActivePopover('none'); }}>
                           <span>{label}</span><small>{hint}</small><ChevronRight size={15} />
@@ -1874,7 +2092,7 @@ export default function App() {
                     style={{ position: 'relative' }}
                     title={uploadedScript ? tr('已加载手动剧本，点击可重新上传') : tr('上传手动剧本并一键生成短剧')}
                   >
-                    <Upload size={14} /> {uploadedScript ? `已选剧本: ${uploadedScript.name.substring(0, 10)}${uploadedScript.name.length > 10 ? '...' : ''}` : '上传剧本'}
+                    <Upload size={14} /> {uploadedScript ? tr('已选剧本: {0}', [`${uploadedScript.name.substring(0, 10)}${uploadedScript.name.length > 10 ? '...' : ''}`]) : tr('上传剧本')}
                     {uploadedScript && (
                       <span 
                         onClick={(e) => {
@@ -1977,11 +2195,11 @@ export default function App() {
 
                 {/* 右下角圆形发送按钮 */}
                 <button 
-                  onClick={() => initDramaProject(chatInput)}
-                  className="cyber-btn" 
-                  style={{ width: '40px', height: '40px', borderRadius: '50%', padding: '0', background: 'linear-gradient(135deg, var(--accent), var(--accent-2))' }}
+                  onClick={() => initDramaProject(lobbyIdea)}
+                  className="cyber-btn creative-send"
+                  aria-label={tr('开始创作')}
                 >
-                  <ArrowUp size={18} color="var(--ink)" />
+                  <ArrowUp size={18} color="var(--on-accent)" />
                 </button>
 
               </div>
@@ -1991,7 +2209,7 @@ export default function App() {
 
           {/* 热门 Skills 卡片横列 */}
           {showSkillsGrid && (
-            <div style={{ marginTop: '24px', position: 'relative' }}>
+            <div className="skills-section">
               <div className="skills-head">
                 <span className="skills-head__label">
                   {tr('🔥 推荐创作 Skills (点击快速填入选题)')}
@@ -2019,7 +2237,7 @@ export default function App() {
                     className="skill-card" 
                     style={{ position: 'relative' }}
                     onClick={() => {
-                      setChatInput(item.prompt);
+                      setLobbyIdea(item.prompt);
                       setConfig({ ...config, titleSuggestion: item.prompt });
                     }}
                   >
@@ -2029,213 +2247,179 @@ export default function App() {
                         e.stopPropagation();
                         setRecommendedTemplates(prev => prev.filter(t => t.id !== item.id));
                       }}
-                      style={{ 
-                        position: 'absolute', 
-                        top: '6px', 
-                        right: '6px', 
-                        background: 'rgba(var(--accent-rgb), 0.22)', 
-                        border: 'none', 
-                        borderRadius: '50%', 
-                        color: 'rgba(43, 29, 35, 0.6)', 
-                        width: '18px', 
-                        height: '18px', 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        justifyContent: 'center', 
-                        cursor: 'pointer',
-                        padding: 0,
-                        transition: 'all 0.2s'
-                      }}
+                      className="skill-card__remove"
                       title={tr('删除该模版')}
+                      aria-label={tr('删除该模版')}
                     >
                       <X size={10} />
                     </button>
-                    <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>{item.title}</span>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{item.desc}</span>
+                    <strong className="skill-card__title">{tr(item.title)}</strong>
+                    <span className="skill-card__desc">{tr(item.desc)}</span>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          <CapabilityCenter canManage={hasPermission(currentUser, 'capability:manage')} />
-
-          {/* 历史任务/断点大厅 (大卡片) */}
-          <div style={{ maxWidth: '900px', width: '100%', margin: '40px auto 0 auto' }}>
-            <h3 style={{ fontSize: '1.2rem', fontWeight: 500, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <HardDrive size={18} color="var(--gold)" /> {tr('断点续传项目大厅')}
-            </h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
-              {historyTasks.map(task => {
-                const isRunning = task.status === 'running';
-                const isCompleted = task.status === 'completed';
-                const isIdle = task.status === 'idle' || task.status === 'paused';
-                const isReview = task.status === 'awaiting_quality_review';
-                const isQualityFailed = task.status === 'quality_failed';
-                
-                // 状态名及色彩对齐
-                let statusLabel = "IDLE";
-                let statusColor = "var(--neon-amber)";
-                if (isRunning) {
-                  statusLabel = "RUNNING";
-                  statusColor = "var(--neon-cyan)";
-                } else if (isCompleted) {
-                  statusLabel = "COMPLETED";
-                  statusColor = "var(--neon-green)";
-                } else if (isReview) {
-                  statusLabel = "QUALITY REVIEW";
-                  statusColor = "var(--neon-amber)";
-                } else if (isQualityFailed) {
-                  statusLabel = "QUALITY FAILED";
-                  statusColor = "var(--neon-red)";
-                }
-
-                // 进度百分比
-                const progressPct = Math.min(Math.round((task.currentStage / WORKFLOW_STAGE_COUNT) * 100), 100);
-
-                return (
-                  <div 
-                    key={task.taskId} 
-                    onClick={() => handleLoadTask(task)}
-                    className="glass-panel"
-                    style={{ 
-                      padding: '18px', 
-                      cursor: 'pointer', 
-                      background: 'rgba(var(--accent-rgb), 0.044)',
-                      border: isRunning ? '1px solid rgba(var(--accent-rgb), 0.3)' : '1px solid var(--border-color)',
-                      boxShadow: isRunning ? '0 0 15px rgba(var(--accent-rgb), 0.08)' : 'none',
-                      transition: 'all 0.3s ease',
-                      position: 'relative'
-                    }}
-                  >
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteTask(task.taskId);
-                      }}
-                      style={{
-                        position: 'absolute',
-                        top: '4px',
-                        right: '4px',
-                        background: 'transparent',
-                        border: 'none',
-                        color: 'rgba(var(--accent-rgb), 0.77)',
-                        cursor: 'pointer',
-                        padding: '4px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        zIndex: 10
-                      }}
-                      title={tr('删除任务项目')}
-                    >
-                      <X size={10} />
-                    </button>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', alignItems: 'center', paddingRight: '12px' }}>
-                      <span style={{ fontWeight: 600, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px' }}>
-                        {task.config.titleSuggestion}
-                      </span>
-                      <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: statusColor, textShadow: `0 0 8px ${statusColor}40` }}>
-                        {statusLabel}
-                      </span>
-                    </div>
-
-                    <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '8px' }}>
-                      {isCompleted ? (
-                        <span>{tr('🎉 已完成一键成片 (100%)')}</span>
-                      ) : (
-                        <span>
-                          当前进度: 第 {task.currentStage}/{WORKFLOW_STAGE_COUNT} 步 ({task.stageName})
-                          {isRunning ? (
-                            <span style={{ color: 'var(--neon-cyan)', marginLeft: '4px' }}>{tr('- 正在生成...')}</span>
-                          ) : (
-                            <span style={{ color: 'var(--text-muted)', marginLeft: '4px' }}>{tr('- 已暂停')}</span>
-                          )}
-                        </span>
-                      )}
-                    </p>
-
-                    {/* 进度条打印显示 */}
-                    <div style={{ width: '100%', height: '5px', background: 'rgba(var(--accent-rgb), 0.132)', borderRadius: '3px', overflow: 'hidden', marginBottom: '14px' }}>
-                      <div 
-                        style={{ 
-                          width: `${progressPct}%`, 
-                          height: '100%', 
-                          background: isCompleted 
-                            ? 'linear-gradient(90deg, #10b981, #10b981)' 
-                            : 'linear-gradient(90deg, var(--accent), var(--accent))',
-                          boxShadow: isRunning ? '0 0 8px var(--accent)' : 'none',
-                          transition: 'width 0.6s cubic-bezier(0.4, 0, 0.2, 1)' 
-                        }}
-                      ></div>
-                    </div>
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      {/* 卡片快速状态切换按钮，支持暂停/恢复 */}
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        {isRunning && (
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleCardPause(task.taskId);
-                            }}
-                            className="capsule-btn" 
-                            style={{ padding: '2px 8px', fontSize: '0.7rem', borderColor: 'var(--neon-red)', color: 'var(--neon-red)', background: 'rgba(211, 18, 18, 0.05)' }}
-                          >
-                            <Pause size={10} style={{ display: 'inline', marginRight: '2px' }} /> {tr('暂停')}
-                          </button>
-                        )}
-                        {isIdle && (
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleCardResume(task.taskId);
-                            }}
-                            className="capsule-btn" 
-                            style={{ padding: '2px 8px', fontSize: '0.7rem', borderColor: 'var(--neon-cyan)', color: 'var(--neon-cyan)', background: 'rgba(var(--accent-rgb), 0.05)' }}
-                          >
-                            <Play size={10} style={{ display: 'inline', marginRight: '2px' }} /> {tr('恢复')}
-                          </button>
-                        )}
-                      </div>
-                      
-                      <button className="capsule-btn" style={{ padding: '2px 10px', fontSize: '0.7rem' }}>
-                        {tr('加载断点')} <ArrowRight size={10} />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+          {/* 项目大厅：先看自己的项目，再看平台能力 */}
+          <section className="project-lobby" aria-labelledby="project-lobby-title">
+            <div className="project-lobby__head">
+              <h3 id="project-lobby-title"><HardDrive size={18} aria-hidden="true" /> {tr('断点续传项目大厅')}</h3>
+              <span className="project-lobby__count">{historyTasks.length} {tr('个项目')}</span>
+              <button
+                type="button"
+                className="project-lobby__new"
+                onClick={() => {
+                  setNewProjectName('');
+                  setCreateError('');
+                  setShowCreateModal(true);
+                }}
+              >
+                <Plus size={15} aria-hidden="true" /> {tr('创建新项目')}
+              </button>
             </div>
-          </div>
 
-          {/* 创建项目悬浮按钮 */}
-          <div style={{ position: 'fixed', bottom: '40px', left: '40px', zIndex: 100 }}>
-            <button 
-              className="project-fab" 
-              onClick={() => {
-                setNewProjectName('');
-                setShowCreateModal(true);
-              }} 
-            >
-              <span className="project-fab__dot"></span>
-              {tr('创建新项目')}
-            </button>
-          </div>
+            {errorMessage && errorMessage === cardActionError && (
+              <div className="error-banner error-banner--pinned" role="alert">
+                <span>{errorMessage}</span>
+                <button type="button" aria-label={tr('关闭提示')} title={tr('关闭提示')} onClick={() => setErrorMessage('')}>
+                  <X size={14} aria-hidden="true" />
+                </button>
+              </div>
+            )}
+
+            {historyLoaded && historyTasks.length === 0 ? (
+              <div className="project-lobby__empty">
+                <Film size={28} aria-hidden="true" />
+                <strong>{tr('还没有项目')}</strong>
+                <span>{tr('在上方输入一个想法，或点击「创建新项目」开始第一部短剧。')}</span>
+              </div>
+            ) : (
+              <div className="project-grid">
+                {historyTasks.map(task => {
+                  const isRunning = task.status === 'running';
+                  const isCompleted = task.status === 'completed';
+                  const isIdle = task.status === 'idle' || task.status === 'paused';
+                  const { label: statusLabel, tone } = projectStatusView(task.status);
+
+                  // 进度百分比
+                  const progressPct = Math.min(Math.round((displayStep(task.currentStage) / DISPLAY_STEPS) * 100), 100);
+
+                  return (
+                    <div
+                      key={task.taskId}
+                      onClick={() => handleLoadTask(task)}
+                      onKeyDown={e => {
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleLoadTask(task);
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      className={`glass-panel project-card is-${tone}`}
+                    >
+                      <button
+                        type="button"
+                        className="project-card__delete"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteTask(task.taskId);
+                        }}
+                        title={tr('删除任务项目')}
+                        aria-label={tr('删除任务项目')}
+                      >
+                        <X size={12} />
+                      </button>
+
+                      <div className="project-card__head">
+                        <span className="project-card__title" title={task.config.titleSuggestion}>
+                          {task.config.titleSuggestion}
+                        </span>
+                        <span className="project-card__status">{statusLabel}</span>
+                      </div>
+
+                      <p className="project-card__meta">
+                        {isCompleted ? (
+                          <span>{tr('🎉 已完成一键成片 (100%)')}</span>
+                        ) : (
+                          <span>
+                            {tr('当前进度: 第 {0}/{1} 步 ({2})', [displayStep(task.currentStage), DISPLAY_STEPS, task.stageName])}
+                            {isRunning ? (
+                              <span className="is-live"> {tr('- 正在生成...')}</span>
+                            ) : (
+                              <span> - {statusLabel}</span>
+                            )}
+                          </span>
+                        )}
+                      </p>
+
+                      <div className="project-card__bar" aria-hidden="true">
+                        <div className="project-card__bar-fill" style={{ width: `${progressPct}%` }} />
+                      </div>
+
+                      <div className="project-card__foot">
+                        <div className="project-card__ops">
+                          {isRunning && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleCardPause(task.taskId);
+                              }}
+                              className="capsule-btn is-danger"
+                            >
+                              <Pause size={10} /> {tr('暂停')}
+                            </button>
+                          )}
+                          {isIdle && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleCardResume(task.taskId);
+                              }}
+                              className="capsule-btn is-accent"
+                            >
+                              <Play size={10} /> {tr('恢复')}
+                            </button>
+                          )}
+                        </div>
+
+                        <span className="capsule-btn project-card__open" aria-hidden="true">
+                          {tr('加载断点')} <ArrowRight size={10} />
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <CapabilityCenter canManage={hasPermission(currentUser, 'capability:manage')} />
 
           {/* 磨砂玻璃真·创建新项目 Modal 弹窗 */}
           {showCreateModal && (
-            <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(var(--shadow-rgb), 0.33)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-              <div className="glass-panel" style={{ width: '480px', padding: '24px', position: 'relative', border: '1px solid rgba(var(--accent-rgb), 0.2)', boxShadow: '0 0 30px rgba(var(--accent-rgb), 0.15)' }}>
-                <button 
-                  onClick={() => setShowCreateModal(false)} 
-                  style={{ position: 'absolute', top: '16px', right: '16px', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+            <div className="modal-backdrop" onClick={() => setShowCreateModal(false)}>
+              <div
+                className="glass-panel create-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="create-modal-title"
+                onClick={e => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  className="create-modal__close"
+                  onClick={() => setShowCreateModal(false)}
+                  aria-label={tr('关闭')}
                 >
                   <X size={18} />
                 </button>
 
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '20px', color: 'var(--neon-cyan)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h3 id="create-modal-title" className="create-modal__title">
                   {tr('🎬 创建全新短剧制作项目')}
                 </h3>
 
@@ -2246,7 +2430,7 @@ export default function App() {
                       type="text" 
                       placeholder={tr('例如：重生之我在火山方舟当车载配件巨头')}
                       value={newProjectName}
-                      onChange={e => setNewProjectName(e.target.value)}
+                      onChange={e => { setNewProjectName(e.target.value); setCreateError(''); }}
                       style={{ width: '100%', padding: '10px', background: 'rgba(var(--shadow-rgb), 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.9rem' }}
                     />
                   </div>
@@ -2320,15 +2504,15 @@ export default function App() {
                     {newProjectCreationMode === 'ad' && (
                       <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px' }} aria-label={tr('广告简报')}>
                         {([
-                          ['product', '产品', '如：静音吹风机'],
-                          ['sellingPoints', '卖点', '如：三分钟速干，45 分贝'],
-                          ['audience', '目标人群', '如：合租年轻人'],
-                          ['callToAction', '行动号召', '如：立即下单'],
+                          ['product', tr('产品'), tr('如：静音吹风机')],
+                          ['sellingPoints', tr('卖点'), tr('如：三分钟速干，45 分贝')],
+                          ['audience', tr('目标人群'), tr('如：合租年轻人')],
+                          ['callToAction', tr('行动号召'), tr('如：立即下单')],
                         ] as const).map(([key, label, placeholder]) => (
                           <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                             {label}
                             <input
-                              aria-label={`广告${label}`}
+                              aria-label={tr('广告{0}', [label])}
                               value={newProjectAdBrief[key]}
                               placeholder={placeholder}
                               onChange={e => setNewProjectAdBrief(current => ({ ...current, [key]: e.target.value }))}
@@ -2336,6 +2520,16 @@ export default function App() {
                             />
                           </label>
                         ))}
+                        <label
+                          style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-muted)' }}
+                          title={tr('先讲一场有人物、有麻烦的小戏，产品在戏里自然出场，结尾落在产品近景上。不勾就是开场抓人、产品演示、行动号召的普通广告短片。')}
+                        >
+                          <input
+                            type="checkbox" checked={newProjectAdBrief.format === 'story'}
+                            onChange={e => setNewProjectAdBrief(current => ({ ...current, format: e.target.checked ? 'story' : '' }))}
+                          />
+                          {tr('剧情带货（先讲一场小戏，产品在戏里自然出场）')}
+                        </label>
                       </div>
                     )}
                     <div>
@@ -2358,7 +2552,14 @@ export default function App() {
                   />
                 </div>
 
-                {/* 成片方式 + 集数 (item 3 两种成片方式 / item 6 选择指定集数) */}
+                {/* 目标用户：只对连续剧（短剧 / 解说）生效，电影短片和广告不显示 */}
+                {(newProjectCreationMode === 'drama' || newProjectCreationMode === 'narration') && (
+                  <div style={{ marginTop: '14px' }}>
+                    <TargetAudiencePicker value={newProjectAudience} onChange={setNewProjectAudience} />
+                  </div>
+                )}
+
+                {/* 成片方式 (item 3 两种成片方式) */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginTop: '14px' }}>
                   <div>
                     <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>{tr('成片方式')}</label>
@@ -2371,40 +2572,43 @@ export default function App() {
                       <option value="guided">{tr('🧭 一步一步引导 (逐步生成，可对话微调)')}</option>
                     </select>
                   </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>{tr('剧本集数 (一次生成，视频逐集制作)')}</label>
-                    <select
-                      value={newProjectEpisodesCustom ? 'custom' : String(newProjectEpisodes)}
-                      onChange={e => {
-                        if (e.target.value === 'custom') {
-                          setNewProjectEpisodesCustom(true); // 切到手动填写，保留当前集数作为初始值
-                          return;
-                        }
-                        setNewProjectEpisodesCustom(false);
-                        setNewProjectEpisodes(parseInt(e.target.value, 10));
-                      }}
-                      style={{ width: '100%', padding: '10px', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem' }}
-                    >
-                      {EPISODE_COUNT_PRESETS
-                        .filter(n => n >= clientConfig.episodeCount.min && n <= clientConfig.episodeCount.max)
-                        .map(n => (
-                          <option key={n} value={n}>{n} 集</option>
-                        ))}
-                      <option value="custom">{tr('✏️ 手动填写集数…')}</option>
-                    </select>
-                    {newProjectEpisodesCustom && (
-                      <input
-                        type="number"
-                        min={clientConfig.episodeCount.min}
-                        max={clientConfig.episodeCount.max}
-                        value={newProjectEpisodes}
-                        onChange={e => setNewProjectEpisodes(clampEpisodeCount(e.target.value, clientConfig.episodeCount))}
-                        placeholder={`${clientConfig.episodeCount.min}-${clientConfig.episodeCount.max} 集`}
-                        style={{ width: '100%', marginTop: '8px', padding: '10px', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem' }}
-                      />
-                    )}
-                  </div>
                 </div>
+
+                {/* 集数(滑块 + 精确值)与剧本结构：一次生成剧本，视频逐集制作；电影短片只有 1 集。 */}
+                <div style={{ display: 'grid', gap: '16px', marginTop: '18px' }}>
+                  <EpisodeCountSlider
+                    value={newProjectEpisodes}
+                    min={clientConfig.episodeCount.min}
+                    max={clientConfig.episodeCount.max}
+                    disabled={newProjectCreationMode === 'film'}
+                    onChange={setNewProjectEpisodes}
+                  />
+                  {newProjectCreationMode !== 'ad' && (
+                    <ScriptStructurePicker value={newProjectStructure} onChange={setNewProjectStructure} />
+                  )}
+                  {(newProjectCreationMode === 'drama' || newProjectCreationMode === 'narration') && (
+                    <SerialBriefPicker
+                      value={newProjectBrief} onChange={setNewProjectBrief}
+                      episodeCount={clampEpisodeCount(newProjectEpisodes, clientConfig.episodeCount)}
+                    />
+                  )}
+                  {newProjectCreationMode !== 'ad' && (
+                    <StoryDirectionPicker
+                      request={{
+                        idea: newProjectName,
+                        creationMode: newProjectCreationMode,
+                        episodeCount: newProjectCreationMode === 'film' ? 1 : clampEpisodeCount(newProjectEpisodes, clientConfig.episodeCount),
+                        ...(newProjectCreationMode === 'drama' || newProjectCreationMode === 'narration' ? { targetAudience: newProjectAudience } : {}),
+                        ...(newProjectStructure ? { scriptStructure: newProjectStructure } : {}),
+                        llmModel: config.llmModel,
+                      }}
+                      value={newProjectDirection} onChange={setNewProjectDirection}
+                      noGo={newProjectNoGo} onNoGoChange={setNewProjectNoGo} onIdea={setNewProjectName}
+                    />
+                  )}
+                </div>
+
+                {createError && <div className="error-banner" role="alert" style={{ margin: '18px 0 0' }}>{createError}</div>}
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '18px' }}>
                   <button
@@ -2416,8 +2620,7 @@ export default function App() {
                   </button>
                   <button
                     onClick={handleConfirmCreate}
-                    className="cyber-btn"
-                    style={{ padding: '8px 20px', background: 'linear-gradient(135deg, var(--accent), var(--accent-2))', color: 'var(--ink)', fontWeight: 600 }}
+                    className="cyber-btn create-modal__submit"
                   >
                     {tr('立即创建项目')}
                   </button>
@@ -2444,14 +2647,14 @@ export default function App() {
               <div className="asset-stage-nav__identity">
                 <Film size={22} color="var(--neon-cyan)" />
                 <h2>
-                  《{scriptDisplayName}》 - 看板展示大厅
+                  {tr('《{0}》 - 看板展示大厅', [scriptDisplayName])}
                 </h2>
               </div>
               <div className="asset-stage-nav__tools" role="group" aria-label={tr('项目工具')}>
-                <button type="button" onClick={() => setProjectOverlay('canvas')}><Network size={14} aria-hidden="true" /> {tr('节点画布')}</button>
-                <button type="button" onClick={() => setProjectOverlay('interactive')}><GitBranch size={14} aria-hidden="true" /> {tr('互动剧')}</button>
-                <button type="button" onClick={() => setProjectOverlay('tasks')}><ListChecks size={14} aria-hidden="true" /> {tr('任务中心')}</button>
-                <button type="button" onClick={() => setProjectOverlay('memory')}><BrainCircuit size={14} aria-hidden="true" /> {tr('项目记忆')}</button>
+                <button type="button" title={tr('节点画布')} onClick={() => setProjectOverlay('canvas')}><Network size={14} aria-hidden="true" /><span>{tr('节点画布')}</span></button>
+                <button type="button" title={tr('互动剧')} onClick={() => setProjectOverlay('interactive')}><GitBranch size={14} aria-hidden="true" /><span>{tr('互动剧')}</span></button>
+                <button type="button" title={tr('任务中心')} onClick={() => setProjectOverlay('tasks')}><ListChecks size={14} aria-hidden="true" /><span>{tr('任务中心')}</span></button>
+                <button type="button" title={tr('项目记忆')} onClick={() => setProjectOverlay('memory')}><BrainCircuit size={14} aria-hidden="true" /><span>{tr('项目记忆')}</span></button>
               </div>
               <AgentStageTabs activeStage={activeTabStage} onChange={setActiveTabStage} />
             </div>
@@ -2470,7 +2673,12 @@ export default function App() {
                 progress={taskData.assets["4_progress"] as StoryboardProgress | undefined}
                 breakdownScenes={(taskData.assets["2_breakdown"] as { scenes?: BreakdownSceneRef[] } | undefined)?.scenes}
                 onRefresh={() => { void fetchTaskStatus(taskId); }}
-                onRegenerate={() => { void sendChatInstruction('重跑第 4 阶段'); }}
+                onRegenerate={() => {
+                  // The server drops later stages' output on a storyboard rerun: say what goes before it happens.
+                  const warning = storyboardRerunWarning(taskData.assets);
+                  if (warning && !window.confirm(warning)) return;
+                  void sendChatInstruction('重跑第 4 阶段');
+                }}
                 externalAction={storyboardViewAction}
                 onContinue={() => setActiveTabStage(5)}
               />
@@ -2487,7 +2695,7 @@ export default function App() {
             ) : activeTabStage === 2 ? (
               <WriterAgentPageContainer
                 taskId={taskId}
-                refreshKey={`${taskData?.currentStage}:${taskData?.status}:${Boolean(taskData?.assets["2_writer_dashboard"])}:${scriptDetailStatus}`}
+                refreshKey={`${taskData?.currentStage}:${taskData?.status}:${Boolean(taskData?.assets["2_writer_dashboard"])}:${scriptDetailStatus}:${castSignature}`}
                 displayTitle={scriptDisplayName}
                 title={taskData?.config.titleSuggestion}
                 fallbackBreakdown={taskData?.assets["2_breakdown"]}
@@ -2517,25 +2725,44 @@ export default function App() {
                 onRefresh={() => { void fetchTaskStatus(taskId); }}
                 onRegenerate={() => { void sendChatInstruction('重跑第 3 阶段'); }}
                 onContinue={() => setActiveTabStage(4)}
+                sculptRequest={sculptRequest}
+                onFocusCharacter={setFocusedCharacter}
               />
-            ) : !taskData?.assets[activeTabStage.toString()] && !(activeTabStage === 5 && taskData?.assets["4"]) ? (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', opacity: 0.65 }}>
-                <Film size={80} color="var(--neon-cyan)" style={{ marginBottom: '20px', filter: 'drop-shadow(0 0 20px rgba(var(--accent-rgb), 0.3))' }} />
-                <h3 style={{ fontSize: '1.8rem', fontWeight: 600, marginBottom: '10px' }}>{tr('开始！')}</h3>
-                <p style={{ color: 'var(--text-muted)' }}>{tr('请在右侧聊天框中输入您的创作需求，或者点击“下一步”启动生成吧！')}</p>
-              </div>
+            ) : !taskData?.assets[activeTabStage.toString()] && !(activeTabStage === 5 && taskData?.assets["4"])
+              && !(isEditorStage(activeTabStage) && (taskData?.assets["6"] || taskData?.assets["7"])) ? (
+              taskData?.status === 'running' && taskData.stageProgress?.status === 'running' && sameStageTab(taskData.stageProgress.stage, activeTabStage) ? (
+                <div className="stage-empty">
+                  <h3>{tr('这一步正在生成')}</h3>
+                  <p>{tr('产物出来后会显示在这里，下面是实时进度。')}</p>
+                  <div className="stage-empty__progress">
+                    <StageProgressPanel progress={taskData.stageProgress} onOpenBilling={() => setActivePortal('billing')} />
+                  </div>
+                </div>
+              ) : (
+                <div className="stage-empty">
+                  <Film className="stage-empty__icon" size={64} aria-hidden="true" />
+                  <h3>{tr('这一步还没有产物')}</h3>
+                  <p>{taskData?.workflow?.actions.length
+                    ? tr('点下面的按钮继续，或在右侧聊天框里说出你的要求。')
+                    : tr('在右侧聊天框里说出你的要求，或发送「继续」推进流程。')}</p>
+                  <WorkflowActions workflow={taskData?.workflow} busy={chatSending}
+                    onAction={message => { void (message === '继续' ? handleNextStage() : sendChatInstruction(message)); }} />
+                </div>
+              )
             ) : ( // 步骤资产高保真呈现
               <div className="stage-asset-stack">
                 
                 <div
                   className={`glass-panel stage-asset-preview${activeTabStage === 5 ? ' stage-asset-preview--visual' : ''}`}
                   role="region"
-                  aria-label={`Stage ${activeTabStage} 阶段资产预览`}
+                  aria-label={tr('Stage {0} 阶段资产预览', [activeTabStage])}
                 >
-                  <div className="stage-preview-head">
-                    <span className="stage-preview-head__icon"><Monitor size={16} /></span>
-                    <span className="stage-preview-head__title">Stage {activeTabStage} 阶段资产预览</span>
-                  </div>
+                  {!isEditorStage(activeTabStage) && (
+                    <div className="stage-preview-head">
+                      <span className="stage-preview-head__icon"><Monitor size={16} /></span>
+                      <span className="stage-preview-head__title">{tr('Stage {0} 阶段资产预览', [activeTabStage])}</span>
+                    </div>
+                  )}
 
                   {/* 5: 视觉总监生成 */}
                   {activeTabStage === 5 && (
@@ -2546,6 +2773,7 @@ export default function App() {
                         imageModel={taskData.config.imageModel || config.imageModel}
                         taskId={taskId}
                         episodes={episodeMetaOf(taskData.assets)}
+                        refreshKey={`${taskData.currentStage}:${taskData.status}`}
                         onRerun={() => { void sendChatInstruction('重跑第 5 阶段'); }}
                         onVideoModelChange={(model: string) => {
                           setConfig(current => ({ ...current, videoModel: model }));
@@ -2555,51 +2783,32 @@ export default function App() {
                     </Suspense>
                   )}
 
-                  {/* 6: 音频总监生成 */}
-                  {activeTabStage === 6 && (
-                    <StageSixPreview asset={taskData.assets["6"]} ttsModel={taskData.config.ttsModel || config.ttsModel} />
-                  )}
-
-                  {/* 7: 合成发布 */}
-                  {activeTabStage === 7 && (
-                    <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: '20px' }}>
-                      <div>
-                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>
-                          {[
-                            taskData.assets["7"]?.aspect_ratio,
-                            taskData.assets["7"]?.delivery_profile?.video_codec?.toUpperCase(),
-                            '成片',
-                          ].filter(Boolean).join(' ')}
-                        </span>
-                        <video src={taskData.videoUrl || taskData.assets["7"]?.final_video_url} controls style={{ width: '100%', borderRadius: '16px', border: '2px solid var(--neon-cyan)', boxShadow: '0 0 20px rgba(var(--accent-rgb), 0.2)' }} />
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        <div className="glass-panel" style={{ background: 'var(--surface)', padding: '12px' }}>
-                          <span style={{ color: 'var(--neon-cyan)', fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>{tr('合成属性')}</span>
-                          <div style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                            {taskData.assets["7"]?.aspect_ratio && (
-                              <div><strong>{tr('画幅比例:')}</strong> {taskData.assets["7"].aspect_ratio}</div>
-                            )}
-                            {taskData.assets["7"]?.delivery_profile?.width && (
-                              <div><strong>{tr('分辨率:')}</strong> {taskData.assets["7"].delivery_profile.width}×{taskData.assets["7"].delivery_profile.height}</div>
-                            )}
-                            {taskData.assets["7"]?.delivery_profile?.fps && (
-                              <div><strong>{tr('帧率:')}</strong> {taskData.assets["7"].delivery_profile.fps} fps</div>
-                            )}
-                            {taskData.assets["7"]?.compose_mode && (
-                              <div><strong>{tr('合成方式:')}</strong> {taskData.assets["7"].compose_mode}</div>
-                            )}
-                            {taskData.assets["7"]?.subtitles && (
-                              <div><strong>{tr('字幕样式:')}</strong> {taskData.assets["7"].subtitles}</div>
-                            )}
-                          </div>
+                  {/* 6–7: 剪辑合成师 —— 声音与成片一页：原声优先、配乐、基础设定、成片版本与重新合成 */}
+                  {isEditorStage(activeTabStage) && (
+                    <>
+                      {taskData.status === 'running' && taskData.stageProgress?.status === 'running' && isEditorStage(taskData.stageProgress.stage) && (
+                        <div className="stage-empty__progress">
+                          <StageProgressPanel progress={taskData.stageProgress} onOpenBilling={() => setActivePortal('billing')} />
                         </div>
-                        {/* 剪辑时间线：审看、裁剪、转场、配乐，按它重新合成或导出剪映草稿 */}
-                        <div className="glass-panel" style={{ background: 'var(--surface)', padding: '12px' }}>
-                          <Suspense fallback={<StageFallback />}><TimelinePanel taskId={taskId} /></Suspense>
-                        </div>
-                      </div>
-                    </div>
+                      )}
+                      <Suspense fallback={<StageFallback />}>
+                        <PostProductionStudio
+                          taskId={taskId}
+                          filmUrl={taskData.assets["7"] ? (taskData.videoUrl || taskData.assets["7"]?.final_video_url) : null}
+                          // 同一路径重新合成后地址不变：带上合成时间，播放器才会换成新片
+                          filmKey={String(taskData.assets["7"]?.rendered_at ?? taskData.assets["7"]?.timeline_revision ?? '')}
+                          episode={taskData.assets["7"]?.episode ?? taskData.assets["6"]?.episode ?? null}
+                          sound={taskData.assets["6"] ?? null}
+                          audioModel={taskData.config.ttsModel || config.ttsModel}
+                          refreshKey={`${taskData.currentStage}:${taskData.status}:${taskData.stageProgress?.stage ?? ''}`}
+                          running={taskData.status === 'running'}
+                          voiceRerender={filmsNeedingVoiceRender(taskData.assets as Record<string, unknown>)}
+                          onRegenerateSound={() => { void sendChatInstruction('重跑第 6 阶段'); }}
+                          onCompose={() => { void handleNextStage(); }}
+                          onRendered={() => { void fetchTaskStatus(taskId); }}
+                        />
+                      </Suspense>
+                    </>
                   )}
 
                   {/* 8: 宣发 Agent */}
@@ -2619,7 +2828,7 @@ export default function App() {
                         <p style={{ fontSize: '0.8rem', lineHeight: '1.4' }}>
                           {(() => {
                             const bodyMatch = taskData.prContent?.match(/📌 黄金引流文案：‘([^’]+)’/);
-                            return bodyMatch ? bodyMatch[1] : (taskData.prContent || "暂无文案");
+                            return bodyMatch ? bodyMatch[1] : (taskData.prContent || tr('暂无文案'));
                           })()}
                         </p>
                       </div>
@@ -2640,7 +2849,7 @@ export default function App() {
                       {activeTabStage > 1 ? (
                         <button 
                           type="button"
-                          onClick={() => setActiveTabStage(activeTabStage - 1)}
+                          onClick={() => setActiveTabStage(previousStageTab(activeTabStage))}
                           className="capsule-btn"
                           style={{ fontSize: '0.75rem', padding: '5px 12px' }}
                         >
@@ -2649,10 +2858,10 @@ export default function App() {
                       ) : <div />}
 
                       <div style={{ display: 'flex', gap: '10px' }}>
-                        {activeTabStage < taskData.currentStage ? (
+                        {nextStageTab(activeTabStage) <= taskData.currentStage ? (
                           <button 
                             type="button"
-                            onClick={() => setActiveTabStage(activeTabStage + 1)}
+                            onClick={() => setActiveTabStage(nextStageTab(activeTabStage))}
                             className="capsule-btn"
                             style={{ borderColor: 'var(--neon-cyan)', color: 'var(--neon-cyan)', fontSize: '0.75rem', padding: '5px 12px' }}
                           >
@@ -2673,8 +2882,8 @@ export default function App() {
                     <span>{tr('100+项质检校验（一致性检查清单）一致性 Hooks 报告')}</span>
                   </header>
                   <div className="qc-panel__body">
-                    {taskData.logs[activeTabStage.toString()]
-                      ? <MarkdownDocument source={String(taskData.logs[activeTabStage.toString()])} ariaLabel={tr('质检报告')} />
+                    {stageLog(taskData.logs, activeTabStage)
+                      ? <MarkdownDocument source={stageLog(taskData.logs, activeTabStage)} ariaLabel={tr('质检报告')} />
                       : <p className="qc-panel__empty">{tr('本阶段的质检报告生成后会显示在这里。')}</p>}
                   </div>
                 </section>
@@ -2706,7 +2915,10 @@ export default function App() {
                 onClick={() => {
                   setTaskId('');
                   setTaskData(null);
-                }} 
+                  setErrorMessage('');
+                  // 没发出去的半句话属于这个项目，不带到下一个项目的输入框里。
+                  setChatInput('');
+                }}
                 aria-label={tr('关闭项目工作台')}
               >
                 <X size={18} />
@@ -2725,8 +2937,21 @@ export default function App() {
                         <span className="chat-agent-badge">{NOVARA_AGENT_NAME}</span>
                       </div>
                       
+                      <ThinkingDisclosure text={msg.reasoning} />
                       <div style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</div>
-                      
+                      {msg.cards?.map((card: ChatCard, index: number) => (
+                        <ChatCardView
+                          key={`${msg.id}:card:${index}`}
+                          card={card}
+                          // 提议只有用户最后一句话之后的还能确认。
+                          busy={chatSending || cardBusy || (card.kind === 'proposal' && !openReplyIds.has(msg.id))}
+                          onSend={message => { void sendChatInstruction(message); }}
+                          onOpenCharacter={openCharacterFromCard}
+                          onOpenStage={openStageFromCard}
+                          onUndoStage={undoStageFromCard}
+                          onUndoFace={undoFaceFromCard}
+                        />
+                      ))}
                     </div>
                   ) : (
                     <div>{msg.text}</div>
@@ -2749,7 +2974,17 @@ export default function App() {
 
             {/* 对话底部输入框 */}
             <div className="chat-sidebar__composer">
-              
+
+              {/* 项目内的失败（发送、状态同步、分集）就地说明，不留到回大厅才看见 */}
+              {errorMessage && (
+                <div className="error-banner chat-sidebar__error" role="alert">
+                  <span>{errorMessage}</span>
+                  <button type="button" aria-label={tr('关闭提示')} title={tr('关闭提示')} onClick={() => setErrorMessage('')}>
+                    <X size={14} aria-hidden="true" />
+                  </button>
+                </div>
+              )}
+
               {/* 侧边栏 Skill 选择气泡弹窗 */}
               {activePopover === 'sidebarSkill' && (
                 <div className="popover-window" style={{ bottom: '85px', left: '16px', right: '16px', width: 'auto', zIndex: 100 }}>
@@ -2829,7 +3064,7 @@ export default function App() {
                   style={{ padding: '4px 10px', fontSize: '0.7rem' }}
                   onClick={() => { setActivePopover('none'); setShowModelConfiguration(true); }}
                 >
-                  模型: {hasEnabledGlobalModel ? tr('已配置') : tr('未配置')}
+                  {tr('模型: {0}', [hasEnabledGlobalModel ? tr('已配置') : tr('未配置')])}
                 </button>
                 <button 
                   type="button"
@@ -2841,7 +3076,7 @@ export default function App() {
                 </button>
               </div>
 
-              <ChatComposer value={chatInput} busy={chatSending} onChange={setChatInput}
+              <ChatComposer taskId={taskId} value={chatInput} busy={chatSending} onChange={setChatInput}
                 onSend={message => { void sendChatInstruction(message); }} />
             </div>
 
@@ -2852,7 +3087,17 @@ export default function App() {
 
       {taskId && projectOverlay && (
         <Suspense fallback={null}>
-          {projectOverlay === 'canvas' && <CanvasWorkspace taskId={taskId} onClose={() => setProjectOverlay(null)} />}
+          {projectOverlay === 'canvas' && (
+            <CanvasWorkspace
+              taskId={taskId} onClose={() => setProjectOverlay(null)}
+              onOpenShot={shot => {
+                // 画布上双击绑定了镜头的节点：收起画布，回到分镜那一场、那一镜。
+                setProjectOverlay(null);
+                setActiveTabStage(4);
+                setStoryboardViewAction({ sceneId: shot.sceneId, shotId: shot.shotId, view: 'board', nonce: Date.now() });
+              }}
+            />
+          )}
           {projectOverlay === 'interactive' && <InteractiveStoryWorkspace taskId={taskId} onClose={() => setProjectOverlay(null)} onOpenCanvas={() => setProjectOverlay('canvas')} />}
           {projectOverlay === 'tasks' && <TaskCenter taskId={taskId} onClose={() => setProjectOverlay(null)} />}
           {projectOverlay === 'memory' && <ProjectMemory taskId={taskId} onClose={() => setProjectOverlay(null)} />}
@@ -2964,7 +3209,7 @@ export default function App() {
                     style={{ width: '100%', padding: '10px', background: 'rgba(var(--shadow-rgb), 0.165)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.9rem' }}
                   />
                   <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '8px' }}>
-                    系统将在后台通过 `npx -y` 载入并安装指定的包。
+                    {tr('系统将在后台通过 `npx -y` 载入并安装指定的包。')}
                   </p>
                 </div>
               )}
@@ -2998,7 +3243,7 @@ export default function App() {
                     />
                     <div style={{ fontSize: '2.5rem', marginBottom: '10px' }}>📦</div>
                     <span style={{ fontSize: '0.85rem', display: 'block', color: importSkillFile ? 'var(--neon-green)' : 'var(--surface-2)' }}>
-                      {importSkillFile ? `已选择: ${importSkillFile.name} (${Math.round(importSkillFile.size / 1024)} KB)` : '点击选择或拖拽本地 ZIP 压缩文件上传'}
+                      {importSkillFile ? tr('已选择: {0} ({1} KB)', [importSkillFile.name, Math.round(importSkillFile.size / 1024)]) : tr('点击选择或拖拽本地 ZIP 压缩文件上传')}
                     </span>
                   </div>
                 </div>

@@ -13,6 +13,19 @@ from dataclasses import dataclass
 from typing import Any
 
 from PIL import Image, ImageChops, ImageOps, ImageStat
+from app.core import prompt_data
+
+
+_WORDING_FILE = "panorama"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/panorama.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 # 2:1, staying under the roughly 4.6-megapixel ceiling of a single image from the image models.
 PANORAMA_SIZE = "3024x1512"
@@ -24,14 +37,9 @@ SEAM_WARNING = 28.0
 MAX_DESCRIPTION = 1500
 
 _FORMAT_TEXT = (
-    "生成一张 360° 全景环境图：等距圆柱投影（equirectangular），画幅严格 2:1。"
-    "地平线水平穿过画面正中；画面左右两端在环绕时无缝相接，左边缘与右边缘的景物、光线和颜色完全连续，不留接缝。"
-    "画面顶部是天空或天花板、底部是地面，靠近上下两极的景物按全景投影自然拉伸。"
-    "这是一个空场景：全场没有人，不出现人物、人影、剪影、倒影里的人或人体局部。"
-    "写实电影质感，同一时段、同一光向与色温贯穿全景。"
-    "画面里不出现文字、字幕、标签、水印和 Logo。"
+    _text_of("module.format_text")
 )
-_REFERENCE_TEXT = "参考所给图片的地点、陈设、材质、色调与光线，把它扩展成环绕一周的完整空间；图中的人物一律不要。"
+_REFERENCE_TEXT = _text_of("module.reference_text")
 
 
 @dataclass(frozen=True)
@@ -56,10 +64,10 @@ def scene_brief(scene: Mapping[str, Any] | None) -> str:
 def panorama_prompt(description: str, *, scene: Mapping[str, Any] | None = None, has_reference: bool = False) -> str:
     place = " ".join(str(description or "").split())[:MAX_DESCRIPTION] or scene_brief(scene)
     if not place and not has_reference:
-        raise ValueError("请描述这个全景的地点，或给一张参考图")
+        raise ValueError(_text_of("panorama_prompt.text"))
     pieces = [_FORMAT_TEXT]
     if place:
-        pieces.append(f"场景：{place}。")
+        pieces.append(_text_of("panorama_prompt.text.2").format(place))
     if has_reference:
         pieces.append(_REFERENCE_TEXT)
     return "".join(pieces)
@@ -95,10 +103,10 @@ def fit_panorama(content: bytes) -> Panorama:
         with Image.open(io.BytesIO(content)) as opened:
             image = opened.convert("RGB")
     except OSError as exc:
-        raise ValueError("图像模型返回的不是可用的图片") from exc
+        raise ValueError(_text_of("fit_panorama.text")) from exc
     width, height = image.size
     if width < MIN_WIDTH:
-        raise ValueError(f"生成的图片太小（{width}×{height}），不能作全景")
+        raise ValueError(_text_of("fit_panorama.text.2").format(width, height))
     target_width = min(width, MAX_WIDTH)
     target = (target_width - target_width % 2, (target_width - target_width % 2) // 2)
     # Keep the middle: the horizon is asked for there, and the poles are the part that matters least.

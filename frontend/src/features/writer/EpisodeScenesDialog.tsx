@@ -3,6 +3,7 @@ import { Clapperboard, X } from 'lucide-react';
 
 import { ScriptOutline } from './ScriptOutline';
 import { sceneEpisode, type WriterScene } from './types';
+import { useDialogFocus } from './useDialogFocus';
 import { t } from '../../i18n';
 
 export function EpisodeScenesDialog({
@@ -18,6 +19,7 @@ export function EpisodeScenesDialog({
     () => scenes.filter(scene => sceneEpisode(scene) === episodeNumber),
     [episodeNumber, scenes],
   );
+  const closeRef = useDialogFocus<HTMLButtonElement>();
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -41,7 +43,7 @@ export function EpisodeScenesDialog({
             <small>EPISODE SCENES</small>
             <h2><Clapperboard aria-hidden="true" /> 第 {episodeNumber} 集 · {episodeScenes.length} 个场景</h2>
           </div>
-          <button type="button" aria-label={t('关闭场景明细')} onClick={onClose}><X aria-hidden="true" /></button>
+          <button ref={closeRef} type="button" aria-label={t('关闭场景明细')} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
         <div className="writer-episode-dialog__scenes">
           {episodeScenes.length ? (

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import Field, model_validator
 
@@ -14,6 +14,19 @@ from app.schema.production import (
     IdentityViewName,
     identity_view_order_is_valid,
 )
+from app.core import prompt_data
+
+
+_WORDING_FILE = "schema_character_dashboard"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/schema_character_dashboard.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 #: 看板里所有视图键的类型别名。
@@ -43,11 +56,11 @@ class CharacterViewDefinition(DramaBaseSchema):
 
 
 IDENTITY_VIEW_LABELS: tuple[tuple[str, str], ...] = (
-    ("正面全身", "Front full body"),
-    ("侧面全身", "Profile full body"),
-    ("背面全身", "Back full body"),
-    ("正脸特写", "Face front close-up"),
-    ("左侧45°侧脸", "Face left 45°"),
+    _words_of("module.identity_view_labels"),
+    _words_of("module.identity_view_labels.2"),
+    _words_of("module.identity_view_labels.3"),
+    _words_of("module.identity_view_labels.4"),
+    _words_of("module.identity_view_labels.5"),
 )
 
 
@@ -193,7 +206,7 @@ class CharacterSheetCell(DramaBaseSchema):
 class CharacterDashboardCharacter(DramaBaseSchema):
     character_id: str = Field(..., pattern=r"^character-[a-f0-9]{16}$")
     name: str = Field(..., min_length=1, max_length=80)
-    role: str = Field("剧情角色", max_length=120)
+    role: str = Field(_text_of("CharacterDashboardCharacter.role"), max_length=120)
     description: str = Field("", max_length=4000)
     identity: str = Field("", max_length=1000)
     voice_id: str = Field("", max_length=160)
@@ -248,3 +261,5 @@ class CharacterDashboardResponse(DramaBaseSchema):
     risks: list[CharacterRisk] = Field(default_factory=list, max_length=100)
     characters: list[CharacterDashboardCharacter] = Field(default_factory=list, max_length=500)
     raw_text: str = Field("", max_length=2_000_000)
+    # 定音色的回应才有：换了已配过音的角色的音色，全剧联动重配的结果(或后台重配的排队状态)，见 app/service/voice_relink.py。
+    voice_relink: Optional[dict[str, Any]] = None

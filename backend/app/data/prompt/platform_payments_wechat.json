@@ -1,0 +1,21 @@
+{
+  "_doc": "app/platform/payments/wechat.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "__init__.text": "微信支付 APIv3 密钥必须是 32 字节",
+  "_request.text": "微信支付请求失败: {0}",
+  "_request.text.2": "微信支付应答验签失败",
+  "create_qr.text": "微信支付下单失败: {0}",
+  "query.text": "微信支付查单失败: {0}",
+  "close.text": "微信支付关单失败: {0}",
+  "parse_notification.text": "微信支付通知验签失败",
+  "parse_notification.text.2": "微信支付通知时间戳无效",
+  "parse_notification.text.3": "微信支付通知已过期",
+  "parse_notification.text.4": "微信支付通知无法解密",
+  "download_bill.text": "微信账单尚未生成: {0}",
+  "download_bill.text.2": "微信账单申请失败: {0}",
+  "download_bill.text.3": "微信账单下载地址不可信",
+  "download_bill.text.4": "微信账单下载失败: {0}",
+  "download_bill.text.5": "微信账单下载失败: HTTP {0}",
+  "download_bill.text.6": "微信账单哈希不一致，下载不完整",
+  "refund.text": "微信支付退款失败: {0}",
+  "query_refund.text": "微信支付退款查询失败: {0}"
+}

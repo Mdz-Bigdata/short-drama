@@ -16,6 +16,7 @@ import {
   actorsInShot, type ActionClip, type ActorKey, type CameraKey, type FollowClip, type GroundPoint, type ShotTimeline, type SpacePoint,
   type StageActor, type StageCamera, type StageEasing, type StagePlan, type StagePose, type StageShot,
 } from '../../spatial/spatialTypes';
+import { resolveContacts, seatOf, type ResolveOptions } from './contacts';
 import { clipForPosture, humanoidClip } from './humanoidClips';
 import { blendPose, jointsOf, posePosture, type Joints } from './poses';
 import { verticalFov } from './stageMath';
@@ -72,15 +73,40 @@ export function frameOf(time: number, fps: number): number {
   return Math.round(time * fps);
 }
 
-/** Key times are stored to the millisecond, which is what the server keeps. */
-export function timeOfFrame(frame: number, fps: number): number {
-  return Math.round((frame / fps) * 1000) / 1000;
+/**
+ * Key times are stored to the millisecond, which is what the server keeps. Given the shot's length,
+ * the time never passes it: the end frame of a shot that is not a whole number of frames long
+ * rounds to an instant just after the end, where the server takes no key.
+ */
+export function timeOfFrame(frame: number, fps: number, durationS?: number): number {
+  const time = Math.round((frame / fps) * 1000) / 1000;
+  return durationS === undefined ? time : Math.min(time, durationS);
 }
 
-/** The frame a playhead is showing: preview, scrub and export all draw whole frames. */
+/**
+ * The last frame a playhead can stand on. It is one past the last frame an export draws
+ * (`frameCount - 1`): a camera move, a baked follow and a key dragged to the right edge all put
+ * their last key on the very end of the shot, and a key can only be edited from its own frame.
+ */
+export function lastPlayheadFrame(durationS: number, fps: number): number {
+  return Math.max(frameCount(durationS, fps) - 1, frameOf(durationS, fps));
+}
+
+/** The frame a playhead at `time` is showing; the end of the shot is a frame of its own. */
+export function playheadFrame(time: number, fps: number, durationS: number): number {
+  const last = lastPlayheadFrame(durationS, fps);
+  if (time >= durationS - 1e-6) return last;
+  return Math.min(last, Math.max(0, Math.floor(time * fps + 1e-6)));
+}
+
+/**
+ * The instant a playhead is showing: preview and scrub draw whole frames, and never past the end.
+ * The last frame stands for the end of the shot itself: an end key sits there, and in a shot that
+ * is not a whole number of frames long the frame it rounds to starts a little before it.
+ */
 export function snapToFrame(time: number, fps: number, durationS: number): number {
-  const last = frameCount(durationS, fps) - 1;
-  return Math.min(last, Math.max(0, Math.floor(time * fps + 1e-6))) / fps;
+  const frame = playheadFrame(time, fps, durationS);
+  return frame === lastPlayheadFrame(durationS, fps) ? durationS : frame / fps;
 }
 
 /** Tenths of a millimetre: fine enough for any frame, and 0.1 + 0.2 stops showing up in the inspector. */
@@ -95,6 +121,18 @@ export function lerpYaw(a: number, b: number, t: number): number {
   return value === -180 ? 180 : value;
 }
 
+/**
+ * A key is stamped at its frame's time rounded to the millisecond (timeOfFrame), up to a third of a
+ * millisecond after the frame itself: frame 1 at 24 fps is 0.041667 s and its key is 0.042 s. Within
+ * half a millisecond a key counts as reached, so it is drawn on the frame it was stamped on.
+ */
+const KEY_REACH_S = 5e-4;
+
+/** Whether `t` has got to an instant stamped at `time`: a key, or the start or end of a block. */
+function reaches(t: number, time: number): boolean {
+  return t >= time - KEY_REACH_S;
+}
+
 interface Span<K> { from: K; to: K; weight: number }
 
 /** The two keys around `t` and how far between them the easing has got; before the first and after the last, that key alone. */
@@ -103,7 +141,7 @@ function spanAt<K extends { time: number; easing?: StageEasing }>(keys: K[], t: 
   if (t <= keys[0].time) return { from: keys[0], to: keys[0], weight: 0 };
   for (let index = 1; index < keys.length; index += 1) {
     const to = keys[index];
-    if (t < to.time) {
+    if (!reaches(t, to.time)) {
       const from = keys[index - 1];
       return { from, to, weight: ease((t - from.time) / (to.time - from.time), to.easing) };
     }
@@ -202,7 +240,7 @@ function clipOver(actor: StageActor, pose: StagePose | null, poseKeys: ActorKey[
   if (actor.figure !== 'humanoid') return pose;
   const clipId = pose?.clip || clipForPosture(posePosture(pose?.preset) || actor.posture);
   const clip = humanoidClip(clipId);
-  const reached = poseKeys.filter(key => key.time <= t);
+  const reached = poseKeys.filter(key => reaches(t, key.time));
   // Blending towards a key that asks for another clip shows that clip's opening frame until the key is reached.
   let started = reached.length && (reached[reached.length - 1].pose?.clip || '') !== clipId && pose?.clip ? t : 0;
   for (let index = reached.length - 1; index >= 0 && (reached[index].pose?.clip || '') === clipId; index -= 1) {
@@ -215,9 +253,22 @@ function clipOver(actor: StageActor, pose: StagePose | null, poseKeys: ActorKey[
   return { preset: pose?.preset || '', joints: pose?.joints || {}, clip: clipId, clip_phase: round3(phase) };
 }
 
-/** The block of the action track playing at `t`; a block owns its first instant and hands over its last. */
-export function actionBlockAt(clips: ActionClip[] | undefined, t: number): ActionClip | undefined {
-  return clips?.find(clip => t >= clip.start && t < clip.end);
+/** A block that runs to the end of the shot has nobody to hand over to, so it is looked up just inside the end. */
+const SHOT_END_INSET_S = 1e-3;
+
+/**
+ * The block playing at `t`: a block owns its first instant and hands over its last. Given the
+ * shot's length, the end of the shot still belongs to the block that reaches it, so a playhead
+ * parked there keeps the cut, the motion or the follow it was showing a frame earlier.
+ */
+function blockAt<T extends { start: number; end: number }>(blocks: T[] | undefined, t: number, durationS?: number): T | undefined {
+  const at = durationS === undefined ? t : Math.min(t, durationS - SHOT_END_INSET_S);
+  return blocks?.find(block => reaches(at, block.start) && !reaches(at, block.end));
+}
+
+/** The block of the action track playing at `t`. */
+export function actionBlockAt(clips: ActionClip[] | undefined, t: number, durationS?: number): ActionClip | undefined {
+  return blockAt(clips, t, durationS);
 }
 
 /**
@@ -228,7 +279,8 @@ export function actionBlockAt(clips: ActionClip[] | undefined, t: number): Actio
 function actionOver(actor: StageActor, pose: StagePose | null, block: ActionClip, t: number): StagePose | null {
   const motion = humanoidClip(block.clip);
   if (actor.figure === 'humanoid') {
-    const elapsed = ((t - block.start) * (block.speed ?? 1)) / motion.duration;
+    // A block is reached a hair before its stamped start; it plays from its first frame, not the end of its loop.
+    const elapsed = (Math.max(0, t - block.start) * (block.speed ?? 1)) / motion.duration;
     const base = block.offset ?? 0;
     const phase = motion.loop ? cyclePhase(elapsed, 1, base) : Math.min(1, base + elapsed);
     return { preset: motion.posture, joints: pose?.joints || {}, clip: motion.id, clip_phase: round3(phase) };
@@ -244,9 +296,11 @@ function actionOver(actor: StageActor, pose: StagePose | null, block: ActionClip
  * `authored` leaves the gait and the running clip out: the pose as somebody keyed it, which is
  * what a new key has to record (a key that froze one frame of a stride would stop the walk).
  */
-export function sampleActor(actor: StageActor, keys: ActorKey[] | undefined, t: number, authored = false, clips?: ActionClip[]): SampledActor {
+export function sampleActor(
+  actor: StageActor, keys: ActorKey[] | undefined, t: number, authored = false, clips?: ActionClip[], durationS?: number,
+): SampledActor {
   const sampled = sampleKeyed(actor, keys, t, authored);
-  const block = authored ? undefined : actionBlockAt(clips, t);
+  const block = authored ? undefined : actionBlockAt(clips, t, durationS);
   return block ? { ...sampled, pose: actionOver(actor, sampled.pose, block, t) } : sampled;
 }
 
@@ -323,12 +377,8 @@ function followWeight(clip: FollowClip, t: number): number {
 }
 
 /** The lens a cut puts in front of the shot at `t`; `undefined` when the shot's own lens films. */
-export function cutCameraAt(timeline: Pick<ShotTimeline, 'cuts'>, t: number): string | undefined {
-  return timeline.cuts?.find(cut => t >= cut.start && t < cut.end)?.camera_id;
-}
-
-function followClipAt(clips: FollowClip[] | undefined, t: number): FollowClip | undefined {
-  return clips?.find(clip => t >= clip.start && t < clip.end);
+export function cutCameraAt(timeline: Pick<ShotTimeline, 'cuts'> & Partial<Pick<ShotTimeline, 'duration_s'>>, t: number): string | undefined {
+  return blockAt(timeline.cuts, t, timeline.duration_s)?.camera_id;
 }
 
 /**
@@ -344,10 +394,17 @@ export function sampleShot(plan: StagePlan, shot: StageShot | undefined, t: numb
   const filming = Boolean(camera) && camera?.id === shot?.camera_id;
   const actors: Record<string, SampledActor> = {};
   const cast = actorsInShot(plan, shot);
-  cast.forEach(actor => { actors[actor.name] = sampleActor(actor, timeline.actors[actor.name], time, false, timeline.clips?.[actor.name]); });
+  cast.forEach(actor => { actors[actor.name] = sampleActor(actor, timeline.actors[actor.name], time, false, timeline.clips?.[actor.name], timeline.duration_s); });
+  // Someone sitting on a seat stays on it whatever the keys say (contacts.ts); facing and pose are still the keys'.
+  if (plan.contacts?.length) {
+    cast.forEach(actor => {
+      const seat = plan.landmarks.find(item => item.name === seatOf(plan, shot?.shot_id, actor.name)?.target);
+      if (seat) actors[actor.name] = { ...actors[actor.name], position: [seat.position[0], seat.position[1]] };
+    });
+  }
   const aspect = parseAspect(plan.aspect_ratio);
   let lens = camera ? sampleCamera(filming ? cameraKeysOf(timeline, camera) : [], camera, aspect, time) : null;
-  const follow = filming ? followClipAt(timeline.follow, time) : undefined;
+  const follow = filming ? blockAt(timeline.follow, time, timeline.duration_s) : undefined;
   const followed = follow ? cast.find(actor => actor.name === follow.actor) : undefined;
   if (lens && follow && followed) {
     const tied = followPose(follow, followed, timeline.actors[followed.name], time, aspect, camera?.sensor_mm, lens.lens_mm);
@@ -365,10 +422,15 @@ function sameNumbers(a: readonly number[], b: readonly number[]): boolean {
 
 /**
  * The plan as it is drawn at `t`: marks, per-shot overrides and the filming lens replaced by
- * their sampled values. Anything the sample leaves as it was keeps its identity, so a still
- * stage (no keys, t = 0) comes back as the very same plan.
+ * their sampled values, then the contacts in force kept (a held prop in the hand that holds it,
+ * see contacts.ts). Anything neither changes keeps its identity, so a still stage (no keys, no
+ * contacts, t = 0) comes back as the very same plan.
  */
-export function stagePlanAt(plan: StagePlan, shotId: number | null | undefined, t: number, cameraId?: string): StagePlan {
+export function stagePlanAt(plan: StagePlan, shotId: number | null | undefined, t: number, cameraId?: string, options?: ResolveOptions): StagePlan {
+  return resolveContacts(sampledPlanAt(plan, shotId, t, cameraId), shotId, options);
+}
+
+function sampledPlanAt(plan: StagePlan, shotId: number | null | undefined, t: number, cameraId?: string): StagePlan {
   const shot = plan.shots.find(item => item.shot_id === shotId);
   if (!shot) return plan;
   const sample = sampleShot(plan, shot, t, cameraId);
@@ -408,40 +470,4 @@ export function stagePlanAt(plan: StagePlan, shotId: number | null | undefined, 
       }),
     })),
   };
-}
-
-export interface CameraPath {
-  /** The lens position along the shot, evenly spaced in time. */
-  points: SpacePoint[];
-  keys: Array<{ time: number; position: SpacePoint }>;
-}
-
-/** Where the filming lens travels during the shot; `null` when it does not move at all. */
-export function cameraPathOf(plan: StagePlan, shot: StageShot | undefined, steps = 48): CameraPath | null {
-  const camera = plan.cameras.find(item => item.id === shot?.camera_id);
-  if (!shot || !camera) return null;
-  const timeline = timelineOf(plan, shot.shot_id);
-  const keys = cameraKeysOf(timeline, camera);
-  if (keys.length < 2 && !timeline.follow?.length) return null;
-  // The whole lens, not just its keys: a follow clip moves it without having any.
-  const points = Array.from({ length: steps + 1 }, (_, index) => sampleShot(plan, shot, (timeline.duration_s * index) / steps).camera?.position ?? camera.position);
-  return { points, keys: keys.map(key => ({ time: key.time, position: key.position })) };
-}
-
-export interface ActorPath {
-  name: string;
-  /** On the ground (y = 0), one point per placed key: between two keys a figure walks a straight line. */
-  points: SpacePoint[];
-  keys: Array<{ time: number; position: SpacePoint }>;
-}
-
-/** Every actor track of the shot that goes somewhere; easing changes the timing of a leg, never its line. */
-export function actorPathsOf(plan: StagePlan, shot: StageShot | undefined): ActorPath[] {
-  if (!shot) return [];
-  const timeline = timelineOf(plan, shot.shot_id);
-  return Object.entries(timeline.actors).flatMap(([name, keys]) => {
-    const placed = keys.flatMap(key => (key.position ? [{ time: key.time, position: [key.position[0], 0, key.position[1]] as SpacePoint }] : []));
-    if (placed.length < 2) return [];
-    return [{ name, points: placed.map(key => key.position), keys: placed }];
-  });
 }

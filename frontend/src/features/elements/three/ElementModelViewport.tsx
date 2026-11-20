@@ -1,14 +1,16 @@
-import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Bounds, Center, Grid, OrbitControls, PerformanceMonitor, useBounds } from '@react-three/drei';
+import { Component, memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Bounds, Center, Environment, Grid, Lightformer, OrbitControls, PerformanceMonitor, useBounds } from '@react-three/drei';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Box, Gauge, Grid3X3, Maximize2, Pause, Play, RotateCcw } from 'lucide-react';
-import type { Object3D } from 'three';
+import { BackSide, type Object3D } from 'three';
 // three-stdlib's loaders are API-identical but do not embed `new URL` decoder
 // fallbacks, which made Vite ship a duplicate ~1.3MB draco runtime in dist.
 import { GLTFLoader } from 'three-stdlib';
 
 import { API_BASE, apiUrl } from '../../../api/client';
 import { disposeModelResources } from './disposeModelResources';
+import { floorGridFor, largestSide } from './stageFloor';
+import { STAGE_AMBIENT, STAGE_LIGHTS, STAGE_PANELS, STAGE_SURROUND } from './stageLights';
 import { t } from '../../../i18n';
 
 
@@ -17,6 +19,9 @@ interface Props {
   contentUrl: string;
   posterUrl?: string;
 }
+
+// 和 ElementLibraryPage.css 的 --asset-stage-dark 同色：容器先铺这个底，画布出第一帧前不闪白。
+const STAGE_BACKGROUND = '#0f0c12';
 
 interface ModelRequestState {
   scene: Object3D | null;
@@ -123,6 +128,55 @@ function FitCamera({ signal }: { signal: number }) {
   return null;
 }
 
+// 地面贴在模型脚下(Center top 把模型底面放到 y=0)，格子和淡出距离按模型的大小算。
+function StageFloor({ scene }: { scene: Object3D }) {
+  const floor = useMemo(() => floorGridFor(largestSide(scene)), [scene]);
+  return (
+    <Grid
+      position={[0, -floor.drop, 0]}
+      args={[28, 28]}
+      cellSize={floor.cellSize}
+      cellThickness={0.4}
+      cellColor="#fef9fa"
+      sectionSize={floor.sectionSize}
+      sectionThickness={0.8}
+      sectionColor="#e14962"
+      fadeDistance={floor.fadeDistance}
+      fadeStrength={1.5}
+      infiniteGrid
+    />
+  );
+}
+
+// memo：环境贴图只在挂载时渲染一次，开关网格、省电这些重绘不必重做。
+const StageLighting = memo(function StageLighting() {
+  return (
+    <>
+      <ambientLight intensity={STAGE_AMBIENT.intensity} />
+      <hemisphereLight args={[STAGE_AMBIENT.sky, STAGE_AMBIENT.ground, STAGE_AMBIENT.hemisphere]} />
+      <directionalLight position={STAGE_LIGHTS.key.position} intensity={STAGE_LIGHTS.key.intensity} />
+      <directionalLight position={STAGE_LIGHTS.fill.position} intensity={STAGE_LIGHTS.fill.intensity} />
+      <directionalLight position={STAGE_LIGHTS.rim.position} intensity={STAGE_LIGHTS.rim.intensity} color={STAGE_LIGHTS.rim.color} />
+      {/* 本地画出来的环境贴图，不取外网 HDR：没有它，金属材质无物可反射，近乎全黑。 */}
+      <Environment resolution={256}>
+        <mesh scale={40}>
+          <sphereGeometry args={[1, 32, 16]} />
+          <meshBasicMaterial color={STAGE_SURROUND} side={BackSide} toneMapped={false} />
+        </mesh>
+        {STAGE_PANELS.map(panel => (
+          <Lightformer
+            key={panel.position.join(',')}
+            form="rect"
+            position={panel.position}
+            scale={panel.size}
+            intensity={panel.intensity}
+          />
+        ))}
+      </Environment>
+    </>
+  );
+});
+
 function ContextLossGuard({ onLost }: { onLost: () => void }) {
   const canvas = useThree(state => state.gl.domElement);
   useEffect(() => {
@@ -216,34 +270,15 @@ export default function ElementModelViewport({ name, contentUrl, posterUrl }: Pr
             camera={{ position: [4.5, 2.8, 6], fov: 38, near: 0.01, far: 10_000 }}
             gl={{ antialias: !lowQuality, powerPreference: 'high-performance' }}
           >
-            <color attach="background" args={['#0f0c12']} />
-            <fog attach="fog" args={['#0f0c12', 14, 34]} />
-            <ambientLight intensity={1.05} />
-            <hemisphereLight args={['#f0a3b4', '#1a1420', 1.7]} />
-            <directionalLight position={[5, 8, 4]} intensity={2.8} color="#e76e82" />
-            <spotLight position={[-6, 5, 1]} intensity={35} angle={0.45} penumbra={0.9} color="#e46e5b" />
-            <spotLight position={[4, 2, -5]} intensity={24} angle={0.55} penumbra={1} color="#e3546c" />
+            <color attach="background" args={[STAGE_BACKGROUND]} />
+            <StageLighting />
             <Bounds fit clip observe margin={1.25}>
-              <Center>
+              <Center top>
                 <primitive object={scene} />
               </Center>
               <FitCamera signal={resetSignal} />
             </Bounds>
-            {showGrid && (
-              <Grid
-                position={[0, -1.4, 0]}
-                args={[28, 28]}
-                cellSize={0.5}
-                cellThickness={0.4}
-                cellColor="#fef9fa"
-                sectionSize={2.5}
-                sectionThickness={0.8}
-                sectionColor="#e14962"
-                fadeDistance={28}
-                fadeStrength={1.5}
-                infiniteGrid
-              />
-            )}
+            {showGrid && <StageFloor scene={scene} />}
             <OrbitControls
               makeDefault
               enableDamping

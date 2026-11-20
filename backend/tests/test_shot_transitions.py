@@ -296,6 +296,16 @@ class CutDiagnosisTests(unittest.TestCase):
         turned = cuts.plan_transitions([_shot(1, "沈砚向右走"), _shot(2, "沈砚转身向左走", size="近景")])
         self.assertTrue(_check(turned, "transition_screen_direction").passed)
 
+    def test_who_leaves_on_one_side_comes_back_in_on_the_other(self):
+        same_side = cuts.plan_transitions([_shot(1, "沈砚从画面右侧出画"), _shot(2, "沈砚从右侧入画，停在门前", size="近景")])
+        check = _check(same_side, "transition_screen_direction")
+        self.assertFalse(check.passed)
+        self.assertIn("第1镜从画面右侧出画→第2镜又从右侧入画", check.detail)
+        other_side = cuts.plan_transitions([_shot(1, "沈砚从画面右侧出画"), _shot(2, "沈砚从画面左侧入画", size="近景")])
+        self.assertTrue(_check(other_side, "transition_screen_direction").passed)
+        came_back = cuts.plan_transitions([_shot(1, "沈砚从画面右侧出画"), _shot(2, "沈砚折返，从右侧入画", size="近景")])
+        self.assertTrue(_check(came_back, "transition_screen_direction").passed, "a written turn brings him back the way he left")
+
     def test_a_fast_move_needs_a_reason_and_a_match(self):
         burst = cuts.plan_transitions([_shot(1, "沈砚慢慢说话"), _shot(2, "沈砚站着", motion="快速左摇", size="近景")])
         self.assertFalse(_check(burst, "transition_motion_energy").passed)

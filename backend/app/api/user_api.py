@@ -17,10 +17,25 @@ from app.platform.billing_book import account_status_changed
 from app.platform.dependencies import get_platform_store
 from app.platform.bootstrap import bootstrap_admin_login, remove_bootstrap_credential_file
 from app.platform.store import PlatformStore
-from app.schema.platform import AdminUserUpdateRequest, PasswordChangeRequest, ProfileUpdateRequest, UserRolesRequest
+from app.schema.platform import (
+    AdminUserUpdateRequest, PasswordChangeRequest, ProfileUpdateRequest, PromptPreferenceRequest, UserRolesRequest,
+)
+from app.core import prompt_data, prompt_preferences
 
 
-router = APIRouter(tags=["用户中心与管理"])
+_WORDING_FILE = "api_user_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_user_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+
+router = APIRouter(tags=list(_words_of("module.tags")))
 
 
 @router.get("/api/users/me")
@@ -55,6 +70,33 @@ async def update_user_center(
         return {"user": _public_user(record)}
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/api/users/me/prompt-preferences")
+async def prompt_preference_catalogue(
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """Every stage agent, the choices it offers, and what this account chose."""
+    saved = prompt_preferences.from_rows(await store.list_prompt_preferences(user["user_id"]))
+    return prompt_preferences.catalogue(saved)
+
+
+@router.put("/api/users/me/prompt-preferences/{operation}")
+async def set_prompt_preference(
+    operation: str,
+    request: PromptPreferenceRequest,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """Follow the platform's method for a stage agent, add to it, or (where offered) write one's own."""
+    try:
+        choice = prompt_preferences.normalise(operation, request.mode, request.text)
+    except prompt_preferences.PreferenceError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    await store.set_prompt_preference(user["user_id"], operation, choice.mode, choice.text)
+    saved = prompt_preferences.from_rows(await store.list_prompt_preferences(user["user_id"]))
+    return prompt_preferences.catalogue(saved)
 
 
 @router.post("/api/users/me/password")
@@ -100,7 +142,7 @@ async def admin_update_user(
     target = await store.get_user(user_id)
     # 客服可以停用客户，但不能通过停用别的管理人员来绕过角色授予。
     if target and target.roles and not has_permission(admin, ROLE_ASSIGN):
-        raise HTTPException(status_code=403, detail="只有可授予角色的人才能更改管理人员的账号状态")
+        raise HTTPException(status_code=403, detail=_text_of("admin_update_user.detail"))
     try:
         user = await store.set_user_status(admin["user_id"], user_id, request.status)
     except ValueError as exc:
@@ -120,7 +162,7 @@ async def admin_delete_user(
     """Who they were goes for good. Orders, ledger and audit stay, because those records are not theirs alone to remove."""
     target = await store.get_user(user_id)
     if target and target.roles and not has_permission(admin, ROLE_ASSIGN):
-        raise HTTPException(status_code=403, detail="只有可授予角色的人才能删除管理人员的账号")
+        raise HTTPException(status_code=403, detail=_text_of("admin_delete_user.detail"))
     try:
         user = await store.delete_account(actor_id=admin["user_id"], user_id=user_id)
     except LookupError as exc:

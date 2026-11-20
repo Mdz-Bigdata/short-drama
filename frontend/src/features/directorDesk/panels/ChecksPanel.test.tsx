@@ -78,6 +78,39 @@ describe('ChecksPanel', () => {
     expect(repairCalls()).toHaveLength(0);
   });
 
+  it('stays folded to its one-line summary while every check passes, and opens when one fails', async () => {
+    const clean: StagePlan = { ...PLAN, checks: PLAN.checks.map(check => ({ ...check, passed: true, shot_ids: [] })) };
+    const { rerender } = render(panel({ plan: clean }));
+    const toggle = screen.getByRole('button', { name: /检查与修正/ });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByText('全部通过')).toBeTruthy();
+    expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+
+    rerender(panel());
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getAllByRole('listitem')).toHaveLength(2);
+    expect(await screen.findByRole('button', { name: '修正' })).toBeTruthy();
+  });
+
+  it('keeps the fold the user chose for the rest of the visit', async () => {
+    const clean: StagePlan = { ...PLAN, checks: PLAN.checks.map(check => ({ ...check, passed: true, shot_ids: [] })) };
+    const { rerender } = render(panel());
+    const toggle = screen.getByRole('button', { name: /检查与修正/ });
+    await userEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+    // Folded by hand: a clean plan and then a failing one again leave it folded, with the count still in the header.
+    rerender(panel({ plan: clean }));
+    rerender(panel());
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByText('1 项未通过')).toBeTruthy();
+
+    await userEvent.click(toggle);
+    rerender(panel({ plan: clean }));
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getAllByRole('listitem')).toHaveLength(2);
+  });
+
   it('shows what the person has to decide when a repair cannot be automatic', async () => {
     fetchMock.mockImplementation(() => json({
       ...REPAIRS,

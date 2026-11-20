@@ -31,10 +31,10 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import BaseModel, Field
 
-from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
+from app.core.reference_limits import WIDEST_REFERENCE_AUDIOS, WIDEST_REFERENCE_IMAGES, WIDEST_REFERENCE_VIDEOS
 from app import settings
 from app.core.providers.defaults import PROVIDER_DEFAULT_BASE_URLS
-from app.core.video_references import max_shot_seconds
+from app.core.video_references import kling_native_sound, max_shot_seconds
 from app.platform.runtime_models import runtime_model_registry
 
 
@@ -46,9 +46,9 @@ class VideoJobRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=20000)
     first_frame: str | None = None
     last_frame: str | None = None
-    reference_images: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_IMAGES)
-    reference_videos: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_VIDEOS)
-    reference_audios: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_AUDIOS)
+    reference_images: list[str] = Field(default_factory=list, max_length=WIDEST_REFERENCE_IMAGES)
+    reference_videos: list[str] = Field(default_factory=list, max_length=WIDEST_REFERENCE_VIDEOS)
+    reference_audios: list[str] = Field(default_factory=list, max_length=WIDEST_REFERENCE_AUDIOS)
     duration_seconds: int = Field(default=5, ge=1, le=30)
     aspect_ratio: str = "9:16"
     resolution: str = "1080p"
@@ -234,6 +234,10 @@ class KlingVideoAdapter(VideoProviderAdapter):
             "duration": self._duration(model, request.duration_seconds),
             "aspect_ratio": request.aspect_ratio,
         }
+        # Judged on the name the project chose, so the request and the dubbing decision read the same string.
+        if kling_native_sound((request.model or "").strip() or model):
+            # The model's own sound, when the host has switched it on (the API's default is "off").
+            body["sound"] = "on"
         if mode == "text":
             return "/v1/videos/text2video", body
         if mode == "multi_reference":

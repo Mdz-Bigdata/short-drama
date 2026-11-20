@@ -6,10 +6,11 @@ export interface ChatCommand {
 }
 
 export const CHAT_COMMANDS: readonly ChatCommand[] = [
-  { command: '/pause', label: '暂停', description: '当前阶段结束后暂停后续制作', keywords: '停止 暂停 pause' },
-  { command: '/resume', label: '恢复', description: '从未完成的步骤恢复之前的制作模式', keywords: '继续 恢复 resume continue' },
+  { command: '/pause', label: '暂停', description: '打断制作：正在做的这一步停在下一个节点，已完成的部分保留', keywords: '停止 暂停 打断 等一下 pause' },
+  { command: '/resume', label: '恢复', description: '从停下的地方接着自动做到成片', keywords: '继续 恢复 接着 resume continue' },
   { command: '/stop', label: '结束任务', description: '结束后续执行，保留已有资产和对话', keywords: '结束 终止 stop end' },
-  { command: '/start', label: '开启', description: '开始第一个尚未完成的步骤', keywords: '开启 开始 启动 start' },
+  { command: '/start', label: '开启', description: '从第一个未完成的步骤开始，每一步做完自动进入下一步', keywords: '开启 开始 启动 start' },
+  { command: '/step', label: '逐步', description: '只做下一步，做完停下等您确认', keywords: '逐步 一步 单步 确认 step' },
   { command: '/compose', label: '合成视频', description: '前置步骤完成后合成视频、字幕和音轨', keywords: '合成 视频 渲染 compose video' },
   { command: '/auto', label: '一键成片', description: '自动连续完成剩余制作，无需逐步确认', keywords: '一键 成片 全部 自动 auto all' },
   { command: '/status', label: '进度', description: '查看当前步骤、进度和下一步建议', keywords: '进度 查询 状态 status progress' },

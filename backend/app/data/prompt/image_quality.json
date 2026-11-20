@@ -1,0 +1,17 @@
+{
+  "_doc": "app/core/image_quality.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "validate_actor_sheet_images.message": "设定集缺少必需格子：{0}。",
+  "validate_actor_sheet_images.message.2": "格子无法读取：{0}",
+  "validate_actor_sheet_images.message.3": "格子分辨率低于64×64。",
+  "validate_actor_sheet_images.message.4": "格子疑似空白或纯色，模型未在该格作画。",
+  "validate_actor_sheet_images.message.5": "五个身份锚点中至少三个疑似重复，未形成有效转面。",
+  "validate_actor_sheet_images.message.6": "正面/侧面/背面三张全身视图中存在重复，三视图未真正转面。",
+  "validate_actor_sheet_images.message.7": "左区大正面与细节矩阵正脸特写是同一张裁切，细节矩阵未按版面作画。",
+  "validate_actor_sheet_images.message.8": "三张全身视图之间色彩/服装调色差异过大，疑似人物或服装漂移。",
+  "validate_five_view_images.message": "必须恰好提供5个视图。",
+  "validate_five_view_images.message.2": "视图无法读取：{0}",
+  "validate_five_view_images.message.3": "视图分辨率低于128×256。",
+  "validate_five_view_images.message.4": "视图疑似空白或细节严重不足。",
+  "validate_five_view_images.message.5": "相邻视图色彩/服装调色差异过大，疑似人物或服装漂移。",
+  "validate_five_view_images.message.6": "五视图中至少三个角度疑似重复，未形成有效转面。"
+}

@@ -18,7 +18,8 @@ const EMPTY: CanvasDoc = { nodes: [], edges: [] };
  * Every save names the revision it was based on. A 409 means someone else (another window, the
  * assistant) wrote in between; nothing is overwritten, autosave stops, and the person chooses.
  */
-export function useCanvasDocument(projectId: string, canvasId: string) {
+export function useCanvasDocument(projectId: string, canvasId: string, options: { clientId?: string } = {}) {
+  const { clientId } = options;
   const [history, setHistory] = useState<DocHistory>(() => startHistory(EMPTY));
   const [status, setStatus] = useState<SaveStatus>('loading');
   const [version, setVersion] = useState(0);
@@ -53,7 +54,7 @@ export function useCanvasDocument(projectId: string, canvasId: string) {
     const attempt = (async () => {
       setStatus('saving');
       try {
-        const record = await saveCanvas(projectId, canvasId, versionRef.current, doc);
+        const record = await saveCanvas(projectId, canvasId, versionRef.current, doc, clientId);
         versionRef.current = record.version;
         setVersion(record.version);
         savedDoc.current = doc;
@@ -81,7 +82,7 @@ export function useCanvasDocument(projectId: string, canvasId: string) {
     const outcome = await attempt;
     inflight.current = null;
     return outcome;
-  }, [canvasId, projectId, schedule]);
+  }, [canvasId, clientId, projectId, schedule]);
 
   useEffect(() => { saveRef.current = save; }, [save]);
 
@@ -126,9 +127,9 @@ export function useCanvasDocument(projectId: string, canvasId: string) {
   useEffect(() => () => {
     clearTimer();
     if (!blocked.current && historyRef.current.doc !== savedDoc.current && !inflight.current) {
-      void saveCanvas(projectId, canvasId, versionRef.current, historyRef.current.doc).catch(() => undefined);
+      void saveCanvas(projectId, canvasId, versionRef.current, historyRef.current.doc, clientId).catch(() => undefined);
     }
-  }, [canvasId, projectId]);
+  }, [canvasId, clientId, projectId]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {

@@ -144,8 +144,8 @@
     "reviewed_commit": "066e7a505a0af17d31ee6c7a5629ac62ce88c166",
     "reviewed_at": "2026-10-13",
     "license_observation": "AGPL-3.0 with NOTICE/additional terms.",
-    "code_treatment": "clean-room",
-    "attribution": "ArcReel capability reference",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "ArcReel capability reference; prompt skeleton sentences reproduced (AGPL-3.0), see THIRD_PARTY_NOTICES.md",
     "capability_ids": [
       "story-graph",
       "shot-generation",
@@ -417,6 +417,121 @@
     "attribution": "looplj/reveric — https://github.com/looplj/reveric",
     "capability_ids": [
       "agent-operates-the-director-desk"
+    ]
+  },
+  {
+    "id": "open-ai-canvas",
+    "url": "https://github.com/ddcat-ai/open-ai-canvas",
+    "reviewed_commit": "c8d274f43c92f6a3d4aa0355f775b1b14c2fbc25",
+    "reviewed_at": "2026-11-10",
+    "license_observation": "MIT (Copyright (c) 2026 ddcat and Open AI Canvas contributors); Live2D runtime, icon logos and tldraw are under other terms and not used.",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "ddcat-ai/open-ai-canvas — https://github.com/ddcat-ai/open-ai-canvas (MIT)",
+    "capability_ids": [
+      "infinite-canvas-viewport",
+      "canvas-spatial-index",
+      "canvas-media-lod",
+      "canvas-layout-tools",
+      "canvas-nested-groups",
+      "canvas-clipboard",
+      "canvas-search",
+      "canvas-export-import"
+    ]
+  },
+  {
+    "id": "harness2",
+    "url": "https://github.com/google-research/harness2",
+    "reviewed_commit": "6868817518876de8fd170c6a8354daca273b6191",
+    "reviewed_at": "2026-11-15",
+    "license_observation": "Apache-2.0 (Copyright 2026 Google LLC; not an officially supported Google product). The benchmark runners under third_party/, the benchmarks and their datasets keep their own upstream licenses and are not used.",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "google-research/harness2 — https://github.com/google-research/harness2 (Apache-2.0); Xu et al., Harness²: Recursive Agent Harnessing for an Open World, arXiv:2610.14224",
+    "capability_ids": [
+      "harness-propose-probe-compose",
+      "harness-recursion-budget-ledger",
+      "harness-blind-selection",
+      "harness-reflection-lesson",
+      "harness-experience-library",
+      "harness-script-checks",
+      "harness-baseline-rollback",
+      "harness-resumable-studies"
+    ]
+  },
+  {
+    "id": "novanova-studio",
+    "url": "https://github.com/Swayingleaves/novanova-studio",
+    "reviewed_commit": "3cd0a62b986cacf7e691193e957e56aded02e017",
+    "reviewed_at": "2026-11-16",
+    "license_observation": "MIT (Copyright (c) 2026 zhenglin). Its canvas is built on React Flow (@xyflow/react, MIT), which this project does not use.",
+    "code_treatment": "clean-room",
+    "attribution": "Swayingleaves/novanova-studio — https://github.com/Swayingleaves/novanova-studio (MIT)",
+    "capability_ids": [
+      "canvas-storyboard-layout",
+      "canvas-asset-library",
+      "canvas-run-progress-push"
+    ]
+  },
+  {
+    "id": "aid-studio",
+    "url": "https://github.com/shijue-aid/aid-studio",
+    "reviewed_commit": "804a775dd03cfb144a8218b3a6fdea876c7e8066",
+    "reviewed_at": "2026-11-16",
+    "license_observation": "MIT (Copyright (c) 2026 光子讯息(杭州)科技有限公司); its backend carries a RuoYi-Vue MIT notice. Its canvas is built on React Flow (@xyflow/react, MIT) and Ant Design, which this project's canvas does not use.",
+    "code_treatment": "clean-room",
+    "attribution": "shijue-aid/aid-studio — https://github.com/shijue-aid/aid-studio (MIT)",
+    "capability_ids": [
+      "canvas-edge-arrows-and-emphasis",
+      "canvas-media-lightbox",
+      "canvas-open-bound-shot",
+      "canvas-pan-media-and-aspect-fit",
+      "canvas-several-results-per-run",
+      "canvas-composer-dock",
+      "canvas-assistant-panel"
+    ]
+  },
+  {
+    "id": "beeftv",
+    "url": "https://github.com/glanderness/BeefTV",
+    "reviewed_commit": "2c415ffbd7589981c70b0d09706e0f517f486fd9",
+    "reviewed_at": "2026-11-16",
+    "license_observation": "BeefTV licensing: Part A, BeefTV Source Available License 1.0 (Copyright (c) 2026 @beefnoode and BeefTV contributors), covers material first published under it and restricts supplying Covered Material or Derivative Works commercially or as an external service without written authorization; it states that independent implementations do not become Derivative Works. Material published earlier under MIT stays MIT. No written authorization was obtained.",
+    "code_treatment": "clean-room",
+    "attribution": "BeefTV capability reference (behaviour as described in its public README and docs); no BeefTV source, prompt, schema, UI or locale text is used",
+    "capability_ids": [
+      "beeftv-storage-meter",
+      "beeftv-startup-self-check",
+      "beeftv-diagnostics-bundle",
+      "beeftv-prompt-preferences",
+      "beeftv-thinking-display",
+      "beeftv-public-appearance",
+      "beeftv-chapter-assets",
+      "beeftv-batch-table",
+      "beeftv-prompt-editor",
+      "beeftv-prompt-optimizer",
+      "beeftv-smart-reference",
+      "beeftv-hand-tool",
+      "beeftv-version-preview",
+      "beeftv-force-overwrite",
+      "beeftv-canvas-appearance",
+      "beeftv-video-preview-transcode",
+      "beeftv-video-privacy-erase"
+    ]
+  },
+  {
+    "id": "sline-short-drama",
+    "url": "https://github.com/0xsline/short-drama",
+    "reviewed_commit": "8979a428c31a865421d661bdb606e24314b683a0",
+    "reviewed_at": "2026-11-19",
+    "license_observation": "MIT (Copyright (c) 2025 0xsline).",
+    "code_treatment": "attributed-adaptation",
+    "attribution": "0xsline/short-drama — https://github.com/0xsline/short-drama (MIT)",
+    "capability_ids": [
+      "sline-genre-stack",
+      "sline-tone-and-ending",
+      "sline-overseas-switch",
+      "sline-paywall-positions",
+      "sline-paywall-cliff-rules",
+      "sline-serial-brief-form"
     ]
   }
 ]

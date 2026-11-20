@@ -213,8 +213,7 @@ prompt.
 
 `POST /api/drama/{task}/director-desk/scenes/{scene}/captures` stores an upload and returns a
 `Capture`. `POST …/captures/{id}/apply` writes the still into the shot's `sequence_images` and the
-clip into `reference_videos` — the two slots stage 5 already reads. A clip's `fps` is a timeline's rate (24 / 25 / 30); 60 is refused. A blocking edit marks that
-scene's captures `stale`; stage 5 refuses a stale clip the same way it refuses a stale board.
+clip into `reference_videos` — the two slots stage 5 already reads. A clip's `fps` is a timeline's rate (24 / 25 / 30); 60 is refused. A plan edit dates only the captures it could show in: every capture of the scene when the edit changes the cast's marks or the set (actors, landmarks, crowds, axis, backdrop, aspect); otherwise a capture whose own shot, shot timeline, shot lens or capture lens changed, or whose shot left the plan. Edits confined to other shots leave it fresh; a rebuild dates the whole scene (`stale`); stage 5 refuses a stale clip the same way it refuses a stale board.
 
 A shot with a reference video reaches stage 5 with `motion_reference_required`, so with the reference mode on
 auto it is generated as `multimodal` (score 125, above first-and-last-frame's 120), and a video model that cannot do

@@ -15,8 +15,22 @@ from typing import Any
 from app.core import breakdown_kinds
 from app.core.character_looks import plan_looks
 from app.core.character_dashboard import compile_character_dashboard
+from app.core.contained_assets import contained_in
 from app.core.element_scope import element_in_task, element_name_keys, normalized_asset_name
 from app.core.production_asset_extractor import extract_production_assets
+from app.core import prompt_data
+
+
+_WORDING_FILE = "production_asset_readiness"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/production_asset_readiness.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 ASSET_KINDS = ("actor", "scene", "prop", "effect")
 # Every kind the library holds; products are only required when an ad's brief names one, and the
@@ -26,12 +40,12 @@ LIBRARY_KINDS = (*ASSET_KINDS, "costume", "product", *breakdown_kinds.KINDS)
 NON_ACTOR_KINDS = ("scene", "prop", "effect")
 OPTIONAL_KINDS = breakdown_kinds.FILED_KINDS
 KIND_LABELS = {
-    "actor": "数字演员",
-    "scene": "拍摄场地",
-    "prop": "拍摄道具",
-    "look": "表演妆造",
-    "effect": "特效",
-    "product": "商品",
+    "actor": _text_of("module.kind_labels.actor"),
+    "scene": _text_of("module.kind_labels.scene"),
+    "prop": _text_of("module.kind_labels.prop"),
+    "look": _text_of("module.kind_labels.look"),
+    "effect": _text_of("module.kind_labels.effect"),
+    "product": _text_of("module.kind_labels.product"),
     **breakdown_kinds.LABELS,
 }
 READINESS_KEY = "3_asset_readiness"
@@ -52,6 +66,7 @@ def element_summary(item: Any, owner_id: str, task_id: str) -> dict[str, Any] | 
         "id": str(getattr(item, "id", "") or ""),
         "kind": str(getattr(item, "kind", "") or ""),
         "name": str(getattr(item, "name", "") or ""),
+        "description": str(getattr(item, "description", "") or ""),
         "metadata": dict(metadata),
         "has_image": any(
             str(getattr(file, "mime_type", "") or "").startswith("image/") for file in files
@@ -116,10 +131,15 @@ def evaluate_asset_readiness(
         expected = expected_asset_names(task, kind)
         enforced = summaries is not None
         ready_keys: set[str] = set()
+        ready_names: list[str] = []
         for summary in summaries or []:
             if summary.get("kind") == kind and summary.get("has_image"):
                 ready_keys |= element_name_keys(summary.get("name"), summary.get("metadata"))
-        missing = [name for key, name in expected.items() if key not in ready_keys] if enforced else []
+                ready_names.append(str(summary.get("name") or ""))
+        # 名字被一条有图的同类条目完整包含的(「香头」之于「偏殿香头」)不单独出图，算已备好。
+        missing = [
+            name for key, name in expected.items() if key not in ready_keys and not contained_in(name, ready_names, kind)
+        ] if enforced else []
         kinds[kind] = {
             "label": KIND_LABELS[kind],
             "total": len(expected),
@@ -132,10 +152,14 @@ def evaluate_asset_readiness(
     for kind in OPTIONAL_KINDS:
         expected = expected_asset_names(task, kind)
         ready_keys = set()
+        ready_names = []
         for summary in summaries or []:
             if summary.get("kind") == kind and summary.get("has_image"):
                 ready_keys |= element_name_keys(summary.get("name"), summary.get("metadata"))
-        missing = [name for key, name in expected.items() if key not in ready_keys] if summaries is not None else []
+                ready_names.append(str(summary.get("name") or ""))
+        missing = [
+            name for key, name in expected.items() if key not in ready_keys and not contained_in(name, ready_names, kind)
+        ] if summaries is not None else []
         kinds[kind] = {
             "label": KIND_LABELS[kind], "total": len(expected), "ready": len(expected) - len(missing) if summaries is not None else 0,
             "missing": missing[:_MAX_LISTED], "enforced": False,
@@ -205,7 +229,7 @@ def readiness_reasons(readiness: Any) -> list[str]:
     reasons: list[str] = []
     error = str(readiness.get("library_error") or "").strip()
     if error:
-        reasons.append(f"3.资产库读取失败：{error}")
+        reasons.append(_text_of("readiness_reasons.text").format(error))
     kinds = readiness.get("kinds") if isinstance(readiness.get("kinds"), dict) else {}
     for kind, info in kinds.items():
         if not isinstance(info, dict) or not info.get("enforced", True):
@@ -215,7 +239,7 @@ def readiness_reasons(readiness: Any) -> list[str]:
             continue
         label = str(info.get("label") or KIND_LABELS.get(kind, kind))
         shown = "、".join(missing[:5]) + ("…" if len(missing) > 5 else "")
-        reasons.append(f"3.{label}缺少参考图（{len(missing)}项）：{shown}")
+        reasons.append(_text_of("readiness_reasons.text.2").format(label, len(missing), shown))
     if not reasons and readiness.get("complete") is False:
-        reasons.append("3.拍摄资产尚未全部生成")
+        reasons.append(_text_of("readiness_reasons.text.3"))
     return reasons

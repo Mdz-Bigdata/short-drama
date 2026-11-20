@@ -14,12 +14,14 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
+from app.core import prompt_data
 from app.core.spatial_stage import geometry as geo
 from app.core.spatial_stage.models import StageAxis, StageCamera, StageShot
 
 # A lens this close to the axis line (degrees off it, seen from the axis midpoint) reads as neutral.
 NEUTRAL_ANGLE_DEG = 6.0
-_WIDE_SIZES = ("大远景", "远景", "全景", "中全景")
+# The sizes that show the whole space: app/data/prompt/stage_vocabulary.json.
+_WIDE_SIZES = tuple(str(size) for size in prompt_data.value("stage_vocabulary", "shot_sizes")["wide"])
 _CROSSING_MOVES = frozenset({"orbit", "track", "follow"})
 
 

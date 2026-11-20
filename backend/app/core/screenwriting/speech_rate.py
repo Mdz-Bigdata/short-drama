@@ -52,7 +52,39 @@ def estimate_spoken_seconds(text: str | None, language: str | None = None, overr
     return units / speech_rate_units_per_second(language, override)
 
 
+def _pace(voice: str | None, key_line: bool) -> dict:
+    from app.core import prompt_data
+
+    tiers = prompt_data.value("speech_pace", "tiers")
+    if key_line:
+        return tiers["key_line"]
+    return tiers.get(str(voice or "").strip().lower()) or tiers[prompt_data.text("speech_pace", "default_tier")]
+
+
+def line_seconds(text: str | None, voice: str | None = None, *, key_line: bool = False, language: str | None = None) -> float:
+    """一句台词在画面里要占的秒数：字数 ÷ 情绪语速 + 句首句尾留白，至少 2 秒(字幕要读得完)。
+
+    和 :func:`estimate_spoken_seconds` 不同：那个按项目统一的念字速度算整集体量；这个按这一句的情绪
+    算画面要留多久——悲伤约 1.8 字/秒、暴怒约 4 字/秒、点题金句降到 2 字/秒并前后留白。
+    ``voice`` 是配音情绪键(sad / cold / tense / angry …)，档位在 data/prompt/speech_pace.json。空台词是 0。
+    """
+    from app.core import prompt_data
+
+    if not text:
+        return 0.0
+    units = count_reading_units(text, language)
+    if units <= 0:
+        return 0.0
+    pace = _pace(voice, key_line)
+    neutral = prompt_data.value("speech_pace", "language_neutral")
+    base = float(neutral.get((language or "zh").strip().lower(), neutral["zh"]))
+    rate = float(pace["cps"]) / float(neutral["zh"]) * base
+    seconds = units / rate + float(pace["head"]) + float(pace["tail"])
+    return max(float(prompt_data.value("speech_pace", "min_seconds")), seconds)
+
+
 __all__ = [
+    "line_seconds",
     "DEFAULT_SPEECH_RATE_UPS",
     "SPEECH_RATE_UPS_BY_LANGUAGE",
     "MIN_SPEECH_RATE_UPS",

@@ -40,6 +40,20 @@ class EmotionTableTests(unittest.TestCase):
         self.assertEqual(reading.matched, "绝望")
         self.assertLessEqual(len(reading.face), 2)
 
+    def test_a_moment_that_turns_is_drawn_first_then_and_the_voice_stays_with_the_deciding_word(self):
+        reading = read_emotion("她愣住，随即苦笑")
+        self.assertEqual((reading.matched, reading.voice), ("苦笑", "sad"), "the voice reading is unchanged")
+        self.assertTrue(reading.visible.startswith("先眼睛猛地睁大"), reading.visible)
+        self.assertIn("再嘴角勉强牵起", reading.visible)
+        self.assertLess(reading.visible.index("睁大"), reading.visible.index("勉强牵起"), "in the order the text gives")
+        self.assertIn("攥着衣角", reading.visible, "the body is the one it ends in")
+
+    def test_no_turn_without_a_turn_word_or_a_second_emotion(self):
+        self.assertFalse(read_emotion("林深：冷笑；沈砚：愤怒").turn_from, "two speakers' notes are not a turn")
+        self.assertFalse(read_emotion("她又笑了").turn_from, "one emotion is not a turn")
+        self.assertFalse(read_emotion("她笑了，又笑").turn_from, "the same emotion twice is not a turn")
+        self.assertFalse(read_emotion("苦笑").turn_from, "笑 inside 苦笑 is not a second emotion")
+
     def test_the_voice_detector_reads_notes_and_parentheticals_before_guessing(self):
         self.assertEqual(detect_emotion("你终于来了", notes="冷笑 / 慢"), "cold")
         self.assertEqual(detect_emotion("林深（冷笑）：你终于来了"), "cold")

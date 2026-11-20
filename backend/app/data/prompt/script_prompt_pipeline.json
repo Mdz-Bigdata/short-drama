@@ -1,0 +1,531 @@
+{
+  "_about": "剧本转视频提示词流水线(app/core/script_prompt_pipeline.py)的措辞与词表：剧本解析用的场景标题、转场、角色提示与括号说明写法(patterns，按 Python 正则写，代码按原样编译；en_scene 与 transition 忽略大小写)，人物 / 服装 / 道具 / 特效 / 室内外地点 / 颜色 / 情绪等词表，角色档案、场景档案、拍点、分镜师计划、九宫格分镜、镜头提示词、一致性检查的句子，以及 Markdown / CSV / XLSX / HTML 报告里的文字。字符串是句子模板，花括号里是代码填进去的值({duration:g} 这类带格式)；没有花括号的就是原样使用的话。*_fields 是按模型字段名给出的固定文字，代码整张表交给对应模型。顺序有意义的词表：mood_visuals(表情取第一个命中的情绪)、weather_terms 与 season_terms(取第一个命中的词，暴风雨要排在雨前面)、heading.cn_int_ext_words(依次对应 INT、EXT、INT/EXT)、sheet.headers(依次对应表格各列)。HTML 与 XLSX 的标签、属性留在代码里，这里只有文字。",
+  "patterns": {
+    "en_scene": "^(INT\\.?|EXT\\.?|INT/EXT\\.?|I/E\\.?)\\s*(.+?)(?:\\s*[-–—]\\s*(.+))?$",
+    "cn_numbered_scene": "^(?:场景\\s*[零〇一二三四五六七八九十百千万两\\d]+|第\\s*[零〇一二三四五六七八九十百千万两\\d]+\\s*[场幕])\\s*[：:]?\\s*(.+)$",
+    "cn_scene": "^(内景|外景|内外景)\\s*[：:]\\s*(.+?)(?:\\s*[-–—]\\s*(.+))?$",
+    "heading_split": "\\s*[-–—]\\s*",
+    "transition": "^(?:FADE\\s+IN:|FADE\\s+OUT\\.?|CUT\\s+TO:|DISSOLVE\\s+TO:|SMASH\\s+CUT(?:\\s+TO)?:|MATCH\\s+CUT(?:\\s+TO)?:|淡入|淡出|切至|转场)",
+    "parenthetical": "^[（(](.+)[）)]$",
+    "bracket_dialogue": "^【([^】]{1,120})】\\s*(.*)$",
+    "inline_dialogue": "^([A-Za-z\\u4e00-\\u9fff][A-Za-z0-9\\u4e00-\\u9fff· ._-]{0,40})[：:]\\s*(.+)$",
+    "upper_character": "^[A-Z][A-Z0-9 ._'’-]{0,50}(?:\\s*\\([^)]*\\))?$",
+    "cue_extension": "\\s*\\([^)]*\\)\\s*$",
+    "cn_action_character": "^([\\u4e00-\\u9fff·]{2,12})[（(]([^）)]*(?:岁|男性|女性|男|女|发|穿着|身穿)[^）)]*)[）)]",
+    "dialogue_direction": "^[（(]([^）)]{1,500})[）)]\\s*(.*)$",
+    "identity_parenthetical": "[（(]([^）)]{1,500})[）)]",
+    "fact_separators": "[，,。；;]",
+    "age_marker": "\\d{1,3}岁|少年|青年|中年|老年"
+  },
+  "heading": {
+    "en_combined_words": [
+      "INT/EXT",
+      "I/E"
+    ],
+    "cn_int_ext_words": [
+      "内景",
+      "外景",
+      "内外景"
+    ],
+    "exterior_mark": "外",
+    "interior_mark": "内",
+    "en_unknown_time": "UNSPECIFIED",
+    "unknown_time": "未注明时段",
+    "unknown_location": "未注明地点",
+    "opening_heading": "SCENE 1"
+  },
+  "non_character_labels": [
+    "场景",
+    "内景",
+    "外景",
+    "内外景",
+    "备注",
+    "注",
+    "时间",
+    "地点",
+    "动作",
+    "镜头",
+    "道具",
+    "特效",
+    "场景描述",
+    "人物",
+    "角色",
+    "对白",
+    "旁白",
+    "音效",
+    "音乐"
+  ],
+  "appearance_terms": [
+    "岁",
+    "青年",
+    "少年",
+    "中年",
+    "老年",
+    "男人",
+    "女人",
+    "男孩",
+    "女孩",
+    "男性",
+    "女性",
+    "高挑",
+    "矮小",
+    "瘦",
+    "苗条",
+    "微胖",
+    "健壮",
+    "魁梧",
+    "长发",
+    "短发",
+    "卷发",
+    "直发",
+    "马尾",
+    "丸子头",
+    "寸头",
+    "光头",
+    "黑发",
+    "白发",
+    "灰发",
+    "金发",
+    "棕发",
+    "脸",
+    "眼",
+    "眉",
+    "鼻",
+    "唇",
+    "痣",
+    "疤",
+    "雀斑",
+    "眼镜",
+    "胡须",
+    "肤色",
+    "身高",
+    "体型"
+  ],
+  "costume_terms": [
+    "穿着",
+    "身穿",
+    "换上",
+    "脱下",
+    "外套",
+    "风衣",
+    "西装",
+    "衬衫",
+    "裙",
+    "裤",
+    "鞋",
+    "帽",
+    "围巾",
+    "制服",
+    "校服",
+    "礼服",
+    "睡衣",
+    "夹克",
+    "毛衣",
+    "背心",
+    "盔甲",
+    "披风",
+    "围裙"
+  ],
+  "prop_terms": [
+    "手机",
+    "信封",
+    "信",
+    "钥匙",
+    "杯",
+    "咖啡",
+    "伞",
+    "书",
+    "文件",
+    "箱",
+    "包",
+    "戒指",
+    "项链",
+    "手表",
+    "照片",
+    "刀",
+    "剑",
+    "枪",
+    "棍",
+    "车",
+    "桌",
+    "椅",
+    "门",
+    "电脑",
+    "录音笔",
+    "存储卡"
+  ],
+  "effect_terms": [
+    "雨",
+    "雪",
+    "雾",
+    "烟",
+    "火",
+    "爆炸",
+    "闪电",
+    "魔法",
+    "能量",
+    "光束",
+    "粒子",
+    "全息",
+    "风沙"
+  ],
+  "indoor_locations": [
+    "办公室",
+    "卧室",
+    "客厅",
+    "厨房",
+    "餐厅",
+    "咖啡厅",
+    "酒吧",
+    "医院",
+    "教室",
+    "会议室",
+    "电梯",
+    "走廊"
+  ],
+  "outdoor_locations": [
+    "街道",
+    "公园",
+    "海滩",
+    "森林",
+    "山",
+    "天台",
+    "停车场",
+    "校园",
+    "广场"
+  ],
+  "color_terms": [
+    "黑色",
+    "白色",
+    "灰色",
+    "红色",
+    "橙色",
+    "黄色",
+    "绿色",
+    "蓝色",
+    "紫色",
+    "粉色",
+    "棕色",
+    "金色",
+    "银色",
+    "青色",
+    "米白",
+    "藏蓝",
+    "酒红"
+  ],
+  "accessory_terms": [
+    "眼镜",
+    "项链",
+    "耳环",
+    "手表",
+    "帽",
+    "围巾"
+  ],
+  "weather_terms": [
+    "暴风雨",
+    "雨",
+    "雪",
+    "雾",
+    "晴",
+    "阴天"
+  ],
+  "season_terms": [
+    "春季",
+    "夏季",
+    "秋季",
+    "冬季",
+    "春天",
+    "夏天",
+    "秋天",
+    "冬天"
+  ],
+  "daylight_words": [
+    "DAY",
+    "MORNING",
+    "AFTERNOON",
+    "白天",
+    "早",
+    "下午"
+  ],
+  "night_words": [
+    "NIGHT",
+    "EVENING",
+    "夜",
+    "傍晚"
+  ],
+  "mood_visuals": {
+    "克制": "呼吸受控、动作幅度收小、情绪只通过眼神和细微肌肉变化外露",
+    "紧张": "肩颈收紧、呼吸变浅、视线短促移动",
+    "焦虑": "手指轻微反复动作、呼吸不稳、视线回避",
+    "愤怒": "眉间收紧、下颌绷紧、目光固定",
+    "悲伤": "眼睑下垂、呼吸放慢、肩部略微下沉",
+    "恐惧": "瞳孔方向骤变、呼吸急促、身体后撤",
+    "温柔": "眼神放松、嘴角轻微上扬、动作幅度收小",
+    "开心": "眼角与嘴角同步上扬、身体姿态打开",
+    "冷静": "呼吸均匀、视线稳定、动作节制"
+  },
+  "joiners": {
+    "clause": "；",
+    "list": "、",
+    "speaker": "："
+  },
+  "common": {
+    "unknown_character": "未识别角色（需确认）",
+    "unknown_costume": "剧本未提供本场服装（需确认）",
+    "no_props": "无关键道具"
+  },
+  "character": {
+    "identity_placeholder": "仅锁定角色名{name}；剧本未提供足够外貌、发型、服装和体型事实，生成前必须补充身份DNA或绑定已批准参考图",
+    "missing_dna_warning": "角色{name}缺少可验证身份DNA，设定集提示词已保留待补充边界",
+    "consistency_seed": "[CHARACTER:{name}] {identity}；保持同一人物、同一面部结构、同一发型与当前场次服装"
+  },
+  "scene": {
+    "spatial_default": "以{location}为固定空间；门窗、稳定家具、人物站位、关键道具位置与前中后景层次以剧本首次可见状态为场景圣经，后续镜头不得镜像翻转或随机迁移",
+    "lighting_fields": {
+      "direction": "锁定本场首次建立镜头的主光方向",
+      "intensity": "保持本场时段与天气对应的可见亮度",
+      "color_temperature": "保持本场首次建立镜头的色温",
+      "quality": "人物与环境受光连续，阴影方向一致"
+    },
+    "visual_place": "{int_ext} {location}",
+    "visual_time": "时段：{time_of_day}",
+    "visual_space": "空间：{spatial}",
+    "visual_props": "关键道具：{props}",
+    "visual_effects": "环境动态或特效：{effects}",
+    "visual_moods": "剧本明确氛围：{moods}",
+    "consistency_seed": "[SCENE:{number}] {visual_prompt}；保持空间布局、道具位置、主光方向和色温一致"
+  },
+  "beat": {
+    "dialogue": "{speaker}说：{line}",
+    "dialogue_directed": "{speaker}（{direction}）说：{line}",
+    "opening": "建立{location}的剧本开场状态"
+  },
+  "director": {
+    "costume_lock": "{name}：{costume}",
+    "age_unknown": "年龄感未注明（需确认）",
+    "psychological_default": "只用可观察表情、视线、呼吸和姿态呈现",
+    "character_fields": {
+      "identity": "按角色档案与剧本身份",
+      "accessories": "仅保留角色档案和剧本明确配饰",
+      "physical_state": "保持本场剧本已明确的伤痕、污渍、湿度与疲劳状态"
+    },
+    "unknown_appearance": "剧本未提供可绑定的角色外貌（需确认）",
+    "prop_fields": {
+      "initial_state": "保持剧本首次可见状态",
+      "initial_position": "锁定剧本首次可见位置与持有者"
+    },
+    "palette_fallback": [
+      "场景既定主色",
+      "场景既定辅助色"
+    ],
+    "face_anchor": "{name}：{anchor}",
+    "face_anchor_missing": "角色身份信息缺失（需确认）",
+    "physique": "{name}：{physique}",
+    "request_fields": {
+      "episode": "由项目集数元数据继承",
+      "narrative_goal": "逐字保留剧本信息，以可见动作、反应和声音完成本场叙事功能"
+    },
+    "weather_unknown": "未注明天气",
+    "scene_fields": {
+      "environmental_sound": "保持本场连续环境声与剧本明确动作声，不编造对白"
+    },
+    "global_visual_fields": {
+      "era_and_region": "严格继承剧本时代、地域和已批准美术资产",
+      "art_direction": "场景圣经、数字演员设定集、服装和道具版本为硬约束",
+      "rendering_texture": "电影摄影质感、可信材质、自然景深与皮肤纹理"
+    },
+    "atmosphere_default": "按本场剧本氛围",
+    "body_anchor": "保持数字演员设定集确定的身高感、肩宽、体型与比例",
+    "body_anchor_physiques": "（{physiques}）",
+    "costume_anchor_missing": "本场服装版本待确认",
+    "prop_position": "{name}：{position}，{state}",
+    "continuity_fields": {
+      "camera_axis": "沿首次建立的180度动作轴线，除非明确展示越轴过程",
+      "screen_direction": "角色朝向、视线和出入画方向连续",
+      "spatial_orientation": "人物、摄影机、门窗、家具和道具的左右前后远近关系保持连续"
+    },
+    "base_content": "{location}中的{characters}；关键道具{props}",
+    "shot_visual_fields": {
+      "composition": "主体与关键道具位于叙事视觉中心，前中后景和留白服务当前事件",
+      "shot_size": "按事件信息量从建立景别连续过渡到关键反应景别",
+      "lens": "35—75mm范围内按叙事目的选择，镜头内不得无原因跳变",
+      "camera_angle": "遵守既定轴线的平视机位",
+      "camera_height": "角色视线高度",
+      "depth_of_field": "主体清晰、空间关系可读的受控景深"
+    },
+    "spatial_layers": "前景遮挡受控；中景为角色动作；背景保持{layout}",
+    "color_fields": {
+      "start_state": "本场首次建立的曝光、色温和主辅色状态",
+      "change_reason": "人物移动、门窗开合或剧本明确光源变化；没有依据时不变化",
+      "peak_state": "叙事峰值仍保持同一调色系统，仅允许有来源的明暗变化",
+      "end_state": "承接下一镜所需的最终曝光、色温和色彩状态"
+    },
+    "dynamics_fields": {
+      "subject_direction": "按剧本动作与已建立屏幕方向",
+      "subject_trajectory": "只执行剧本可见动作所需的直线或自然弧线",
+      "force_source": "人物主动发力、重力或剧本明确的环境力",
+      "speed_curve": "缓起—发展—峰值—自然减速或收势",
+      "center_of_gravity": "随动作真实转移，不瞬移、不重置",
+      "visual_flow": "观众视线从动作发起者移动到动作目标或反应者",
+      "secondary_motion": "衣摆、发丝和环境只响应主体动作或真实环境力",
+      "inertia_and_follow_through": "动作结束保留符合质量和速度的惯性、回落与余振",
+      "motion_blur": "仅快速运动部位允许轻微动态模糊",
+      "stable_regions": "角色面部、身份锚点和关键道具保持清晰稳定"
+    },
+    "camera_fields": {
+      "movement_type": "由叙事事件自动选择固定、推拉、摇移或跟拍",
+      "start_position": "既定轴线一侧的建立机位",
+      "end_position": "同轴线一侧、能够交付最终事件状态的机位",
+      "path": "连续直线或受控弧线，不穿越角色和场景实体",
+      "direction": "服从主体动线和屏幕方向",
+      "speed_curve": "缓入、按事件发展调整、缓出；禁止无原因急停",
+      "subject_following": "保持核心主体可读，必要时延迟跟随以交付反应",
+      "composition_change": "景别和主体位置随叙事信息连续变化，不跳切、不漂移",
+      "focus_change": "跟焦主体；只有明确视线或线索转移时才转焦",
+      "stability": "稳定器质感；仅剧情要求时允许轻微手持",
+      "forbidden_behaviors": "禁止无动机旋转、突然推近、越轴、镜像翻转和随机变焦"
+    },
+    "entry_fields": {
+      "visual_handoff": "从上一镜构图、动作、颜色或光源承接；无上一镜时建立本场",
+      "audio_handoff": "保留环境声桥；无声音依据时不添加"
+    },
+    "exit_fields": {
+      "visual_handoff": "以最终姿势、视线、运动方向、光影或构图交给下一镜",
+      "audio_handoff": "保留尾音或明确的下一镜声音先入"
+    }
+  },
+  "storyboard": {
+    "no_effects": "无额外视觉特效",
+    "coverage": {
+      "first": {
+        "shot_size": "全景",
+        "movement": "受控建立或缓慢推进"
+      },
+      "dialogue": {
+        "shot_size": "中近景",
+        "movement": "轴线内轻微推近或稳定跟随"
+      },
+      "last": {
+        "shot_size": "近景",
+        "movement": "稳定停留或缓慢拉远"
+      },
+      "transition": {
+        "shot_size": "远景",
+        "movement": "连续转场运动"
+      },
+      "other": {
+        "shot_size": "中景",
+        "movement": "按主体动线稳定跟随"
+      }
+    },
+    "expression_default": "自然表演；情绪只通过剧本可见的眼神、呼吸、姿态和肌肉变化呈现",
+    "camera_movement": "{movement}（{phase}阶段）",
+    "camera_reason": "清楚交付唯一事件“{event}”，不做无动机炫技",
+    "panel_fields": {
+      "camera_angle": "遵守180度轴线的平视机位",
+      "composition": "主体、动作目标和关键道具构成清晰视觉动线，前中后景保持场景圣经布局",
+      "action_axis": "沿本场已建立的180度轴线；人物左右关系和出入画方向连续",
+      "eyeline": "说话人、聆听者与动作目标的视线方向、高度和反打关系连续"
+    },
+    "story_beat": "{phase}｜{event}",
+    "sound": "{environment}；台词逐字保留且只作时间与表演依据",
+    "lighting": "{direction}；{intensity}；{color_temperature}；{quality}；本拍状态：{color_state}",
+    "edit_in_first": "按入场转场建立本镜头",
+    "edit_in": "从上一拍结束状态连续进入：{state}",
+    "edit_out_last": "按出场转场交付下一镜",
+    "edit_out": "在关键状态可读后连续进入下一拍：{state}",
+    "continuity_in": "承接上一拍结束状态：{state}",
+    "board_title": "{title}｜场景{scene}｜第{page}页"
+  },
+  "shot": {
+    "image_prompt": "{still}\n【共享镜头契约】{contract}",
+    "motion_prompt": "{segment}\n【共享镜头契约】{contract}",
+    "route_only_warning": "{family}需要适配器或运行时能力探测，当前仅生成路由计划"
+  },
+  "consistency": {
+    "whole_project": "全项目",
+    "character_location": "角色 {name}",
+    "panel_location": "{title} 第{panel}格",
+    "shot_location": "场景 {scene} / 第{page}页 / 镜头 {panel}",
+    "missing_character_cast": {
+      "description": "未识别到任何角色，无法满足数字演员设定集和人物一致性要求。",
+      "suggestion": "使用标准角色名/对白格式或补充角色档案后重新编译。"
+    },
+    "missing_identity_dna": {
+      "description": "剧本没有提供足够身份事实，无法安全锁定同一人物。",
+      "suggestion": "补充角色身份DNA或绑定已批准参考图后再提交生成。"
+    },
+    "costume_change_tracked": {
+      "description": "检测到跨场次服装描述，已按场次保留而未合并为同一套服装。",
+      "suggestion": "生成每场镜头前确认对应服装版本和参考图。"
+    },
+    "storyboard_suggestion": "补全分镜状态后重新编译图片和运镜 Prompt。",
+    "shot_prompt_count_mismatch": {
+      "description": "分镜数量与镜头 Prompt 数量不一致。",
+      "suggestion": "重新编译完整项目，禁止跳过任一九宫格面板。"
+    },
+    "shot_contract_drift": {
+      "description": "分镜图片与运镜提示词不再来自同一语义契约。",
+      "suggestion": "废弃该镜头缓存并从对应九宫格面板重新编译。"
+    }
+  },
+  "markdown": {
+    "title": "# {title} - AI视频提示词生产包",
+    "metadata_heading": "## 项目元数据",
+    "source_sha256": "- 源文件 SHA-256：`{sha256}`",
+    "scene_count": "- 场景数：{count}",
+    "duration": "- 预估时长：{seconds} 秒",
+    "characters_heading": "## 数字演员设定集",
+    "identity_status": "- 身份状态：{status}",
+    "identity_dna": "- 身份DNA：{dna}",
+    "storyboards_heading": "## 九宫格分镜与运镜",
+    "panel_table_header": "| 格 | 目的 | 人物 | 景别 | 运镜 | 动作 | 开始状态 | 结束状态 |",
+    "plans_heading": "## 分镜师时间拍点与连续性自检",
+    "plan_heading": "### 场景 {scene} / 镜头 {shot}",
+    "plan_beats": "- 实际拍点：{count}",
+    "plan_pages": "- 分页数：{count}",
+    "plan_segments": "- 相邻关键帧视频段：{count}",
+    "plan_fingerprint": "- 计划指纹：`{fingerprint}`",
+    "shots_heading": "## 可提交 SD25 Prompt",
+    "shot_heading": "### 场景 {scene} / 第{page}页 / 镜头 {panel} / 连续瞬间 {beat}"
+  },
+  "sheet": {
+    "headers": [
+      "场景编号",
+      "页码",
+      "镜头编号",
+      "全局拍点编号",
+      "角色",
+      "场景",
+      "道具",
+      "特效",
+      "景别",
+      "机位",
+      "运镜",
+      "动作",
+      "表演",
+      "对白",
+      "声音",
+      "时长(秒)",
+      "开始状态",
+      "结束状态",
+      "SD25模式",
+      "分镜图片提示词",
+      "运镜提示词",
+      "SD25可提交提示词",
+      "分镜计划指纹",
+      "契约指纹"
+    ],
+    "name": "分镜提示词"
+  },
+  "html": {
+    "page_title": "{title} - AI视频提示词",
+    "summary": "场景数：{scenes}；预估时长：{duration:g} 秒",
+    "characters_heading": "数字演员设定集",
+    "shots_heading": "镜头提示词",
+    "shot_heading": "场景 {scene} / 第{page}页 / 镜头 {panel}",
+    "mode_label": "模式：",
+    "plan_fingerprint": "分镜计划指纹：{fingerprint}",
+    "contract_fingerprint": "契约指纹：{fingerprint}"
+  }
+}

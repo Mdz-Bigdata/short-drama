@@ -1,0 +1,14 @@
+{
+  "_doc": "app/core/asset_identity.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "_apply.text": "资产「{0}」已改为「{1}」，提示词需重新编译后重跑第 5 阶段",
+  "_check.text": "资产类型只能是 character、scene 或 prop",
+  "_check.text.2": "资产名不能为空",
+  "_check.text.3": "资产名最长 80 个字符",
+  "_check.text.4": "新旧名字相同",
+  "_check.text.5": "项目里没有叫「{0}」的{1}",
+  "_check.text.6": "项目里没有叫「{0}」的{1}，合并需要一个已有的保留方",
+  "_check.text.7": "「{0}」已是另一个{1}的名字；要并成一个请用合并",
+  "_kind_label.character": "角色",
+  "_kind_label.scene": "场景",
+  "_kind_label.prop": "道具"
+}

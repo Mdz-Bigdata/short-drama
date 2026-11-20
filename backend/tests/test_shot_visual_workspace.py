@@ -8,7 +8,9 @@ from fastapi.testclient import TestClient
 from app.api import drama_api
 from app.api.auth_api import get_current_user
 from app.core.camera_motion import (
+    CAMERA_MOTION_LABELS,
     duration_options,
+    motion_problem,
     normalize_camera_motion,
     normalize_shot_type,
     render_camera_motion,
@@ -64,10 +66,15 @@ class CameraMotionVocabularyTests(unittest.TestCase):
         self.assertEqual(normalize_shot_type("莫名其妙"), ("Medium Shot", False))
 
     def test_rendering_uses_each_providers_documented_phrasing(self):
-        self.assertEqual(render_camera_motion("Push In", "minimax_h3"), "[Push in] 镜头缓慢推进")
-        self.assertEqual(render_camera_motion("Orbit", "minimax_h3"), "镜头围绕主体环绕（Orbit）")
-        self.assertEqual(render_camera_motion("dolly in", "seedance"), "镜头缓慢推进（Push In）")
+        self.assertEqual(render_camera_motion("Push In", "minimax_h3"), "[Push in] 镜头缓慢推进，到落幅时画面推近约四分之一，主体在画面里明显变大")
+        self.assertEqual(render_camera_motion("Orbit", "minimax_h3"), "镜头围绕主体环绕，到落幅时绕主体转约 90 度，停在主体侧面（Orbit）")
+        self.assertEqual(render_camera_motion("dolly in", "seedance"), "镜头缓慢推进，到落幅时画面推近约四分之一，主体在画面里明显变大（Push In）")
         self.assertEqual(render_camera_motion("nonsense", "kling"), "固定机位，镜头保持不动（Static）")
+        # 幅度写成落幅时画面变了多少：不写秒数，也不让自己的写法被当成越轴或叠运镜。
+        for motion in CAMERA_MOTION_LABELS:
+            phrase = render_camera_motion(motion, "seedance")
+            self.assertNotRegex(phrase, r"\d+(?:\.\d+)?\s*秒", motion)
+            self.assertEqual(motion_problem(phrase), "", motion)
 
     def test_duration_options_follow_the_selected_video_model(self):
         self.assertEqual(duration_options("seedance2.5"), list(range(4, 31)))
@@ -219,6 +226,36 @@ class ShotVisualWorkspaceTests(unittest.TestCase):
         self.assertEqual(shot["mention_kinds"], {"沈砚": "actor", "天牢": "scene"})
         self.assertEqual(shot["reference_numbers"], {"沈砚": 1, "天牢": 2})
 
+    def test_each_shot_lists_the_assets_it_uses(self):
+        task = self.repo.get_task("visual-task")
+        task["assets"]["4"][0]["asset_bindings"] = [{"kind": "actor", "name": "沈砚", "element_id": "el-shen", "element_version": 2}]
+        task["assets"]["4"][0]["characters"] = ["沈砚"]
+        task["assets"]["5"][0]["reference_numbers"] = {"沈砚": 1}
+        task["assets"]["5"][0]["mention_kinds"] = {"沈砚": "actor"}
+        self.repo.save_task("visual-task", task)
+        with patch.object(drama_api, "service", self.service):
+            shot = self.client.get("/api/drama/visual-task/shots/visual").json()["shots"][0]
+        self.assertEqual(shot["assets"], [{
+            "kind": "actor", "name": "沈砚", "element_id": "el-shen", "element_version": 2, "image_number": 1,
+            "in_storyboard": True, "in_video": True, "stale": False,
+        }])
+        # 原来的两张表格式不变。
+        self.assertEqual(shot["reference_numbers"], {"沈砚": 1})
+
+    def test_a_shot_whose_asset_changed_is_stale_before_any_clip_exists(self):
+        from app.core import asset_dependents
+
+        task = self.repo.get_task("visual-task")
+        task["assets"]["4"][0]["characters"] = ["沈砚"]
+        task["assets"]["5"] = []
+        asset_dependents.mark_dependents_stale(task, kind="actor", names=["沈砚"], reason=asset_dependents.STALE_REASON.format(name="沈砚"))
+        self.repo.save_task("visual-task", task)
+        with patch.object(drama_api, "service", self.service):
+            shot = self.client.get("/api/drama/visual-task/shots/visual").json()["shots"][0]
+        self.assertTrue(shot["stale"])
+        self.assertIn("资产「沈砚」已修改", shot["stale_reason"])
+        self.assertTrue(all(item["stale"] for item in shot["assets"]))
+
     def test_edits_are_refused_while_a_stage_is_running(self):
         task = self.repo.get_task("visual-task")
         task["status"] = "running"
@@ -229,6 +266,69 @@ class ShotVisualWorkspaceTests(unittest.TestCase):
                 "camera_motion": "Static", "shot_type": "Medium Shot", "duration_seconds": 6,
             })
         self.assertEqual(response.status_code, 409)
+
+
+class StageFiveAssetVersionTests(unittest.TestCase):
+    """运镜契约不含参考图：资产换了图或改了描述，契约指纹不变，只有资产版本能挡住旧片被原样复用。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = TaskRepository(str(Path(self.temp.name) / "tasks.json"))
+        self.service = DramaService()
+        self.service.repo = self.repo
+
+    def _run(self, task, generate_video):
+        self.repo.save_task(task["task_id"], task)
+        with patch.object(self.service.gateway, "generate_video", side_effect=generate_video), \
+             patch.object(self.service.gateway, "generate_image", return_value=("https://cdn/frame.png", {})), \
+             patch.object(self.service.gateway, "video_family_ready", return_value=True), \
+             patch.object(self.service.gateway, "video_family_modes", return_value=None), \
+             patch("app.service.drama_service.media_compositor.synthesize_preferred_dialogue_track", return_value=(None, None)), \
+             patch("app.service.drama_service.media_compositor.attach_audio_to_clip", side_effect=lambda url, *a, **k: url), \
+             patch.object(DramaService, "run_real_consistency_check", lambda _self, *a, **k: "OK"):
+            self.service._execute_stage_blocking(task["task_id"], 5, _claimed_task=task)
+        return self.repo.get_task(task["task_id"])
+
+    def _rerun(self, stored, generate_video):
+        stored["status"] = "running"
+        stored["workflow_control"] = {"run_id": "run-2", "active": True, "pause_requested": False}
+        return self._run(stored, generate_video)
+
+    def test_a_clip_made_with_another_asset_version_is_made_again(self):
+        from tests.test_stage_five_queue import _task as queue_task
+
+        stored = self._run(queue_task(2), lambda *a, **k: "https://cdn/first.mp4")
+        # 这一轮没有素材库资产：片上记的是空表，和这次一样，照常复用。
+        self.assertEqual([clip["asset_versions"] for clip in stored["assets"]["5"]], [{}, {}])
+        # 第 1 镜的片是按素材库某资产的第 1 版出的，现在这一镜不再发那一版。
+        stored["assets"]["5"][0]["asset_versions"] = {"el-shen": 1}
+        calls: list[str] = []
+        again = self._rerun(stored, lambda *a, **k: calls.append("v") or "https://cdn/fresh.mp4")
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(again["assets"]["5"][0]["video_url"], "https://cdn/fresh.mp4")
+        self.assertEqual(again["assets"]["5"][0]["asset_versions"], {})
+        self.assertEqual(again["assets"]["5"][1]["video_url"], stored["assets"]["5"][1]["video_url"])
+
+    def test_a_legacy_clip_without_versions_is_reused_when_no_library_asset_is_sent(self):
+        from tests.test_stage_five_queue import _task as queue_task
+
+        stored = self._run(queue_task(1), lambda *a, **k: "https://cdn/first.mp4")
+        stored["assets"]["5"][0].pop("asset_versions")
+        again = self._rerun(stored, lambda *a, **k: (_ for _ in ()).throw(AssertionError("must reuse")))
+        self.assertEqual(again["assets"]["5"][0]["video_url"], stored["assets"]["5"][0]["video_url"])
+
+    def test_a_stale_clip_is_never_reused(self):
+        from tests.test_stage_five_queue import _task as queue_task
+
+        stored = self._run(queue_task(1), lambda *a, **k: "https://cdn/first.mp4")
+        stored["assets"]["5"][0].update(stale=True, stale_reason="资产「沈砚」已修改")
+        calls: list[str] = []
+        again = self._rerun(stored, lambda *a, **k: calls.append("v") or "https://cdn/fresh.mp4")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(again["assets"]["5"][0]["video_url"], "https://cdn/fresh.mp4")
+        self.assertFalse(again["assets"]["5"][0].get("stale"))
 
 
 if __name__ == "__main__":

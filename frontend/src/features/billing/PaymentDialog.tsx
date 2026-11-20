@@ -4,6 +4,8 @@ import { QRCodeSVG } from 'qrcode.react';
 
 import { ApiError, apiRequest } from '../../api/client';
 import { t } from '../../i18n';
+import { money } from '../finance/financeFormat';
+import { useDialogFocus } from '../tasks/useDialogFocus';
 import { channelLabel, type PaymentChannelName } from './paymentChannels';
 
 
@@ -45,6 +47,8 @@ export function PaymentDialog({ title, amount, points, channels, provider, order
   const [left, setLeft] = useState(0);
   const [outcome, setOutcome] = useState<'open' | 'paid' | 'closed'>('open');
   const paidRef = useRef(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(panelRef, onClose);
 
   const take = useCallback((next: PayState) => {
     if (closedRef.current) return;
@@ -129,9 +133,9 @@ export function PaymentDialog({ title, amount, points, channels, provider, order
 
   return (
     <div className="pay-dialog" role="dialog" aria-modal="true" aria-label={t('扫码支付')}>
-      <div className="pay-dialog__panel">
+      <div className="pay-dialog__panel" ref={panelRef}>
         <header>
-          <div><h2>{title}</h2><strong>¥{amount}</strong></div>
+          <div><h2>{title}</h2><strong>{money(amount)}</strong></div>
           <button type="button" className="pay-dialog__close" aria-label={t('关闭')} onClick={onClose}><X size={18} /></button>
         </header>
 
@@ -170,7 +174,7 @@ export function PaymentDialog({ title, amount, points, channels, provider, order
             )}
             <div className="pay-dialog__code">
               {code && <QRCodeSVG value={code} size={208} level="M" marginSize={2} title={t('付款二维码')} />}
-              {waitingForCode && <p><LoaderCircle className="spin" size={18} /> {t('正在生成付款码…')}</p>}
+              {waitingForCode && <p role="status"><LoaderCircle className="spin" size={18} /> {t('正在生成付款码…')}</p>}
               {!code && !busy && !error && (
                 <div className="pay-dialog__expired">
                   <p>{t('付款码已过期')}</p>

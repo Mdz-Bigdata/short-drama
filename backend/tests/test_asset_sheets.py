@@ -2,7 +2,7 @@
 """Design sheets: what has to be locked before a single frame is generated.
 
 A character sheet describes a look and never a temperament; a scene sheet holds the
-room and nobody in it; a prop earns a sheet only if the story leans on it.
+room and nobody in it; every prop gets a sheet, the ones the story leans on marked as key.
 """
 
 import unittest
@@ -80,14 +80,21 @@ class SceneSheetTests(unittest.TestCase):
 
 
 class PropAndPaletteTests(unittest.TestCase):
-    def test_only_the_props_the_story_leans_on_get_a_sheet(self):
+    def test_every_prop_gets_a_sheet_and_the_ones_the_story_leans_on_are_key(self):
         result = sheets.extract_sheets(TASK, pack=style_packs.FILM_35MM)
 
-        names = [sheet.name for sheet in result.props]
-        self.assertIn("录音笔", names)          # handed over
-        self.assertIn("照片", names)            # taken out
-        self.assertNotIn("茶杯", names)         # just sitting there
-        self.assertTrue(any("茶杯" in warning for warning in result.warnings))
+        by_name = {sheet.name: sheet for sheet in result.props}
+        self.assertEqual(set(by_name), {"录音笔", "照片", "茶杯"})
+        self.assertIn("关键道具", by_name["录音笔"].function)   # handed over
+        self.assertIn("关键道具", by_name["照片"].function)     # taken out
+        self.assertIn("出场道具", by_name["茶杯"].function)     # just sitting there, still drawn
+        self.assertFalse(any("未出设定图" in warning for warning in result.warnings))
+
+    def test_the_prop_layout_is_the_two_by_three_design_sheet(self):
+        prompt = sheets.prop_sheet("断水剑", "三尺二寸窄长直剑").prompt
+        self.assertIn("2 行 × 3 列", prompt)
+        self.assertIn("3/4", prompt)
+        self.assertNotIn("正面与四分之三侧各一", prompt)
 
     def test_a_palette_sheet_states_every_colour_and_what_it_is_bound_to(self):
         result = sheets.extract_sheets(

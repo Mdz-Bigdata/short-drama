@@ -1,0 +1,53 @@
+{
+  "_doc": "app/core/look_board.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.look_views": [
+    "look_front",
+    "正面全身"
+  ],
+  "module.look_views.2": [
+    "look_left",
+    "左侧面"
+  ],
+  "module.look_views.3": [
+    "look_back",
+    "背面"
+  ],
+  "module.look_views.4": [
+    "look_three_quarter",
+    "三分之四侧面"
+  ],
+  "module.look_views.5": [
+    "look_closeup_1",
+    "特写一"
+  ],
+  "module.look_views.6": [
+    "look_closeup_2",
+    "特写二"
+  ],
+  "module.look_views.7": [
+    "look_closeup_3",
+    "特写三"
+  ],
+  "module.closeup_labels": [
+    "正脸胸像",
+    "妆效部位",
+    "腰带与配饰"
+  ],
+  "module.closeup_labels.2": [
+    "正脸胸像",
+    "腰带与配饰",
+    "袖口或下摆"
+  ],
+  "module.closeup_labels.3": [
+    "正脸胸像",
+    "妆效部位",
+    "四分之三侧脸"
+  ],
+  "module.closeup_labels.4": [
+    "正脸胸像",
+    "腰带与配饰",
+    "四分之三侧脸"
+  ],
+  "_cuts.text": "定妆图展示板切分得到过窄的格子",
+  "split_look_board.text": "定妆图展示板切分得到空白格"
+}

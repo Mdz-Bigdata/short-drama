@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-"""MiniMax H3 clips keep the sound the model made: no dubbing over it, from the clip to the finished film."""
+"""Clips from a model that makes sound keep it: no dubbing over it, from the clip to the finished film.
+
+A clip that comes back silent is dubbed, shot by shot.
+"""
 
 import os
 import shutil
@@ -43,9 +46,18 @@ class ChoiceTest(unittest.TestCase):
         with patch.dict(os.environ, {"MINIMAX_H3_NATIVE_AUDIO": "0"}):
             self.assertFalse(uses_native_soundtrack({"video_model": "MiniMax-H3"}))
 
-    def test_other_models_stay_as_they_were(self):
-        for model in ("seedance2.0", "seedance-1-0", "kling3", ""):
+    def test_every_model_that_makes_sound_keeps_it(self):
+        for model in ("seedance2.0", "doubao-seedance-2-0-260128", "ltx-2.3"):
+            self.assertTrue(uses_native_soundtrack({"video_model": model}), model)
+            self.assertFalse(uses_native_soundtrack({"video_model": model, "native_audio": False}), model)
+
+    def test_silent_models_are_dubbed(self):
+        for model in ("seedance-1-0", "kling3", ""):
             self.assertFalse(uses_native_soundtrack({"video_model": model}), model)
+
+    def test_turning_h3_sound_off_leaves_other_models_alone(self):
+        with patch.dict(os.environ, {"MINIMAX_H3_NATIVE_AUDIO": "0"}):
+            self.assertTrue(uses_native_soundtrack({"video_model": "seedance2.0"}))
 
 
 @unittest.skipUnless(FFMPEG, "needs ffmpeg")
@@ -67,6 +79,16 @@ class CompositionTest(unittest.TestCase):
         _clip(self.media / "a.mp4")
         film = self._film([media_compositor.public_url("a.mp4")], native_audio=[True])
         self.assertAlmostEqual(_audio_seconds(film), 4, delta=0.3)
+
+    def test_clips_of_any_shape_fit_the_frame_480p_included(self):
+        """Seedance's 480p 9:16 clips are 480x854: scaled to 1080 wide they were 1922 tall, over the 1920 frame, and no film came out."""
+        for name, size in (("tall.mp4", "480x854"), ("wide.mp4", "1280x720"), ("square.mp4", "720x720")):
+            subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c=red:s={size}:d=1", "-f", "lavfi", "-i", "sine=duration=1",
+                            "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(self.media / name)], check=True)
+        film = self._film([media_compositor.public_url(name) for name in ("tall.mp4", "wide.mp4", "square.mp4")], native_audio=[True] * 3)
+        probe = subprocess.run([shutil.which("ffprobe") or "ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "stream=width,height",
+                                "-of", "csv=p=0", str(film)], capture_output=True, text=True).stdout.strip()
+        self.assertEqual(probe, f"{media_compositor.OUT_W},{media_compositor.OUT_H}")
 
     def test_without_the_flag_the_clips_sound_is_dropped_as_before(self):
         _clip(self.media / "a.mp4")
@@ -91,6 +113,18 @@ class CompositionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as work:
             self.assertIsNone(media_compositor._clip_sound(FFMPEG, str(self.media / "silent.mp4"), None, os.path.join(work, "t.m4a")))
         self.assertTrue(self._film([media_compositor.public_url("silent.mp4")], native_audio=[True]).exists())
+
+    def test_a_clip_is_heard_before_its_sound_is_trusted(self):
+        _clip(self.media / "a.mp4")
+        _clip(self.media / "mute.mp4", audio=False)
+        command = [FFMPEG, "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=320x568:rate=24:duration=2",
+                   "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                   "-c:a", "aac", str(self.media / "hush.mp4")]
+        subprocess.run(command, check=True)
+        self.assertTrue(media_compositor.clip_has_sound(media_compositor.public_url("a.mp4")))
+        self.assertFalse(media_compositor.clip_has_sound(media_compositor.public_url("mute.mp4")), "no audio stream")
+        self.assertFalse(media_compositor.clip_has_sound(media_compositor.public_url("hush.mp4")), "a stream of silence")
+        self.assertIsNone(media_compositor.clip_has_sound("https://cdn/elsewhere.mp4"), "cannot tell, so trust the model")
 
     def test_keeping_a_clip_makes_a_local_copy_and_never_loses_the_link(self):
         _clip(self.media / "a.mp4")
@@ -159,6 +193,20 @@ class StageFiveTest(unittest.TestCase):
         self.assertEqual(clip["video_url"], "https://kept/1.mp4")
         self.assertFalse(clip.get("voice_path"))
 
+    def test_a_clip_that_came_back_silent_is_dubbed(self):
+        with patch("app.service.drama_service.media_compositor.clip_has_sound", return_value=False):
+            clip, dub, attach, keep = self._run(self._h3_task())
+        keep.assert_called_once()
+        dub.assert_called_once()
+        attach.assert_called_once()
+        self.assertFalse(clip["native_audio"])
+
+    def test_a_clip_with_sound_is_marked(self):
+        with patch("app.service.drama_service.media_compositor.clip_has_sound", return_value=True):
+            clip, dub, _attach, _keep = self._run(self._h3_task())
+        dub.assert_not_called()
+        self.assertTrue(clip["native_audio"])
+
     def test_a_project_that_opted_out_is_dubbed_as_before(self):
         task = self._h3_task()
         task["config"]["native_audio"] = False
@@ -211,8 +259,24 @@ class StageSixTest(unittest.TestCase):
             self.assertTrue(audio["shot_voices"][0])
             dub.assert_not_called()
 
-    def test_seedance_is_still_dubbed(self):
+    def test_seedance_keeps_its_own_sound(self):
         audio, dub, _sfx, _tts = self._run({"video_model": "seedance2.0"}, [self._clip(1)])
+        self.assertEqual(audio["native_audio_shots"], [True])
+        dub.assert_not_called()
+
+    def test_a_shot_that_came_back_silent_is_dubbed(self):
+        audio, dub, _sfx, _tts = self._run({"video_model": "seedance2.0"}, [self._clip(1, native_audio=False), self._clip(2)])
+        self.assertEqual(audio["native_audio_shots"], [False, True])
+        self.assertTrue(audio["shot_voices"][0])
+        dub.assert_called_once()
+
+    def test_ambience_is_made_for_the_dubbed_shots_of_a_mixed_film(self):
+        _audio, _dub, sfx, _tts = self._run({"video_model": "seedance2.0", "tts_model": "eleven_v3"},
+                                            [self._clip(1, native_audio=False), self._clip(2)])
+        sfx.assert_called_once()
+
+    def test_a_silent_model_is_still_dubbed(self):
+        audio, dub, _sfx, _tts = self._run({"video_model": "kling3"}, [self._clip(1)])
         self.assertEqual(audio["native_audio_shots"], [False])
         dub.assert_called()
 

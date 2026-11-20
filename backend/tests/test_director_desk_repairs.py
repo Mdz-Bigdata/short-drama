@@ -104,7 +104,7 @@ class RepairTests(unittest.TestCase):
         self.assertIn("spatial_action_changes_state", _failing(plan))
         proposal = next(item for item in repair.propose(plan) if item.code == "spatial_action_changes_state")
         self.assertEqual(proposal.operations, [{
-            "op": "set_shot_override", "shot_id": 2, "name": "沈砚", "posture": "kneel", "reason": "分镜写明「kneel」",
+            "op": "set_shot_override", "shot_id": 2, "name": "沈砚", "posture": "kneel", "reason": "分镜写明「跪地」",
         }])
         fixed = apply_operations(plan, proposal.operations, solve=False)
         self.assertNotIn("spatial_action_changes_state", _failing(fixed))

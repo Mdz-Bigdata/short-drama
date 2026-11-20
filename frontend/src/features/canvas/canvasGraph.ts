@@ -177,24 +177,36 @@ export function groupNodes(doc: CanvasDoc, ids: ReadonlySet<string>, label: stri
   return { doc: { ...doc, nodes: [group, ...nodes] }, groupId: group.id };
 }
 
-export function ungroup(doc: CanvasDoc, groupIds: ReadonlySet<string>): CanvasDoc {
-  const nodes = doc.nodes.filter(node => !(node.kind === 'group' && groupIds.has(node.id))).map(node => {
-    if (!node.payload.groupId || !groupIds.has(node.payload.groupId)) return node;
+/** Where the members of removed groups go: the removed group's own group (a nested group's parent), else nowhere. */
+function rehome(doc: CanvasDoc, removed: ReadonlySet<string>): CanvasNode[] {
+  const byId = new Map(doc.nodes.map(node => [node.id, node]));
+  const homeOf = (groupId: string) => {
+    let parent = byId.get(groupId)?.payload.groupId;
+    const seen = new Set([groupId]);
+    while (parent && removed.has(parent) && !seen.has(parent)) {
+      seen.add(parent);
+      parent = byId.get(parent)?.payload.groupId;
+    }
+    return parent && !removed.has(parent) && byId.has(parent) ? parent : undefined;
+  };
+  return doc.nodes.filter(node => !removed.has(node.id)).map(node => {
+    if (!node.payload.groupId || !removed.has(node.payload.groupId)) return node;
     const payload = { ...node.payload };
-    delete payload.groupId;
+    const home = homeOf(node.payload.groupId);
+    if (home) payload.groupId = home;
+    else delete payload.groupId;
     return { ...node, payload };
   });
-  return { ...doc, nodes };
+}
+
+export function ungroup(doc: CanvasDoc, groupIds: ReadonlySet<string>): CanvasDoc {
+  const groups = new Set(doc.nodes.filter(node => node.kind === 'group' && groupIds.has(node.id)).map(node => node.id));
+  return { ...doc, nodes: rehome(doc, groups) };
 }
 
 export function deleteSelection(doc: CanvasDoc, nodeIds: ReadonlySet<string>, edgeIds: ReadonlySet<string> = new Set()): CanvasDoc {
   // Deleting a group frame frees what it held; those nodes are only deleted if they were selected too.
-  const nodes = doc.nodes.filter(node => !nodeIds.has(node.id)).map(node => {
-    if (!node.payload.groupId || !nodeIds.has(node.payload.groupId)) return node;
-    const payload = { ...node.payload };
-    delete payload.groupId;
-    return { ...node, payload };
-  });
+  const nodes = rehome(doc, nodeIds);
   const edges = doc.edges.filter(edge => !edgeIds.has(edge.id) && !nodeIds.has(edge.source) && !nodeIds.has(edge.target));
   return { nodes, edges };
 }

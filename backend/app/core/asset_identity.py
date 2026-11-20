@@ -15,7 +15,21 @@ from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from app.core import episode_cycle
 from app.core.screenwriting.speech import is_narrator
+from app.core import prompt_data
+
+
+_WORDING_FILE = "asset_identity"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/asset_identity.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 AssetKind = Literal["character", "scene", "prop"]
 ASSET_KINDS: tuple[str, ...] = ("character", "scene", "prop")
@@ -24,6 +38,8 @@ STATE_KEY = "2_screenwriting"
 _INVENTORY_BUCKET = {"character": "characters", "scene": "scenes", "prop": "props"}
 _PLAN_LIST = {"character": "characters_in_scene", "scene": "scenes", "prop": "props"}
 _BREAKDOWN_ASSET_KIND = {"scene": "scenes", "prop": "props"}
+# The kind a storyboard binding (``shot["asset_bindings"]``) and the element library use for each identity kind.
+_BINDING_KIND = {"character": "actor", "scene": "scene", "prop": "prop"}
 
 
 class AssetIdentityError(ValueError):
@@ -231,20 +247,37 @@ def _apply(task: MutableMapping[str, Any], kind: str, old: str, new: str, *, imp
                 if write:
                     item["name"] = new
     # Shots name their cast; a clip generated for the old name is still that clip, but its prompt is not.
+    stale_uids: set[int] = set()
+    legacy_ids: set[str] = set()
     for shot in assets.get("4") or []:
         if not isinstance(shot, MutableMapping):
             continue
         before = dict(impact.references)
         rewrite_list(shot, "characters" if kind == "character" else _PLAN_LIST[kind], "shots", None)
+        if write:
+            # The storyboard's bindings name the asset too; they follow the rename without counting as a reference.
+            for binding in shot.get("asset_bindings") or []:
+                if isinstance(binding, MutableMapping) and binding.get("kind") == _BINDING_KIND[kind] and canonical_name(binding.get("name")) == old:
+                    binding["name"] = new
         if impact.references != before:
             shot_id = shot.get("shot_id")
             if isinstance(shot_id, int) and shot_id not in impact.stale_shots:
                 impact.stale_shots.append(shot_id)
-    if write and impact.stale_shots:
+            stale_uids.add(episode_cycle.shot_uid(shot))
+            if shot_id not in (None, ""):
+                legacy_ids.add(str(shot_id))
+    if write and stale_uids:
+        # Shot numbers restart at 1 in every scene: clips are matched by the shots they cover, legacy clips by number.
         for clip in assets.get("5") or []:
-            if isinstance(clip, MutableMapping) and clip.get("shot_id") in impact.stale_shots and clip.get("video_url"):
+            if not isinstance(clip, MutableMapping) or not clip.get("video_url"):
+                continue
+            if clip.get("scene_id") or clip.get("shot_uids"):
+                hit = not stale_uids.isdisjoint(episode_cycle.covered_uids(clip))
+            else:
+                hit = str(clip.get("shot_id")) in legacy_ids
+            if hit:
                 clip["stale"] = True
-                clip["stale_reason"] = f"资产「{old}」已改为「{new}」，提示词需重新编译后重跑第 5 阶段"
+                clip["stale_reason"] = _text_of("_apply.text").format(old, new)
 
 
 def preview_rename(task: Mapping[str, Any], kind: str, name: str, new_name: str) -> IdentityImpact:
@@ -284,25 +317,25 @@ def merge_assets(task: MutableMapping[str, Any], kind: str, loser: str, survivor
 
 def _check(task: Mapping[str, Any], kind: str, name: str, new_name: str, *, merging: bool) -> None:
     if kind not in ASSET_KINDS:
-        raise AssetIdentityError("资产类型只能是 character、scene 或 prop")
+        raise AssetIdentityError(_text_of("_check.text"))
     old, new = canonical_name(name), canonical_name(new_name)
     if not old or not new:
-        raise AssetIdentityError("资产名不能为空")
+        raise AssetIdentityError(_text_of("_check.text.2"))
     if len(new) > 80:
-        raise AssetIdentityError("资产名最长 80 个字符")
+        raise AssetIdentityError(_text_of("_check.text.3"))
     if old == new:
-        raise AssetIdentityError("新旧名字相同")
+        raise AssetIdentityError(_text_of("_check.text.4"))
     names = known_names(task, kind)
     if old not in names:
-        raise AssetIdentityError(f"项目里没有叫「{old}」的{_kind_label(kind)}")
+        raise AssetIdentityError(_text_of("_check.text.5").format(old, _kind_label(kind)))
     if merging and new not in names:
-        raise AssetIdentityError(f"项目里没有叫「{new}」的{_kind_label(kind)}，合并需要一个已有的保留方")
+        raise AssetIdentityError(_text_of("_check.text.6").format(new, _kind_label(kind)))
     if not merging and new in names:
-        raise AssetIdentityError(f"「{new}」已是另一个{_kind_label(kind)}的名字；要并成一个请用合并")
+        raise AssetIdentityError(_text_of("_check.text.7").format(new, _kind_label(kind)))
 
 
 def _kind_label(kind: str) -> str:
-    return {"character": "角色", "scene": "场景", "prop": "道具"}[kind]
+    return {"character": _text_of("_kind_label.character"), "scene": _text_of("_kind_label.scene"), "prop": _text_of("_kind_label.prop")}[kind]
 
 
 def _record_alias(task: MutableMapping[str, Any], kind: str, name: str, alias: str) -> None:

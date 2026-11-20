@@ -2,7 +2,6 @@ import { Maximize2, Minus, Plus, RotateCcw, X } from 'lucide-react';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
-  type WheelEvent as ReactWheelEvent,
   useEffect,
   useId,
   useRef,
@@ -11,6 +10,7 @@ import {
 import { createPortal } from 'react-dom';
 
 import './AssetImageViewer.css';
+import { centreOn, INITIAL_VIEW, MAX_ZOOM, MIN_ZOOM, wheelZoomFactor, zoomAtPointer, zoomBy, ZOOM_STEP, type ViewPoint } from './assetImageZoom';
 import { t } from '../../i18n';
 
 
@@ -41,28 +41,30 @@ interface Props {
   onClose: () => void;
 }
 
-interface FocusPoint {
-  x: number;
-  y: number;
+// 写进样式的百分比留两位小数就够。
+function percent(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
-const MIN_ZOOM = 1;
-const MAX_ZOOM = 4;
-const ZOOM_STEP = 0.5;
-
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.min(maximum, Math.max(minimum, value));
+// 倍数留四位：样式里不必带十几位小数，慢滚的每一小步又都还看得出来。
+function scaleOf(zoom: number): number {
+  return Math.round(zoom * 10000) / 10000;
 }
 
-function roundZoom(value: number): number {
-  return Math.round(value * 10) / 10;
+/** 指针在舞台里的位置(百分比)；舞台还没有尺寸时没有位置。 */
+function pointerIn(stage: HTMLElement, event: { clientX: number; clientY: number }): ViewPoint | null {
+  const bounds = stage.getBoundingClientRect();
+  if (!bounds.width || !bounds.height) return null;
+  const share = (offset: number, size: number) => Math.min(100, Math.max(0, (offset / size) * 100));
+  return { x: share(event.clientX - bounds.left, bounds.width), y: share(event.clientY - bounds.top, bounds.height) };
 }
 
 
 export default function AssetImageViewer({ asset, onClose }: Props) {
-  const [zoom, setZoom] = useState(MIN_ZOOM);
-  const [focusPoint, setFocusPoint] = useState<FocusPoint>({ x: 50, y: 50 });
+  const [view, setView] = useState(INITIAL_VIEW);
+  const { zoom, origin, focus } = view;
   const dialogRef = useRef<HTMLElement>(null);
+  const stageRef = useRef<HTMLButtonElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
@@ -81,33 +83,33 @@ export default function AssetImageViewer({ asset, onClose }: Props) {
     };
   }, []);
 
-  const changeZoom = (delta: number) => {
-    setZoom(current => roundZoom(clamp(current + delta, MIN_ZOOM, MAX_ZOOM)));
-  };
+  // React 的 onWheel 是被动监听，拦不住浏览器跟着缩放整页，所以滚轮直接挂在舞台上。
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return undefined;
+    const wheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const pointer = pointerIn(stage, event);
+      // 触控板捏合是带 ctrl 的滚轮事件。
+      const factor = wheelZoomFactor(event.deltaY, event.ctrlKey);
+      setView(current => (pointer ? zoomAtPointer(current, pointer, current.zoom * factor) : zoomBy(current, current.zoom * (factor - 1))));
+    };
+    stage.addEventListener('wheel', wheel, { passive: false });
+    return () => stage.removeEventListener('wheel', wheel);
+  }, []);
 
-  const resetView = () => {
-    setZoom(MIN_ZOOM);
-    setFocusPoint({ x: 50, y: 50 });
-  };
+  const changeZoom = (delta: number) => setView(current => zoomBy(current, delta));
 
-  const updateFocusPoint = (clientX: number, clientY: number, target: HTMLElement) => {
-    const bounds = target.getBoundingClientRect();
-    if (!bounds.width || !bounds.height) return;
-    setFocusPoint({
-      x: Math.round(clamp(((clientX - bounds.left) / bounds.width) * 100, 0, 100)),
-      y: Math.round(clamp(((clientY - bounds.top) / bounds.height) * 100, 0, 100)),
-    });
-  };
+  const resetView = () => setView(INITIAL_VIEW);
 
   const inspectDetail = (event: ReactMouseEvent<HTMLButtonElement>) => {
-    updateFocusPoint(event.clientX, event.clientY, event.currentTarget);
-    changeZoom(ZOOM_STEP);
-  };
-
-  const zoomWithWheel = (event: ReactWheelEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    updateFocusPoint(event.clientX, event.clientY, event.currentTarget);
-    changeZoom(event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP);
+    // 键盘按下的点击没有指针位置(坐标全是 0)：绕当前中心放大，不跳去左上角。
+    const fromKeyboard = event.detail === 0 && event.clientX === 0 && event.clientY === 0;
+    const pointer = fromKeyboard ? null : pointerIn(event.currentTarget, event);
+    setView(current => {
+      if (!pointer) return zoomBy(current, ZOOM_STEP);
+      return current.zoom >= MAX_ZOOM ? centreOn(current, pointer) : zoomAtPointer(current, pointer, current.zoom + ZOOM_STEP);
+    });
   };
 
   const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
@@ -178,25 +180,25 @@ export default function AssetImageViewer({ asset, onClose }: Props) {
 
         <div className="asset-image-viewer__canvas">
           <button
+            ref={stageRef}
             type="button"
             className={`asset-image-viewer__stage${zoom > MIN_ZOOM ? ' is-zoomed' : ''}`}
             aria-label={`点击${kindLabel}全景图局部放大`}
             onClick={inspectDetail}
-            onWheel={zoomWithWheel}
           >
             <img
               src={asset.imageUrl}
               alt={`${asset.name} ${kindLabel}全景图`}
               draggable={false}
               style={{
-                transform: `scale(${zoom})`,
-                transformOrigin: `${focusPoint.x}% ${focusPoint.y}%`,
+                transform: `scale(${scaleOf(zoom)})`,
+                transformOrigin: `${percent(origin.x)}% ${percent(origin.y)}%`,
               }}
             />
           </button>
           <div className="asset-image-viewer__position" aria-live="polite">
             <Maximize2 aria-hidden="true" />
-            <span>观察位置 X {focusPoint.x}% · Y {focusPoint.y}%</span>
+            <span>观察位置 X {Math.round(focus.x)}% · Y {Math.round(focus.y)}%</span>
           </div>
         </div>
 

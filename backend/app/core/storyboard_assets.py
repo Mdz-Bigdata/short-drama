@@ -22,6 +22,19 @@ from app.core.actor_sheet_layout import (
     MIRRORED_CELL_SOURCES,
     actor_sheet_cell_paths,
 )
+from app.core import prompt_data
+
+
+_WORDING_FILE = "storyboard_assets"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/storyboard_assets.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 Image.MAX_IMAGE_PIXELS = 60_000_000
@@ -187,12 +200,10 @@ def split_actor_sheet(source: str | Path, output_directory: str | Path) -> list[
     aspect = image.width / image.height
     if not layout.min_aspect_ratio <= aspect <= layout.max_aspect_ratio:
         raise ValueError(
-            f"数字演员设定集必须是 {layout.aspect_ratio_label} 超宽横版"
-            f"（宽高比需在 {layout.min_aspect_ratio:g}–{layout.max_aspect_ratio:g} 之间），"
-            f"当前为 {aspect:.2f}，不予拆分。"
+            _text_of("split_actor_sheet.text").format(layout.aspect_ratio_label, layout.min_aspect_ratio, layout.max_aspect_ratio, aspect)
         )
     if image.width < 200 or image.height < 100:
-        raise ValueError("数字演员设定集分辨率过低，无法拆出各个格子。")
+        raise ValueError(_text_of("split_actor_sheet.text.2"))
     target_dir = Path(output_directory).expanduser().resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []

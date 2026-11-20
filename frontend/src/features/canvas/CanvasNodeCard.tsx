@@ -1,6 +1,6 @@
 import { Component, lazy, memo, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
-  AudioLines, Box, Boxes, Clapperboard, Clock, Film, Globe2, ImageIcon, Loader2, Palette, Play, StickyNote, Upload, X, type LucideIcon, Wrench } from 'lucide-react';
+  AudioLines, Box, Boxes, ChevronDown, ChevronRight, Clapperboard, Clock, Film, Globe2, ImageIcon, Loader2, Palette, Play, StickyNote, Upload, X, type LucideIcon, Wrench } from 'lucide-react';
 
 import { apiUrl } from '../../api/client';
 import { t } from '../../i18n';
@@ -10,8 +10,10 @@ import type { StagePlan } from '../spatial/spatialTypes';
 import { acceptsInput, outputType, RUNNABLE_KINDS } from './canvasGraph';
 import { useCanvasActions } from './canvasContext';
 import { kindLabel, nodeTitle, outputLabel, statusLabel } from './canvasLabels';
+import type { NodeLod } from './canvasLod';
 import type { CanvasNode, LatestRun, NodeKind, NodeOutput } from './canvasTypes';
 import type { DropState } from './CanvasSurface';
+import { bindVideoHoverPreview } from './canvasVideoPreview';
 import { ToolBody } from './ToolBody';
 
 const PanoramaViewer = lazy(() => import('./PanoramaViewer'));
@@ -30,7 +32,8 @@ function messageOf(error: unknown, fallback: string) {
 export function MediaPreview({ output }: { output: NodeOutput }) {
   const url = apiUrl(output.url);
   if (output.medium === 'image') return <img className="cn-media" src={url} alt="" loading="lazy" draggable={false} />;
-  if (output.medium === 'video') return <video className="cn-media" src={url} controls preload="metadata" playsInline />;
+  // An upload in an encoding browsers may not play is watched through its H.264 copy (video_preview.py).
+  if (output.medium === 'video') return <video className="cn-media" src={output.preview_url ? apiUrl(output.preview_url) : url} controls preload="metadata" playsInline />;
   return <audio className="cn-audio" src={url} controls preload="none" />;
 }
 
@@ -61,7 +64,7 @@ function RunBar({ node, latest }: { node: CanvasNode; latest?: LatestRun }) {
       <button type="button" className="cn-button is-primary" disabled={busy || kind?.runnable === false} onClick={() => run([node.id])}>
         {busy ? <Loader2 className="cn-spin" aria-hidden="true" /> : <Play aria-hidden="true" />} {t('运行')}
       </button>
-      {latest && <span className={`cn-status is-${latest.status}`} title={latest.error ?? undefined}>{statusLabel(latest.status)}</span>}
+      {latest && <span className={`cn-status is-${latest.status}`} title={latest.error ?? undefined}>{statusLabel(latest.status)}{latest.versions ? ` ${latest.versions.done}/${latest.versions.total}` : ''}</span>}
       {latest?.status === 'queued' && (
         <button type="button" className="cn-button is-quiet" onClick={() => cancel(latest)} aria-label={t('取消排队')}><X aria-hidden="true" /></button>
       )}
@@ -144,6 +147,8 @@ class ViewerBoundary extends Component<{ fallback: ReactNode; children: ReactNod
 function PanoramaBody({ node, output, selected }: { node: CanvasNode; output: NodeOutput | null; selected: boolean }) {
   const [inside, setInside] = useState(false);
   const [noWebgl, setNoWebgl] = useState(false);
+  // 全景图读不出来(链接失效、跨域被拒)：退回平面图并说明，而不是留一个空的球。
+  const [unreadable, setUnreadable] = useState(false);
   const url = output?.medium === 'image' ? output.url : '';
   if (!url) {
     return (
@@ -156,7 +161,9 @@ function PanoramaBody({ node, output, selected }: { node: CanvasNode; output: No
   return inside && selected ? (
     <>
       <ViewerBoundary fallback={<p className="cn-error" role="status">{t('全景视图打开失败，这个浏览器可能不支持 WebGL。')}</p>}>
-        <Suspense fallback={<p className="cn-hint">{t('加载全景…')}</p>}><PanoramaViewer url={url} /></Suspense>
+        <Suspense fallback={<p className="cn-hint">{t('加载全景…')}</p>}>
+          <PanoramaViewer url={url} onFail={() => { setInside(false); setUnreadable(true); }} />
+        </Suspense>
       </ViewerBoundary>
       <button type="button" className="cn-button" onClick={() => setInside(false)}>{t('退出全景')}</button>
     </>
@@ -164,11 +171,13 @@ function PanoramaBody({ node, output, selected }: { node: CanvasNode; output: No
     <>
       <div className="cn-preview"><img className="cn-media" src={apiUrl(url)} alt="" loading="lazy" draggable={false} /></div>
       {noWebgl && <p className="cn-error" role="status">{t('全景视图打开失败，这个浏览器可能不支持 WebGL。')}</p>}
+      {unreadable && <p className="cn-error" role="status">{t('全景图读取失败，已退回平面图。')}</p>}
       <button
         type="button" className="cn-button" disabled={!selected} title={selected ? undefined : t('先选中这个节点')}
         onClick={() => {
           const supported = webglAvailable();
           setNoWebgl(!supported);
+          setUnreadable(false);
           setInside(supported);
         }}
       >
@@ -242,7 +251,7 @@ function PrevizBody({ node, reference }: { node: CanvasNode; reference: string |
       </button>
       {reference && <p className="cn-hint">{t('已连接参考图，会带入预演台的白模页')}</p>}
       {captures.length > 0 && (
-        <div className="cn-captures" data-no-wheel data-no-drag role="group" aria-label={t('预演台的输出')}>
+        <div className="cn-captures" data-canvas-wheel-intent data-no-drag role="group" aria-label={t('预演台的输出')}>
           {captures.map(capture => {
             const usable = usableCapture(capture);
             return (
@@ -329,6 +338,55 @@ export const NodeShell = memo(function NodeShell({ node, selected }: { node: Can
   );
 });
 
+/** A still of a video: nothing loads until a mouse rests on it, then a few muted seconds play. */
+function VideoTile({ url }: { url: string }) {
+  const tile = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = tile.current;
+    if (!element) return undefined;
+    return bindVideoHoverPreview(element, () => apiUrl(url));
+  }, [url]);
+  return (
+    <div ref={tile} className="cn-preview cn-preview-tile" title={t('悬停预览')}>
+      <Film aria-hidden="true" />
+    </div>
+  );
+}
+
+/** The card from a middle distance: what it holds at a glance, with no editor or player mounted. */
+function PreviewBody({ node, output }: { node: CanvasNode; output: NodeOutput | null }) {
+  const text = output?.html ? '' : output?.text || node.payload.prompt || node.payload.text || node.payload.styleText || '';
+  return (
+    <>
+      {output?.url && output.medium === 'image' && <div className="cn-preview"><img className="cn-media" src={apiUrl(output.url)} alt="" loading="lazy" draggable={false} /></div>}
+      {output?.url && output.medium === 'video' && <VideoTile url={output.url} />}
+      {output?.url && output.medium === 'audio' && <div className="cn-preview cn-preview-tile"><AudioLines aria-hidden="true" /></div>}
+      {text && <p className="cn-hint cn-preview-text">{text}</p>}
+    </>
+  );
+}
+
+function Title({ node, renaming, onRename }: { node: CanvasNode; renaming: boolean; onRename?: (id: string, title: string | null) => void }) {
+  if (!renaming || !onRename) return <strong>{nodeTitle(node)}</strong>;
+  return (
+    <input
+      className="cn-title-input" autoFocus defaultValue={node.payload.label || node.payload.title || ''} placeholder={nodeTitle(node)} maxLength={120} aria-label={t('节点名称')}
+      onFocus={event => event.currentTarget.select()}
+      onBlur={event => onRename(node.id, event.currentTarget.value)}
+      onKeyDown={event => {
+        if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+          event.preventDefault();
+          onRename(node.id, event.currentTarget.value);
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          onRename(node.id, null);
+        }
+      }}
+    />
+  );
+}
+
 interface CardProps {
   node: CanvasNode;
   selected: boolean;
@@ -339,33 +397,64 @@ interface CardProps {
   inputs: number;
   /** Previz only: the connected picture that goes along to the desk's 白模 tab. */
   reference: string | null;
+  /** 'preview' draws the frame, title and a still, without editors or players. */
+  lod?: Exclude<NodeLod, 'shell'>;
+  /** The title is being edited in place. */
+  renaming?: boolean;
+  /** A new title, or null to keep the old one. */
+  onRename?: (id: string, title: string | null) => void;
+  onToggleCollapse?: (id: string) => void;
+  /** Groups: how many nodes they hold, shown when folded. */
+  members?: number;
 }
 
-export const CanvasNodeCard = memo(function CanvasNodeCard({ node, selected, dropState, output, latest, historyCount, inputs, reference }: CardProps) {
+export const CanvasNodeCard = memo(function CanvasNodeCard({
+  node, selected, dropState, output, latest, historyCount, inputs, reference, lod = 'full', renaming = false, onRename, onToggleCollapse, members = 0,
+}: CardProps) {
   const Icon = KIND_ICONS[node.kind];
   const produced = outputType(node);
   if (node.kind === 'group') {
+    const collapsed = node.payload.collapsed === true;
+    const Toggle = collapsed ? ChevronRight : ChevronDown;
     return (
-      <div className={`cn-group${selected ? ' is-selected' : ''}`}>
-        <header className="cn-group__head"><Boxes aria-hidden="true" /> {nodeTitle(node)}</header>
-        <span className="cn-resize" data-resize aria-hidden="true" />
+      <div className={`cn-group${selected ? ' is-selected' : ''}${collapsed ? ' is-collapsed' : ''}`}>
+        <header
+          className="cn-group__head" title={t('双击折叠或展开')}
+          onDoubleClick={event => { if (!(event.target as Element).closest('input,button')) onToggleCollapse?.(node.id); }}
+        >
+          {onToggleCollapse && (
+            <button
+              type="button" className="cn-group__toggle" aria-expanded={!collapsed} aria-label={collapsed ? t('展开分组') : t('折叠分组')}
+              onClick={() => onToggleCollapse(node.id)}
+            >
+              <Toggle aria-hidden="true" />
+            </button>
+          )}
+          <Boxes aria-hidden="true" /> <Title node={node} renaming={renaming} onRename={onRename} />
+        </header>
+        {collapsed && <p className="cn-hint cn-group__count">{t('{0} 个节点', [members])}</p>}
+        {!collapsed && <span className="cn-resize" data-resize aria-hidden="true" />}
       </div>
     );
   }
   return (
     <article
-      className={`cn-node cn-kind--${node.kind}${selected ? ' is-selected' : ''}${dropState ? ` is-drop-${dropState}` : ''}${node.track === 'mainline' ? ' is-mainline' : ''}`}
+      className={`cn-node cn-kind--${node.kind}${selected ? ' is-selected' : ''}${dropState ? ` is-drop-${dropState}` : ''}${node.track === 'mainline' ? ' is-mainline' : ''}${lod === 'preview' ? ' is-preview' : ''}`}
       aria-label={`${kindLabel(node.kind)}：${nodeTitle(node)}`}
     >
       <header className="cn-node__head">
         <Icon aria-hidden="true" />
-        <strong>{nodeTitle(node)}</strong>
+        <Title node={node} renaming={renaming} onRename={onRename} />
         {node.track === 'mainline' && <em className="cn-tag" title={t('已提交到项目')}>{t('已提交')}</em>}
         {RUNNABLE_KINDS.has(node.kind) && historyCount > 0 && (
           <span className="cn-count" title={t('生成记录')}><Clock aria-hidden="true" /> {historyCount}</span>
         )}
       </header>
-      <div className="cn-node__body"><Body node={node} output={output} latest={latest} selected={selected} inputs={inputs} reference={reference} /></div>
+      <div className="cn-node__body">
+        {lod === 'preview'
+          ? <PreviewBody node={node} output={output} />
+          : <Body node={node} output={output} latest={latest} selected={selected} inputs={inputs} reference={reference} />}
+      </div>
       {acceptsInput(node) && <span className="cn-port cn-port--in" aria-hidden="true" />}
       {produced && <span className="cn-port cn-port--out" data-port="out" title={t('拖出连线（输出：{0}）', [outputLabel(produced)])} />}
       <span className="cn-resize" data-resize aria-hidden="true" />

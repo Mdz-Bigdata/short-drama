@@ -50,7 +50,7 @@ class TaskRecoveryTests(unittest.TestCase):
         self.assertEqual(task["stage_progress"]["status"], "error")
         self.assertEqual(task["stage_progress"]["calls"][0]["status"], "error")
         self.assertEqual(len(task["chat_history"]), 1)
-        self.assertIn("第 1/8 步", task["chat_history"][0]["content"])
+        self.assertIn("第 1/7 步", task["chat_history"][0]["content"])
         self.assertIn("服务重启", task["chat_history"][0]["content"])
 
         # A second restart before anyone resumes must not repeat the message.

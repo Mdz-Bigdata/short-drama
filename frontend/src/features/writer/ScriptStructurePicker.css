@@ -1,0 +1,116 @@
+.structure-picker,
+.episode-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.structure-picker__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.structure-picker__title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.structure-picker__note {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.structure-picker__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.structure-picker__chip {
+  padding: 8px 18px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.structure-picker__chip:hover {
+  background: var(--surface);
+}
+
+.structure-picker__chip.is-active {
+  border-color: var(--accent, #4fc3f7);
+  background: color-mix(in srgb, var(--accent, #4fc3f7) 16%, transparent);
+}
+
+.structure-picker__chip:focus-visible,
+.episode-slider input:focus-visible {
+  outline: 2px solid var(--accent, #4fc3f7);
+  outline-offset: 2px;
+}
+
+.episode-slider__row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.episode-slider input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  height: 8px;
+  appearance: none;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--accent, #4fc3f7) var(--episode-fill, 0%), var(--border-color) var(--episode-fill, 0%));
+  cursor: pointer;
+}
+
+.episode-slider input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  border: 4px solid var(--accent, #4fc3f7);
+}
+
+.episode-slider input[type='range']::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 4px solid var(--accent, #4fc3f7);
+}
+
+.episode-slider input[type='range']:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.episode-slider__value {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.episode-slider__value input {
+  width: 3.2em;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+}

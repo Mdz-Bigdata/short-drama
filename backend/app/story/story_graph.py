@@ -16,17 +16,30 @@ from app.schema.studio import (
     StoryGraph,
     StoryScene,
 )
+from app.core import prompt_data
+
+
+_WORDING_FILE = "story_story_graph"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/story_story_graph.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 class StoryGraphBuilder:
     _DIALOGUE = re.compile(r"(?m)^\s*([\u4e00-\u9fffA-Za-z][\w\u4e00-\u9fff·.-]{0,19})\s*[:：]")
-    _SCENE_CN = re.compile(r"(?m)^\s*(?:#+\s*)?场景\s*[:：]\s*([^\n]+)")
+    _SCENE_CN = re.compile(_text_of("StoryGraphBuilder.scene_cn"))
     _SCENE_FDX = re.compile(r"(?im)^\s*(?:(?:INT|EXT|INT\.?/EXT|I/E)\.?\s+[^\n]+)")
-    _SCENE_CN_SIDE = re.compile(r"(?m)^\s*((?:内景|外景|内外景)\s*[:：]\s*[^\n]+)")
-    _SCENE_CN_NUMBERED = re.compile(r"(?m)^\s*(第\s*[零〇一二三四五六七八九十百千万两\d]+\s*[场幕]\s*[^\n:：]+)$")
+    _SCENE_CN_SIDE = re.compile(_text_of("StoryGraphBuilder.scene_cn_side"))
+    _SCENE_CN_NUMBERED = re.compile(_text_of("StoryGraphBuilder.scene_cn_numbered"))
     # Spaced names ("MARY JANE: …") only count in capitals, so an action line with a colon stays an action line.
     _DIALOGUE_SPACED = re.compile(r"(?m)^\s*([A-Z][A-Z0-9._-]*(?: [A-Z0-9._-]+)+)\s*[:：][ \t]*\S")
-    _RESERVED = {"场景", "地点", "时间", "动作", "旁白", "音效", "音乐", "镜头", "内景", "外景", "内外景", "转场", "淡入", "淡出", "切至"}
+    _RESERVED = {_text_of("StoryGraphBuilder.reserved"), _text_of("StoryGraphBuilder.reserved.2"), _text_of("StoryGraphBuilder.reserved.3"), _text_of("StoryGraphBuilder.reserved.4"), _text_of("StoryGraphBuilder.reserved.5"), _text_of("StoryGraphBuilder.reserved.6"), _text_of("StoryGraphBuilder.reserved.7"), _text_of("StoryGraphBuilder.reserved.8"), _text_of("StoryGraphBuilder.reserved.9"), _text_of("StoryGraphBuilder.reserved.10"), _text_of("StoryGraphBuilder.reserved.11"), _text_of("StoryGraphBuilder.reserved.12"), _text_of("StoryGraphBuilder.reserved.13"), _text_of("StoryGraphBuilder.reserved.14"), _text_of("StoryGraphBuilder.reserved.15")}
 
     def build(self, document: SourceDocument) -> StoryGraph:
         character_spans: dict[str, list[str]] = {}

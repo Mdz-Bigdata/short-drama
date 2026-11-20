@@ -1,0 +1,34 @@
+.script-review__backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 1rem; background: rgba(20, 12, 16, 0.45); }
+.script-review { width: min(52rem, 100%); max-height: calc(100dvh - 2rem); overflow-y: auto; display: flex; flex-direction: column; gap: 0.8rem; padding: 1.1rem 1.25rem 1.25rem; border: 1px solid var(--border-color, #e3d4da); border-radius: 14px; color: var(--ink, #2b2226); background: var(--surface, #fff); box-shadow: 0 18px 48px rgba(20, 12, 16, 0.22); }
+.script-review header { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
+.script-review h2 { margin: 0; font-size: 1.15rem; }
+.script-review h3 { margin: 0.4rem 0 0; font-size: 0.95rem; }
+.script-review p { margin: 0; }
+.script-review__note { font-size: 0.8125rem; color: var(--text-muted, #7a6d72); }
+.script-review__close { flex: none; display: inline-grid; place-items: center; width: 2rem; height: 2rem; border: 0; border-radius: 8px; color: inherit; background: transparent; cursor: pointer; }
+.script-review__close:focus-visible, .script-review__actions button:focus-visible, .script-review__actions a:focus-visible { outline: 2px solid var(--accent, #c8415a); outline-offset: 2px; }
+.script-review__facts { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0; padding: 0; list-style: none; }
+.script-review__facts li { padding: 0.25rem 0.6rem; font-size: 0.8125rem; border: 1px solid var(--border-color, #e3d4da); border-radius: 999px; }
+.script-review__facts strong { margin-left: 0.3rem; font-variant-numeric: tabular-nums; }
+.script-review__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.script-review__actions button, .script-review__actions a { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.4rem 0.8rem; font: inherit; font-size: 0.875rem; text-decoration: none; color: inherit; border: 1px solid var(--border-color, #e3d4da); border-radius: 8px; background: transparent; cursor: pointer; }
+.script-review__actions button.is-primary { color: var(--on-accent, #fff); border-color: var(--accent, #c8415a); background: var(--accent, #c8415a); }
+.script-review__actions button:disabled { opacity: 0.55; cursor: default; }
+.script-review__warn { padding: 0.5rem 0.7rem; font-size: 0.8125rem; border: 1px solid rgba(200, 140, 30, 0.45); border-radius: 8px; background: rgba(200, 140, 30, 0.1); }
+.script-review__summary { white-space: pre-line; line-height: 1.6; }
+.script-review__dimensions { display: grid; gap: 0.35rem; margin: 0; padding: 0; list-style: none; }
+.script-review__dimensions li { display: grid; grid-template-columns: 5.5rem 5.5rem minmax(0, 1fr); gap: 0.5rem; align-items: baseline; font-size: 0.875rem; }
+.script-review__verdict { justify-self: start; padding: 0.05rem 0.5rem; font-size: 0.75rem; border-radius: 999px; border: 1px solid currentColor; }
+.script-review__verdict.is-pass { color: #2e7d4f; }
+.script-review__verdict.is-revise { color: #a8700f; }
+.script-review__verdict.is-problem { color: #c0392b; }
+.script-review__findings { display: grid; gap: 0.55rem; margin: 0; padding: 0; list-style: none; }
+.script-review__findings li { display: grid; gap: 0.25rem; padding: 0.55rem 0.7rem; font-size: 0.875rem; border: 1px solid var(--border-color, #e3d4da); border-left-width: 4px; border-radius: 8px; }
+.script-review__findings li.is-high { border-left-color: #c0392b; }
+.script-review__findings li.is-medium { border-left-color: #d08a1a; }
+.script-review__findings li.is-low { border-left-color: #8a8f98; }
+.script-review__where { font-size: 0.75rem; color: var(--text-muted, #7a6d72); }
+.script-review__findings blockquote { margin: 0; padding-left: 0.6rem; border-left: 2px solid var(--border-color, #e3d4da); color: var(--text-muted, #7a6d72); }
+.script-review__findings em { font-style: normal; font-weight: 600; margin-right: 0.3rem; }
+.script-review__strengths { margin: 0; padding-left: 1.1rem; font-size: 0.875rem; }
+@media (max-width: 560px) { .script-review__dimensions li { grid-template-columns: minmax(0, 1fr); gap: 0.15rem; } }

@@ -1,0 +1,22 @@
+{
+  "_note": "对白说哪种话（app/core/spoken_language.py 读取）。只管音画同生的视频模型自己出的原声：提示词里「对白语言」那一行按这里的写法写。默认普通话，和原来一字不差。方言写清三件事——口音和口语节奏要地道、方言词连着说并按当地读音、不按字面念成普通话（否则「老子数到三」会被念成普通话的字面读音）。写法里不能出现逗号，那一行靠逗号断句。from_content_language：项目的内容语言是英语或越南语而没有另选时，对白语言跟着内容语言走。配音(TTS)补的台词不归这里管，它用的是音色库里的声音。",
+  "dialect": "{label}（地道的{label}口音和口语节奏、方言词连着说并按当地读音、不按字面念成普通话）",
+  "foreign": "{label}（自然的母语口语、不夹中文）",
+  "options": [
+    {"key": "", "label": "普通话", "kind": "default"},
+    {"key": "sichuan", "label": "四川话", "kind": "dialect"},
+    {"key": "cantonese", "label": "粤语", "kind": "dialect"},
+    {"key": "northeast", "label": "东北话", "kind": "dialect"},
+    {"key": "shanghai", "label": "上海话", "kind": "dialect"},
+    {"key": "henan", "label": "河南话", "kind": "dialect"},
+    {"key": "shaanxi", "label": "陕西话", "kind": "dialect"},
+    {"key": "tianjin", "label": "天津话", "kind": "dialect"},
+    {"key": "minnan", "label": "闽南语", "kind": "dialect"},
+    {"key": "english", "label": "英语", "kind": "foreign"},
+    {"key": "vietnamese", "label": "越南语", "kind": "foreign"},
+    {"key": "korean", "label": "韩语", "kind": "foreign"},
+    {"key": "japanese", "label": "日语", "kind": "foreign"}
+  ],
+  "from_content_language": {"en": "english", "vi": "vietnamese"},
+  "errors": {"unknown": "没有「{key}」这种对白语言"}
+}

@@ -38,6 +38,24 @@ def _task(**overrides) -> dict:
     return task
 
 
+def _two_scene_task() -> dict:
+    """Two scenes that both start at shot 1, the way every multi-scene film is numbered."""
+    task = _task()
+    task["assets"]["5"] = [
+        {"shot_id": 1, "scene_id": "E1S01", "video_url": "http://localhost:8000/media/s1c1.mp4", "duration": 8, "dialogue": "", "contract_fingerprint": "a1"},
+        {"shot_id": 2, "scene_id": "E1S01", "video_url": "http://localhost:8000/media/s1c2.mp4", "duration": 6, "dialogue": "", "contract_fingerprint": "a2"},
+        {"shot_id": 1, "scene_id": "E1S02", "video_url": "http://localhost:8000/media/s2c1.mp4", "duration": 5, "dialogue": "", "contract_fingerprint": "b1",
+         "candidates": ["http://localhost:8000/media/s2c1.mp4", "http://localhost:8000/media/s2c1b.mp4"]},
+    ]
+    task["assets"]["6"] = {"shot_voices": [None, None, None], "bgm_path": None}
+    return task
+
+
+def _without_shot_uids(timeline: dict) -> dict:
+    """The timeline as it was saved before clips carried ``shot_uid``."""
+    return {**timeline, "clips": [{k: v for k, v in clip.items() if k not in {"shot_uid", "scene_id"}} for clip in timeline["clips"]]}
+
+
 class SubtitleTextTests(unittest.TestCase):
     def test_only_the_spoken_words_reach_the_subtitle(self):
         cases = {
@@ -125,6 +143,55 @@ class TimelineModelTests(unittest.TestCase):
         with self.assertRaisesRegex(edit_timeline.TimelineError, "没有镜头"):
             edit_timeline.review(timeline, 9, decision="approved")
 
+    def test_the_same_shot_number_in_two_scenes_is_two_clips(self):
+        timeline = edit_timeline.build(_two_scene_task(), transitions=[{}, {"sound_join": "j_cut"}], title="t")
+        self.assertEqual([(c["scene_id"], c["shot_id"], c["shot_uid"]) for c in timeline["clips"]], [("E1S01", 1, 100101), ("E1S01", 2, 100102), ("E1S02", 1, 100201)])
+
+        timeline = edit_timeline.review(timeline, 1, decision="rejected", note="穿模", shot_uid=100201)
+        timeline = edit_timeline.trim(timeline, 1, start=1.0, end=4.0, shot_uid=100201)
+        timeline = edit_timeline.set_muted(timeline, 1, True, shot_uid=100201)
+        timeline = edit_timeline.set_subtitle(timeline, 1, "回头", shot_uid=100201)
+        timeline = edit_timeline.choose_candidate(timeline, 1, "http://localhost:8000/media/s2c1b.mp4", shot_uid=100201)
+        timeline = edit_timeline.set_transition(timeline, 1, kind="dip_to_black", shot_uid=100201)
+        timeline = edit_timeline.set_sound_join(timeline, 1, join="l_cut", shot_uid=100201)
+        first, _, third = timeline["clips"]
+        self.assertEqual((first["review"]["decision"], first["in"], first["muted"], first["subtitle"]), ("pending", 0.0, False, ""), "scene 1 的镜头 1 没被动过")
+        self.assertEqual((third["review"]["decision"], third["in"], third["out"], third["muted"], third["subtitle"]), ("rejected", 1.0, 4.0, True, "回头"))
+        self.assertEqual(third["video_url"], "http://localhost:8000/media/s2c1b.mp4")
+        self.assertEqual((third["transition_in"]["type"], third["sound_in"]["join"]), ("dip_to_black", "l_cut"))
+
+        with self.assertRaisesRegex(edit_timeline.TimelineError, "没有镜头"):
+            edit_timeline.review(timeline, 1, decision="approved", shot_uid=100301)
+        # 只给镜号的旧调用方还是落在第一段上。
+        self.assertEqual(edit_timeline.review(timeline, 1, decision="approved")["clips"][0]["review"]["decision"], "approved")
+
+    def test_a_timeline_saved_before_shot_uids_still_takes_edits_and_gets_its_ids_back(self):
+        task = _two_scene_task()
+        saved = _without_shot_uids(edit_timeline.build(task, title="t"))
+        self.assertTrue(edit_timeline.is_current(saved, task))
+
+        self.assertEqual(edit_timeline.set_muted(saved, 2, True)["clips"][1]["muted"], True)
+        self.assertEqual(edit_timeline.set_muted(saved, 2, True, shot_uid=100102)["clips"][1]["muted"], True, "没有全剧编号的片段退回按镜号找")
+
+        restored = edit_timeline.with_shot_uids(saved, task)
+        self.assertEqual([(c["shot_uid"], c["scene_id"]) for c in restored["clips"]], [(100101, "E1S01"), (100102, "E1S01"), (100201, "E1S02")])
+        self.assertNotIn("shot_uid", saved["clips"][0], "the stored timeline is not changed in place")
+        self.assertEqual(restored["revision"], saved["revision"])
+        self.assertIs(edit_timeline.with_shot_uids(restored, task), restored)
+
+    def test_what_the_render_did_lands_on_the_clip_at_that_place_in_the_cut(self):
+        timeline = edit_timeline.build(_two_scene_task(), transitions=[{}, {"sound_join": "j_cut"}], title="t")
+        timeline = edit_timeline.set_sound_join(timeline, 1, join="l_cut", shot_uid=100201)
+        report = [{"index": 2, "join": "l_cut", "seconds": 0.5, "applied": True, "reason": ""}]
+        recorded = edit_timeline.record_sound_results(timeline, edit_timeline.render_plan(timeline)["shot_ids"], report)
+        self.assertEqual(recorded["clips"][2]["sound_in"]["result"]["applied"], True)
+        self.assertIsNone(recorded["clips"][0]["sound_in"])
+
+        # 中间一段被打回后，成片里的第 2 段就是第二场的镜头 1。
+        without = edit_timeline.review(timeline, 2, decision="rejected")
+        recorded = edit_timeline.record_sound_results(without, edit_timeline.render_plan(without)["shot_ids"], [{**report[0], "index": 1}])
+        self.assertEqual(recorded["clips"][2]["sound_in"]["result"]["applied"], True)
+
     def test_a_refresh_after_new_footage_keeps_the_edits_of_unchanged_clips(self):
         task = _task()
         timeline = edit_timeline.review(edit_timeline.trim(edit_timeline.build(task, title="t"), 1, start=0.5, end=None), 3, decision="approved")
@@ -179,6 +246,25 @@ class JianYingDraftTests(unittest.TestCase):
                 self.assertIn("暗室回声/materials/bgm.mp3", names)
                 loaded = json.loads(archive.read("暗室回声/draft_content.json"))
                 self.assertEqual(loaded["version"], jianying.DRAFT_VERSION)
+
+    def test_two_scenes_that_both_start_at_shot_one_keep_their_own_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            task = _two_scene_task()
+            # Both scenes' shot 1 are on this machine, each with a voice; the shot between them is not.
+            media = {name: str(Path(temp) / name) for name in ("s1c1.mp4", "s2c1.mp4", "v1.mp3", "v2.mp3")}
+            for name, path in media.items():
+                Path(path).write_bytes(name.encode())
+            task["assets"]["6"] = {"shot_voices": [media["v1.mp3"], None, media["v2.mp3"]], "bgm_path": None}
+            timeline = edit_timeline.build(task, title=None)
+
+            draft = jianying.build_draft(timeline, name="x", resolve_local=lambda url: media.get(url.rsplit("/", 1)[-1]), probe=lambda _path: 1.0)
+
+            packed = {kind: sorted(Path(local).name for rel, local in draft["files"].items() if rel.startswith(f"materials/{kind}_")) for kind in ("shot", "voice")}
+            self.assertEqual(packed, {"shot": ["s1c1.mp4", "s2c1.mp4"], "voice": ["v1.mp3", "v2.mp3"]}, "no scene's file is written over another's")
+            videos = [item["path"] for item in draft["draft_content"]["materials"]["videos"]]
+            self.assertEqual(len(set(videos)), 2)
+            # The clip that is missing is named with its scene, since its number alone repeats.
+            self.assertEqual(draft["skipped"], ["E1S01 镜头 2：片段不在本机，未打包"])
 
     def offset_draft(self, joins, voices, *, probe=None):
         temp = tempfile.TemporaryDirectory()
@@ -365,6 +451,26 @@ class TimelineServiceTests(unittest.TestCase):
         self.assertEqual(stored["assets"]["7"]["final_video_url"], "http://localhost:8000/media/film.mp4")
         self.assertEqual(stored["assets"]["7"]["timeline_summary"]["included"], 1)
         self.assertEqual(stored["video_url"], "http://localhost:8000/media/film.mp4")
+
+    def test_an_edit_names_its_clip_by_shot_uid_and_a_stored_timeline_without_ids_gets_them(self):
+        task = _two_scene_task()
+        task["assets"][edit_timeline.TIMELINE_KEY] = _without_shot_uids(edit_timeline.build(task, title="暗室回声"))
+        self.repo.save_task("tl-1", task)
+        with patch.object(drama_api, "service", self.service):
+            read = self.client.get("/api/drama/tl-1/timeline")
+            self.assertEqual(read.status_code, 200, read.text)
+            self.assertEqual([c["shot_uid"] for c in read.json()["timeline"]["clips"]], [100101, 100102, 100201])
+            self.assertEqual(self.repo.get_task("tl-1")["assets"][edit_timeline.TIMELINE_KEY]["clips"][2]["shot_uid"], 100201, "the ids are saved, not recomputed on every read")
+
+            rejected = self.client.post("/api/drama/tl-1/timeline/ops", json={"operation": "review", "shot_id": 1, "shot_uid": 100201, "decision": "rejected", "note": "重做"})
+            self.assertEqual(rejected.status_code, 200, rejected.text)
+            self.assertEqual([c["review"]["decision"] for c in rejected.json()["timeline"]["clips"]], ["pending", "pending", "rejected"])
+
+            # 只带镜号的旧请求照旧可用。
+            muted = self.client.post("/api/drama/tl-1/timeline/ops", json={"operation": "mute", "shot_id": 2, "muted": True})
+            self.assertEqual([c["muted"] for c in muted.json()["timeline"]["clips"]], [False, True, False])
+            gone = self.client.post("/api/drama/tl-1/timeline/ops", json={"operation": "mute", "shot_id": 1, "shot_uid": 100901, "muted": True})
+            self.assertEqual(gone.status_code, 422)
 
     def test_the_title_card_carries_the_screenplays_title_not_the_request(self):
         task = _task()

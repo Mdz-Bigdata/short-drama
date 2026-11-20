@@ -22,6 +22,9 @@ const DYNAMIC_SOURCES = [
   ['src/features/workbench/chatCommands.ts', ['label', 'description']],
   ['src/features/workbench/creationOptions.ts', ['label']],
   ['src/types.ts', ['label', 'hint']],
+  ['src/features/writer/serialBrief.ts', ['label', 'hint', 'say']],
+  // 大厅的推荐模板卡：标题与简介在卡片上 tr()，发给模型的 prompt 不翻。
+  ['src/App.tsx', ['title', 'desc']],
 ];
 
 function walk(dir, out = []) {

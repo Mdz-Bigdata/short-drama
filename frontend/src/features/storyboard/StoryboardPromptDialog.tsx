@@ -18,6 +18,9 @@ export function StoryboardPromptDialog({ detail, fallbackPrompt, onClose }: {
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  // Callers pass a fresh onClose on every render; the dialog must not take focus back each time.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; });
   const markdown = useMemo(() => detail ? storyboardPromptMarkdown(detail) : (fallbackPrompt || '暂无提示词'), [detail, fallbackPrompt]);
   const downloadHref = `data:text/markdown;charset=utf-8,${encodeURIComponent(markdown)}`;
 
@@ -28,7 +31,7 @@ export function StoryboardPromptDialog({ detail, fallbackPrompt, onClose }: {
     closeRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -57,7 +60,7 @@ export function StoryboardPromptDialog({ detail, fallbackPrompt, onClose }: {
       window.removeEventListener('keydown', handleKeyDown);
       previousFocus?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   return createPortal(
     <div className="prompt-dialog__backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>

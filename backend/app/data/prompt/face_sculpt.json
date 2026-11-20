@@ -1,0 +1,3434 @@
+{
+  "_comment": "捏脸与捏表情的控件表。每个控件归一层人物资产卡(face_card)：选中的选项给出写进提示词的短语，replaces 里的词出现在原描述同层片段里时，那个片段被这次捏出的结果替换掉。scale 控件 5 档，中间档 phrase 为空表示不写词。表情的 words 与 emotion_table 的情绪词一一对应。",
+  "layers": [
+    {
+      "key": "identity",
+      "label": "身份锚点"
+    },
+    {
+      "key": "bone",
+      "label": "骨相"
+    },
+    {
+      "key": "features",
+      "label": "五官"
+    },
+    {
+      "key": "skin",
+      "label": "皮肤"
+    },
+    {
+      "key": "hair",
+      "label": "毛发"
+    },
+    {
+      "key": "physique",
+      "label": "体态"
+    }
+  ],
+  "controls": [
+    {
+      "key": "age",
+      "layer": "identity",
+      "label": "年龄感",
+      "type": "choice",
+      "replaces": [
+        "岁",
+        "年纪",
+        "年龄",
+        "少女",
+        "少年",
+        "中年",
+        "老年",
+        "青年"
+      ],
+      "options": [
+        {
+          "value": "teen",
+          "label": "十六七岁",
+          "phrase": "十六七岁的少年感"
+        },
+        {
+          "value": "early20",
+          "label": "二十出头",
+          "phrase": "二十出头"
+        },
+        {
+          "value": "late20",
+          "label": "二十七八",
+          "phrase": "二十七八岁"
+        },
+        {
+          "value": "30s",
+          "label": "三十上下",
+          "phrase": "三十岁上下"
+        },
+        {
+          "value": "40s",
+          "label": "四十余岁",
+          "phrase": "四十余岁、眼角有浅纹"
+        },
+        {
+          "value": "50s",
+          "label": "年过半百",
+          "phrase": "年过半百、两鬓微霜"
+        },
+        {
+          "value": "60s",
+          "label": "花甲之年",
+          "phrase": "花甲之年、皱纹清晰"
+        }
+      ]
+    },
+    {
+      "key": "temperament",
+      "layer": "identity",
+      "label": "气质",
+      "type": "choice",
+      "replaces": [
+        "气质",
+        "气场",
+        "神态"
+      ],
+      "options": [
+        {
+          "value": "cool",
+          "label": "清冷",
+          "phrase": "清冷疏离的气质"
+        },
+        {
+          "value": "bright",
+          "label": "明艳",
+          "phrase": "明艳张扬的气质"
+        },
+        {
+          "value": "gentle",
+          "label": "温婉",
+          "phrase": "温婉柔和的气质"
+        },
+        {
+          "value": "heroic",
+          "label": "英气",
+          "phrase": "英气利落的气质"
+        },
+        {
+          "value": "scholar",
+          "label": "书卷气",
+          "phrase": "沉静的书卷气"
+        },
+        {
+          "value": "sinister",
+          "label": "阴鸷",
+          "phrase": "阴鸷压迫的气场"
+        },
+        {
+          "value": "honest",
+          "label": "憨厚",
+          "phrase": "憨厚朴实的神态"
+        },
+        {
+          "value": "regal",
+          "label": "威仪",
+          "phrase": "端严威仪的气场"
+        }
+      ]
+    },
+    {
+      "key": "face_shape",
+      "layer": "bone",
+      "label": "脸型",
+      "type": "choice",
+      "replaces": [
+        "脸型",
+        "脸",
+        "面庞",
+        "瓜子",
+        "鹅蛋",
+        "方脸",
+        "圆脸",
+        "长脸",
+        "心形",
+        "椭圆"
+      ],
+      "options": [
+        {
+          "value": "oval",
+          "label": "鹅蛋脸",
+          "phrase": "鹅蛋脸"
+        },
+        {
+          "value": "ellipse",
+          "label": "椭圆脸",
+          "phrase": "椭圆脸"
+        },
+        {
+          "value": "melon",
+          "label": "瓜子脸",
+          "phrase": "瓜子脸、下颌收窄"
+        },
+        {
+          "value": "round",
+          "label": "圆脸",
+          "phrase": "圆脸、苹果肌饱满"
+        },
+        {
+          "value": "square",
+          "label": "方脸",
+          "phrase": "方脸、下颌角分明"
+        },
+        {
+          "value": "long",
+          "label": "长脸",
+          "phrase": "长脸、面中偏长"
+        },
+        {
+          "value": "heart",
+          "label": "心形脸",
+          "phrase": "心形脸、额头宽下巴尖"
+        },
+        {
+          "value": "diamond",
+          "label": "菱形脸",
+          "phrase": "菱形脸、颧骨最宽"
+        }
+      ]
+    },
+    {
+      "key": "face_length",
+      "layer": "bone",
+      "label": "脸长",
+      "type": "scale",
+      "replaces": [
+        "脸短",
+        "脸长"
+      ],
+      "steps": [
+        "面部偏短",
+        "面部略短",
+        "",
+        "面部略长",
+        "面部偏长"
+      ]
+    },
+    {
+      "key": "face_width",
+      "layer": "bone",
+      "label": "脸宽",
+      "type": "scale",
+      "replaces": [
+        "脸宽",
+        "脸窄",
+        "宽脸",
+        "窄脸"
+      ],
+      "steps": [
+        "脸型窄",
+        "脸略窄",
+        "",
+        "脸略宽",
+        "脸型宽"
+      ]
+    },
+    {
+      "key": "midface",
+      "layer": "bone",
+      "label": "中庭(眉到鼻底)",
+      "type": "scale",
+      "replaces": [
+        "中庭",
+        "面中",
+        "鼻底"
+      ],
+      "steps": [
+        "面中偏短、鼻底位置偏高",
+        "面中略短",
+        "",
+        "面中略长",
+        "面中偏长、鼻底位置偏低"
+      ]
+    },
+    {
+      "key": "philtrum",
+      "layer": "bone",
+      "label": "人中(鼻底到嘴)",
+      "type": "scale",
+      "replaces": [
+        "人中"
+      ],
+      "steps": [
+        "人中短、鼻底贴近上唇",
+        "人中略短",
+        "",
+        "人中略长",
+        "人中偏长"
+      ]
+    },
+    {
+      "key": "chin_length",
+      "layer": "bone",
+      "label": "下巴长短(嘴到下巴)",
+      "type": "scale",
+      "replaces": [
+        "下巴长",
+        "下巴短",
+        "下庭"
+      ],
+      "steps": [
+        "下巴短、嘴到下巴距离短",
+        "下巴略短",
+        "",
+        "下巴略长",
+        "下巴偏长"
+      ]
+    },
+    {
+      "key": "cheekbone",
+      "layer": "bone",
+      "label": "颧骨",
+      "type": "scale",
+      "replaces": [
+        "颧骨",
+        "颧弓"
+      ],
+      "steps": [
+        "颧骨平缓",
+        "颧骨略低",
+        "",
+        "颧骨略高",
+        "颧骨高而外显"
+      ]
+    },
+    {
+      "key": "cheek_fullness",
+      "layer": "bone",
+      "label": "面颊到下颌",
+      "type": "scale",
+      "replaces": [
+        "面颊",
+        "脸颊",
+        "两颊"
+      ],
+      "steps": [
+        "面颊凹陷",
+        "面颊略瘦削",
+        "",
+        "面颊到下颌衔接饱满",
+        "面颊丰润饱满"
+      ]
+    },
+    {
+      "key": "jaw",
+      "layer": "bone",
+      "label": "下颌线",
+      "type": "choice",
+      "replaces": [
+        "下颌",
+        "下颚",
+        "腮"
+      ],
+      "options": [
+        {
+          "value": "soft",
+          "label": "柔和",
+          "phrase": "下颌线柔和圆润"
+        },
+        {
+          "value": "clear",
+          "label": "清晰",
+          "phrase": "下颌线清晰流畅"
+        },
+        {
+          "value": "hard",
+          "label": "硬朗",
+          "phrase": "下颌线硬朗棱角分明"
+        },
+        {
+          "value": "wide",
+          "label": "宽厚",
+          "phrase": "下颌宽厚"
+        }
+      ]
+    },
+    {
+      "key": "chin",
+      "layer": "bone",
+      "label": "下巴",
+      "type": "choice",
+      "replaces": [
+        "下巴",
+        "颏"
+      ],
+      "options": [
+        {
+          "value": "round",
+          "label": "圆润",
+          "phrase": "下巴圆润"
+        },
+        {
+          "value": "pointed",
+          "label": "尖",
+          "phrase": "下巴尖细"
+        },
+        {
+          "value": "square",
+          "label": "方",
+          "phrase": "下巴方正"
+        },
+        {
+          "value": "broad",
+          "label": "有宽度",
+          "phrase": "下巴保留宽度、不削尖"
+        },
+        {
+          "value": "lifted",
+          "label": "微翘",
+          "phrase": "下巴略微前翘"
+        },
+        {
+          "value": "cleft",
+          "label": "美人沟",
+          "phrase": "下巴有一道浅美人沟"
+        }
+      ]
+    },
+    {
+      "key": "brow_ridge",
+      "layer": "bone",
+      "label": "眉弓与眼窝",
+      "type": "choice",
+      "replaces": [
+        "眉弓",
+        "眼窝"
+      ],
+      "options": [
+        {
+          "value": "flat",
+          "label": "平缓浅眼窝",
+          "phrase": "平缓眉弓、浅眼窝"
+        },
+        {
+          "value": "medium",
+          "label": "适中",
+          "phrase": "眉弓适中、眼窝略有立体感"
+        },
+        {
+          "value": "deep",
+          "label": "高眉弓深眼窝",
+          "phrase": "高眉弓、深眼窝"
+        }
+      ]
+    },
+    {
+      "key": "forehead",
+      "layer": "bone",
+      "label": "额头",
+      "type": "choice",
+      "replaces": [
+        "额头",
+        "额"
+      ],
+      "options": [
+        {
+          "value": "full",
+          "label": "饱满",
+          "phrase": "额头饱满"
+        },
+        {
+          "value": "high",
+          "label": "高阔",
+          "phrase": "额头高阔"
+        },
+        {
+          "value": "narrow",
+          "label": "略窄",
+          "phrase": "额头略窄"
+        }
+      ]
+    },
+    {
+      "key": "eye_shape",
+      "layer": "features",
+      "label": "眼型",
+      "type": "choice",
+      "replaces": [
+        "眼型",
+        "杏眼",
+        "桃花眼",
+        "丹凤眼",
+        "圆眼",
+        "细长眼",
+        "下垂眼",
+        "眼形"
+      ],
+      "options": [
+        {
+          "value": "almond",
+          "label": "杏眼",
+          "phrase": "杏眼、眼头圆眼尾微收"
+        },
+        {
+          "value": "long_almond",
+          "label": "长杏眼",
+          "phrase": "杏眼偏长、眼裂横向舒展"
+        },
+        {
+          "value": "peach",
+          "label": "桃花眼",
+          "phrase": "桃花眼、眼尾微微上翘带湿润感"
+        },
+        {
+          "value": "phoenix",
+          "label": "丹凤眼",
+          "phrase": "丹凤眼、眼尾上挑细长"
+        },
+        {
+          "value": "round",
+          "label": "圆眼",
+          "phrase": "圆眼、黑眼仁大"
+        },
+        {
+          "value": "narrow",
+          "label": "细长眼",
+          "phrase": "细长眼"
+        },
+        {
+          "value": "droopy",
+          "label": "下垂眼",
+          "phrase": "眼尾自然下垂的无辜眼"
+        },
+        {
+          "value": "fox",
+          "label": "狐狸眼",
+          "phrase": "狐狸眼、眼头尖眼尾斜上扬"
+        }
+      ]
+    },
+    {
+      "key": "eyelid",
+      "layer": "features",
+      "label": "眼皮",
+      "type": "choice",
+      "replaces": [
+        "眼皮",
+        "单眼皮",
+        "双眼皮",
+        "内双",
+        "外双"
+      ],
+      "options": [
+        {
+          "value": "mono",
+          "label": "单眼皮",
+          "phrase": "单眼皮"
+        },
+        {
+          "value": "inner",
+          "label": "内双",
+          "phrase": "内双"
+        },
+        {
+          "value": "double",
+          "label": "双眼皮",
+          "phrase": "平行双眼皮"
+        },
+        {
+          "value": "deep",
+          "label": "宽深双",
+          "phrase": "宽而深的双眼皮"
+        }
+      ]
+    },
+    {
+      "key": "eye_size",
+      "layer": "features",
+      "label": "眼睛大小",
+      "type": "scale",
+      "replaces": [
+        "眼睛大",
+        "眼睛小",
+        "大眼",
+        "小眼"
+      ],
+      "steps": [
+        "眼睛偏小",
+        "眼睛略小",
+        "",
+        "眼睛略大",
+        "眼睛大而明亮"
+      ]
+    },
+    {
+      "key": "eye_spacing",
+      "layer": "features",
+      "label": "眼距",
+      "type": "scale",
+      "replaces": [
+        "眼距"
+      ],
+      "steps": [
+        "眼距偏近",
+        "眼距略近",
+        "",
+        "眼距略宽",
+        "眼距偏宽"
+      ]
+    },
+    {
+      "key": "eye_tail",
+      "layer": "features",
+      "label": "眼尾",
+      "type": "choice",
+      "replaces": [
+        "眼尾"
+      ],
+      "options": [
+        {
+          "value": "up",
+          "label": "上扬",
+          "phrase": "眼尾上扬"
+        },
+        {
+          "value": "level",
+          "label": "平直",
+          "phrase": "眼尾平直"
+        },
+        {
+          "value": "down",
+          "label": "下垂",
+          "phrase": "眼尾略下垂"
+        }
+      ]
+    },
+    {
+      "key": "gaze",
+      "layer": "features",
+      "label": "眼神",
+      "type": "choice",
+      "replaces": [
+        "眼神",
+        "目光",
+        "眼眸"
+      ],
+      "options": [
+        {
+          "value": "clear",
+          "label": "清亮",
+          "phrase": "眼神清亮"
+        },
+        {
+          "value": "cold",
+          "label": "冷冽",
+          "phrase": "眼神冷冽"
+        },
+        {
+          "value": "soft",
+          "label": "温润",
+          "phrase": "眼神温润"
+        },
+        {
+          "value": "sharp",
+          "label": "锐利",
+          "phrase": "眼神锐利"
+        },
+        {
+          "value": "melancholy",
+          "label": "含愁",
+          "phrase": "眼神里带着淡淡的愁"
+        },
+        {
+          "value": "sly",
+          "label": "狡黠",
+          "phrase": "眼神狡黠灵动"
+        }
+      ]
+    },
+    {
+      "key": "brow_shape",
+      "layer": "features",
+      "label": "眉形",
+      "type": "choice",
+      "replaces": [
+        "眉形",
+        "眉毛",
+        "柳叶眉",
+        "远山眉",
+        "剑眉",
+        "平眉",
+        "挑眉",
+        "弧眉",
+        "弓眉"
+      ],
+      "options": [
+        {
+          "value": "willow",
+          "label": "柳叶眉",
+          "phrase": "柳叶眉、眉尾细长"
+        },
+        {
+          "value": "mountain",
+          "label": "远山眉",
+          "phrase": "远山眉、眉色淡而长"
+        },
+        {
+          "value": "natural",
+          "label": "自然弧眉",
+          "phrase": "眉形自然微弓"
+        },
+        {
+          "value": "sword",
+          "label": "剑眉",
+          "phrase": "剑眉、眉峰利落上扬"
+        },
+        {
+          "value": "straight",
+          "label": "平眉",
+          "phrase": "平直眉"
+        },
+        {
+          "value": "arched",
+          "label": "挑眉",
+          "phrase": "眉峰高挑"
+        },
+        {
+          "value": "thick",
+          "label": "浓眉",
+          "phrase": "浓眉"
+        }
+      ]
+    },
+    {
+      "key": "nose_bridge",
+      "layer": "features",
+      "label": "鼻梁",
+      "type": "scale",
+      "replaces": [
+        "鼻梁",
+        "鼻根"
+      ],
+      "steps": [
+        "鼻梁低平",
+        "鼻梁略低",
+        "",
+        "鼻梁挺直",
+        "鼻梁高挺"
+      ]
+    },
+    {
+      "key": "nose_tip",
+      "layer": "features",
+      "label": "鼻头",
+      "type": "choice",
+      "replaces": [
+        "鼻头",
+        "鼻尖",
+        "鼻翼",
+        "鹰钩鼻"
+      ],
+      "options": [
+        {
+          "value": "small",
+          "label": "小巧",
+          "phrase": "鼻头小巧"
+        },
+        {
+          "value": "button",
+          "label": "小圆鼻尖",
+          "phrase": "鼻尖小而圆润"
+        },
+        {
+          "value": "round",
+          "label": "圆钝",
+          "phrase": "鼻尖圆钝"
+        },
+        {
+          "value": "upturned",
+          "label": "微翘",
+          "phrase": "鼻尖微翘"
+        },
+        {
+          "value": "aquiline",
+          "label": "鹰钩",
+          "phrase": "微带鹰钩的鼻尖"
+        },
+        {
+          "value": "wide",
+          "label": "鼻翼略宽",
+          "phrase": "鼻翼略宽"
+        }
+      ]
+    },
+    {
+      "key": "nose_width",
+      "layer": "features",
+      "label": "鼻翼宽窄",
+      "type": "scale",
+      "replaces": [
+        "鼻翼"
+      ],
+      "steps": [
+        "鼻翼窄",
+        "鼻翼紧凑",
+        "",
+        "鼻翼略宽",
+        "鼻翼宽"
+      ]
+    },
+    {
+      "key": "lips",
+      "layer": "features",
+      "label": "唇形",
+      "type": "choice",
+      "replaces": [
+        "唇形",
+        "嘴唇",
+        "嘴型",
+        "唇中等",
+        "唇厚",
+        "唇薄",
+        "厚唇",
+        "薄唇",
+        "丰唇",
+        "唇珠"
+      ],
+      "options": [
+        {
+          "value": "thin",
+          "label": "薄唇",
+          "phrase": "薄唇"
+        },
+        {
+          "value": "full",
+          "label": "丰唇",
+          "phrase": "唇形饱满"
+        },
+        {
+          "value": "m",
+          "label": "M唇",
+          "phrase": "上唇呈清晰 M 形唇峰"
+        },
+        {
+          "value": "bow",
+          "label": "菱角唇",
+          "phrase": "菱角唇、唇峰分明"
+        },
+        {
+          "value": "small",
+          "label": "樱桃小口",
+          "phrase": "嘴小而唇色红润"
+        },
+        {
+          "value": "pearl",
+          "label": "唇珠",
+          "phrase": "上唇带微凸唇珠"
+        },
+        {
+          "value": "full_lower",
+          "label": "下唇饱满",
+          "phrase": "下唇饱满圆润"
+        }
+      ]
+    },
+    {
+      "key": "lip_thickness",
+      "layer": "features",
+      "label": "唇厚(上下高度)",
+      "type": "scale",
+      "replaces": [
+        "唇中等",
+        "唇厚",
+        "唇薄",
+        "厚唇",
+        "薄唇",
+        "丰唇",
+        "唇饱满",
+        "唇形饱满"
+      ],
+      "steps": [
+        "上下唇很薄",
+        "上下唇偏薄",
+        "",
+        "上下唇略厚",
+        "上下唇饱满偏厚"
+      ]
+    },
+    {
+      "key": "mouth_width",
+      "layer": "features",
+      "label": "嘴宽(两嘴角距离)",
+      "type": "scale",
+      "replaces": [
+        "嘴宽",
+        "嘴大",
+        "嘴小",
+        "小口",
+        "大嘴"
+      ],
+      "steps": [
+        "嘴宽偏小",
+        "嘴宽略收",
+        "",
+        "嘴略宽",
+        "嘴宽偏大"
+      ]
+    },
+    {
+      "key": "mouth_corner",
+      "layer": "features",
+      "label": "嘴角",
+      "type": "choice",
+      "replaces": [
+        "嘴角"
+      ],
+      "options": [
+        {
+          "value": "up",
+          "label": "天生上扬",
+          "phrase": "嘴角天生微微上扬"
+        },
+        {
+          "value": "level",
+          "label": "平直",
+          "phrase": "嘴角平直"
+        },
+        {
+          "value": "down",
+          "label": "微微下垂",
+          "phrase": "嘴角微微下垂"
+        }
+      ]
+    },
+    {
+      "key": "face_mark",
+      "layer": "features",
+      "label": "面部标记",
+      "type": "choice",
+      "replaces": [
+        "痣",
+        "梨涡",
+        "酒窝",
+        "疤",
+        "胎记"
+      ],
+      "options": [
+        {
+          "value": "tear_mole",
+          "label": "左眼下泪痣",
+          "phrase": "左眼下方一颗泪痣"
+        },
+        {
+          "value": "tear_mole_r",
+          "label": "右眼下泪痣",
+          "phrase": "右眼下方一颗泪痣"
+        },
+        {
+          "value": "dimple_l",
+          "label": "左颊梨涡",
+          "phrase": "笑时左颊一个梨涡"
+        },
+        {
+          "value": "dimples",
+          "label": "双梨涡",
+          "phrase": "笑时两颊梨涡"
+        },
+        {
+          "value": "brow_scar",
+          "label": "眉尾疤痕",
+          "phrase": "右眉尾一道浅疤"
+        },
+        {
+          "value": "lip_mole",
+          "label": "唇边痣",
+          "phrase": "唇边一颗小痣"
+        }
+      ]
+    },
+    {
+      "key": "makeup",
+      "layer": "features",
+      "label": "妆容",
+      "type": "choice",
+      "replaces": [
+        "妆",
+        "口红",
+        "唇色",
+        "眼影",
+        "腮红"
+      ],
+      "options": [
+        {
+          "value": "bare",
+          "label": "素颜感",
+          "phrase": "素颜感妆容、几乎看不出上妆",
+          "group": "现代"
+        },
+        {
+          "value": "daily",
+          "label": "清透日常",
+          "phrase": "清透日常淡妆",
+          "group": "现代"
+        },
+        {
+          "value": "office",
+          "label": "职场通勤",
+          "phrase": "干练的职场通勤妆",
+          "group": "现代"
+        },
+        {
+          "value": "sweet",
+          "label": "甜美元气",
+          "phrase": "甜美元气妆、腮红明显",
+          "group": "现代"
+        },
+        {
+          "value": "groomed",
+          "label": "男士底妆",
+          "phrase": "男士干净底妆、眉形修整",
+          "group": "现代"
+        },
+        {
+          "value": "smoky",
+          "label": "烟熏妆",
+          "phrase": "深色烟熏眼妆",
+          "group": "欧美时尚"
+        },
+        {
+          "value": "contour",
+          "label": "修容立体",
+          "phrase": "高光修容、轮廓立体",
+          "group": "欧美时尚"
+        },
+        {
+          "value": "red_lip",
+          "label": "复古红唇",
+          "phrase": "复古红唇、眼妆干净",
+          "group": "欧美时尚"
+        },
+        {
+          "value": "neo_chinese",
+          "label": "新中式",
+          "phrase": "新中式妆容、眼尾晕红",
+          "group": "国潮"
+        },
+        {
+          "value": "huadian",
+          "label": "花钿妆",
+          "phrase": "眉心花钿、唇色朱红",
+          "group": "国潮"
+        },
+        {
+          "value": "classic_light",
+          "label": "古典淡妆",
+          "phrase": "古典淡妆、远山黛眉",
+          "group": "古风"
+        },
+        {
+          "value": "opera",
+          "label": "戏曲浓妆",
+          "phrase": "戏曲浓妆、眼周大面积红晕",
+          "group": "古风"
+        }
+      ]
+    },
+    {
+      "key": "skin_tone",
+      "layer": "skin",
+      "label": "肤色",
+      "type": "choice",
+      "replaces": [
+        "肤色",
+        "肤白",
+        "白皙",
+        "冷白",
+        "小麦色",
+        "黝黑"
+      ],
+      "options": [
+        {
+          "value": "cool_fair",
+          "label": "冷白",
+          "phrase": "冷白皮"
+        },
+        {
+          "value": "warm_fair",
+          "label": "暖白",
+          "phrase": "暖调白皙肤色"
+        },
+        {
+          "value": "natural",
+          "label": "自然",
+          "phrase": "自然健康肤色"
+        },
+        {
+          "value": "wheat",
+          "label": "小麦",
+          "phrase": "小麦色皮肤"
+        },
+        {
+          "value": "deep",
+          "label": "深肤色",
+          "phrase": "日晒后的深肤色"
+        }
+      ]
+    },
+    {
+      "key": "skin_texture",
+      "layer": "skin",
+      "label": "肤质",
+      "type": "choice",
+      "replaces": [
+        "肤质",
+        "质感",
+        "毛孔",
+        "皮肤纹理",
+        "纹理"
+      ],
+      "options": [
+        {
+          "value": "porcelain",
+          "label": "细腻",
+          "phrase": "皮肤细腻有自然毛孔"
+        },
+        {
+          "value": "dewy",
+          "label": "通透",
+          "phrase": "皮肤通透有光泽"
+        },
+        {
+          "value": "matte",
+          "label": "哑光",
+          "phrase": "哑光肤质"
+        },
+        {
+          "value": "weathered",
+          "label": "风霜",
+          "phrase": "风吹日晒的粗糙肤质"
+        }
+      ]
+    },
+    {
+      "key": "skin_mark",
+      "layer": "skin",
+      "label": "皮肤特征",
+      "type": "choice",
+      "replaces": [
+        "雀斑",
+        "红晕",
+        "胡茬"
+      ],
+      "options": [
+        {
+          "value": "freckles",
+          "label": "淡雀斑",
+          "phrase": "鼻梁两侧淡淡雀斑"
+        },
+        {
+          "value": "flush",
+          "label": "易红晕",
+          "phrase": "两颊天然淡红晕"
+        },
+        {
+          "value": "stubble",
+          "label": "青色胡茬",
+          "phrase": "下巴一层青色胡茬"
+        }
+      ]
+    },
+    {
+      "key": "skin_smooth",
+      "layer": "skin",
+      "label": "质感磨皮",
+      "type": "level",
+      "replaces": [
+        "磨皮"
+      ],
+      "steps": [
+        "",
+        "皮肤轻度磨皮、保留细微毛孔",
+        "皮肤磨皮柔滑、毛孔几乎不可见",
+        "皮肤高度磨皮、光洁如瓷"
+      ]
+    },
+    {
+      "key": "skin_beauty",
+      "layer": "skin",
+      "label": "美颜（脸部）",
+      "type": "level",
+      "replaces": [
+        "美颜"
+      ],
+      "steps": [
+        "",
+        "面部略作美化",
+        "面部精致美化、瑕疵淡去",
+        "面部高度精修、明星级精致"
+      ]
+    },
+    {
+      "key": "skin_detail",
+      "layer": "skin",
+      "label": "皮肤纹理（脸部）",
+      "type": "level",
+      "replaces": [
+        "纹理",
+        "毛孔"
+      ],
+      "steps": [
+        "",
+        "保留轻微的真实皮肤纹理",
+        "真实皮肤纹理与毛孔清晰可见",
+        "粗粝真实的皮肤纹理、细纹清晰"
+      ]
+    },
+    {
+      "key": "skin_radiance",
+      "layer": "skin",
+      "label": "皮肤透亮",
+      "type": "level",
+      "replaces": [
+        "光泽",
+        "透亮"
+      ],
+      "steps": [
+        "",
+        "皮肤略带光泽",
+        "皮肤透亮有光泽",
+        "水光透亮的皮肤"
+      ]
+    },
+    {
+      "key": "skin_rosy",
+      "layer": "skin",
+      "label": "皮肤红润",
+      "type": "level",
+      "replaces": [
+        "红润",
+        "气色"
+      ],
+      "steps": [
+        "",
+        "气色略红润",
+        "面色红润",
+        "双颊明显红润"
+      ]
+    },
+    {
+      "key": "skin_whiten",
+      "layer": "skin",
+      "label": "皮肤美白",
+      "type": "level",
+      "replaces": [
+        "白皙",
+        "美白"
+      ],
+      "steps": [
+        "",
+        "肤色略提亮",
+        "肤色白皙",
+        "肤色非常白皙"
+      ]
+    },
+    {
+      "key": "skin_clear",
+      "layer": "skin",
+      "label": "祛斑祛痘",
+      "type": "level",
+      "replaces": [
+        "痘",
+        "斑"
+      ],
+      "steps": [
+        "",
+        "无斑无痘、肤面干净"
+      ]
+    },
+    {
+      "key": "hair_color",
+      "layer": "hair",
+      "label": "发色",
+      "type": "choice",
+      "replaces": [
+        "发色",
+        "黑发",
+        "乌发",
+        "白发",
+        "银发",
+        "棕发",
+        "金发",
+        "红发",
+        "栗色",
+        "棕色头发",
+        "染发"
+      ],
+      "options": [
+        {
+          "value": "black",
+          "label": "乌黑",
+          "phrase": "乌黑发色",
+          "swatch": "#0b0b0c"
+        },
+        {
+          "value": "soft_black",
+          "label": "柔黑",
+          "phrase": "偏柔和的黑发",
+          "swatch": "#241c17"
+        },
+        {
+          "value": "brown",
+          "label": "深棕",
+          "phrase": "深棕发色",
+          "swatch": "#4a2c1a"
+        },
+        {
+          "value": "grey",
+          "label": "灰白",
+          "phrase": "灰白相间的头发",
+          "swatch": "#8b8987"
+        },
+        {
+          "value": "silver",
+          "label": "银白",
+          "phrase": "银白长发",
+          "swatch": "#c9c9cc"
+        },
+        {
+          "value": "chestnut",
+          "label": "栗棕",
+          "phrase": "栗棕色头发",
+          "swatch": "#6b3a1f"
+        },
+        {
+          "value": "light_brown",
+          "label": "浅棕",
+          "phrase": "浅棕色头发",
+          "swatch": "#9a6440"
+        },
+        {
+          "value": "honey",
+          "label": "蜜糖棕",
+          "phrase": "蜜糖棕色头发",
+          "swatch": "#c48a57"
+        },
+        {
+          "value": "ash_brown",
+          "label": "灰棕",
+          "phrase": "灰棕色头发",
+          "swatch": "#6f6258"
+        },
+        {
+          "value": "milk_tea",
+          "label": "奶茶色",
+          "phrase": "奶茶色头发",
+          "swatch": "#d8c3a5"
+        },
+        {
+          "value": "platinum",
+          "label": "奶白金",
+          "phrase": "奶白金色头发",
+          "swatch": "#efe4c9"
+        },
+        {
+          "value": "wine",
+          "label": "酒红",
+          "phrase": "酒红色头发",
+          "swatch": "#6a1b2b"
+        },
+        {
+          "value": "blue_black",
+          "label": "蓝黑",
+          "phrase": "泛蓝光的黑发",
+          "swatch": "#1c2436"
+        }
+      ]
+    },
+    {
+      "key": "hair_length",
+      "layer": "hair",
+      "label": "发长",
+      "type": "choice",
+      "replaces": [
+        "长发",
+        "短发",
+        "及腰",
+        "及肩",
+        "发长"
+      ],
+      "options": [
+        {
+          "value": "waist",
+          "label": "及腰",
+          "phrase": "及腰长发"
+        },
+        {
+          "value": "back",
+          "label": "过肩",
+          "phrase": "过肩长发"
+        },
+        {
+          "value": "shoulder",
+          "label": "及肩",
+          "phrase": "及肩发"
+        },
+        {
+          "value": "short",
+          "label": "短发",
+          "phrase": "短发"
+        }
+      ]
+    },
+    {
+      "key": "hair_texture",
+      "layer": "hair",
+      "label": "发质",
+      "type": "choice",
+      "replaces": [
+        "发质",
+        "直发",
+        "卷发",
+        "发丝"
+      ],
+      "options": [
+        {
+          "value": "straight",
+          "label": "顺直",
+          "phrase": "发丝顺直"
+        },
+        {
+          "value": "soft_wave",
+          "label": "微卷",
+          "phrase": "发尾自然微卷"
+        },
+        {
+          "value": "thick",
+          "label": "浓密",
+          "phrase": "发量浓密"
+        },
+        {
+          "value": "fine",
+          "label": "细软",
+          "phrase": "发丝细软"
+        }
+      ]
+    },
+    {
+      "key": "hairline",
+      "layer": "hair",
+      "label": "发际线",
+      "type": "choice",
+      "replaces": [
+        "发际线",
+        "美人尖"
+      ],
+      "options": [
+        {
+          "value": "widows_peak",
+          "label": "美人尖",
+          "phrase": "额前美人尖"
+        },
+        {
+          "value": "straight",
+          "label": "平直",
+          "phrase": "发际线平直"
+        },
+        {
+          "value": "round",
+          "label": "圆润",
+          "phrase": "发际线圆润"
+        }
+      ]
+    },
+    {
+      "key": "hairstyle",
+      "layer": "hair",
+      "label": "发型",
+      "type": "choice",
+      "replaces": [
+        "发型",
+        "发髻",
+        "马尾",
+        "寸头",
+        "背头",
+        "油头",
+        "辫",
+        "盘发",
+        "束发",
+        "短发",
+        "长发",
+        "卷发",
+        "直发"
+      ],
+      "options": [
+        {
+          "value": "buzz",
+          "label": "寸头",
+          "phrase": "利落寸头",
+          "group": "现代"
+        },
+        {
+          "value": "slicked_back",
+          "label": "背头",
+          "phrase": "向后梳的背头",
+          "group": "现代"
+        },
+        {
+          "value": "pompadour",
+          "label": "油头",
+          "phrase": "有光泽的油头",
+          "group": "现代"
+        },
+        {
+          "value": "textured_crop",
+          "label": "短碎发",
+          "phrase": "层次短碎发",
+          "group": "现代"
+        },
+        {
+          "value": "middle_part",
+          "label": "中分",
+          "phrase": "中分刘海发型",
+          "group": "现代"
+        },
+        {
+          "value": "curly_short",
+          "label": "卷发",
+          "phrase": "蓬松短卷发",
+          "group": "现代"
+        },
+        {
+          "value": "high_ponytail",
+          "label": "高马尾",
+          "phrase": "利落高马尾",
+          "group": "现代"
+        },
+        {
+          "value": "low_ponytail",
+          "label": "低马尾",
+          "phrase": "松垮低马尾",
+          "group": "现代"
+        },
+        {
+          "value": "straight_long",
+          "label": "黑长直",
+          "phrase": "垂顺的长直发",
+          "group": "现代"
+        },
+        {
+          "value": "bob",
+          "label": "波波头",
+          "phrase": "齐下巴的波波头",
+          "group": "现代"
+        },
+        {
+          "value": "big_waves",
+          "label": "大波浪",
+          "phrase": "蓬松大波浪卷发",
+          "group": "现代"
+        },
+        {
+          "value": "top_bun",
+          "label": "丸子头",
+          "phrase": "头顶丸子头",
+          "group": "现代"
+        },
+        {
+          "value": "crown_topknot",
+          "label": "束发玉冠",
+          "phrase": "头顶束发、戴玉冠",
+          "group": "古风"
+        },
+        {
+          "value": "half_tied",
+          "label": "半束发",
+          "phrase": "上半束起、下半披散的长发",
+          "group": "古风"
+        },
+        {
+          "value": "loose_long",
+          "label": "披发",
+          "phrase": "长发自然披散",
+          "group": "古风"
+        },
+        {
+          "value": "high_chignon",
+          "label": "高髻",
+          "phrase": "盘起的高髻",
+          "group": "古风"
+        },
+        {
+          "value": "double_loops",
+          "label": "双环髻",
+          "phrase": "头两侧双环髻",
+          "group": "古风"
+        },
+        {
+          "value": "hanging_loops",
+          "label": "垂鬟髻",
+          "phrase": "垂鬟分肖髻、发尾垂于肩后",
+          "group": "古风"
+        },
+        {
+          "value": "side_part_oil",
+          "label": "三七分油头",
+          "phrase": "三七分的油头",
+          "group": "民国"
+        },
+        {
+          "value": "finger_waves",
+          "label": "手推波纹",
+          "phrase": "手推波纹短卷发",
+          "group": "民国"
+        },
+        {
+          "value": "ear_bob",
+          "label": "齐耳短发",
+          "phrase": "齐耳的女学生短发",
+          "group": "民国"
+        },
+        {
+          "value": "twin_braids",
+          "label": "麻花辫",
+          "phrase": "两条垂肩麻花辫",
+          "group": "民国"
+        },
+        {
+          "value": "xian_crown_ponytail",
+          "label": "发冠高马尾",
+          "phrase": "发冠束起的高马尾、长发及腰",
+          "group": "仙侠"
+        },
+        {
+          "value": "forehead_band",
+          "label": "抹额长发",
+          "phrase": "额前系抹额、长发披散",
+          "group": "仙侠"
+        },
+        {
+          "value": "flowing_half",
+          "label": "飘逸半扎",
+          "phrase": "飘逸长发半扎、两缕垂在胸前",
+          "group": "仙侠"
+        },
+        {
+          "value": "snake_bun",
+          "label": "灵蛇髻",
+          "phrase": "灵蛇髻配发簪流苏",
+          "group": "仙侠"
+        },
+        {
+          "value": "undercut",
+          "label": "侧剃短发",
+          "phrase": "两侧剃短、顶部留长",
+          "group": "科幻"
+        },
+        {
+          "value": "fade",
+          "label": "渐变寸头",
+          "phrase": "两侧渐变的寸头",
+          "group": "科幻"
+        },
+        {
+          "value": "asym_bob",
+          "label": "不对称短发",
+          "phrase": "几何感不对称短发",
+          "group": "科幻"
+        },
+        {
+          "value": "dreadlocks",
+          "label": "脏辫",
+          "phrase": "编成脏辫的头发",
+          "group": "科幻"
+        },
+        {
+          "value": "miao_bun",
+          "label": "苗族高髻",
+          "phrase": "苗族高髻配银饰",
+          "group": "民族"
+        },
+        {
+          "value": "tibetan_braids",
+          "label": "藏式发辫",
+          "phrase": "藏式细发辫缀松石",
+          "group": "民族"
+        },
+        {
+          "value": "mongol_braids",
+          "label": "蒙古发辫",
+          "phrase": "蒙古式双辫",
+          "group": "民族"
+        },
+        {
+          "value": "uyghur_braids",
+          "label": "多辫",
+          "phrase": "编成许多细辫",
+          "group": "民族"
+        },
+        {
+          "value": "bowl_cut",
+          "label": "西瓜头",
+          "phrase": "齐刘海西瓜头",
+          "group": "儿童"
+        },
+        {
+          "value": "pigtails",
+          "label": "羊角辫",
+          "phrase": "两只羊角辫",
+          "group": "儿童"
+        },
+        {
+          "value": "sky_pigtail",
+          "label": "冲天辫",
+          "phrase": "头顶冲天辫",
+          "group": "儿童"
+        },
+        {
+          "value": "kid_crew",
+          "label": "小平头",
+          "phrase": "短短的小平头",
+          "group": "儿童"
+        }
+      ]
+    },
+    {
+      "key": "height",
+      "layer": "physique",
+      "label": "身高感",
+      "type": "choice",
+      "replaces": [
+        "身高",
+        "个子",
+        "娇小",
+        "高挑",
+        "高大"
+      ],
+      "options": [
+        {
+          "value": "petite",
+          "label": "娇小",
+          "phrase": "身形娇小"
+        },
+        {
+          "value": "medium",
+          "label": "中等",
+          "phrase": "中等身高"
+        },
+        {
+          "value": "tall",
+          "label": "高挑",
+          "phrase": "身形高挑"
+        },
+        {
+          "value": "towering",
+          "label": "高大",
+          "phrase": "身材高大"
+        }
+      ]
+    },
+    {
+      "key": "build",
+      "layer": "physique",
+      "label": "体型",
+      "type": "choice",
+      "replaces": [
+        "体型",
+        "身材",
+        "纤瘦",
+        "清瘦",
+        "健硕",
+        "魁梧",
+        "丰腴",
+        "匀称"
+      ],
+      "options": [
+        {
+          "value": "slender",
+          "label": "纤瘦",
+          "phrase": "纤瘦"
+        },
+        {
+          "value": "lean",
+          "label": "清瘦",
+          "phrase": "清瘦挺拔"
+        },
+        {
+          "value": "balanced",
+          "label": "匀称",
+          "phrase": "身材匀称"
+        },
+        {
+          "value": "athletic",
+          "label": "健硕",
+          "phrase": "肩背健硕"
+        },
+        {
+          "value": "burly",
+          "label": "魁梧",
+          "phrase": "身材魁梧"
+        },
+        {
+          "value": "plump",
+          "label": "丰腴",
+          "phrase": "体态丰腴"
+        }
+      ]
+    },
+    {
+      "key": "posture",
+      "layer": "physique",
+      "label": "站姿习惯",
+      "type": "choice",
+      "replaces": [
+        "站姿",
+        "体态",
+        "姿态"
+      ],
+      "options": [
+        {
+          "value": "upright",
+          "label": "挺拔",
+          "phrase": "站姿挺拔"
+        },
+        {
+          "value": "relaxed",
+          "label": "松弛",
+          "phrase": "体态松弛随意"
+        },
+        {
+          "value": "hunched",
+          "label": "微含胸",
+          "phrase": "习惯微微含胸"
+        },
+        {
+          "value": "martial",
+          "label": "习武",
+          "phrase": "习武之人的稳重重心"
+        }
+      ]
+    },
+    {
+      "key": "bust",
+      "layer": "physique",
+      "label": "胸围",
+      "type": "scale",
+      "replaces": [
+        "胸"
+      ],
+      "steps": [
+        "胸部扁平",
+        "胸部略平",
+        "",
+        "胸部略丰满",
+        "胸部丰满"
+      ]
+    },
+    {
+      "key": "hunch",
+      "layer": "physique",
+      "label": "驼背",
+      "type": "scale",
+      "replaces": [
+        "驼背",
+        "背脊"
+      ],
+      "steps": [
+        "背脊笔直",
+        "背脊挺直",
+        "",
+        "背微驼",
+        "明显驼背"
+      ]
+    },
+    {
+      "key": "leg_length",
+      "layer": "physique",
+      "label": "腿长",
+      "type": "scale",
+      "replaces": [
+        "腿长",
+        "长腿"
+      ],
+      "steps": [
+        "腿偏短",
+        "腿略短",
+        "",
+        "腿略长",
+        "腿长、下身比例长"
+      ]
+    },
+    {
+      "key": "shoulder_line",
+      "layer": "physique",
+      "label": "肩线",
+      "type": "scale",
+      "replaces": [
+        "溜肩",
+        "直角肩",
+        "肩线"
+      ],
+      "steps": [
+        "明显溜肩",
+        "肩略溜",
+        "",
+        "肩线平直",
+        "直角肩"
+      ]
+    },
+    {
+      "key": "head_size",
+      "layer": "physique",
+      "label": "头身比",
+      "type": "scale",
+      "replaces": [
+        "头身比",
+        "小头"
+      ],
+      "steps": [
+        "头偏大",
+        "头略大",
+        "",
+        "头略小",
+        "小头、头身比修长"
+      ]
+    },
+    {
+      "key": "slim",
+      "layer": "physique",
+      "label": "胖瘦",
+      "type": "scale",
+      "replaces": [
+        "胖",
+        "瘦"
+      ],
+      "steps": [
+        "身形偏胖",
+        "身形略丰",
+        "",
+        "身形略瘦",
+        "身形纤瘦"
+      ]
+    },
+    {
+      "key": "waist",
+      "layer": "physique",
+      "label": "腰腹",
+      "type": "scale",
+      "replaces": [
+        "小腹",
+        "腰腹",
+        "肚子"
+      ],
+      "steps": [
+        "小腹明显",
+        "腰腹略有赘肉",
+        "",
+        "腰腹紧实",
+        "腰腹平坦、腰线清晰"
+      ]
+    },
+    {
+      "key": "neck",
+      "layer": "physique",
+      "label": "脖颈",
+      "type": "scale",
+      "replaces": [
+        "脖颈",
+        "脖子"
+      ],
+      "steps": [
+        "脖颈短粗",
+        "脖颈略短",
+        "",
+        "脖颈略修长",
+        "脖颈修长"
+      ]
+    }
+  ],
+  "presets": [
+    {
+      "key": "heroine_cool",
+      "label": "古装女主·清冷",
+      "values": {
+        "age": "early20",
+        "temperament": "cool",
+        "face_shape": "melon",
+        "jaw": "clear",
+        "chin": "pointed",
+        "brow_ridge": "flat",
+        "eye_shape": "phoenix",
+        "eyelid": "inner",
+        "gaze": "cold",
+        "brow_shape": "mountain",
+        "nose_bridge": 1,
+        "nose_tip": "small",
+        "lips": "thin",
+        "mouth_corner": "level",
+        "skin_tone": "cool_fair",
+        "skin_texture": "porcelain",
+        "hair_color": "black",
+        "hair_length": "waist",
+        "hair_texture": "straight",
+        "height": "tall",
+        "build": "slender",
+        "posture": "upright"
+      }
+    },
+    {
+      "key": "heroine_bright",
+      "label": "古装女主·明艳",
+      "values": {
+        "age": "early20",
+        "temperament": "bright",
+        "face_shape": "oval",
+        "jaw": "soft",
+        "chin": "round",
+        "eye_shape": "peach",
+        "eyelid": "double",
+        "eye_size": 1,
+        "gaze": "clear",
+        "brow_shape": "willow",
+        "nose_tip": "upturned",
+        "lips": "full",
+        "mouth_corner": "up",
+        "face_mark": "dimple_l",
+        "skin_tone": "warm_fair",
+        "skin_texture": "dewy",
+        "skin_mark": "flush",
+        "hair_color": "black",
+        "hair_length": "back",
+        "height": "medium",
+        "build": "balanced"
+      }
+    },
+    {
+      "key": "general_young",
+      "label": "少年将军",
+      "values": {
+        "age": "early20",
+        "temperament": "heroic",
+        "face_shape": "long",
+        "jaw": "hard",
+        "cheekbone": 1,
+        "brow_ridge": "medium",
+        "eye_shape": "narrow",
+        "eyelid": "inner",
+        "gaze": "sharp",
+        "brow_shape": "sword",
+        "nose_bridge": 2,
+        "lips": "thin",
+        "skin_tone": "wheat",
+        "skin_texture": "matte",
+        "hair_color": "black",
+        "hair_texture": "thick",
+        "height": "tall",
+        "build": "athletic",
+        "posture": "martial"
+      }
+    },
+    {
+      "key": "scholar",
+      "label": "温润公子",
+      "values": {
+        "age": "late20",
+        "temperament": "scholar",
+        "face_shape": "oval",
+        "jaw": "clear",
+        "eye_shape": "almond",
+        "eyelid": "double",
+        "gaze": "soft",
+        "brow_shape": "straight",
+        "nose_bridge": 1,
+        "lips": "m",
+        "mouth_corner": "up",
+        "skin_tone": "warm_fair",
+        "skin_texture": "porcelain",
+        "hair_color": "black",
+        "hair_texture": "straight",
+        "height": "tall",
+        "build": "lean",
+        "posture": "upright"
+      }
+    },
+    {
+      "key": "schemer",
+      "label": "权臣·阴鸷",
+      "values": {
+        "age": "40s",
+        "temperament": "sinister",
+        "face_shape": "long",
+        "cheekbone": 2,
+        "jaw": "hard",
+        "eye_shape": "narrow",
+        "eye_tail": "down",
+        "gaze": "cold",
+        "brow_shape": "arched",
+        "nose_tip": "aquiline",
+        "lips": "thin",
+        "mouth_corner": "down",
+        "skin_tone": "natural",
+        "skin_texture": "matte",
+        "hair_color": "black",
+        "height": "medium",
+        "build": "lean"
+      }
+    },
+    {
+      "key": "elder_matriarch",
+      "label": "深宫太后",
+      "values": {
+        "age": "50s",
+        "temperament": "regal",
+        "face_shape": "oval",
+        "jaw": "soft",
+        "eye_shape": "phoenix",
+        "gaze": "sharp",
+        "brow_shape": "willow",
+        "lips": "thin",
+        "mouth_corner": "down",
+        "skin_tone": "warm_fair",
+        "skin_texture": "matte",
+        "hair_color": "grey",
+        "height": "medium",
+        "build": "plump",
+        "posture": "upright"
+      }
+    },
+    {
+      "key": "look_clear_round",
+      "label": "五官·澄澈圆眼",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "focus": "eye_shape",
+      "values": {
+        "eye_shape": "almond",
+        "eye_size": 1,
+        "gaze": "clear",
+        "brow_shape": "straight",
+        "nose_tip": "button",
+        "lips": "bow",
+        "mouth_width": -1,
+        "face_shape": "oval",
+        "face_length": -1,
+        "chin": "round",
+        "chin_length": -1
+      }
+    },
+    {
+      "key": "look_delicate",
+      "label": "五官·清秀小巧",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "values": {
+        "eye_shape": "almond",
+        "gaze": "clear",
+        "brow_shape": "willow",
+        "nose_bridge": 1,
+        "nose_width": -1,
+        "lips": "m",
+        "mouth_width": -1,
+        "face_shape": "ellipse",
+        "face_width": -1,
+        "cheek_fullness": 1,
+        "jaw": "soft"
+      }
+    },
+    {
+      "key": "look_soft_almond",
+      "label": "五官·柔和杏眼",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "focus": "eye_shape",
+      "values": {
+        "eye_shape": "almond",
+        "gaze": "soft",
+        "brow_ridge": "flat",
+        "brow_shape": "natural",
+        "nose_tip": "button",
+        "lips": "full_lower",
+        "face_shape": "oval",
+        "jaw": "soft",
+        "cheek_fullness": 1
+      }
+    },
+    {
+      "key": "look_bright_open",
+      "label": "五官·明艳舒展",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "values": {
+        "eye_shape": "almond",
+        "eye_size": 1,
+        "gaze": "clear",
+        "brow_shape": "natural",
+        "nose_bridge": 1,
+        "lip_thickness": 1,
+        "mouth_width": 1,
+        "face_shape": "ellipse",
+        "face_width": 1,
+        "jaw": "clear",
+        "chin": "broad"
+      }
+    },
+    {
+      "key": "look_gentle_full",
+      "label": "五官·温柔丰盈",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "values": {
+        "eye_shape": "round",
+        "gaze": "soft",
+        "brow_shape": "willow",
+        "nose_tip": "round",
+        "mouth_corner": "up",
+        "face_shape": "ellipse",
+        "cheek_fullness": 2,
+        "chin": "round",
+        "chin_length": -1
+      }
+    },
+    {
+      "key": "look_crisp_heroic",
+      "label": "五官·利落英气",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "values": {
+        "eye_shape": "long_almond",
+        "gaze": "sharp",
+        "brow_shape": "arched",
+        "nose_bridge": 1,
+        "lips": "m",
+        "face_shape": "ellipse",
+        "face_length": 1,
+        "jaw": "clear",
+        "chin": "broad"
+      }
+    },
+    {
+      "key": "look_cool_slender",
+      "label": "五官·清冷修长",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "focus": "eye_shape",
+      "values": {
+        "eye_shape": "narrow",
+        "eye_tail": "up",
+        "gaze": "cold",
+        "brow_shape": "straight",
+        "nose_bridge": 1,
+        "nose_width": -1,
+        "lips": "bow",
+        "face_shape": "oval",
+        "face_length": 1,
+        "jaw": "clear"
+      }
+    },
+    {
+      "key": "look_upright_full",
+      "label": "五官·端正饱满",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "values": {
+        "eye_shape": "long_almond",
+        "eye_size": 1,
+        "brow_shape": "straight",
+        "nose_bridge": 1,
+        "nose_tip": "button",
+        "lip_thickness": 1,
+        "face_shape": "oval",
+        "cheekbone": 1,
+        "jaw": "clear"
+      }
+    },
+    {
+      "key": "look_lively_upturned",
+      "label": "五官·俏丽上挑",
+      "scope": [
+        "bone",
+        "features"
+      ],
+      "focus": "eye_tail",
+      "values": {
+        "eye_shape": "almond",
+        "eye_tail": "up",
+        "gaze": "clear",
+        "brow_ridge": "flat",
+        "brow_shape": "mountain",
+        "nose_bridge": 1,
+        "nose_width": -1,
+        "lips": "full_lower",
+        "face_shape": "oval",
+        "face_width": -1,
+        "jaw": "soft",
+        "chin": "round",
+        "chin_length": -1
+      }
+    }
+  ],
+  "expression_controls": [
+    {
+      "key": "brows",
+      "label": "眉",
+      "options": [
+        {
+          "value": "relaxed",
+          "label": "舒展",
+          "phrase": "眉头舒展"
+        },
+        {
+          "value": "lift",
+          "label": "微挑",
+          "phrase": "眉梢微挑"
+        },
+        {
+          "value": "one_up",
+          "label": "单侧上挑",
+          "phrase": "一侧眉梢上挑"
+        },
+        {
+          "value": "knit",
+          "label": "微蹙",
+          "phrase": "眉心微蹙"
+        },
+        {
+          "value": "furrow",
+          "label": "紧锁",
+          "phrase": "眉头紧锁"
+        },
+        {
+          "value": "press",
+          "label": "下压",
+          "phrase": "眉头下压"
+        },
+        {
+          "value": "worried",
+          "label": "八字眉",
+          "phrase": "眉头内端上抬成八字"
+        }
+      ]
+    },
+    {
+      "key": "eyes",
+      "label": "眼",
+      "options": [
+        {
+          "value": "crescent",
+          "label": "弯成月牙",
+          "phrase": "眼睛弯成月牙"
+        },
+        {
+          "value": "squint",
+          "label": "微眯",
+          "phrase": "眼睛微眯"
+        },
+        {
+          "value": "wide",
+          "label": "睁圆",
+          "phrase": "眼睛猛地睁圆"
+        },
+        {
+          "value": "lowered",
+          "label": "半垂",
+          "phrase": "眼皮半垂"
+        },
+        {
+          "value": "sidelong",
+          "label": "斜睨",
+          "phrase": "斜睨着看人"
+        },
+        {
+          "value": "teary",
+          "label": "含泪",
+          "phrase": "眼眶泛红含着泪"
+        },
+        {
+          "value": "tears",
+          "label": "泪落",
+          "phrase": "泪水无声滑落"
+        },
+        {
+          "value": "blank",
+          "label": "失焦",
+          "phrase": "眼神失焦发空"
+        },
+        {
+          "value": "steady",
+          "label": "直视",
+          "phrase": "目光直视不躲"
+        }
+      ]
+    },
+    {
+      "key": "mouth",
+      "label": "嘴",
+      "options": [
+        {
+          "value": "soft_smile",
+          "label": "微扬不露齿",
+          "phrase": "嘴角微扬不露齿"
+        },
+        {
+          "value": "teeth",
+          "label": "露上齿",
+          "phrase": "笑开露出上排牙齿"
+        },
+        {
+          "value": "laugh",
+          "label": "大笑",
+          "phrase": "张嘴大笑"
+        },
+        {
+          "value": "one_corner",
+          "label": "单侧挑起",
+          "phrase": "只一侧嘴角挑起"
+        },
+        {
+          "value": "line",
+          "label": "抿成一线",
+          "phrase": "嘴唇抿成一线"
+        },
+        {
+          "value": "down",
+          "label": "嘴角下压",
+          "phrase": "嘴角向下压"
+        },
+        {
+          "value": "open",
+          "label": "微张",
+          "phrase": "嘴唇微张"
+        },
+        {
+          "value": "bite",
+          "label": "咬唇",
+          "phrase": "轻咬下唇"
+        },
+        {
+          "value": "clench",
+          "label": "牙关紧咬",
+          "phrase": "牙关紧咬、腮边绷起"
+        }
+      ]
+    },
+    {
+      "key": "side",
+      "label": "偏侧",
+      "options": [
+        {
+          "value": "left",
+          "label": "左侧更明显",
+          "phrase": "左侧更明显"
+        },
+        {
+          "value": "right",
+          "label": "右侧更明显",
+          "phrase": "右侧更明显"
+        }
+      ]
+    },
+    {
+      "key": "intensity",
+      "label": "幅度",
+      "options": [
+        {
+          "value": "subtle",
+          "label": "克制",
+          "phrase": "幅度克制，只在眼神和嘴角"
+        },
+        {
+          "value": "medium",
+          "label": "适中",
+          "phrase": ""
+        },
+        {
+          "value": "big",
+          "label": "外放",
+          "phrase": "幅度外放、整张脸都在动"
+        }
+      ]
+    }
+  ],
+  "expressions": [
+    {
+      "key": "smile",
+      "label": "笑",
+      "words": [
+        "开心",
+        "欣喜",
+        "喜悦",
+        "高兴",
+        "微笑",
+        "笑"
+      ]
+    },
+    {
+      "key": "laugh",
+      "label": "大笑",
+      "words": [
+        "狂喜",
+        "欣喜若狂",
+        "大笑"
+      ]
+    },
+    {
+      "key": "sneer",
+      "label": "冷笑",
+      "words": [
+        "冷笑",
+        "嗤笑",
+        "讥笑",
+        "嘲笑",
+        "嘲讽",
+        "不屑",
+        "狞笑",
+        "阴笑",
+        "奸笑",
+        "轻蔑",
+        "不屑一顾"
+      ]
+    },
+    {
+      "key": "bitter_smile",
+      "label": "苦笑",
+      "words": [
+        "苦笑",
+        "强颜欢笑",
+        "惨笑"
+      ]
+    },
+    {
+      "key": "anger",
+      "label": "怒",
+      "words": [
+        "愤怒",
+        "生气",
+        "恼怒",
+        "气愤",
+        "怒",
+        "怒吼",
+        "咆哮",
+        "嘶吼",
+        "暴怒",
+        "爆发",
+        "怒不可遏",
+        "怒火中烧",
+        "勃然大怒"
+      ]
+    },
+    {
+      "key": "sad",
+      "label": "悲伤",
+      "words": [
+        "悲伤",
+        "难过",
+        "伤心",
+        "委屈",
+        "憋屈",
+        "受委屈",
+        "含泪",
+        "泪光",
+        "噙着泪",
+        "眼含热泪",
+        "舍不得",
+        "不舍",
+        "隐痛",
+        "触景生情",
+        "往事涌上"
+      ]
+    },
+    {
+      "key": "cry",
+      "label": "哭",
+      "words": [
+        "哭",
+        "哽咽",
+        "抽泣",
+        "啜泣",
+        "泣不成声",
+        "悲恸",
+        "悲痛",
+        "痛不欲生",
+        "肝肠寸断",
+        "撕心裂肺",
+        "破防",
+        "绷不住",
+        "再也忍不住",
+        "笑容凝固"
+      ]
+    },
+    {
+      "key": "despair",
+      "label": "绝望",
+      "words": [
+        "绝望",
+        "崩溃",
+        "心如死灰",
+        "万念俱灰"
+      ]
+    },
+    {
+      "key": "shock",
+      "label": "震惊",
+      "words": [
+        "震惊",
+        "错愕",
+        "愣住",
+        "难以置信"
+      ]
+    },
+    {
+      "key": "fear",
+      "label": "惊恐",
+      "words": [
+        "慌张",
+        "惊慌",
+        "慌乱",
+        "惊恐",
+        "恐惧",
+        "害怕",
+        "惊惧",
+        "惊恐万分"
+      ]
+    },
+    {
+      "key": "wary",
+      "label": "警惕",
+      "words": [
+        "警惕",
+        "戒备",
+        "防备",
+        "试探",
+        "犹豫",
+        "迟疑",
+        "踌躇",
+        "内心挣扎",
+        "心里挣扎",
+        "进退两难",
+        "举棋不定",
+        "迷茫",
+        "茫然",
+        "恍惚",
+        "不知所措"
+      ]
+    },
+    {
+      "key": "restrain",
+      "label": "隐忍",
+      "words": [
+        "压抑",
+        "隐忍",
+        "克制",
+        "强忍",
+        "忍住",
+        "强忍泪水",
+        "忍着眼泪",
+        "硬撑",
+        "强撑",
+        "倔强",
+        "逞强",
+        "不肯示弱",
+        "嘴硬"
+      ]
+    },
+    {
+      "key": "cold",
+      "label": "冷漠",
+      "words": [
+        "冷漠",
+        "冷淡",
+        "漠然",
+        "冷峻",
+        "冷酷",
+        "杀意",
+        "杀气",
+        "杀心",
+        "杀念",
+        "决绝",
+        "毅然",
+        "决然",
+        "一刀两断",
+        "狠下心",
+        "黑化",
+        "眼神变冷",
+        "心冷了",
+        "坚定",
+        "下定决心",
+        "觉醒",
+        "眼神坚毅"
+      ]
+    },
+    {
+      "key": "proud",
+      "label": "得意",
+      "words": [
+        "得意",
+        "嚣张",
+        "傲慢"
+      ]
+    },
+    {
+      "key": "guilt",
+      "label": "心虚",
+      "words": [
+        "心虚",
+        "愧疚",
+        "内疚",
+        "躲闪"
+      ]
+    },
+    {
+      "key": "relief",
+      "label": "释然",
+      "words": [
+        "释然",
+        "如释重负",
+        "松了口气"
+      ]
+    },
+    {
+      "key": "tender",
+      "label": "温柔",
+      "words": [
+        "温柔",
+        "深情",
+        "宠溺",
+        "柔声",
+        "动容",
+        "触动",
+        "百感交集",
+        "重逢",
+        "心动",
+        "暧昧",
+        "怦然",
+        "害羞",
+        "羞涩",
+        "脸红"
+      ]
+    },
+    {
+      "key": "anxious",
+      "label": "焦急",
+      "words": [
+        "焦急",
+        "着急",
+        "急切",
+        "紧张",
+        "焦虑",
+        "焦灼",
+        "如坐针毡",
+        "心急如焚"
+      ]
+    },
+    {
+      "key": "calm",
+      "label": "平静",
+      "words": [
+        "平静",
+        "冷静",
+        "淡然",
+        "镇定"
+      ]
+    }
+  ],
+  "limits": {
+    "note_chars": 60,
+    "tell_chars": 40,
+    "habit_chars": 40,
+    "max_layer_note_layers": 6,
+    "instruct_max_tokens": 1200,
+    "history_limit": 6,
+    "label_message_chars": 40
+  },
+  "wording": {
+    "expression_line": "{name}{label}时：{phrases}",
+    "shot_expression_head": "本镜人物各自的表情习惯：",
+    "sheet_stale": "脸已经改过，现有设定集和定妆图还是旧脸；重出设定集后新脸才会进图。",
+    "stale_clip_reason": "「{name}」的脸已改，需重跑第 5 阶段后生效",
+    "history_before": "捏脸前",
+    "history_manual": "手动调整",
+    "history_instruct": "对话：{message}",
+    "history_revert": "撤销到「{label}」",
+    "history_missing": "这一步已经撤销不了了：只保留最近几步",
+    "instruct": {
+      "system": "你是短剧角色的捏脸师。用户用一句话说想怎么改这个人的脸或表情习惯，你把它翻译成控件表里的取值。只能用控件表里列出的键与选项值：choice 控件填选项的 value，scale 控件填 -2 到 2 的整数(0 为不写)；没有对应控件的要求写进对应层的 notes(每层一句，不超过 {note_chars} 字)。表情习惯写进 expressions：键是情绪键，choices 用表情控件的选项值，tell 是这个人独有的面部特征，habit 是习惯小动作，各不超过 {tell_chars} 字。只写用户这句话要改的东西，没提到的控件不要动；用户要去掉某项就把它的值写成 null。当前捏脸里的 focus 是这张脸的突出点(一个控件键)：改动都围着它做配合，不要换它的值，除非用户明说要换；保留的是它的特点，它的大小、位置(如眼睛大小、眼距)仍可为整脸比例微调。用户说「以某处为突出点」「保留某处」时把 focus 设成那个控件键。唇厚(上下高度)和嘴宽(两嘴角距离)是两件事：「减薄嘴唇」改 lip_thickness，「嘴收窄」改 mouth_width；只说「嘴小一点」时只收嘴宽，并在 reply 里说明唇厚没动。调整顺序：先定突出点，再改最影响协调的两处(常见是鼻唇、脸廓)，最后精修三庭(midface 眉到鼻底、philtrum 鼻底到嘴、chin_length 嘴到下巴)与横向间距(eye_spacing、nose_width、mouth_width、face_width)。刻度一句话每个控件最多挪一档，用户明说要大改除外；想改善尖窄的下半脸，先用 cheek_fullness 补顺面颊到下颌的过渡，不要直接把 face_width 拉满。改了脸廓或五官大小时，在 reply 里提醒下一步回看三庭和眼距。只输出一个 JSON 对象，格式：{\"face\": {\"控件键\": 值或null}, \"notes\": {\"层键\": 文字或null}, \"expressions\": {\"情绪键\": {\"choices\": {\"表情控件键\": \"选项值\"}, \"tell\": \"\", \"habit\": \"\"} 或 null}, \"preset\": \"预设键或空\", \"focus\": \"突出点控件键；不改就不写这个键，去掉写空串\", \"reply\": \"一句话说明你改了什么\"}。",
+      "user_template": "【控件表】\n{catalog}\n\n【当前捏脸】\n{current}\n\n【角色现在的描述】\n{description}\n\n【用户的要求】\n{instruction}\n\n只输出 JSON 对象。",
+      "reply_fallback": "按你的要求改了：{changes}",
+      "reply_nothing": "这句话里没有能改的地方",
+      "unknown_control": "没有这个捏脸控件：{key}",
+      "unknown_option": "「{label}」没有选项 {value}",
+      "bad_scale": "「{label}」的刻度只能是 -2 到 2，给的是 {value}",
+      "unknown_layer": "没有这一层：{key}",
+      "unknown_expression": "没有这个表情：{key}",
+      "unknown_expression_control": "表情「{label}」没有这个控件：{key}",
+      "unknown_expression_option": "表情「{label}」的{control}没有选项 {value}",
+      "unknown_preset": "没有这个预设：{key}",
+      "bad_shape": "{key} 不是对象，略过",
+      "nothing_usable": "模型没有给出可用的捏脸改动",
+      "focus_kept": "「{label}」是这张脸的突出点，这句话没说要换它，没改",
+      "unknown_focus": "没有这个捏脸控件，不能做突出点：{key}"
+    },
+    "focus_label": "突出点"
+  },
+  "harmony": {
+    "_comment": "协调检查：一张脸留一个突出点，其余做配合。strong 是抢眼的取值(刻度写整数，选项写 value)；抢眼的项超过 max_strong(没定突出点)或突出点之外超过 max_strong_besides_focus 时提醒。rules 每条 when 的各组都要命中、unless 任一组命中就不报；组内任一控件取到列出的值就算命中。只提醒，不改捏脸。",
+    "strong": {
+      "eye_size": [
+        2
+      ],
+      "nose_bridge": [
+        2
+      ],
+      "cheekbone": [
+        2
+      ],
+      "lip_thickness": [
+        2
+      ],
+      "mouth_width": [
+        2
+      ],
+      "eye_shape": [
+        "peach",
+        "fox"
+      ],
+      "lips": [
+        "full"
+      ],
+      "nose_tip": [
+        "aquiline"
+      ],
+      "brow_ridge": [
+        "deep"
+      ],
+      "brow_shape": [
+        "sword",
+        "thick"
+      ],
+      "chin": [
+        "pointed"
+      ]
+    },
+    "max_strong": 2,
+    "max_strong_besides_focus": 1,
+    "messages": {
+      "crowded": "{features}都很抢眼，好看的五官堆在一起不一定协调：挑一个做突出点，其余收一档做配合。",
+      "crowded_focus": "突出点是「{focus}」，可{features}也很抢眼：配合点收一档，给突出点让位。",
+      "focus_empty": "突出点「{focus}」还没选值：先把它捏出来，再调配合点。"
+    },
+    "rules": [
+      {
+        "key": "sharp_contour",
+        "when": [
+          {
+            "cheekbone": [
+              1,
+              2
+            ]
+          },
+          {
+            "chin": [
+              "pointed"
+            ],
+            "face_shape": [
+              "melon",
+              "heart",
+              "diamond"
+            ]
+          }
+        ],
+        "unless": [
+          {
+            "cheek_fullness": [
+              1,
+              2
+            ]
+          }
+        ],
+        "message": "颧骨外显、下半脸又收得尖窄，宽窄之间转折生硬：先让面颊到下颌衔接饱满，再把尖下巴放圆，不要一次把下颌撑宽。"
+      },
+      {
+        "key": "full_center",
+        "when": [
+          {
+            "lips": [
+              "full"
+            ],
+            "lip_thickness": [
+              1,
+              2
+            ]
+          },
+          {
+            "nose_bridge": [
+              2
+            ]
+          }
+        ],
+        "message": "鼻梁高挺、嘴唇又厚，脸部中央显得满：两者留一个做主，另一个收一档，给鼻底、嘴唇和下巴之间留出空间。"
+      },
+      {
+        "key": "lips_thin_thick",
+        "when": [
+          {
+            "lips": [
+              "thin"
+            ]
+          },
+          {
+            "lip_thickness": [
+              1,
+              2
+            ]
+          }
+        ],
+        "message": "唇形选了薄唇，唇厚却往厚里调：唇厚只留一个说法，唇形换成唇峰、唇珠这类形状。"
+      },
+      {
+        "key": "lips_full_thin",
+        "when": [
+          {
+            "lips": [
+              "full"
+            ]
+          },
+          {
+            "lip_thickness": [
+              -2,
+              -1
+            ]
+          }
+        ],
+        "message": "唇形选了丰唇，唇厚却往薄里调：唇厚只留一个说法，唇形换成唇峰、唇珠这类形状。"
+      },
+      {
+        "key": "mouth_small_wide",
+        "when": [
+          {
+            "lips": [
+              "small"
+            ]
+          },
+          {
+            "mouth_width": [
+              1,
+              2
+            ]
+          }
+        ],
+        "message": "樱桃小口和嘴宽放大说法相反：嘴宽只留一个说法。"
+      },
+      {
+        "key": "eyes_crowded",
+        "when": [
+          {
+            "eye_size": [
+              1,
+              2
+            ]
+          },
+          {
+            "eye_spacing": [
+              -2,
+              -1
+            ]
+          }
+        ],
+        "message": "眼睛放大、眼距又收近，眼间显得拥挤：放大眼睛时眼距跟着放开一点。"
+      },
+      {
+        "key": "eyes_fill_face",
+        "when": [
+          {
+            "eye_size": [
+              2
+            ]
+          },
+          {
+            "face_width": [
+              -2,
+              -1
+            ],
+            "face_shape": [
+              "melon"
+            ]
+          }
+        ],
+        "message": "眼睛放到最大、脸又窄，五官挤满了脸：眼睛收一档，或先放柔脸廓再回看眼睛占脸的比例。"
+      },
+      {
+        "key": "long_face",
+        "when": [
+          {
+            "face_length": [
+              1,
+              2
+            ],
+            "face_shape": [
+              "long"
+            ]
+          },
+          {
+            "chin_length": [
+              1,
+              2
+            ],
+            "chin": [
+              "pointed"
+            ]
+          }
+        ],
+        "message": "脸已经偏长，下巴又尖或长，纵向被一再拉长：先看长在哪一段，眉到鼻底偏长就上移鼻底，嘴到下巴偏长就缩短下巴。"
+      },
+      {
+        "key": "wide_jump",
+        "when": [
+          {
+            "face_width": [
+              2
+            ]
+          },
+          {
+            "jaw": [
+              "wide"
+            ]
+          }
+        ],
+        "message": "脸宽和宽厚下颌叠在一起，下半脸一下撑得太开，容易改掉原来的长相方向：先补顺面颊到下颌的过渡，再判断宽度。"
+      }
+    ],
+    "focus_layers": [
+      "bone",
+      "features"
+    ],
+    "keep_words": [
+      "保持",
+      "保留",
+      "不动",
+      "别动",
+      "沿用",
+      "维持",
+      "不改",
+      "不要改",
+      "别改",
+      "暂不"
+    ]
+  },
+  "marks": {
+    "_comment": "脸部与身体特征：点一种特征，再在示意图上点它长在哪里。kinds 的 phrase 里 {where} 换成部位、{text} 换成自己写的图案或说明；region=false 的不用点部位(全脸雀斑)。layer 不写时按部位：脸上的进五官层、身上的进体态层。左右以角色自己为准，示意图是面对角色看，所以角色的左边画在右侧。x / y 是示意图上的位置(0-1)。",
+    "limit": 8,
+    "text_chars": 20,
+    "kinds": [
+      {
+        "key": "mole",
+        "label": "痣",
+        "phrase": "{where}一颗小痣",
+        "swatch": "#4a2e22"
+      },
+      {
+        "key": "scar_deep",
+        "label": "疤痕·深",
+        "phrase": "{where}一道深色旧疤",
+        "swatch": "#b33a3a"
+      },
+      {
+        "key": "scar_light",
+        "label": "疤痕·浅",
+        "phrase": "{where}一道浅淡的旧疤",
+        "swatch": "#d9a08a"
+      },
+      {
+        "key": "freckles_full",
+        "label": "全脸雀斑",
+        "phrase": "满脸细密的雀斑",
+        "region": false,
+        "layer": "features",
+        "swatch": "#a0704f"
+      },
+      {
+        "key": "freckles_cheek",
+        "label": "脸颊雀斑",
+        "phrase": "两颊与鼻梁散着淡雀斑",
+        "region": false,
+        "layer": "features",
+        "swatch": "#c49a7a"
+      },
+      {
+        "key": "birthmark",
+        "label": "胎记",
+        "phrase": "{where}一块淡红色胎记",
+        "swatch": "#c96b6b"
+      },
+      {
+        "key": "tattoo",
+        "label": "纹身",
+        "phrase": "{where}{text}纹身",
+        "text": true,
+        "swatch": "#2f4a6b"
+      },
+      {
+        "key": "custom",
+        "label": "自定义",
+        "phrase": "{where}{text}",
+        "text": true,
+        "swatch": "#777777"
+      }
+    ],
+    "regions": [
+      {
+        "key": "forehead",
+        "label": "额头",
+        "area": "face",
+        "x": 0.5,
+        "y": 0.2
+      },
+      {
+        "key": "right_brow",
+        "label": "右眉尾",
+        "area": "face",
+        "x": 0.3,
+        "y": 0.33
+      },
+      {
+        "key": "left_brow",
+        "label": "左眉尾",
+        "area": "face",
+        "x": 0.7,
+        "y": 0.33
+      },
+      {
+        "key": "under_right_eye",
+        "label": "右眼下",
+        "area": "face",
+        "x": 0.36,
+        "y": 0.45
+      },
+      {
+        "key": "under_left_eye",
+        "label": "左眼下",
+        "area": "face",
+        "x": 0.64,
+        "y": 0.45
+      },
+      {
+        "key": "nose_bridge",
+        "label": "鼻梁",
+        "area": "face",
+        "x": 0.5,
+        "y": 0.45
+      },
+      {
+        "key": "nose_tip",
+        "label": "鼻尖",
+        "area": "face",
+        "x": 0.5,
+        "y": 0.57
+      },
+      {
+        "key": "right_cheek",
+        "label": "右颊",
+        "area": "face",
+        "x": 0.28,
+        "y": 0.58
+      },
+      {
+        "key": "left_cheek",
+        "label": "左颊",
+        "area": "face",
+        "x": 0.72,
+        "y": 0.58
+      },
+      {
+        "key": "above_lip",
+        "label": "唇上",
+        "area": "face",
+        "x": 0.56,
+        "y": 0.66
+      },
+      {
+        "key": "below_lip",
+        "label": "唇下",
+        "area": "face",
+        "x": 0.5,
+        "y": 0.76
+      },
+      {
+        "key": "chin",
+        "label": "下巴",
+        "area": "face",
+        "x": 0.5,
+        "y": 0.86
+      },
+      {
+        "key": "right_jaw",
+        "label": "右下颌",
+        "area": "face",
+        "x": 0.3,
+        "y": 0.76
+      },
+      {
+        "key": "left_jaw",
+        "label": "左下颌",
+        "area": "face",
+        "x": 0.7,
+        "y": 0.76
+      },
+      {
+        "key": "neck",
+        "label": "颈侧",
+        "area": "body",
+        "x": 0.56,
+        "y": 0.15
+      },
+      {
+        "key": "collarbone",
+        "label": "锁骨",
+        "area": "body",
+        "x": 0.44,
+        "y": 0.2
+      },
+      {
+        "key": "chest",
+        "label": "胸口",
+        "area": "body",
+        "x": 0.5,
+        "y": 0.28
+      },
+      {
+        "key": "right_shoulder",
+        "label": "右肩",
+        "area": "body",
+        "x": 0.32,
+        "y": 0.21
+      },
+      {
+        "key": "left_shoulder",
+        "label": "左肩",
+        "area": "body",
+        "x": 0.68,
+        "y": 0.21
+      },
+      {
+        "key": "right_arm",
+        "label": "右臂",
+        "area": "body",
+        "x": 0.26,
+        "y": 0.36
+      },
+      {
+        "key": "left_arm",
+        "label": "左臂",
+        "area": "body",
+        "x": 0.74,
+        "y": 0.36
+      },
+      {
+        "key": "right_hand",
+        "label": "右手背",
+        "area": "body",
+        "x": 0.22,
+        "y": 0.52
+      },
+      {
+        "key": "left_wrist",
+        "label": "左手腕",
+        "area": "body",
+        "x": 0.77,
+        "y": 0.49
+      },
+      {
+        "key": "back",
+        "label": "后背",
+        "area": "body",
+        "x": 0.5,
+        "y": 0.36
+      },
+      {
+        "key": "waist_side",
+        "label": "腰侧",
+        "area": "body",
+        "x": 0.62,
+        "y": 0.44
+      },
+      {
+        "key": "right_calf",
+        "label": "右小腿",
+        "area": "body",
+        "x": 0.44,
+        "y": 0.82
+      },
+      {
+        "key": "left_ankle",
+        "label": "左脚踝",
+        "area": "body",
+        "x": 0.56,
+        "y": 0.92
+      }
+    ],
+    "conflicts": [
+      {
+        "control": "skin_clear",
+        "kinds": [
+          "freckles_full",
+          "freckles_cheek"
+        ],
+        "message": "「祛斑祛痘」和雀斑说的是两回事：提示词里同时写着无斑和有雀斑，模型会随机二选一。要雀斑就关掉祛斑祛痘，要干净就去掉雀斑。"
+      }
+    ]
+  },
+  "studio": {
+    "_comment": "造型编辑器(前端 CharacterStudio)的版面：左栏几块、每块里的分页和分页里放哪些控件。只管放在哪，控件本身在 controls 里。",
+    "panels": [
+      {
+        "key": "retouch",
+        "label": "脸部精修",
+        "sections": [
+          {
+            "key": "skin",
+            "label": "皮肤",
+            "controls": [
+              "skin_smooth",
+              "skin_beauty",
+              "skin_detail",
+              "skin_radiance",
+              "skin_rosy",
+              "skin_whiten",
+              "skin_clear",
+              "skin_tone",
+              "skin_texture"
+            ]
+          },
+          {
+            "key": "eyes",
+            "label": "眼眉",
+            "controls": [
+              "eye_shape",
+              "eyelid",
+              "eye_size",
+              "eye_spacing",
+              "eye_tail",
+              "gaze",
+              "brow_shape",
+              "brow_ridge"
+            ]
+          },
+          {
+            "key": "nose",
+            "label": "鼻子",
+            "controls": [
+              "nose_bridge",
+              "nose_tip",
+              "nose_width"
+            ]
+          },
+          {
+            "key": "lips",
+            "label": "嘴唇",
+            "controls": [
+              "lips",
+              "lip_thickness",
+              "mouth_width",
+              "mouth_corner"
+            ]
+          },
+          {
+            "key": "shape",
+            "label": "脸型",
+            "presets": true,
+            "controls": [
+              "age",
+              "temperament",
+              "face_shape",
+              "face_length",
+              "face_width",
+              "midface",
+              "philtrum",
+              "chin_length",
+              "cheekbone",
+              "cheek_fullness",
+              "jaw",
+              "chin",
+              "forehead"
+            ]
+          }
+        ]
+      },
+      {
+        "key": "marks",
+        "label": "脸部 & 身体特征",
+        "marks": true,
+        "sections": [
+          {
+            "key": "marks",
+            "label": "纹身 & 疤痕",
+            "controls": [
+              "face_mark",
+              "skin_mark"
+            ]
+          }
+        ]
+      },
+      {
+        "key": "body",
+        "label": "身材塑形",
+        "sections": [
+          {
+            "key": "body",
+            "label": "身材",
+            "controls": [
+              "height",
+              "build",
+              "posture",
+              "bust",
+              "hunch",
+              "leg_length",
+              "shoulder_line",
+              "head_size",
+              "slim",
+              "waist",
+              "neck"
+            ]
+          }
+        ]
+      },
+      {
+        "key": "style",
+        "label": "服装造型",
+        "sections": [
+          {
+            "key": "hair",
+            "label": "造型",
+            "controls": [
+              "hairstyle",
+              "hair_color",
+              "hair_length",
+              "hair_texture",
+              "hairline",
+              "makeup"
+            ]
+          }
+        ]
+      },
+      {
+        "key": "voice",
+        "label": "音色音调",
+        "voice": true
+      },
+      {
+        "key": "expression",
+        "label": "表情习惯",
+        "expression": true
+      }
+    ]
+  }
+}

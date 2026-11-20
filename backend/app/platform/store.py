@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import hmac
 import logging
@@ -51,6 +52,7 @@ from app.platform.models import (
     ElementFile,
     ElementFolder,
     ElementFolderMember,
+    ElementRevision,
     LedgerEntry,
     MembershipPlan,
     ModelProviderConfiguration,
@@ -65,11 +67,25 @@ from app.platform.models import (
     ModelConfigurationCredential,
     PlatformSetting,
     McpToken,
+    UserPromptPreference,
 )
 from app.repository.user_repo import hash_password, verify_password
 from app.core import real_person
 from app.core.look_board import LOOK_VIEW_SLOTS
 from app.schema.production import IDENTITY_VIEW_ORDER, LEGACY_IDENTITY_VIEW_ORDER
+from app.core import prompt_data
+
+
+_WORDING_FILE = "platform_store"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/platform_store.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 # 数字演员的图片槽位 = 设定集的五个身份锚点。
@@ -184,6 +200,13 @@ MAX_ELEMENT_STORAGE_BYTES = settings.env_int(
 MAX_GLOBAL_ELEMENT_STORAGE_BYTES = settings.env_int(
     "ELEMENT_GLOBAL_STORAGE_QUOTA_BYTES", 20 * 1024**3, minimum=1024**3, maximum=1024**5
 )
+# 每个资产最多留这么多个旧版本；更早的连同只有它们还在用的文件一起清掉。
+REVISION_LIMIT = 20
+ELEMENT_REVISION_REASONS = frozenset({
+    "edit", "rename", "file", "file_delete", "variant", "prop_size", "real_person", "restore",
+})
+# 恢复旧版本时不跟着回退的元数据：项目关联和进行中的生成状态说的是现在，不是资产长什么样。
+_RESTORE_KEEPS_METADATA = ("task_id", "task_ids", "regeneration")
 
 
 @dataclass(frozen=True)
@@ -261,6 +284,66 @@ def _deleted_element_file_record(item: ElementFile) -> DeletedElementFileRecord:
     )
 
 
+def _revision_files(files) -> list[dict]:
+    return [
+        {
+            "slot": item.slot,
+            "storage_path": item.storage_path,
+            "sha256": item.sha256,
+            "mime_type": item.mime_type,
+            "size_bytes": item.size_bytes,
+            "position": item.position,
+        }
+        for item in files
+    ]
+
+
+def _element_state(element: ElementAsset) -> dict:
+    """改动前要记下的那一版；``version`` 是这一版当时的版本号。"""
+    return {
+        "version": element.version,
+        "name": element.name,
+        "description": element.description or "",
+        "metadata": copy.deepcopy(element.metadata_json or {}),
+        "files": _revision_files(element.files),
+    }
+
+
+def _same_content(before: dict, element: ElementAsset) -> bool:
+    now = _element_state(element)
+    return all(before[key] == now[key] for key in ("name", "description", "metadata", "files"))
+
+
+def _revision_file_record(revision: ElementRevision, entry: Mapping) -> DeletedElementFileRecord:
+    return DeletedElementFileRecord(
+        id=f"{revision.id}:{entry.get('slot')}",
+        element_id=revision.element_id,
+        slot=str(entry.get("slot") or ""),
+        storage_path=str(entry.get("storage_path") or ""),
+        mime_type=str(entry.get("mime_type") or ""),
+        size_bytes=int(entry.get("size_bytes") or 0),
+    )
+
+
+@dataclass(frozen=True)
+class _RevisionTrim:
+    """裁掉的旧版本引用过的文件，和还留着的版本引用的路径；哪些能删要等改动做完、看过现行文件再定。"""
+
+    dropped: tuple[DeletedElementFileRecord, ...] = ()
+    kept_paths: frozenset[str] = frozenset()
+
+    def unreferenced(self, element: ElementAsset) -> tuple[DeletedElementFileRecord, ...]:
+        live = {item.storage_path for item in element.files}
+        seen: set[str] = set()
+        result = []
+        for record in self.dropped:
+            path = record.storage_path
+            if path and path not in live and path not in self.kept_paths and path not in seen:
+                seen.add(path)
+                result.append(record)
+        return tuple(result)
+
+
 async def _commit_deletion_with_cancellation_boundary(session) -> bool:
     """Commit exactly once and report cancellation only after its outcome is known.
 
@@ -287,7 +370,7 @@ async def _commit_deletion_with_cancellation_boundary(session) -> bool:
 class PlatformStore:
     def __init__(self, database_url: str, *, echo: bool = False):
         if not database_url.startswith(("postgresql+asyncpg://", "sqlite+aiosqlite://")):
-            raise ValueError("DATABASE_URL 必须使用 postgresql+asyncpg 或 sqlite+aiosqlite")
+            raise ValueError(_text_of("__init__.text"))
         self.engine: AsyncEngine = create_async_engine(database_url, echo=echo, pool_pre_ping=True)
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
         if self.engine.dialect.name == "sqlite":
@@ -344,9 +427,9 @@ class PlatformStore:
         clean_email = email.strip().lower() if email else None
         clean_phone = phone.strip() if phone else None
         if not clean_email and not clean_phone:
-            raise ValueError("邮箱和手机号至少填写一项")
+            raise ValueError(_text_of("create_user.text"))
         if len(password) < _minimum_password_length:
-            raise ValueError(f"密码至少需要 {_minimum_password_length} 位")
+            raise ValueError(_text_of("create_user.text.2").format(_minimum_password_length))
         async with self.sessions() as session:
             clauses = []
             if clean_email:
@@ -381,7 +464,7 @@ class PlatformStore:
     ) -> tuple[PlatformUser, bool]:
         clean_login = login.strip().lower()
         if "@" not in clean_login or len(clean_login) > 320:
-            raise ValueError("默认管理员登录名必须为有效邮箱格式")
+            raise ValueError(_text_of("bootstrap_admin.text"))
         async with self.sessions() as session:
             existing = await session.scalar(
                 select(PlatformUser).where(PlatformUser.email == clean_login)
@@ -433,7 +516,7 @@ class PlatformStore:
         async with self.sessions() as session:
             user = await session.get(PlatformUser, user_id)
             if not user:
-                raise ValueError("用户不存在")
+                raise ValueError(_text_of("update_profile.text"))
             if display_name is not None:
                 user.display_name = display_name.strip()[:120] or None
             if phone is not None:
@@ -445,18 +528,18 @@ class PlatformStore:
                         )
                     )
                     if duplicate:
-                        raise ValueError("手机号已被使用")
+                        raise ValueError(_text_of("update_profile.text.2"))
                 user.phone = clean_phone
             await session.commit()
             return user
 
     async def change_password(self, user_id: str, current_password: str, new_password: str) -> PlatformUser:
         if len(new_password) < settings.PASSWORD_MIN_LENGTH:
-            raise ValueError(f"新密码至少需要 {settings.PASSWORD_MIN_LENGTH} 位")
+            raise ValueError(_text_of("change_password.text").format(settings.PASSWORD_MIN_LENGTH))
         async with self.sessions() as session:
             user = await session.get(PlatformUser, user_id)
             if not user or not verify_password(current_password, user.password_hash):
-                raise ValueError("当前密码错误")
+                raise ValueError(_text_of("change_password.text.2"))
             user.password_hash = hash_password(new_password)
             user.must_change_password = False
             await session.commit()
@@ -478,7 +561,7 @@ class PlatformStore:
             )
         ) or 0)
         if not others:
-            raise ValueError("不能停用或降级最后一个有效超级管理员")
+            raise ValueError(_text_of("_assert_keeps_a_super_admin.text"))
 
     async def _close_account_money(self, session, user_id: str) -> dict:
         """Unpaid orders close, points held for calls go back, and tokens stop. Refunds carry on: that money is owed regardless."""
@@ -504,13 +587,13 @@ class PlatformStore:
 
     async def set_user_status(self, actor_id: str, user_id: str, status: str) -> PlatformUser:
         if status not in {"active", "suspended"}:
-            raise ValueError("无效状态")
+            raise ValueError(_text_of("set_user_status.text"))
         async with self.sessions() as session:
             user = await session.get(PlatformUser, user_id)
             if not user:
-                raise ValueError("用户不存在")
+                raise ValueError(_text_of("set_user_status.text.2"))
             if user.status == ACCOUNT_DELETED:
-                raise ValueError("账号已删除，不能再启用")
+                raise ValueError(_text_of("set_user_status.text.3"))
             if status == "suspended" and SUPER_ADMIN in user.roles and user.status == "active":
                 await self._assert_keeps_a_super_admin(session, user)
             previous = user.status
@@ -526,13 +609,13 @@ class PlatformStore:
     async def delete_account(self, *, actor_id: str, user_id: str) -> PlatformUser:
         """Removes who they were and keeps what happened: orders, ledger and audit stay, tied to an id nobody can log in with."""
         if actor_id == user_id:
-            raise ValueError("不能删除自己的账号")
+            raise ValueError(_text_of("delete_account.text"))
         async with self.sessions() as session:
             user = await session.get(PlatformUser, user_id, with_for_update=True)
             if not user:
-                raise LookupError("用户不存在")
+                raise LookupError(_text_of("delete_account.text.2"))
             if user.status == ACCOUNT_DELETED:
-                raise ValueError("账号已删除")
+                raise ValueError(_text_of("delete_account.text.3"))
             if SUPER_ADMIN in user.roles and user.status == "active":
                 await self._assert_keeps_a_super_admin(session, user)
             effects = await self._close_account_money(session, user.id)
@@ -558,11 +641,11 @@ class PlatformStore:
     async def set_user_roles(self, actor_id: str, user_id: str, roles: Sequence[str]) -> PlatformUser:
         wanted = set(roles)
         if wanted - set(ROLE_PERMISSIONS):
-            raise ValueError("无效角色")
+            raise ValueError(_text_of("set_user_roles.text"))
         async with self.sessions() as session:
             user = await session.get(PlatformUser, user_id, with_for_update=True)
             if not user:
-                raise ValueError("用户不存在")
+                raise ValueError(_text_of("set_user_roles.text.2"))
             previous = set(user.roles)
             if SUPER_ADMIN in previous and SUPER_ADMIN not in wanted and user.status == "active":
                 await self._assert_keeps_a_super_admin(session, user)
@@ -633,7 +716,7 @@ class PlatformStore:
         async with self.sessions() as session:
             setting = await session.get(CapabilitySetting, (source_id, capability_id))
             if not setting:
-                raise ValueError("能力不存在")
+                raise ValueError(_text_of("set_capability_enabled.text"))
             previous = setting.enabled
             setting.enabled = enabled
             setting.updated_by = actor_id
@@ -651,12 +734,12 @@ class PlatformStore:
         command_text = (text or "").strip()
         command, _, payload = command_text.partition(" ")
         if not re.fullmatch(r"/[a-z0-9][a-z0-9._-]{1,219}", command):
-            raise ValueError("命令格式无效")
+            raise ValueError(_text_of("resolve_command.text"))
         async with self.sessions() as session:
             setting = await session.scalar(select(CapabilitySetting).where(CapabilitySetting.command == command))
             if setting:
                 if not setting.enabled:
-                    raise ValueError("该能力尚未启用")
+                    raise ValueError(_text_of("resolve_command.text.2"))
                 return ResolvedCommand(
                     source_id=setting.source_id,
                     capability_id=setting.capability_id,
@@ -667,9 +750,9 @@ class PlatformStore:
                 )
             skill = await session.scalar(select(ProjectSkill).where(ProjectSkill.command == command))
             if not skill:
-                raise ValueError("命令不存在")
+                raise ValueError(_text_of("resolve_command.text.3"))
             if not skill.enabled:
-                raise ValueError("该 Skill 尚未启用")
+                raise ValueError(_text_of("resolve_command.text.4"))
             return ResolvedCommand(
                 source_id="project-skills",
                 capability_id=skill.slug,
@@ -687,14 +770,14 @@ class PlatformStore:
         clean_slug = slug.strip().lower()
         content = markdown_content.replace("\r\n", "\n").replace("\r", "\n").strip()
         if not clean_name or len(clean_name) > 160:
-            raise ValueError("Skill 名称必须为 1-160 个字符")
+            raise ValueError(_text_of("_validate_project_skill.text"))
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,78}[a-z0-9]", clean_slug):
-            raise ValueError("命令标识仅允许 3-80 位小写字母、数字和中横线")
+            raise ValueError(_text_of("_validate_project_skill.text.2"))
         if source_type not in PROJECT_SKILL_SOURCE_TYPES:
-            raise ValueError("Skill 来源类型无效")
+            raise ValueError(_text_of("_validate_project_skill.text.3"))
         encoded = content.encode("utf-8")
         if not encoded or len(encoded) > MAX_PROJECT_SKILL_BYTES or "\x00" in content:
-            raise ValueError("Markdown 内容必须为 1 字节至 128 KiB 的 UTF-8 文本")
+            raise ValueError(_text_of("_validate_project_skill.text.4"))
         return clean_name, clean_slug, content
 
     async def _check_project_skill_enable_budget(
@@ -708,7 +791,7 @@ class PlatformStore:
         total = sum(len(item.markdown_content.encode("utf-8")) for item in active)
         total += len(added_content.encode("utf-8"))
         if count > MAX_ENABLED_SKILLS or total > MAX_ENABLED_SKILL_BYTES:
-            raise ValueError("启用的项目 Skill 超过 12 个或 96 KiB 运行时上限")
+            raise ValueError(_text_of("_check_project_skill_enable_budget.text"))
 
     async def list_project_skills(self, *, enabled_only: bool = False) -> list[ProjectSkill]:
         async with self.sessions() as session:
@@ -732,10 +815,10 @@ class PlatformStore:
             name=name, slug=slug, markdown_content=markdown_content, source_type=source_type
         )
         if len(description) > 4000:
-            raise ValueError("Skill 描述不能超过 4000 个字符")
+            raise ValueError(_text_of("create_project_skill.text"))
         async with self.sessions() as session:
             if await session.scalar(select(ProjectSkill.id).where(ProjectSkill.slug == clean_slug)):
-                raise ValueError("命令标识已存在")
+                raise ValueError(_text_of("create_project_skill.text.2"))
             if enabled:
                 await self._check_project_skill_enable_budget(session, added_content=content)
             item = ProjectSkill(
@@ -775,7 +858,7 @@ class PlatformStore:
         async with self.sessions() as session:
             item = await session.get(ProjectSkill, skill_id)
             if not item:
-                raise ValueError("Skill 不存在")
+                raise ValueError(_text_of("update_project_skill.text"))
             next_name = item.name if name is None else name
             next_description = item.description if description is None else description
             next_content = item.markdown_content if markdown_content is None else markdown_content
@@ -784,7 +867,7 @@ class PlatformStore:
                 source_type=item.source_type,
             )
             if len(next_description) > 4000:
-                raise ValueError("Skill 描述不能超过 4000 个字符")
+                raise ValueError(_text_of("update_project_skill.text.2"))
             if item.enabled:
                 await self._check_project_skill_enable_budget(
                     session, added_content=content, excluding_id=item.id
@@ -813,7 +896,7 @@ class PlatformStore:
         async with self.sessions() as session:
             item = await session.get(ProjectSkill, skill_id)
             if not item:
-                raise ValueError("Skill 不存在")
+                raise ValueError(_text_of("set_project_skill_enabled.text"))
             if enabled and not item.enabled:
                 await self._check_project_skill_enable_budget(
                     session, added_content=item.markdown_content, excluding_id=item.id
@@ -875,7 +958,7 @@ class PlatformStore:
         models: list[dict],
     ) -> ModelProviderConfiguration:
         if not models:
-            raise ValueError("至少选择一个模型")
+            raise ValueError(_text_of("save_model_configuration.text"))
         async with self.sessions() as session:
             configuration = await session.scalar(
                 select(ModelProviderConfiguration)
@@ -965,7 +1048,7 @@ class PlatformStore:
         async with self.sessions() as session:
             configuration = await session.get(ModelProviderConfiguration, configuration_id)
             if not configuration:
-                raise ValueError("模型配置不存在")
+                raise ValueError(_text_of("add_model_credential.text"))
             credential = ModelConfigurationCredential(
                 configuration_id=configuration_id, label=label[:80], api_key_ciphertext=api_key_ciphertext,
                 api_key_hint=api_key_hint, buckets=list(buckets), enabled=True, created_by=actor_id,
@@ -985,7 +1068,7 @@ class PlatformStore:
         async with self.sessions() as session:
             credential = await session.get(ModelConfigurationCredential, credential_id)
             if not credential or credential.configuration_id != configuration_id:
-                raise ValueError("凭据不存在")
+                raise ValueError(_text_of("update_model_credential.text"))
             if enabled is not None:
                 credential.enabled = enabled
             if buckets is not None:
@@ -1002,7 +1085,7 @@ class PlatformStore:
         async with self.sessions() as session:
             credential = await session.get(ModelConfigurationCredential, credential_id)
             if not credential or credential.configuration_id != configuration_id:
-                raise ValueError("凭据不存在")
+                raise ValueError(_text_of("delete_model_credential.text"))
             await session.delete(credential)
             session.add(AuditEvent(
                 actor_id=actor_id, action="model_credential.delete", resource_type="model_configuration",
@@ -1104,7 +1187,7 @@ class PlatformStore:
         async with self.sessions() as session:
             configuration = await session.get(ModelProviderConfiguration, configuration_id)
             if not configuration:
-                raise ValueError("模型配置不存在")
+                raise ValueError(_text_of("set_model_configuration_enabled.text"))
             previous = configuration.enabled
             configuration.enabled = enabled
             configuration.updated_by = actor_id
@@ -1131,10 +1214,10 @@ class PlatformStore:
         async with self.sessions() as session:
             entry = await session.get(ConfiguredModel, entry_id)
             if not entry or entry.configuration_id != configuration_id:
-                raise ValueError("模型不存在")
+                raise ValueError(_text_of("set_configured_model_enabled.text"))
             configuration = await session.get(ModelProviderConfiguration, configuration_id)
             if not configuration:
-                raise ValueError("模型配置不存在")
+                raise ValueError(_text_of("set_configured_model_enabled.text.2"))
             previous = entry.enabled
             entry.enabled = enabled
             session.add(AuditEvent(
@@ -1163,10 +1246,10 @@ class PlatformStore:
                 .where(ModelProviderConfiguration.id == configuration_id)
             )
             if not configuration:
-                raise ValueError("模型配置不存在")
+                raise ValueError(_text_of("delete_configured_model.text"))
             entry = next((item for item in configuration.models if item.id == entry_id), None)
             if entry is None:
-                raise ValueError("模型不存在")
+                raise ValueError(_text_of("delete_configured_model.text.2"))
 
             result = {
                 "entry_id": entry.id,
@@ -1199,20 +1282,20 @@ class PlatformStore:
         self, *, owner_id: str, kind: str, name: str, description: str = "", metadata: dict | None = None
     ) -> ElementAsset:
         if kind not in ELEMENT_KINDS:
-            raise ValueError("元素类型必须是 actor、prop、scene、costume 或 effect")
+            raise ValueError(_text_of("create_element.text"))
         if not name.strip():
-            raise ValueError("元素名称不能为空")
+            raise ValueError(_text_of("create_element.text.2"))
         async with self.sessions() as session:
             locked_owner = await session.scalar(
                 select(PlatformUser.id).where(PlatformUser.id == owner_id).with_for_update()
             )
             if not locked_owner:
-                raise ValueError("用户不存在")
+                raise ValueError(_text_of("create_element.text.3"))
             existing_count = int(await session.scalar(
                 select(func.count()).select_from(ElementAsset).where(ElementAsset.owner_id == owner_id)
             ) or 0)
             if existing_count >= MAX_ELEMENT_ASSETS_PER_OWNER:
-                raise ValueError(f"元素数量已达到 {MAX_ELEMENT_ASSETS_PER_OWNER} 项配额")
+                raise ValueError(_text_of("create_element.text.4").format(MAX_ELEMENT_ASSETS_PER_OWNER))
             element = ElementAsset(
                 owner_id=owner_id,
                 kind=kind,
@@ -1231,6 +1314,234 @@ class PlatformStore:
             .execution_options(populate_existing=True)
         )
 
+    async def _record_revision(
+        self, session, element: ElementAsset, before: dict, reason: str, *, discard_files: bool,
+    ) -> tuple[DeletedElementFileRecord, ...]:
+        """改动已经做在 ``element`` 上之后、提交之前调用：把改动前那一版(``before``)记下，裁掉超出 REVISION_LIMIT 的最旧版本。
+
+        返回裁掉的版本引用、现行文件和留下的版本又都不再用的文件，由调用方在提交前隔离。
+        ``discard_files`` 为假(调用方没法删文件)时只裁那些文件别处还在用的旧版本：宁可多留几版，不留没人管的文件。
+        """
+        if reason not in ELEMENT_REVISION_REASONS:
+            raise ValueError(_text_of("_record_revision.text"))
+        revisions = list((await session.scalars(
+            select(ElementRevision).where(ElementRevision.element_id == element.id).order_by(ElementRevision.revision)
+        )).all())
+        latest = ElementRevision(
+            element_id=element.id,
+            owner_id=element.owner_id,
+            revision=(revisions[-1].revision + 1) if revisions else 1,
+            version=before["version"],
+            name=before["name"],
+            description=before["description"],
+            metadata_json=before["metadata"],
+            files_json=before["files"],
+            reason=reason,
+        )
+        session.add(latest)
+        revisions.append(latest)
+        excess = len(revisions) - REVISION_LIMIT
+        if excess <= 0:
+            return ()
+        live = {item.storage_path for item in element.files}
+
+        def paths(revision: ElementRevision) -> set[str]:
+            return {str(entry.get("storage_path") or "") for entry in revision.files_json or []}
+
+        kept = list(revisions)
+        dropped: list[ElementRevision] = []
+        for old in revisions[:excess]:
+            others = live.union(*(paths(item) for item in kept if item is not old))
+            if discard_files or paths(old) <= others:
+                kept.remove(old)
+                dropped.append(old)
+        referenced = live.union(*(paths(item) for item in kept))
+        orphans: dict[str, DeletedElementFileRecord] = {}
+        for old in dropped:
+            for entry in old.files_json or []:
+                record = _revision_file_record(old, entry)
+                if record.storage_path and record.storage_path not in referenced:
+                    orphans.setdefault(record.storage_path, record)
+            await session.delete(old)
+        return tuple(orphans.values())
+
+    async def list_prompt_preferences(self, user_id: str) -> list[UserPromptPreference]:
+        """The stage agents this account does not simply follow the platform on."""
+        async with self.sessions() as session:
+            return list((await session.scalars(
+                select(UserPromptPreference).where(UserPromptPreference.user_id == user_id)
+            )).all())
+
+    async def set_prompt_preference(self, user_id: str, operation: str, mode: str, text: str) -> None:
+        """Keep the account's choice for one stage agent. ``follow`` keeps nothing: it is the absence of a row."""
+        async with self.sessions() as session:
+            row = await session.get(UserPromptPreference, (user_id, operation))
+            if mode == "follow":
+                if row is not None:
+                    await session.delete(row)
+            elif row is None:
+                session.add(UserPromptPreference(user_id=user_id, operation=operation, mode=mode, text=text))
+            else:
+                row.mode, row.text = mode, text
+            await session.commit()
+
+    async def count_users(self) -> int:
+        """How many accounts exist. Cheap, and the diagnostics' proof that the store answers."""
+        async with self.sessions() as session:
+            return int(await session.scalar(select(func.count()).select_from(PlatformUser)) or 0)
+
+    async def element_storage_report(self, owner_id: str) -> dict[str, int]:
+        """What the owner's library holds against its limits: bytes (every kept version's files, each counted once) and assets."""
+        async with self.sessions() as session:
+            used = await self._element_storage_usage(session, owner_id)
+            count = int(await session.scalar(
+                select(func.count()).select_from(ElementAsset).where(ElementAsset.owner_id == owner_id)
+            ) or 0)
+        return {
+            "used_bytes": int(used), "quota_bytes": MAX_ELEMENT_STORAGE_BYTES,
+            "asset_count": count, "asset_quota": MAX_ELEMENT_ASSETS_PER_OWNER,
+        }
+
+    async def _element_storage_usage(self, session, owner_id: str | None = None) -> int:
+        """现行文件和历史版本文件按 (资产, 路径) 去重后的总字节数：同一个文件被几版引用只算一次。"""
+        live = select(ElementFile.element_id, ElementFile.storage_path, ElementFile.size_bytes)
+        history = select(ElementRevision.element_id, ElementRevision.files_json)
+        if owner_id is not None:
+            live = live.join(ElementAsset, ElementFile.element_id == ElementAsset.id).where(ElementAsset.owner_id == owner_id)
+            history = history.where(ElementRevision.owner_id == owner_id)
+        sizes = {(element_id, path): int(size or 0) for element_id, path, size in (await session.execute(live)).all()}
+        for element_id, files in (await session.execute(history)).all():
+            for entry in files if isinstance(files, list) else ():
+                key = (element_id, str(entry.get("storage_path") or ""))
+                sizes.setdefault(key, int(entry.get("size_bytes") or 0))
+        return sum(sizes.values())
+
+    async def _change_element(
+        self,
+        element_id: str,
+        owner_id: str,
+        reason: str,
+        change: Callable[..., Awaitable[str | None]],
+        *,
+        before_commit: DeletionStorageHook | None = None,
+    ) -> ElementAsset:
+        """锁住资产，``change(session, element)`` 校验并改动(可返回更准确的原因)，内容变了就记下改动前那一版，版本号加一，一个事务提交。"""
+        committed: ElementAsset | None = None
+        cancellation_requested = False
+        try:
+            async with self.sessions() as session:
+                element = await session.scalar(
+                    select(ElementAsset).options(selectinload(ElementAsset.files))
+                    .where(ElementAsset.id == element_id)
+                    .with_for_update()
+                )
+                if not element or element.owner_id != owner_id:
+                    raise ValueError(_text_of("_change_element.text"))
+                before = _element_state(element)
+                reason = await change(session, element) or reason
+                orphans: tuple[DeletedElementFileRecord, ...] = ()
+                if not _same_content(before, element):
+                    orphans = await self._record_revision(
+                        session, element, before, reason, discard_files=before_commit is not None,
+                    )
+                element.version += 1
+                if orphans and before_commit is not None:
+                    storage_cleanup = await before_commit(orphans)
+                    session.add(AuditEvent(
+                        actor_id=owner_id,
+                        action="element.revision.trim",
+                        resource_type="element",
+                        resource_id=element.id,
+                        details={"file_count": len(orphans), **({"storage_cleanup": storage_cleanup} if storage_cleanup else {})},
+                    ))
+                    cancellation_requested = await _commit_deletion_with_cancellation_boundary(session)
+                else:
+                    await session.commit()
+                committed = element
+                loaded = await self._loaded_element(session, element.id)
+                assert loaded is not None
+        except BaseException as exc:
+            # 提交过了还要让调用方知道：隔离的文件该清掉，而不是放回去。没给钩子的调用方照旧拿到原来的异常。
+            if committed is not None and before_commit is not None:
+                raise StorageMutationCommittedWithError(committed, exc) from exc
+            raise
+        if cancellation_requested:
+            raise StorageMutationCommittedWithError(loaded, asyncio.CancelledError())
+        return loaded
+
+    async def list_element_revisions(self, owner_id: str, element_id: str) -> list[ElementRevision]:
+        """这个资产留着的旧版本，最新的在前。"""
+        async with self.sessions() as session:
+            element = await session.get(ElementAsset, element_id)
+            if not element or element.owner_id != owner_id:
+                raise ValueError(_text_of("list_element_revisions.text"))
+            return list((await session.scalars(
+                select(ElementRevision).where(ElementRevision.element_id == element_id)
+                .order_by(ElementRevision.revision.desc())
+            )).all())
+
+    async def get_element_revision(self, owner_id: str, element_id: str, revision: int) -> ElementRevision | None:
+        async with self.sessions() as session:
+            return await session.scalar(
+                select(ElementRevision)
+                .join(ElementAsset, ElementAsset.id == ElementRevision.element_id)
+                .where(
+                    ElementRevision.element_id == element_id,
+                    ElementRevision.revision == revision,
+                    ElementAsset.owner_id == owner_id,
+                )
+            )
+
+    async def restore_element_revision(
+        self, owner_id: str, element_id: str, revision: int, *, before_commit: DeletionStorageHook | None = None,
+    ) -> ElementAsset:
+        """回到第 ``revision`` 版：先把现在这一版记下(原因 restore)，再恢复名称、描述、元数据，各槽位指回当时的文件。
+
+        当时没有的槽位去掉；项目关联和进行中的生成状态保持现在的样子。
+        """
+
+        async def change(session, element: ElementAsset) -> None:
+            target = await session.scalar(
+                select(ElementRevision).where(
+                    ElementRevision.element_id == element.id, ElementRevision.revision == revision,
+                )
+            )
+            if target is None:
+                raise ValueError(_text_of("change.text"))
+            current = element.metadata_json or {}
+            metadata = {
+                key: value for key, value in copy.deepcopy(target.metadata_json or {}).items()
+                if key not in _RESTORE_KEEPS_METADATA
+            }
+            metadata.update({key: copy.deepcopy(current[key]) for key in _RESTORE_KEEPS_METADATA if key in current})
+            element.name = target.name
+            element.description = target.description or ""
+            element.metadata_json = metadata
+            wanted = {str(entry.get("slot")): entry for entry in target.files_json or []}
+            for item in [item for item in element.files if item.slot not in wanted]:
+                element.files.remove(item)
+            for slot, entry in wanted.items():
+                row = next((item for item in element.files if item.slot == slot), None)
+                fields = {
+                    "storage_path": str(entry.get("storage_path") or ""),
+                    "mime_type": str(entry.get("mime_type") or ""),
+                    "size_bytes": int(entry.get("size_bytes") or 0),
+                    "sha256": str(entry.get("sha256") or ""),
+                    "position": int(entry.get("position") or 0),
+                }
+                if row is None:
+                    element.files.append(ElementFile(element_id=element.id, slot=slot, **fields))
+                else:
+                    for key, value in fields.items():
+                        setattr(row, key, value)
+            element.status = "ready" if _actor_ready(element, set(wanted)) else "draft"
+            session.add(AuditEvent(
+                actor_id=owner_id, action="element.revision.restore", resource_type="element",
+                resource_id=element.id, details={"revision": revision, "version": target.version},
+            ))
+
+        return await self._change_element(element_id, owner_id, "restore", change, before_commit=before_commit)
+
     async def get_element(self, element_id: str, owner_id: str) -> ElementAsset | None:
         async with self.sessions() as session:
             return await session.scalar(
@@ -1242,27 +1553,32 @@ class PlatformStore:
     async def list_all_elements(self, owner_id: str, kind: str) -> list[ElementAsset]:
         """Every element of one kind the owner holds, newest first; bounded by the owner quota."""
         if kind not in ELEMENT_KINDS:
-            raise ValueError("无效元素类型")
+            raise ValueError(_text_of("list_all_elements.text"))
         async with self.sessions() as session:
             return list((await session.scalars(
                 select(ElementAsset).options(selectinload(ElementAsset.files))
                 .where(ElementAsset.owner_id == owner_id, ElementAsset.kind == kind)
-                .order_by(ElementAsset.updated_at.desc())
+                .order_by(ElementAsset.updated_at.desc(), ElementAsset.id)
             )).all())
 
     async def list_elements(
         self, owner_id: str, kind: str, page: int, page_size: int, task_id: str | None = None, folder: str | None = None,
+        include: tuple[str, ...] = (),
     ) -> tuple[list[ElementAsset], int]:
-        """``folder`` narrows to one folder's elements, or to the unfiled ones with ``ELEMENT_FOLDER_UNFILED``."""
-        if kind not in ELEMENT_KINDS:
-            raise ValueError("无效元素类型")
+        """``folder`` narrows to one folder's elements, or to the unfiled ones with ``ELEMENT_FOLDER_UNFILED``.
+
+        ``include`` lists more kinds shown in the same tab (拍摄道具 also lists 车辆 and 商品); newest first across all.
+        """
+        kinds = tuple(dict.fromkeys((kind, *include)))
+        if any(item not in ELEMENT_KINDS for item in kinds):
+            raise ValueError(_text_of("list_elements.text"))
         if task_id:
             # Project scope lives in JSON metadata; filtering in Python keeps SQLite
             # and PostgreSQL identical, and the per-owner quota bounds the scan.
-            scoped = [
-                item for item in await self.list_all_elements(owner_id, kind)
-                if element_in_task(item.metadata_json, task_id)
-            ]
+            everything = [item for each in kinds for item in await self.list_all_elements(owner_id, each)]
+            everything.sort(key=lambda item: item.id)
+            everything.sort(key=lambda item: item.updated_at, reverse=True)
+            scoped = [item for item in everything if element_in_task(item.metadata_json, task_id)]
             if folder:
                 placed = await self.element_folder_ids(owner_id, [item.id for item in scoped])
                 scoped = [
@@ -1271,7 +1587,7 @@ class PlatformStore:
                 ]
             start = (page - 1) * page_size
             return scoped[start:start + page_size], len(scoped)
-        where = [ElementAsset.owner_id == owner_id, ElementAsset.kind == kind]
+        where = [ElementAsset.owner_id == owner_id, ElementAsset.kind.in_(kinds)]
         if folder == ELEMENT_FOLDER_UNFILED:
             where.append(ElementAsset.id.not_in(select(ElementFolderMember.element_id)))
         elif folder:
@@ -1280,7 +1596,8 @@ class PlatformStore:
             total = int(await session.scalar(select(func.count()).select_from(ElementAsset).where(*where)) or 0)
             items = list((await session.scalars(
                 select(ElementAsset).options(selectinload(ElementAsset.files)).where(*where)
-                .order_by(ElementAsset.updated_at.desc()).offset((page - 1) * page_size).limit(page_size)
+                # id 兜底：同一时刻改过的几项在翻页时顺序不变。
+                .order_by(ElementAsset.updated_at.desc(), ElementAsset.id).offset((page - 1) * page_size).limit(page_size)
             )).all())
             return items, total
 
@@ -1289,7 +1606,7 @@ class PlatformStore:
         async with self.sessions() as session:
             element = await session.get(ElementAsset, element_id)
             if not element or element.owner_id != owner_id:
-                raise ValueError("元素不存在")
+                raise ValueError(_text_of("merge_element_metadata.text"))
             metadata = dict(element.metadata_json or {})
             metadata.update({key: value for key, value in patch.items() if key != "model3d"})
             element.metadata_json = metadata
@@ -1298,14 +1615,14 @@ class PlatformStore:
             assert loaded is not None
             return loaded
 
-    async def set_real_person(self, element_id: str, owner_id: str, record: dict | None) -> ElementAsset:
+    async def set_real_person(
+        self, element_id: str, owner_id: str, record: dict | None, *, before_commit: DeletionStorageHook | None = None,
+    ) -> ElementAsset:
         """把数字演员设成(或取消)真人演员，并按新规则重算它是否就绪；留审计。"""
-        async with self.sessions() as session:
-            element = await session.scalar(
-                select(ElementAsset).options(selectinload(ElementAsset.files)).where(ElementAsset.id == element_id).with_for_update()
-            )
-            if not element or element.owner_id != owner_id or element.kind != "actor" or not _wants_identity_views(element):
-                raise ValueError("只有数字演员本人可以设为真人演员")
+
+        async def change(session, element: ElementAsset) -> None:
+            if element.kind != "actor" or not _wants_identity_views(element):
+                raise ValueError(_text_of("change.text.2"))
             metadata = dict(element.metadata_json or {})
             if record is None:
                 metadata.pop(real_person.KEY, None)
@@ -1313,23 +1630,25 @@ class PlatformStore:
                 metadata[real_person.KEY] = dict(record)
             element.metadata_json = metadata
             element.status = "ready" if _actor_ready(element, {item.slot for item in element.files}) else "draft"
-            element.version += 1
             session.add(AuditEvent(
                 actor_id=owner_id, action="element.real_person.set" if record else "element.real_person.clear",
                 resource_type="element", resource_id=element.id,
                 details={"person": (record or {}).get("person", ""), "assets": len((record or {}).get("ark_assets") or [])},
             ))
-            await session.commit()
-            loaded = await self._loaded_element(session, element.id)
-            assert loaded is not None
-            return loaded
+
+        try:
+            return await self._change_element(element_id, owner_id, "real_person", change, before_commit=before_commit)
+        except ValueError as exc:
+            if str(exc) == _text_of("set_real_person.text"):
+                raise ValueError(_text_of("set_real_person.text.2")) from exc
+            raise
 
     async def link_element_to_task(self, element_id: str, owner_id: str, task_id: str) -> ElementAsset:
         """Make an existing library asset visible to another project without copying it."""
         async with self.sessions() as session:
             element = await session.get(ElementAsset, element_id)
             if not element or element.owner_id != owner_id:
-                raise ValueError("元素不存在")
+                raise ValueError(_text_of("link_element_to_task.text"))
             element.metadata_json = link_task(element.metadata_json, task_id)
             await session.commit()
             loaded = await self._loaded_element(session, element.id)
@@ -1341,69 +1660,68 @@ class PlatformStore:
         async with self.sessions() as session:
             element = await session.get(ElementAsset, element_id)
             if not element or element.owner_id != owner_id:
-                raise ValueError("元素不存在")
+                raise ValueError(_text_of("unlink_element_from_task.text"))
             element.metadata_json = unlink_task(element.metadata_json, task_id)
             await session.commit()
             loaded = await self._loaded_element(session, element.id)
             assert loaded is not None
             return loaded
 
-    async def update_element(self, element_id: str, owner_id: str, *, name: str | None, description: str | None) -> ElementAsset:
-        async with self.sessions() as session:
-            element = await session.get(ElementAsset, element_id)
-            if not element or element.owner_id != owner_id:
-                raise ValueError("元素不存在")
+    async def update_element(
+        self,
+        element_id: str,
+        owner_id: str,
+        *,
+        name: str | None,
+        description: str | None,
+        before_commit: DeletionStorageHook | None = None,
+    ) -> ElementAsset:
+        async def change(_session, element: ElementAsset) -> str:
+            renamed = False
             if name is not None:
                 if not name.strip():
-                    raise ValueError("元素名称不能为空")
+                    raise ValueError(_text_of("change.text.3"))
+                renamed = name.strip()[:160] != element.name
                 element.name = name.strip()[:160]
             if description is not None:
                 element.description = description.strip()
-            element.version += 1
-            await session.commit()
-            loaded = await self._loaded_element(session, element.id)
-            assert loaded is not None
-            return loaded
+            return "rename" if renamed else "edit"
 
-    async def set_element_variant(self, element_id: str, owner_id: str, variant: dict | None) -> ElementAsset:
+        return await self._change_element(element_id, owner_id, "edit", change, before_commit=before_commit)
+
+    async def set_element_variant(
+        self, element_id: str, owner_id: str, variant: dict | None, *, before_commit: DeletionStorageHook | None = None,
+    ) -> ElementAsset:
         """Set or clear an actor element's derived-look facts; nothing else on its metadata moves."""
-        async with self.sessions() as session:
-            element = await session.get(ElementAsset, element_id)
-            if not element or element.owner_id != owner_id:
-                raise ValueError("元素不存在")
+
+        async def change(_session, element: ElementAsset) -> None:
             if element.kind != "actor":
-                raise ValueError("只有数字演员可以设为衍生形象")
+                raise ValueError(_text_of("change.text.4"))
             metadata = dict(element.metadata_json or {})
             if variant is None:
                 metadata.pop("variant", None)
             else:
                 metadata["variant"] = dict(variant)
             element.metadata_json = metadata
-            element.version += 1
-            await session.commit()
-            loaded = await self._loaded_element(session, element.id)
-            assert loaded is not None
-            return loaded
 
-    async def set_prop_length(self, element_id: str, owner_id: str, length_cm: float | None) -> ElementAsset:
+        return await self._change_element(element_id, owner_id, "variant", change, before_commit=before_commit)
+
+    async def set_prop_length(
+        self, element_id: str, owner_id: str, length_cm: float | None, *, before_commit: DeletionStorageHook | None = None,
+    ) -> ElementAsset:
         """Set or clear a prop's stated longest side; nothing else on its metadata moves."""
-        async with self.sessions() as session:
-            element = await session.get(ElementAsset, element_id)
-            if not element or element.owner_id != owner_id:
-                raise ValueError("元素不存在")
+
+        async def change(_session, element: ElementAsset) -> None:
             if element.kind != "prop":
-                raise ValueError("只有拍摄道具可以设置尺寸")
+                raise ValueError(_text_of("change.text.5"))
             metadata = dict(element.metadata_json or {})
             if length_cm is None:
                 metadata.pop("prop_length_cm", None)
             else:
                 metadata["prop_length_cm"] = float(length_cm)
             element.metadata_json = metadata
-            element.version += 1
-            await session.commit()
-            loaded = await self._loaded_element(session, element.id)
-            assert loaded is not None
-            return loaded
+
+        return await self._change_element(element_id, owner_id, "prop_size", change, before_commit=before_commit)
 
     async def add_element_file(
         self,
@@ -1427,46 +1745,34 @@ class PlatformStore:
                     select(PlatformUser.id).where(PlatformUser.id == owner_id).with_for_update()
                 )
                 if not locked_owner:
-                    raise ValueError("用户不存在")
+                    raise ValueError(_text_of("add_element_file.text"))
                 element = await session.scalar(
                     select(ElementAsset).options(selectinload(ElementAsset.files))
                     .where(ElementAsset.id == element_id)
                     .with_for_update()
                 )
                 if not element or element.owner_id != owner_id:
-                    raise ValueError("元素不存在")
+                    raise ValueError(_text_of("add_element_file.text.2"))
                 is_3d_model = mime_type == "model/gltf-binary"
                 if is_3d_model and (element.kind not in {"prop", "scene"} or slot != "model_glb"):
-                    raise ValueError("3D 模型只允许绑定到场景或道具的 model_glb 槽位")
+                    raise ValueError(_text_of("add_element_file.text.3"))
                 if slot == "model_glb" and not is_3d_model:
-                    raise ValueError("model_glb 槽位只接受 GLB 3D 模型")
+                    raise ValueError(_text_of("add_element_file.text.4"))
                 if element.kind == "actor":
                     look_view = slot in LOOK_VIEW_SLOTS and not _wants_identity_views(element)
                     if slot not in ACTOR_VIEW_SLOT_ORDER and not look_view:
-                        raise ValueError("演员图片必须使用规定的身份视图槽位")
+                        raise ValueError(_text_of("add_element_file.text.5"))
                     position = ACTOR_FILE_SLOT_ORDER.index(slot)
                 else:
                     if not re.fullmatch(r"[a-z0-9_-]{1,64}", slot):
-                        raise ValueError("文件槽位无效")
+                        raise ValueError(_text_of("add_element_file.text.6"))
                     position = len(element.files)
                 existing = next((item for item in element.files if item.slot == slot), None)
-                owner_usage = int(await session.scalar(
-                    select(func.coalesce(func.sum(ElementFile.size_bytes), 0))
-                    .select_from(ElementFile)
-                    .join(ElementAsset, ElementFile.element_id == ElementAsset.id)
-                    .where(ElementAsset.owner_id == owner_id)
-                ) or 0)
-                projected_usage = owner_usage - (existing.size_bytes if existing else 0) + size_bytes
-                if size_bytes < 0 or projected_usage > MAX_ELEMENT_STORAGE_BYTES:
-                    raise ValueError("元素资产存储空间已达到账号配额")
-                global_usage = int(await session.scalar(
-                    select(func.coalesce(func.sum(ElementFile.size_bytes), 0)).select_from(ElementFile)
-                ) or 0)
-                projected_global_usage = global_usage - (existing.size_bytes if existing else 0) + size_bytes
-                if projected_global_usage > MAX_GLOBAL_ELEMENT_STORAGE_BYTES:
-                    raise ValueError("元素资产已达到服务全局存储配额")
+                if size_bytes < 0:
+                    raise ValueError(_text_of("add_element_file.text.7"))
+                before = _element_state(element)
+                # 被换掉的文件记进改动前那一版，不再删；配额按现行文件加历史版本文件算，所以放在改动之后。
                 replaced_storage_path = existing.storage_path if existing else None
-                replaced_file = _deleted_element_file_record(existing) if existing else None
                 if existing:
                     existing.storage_path = storage_path
                     existing.mime_type = mime_type
@@ -1489,9 +1795,16 @@ class PlatformStore:
                 slots = {item.slot for item in element.files}
                 slots.add(slot)
                 element.status = "ready" if _actor_ready(element, slots) else "draft"
+                orphans = await self._record_revision(
+                    session, element, before, "file", discard_files=before_commit is not None,
+                )
+                if await self._element_storage_usage(session, owner_id) > MAX_ELEMENT_STORAGE_BYTES:
+                    raise ValueError(_text_of("add_element_file.text.8"))
+                if await self._element_storage_usage(session) > MAX_GLOBAL_ELEMENT_STORAGE_BYTES:
+                    raise ValueError(_text_of("add_element_file.text.9"))
                 storage_cleanup = (
-                    await before_commit((replaced_file,))
-                    if before_commit is not None and replaced_file is not None
+                    await before_commit(orphans)
+                    if before_commit is not None and orphans
                     else None
                 )
                 audit_details: dict[str, object] = {
@@ -1545,12 +1858,13 @@ class PlatformStore:
                     .with_for_update()
                 )
                 if not element:
-                    raise ValueError("元素不存在")
+                    raise ValueError(_text_of("delete_element_file.text"))
                 target = next((item for item in element.files if item.id == file_id), None)
                 if target is None:
-                    raise ValueError("元素文件不存在")
+                    raise ValueError(_text_of("delete_element_file.text.2"))
 
                 deleted_file = _deleted_element_file_record(target)
+                before = _element_state(element)
                 element.files.remove(target)
                 if element.kind == "actor":
                     for item in element.files:
@@ -1567,10 +1881,14 @@ class PlatformStore:
                     element.status = "ready" if _actor_ready(element, slots) else "draft"
                 else:
                     element.status = "ready" if element.files else "draft"
+                # 删掉的文件留在改动前那一版里，恢复时还能指回去；只清理裁掉的旧版本独占的文件。
+                orphans = await self._record_revision(
+                    session, element, before, "file_delete", discard_files=before_commit is not None,
+                )
                 element.version += 1
                 storage_cleanup = (
-                    await before_commit((deleted_file,))
-                    if before_commit is not None
+                    await before_commit(orphans)
+                    if before_commit is not None and orphans
                     else None
                 )
                 audit_details: dict[str, object] = {
@@ -1620,12 +1938,22 @@ class PlatformStore:
                     .with_for_update()
                 )
                 if not element:
-                    raise ValueError("元素不存在")
+                    raise ValueError(_text_of("delete_element.text"))
 
-                deleted_files = tuple(_deleted_element_file_record(item) for item in element.files)
+                # 现行文件连同历史版本的文件一起删；几版共用的同一个文件只删一次。
+                by_path = {item.storage_path: _deleted_element_file_record(item) for item in element.files}
+                for revision in (await session.scalars(
+                    select(ElementRevision).where(ElementRevision.element_id == element.id)
+                )).all():
+                    for entry in revision.files_json or []:
+                        record = _revision_file_record(revision, entry)
+                        if record.storage_path:
+                            by_path.setdefault(record.storage_path, record)
+                deleted_files = tuple(by_path.values())
                 await session.execute(
                     delete(RegenerationRequest).where(RegenerationRequest.element_id == element.id)
                 )
+                await session.execute(delete(ElementRevision).where(ElementRevision.element_id == element.id))
                 await session.delete(element)
                 storage_cleanup = (
                     await before_commit(deleted_files)
@@ -1670,11 +1998,13 @@ class PlatformStore:
             )
             return {element_id: folder_id for element_id, folder_id in rows.all()}
 
-    async def list_element_folders(self, owner_id: str, kind: str | None = None) -> dict:
+    async def list_element_folders(self, owner_id: str, kind: str | None = None, include: tuple[str, ...] = ()) -> dict:
         """The owner's folders with counts, joined on live elements so a deleted one is never counted."""
-        if kind is not None and kind not in ELEMENT_KINDS:
-            raise ValueError("无效元素类型")
-        scope = [ElementAsset.owner_id == owner_id, *([ElementAsset.kind == kind] if kind else [])]
+        kinds = tuple(dict.fromkeys((kind, *include))) if kind else ()
+        if any(item not in ELEMENT_KINDS for item in kinds):
+            raise ValueError(_text_of("list_element_folders.text"))
+        # include：同一页签里一起数的其它类型(拍摄道具也数车辆、商品)。
+        scope = [ElementAsset.owner_id == owner_id, *([ElementAsset.kind.in_(kinds)] if kinds else [])]
         async with self.sessions() as session:
             folders = list((await session.scalars(
                 select(ElementFolder).where(ElementFolder.owner_id == owner_id).order_by(ElementFolder.created_at, ElementFolder.id)
@@ -1710,9 +2040,9 @@ class PlatformStore:
     def _element_folder_name(name: str) -> str:
         label = name.strip()
         if not label:
-            raise ValueError("文件夹需要一个名称")
+            raise ValueError(_text_of("_element_folder_name.text"))
         if len(label) > MAX_ELEMENT_FOLDER_NAME:
-            raise ValueError(f"文件夹名称最长 {MAX_ELEMENT_FOLDER_NAME} 个字符")
+            raise ValueError(_text_of("_element_folder_name.text.2").format(MAX_ELEMENT_FOLDER_NAME))
         return label
 
     async def _assert_folder_name_free(self, session, owner_id: str, label: str, *, ignoring: str = "") -> None:
@@ -1720,22 +2050,22 @@ class PlatformStore:
             select(ElementFolder.id).where(ElementFolder.owner_id == owner_id, ElementFolder.name == label, ElementFolder.id != ignoring)
         )
         if clash:
-            raise ValueError(f"已经有叫「{label}」的文件夹")
+            raise ValueError(_text_of("_assert_folder_name_free.text").format(label))
 
     async def create_element_folder(self, owner_id: str, name: str, cover_element_id: str | None = None) -> ElementFolder:
         label = self._element_folder_name(name)
         async with self.sessions() as session:
             # The owner row serializes the count-then-insert of two creates racing for the last slot.
             if not await session.scalar(select(PlatformUser.id).where(PlatformUser.id == owner_id).with_for_update()):
-                raise ValueError("用户不存在")
+                raise ValueError(_text_of("create_element_folder.text"))
             await self._assert_folder_name_free(session, owner_id, label)
             count = int(await session.scalar(
                 select(func.count()).select_from(ElementFolder).where(ElementFolder.owner_id == owner_id)
             ) or 0)
             if count >= MAX_ELEMENT_FOLDERS_PER_OWNER:
-                raise ValueError(f"最多 {MAX_ELEMENT_FOLDERS_PER_OWNER} 个文件夹，请先删除不用的")
+                raise ValueError(_text_of("create_element_folder.text.2").format(MAX_ELEMENT_FOLDERS_PER_OWNER))
             if cover_element_id and not await self._owned_element_ids(session, owner_id, [cover_element_id]):
-                raise ValueError("封面元素不存在")
+                raise ValueError(_text_of("create_element_folder.text.3"))
             folder = ElementFolder(owner_id=owner_id, name=label, cover_element_id=cover_element_id or None)
             session.add(folder)
             await session.commit()
@@ -1753,7 +2083,7 @@ class PlatformStore:
                 folder.name = label
             if cover_element_id != "":
                 if cover_element_id and not await self._owned_element_ids(session, owner_id, [cover_element_id]):
-                    raise ValueError("封面元素不存在")
+                    raise ValueError(_text_of("update_element_folder.text"))
                 folder.cover_element_id = cover_element_id
             await session.commit()
             return folder
@@ -1775,11 +2105,11 @@ class PlatformStore:
         wanted = list(dict.fromkeys(element_ids))
         async with self.sessions() as session:
             if await self._owned_element_ids(session, owner_id, wanted) != set(wanted):
-                raise LookupError("元素不存在")
+                raise LookupError(_text_of("move_elements_to_folder.text"))
             if folder_id is not None:
                 folder = await session.get(ElementFolder, folder_id)
                 if folder is None or folder.owner_id != owner_id:
-                    raise LookupError("文件夹不存在")
+                    raise LookupError(_text_of("move_elements_to_folder.text.2"))
             await session.execute(delete(ElementFolderMember).where(ElementFolderMember.element_id.in_(wanted)))
             if folder_id is not None:
                 session.add_all(ElementFolderMember(element_id=element_id, folder_id=folder_id) for element_id in wanted)
@@ -1797,16 +2127,16 @@ class PlatformStore:
         """Save under a name; the same name again replaces that pose (names are unique per owner)."""
         label = name.strip()
         if not label:
-            raise ValueError("姿势需要一个名称")
+            raise ValueError(_text_of("save_desk_pose.text"))
         if len(label) > MAX_DESK_POSE_NAME:
-            raise ValueError(f"姿势名称最长 {MAX_DESK_POSE_NAME} 个字符")
+            raise ValueError(_text_of("save_desk_pose.text.2").format(MAX_DESK_POSE_NAME))
         async with self.sessions() as session:
             # The owner row serializes the count-then-insert of two saves racing for the last slot.
             locked_owner = await session.scalar(
                 select(PlatformUser.id).where(PlatformUser.id == owner_id).with_for_update()
             )
             if not locked_owner:
-                raise ValueError("用户不存在")
+                raise ValueError(_text_of("save_desk_pose.text.3"))
             record = await session.scalar(
                 select(DirectorDeskPose).where(DirectorDeskPose.owner_id == owner_id, DirectorDeskPose.name == label)
             )
@@ -1815,7 +2145,7 @@ class PlatformStore:
                     select(func.count()).select_from(DirectorDeskPose).where(DirectorDeskPose.owner_id == owner_id)
                 ) or 0)
                 if count >= MAX_DESK_POSES_PER_OWNER:
-                    raise ValueError(f"最多保存 {MAX_DESK_POSES_PER_OWNER} 个姿势，请先删除不用的")
+                    raise ValueError(_text_of("save_desk_pose.text.4").format(MAX_DESK_POSES_PER_OWNER))
                 record = DirectorDeskPose(owner_id=owner_id, name=label, pose_json=pose)
                 session.add(record)
             else:
@@ -1836,7 +2166,7 @@ class PlatformStore:
         async with self.sessions() as session:
             element = await session.get(ElementAsset, element_id)
             if not element or element.owner_id != owner_id:
-                raise ValueError("元素不存在")
+                raise ValueError(_text_of("request_regeneration.text"))
             request = RegenerationRequest(
                 element_id=element_id,
                 requested_by=owner_id,
@@ -1850,9 +2180,9 @@ class PlatformStore:
 
     async def seed_billing_plans(self) -> None:
         plans = (
-            ("starter", "创作入门", "每月 500 创作积分", Decimal("29.00"), 500, 30),
-            ("studio", "工作室", "每月 3000 创作积分", Decimal("129.00"), 3000, 30),
-            ("pro", "专业制作", "每月 10000 创作积分", Decimal("399.00"), 10000, 30),
+            ("starter", _text_of("seed_billing_plans.plans"), _text_of("seed_billing_plans.plans.2"), Decimal("29.00"), 500, 30),
+            ("studio", _text_of("seed_billing_plans.plans.3"), _text_of("seed_billing_plans.plans.4"), Decimal("129.00"), 3000, 30),
+            ("pro", _text_of("seed_billing_plans.plans.5"), _text_of("seed_billing_plans.plans.6"), Decimal("399.00"), 10000, 30),
         )
         async with self.sessions() as session:
             for plan_id, name, description, price, points, days in plans:
@@ -1877,11 +2207,11 @@ class PlatformStore:
         self, *, user_id: str, plan_id: str, provider: str | None, idempotency_key: str
     ) -> PaymentOrder:
         if provider and provider not in PAYMENT_PROVIDERS:
-            raise ValueError("不支持的支付渠道")
+            raise ValueError(_text_of("create_order.text"))
         if provider == "sandbox" and not settings.payment_sandbox_enabled():
-            raise ValueError("沙箱支付未开启")
+            raise ValueError(_text_of("create_order.text.2"))
         if not re.fullmatch(r"[A-Za-z0-9._:-]{8,120}", idempotency_key):
-            raise ValueError("幂等键格式无效")
+            raise ValueError(_text_of("create_order.text.3"))
         async with self.sessions() as session:
             existing = await session.scalar(select(PaymentOrder).where(
                 PaymentOrder.user_id == user_id, PaymentOrder.idempotency_key == idempotency_key
@@ -1890,7 +2220,7 @@ class PlatformStore:
                 return existing
             plan = await session.get(MembershipPlan, plan_id)
             if not plan or not plan.active:
-                raise ValueError("会员计划不存在")
+                raise ValueError(_text_of("create_order.text.4"))
             order = PaymentOrder(
                 user_id=user_id, plan_id=plan.id, provider=provider or "",  # the channel is chosen when paying
                 amount=plan.price, currency=plan.currency, status="pending",
@@ -2079,14 +2409,14 @@ class PlatformStore:
         """
         if order.status == "paid":
             if order.provider_event_id != event_id:
-                raise ValueError("订单已由其他支付事件完成")
+                raise ValueError(_text_of("_apply_paid_order.text"))
             return
         open_states = ("pending", "closed") if late_is_paid else ("pending",)
         if order.status not in open_states:
-            raise ValueError("订单状态不允许支付")
+            raise ValueError(_text_of("_apply_paid_order.text.2"))
         plan = await session.get(MembershipPlan, order.plan_id)
         if not plan:
-            raise ValueError("会员计划不存在")
+            raise ValueError(_text_of("_apply_paid_order.text.3"))
         now = datetime.now(timezone.utc)
         moved = await session.execute(
             update(PaymentOrder)
@@ -2096,7 +2426,7 @@ class PlatformStore:
         await session.refresh(order)
         if moved.rowcount != 1:
             if order.provider_event_id != event_id:
-                raise ValueError("订单已由其他支付事件完成")
+                raise ValueError(_text_of("_apply_paid_order.text.4"))
             return
         session.add(LedgerEntry(
             user_id=order.user_id,
@@ -2155,9 +2485,9 @@ class PlatformStore:
             async with session.begin():
                 order = await session.get(PaymentOrder, order_id, with_for_update=True)
                 if not order:
-                    raise ValueError("订单不存在")
+                    raise ValueError(_text_of("confirm_paid_order.text"))
                 if order.provider == "sandbox" and not settings.payment_sandbox_enabled():
-                    raise ValueError("沙箱支付未开启")
+                    raise ValueError(_text_of("confirm_paid_order.text.2"))
                 await self._apply_paid_order(session, order, provider_event_id)
             return order
 
@@ -2237,11 +2567,11 @@ class PlatformStore:
                 await session.execute(update(PaymentOrder).where(PaymentOrder.id == order_id).values(provider=provider))
                 order = await session.get(PaymentOrder, order_id, with_for_update=True)
                 if not order or order.user_id != user_id:
-                    raise LookupError("订单不存在")
+                    raise LookupError(_text_of("open_payment_attempt.text"))
                 if order.status != "pending":
-                    raise ValueError("订单状态不允许支付")
+                    raise ValueError(_text_of("open_payment_attempt.text.2"))
                 if order.currency != "CNY" or order.amount <= 0:
-                    raise ValueError("该订单不能在线支付")
+                    raise ValueError(_text_of("open_payment_attempt.text.3"))
                 attempts = (await session.scalars(select(PaymentAttempt).where(
                     PaymentAttempt.order_id == order.id, PaymentAttempt.status == "pending",
                 ))).all()
@@ -2252,7 +2582,7 @@ class PlatformStore:
                     elif attempt.qr_code and _aware_utc(attempt.expires_at) > now + keep_if_left:
                         return attempt, False, [item for item in attempts if item.id != attempt.id]
                     elif not attempt.qr_code and _aware_utc(attempt.created_at) > now - in_flight_for:
-                        raise PaymentInFlight("正在生成付款码，请稍候")
+                        raise PaymentInFlight(_text_of("open_payment_attempt.text.4"))
                     else:
                         others.append(attempt)
                 attempt = PaymentAttempt(
@@ -2481,22 +2811,22 @@ class PlatformStore:
     @staticmethod
     def _refund_blocker(order: PaymentOrder, position: dict) -> str | None:
         if order.status not in ("paid", "partially_refunded"):
-            return "订单状态不允许退款"
+            return _text_of("_refund_blocker.text")
         if not position["attempt"]:
-            return "这笔订单没有真实的渠道收款，不能退款"
+            return _text_of("_refund_blocker.text.2")
         if position["open_refund"]:
-            return "这笔订单已有退款在处理中"
+            return _text_of("_refund_blocker.text.3")
         if position["flagged"]:
-            return "这笔订单有未处理的严重对账差异，处理后才能退款"
+            return _text_of("_refund_blocker.text.4")
         if position["refundable_minor"] <= 0:
-            return "这笔订单已全部退款"
+            return _text_of("_refund_blocker.text.5")
         return None
 
     async def refund_quote(self, order_id: str) -> dict:
         async with self.sessions() as session:
             order = await session.get(PaymentOrder, order_id)
             if not order:
-                raise LookupError("订单不存在")
+                raise LookupError(_text_of("refund_quote.text"))
             position = await self._refund_position(session, order)
             return {
                 **{key: position[key] for key in (
@@ -2514,7 +2844,7 @@ class PlatformStore:
             async with session.begin():
                 order = await self._lock_order(session, order_id)
                 if not order:
-                    raise LookupError("订单不存在")
+                    raise LookupError(_text_of("request_refund.text"))
                 position = await self._refund_position(session, order, lock_points=True)
                 blocked = self._refund_blocker(order, position)
                 if blocked:
@@ -2522,13 +2852,13 @@ class PlatformStore:
                 lot, balance, attempt = position["lot"], position["balance"], position["attempt"]
                 clawback = position["freezable"] if points is None else points
                 if clawback < 0 or clawback > position["freezable"]:
-                    raise ValueError(f"最多可回收 {position['freezable']} 积分")
+                    raise ValueError(_text_of("request_refund.text.2").format(position['freezable']))
                 suggested = min(
                     int(position["paid_minor"] * clawback // lot.granted) if lot and lot.granted else 0, position["refundable_minor"],
                 )
                 amount = suggested if amount_minor is None else amount_minor
                 if amount <= 0 or amount > position["refundable_minor"]:
-                    raise ValueError("退款金额必须大于 0，且不超过可退金额")
+                    raise ValueError(_text_of("request_refund.text.3"))
                 if lot and clawback > 0:
                     lot.frozen += clawback
                     balance.available -= clawback
@@ -2551,7 +2881,7 @@ class PlatformStore:
     async def _locked_refund(self, session, refund_id: str) -> tuple[PaymentRefund, PaymentOrder]:
         order_id = await session.scalar(select(PaymentRefund.order_id).where(PaymentRefund.id == refund_id))
         if not order_id:
-            raise LookupError("退款单不存在")
+            raise LookupError(_text_of("_locked_refund.text"))
         order = await self._lock_order(session, order_id)
         refund = await session.get(PaymentRefund, refund_id, with_for_update=True, populate_existing=True)
         return refund, order
@@ -2561,16 +2891,16 @@ class PlatformStore:
             async with session.begin():
                 refund, order = await self._locked_refund(session, refund_id)
                 if refund.status != "requested":
-                    raise ValueError("退款单已处理")
+                    raise ValueError(_text_of("approve_refund.text"))
                 if refund.requested_by == actor["user_id"]:
                     # No exception for super admins: two people is the whole point.
-                    raise PermissionError("发起人不能批准自己发起的退款")
+                    raise PermissionError(_text_of("approve_refund.text.2"))
                 position = await self._refund_position(session, order)
                 if position["flagged"]:
-                    raise ValueError("这笔订单有未处理的严重对账差异，处理后才能退款")
+                    raise ValueError(_text_of("approve_refund.text.3"))
                 amount = refund.refund_minor if amount_minor is None else amount_minor
                 if amount <= 0 or amount > position["refundable_minor"]:
-                    raise ValueError("退款金额必须大于 0，且不超过可退金额")
+                    raise ValueError(_text_of("approve_refund.text.4"))
                 money_audit(
                     session, actor, "refund.approve", "payment_refund", refund.id, order_id=order.id, amount_minor=amount,
                     requested_minor=refund.refund_minor, amount_changed=amount != refund.refund_minor, note=note[:200],
@@ -2584,7 +2914,7 @@ class PlatformStore:
             async with session.begin():
                 refund, order = await self._locked_refund(session, refund_id)
                 if refund.status != "requested":
-                    raise ValueError("退款单已处理")
+                    raise ValueError(_text_of("reject_refund.text"))
                 await self._unfreeze(session, refund, order)
                 refund.status, refund.rejected_by = "rejected", actor["user_id"]
                 refund.decision_note, refund.decided_at = note[:500], datetime.now(timezone.utc)
@@ -2756,7 +3086,7 @@ class PlatformStore:
         async with self.sessions() as session:
             order = await session.get(PaymentOrder, order_id)
             if not order:
-                raise LookupError("订单不存在")
+                raise LookupError(_text_of("order_details.text"))
             return {
                 "order": order,
                 "user": await session.get(PlatformUser, order.user_id),
@@ -2769,10 +3099,10 @@ class PlatformStore:
 
     async def request_wallet_adjustment(self, *, user_id: str, points: Decimal, reason: str, actor: Mapping) -> WalletAdjustment:
         if points == 0:
-            raise ValueError("调整积分不能为 0")
+            raise ValueError(_text_of("request_wallet_adjustment.text"))
         async with self.sessions() as session:
             if not await session.get(PlatformUser, user_id):
-                raise LookupError("用户不存在")
+                raise LookupError(_text_of("request_wallet_adjustment.text.2"))
             adjustment = WalletAdjustment(user_id=user_id, points=points, reason=reason[:500], requested_by=actor["user_id"])
             session.add(adjustment)
             await session.flush()
@@ -2787,11 +3117,11 @@ class PlatformStore:
                 await session.execute(update(WalletAdjustment).where(WalletAdjustment.id == adjustment_id).values(status=WalletAdjustment.status))
                 adjustment = await session.get(WalletAdjustment, adjustment_id, with_for_update=True)
                 if not adjustment:
-                    raise LookupError("调整单不存在")
+                    raise LookupError(_text_of("approve_wallet_adjustment.text"))
                 if adjustment.status != "requested":
-                    raise ValueError("调整单已处理")
+                    raise ValueError(_text_of("approve_wallet_adjustment.text.2"))
                 if adjustment.requested_by == actor["user_id"]:
-                    raise PermissionError("发起人不能批准自己发起的调整")
+                    raise PermissionError(_text_of("approve_wallet_adjustment.text.3"))
                 balance = await session.get(PointBalance, adjustment.user_id, with_for_update=True)
                 metadata = {"adjustment_id": adjustment.id}
                 if adjustment.points > 0:
@@ -2809,7 +3139,7 @@ class PlatformStore:
                 else:
                     needed = -adjustment.points
                     if not balance or balance.available < needed:
-                        raise ValueError(f"用户可用积分不足，最多可扣 {balance.available if balance else 0}")
+                        raise ValueError(_text_of("approve_wallet_adjustment.text.4").format(balance.available if balance else 0))
                     balance.available -= needed
                     lots = (await session.scalars(
                         select(PointLot).where(PointLot.user_id == adjustment.user_id, PointLot.remaining > PointLot.frozen)
@@ -2837,13 +3167,13 @@ class PlatformStore:
         async with self.sessions() as session:
             adjustment = await session.get(WalletAdjustment, adjustment_id)
             if not adjustment:
-                raise LookupError("调整单不存在")
+                raise LookupError(_text_of("reject_wallet_adjustment.text"))
             moved = await session.execute(
                 update(WalletAdjustment).where(WalletAdjustment.id == adjustment_id, WalletAdjustment.status == "requested")
                 .values(status="rejected", rejected_by=actor["user_id"], decision_note=note[:500], decided_at=datetime.now(timezone.utc))
             )
             if moved.rowcount != 1:
-                raise ValueError("调整单已处理")
+                raise ValueError(_text_of("reject_wallet_adjustment.text.2"))
             money_audit(session, actor, "wallet.adjust_reject", "wallet_adjustment", adjustment_id, note=note[:200])
             await session.commit()
             await session.refresh(adjustment)

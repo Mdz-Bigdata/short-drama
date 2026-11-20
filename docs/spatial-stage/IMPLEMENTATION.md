@@ -31,11 +31,23 @@ whose 36 mm side lies along the long side of the delivery frame.
 | `projection.py` | Perspective projection → screen region, depth layer, screen facing, 2D occlusion; shot-size classification |
 | `axis.py` | Axis of action, camera side, neutral / moving / re-establishing bridges, illegal crossings |
 | `coverage.py` | Shot intent → camera: establishing / relation / single / over-the-shoulder / reaction / insert / empty; angles; moves with end poses; `keep_side`, `fit_move` |
-| `planner.py` | Principals, separation, side-by-side, supporting triangle, crowd, set pieces, gaze axis for a lone character, per-shot overrides, `refresh` |
-| `validation.py` | The nine checks below |
+| `planner.py` | Principals, separation, side-by-side, supporting triangle, crowd, set pieces (table in `data/prompt/stage_set_pieces.json`, matched by the end of the prop name); its vocabulary, walk reasons and formation sentences in `data/prompt/stage_planner.json`, gaze axis for a lone character, per-shot overrides, `refresh` |
+| `validation.py` | The eleven checks below; with `repair.py` and `scoring.py` it reads every check, repair and score sentence from `data/prompt/stage_checks.json` (set-clearance sentences from `stage_brief.json`) |
 | `prompting.py` | Panel sentences, frame positions, landmark bearings, scene bible, table brief |
-| `operations.py` | Semantic edits, all-or-nothing, revision + 1 |
+| `operations.py` | Semantic edits, all-or-nothing, revision + 1; every refusal and label it writes comes from `data/prompt/stage_operations.json` |
 | `interchange.py` | Export to / import from the two desk formats |
+| `cutting.py` | Cut-to-cut lens rules shared by the planner and `solve_camera`: `vary_angle` (30-degree rule), `carry_camera` (a follow / track shot keeps the end of its move) |
+| `wording.py` | Chinese names of postures and camera moves for checks, repairs and prompts, read from `stage_brief.json` / `stage_camera_moves.json` |
+
+**Wording lives in data.** No module above writes a Chinese sentence or word table of its own; each reads
+`backend/app/data/prompt/`: `stage_brief.json` and `stage_panel.json` (panel sentences, bearings, screen
+regions, shot-size heights, clip brief), `stage_vocabulary.json` (size aliases and shorthand, angles, camera
+labels, blocking verbs, path and interchange messages), `stage_camera_moves.json` (move words and names),
+`stage_planner.json`, `stage_set_pieces.json`, `stage_props.json`, `stage_checks.json`,
+`stage_operations.json`, `stage_director_ai.json` and `stage_blockout.json`. Each file has a test that every
+key is read and every key read exists (`tests/test_stage_*_wording.py`). The nine size names of
+`stage_panel.json` are the solver's identifiers; `stage_vocabulary.json` may only map onto them. What stays in
+Python is geometry (angles, thresholds), the height parser and the model kit's catalog.
 
 `backend/app/service/spatial_stage_service.py` binds this to a task: storage under
 `assets["4_spatial"]` (`scenes`, `side_memory`, `locations`), panel fields, director context,
@@ -57,8 +69,10 @@ whose 36 mm side lies along the long side of the delivery frame.
 within one step, the same over-the-shoulder-ness and a lens direction less than 30° away
 (`coverage.repeats_the_angle`) is solved again with `avoid_bearing`, which makes the solver prefer a
 clear candidate at least 30° from the previous lens. If none is clear it keeps the clear one; the cut
-plan reports what is left. Sizes are read from Chinese terms first, then whole-token shot-list
+plan reports what is left. The `solve_camera` operation keeps this variation and the carried end of a follow / track move (`cutting.vary_angle` / `cutting.carry_camera`, shared with the planner); its all-shots form skips a lens that has timeline camera keys or that several shots share, while a named `shot_id` always solves. Sizes are read from Chinese terms first, then whole-token shot-list
 shorthand (`ECU / CU / MCU / MS / MLS / FS / LS / ELS`), then English phrases.
+
+**Props and set pieces.** A prop takes its real size from the prop scale table, else from the by-ending class table in `data/prompt/stage_props.json`, else the 0.5 m stand-in, whose size no prompt states; every side is at least 3 cm. A hand prop rests on a table of the scene (`elevation_m` = table top) when there is one. Set pieces are kept off the marks by footprint (0.3 m margin, stepping upstage), and a piece placed in this run that hides a subject or holds a lens steps upstage until it troubles no shot.
 
 Moves (`push / pull / pan / track / follow / orbit / rise / fall`) get an end pose; none may leave
 the established side, and `fit_move` shortens one until its subjects are still in frame when it ends.
@@ -74,6 +88,29 @@ the cut into the walk does not jump anyone. One mark carries one move: someone w
 or walked in the scene is not staged again, and a second walk stays unstaged rather than teleporting
 them back to a start point.
 
+## Contacts (`contacts.py`)
+
+A lock only keeps the operator from moving a piece; contact between a body and a thing is its own data,
+`StagePlan.contacts` (no per-shot cap). Three kinds: **hold** (a prop in an actor's left / right / both hands),
+**sit** (an actor on a seat piece whose top is 0.3–0.7 m) and **rest** (a thing on a support's top, kept inside its
+footprint). `shot_ids` empty means the whole scene. One resolver places them after overrides and timeline sampling:
+sits, then holds (hand point from the actor's posture; a sitter holds at sit height whatever the pose preset says),
+then rests until nothing moves. `actors_in` / `landmarks_in` apply it, so projection, checks, prompts, clip briefs and
+camera solving all see a held prop in the hand. Whole-scene contacts are also written into the stored marks after
+every edit, and contacts naming something removed are dropped.
+
+- Operations `set_contact` / `remove_contact` (a new contact takes its shots out of others on the same target);
+  `move_landmark` on a prop held for the whole scene is refused with 「先解除接触再单独移动」.
+- The planner derives hold and sit contacts from the shot text (verb tables in `stage_planner.json`) and rest
+  contacts for hand props it puts on a table; a re-plan keeps manual contacts. A seat the planner dresses for the
+  scene is placed under its sitter, so a facing pair keeps facing; an inherited or manual seat more than
+  `seat_reach_m` from the mark gives no sit.
+- Check `spatial_contact_kept` (warning, only on plans with contacts) and repair 「贴合接触」.
+- Prompts: 「林夏右手握着录音笔」「录音笔放在书案上」「周教授坐在扶手椅上」 in the blocking text and a 「接触」
+  line in the clip brief, for contacts visible in the shot. Numbers live in `stage_props.json` (`contacts`).
+- The desk mirrors the resolver (`frontend/src/features/directorDesk/lib/contacts.ts`; a posed mannequin holds at
+  its drawn palm), edits contacts in the inspector's 「接触」 section with undo, and refuses dragging a held prop.
+
 ## Checks
 
 | Code | Severity | Meaning |
@@ -87,6 +124,8 @@ them back to a start point.
 | `spatial_facing_partner` | warning | a face-to-face pair is not facing each other |
 | `spatial_camera_clearance` | warning | the lens stands inside a character |
 | `spatial_action_changes_state` | warning | the table says someone walks / kneels, the stage did not change |
+| `spatial_set_clearance` | warning | a lens stands inside a set piece, or a set piece hides a visible subject; repair 绕开布景 searches a clear lens |
+| `spatial_contact_kept` | warning | a held prop is away from the hand, a resting thing off its support, a sitter off the seat, a seat of the wrong height or a holder offstage (only on plans with contacts); repair 贴合接触 |
 
 They join `StoryboardDirectorResult.continuity_checks` through
 `StoryboardDirectorRequest.spatial_checks`, so an error reaches `audit_prompt_detail` →

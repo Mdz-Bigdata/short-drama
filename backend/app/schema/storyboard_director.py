@@ -7,6 +7,19 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.frame_position import FramePosition
+from app.core import prompt_data
+
+
+_WORDING_FILE = "schema_storyboard_director"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/schema_storyboard_director.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 BoundedText = Annotated[str, Field(min_length=1, max_length=4_000)]
@@ -17,13 +30,13 @@ class DirectorCharacter(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: Annotated[str, Field(min_length=1, max_length=120)]
-    identity: ShortText = "身份未注明（需确认）"
-    age_impression: ShortText = "年龄感未注明（需确认）"
+    identity: ShortText = _text_of("DirectorCharacter.identity")
+    age_impression: ShortText = _text_of("DirectorCharacter.age_impression")
     appearance: BoundedText
     costume: BoundedText
-    accessories: ShortText = "无固定配饰"
-    physical_state: ShortText = "按剧本当前状态"
-    psychological_state: ShortText = "只呈现剧本可观察到的心理状态"
+    accessories: ShortText = _text_of("DirectorCharacter.accessories")
+    physical_state: ShortText = _text_of("DirectorCharacter.physical_state")
+    psychological_state: ShortText = _text_of("DirectorCharacter.psychological_state")
 
 
 class DirectorProp(BaseModel):
@@ -32,7 +45,7 @@ class DirectorProp(BaseModel):
     name: Annotated[str, Field(min_length=1, max_length=120)]
     initial_state: ShortText
     initial_position: ShortText
-    allowed_motion: ShortText = "仅随剧本动作移动"
+    allowed_motion: ShortText = _text_of("DirectorProp.allowed_motion")
 
 
 class SceneLandmark(BaseModel):
@@ -46,7 +59,7 @@ class SceneLandmark(BaseModel):
 
     name: Annotated[str, Field(min_length=1, max_length=120)]
     relative_position: ShortText
-    form_and_count: ShortText = "形态与数量按首拍画面锁定"
+    form_and_count: ShortText = _text_of("SceneLandmark.form_and_count")
 
 
 class DirectorScene(BaseModel):
@@ -54,14 +67,14 @@ class DirectorScene(BaseModel):
 
     time: ShortText
     location: ShortText
-    weather: ShortText = "未注明天气"
+    weather: ShortText = _text_of("DirectorScene.weather")
     spatial_structure: BoundedText
     landmarks: Annotated[list[SceneLandmark], Field(max_length=50)] = Field(default_factory=list)
-    ground_material: ShortText = "按场景圣经与首拍画面锁定地面材质"
-    initial_environment_state: ShortText = "按首拍画面锁定地面与环境初始状态"
+    ground_material: ShortText = _text_of("DirectorScene.ground_material")
+    initial_environment_state: ShortText = _text_of("DirectorScene.initial_environment_state")
     props: Annotated[list[DirectorProp], Field(min_length=1, max_length=100)]
-    environmental_sound: ShortText = "保持本场连续环境底噪"
-    sound_policy: ShortText = "只生成同期音效与连续环境底噪，不添加背景音乐"
+    environmental_sound: ShortText = _text_of("DirectorScene.environmental_sound")
+    sound_policy: ShortText = _text_of("DirectorScene.sound_policy")
 
 
 class SoundDesign(BaseModel):
@@ -69,11 +82,11 @@ class SoundDesign(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    near: ShortText = "主体动作声：衣料、呼吸、道具接触"
-    mid: ShortText = "空间环境声：风、雨、人群、器物"
-    far: ShortText = "远处底噪：城市、钟声、雷声或寂静"
-    music_entry: ShortText = "无配乐；仅在情绪转折点考虑进入"
-    silence: ShortText = "爆发前抽空声音，只留极细的环境音"
+    near: ShortText = _text_of("SoundDesign.near")
+    mid: ShortText = _text_of("SoundDesign.mid")
+    far: ShortText = _text_of("SoundDesign.far")
+    music_entry: ShortText = _text_of("SoundDesign.music_entry")
+    silence: ShortText = _text_of("SoundDesign.silence")
 
 
 class DirectorExtras(BaseModel):
@@ -81,11 +94,11 @@ class DirectorExtras(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    label: ShortText = "群演"
-    reference_note: ShortText = "按参考图锁定群演外形与服装，不照搬参考图姿势"
+    label: ShortText = _text_of("DirectorExtras.label")
+    reference_note: ShortText = _text_of("DirectorExtras.reference_note")
     initial_distribution: BoundedText
     motion_parameters: BoundedText
-    hit_reaction_rules: ShortText = "无受击互动"
+    hit_reaction_rules: ShortText = _text_of("DirectorExtras.hit_reaction_rules")
     stagger_seconds: Annotated[float, Field(ge=0, le=10)] = 0.3
 
 
@@ -158,35 +171,31 @@ class StoryEvent(BaseModel):
         return self
 
 
-APPEARANCE_REFERENCE_VIDEO_POLICY = "参考视频只锁定角色长相、服装与破损污渍状态，不强制复刻其中的动作与运镜"
+APPEARANCE_REFERENCE_VIDEO_POLICY = _text_of("module.appearance_reference_video_policy")
 # A user-supplied motion reference (a stunt take, a rehearsal clip) is the opposite job: it lends the
 # body's path and the timing of the force, and nothing that belongs to the approved assets.
 MOTION_REFERENCE_VIDEO_POLICY = (
-    "参考视频只提供身体运动轨迹与发力节奏（起势、加速、接触、收势各在什么时间点），"
-    "不继承其中的长相、服装、场景与运镜；角色外观以设定图为准"
+    _text_of("module.motion_reference_video_policy")
 )
 
 
 class GlobalVisualRules(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    visual_style: BoundedText = "电影写实"
-    era_and_region: ShortText = "按剧本时代与地域"
-    art_direction: BoundedText = "建筑、服装与道具遵守剧本和已批准资产"
-    rendering_texture: BoundedText = "自然摄影质感、可信材质、受控景深和细颗粒"
-    authenticity: ShortText = "原创虚拟角色，不冒用真人身份"
-    overall_atmosphere: ShortText = "按本镜头叙事目标"
+    visual_style: BoundedText = _text_of("GlobalVisualRules.visual_style")
+    era_and_region: ShortText = _text_of("GlobalVisualRules.era_and_region")
+    art_direction: BoundedText = _text_of("GlobalVisualRules.art_direction")
+    rendering_texture: BoundedText = _text_of("GlobalVisualRules.rendering_texture")
+    authenticity: ShortText = _text_of("GlobalVisualRules.authenticity")
+    overall_atmosphere: ShortText = _text_of("GlobalVisualRules.overall_atmosphere")
     reference_image_policy: ShortText = (
-        "参考图片只提供角色、道具与场景的外形、材质和颜色，不照搬参考图中的人物姿势、构图或排版"
+        _text_of("GlobalVisualRules.reference_image_policy")
     )
     # What a reference video is for: the default locks appearance; "motion_trajectory" is the
     # user's own motion reference, which locks only the body's path and force timing.
     reference_video_role: Literal["appearance", "motion_trajectory"] = "appearance"
     reference_video_policy: ShortText = APPEARANCE_REFERENCE_VIDEO_POLICY
-    exclusions: Annotated[list[str], Field(min_length=1, max_length=50)] = Field(default_factory=lambda: [
-        "错误时代物品", "人物数量变化", "角色外貌漂移", "无原因换装", "多余肢体和畸形手指",
-        "字幕、水印、编号和无关文字", "无剧情依据的粒子、烟雾或光效",
-    ])
+    exclusions: Annotated[list[str], Field(min_length=1, max_length=50)] = Field(default_factory=lambda: list(_words_of("GlobalVisualRules.default_factory")))
 
     @model_validator(mode="after")
     def motion_reference_policy(self) -> "GlobalVisualRules":
@@ -202,10 +211,10 @@ class ContinuityLocks(BaseModel):
     face_anchor: BoundedText
     body_anchor: BoundedText
     costume_anchor: BoundedText
-    accessory_anchor: ShortText = "固定配饰及位置保持不变"
-    wound_and_stain_anchor: ShortText = "伤痕、破损、湿度和污渍按输入位置锁定"
-    damage_closure: ShortText = "本镜禁止在污损时间表之外新增任何裂口、血迹、虫尸或污渍"
-    mirror_lock: ShortText = "禁止场景地标左右镜像翻转，禁止物体在画面中左右颠倒"
+    accessory_anchor: ShortText = _text_of("ContinuityLocks.accessory_anchor")
+    wound_and_stain_anchor: ShortText = _text_of("ContinuityLocks.wound_and_stain_anchor")
+    damage_closure: ShortText = _text_of("ContinuityLocks.damage_closure")
+    mirror_lock: ShortText = _text_of("ContinuityLocks.mirror_lock")
     scene_structure: BoundedText
     prop_positions: BoundedText
     key_light_direction: ShortText
@@ -219,11 +228,11 @@ class ShotVisualDesign(BaseModel):
 
     base_content: BoundedText
     composition: BoundedText
-    shot_size: ShortText = "中景"
-    lens: ShortText = "50mm 标准镜头"
-    camera_angle: ShortText = "平视"
-    camera_height: ShortText = "视线高度"
-    depth_of_field: ShortText = "中等景深"
+    shot_size: ShortText = _text_of("ShotVisualDesign.shot_size")
+    lens: ShortText = _text_of("ShotVisualDesign.lens")
+    camera_angle: ShortText = _text_of("ShotVisualDesign.camera_angle")
+    camera_height: ShortText = _text_of("ShotVisualDesign.camera_height")
+    depth_of_field: ShortText = _text_of("ShotVisualDesign.depth_of_field")
     spatial_layers: BoundedText
     # Subjects in screen coordinates: region, depth layer, facing, occlusion, forbidden zone.
     frame_positions: Annotated[list[FramePosition], Field(max_length=30)] = Field(default_factory=list)
@@ -236,16 +245,16 @@ class ColorDesign(BaseModel):
     secondary_color: ShortText
     accent_color: ShortText
     color_temperature: ShortText
-    saturation: ShortText = "中等饱和度"
-    brightness: ShortText = "中间调"
-    contrast: ShortText = "中等对比度"
-    blacks_and_highlights: ShortText = "黑位与高光保留细节"
+    saturation: ShortText = _text_of("ColorDesign.saturation")
+    brightness: ShortText = _text_of("ColorDesign.brightness")
+    contrast: ShortText = _text_of("ColorDesign.contrast")
+    blacks_and_highlights: ShortText = _text_of("ColorDesign.blacks_and_highlights")
     # Tension handbook: dark share and hard-light ratio decide how much the frame withholds.
-    light_ratio: ShortText = "中等光比（约 1:2–1:4），主体可读"
-    skin_tone_strategy: ShortText = "自然肤色"
-    grading_reference: ShortText = "自然电影调色"
+    light_ratio: ShortText = _text_of("ColorDesign.light_ratio")
+    skin_tone_strategy: ShortText = _text_of("ColorDesign.skin_tone_strategy")
+    grading_reference: ShortText = _text_of("ColorDesign.grading_reference")
     start_state: ShortText
-    change_reason: ShortText = "无变化；保持镜头内连续"
+    change_reason: ShortText = _text_of("ColorDesign.change_reason")
     peak_state: ShortText
     end_state: ShortText
 
@@ -284,8 +293,8 @@ class CameraDesign(BaseModel):
 class TransitionEdge(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    adjacent_shot: ShortText = "无"
-    transition_type: ShortText = "匹配剪辑"
+    adjacent_shot: ShortText = _text_of("TransitionEdge.adjacent_shot")
+    transition_type: ShortText = _text_of("TransitionEdge.transition_type")
     visual_handoff: BoundedText
     audio_handoff: BoundedText
     duration_seconds: Annotated[float, Field(ge=0, le=30)] = 0
@@ -296,7 +305,7 @@ class TransitionDesign(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     entry: TransitionEdge
-    internal_linkage: BoundedText = "连续动作、姿态、视线、声音与光影自然延续"
+    internal_linkage: BoundedText = _text_of("TransitionDesign.internal_linkage")
     exit: TransitionEdge
 
 
@@ -306,7 +315,7 @@ class StoryboardDirectorRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     project_name: Annotated[str, Field(min_length=1, max_length=300)]
-    episode: ShortText = "未指定集数"
+    episode: ShortText = _text_of("StoryboardDirectorRequest.episode")
     scene_number: Annotated[int, Field(ge=1, le=10_000)] = 1
     shot_number: ShortText
     duration_seconds: Annotated[float, Field(ge=0.5, le=300)]

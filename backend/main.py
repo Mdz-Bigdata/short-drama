@@ -21,6 +21,11 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 
+from app.core import system_diagnostics
+
+# The last lines logged stay in memory for the diagnostics bundle; they are masked when exported.
+system_diagnostics.install_log_buffer()
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,6 +63,18 @@ from app.api.panorama_api import router as panorama_router
 from app.api.recipe_api import router as recipe_router
 from app.api.interactive_story_api import router as interactive_story_router
 from app.api.canvas_workflow_api import router as canvas_workflow_router
+from app.api.canvas_share_api import public_router as canvas_share_public_router, router as canvas_share_router
+from app.api.canvas_presence_api import router as canvas_presence_router
+from app.api.face_sculpt_api import catalog_router as face_sculpt_catalog_router, router as face_sculpt_router
+from app.api.appearance_api import public_router as appearance_public_router, router as appearance_router
+from app.api.chapter_assets_api import router as chapter_assets_router
+from app.api.canvas_beef_api import drama_router as canvas_beef_drama_router, studio_router as canvas_beef_studio_router
+from app.api.passage_rewrite_api import router as passage_rewrite_router
+from app.api.submission_pack_api import router as submission_pack_router
+from app.api.script_review_api import router as script_review_router
+from app.api.clip_handoff_api import router as clip_handoff_router
+from app.api.story_direction_api import router as story_direction_router
+from app.api.serial_brief_api import router as serial_brief_router
 from app.core.media_compositor import MEDIA_DIR
 from app.repository.task_repo import TaskStoreUnavailableError
 from app.platform.bootstrap import initialize_platform
@@ -89,23 +106,32 @@ app.add_middleware(
 )
 
 
+def _names_private_element_media(path: str) -> bool:
+    """Whether ``path``, normalized the way StaticFiles normalizes it, lies in the private element media."""
+    normalized_path_key = posixpath.normpath("/" + path.replace("\\", "/").lstrip("/")).casefold()
+    private_element_media = f"{settings.MEDIA_ROUTE}/elements"
+    return (
+        normalized_path_key == private_element_media
+        or normalized_path_key.startswith(private_element_media + "/")
+    )
+
+
 @app.middleware("http")
 async def _security_boundary(request: Request, call_next):
     origin = request.headers.get("origin")
     # StaticFiles normalizes duplicate slashes and dot segments before opening
     # a file. Apply the same normalization to the percent-decoded ASGI path so
     # legacy private element images cannot bypass this boundary.
-    normalized_path = posixpath.normpath(
-        "/" + request.url.path.replace("\\", "/").lstrip("/")
-    )
-    normalized_path_key = normalized_path.casefold()
-    private_element_media = f"{settings.MEDIA_ROUTE}/elements"
+    #
+    # That path is scope["path"], the one StaticFiles itself resolves.
+    # request.url.path is not the same thing: the URL is rebuilt as text and
+    # split again, which stops at an encoded "#" or "?", so
+    # /media/x%23/../elements/<file> read as /media/x here while the static
+    # handler went on to serve elements/<file>. The old reading is still
+    # checked so that nothing it refused becomes reachable.
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and origin and origin not in _allowed_origins:
         response = JSONResponse(status_code=403, content={"detail": "请求来源不受信任"})
-    elif (
-        normalized_path_key == private_element_media
-        or normalized_path_key.startswith(private_element_media + "/")
-    ):
+    elif _names_private_element_media(request.scope["path"]) or _names_private_element_media(request.url.path):
         # Element reference images are account-private. Keep the general
         # /media mount for generated audio/video, but never let its static
         # handler bypass the authenticated element file endpoint.
@@ -163,6 +189,22 @@ app.include_router(panorama_router)
 app.include_router(recipe_router)
 app.include_router(interactive_story_router)
 app.include_router(canvas_workflow_router)
+app.include_router(canvas_share_router)
+app.include_router(canvas_share_public_router)
+app.include_router(canvas_presence_router)
+app.include_router(face_sculpt_catalog_router)
+app.include_router(face_sculpt_router)
+app.include_router(story_direction_router)
+app.include_router(serial_brief_router)
+app.include_router(appearance_public_router)
+app.include_router(appearance_router)
+app.include_router(chapter_assets_router)
+app.include_router(canvas_beef_drama_router)
+app.include_router(canvas_beef_studio_router)
+app.include_router(passage_rewrite_router)
+app.include_router(submission_pack_router)
+app.include_router(script_review_router)
+app.include_router(clip_handoff_router)
 
 
 @app.on_event("startup")
@@ -176,6 +218,12 @@ async def _initialize_postgresql_platform():
         )
     await hydrate_runtime_model_registry(get_platform_store(), get_model_secret_cipher())
     await hydrate_runtime_skill_registry(get_platform_store())
+
+@app.on_event("startup")
+async def _startup_self_check():
+    """Say at start-up what is not well (disk, stores, ffmpeg, keys, models); the platform page shows it later."""
+    await system_diagnostics.startup_self_check(get_platform_store().count_users, usage_task_repository.count_tasks)
+
 
 def _recover_orphan_task_state(task: dict) -> bool:
     """Normalize a persisted running task after a process restart."""
@@ -345,6 +393,15 @@ def _recover_orphan_tasks():
                 log.warning("[启动恢复] 视频任务续查: 取回 %s 条, 失败 %s 条", outcome["downloaded"], outcome["failed"])
         except Exception as error:  # noqa: BLE001 - recovery must never take the server down
             log.error("[启动恢复] 视频任务续查失败: %s", str(error)[:160])
+        try:
+            # 被重启打断的自进化研究：已经问到的回答都在盘上，接着往下做，不重新付费。
+            from app.service import harness_evolution
+
+            resumed = harness_evolution.resume_pending(drama_service.gateway)
+            if resumed:
+                log.warning("[启动恢复] 自进化: 接着做 %s 个被打断的研究", resumed)
+        except Exception as error:  # noqa: BLE001 - recovery must never take the server down
+            log.error("[启动恢复] 自进化续跑失败: %s", str(error)[:160])
 
     threading.Thread(target=_resume, name="video-job-resume", daemon=True).start()
 
@@ -398,4 +455,6 @@ if __name__ == "__main__":
         host=settings.server_host(),
         port=settings.server_port(),
         reload=settings.server_reload(),
+        # 推送连接(画布多窗口)会定期换新；兜底：停机或自动重启时最多等 5 秒，不无限等连接关闭。
+        timeout_graceful_shutdown=5,
     )

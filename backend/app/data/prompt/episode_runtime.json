@@ -1,0 +1,11 @@
+{
+  "_doc": "app/core/episode_runtime.py 的界限与说法：一集分镜的计划总时长对剧本目标时长允许偏多少、第 4 阶段报告里写的那一行。",
+  "tolerance": 0.15,
+  "heading": "【时长对账】",
+  "within": "第{episode}集分镜合计 {planned} 秒，剧本目标 {target} 秒（{signed}%），在 ±{percent}% 以内。",
+  "outside": "第{episode}集分镜合计 {planned} 秒，剧本目标 {target} 秒，{direction}了 {off}%，超出 ±{percent}%：{advice}",
+  "longer": "长",
+  "shorter": "短",
+  "advice_longer": "看哪几场的镜头比剧情需要的长，或剧本本身写多了；重拆那几场的分镜，或把目标时长改成实际想要的长度。",
+  "advice_shorter": "看哪几场被拆得太碎、台词没给够时间；重拆那几场的分镜，或把目标时长改成实际想要的长度。"
+}

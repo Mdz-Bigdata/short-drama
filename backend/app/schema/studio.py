@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
@@ -15,6 +16,19 @@ from app.schema.production import (
     IdentityViewName,
     identity_view_order_is_valid,
 )
+from app.core import prompt_data
+
+
+_WORDING_FILE = "schema_studio"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/schema_studio.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 def utc_now_iso() -> str:
@@ -188,6 +202,51 @@ class ReviewRecord(BaseModel):
 
 CanvasTrack = Literal["mainline", "freezone"]
 
+# The node canvas is infinite: positions only have to stay finite and sane, not inside a page.
+CANVAS_COORD_LIMIT = 1_000_000_000
+CANVAS_SIZE_LIMIT = 1_000_000
+CANVAS_BOOKMARK_LIMIT = 10_000_000_000
+CANVAS_ZOOM_MIN, CANVAS_ZOOM_MAX = 0.01, 16
+CANVAS_MAX_NODES, CANVAS_MAX_EDGES = 5000, 12000
+# A group may hold a group, which may not hold another: a member's chain of groups is at most two long.
+CANVAS_GROUP_DEPTH = 2
+_CanvasCoord = Annotated[float, Field(ge=-CANVAS_COORD_LIMIT, le=CANVAS_COORD_LIMIT, allow_inf_nan=False)]
+_CanvasSize = Annotated[float, Field(gt=0, le=CANVAS_SIZE_LIMIT, allow_inf_nan=False)]
+
+
+def canvas_group_parents(nodes: list[dict[str, Any]] | list["CanvasNode"]) -> dict[str, str]:
+    """node id -> the group it sits in. A ``groupId`` naming no group (left over from a deletion) is ignored."""
+    rows = [item.model_dump() if isinstance(item, BaseModel) else item for item in nodes]
+    groups = {str(row.get("id")) for row in rows if row.get("kind") == "group"}
+    parents = {}
+    for row in rows:
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        parent = str(payload.get("groupId") or "")
+        if parent in groups:
+            parents[str(row.get("id"))] = parent
+    return parents
+
+
+def canvas_group_problem(nodes: list[dict[str, Any]] | list["CanvasNode"]) -> str | None:
+    """Why this nesting is not allowed, or ``None``: no group inside itself or its own member, at most one level of nesting."""
+    rows = [item.model_dump() if isinstance(item, BaseModel) else item for item in nodes]
+    kinds = {str(row.get("id")): row.get("kind") for row in rows}
+    parents = canvas_group_parents(rows)
+    for node_id, parent in parents.items():
+        if parent == node_id:
+            return _text_of("canvas_group_problem.text").format(node_id)
+        seen, chain, current = {node_id}, 0, parent
+        while current:
+            if current in seen:
+                return _text_of("canvas_group_problem.text.2").format(current)
+            seen.add(current)
+            chain += 1
+            current = parents.get(current, "")
+        limit = CANVAS_GROUP_DEPTH - 1 if kinds.get(node_id) == "group" else CANVAS_GROUP_DEPTH
+        if chain > limit:
+            return _text_of("canvas_group_problem.text.3")
+    return None
+
 
 class CanvasNode(BaseModel):
     id: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$")]
@@ -197,10 +256,10 @@ class CanvasNode(BaseModel):
         "image_gen", "video_gen", "audio_gen", "video_compose", "style_ref", "panorama", "previz", "tool",
     ]
     track: CanvasTrack
-    x: Annotated[float, Field(ge=-1_000_000, le=1_000_000)]
-    y: Annotated[float, Field(ge=-1_000_000, le=1_000_000)]
-    width: Annotated[float, Field(gt=0, le=100_000)]
-    height: Annotated[float, Field(gt=0, le=100_000)]
+    x: _CanvasCoord
+    y: _CanvasCoord
+    width: _CanvasSize
+    height: _CanvasSize
     artifact_id: Annotated[str | None, Field(max_length=120)] = None
     payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -208,6 +267,20 @@ class CanvasNode(BaseModel):
     def artifact_backed_nodes_have_an_artifact(self) -> "CanvasNode":
         if self.kind in {"artifact", "candidate"} and not self.artifact_id:
             raise ValueError("artifact and candidate canvas nodes require artifact_id")
+        return self
+
+    @model_validator(mode="after")
+    def group_fold_state_is_well_formed(self) -> "CanvasNode":
+        if self.kind != "group":
+            return self
+        if "collapsed" in self.payload and not isinstance(self.payload["collapsed"], bool):
+            raise ValueError("group payload.collapsed must be a boolean")
+        size = self.payload.get("expandedSize")
+        if size is not None:
+            if not (isinstance(size, (list, tuple)) and len(size) == 2 and all(
+                isinstance(item, (int, float)) and not isinstance(item, bool) and math.isfinite(item) and 0 < item <= CANVAS_SIZE_LIMIT for item in size
+            )):
+                raise ValueError("group payload.expandedSize must be [width, height] with positive finite sizes")
         return self
 
 
@@ -221,8 +294,8 @@ class CanvasEdge(BaseModel):
 
 class CanvasPutRequest(BaseModel):
     expected_version: Annotated[int, Field(ge=0)]
-    nodes: Annotated[list[CanvasNode], Field(max_length=2000)] = Field(default_factory=list)
-    edges: Annotated[list[CanvasEdge], Field(max_length=5000)] = Field(default_factory=list)
+    nodes: Annotated[list[CanvasNode], Field(max_length=CANVAS_MAX_NODES)] = Field(default_factory=list)
+    edges: Annotated[list[CanvasEdge], Field(max_length=CANVAS_MAX_EDGES)] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_graph(self) -> "CanvasPutRequest":
@@ -233,6 +306,9 @@ class CanvasPutRequest(BaseModel):
         known = set(node_ids)
         if any(edge.source not in known or edge.target not in known for edge in self.edges):
             raise ValueError("canvas edges must reference existing nodes")
+        problem = canvas_group_problem(self.nodes)
+        if problem:
+            raise ValueError(problem)
         return self
 
 
@@ -272,9 +348,9 @@ class CanvasDuplicateRequest(BaseModel):
 
 class CanvasBookmark(BaseModel):
     slot: Annotated[int, Field(ge=1, le=9)]
-    x: Annotated[float, Field(ge=-10_000_000, le=10_000_000)]
-    y: Annotated[float, Field(ge=-10_000_000, le=10_000_000)]
-    zoom: Annotated[float, Field(gt=0, le=16)]
+    x: Annotated[float, Field(ge=-CANVAS_BOOKMARK_LIMIT, le=CANVAS_BOOKMARK_LIMIT, allow_inf_nan=False)]
+    y: Annotated[float, Field(ge=-CANVAS_BOOKMARK_LIMIT, le=CANVAS_BOOKMARK_LIMIT, allow_inf_nan=False)]
+    zoom: Annotated[float, Field(ge=CANVAS_ZOOM_MIN, le=CANVAS_ZOOM_MAX, allow_inf_nan=False)]
     label: Annotated[str, Field(max_length=60)] = ""
 
 
@@ -349,6 +425,57 @@ class CanvasCommitPreviewRequest(BaseModel):
     node_ids: Annotated[list[str], Field(min_length=1, max_length=200)]
 
 
+class CanvasStoryboardRequest(BaseModel):
+    """Lay storyboard scenes out on the canvas; no scene named means every scene."""
+
+    scene_ids: Annotated[list[Annotated[str, Field(min_length=1, max_length=80)]], Field(max_length=400)] = []
+    preview: bool = False
+    expected_version: Annotated[int, Field(ge=0)] | None = None
+
+
+class CanvasElementPick(BaseModel):
+    """One picture of a library element; no file means the element's main picture."""
+
+    element_id: Annotated[str, Field(min_length=1, max_length=64)]
+    file_id: Annotated[str, Field(min_length=1, max_length=64)] | None = None
+
+
+class CanvasTakeElementsRequest(BaseModel):
+    """Library elements to put on the canvas as media nodes: ``element_ids`` take each one's main picture, ``picks`` name pictures."""
+
+    element_ids: Annotated[list[Annotated[str, Field(min_length=1, max_length=64)]], Field(max_length=200)] = []
+    picks: Annotated[list[CanvasElementPick], Field(max_length=200)] = []
+    expected_version: Annotated[int, Field(ge=0)] | None = None
+
+
+class CanvasSaveElementRequest(BaseModel):
+    """Keep a node's picture in the element library under this name and kind (the library says which kinds exist)."""
+
+    name: Annotated[str, Field(min_length=1, max_length=160)]
+    kind: Annotated[str, Field(min_length=1, max_length=24)]
+
+
+class CanvasCropRequest(BaseModel):
+    """Cut a rectangle out of a node's picture into a new media node; the rectangle is in 0–1 units of the picture.
+
+    What the numbers may be is ``app/service/canvas_image_ops.py``'s to say, in its own words.
+    """
+
+    x: float
+    y: float
+    w: float
+    h: float
+    expected_version: Annotated[int, Field(ge=0)] | None = None
+
+
+class CanvasGridSplitRequest(BaseModel):
+    """Cut a node's picture into rows × columns cells, one new media node each."""
+
+    rows: int = 2
+    columns: int = 2
+    expected_version: Annotated[int, Field(ge=0)] | None = None
+
+
 class CanvasCommitRequest(BaseModel):
     node_ids: Annotated[list[str], Field(min_length=1, max_length=200)]
     expected_version: Annotated[int, Field(ge=1)]
@@ -371,6 +498,40 @@ class CanvasNodeRun(BaseModel):
     created_at: str
     updated_at: str
     deleted_at: str | None = None
+
+
+class CanvasShareCreate(BaseModel):
+    """A read-only link to one canvas; null days = it lasts until stopped or rotated."""
+
+    expires_days: Literal[1, 7, 30] | None = None
+
+
+class CanvasShareRecord(BaseModel):
+    """What the owner sees of the link: the token and its viewer path are theirs to copy again."""
+
+    token: str
+    url_path: str
+    expires_at: str | None = None
+    created_at: str
+
+
+class CanvasShareOutput(BaseModel):
+    medium: str = ""
+    url: str | None = None
+    text: str | None = None
+    filename: str | None = None
+
+
+class PublicCanvasShare(BaseModel):
+    """The canvas as an anonymous viewer gets it: layout and words, no bindings or provenance."""
+
+    title: str
+    canvas_id: str
+    version: int
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+    outputs: dict[str, CanvasShareOutput]
+    expires_at: str | None = None
 
 
 class Vec3(BaseModel):
@@ -572,9 +733,7 @@ class CharacterReference(BaseModel):
         # 新契约的五个身份锚点，或存量记录的旧五视图顺序——两者都放行。
         if not identity_view_order_is_valid(tuple(view.view for view in self.views)):
             raise ValueError(
-                "character references require the exact ordered identity views "
-                f"({', '.join(IDENTITY_VIEW_ORDER)}) 或旧版五视图顺序"
-                f"（{', '.join(LEGACY_IDENTITY_VIEW_ORDER)}）"
+                _text_of("exact_identity_views.text").format(', '.join(IDENTITY_VIEW_ORDER), ', '.join(LEGACY_IDENTITY_VIEW_ORDER))
             )
         return self
 

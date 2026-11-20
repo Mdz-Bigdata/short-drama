@@ -1,0 +1,471 @@
+/* Canvas additions after BeefTV's described behaviour (editor, optimizer, batch table, references, tools, versions, appearance). */
+.canvas-beef-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  background: rgba(var(--shadow-rgb, 0, 0, 0), 0.36);
+}
+
+.canvas-beef-editor,
+.canvas-beef-optimizer,
+.canvas-beef-batch,
+.canvas-beef-version {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  padding: 14px 16px;
+  border: 1px solid rgba(var(--accent-rgb, 120, 120, 120), 0.25);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  color: var(--text-main, inherit);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+}
+
+.canvas-beef-editor header,
+.canvas-beef-optimizer header,
+.canvas-beef-batch header,
+.canvas-beef-version header,
+.canvas-beef-editor footer,
+.canvas-beef-optimizer footer,
+.canvas-beef-batch footer,
+.canvas-beef-version footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.canvas-beef-editor header strong,
+.canvas-beef-optimizer header strong,
+.canvas-beef-batch header strong,
+.canvas-beef-version header strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.86rem;
+}
+
+.canvas-beef-editor header > span,
+.canvas-beef-batch header > span,
+.canvas-beef-muted {
+  flex: 1;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.canvas-beef-spacer { flex: 1; }
+
+.canvas-beef-editor button,
+.canvas-beef-optimizer button,
+.canvas-beef-batch button,
+.canvas-beef-version button,
+.canvas-beef-refs button,
+.canvas-beef-appearance button,
+.canvas-beef-conflict button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border: 1px solid rgba(var(--accent-rgb, 120, 120, 120), 0.25);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.canvas-beef-backdrop button.is-primary,
+.canvas-beef-conflict button.is-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+}
+
+.canvas-beef-backdrop button:disabled,
+.canvas-beef-conflict button:disabled,
+.canvas-beef-refs button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.canvas-beef-editor textarea {
+  width: 100%;
+  min-height: 200px;
+  box-sizing: border-box;
+  resize: none;
+  padding: 12px;
+  border: 1px solid rgba(var(--accent-rgb, 120, 120, 120), 0.22);
+  border-radius: 10px;
+  background: rgba(var(--shadow-rgb, 0, 0, 0), 0.06);
+  color: inherit;
+  font: inherit;
+  font-size: 0.86rem;
+  line-height: 1.7;
+}
+
+.canvas-beef-editor__resize {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 55%, rgba(var(--accent-rgb, 120, 120, 120), 0.6) 55% 62%, transparent 62% 74%, rgba(var(--accent-rgb, 120, 120, 120), 0.6) 74% 81%, transparent 81%);
+  touch-action: none;
+}
+
+.canvas-beef-editor__resize:focus-visible { outline: 2px solid var(--accent); }
+
+.canvas-beef-optimizer {
+  width: min(460px, 92vw);
+  overflow: auto;
+}
+
+.canvas-beef-optimizer__modes,
+.canvas-beef-appearance [role="radiogroup"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.canvas-beef-optimizer__modes label,
+.canvas-beef-appearance [role="radiogroup"] label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border: 1px solid rgba(var(--accent-rgb, 120, 120, 120), 0.22);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.canvas-beef-optimizer__modes label.is-chosen,
+.canvas-beef-appearance [role="radiogroup"] label.is-chosen { border-color: var(--accent); }
+
+.canvas-beef-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.canvas-beef-field--inline {
+  flex-direction: row;
+  align-items: center;
+}
+
+.canvas-beef-field input,
+.canvas-beef-field select,
+.canvas-beef-field textarea,
+.canvas-beef-batch input,
+.canvas-beef-batch select,
+.canvas-beef-batch textarea {
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid rgba(var(--accent-rgb, 120, 120, 120), 0.22);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-main, inherit);
+  font: inherit;
+  font-size: 0.76rem;
+}
+
+.canvas-beef-optimizer__list strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 0.72rem;
+}
+
+.canvas-beef-optimizer__list ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.canvas-beef-optimizer__alt {
+  display: block !important;
+  width: 100%;
+  margin-top: 4px;
+  text-align: left;
+  white-space: normal;
+}
+
+.canvas-beef-batch {
+  width: min(1100px, 96vw);
+}
+
+.canvas-beef-batch__table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+}
+
+.canvas-beef-batch__table [role="row"] {
+  display: grid;
+  grid-template-columns: 78px minmax(90px, 0.8fr) minmax(180px, 2.4fr) minmax(120px, 1fr) 86px 64px 34px;
+  align-items: start;
+  gap: 6px;
+}
+
+.canvas-beef-batch__table [role="row"].has-problem textarea:placeholder-shown,
+.canvas-beef-batch__table [role="row"].has-problem input[type="number"]:invalid { border-color: var(--danger, #d64545); }
+
+.canvas-beef-batch__head {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.canvas-beef-batch__tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.canvas-beef-batch__tools textarea { flex: 1; }
+
+.canvas-beef-batch__confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  font-size: 0.76rem;
+}
+
+.canvas-beef-batch__confirm > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.canvas-beef-batch__confirm .is-warning { color: var(--warning, #c98a12); }
+
+.canvas-beef-refs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px dashed rgba(var(--accent-rgb, 120, 120, 120), 0.35);
+  border-radius: 8px;
+  font-size: 0.72rem;
+}
+
+.canvas-beef-refs strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.canvas-beef-refs ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.canvas-beef-refs__problems { color: var(--warning, #c98a12); }
+
+.canvas-beef-tools {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid rgba(var(--accent-rgb, 120, 120, 120), 0.22);
+  border-radius: 9px;
+}
+
+.canvas-beef-tools button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.canvas-beef-tools button[aria-checked="true"] {
+  background: rgba(var(--accent-rgb, 120, 120, 120), 0.18);
+  color: var(--accent);
+}
+
+.canvas-beef-version {
+  width: min(760px, 94vw);
+}
+
+/* The workspace sizes every icon svg to 0.95rem; this one is a drawing of the board, so it needs the stronger rule. */
+.canvas-workspace .canvas-beef-version svg.canvas-beef-version__map,
+.canvas-beef-version__map {
+  flex: 1 1 auto;
+  width: 100%;
+  height: min(52vh, 420px);
+  border-radius: 10px;
+  background: rgba(var(--shadow-rgb, 0, 0, 0), 0.06);
+}
+
+.canvas-beef-version__node {
+  fill: rgba(var(--accent-rgb, 120, 120, 120), 0.12);
+  stroke: rgba(var(--accent-rgb, 120, 120, 120), 0.5);
+  stroke-width: 4;
+}
+
+.canvas-beef-version__node.is-added { fill: rgba(46, 158, 91, 0.22); stroke: #2e9e5b; }
+.canvas-beef-version__node.is-changed { fill: rgba(201, 138, 18, 0.22); stroke: #c98a12; }
+
+.canvas-beef-version__diff {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.74rem;
+}
+
+.canvas-beef-conflict {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.74rem;
+}
+
+.canvas-beef-appearance {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.74rem;
+}
+
+.canvas-beef-appearance strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.canvas-beef-appearance__custom {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.canvas-beef-swatch {
+  width: 16px;
+  height: 16px;
+  border: 1px solid rgba(var(--accent-rgb, 120, 120, 120), 0.4);
+  border-radius: 4px;
+}
+
+@media (max-width: 760px) {
+  .canvas-beef-backdrop { flex-direction: column; overflow: auto; }
+
+  .canvas-beef-batch__table [role="row"] {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .canvas-beef-batch__head { display: none !important; }
+}
+
+.canvas-beef-popover-anchor { position: relative; display: inline-flex; }
+
+.canvas-beef-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 260px;
+  padding: 12px;
+  border: 1px solid var(--line-strong, rgba(120, 120, 120, 0.3));
+  border-radius: 10px;
+  background: var(--bg-popover, var(--surface, #fff));
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+}
+
+/* A board that chose its own theme: its backdrop colour and the colour and strength of its dots or lines. */
+.cn-viewport[data-board-theme] .cn-surface { background-color: var(--canvas-beef-bg); }
+.cn-viewport[data-board-theme] .cn-backdrop {
+  --accent-rgb: var(--canvas-beef-grid-rgb);
+  --line: rgba(var(--canvas-beef-grid-rgb), var(--canvas-beef-grid-strength));
+  opacity: min(1, calc(var(--canvas-beef-grid-strength) * 2.5));
+}
+
+.cn-surface.is-hand { cursor: grab; }
+.cn-surface.is-hand.is-panning { cursor: grabbing; }
+
+/* 机位诊断：规则检查的结果，排在优化方式下面。 */
+.canvas-beef-diagnosis {
+  display: grid;
+  gap: 6px;
+  font-size: 0.72rem;
+}
+
+.canvas-beef-diagnosis ol,
+.canvas-beef-diagnosis__table {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+.canvas-beef-diagnosis li > span {
+  display: block;
+}
+
+.canvas-beef-diagnosis__title {
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.canvas-beef-diagnosis__title em {
+  margin-left: 6px;
+  padding: 0 5px;
+  font-style: normal;
+  font-weight: 500;
+  border: 1px solid rgba(var(--accent-rgb), 0.5);
+  border-radius: 4px;
+}
+
+.canvas-beef-diagnosis__note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.canvas-beef-diagnosis summary {
+  cursor: pointer;
+  color: var(--text-main);
+}
+
+.canvas-beef-diagnosis dl {
+  margin: 4px 0;
+  display: grid;
+  gap: 2px;
+}
+
+.canvas-beef-diagnosis dl > div {
+  display: grid;
+  grid-template-columns: 3em minmax(0, 1fr);
+  gap: 6px;
+}
+
+.canvas-beef-diagnosis dt {
+  color: var(--text-main);
+}
+
+.canvas-beef-diagnosis dd {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.canvas-beef-diagnosis__table b {
+  margin-right: 6px;
+  color: var(--text-main);
+}

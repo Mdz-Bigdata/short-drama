@@ -1,5 +1,21 @@
 export type ElementKind = 'actor' | 'scene' | 'prop' | 'costume' | 'effect' | 'product' | 'extra' | 'vehicle' | 'stunt' | 'set_dressing' | 'makeup';
 
+/**
+ * 几类资产并在一个页签里看：车辆、商品归在「拍摄道具」里，置景归在「拍摄场地」里，特技归在「特效」里。类型本身不变(剧本的车辆清单、带货模式的商品检查
+ * 照旧按类型认)，只是同一页里列出、计数相加。
+ */
+export const TAB_MEMBERS: Partial<Record<ElementKind, ElementKind[]>> = {
+  prop: ['vehicle', 'product'],
+  scene: ['set_dressing'],
+  effect: ['stunt'],
+};
+
+/** 这一类资产在哪个页签里看：车辆、商品 → 拍摄道具，置景 → 拍摄场地，特技 → 特效，其余就是它自己。 */
+export function tabOfKind(kind: ElementKind): ElementKind {
+  const owner = (Object.keys(TAB_MEMBERS) as ElementKind[]).find(tab => TAB_MEMBERS[tab]?.includes(kind));
+  return owner ?? kind;
+}
+
 /** A derived look of a character (backend app/core/character_variants.py), kept on the actor's metadata. */
 export interface ElementVariant {
   of: string;
@@ -14,6 +30,10 @@ export interface ElementVariant {
   starts?: [number, number];
   /** 剧本已不需要这张定妆图：图留着，但不再穿，也不再补画。 */
   retired?: boolean;
+  /** 剧本还没写到这套穿的那几集：照样登记、能出图，现在的镜头用不上。 */
+  later?: boolean;
+  /** 并进这张的素的那身（同一身戏服，妆效少几样）：哪几集这样穿（空的是其余各集），图上哪几样妆效那时没有。 */
+  without?: Array<{ label: string; spans: Array<[number, number]>; off: string[] }>;
 }
 
 export function variantOf(item: { metadata?: Record<string, unknown> }): ElementVariant | null {
@@ -27,7 +47,15 @@ export function variantOf(item: { metadata?: Record<string, unknown> }): Element
       ...(Array.isArray(raw.spans) ? { spans: raw.spans.map(span => [Number(span[0]), Number(span[1])] as [number, number]) } : {}),
       ...(raw.source ? { source: String(raw.source) } : {}),
       ...(raw.retired ? { retired: true } : {}),
+      ...(raw.later ? { later: true } : {}),
       ...(Array.isArray(raw.starts) && raw.starts.length === 2 ? { starts: [Number(raw.starts[0]), Number(raw.starts[1])] as [number, number] } : {}),
+      ...(Array.isArray(raw.without) && raw.without.length ? {
+        without: raw.without.map(entry => ({
+          label: String(entry?.label ?? ''),
+          spans: Array.isArray(entry?.spans) ? entry.spans.map(span => [Number(span[0]), Number(span[1])] as [number, number]) : [],
+          off: Array.isArray(entry?.off) ? entry.off.map(String) : [],
+        })),
+      } : {}),
     }
     : null;
 }
@@ -114,6 +142,11 @@ export interface ElementItem {
     source: 'manual' | 'description' | 'table' | 'estimate';
     size_text?: string;
   };
+  /** 拍摄场地的主要尺寸：描述里写明的，或按场地类型 / 室内外估的。 */
+  scene_scale?: {
+    text: string;
+    source: 'description' | 'table' | 'indoor' | 'outdoor';
+  };
   /** Set on listings; an element outside any folder is simply unfiled. */
   folder_id?: string | null;
 }
@@ -124,11 +157,36 @@ export function findPoster(item: ElementItem): ElementFile | undefined {
     ?? item.files.find(file => file.media_kind === 'image' && Boolean(file.url));
 }
 
+/**
+ * 主参考图是第一张视图(场地的全景、道具的第一面)另存的一份，内容一样。
+ * 删那张视图时把这份也带走，否则删完它还作为参考图留在原处。
+ */
+export function referenceCopyOf(item: ElementItem, file: ElementFile): ElementFile | undefined {
+  if (file.slot === 'reference' || !file.sha256) return undefined;
+  return item.files.find(other => (
+    other.id !== file.id && other.slot === 'reference' && other.media_kind === 'image' && other.sha256 === file.sha256
+  ));
+}
+
+/** 主参考图在视图条里单列一格时用的槽位和叫法。 */
+export const REFERENCE_VIEW: readonly [slot: string, label: string] = ['reference', '主参考图'];
+
+/**
+ * 人自己传的主参考图：内容和哪张视图都不一样，不是 referenceCopyOf 说的那一份。
+ * 它不在各视图里，得单列出来才看得到、删得掉。
+ */
+export function uploadedReference(item: ElementItem): ElementFile | undefined {
+  const reference = item.files.find(file => file.slot === REFERENCE_VIEW[0] && file.media_kind === 'image' && Boolean(file.url));
+  if (!reference) return undefined;
+  const copied = item.files.some(file => referenceCopyOf(item, file)?.id === reference.id);
+  return copied ? undefined : reference;
+}
+
 /** 拍摄道具可能有的视图，顺序即展示顺序；与后端 core/prop_turnaround 一致。画哪几个看物件本身。 */
 export const PROP_VIEW_SLOTS: ReadonlyArray<readonly [slot: string, label: string]> = [
   ['prop_board', '比例总览'],
   ['prop_front', '正面'],
-  ['prop_left_45', '左侧45°'],
+  ['prop_left_45', '3/4'],
   ['prop_right_45', '右侧45°'],
   ['prop_side', '侧面'],
   ['prop_back', '背面'],
@@ -137,12 +195,20 @@ export const PROP_VIEW_SLOTS: ReadonlyArray<readonly [slot: string, label: strin
   ['prop_in_use', '比例参照'],
 ];
 
-/** 拍摄场地的四视角(都是空景)，顺序即展示顺序；与后端 core/scene_turnaround.SCENE_VIEWS 一致。全景同时是主参考图。 */
+/** 拍摄场地的人物比例参照(全景 + 比例尺、人形、尺寸)，后端 core/scene_scale；只给人看，不当参考图。 */
+export const SCENE_SCALE_SLOT = 'scene_scale';
+
+/** 反打视角：照主场景全景另出的一张，反打镜头照它定背景。 */
+export const SCENE_REVERSE_SLOT = 'scene_reverse';
+
+/** 拍摄场地的视角，顺序即展示顺序：人物比例在前(默认看它)，后五张空景与后端 core/scene_turnaround.SCENE_VIEWS 一致。全景同时是主参考图。 */
 export const SCENE_VIEW_SLOTS: ReadonlyArray<readonly [slot: string, label: string]> = [
+  [SCENE_SCALE_SLOT, '人物比例'],
   ['scene_main', '主场景全景'],
   ['scene_45', '45°斜角'],
   ['scene_depth', '纵深视角'],
   ['scene_detail', '关键细节'],
+  [SCENE_REVERSE_SLOT, '反打视角'],
 ];
 
 export type BoardView = { slot: string; label: string; file: ElementFile | undefined };

@@ -1,0 +1,29 @@
+{
+  "_doc": "app/core/pilot_shot.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.checks": [
+    "脸",
+    "服装",
+    "人数",
+    "动作",
+    "口型"
+  ],
+  "module.check_words": "脸",
+  "module.check_words.2": "脸和定妆照不一样，变脸了",
+  "module.check_words.3": "服装",
+  "module.check_words.4": "服装和设定不一致",
+  "module.check_words.5": "人数",
+  "module.check_words.6": "画面里的人数不对，多了或少了人",
+  "module.check_words.7": "动作",
+  "module.check_words.8": "动作没按描述演",
+  "module.check_words.9": "口型",
+  "module.check_words.10": "口型和台词对不上",
+  "module.nobody": "无",
+  "module.nobody.2": "无人",
+  "module.nobody.3": "无人物",
+  "module.nobody.4": "空镜",
+  "module.interrupted": "试拍没有跑完，可以再试一次",
+  "problem_text.text": "首镜试拍不通过：",
+  "pick.text": "你选的这一镜",
+  "pick.text.2": "这段{0}、{1} 个动作，变量最少，走样时最容易看出问题",
+  "running.label": "镜头 {0}"
+}

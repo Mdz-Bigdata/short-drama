@@ -1,0 +1,57 @@
+{
+  "_doc": "app/core/breakdown_kinds.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.labels.extra": "群演",
+  "module.labels.vehicle": "车辆",
+  "module.labels.stunt": "特技",
+  "module.labels.set_dressing": "置景",
+  "module.labels.makeup": "化妆",
+  "module.section_labels.extra": [
+    "群演",
+    "群众演员",
+    "路人",
+    "背景人物"
+  ],
+  "module.section_labels.vehicle": [
+    "车辆",
+    "载具",
+    "画面车辆"
+  ],
+  "module.section_labels.stunt": [
+    "特技",
+    "动作特技",
+    "武打设计",
+    "特技动作"
+  ],
+  "module.section_labels.set_dressing": [
+    "置景",
+    "陈设",
+    "布景",
+    "场景陈设"
+  ],
+  "module.section_labels.makeup": [
+    "化妆",
+    "妆效",
+    "特效化妆",
+    "妆容"
+  ],
+  "module.picture_noun.extra": "群演参考图",
+  "module.picture_noun.vehicle": "车辆图",
+  "module.picture_noun.stunt": "特技参考图",
+  "module.picture_noun.set_dressing": "置景图",
+  "module.picture_noun.makeup": "妆效图",
+  "module.only_gives.extra": "群演参考图只提供人群的服装、体型和疏密，不提供脸和主要人物",
+  "module.only_gives.vehicle": "车辆图只提供车型、颜色与新旧，不提供人物和背景",
+  "module.only_gives.stunt": "特技参考图只提供动作的姿态与接触点，不提供人物长相",
+  "module.only_gives.set_dressing": "置景图只提供陈设的摆放、材质与颜色，不提供人物和光线",
+  "module.only_gives.makeup": "妆效图只提供伤口、血迹、假体的位置与形态，不提供脸型和五官",
+  "module.writer_rules": "- 群演（extras）：没有台词的背景人物，按职能登记（「码头苦力」「宫女若干」），写人数、服装和在做什么；有台词或反复推动剧情的是角色，不登记在这里。\n- 车辆（vehicles）：入画的车、船、马车、摩托；写车型、颜色、新旧和谁在用。不开动的大船、飞机算场景。\n- 特技（stunts）：有风险的动作过程，整体登记一条（「主角撞破窗户」「坠马」），写谁做、在哪、结果；不拆成替身和道具。\n- 置景（set_dressing）：让场地像那么回事、角色不去碰的陈设：家具、灯具、匾额、帷幔；角色会碰、会用的归道具。\n- 化妆（makeup）：只登记特殊的：伤口、血迹、假体、老年妆、易容；写在谁脸上或身上、什么形态、哪几集带着（写「第9集起」或「第9-12集」，它决定定妆图画在哪身戏服上）。日常妆不登记。",
+  "module.catalog_shapes.extras": "\"extras\": [{\"name\": \"群演职能名\", \"description\": \"人数、服装、动作和出现的场次\"}]",
+  "module.catalog_shapes.vehicles": "\"vehicles\": [{\"name\": \"具体车辆名\", \"aliases\": [\"剧本原文里对它的其他叫法(简称、只写名词的叫法)，没有写空数组\"], \"description\": \"车型、颜色、新旧、谁在用和出现的场次\"}]",
+  "module.catalog_shapes.stunts": "\"stunts\": [{\"name\": \"特技动作名\", \"aliases\": [\"剧本原文里对它的其他叫法(简称、只写名词的叫法)，没有写空数组\"], \"description\": \"谁做、在哪、过程和结果\"}]",
+  "module.catalog_shapes.set_dressing": "\"set_dressing\": [{\"name\": \"陈设名\", \"aliases\": [\"剧本原文里对它的其他叫法(简称、只写名词的叫法)，没有写空数组\"], \"description\": \"摆在哪、材质、颜色和出现的场次\"}]",
+  "module.catalog_shapes.makeup": "\"makeup\": [{\"name\": \"角色名·妆效名\", \"description\": \"位置、形态、颜色和哪几集带着（第9集起 / 第9-12集）\"}]",
+  "reference_note.text": "参考图{0}仅锁定{1}「{2}」的服装、体型与人群疏密，不采用图中面孔、背景与主要人物，不是额外剧情或额外人物",
+  "reference_note.text.2": "参考图{0}仅锁定{1}「{2}」的位置、形态与颜色，不采用图中脸型、五官与背景，不是额外剧情或额外人物",
+  "reference_note.text.3": "参考图{0}仅锁定{1}「{2}」的动作姿态与接触点，不采用图中人物长相与背景，不是额外剧情或额外人物",
+  "reference_note.text.4": "参考图{0}仅锁定{1}「{2}」的外形、材质与颜色，不采用图中背景与人物，不是额外剧情或额外人物"
+}

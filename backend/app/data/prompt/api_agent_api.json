@@ -1,0 +1,12 @@
+{
+  "_doc": "app/api/agent_api.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.tags": [
+    "作用域外部 Agent API"
+  ],
+  "dependency.detail": "缺少外部 Agent 凭据",
+  "dependency.detail.2": "凭据无效、已撤销或权限不足",
+  "_assert_project.detail": "凭据不属于该项目",
+  "_agent_error.detail": "资源不存在",
+  "_agent_error.detail.2": "外部 Agent 服务暂不可用",
+  "get_job.detail": "凭据不属于该任务项目"
+}

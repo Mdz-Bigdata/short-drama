@@ -1,0 +1,26 @@
+{
+  "_doc": "app/core/appearance.py 的界限与说法：可改的品牌文字及其长度、Logo 外框、可换的图片位(大小、尺寸)、报错。没有设置的字段公开接口返回 null，前端用内置的(可翻译的)说法。",
+  "fields": {
+    "brand_name": {"label": "品牌名", "max": 40},
+    "login_tagline": {"label": "登录页副标题", "max": 80},
+    "lobby_tagline": {"label": "大厅品牌标签", "max": 40},
+    "assistant_name": {"label": "助手名", "max": 40}
+  },
+  "logo_frames": ["rounded", "square", "circle", "none"],
+  "default_logo_frame": "rounded",
+  "slots": {
+    "logo": {"label": "Logo", "max_bytes": 1048576, "max_side": 2048},
+    "favicon": {"label": "网页图标", "max_bytes": 262144, "max_side": 512}
+  },
+  "formats": ["PNG", "JPEG", "WEBP"],
+  "errors": {
+    "unknown_field": "没有这一项：{field}",
+    "too_long": "「{label}」最多 {limit} 个字，现在是 {length} 个",
+    "unknown_frame": "没有这种外框：{frame}",
+    "unknown_slot": "没有这个图片位：{slot}",
+    "too_big": "「{label}」最大 {limit}，这张是 {size}",
+    "not_image": "「{label}」只收 PNG、JPEG 或 WebP 图片",
+    "too_large_side": "「{label}」的边长最多 {limit} 像素，这张是 {width}×{height}",
+    "missing_asset": "还没有上传这个图片"
+  }
+}

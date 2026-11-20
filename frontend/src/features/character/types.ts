@@ -211,6 +211,18 @@ export interface CharacterDashboardResponse {
   risks: CharacterDashboardRisk[];
   characters: CharacterDashboardCharacter[];
   rawText: string;
+  /** The redub a voice change set off (backend voice_relink); null when nothing was redubbed. */
+  voiceRelink?: {
+    status: 'done' | 'failed' | 'queued' | 'running';
+    name?: string;
+    message?: string;
+    error?: string;
+    lines_redubbed?: number;
+    shots_redubbed?: number;
+    native_switched?: number;
+    episodes?: number[];
+    films_to_rerender?: number[];
+  } | null;
 }
 
 export const DEFAULT_VIEW_CONTRACT: CharacterViewContract = {

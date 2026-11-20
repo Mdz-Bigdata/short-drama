@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ScreenwritingPanel } from './ScreenwritingPanel';
@@ -122,7 +122,8 @@ describe('ScreenwritingPanel', () => {
     render(<ScreenwritingPanel taskId="t1" />);
     await userEvent.click(await screen.findByRole('button', { name: /第 1 集/ }));
 
-    expect(await screen.findByText('E1S01')).toBeTruthy();
+    // The id also names an option of the passage rewrite's shot pickers; the table shows it as code.
+    expect(await screen.findByText('E1S01', { selector: 'code' })).toBeTruthy();
     expect(screen.getByLabelText('E1S01 时长（秒）')).toHaveProperty('value', '6');
     expect(screen.getByText('口播约 24.0 秒超过最长档 15 秒')).toBeTruthy();
     expect(screen.getAllByText('你到底瞒了什么？')).toHaveLength(2);
@@ -215,6 +216,130 @@ describe('ScreenwritingPanel', () => {
 
     await waitFor(() => expect(screen.getByText('已取消保存，本地改动仍保留。')).toBeTruthy());
     expect(screen.getByLabelText('E1S01 时长（秒）')).toHaveProperty('value', '8');
+  });
+
+  it('asks before closing or switching an episode whose shot edits are unsaved', async () => {
+    const answers = [false, false, true];
+    const questions: string[] = [];
+    vi.stubGlobal('confirm', (message: string) => { questions.push(message); return answers.shift() ?? true; });
+    render(<ScreenwritingPanel taskId="t1" />);
+    const first = await screen.findByRole('button', { name: /第 1 集/ });
+    await userEvent.click(first);
+    const duration = await screen.findByLabelText('E1S01 时长（秒）');
+    await userEvent.clear(duration);
+    await userEvent.type(duration, '8');
+    expect(first.textContent).toContain('未保存');
+
+    // Declined: neither collapsing nor opening another episode drops the edit.
+    await userEvent.click(first);
+    await userEvent.click(screen.getByRole('button', { name: /第 2 集/ }));
+    expect(questions).toEqual(['这一集有未保存的修改，确定放弃吗？', '这一集有未保存的修改，确定放弃吗？']);
+    expect(first.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByLabelText('E1S01 时长（秒）')).toHaveProperty('value', '8');
+    expect(fetchMock.mock.calls.filter(call => String(call[0]).includes('/episodes/2'))).toHaveLength(0);
+
+    // Accepted: the episode closes.
+    await userEvent.click(first);
+    expect(first.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByLabelText('E1S01 时长（秒）')).toBeNull();
+    expect(questions).toHaveLength(3);
+  });
+
+  it('closes a clean episode without asking', async () => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirm);
+    render(<ScreenwritingPanel taskId="t1" />);
+    const first = await screen.findByRole('button', { name: /第 1 集/ });
+    await userEvent.click(first);
+    await screen.findByLabelText('E1S01 时长（秒）');
+    await userEvent.click(first);
+    expect(first.getAttribute('aria-expanded')).toBe('false');
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it('asks before a ledger step reloads the episodes over unsaved shot edits', async () => {
+    const ledger = {
+      task_id: 't1', unsplit: [], source_length: 0, layout_revision: '', candidate: null,
+      entries: [
+        { episode: 1, title: '对峙', hook: '', origin: 'own', source_range: null, units: 0, units_noun: '字', opening: '', closing: '', written: true, ledger_status: 'written' },
+        { episode: 2, title: '反击', hook: '', origin: 'own', source_range: null, units: 0, units_noun: '字', opening: '', closing: '', written: true, ledger_status: 'written' },
+      ],
+    };
+    const posted: unknown[] = [];
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/ledger/ops')) { posted.push(init?.body); return jsonResponse(ledger); }
+      if (url.includes('/screenwriting/episodes/1')) return jsonResponse(EPISODE);
+      if (url.endsWith('/screenwriting/ledger')) return jsonResponse(ledger);
+      if (url.endsWith('/screenwriting')) return jsonResponse(STATE);
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    const questions: string[] = [];
+    vi.stubGlobal('confirm', (message: string) => { questions.push(message); return false; });
+    render(<ScreenwritingPanel taskId="t1" />);
+    await userEvent.click(await screen.findByRole('button', { name: /第 1 集/ }));
+    const duration = await screen.findByLabelText('E1S01 时长（秒）');
+    await userEvent.clear(duration);
+    await userEvent.type(duration, '8');
+
+    await userEvent.click(screen.getByRole('button', { name: '下移' }));
+
+    expect(questions).toEqual(['这一集有未保存的修改，确定放弃吗？']);
+    expect(posted).toHaveLength(0);
+    expect(screen.getByLabelText('E1S01 时长（秒）')).toHaveProperty('value', '8');
+  });
+
+  it('keeps the ledger when one episode fails to load and retries inside its row', async () => {
+    let attempts = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/screenwriting/episodes/1')) {
+        attempts += 1;
+        return attempts === 1 ? Promise.reject(new Error('network')) : jsonResponse(EPISODE);
+      }
+      if (url.endsWith('/screenwriting/ledger')) return jsonResponse({ task_id: 't1', entries: [], unsplit: [], source_length: 0, layout_revision: '', candidate: null });
+      if (url.endsWith('/screenwriting')) return jsonResponse(STATE);
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    render(<ScreenwritingPanel taskId="t1" />);
+    const first = await screen.findByRole('button', { name: /第 1 集/ });
+    await userEvent.click(first);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('该集的分镜规划读取失败。');
+    expect(first.closest('li')?.contains(alert)).toBe(true);
+    expect(screen.getByRole('button', { name: /第 2 集/ })).toBeTruthy();
+    expect(screen.getByText('合法单镜时长')).toBeTruthy();
+
+    await userEvent.click(within(alert).getByRole('button', { name: '重试' }));
+    expect(await screen.findByLabelText('E1S01 时长（秒）')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('ignores an earlier episode answering after a later one was opened', async () => {
+    let answerFirst: (response: Response) => void = () => undefined;
+    const second: ScreenwritingEpisode = {
+      ...EPISODE, episode: 2, title: '反击', planRevision: 'sha256-v1:bbb', violations: [], needsReplan: [],
+      plan: { title: '反击', scenes: [scene('E2S01')] },
+    };
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/screenwriting/episodes/1')) return new Promise<Response>(resolve => { answerFirst = resolve; });
+      if (url.includes('/screenwriting/episodes/2')) return jsonResponse(second);
+      if (url.endsWith('/screenwriting/ledger')) return jsonResponse({ task_id: 't1', entries: [], unsplit: [], source_length: 0, layout_revision: '', candidate: null });
+      if (url.endsWith('/screenwriting')) return jsonResponse(STATE);
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    render(<ScreenwritingPanel taskId="t1" />);
+    await userEvent.click(await screen.findByRole('button', { name: /第 1 集/ }));
+    await userEvent.click(screen.getByRole('button', { name: /第 2 集/ }));
+    expect(await screen.findByLabelText('E2S01 时长（秒）')).toBeTruthy();
+
+    await act(async () => { answerFirst(await jsonResponse(EPISODE)); });
+
+    expect(screen.getByLabelText('E2S01 时长（秒）')).toBeTruthy();
+    expect(screen.queryByLabelText('E1S01 时长（秒）')).toBeNull();
+    expect(screen.queryByText('正在读取分镜规划…')).toBeNull();
   });
 
   it('previews a prompt without triggering a write', async () => {

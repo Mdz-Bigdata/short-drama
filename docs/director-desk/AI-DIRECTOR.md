@@ -45,3 +45,24 @@
 - 真实 Blender 渲染过组合模型，导出的 GLB 能被 Blender 导入。
 - 浏览器里走通了规划、采用、对话、撤销、优化、模型库、文字搭物体、文字搭场景和 GLB 下载。
 - **这些流程用的是本地假模型，答案是写死的。** 所以它们证明的是链路通畅，不是真实模型的规划质量。提示词还没有经过真实模型的调校。
+
+## 侧栏助手与 MCP 的舞台控制（2026-11-10）
+
+导演台「AI 导演」页签里能做的，工作台右侧对话和 MCP 客户端现在也能做：用的是同一份工具目录（`backend/app/core/agent_tools.py`），落地走 `backend/app/service/stage_director_ops.py`（每轮一步可撤销的导演改动、固定快照、恢复、以当前舞台为底稿再规划、批量优化）和 `backend/app/core/stage_locator.py`（把「第三场」「办公室那场」「沈砚说话的那镜」落到场景号与镜号）。这两个文件是本项目自己的代码，建立在 `stage_director_service` 与导演台的语义操作之上。
+
+| 工具 | 对应页签里的区块 | 花费 |
+| --- | --- | --- |
+| `describe_stage`、`get_stage_checks`、`get_stage_director`、`list_stage_scenes` | 看舞台、看检查、看快照与对话 | 不调用模型 |
+| `edit_stage`、`repair_stage` | 直接操作 / 一键修正 | 不调用模型 |
+| `auto_plan_stage`（`from_current` 可选）、`adopt_stage_plan` | 自动规划 / 采用 | 每版 1 到 2 次文本调用（提议，需确认）；采用不花钱 |
+| `direct_stage` | 对话调整 | 每条 1 到 3 次文本调用，**不走确认** |
+| `optimize_stage` | 自动优化 | 0 到 3 次文本调用，**不走确认** |
+| `optimize_scenes` | （页签里没有）多场依次优化 | 每场 1 到 3 次；必须指明场或集，一次最多 12 场，提议里列出要优化的场，需确认 |
+| `build_stage_model` | 模型库 / 文字搭物体 | 0 或 1 次（提议，需确认） |
+| `revert_stage_step`、`pin_stage_snapshot` | 撤销 / 留住某一版 | 不调用模型 |
+
+哪些话会到助手手里：`/agent …` 一定到；没有斜杠时，不是流程指令的话（`read`）、以「修改 / 调整 / 把…改」开头且点了名的话（`edit`）、不含「流程」且点了名的问句（`question`）会被转成 `/agent` 走一轮。「点了名」指句子里有对象词（`assistant_intents.json` 的 `agent_subjects`：站位、机位、舞台、布景、走位、过肩、轴线、撤销、评分、优化、镜头、E1S02、第 3 场…）或项目自己的名字（角色名、第一个别名、场景号、场名及地点半截）。「继续」「重跑第 5 阶段」「一键成片」「暂停」这些流程指令，和「修改一下整体节奏」这类没点名的修改，永远不进助手；项目没配文本模型或 `ASSISTANT_AGENT_ROUTING=0` 时也不进。
+
+舞台一变，这一场已出的第 5 阶段片段就标 `stale`（原因「所属场景的站位或机位已由助手修改，需重跑第 5 阶段后生效」），工具回执和界面事件 `stage_changed` 都带 `stale_clips`；助手被要求报出这个数，并说明重跑是付费步骤、要用户确认。舞台没变的提交什么都不写，也没有刷新动作。
+
+还没接上的：工作台 `App.tsx` 尚未把回复里的 `ui_action` 画成卡片（`frontend/src/features/workbench/chatCards.ts`、`ChatCardView.tsx` 已写好），也还没把界面上打开的场景 / 镜头 / 角色作为 `context` 报给助手（后端已接收）。验证方式与上文一样：测试里用的是本地假模型，证明的是链路，不是真实模型调舞台的质量。

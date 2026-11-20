@@ -1,7 +1,7 @@
 import { Pencil, X } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 
-import { graphCast, isBidirectional } from './relationshipCast';
+import { graphCast, isBidirectional, isUnnamedPairing } from './relationshipCast';
 import type { WriterRelationship, WriterRole } from './types';
 import { t } from '../../i18n';
 
@@ -16,6 +16,13 @@ interface RelationshipForm {
 }
 
 const EMPTY_FORM: RelationshipForm = { target: null, from: '', to: '', relation: '', bidirectional: false };
+
+// A refreshed dashboard hands the same relations back as new objects, so the one being edited is
+// found by what it says; by identity alone a save after a refresh added a copy beside the original.
+function sameRelation(left: WriterRelationship, right: WriterRelationship) {
+  return left === right || (left.from === right.from && left.to === right.to
+    && left.relation === right.relation && isBidirectional(left) === isBidirectional(right));
+}
 
 /** 人物关系编辑: every relation as "A → B · tag", and one form to add a relation or rewrite the one being edited. */
 export function RelationshipEditor({
@@ -64,9 +71,16 @@ export function RelationshipEditor({
       setError(t('关系两端不能是同一个角色。'));
       return;
     }
-    const entry: WriterRelationship = { from, to, relation: form.relation.trim() || '剧情关联', bidirectional: form.bidirectional };
+    const relation = form.relation.trim();
+    // The star map draws named relations only; an empty or co-occurrence wording would save and then vanish.
+    if (isUnnamedPairing({ relation })) {
+      setError(t('请写出两人的具体关系，例如：夫妻、宿敌。'));
+      return;
+    }
+    const entry: WriterRelationship = { from, to, relation, bidirectional: form.bidirectional };
     const next = [...relationships];
-    const index = form.target ? next.indexOf(form.target) : -1;
+    const target = form.target;
+    const index = target ? next.findIndex(edge => sameRelation(edge, target)) : -1;
     if (index >= 0) next[index] = entry;
     else next.push(entry);
     void commit(next);
@@ -79,7 +93,7 @@ export function RelationshipEditor({
 
   const remove = (edge: WriterRelationship) => {
     if (saving) return;
-    if (form.target === edge) setForm(EMPTY_FORM);
+    if (form.target && sameRelation(form.target, edge)) setForm(EMPTY_FORM);
     void commit(relationships.filter(item => item !== edge));
   };
 
@@ -90,7 +104,7 @@ export function RelationshipEditor({
         {valid.length > 0 ? visible.map((edge, index) => {
           const bidirectional = isBidirectional(edge);
           return (
-            <div className={`writer-relations__row ${form.target === edge ? 'is-editing' : ''}`} key={`${edge.from}-${edge.to}-${activePage}-${index}`}>
+            <div className={`writer-relations__row ${form.target && sameRelation(form.target, edge) ? 'is-editing' : ''}`} key={`${edge.from}-${edge.to}-${activePage}-${index}`}>
               <strong>{edge.from || '未知'}</strong>
               <span className="writer-relations__arrow" aria-label={bidirectional ? t('双向关系') : t('指向')}>{bidirectional ? '↔' : '→'}</span>
               <strong>{edge.to || '未知'}</strong>

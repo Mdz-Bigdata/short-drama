@@ -34,8 +34,11 @@ describe('ImagePoolPanel', () => {
 
   it('lists the pool and filters by kind', async () => {
     route();
-    render(<ImagePoolPanel taskId="t1" onClose={() => {}} />);
+    const { container } = render(<ImagePoolPanel taskId="t1" onClose={() => {}} />);
     expect(await screen.findByRole('button', { name: /E1S01 九宫格/ })).toBeTruthy();
+    // On the page root, so nothing in the workspace's own stacking context can cover it.
+    expect(screen.getByRole('dialog', { name: '图片池' }).parentElement).toBe(document.body);
+    expect(container.childElementCount).toBe(0);
     fireEvent.change(screen.getByLabelText('类型'), { target: { value: 'shot' } });
     expect(screen.queryByRole('button', { name: /E1S01 九宫格/ })).toBeNull();
     expect(screen.getByRole('button', { name: /E1S01 镜头 1/ })).toBeTruthy();

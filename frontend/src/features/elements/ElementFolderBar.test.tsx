@@ -87,6 +87,14 @@ describe('element library folders', () => {
     expect(calls.some(call => call.url.includes('/folders'))).toBe(false);
   });
 
+  it('shows the folders in a project view when asked to', async () => {
+    const { calls } = serve();
+    render(<ElementLibraryPage initialKind="costume" embedded taskId="t1" showFolders />);
+    expect(await screen.findByRole('button', { name: /道具组/ })).toBeTruthy();
+    expect(await screen.findByLabelText('“元素b”所在文件夹')).toBeTruthy();
+    expect(calls.some(call => call.url.includes('/api/elements/folders?kind=costume'))).toBe(true);
+  });
+
   it('still works when the folder routes fail', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
       if (String(input).includes('/folders')) return { ok: false, status: 500, json: async () => ({ detail: 'x' }) } as Response;

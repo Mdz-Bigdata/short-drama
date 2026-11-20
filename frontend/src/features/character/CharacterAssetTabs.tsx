@@ -12,6 +12,7 @@ interface AssetTabDefinition {
   icon: LucideIcon;
 }
 
+// 群演不单独成页：和数字演员同在「数字演员」一页里；车辆、商品归在「拍摄道具」，置景归在「拍摄场地」，特技归在「特效」(elementTypes 的 TAB_MEMBERS)。
 const characterAssetTabs: AssetTabDefinition[] = [
   { kind: 'actor', label: characterAssetTabLabels.actor, icon: UsersRound },
   { kind: 'scene', label: characterAssetTabLabels.scene, icon: Landmark },

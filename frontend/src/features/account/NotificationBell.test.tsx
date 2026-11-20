@@ -52,6 +52,43 @@ describe('NotificationBell', () => {
     expect(finance).toHaveBeenCalled();
   });
 
+  it('writes amounts like the rest of billing, and closes on Escape or a press outside', async () => {
+    serve({
+      unread: 1, to_do: {},
+      items: [{ id: 'n1', kind: 'duplicate_refunded', data: { amount_minor: 129900 }, read: false, created_at: '2026-11-05T00:00:00Z' }],
+    });
+    render(<NotificationBell onOpenBilling={() => undefined} onOpenFinance={() => undefined} />);
+    const bell = await screen.findByRole('button', { name: '通知，1 条未读' });
+    fireEvent.click(bell);
+    expect(await screen.findByText('你多付的 ¥1,299.00 已自动退回。')).toBeTruthy();
+
+    const markAll = screen.getByText('全部已读');
+    markAll.focus();
+    fireEvent.keyDown(markAll, { key: 'Escape' });
+    expect(screen.queryByText('你多付的 ¥1,299.00 已自动退回。')).toBeNull();
+    expect(document.activeElement).toBe(bell);
+
+    fireEvent.click(bell);
+    await screen.findByText('你多付的 ¥1,299.00 已自动退回。');
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByText('你多付的 ¥1,299.00 已自动退回。')).toBeNull();
+  });
+
+  it('leaves focus where it went when Escape closes a panel it has already left', async () => {
+    serve({ unread: 0, to_do: {}, items: [{ id: 'n1', kind: 'duplicate_refunded', data: { amount_minor: 100 }, read: true, created_at: '2026-11-05T00:00:00Z' }] });
+    const field = document.createElement('input');
+    document.body.appendChild(field);
+    render(<NotificationBell onOpenBilling={() => undefined} onOpenFinance={() => undefined} />);
+    fireEvent.click(await screen.findByRole('button', { name: '通知' }));
+    await screen.findByText('你多付的 ¥1.00 已自动退回。');
+    // Tabbed on past the panel into the page, then Escape for something there.
+    field.focus();
+    fireEvent.keyDown(field, { key: 'Escape' });
+    expect(screen.queryByText('你多付的 ¥1.00 已自动退回。')).toBeNull();
+    expect(document.activeElement).toBe(field);
+    field.remove();
+  });
+
   it('says so when there is nothing', async () => {
     serve({ unread: 0, to_do: {}, items: [] });
     render(<NotificationBell onOpenBilling={() => undefined} onOpenFinance={() => undefined} />);

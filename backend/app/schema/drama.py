@@ -3,6 +3,19 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Annotated, Optional, Dict, Any, Literal, List
 
 from app.core.style_packs import DEFAULT_PACK_ID
+from app.core import prompt_data
+
+
+_WORDING_FILE = "schema_drama"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/schema_drama.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 # One definition of a new project's range and defaults; requests, stored
 # configuration and the pipeline's fallbacks all read these.
@@ -43,87 +56,107 @@ class AdBrief(DramaBaseSchema):
     selling_points: str = Field("", max_length=500)
     audience: str = Field("", max_length=200)
     call_to_action: str = Field("", max_length=100)
+    # "story"：剧情带货——先讲一场小戏，产品在戏里自然出场，结尾落在产品近景上；空着是普通广告短片。
+    format: Literal["", "story"] = ""
+
+
+class TargetAudience(DramaBaseSchema):
+    """Who a serial is written for (app/core/target_audience.py); an empty value means not chosen."""
+    lean: Literal["", "male", "female"] = ""
+    age: Literal["", "youth", "adult", "senior"] = ""
 
 
 class DramaCreateRequest(DramaBaseSchema):
     """
     创建短剧任务的请求 Schema
     """
-    title_suggestion: str = Field(..., description="创意大纲/选题提示词", min_length=2)
-    director_style: str = Field(DEFAULT_DIRECTOR_STYLE, description="导演视听风格，如 cyberpunk, retro, realistic")
+    title_suggestion: str = Field(..., description=_text_of("DramaCreateRequest.description"), min_length=2)
+    director_style: str = Field(DEFAULT_DIRECTOR_STYLE, description=_text_of("DramaCreateRequest.description.2"))
     style_pack: Optional[str] = Field(
         None,
         description=(
-            "风格锁：全片统一的画面质感包 (cinematic_realism / film_35mm / atom_punk / anime_2d_cel / anime_3d_cg)。"
-            "更新配置时省略该字段表示沿用项目已有的风格锁。"
+            _text_of("DramaCreateRequest.description.3")
         ),
         max_length=40,
     )
-    shot_style: str = Field(DEFAULT_SHOT_STYLE, description="运镜风格设定")
-    llm_model: str = Field(DEFAULT_LLM_MODEL, description="选用的多模态语言大模型")
-    image_model: str = Field(DEFAULT_IMAGE_MODEL, description="选用的文生图大模型")
-    video_model: str = Field(DEFAULT_VIDEO_MODEL, description="选用的视频生成大模型")
-    tts_model: str = Field(DEFAULT_TTS_MODEL, description="选用的语音配音大模型")
+    shot_style: str = Field(DEFAULT_SHOT_STYLE, description=_text_of("DramaCreateRequest.description.4"))
+    llm_model: str = Field(DEFAULT_LLM_MODEL, description=_text_of("DramaCreateRequest.description.5"))
+    image_model: str = Field(DEFAULT_IMAGE_MODEL, description=_text_of("DramaCreateRequest.description.6"))
+    video_model: str = Field(DEFAULT_VIDEO_MODEL, description=_text_of("DramaCreateRequest.description.7"))
+    tts_model: str = Field(DEFAULT_TTS_MODEL, description=_text_of("DramaCreateRequest.description.8"))
     video_reference_mode: EditableVideoReferenceMode = Field(
-        "auto", description="运镜视频的参考输入模式（自动、首尾帧、多图/宫格或多模态参考）"
+        "auto", description=_text_of("DramaCreateRequest.description.9")
     )
     narration_delivery: Literal["use_tts", "post_production"] = Field(
-        "use_tts", description="旁白交付方式：合成旁白配音，或留给后期配音（旁白不进入视频提示词）"
+        "use_tts", description=_text_of("DramaCreateRequest.description.10")
     )
-    creation_mode: Literal["drama", "narration", "ad"] = Field(
-        "drama", description="创作类型：剧情短剧、旁白解说、广告短片"
+    creation_mode: Literal["drama", "narration", "ad", "film"] = Field(
+        "drama", description=_text_of("DramaCreateRequest.description.11")
     )
-    ad_brief: Optional[AdBrief] = Field(None, description="广告短片的产品简报（其它类型忽略）")
+    ad_brief: Optional[AdBrief] = Field(None, description=_text_of("DramaCreateRequest.description.12"))
+    target_audience: Optional[TargetAudience] = Field(None, description=_text_of("DramaCreateRequest.target_audience"))
+    script_structure: str = Field("", max_length=40, description=_text_of("DramaCreateRequest.script_structure"))
+    story_direction: Optional[dict] = Field(None, description=_text_of("DramaCreateRequest.story_direction"))
+    story_no_go: List[Annotated[str, Field(max_length=200)]] = Field(
+        default_factory=list, max_length=16, description=_text_of("DramaCreateRequest.story_no_go"),
+    )
+    story_genres: List[Annotated[str, Field(max_length=40)]] = Field(
+        default_factory=list, max_length=8, description=_text_of("DramaCreateRequest.story_genres"),
+    )
+    story_tone: str = Field("", max_length=40, description=_text_of("DramaCreateRequest.story_tone"))
+    ending_type: str = Field("", max_length=40, description=_text_of("DramaCreateRequest.ending_type"))
+    overseas: bool = Field(False, description=_text_of("DramaCreateRequest.overseas"))
+    paywall_plan: bool = Field(False, description=_text_of("DramaCreateRequest.paywall_plan"))
     poetry_sources: Optional[List[Annotated[str, Field(min_length=1, max_length=40)]]] = Field(
         None, max_length=40,
-        description="编剧可取材的诗词库作者、别名或篇名（如 苏轼、李清照、滕王阁序；“全部”表示整个诗词库）。更新配置时省略表示沿用。",
+        description=_text_of("DramaCreateRequest.description.13"),
     )
     content_language: Literal["zh", "en", "vi"] = Field(
-        "zh", description="剧本内容语言：标题、钩子、台词、旁白、正文与画面描述用这种语言写"
+        "zh", description=_text_of("DramaCreateRequest.description.14")
     )
-    one_click: bool = Field(False, description="是否一键成片模式")
+    one_click: bool = Field(False, description=_text_of("DramaCreateRequest.description.15"))
     episode_count: int = Field(
         DEFAULT_EPISODE_COUNT,
-        description=f"一次性生成的剧本集数 ({EPISODE_COUNT_MIN}-{EPISODE_COUNT_MAX})，视频按集逐集制作",
+        description=_text_of("DramaCreateRequest.description.16").format(EPISODE_COUNT_MIN, EPISODE_COUNT_MAX),
         ge=EPISODE_COUNT_MIN,
         le=EPISODE_COUNT_MAX,
     )
-    script_content: Optional[str] = Field(None, description="手动上传的剧本文件内容")
-    script_name: Optional[str] = Field(None, description="手动上传的剧本文件名")
+    script_content: Optional[str] = Field(None, description=_text_of("DramaCreateRequest.description.17"))
+    script_name: Optional[str] = Field(None, description=_text_of("DramaCreateRequest.description.18"))
 
 
 class ScriptUpdateRequest(DramaBaseSchema):
     """Persist a manually edited Markdown or plain-text screenplay."""
 
-    content: str = Field(..., description="完整剧本文本", min_length=1)
+    content: str = Field(..., description=_text_of("ScriptUpdateRequest.description"), min_length=1)
     file_name: Optional[str] = Field(
         None,
-        description="可选的原始 .md/.txt 文件名",
+        description=_text_of("ScriptUpdateRequest.description.2"),
         max_length=255,
     )
     expected_source_hash: str = Field(
         ...,
-        description="编辑器加载时的剧本资源哈希，用于防止旧标签页覆盖新版本",
+        description=_text_of("ScriptUpdateRequest.description.3"),
         min_length=64,
         max_length=64,
         pattern=r"^[0-9a-fA-F]{64}$",
     )
     confirm_invalidate: bool = Field(
         False,
-        description="确认归档并使当前剧本的下游制作资产失效",
+        description=_text_of("ScriptUpdateRequest.description.4"),
     )
 
     @field_validator("content")
     @classmethod
     def validate_content(cls, value: str) -> str:
         if "\x00" in value:
-            raise ValueError("剧本内容不能包含空字节")
+            raise ValueError(_text_of("validate_content.text"))
         if any(ord(char) < 32 and char not in "\n\r\t" for char in value):
-            raise ValueError("剧本内容包含不支持的控制字符")
+            raise ValueError(_text_of("validate_content.text.2"))
         if not value.strip():
-            raise ValueError("剧本内容不能为空")
+            raise ValueError(_text_of("validate_content.text.3"))
         if len(value.encode("utf-8")) > 2 * 1024 * 1024:
-            raise ValueError("剧本内容不能超过 2 MiB")
+            raise ValueError(_text_of("validate_content.text.4"))
         return value
 
     @field_validator("file_name")
@@ -138,10 +171,10 @@ class ScriptUpdateRequest(DramaBaseSchema):
             or "\\" in cleaned
             or any(ord(char) < 32 for char in cleaned)
         ):
-            raise ValueError("剧本文件名无效")
+            raise ValueError(_text_of("validate_file_name.text"))
         suffix = cleaned.rsplit(".", 1)[-1].lower() if "." in cleaned else ""
         if suffix not in {"md", "txt"}:
-            raise ValueError("剧本文件仅支持 .md 或 .txt")
+            raise ValueError(_text_of("validate_file_name.text.2"))
         return cleaned
 
 
@@ -149,39 +182,48 @@ class DramaConfigSchema(DramaBaseSchema):
     """
     创建时所用的参数配置 Schema
     """
-    title_suggestion: str = Field(..., description="创意大纲/选题提示词")
-    director_style: str = Field(DEFAULT_DIRECTOR_STYLE, description="导演视听风格")
-    style_pack: str = Field(DEFAULT_PACK_ID, description="风格锁：全片统一的画面质感包", max_length=40)
-    shot_style: str = Field(DEFAULT_SHOT_STYLE, description="运镜风格设定")
-    llm_model: str = Field(DEFAULT_LLM_MODEL, description="选用的多模态语言大模型")
-    image_model: str = Field(DEFAULT_IMAGE_MODEL, description="选用的文生图大模型")
-    video_model: str = Field(DEFAULT_VIDEO_MODEL, description="选用的视频生成大模型")
-    tts_model: str = Field(DEFAULT_TTS_MODEL, description="选用的语音配音大模型")
+    title_suggestion: str = Field(..., description=_text_of("DramaConfigSchema.description"))
+    director_style: str = Field(DEFAULT_DIRECTOR_STYLE, description=_text_of("DramaConfigSchema.description.2"))
+    style_pack: str = Field(DEFAULT_PACK_ID, description=_text_of("DramaConfigSchema.description.3"), max_length=40)
+    shot_style: str = Field(DEFAULT_SHOT_STYLE, description=_text_of("DramaConfigSchema.description.4"))
+    llm_model: str = Field(DEFAULT_LLM_MODEL, description=_text_of("DramaConfigSchema.description.5"))
+    image_model: str = Field(DEFAULT_IMAGE_MODEL, description=_text_of("DramaConfigSchema.description.6"))
+    video_model: str = Field(DEFAULT_VIDEO_MODEL, description=_text_of("DramaConfigSchema.description.7"))
+    tts_model: str = Field(DEFAULT_TTS_MODEL, description=_text_of("DramaConfigSchema.description.8"))
     video_reference_mode: StoredVideoReferenceMode = Field(
-        "auto", description="运镜视频的参考输入模式；响应兼容历史 first_frame 项目"
+        "auto", description=_text_of("DramaConfigSchema.description.9")
     )
-    narration_delivery: Literal["use_tts", "post_production"] = Field("use_tts", description="旁白交付方式")
-    creation_mode: Literal["drama", "narration", "ad"] = Field("drama", description="创作类型")
-    ad_brief: Optional[dict] = Field(None, description="广告短片的产品简报")
-    poetry_sources: List[str] = Field(default_factory=list, description="编剧可取材的诗词库作者或篇名")
-    content_language: Literal["zh", "en", "vi"] = Field("zh", description="剧本内容语言")
-    one_click: bool = Field(False, description="是否一键成片模式")
+    narration_delivery: Literal["use_tts", "post_production"] = Field("use_tts", description=_text_of("DramaConfigSchema.description.10"))
+    creation_mode: Literal["drama", "narration", "ad", "film"] = Field("drama", description=_text_of("DramaConfigSchema.description.11"))
+    ad_brief: Optional[dict] = Field(None, description=_text_of("DramaConfigSchema.description.12"))
+    target_audience: Optional[dict] = Field(None, description=_text_of("DramaConfigSchema.target_audience"))
+    script_structure: str = Field("", description=_text_of("DramaConfigSchema.script_structure"))
+    story_direction: Optional[dict] = Field(None, description=_text_of("DramaConfigSchema.story_direction"))
+    story_no_go: List[str] = Field(default_factory=list, description=_text_of("DramaConfigSchema.story_no_go"))
+    story_genres: List[str] = Field(default_factory=list, description=_text_of("DramaConfigSchema.story_genres"))
+    story_tone: str = Field("", description=_text_of("DramaConfigSchema.story_tone"))
+    ending_type: str = Field("", description=_text_of("DramaConfigSchema.ending_type"))
+    overseas: bool = Field(False, description=_text_of("DramaConfigSchema.overseas"))
+    paywall_plan: bool = Field(False, description=_text_of("DramaConfigSchema.paywall_plan"))
+    poetry_sources: List[str] = Field(default_factory=list, description=_text_of("DramaConfigSchema.description.13"))
+    content_language: Literal["zh", "en", "vi"] = Field("zh", description=_text_of("DramaConfigSchema.description.14"))
+    one_click: bool = Field(False, description=_text_of("DramaConfigSchema.description.15"))
     episode_count: int = Field(
         DEFAULT_EPISODE_COUNT,
-        description=f"一次性生成的剧本集数 ({EPISODE_COUNT_MIN}-{EPISODE_COUNT_MAX})，视频按集逐集制作",
+        description=_text_of("DramaConfigSchema.description.16").format(EPISODE_COUNT_MIN, EPISODE_COUNT_MAX),
         ge=EPISODE_COUNT_MIN,
         le=EPISODE_COUNT_MAX,
     )
-    script_content: Optional[str] = Field(None, description="手动上传的剧本文件内容")
-    script_name: Optional[str] = Field(None, description="手动上传的剧本文件名")
+    script_content: Optional[str] = Field(None, description=_text_of("DramaConfigSchema.description.17"))
+    script_name: Optional[str] = Field(None, description=_text_of("DramaConfigSchema.description.18"))
 
 class ShotFeedbackRequest(DramaBaseSchema):
     """One "this shot came back wrong" report from the person watching the clip."""
 
-    result: Literal["success", "partial", "failed"] = Field("failed", description="这次生成的结果")
-    text: str = Field("", description="用自己的话描述问题，如「脸崩了」「手是六根手指」", max_length=500)
-    category: str = Field("", description="可选：直接指定失败类型，留空则按描述归类", max_length=40)
-    applied_fix: str = Field("", description="可选：本次生效的修正手段，连续两次有效会写入项目经验", max_length=300)
+    result: Literal["success", "partial", "failed"] = Field("failed", description=_text_of("ShotFeedbackRequest.description"))
+    text: str = Field("", description=_text_of("ShotFeedbackRequest.description.2"), max_length=500)
+    category: str = Field("", description=_text_of("ShotFeedbackRequest.description.3"), max_length=40)
+    applied_fix: str = Field("", description=_text_of("ShotFeedbackRequest.description.4"), max_length=300)
 
 
 class DramaTaskSummary(DramaBaseSchema):
@@ -191,31 +233,31 @@ class DramaTaskSummary(DramaBaseSchema):
     DramaTaskResponse carries every generated asset — over a megabyte per poll
     once a few projects exist. Listing endpoints use this instead.
     """
-    task_id: str = Field(..., description="任务唯一 ID")
-    current_stage: int = Field(..., description="当前所处步骤阶段 (0-9)")
-    stage_name: str = Field(..., description="当前阶段名称")
-    status: str = Field(..., description="状态: idle, running, paused, completed, failed")
-    config: DramaConfigSchema = Field(..., description="创建时所用的参数配置")
-    video_url: Optional[str] = Field(None, description="最终合成视频的播放链接")
-    stage_progress: Optional[Dict[str, Any]] = Field(None, description="当前阶段执行进度")
-    fail_reason: Optional[str] = Field(None, description="任务失败原因 (status=failed 时)")
+    task_id: str = Field(..., description=_text_of("DramaTaskSummary.description"))
+    current_stage: int = Field(..., description=_text_of("DramaTaskSummary.description.2"))
+    stage_name: str = Field(..., description=_text_of("DramaTaskSummary.description.3"))
+    status: str = Field(..., description=_text_of("DramaTaskSummary.description.4"))
+    config: DramaConfigSchema = Field(..., description=_text_of("DramaTaskSummary.description.5"))
+    video_url: Optional[str] = Field(None, description=_text_of("DramaTaskSummary.description.6"))
+    stage_progress: Optional[Dict[str, Any]] = Field(None, description=_text_of("DramaTaskSummary.description.7"))
+    fail_reason: Optional[str] = Field(None, description=_text_of("DramaTaskSummary.description.8"))
 
 
 class DramaTaskResponse(DramaBaseSchema):
     """
     短剧任务状态响应 Schema
     """
-    task_id: str = Field(..., description="任务唯一 ID")
-    current_stage: int = Field(..., description="当前所处步骤阶段 (0-9)")
-    stage_name: str = Field(..., description="当前阶段名称")
-    status: str = Field(..., description="状态: idle, running, paused, completed, failed")
-    config: DramaConfigSchema = Field(..., description="创建时所用的参数配置")
-    assets: Dict[str, Any] = Field(..., description="各步骤已生成的结构化资产")
-    workflow: Optional[Dict[str, Any]] = Field(None, description="基于真实产物的八 Agent 流程引导")
-    chat_history: List[Dict[str, Any]] = Field(default_factory=list, description="持久化用户与助手消息")
-    logs: Dict[str, str] = Field(..., description="各步骤的执行日志与校验结果")
-    video_url: Optional[str] = Field(None, description="最终合成视频的播放链接")
-    short_link: Optional[str] = Field(None, description="宣发引流短链接")
-    pr_content: Optional[str] = Field(None, description="宣发引流文案")
-    stage_progress: Optional[Dict[str, Any]] = Field(None, description="当前阶段执行进度: stage/percent/label/status/calls/error")
-    fail_reason: Optional[str] = Field(None, description="任务失败原因 (status=failed 时)")
+    task_id: str = Field(..., description=_text_of("DramaTaskResponse.description"))
+    current_stage: int = Field(..., description=_text_of("DramaTaskResponse.description.2"))
+    stage_name: str = Field(..., description=_text_of("DramaTaskResponse.description.3"))
+    status: str = Field(..., description=_text_of("DramaTaskResponse.description.4"))
+    config: DramaConfigSchema = Field(..., description=_text_of("DramaTaskResponse.description.5"))
+    assets: Dict[str, Any] = Field(..., description=_text_of("DramaTaskResponse.description.6"))
+    workflow: Optional[Dict[str, Any]] = Field(None, description=_text_of("DramaTaskResponse.description.7"))
+    chat_history: List[Dict[str, Any]] = Field(default_factory=list, description=_text_of("DramaTaskResponse.description.8"))
+    logs: Dict[str, str] = Field(..., description=_text_of("DramaTaskResponse.description.9"))
+    video_url: Optional[str] = Field(None, description=_text_of("DramaTaskResponse.description.10"))
+    short_link: Optional[str] = Field(None, description=_text_of("DramaTaskResponse.description.11"))
+    pr_content: Optional[str] = Field(None, description=_text_of("DramaTaskResponse.description.12"))
+    stage_progress: Optional[Dict[str, Any]] = Field(None, description=_text_of("DramaTaskResponse.description.13"))
+    fail_reason: Optional[str] = Field(None, description=_text_of("DramaTaskResponse.description.14"))

@@ -1,0 +1,66 @@
+{
+  "_note": "一句台词在画面里要占多久：字数 ÷ 情绪语速(字/秒) + 句首留白 + 句尾留白，不足 min_seconds 按 min_seconds。语速与留白按情绪分档（app/core/screenwriting/speech_rate.line_seconds 读取）；情绪键与配音情绪(media_compositor.EMOTION_PRESETS)一致。悲伤要慢、停顿多；暴怒快、句子碎；点题的金句一律降速、留足定格时间。字幕可读时间优先于朗读时长。",
+  "tiers": {
+    "sad": {
+      "label": "悲伤、哽咽、虚弱、心碎独白",
+      "cps": 1.8,
+      "head": 0.8,
+      "tail": 1.5
+    },
+    "tender": {
+      "label": "深情、温柔的低语",
+      "cps": 2.2,
+      "head": 0.5,
+      "tail": 1.0
+    },
+    "cold": {
+      "label": "冷静、凝重、悬疑、对峙放狠话",
+      "cps": 2.2,
+      "head": 0.5,
+      "tail": 0.8
+    },
+    "neutral": {
+      "label": "日常对话、普通旁白",
+      "cps": 3.0,
+      "head": 0.3,
+      "tail": 0.4
+    },
+    "happy": {
+      "label": "轻快、高兴",
+      "cps": 3.0,
+      "head": 0.3,
+      "tail": 0.4
+    },
+    "tense": {
+      "label": "慌张、着急、催促、辩解",
+      "cps": 3.5,
+      "head": 0.25,
+      "tail": 0.35
+    },
+    "angry": {
+      "label": "愤怒、激动争吵",
+      "cps": 4.0,
+      "head": 0.3,
+      "tail": 0.45
+    },
+    "shout": {
+      "label": "暴怒、嘶吼",
+      "cps": 4.0,
+      "head": 0.3,
+      "tail": 0.45
+    },
+    "key_line": {
+      "label": "点题金句、反转台词",
+      "cps": 2.0,
+      "head": 1.2,
+      "tail": 1.5
+    }
+  },
+  "default_tier": "neutral",
+  "min_seconds": 2.0,
+  "language_neutral": {
+    "zh": 3.0,
+    "en": 2.5,
+    "vi": 2.5
+  }
+}

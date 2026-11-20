@@ -1,0 +1,9 @@
+{
+  "_doc": "app/core/actor_sheet_layout.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "__post_init__.text": "区域 {0} 的格子数与 {1}×{2} 网格不符",
+  "_build_regions.title": "主肖像",
+  "_build_regions.title.2": "全身与元素",
+  "_build_regions.title.3": "细节矩阵",
+  "module.full_body_proportion_rule": "人体比例按真实成年演员：约7.5到8头身，下巴到头顶的头高约占身高的八分之一(发髻与头饰不计入)，肩宽约两个头宽，腿长约占身高一半；参考图只用来锁定五官与发型，不照搬参考图里的头部大小。禁止大头小身、Q版、娃娃比例、头饰夸张放大和短腿。",
+  "actor_sheet_cell_boxes.text": "画布尺寸必须为正"
+}

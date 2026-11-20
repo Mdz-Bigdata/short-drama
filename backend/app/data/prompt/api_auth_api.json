@@ -1,0 +1,15 @@
+{
+  "_doc": "app/api/auth_api.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.tags": [
+    "用户身份认证"
+  ],
+  "get_current_user.detail": "未登录，请先登录",
+  "get_current_user.detail.2": "会话已过期，请重新登录",
+  "get_current_user.detail.3": "用户账户不存在或已停用",
+  "send_code.detail": "邮箱或手机号不能为空",
+  "send_code.detail.2": "验证码发送服务暂不可用",
+  "send_code.payload.message": "验证码已成功发送至 {0}",
+  "register_user.detail": "邮箱或手机号已被注册",
+  "login_by_password.detail": "账号或密码错误",
+  "logout_user.message": "已成功退出登录"
+}

@@ -1,0 +1,16 @@
+{
+  "_doc": "app/api/model_configuration_api.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.tags": [
+    "模型配置"
+  ],
+  "_resolve_key.text": "模型配置不存在",
+  "_resolve_key.text.2": "已有配置与当前分类或供应商不匹配",
+  "_resolve_key.text.3": "修改基础 URL 时必须重新输入 API Key",
+  "save_video_endpoint.detail": "首次声明端点时必须提供 API Key",
+  "delete_video_endpoint.detail": "没有这个声明式端点",
+  "add_model_credential.detail": "API Key 太短",
+  "test_model_connection.text": "所选模型已不在供应商返回的动态列表中",
+  "test_model_connection.message": "连接成功，已验证 {0} 个模型",
+  "test_model_connection.message.2": "已加载 {0} 个官方目录模型；该供应商不提供模型枚举接口，凭据将在首次生成时验证",
+  "save_model_configuration.text": "所选模型已不在供应商返回的动态列表中"
+}

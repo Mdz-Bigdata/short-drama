@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WriterAgentPage } from './WriterAgentPage';
@@ -305,6 +306,127 @@ describe('WriterAgentPage', () => {
     expect(document.activeElement).toBe(openButton);
   });
 
+  it('lays the Markdown screenplay out with the document styles, and leaves plain text as it is', async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<WriterAgentPage title="十二小时" breakdown={breakdown} script={'# 第一集\n\n林夏推开门。\n\n- 录音笔\n> 旁白'} />);
+
+    await user.click(screen.getByRole('button', { name: '分页阅读完整剧本' }));
+    const dialog = screen.getByRole('dialog', { name: '十二小时 · 完整剧本' });
+    // MarkdownDocument.css scopes its paragraph, list and quote rules under this class.
+    const paragraph = within(dialog).getByText('林夏推开门。');
+    expect(paragraph.closest('.writer-markdown-document')?.classList.contains('writer-reader__document')).toBe(true);
+    expect(within(dialog).getByText('录音笔').closest('.writer-markdown-document')).toBeTruthy();
+    unmount();
+
+    render(<WriterAgentPage title="十二小时" breakdown={breakdown} script="林夏推开门。" scriptFileName="十二小时.txt" />);
+    await user.click(screen.getByRole('button', { name: '分页阅读完整剧本' }));
+    const plain = within(screen.getByRole('dialog', { name: '十二小时 · 完整剧本' })).getByText('林夏推开门。');
+    expect(plain.tagName).toBe('PRE');
+    expect(plain.closest('.writer-markdown-document')).toBeNull();
+  });
+
+  it('edits the relations under the star map when a save handler is given, and only then', async () => {
+    const user = userEvent.setup();
+    const onSaveRelationships = vi.fn().mockResolvedValue(undefined);
+    const withPairing = {
+      ...breakdown,
+      roles: [...breakdown.roles, { name: '陈默', position: '配角' }],
+      relationships: [...breakdown.relationships, { from: '林夏', to: '陈默', relation: '同场互动 · 2 场', bidirectional: true }],
+    };
+    const { rerender } = render(<WriterAgentPage title="十二小时" breakdown={withPairing} defaultView="characters" />);
+    expect(screen.queryByRole('heading', { name: '人物关系编辑' })).toBeNull();
+    expect(screen.queryByRole('form', { name: '新增人物关系' })).toBeNull();
+
+    rerender(<WriterAgentPage title="十二小时" breakdown={withPairing} defaultView="characters" onSaveRelationships={onSaveRelationships} />);
+    expect(screen.getByRole('heading', { name: '人物关系编辑' })).toBeTruthy();
+    // Only named relations are listed, so a same-scene count is never offered for editing or saved back.
+    expect(screen.getByRole('button', { name: '编辑 林夏 与 周教授 的关系' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '编辑 林夏 与 陈默 的关系' })).toBeNull();
+
+    const form = screen.getByRole('form', { name: '新增人物关系' });
+    await user.selectOptions(within(form).getByLabelText('起始角色'), '周教授');
+    await user.selectOptions(within(form).getByLabelText('目标角色'), '陈默');
+    await user.type(within(form).getByLabelText('关系描述'), '上下级');
+    await user.click(within(form).getByRole('button', { name: '添加' }));
+
+    await waitFor(() => expect(onSaveRelationships).toHaveBeenCalledTimes(1));
+    expect(onSaveRelationships).toHaveBeenCalledWith([
+      { from: '林夏', to: '周教授', relation: '师生对立' },
+      { from: '周教授', to: '陈默', relation: '上下级', bidirectional: false },
+    ]);
+  });
+
+  it('leaves an emptied relation list empty instead of starting an analysis', async () => {
+    const user = userEvent.setup();
+    const onAnalyzeRelationships = vi.fn().mockResolvedValue(undefined);
+    const saved: unknown[] = [];
+    function Host() {
+      const [current, setCurrent] = useState(breakdown);
+      return (
+        <WriterAgentPage
+          title="十二小时"
+          taskId="task-1"
+          breakdown={current}
+          script="林夏：你隐瞒了什么？"
+          defaultView="characters"
+          onAnalyzeRelationships={onAnalyzeRelationships}
+          onSaveRelationships={async next => {
+            saved.push(next);
+            setCurrent(value => ({ ...value, relationships: next as typeof breakdown.relationships }));
+          }}
+        />
+      );
+    }
+    render(<Host />);
+
+    await user.click(screen.getByRole('button', { name: '删除 林夏 与 周教授 的关系' }));
+    await waitFor(() => expect(saved).toEqual([[]]));
+    // The editor stays, with the analysis one click away for whoever wants it.
+    expect(await screen.findByRole('form', { name: '新增人物关系' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'AI 分析人物关系' })).toHaveProperty('disabled', false);
+    expect(onAnalyzeRelationships).not.toHaveBeenCalled();
+  });
+
+  it('clears 分析中 when the automatic analysis ends, though the page re-rendered with a new handler meanwhile', async () => {
+    let finish: () => void = () => undefined;
+    const firstHandler = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    const props = {
+      title: '十二小时',
+      taskId: 'task-1',
+      breakdown: { ...breakdown, relationships: [] },
+      script: '林夏：你隐瞒了什么？',
+      defaultView: 'characters' as const,
+    };
+    const { rerender } = render(<WriterAgentPage {...props} onAnalyzeRelationships={firstHandler} />);
+    expect(await screen.findByRole('button', { name: '分析中…' })).toHaveProperty('disabled', true);
+
+    // The workbench polls the task, so the page is handed a fresh handler while the analysis runs.
+    rerender(<WriterAgentPage {...props} onAnalyzeRelationships={vi.fn().mockResolvedValue(undefined)} />);
+    await act(async () => { finish(); });
+
+    expect(await screen.findByRole('button', { name: 'AI 分析人物关系' })).toHaveProperty('disabled', false);
+    expect(firstHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not analyse a relation list the writer emptied earlier when the page opens again', async () => {
+    const onAnalyzeRelationships = vi.fn().mockResolvedValue(undefined);
+    const props = {
+      title: '十二小时',
+      taskId: 'task-1',
+      breakdown: { ...breakdown, relationships: [] },
+      script: '林夏：你隐瞒了什么？',
+      defaultView: 'characters' as const,
+      onAnalyzeRelationships,
+    };
+    const { unmount } = render(<WriterAgentPage {...props} relationshipsAuthored />);
+    unmount();
+    render(<WriterAgentPage {...props} relationshipsAuthored />);
+
+    expect(await screen.findByRole('button', { name: 'AI 分析人物关系' })).toHaveProperty('disabled', false);
+    await act(async () => { await Promise.resolve(); });
+    expect(onAnalyzeRelationships).not.toHaveBeenCalled();
+  });
+
   it('imports Markdown and text files into an editable screenplay draft', async () => {
     const user = userEvent.setup();
     const onSaveScript = vi.fn().mockResolvedValue(undefined);
@@ -377,6 +499,133 @@ describe('WriterAgentPage', () => {
     await user.click(within(dialog).getByRole('button', { name: '编辑剧本' }));
     await user.click(within(dialog).getByRole('button', { name: '保存剧本' }));
     expect(onSaveScript).toHaveBeenCalledWith('# 修订版\n\n新的结局', '十二小时.md', '');
+  });
+
+  it('opens the editor at the page being read and comes back to the page under the caret', async () => {
+    const user = userEvent.setup();
+    const script = Array.from({ length: 400 }, (_, index) => `第${index}句，线索持续推进。`).join('');
+    render(<WriterAgentPage title="十二小时" breakdown={breakdown} script={script} />);
+
+    await user.click(screen.getByRole('button', { name: '分页阅读完整剧本' }));
+    const dialog = screen.getByRole('dialog', { name: '十二小时 · 完整剧本' });
+    await user.click(within(dialog).getByRole('button', { name: '下一页' }));
+    await user.click(within(dialog).getByRole('button', { name: '下一页' }));
+    const counter = within(dialog).getByText(/第 3 \/ \d+ 页/).textContent as string;
+    const pageStart = script.indexOf((dialog.querySelector('.writer-reader__paper')?.textContent || '').slice(0, 12));
+    expect(pageStart).toBeGreaterThan(2000);
+
+    await user.click(within(dialog).getByRole('button', { name: '编辑剧本' }));
+    const editor = within(dialog).getByRole('textbox', { name: '剧本内容' }) as HTMLTextAreaElement;
+    expect(editor.selectionStart).toBe(pageStart);
+    expect(document.activeElement).toBe(editor);
+
+    // A fix typed on that page keeps the reader there instead of sending it back to page 1.
+    await user.keyboard('（修订）');
+    await user.click(within(dialog).getByRole('button', { name: '预览剧本' }));
+    expect(within(dialog).getByText(counter)).toBeTruthy();
+    expect(dialog.querySelector('.writer-reader__paper')?.textContent?.startsWith('（修订）')).toBe(true);
+
+    // Moving the caret into an earlier page brings the preview back to that page.
+    await user.click(within(dialog).getByRole('button', { name: '编辑剧本' }));
+    const reopened = within(dialog).getByRole('textbox', { name: '剧本内容' }) as HTMLTextAreaElement;
+    reopened.setSelectionRange(pageStart - 30, pageStart - 30);
+    await user.click(within(dialog).getByRole('button', { name: '预览剧本' }));
+    expect(within(dialog).getByText(/第 2 \/ \d+ 页/)).toBeTruthy();
+  });
+
+  it('keeps the open page when a script saved elsewhere replaces the untouched editor text', async () => {
+    const user = userEvent.setup();
+    const script = Array.from({ length: 400 }, (_, index) => `第${index}句，线索持续推进。`).join('');
+    const { rerender } = render(<WriterAgentPage title="十二小时" breakdown={breakdown} script={script} />);
+
+    await user.click(screen.getByRole('button', { name: '分页阅读完整剧本' }));
+    const dialog = screen.getByRole('dialog', { name: '十二小时 · 完整剧本' });
+    await user.click(within(dialog).getByRole('button', { name: '下一页' }));
+    await user.click(within(dialog).getByRole('button', { name: '下一页' }));
+    const counter = within(dialog).getByText(/第 3 \/ \d+ 页/).textContent as string;
+    await user.click(within(dialog).getByRole('button', { name: '编辑剧本' }));
+    const editor = within(dialog).getByRole('textbox', { name: '剧本内容' }) as HTMLTextAreaElement;
+    const caret = editor.selectionStart;
+
+    // Another tab saved a version with a new last line; nothing was typed here.
+    rerender(<WriterAgentPage title="十二小时" breakdown={breakdown} script={`${script}结尾补了一句。`} />);
+    expect(editor.value.endsWith('结尾补了一句。')).toBe(true);
+    expect(editor.selectionStart).toBe(caret);
+
+    await user.click(within(dialog).getByRole('button', { name: '预览剧本' }));
+    expect(within(dialog).getByText(counter)).toBeTruthy();
+  });
+
+  it('keeps a table page through the editor and opens the editor on that table', async () => {
+    const user = userEvent.setup();
+    const rows = Array.from({ length: 150 }, (_, index) => `| ${index} | 林夏 | 第${index}镜 |`);
+    const script = ['# 第一集', '', '开场正文。', '', '| 镜号 | 角色 | 内容 |', '| --- | --- | --- |', ...rows, '', '## 结尾', '', '林夏收尾。'].join('\n');
+    render(<WriterAgentPage title="十二小时" breakdown={breakdown} script={script} scriptFileName="十二小时.md" />);
+
+    await user.click(screen.getByRole('button', { name: '分页阅读完整剧本' }));
+    const dialog = screen.getByRole('dialog', { name: '十二小时 · 完整剧本' });
+    const editorOf = () => within(dialog).getByRole('textbox', { name: '剧本内容' }) as HTMLTextAreaElement;
+
+    // Page 2 is the first hundred rows of the table.
+    await user.click(within(dialog).getByRole('button', { name: '下一页' }));
+    expect(dialog.querySelector('.writer-reader__paper table')).toBeTruthy();
+    await user.click(within(dialog).getByRole('button', { name: '编辑剧本' }));
+    expect(editorOf().selectionStart).toBe(script.indexOf('| 镜号'));
+    await user.click(within(dialog).getByRole('button', { name: '预览剧本' }));
+    expect(within(dialog).getByText('第 2 / 4 页')).toBeTruthy();
+    expect(dialog.querySelector('.writer-reader__paper table')).toBeTruthy();
+
+    // Page 3 carries on from row 100, and a row fixed there is shown on return.
+    await user.click(within(dialog).getByRole('button', { name: '下一页' }));
+    await user.click(within(dialog).getByRole('button', { name: '编辑剧本' }));
+    expect(editorOf().selectionStart).toBe(script.indexOf('| 100 |'));
+    const inRow = script.indexOf('第120镜');
+    editorOf().setSelectionRange(inRow, inRow);
+    await user.keyboard('补拍');
+    await user.click(within(dialog).getByRole('button', { name: '预览剧本' }));
+    expect(within(dialog).getByText('第 3 / 4 页')).toBeTruthy();
+    expect(within(dialog).getByRole('cell', { name: '补拍第120镜' })).toBeTruthy();
+  });
+
+  it('opens the editor at the page being read when the script has Windows line endings', async () => {
+    const user = userEvent.setup();
+    const script = Array.from({ length: 400 }, (_, index) => `第${index}句，线索持续推进。`).join('\r\n');
+    render(<WriterAgentPage title="十二小时" breakdown={breakdown} script={script} scriptFileName="十二小时.txt" />);
+
+    await user.click(screen.getByRole('button', { name: '分页阅读完整剧本' }));
+    const dialog = screen.getByRole('dialog', { name: '十二小时 · 完整剧本' });
+    await user.click(within(dialog).getByRole('button', { name: '下一页' }));
+    await user.click(within(dialog).getByRole('button', { name: '下一页' }));
+    const pageOpening = (dialog.querySelector('.writer-reader__paper')?.textContent || '').slice(0, 10);
+    expect(pageOpening).toMatch(/^第\d+句/);
+
+    await user.click(within(dialog).getByRole('button', { name: '编辑剧本' }));
+    const editor = within(dialog).getByRole('textbox', { name: '剧本内容' }) as HTMLTextAreaElement;
+    expect(editor.value.slice(editor.selectionStart, editor.selectionStart + 10)).toBe(pageOpening);
+    // Line endings alone are not an edit.
+    expect(within(dialog).getByRole('button', { name: '保存剧本' })).toHaveProperty('disabled', true);
+  });
+
+  it('previews a pasted script from where the paste begins', async () => {
+    const user = userEvent.setup();
+    const pasted = Array.from({ length: 400 }, (_, index) => `第${index}句，线索持续推进。`).join('');
+    render(<WriterAgentPage title="十二小时" breakdown={breakdown} script="" onSaveScript={vi.fn()} />);
+
+    await user.click(screen.getAllByRole('button', { name: '导入或编辑剧本' })[0]);
+    const dialog = screen.getByRole('dialog', { name: '十二小时 · 完整剧本' });
+    await user.click(within(dialog).getByRole('textbox', { name: '剧本内容' }));
+    await user.paste(pasted);
+    await user.click(within(dialog).getByRole('button', { name: '预览剧本' }));
+    expect(within(dialog).getByText(/第 1 \/ \d+ 页/)).toBeTruthy();
+
+    // The same when a paste replaces the script being read on a later page.
+    await user.click(within(dialog).getByRole('button', { name: '下一页' }));
+    await user.click(within(dialog).getByRole('button', { name: '编辑剧本' }));
+    const editor = within(dialog).getByRole('textbox', { name: '剧本内容' }) as HTMLTextAreaElement;
+    editor.setSelectionRange(0, editor.value.length);
+    await user.paste(pasted.replace(/线索/g, '证据'));
+    await user.click(within(dialog).getByRole('button', { name: '预览剧本' }));
+    expect(within(dialog).getByText(/第 1 \/ \d+ 页/)).toBeTruthy();
   });
 
   it('only saves dirty drafts and preserves edits typed while a save is in flight', async () => {
@@ -668,6 +917,34 @@ describe('WriterAgentPage breakdown download', () => {
     await user.click(screen.getByRole('button', { name: '拆解单文档' }));
 
     expect(onExportBreakdown.mock.calls).toEqual([['csv'], ['md']]);
+  });
+
+  it('offers the script review on a saved project only, and opens it without asking the model', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ title: '雨夜来信', report: null, stale: false, facts: [{ key: 'episodes', label: '集数', value: '1' }], calls_needed: 1, attempts: 3, model: 'm', advice: '' }),
+    } as Response);
+    const { rerender } = render(<WriterAgentPage title="雨夜来信" script="第1集\n内景：书房 - 日\n沈砚抬头。" />);
+    expect(screen.queryByRole('button', { name: '剧本审核' })).toBeNull();
+    rerender(<WriterAgentPage title="雨夜来信" taskId="t1" script="第1集\n内景：书房 - 日\n沈砚抬头。" />);
+    fireEvent.click(screen.getByRole('button', { name: '剧本审核' }));
+    expect(await screen.findByRole('dialog', { name: '剧本审核报告' })).toBeTruthy();
+    const reads = fetchMock.mock.calls.filter(call => String(call[0]).includes('/script-review'));
+    expect(reads).toHaveLength(1);
+    expect((reads[0][1] as RequestInit | undefined)?.method).toBeUndefined();
+    fetchMock.mockRestore();
+  });
+
+  it('offers the platform submission pack and holds the button while it is being prepared', async () => {
+    const onExportSubmission = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(<WriterAgentPage title="雨夜来信" script="第1集\n内景：书房 - 日\n沈砚抬头。" onExportSubmission={onExportSubmission} />);
+
+    await user.click(screen.getByRole('button', { name: '投稿材料' }));
+    expect(onExportSubmission).toHaveBeenCalledTimes(1);
+
+    rerender(<WriterAgentPage title="雨夜来信" script="第1集\n内景：书房 - 日\n沈砚抬头。" onExportSubmission={onExportSubmission} submissionBusy />);
+    expect((screen.getByRole('button', { name: '投稿材料生成中…' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('has nothing to offer when nothing can handle it', () => {

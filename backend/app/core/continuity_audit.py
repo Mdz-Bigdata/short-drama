@@ -17,6 +17,19 @@ storyboard_director 为每个镜头算出的 continuity_checks 过去只被渲�
 from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
+from app.core import prompt_data
+
+
+_WORDING_FILE = "continuity_audit"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/continuity_audit.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 # 阶段闸门与质检报告里最多列这么多条失败，避免一屏刷不完；总数另计。
@@ -61,7 +74,7 @@ def audit_prompt_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
         return {"passed": False, "total": 0, "error_codes": ["missing_prompt_detail"],
                 "warning_codes": [], "failures": [{
                     "code": "missing_prompt_detail", "severity": "error",
-                    "detail": "场景缺少分镜提示词详情，无法执行连续性自检。",
+                    "detail": _text_of("audit_prompt_detail.failures.detail"),
                 }]}
     summary = summarize_checks(detail.get("continuity_checks"))
     submission_ready = detail.get("submission_ready")
@@ -115,17 +128,14 @@ def gate_reasons(audit: Mapping[str, Any] | None) -> list[str]:
     ]
     extra = max(0, len(listed) - _MAX_LISTED_FAILURES)
     shown = ",".join(listed[:_MAX_LISTED_FAILURES]) + (f",…+{extra}" if extra else "")
-    return [f"4_continuity_audit.passed=true ({shown or '未通过'})"]
+    return [f"4_continuity_audit.passed=true ({shown or _text_of('gate_reasons.text')})"]
 
 
 def audit_markdown(audit: Mapping[str, Any] | None) -> str:
     """质检报告里的机器自检表：没有检查记录时返回空串，不制造噪声。"""
     if not isinstance(audit, Mapping) or not audit.get("scenes_checked"):
         return ""
-    lines = [
-        "| 场景 | 检查项 | 级别 | 说明 |",
-        "|---|---|---|---|",
-    ]
+    lines = list(_words_of("audit_markdown.lines"))
     failures = [item for item in audit.get("failures") or [] if isinstance(item, Mapping)]
     for item in failures[:_MAX_LISTED_FAILURES]:
         lines.append(
@@ -133,12 +143,10 @@ def audit_markdown(audit: Mapping[str, Any] | None) -> str:
             f"{item.get('severity', 'error')} | {item.get('detail', '')} |"
         )
     if len(failures) > _MAX_LISTED_FAILURES:
-        lines.append(f"| … | 另有 {len(failures) - _MAX_LISTED_FAILURES} 条 | | |")
+        lines.append(_text_of("audit_markdown.text").format(len(failures) - _MAX_LISTED_FAILURES))
     if not failures:
-        lines.append("| 全部场景 | 连续性自检 | 通过 | 无失败项 |")
+        lines.append(_text_of("audit_markdown.text.2"))
     header = (
-        f"已对 {audit.get('scenes_checked')} 个场景执行机器连续性自检："
-        f"error {audit.get('errors', 0)} 项、warning {audit.get('warnings', 0)} 项，"
-        f"未通过场景 {len(audit.get('scenes_failed') or [])} 个。"
+        _text_of("audit_markdown.header").format(audit.get('scenes_checked'), audit.get('errors', 0), audit.get('warnings', 0), len(audit.get('scenes_failed') or []))
     )
     return header + "\n" + "\n".join(lines)

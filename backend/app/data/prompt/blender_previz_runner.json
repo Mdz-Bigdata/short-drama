@@ -1,0 +1,8 @@
+{
+  "_doc": "app/core/blender_previz/runner.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "render.text": "本机没有找到 Blender；请安装 Blender 4.2 以上，或在 .env 里设置 BLENDER_BIN 指向可执行文件",
+  "render.text.2": "Blender 渲染超过 {0} 秒，已中止",
+  "render.text.3": "Blender 渲染失败(退出码 {0})：{1}",
+  "cut_clip.text": "没有找到 ffmpeg，无法按镜头切片",
+  "cut_clip.text.2": "切镜头片段失败：{0}"
+}

@@ -1,0 +1,15 @@
+{
+  "_comment": "数字演员设定集(第 3 阶段出图)提示词里的风格词与时代服饰句。ModelGateway._generate_character_sheet_unmetered 真正出图和捏脸页不花钱看一眼的 sheet-prompt 都经 core/actor_sheet_style 读这一份；style_words 按 config.director_style 取，题材带时代服饰约束(GENRE_ERA_COSTUME)时改用 style_era；era_clause 里的 {era_costume} 换成那条约束。",
+  "style_words": {
+    "cyberpunk": "赛博朋克写实电影感",
+    "retro": "年代怀旧胶片质感",
+    "palace": "古装东方美学写实影视感",
+    "mystery_dark": "悬疑低饱和写实电影感",
+    "anime": "2D日漫风格",
+    "horror_folk": "民俗惊悚写实质感",
+    "sci_fi_future": "硬核科幻写实质感"
+  },
+  "style_default": "现代都市短剧写实电影感",
+  "style_era": "符合时代背景的写实影视质感",
+  "era_clause": " The character must wear period-accurate costume — {era_costume}."
+}

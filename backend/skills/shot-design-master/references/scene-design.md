@@ -131,6 +131,17 @@ narrow hallway, strong vertical lines, low ceiling, character framed tightly bet
 | 雨伞 | 分别、保护、疏离 | `black umbrella leaning near the entrance, wet floor reflection` |
 | 镜子 | 自我审视、真相分裂 | `mirror reflection showing the character's hidden expression` |
 
+不是道具的东西也能替人把没说出口的那半句说完：
+
+| 来源 | 叙事功能 | 场景提示词 |
+|---|---|---|
+| 影子 | 压迫、心里藏着的另一面 | `the character's shadow thrown by the lamp in the scene onto the wall behind the other person, larger than the figure, same pose` |
+| 热气 | 时间、陪伴、关系冷掉 | `steam rising from the bowl on the table in warm light; later in the same framing, the same bowl, no steam` |
+| 风 | 想走、留不住 | `hem and loose hair pulled toward the open door by the draught, the character standing still` |
+| 天光 | 情绪转折、换章 | `the window sky turning from flat gray to a thin band of warm light, the room lit by that light` |
+
+这几样都要从画面里本来就有的源头来——现场那盏灯投下的影子、碗里升起的热气、门口进来的风、窗外的天，只占画面一部分，不压人物的脸；人物的脸、动作、服装照旧，画风不变，不往画面里加现场没有的东西。
+
 ## 8. 常用短剧场景库
 
 ### 高层公寓客厅

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Final
+from typing import Any, Final
 
 from app.schema.agent_council import (
     ALL_AGENT_ROLES,
@@ -28,7 +28,7 @@ from app.schema.agent_council import (
     ProductionConstitution,
     ReleaseCheck,
 )
-from app.core import knowledge_registry
+from app.core import knowledge_registry, prompt_data
 from app.schema.production import identity_view_order_is_valid
 
 
@@ -37,27 +37,45 @@ def knowledge_source_keys() -> tuple[str, ...]:
     return tuple(sorted(knowledge_registry.sections()))
 
 
+# The council's sentences, role prompts and word tables: app/data/prompt/agent_council.json.
+_WORDING = "agent_council"
+
+
+def _entry(key: str) -> Any:
+    """The entry at the dotted ``key`` ("section.name") of the wording table."""
+    node: Any = prompt_data.load(_WORDING)
+    for part in key.split("."):
+        node = node[part]
+    return node
+
+
+def _template(key: str) -> str:
+    """A template of the wording table as written (an array of lines is joined with newlines)."""
+    entry = _entry(key)
+    return "\n".join(str(line) for line in entry) if isinstance(entry, list) else str(entry)
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A template of the wording table, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return _template(key).format(**values)
+
+
+def _table(key: str) -> Any:
+    """A word table or a list of rules of the wording table, used as it stands."""
+    return _entry(key)
+
+
+def _by_role(key: str) -> dict[AgentRole, Any]:
+    """A table of the wording file keyed by ``AgentRole`` value, in the file's (stage) order."""
+    return {AgentRole(role): value for role, value in _table(key).items()}
+
+
+# 声音与成片合成是同一个角色「剪辑合成师」的两步：内部仍是第 6、7 阶段，各有各的交付物。
 _ROLE_NAMES: Final[dict[AgentRole, tuple[str, str]]] = {
-    AgentRole.EXECUTIVE_DIRECTOR: ("总导演", "Executive Director"),
-    AgentRole.WRITER: ("编剧", "Writer Agent"),
-    AgentRole.CHARACTER_DESIGNER: ("角色设计师", "Character Designer"),
-    AgentRole.STORYBOARD_ARTIST: ("分镜师", "Storyboard Artist"),
-    AgentRole.VISUAL_DIRECTOR: ("视觉总监", "Visual Director"),
-    AgentRole.AUDIO_DIRECTOR: ("音频总监", "Audio Director"),
-    AgentRole.COMPOSER_PUBLISHER: ("合成发布", "Composer & Publisher"),
-    AgentRole.PR_AGENT: ("宣发 Agent", "PR Agent"),
+    role: (str(names[0]), str(names[1])) for role, names in _by_role("role_names").items()
 }
 
-_MISSIONS: Final[dict[AgentRole, str]] = {
-    AgentRole.EXECUTIVE_DIRECTOR: "确立题材、受众、商业边界、叙事弧、高光与全局质量标准，并裁决跨部门冲突。",
-    AgentRole.WRITER: "交付可拍、可听、因果完整的分集剧本，管理钩子、信息差、伏笔、弧光、台词与情绪节拍。",
-    AgentRole.CHARACTER_DESIGNER: "锁定每个角色与状态的身份 DNA、数字演员设定集、造型、标志物、表演基线与声音身份。",
-    AgentRole.STORYBOARD_ARTIST: "把剧本拆成连续可生成的时间拍点、九宫格、场景圣经、镜头契约、动作与剪辑交接。",
-    AgentRole.VISUAL_DIRECTOR: "锁定画风、场景、光色材质与参考资产，编译负面词并自动路由多种视频生成模式。",
-    AgentRole.AUDIO_DIRECTOR: "设计角色声卡、逐句语速情绪停顿、口型时序、SFX/Foley、BGM 与可编辑混音计划。",
-    AgentRole.COMPOSER_PUBLISHER: "完成剪辑、转场、字幕、音画合成、母版、平台导出、版本归档与发布前验收。",
-    AgentRole.PR_AGENT: "从真实高光中制作封面、标题、预告、文案、标签、A/B 计划、在地化与投放指标闭环。",
-}
+_MISSIONS: Final[dict[AgentRole, str]] = {role: str(text) for role, text in _by_role("missions").items()}
 
 _ROLE_OUTPUTS: Final[dict[AgentRole, tuple[str, ...]]] = {
     AgentRole.EXECUTIVE_DIRECTOR: (
@@ -97,82 +115,16 @@ _ROLE_OUTPUTS: Final[dict[AgentRole, tuple[str, ...]]] = {
 # What each deliverable is called in the prose an agent writes. The ids stay the structured keys
 # (release evidence, handoffs); the prompt names deliverables in Chinese so the plans read in Chinese.
 ARTIFACT_LABELS: Final[dict[str, str]] = {
-    "director_constitution": "导演宪法", "genre_audience_strategy": "题材与受众策略",
-    "series_narrative_arc": "全季叙事弧线", "highlight_map": "高光地图",
-    "production_risk_register": "制作风险登记", "director_approval": "导演审批",
-    "series_bible": "剧集圣经", "episode_scripts": "分集剧本", "character_arcs": "人物弧光",
-    "dialogue_sheet": "台词表", "foreshadow_ledger": "伏笔账本", "writer_compliance_pass": "编剧合规自检",
-    "character_bible": "角色圣经", "five_view_turnarounds": "五视图设定", "character_state_cards": "角色状态卡",
-    "costume_makeup_ledger": "服化账本", "prop_ownership": "道具归属", "voice_identity_brief": "声音身份说明",
-    "scene_bibles": "场景圣经", "exact_nine_grid_storyboards": "九宫格分镜", "shot_motion_contracts": "镜头运镜契约",
-    "continuity_ledger": "连续性账本", "action_choreography": "动作设计", "storyboard_qc": "分镜质检",
-    "visual_bible": "视觉圣经", "style_palette_lighting_lock": "风格色板与布光锁定", "negative_prompt_plan": "负面提示词方案",
-    "reference_binding_plan": "参考图绑定方案", "generated_keyframes": "关键帧", "video_route_plans": "视频路由方案",
-    "visual_qc": "视觉质检", "voice_cards": "声卡", "dialogue_timing": "台词时间轴",
-    "elevenlabs_job_plan": "配音任务计划", "sfx_foley_cues": "音效与拟音提示", "bgm_music_plan": "配乐方案",
-    "lipsync_plan": "口型同步方案", "audio_mix_plan": "混音方案", "audio_qc": "音频质检",
-    "edit_decision_list": "剪辑决策表", "transition_plan": "转场方案", "subtitle_package": "字幕包",
-    "mastered_timeline": "母版时间线", "export_profiles": "导出规格", "delivery_archive": "交付归档",
-    "final_qc": "成片终检", "highlight_clips": "高光切片", "cover_title_variants": "封面与标题备选",
-    "trailer_plan": "预告方案", "platform_copy_tags": "平台文案与标签", "ab_test_plan": "A/B 测试方案",
-    "localization_package": "本地化素材包", "rights_ai_disclosure": "版权与授权", "campaign_kpis": "投放指标",
+    artifact_id: str(label) for artifact_id, label in _table("artifact_labels").items()
 }
-
 
 def artifact_label(artifact_id: str) -> str:
     return ARTIFACT_LABELS.get(artifact_id, artifact_id)
 
 
 _ROLE_GATES: Final[dict[AgentRole, tuple[str, ...]]] = {
-    AgentRole.EXECUTIVE_DIRECTOR: (
-        "前3秒有可见冲突/悬念；每集有冲突、情绪点和尾钩。",
-        "题材、受众、平台、预算、合规和人类审批边界明确。",
-        "所有高光有前文铺垫、强度、情绪、叙事功能和可传播依据。",
-    ),
-    AgentRole.WRITER: (
-        "只写镜头可见与声音可听内容；不以心理旁白代替行动。",
-        "每句台词默认不超过15个汉字，并标注潜台词、重音、停顿与打断。",
-        "因果、人物知情状态、时间线、伏笔回收和多集承接均有台账。",
-    ),
-    AgentRole.CHARACTER_DESIGNER: (
-        "每个角色/状态独立交付一张 21:9 数字演员设定集（主肖像 / 全身与元素 / 细节矩阵 三栏，含 1×3 三视图、2×4 元素拆解、4×3 细节矩阵与各格编号中文标注），五个身份锚点顺序不得改变且通过完整性检查。",
-        "脸、发际线、体型、服装层次、配饰、伤痕与标志道具可量化且可复用。",
-        "角色之间在脸型、发型、服装主色和声纹上可区分。",
-        "设定集负面词只取通用/面部/手部肢体/身份造型/服化道/材质模块，不发时序词，不盲目堆叠。",
-    ),
-    AgentRole.STORYBOARD_ARTIST: (
-        "每页为严格3×3九宫格，逐格包含角色、场景、道具、特效与完整镜头字段。",
-        "一镜可以多人同时露面、连着多个动作，写清谁先谁后，并承接上一镜首尾状态。",
-        "轴线、视线、左右站位、光向、道具归属和声音桥连续；动作戏拆成出招/受击/环境反馈。",
-        "九宫格负面词只取通用/面部/手部肢体/身份造型/多人群演/场景光影/镜头语言/表演模块，静图不发时序词，不盲目堆叠。",
-    ),
-    AgentRole.VISUAL_DIRECTOR: (
-        "分镜图提示词与运镜提示词来自同一 ShotMotionContract，指纹一致。",
-        "首尾帧、多图/宫格、多模态模式由素材与供应商能力自动选择，缺失能力必须失败关闭。",
-        "负面词按人物/手部/多人/场景/材质/时序/题材模块选择，不盲目堆叠。",
-        "图像侧与视频侧分别编译负面词，只有视频侧发时序连续性模块，机位约束沿用上游镜头契约不重复压制。",
-    ),
-    AgentRole.AUDIO_DIRECTOR: (
-        "同一角色固定 voice_id/声纹；逐句记录语速、情绪、停顿、重音、呼吸与时长。",
-        "对白、环境、动作、情绪、Foley、BGM 均在同一时间轴，撞击音效帧级对齐。",
-        "ElevenLabs 密钥仅从服务端环境读取；SFX 使用 /v1/sound-generation，音乐与配音使用各自端点。",
-        "语音与音乐接口没有负面词通道，排除项必须写进正向提示词：BGM 只出器乐并为对白留声位，环境音效不含音乐与人声；"
-        "本角色的负面词只保留时序与表演两个模块，用于核验口型时序与念白表演，不得把画面负面词发给音频模型。",
-    ),
-    AgentRole.COMPOSER_PUBLISHER: (
-        "音画、字幕、口型、镜头契约与转场连续性全部通过，未验收素材不得发布。",
-        "输出分辨率/帧率/编码/字幕安全区按目标平台统一，不混用互斥基准。",
-        "保留提示词、模型、seed、素材授权、版本、问题与审批记录，支持单镜重做。",
-        "为每个入选镜头归档其负面词模块台账并逐条核对，缺记录即判归档不完整；成片只核验通用画质/时序/文字水印三项，不盲目堆叠。",
-    ),
-    AgentRole.PR_AGENT: (
-        "宣传素材只能取自正片真实高光，不得夸大或诱导。",
-        "每个平台独立交付封面、标题、预告、简介、标签与版权说明；物料里不写 AI 生成、AI 制作这类声明。",
-        "用3秒留存、完播、下一集点击、转化、分享和ROI做A/B闭环。",
-        "宣发当前不生成画面，负面词只保留身份造型与文字水印两项用于物料核验；新增封面或预告生成前不得扩用画面负面词。",
-    ),
+    role: tuple(str(gate) for gate in gates) for role, gates in _by_role("role_gates").items()
 }
-
 
 def _cap(
     capability_id: str,
@@ -194,110 +146,121 @@ def _cap(
     )
 
 
+# 能力目录的中文名与可执行策略按能力 id 存在措辞表里；id、负责角色、知识源、校验器与交付物是代码要比对的值，留在这里。
+_CAPABILITY_WORDING: Final[dict[str, Any]] = _table("capabilities")
+
+
+def _owned(
+    capability_id: str,
+    owners: tuple[AgentRole, ...],
+    sources: tuple[str, ...],
+    validator: str,
+    artifacts: tuple[str, ...],
+) -> CapabilityRecord:
+    """A catalog entry whose label and policy are the wording table's ``capabilities.<capability_id>``."""
+    wording = _CAPABILITY_WORDING[capability_id]
+    return _cap(capability_id, str(wording["label"]), owners, sources, str(wording["policy"]), validator, artifacts)
+
+
 _C = AgentRole
 CAPABILITIES: Final[tuple[CapabilityRecord, ...]] = (
-    _cap("genre_strategy", "题材、受众与商业定位", (_C.EXECUTIVE_DIRECTOR, _C.PR_AGENT),
-         ("genre-summary", "production-guidelines", "industrial-production"),
-         "从题材库选择主类型/混合元素，记录受众、平台、付费与成本边界。", "validate_director_artifacts", ("genre_audience_strategy",)),
-    _cap("golden_narrative", "黄金叙事结构与多集弧", (_C.EXECUTIVE_DIRECTOR, _C.WRITER),
-         ("golden-narrative", "production-guidelines", "cinema-craft-redlines", "episode-hook-ladder", "scene-craft-dialogue", "payoff-arc-craft",
-          "character-relationship-craft", "emotional-hook-craft"),
-         "强制前3秒钩子、周期冲突/反转、单集情绪点与尾5秒钩子；每集情绪/视觉/场景各有一次顶点(S级三冲击)，强情节必须因果成立；"
-         "前三集按引爆/升级/反转分工，集尾悬念与下一集开场咬合，付费墙前三集走虚假胜利→崩塌→黑屏钩子；"
-         "爽剧主角弱时智谋苟道、强时杀伐果断横推，相邻两集换爽法、解围前有伏笔；"
-         "钩子先立共情基点再抛反常，代价落在观众在乎的人和物上，堵死退路、误导拉扯之后才卡点或反向爆击。",
-         "validate_narrative_contract", ("series_narrative_arc", "episode_scripts")),
-    _cap("highlight_detection", "高光识别与传播强度", (_C.EXECUTIVE_DIRECTOR, _C.PR_AGENT),
-         ("highlight-detection",),
-         "按情节/情绪/叙事/视听/观众行为打1-10分，7分以上进入候选并保留上下文理由。", "validate_highlight_map", ("highlight_map", "highlight_clips")),
-    _cap("production_orchestration", "八 Agent 编排与人类审批", (_C.EXECUTIVE_DIRECTOR,),
-         ("industrial-production", "consistency-checklist"),
-         "八角色按契约交接；缺失输入、未批准资产或阻断问题不得向下游推进。", "validate_council_coverage", ("director_constitution", "director_approval")),
-    _cap("story_causality", "因果、信息状态、伏笔与世界规则", (_C.WRITER, _C.EXECUTIVE_DIRECTOR),
-         ("consistency-checklist", "golden-narrative", "cinema-craft-redlines", "episode-hook-ladder"),
-         "维护因果链、角色知情表、世界规则、时间线、伏笔设置/回收和关系变化台账；每集更新角色状态/暗线进度/埋种回调/已公开信息四张追踪表。", "validate_narrative_contract", ("series_bible", "foreshadow_ledger")),
-    _cap("dialogue_craft", "口语台词、潜台词与角色辨识", (_C.WRITER, _C.AUDIO_DIRECTOR),
-         ("dialogue-pacing", "production-guidelines", "cinema-craft-redlines", "scene-craft-dialogue", "poetry-recreation"),
-         "台词短句化并记录角色语癖(语言指纹)、潜台词、打断/重叠、叙述层与可读时长；不写心理描写、括号暗示与解释性台词。", "validate_dialogue_contract", ("dialogue_sheet", "voice_cards")),
-    _cap("dialogue_performance", "语速、情绪、停顿、重音与呼吸", (_C.AUDIO_DIRECTOR, _C.WRITER),
-         ("dialogue-pacing", "performance-details"),
-         "逐句编译 speed/emotion/intensity/pause/stress/breath，并校验对白时长与镜头时长。", "validate_audio_contract", ("dialogue_timing", "lipsync_plan")),
-    _cap("five_view_identity", "数字演员设定集与身份 DNA", (_C.CHARACTER_DESIGNER,),
-         ("actor-sheet-template", "consistency-checklist"),
-         "每个角色状态严格按正面/正面四分之三/侧面/背面四分之三/背面生成并质检。", "validate_five_view_contract", ("five_view_turnarounds", "character_state_cards")),
-    _cap("character_styling", "发型、服化、体型、标志物与状态版本", (_C.CHARACTER_DESIGNER, _C.VISUAL_DIRECTOR),
-         ("actor-sheet-template", "director-shot-guide"),
-         "造型字段逐项锁定；换装/战损/年龄变化使用新 state_id，不覆盖基础状态。", "validate_character_artifacts", ("character_bible", "costume_makeup_ledger")),
-    _cap("observable_acting", "可观察表演与微表情", (_C.CHARACTER_DESIGNER, _C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR),
-         ("performance-details", "emotion-expression", "martial-arts"),
-         "把抽象情绪转换为眉眼嘴颌、视线、呼吸、手部、重心和渐进关键帧。", "validate_performance_contract", ("character_bible", "shot_motion_contracts", "visual_qc")),
-    _cap("scene_bible", "功能化场景圣经", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR),
-         ("scene-design", "continuity-design"),
-         "为场景锁定剧情功能、布局、出入口、站位、关键道具、光向色温、材质与前中后景。", "validate_scene_contract", ("scene_bibles", "visual_bible")),
-    _cap("shot_grammar", "景别、构图、机位、焦段与运镜语法", (_C.STORYBOARD_ARTIST,),
-         ("director-shot-guide", "visual-style", "high-tension-shots"),
-         "每镜说明景别/角度/焦段/构图/运镜路径/速度/起止点/叙事原因，禁止无动机炫技。", "validate_storyboard_contract", ("shot_motion_contracts",)),
-    _cap("blocking_axis", "站位、视线与180度轴线", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR),
-         ("director-shot-guide", "continuity-design", "shot-group-and-handoff-checks"),
-         "固定角色左右、眼线、动作方向和机位侧；跨轴须有可见过轴或中性镜头。", "validate_continuity_contract", ("continuity_ledger", "reference_binding_plan")),
-    _cap("exact_nine_grid", "严格九宫格与分页", (_C.STORYBOARD_ARTIST,),
-         ("actor-sheet-template", "plot-shot-coherence"),
-         "分镜按3×3从左到右、从上到下；每格一拍，真实镜不足时只留空格不伪造剧情。", "validate_nine_grid_contract", ("exact_nine_grid_storyboards", "storyboard_qc")),
-    _cap("continuity_six_anchors", "跨镜六锚点连续性", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR, _C.COMPOSER_PUBLISHER),
-         ("plot-shot-coherence", "continuity-design", "consistency-checklist", "frame-handoff-action-light-tone", "shot-group-and-handoff-checks", "cut-connection-ideas", "segment-relay-and-fight-keyframes"),
-         "人物/空间/动作/情绪/道具/光影从上一镜尾状态原样交付下一镜首状态。", "validate_continuity_contract", ("continuity_ledger", "transition_plan")),
-    _cap("fight_choreography", "武打力学与出招-受击拆分", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR, _C.AUDIO_DIRECTOR),
-         ("martial-arts", "segment-relay-and-fight-keyframes"),
-         "高风险动作拆为蓄力/出招/受击/环境反馈，单镜1.5-2.5秒并对齐冲击帧、SFX与轴线。", "validate_action_contract", ("action_choreography", "sfx_foley_cues")),
-    _cap("visual_style", "画质、载体、色彩、光影与材质风格", (_C.VISUAL_DIRECTOR, _C.EXECUTIVE_DIRECTOR),
-         ("visual-style", "director-shot-guide"),
-         "按题材/载体选择唯一视觉基线并锁定色板、LUT、主光、镜头质感和材质。", "validate_visual_contract", ("style_palette_lighting_lock",)),
+    _owned("genre_strategy", (_C.EXECUTIVE_DIRECTOR, _C.PR_AGENT),
+           ("genre-summary", "production-guidelines", "industrial-production"),
+           "validate_director_artifacts", ("genre_audience_strategy",)),
+    _owned("golden_narrative", (_C.EXECUTIVE_DIRECTOR, _C.WRITER),
+           ("golden-narrative", "production-guidelines", "cinema-craft-redlines", "episode-hook-ladder", "scene-craft-dialogue", "payoff-arc-craft",
+            "character-relationship-craft", "causal-chain-craft", "tension-craft", "emotional-hook-craft"),
+           "validate_narrative_contract", ("series_narrative_arc", "episode_scripts")),
+    _owned("highlight_detection", (_C.EXECUTIVE_DIRECTOR, _C.PR_AGENT),
+           ("highlight-detection",),
+           "validate_highlight_map", ("highlight_map", "highlight_clips")),
+    _owned("production_orchestration", (_C.EXECUTIVE_DIRECTOR,),
+           ("industrial-production", "consistency-checklist"),
+           "validate_council_coverage", ("director_constitution", "director_approval")),
+    _owned("story_causality", (_C.WRITER, _C.EXECUTIVE_DIRECTOR),
+           ("consistency-checklist", "golden-narrative", "cinema-craft-redlines", "episode-hook-ladder", "causal-chain-craft", "tension-craft",
+            "xianxia-power-system", "xianxia-catalog", "xianxia-world"),
+           "validate_narrative_contract", ("series_bible", "foreshadow_ledger")),
+    _owned("dialogue_craft", (_C.WRITER, _C.AUDIO_DIRECTOR),
+           ("dialogue-pacing", "production-guidelines", "cinema-craft-redlines", "scene-craft-dialogue", "poetry-recreation"),
+           "validate_dialogue_contract", ("dialogue_sheet", "voice_cards")),
+    _owned("dialogue_performance", (_C.AUDIO_DIRECTOR, _C.WRITER),
+           ("dialogue-pacing", "performance-details"),
+           "validate_audio_contract", ("dialogue_timing", "lipsync_plan")),
+    _owned("five_view_identity", (_C.CHARACTER_DESIGNER,),
+           ("actor-sheet-template", "consistency-checklist"),
+           "validate_five_view_contract", ("five_view_turnarounds", "character_state_cards")),
+    _owned("character_styling", (_C.CHARACTER_DESIGNER, _C.VISUAL_DIRECTOR),
+           ("actor-sheet-template", "director-shot-guide"),
+           "validate_character_artifacts", ("character_bible", "costume_makeup_ledger")),
+    _owned("observable_acting", (_C.CHARACTER_DESIGNER, _C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR),
+           ("performance-details", "emotion-expression", "martial-arts"),
+           "validate_performance_contract", ("character_bible", "shot_motion_contracts", "visual_qc")),
+    _owned("scene_bible", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR),
+           ("scene-design", "continuity-design"),
+           "validate_scene_contract", ("scene_bibles", "visual_bible")),
+    _owned("shot_grammar", (_C.STORYBOARD_ARTIST,),
+           ("director-shot-guide", "visual-style", "high-tension-shots"),
+           "validate_storyboard_contract", ("shot_motion_contracts",)),
+    _owned("blocking_axis", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR),
+           ("director-shot-guide", "continuity-design", "shot-group-and-handoff-checks"),
+           "validate_continuity_contract", ("continuity_ledger", "reference_binding_plan")),
+    _owned("exact_nine_grid", (_C.STORYBOARD_ARTIST,),
+           ("actor-sheet-template", "plot-shot-coherence"),
+           "validate_nine_grid_contract", ("exact_nine_grid_storyboards", "storyboard_qc")),
+    _owned("continuity_six_anchors", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR, _C.COMPOSER_PUBLISHER),
+           ("plot-shot-coherence", "continuity-design", "consistency-checklist", "frame-handoff-action-light-tone", "shot-group-and-handoff-checks", "cut-connection-ideas", "segment-relay-and-fight-keyframes"),
+           "validate_continuity_contract", ("continuity_ledger", "transition_plan")),
+    _owned("fight_choreography", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR, _C.AUDIO_DIRECTOR),
+           ("martial-arts", "segment-relay-and-fight-keyframes"),
+           "validate_action_contract", ("action_choreography", "sfx_foley_cues")),
+    _owned("visual_style", (_C.VISUAL_DIRECTOR, _C.EXECUTIVE_DIRECTOR),
+           ("visual-style", "director-shot-guide"),
+           "validate_visual_contract", ("style_palette_lighting_lock",)),
     # 编剧之后的六个角色共同持有：出图出视频的角色负责编译执行，
     # 音频/合成/宣发角色负责按同一模块清单做核验与归档，口径不分叉。
-    _cap("negative_prompt_router", "模块化负面提示词", POST_WRITER_ROLES,
-         ("negative-prompts", "emotion-expression"),
-         "按本角色实际产出形态从通用/脸/手/多人/服装/场景/镜头/材质/时序/表演/题材模块中筛选并保留优先级；"
-         "调用图像与视频模型的角色负责把选中模块编译进提示词，不调用生成模型的角色只按同一清单核验与归档，"
-         "任何角色都不得把全量词表一次性堆满。", "validate_visual_contract", ("negative_prompt_plan",)),
-    _cap("reference_generation", "多图、首尾帧与多模态视频路由", (_C.VISUAL_DIRECTOR, _C.STORYBOARD_ARTIST),
-         ("actor-sheet-template", "continuity-design", "industrial-production"),
-         "根据硬结尾、连续图片、动作视频、音频节奏和供应商能力自动选择模式；不静默丢参考。", "validate_video_route_contract", ("video_route_plans", "reference_binding_plan")),
-    _cap("prompt_fingerprint", "分镜图与运镜同源契约", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR),
-         ("actor-sheet-template",),
-         "分镜图和视频提示词必须携带同一规范化 ShotMotionContract 指纹；变更使旧计划失效。", "validate_fingerprint_contract", ("shot_motion_contracts", "generated_keyframes")),
-    _cap("visual_quality_repair", "视觉质检与局部修复", (_C.VISUAL_DIRECTOR, _C.COMPOSER_PUBLISHER),
-         ("consistency-checklist", "performance-details", "production-guidelines"),
-         "检测身份漂移、手部、口型、闪烁、光向、文字和物理异常；仅重做失败镜头/区域。", "validate_visual_contract", ("visual_qc", "final_qc")),
-    _cap("elevenlabs_audio", "ElevenLabs 配音、对白、SFX与音乐", (_C.AUDIO_DIRECTOR,),
-         ("dialogue-pacing", "production-guidelines", "industrial-production"),
-         "生成可审计服务端任务计划；密钥来自环境，SFX/BGM/TTS端点分离且不在日志暴露。", "validate_audio_contract", ("elevenlabs_job_plan",)),
-    _cap("voice_identity", "角色声卡与声纹连续", (_C.AUDIO_DIRECTOR, _C.CHARACTER_DESIGNER),
-         ("dialogue-pacing", "performance-details"),
-         "角色固定 voice_id、音高、年龄感、语癖、语速基准与授权引用，情绪仅做受控偏移。", "validate_audio_contract", ("voice_cards", "voice_identity_brief")),
-    _cap("sfx_bgm_mix", "环境音、Foley、BGM与混音母版", (_C.AUDIO_DIRECTOR, _C.COMPOSER_PUBLISHER),
-         ("production-guidelines", "martial-arts", "continuity-design"),
-         "环境床跨镜连续、动作声帧对齐、对白时BGM ducking，并交付响度/真峰值母版计划。", "validate_audio_contract", ("sfx_foley_cues", "bgm_music_plan", "audio_mix_plan")),
-    _cap("lip_sync", "口型、字幕与对白时序", (_C.AUDIO_DIRECTOR, _C.COMPOSER_PUBLISHER),
-         ("performance-details", "dialogue-pacing"),
-         "先锁最终干声，再生成口型与逐字时间戳；字幕、闭口手柄与镜头时长共同校验。", "validate_lipsync_contract", ("lipsync_plan", "subtitle_package")),
-    _cap("editing_transitions", "剪辑节奏与连续性转场", (_C.COMPOSER_PUBLISHER, _C.STORYBOARD_ARTIST),
-         ("continuity-design", "production-guidelines", "director-shot-guide", "frame-handoff-action-light-tone"),
-         "不用硬切：同场用动作/视线匹配或镜头顺势运动衔接，换场用遮挡/推拉并让声音先行，时间跳跃用叠化；转场必须连贯自然且有叙事原因。", "validate_delivery_contract", ("edit_decision_list", "transition_plan")),
-    _cap("delivery_master", "字幕、画幅、帧率、编码与归档", (_C.COMPOSER_PUBLISHER,),
-         ("production-guidelines", "visual-style", "consistency-checklist"),
-         "按单一目标平台编译导出配置，校验字幕安全区、OCR、音量、帧率、分辨率、命名、版本与元数据。", "validate_delivery_contract", ("mastered_timeline", "export_profiles", "delivery_archive")),
-    _cap("release_gate", "S/A/B/C 一致性发布门禁", (_C.EXECUTIVE_DIRECTOR, _C.COMPOSER_PUBLISHER),
-         ("consistency-checklist",),
-         "未解决S/A为0、B不超过3、核心均分至少4/5、总分至少85且所有硬门禁通过才可发布。", "evaluate_release", ("final_qc", "director_approval")),
-    _cap("marketing_package", "封面、标题、预告、文案与标签", (_C.PR_AGENT,),
-         ("highlight-detection", "production-guidelines", "industrial-production"),
-         "从已批准高光生成平台化素材，保留正片事实、角色状态、视觉风格和合规边界。", "validate_marketing_contract", ("cover_title_variants", "trailer_plan", "platform_copy_tags")),
-    _cap("growth_loop", "平台指标、A/B、投流与商业闭环", (_C.PR_AGENT, _C.EXECUTIVE_DIRECTOR),
-         ("production-guidelines", "genre-summary"),
-         "跟踪3秒留存、完播、下一集点击、付费、分享和ROI，结论回写下一轮创作假设。", "validate_marketing_contract", ("ab_test_plan", "campaign_kpis")),
-    _cap("rights_provenance", "授权、版权与第三方溯源", (_C.PR_AGENT, _C.COMPOSER_PUBLISHER, _C.EXECUTIVE_DIRECTOR),
-         ("production-guidelines", "consistency-checklist"),
-         "记录人类创作参与、素材/声纹授权、模型条款、来源、版本与审批，不复制受限代码资产。", "validate_provenance_contract", ("rights_ai_disclosure", "delivery_archive", "production_risk_register")),
+    _owned("negative_prompt_router", POST_WRITER_ROLES,
+           ("negative-prompts", "emotion-expression"),
+           "validate_visual_contract", ("negative_prompt_plan",)),
+    _owned("reference_generation", (_C.VISUAL_DIRECTOR, _C.STORYBOARD_ARTIST),
+           ("actor-sheet-template", "continuity-design", "industrial-production"),
+           "validate_video_route_contract", ("video_route_plans", "reference_binding_plan")),
+    _owned("prompt_fingerprint", (_C.STORYBOARD_ARTIST, _C.VISUAL_DIRECTOR),
+           ("actor-sheet-template",),
+           "validate_fingerprint_contract", ("shot_motion_contracts", "generated_keyframes")),
+    _owned("visual_quality_repair", (_C.VISUAL_DIRECTOR, _C.COMPOSER_PUBLISHER),
+           ("consistency-checklist", "performance-details", "production-guidelines"),
+           "validate_visual_contract", ("visual_qc", "final_qc")),
+    _owned("elevenlabs_audio", (_C.AUDIO_DIRECTOR,),
+           ("dialogue-pacing", "production-guidelines", "industrial-production"),
+           "validate_audio_contract", ("elevenlabs_job_plan",)),
+    _owned("voice_identity", (_C.AUDIO_DIRECTOR, _C.CHARACTER_DESIGNER),
+           ("dialogue-pacing", "performance-details"),
+           "validate_audio_contract", ("voice_cards", "voice_identity_brief")),
+    _owned("sfx_bgm_mix", (_C.AUDIO_DIRECTOR, _C.COMPOSER_PUBLISHER),
+           ("production-guidelines", "martial-arts", "continuity-design"),
+           "validate_audio_contract", ("sfx_foley_cues", "bgm_music_plan", "audio_mix_plan")),
+    _owned("lip_sync", (_C.AUDIO_DIRECTOR, _C.COMPOSER_PUBLISHER),
+           ("performance-details", "dialogue-pacing"),
+           "validate_lipsync_contract", ("lipsync_plan", "subtitle_package")),
+    _owned("editing_transitions", (_C.COMPOSER_PUBLISHER, _C.STORYBOARD_ARTIST),
+           ("continuity-design", "production-guidelines", "director-shot-guide", "frame-handoff-action-light-tone"),
+           "validate_delivery_contract", ("edit_decision_list", "transition_plan")),
+    _owned("delivery_master", (_C.COMPOSER_PUBLISHER,),
+           ("production-guidelines", "visual-style", "consistency-checklist"),
+           "validate_delivery_contract", ("mastered_timeline", "export_profiles", "delivery_archive")),
+    _owned("release_gate", (_C.EXECUTIVE_DIRECTOR, _C.COMPOSER_PUBLISHER),
+           ("consistency-checklist",),
+           "evaluate_release", ("final_qc", "director_approval")),
+    _owned("marketing_package", (_C.PR_AGENT,),
+           ("highlight-detection", "production-guidelines", "industrial-production"),
+           "validate_marketing_contract", ("cover_title_variants", "trailer_plan", "platform_copy_tags")),
+    _owned("growth_loop", (_C.PR_AGENT, _C.EXECUTIVE_DIRECTOR),
+           ("production-guidelines", "genre-summary"),
+           "validate_marketing_contract", ("ab_test_plan", "campaign_kpis")),
+    _owned("rights_provenance", (_C.PR_AGENT, _C.COMPOSER_PUBLISHER, _C.EXECUTIVE_DIRECTOR),
+           ("production-guidelines", "consistency-checklist"),
+           "validate_provenance_contract", ("rights_ai_disclosure", "delivery_archive", "production_risk_register")),
 )
 
 
@@ -325,60 +288,26 @@ def _delivery_profile(platform: str) -> DeliveryProfile:
     if platform == "bilibili":
         return DeliveryProfile(
             aspect_ratio="16:9", width=1920, height=1080, fps=24,
-            subtitle_safe_zone="下方10%，避开画面边缘与播放器控件",
+            subtitle_safe_zone=_says("delivery.subtitle_safe_zone_landscape"),
         )
     return DeliveryProfile(
         aspect_ratio="9:16", width=1080, height=1920, fps=30,
-        subtitle_safe_zone="字幕位于下方1/5上沿；避开顶部约200px与底部约250px平台UI",
+        subtitle_safe_zone=_says("delivery.subtitle_safe_zone_portrait"),
     )
 
 
 # 负面词模块词表：id 对照负面提示词指南（negative-prompts 章节）的章节，
 # negative_prompt_router 的可执行策略(通用/脸/手/多人/服装/场景/材质/时序/表演/题材)逐项落到这里。
 NEGATIVE_MODULE_LABELS: Final[dict[str, str]] = {
-    "common_quality": "通用画质(一)",
-    "face_anatomy": "面部结构(二·1)",
-    "hands_body": "手部与肢体(二·2/3)",
-    "identity_outfit": "身份与造型一致性(二·4/四)",
-    "multi_person_crowd": "双人多人群演(三)",
-    "costume_hair_props": "服装发型饰品道具(四)",
-    "scene_layout_lighting": "场景美术与光影(五/七)",
-    "camera_language": "镜头语言与摄影(六)",
-    "material_texture": "质感与材质(八)",
-    "temporal_continuity": "文生视频时序连续性(九)",
-    "performance_acting": "剧情演绎与表演(十)",
-    "text_watermark": "文字水印logo(一·关键压制项)",
-    "period_costume_architecture": "古装历史仙侠补充(十一)",
-    "suspense_horror_visibility": "悬疑惊悚犯罪补充(十三)",
-    "scifi_material_ui": "科幻赛博未来补充(十四)",
-    "action_physics": "战争动作打斗补充(十五)",
-    "weapon_contact": "兵器接触受力(十五)",
-    "crowd_limb_separation": "群戏肢体粘连分离(三/十五)",
+    module: str(label) for module, label in _table("negative.module_labels").items()
 }
 
 # 模块 → 可直接拼进生成提示词的负面词串。词条从负面提示词指南（negative-prompts 章节）对应章节精选，
 # 每模块只保留压制力最强的少数词(知识源 §17.3 关键压制项优先级)；多模块叠加后仍要能
 # 活过 Agnes 网关的截断预算——绝不整章搬运(知识源使用原则 1「不要一次性把负面词堆满」)。
+# 只禁叠加上去的东西：text_watermark 裸写 text 会让模型去擦场景里原有的匾额、对联、招牌。短一点，预算内才轮得到它。
 NEGATIVE_MODULE_WORDS: Final[dict[str, str]] = {
-    "common_quality": "worst quality, blurry, bad anatomy, deformed",                      # §一
-    "face_anatomy": "deformed face, asymmetrical face, dead eyes",                         # §二·1
-    "hands_body": "bad hands, extra fingers, fused fingers, extra limbs",                  # §二·2/3
-    "identity_outfit": "identity drift, face drift, changing outfit, clone face",          # §二·4/§九
-    "multi_person_crowd": "duplicate people, merged bodies, tangled limbs",                # §三
-    "costume_hair_props": "costume flicker, hair clipping, prop flicker, floating weapon", # §四
-    "scene_layout_lighting": "warped background, inconsistent lighting direction, flat lighting",  # §五/§七
-    "camera_language": "broken shot continuity, wrong eyeline match, random zoom",         # §六
-    "material_texture": "plastic skin, waxy skin, CGI look, 3d render",                    # §八
-    "temporal_continuity": "frame flicker, temporal inconsistency, character drift, sliding feet",  # §九
-    "performance_acting": "overacting, stiff acting, broken lip sync, expression drift",   # §十
-    # 只禁叠加上去的东西：裸写 text 会让模型去擦场景里原有的匾额、对联、招牌。短一点，预算内才轮得到它。
-    "text_watermark": "subtitles, watermark, logo",                                        # §一·关键压制项
-    "period_costume_architecture": "modern hairstyle, zipper, modern props, cosplay look", # §十一
-    "suspense_horror_visibility": "muddy darkness, unreadable shadows, cheesy blood",      # §十三
-    "scifi_material_ui": "cheap sci-fi, fake hologram, floating meaningless interface",    # §十四
-    "action_physics": "frozen action, no-impact fight, foot sliding, floating debris",     # §十五
-    "weapon_contact": "soft weapon, rubber weapon, melted weapon, incorrect grip",         # §十五
-    "crowd_limb_separation": "body clipping, intersecting limbs, fused characters",        # §三/§十五
+    module: str(words) for module, words in _table("negative.module_words").items()
 }
 
 
@@ -407,73 +336,46 @@ def compile_negative_prompt(modules: list[str], *, budget: int = 420) -> str:
         length += added
     if not words:
         return ""
-    return "(避免：" + ", ".join(words) + ")"
+    return _says("negative.prompt", words=", ".join(words))
 
 
-_NEGATIVE_BASE_MODULES: Final[tuple[str, ...]] = (
-    "common_quality", "face_anatomy", "hands_body", "identity_outfit",
-    "multi_person_crowd", "costume_hair_props", "scene_layout_lighting",
-    "camera_language", "material_texture", "temporal_continuity",
-    "performance_acting", "text_watermark",
-)
+_NEGATIVE_BASE_MODULES: Final[tuple[str, ...]] = tuple(str(module) for module in _table("negative.base_modules"))
 
 # 每个下游角色按自己真正调用的生成接口筛模块，不是复制全量词表。
 # 依据：知识源 §17.2「不同任务的推荐组合」与各角色在流水线里的实际产出形态。
+# 数字演员设定集是静态设定图、全片身份锚点：压五官漂移/手部崩塌/服装走样/配色不稳，不发时序词。
+# 九宫格同样是静图，但要处理群像、机位与场景圣经，仍不发时序词。
+# 视觉总监是唯一同时出图与出视频的角色，时序连续性必发；机位由上游 ShotMotionContract 锁定，本阶段不再重复压制镜头语言。
+# TTS/音乐/音效接口只接受一个正向字符串，没有负面词通道：音频总监只保留与口型时序、念白表演真正相关的两项，作为核验口径而非画面约束。
+# 合成发布不调用任何生成模型：它的三项是在母版与转场上的核验与归档口径。
+# 宣发当前不产出画面，只在封面与物料描述上沿用同一身份与错字水印边界。
 _ROLE_NEGATIVE_MODULES: Final[dict[AgentRole, tuple[str, ...]]] = {
-    # 数字演员设定集是静态设定图、全片身份锚点：压五官漂移/手部崩塌/服装走样/配色不稳，不发时序词。
-    AgentRole.CHARACTER_DESIGNER: (
-        "common_quality", "face_anatomy", "hands_body", "identity_outfit",
-        "costume_hair_props", "material_texture", "text_watermark",
-    ),
-    # 九宫格同样是静图，但要处理群像、机位与场景圣经，仍不发时序词。
-    AgentRole.STORYBOARD_ARTIST: (
-        "common_quality", "face_anatomy", "hands_body", "identity_outfit",
-        "multi_person_crowd", "scene_layout_lighting", "camera_language",
-        "performance_acting", "text_watermark",
-    ),
-    # 唯一同时出图与出视频的角色，时序连续性必发；机位由上游 ShotMotionContract 锁定，
-    # 本阶段不再重复压制镜头语言。
-    AgentRole.VISUAL_DIRECTOR: (
-        "common_quality", "face_anatomy", "hands_body", "identity_outfit",
-        "multi_person_crowd", "costume_hair_props", "scene_layout_lighting",
-        "material_texture", "temporal_continuity", "performance_acting", "text_watermark",
-    ),
-    # TTS/音乐/音效接口只接受一个正向字符串，没有负面词通道：
-    # 音频总监只保留与口型时序、念白表演真正相关的两项，作为核验口径而非画面约束。
-    AgentRole.AUDIO_DIRECTOR: ("temporal_continuity", "performance_acting"),
-    # 合成发布不调用任何生成模型：这三项是它在母版与转场上的核验与归档口径。
-    AgentRole.COMPOSER_PUBLISHER: ("common_quality", "temporal_continuity", "text_watermark"),
-    # 宣发当前不产出画面，只在封面与物料描述上沿用同一身份与错字水印边界。
-    AgentRole.PR_AGENT: ("identity_outfit", "text_watermark"),
+    role: tuple(str(module) for module in modules) for role, modules in _by_role("negative.role_modules").items()
 }
 
 # 题材与高动作追加项只发给真正能对画面动手的角色。
 _ROLE_GENRE_NEGATIVE_MODULES: Final[dict[str, tuple[AgentRole, ...]]] = {
-    "period_costume_architecture": (
-        AgentRole.CHARACTER_DESIGNER, AgentRole.STORYBOARD_ARTIST, AgentRole.VISUAL_DIRECTOR,
-    ),
-    "suspense_horror_visibility": (AgentRole.STORYBOARD_ARTIST, AgentRole.VISUAL_DIRECTOR),
-    "scifi_material_ui": (
-        AgentRole.CHARACTER_DESIGNER, AgentRole.STORYBOARD_ARTIST, AgentRole.VISUAL_DIRECTOR,
-    ),
-    "action_physics": (AgentRole.STORYBOARD_ARTIST, AgentRole.VISUAL_DIRECTOR),
-    "weapon_contact": (AgentRole.STORYBOARD_ARTIST, AgentRole.VISUAL_DIRECTOR),
-    "crowd_limb_separation": (AgentRole.STORYBOARD_ARTIST, AgentRole.VISUAL_DIRECTOR),
+    module: tuple(AgentRole(role) for role in roles) for module, roles in _table("negative.genre_roles").items()
 }
+
+# 题材触发词：按顺序逐条比对小写后的题材，包含任一词即追加该模块；高动作强度再追加一组。
+_GENRE_NEGATIVE_TRIGGERS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = tuple(
+    (str(module), tuple(str(word) for word in words)) for module, words in _table("negative.genre_triggers")
+)
+_HIGH_ACTION_NEGATIVE_MODULES: Final[tuple[str, ...]] = tuple(
+    str(module) for module in _table("negative.high_action_modules")
+)
 
 
 def _negative_modules(request: CouncilCompileRequest) -> list[str]:
     """全局词表：本次项目允许使用的负面词模块全集(扁平清单，兼容既有调用方)。"""
     modules = list(_NEGATIVE_BASE_MODULES)
     genre = request.genre.lower()
-    if any(word in genre for word in ("古", "宫", "武侠", "仙侠", "period", "wuxia", "xianxia")):
-        modules.append("period_costume_architecture")
-    if any(word in genre for word in ("悬疑", "犯罪", "恐怖", "mystery", "crime", "horror")):
-        modules.append("suspense_horror_visibility")
-    if any(word in genre for word in ("科幻", "赛博", "sci", "cyber")):
-        modules.append("scifi_material_ui")
+    for module, triggers in _GENRE_NEGATIVE_TRIGGERS:
+        if any(word in genre for word in triggers):
+            modules.append(module)
     if request.action_intensity == "high":
-        modules.extend(["action_physics", "weapon_contact", "crowd_limb_separation"])
+        modules.extend(_HIGH_ACTION_NEGATIVE_MODULES)
     return modules
 
 
@@ -531,39 +433,45 @@ def _role_prompt(
 ) -> str:
     name_zh, name_en = _ROLE_NAMES[role]
     capabilities = _role_capabilities(role)
-    policies = "\n".join(f"- [{item.id}] {item.executable_policy}" for item in capabilities)
-    outputs = "、".join(artifact_label(item) for item in _ROLE_OUTPUTS[role])
-    gates = "\n".join(f"- {gate}" for gate in _ROLE_GATES[role])
+    policies = "\n".join(
+        _says("role_prompt.policy_line", capability_id=item.id, policy=item.executable_policy) for item in capabilities
+    )
+    outputs = _table("role_prompt.output_separator").join(artifact_label(item) for item in _ROLE_OUTPUTS[role])
+    gates = "\n".join(_says("role_prompt.gate_line", gate=gate) for gate in _ROLE_GATES[role])
     # 只有编剧之后的角色带负面词小节；总导演与编剧的提示词保持原样。
     negative_section = ""
     if negative_modules:
         rendered = "\n".join(
-            f"- {module}（{NEGATIVE_MODULE_LABELS.get(module, module)}）" for module in negative_modules
+            _says("role_prompt.negative_module_line", module=module, label=NEGATIVE_MODULE_LABELS.get(module, module))
+            for module in negative_modules
         )
-        negative_section = (
-            f"本角色负面提示词模块（来自《{knowledge_registry.section_title('negative-prompts')}》，按本角色产出形态筛选而成，"
-            f"不得再自行扩用未列出的模块，也不得一次性堆满全部词条）：\n{rendered}\n"
+        negative_section = _says(
+            "role_prompt.negative_section",
+            source_title=knowledge_registry.section_title("negative-prompts"),
+            modules=rendered,
         )
-    return (
-        f"Role: {name_zh} ({name_en})\n"
-        f"项目：《{request.title}》；题材={request.genre}；受众={request.audience}；平台={request.platform}；"
-        f"形式={request.format}；语言={request.output_language}。\n"
-        f"使命：{_MISSIONS[role]}\n"
-        "共同硬约束：角色使用 21:9 数字演员设定集并锁定五个身份锚点；分镜使用3×3九宫格；角色/场景/道具/特效不可省略；"
-        "分镜图与运镜必须同源并校验契约指纹；视频路由必须在首尾帧、多图/宫格、多模态与首帧模式中按能力自动选择；"
-        "不支持的输入不得静默丢弃；任何密钥不得写入提示词、前端、日志或产物。\n"
-        f"交付基准：{delivery.width}×{delivery.height} {delivery.aspect_ratio} {delivery.fps}fps；"
-        f"前{constitution.opening_hook_deadline_seconds:g}秒钩子；对白默认不超过"
-        f"{constitution.dialogue_max_han_characters}个汉字；发布阈值{constitution.release_threshold}分；"
-        "执行 S/A/B/C 问题分级门禁。\n"
-        f"本角色可执行能力：\n{policies}\n"
-        f"必须交付的结构化产物：{outputs}。\n"
-        "书写语言：标题、正文与表格一律用中文；交付物用上面的中文名称，不写英文标识符；集数写「第N集」，"
-        "缺失项写「待补」，专业术语用中文（必要时括注英文缩写，如 LUT、fps）。\n"
-        + negative_section +
-        f"本阶段验收：\n{gates}\n"
-        "输出必须显式列出输入来源、假设、结构化交付物、未解决风险、交接对象和验收结论；"
-        "缺少关键输入时标记 BLOCKED，不得伪造已生成、已授权或已验收。"
+    return _says(
+        "role_prompt.body",
+        name_zh=name_zh,
+        name_en=name_en,
+        title=request.title,
+        genre=request.genre,
+        audience=request.audience,
+        platform=request.platform,
+        format=request.format,
+        language=request.output_language,
+        mission=_MISSIONS[role],
+        width=delivery.width,
+        height=delivery.height,
+        aspect_ratio=delivery.aspect_ratio,
+        fps=delivery.fps,
+        hook_seconds=constitution.opening_hook_deadline_seconds,
+        dialogue_max=constitution.dialogue_max_han_characters,
+        release_threshold=constitution.release_threshold,
+        policies=policies,
+        outputs=outputs,
+        negative_section=negative_section,
+        gates=gates,
     )
 
 
@@ -574,11 +482,7 @@ def _handoffs() -> list[AgentHandoff]:
             producer=producer,
             consumer=consumer,
             required_artifacts=list(_ROLE_OUTPUTS[producer]),
-            acceptance_rules=[
-                "artifact_id 完整且版本/来源/审批状态可追踪",
-                "消费者需要的角色、场景、道具、特效与连续性字段不得为空",
-                "未解决 S/A 级问题不得交接",
-            ],
+            acceptance_rules=[str(rule) for rule in _table("handoff.rules")],
         )
         for producer, consumer in pairs
     ]
@@ -586,13 +490,15 @@ def _handoffs() -> list[AgentHandoff]:
         producer=AgentRole.PR_AGENT,
         consumer=AgentRole.EXECUTIVE_DIRECTOR,
         required_artifacts=["rights_ai_disclosure", "campaign_kpis", "highlight_clips"],
-        acceptance_rules=[
-            "宣发主张与已批准正片高光一致",
-            "版权、授权、平台合规和最终人工复核齐备",
-            "发布门禁可复算且所有阻断项为零",
-        ],
+        acceptance_rules=[str(rule) for rule in _table("handoff.closing_rules")],
     ))
     return handoffs
+
+
+# 发布门禁的阈值：未解决B级问题上限、核心维度均分下限(满分5)、总分下限(满分100)。
+_UNRESOLVED_B_LIMIT: Final = 3
+_CORE_AVERAGE_MINIMUM: Final = 4.0
+_TOTAL_SCORE_MINIMUM: Final = 85
 
 
 class AgentCouncilCompiler:
@@ -706,7 +612,10 @@ class AgentCouncilCompiler:
         checks.append(ReleaseCheck(
             code="council.roles_unique",
             passed=not duplicate_roles,
-            detail="每个 Agent 只有一份权威验收记录" if not duplicate_roles else f"重复角色：{sorted(role.value for role in duplicate_roles)}",
+            detail=(
+                _says("release.roles_unique") if not duplicate_roles
+                else _says("release.roles_duplicated", roles=sorted(role.value for role in duplicate_roles))
+            ),
             owner=AgentRole.EXECUTIVE_DIRECTOR,
         ))
 
@@ -719,47 +628,73 @@ class AgentCouncilCompiler:
             checks.append(ReleaseCheck(
                 code=f"agent.{role.value}.artifacts",
                 passed=present,
-                detail="交付物完整" if present else f"缺失：{missing or ['整阶段证据']}",
+                detail=(
+                    _says("release.artifacts_complete") if present
+                    else _says("release.artifacts_missing", missing=missing or [_table("release.whole_stage_evidence")])
+                ),
                 owner=role,
             ))
             approved = approvals.get(role, False)
             checks.append(ReleaseCheck(
                 code=f"agent.{role.value}.approved",
                 passed=approved,
-                detail="阶段已批准" if approved else "阶段尚未批准",
+                detail=_says("release.stage_approved") if approved else _says("release.stage_unapproved"),
                 owner=role,
             ))
 
         # 当前契约的五个身份锚点，或旧五视图顺序（存量项目的证据包还是老键）。
         identity_order_ok = identity_view_order_is_valid(tuple(evidence.five_view_order))
+        nine_grid_ok = (
+            evidence.storyboard_rows == 3 and evidence.storyboard_columns == 3 and 1 <= evidence.storyboard_panel_count <= 9
+        )
+        video_route_ok = evidence.video_route_accepted and not evidence.unsupported_references_dropped
         structural = (
             ("character.five_view_order", identity_order_ok,
-             "身份视图顺序正确" if identity_order_ok else "身份视图缺失或顺序错误", AgentRole.CHARACTER_DESIGNER),
-            ("storyboard.exact_nine_grid", evidence.storyboard_rows == 3 and evidence.storyboard_columns == 3 and 1 <= evidence.storyboard_panel_count <= 9,
-             f"{evidence.storyboard_rows}×{evidence.storyboard_columns}, panels={evidence.storyboard_panel_count}", AgentRole.STORYBOARD_ARTIST),
+             _says("release.five_view_order_ok") if identity_order_ok else _says("release.five_view_order_bad"),
+             AgentRole.CHARACTER_DESIGNER),
+            ("storyboard.exact_nine_grid", nine_grid_ok,
+             _says("release.nine_grid", rows=evidence.storyboard_rows, columns=evidence.storyboard_columns,
+                   panels=evidence.storyboard_panel_count),
+             AgentRole.STORYBOARD_ARTIST),
             ("storyboard.motion_fingerprint", evidence.storyboard_motion_fingerprints_match,
-             "分镜与运镜契约指纹一致" if evidence.storyboard_motion_fingerprints_match else "契约指纹不一致", AgentRole.VISUAL_DIRECTOR),
-            ("video.route_accepted", evidence.video_route_accepted and not evidence.unsupported_references_dropped,
-             "视频路由已验收且未丢弃参考" if evidence.video_route_accepted and not evidence.unsupported_references_dropped else "视频路由未验收或静默丢弃参考", AgentRole.VISUAL_DIRECTOR),
-            ("audio.dialogue_timing", evidence.dialogue_timing_approved, "对白时序已批准" if evidence.dialogue_timing_approved else "对白时序未批准", AgentRole.AUDIO_DIRECTOR),
-            ("audio.mix", evidence.audio_mix_approved, "混音已批准" if evidence.audio_mix_approved else "混音未批准", AgentRole.AUDIO_DIRECTOR),
-            ("delivery.final_media", evidence.final_media_present, "最终媒体存在" if evidence.final_media_present else "最终媒体缺失", AgentRole.COMPOSER_PUBLISHER),
-            ("delivery.subtitles", evidence.subtitles_approved, "字幕已批准" if evidence.subtitles_approved else "字幕未批准", AgentRole.COMPOSER_PUBLISHER),
+             _says("release.motion_fingerprint_ok") if evidence.storyboard_motion_fingerprints_match
+             else _says("release.motion_fingerprint_bad"),
+             AgentRole.VISUAL_DIRECTOR),
+            ("video.route_accepted", video_route_ok,
+             _says("release.video_route_ok") if video_route_ok else _says("release.video_route_bad"),
+             AgentRole.VISUAL_DIRECTOR),
+            ("audio.dialogue_timing", evidence.dialogue_timing_approved,
+             _says("release.dialogue_timing_ok") if evidence.dialogue_timing_approved else _says("release.dialogue_timing_bad"),
+             AgentRole.AUDIO_DIRECTOR),
+            ("audio.mix", evidence.audio_mix_approved,
+             _says("release.audio_mix_ok") if evidence.audio_mix_approved else _says("release.audio_mix_bad"),
+             AgentRole.AUDIO_DIRECTOR),
+            ("delivery.final_media", evidence.final_media_present,
+             _says("release.final_media_ok") if evidence.final_media_present else _says("release.final_media_bad"),
+             AgentRole.COMPOSER_PUBLISHER),
+            ("delivery.subtitles", evidence.subtitles_approved,
+             _says("release.subtitles_ok") if evidence.subtitles_approved else _says("release.subtitles_bad"),
+             AgentRole.COMPOSER_PUBLISHER),
             ("compliance.rights_provenance", evidence.rights_and_provenance_approved,
-             "授权与溯源已批准" if evidence.rights_and_provenance_approved else "授权或溯源未批准", AgentRole.PR_AGENT),
+             _says("release.rights_provenance_ok") if evidence.rights_and_provenance_approved
+             else _says("release.rights_provenance_bad"),
+             AgentRole.PR_AGENT),
             ("compliance.platform", evidence.platform_compliance_approved,
-             "平台合规已批准" if evidence.platform_compliance_approved else "平台合规未批准", AgentRole.PR_AGENT),
+             _says("release.platform_ok") if evidence.platform_compliance_approved else _says("release.platform_bad"),
+             AgentRole.PR_AGENT),
             ("review.human_final", evidence.human_final_review,
-             "最终人工复核已完成" if evidence.human_final_review else "缺少最终人工复核", AgentRole.EXECUTIVE_DIRECTOR),
+             _says("release.human_final_ok") if evidence.human_final_review else _says("release.human_final_bad"),
+             AgentRole.EXECUTIVE_DIRECTOR),
         )
         checks.extend(ReleaseCheck(code=code, passed=passed, detail=detail, owner=owner) for code, passed, detail, owner in structural)
 
         unresolved = [issue for issue in evidence.issues if not issue.resolved]
         severity_counts = {severity: sum(issue.severity == severity for issue in unresolved) for severity in ("S", "A", "B", "C")}
         severity_rules = (
-            ("issues.no_unresolved_s", severity_counts["S"] == 0, "未解决S级问题必须为0"),
-            ("issues.no_unresolved_a", severity_counts["A"] == 0, "未解决A级问题必须为0"),
-            ("issues.b_within_limit", severity_counts["B"] <= 3, f"未解决B级问题={severity_counts['B']}，上限=3"),
+            ("issues.no_unresolved_s", severity_counts["S"] == 0, _says("release.none_unresolved", severity="S")),
+            ("issues.no_unresolved_a", severity_counts["A"] == 0, _says("release.none_unresolved", severity="A")),
+            ("issues.b_within_limit", severity_counts["B"] <= _UNRESOLVED_B_LIMIT,
+             _says("release.b_within_limit", count=severity_counts["B"], limit=_UNRESOLVED_B_LIMIT)),
         )
         checks.extend(ReleaseCheck(code=code, passed=passed, detail=detail, owner=AgentRole.EXECUTIVE_DIRECTOR) for code, passed, detail in severity_rules)
 
@@ -768,12 +703,14 @@ class AgentCouncilCompiler:
         total_score = round(core_average / 5 * 100, 2)
         checks.extend([
             ReleaseCheck(
-                code="score.core_average", passed=core_average >= 4.0,
-                detail=f"核心均分={core_average}/5，最低=4.0", owner=AgentRole.EXECUTIVE_DIRECTOR,
+                code="score.core_average", passed=core_average >= _CORE_AVERAGE_MINIMUM,
+                detail=_says("release.core_average", average=core_average, minimum=_CORE_AVERAGE_MINIMUM),
+                owner=AgentRole.EXECUTIVE_DIRECTOR,
             ),
             ReleaseCheck(
-                code="score.total", passed=total_score >= 85,
-                detail=f"总分={total_score}/100，最低=85", owner=AgentRole.EXECUTIVE_DIRECTOR,
+                code="score.total", passed=total_score >= _TOTAL_SCORE_MINIMUM,
+                detail=_says("release.total_score", total=total_score, minimum=_TOTAL_SCORE_MINIMUM),
+                owner=AgentRole.EXECUTIVE_DIRECTOR,
             ),
         ])
 
@@ -794,5 +731,7 @@ class AgentCouncilCompiler:
         summary = {role.value: [] for role in ALL_AGENT_ROLES}
         for issue in issues:
             if not issue.resolved:
-                summary[issue.owner.value].append(f"[{issue.severity}] {issue.code}: {issue.detail}")
+                summary[issue.owner.value].append(
+                    _says("release.issue_line", severity=issue.severity, code=issue.code, detail=issue.detail)
+                )
         return {role: records for role, records in summary.items() if records}

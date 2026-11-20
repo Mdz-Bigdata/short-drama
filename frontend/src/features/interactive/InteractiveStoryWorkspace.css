@@ -447,6 +447,8 @@
   .istory-side.is-right { border: 0; border-top: 1px solid var(--istory-line); }
   .istory-graph { order: -1; }
   .istory-canvas { flex: none; height: 62vh; }
+  /* 试玩页的进度地图是横向 flex：不撑满宽度就是 0 宽，图整个看不见。 */
+  .istory-play__map .istory-canvas { flex: 1 1 auto; height: auto; }
   .istory-play { grid-template-columns: minmax(0, 1fr); }
   .istory-play__side { border-left: 0; border-top: 1px solid var(--istory-line); }
   .istory-top { padding: 0.5rem 1rem; }

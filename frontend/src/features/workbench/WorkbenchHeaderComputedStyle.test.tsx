@@ -45,7 +45,7 @@ describe('Workbench header computed style', () => {
     expect(header).not.toBeNull();
     expect(getComputedStyle(header as Element).display).toBe('flex');
     expect(screen.getByRole('heading', { name: '《乱葬坑里有人醒》 - 看板展示大厅' })).toBeTruthy();
-    expect(screen.getByRole('navigation', { name: '八种制作 Agent' }).querySelectorAll('button')).toHaveLength(8);
+    expect(screen.getByRole('navigation', { name: '制作 Agent' }).querySelectorAll('button')).toHaveLength(7);
     expect(screen.getByRole('button', { name: '4.分镜' }).getAttribute('aria-current')).toBe('step');
   });
 });

@@ -3,7 +3,9 @@ import { ArrowLeft, CheckCircle2, Coins, CreditCard, LoaderCircle, ReceiptText, 
 
 import { apiRequest } from '../../api/client';
 import { t } from '../../i18n';
+import { money, when } from '../finance/financeFormat';
 import { PaymentDialog } from './PaymentDialog';
+import { PriceListSection } from './PriceListSection';
 import { channelLabel, type PaymentChannelName } from './paymentChannels';
 
 
@@ -55,6 +57,8 @@ export function BillingCenterPage({ onBack, inProject = false }: { onBack: () =>
   const [orders, setOrders] = useState<Order[]>([]);
   const [wallet, setWallet] = useState<Wallet>({ points: '0', money: {}, entries: [] });
   const [loading, setLoading] = useState(true);
+  // Until one load works the page has no wallet or plans to show, only the reason and a retry.
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -72,8 +76,9 @@ export function BillingCenterPage({ onBack, inProject = false }: { onBack: () =>
       setChannels(planData.channels ?? []);
       setWallet(walletData);
       setOrders(orderData.items);
+      setLoaded(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '支付中心加载失败');
+      setError(err instanceof Error ? err.message : t('支付中心加载失败'));
     } finally {
       setLoading(false);
     }
@@ -92,6 +97,10 @@ export function BillingCenterPage({ onBack, inProject = false }: { onBack: () =>
     return order.id;
   }, []);
   const reload = useCallback(() => { void load(); }, []);
+  const retry = () => {
+    setLoading(true);
+    void load();
+  };
   const closePaying = () => {
     setPaying(null);
     void load();
@@ -114,7 +123,7 @@ export function BillingCenterPage({ onBack, inProject = false }: { onBack: () =>
       setNotice(t('{0}沙箱订单已完成，积分已通过追加式账本入账。', [plan.name]));
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '沙箱订单创建失败');
+      setError(err instanceof Error ? err.message : t('沙箱订单创建失败'));
     } finally {
       setBusy('');
     }
@@ -128,15 +137,21 @@ export function BillingCenterPage({ onBack, inProject = false }: { onBack: () =>
         <CreditCard size={34} className="portal-mark" />
       </header>
 
-      <div className="billing-safety"><ShieldCheck size={18} /><span>{channels.length > 0
+      {loaded && <div className="billing-safety"><ShieldCheck size={18} /><span>{channels.length > 0
         ? t('付款在支付宝或微信内完成，本站不接触你的支付账号。')
         : sandboxEnabled
           ? t('当前开放沙箱支付；微信/支付宝在商户证书和签名密钥配置前不会发起真实扣款。')
-          : t('在线支付暂未开放，暂时无法购买。')}</span></div>
-      {error && <div className="inline-error" role="alert">{error}</div>}
-      {notice && <div className="command-result"><CheckCircle2 size={16} /> {notice}</div>}
+          : t('在线支付暂未开放，暂时无法购买。')}</span></div>}
+      {error && loaded && <div className="inline-error" role="alert">{error}</div>}
+      {notice && <div className="command-result" role="status"><CheckCircle2 size={16} /> {notice}</div>}
 
-      {loading ? <div className="empty-library"><LoaderCircle className="spin" /> {t('正在加载支付中心…')}</div> : (
+      {loading ? <div className="empty-library" role="status"><LoaderCircle className="spin" /> {t('正在加载支付中心…')}</div> : !loaded ? (
+        <div className="empty-library" role="alert">
+          <strong>{t('支付中心没有加载出来')}</strong>
+          <span>{error}</span>
+          <button type="button" className="secondary-action" onClick={retry}>{t('重试')}</button>
+        </div>
+      ) : (
         <>
           <section className="wallet-hero">
             <div><Coins size={25} /><span>{t('可用创作积分')}</span><strong>{wallet.charging ? Number(wallet.available ?? 0) : wallet.points}</strong>{Number(wallet.held ?? 0) > 0 && <small>{t('其中 {0} 积分正在使用', [String(Number(wallet.held))])}</small>}{Number(wallet.frozen ?? 0) > 0 && <small>{t('另有 {0} 积分在退款审核中，暂不可用', [String(Number(wallet.frozen))])}</small>}</div>
@@ -147,16 +162,17 @@ export function BillingCenterPage({ onBack, inProject = false }: { onBack: () =>
           <section className="billing-section">
             <div className="section-title"><div><h2>{t('会员计划')}</h2>{sandboxEnabled && <p>{t('下列按钮仅执行本地沙箱确认，不会调用外部支付服务。')}</p>}</div></div>
             <div className="plan-grid">
+              {plans.length === 0 && <p>{t('暂时没有可购买的会员计划')}</p>}
               {plans.map(plan => (
                 <article className="plan-card" key={plan.id}>
-                  <span>{plan.duration_days} 天</span><h2>{plan.name}</h2><p>{plan.description}</p>
-                  <div className="plan-price"><strong>¥{plan.price}</strong><small> {t('/ 期')}</small></div>
-                  <ul><li><CheckCircle2 size={15} /> {plan.points} 创作积分</li><li><CheckCircle2 size={15} /> {t('幂等订单与追加式流水')}</li></ul>
+                  <span>{t('{0} 天', [plan.duration_days])}</span><h2>{plan.name}</h2><p>{plan.description}</p>
+                  <div className="plan-price"><strong>{money(plan.price, plan.currency)}</strong><small> {t('/ 期')}</small></div>
+                  <ul><li><CheckCircle2 size={15} /> {t('{0} 创作积分', [plan.points])}</li><li><CheckCircle2 size={15} /> {t('幂等订单与追加式流水')}</li></ul>
                   {channels.map(channel => (
                     <button type="button" className="primary-action" key={channel} onClick={() => setPaying({ plan, provider: channel })}><CreditCard size={16} /> {channelLabel(channel)}</button>
                   ))}
                   {(sandboxEnabled || channels.length === 0) && (
-                    <button type="button" className={channels.length > 0 ? 'secondary-action' : 'primary-action'} onClick={() => void buySandbox(plan)} disabled={!sandboxEnabled || busy === plan.id}>{busy === plan.id ? <LoaderCircle className="spin" size={16} /> : <CreditCard size={16} />} {sandboxEnabled ? `沙箱购买 ${plan.name}` : t('暂未开放购买')}</button>
+                    <button type="button" className={channels.length > 0 ? 'secondary-action' : 'primary-action'} onClick={() => void buySandbox(plan)} disabled={!sandboxEnabled || busy === plan.id}>{busy === plan.id ? <LoaderCircle className="spin" size={16} /> : <CreditCard size={16} />} {sandboxEnabled ? t('沙箱购买 {0}', [plan.name]) : t('暂未开放购买')}</button>
                   )}
                 </article>
               ))}
@@ -167,12 +183,16 @@ export function BillingCenterPage({ onBack, inProject = false }: { onBack: () =>
             <div className="section-title"><ReceiptText size={20} /><div><h2>{t('订单记录')}</h2><p>{t('金额和币种由服务端会员计划锁定，浏览器不能覆盖。')}</p></div></div>
             <div className="order-list">
               {orders.length === 0 ? <p>{t('暂无订单')}</p> : orders.map(order => (
-                <div className="order-row" key={order.id}><div><strong>{order.plan_id}</strong><small>{new Date(order.created_at).toLocaleString('zh-CN')}</small></div><span>{channelLabel(order.provider)}</span><span>{order.currency} {order.amount}</span><span className={`order-status ${order.status}`}>{orderStatusLabel(order.status)}</span>{order.status === 'pending' && order.provider !== 'sandbox' && channels.length > 0 && (
-                  <button type="button" className="secondary-action" onClick={() => setPaying({ order, provider: channels.includes(order.provider as PaymentChannelName) ? order.provider as PaymentChannelName : channels[0] })}>{t('继续支付')}</button>
-                )}</div>
+                <div className="order-row" key={order.id}><div><strong>{order.plan_id}</strong><small>{when(order.created_at)}</small></div><span>{channelLabel(order.provider)}</span><span>{money(order.amount, order.currency)}</span>
+                  {/* Status and its action share the last column; a fifth cell would wrap under the plan name. */}
+                  <div><span className={`order-status ${order.status}`}>{orderStatusLabel(order.status)}</span>{order.status === 'pending' && order.provider !== 'sandbox' && channels.length > 0 && (
+                    <button type="button" className="secondary-action" onClick={() => setPaying({ order, provider: channels.includes(order.provider as PaymentChannelName) ? order.provider as PaymentChannelName : channels[0] })}>{t('继续支付')}</button>
+                  )}</div></div>
               ))}
             </div>
           </section>
+
+          <PriceListSection />
         </>
       )}
       {paying && (

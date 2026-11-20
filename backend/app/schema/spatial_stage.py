@@ -6,6 +6,19 @@ from typing import Any, Literal, Optional
 from pydantic import Field
 
 from app.schema.drama import DramaBaseSchema
+from app.core import prompt_data
+
+
+_WORDING_FILE = "schema_spatial_stage"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/schema_spatial_stage.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 class SpatialSceneSummary(DramaBaseSchema):
@@ -26,25 +39,25 @@ class SpatialOverviewResponse(DramaBaseSchema):
     schema_version: Literal["spatial-stage.v1"] = "spatial-stage.v1"
     task_id: str = Field(..., min_length=1, max_length=120)
     scenes: list[SpatialSceneSummary] = Field(default_factory=list, max_length=5000)
-    side_memory: dict[str, str] = Field(default_factory=dict, description="人物 → 首次确立的画左 / 画右")
-    locations: dict[str, int] = Field(default_factory=dict, description="地点 → 已固定的地标数")
+    side_memory: dict[str, str] = Field(default_factory=dict, description=_text_of("SpatialOverviewResponse.description"))
+    locations: dict[str, int] = Field(default_factory=dict, description=_text_of("SpatialOverviewResponse.description.2"))
 
 
 class SpatialPlanResponse(DramaBaseSchema):
     schema_version: Literal["spatial-stage.v1"] = "spatial-stage.v1"
     task_id: str = Field(..., min_length=1, max_length=120)
     scene_id: str = Field(..., max_length=80)
-    persisted: bool = Field(True, description="false 表示该场尚未保存空间方案，返回的是按当前剧本即时规划的预览")
+    persisted: bool = Field(True, description=_text_of("SpatialPlanResponse.description"))
     board_status: str = Field("", max_length=40)
-    board_stale: bool = Field(False, description="站位已修改，已完成的九宫格仍按旧站位绘制")
-    plan: dict[str, Any] = Field(default_factory=dict, description="StagePlan（字段保持 snake_case）")
+    board_stale: bool = Field(False, description=_text_of("SpatialPlanResponse.description.2"))
+    plan: dict[str, Any] = Field(default_factory=dict, description=_text_of("SpatialPlanResponse.description.3"))
 
 
 class SpatialPlanPatchRequest(DramaBaseSchema):
-    base_revision: int = Field(..., ge=0, description="编辑前读取到的 plan.revision，用于乐观并发")
+    base_revision: int = Field(..., ge=0, description=_text_of("SpatialPlanPatchRequest.description"))
     operations: list[dict[str, Any]] = Field(..., min_length=1, max_length=100)
     solve: Optional[bool] = Field(
-        None, description="false：本次编辑不得顺带重解任何机位（视口拖拽时用）；true：操作完成后重解全部机位；省略：由操作本身决定",
+        None, description=_text_of("SpatialPlanPatchRequest.description.2"),
     )
 
 
@@ -54,7 +67,7 @@ class SpatialRevisionRequest(DramaBaseSchema):
 
 class SpatialImportRequest(DramaBaseSchema):
     base_revision: int = Field(..., ge=0)
-    document: dict[str, Any] = Field(..., description="3D 导演台工程（version 1）或 CoStage 文档（version 2）")
+    document: dict[str, Any] = Field(..., description=_text_of("SpatialImportRequest.description"))
 
 
 class SpatialRepair(DramaBaseSchema):
@@ -62,8 +75,8 @@ class SpatialRepair(DramaBaseSchema):
     label: str = Field(..., max_length=40)
     detail: str = Field("", max_length=2000)
     shot_ids: list[int] = Field(default_factory=list, max_length=200)
-    operations: list[dict[str, Any]] = Field(default_factory=list, max_length=100, description="清除该项检查要提交的操作")
-    manual: str = Field("", max_length=2000, description="无法自动修正时，需要人决定的事")
+    operations: list[dict[str, Any]] = Field(default_factory=list, max_length=100, description=_text_of("SpatialRepair.description"))
+    manual: str = Field("", max_length=2000, description=_text_of("SpatialRepair.description.2"))
     automatic: bool = False
 
 
@@ -71,9 +84,9 @@ class SpatialRepairsResponse(DramaBaseSchema):
     schema_version: Literal["spatial-stage.v1"] = "spatial-stage.v1"
     task_id: str = Field(..., min_length=1, max_length=120)
     scene_id: str = Field(..., max_length=80)
-    revision: int = Field(0, ge=0, description="提案所依据的 plan.revision；提交时作为 base_revision")
+    revision: int = Field(0, ge=0, description=_text_of("SpatialRepairsResponse.description"))
     repairs: list[SpatialRepair] = Field(default_factory=list, max_length=40)
-    operations: list[dict[str, Any]] = Field(default_factory=list, max_length=100, description="全部自动修正去重后的操作，按序提交即可")
+    operations: list[dict[str, Any]] = Field(default_factory=list, max_length=100, description=_text_of("SpatialRepairsResponse.description.2"))
     automatic: int = Field(0, ge=0)
     manual: int = Field(0, ge=0)
 

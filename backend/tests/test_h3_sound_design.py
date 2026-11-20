@@ -23,7 +23,7 @@ class VoiceAnchorTests(unittest.TestCase):
         # The card's own words decide the band; an age alone does not raise the pitch.
         self.assertEqual((first.pitch, first.pace_cps), ("中音区", 3.0))
 
-    def test_the_lock_line_states_timbre_pitch_and_pace_and_says_it_never_changes(self):
+    def test_the_lock_line_states_timbre_and_pitch_and_says_it_never_changes(self):
         anchor = sound.build_voice_anchor("周教授", description="花白头发的中年教授", gender="male")
 
         line = anchor.lock_line()
@@ -31,7 +31,8 @@ class VoiceAnchorTests(unittest.TestCase):
         self.assertIn("周教授：", line)
         self.assertIn("沉稳男声", line)
         self.assertIn("中低音区", line)
-        self.assertIn("语速每秒3字", line)
+        # No fixed pace: each line's pace follows its emotion (speech_pace tiers), a locked rate would fight it.
+        self.assertNotIn("语速", line)
         self.assertIn("全片音色、音调与声线不变", line)
         self.assertNotIn("音色参考", line)          # no clean sample on file yet
 
@@ -187,7 +188,7 @@ class ShotPromptIntegrationTests(unittest.TestCase):
     def test_without_layers_the_sound_note_becomes_one_ambience_bed(self):
         compiled = compile_shot_prompt(CINEMATIC_REALISM, self._shot(), model="seedance2.5", max_duration_seconds=30)
 
-        self.assertIn("【声音设计】环境铺底：空调低鸣，全程连续", compiled.text)
+        self.assertIn("【声音设计】环境铺底：<空调低鸣>，全程连续", compiled.text)  # Seedance 的音效写在尖括号里
         self.assertNotIn("【声音设计·三层】", compiled.text)
 
     def test_with_layers_only_the_event_bound_contacts_are_added(self):

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
   BookOpenText,
   Check,
+  ClipboardCheck,
   Download,
   Film,
   LayoutDashboard,
@@ -22,11 +23,13 @@ import {
 } from 'lucide-react';
 
 import { CharacterRelationshipGraph } from './CharacterRelationshipGraph';
+import { RelationshipEditor } from './RelationshipEditor';
 import { namedRelationships } from './relationshipCast';
 import { ScriptVersionMenu } from './ScriptVersionMenu';
 import { StoryEventTimeline } from './StoryEventTimeline';
 import { EpisodeScenesDialog } from './EpisodeScenesDialog';
 import { EpisodeTextDialog } from './EpisodeTextDialog';
+import { ScriptReviewDialog } from './ScriptReviewDialog';
 import { ScreenplayReader } from './ScreenplayReader';
 import { ScreenwritingPanel } from './ScreenwritingPanel';
 import { ScriptLibrary } from './ScriptLibrary';
@@ -35,6 +38,7 @@ import { LedgerOutline, ScriptDetailBanner } from './ScriptDetailStatus';
 import { scriptDetailPhase, type ScriptDetailRecord } from './scriptDetail';
 import { groupEpisodeGaps, normalizeMissingEpisodes } from './episodeGaps';
 import { WriterTimeline } from './WriterTimeline';
+import { ChapterAssets } from './ChapterAssets';
 import { summarizeEpisodeTitle } from './textSummary';
 import {
   CREATION_MODE_LABELS,
@@ -142,6 +146,35 @@ function durationSecondsLabel(seconds?: number) {
   return seconds >= 60 ? `${Math.round(seconds / 60)} 分钟` : `${Math.round(seconds)} 秒`;
 }
 
+/**
+ * A stat card's note: two lines, and a 展开 / 收起 toggle once it runs past them (a long 剧本基调
+ * theme does). Whether it runs past depends on the card's width, so the note is measured each time
+ * it resizes rather than guessed from its length. Keyed on the text, so a new note is measured afresh.
+ */
+function StatNote({ text }: { text: string }) {
+  const ref = useRef<HTMLElement | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  useEffect(() => {
+    const note = ref.current;
+    if (!note || expanded || typeof ResizeObserver === 'undefined') return;
+    // The observer reports once as soon as it starts, then on every resize of the card.
+    const observer = new ResizeObserver(() => setOverflowing(note.scrollHeight > note.clientHeight + 1));
+    observer.observe(note);
+    return () => observer.disconnect();
+  }, [expanded]);
+  return (
+    <>
+      <small ref={ref} className={expanded ? 'is-expanded' : undefined}>{text}</small>
+      {(overflowing || expanded) && (
+        <button type="button" className="writer-stats__toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>
+          {expanded ? t('收起') : t('展开')}
+        </button>
+      )}
+    </>
+  );
+}
+
 export function WriterAgentPage({
   title,
   taskId,
@@ -155,11 +188,15 @@ export function WriterAgentPage({
   serverStats,
   onExport,
   onExportBreakdown,
+  onExportSubmission,
+  submissionBusy = false,
   onPlanEpisodes,
   onProduceEpisode,
   onSaveScript,
+  onSaveRelationships,
   onAnalyzeRelationships,
   onContinueScript,
+  relationshipsAuthored = false,
   timelineAuthored = false,
   creationMode,
   versions = [],
@@ -187,6 +224,9 @@ export function WriterAgentPage({
   onExport?: () => void | Promise<void>;
   /** 每场一张的拆解单：表格给制片排期，Markdown 给人看。 */
   onExportBreakdown?: (format: 'csv' | 'md') => void | Promise<void>;
+  /** 按平台投稿模板整理的剧本附件(Word)：正文由剧本直接排版，简介、大纲、人设这几项由文字模型写一次。 */
+  onExportSubmission?: () => void | Promise<void>;
+  submissionBusy?: boolean;
   onPlanEpisodes?: () => void;
   onProduceEpisode?: (index: number) => void;
   onSaveScript?: (
@@ -198,6 +238,8 @@ export function WriterAgentPage({
   onAnalyzeRelationships?: () => Promise<void>;
   onContinueScript?: () => Promise<void>;
   relationshipsInferred?: boolean;
+  /** The relation list is the writer's (or an earlier analysis's): an empty one is not analysed again. */
+  relationshipsAuthored?: boolean;
   timelineAuthored?: boolean;
   creationMode?: string;
   versions?: WriterScriptVersion[];
@@ -224,6 +266,7 @@ export function WriterAgentPage({
   const [overviewError, setOverviewError] = useState('');
   const [readerOpen, setReaderOpen] = useState(false);
   const [view, setView] = useState<WriterView>(defaultView);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [episodeTextTarget, setEpisodeTextTarget] = useState<{ episode?: number } | null>(null);
   const [sceneDialogEpisode, setSceneDialogEpisode] = useState<number | null>(null);
   const [episodePage, setEpisodePage] = useState(0);
@@ -353,22 +396,29 @@ export function WriterAgentPage({
 
   // The character network has its own page under the 人物关系 tab.
   const autoAnalyzed = useRef<string | null>(null);
+  const analysisKey = taskId || title || 'writer';
   const hasScript = Boolean(source);
-  useEffect(() => {
-    if (view !== 'characters' || !graphIsInferred || !onAnalyzeRelationships || !hasScript || roles.length < 2) return;
-    const key = taskId || title || 'writer';
-    if (autoAnalyzed.current === key) return;
-    autoAnalyzed.current = key;
-    let active = true;
-    void Promise.resolve()
-      .then(() => {
-        if (active) setRelationshipsAnalyzing(true);
-        return onAnalyzeRelationships();
-      })
+  // The spinner follows the run, not the effect that started it: the parent hands down a new
+  // handler on every render, and a run cut loose by that cleanup used to leave 分析中… up for good.
+  const analysisRun = useRef(0);
+  const analyzeRelationships = useCallback((analyze: () => Promise<void>) => {
+    const run = ++analysisRun.current;
+    setRelationshipsAnalyzing(true);
+    void analyze()
       .catch(() => undefined)
-      .finally(() => { if (active) setRelationshipsAnalyzing(false); });
-    return () => { active = false; };
-  }, [view, graphIsInferred, onAnalyzeRelationships, hasScript, roles.length, taskId, title]);
+      .finally(() => { if (analysisRun.current === run) setRelationshipsAnalyzing(false); });
+  }, []);
+  useEffect(() => {
+    if (view !== 'characters' || !graphIsInferred || relationshipsAuthored || !onAnalyzeRelationships || !hasScript || roles.length < 2) return;
+    if (autoAnalyzed.current === analysisKey) return;
+    autoAnalyzed.current = analysisKey;
+    void Promise.resolve().then(() => analyzeRelationships(onAnalyzeRelationships));
+  }, [view, graphIsInferred, relationshipsAuthored, onAnalyzeRelationships, hasScript, roles.length, analysisKey, analyzeRelationships]);
+  // A list the writer has edited is theirs: emptying it must not start an analysis that refills it.
+  const saveEditedRelationships = onSaveRelationships && ((next: WriterRelationship[]) => {
+    autoAnalyzed.current = analysisKey;
+    return onSaveRelationships(next);
+  });
 
   const characterSection = (
   <section className="writer-section writer-network" aria-labelledby="writer-relationships-title">
@@ -392,12 +442,7 @@ export function WriterAgentPage({
           <button
             type="button"
             disabled={relationshipsAnalyzing}
-            onClick={() => {
-              setRelationshipsAnalyzing(true);
-              void onAnalyzeRelationships()
-                .catch(() => undefined)
-                .finally(() => setRelationshipsAnalyzing(false));
-            }}
+            onClick={() => analyzeRelationships(onAnalyzeRelationships)}
           >
             <Sparkles aria-hidden="true" /> {relationshipsAnalyzing ? t('分析中…') : t('AI 分析人物关系')}
           </button>
@@ -411,6 +456,13 @@ export function WriterAgentPage({
       </header>
       <CharacterRelationshipGraph roles={roles} relationships={displayedRelationships} avatars={avatars} expanded={networkExpanded} />
     </div>
+    {/* Hidden while the analysis runs: its result replaces the whole list. */}
+    {onSaveRelationships && !relationshipsAnalyzing && characterNames.size >= 2 && (
+      <div className="writer-network__block">
+        <h3><Pencil aria-hidden="true" /> {t('人物关系编辑')}</h3>
+        <RelationshipEditor roles={roles} relationships={displayedRelationships} onSave={saveEditedRelationships} />
+      </div>
+    )}
   </section>
   );
 
@@ -424,13 +476,21 @@ export function WriterAgentPage({
         </div>
         <div className="writer-board__actions">
           <span className={`writer-board__state ${source ? 'is-ready' : ''}`}><Check aria-hidden="true" /> {source ? t('剧本已载入') : t('等待生成')}</span>
-          {(onSaveVersion || versions.length > 0) && <ScriptVersionMenu versions={versions} onSave={onSaveVersion} onRestore={onRestoreVersion} />}
+          {(onSaveVersion || versions.length > 0) && <ScriptVersionMenu versions={versions} onSave={onSaveVersion} onRestore={onRestoreVersion} taskId={taskId} />}
           {taskId && <button type="button" className="is-primary" onClick={() => setView('library')}><Upload aria-hidden="true" /> {t('上传映视界文件')}</button>}
           {onExportBreakdown && (
             <>
               <button type="button" onClick={() => { void onExportBreakdown('csv'); }} disabled={!source && scenes.length === 0} title={t('每场一张：场号、内外、日夜、页长、演员和元素。页长按一页约一分钟估算。')}><Download aria-hidden="true" /> {t('拆解单表格')}</button>
               <button type="button" onClick={() => { void onExportBreakdown('md'); }} disabled={!source && scenes.length === 0}><Download aria-hidden="true" /> {t('拆解单文档')}</button>
             </>
+          )}
+          {taskId && (
+            <button type="button" onClick={() => setReviewOpen(true)} disabled={!source && scenes.length === 0} title={t('把写完的剧本按七个方面审读一遍，出一份带场次和改法的报告。打开不花钱，点了生成才调用文本模型。')}>
+              <ClipboardCheck aria-hidden="true" /> {t('剧本审核')}
+            </button>
+          )}
+          {onExportSubmission && (
+            <button type="button" onClick={() => { void onExportSubmission(); }} disabled={submissionBusy || (!source && scenes.length === 0)} aria-busy={submissionBusy} title={t('按平台「AI剧自制编剧投稿模板」整理的 Word 文档。剧本正文直接按项目剧本排版；男女频、一卡、简介、大纲和人设由文字模型写一次，剧本没改就不再调用。')}><Download aria-hidden="true" /> {submissionBusy ? t('投稿材料生成中…') : t('投稿材料')}</button>
           )}
           <button type="button" onClick={() => { void (onExport || handleExport)(); }} disabled={!source && scenes.length === 0}><Download aria-hidden="true" /> {t('导出 JSON')}</button>
         </div>
@@ -495,7 +555,7 @@ export function WriterAgentPage({
         {stats.map(stat => (
           <div key={stat.label}>
             <dt>{stat.label}</dt>
-            <dd>
+            <dd title={typeof stat.value === 'string' && !stat.onOpen ? stat.value : undefined}>
               {stat.onOpen ? (
                 <button
                   type="button"
@@ -508,7 +568,7 @@ export function WriterAgentPage({
                 </button>
               ) : stat.value}
             </dd>
-            <small>{stat.note}</small>
+            <StatNote key={stat.note} text={stat.note} />
           </div>
         ))}
       </dl>
@@ -528,6 +588,7 @@ export function WriterAgentPage({
             <div><span>01</span><div><small>SCRIPT LIBRARY</small><h2 id="writer-library-title">{t('剧本文库')}</h2></div></div>
           </div>
           <ScriptLibrary taskId={taskId} />
+          <ChapterAssets taskId={taskId} />
         </section>
       ) : view === 'characters' ? (
         characterSection
@@ -789,6 +850,7 @@ export function WriterAgentPage({
           onSave={onSaveScript}
         />
       )}
+      {reviewOpen && taskId && <ScriptReviewDialog taskId={taskId} onClose={() => setReviewOpen(false)} />}
     </main>
   );
 }

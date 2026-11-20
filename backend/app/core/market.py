@@ -38,6 +38,19 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from app import settings
 from app.core.providers.declarative_video import VideoEndpointSpec
+from app.core import prompt_data
+
+
+_WORDING_FILE = "market"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/market.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.core.market")
 
@@ -97,7 +110,7 @@ class MarketEntry(BaseModel):
     @classmethod
     def slug_shape(cls, value: str) -> str:
         if not _SLUG.match(value):
-            raise ValueError("slug 只能是小写字母、数字和连字符，且以字母或数字开头")
+            raise ValueError(_text_of("slug_shape.text"))
         return value
 
     @field_validator("path")
@@ -106,7 +119,7 @@ class MarketEntry(BaseModel):
         clean = value.strip()
         parts = clean.split("/")
         if clean.startswith("/") or "\\" in clean or "://" in clean or any(part in ("", ".", "..") for part in parts):
-            raise ValueError("path 必须是源内的相对路径，不能含 .. 或绝对地址")
+            raise ValueError(_text_of("relative_path.text"))
         return clean
 
 
@@ -126,9 +139,9 @@ class MarketIndex(BaseModel):
     def supported_schema(cls, value: str) -> str:
         family, _, major = value.partition("/")
         if family != INDEX_SCHEMA_FAMILY or not major.isdigit():
-            raise ValueError(f"索引 schema 必须是 {INDEX_SCHEMA_FAMILY}/<主版本>")
+            raise ValueError(_text_of("supported_schema.text").format(INDEX_SCHEMA_FAMILY))
         if int(major) > INDEX_SCHEMA_MAJOR:
-            raise ValueError(f"索引 schema 主版本 {major} 高于本客户端支持的 {INDEX_SCHEMA_MAJOR}，请升级应用")
+            raise ValueError(_text_of("supported_schema.text.2").format(major, INDEX_SCHEMA_MAJOR))
         return value
 
     @field_validator("entries")
@@ -137,7 +150,7 @@ class MarketIndex(BaseModel):
         seen: set[str] = set()
         for entry in entries:
             if entry.slug in seen:
-                raise ValueError(f"索引里 slug 重复：{entry.slug}")
+                raise ValueError(_text_of("unique_slugs.text").format(entry.slug))
             seen.add(entry.slug)
         return entries
 
@@ -167,7 +180,7 @@ def parse_index(raw: bytes | str | Mapping[str, Any]) -> MarketIndex:
         data = raw if isinstance(raw, Mapping) else json.loads(raw)
         return MarketIndex.model_validate(data)
     except (ValueError, TypeError) as exc:  # json and pydantic errors both read as ValueError
-        raise MarketError(f"市场索引不可用：{_short(exc)}", code="bad_index") from exc
+        raise MarketError(_text_of("parse_index.text").format(_short(exc)), code="bad_index") from exc
 
 
 def parse_definition(raw: bytes | str | Mapping[str, Any]) -> EntryDefinition:
@@ -175,7 +188,7 @@ def parse_definition(raw: bytes | str | Mapping[str, Any]) -> EntryDefinition:
         data = raw if isinstance(raw, Mapping) else json.loads(raw)
         definition = EntryDefinition.model_validate(data)
     except (ValueError, TypeError) as exc:
-        raise MarketError(f"条目定义不可用：{_short(exc)}", code="bad_definition") from exc
+        raise MarketError(_text_of("parse_definition.text").format(_short(exc)), code="bad_definition") from exc
     return definition
 
 
@@ -213,12 +226,12 @@ def resolve_source(url: str) -> ResolvedSource:
     """A GitHub repository page or a direct index link → where its raw files live."""
     parsed = urlsplit(str(url or "").strip())
     if parsed.scheme.lower() != "https" or not parsed.hostname:
-        raise MarketError("市场源地址必须是 https:// 开头的 GitHub 仓库或索引直链", code="bad_source_url")
+        raise MarketError(_text_of("resolve_source.text"), code="bad_source_url")
     host = parsed.hostname.lower()
     if host in ("github.com", "www.github.com"):
         match = _GITHUB_REPO.match(parsed.path)
         if not match:
-            raise MarketError("GitHub 市场源请给仓库地址，如 https://github.com/owner/repo 或 …/tree/branch", code="bad_source_url")
+            raise MarketError(_text_of("resolve_source.text.2"), code="bad_source_url")
         owner, repo, branch = match.group(1), match.group(2), match.group(3) or "main"
         base = f"https://{RAW_GITHUB_HOST}/{owner}/{repo}/{branch}/"
         return ResolvedSource(key=f"github:{owner}/{repo}@{branch}", kind="github", base_url=base, index_url=base + INDEX_FILENAME, label=f"{owner}/{repo}")
@@ -251,14 +264,14 @@ Fetch = Callable[[str, int], bytes]
 def _assert_public_host(url: str) -> None:
     parsed = urlsplit(url)
     if parsed.scheme.lower() != "https" or not parsed.hostname:
-        raise MarketError("只抓取 https:// 地址", code="fetch_refused")
+        raise MarketError(_text_of("_assert_public_host.text"), code="fetch_refused")
     try:
         addresses = socket.getaddrinfo(parsed.hostname, parsed.port or 443, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
-        raise MarketError(f"市场源域名无法解析：{parsed.hostname}", code="fetch_refused") from exc
+        raise MarketError(_text_of("_assert_public_host.text.2").format(parsed.hostname), code="fetch_refused") from exc
     for address in {item[4][0] for item in addresses}:
         if not settings.is_public_address(address):
-            raise MarketError(f"市场源域名解析到了非公网地址 {address}，拒绝抓取", code="fetch_refused")
+            raise MarketError(_text_of("_assert_public_host.text.3").format(address), code="fetch_refused")
 
 
 def http_fetch(url: str, max_bytes: int, *, transport: httpx.BaseTransport | None = None, timeout: float = FETCH_TIMEOUT_SECONDS) -> bytes:
@@ -273,17 +286,17 @@ def http_fetch(url: str, max_bytes: int, *, transport: httpx.BaseTransport | Non
                     current = str(response.url.join(target))
                     continue
                 if response.status_code != 200:
-                    raise MarketError(f"抓取失败（HTTP {response.status_code}）：{url}", code="fetch_failed", status=502)
+                    raise MarketError(_text_of("http_fetch.text").format(response.status_code, url), code="fetch_failed", status=502)
                 declared = response.headers.get("content-length")
                 if declared and declared.isdigit() and int(declared) > max_bytes:
-                    raise MarketError(f"文件超过 {max_bytes} 字节上限：{url}", code="fetch_too_large", status=502)
+                    raise MarketError(_text_of("http_fetch.text.2").format(max_bytes, url), code="fetch_too_large", status=502)
                 body = bytearray()
                 for chunk in response.iter_bytes():
                     body.extend(chunk)
                     if len(body) > max_bytes:
-                        raise MarketError(f"文件超过 {max_bytes} 字节上限：{url}", code="fetch_too_large", status=502)
+                        raise MarketError(_text_of("http_fetch.text.3").format(max_bytes, url), code="fetch_too_large", status=502)
                 return bytes(body)
-    raise MarketError(f"重定向超过 {MAX_REDIRECTS} 次：{url}", code="fetch_refused", status=502)
+    raise MarketError(_text_of("http_fetch.text.4").format(MAX_REDIRECTS, url), code="fetch_refused", status=502)
 
 
 # ---------------------------------------------------------------- stored state
@@ -320,7 +333,7 @@ def stored_sources(setting: Mapping[str, Any]) -> list[dict[str, Any]]:
                     row["official"] = True
                     break
             else:
-                rows.insert(0, _source_row(resolved, label="官方市场源", official=True))
+                rows.insert(0, _source_row(resolved, label=_text_of("stored_sources.label"), official=True))
     else:
         for row in rows:
             row["official"] = False
@@ -421,7 +434,7 @@ class Market:
         resolved = resolve_source(url)
         rows = await self._sources()
         if any(row["key"] == resolved.key for row in rows):
-            raise MarketError("这个市场源已经登记过了", code="duplicate_source", status=409)
+            raise MarketError(_text_of("add_source.text"), code="duplicate_source", status=409)
         row = _source_row(resolved, label=label)
         self._refresh_row(row)
         rows.append(row)
@@ -440,7 +453,7 @@ class Market:
         rows = await self._sources()
         row = self._find(rows, id_)
         if row.get("official"):
-            raise MarketError("官方市场源随版预置，只能停用，不能删除", code="official_source", status=409)
+            raise MarketError(_text_of("remove_source.text"), code="official_source", status=409)
         rows = [r for r in rows if r is not row]
         await self.store.put_setting(SOURCES_KEY, {"items": rows}, actor_id=actor_id)
         return {"id": id_, "deleted": True}
@@ -469,7 +482,7 @@ class Market:
         except MarketError as exc:
             row["error"] = str(exc)
         except (httpx.HTTPError, OSError) as exc:
-            row["error"] = f"抓取索引失败：{str(exc)[:200]}"
+            row["error"] = _text_of("_refresh_row.text").format(str(exc)[:200])
         else:
             row["index"] = index.model_dump(mode="json", by_alias=True)
             row["fetched_at"] = _now()
@@ -480,7 +493,7 @@ class Market:
         for row in rows:
             if (row.get("id") or source_id(str(row["key"]))) == id_:
                 return row
-        raise MarketError("没有这个市场源", code="unknown_source", status=404)
+        raise MarketError(_text_of("_find.text"), code="unknown_source", status=404)
 
     # ---- install / update
 
@@ -498,40 +511,40 @@ class Market:
         rows = await self._sources()
         source_row = self._find(rows, source_id_)
         if not source_row.get("enabled", True):
-            raise MarketError("这个市场源已停用", code="source_disabled", status=409)
+            raise MarketError(_text_of("install.text"), code="source_disabled", status=409)
         index = source_row.get("index") if isinstance(source_row.get("index"), Mapping) else None
         listed = next((e for e in ((index or {}).get("entries") or []) if isinstance(e, Mapping) and e.get("slug") == slug), None)
         if listed is None:
-            raise MarketError("索引里没有这个条目，请先刷新市场源", code="unknown_entry", status=404)
+            raise MarketError(_text_of("install.text.2"), code="unknown_entry", status=404)
         entry = MarketEntry.model_validate(listed)
         resolved = ResolvedSource(key=source_row["key"], kind=source_row.get("kind") or "direct", base_url=source_row["base_url"], index_url=source_row["url"], label=source_row.get("label") or "")
         try:
             definition = parse_definition(self.fetch(entry_url(resolved, entry), MAX_DEFINITION_BYTES))
         except (httpx.HTTPError, OSError) as exc:
-            raise MarketError(f"抓取条目定义失败：{str(exc)[:200]}", code="fetch_failed", status=502) from exc
+            raise MarketError(_text_of("install.text.3").format(str(exc)[:200]), code="fetch_failed", status=502) from exc
         meta = definition.meta
         if (meta.slug, meta.name, meta.version, meta.kind) != (entry.slug, entry.name, entry.version, entry.kind):
-            raise MarketError("索引与条目定义不一致（slug / 名称 / 版本 / 类型），拒绝安装；请联系市场源维护者", code="index_mismatch", status=409)
+            raise MarketError(_text_of("install.text.4"), code="index_mismatch", status=409)
         target = (family or str(definition.spec.get("family") or "") or entry.slug.replace("-", "_")).strip().lower()
         try:
             spec = VideoEndpointSpec.model_validate({**definition.spec, "family": target})
             spec.check()
         except ValueError as exc:
-            raise MarketError(f"条目的端点声明无效：{exc}", code="bad_definition", status=422) from exc
+            raise MarketError(_text_of("install.text.5").format(exc), code="bad_definition", status=422) from exc
 
         endpoints = await self._endpoints()
         installs = await self._installs()
         existing = next((e for e in endpoints if (e.get("spec") or {}).get("family") == target), None)
         record = next((r for r in installs if r.get("family") == target), None)
         if record and (record.get("source_key"), record.get("slug")) != (source_row["key"], slug):
-            raise MarketError(f"端点 {target} 来自另一个市场条目（{record.get('source_label') or record.get('source_key')} / {record.get('slug')}），不做跨条目转移；请换一个族标识", code="family_bound", status=409)
+            raise MarketError(_text_of("install.text.6").format(target, record.get('source_label') or record.get('source_key'), record.get('slug')), code="family_bound", status=409)
         if existing and record is None and not overwrite:
-            raise MarketError(f"本地已有端点 {target}（非市场安装）；确认覆盖后才会替换", code="overwrite_needed", status=409, family=target)
+            raise MarketError(_text_of("install.text.7").format(target), code="overwrite_needed", status=409, family=target)
         if record and existing and not discard_local and spec_digest(existing.get("spec") or {}) != record.get("digest"):
-            raise MarketError(f"端点 {target} 安装后被本地修改过；更新会覆盖这些修改，请先导出或确认丢弃", code="modified_locally", status=409, family=target)
+            raise MarketError(_text_of("install.text.8").format(target), code="modified_locally", status=409, family=target)
         key = (api_key or "").strip()
         if not key and not (existing or {}).get("api_key_ciphertext"):
-            raise MarketError("首次安装需要提供这个供应商的 API Key", code="api_key_required", status=422)
+            raise MarketError(_text_of("install.text.9"), code="api_key_required", status=422)
         spec_json = spec.model_dump(mode="json")
         endpoint = {
             "spec": spec_json,
@@ -569,7 +582,7 @@ class Market:
         """
         endpoint = next((e for e in await self._endpoints() if (e.get("spec") or {}).get("family") == family), None)
         if endpoint is None:
-            raise MarketError("没有这个声明式端点", code="unknown_endpoint", status=404)
+            raise MarketError(_text_of("export_bundle.text"), code="unknown_endpoint", status=404)
         record = next((r for r in await self._installs() if r.get("family") == family), None)
         spec = dict(endpoint.get("spec") or {})
         slug = (record or {}).get("slug") or family.replace("_", "-")
@@ -584,7 +597,7 @@ class Market:
             "slug": slug,
             "files": {f"entries/{slug}/definition.json": json.dumps(definition, ensure_ascii=False, indent=2) + "\n"},
             "index_entry": entry,
-            "note": f"把 files 里的文件加进市场源仓库，并把 index_entry 追加到 {INDEX_FILENAME} 的 entries 里（API Key 不在其中）。",
+            "note": _text_of("export_bundle.note").format(INDEX_FILENAME),
         }
 
 

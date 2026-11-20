@@ -23,6 +23,23 @@ import zlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from app.core import prompt_data
+
+# The feelings, the paragraph the storyboard writer is given and why a feeling is dropped:
+# app/data/prompt/creative_intent.json.
+_WORDING = "creative_intent"
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A sentence of the brief's wording table, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return str(prompt_data.load(_WORDING)["says"][key]).format(**values)
+
+
+def _word(key: str) -> str:
+    """A word of the brief's wording table (a separator)."""
+    return prompt_data.text(_WORDING, key)
+
+
 # Shot-size families the distribution is expressed in.
 SIZE_BANDS = ("wide", "medium", "close")
 
@@ -45,116 +62,17 @@ class Intent:
     conflicts: tuple[str, ...] = ()
 
 
-INTENTS: tuple[Intent, ...] = (
+# The feelings, their trigger words and the seven offsets each applies, in the order they are
+# matched and fallen back on: app/data/prompt/creative_intent.json.
+INTENTS: tuple[Intent, ...] = tuple(
     Intent(
-        "vfx_maxed", "特效拉满", ("特效拉满", "特效满", "视觉轰炸", "特效炸裂", "满屏特效"),
-        camera="打斗专项与特殊视角：极速推拉、离心甩出、超快环绕",
-        vfx_density=0.8, rhythm=0.7, sizes=(0.3, 0.3, 0.4),
-        composition="低机位、超广角透视、前景粒子层层叠加",
-        lighting="高对比配局部过曝，硬逆光剪影",
-        sound="爆炸、能量、低频轰鸣；音效层可加到五层",
-    ),
-    Intent(
-        "tight_fight", "打斗紧凑", ("打斗紧凑", "拳拳到肉", "近身缠斗", "快切打斗", "硬桥硬马"),
-        camera="贴身平移、攻击轨迹跟拍、低角度扫掠拉出",
-        vfx_density=0.5, rhythm=0.6, sizes=(0.2, 0.5, 0.3),
-        composition="锁定身体焦点、持续动态模糊、前景快速掠过",
-        lighting="强对比快速切换，命中帧提亮",
-        sound="打击声优先，每次命中给低频闷响，环境声压到最低",
-    ),
-    Intent(
-        "tension", "压迫紧绷", ("紧张", "绷住", "压迫", "剑拔弩张", "对峙感", "窒息"),
-        camera="缓慢推进、被遮挡的窥视式横移、固定长镜蓄力、静止到骤动",
-        vfx_density=0.1, rhythm=1.5, sizes=(0.2, 0.4, 0.4),
-        composition="偏离中心、大量留白、前景遮挡、荷兰角",
-        lighting="高对比、硬阴影、明确的明暗交界线、单一方向光源",
-        sound="持续低频铺底（心跳、耳鸣），静默拉长，重音留给关键点",
-    ),
-    Intent(
-        "impact", "视觉冲击", ("冲击", "爆点", "炸裂", "震撼", "血脉偾张"),
-        camera="急刹推镜、离心甩出、俯冲、斜向推拉、弹射升起",
-        vfx_density=0.6, rhythm=0.7, sizes=(0.4, 0.3, 0.3),
-        composition="超广角在先、极端近远透视、元素冲出画框",
-        lighting="穿插一两帧全白闪、硬逆光爆发、明暗极端切换",
-        sound="每次爆点给低频 BOOM，瞬态前置",
-    ),
-    Intent(
-        "burning", "高燃", ("燃", "热血", "燃炸", "带感", "上头"),
-        camera="弹射升起、超快环绕接推近、静止到骤动、上升拉开",
-        vfx_density=0.5, rhythm=0.75, sizes=(0.3, 0.3, 0.4),
-        composition="低机位为主、主体向上冲出画框、背景留给天空或光源",
-        lighting="暖色主导（金橙红）、强逆光、镜头光晕、由暗到亮抬升",
-        sound="音乐优先、画面跟着节拍走，音效推而不抢",
-    ),
-    Intent(
-        "epic", "史诗宏大", ("史诗", "宏大", "壮阔", "大场面", "磅礴"),
-        camera="上升拉开、反向拉轨、升降广角、宏观环绕",
-        vfx_density=0.15, rhythm=1.3, sizes=(0.6, 0.25, 0.15),
-        composition="对称、三分法、深焦、前中后景分明，人物不超过画面三分之一",
-        lighting="黄金时刻或蓝调时刻、上帝光、大面积柔光，不做硬切",
-        sound="管弦与人声优先，环境层丰富，单个音效留 5-10 秒",
-    ),
-    Intent(
-        "oppressive", "压抑暗黑", ("压抑", "暗黑", "阴郁", "沉重", "绝望"),
-        camera="窥视式横移、缓慢推进、俯冲下压",
-        vfx_density=0.1, rhythm=1.5, sizes=(0.15, 0.35, 0.5),
-        composition="压缩头顶空间、画框向内挤压、人物被环境吞掉、前景遮挡",
-        lighting="低调、单光源、大片阴影吃掉人物、冷色主导，拒绝暖调",
-        sound="持续低频铺底、不协和音与噪声、可听见的心跳；不超过两层",
-        conflicts=("burning", "healing"),
-    ),
-    Intent(
-        "healing", "唯美治愈", ("唯美", "治愈", "温暖", "清新", "柔和", "甜"),
-        camera="并行横移、宏观环绕、贴水面滑行、上升拉开",
-        vfx_density=0.15, rhythm=1.5, sizes=(0.35, 0.4, 0.25),
-        composition="居中对称、大量留白、柔焦前景",
-        lighting="柔光为主、低对比、暖色（粉金奶油）、逆光柔焦、丰富焦外",
-        sound="钢琴竖琴风铃与自然声，一到两层，拒绝厚重音效",
-        conflicts=("oppressive", "tragic"),
-    ),
-    Intent(
-        "comedic", "轻松搞笑", ("搞笑", "喜剧", "轻松", "沙雕", "无厘头", "解压"),
-        camera="快速甩镜切反应、急推到表情峰值、跳切闪回",
-        vfx_density=0.1, rhythm=0.85, sizes=(0.25, 0.35, 0.4),
-        composition="人物直面镜头、对称的「呆视」构图、表情最大化",
-        lighting="高调、明亮均匀、高饱和、暖色主导",
-        sound="卡通音效优先（叮、啵、啪、咻），每层不超过 0.3 秒",
-        conflicts=("tragic", "oppressive"),
-    ),
-    Intent(
-        "eerie", "悬疑惊悚", ("悬疑", "惊悚", "诡异", "恐怖", "反转强"),
-        camera="从缝隙窥视、反向拉轨、甩镜、跳切闪回、穿物推进",
-        vfx_density=0.25, rhythm=1.2, sizes=(0.4, 0.3, 0.3),
-        composition="透过缝隙取景、人物背对镜头、信息藏在画面边缘、人物小而空间吞噬",
-        lighting="低调、大片黑区、单点光源（手电烛光月光）、闪烁光、阴影里有东西",
-        sound="环境音优先（风、滴水、门轴、远处脚步）、不协和音、极低频",
-        conflicts=("comedic",),
-    ),
-    Intent(
-        "tragic", "虐心催泪", ("虐", "催泪", "悲情", "心碎", "遗憾", "破防"),
-        camera="反向拉轨（抽离感）、俯冲下压、上升拉开",
-        vfx_density=0.1, rhythm=1.8, sizes=(0.3, 0.2, 0.5),
-        composition="人物在画面里很小、大量留白、雨雪作前景、背影取景",
-        lighting="冷色主导（蓝灰青）、低饱和、高光压下去、阴天平光",
-        sound="独奏钢琴或大提琴、雨风钟声、心跳渐弱；关键台词后留 3-5 秒纯画面",
-        conflicts=("comedic", "healing"),
-    ),
-    Intent(
-        "beat_synced", "卡点", ("卡点", "踩点", "节拍", "BGM同步"),
-        camera="急刹推镜、每拍一次甩镜、重拍定帧、弹射升起",
-        vfx_density=0.5, rhythm=0.7, sizes=(0.3, 0.2, 0.5),
-        composition="每一拍构图重心换位（左→中→右→上→下），元素走对角与放射线",
-        lighting="每个重拍给一到两帧全白或全色闪",
-        sound="以 BGM 节拍为准，所有音效对齐节拍（±50 毫秒），不超过三层",
-    ),
-    Intent(
-        "one_take", "一镜到底", ("一镜到底", "长镜头", "不切镜", "连续镜头"),
-        camera="复合联动运镜：平滑跟随、环绕跟拍、移焦、旋转跟随",
-        vfx_density=0.2, rhythm=1.2, sizes=(0.3, 0.45, 0.25),
-        composition="重心沿运镜路径平滑转移、三分或居中、始终保留一个视觉锚点",
-        lighting="光比平滑过渡、不用闪帧、同一镜内色温不变",
-        sound="每段独立声音节拍（3-5 个变化点），底噪贯穿，动作声落在段落起止",
-    ),
+        str(row["id"]), str(row["name"]), tuple(str(word) for word in row["triggers"]),
+        camera=str(row["camera"]), vfx_density=float(row["vfx_density"]), rhythm=float(row["rhythm"]),
+        sizes=tuple(float(share) for share in row["sizes"]),
+        composition=str(row["composition"]), lighting=str(row["lighting"]), sound=str(row["sound"]),
+        conflicts=tuple(str(other) for other in row["conflicts"]),
+    )
+    for row in prompt_data.value(_WORDING, "intents")
 )
 _BY_ID = {intent.id: intent for intent in INTENTS}
 PRIMARY_WEIGHT = 0.7
@@ -188,33 +106,36 @@ class IntentPlan:
         Given one list every scene, a model takes its first item every time. The choice follows the scene's own number,
         so a rerun asks the same question and neighbouring scenes differ.
         """
-        options = [item.split("：")[-1].strip() for item in self.primary.camera.split("、") if item.strip()]
+        separator, label = _word("list_separator"), _word("camera_label_separator")
+        options = [item.split(label)[-1].strip() for item in self.primary.camera.split(separator) if item.strip()]
         if not scene_key or len(options) < 2:
-            return f"运镜倾向：{self.primary.camera}"
+            return _says("camera_plain", camera=self.primary.camera)
         number = re.search(r"(\d+)$", scene_key)
         lead = (int(number.group(1)) if number else zlib.crc32(scene_key.encode("utf-8"))) % len(options)
-        rest = "、".join(option for index, option in enumerate(options) if index != lead)
-        return f"运镜倾向：这一场优先用「{options[lead]}」作主运镜，确实不合戏再换成{rest}"
+        rest = separator.join(option for index, option in enumerate(options) if index != lead)
+        return _says("camera_lead", lead=options[lead], rest=rest)
 
     def brief(self, scene_key: str = "") -> str:
         """The paragraph the storyboard writer is given."""
-        mix = "、".join(
-            f"{label}{round(share * 100)}%" for label, share in zip(("远中景", "中景", "近特写"), self.sizes)
+        separator = _word("list_separator")
+        mix = separator.join(
+            _says("size_share", label=label, percent=round(share * 100))
+            for label, share in zip(prompt_data.words(_WORDING, "size_labels"), self.sizes)
         )
         lines = [
-            f"【感觉】主感觉：{self.primary.name}"
-            + (f"；次感觉：{'、'.join(intent.name for intent in self.secondary)}（只做偏移，不反客为主）" if self.secondary else ""),
+            _says("feeling", primary=self.primary.name)
+            + (_says("feeling_secondary", names=separator.join(intent.name for intent in self.secondary)) if self.secondary else ""),
             self.camera_line(scene_key),
-            f"景别分布：{mix}；镜头长度按{self.rhythm:.2f}倍基准（小于1更碎、大于1更长）",
-            f"特效密度：约{round(self.vfx_density * 100)}%的镜头带明显特效",
-            f"构图：{self.primary.composition}",
-            f"光影：{self.primary.lighting}",
-            f"音效策略：{self.primary.sound}",
+            _says("sizes", mix=mix, rhythm=self.rhythm),
+            _says("vfx", percent=round(self.vfx_density * 100)),
+            _says("composition", composition=self.primary.composition),
+            _says("lighting", lighting=self.primary.lighting),
+            _says("sound", sound=self.primary.sound),
         ]
         for intent in self.secondary:
-            lines.append(f"次感觉「{intent.name}」只在对应段落与峰值镜加权：{intent.camera}；{intent.lighting}")
+            lines.append(_says("secondary_weighting", name=intent.name, camera=intent.camera, lighting=intent.lighting))
         if self.dropped:
-            lines.append("已丢弃冲突次感觉：" + "、".join(f"{name}（{why}）" for name, why in self.dropped))
+            lines.append(_says("dropped", items=separator.join(_says("dropped_item", name=name, why=why) for name, why in self.dropped)))
         return "\n".join(lines)
 
     def as_dict(self) -> dict:
@@ -270,10 +191,10 @@ def decode(
         if intent.id == lead.id:
             continue
         if intent.id in lead.conflicts or lead.id in intent.conflicts:
-            dropped.append((intent.name, f"与主感觉「{lead.name}」相冲"))
+            dropped.append((intent.name, _says("conflicts_with_primary", primary=lead.name)))
             continue
         if len(rest) >= MAX_SECONDARY:
-            dropped.append((intent.name, "一份分镜最多两个次感觉"))
+            dropped.append((intent.name, _says("too_many_secondary")))
             continue
         rest.append(intent)
 

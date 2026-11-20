@@ -1,0 +1,24 @@
+.passage-rewrite { display: flex; flex-direction: column; gap: 0.5rem; margin: 0.5rem 0; }
+.passage-rewrite__bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.passage-rewrite__bar label { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8125rem; }
+.passage-rewrite__bar input[type="text"] { flex: 1 1 14rem; min-width: 0; }
+.passage-rewrite__notice { margin: 0; font-size: 0.8125rem; }
+.passage-rewrite__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.passage-rewrite__list > li { display: flex; flex-direction: column; gap: 0.3rem; padding: 0.45rem 0.55rem; border: 1px solid var(--line, #e3d4da); border-radius: 6px; font-size: 0.875rem; }
+.passage-rewrite__pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
+.passage-rewrite__pair > div > span { font-size: 0.75rem; color: var(--text-muted, #777); }
+.passage-rewrite__before { color: var(--text-muted, #888); }
+.passage-rewrite__shot p { margin: 0.15rem 0; }
+.passage-rewrite__shot small { color: var(--text-muted, #777); }
+.passage-rewrite__line b { margin-right: 0.35rem; }
+.passage-rewrite__impact { padding: 0.45rem 0.55rem; border-left: 3px solid var(--warning, #d08a2a); background: var(--surface-muted, rgba(208, 138, 42, 0.06)); font-size: 0.8125rem; }
+.passage-rewrite__impact p { margin: 0; }
+.passage-rewrite__impact > ul { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.passage-rewrite__impact > ul b { margin-right: 0.4rem; }
+.passage-rewrite__impact small { display: block; color: var(--text-muted, #777); }
+.passage-rewrite__impact em { display: block; font-style: normal; }
+.passage-rewrite__sheet { margin-top: 0.45rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.passage-rewrite__sheet label { display: inline-flex; align-items: center; gap: 0.35rem; }
+.passage-rewrite__sheet ul { list-style: none; margin: 0; padding: 0; }
+.passage-rewrite__sheet ins { text-decoration: none; font-weight: 500; }
+@media (max-width: 640px) { .passage-rewrite__pair { grid-template-columns: minmax(0, 1fr); } }

@@ -2,6 +2,9 @@ import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 're
 import { ArrowRight, Command, Send } from 'lucide-react';
 import { filterChatCommands, type ChatCommand } from './chatCommands';
 import { NOVARA_AGENT_NAME } from './agentBrand';
+import { MentionMenu } from './MentionMenu';
+import { useMentionCandidates } from './useMentionCandidates';
+import { useMentionInput } from './useMentionInput';
 import './ChatComposer.css';
 import { t } from '../../i18n';
 
@@ -10,9 +13,11 @@ interface ChatComposerProps {
   busy: boolean;
   onChange: (value: string) => void;
   onSend: (message: string) => void;
+  /** 有项目 id 时输入「@」可以引用项目里的人物、场景和道具。 */
+  taskId?: string;
 }
 
-export function ChatComposer({ value, busy, onChange, onSend }: ChatComposerProps) {
+export function ChatComposer({ value, busy, onChange, onSend, taskId }: ChatComposerProps) {
   const menuId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -24,6 +29,10 @@ export function ChatComposer({ value, busy, onChange, onSend }: ChatComposerProp
   const open = slash && focused && dismissedValue !== value;
   const selected = open && activeIndex >= 0 ? commands[activeIndex] : undefined;
   const exact = slash ? commands.find(item => item.command === value.trim().toLowerCase()) : undefined;
+  const { items: mentionCandidates } = useMentionCandidates(taskId);
+  // 斜杠命令和 @ 引用不同时出现：以 / 开头时只有命令菜单。
+  const mention = useMentionInput({ value, onChange, candidates: mentionCandidates, inputRef, disabled: slash });
+  const { onFocus: mentionFocus, onBlur: mentionBlur, ...mentionInputProps } = mention.inputProps;
 
   // Scroll only the command list; never move the chat viewport or page.
   useLayoutEffect(() => {
@@ -57,6 +66,8 @@ export function ChatComposer({ value, busy, onChange, onSend }: ChatComposerProp
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    // @ 菜单开着时它先拿键：Enter 是插入名字，不是发送。
+    if (mention.onKeyDown(event)) return;
     if (event.nativeEvent.isComposing) return;
     if (open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
       event.preventDefault();
@@ -77,6 +88,7 @@ export function ChatComposer({ value, busy, onChange, onSend }: ChatComposerProp
 
   return (
     <div className="chat-composer">
+      <MentionMenu {...mention.menuProps} placement="above" />
       {open && (
         <div className="chat-command-menu">
           <div className="chat-command-menu__heading"><Command size={15} aria-hidden="true" /><span>{t('快捷命令')}</span><small>{t('↑↓ 选择 · Enter 执行')}</small></div>
@@ -96,12 +108,19 @@ export function ChatComposer({ value, busy, onChange, onSend }: ChatComposerProp
         </div>
       )}
       <div className="chat-composer__row">
-        <input ref={inputRef} type="text" role={slash ? 'combobox' : undefined}
+        <input ref={inputRef} type="text" {...mentionInputProps}
+          {...(slash ? {
+            role: 'combobox' as const,
+            'aria-expanded': open,
+            'aria-controls': open ? menuId : undefined,
+            'aria-autocomplete': 'list' as const,
+            'aria-activedescendant': selected ? `${menuId}-${activeIndex}` : undefined,
+          } : {})}
           placeholder={t('输入 / 查看命令，或直接说出需求…')}
-          aria-label={`发送给 ${NOVARA_AGENT_NAME} 的消息`} aria-expanded={slash ? open : undefined}
-          aria-controls={open ? menuId : undefined} aria-autocomplete={slash ? 'list' : undefined}
-          aria-activedescendant={selected ? `${menuId}-${activeIndex}` : undefined}
-          value={value} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+          aria-label={`发送给 ${NOVARA_AGENT_NAME} 的消息`}
+          value={value}
+          onFocus={event => { setFocused(true); mentionFocus(event); }}
+          onBlur={() => { setFocused(false); mentionBlur(); }}
           onChange={event => { setActiveIndex(-1); setDismissedValue(null); onChange(event.target.value); }}
           onKeyDown={onKeyDown} />
         <button type="button" onMouseDown={event => event.preventDefault()} onClick={submit} className="cyber-btn chat-composer__send" aria-label={t('发送消息')}

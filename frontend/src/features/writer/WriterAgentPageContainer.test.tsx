@@ -263,6 +263,45 @@ describe('WriterAgentPageContainer', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it('leaves a relation list the writer emptied alone when the page is opened again', async () => {
+    const emptied = {
+      ...dashboard,
+      relationshipsInferred: true,
+      relationshipsAuthored: true,
+      relationships: [{ from: '林夏', to: '周教授', relation: '同场互动 · 1 场', bidirectional: true }],
+    };
+    let answer: (response: Response) => void = () => undefined;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise<Response>(resolve => { answer = resolve; }));
+    const page = (
+      <WriterAgentPageContainer
+        defaultView="characters"
+        taskId="writer-task-1"
+        // The task's own breakdown shows first, before the dashboard says the list is the writer's.
+        fallbackBreakdown={{ roles: [{ name: '林夏' }, { name: '周教授' }], relationships: [] }}
+        fallbackScript="林夏：你隐瞒了什么？"
+        episodes={[]}
+        episodesBusy={false}
+        onPlanEpisodes={vi.fn()}
+        onProduceEpisode={vi.fn()}
+      />
+    );
+
+    const first = render(page);
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+    answer({ ok: true, json: async () => emptied } as Response);
+    expect(await screen.findByRole('button', { name: 'AI 分析人物关系' })).toBeTruthy();
+    first.unmount();
+    render(page);
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+    answer({ ok: true, json: async () => emptied } as Response);
+    expect(await screen.findByRole('button', { name: 'AI 分析人物关系' })).toBeTruthy();
+
+    expect(fetchSpy.mock.calls.map(call => String(call[0]))).toEqual([
+      'http://localhost:8000/api/drama/writer-task-1/writer-dashboard',
+      'http://localhost:8000/api/drama/writer-task-1/writer-dashboard',
+    ]);
+  });
+
   it('keeps the analyse button when the automatic analysis is refused, and lets it be retried', async () => {
     const user = userEvent.setup();
     const inferred = {

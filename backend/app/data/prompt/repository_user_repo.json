@@ -1,0 +1,6 @@
+{
+  "_doc": "app/repository/user_repo.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "hash_password.text": "密码不能为空",
+  "create_user.user_data.username": "用户",
+  "upgrade_password.text": "用户不存在"
+}

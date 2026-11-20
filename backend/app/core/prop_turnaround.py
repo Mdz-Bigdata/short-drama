@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""拍摄道具的比例参考：按物件决定画几个视图，再加一格手持或人形对比。
+"""拍摄道具的设定图：正面、背面、侧面、顶面、3/4 五个视图，再加一格手持或人台对比，排成 2 行 × 3 列。
 
 一次出图画一张网格(省钱，也让各格同一光线、同一比例)，再切成单独的视图：分割线从等分位置出发吸附到
 真实的白缝上(复用设定集切图器的平滑分隔判定)，每格收紧到道具本身、四周留一点余量。每张视图存进道具
@@ -19,15 +19,12 @@ from PIL import Image
 from app.core import prompt_data, prop_scale
 from app.core.actor_sheet_cutter import _runs, _SeparatorMap
 
-#: 槽位 → (中文名, 给图像模型的角度说明)。顺序即前端展示顺序，与 elementTypes.PROP_VIEW_SLOTS 一致。
+_SHEET = "prop_sheet"
+# 各类道具的摆放说法和名词表、手比的说法、中文数字、长度单位和认尺寸的正则：app/data/prompt/prop_turnaround.json。
+_WORDING = "prop_turnaround"
+#: 槽位 → (中文名, 给图像模型的角度说明)。顺序即前端展示顺序，与 elementTypes.PROP_VIEW_SLOTS 一致；说法在 app/data/prompt/prop_sheet.json。
 PROP_VIEWS: dict[str, tuple[str, str]] = {
-    "prop_front": ("正面", "正面平视，无透视"),
-    "prop_left_45": ("左侧45°", "向画面左侧转动 45°"),
-    "prop_right_45": ("右侧45°", "向画面右侧转动 45°"),
-    "prop_side": ("侧面", "正侧面平视，转动 90°，无透视，看得出厚度"),
-    "prop_back": ("背面", "转动 180° 的背面平视，无透视"),
-    "prop_top": ("顶面", "从正上方垂直俯视"),
-    "prop_detail": ("关键细节", "最有辨识度的结构、纹样或磨损的特写"),
+    slot: (str(name), str(angle)) for slot, (name, angle) in prompt_data.value(_SHEET, "views").items()
 }
 PROP_REFERENCE_SLOT = "prop_in_use"
 #: 带刻度和尺寸标注的比例总览，是程序画的，不是模型出的。
@@ -58,53 +55,47 @@ class _Family:
     pose: str
     nouns: dict[str, float]
     figure: bool = False
+    # 长轴水平横放：各视图的长度一样，按宽对齐比例(高是刃宽或厚度，各面不同)。
+    lying: bool = False
 
+
+def _word(key: str) -> str:
+    return prompt_data.text(_WORDING, key)
+
+
+def _lengths(key: str) -> dict[str, float]:
+    """词 → 厘米的表，按表里的顺序(先认先得)。数值照表里的写法，整数仍是整数。"""
+    return {str(word): length for word, length in prompt_data.value(_WORDING, key).items()}
+
+
+def _family_words(name: str) -> dict[str, object]:
+    """这一类道具的摆放说法(写进版式说明)和认它的名词表。"""
+    entry = prompt_data.value(_WORDING, "families")[name]
+    return {"pose": str(entry["pose"]), "nouns": {str(noun): length for noun, length in entry["nouns"].items()}}
+
+
+# 每件道具都是 2 行 × 3 列：五个视图加一格手持 / 人台对照，像专业道具设定图那样一张看全。
+# 正投影的四个视图(正面、背面、侧面、顶面)标长宽高；3/4 透视和细节只看样子，不标尺寸。
+_ORTHOGRAPHIC = ("prop_front", "prop_back", "prop_side", "prop_top")
+_STANDARD_VIEWS = (*_ORTHOGRAPHIC, "prop_left_45")
+_GRID = dict(rows=2, columns=3, size=WIDE_SIZE)
 
 _FAMILIES: dict[str, _Family] = {
-    # 细长的东西一行排开，长轴竖直，长度看得最清楚。
-    "slender": _Family(
-        ("prop_front", "prop_side", "prop_back"), ("prop_front", "prop_side", "prop_back"), 1, 4, WIDE_SIZE,
-        "长轴竖直，从头到尾完整入格",
-        {"匕首": 30, "短刀": 35, "短剑": 50, "长剑": 100, "剑": 100, "刀": 90, "刃": 80, "鞘": 85, "枪": 220, "矛": 220,
-         "戟": 240, "棍": 180, "杖": 150, "拐": 90, "鞭": 150, "箫": 80, "笛": 60, "伞": 90, "弓": 120, "箭": 80},
-    ),
-    # 扁平的东西两面都要看，再加一格看厚度。
-    "flat": _Family(
-        ("prop_front", "prop_back", "prop_side"), ("prop_front", "prop_back"), 2, 2, SQUARE_SIZE,
-        "平面正对镜头",
-        {"令牌": 10, "牌": 10, "信": 25, "纸": 30, "地图": 60, "图": 60, "卷轴": 60, "书": 25, "册": 25, "账本": 25,
-         "画": 80, "符": 18, "帖": 20, "佩": 6, "帕": 30, "布": 40, "巾": 40, "镜": 20, "扇": 30, "盾": 80},
-    ),
-    # 回转体转到哪一面都一样，要看的是口沿和轮廓。
+    # 细长的东西横放，长轴水平，长度看得最清楚。
+    "slender": _Family(_STANDARD_VIEWS, _ORTHOGRAPHIC, **_GRID, **_family_words("slender"), lying=True),
+    # 扁平的东西两面都要看，侧面看厚度。
+    "flat": _Family(_STANDARD_VIEWS, _ORTHOGRAPHIC, **_GRID, **_family_words("flat")),
+    # 回转体侧面和正面一样，换成细节特写；要看的是口沿和轮廓。
     "round": _Family(
-        ("prop_front", "prop_top", "prop_left_45"), ("prop_front",), 2, 2, SQUARE_SIZE,
-        "放正，能看清轮廓",
-        {"杯": 8, "盏": 8, "碗": 14, "壶": 18, "瓶": 25, "坛": 40, "罐": 25, "灯笼": 35, "灯": 20, "烛": 15, "炉": 25, "盆": 35},
+        ("prop_front", "prop_back", "prop_top", "prop_left_45", "prop_detail"), ("prop_front", "prop_back", "prop_top"), **_GRID,
+        **_family_words("round"),
     ),
-    # 小物件放大了画，真实大小靠手来比。
-    "tiny": _Family(
-        ("prop_front", "prop_side", "prop_left_45"), ("prop_front",), 2, 2, SQUARE_SIZE,
-        "放大到占满格子的大部分",
-        {"扳指": 3, "戒指": 2.5, "戒": 2.5, "耳环": 3, "耳坠": 4, "簪": 15, "钗": 15, "钥匙": 8, "印": 8, "骰子": 2,
-         "丸": 1, "针": 8, "钉": 5, "珠": 2, "铃": 5, "哨": 6, "锁": 8},
-    ),
-    "box": _Family(
-        ("prop_front", "prop_left_45", "prop_back", "prop_top", "prop_detail"), ("prop_front", "prop_back"), 2, 3, WIDE_SIZE,
-        "放正，盖子闭合",
-        {"匣": 20, "盒": 15, "箱": 60, "奁": 20},
-    ),
-    "large": _Family(
-        ("prop_front", "prop_side", "prop_back", "prop_top", "prop_detail"), ("prop_front", "prop_back"), 2, 3, WIDE_SIZE,
-        "放正，整体完整入格",
-        {"桌": 120, "案": 150, "椅": 95, "凳": 45, "床": 200, "榻": 190, "屏风": 180, "柜": 180, "棺": 210, "轿": 220,
-         "马车": 350, "车": 300, "鼎": 100, "门": 200, "架": 180, "碑": 150, "笼": 100},
-        True,
-    ),
+    # 小物件放大了画，真实大小靠手来比。丹药：「九转还魂丹」是一粒丹丸；「牡丹」是花，按花朵算。
+    "tiny": _Family(_STANDARD_VIEWS, _ORTHOGRAPHIC, **_GRID, **_family_words("tiny")),
+    "box": _Family(_STANDARD_VIEWS, _ORTHOGRAPHIC, **_GRID, **_family_words("box")),
+    "large": _Family(_STANDARD_VIEWS, _ORTHOGRAPHIC, **_GRID, **_family_words("large"), figure=True),
 }
-_DEFAULT_FAMILY = _Family(
-    ("prop_front", "prop_left_45", "prop_right_45", "prop_back", "prop_detail"), ("prop_front", "prop_back"), 2, 3, WIDE_SIZE,
-    "放正，整体完整入格", {},
-)
+_DEFAULT_FAMILY = _Family(_STANDARD_VIEWS, _ORTHOGRAPHIC, **_GRID, pose=_word("default_pose"), nouns={})
 _DEFAULT_LENGTH_CM = 30.0
 # 按形状认出来的类别：名字结尾就是这种形状时，参照表的类别不改它的排版。
 _SHAPE_FAMILIES = (_FAMILIES["flat"], _FAMILIES["round"], _FAMILIES["tiny"], _FAMILIES["box"])
@@ -113,12 +104,17 @@ _BY_NOUN = sorted(
     key=lambda entry: -len(entry[0]),
 )
 
-_HAND_WORDS = {"掌心": 8.0, "巴掌": 15.0, "拇指": 3.0, "指甲": 1.5, "拳头": 9.0}
-_DIGITS = {"半": 0.5, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
-_NUMBER = r"\d+(?:\.\d+)?|[半一二两三四五六七八九十]+"
-_UNITS = {"厘米": 1.0, "公分": 1.0, "cm": 1.0, "毫米": 0.1, "mm": 0.1, "米": 100.0, "m": 100.0, "尺": 33.0, "寸": 3.3}
+_HAND_WORDS = _lengths("hand_words")
+_DIGITS = _lengths("digits")
+_TEN = _word("ten")
+_NUMBER = _word("number_pattern")
+_UNITS = _lengths("units")
+_CHI, _CUN = _word("chi"), _word("cun")
 _UNIT = "|".join(sorted(_UNITS, key=len, reverse=True))
-_MEASURE = re.compile(rf"(?:全长|总长|通长|长|高|宽|直径|径|约|尺寸)[^\d半一二两三四五六七八九十，。；]{{0,3}}({_NUMBER})\s*({_UNIT})|({_NUMBER})\s*({_UNIT})(?:长|高|宽)|({_NUMBER})\s*(尺|寸)", re.I)
+# 「三尺二寸」是一个长度：尺和寸要加起来，不能只认前面的三尺。
+_CHI_CUN = re.compile(_word("chi_cun_pattern").format(number=_NUMBER))
+_MEASURE = re.compile(_word("measure_pattern").format(number=_NUMBER, unit=_UNIT), re.I)
+_BRACKETS = re.compile(_word("bracket_pattern"))
 
 
 @dataclass(frozen=True)
@@ -136,6 +132,9 @@ class PropPlan:
     size_source: str = "estimate"
     # 参照表里的长宽高说法(「长100×宽4×高2厘米」)；不是从表里查到的为空。
     size_text: str = ""
+    # 参照表里的长宽高(厘米)；比例总览上算出来的尺寸靠近其中一个时，标这个整数。
+    dims_cm: tuple[float, ...] = ()
+    lying: bool = False
 
     @property
     def slots(self) -> tuple[str, ...]:
@@ -146,17 +145,17 @@ class PropPlan:
 def _number(text: str) -> float:
     if text[0].isdigit():
         return float(text)
-    if text == "十":
+    if text == _TEN:
         return 10.0
-    if "十" in text:  # 十二、二十、二十五
-        tens, _, ones = text.partition("十")
+    if _TEN in text:  # 十二、二十、二十五
+        tens, _, ones = text.partition(_TEN)
         return float(_DIGITS.get(tens, 1)) * 10 + float(_DIGITS.get(ones, 0))
     return float(_DIGITS.get(text, 0))
 
 
 def stated_length_cm(text: str) -> float | None:
     """描述里写明的最长尺寸；只认紧贴尺寸词的数字，「三米外」不是道具的长度。"""
-    lengths = []
+    lengths = [_number(chi) * _UNITS[_CHI] + _number(cun) * _UNITS[_CUN] for chi, cun in _CHI_CUN.findall(text or "")]
     for match in _MEASURE.finditer(text or ""):
         groups = [group for group in match.groups() if group]
         lengths.append(_number(groups[0]) * _UNITS[groups[1].lower()])
@@ -173,7 +172,7 @@ def plan_prop(name: str, description: str = "", *, length_cm: float | None = Non
     尺寸依次看：人填的 ``length_cm``、描述里写明的、道具标尺参照表里的真实尺寸、物件类别的常见大小。
     参照表认出了类别(车辆、动物、饰品……)就按类别排版；名字结尾是扁的、圆的、小的东西(盾、杯、戒指)仍按形状排。
     """
-    bare = re.sub(r"[（(][^）)]*[）)]", "", name or "").strip()
+    bare = _BRACKETS.sub("", name or "").strip()
     by_end = next((entry for entry in _BY_NOUN if bare.endswith(entry[0])), None)
     found = by_end or next((entry for entry in _BY_NOUN if entry[0] in bare), None)
     noun_length, family = (found[1], found[2]) if found else (_DEFAULT_LENGTH_CM, _DEFAULT_FAMILY)
@@ -188,39 +187,35 @@ def plan_prop(name: str, description: str = "", *, length_cm: float | None = Non
         pose=family.pose, longest_cm=float(longest), size_stated=stated is not None,
         figure=family.figure or longest >= FIGURE_FROM_CM,
         size_source=source, size_text=scale.size_text() if scale is not None and not stated else "",
+        dims_cm=tuple(scale.dims_cm) if scale is not None and not stated else (),
+        lying=family.lying,
     )
 
 
 def prop_instruction(plan: PropPlan) -> str:
-    """给图像模型的版式说明。只要它画，不要它写字。"""
-    cells = "；".join(f"第 {index} 格：{PROP_VIEWS[slot][0]}，{PROP_VIEWS[slot][1]}" for index, slot in enumerate(plan.views, start=1))
-    length = f"这件道具最长边约 {plan.longest_cm:g} 厘米" + (
+    """给图像模型的版式说明。只要它画，不要它写字；说法在 app/data/prompt/prop_sheet.json。"""
+    cells = _word("cell_separator").join(
+        prompt_data.text(_SHEET, "cell").format(index=index, name=PROP_VIEWS[slot][0], angle=PROP_VIEWS[slot][1])
+        for index, slot in enumerate(plan.views, start=1)
+    )
+    length = prompt_data.text(_SHEET, "length").format(length=f"{plan.longest_cm:g}") + (
         prompt_data.text("prop_scale", "board_size").format(plan.size_text) if plan.size_text else ""
     )
     last = len(plan.slots)
     # 只说厘米模型容易画走样，把两者的倍数也说出来。
     reference = (
-        f"第 {last} 格是比例对照：一具哑光米白、光滑无五官的全身人台站在道具旁，人台不是真人，身高约 {FIGURE_HEIGHT_CM:g} 厘米，"
-        f"{length}，道具最长边是人台身高的 {plan.longest_cm / FIGURE_HEIGHT_CM:.1f} 倍，两者同处一个画面、都完整入格。"
-        if plan.figure else
-        f"第 {last} 格是比例对照：一只成年人的手自然地拿着这件道具，只画到前臂，不出现脸和身体；手长约 {HAND_LENGTH_CM:g} 厘米，"
-        f"{length}，道具最长边是手长的 {plan.longest_cm / HAND_LENGTH_CM:.1f} 倍，严格按这个比例画，道具主要部分不被手挡住。"
+        prompt_data.text(_SHEET, "figure_reference").format(
+            cell=last, figure=f"{FIGURE_HEIGHT_CM:g}", length=length, ratio=f"{plan.longest_cm / FIGURE_HEIGHT_CM:.1f}",
+        ) if plan.figure else prompt_data.text(_SHEET, "hand_reference").format(
+            cell=last, hand=f"{HAND_LENGTH_CM:g}", length=length, ratio=f"{plan.longest_cm / HAND_LENGTH_CM:.1f}",
+        )
     )
-    return (
-        f"生成一张影视道具比例参考图：严格的 {plan.rows} 行 × {plan.columns} 列网格，共 {last} 格，按从左到右、从上到下的顺序，"
-        "格与格之间留一条纯白细缝。各格是同一件道具、同一材质颜色与磨损、同一剧本状态，同一中性柔光，"
-        "每一格(包括比例对照格)都是纯白背景，产品抠图质感，没有投影、倒影和地面，"
-        f"道具{plan.pose}，在格内居中、完整、不裁断、不贴边。"
-        f"前 {len(plan.views)} 格同一比例，不出现手和人物。{cells}。{reference}"
-        "清楚呈现比例、轮廓、材质、颜色、磨损和关键结构。"
+    return prompt_data.text(_SHEET, "instruction").format(
+        rows=plan.rows, columns=plan.columns, cells=last, pose=plan.pose, views=len(plan.views), cell_list=cells, reference=reference,
     )
 
 
-PROP_CLOSING = (
-    "项目视觉基准只决定道具的材质与年代感，不改变纯白背景和中性光：不要暗调、色调滤镜、景深虚化和场景。"
-    "统一要求：结构清晰，透视正确，材质真实，细节丰富，高清写实电影质感；严禁任何文字、数字、刻度、尺子、标签、编号、字幕、"
-    "水印、Logo、边框；格内不出现第二个道具。"
-)
+PROP_CLOSING = prompt_data.text(_SHEET, "closing")
 
 
 def _split_at(separators: list[bool], length: int, parts: int) -> list[tuple[int, int]]:

@@ -15,6 +15,9 @@ from functools import lru_cache
 from pathlib import Path
 
 TABLE = Path(__file__).resolve().parents[1] / "data" / "props" / "scale_reference.json"
+#: 参照表之外的补充：修仙题材的法宝、丹药、符箓、储物，和短剧常见的古装日用器物、车马、家具、现代日常物件
+#: (参照表里没有)。同名以参照表为准。
+SUPPLEMENTS = (TABLE.with_name("xianxia_items.json"), TABLE.with_name("everyday_items.json"))
 _TYPE_SUFFIX = re.compile(r"[二三四五六七八九十]型$")
 
 
@@ -44,10 +47,10 @@ class PropScale:
 
 @lru_cache(maxsize=1)
 def _table() -> tuple[dict[str, PropScale], tuple[str, ...]]:
-    data = json.loads(TABLE.read_text(encoding="utf-8"))
-    families = data.get("category_family") or {}
+    tables = [json.loads(path.read_text(encoding="utf-8")) for path in (TABLE, *SUPPLEMENTS) if path.is_file()]
+    families = {key: value for data in tables for key, value in (data.get("category_family") or {}).items()}
     by_name: dict[str, PropScale] = {}
-    for entry in data.get("entries") or []:
+    for entry in (entry for data in tables for entry in data.get("entries") or []):
         name = _TYPE_SUFFIX.sub("", str(entry["name"]).strip())
         if name in by_name:
             continue

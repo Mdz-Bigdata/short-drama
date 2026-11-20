@@ -66,6 +66,20 @@ class ShotVideoFailure(BaseModel):
     at: float | None = None
 
 
+class ShotAsset(BaseModel):
+    """这一镜用到的一个资产：分镜里画了它、视频里发了它的图(第几张)、改过之后是否待重做。"""
+    kind: str = ""
+    name: str = ""
+    # 素材库元素 id 与绑定时的版本；只在项目里、不在素材库的资产为空串 / 0。
+    element_id: str = ""
+    element_version: int = 0
+    # 视频提示词里的参考图序号(参考图N)；没进视频请求为空。
+    image_number: int | None = None
+    in_storyboard: bool = False
+    in_video: bool = False
+    stale: bool = False
+
+
 class ShotVisualRecord(BaseModel):
     shot_id: int
     scene_id: str = ""
@@ -80,6 +94,8 @@ class ShotVisualRecord(BaseModel):
     image_url: str | None = None
     end_frame_url: str | None = None
     video_url: str | None = None
+    # 换了音色后重配过的预览片段(画面同 video_url，声音是新配音)；成片仍按 video_url 和时间线合成。
+    preview_url: str | None = None
     candidate_urls: list[str] = Field(default_factory=list)
     image_prompt: str = ""
     video_prompt: str = ""
@@ -94,6 +110,20 @@ class ShotVisualRecord(BaseModel):
     reference_numbers: dict[str, int] = Field(default_factory=dict)
     # 本镜所在看板最近一次没出片的原因(供应商拒单等)；出片后清除。
     failure: ShotVideoFailure | None = None
+    # 本镜用到的资产(分镜绑定、分镜表点名、片段参考合并去重)，改了哪个资产就知道哪些镜头要重做。
+    assets: list[ShotAsset] = Field(default_factory=list)
+    # 样片：按什么分辨率出的(480p；空表示全分辨率)，是否已本地放大，是否已要求重出高清。
+    draft_resolution: str = ""
+    # 这一镜一共提交过几次视频(各轮累计)，「每镜最多尝试」按它算。
+    attempts: int = 0
+    draft_upscaled: bool = False
+    hd_retake: bool = False
+    # 局部修：要求从第几秒往后重做(重跑第 5 阶段时执行)，以及区域修补的进度与结果。
+    retake_from: float | None = None
+    retaken_from: float | None = None
+    repair: dict[str, Any] | None = None
+    # 控制表：这一镜要保留的几件事各靠哪份素材(动作与运镜、开场站位、空间、外观、节奏、场地)，重复和缺的标出来。
+    controls: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ShotVideoPromptUpdate(BaseModel):
@@ -111,6 +141,68 @@ class ProjectVideoModelUpdate(BaseModel):
 
 class ShotRegenerateRequest(BaseModel):
     reason: str = Field("", max_length=300)
+
+
+class SpendLimitsUpdate(BaseModel):
+    """本轮视频预算上限(元)和每镜最多尝试次数；留空(null / 0)就是不限。"""
+    model_config = ConfigDict(extra="forbid")
+
+    budget_cap: float | None = Field(None, ge=0, le=1_000_000)
+    max_attempts: int | None = Field(None, ge=0, le=50)
+
+
+class SpokenLanguageUpdate(BaseModel):
+    """对白语言：四川话、粤语、英语……里的一种；留空回到默认的普通话。"""
+    model_config = ConfigDict(extra="forbid")
+
+    language: str | None = Field(None, max_length=24)
+
+
+class VideoResolutionUpdate(BaseModel):
+    """成片清晰度：720p / 1080p / 4k 里当前视频模型提供的一档；留空回到默认档位。"""
+    model_config = ConfigDict(extra="forbid")
+
+    resolution: str | None = Field(None, max_length=12)
+
+
+class DraftModeUpdate(BaseModel):
+    """样片模式：第 5 阶段按 480p 出片，看过再逐镜出高清。"""
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+
+
+class ShotHdRequest(BaseModel):
+    """样片转高清：本地放大(不花钱，偏软) 或 同提示词同种子按全分辨率重出(重跑第 5 阶段时执行)。"""
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["upscale", "regenerate"]
+
+
+class ShotRetakeRequest(BaseModel):
+    """从第几秒往后重做：之前的画面保留，只重出后面。"""
+    model_config = ConfigDict(extra="forbid")
+
+    from_seconds: float = Field(gt=0, le=60)
+    note: str = Field("", max_length=300)
+
+
+class RepairBox(BaseModel):
+    """画面上的一块，都是 0–1 的比例：左上角 (x, y)，宽 w、高 h。"""
+    x: float = Field(ge=0, lt=1)
+    y: float = Field(ge=0, lt=1)
+    w: float = Field(gt=0, le=1)
+    h: float = Field(gt=0, le=1)
+
+
+class ShotRepairRequest(BaseModel):
+    """区域修补：只改框出来的那一块，其余原样。"""
+    model_config = ConfigDict(extra="forbid")
+
+    box: RepairBox
+    note: str = Field(min_length=1, max_length=300)
+    start: float | None = Field(None, ge=0, le=60)
+    end: float | None = Field(None, ge=0, le=60)
 
 
 class VideoAdmissionRequest(BaseModel):
@@ -137,3 +229,15 @@ class ShotVisualWorkspaceResponse(BaseModel):
     shot_types: list[dict[str, str]] = Field(default_factory=list)
     recipe_categories: list[dict[str, str]] = Field(default_factory=list)
     shots: list[ShotVisualRecord] = Field(default_factory=list)
+    # 样片模式是否开着；当前视频模型能不能做区域修补(要能收参考视频)。
+    draft_mode: bool = False
+    # 对白语言：项目选的方言或外语(空串是默认的普通话)，和可选的列表(视频模型不自己出声时为空)。
+    spoken_language: str = ""
+    spoken_language_options: list[dict[str, str]] = Field(default_factory=list)
+    # 成片清晰度：项目选的档位(空串是默认档位)，和当前视频模型可选的档位。
+    video_resolution: str = ""
+    video_resolution_choices: list[str] = Field(default_factory=list)
+    repair_supported: bool = False
+    # 本轮视频预算上限(元)、每镜最多尝试次数；None 是不限。
+    video_budget_cap: float | None = None
+    video_max_attempts: int | None = None

@@ -251,15 +251,20 @@ class ConsolidatePanelTests(unittest.TestCase):
         self.assertIn(30, supported_shot_durations(model))
         self.assertEqual(split_shot_seconds(30, model), [30])
         self.assertEqual(audit_shot_table([_shot(1, "沈知微跪下", duration="30s")], video_model=model).shots[0]["duration"], "30s")
-        # One clip every ten seconds, the shortest this model is worth using.
-        self.assertEqual([panel_limit(f"{seconds}s", video_model=model) for seconds in (10, 19, 20, 30)], [1, 1, 2, 3])
+        # One clip every fifteen seconds, the shortest this model is worth using: a 30 s scene is one or two clips.
+        self.assertEqual([panel_limit(f"{seconds}s", video_model=model) for seconds in (10, 15, 29, 30)], [1, 1, 1, 2])
         panels = [_shot(1, "沈知微跪下", duration="15s"), _shot(2, "陆昀转身离开", angle="俯拍", duration="15s")]
         self.assertEqual([panel["duration"] for panel in fit_panels(panels, 1, video_model=model)], ["30s"])
         self.assertEqual(len(fit_panels(panels, 1, video_model="MiniMax-H3")), 2)
 
-    def test_automatic_merging_still_stops_at_a_steady_length_within_the_limit(self):
-        panels = [_shot(1, "沈知微跪下", duration="10s"), _shot(2, "她低头", duration="10s")]
-        self.assertEqual(len(consolidate_panels(panels, video_model="seedance2.5")), 2)
+    def test_beats_that_keep_their_size_become_one_long_panel_and_a_size_change_stops_at_a_steady_length(self):
+        same = [_shot(1, "沈知微跪下", duration="10s"), _shot(2, "她低头", duration="10s"), _shot(3, "她把信放在膝上", duration="8s")]
+        merged = consolidate_panels(same, video_model="seedance2.5")
+        self.assertEqual([panel["duration"] for panel in merged], ["28s"], "one storyboard picture for the whole same-size stretch")
+        # The model's own clip length still caps it: 2.0 / H3 render 15 s, so the same beats stay apart there.
+        self.assertEqual(len(consolidate_panels(same, video_model="MiniMax-H3")), 3)
+        changing = [_shot(1, "沈知微跪下", duration="10s"), _shot(2, "她抬眼", size="近景", duration="10s")]
+        self.assertEqual(len(consolidate_panels(changing, video_model="seedance2.5")), 2)
 
     def test_a_chosen_seconds_per_panel_overrides_the_models_default(self):
         with patch.dict("os.environ", {"STORYBOARD_SECONDS_PER_PANEL": "5"}):

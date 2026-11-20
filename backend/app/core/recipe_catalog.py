@@ -17,6 +17,19 @@ from pathlib import Path
 from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from app.core import prompt_data
+
+
+_WORDING_FILE = "recipe_catalog"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/recipe_catalog.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 RECIPES_DIR = Path(__file__).resolve().parents[1] / "data" / "recipes"
 
@@ -52,26 +65,26 @@ class RecipeInput(BaseModel):
     @model_validator(mode="after")
     def consistent(self) -> "RecipeInput":
         if self.type == "choice" and not self.choices:
-            raise ValueError(f"选项型输入 {self.name} 需要 choices")
+            raise ValueError(_text_of("consistent.text").format(self.name))
         if self.type != "choice" and self.choices:
-            raise ValueError(f"输入 {self.name} 不是选项型，不能有 choices")
+            raise ValueError(_text_of("consistent.text.2").format(self.name))
         if self.default and self.type == "choice" and self.default not in self.choices:
-            raise ValueError(f"输入 {self.name} 的默认值不在 choices 里")
+            raise ValueError(_text_of("consistent.text.3").format(self.name))
         if self.default and self.type == "number":
             self.check_number(self.default)
         if self.type != "number" and (self.minimum is not None or self.maximum is not None):
-            raise ValueError(f"输入 {self.name} 不是数字型，不能有范围")
+            raise ValueError(_text_of("consistent.text.4").format(self.name))
         return self
 
     def check_number(self, value: str) -> None:
         try:
             number = float(value)
         except ValueError as exc:
-            raise ValueError(f"「{self.label}」要填数字") from exc
+            raise ValueError(_text_of("check_number.text").format(self.label)) from exc
         if number != number or number in (float("inf"), float("-inf")):
-            raise ValueError(f"「{self.label}」要填数字")
+            raise ValueError(_text_of("check_number.text.2").format(self.label))
         if (self.minimum is not None and number < self.minimum) or (self.maximum is not None and number > self.maximum):
-            raise ValueError(f"「{self.label}」要在 {self.minimum:g} 到 {self.maximum:g} 之间")
+            raise ValueError(_text_of("check_number.text.3").format(self.label, self.minimum, self.maximum))
 
 
 class Recipe(BaseModel):
@@ -92,20 +105,20 @@ class Recipe(BaseModel):
     def placeholders_match_inputs(self) -> "Recipe":
         declared = [item.name for item in self.inputs]
         if len(declared) != len(set(declared)):
-            raise ValueError("输入名重复")
+            raise ValueError(_text_of("placeholders_match_inputs.text"))
         used = set(_PLACEHOLDER.findall(self.prompt))
         unknown = used - set(declared)
         if unknown:
-            raise ValueError(f"提示词用了未声明的输入：{'、'.join(sorted(unknown))}")
+            raise ValueError(_text_of("placeholders_match_inputs.text.2").format('、'.join(sorted(unknown))))
         unused = set(declared) - used
         if unused:
-            raise ValueError(f"声明了但提示词没用的输入：{'、'.join(sorted(unused))}")
+            raise ValueError(_text_of("placeholders_match_inputs.text.3").format('、'.join(sorted(unused))))
         always = _PLACEHOLDER.findall(_OPTIONAL.sub("", self.prompt))
         for item in self.inputs:
             if not item.required and not item.default and item.name in always:
-                raise ValueError(f"可选输入 {item.name} 没有默认值，必须放进 [[ ]] 里")
+                raise ValueError(_text_of("placeholders_match_inputs.text.4").format(item.name))
         if "{" in _PLACEHOLDER.sub("", self.prompt) or "}" in _PLACEHOLDER.sub("", self.prompt):
-            raise ValueError("提示词里有写坏的占位符")
+            raise ValueError(_text_of("placeholders_match_inputs.text.5"))
         return self
 
 
@@ -126,7 +139,7 @@ class RecipeCatalog:
     def get(self, recipe_id: str) -> Recipe:
         recipe = self._by_id.get(recipe_id)
         if recipe is None:
-            raise LookupError(f"没有叫 {recipe_id} 的配方")
+            raise LookupError(_text_of("get.text").format(recipe_id))
         return recipe
 
     def search(self, *, category: str = "", output_type: str = "", query: str = "") -> list[Recipe]:
@@ -162,18 +175,18 @@ def load_catalog(directory: Path = RECIPES_DIR) -> RecipeCatalog:
     seen: dict[str, str] = {}
     files = sorted(directory.glob("*.json"))
     if not files:
-        raise RecipeCatalogError(f"{directory} 里没有配方文件")
+        raise RecipeCatalogError(_text_of("load_catalog.text").format(directory))
     for path in files:
         try:
             parsed = RecipeFile.model_validate(json.loads(path.read_text(encoding="utf-8")))
         except (OSError, json.JSONDecodeError, ValidationError) as exc:
             raise RecipeCatalogError(f"{path.name}: {exc}") from exc
         if parsed.category in labels:
-            raise RecipeCatalogError(f"{path.name}: 类别 {parsed.category} 已在别的文件里定义")
+            raise RecipeCatalogError(_text_of("load_catalog.text.2").format(path.name, parsed.category))
         labels[parsed.category] = parsed.label
         for recipe in parsed.recipes:
             if recipe.id in seen:
-                raise RecipeCatalogError(f"{path.name}: 配方 {recipe.id} 与 {seen[recipe.id]} 重复")
+                raise RecipeCatalogError(_text_of("load_catalog.text.3").format(path.name, recipe.id, seen[recipe.id]))
             seen[recipe.id] = path.name
             recipes.append(recipe.model_copy(update={"category": parsed.category, "category_label": parsed.label}))
     return RecipeCatalog(recipes, labels)
@@ -188,18 +201,18 @@ def _values(recipe: Recipe, given: Mapping[str, Any]) -> dict[str, str]:
     declared = {item.name: item for item in recipe.inputs}
     unknown = [name for name in given if name not in declared]
     if unknown:
-        raise RecipeInputError(f"配方 {recipe.id} 没有这些输入：{'、'.join(unknown)}")
+        raise RecipeInputError(_text_of("_values.text").format(recipe.id, '、'.join(unknown)))
     values: dict[str, str] = {}
     for item in recipe.inputs:
         raw = given.get(item.name)
         text = " ".join(str(raw).split()) if raw is not None else ""
         text = text or item.default
         if item.required and not text:
-            raise RecipeInputError(f"缺少「{item.label}」")
+            raise RecipeInputError(_text_of("_values.text.2").format(item.label))
         if len(text) > item.max_length:
-            raise RecipeInputError(f"「{item.label}」最长 {item.max_length} 个字符")
+            raise RecipeInputError(_text_of("_values.text.3").format(item.label, item.max_length))
         if text and item.type == "choice" and text not in item.choices:
-            raise RecipeInputError(f"「{item.label}」只能是：{'、'.join(item.choices)}")
+            raise RecipeInputError(_text_of("_values.text.4").format(item.label, '、'.join(item.choices)))
         if text and item.type == "number":
             try:
                 item.check_number(text)

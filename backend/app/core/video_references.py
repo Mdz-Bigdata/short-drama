@@ -9,12 +9,14 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core import prompt_data
-from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS, MAX_SEQUENCE_IMAGES
+from app.core import clip_skeleton, prompt_data
+from app.core.reference_limits import MAX_SEQUENCE_IMAGES, WIDEST_REFERENCE_AUDIOS, WIDEST_REFERENCE_IMAGES, WIDEST_REFERENCE_VIDEOS
 
 
+# "first_frame" 不是出品人能选的项目设置(见 _USER_VIDEO_REFERENCE_MODES)：只由第 5 阶段的接法规则(clip_route)
+# 明确指定——同场接上一镜尾帧、唯一一张分镜当首帧起步。
 VideoReferenceMode = Literal[
-    "auto", "first_last_frame", "multi_reference", "multimodal",
+    "auto", "first_frame", "first_last_frame", "multi_reference", "multimodal",
 ]
 ExecutableVideoMode = Literal[
     "text", "first_frame", "first_last_frame", "multi_reference", "multimodal",
@@ -76,9 +78,39 @@ VIDEO_PROVIDER_PROFILES: tuple[VideoProviderProfile, ...] = (
         notes=["frame anchoring and mixed Ref2VA references are separate request modes"],
         native_audio=True,
     ),
+    # Seedance 2.5 and 2.5 flash take more references than 2.0 (Ark video generation guide: images 30 / 10 / 9,
+    # videos 10 / 5 / 3, audio 10 / 5 / 3). Same family, so everything that asks for "seedance" still matches;
+    # listed before the 2.0 entry so the longer names are found first.
     VideoProviderProfile(
         family="seedance",
-        aliases=["seedance2.5", "seedance-2.5", "seedance2.0", "seedance-2.0", "seedance2", "seedance"],
+        aliases=["seedance2.5-flash", "seedance-2.5-flash", "seedance 2.5 flash", "seedance-2-5-flash"],
+        modes=["text", "first_frame", "first_last_frame", "multi_reference", "multimodal"],
+        max_reference_images=10,
+        max_reference_videos=5,
+        max_reference_audios=5,
+        verification_status="integrated",
+        capability_source="Ark video generation guide (Seedance 2.5 flash reference limits); project Ark-compatible adapter",
+        notes=["the configured endpoint remains authoritative for each Seedance version"],
+        native_audio=True,
+    ),
+    VideoProviderProfile(
+        family="seedance",
+        aliases=["seedance2.5", "seedance-2.5", "seedance 2.5", "seedance-2-5"],
+        modes=["text", "first_frame", "first_last_frame", "multi_reference", "multimodal"],
+        max_reference_images=30,
+        max_reference_videos=10,
+        max_reference_audios=10,
+        verification_status="integrated",
+        capability_source="Ark video generation guide (Seedance 2.5 reference limits); project Ark-compatible adapter",
+        notes=[
+            "the configured endpoint remains authoritative for each Seedance version",
+            "a request body may not exceed 64 MB: the gateway shrinks or drops inline references past its budget",
+        ],
+        native_audio=True,
+    ),
+    VideoProviderProfile(
+        family="seedance",
+        aliases=["seedance2.0", "seedance-2.0", "seedance2", "seedance"],
         modes=["text", "first_frame", "first_last_frame", "multi_reference", "multimodal"],
         max_reference_images=9,
         max_reference_videos=3,
@@ -103,7 +135,8 @@ VIDEO_PROVIDER_PROFILES: tuple[VideoProviderProfile, ...] = (
         notes=[
             "audio is not advertised as a conditioning input in the reviewed O1 guide",
             "the adapter executes text, first-frame, first+last-frame and multi-image modes; Video O1 multimodal references fail closed until their fields are verified",
-            "kling-v2-6 / v3 can render sound, but only behind a request flag the adapter does not send, so clips arrive silent",
+            "kling 3.0 / 4.0 render sound only when the request says sound=on (default off); the adapter sends it, and their "
+            "clips keep their own sound, only when the host sets KLING_NATIVE_SOUND=1 - otherwise clips arrive silent and are dubbed",
         ],
     ),
     VideoProviderProfile(
@@ -178,9 +211,9 @@ class VideoRouteRequest(BaseModel):
     first_frame: str | None = None
     last_frame: str | None = None
     sequence_images: list[str] = Field(default_factory=list, max_length=MAX_SEQUENCE_IMAGES)
-    reference_images: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_IMAGES)
-    reference_videos: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_VIDEOS)
-    reference_audios: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_AUDIOS)
+    reference_images: list[str] = Field(default_factory=list, max_length=WIDEST_REFERENCE_IMAGES)
+    reference_videos: list[str] = Field(default_factory=list, max_length=WIDEST_REFERENCE_VIDEOS)
+    reference_audios: list[str] = Field(default_factory=list, max_length=WIDEST_REFERENCE_AUDIOS)
     intent: VideoGenerationIntent = Field(default_factory=VideoGenerationIntent)
 
 
@@ -223,11 +256,11 @@ VIDEO_MODEL_MAX_SHOT_SECONDS: tuple[tuple[str, int], ...] = (
 
 
 # 单个分镜时长的「宜用区间」：模型能生成的范围之内，按创作习惯取的一段。Seedance 2.5 一次能出 30 秒，
-# 用它拍 4 秒碎镜既浪费调用也丢掉长镜头的连贯；2.0 与 H3 的 5–15 秒是它们画面最稳的一段。
+# 用它拍碎镜既浪费调用也丢掉长镜头的连贯，所以只取 15–30 秒；2.0 与 H3 的 5–15 秒是它们画面最稳的一段。
 # 编剧阶段把分镜时长限定在这里（模型从剧本规划时只能取区间内的整数秒），估算也落在这里。
 VIDEO_MODEL_PREFERRED_SHOT_SECONDS: tuple[tuple[str, int, int], ...] = (
-    ("seedance2.5", 10, 30),
-    ("seedance-2.5", 10, 30),
+    ("seedance2.5", 15, 30),
+    ("seedance-2.5", 15, 30),
     ("seedance2.0", 5, 15),
     ("seedance-2.0", 5, 15),
     ("seedance2", 5, 15),
@@ -239,11 +272,37 @@ VIDEO_MODEL_PREFERRED_SHOT_SECONDS: tuple[tuple[str, int, int], ...] = (
 )
 
 
+# 宜用区间里往哪头靠：Seedance 2.5 一镜尽量拍满 30 秒，取多少仍由这一镜的剧情决定（编剧提示词照此写）。
+# 没登记的模型不偏向哪头，按内容取。
+VIDEO_MODEL_AIM_SHOT_SECONDS: tuple[tuple[str, int], ...] = (
+    ("seedance2.5", 30),
+    ("seedance-2.5", 30),
+)
+
+
 # 同一族里不出声的版本：族粒度上 seedance 音画同生，但 1.0 只出画面（1.5 起出声）。
 VIDEO_MODEL_NATIVE_AUDIO: tuple[tuple[str, bool], ...] = (
     ("seedance-1-0", False),
     ("seedance1-0", False),
 )
+
+
+# Kling renders sound with the picture only when the request says ``sound: "on"`` (official legacy
+# /v1/videos endpoints; default "off"), and only on the versions its capability map lists for text and
+# image to video: 3.0, 3.0 Turbo, 4.0, 4.0 Flash. O1 / Omni, 2.6 and 2.5 Turbo are not on that list.
+# The request flag has not been proven against the live API from this project, so it is a host
+# switch that starts off: KLING_NATIVE_SOUND=1 sends the flag and treats those versions as audible.
+KLING_NATIVE_SOUND_ENV = "KLING_NATIVE_SOUND"
+_KLING_AUDIBLE = re.compile(r"kling-?(?:v-?)?(?:3|4)(?!\d)")
+_KLING_SILENT = re.compile(r"o1|omni")
+
+
+def kling_native_sound(model: str) -> bool:
+    """Whether this Kling request should ask for the model's own sound (see ``KLING_NATIVE_SOUND_ENV``)."""
+    if os.getenv(KLING_NATIVE_SOUND_ENV, "0").strip().lower() not in {"1", "true", "on", "yes"}:
+        return False
+    normalized = _normalize_model_token(model)
+    return bool(_KLING_AUDIBLE.search(normalized)) and not _KLING_SILENT.search(normalized)
 
 
 def _normalize_model_token(value: str) -> str:
@@ -286,6 +345,19 @@ def preferred_shot_seconds(model: str) -> tuple[int, int]:
     return MIN_SHOT_SECONDS, max(MIN_SHOT_SECONDS, hard_max)
 
 
+def aim_shot_seconds(model: str) -> int | None:
+    """The shot length to lean toward for ``model`` (Seedance 2.5: 30 s), inside its preferred range; None leans nowhere."""
+    normalized = _normalize_model_token(model)
+    if not normalized:
+        return None
+    ranked = sorted(VIDEO_MODEL_AIM_SHOT_SECONDS, key=lambda item: len(_normalize_model_token(item[0])), reverse=True)
+    for alias, seconds in ranked:
+        if _normalize_model_token(alias) in normalized:
+            low, high = preferred_shot_seconds(model)
+            return max(low, min(seconds, high))
+    return None
+
+
 def split_shot_seconds(duration_seconds: int, model: str) -> list[int]:
     """Cut one over-long shot into clips the model can actually render.
 
@@ -317,6 +389,7 @@ def _declared_profile(model: str) -> VideoProviderProfile | None:
         family=spec.family, aliases=list(spec.model_ids), modes=list(spec.modes),
         max_reference_images=spec.max_reference_images, max_reference_videos=spec.max_reference_videos,
         max_reference_audios=spec.max_reference_audios,
+        native_audio=bool(getattr(spec, "native_audio", False)),
         verification_status="integrated" if declared_video_endpoints.ready(spec.family) else "runtime_configuration_required",
         capability_source=f"declared video endpoint {spec.label}",
         notes=["modes and limits come from the declared spec; the credential is proven on first generation"],
@@ -327,7 +400,7 @@ def video_native_audio(model: str) -> bool:
     """Whether the selected video model renders dialogue and sound with the picture.
 
     A version entry wins over its family (``seedance1.0`` is silent although the family is not);
-    unknown and declared-but-unverified models are treated as silent.
+    unknown models are treated as silent; a declared provider says so itself (``native_audio`` in its spec).
     """
     normalized = _normalize_model_token(model)
     if normalized:
@@ -335,18 +408,45 @@ def video_native_audio(model: str) -> bool:
         for alias, audio in ranked:
             if alias in normalized:
                 return audio
-    return normalize_video_provider(model).native_audio
+    profile = normalize_video_provider(model)
+    if profile.family == "kling":
+        return kling_native_sound(model)
+    return profile.native_audio
 
 
 def uses_native_soundtrack(config: Mapping[str, Any]) -> bool:
     """Whether this project's clips keep the sound the video model made, with no dubbing over it.
 
-    Only MiniMax H3 so far: it is the one this was listened to on. ``native_audio: false`` goes back to dubbing.
+    Every model that renders sound with the picture (MiniMax H3, Seedance 2.x, Grok, LTX …): the model's own voices
+    match its lip movement, a dub laid over them does not. A clip that comes back with no sound is still dubbed, shot
+    by shot (see ``media_compositor.clip_has_sound``). ``native_audio: false`` goes back to dubbing everything;
+    ``MINIMAX_H3_NATIVE_AUDIO=0`` does so for H3 alone.
     """
     model = str(config.get("video_model") or "")
-    if os.getenv("MINIMAX_H3_NATIVE_AUDIO", "1") in {"0", "false", "False"}:  # the clips come back silent
+    if config.get("native_audio") is False or not video_native_audio(model):
         return False
-    return config.get("native_audio") is not False and video_native_audio(model) and normalize_video_provider(model).family == "minimax_h3"
+    if normalize_video_provider(model).family == "minimax_h3" and os.getenv("MINIMAX_H3_NATIVE_AUDIO", "1") in {"0", "false", "False"}:
+        return False  # the H3 clips come back silent
+    return True
+
+
+def billed_resolution(model: str, requested: str | None = None) -> str | None:
+    """The tier a video request really goes out at, so quotes and the usage ledger price it.
+
+    A per-request tier wins. Without one, Seedance renders at ``SEEDANCE_VIDEO_RESOLUTION``
+    (720p by default); pricing it at the flat rate overstated a 480p clip by more than double.
+    Other families have no tier to report here, so they keep their flat price.
+    """
+    from app.core import video_tiers
+
+    # A tier the model does not have never goes out: it is brought down to one it has (Flash stops at 720p).
+    if requested:
+        return video_tiers.fit(model, requested)
+    if normalize_video_provider(model).family == "seedance":
+        from app.core.providers.defaults import SEEDANCE_DEFAULT_RESOLUTION
+
+        return video_tiers.fit(model, os.getenv("SEEDANCE_VIDEO_RESOLUTION") or SEEDANCE_DEFAULT_RESOLUTION)
+    return None
 
 
 def normalize_video_provider(model: str) -> VideoProviderProfile:
@@ -373,7 +473,11 @@ def normalize_video_provider(model: str) -> VideoProviderProfile:
 
 
 _NUMBERED_MENTION = re.compile(r"（参考图(\d+)）")
-_REFERENCE_NOTE = re.compile(r"参考图(\d+)(仅锁定[^；。]*?不是额外剧情或额外人物)([；。]?)")
+# 一句参考图职责：「参考图N仅锁定……」或真人正脸照的「参考图N是……」，连同指着这张图的真人提示一起改号或删掉；
+# 后面的服装文字、真实尺寸不跟着删(图没发出去，文字还要管用)。
+_REFERENCE_NOTE = re.compile(
+    r"参考图(\d+)((?:仅锁定|是)[^；。]*?不是额外剧情或额外人物(?:" + re.escape(prompt_data.text("real_person", "reference_body")) + r")?)([；。]?)"
+)
 
 
 def _frames_only_wording(text: str) -> str:
@@ -386,7 +490,9 @@ def _frames_only_wording(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text)
 
 
-def renumber_reference_mentions(prompt: str, identity_images: list[str], plan: "VideoReferencePlan") -> str:
+def renumber_reference_mentions(
+    prompt: str, identity_images: list[str], plan: "VideoReferencePlan", *, desk_still: str = "",
+) -> str:
     """Number every 参考图N by the image the request actually carries.
 
     The prompt is written before routing and counts only the identity images
@@ -396,6 +502,10 @@ def renumber_reference_mentions(prompt: str, identity_images: list[str], plan: "
     frame modes). Each mention is renumbered to the image's real position, and a
     mention of an image that is not sent is removed, so no number points at the
     wrong picture. When the first frame travels as an image it is named as such.
+
+    ``desk_still`` is the director-desk still applied to this shot (a grey blockout), when there is
+    one: it only decides the room's structure, the positions and the furniture, never the materials,
+    colours or light, and the prompt says so for the number it actually goes out under.
     """
     sent = list(plan.reference_images or [])
     position = {url: index for index, url in enumerate(sent, start=1)}
@@ -416,13 +526,75 @@ def renumber_reference_mentions(prompt: str, identity_images: list[str], plan: "
 
     text = _REFERENCE_NOTE.sub(note, _NUMBERED_MENTION.sub(mention, prompt or ""))
     text = re.sub(r"；{2,}", "；", text)
-    if plan.first_frame and not sent:
+    frames_only = bool(plan.first_frame and not sent)
+    # 锚型定义按实际发出的图收拾：没发出去的图不留行，只有首(尾)帧时整段不写。
+    text = clip_skeleton.settle(text, frames_only=frames_only)
+    if frames_only:
         text = _frames_only_wording(text)
     if plan.first_frame is None and sent and sent[0] not in identity_images:
-        lead = "参考图1是本镜首帧画面，只决定开场构图、站位与光线；"
+        lead = prompt_data.text("clip_prompt", "opening_picture")
+        if desk_still and desk_still in position:
+            # 导演台白模只给空间骨架：白模排第一就是它开场，排在分镜画面后面就接着说它管什么。
+            desk = prompt_data.text("clip_prompt", "opening_desk").format(n=position[desk_still])
+            lead = desk if position[desk_still] == 1 else lead + desk
+        # 开场画面已经定了构图：场地视角图不再自称本镜的构图来源，两者不抢。
+        for old, new in prompt_data.pairs("scene_views", "with_opening"):
+            text = text.replace(old, new)
         if not text.startswith(lead):
             text = lead + text
     return text
+
+
+#: 说话角色定角音色样本的占位符：提示词写在路由之前，那时还不知道这段音频排第几(或发不发得出去)。
+#: 按名字占位，同一段多镜头片段里几个瞬间合并后也不撞号；发送前由 renumber_audio_mentions 换成真实编号。
+_VOICE_SAMPLE_MARK = "〈音频:{name}〉"
+_VOICE_SAMPLE = re.compile(
+    "(，?" + re.escape(prompt_data.text("voice_reference", "lock_lead")) + r")?〈音频:([^〉]+)〉"
+)
+
+
+#: 一句完整的音色锁：「名字：形容音色的那一段(，音色参考)〈音频:名字〉」。形容的那一段里不会有冒号、句读和引号，
+#: 所以同一行里更靠前的「名字：台词」不会被当成它的开头。
+_VOICE_LOCK = re.compile(
+    r"(?P<name>[^\s：；。，、？！〈〉“”「」]{1,24})：[^：；。？！\n〈〉“”「」]{0,120}?(?:，?"
+    + re.escape(prompt_data.text("voice_reference", "lock_lead")) + r")?〈音频:(?P=name)〉"
+)
+
+
+def voice_placeholder(name: str) -> str:
+    """The placeholder a speaking character's voice anchor carries as ``ref_audio`` until routing is done."""
+    return _VOICE_SAMPLE_MARK.format(name=str(name or "").strip())
+
+
+def renumber_audio_mentions(prompt: str, voices: list[tuple[str, str]] | tuple, plan: "VideoReferencePlan") -> str:
+    """Number every voice-sample placeholder by the audio the request actually carries.
+
+    ``voices`` is ``[(name, url)]``: the cast voice samples offered for this shot. A sample the
+    routed plan carries becomes 参考音频N (its position in ``plan.reference_audios``, after the shot's
+    own reference audios); one it does not carry (first / first+last frame modes, a model that takes
+    no audio, over the limit) is removed together with its 音色参考 lead, so no number points at an
+    audio that is not there.
+
+    A carried sample also turns that character's whole voice lock into a pointer (``pointed`` in
+    voice_reference.json): the adjectives describing the timbre are dropped, because a description
+    next to a reference makes the model draw the voice again. Without the sample they stay.
+    """
+    position = {url: index for index, url in enumerate(plan.reference_audios or [], start=1)}
+    urls = {str(name).strip(): url for name, url in voices or ()}
+    pointed = prompt_data.text("voice_reference", "pointed")
+
+    def lock(match: re.Match[str]) -> str:
+        name = match.group("name").strip()
+        number = position.get(urls.get(name, ""))
+        return pointed.format(name=name, n=number) if number and pointed else match.group(0)
+
+    prompt = _VOICE_LOCK.sub(lock, prompt or "")
+
+    def sample(match: re.Match[str]) -> str:
+        number = position.get(urls.get(match.group(2).strip(), ""))
+        return prompt_data.text("voice_reference", "clause").format(n=number) if number else ""
+
+    return _VOICE_SAMPLE.sub(sample, prompt or "")
 
 
 def _asset_marker(kind: str, count: int) -> str:
@@ -440,15 +612,30 @@ def plan_video_references(
     reference_audios: list[str] | None = None,
     model: str = "MiniMax-H3",
     intent: VideoGenerationIntent | None = None,
+    caps_model: str | None = None,
 ) -> VideoReferencePlan:
-    """Choose a mode from shot intent first, then negotiate provider limits."""
+    """Choose a mode from shot intent first, then negotiate provider limits.
+
+    ``caps_model`` is the model that will really render the clip (the configuration centre's, or the gateway's
+    own Seedance when the centre has none). Of the same family as ``model``, its reference limits are the ones
+    that count: a project set to Seedance 2.5 that renders on 2.0 must not be handed thirty pictures.
+    """
 
     intent = intent or VideoGenerationIntent()
     profile = normalize_video_provider(model)
-    sequences = _unique(sequence_images, 9)
-    identities = _unique(reference_images, 9)
-    videos = _unique(reference_videos, 3)
-    audios = _unique(reference_audios, 3)
+    if caps_model:
+        renders = normalize_video_provider(caps_model)
+        if renders.family == profile.family:
+            profile = profile.model_copy(update={
+                "max_reference_images": renders.max_reference_images,
+                "max_reference_videos": renders.max_reference_videos,
+                "max_reference_audios": renders.max_reference_audios,
+            })
+    # Taken in at the widest any model accepts; the profile cuts them below, where what it cannot take is reported.
+    sequences = _unique(sequence_images, MAX_SEQUENCE_IMAGES)
+    identities = _unique(reference_images, WIDEST_REFERENCE_IMAGES)
+    videos = _unique(reference_videos, WIDEST_REFERENCE_VIDEOS)
+    audios = _unique(reference_audios, WIDEST_REFERENCE_AUDIOS)
     visual_refs = _unique(
         [value for value in [first_frame, *sequences, last_frame, *identities] if value],
         profile.max_reference_images,
@@ -491,14 +678,10 @@ def plan_video_references(
                 )
             fallbacks.append(f"{profile.family} 不支持当前视频/音频参考，转入视觉参考候选")
 
-        multi_image_signal = len(visual_refs) >= 2 and (
-            bool(sequences)
-            or intent.narrative_image_sequence
-            or intent.identity_consistency_required
-        )
-        if multi_image_signal and "multi_reference" in profile.modes:
-            score = 100 if intent.narrative_image_sequence or intent.multi_shot_output else 76
-            candidates.append((score, "multi_reference", "存在连续分镜或角色/场景多图，需要多图一致性约束"))
+        # 多图参考是默认：手里有一张图就带上它，分镜画面、人物、场地都进请求；
+        # 首尾帧只在结尾必须精确落定(或人工指定)时才压过它。
+        if visual_refs and "multi_reference" in profile.modes:
+            candidates.append((100, "multi_reference", "带上分镜画面与角色/场景参考图，多图一致性约束"))
 
         if "text" in profile.modes:
             candidates.append((5, "text", "没有更强的兼容视觉锚点，使用文本生成"))

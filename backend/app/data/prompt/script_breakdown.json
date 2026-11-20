@@ -1,0 +1,127 @@
+{
+  "_about": "剧本拆解单(app/core/script_breakdown.py)的词表、场景标题的写法和导出模板。element_labels 是每类元素在表头和汇总里的名字，按类别代码(extra、look……)取，顺序由代码定；side_words / side_short_words 是场景标题里内外景的写法(全称和单字)，side_labels / day_night_labels / strip_labels 是表里给人看的内外、日夜、堪布条颜色；night_words / day_words 按子串判日夜，先查夜；patterns 是正则：cn_heading 读「内景：地点 - 时段」，split 是拆标题的分隔符，leading_heading 从分镜文字开头截标题，time_token 判一个词是不是时段，sentence_end 是概要截第一句的句末标点。csv_header 是 CSV 表头里元素之前的各列。says 是句子模板，花括号里是代码填进去的值；markdown 下的 *_table 是表头两行(原样输出)。separators.list 连接名单，separators.look 连接一个人这场的几处妆造，separators.place 连接场次标题里的内外、日夜和地点；summary_trim 是截断概要前要去掉的尾部标点，ellipsis 是截断后补的省略号。",
+  "element_labels": {
+    "extra": "群演",
+    "stunt": "特技",
+    "vehicle": "车辆",
+    "prop": "道具",
+    "effect": "特效",
+    "look": "表演妆造",
+    "set_dressing": "置景",
+    "product": "商品"
+  },
+  "side_words": {
+    "INT": "内景",
+    "EXT": "外景",
+    "INT/EXT": "内外景"
+  },
+  "side_short_words": {
+    "INT": "内",
+    "EXT": "外"
+  },
+  "side_labels": {
+    "INT": "内",
+    "EXT": "外",
+    "INT/EXT": "内外"
+  },
+  "night_words": [
+    "夜",
+    "晚",
+    "凌晨",
+    "NIGHT",
+    "MIDNIGHT"
+  ],
+  "day_words": [
+    "日",
+    "昼",
+    "天",
+    "晨",
+    "早",
+    "午",
+    "黄昏",
+    "傍晚",
+    "黎明",
+    "拂晓",
+    "DAY",
+    "MORNING",
+    "NOON",
+    "AFTERNOON",
+    "DAWN",
+    "DUSK",
+    "SUNSET",
+    "SUNRISE"
+  ],
+  "day_night_labels": {
+    "DAY": "日",
+    "NIGHT": "夜"
+  },
+  "strip_labels": {
+    "white": "白",
+    "yellow": "黄",
+    "blue": "蓝",
+    "green": "绿"
+  },
+  "patterns": {
+    "cn_heading": "^(内外景|内景|外景)\\s*[：:]?\\s*(.+?)(?:\\s*[-–—]\\s*(.+?))?$",
+    "split": "[\\s·,，、/]+",
+    "leading_heading": "^((?:INT|EXT|I/E|内景|外景|内外景)\\S*\\s*[^。！？!?]*?\\s[-–—]\\s\\S+)",
+    "time_token": "^[雨雪风]?(?:深|午|入)?夜$|^(?:夜晚|夜间|夜里|白天|白日|日间|清晨|早晨|上午|中午|午后|下午|黄昏|傍晚|日暮|黎明|拂晓|凌晨|日|晨|昏|晚|早|午)$",
+    "sentence_end": "(?<=[。！？!?])"
+  },
+  "csv_header": [
+    "场号",
+    "内外",
+    "日夜",
+    "时段",
+    "地点",
+    "页长",
+    "秒数",
+    "堪布条",
+    "概要",
+    "演员"
+  ],
+  "separators": {
+    "list": "、",
+    "look": "·",
+    "place": " · "
+  },
+  "summary_trim": "，、；;",
+  "ellipsis": "…",
+  "says": {
+    "look_row": "{name}：{looks}",
+    "look_owner": "{name}：",
+    "untimed_look": "{name}：{label}（未定时间）"
+  },
+  "markdown": {
+    "untitled": "未命名短剧",
+    "title": "# {title} · 拆解单",
+    "totals": "共 {scenes} 场，约 {pages} 页。页长按一页约一分钟估算，排期前请按实际拍摄稿复核。",
+    "strips_heading": "## 场次总表",
+    "strips_table": [
+      "| 场号 | 内外 | 日夜 | 地点 | 页长 | 堪布条 | 演员 | 概要 |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- |"
+    ],
+    "strip_row": "| {number} | {side} | {day_night} | {location} | {page_length} | {strip} | {cast} | {summary} |",
+    "sheets_heading": "## 每场拆解单",
+    "sheet_heading": "### 第 {number} 场{place}",
+    "sheet_place": "：{place}",
+    "time": "- 时段：{time}",
+    "page_length": "- 页长：{page_length}（{seconds} 秒）",
+    "shots": "- 分镜：{shots}",
+    "summary": "- 概要：{summary}",
+    "cast": "- 演员：{cast}",
+    "element": "- {label}：{names}",
+    "cast_heading": "## 演员出场",
+    "cast_table": [
+      "| 编号 | 演员 | 场次数 | 场号 |",
+      "| --- | --- | --- | --- |"
+    ],
+    "cast_row": "| {number} | {name} | {count} | {scenes} |",
+    "elements_heading": "## 元素汇总",
+    "elements_table": [
+      "| 类别 | 元素 | 场次数 | 场号 |",
+      "| --- | --- | --- | --- |"
+    ],
+    "element_row": "| {label} | {name} | {count} | {scenes} |"
+  }
+}

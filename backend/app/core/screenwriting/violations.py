@@ -15,7 +15,9 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from app.core import fight_design, visual_wording
 from app.core.episode_shape import EpisodeShape
+from app.core.screenwriting import filmability
 from app.core.screenwriting.prose import spoken_verbatim_in
 from app.core.screenwriting.speech import speech_problems
 from app.core.screenwriting.speech_rate import estimate_spoken_seconds
@@ -82,6 +84,21 @@ NO_EMOTION_POINT = "no_emotion_point"
 NO_KEY_LINE = "no_key_line"
 
 
+# A drama adapted from a novel that still tells its story in narration: sent back, then kept and flagged.
+TOO_MANY_NARRATED_SHOTS = "too_many_narrated_shots"
+
+
+def narrated_shots(scenes) -> list[str]:
+    """The ids of the shots that carry narration (a ``voiceover`` utterance with words in it)."""
+    return [
+        str(scene.get("scene_id") or "") for scene in scenes if isinstance(scene, dict)
+        and any(
+            isinstance(item, dict) and item.get("kind") == "voiceover" and str(item.get("text") or "").strip()
+            for item in (scene.get("utterances") or [])
+        )
+    ]
+
+
 def spoken_shot_problem(scenes, spoken_shot_ratio: float) -> str | None:
     """Why an episode is too quiet, or ``None``: fewer than ``spoken_shot_ratio`` of its shots carry speech."""
     ratio = max(0.0, min(1.0, float(spoken_shot_ratio or 0)))
@@ -129,6 +146,23 @@ def smallest_tier_at_least(seconds: float, supported: Iterable[int]) -> int | No
         if tier >= seconds:
             return tier
     return None
+
+
+def _visual_texts(scene: Mapping[str, Any]) -> list[str]:
+    """What the camera is asked to show in one shot: its description and, once written, its image and video prompts."""
+    texts = [str(scene.get("scene_description") or "")]
+    image = scene.get("image_prompt")
+    if isinstance(image, Mapping):
+        texts.append(str(image.get("scene") or ""))
+    video = scene.get("video_prompt")
+    if isinstance(video, Mapping):
+        texts.append(str(video.get("action") or ""))
+    return texts
+
+
+def _is_fight_shot(scene: Mapping[str, Any]) -> bool:
+    """A fight shot, judged the way the visual layer judges one (``fight_design.looks_like_fight``), its source excerpt included."""
+    return fight_design.looks_like_fight("\n".join([*_visual_texts(scene), str(scene.get("source_text") or "")]))
 
 
 def check_script_plan(scenes: list[dict[str, Any]], ctx: PlanCheckContext, *, repair: bool = True) -> PlanCheckResult:
@@ -223,6 +257,16 @@ def check_script_plan(scenes: list[dict[str, Any]], ctx: PlanCheckContext, *, re
             if known_characters and name not in known_characters and name not in result.unknown_characters:
                 result.unknown_characters.append(name)
 
+        # ---- 可拍性：视频提示词里不再重复的通用约束，剧本里就要满足。上传的成品剧本只提示(内容是作者的)。
+        for problem in filmability.scene_problems(scene):
+            severity = "warning" if ctx.source_kind == "screenplay" else problem.severity
+            violation = DraftViolation(problem.code, problem.message, f"{label}·{problem.label}", severity, raw_id)  # type: ignore[arg-type]
+            (result.errors if severity == "error" else result.warnings).append(violation)
+
+        # ---- 画面写法：主观评价词、非打斗快动作。只是提示，任何模式都不报错、不退回模型。
+        for finding in visual_wording.findings(*_visual_texts(scene), fight=_is_fight_shot(scene)):
+            result.warnings.append(DraftViolation(finding.code, finding.message, f"{label}·{finding.rule}", "warning", raw_id))
+
         # ---- source anchor (best effort)
         anchor = str(scene.get("source_text") or "")
         if anchor and normalized_source and _normalize(anchor) not in normalized_source:
@@ -297,6 +341,8 @@ __all__ = [
     "DraftViolation",
     "EPISODE_SHAPE_CODES",
     "TOO_FEW_SPOKEN_SHOTS",
+    "TOO_MANY_NARRATED_SHOTS",
+    "narrated_shots",
     "spoken_shot_problem",
     "PlanCheckContext",
     "PlanCheckResult",

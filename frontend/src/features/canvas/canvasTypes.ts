@@ -3,6 +3,28 @@ export type NodeKind =
   | 'image_gen' | 'video_gen' | 'audio_gen' | 'video_compose' | 'style_ref' | 'panorama' | 'previz' | 'tool';
 
 export type Medium = 'image' | 'video' | 'audio';
+
+/** One row of a shot table (the 拆镜头表 tool). */
+export interface TableShot {
+  size: string;
+  motion: string;
+  seconds: number;
+  desc: string;
+  /** Who is in the shot (absent from tables made before it was asked for). */
+  characters?: string[];
+  /** 「人物名：对白」 lines. */
+  dialogue: string;
+  /** 日 / 夜 / 黄昏 / 清晨, from the scene heading (absent from older tables). */
+  time?: string;
+}
+
+/** A character a shot table describes. */
+export interface TableCast {
+  name: string;
+  look: string;
+  /** The words for a look sheet of them alone; only characters seen in more than one shot have one. */
+  sheet_prompt?: string;
+}
 export type OutputType = Medium | 'text' | 'style' | 'capture';
 export type EdgeKind = 'lineage' | 'variant' | 'continuity' | 'dependency' | 'reference';
 
@@ -12,11 +34,25 @@ export interface NodeOutput {
   url: string;
   text?: string;
   beats?: Array<{ title: string; prompt: string }>;
+  /** A shot table's rows, whole: what 铺成镜头 turns into a first frame feeding a video node per shot. */
+  shots?: TableShot[];
+  /** The shot table's characters and their looks. */
+  cast?: TableCast[];
+  /** How many shots the table was asked for, when it was asked for a number. */
+  asked?: number;
+  /** Lines the model placed out of the script's order. */
+  line_order?: string[];
   /** `text` is a whole HTML page: shown in a sandboxed frame, never as markup of this page. */
   html?: boolean;
+  /** 抠像序列帧: the ZIP of same-sized transparent frames; `url` is its sprite sheet (the first frame when there is no sheet). */
+  zip?: string;
+  /** What that ZIP holds, as its manifest says. */
+  sprite?: { frame_width: number; frame_height: number; count: number; fps: number; sheet: { columns: number; rows: number } | null };
   /** How well a continued clip opens on the frame it was handed: good / suspect / jump. */
   seam?: { score: number; verdict: 'good' | 'suspect' | 'jump'; label: string; detail: string };
   filename?: string;
+  /** An uploaded clip a browser may not play (H.265, 10-bit): its H.264 copy for watching; runs read `url`. */
+  preview_url?: string;
   remote?: boolean;
   run_id?: string;
   provenance?: Record<string, unknown>;
@@ -26,6 +62,8 @@ export interface NodeParams {
   model?: string;
   durationSeconds?: number;
   size?: string;
+  /** Picture and clip nodes: how many results one run makes (the server caps it). */
+  count?: number;
   mode?: 'speech' | 'music' | 'sfx';
   gender?: 'male' | 'female';
   /** Tool nodes: which tool, the look picked on the style wall, and that tool's own settings. */
@@ -153,6 +191,8 @@ export interface LatestRun {
   status: RunStatus;
   error: string | null;
   batch_id: string;
+  /** Present when the last order asked for several results: how many, and how they ended so far. */
+  versions?: { total: number; done: number; failed: number };
 }
 
 export interface CanvasOutputs {
@@ -187,6 +227,8 @@ export interface AssessedNode {
   requested_seconds: number;
   scripted_seconds: number;
   estimate: Estimate;
+  /** How many results the run makes; the estimate covers all of them. */
+  versions?: number;
 }
 
 export interface TierConfirmation {
@@ -223,9 +265,12 @@ export interface RunOptions {
     styles: StyleLook[];
     engines: { image: boolean; vision: boolean; text: boolean; local: boolean; voice: boolean };
   };
-  models: { image: string; video: string; audio: string };
-  enabled: { image: string[]; video: string[]; audio: string[] };
+  /** `text` is absent when talking to a server from before text models could be picked on the canvas. */
+  models: { image: string; video: string; audio: string; text?: string };
+  enabled: { image: string[]; video: string[]; audio: string[]; text?: string[] };
   video_durations: number[];
+  /** Absent when talking to a server from before several results per run. */
+  versions?: { max: number; kinds: string[] };
   camera_recipes?: Array<{ value: string; label: string; purpose: string }>;
   kinds: Record<string, { runnable: boolean; reason: string; modes?: Record<string, boolean> }>;
 }
@@ -235,6 +280,24 @@ export interface ProjectShot {
   shot_id: number;
   shot_uid?: number;
   desc: string;
+}
+
+/** One storyboard scene, as the "lay the storyboard out" picker lists it: `new` shots are not on this canvas yet. */
+export interface StoryboardScene {
+  scene_id: string;
+  shots: number;
+  new: number;
+}
+
+export interface StoryboardLayout {
+  applied: boolean;
+  shots: number;
+  skipped: number;
+  frames_to_draw: number;
+  cast: number;
+  scenes: string[];
+  version?: number;
+  node_ids?: string[];
 }
 
 export interface CommitRow {

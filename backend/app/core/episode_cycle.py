@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
-"""逐集制作：一集做完「分镜 → 视觉 → 音频 → 合成」出了成片，才开始下一集；宣发等全部集做完。
+"""分集制作：多集项目的产物按集归档，但步骤按整部剧往下走——第 4 步把所有集的分镜做完，第 5 步把所有集的
+视频做完，然后是所有集的音频、所有集的成片，最后宣发。任何一步都不会因为「该做下一集了」回到前面的步骤。
 
-「当前集」不单独存游标，而是推出来的：第一个还没有成片的集。这样不会出现游标和产物对不上的情况——
-第 N 集成片一落库，当前集就自然变成 N+1，工作流的「下一步」也随之回到第 4 或第 5 阶段。
+早先是「逐集」：一集走完 分镜 → 视觉 → 音频 → 合成 才开始下一集，于是做到第 6 步又回到第 4 步，进度从
+6/7 掉回「已完成 3/7」。2026-11-19 按使用者的要求改成步骤优先(从分镜开始严格往下推进，不回退、不跳着走)。
+
+「这一步现在做哪一集」不单独存游标，而是推出来的(``episode_for``)：还没出成片的集里，第一个缺这一步产物的。
+产物一落库，它自然变成下一集；一步里所有集都做完，工作流的「下一步」才往后走。
 
 产物按集归档在 ``assets["episode_cycle"]["episodes"][N]``(audio / timeline / film)，键名不以数字开头，
 重跑前面阶段时的清理只动当前集，已完成的集永远不会被冲掉。第 5 阶段的片段仍在 ``assets["5"]``，
@@ -15,6 +19,19 @@ from __future__ import annotations
 
 import re
 from typing import Any, Mapping, Sequence
+from app.core import prompt_data
+
+
+_WORDING_FILE = "episode_cycle"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/episode_cycle.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 CYCLE_KEY = "episode_cycle"
 TIMELINE_KEY = "7_timeline"
@@ -131,6 +148,41 @@ def current_episode(task: Mapping[str, Any]) -> int | None:
     return next((number for number in episode_numbers(task) if not film_of(task, number)), None)
 
 
+def stage_done(task: Mapping[str, Any], number: int, stage: int) -> bool:
+    """第 ``number`` 集有没有第 ``stage`` 步(4 分镜 / 5 视频 / 6 音频 / 7 成片)的产物。"""
+    if stage == 4:
+        return storyboard_complete(task, number)
+    if stage == 5:
+        shots = episode_shots(task, number)
+        done = {uid for clip in episode_clips(task, number) if clip.get("video_url") for uid in covered_uids(clip)}
+        return bool(shots) and all(shot_uid(shot) in done for shot in shots)
+    if stage == 6:
+        audio = record(task, number).get("audio")
+        return isinstance(audio, Mapping) and bool(audio)
+    if stage == 7:
+        return bool(film_of(task, number))
+    return True
+
+
+def open_episodes(task: Mapping[str, Any]) -> list[int]:
+    """还没出成片的集，按集号。出了成片的集不再被任何一步重新打开。"""
+    return [number for number in episode_numbers(task) if not film_of(task, number)]
+
+
+def episode_for(task: Mapping[str, Any], stage: int) -> int | None:
+    """第 ``stage`` 步现在做哪一集：还没出成片的集里第一个缺这一步产物的。
+
+    这一步的产物各集都有了(人要求重做这一步时)，就是第一个还没出成片的集；全部集都出了成片时为 None。
+    """
+    pending = open_episodes(task)
+    return next((number for number in pending if not stage_done(task, number, stage)), pending[0] if pending else None)
+
+
+def signature(task: Mapping[str, Any]) -> tuple:
+    """每一集做到了哪一步：同一步连着做下一集时，自动推进靠它确认上一轮真的做成了一集。"""
+    return tuple((number, tuple(stage_done(task, number, stage) for stage in (4, 5, 6, 7))) for number in episode_numbers(task))
+
+
 def storyboard_complete(task: Mapping[str, Any], number: int) -> bool:
     assets = task.get("assets") if isinstance(task.get("assets"), Mapping) else {}
     progress = assets.get("4_progress") if isinstance(assets.get("4_progress"), Mapping) else {}
@@ -162,30 +214,20 @@ def merged_clips(others: Sequence[Mapping[str, Any]], current: Sequence[Mapping[
 
 
 def missing(task: Mapping[str, Any], stage: int) -> list[str] | None:
-    """逐集口径下第 4–8 阶段还缺什么；不在逐集模式(或不是这几个阶段)时返回 None，由原口径判断。"""
+    """分集口径下第 4–8 阶段还缺什么；不分集(或不是这几个阶段)时返回 None，由原口径判断。
+
+    一步要所有还没出成片的集都做完才算完成，所以「下一步」只会停在同一步或往后走。
+    """
     if stage < 4 or not active(task):
         return None
-    current = current_episode(task)
-    if stage == 4:
-        upto = current if current is not None else max(episode_numbers(task))
-        gaps = [n for n in episode_numbers(task) if n <= upto and not storyboard_complete(task, n)]
-        return [f"第{','.join(map(str, gaps))}集分镜尚未完成"] if gaps else []
+    pending = open_episodes(task)
     if stage == 8:
-        return [f"第{current}集尚未做完成片(逐集制作：全部集完成后才宣发)"] if current is not None else []
-    if current is None:
+        return [_text_of("missing.text.2").format(pending[0])] if pending else []
+    gaps = [number for number in pending if not stage_done(task, number, stage)]
+    if not gaps:
         return []
-    if stage == 5:
-        shots = episode_shots(task, current)
-        done = {uid for clip in episode_clips(task, current) if clip.get("video_url") for uid in covered_uids(clip)}
-        if not shots or any(shot_uid(shot) not in done for shot in shots):
-            return [f"第{current}集视觉(运镜视频)尚未完成"]
-        return []
-    if stage == 6:
-        audio = record(task, current).get("audio")
-        return [] if isinstance(audio, Mapping) and audio else [f"第{current}集音频尚未完成"]
-    if stage == 7:
-        return [f"第{current}集成片尚未合成"]
-    return None
+    key = {4: "missing.text", 5: "missing.text.3", 6: "missing.text.4", 7: "missing.text.5"}.get(stage)
+    return [_text_of(key).format(",".join(map(str, gaps)))] if key else None
 
 
 def episode_view(task: Mapping[str, Any], number: int) -> dict[str, Any]:
@@ -211,7 +253,7 @@ def episode_view(task: Mapping[str, Any], number: int) -> dict[str, Any]:
 
 
 def timeline_episode(task: Mapping[str, Any]) -> int | None:
-    """剪辑时间线默认看哪一集：当前集已有片段就看当前集，否则看最近做完的一集。"""
+    """剪辑时间线默认看哪一集：下一部要合成的集已有片段就看它，否则看最近做完的一集。"""
     current = current_episode(task)
     if current is not None and episode_clips(task, current):
         return current
@@ -220,8 +262,8 @@ def timeline_episode(task: Mapping[str, Any]) -> int | None:
 
 
 def discard_for_rerun(task: dict[str, Any], stage: int) -> None:
-    """重跑第 ``stage`` 阶段：只清掉当前集在它之后的产物，已完成的集一概不动。"""
-    current = current_episode(task)
+    """开始做第 ``stage`` 步：只清掉这一步要做的那一集在它之后的产物，别的集一概不动。"""
+    current = episode_for(task, stage)
     if current is None:
         return
     assets = task.setdefault("assets", {})
@@ -251,8 +293,5 @@ def status_line(task: Mapping[str, Any]) -> str:
     current = current_episode(task)
     done = finished(task)
     if current is None:
-        return f"逐集制作：全部 {len(numbers)} 集成片均已完成。"
-    return (
-        f"逐集制作：正在做第 {current} 集（共 {len(numbers)} 集，已完成成片 {len(done)} 集）。"
-        "每一集按 分镜 → 视觉 → 音频 → 合成 做完出成片，才开始下一集；全部完成后再宣发。"
-    )
+        return _text_of("status_line.text").format(len(numbers))
+    return _text_of("status_line.text.2").format(len(numbers), len(done))

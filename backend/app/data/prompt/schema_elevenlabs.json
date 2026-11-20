@@ -1,0 +1,12 @@
+{
+  "_doc": "app/schema/elevenlabs.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "require_preview_text_strategy.text": "text 或 auto_generate_text=true 至少提供一项",
+  "validate_labels.text": "声音标签最多 20 项，且键值必须是短文本",
+  "validate_public_websocket_url.text": "Speech Engine ws_url 必须是绝对 WSS 地址",
+  "validate_public_websocket_url.text.2": "Speech Engine ws_url 格式无效",
+  "validate_public_websocket_url.text.3": "Speech Engine ws_url 必须指向公网服务",
+  "validate_public_websocket_url.text.4": "Speech Engine ws_url 必须指向公网服务",
+  "validate_tags.text": "Speech Engine 标签必须是 1 到 80 个字符",
+  "validate_variant.text": "alias 规则只能提供 alias",
+  "validate_variant.text.2": "phoneme 规则必须提供 phoneme 和 alphabet"
+}

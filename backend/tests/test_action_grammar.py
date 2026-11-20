@@ -44,6 +44,9 @@ class BreakdownTests(unittest.TestCase):
         for part in grammar.ACTION_PARTS:
             self.assertIn(part, prompt)
         self.assertIn("她背对门站着", prompt)
+        # 五层都要问到：姿态、动线(直线还是弧线)、时序(先动哪)、对位(接触点)、节奏(急停)。
+        for layer in ("躯干朝向", "直线还是弧线", "先动哪里", "接触点", "急停", "不加原句没有的动作"):
+            self.assertIn(layer, prompt)
         with self.assertRaises(ValueError):
             grammar.breakdown_prompt("  ")
 

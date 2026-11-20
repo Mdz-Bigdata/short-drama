@@ -71,7 +71,7 @@ class SilentModelPromptTests(unittest.TestCase):
         text = compile_shot_prompt(style_packs.FILM_35MM, _shot(), model="seedance2.5").text
 
         self.assertIn("[声音锁]空调低鸣", text)
-        self.assertIn("【声音设计】环境铺底：空调低鸣", text)
+        self.assertIn("【声音设计】环境铺底：<空调低鸣>", text)  # Seedance 的音效写在尖括号里
         self.assertIn("仅生成动作音效", text)
 
 
@@ -290,7 +290,8 @@ class DialogueBracesTests(unittest.TestCase):
     def test_someone_speaking_from_outside_the_shot_keeps_their_name_out_of_the_line(self):
         text = format_dialogue("苏问剑：雨里没有这声音。 沈无咎：那我不知道。", ["苏问剑"], on_screen=["苏问剑"])
         self.assertEqual(
-            text, "@[苏问剑]{雨里没有这声音。} 沈无咎{那我不知道。}（只有@[苏问剑]、沈无咎说话，按台词顺序轮流开口，同一时刻只有一人出声）",
+            text, "@[苏问剑]{雨里没有这声音。} 沈无咎{那我不知道。}（只有@[苏问剑]、沈无咎说话，按台词顺序轮流开口，同一时刻只有一人出声"
+            "；沈无咎在画外，不出现在画面里）",
         )
 
     def test_a_narrator_is_named_but_keeps_the_mouths_closed(self):

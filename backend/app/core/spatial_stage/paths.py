@@ -14,6 +14,7 @@ import heapq
 import math
 from collections.abc import Sequence
 
+from app.core import prompt_data
 from app.core.spatial_stage import geometry as geo
 from app.core.spatial_stage.camera_moves import MOVE_EASINGS, eased_time
 from app.core.spatial_stage.models import MAX_TRACK_KEYS, ActorKey, CameraKey, StagePose
@@ -25,10 +26,17 @@ ACTOR_KEY_SPACING_M = 0.6
 CAMERA_KEY_SPACING_M = 0.5
 MAX_PATH_KEYS = 24
 _MIN_STEP_S = 0.001
+# What a refused route says: app/data/prompt/stage_vocabulary.json.
+_VOCABULARY = "stage_vocabulary"
 
 
 class PathError(ValueError):
     """The route cannot be turned into keys."""
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A refusal of the route table, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return str(prompt_data.value(_VOCABULARY, "path_errors")[key]).format(**values)
 
 
 Point3 = tuple[float, float, float]
@@ -36,22 +44,22 @@ Point3 = tuple[float, float, float]
 
 def _finite(value: object, label: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-        raise PathError(f"{label} 必须是有限数字")
+        raise PathError(_says("not_a_number", label=label))
     if abs(value) > 500:
-        raise PathError(f"{label} 超出场地范围（±500 米）")
+        raise PathError(_says("off_stage", label=label))
     return float(value)
 
 
 def read_points(points: object, *, height_m: float | None) -> list[Point3]:
     """``[[x, z], …]`` or ``[[x, y, z], …]`` as 3-D points; 2-D points take ``height_m`` (0 for the ground)."""
     if not isinstance(points, Sequence) or isinstance(points, (str, bytes)):
-        raise PathError("points 必须是点的列表")
+        raise PathError(_says("not_a_list"))
     if not MIN_PATH_POINTS <= len(points) <= MAX_PATH_POINTS:
-        raise PathError(f"路径需要 {MIN_PATH_POINTS} 到 {MAX_PATH_POINTS} 个点")
+        raise PathError(_says("point_count", low=MIN_PATH_POINTS, high=MAX_PATH_POINTS))
     result: list[Point3] = []
     for index, point in enumerate(points):
         if not isinstance(point, Sequence) or isinstance(point, (str, bytes)) or len(point) not in (2, 3):
-            raise PathError(f"points[{index}] 必须是 [x, z] 或 [x, y, z]")
+            raise PathError(_says("point_shape", index=index))
         if len(point) == 2:
             x, z = (_finite(point[0], f"points[{index}][0]"), _finite(point[1], f"points[{index}][1]"))
             result.append((x, height_m if height_m is not None else 0.0, z))
@@ -94,7 +102,7 @@ def resample(points: Sequence[Point3], count: int) -> list[Point3]:
     """``count`` points at even arc length along the polyline, first and last kept exactly."""
     route = _dedupe(points)
     if len(route) < 2:
-        raise PathError("路径的起点和终点不能重合")
+        raise PathError(_says("no_length"))
     total = arc_length(route)
     if count < 2:
         return [route[0], route[-1]]
@@ -120,9 +128,10 @@ def key_count(length_m: float, spacing_m: float) -> int:
 def key_times(count: int, start_s: float, end_s: float, easing: str) -> list[float]:
     """When each of ``count`` evenly spaced route samples is reached, eased over ``start_s``…``end_s``."""
     if easing not in MOVE_EASINGS:
-        raise PathError(f"easing 只能是 {' / '.join(MOVE_EASINGS)}")
+        separator = str(prompt_data.value(_VOCABULARY, "path_errors")["option_separator"])
+        raise PathError(_says("one_of", label="easing", options=separator.join(MOVE_EASINGS)))
     if not 0 <= start_s < end_s <= 30:
-        raise PathError("start_s 必须小于 end_s，且都在 0 到 30 秒之间")
+        raise PathError(_says("time_span"))
     times: list[float] = []
     for index in range(count):
         progress = index / (count - 1)
@@ -132,7 +141,7 @@ def key_times(count: int, start_s: float, end_s: float, easing: str) -> list[flo
             time = round(times[-1] + _MIN_STEP_S, 3)
         times.append(time)
     if times[-1] > end_s + 1e-6:
-        raise PathError("路径的点太密，无法在这段时间内分配关键帧")
+        raise PathError(_says("too_dense"))
     return times
 
 
@@ -253,7 +262,7 @@ def find_route(
         return _clear_of_footprints(a, b, grown) and all(_segment_distance(a, b, person) >= radius * 2 - 1e-7 for person in people)
 
     if not clear(goal, goal):
-        raise PathError("终点被布景或其他人物占着，请换一个终点")
+        raise PathError(_says("goal_taken"))
     if clear(start, goal):
         return [start, goal]
     step = max(0.25, radius)
@@ -262,7 +271,7 @@ def find_route(
     columns = math.ceil((abs(start[0] - goal[0]) + margin * 2) / step) + 1
     rows = math.ceil((abs(start[1] - goal[1]) + margin * 2) / step) + 1
     if columns * rows > _ROUTE_MAX_CELLS:
-        raise PathError("寻路范围太大，请分段走位")
+        raise PathError(_says("too_far"))
 
     def point(cell: tuple[int, int]) -> geo.Vec2:
         return (x0 + cell[0] * step, z0 + cell[1] * step)
@@ -305,7 +314,7 @@ def find_route(
                     costs[near], came[near] = cost, cell
                     heapq.heappush(queue, (cost + distance(there, goal), near))
     if last is None:
-        raise PathError("没有找到能绕开布景的路线")
+        raise PathError(_says("no_route"))
     route: list[geo.Vec2] = [goal]
     walker: tuple[int, int] | None = last
     while walker is not None:

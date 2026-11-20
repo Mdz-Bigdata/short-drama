@@ -9,6 +9,10 @@ import {
   resolveMentions,
   splitMentions,
 } from './promptMentions';
+import type { MentionCandidate } from './mentionAutocomplete';
+import { MentionMenu } from './MentionMenu';
+import { useMentionCandidates } from './useMentionCandidates';
+import { useMentionInput } from './useMentionInput';
 
 interface Props {
   shotId: number;
@@ -19,18 +23,36 @@ interface Props {
   locked: boolean;
   saving: boolean;
   onSave: (prompt: string | null) => Promise<void> | void;
+  /** 上次离开这个编辑器时还没保存的草稿；调用方按同一个 key 记着，换页签回来接着改。 */
+  initialDraft?: string;
+  onDraftChange?: (draft: string) => void;
+  /** 有项目 id 就从后端读可 @ 的人物、场景、道具。 */
+  taskId?: string;
+  /** 调用方已经有候选就直接给；都没有时用 mentionKinds 里已登记的名字。 */
+  mentionCandidates?: MentionCandidate[];
 }
 
 type View = 'text' | 'preview';
 
 /**
  * 视频提示词编辑器：@[名字] 按资产类型着色，可改可存；「解析预览」显示发给模型前的样子。
- * 草稿只在本组件里；调用方用「镜头 + 已保存文本」作 key，切换镜头或保存后自然换成服务端的版本。
+ * 正在改的草稿在本组件里；调用方用「镜头 + 已保存文本」作 key，并按同一个 key 记着没保存的草稿，
+ * 换页签、换镜头回来接着改。保存或恢复自动编译成功后，调用方要丢掉这一镜记着的草稿，
+ * 否则服务端文本再变回原样时，已经保存过的旧草稿会当成「未保存」冒出来。
  */
-export function VideoPromptEditor({ shotId, prompt, edited, mentionKinds, referenceNumbers, locked, saving, onSave }: Props) {
+export function VideoPromptEditor({ shotId, prompt, edited, mentionKinds, referenceNumbers, locked, saving, onSave, initialDraft, onDraftChange, taskId, mentionCandidates }: Props) {
   const [view, setView] = useState<View>('text');
-  const [draft, setDraft] = useState(prompt);
+  const [draft, setDraft] = useState(initialDraft ?? prompt);
   const highlight = useRef<HTMLPreElement>(null);
+  const field = useRef<HTMLTextAreaElement>(null);
+  const loaded = useMentionCandidates(mentionCandidates ? undefined : taskId);
+  const fallbackCandidates = useMemo<MentionCandidate[]>(
+    () => Object.entries(mentionKinds).map(([name, kind]) => ({ name, kind })),
+    [mentionKinds],
+  );
+  const candidates = mentionCandidates ?? (taskId && loaded.items.length ? loaded.items : fallbackCandidates);
+  const changeDraft = (next: string) => { setDraft(next); onDraftChange?.(next); };
+  const mention = useMentionInput({ value: draft, onChange: changeDraft, candidates, inputRef: field, disabled: locked });
 
   const dirty = draft !== prompt;
   const mentions = useMemo(() => parseMentions(draft), [draft]);
@@ -62,15 +84,19 @@ export function VideoPromptEditor({ shotId, prompt, edited, mentionKinds, refere
             {'\n'}
           </pre>
           <textarea
+            ref={field}
+            {...mention.inputProps}
             aria-label={t('视频提示词文稿')}
             value={draft}
             disabled={locked}
             spellCheck={false}
-            onChange={event => setDraft(event.target.value)}
+            onChange={event => changeDraft(event.target.value)}
+            onKeyDown={event => { mention.onKeyDown(event); }}
             onScroll={event => {
               if (highlight.current) highlight.current.scrollTop = event.currentTarget.scrollTop;
             }}
           />
+          <MentionMenu {...mention.menuProps} />
         </div>
       ) : (
         <div className="video-prompt-editor__preview" role="tabpanel">

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { PLAN } from '../../spatial/spatialFixtures';
-import type { ActorKey, CameraKey, StageActor, StagePlan } from '../../spatial/spatialTypes';
+import type { ActionClip, ActorKey, CameraKey, StageActor, StagePlan } from '../../spatial/spatialTypes';
 import {
-  actorPathsOf, cameraPathOf, cyclePhase, ease, frameCount, gaitJoints, lerpYaw, sampleActor, sampleShot, snapToFrame, stagePlanAt, timeOfFrame,
+  FRAME_RATES, actionBlockAt, cutCameraAt, cyclePhase, ease, frameCount, frameOf, gaitJoints, lastPlayheadFrame, lerpYaw, playheadFrame,
+  sampleActor, sampleShot, snapToFrame, stagePlanAt, timeOfFrame,
 } from './sampling';
 import { verticalFov } from './stageMath';
 
@@ -82,22 +83,8 @@ describe('sampleShot', () => {
     const legacy = sampleShot(PLAN, PLAN.shots[1], 5).camera!;
     expect(legacy.position).toEqual([-0.2, 1.55, 0.65]);
     expect(sampleShot(PLAN, PLAN.shots[1], 0).camera!.position).toEqual([0.2, 1.58, 0.9]);
-    expect(cameraPathOf(PLAN, PLAN.shots[1])!.keys.map(key => key.time)).toEqual([0, 5]);
-    expect(cameraPathOf(PLAN, PLAN.shots[0])).toBeNull();
     // Whoever is offstage in the shot is not sampled at all.
     expect(Object.keys(sampleShot(PLAN, PLAN.shots[1], 0).actors)).toEqual(['林夏', '周教授']);
-  });
-
-  it('draws an actor track as the line through its placed keys, and skips a track that stays put', () => {
-    const plan = timed([], {
-      林夏: [{ time: 0, position: [-1.3, 0], easing: 'linear' }, { time: 1, yaw_deg: 45, easing: 'smooth' }, { time: 4, position: [1, 2], easing: 'smooth' }],
-      助手: [{ time: 0, position: [0, -2], easing: 'linear' }, { time: 2, pose: { preset: 'sit' }, easing: 'linear' }],
-    });
-    expect(actorPathsOf(plan, plan.shots[0])).toEqual([
-      { name: '林夏', points: [[-1.3, 0, 0], [1, 0, 2]], keys: [{ time: 0, position: [-1.3, 0, 0] }, { time: 4, position: [1, 0, 2] }] },
-    ]);
-    expect(actorPathsOf(plan, undefined)).toEqual([]);
-    expect(actorPathsOf(PLAN, PLAN.shots[0])).toEqual([]);
   });
 
   it('leaves a candidate lens where it is: keys belong to the lens that films', () => {
@@ -199,8 +186,120 @@ describe('frames', () => {
     expect(frameCount(3.5, 25)).toBe(88);
     expect(frameCount(4, 30)).toBe(120);
     expect(snapToFrame(0.2099, 24, 5)).toBeCloseTo(5 / 24);
-    expect(snapToFrame(5, 24, 5)).toBeCloseTo(119 / 24);
+    expect(snapToFrame(119.5 / 24, 24, 5)).toBeCloseTo(119 / 24);
     expect(snapToFrame(-1, 24, 5)).toBe(0);
     expect(timeOfFrame(5, 24)).toBe(0.208);
+  });
+
+  it('lets the playhead stand on the end of the shot, one frame past the last one an export draws', () => {
+    expect(lastPlayheadFrame(5, 24)).toBe(120);
+    expect(snapToFrame(5, 24, 5)).toBe(5);
+    expect(snapToFrame(99, 24, 5)).toBe(5);
+    expect(playheadFrame(5, 24, 5)).toBe(120);
+    expect(playheadFrame(119.9 / 24, 24, 5)).toBe(119);
+    // A move's last key is written at the duration itself; its frame is where the playhead ends.
+    ([[5, 24], [2.5, 25], [3.5, 25], [3.7, 24], [3.3, 24], [4.1, 30], [1, 30]] as const).forEach(([duration, fps]) => {
+      expect(lastPlayheadFrame(duration, fps)).toBe(frameOf(duration, fps));
+      expect(playheadFrame(duration, fps, duration)).toBe(frameOf(duration, fps));
+      expect(frameOf(snapToFrame(duration, fps, duration), fps)).toBe(frameOf(duration, fps));
+      expect(snapToFrame(duration, fps, duration)).toBeLessThanOrEqual(duration);
+      expect(lastPlayheadFrame(duration, fps)).toBeGreaterThanOrEqual(frameCount(duration, fps) - 1);
+    });
+  });
+
+  it('shows the end of the shot on the last frame, though that frame starts a little before it', () => {
+    // 3.3 s at 24 fps is 79.2 frames: the end rounds to frame 79, which starts at 3.2917 s.
+    expect(snapToFrame(3.3, 24, 3.3)).toBe(3.3);
+    expect(snapToFrame(79 / 24, 24, 3.3)).toBe(3.3);
+    expect(snapToFrame(78.4 / 24, 24, 3.3)).toBeCloseTo(78 / 24);
+    // A key that holds until the end is the picture of that frame, as the diamond under the playhead says.
+    const held: CameraKey[] = [CAMERA_KEYS[0], { ...CAMERA_KEYS[1], time: 3.3, easing: 'hold' }];
+    const plan: StagePlan = { ...PLAN, timelines: { 1: { duration_s: 3.3, fps: 24, camera: held, actors: {} } } };
+    expect(frameOf(held[1].time, 24)).toBe(playheadFrame(79 / 24, 24, 3.3));
+    expect(sampleShot(plan, plan.shots[0], snapToFrame(79 / 24, 24, 3.3)).camera!.position).toEqual([0, 1.5, 1]);
+    expect(sampleShot(plan, plan.shots[0], snapToFrame(78 / 24, 24, 3.3)).camera!.position).toEqual([0, 1.5, 5]);
+  });
+
+  it('never stamps a key past the end of a shot that is not a whole number of frames long', () => {
+    expect(timeOfFrame(63, 25)).toBe(2.52);
+    expect(timeOfFrame(63, 25, 2.5)).toBe(2.5);
+    expect(timeOfFrame(62, 25, 2.5)).toBe(2.48);
+    expect(timeOfFrame(120, 24, 5)).toBe(5);
+  });
+});
+
+describe('keys on the frame they were stamped on', () => {
+  const DURATION = 5;
+
+  it('reaches a hold key on its own frame though the millisecond rounding put it a little later', () => {
+    // 1/24 s is stored as 0.042: export asks for 0.041667 and preview for the same instant.
+    expect(timeOfFrame(1, 24)).toBe(0.042);
+    FRAME_RATES.forEach(fps => {
+      for (let frame = 1; frame < frameCount(DURATION, fps); frame += 1) {
+        const stamped = timeOfFrame(frame, fps, DURATION);
+        const camera: CameraKey[] = [CAMERA_KEYS[0], { ...CAMERA_KEYS[1], time: stamped, easing: 'hold' }];
+        const actors: Record<string, ActorKey[]> = { 林夏: [{ time: 0, position: [0, 0], easing: 'linear' }, { time: stamped, position: [1, 0], easing: 'hold' }] };
+        const plan: StagePlan = { ...PLAN, timelines: { 1: { duration_s: DURATION, fps, camera, actors } } };
+        const at = (time: number) => sampleShot(plan, plan.shots[0], time);
+        const label = `${fps} fps, frame ${frame}`;
+        expect(at(frame / fps).camera!.position, label).toEqual([0, 1.5, 1]);
+        expect(at(snapToFrame(frame / fps, fps, DURATION)).camera!.position, label).toEqual([0, 1.5, 1]);
+        expect(at(frame / fps).actors['林夏'].position, label).toEqual([1, 0]);
+        // The frame before still holds the key before.
+        expect(at((frame - 1) / fps).camera!.position, label).toEqual([0, 1.5, 5]);
+        expect(at((frame - 1) / fps).actors['林夏'].position, label).toEqual([0, 0]);
+      }
+    });
+  });
+
+  it('starts and ends a cut or a motion on the frames it was stamped between', () => {
+    FRAME_RATES.forEach(fps => {
+      for (let frame = 1; frame + 3 < frameCount(DURATION, fps); frame += 1) {
+        const start = timeOfFrame(frame, fps, DURATION);
+        const end = timeOfFrame(frame + 3, fps, DURATION);
+        const timeline = { duration_s: DURATION, cuts: [{ id: 'cut-01', camera_id: 'cam-02', start, end }] };
+        const clips: ActionClip[] = [{ id: 'act-01', clip: 'human-walk-v1', start, end }];
+        const label = `${fps} fps, frame ${frame}`;
+        expect(cutCameraAt(timeline, (frame - 1) / fps), label).toBeUndefined();
+        expect(cutCameraAt(timeline, frame / fps), label).toBe('cam-02');
+        expect(cutCameraAt(timeline, (frame + 2) / fps), label).toBe('cam-02');
+        expect(cutCameraAt(timeline, (frame + 3) / fps), label).toBeUndefined();
+        expect(actionBlockAt(clips, frame / fps, DURATION)?.id, label).toBe('act-01');
+        expect(actionBlockAt(clips, (frame + 3) / fps, DURATION), label).toBeUndefined();
+      }
+    });
+  });
+
+  it('plays a motion reached a hair early from its first frame', () => {
+    const human: StageActor = { ...PLAN.actors[0], figure: 'humanoid' };
+    const clips: ActionClip[] = [{ id: 'act-01', clip: 'human-walk-v1', start: timeOfFrame(1, 24), end: 2 }];
+    expect(sampleActor(human, undefined, 1 / 24, false, clips, DURATION).pose).toMatchObject({ clip: 'human-walk-v1', clip_phase: 0 });
+  });
+
+  it('exports an untouched plan whose keys sit exactly on frames just as before', () => {
+    const z = [5, 1, 3, 2];
+    const keys: CameraKey[] = [
+      { time: 0, position: [0, 1.5, z[0]], target: [0, 1, 0], lens_mm: 28, easing: 'linear' },
+      { time: 1, position: [0, 1.5, z[1]], target: [0, 1, 0], lens_mm: 28, easing: 'linear' },
+      { time: 2.5, position: [0, 1.5, z[2]], target: [0, 1, 0], lens_mm: 28, easing: 'smooth' },
+      { time: 4, position: [0, 1.5, z[3]], target: [0, 1, 0], lens_mm: 28, easing: 'ease-in' },
+    ];
+    // The plain reading of the keys: the span t falls in, eased into its later key.
+    const expected = (t: number): number => {
+      const index = keys.findIndex(key => t < key.time);
+      if (index <= 0) return index === 0 ? z[0] : z[z.length - 1];
+      const weight = ease((t - keys[index - 1].time) / (keys[index].time - keys[index - 1].time), keys[index].easing);
+      return Math.round((z[index - 1] + (z[index] - z[index - 1]) * weight) * 1e4) / 1e4 + 0;
+    };
+    FRAME_RATES.forEach(fps => {
+      const plan: StagePlan = { ...PLAN, timelines: { 1: { duration_s: 4, fps, camera: keys, actors: {} } } };
+      for (let frame = 0; frame < frameCount(4, fps); frame += 1) {
+        expect(sampleShot(plan, plan.shots[0], frame / fps).camera!.position[2], `${fps} fps, frame ${frame}`).toBe(expected(frame / fps));
+      }
+      // The keys that fall on a frame are drawn as keyed.
+      keys.forEach((key, index) => {
+        if (Number.isInteger(key.time * fps)) expect(sampleShot(plan, plan.shots[0], key.time).camera!.position[2]).toBe(z[index]);
+      });
+    });
   });
 });

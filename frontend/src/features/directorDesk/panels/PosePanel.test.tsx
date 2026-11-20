@@ -83,6 +83,27 @@ describe('PosePanel', () => {
     expect(onCommit.mock.calls[0][0].label).toBe('林夏：单膝跪');
   });
 
+  it('keeps one release listener on the window however many keys move a joint, and none once it is let go', () => {
+    const added = vi.spyOn(window, 'addEventListener');
+    const removed = vi.spyOn(window, 'removeEventListener');
+    const ups = (spy: typeof added) => spy.mock.calls.filter(([type]) => type === 'pointerup').length;
+    const { unmount } = render(panel(withActor({ figure: 'mannequin', pose: { preset: 'walk', joints: {} } })));
+    const slider = screen.getByLabelText('左膝 弯曲') as HTMLInputElement;
+    const before = ups(added);
+    for (const value of ['5', '10', '15']) {
+      fireEvent.change(slider, { target: { value } });
+      fireEvent.keyUp(slider, { key: 'ArrowRight' });
+    }
+    expect(committed()).toHaveLength(3);
+    // Each key press arms and the key's release takes the listener down again.
+    expect(ups(added) - before).toBe(ups(removed));
+    fireEvent.change(slider, { target: { value: '20' } });
+    unmount();
+    expect(ups(added) - before).toBe(ups(removed));
+    added.mockRestore();
+    removed.mockRestore();
+  });
+
   it('previews a joint while the slider moves and saves once, clamped, when it is let go', () => {
     render(panel(withActor({ figure: 'mannequin', body_type: 'child', pose: { preset: 'walk', joints: { 'leftKnee.bend': 12 } } })));
     const groups = screen.getAllByRole('group').filter(node => node.tagName === 'DETAILS');
@@ -139,12 +160,15 @@ describe('PosePanel', () => {
     expect(committed()[1]).toEqual({ op: 'set_pose', name: '林夏', shot_id: 1, preset: '', joints: {}, clip: '', clip_phase: 0 });
   });
 
-  it('gives a skinned figure ten clips and a scrubbed phase', async () => {
+  it('gives a skinned figure its clips, fighting ones among them, and a scrubbed phase', async () => {
     render(panel(withActor({ figure: 'humanoid' })));
     const select = screen.getByLabelText('动作片段') as HTMLSelectElement;
-    expect([...select.options].map(option => option.textContent)).toEqual([
+    const offered = [...select.options].map(option => option.textContent);
+    expect(offered.slice(0, 10)).toEqual([
       '站立 · 站立待机', '站立 · 交谈手势', '移动 · 行走', '移动 · 慢跑', '蹲姿 · 蹲姿待机', '移动 · 蹲着前进', '坐姿 · 坐下', '坐姿 · 坐姿待机', '坐姿 · 坐姿交谈', '坐姿 · 站起',
     ]);
+    expect(offered).toHaveLength(34);
+    expect(offered).toEqual(expect.arrayContaining(['持剑 · 持剑戒备', '持剑 · 三连斩', '拳脚 · 直拳', '受击 · 中招倒地', '腾跃 · 轻功腾空']));
     expect(screen.queryByRole('group', { name: '预设姿势' })).toBeNull();
 
     await userEvent.selectOptions(select, 'human-sit-idle-v1');

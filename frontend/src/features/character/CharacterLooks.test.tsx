@@ -23,7 +23,11 @@ const items = [
   { ...look('e', '沈无咎', '本人'), name: '沈无咎', metadata: {} },
 ];
 
-function mockApi(older: Array<ReturnType<typeof look>> = [], untimed: Array<{ of: string; name: string; label: string; text: string }> = []) {
+function mockApi(
+  older: Array<ReturnType<typeof look>> = [],
+  untimed: Array<{ of: string; name: string; label: string; text: string }> = [],
+  job: Record<string, unknown> = { id: 'job', status: 'completed', total: 1, processed: 1, succeeded: 1, failed: 0 },
+) {
   const calls: Array<{ url: string; body?: string }> = [];
   let drawn = false;
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
@@ -31,7 +35,7 @@ function mockApi(older: Array<ReturnType<typeof look>> = [], untimed: Array<{ of
     calls.push({ url, body: init?.body as string | undefined });
     if (url.includes('/generation-jobs')) {
       drawn = true;
-      return { ok: true, status: 202, json: async () => ({ id: 'job', status: 'completed', total: 1, processed: 1, succeeded: 1, failed: 0 }) } as Response;
+      return { ok: true, status: 202, json: async () => job } as Response;
     }
     if (url.includes('/look-views')) {
       // 切开旧展示板：整板之外多出七张单张。
@@ -45,6 +49,9 @@ function mockApi(older: Array<ReturnType<typeof look>> = [], untimed: Array<{ of
         files: [...item.files, ...views.map(slot => ({ ...item.files[0], id: `${id}-${slot}`, slot, url: `/media/${id}-${slot}.png` }))],
       };
       return { ok: true, json: async () => split } as Response;
+    }
+    if (url.includes('/character-looks/sync')) {
+      return { ok: true, json: async () => ({ kind: 'look', created: 0 }) } as Response;
     }
     if (url.includes('/character-looks/untimed')) {
       return { ok: true, json: async () => ({ items: untimed }) } as Response;
@@ -156,6 +163,25 @@ describe('CharacterLooks', () => {
     expect(found).toBeTruthy();
   });
 
+  it('says on the one chip when the same outfit is worn without its makeup', async () => {
+    mockApi();
+    items.push(look('w', '石砚', '靛青杂役短打·吐血唇血·炉灰脸', {
+      episodes: [1, 2], spans: [[1, 2]], makeups: ['石砚·吐血唇血', '石砚·炉灰脸'],
+      without: [{ label: '靛青杂役短打', spans: [[3, 3]], makeups: [], off: ['吐血唇血', '炉灰脸'] }],
+    }));
+    items.push(look('v', '阿禾', '灰蓝守炉短袄·烧伤痕', {
+      episodes: [2, 2], spans: [[2, 2]], without: [{ label: '灰蓝守炉短袄', spans: [], makeups: [], off: ['烧伤痕'] }],
+    }));
+    render(<CharacterLooks taskId="t1" characterName="石砚" />);
+    const tab = await screen.findByRole('tab', { name: '靛青杂役短打·吐血唇血·炉灰脸' });
+    expect(tab.getAttribute('title')).toBe('第 1–2 集；第 3 集不带吐血唇血、炉灰脸');
+    cleanup();
+    render(<CharacterLooks taskId="t1" characterName="阿禾" />);
+    const other = await screen.findByRole('tab', { name: '灰蓝守炉短袄·烧伤痕' });
+    items.splice(-2, 2);
+    expect(other.getAttribute('title')).toBe('第 2 集；其余各集不带烧伤痕');
+  });
+
   it('flags a look whose description changed after it was drawn', async () => {
     mockApi();
     const stale = look('t', '路人甲', '旧写法');
@@ -165,6 +191,27 @@ describe('CharacterLooks', () => {
     const flag = await screen.findByText('设定改过，这张图还是旧写法，建议重新生成');
     items.pop();
     expect(flag).toBeTruthy();
+  });
+
+  it('says when a drawn board has no side-face panel, and names that panel on a board that has one', async () => {
+    mockApi();
+    const views = ['look_front', 'look_left', 'look_back', 'look_three_quarter', 'look_closeup_1', 'look_closeup_2', 'look_closeup_3'];
+    const old = look('o', '路人乙', '旧板');
+    const fresh = look('n', '路人乙', '新板');
+    const withViews = (entry: typeof old, layout: string) => ({
+      ...entry,
+      metadata: { ...entry.metadata, look_layout: layout } as typeof entry.metadata,
+      files: [...entry.files, ...views.map(slot => ({ ...entry.files[0], id: `${entry.id}-${slot}`, slot, url: `/media/${entry.id}-${slot}.png` }))],
+    });
+    items.push(withViews(old, 'plain'), withViews(fresh, 'makeup_side'));
+    render(<CharacterLooks taskId="t1" characterName="路人乙" />);
+    await userEvent.click(await screen.findByRole('tab', { name: '旧板' }));
+    expect(await screen.findByText(/这张定妆图没有侧脸格/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('tab', { name: '新板' }));
+    const tabs = within(screen.getByRole('tablist', { name: '“新板”的单张' })).getAllByRole('tab').map(tab => tab.textContent);
+    items.splice(items.length - 2, 2);
+    expect(tabs.slice(-3)).toEqual(['正脸胸像', '妆效部位', '四分之三侧脸']);
+    expect(screen.queryByText(/这张定妆图没有侧脸格/)).toBeNull();
   });
 
   it('shows what the makeup check still found wrong, and nothing for a look that passed', async () => {
@@ -272,6 +319,34 @@ describe('CharacterLooks', () => {
     expect(JSON.parse(job?.body || '{}')).toEqual({ kind: 'actor', looks: true, task_id: 't1' });
     expect(await screen.findByText('全剧 3 套，已生成 3 套')).toBeTruthy();
     expect((screen.getByRole('button', { name: '生成缺失定妆图' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('files every costume before listing and says when one is for episodes not written yet', async () => {
+    const calls = mockApi();
+    items.push(look('f', '沈无咎', '官服', { episodes: [11, 20], later: true }, false));
+    try {
+      render(<CharacterLooks taskId="t1" characterName="沈无咎" />);
+      const tab = await screen.findByRole('tab', { name: '官服' });
+      expect(calls[0].url).toContain('/api/drama/t1/character-looks/sync');
+      expect(tab.getAttribute('title')).toContain('第 11 集起才穿，剧本还没写到');
+      await userEvent.click(tab);
+      expect(screen.getByText('第 11 集起才穿，剧本还没写到')).toBeTruthy();
+      expect(screen.getByText('全剧 4 套，已生成 2 套')).toBeTruthy();
+    } finally {
+      items.pop();
+    }
+  });
+
+  it('names each look that failed and why', async () => {
+    mockApi([], [], {
+      id: 'job', status: 'partial', total: 2, processed: 2, succeeded: 1, failed: 1,
+      errors: [{ element_id: 'b', name: '沈无咎·染血残衣', detail: '沈无咎还没有设定集图片，先生成角色形象再出定妆图' }],
+    });
+    render(<CharacterLooks taskId="t1" characterName="沈无咎" />);
+    await userEvent.click(await screen.findByRole('button', { name: '生成缺失定妆图' }));
+    const failed = await screen.findByRole('list', { name: '没生成出来的定妆图' });
+    expect(within(failed).getByText('沈无咎·染血残衣')).toBeTruthy();
+    expect(failed.textContent).toContain('先生成角色形象再出定妆图');
   });
 
   it('asks before replacing a drawn look and draws a missing one straight away', async () => {

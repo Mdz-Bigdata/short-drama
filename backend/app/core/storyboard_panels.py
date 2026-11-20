@@ -20,29 +20,43 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from app import settings
+from app.core import prompt_data
 from app.core.camera_motion import motion_problem
 from app.core.video_references import MIN_SHOT_SECONDS, max_shot_seconds, preferred_shot_seconds
 from app.core.writer_dashboard import parse_duration_seconds
+
+# The words a beat is recognised by, the size scale, the patterns and the joiners a merge writes:
+# app/data/prompt/storyboard_panels.json.
+_WORDING = "storyboard_panels"
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A phrase of the panels' wording table, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return str(prompt_data.load(_WORDING)["says"][key]).format(**values)
+
+
+def _joiner(part: str) -> str:
+    """What joins two merged beats' ``part`` (desc, sound, dialogue, purpose, motion)."""
+    return str(prompt_data.value(_WORDING, "joiners")[part])
+
 
 MAX_PANELS = 9
 # 一场戏每这么多秒才给一格(STORYBOARD_SECONDS_PER_PANEL)：图和视频都按格算，宁少勿多。
 SECONDS_PER_PANEL = 5
 # 一格视频里最多推进几个动作：再多模型就会漏拍或糊成一团。
 MAX_BEATS_PER_PANEL = 4
-# 单段视频超过这个时长容易漂脸、漂场景，模型上限更长也按这个自动合并；
-# 只有超出本场格数上限时(fit_panels)才并到模型上限，如 Seedance 2.5 的 30 秒。
+# 单段视频超过这个时长容易漂脸、漂场景，换景别的自动合并按这个封顶；景别不变的连续几拍并到模型上限
+# (Seedance 2.5 的 30 秒)，一张分镜图出一段长镜。超出本场格数上限时(fit_panels)也并到模型上限。
 STEADY_CLIP_SECONDS = 15
 # 没写时长的行按这个估。
 DEFAULT_BEAT_SECONDS = 3
 # 这些拍点要单独一张图让观众看清，不并进上一格。
-_STANDALONE = ("反转", "揭露", "真相", "转场", "时间跳", "闪回", "回忆", "插叙")
+_STANDALONE = prompt_data.words(_WORDING, "standalone_beats")
 # 正反打与过肩是换到对面去拍：一段视频里转不过去，必须切。
-_REVERSE_SETUPS = ("过肩", "反打", "越轴", "OTS", "OVER")
-# 景别从远到近的刻度；同一格里靠推拉够得着的跨度。
-_SIZE_RANKS = (
-    (("大特写", "局部特写", "ECU", "EXTREME CLOSE"), 7), (("中近景", "MCU"), 4), (("特写", "CU", "CLOSE"), 6),
-    (("近景",), 5), (("远中景", "中全景", "MLS", "MWS"), 2), (("中景", "MS", "MEDIUM"), 3),
-    (("大远景", "ELS", "EWS"), 0), (("远景", "LS", "WS", "LONG", "WIDE"), 0), (("全景", "FS", "FULL"), 1),
+_REVERSE_SETUPS = prompt_data.words(_WORDING, "reverse_setups")
+# 景别从远到近的刻度(先命中先算：「大特写」在「特写」前，「中近景」在「近景」前)；同一格里靠推拉够得着的跨度。
+_SIZE_RANKS: tuple[tuple[tuple[str, ...], int], ...] = tuple(
+    (tuple(str(term) for term in terms), int(rank)) for terms, rank in prompt_data.value(_WORDING, "size_ranks")
 )
 MAX_SIZE_REACH = 3
 # 画面描述的字面相似度达到这个值，就算景别、机位都换了也是同一个画面。
@@ -50,9 +64,9 @@ SAME_PICTURE = 0.85
 # 景别、机位、入镜人物都没变时，画面描述相似到这个程度就算重复。
 SAME_SETUP_PICTURE = 0.6
 
-_NO_LINE = ("无", "-", "—", "（无）", "(无)")
-_FILM_SECONDS = re.compile(r"(\d+(?:\.\d+)?)\s*(?:秒|s)?\s*[（(]?\s*成片|成片\s*[:：]?\s*(\d+(?:\.\d+)?)", re.I)
-_NOISE = re.compile(r"[\s，,。；;：:、！!？?“”\"'（）()【】\[\]《》<>·\-—_/|]+")
+_NO_LINE = prompt_data.words(_WORDING, "no_line")
+_FILM_SECONDS = prompt_data.pattern(_WORDING, "film_seconds", re.I)
+_NOISE = prompt_data.pattern(_WORDING, "noise")
 
 
 def _norm(value: Any) -> str:
@@ -134,9 +148,9 @@ def _size_rank(size: Any) -> int | None:
     return None
 
 
-_SLIGHT = re.compile(r"(略|微|稍|偏)[仰俯高低]")
+_SLIGHT = prompt_data.pattern(_WORDING, "slight_angle")
 # 模型把「其余格留白」写成了表格行：这些行没有画面，不出图。
-_VACANT = ("留白", "空格", "待补", "空位")
+_VACANT = prompt_data.words(_WORDING, "vacant_words")
 
 
 def is_vacant(shot: Mapping[str, Any]) -> bool:
@@ -150,10 +164,10 @@ def is_vacant(shot: Mapping[str, Any]) -> bool:
 def _camera_height(angle: Any) -> str:
     """机位高度：仰拍、俯拍、平视。换高度就是换机位，一段视频里不升降过去；「略仰、略俯」仍算平视。"""
     text = _SLIGHT.sub("", str(angle or ""))
-    if any(word in text for word in ("仰", "低机位", "低角度")):
-        return "low"
-    if any(word in text for word in ("俯", "高机位", "顶拍", "鸟瞰")):
-        return "high"
+    # 先命中先算：低机位(仰)在前，高机位(俯)在后。
+    for height, words in prompt_data.value(_WORDING, "camera_heights"):
+        if any(word in text for word in words):
+            return str(height)
     return "eye" if text.strip() else ""
 
 
@@ -185,7 +199,7 @@ def _can_join(panel: Mapping[str, Any], shot: Mapping[str, Any], *, seconds: int
         return True
     # 景别变了要在这一格里补一段推 / 拉；补上就成了推了又拉、或三种运镜叠在一起，就另起一格。
     move = _size_move(panel, shot)
-    if move and motion_problem(_join(str(panel.get("motion") or ""), move, "，随后")):
+    if move and motion_problem(_join(str(panel.get("motion") or ""), move, _joiner("motion"))):
         return False
     height, last_height = _camera_height(shot.get("angle")), panel["_last_height"]
     if height and last_height and height != last_height:
@@ -202,7 +216,7 @@ def _size_move(panel: Mapping[str, Any], shot: Mapping[str, Any]) -> str:
     rank, last = _size_rank(shot.get("size")), panel["_last_rank"]
     if rank is None or last is None or rank == last:
         return ""
-    return f"{'推近至' if rank > last else '拉远至'}{shot.get('size')}"
+    return _says("push_in" if rank > last else "pull_out", size=shot.get("size"))
 
 
 def _join(text: str, extra: str, joiner: str) -> str:
@@ -215,27 +229,33 @@ def _join(text: str, extra: str, joiner: str) -> str:
 def _join_lines(text: Any, extra: Any) -> str:
     """把两格的台词接起来；「无」不是台词，不写进去。"""
     lines = [str(line or "").strip() for line in (text, extra)]
-    return "；".join(line for line in lines if line and line not in _NO_LINE) or str(text or "")
+    return _joiner("dialogue").join(line for line in lines if line and line not in _NO_LINE) or str(text or "")
 
 
 def consolidate_panels(shots: Sequence[Mapping[str, Any]], *, video_model: str = "") -> list[dict[str, Any]]:
-    """把同一机位组、同一组人物里连续的动作并成一格视频；合并后的动作、台词与声音全部保留。"""
-    cap = min(max_shot_seconds(video_model), STEADY_CLIP_SECONDS)
+    """把同一机位组、同一组人物里连续的动作并成一格视频；合并后的动作、台词与声音全部保留。
+
+    景别不变的下一拍并到模型一段视频的上限(只出一张分镜图)；要换景别的只并到 ``STEADY_CLIP_SECONDS``。
+    """
+    longest = max_shot_seconds(video_model)
+    steady = min(longest, STEADY_CLIP_SECONDS)
     panels: list[dict[str, Any]] = []
     for raw in shots:
         if is_vacant(raw):
             continue
         shot = dict(raw)
         seconds = _seconds(shot)
-        if panels and _can_join(panels[-1], shot, seconds=seconds, cap=cap):
+        rank = _size_rank(shot.get("size"))
+        same_size = bool(panels) and rank is not None and rank == panels[-1]["_last_rank"]
+        if panels and _can_join(panels[-1], shot, seconds=seconds, cap=longest if same_size else steady):
             panel = panels[-1]
-            panel["desc"] = _join(str(panel.get("desc") or ""), str(shot.get("desc") or ""), "；随后")
+            panel["desc"] = _join(str(panel.get("desc") or ""), str(shot.get("desc") or ""), _joiner("desc"))
             panel["dialogue"] = _join_lines(panel.get("dialogue"), shot.get("dialogue"))
             if str(shot.get("sound") or "") not in str(panel.get("sound") or ""):
-                panel["sound"] = _join(str(panel.get("sound") or ""), str(shot.get("sound") or ""), "；")
-            panel["narrative_purpose"] = _join(str(panel.get("narrative_purpose") or ""), str(shot.get("narrative_purpose") or ""), "→")
+                panel["sound"] = _join(str(panel.get("sound") or ""), str(shot.get("sound") or ""), _joiner("sound"))
+            panel["narrative_purpose"] = _join(str(panel.get("narrative_purpose") or ""), str(shot.get("narrative_purpose") or ""), _joiner("purpose"))
             rank = _size_rank(shot.get("size"))
-            joined = _join(str(panel.get("motion") or ""), _size_move(panel, shot), "，随后")
+            joined = _join(str(panel.get("motion") or ""), _size_move(panel, shot), _joiner("motion"))
             # 太短只能并进来的那一拍：补的推 / 拉会和格里的运镜对冲，就不补，景别交给画面描述。
             if not motion_problem(joined):
                 panel["motion"] = joined
@@ -260,7 +280,7 @@ def consolidate_panels(shots: Sequence[Mapping[str, Any]], *, video_model: str =
 def panel_limit(scene_duration: Any, *, video_model: str = "") -> int:
     """这场戏最多几格：时长除以每格秒数，1–9 格。
 
-    每格秒数默认取 5 秒与所选模型宜用下限中较大的(Seedance 2.5 是 10 秒，30 秒的场 3 格)；
+    每格秒数默认取 5 秒与所选模型宜用下限中较大的(Seedance 2.5 是 15 秒，30 秒的场 2 格)；
     STORYBOARD_SECONDS_PER_PANEL 设了就按它，调大格数更少。
 
     没写时长的场次(旧任务)估不出，只受每页九格的限制。
@@ -300,12 +320,12 @@ def _fit_cost(first: Mapping[str, Any], second: Mapping[str, Any], *, cap: int) 
 def _combine(first: Mapping[str, Any], second: Mapping[str, Any], *, cap: int) -> dict[str, Any]:
     """后一格并进前一格：机位和起幅沿用前一格，动作、台词、声音、入镜人物全部留下。"""
     panel = dict(first)
-    panel["desc"] = _join(str(first.get("desc") or ""), str(second.get("desc") or ""), "；随后")
+    panel["desc"] = _join(str(first.get("desc") or ""), str(second.get("desc") or ""), _joiner("desc"))
     panel["dialogue"] = _join_lines(first.get("dialogue"), second.get("dialogue"))
     if str(second.get("sound") or "") not in str(first.get("sound") or ""):
-        panel["sound"] = _join(str(first.get("sound") or ""), str(second.get("sound") or ""), "；")
-    panel["narrative_purpose"] = _join(str(first.get("narrative_purpose") or ""), str(second.get("narrative_purpose") or ""), "→")
-    joined = _join(str(first.get("motion") or ""), str(second.get("motion") or ""), "，随后")
+        panel["sound"] = _join(str(first.get("sound") or ""), str(second.get("sound") or ""), _joiner("sound"))
+    panel["narrative_purpose"] = _join(str(first.get("narrative_purpose") or ""), str(second.get("narrative_purpose") or ""), _joiner("purpose"))
+    joined = _join(str(first.get("motion") or ""), str(second.get("motion") or ""), _joiner("motion"))
     if not motion_problem(joined):
         panel["motion"] = joined
     panel["characters"] = list(dict.fromkeys([*(first.get("characters") or []), *(second.get("characters") or [])]))

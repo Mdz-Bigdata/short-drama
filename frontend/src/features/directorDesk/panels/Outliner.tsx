@@ -2,7 +2,9 @@ import { Eye, EyeOff, Lock, LockOpen, Plus, Users } from 'lucide-react';
 
 import type { LandmarkShape, StagePlan, StageShot } from '../../spatial/spatialTypes';
 import { refKey, type SelectionRef } from '../deskTypes';
+import { contactOn, contactPhrase, seatOf } from '../lib/contacts';
 import { crowdIds, crowdMembers, crowdOf } from '../lib/stageMath';
+import { trailLength, type Trail } from '../lib/trails';
 import { SHAPE_LABELS } from '../three/stageLook';
 
 interface Props {
@@ -12,6 +14,8 @@ interface Props {
   hidden: string[];
   locked: string[];
   editable: boolean;
+  /** The routes of this shot: the filming lens when it travels, and each actor that goes somewhere. */
+  trails?: Trail[];
   onSelect: (ref: SelectionRef, additive: boolean) => void;
   onToggleHidden: (key: string) => void;
   onToggleLocked: (key: string) => void;
@@ -20,8 +24,9 @@ interface Props {
 }
 
 const SHAPES = Object.keys(SHAPE_LABELS) as LandmarkShape[];
+const NO_TRAILS: Trail[] = [];
 
-export function Outliner({ plan, shot, selection, hidden, locked, editable, onSelect, onToggleHidden, onToggleLocked, onAddProp, onAddCrowd }: Props) {
+export function Outliner({ plan, shot, selection, hidden, locked, editable, trails = NO_TRAILS, onSelect, onToggleHidden, onToggleLocked, onAddProp, onAddCrowd }: Props) {
   const selected = new Set(selection.map(refKey));
   const row = (ref: SelectionRef, title: string, detail: string) => {
     const key = refKey(ref);
@@ -34,10 +39,10 @@ export function Outliner({ plan, shot, selection, hidden, locked, editable, onSe
           <small>{detail}</small>
         </button>
         {/* Visibility and lock are the operator's own view of the stage: never sent, never saved. */}
-        <button type="button" className="desk-icon" aria-pressed={isHidden} aria-label={`${isHidden ? '显示' : '隐藏'} ${title}`} onClick={() => onToggleHidden(key)}>
+        <button type="button" className="desk-icon" aria-pressed={isHidden} aria-label={`${isHidden ? '显示' : '隐藏'} ${title}`} title={isHidden ? '显示' : '隐藏：只影响自己看到的舞台'} onClick={() => onToggleHidden(key)}>
           {isHidden ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
         </button>
-        <button type="button" className="desk-icon" aria-pressed={isLocked} aria-label={`${isLocked ? '解锁' : '锁定'} ${title}`} onClick={() => onToggleLocked(key)}>
+        <button type="button" className="desk-icon" aria-pressed={isLocked} aria-label={`${isLocked ? '解锁' : '锁定'} ${title}`} title={isLocked ? '解锁' : '锁定：不能在舞台上点选和拖动'} onClick={() => onToggleLocked(key)}>
           {isLocked ? <Lock aria-hidden="true" /> : <LockOpen aria-hidden="true" />}
         </button>
       </li>
@@ -46,17 +51,27 @@ export function Outliner({ plan, shot, selection, hidden, locked, editable, onSe
   const cast = plan.actors.filter(actor => !actor.crowd_id);
   const crowds = crowdIds(plan);
   const shotCameras = new Set([shot?.camera_id, ...(shot?.alt_camera_ids || [])]);
+  // A held, resting or seated thing says so where it is listed: 「在林夏右手里」.
+  const propDetail = (name: string, shape: LandmarkShape | undefined) => {
+    const contact = contactOn(plan, shot?.shot_id, name);
+    return contact && contact.kind !== 'sit' ? `${SHAPE_LABELS[shape ?? 'box']} · ${contactPhrase(contact)}` : SHAPE_LABELS[shape ?? 'box'];
+  };
+  const actorDetail = (name: string, role: string) => {
+    const base = shot?.subjects.includes(name) ? '本镜主体' : role === 'principal' ? '主角' : '配角';
+    const seat = seatOf(plan, shot?.shot_id, name);
+    return seat ? `${base} · ${contactPhrase(seat)}` : base;
+  };
 
   return (
     <aside className="desk-outliner" aria-label="场景大纲">
       <section aria-label="角色">
         <h2>角色 <small>{cast.length}</small></h2>
-        <ul>{cast.map(actor => row({ kind: 'actor', name: actor.name }, actor.name, shot?.subjects.includes(actor.name) ? '本镜主体' : actor.role === 'principal' ? '主角' : '配角'))}</ul>
+        <ul>{cast.map(actor => row({ kind: 'actor', name: actor.name }, actor.name, actorDetail(actor.name, actor.role)))}</ul>
       </section>
       <section aria-label="群演">
         <h2>
           群演 <small>{crowds.length}</small>
-          <button type="button" className="desk-icon" aria-label="添加群演阵列" disabled={!editable} onClick={onAddCrowd}><Users aria-hidden="true" /></button>
+          <button type="button" className="desk-icon" aria-label="添加群演阵列" title="添加群演阵列" disabled={!editable} onClick={onAddCrowd}><Users aria-hidden="true" /></button>
         </h2>
         {crowds.length === 0 && <p className="desk-outliner__empty">还没有群演阵列</p>}
         <ul>{crowds.map(id => row({ kind: 'crowd', id }, crowdOf(plan, id)?.label || id, `${crowdMembers(plan, id).length} 人`))}</ul>
@@ -70,7 +85,7 @@ export function Outliner({ plan, shot, selection, hidden, locked, editable, onSe
             </button>
           ))}
         </div>
-        <ul>{plan.landmarks.filter(item => item.origin !== 'blockout').map(item => row({ kind: 'landmark', name: item.name }, item.name, SHAPE_LABELS[item.shape ?? 'box']))}</ul>
+        <ul>{plan.landmarks.filter(item => item.origin !== 'blockout').map(item => row({ kind: 'landmark', name: item.name }, item.name, propDetail(item.name, item.shape)))}</ul>
         {plan.landmarks.some(item => item.origin === 'blockout') && (
           <details className="desk-outliner__group">
             <summary>白模 <small>{plan.landmarks.filter(item => item.origin === 'blockout').length}</small></summary>
@@ -85,6 +100,27 @@ export function Outliner({ plan, shot, selection, hidden, locked, editable, onSe
             { kind: 'camera', id: camera.id }, camera.label || camera.id,
             `${camera.lens_mm}mm${camera.id === shot?.camera_id ? ' · 本镜主机位' : shotCameras.has(camera.id) ? ' · 本镜候选' : ''}`,
           ))}
+        </ul>
+      </section>
+      <section aria-label="轨迹">
+        <h2>轨迹 <small>{trails.length}</small></h2>
+        {trails.length === 0 && <p className="desk-outliner__empty">本镜还没有走位或运镜：用「路径」工具在地面上画，或在时间线上打关键帧</p>}
+        <ul>
+          {trails.map(trail => {
+            // A route belongs to whoever travels it: picking the route picks them, and hiding them hides it.
+            const ref: SelectionRef = trail.kind === 'camera' ? { kind: 'camera', id: trail.owner } : { kind: 'actor', name: trail.owner };
+            const owner = trail.kind === 'camera' ? plan.cameras.find(camera => camera.id === trail.owner)?.label || trail.owner : trail.owner;
+            const title = `${trail.kind === 'camera' ? '运镜' : '走位'} · ${owner}`;
+            const keys = trail.keys.length ? `${trail.keys.length} 个关键帧` : '跟拍';
+            return (
+              <li key={trail.key} className={`desk-outliner__row is-trail ${selected.has(trail.key) ? 'is-selected' : ''} ${hidden.includes(trail.key) ? 'is-hidden' : ''}`}>
+                <button type="button" className="desk-outliner__name" aria-pressed={selected.has(trail.key)} title="选中走这条轨迹的角色或机位" onClick={event => onSelect(ref, event.shiftKey)}>
+                  <strong>{title}</strong>
+                  <small>{keys} · {trailLength(trail.points).toFixed(1)} 米 · {trail.durationS} 秒</small>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       </section>
     </aside>

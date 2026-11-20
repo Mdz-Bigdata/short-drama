@@ -13,6 +13,18 @@ from typing import Any, Mapping, Sequence
 
 from app.core import camera_motion, prompt_data, shot_transitions
 
+
+_WORDING_FILE = "storyboard_revision"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/storyboard_revision.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
 # 版数、退回代码、持物词表、打戏词表都是数据(app/data/prompt/storyboard_revision.json)。
 _DATA = "storyboard_revision"
 # 最多交两版：初稿 + 一版修订。再多也不会更好，只会更贵。
@@ -41,8 +53,7 @@ def vague_fight_issues(shots: Sequence[Mapping[str, Any]]) -> list[str]:
         hits = [(word, fix) for word, fix in VAGUE_FIGHT_MOVES if word in desc]
         if hits:
             issues.append(
-                f"第{index}镜画面里的「{'」「'.join(word for word, _ in hits)}」是含混技法：{hits[0][1]}；"
-                "每个动作都要写清哪只手哪只脚、打在哪里、用什么技法，受击方要有格挡、闪避、借力或硬吃换击的反应"
+                _text_of("vague_fight_issues.text").format(index, '」「'.join(word for word, _ in hits), hits[0][1])
             )
     return issues
 
@@ -65,12 +76,11 @@ def contact_issues(shots: Sequence[Mapping[str, Any]], *, exclude: Sequence[int]
             continue
         if not any(word in desc for word in _CONTACTS):
             issues.append(
-                f"第{index}镜出了手（「{strikes[0]}」）却没写打在哪：每一下都要写接触点与接触处的受力形变"
-                "（如「拳峰撞上对方颧骨，皮肉向后挤出褶皱」），拳拳到肉"
+                _text_of("contact_issues.text").format(index, strikes[0])
             )
         elif not any(word in desc for word in _REACTIONS):
             issues.append(
-                f"第{index}镜受击方没有反应：每一击都要写对方怎么接——格挡、闪避、借力或硬吃换击，被打动的幅度要与力道相称"
+                _text_of("contact_issues.text.2").format(index)
             )
     return issues
 
@@ -90,7 +100,7 @@ def handoff_issues(
     fight_notes: list[str] = []
     if fight:
         vague = vague_fight_issues(shots)
-        flagged = [int(re.match(r"第(\d+)镜", note).group(1)) for note in vague]
+        flagged = [int(re.match(_text_of("handoff_issues.flagged"), note).group(1)) for note in vague]
         fight_notes = vague + contact_issues(shots, exclude=flagged)
     return transitions + motion_issues(shots) + prop_issues(shots, props) + fight_notes
 
@@ -108,7 +118,7 @@ def prop_issues(shots: Sequence[Mapping[str, Any]], props: Sequence[str]) -> lis
                 continue
             taken = any(_TAKES.search(clause) for clause in clauses)
             if not seen and index > 1 and not taken and any(_HOLDING.search(clause) for clause in clauses):
-                issues.append(f"第{index}镜「{prop}」已经在手上，但前面没有出现过，也没写是怎么拿到的：补一个拿起的动作，或在前一镜交代它")
+                issues.append(_text_of("prop_issues.text").format(index, prop))
             seen = True
             cast = [str(name) for name in shot.get("characters") or []]
             for clause in clauses:
@@ -117,7 +127,7 @@ def prop_issues(shots: Sequence[Mapping[str, Any]], props: Sequence[str]) -> lis
                 if not hand or not holder:
                     continue
                 if last_hold and last_hold[0] == holder and last_hold[1] != hand.group(0) and not taken and not _HAND_CHANGE.search(desc):
-                    issues.append(f"第{index}镜{holder}的「{prop}」从{last_hold[1]}到了{hand.group(0)}，没写换手：统一成一只手，或把换手的动作写出来")
+                    issues.append(_text_of("prop_issues.text.2").format(index, holder, prop, last_hold[1], hand.group(0)))
                 last_hold = (holder, hand.group(0))
     return issues
 
@@ -128,7 +138,7 @@ def motion_issues(shots: Sequence[Mapping[str, Any]]) -> list[str]:
     for index, shot in enumerate(shots, start=1):
         problem = camera_motion.motion_problem(shot.get("motion"))
         if problem:
-            issues.append(f"第{index}镜运镜「{str(shot.get('motion') or '')[:40]}」{problem}")
+            issues.append(_text_of("motion_issues.text").format(index, str(shot.get('motion') or '')[:40], problem))
     return issues
 
 
@@ -137,24 +147,21 @@ def previous_table(reply: str) -> str:
     table = "\n".join(line for line in str(reply or "").splitlines() if line.lstrip().startswith("|"))
     if not table or len(table) > PREVIOUS_TABLE_LIMIT:
         return ""
-    return f"\n\n【上一版分镜表】\n{table}"
+    return _text_of("previous_table.text").format(table)
 
 
 def rejection_note(reason: str, reply: str = "") -> str:
     return (
         previous_table(reply)
-        + "\n\n【上一版被退回】" + reason.strip()
-        + "\n请按同一格式重新给出完整分镜表：只写当前剧情里出场的人，入镜角色列与画面描述一致，不用占位内容。"
+        + _text_of("rejection_note.text") + reason.strip()
+        + _text_of("rejection_note.text.2")
     )
 
 
 def revision_note(issues: Sequence[str], reply: str = "") -> str:
     return (
         previous_table(reply)
-        + "\n\n【上一版衔接自检没过，请修订后重新给出完整分镜表】\n"
+        + _text_of("revision_note.text")
         + "\n".join(f"- {issue}" for issue in issues)
-        + "\n同一场戏每一镜写同一句光线(主光方向、光源、冷暖)；相邻镜头景别逐级过渡；相邻运镜不对冲；"
-        "每镜只留一个主运镜(最多再加一个不冲突的辅助，如推近 + 轻手持)，不推了又拉，要两段运动就拆成两镜。"
-        "留哪个主运镜看这一镜的戏：摇、移、升降、环绕、跟拍和固定都可以，不要为了过检查一律改成缓慢推近。"
-        "其余内容保持不变。"
+        + _text_of("revision_note.text.2")
     )

@@ -14,22 +14,25 @@ import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from app.core import prompt_data
 
-REGIONS: tuple[str, ...] = (
-    "画面左侧三分之一", "画面右侧三分之一", "画面左侧", "画面右侧", "画面中央", "画面中心",
-    "中央轴线", "画面上方", "画面下方", "画面左下角", "画面右下角", "画面左上角", "画面右上角",
-    "画面左下方", "画面右下方", "画面左上方", "画面右上方", "画面中右侧", "画面中左侧",
-    "画面左后方", "画面右后方", "画面下方中央",
-)
-DEPTHS: tuple[str, ...] = ("极近前景", "近前景", "前景", "中景", "中远景", "背景", "远景")
-FACINGS: tuple[str, ...] = (
-    "朝向画面右侧", "朝向画面左侧", "朝画面右侧", "朝画面左侧", "朝画面内侧", "朝向画面内侧",
-    "面向画面右侧", "面向画面左侧", "面向镜头", "正对镜头", "背对镜头", "视线朝向画面右侧",
-    "视线朝向画面左侧", "视线指向左侧", "视线指向右侧", "看向画面右侧", "看向画面左侧",
-    "看向镜头", "望向画面右侧", "望向画面左侧",
-)
-_OCCLUSION = re.compile(r"(遮挡[^，。；]{0,30}?(?:约)?[一二三四五六七八九十\d分之]+[^，。；]{0,20})")
-_FORBIDDEN = re.compile(r"((?:不要|不得|禁止|不放置)[^，。；]{2,40})")
+
+_WORDING_FILE = "frame_position"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/frame_position.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+REGIONS: tuple[str, ...] = _words_of("module.regions")
+DEPTHS: tuple[str, ...] = _words_of("module.depths")
+FACINGS: tuple[str, ...] = _words_of("module.facings")
+_OCCLUSION = re.compile(_text_of("module.occlusion"))
+_FORBIDDEN = re.compile(_text_of("module.forbidden"))
 _SENTENCE_SPLIT = re.compile(r"[。；;\n]")
 
 
@@ -54,7 +57,7 @@ def uses_frame_grammar(text: str) -> bool:
     """True when prose positions subjects in screen coordinates at all."""
     haystack = str(text or "")
     return any(token in haystack for token in (*REGIONS, *DEPTHS)) and (
-        "画面" in haystack or any(depth in haystack for depth in DEPTHS)
+        _text_of("uses_frame_grammar.text") in haystack or any(depth in haystack for depth in DEPTHS)
     )
 
 
@@ -104,7 +107,7 @@ def parse_frame_positions(text: str, subjects: list[str]) -> list[FramePosition]
         window = "，".join(scope)
         occlusion = _OCCLUSION.search(window)
         forbidden = _FORBIDDEN.search("，".join(clauses))
-        keep = re.search(r"保留[^，。；]{1,30}", window)
+        keep = re.search(_text_of("parse_frame_positions.keep"), window)
         position = FramePosition(
             subject=subject[:120],
             region=_first(REGIONS, _without_facings(window)),
@@ -123,8 +126,8 @@ def render_frame_positions(positions: list[FramePosition]) -> str:
     """The five-part position sentence: region, depth, facing, occlusion, forbidden zone."""
     parts: list[str] = []
     for item in positions:
-        where = "".join(filter(None, [item.region, f"的{item.depth}" if item.depth and item.region else item.depth]))
-        clause = f"{item.subject}位于{where}" if where else item.subject
+        where = "".join(filter(None, [item.region, _text_of("render_frame_positions.where").format(item.depth) if item.depth and item.region else item.depth]))
+        clause = _text_of("render_frame_positions.clause").format(item.subject, where) if where else item.subject
         if item.facing:
             clause += f"，{item.facing}"
         if item.occlusion:
@@ -144,13 +147,13 @@ ScreenSide = Literal["left", "right", "camera", "away", ""]
 
 def facing_side(facing: str) -> ScreenSide:
     text = str(facing or "")
-    if "背对" in text:
+    if _text_of("facing_side.text") in text:
         return "away"
-    if "镜头" in text:
+    if _text_of("facing_side.text.2") in text:
         return "camera"
-    if "右" in text:
+    if _text_of("facing_side.text.3") in text:
         return "right"
-    if "左" in text:
+    if _text_of("facing_side.text.4") in text:
         return "left"
     return ""
 

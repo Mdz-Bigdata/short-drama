@@ -1,0 +1,14 @@
+{
+  "_doc": "app/core/promo_facts.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.title_label": "【封面大字标题】",
+  "module.body_label": "【黄金引流文案】",
+  "module.output_contract": "方案正文写完后，最后单独输出两行，供系统直接上线使用，不要加引号、编号或 Markdown：\n{0}一句 4–14 字的主推封面标题\n{1}一段 30–80 字的主推引流文案，只用正片里真实发生的情节和台词",
+  "module.episode_prefix": "^第\\s*\\d+\\s*集\\s*",
+  "_dialogue.line": "旁白",
+  "production_facts.title": "未命名",
+  "production_facts.state": "成片已合成，{0:.0f} 秒",
+  "production_facts.state.2": "成片已合成",
+  "production_facts.state.3": "成片未合成",
+  "production_facts.text": "- 第{0}集「{1}」：{2}",
+  "production_facts.head": "本剧已写定 {0} 集，其中 {1} 集成片已合成。以下为正片事实，宣传主张只能从这里取："
+}

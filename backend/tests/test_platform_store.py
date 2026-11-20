@@ -128,12 +128,13 @@ class PlatformStoreTests(unittest.IsolatedAsyncioTestCase):
                 sha256="bad",
             )
 
-    async def test_element_storage_quota_uses_replacement_delta(self):
+    async def test_element_storage_quota_counts_files_kept_in_history(self):
+        """换掉的文件留在历史版本里可以恢复，所以配额连它一起算。"""
         user, _ = await self.store.create_user(
             email="quota-owner@example.com", phone=None, password="owner-password"
         )
         scene = await self.store.create_element(owner_id=user.id, kind="scene", name="配额场景")
-        with patch("app.platform.store.MAX_ELEMENT_STORAGE_BYTES", 150):
+        with patch("app.platform.store.MAX_ELEMENT_STORAGE_BYTES", 250):
             first = await self.store.add_element_file(
                 element_id=scene.id,
                 owner_id=user.id,

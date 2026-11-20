@@ -1,4 +1,4 @@
-.image-pool { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: rgba(var(--surface-tint-rgb), 0.72); }
+.image-pool { position: fixed; inset: 0; z-index: 3000; display: grid; place-items: center; padding: 24px; background: rgba(var(--surface-tint-rgb), 0.72); }
 .image-pool__panel { width: min(980px, 100%); max-height: 88vh; display: flex; flex-direction: column; gap: 12px; padding: 18px; color: var(--text-main); background: var(--surface); border: 1px solid rgba(var(--ink-rgb), 0.16); border-radius: 12px; }
 .image-pool__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .image-pool__head h2 { margin: 0; font-size: 1rem; letter-spacing: 0.04em; }

@@ -31,7 +31,7 @@ class CreativePresetRegistryTests(unittest.TestCase):
         self.assertTrue(expected.issubset({preset.id for preset in self.registry.list()}))
 
     def test_manifest_contains_every_requested_source(self):
-        self.assertEqual(len(UPSTREAM_CAPABILITIES), 23)
+        self.assertEqual(len(UPSTREAM_CAPABILITIES), 29)  # + harness2 (2026-11-15), + novanova-studio (2026-11-16), + aid-studio (2026-11-16), + beeftv (2026-11-16), + sline-short-drama (2026-11-19)
         ids = {source["id"] for source in UPSTREAM_CAPABILITIES}
         self.assertIn("short-drama-skills", ids)
         self.assertIn("fight-prompt-director", ids)

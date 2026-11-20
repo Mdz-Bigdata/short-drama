@@ -46,6 +46,14 @@
       "scope": "skill"
     },
     {
+      "key": "episode-pacing-film",
+      "title": "episode-pacing-film.md",
+      "file": "references/episode-pacing-film.md",
+      "budget": 0,
+      "stages": [],
+      "scope": "skill"
+    },
+    {
       "key": "cinema-craft-redlines",
       "title": "电影级编剧红线与 S 级三冲击",
       "file": "references/cinema-craft-redlines.md",
@@ -97,6 +105,56 @@
       "title": "主角拷问与人物关系架法",
       "file": "references/character-relationship-craft.md",
       "budget": 2500,
+      "stages": [
+        1,
+        2
+      ]
+    },
+    {
+      "key": "causal-chain-craft",
+      "title": "因果链：把「然后」换成「所以」",
+      "file": "references/causal-chain-craft.md",
+      "budget": 2500,
+      "stages": [
+        1,
+        2
+      ]
+    },
+    {
+      "key": "tension-craft",
+      "title": "紧张感：控制观众的预期",
+      "file": "references/tension-craft.md",
+      "budget": 2500,
+      "stages": [
+        1,
+        2
+      ]
+    },
+    {
+      "key": "xianxia-power-system",
+      "title": "修仙 / 武侠力量体系",
+      "file": "references/xianxia-power-system.md",
+      "budget": 4000,
+      "stages": [
+        1,
+        2
+      ]
+    },
+    {
+      "key": "xianxia-catalog",
+      "title": "修仙设定谱：功法、术法、丹药、宗门、法宝道具、秘境、符箓、阵法、传承",
+      "file": "references/xianxia-catalog.md",
+      "budget": 7000,
+      "stages": [
+        1,
+        2
+      ]
+    },
+    {
+      "key": "xianxia-world",
+      "title": "修仙世界的人情物理：妖兽、称谓礼数、宗门服饰、坊市与灵石",
+      "file": "references/xianxia-world.md",
+      "budget": 3500,
       "stages": [
         1,
         2

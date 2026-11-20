@@ -5,11 +5,27 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from app.core import prompt_data
+
+
+_WORDING_FILE = "continuity"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/continuity.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 class ContinuityState(BaseModel):
     characters: list[str]
     scene: str
+    # 剧本场次号(E1S06)。屏幕方向是按这一场自己的导演台机位量的：不同场次即使在同一地点，
+    # 机位也各自重摆，「左到右」不是同一条轴线，不算越轴。旧数据没有场次号时按地点名比。
+    scene_id: str = ""
     screen_direction: Literal["left_to_right", "right_to_left", "neutral", "unknown"]
     action: str
     emotion: str
@@ -34,23 +50,30 @@ def _is_handoff(previous: ContinuityState, current: ContinuityState) -> bool:
     return any(previous.props[name] != current.props[name] for name in common_props)
 
 
+def _same_setup(previous: ContinuityState, current: ContinuityState) -> bool:
+    """两镜是不是同一场戏的同一套机位：有场次号按场次号，没有按地点名。"""
+    if previous.scene_id and current.scene_id:
+        return previous.scene_id == current.scene_id and previous.scene == current.scene
+    return previous.scene == current.scene
+
+
 def plan_transition(previous: ContinuityState, current: ContinuityState) -> TransitionPlan:
     reasons: list[str] = []
     score = 1.0
 
     axis_flip = (
-        previous.scene == current.scene
+        _same_setup(previous, current)
         and previous.screen_direction in {"left_to_right", "right_to_left"}
         and current.screen_direction in {"left_to_right", "right_to_left"}
         and previous.screen_direction != current.screen_direction
     )
     if axis_flip:
         score -= 0.55
-        reasons.append("检测到180度轴线翻转，需要中性机位桥接后才能合成。")
+        reasons.append(_text_of("plan_transition.text"))
 
     if previous.scene != current.scene:
         score -= 0.12
-        reasons.append("场景变化，采用声画错位引导新空间。")
+        reasons.append(_text_of("plan_transition.text.2"))
         return TransitionPlan(
             accepted=not axis_flip,
             score=max(score, 0),
@@ -62,10 +85,10 @@ def plan_transition(previous: ContinuityState, current: ContinuityState) -> Tran
 
     if previous.lighting != current.lighting:
         score -= 0.12
-        reasons.append("相邻镜头光向或色温不一致。")
+        reasons.append(_text_of("plan_transition.text.3"))
     if previous.audio_bed != current.audio_bed:
         score -= 0.08
-        reasons.append("环境声底发生变化，需音频交叉淡化。")
+        reasons.append(_text_of("plan_transition.text.4"))
 
     if axis_flip:
         return TransitionPlan(
@@ -78,7 +101,7 @@ def plan_transition(previous: ContinuityState, current: ContinuityState) -> Tran
         )
 
     if _is_handoff(previous, current):
-        reasons.append("关键道具发生连续交接，使用动作匹配剪辑。")
+        reasons.append(_text_of("plan_transition.text.5"))
         return TransitionPlan(
             accepted=score >= 0.72,
             score=max(score, 0),
@@ -95,5 +118,5 @@ def plan_transition(previous: ContinuityState, current: ContinuityState) -> Tran
         video_transition="match_cut" if score >= 0.88 else "crossfade",
         audio_transition="l_cut" if previous.audio_bed == current.audio_bed else "crossfade",
         duration_seconds=0.12 if score >= 0.88 else 0.3,
-        reasons=reasons or ["六项连续性锚点可接受。"],
+        reasons=reasons or list(_words_of("plan_transition.reasons")),
     )

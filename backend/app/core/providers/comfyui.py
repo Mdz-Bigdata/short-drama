@@ -26,6 +26,19 @@ from typing import Any
 import httpx
 
 from app import settings
+from app.core import prompt_data
+
+
+_WORDING_FILE = "providers_comfyui"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/providers_comfyui.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 FAMILY = "comfyui"
 ENV_BASE_URL = "COMFYUI_BASE_URL"
@@ -44,12 +57,12 @@ def status() -> dict[str, Any]:
     bindings = _bindings_from_env()
     problems: list[str] = []
     if not base_url:
-        problems.append(f"未设置 {ENV_BASE_URL}")
+        problems.append(_text_of("status.text").format(ENV_BASE_URL))
     workflow_state = "missing"
     if not workflow_path:
-        problems.append(f"未提供工作流：设置 {ENV_WORKFLOW} 指向 ComfyUI 导出的 API 格式 JSON")
+        problems.append(_text_of("status.text.2").format(ENV_WORKFLOW))
     elif not Path(workflow_path).is_file():
-        problems.append(f"工作流文件不存在：{workflow_path}")
+        problems.append(_text_of("status.text.3").format(workflow_path))
     else:
         try:
             load_workflow(workflow_path)
@@ -58,17 +71,17 @@ def status() -> dict[str, Any]:
             problems.append(str(exc))
             workflow_state = "invalid"
     if workflow_state == "loaded" and not bindings.get("prompt"):
-        problems.append(f"{ENV_BINDINGS} 里缺少 prompt 绑定（形如 {{\"prompt\": \"6.inputs.text\"}}）")
+        problems.append(_text_of("status.text.4").format(ENV_BINDINGS))
     return {
         "family": FAMILY,
-        "label": "ComfyUI（自托管工作流）",
+        "label": _text_of("status.label"),
         "configured": bool(base_url),
         "workflow": workflow_state,
         "ready": not problems,
         "problems": problems,
         "base_url_set": bool(base_url),
         "bindings": {key: bool(value) for key, value in bindings.items()},
-        "how_to": "导出 ComfyUI 工作流（Save (API Format)），设置 COMFYUI_WORKFLOW_PATH 与 COMFYUI_BINDINGS 后重启；无工作流时不会向 ComfyUI 发送任何请求。",
+        "how_to": _text_of("status.how_to"),
     }
 
 
@@ -96,9 +109,9 @@ def load_workflow(path: str) -> dict[str, Any]:
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise ValueError(f"工作流文件无法读取或不是合法 JSON：{exc}") from exc
+        raise ValueError(_text_of("load_workflow.text").format(exc)) from exc
     if not isinstance(data, dict) or not data or not all(isinstance(node, dict) and "class_type" in node for node in data.values()):
-        raise ValueError("工作流必须是 ComfyUI 的 API 格式（节点号 → {class_type, inputs}），请用「Save (API Format)」导出")
+        raise ValueError(_text_of("load_workflow.text.2"))
     return data
 
 
@@ -111,7 +124,7 @@ def bind(workflow: dict[str, Any], bindings: dict[str, str], values: dict[str, A
         node_id, _, field = path.partition(".inputs.")
         node = filled.get(node_id)
         if not isinstance(node, dict) or not field:
-            raise ValueError(f"绑定 {name}={path} 指向的节点或输入不存在")
+            raise ValueError(_text_of("bind.text").format(name, path))
         node.setdefault("inputs", {})[field] = values[name]
     return filled
 
@@ -132,7 +145,7 @@ class ComfyUIClient:
     def from_environment(cls, transport: httpx.BaseTransport | None = None) -> "ComfyUIClient":
         view = status()
         if not view["ready"]:
-            raise RuntimeError("ComfyUI 未就绪：" + "；".join(view["problems"]))
+            raise RuntimeError(_text_of("from_environment.text") + "；".join(view["problems"]))
         return cls(
             base_url=os.getenv(ENV_BASE_URL, ""), workflow=load_workflow(os.getenv(ENV_WORKFLOW, "")),
             bindings=_bindings_from_env(), api_key=os.getenv(ENV_API_KEY, ""), transport=transport,

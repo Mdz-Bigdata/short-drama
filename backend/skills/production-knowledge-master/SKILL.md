@@ -50,7 +50,7 @@ promote_and_prune / evolution_report）。
 | 2 编剧剧本创作 | WRITER | dialogue-pacing | screenwriting-master/references/dialogue-pacing.md | 5000 | sys_prompt「【台词语速情绪与停顿重音标注规范如下】」 |
 | 3 角色设计师造型 | CHARACTER_DESIGNER | five-view-template | character-turnaround-consistency/references/actor-sheet-template.md | 5000 | sys_prompt「【五视图一致性角色卡设定规则与示例】」 |
 | 3 角色设计师造型 | CHARACTER_DESIGNER | performance-details | shot-design-master/references/performance-details.md | 5000 | sys_prompt「【角色表情细节与身体微动作描述规范】」 |
-| 4 分镜师分镜拆解 | STORYBOARD_ARTIST | scene-design | shot-design-master/references/scene-design.md | 5000 | sys_prompt「【场景设计指南(场景圣经/功能化场景/空间布局/光影道具叙事)如下】」 |
+| 4 分镜师分镜拆解 | STORYBOARD_ARTIST | scene-design | shot-design-master/references/scene-design.md | 5890 | sys_prompt「【场景设计指南(场景圣经/功能化场景/空间布局/光影道具叙事)如下】」 |
 | 4 分镜师分镜拆解 | STORYBOARD_ARTIST | director-shot-guide | shot-design-master/references/director-shot-guide.md | 8000 | sys_prompt「【导演拍摄分镜完全指南与运镜标准如下】」 |
 | 4 分镜师分镜拆解 | STORYBOARD_ARTIST | emotion-expression | shot-design-master/references/emotion-expression.md | 5000 | sys_prompt「【情绪与面部表情提示词库(把抽象情绪转为可观察微表情/眼神/肢体)如下】」 |
 | 4 分镜师分镜拆解 | STORYBOARD_ARTIST | action-choreography | shot-design-master/references/martial-arts.md | 5000 | sys_prompt「【电影级武打镜头设计指南(力学受力反馈/五镜动作链/防越轴/慢动作卡点)如下】」 |

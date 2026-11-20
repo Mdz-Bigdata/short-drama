@@ -42,11 +42,18 @@ def renderable_shot_durations(video_model: str) -> list[int]:
 
 def supported_shot_durations(video_model: str) -> list[int]:
     """Every whole-second shot length to plan for the video model: its preferred range (seedance2.5
-    10–30 s, seedance2.0 and MiniMax H3 5–15 s), always inside what it renders in one call."""
+    15–30 s, seedance2.0 and MiniMax H3 5–15 s), always inside what it renders in one call."""
     from app.core.video_references import preferred_shot_seconds
 
     low, high = preferred_shot_seconds(video_model)
     return list(range(low, high + 1))
+
+
+def shot_duration_aim(video_model: str) -> int | None:
+    """The length the planner should lean toward (seedance2.5: 30 s); None when the model leans nowhere."""
+    from app.core.video_references import aim_shot_seconds
+
+    return aim_shot_seconds(video_model)
 
 
 def format_duration_constraint(supported_durations: list[int], default_duration: int | None) -> str:
@@ -152,5 +159,6 @@ __all__ = [
     "resolve_episode_target_seconds",
     "resolve_episode_target_volume",
     "renderable_shot_durations",
+    "shot_duration_aim",
     "supported_shot_durations",
 ]

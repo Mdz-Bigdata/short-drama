@@ -20,14 +20,27 @@ from app.schema.intelligence import (
     VoiceCastingPlan,
     VoiceDirectionRequest,
 )
+from app.core import prompt_data
+
+
+_WORDING_FILE = "preproduction"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/preproduction.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 _CHAPTER_HEADING = re.compile(
-    r"^\s*(?:第[零〇一二三四五六七八九十百千万两\d]+[章回节卷]|chapter\s+[0-9ivxlcdm]+)\b.*$",
+    _text_of("module.chapter_heading"),
     re.IGNORECASE,
 )
 _EPISODE_HEADING = re.compile(
-    r"^\s*(?:第[零〇一二三四五六七八九十百千万两\d]+集|ep(?:isode)?\s*[-_ ]?\d+)\b.*$",
+    _text_of("module.episode_heading"),
     re.IGNORECASE,
 )
 
@@ -76,7 +89,7 @@ class PreproductionPlanner:
             start_char = char_offsets[start_line]
             end_char = char_offsets[end_line]
             chapter_text = request.text[start_char:end_char]
-            title = lines[start_line].strip() if len(headings) > 1 or _CHAPTER_HEADING.match(lines[start_line].strip()) else "全文"
+            title = lines[start_line].strip() if len(headings) > 1 or _CHAPTER_HEADING.match(lines[start_line].strip()) else _text_of("analyze_novel.title")
             chapters.append(ChapterSlice(
                 index=ordinal,
                 title=title[:300],
@@ -115,7 +128,7 @@ class PreproductionPlanner:
             boundaries = [
                 EpisodeBoundary(
                     episode_index=position + 1,
-                    title=(lines[start].strip() or f"第 {position + 1} 集")[:200],
+                    title=(lines[start].strip() or _text_of("index_episodes.title").format(position + 1))[:200],
                     start_line=start + 1,
                     end_line=(starts[position + 1] if position + 1 < len(starts) else len(lines)),
                 )

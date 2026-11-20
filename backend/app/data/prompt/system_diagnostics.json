@@ -1,0 +1,70 @@
+{
+  "_doc": "app/core/system_diagnostics.py 的措辞与界限：自检各项的名字、每种结果的说法、诊断包里的说明。代码用 prompt_data.text / number 读取；带 {名字} 的按名字填。",
+  "limits": {
+    "disk_error_bytes": 1073741824,
+    "disk_warning_bytes": 5368709120,
+    "slow_store_ms": 1500,
+    "log_lines": 2000,
+    "log_line_chars": 2000
+  },
+  "labels": {
+    "runtime": "运行环境",
+    "media_dir": "生成文件目录",
+    "runtime_dir": "运行数据目录",
+    "disk": "磁盘空间",
+    "task_store": "项目库",
+    "platform_store": "账号与平台库",
+    "ffmpeg": "FFmpeg",
+    "ffprobe": "FFprobe",
+    "secret_cipher": "模型密钥的加密钥匙",
+    "models": "模型配置",
+    "skills": "技能库",
+    "aspect_ratio": "画幅"
+  },
+  "details": {
+    "runtime": "Python {python} · {system} · 环境 {environment}",
+    "dir_ok": "可写：{path}",
+    "dir_missing": "目录不存在：{path}",
+    "dir_readonly": "目录不能写入：{path}",
+    "disk_ok": "剩余 {free}，共 {total}",
+    "disk_low": "剩余 {free}，共 {total}：快满了，成片和素材可能写不进去",
+    "disk_full": "只剩 {free}，共 {total}：先清出空间再出片",
+    "store_ok": "连接正常，{count} 个项目，用时 {ms} 毫秒",
+    "platform_ok": "连接正常，{count} 个账号，用时 {ms} 毫秒",
+    "store_slow": "连得上，但这次用了 {ms} 毫秒，偏慢",
+    "store_failed": "连不上：{error}",
+    "binary_ok": "已找到：{path}",
+    "ffmpeg_missing": "没有找到 ffmpeg：合成成片、截帧和转码都做不了。装好后重启，或在 FFMPEG_PATH 里写明位置",
+    "ffprobe_missing": "没有找到 ffprobe：读不到片段的真实时长。装好后重启，或在 FFPROBE_PATH 里写明位置",
+    "cipher_ok": "可用",
+    "cipher_failed": "不可用：{error}",
+    "models_ok": "文本 {text} 个 · 图片 {image} 个 · 视频 {video} 个 · 声音 {audio} 个",
+    "models_missing": "配置中心里还没有{kinds}模型（文本 {text} · 图片 {image} · 视频 {video} · 声音 {audio}）；只用环境变量里的密钥时可以不管",
+    "skills_ok": "{count} 个技能，位于 {path}",
+    "skills_missing": "技能目录里没有技能：{path}",
+    "check_failed": "这一项没有查成：{error}",
+    "ratio_ok": "分镜图 {image} 与视频 {video} 同为 {ratio}",
+    "ratio_mismatch": "分镜图是 {image_ratio}（{image}），视频是 {videos}：画面会被裁或加黑边。把 SEEDANCE_IMAGE_SIZE、VIDEO_ASPECT_RATIO、MINIMAX_H3_ASPECT_RATIO 设成同一画幅",
+    "ratio_unusual": "画幅是 {ratio}，短剧只按 9:16 或 16:9 出片",
+    "ratio_unreadable": "读不出分镜图尺寸 {image}"
+  },
+  "kinds": {
+    "text": "文本",
+    "image": "图片",
+    "video": "视频",
+    "audio": "声音"
+  },
+  "kind_joiner": "、",
+  "settings": {
+    "unset": "未设置",
+    "hidden": "已设置（{length} 个字符，内容不导出）"
+  },
+  "startup": {
+    "problem": "[启动自检] {label}：{detail}",
+    "clear": "[启动自检] {count} 项全部正常"
+  },
+  "bundle": {
+    "readme": "这是一份诊断包，用来交给帮你排查问题的人。\n\nreport.json   自检各项的结果、运行环境和目录位置（主目录写成 ~）。\nsettings.json 每个配置项是否设置。只有数字和开关会带上值，其余只写长度。\nrecent_log.txt 最近 {lines} 行服务日志。\n\n导出前已经遮去：密钥与令牌、网址里的账号密码和参数、邮箱、手机号、长串的随机字符。\n包里没有剧本、提示词、图片、视频和任何账号的资料。交出去之前仍然建议自己打开看一眼。",
+    "empty_log": "（服务启动以来还没有日志）"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "_doc": "app/repository/task_repo.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "_ensure_ready.text": "任务库初始化失败: {0}",
+  "_migrate_legacy_json.text": "旧版任务库 {0} 无法读取，已停止迁移以避免数据丢失",
+  "_migrate_legacy_json.text.2": "旧版任务库 {0} 格式异常，已停止迁移以避免数据丢失",
+  "_translate.text": "任务库不可用: {0}",
+  "get_task.raw": "读取任务",
+  "save_task.text": "任务剧本已更新，拒绝旧快照覆盖",
+  "save_task.text.2": "任务剧本已更新，拒绝旧快照覆盖",
+  "mutate_task.text": "修改任务"
+}

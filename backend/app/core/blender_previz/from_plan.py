@@ -16,6 +16,19 @@ from app.core.spatial_stage.glb import euler_matrix, multiply, multiply_vector, 
 from app.core.spatial_stage.models import StageActor, StageLandmark, StagePlan, StageShot
 
 from .spec import MAX_SET_BLOCKS, BlockingSpec, Block, Camera, Cut, Floor, Handheld, Key, LensKey, Proxy, Reserved, SetDressing, Target
+from app.core import prompt_data
+
+
+_WORDING_FILE = "blender_previz_from_plan"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/blender_previz_from_plan.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 #: 主要角色的区分色：相邻两色差得够远，视频参考里一眼分得清。
 ACTOR_PALETTE = ("#2b2f8f", "#c8a24a", "#b03a2e", "#1e8449", "#8e44ad", "#d35400", "#17a589", "#c0392b",
@@ -140,7 +153,7 @@ def build_spec(
     options = dict(options or {})
     chosen = [shot for shot in plan.shots if shot_ids is None or shot.shot_id in set(shot_ids)]
     if not chosen:
-        raise ValueError("这一场还没有可预演的镜头")
+        raise ValueError(_text_of("build_spec.text"))
     seconds_of = _durations(plan, durations or {})
     segments: list[dict] = []
     frame = 1
@@ -207,7 +220,7 @@ def build_spec(
         if shot.shot_id in handheld_shots:
             camera = camera.model_copy(update={"handheld": Handheld(start=segment["start"], end=segment["end"], seed=shot.shot_id)})
         cameras.append(camera)
-        cuts.append(Cut(frame=segment["start"], camera=camera.id, label=f"镜{shot.shot_id}"))
+        cuts.append(Cut(frame=segment["start"], camera=camera.id, label=_text_of("build_spec.label").format(shot.shot_id)))
 
     reserved = []
     for slot in options.get("reserved") or []:
@@ -216,7 +229,7 @@ def build_spec(
             continue
         start = segment["start"] + round(float(slot.get("from_s", 0)) * fps)
         end = segment["start"] + round(float(slot.get("to_s", segment["seconds"])) * fps) - 1
-        reserved.append(Reserved(label=str(slot.get("label") or "专项效果")[:40],
+        reserved.append(Reserved(label=str(slot.get("label") or _text_of("build_spec.label.2"))[:40],
                                  start=max(segment["start"], start), end=min(segment["end"], max(start, end))))
 
     spec = BlockingSpec(
@@ -245,7 +258,7 @@ def _shot_camera(plan: StagePlan, shot: StageShot, segment: dict, fps: int) -> C
                       target=Target(keys=targets), interpolation="BEZIER")
     stage_cam = plan.camera(shot.camera_id)
     if stage_cam is None:
-        raise ValueError(f"第 {shot.shot_id} 镜用的摄影机 {shot.camera_id} 不在方案里")
+        raise ValueError(_text_of("_shot_camera.text").format(shot.shot_id, shot.camera_id))
     keys = [Key(frame=segment["start"], position=to_blender(stage_cam.position))]
     targets = [Key(frame=segment["start"], position=to_blender(stage_cam.target))]
     move = stage_cam.move

@@ -12,6 +12,7 @@ import { BackSide, SRGBColorSpace, Texture, Vector3, type Mesh, type Perspective
 import type { StageBackdrop } from '../../spatial/spatialTypes';
 import { HELPER_FLAG } from '../lib/capture';
 import { BACKDROP_FLAG } from '../lib/depthPass';
+import { BACKDROP_UNSET_COLOR } from './stageLook';
 
 // Well beyond any stage but far inside the lens's 500 m far plane: the backdrop is depth-tested like
 // everything else, so it has to be genuinely behind the set rather than merely drawn first.
@@ -113,7 +114,7 @@ export function Backdrop({ backdrop, inCapture }: {
     <mesh key="flat" ref={mesh} userData={flag} renderOrder={-1} frustumCulled={false}>
       <planeGeometry args={plane} />
       <meshBasicMaterial
-        map={backdrop.kind === 'image' ? picture : null} color={backdrop.kind === 'color' ? (backdrop.color || '#fdf0f2') : '#221b1e'}
+        map={backdrop.kind === 'image' ? picture : null} color={backdrop.kind === 'color' ? (backdrop.color || BACKDROP_UNSET_COLOR) : '#221b1e'}
         transparent opacity={backdrop.opacity} depthWrite={false} toneMapped={false}
       />
     </mesh>

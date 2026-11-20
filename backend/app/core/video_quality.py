@@ -5,6 +5,19 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from app.core import prompt_data
+
+
+_WORDING_FILE = "video_quality"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/video_quality.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 DimensionName = Literal[
@@ -55,14 +68,14 @@ _THRESHOLDS = {
 }
 
 _ACTIONS = {
-    "identity_consistency": "重新绑定数字演员设定集与身份 DNA，减少同镜角色数，并用上一镜验收尾帧作为首帧重生成。",
-    "anatomy_integrity": "缩短镜头并拆分复杂手部/身体动作，增加遮挡或中景构图，针对畸形区段局部重生成。",
-    "expression_fidelity": "按动机→视线→呼吸→面部肌群→肢体顺序重写微表情节拍，降低夸张幅度后重生成。",
-    "photorealism": "锁定自然皮肤纹理、物理可信光线与真实镜头缺陷，移除塑料皮肤、CG渲染和过度磨皮描述。",
-    "temporal_continuity": "用上一镜尾态重建首帧，校正轴线、视线、动作方向、道具归属、光色和环境动态。",
-    "dialogue_emotion_timing": "按情绪弧重做对白：标记重音、语速、停顿、呼吸和反应空拍，再生成多角色对话音轨。",
-    "lip_sync": "按语音时长重切镜头和字幕，保留起音/收音反应帧，并对失配区段重新口型驱动。",
-    "hard_defects": "检测到硬缺陷；禁止进入合成，定位缺陷帧并执行局部重生成或逐帧修复。",
+    "identity_consistency": _text_of("module.actions.identity_consistency"),
+    "anatomy_integrity": _text_of("module.actions.anatomy_integrity"),
+    "expression_fidelity": _text_of("module.actions.expression_fidelity"),
+    "photorealism": _text_of("module.actions.photorealism"),
+    "temporal_continuity": _text_of("module.actions.temporal_continuity"),
+    "dialogue_emotion_timing": _text_of("module.actions.dialogue_emotion_timing"),
+    "lip_sync": _text_of("module.actions.lip_sync"),
+    "hard_defects": _text_of("module.actions.hard_defects"),
 }
 
 

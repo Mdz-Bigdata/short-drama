@@ -2,7 +2,7 @@ import type {
   ActorKey, CameraKey, ShotTimeline, StageActor, StageCamera, StageEasing, StageOperation, StagePlan, StagePose, StageShot,
 } from '../../spatial/spatialTypes';
 import { round2 } from './stageMath';
-import { frameOf, timeOfFrame, timelineOf } from './sampling';
+import { frameOf, lastPlayheadFrame, timeOfFrame, timelineOf } from './sampling';
 
 // Key edits as data. Every one of them ends in a `set_timeline` that carries a whole track: the
 // server replaces `camera` and `actors` wholesale, so a track is never half-written.
@@ -52,9 +52,9 @@ export function removeKey<K>(keys: K[], index: number): K[] {
 /** Drag a key in time: whole frames only, and never onto or past a neighbour. */
 export function retimeKey<K extends { time: number }>(keys: K[], index: number, time: number, fps: number, durationS: number): K[] {
   const lowest = index > 0 ? frameOf(keys[index - 1].time, fps) + 1 : 0;
-  const highest = index < keys.length - 1 ? frameOf(keys[index + 1].time, fps) - 1 : Math.floor(durationS * fps + 1e-6);
+  const highest = index < keys.length - 1 ? frameOf(keys[index + 1].time, fps) - 1 : lastPlayheadFrame(durationS, fps);
   const frame = Math.min(Math.max(frameOf(time, fps), lowest), Math.max(lowest, highest));
-  return keys.map((key, position) => (position === index ? { ...key, time: timeOfFrame(frame, fps) } : key));
+  return keys.map((key, position) => (position === index ? { ...key, time: timeOfFrame(frame, fps, durationS) } : key));
 }
 
 export function lastKey(timeline: ShotTimeline): { track: TrackRef; time: number } | null {

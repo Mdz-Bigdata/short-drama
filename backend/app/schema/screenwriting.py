@@ -31,6 +31,8 @@ class ScreenwritingLedgerEntry(DramaBaseSchema):
     source_kind: Optional[Literal["novel", "screenplay"]] = None
     source_name: Optional[str] = Field(None, max_length=255)
     ledger_status: str = Field("planned", max_length=40)
+    # The cross-episode sheet: what this episode leaves changed (see app/core/screenwriting/story_state.py).
+    state_changes: list[str] = Field(default_factory=list, max_length=100)
 
 
 class ScreenwritingOverview(DramaBaseSchema):
@@ -177,6 +179,25 @@ class ScreenwritingPlanPatchRequest(DramaBaseSchema):
     base_revision: str = Field(..., min_length=8, max_length=120, description="编辑前读取到的 planRevision，用于乐观并发")
     operations: list[dict[str, Any]] = Field(..., min_length=1, max_length=200)
     confirm_invalidate: bool = Field(False, description="确认归档并使当前剧本的下游制作资产失效")
+
+
+class DialoguePolishRequest(DramaBaseSchema):
+    """润色台词：这一集里的哪些分镜(不给就是整集)、戏路、额外要求。结果只给人看，不写回。"""
+
+    scene_ids: list[str] = Field(default_factory=list, max_length=200)
+    scene_kind: str = Field("", max_length=20, description="戏路：吵架 / 和解 / 安慰 / 暧昧 / 重逢 / 家人；空串表示不限")
+    extra: str = Field("", max_length=300, description="这次额外的要求，如「再冷一点」")
+
+
+class PronunciationRow(DramaBaseSchema):
+    word: str = Field(..., min_length=1, max_length=20, description="剧本里的写法，如「行长」")
+    say: str = Field(..., min_length=1, max_length=20, description="配音时的念法，用同音字写，如「航长」")
+
+
+class PronunciationsUpdate(DramaBaseSchema):
+    """项目读音表：配音时把词换成登记的念法，字幕不动。整张表一起存。"""
+
+    readings: list[PronunciationRow] = Field(default_factory=list, max_length=200)
 
 
 class ScreenwritingPromptPreviewResponse(DramaBaseSchema):

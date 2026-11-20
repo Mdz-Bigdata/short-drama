@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, KeyRound, LoaderCircle, ShieldCheck, UserRound, UsersRound } from 'lucide-react';
 
 import { apiRequest, apiUrl } from '../../api/client';
 import { DEFAULT_CLIENT_CONFIG } from '../../api/clientConfig';
 import { t } from '../../i18n';
+import { when } from '../finance/financeFormat';
 import { hasPermission } from './permissions';
+import { PromptPreferencesPane } from './PromptPreferencesPane';
 
 
 interface UserRecord {
@@ -80,6 +82,11 @@ export function UserCenterPage({
   const [mcpTokens, setMcpTokens] = useState<McpToken[]>([]);
   const [mcpLabel, setMcpLabel] = useState('');
   const [issuedToken, setIssuedToken] = useState('');
+  const [tokenCopied, setTokenCopied] = useState(false);
+  const issuedTokenRef = useRef<HTMLElement>(null);
+  // The profile fields take the server's values once, and again after a profile save; reloads that
+  // follow other actions (a password change, a role toggle) must not overwrite what is being typed.
+  const profileSynced = useRef(false);
 
   const loadMcpTokens = useCallback(async () => {
     try {
@@ -96,14 +103,26 @@ export function UserCenterPage({
     try {
       const created = await apiRequest<McpToken & { token: string }>('/api/mcp/tokens', { method: 'POST', body: JSON.stringify({ label: mcpLabel.trim() }) });
       setIssuedToken(created.token);
+      setTokenCopied(false);
       setMcpLabel('');
       await loadMcpTokens();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'MCP 令牌创建失败');
+      setError(reason instanceof Error ? reason.message : t('MCP 令牌创建失败'));
     } finally {
       setBusy('');
     }
   }, [loadMcpTokens, mcpLabel]);
+
+  const copyIssuedToken = async () => {
+    try {
+      await navigator.clipboard.writeText(issuedToken);
+      setTokenCopied(true);
+    } catch {
+      // 非安全上下文里剪贴板不可用：把令牌选中，留给人自己按复制键。
+      const node = issuedTokenRef.current;
+      if (node) window.getSelection()?.selectAllChildren(node);
+    }
+  };
 
   const revokeMcpToken = useCallback(async (token: McpToken) => {
     setBusy(`mcp:${token.id}`);
@@ -111,7 +130,7 @@ export function UserCenterPage({
       await apiRequest(`/api/mcp/tokens/${token.id}`, { method: 'DELETE' });
       await loadMcpTokens();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'MCP 令牌撤销失败');
+      setError(reason instanceof Error ? reason.message : t('MCP 令牌撤销失败'));
     } finally {
       setBusy('');
     }
@@ -124,8 +143,11 @@ export function UserCenterPage({
       void loadMcpTokens();
       setCenter(data);
       onUserChange?.(data.user);
-      setDisplayName(data.user.display_name || '');
-      setPhone(data.user.phone || '');
+      if (!profileSynced.current) {
+        profileSynced.current = true;
+        setDisplayName(data.user.display_name || '');
+        setPhone(data.user.phone || '');
+      }
       if (hasPermission(data.user, 'user:read') && !data.user.must_change_password) {
         const [result, roles] = await Promise.all([
           apiRequest<AdminUsersResponse>('/api/admin/users?page=1&page_size=50'),
@@ -135,7 +157,7 @@ export function UserCenterPage({
         setRoleCatalog(Array.isArray(roles.items) ? roles.items : []);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '用户中心加载失败');
+      setError(err instanceof Error ? err.message : t('用户中心加载失败'));
     }
   }, [onUserChange, loadMcpTokens]);
 
@@ -154,9 +176,10 @@ export function UserCenterPage({
         body: JSON.stringify({ display_name: displayName, phone }),
       });
       setNotice(t('个人资料已保存'));
+      profileSynced.current = false;
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '资料保存失败');
+      setError(err instanceof Error ? err.message : t('资料保存失败'));
     } finally {
       setBusy('');
     }
@@ -176,7 +199,7 @@ export function UserCenterPage({
       setNotice(t('密码已更新，一次性管理员凭据已失效'));
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '密码更新失败');
+      setError(err instanceof Error ? err.message : t('密码更新失败'));
     } finally {
       setBusy('');
     }
@@ -190,7 +213,7 @@ export function UserCenterPage({
       setConfirmingDelete('');
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '删除账号失败');
+      setError(err instanceof Error ? err.message : t('删除账号失败'));
     } finally {
       setBusy('');
     }
@@ -205,7 +228,7 @@ export function UserCenterPage({
       });
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '用户状态更新失败');
+      setError(err instanceof Error ? err.message : t('用户状态更新失败'));
     } finally {
       setBusy('');
     }
@@ -230,23 +253,40 @@ export function UserCenterPage({
   const canAssignRoles = hasPermission(center?.user, 'role:assign') && !center?.user.must_change_password;
   const canManageUsers = hasPermission(center?.user, 'user:manage') && !center?.user.must_change_password;
 
+  const header = (
+    <header className="portal-header">
+      <button type="button" className="back-button" onClick={onBack}><ArrowLeft size={18} /> {t('返回创作台')}</button>
+      <div><span className="eyebrow">ACCOUNT & ACCESS</span><h1>{t('用户中心')}</h1><p>{t('管理身份、资料、密码、会员和平台访问权限。')}</p></div>
+      <UserRound size={34} className="portal-mark" />
+    </header>
+  );
+
   if (!center) {
-    return <main className="portal-page"><div className="empty-library"><LoaderCircle className="spin" /> {t('正在加载用户中心…')}</div>{error && <div className="inline-error">{error}</div>}</main>;
+    return (
+      <main className="portal-page">
+        {header}
+        {error ? (
+          <div className="empty-library" role="alert">
+            <strong>{t('用户中心没有加载出来')}</strong>
+            <span>{error}</span>
+            <button type="button" className="secondary-action" onClick={() => void load()}>{t('重试')}</button>
+          </div>
+        ) : (
+          <div className="empty-library" role="status"><LoaderCircle className="spin" /> {t('正在加载用户中心…')}</div>
+        )}
+      </main>
+    );
   }
 
   return (
     <main className="portal-page">
-      <header className="portal-header">
-        <button type="button" className="back-button" onClick={onBack}><ArrowLeft size={18} /> {t('返回创作台')}</button>
-        <div><span className="eyebrow">ACCOUNT & ACCESS</span><h1>{t('用户中心')}</h1><p>{t('管理身份、资料、密码、会员和平台访问权限。')}</p></div>
-        <UserRound size={34} className="portal-mark" />
-      </header>
+      {header}
 
       {center.user.must_change_password && (
         <div className="account-warning"><KeyRound size={18} /><div><strong>{t('首次登录必须修改密码')}</strong><span>{t('当前为一次性引导凭据，改密后本地临时凭据文件会删除。')}</span></div></div>
       )}
       {error && <div className="inline-error" role="alert">{error}</div>}
-      {notice && <div className="command-result"><ShieldCheck size={16} /> {notice}</div>}
+      {notice && <div className="command-result" role="status"><ShieldCheck size={16} /> {notice}</div>}
 
       <div className="account-grid">
         <section className="account-card identity-card">
@@ -254,7 +294,7 @@ export function UserCenterPage({
           <div>{(center.user.roles?.length ? center.user.roles : ['']).map(role => (
             <span className="role-pill" key={role}>{role ? t(ROLE_NAMES[role] ?? role) : t('成员')}</span>
           ))}<h2>{center.user.display_name || center.user.username}</h2><p>{center.user.email || center.user.phone}</p></div>
-          <dl><div><dt>{t('账号状态')}</dt><dd>{center.user.status === 'active' ? t('正常') : t('已停用')}</dd></div><div><dt>{t('会员')}</dt><dd>{center.membership?.plan_name || '未开通'}</dd></div></dl>
+          <dl><div><dt>{t('账号状态')}</dt><dd>{center.user.status === 'active' ? t('正常') : t('已停用')}</dd></div><div><dt>{t('会员')}</dt><dd>{center.membership?.plan_name || t('未开通')}</dd></div></dl>
         </section>
 
         <section className="account-card account-form">
@@ -267,14 +307,16 @@ export function UserCenterPage({
         <section className="account-card account-form">
           <h2>{t('登录安全')}</h2>
           <label>{t('当前密码')}<input type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} /></label>
-          <label>{t('新密码')}<input type="password" minLength={passwordMinLength} value={newPassword} onChange={event => setNewPassword(event.target.value)} placeholder={`至少 ${passwordMinLength} 位`} /></label>
+          <label>{t('新密码')}<input type="password" minLength={passwordMinLength} value={newPassword} onChange={event => setNewPassword(event.target.value)} placeholder={t('至少 {0} 位', [passwordMinLength])} /></label>
           <button type="button" className="primary-action" onClick={() => void changePassword()} disabled={!currentPassword || newPassword.length < passwordMinLength || busy === 'password'}>{t('更新密码')}</button>
         </section>
 
         <section className="account-card account-form" aria-label={t('MCP 令牌')}>
           <h2>{t('MCP 令牌')}</h2>
           <p className="account-help">{t('外部 Agent（如 Claude Code）凭令牌通过')} <code>POST /mcp</code> {t('使用与站内工具助手相同的工具；付费工具仍需显式确认。令牌只显示一次。')}</p>
-          {issuedToken && <div className="command-result" role="status"><KeyRound size={16} /> {t('新令牌（请立即复制）：')}<code>{issuedToken}</code></div>}
+          {issuedToken && <div className="command-result" role="status"><KeyRound size={16} /> {t('新令牌（请立即复制）：')}<code ref={issuedTokenRef}>{issuedToken}</code>
+            <button type="button" className="secondary-action" onClick={() => void copyIssuedToken()}>{tokenCopied ? t('已复制') : t('复制')}</button>
+          </div>}
           {issuedToken && (
             <div className="command-result" role="note">
               {t('接入 Claude Code：')}<code>{`claude mcp add --transport http short-drama ${apiUrl('/mcp')} --header "Authorization: Bearer ${issuedToken}"`}</code>
@@ -285,8 +327,8 @@ export function UserCenterPage({
             {mcpTokens.map(token => (
               <li key={token.id}>
                 <strong>{token.label}</strong><code>{token.hint}</code>
-                <small>{token.last_used_at ? `最近使用 ${token.last_used_at.slice(0, 16).replace('T', ' ')}` : '尚未使用'}</small>
-                <button type="button" aria-label={`撤销令牌 ${token.label}`} disabled={busy === `mcp:${token.id}`} onClick={() => void revokeMcpToken(token)}>{t('撤销')}</button>
+                <small>{token.last_used_at ? t('最近使用 {0}', [when(token.last_used_at)]) : t('尚未使用')}</small>
+                <button type="button" className="secondary-action" aria-label={t('撤销令牌 {0}', [token.label])} disabled={busy === `mcp:${token.id}`} onClick={() => void revokeMcpToken(token)}>{t('撤销')}</button>
               </li>
             ))}
           </ul>
@@ -295,15 +337,17 @@ export function UserCenterPage({
         </section>
       </div>
 
+      <PromptPreferencesPane />
+
       {hasPermission(center.user, 'user:read') && (
         <section className="user-management">
-          <div className="section-title"><UsersRound size={20} /><div><h2>{t('用户管理')}</h2><p>共 {users.length} 个账号；系统会保护最后一个有效管理员。</p></div></div>
+          <div className="section-title"><UsersRound size={20} /><div><h2>{t('用户管理')}</h2><p>{t('共 {0} 个账号；系统会保护最后一个有效管理员。', [users.length])}</p></div></div>
           <div className="user-table" role="table">
             <div className="user-row user-row-head" role="row"><span>{t('用户')}</span><span>{t('角色')}</span><span>{t('状态')}</span></div>
             {users.map(user => (
               <div className="user-row" role="row" key={user.user_id}>
                 <div><strong>{user.display_name || user.username}</strong><small>{user.email || user.phone}</small></div>
-                <div className="user-roles" role="group" aria-label={`${user.username} 角色`}>
+                <div className="user-roles" role="group" aria-label={t('{0} 角色', [user.username])}>
                   {roleCatalog.map(item => (
                     <label key={item.role} title={item.description}>
                       <input
@@ -316,19 +360,21 @@ export function UserCenterPage({
                     </label>
                   ))}
                 </div>
+                {/* One cell for the status and its actions: the row's grid has three columns. */}
                 {user.status === 'deleted' ? <span className="status-control deleted">{t('已删除')}</span> : (
-                  <>
-                <button type="button" className={`status-control ${user.status}`} disabled={!canManageUsers || (user.roles.length > 0 && !canAssignRoles) || busy === user.user_id} onClick={() => void updateUser(user, { status: user.status === 'active' ? 'suspended' : 'active' })}>{user.status === 'active' ? t('正常') : t('已停用')}</button>
+                  <div>
+                    <button type="button" className={`status-control ${user.status}`} disabled={!canManageUsers || (user.roles.length > 0 && !canAssignRoles) || busy === user.user_id} onClick={() => void updateUser(user, { status: user.status === 'active' ? 'suspended' : 'active' })}>{user.status === 'active' ? t('正常') : t('已停用')}</button>
                     {confirmingDelete === user.user_id ? (
                       <span className="account-delete-confirm">
                         <span>{t('删除后无法恢复。财务记录会保留，登录信息会清除。')}</span>
                         <button type="button" className="status-control suspended" disabled={busy === user.user_id} onClick={() => void deleteUser(user)}>{t('确认删除')}</button>
-                        <button type="button" className="status-control" onClick={() => setConfirmingDelete('')}>{t('取消')}</button>
+                        {/* The 删除 button that had focus is gone; focus lands on the safe choice, not the page top. */}
+                        <button type="button" className="status-control" autoFocus onClick={() => setConfirmingDelete('')}>{t('取消')}</button>
                       </span>
                     ) : (
                       <button type="button" className="status-control" disabled={!canManageUsers || (user.roles.length > 0 && !canAssignRoles) || user.user_id === center.user.user_id} onClick={() => setConfirmingDelete(user.user_id)}>{t('删除')}</button>
                     )}
-                  </>
+                  </div>
                 )}
               </div>
             ))}

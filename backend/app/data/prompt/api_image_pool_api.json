@@ -1,0 +1,18 @@
+{
+  "_doc": "app/api/image_pool_api.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.tags": [
+    "图片池"
+  ],
+  "_task.detail": "任务不存在",
+  "_image_bytes.text": "这张图的文件已不存在",
+  "split_into_pool.detail": "图片池里没有这张图",
+  "split_into_pool.detail.2": "图片池已被更新，请刷新后再试",
+  "split_into_pool.detail.3": "原图下载失败，请稍后重试",
+  "split_into_pool.detail.4": "这个文件不是可切分的图片",
+  "mutate.text": "任务正在执行阶段，暂不能更换分镜图",
+  "mutate.text.2": "图片池里没有这张图",
+  "mutate.text.3": "镜头不存在，请先完成第 4 阶段分镜",
+  "mutate.text.4": "分镜图已从图片池更换，需重跑第 5 阶段后生效",
+  "assign_pool_image.status_code": "正在执行",
+  "assign_pool_image.detail": "任务不存在"
+}

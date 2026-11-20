@@ -79,6 +79,8 @@ export interface LensHandle {
 
 export interface DeskViewHandle {
   viewPose: () => ViewPose;
+  /** Turn the director's view onto the selection, or onto the whole set when nothing is selected. */
+  frameSelection?: () => void;
 }
 
 export interface EditRequest {

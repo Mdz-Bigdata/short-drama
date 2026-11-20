@@ -135,17 +135,17 @@ class StyleLayerTests(unittest.TestCase):
 
 class BudgetTests(unittest.TestCase):
     def test_each_model_has_its_own_budget_and_sora_has_none(self):
-        self.assertEqual(prompt_budget.prompt_budget("seedance2.5"), 900)
-        self.assertEqual(prompt_budget.prompt_budget("doubao-seedance-2-5-260128"), 900)
-        self.assertEqual(prompt_budget.prompt_budget("seedance2.0"), 600)
+        self.assertEqual(prompt_budget.prompt_budget("seedance2.5"), 4000)
+        self.assertEqual(prompt_budget.prompt_budget("doubao-seedance-2-5-260128"), 4000)
+        self.assertEqual(prompt_budget.prompt_budget("seedance2.0"), 2000)
         self.assertEqual(prompt_budget.prompt_budget("kling-2.6"), 500)
         self.assertIsNone(prompt_budget.prompt_budget("sora"))
         self.assertEqual(prompt_budget.prompt_budget("brand-new-model"), prompt_budget.DEFAULT_BUDGET[1])
 
     def test_pressure_grades_against_the_budget(self):
         self.assertEqual(prompt_budget.pressure("字" * 400, "seedance2.5").tier, "green")
-        self.assertEqual(prompt_budget.pressure("字" * 850, "seedance2.5").tier, "yellow")
-        report = prompt_budget.pressure("字" * 1200, "seedance2.5")
+        self.assertEqual(prompt_budget.pressure("字" * 3500, "seedance2.5").tier, "yellow")
+        report = prompt_budget.pressure("字" * 5320, "seedance2.5")
         self.assertEqual((report.tier, report.ratio), ("red", 1.33))
         self.assertEqual(prompt_budget.pressure("字" * 9000, "sora").tier, "unlimited")
         self.assertEqual(prompt_budget.prompt_length(" 一 二\n三 "), 3)
@@ -154,7 +154,7 @@ class BudgetTests(unittest.TestCase):
         sections = {
             "style_lock": "锁" * 200, "locks": "锚" * 120, "subject": "主体" * 100, "camera": "机位近景缓推",
             "dialogue": "台词：你到底瞒了什么？", "sound": "音效" * 40, "environment": "环境" * 40,
-            "light": "光线：冷白顶光（5000K，光比3:1）侧逆光", "colour": "色" * 40, "effects": "特效" * 30,
+            "light": "光线：冷白顶光（5000K，光比3:1）侧逆光", "colour": "色" * 40, "effects": "特效" * 5,
             "dialogue_notes": "情绪" * 20, "rules": "铁律" * 60,
         }
         kept, report = prompt_budget.compress(sections, "jimeng")
@@ -163,6 +163,8 @@ class BudgetTests(unittest.TestCase):
         self.assertNotIn("5000K", kept["light"])
         for key in ("style_lock", "locks", "subject", "camera", "dialogue", "rules"):
             self.assertIn(key, kept, key)
+        # 特效是这一镜要拍的东西，不裁(prompt_budget.CUT_ORDER)。
+        self.assertEqual(kept["effects"], sections["effects"])
         self.assertLessEqual(report.length, report.budget)
         # The fixed layers are restated every time and are not measured against the budget.
         self.assertGreater(report.total_length, report.length)
@@ -276,8 +278,9 @@ class VideoPromptTests(unittest.TestCase):
         """《运镜提示词》三段：Pa1 锚点、结构、锁、镜头块；Pa2 风格、外貌、画质、声音；Pa3 铁律。"""
         compiled = compile_shot_prompt(style_packs.FILM_35MM, _shot(cast_refs=["林夏", "周教授"]), model="seedance2.5")
         text = compiled.text
-        self.assertTrue(text.startswith("【人物锚点·锁脸】"))
+        self.assertTrue(text.startswith("Pa1\n锚型定义"))
         for earlier, later in (
+            ("Pa1", "【人物锚点·锁脸】"), ("落幅：", "Pa2"), ("Pa2", "[STYLE LOCK]"), ("不要BGM", "Pa3"), ("Pa3", "【关键约束】"),
             ("【人物锚点·锁脸】", "【结构声明】"), ("【结构声明】", "[空间锚]"), ("[空间锚]", "景别：近景"),
             ("景别：近景", "台词（逐字保持原文"), ("台词（逐字保持原文", "落幅："), ("落幅：", "[STYLE LOCK]"),
             ("[STYLE LOCK]", "画质："), ("画质：", "【声音设计】"), ("【声音设计】", "不要BGM"), ("不要BGM", "【关键约束】"),
@@ -325,7 +328,7 @@ class VideoPromptTests(unittest.TestCase):
             "周教授": "身份锚点：反派/周教授（系主任）、男性、五十多岁；毛发：花白短发；其他固定特征：金丝眼镜",
         }
         close = compile_shot_prompt(style_packs.FILM_35MM, _shot(cast_looks=looks), model="seedance2.5").text
-        self.assertIn("人物外貌：@[林夏]：瓜子脸、浅眼窝；内双、鼻尖圆钝；冷白；黑色低马尾。@[周教授]：男性、五十多岁；花白短发；金丝眼镜。", close)
+        self.assertIn("人物外貌：@[林夏]：瓜子脸、浅眼窝；内双、鼻尖圆钝；冷白；黑色低马尾；不许变：头发始终束起。@[周教授]：男性、五十多岁；花白短发；金丝眼镜。", close)
         self.assertNotIn("反派", close, "the role and the name are not a look")
         self.assertNotIn("骨相：", close, "layer labels are for the audit, not the model")
         self.assertNotIn("四肢修长", close, "a close shot does not describe the limbs")
@@ -396,7 +399,7 @@ class VideoPromptTests(unittest.TestCase):
         self.assertNotIn("film grain visible", compiled.text)
 
     def test_a_tight_budget_cuts_the_optional_layers_and_keeps_the_shot(self):
-        shot = _shot(subject_action="林夏盯着对面" * 30, environment="北侧档案柜" * 20, effects=["烟雾"], dialogue_notes="压低声音")
+        shot = _shot(subject_action="林夏盯着对面" * 28, environment="北侧档案柜" * 20, effects=["烟雾"], dialogue_notes="压低声音")
         compiled = compile_shot_prompt(style_packs.FILM_35MM, shot, model="jimeng")
         self.assertNotEqual(compiled.pressure.tier, "red")
         self.assertLessEqual(compiled.pressure.length, compiled.pressure.budget)
@@ -474,6 +477,17 @@ class FightNegativeTests(unittest.TestCase):
                     service._execute_stage_blocking(task["task_id"], 5, _claimed_task=task)
             self.assertEqual(len(prompts), 1, kind)
             self.assertEqual("no foot sliding" in prompts[0], kind == "fight", kind)
+
+
+class ContinuityNegativeTests(unittest.TestCase):
+    def test_every_pack_leads_its_negatives_with_the_six_continuity_bans(self):
+        six = ["禁止空间重构", "禁止比例畸变", "禁止光影跳变", "禁止角色瞬移", "禁止画风切换", "禁止广角失真"]
+        packs = [value for value in vars(style_packs).values() if isinstance(value, style_packs.StylePack)]
+        self.assertTrue(packs)
+        for pack in packs:
+            self.assertEqual(style_packs.negatives_for(pack, ["fight"])[:6], six, pack.id)
+            # 延长段只取前 10 条，六条都在。
+            self.assertEqual(style_packs.negatives_for(pack, ["extension"])[:10][:6], six)
 
 
 if __name__ == "__main__":

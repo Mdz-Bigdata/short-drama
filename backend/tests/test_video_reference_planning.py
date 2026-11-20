@@ -62,14 +62,26 @@ class VideoReferencePlanningTests(unittest.TestCase):
         self.assertEqual(plan.reference_images, ["panel.png", "character.png"])
 
     def test_auto_does_not_select_removed_first_frame_mode(self):
+        # 只有一张分镜画面也带上它走多图参考，不退回文生视频把画面丢掉。
         plan = plan_video_references(
             "auto",
             first_frame="panel.png",
             model="Seedance 2.5",
             intent=VideoGenerationIntent(identity_consistency_required=False),
         )
-        self.assertEqual(plan.mode, "text")
+        self.assertEqual(plan.mode, "multi_reference")
+        self.assertEqual(plan.reference_images, ["panel.png"])
         self.assertNotEqual(plan.mode, "first_frame")
+
+    def test_auto_prefers_multi_reference_when_an_end_frame_is_not_required(self):
+        plan = plan_video_references(
+            "auto", first_frame="panel.png", last_frame="end.png", reference_images=["character.png"], model="Seedance 2.0",
+        )
+        self.assertEqual(plan.mode, "multi_reference")
+        self.assertEqual(plan.reference_images, ["panel.png", "end.png", "character.png"])
+
+    def test_auto_uses_text_only_when_there_is_no_picture_at_all(self):
+        self.assertEqual(plan_video_references("auto", first_frame=None, model="Seedance 2.0").mode, "text")
 
     def test_first_last_frame_requires_both_anchors_instead_of_downgrading(self):
         with self.assertRaises(ValueError):

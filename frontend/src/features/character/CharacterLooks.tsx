@@ -21,23 +21,44 @@ interface GenerationJob {
   processed: number;
   succeeded: number;
   failed: number;
+  errors?: Array<{ element_id?: string; name?: string; detail?: string }>;
 }
 
 const POLL_MS = 1_500;
 
-function episodesText(item: ElementItem): string {
+/** 剧本还没写到这套戏服穿的那几集：先登记、照样能出图，现在的镜头用不上。 */
+function laterText(item: ElementItem): string {
   const variant = variantOf(item);
-  const spans = variant?.spans?.length ? variant.spans : variant?.episodes ? [variant.episodes] : [];
-  if (!spans.length) return '';
+  if (!variant?.later) return '';
+  const first = variant.spans?.[0]?.[0] ?? variant.episodes?.[0];
+  return first ? t('第 {0} 集起才穿，剧本还没写到', [first]) : t('剧本还没写到这名角色出场');
+}
+
+function spansText(spans: Array<[number, number]>): string {
   // 「第 11 集起」一直穿到剧终（后端的开放区间写成 500）。
   const open = spans.find(([, last]) => last >= 500);
   const closed = spans.filter(([, last]) => last < 500);
   const text = closed.map(([first, last]) => (first === last ? `${first}` : `${first}–${last}`)).join('、');
-  const when = [text && `第 ${text} 集`, open && `第 ${open[0]} 集起`].filter(Boolean).join('、');
+  return [text && `第 ${text} 集`, open && `第 ${open[0]} 集起`].filter(Boolean).join('、');
+}
+
+function ownEpisodesText(item: ElementItem): string {
+  const variant = variantOf(item);
+  const spans = variant?.spans?.length ? variant.spans : variant?.episodes ? [variant.episodes] : [];
+  if (!spans.length) return '';
+  const when = spansText(spans);
   if (!variant?.starts) return when;
   return when === `第 ${variant.starts[0]} 集`
     ? `${when}（从第 ${variant.starts[1]} 场起）`
     : `${when}（第 ${variant.starts[0]} 集从第 ${variant.starts[1]} 场起）`;
+}
+
+/** 穿戴时间；并进来的素的那身（同一身戏服、妆效少几样）也写上：那几集图上的哪些妆效不画。 */
+function episodesText(item: ElementItem): string {
+  const bare = (variantOf(item)?.without ?? []).filter(entry => entry.off.length).map(entry => (entry.spans.length
+    ? t('{0}不带{1}', [spansText(entry.spans), entry.off.join('、')])
+    : t('其余各集不带{0}', [entry.off.join('、')])));
+  return [ownEpisodesText(item), ...bare].filter(Boolean).join('；');
 }
 
 // 定妆图展示板切出来的单张(后端 core/look_board)：四格全身，再三格特写；特写叫什么看出图时的版式。
@@ -51,7 +72,17 @@ const LOOK_CLOSEUP_SLOTS = ['look_closeup_1', 'look_closeup_2', 'look_closeup_3'
 const LOOK_CLOSEUP_LABELS: Record<string, readonly string[]> = {
   makeup: ['正脸胸像', '妆效部位', '腰带与配饰'],
   plain: ['正脸胸像', '腰带与配饰', '袖口或下摆'],
+  // 现在出的板：第三格是这身造型自己的四分之三侧脸，转头和侧脸的镜头拿它当参考。
+  makeup_side: ['正脸胸像', '妆效部位', '四分之三侧脸'],
+  plain_side: ['正脸胸像', '腰带与配饰', '四分之三侧脸'],
 };
+const SIDE_FACE_LAYOUTS = new Set(['makeup_side', 'plain_side']);
+
+/** 画好了、但展示板上还没有侧脸格的定妆图(这一格加上之前画的)。 */
+function lacksSideFace(look: ElementItem): boolean {
+  return look.files.some(file => file.slot === LOOK_BOARD && file.media_kind === 'image')
+    && !SIDE_FACE_LAYOUTS.has(String(look.metadata?.look_layout || 'plain'));
+}
 const LOOK_BOARD = 'front';
 
 /** 这套定妆图能看的每一张：整板在前，切出来的单张跟在后面。 */
@@ -106,6 +137,7 @@ function PerformanceLookStage({
     || pictures.find(item => item.slot === LOOK_BODY_VIEWS[0][0]) || pictures[0];
   const label = variantOf(look)?.label || look.name;
   const episodes = episodesText(look);
+  const later = laterText(look);
   const problems = lookCheckProblems(look);
   const working = busy === look.id;
   const drawn = pictures.length > 0;
@@ -118,7 +150,11 @@ function PerformanceLookStage({
         </div>
         {episodes && <small className="character-look-viewer__episodes">{episodes}</small>}
       </header>
+      {later && <p className="character-looks__later">{later}</p>}
       {Boolean(look.metadata?.needs_redraw) && <p className="character-looks__stale">{t('设定改过，这张图还是旧写法，建议重新生成')}</p>}
+      {lacksSideFace(look) && (
+        <p className="character-looks__later">{t('这张定妆图没有侧脸格：转头和侧脸的镜头不带这身造型的侧脸参考。重新生成后会多出一格四分之三侧脸（重新生成要调用一次图像模型）。')}</p>
+      )}
       {problems.length > 0 && (
         <details className="character-look-viewer__problems">
           <summary>{t('妆效核对没过 {0} 处，重新生成时会照这些问题改', [problems.length])}</summary>
@@ -217,12 +253,20 @@ export function CharacterLooks({
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  // 批量生成没出来的那几套：名字和原因。
+  const [failures, setFailures] = useState<Array<{ name: string; detail: string }>>([]);
   const [viewing, setViewing] = useState<AssetImageViewerAsset | null>(null);
   // 选中的那套只对当时那名角色有效；换了角色就回到设定集。
   const [picked, setPicked] = useState<{ of: string; id: string } | null>(null);
   const [describing, setDescribing] = useState<ElementItem | null>(null);
 
   const load = useCallback(async () => {
+    // 先按拆解目录把每套戏服登记成定妆图(剧本还没写到的那几集也算)；只登记不出图，登记不上也照样列出已有的。
+    try {
+      await apiRequest(`/api/drama/${encodeURIComponent(taskId)}/character-looks/sync`, { method: 'POST' });
+    } catch {
+      // 旧任务或没有拆解目录：列出已有的就好。
+    }
     const found: ElementItem[] = [];
     for (let page = 1; ; page += 1) {
       const response = await apiRequest<{ items: ElementItem[]; total: number }>(
@@ -269,6 +313,7 @@ export function CharacterLooks({
     if (busy) return;
     setBusy('all');
     setError('');
+    setFailures([]);
     setNotice(t('正在生成定妆图…'));
     try {
       let job = await apiRequest<GenerationJob>('/api/elements/generation-jobs', {
@@ -285,6 +330,7 @@ export function CharacterLooks({
       if (job.failed > 0) {
         setNotice('');
         setError(t('{0} 张定妆图生成成功，{1} 张失败；可再次点击补全失败项。', [job.succeeded, job.failed]));
+        setFailures((job.errors || []).map(item => ({ name: String(item.name || item.element_id || ''), detail: String(item.detail || '') })));
       } else {
         setNotice(t('{0} 张定妆图已生成。', [job.succeeded]));
       }
@@ -395,7 +441,7 @@ export function CharacterLooks({
                 aria-selected={active}
                 aria-controls={active ? 'character-look-stage' : undefined}
                 className={`character-looks__chip${active ? ' is-active' : ''}`}
-                title={[episodesText(item) || label, needsAttention(item) ? t('待处理') : ''].filter(Boolean).join(' · ')}
+                title={[episodesText(item) || label, laterText(item), needsAttention(item) ? t('待处理') : ''].filter(Boolean).join(' · ')}
                 onClick={() => setPicked({ of: characterName, id: item.id })}
               >
                 <span className="character-looks__chip-avatar" aria-hidden="true">
@@ -418,7 +464,16 @@ export function CharacterLooks({
         </div>
       </div>
       {notice && <p className="character-looks__notice" role="status">{notice}</p>}
-      {error && <p className="character-looks__error" role="alert">{error}</p>}
+      {error && (
+        <div className="character-looks__error" role="alert">
+          <p>{error}</p>
+          {failures.length > 0 && (
+            <ul aria-label={t('没生成出来的定妆图')}>
+              {failures.map((item, index) => <li key={index}><strong>{item.name}</strong>{item.detail && `：${item.detail}`}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
       {children ? children(lookStage) : lookStage}
       {hasExtras && (
       <section className="character-looks" aria-label={t('妆造补充')}>
@@ -491,6 +546,7 @@ export function CharacterLooks({
           onClose={() => setDescribing(null)}
         >
           {episodesText(describing) && <p className="character-dialog__project-value"><strong>{t('穿戴时间')}：</strong>{episodesText(describing)}</p>}
+          {laterText(describing) && <p className="character-dialog__project-value">{laterText(describing)}</p>}
           <p className="character-dialog__project-value">{describing.description || t('这套妆造还没有描述。')}</p>
         </CharacterDetailDialog>
       )}

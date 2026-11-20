@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { BillingCenterPage } from './BillingCenterPage';
@@ -27,6 +27,51 @@ describe('BillingCenterPage', () => {
     expect(screen.getByText('创作入门')).toBeTruthy();
     expect(screen.getByRole('button', { name: /沙箱购买/ })).toBeTruthy();
     expect(screen.getByText('订单记录')).toBeTruthy();
+  });
+
+  it('lists what each model is priced at, and never what it costs us', async () => {
+    const urls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      urls.push(url);
+      const payload = url.includes('/price-list')
+        ? { items: [
+          { model: 'deepseek-flash', kind: 'per_million_tokens', currency: 'CNY', quote: { input: 2.4, output: 9.6 } },
+          { model: 'seedance-2-5', kind: 'per_second', currency: 'CNY', quote: { price: 1.812, by_resolution: { '480p': 0.804 } } },
+          { model: 'music_v2', kind: 'per_second', currency: 'CNY', quote: { price: 0.0216 } },
+        ] }
+        : url.includes('/plans') ? { sandbox_enabled: true, items: [] }
+          : url.includes('/wallet') ? { points: '5', money: {}, entries: [] } : { items: [], page: 1, page_size: 20, total: 0 };
+      return { ok: true, json: async () => payload } as Response;
+    });
+    render(<BillingCenterPage onBack={() => undefined} />);
+
+    const table = (await screen.findByText('deepseek-flash')).closest('table') as HTMLElement;
+    expect(screen.getByText('模型价目')).toBeTruthy();
+    expect(within(table).getByText('输入 ¥2.4 · 输出 ¥9.6')).toBeTruthy();
+    expect(within(table).getByText('480p ¥0.804')).toBeTruthy();
+    expect(within(table).getByText('¥0.0216')).toBeTruthy();
+    expect(table.textContent).not.toContain('USD');
+    expect(within(table).queryByText(/官方/)).toBeNull();
+    // The customer's page asks for the outward list, not the finance one.
+    expect(urls.some(url => url.includes('/api/billing/price-list'))).toBe(true);
+    expect(urls.some(url => url.includes('/api/admin/'))).toBe(false);
+  });
+
+  it('shows the wallet and the orders even when the price list cannot be loaded', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/price-list')) throw new Error('offline');
+      const payload = url.includes('/plans') ? { sandbox_enabled: true, items: [] }
+        : url.includes('/wallet') ? { points: '77', money: {}, entries: [] } : { items: [], page: 1, page_size: 20, total: 0 };
+      return { ok: true, json: async () => payload } as Response;
+    });
+    render(<BillingCenterPage onBack={() => undefined} />);
+
+    expect(await screen.findByText('77')).toBeTruthy();
+    expect(screen.getByText('订单记录')).toBeTruthy();
+    expect(screen.queryByText('模型价目')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('says buying is not open and offers no purchase while the sandbox is off', async () => {
@@ -110,6 +155,61 @@ describe('BillingCenterPage', () => {
     expect(await screen.findByRole('button', { name: '继续支付' })).toBeTruthy();
     expect(screen.getByText('已关闭')).toBeTruthy();
     expect(screen.getAllByRole('button', { name: '继续支付' })).toHaveLength(1);
+  });
+
+  it('shows why the page did not load instead of an empty wallet, and loads again on retry', async () => {
+    let down = true;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      if (down && url.includes('/wallet')) return { ok: false, status: 503, json: async () => ({ detail: '服务暂时不可用' }) } as Response;
+      const payload = url.includes('/plans')
+        ? { sandbox_enabled: false, channels: ['alipay'], items: [] }
+        : url.includes('/wallet') ? { points: '132', money: {}, entries: [] } : { items: [] };
+      return { ok: true, json: async () => payload } as Response;
+    });
+    render(<BillingCenterPage onBack={() => undefined} />);
+
+    const failure = await screen.findByRole('alert');
+    expect(failure.textContent).toContain('服务暂时不可用');
+    expect(screen.queryByText('可用创作积分')).toBeNull();
+    expect(screen.queryByText('在线支付暂未开放，暂时无法购买。')).toBeNull();
+
+    down = false;
+    fireEvent.click(within(failure).getByRole('button', { name: '重试' }));
+    expect(await screen.findByText('132')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('暂时没有可购买的会员计划')).toBeTruthy();
+  });
+
+  it('writes plan prices, order amounts and the payment total the same way', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      let payload: unknown = { items: [] };
+      if (url.includes('/plans')) payload = { sandbox_enabled: false, channels: ['alipay'], items: [{ id: 'studio', name: '工作室', description: '', price: '1299.00', currency: 'CNY', points: 30000, duration_days: 30 }] };
+      else if (url.includes('/wallet')) payload = { points: '0', money: {}, entries: [] };
+      else if (url.includes('/orders?')) payload = { items: [{ id: 'o1', plan_id: 'studio', provider: 'alipay', amount: '1299.00', currency: 'CNY', status: 'pending', created_at: '2026-11-05T00:00:00Z' }] };
+      else if (url.endsWith('/pay')) payload = { id: 'o1', status: 'pending', attempt: null };
+      else if (init?.method === 'POST') payload = { id: 'o1', status: 'pending' };
+      return { ok: true, json: async () => payload } as Response;
+    });
+    const { container } = render(<BillingCenterPage onBack={() => undefined} />);
+
+    expect((await screen.findByText('¥1,299.00', { selector: '.plan-price strong' }))).toBeTruthy();
+    const row = container.querySelector('.order-row') as HTMLElement;
+    expect(within(row).getByText('¥1,299.00')).toBeTruthy();
+    // Status and its action sit in one cell, so the row keeps the four columns its grid has.
+    expect(row.children).toHaveLength(4);
+    const resume = within(row).getByRole('button', { name: '继续支付' });
+    resume.focus();
+    fireEvent.click(resume);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('¥1,299.00')).toBeTruthy();
+
+    // The dialog takes focus, Escape closes it, and focus returns to the button that opened it.
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: '关闭' }));
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(resume);
   });
 
   it('shows what can be spent once charging is on', async () => {

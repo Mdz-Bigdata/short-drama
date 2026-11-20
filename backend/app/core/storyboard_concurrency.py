@@ -19,10 +19,8 @@ _R = TypeVar("_R")
 # Shared across all scenes/tasks in this process. Threads are created lazily by
 # the executor; no per-scene pool can multiply the provider concurrency ceiling.
 # Boards are drawn side by side, so this, not a board's own width, is what the provider sees.
-_IMAGE_POOL = ThreadPoolExecutor(
-    max_workers=settings.env_int("STORYBOARD_IMAGE_CEILING", 6, minimum=1, maximum=12),
-    thread_name_prefix="storyboard-image",
-)
+_IMAGE_CEILING = settings.env_int("STORYBOARD_IMAGE_CEILING", 6, minimum=1, maximum=12)
+_IMAGE_POOL = ThreadPoolExecutor(max_workers=_IMAGE_CEILING, thread_name_prefix="storyboard-image")
 # Structuring a screenplay is text-only and hits a different provider budget
 # than image generation, so it gets its own ceiling rather than competing for
 # the image pool's three slots.
@@ -43,6 +41,11 @@ def map_storyboard_images(work: Callable[[_T], _R], items: Sequence[_T]) -> list
     return _map_bounded(
         work, items, _IMAGE_POOL, _bounded_width("STORYBOARD_IMAGE_CONCURRENCY", 3)
     )
+
+
+def image_ceiling() -> int:
+    """How many image calls this process lets the provider see at once (STORYBOARD_IMAGE_CEILING)."""
+    return _IMAGE_CEILING
 
 
 def character_sheet_concurrency() -> int:

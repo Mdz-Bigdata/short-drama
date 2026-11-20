@@ -152,6 +152,17 @@ class AuthoredEditsSurviveProjectionTests(unittest.TestCase):
         self.assertFalse(fresh["2_breakdown"].get("timeline_authored"))
         self.assertTrue(fresh["2_breakdown"]["timeline"], "an untouched timeline still comes from the ledger")
 
+    def test_a_relation_list_the_person_emptied_stays_empty_through_a_projection(self):
+        assets: dict = {}
+        screenwriting.apply_state(assets, _state(2))
+        self.assertTrue(assets["2_breakdown"]["relationships"], "the inventory gives relations to begin with")
+        assets["2_breakdown"]["relationships"] = []
+        assets["2_breakdown"]["relationships_authored"] = True
+
+        screenwriting.apply_state(assets, _state(3))
+        self.assertEqual(assets["2_breakdown"]["relationships"], [])
+        self.assertTrue(assets["2_breakdown"]["relationships_authored"])
+
 
 class WriterBoardApiTests(unittest.TestCase):
     def setUp(self):

@@ -62,6 +62,9 @@ PUBLIC_ROUTES = {
     ("POST", "/api/auth/login_code"), ("GET", "/api/auth/session"), ("POST", "/api/auth/logout"),
     ("GET", "/api/billing/plans"),
     ("POST", "/api/billing/webhooks/{provider}"),  # signed by the payment channel
+    ("GET", "/api/public/canvas-shares/{token}"),  # read-only canvas share; the token is checked inside
+    ("GET", "/api/public/appearance"),  # the brand, read before anyone signs in; only public fields
+    ("GET", "/api/public/appearance/assets/{slot}"),  # the logo and page icon of that brand
     ("POST", "/mcp"), ("GET", "/mcp"),  # bearer token, checked inside
     ("GET", "/api/agent/projects/{project_id}/artifacts"),  # agent key
     ("POST", "/api/agent/projects/{project_id}/artifacts"),

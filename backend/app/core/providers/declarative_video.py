@@ -23,6 +23,19 @@ import httpx
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.providers.video_adapters import VideoJobRequest, VideoJobResult, VideoProviderAdapter
+from app.core import prompt_data
+
+
+_WORDING_FILE = "providers_declarative_video"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/providers_declarative_video.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 Mode = Literal["text", "first_frame", "first_last_frame", "multi_reference", "multimodal"]
 _PLACEHOLDER = re.compile(r"^\{\{\s*([a-z_]+)\s*\}\}$")
@@ -57,11 +70,13 @@ class VideoEndpointSpec(BaseModel):
     max_reference_images: int = Field(default=0, ge=0, le=20)
     max_reference_videos: int = Field(default=0, ge=0, le=5)
     max_reference_audios: int = Field(default=0, ge=0, le=5)
+    # Whether the model renders dialogue and sound with the picture: its clips then keep their own sound instead of a dub.
+    native_audio: bool = False
     auth_header: str = Field(default="Authorization", max_length=60)
     auth_prefix: str = Field(default="Bearer ", max_length=20)
     submit: HttpStep
-    job_id_path: str = Field(default="", max_length=120, description="空表示提交即返回片段地址")
-    video_url_path: str = Field(default="", max_length=120, description="提交响应里直接给出片段地址时的路径")
+    job_id_path: str = Field(default="", max_length=120, description=_text_of("VideoEndpointSpec.description"))
+    video_url_path: str = Field(default="", max_length=120, description=_text_of("VideoEndpointSpec.description.2"))
     poll: PollStep | None = None
     max_seconds: int = Field(default=15, ge=1, le=60)
 
@@ -70,7 +85,7 @@ class VideoEndpointSpec(BaseModel):
     def https_only(cls, value: str) -> str:
         clean = value.strip().rstrip("/")
         if not clean.lower().startswith("https://"):
-            raise ValueError("声明式视频端点的基础 URL 必须使用 HTTPS")
+            raise ValueError(_text_of("https_only.text"))
         return clean
 
     @field_validator("model_ids")
@@ -78,16 +93,16 @@ class VideoEndpointSpec(BaseModel):
     def clean_models(cls, values: list[str]) -> list[str]:
         cleaned = [v.strip() for v in values if v and v.strip()]
         if not cleaned:
-            raise ValueError("至少声明一个模型 ID")
+            raise ValueError(_text_of("clean_models.text"))
         return list(dict.fromkeys(cleaned))
 
     def check(self) -> None:
         if not self.job_id_path and not self.video_url_path:
-            raise ValueError("提交步骤必须给出 job_id_path 或 video_url_path 之一")
+            raise ValueError(_text_of("check.text"))
         if self.job_id_path and self.poll is None:
-            raise ValueError("给出 job_id_path 时必须声明 poll 步骤")
+            raise ValueError(_text_of("check.text.2"))
         if not re.search(_INLINE, json.dumps(self.submit.body, ensure_ascii=False)):
-            raise ValueError("提交请求体里至少要有一个 {{prompt}} 之类的占位符")
+            raise ValueError(_text_of("check.text.3"))
 
 
 def _path_get(data: Any, path: str) -> Any:

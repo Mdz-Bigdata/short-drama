@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -512,14 +512,303 @@ describe('ShotVisualWorkspace', () => {
     expect(await screen.findByText(/已按场景分配固定种子/)).toBeTruthy();
     expect((screen.getByLabelText('种子') as HTMLInputElement).value).toBe('123001');
 
-    const candidates = within(screen.getByRole('list', { name: '候选版本' })).getAllByRole('button', { name: '选用此版' });
-    expect(candidates).toHaveLength(2);
-    await userEvent.click(candidates[1]);
+    // 这时在用的是版本 2：它不能再选一次，版本 1 不用先预览也能选。
+    const list = within(screen.getByRole('list', { name: '候选版本' }));
+    const candidates = list.getAllByRole('button', { name: '选用此版' }) as HTMLButtonElement[];
+    expect(candidates.map(button => button.disabled)).toEqual([false, true]);
+    expect(list.getAllByRole('listitem')[1].textContent).toContain('当前使用');
+    await userEvent.click(candidates[0]);
     expect(await screen.findByText(/已选用该版本/)).toBeTruthy();
     // The workspace also asks for the batch admission when it opens; that call is not part of this flow.
     const flow = calls.filter(call => !call.url.endsWith('/shots/admission'));
     expect(flow.map(call => call.url.split('/api/drama/visual-task')[1])).toEqual(['/shots/seeds/assign', '/shots/1/visual/select?scene_id=E1S01']);
-    expect(flow[1].body).toEqual({ video_url: '/media/c1-b.mp4' });
+    expect(flow[1].body).toEqual({ video_url: '/media/c1.mp4' });
+  });
+
+  it('plays a version before it is chosen, and only for the shot it belongs to', async () => {
+    const puts: unknown[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      if (init?.method === 'PUT') {
+        puts.push(JSON.parse(String(init.body)));
+        const next = workspace();
+        next.shots[0] = { ...next.shots[0], video_url: '/media/c1-b.mp4' };
+        return { ok: true, json: async () => next } as Response;
+      }
+      return { ok: true, json: async () => workspace() } as Response;
+    });
+
+    render(<ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" />);
+    const player = () => screen.getByLabelText('镜头 1 视频') as HTMLVideoElement;
+    await screen.findByRole('list', { name: '分镜' });
+    expect(player().getAttribute('src')).toBe('/media/c1.mp4');
+
+    const second = screen.getByRole('button', { name: '预览版本 2' });
+    await userEvent.click(second);
+    expect(player().getAttribute('src')).toBe('/media/c1-b.mp4');
+    expect(second.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByText('预览中：版本 2，还没选用')).toBeTruthy();
+    expect(puts).toEqual([]);
+
+    // 换一镜再回来，播放器回到在用的版本。
+    await userEvent.click(screen.getByRole('button', { name: 'E1S01 镜头 2' }));
+    expect(screen.queryByText(/预览中/)).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'E1S01 镜头 1' }));
+    await userEvent.click(screen.getByRole('button', { name: '预览版本 2' }));
+    await userEvent.click(screen.getByRole('button', { name: '预览版本 1' }));
+    expect(player().getAttribute('src')).toBe('/media/c1.mp4');
+    expect(screen.queryByText(/预览中/)).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: '预览版本 2' }));
+    await userEvent.click(within(screen.getByRole('list', { name: '候选版本' })).getAllByRole('button', { name: '选用此版' })[1]);
+    await waitFor(() => expect(puts).toEqual([{ video_url: '/media/c1-b.mp4' }]));
+    await waitFor(() => expect(screen.queryByText(/预览中/)).toBeNull());
+    expect(player().getAttribute('src')).toBe('/media/c1-b.mp4');
+  });
+
+  it('keeps the other unsaved camera edits when seeds are assigned', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input).endsWith('/shots/seeds/assign') && init?.method === 'POST') {
+        const next = workspace();
+        next.shots = next.shots.map((shot, index) => ({ ...shot, settings: { ...shot.settings, seed: 123001 + index } }));
+        return { ok: true, json: async () => next } as Response;
+      }
+      return { ok: true, json: async () => workspace() } as Response;
+    });
+
+    render(<ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" />);
+    await screen.findByRole('list', { name: '分镜' });
+    await userEvent.selectOptions(screen.getByLabelText('镜头运动'), 'Orbit');
+    await userEvent.type(screen.getByLabelText('种子'), '7');
+    await userEvent.click(screen.getByRole('button', { name: 'E1S01 镜头 2' }));
+    await userEvent.type(screen.getByLabelText('种子'), '9');
+
+    await userEvent.click(screen.getByRole('button', { name: '按场分配种子' }));
+    expect(await screen.findByText(/已按场景分配固定种子/)).toBeTruthy();
+
+    // 镜头 2 只改过种子：新分配的种子顶掉它，不再算未保存。
+    expect((screen.getByLabelText('种子') as HTMLInputElement).value).toBe('123002');
+    expect(screen.getByRole('button', { name: /保存运镜/ }).hasAttribute('disabled')).toBe(true);
+    await userEvent.click(screen.getByRole('button', { name: 'E1S01 镜头 1' }));
+    expect((screen.getByLabelText('镜头运动') as HTMLSelectElement).value).toBe('Orbit');
+    expect((screen.getByLabelText('种子') as HTMLInputElement).value).toBe('123001');
+    expect(screen.getByRole('button', { name: /保存运镜/ }).hasAttribute('disabled')).toBe(false);
+  });
+
+  it('keeps a half-written video prompt while another tab or shot is looked at', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true, json: async () => workspace() } as Response);
+
+    render(<ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" />);
+    await screen.findByRole('list', { name: '分镜' });
+    await userEvent.click(screen.getByRole('tab', { name: '提示词' }));
+    await userEvent.type(screen.getByLabelText('视频提示词文稿'), '镜头缓慢推近。');
+
+    await userEvent.click(screen.getByRole('tab', { name: '脚本 / 对话' }));
+    await userEvent.click(screen.getByRole('tab', { name: '提示词' }));
+    expect((screen.getByLabelText('视频提示词文稿') as HTMLTextAreaElement).value).toBe('【批次 1】视频提示词镜头缓慢推近。');
+    expect(within(screen.getByRole('tabpanel')).getByRole('status').textContent).toContain('未保存');
+
+    // The draft belongs to its shot: the next shot shows its own saved text, and coming back restores it.
+    await userEvent.click(screen.getByRole('button', { name: 'E1S01 镜头 2' }));
+    expect((screen.getByLabelText('视频提示词文稿') as HTMLTextAreaElement).value).toBe('');
+    await userEvent.click(screen.getByRole('button', { name: 'E1S01 镜头 1' }));
+    expect((screen.getByLabelText('视频提示词文稿') as HTMLTextAreaElement).value).toBe('【批次 1】视频提示词镜头缓慢推近。');
+  });
+
+  it('drops a video prompt draft once it is saved, so restoring the auto prompt shows the auto prompt', async () => {
+    const state = workspace();
+    state.shots[0] = { ...state.shots[0], video_prompt: '自动提示词', video_prompt_edited: false };
+    const saved: Array<string | null> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input).includes('/video-prompt') && init?.method === 'PUT') {
+        const { prompt } = JSON.parse(String(init.body)) as { prompt: string | null };
+        saved.push(prompt);
+        state.shots[0] = { ...state.shots[0], video_prompt: prompt ?? '自动提示词', video_prompt_edited: prompt !== null };
+      }
+      return { ok: true, json: async () => structuredClone(state) } as Response;
+    });
+
+    render(<ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" />);
+    await screen.findByRole('list', { name: '分镜' });
+    await userEvent.click(screen.getByRole('tab', { name: '提示词' }));
+    const editorStatus = () => within(screen.getByRole('tabpanel')).getByRole('status').textContent;
+    await userEvent.type(screen.getByLabelText('视频提示词文稿'), '手写一句。');
+    await userEvent.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(editorStatus()).toContain('已人工修改'));
+
+    await userEvent.click(screen.getByRole('button', { name: '恢复自动编译' }));
+    await waitFor(() => expect(saved).toEqual(['自动提示词手写一句。', null]));
+    await waitFor(() => expect(screen.queryByRole('button', { name: '恢复自动编译' })).toBeNull());
+    // The server prompt is the text the draft was typed against again; the saved draft must not come back.
+    expect((screen.getByLabelText('视频提示词文稿') as HTMLTextAreaElement).value).toBe('自动提示词');
+    expect(editorStatus()).toContain('已同步');
+    expect(screen.getByRole('button', { name: '保存' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('keeps what is typed into the video prompt while its save is on the way', async () => {
+    const state = workspace();
+    let finishSave = () => {};
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input).includes('/video-prompt') && init?.method === 'PUT') {
+        const { prompt } = JSON.parse(String(init.body)) as { prompt: string };
+        await new Promise<void>(resolve => { finishSave = resolve; });
+        state.shots[0] = { ...state.shots[0], video_prompt: prompt, video_prompt_edited: true };
+      }
+      return { ok: true, json: async () => structuredClone(state) } as Response;
+    });
+
+    render(<ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" />);
+    await screen.findByRole('list', { name: '分镜' });
+    await userEvent.click(screen.getByRole('tab', { name: '提示词' }));
+    await userEvent.type(screen.getByLabelText('视频提示词文稿'), '第一句。');
+    await userEvent.click(screen.getByRole('button', { name: '保存' }));
+    await userEvent.type(screen.getByLabelText('视频提示词文稿'), '第二句。');
+    await act(async () => { finishSave(); });
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存' }).hasAttribute('disabled')).toBe(false));
+    expect((screen.getByLabelText('视频提示词文稿') as HTMLTextAreaElement).value).toBe('【批次 1】视频提示词第一句。第二句。');
+    expect(within(screen.getByRole('tabpanel')).getByRole('status').textContent).toContain('未保存');
+  });
+
+  it('keeps a recipe, a failure note and its fix plan with the shot they were made for', async () => {
+    const reports: Array<{ url: string; body: unknown }> = [];
+    const twoScenes = workspace();
+    twoScenes.shots = [
+      { ...twoScenes.shots[0], shot_uid: 100101 },
+      { ...twoScenes.shots[1], shot_id: 1, scene_id: 'E1S02', shot_uid: 100201 },
+    ];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes('/visual/recipe') && init?.method === 'POST') {
+        return { ok: true, json: async () => ({
+          category: 'psychology', category_label: '心理放大', intensity: 'medium', camera_motion: 'Orbit', camera_motion_label: '环绕',
+          angle_label: '平视', rhythm_label: '慢节奏', prompt_zh: '镜头围绕主体环绕（Orbit）；沈砚推门而入',
+          prompt_en: 'orbit camera move', negative: 'static camera', provider_phrase: '镜头围绕主体环绕（Orbit）',
+        }) } as Response;
+      }
+      if (url.endsWith('/feedback') && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { result: string };
+        reports.push({ url: url.split('/api/drama/visual-task')[1], body });
+        // As the backend answers: a fix plan for a failure, none for a success.
+        return { ok: true, json: async () => ({ attempt: 1, plan: body.result === 'success' ? null : {
+          category: 'face_collapse', category_name: '面部崩坏', attempt: 1, diagnosis: '脸在运动里走样', variable: 'action', variable_name: '动作幅度',
+          steps: ['把动作幅度降一档'], negatives: [], give_up: false,
+        } }) } as Response;
+      }
+      return { ok: true, json: async () => twoScenes } as Response;
+    });
+
+    render(<ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" />);
+    await screen.findByRole('list', { name: '分镜' });
+    await userEvent.selectOptions(screen.getByLabelText('运镜灵感'), 'psychology');
+    await userEvent.click(screen.getByRole('button', { name: '生成配方' }));
+    expect(await screen.findByRole('button', { name: '套用到本镜' })).toBeTruthy();
+    await userEvent.type(screen.getByLabelText('这一镜翻车了？'), '脸崩了');
+    await userEvent.click(screen.getByRole('button', { name: '报告问题' }));
+    expect(await screen.findByText('把动作幅度降一档')).toBeTruthy();
+    // 两场都有镜头 1：报告按全剧编号记，不会记到一起。
+    expect(reports).toEqual([{ url: '/shots/100101/feedback', body: { result: 'failed', text: '脸崩了' } }]);
+
+    await userEvent.click(screen.getByRole('button', { name: 'E1S02 镜头 1' }));
+    expect(screen.queryByRole('button', { name: '套用到本镜' })).toBeNull();
+    expect(screen.queryByText('把动作幅度降一档')).toBeNull();
+    expect((screen.getByLabelText('这一镜翻车了？') as HTMLTextAreaElement).value).toBe('');
+    await userEvent.click(screen.getByRole('button', { name: '这条可用' }));
+    await waitFor(() => expect(reports[1]).toEqual({ url: '/shots/100201/feedback', body: { result: 'success', applied_fix: '' } }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'E1S01 镜头 1' }));
+    expect(screen.getByRole('button', { name: '套用到本镜' })).toBeTruthy();
+    expect((screen.getByLabelText('这一镜翻车了？') as HTMLTextAreaElement).value).toBe('脸崩了');
+    // The report on the other shot left this shot's plan alone, so the fix that worked is still named.
+    expect(screen.getByText('把动作幅度降一档')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: '这条可用' }));
+    await waitFor(() => expect(reports[2]).toEqual({ url: '/shots/100101/feedback', body: { result: 'success', applied_fix: '把动作幅度降一档' } }));
+    await waitFor(() => expect(screen.queryByText('把动作幅度降一档')).toBeNull());
+    expect((screen.getByLabelText('这一镜翻车了？') as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('keeps each failed shot\'s fix plan when a second shot fails too', async () => {
+    const twoShots = workspace();
+    twoShots.shots = [{ ...twoShots.shots[0], shot_uid: 100101 }, { ...twoShots.shots[1], shot_uid: 100102 }];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/feedback') && init?.method === 'POST') {
+        const step = url.includes('/shots/100101/') ? '把动作幅度降一档' : '换成固定机位';
+        return { ok: true, json: async () => ({ attempt: 1, plan: {
+          category: 'face_collapse', category_name: '面部崩坏', attempt: 1, diagnosis: '脸在运动里走样',
+          steps: [step], negatives: [], escalation: '', give_up: false,
+        } }) } as Response;
+      }
+      return { ok: true, json: async () => twoShots } as Response;
+    });
+
+    render(<ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" />);
+    await screen.findByRole('list', { name: '分镜' });
+    await userEvent.type(screen.getByLabelText('这一镜翻车了？'), '脸崩了');
+    await userEvent.click(screen.getByRole('button', { name: '报告问题' }));
+    expect(await screen.findByText('把动作幅度降一档')).toBeTruthy();
+
+    await userEvent.click(screen.getByRole('button', { name: 'E1S01 镜头 2' }));
+    await userEvent.type(screen.getByLabelText('这一镜翻车了？'), '位置跳了');
+    await userEvent.click(screen.getByRole('button', { name: '报告问题' }));
+    expect(await screen.findByText('换成固定机位')).toBeTruthy();
+    expect(screen.queryByText('把动作幅度降一档')).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'E1S01 镜头 1' }));
+    expect(screen.getByText('把动作幅度降一档')).toBeTruthy();
+    expect(screen.queryByText('换成固定机位')).toBeNull();
+  });
+
+  it('starts watching the run once the batch is asked for, queue included', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let running = false;
+      const gets: string[] = [];
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (!init?.method) gets.push(url.split('/api/drama/visual-task')[1]);
+        if (url.endsWith('/queue')) {
+          return { ok: true, json: async () => (running ? {
+            task_id: 'visual-task', running: true, run_id: 'r1', counts: { queued: 0, running: 1, done: 0 }, buckets: {}, withdraw: [],
+            items: [{ key: 'video:2', label: '镜头 2 · 视频 ×1', family: 'minimax', medium: 'video', bucket: 'minimax/video', depends_on: [], status: 'running', meta: {} }],
+          } : { items: [] }) } as Response;
+        }
+        if (url.endsWith('/shots/admission')) return { ok: true, json: async () => ({}) } as Response;
+        if (url.includes('/usage')) return { ok: true, json: async () => ({ summary: null }) } as Response;
+        return { ok: true, json: async () => workspace({ running }) } as Response;
+      });
+      const onRerun = vi.fn(() => { running = true; });
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+      render(<ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" onRerun={onRerun} />);
+      const rerun = await screen.findByRole('button', { name: /重跑第 5 阶段/ }) as HTMLButtonElement;
+      expect(screen.queryByRole('button', { name: /生成队列/ })).toBeNull();
+      await user.click(rerun);
+      expect(onRerun).toHaveBeenCalledOnce();
+      expect(rerun.disabled).toBe(true);
+      await user.click(rerun);
+      expect(onRerun).toHaveBeenCalledOnce();
+
+      const before = gets.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(4100); });
+      expect(gets.slice(before)).toEqual(expect.arrayContaining(['/shots/visual', '/queue']));
+      expect(await screen.findByRole('button', { name: /生成队列/ })).toBeTruthy();
+      expect(screen.getByText(/任务正在执行阶段，暂不能修改运镜/)).toBeTruthy();
+      expect((screen.getByLabelText('镜头运动') as HTMLSelectElement).disabled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('looks again when the shell says the task has moved on', async () => {
+    let running = false;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => ({ ok: true, json: async () => workspace({ running }) }) as Response);
+    const view = render(<ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" refreshKey="4:completed" />);
+    await screen.findByRole('list', { name: '分镜' });
+    expect((screen.getByLabelText('镜头运动') as HTMLSelectElement).disabled).toBe(false);
+
+    running = true;
+    view.rerender(<ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" refreshKey="5:running" />);
+    await waitFor(() => expect((screen.getByLabelText('镜头运动') as HTMLSelectElement).disabled).toBe(true));
   });
 
   it('shows what the 3D director desk applied to a shot, and takes it back out', async () => {
@@ -756,5 +1045,76 @@ describe('ShotVisualWorkspace pilot shot', () => {
     await user.click(screen.getByRole('button', { name: '再试一次' }));
 
     expect(posts).toEqual([{ redo: true }]);
+  });
+});
+
+describe('ShotVisualWorkspace shot assets', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  function serve(data: () => Workspace) {
+    const loads: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      if (url.endsWith('/shots/admission')) return { ok: true, json: async () => ({}) } as Response;
+      if (url.includes('/usage')) return { ok: true, json: async () => ({ summary: null }) } as Response;
+      if (url.endsWith('/shots/visual')) loads.push(url);
+      return { ok: true, json: async () => data() } as Response;
+    });
+    return loads;
+  }
+
+  it('shows the selected shot\'s assets, the strip chips and the references the route left out', async () => {
+    const base = workspace();
+    serve(() => workspace({
+      shots: [
+        {
+          ...base.shots[0],
+          route: { ...base.shots[0].route, unused_assets: ['玉佩', '铜灯'] },
+          assets: [
+            { kind: 'actor', name: '沈砚', element_id: 'el-1', element_version: 3, image_number: 1, in_storyboard: true, in_video: true, stale: false },
+            { kind: 'prop', name: '青铜剑', element_id: 'el-2', element_version: 1, image_number: 2, in_storyboard: true, in_video: false, stale: true },
+          ],
+        },
+        base.shots[1],
+      ],
+    }));
+
+    render(<ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" />);
+    const detail = await screen.findByRole('region', { name: 'E1S01 镜头 1 详情' });
+    const header = detail.querySelector('.shot-workspace__detail-header') as HTMLElement;
+    const chips = within(header).getByRole('group', { name: '本镜用到的资产' });
+    expect(within(chips).getByText('沈砚')).toBeTruthy();
+    expect(within(chips).getByText('图2')).toBeTruthy();
+    expect(within(chips).getByText('分镜')).toBeTruthy();
+    expect(within(chips).getByText('青铜剑').closest('.shot-assets__chip')?.getAttribute('title')).toContain('资产已改，需重画或重跑');
+    expect(within(header).getByText(/未带上的参考/).textContent).toContain('玉佩、铜灯');
+
+    const stripButton = screen.getByRole('button', { name: 'E1S01 镜头 1' });
+    expect(within(stripButton).getByText('沈砚')).toBeTruthy();
+    expect(stripButton.querySelectorAll('button')).toHaveLength(0);
+  });
+
+  it('falls back to the prompt mentions on old data and reloads when an asset changes', async () => {
+    const base = workspace();
+    const loads = serve(() => workspace({
+      shots: [{ ...base.shots[0], mention_kinds: { 贺兰霆: 'actor', 乱葬坑: 'scene' }, reference_numbers: { 贺兰霆: 1 } }, base.shots[1]],
+    }));
+
+    render(<ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" />);
+    const detail = await screen.findByRole('region', { name: 'E1S01 镜头 1 详情' });
+    const header = detail.querySelector('.shot-workspace__detail-header') as HTMLElement;
+    const chips = within(header).getByRole('group', { name: '本镜用到的资产' });
+    expect([...chips.querySelectorAll('.shot-assets__name')].map(node => node.textContent)).toEqual(['贺兰霆', '乱葬坑']);
+    expect(within(chips).getByText('图1')).toBeTruthy();
+    expect(within(header).queryByText(/未带上的参考/)).toBeNull();
+
+    const before = loads.length;
+    act(() => {
+      window.dispatchEvent(new CustomEvent('novara:assets-changed', { detail: { reason: 'image' } }));
+    });
+    await waitFor(() => expect(loads.length).toBe(before + 1));
   });
 });

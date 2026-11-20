@@ -1,0 +1,16 @@
+{
+  "_doc": "app/api/billing_api.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.tags": [
+    "会员积分与支付"
+  ],
+  "create_order.detail": "该支付渠道暂不可用",
+  "_own_order.detail": "订单不存在",
+  "pay_order.detail": "该支付渠道暂不可用",
+  "pay_order.detail.2": "支付渠道暂时不可用，请稍后重试或换一种支付方式",
+  "cancel_order.detail": "支付渠道暂时不可用，请稍后再取消",
+  "sandbox_confirm.detail": "沙箱支付未开启",
+  "sandbox_confirm.detail.2": "订单不存在",
+  "sandbox_confirm.detail.3": "仅沙箱订单支持本地确认",
+  "_notification_reply.message": "失败",
+  "payment_webhook.detail": "支付渠道不存在"
+}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { GitMerge, Plus, RefreshCw, Scissors, Trash2 } from 'lucide-react';
+import { GitMerge, Loader2, Plus, RefreshCw, Scissors, Trash2 } from 'lucide-react';
 
-import { ApiError } from '../../api/client';
+import { ApiError, apiRequest } from '../../api/client';
 import {
   adoptReplan,
   applyLedgerOperation,
@@ -36,15 +36,20 @@ interface Props {
   taskId: string;
   /** Called after the ledger changed, so the panel reloads the episode list. */
   onChanged: () => void;
+  /** Asked before a step that ends in `onChanged`; false leaves the ledger untouched. */
+  onBeforeChange?: () => boolean;
   /** Open the full screenplay of a written episode (the 来源 cell links there). */
   onOpenEpisode?: (episode: number) => void;
 }
 
-export function EpisodeLedgerTools({ taskId, onChanged, onOpenEpisode }: Props) {
+export function EpisodeLedgerTools({ taskId, onChanged, onBeforeChange, onOpenEpisode }: Props) {
   const [view, setView] = useState<LedgerView | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [busy, setBusy] = useState(false);
+  // The step in flight, in the words its result notice uses. `usesModel` marks the ones that
+  // may plan or write episodes, which take minutes rather than a moment.
+  const [running, setRunning] = useState<{ describe: string; usesModel: boolean } | null>(null);
+  const busy = running !== null;
   const [splitting, setSplitting] = useState<number | null>(null);
   const [excerpt, setExcerpt] = useState<{ start: number; text: string } | null>(null);
   const [splitPoint, setSplitPoint] = useState('');
@@ -54,6 +59,27 @@ export function EpisodeLedgerTools({ taskId, onChanged, onOpenEpisode }: Props) 
   const [createText, setCreateText] = useState('');
   const [createKind, setCreateKind] = useState<'novel' | 'screenplay'>('novel');
   const [createAfter, setCreateAfter] = useState('');
+  // 上传一份文本解析成这一集的原文：正在读哪个文件、读不出来时的原因。
+  const [uploading, setUploading] = useState('');
+  const [uploadError, setUploadError] = useState('');
+
+  const readSourceFile = async (file: File | undefined) => {
+    if (!file) return;
+    setUploading(file.name);
+    setUploadError('');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const parsed = await apiRequest<{ content?: string }>('/api/drama/parse_script', { method: 'POST', body: form });
+      const content = String(parsed.content ?? '').trim();
+      if (!content) throw new Error(t('这个文件里没有读出文字。'));
+      setCreateText(content);
+    } catch (reason) {
+      setUploadError(reason instanceof Error && reason.message ? reason.message : t('文件没有读出来，请确认格式后重试。'));
+    } finally {
+      setUploading('');
+    }
+  };
 
   const load = useCallback((signal?: AbortSignal) => fetchLedger(taskId, signal)
     .then(data => { setView(data); setError(''); })
@@ -69,7 +95,8 @@ export function EpisodeLedgerTools({ taskId, onChanged, onOpenEpisode }: Props) 
   }, [load]);
 
   const run = async (submit: Submit, describe: string, { changesEpisodes = true } = {}) => {
-    setBusy(true);
+    if (changesEpisodes && onBeforeChange && !onBeforeChange()) return;
+    setRunning({ describe, usesModel: true });
     setNotice('');
     try {
       let confirmDiscard: number[] = [];
@@ -91,7 +118,7 @@ export function EpisodeLedgerTools({ taskId, onChanged, onOpenEpisode }: Props) 
               const detail = hit ? `${hit.scenes} 个分镜${hit.has_prose ? '、正文' : ''}` : '已写出的内容';
               return `第 ${number} 集${hit?.title ? `《${hit.title}》` : ''}：${detail}`;
             });
-            if (!window.confirm(t('{0}会丢掉以下已写出的集，并重新写出受影响的集：\\n{1}\\n是否继续？', [describe, lines.join('\n')]))) {
+            if (!window.confirm(t('{0}会丢掉以下已写出的集，并重新写出受影响的集：\n{1}\n是否继续？', [describe, lines.join('\n')]))) {
               setNotice(t('已取消。'));
               return;
             }
@@ -126,7 +153,7 @@ export function EpisodeLedgerTools({ taskId, onChanged, onOpenEpisode }: Props) 
     } catch (caught) {
       setNotice(caught instanceof ApiError && caught.message ? caught.message : `${describe}失败，请稍后重试。`);
     } finally {
-      setBusy(false);
+      setRunning(null);
     }
   };
 
@@ -158,19 +185,38 @@ export function EpisodeLedgerTools({ taskId, onChanged, onOpenEpisode }: Props) 
   const adopt = (deleteReplaced: boolean) =>
     run(confirm => adoptReplan(taskId, { delete_replaced: deleteReplaced, ...confirm }), '采纳候选规划');
 
+  const remove = (entry: LedgerEntryView) => {
+    // A written episode is confirmed by the server's 409, which lists what it holds.
+    if (!entry.written) {
+      const question = entry.origin === 'own'
+        ? t('确定删除第 {0} 集吗？这一集自带的原文会一起删除，后面的集依次前移。', [entry.episode])
+        : t('确定删除第 {0} 集吗？后面的集依次前移。', [entry.episode]);
+      if (!window.confirm(question)) return;
+    }
+    void operate({ operation: 'delete', episode: entry.episode }, `删除第 ${entry.episode} 集`);
+  };
+
   const discard = async () => {
-    setBusy(true);
+    setRunning({ describe: '放弃候选规划', usesModel: false });
+    setNotice('');
     try {
       setView(await discardReplan(taskId));
       setNotice(t('已放弃候选规划。'));
     } catch {
       setNotice(t('放弃候选规划失败。'));
     } finally {
-      setBusy(false);
+      setRunning(null);
     }
   };
 
-  if (error) return <p className="writer-empty" role="status">{error}</p>;
+  if (error) {
+    return (
+      <p className="writer-empty writer-ledger__load-error" role="alert">
+        {error}
+        <button type="button" onClick={() => { void load(); }}><RefreshCw aria-hidden="true" /> {t('重试')}</button>
+      </p>
+    );
+  }
   if (!view) return null;
 
   const entries = view.entries;
@@ -185,7 +231,15 @@ export function EpisodeLedgerTools({ taskId, onChanged, onOpenEpisode }: Props) 
           <Plus aria-hidden="true" /> {t('新建一集')}
         </button>
       </header>
-      {notice && <p className="writer-screenwriting__notice" role="status">{notice}</p>}
+      {running && (
+        <p className="writer-screenwriting__notice writer-ledger__progress" role="status">
+          <Loader2 className="spin" aria-hidden="true" />
+          {running.usesModel
+            ? t('正在{0}…模型要处理受影响的集，可能需要几分钟，请不要关闭页面。', [running.describe])
+            : t('正在{0}…', [running.describe])}
+        </p>
+      )}
+      {!running && notice && <p className="writer-screenwriting__notice" role="status">{notice}</p>}
 
       {creating && (
         <form
@@ -214,13 +268,22 @@ export function EpisodeLedgerTools({ taskId, onChanged, onOpenEpisode }: Props) 
           <label className="writer-ledger__wide">{t('这一集自己的原文（可留空，留空则按大纲创作）')}
             <textarea rows={4} value={createText} onChange={event => setCreateText(event.target.value)} />
           </label>
+          <label className="writer-ledger__wide">{t('或上传文本，解析成这一集的原文（txt、md、docx、pdf、fdx、fountain）')}
+            <input
+              type="file" accept=".txt,.md,.markdown,.docx,.pdf,.fdx,.fountain,.spmd" disabled={busy || Boolean(uploading)}
+              onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void readSourceFile(file); }}
+            />
+          </label>
+          {uploading && <p className="writer-screenwriting__notice" role="status">{t('正在读取 {0}…', [uploading])}</p>}
+          {uploadError && <p className="inline-error" role="alert">{uploadError}</p>}
           <div className="writer-screenwriting__actions">
-            <button type="submit" className="is-primary" disabled={busy}>{t('创建并写出')}</button>
+            <button type="submit" className="is-primary" disabled={busy || Boolean(uploading)}>{t('创建并写出')}</button>
             <button type="button" onClick={() => setCreating(false)}>{t('取消')}</button>
           </div>
         </form>
       )}
 
+      <div className="writer-ledger__scroll" role="region" aria-label={t('分集账本表，可横向滚动')} tabIndex={0}>
       <table className="writer-ledger__table">
         <thead>
           <tr><th>{t('集')}</th><th>{t('来源')}</th><th>{t('原文')}</th><th>{t('长度')}</th><th>{t('状态')}</th><th>{t('操作')}</th></tr>
@@ -276,7 +339,7 @@ export function EpisodeLedgerTools({ taskId, onChanged, onOpenEpisode }: Props) 
                     <button type="button" disabled={busy} onClick={() => { void operate({ operation: 'move', episode: entry.episode, after: next.episode }, `下移第 ${entry.episode} 集`); }}>{t('下移')}</button>
                   )}
                   <button type="button" disabled={busy} className="is-danger" aria-label={`删除第 ${entry.episode} 集`}
-                    onClick={() => { void operate({ operation: 'delete', episode: entry.episode }, `删除第 ${entry.episode} 集`); }}>
+                    onClick={() => remove(entry)}>
                     <Trash2 aria-hidden="true" /> {t('删除')}
                   </button>
                 </td>
@@ -297,6 +360,7 @@ export function EpisodeLedgerTools({ taskId, onChanged, onOpenEpisode }: Props) 
           ))}
         </tbody>
       </table>
+      </div>
 
       {splitting !== null && (
         <form

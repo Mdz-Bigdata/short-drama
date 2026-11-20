@@ -82,6 +82,13 @@ export interface StageLandmark {
   kit?: string;
   /** Absent or empty: the piece is the one volume `shape` describes. */
   parts?: LandmarkPart[];
+  /**
+   * Drawn only. A long thing in a hand (a sword, a staff) leans the way the fist points it: worked out
+   * from the contact each time the stage is drawn, never stored and never sent. With it, `position`
+   * and `elevation_m` are the piece's foot, `up` is the way its height runs and `forward` the way
+   * its depth faces.
+   */
+  tilt?: { up: SpacePoint; forward: SpacePoint };
 }
 
 export type BackdropKind = 'none' | 'color' | 'image' | 'panorama';
@@ -245,6 +252,44 @@ export interface ShotTimeline {
   cuts?: CameraCut[];
 }
 
+export type ContactKind = 'hold' | 'sit' | 'rest';
+/** '' means the right hand. */
+export type ContactHand = 'left' | 'right' | 'both' | '';
+
+/**
+ * A body touching a thing, kept through edits and playback. hold: `actor` holds the prop `target`;
+ * sit: `actor` sits on the seat `target`; rest: `target` rests on `support`.
+ */
+export interface StageContact {
+  id: string;
+  kind: ContactKind;
+  /** hold, sit: the actor; rest: ''. */
+  actor: string;
+  target: string;
+  /** rest: the piece it rests on; hold, sit: ''. */
+  support: string;
+  /** hold only. */
+  hand: ContactHand;
+  /** Empty: the whole scene; else only these shots. */
+  shot_ids: number[];
+  /** auto contacts may be re-derived on re-plan; manual ones are kept. */
+  source: 'auto' | 'manual';
+}
+
+/** An effect a person marked on the floor for previs: a placeholder range, not a simulation. */
+export interface StageEffect {
+  id: string;
+  /** One of the kinds in the server's action_marks.json (blast, shock, fire, …). */
+  kind: string;
+  position: GroundPoint;
+  radius_m: number;
+  /** The character who sends it; '' when it has no sender. */
+  source: string;
+  note: string;
+  /** Empty: the whole scene; else only these shots. */
+  shot_ids: number[];
+}
+
 export interface StagePlan {
   version: 1;
   scene_id: string;
@@ -270,6 +315,10 @@ export interface StagePlan {
   /** Keyed by shot id as a string. */
   timelines?: Record<string, ShotTimeline>;
   blockout_standin_limbs?: boolean;
+  /** Absent in a plan stored before the stage kept contacts. */
+  contacts?: StageContact[];
+  /** Absent in a plan stored before the stage kept effect markers. */
+  effects?: StageEffect[];
 }
 
 export interface SpatialPlanResponse {

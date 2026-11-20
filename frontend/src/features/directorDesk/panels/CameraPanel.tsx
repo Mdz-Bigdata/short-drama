@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Camera, CircleCheck, Eye, Plus, Star, Trash2, TriangleAlert } from 'lucide-react';
 
 import type { StageCamera, StageOperation, StagePlan, StageShot } from '../../spatial/spatialTypes';
@@ -66,6 +66,21 @@ export function CameraPanel({ plan, shot, lens, guides, editable, canUseView, ba
   const [focal, setFocal] = useState<number | null>(null);
   const custom = guides.aspect !== '' && !(ASPECT_PRESETS as readonly string[]).includes(guides.aspect);
   const [customText, setCustomText] = useState(custom ? guides.aspect : '');
+  // Deleting or promoting a candidate removes the button that was pressed; focus goes to the lens that
+  // took its place instead of the page, where the next Delete would reach the stage's selection.
+  const listRef = useRef<HTMLUListElement>(null);
+  const refocus = useRef<{ id?: string; index: number } | null>(null);
+  const lensIds = shot ? [shot.camera_id, ...(shot.alt_camera_ids || [])].join(' ') : '';
+  useEffect(() => {
+    const wanted = refocus.current;
+    const rows = listRef.current?.querySelectorAll<HTMLLIElement>('li');
+    if (!wanted || !rows?.length) return;
+    refocus.current = null;
+    // Only focus that was actually lost is put back; a refused edit leaves the button where it was.
+    if (document.activeElement && document.activeElement !== document.body) return;
+    const row = [...rows].find(item => item.dataset.cameraId === wanted.id) ?? rows[Math.min(wanted.index, rows.length - 1)];
+    row.querySelector<HTMLButtonElement>('button')?.focus();
+  }, [lensIds]);
 
   if (!shot) return <section className="desk-camera" aria-label="机位"><h2>机位</h2><p className="desk-inspector__empty">本场还没有镜头。</p>{backdrop}</section>;
 
@@ -83,20 +98,20 @@ export function CameraPanel({ plan, shot, lens, guides, editable, canUseView, ba
   return (
     <section className="desk-camera" aria-label="机位">
       <h2><Camera aria-hidden="true" /> 第 {shot.shot_id} 镜机位</h2>
-      <ul className="desk-camera__list">
-        {cameras.map(camera => {
+      <ul ref={listRef} className="desk-camera__list">
+        {cameras.map((camera, index) => {
           const main = camera.id === shot.camera_id;
           return (
-            <li key={camera.id} className={camera.id === lens?.id ? 'is-viewing' : ''}>
+            <li key={camera.id} className={camera.id === lens?.id ? 'is-viewing' : ''} data-camera-id={camera.id}>
               <span>
                 <strong>{camera.label || camera.id}</strong>
                 <small>{main ? '主机位' : '候选'} · {camera.lens_mm}mm</small>
               </span>
-              <button type="button" className="desk-icon" aria-pressed={camera.id === lens?.id} aria-label={`查看 ${camera.label || camera.id}`} onClick={() => onLook(camera.id)}><Eye aria-hidden="true" /></button>
+              <button type="button" className="desk-icon" aria-pressed={camera.id === lens?.id} aria-label={`查看 ${camera.label || camera.id}`} title="从这个机位看" onClick={() => onLook(camera.id)}><Eye aria-hidden="true" /></button>
               {!main && (
                 <>
-                  <button type="button" className="desk-icon" aria-label={`将 ${camera.label || camera.id} 设为主机位`} disabled={!editable} onClick={() => onCommit({ label: '设为主机位', operations: [{ op: 'use_camera', shot_id: shot.shot_id, camera_id: camera.id }] })}><Star aria-hidden="true" /></button>
-                  <button type="button" className="desk-icon" aria-label={`删除 ${camera.label || camera.id}`} disabled={!editable} onClick={() => onCommit({ label: '删除候选机位', operations: [{ op: 'remove_camera', camera_id: camera.id }], barrier: true })}><Trash2 aria-hidden="true" /></button>
+                  <button type="button" className="desk-icon" aria-label={`将 ${camera.label || camera.id} 设为主机位`} title="设为主机位" disabled={!editable} onClick={() => { refocus.current = { id: camera.id, index: 0 }; onCommit({ label: '设为主机位', operations: [{ op: 'use_camera', shot_id: shot.shot_id, camera_id: camera.id }] }); }}><Star aria-hidden="true" /></button>
+                  <button type="button" className="desk-icon" aria-label={`删除 ${camera.label || camera.id}`} title="删除候选机位" disabled={!editable} onClick={() => { refocus.current = { index }; onCommit({ label: '删除候选机位', operations: [{ op: 'remove_camera', camera_id: camera.id }], barrier: true }); }}><Trash2 aria-hidden="true" /></button>
                 </>
               )}
             </li>

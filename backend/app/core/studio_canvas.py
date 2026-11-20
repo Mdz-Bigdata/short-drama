@@ -9,6 +9,7 @@ server is what decides.
 
 from __future__ import annotations
 
+import math
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -16,8 +17,22 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
-from app.core import canvas_tools
-from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
+from app.core import canvas_layout, canvas_tools
+from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS, ReferenceCaps
+from app.schema.studio import CANVAS_COORD_LIMIT, CANVAS_SIZE_LIMIT, canvas_group_problem
+from app.core import prompt_data
+
+
+_WORDING_FILE = "studio_canvas"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/studio_canvas.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 RUNNABLE = {"image_gen": "image", "video_gen": "video", "audio_gen": "audio", "video_compose": "video"}
 # Kinds an agent (or anyone but the importer) may create.
@@ -48,8 +63,8 @@ DEFAULT_SIZES = {
     "video_compose": (300, 240), "style_ref": (240, 220), "panorama": (340, 260), "previz": (320, 300), "tool": (300, 340),
 }
 KIND_LABELS = {
-    "artifact": "产物", "candidate": "候选", "media": "上传素材", "note": "文本注释", "group": "分组", "image_gen": "图像生成",
-    "video_gen": "视频生成", "audio_gen": "音频生成", "video_compose": "视频合成", "style_ref": "风格参考", "panorama": "360° 全景", "previz": "预演", "tool": "工具",
+    "artifact": _text_of("module.kind_labels.artifact"), "candidate": _text_of("module.kind_labels.candidate"), "media": _text_of("module.kind_labels.media"), "note": _text_of("module.kind_labels.note"), "group": _text_of("module.kind_labels.group"), "image_gen": _text_of("module.kind_labels.image_gen"),
+    "video_gen": _text_of("module.kind_labels.video_gen"), "audio_gen": _text_of("module.kind_labels.audio_gen"), "video_compose": _text_of("module.kind_labels.video_compose"), "style_ref": _text_of("module.kind_labels.style_ref"), "panorama": _text_of("module.kind_labels.panorama"), "previz": _text_of("module.kind_labels.previz"), "tool": _text_of("module.kind_labels.tool"),
 }
 
 
@@ -109,17 +124,17 @@ def output_type(node: Mapping[str, Any]) -> str | None:
 def connection(source: Mapping[str, Any], target: Mapping[str, Any], *, role: str | None = None) -> tuple[str, str]:
     """(edge kind, role) of this connection; raises ``CanvasOperationError`` saying why it is not allowed."""
     if source.get("id") == target.get("id"):
-        raise CanvasOperationError("节点不能连接自己")
+        raise CanvasOperationError(_text_of("connection.text"))
     produced = output_type(source)
     if produced is None:
-        raise CanvasOperationError(f"「{KIND_LABELS.get(str(source.get('kind')), source.get('kind'))}」还没有可以输出的内容")
+        raise CanvasOperationError(_text_of("connection.text.2").format(KIND_LABELS.get(str(source.get('kind')), source.get('kind'))))
     inputs = inputs_of(target)
     if not inputs or produced not in inputs:
-        raise CanvasOperationError(f"「{KIND_LABELS.get(str(target.get('kind')), target.get('kind'))}」不接受这种输入（{produced}）")
+        raise CanvasOperationError(_text_of("connection.text.3").format(KIND_LABELS.get(str(target.get('kind')), target.get('kind')), produced))
     edge_kind, default_role = inputs[produced]
     if role and role != default_role:
         if role not in _ROLE_CHOICES.get((str(target.get("kind")), produced), ()):
-            raise CanvasOperationError(f"这条连接不能用作 {role}")
+            raise CanvasOperationError(_text_of("connection.text.4").format(role))
         return edge_kind, role
     return edge_kind, default_role
 
@@ -229,8 +244,13 @@ def resolve_inputs(
     captures_of: Callable[[str], Sequence[Mapping[str, Any]]],
     *,
     in_batch: Iterable[str] = (),
+    caps: ReferenceCaps | None = None,
 ) -> Inputs:
-    """Everything connected to ``node``, by what the connection means."""
+    """Everything connected to ``node``, by what the connection means.
+
+    ``caps`` is how many references the model that will run the node takes (a video node on Seedance 2.5 takes
+    thirty pictures); without it the common cap applies.
+    """
     resolved = Inputs()
     batch = set(in_batch)
     node_id = str(node.get("id"))
@@ -257,7 +277,7 @@ def resolve_inputs(
                 elif source_id in batch:
                     resolved.pending.append(source_id)
                 else:
-                    resolved.problems.append(f"上游节点 {_label(source)} 还没有结果")
+                    resolved.problems.append(_text_of("resolve_inputs.text").format(_label(source)))
                 continue
             text = str(payload_of(source).get("text") or "").strip()
             if text:
@@ -266,7 +286,7 @@ def resolve_inputs(
         if produced == "capture":
             captures = selected_captures(source, captures_of)
             if not captures:
-                resolved.problems.append(f"预演节点 {_label(source)} 没有选中可用的截取")
+                resolved.problems.append(_text_of("resolve_inputs.text.2").format(_label(source)))
             for capture in captures:
                 _take_capture(resolved, capture, source_id, node)
             continue
@@ -283,17 +303,18 @@ def resolve_inputs(
             if source_id in batch:
                 resolved.pending.append(source_id)
             else:
-                resolved.problems.append(f"上游节点 {_label(source)} 还没有结果")
+                resolved.problems.append(_text_of("resolve_inputs.text.3").format(_label(source)))
             continue
         _add_url(resolved, role, output.get("url"), source_id)
         if role == "continue_from":
             resolved.continue_from_prompt = str(payload_of(source).get("prompt") or "")
-    if len(resolved.ref_images) > MAX_REFERENCE_IMAGES:
-        resolved.problems.append(f"参考图最多 {MAX_REFERENCE_IMAGES} 张，现在连了 {len(resolved.ref_images)} 张")
-    if len(resolved.ref_videos) > MAX_REFERENCE_VIDEOS:
-        resolved.problems.append(f"参考视频最多 {MAX_REFERENCE_VIDEOS} 段，现在连了 {len(resolved.ref_videos)} 段")
-    if len(resolved.ref_audios) > MAX_REFERENCE_AUDIOS:
-        resolved.problems.append(f"参考音频最多 {MAX_REFERENCE_AUDIOS} 段，现在连了 {len(resolved.ref_audios)} 段")
+    limit = caps or ReferenceCaps(MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS, MAX_REFERENCE_AUDIOS)
+    if len(resolved.ref_images) > limit.images:
+        resolved.problems.append(_text_of("resolve_inputs.text.4").format(limit.images, len(resolved.ref_images)))
+    if len(resolved.ref_videos) > limit.videos:
+        resolved.problems.append(_text_of("resolve_inputs.text.5").format(limit.videos, len(resolved.ref_videos)))
+    if len(resolved.ref_audios) > limit.audios:
+        resolved.problems.append(_text_of("resolve_inputs.text.6").format(limit.audios, len(resolved.ref_audios)))
     return resolved
 
 
@@ -305,18 +326,18 @@ def _takes_mask(node: Mapping[str, Any]) -> bool:
 def _take_capture(resolved: Inputs, capture: Mapping[str, Any], source_id: str, node: Mapping[str, Any]) -> None:
     capture_kind = str(capture.get("kind") or "")
     if capture.get("stale"):
-        resolved.problems.append("所选截取是按旧站位拍的，请回导演台重新截取")
+        resolved.problems.append(_text_of("_take_capture.text"))
         return
     compose = node.get("kind") == "video_compose"
     if capture_kind == "clip":
         _add_url(resolved, "clip" if compose else "ref_video", capture.get("url"), source_id)
     elif capture_kind == "still" and not compose:
         if capture.get("layer") == "mask" and not _takes_mask(node):
-            resolved.problems.append("人物遮罩是黑白控制图，不能作为参考图；请改选普通静帧或空景，或连到「贴回人物」工具")
+            resolved.problems.append(_text_of("_take_capture.text.2"))
             return
         if capture.get("depth"):
             # The same refusal the desk gives: a video model would copy a depth picture as a grey frame.
-            resolved.problems.append("深度静帧不能作为参考图；请改选普通静帧或深度视频")
+            resolved.problems.append(_text_of("_take_capture.text.3"))
             return
         _add_url(resolved, "ref_image", capture.get("url"), source_id)
 
@@ -324,12 +345,12 @@ def _take_capture(resolved: Inputs, capture: Mapping[str, Any], source_id: str, 
 def _add_url(resolved: Inputs, role: str, value: Any, source_id: str) -> None:
     url = safe_media_url(value)
     if not url:
-        resolved.problems.append("上游节点的结果地址不可用")
+        resolved.problems.append(_text_of("_add_url.text"))
         return
     resolved.sources.append({"node_id": source_id, "role": role, "url": url})
     if role == "first_frame":
         if resolved.continue_from:
-            resolved.problems.append("首帧只能有一个：要么接上一段的尾帧，要么连一张首帧图")
+            resolved.problems.append(_text_of("_add_url.text.2"))
         resolved.first_frame = url
     elif role == "last_frame":
         resolved.last_frame = url
@@ -339,7 +360,7 @@ def _add_url(resolved: Inputs, role: str, value: Any, source_id: str) -> None:
         resolved.ref_videos.append(url)
     elif role == "continue_from":
         if resolved.continue_from or resolved.first_frame:
-            resolved.problems.append("首帧只能有一个：要么接上一段的尾帧，要么连一张首帧图")
+            resolved.problems.append(_text_of("_add_url.text.3"))
         resolved.continue_from = url
     elif role == "ref_audio":
         resolved.ref_audios.append(url)
@@ -369,7 +390,7 @@ def batch_order(node_ids: Sequence[str], edges: Sequence[Mapping[str, Any]]) -> 
     while remaining:
         ready = [item for item in remaining if all(dep in placed for dep in upstream[item])]
         if not ready:
-            raise ValueError("所选节点之间有环，无法排出运行顺序")
+            raise ValueError(_text_of("batch_order.text"))
         for item in ready:
             ordered.append(item)
             placed.add(item)
@@ -509,12 +530,107 @@ def _place(nodes: Sequence[Mapping[str, Any]]) -> tuple[float, float]:
 
 
 _TEXT_FIELDS = ("label", "prompt", "text", "styleText", "sceneId", "shotId", "medium")
+OPERATIONS = ("add_node", "update_node", "delete_node", "connect", "disconnect", "group", "set_group", "align", "distribute", "arrange")
+
+
+def _coordinate(value: Any, name: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or abs(number) > CANVAS_COORD_LIMIT:
+        raise CanvasOperationError(_text_of("_coordinate.text").format(name, CANVAS_COORD_LIMIT))
+    return number
+
+
+def _size(value: Any, name: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or not 0 < number <= CANVAS_SIZE_LIMIT:
+        raise CanvasOperationError(_text_of("_size.text").format(name, CANVAS_SIZE_LIMIT))
+    return number
+
+
+def _geometry(key: str, value: Any) -> float:
+    return _coordinate(value, key) if key in ("x", "y") else _size(value, key)
+
+
+def _ids(operation: Mapping[str, Any], *keys: str) -> list[Any]:
+    for key in keys:
+        value = operation.get(key)
+        if isinstance(value, list) and value:
+            return value
+    raise CanvasOperationError(_text_of("_ids.text").format(keys[0]))
+
+
+def _check_nesting(nodes: Sequence[Mapping[str, Any]]) -> None:
+    problem = canvas_group_problem([dict(item) for item in nodes])
+    if problem:
+        raise CanvasOperationError(problem)
+
+
+def _set_group(node: dict[str, Any], group_id: str | None) -> None:
+    payload = {key: value for key, value in (node.get("payload") or {}).items() if key != "groupId"}
+    if group_id:
+        payload["groupId"] = group_id
+    node["payload"] = payload
+
+
+#: The kinds that hold a file somebody put there (an upload, a library element, a storyboard picture).
+HOLDS_MEDIA = frozenset({"media", "style_ref"})
+_HELD_MEDIA = frozenset({"image", "video", "audio"})
+
+
+def _binding_of(value: Any) -> dict[str, Any]:
+    """Which shot a node's result is written back to: ``{sceneId, shotId?}``; a shot of 0 or none means the whole scene."""
+    if not isinstance(value, Mapping) or not str(value.get("sceneId") or "").strip():
+        raise CanvasOperationError(_text_of("_binding_of.text"))
+    binding: dict[str, Any] = {"sceneId": str(value["sceneId"]).strip()}
+    raw = value.get("shotId")
+    if raw not in (None, "", 0):
+        try:
+            binding["shotId"] = int(raw)
+        except (TypeError, ValueError) as error:
+            raise CanvasOperationError(_text_of("_binding_of.text.2")) from error
+    return binding
+
+
+def _held_output(kind: str, value: Any) -> dict[str, Any]:
+    """The file a media node holds: ``{medium, url, name?}``. Only the kinds that hold a file take one."""
+    if kind not in HOLDS_MEDIA:
+        raise CanvasOperationError(_text_of("_held_output.text").format(kind))
+    url = str((value or {}).get("url") or "").strip() if isinstance(value, Mapping) else ""
+    medium = str(value.get("medium") or "") if isinstance(value, Mapping) else ""
+    if medium not in _HELD_MEDIA or not url.startswith(("http://", "https://", "/media/")):
+        raise CanvasOperationError(_text_of("_held_output.text.2"))
+    held = {"medium": medium, "url": url}
+    if str(value.get("name") or "").strip():
+        held["name"] = str(value["name"]).strip()[:120]
+    element = value.get("element")
+    if isinstance(element, Mapping) and str(element.get("id") or "").strip():
+        # Which library element this file is a copy of (app/service/canvas_elements.py): a note of where it came from, never an address.
+        held["element"] = {key: str(element[key]).strip()[:160] for key in ("id", "name", "kind", "file_id", "slot", "sha256") if str(element.get(key) or "").strip()}
+    source = value.get("source")
+    if isinstance(source, Mapping) and str(source.get("node_id") or "").strip():
+        # Which node's picture this file was cut from (app/service/canvas_image_ops.py): a note of where it came from, never an address.
+        held["source"] = _cut_source(source)
+    return held
+
+
+def _cut_source(source: Mapping[str, Any]) -> dict[str, Any]:
+    """``{node_id, run_id?, crop?: {x, y, w, h}, grid?: {rows, columns, row, column}}``: ids as text, numbers finite, nothing else kept."""
+    note: dict[str, Any] = {key: str(source[key]).strip()[:160] for key in ("node_id", "run_id") if str(source.get(key) or "").strip()}
+    for name, fields, number in (("crop", ("x", "y", "w", "h"), float), ("grid", ("rows", "columns", "row", "column"), int)):
+        part = source.get(name)
+        try:
+            values = {field: float(part[field]) for field in fields} if isinstance(part, Mapping) else None
+        except (KeyError, TypeError, ValueError):
+            values = None
+        if values and all(math.isfinite(item) for item in values.values()):
+            note[name] = {field: number(item) if number is int else round(item, 6) for field, item in values.items()}
+    return note
 
 
 def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], dict[str, str]]:
     """Apply every operation or none: returns the new document and ``ref -> node id`` for what was added."""
     if not operations:
-        raise CanvasOperationError("operations 不能为空")
+        raise CanvasOperationError(_text_of("apply_operations.text"))
     nodes: list[dict[str, Any]] = [dict(item) for item in document.get("nodes") or []]
     edges: list[dict[str, Any]] = [dict(item) for item in document.get("edges") or []]
     refs: dict[str, str] = {}
@@ -528,7 +644,7 @@ def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[s
         for node in nodes:
             if node.get("id") == node_id:
                 return node
-        raise CanvasOperationError(f"画布上没有节点 {value}")
+        raise CanvasOperationError(_text_of("find.text").format(value))
 
     for index, operation in enumerate(operations, start=1):
         op = str(operation.get("op") or "")
@@ -536,16 +652,20 @@ def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[s
             if op == "add_node":
                 kind = str(operation.get("kind") or "")
                 if kind not in CREATABLE:
-                    raise CanvasOperationError(f"不能添加 {kind or '未知'} 类型的节点；可用：{'、'.join(sorted(CREATABLE))}")
+                    raise CanvasOperationError(_text_of("apply_operations.text.2").format(kind or '未知', '、'.join(sorted(CREATABLE))))
                 width, height = DEFAULT_SIZES[kind]
                 x, y = _place(nodes)
                 payload: dict[str, Any] = {key: operation[key] for key in _TEXT_FIELDS if operation.get(key) not in (None, "")}
                 if isinstance(operation.get("params"), Mapping):
                     payload["params"] = dict(operation["params"])
+                if "binding" in operation:
+                    payload["binding"] = _binding_of(operation["binding"])
+                if "output" in operation:
+                    payload["output"] = _held_output(kind, operation["output"])
                 node = {
                     "id": _new_id(), "kind": kind, "track": "freezone",
-                    "x": float(operation.get("x", x)), "y": float(operation.get("y", y)),
-                    "width": float(operation.get("width", width)), "height": float(operation.get("height", height)),
+                    "x": _geometry("x", operation.get("x", x)), "y": _geometry("y", operation.get("y", y)),
+                    "width": _geometry("width", operation.get("width", width)), "height": _geometry("height", operation.get("height", height)),
                     "artifact_id": None, "payload": payload,
                 }
                 nodes.append(node)
@@ -559,56 +679,121 @@ def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[s
                         payload[key] = operation[key]
                 if isinstance(operation.get("params"), Mapping):
                     payload["params"] = {**(payload.get("params") or {}), **operation["params"]}
+                if "binding" in operation:
+                    payload["binding"] = _binding_of(operation["binding"])
+                if "output" in operation:
+                    payload["output"] = _held_output(str(node.get("kind") or ""), operation["output"])
+                if "collapsed" in operation or "expandedSize" in operation:
+                    if node.get("kind") != "group":
+                        raise CanvasOperationError(_text_of("apply_operations.text.3"))
+                    if "expandedSize" in operation:
+                        size = operation["expandedSize"]
+                        if not isinstance(size, (list, tuple)) or len(size) != 2:
+                            raise CanvasOperationError(_text_of("apply_operations.text.4"))
+                        payload["expandedSize"] = [_size(size[0], "expandedSize"), _size(size[1], "expandedSize")]
+                    if "collapsed" in operation:
+                        if not isinstance(operation["collapsed"], bool):
+                            raise CanvasOperationError(_text_of("apply_operations.text.5"))
+                        if operation["collapsed"] and not payload.get("collapsed") and "expandedSize" not in payload:
+                            # Remember the open frame, so unfolding gives back the size it had.
+                            payload["expandedSize"] = [float(node["width"]), float(node["height"])]
+                        if not operation["collapsed"] and payload.get("collapsed") and payload.get("expandedSize") and not {"width", "height"} & operation.keys():
+                            node["width"], node["height"] = (float(item) for item in payload["expandedSize"])
+                        payload["collapsed"] = operation["collapsed"]
                 node["payload"] = payload
                 for key in ("x", "y", "width", "height"):
                     if key in operation:
-                        node[key] = float(operation[key])
+                        node[key] = _geometry(key, operation[key])
             elif op == "delete_node":
                 node = find(operation.get("id"))
                 removed = node["id"]
                 nodes = [item for item in nodes if item.get("id") != removed]
                 edges = [item for item in edges if removed not in (item.get("source"), item.get("target"))]
+                # What a deleted group held stays where it was: in the group around it, if there is one.
+                parent = canvas_layout.group_of(node) if node.get("kind") == "group" else ""
                 for item in nodes:
                     if (item.get("payload") or {}).get("groupId") == removed:
-                        item["payload"] = {k: v for k, v in item["payload"].items() if k != "groupId"}
+                        _set_group(item, parent or None)
             elif op == "connect":
                 source, target = find(operation.get("source")), find(operation.get("target"))
                 edge_kind, role = connection(source, target, role=operation.get("role"))
                 if creates_cycle(edges, source["id"], target["id"]):
-                    raise CanvasOperationError("这条连接会形成环")
+                    raise CanvasOperationError(_text_of("apply_operations.text.6"))
                 if not any(item.get("source") == source["id"] and item.get("target") == target["id"] for item in edges):
                     edges.append({"id": f"e_{uuid.uuid4().hex[:16]}", "source": source["id"], "target": target["id"], "kind": edge_kind, "payload": {"role": role}})
             elif op == "disconnect":
                 source_id, target_id = resolve(operation.get("source")), resolve(operation.get("target"))
                 kept = [item for item in edges if not (item.get("id") == operation.get("edge_id") or (item.get("source") == source_id and item.get("target") == target_id))]
                 if len(kept) == len(edges):
-                    raise CanvasOperationError("没有这条连接")
+                    raise CanvasOperationError(_text_of("apply_operations.text.7"))
                 edges = kept
             elif op == "group":
-                members = [find(item) for item in operation.get("ids") or []]
+                members = [find(item) for item in operation.get("ids") or operation.get("node_ids") or []]
                 if not members:
-                    raise CanvasOperationError("group 需要 ids")
-                if any(item.get("kind") == "group" for item in members):
-                    raise CanvasOperationError("分组不能嵌套")
+                    raise CanvasOperationError(_text_of("apply_operations.text.8"))
+                parent_ref = operation.get("parent") or operation.get("group_id")
+                parent = find(parent_ref) if parent_ref else None
+                if parent is not None and parent.get("kind") != "group":
+                    raise CanvasOperationError(_text_of("apply_operations.text.9").format(parent_ref))
+                if parent is not None and any(item["id"] == parent["id"] for item in members):
+                    raise CanvasOperationError(_text_of("apply_operations.text.10"))
+                if parent is None and not parent_ref:
+                    # Grouping things that already share a group keeps the new group inside it.
+                    shared = {canvas_layout.group_of(item) for item in members}
+                    candidate = next(iter(shared)) if len(shared) == 1 else ""
+                    parent = next((item for item in nodes if item.get("id") == candidate and item.get("kind") == "group"), None)
                 left = min(float(item["x"]) for item in members) - 40
                 top = min(float(item["y"]) for item in members) - 60
                 right = max(float(item["x"]) + float(item["width"]) for item in members) + 40
                 bottom = max(float(item["y"]) + float(item["height"]) for item in members) + 40
                 group = {
                     "id": _new_id(), "kind": "group", "track": "freezone", "x": left, "y": top, "width": right - left, "height": bottom - top,
-                    "artifact_id": None, "payload": {"label": str(operation.get("label") or "分组")},
+                    "artifact_id": None, "payload": {"label": str(operation.get("label") or _text_of("apply_operations.group.payload.label"))},
                 }
-                nodes.insert(0, group)
+                # Groups draw first, so their frames stay behind what they hold; an outer group before an inner one.
+                nodes.insert(next((i + 1 for i, item in enumerate(nodes) if parent is not None and item is parent), 0), group)
                 for member in members:
-                    member["payload"] = {**(member.get("payload") or {}), "groupId": group["id"]}
+                    _set_group(member, group["id"])
+                if parent is not None:
+                    _set_group(group, str(parent["id"]))
+                    if canvas_group_problem([dict(item) for item in nodes]) and not parent_ref:
+                        _set_group(group, None)
+                _check_nesting(nodes)
+                canvas_layout.fit_groups(nodes, [canvas_layout.group_of(group)])
                 if operation.get("ref"):
                     refs[str(operation["ref"])] = group["id"]
+            elif op == "set_group":
+                members = [find(item) for item in _ids(operation, "node_ids", "ids")]
+                target_ref = operation.get("group_id")
+                target = find(target_ref) if target_ref else None
+                if target is not None and target.get("kind") != "group":
+                    raise CanvasOperationError(_text_of("apply_operations.text.11").format(target_ref))
+                if target is not None and any(item["id"] == target["id"] for item in members):
+                    raise CanvasOperationError(_text_of("apply_operations.text.12"))
+                for member in members:
+                    _set_group(member, str(target["id"]) if target is not None else None)
+                _check_nesting(nodes)
+                if target is not None:
+                    canvas_layout.fit_groups(nodes, [str(target["id"])])
+            elif op in ("align", "distribute", "arrange"):
+                ids = [resolve(item) for item in _ids(operation, "node_ids", "ids")]
+                try:
+                    if op == "align":
+                        canvas_layout.align(nodes, ids, str(operation.get("mode") or ""))
+                    elif op == "distribute":
+                        canvas_layout.distribute(nodes, ids, str(operation.get("axis") or ""))
+                    else:
+                        canvas_layout.arrange(nodes, ids, str(operation.get("layout") or ""), gap=operation.get("gap"), edges=edges)
+                except ValueError as exc:
+                    raise CanvasOperationError(str(exc)) from exc
+                by_id = {str(item.get("id")): item for item in nodes}
+                canvas_layout.fit_groups(nodes, [canvas_layout.group_of(by_id[item]) for item in ids if item in by_id])
             else:
-                raise CanvasOperationError(f"未知操作 {op or '（缺 op）'}；可用：add_node、update_node、delete_node、connect、disconnect、group")
+                raise CanvasOperationError(_text_of("apply_operations.text.13").format(op or '（缺 op）', '、'.join(OPERATIONS)))
         except CanvasOperationError as exc:
-            raise CanvasOperationError(f"第 {index} 个操作（{op or '?'}）：{exc}；整批未生效") from exc
+            raise CanvasOperationError(_text_of("apply_operations.text.14").format(index, op or '?', exc)) from exc
         except (TypeError, ValueError) as exc:
-            raise CanvasOperationError(f"第 {index} 个操作（{op or '?'}）字段不合法：{exc}；整批未生效") from exc
+            raise CanvasOperationError(_text_of("apply_operations.text.15").format(index, op or '?', exc)) from exc
     return {"nodes": nodes, "edges": edges}, refs
 
 
@@ -632,8 +817,24 @@ def summarize(document: Mapping[str, Any], runs: Mapping[str, Mapping[str, Any]]
             "output": {"medium": output.get("medium"), "url": output.get("url")} if output else None,
             "last_run": (run or {}).get("status"),
             "track": node.get("track"),
+            "group": canvas_layout.group_of(node) or None,
+            **({"collapsed": bool(payload.get("collapsed"))} if node.get("kind") == "group" else {}),
         })
+    box = canvas_layout.bounds(nodes.values())
     return {
         "node_count": len(nodes), "edge_count": len(edges), "by_kind": by_kind, "nodes": rows, "truncated": len(nodes) > limit,
+        "bounds": box or {"x": 0.0, "y": 0.0, "width": 0.0, "height": 0.0},
         "edges": [{"id": edge.get("id"), "source": edge.get("source"), "target": edge.get("target"), "kind": edge.get("kind"), "role": (edge.get("payload") or {}).get("role")} for edge in edges[:limit * 2]],
     }
+
+
+def changed_node_ids(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[str]:
+    """Nodes that are new or different in ``after``, or gained or lost a connection, in its order: what a UI should bring into view."""
+    old = {str(item.get("id")): item for item in before.get("nodes") or []}
+    def wires(document: Mapping[str, Any]) -> set[tuple[str, str, str]]:
+        return {(str(edge.get("source")), str(edge.get("target")), str(edge.get("id"))) for edge in document.get("edges") or []}
+    touched = {end for wire in wires(before) ^ wires(after) for end in wire[:2]}
+    return [
+        str(item.get("id")) for item in after.get("nodes") or []
+        if old.get(str(item.get("id"))) != item or str(item.get("id")) in touched
+    ]

@@ -4,9 +4,11 @@ import { Trash2 } from 'lucide-react';
 import { actorsInShot, POSTURE_LABELS, type LandmarkShape, type StageLandmark, type StageOperation, type StagePlan, type StagePosture, type StageShot } from '../../spatial/spatialTypes';
 import { actorMoveOperation, addLandmarkOperation } from '../deskOperations';
 import type { EditRequest, SelectionRef } from '../deskTypes';
+import { contactOn, contactOperation, detachOperations, seatOf } from '../lib/contacts';
 import { crowdMembers, crowdOf, distance2 } from '../lib/stageMath';
 import { KIND_LABELS, SHAPE_LABELS, landmarkColor } from '../three/stageLook';
-import { NumberField } from './fields';
+import { ActorContacts, PropContacts } from './ContactSection';
+import { ColorField, DraftInput, NumberField } from './fields';
 import { ModelBinding } from './ModelBinding';
 
 interface Props {
@@ -23,9 +25,16 @@ interface Props {
 
 function LandmarkName({ landmark, plan, disabled, onRename }: { landmark: StageLandmark; plan: StagePlan; disabled: boolean; onRename: (name: string) => void }) {
   const [problem, setProblem] = useState('');
-  const send = (text: string) => {
+  // The note is about the name that was typed for this piece; another piece picked is a fresh start.
+  const [shownFor, setShownFor] = useState(landmark.name);
+  if (shownFor !== landmark.name) {
+    setShownFor(landmark.name);
+    setProblem('');
+  }
+  const send = (text: string, input: HTMLInputElement) => {
     const name = text.trim();
-    if (!name || name === landmark.name) { setProblem(''); return; }
+    if (!name || name === landmark.name) { setProblem(''); input.value = landmark.name; return; }
+    // A taken name stays in the field, so the director can change a character instead of typing it again.
     if (plan.landmarks.some(item => item.name === name) || plan.actors.some(actor => actor.name === name)) { setProblem(`场上已经有「${name}」`); return; }
     setProblem('');
     onRename(name);
@@ -33,11 +42,7 @@ function LandmarkName({ landmark, plan, disabled, onRename }: { landmark: StageL
   return (
     <label className="desk-field is-wide">
       <span>名称</span>
-      <input
-        key={landmark.name} defaultValue={landmark.name} maxLength={120} disabled={disabled}
-        onBlur={event => send(event.target.value)}
-        onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }}
-      />
+      <DraftInput value={landmark.name} maxLength={120} disabled={disabled} onDone={send} />
       {problem && <small className="desk-field__problem">{problem}</small>}
     </label>
   );
@@ -63,13 +68,15 @@ export function Inspector({ plan, shot, selection, editable, error, taskId, onCo
     if (!actor) return <section className="desk-inspector" aria-label="属性"><h2>{primary.name}</h2><p className="desk-inspector__empty">本镜中该角色不在场。</p></section>;
     const others = actorsInShot(plan, shot).filter(item => item.name !== actor.name && shot?.subjects.includes(item.name));
     const move = (change: { position?: [number, number]; yaw_deg?: number }) => send(`调整 ${actor.name}`, [actorMoveOperation(shot, actor.name, change)]);
+    // Someone on a seat is where the seat is: the mark only comes back into play once they stand up.
+    const seated = Boolean(seatOf(plan, shot?.shot_id, actor.name));
     return (
       <section className="desk-inspector" aria-label="属性">
         <h2>{actor.name} <small>{actor.role === 'principal' ? '主角' : '配角'}</small></h2>
         {alert}
         <div className="desk-inspector__grid">
-          <NumberField label="X（米）" value={actor.position[0]} min={-500} max={500} disabled={!editable} onCommit={value => move({ position: [value, actor.position[1]] })} />
-          <NumberField label="Z（米）" value={actor.position[1]} min={-500} max={500} disabled={!editable} onCommit={value => move({ position: [actor.position[0], value] })} />
+          <NumberField label="X（米）" value={actor.position[0]} min={-500} max={500} disabled={!editable || seated} onCommit={value => move({ position: [value, actor.position[1]] })} />
+          <NumberField label="Z（米）" value={actor.position[1]} min={-500} max={500} disabled={!editable || seated} onCommit={value => move({ position: [actor.position[0], value] })} />
           <NumberField label="朝向（°）" value={actor.yaw_deg} min={-180} max={180} step={5} disabled={!editable} onCommit={value => move({ yaw_deg: value })} />
           <NumberField label="身高（米）" value={actor.height_m} min={0.4} max={3} step={0.05} disabled={!editable} onCommit={value => send(`调整 ${actor.name} 身高`, [{ op: 'move_actor', name: actor.name, height_m: value }])} />
           <label className="desk-field is-wide">
@@ -79,6 +86,7 @@ export function Inspector({ plan, shot, selection, editable, error, taskId, onCo
             </select>
           </label>
         </div>
+        <ActorContacts key={actor.name} plan={plan} shot={shot} actor={actor.name} editable={editable} send={send} />
         <h3>与本镜其他主体的距离</h3>
         {others.length === 0
           ? <p className="desk-inspector__empty">本镜没有其他主体。</p>
@@ -96,11 +104,21 @@ export function Inspector({ plan, shot, selection, editable, error, taskId, onCo
     if (!landmark) return null;
     const change = (label: string, fields: Record<string, unknown>) => send(label, [{ op: 'transform_landmark', name: landmark.name, ...fields }]);
     const onAxis = plan.axis.from_name === landmark.name || plan.axis.to_name === landmark.name;
+    // A prop in a hand goes where the hand goes: where it stands and which way it faces are not its own.
+    const held = contactOn(plan, shot?.shot_id, landmark.name)?.kind === 'hold';
     const rename = (name: string) => {
-      // There is no rename operation: the piece is rebuilt under its new name in one all-or-nothing batch.
+      // There is no rename operation: the piece is rebuilt under its new name in one all-or-nothing batch,
+      // and every contact that named it is made again under the new name.
+      const renamed = (plan.contacts || []).filter(item => item.target === landmark.name || item.support === landmark.name).map(item => ({
+        ...contactOperation(item),
+        target: item.target === landmark.name ? name : item.target,
+        support: item.support === landmark.name ? name : item.support,
+      }));
       send(`重命名 ${landmark.name}`, [
+        ...detachOperations(plan, landmark.name),
         { op: 'remove_landmark', name: landmark.name }, addLandmarkOperation(landmark, name),
         ...(landmark.element_id ? [{ op: 'bind_landmark_model', name, element_id: landmark.element_id }] : []),
+        ...renamed,
       ]);
       onSelect({ kind: 'landmark', name }, false);
     };
@@ -131,21 +149,15 @@ export function Inspector({ plan, shot, selection, editable, error, taskId, onCo
           <NumberField label="宽（米）" value={landmark.size[0]} min={0.05} max={50} disabled={!editable} onCommit={value => size(0, value)} />
           <NumberField label="深（米）" value={landmark.size[1]} min={0.05} max={50} disabled={!editable} onCommit={value => size(1, value)} />
           <NumberField label="高（米）" value={landmark.size[2]} min={0.05} max={50} disabled={!editable} onCommit={value => size(2, value)} />
-          <NumberField label="朝向（°）" value={landmark.yaw_deg ?? 0} min={-180} max={180} step={5} disabled={!editable} onCommit={value => change(`旋转 ${landmark.name}`, { yaw_deg: value })} />
-          <NumberField label="X（米）" value={landmark.position[0]} min={-500} max={500} disabled={!editable} onCommit={value => change(`移动 ${landmark.name}`, { position: [value, landmark.position[1]] })} />
-          <NumberField label="Z（米）" value={landmark.position[1]} min={-500} max={500} disabled={!editable} onCommit={value => change(`移动 ${landmark.name}`, { position: [landmark.position[0], value] })} />
-          <label className="desk-field">
-            <span>颜色</span>
-            <input
-              key={landmarkColor(landmark)} type="color" defaultValue={landmarkColor(landmark)} disabled={!editable}
-              onBlur={event => { if (event.target.value !== landmarkColor(landmark)) change(`调整 ${landmark.name} 颜色`, { color: event.target.value }); }}
-              onChange={event => { if (event.target.value !== landmarkColor(landmark)) change(`调整 ${landmark.name} 颜色`, { color: event.target.value }); }}
-            />
-          </label>
+          <NumberField label="朝向（°）" value={landmark.yaw_deg ?? 0} min={-180} max={180} step={5} disabled={!editable || held} onCommit={value => change(`旋转 ${landmark.name}`, { yaw_deg: value })} />
+          <NumberField label="X（米）" value={landmark.position[0]} min={-500} max={500} disabled={!editable || held} onCommit={value => change(`移动 ${landmark.name}`, { position: [value, landmark.position[1]] })} />
+          <NumberField label="Z（米）" value={landmark.position[1]} min={-500} max={500} disabled={!editable || held} onCommit={value => change(`移动 ${landmark.name}`, { position: [landmark.position[0], value] })} />
+          <ColorField label="颜色" value={landmarkColor(landmark)} disabled={!editable} onCommit={color => change(`调整 ${landmark.name} 颜色`, { color })} />
           <button type="button" className="desk-button" disabled={!editable || !landmark.color} onClick={() => change(`恢复 ${landmark.name} 颜色`, { color: '' })}>用类别色</button>
         </div>
+        <PropContacts key={landmark.name} plan={plan} shot={shot} landmark={landmark} editable={editable} send={send} />
         <ModelBinding taskId={taskId} landmark={landmark} editable={editable} onCommit={onCommit} />
-        <button type="button" className="desk-button is-danger" disabled={!editable} onClick={() => send(`删除 ${landmark.name}`, [{ op: 'remove_landmark', name: landmark.name }])}>
+        <button type="button" className="desk-button is-danger" disabled={!editable} onClick={() => send(`删除 ${landmark.name}`, [...detachOperations(plan, landmark.name), { op: 'remove_landmark', name: landmark.name }])}>
           <Trash2 aria-hidden="true" /> 删除道具
         </button>
       </section>

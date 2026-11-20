@@ -1,0 +1,27 @@
+{
+  "_doc": "app/platform/permissions.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.role_labels": [
+    "超级管理员",
+    "全部权限，包括授予角色"
+  ],
+  "module.role_labels.ops": [
+    "运维",
+    "模型、技能、能力配置，可操作他人项目"
+  ],
+  "module.role_labels.finance": [
+    "财务",
+    "套餐定价、退款与积分调整审批、对账"
+  ],
+  "module.role_labels.support": [
+    "客服",
+    "查看和停用用户、查看订单和项目、发起退款"
+  ],
+  "module.role_labels.auditor": [
+    "审计",
+    "只读：用户、订单、项目、对账、审计记录"
+  ],
+  "authorize.text": "用户账户不存在或已停用",
+  "authorize.text.2": "没有执行这项操作的权限",
+  "authorize.text.3": "首次登录必须先在用户中心修改管理员密码",
+  "authorize.text.4": "任务不存在"
+}

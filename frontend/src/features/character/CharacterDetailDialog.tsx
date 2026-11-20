@@ -35,6 +35,8 @@ export function CharacterDetailDialog({
   const closeRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const closeHandlerRef = useRef(onClose);
+  // 在窗口里按下、拖到外面才松手(比如选中一段文字)不算点了空白处。
+  const pressedBackdropRef = useRef(false);
 
   useEffect(() => {
     closeHandlerRef.current = onClose;
@@ -83,8 +85,11 @@ export function CharacterDetailDialog({
   return createPortal(
     <div
       className="character-dialog-backdrop"
+      onMouseDown={event => { pressedBackdropRef.current = event.target === event.currentTarget; }}
       onClick={event => {
-        if (event.target === event.currentTarget) closeHandlerRef.current();
+        const pressedHere = pressedBackdropRef.current;
+        pressedBackdropRef.current = false;
+        if (pressedHere && event.target === event.currentTarget) closeHandlerRef.current();
       }}
     >
       <section

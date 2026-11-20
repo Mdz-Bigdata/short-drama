@@ -58,6 +58,21 @@ describe('VideoPromptEditor', () => {
     expect(onSave).toHaveBeenLastCalledWith(null);
   });
 
+  it('starts from a draft handed back to it and reports every edit', () => {
+    const onDraftChange = vi.fn();
+    render(
+      <VideoPromptEditor shotId={11} prompt={PROMPT} edited={false} mentionKinds={KINDS} referenceNumbers={NUMBERS}
+        locked={false} saving={false} onSave={vi.fn()} initialDraft={`${PROMPT}未写完`} onDraftChange={onDraftChange} />,
+    );
+    const field = screen.getByLabelText('视频提示词文稿') as HTMLTextAreaElement;
+    expect(field.value).toBe(`${PROMPT}未写完`);
+    expect(screen.getByRole('status').textContent).toContain('未保存');
+
+    fireEvent.change(field, { target: { value: PROMPT } });
+    expect(onDraftChange).toHaveBeenLastCalledWith(PROMPT);
+    expect(screen.getByRole('status').textContent).toContain('已同步');
+  });
+
   it('previews which reference image each name binds to and the text the model receives', async () => {
     const user = userEvent.setup();
     render(
@@ -77,5 +92,33 @@ describe('VideoPromptEditor', () => {
         referenceNumbers={NUMBERS} locked saving={false} onSave={vi.fn()} />,
     );
     expect((screen.getByLabelText('视频提示词文稿') as HTMLTextAreaElement).disabled).toBe(true);
+  });
+});
+
+describe('VideoPromptEditor @ completion', () => {
+  afterEach(cleanup);
+
+  it('offers the names already registered in mentionKinds when no task id or candidates are given', async () => {
+    const user = userEvent.setup();
+    render(
+      <VideoPromptEditor shotId={11} prompt="" edited={false} mentionKinds={KINDS}
+        referenceNumbers={NUMBERS} locked={false} saving={false} onSave={vi.fn()} />,
+    );
+    const field = screen.getByLabelText('视频提示词文稿') as HTMLTextAreaElement;
+    await user.type(field, '画面：@罗');
+    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual(['罗荧数字演员']);
+    await user.keyboard('{Enter}');
+    expect(field.value).toBe('画面：@[罗荧] ');
+    expect(screen.getByRole('status').textContent).toContain('未保存');
+  });
+
+  it('prefers candidates handed in by the caller', async () => {
+    const user = userEvent.setup();
+    render(
+      <VideoPromptEditor shotId={11} prompt="" edited={false} mentionKinds={KINDS} referenceNumbers={NUMBERS}
+        locked={false} saving={false} onSave={vi.fn()} mentionCandidates={[{ name: '铜镜', kind: 'prop' }]} />,
+    );
+    await user.type(screen.getByLabelText('视频提示词文稿'), '@');
+    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual(['铜镜拍摄道具']);
   });
 });

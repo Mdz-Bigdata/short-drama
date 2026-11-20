@@ -1,0 +1,43 @@
+{
+  "_about": "人物出场字幕(app/core/character_intro.py)：人物第一次在成片里出场时，在他身旁竖排显示姓名和身份，之后不再出现。不调模型：谁在这一镜里、站在画面哪一侧来自分镜(characters 与 spatial.screen 的画面区域)，身份取角色设定开头的那一段(「外门杂役/编号丁七/…」取「外门杂役」)，投稿材料里写过身份的以它为准。scope 是「第一次」按什么算：drama 是整部剧只出一次(前面的集里出过场的人，这一集不再出)，episode 是每一集各出一次。timing 都是秒：lead 是人物所在的那个分镜瞬间开始后多久出字，seconds 是停留多久，fade 是淡入淡出各多久，min_seconds 是片段太短时至少停留多久。columns_per_side 是同一侧同时最多并排几个人，多出来的顺延到下一轮。字幕放在「只可能是他」的那一刻：镜里只有他一个人时放在他对面的空处；还有别人(分镜排了位置的群演也算)时放在他自己那一侧，那一侧没有别人才算清楚。第一次出场时不清楚，就往后等最多 defer_clips 个片段找清楚的一刻；等不到就还放在第一次出场，并标上 unsure 请剪辑的人看一眼——位置和时间都来自分镜，不是看着画面定的，人物在片段第几秒真的入画这里不知道。identity.split 是切身份用的分隔符，max_chars 是身份最多几个字(超出的整段不要，不截半句)，name_max_chars 是姓名最多几个字。sides 用画面区域里的字判断左右，判断不出就用 default_side，同一镜里再有判断不出的就左右交替。style 是画在 1080×1920 画面上的样式：top 是这一列顶端在画面高度的比例(避开平台顶部信息和右侧按钮)，margin_x 是离画面左右边的距离，姓名在右一列、身份在它左边一列并往下错开 identity_drop 个姓名字高，rule 是姓名右侧的一条细竖线。limits 是人手改字幕时的上限。2026-11-19 按使用者的要求加的，样式没有做过对比，只在本机用 ffmpeg 合成过样片。",
+  "scope": "drama",
+  "scopes": ["drama", "episode"],
+  "timing": {"lead": 0.6, "seconds": 3.0, "fade": 0.3, "min_seconds": 1.2, "gap": 0.3},
+  "columns_per_side": 2,
+  "defer_clips": 2,
+  "identity": {
+    "split": "[/／，,；;。:：|｜、（(\\s]",
+    "max_chars": 8,
+    "name_max_chars": 8
+  },
+  "sides": {"left": ["左"], "right": ["右"]},
+  "default_side": "right",
+  "style": {
+    "top": 0.2,
+    "margin_x": 64,
+    "name_size": 84,
+    "name_step": 1.12,
+    "identity_size": 44,
+    "identity_step": 1.16,
+    "identity_drop": 0.6,
+    "column_gap": 18,
+    "slot_gap": 36,
+    "name_color": [255, 255, 255, 255],
+    "identity_color": [246, 222, 160, 255],
+    "stroke_color": [0, 0, 0, 230],
+    "name_stroke": 5,
+    "identity_stroke": 3,
+    "rule_width": 4,
+    "rule_gap": 14,
+    "rule_color": [214, 48, 49, 235],
+    "long_name_chars": 4,
+    "long_name_shrink": 0.82
+  },
+  "limits": {"cards_per_clip": 4, "note_chars": 12},
+  "errors": {
+    "cards": "出场字幕要是一个列表，每一项有 name(姓名)，可以有 identity(身份)、side(left 或 right)、at(片段第几秒出现)",
+    "too_many": "一个片段最多放 {limit} 条出场字幕",
+    "name": "第 {index} 条出场字幕缺姓名",
+    "side": "第 {index} 条出场字幕的 side 只能是 left 或 right"
+  }
+}

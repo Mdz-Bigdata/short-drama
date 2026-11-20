@@ -4,6 +4,9 @@
 一次出图画一张 16:9 的 2×2 四宫格(省钱，也让四格同一光线、同一陈设)，再切成四张单独的视角：
 分割线从画面中线出发吸附到真实的白缝上(与道具四视图同一套分隔判定)。场景铺满整格，不像道具那样
 收紧到主体，只去掉白缝本身。四张都是空景底板，主场景全景同时作为场地的主参考图。
+
+反打视角不在四宫格里：它以切好的主场景全景为参考另出一张单图，从全景画面的深处拍回主机位一侧，
+正反打的反打镜头照它定背景(措辞在 data/prompt/scene_views.json)。
 """
 
 from __future__ import annotations
@@ -12,17 +15,31 @@ import io
 
 from PIL import Image
 
+from app.core import prompt_data
 from app.core.actor_sheet_cutter import _runs, _SeparatorMap
 from app.core.asset_sheets import EMPTY_SCENE_PREFIX, EMPTY_SCENE_SUFFIX
 
-#: (槽位, 中文名, 拍摄时用来做什么)。顺序即前端展示顺序，也是宫格的阅读顺序。
-SCENE_VIEWS: tuple[tuple[str, str, str], ...] = (
-    ("scene_main", "主场景全景", "整体空间布局与左右关系"),
-    ("scene_45", "45°斜角", "走位与转身时的透视"),
-    ("scene_depth", "纵深视角", "纵深调度：走廊、门洞与前后景"),
-    ("scene_detail", "关键细节", "特写与插入镜头的陈设材质"),
+# 视角的中文名与用途、四宫格出图说明和报错：app/data/prompt/scene_turnaround.json。
+_WORDING = "scene_turnaround"
+
+
+def _says(key: str, /, **values: object) -> str:
+    """场地四视角措辞表里的一句，填好值(长句在表里按行存，直接相连)。"""
+    body = prompt_data.load(_WORDING)["says"][key]
+    return ("".join(body) if isinstance(body, list) else str(body)).format(**values)
+
+
+#: 槽位的顺序即前端展示顺序，也是宫格的阅读顺序；与 elementTypes 的场地槽位一致。
+_SLOTS: tuple[str, ...] = ("scene_main", "scene_45", "scene_depth", "scene_detail", "scene_reverse")
+_VIEW_WORDS: dict[str, list[str]] = prompt_data.value(_WORDING, "views")
+#: (槽位, 中文名, 拍摄时用来做什么)。
+SCENE_VIEWS: tuple[tuple[str, str, str], ...] = tuple(
+    (slot, str(_VIEW_WORDS[slot][0]), str(_VIEW_WORDS[slot][1])) for slot in _SLOTS
 )
 SCENE_VIEW_SLOTS: tuple[str, ...] = tuple(slot for slot, _, _ in SCENE_VIEWS)
+#: 四宫格切出来的四张；反打视角另出一张。
+SCENE_GRID_SLOTS: tuple[str, ...] = SCENE_VIEW_SLOTS[:4]
+SCENE_REVERSE_SLOT = "scene_reverse"
 SCENE_VIEW_LABELS: dict[str, str] = {slot: label for slot, label, _ in SCENE_VIEWS}
 SCENE_VIEW_PURPOSES: dict[str, str] = {slot: purpose for slot, _, purpose in SCENE_VIEWS}
 #: 四宫格出图尺寸：16:9 横向，每格仍是 16:9；不超过图像模型单张约 462 万像素的上限。
@@ -30,25 +47,8 @@ SCENE_TURNAROUND_SIZE = "2848x1600"
 # 分割线最多从中线挪开多少(占边长的比例)。
 SPLIT_SEARCH = 0.15
 
-SCENE_TURNAROUND_INSTRUCTION = (
-    f"{EMPTY_SCENE_PREFIX}"
-    "生成一张影视拍摄场地四视角定妆参考图：16:9 横向画布，严格的 2 行 × 2 列四宫格，格与格之间留一条纯白细缝。"
-    "四格是同一个空场景：同一时段、同一主光方向与色温、同一陈设位置、同一材质颜色，是可直接拍摄的空景底板；"
-    "全场无人，不出现任何人物、人影、剪影、镜面倒影里的人或人体局部。"
-    "左上格：主场景全景，主机位平视，交代整体布局与出入口；"
-    "右上格：45°斜角，从主机位一侧转 45° 看同一空间，呈现走位与转身时的透视；"
-    "左下格：纵深视角，沿空间最长的方向看向深处，交代走廊、门洞与前中后景层次；"
-    "右下格：关键细节，近距离拍场景里最有辨识度的陈设或材质。"
-    "写清并画准：空间类型与剧情功能；以左上全景格为准的左右布局(画面左侧是什么、右侧是什么、出入口在哪)；"
-    "主光从画面哪一侧来、色温与时段；墙、地、主要陈设的颜色与材质；"
-    "尺度按真实尺寸——门高约2米、桌面高约0.75米、椅面高约0.45米，四格比例一致。"
-)
-SCENE_TURNAROUND_CLOSING = (
-    "统一要求：四格是同一空间，陈设位置、光向、色温与材质完全一致，45°与纵深两格里能认出全景格中的同一批陈设；"
-    "结构清晰，透视正确，材质真实，细节丰富，高清写实电影质感；"
-    "严禁任何文字、标签、编号、字幕、水印、Logo；四格里都不出现任何人物。"
-    f"{EMPTY_SCENE_SUFFIX}"
-)
+SCENE_TURNAROUND_INSTRUCTION = _says("instruction", prefix=EMPTY_SCENE_PREFIX)
+SCENE_TURNAROUND_CLOSING = _says("closing", suffix=EMPTY_SCENE_SUFFIX)
 
 
 def _seam(separators: list[bool], length: int) -> tuple[int, int]:
@@ -77,9 +77,9 @@ def split_scene_turnaround(content: bytes) -> dict[str, bytes]:
         (0, bottom, left, height), (right, bottom, width, height),
     )
     views: dict[str, bytes] = {}
-    for slot, box in zip(SCENE_VIEW_SLOTS, quadrants):
+    for slot, box in zip(SCENE_GRID_SLOTS, quadrants):
         if box[2] <= box[0] or box[3] <= box[1]:
-            raise ValueError("场景四视角切分得到空白格")
+            raise ValueError(_says("empty_quadrant"))
         buffer = io.BytesIO()
         image.crop(box).save(buffer, format="PNG", optimize=True)
         views[slot] = buffer.getvalue()

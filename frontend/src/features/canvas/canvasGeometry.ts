@@ -6,8 +6,18 @@ export const MAX_ZOOM = 2.5;
 export const SHELL_ZOOM = 0.35;
 export const SNAP_DISTANCE = 6;
 
+/** The server's limits (backend/app/schema/studio.py): a save past them is refused, so the editor stops short of them. */
+export const CANVAS_MAX_NODES = 5000;
+export const CANVAS_MAX_EDGES = 12000;
+export const CANVAS_COORD_LIMIT = 1_000_000_000;
+
 export function clampZoom(zoom: number) {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
+}
+
+/** A world coordinate kept inside what the server stores. */
+export function clampCoord(value: number) {
+  return Math.min(CANVAS_COORD_LIMIT, Math.max(-CANVAS_COORD_LIMIT, value));
 }
 
 export function screenToWorld(view: Viewport, screenX: number, screenY: number) {

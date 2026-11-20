@@ -2,6 +2,8 @@
   --asset-panel: rgba(253, 238, 240, 0.9);
   --asset-line: rgba(223, 103, 123, 0.14);
   --asset-cyan: #e56278;
+  /* 3D 画布的底色，和 ElementModelViewport.tsx 的 STAGE_BACKGROUND 是同一个值。 */
+  --asset-stage-dark: #0f0c12;
   padding-inline: clamp(14px, 2.5vw, 40px);
 }
 
@@ -58,6 +60,11 @@
 .element-library-page--embedded select:focus-visible {
   outline: 2px solid var(--neon-cyan);
   outline-offset: 2px;
+}
+
+/* 清单在原处刷新时，数量旁边转一圈，卡片和 3D 视口不动。 */
+.element-library-page .element-toolbar .element-refreshing {
+  color: var(--text-muted);
 }
 
 .element-library-page .portal-header,
@@ -555,6 +562,48 @@
   gap: 4px;
 }
 
+.asset-stage-chrome__side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+/* 有 3D 模型时在模型和参考图之间切主预览。自带底色：压在深色画布和浅色参考图上都读得清。 */
+.asset-stage-switch {
+  padding: 3px;
+  display: flex;
+  gap: 3px;
+  pointer-events: auto;
+  border: 1px solid rgba(var(--accent-rgb), 0.16);
+  border-radius: 9px;
+  background: rgba(var(--surface-tint-rgb), 0.9);
+  backdrop-filter: blur(14px);
+}
+
+.asset-stage-switch button {
+  padding: 6px 9px;
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  color: var(--text-main);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 0.64rem;
+}
+
+.asset-stage-switch button:hover,
+.asset-stage-switch button[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: rgba(var(--accent-rgb), 0.3);
+  background: rgba(var(--accent-rgb), 0.1);
+}
+
+.asset-stage-switch button[aria-pressed='true'] { font-weight: 700; }
+
 .asset-stage-chrome strong {
   color: rgba(var(--accent-rgb), 0.88);
   font-size: 0.78rem;
@@ -590,6 +639,19 @@
   display: block;
   touch-action: none;
 }
+
+/* 画布是深色的，浅色主题的遮罩和标签压不住它。只在真的画出 canvas 时换：
+   读取中、读取失败这些状态仍是浅底深字。容器先铺同色，第一帧画出来之前不闪白。 */
+.element-model-viewport:has(canvas) { background: var(--asset-stage-dark); }
+
+.asset-stage:has(.element-model-viewport canvas)::before { content: none; }
+
+.asset-stage:has(.element-model-viewport canvas) .asset-stage-chrome span,
+.asset-stage:has(.element-model-viewport canvas) .asset-live-status {
+  color: rgba(var(--surface-rgb), 0.78);
+}
+
+.asset-stage:has(.element-model-viewport canvas) .asset-stage-chrome strong { color: var(--accent-soft); }
 
 .element-model-viewport:fullscreen {
   width: 100vw;
@@ -807,7 +869,7 @@
   position: absolute;
   z-index: 6;
   left: 50%;
-  bottom: 25px;
+  bottom: 38px;
   padding: 5px;
   display: flex;
   gap: 4px;
@@ -840,11 +902,15 @@
   position: absolute;
   z-index: 5;
   left: 50%;
-  bottom: 7px;
-  color: rgba(var(--ink-rgb), 0.62);
+  bottom: 8px;
+  padding: 3px 10px;
+  color: var(--text-main);
   transform: translateX(-50%);
   white-space: nowrap;
-  font-size: 0.52rem;
+  pointer-events: none;
+  border-radius: 99px;
+  background: rgba(var(--surface-tint-rgb), 0.86);
+  font-size: 0.68rem;
   letter-spacing: 0.04em;
 }
 
@@ -1078,7 +1144,6 @@
   .asset-stage { min-height: 500px; }
   .element-model-viewport { min-height: 500px; }
   .asset-inspector { max-height: none; border-top: 1px solid var(--asset-line); border-left: 0; }
-  .model-view-controls { bottom: 30px; }
   .model-view-controls button { padding: 7px; }
   .asset-stage-chrome { padding: 13px; }
   .asset-mode-switch { width: 100%; }
@@ -1358,3 +1423,20 @@
 }
 .element-regeneration-status { display: block; margin-top: 4px; color: var(--neon-cyan, var(--info)); font-size: 0.7rem; }
 .element-regeneration-error { display: block; margin-top: 4px; color: var(--danger); font-size: 0.7rem; }
+
+/* 正在执行的那个按钮不跟着别的按钮一起变灰，才看得出是哪一步在跑。 */
+.inspector-actions button:disabled[aria-busy="true"],
+.element-actions button:disabled[aria-busy="true"],
+.asset-prop-size button:disabled[aria-busy="true"],
+.asset-reference-preview__details button:disabled[aria-busy="true"] {
+  opacity: 1;
+  cursor: progress;
+}
+.asset-prop-size button .spin { margin-right: 4px; vertical-align: -2px; }
+
+/* 卡片底部五六个操作按钮：放不下就换行，按钮文字不拆成两行竖排 */
+.element-actions { flex-wrap: wrap; }
+.element-actions button { flex: 1 1 auto; min-width: 4.5rem; white-space: nowrap; font-size: 0.74rem; }
+
+/* 拍摄道具页里一起列出的车辆、商品：名字旁标它本来是哪类。 */
+.element-kind-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 6px; font-size: 0.72rem; line-height: 1.6; vertical-align: middle; background: rgba(var(--info-rgb), 0.12); color: var(--info-ink); }

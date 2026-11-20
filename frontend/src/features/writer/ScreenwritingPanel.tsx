@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, BookOpenText, CheckCircle2, ChevronDown, ChevronRight, Clapperboard, FileCode2, RotateCcw, Save, Wrench } from 'lucide-react';
 
 import { ApiError, isUnauthorized } from '../../api/client';
 import { EpisodeLedgerTools } from './EpisodeLedgerTools';
+import { DialoguePolishReview } from './DialoguePolishReview';
+import { PassageRewriteReview } from './PassageRewriteReview';
+import { PronunciationTable } from './PronunciationTable';
 import { draftOfScene, planOperations, type PlanDraft } from './planOperations';
 import {
   fetchScreenwritingEpisode,
@@ -44,6 +47,9 @@ export function ScreenwritingPanel({ taskId, onOpenEpisodeText }: {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
   const [prompt, setPrompt] = useState('');
+  const [episodeError, setEpisodeError] = useState('');
+  // Only the latest episode request may fill the open row; an earlier one can answer later.
+  const episodeRequest = useRef(0);
 
   useEffect(() => {
     if (!taskId) return;
@@ -59,29 +65,45 @@ export function ScreenwritingPanel({ taskId, onOpenEpisodeText }: {
   }, [taskId]);
 
   const loadEpisode = useCallback((index: number) => {
+    const request = ++episodeRequest.current;
     setPrompt('');
     setNotice('');
+    setEpisodeError('');
     fetchScreenwritingEpisode(taskId, index)
       .then(data => {
+        if (request !== episodeRequest.current) return;
         setEpisode(data);
         setDrafts(Object.fromEntries(data.plan.scenes.map(scene => [scene.scene_id, draftOfScene(scene)])));
       })
-      .catch(() => setError(t('该集的分镜规划读取失败。')));
+      .catch(caught => {
+        if (request !== episodeRequest.current) return;
+        setEpisodeError(isUnauthorized(caught) ? t('登录状态已过期，请重新登录后继续。') : t('该集的分镜规划读取失败。'));
+      });
   }, [taskId]);
 
+  const closeEpisode = () => {
+    episodeRequest.current += 1;
+    setOpenEpisode(null);
+    setEpisode(null);
+    setEpisodeError('');
+  };
+
+  const scenes = useMemo(() => episode?.plan.scenes ?? [], [episode]);
+  const operations = useMemo(() => planOperations(scenes, drafts), [scenes, drafts]);
+
+  // Shot edits live only in this panel until saved; closing the episode would drop them.
+  const mayDropEdits = () => operations.length === 0 || window.confirm(t('这一集有未保存的修改，确定放弃吗？'));
+
   const toggleEpisode = (index: number) => {
+    if (!mayDropEdits()) return;
     if (openEpisode === index) {
-      setOpenEpisode(null);
-      setEpisode(null);
+      closeEpisode();
       return;
     }
     setOpenEpisode(index);
     setEpisode(null);
     loadEpisode(index);
   };
-
-  const scenes = useMemo(() => episode?.plan.scenes ?? [], [episode]);
-  const operations = useMemo(() => planOperations(scenes, drafts), [scenes, drafts]);
   const violationsByScene = useMemo(() => {
     const map = new Map<string, string[]>();
     (episode?.violations ?? []).forEach(violation => {
@@ -229,9 +251,9 @@ export function ScreenwritingPanel({ taskId, onOpenEpisodeText }: {
       <EpisodeLedgerTools
         taskId={taskId}
         onOpenEpisode={onOpenEpisodeText}
+        onBeforeChange={mayDropEdits}
         onChanged={() => {
-          setOpenEpisode(null);
-          setEpisode(null);
+          closeEpisode();
           fetchScreenwritingState(taskId).then(setState).catch(() => undefined);
         }}
       />
@@ -254,6 +276,7 @@ export function ScreenwritingPanel({ taskId, onOpenEpisodeText }: {
                 {summary && summary.needsReplan.length > 0 && (
                   <span className="writer-screenwriting__flag"><AlertTriangle aria-hidden="true" /> {summary.needsReplan.length} 个分镜待重拆</span>
                 )}
+                {open && operations.length > 0 && <span className="writer-screenwriting__flag">{t('未保存')}</span>}
               </button>
               <div className="writer-screenwriting__outline">
                 {entry.hook && <p><span>{t('集尾钩子')}</span>{entry.hook}</p>}
@@ -265,7 +288,13 @@ export function ScreenwritingPanel({ taskId, onOpenEpisodeText }: {
 
               {open && (
                 <div className="writer-screenwriting__plan">
-                  {!episode && <p className="writer-empty">{t('正在读取分镜规划…')}</p>}
+                  {episodeError && (
+                    <p className="writer-empty writer-ledger__load-error" role="alert">
+                      {episodeError}
+                      <button type="button" onClick={() => loadEpisode(entry.episode)}><RotateCcw aria-hidden="true" /> {t('重试')}</button>
+                    </p>
+                  )}
+                  {!episode && !episodeError && <p className="writer-empty">{t('正在读取分镜规划…')}</p>}
                   {episode && episode.episode === entry.episode && (
                     <>
                       <div className="writer-screenwriting__actions">
@@ -294,6 +323,28 @@ export function ScreenwritingPanel({ taskId, onOpenEpisodeText }: {
                           <Save aria-hidden="true" /> {saving ? '保存中…' : `保存改动${operations.length ? `（${operations.length}）` : ''}`}
                         </button>
                       </div>
+                      <DialoguePolishReview
+                        taskId={taskId}
+                        episode={episode}
+                        disabled={saving || operations.length > 0}
+                        onApplied={updated => {
+                          setEpisode(updated);
+                          setDrafts(Object.fromEntries(updated.plan.scenes.map(scene => [scene.scene_id, draftOfScene(scene)])));
+                          void fetchScreenwritingState(taskId).then(setState).catch(() => undefined);
+                        }}
+                      />
+                      <PassageRewriteReview
+                        key={episode.episode}
+                        taskId={taskId}
+                        episode={episode}
+                        disabled={saving || operations.length > 0}
+                        onApplied={updated => {
+                          setEpisode(updated);
+                          setDrafts(Object.fromEntries(updated.plan.scenes.map(scene => [scene.scene_id, draftOfScene(scene)])));
+                          void fetchScreenwritingState(taskId).then(setState).catch(() => undefined);
+                        }}
+                      />
+                      <PronunciationTable taskId={taskId} />
                       {episode.review?.draft && (
                         <div className="writer-screenwriting__draft" role="note">
                           <AlertTriangle aria-hidden="true" />

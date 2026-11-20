@@ -22,6 +22,19 @@ from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from app.core import publish_targets
+from app.core import prompt_data
+
+
+_WORDING_FILE = "lead_acquisition"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/lead_acquisition.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 @dataclass(frozen=True)
@@ -35,10 +48,10 @@ class Channel:
 
 
 _EXTRA_CHANNELS = (
-    Channel("kuaishou", "快手", "#ff6a00", "zh"),
-    Channel("xiaohongshu", "小红书", "#ff2442", "zh"),
-    Channel("bilibili", "B站", "#00a1d6", "zh"),
-    Channel("wechat_channels", "视频号", "#07c160", "zh"),
+    Channel("kuaishou", _text_of("module.extra_channels"), "#ff6a00", "zh"),
+    Channel("xiaohongshu", _text_of("module.extra_channels.2"), "#ff2442", "zh"),
+    Channel("bilibili", _text_of("module.extra_channels.3"), "#00a1d6", "zh"),
+    Channel("wechat_channels", _text_of("module.extra_channels.4"), "#07c160", "zh"),
     Channel("tiktok", "TikTok", "#161823", "en"),
 )
 CHANNELS: tuple[Channel, ...] = (
@@ -57,14 +70,14 @@ def channel(channel_id: str) -> Channel:
 # ---------------------------------------------------------------- 意图判定
 
 INTENTS: dict[str, tuple[str, int]] = {
-    "business": ("合作意向", 90),
-    "watch_full": ("求全集", 75),
-    "want_more": ("催更", 60),
-    "question": ("剧情提问", 45),
-    "complaint": ("差评投诉", 40),
-    "praise": ("夸赞", 20),
-    "neutral": ("其他", 5),
-    "spam": ("广告引流", 0),
+    "business": (_text_of("module.intents.business"), 90),
+    "watch_full": (_text_of("module.intents.watch_full"), 75),
+    "want_more": (_text_of("module.intents.want_more"), 60),
+    "question": (_text_of("module.intents.question"), 45),
+    "complaint": (_text_of("module.intents.complaint"), 40),
+    "praise": (_text_of("module.intents.praise"), 20),
+    "neutral": (_text_of("module.intents.neutral"), 5),
+    "spam": (_text_of("module.intents.spam"), 0),
 }
 # 值得有人回应的意图；夸赞、其他和广告只计数。
 LEAD_INTENTS = ("business", "watch_full", "want_more", "question", "complaint")
@@ -72,13 +85,13 @@ LEAD_STATUSES = ("new", "contacted", "replied", "won", "ignored")
 FOLLOW_UP_STATUSES = ("pending", "sent_once", "completed", "cancelled")
 
 _RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("spam", re.compile(r"代刷|兼职|日结|刷单|点我头像|看我主页|进群领|https?://|www\.|check my (profile|channel)|subscribe to my|onlyfans", re.I)),
-    ("business", re.compile(r"合作|商务|投放|版权|代理|分销|采购|发行|授权|报价|对接|招商|买断|联系方式|\b(licens|distribut|partner|collab|business|sponsor|inquir)", re.I)),
-    ("watch_full", re.compile(r"全集|完整版|在哪看|哪里看|哪看|去哪看|哪能看|链接|资源|求片|片名|剧名|叫什么|全剧|\b(full (episode|series|movie|drama)|where (can i|to|do i) watch|what('?s| is) the (name|title)|link)", re.I)),
-    ("want_more", re.compile(r"更新|催更|下一集|后续|第二季|续集|还有吗|什么时候更|快更|等更|\b(next (episode|part)|part 2|season 2|more episodes|when('?s| is) the next|can'?t wait|continue)", re.I)),
-    ("complaint", re.compile(r"难看|垃圾|骗|退款|差评|无聊|尴尬|ai味|假得|看不下去|劝退|\b(boring|scam|refund|trash|cringe|terrible|awful|worst)", re.I)),
-    ("question", re.compile(r"[?？]|为什么|怎么|是谁|是不是|会不会|\b(who|why|how|what|is (he|she|it))\b", re.I)),
-    ("praise", re.compile(r"好看|好棒|绝了|上头|太好|爱了|太爽|好燃|好帅|好美|神剧|\b(great|love|amazing|awesome|beautiful|best|good)\b", re.I)),
+    ("spam", re.compile(_text_of("module.rules"), re.I)),
+    ("business", re.compile(_text_of("module.rules.2"), re.I)),
+    ("watch_full", re.compile(_text_of("module.rules.3"), re.I)),
+    ("want_more", re.compile(_text_of("module.rules.4"), re.I)),
+    ("complaint", re.compile(_text_of("module.rules.5"), re.I)),
+    ("question", re.compile(_text_of("module.rules.6"), re.I)),
+    ("praise", re.compile(_text_of("module.rules.7"), re.I)),
 )
 
 
@@ -97,7 +110,7 @@ def is_lead(intent: str) -> bool:
 
 
 def language_of(text: str) -> str:
-    return "zh" if re.search(r"[一-鿿]", str(text or "")) else "en"
+    return "zh" if re.search(_text_of("language_of.text"), str(text or "")) else "en"
 
 
 # ---------------------------------------------------------------- 评论
@@ -164,7 +177,7 @@ def parse_import(text: str, limit: int = 500) -> list[dict[str, str]]:
 def where_to_watch(platform_ids: Iterable[str], language: str) -> str:
     names = [(_CHANNEL[item].name if item in _CHANNEL else item) for item in dict.fromkeys(platform_ids)]
     if not names:
-        return "我们的主页" if language == "zh" else "our channel"
+        return _text_of("where_to_watch.text") if language == "zh" else "our channel"
     return "、".join(names) if language == "zh" else ", ".join(names)
 
 
@@ -172,13 +185,13 @@ def template_reply(intent: str, language: str, *, title: str, where: str) -> str
     """A safe public reply when the model gives none: no contact details, no links, no promises."""
     if language == "zh":
         return {
-            "business": f"感谢关注《{title}》！合作与版权事宜欢迎私信留言，我们会尽快对接。",
-            "watch_full": f"谢谢喜欢！《{title}》全集在{where}，搜剧名就能看到～",
-            "want_more": "收到催更！新一集上线会第一时间更新在主页，关注不迷路～",
-            "question": "好问题！答案就藏在后面的剧情里，接着往下看～",
-            "complaint": "谢谢你直说，我们会认真改。哪里不满意欢迎私信细说。",
-            "praise": "谢谢喜欢，会继续努力的！",
-        }.get(intent, "谢谢观看！")
+            "business": _text_of("template_reply.business").format(title),
+            "watch_full": _text_of("template_reply.watch_full").format(title, where),
+            "want_more": _text_of("template_reply.want_more"),
+            "question": _text_of("template_reply.question"),
+            "complaint": _text_of("template_reply.complaint"),
+            "praise": _text_of("template_reply.praise"),
+        }.get(intent, _text_of("template_reply.text"))
     return {
         "business": f"Thanks for your interest in {title}! Please send us a message about partnership or licensing and we'll get back to you.",
         "watch_full": f"Glad you like it! The full series of {title} is on {where} — search the title to watch.",
@@ -194,9 +207,9 @@ def template_dm(intent: str, language: str, *, title: str, where: str) -> str:
         return ""
     if language == "zh":
         return {
-            "business": f"您好，看到您在《{title}》下关于合作的留言。方便说说您那边的合作方向（发行、投放还是版权）吗？我们按方向准备资料给您。",
-            "watch_full": f"你好，看到你在问《{title}》的全集～ 目前在{where}可以看完整版，搜剧名就能找到。",
-            "want_more": f"你好，谢谢你追《{title}》！下一集上线时我们会在主页第一时间更新。",
+            "business": _text_of("template_dm.business").format(title),
+            "watch_full": _text_of("template_dm.watch_full").format(title, where),
+            "want_more": _text_of("template_dm.want_more").format(title),
         }[intent]
     return {
         "business": f"Hi, thanks for your comment on {title} about working together. Could you share what you have in mind — distribution, promotion or licensing? We'll send the right materials.",
@@ -206,9 +219,7 @@ def template_dm(intent: str, language: str, *, title: str, where: str) -> str:
 
 
 _RULES_PROMPT = (
-    "公开回复：用评论者的语言；中文不超过 60 字，英文不超过 200 个字符；不留微信号、手机号、二维码或外链，"
-    "需要进一步沟通就请对方私信；不承诺免费、不夸大、不用「最」「第一」等绝对化用语；只说剧里真实存在的内容。"
-    "私信草稿：只给合作意向、求全集、催更三类写，先说明是看到对方哪条留言，一条消息只推进一个动作；其他意图私信留空字符串。"
+    _text_of("module.rules_prompt")
 )
 
 
@@ -216,17 +227,15 @@ def lead_prompt(comments: Sequence[Mapping[str, Any]], *, title: str, logline: s
     """One model call that judges a batch of comments and drafts the replies."""
     intents = "、".join(f"{key}（{label}）" for key, (label, _) in INTENTS.items())
     system = (
-        "你是短剧账号的运营，负责从评论区找出值得回应的观众和合作方，并写回复草稿。"
-        f"意图只能取：{intents}。score 是 0-100 的跟进优先级：合作最高，求全集次之，广告为 0。"
+        _text_of("lead_prompt.system").format(intents)
         + _RULES_PROMPT
-        + '只输出一个 JSON 对象：{"items": [{"id": str, "intent": str, "score": int, "reply": str, "dm": str}]}，不要输出其它文字。'
+        + _text_of("lead_prompt.system.2")
     )
     lines = "\n".join(
-        f'- id={item["id"]}｜平台={_CHANNEL.get(str(item.get("platform")), Channel("", str(item.get("platform")), "", "zh")).name}'
-        f'｜昵称={item.get("author_name") or "匿名"}｜评论={str(item.get("text") or "")[:400]}'
+        _text_of("lead_prompt.lines").format(item["id"], _CHANNEL.get(str(item.get("platform")), Channel("", str(item.get("platform")), "", "zh")).name, item.get("author_name") or "匿名", str(item.get("text") or "")[:400])
         for item in comments
     )
-    user = f"剧名：{title}\n剧情梗概：{logline[:1500]}\n可以看全集的平台：{where}\n\n评论：\n{lines}"
+    user = _text_of("lead_prompt.user").format(title, logline[:1500], where, lines)
     return system, user
 
 
@@ -265,14 +274,13 @@ def parse_lead_answer(text: str, ids: Iterable[str]) -> dict[str, dict[str, Any]
 def inbox_prompt(message: str, *, title: str, logline: str, where: str, history: Sequence[str] = ()) -> tuple[str, str]:
     """The pre-sales reply to someone who wrote to the account."""
     system = (
-        "你是短剧账号的客服，回复主动找来的观众或合作方。回复按「承接 → 结论 → 关键信息 → 推进」组织，"
-        "能三到六句说清就不写长；一次只推进一个最自然的下一步，不连环追问；用对方的语言。"
-        + _RULES_PROMPT.replace("公开回复：", "回复：")
-        + "如果对方表示要过段时间再说（明天、下周、发工资后等），follow_up 填对方说的时间原话，否则填空字符串。"
-        + f'intent 只能取：{"、".join(INTENTS)}。只输出一个 JSON 对象：{{"intent": str, "reply": str, "follow_up": str}}。'
+        _text_of("inbox_prompt.system")
+        + _RULES_PROMPT.replace(_text_of("inbox_prompt.system.2"), _text_of("inbox_prompt.system.3"))
+        + _text_of("inbox_prompt.system.4")
+        + _text_of("inbox_prompt.system.5").format("、".join(INTENTS))
     )
-    past = "\n".join(f"- {line}" for line in history[-6:]) or "（无）"
-    user = f"剧名：{title}\n剧情梗概：{logline[:1500]}\n可以看全集的平台：{where}\n此前往来：\n{past}\n\n对方的新消息：{message[:2000]}"
+    past = "\n".join(f"- {line}" for line in history[-6:]) or _text_of("inbox_prompt.past")
+    user = _text_of("inbox_prompt.user").format(title, logline[:1500], where, past, message[:2000])
     return system, user
 
 
@@ -295,8 +303,7 @@ def local_now() -> datetime:
 
 
 _DELAY = re.compile(
-    r"明天|明早|明晚|后天|下周|下星期|下礼拜|工资|月底|过两天|过几天|几天后|晚点|稍后|回头|改天|下午|晚上|今晚|\d{1,2}\s*[月/]\s*\d{1,2}|\d{1,2}\s*[号日]|"
-    r"\b(tomorrow|next week|later|tonight|this (afternoon|evening)|in \d+ days?|payday|end of (the )?month)\b",
+    _text_of("module.delay"),
     re.I,
 )
 
@@ -326,16 +333,16 @@ def follow_up_time(phrase: str, now: datetime) -> datetime | None:
                                minute=int(minute or 0), second=0, microsecond=0)
         except ValueError:
             return None
-    clock = re.search(r"(上午|早上|中午|下午|晚上)?\s*(\d{1,2})\s*(?:点|:|：|时)\s*(半|\d{1,2})?", text)
+    clock = re.search(_text_of("follow_up_time.clock"), text)
     hour = minute = None
     if clock:
         hour = int(clock.group(2))
-        minute = 30 if clock.group(3) == "半" else int(clock.group(3) or 0)
-        if clock.group(1) in ("下午", "晚上") and hour < 12:
+        minute = 30 if clock.group(3) == _text_of("follow_up_time.minute") else int(clock.group(3) or 0)
+        if clock.group(1) in _words_of("follow_up_time.text") and hour < 12:
             hour += 12
         if hour > 23 or minute > 59:
             hour = minute = None
-    dated = re.search(r"(\d{1,2})\s*[月/]\s*(\d{1,2})\s*[日号]?", text) or re.search(r"(?<![\d月/])(\d{1,2})\s*[号日]", text)
+    dated = re.search(_text_of("follow_up_time.dated"), text) or re.search(_text_of("follow_up_time.dated.2"), text)
     if dated:
         month, day = (int(dated.group(1)), int(dated.group(2))) if dated.lastindex == 2 else (now.month, int(dated.group(1)))
         try:
@@ -353,31 +360,31 @@ def follow_up_time(phrase: str, now: datetime) -> datetime | None:
         return _at(now, start) if now.hour < cutoff else otherwise
 
     day_offset = None
-    if "后天" in text or "day after tomorrow" in lowered:
+    if _text_of("follow_up_time.text.2") in text or "day after tomorrow" in lowered:
         day_offset = 2
-    elif re.search(r"明天|明早|明晚|tomorrow", text, re.I):
+    elif re.search(_text_of("follow_up_time.text.3"), text, re.I):
         day_offset = 1
-    elif re.search(r"下周|下星期|下礼拜|next week", text, re.I):
+    elif re.search(_text_of("follow_up_time.text.4"), text, re.I):
         day_offset = 7
-    elif re.search(r"工资|月底|payday|end of (the )?month", text, re.I):
+    elif re.search(_text_of("follow_up_time.text.5"), text, re.I):
         day_offset = 5
-    elif re.search(r"过两天|过几天|几天后|改天", text):
+    elif re.search(_text_of("follow_up_time.text.6"), text):
         day_offset = 3
     else:
-        days = re.search(r"in (\d+) days?", lowered) or re.search(r"(\d+)\s*天后", text)
+        days = re.search(r"in (\d+) days?", lowered) or re.search(_text_of("follow_up_time.days"), text)
         if days:
             day_offset = int(days.group(1))
     if day_offset is not None:
-        default_hour = 19 if re.search(r"晚上|明晚|evening|night", text, re.I) else 14 if re.search(r"下午|afternoon", text, re.I) else 10
+        default_hour = 19 if re.search(_text_of("follow_up_time.default_hour"), text, re.I) else 14 if re.search(_text_of("follow_up_time.default_hour.2"), text, re.I) else 10
         return _at(now + timedelta(days=day_offset), hour if hour is not None else default_hour, minute or 0)
     if hour is not None:
         target = _at(now, hour, minute or 0)
         return target if target > now else target + timedelta(days=1)
-    if re.search(r"下午|this afternoon", text, re.I):
+    if re.search(_text_of("follow_up_time.text.7"), text, re.I):
         return later_today(14, 13, _at(now + timedelta(days=1), 14))
-    if re.search(r"晚上|今晚|tonight|this evening", text, re.I):
+    if re.search(_text_of("follow_up_time.text.8"), text, re.I):
         return later_today(19, 18, _at(now + timedelta(days=1), 19))
-    if re.search(r"晚点|稍后|回头|later", text, re.I):
+    if re.search(_text_of("follow_up_time.text.9"), text, re.I):
         return later_today(14, 13, _at(now + timedelta(days=1), 10))
     return None
 
@@ -412,21 +419,21 @@ def review(state: Mapping[str, Any], now: datetime, *, can_read_youtube: bool) -
     watch = sum(1 for lead in open_leads if lead.get("intent") == "watch_full")
     unsure = sum(1 for lead in leads if lead.get("send_state") in ("unknown", "sending"))
     if business:
-        suggestions.append(f"有 {business} 条合作意向还没联系，先处理它们")
+        suggestions.append(_text_of("review.text").format(business))
     if watch:
-        suggestions.append(f"{watch} 位观众在问全集去哪看：回复里写清平台和剧名")
+        suggestions.append(_text_of("review.text.2").format(watch))
     if due:
-        suggestions.append(f"{len(due)} 条跟进已到时间")
+        suggestions.append(_text_of("review.text.3").format(len(due)))
     if unsure:
-        suggestions.append(f"{unsure} 条 YouTube 回复发送结果不明：先到 YouTube 核对，再标记")
+        suggestions.append(_text_of("review.text.4").format(unsure))
     if any(item.get("platform") == "youtube" for item in works) and not can_read_youtube:
-        suggestions.append("配置 YOUTUBE_API_KEY 后，YouTube 的评论和播放数据会自动拉取")
+        suggestions.append(_text_of("review.text.5"))
     silent = [item for item in works if not _CHANNEL.get(str(item.get("platform")), Channel("", "", "", "")).auto_read
               and not any(c.get("work_id") == item.get("id") for c in comments)]
     if silent:
-        suggestions.append(f"{len(silent)} 个作品还没有导入评论：从平台复制评论粘贴进来")
+        suggestions.append(_text_of("review.text.6").format(len(silent)))
     if not works:
-        suggestions.append("先登记已发布作品的链接，获客从这些作品的评论开始")
+        suggestions.append(_text_of("review.text.7"))
     return {
         "generated_at": now.isoformat(),
         "funnel": {"comments": len(comments), "leads": len(leads), "reached": reached,
@@ -534,12 +541,12 @@ class YouTubeClient:
                 "refresh_token": self.refresh_token, "grant_type": "refresh_token",
             }, timeout=self.timeout)
         except Exception as error:  # noqa: BLE001 - network errors become one readable failure
-            raise YouTubeError(f"YouTube 授权刷新失败：{type(error).__name__}") from error
+            raise YouTubeError(_text_of("_token.text").format(type(error).__name__)) from error
         if response.status_code != 200:
-            raise YouTubeError(f"YouTube 授权刷新失败（HTTP {response.status_code}）：检查 YOUTUBE_REFRESH_TOKEN 是否仍有效")
+            raise YouTubeError(_text_of("_token.text.2").format(response.status_code))
         self._access_token = str(response.json().get("access_token") or "")
         if not self._access_token:
-            raise YouTubeError("YouTube 授权刷新没有返回 access_token")
+            raise YouTubeError(_text_of("_token.text.3"))
         return self._access_token
 
     def _get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -551,9 +558,9 @@ class YouTubeClient:
         try:
             response = self.http("GET", f"{YOUTUBE_API}/{path}", params=params, headers=headers, timeout=self.timeout)
         except Exception as error:  # noqa: BLE001
-            raise YouTubeError(f"YouTube 读取失败：{type(error).__name__}") from error
+            raise YouTubeError(_text_of("_get.text").format(type(error).__name__)) from error
         if response.status_code != 200:
-            raise YouTubeError(_youtube_reason(response, "读取"))
+            raise YouTubeError(_youtube_reason(response, _text_of("_get.text.2")))
         return response.json()
 
     def statistics(self, video_ids: Sequence[str]) -> dict[str, dict[str, int]]:
@@ -603,11 +610,11 @@ class YouTubeClient:
                                  headers={"Authorization": f"Bearer {token}"},
                                  json={"snippet": {"parentId": parent_id, "textOriginal": text}}, timeout=self.timeout)
         except Exception as error:  # noqa: BLE001 - the request may have reached YouTube
-            raise YouTubeError(f"发送时连接中断（{type(error).__name__}），回复可能已经发出", definite=False) from error
+            raise YouTubeError(_text_of("reply.text").format(type(error).__name__), definite=False) from error
         if response.status_code >= 500:
-            raise YouTubeError(_youtube_reason(response, "发送") + "，回复可能已经发出", definite=False)
+            raise YouTubeError(_youtube_reason(response, _text_of("reply.text.2")) + _text_of("reply.text.3"), definite=False)
         if response.status_code not in (200, 201):
-            raise YouTubeError(_youtube_reason(response, "发送"))
+            raise YouTubeError(_youtube_reason(response, _text_of("reply.text.4")))
         return str(response.json().get("id") or "")
 
 
@@ -619,13 +626,13 @@ def _youtube_reason(response: Any, action: str) -> str:
     except Exception:  # noqa: BLE001 - a non-JSON error body still gets a status
         pass
     known = {
-        "commentsDisabled": "这个视频关闭了评论",
-        "quotaExceeded": "YouTube API 今日配额已用完",
-        "forbidden": "没有权限：确认授权的频道与账号",
-        "videoNotFound": "找不到这个视频",
-        "insufficientPermissions": "授权缺少 youtube.force-ssl 权限",
+        "commentsDisabled": _text_of("_youtube_reason.known.commentsDisabled"),
+        "quotaExceeded": _text_of("_youtube_reason.known.quotaExceeded"),
+        "forbidden": _text_of("_youtube_reason.known.forbidden"),
+        "videoNotFound": _text_of("_youtube_reason.known.videoNotFound"),
+        "insufficientPermissions": _text_of("_youtube_reason.known.insufficientPermissions"),
     }
-    return f"YouTube {action}失败：{known.get(reason, reason or f'HTTP {response.status_code}')}"
+    return _text_of("_youtube_reason.text").format(action, known.get(reason, reason or f'HTTP {response.status_code}'))
 
 
 __all__ = [

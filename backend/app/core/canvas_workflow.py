@@ -22,6 +22,19 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core import canvas_tools, recipe_catalog, studio_canvas
+from app.core import prompt_data
+
+
+_WORDING_FILE = "canvas_workflow"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/canvas_workflow.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 MAX_STEPS = 40
 _COLUMN_GAP = 80
@@ -33,23 +46,10 @@ RUNNING_KINDS = frozenset({"image_gen", "video_gen", "audio_gen", "video_compose
 STEP_STATES = frozenset({"pending", "queued", "running", "done", "failed", "skipped", "cancelled", "waiting_input", "removed"})
 
 PLAN_SYSTEM_PROMPT = (
-    "你是短剧和短视频的制作统筹。把创作需求拆成节点画布上的一条制作流程：每一步是一个节点，步骤之间连线传递结果。"
-    "只规划真正需要的步骤，不要为了显得完整而加步骤；每多一个生成节点就多花一笔钱。只输出一个 JSON 对象，不要解释。"
+    _text_of("module.plan_system_prompt")
 )
 
-_RULES = """规划规则：
-- 每步有唯一的 ref（小写英文加数字）；inputs 写这一步要用哪些步骤的结果。
-- kind 只能是：note（文本）、media（等用户上传的素材，medium 写 image / video / audio）、style_ref（风格描述，写在 text）、image_gen（生成图片）、video_gen（生成视频）、audio_gen（配音、配乐或音效，params.mode 为 speech / music / sfx）、video_compose（把视频片段拼成一条）、tool（工具，tool 字段写工具 id）。
-- 平台不做纯文生视频：video_gen 至少要连一张图、一段视频。先出首帧，再连到 video_gen，role 写 first_frame。
-- 一个连续镜头太长要切成几段时，后一段的 inputs 连前一段的 video_gen，role 写 continue_from：后一段的首帧就是前一段的尾帧，不挂上接缝处必跳。只有同一个连续镜头才这么连；两个镜头之间是剪切，各自出首帧，不要接。后一段的 prompt 先写上一段的结束状态，再写下一步。
-- 动作复杂的镜头，prompt 按「起始姿态→主动作→身体联动→结束姿态」四步写，结束姿态写具体；拿不准可以先用 action_breakdown 工具拆。
-- 两个不连续的镜头要接在一起，用 link_design 工具写接法；有首帧和尾帧要过渡，用 frame_bridge 工具写提示词，连到视频节点；首尾帧比例必须相同。
-- 同一个角色或场景要在多个镜头里保持一致时，先生成一张参考图，再把它连到每个镜头。
-- 提示词写在 prompt，要能直接生成：人物、动作、景别、机位、光线都写清楚。文本节点的内容写在 text。
-- 只有确实需要用户提供的东西才用 media；需求里已经写清楚的，直接生成。
-- 可以用 recipe 指定配方并在 recipe_inputs 里填它要的字段，这时不用写 prompt。
-- 要用画布上已有的节点时，inputs 的 source 写 "node:节点id"。
-- 总步数不超过 {max_steps}。"""
+_RULES = _text_of("module.rules")
 
 
 class StepInput(BaseModel):
@@ -85,28 +85,28 @@ class WorkflowPlan(BaseModel):
 
 def planning_prompt(brief: str, *, existing: Sequence[Mapping[str, Any]] = (), project_title: str = "") -> str:
     tools = "\n".join(
-        f"- {tool.id}：{tool.label}，吃 {'/'.join(sorted(tool.inputs))}，产出 {tool.output}"
-        + (f"，至少 {tool.images} 张图" if tool.images else "") + (f"，至少 {tool.videos} 段视频" if tool.videos else "")
+        _text_of("planning_prompt.tools").format(tool.id, tool.label, '/'.join(sorted(tool.inputs)), tool.output)
+        + (_text_of("planning_prompt.tools.2").format(tool.images) if tool.images else "") + (_text_of("planning_prompt.tools.3").format(tool.videos) if tool.videos else "")
         for tool in canvas_tools.TOOLS
     )
     looks = "、".join(f"{look.id}（{look.names['zh']}）" for look in canvas_tools.style_wall())
     recipes = "\n".join(
-        f"- {recipe['id']}：{recipe['name']}，产出 {recipe['output_type']}，字段 " + "、".join(f"{item['name']}（{item['label']}）" for item in recipe["inputs"])
+        _text_of("planning_prompt.recipes").format(recipe['id'], recipe['name'], recipe['output_type']) + "、".join(f"{item['name']}（{item['label']}）" for item in recipe["inputs"])
         for recipe in recipe_catalog.catalog().describe()["recipes"]
     )
     sections = [
-        f"# 创作需求\n{brief.strip()}",
-        f"# 项目\n{project_title}" if project_title else "",
+        _text_of("planning_prompt.sections").format(brief.strip()),
+        _text_of("planning_prompt.sections.2").format(project_title) if project_title else "",
         _RULES.format(max_steps=MAX_STEPS),
-        f"# 可用工具（kind=tool 时用）\n{tools}\n风格转绘的 params.style 从这些里选：{looks}",
-        f"# 可用配方\n{recipes}",
+        _text_of("planning_prompt.sections.3").format(tools, looks),
+        _text_of("planning_prompt.sections.4").format(recipes),
     ]
     if existing:
         rows = "\n".join(
             f"- node:{item['id']}：{studio_canvas.KIND_LABELS.get(str(item.get('kind')), item.get('kind'))} {studio_canvas._label(item)}"
             for item in existing[:40]
         )
-        sections.append(f"# 画布上已有的节点\n{rows}")
+        sections.append(_text_of("planning_prompt.text").format(rows))
     return "\n\n".join(part for part in sections if part)
 
 
@@ -132,7 +132,7 @@ def _order_problem(plan: WorkflowPlan) -> list[dict[str, Any]]:
     while waiting:
         free = [ref for ref, needs in waiting.items() if not needs]
         if not free:
-            return [_problem(sorted(waiting)[0], "cycle", f"这些步骤互相依赖，没法开始：{'、'.join(sorted(waiting))}")]
+            return [_problem(sorted(waiting)[0], "cycle", _text_of("_order_problem.text").format('、'.join(sorted(waiting))))]
         for ref in free:
             del waiting[ref]
         waiting = {ref: needs - set(free) for ref, needs in waiting.items()}
@@ -145,7 +145,7 @@ def validate_plan(plan: WorkflowPlan, *, existing: Sequence[Mapping[str, Any]] =
     by_ref: dict[str, PlanStep] = {}
     for step in plan.steps:
         if step.ref in by_ref:
-            problems.append(_problem(step.ref, "duplicate_ref", f"步骤 {step.ref} 重复了"))
+            problems.append(_problem(step.ref, "duplicate_ref", _text_of("validate_plan.text").format(step.ref)))
         by_ref[step.ref] = step
     nodes = {str(item.get("id")): item for item in existing}
     problems.extend(_order_problem(plan))
@@ -154,7 +154,7 @@ def validate_plan(plan: WorkflowPlan, *, existing: Sequence[Mapping[str, Any]] =
         kinds: list[str] = []
         for item in step.inputs:
             if item.source == step.ref:
-                problems.append(_problem(step.ref, "self", f"{step.ref} 不能用自己的结果"))
+                problems.append(_problem(step.ref, "self", _text_of("validate_plan.text.2").format(step.ref)))
                 continue
             source: Mapping[str, Any] | None
             if item.source.startswith(_EXISTING):
@@ -162,7 +162,7 @@ def validate_plan(plan: WorkflowPlan, *, existing: Sequence[Mapping[str, Any]] =
             else:
                 source = _pseudo(by_ref[item.source]) if item.source in by_ref else None
             if source is None:
-                problems.append(_problem(step.ref, "unknown_input", f"{step.ref} 要用的 {item.source} 不存在"))
+                problems.append(_problem(step.ref, "unknown_input", _text_of("validate_plan.text.3").format(step.ref, item.source)))
                 continue
             if step.kind == "tool" and canvas_tools.get_tool(step.tool) is None:
                 continue  # said once below; every input would only repeat it
@@ -183,25 +183,25 @@ def _step_problems(step: PlanStep, kinds: Sequence[str]) -> list[dict[str, Any]]
         try:
             recipe_catalog.render(step.recipe, step.recipe_inputs)
         except (LookupError, recipe_catalog.RecipeInputError) as error:
-            found.append(_problem(step.ref, "recipe", f"{step.ref} 的配方：{error}"))
+            found.append(_problem(step.ref, "recipe", _text_of("_step_problems.text").format(step.ref, error)))
     if step.kind == "media" and step.medium not in {"image", "video", "audio"}:
-        found.append(_problem(step.ref, "medium", f"{step.ref} 要写明等用户上传 image、video 还是 audio"))
+        found.append(_problem(step.ref, "medium", _text_of("_step_problems.text.2").format(step.ref)))
     if step.kind == "note" and not step.text.strip():
-        found.append(_problem(step.ref, "empty_text", f"{step.ref} 是文本节点，text 不能是空的"))
+        found.append(_problem(step.ref, "empty_text", _text_of("_step_problems.text.3").format(step.ref)))
     if step.kind == "image_gen" and not words:
-        found.append(_problem(step.ref, "no_prompt", f"{step.ref} 没有提示词"))
+        found.append(_problem(step.ref, "no_prompt", _text_of("_step_problems.text.4").format(step.ref)))
     if step.kind == "video_gen":
         if not words:
-            found.append(_problem(step.ref, "no_prompt", f"{step.ref} 没有提示词"))
+            found.append(_problem(step.ref, "no_prompt", _text_of("_step_problems.text.5").format(step.ref)))
         if not any(kind in {"image", "video", "capture"} for kind in kinds):
-            found.append(_problem(step.ref, "no_reference", f"{step.ref} 是视频生成，平台不做纯文生视频：至少连一张图或一段视频"))
+            found.append(_problem(step.ref, "no_reference", _text_of("_step_problems.text.6").format(step.ref)))
     if step.kind == "audio_gen":
         if not words:
-            found.append(_problem(step.ref, "no_prompt", f"{step.ref} 没有要合成的文本"))
+            found.append(_problem(step.ref, "no_prompt", _text_of("_step_problems.text.7").format(step.ref)))
         if str(step.params.get("mode") or "speech") not in {"speech", "music", "sfx"}:
-            found.append(_problem(step.ref, "mode", f"{step.ref} 的音频类型只能是 speech、music 或 sfx"))
+            found.append(_problem(step.ref, "mode", _text_of("_step_problems.text.8").format(step.ref)))
     if step.kind == "video_compose" and not any(kind in {"video", "capture"} for kind in kinds):
-        found.append(_problem(step.ref, "no_clips", f"{step.ref} 是视频合成，至少要连一段视频"))
+        found.append(_problem(step.ref, "no_clips", _text_of("_step_problems.text.9").format(step.ref)))
     if step.kind == "tool":
         found.extend(_tool_problems(step, kinds, words))
     return found
@@ -210,19 +210,19 @@ def _step_problems(step: PlanStep, kinds: Sequence[str]) -> list[dict[str, Any]]
 def _tool_problems(step: PlanStep, kinds: Sequence[str], words: bool) -> list[dict[str, Any]]:
     tool = canvas_tools.get_tool(step.tool)
     if tool is None:
-        return [_problem(step.ref, "tool", f"{step.ref} 用的工具 {step.tool or '（没写）'} 不存在")]
+        return [_problem(step.ref, "tool", _text_of("_tool_problems.text").format(step.ref, step.tool or '（没写）'))]
     found: list[dict[str, Any]] = []
     pictures = sum(kind in {"image", "capture"} for kind in kinds)
     if pictures < tool.images:
-        found.append(_problem(step.ref, "no_image", f"{step.ref}（{tool.label}）要连 {tool.images} 张图，现在 {pictures} 张"))
+        found.append(_problem(step.ref, "no_image", _text_of("_tool_problems.text.2").format(step.ref, tool.label, tool.images, pictures)))
     if kinds.count("video") < tool.videos:
-        found.append(_problem(step.ref, "no_video", f"{step.ref}（{tool.label}）要连一段视频"))
+        found.append(_problem(step.ref, "no_video", _text_of("_tool_problems.text.3").format(step.ref, tool.label)))
     if tool.needs_prompt and not words:
-        found.append(_problem(step.ref, "no_prompt", f"{step.ref}（{tool.label}）要写提示词或连文本"))
+        found.append(_problem(step.ref, "no_prompt", _text_of("_tool_problems.text.4").format(step.ref, tool.label)))
     if tool.engine == "image" and tool.id != "scene_360":
         # A connected text only arrives at run time, so anything will do here to test the rest of the settings.
         try:
-            canvas_tools.image_prompt(tool, step.params, step.prompt or ("上游文本" if "text" in kinds else ""))
+            canvas_tools.image_prompt(tool, step.params, step.prompt or (_text_of("_tool_problems.text.5") if "text" in kinds else ""))
         except canvas_tools.CanvasToolError as error:
             found.append(_problem(step.ref, "params", f"{step.ref}（{tool.label}）：{error}"))
     return found

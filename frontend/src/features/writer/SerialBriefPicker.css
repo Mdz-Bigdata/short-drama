@@ -1,0 +1,100 @@
+.serial-brief {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.serial-brief__pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.serial-brief .structure-picker__chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.serial-brief__order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2em;
+  height: 1.2em;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--accent, #4fc3f7);
+  color: var(--surface, #fff);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.serial-brief__clash {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--warning-ink, #894f03);
+}
+
+.serial-brief__switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+}
+
+.serial-brief__switch {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.serial-brief__switch input {
+  margin-top: 3px;
+}
+
+.serial-brief__switch span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.serial-brief__switch strong {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.serial-brief__switch small {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.serial-brief__plan {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.serial-brief__plan ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.serial-brief__plan li {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 0.78rem;
+  color: var(--ink);
+}
+
+.serial-brief__plan li span {
+  color: var(--text-muted);
+}

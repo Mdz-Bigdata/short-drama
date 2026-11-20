@@ -1,0 +1,23 @@
+{
+  "_doc": "app/core/recipe_catalog.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "consistent.text": "选项型输入 {0} 需要 choices",
+  "consistent.text.2": "输入 {0} 不是选项型，不能有 choices",
+  "consistent.text.3": "输入 {0} 的默认值不在 choices 里",
+  "consistent.text.4": "输入 {0} 不是数字型，不能有范围",
+  "check_number.text": "「{0}」要填数字",
+  "check_number.text.2": "「{0}」要填数字",
+  "check_number.text.3": "「{0}」要在 {1:g} 到 {2:g} 之间",
+  "placeholders_match_inputs.text": "输入名重复",
+  "placeholders_match_inputs.text.2": "提示词用了未声明的输入：{0}",
+  "placeholders_match_inputs.text.3": "声明了但提示词没用的输入：{0}",
+  "placeholders_match_inputs.text.4": "可选输入 {0} 没有默认值，必须放进 [[ ]] 里",
+  "placeholders_match_inputs.text.5": "提示词里有写坏的占位符",
+  "get.text": "没有叫 {0} 的配方",
+  "load_catalog.text": "{0} 里没有配方文件",
+  "load_catalog.text.2": "{0}: 类别 {1} 已在别的文件里定义",
+  "load_catalog.text.3": "{0}: 配方 {1} 与 {2} 重复",
+  "_values.text": "配方 {0} 没有这些输入：{1}",
+  "_values.text.2": "缺少「{0}」",
+  "_values.text.3": "「{0}」最长 {1} 个字符",
+  "_values.text.4": "「{0}」只能是：{1}"
+}

@@ -1,0 +1,174 @@
+{
+  "_about": "导演台方案写成分镜文字(app/core/spatial_stage/prompting.py)和画面测量(projection.py)用的句子和词表。bearing 是某人看出去的方位：side_ahead / side / side_behind 的 {side} 取 bearing_sides；screen_sides 是主机位画面里布景在哪边，也是过肩前景挡住画面的哪一边。landmark 写布景离锚点人物多远、在主机位画面哪边；size 写布景真实尺寸(不足 0.3 米的用 centimetres)。scale 是人和布景的比例：body_marks 按顺序比，布景顶高不低于身高的 share 倍就用那一句；heads 是高出几个头。axis 是轴线一句，crossings 是越轴镜头的说明(键是 StageShot.crossing)。lens_clause 和 lens_clause_pattern 是同一个分句：前者写，后者认出来删掉(带白模视频时机位只由视频说)，改一个须同改另一个。projection 的 shot_sizes 是景别和一帧覆盖的人体高度(米)，景别名是机位求解器认的枚举值，须与 coverage.py 的景别名一致；regions 按 edge 由左到右比，超过最后一个 edge 用 region_right；regions、depth_layers、facings 都须是 app/core/frame_position.py 认得的词。",
+  "bearing": {
+    "beside": "身旁",
+    "ahead": "前方",
+    "side_ahead": "{side}前方",
+    "side": "{side}侧",
+    "side_behind": "{side}后方",
+    "behind": "后方"
+  },
+  "bearing_sides": {
+    "left": "左",
+    "right": "右"
+  },
+  "screen_sides": {
+    "left": "左侧",
+    "right": "右侧",
+    "centre": "中央"
+  },
+  "landmark": {
+    "from_centre": "距场地中心约{meters:.1f}米，位置固定不镜像",
+    "from_anchor": "位于{anchor}{bearing}约{meters:.1f}米",
+    "master_side": "，主机位画面{side}",
+    "layout_fact": "{name}在画面{side}"
+  },
+  "size": {
+    "width": "宽约{span}",
+    "depth": "进深约{span}",
+    "height": "高约{span}",
+    "metres": "{metres:.1f}米",
+    "centimetres": "{centimetres}厘米"
+  },
+  "scale": {
+    "height": "{name}身高约{centimetres}cm",
+    "heads": "（约{heads}）",
+    "body_mark": "{piece}顶{mark}",
+    "below_knee": "{piece}不及{name}膝盖",
+    "line": "{person}；{piece}高约{height:.1f}米，{relation}",
+    "body_marks": [
+      [0.92, "与{name}头顶齐平"],
+      [0.78, "约齐{name}肩"],
+      [0.62, "约齐{name}胸口"],
+      [0.45, "约齐{name}腰"],
+      [0.25, "约到{name}大腿"]
+    ],
+    "heads_words": [
+      [0.5, "半个头"],
+      [1.0, "一个头"],
+      [1.5, "一个半头"],
+      [2.0, "两个头"],
+      [2.5, "两个半头"],
+      [3.0, "三个头"]
+    ]
+  },
+  "frame": {
+    "shoulder": "肩背虚化，遮挡画面{edge}约四分之一",
+    "keep_face": "保留{name}的完整面部",
+    "occluded": "被{blocker}遮挡约二分之一"
+  },
+  "axis": {
+    "none": "本场无人物关系轴线；以场景地标的左右位置为准，任何镜头不得左右镜像",
+    "gaze": "视线轴线为{source}→{target}；全场机位守在轴线同一侧，{left}恒在画左、{right}恒在画右",
+    "motion": "运动轴线沿{source}→{target}；全场机位守在轴线同一侧，运动方向恒为画面由左向右",
+    "relation": "关系轴线为{source}—{target}连线；全场机位守在轴线同一侧，{left}恒在画左、{right}恒在画右",
+    "held": "本镜机位在既定一侧，与轴线夹角约{angle:.0f}度，不越轴",
+    "crossings": {
+      "neutral": "本镜机位落在轴线上，属中性镜头，可作为换边的桥",
+      "moving": "本镜机位带着观众越过轴线，越轴过程完整可见",
+      "reestablish": "本镜为重新建立空间的全景，可在此后换边"
+    }
+  },
+  "eyeline": {
+    "gaze": "{name}视线{facing}",
+    "partner_in_frame": "，看向画内的{partner}",
+    "partner_off_left": "，看向画外左侧的{partner}",
+    "partner_off_right": "，看向画外右侧的{partner}",
+    "partner": "，看向{partner}",
+    "none": "本镜无人物视线；保持场景地标与光向的左右关系",
+    "level": "镜头与视线齐平",
+    "above": "镜头高于视线，略俯",
+    "below": "镜头低于视线，略仰"
+  },
+  "blocking": {
+    "pair": "{first}（{first_posture}）与{second}（{second_posture}）相距{gap:.1f}米{relation}",
+    "other": "{name}（{posture}）在{anchor}{bearing}{meters:.1f}米",
+    "crowd": "{label}{count}人列阵于{anchor}{bearing}{meters:.1f}米",
+    "centre": "{name}（{posture}）位于场地中央",
+    "override": "本镜{name}{reason}",
+    "lens_clause": "机位距{name}{reach:.1f}米、机高{height:.1f}米",
+    "lens_clause_pattern": "(?:^|；)机位距[^；。]*?机高\\d+(?:\\.\\d+)?米",
+    "landmark": "{name}{position}",
+    "scale": "比例：{scale}",
+    "empty": "空镜：按场景圣经保持地标位置"
+  },
+  "camera": {
+    "height": "机高{height:.1f}米",
+    "from_lead": "位于{name}{bearing}{meters:.1f}米、{height}",
+    "pose": "{where}，{lens:g}mm，{angle}",
+    "default_angle": "平视",
+    "moves_to": "{move}至：{pose}",
+    "holds": "{move}，机位不变"
+  },
+  "composition": {
+    "frame": "{size}，{lens:g}mm",
+    "landmark": "{name}位于{side}",
+    "empty": "空镜，不出现人物",
+    "by_bible": "按场景圣经的地标左右位置构图"
+  },
+  "bible": {
+    "head": "【空间圣经】{place}；单位米；左右一律以主机位的画面为准，任何镜头不得镜像。",
+    "formation": "站位：{formation}。",
+    "actor": "{name}：{posture}，身高约{centimetres}cm，地面坐标({x:.1f}, {z:.1f}){side}。",
+    "actor_side": "，{side}",
+    "sides": {
+      "left": "恒在画左",
+      "right": "恒在画右"
+    },
+    "crowd": "{label}：{rows}排×{columns}列共{count}人，阵心地面坐标({x:.1f}, {z:.1f})，间距{spacing:.1f}米。",
+    "landmark": "{name}：{size}{position}。",
+    "landmark_size": "{size}，",
+    "scale": "比例尺：{scale}；全场人物与陈设保持这一比例，不随景别缩放。",
+    "axis": "轴线：{source}—{target}；全部机位位于轴线同一侧，换边必须先经过轴线上的中性镜头、越轴运动镜头或重新建立空间的全景。"
+  },
+  "table": {
+    "pair": "{left}恒在画左、{right}恒在画右，相距约{gap:.1f}米（{formation}）",
+    "lead": "{name}{side}",
+    "sides": {
+      "left": "恒在画左",
+      "right": "恒在画右",
+      "center": "居中"
+    },
+    "landmark": "{name}{position}",
+    "crowd_lenses": "{labels}成排在场，机位角度还可以写{lenses}，系统按人群的位置求机位",
+    "brief": "【空间调度（系统已定站位，机位由系统按此求解）】{parts}。画面内容里的左右、朝向与远近须与此一致，不写越轴与镜像；景别、机位角度照常填写。"
+  },
+  "projection": {
+    "shot_sizes": [
+      ["大特写", 0.22],
+      ["特写", 0.38],
+      ["近景", 0.72],
+      ["中近景", 0.95],
+      ["中景", 1.3],
+      ["中全景", 1.85],
+      ["全景", 2.35],
+      ["远景", 5.0],
+      ["大远景", 10.0]
+    ],
+    "regions": [
+      [-0.4, "画面左侧三分之一"],
+      [-0.12, "画面中左侧"],
+      [0.12, "画面中央"],
+      [0.4, "画面中右侧"]
+    ],
+    "region_right": "画面右侧三分之一",
+    "depth_layers": {
+      "near_foreground": "近前景",
+      "foreground": "前景",
+      "midground": "中景",
+      "middle_distance": "中远景",
+      "background": "背景"
+    },
+    "facings": {
+      "to_lens": "面向镜头",
+      "away": "背对镜头",
+      "right": "朝向画面右侧",
+      "left": "朝向画面左侧"
+    }
+  },
+  "contacts": {
+    "hold": "{actor}{hand}握着{target}",
+    "sit": "{actor}坐在{target}上",
+    "rest": "{target}放在{support}上"
+  }
+}

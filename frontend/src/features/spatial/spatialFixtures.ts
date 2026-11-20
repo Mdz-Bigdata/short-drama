@@ -40,3 +40,21 @@ export const PLAN: StagePlan = {
 export function planResponse(overrides: Partial<SpatialPlanResponse> = {}, plan: Partial<StagePlan> = {}): SpatialPlanResponse {
   return { taskId: 't1', sceneId: 'E1S01', persisted: true, boardStatus: 'done', boardStale: false, plan: { ...PLAN, ...plan }, ...overrides };
 }
+
+/**
+ * The office with things to touch: a desk and an armchair, the recorder a hand-sized prop, and
+ * 林夏 holding it in her right hand for the whole scene.
+ */
+export function contactPlan(plan: Partial<StagePlan> = {}): StagePlan {
+  return {
+    ...PLAN,
+    landmarks: [
+      { id: 'mark-01', name: '录音笔', kind: 'prop', position: [0, -0.9], size: [0.12, 0.04, 0.04] },
+      { id: 'mark-02', name: '书案', kind: 'furniture', position: [0, -2], size: [1.6, 0.8, 0.78] },
+      { id: 'mark-03', name: '扶手椅', kind: 'furniture', position: [2.5, 0], size: [0.7, 0.7, 0.45], yaw_deg: -90 },
+      { id: 'mark-04', name: '茶杯', kind: 'prop', position: [5, -2], size: [0.08, 0.08, 0.1] },
+    ],
+    contacts: [{ id: 'contact-01', kind: 'hold', actor: '林夏', target: '录音笔', support: '', hand: 'right', shot_ids: [], source: 'auto' }],
+    ...plan,
+  };
+}

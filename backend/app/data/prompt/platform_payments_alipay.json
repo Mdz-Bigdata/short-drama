@@ -1,0 +1,19 @@
+{
+  "_doc": "app/platform/payments/alipay.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "_call.text": "支付宝请求失败: {0}",
+  "_call.text.2": "支付宝应答无法解析: HTTP {0}",
+  "_call.text.3": "支付宝应答异常: {0}",
+  "_call.text.4": "支付宝应答验签失败",
+  "_failed.text": "支付宝{0}失败: {1}",
+  "create_qr.text": "下单",
+  "query.text": "查单",
+  "close.text": "关单",
+  "parse_notification.text": "支付宝通知格式无效",
+  "parse_notification.text.2": "支付宝通知验签失败",
+  "download_bill.text": "支付宝账单暂不可用: {0}",
+  "download_bill.text.2": "支付宝账单下载地址不可信",
+  "download_bill.text.3": "支付宝账单下载失败: {0}",
+  "download_bill.text.4": "支付宝账单下载失败: HTTP {0}",
+  "refund.text": "退款",
+  "query_refund.text": "退款查询"
+}

@@ -14,6 +14,19 @@ from dataclasses import dataclass
 from PIL import Image, ImageStat
 
 from app.core.actor_sheet_cutter import _runs, _SeparatorMap
+from app.core import prompt_data
+
+
+_WORDING_FILE = "grid_split"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/grid_split.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 MAX_GRID_SIDE = 8
 # How far from its even position a seam may be, as a share of one cell.
@@ -113,14 +126,14 @@ def _is_blank(cell: Image.Image) -> bool:
 def split_grid(content: bytes, rows: int, columns: int) -> list[GridCell]:
     """The non-blank cells in reading order, as PNG. Row and column are 0-based positions in the grid."""
     if not (1 <= rows <= MAX_GRID_SIDE and 1 <= columns <= MAX_GRID_SIDE):
-        raise ValueError(f"行列数必须在 1 到 {MAX_GRID_SIDE} 之间")
+        raise ValueError(_text_of("split_grid.text").format(MAX_GRID_SIDE))
     if rows * columns < 2:
-        raise ValueError("至少要切成两格")
+        raise ValueError(_text_of("split_grid.text.2"))
     with Image.open(io.BytesIO(content)) as opened:
         image = opened.convert("RGB")
     width, height = image.size
     if width < columns * _MIN_CELL_PIXELS or height < rows * _MIN_CELL_PIXELS:
-        raise ValueError(f"图片只有 {width}×{height}，切不出 {rows}×{columns} 格")
+        raise ValueError(_text_of("split_grid.text.3").format(width, height, rows, columns))
     seps = _SeparatorMap(image)
     borders = _Borders(image)
     whole: Box = (0, 0, width, height)
@@ -141,5 +154,5 @@ def split_grid(content: bytes, rows: int, columns: int) -> list[GridCell]:
             cell.save(buffer, format="PNG", optimize=True)
             cells.append(GridCell(row=row, column=column, box=box, png=buffer.getvalue()))
     if not cells:
-        raise ValueError("这张图切不出有内容的格子")
+        raise ValueError(_text_of("split_grid.text.4"))
     return cells

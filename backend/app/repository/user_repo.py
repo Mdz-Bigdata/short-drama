@@ -11,6 +11,19 @@ import threading
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from app.core import prompt_data
+
+
+_WORDING_FILE = "repository_user_repo"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/repository_user_repo.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 _SCRYPT_N = 2**14
@@ -21,7 +34,7 @@ _WRITE_LOCK = threading.RLock()
 
 def hash_password(password: str) -> str:
     if not password:
-        raise ValueError("密码不能为空")
+        raise ValueError(_text_of("hash_password.text"))
     salt = os.urandom(16)
     digest = hashlib.scrypt(
         password.encode("utf-8"), salt=salt,
@@ -84,7 +97,7 @@ class UserRepository:
                 "email": email.strip().lower() if email else None,
                 "phone": phone.strip() if phone else None,
                 "password_hash": hash_password(password_plain),
-                "username": email.split("@")[0] if email else (phone[-4:] if phone else "用户"),
+                "username": email.split("@")[0] if email else (phone[-4:] if phone else _text_of("create_user.user_data.username")),
             }
             db[user_id] = user_data
             self._write_db(db)
@@ -95,7 +108,7 @@ class UserRepository:
             db = self._read_db()
             user = db.get(user_id)
             if not isinstance(user, dict):
-                raise ValueError("用户不存在")
+                raise ValueError(_text_of("upgrade_password.text"))
             user["password_hash"] = hash_password(password_plain)
             user.pop("salt", None)
             self._write_db(db)

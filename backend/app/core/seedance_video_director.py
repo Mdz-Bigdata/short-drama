@@ -18,19 +18,22 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 
 from app import settings
-from app.core import knowledge_registry
+from app.core import knowledge_registry, prompt_data
 from app.core import fight_design
+from app.core import wuxia_vfx
 
 from app.core.video_references import _normalize_model_token
 
 
 SKILL_NAME = "seedance-2-5-video-director"
 SKILL_ROOT = settings.skills_root() / SKILL_NAME
+# 导演层的词表、正则、接入说明与每一段的段名和标题：app/data/prompt/seedance_video_director.json。
+_WORDING = "seedance_video_director"
 
 # 导演层是追加在 sd25-pe 主规范之后的第三段系统提示；34k 的主规范之外再放这么多，
 # 对 doubao-seed / deepseek 这类 128k 上下文的文本模型仍有余量，但不能无限长——
 # 超过就按优先级从低到高丢整段，绝不留半张表。
-DIRECTOR_LAYER_CHAR_CAP = 24_000
+DIRECTOR_LAYER_CHAR_CAP = prompt_data.number(_WORDING, "char_cap")
 
 # 本项目视频产线只产 4-30s 的单镜；上游其余主模式（续写/编辑/白模/无缝转场/
 # 多格分镜）不在这条链路上，这里只登记会被选中的两种。
@@ -38,30 +41,26 @@ PRIMARY_MODES = ("basic-multimodal", "timestamp-30s")
 
 _REF_MODES = frozenset({"first_frame", "first_last_frame", "multi_ref"})
 
-_DIALOGUE_MARKERS = ("台词", "对白", "说道", "说：", "喊道", "低声", "旁白", "独白", "「", "“")
-_ACTING_MARKERS = ("表情", "眼神", "哭", "笑", "颤抖", "情绪", "愤怒", "泪", "拥抱", "吻", "对峙")
-_PHYSICAL_MARKERS = ("打", "踢", "摔", "撞", "碰撞", "推开", "拳", "刀", "剑", "跌", "坠", "扑", "劈", "砍", "格挡", "冲刺")
-_SPORTS_MARKERS = ("比赛", "综艺", "赛道", "障碍", "直播", "解说", "观众席")
+_DIALOGUE_MARKERS = prompt_data.words(_WORDING, "dialogue_markers")
+_ACTING_MARKERS = prompt_data.words(_WORDING, "acting_markers")
+_PHYSICAL_MARKERS = prompt_data.words(_WORDING, "physical_markers")
+_SPORTS_MARKERS = prompt_data.words(_WORDING, "sports_markers")
 # 打戏专用：比 _PHYSICAL_MARKERS 严——"御剑""剑修"里的"剑"不算打斗。
-_FIGHT_MARKERS = ("打斗", "交手", "对打", "互打", "拳", "踢", "劈", "砍", "斩", "刺向", "格挡", "对撞", "出招", "厮杀", "击飞", "大招", "连招", "反杀")
+_FIGHT_MARKERS = prompt_data.words(_WORDING, "fight_markers")
 # 与编剧阶段共用一份玄幻词表（app.core.fight_design）。
 _XIANXIA_MARKERS = fight_design.XIANXIA_MARKERS
 # 群敌清场：换上割草专章的机位表，不带单挑那张——两张表一起进来太长，也会互相打架。
-_MASS_BATTLE_MARKERS = ("割草", "群敌", "群战", "混战", "围攻", "一打多", "以一敌", "敌群", "杂兵", "千军", "大军", "士兵们", "清场")
-_TIMESTAMP_PATTERN = re.compile(r"(?<!\d)\d{1,2}\s*[-–~至]\s*\d{1,2}\s*(?:s|秒)")
+_MASS_BATTLE_MARKERS = prompt_data.words(_WORDING, "mass_battle_markers")
+# 带了声音素材或音色说明；写到转场、切镜。
+_AUDIO_MARKERS = prompt_data.words(_WORDING, "audio_markers")
+_TRANSITION_MARKERS = prompt_data.words(_WORDING, "transition_markers")
+_TIMESTAMP_PATTERN = prompt_data.pattern(_WORDING, "timestamp_pattern")
 
 # 项目自写的接入说明：放在导演层最前面，讲清它与 sd25-pe 的分工，免得模型把
 # 上游的「提问 / 导演方案」输出模式当成本次任务的输出。
-_PRECEDENCE_NOTE = """# 导演层：seedance-2-5-video-director（仅 Seedance 2.5 生效）
-
-下面几段来自 MIT 授权的 seedance-2-5-video-director 技能，只作为 Seedance 2.5 的
-模式上限、素材要求、时序/引用规则与真人表演约束；接口参数分离（画幅、总时长、
-分辨率、帧率、声音开关不进 Prompt）与素材引用保真仍以上文 sd25-pe 主规范为准。
-主模式已由项目按镜头时长与提示词形态选定（见「当前调用约定」），不要再提问、
-不要输出导演方案或诊断，只把这些约束体现在最终的中文提示词正文里。
-
-写正文时，排除项少而精、尽量正着说：写画面里有什么（「双手各握一把刀」），而不是「不要 X」，
-被排除的那个名词不在正文里重复出现；容易被模型按常见印象误读的名词，改写成形状、材质与空间关系。"""
+_PRECEDENCE_NOTE = "\n".join(prompt_data.words(_WORDING, "precedence_note"))
+# 接入说明在 DirectorLayer.sections 里的名字。
+_PRECEDENCE_NAME = "precedence-note"
 
 
 @dataclass(frozen=True)
@@ -157,6 +156,12 @@ def _has_any(text: str, markers: tuple[str, ...]) -> bool:
     return any(marker in text for marker in markers)
 
 
+def _part(priority: int, key: str, source: str) -> tuple[int, str, str]:
+    """导演层的一段：(优先级, 段名, 正文)。段名与它在参考文件里的二级标题见词表的 sections。"""
+    name, heading = prompt_data.load(_WORDING)["sections"][key]
+    return (priority, str(name), _section(source, str(heading)))
+
+
 def build_director_layer(
     *,
     video_model: str = "",
@@ -187,7 +192,7 @@ def build_director_layer(
 
     corpus = f"{prompt}\n{asset_hint}"
     has_refs = mode in _REF_MODES
-    has_audio = "音频" in corpus or "@音频" in corpus or "@Audio" in corpus or "音色" in corpus
+    has_audio = _has_any(corpus, _AUDIO_MARKERS)
     has_dialogue = _has_any(corpus, _DIALOGUE_MARKERS) or _has_any(corpus, _ACTING_MARKERS)
     has_physical = _has_any(corpus, _PHYSICAL_MARKERS)
     has_sports = _has_any(corpus, _SPORTS_MARKERS)
@@ -196,76 +201,82 @@ def build_director_layer(
     has_mass_battle = has_fight and _has_any(corpus, _MASS_BATTLE_MARKERS)
 
     # (优先级, 章节名, 正文)。优先级越小越先保住；同优先级按出现顺序。
-    blueprint_heading = (
-        "Exact 30-second timestamp video" if primary_mode == "timestamp-30s" else "Basic multimodal"
-    )
+    blueprint = "blueprint_timestamp" if primary_mode == "timestamp-30s" else "blueprint_basic"
     candidates: list[tuple[int, str, str]] = [
-        (0, "precedence-note", _PRECEDENCE_NOTE),
-        (1, "limits/Mode limits", _section(limits, "Mode limits")),
-        (1, "skill/Timing and reference rules", _section(skill, "Timing and reference rules")),
-        (1, f"blueprints/{blueprint_heading}", _section(blueprints, blueprint_heading)),
-        (2, "blueprints/Shared assembly order", _section(blueprints, "Shared assembly order")),
-        (2, "limits/Validation behavior", _section(limits, "Validation behavior")),
-        (3, "skill/Final audit", _section(skill, "Final audit")),
-        (3, "realistic/Contradiction audit", _section(realistic, "Contradiction audit")),
+        (0, _PRECEDENCE_NAME, _PRECEDENCE_NOTE),
+        _part(1, "mode_limits", limits),
+        _part(1, "timing_rules", skill),
+        _part(1, blueprint, blueprints),
+        _part(2, "assembly_order", blueprints),
+        _part(2, "validation_behavior", limits),
+        _part(3, "final_audit", skill),
+        _part(3, "contradiction_audit", realistic),
     ]
     if has_refs:
         candidates.extend((
-            (2, "multimodal/Asset lock table", _section(multimodal, "Asset lock table")),
-            (2, "multimodal/Reference grammar", _section(multimodal, "Reference grammar")),
-            (2, "multimodal/Person-reference scope", _section(multimodal, "Person-reference scope")),
-            (3, "multimodal/Realistic people", _section(multimodal, "Realistic people")),
-            (3, "multimodal/Multiple people", _section(multimodal, "Multiple people")),
-            (4, "limits/Input requirements", _section(limits, "Input requirements")),
-            (4, "limits/Stability guidance", _section(limits, "Stability guidance")),
+            _part(2, "asset_lock_table", multimodal),
+            _part(2, "reference_grammar", multimodal),
+            _part(2, "person_reference_scope", multimodal),
+            _part(3, "realistic_people", multimodal),
+            _part(3, "multiple_people", multimodal),
+            _part(4, "input_requirements", limits),
+            _part(4, "stability_guidance", limits),
         ))
     if has_audio or has_dialogue:
-        candidates.append((3, "multimodal/Timbre and dialogue", _section(multimodal, "Timbre and dialogue")))
+        candidates.append(_part(3, "timbre_and_dialogue", multimodal))
     if has_dialogue:
         candidates.extend((
-            (2, "realistic/Natural human performance", _section(realistic, "Natural human performance")),
-            (3, "realistic/Dialogue and emotional conflict", _section(realistic, "Dialogue and emotional conflict")),
-            (4, "realistic/Relationship-drama camera grammar", _section(realistic, "Relationship-drama camera grammar")),
+            _part(2, "natural_performance", realistic),
+            _part(3, "dialogue_conflict", realistic),
+            _part(4, "relationship_camera", realistic),
         ))
     if has_physical:
-        candidates.append((2, "realistic/Physical causality", _section(realistic, "Physical causality")))
+        candidates.append(_part(2, "physical_causality", realistic))
     if has_fight:
         # 打戏：镜头贴动作走、命中打实、尾帧留下一击；速度档位词与拼接顺序。
-        candidates.append((3, "combat/核心原则", _section(combat, "一、核心原则")))
+        candidates.append(_part(3, "combat_core", combat))
         # 机位词典按场次只带一张：群敌清场带割草专章（含群演规矩），其余带单挑机位表。
         if has_mass_battle:
-            candidates.append((3, "combat/割草专章", _section(combat, "三、割草专章(群敌清场)")))
+            candidates.append(_part(3, "combat_mass_battle", combat))
         else:
-            candidates.append((3, "combat/单挑机位公式", _section(combat, "二、单挑机位公式")))
-        candidates.append((4, "combat/速度档位词", _section(combat, "四、速度档位词(写进运镜句)")))
-        candidates.append((4, "combat/拼接公式", _section(combat, "五、拼接公式(一段打戏一条 prompt)")))
+            candidates.append(_part(3, "combat_duel", combat))
+        candidates.append(_part(4, "combat_speed", combat))
+        candidates.append(_part(4, "combat_assembly", combat))
     if has_xianxia:
         # 玄幻打戏：能量先定形再有光、大招尺度要量得出来、结尾只能四种收法。
-        candidates.append((3, "xianxia/能量四态", _section(xianxia, "二、能量四态：先定形，再有光")))
-        candidates.append((3, "xianxia/收束协议", _section(xianxia, "五、收束协议：一段打戏只能用四种方式结束")))
-        candidates.append((4, "xianxia/尺度四件套", _section(xianxia, "三、尺度四件套：大招必须量得出来")))
+        candidates.append(_part(3, "xianxia_energy", xianxia))
+        candidates.append(_part(3, "xianxia_closing", xianxia))
+        candidates.append(_part(4, "xianxia_scale", xianxia))
+    # 修仙特效(打戏和渡劫、突破、御剑、阵法这类非打斗奇观)：四拍时序、特效当光源、大制作感的看得见的几件事。
+    if wuxia_vfx.kind_of(corpus) == wuxia_vfx.XIANXIA:
+        candidates.append(_part(3, "xianxia_vfx_shots", xianxia))
+        if not has_xianxia:
+            candidates.append(_part(3, "xianxia_energy", xianxia))
+        # 渡劫、御剑、阵法……常带「劈」「砸」这类字被认成打戏，奇观写法照样要。
+        if wuxia_vfx.is_spectacle(corpus):
+            candidates.append(_part(4, "xianxia_spectacle", xianxia))
     if has_sports:
-        candidates.append((4, "realistic/Sports and variety live coverage", _section(realistic, "Sports and variety live coverage")))
-    candidates.append((3, "cn-handbook/四种提示词公式", _section(handbook, "一、四种提示词公式")))
+        candidates.append(_part(4, "sports_coverage", realistic))
+    candidates.append(_part(3, "handbook_formulas", handbook))
     if primary_mode == "timestamp-30s":
-        candidates.append((2, "cn-handbook/30 秒长视频的三个模块", _section(handbook, "二、30 秒长视频的三个模块")))
-    if "转场" in corpus or "切镜" in corpus:
-        candidates.append((3, "cn-handbook/中文转场用语", _section(handbook, "五、中文转场用语")))
+        candidates.append(_part(2, "handbook_thirty_seconds", handbook))
+    if _has_any(corpus, _TRANSITION_MARKERS):
+        candidates.append(_part(3, "handbook_transitions", handbook))
     if has_dialogue or has_refs:
-        candidates.append((4, "cn-handbook/人物造型细分公式", _section(handbook, "三、人物造型细分公式（真人与动画通用）")))
-    candidates.append((4, "cn-handbook/其他可直接用的说法", _section(handbook, "六、其他可直接用的说法")))
-    candidates.append((4, "camera-style/选运镜的总规则", _section(camera_library, "一、选运镜的总规则")))
+        candidates.append(_part(4, "handbook_looks", handbook))
+    candidates.append(_part(4, "handbook_phrases", handbook))
+    candidates.append(_part(4, "camera_style_rules", camera_library))
     # 运镜句怎么写(幅度/速度词、单句放最后、给落点)；48 条词条太长，只带总则与组合公式。
-    candidates.append((4, "camera-move/写法总则", _section(camera_moves, "一、写法总则")))
-    candidates.append((5, "camera-move/组合公式", _section(camera_moves, "三、六个组合公式(整句填入运镜位)")))
-    candidates.append((4, "composition/怎么用", _section(composition, "一、怎么用")))
+    candidates.append(_part(4, "camera_move_rules", camera_moves))
+    candidates.append(_part(5, "camera_move_formulas", camera_moves))
+    candidates.append(_part(4, "composition_use", composition))
     if has_physical:
-        candidates.append((4, "composition/动作张力", _section(composition, "四、动作张力：把速度、压迫与爆点组织清楚")))
+        candidates.append(_part(4, "composition_action", composition))
     else:
-        candidates.append((4, "composition/电影氛围", _section(composition, "三、电影氛围：让光线、天气与遮挡参与叙事")))
-    candidates.append((4, "four-lock/动作连贯三原则", _section(handoff, "五、动作连贯三原则")))
+        candidates.append(_part(4, "composition_mood", composition))
+    candidates.append(_part(4, "handoff_continuity", handoff))
     if has_refs:
-        candidates.append((3, "four-lock/故事板交给视频模型时的五条设置", _section(handoff, "六、故事板交给视频模型时的五条设置")))
+        candidates.append(_part(3, "handoff_storyboard", handoff))
 
     # 按预算打包：从高优先级往下装，装不下的整段丢弃，保持原相对顺序。
     ordered = sorted(

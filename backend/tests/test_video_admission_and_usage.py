@@ -41,6 +41,24 @@ class PricingTests(unittest.TestCase):
         self.assertEqual(table.cost("doubao-seedream-4-5", units={"images": 4}), (1.0, "CNY"))
         self.assertIsNone(table.cost("unknown-model", units={"seconds": 10}))
 
+    def test_a_project_alias_finds_its_price_whatever_the_separators(self):
+        """Projects say "seedance2.5"; the price list says "seedance-2-5". Both name one model."""
+        table = _pricing(**{"seedance-2-5": {"kind": "per_second", "currency": "CNY", "price": 1.51, "by_resolution": {"480p": 0.67}}})
+        for model in ("seedance2.5", "Seedance 2.5", "doubao-seedance-2-5-260628", "seedance_2_5"):
+            self.assertIsNotNone(table.lookup(model), model)
+        self.assertEqual(table.cost("seedance2.5", units={"seconds": 5, "resolution": "480p"}), (3.35, "CNY"))
+        self.assertIsNone(table.lookup("seedance2.0"), "2.0 is not 2.5")
+        self.assertIsNone(table.lookup("seedance2"), "a shorter name is not a match")
+
+    def test_a_quote_without_a_tier_prices_the_tier_seedance_renders_at(self):
+        pricing.set_pricing_table(_pricing(**{"seedance-2-5": {"kind": "per_second", "currency": "CNY", "price": 1.51, "by_resolution": {"480p": 0.67, "720p": 1.51}}}))
+        with patch.dict("os.environ", {"SEEDANCE_VIDEO_RESOLUTION": "480p"}):
+            self.assertEqual(usage_ledger.estimate("seedance2.5", "video", {"seconds": 5})["cost"], 3.35)
+            self.assertEqual(usage_ledger.estimate("seedance2.5", "video", {"seconds": 5, "resolution": "720p"})["cost"], 7.55)
+        with patch.dict("os.environ", {}, clear=False) as env:
+            env.pop("SEEDANCE_VIDEO_RESOLUTION", None)
+            self.assertEqual(usage_ledger.estimate("doubao-seedance-2-5-260628", "video", {"seconds": 5})["cost"], 7.55)
+
     def test_an_invalid_entry_is_skipped_and_an_absent_file_prices_nothing(self):
         table = _pricing(bad={"kind": "per_hour", "price": 1}, worse={"kind": "per_image", "price": "many"})
         self.assertEqual(len(table), 0)
@@ -197,6 +215,9 @@ class VideoAdmissionTests(unittest.TestCase):
 
         task = _task([_shot(1, "E1S01", duration=8)], status="running")
         self.assertEqual([p.code for p in assess_video_batch(task, provider_ready=lambda *_: True).shots[0].problems], [video_admission.ACTIVE_TASK])
+        # 这一步刚做完一轮、同一次制作接着做下一集：不算在跑。
+        task["stage_progress"]["status"] = "success"
+        self.assertEqual(assess_video_batch(task, provider_ready=lambda *_: True).decision, "admitted")
 
     def test_a_scripted_length_outside_the_tiers_asks_for_confirmation_then_clears(self):
         # seedance2.0 films up to 15 s; a 22 s shot is requested at the longest tier.

@@ -1,0 +1,9 @@
+{
+  "_doc": "app/service/studio_service.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "promote_canvas_node.text": "提交失败",
+  "restore_canvas_version.text": "画布没有第 {0} 版（可能已被清理）",
+  "store_canvas_upload.text": "图片不能超过 {0} MB",
+  "store_canvas_upload.text.2": "视频不能超过 {0} MB",
+  "store_canvas_upload.text.3": "只支持图片（PNG、JPEG、WebP）、视频（MP4、WebM）和音频（MP3、WAV、M4A、AAC、OGG）",
+  "_canvas_task.text": "这个画布没有关联项目，只能编辑，不能运行或写回"
+}

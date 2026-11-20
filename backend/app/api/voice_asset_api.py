@@ -10,12 +10,25 @@ from pydantic import BaseModel, Field
 
 from app.api import drama_api
 from app.service import voice_asset_service
+from app.core import prompt_data
+
+
+_WORDING_FILE = "api_voice_asset_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_voice_asset_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.api.voice_asset_api")
 
 router = APIRouter(
     prefix="/api/drama",
-    tags=["声音资产"],
+    tags=list(_words_of("module.tags")),
     dependencies=[Depends(drama_api.require_owned_drama_task)],
 )
 
@@ -36,7 +49,7 @@ class NarratorChooseRequest(BaseModel):
 
 def _answered(result: dict | None) -> dict:
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("_answered.detail"))
     return result
 
 
@@ -45,12 +58,12 @@ def _guarded(work):
         return _answered(work())
     except ValueError as exc:
         detail = str(exc)
-        raise HTTPException(status_code=409 if "正在" in detail else 422, detail=detail) from exc
+        raise HTTPException(status_code=409 if _text_of("_guarded.status_code") in detail else 422, detail=detail) from exc
     except HTTPException:
         raise
     except Exception as exc:
         logger.warning("旁白音色操作失败: %s", type(exc).__name__)
-        raise HTTPException(status_code=502, detail="音色设计服务暂不可用") from exc
+        raise HTTPException(status_code=502, detail=_text_of("_guarded.detail")) from exc
 
 
 @router.get("/{task_id}/voices")
@@ -79,3 +92,21 @@ def choose_narrator(task_id: str, req: NarratorChooseRequest):
 @router.delete("/{task_id}/voices/narrator")
 def clear_narrator(task_id: str):
     return _guarded(lambda: voice_asset_service.clear_narrator(drama_api.service, task_id))
+
+
+class CharacterVoiceChooseRequest(BaseModel):
+    voice_id: str = Field(min_length=1, max_length=200)
+    # 音色库给的公开试听录音：原声视频模型拿它当这个声音的参考音频。
+    sample_url: str = Field("", max_length=1000)
+
+
+@router.put("/{task_id}/voices/characters/{name}")
+def choose_character_voice(task_id: str, name: str, req: CharacterVoiceChooseRequest):
+    """Use one of the account's library voices for a character (nothing is paid); re-dubs what they said when needed."""
+    from app.service import character_voice_choice
+
+    def work():
+        dashboard = character_voice_choice.choose(drama_api.service, task_id, name, req.voice_id, sample_url=req.sample_url)
+        return dashboard.model_dump(mode="json", by_alias=True) if dashboard is not None else None
+
+    return _guarded(work)

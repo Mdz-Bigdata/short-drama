@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { CREATION_MODE_OPTIONS, EMPTY_AD_BRIEF } from './types';
 
 describe('creation modes', () => {
-  it('offers the three kinds the backend accepts, drama first as the default', () => {
-    // backend app/schema/drama.py: creation_mode: Literal["drama", "narration", "ad"]
-    expect(CREATION_MODE_OPTIONS.map(option => option.id)).toEqual(['drama', 'narration', 'ad']);
+  it('offers the four kinds the backend accepts, drama first as the default', () => {
+    // backend app/schema/drama.py: creation_mode: Literal["drama", "narration", "ad", "film"]
+    expect(CREATION_MODE_OPTIONS.map(option => option.id)).toEqual(['drama', 'narration', 'ad', 'film']);
     expect(CREATION_MODE_OPTIONS.every(option => option.label && option.hint)).toBe(true);
   });
 

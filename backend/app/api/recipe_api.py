@@ -10,8 +10,21 @@ from pydantic import BaseModel, Field
 
 from app.api.auth_api import get_current_user
 from app.core import recipe_catalog
+from app.core import prompt_data
 
-router = APIRouter(prefix="/api/recipes", tags=["配方库"], dependencies=[Depends(get_current_user)])
+
+_WORDING_FILE = "api_recipe_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_recipe_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+router = APIRouter(prefix="/api/recipes", tags=list(_words_of("module.tags")), dependencies=[Depends(get_current_user)])
 
 
 class RecipeRenderRequest(BaseModel):

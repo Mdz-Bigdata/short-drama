@@ -1,0 +1,161 @@
+/* 白模站位图对话框。图本身永远是浅色纸面（它是要导出的图），外框跟导演台走。 */
+.desk-modal.desk-diagram {
+  width: min(72rem, 100%);
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+}
+
+.desk-diagram__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.desk-diagram__views {
+  display: inline-flex;
+  border: 1px solid var(--desk-line);
+  border-radius: 0.45rem;
+  overflow: hidden;
+}
+
+.desk-diagram__views button {
+  padding: 0.35rem 0.75rem;
+  color: var(--desk-text);
+  font: inherit;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.desk-diagram__views button + button {
+  border-left: 1px solid var(--desk-line);
+}
+
+.desk-diagram__views button.is-active {
+  color: var(--on-accent);
+  background: var(--desk-cyan);
+}
+
+.desk-diagram__views button:focus-visible,
+.desk-diagram__legend summary:focus-visible,
+.desk-diagram__prompt summary:focus-visible {
+  outline: 2px solid var(--desk-cyan);
+  outline-offset: -2px;
+}
+
+.desk-diagram__pager,
+.desk-diagram__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--desk-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.desk-diagram__stage {
+  border: 1px solid var(--desk-line);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: #f5f5f0;
+}
+
+/* 导演台把所有 svg 当 1rem 的图标排（.director-desk svg），这张图要比那条规则更具体才撑得开。 */
+.director-desk .desk-diagram svg.desk-diagram__picture {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+}
+
+.desk-diagram__notes {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.desk-diagram__prompt {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.desk-diagram__prompt summary {
+  color: var(--desk-text);
+  cursor: pointer;
+}
+
+.desk-diagram__prompt textarea {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.6rem;
+  color: var(--desk-text);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  border: 1px solid var(--desk-line);
+  border-radius: 0.45rem;
+  background: rgba(var(--ink-rgb), 0.04);
+  resize: vertical;
+}
+
+.desk-diagram__prompt .desk-button {
+  margin-top: 0.4rem;
+  justify-self: start;
+}
+
+/* 标注表：图上的短标记在图外写全，和「后期标注」一个意思。 */
+.desk-diagram__legend {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.desk-diagram__legend summary {
+  color: var(--desk-text);
+  cursor: pointer;
+}
+
+.desk-diagram__legend table {
+  width: 100%;
+  margin-top: 0.5rem;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  color: var(--desk-text);
+}
+
+.desk-diagram__legend th,
+.desk-diagram__legend td {
+  padding: 0.3rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--desk-line);
+}
+
+.desk-diagram__legend thead th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.desk-diagram__legend tbody th {
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.desk-diagram__legend h3 {
+  margin: 0.7rem 0 0.2rem;
+  font-size: 0.8rem;
+  color: var(--desk-text);
+}
+
+.desk-diagram__legend ol {
+  margin: 0;
+  padding-left: 1.2rem;
+  font-size: 0.78rem;
+  color: var(--desk-text);
+}
+
+.desk-diagram__legend .desk-button {
+  margin-top: 0.5rem;
+  justify-self: start;
+}

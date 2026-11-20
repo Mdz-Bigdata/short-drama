@@ -18,6 +18,19 @@ from typing import Any
 from app.core import media_compositor
 from app.core.episode_cycle import shot_uid
 from app.core.grid_split import split_grid
+from app.core import prompt_data
+
+
+_WORDING_FILE = "image_pool"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/image_pool.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 POOL_KEY = "4_image_pool"
 STORE_VERSION = 1
@@ -66,13 +79,13 @@ def _generated(task: Mapping[str, Any]) -> list[dict[str, Any]]:
         if isinstance(shot, Mapping):
             number = int(shot.get("shot_id") or index)
             scene = str(shot.get("scene_id") or "")
-            note(shot.get("image_url"), "shot", f"{scene} 镜头 {number}".strip(), scene_id=scene, shot_id=number,
+            note(shot.get("image_url"), "shot", _text_of("_generated.text").format(scene, number).strip(), scene_id=scene, shot_id=number,
                  shot_uid=shot_uid({**shot, "shot_id": number}))
     boards = assets.get("4_scene_boards")
     for scene, board in (boards.items() if isinstance(boards, Mapping) else ()):
         if isinstance(board, Mapping):
-            note(board.get("grid_url"), "board", f"{scene} 九宫格", scene_id=str(scene))
-    note(assets.get("4_grid"), "board", "分镜总览")
+            note(board.get("grid_url"), "board", _text_of("_generated.text.2").format(scene), scene_id=str(scene))
+    note(assets.get("4_grid"), "board", _text_of("_generated.text.3"))
     return list(found.values())
 
 
@@ -93,7 +106,7 @@ def _cells_on_disk(task_id: str, sources: Mapping[str, Mapping[str, Any]]) -> li
             "id": name[:-4],
             "url": media_compositor.public_url(f"{_DIRECTORY}/{os.path.basename(folder)}/{name}"),
             "kind": "cell",
-            "label": f"{(source or {}).get('label') or '切图'} · {int(row) + 1}-{int(column) + 1}",
+            "label": f"{(source or {}).get('label') or _text_of('_cells_on_disk.label')} · {int(row) + 1}-{int(column) + 1}",
             "parent_id": f"img_{digest}", "grid": [int(rows), int(columns)], "row": int(row), "column": int(column),
         })
     return cells
@@ -127,7 +140,7 @@ def view(task: Mapping[str, Any]) -> dict[str, Any]:
 def _assert_revision(task: Mapping[str, Any], expected: int | None) -> dict[str, Any]:
     store = _stored(task)
     if expected is not None and int(expected) != int(store["revision"]):
-        raise PoolConflict(f"图片池已被更新（当前版本 {store['revision']}），请刷新后再试")
+        raise PoolConflict(_text_of("_assert_revision.text").format(store['revision']))
     return store
 
 
@@ -155,7 +168,7 @@ def cut(task_id: str, source: Mapping[str, Any], content: bytes, rows: int, colu
     digest = _digest(str(source.get("url") or ""))
     folder = _folder(task_id)
     os.makedirs(folder, exist_ok=True)
-    label = str(source.get("label") or "切图")
+    label = str(source.get("label") or _text_of("cut.label"))
     entries = []
     for cell in split_grid(content, rows, columns):
         name = f"cell_{digest}_{rows}x{columns}_{cell.row}_{cell.column}.png"
@@ -181,5 +194,5 @@ def add_cells(task: dict[str, Any], cells: list[dict[str, Any]], *, expected_rev
     kept = [item for item in current if item.get("kind") == "cell" and item.get("id") not in fresh]
     merged_cells = [*kept, *cells]
     if len(merged_cells) > MAX_CELLS:
-        raise ValueError(f"图片池最多 {MAX_CELLS} 张切图，请先清理")
+        raise ValueError(_text_of("add_cells.text").format(MAX_CELLS))
     return _save(task, store, _merged(task, merged_cells))

@@ -4,6 +4,8 @@ export type StoryboardView = 'board' | 'prompt' | 'spatial' | 'desk' | 'blender'
 export interface StoryboardViewAction {
   sceneId: string;
   view: StoryboardView;
+  /** The shot to select in that scene, by its shot_id; the first one when absent or unknown. */
+  shotId?: number | null;
   /** Bumped per request so asking for the same view twice opens it twice. */
   nonce: number;
 }

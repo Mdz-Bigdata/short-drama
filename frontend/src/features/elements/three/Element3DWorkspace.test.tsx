@@ -150,7 +150,8 @@ describe('Element3DWorkspace', () => {
       {
         id: 'prop-1', kind: 'prop', name: '青铜令牌', description: '正面虎纹', status: 'ready', version: 3,
         metadata: {}, model3d: null,
-        files: [file('reference'), file('prop_front'), file('prop_back'), file('prop_side'), file('prop_in_use'), file('prop_board')],
+        // 主参考图是正面那张另存的一份，内容一样。
+        files: [{ ...file('reference'), sha256: 'prop_front-sha' }, file('prop_front'), file('prop_back'), file('prop_side'), file('prop_in_use'), file('prop_board')],
       },
       {
         id: 'prop-2', kind: 'prop', name: '旧钥匙', description: '只有一张参考图', status: 'ready', version: 1,
@@ -181,7 +182,7 @@ describe('Element3DWorkspace', () => {
     expect(within(screen.getByLabelText('参考图统计')).getByText('0')).toBeTruthy();
   });
 
-  it('shows a scene as master, 45°, depth and detail views with the master as its reference', async () => {
+  it('shows a scene as master, 45°, depth, detail and reverse views with the master as its reference', async () => {
     const file = (slot: string) => ({
       id: `study-${slot}`, slot, mime_type: 'image/png', media_kind: 'image' as const,
       size_bytes: 2_048, sha256: `${slot}-sha`, url: `/media/elements/study-${slot}.png`,
@@ -190,7 +191,14 @@ describe('Element3DWorkspace', () => {
       {
         id: 'scene-views', kind: 'scene', name: '雨夜书房', description: '左侧木门，右侧花窗', status: 'ready', version: 2,
         metadata: {}, model3d: null,
-        files: [file('reference'), file('scene_main'), file('scene_45'), file('scene_depth'), file('scene_detail')],
+        files: [{ ...file('reference'), sha256: 'scene_main-sha' }, file('scene_scale'), file('scene_main'), file('scene_45'), file('scene_depth'), file('scene_detail'), file('scene_reverse')],
+        scene_scale: { text: '房间面宽约4.5米、房间进深约5.5米', source: 'table' },
+      },
+      {
+        id: 'scene-no-scale', kind: 'scene', name: '客栈暗室', description: '约两丈见方', status: 'ready', version: 1,
+        metadata: {}, model3d: null,
+        files: [{ ...file('reference'), sha256: 'scene_main-sha' }, file('scene_main'), file('scene_45'), file('scene_depth'), file('scene_detail')],
+        scene_scale: { text: '房间面宽约6.7米、房间进深约6.7米', source: 'description' },
       },
       {
         id: 'scene-legacy', kind: 'scene', name: '旧城门', description: '只有一张宽幅参考图', status: 'ready', version: 1,
@@ -199,23 +207,38 @@ describe('Element3DWorkspace', () => {
     ];
     const handlers = {
       onSelect: vi.fn(), onCreate: vi.fn(), onUploadModel: vi.fn(), onUploadPoster: vi.fn(), onRegenerate: vi.fn(),
-      onDelete: vi.fn(), onDeletePoster: vi.fn(), onInspectPoster: vi.fn(),
+      onDelete: vi.fn(), onDeletePoster: vi.fn(), onInspectPoster: vi.fn(), onDrawSceneScale: vi.fn(), onDrawSceneReverse: vi.fn(),
     };
     const { rerender } = render(<Element3DWorkspace kind="scene" items={scenes} selectedId="scene-views" busy="" {...handlers} />);
 
-    const strip = screen.getByRole('tablist', { name: '雨夜书房 四视角' });
-    expect(within(strip).getAllByRole('tab').map(tab => tab.textContent)).toEqual(['主场景全景', '45°斜角', '纵深视角', '关键细节']);
+    const strip = screen.getByRole('tablist', { name: '雨夜书房 视角' });
+    expect(within(strip).getAllByRole('tab').map(tab => tab.textContent)).toEqual(['人物比例', '主场景全景', '45°斜角', '纵深视角', '关键细节', '反打视角']);
     const preview = screen.getByRole('region', { name: '场景资产“雨夜书房”参考预览' });
-    expect(within(preview).getByRole('img', { name: '雨夜书房 主场景全景' }).getAttribute('src')).toContain('study-scene_main.png');
+    // The human-scale board opens first.
+    expect(within(preview).getByRole('img', { name: '雨夜书房 人物比例' }).getAttribute('src')).toContain('study-scene_scale.png');
+    expect(screen.getByText('房间面宽约4.5米、房间进深约5.5米')).toBeTruthy();
+    expect(screen.getByText(/按场地类型估算/)).toBeTruthy();
 
     await userEvent.click(within(strip).getByRole('tab', { name: '纵深视角' }));
     expect(within(preview).getByRole('img', { name: '雨夜书房 纵深视角' }).getAttribute('src')).toContain('study-scene_depth.png');
-    expect(within(screen.getByLabelText('参考图统计')).getByText('5 张')).toBeTruthy();
+    expect(within(screen.getByLabelText('参考图统计')).getByText('7 张')).toBeTruthy();
+
+    // A scene drawn before the human-scale board offers to draw it from its panorama.
+    rerender(<Element3DWorkspace kind="scene" items={scenes} selectedId="scene-no-scale" busy="" {...handlers} />);
+    const noScale = screen.getByRole('tablist', { name: '客栈暗室 视角' });
+    expect(within(screen.getByRole('region', { name: '场景资产“客栈暗室”参考预览' }))
+      .getByRole('img', { name: '客栈暗室 主场景全景' })).toBeTruthy();
+    await userEvent.click(within(noScale).getByRole('tab', { name: /点此生成人物比例/ }));
+    expect(handlers.onDrawSceneScale).toHaveBeenCalledWith(scenes[1]);
+    // …and the reverse view, drawn from the same panorama.
+    await userEvent.click(within(noScale).getByRole('tab', { name: /点此生成反打视角/ }));
+    expect(handlers.onDrawSceneReverse).toHaveBeenCalledWith(scenes[1]);
+    expect(screen.getByText(/来自描述/)).toBeTruthy();
 
     // An older scene with only its single wide reference still previews it, and says how to get the views.
     rerender(<Element3DWorkspace kind="scene" items={scenes} selectedId="scene-legacy" busy="" {...handlers} />);
-    const empty = screen.getByRole('tablist', { name: '旧城门 四视角' });
-    expect(within(empty).getAllByText('待生成')).toHaveLength(4);
+    const empty = screen.getByRole('tablist', { name: '旧城门 视角' });
+    expect(within(empty).getAllByText('待生成')).toHaveLength(6);
     expect(within(empty).getByText(/生成主场景全景、45°斜角、纵深视角、关键细节四张空景视角/)).toBeTruthy();
     expect(screen.getByRole('img', { name: '旧城门 参考图' }).getAttribute('src')).toContain('study-reference.png');
   });
@@ -335,5 +358,173 @@ describe('Element3DWorkspace', () => {
 
     await userEvent.click(screen.getByRole('button', { name: '删除道具资产“空道具”' }));
     expect(onDelete).toHaveBeenCalledWith(bare[0]);
+  });
+
+  it('deletes the picture on show, not whichever file is the main reference', async () => {
+    const file = (slot: string) => ({
+      id: `study-${slot}`, slot, mime_type: 'image/png', media_kind: 'image' as const,
+      size_bytes: 2_048, sha256: `${slot}-sha`, url: `/media/elements/study-${slot}.png`,
+    });
+    const scene: ElementItem = {
+      id: 'scene-views', kind: 'scene', name: '雨夜书房', description: '', status: 'ready', version: 2, metadata: {}, model3d: null,
+      files: [file('reference'), file('scene_scale'), file('scene_main'), file('scene_45')],
+    };
+    const legacy: ElementItem = { ...scene, id: 'scene-legacy', name: '旧城门', files: [file('reference')] };
+    const withModel: ElementItem = { ...scene, id: 'scene-model', name: '码头', model3d: items[0].model3d };
+    const onDeletePoster = vi.fn();
+    const handlers = {
+      onSelect: vi.fn(), onCreate: vi.fn(), onUploadModel: vi.fn(), onUploadPoster: vi.fn(), onRegenerate: vi.fn(),
+      onDelete: vi.fn(), onDeletePoster, onInspectPoster: vi.fn(),
+    };
+    const all = [scene, legacy, withModel];
+    const { rerender } = render(<Element3DWorkspace kind="scene" items={all} selectedId="scene-views" busy="" {...handlers} />);
+
+    // The human-scale board is what opens, so that is what the button names and removes.
+    await userEvent.click(screen.getByRole('button', { name: '删除这张：人物比例' }));
+    expect(onDeletePoster).toHaveBeenLastCalledWith(scene, scene.files[1], '「人物比例」这张图');
+
+    await userEvent.click(screen.getByRole('tab', { name: '45°斜角' }));
+    await userEvent.click(screen.getByRole('button', { name: '删除这张：45°斜角' }));
+    expect(onDeletePoster).toHaveBeenLastCalledWith(scene, scene.files[3], '「45°斜角」这张图');
+
+    // While it runs, the button for that very picture carries the spinner state.
+    rerender(<Element3DWorkspace kind="scene" items={all} selectedId="scene-views" busy="delete-file:study-scene_45" {...handlers} />);
+    const deleting = screen.getByRole('button', { name: '正在删除：45°斜角' });
+    expect(deleting.getAttribute('aria-busy')).toBe('true');
+
+    // The person's own upload is not a copy of any view, so it gets a place of its own and can be removed too.
+    rerender(<Element3DWorkspace kind="scene" items={all} selectedId="scene-views" busy="" {...handlers} />);
+    const strip = screen.getByRole('tablist', { name: '雨夜书房 视角' });
+    expect(within(strip).getAllByRole('tab').at(-1)?.textContent).toBe('主参考图');
+    await userEvent.click(within(strip).getByRole('tab', { name: '主参考图' }));
+    expect(screen.getByRole('img', { name: '雨夜书房 主参考图' }).getAttribute('src')).toContain('study-reference.png');
+    await userEvent.click(screen.getByRole('button', { name: '删除这张：主参考图' }));
+    expect(onDeletePoster).toHaveBeenLastCalledWith(scene, scene.files[0], '「主参考图」这张图');
+
+    // A main reference that is only the stored copy of a view is not listed twice.
+    const copied: ElementItem = { ...scene, id: 'scene-copied', name: '茶馆', files: [{ ...scene.files[0], sha256: 'scene_main-sha' }, ...scene.files.slice(1)] };
+    rerender(<Element3DWorkspace kind="scene" items={[copied]} selectedId="scene-copied" busy="" {...handlers} />);
+    expect(within(screen.getByRole('tablist', { name: '茶馆 视角' })).queryByRole('tab', { name: '主参考图' })).toBeNull();
+
+    // No views yet: the single reference is on show.
+    rerender(<Element3DWorkspace kind="scene" items={all} selectedId="scene-legacy" busy="" {...handlers} />);
+    expect(within(screen.getByRole('tablist', { name: '旧城门 视角' })).queryByRole('tab', { name: '主参考图' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: '删除参考图' }));
+    expect(onDeletePoster).toHaveBeenLastCalledWith(legacy, legacy.files[0], '参考图');
+
+    // With a model on the stage no view is on show, so it is the main reference that goes.
+    rerender(<Element3DWorkspace kind="scene" items={all} selectedId="scene-model" busy="" {...handlers} />);
+    await userEvent.click(screen.getByRole('button', { name: '删除参考图' }));
+    expect(onDeletePoster).toHaveBeenLastCalledWith(withModel, withModel.files[0], '参考图');
+  });
+
+  it('lets an asset with a model go back to its reference views, and keeps the size controls', async () => {
+    const file = (slot: string) => ({
+      id: `dock-${slot}`, slot, mime_type: 'image/png', media_kind: 'image' as const,
+      size_bytes: 2_048, sha256: `${slot}-sha`, url: `/media/elements/dock-${slot}.png`,
+    });
+    const dock: ElementItem = {
+      id: 'dock', kind: 'scene', name: '码头', description: '', status: 'ready', version: 2, metadata: {},
+      model3d: items[0].model3d, files: [file('reference'), file('scene_scale'), file('scene_main'), file('scene_45')],
+    };
+    const sword: ElementItem = {
+      id: 'sword', kind: 'prop', name: '长剑', description: '', status: 'ready', version: 1, metadata: {},
+      model3d: items[0].model3d, files: [file('reference')], prop_scale: { longest_cm: 100, manual_cm: null, source: 'estimate' },
+    };
+    const onDeletePoster = vi.fn();
+    const onSetPropSize = vi.fn();
+    const handlers = {
+      onSelect: vi.fn(), onCreate: vi.fn(), onUploadModel: vi.fn(), onUploadPoster: vi.fn(), onRegenerate: vi.fn(),
+      onDelete: vi.fn(), onDeletePoster, onInspectPoster: vi.fn(), onSetPropSize,
+    };
+    const all = [dock, items[0], items[1]];
+    const { rerender } = render(<Element3DWorkspace kind="scene" items={all} selectedId="dock" busy="" {...handlers} />);
+
+    // The model opens first, and the two choices say which one is on the stage.
+    expect(screen.getByRole('img', { name: '码头 模型画布' })).toBeTruthy();
+    const stageSwitch = screen.getByRole('group', { name: '主预览显示' });
+    const showModel = within(stageSwitch).getByRole('button', { name: '看 3D 模型' });
+    const showReference = within(stageSwitch).getByRole('button', { name: '看参考图' });
+    expect(showModel.getAttribute('aria-pressed')).toBe('true');
+    expect(showReference.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', { name: '删除参考图' })).toBeTruthy();
+
+    await userEvent.click(showReference);
+    expect(screen.queryByRole('img', { name: '码头 模型画布' })).toBeNull();
+    expect(showReference.getAttribute('aria-pressed')).toBe('true');
+    const preview = screen.getByRole('region', { name: '场景资产“码头”参考预览' });
+    expect(within(preview).getByRole('img', { name: '码头 人物比例' }).getAttribute('src')).toContain('dock-scene_scale.png');
+    // The model is already there, so the preview does not ask for one again.
+    expect(within(preview).queryByRole('button', { name: '上传 3D 模型' })).toBeNull();
+
+    // Now a view is on show, so it is that view the delete button names and removes.
+    await userEvent.click(screen.getByRole('tab', { name: '45°斜角' }));
+    expect(within(preview).getByRole('img', { name: '码头 45°斜角' }).getAttribute('src')).toContain('dock-scene_45.png');
+    await userEvent.click(screen.getByRole('button', { name: '删除这张：45°斜角' }));
+    expect(onDeletePoster).toHaveBeenLastCalledWith(dock, dock.files[3], '「45°斜角」这张图');
+
+    await userEvent.click(showModel);
+    expect(screen.getByRole('img', { name: '码头 模型画布' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '删除参考图' })).toBeTruthy();
+
+    // The choice belongs to the asset it was made on: another asset opens on its model again.
+    await userEvent.click(showReference);
+    rerender(<Element3DWorkspace kind="scene" items={all} selectedId="scene-1" busy="" {...handlers} />);
+    expect(screen.getByRole('img', { name: '雨夜巷口 模型画布' })).toBeTruthy();
+    // Nothing to switch to without a reference image, or without a model.
+    expect(screen.queryByRole('group', { name: '主预览显示' })).toBeNull();
+    rerender(<Element3DWorkspace kind="scene" items={all} selectedId="scene-2" busy="" {...handlers} />);
+    expect(screen.queryByRole('group', { name: '主预览显示' })).toBeNull();
+
+    // A prop keeps its real-size field once it has a model.
+    rerender(<Element3DWorkspace kind="prop" items={[sword]} selectedId="sword" busy="" {...handlers} />);
+    expect(screen.getByRole('img', { name: '长剑 模型画布' })).toBeTruthy();
+    expect(screen.getByText('184,332')).toBeTruthy();
+    await userEvent.type(screen.getByRole('spinbutton', { name: /最长边/ }), '64{Enter}');
+    expect(onSetPropSize).toHaveBeenCalledWith(sword, 64);
+  });
+
+  it('marks the one action that is running and keeps its name', () => {
+    const file = (slot: string) => ({
+      id: `inn-${slot}`, slot, mime_type: 'image/png', media_kind: 'image' as const,
+      size_bytes: 2_048, sha256: `${slot}-sha`, url: `/media/elements/inn-${slot}.png`,
+    });
+    const scene: ElementItem = {
+      id: 'inn', kind: 'scene', name: '客栈暗室', description: '', status: 'ready', version: 1, metadata: {}, model3d: null,
+      files: [file('reference'), file('scene_main')],
+    };
+    const handlers = {
+      onSelect: vi.fn(), onCreate: vi.fn(), onUploadModel: vi.fn(), onUploadPoster: vi.fn(), onRegenerate: vi.fn(),
+      onDelete: vi.fn(), onDeletePoster: vi.fn(), onInspectPoster: vi.fn(), onDrawSceneScale: vi.fn(), onSetPropSize: vi.fn(),
+    };
+    const { rerender } = render(<Element3DWorkspace kind="scene" items={[scene]} selectedId="inn" busy="" {...handlers} />);
+    const busyNames = () => screen.getAllByRole('button').concat(screen.getAllByRole('tab'))
+      .filter(node => node.getAttribute('aria-busy') === 'true')
+      .map(node => node.textContent?.trim());
+    expect(busyNames()).toEqual([]);
+
+    rerender(<Element3DWorkspace kind="scene" items={[scene]} selectedId="inn" busy="regenerate:inn" {...handlers} />);
+    expect(screen.getByRole('button', { name: '重生成参考图' }).textContent).toContain('正在生成…');
+    expect(busyNames()).toEqual(['正在生成…']);
+
+    rerender(<Element3DWorkspace kind="scene" items={[scene]} selectedId="inn" busy="model:inn" {...handlers} />);
+    expect(screen.getByRole('button', { name: '上传 GLB' }).textContent).toContain('上传中…');
+    expect(screen.getByRole('button', { name: '上传 3D 模型' }).getAttribute('aria-busy')).toBe('true');
+
+    rerender(<Element3DWorkspace kind="scene" items={[scene]} selectedId="inn" busy="upload:inn" {...handlers} />);
+    expect(screen.getByRole('button', { name: '参考图' }).textContent).toContain('上传中…');
+    expect(busyNames()).toEqual(['上传中…']);
+
+    // Drawing the human-scale board from the panorama: the empty cell says so instead of 点此生成.
+    rerender(<Element3DWorkspace kind="scene" items={[scene]} selectedId="inn" busy="scale:inn" {...handlers} />);
+    expect(busyNames()).toEqual(['正在生成…人物比例']);
+
+    const sword: ElementItem = {
+      id: 'sword', kind: 'prop', name: '长剑', description: '', status: 'ready', version: 1, metadata: {}, model3d: null,
+      files: [file('reference')], prop_scale: { longest_cm: 100, manual_cm: null, source: 'estimate' },
+    };
+    rerender(<Element3DWorkspace kind="prop" items={[sword]} selectedId="sword" busy="size:sword" {...handlers} />);
+    expect(screen.getByRole('button', { name: '保存尺寸' }).textContent).toContain('正在保存…');
+    expect(busyNames()).toEqual(['正在保存…']);
   });
 });

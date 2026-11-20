@@ -24,6 +24,9 @@ logger = logging.getLogger("app.core.reference_fit")
 
 MIN_RATIO = 0.4
 MAX_RATIO = 2.5
+# 补边时往范围里面多留一点：供应商量的是它自己解码后的图，卡在 0.4000 上差一个像素的取整就是一次拒单。
+PAD_MIN_RATIO = 0.405
+PAD_MAX_RATIO = 2.47
 MIN_SIDE = 300
 MAX_SIDE = 6000
 COMPACT_MAX_SIDE = 2048
@@ -31,13 +34,13 @@ COMPACT_JPEG_QUALITY = 90
 _DATA_URI = re.compile(r"data:image/(png|jpeg|jpg|webp);base64,(.+)", re.DOTALL)
 
 
-def compact_image_reference(value: object) -> object:
+def compact_image_reference(value: object, *, max_side: int = COMPACT_MAX_SIDE, quality: int = COMPACT_JPEG_QUALITY, force: bool = False) -> object:
     """生图参考图的内嵌 data URI 重新编码成 JPEG，长边不超过 COMPACT_MAX_SIDE；变小才替换。
 
     一格分镜要带 5–7 张内嵌 PNG，请求体中位数约 8.7 MB：参考图只用来认人认景，不需要无损。
     带透明通道的图(元素抠图)和读不了的图原样返回。IMAGE_REFERENCE_COMPACT=0 关闭。
     """
-    if not isinstance(value, str) or not value.startswith("data:image/") or not settings.env_flag("IMAGE_REFERENCE_COMPACT", True):
+    if not isinstance(value, str) or not value.startswith("data:image/") or not (force or settings.env_flag("IMAGE_REFERENCE_COMPACT", True)):
         return value
     match = _DATA_URI.fullmatch(value)
     if match is None:
@@ -49,11 +52,11 @@ def compact_image_reference(value: object) -> object:
             if "A" in image.getbands() and image.getchannel("A").getextrema()[0] < 255:
                 return value
             picture = image.convert("RGB")
-        if max(picture.size) > COMPACT_MAX_SIDE:
-            picture.thumbnail((COMPACT_MAX_SIDE, COMPACT_MAX_SIDE), Image.LANCZOS)
+        if max(picture.size) > max_side:
+            picture.thumbnail((max_side, max_side), Image.LANCZOS)
         buffer = io.BytesIO()
         # 不做色度抽样：人脸和服饰边缘的颜色是参考图要传达的东西。
-        picture.save(buffer, format="JPEG", quality=COMPACT_JPEG_QUALITY, subsampling=0, optimize=True)
+        picture.save(buffer, format="JPEG", quality=quality, subsampling=0, optimize=True)
     except (OSError, ValueError, binascii.Error) as error:
         logger.debug("参考图未压缩，按原图发送: %s", type(error).__name__)
         return value
@@ -61,20 +64,36 @@ def compact_image_reference(value: object) -> object:
     return compact if len(compact) < len(value) else value
 
 
-def _target_size(width: int, height: int) -> tuple[tuple[int, int], tuple[int, int]]:
-    """(缩放后的图尺寸, 补边后的画布尺寸)：先压到长边上限，再补边到宽高比范围，最后补足短边。"""
-    scale = min(1.0, MAX_SIDE / max(width, height))
-    image_w, image_h = max(1, round(width * scale)), max(1, round(height * scale))
+def _padded(image_w: int, image_h: int) -> tuple[int, int]:
+    """能装下这张图、宽高比落在补边目标范围内的最小画布：竖条加宽，横条加高。"""
     canvas_w, canvas_h = image_w, image_h
     if canvas_w / canvas_h < MIN_RATIO:
-        canvas_w = math.ceil(canvas_h * MIN_RATIO)
+        canvas_w = math.ceil(canvas_h * PAD_MIN_RATIO)
     elif canvas_w / canvas_h > MAX_RATIO:
-        canvas_h = math.ceil(canvas_w / MAX_RATIO)
-    if min(canvas_w, canvas_h) < MIN_SIDE:
-        # 画布已在比例范围内，短边不足 300 时长边至多 750：整体等比放大不会越过长边上限。
-        up = MIN_SIDE / min(canvas_w, canvas_h)
-        image_w, image_h = max(1, round(image_w * up)), max(1, round(image_h * up))
-        canvas_w, canvas_h = max(image_w, math.ceil(canvas_w * up)), max(image_h, math.ceil(canvas_h * up))
+        canvas_h = math.ceil(canvas_w / PAD_MAX_RATIO)
+    return canvas_w, canvas_h
+
+
+def _target_size(width: int, height: int) -> tuple[tuple[int, int], tuple[int, int]]:
+    """(缩放后的图尺寸, 补边后的画布尺寸)：先压到长边上限，短边不足就等比放大，最后才补边。
+
+    补边放在最后一步，画布的两条边就只取整一次。早先是先补边、再把图和画布各自取整放大：
+    229×740 的道具图补成 296×740 后放大到 300×751，宽高比 0.3995，整条请求被供应商拒掉。
+    """
+    scale = min(1.0, MAX_SIDE / max(width, height))
+    image_w, image_h = max(1, round(width * scale)), max(1, round(height * scale))
+    short = min(_padded(image_w, image_h))
+    if short < MIN_SIDE:
+        # 画布在比例范围内、短边不足 300 时长边至多 750：等比放大不会越过长边上限。
+        up = MIN_SIDE / short
+        image_w, image_h = max(1, math.ceil(image_w * up)), max(1, math.ceil(image_h * up))
+    canvas_w, canvas_h = _padded(image_w, image_h)
+    canvas_w, canvas_h = max(canvas_w, min(MIN_SIDE, canvas_h)), max(canvas_h, min(MIN_SIDE, canvas_w))
+    # 取整之后再核一遍：只往范围里面加边，所以一定停得下来。
+    while canvas_w / canvas_h < MIN_RATIO:
+        canvas_w += 1
+    while canvas_w / canvas_h > MAX_RATIO:
+        canvas_h += 1
     return (image_w, image_h), (canvas_w, canvas_h)
 
 
@@ -120,4 +139,4 @@ def fit_images(values: list | None) -> list | None:
     return [fit_image(value) for value in values] if values else values
 
 
-__all__ = ["MAX_RATIO", "MAX_SIDE", "MIN_RATIO", "MIN_SIDE", "fit_image", "fit_images", "within_limits"]
+__all__ = ["MAX_RATIO", "MAX_SIDE", "MIN_RATIO", "MIN_SIDE", "PAD_MAX_RATIO", "PAD_MIN_RATIO", "fit_image", "fit_images", "within_limits"]

@@ -5,12 +5,25 @@ from __future__ import annotations
 import base64
 import binascii
 import re
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Any, Literal, Optional, Union
 from urllib.parse import urlsplit
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
+from app.core import prompt_data
+
+
+_WORDING_FILE = "schema_production"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/schema_production.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 _DATA_IMAGE_RE = re.compile(
@@ -132,8 +145,7 @@ class CharacterAsset(BaseModel):
         actual = tuple(view.view for view in self.views)
         if not identity_view_order_is_valid(actual):
             raise ValueError(
-                "identity views must use exact order: "
-                f"{', '.join(IDENTITY_VIEW_ORDER)}（或旧版 {', '.join(LEGACY_IDENTITY_VIEW_ORDER)}）"
+                _text_of("validate_view_order.text").format(', '.join(IDENTITY_VIEW_ORDER), ', '.join(LEGACY_IDENTITY_VIEW_ORDER))
             )
         return self
 
@@ -160,7 +172,7 @@ class StoryboardPanel(BaseModel):
     action_axis: Annotated[str, Field(min_length=2, max_length=500)]
     eyeline: Annotated[str, Field(min_length=2, max_length=500)]
     shot_purpose: Literal["information", "emotion", "suspense", "tension", "reversal", "shock", "clue"] = "information"
-    story_beat: Annotated[str, Field(min_length=1, max_length=500)] = "推进当前信息"
+    story_beat: Annotated[str, Field(min_length=1, max_length=500)] = _text_of("StoryboardPanel.story_beat")
     duration_seconds: Annotated[float, Field(ge=0.5, le=300)] = 2.0
     subject_action: Annotated[str, Field(min_length=2, max_length=2000)]
     expression: Annotated[str, Field(min_length=2, max_length=1000)]
@@ -173,9 +185,9 @@ class StoryboardPanel(BaseModel):
     edit_in: Annotated[str, Field(min_length=2, max_length=500)]
     edit_out: Annotated[str, Field(min_length=2, max_length=500)]
     generation_mode: Literal["auto", "text", "first_frame", "last_frame", "first_last_frame", "reference"]
-    blocking: Annotated[str, Field(min_length=1, max_length=800)] = "遵守场景圣经与180度轴线"
-    start_state: Annotated[str, Field(min_length=1, max_length=1000)] = "承接上一格结束状态"
-    end_state: Annotated[str, Field(min_length=1, max_length=1000)] = "形成下一格可承接的可见状态"
+    blocking: Annotated[str, Field(min_length=1, max_length=800)] = _text_of("StoryboardPanel.blocking")
+    start_state: Annotated[str, Field(min_length=1, max_length=1000)] = _text_of("StoryboardPanel.start_state")
+    end_state: Annotated[str, Field(min_length=1, max_length=1000)] = _text_of("StoryboardPanel.end_state")
     continuity_in: Annotated[str, Field(max_length=1000)] = ""
     continuity_out: Annotated[str, Field(min_length=2, max_length=1000)]
 
@@ -387,7 +399,7 @@ Sd25AssetRole = Literal[
 class Sd25Asset(BaseModel):
     """One read-only reference with one declared primary responsibility."""
 
-    ref: Annotated[str, Field(pattern=r"^@(?:图片|视频|音频|Image|Video|Audio)\s?\d+$")]
+    ref: Annotated[str, Field(pattern=_text_of("Sd25Asset.pattern"))]
     media_type: Sd25MediaType
     role: Sd25AssetRole
     subject: Annotated[str, Field(min_length=1, max_length=120)]
@@ -402,8 +414,8 @@ class Sd25Asset(BaseModel):
     def validate_reference_contract(self) -> "Sd25Asset":
         prefix = self.ref.removeprefix("@").replace(" ", "")
         expected = (
-            "image" if prefix.startswith(("图片", "Image"))
-            else "video" if prefix.startswith(("视频", "Video"))
+            "image" if prefix.startswith(_words_of("validate_reference_contract.expected"))
+            else "video" if prefix.startswith(_words_of("validate_reference_contract.expected.2"))
             else "audio"
         )
         if self.media_type != expected:
@@ -422,14 +434,14 @@ class Sd25DialogueEntry(BaseModel):
     text: Annotated[str, Field(max_length=1000)] = ""
     language: Annotated[str, Field(max_length=40)] = ""
     delivery: Annotated[str, Field(min_length=1, max_length=500)]
-    position: Literal["画内", "画外", "旁白"] = "画内"
-    audio_ref: Annotated[str | None, Field(pattern=r"^@(?:音频|Audio)\s?\d+$")] = None
+    position: Literal["画内", "画外", "旁白"] = _text_of("Sd25DialogueEntry.position")
+    audio_ref: Annotated[str | None, Field(pattern=_text_of("Sd25DialogueEntry.pattern"))] = None
 
 
 class Sd25MissingAsset(BaseModel):
     """A declared but inaccessible reference whose original binding is preserved."""
 
-    ref: Annotated[str, Field(pattern=r"^@(?:图片|视频|音频|Image|Video|Audio)\s?\d+$")]
+    ref: Annotated[str, Field(pattern=_text_of("Sd25MissingAsset.pattern"))]
     intended_role: Annotated[str, Field(min_length=1, max_length=500)]
 
 
@@ -503,9 +515,9 @@ class Sd25CompileRequest(BaseModel):
                 return False
             compact = ref.removeprefix("@").replace(" ", "")
             return {
-                "image": compact.startswith(("图片", "Image")),
-                "video": compact.startswith(("视频", "Video")),
-                "audio": compact.startswith(("音频", "Audio")),
+                "image": compact.startswith(_words_of("missing_has_type.image")),
+                "video": compact.startswith(_words_of("missing_has_type.video")),
+                "audio": compact.startswith(_words_of("missing_has_type.audio")),
             }[media_type]
 
         def has_type(ref: str | None, media_type: Sd25MediaType) -> bool:
@@ -614,10 +626,22 @@ class Sd25PromptAuditResult(BaseModel):
     prompt_sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 
 
+class TimelineRenderRequest(BaseModel):
+    """Which episode to render again; none is the episode the timeline shows by default."""
+    episode: Optional[int] = Field(None, ge=1)
+
+
+class RightsNoteRequest(BaseModel):
+    """验收单「授权」层：给一样素材记下授权说明；note 为空就是撤回。"""
+    key: str = Field(..., min_length=1, max_length=120)
+    note: str = Field("", max_length=300)
+
+
 class TimelineOperationRequest(BaseModel):
     """One edit on the stage-7 timeline; which fields matter depends on ``operation``."""
-    operation: Literal["trim", "transition", "sound_join", "subtitle", "mute", "candidate", "review", "title", "bgm"]
+    operation: Literal["trim", "transition", "sound_join", "subtitle", "mute", "candidate", "review", "title", "bgm", "audio_source", "settings", "name_cards"]
     shot_id: Optional[int] = Field(None, ge=1)
+    shot_uid: Optional[int] = Field(None, ge=1, description=_text_of("TimelineOperationRequest.description"))
     start: Optional[float] = Field(None, ge=0)
     end: Optional[float] = Field(None, ge=0)
     kind: Optional[str] = Field(None, max_length=40)
@@ -633,3 +657,9 @@ class TimelineOperationRequest(BaseModel):
     library_id: Optional[str] = Field(None, max_length=40)
     volume: Optional[float] = Field(None, ge=0, le=1)
     duck: Optional[bool] = None
+    bgm_start: Optional[float] = Field(None, ge=0, le=3600, description=_text_of("TimelineOperationRequest.description.2"))
+    music_version: Optional[str] = Field(None, max_length=2000, description=_text_of("TimelineOperationRequest.description.3"))
+    audio_source: Optional[Literal["native", "tts", "none"]] = Field(None, description=_text_of("TimelineOperationRequest.description.4"))
+    settings: Optional[dict[str, Union[bool, dict[str, Any]]]] = Field(None, description=_text_of("TimelineOperationRequest.description.5"))
+    cards: Optional[list[dict[str, Any]]] = Field(None, max_length=8, description=_text_of("TimelineOperationRequest.description.cards"))
+    episode: Optional[int] = Field(None, ge=1, description=_text_of("TimelineOperationRequest.description.episode"))

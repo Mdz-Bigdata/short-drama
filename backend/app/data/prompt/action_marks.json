@@ -1,0 +1,248 @@
+{
+  "_about": "app/core/spatial_stage/action_marks.py 的词表与数值：白模站位图上的「动作 / 特效预演」标注。普通站位只画人、机位和走位；这一层再读两样东西。一是导演台时间线上摆的动作片段(出拳、挥剑、受击、翻滚、起跳…)，一定发生，照实画。二是这一镜的分镜动作文字，但分镜文字是大段画面描写(光柱、火把、裂纹、「没有后撤」都会出现)，所以读得很窄：攻击必须在同一小句里点到被打的人或布景才画线；闪避 / 格挡 / 腾空 / 受击只认这一镜里已经被打的那个人；特效只认 effects 里这几个不会出现在环境描写里的词，而且同一小句里要点到施放的人。2026-11-19 在 100 张真实站位图上按宽词表读过一遍，24 个特效圈和 8 个闪避标签几乎全是误读，才收成现在这样；要放宽先重跑那次核对。每条标注都带来源，图例里写明。特效圈的半径是占位用的约数，不是算出来的。全程不调模型。clips：动作片段 → 标注种类；text：分镜文字里的说法(竖线分隔，按正则读)；effect_kinds：特效的种类 → 名称、默认占位半径(米)、圈数，导演台上手动放置的特效标记(StagePlan.effects)和从文字读出的都用这一张表；effects：[说法, 种类]，只是文字里认哪些词。手动放的标记排在前面编号，文字读出的同类特效落在它半米之内就不再重复画。",
+  "clips": {
+    "strike": {
+      "human-punch-jab-v1": "fist",
+      "human-punch-cross-v1": "fist",
+      "human-punch-hook-v1": "fist",
+      "human-sword-attack-v1": "blade",
+      "human-sword-dash-v1": "blade",
+      "human-sword-heavy-v1": "blade",
+      "human-sword-combo-v1": "blade",
+      "human-sword-heavy-combo-v1": "blade"
+    },
+    "react": {
+      "human-hit-chest-v1": "hit",
+      "human-hit-head-v1": "hit",
+      "human-hit-knockback-v1": "knockback",
+      "human-fall-v1": "fall"
+    },
+    "evade": [
+      "human-roll-v1"
+    ],
+    "guard": [
+      "human-sword-block-v1"
+    ],
+    "air": [
+      "human-jump-start-v1",
+      "human-jump-air-v1",
+      "human-jump-land-v1",
+      "human-leap-start-v1",
+      "human-leap-air-v1",
+      "human-leap-land-v1"
+    ]
+  },
+  "strike_kinds": {
+    "fist": {
+      "short": "拳",
+      "label": "拳轨迹"
+    },
+    "kick": {
+      "short": "踢",
+      "label": "踢击线"
+    },
+    "blade": {
+      "short": "兵器",
+      "label": "兵器路径"
+    },
+    "palm": {
+      "short": "掌",
+      "label": "掌击线"
+    },
+    "body": {
+      "short": "撞",
+      "label": "冲撞线"
+    },
+    "bolt": {
+      "short": "射",
+      "label": "射击线"
+    }
+  },
+  "text": {
+    "strike": [
+      [
+        "一拳|出拳|挥拳|重拳|直拳|勾拳|拳头砸|挥起拳头",
+        "fist"
+      ],
+      [
+        "一脚|飞踢|踢向|踢中|踢飞|踹|扫腿|蹬向|膝撞",
+        "kick"
+      ],
+      [
+        "砍向|砍中|劈向|劈中|刺向|刺中|斩向|挥刀|挥剑|一剑|一刀|捅向|捅进",
+        "blade"
+      ],
+      [
+        "一掌|掌击|拍向|推开|猛推|推向|推搡",
+        "palm"
+      ],
+      [
+        "扑向|扑倒|撞向|撞开|撞飞|擒住|锁喉|掐住",
+        "body"
+      ],
+      [
+        "射向|掷向|开枪|放箭|甩出暗器",
+        "bolt"
+      ]
+    ],
+    "passive": "被|遭|挨了",
+    "evade": "闪开|闪避|躲开|躲过|避开|侧闪|侧身躲|翻滚|下潜|矮身",
+    "guard": "格挡|格开|架住|挡开|挡住|招架|磕开",
+    "react": [
+      [
+        "击飞|震飞|倒飞|打飞|踢飞|掀翻|撞飞|击退|震退|逼退|踉跄",
+        "knockback"
+      ],
+      [
+        "倒地|摔倒|栽倒|撂倒|跪倒",
+        "fall"
+      ],
+      [
+        "中招|受击|击中|踢中|砍中|刺中|劈中|吐血",
+        "hit"
+      ]
+    ],
+    "air": "腾空|跃起|纵身|凌空|跳起|飞身|一跃"
+  },
+  "reaction_rank": [
+    "knockback",
+    "fall",
+    "hit"
+  ],
+  "badges": {
+    "evade": "闪避",
+    "guard": "格挡",
+    "air": "腾空",
+    "hit": "受击",
+    "knockback": "击退",
+    "fall": "倒地"
+  },
+  "reactions": {
+    "hit": "受击",
+    "knockback": "被击退",
+    "fall": "倒地"
+  },
+  "route_labels": {
+    "evade": "闪避路径",
+    "knockback": "击退方向",
+    "fall": "击退方向",
+    "hit": "击退方向",
+    "air": "腾空落点"
+  },
+  "effect_kinds": {
+    "blast": {
+      "name": "爆炸",
+      "radius_m": 3.0,
+      "rings": 3
+    },
+    "shock": {
+      "name": "冲击波",
+      "radius_m": 3.0,
+      "rings": 3
+    },
+    "fire": {
+      "name": "火焰",
+      "radius_m": 1.5,
+      "rings": 2
+    },
+    "bolt": {
+      "name": "闪电",
+      "radius_m": 1.5,
+      "rings": 2
+    },
+    "energy": {
+      "name": "能量",
+      "radius_m": 2.0,
+      "rings": 3
+    },
+    "dust": {
+      "name": "烟尘",
+      "radius_m": 2.5,
+      "rings": 2
+    },
+    "collapse": {
+      "name": "坍塌",
+      "radius_m": 2.5,
+      "rings": 2
+    },
+    "debris": {
+      "name": "碎片",
+      "radius_m": 2.0,
+      "rings": 2
+    },
+    "crack": {
+      "name": "裂纹",
+      "radius_m": 1.0,
+      "rings": 1
+    },
+    "impact": {
+      "name": "冲击点",
+      "radius_m": 0.6,
+      "rings": 1
+    }
+  },
+  "effects": [
+    [
+      "爆炸|炸裂|轰然炸开",
+      "blast"
+    ],
+    [
+      "冲击波|气浪|气劲|罡风",
+      "shock"
+    ],
+    [
+      "火球|烈焰|火龙",
+      "fire"
+    ],
+    [
+      "闪电|雷电|电弧|落雷",
+      "bolt"
+    ],
+    [
+      "坍塌|倒塌|垮塌",
+      "collapse"
+    ],
+    [
+      "法阵|结界|符咒|剑气|刀气|魔火|掌印",
+      "energy"
+    ]
+  ],
+  "impact_kind": "impact",
+  "effect_color": {
+    "hex": "#C0392B",
+    "name": "红"
+  },
+  "effect_id": "VFX-{0:02d}",
+  "modes": {
+    "staging": "普通站位",
+    "action": "动作预演",
+    "vfx": "特效预演",
+    "joiner": " + "
+  },
+  "sources": {
+    "clip": "按导演台动作片段",
+    "text": "按分镜文字",
+    "manual": "手动放置"
+  },
+  "node_text": "分镜文字",
+  "limits": {
+    "strike_cone_deg": 50,
+    "strike_reach_m": 5.0,
+    "open_strike_m": 1.2,
+    "hand_m": 0.3,
+    "body_m": 0.25,
+    "force_m": 1.2,
+    "cast_m": 1.0,
+    "flow_min_m": 0.6,
+    "max_strikes": 6,
+    "max_effects": 4,
+    "max_distances": 3,
+    "max_nodes": 12,
+    "max_badges": 2
+  },
+  "effect_radius": {
+    "low": 0.2,
+    "high": 30
+  },
+  "ring_step_m": 1.0
+}

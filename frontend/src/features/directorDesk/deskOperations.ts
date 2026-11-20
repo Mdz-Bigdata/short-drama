@@ -2,8 +2,10 @@ import { parseAspect } from '../spatial/floorPlanGeometry';
 import {
   NO_BACKDROP,
   type ActionClip, type CameraCut, type FollowClip, type ActorKey, type ActorOverride, type CameraKey, type GroundPoint, type ShotTimeline, type StageActor, type StageBackdrop,
-  type StageCamera, type StageCrowd, type StageLandmark, type StageOperation, type StagePlan, type StagePose, type StageShot,
+  type StageCamera, type StageContact, type StageCrowd, type StageLandmark, type StageOperation, type StagePlan, type StagePose, type StageShot,
 } from '../spatial/spatialTypes';
+import { bakeContacts, contactOperation } from './lib/contacts';
+import { effectOperation, effectsOf, removeEffect, setEffect } from './lib/effects';
 import { crowdMembersOf, nextCrowdId } from './lib/crowdLayout';
 import { timelineOf } from './lib/sampling';
 import { crowdOf, normalizeYaw, rotateAbout, round2, verticalFov } from './lib/stageMath';
@@ -91,6 +93,47 @@ function withTimeline(plan: StagePlan, shotId: unknown, timeline: ShotTimeline |
   return { ...plan, timelines };
 }
 
+function candidatePrefix(shotId: number): string {
+  return `alt-${String(shotId).padStart(2, '0')}-`;
+}
+
+/** Whether add_camera in operations.py will take this id for the shot: its own candidate prefix and a number. */
+function isCandidateIdOf(id: string, shotId: number): boolean {
+  const prefix = candidatePrefix(shotId);
+  return id.startsWith(prefix) && /^\d{2,4}$/.test(id.slice(prefix.length));
+}
+
+/** A lens the planner made keeps its cam- id after it stops filming; add_camera in operations.py takes one back while it is free. */
+function isFormerFilmingId(id: string): boolean {
+  return /^cam-\d{2,76}$/.test(id);
+}
+
+/** The id add_camera in operations.py would give the shot's next candidate: one past the highest number in use. */
+function nextCandidateId(plan: StagePlan, shotId: number): string {
+  const prefix = candidatePrefix(shotId);
+  const numbers = plan.cameras.filter(camera => camera.id.startsWith(prefix))
+    .map(camera => camera.id.slice(prefix.length).split('-', 1)[0]).filter(tail => /^\d+$/.test(tail)).map(Number);
+  return `${prefix}${String(Math.max(0, ...numbers) + 1).padStart(2, '0')}`;
+}
+
+// Mirrors the backend's add_camera for a lens that names its own id, which is how an undone removal
+// comes back: a copy of the lens that films, standing still, then placed. Drawn at once, it keeps
+// the cuts through it on the desk, so an edit made before the answer is built on all of them. A new
+// candidate is numbered by the server and waits for its answer.
+function addCamera(plan: StagePlan, op: StageOperation): StagePlan {
+  const shot = shotOf(plan, op.shot_id);
+  const filming = plan.cameras.find(camera => camera.id === shot?.camera_id);
+  const id = String(op.camera_id ?? '');
+  if (!shot || !filming || plan.cameras.some(camera => camera.id === id)) return plan;
+  if (!isCandidateIdOf(id, shot.shot_id) && !isFormerFilmingId(id)) return plan;
+  const lens: StageCamera = { ...filming, id, label: String(op.label || filming.label), move: { kind: 'static' } };
+  return applyLocal({
+    ...plan,
+    cameras: [...plan.cameras, lens],
+    shots: mapWhere(plan.shots, item => item === shot, item => ({ ...item, alt_camera_ids: [...(item.alt_camera_ids || []), id] })),
+  }, { ...op, op: 'move_camera', camera_id: id });
+}
+
 // Mirrors the backend's set_timeline: a field that is sent replaces the stored one whole, a field
 // that is not sent stays, and an actor track with no keys is not a track.
 function setTimeline(plan: StagePlan, op: StageOperation): StagePlan {
@@ -105,8 +148,61 @@ function setTimeline(plan: StagePlan, op: StageOperation): StagePlan {
   }
   if ('clips' in op) next.clips = Object.fromEntries(Object.entries(op.clips as Record<string, ActionClip[]>).filter(([, clips]) => clips.length));
   if ('follow' in op) next.follow = op.follow as FollowClip[];
-  if ('cuts' in op) next.cuts = op.cuts as CameraCut[];
+  // A cut can only be drawn through a lens the desk holds; the server refuses any other.
+  if ('cuts' in op) next.cuts = (op.cuts as CameraCut[]).filter(cut => plan.cameras.some(camera => camera.id === cut.camera_id));
   return withTimeline(plan, op.shot_id, next);
+}
+
+function nextContactId(contacts: StageContact[]): string {
+  const numbers = contacts.map(contact => /^contact-(\d+)$/.exec(contact.id)?.[1]).filter(Boolean).map(Number);
+  return `contact-${String(Math.max(0, ...numbers) + 1).padStart(2, '0')}`;
+}
+
+/**
+ * Mirrors backend contacts.without_shots: the contacts on `target` taken out of `shotIds` (empty: out
+ * of every shot). A whole-scene contact that loses some shots keeps the scene's other shots as a
+ * list; one left with no shot is gone.
+ */
+function withoutShots(plan: StagePlan, target: string, shotIds: number[]): StageContact[] {
+  const all = plan.shots.map(shot => shot.shot_id);
+  return (plan.contacts || []).flatMap(item => {
+    if (item.target !== target) return [item];
+    if (!shotIds.length) return [];
+    const covered = item.shot_ids.length ? item.shot_ids : all;
+    const remaining = covered.filter(id => !shotIds.includes(id));
+    if (remaining.length === covered.length) return [item];
+    return remaining.length ? [{ ...item, shot_ids: remaining }] : [];
+  });
+}
+
+function shotIdsOf(op: StageOperation): number[] {
+  return Array.isArray(op.shot_ids) ? [...new Set((op.shot_ids as unknown[]).map(Number).filter(Number.isFinite))] : [];
+}
+
+// Mirrors the backend's set_contact: every other contact on the target loses the new one's shots,
+// then the new one is added, as a person's own. Names the server would refuse are its to refuse.
+function setContact(plan: StagePlan, op: StageOperation): StagePlan {
+  const kind = String(op.kind || '') as StageContact['kind'];
+  const target = String(op.target || '');
+  if (!['hold', 'sit', 'rest'].includes(kind) || !plan.landmarks.some(item => item.name === target)) return plan;
+  const shotIds = shotIdsOf(op);
+  const hand = String(op.hand || '');
+  const contact: StageContact = {
+    id: nextContactId(plan.contacts || []), kind, target,
+    actor: kind === 'rest' ? '' : String(op.actor || ''),
+    support: kind === 'rest' ? String(op.support || '') : '',
+    hand: kind === 'hold' && (hand === 'left' || hand === 'right' || hand === 'both') ? hand : '',
+    shot_ids: shotIds, source: 'manual',
+  };
+  return { ...plan, contacts: [...withoutShots(plan, target, shotIds), contact] };
+}
+
+// Mirrors the backend's remove_contact: every contact on the target, or that shot taken out of them.
+function removeContact(plan: StagePlan, op: StageOperation): StagePlan {
+  const target = String(op.target || '');
+  if (!plan.contacts?.some(item => item.target === target)) return plan;
+  const shotIds = op.shot_id === undefined || op.shot_id === null ? [] : [Number(op.shot_id)];
+  return { ...plan, contacts: withoutShots(plan, target, shotIds) };
 }
 
 /** What the plan looks like once `op` lands. Operations only the server can resolve leave it unchanged. */
@@ -139,8 +235,20 @@ export function applyLocal(plan: StagePlan, op: StageOperation): StagePlan {
       return { ...plan, landmarks: mapWhere(plan.landmarks, item => item.name === op.name, item => ({ ...item, element_id: String(op.element_id || '') })) };
     case 'set_backdrop':
       return { ...plan, backdrop: { ...backdropOf(plan), ...pick<StageBackdrop>(BACKDROP_FIELDS, op) } };
-    case 'remove_landmark':
-      return { ...plan, landmarks: plan.landmarks.filter(item => item.name !== op.name) };
+    case 'remove_landmark': {
+      const removed = { ...plan, landmarks: plan.landmarks.filter(item => item.name !== op.name) };
+      // A contact cannot name a piece that is gone.
+      if (!plan.contacts?.some(item => item.target === op.name || item.support === op.name)) return removed;
+      return { ...removed, contacts: plan.contacts.filter(item => item.target !== op.name && item.support !== op.name) };
+    }
+    case 'set_contact':
+      return setContact(plan, op);
+    case 'remove_contact':
+      return removeContact(plan, op);
+    case 'set_effect':
+      return setEffect(plan, op);
+    case 'remove_effect':
+      return removeEffect(plan, op);
     case 'add_crowd': {
       // Drawn at once from the same generator the server uses; its answer replaces this either way.
       const crowds = plan.crowds || [];
@@ -169,12 +277,20 @@ export function applyLocal(plan: StagePlan, op: StageOperation): StagePlan {
           return next;
         }),
       };
-    case 'remove_camera':
-      return {
+    case 'add_camera':
+      return addCamera(plan, op);
+    case 'remove_camera': {
+      const removed: StagePlan = {
         ...plan,
         cameras: plan.cameras.filter(camera => camera.id !== op.camera_id),
         shots: plan.shots.map(shot => ({ ...shot, alt_camera_ids: (shot.alt_camera_ids || []).filter(id => id !== op.camera_id) })),
       };
+      // The server drops every cut through the lens that is gone; the shot shows its own lens there.
+      const cutting = Object.entries(plan.timelines || {}).filter(([, timeline]) => timeline.cuts?.some(cut => cut.camera_id === op.camera_id));
+      return cutting.reduce((next, [shotId, timeline]) => (
+        withTimeline(next, shotId, { ...timeline, cuts: timeline.cuts?.filter(cut => cut.camera_id !== op.camera_id) })
+      ), removed);
+    }
     case 'use_camera': {
       const filming = shotOf(plan, op.shot_id);
       const stored = plan.timelines?.[String(Number(op.shot_id))];
@@ -245,15 +361,19 @@ export function applyLocal(plan: StagePlan, op: StageOperation): StagePlan {
   }
 }
 
+/**
+ * What a batch leaves behind. Like the server, the whole-scene contacts are then baked into the
+ * stored marks (a prop held all scene long is stored in the hand) and contacts that name something
+ * gone are dropped; a plan with no contacts is untouched.
+ */
 export function applyAll(plan: StagePlan, operations: StageOperation[]): StagePlan {
-  return operations.reduce(applyLocal, plan);
+  return bakeContacts(operations.reduce(applyLocal, plan));
 }
 
 function restoreCamera(camera: StageCamera): StageOperation {
   return { op: 'move_camera', camera_id: camera.id, position: camera.position, target: camera.target, lens_mm: camera.lens_mm };
 }
 
-/** Operations that put `plan` back after `op`; `null` when only the server's answer can tell (new ids). */
 function inverseOfOne(plan: StagePlan, op: StageOperation): StageOperation[] | null {
   switch (op.op) {
     case 'move_actor': {
@@ -281,7 +401,35 @@ function inverseOfOne(plan: StagePlan, op: StageOperation): StageOperation[] | n
     case 'remove_landmark': {
       const landmark = plan.landmarks.find(item => item.name === op.name);
       if (!landmark) return [];
-      return [addLandmarkOperation(landmark), ...(landmark.element_id ? [{ op: 'bind_landmark_model', name: landmark.name, element_id: landmark.element_id }] : [])];
+      // The piece comes back first, then whatever contact named it.
+      const contacts = (plan.contacts || []).filter(item => item.target === landmark.name || item.support === landmark.name);
+      return [
+        addLandmarkOperation(landmark), ...(landmark.element_id ? [{ op: 'bind_landmark_model', name: landmark.name, element_id: landmark.element_id }] : []),
+        ...contacts.map(contactOperation),
+      ];
+    }
+    case 'set_effect':
+    case 'remove_effect': {
+      // A marker that was there comes back as it was; one this edit made is taken away again.
+      const before = effectsOf(plan).find(item => item.id === op.id);
+      if (before) return [effectOperation(before)];
+      if (op.op === 'remove_effect') return [];
+      const made = effectsOf(applyLocal(plan, op)).find(item => !effectsOf(plan).some(old => old.id === item.id));
+      return made ? [{ op: 'remove_effect', id: made.id }] : [];
+    }
+    case 'set_contact':
+    case 'remove_contact': {
+      // Whatever is on the target afterwards goes, the stored marks a whole-scene contact baked go back,
+      // then each contact that was there comes back as it was (the server refuses removing nothing).
+      const target = String(op.target || '');
+      const before = (plan.contacts || []).filter(item => item.target === target);
+      if (op.op === 'remove_contact' && !before.length) return [];
+      const after = applyLocal(plan, op);
+      return [
+        ...(after.contacts?.some(item => item.target === target) ? [{ op: 'remove_contact', target }] : []),
+        ...restoreMarks(plan, op, before),
+        ...before.map(contactOperation),
+      ];
     }
     case 'transform_crowd': {
       const crowd = crowdOf(plan, String(op.crowd_id || ''));
@@ -315,7 +463,26 @@ function inverseOfOne(plan: StagePlan, op: StageOperation): StageOperation[] | n
       const camera = plan.cameras.find(item => item.id === op.camera_id);
       const shot = plan.shots.find(item => (item.alt_camera_ids || []).includes(String(op.camera_id)));
       if (!camera || !shot) return [];
-      return [{ op: 'add_camera', shot_id: shot.shot_id, label: camera.label, position: camera.position, target: camera.target, lens_mm: camera.lens_mm }];
+      // Every field add_camera takes: a candidate starts as a copy of the filming lens, sensor included.
+      const rebuilt: StageOperation = {
+        op: 'add_camera', shot_id: shot.shot_id, label: camera.label, position: camera.position, target: camera.target,
+        lens_mm: camera.lens_mm, sensor_mm: camera.sensor_mm ?? 36,
+      };
+      // The cuts through it go with it, and they name the lens by id: it comes back under an id, then they do.
+      // Older history entries name it too, so it asks for its own id whenever the server would take it.
+      const cuts = plan.timelines?.[String(shot.shot_id)]?.cuts ?? [];
+      const cutting = cuts.some(cut => cut.camera_id === camera.id);
+      if (isCandidateIdOf(camera.id, shot.shot_id) || isFormerFilmingId(camera.id)) {
+        return [{ ...rebuilt, camera_id: camera.id }, ...(cutting ? [{ op: 'set_timeline', shot_id: shot.shot_id, cuts }] : [])];
+      }
+      // Any other id the server will not hand back. Without cuts the lens takes whatever number the
+      // server gives it; with cuts it asks for the next free one here, so they can follow it there.
+      if (!cutting) return [rebuilt];
+      const id = nextCandidateId(plan, shot.shot_id);
+      return [
+        { ...rebuilt, camera_id: id },
+        { op: 'set_timeline', shot_id: shot.shot_id, cuts: cuts.map(cut => (cut.camera_id === camera.id ? { ...cut, camera_id: id } : cut)) },
+      ];
     }
     case 'use_camera': {
       const shot = shotOf(plan, op.shot_id);
@@ -393,6 +560,23 @@ function inverseOfOne(plan: StagePlan, op: StageOperation): StageOperation[] | n
     default:
       return null;
   }
+}
+
+/**
+ * The stored marks a whole-scene contact may have baked, as they are now: the target's place and,
+ * for a sit, the sitter's mark and posture. Nothing when no whole-scene contact is involved.
+ */
+function restoreMarks(plan: StagePlan, op: StageOperation, before: StageContact[]): StageOperation[] {
+  const sceneWide = (op.op === 'set_contact' && !shotIdsOf(op).length) || before.some(item => !item.shot_ids.length);
+  if (!sceneWide) return [];
+  const restores: StageOperation[] = [];
+  const landmark = plan.landmarks.find(item => item.name === op.target);
+  if (landmark) {
+    restores.push({ op: 'transform_landmark', name: landmark.name, position: landmark.position, elevation_m: landmark.elevation_m ?? 0, yaw_deg: landmark.yaw_deg ?? 0 });
+  }
+  const sitters = new Set([...(op.op === 'set_contact' && op.kind === 'sit' ? [String(op.actor || '')] : []), ...before.filter(item => item.kind === 'sit').map(item => item.actor)]);
+  plan.actors.filter(actor => sitters.has(actor.name)).forEach(actor => restores.push({ op: 'move_actor', name: actor.name, position: actor.position, posture: actor.posture }));
+  return restores;
 }
 
 export function addLandmarkOperation(landmark: StageLandmark, name = landmark.name): StageOperation {

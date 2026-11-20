@@ -1,0 +1,24 @@
+{
+  "_doc": "app/schema/character_dashboard.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.identity_view_labels": [
+    "正面全身",
+    "Front full body"
+  ],
+  "module.identity_view_labels.2": [
+    "侧面全身",
+    "Profile full body"
+  ],
+  "module.identity_view_labels.3": [
+    "背面全身",
+    "Back full body"
+  ],
+  "module.identity_view_labels.4": [
+    "正脸特写",
+    "Face front close-up"
+  ],
+  "module.identity_view_labels.5": [
+    "左侧45°侧脸",
+    "Face left 45°"
+  ],
+  "CharacterDashboardCharacter.role": "剧情角色"
+}

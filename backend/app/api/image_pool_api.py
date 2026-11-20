@@ -12,12 +12,25 @@ from app.api import drama_api
 from app.core import episode_cycle, image_pool, media_compositor
 from app.core.grid_split import MAX_GRID_SIDE
 from app.core.storyboard_assets import fetch_remote_image_bytes
+from app.core import prompt_data
+
+
+_WORDING_FILE = "api_image_pool_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_image_pool_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.api.image_pool_api")
 
 router = APIRouter(
     prefix="/api/drama",
-    tags=["图片池"],
+    tags=list(_words_of("module.tags")),
     dependencies=[Depends(drama_api.require_owned_drama_task)],
 )
 
@@ -43,7 +56,7 @@ class PoolAssignRequest(BaseModel):
 def _task(task_id: str) -> dict:
     task = drama_api.service.repo.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("_task.detail"))
     return task
 
 
@@ -54,7 +67,7 @@ def _image_bytes(url: str) -> bytes:
             return handle.read()
     if url.startswith(("http://", "https://")):
         return fetch_remote_image_bytes(url)
-    raise ValueError("这张图的文件已不存在")
+    raise ValueError(_text_of("_image_bytes.text"))
 
 
 @router.get("/{task_id}/image-pool")
@@ -80,23 +93,23 @@ def split_into_pool(task_id: str, req: PoolSplitRequest):
     task = _task(task_id)
     source = image_pool.find(task, req.image_id)
     if source is None:
-        raise HTTPException(status_code=404, detail="图片池里没有这张图")
+        raise HTTPException(status_code=404, detail=_text_of("split_into_pool.detail"))
     # Checked before the work as well as after: the cheap refusal should not cost a cut.
     if req.revision is not None and req.revision != image_pool.view(task)["revision"]:
-        raise HTTPException(status_code=409, detail="图片池已被更新，请刷新后再试")
+        raise HTTPException(status_code=409, detail=_text_of("split_into_pool.detail.2"))
     try:
         content = _image_bytes(str(source["url"]))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - a remote image that has gone is the person's to redo, not a crash
         logger.warning("图片池取图失败: %s", type(exc).__name__)
-        raise HTTPException(status_code=502, detail="原图下载失败，请稍后重试") from exc
+        raise HTTPException(status_code=502, detail=_text_of("split_into_pool.detail.3")) from exc
     try:
         cells = image_pool.cut(task_id, source, content, req.rows, req.columns)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except OSError as exc:
-        raise HTTPException(status_code=422, detail="这个文件不是可切分的图片") from exc
+        raise HTTPException(status_code=422, detail=_text_of("split_into_pool.detail.4")) from exc
     try:
         pool = drama_api.service.repo.mutate_task(
             task_id, lambda current: image_pool.add_cells(current, cells, expected_revision=req.revision),
@@ -115,19 +128,19 @@ def assign_pool_image(task_id: str, req: PoolAssignRequest):
 
     def mutate(task: dict) -> dict:
         if service._has_running_generation(task):
-            raise ValueError("任务正在执行阶段，暂不能更换分镜图")
+            raise ValueError(_text_of("mutate.text"))
         image = image_pool.find(task, req.image_id)
         if image is None:
-            raise LookupError("图片池里没有这张图")
+            raise LookupError(_text_of("mutate.text.2"))
         assets = task.setdefault("assets", {})
         target, number = service._find_shot(assets.get("4"), req.shot_id, scene_id=req.scene_id, uid=req.shot_uid)
         if target is None:
-            raise LookupError("镜头不存在，请先完成第 4 阶段分镜")
+            raise LookupError(_text_of("mutate.text.3"))
         target["image_url"] = str(image["url"])
         clip = episode_cycle.clip_for({**target, "shot_id": number}, assets.get("5") or [])
         if clip is not None:
             clip["stale"] = True
-            clip["stale_reason"] = "分镜图已从图片池更换，需重跑第 5 阶段后生效"
+            clip["stale_reason"] = _text_of("mutate.text.4")
         return task
 
     try:
@@ -135,7 +148,7 @@ def assign_pool_image(task_id: str, req: PoolAssignRequest):
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=409 if "正在执行" in str(exc) else 422, detail=str(exc)) from exc
+        raise HTTPException(status_code=409 if _text_of("assign_pool_image.status_code") in str(exc) else 422, detail=str(exc)) from exc
     if not updated:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("assign_pool_image.detail"))
     return service.get_shot_visual_workspace(task_id)

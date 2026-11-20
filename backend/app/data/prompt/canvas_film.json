@@ -1,0 +1,15 @@
+{
+  "_about": "画布一键成片(app/core/canvas_film.py)：把成片要用的镜头按顺序接到一个「成片」合成节点上，台词镜头里没声音的配上按项目角色分声的配音，要配乐时加一个配乐节点，再和还没生成的首帧、视频一起运行。compose_label / voice_label / music_label 是新节点的名字；music_prompt 是没写配乐要求时的默认描述；max_clips 是一部成片最多几个镜头；max_line_chars 是一镜台词最多取几个字；min_music_seconds / max_music_seconds 是配乐时长的下限和上限(按镜头总长算)；layout 是新节点的位置和大小；其余是提示语。",
+  "compose_label": "成片",
+  "voice_label": "{label} · 配音",
+  "music_label": "配乐",
+  "music_prompt": "贴合短剧情绪的电影感配乐，节奏随剧情起伏，不抢台词",
+  "max_clips": 120,
+  "max_line_chars": 600,
+  "min_music_seconds": 10,
+  "max_music_seconds": 300,
+  "layout": {"margin": 200, "gap": 40, "voice_width": 280, "voice_size": [280, 240], "compose_size": [320, 260], "music_size": [280, 240]},
+  "no_clips": "画布上还没有视频节点：先把分镜铺到画布（或从镜头表铺成镜头），再一键成片",
+  "too_many": "一部成片最多 {limit} 个镜头，现在有 {count} 个：先选中要用的视频节点再成片",
+  "no_music": "配乐要用 ElevenLabs，模型配置中心还没有可用的密钥：先关掉配乐，或在模型配置中心配好再来"
+}

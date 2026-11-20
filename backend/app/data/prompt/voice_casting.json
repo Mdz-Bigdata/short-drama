@@ -1,0 +1,16 @@
+{
+  "_doc": "app/core/voice_casting.py 的措辞：中性试音台词、默认旁白音色描述、换音色的说明句。代码用 _text_of / _words_of 读取。",
+  "module.narrator_name": "旁白",
+  "module.default_narrator_prompt": "纪录片式中文旁白，成年声音，音高适中，音色干净沉稳，咬字清晰，语速平稳，情绪保持中性；干声，不含音乐、音效、环境声与混响",
+  "module.neutral_lines": [
+    "今天上午九点，我从家里出发，坐地铁去公司。",
+    "路上的人不多，车厢里很安静，我看了一会儿窗外的街道。",
+    "到了公司以后，我先把桌上的文件整理好，再给同事回了几封邮件。",
+    "中午我在楼下的小店吃了一碗面，下午接着开会，一直到傍晚才结束。",
+    "回家的路上下了一点小雨，我在便利店买了一把伞和一瓶水。"
+  ],
+  "audition_text.text": "我是{0}。",
+  "audition_request.text": "「{0}」还没有可用的音色设计提示词（至少 {1} 字），请先在角色 DNA 里补上 voice_prompt",
+  "record_round.text": "音色设计没有返回试听样本",
+  "assign_missing_voices.label": "自动分配"
+}

@@ -1,7 +1,7 @@
 import { apiRequest } from '../../api/client';
 import type {
   NodeKind, Bookmark, CanvasBoard, CanvasDoc, CanvasOutputs, CanvasRecord, CanvasVersion, CommitPreview, CommitResult, NodeHistory, NodeOutput, ProjectShot,
-  RunAssessment, RunOptions, RunStart, TierConfirmation,
+  RunAssessment, RunOptions, RunStart, StoryboardLayout, StoryboardScene, TierConfirmation,
 } from './canvasTypes';
 
 const project = (projectId: string) => `/api/studio/projects/${encodeURIComponent(projectId)}`;
@@ -28,9 +28,11 @@ export function fetchCanvas(projectId: string, canvasId: string, signal?: AbortS
   return apiRequest<CanvasRecord>(`${project(projectId)}/canvas?${board(canvasId)}`, { signal });
 }
 
-export function saveCanvas(projectId: string, canvasId: string, expectedVersion: number, doc: CanvasDoc) {
+/** `clientId` names the window saving, so the presence stream does not tell that same window about its own save. */
+export function saveCanvas(projectId: string, canvasId: string, expectedVersion: number, doc: CanvasDoc, clientId?: string) {
   return apiRequest<CanvasRecord>(`${project(projectId)}/canvas?${board(canvasId)}`, {
     method: 'PUT', body: json({ expected_version: expectedVersion, nodes: doc.nodes, edges: doc.edges }),
+    ...(clientId ? { headers: { 'X-Canvas-Client': clientId } } : {}),
   });
 }
 
@@ -52,6 +54,19 @@ export function uploadMedia(projectId: string, file: File) {
 
 export function fetchRunOptions(projectId: string, signal?: AbortSignal) {
   return apiRequest<RunOptions>(`${project(projectId)}/canvas/run-options`, { signal });
+}
+
+export function fetchStoryboardScenes(projectId: string, canvasId: string, signal?: AbortSignal) {
+  return apiRequest<{ scenes: StoryboardScene[]; max_shots: number }>(`${project(projectId)}/canvas/storyboard?${board(canvasId)}`, { signal });
+}
+
+/** Lays the chosen scenes' shots out as nodes in one new canvas version; `preview` only counts. */
+export function layStoryboard(projectId: string, canvasId: string, options: { sceneIds: string[]; expectedVersion?: number; preview?: boolean; clientId?: string }) {
+  return apiRequest<StoryboardLayout>(`${project(projectId)}/canvas/storyboard?${board(canvasId)}`, {
+    method: 'POST', body: json({ scene_ids: options.sceneIds, preview: Boolean(options.preview), expected_version: options.expectedVersion ?? null }),
+    // The window laying out reloads the result itself; the presence stream need not tell it the canvas changed elsewhere.
+    ...(options.clientId ? { headers: { 'X-Canvas-Client': options.clientId } } : {}),
+  });
 }
 
 export function fetchShots(projectId: string, signal?: AbortSignal) {

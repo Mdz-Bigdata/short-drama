@@ -1,0 +1,8 @@
+{
+  "_doc": "app/schema/script_prompts.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "SceneLightingProfile.direction": "按剧本或场景参考锁定",
+  "SceneLightingProfile.intensity": "按剧本可见状态",
+  "SceneLightingProfile.color_temperature": "按剧本时段",
+  "SceneLightingProfile.quality": "自然连续",
+  "ScriptPromptCompileRequest.visual_style": "写实真人电影质感"
+}

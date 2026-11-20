@@ -37,6 +37,12 @@ import {
   type BatchAdmission,
   type UsageSummary,
 } from './shotVisual';
+import { DeskLoading } from '../directorDesk/DeskLoading';
+import { useAssetsChanged } from '../elements/assetEvents';
+import { ShotAssetChips } from './ShotAssetChips';
+import { DraftModeToggle, FinalResolutionSelect, ShotFixPanel, SpendLimits, SpokenLanguageSelect } from './ShotFixPanel';
+import { ShotControlTable, type ControlRow } from './ShotControlTable';
+import { ClipHandoffNote } from './ClipHandoffNote';
 import { t } from '../../i18n';
 
 const INTENSITIES: Array<[CameraRecipe['intensity'], string]> = [['strong', '强'], ['medium', '中'], ['soft', '弱']];
@@ -79,6 +85,8 @@ interface Props {
   imageModel: string;
   onRerun?: () => void;
   onVideoModelChange?: (model: string) => void;
+  /** Changes when the task moves on outside this panel (a run started from the chat): the workspace looks again. */
+  refreshKey?: string;
 }
 
 type DetailTab = 'script' | 'prompts' | 'media';
@@ -150,7 +158,7 @@ function DurationSelector({ value, options, disabled, onChange }: {
 
 const PILOT_POLL_MS = 4000;
 
-export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, onVideoModelChange, episodes: episodeMeta = [] }: Props) {
+export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, onVideoModelChange, refreshKey, episodes: episodeMeta = [] }: Props) {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [savingPrompt, setSavingPrompt] = useState(false);
   const [error, setError] = useState('');
@@ -162,18 +170,24 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   // Unsaved edits per shot; a shot without an entry shows its persisted settings.
   const [drafts, setDrafts] = useState<Record<string, ShotVisualSettings>>({});
+  // Half-written video prompts, by shot and saved text: the editor unmounts with its tab, the draft must not.
+  const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>({});
   const [listCollapsed, setListCollapsed] = useState(false);
   // The episode whose scenes and shots the rail and the strip show; 0 follows the selected shot.
   const [episodeFilter, setEpisodeFilter] = useState(0);
   const [tab, setTab] = useState<DetailTab>('media');
   const [recipeCategory, setRecipeCategory] = useState('');
   const [recipeIntensity, setRecipeIntensity] = useState<CameraRecipe['intensity']>('medium');
-  const [recipe, setRecipe] = useState<CameraRecipe | null>(null);
+  // A recipe is composed from one shot's action and scene, so like a notice it stays with that shot.
+  const [recipe, setRecipe] = useState<{ shotKey: string; value: CameraRecipe } | null>(null);
   const [composing, setComposing] = useState(false);
   // 这一镜生成翻车时，用自己的话报一句；后端归类、给修正方案，并记进项目台账。
-  const [failureText, setFailureText] = useState('');
-  const [fixPlan, setFixPlan] = useState<ShotFixPlan | null>(null);
+  const [failureTexts, setFailureTexts] = useState<Record<string, string>>({});
+  // One plan per shot, like the note it answers: a report on another shot must not take this shot's plan away.
+  const [fixPlans, setFixPlans] = useState<Record<string, ShotFixPlan>>({});
   const [reporting, setReporting] = useState(false);
+  // The version being watched before it is chosen; the player goes back to the chosen one on another shot.
+  const [preview, setPreview] = useState<{ shotKey: string; url: string } | null>(null);
   // The shot whose scene the desk is open on; the desk itself is keyed by scene, as everywhere else.
   const [deskShot, setDeskShot] = useState<{ sceneId: string; shotId: number } | null>(null);
   const [deskToken, setDeskToken] = useState(0);
@@ -310,6 +324,9 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
     }
   }, [taskId]);
 
+  // 资产在元素库改了：重读本工作区，镜头上的资产和「需重跑」跟着变。
+  useAssetsChanged(() => { void load(); });
+
   useEffect(() => {
     // Same pattern as the rest of the workbench: the initial fetch is scheduled
     // rather than started synchronously inside the effect body.
@@ -322,18 +339,25 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
   const generating = Boolean(workspace?.running) || batchAsked || pilotState === 'requested' || pilotState === 'running';
   useEffect(() => {
     if (!generating) return undefined;
-    const timer = window.setInterval(() => { void load(); }, PILOT_POLL_MS);
+    const timer = window.setInterval(() => { void load(); void loadQueue(); }, PILOT_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [generating, load]);
-  // What is left to generate changed: the reused clip is no longer quoted.
+  }, [generating, load, loadQueue]);
+  // What is left to generate changed: the reused clip is no longer quoted, and the queue has settled.
   const wasGenerating = useRef(false);
   useEffect(() => {
     const finished = wasGenerating.current && !generating;
     wasGenerating.current = generating;
     if (!finished) return undefined;
-    const handle = window.setTimeout(() => { void loadAdmission(); }, 0);
+    const handle = window.setTimeout(() => { void loadAdmission(); void loadQueue(); }, 0);
     return () => window.clearTimeout(handle);
-  }, [generating, loadAdmission]);
+  }, [generating, loadAdmission, loadQueue]);
+  const seenRefreshKey = useRef(refreshKey);
+  useEffect(() => {
+    if (seenRefreshKey.current === refreshKey) return undefined;
+    seenRefreshKey.current = refreshKey;
+    const handle = window.setTimeout(() => { void load(); void loadQueue(); }, 0);
+    return () => window.clearTimeout(handle);
+  }, [refreshKey, load, loadQueue]);
   // The batch is started through the chat, so it may not show as running on the very next look.
   useEffect(() => {
     if (!batchAsked) return undefined;
@@ -346,6 +370,14 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
     [workspace, selectedKey],
   );
   const draft = selected ? (drafts[shotKey(selected)] ?? selected.settings) : null;
+  const currentKey = selected ? shotKey(selected) : '';
+  // The saved text is part of the key: once the server's prompt changes, the old draft no longer applies.
+  const promptKey = selected ? `${currentKey}:${selected.video_prompt}` : '';
+  const shotRecipe = recipe?.shotKey === currentKey ? recipe.value : null;
+  const shotFixPlan = fixPlans[currentKey] ?? null;
+  const failureText = failureTexts[currentKey] ?? '';
+  // The batch is started through the chat; asking is what starts the looking.
+  const rerun = () => { setBatchAsked(true); onRerun?.(); };
 
 
   const dirty = Boolean(selected && draft && !settingsEqual(selected.settings, draft));
@@ -377,6 +409,9 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
   /** 保存人工改写的视频提示词；传 null 恢复自动编译。本镜已出的片会标记为待重做。 */
   const saveVideoPrompt = async (prompt: string | null) => {
     if (!selected || !workspace || workspace.running) return;
+    const saved = shotKey(selected);
+    const sentKey = promptKey;
+    const sent = prompt ?? selected.video_prompt;
     setSavingPrompt(true);
     setError('');
     try {
@@ -385,6 +420,15 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
         { method: 'PUT', body: JSON.stringify({ prompt }) },
       );
       setWorkspace(data);
+      // The draft is saved (or given up for the auto prompt): drop it, or it comes back as unsaved once the
+      // server prompt is again the text it was typed against. Only what was typed during the save lives on.
+      const stored = data.shots.find(shot => shotKey(shot) === saved);
+      setPromptDrafts(current => {
+        const typedSince = current[sentKey];
+        const next = Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${saved}:`)));
+        if (stored && typedSince !== undefined && typedSince !== sent) next[`${saved}:${stored.video_prompt}`] = typedSince;
+        return next;
+      });
       setNotice({
         shotKey: shotKey(selected),
         text: prompt === null
@@ -413,7 +457,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
         shotPath(taskId, selected, 'visual/recipe'),
         { method: 'POST', body: JSON.stringify({ category: recipeCategory, intensity: recipeIntensity }) },
       );
-      setRecipe(composed);
+      setRecipe({ shotKey: shotKey(selected), value: composed });
     } catch (err) {
       setError(err instanceof Error ? err.message : '运镜配方生成失败');
     } finally {
@@ -429,20 +473,27 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
     setError('');
     try {
       const payload = await apiRequest<{ plan: ShotFixPlan | null; attempt: number }>(
-        `/api/drama/${encodeURIComponent(taskId)}/shots/${selected.shot_id}/feedback`,
+        // 台账按全剧编号记：各场镜号都从 1 起，只报镜号会把不同场的镜头记到一起。
+        `/api/drama/${encodeURIComponent(taskId)}/shots/${selected.shot_uid ?? selected.shot_id}/feedback`,
         {
           method: 'POST',
           body: JSON.stringify(
             result === 'failed'
               ? { result, text: failureText.trim() }
-              : { result, applied_fix: fixPlan?.steps?.[0] || '' },
+              : { result, applied_fix: shotFixPlan?.steps?.[0] || '' },
           ),
         },
       );
-      setFixPlan(payload.plan);
+      const reported = shotKey(selected);
+      setFixPlans(current => {
+        const next = { ...current };
+        if (payload.plan) next[reported] = payload.plan;
+        else delete next[reported];
+        return next;
+      });
       if (result === 'success') {
-        setFailureText('');
-        setNotice({ shotKey: shotKey(selected), text: '已记为成功，生效的修正手段会沉淀为项目经验。' });
+        setFailureTexts(current => ({ ...current, [reported]: '' }));
+        setNotice({ shotKey: reported, text: '已记为成功，生效的修正手段会沉淀为项目经验。' });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '反馈提交失败');
@@ -452,8 +503,8 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
   };
 
   const applyRecipe = () => {
-    if (!recipe) return;
-    update({ camera_motion: recipe.camera_motion, action: recipe.prompt_zh });
+    if (!shotRecipe) return;
+    update({ camera_motion: shotRecipe.camera_motion, action: shotRecipe.prompt_zh });
   };
 
   const assignSeeds = async () => {
@@ -463,7 +514,17 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
     try {
       const data = await apiRequest<Workspace>(`/api/drama/${encodeURIComponent(taskId)}/shots/seeds/assign`, { method: 'POST', body: JSON.stringify({}) });
       setWorkspace(data);
-      setDrafts({});
+      // 只有种子变了：别的没保存的改动留着，种子以新分配的为准。
+      setDrafts(current => {
+        const next: Record<string, ShotVisualSettings> = {};
+        for (const shot of data.shots) {
+          const kept = current[shotKey(shot)];
+          if (!kept) continue;
+          const merged = { ...kept, seed: shot.settings.seed };
+          if (!settingsEqual(shot.settings, merged)) next[shotKey(shot)] = merged;
+        }
+        return next;
+      });
       if (selected) setNotice({ shotKey: shotKey(selected), text: '已按场景分配固定种子（同场相邻），重跑第 5 阶段后生效。' });
     } catch (err) {
       setError(err instanceof Error ? err.message : '分配种子失败');
@@ -482,6 +543,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
         { method: 'PUT', body: JSON.stringify({ video_url: url }) },
       );
       setWorkspace(data);
+      setPreview(null);
       setNotice({ shotKey: shotKey(selected), text: `镜头 ${selected.shot_id} 已选用该版本。` });
     } catch (err) {
       setError(err instanceof Error ? err.message : '选用版本失败');
@@ -528,6 +590,11 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
     return list;
   }, []);
   const shotTitle = (desc: string) => desc.split(/[，。；！？,.;!?\n]/)[0].slice(0, 18) || '分镜画面';
+  const candidateUrls = selected?.candidate_urls ?? [];
+  // A version that is no longer among this shot's candidates is not played.
+  const previewIndex = preview?.shotKey === currentKey && preview.url !== selected?.video_url ? candidateUrls.indexOf(preview.url) : -1;
+  // 换过音色的镜头有重配过的预览片段：画面一样，声音是新的。
+  const playingUrl = previewIndex >= 0 ? candidateUrls[previewIndex] : (selected?.preview_url || selected?.video_url);
 
   return (
     <div className={`shot-workspace${listCollapsed ? ' is-list-collapsed' : ''}`}>
@@ -546,8 +613,27 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
             {t('先试拍一段')}
           </button>
         )}
+        <DraftModeToggle<Workspace>
+          taskId={taskId} enabled={Boolean((workspace as { draft_mode?: boolean }).draft_mode)} locked={locked}
+          onWorkspace={setWorkspace} onError={setError}
+        />
+        <SpokenLanguageSelect<Workspace>
+          taskId={taskId} locked={locked} onWorkspace={setWorkspace} onError={setError}
+          value={(workspace as { spoken_language?: string }).spoken_language ?? ''}
+          options={(workspace as { spoken_language_options?: Array<{ key: string; label: string }> }).spoken_language_options ?? []}
+        />
+        <FinalResolutionSelect<Workspace>
+          taskId={taskId} locked={locked} onWorkspace={setWorkspace} onError={setError}
+          value={(workspace as { video_resolution?: string }).video_resolution ?? ''}
+          choices={(workspace as { video_resolution_choices?: string[] }).video_resolution_choices ?? []}
+        />
+        <SpendLimits<Workspace>
+          taskId={taskId} locked={locked} onWorkspace={setWorkspace} onError={setError}
+          budgetCap={(workspace as { video_budget_cap?: number | null }).video_budget_cap ?? null}
+          maxAttempts={(workspace as { video_max_attempts?: number | null }).video_max_attempts ?? null}
+        />
         {onRerun && (
-          <button type="button" className="primary-action shot-workspace__rerun" onClick={onRerun} disabled={Boolean(workspace.running)}>
+          <button type="button" className="primary-action shot-workspace__rerun" onClick={rerun} disabled={Boolean(workspace.running) || batchAsked}>
             <RefreshCcw size={14} aria-hidden="true" /> {t('重跑第 5 阶段')}（{workspace.shots.length}）
           </button>
         )}
@@ -591,6 +677,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
                       <em className="num">{shot.settings.duration_seconds} 秒</em>
                       <em className={`shot-workspace__status is-${status.key}`}>{status.label}</em>
                     </span>
+                    <ShotAssetChips compact assets={shot.assets} kinds={shot.mention_kinds} referenceNumbers={shot.reference_numbers} />
                   </span>
                 </button>
               </li>
@@ -661,6 +748,10 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
               <span className="shot-workspace__shot-brief">{selected.scene_id} · {draft.duration_seconds} 秒运镜</span>
               {selected.contract_fingerprint && <code>契约 {selected.contract_fingerprint.slice(0, 12)}</code>}
               {selected.settings_source === 'edited' && <small>{t('人工设定')}</small>}
+              <ShotAssetChips assets={selected.assets} kinds={selected.mention_kinds} referenceNumbers={selected.reference_numbers} />
+              {(selected.route?.unused_assets?.length ?? 0) > 0 && (
+                <small className="shot-assets__unused">{t('未带上的参考')}：{selected.route?.unused_assets?.join('、')}</small>
+              )}
               {queue && (
                 <button
                   type="button"
@@ -698,6 +789,16 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
             </div>
           </header>
 
+          <ShotControlTable rows={(selected as { controls?: ControlRow[] }).controls} />
+
+          <ShotFixPanel<Workspace>
+            key={shotKey(selected)}
+            taskId={taskId} shot={selected} locked={locked}
+            repairSupported={Boolean((workspace as { repair_supported?: boolean }).repair_supported)}
+            onWorkspace={setWorkspace} onError={setError}
+            onNotice={text => setNotice({ shotKey: shotKey(selected), text })}
+          />
+
           {workspace.video_model_issue && (
             <section className="shot-workspace__model-issue" role="alert" aria-label={t('视频模型不可用')}>
               <p>{workspace.video_model_issue}</p>
@@ -717,7 +818,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
               key={workspace.pilot.video_url || workspace.pilot.state}
               pilot={workspace.pilot}
               locked={locked}
-              onPass={() => { setBatchAsked(true); onRerun?.(); }}
+              onPass={rerun}
               onRedo={problems => { void startPilot({ redo: true, problems }); }}
               onRetry={() => { void startPilot({ redo: true }); }}
             />
@@ -799,7 +900,10 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
             <div className="shot-workspace__panel" role="tabpanel">
               <h4><Video size={14} aria-hidden="true" /> {t('视频提示词')} <small>{videoModel}</small></h4>
               <VideoPromptEditor
-                key={`${shotKey(selected)}:${selected.video_prompt}`}
+                key={promptKey}
+                taskId={taskId}
+                initialDraft={promptDrafts[promptKey]}
+                onDraftChange={draft => setPromptDrafts(current => ({ ...current, [promptKey]: draft }))}
                 shotId={selected.shot_id}
                 prompt={selected.video_prompt}
                 edited={Boolean(selected.video_prompt_edited)}
@@ -848,20 +952,24 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
                       )}
                     </figcaption>
                     <div className="shot-workspace__frame is-video">
-                      {selected.video_url
-                        ? <video src={selected.video_url} controls loop preload="metadata" aria-label={`镜头 ${selected.shot_id} 视频`} />
+                      {playingUrl
+                        ? <video src={playingUrl} controls loop preload="metadata" aria-label={`镜头 ${selected.shot_id} 视频`} />
                         : <p className="shot-workspace__hint">{t('尚未生成')}</p>}
                     </div>
-                    {(selected.candidate_urls?.length ?? 0) > 1 && (
+                    {previewIndex >= 0 && <p className="shot-workspace__previewing" role="status">{t('预览中：版本 {0}，还没选用', [String(previewIndex + 1)])}</p>}
+                    {candidateUrls.length > 1 && (
                       <ul className="shot-workspace__candidates" aria-label={t('候选版本')}>
-                        {selected.candidate_urls!.map((url, index) => (
+                        {candidateUrls.map((url, index) => (
                           <li key={url} className={url === selected.video_url ? 'is-current' : ''}>
                             <span>版本 {index + 1}</span>
-                            <button type="button" className="secondary-action" disabled={saving} onClick={() => { void selectCandidate(url); }}>{t('选用此版')}</button>
+                            {url === selected.video_url && <em>{t('当前使用')}</em>}
+                            <button type="button" className="secondary-action" aria-pressed={url === playingUrl || (previewIndex < 0 && url === selected.video_url)} aria-label={t('预览版本 {0}', [String(index + 1)])} onClick={() => setPreview({ shotKey: currentKey, url })}>{t('预览')}</button>
+                            <button type="button" className="secondary-action" disabled={saving || url === selected.video_url} onClick={() => { void selectCandidate(url); }}>{t('选用此版')}</button>
                           </li>
                         ))}
                       </ul>
                     )}
+                    <ClipHandoffNote taskId={taskId} sceneId={selected.scene_id} shotId={selected.shot_id} videoUrl={selected.video_url ?? ''} />
                   </figure>
                   <ShotDeskPanel
                     taskId={taskId} sceneId={selected.scene_id} shotId={selected.shot_id} reloadToken={deskToken}
@@ -897,12 +1005,12 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
                     {composing ? t('生成中…') : t('生成配方')}
                   </button>
                 </div>
-                {recipe && (
+                {shotRecipe && (
                   <div className="shot-workspace__recipe-result">
-                    <p><strong>{recipe.category_label} · {recipe.camera_motion_label} · {recipe.angle_label} · {recipe.rhythm_label}</strong></p>
-                    <p>{recipe.prompt_zh}</p>
-                    <p className="shot-workspace__hint">EN: {recipe.prompt_en}</p>
-                    <p className="shot-workspace__hint">反向: {recipe.negative}</p>
+                    <p><strong>{shotRecipe.category_label} · {shotRecipe.camera_motion_label} · {shotRecipe.angle_label} · {shotRecipe.rhythm_label}</strong></p>
+                    <p>{shotRecipe.prompt_zh}</p>
+                    <p className="shot-workspace__hint">EN: {shotRecipe.prompt_en}</p>
+                    <p className="shot-workspace__hint">反向: {shotRecipe.negative}</p>
                     <button type="button" className="secondary-action" disabled={locked} onClick={applyRecipe}>{t('套用到本镜')}</button>
                   </div>
                 )}
@@ -916,7 +1024,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
                 rows={2}
                 value={failureText}
                 placeholder={t('用自己的话写：脸崩了 / 手是六根手指 / 特效糊住了脸 / 位置跳了…')}
-                onChange={event => setFailureText(event.target.value)}
+                onChange={event => setFailureTexts(current => ({ ...current, [currentKey]: event.target.value }))}
               />
               <div className="shot-workspace__recipe-controls">
                 <button
@@ -936,17 +1044,17 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
                   {t('这条可用')}
                 </button>
               </div>
-              {fixPlan && (
+              {shotFixPlan && (
                 <div className="shot-workspace__recipe-result">
-                  <p><strong>{fixPlan.category_name}</strong>（第 {fixPlan.attempt} 次）：{fixPlan.diagnosis}</p>
-                  {fixPlan.variable_name && <p className="shot-workspace__hint">本轮只改：{fixPlan.variable_name}</p>}
+                  <p><strong>{shotFixPlan.category_name}</strong>（第 {shotFixPlan.attempt} 次）：{shotFixPlan.diagnosis}</p>
+                  {shotFixPlan.variable_name && <p className="shot-workspace__hint">本轮只改：{shotFixPlan.variable_name}</p>}
                   <ol>
-                    {fixPlan.steps.map(step => <li key={step}>{step}</li>)}
+                    {shotFixPlan.steps.map(step => <li key={step}>{step}</li>)}
                   </ol>
-                  {fixPlan.negatives.length > 0 && (
-                    <p className="shot-workspace__hint">建议追加负面词：{fixPlan.negatives.join('、')}</p>
+                  {shotFixPlan.negatives.length > 0 && (
+                    <p className="shot-workspace__hint">建议追加负面词：{shotFixPlan.negatives.join('、')}</p>
                   )}
-                  {fixPlan.give_up && <p className="shot-workspace__hint">{t('已到模型能力边界：考虑换等价表达或换模型。')}</p>}
+                  {shotFixPlan.give_up && <p className="shot-workspace__hint">{t('已到模型能力边界：考虑换等价表达或换模型。')}</p>}
                 </div>
               )}
               <small>{t('同一类问题在同一模型上出现两次，后续镜头会自动按它预防性加固。')}</small>
@@ -1059,7 +1167,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
         </aside>
       )}
       {deskShot && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<DeskLoading />}>
           <DirectorDesk
             key={`desk-${deskShot.sceneId}`}
             taskId={taskId}

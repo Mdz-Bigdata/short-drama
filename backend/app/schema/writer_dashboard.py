@@ -49,7 +49,7 @@ class WriterDashboardLine(DramaBaseSchema):
     speaker: str = Field("", max_length=80)
     text: str = Field(..., min_length=1, max_length=500)
     verbatim: bool = False
-    delivery: str = Field("", max_length=120, description="表演标注：情绪-强度 / 语速 / 停顿重音 / 生理表现")
+    delivery: str = Field("", max_length=200, description="表演标注：说之前的状态 / 这句里声音怎么走 / 说完那半拍，口音")
 
 
 class WriterDashboardScene(DramaBaseSchema):
@@ -66,6 +66,7 @@ class WriterDashboardScene(DramaBaseSchema):
     description: str = Field("", max_length=6000)
     emotion_point: str = Field("", max_length=20, description="这一格打到的情绪点：钩子/冲突/反转/爽点/暖点/泪点/笑点/揭秘/悬念/抒情/信息交代")
     key_line: str = Field("", max_length=120, description="本集的题眼台词落在这一格时，那一句；一集最多一格有")
+    subtext: str = Field("", max_length=200, description="表演依据：每个入镜人物此刻为什么这样演、知道什么不知道什么；只作动机，不进画面")
     dialogue: list[WriterDashboardLine] = Field(default_factory=list, max_length=30)
     image_url: Optional[str] = Field(None, max_length=4000)
     characters: list[str] = Field(default_factory=list, max_length=100)
@@ -213,6 +214,10 @@ class WriterDashboardResponse(DramaBaseSchema):
     relationships_inferred: bool = Field(
         False,
         description="关系图谱是否为同场共现推断（尚未做人物关系语义分析）",
+    )
+    relationships_authored: bool = Field(
+        False,
+        description="人物关系是否已经定过（人手保存或分析写入）；清空后也算，页面不再自动分析",
     )
     timeline_authored: bool = Field(False, description="剧情事件时间轴是否经人手编辑（编辑后不再随分集账本重新生成）")
     creation_mode: str = Field("drama", max_length=40)

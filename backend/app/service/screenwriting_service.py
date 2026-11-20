@@ -19,7 +19,9 @@ from typing import Any
 
 from app import settings
 from app.core.production_knowledge import load_section, stage_lessons_block
-from app.core import creation_modes, emotion_points, literary, llm_profile, poetry_library
+from app.core import creation_modes, emotion_points, literary, llm_profile, poetry_library, prompt_data, prompt_preferences, script_structure, target_audience, technique_look
+from app.core import story_direction
+from app.core import paywall_plan, serial_brief
 from app.core.screenwriting import review
 from app.core.screenwriting.durations import resolve_episode_target_seconds
 from app.core.screenwriting.engine import ENGINE_NAME, ScreenwritingEngine, detect_source_kind
@@ -47,8 +49,9 @@ LEGACY_ENGINE = "legacy"
 # pipeline. The pipeline makes several calls per episode, so each section is
 # budgeted instead of injected in full like the single-shot legacy prompt.
 WRITER_KNOWLEDGE_SECTIONS: tuple[str, ...] = (
-    "cinema-craft-redlines", "golden-narrative", "episode-hook-ladder", "emotional-hook-craft", "scene-craft-dialogue",
-    "payoff-arc-craft", "character-relationship-craft", "dialogue-pacing", "performance-details",
+    "cinema-craft-redlines", "golden-narrative", "episode-hook-ladder", "scene-craft-dialogue", "payoff-arc-craft",
+    "character-relationship-craft", "causal-chain-craft", "tension-craft", "emotional-hook-craft", "dialogue-pacing",
+    "performance-details",
 )
 
 WRITER_METHODOLOGY = (
@@ -99,18 +102,28 @@ def poetry_materials(config: Mapping[str, Any] | None, *, keywords: str = "", bu
 
 def writer_system_prompt(
     role_prompt: str, shanyin_core: str = "", *, stage: str = "write", config: Mapping[str, Any] | None = None, keywords: str = "",
+    preference: prompt_preferences.Preference | None = None,
 ) -> str:
-    """The Writer persona plus the budgeted creative guidance a ``stage`` of the structured pipeline uses."""
+    """The Writer persona plus the budgeted creative guidance a ``stage`` of the structured pipeline uses.
+
+    ``preference`` is the project owner's own way of writing (``prompt_preferences``); it follows the method in the
+    stages that write, and is left out of ``extract``, which only reads what was written.
+    """
     budget = _int_env("SCREENWRITING_KNOWLEDGE_BUDGET", 2500, 0)
-    parts = [role_prompt.strip(), WRITER_METHODOLOGY]
+    methodology = WRITER_METHODOLOGY
+    if stage != "extract" and prompt_preferences.personal(preference):
+        methodology = prompt_preferences.creative_layer("writer", WRITER_METHODOLOGY, preference).rstrip("\n")
+    parts = [role_prompt.strip(), methodology]
     labels = {
         "cinema-craft-redlines": "写作红线与 S 级三冲击（情绪 / 视觉 / 场景顶点）",
         "golden-narrative": "黄金叙事结构（单集模型 / 每集三件事 / 钩子公式）",
         "episode-hook-ladder": "前三集钩子阶梯（E1 引爆 / E2 升级 / E3 反转）、集尾悬念五型与付费墙前三步",
-        "emotional-hook-craft": "情绪钩子六步法（共情基点 / 反常裂痕 / 抬高代价 / 封死退路 / 误导拉扯 / 卡点或反向爆击）与三条红线",
         "scene-craft-dialogue": "场次工艺与对白技法（每集一件新东西 / 爽点三段落台词 / 对手物证 / 一场戏六行 / 台词四型与含蓄四法）",
         "payoff-arc-craft": "爽点底线与主角强弱两段弧（杀伐果断横推 / 不按套路 / 弱时智谋苟道、强时杀伐 / 爽点谱系）",
         "character-relationship-craft": "主角拷问与人物关系架法（一句话梗概 / 拷问主角 / 关系六性 / 一条主线 / 小事折射大事）",
+        "causal-chain-craft": "因果链（节点之间连「所以」/ 每个节点改变目标、关系、认知或处境 / 关键转折由人物选择触发 / 写完一场过三问）",
+        "tension-craft": "紧张感（信息分给谁：观众先知道、人物先知道、同时知道 / 延迟兑现 / 分层揭底 / 平静→异常→逼近→爆发与没有解除危险的缓冲 / 动笔前问四句、写完问三句）",
+        "emotional-hook-craft": "情绪钩子六步法（共情基点 / 反常裂痕 / 抬高代价 / 封死退路 / 误导拉扯 / 卡点或反向爆击）与三条红线",
         "dialogue-pacing": "台词语速情绪与停顿重音标注规范",
         "performance-details": "表演细节与具象物理动作指导",
     }
@@ -119,6 +132,22 @@ def writer_system_prompt(
         text = load_section(key, budget=budget) if budget else ""
         if text:
             parts.append(f"【{labels[key]}】：\n{text}")
+    story = " ".join(str((config or {}).get(key) or "") for key in ("title_suggestion", "guidance_instruction")) + f" {keywords}"
+    if budget and stage != "extract" and technique_look.power_system_applies(text=story):
+        # 修仙 / 武侠：境界、功法品级、代价全剧一套，术法起名就想好它长什么样。
+        power_system = load_section("xianxia-power-system", budget=budget + 1500)
+        if power_system:
+            parts.append(f"【{prompt_data.text('technique_look', 'power_system_title')}】：\n{power_system}")
+        # 设定谱(功法、丹药、宗门、法宝条目)只给定计划和写正文的两步，画面层与抽取用不上。
+        # 只给修仙 / 武侠故事：整份给，条目截掉一半不如不给。
+        catalog = load_section("xianxia-catalog", budget=0) if stage == "write" else ""
+        if catalog:
+            parts.append(f"【{prompt_data.text('technique_look', 'catalog_title')}】：\n{catalog}")
+    if budget and stage == "write" and technique_look.world_applies(text=story):
+        # 修仙世界的称谓、服饰、妖兽、坊市：写台词和场面时用得上。
+        world = load_section("xianxia-world", budget=0)
+        if world:
+            parts.append(f"【{prompt_data.text('technique_look', 'world_title')}】：\n{world}")
     if shanyin_core and budget and stage == "write":
         parts.append("【山音超级编剧大师核心指导规范（节选）】：\n" + shanyin_core[: budget + 500])
     if stage == "write" and budget:
@@ -132,13 +161,15 @@ def writer_system_prompt(
 
 def writer_system_prompts(
     role_prompt: str, shanyin_core: str = "", *, config: Mapping[str, Any] | None = None, keywords: str = "",
+    preference: prompt_preferences.Preference | None = None,
 ) -> dict[str, str]:
     """One system prompt per engine stage (``ledger`` / ``plan`` / ``prose`` / ``visual`` / ``extract``).
 
     ``config`` brings the project's poetry sources into the writing stages; the rest of the guidance does not depend on it.
     """
     by_kind = {
-        kind: writer_system_prompt(role_prompt, shanyin_core, stage=kind, config=config, keywords=keywords) for kind in STAGE_KNOWLEDGE
+        kind: writer_system_prompt(role_prompt, shanyin_core, stage=kind, config=config, keywords=keywords, preference=preference)
+        for kind in STAGE_KNOWLEDGE
     }
     return {stage: by_kind[kind] for stage, kind in ENGINE_STAGES_BY_KNOWLEDGE.items()}
 
@@ -170,7 +201,8 @@ def build_engine(
         caller,
         video_model=str(config.get("video_model") or ""),
         language=str(config.get("source_language") or "zh"),
-        episode_target_seconds=resolve_episode_target_seconds(config),
+        # A short film that names no length aims at its own default, not the serial's minute and a half.
+        episode_target_seconds=creation_modes.episode_target_for(config, resolve_episode_target_seconds(config)),
         style=dir_style or "真人电影写实",
         style_description=f"运镜风格：{shot_style}" if shot_style else "",
         aspect_ratio=str(config.get("aspect_ratio") or "9:16"),
@@ -194,9 +226,16 @@ def build_engine(
         # How much of a long source the one-shot analysis stages read (opening, spaced excerpts, ending).
         analysis_chars=_int_env("SCREENWRITING_ANALYSIS_CHARS", 48000, 4000),
         # Talk-heavy episodes: this share of an outline-written episode's shots must carry speech (0 turns it off).
-        spoken_shot_ratio=settings.env_float("SCREENWRITING_MIN_SPOKEN_SHOT_RATIO", 0.7, minimum=0.0, maximum=1.0),
+        # A short film may be quieter than a serial: its own, lower share (creation_modes).
+        spoken_shot_ratio=creation_modes.spoken_shot_ratio_for(
+            config, settings.env_float("SCREENWRITING_MIN_SPOKEN_SHOT_RATIO", 0.7, minimum=0.0, maximum=1.0),
+        ),
         episode_shape=creation_modes.episode_shape_for(config),
-        creation={"creation_mode": creation_modes.mode_of(config), "ad_brief": creation_modes.ad_brief(config)},
+        creation={"creation_mode": creation_modes.mode_of(config), "ad_brief": creation_modes.ad_brief(config),
+                  target_audience.CONFIG_KEY: target_audience.of(config),
+                  script_structure.CONFIG_KEY: script_structure.of(config), "script_content": bool(config.get("script_content")),
+                  story_direction.NO_GO_KEY: story_direction.no_go_of(config),
+                  **serial_brief.of(config), paywall_plan.CONFIG_KEY: paywall_plan.applies(config)},
         progress=progress,
     )
 
@@ -233,9 +272,13 @@ def carry_authored(previous: Mapping[str, Any] | None, breakdown: dict[str, Any]
         return breakdown
     # Relations a person edited or asked the analyser for win; ones the inventory produced are
     # re-read from the state, so a newer inventory is not shadowed by an older projection.
-    if previous.get("relationships") and (previous.get("relationships_authored") or not breakdown.get("relationships")):
+    # An authored list comes across even when the person emptied it, so a re-projection cannot refill it.
+    if previous.get("relationships_authored") and isinstance(previous.get("relationships"), list):
         breakdown["relationships"] = list(previous["relationships"])
-        breakdown["relationships_authored"] = bool(previous.get("relationships_authored"))
+        breakdown["relationships_authored"] = True
+    elif previous.get("relationships") and not breakdown.get("relationships"):
+        breakdown["relationships"] = list(previous["relationships"])
+        breakdown["relationships_authored"] = False
     if previous.get("hidden_roles"):
         breakdown["hidden_roles"] = list(previous["hidden_roles"])
     positions = previous.get("role_positions") if isinstance(previous.get("role_positions"), Mapping) else {}
@@ -265,6 +308,14 @@ def apply_state(assets: dict[str, Any], state: dict[str, Any]) -> tuple[str, dic
     assets["2"] = text
     assets["2_breakdown"] = breakdown
     return text, breakdown
+
+
+def board_breakdown(assets: Mapping[str, Any], state: Mapping[str, Any]) -> dict[str, Any]:
+    """创作看板与人物关系：概述、角色和关系定下来就能显示的那部分拆解，剧本正文还没有。
+
+    人手改过的关系、角色位置照样保留；分镜场次要等逐集剧本写完才有，这里是空的。
+    """
+    return carry_authored(assets.get("2_breakdown"), render_breakdown(state))
 
 
 def written_episode_numbers(state: Mapping[str, Any]) -> list[int]:

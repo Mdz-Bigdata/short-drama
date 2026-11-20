@@ -1,0 +1,56 @@
+{
+  "_doc": "app/core/publish_targets.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.ai_claim": "[^。！？!?.\\n]*(?:AI ?(?:生成|制作|合成|创作)|AI-(?:generated|created)|generated (?:by|with) AI)[^。！？!?.\\n]*[。！？!?.]?",
+  "module.cn_live": [
+    "上线前确认微短剧备案（或平台要求的备案/审核编号）",
+    "确认配乐、音效与数字演员形象的商用授权"
+  ],
+  "module.platforms": "爱奇艺",
+  "module.platforms.2": [
+    "竖版 3:4 1080×1440",
+    "横版 16:9 1920×1080"
+  ],
+  "module.platforms.3": "腾讯",
+  "module.platforms.4": [
+    "竖版 3:4 1080×1440",
+    "横版 16:9 1920×1080"
+  ],
+  "module.platforms.5": "优酷",
+  "module.platforms.6": [
+    "竖版 3:4 1080×1440",
+    "横版 16:9 1920×1080"
+  ],
+  "module.platforms.7": "抖音",
+  "module.platforms.8": [
+    "竖版 9:16 1080×1920"
+  ],
+  "module.notes": "付费短剧需先开通抖音短剧资质与分账",
+  "module.platforms.9": [
+    "缩略图 16:9 1280×720"
+  ],
+  "module.notes.2": [
+    "上传时在「Altered or synthetic content」处选择「是」",
+    "单集不超过 3 分钟按 Shorts 发布，否则按普通视频发布",
+    "确认配乐与数字演员形象的海外商用授权"
+  ],
+  "module.platforms.10": [
+    "竖版 3:4 1080×1440"
+  ],
+  "module.notes.3": [
+    "DramaBox 没有公开上传入口：通过版权合作邮箱或商务对接提交",
+    "需提供英文字幕（或目标语种字幕）与整季分集表",
+    "确认海外发行权与数字演员形象授权"
+  ],
+  "build_package.text": "标题超过 {0} 字，已截断，建议改短",
+  "build_package.text.2": "简介超过 {0} 字，已截断",
+  "build_package.text.3": "文案由剧名与分集标题拼成（模型未返回），发布前请润色",
+  "build_package.text.4": "成片画幅 {0}，{1} 这一类视频要 {2}",
+  "build_package.text.5": "还没有成片：先完成第 7 阶段合成",
+  "build_package.text.6": "第 {0} 集 {1:.0f} 秒，超过 {2} 秒，按普通视频发布",
+  "copy_prompt.language": "简体中文",
+  "copy_prompt.text": "- \"{0}\"（{1}）：语言 {2}；标题不超过 {3} 字符；简介不超过 {4} 字符；标签至多 {5} 个",
+  "copy_prompt.system": "你是短剧发行编辑，为各平台写上架文案。只写正片里真实存在的人物与情节，不编造剧情、不承诺付费权益、不使用「最」「第一」等绝对化用语；不写 AI 生成、AI 制作这类声明；标题要有钩子，简介前两句交代冲突。只输出一个 JSON 对象，键是平台 id，值是 {\"title\": str, \"description\": str, \"tags\": [str]}，不要输出其它文字。",
+  "copy_prompt.episode_lines": "第{0}集：{1}",
+  "copy_prompt.episode_lines.2": "（分集标题缺失）",
+  "copy_prompt.user": "剧名：{0}\n剧情梗概：{1}\n分集：\n{2}\n\n各平台要求：\n"
+}

@@ -1,0 +1,18 @@
+.desk-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: grid;
+  place-items: center;
+  background: rgba(var(--surface-tint-rgb), 0.82);
+  backdrop-filter: blur(0.5rem);
+}
+
+.desk-loading p {
+  margin: 0;
+  padding: 3rem 1.5rem;
+  color: var(--text-main);
+  border-radius: 0.75rem;
+  background: var(--surface);
+  text-align: center;
+}

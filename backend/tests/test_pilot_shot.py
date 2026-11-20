@@ -129,6 +129,10 @@ class PilotRunTests(queue_fixture.StageFiveQueueTests):
             stored = self._run(stored)
         self.assertEqual(len(self.submitted), 1)
         self.assertEqual(len(stored["assets"]["5"]), 3, "其余片段没有丢")
+        self.assertEqual(
+            [clip["shot_uid"] for clip in stored["assets"]["5"]], sorted(clip["shot_uid"] for clip in stored["assets"]["5"]),
+            "重出的那一段回到它原来的位置，不排到片头",
+        )
 
     def test_a_failed_pilot_says_why_and_the_next_batch_run_is_a_real_batch(self):
         task = _task(2)

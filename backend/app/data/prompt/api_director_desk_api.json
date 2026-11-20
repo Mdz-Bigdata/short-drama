@@ -1,0 +1,8 @@
+{
+  "_doc": "app/api/director_desk_api.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.tags": [
+    "3D 导演台"
+  ],
+  "save_user_pose.detail": "姿态数据不合法：关节角度须在 ±180° 内、最多 120 个关节，clip_phase 在 0 到 1 之间",
+  "delete_user_pose.detail": "这个姿势不存在，可能已被删除"
+}

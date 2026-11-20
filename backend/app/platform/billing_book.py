@@ -26,6 +26,19 @@ from sqlalchemy.orm import Session
 from app.platform.entitlements import UNLIMITED, entitlements_from, resolution_allowed
 from app.platform.models import LedgerEntry, MembershipTerm, PlatformUser, PointBalance, PointHold, PointLot, PointRate, UserRole
 from app.platform.usage_billing import FREE_PROVIDERS, find_rate, points_for
+from app.core import prompt_data
+
+
+_WORDING_FILE = "platform_billing_book"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/platform_billing_book.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.platform.billing_book")
 
@@ -141,7 +154,7 @@ class BillingBook:
 
     def require_open_account(self, user_id: str) -> None:
         if not self._account_open(user_id):
-            raise BillingRefused("account_closed", "账号已停用，不能继续生成。")
+            raise BillingRefused("account_closed", _text_of("require_open_account.text"))
 
     def _task_owner(self, task_id: str | None) -> str | None:
         if not task_id:
@@ -167,9 +180,9 @@ class BillingBook:
         granted = self._entitlements(user_id).get(feature)
         if current is not None:
             if granted != UNLIMITED and current >= int(granted or 0):
-                raise BillingRefused("feature_not_in_plan", f"当前套餐最多 {granted} 个，已用 {current} 个。请升级套餐。")
+                raise BillingRefused("feature_not_in_plan", _text_of("require_feature.text").format(granted, current))
         elif not granted:
-            raise BillingRefused("feature_not_in_plan", "当前套餐不包含这项功能。请升级套餐。")
+            raise BillingRefused("feature_not_in_plan", _text_of("require_feature.text.2"))
 
     def _payer(self, task_id: str | None, user_id: str | None) -> tuple[str | None, str | None]:
         """(who pays, who is working on someone else's project)."""
@@ -183,19 +196,19 @@ class BillingBook:
         rate = find_rate(self._current_rates(), model, resolution or None, datetime.now(timezone.utc))
         needs_own_rate = media_type == "video" and resolution and resolution != _BASE_VIDEO_RESOLUTION
         if rate is None or (needs_own_rate and rate.resolution != resolution):
-            raise BillingRefused("rate_missing", f"模型 {model or '（未指定）'} 暂未开放使用。")
+            raise BillingRefused("rate_missing", _text_of("_price.text").format(model or '（未指定）'))
         if media_type == "video" and resolution and not resolution_allowed(self._entitlements(payer), resolution):
-            raise BillingRefused("feature_not_in_plan", f"当前套餐不支持 {resolution} 视频。请升级套餐。")
+            raise BillingRefused("feature_not_in_plan", _text_of("_price.text.2").format(resolution))
         amount = points_for(rate, _estimated_units(rate, units))
         if amount <= 0:  # nothing to measure it by: it would go out free
-            raise BillingRefused("rate_missing", f"模型 {model or '（未指定）'} 暂未开放使用。")
+            raise BillingRefused("rate_missing", _text_of("_price.text.3").format(model or '（未指定）'))
         return rate, amount
 
     def preflight(self, *, task_id: str, user_id: str | None, media_type: str, model: str, units: Mapping[str, Any]) -> None:
         """Before a batch: can the whole of it be paid for? Then none of it starts and fails half way."""
         payer, operator = self._payer(task_id, user_id)
         if not payer:
-            raise BillingRefused("unattributed", "这次调用无法确定付费账号，已拒绝。")
+            raise BillingRefused("unattributed", _text_of("preflight.text"))
         self.require_open_account(payer)
         if operator or self._is_staff(payer):
             return
@@ -210,7 +223,7 @@ class BillingBook:
     def _insufficient(required: Decimal, available: Decimal) -> BillingRefused:
         need, have = math.ceil(required), math.floor(available)
         return BillingRefused(
-            "insufficient_points", f"积分不足：这一步预计需要 {need} 积分，当前可用 {have}。请到会员与支付中心充值后继续。",
+            "insufficient_points", _text_of("_insufficient.text").format(need, have),
             required=need, available=have,
         )
 
@@ -223,7 +236,7 @@ class BillingBook:
         payer, operator = self._payer(task_id, user_id)
         if not payer:
             logger.error("[Billing] 无法确定付费账号，已拒绝调用: model=%s task=%s", model, task_id)
-            raise BillingRefused("unattributed", "这次调用无法确定付费账号，已拒绝。")
+            raise BillingRefused("unattributed", _text_of("reserve.text"))
         self.require_open_account(payer)
         if operator:
             return Handle(ABSORBED)

@@ -1,0 +1,20 @@
+{
+  "_doc": "app/core/frame_handoff.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.light_structure": "主光|光源|光比|色温|侧逆光|逆光|侧光|顶光|底光|轮廓光|补光|明暗交界",
+  "module.light_noun": "硬光|柔光|暖光|冷光|天光|月光|日光|晨光|夕照|火光|烛光|灯光|白光|橙光|青光",
+  "module.direction": "画面[左右上下]|[左右][上下前后]方|[左右]侧|高处|低位|斜|自|从|来自",
+  "module.not_light": "镜头|机位|推近|拉远|摇|跟拍|景别|构图|转身|抬手|握|看向|视线|拇指|扳指|刀背",
+  "module.time_token": "[雨雪风]?[深入午]?夜|白日|白天|日间|[清早]晨|黎明|拂晓|黄昏|傍晚|日暮|正午|午后",
+  "scene_time.setting": [
+    "内景",
+    "外景"
+  ],
+  "board_lighting.night": "，是夜景，不得画成白天或阴天的天光",
+  "board_lighting.night.2": "夜",
+  "board_lighting.text": "本场时段天气：{0}，全场每一格保持同一时段与天色{1}",
+  "board_lighting.text.2": "主光：{0}",
+  "board_lighting.text.3": "；人物脸部保持自然层次",
+  "tone_for.text": "类型调性",
+  "tone_for.genre_tone": "{0}调性",
+  "tone_for.tempo": "节奏"
+}

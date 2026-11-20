@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TaskResponse, WorkflowSnapshot } from './types';
 import App from './App';
 
-vi.mock('./features/storyboard/StoryboardWorkspace', () => ({ StoryboardWorkspace: () => <div>分镜工作区</div> }));
+vi.mock('./features/storyboard/StoryboardWorkspace', () => ({
+  StoryboardWorkspace: ({ onRegenerate }: { onRegenerate?: () => void }) => (
+    <div>分镜工作区<button type="button" onClick={onRegenerate}>重跑分镜阶段</button></div>
+  ),
+}));
 vi.mock('./features/writer/WriterAgentPageContainer', () => ({ WriterAgentPageContainer: () => <div>编剧工作区</div> }));
 
 function task(id = 'task-a'): TaskResponse {
@@ -203,7 +207,7 @@ describe('App follows the server workflow', () => {
     const current = task();
     const fetchMock = mockFetch([current], (url, init) => {
       if (!url.endsWith('/assistant')) return;
-      expect(JSON.parse(String(init?.body))).toEqual({ message: '/resume' });
+      expect(JSON.parse(String(init?.body))).toEqual({ message: '/resume', context: expect.objectContaining({ stage: expect.any(Number) }) });
       return response({ reply: '已继续第 4 阶段。', action: 'run_stage', stage: 4, task: {
         ...current,
         workflow: { ...current.workflow, mode: 'running', active_stage: 4, event_id: 'running-4' },
@@ -292,5 +296,265 @@ describe('App follows the server workflow', () => {
     })); });
     expect(await screen.findByText('这是当前回复')).toBeTruthy();
     expect(screen.getByRole('button', { name: '发送消息' }).hasAttribute('disabled')).toBe(false);
+  });
+});
+
+describe('App reports a project failure inside the project', () => {
+  const refused = (status: number, detail: string): Response => {
+    const body = { ok: false, status, json: async () => ({ detail }), clone: () => body } as unknown as Response;
+    return body;
+  };
+
+  // drama_service.assistant_message stores the user message before the turn runs, so a turn that
+  // is refused afterwards (402, 409, 500) has already left it in the chat history.
+  function recordingServer(current: TaskResponse, refusal: () => Response | undefined) {
+    const server = { stored: current };
+    mockFetch([current], (url, init) => {
+      if (url.endsWith('/task-a/status')) return response(server.stored);
+      if (!url.endsWith('/assistant')) return undefined;
+      const history = server.stored.chatHistory!;
+      const message = JSON.parse(String(init?.body)).message as string;
+      server.stored = { ...server.stored, chatHistory: [...history, { id: `u${history.length}`, role: 'user', content: message }] };
+      const refusedWith = refusal();
+      if (refusedWith) return refusedWith;
+      server.stored = { ...server.stored, chatHistory: [...server.stored.chatHistory!, { id: `a${history.length}`, role: 'assistant', content: '已改成夜戏。' }] };
+      return response({ reply: '已改成夜戏。', action: 'none', stage: null, task: server.stored });
+    });
+    return server;
+  }
+
+  it('explains a refused message beside the composer and keeps the recorded message once', async () => {
+    const current = task();
+    const server = recordingServer(current, () => refused(409, '当前阶段正在执行，请稍后再发。'));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText('项目 task-a'));
+    await screen.findByText(current.workflow!.hint);
+    const input = screen.getByRole<HTMLInputElement>('textbox', { name: /发送给/ });
+    await user.type(input, '把第二场改成夜戏{Enter}');
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('当前阶段正在执行，请稍后再发。');
+    expect(document.getElementById('workbench-chat-sidebar')!.contains(alert)).toBe(true);
+    expect(screen.queryByText(/正在理解您的指令/)).toBeNull();
+    // The server has the message: it stays in the history, and is not offered for a second send.
+    expect(screen.getAllByText('把第二场改成夜戏')).toHaveLength(1);
+    expect(input.value).toBe('');
+    expect(server.stored.chatHistory!.filter(entry => entry.content === '把第二场改成夜戏')).toHaveLength(1);
+  });
+
+  it('hands the text back for a resend when the refused message was not recorded', async () => {
+    const current = task();
+    let refuse = true;
+    mockFetch([current], url => {
+      if (!url.endsWith('/assistant')) return undefined;
+      if (refuse) return refused(404, '任务不存在');
+      return response({ reply: '已改成夜戏。', action: 'none', stage: null, task: { ...current, chatHistory: [
+        ...current.chatHistory!, { id: 'u2', role: 'user', content: '把第二场改成夜戏' }, { id: 'a2', role: 'assistant', content: '已改成夜戏。' },
+      ] } });
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText('项目 task-a'));
+    await screen.findByText(current.workflow!.hint);
+    const input = screen.getByRole<HTMLInputElement>('textbox', { name: /发送给/ });
+    await user.type(input, '把第二场改成夜戏{Enter}');
+
+    expect((await screen.findByRole('alert')).textContent).toContain('任务不存在');
+    expect(screen.queryByText(/正在理解您的指令/)).toBeNull();
+    // The message was not delivered: it is back in the composer, not in the history.
+    expect(input.value).toBe('把第二场改成夜戏');
+    expect(screen.queryByText('把第二场改成夜戏')).toBeNull();
+
+    refuse = false;
+    await user.click(screen.getByRole('button', { name: '发送消息' }));
+    expect(await screen.findByText('已改成夜戏。')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getAllByText('把第二场改成夜戏')).toHaveLength(1);
+    expect(input.value).toBe('');
+  });
+
+  it('keeps the failed message on screen when something else was typed while it was sending', async () => {
+    const current = task();
+    let fail: (reason: Error) => void = () => undefined;
+    mockFetch([current], url => url.endsWith('/assistant')
+      ? new Promise<Response>((_, reject) => { fail = reject; }) : undefined);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText('项目 task-a'));
+    await screen.findByText(current.workflow!.hint);
+    const input = screen.getByRole<HTMLInputElement>('textbox', { name: /发送给/ });
+    await user.type(input, '把第二场改成夜戏{Enter}');
+    await user.type(input, '再加一场雨');
+    await act(async () => { fail(new TypeError('Failed to fetch')); });
+
+    expect((await screen.findByRole('alert')).textContent).toContain('发送消息失败');
+    expect(screen.queryByText(/正在理解您的指令/)).toBeNull();
+    expect(input.value).toBe('再加一场雨');
+    expect(screen.getAllByText('把第二场改成夜戏')).toHaveLength(1);
+  });
+
+  it('leaves a half-typed message in the composer when a button sends the instruction', async () => {
+    const current = task();
+    let refuse = true;
+    const server = recordingServer(current, () => refuse ? refused(500, '对话处理失败') : undefined);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText('项目 task-a'));
+    await screen.findByText(current.workflow!.hint);
+    const input = screen.getByRole<HTMLInputElement>('textbox', { name: /发送给/ });
+    await user.type(input, '半句没写完的话');
+
+    await user.click(screen.getAllByRole('button', { name: '继续制作第 2 集分镜' })[0]);
+    expect((await screen.findByRole('alert')).textContent).toContain('对话处理失败');
+    expect(input.value).toBe('半句没写完的话');
+
+    refuse = false;
+    await user.click(screen.getAllByRole('button', { name: '继续制作第 2 集分镜' })[0]);
+    await screen.findByText('已改成夜戏。');
+    expect(input.value).toBe('半句没写完的话');
+    expect(server.stored.chatHistory!.filter(entry => entry.content === '半句没写完的话')).toHaveLength(0);
+  });
+
+  it('can be dismissed, and is not carried back to the lobby when the project closes', async () => {
+    const current = task();
+    mockFetch([current], url => url.endsWith('/assistant') ? Promise.reject(new TypeError('Failed to fetch')) : undefined);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText('项目 task-a'));
+    await screen.findByText(current.workflow!.hint);
+    await user.type(screen.getByRole('textbox', { name: /发送给/ }), '进度{Enter}');
+    expect((await screen.findByRole('alert')).textContent).toContain('发送消息失败');
+    await user.click(screen.getByRole('button', { name: '关闭提示' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: '发送消息' }));
+    await screen.findByRole('alert');
+    await user.click(screen.getByRole('button', { name: '关闭项目工作台' }));
+    await screen.findByText('项目 task-a');
+    expect(screen.queryByText(/发送消息失败/)).toBeNull();
+    expect(document.querySelector('.error-banner')).toBeNull();
+  });
+
+  it('leaves an out-of-points refusal to the top-up notice instead of repeating it', async () => {
+    const current = task();
+    recordingServer(current, () => refused(402, '积分不足，请先充值。'));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText('项目 task-a'));
+    await screen.findByText(current.workflow!.hint);
+    const input = screen.getByRole<HTMLInputElement>('textbox', { name: /发送给/ });
+    await user.type(input, '把第二场改成夜戏{Enter}');
+    await waitFor(() => expect(screen.queryByText(/正在理解您的指令/)).toBeNull());
+    expect(screen.getAllByText('积分不足，请先充值。')).toHaveLength(1);
+    expect(document.querySelector('.chat-sidebar__error')).toBeNull();
+    // Recorded by the server before the refusal: shown once, and not sent again after the top-up.
+    expect(screen.getAllByText('把第二场改成夜戏')).toHaveLength(1);
+    expect(input.value).toBe('');
+  });
+});
+
+describe('App storyboard rerun', () => {
+  const storyboardTask = (assets: TaskResponse['assets']): TaskResponse => ({ ...task(), assets: { '4': [{ shot_id: 1 }], ...assets } });
+  const sentMessages = (fetchMock: ReturnType<typeof mockFetch>) => fetchMock.mock.calls
+    .filter(([url]) => String(url).endsWith('/task-a/assistant'))
+    .map(([, init]) => JSON.parse(String(init?.body)).message as string);
+
+  it('asks before a rerun that would clear finished videos, audio or the film', async () => {
+    const current = storyboardTask({ '5_shot_videos': { '1': '/media/shot-1.mp4' } });
+    const fetchMock = mockFetch([current]);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText('项目 task-a'));
+    const rerun = await screen.findByRole('button', { name: '重跑分镜阶段' });
+
+    await user.click(rerun);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(String(confirm.mock.calls[0][0])).toContain('第 5 阶段及之后');
+    expect(sentMessages(fetchMock)).toEqual([]);
+
+    confirm.mockReturnValue(true);
+    await user.click(rerun);
+    await waitFor(() => expect(sentMessages(fetchMock)).toEqual(['重跑第 4 阶段']));
+  });
+
+  it('reruns straight away when nothing later exists yet', async () => {
+    const fetchMock = mockFetch([storyboardTask({ '4_grid': '/media/grid.png' })]);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText('项目 task-a'));
+    await user.click(await screen.findByRole('button', { name: '重跑分镜阶段' }));
+
+    await waitFor(() => expect(sentMessages(fetchMock)).toEqual(['重跑第 4 阶段']));
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  // Per-episode production: the server keeps the other episodes' clips and every finished film.
+  const perEpisode = (assets: TaskResponse['assets']) => storyboardTask({
+    '4_progress': { episodes: [{ number: 1 }, { number: 2 }] },
+    '5': [{ shot_id: 1, scene_id: 'E1S01', video_url: '/media/e1.mp4' }],
+    '6': { episode: 1 },
+    '7': { episode: 1 },
+    episode_cycle: { version: 1, episodes: { '1': { audio: { episode: 1 }, timeline: { clips: [] }, film: { final_video_url: '/media/film-1.mp4' } } } },
+    ...assets,
+  });
+  const pressRerun = async (current: TaskResponse) => {
+    const fetchMock = mockFetch([current]);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByText('项目 task-a'));
+    await user.click(await screen.findByRole('button', { name: '重跑分镜阶段' }));
+    return { fetchMock, confirm };
+  };
+
+  it('does not ask in per-episode production when the episode in hand has nothing later', async () => {
+    const { fetchMock, confirm } = await pressRerun(perEpisode({}));
+
+    await waitFor(() => expect(sentMessages(fetchMock)).toEqual(['重跑第 4 阶段']));
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it('names the episode whose videos go, and says the other episodes stay', async () => {
+    const { fetchMock, confirm } = await pressRerun(perEpisode({
+      '5': [{ shot_id: 1, scene_id: 'E1S01', video_url: '/media/e1.mp4' }, { shot_id: 1, scene_id: 'E2S01', video_url: '/media/e2.mp4' }],
+    }));
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    const asked = String(confirm.mock.calls[0][0]);
+    expect(asked).toContain('第 2 集已生成的视频、音频与剪辑会被清除');
+    expect(asked).toContain('其他各集的视频和成片都保留');
+    expect(asked).not.toContain('第 5 阶段及之后');
+    expect(sentMessages(fetchMock)).toEqual([]);
+  });
+
+  it('looks at the episode the storyboard step will work on, not the first one without a film', async () => {
+    // Steps run for every episode before the next step: episode 1 is boarded and filmed-in-part, episode 2 is the one
+    // still to board, so a rerun touches episode 2 (nothing to lose) and leaves episode 1's clips alone.
+    const { fetchMock, confirm } = await pressRerun(perEpisode({
+      '4_progress': { episodes: [{ number: 1, complete: true }, { number: 2, complete: false }, { number: 3, complete: false }] },
+      episode_cycle: { version: 1, episodes: {} },
+    }));
+
+    await waitFor(() => expect(sentMessages(fetchMock)).toEqual(['重跑第 4 阶段']));
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it('asks about the promotion copy once every episode has its film', async () => {
+    const { fetchMock, confirm } = await pressRerun(perEpisode({
+      episode_cycle: { version: 1, episodes: {
+        '1': { film: { final_video_url: '/media/film-1.mp4' } },
+        '2': { film: { final_video_url: '/media/film-2.mp4' } },
+      } },
+      '8_publish': { title: '宣发标题' },
+    }));
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    const asked = String(confirm.mock.calls[0][0]);
+    expect(asked).toContain('各集成片都保留');
+    expect(asked).toContain('宣发内容会被清除');
+    expect(sentMessages(fetchMock)).toEqual([]);
   });
 });

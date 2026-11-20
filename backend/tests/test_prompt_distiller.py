@@ -71,20 +71,20 @@ class PlanAndCheckTests(unittest.TestCase):
 class CompressTests(unittest.TestCase):
     def test_a_condensed_prompt_is_never_cut_afterwards(self):
         sections = {**_sections(BODY * 5), "sound": "【声音设计】雨声铺底", "dialogue_notes": "台词表达：压着嗓子"}
-        kept, report = prompt_budget.compress(sections, "minimax-h3", distill=lambda s, budget: prompt_distiller.distill_sections(s, budget, rewrite=lambda b, t: SHORT)[0])
+        kept, report = prompt_budget.compress(sections, "kling-2.6", distill=lambda s, budget: prompt_distiller.distill_sections(s, budget, rewrite=lambda b, t: SHORT)[0])
         self.assertTrue(report.distilled)
         self.assertEqual((report.dropped, report.trimmed), ([], []))
         self.assertEqual(kept["subject"], SHORT)
         self.assertTrue(report.as_dict()["distilled"])
         still_long = {**_sections(BODY * 5)}
-        kept, report = prompt_budget.compress(still_long, "minimax-h3", distill=lambda s, budget: dict(s))
+        kept, report = prompt_budget.compress(still_long, "kling-2.6", distill=lambda s, budget: dict(s))
         self.assertTrue(report.distilled)
         self.assertEqual(report.tier, "red")
         self.assertEqual(kept["subject"], BODY * 5, "去重后仍超预算也不裁：内容一个不丢")
 
     def test_without_a_distiller_the_old_ladder_still_runs(self):
         sections = {**_sections(BODY * 5), "sound": "【声音设计】雨声铺底" * 3}
-        kept, report = prompt_budget.compress(sections, "minimax-h3", distill=lambda s, budget: None)
+        kept, report = prompt_budget.compress(sections, "kling-2.6", distill=lambda s, budget: None)
         self.assertFalse(report.distilled)
         self.assertIn("sound", report.dropped)
 
@@ -102,8 +102,8 @@ class CompileTests(unittest.TestCase):
             blocking="@[沈知微]居中偏左", start_state="端坐", end_state="拇指悬在契纸上方", characters=["沈知微"], cast_refs=["沈知微"],
             sound="雨声铺底", expression="眉心骤紧", composition="左三分线",
         )
-        compiled = compile_shot_prompt(get_pack(DEFAULT_PACK_ID), shot, model="minimax-h3", max_duration_seconds=15, distill=distill)
-        self.assertEqual(calls, [900])
+        compiled = compile_shot_prompt(get_pack(DEFAULT_PACK_ID), shot, model="kling-2.6", max_duration_seconds=15, distill=distill)
+        self.assertEqual(calls, [500])
         self.assertTrue(compiled.pressure.distilled)
         self.assertIn(SHORT, compiled.text)
 
@@ -154,7 +154,8 @@ class StageFiveTests(unittest.TestCase):
             blocks = [f"【镜头{k}/3｜精炼】沈砚推门；" for k in (1, 2, 3)]
             return "".join(blocks) + "；".join(sorted(mentions) + sorted(numbers))
 
-        tight = (("minimax-h3", 150, 400),)
+        # H3 的上限管整条提示词，三瞬间片段不再按瞬间数放大：给整段 1200(原先 400×3)。
+        tight = (("minimax-h3", 150, 1200),)
         with patch.object(harness.service.gateway, "call_llm", side_effect=call_llm), \
              patch("app.core.prompt_budget.MODEL_PROMPT_BUDGETS", tight):
             stored = harness._run(task)

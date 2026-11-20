@@ -70,7 +70,7 @@ stored under the task and listed with their revision, size, and badges for 过�
 shot is marked as requiring a motion reference, so auto mode picks multimodal, and the measured lens clause
 (「机位距…米、机高…米」) is withheld from the prompt, because a blockout owns the camera track and two camera
 instructions compete. A limbed white model appends one requirement sentence about writing the limb motion out.
-A blocking edit marks every capture of the scene stale, and stage 5 refuses a stale clip and restores the clause.
+A plan edit dates only the captures it could show in: every capture of the scene when the edit changes the cast's marks or the set (actors, landmarks, crowds, axis, backdrop, aspect); otherwise a capture whose own shot, shot timeline, shot lens or capture lens changed, or whose shot left the plan. Edits confined to other shots leave it fresh; a rebuild dates the whole scene, and stage 5 refuses a stale clip and restores the clause.
 
 *Gap:* one still and one clip per shot. Applying a newer one replaces the older.
 

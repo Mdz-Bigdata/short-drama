@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from app.core import prompt_data
 from app.core.creative_intent import IntentPlan, decode
 
 
@@ -32,62 +33,64 @@ class GenreCluster:
     note: str
 
 
+# The name, story keywords and staging note of each cluster: app/data/prompt/genre_clusters.json.
+_WORDING = "genre_clusters"
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A sentence of the clusters' wording table, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return str(prompt_data.load(_WORDING)["says"][key]).format(**values)
+
+
+def _cluster(
+    cluster_id: str, genre_keys: tuple[str, ...], *, fight_coverage: bool, default_intent: str, rhythm_profile: str,
+    negative_modules: tuple[str, ...],
+) -> GenreCluster:
+    """A cluster from its code values here and its words in the table (looked up by ``cluster_id``)."""
+    words = prompt_data.load(_WORDING)["clusters"][cluster_id]
+    return GenreCluster(
+        cluster_id, str(words["name"]), tuple(str(word) for word in words["keywords"]), genre_keys,
+        fight_coverage=fight_coverage, default_intent=default_intent, rhythm_profile=rhythm_profile,
+        negative_modules=negative_modules, note=str(words["note"]),
+    )
+
+
+# Order matters: a keyword tie goes to the earlier cluster.
 CLUSTERS: tuple[GenreCluster, ...] = (
-    GenreCluster(
-        "A", "现代都市文戏",
-        ("都市", "职场", "家庭", "伦理", "甜宠", "霸总", "校园", "婚姻", "商战", "医生", "律师", "重生复仇"),
-        ("romance", "retro_romance", "campus", "family", "male_counterattack", "rebirth_revenge", "food", "interactive"),
+    _cluster(
+        "A", ("romance", "retro_romance", "campus", "family", "male_counterattack", "rebirth_revenge", "food", "interactive"),
         fight_coverage=False, default_intent="tension", rhythm_profile="confrontation",
         negative_modules=("performance_acting", "scene_layout_lighting"),
-        note="靠表演与关系推进：过肩正反打、缓慢推近、微表情，运动镜头留给情绪转折。",
     ),
-    GenreCluster(
-        "B", "古装权谋江湖",
-        ("古装", "宫廷", "权谋", "宅斗", "朝堂", "江湖", "武侠", "年代", "民国"),
-        ("palace_intrigue", "wuxia"),
+    _cluster(
+        "B", ("palace_intrigue", "wuxia"),
         fight_coverage=True, default_intent="tension", rhythm_profile="confrontation",
         negative_modules=("period_costume_architecture", "weapon_contact", "costume_hair_props"),
-        note="服化道与礼制先立住；文戏靠站位与眼神，武戏才换打斗覆盖。",
     ),
-    GenreCluster(
-        "C", "仙侠玄幻修真",
-        ("仙侠", "修仙", "玄幻", "灵气", "法术", "结界", "飞升", "妖", "神魔", "灵根"),
-        ("xianxia",),
+    _cluster(
+        "C", ("xianxia",),
         fight_coverage=True, default_intent="burning", rhythm_profile="action",
         negative_modules=("action_physics", "material_texture", "period_costume_architecture"),
-        note="法术要有蓄力→释放→命中→余波四拍；特效分层，别盖住人物。",
     ),
-    GenreCluster(
-        "D", "动作打斗战争",
-        ("动作", "打斗", "格斗", "枪战", "军旅", "战争", "追车", "特工", "拳"),
-        ("military", "sports", "mafia"),
+    _cluster(
+        "D", ("military", "sports", "mafia"),
         fight_coverage=True, default_intent="tight_fight", rhythm_profile="action",
         negative_modules=("action_physics", "weapon_contact", "crowd_limb_separation"),
-        note="动作按起手→碰撞→结果拆镜，用动作匹配在撞击帧衔接(动作不中断)，空间单向推进。",
     ),
-    GenreCluster(
-        "E", "悬疑惊悚",
-        ("悬疑", "惊悚", "恐怖", "刑侦", "灵异", "民俗", "密室", "凶案", "失踪"),
-        ("mystery", "horror"),
+    _cluster(
+        "E", ("mystery", "horror"),
         fight_coverage=False, default_intent="eerie", rhythm_profile="suspense",
         negative_modules=("suspense_horror_visibility", "scene_layout_lighting"),
-        note="信息延后给出：遮挡、POV、物件插入；光只够看清该看的那一点。",
     ),
-    GenreCluster(
-        "F", "科幻末世机甲",
-        ("科幻", "末世", "机甲", "赛博", "星际", "废土", "时空", "人工智能", "克隆"),
-        ("time_travel", "alpha", "omega", "wolf", "vampire"),
+    _cluster(
+        "F", ("time_travel", "alpha", "omega", "wolf", "vampire"),
         fight_coverage=True, default_intent="impact", rhythm_profile="action",
         negative_modules=("scifi_material_ui", "material_texture", "action_physics"),
-        note="机械与界面要有材质与磨损；巨物用比例对比，不靠光效堆量。",
     ),
-    GenreCluster(
-        "G", "喜剧",
-        ("喜剧", "搞笑", "沙雕", "无厘头", "情景", "爆笑", "吐槽"),
-        ("comedy",),
+    _cluster(
+        "G", ("comedy",),
         fight_coverage=False, default_intent="comedic", rhythm_profile="comedy",
         negative_modules=("performance_acting", "face_anatomy"),
-        note="反应镜是正文：给足停顿与夸张表情，节奏靠剪辑不靠运镜。",
     ),
 )
 _BY_ID = {cluster.id: cluster for cluster in CLUSTERS}
@@ -122,7 +125,7 @@ class DirectionPlan:
 
     def brief(self, scene_key: str = "") -> str:
         return "\n".join((
-            f"【题材】{self.cluster.name}（{self.cluster.id}簇）：{self.cluster.note}",
+            _says("brief", name=self.cluster.name, id=self.cluster.id, note=self.cluster.note),
             self.intent.brief(scene_key),
         ))
 

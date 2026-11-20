@@ -1,0 +1,59 @@
+{
+  "_about": "分镜「运镜」一栏的写法怎么读成机位运动。先按 drop_patterns 和 drop_phrases 去掉否定说法、写人怎么动的话(人物靠近、向镜头走来)和不挪机位的术语，再按 phrases 的先后找词组，然后按 camera_patterns 找「镜头/机位 + 靠近、逼近、后退」这种写明是机位在动的说法，最后按 words 的先后找单字；什么都没剩就是固定机位。靠近、逼近、后退单独出现时说的多半是人，不算运镜。names 是写进提示词的叫法。",
+  "drop_patterns": [
+    "(?:不|无|没有|别|勿|禁止)(?:要|再|做|带|用|明显|任何)?(?:的)?[推拉摇移升降跟动晃]+",
+    "(?:向|朝|往|对|冲)着?(?:镜头|机位|相机|摄影机)",
+    "(?:人物|角色|主角|演员|男主|女主|两人|二人|众人)[^，。；,.;镜机]{0,6}?(?:移动|走动|走位|运动|活动|靠近|逼近|后退|前进|上前|走近|走来|走向|走开|离开)",
+    "(?<=[推拉摇移升降跟])后(?=[推拉摇移升降跟])",
+    "[推拉摇移升降跟]{2,}(?:全无|皆无|均无|都没有|一概没有)",
+    "焦点[^，。；、,.;]{0,12}?(?:转移|移到|移向|移至)",
+    "\\b(?:no|not|without|never)\\s+(?:camera\\s+)?(?:push|pull|pan|tilt|track|truck|dolly|zoom|orbit|arc|mov\\w*)(?:(?:\\s*(?:,|/|or|nor|and)\\s*)(?:push|pull|pan|tilt|track|truck|dolly|zoom|orbit|arc))*"
+  ],
+  "drop_phrases": [
+    "升降格", "升格", "降格",
+    "转移焦点", "焦点转移", "跟焦", "拉焦", "移焦", "变焦", "追焦", "移轴",
+    "摇晃", "晃动", "摇曳", "摇摆", "摇头", "抖动", "手持",
+    "focus pull", "pull focus", "rack focus", "follow focus"
+  ],
+  "phrases": [
+    [["环绕"], "orbit"],
+    [["跟拍", "跟随", "跟移", "跟着"], "follow"],
+    [["拉近", "推近", "推进", "前移", "前推"], "push"],
+    [["拉远", "拉开", "拉出", "后拉", "后移"], "pull"],
+    [["拉升", "拉高", "上移", "上升"], "rise"],
+    [["下移", "下降"], "fall"],
+    [["横移", "平移", "侧移"], "track"]
+  ],
+  "camera_patterns": [
+    ["(?:镜头|机位|相机|摄影机)[^，。；,.;]{0,6}?(?:靠近|逼近|贴近|前进)", "push"],
+    ["(?:镜头|机位|相机|摄影机)[^，。；,.;]{0,6}?(?:后退|退后|远离)", "pull"]
+  ],
+  "words": [
+    [["弧", "orbit", "arc"], "orbit"],
+    [["跟", "follow"], "follow"],
+    [["推", "push", "dolly in", "zoom in"], "push"],
+    [["拉", "pull", "dolly out", "zoom out"], "pull"],
+    [["升", "crane up", "rise", "pedestal up"], "rise"],
+    [["降", "crane down", "fall", "pedestal down"], "fall"],
+    [["移", "track", "truck", "slide"], "track"],
+    [["摇", "pan", "tilt"], "pan"]
+  ],
+  "names": {
+    "static": "固定机位",
+    "push": "推近",
+    "pull": "拉远",
+    "pan": "摇镜",
+    "track": "横移",
+    "orbit": "弧形环绕",
+    "rise": "升",
+    "fall": "降",
+    "follow": "跟拍"
+  },
+  "errors": {
+    "_about": "导演台按运镜预设排机位关键帧(app/core/spatial_stage/camera_moves.py)失败时说的话。花括号里是代码填进去的值，{preset!r} 带引号原样写出；option_separator 连接可选值。",
+    "unknown_preset": "未知的运镜预设 {preset!r}",
+    "one_of": "{label} 只能是 {options}",
+    "option_separator": " / ",
+    "crosses_axis": "这个方向的运镜会越过轴线，请换一侧或先调整轴线"
+  }
+}

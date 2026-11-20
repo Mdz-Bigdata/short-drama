@@ -27,6 +27,19 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from app.core import edit_timeline, media_compositor
+from app.core import prompt_data
+
+
+_WORDING_FILE = "export_jianying"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/export_jianying.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 DRAFT_PATH_MARKER = "##_draftpath_##"
 DRAFT_VERSION = 360000
@@ -118,7 +131,7 @@ def build_draft(
     for clip in clips:
         local = resolve_local(str(clip["video_url"]))
         if not local or not os.path.isfile(local):
-            skipped.append(f"镜头 {clip.get('shot_id')}：片段不在本机，未打包")
+            skipped.append(_text_of("build_draft.text").format(clip.get('scene_id') or '', clip.get('shot_id')).strip())
             continue
         voice = clip.get("voice_path")
         placed.append({
@@ -130,7 +143,9 @@ def build_draft(
     for index, entry in enumerate(placed):
         clip, local = entry["clip"], entry["local"]
         seconds = entry["seconds"] - heads[index] - tails[index]
-        rel = f"materials/shot_{clip.get('shot_id')}{os.path.splitext(local)[1] or '.mp4'}"
+        # Shot numbers start over in every scene; the film-wide id keeps one scene's file from replacing another's.
+        material = clip.get("shot_uid") or clip.get("shot_id")
+        rel = f"materials/shot_{material}{os.path.splitext(local)[1] or '.mp4'}"
         files[rel] = local
         material_id = _uid()
         videos.append({"id": material_id, "type": "video", "path": f"{DRAFT_PATH_MARKER}/{rel}", "material_name": os.path.basename(rel),
@@ -147,7 +162,7 @@ def build_draft(
         video_segments.append(segment)
         voice = entry["voice"]
         if voice:
-            rel_voice = f"materials/voice_{clip.get('shot_id')}{os.path.splitext(voice)[1] or '.mp3'}"
+            rel_voice = f"materials/voice_{material}{os.path.splitext(voice)[1] or '.mp3'}"
             files[rel_voice] = voice
             audio_id = _uid()
             spoken = entry.get("voice_seconds") or seconds
@@ -215,7 +230,7 @@ def pack(draft: Mapping[str, Any], *, folder_name: str) -> bytes:
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(f"{folder_name}/draft_content.json", json.dumps(draft["draft_content"], ensure_ascii=False, indent=2))
         archive.writestr(f"{folder_name}/draft_meta_info.json", json.dumps(draft["draft_meta_info"], ensure_ascii=False, indent=2))
-        archive.writestr(f"{folder_name}/README.txt", "把整个文件夹放进剪映的草稿目录（如 ~/Movies/JianyingPro/User Data/Projects/com.lveditor.draft/）后重新打开剪映。\n")
+        archive.writestr(f"{folder_name}/README.txt", _text_of("pack.text"))
         for rel, local in (draft.get("files") or {}).items():
             archive.write(local, f"{folder_name}/{rel}")
     return buffer.getvalue()

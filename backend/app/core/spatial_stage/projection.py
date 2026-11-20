@@ -14,17 +14,29 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from typing import Any
+
+from app.core import prompt_data
 from app.core.spatial_stage import geometry as geo
 from app.core.spatial_stage.models import ScreenState, StageActor, StageCamera
 
-# Normalised screen x (-1 left edge … +1 right edge) → picture region.
-_REGION_EDGES: tuple[tuple[float, str], ...] = (
-    (-0.4, "画面左侧三分之一"),
-    (-0.12, "画面中左侧"),
-    (0.12, "画面中央"),
-    (0.4, "画面中右侧"),
-)
-_REGION_RIGHT = "画面右侧三分之一"
+# The region, depth-layer and facing words and the shot-size table: ``app/data/prompt/stage_panel.json``
+# (section ``projection``). The words are the ``frame_position`` vocabulary; the sizes are the enum the
+# camera solver matches.
+_PANEL = "stage_panel"
+
+
+def _entry(*path: str) -> Any:
+    """The entry of the projection's wording table at ``path``."""
+    found: Any = prompt_data.load(_PANEL)["projection"]
+    for key in path:
+        found = found[key]
+    return found
+
+
+# Normalised screen x (-1 left edge … +1 right edge) → picture region; right of the last edge is the right third.
+_REGION_EDGES: tuple[tuple[float, str], ...] = tuple((float(edge), str(label)) for edge, label in _entry("regions"))
+_REGION_RIGHT = str(_entry("region_right"))
 # Only a facing within ~5° of the lens axis reads as "to camera": a single or an over-the-shoulder
 # shot a few degrees off the axis still shows its subject looking past the lens to one side, and
 # that side is the eyeline every reverse shot has to answer.
@@ -35,16 +47,8 @@ _ACTOR_HALF_WIDTH_M = 0.24
 _EYE_FRACTION = 0.93
 _CHEST_FRACTION = 0.75
 # World height a frame covers for each shot size (meters of a standing adult).
-SHOT_SIZE_HEIGHTS: tuple[tuple[str, float], ...] = (
-    ("大特写", 0.22),
-    ("特写", 0.38),
-    ("近景", 0.72),
-    ("中近景", 0.95),
-    ("中景", 1.3),
-    ("中全景", 1.85),
-    ("全景", 2.35),
-    ("远景", 5.0),
-    ("大远景", 10.0),
+SHOT_SIZE_HEIGHTS: tuple[tuple[str, float], ...] = tuple(
+    (str(name), float(height)) for name, height in _entry("shot_sizes")
 )
 POSTURE_HEIGHT: dict[str, float] = {
     "stand": 1.0, "walk": 1.0, "run": 0.96, "fight": 0.94, "lean": 0.97, "bow": 0.8,
@@ -150,10 +154,10 @@ def screen_facing(actor: StageActor, view: CameraView) -> str:
     forward = geo.forward_of(actor.yaw_deg)
     toward_lens = -geo.dot(forward, view.ground_forward())
     if toward_lens >= _LENS_FACING_COSINE:
-        return "面向镜头"
+        return str(_entry("facings", "to_lens"))
     if toward_lens <= -_LENS_FACING_COSINE:
-        return "背对镜头"
-    return "朝向画面右侧" if geo.dot(forward, view.ground_right()) >= 0 else "朝向画面左侧"
+        return str(_entry("facings", "away"))
+    return str(_entry("facings", "right" if geo.dot(forward, view.ground_right()) >= 0 else "left"))
 
 
 def screen_interval(actor: StageActor, view: CameraView) -> tuple[float, float, float]:
@@ -169,19 +173,20 @@ def _depth_layers(depths: dict[str, float], focus: Sequence[str]) -> dict[str, s
     """Foreground / midground / background relative to the subjects the shot is about."""
     focal = [depths[name] for name in focus if name in depths and depths[name] > _NEAR_PLANE_M]
     reference = sum(focal) / len(focal) if focal else (sum(depths.values()) / len(depths) if depths else 1.0)
+    words = _entry("depth_layers")
     layers: dict[str, str] = {}
     for name, depth in depths.items():
         ratio = depth / reference if reference > 1e-6 else 1.0
         if ratio < 0.4:
-            layers[name] = "近前景"
+            layers[name] = str(words["near_foreground"])
         elif ratio < 0.7:
-            layers[name] = "前景"
+            layers[name] = str(words["foreground"])
         elif ratio <= 1.5:
-            layers[name] = "中景"
+            layers[name] = str(words["midground"])
         elif ratio <= 2.6:
-            layers[name] = "中远景"
+            layers[name] = str(words["middle_distance"])
         else:
-            layers[name] = "背景"
+            layers[name] = str(words["background"])
     return layers
 
 

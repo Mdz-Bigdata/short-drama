@@ -52,6 +52,21 @@ describe('StoryboardPromptDialog', () => {
     expect(document.activeElement).toBe(screen.getByText('拍点规划').closest('summary'));
   });
 
+  it('keeps focus where the user put it when the caller renders again', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<StoryboardPromptDialog detail={detail} onClose={vi.fn()} />);
+    await user.tab();
+    const focused = document.activeElement;
+    expect(focused).not.toBe(screen.getByRole('button', { name: '关闭宫格提示词' }));
+
+    const onClose = vi.fn();
+    rerender(<StoryboardPromptDialog detail={detail} onClose={onClose} />);
+
+    expect(document.activeElement).toBe(focused);
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('shows no prompt that never reaches a model', () => {
     render(<StoryboardPromptDialog detail={detail} onClose={vi.fn()} />);
 

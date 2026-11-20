@@ -91,8 +91,29 @@ class RenameTests(unittest.TestCase):
         self.assertEqual(task["assets"]["3_characters"][0]["name"], "沈知微")
         self.assertEqual(task["assets"]["4"][0]["characters"], ["沈知微", "周教授"])
         # The clip filmed under the old name stays, flagged for a rerun; the other shot is untouched.
+        # These legacy clips carry no scene, so they are still matched by shot number.
         self.assertTrue(task["assets"]["5"][0]["stale"])
         self.assertNotIn("stale", task["assets"]["5"][1])
+
+    def test_clips_are_matched_by_the_shots_they_cover_not_by_shot_number_across_scenes(self):
+        task = _task()
+        # 各场镜号都从 1 起：第二场的第 1 镜只有周教授，它的片段不能因为同号被当成林夏那一镜。
+        task["assets"]["4"] = [
+            {"shot_id": 1, "scene_id": "E1S01", "characters": ["林夏", "周教授"], "desc": "对峙",
+             "asset_bindings": [{"kind": "actor", "name": "林夏", "element_id": "el-lin", "element_version": 2}]},
+            {"shot_id": 1, "scene_id": "E1S02", "characters": ["周教授"], "desc": "走廊"},
+        ]
+        task["assets"]["5"] = [
+            {"shot_id": 1, "scene_id": "E1S01", "shot_uid": 100101, "video_url": "https://cdn/1.mp4"},
+            {"shot_id": 1, "scene_id": "E1S02", "shot_uid": 100201, "video_url": "https://cdn/2.mp4"},
+        ]
+
+        asset_identity.rename_asset(task, "character", "林夏", "沈知微")
+
+        self.assertTrue(task["assets"]["5"][0]["stale"])
+        self.assertNotIn("stale", task["assets"]["5"][1])
+        # 分镜绑定的名字跟着改，素材库 id 不变。
+        self.assertEqual(task["assets"]["4"][0]["asset_bindings"][0], {"kind": "actor", "name": "沈知微", "element_id": "el-lin", "element_version": 2})
 
     def test_scenes_and_props_rename_through_their_own_references(self):
         task = _task()
@@ -171,6 +192,14 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual({role["name"] for role in stored["assets"]["2_breakdown"]["roles"]}, {"沈知微", "周教授"})
         self.assertTrue(any(role["name"] == "沈知微" for role in stored["assets"]["2_writer_dashboard"]["roles"]))
         self.assertTrue(stored["assets"]["5"][0]["stale"])
+
+    def test_a_merge_marks_the_shots_that_showed_the_merged_asset(self):
+        result = self.service.change_asset_identity("id-1", operation="merge", kind="character", name="周教授", new_name="林夏", dry_run=False)
+
+        self.assertEqual(result["dependents"], {"shots_marked": 2, "clips_marked": 2, "boards_marked": 0})
+        shot = self.repo.get_task("id-1")["assets"]["4"][1]
+        self.assertTrue(shot["asset_stale"])
+        self.assertIn("并入「林夏」", shot["asset_stale_reason"])
 
 
 if __name__ == "__main__":

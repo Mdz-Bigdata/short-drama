@@ -69,6 +69,7 @@ export function WriterAgentPageContainer({
     data: WriterDashboardResponse;
   } | null>(null);
   const [syncError, setSyncError] = useState('');
+  const [submissionBusy, setSubmissionBusy] = useState(false);
   const dashboard = dashboardState?.taskId === taskId ? dashboardState.data : null;
   // Portraits are a bonus from stage 3; the board renders initials without them.
   const avatars = dashboard?.portraits || {};
@@ -156,6 +157,34 @@ export function WriterAgentPageContainer({
       URL.revokeObjectURL(url);
     } catch {
       setSyncError('拆解单导出失败，请稍后重试。');
+    }
+  };
+
+  // 投稿材料：先让后端把模型那几项写好(剧本没改过就直接用上次的，不再调模型)，再下载 Word。
+  const downloadSubmission = async () => {
+    if (!taskId || submissionBusy) return;
+    setSubmissionBusy(true);
+    try {
+      await apiRequest(`/api/drama/${encodeURIComponent(taskId)}/submission-pack`, {
+        method: 'POST',
+        body: JSON.stringify({ refresh: false }),
+      });
+      const response = await fetch(`${API_BASE}/api/drama/${encodeURIComponent(taskId)}/submission-pack?format=docx`, {
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error(`export failed: ${response.status}`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${resolvedTitle || 'script'}-${t('投稿材料')}.docx`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setSyncError('');
+    } catch (error) {
+      setSyncError(error instanceof ApiError && error.message ? error.message : t('投稿材料生成失败，请稍后重试。'));
+    } finally {
+      setSubmissionBusy(false);
     }
   };
 
@@ -355,6 +384,8 @@ export function WriterAgentPageContainer({
         serverStats={dashboard?.stats}
         onExport={downloadDashboard}
         onExportBreakdown={downloadBreakdown}
+        onExportSubmission={taskId ? downloadSubmission : undefined}
+        submissionBusy={submissionBusy}
         onPlanEpisodes={onPlanEpisodes}
         onProduceEpisode={onProduceEpisode}
         onSaveScript={saveScript}
@@ -362,6 +393,9 @@ export function WriterAgentPageContainer({
         onAnalyzeRelationships={taskId ? analyzeRelationships : undefined}
         onContinueScript={taskId ? continueScript : undefined}
         relationshipsInferred={dashboard?.relationshipsInferred === true}
+        // Until the dashboard answers, the list counts as decided: an analysis started on the
+        // fallback breakdown would refill a list the writer emptied before the flag arrives.
+        relationshipsAuthored={dashboard ? dashboard.relationshipsAuthored === true : true}
         timelineAuthored={dashboard?.timelineAuthored === true}
         creationMode={dashboard?.creationMode}
         versions={dashboard?.versions || []}

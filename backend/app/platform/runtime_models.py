@@ -9,6 +9,19 @@ from dataclasses import dataclass
 from app import settings
 from app.core.credential_pool import Credential
 from app.core.model_configuration import ModelSecretCipher
+from app.core import prompt_data
+
+
+_WORDING_FILE = "platform_runtime_models"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/platform_runtime_models.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 @dataclass(frozen=True)
@@ -25,7 +38,7 @@ class RuntimeModelConfiguration:
     multimodal_ids: tuple[str, ...] = ()
 
     def credentials_for(self, bucket: str) -> tuple[Credential, ...]:
-        pool = self.credentials or (Credential(id="primary", api_key=self.api_key, label="主凭据"),)
+        pool = self.credentials or (Credential(id="primary", api_key=self.api_key, label=_text_of("credentials_for.label")),)
         return tuple(c for c in pool if c.serves(bucket))
 
 
@@ -107,7 +120,7 @@ async def hydrate_runtime_model_registry(store, cipher: ModelSecretCipher) -> in
         if not model_ids:
             continue
         primary = cipher.decrypt(configuration.api_key_ciphertext)
-        credentials = [Credential(id="primary", api_key=primary, label="主凭据")]
+        credentials = [Credential(id="primary", api_key=primary, label=_text_of("hydrate_runtime_model_registry.label"))]
         for item in extra.get(configuration.id, []):
             if item.enabled:
                 credentials.append(Credential(

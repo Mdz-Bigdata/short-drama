@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Bell } from 'lucide-react';
 
 import { apiRequest } from '../../api/client';
 import { t } from '../../i18n';
+import { when, yuan } from '../finance/financeFormat';
 
 
 const POLL_MS = 60000;
@@ -15,8 +16,6 @@ interface Notice {
   created_at: string;
 }
 interface Inbox { unread: number; to_do: Record<string, number>; items: Notice[] }
-
-const yuan = (minor?: number) => `¥${(Number(minor ?? 0) / 100).toFixed(2)}`;
 
 function noticeText(notice: Notice): string {
   const { plan_name: plan = '', points = 0, amount_minor: amount, days } = notice.data;
@@ -41,6 +40,8 @@ const TO_DO_TEXT: Record<string, string> = {
 export function NotificationBell({ onOpenBilling, onOpenFinance }: { onOpenBilling: () => void; onOpenFinance: () => void }) {
   const [inbox, setInbox] = useState<Inbox | null>(null);
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
   const load = useCallback(async () => {
     try {
@@ -55,6 +56,26 @@ export function NotificationBell({ onOpenBilling, onOpenFinance }: { onOpenBilli
     const poll = window.setInterval(() => { if (document.visibilityState === 'visible') void load(); }, POLL_MS);
     return () => { window.clearTimeout(first); window.clearInterval(poll); };
   }, [load]);
+
+  // An open panel closes on Escape (focus back on the bell) or on a press anywhere outside it.
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
+      setOpen(false);
+      // Focus that has moved on (Tab out of the panel into the page) stays where it is.
+      if (rootRef.current?.contains(document.activeElement)) buttonRef.current?.focus();
+    };
+    const onPress = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPress);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPress);
+    };
+  }, [open]);
 
   const toDo = Object.entries(inbox?.to_do ?? {}).filter(([, count]) => count > 0);
   const badge = (inbox?.unread ?? 0) + toDo.reduce((sum, [, count]) => sum + count, 0);
@@ -78,8 +99,8 @@ export function NotificationBell({ onOpenBilling, onOpenFinance }: { onOpenBilli
   };
 
   return (
-    <div className="notification-bell">
-      <button type="button" className="notification-bell__button" aria-label={badge ? t('通知，{0} 条未读', [String(badge)]) : t('通知')} aria-expanded={open} onClick={toggle}>
+    <div className="notification-bell" ref={rootRef}>
+      <button type="button" ref={buttonRef} className="notification-bell__button" aria-label={badge ? t('通知，{0} 条未读', [String(badge)]) : t('通知')} aria-expanded={open} onClick={toggle}>
         <Bell size={17} />
         {badge > 0 && <span className="notification-bell__badge">{badge > 99 ? '99+' : badge}</span>}
       </button>
@@ -97,7 +118,7 @@ export function NotificationBell({ onOpenBilling, onOpenFinance }: { onOpenBilli
           {inbox?.items.map(notice => (
             <button type="button" key={notice.id} className={`notification-bell__item${notice.read ? '' : ' is-unread'}`} onClick={() => void openNotice(notice)}>
               <span>{noticeText(notice)}</span>
-              <small>{new Date(notice.created_at).toLocaleString('zh-CN', { hour12: false })}</small>
+              <small>{when(notice.created_at)}</small>
             </button>
           ))}
           {!toDo.length && !inbox?.items.length && <p>{t('没有新通知')}</p>}

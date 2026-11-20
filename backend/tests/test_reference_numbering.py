@@ -37,7 +37,7 @@ class RenumberTests(unittest.TestCase):
         )
         self.assertEqual(plan.reference_images[0], "https://cdn/frame.png")
         sent = renumber_reference_mentions(text, images, plan)
-        self.assertTrue(sent.startswith("参考图1是本镜首帧画面"))
+        self.assertTrue(sent.startswith("参考图1是开场画面"))
         self.assertIn("林夏（参考图2）", sent)
         self.assertIn("周教授（参考图3）", sent)
         self.assertIn("地下实验室（参考图4）", sent)
@@ -84,12 +84,12 @@ def _still(binding: dict) -> str:
 
 
 class SceneBindingTests(unittest.TestCase):
-    def _binding(self, layout: str = ""):
+    def _binding(self, layout: str = "", **framing):
         task = {"task_id": "t-1", "assets": {"3_characters": [{"name": "林夏", "desc": "调查记者"}]}}
         context = compile_scene_context(
             task, {"scene_id": "E1S01", "content": "林夏在地下实验室里翻找档案。", "characters": ["林夏"]}, [STUDY],
         )
-        return panel_context(context, {"desc": "林夏翻找档案", "characters": ["林夏"]}, layout=layout)
+        return panel_context(context, {"desc": "林夏翻找档案", "characters": ["林夏"], **framing}, layout=layout)
 
     def test_the_scene_reference_states_the_layout_and_never_lends_its_people(self):
         binding = self._binding("铁门在画面左侧、观察窗在画面右侧")
@@ -101,34 +101,34 @@ class SceneBindingTests(unittest.TestCase):
         )
         _, notes = merge_video_references(SHEETS[:1], binding["references"])
         self.assertIn("参考图1仅锁定数字演员设定集「林夏」的脸型、发型、体型与服装，不采用图中背景、版式与其他人物，不是额外剧情或额外人物", notes)
-        self.assertIn("参考图2仅锁定拍摄场地「地下实验室」的空间布局，光线与天色以本场为准、不照搬此图（铁门在画面左侧、观察窗在画面右侧）", notes)
+        self.assertIn("参考图2仅锁定拍摄场地「地下实验室」正面的空间布局，光线与天色以本场为准、不照搬此图（铁门在画面左侧、观察窗在画面右侧）", notes)
         # Without a plan the line still binds the space, just without the sides.
         self.assertIn("场景图只提供空间结构、陈设与材质，不提供光线、天色和人物", _still(self._binding()))
 
-    def test_the_extra_views_come_last_each_with_its_purpose_and_none_takes_the_name(self):
-        binding = self._binding("铁门在画面左侧")
-        self.assertEqual([item.get("view", "") for item in binding["references"]], ["", "scene_45", "scene_depth", "scene_detail"])
-        for line in ("图2 「地下实验室」场景图（45°斜角）", "图2 用于走位与转身时的透视",
-                     "图3 用于纵深调度：走廊、门洞与前后景", "图4 用于特写与插入镜头的陈设材质"):
+    def test_only_the_view_that_frames_the_shot_comes_last_and_none_takes_the_name(self):
+        # 没有景别线索：只发主场景全景，别的视角用不上就不发。
+        self.assertEqual([item.get("view", "") for item in self._binding("铁门在画面左侧")["references"]], [""])
+        binding = self._binding("铁门在画面左侧", size="中景", angle="过肩")
+        self.assertEqual([item.get("view", "") for item in binding["references"]], ["", "scene_45"])
+        for line in ("图2 「地下实验室」场景图（45°斜角）", "图2 用于走位与转身时的透视"):
             self.assertIn(line, _still(binding))
+        self.assertNotIn("纵深视角", _still(binding))
         entries = video_reference_entries(SHEETS[:1], binding["references"])
-        self.assertEqual([name for _, name, _ in entries], ["林夏", "地下实验室", "", "", ""])
+        self.assertEqual([name for _, name, _ in entries], ["林夏", "地下实验室", ""])
         numbers = {name: number for number, (_, name, _) in enumerate(entries, start=1) if name}
         self.assertEqual(numbers, {"林夏": 1, "地下实验室": 2}, "@[地下实验室] points at the main view")
 
         images, notes = merge_video_references(SHEETS[:1], binding["references"])
-        plan = VideoReferencePlan(mode="multi_reference", reference_images=["https://cdn/frame.png", *images[:3]])
+        plan = VideoReferencePlan(mode="multi_reference", reference_images=["https://cdn/frame.png", *images[:2]])
         sent = renumber_reference_mentions(notes, images, plan)
-        self.assertIn("参考图3仅锁定拍摄场地「地下实验室」的空间布局，光线与天色以本场为准、不照搬此图（铁门在画面左侧）", sent)
-        self.assertIn("参考图4仅锁定拍摄场地「地下实验室」的45°斜角", sent)
-        self.assertNotIn("纵深视角", sent, "a view the request does not carry loses its whole line")
-        self.assertNotIn("关键细节", sent)
+        self.assertIn("参考图3仅锁定拍摄场地「地下实验室」正面的空间布局，光线与天色以本场为准、不照搬此图（铁门在画面左侧）", sent)
+        self.assertNotIn("45°斜角", sent, "a view the request does not carry loses its whole line")
 
     def test_the_views_never_push_out_the_cast_or_the_props(self):
         props = [{"kind": "prop", "name": f"档案{i}", "image_url": f"data:p{i}"} for i in range(7)]
         task = {"task_id": "t-1", "assets": {"2_breakdown": {"production_assets": {}}}}
         context = compile_scene_context(task, {"scene_id": "E1S01", "content": "地下实验室里的档案" + "".join(p["name"] for p in props)}, [STUDY, *props])
-        references = panel_context(context, {"desc": "镜头扫过" + "".join(p["name"] for p in props), "characters": []})["references"]
+        references = panel_context(context, {"desc": "镜头扫过" + "".join(p["name"] for p in props), "characters": [], "angle": "侧面"})["references"]
         self.assertEqual(len(references), 9)
         self.assertEqual([item.get("view", "") for item in references][-1], "scene_45")
         self.assertEqual(sum(1 for item in references if item["kind"] == "prop"), 7)

@@ -1,0 +1,23 @@
+{
+  "_doc": "app/core/providers/elevenlabs.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "_voice_settings.intense": [
+    "怒",
+    "崩溃",
+    "激动",
+    "fear",
+    "angry"
+  ],
+  "_voice_settings.restrained": [
+    "克制",
+    "压抑",
+    "平静",
+    "restrained"
+  ],
+  "_emotion_tag.mapping": "愤怒",
+  "_emotion_tag.mapping.2": "激动",
+  "_emotion_tag.mapping.3": "悲伤",
+  "_emotion_tag.mapping.4": "温柔",
+  "_emotion_tag.mapping.5": "压抑",
+  "_emotion_tag.mapping.6": "克制悲伤",
+  "_emotion_tag.mapping.7": "恐惧"
+}

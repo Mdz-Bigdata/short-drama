@@ -1,0 +1,20 @@
+{
+  "_doc": "app/core/action_grammar.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.action_parts": [
+    "起始姿态",
+    "主动作",
+    "身体联动",
+    "结束姿态"
+  ],
+  "module.labelled_ending": "(?<!上一段)(?:落幅|结束姿态|结尾|收势)[：:]\\s*([^\\n]+)",
+  "module.label_prefix": "^【[^】]*】|^[A-Za-z_]+[：:]|^接下来[：:]",
+  "module.generic_endings": "形成下一格可承接的可见状态",
+  "module.generic_endings.2": "人物姿态、视线与道具停在下一镜可以直接承接的状态",
+  "module.generic_endings.3": "锁定人物朝向、道具归属、情绪强度、光向与色温",
+  "module.structure_rule": "复杂动作按「起始姿态→主动作→身体联动→结束姿态」四步写：先写动作开始前的身体姿势和重心，再写主动作本身，再写手、脚、躯干、视线怎么跟着动，最后写动作停下来时的姿势；结束姿态要写得能被下一段直接接住。",
+  "module.continuation_rule": "延续动作时先接住上一段的结尾——把上一段的结束状态原样写在开头——再写清下一步，不要只写「接着往下演」。",
+  "continuation_text.text": "接住上一段结尾：{0}。接下来：{1}",
+  "continuation_text.text.2": "接住上一段结尾：{0}。",
+  "breakdown_prompt.text": "先写一下要拆的动作",
+  "parse_breakdown.text": "模型没有写全四步，缺："
+}

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { storyboardActionFrom, type StoryboardViewAction } from './storyboardActions';
@@ -62,6 +63,20 @@ describe('StoryboardWorkspace opens what the agent asked for', () => {
     expect(await screen.findByRole('dialog', { name: '导出-sheets' })).toBeTruthy();
     rerender(workspace({ sceneId: 'E1S02', view: 'blender', nonce: 4 }));
     expect((await screen.findByRole('dialog', { name: '3D 导演台' })).textContent).toBe('E1S02:blender');
+  });
+
+  it('keeps the secondary tools one click away under 「更多」', async () => {
+    render(workspace(null));
+    expect(screen.queryByRole('menuitem', { name: '提示词分包' })).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: '更多' }));
+    expect(screen.getAllByRole('menuitem').map(item => item.textContent?.trim())).toEqual(['360° 全景', '图片池', '提示词分包', '资产设定图']);
+    await userEvent.click(screen.getByRole('menuitem', { name: '提示词分包' }));
+
+    expect((await screen.findByRole('dialog', { name: '导出-packages' })).textContent).toBe('E1S01');
+    expect(screen.queryByRole('menu')).toBeNull();
+    // The whole-stage rerun stays in view: the spatial stage's redraw notice sends people to it by name.
+    expect(screen.getByRole('button', { name: /重跑分镜阶段/ }).getAttribute('title')).toContain('已完成的分镜页会保留');
   });
 
   it('applies the same request only once and a repeated one again', async () => {

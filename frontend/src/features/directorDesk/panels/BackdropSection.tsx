@@ -4,6 +4,8 @@ import { Image as ImageIcon, Trash2, Upload } from 'lucide-react';
 import { NO_BACKDROP, type BackdropKind, type StageBackdrop } from '../../spatial/spatialTypes';
 import type { EditRequest } from '../deskTypes';
 import { deleteCapture, listCaptures, uploadCapture, uploadRefusal, type DeskCapture } from '../directorDeskApi';
+import { ColorField } from './fields';
+import { BACKDROP_UNSET_COLOR } from '../three/stageLook';
 
 interface Props {
   taskId: string;
@@ -20,6 +22,10 @@ interface Props {
 const KINDS: Array<{ id: BackdropKind; label: string }> = [
   { id: 'none', label: '无' }, { id: 'color', label: '纯色' }, { id: 'image', label: '参考图' }, { id: 'panorama', label: '全景图' },
 ];
+
+// A colour field takes only #rrggbb, so the swatch starts on what the lens draws for an unset colour:
+// closing the picker without choosing then sends nothing.
+const UNSET_COLOR = BACKDROP_UNSET_COLOR;
 
 function messageOf(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -102,14 +108,7 @@ export function BackdropSection({ taskId, sceneId, backdrop, editable, inCapture
       </div>
 
       {kind === 'color' && (
-        <label className="desk-field is-wide">
-          <span>背景色</span>
-          <input
-            key={backdrop.color} type="color" aria-label="背景色" defaultValue={backdrop.color || 'var(--on-accent)'} disabled={disabled}
-            onBlur={event => { if (event.target.value !== backdrop.color) change('颜色', { color: event.target.value }); }}
-            onChange={event => { if (event.target.value !== backdrop.color) change('颜色', { color: event.target.value }); }}
-          />
-        </label>
+        <ColorField wide label="背景色" value={backdrop.color || UNSET_COLOR} disabled={disabled} onCommit={color => change('颜色', { color })} />
       )}
 
       {kind !== 'none' && (
@@ -149,7 +148,7 @@ export function BackdropSection({ taskId, sceneId, backdrop, editable, inCapture
                   onClick={() => change('换一张图', { kind: kind === 'panorama' ? 'panorama' : 'image', url: picture.url })}
                 ><img src={picture.url} alt="" loading="lazy" /></button>
                 <button
-                  type="button" className="desk-icon" aria-label={`删除背景图 ${picture.id.slice(0, 6)}`} disabled={disabled}
+                  type="button" className="desk-icon" aria-label={`删除背景图 ${picture.id.slice(0, 6)}`} title="删除这张背景图" disabled={disabled}
                   onClick={() => {
                     if (!window.confirm('删除这张背景图？正在使用它的场景会回到无背景。')) return;
                     void run(async () => {

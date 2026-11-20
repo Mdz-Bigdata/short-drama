@@ -11,6 +11,7 @@ from app.core.blender_previz.from_plan import build_spec
 from app.core.spatial_stage import SceneBrief, ShotSpec, blockout, build_plan, director_ai, glb, model_kit, paths, scoring
 from app.core.spatial_stage.director_ai import Scope
 from app.core.spatial_stage.operations import StageEditError, apply_operations
+from app.service import director_desk_service as desk
 from app.service import spatial_stage_service as spatial
 from app.service import stage_director_service as director
 
@@ -286,6 +287,16 @@ class TurnTest(unittest.TestCase):
         self.assertEqual(next(a for a in outcome["plan"].actors if a.name == "内侍").position, [0.0, -4.0])
         self.assertIn("失败的操作", llm.prompts[1][1])
 
+    def test_a_pose_the_desk_cannot_draw_goes_back_to_the_model_with_the_ones_it_can(self):
+        first = json.dumps({"reply": "跪下了", "operations": [{"op": "set_pose", "name": "沈砚", "preset": "kneel"}], "done": True})
+        second = json.dumps({"reply": "沈砚单膝跪下", "operations": [{"op": "set_pose", "name": "沈砚", "preset": "kneel-one"}], "done": True})
+        llm = FakeLLM(first, second)
+        outcome = director_ai.run_turn(_plan(), "让沈砚跪下", llm)
+        self.assertEqual((outcome["rounds"], outcome["errors"]), (2, []))
+        self.assertEqual(next(a for a in outcome["plan"].actors if a.name == "沈砚").pose.preset, "kneel-one")
+        self.assertIn("未知的姿态预设「kneel」", llm.prompts[1][1])
+        self.assertIn("kneel-one", llm.prompts[1][1])
+
     def test_a_question_changes_nothing(self):
         plan = _plan()
         outcome = director_ai.run_turn(plan, "现在谁在左边？", FakeLLM(json.dumps({"reply": "沈砚在左", "operations": []})))
@@ -541,6 +552,25 @@ class ServiceTest(unittest.TestCase):
         self.assertNotEqual(next(a for a in restored.actors if a.name == "内侍").position, [0.0, -4.0])
         self.assertTrue(restored.shots[0].screen, "what a revert restores is measured again")
         self.assertEqual(director.state(service, "t1", "E1S02")["snapshots"], [])
+
+    def test_a_turn_and_its_undo_date_only_the_pictures_they_could_show_in(self):
+        service = self._service(json.dumps({"reply": "换了机位", "operations": [
+            {"op": "move_camera", "camera_id": "cam-02", "position": [2.0, 1.6, 3.0], "target": [0.0, 1.2, 0.0]},
+        ]}))
+        for shot_id in (1, 2):
+            upload = desk.CaptureUpload(content=b"x", kind="still", shot_id=shot_id, camera_id=f"cam-0{shot_id}")
+            desk.add_capture(service.repo.task, "E1S02", upload, f"https://cdn.test/media/desk_{shot_id}.png")
+
+        def stale():
+            return [item["stale"] for item in service.repo.task["assets"][desk.ASSET_KEY]["scenes"]["E1S02"]["captures"]]
+
+        start = self._revision(service)
+        response = director.chat(service, "t1", "E1S02", message="第二镜换个机位", base_revision=start)
+        self.assertEqual((response["changed"], stale()), (True, [False, True]))
+
+        service.repo.task["assets"][desk.ASSET_KEY]["scenes"]["E1S02"]["captures"][1]["stale"] = False
+        director.revert(service, "t1", "E1S02", snapshot_id=response["snapshot_id"], base_revision=start + 1)
+        self.assertEqual(stale(), [False, True])
 
     def test_a_question_writes_no_revision_and_keeps_the_conversation(self):
         service = self._service(json.dumps({"reply": "沈砚在左", "operations": []}))

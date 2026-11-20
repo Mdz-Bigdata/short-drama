@@ -16,9 +16,16 @@ What each check gets:
   ``spatial_camera_clearance``, ``spatial_axis_consistent`` — the offending shot's lens is solved
   again from its own brief (size, angle, subjects); the solver already frames everyone, keeps
   clear of the foreground and stays on the established side of the axis.
+* ``spatial_set_clearance`` — the lens is searched for a place near where it stands from which the
+  set no longer hides the shot's subjects (``best_camera``); a lens with keys, one that serves
+  several shots, or one with no clear place nearby is left to a person. People are never moved
+  out of a set piece: someone seated on a bed or riding a sedan chair is inside one on purpose.
 * ``spatial_action_changes_state`` — a posture the storyboard names is written as that shot's
   override. A walk the storyboard names cannot be invented: that needs a mark or a drawn path,
   and the proposal says so instead of guessing.
+* ``spatial_contact_kept`` (「贴合接触」) — the contact resolver is applied to the stored marks again:
+  the held prop is put back in the hand, the thing back on its support, the sitter back on the seat.
+  A seat nobody can sit on, or a holder who is not on the set in a shot, is left to a person.
 """
 
 from __future__ import annotations
@@ -28,10 +35,14 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.core import prompt_data
+from app.core.spatial_stage import contacts as contact_rules
 from app.core.spatial_stage import geometry as geo
+from app.core.spatial_stage import scoring
 from app.core.spatial_stage.language import posture_in, travel_in
 from app.core.spatial_stage.models import StageCheck, StagePlan
-from app.core.spatial_stage.validation import MIN_ACTOR_SPACING_M
+from app.core.spatial_stage.validation import MIN_ACTOR_SPACING_M, contact_findings, set_blockers
+from app.core.spatial_stage.wording import phrase, posture_zh
 
 # A little more than the check demands, so a repaired pair does not sit exactly on the limit.
 SPACING_TARGET_M = round(MIN_ACTOR_SPACING_M + 0.1, 3)
@@ -39,17 +50,16 @@ _LENS_CODES = frozenset({
     "spatial_subjects_in_frame", "spatial_subject_occlusion", "spatial_move_keeps_subjects",
     "spatial_camera_clearance", "spatial_axis_consistent",
 })
+_WORDING = "stage_checks"
+# The button each repair is shown under on the desk, by check code.
 LABELS: dict[str, str] = {
-    "spatial_actor_spacing": "拉开站位",
-    "spatial_facing_partner": "转向对手",
-    "spatial_screen_sides_stable": "换回站位",
-    "spatial_subjects_in_frame": "重解机位",
-    "spatial_subject_occlusion": "重解机位",
-    "spatial_move_keeps_subjects": "重解机位",
-    "spatial_camera_clearance": "重解机位",
-    "spatial_axis_consistent": "重解机位",
-    "spatial_action_changes_state": "补上姿态",
+    str(code): str(label) for code, label in prompt_data.load(_WORDING)["repairs"]["labels"].items()
 }
+
+
+def _says(key: str, **values: object) -> str:
+    """A repair sentence (``app/data/prompt/stage_checks.json``), filled in."""
+    return str(prompt_data.load(_WORDING)["repairs"][key]).format(**values)
 
 
 @dataclass(frozen=True)
@@ -100,9 +110,9 @@ def _spacing(plan: StagePlan, check: StageCheck) -> Repair:
     names = "、".join(op["name"] for op in operations)
     return Repair(
         check.code, LABELS[check.code],
-        f"把{names}沿彼此的连线推开到至少 {SPACING_TARGET_M:g} 米。" if operations else check.detail,
+        _says("spacing", names=names, target=SPACING_TARGET_M) if operations else check.detail,
         operations=operations,
-        manual="" if operations else "人物重叠但无法自动推开，请手动调整站位。",
+        manual="" if operations else _says("spacing_manual"),
     )
 
 
@@ -117,9 +127,9 @@ def _facing(plan: StagePlan, check: StageCheck) -> Repair:
     names = "、".join(op["name"] for op in operations)
     return Repair(
         check.code, LABELS[check.code],
-        f"让{names}转身面向对手。" if operations else check.detail,
+        _says("facing", names=names) if operations else check.detail,
         operations=operations,
-        manual="" if operations else "找不到对手戏的两个人物，请手动调整朝向。",
+        manual="" if operations else _says("facing_manual"),
     )
 
 
@@ -127,17 +137,19 @@ def _screen_sides(plan: StagePlan, check: StageCheck) -> Repair:
     if check.severity != "error":
         return Repair(
             check.code, LABELS[check.code], check.detail, shot_ids=list(check.shot_ids),
-            manual="这些镜头在合法越轴之后拍摄，左右相反是有意为之；若非本意，请在越轴镜头上换边或重解机位。",
+            manual=_says("screen_sides_after_crossing_manual"),
         )
     first, second = plan.actor(plan.axis.from_name), plan.actor(plan.axis.to_name)
     if first is None or second is None:
-        return Repair(check.code, LABELS[check.code], check.detail, shot_ids=list(check.shot_ids), manual="轴线两端的人物不在场上。")
+        return Repair(
+            check.code, LABELS[check.code], check.detail, shot_ids=list(check.shot_ids), manual=_says("screen_sides_missing_manual"),
+        )
     operations = [
         {"op": "move_actor", "name": first.name, "position": list(second.position), "yaw_deg": second.yaw_deg},
         {"op": "move_actor", "name": second.name, "position": list(first.position), "yaw_deg": first.yaw_deg},
     ]
     return Repair(
-        check.code, LABELS[check.code], f"对调{first.name}与{second.name}的站位和朝向，恢复既定的画左 / 画右。",
+        check.code, LABELS[check.code], _says("screen_sides", first=first.name, second=second.name),
         shot_ids=list(check.shot_ids), operations=operations,
     )
 
@@ -145,13 +157,40 @@ def _screen_sides(plan: StagePlan, check: StageCheck) -> Repair:
 def _lens(plan: StagePlan, check: StageCheck) -> Repair:
     shots = [shot_id for shot_id in check.shot_ids if plan.shot(shot_id) is not None]
     if not shots:
-        return Repair(check.code, LABELS[check.code], check.detail, manual="检查没有指向具体镜头，无法自动重解。")
+        return Repair(check.code, LABELS[check.code], check.detail, manual=_says("lens_manual"))
     operations = [{"op": "solve_camera", "shot_id": shot_id} for shot_id in shots]
-    labels = "、".join(f"第{shot_id}镜" for shot_id in shots)
+    labels = "、".join(phrase("shot_named", shot=shot_id) for shot_id in shots)
     return Repair(
         check.code, LABELS[check.code],
-        f"按景别、角度和主体重新求解{labels}的机位：主体入画、避开前景遮挡、守住轴线同侧。",
+        _says("lens", shots=labels),
         shot_ids=shots, operations=operations,
+    )
+
+
+def _set_clearance(plan: StagePlan, check: StageCheck) -> Repair:
+    operations: list[dict[str, Any]] = []
+    stuck: list[int] = []
+    for shot_id in check.shot_ids:
+        shot = plan.shot(shot_id)
+        camera = plan.camera(shot.camera_id) if shot is not None else None
+        if shot is None or camera is None:
+            continue
+        timeline = plan.timelines.get(str(shot.shot_id))
+        # What ``best_camera`` will not touch: a lens animated by keys, and one several shots look through.
+        searchable = not (timeline is not None and timeline.camera) and sum(other.camera_id == camera.id for other in plan.shots) == 1
+        found = scoring.candidate_cameras(plan, shot, limit=1) if searchable else []
+        better = scoring.best_lens_is_worth_it(found, camera, scoring.score_shot(plan, shot)[0])
+        if better and not set_blockers(plan, shot, found[0][1]):
+            operations.append({"op": "best_camera", "shot_id": shot.shot_id})
+        else:
+            stuck.append(shot.shot_id)
+    moved = "、".join(phrase("shot_named", shot=op["shot_id"]) for op in operations)
+    left = "、".join(phrase("shot_named", shot=shot_id) for shot_id in stuck)
+    return Repair(
+        check.code, LABELS[check.code],
+        phrase("set_clearance_repair", shots=moved) if operations else check.detail,
+        shot_ids=list(check.shot_ids), operations=operations,
+        manual=phrase("set_clearance_manual", shots=left) if stuck else "",
     )
 
 
@@ -169,13 +208,14 @@ def _action(plan: StagePlan, check: StageCheck) -> Repair:
             change = changes.get(actor.name)
             moved = change is not None and change.position is not None
             if travel_in(actor.name, shot.action) and actor.name not in walkers:
-                manual.append(f"第{shot.shot_id}镜{actor.name}写了走位：请在导演台为其画一条路径，或设置本镜的起始位置")
+                manual.append(_says("walk_manual", shot=shot.shot_id, name=actor.name))
             implied = posture_in(actor.name, shot.action, None)
             if implied and not moved and implied != actor.posture:
                 current = change or None
                 operation: dict[str, Any] = {
                     "op": "set_shot_override", "shot_id": shot.shot_id, "name": actor.name, "posture": implied,
-                    "reason": f"分镜写明「{implied}」",
+                    # The reason is read back in the shot's blocking sentence, so it names the posture in Chinese.
+                    "reason": phrase("posture_named", posture=posture_zh(implied)),
                 }
                 if current is not None:
                     # set_shot_override rewrites the whole override: carry what it already says.
@@ -188,11 +228,37 @@ def _action(plan: StagePlan, check: StageCheck) -> Repair:
                     if current.reason:
                         operation["reason"] = current.reason
                 operations.append(operation)
-    done = "；".join(f"第{op['shot_id']}镜{op['name']}改为「{op['posture']}」" for op in operations)
+    done = "；".join(_says("posture", shot=op["shot_id"], name=op["name"], posture=posture_zh(op["posture"])) for op in operations)
     return Repair(
         check.code, LABELS[check.code],
-        (done + "。") if done else check.detail,
+        _says("postures_done", changes=done) if done else check.detail,
         shot_ids=list(check.shot_ids), operations=operations, manual="；".join(manual)[:1900],
+    )
+
+
+def _contacts(plan: StagePlan, check: StageCheck) -> Repair:
+    findings = contact_findings(plan)
+    actors, landmarks = contact_rules.settle(plan.actors, plan.landmarks, plan.contacts)
+    operations: list[dict[str, Any]] = []
+    if any(kind == "settle" for kind, _, _ in findings):
+        for before, after in zip(plan.actors, actors):
+            if geo.distance(tuple(before.position), tuple(after.position)) > 1e-3 or before.posture != after.posture:
+                operations.append({"op": "move_actor", "name": after.name, "position": list(after.position), "posture": after.posture})
+        for before, after in zip(plan.landmarks, landmarks):
+            if (
+                geo.distance(tuple(before.position), tuple(after.position)) > 1e-3
+                or abs(before.elevation_m - after.elevation_m) > 1e-3 or abs(before.yaw_deg - after.yaw_deg) > 1e-3
+            ):
+                operations.append({
+                    "op": "transform_landmark", "name": after.name, "position": list(after.position),
+                    "elevation_m": after.elevation_m, "yaw_deg": after.yaw_deg,
+                })
+    manual = "；".join(text for kind, _, text in findings if kind == "manual")
+    return Repair(
+        check.code, LABELS[check.code],
+        _says("contact", names="、".join(op["name"] for op in operations)) if operations else check.detail,
+        shot_ids=list(check.shot_ids), operations=operations,
+        manual=_says("contact_manual", findings=manual[:1800]) if manual else "",
     )
 
 
@@ -201,6 +267,8 @@ _HANDLERS = {
     "spatial_facing_partner": _facing,
     "spatial_screen_sides_stable": _screen_sides,
     "spatial_action_changes_state": _action,
+    "spatial_set_clearance": _set_clearance,
+    "spatial_contact_kept": _contacts,
     **{code: _lens for code in _LENS_CODES},
 }
 
@@ -215,7 +283,9 @@ def propose(
             continue
         handler = _HANDLERS.get(check.code)
         if handler is None:
-            repairs.append(Repair(check.code, "需人工处理", check.detail, shot_ids=list(check.shot_ids), manual="这项检查没有自动修正。"))
+            repairs.append(Repair(
+                check.code, _says("unhandled"), check.detail, shot_ids=list(check.shot_ids), manual=_says("unhandled_manual"),
+            ))
             continue
         repairs.append(handler(plan, check))
     return repairs

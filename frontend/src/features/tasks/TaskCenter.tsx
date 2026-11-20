@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, RefreshCw, X } from 'lucide-react';
 
 import { apiRequest } from '../../api/client';
 import { t } from '../../i18n';
 import { QUEUE_STATUS_LABELS, type QueueItem } from '../workbench/shotVisual';
+import { useDialogFocus } from './useDialogFocus';
 import './TaskCenter.css';
 
 const POLL_MS = 3000;
@@ -44,6 +45,8 @@ export function TaskCenter({ taskId, onClose }: TaskCenterProps) {
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(panelRef, onClose);
 
   const base = `/api/drama/${encodeURIComponent(taskId)}`;
   const load = useCallback(async () => {
@@ -61,7 +64,10 @@ export function TaskCenter({ taskId, onClose }: TaskCenterProps) {
         if (!stopped) setError('');
         if (!stopped && data.running) timer = window.setTimeout(() => { void tick(); }, POLL_MS);
       } catch (err) {
-        if (!stopped) setError(err instanceof Error ? err.message : t('读取任务失败'));
+        if (stopped) return;
+        setError(err instanceof Error ? err.message : t('读取任务失败'));
+        // 一次读取失败不该让进度停住：上次看到还在跑（或还没读到过）就放慢一倍再试。
+        if (view?.running !== false) timer = window.setTimeout(() => { void tick(); }, POLL_MS * 2);
       }
     };
     void tick();
@@ -70,12 +76,6 @@ export function TaskCenter({ taskId, onClose }: TaskCenterProps) {
       window.clearTimeout(timer);
     };
   }, [load, view?.running]);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   const act = useCallback(async (id: string, path: string, success: string) => {
     setBusy(id);
@@ -104,7 +104,7 @@ export function TaskCenter({ taskId, onClose }: TaskCenterProps) {
 
   return (
     <div className="task-center" role="dialog" aria-modal="true" aria-label={t('任务中心')}>
-      <div className="task-center__panel">
+      <div className="task-center__panel" ref={panelRef}>
         <header className="task-center__head">
           <h2>{t('任务中心')}</h2>
           <button type="button" className="task-center__icon" onClick={onClose} aria-label={t('关闭')}><X size={16} /></button>
@@ -141,7 +141,7 @@ export function TaskCenter({ taskId, onClose }: TaskCenterProps) {
             {t('取消全部排队')}
           </button>
           <button type="button" className="task-center__icon" aria-label={t('刷新')} disabled={Boolean(busy)}
-            onClick={() => { void load().catch(err => setError(err instanceof Error ? err.message : t('读取任务失败'))); }}>
+            onClick={() => { void load().then(() => setError(''), err => setError(err instanceof Error ? err.message : t('读取任务失败'))); }}>
             <RefreshCw size={14} />
           </button>
         </div>
@@ -150,6 +150,7 @@ export function TaskCenter({ taskId, onClose }: TaskCenterProps) {
         {error && <p className="task-center__error" role="alert">{error}</p>}
 
         <ul className="task-center__list">
+          {!view && !error && <li className="task-center__empty" role="status">{t('正在读取任务…')}</li>}
           {view && jobs.length === 0 && (
             <li className="task-center__empty">{view.jobs.length ? t('这个状态下没有任务') : t('这个项目还没有生成任务')}</li>
           )}

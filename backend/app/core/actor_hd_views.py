@@ -16,6 +16,8 @@
 from __future__ import annotations
 
 import io
+import concurrent.futures
+import contextvars
 import os
 from dataclasses import dataclass
 from typing import Callable
@@ -24,6 +26,19 @@ from PIL import Image, ImageChops
 
 from app.core.actor_sheet_cutter import _runs, _SeparatorMap
 from app.core.actor_sheet_layout import FULL_BODY_PROPORTION_RULE
+from app.core import prompt_data
+
+
+_WORDING_FILE = "actor_hd_views"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/actor_hd_views.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 #: 头像三联、全身三联的出图尺寸(总像素都在供应商 4096×4096 上限之内)。
 HD_FACE_SIZE = "3072x1024"
@@ -55,11 +70,7 @@ HD_GROUPS: tuple[HdGroup, ...] = (
         cells=HD_FACE_CELLS,
         size=HD_FACE_SIZE,
         layout=(
-            "横向 1 行 3 格的头肩特写三联，格与格之间一条纯白细缝，浅灰到纯白的干净背景。"
-            "三格是同一个人、同一光线、同一景别(头顶到锁骨完整入画)、同一高度。"
-            "左格：正脸，直视镜头；中格：整个头部向画面左侧转 45°，露出右侧脸颊与右耳；"
-            "右格：整个头部向画面右侧转 45°，露出左侧脸颊与左耳。三格的朝向必须明显不同。"
-            "五官、皮肤纹理、发丝、发饰与领口高清锐利，焦点落在眼睛上。"
+            _text_of("module.layout")
         ),
         require_distinct=True,
     ),
@@ -68,12 +79,7 @@ HD_GROUPS: tuple[HdGroup, ...] = (
         size=HD_BODY_SIZE,
         layout=(
             # 浅灰底：白衣服、白靴、银剑在纯白底上和背景连成一片，切图时会被当成留白切掉。
-            "横向 1 行 3 格的全身三视图，格与格之间一条纯白细缝，浅灰色(不是纯白)纯色干净背景。"
-            "手持的兵器、道具与垂下的衣袖、披帛、流苏都完整留在本格之内，不越过格缝。"
-            "左格：正面全身；中格：90 度标准侧面全身；右格：背面全身。"
-            "三格同一比例，脚底在同一条基线上，头顶在同一高度，头顶到双脚完整入画。"
-            f"{FULL_BODY_PROPORTION_RULE}"
-            "服装面料、纹样、配饰与鞋履高清锐利。"
+            _text_of("module.layout.2").format(FULL_BODY_PROPORTION_RULE)
         ),
         distinct_pairs=((0, 1),),
         distinct_level=18.0,
@@ -83,10 +89,7 @@ HD_GROUPS: tuple[HdGroup, ...] = (
 
 def hd_prompt(group: HdGroup, *, name: str, desc: str, style: str) -> str:
     return (
-        f"为角色{name}制作高清身份视图。{group.layout}"
-        f"严格参考所给参考图里的同一个人：脸型、五官比例、痣与疤的位置、发际线、发型发色、发饰、服装与配饰完全一致。"
-        f"角色设定：{desc}。视觉风格：{style}。"
-        "禁止出现文字、标签、编号、水印、logo，禁止第二个人物、额外肢体、多余手指和场景道具。"
+        _text_of("hd_prompt.text").format(name, group.layout, desc, style)
     )
 
 
@@ -206,14 +209,11 @@ def generate_hd_views(
     ``generate(model 之外的) (prompt, references, size)`` 返回图片地址，``load(url)`` 取回字节——
     由调用方绑定模型与网关，这里只管提示词、切图和取舍。
     """
-    views: dict[str, Image.Image] = {}
-    for group in HD_GROUPS:
-        if only is not None and not set(group.cells) & set(only):
-            continue  # ``only`` 只要某几格时，不相干的那一组不出图、不花钱
+    def one(group) -> dict[str, Image.Image]:
         try:
             url = generate(hd_prompt(group, name=name, desc=desc, style=style), references, group.size)
             if not url:
-                continue
+                return {}
             content = load(url)
             if keep is not None:
                 try:
@@ -222,13 +222,26 @@ def generate_hd_views(
                     pass
             crops = split_triptych(content)
         except Exception:  # noqa: BLE001 - 高清视图是锦上添花，失败就保留设定集裁切
-            continue
+            return {}
         turned = (
             _distinct(crops, group.distinct_pairs, group.distinct_level)
             if group.require_distinct or group.distinct_pairs else True
         )
-        if len(crops) == len(group.cells) and turned:
-            views.update(zip(group.cells, crops))
+        return dict(zip(group.cells, crops)) if len(crops) == len(group.cells) and turned else {}
+
+    # ``only`` 只要某几格时，不相干的那一组不出图、不花钱。
+    groups = [group for group in HD_GROUPS if only is None or set(group.cells) & set(only)]
+    # 头像三联和全身三联互不依赖：两张同时出(各约 100 秒)，按组的先后合并，结果和挨个出一样。
+    # 每个线程带上当前的调用上下文(用量记在哪个项目、哪一阶段)。
+    if len(groups) > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(groups)) as pool:
+            futures = [pool.submit(contextvars.copy_context().run, one, group) for group in groups]
+            results = [future.result() for future in futures]
+    else:
+        results = [one(group) for group in groups]
+    views: dict[str, Image.Image] = {}
+    for found in results:
+        views.update(found)
     return views
 
 

@@ -78,7 +78,7 @@ function LandmarkBlock({ landmark, labelled }: { landmark: StageLandmark; labell
         <meshStandardMaterial color={LANDMARK_COLOR[landmark.kind]} roughness={0.8} transparent opacity={0.82} />
       </mesh>
       {labelled && (
-        <Text position={[0, height + 0.18, 0]} fontSize={0.13} color="#46373e" anchorX="center" anchorY="bottom">{landmark.name}</Text>
+        <Text position={[0, height + 0.18, 0]} fontSize={0.16} color="#f3e9ee" anchorX="center" anchorY="bottom" outlineWidth={0.012} outlineColor="#0f0c12">{landmark.name}</Text>
       )}
     </group>
   );
@@ -188,7 +188,7 @@ export default function SpatialStageViewport({ plan, shot, mode }: Props) {
       <ViewportBoundary fallback={fallback}>
         {/* In camera view the canvas itself takes the delivery aspect, so what is inside it is the frame. */}
         <div className="spatial-viewport__frame" style={lens ? { aspectRatio: String(aspect) } : undefined}>
-          <Canvas dpr={[1, 1.5]} frameloop="demand" gl={{ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true }}>
+          <Canvas dpr={[1, 1.5]} frameloop="demand" gl={{ antialias: true, powerPreference: 'high-performance' }}>
             <color attach="background" args={['#0f0c12']} />
             <ambientLight intensity={1.1} />
             <hemisphereLight args={['#f0a3b4', '#1a1420', 1.4]} />
@@ -229,7 +229,7 @@ export default function SpatialStageViewport({ plan, shot, mode }: Props) {
       <div className="spatial-viewport__hint">
         {lens
           ? `第 ${shot?.shot_id} 镜 · ${lens.shot_size} · ${lens.lens_mm}mm · ${plan.aspect_ratio}（白模不带四肢，仅示意站位与景别）`
-          : '拖动旋转 · 滚轮缩放 · 右键平移 · 红色虚线为轴线'}
+          : `拖动旋转 · 滚轮缩放 · 右键平移 · 红色虚线为轴线 · ${t('只读预览，编辑请开 3D 导演台')}`}
       </div>
     </div>
   );

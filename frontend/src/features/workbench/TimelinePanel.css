@@ -7,6 +7,7 @@
 .timeline__head button.is-primary { color: var(--on-accent); border-color: var(--neon-cyan); background: var(--neon-cyan); font-weight: 600; }
 .timeline__head button svg, .timeline__download svg, .timeline__clip-head button svg { width: 13px; height: 13px; }
 .timeline button:disabled { opacity: 0.5; cursor: not-allowed; }
+.timeline__fields button.is-unsaved { border-color: var(--neon-cyan); box-shadow: inset 0 -2px 0 var(--neon-cyan); }
 .timeline__notice, .timeline__empty, .timeline__note { margin: 0; color: var(--text-muted); font-size: 0.76rem; }
 .timeline__row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .timeline__row label, .timeline__fields label { display: flex; flex-direction: column; gap: 3px; color: var(--text-muted); font-size: 0.7rem; }

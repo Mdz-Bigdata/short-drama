@@ -4,10 +4,20 @@
   --desk-surface: var(--surface);
   --desk-panel: var(--surface);
   --desk-text: var(--text-main);
-  --desk-dim: var(--text-dim, var(--text-dim));
-  --desk-amber: #e6a000;
-  --desk-red: #e60000;
-  --desk-green: #21c584;
+  --desk-dim: var(--text-dim);
+  --desk-amber: var(--warning);
+  --desk-red: var(--danger);
+  --desk-green: var(--success);
+  /* Amber and green are fills, borders and icons: as text on the white panels they are too pale to read, so
+     words take the darker inks (set just below where the browser can mix them) and amber fills carry dark text. */
+  --desk-amber-ink: var(--text-main);
+  --desk-green-ink: var(--text-main);
+  --desk-on-amber: var(--ink);
+  /* What surrounds the delivery frame in the lens view: dark, so the bands read as letterboxing. */
+  --desk-matte: var(--text-muted);
+  /* The viewport is the product: the stage row keeps this much height and the open timeline gives way first
+     (it is left about a quarter of the window, and never takes more than 38vh). */
+  --desk-stage-floor: clamp(8rem, 75vh - 11rem, 34rem);
   position: fixed;
   inset: 0;
   z-index: 3000;
@@ -19,6 +29,14 @@
   background: var(--desk-surface);
 }
 
+@supports (color: color-mix(in srgb, red, blue)) {
+  .director-desk {
+    --desk-amber-ink: color-mix(in srgb, var(--warning) 55%, var(--text-main));
+    --desk-green-ink: color-mix(in srgb, var(--success) 65%, var(--text-main));
+    --desk-matte: color-mix(in srgb, var(--ink) 72%, var(--surface));
+  }
+}
+
 .director-desk svg:not(.desk-guides) {
   width: 1rem;
   height: 1rem;
@@ -26,6 +44,9 @@
 }
 
 .desk-topbar {
+  /* The shortcuts card hangs from the bar, however many rows the bar wraps to. */
+  position: relative;
+  flex: none;
   padding: 0.5rem 1rem;
   display: flex;
   flex-wrap: wrap;
@@ -55,6 +76,12 @@
   gap: 0.45rem;
 }
 
+/* A long cast list in the option text must not push the rest of the bar onto another row. */
+.desk-topbar__shot select {
+  max-width: 14rem;
+  text-overflow: ellipsis;
+}
+
 .desk-topbar__snap label {
   display: inline-flex;
   align-items: center;
@@ -73,8 +100,8 @@
   color: var(--desk-dim);
 }
 
-.desk-topbar__save.is-saving { color: var(--desk-amber); }
-.desk-topbar__save.is-saved { color: var(--desk-green); }
+.desk-topbar__save.is-saving { color: var(--desk-amber-ink); }
+.desk-topbar__save.is-saved { color: var(--desk-green-ink); }
 .desk-topbar__save.is-error { color: var(--desk-red); }
 
 .director-desk select,
@@ -154,7 +181,7 @@
 }
 
 .desk-chip[aria-pressed='true'] {
-  color: var(--on-accent);
+  color: var(--desk-on-amber);
   border-color: var(--desk-amber);
   background: var(--desk-amber);
 }
@@ -197,20 +224,45 @@
 
 .desk-banner {
   margin: 0;
-  padding: 0.4rem 1rem;
+  flex: none;
+  padding: 0.3rem 1rem;
+  color: var(--desk-text);
   border-bottom: 1px solid var(--desk-line);
   background: rgba(var(--accent-rgb), 0.05);
 }
 
+/* The tone is carried by the tint and the bar at the left edge; the words stay in the body colour. */
 .desk-banner.is-warning {
-  color: var(--desk-amber);
-  background: rgba(var(--gold-rgb), 0.07);
+  background: rgba(var(--gold-rgb), 0.12);
+  box-shadow: inset 3px 0 0 var(--desk-amber);
+}
+
+.desk-banner.is-notice:not(.is-warning) {
+  background: rgba(var(--success-rgb), 0.08);
+  box-shadow: inset 3px 0 0 var(--desk-green);
+}
+
+/* A notice can be put away: the text keeps the width, the close button sits at the end of the line. */
+.desk-banner.is-notice {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.desk-banner.is-notice > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.desk-banner__close {
+  width: 1.5rem;
+  height: 1.5rem;
 }
 
 .desk-banner.is-locked {
-  color: var(--on-accent);
   font-weight: 600;
-  background: var(--desk-amber);
+  background: rgba(var(--gold-rgb), 0.22);
+  box-shadow: inset 3px 0 0 var(--desk-amber);
 }
 
 .desk-empty {
@@ -221,7 +273,7 @@
 }
 
 .desk-body {
-  flex: 1;
+  flex: 1 1 var(--desk-stage-floor);
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr) minmax(16rem, 21rem);
@@ -378,12 +430,19 @@
   container-type: size;
 }
 
+/* A portrait frame fits by height and leaves bands at the sides: dark, they read as letterboxing. */
+.desk-viewport.is-lens .desk-viewport__pane {
+  background: var(--desk-matte);
+}
+
 .desk-viewport__frame {
   position: relative;
   width: min(100cqw, 100cqh * var(--desk-aspect, 0.5625));
   height: min(100cqh, 100cqw / var(--desk-aspect, 0.5625));
   overflow: hidden;
   border: 1px solid var(--desk-amber);
+  /* The lens canvas is see-through where nothing is drawn: the frame keeps its own light ground. */
+  background: var(--surface);
 }
 
 .desk-viewport__hint {
@@ -449,12 +508,13 @@
 .desk-side__tabs {
   padding: 0.4rem;
   display: flex;
+  flex-wrap: wrap;
   gap: 0.2rem;
   border-bottom: 1px solid var(--desk-line);
 }
 
 .desk-side__tabs button {
-  flex: 1;
+  flex: 1 0 auto;
   justify-content: center;
   padding-inline: 0.3rem;
   font-size: 0.78rem;
@@ -643,13 +703,13 @@
 }
 
 .desk-badge.is-stale {
-  color: var(--on-accent);
+  color: var(--desk-on-amber);
   border-color: var(--desk-amber);
   background: var(--desk-amber);
 }
 
 .desk-badge.is-applied {
-  color: var(--desk-green);
+  color: var(--desk-green-ink);
   border-color: rgba(var(--success-rgb), 0.5);
 }
 
@@ -722,8 +782,11 @@
   background: rgba(var(--surface-rgb), 0.7);
 }
 
+/* Tall enough for the path-speed field, so picking a tool never changes the height and moves the stage. */
 .desk-statusbar {
-  padding: 0.3rem 1rem;
+  flex: none;
+  min-height: 2.1rem;
+  padding: 0.2rem 1rem;
   display: flex;
   align-items: center;
   gap: 1.2rem;
@@ -732,8 +795,11 @@
   background: var(--surface);
 }
 
+/* Open, the timeline shrinks long before the stage does: the transport bar stays, the tracks scroll. */
 .desk-timeline {
-  flex: none;
+  position: relative;
+  flex: 0 1000 auto;
+  min-height: 3.2rem;
   max-height: 38vh;
   padding: 0.4rem 1rem 0.5rem;
   display: flex;
@@ -744,7 +810,32 @@
 }
 
 .desk-timeline.is-collapsed {
+  flex: none;
+  min-height: 0;
   padding: 0.15rem 1rem;
+}
+
+.desk-timeline__bar {
+  flex: none;
+}
+
+/* Everything under the transport bar. The tracks scroll first; when even their floor does not fit,
+   this scrolls, so the picked-clip bar and the foot are never cut off. */
+.desk-timeline__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Room for the focus ring of a control at the edge: a scroller cuts off what is drawn outside it. */
+  margin: 0 -3px -3px;
+  padding: 0 3px 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  overflow-y: auto;
+}
+
+.desk-timeline__body > .desk-timeline__clipbar,
+.desk-timeline__foot {
+  flex: none;
 }
 
 .desk-timeline__toggle {
@@ -794,11 +885,18 @@
   width: 4.2rem;
 }
 
+/* The move settings float over the stage above the bar, so opening them takes no height from the tracks. */
 .desk-timeline__moves {
-  padding: 0.45rem 0.6rem;
+  position: absolute;
+  right: 1rem;
+  bottom: calc(100% + 0.4rem);
+  z-index: 6;
+  width: min(34rem, calc(100% - 2rem));
+  padding: 0.6rem 0.7rem;
   border: 1px solid var(--desk-line);
-  border-radius: 0.4rem;
-  background: var(--surface);
+  border-radius: 0.6rem;
+  background: var(--desk-panel);
+  box-shadow: 0 0.8rem 1.8rem rgba(var(--shadow-rgb), 0.3);
 }
 
 .desk-timeline__moves input {
@@ -811,7 +909,8 @@
 }
 
 .desk-timeline__tracks {
-  min-height: 0;
+  flex: 1 1 auto;
+  min-height: 4.5rem;
   overflow-y: auto;
   display: grid;
   gap: 2px;
@@ -963,6 +1062,13 @@ button.desk-timeline__name {
   border-left: 2px solid var(--desk-line);
 }
 
+/* On a laptop the outliner gives a little width to the stage; the property column keeps its own. */
+@media (max-width: 1366px) {
+  .desk-body {
+    grid-template-columns: minmax(11rem, 13.5rem) minmax(0, 1fr) minmax(16rem, 21rem);
+  }
+}
+
 @media (max-width: 1100px) {
   .desk-body {
     grid-template-columns: minmax(10rem, 13rem) minmax(0, 1fr) minmax(14rem, 17rem);
@@ -1003,10 +1109,10 @@ button.desk-timeline__name {
   padding: 0.4rem 0.55rem;
   font-size: 0.74rem;
   line-height: 1.45;
-  color: var(--desk-amber);
-  border: 1px solid rgba(var(--gold-rgb), 0.35);
+  color: var(--desk-text);
+  border: 1px solid rgba(var(--gold-rgb), 0.45);
   border-radius: 0.4rem;
-  background: rgba(var(--gold-rgb), 0.07);
+  background: rgba(var(--gold-rgb), 0.12);
 }
 
 .desk-captures__warning {
@@ -1017,7 +1123,7 @@ button.desk-timeline__name {
 }
 
 .desk-badge.is-limbs {
-  color: var(--desk-amber);
+  color: var(--desk-amber-ink);
   border-color: rgba(var(--gold-rgb), 0.5);
 }
 
@@ -1163,10 +1269,12 @@ button.desk-timeline__name {
 
 .desk-shortcuts {
   position: absolute;
-  top: 3.4rem;
+  top: calc(100% + 0.4rem);
   right: 1rem;
   z-index: 10;
   width: min(22rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 8.5rem);
+  overflow-y: auto;
   padding: 0.8rem 0.9rem;
   display: flex;
   flex-direction: column;
@@ -1268,8 +1376,8 @@ button.desk-timeline__name {
 /* ---- checks panel: the third row of the side column, under the tabbed panel (`.desk-side` leaves it an implicit auto row) */
 .desk-checks-panel {
   min-height: 0;
-  max-height: 15rem;
-  overflow-y: auto;
+  max-height: min(15rem, 28vh);
+  overflow: hidden;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   border-top: 1px solid var(--desk-line);
@@ -1305,10 +1413,9 @@ button.desk-timeline__name {
   font-size: 0.76rem;
 }
 
-/* Bounded on its own so a long list never pushes the tabbed panel off the column. */
+/* The only scroller of the panel: the heading with its counts and the fix button stays in place above it. */
 .desk-checks-panel__body {
   min-height: 0;
-  max-height: 38vh;
   padding: 0 0.6rem 0.6rem;
   overflow-y: auto;
 }
@@ -1332,7 +1439,7 @@ button.desk-timeline__name {
 }
 
 .desk-badge.is-passed {
-  color: var(--desk-green);
+  color: var(--desk-green-ink);
   border-color: rgba(var(--success-rgb), 0.5);
 }
 
@@ -1346,9 +1453,9 @@ button.desk-timeline__name {
   margin-right: 0.2rem;
 }
 
-.desk-checks li.is-warning .desk-checks__body strong { color: var(--desk-amber); }
+.desk-checks li.is-warning .desk-checks__body strong { color: var(--desk-amber-ink); }
 .desk-checks li.is-error .desk-checks__body strong { color: var(--desk-red); }
-.desk-checks li.is-passed .desk-checks__body strong { color: var(--desk-green); }
+.desk-checks li.is-passed .desk-checks__body strong { color: var(--desk-green-ink); }
 
 .desk-checks__shots,
 .desk-checks__repair {
@@ -1363,7 +1470,7 @@ button.desk-timeline__name {
 }
 
 .desk-checks__manual {
-  color: var(--desk-amber);
+  color: var(--desk-amber-ink);
 }
 
 /* Someone who asks the system for less movement gets none of the desk's own. */
@@ -1420,7 +1527,7 @@ button.desk-timeline__name {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.76rem;
-  color: var(--desk-amber);
+  color: var(--desk-amber-ink);
 }
 .desk-compare__grid {
   margin: 0;
@@ -1581,7 +1688,7 @@ button.desk-timeline__name {
 
 .desk-blender__notice {
   margin: 0;
-  color: var(--desk-green);
+  color: var(--desk-green-ink);
 }
 
 .desk-blender__result {
@@ -1592,7 +1699,7 @@ button.desk-timeline__name {
 .desk-blender__result video {
   width: 100%;
   max-height: 22rem;
-  background: #000;
+  background: var(--ink);
   border-radius: 0.4rem;
 }
 
@@ -1615,7 +1722,7 @@ button.desk-timeline__name {
   height: 3rem;
   padding: 0;
   overflow: hidden;
-  background: #000;
+  background: var(--ink);
   border: 1px solid var(--desk-line);
   border-radius: 0.3rem;
   cursor: pointer;
@@ -1642,7 +1749,7 @@ button.desk-timeline__name {
 }
 
 .desk-blender__hand.is-on {
-  color: var(--desk-amber);
+  color: var(--desk-amber-ink);
   border-color: var(--desk-amber);
 }
 
@@ -1711,7 +1818,7 @@ button.desk-timeline__name {
 }
 
 .desk-blender__log li.is-agent {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--ink-rgb), 0.05);
 }
 
 .desk-blender__log small {
@@ -1791,6 +1898,7 @@ button.desk-timeline__name {
 }
 
 .desk-timeline__block.is-follow {
+  color: var(--desk-on-amber);
   background: var(--desk-amber);
 }
 
@@ -1825,15 +1933,16 @@ button.desk-timeline__name {
   width: 3.4rem;
 }
 
-.desk-topbar__speed {
+.desk-statusbar__speed {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
-  font-size: 0.74rem;
 }
 
-.desk-topbar__speed input {
-  width: 3.2rem;
+/* Named as tightly as the desk's own number fields, or their padding wins and the bar grows with the path tool. */
+.director-desk .desk-statusbar__speed input[type='number'] {
+  width: 3.6rem;
+  padding-block: 0.2rem;
 }
 
 .desk-blockout {
@@ -1894,6 +2003,8 @@ button.desk-timeline__name {
   top: 0.5rem;
   right: 0.5rem;
   z-index: 2;
+  display: flex;
+  gap: 0.35rem;
 }
 
 .desk-stage.is-quad {
@@ -1929,12 +2040,12 @@ button.desk-timeline__name {
 .desk-director__head h2 svg, .desk-director__section summary svg, .desk-director .desk-button svg { width: 0.95rem; height: 0.95rem; flex: none; }
 .desk-director__head p { margin: 0; font-size: 0.75rem; color: var(--desk-dim); }
 .desk-director__head strong, .desk-director__score strong { color: var(--desk-text); font-size: 1rem; }
-.desk-director__busy { margin: 0; padding: 0.4rem 0.55rem; font-size: 0.78rem; color: var(--desk-amber); border: 1px solid var(--desk-line); border-radius: 0.3rem; }
+.desk-director__busy { margin: 0; padding: 0.4rem 0.55rem; font-size: 0.78rem; color: var(--desk-amber-ink); border: 1px solid var(--desk-line); border-radius: 0.3rem; }
 .desk-director__section { display: grid; gap: 0.55rem; padding: 0.55rem 0; border-top: 1px solid var(--desk-line); }
 .desk-director__section > summary { display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
 .desk-director__section[open] > summary { margin-bottom: 0.5rem; }
 .desk-director__section h3 { margin: 0.5rem 0 0.25rem; font-size: 0.78rem; color: var(--desk-dim); font-weight: 600; }
-.desk-director__issues summary { cursor: pointer; font-size: 0.74rem; color: var(--desk-amber); }
+.desk-director__issues summary { cursor: pointer; font-size: 0.74rem; color: var(--desk-amber-ink); }
 .desk-director__issues ul { margin: 0.25rem 0 0; padding-left: 1rem; font-size: 0.72rem; color: var(--desk-dim); }
 .desk-director__section details summary { cursor: pointer; font-size: 0.74rem; color: var(--desk-dim); }
 .desk-director__section details ul { margin: 0.25rem 0 0; padding-left: 1rem; font-size: 0.72rem; color: var(--desk-dim); }
@@ -1965,6 +2076,9 @@ button.desk-timeline__name {
 .desk-director__row.is-assistant { margin-right: 0.4rem; border: 1px solid var(--desk-line); }
 .desk-director__row .desk-button { justify-self: start; }
 .desk-director__compare { color: var(--desk-text) !important; }
+.desk-director__errors { font-size: 0.72rem; }
+.desk-director__errors summary { color: var(--desk-amber-ink); cursor: pointer; }
+.desk-director__errors ul { margin: 0.2rem 0 0; padding-left: 1.1rem; color: var(--desk-text); }
 .desk-director__chips, .desk-director__kits, .desk-director__groups { display: flex; flex-wrap: wrap; gap: 0.25rem; }
 .desk-director__chips button, .desk-director__kits button, .desk-director__groups button {
   padding: 0.12rem 0.4rem; font-size: 0.72rem; color: var(--desk-text); background: transparent; border: 1px solid var(--desk-line); border-radius: 0.2rem; cursor: pointer;
@@ -1979,3 +2093,48 @@ button.desk-timeline__name {
 .desk-director__front rect { fill: var(--desk-dim); fill-opacity: 0.55; }
 .desk-director__front rect.is-dark { fill: var(--desk-text); fill-opacity: 0.6; }
 .desk-director__front rect.is-light { fill-opacity: 0.3; }
+
+/* 特效占位：属性页底部，一场的特效标记一项一块。 */
+.desk-effects {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.9rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--desk-line);
+}
+
+.desk-effects h3 {
+  margin: 0;
+}
+
+.desk-effects__item {
+  min-width: 0;
+  margin: 0;
+  padding: 0.5rem 0.6rem 0.6rem;
+  border: 1px solid var(--desk-line);
+  border-radius: 0.45rem;
+}
+
+.desk-effects__item legend {
+  padding: 0 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--desk-text);
+}
+
+.desk-effects__item.is-off {
+  opacity: 0.6;
+}
+
+.desk-effects__actions,
+.desk-effects__add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.desk-effects__add .desk-field {
+  flex: 1 1 9rem;
+}

@@ -35,6 +35,36 @@ from pydantic import (
     model_validator,
 )
 
+from app.core import prompt_data
+
+# What a refused story, an issue in the editor and a refused plan say, and the exported player's
+# interface words: app/data/prompt/interactive_story.json.
+_WORDING = "interactive_story"
+
+
+def _entry(key: str) -> Any:
+    """The entry at the dotted ``key`` ("section.name") of the wording table."""
+    node: Any = prompt_data.load(_WORDING)
+    for part in key.split("."):
+        node = node[part]
+    return node
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A template of the wording table, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return str(_entry(key)).format(**values)
+
+
+def _word(key: str) -> str:
+    """A word of the wording table, used as it stands."""
+    return str(_entry(key))
+
+
+def _table(key: str) -> Any:
+    """A table of the wording table, used as it stands."""
+    return _entry(key)
+
+
 MAX_SEGMENTS = 300
 MAX_CHOICES_PER_SEGMENT = 8
 MAX_ROUTES_PER_SEGMENT = 8
@@ -59,15 +89,15 @@ class StoryInputError(ValueError):
 
 def _check_id(value: str) -> str:
     if _ID_FORBIDDEN.search(value):
-        raise ValueError("编号不能包含空白、引号或尖括号")
+        raise ValueError(_says("says.id_forbidden_chars"))
     if value in _RESERVED_IDS:
-        raise ValueError(f"编号不能使用保留字 {value}")
+        raise ValueError(_says("says.id_reserved", value=value))
     return value
 
 
 def _finite(value: float) -> float:
     if not math.isfinite(value) or abs(value) > VALUE_LIMIT:
-        raise ValueError(f"数值必须是绝对值不超过 {VALUE_LIMIT:g} 的有限数")
+        raise ValueError(_says("says.not_finite", limit=VALUE_LIMIT))
     return value
 
 
@@ -97,9 +127,9 @@ class Condition(BaseModel):
         groups = (self.all is not None) + (self.any is not None)
         leaf = self.var is not None or self.op is not None or self.value is not None
         if groups > 1 or (groups and leaf):
-            raise ValueError("一个条件只能是 all、any 或 var/op/value 之一")
+            raise ValueError(_says("says.condition_one_form"))
         if not groups and (self.var is None or self.op is None or self.value is None):
-            raise ValueError("比较条件必须同时给出 var、op、value")
+            raise ValueError(_says("says.condition_incomplete"))
         return self
 
     @model_serializer(mode="plain")
@@ -127,16 +157,16 @@ class StoryVariable(BaseModel):
             if self.initial is None:
                 self.initial = False
             if not isinstance(self.initial, bool):
-                raise ValueError(f"标记变量 {self.id} 的初始值只能是 true 或 false")
+                raise ValueError(_says("says.flag_initial", id=self.id))
             if self.min is not None or self.max is not None:
-                raise ValueError(f"标记变量 {self.id} 不能设上下限")
+                raise ValueError(_says("says.flag_bounds", id=self.id))
             return self
         if self.initial is None:
             self.initial = 0
         if isinstance(self.initial, bool):
-            raise ValueError(f"数值变量 {self.id} 的初始值不能是 true 或 false")
+            raise ValueError(_says("says.number_initial", id=self.id))
         if self.min is not None and self.max is not None and self.min > self.max:
-            raise ValueError(f"变量 {self.id} 的下限大于上限")
+            raise ValueError(_says("says.bounds_inverted", id=self.id))
         return self
 
 
@@ -230,8 +260,8 @@ class StoryGraph(BaseModel):
 
     @model_validator(mode="after")
     def _identity(self) -> "StoryGraph":
-        _unique("变量", [item.id for item in self.variables])
-        _unique("片段", [item.id for item in self.segments])
+        _unique(_word("id_kinds.variables"), [item.id for item in self.variables])
+        _unique(_word("id_kinds.segments"), [item.id for item in self.segments])
         # Statistics are keyed by choice id, so a blank one gets a name here and a repeated one is refused.
         taken = {choice.id for segment in self.segments for choice in segment.choices if choice.id}
         taken |= {route.id for segment in self.segments for route in segment.routes if route.id}
@@ -242,7 +272,7 @@ class StoryGraph(BaseModel):
                         continue
                     edge.id = _fresh_id(f"{segment.id}.{prefix}{index}", taken)
                     taken.add(edge.id)
-        _unique("选项或路由", [
+        _unique(_word("id_kinds.edges"), [
             edge.id for segment in self.segments for edge in (*segment.choices, *segment.routes)
         ])
         for edge in (edge for segment in self.segments for edge in (*segment.choices, *segment.routes)):
@@ -255,7 +285,7 @@ class StoryGraph(BaseModel):
 def _unique(label: str, ids: Sequence[str]) -> None:
     repeated = [item for item, count in Counter(ids).items() if count > 1]
     if repeated:
-        raise ValueError(f"{label}编号重复：{', '.join(repeated[:5])}")
+        raise ValueError(_says("says.repeated_ids", label=label, ids=", ".join(repeated[:5])))
 
 
 def _fresh_id(base: str, taken: set[str]) -> str:
@@ -273,9 +303,9 @@ def _check_condition_size(condition: Condition) -> None:
         nonlocal nodes
         nodes += 1
         if depth > MAX_CONDITION_DEPTH:
-            raise ValueError(f"条件最多嵌套 {MAX_CONDITION_DEPTH} 层")
+            raise ValueError(_says("says.condition_depth", depth=MAX_CONDITION_DEPTH))
         if nodes > MAX_CONDITION_NODES:
-            raise ValueError(f"一个条件最多 {MAX_CONDITION_NODES} 项")
+            raise ValueError(_says("says.condition_nodes", nodes=MAX_CONDITION_NODES))
         for child in (item.all or item.any or []):
             walk(child, depth + 1)
 
@@ -286,8 +316,8 @@ def format_errors(error: ValidationError, limit: int = 6) -> str:
     parts = []
     for item in error.errors()[:limit]:
         where = ".".join(str(part) for part in item.get("loc", ()))
-        parts.append(f"{where or '(根)'}: {item.get('msg', '')}")
-    return "；".join(parts)
+        parts.append(f"{where or _word('root')}: {item.get('msg', '')}")
+    return _word("separators.errors").join(parts)
 
 
 def parse_graph(raw: Any) -> dict[str, Any]:
@@ -295,9 +325,9 @@ def parse_graph(raw: Any) -> dict[str, Any]:
     try:
         graph = StoryGraph.model_validate(raw).model_dump(mode="json")
     except ValidationError as error:
-        raise StoryInputError(f"互动剧数据不合法：{format_errors(error)}") from error
+        raise StoryInputError(_says("says.invalid_story", errors=format_errors(error))) from error
     if len(json.dumps(graph, ensure_ascii=False).encode("utf-8")) > MAX_GRAPH_JSON_BYTES:
-        raise StoryInputError(f"互动剧数据超过 {MAX_GRAPH_JSON_BYTES // (1024 * 1024)} MB 上限")
+        raise StoryInputError(_says("says.story_too_large", megabytes=MAX_GRAPH_JSON_BYTES // (1024 * 1024)))
     return graph
 
 
@@ -522,15 +552,15 @@ def can_be_true(condition: Mapping[str, Any] | None, state: Mapping[str, Domain]
 def _describe(domain: Domain) -> str:
     if domain.values is not None:
         ordered = sorted(domain.values, key=lambda item: (isinstance(item, bool), item))
-        return "、".join(("true" if item else "false") if isinstance(item, bool) else f"{item:g}" for item in ordered)
+        return _word("separators.values").join(("true" if item else "false") if isinstance(item, bool) else f"{item:g}" for item in ordered)
     low, high = domain.low, domain.high
     if math.isinf(low) and math.isinf(high):
-        return "任意值"
+        return _says("domain.any")
     if math.isinf(low):
-        return f"≤ {high:g}"
+        return _says("domain.at_most", high=high)
     if math.isinf(high):
-        return f"≥ {low:g}"
-    return f"{low:g} ~ {high:g}"
+        return _says("domain.at_least", low=low)
+    return _says("domain.between", low=low, high=high)
 
 
 def _edges(segment: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -712,18 +742,18 @@ def _check_references(segment: Mapping[str, Any], variables: Mapping[str, Mappin
             problem = _leaf_problem(leaf, variables)
             params = {"segment": name, "variable": str(leaf.get("var"))}
             if problem == "unknown":
-                issues.append(_issue("unknown_variable", "error", f"「{name}」的条件用了不存在的变量 {leaf.get('var')}", variable_id=leaf.get("var"), params=params, **where))
+                issues.append(_issue("unknown_variable", "error", _says("issues.condition_unknown_variable", segment=name, variable=leaf.get("var")), variable_id=leaf.get("var"), params=params, **where))
             elif problem == "type":
-                issues.append(_issue("condition_type_mismatch", "error", f"「{name}」的条件与变量 {leaf.get('var')} 的类型不符", variable_id=leaf.get("var"), params=params, **where))
+                issues.append(_issue("condition_type_mismatch", "error", _says("issues.condition_type_mismatch", segment=name, variable=leaf.get("var")), variable_id=leaf.get("var"), params=params, **where))
         for effect in edge.get("effects") or []:
             variable = variables.get(effect.get("var"))
             params = {"segment": name, "variable": str(effect.get("var"))}
             if variable is None:
-                issues.append(_issue("unknown_variable", "error", f"「{name}」的效果用了不存在的变量 {effect.get('var')}", variable_id=effect.get("var"), params=params, **where))
+                issues.append(_issue("unknown_variable", "error", _says("issues.effect_unknown_variable", segment=name, variable=effect.get("var")), variable_id=effect.get("var"), params=params, **where))
             elif variable.get("kind") == "flag" and not (effect.get("op") == "set" and isinstance(effect.get("value"), bool)):
-                issues.append(_issue("effect_type_mismatch", "error", f"「{name}」的效果对标记变量 {effect.get('var')} 只能设为 true 或 false", variable_id=effect.get("var"), params=params, **where))
+                issues.append(_issue("effect_type_mismatch", "error", _says("issues.effect_flag_value", segment=name, variable=effect.get("var")), variable_id=effect.get("var"), params=params, **where))
             elif variable.get("kind") != "flag" and not _is_number(effect.get("value")):
-                issues.append(_issue("effect_type_mismatch", "error", f"「{name}」的效果给数值变量 {effect.get('var')} 赋了非数值", variable_id=effect.get("var"), params=params, **where))
+                issues.append(_issue("effect_type_mismatch", "error", _says("issues.effect_number_value", segment=name, variable=effect.get("var")), variable_id=effect.get("var"), params=params, **where))
     return issues
 
 
@@ -733,25 +763,25 @@ def _check_exits(segment: Mapping[str, Any], index: Mapping[str, Any]) -> list[d
     choices, routes = segment.get("choices") or [], segment.get("routes") or []
     if segment.get("kind") == "ending":
         if choices or routes:
-            issues.append(_issue("ending_has_exits", "warning", f"结局「{name}」还连着出口，播放到结局时会被忽略", segment_id=segment["id"], params={"segment": name}))
+            issues.append(_issue("ending_has_exits", "warning", _says("issues.ending_has_exits", segment=name), segment_id=segment["id"], params={"segment": name}))
         return issues
     if not choices and not routes:
-        issues.append(_issue("dead_end", "error", f"「{name}」没有任何出口，也不是结局", segment_id=segment["id"], params={"segment": name}))
+        issues.append(_issue("dead_end", "error", _says("issues.dead_end", segment=name), segment_id=segment["id"], params={"segment": name}))
     for choice in choices:
         params = {"segment": name, "text": str(choice.get("text") or "")}
         if not choice.get("target"):
-            issues.append(_issue("choice_unconnected", "error", f"「{name}」的选项「{params['text']}」还没有连到任何片段", segment_id=segment["id"], choice_id=choice["id"], params=params))
+            issues.append(_issue("choice_unconnected", "error", _says("issues.choice_unconnected", segment=name, text=params["text"]), segment_id=segment["id"], choice_id=choice["id"], params=params))
         elif choice["target"] not in index:
-            issues.append(_issue("choice_target_missing", "error", f"「{name}」的选项「{params['text']}」指向不存在的片段 {choice['target']}", segment_id=segment["id"], choice_id=choice["id"], params={**params, "target": choice["target"]}))
+            issues.append(_issue("choice_target_missing", "error", _says("issues.choice_target_missing", segment=name, text=params["text"], target=choice["target"]), segment_id=segment["id"], choice_id=choice["id"], params={**params, "target": choice["target"]}))
         if not str(choice.get("text") or "").strip():
-            issues.append(_issue("choice_text_empty", "warning", f"「{name}」有一个选项没有文字", segment_id=segment["id"], choice_id=choice["id"], params={"segment": name}))
+            issues.append(_issue("choice_text_empty", "warning", _says("issues.choice_text_empty", segment=name), segment_id=segment["id"], choice_id=choice["id"], params={"segment": name}))
     for route in routes:
         if not route.get("target") or route["target"] not in index:
-            issues.append(_issue("route_target_missing", "error", f"「{name}」的自动路由没有连到存在的片段", segment_id=segment["id"], route_id=route["id"], params={"segment": name}))
+            issues.append(_issue("route_target_missing", "error", _says("issues.route_target_missing", segment=name), segment_id=segment["id"], route_id=route["id"], params={"segment": name}))
     used = {edge["id"] for edge in _edges(segment)}
     shadowed = [edge["id"] for edge in (*routes, *choices) if edge["id"] not in used]
     if shadowed:
-        issues.append(_issue("shadowed_edges", "warning", f"「{name}」有无条件路由，排在它后面的 {len(shadowed)} 个出口永远用不上", segment_id=segment["id"], params={"segment": name, "count": len(shadowed)}))
+        issues.append(_issue("shadowed_edges", "warning", _says("issues.shadowed_edges", segment=name, count=len(shadowed)), segment_id=segment["id"], params={"segment": name, "count": len(shadowed)}))
     return issues
 
 
@@ -762,12 +792,12 @@ def _check_timer(segment: Mapping[str, Any]) -> list[dict[str, Any]]:
     name = _segment_name(segment)
     choices = segment.get("choices") or []
     if not choices:
-        return [_issue("timer_without_choices", "warning", f"「{name}」设了限时但没有选项", segment_id=segment["id"], params={"segment": name})]
+        return [_issue("timer_without_choices", "warning", _says("issues.timer_without_choices", segment=name), segment_id=segment["id"], params={"segment": name})]
     default = next((choice for choice in choices if choice["id"] == timer.get("default_choice")), None)
     if default is None:
-        return [_issue("timer_default_missing", "error", f"「{name}」的限时没有默认选项", segment_id=segment["id"], params={"segment": name})]
+        return [_issue("timer_default_missing", "error", _says("issues.timer_default_missing", segment=name), segment_id=segment["id"], params={"segment": name})]
     if default.get("condition"):
-        return [_issue("timer_default_gated", "warning", f"「{name}」的限时默认选项带条件；不满足时会改走第一个可选项", segment_id=segment["id"], choice_id=default["id"], params={"segment": name})]
+        return [_issue("timer_default_gated", "warning", _says("issues.timer_default_gated", segment=name), segment_id=segment["id"], choice_id=default["id"], params={"segment": name})]
     return []
 
 
@@ -775,11 +805,11 @@ def validate_graph(graph: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Everything wrong with a story, as data the editor can point at. ``error`` blocks an export."""
     segments = graph.get("segments") or []
     if not segments:
-        return [_issue("empty_story", "error", "故事里还没有片段")]
+        return [_issue("empty_story", "error", _says("issues.empty_story"))]
     index, variables = _index(graph), _variables(graph)
     issues: list[dict[str, Any]] = []
     if graph.get("start") not in index:
-        issues.append(_issue("missing_start", "error", "没有指定存在的开场片段"))
+        issues.append(_issue("missing_start", "error", _says("issues.missing_start")))
     for segment in segments:
         issues.extend(_check_references(segment, variables))
         issues.extend(_check_exits(segment, index))
@@ -791,22 +821,22 @@ def validate_graph(graph: Mapping[str, Any]) -> list[dict[str, Any]]:
         for segment in segments:
             if segment["id"] not in reachable:
                 by_condition = segment["id"] in connected
-                reason = "它的入口条件永远满足不了" if by_condition else "没有路径从开场走到这里"
+                reason = _word("unreachable_reasons.conditions") if by_condition else _word("unreachable_reasons.no_path")
                 issues.append(_issue(
-                    "unreachable_segment", "warning", f"「{_segment_name(segment)}」到不了：{reason}", segment_id=segment["id"],
+                    "unreachable_segment", "warning", _says("issues.unreachable_segment", segment=_segment_name(segment), reason=reason), segment_id=segment["id"],
                     params={"segment": _segment_name(segment), "reason": "conditions" if by_condition else "no_path"},
                 ))
     for segment_id, edge in flow.impossible:
         if not _condition_is_wellformed(edge["condition"], variables):
             continue
         name = _segment_name(index[segment_id])
-        possible = "；".join(
-            f"{leaf['var']} 只可能是 {_describe(flow.states[segment_id][leaf['var']])}"
+        possible = _word("separators.possible").join(
+            _says("issues.possible_values", variable=leaf["var"], values=_describe(flow.states[segment_id][leaf["var"]]))
             for leaf in {str(item.get("var")): item for item in _leaves(edge["condition"])}.values()
         )
         label = edge.get("text") or edge["id"]
         issues.append(_issue(
-            "impossible_condition", "warning", f"「{name}」的「{label}」条件永远不会成立：{possible}", segment_id=segment_id,
+            "impossible_condition", "warning", _says("issues.impossible_condition", segment=name, label=label, possible=possible), segment_id=segment_id,
             **{f"{edge['kind']}_id": edge["id"]}, params={"segment": name, "text": str(label), "possible": possible},
         ))
     issues.extend(_check_endings_and_cycles(graph, flow, issues))
@@ -832,9 +862,9 @@ def _check_endings_and_cycles(graph: Mapping[str, Any], flow: Flow, existing: Se
     endings = [segment["id"] for segment in graph.get("segments") or [] if segment.get("kind") == "ending"]
     reachable = set(flow.states)
     if not endings:
-        issues.append(_issue("no_ending", "error", "故事里还没有结局"))
+        issues.append(_issue("no_ending", "error", _says("issues.no_ending")))
     elif graph.get("start") in index and not reachable.intersection(endings):
-        issues.append(_issue("no_reachable_ending", "error", "从开场走不到任何结局"))
+        issues.append(_issue("no_reachable_ending", "error", _says("issues.no_reachable_ending")))
     successors = {node: [edge["target"] for edge in flow.live.get(node, [])] for node in reachable}
     trapped: set[str] = set()
     for component in _components(sorted(reachable), successors):
@@ -844,10 +874,10 @@ def _check_endings_and_cycles(graph: Mapping[str, Any], flow: Flow, existing: Se
             continue
         if not any(target not in members for node in component for target in successors.get(node, ())):
             ordered = sorted(component)
-            names = "、".join(_segment_name(index[node]) for node in ordered[:6])
+            names = _word("separators.values").join(_segment_name(index[node]) for node in ordered[:6])
             trapped |= members
             issues.append(_issue(
-                "cycle_no_exit", "error", f"这些片段绕成一个圈且没有出口：{names}", segment_id=ordered[0], segment_ids=ordered,
+                "cycle_no_exit", "error", _says("issues.cycle_no_exit", segments=names), segment_id=ordered[0], segment_ids=ordered,
                 params={"segments": names},
             ))
     # Whatever else leads only into a trap: without this a segment one step before the loop looks fine.
@@ -866,16 +896,19 @@ def _check_endings_and_cycles(graph: Mapping[str, Any], flow: Flow, existing: Se
     if endings and reachable.intersection(endings):
         for node in sorted(reachable - can_finish - flagged):
             name = _segment_name(index[node])
-            issues.append(_issue("cannot_reach_ending", "warning", f"从「{name}」出发走不到任何结局", segment_id=node, params={"segment": name}))
+            issues.append(_issue("cannot_reach_ending", "warning", _says("issues.cannot_reach_ending", segment=name), segment_id=node, params={"segment": name}))
     return issues
 
 
 # --------------------------------------------------------------------------- paths
 
 
+_CJK_CHAR = re.compile(_word("patterns.cjk_char"))
+
+
 def reading_seconds(text: str) -> float:
     """Roughly how long a line takes to perform: about 4.5 CJK characters or 2.5 Latin words a second."""
-    cjk = len(re.findall(r"[㐀-鿿぀-ヿ가-힣]", text or ""))
+    cjk = len(_CJK_CHAR.findall(text or ""))
     words = len(re.findall(r"[A-Za-zÀ-ỹ0-9']+", text or ""))
     return cjk / 4.5 + words / 2.5
 
@@ -1068,7 +1101,7 @@ def analyze_story(graph: Mapping[str, Any]) -> dict[str, Any]:
     for item in paths["stuck"]:
         name = _segment_name(index[item["segment_id"]])
         issues.append(_issue(
-            "stuck_state", "warning", f"有的走法到了「{name}」时所有选项都上了锁，只能停在那里", segment_id=item["segment_id"],
+            "stuck_state", "warning", _says("issues.stuck_state", segment=name), segment_id=item["segment_id"],
             params={"segment": name},
         ))
     errors = sum(1 for item in issues if item["severity"] == "error")
@@ -1225,35 +1258,19 @@ def plan_problems(graph: dict[str, Any], *, min_endings: int = 2) -> list[str]:
     reached = set(flow_values(graph).states)
     endings = [segment for segment in graph.get("segments") or [] if segment.get("kind") == "ending" and segment["id"] in reached]
     if len(endings) < min_endings:
-        reasons.append(f"至少需要 {min_endings} 个能走到的结局（kind 为 ending），现在只有 {len(endings)} 个")
+        reasons.append(_says("says.too_few_endings", wanted=min_endings, found=len(endings)))
     branching = [segment for segment in graph.get("segments") or [] if len(segment.get("choices") or []) >= 2]
     if not branching:
-        reasons.append("至少需要一个带两个以上选项的抉择点")
+        reasons.append(_says("says.no_branching"))
     return reasons[:12]
 
 
 # --------------------------------------------------------------------------- the exported player
 
 
+# The exported player's interface words per language (the keys are the names PLAYER_UI_JS reads).
 PLAYER_TEXT: dict[str, dict[str, str]] = {
-    "zh-CN": {
-        "start": "开始观看", "resume": "继续观看", "restart": "重新开始", "map": "故事地图", "close": "返回",
-        "continue": "继续", "skip": "跳过", "locked": "未解锁", "ending": "结局", "endings": "已达成结局",
-        "played": "已看过", "unlocked": "已解锁", "unexplored": "未探索", "unknown": "？？？", "stuck": "这条路走不下去了。",
-        "stats": "故事进度", "progress": "当前数值", "replay": "点已看过或已解锁的片段，可以从那里重看。", "reset": "清除进度", "onTrue": "是", "onFalse": "否",
-    },
-    "en": {
-        "start": "Start watching", "resume": "Continue", "restart": "Start over", "map": "Story map", "close": "Back",
-        "continue": "Continue", "skip": "Skip", "locked": "Locked", "ending": "Ending", "endings": "Endings reached",
-        "played": "Watched", "unlocked": "Unlocked", "unexplored": "Unexplored", "unknown": "???", "stuck": "This path goes no further.",
-        "stats": "Your progress", "progress": "Current values", "replay": "Pick a watched or unlocked segment to replay from there.", "reset": "Clear progress", "onTrue": "Yes", "onFalse": "No",
-    },
-    "vi": {
-        "start": "Bắt đầu xem", "resume": "Xem tiếp", "restart": "Bắt đầu lại", "map": "Bản đồ câu chuyện", "close": "Quay lại",
-        "continue": "Tiếp tục", "skip": "Bỏ qua", "locked": "Chưa mở khóa", "ending": "Kết thúc", "endings": "Kết thúc đã đạt",
-        "played": "Đã xem", "unlocked": "Đã mở khóa", "unexplored": "Chưa khám phá", "unknown": "???", "stuck": "Con đường này không đi tiếp được.",
-        "stats": "Tiến độ của bạn", "progress": "Giá trị hiện tại", "replay": "Chọn phân đoạn đã xem hoặc đã mở khóa để xem lại từ đó.", "reset": "Xóa tiến độ", "onTrue": "Có", "onFalse": "Không",
-    },
+    str(lang): {str(key): str(text) for key, text in words.items()} for lang, words in _table("player_text").items()
 }
 
 SAFE_MEDIA_PATTERN = re.compile(r"^(data:(image/(png|jpeg|webp)|video/(mp4|webm));base64,[A-Za-z0-9+/=]+|media/[A-Za-z0-9._-]+)$")

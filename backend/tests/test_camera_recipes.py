@@ -29,7 +29,9 @@ class CameraRecipeTests(unittest.TestCase):
             "fight_climax", "strong", subject_action="沈砚挥剑劈向门柱", environment="天牢", lighting="冷白月光",
             provider_family="minimax_h3",
         )
-        self.assertEqual(recipe.camera_motion, "Orbit")
+        # 打斗高潮不环绕、不定格：急推、骤停、冲击时的震动。
+        self.assertEqual(recipe.camera_motion, "Push In")
+        self.assertNotIn("环绕", recipe.prompt_zh)
         self.assertIn("沈砚挥剑劈向门柱", recipe.prompt_zh)
         self.assertIn("天牢", recipe.prompt_zh)
         self.assertIn("低位贴地机位", recipe.prompt_zh)

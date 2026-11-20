@@ -18,6 +18,19 @@ from pathlib import Path
 from typing import Any
 
 from app import settings
+from app.core import prompt_data
+
+
+_WORDING_FILE = "bgm_library"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/bgm_library.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 MAX_BGM_UPLOAD_BYTES = 20 * 1024 * 1024
 _SIGNATURES = {
@@ -72,22 +85,22 @@ def _probe_seconds(path: Path) -> float | None:
 def validate_audio_upload(filename: str, content_type: str, content: bytes) -> tuple[str, str]:
     """The declared type and the suffix to store under; raises when the bytes do not match."""
     if not content or len(content) > MAX_BGM_UPLOAD_BYTES:
-        raise BgmUploadError("音频为空或超过 20MB")
+        raise BgmUploadError(_text_of("validate_audio_upload.text"))
     declared = (content_type or "").split(";", 1)[0].strip().lower()
     if declared not in _SIGNATURES:
-        raise BgmUploadError("仅支持 MP3、WAV、M4A、AAC、OGG 音频")
+        raise BgmUploadError(_text_of("validate_audio_upload.text.2"))
     starts, frames, suffix = _SIGNATURES[declared]
     if declared in ("audio/mp4", "audio/x-m4a"):
         if len(content) < 12 or content[4:8] != b"ftyp":
-            raise BgmUploadError("M4A 文件头无效")
+            raise BgmUploadError(_text_of("validate_audio_upload.text.3"))
     elif declared == "audio/wav" or declared == "audio/x-wav":
         if not content.startswith(b"RIFF") or content[8:12] != b"WAVE":
-            raise BgmUploadError("WAV 文件头无效")
+            raise BgmUploadError(_text_of("validate_audio_upload.text.4"))
     elif not (any(content.startswith(s) for s in starts) or any(content.startswith(f) for f in frames)):
-        raise BgmUploadError("音频内容与声明类型不一致")
+        raise BgmUploadError(_text_of("validate_audio_upload.text.5"))
     given = Path(filename or "").suffix.lower()
     if given and given not in {suffix, ".mp3" if declared == "audio/mpeg" else suffix}:
-        raise BgmUploadError("文件扩展名与媒体类型不一致")
+        raise BgmUploadError(_text_of("validate_audio_upload.text.6"))
     return declared, suffix
 
 
@@ -108,7 +121,7 @@ def get_track(track_id: str) -> dict[str, Any] | None:
 
 def add_track(*, name: str, mood: str, content: bytes, filename: str, content_type: str, owner_id: str | None = None) -> dict[str, Any]:
     _, suffix = validate_audio_upload(filename, content_type, content)
-    clean_name = re.sub(r"\s+", " ", (name or Path(filename or "").stem or "未命名配乐")).strip()[:80]
+    clean_name = re.sub(r"\s+", " ", (name or Path(filename or "").stem or _text_of("add_track.clean_name"))).strip()[:80]
     track_id = uuid.uuid4().hex[:12]
     file_name = f"{track_id}{suffix}"
     with _lock:
@@ -129,7 +142,7 @@ def keep_generated(*, name: str, mood: str, source_path: str, owner_id: str | No
     """Keep a bed stage 6 generated, so another project can pick it."""
     source = Path(source_path)
     if not source.is_file():
-        raise BgmUploadError("生成的配乐文件不存在")
+        raise BgmUploadError(_text_of("keep_generated.text"))
     content = source.read_bytes()
     suffix = source.suffix.lower() or ".mp3"
     track_id = uuid.uuid4().hex[:12]

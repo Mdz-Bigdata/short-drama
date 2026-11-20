@@ -1,0 +1,59 @@
+{
+  "_doc": "画布工具「抠像序列帧」(app/core/sprite_frames.py)的措辞、颜色表和上限。一段在纯色背景上生成的人物动作片段，按指定的底色抠成透明，输出一组同样大小的 PNG：整段只用一个裁剪框(每一帧不透明范围的并集，左、上、右留一点边，下边不留)，所以回放时人物不会抖；裁剪框的下边就是全程最低的落脚点，作为共用的脚底基线。只用本机 ffmpeg 和 PIL，不调任何模型，不计费。key_colours 是「底色」选项对应的颜色；options 是各参数的默认值与上下限(前端 canvasTools.ts 里的同名参数要一致)；keying 把 0–100 的容差换成 ffmpeg chromakey / colorkey 的 similarity 和 blend：底色够鲜艳(chroma_min，UV 平面上离灰色的距离)用 chromakey(只看色度，底色上的明暗不影响)，灰、白、黑这类底色用 colorkey(按 RGB)；auto 是「自动」取色：第一帧四个角各取一小块(patch_percent，按短边)，取其中最多的颜色，四角里和它相近(spread，RGB 距离)的像素不到 min_share_percent 就说明四角不是同一种底色；alpha_floor 以下的透明度当作全透明(压缩噪点)；crop 是裁剪框留边；despill 只在离透明处 edge_px 以内的边缘像素上去掉底色的溢色，只认绿、蓝、品红三类底色(dominance 是主色通道要高出其余通道多少)，其他底色不做；sheet 是精灵图(逐行排列)的像素上限，超过就不拼，预览改用第一帧；limits 是整段处理量的上限。带 {0}{1} 的句子按位置填。",
+  "key_colours": {
+    "magenta": "#ff00ff",
+    "blue": "#0000ff",
+    "green": "#00ff00"
+  },
+  "options": {
+    "key": "auto",
+    "key_custom": "custom",
+    "key_hex": "#ff00ff",
+    "tolerance": {"default": 40, "min": 0, "max": 100},
+    "fps": {"default": 12, "min": 1, "max": 30},
+    "max_frames": {"default": 120, "min": 1, "max": 240}
+  },
+  "keying": {
+    "similarity_min": 0.02,
+    "similarity_max": 0.4,
+    "blend_ratio": 0.25,
+    "blend_max": 0.08,
+    "chroma_min": 40
+  },
+  "auto": {
+    "patch_percent": 6,
+    "patch_min_px": 4,
+    "spread": 48,
+    "min_share_percent": 55
+  },
+  "alpha_floor": 16,
+  "crop": {
+    "padding_percent": 2,
+    "padding_min_px": 2
+  },
+  "despill": {
+    "edge_px": 2,
+    "dominance": 40
+  },
+  "sheet": {
+    "max_side": 8192,
+    "max_pixels": 40000000
+  },
+  "limits": {
+    "max_source_pixels": 520000000,
+    "min_transparent_percent": 2
+  },
+  "files": {
+    "frame": "{0:04d}.png",
+    "sheet": "sheet.png",
+    "manifest": "manifest.json"
+  },
+  "error.bad_hex": "自定义底色要写成 #RRGGBB 这样的六位十六进制颜色，现在是「{0}」",
+  "error.no_duration": "读不出这段视频的时长，无法抽帧",
+  "error.too_many_frames": "这段视频 {0:.1f} 秒，按每秒 {1} 帧会有 {2} 帧，超过了最多 {3} 帧：把帧率调低，或把「最多帧数」调高（上限 {4}），或先把片段剪短",
+  "error.too_heavy": "{0}×{1} 的画面抽 {2} 帧太大了：把帧率调低，或先把视频缩小",
+  "error.no_frames": "没能从这段视频里抽出画面",
+  "error.corners_differ": "第一帧四个角不是同一种纯色，认不出底色：请手动选底色，或用「自定义」填颜色",
+  "error.all_keyed": "整个画面都被抠掉了：容差太大，或者人物和底色太接近",
+  "error.nothing_keyed": "几乎没有抠掉任何东西：背景不是这个底色（用的是 {0}），换一个底色或调高容差"
+}

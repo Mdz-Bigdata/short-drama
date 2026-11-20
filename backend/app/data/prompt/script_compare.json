@@ -1,0 +1,8 @@
+{
+  "_note": "剧本版本对比（app/core/script_compare.py 读取）：把存下的一个版本和现在的剧本按集对比，说出哪几集改了、加了、删了，每集列出改动的行。不调模型。heading 是剧本正文里每集标题行的写法（「第N集 标题」）；limits 管一集最多列几处改动、一行最多显示多少字。",
+  "heading": "^第\\s*(\\d+)\\s*集",
+  "limits": {"changes_per_episode": 12, "line_chars": 240, "lines_per_change": 6},
+  "labels": {"same": "没变", "changed": "改了", "added": "新增", "removed": "删掉"},
+  "preface": "开头（第一集之前）",
+  "errors": {"no_version": "没有这个版本"}
+}

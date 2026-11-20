@@ -98,6 +98,13 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(episode_spans("第3集至第5集"), [[3, 5]])
         self.assertEqual(episode_spans("交领短褐"), [])
 
+    def test_a_list_of_single_episodes_is_read_too(self):
+        self.assertEqual(episode_spans("第1、2集穿着"), [[1, 2]])
+        self.assertEqual(episode_spans("第一、三集"), [[1, 1], [3, 3]])
+        self.assertEqual(episode_spans("第2、3、5集"), [[2, 3], [5, 5]])
+        self.assertEqual(episode_spans("第1和第4集起"), [[1, 1], [4, 500]])
+        self.assertEqual(wardrobe_text("阿禾穿着；灰蓝色粗布短袄，袖口卷至小臂。第1、2集穿着。", "阿禾"), "灰蓝色粗布短袄，袖口卷至小臂")
+
     def test_the_picture_gets_the_clothes_and_not_the_story(self):
         text = wardrobe_text("沈无咎穿着；交领短褐，腰束布带，第1集受辱时穿。第2-8集拭剑", SHEN)
         self.assertEqual(text, "交领短褐，腰束布带")
@@ -178,15 +185,40 @@ class LookBoardTests(unittest.TestCase):
             split_look_board(VALID_PNG)
 
 
+class SideFacePanelTests(unittest.TestCase):
+    def test_boards_drawn_now_keep_a_three_quarter_face_in_the_third_close_up(self):
+        from app.core import look_board
+        for layout in (look_board.LAYOUT_MAKEUP_SIDE, look_board.LAYOUT_PLAIN_SIDE):
+            self.assertEqual(look_board.side_face_slot(layout), "look_closeup_3")
+            self.assertEqual(look_board.closeup_labels(layout)[0], "正脸胸像")
+            self.assertEqual(look_board.closeup_labels(layout)[2], "四分之三侧脸")
+        # Boards drawn before have a belt or a cuff there, and one with no layout recorded counts as the oldest.
+        for layout in (look_board.LAYOUT_MAKEUP, look_board.LAYOUT_PLAIN, "", None, "nope"):
+            self.assertEqual(look_board.side_face_slot(layout), "")
+        self.assertEqual(look_board.closeup_labels(look_board.LAYOUT_MAKEUP)[2], "腰带与配饰")
+        self.assertEqual(look_board.closeup_labels("nope"), look_board.closeup_labels(look_board.LAYOUT_PLAIN))
+
+    def test_the_makeup_check_is_told_what_the_third_close_up_now_is(self):
+        self.assertIn("右前方四分之三侧脸胸像", character_looks.LOOK_CHECK_SYSTEM)
+        self.assertIn("正脸特写和侧脸特写里", character_looks.LOOK_CHECK_SYSTEM)
+        self.assertIn("正脸特写和侧脸特写里", character_looks.LOOK_SIDE_RULE)
+
+
 class LookPromptTests(unittest.TestCase):
     def test_a_wound_gets_its_own_close_up_and_the_side_is_the_characters_own(self):
         prompt = look_prompt("常九斤·右手断指", "靛蓝短褂；妆效：右手小指与无名指各缺半截")
         self.assertIn("妆效所在部位的近景", prompt)
-        self.assertNotIn("袖口或下摆的面料纹理", prompt)
+        self.assertNotIn("腰带系结与配饰", prompt)
         self.assertIn("人物的右手、右脸和右腿在画面左侧", prompt)
         plain = look_prompt("沈无咎·麻衣", "麻灰短褐")
-        self.assertIn("袖口或下摆的面料纹理", plain)
+        self.assertIn("腰带系结与配饰", plain)
+        self.assertNotIn("袖口或下摆的面料纹理", plain)
         self.assertNotIn("不是画面的左右", plain)
+        # 第三格特写是这身造型自己的四分之三侧脸：转头、侧脸的镜头拿它当参考，发型妆面和正脸胸像一样。
+        for board in (prompt, plain):
+            self.assertIn("右前方45度的侧脸胸像", board)
+            self.assertIn("同一发型头饰和妆面", board)
+            self.assertEqual(board.count("竖排三格特写"), 1)
 
     def test_a_redraw_reminds_which_side_is_which(self):
         self.assertIn("正面视图里人物的右手在画面左侧", look_fix_prompt(["伤画到了左手"], "妆效：右手断指"))
@@ -264,6 +296,66 @@ class WearingTests(unittest.TestCase):
         self.assertNotIn("；", reference_note(1, reference))
 
 
+class WornLookPromptTests(unittest.TestCase):
+    """按剧情穿的那身跟着参考图一起进提示词；还没画成定妆图时，图上那身不算，衣服照文字画。"""
+
+    BASE = {"id": "base", "kind": "actor", "name": SHEN, "description": FACE, "metadata": {"task_id": TASK_ID}, "image_url": "data:sheet"}
+
+    def _reference(self, *, drawn: bool) -> dict:
+        context = compile_scene_context(
+            _task(), {"scene_id": "E9S01", "content": "沈无咎跪在殿前。", "characters": [SHEN]},
+            [self.BASE, *_looks_as_elements(images=drawn)],
+        )
+        panel = panel_context(context, {"characters": [SHEN], "desc": "沈无咎跪在殿前"})
+        return next(item for item in panel["references"] if item["kind"] == "actor")
+
+    def test_a_drawn_look_carries_its_outfit_with_the_reference(self):
+        reference = self._reference(drawn=True)
+        self.assertEqual(reference["image_url"], "data:look-1")
+        self.assertNotIn("look_undrawn", reference)
+        note = reference_note(1, reference)
+        self.assertIn("（造型：染血残衣）的脸型、发型、体型与服装", note)
+        self.assertIn("「沈无咎」这一镜穿「染血残衣」：同款麻灰短褐，大片暗红浸染", note)
+        self.assertNotIn("；", note)
+        self.assertEqual(costume_wearers([reference], [SHEN]), [(SHEN, "染血残衣")])
+        self.assertIn("穿图1 的「染血残衣」（同款麻灰短褐", _costume_notes([SHEN], [reference], [])[SHEN])
+        # 参考图被路由去掉时，那身衣服的文字留在提示词里。
+        from app.core.video_references import _REFERENCE_NOTE
+        self.assertIn("这一镜穿「染血残衣」", _REFERENCE_NOTE.sub("", note))
+
+    def test_an_undrawn_look_locks_only_the_face_and_dresses_by_text(self):
+        reference = self._reference(drawn=False)
+        self.assertEqual((reference["image_url"], reference["variant"], reference["look_undrawn"]), ("data:sheet", "染血残衣", True))
+        note = reference_note(1, reference)
+        self.assertIn("脸型、发型与体型，图中衣服不是本场造型", note)
+        self.assertNotIn("（造型：", note)
+        self.assertIn("这一镜穿「染血残衣」：同款麻灰短褐，大片暗红浸染", note)
+        self.assertIn("服装按这段文字画", note)
+        self.assertEqual(costume_wearers([reference], [SHEN]), [], "不绑「款式以参考图为准」")
+        panel = _costume_notes([SHEN], [reference], [])[SHEN]
+        self.assertIn("图1 只取脸型、发型与体型，本格穿「染血残衣」：同款麻灰短褐", panel)
+        self.assertNotIn("穿图1", panel)
+
+    def test_an_older_costume_picture_dresses_an_undrawn_look(self):
+        reference = self._reference(drawn=False)
+        older = {"kind": "costume", "name": "沈无咎·染血残衣", "image_url": "data:mannequin"}
+        notes = _costume_notes([SHEN], [reference, older], [{"kind": "costume", "name": "沈无咎·染血残衣", "description": "沈无咎穿着"}])
+        self.assertEqual(notes[SHEN], "「沈无咎」穿图2 的「沈无咎·染血残衣」")
+
+    def test_the_video_appearance_line_wears_the_look_not_the_sheet_outfit(self):
+        from app.core.storyboard_scene_context import dress_cast_looks
+        from app.core.video_prompt_engine import appearance_lines
+        reference = self._reference(drawn=True)
+        looks = dress_cast_looks({SHEN: FACE, "苏问剑": "冷峻女子"}, [reference])
+        self.assertIn("窄长脸", looks[SHEN])
+        self.assertIn("大片暗红浸染", looks[SHEN])
+        self.assertNotIn("灰布短褐", looks[SHEN])
+        self.assertEqual(looks["苏问剑"], "冷峻女子")
+        line = appearance_lines(looks, [SHEN], "全景")
+        self.assertNotIn("灰布短褐", line)
+        self.assertIn("暗红", line)
+
+
 class MakeupTests(unittest.TestCase):
     """妆效画在定妆图上：写了集数的和当时穿的那身合成一张，受伤之前的戏不带伤。"""
 
@@ -282,9 +374,13 @@ class MakeupTests(unittest.TestCase):
 
     def test_a_timed_wound_joins_whatever_is_worn_from_then_on(self):
         looks = self._looks(self.WOUND)
-        self.assertEqual(looks["沈无咎·麻灰拭剑奴衣"]["facts"]["spans"], [[1, 8]])
         self.assertEqual(looks["沈无咎·染血残衣·左颊剑伤"]["facts"]["spans"], [[9, 10]])
         self.assertEqual(looks["沈无咎·麻灰拭剑奴衣·左颊剑伤"]["facts"]["spans"], [[11, 45]])
+        # 素的那身在带伤的那张里：不单列，那张记下第 1-8 集这样穿、图上的伤不画。
+        self.assertNotIn("沈无咎·麻灰拭剑奴衣", looks)
+        self.assertEqual(looks["沈无咎·麻灰拭剑奴衣·左颊剑伤"]["facts"]["without"], [
+            {"label": "麻灰拭剑奴衣", "description": "交领短褐，腰束布带", "spans": [[1, 8]], "makeups": [], "off": ["左颊剑伤"]},
+        ])
         # 这身每一集都带着伤，不单独画；「第9集起」算到戏服写到的第 45 集，后面不多出一张只有伤的图。
         self.assertNotIn("沈无咎·染血残衣", looks)
         self.assertNotIn("沈无咎·左颊剑伤", looks)
@@ -318,8 +414,10 @@ class MakeupTests(unittest.TestCase):
             {"name": "沈无咎·左颊剑伤", "description": "左颊血口。第9-12集"},
             costumes=[{"name": "沈无咎·麻灰奴衣", "description": "麻灰短褐"}],
         )
-        self.assertIsNone(looks["沈无咎·麻灰奴衣"]["facts"]["episodes"])
+        self.assertNotIn("沈无咎·麻灰奴衣", looks)
         self.assertEqual(looks["沈无咎·麻灰奴衣·左颊剑伤"]["facts"]["spans"], [[9, 12]])
+        # 不限集数的素的那身：其余各集都这样穿。
+        self.assertEqual(looks["沈无咎·麻灰奴衣·左颊剑伤"]["facts"]["without"][0]["spans"], [])
         self.assertEqual(self._worn("E3S01")["variant"], "麻灰奴衣")
         self.assertEqual(self._worn("E10S01")["variant"], "麻灰奴衣·左颊剑伤")
 
@@ -332,15 +430,22 @@ class MakeupTests(unittest.TestCase):
         looks = self._looks({"name": "沈无咎·左颊剑伤", "description": "左颊血口。第9集起"}, costumes=[])
         self.assertEqual(looks["沈无咎·左颊剑伤"]["facts"]["spans"], [[9, 500]])
 
-    def test_two_wounds_at_once_are_drawn_together(self):
+    def test_two_wounds_at_once_are_drawn_together_and_either_alone_is_that_picture(self):
         looks = self._looks(
             {"name": "沈无咎·左颊剑伤", "description": "左颊血口。第1-5集"},
             {"name": "沈无咎·断指", "description": "左手小指缠布。第3-8集"},
             costumes=[],
         )
-        self.assertEqual(looks["沈无咎·左颊剑伤"]["facts"]["spans"], [[1, 2]])
-        self.assertEqual(looks["沈无咎·左颊剑伤·断指"]["facts"]["spans"], [[3, 5]])
-        self.assertEqual(looks["沈无咎·断指"]["facts"]["spans"], [[6, 8]])
+        self.assertEqual(list(looks), ["沈无咎·左颊剑伤·断指"])
+        facts = looks["沈无咎·左颊剑伤·断指"]["facts"]
+        self.assertEqual(facts["spans"], [[3, 5]])
+        self.assertEqual([(entry["label"], entry["spans"], entry["off"]) for entry in facts["without"]], [
+            ("左颊剑伤", [[1, 2]], ["断指"]), ("断指", [[6, 8]], ["左颊剑伤"]),
+        ])
+        for scene_id, expected, off in (("E1S01", "左颊剑伤", "断指"), ("E4S01", "左颊剑伤·断指", None), ("E7S01", "断指", "左颊剑伤")):
+            worn = self._worn(scene_id)
+            self.assertEqual((worn["variant"], worn.get("look_off")), (expected, off), scene_id)
+        self.assertNotIn("断指", self._worn("E1S01")["description"])
 
     def test_a_wound_nothing_can_date_gets_no_picture_and_is_written_onto_the_current_outfit(self):
         looks = self._looks({"name": "沈无咎·老年妆", "description": "两鬓斑白，额头皱纹"})
@@ -352,7 +457,7 @@ class MakeupTests(unittest.TestCase):
         actor = next(item for item in panel["references"] if item["kind"] == "actor")
         self.assertEqual((actor["variant"], actor["makeup"]), ("麻灰拭剑奴衣", "两鬓斑白，额头皱纹"))
         self.assertIn("图上没有的妆效按文字加上：两鬓斑白", reference_note(1, actor))
-        self.assertEqual(_costume_notes([SHEN], [actor], [])[SHEN], "「沈无咎」穿图1 的「麻灰拭剑奴衣」，图上没有的妆效按文字加上：两鬓斑白，额头皱纹")
+        self.assertEqual(_costume_notes([SHEN], [actor], [])[SHEN], "「沈无咎」穿图1 的「麻灰拭剑奴衣」（交领短褐，腰束布带），图上没有的妆效按文字加上：两鬓斑白，额头皱纹")
         # 这一镜没提，就不加。
         quiet = panel_context(context, {"characters": [SHEN], "desc": "沈无咎跪着"})
         self.assertNotIn("makeup", next(item for item in quiet["references"] if item["kind"] == "actor"))
@@ -379,6 +484,67 @@ class MakeupTests(unittest.TestCase):
         self.assertIn("；妆效：左颊血口", worn["description"])
         self.assertNotIn("服装：妆效", worn["description"])
 
+    def test_a_look_inside_another_is_not_listed_and_its_episodes_wear_the_bigger_picture_without_the_makeup(self):
+        # 用户报的情形：戏服第1至3集通用，吐血和炉灰第1至2集；第3集不再单独出一张素的。
+        looks = self._looks(
+            {"name": "沈无咎·吐血唇血", "description": "嘴角血沫。第1集至第2集"},
+            {"name": "沈无咎·炉灰脸", "description": "两颊黑灰。第1集至第2集"},
+            costumes=[{"name": "沈无咎·靛青杂役短打", "description": "靛青粗布短打。第1至3集通用"}],
+        )
+        self.assertEqual(list(looks), ["沈无咎·靛青杂役短打·吐血唇血·炉灰脸"])
+        bigger = self._worn("E2S01")
+        self.assertEqual(bigger["variant"], "靛青杂役短打·吐血唇血·炉灰脸")
+        self.assertNotIn("look_off", bigger)
+        worn = self._worn("E3S01")
+        self.assertEqual((worn["variant"], worn["look_off"]), ("靛青杂役短打", "吐血唇血、炉灰脸"))
+        self.assertEqual(worn["variant_element_id"], bigger["variant_element_id"])
+        self.assertIn("服装：靛青粗布短打", worn["description"])
+        self.assertNotIn("血沫", worn["description"])
+
+    def test_the_frame_and_the_clip_are_told_not_to_draw_the_makeup_that_is_not_on_yet(self):
+        self._looks(self.WOUND)
+        scene = {"scene_id": "E3S01", "content": "沈无咎跪在殿前。", "characters": [SHEN]}
+        context = compile_scene_context(self.task, scene, _looks_as_elements(self.task))
+        panel = panel_context(context, {"characters": [SHEN], "desc": "沈无咎跪着"})
+        actor = next(item for item in panel["references"] if item["kind"] == "actor")
+        self.assertEqual((actor["variant"], actor["look_off"]), ("麻灰拭剑奴衣", "左颊剑伤"))
+        self.assertNotIn("look_makeup", actor)
+        self.assertIn("图中的左颊剑伤这一镜没有，不要画", reference_note(1, actor))
+        self.assertIn("图上的左颊剑伤这一格没有，不要画", _costume_notes([SHEN], [actor], [])[SHEN])
+        # 伤已经在身上的那一场：没有这句。
+        later = compile_scene_context(self.task, {**scene, "scene_id": "E20S01"}, _looks_as_elements(self.task))
+        wounded = next(item for item in panel_context(later, {"characters": [SHEN], "desc": "沈无咎跪着"})["references"] if item["kind"] == "actor")
+        self.assertNotIn("look_off", wounded)
+        self.assertNotIn("这一镜没有", reference_note(1, wounded))
+
+    def test_an_undrawn_bigger_look_only_lends_its_words(self):
+        self._looks(self.WOUND)
+        self.task["assets"]["3_sheets"] = {SHEN: "data:sheet"}
+        scene = {"scene_id": "E3S01", "content": "沈无咎跪在殿前。", "characters": [SHEN]}
+        context = compile_scene_context(self.task, scene, _looks_as_elements(self.task, images=False))
+        actor = next(item for item in panel_context(context, {"characters": [SHEN], "desc": "沈无咎跪着"})["references"] if item["kind"] == "actor")
+        # 还没画：参考图是设定集，图上本来就没有伤，不用写不画。
+        self.assertEqual((actor["image_url"], actor["variant"], actor.get("look_undrawn")), ("data:sheet", "麻灰拭剑奴衣", True))
+        self.assertNotIn("look_off", actor)
+
+    def test_without_an_episode_the_bigger_look_stands_for_the_plain_outfit(self):
+        looks = self._looks(
+            {"name": "沈无咎·左颊剑伤", "description": "左颊血口。第9-12集"},
+            costumes=[{"name": "沈无咎·麻灰奴衣", "description": "麻灰短褐"}],
+        )
+        variant = {"name": "沈无咎·麻灰奴衣·左颊剑伤", "variant": looks["沈无咎·麻灰奴衣·左颊剑伤"]["facts"]}
+        self.assertEqual(character_variants.bare_look(variant)["label"], "麻灰奴衣")
+        self.assertIsNone(character_variants.bare_look(variant, 10, 1))
+        self.assertEqual(character_variants.bare_look(variant, 3, 1)["off"], ["左颊剑伤"])
+
+    def test_the_breakdown_sheet_names_the_outfit_worn_without_the_wound(self):
+        self._looks(self.WOUND)
+        looks = {SHEN: [{"name": look["name"], "variant": look["facts"], "label": look["label"]} for look in plan_looks(self.task)]}
+        rows = script_breakdown._looks_in_scene([SHEN], looks, [], "", [{"scene_id": "E3S01", "_text": "沈无咎跪着"}])
+        self.assertEqual(len(rows), 1)
+        self.assertIn("麻灰拭剑奴衣", rows[0])
+        self.assertNotIn("左颊剑伤", rows[0])
+
 
 def _scene(scene_id, text, *people) -> dict:
     return {"scene_id": scene_id, "content": text, "characters": list(people)}
@@ -397,6 +563,57 @@ class TimingTests(unittest.TestCase):
     def _worn(self, scene_id):
         scene = {"scene_id": scene_id, "content": "沈无咎走来。", "characters": [SHEN]}
         return compile_scene_context(self.task, scene, _looks_as_elements(self.task))["actors"][0].get("variant")
+
+    def test_an_outfit_that_always_carries_its_stain_is_drawn_once(self):
+        # 衣服写着「药渍见妆效」、药渍覆盖他出场的每一集：素的那张没戏可穿，只出带药渍的那张。
+        looks = self._plan(
+            {"name": "沈无咎·右腕药渍", "description": "右腕内侧深褐色药渍。第1集"},
+            scenes=[_scene("E1S01", "沈无咎", SHEN), _scene("E1S02", "沈无咎", SHEN)],
+            costumes=[{"name": "沈无咎·药白长衣", "description": "药白棉麻长衣；右腕药渍见妆效"}],
+        )
+        self.assertEqual(sorted(looks), ["沈无咎·药白长衣·右腕药渍"])
+        self.assertEqual(self._worn("E1S02"), "药白长衣·右腕药渍")
+
+    def test_a_stain_that_comes_later_keeps_the_clean_outfit_for_the_earlier_episodes(self):
+        looks = self._plan(
+            {"name": "沈无咎·右腕药渍", "description": "右腕内侧深褐色药渍。第2集起"},
+            scenes=[_scene("E1S01", "沈无咎", SHEN), _scene("E2S01", "沈无咎", SHEN)],
+            costumes=[{"name": "沈无咎·药白长衣", "description": "药白棉麻长衣"}],
+        )
+        self.assertEqual(sorted(looks), ["沈无咎·药白长衣·右腕药渍"])
+        self.assertEqual(self._worn("E1S01"), "药白长衣")
+        self.assertEqual(self._worn("E2S01"), "药白长衣·右腕药渍")
+
+    def test_a_stain_that_begins_mid_episode_keeps_the_clean_outfit_for_the_scenes_before(self):
+        looks = self._plan(
+            {"name": "沈无咎·右腕药渍", "description": "右腕药渍。E1S02"},
+            scenes=[_scene("E1S01", "沈无咎", SHEN), _scene("E1S02", "沈无咎", SHEN)],
+            costumes=[{"name": "沈无咎·药白长衣", "description": "药白棉麻长衣"}],
+        )
+        self.assertEqual(sorted(looks), ["沈无咎·药白长衣·右腕药渍"])
+        self.assertEqual(self._worn("E1S01"), "药白长衣")
+        self.assertEqual(self._worn("E1S02"), "药白长衣·右腕药渍")
+
+    def test_an_old_scar_first_written_later_is_there_from_the_start(self):
+        # 旧烫斑第2场才第一次写到，但它是旧伤：从第一场就在，素的那身不再单独出图。
+        looks = self._plan(
+            {"name": "沈无咎·左颧旧烫斑", "description": "左颧一块旧烫斑。E1S02"},
+            scenes=[_scene("E1S01", "沈无咎", SHEN), _scene("E1S02", "沈无咎", SHEN)],
+            costumes=[{"name": "沈无咎·铁匠短褐", "description": "铁灰短褐"}],
+        )
+        self.assertEqual(sorted(looks), ["沈无咎·铁匠短褐·左颧旧烫斑"])
+        self.assertNotIn("starts", looks["沈无咎·铁匠短褐·左颧旧烫斑"]["facts"])
+        self.assertEqual(self._worn("E1S01"), "铁匠短褐·左颧旧烫斑")
+
+    def test_an_old_scar_with_written_episodes_keeps_them(self):
+        looks = self._plan(
+            {"name": "沈无咎·眉骨旧疤", "description": "眉骨旧疤。第2集起"},
+            scenes=[_scene("E1S01", "沈无咎", SHEN), _scene("E2S01", "沈无咎", SHEN)],
+            costumes=[{"name": "沈无咎·铁匠短褐", "description": "铁灰短褐"}],
+        )
+        self.assertEqual(sorted(looks), ["沈无咎·铁匠短褐·眉骨旧疤"])
+        self.assertEqual(self._worn("E1S01"), "铁匠短褐")
+        self.assertEqual(self._worn("E2S01"), "铁匠短褐·眉骨旧疤")
 
     def test_a_scene_reference_sets_the_episode_and_the_scene(self):
         looks = self._plan({"name": "沈无咎·剑伤", "description": "左颊血口。从第2集第3场起"}, scenes=[_scene("E1S01", "沈无咎", SHEN), _scene("E2S01", "沈无咎", SHEN), _scene("E3S01", "沈无咎", SHEN)])
@@ -417,8 +634,9 @@ class TimingTests(unittest.TestCase):
             costumes=[{"name": "沈无咎·奴衣", "description": "短褐。第1-3集"}],
             scenes=[_scene("E1S01", "沈无咎", SHEN), _scene("E2S01", "沈无咎", SHEN)],
         )
-        self.assertEqual(looks["沈无咎·奴衣"]["facts"]["spans"], [[1, 2]])
+        self.assertNotIn("沈无咎·奴衣", looks)
         self.assertEqual(looks["沈无咎·奴衣·剑伤"]["facts"]["spans"], [[2, 3]])
+        self.assertEqual(looks["沈无咎·奴衣·剑伤"]["facts"]["without"][0]["spans"], [[1, 2]])
         self.assertEqual(self._worn("E2S01"), "奴衣")
         self.assertEqual(self._worn("E2S03"), "奴衣·剑伤")
 
@@ -460,6 +678,40 @@ class TimingTests(unittest.TestCase):
         # 官服那段他没出场：不出官服带伤这张。
         self.assertEqual(sorted(looks), ["沈无咎·奴衣", "沈无咎·残衣·剑伤"])
         self.assertNotIn("苏问剑·月白", " ".join(looks))
+
+    def test_looks_for_episodes_not_written_yet_are_still_filed_and_marked_later(self):
+        self._plan(
+            costumes=[{"name": "沈无咎·奴衣", "description": "短褐。第1-2集"}, {"name": "沈无咎·残衣", "description": "残衣。第2集"},
+                      {"name": "沈无咎·官服", "description": "官服。第9-10集"}, {"name": "苏问剑·丧服", "description": "丧服。第11集起"}],
+            scenes=[_scene("E1S01", "沈无咎拭剑。", SHEN), _scene("E2S01", "苏问剑独自走。", "苏问剑")],
+        )
+        filed = {look["name"]: look["facts"] for look in plan_looks(self.task, include_later=True)}
+        # 第 2 集写好了、他没穿残衣：真用不上。第 9 集起剧本还没写到：登记、标 later。
+        self.assertEqual(sorted(filed), ["沈无咎·奴衣", "沈无咎·官服", "苏问剑·丧服"])
+        self.assertNotIn("later", filed["沈无咎·奴衣"])
+        self.assertTrue(filed["沈无咎·官服"]["later"] and filed["苏问剑·丧服"]["later"])
+        # 没要 later 的地方(资产就绪、拆解表)照旧只算写好的集。
+        self.assertEqual([look["name"] for look in plan_looks(self.task)], ["沈无咎·奴衣"])
+        later = character_variants.clean_variant(filed["沈无咎·官服"], element_name="沈无咎·官服")
+        self.assertTrue(later["later"], "表单改过一次 later 也不丢")
+
+    def test_a_look_for_later_episodes_is_not_worn_in_the_episodes_written(self):
+        self._plan(
+            costumes=[{"name": "沈无咎·奴衣", "description": "短褐。第1-8集"}, {"name": "沈无咎·官服", "description": "官服。第9集起"}],
+            scenes=[_scene("E1S01", "沈无咎拭剑。", SHEN), _scene("E2S01", "沈无咎拭剑。", SHEN)],
+        )
+        filed = [
+            {"id": f"look-{index}", "kind": "actor", "name": look["name"], "description": look["description"],
+             "metadata": {"variant": look["facts"], "task_id": TASK_ID}, "image_url": f"data:look-{index}"}
+            for index, look in enumerate(plan_looks(self.task, include_later=True))
+        ]
+        self.assertTrue(filed[1]["metadata"]["variant"]["later"])
+        for scene_id in ("E1S01", "E2S01"):
+            scene = {"scene_id": scene_id, "content": "沈无咎走来。", "characters": [SHEN]}
+            worn = compile_scene_context(self.task, scene, filed)["actors"][0].get("variant")
+            self.assertEqual(worn, "奴衣", scene_id)
+        scene = {"scene_id": "E9S01", "content": "沈无咎走来。", "characters": [SHEN]}
+        self.assertEqual(compile_scene_context(self.task, scene, filed)["actors"][0]["variant"], "官服")
 
     def test_a_character_with_no_scenes_at_all_draws_nothing(self):
         looks = self._plan(costumes=[{"name": "苏问剑·月白袍", "description": "袍"}], scenes=[_scene("E1S01", "沈无咎拭剑。", SHEN)])
@@ -724,7 +976,9 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(self._actors()["沈无咎·麻灰拭剑奴衣"]["metadata"]["variant"]["spans"], [[1, 8], [11, 45]])
         self._file_with_wound()
         actors = self._actors()
-        self.assertEqual(actors["沈无咎·麻灰拭剑奴衣"]["metadata"]["variant"]["spans"], [[1, 8]])
+        # 素的那身并进了带伤的那张：它退役，带伤的那张记下第 1-8 集不带伤。
+        self.assertTrue(actors["沈无咎·麻灰拭剑奴衣"]["metadata"]["variant"]["retired"])
+        self.assertEqual(actors["沈无咎·麻灰拭剑奴衣·左颊剑伤"]["metadata"]["variant"]["without"][0]["spans"], [[1, 8]])
         self.assertIn("沈无咎·染血残衣·左颊剑伤", actors)
         self.assertTrue(actors["沈无咎·染血残衣"]["metadata"]["variant"]["retired"])
         self.assertFalse(character_variants.is_current_look(actors["沈无咎·染血残衣"]))
@@ -840,6 +1094,17 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(redrawn.status_code, 200, redrawn.text)
         self.assertFalse(redrawn.json()["metadata"]["needs_redraw"])
 
+    def test_dropping_only_the_episode_words_keeps_the_picture(self):
+        # 以前读不出「第1、2集穿着」，它留在了定妆图的文字里；现在去掉它不是改了穿戴，图不用重画。
+        self._file_looks()
+        look = self._actors()["沈无咎·染血残衣"]
+        self._drawn(look["id"])
+        asyncio.run(self.store.update_element(look["id"], self.user.id, name=None, description=f"{look['description']}；第1、2集穿着"))
+        asyncio.run(_file_character_looks(task=_task(), task_id=TASK_ID, owner_id=self.user.id, store=self.store))
+        kept = self._actors()["沈无咎·染血残衣"]
+        self.assertEqual(kept["description"], look["description"])
+        self.assertFalse(kept["metadata"].get("needs_redraw"))
+
     def test_an_undrawn_look_is_rewritten_with_no_flag(self):
         self._file_looks()
         changed = _task()
@@ -866,6 +1131,37 @@ class LibraryTests(unittest.TestCase):
         # 再同步一次不会重复写。
         asyncio.run(_file_crowd_wardrobe(task=task, task_id=TASK_ID, owner_id=self.user.id, store=self.store))
         self.assertEqual(self._extras()["禁军"]["description"], "二十人列阵；服装：黑铁札甲，红缨")
+
+    def test_costumes_for_episodes_not_written_yet_are_filed_and_can_be_drawn(self):
+        # 剧本只写到第 3 集：第 9-10 集的血衣也登记成定妆图，标「剧本还没写到」，批量生成里有它。
+        task = _task()
+        task["assets"]["2_breakdown"]["scenes"] = [
+            {"scene_id": f"E{episode}S01", "content": "沈无咎拭剑，苏问剑守冢。", "characters": [SHEN, "苏问剑"]} for episode in (1, 2, 3)
+        ]
+        repository = TaskRepository(str(Path(self.temp.name) / "tasks.json"))
+        repository.save_task(TASK_ID, task)
+        app.dependency_overrides[drama_api.require_owned_drama_task] = lambda: None
+        with patch.object(drama_api.service, "repo", repository), \
+             patch("app.api.element_api.element_image_gateway.generate_image") as generate:
+            synced = self.client.post(f"/api/drama/{TASK_ID}/character-looks/sync", cookies=self.cookie)
+            again = self.client.post(f"/api/drama/{TASK_ID}/character-looks/sync", cookies=self.cookie).json()
+        generate.assert_not_called()
+        self.assertEqual(synced.status_code, 200, synced.text)
+        self.assertEqual((synced.json()["created"], again["created"]), (3, 0))
+        actors = self._actors()
+        blood = actors["沈无咎·染血残衣"]["metadata"]["variant"]
+        self.assertTrue(blood["later"])
+        self.assertNotIn("retired", blood)
+        self.assertNotIn("later", actors["月白守冢袍"]["metadata"]["variant"])
+        job = self.client.post(
+            "/api/elements/generation-jobs", json={"kind": "actor", "looks": True, "task_id": TASK_ID}, cookies=self.cookie,
+        ).json()
+        self.assertEqual(job["total"], 3)
+        # 写到第 9 集时它就是一张普通的定妆图，不再标 later。
+        task["assets"]["2_breakdown"]["scenes"].append({"scene_id": "E9S01", "content": "沈无咎跪着。", "characters": [SHEN]})
+        task["assets"]["2_breakdown"]["scenes"].append({"scene_id": "E10S01", "content": "沈无咎倒下。", "characters": [SHEN]})
+        asyncio.run(_file_character_looks(task=task, task_id=TASK_ID, owner_id=self.user.id, store=self.store))
+        self.assertNotIn("later", self._actors()["沈无咎·染血残衣"]["metadata"]["variant"])
 
     def _untimed_task(self, repository) -> None:
         task = _task()
@@ -1039,7 +1335,7 @@ class LibraryTests(unittest.TestCase):
             response = self.client.post(f"/api/elements/{look['id']}/regenerate", json={"prompt": ""}, cookies=self.cookie)
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual([file["slot"] for file in response.json()["files"]], ["front", *LOOK_VIEW_SLOTS])
-        self.assertEqual(response.json()["metadata"]["look_layout"], "makeup")
+        self.assertEqual(response.json()["metadata"]["look_layout"], "makeup_side")
 
     def test_an_earlier_board_is_cut_without_drawing_and_only_looks_take_those_slots(self):
         self._base_actor()

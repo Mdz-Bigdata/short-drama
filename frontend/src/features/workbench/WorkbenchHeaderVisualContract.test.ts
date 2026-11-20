@@ -21,7 +21,10 @@ describe('Workbench header visual contract', () => {
 
     expect(header).toMatch(/flex-wrap\s*:\s*nowrap\s*;/);
     expect(header).toMatch(/gap\s*:/);
-    expect(identity).toMatch(/min-width\s*:\s*0\s*;/);
+    // The identity yields to the tools and tabs but keeps a floor wide enough to read the title.
+    expect(identity).toMatch(/min-width\s*:\s*min\(\d+rem,\s*100%\)\s*;/);
+    expect(identity).toMatch(/flex\s*:\s*1 1 0\s*;/);
+    expect(title).toMatch(/min-width\s*:\s*0\s*;/);
     expect(title).toMatch(/white-space\s*:\s*nowrap\s*;/);
     expect(title).toMatch(/text-overflow\s*:\s*ellipsis\s*;/);
     expect(title).toMatch(/overflow\s*:\s*hidden\s*;/);
@@ -31,7 +34,34 @@ describe('Workbench header visual contract', () => {
     const tabs = declarationsFor(tabsStylesheet, '.agent-stage-tabs');
 
     expect(tabs).toMatch(/flex-wrap\s*:\s*nowrap\s*;/);
-    expect(tabs).toMatch(/flex-shrink\s*:\s*0\s*;/);
+  });
+
+  it('scrolls the Agent tabs inside their own strip instead of widening the header', () => {
+    const tabs = declarationsFor(tabsStylesheet, '.agent-stage-tabs');
+
+    expect(tabs).toMatch(/flex-shrink\s*:\s*1\s*;/);
+    expect(tabs).toMatch(/min-width\s*:\s*0\s*;/);
+    expect(tabs).toMatch(/overflow-x\s*:\s*auto\s*;/);
+    // A scrolling flex strip squashes its children unless each tab refuses to shrink.
+    expect(tabsStylesheet).toMatch(/\.agent-stage-tab\.is-active\s*\{\s*flex\s*:\s*none\s*;/);
+  });
+
+  it('fills the viewport: no header sits above the workbench', () => {
+    expect(declarationsFor(appStylesheet, '.workbench-layout')).toMatch(/height\s*:\s*100vh\s*;\s*height\s*:\s*100dvh\s*;/);
+    expect(appStylesheet).not.toMatch(/100vh - 64px/);
+  });
+
+  it('keeps the top-up notice above every full-screen tool and dialog', () => {
+    const notice = Number(declarationsFor(appStylesheet, '.billing-required').match(/z-index\s*:\s*(\d+)\s*;/)?.[1]);
+    const overlays = [...appStylesheet.matchAll(/z-index\s*:\s*(\d+)\s*;/g)].map(match => Number(match[1]));
+
+    expect(notice).toBe(Math.max(...overlays));
+    expect(notice).toBeGreaterThan(100000);
+  });
+
+  it('never waits on a remote stylesheet before the first paint', () => {
+    expect(appStylesheet).not.toMatch(/@import\s+url\(\s*['"]?https?:/);
+    expect(appStylesheet).toMatch(/font-family\s*:[^;]*'PingFang SC'[^;]*'Microsoft YaHei'[^;]*sans-serif\s*;/);
   });
 
   it('keeps the screenplay identity inside the narrow mobile workbench', () => {

@@ -68,5 +68,43 @@ class AnchoredShotPromptTests(unittest.TestCase):
         self.assertNotIn("anchor_cast", compiled.pressure.dropped)
 
 
+class MentionRefTests(unittest.TestCase):
+    ENTRIES = [
+        {"name": "林夏", "kind": "actor", "element_id": "el-1", "aliases": ["夏夏"]},
+        {"name": "办公室 / 日", "kind": "scene", "element_id": "", "aliases": ["E1S01"]},
+        {"name": "玉佩", "kind": "prop", "element_id": "el-3", "aliases": []},
+        {"name": "青铜镜", "kind": "prop", "element_id": "el-4", "aliases": []},
+        {"name": "青铜镜", "kind": "scene", "element_id": "el-5", "aliases": []},
+    ]
+
+    def resolve(self, text):
+        from app.core.asset_mentions import resolve_mention_refs
+
+        return resolve_mention_refs(text, self.ENTRIES)
+
+    def test_names_resolve_to_their_entry_in_first_seen_order(self):
+        result = self.resolve("@[玉佩]掉在@[林夏]脚边，@[林夏]弯腰。")
+        self.assertEqual(result["refs"], [
+            {"name": "玉佩", "kind": "prop", "element_id": "el-3"},
+            {"name": "林夏", "kind": "actor", "element_id": "el-1"},
+        ])
+        self.assertEqual((result["ambiguous"], result["unknown"]), ([], []))
+
+    def test_aliases_and_spacing_or_punctuation_still_match(self):
+        result = self.resolve("@[夏夏]走进@[办公室日]，@[E1S01]")
+        self.assertEqual([(ref["name"], ref["kind"]) for ref in result["refs"]], [("林夏", "actor"), ("办公室 / 日", "scene")])
+
+    def test_one_name_in_two_kinds_is_ambiguous_and_never_picked(self):
+        result = self.resolve("拿起@[青铜镜]")
+        self.assertEqual(result["refs"], [])
+        self.assertEqual(result["ambiguous"], [{"name": "青铜镜", "kinds": ["prop", "scene"]}])
+
+    def test_unknown_names_are_reported(self):
+        result = self.resolve("@[路人甲]和@[林夏]")
+        self.assertEqual(result["unknown"], ["路人甲"])
+        self.assertEqual(len(result["refs"]), 1)
+        self.assertEqual(self.resolve("没有引用"), {"refs": [], "ambiguous": [], "unknown": []})
+
+
 if __name__ == "__main__":
     unittest.main()

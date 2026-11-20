@@ -10,10 +10,31 @@ class GlobalNegativeListTests(unittest.TestCase):
 
     def test_the_video_list_is_read_from_the_guide(self):
         terms = production_knowledge.global_negatives("video")
-        self.assertEqual(len(terms), 21)
+        self.assertEqual(len(terms), 41)
         self.assertEqual(terms[0], "禁止穿模")
         for term in ("禁止隔空打击", "禁止滑步悬空", "禁止站桩蓄力", "禁止玄幻悬浮打斗", "禁止低帧率卡顿"):
             self.assertIn(term, terms)
+
+    def test_the_general_drama_negatives_are_in_both_lists(self):
+        # 「AI漫剧通用负面提示词」补进来的几条，视频和静帧都带
+        video, image = production_knowledge.global_negatives("video"), production_knowledge.global_negatives("image")
+        for term in ("禁止低分辨率与画质低劣", "禁止人体结构畸形", "禁止手指残缺多余", "禁止五官扭曲", "禁止面部漂移换脸",
+                     "禁止二维码", "禁止低俗擦边", "禁止多余的残忍画面", "禁止多余的灵异虚影", "禁止明星肖像", "禁止塑料建模脸",
+                     # 「光影逻辑统一」
+                     "禁止多个互相矛盾的光源方向", "禁止受光面背光面与投影方向不一致", "禁止阴影长短软硬与光源不符",
+                     "禁止没有来由的亮斑与错位高光"):
+            self.assertIn(term, video)
+            self.assertIn(term, image)
+        self.assertIn("禁止未写明的慢动作", video)
+        self.assertNotIn("禁止未写明的慢动作", image)
+
+    def test_no_term_carries_a_word_the_video_review_refuses(self):
+        # 这一行原样追加到每条提示词，拒单后的改写改不到它：带了「血」「色情」这类词，就是每一镜都被拒。
+        from app.core import prompt_data
+        refused = [word for word, _ in prompt_data.value("fight_safety", "always")] + ["血", "色情", "肢解", "杀", "死"]
+        for medium in ("video", "image"):
+            for term in production_knowledge.global_negatives(medium):
+                self.assertFalse([word for word in refused if word in term], term)
 
     def test_stills_get_only_the_single_frame_subset(self):
         video = set(production_knowledge.global_negatives("video"))
@@ -52,10 +73,20 @@ class GatewayGlobalNegativeTests(unittest.TestCase):
         long_prompt = "雨夜街道，" * 400
         prompt = ModelGateway._with_global_negatives(long_prompt, "video")
         agnes = ModelGateway._agnes_prompt(prompt, "video")
-        line = ModelGateway.GLOBAL_NEGATIVE_LABEL + production_knowledge.global_negative_text("video")
+        triggers = ("换脸", "畸形", "明星肖像")
+        line = ModelGateway.GLOBAL_NEGATIVE_LABEL + production_knowledge.global_negative_text("video", triggers)
         self.assertTrue(agnes.endswith(line))
         self.assertEqual(agnes.count(ModelGateway.GLOBAL_NEGATIVE_LABEL), 1)
         self.assertLessEqual(len(agnes), 600 + 1 + len(line))
+
+    def test_agnes_leaves_out_the_terms_its_review_refuses(self):
+        prompt = ModelGateway._with_global_negatives("少女推门进店。", "image")
+        agnes = ModelGateway._agnes_prompt(prompt, "image")
+        for term in ("禁止面部漂移换脸", "禁止人体结构畸形", "禁止明星肖像"):
+            self.assertIn(term, prompt)
+            self.assertNotIn(term, agnes)
+        self.assertIn("禁止穿模", agnes)
+        self.assertIn("禁止二维码", agnes)
 
     def test_video_and_image_calls_carry_the_list_to_the_provider(self):
         gateway = ModelGateway()
@@ -67,8 +98,8 @@ class GatewayGlobalNegativeTests(unittest.TestCase):
              patch.object(ModelGateway, "_provider_creds", return_value=("", "", "")):
             # 没有任何可用凭证：走到离线兜底前，提示词已经在入口处带上了词表。
             original = ModelGateway._with_global_negatives
-            def spy(prompt, medium):
-                result = original(prompt, medium)
+            def spy(prompt, medium, *rest):
+                result = original(prompt, medium, *rest)
                 seen.setdefault(medium, result)
                 return result
             with patch.object(ModelGateway, "_with_global_negatives", side_effect=spy):

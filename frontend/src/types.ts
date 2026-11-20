@@ -28,6 +28,21 @@ export interface TaskConfig {
   adBrief?: AdBrief;
   /** 剧本内容语言：标题、钩子、台词、旁白、正文与画面描述用它来写 (backend content_language)。 */
   contentLanguage?: ContentLanguage;
+  /** 目标用户：男频 / 女频与年龄段，空值由总导演定 (backend app/core/target_audience.py)；只对连续剧生效。 */
+  targetAudience?: TargetAudience;
+  /** 剧本结构：三幕式、五幕式、英雄旅程…的代码值，空值由总导演定 (backend app/core/script_structure.py)；广告不用。 */
+  scriptStructure?: string;
+  /** 立项前挑中的故事方向 (backend app/core/story_direction.py)；没挑由总导演定，广告不用。 */
+  storyDirection?: { title: string; logline: string; conflict: string; hook: string; appeal: string };
+  /** 创作禁区：创作者明确不要出现的东西，一条一句。 */
+  storyNoGo?: string[];
+  /** 连载立项 (backend app/core/serial_brief.py, paywall_plan.py)：题材最多三个、第一个定基调；都可以不选，只对连续剧生效。 */
+  storyGenres?: string[];
+  storyTone?: string;
+  endingType?: string;
+  overseas?: boolean;
+  /** 按集数规划付费卡点；不到起步集数的剧不规划。 */
+  paywallPlan?: boolean;
   oneClick: boolean;
   episodeCount: number;
   /** 编剧可引用、化用的诗词库作者或篇名 (backend app/core/poetry_library.py)；空表示不用诗词库。 */
@@ -36,13 +51,26 @@ export interface TaskConfig {
 
 export type NarrationDelivery = 'use_tts' | 'post_production';
 
-export type CreationMode = 'drama' | 'narration' | 'ad';
+export type AudienceLean = '' | 'male' | 'female';
+
+export type AudienceAge = '' | 'youth' | 'adult' | 'senior';
+
+export interface TargetAudience {
+  lean: AudienceLean;
+  age: AudienceAge;
+}
+
+export const EMPTY_TARGET_AUDIENCE: TargetAudience = { lean: '', age: '' };
+
+export type CreationMode = 'drama' | 'narration' | 'ad' | 'film';
 
 export interface AdBrief {
   product: string;
   sellingPoints: string;
   audience: string;
   callToAction: string;
+  /** 'story'：剧情带货——先讲一场小戏，产品在戏里自然出场；空着是普通广告短片。 */
+  format?: '' | 'story';
 }
 
 export const EMPTY_AD_BRIEF: AdBrief = { product: '', sellingPoints: '', audience: '', callToAction: '' };
@@ -59,6 +87,7 @@ export const CREATION_MODE_OPTIONS: Array<{ id: CreationMode; label: string; hin
   { id: 'drama', label: '剧情短剧', hint: '角色在画面里说话，按集推进剧情' },
   { id: 'narration', label: '旁白解说', hint: '旁白讲述故事，角色只表演不开口' },
   { id: 'ad', label: '广告短片', hint: '按产品简报做 15–60 秒短片：开场抓人、产品清楚、结尾行动号召' },
+  { id: 'film', label: '电影短片', hint: '一集讲完的完整短片：一个人、一个困境、一次回不了头的选择，结尾收住' },
 ];
 
 export const NARRATION_DELIVERY_OPTIONS: Array<{ id: NarrationDelivery; label: string; hint: string }> = [
@@ -97,6 +126,8 @@ export interface StageProgress {
 export interface WorkflowSnapshot {
   stages: Array<{
     stage: number;
+    /** 用户看到的第几步：第 6、7 阶段同属剪辑合成师，都是第 6 步，宣发是第 7 步。 */
+    step?: number;
     label: string;
     state: 'complete' | 'running' | 'pending';
     missing: string[];
@@ -105,6 +136,9 @@ export interface WorkflowSnapshot {
   next_stage: number | null;
   active_stage: number | null;
   completed_stages: number[];
+  /** 用户看到的总步数(7)与已完成步数；旧快照没有，就按阶段数算。 */
+  steps_total?: number;
+  steps_done?: number;
   production_complete: boolean;
   release_ready: boolean;
   mode: 'running' | 'ready' | 'paused' | 'blocked' | 'review' | 'completed';
@@ -117,6 +151,12 @@ export interface TaskChatEntry {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  /** 助手这一轮的界面事件(捏脸已更新、舞台已改)，服务端存下来，重开项目后照样做成卡片。 */
+  ui_actions?: unknown[];
+  /** 助手这一轮提出、等用户确认的付费操作。 */
+  proposal?: unknown;
+  /** 模型随回复给出的可读思考(只在助手消息上)，界面默认折叠，仅供参考。 */
+  reasoning?: string;
 }
 
 /** What GET /api/drama/list returns: the lobby row without generated assets.

@@ -13,33 +13,44 @@ import re
 from typing import Any, Iterable
 
 from app.core import breakdown_kinds
+from app.core import prompt_data
+
+
+_WORDING_FILE = "production_asset_extractor"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/production_asset_extractor.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 # One asset kind -> the labelled sections that describe it in the shooting
 # scripts this project produces (see backend/skills/**/storyboard-format.md).
 _SECTION_LABELS: dict[str, tuple[str, ...]] = {
-    "prop": ("关键道具", "道具"),
-    "costume": ("服装", "服饰", "造型", "着装"),
-    "effect": ("特效", "视效", "效果"),
+    "prop": _words_of("module.section_labels.prop"),
+    "costume": _words_of("module.section_labels.costume"),
+    "effect": _words_of("module.section_labels.effect"),
     **breakdown_kinds.SECTION_LABELS,
 }
 # `SC01 建康城外乱葬岗` and `建康城外乱葬岗` are the same location written twice.
 _SCENE_CODE_PREFIX = re.compile(r"^(?:SC|SCENE|E\d+S)\s*\d*\s*[-:：]?\s*", re.IGNORECASE)
 _SCENE_HEADING = re.compile(
-    r"【\s*(?:场景|SCENE)\s*[0-9零一二三四五六七八九十]*\s*[:：]?\s*([^】]{2,80})\s*】",
+    _text_of("module.scene_heading"),
     re.IGNORECASE,
 )
 _SCENE_BIBLE_HEADING = re.compile(
-    r"^#{0,6}\s*场景圣经\s*[:：]\s*(.+)$",
+    _text_of("module.scene_bible_heading"),
     re.MULTILINE,
 )
 _PLAIN_SCENE_HEADING = re.compile(
-    r"^\s*#{0,6}\s*(?:\*\*)?(?:场景|SCENE)\s*[0-9零一二三四五六七八九十]*\s*[:：]\s*"
-    r"(.{2,100}?)(?:\*\*)?\s*$",
+    _text_of("module.plain_scene_heading"),
     re.IGNORECASE | re.MULTILINE,
 )
 _SCENE_CONTEXT_SUFFIX = re.compile(
-    r"(?:\s+|[/／|｜·]+)(?:凌晨|清晨|早晨|晨|上午|中午|午后|下午|黄昏|傍晚|"
-    r"深夜|夜晚|夜|白天|日|昼|内景|外景|内|外)\s*$"
+    _text_of("module.scene_context_suffix")
 )
 _LIST_ITEM = re.compile(r"^\s*[-*•]\s*(.+)$")
 _MAX_ASSETS_PER_KIND = 60
@@ -66,10 +77,10 @@ def _split_entries(raw: str) -> list[str]:
 # A trailing clause such as `插在萧遥腰带。` describes the previous prop rather
 # than naming a new one; asset names are noun phrases, not verb phrases.
 _CLAUSE_START = re.compile(
-    r"^(?:插在|挂在|放在|位于|系在|藏在|摆在|由|从|被|用于|用来|随|以|在|其|该|它|他|她)"
+    _text_of("module.clause_start")
 )
 _ACTION_TAIL = re.compile(
-    r"(?:割下|拿起|放下|折断|形成对比|对比|甩出|扔出|递给|举起|穿上|脱下|生锈|反光明显|飞溅)。?$"
+    _text_of("module.action_tail")
 )
 
 
@@ -121,7 +132,7 @@ def _extract_locations(scenes: list[dict[str, Any]], script: str) -> list[dict[s
         # `建康城外乱葬岗 / 夜 / 暴雨初歇` -> name is the place, rest is context.
         segments = [segment for segment in (_clean(part) for part in heading.split("/")) if segment]
         name = segments[0] if segments else heading
-        name = re.sub(r"^(?:场景|SCENE)\s*[0-9零一二三四五六七八九十]*\s*[:：]?\s*", "", name).strip()
+        name = re.sub(_text_of("record.name"), "", name).strip()
         name = _SCENE_CODE_PREFIX.sub("", name).strip()
         # Stage 2 emits headings such as `场景1：太常寺天文台 夜 内景`.
         # Strip only well-known time/interior markers from the tail; the place
@@ -195,6 +206,7 @@ def _extract_structured_catalog(breakdown: dict[str, Any], kind: str) -> list[di
         return []
 
     found: dict[str, str] = {}
+    aliases: dict[str, list[str]] = {}
     for raw_item in raw_items:
         if isinstance(raw_item, dict):
             name = _clean(raw_item.get("name"))[:_MAX_NAME_LENGTH]
@@ -205,9 +217,17 @@ def _extract_structured_catalog(breakdown: dict[str, Any], kind: str) -> list[di
         if not name or name in found:
             continue
         found[name] = description
+        # 剧本里对它的别的叫法，跟着进素材库(元数据 aliases)，分镜按这些叫法也认得到它。
+        raw_aliases = raw_item.get("aliases") if isinstance(raw_item, dict) and isinstance(raw_item.get("aliases"), list) else []
+        named = [alias for alias in dict.fromkeys(_clean(alias)[:_MAX_NAME_LENGTH] for alias in raw_aliases) if alias and alias != name]
+        if named:
+            aliases[name] = named
         if len(found) >= _MAX_ASSETS_PER_KIND:
             break
-    return [{"name": name, "description": description} for name, description in found.items()]
+    return [
+        {"name": name, "description": description, **({"aliases": aliases[name]} if name in aliases else {})}
+        for name, description in found.items()
+    ]
 
 
 def _actor_image(character: dict[str, Any]) -> str:
@@ -268,7 +288,7 @@ def _extract_actors(
             continue
         found[name] = {
             "name": name,
-            "description": _clean(role.get("position")) or "剧情角色",
+            "description": _clean(role.get("position")) or _text_of("_extract_actors.description"),
             "image_url": "",
         }
 
@@ -277,7 +297,7 @@ def _extract_actors(
             name = _clean(raw_name)[:_MAX_NAME_LENGTH]
             if not name or name in found or len(found) >= _MAX_ASSETS_PER_KIND:
                 continue
-            found[name] = {"name": name, "description": "剧情角色", "image_url": ""}
+            found[name] = {"name": name, "description": _text_of("_extract_actors.description.2"), "image_url": ""}
 
     return list(found.values())[:_MAX_ASSETS_PER_KIND]
 
@@ -294,7 +314,7 @@ def _scene_images(shots: list[dict[str, Any]]) -> dict[str, str]:
         for raw_key in (shot.get("scene_id"), shot.get("sceneId"), shot.get("scene")):
             key = _clean(raw_key)
             # `继承本场戏场景圣经` is a template placeholder, not a scene name.
-            if not key or "继承" in key:
+            if not key or _text_of("_scene_images.text") in key:
                 continue
             images.setdefault(key, url)
     return images
@@ -303,7 +323,7 @@ def _scene_images(shots: list[dict[str, Any]]) -> dict[str, str]:
 def extract_production_assets(task: dict[str, Any], kind: str) -> list[dict[str, Any]]:
     """Return the `{name, description, image_url}` assets the screenplay names."""
     if kind not in {"actor", "scene", "prop", "costume", "effect", "product", *breakdown_kinds.KINDS}:
-        raise ValueError("仅支持提取 actor、scene、prop、costume、effect、product 和拆解补充类别的资产")
+        raise ValueError(_text_of("extract_production_assets.text"))
     assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
     config = task.get("config") if isinstance(task.get("config"), dict) else {}
     if kind == "product":
@@ -313,8 +333,8 @@ def extract_production_assets(task: dict[str, Any], kind: str) -> list[dict[str,
         brief = creation_modes.ad_brief(config) if creation_modes.mode_of(config) == "ad" else {}
         if not brief.get("product"):
             return []
-        description = "；".join(part for part in (brief.get("selling_points"), brief.get("audience") and f"面向{brief['audience']}") if part)
-        return [{"name": brief["product"], "description": description or "广告主推商品", "image_url": ""}]
+        description = "；".join(part for part in (brief.get("selling_points"), brief.get("audience") and _text_of("extract_production_assets.description").format(brief['audience'])) if part)
+        return [{"name": brief["product"], "description": description or _text_of("extract_production_assets.description.2"), "image_url": ""}]
     breakdown = assets.get("2_breakdown") if isinstance(assets.get("2_breakdown"), dict) else {}
     scenes = [item for item in (breakdown.get("scenes") or []) if isinstance(item, dict)]
     script_parts = [

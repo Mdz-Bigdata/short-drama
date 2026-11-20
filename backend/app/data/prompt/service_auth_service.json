@@ -1,0 +1,12 @@
+{
+  "_doc": "app/service/auth_service.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "register.text": "该邮箱已被注册",
+  "register.text.2": "该手机号已被注册",
+  "login_by_password.text": "账号或密码错误",
+  "login_by_password.text.2": "内置演示管理员已禁用，请注册独立账号",
+  "login_by_password.text.3": "账号或密码错误",
+  "consume_verification_code.text": "参数不能为空",
+  "consume_verification_code.text.2": "验证码不正确或已过期",
+  "consume_verification_code.text.3": "验证码不正确或已过期",
+  "consume_verification_code.text.4": "验证码不正确或已过期"
+}

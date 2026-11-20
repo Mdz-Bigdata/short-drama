@@ -78,8 +78,9 @@ export function RunDialog({ assessment: initial, onClose, onConfirm }: {
           <li key={node.node_id} className={node.quote === 'blocked' ? 'is-blocked' : ''}>
             <strong>{node.label}</strong>
             <small>
-              {node.model || t('未选模型')}
+              {node.model || (node.paid ? t('未选模型') : t('本机处理，免费'))}
               {node.requested_seconds > 0 ? ` · ${t('{0} 秒', [node.requested_seconds])}` : ''}
+              {node.versions && node.versions > 1 ? ` · ${t('{0} 个结果', [node.versions])}` : ''}
               {node.paid && node.estimate.priced && node.estimate.currency ? ` · ${node.estimate.cost} ${node.estimate.currency}` : ''}
               {node.paid && !node.estimate.priced ? ` · ${t('未定价')}` : ''}
             </small>
@@ -171,6 +172,9 @@ export function CommitDialog({ projectId, canvasId, nodeIds, onClose, onCommit }
               </li>
             ))}
           </ul>
+          {preview.nodes.some(row => row.state === 'ready' && row.medium === 'video' && row.applies_to_shots && row.impact.count > 0) && (
+            <p className="cn-hint">{t('视频会作为这些镜头的参考视频；已经出过片的镜头，还会在镜头工作台里多一个可「选用此版」的版本。')}</p>
+          )}
           {(preview.counts.no_provenance + preview.counts.no_result + preview.counts.already) > 0 && (
             <p className="cn-hint">{t('将跳过 {0} 个：没有来源 {1}，没有结果 {2}，已提交 {3}', [
               preview.counts.no_provenance + preview.counts.no_result + preview.counts.already,

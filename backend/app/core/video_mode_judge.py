@@ -26,7 +26,7 @@ _DATA = "video_mode_judge"
 ENABLED_ENV = "VIDEO_MODE_JUDGE"
 FIRST_LAST = "first_last_frame"
 MULTI_REFERENCE = "multi_reference"
-_CHOICES = (FIRST_LAST, MULTI_REFERENCE)
+_CHOICES = (MULTI_REFERENCE, FIRST_LAST)
 
 
 @dataclass(frozen=True)

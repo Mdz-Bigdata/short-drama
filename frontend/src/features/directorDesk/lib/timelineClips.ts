@@ -5,7 +5,7 @@ import type {
   ActionClip, CameraCut, CameraKey, FollowClip, SpacePoint, StageActor, StageOperation, StagePlan, StageShot, ShotTimeline,
 } from '../../spatial/spatialTypes';
 import { humanoidClip } from './humanoidClips';
-import { sampleShot, timelineOf, timeOfFrame } from './sampling';
+import { frameOf, lastPlayheadFrame, sampleShot, timelineOf, timeOfFrame } from './sampling';
 import { round2 } from './stageMath';
 
 export interface Block { id: string; start: number; end: number }
@@ -38,8 +38,9 @@ export const FOLLOW_PRESETS: FollowPreset[] = [
   { id: 'top', label: '俯拍跟随', offset: [0, 5, 0.6], aim: 0.6, lensMm: 28, relative: 'world' },
 ];
 
-function snap(time: number, fps: number): number {
-  return timeOfFrame(Math.round(time * fps), fps);
+/** The frame nearest `time`, stamped; in a shot that is not a whole number of frames long, never past its end. */
+function snap(time: number, fps: number, durationS: number): number {
+  return timeOfFrame(Math.round(time * fps), fps, durationS);
 }
 
 function sorted<T extends Block>(blocks: T[]): T[] {
@@ -62,9 +63,12 @@ export function moveBlock<T extends Block>(blocks: T[], id: string, start: numbe
   const [low, high] = roomOf(blocks, id, durationS);
   return sorted(blocks.map(block => {
     if (block.id !== id) return block;
-    const length = block.end - block.start;
-    const from = snap(Math.min(high - length, Math.max(low, start)), fps);
-    return { ...block, start: from, end: round2Time(from + length) };
+    // Counted in frames: both ends are stamped to the millisecond, so the length in seconds can be a frame's
+    // rounding off, and the slid block would hand over a frame late.
+    const frames = frameOf(block.end, fps) - frameOf(block.start, fps);
+    const last = high >= durationS ? lastPlayheadFrame(durationS, fps) : frameOf(high, fps);
+    const first = Math.min(last - frames, Math.max(frameOf(low, fps), Math.round(start * fps)));
+    return { ...block, start: timeOfFrame(first, fps, durationS), end: timeOfFrame(first + frames, fps, durationS) };
   }));
 }
 
@@ -78,8 +82,8 @@ export function trimBlock<T extends Block>(blocks: T[], id: string, edge: 'start
   return blocks.map(block => {
     if (block.id !== id) return block;
     return edge === 'start'
-      ? { ...block, start: snap(Math.min(block.end - MIN_BLOCK_S, Math.max(low, time)), fps) }
-      : { ...block, end: snap(Math.max(block.start + MIN_BLOCK_S, Math.min(high, time)), fps) };
+      ? { ...block, start: snap(Math.min(block.end - MIN_BLOCK_S, Math.max(low, time)), fps, durationS) }
+      : { ...block, end: snap(Math.max(block.start + MIN_BLOCK_S, Math.min(high, time)), fps, durationS) };
   });
 }
 
@@ -91,7 +95,7 @@ export function placeBlock(blocks: Block[], at: number, length: number, fps: num
   const limit = next?.start ?? durationS;
   const end = Math.min(limit, from + length);
   if (end - from < MIN_BLOCK_S) return null;
-  return { start: snap(from, fps), end: snap(end, fps) };
+  return { start: snap(from, fps, durationS), end: snap(end, fps, durationS) };
 }
 
 export function nextBlockId(blocks: Block[], prefix: string): string {

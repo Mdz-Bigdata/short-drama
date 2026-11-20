@@ -348,6 +348,47 @@ describe('ElementLibraryPage', () => {
     vi.useRealTimers();
   });
 
+  it('keeps the open folder when it polls for a 数字演员 sheet that is still being drawn', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const actor = (id: string, name: string, regeneration?: Record<string, unknown>) => ({
+      id, kind: 'actor' as const, name, description: '', status: 'ready', version: 1,
+      metadata: { task_id: 'task-cast', ...(regeneration ? { regeneration } : {}) }, files: [], model3d: null,
+    });
+    const running = actor('actor-lu', '陆昀', { status: 'running', started_epoch: Date.now() / 1000 });
+    const outside = actor('actor-shen', '沈砚');
+    const listUrls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/api/elements/folders?kind=actor')) {
+        return {
+          ok: true,
+          json: async () => ({ folders: [{ id: 'folder-1', name: '主角团', count: 1, cover_element_id: null, cover_url: null }], total: 2, unfiled: 1 }),
+        } as Response;
+      }
+      if (url.includes('/api/elements?kind=actor')) {
+        listUrls.push(url);
+        const items = url.includes('folder=folder-1') ? [running] : [running, outside];
+        return { ok: true, json: async () => ({ items, page: 1, page_size: 100, total: items.length }) } as Response;
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    render(<ElementLibraryPage initialKind="actor" onBack={() => undefined} />);
+    expect(await screen.findByRole('article', { name: /沈砚/ })).toBeTruthy();
+    await userEvent.click(await screen.findByRole('button', { name: /主角团/ }));
+    await waitFor(() => expect(screen.queryByRole('article', { name: /沈砚/ })).toBeNull());
+    expect(await screen.findByRole('article', { name: /陆昀/ })).toBeTruthy();
+
+    const before = listUrls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    await waitFor(() => expect(listUrls.length).toBe(before + 1));
+    // The silent re-read asks for the same folder, so cards from outside it do not come back.
+    expect(listUrls[listUrls.length - 1]).toContain('folder=folder-1');
+    expect(screen.queryByRole('article', { name: /沈砚/ })).toBeNull();
+    expect(screen.getByRole('article', { name: /陆昀/ })).toBeTruthy();
+    vi.useRealTimers();
+  });
+
   it('shows why the last 数字演员 regeneration failed', async () => {
     const actor = {
       id: 'actor-pei', kind: 'actor' as const, name: '裴崇', description: '', status: 'ready', version: 2,
@@ -380,6 +421,17 @@ describe('ElementLibraryPage', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
       const url = String(input);
       if (url.endsWith('/api/elements/generation-jobs') && options?.method === 'POST') {
+        // 特效页把并进来的特技也一起补：特技这类没有缺图，一出来就完成。
+        if (JSON.parse(String(options.body)).kind === 'stunt') {
+          expect(JSON.parse(String(options.body))).toEqual({ kind: 'stunt', task_id: 'task-effects' });
+          return {
+            ok: true,
+            json: async () => ({
+              id: 'generation-job-2', kind: 'stunt', status: 'completed', total: 0,
+              processed: 0, succeeded: 0, failed: 0, remaining: 0, errors: [],
+            }),
+          } as Response;
+        }
         expect(JSON.parse(String(options.body))).toEqual({ kind: 'effect', task_id: 'task-effects' });
         return {
           ok: true,
@@ -437,7 +489,7 @@ describe('ElementLibraryPage', () => {
     ))).toBe(true);
     // Embedded in a project, listing is scoped to that project's own and linked assets.
     expect(fetchMock.mock.calls.some(([url]) => (
-      String(url).includes('/api/elements?kind=effect&page=1&page_size=50&task_id=task-effects')
+      String(url).includes('/api/elements?kind=effect&page=1&page_size=100&task_id=task-effects')
     ))).toBe(true);
   });
 
@@ -1202,5 +1254,299 @@ describe('actor five-view preview switching', () => {
     expect(screen.queryByRole('img', { name: /沈砚之/ })).toBeNull();
     expect(screen.getByText('背面全身视图未上传')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /删除“沈砚之”的背面全身视图/ })).toBeNull();
+  });
+
+  it('pages through the whole list instead of stopping at the first page', async () => {
+    const makeEffect = (index: number) => ({
+      id: `effect-${index}`, kind: 'effect' as const, name: `特效${String(index).padStart(3, '0')}`, description: '',
+      status: 'ready', version: 1, metadata: {}, files: [], model3d: null,
+    });
+    const all = Array.from({ length: 130 }, (_, index) => makeEffect(index + 1));
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = new URL(String(input), 'http://localhost');
+      const page = Number(url.searchParams.get('page'));
+      const size = Number(url.searchParams.get('page_size'));
+      return {
+        ok: true,
+        json: async () => ({ items: all.slice((page - 1) * size, page * size), page, page_size: size, total: all.length }),
+      } as Response;
+    });
+
+    render(<ElementLibraryPage initialKind="effect" embedded />);
+
+    expect(await screen.findByRole('article', { name: '特效资产“特效130”' })).toBeTruthy();
+    expect(screen.getAllByRole('article')).toHaveLength(130);
+    expect(screen.getByText('130')).toBeTruthy();
+    const listed = fetchMock.mock.calls.map(([url]) => String(url)).filter(url => url.includes('/api/elements?kind=effect'));
+    expect(listed).toHaveLength(2);
+    expect(listed[0]).toContain('page=1&page_size=100');
+    expect(listed[1]).toContain('page=2&page_size=100');
+  });
+
+  it('reads the list again when an asset moved to the front between two pages', async () => {
+    const makeEffect = (index: number) => ({
+      id: `effect-${index}`, kind: 'effect' as const, name: `特效${String(index).padStart(3, '0')}`, description: '',
+      status: 'ready', version: 1, metadata: {}, files: [], model3d: null,
+    });
+    // The server lists the most recently changed first.
+    let order = Array.from({ length: 130 }, (_, index) => makeEffect(index + 1));
+    let moved = false;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = new URL(String(input), 'http://localhost');
+      const page = Number(url.searchParams.get('page'));
+      const size = Number(url.searchParams.get('page_size'));
+      const body = { items: order.slice((page - 1) * size, page * size), page, page_size: size, total: order.length };
+      if (page === 1 && !moved) {
+        // Right after page 1 is read, an asset from page 2 is updated and jumps to the top.
+        moved = true;
+        order = [order[114], ...order.slice(0, 114), ...order.slice(115)];
+      }
+      return { ok: true, json: async () => body } as Response;
+    });
+
+    render(<ElementLibraryPage initialKind="effect" embedded />);
+
+    expect(await screen.findByRole('article', { name: '特效资产“特效115”' })).toBeTruthy();
+    expect(screen.getAllByRole('article')).toHaveLength(130);
+    const pages = fetchMock.mock.calls
+      .map(([url]) => new URL(String(url), 'http://localhost'))
+      .filter(url => url.pathname === '/api/elements')
+      .map(url => url.searchParams.get('page'));
+    // First pass comes up one short (page 3 is empty), so the list is read once more from the start.
+    expect(pages).toEqual(['1', '2', '3', '1', '2']);
+  });
+
+  it('keeps the workspace on screen while the list reloads after a change', async () => {
+    const scene = makeSpatialAsset('scene', 1);
+    const reload = deferred<Response>();
+    let lists = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = String(input);
+      if (url.endsWith('/api/elements/scene-1/files/scene-1-reference') && options?.method === 'DELETE') {
+        return { ok: true, json: async () => ({ ...scene, files: [] }) } as Response;
+      }
+      if (url.includes('/api/elements?kind=scene')) {
+        lists += 1;
+        if (lists > 1) return reload.promise;
+        return { ok: true, json: async () => ({ items: [scene], page: 1, page_size: 100, total: 1 }) } as Response;
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container } = render(<ElementLibraryPage initialKind="scene" embedded />);
+
+    const workspace = await screen.findByRole('region', { name: '场景 3D 资产工作台' });
+    expect(container.querySelector('.element-library-content')?.getAttribute('aria-busy')).toBe('false');
+    await userEvent.click(within(workspace).getByRole('button', { name: '删除参考图' }));
+
+    // The delete has landed and the list is being read again: same workspace node, no full-page loader.
+    await waitFor(() => expect(lists).toBe(2));
+    expect(screen.getByRole('region', { name: '场景 3D 资产工作台' })).toBe(workspace);
+    expect(screen.queryByText(/正在加载场景库/)).toBeNull();
+    expect(container.querySelector('.element-library-content')?.getAttribute('aria-busy')).toBe('true');
+
+    await act(async () => {
+      reload.resolve({ ok: true, json: async () => ({ items: [{ ...scene, files: [] }], page: 1, page_size: 100, total: 1 }) } as Response);
+    });
+    await waitFor(() => expect(container.querySelector('.element-library-content')?.getAttribute('aria-busy')).toBe('false'));
+    expect(screen.getByRole('region', { name: '场景 3D 资产工作台' })).toBe(workspace);
+  });
+
+  it('clears the cards of the previous folder as soon as another folder is opened', async () => {
+    const effect = (id: string, name: string) => ({
+      id, kind: 'effect' as const, name, description: '', status: 'ready', version: 1, metadata: {}, files: [], model3d: null,
+    });
+    const inFolder = deferred<Response>();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/api/elements/folders?kind=effect')) {
+        return {
+          ok: true,
+          json: async () => ({ folders: [{ id: 'folder-1', name: '雷电', count: 1, cover_element_id: null, cover_url: null }], total: 2, unfiled: 1 }),
+        } as Response;
+      }
+      if (url.includes('folder=folder-1')) return inFolder.promise;
+      if (url.includes('/api/elements?kind=effect')) {
+        return { ok: true, json: async () => ({ items: [effect('effect-a', '火焰'), effect('effect-b', '雷光')], page: 1, page_size: 100, total: 2 }) } as Response;
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    render(<ElementLibraryPage initialKind="effect" onBack={() => undefined} />);
+
+    expect(await screen.findByRole('article', { name: '特效资产“火焰”' })).toBeTruthy();
+    await userEvent.click(await screen.findByRole('button', { name: /雷电/ }));
+
+    expect(screen.queryByRole('article', { name: '特效资产“火焰”' })).toBeNull();
+    expect(screen.getByText(/正在加载特效库/)).toBeTruthy();
+
+    await act(async () => {
+      inFolder.resolve({ ok: true, json: async () => ({ items: [effect('effect-b', '雷光')], page: 1, page_size: 100, total: 1 }) } as Response);
+    });
+    expect(await screen.findByRole('article', { name: '特效资产“雷光”' })).toBeTruthy();
+    expect(screen.queryByRole('article', { name: '特效资产“火焰”' })).toBeNull();
+  });
+
+  it('deletes the view on show together with the main reference copied from it', async () => {
+    const file = (id: string, slot: string, sha256: string) => ({
+      id, slot, mime_type: 'image/png', media_kind: 'image' as const, size_bytes: 2048, sha256, url: `/media/elements/${id}.png`,
+    });
+    const scene = {
+      id: 'scene-1', kind: 'scene' as const, name: '废弃仓库', description: '', status: 'ready', version: 2, metadata: {},
+      files: [file('ref', 'reference', 'wide-sha'), file('wide', 'scene_main', 'wide-sha'), file('angle', 'scene_45', 'angle-sha')],
+      model3d: null,
+    };
+    let current = scene;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = String(input);
+      const removed = /\/api\/elements\/scene-1\/files\/(\w+)$/.exec(url);
+      if (removed && options?.method === 'DELETE') {
+        current = { ...current, files: current.files.filter(entry => entry.id !== removed[1]) };
+        return { ok: true, json: async () => current } as Response;
+      }
+      if (url.includes('/api/elements?kind=scene')) {
+        return { ok: true, json: async () => ({ items: [current], page: 1, page_size: 100, total: 1 }) } as Response;
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<ElementLibraryPage initialKind="scene" embedded />);
+
+    // The wide view is the one on show, so the button names it rather than a generic 参考图.
+    expect(await screen.findByRole('img', { name: '废弃仓库 主场景全景' })).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: '删除这张：主场景全景' }));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('「主场景全景」这张图'));
+    expect(await screen.findByRole('img', { name: '废弃仓库 45°斜角' })).toBeTruthy();
+    const deleted = fetchMock.mock.calls
+      .filter(([, init]) => init?.method === 'DELETE')
+      .map(([url]) => String(url).split('/').pop());
+    expect(deleted).toEqual(['wide', 'ref']);
+    expect(screen.getByRole('status').textContent).toContain('已删除“废弃仓库”的「主场景全景」这张图');
+  });
+
+  it('shows what is left when the view is deleted but its copy in the main reference is not', async () => {
+    const file = (id: string, slot: string, sha256: string) => ({
+      id, slot, mime_type: 'image/png', media_kind: 'image' as const, size_bytes: 2048, sha256, url: `/media/elements/${id}.png`,
+    });
+    const scene = {
+      id: 'scene-1', kind: 'scene' as const, name: '废弃仓库', description: '', status: 'ready', version: 2, metadata: {},
+      files: [file('ref', 'reference', 'wide-sha'), file('wide', 'scene_main', 'wide-sha'), file('angle', 'scene_45', 'angle-sha')],
+      model3d: null,
+    };
+    let current = scene;
+    let copyFails = true;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = String(input);
+      const removed = /\/api\/elements\/scene-1\/files\/(\w+)$/.exec(url);
+      if (removed && options?.method === 'DELETE') {
+        if (removed[1] === 'ref' && copyFails) {
+          copyFails = false;
+          return { ok: false, status: 500, json: async () => ({ detail: '存储暂时不可用' }) } as Response;
+        }
+        current = { ...current, files: current.files.filter(entry => entry.id !== removed[1]) };
+        return { ok: true, json: async () => current } as Response;
+      }
+      if (url.includes('/api/elements?kind=scene')) {
+        return { ok: true, json: async () => ({ items: [current], page: 1, page_size: 100, total: 1 }) } as Response;
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<ElementLibraryPage initialKind="scene" embedded />);
+
+    expect(await screen.findByRole('img', { name: '废弃仓库 主场景全景' })).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: '删除这张：主场景全景' }));
+
+    // The view is gone on the server, so it is gone here too, and the message says what stayed behind.
+    expect((await screen.findByRole('alert')).textContent)
+      .toContain('“废弃仓库”的「主场景全景」这张图已删除，但主参考图里还留着同一张，没删掉。请再删一次主参考图。');
+    expect(screen.queryByRole('img', { name: '废弃仓库 主场景全景' })).toBeNull();
+    expect(screen.getByRole('img', { name: '废弃仓库 45°斜角' })).toBeTruthy();
+
+    // The copy that stayed is listed as the main reference and can be removed from there.
+    await userEvent.click(screen.getByRole('tab', { name: '主参考图' }));
+    await userEvent.click(screen.getByRole('button', { name: '删除这张：主参考图' }));
+    await waitFor(() => expect(screen.queryByRole('tab', { name: '主参考图' })).toBeNull());
+    const deleted = fetchMock.mock.calls
+      .filter(([, init]) => init?.method === 'DELETE')
+      .map(([url]) => String(url).split('/').pop());
+    expect(deleted).toEqual(['wide', 'ref', 'ref']);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('says which reference image is being generated while the request runs', async () => {
+    const prop = makeSpatialAsset('prop', 1);
+    const generated = deferred<Response>();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = String(input);
+      if (url.endsWith('/api/elements/prop-1/regenerate') && options?.method === 'POST') return generated.promise;
+      if (url.includes('/api/elements?kind=prop')) {
+        return { ok: true, json: async () => ({ items: [prop], page: 1, page_size: 100, total: 1 }) } as Response;
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    render(<ElementLibraryPage initialKind="prop" embedded />);
+
+    const button = await screen.findByRole('button', { name: '重生成参考图' });
+    await userEvent.click(button);
+
+    expect(screen.getByRole('status').textContent).toContain('正在为“道具01”生成参考图');
+    // Same accessible name, now marked busy and spelling out the wait.
+    expect(screen.getByRole('button', { name: '重生成参考图' }).getAttribute('aria-busy')).toBe('true');
+    expect(screen.getByRole('button', { name: '重生成参考图' }).textContent).toContain('正在生成…');
+
+    await act(async () => {
+      generated.resolve({ ok: true, json: async () => ({ ...prop, version: 3 }) } as Response);
+    });
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('已重新生成“道具01”的参考图'));
+    expect(screen.getByRole('button', { name: '重生成参考图' }).getAttribute('aria-busy')).toBe('false');
+  });
+
+  it('names the file being uploaded and marks the upload button until it lands', async () => {
+    const scene = makeSpatialAsset('scene', 1);
+    const sent = deferred<Response>();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = String(input);
+      if (url.endsWith('/api/elements/scene-1/model') && options?.method === 'POST') return sent.promise;
+      if (url.includes('/api/elements?kind=scene')) {
+        return { ok: true, json: async () => ({ items: [scene], page: 1, page_size: 100, total: 1 }) } as Response;
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const { container } = render(<ElementLibraryPage initialKind="scene" embedded />);
+
+    await userEvent.click(await screen.findByRole('button', { name: '上传 GLB' }));
+    await userEvent.upload(
+      container.querySelector<HTMLInputElement>('input[accept*=".glb"]')!,
+      new File(['glTF-fixture'], 'alley.glb', { type: 'model/gltf-binary' }),
+    );
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('正在上传 3D 模型“alley.glb”…'));
+    const button = screen.getByRole('button', { name: '上传 GLB' });
+    expect(button.getAttribute('aria-busy')).toBe('true');
+    expect(button.textContent).toContain('上传中…');
+
+    await act(async () => { sent.resolve({ ok: true, json: async () => scene } as Response); });
+    await waitFor(() => expect(screen.getByRole('button', { name: '上传 GLB' }).getAttribute('aria-busy')).toBe('false'));
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('clears the progress line when a reference image fails to generate', async () => {
+    const effect = {
+      id: 'effect-1', kind: 'effect' as const, name: '雷光', description: '', status: 'ready', version: 1, metadata: {}, files: [], model3d: null,
+    };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = String(input);
+      if (url.endsWith('/api/elements/effect-1/regenerate') && options?.method === 'POST') {
+        return { ok: false, status: 502, json: async () => ({ detail: '图像模型暂时不可用' }) } as Response;
+      }
+      return { ok: true, json: async () => ({ items: [effect], page: 1, page_size: 100, total: 1 }) } as Response;
+    });
+    render(<ElementLibraryPage initialKind="effect" embedded />);
+
+    await userEvent.click(await screen.findByRole('button', { name: '重新生成' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('图像模型暂时不可用');
+    expect(screen.queryByRole('status')).toBeNull();
   });
 });

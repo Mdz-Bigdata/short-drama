@@ -1,0 +1,17 @@
+.shot-fix { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; }
+.shot-fix__row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.shot-fix__row label, .shot-fix__repair-form label { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8125rem; }
+.shot-fix input[type="number"] { width: 4.5rem; }
+.shot-fix__note { flex: 1 1 12rem; min-width: 0; }
+.shot-fix__badge { font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 4px; border: 1px solid currentColor; opacity: 0.8; }
+.shot-fix__draft-toggle { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8125rem; white-space: nowrap; }
+.shot-fix__repair { display: flex; flex-direction: column; align-items: flex-start; gap: 0.4rem; }
+.shot-fix__repair-form { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; width: 100%; }
+.shot-fix__grid { display: grid; grid-template-columns: repeat(3, 2.75rem); gap: 2px; }
+.shot-fix__grid button { padding: 0.2rem 0; font-size: 0.75rem; border: 1px solid var(--line, #ddd); background: transparent; border-radius: 3px; cursor: pointer; }
+.shot-fix__grid button.is-active { background: var(--accent, #d9466f); color: #fff; border-color: transparent; }
+.shot-fix__error { color: var(--danger, #c0392b); font-size: 0.8125rem; margin: 0; }
+.shot-fix__limits { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 0.8125rem; }
+.shot-fix__limits label { display: inline-flex; align-items: center; gap: 0.25rem; }
+.shot-fix__limits input { width: 4.5rem; }
+.shot-fix__attempts { margin: 0 0 0.35rem; font-size: 0.75rem; color: var(--text-muted); }

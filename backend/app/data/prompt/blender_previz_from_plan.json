@@ -1,0 +1,7 @@
+{
+  "_doc": "app/core/blender_previz/from_plan.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "build_spec.text": "这一场还没有可预演的镜头",
+  "build_spec.label": "镜{0}",
+  "build_spec.label.2": "专项效果",
+  "_shot_camera.text": "第 {0} 镜用的摄影机 {1} 不在方案里"
+}

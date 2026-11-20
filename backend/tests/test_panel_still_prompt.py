@@ -147,7 +147,10 @@ class HandoffTests(unittest.TestCase):
 class LineTests(unittest.TestCase):
     def test_mouth_follows_who_speaks(self):
         self.assertIn("口型：闭口，不说话。", _prompt())
-        self.assertIn("口型：「沈砚」正在说话，嘴唇微张，其他人物闭口。", _prompt(_contract(dialogue="沈砚：你早就知道。")))
+        spoken = _prompt(_contract(dialogue="沈砚：你早就知道。"))
+        self.assertIn("口型：「沈砚」是说话的人；说话的人这句刚说完、嘴自然合上；听的人闭着嘴在听（或正要开口）；不画张嘴吐字的一瞬。", spoken)
+        alone = _prompt(_contract(characters=["沈砚"], dialogue="沈砚：你早就知道。"))
+        self.assertIn("口型：「沈砚」是说话的人；说话的人这句刚说完、嘴自然合上；不画张嘴吐字的一瞬。", alone)
         self.assertIn("口型：画内人物闭口", _prompt(_contract(dialogue="旁白：那一夜没有人睡。")))
         self.assertIn("口型：画内人物闭口", _prompt(_contract(dialogue="画外声音：开门。")))
 
@@ -220,6 +223,58 @@ class FaceTests(unittest.TestCase):
         self.assertTrue(line.endswith(")"))
 
 
+class SkeletonSentenceTests(unittest.TestCase):
+    """对照《系统实际下发提示词骨架》补齐的固定句(app/data/prompt/panel_still.json)。"""
+
+    def test_each_person_is_the_one_in_their_own_pictures(self):
+        self.assertIn("每个角色的定妆照是该角色本人；沈砚、林晚是不同的角色，脸和服装都不互相借用。", _prompt())
+        costumed = _prompt(references=[*_REFERENCES, {"kind": "costume", "name": "林晚囚服"}])
+        self.assertIn("每个角色的定妆照与戏服图是该角色本人；沈砚、林晚是不同的角色", costumed)
+        self.assertIn("每个角色的定妆照是该角色本人。", _prompt(_contract(characters=["沈砚"])))
+        self.assertNotIn("该角色本人", _prompt(references=[], assets=_ASSETS))
+
+    def test_assets_without_a_picture_are_named_before_they_are_described(self):
+        prompt = _prompt(assets=[*_ASSETS, {"kind": "prop", "name": "铜铃", "description": "掌心大，铃舌缺一角"}])
+        self.assertIn("以下资产没有参考图，按文字绘制，不要因为没有图就省略：烛焰、铜铃。「烛焰」没有参考图，按设定：橙色微颤；「铜铃」没有参考图", prompt)
+        pictured = _prompt(assets=[{"kind": "actor", "name": "沈砚", "description": "圆脸"}])
+        self.assertNotIn("以下资产没有参考图", pictured)
+
+    def test_a_prop_with_its_own_picture_is_drawn_from_it(self):
+        prompt = _prompt()
+        self.assertIn("道具（形制照母版）：「玉牌」照图4（道具母版）画，改位置不改形制。", prompt)
+        self.assertLess(prompt.index("时段与光线："), prompt.index("道具（形制照母版）："))
+        self.assertLess(prompt.index("道具（形制照母版）："), prompt.index("表演："))
+        self.assertNotIn("形制照母版", _prompt(references=_REFERENCES[:3]))
+
+    def test_the_technique_baseline_quotes_the_table_and_invents_nothing(self):
+        prompt = _prompt()
+        contract = _contract()
+        self.assertIn(f"技法基准：焦段 {contract.lens_mm}mm；光圈 {contract.aperture}；光位 烛火自画右下方。", prompt)
+        self.assertLess(prompt.index("【调色】"), prompt.index("技法基准："))
+        self.assertLess(prompt.index("技法基准："), prompt.index("【收边】"))
+        written = _prompt(_contract(lighting="主光：烛火自画右下方；光比 1:4；色温 3200K"))
+        self.assertIn("光比 1:4；色温 3200K；光位 烛火自画右下方。", written)
+        for invented in ("光比", "色温 "):
+            self.assertNotIn(invented, prompt.split("技法基准：")[1].split("\n")[0])
+
+    def test_the_six_locks_say_what_may_only_grow(self):
+        prompt = _prompt()
+        self.assertIn("身份 沈砚、林晚，同一张脸同一发型同一体型；", prompt)
+        self.assertIn("，破损浸润凌乱只增不减；道具 玉牌，磨损消耗只增不减；", prompt)
+        bare = _prompt(_contract(eyeline="", props=["本格无额外道具"]), references=[], assets=[])
+        self.assertIn("服装 承接定妆照与上一格，破损浸润凌乱只增不减；道具 无；朝向 承接上一格的身体朝向与视线；", bare)
+        first = _prompt(_contract(eyeline="", shot_id=1))
+        self.assertIn("朝向 以本格调度为准；", first)
+
+    def test_light_and_palette_locks_carry_over_when_the_table_gives_none(self):
+        plain = "继承场景圣经的主光方向、色温、时间和天气"
+        later = _prompt(_contract(lighting=plain, shot_id=3))
+        self.assertIn("光位 沿用本场建立镜，承接上一格的主光方向与色温；色板 沿用本场建立镜，承接参考图与上一格的主色次色点缀色。", later)
+        first = _prompt(_contract(lighting=plain, shot_id=1))
+        self.assertIn("光位 沿用本场建立镜的主光方向与色温；色板 沿用本场建立镜与参考图的主色次色点缀色。", first)
+        self.assertNotIn("上一格的主光", first)
+
+
 class FallbackProviderTests(unittest.TestCase):
     def test_the_short_form_for_other_providers_still_carries_the_action(self):
         long_setup = [{"kind": "actor", "name": f"角色{index}"} for index in range(1, 8)]
@@ -245,6 +300,33 @@ class PanelContextTests(unittest.TestCase):
         binding = panel_context(context, {"desc": "沈砚拿起玉牌", "characters": ["沈砚"]})
         self.assertEqual([item["name"] for item in binding["references"]][:1], ["沈砚"])
         self.assertIn({"kind": "prop", "name": "玉牌", "description": "青白玉"}, binding["assets"])
+
+
+
+class SceneDirectionLabelTests(unittest.TestCase):
+    """The still prompt names the front and the reverse plate as such when both go out (as the video prompt does)."""
+
+    def _line(self, references):
+        from app.core.panel_still_prompt import _only_gives, _reference_line
+
+        return _reference_line(references), _only_gives(references)
+
+    def test_a_pair_is_named_front_and_reverse_and_the_back_side_check_gets_no_use_line(self):
+        names, gives = self._line([
+            {"kind": "scene", "name": "磨刀铺内", "frame": "composition"},
+            {"kind": "scene", "name": "磨刀铺内", "view": "scene_reverse", "frame": "reverse_space"},
+        ])
+        self.assertIn("（正面）", names)
+        self.assertIn("（反打（与正面相对））", names)
+        self.assertNotIn("反打镜头：", gives)
+
+    def test_without_the_pair_the_view_names_stay_as_before(self):
+        names, _ = self._line([
+            {"kind": "scene", "name": "磨刀铺内"},
+            {"kind": "scene", "name": "磨刀铺内", "view": "scene_45", "frame": "composition"},
+        ])
+        self.assertNotIn("正面", names)
+        self.assertIn("45°斜角", names)
 
 
 if __name__ == "__main__":

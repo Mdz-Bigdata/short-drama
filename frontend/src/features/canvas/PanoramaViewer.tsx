@@ -8,9 +8,12 @@ const SPHERE_RADIUS = 50;
 const MIN_FOV = 30;
 const MAX_FOV = 100;
 
-function Sphere({ url }: { url: string }) {
+function Sphere({ url, onFail }: { url: string; onFail?: () => void }) {
   const { invalidate } = useThree();
   const [texture, setTexture] = useState<Texture | null>(null);
+  // Kept in a ref so a new callback from the parent does not fetch the picture again.
+  const fail = useRef(onFail);
+  useEffect(() => { fail.current = onFail; }, [onFail]);
   useEffect(() => {
     let live = true;
     const loader = new TextureLoader();
@@ -25,6 +28,8 @@ function Sphere({ url }: { url: string }) {
       loaded = result;
       setTexture(result);
       invalidate();
+    }, undefined, () => {
+      if (live) fail.current?.();
     });
     return () => {
       live = false;
@@ -33,7 +38,8 @@ function Sphere({ url }: { url: string }) {
   }, [invalidate, url]);
   if (!texture) return null;
   return (
-    <mesh>
+    // Seen from inside, a sphere shows its picture mirrored (text reads backwards, left and right swap); flipping x puts it right.
+    <mesh scale={[-1, 1, 1]}>
       <sphereGeometry args={[SPHERE_RADIUS, 48, 32]} />
       <meshBasicMaterial map={texture} side={BackSide} toneMapped={false} />
     </mesh>
@@ -91,14 +97,17 @@ function LookControls() {
   return null;
 }
 
-/** An equirectangular picture from inside its sphere. Only one is ever mounted: browsers allow few WebGL contexts. */
-export default function PanoramaViewer({ url }: { url: string }) {
+/**
+ * An equirectangular picture from inside its sphere. Only one is ever mounted: browsers allow few WebGL contexts.
+ * ``onFail`` fires when the picture cannot be read, so the node can go back to the flat picture instead of a blank view.
+ */
+export default function PanoramaViewer({ url, onFail }: { url: string; onFail?: () => void }) {
   return (
     <div className="cn-panorama" data-no-drag data-no-wheel>
       {/* offsetSize: the node sits inside a scaled world, and a measured (scaled) box would draw a smaller picture. */}
       <Canvas frameloop="demand" resize={{ offsetSize: true }} camera={{ fov: 75, near: 0.1, far: SPHERE_RADIUS * 2, position: [0, 0, 0.001] }}>
         <LookControls />
-        <Sphere url={url} />
+        <Sphere url={url} onFail={onFail} />
       </Canvas>
     </div>
   );

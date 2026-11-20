@@ -1,0 +1,16 @@
+.element-filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 0.78rem; }
+.element-filter-bar__search { display: inline-flex; flex: 1 1 200px; max-width: 320px; align-items: center; gap: 6px; padding: 4px 10px; background: var(--surface); border: 1px solid rgba(var(--ink-rgb), 0.16); border-radius: 999px; }
+.element-filter-bar__search input { flex: 1; min-width: 0; padding: 0; color: inherit; font-size: 0.78rem; background: transparent; border: 0; outline: none; }
+.element-filter-bar__chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.element-filter-chip { padding: 4px 10px; color: inherit; font-size: 0.75rem; font-variant-numeric: tabular-nums; background: transparent; border: 1px solid rgba(var(--ink-rgb), 0.16); border-radius: 999px; cursor: pointer; }
+.element-filter-chip[aria-pressed="true"] { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
+.element-filter-bar__toggle { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.element-filter-bar__count { margin-left: auto; opacity: 0.72; font-variant-numeric: tabular-nums; }
+.element-filter-bar__clear { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; color: inherit; font-size: 0.75rem; background: transparent; border: 1px solid rgba(var(--ink-rgb), 0.16); border-radius: 6px; cursor: pointer; }
+.element-filter-empty { display: grid; justify-items: center; gap: 8px; padding: 32px 16px; opacity: 0.8; }
+
+/* 衍生形象挂在来源角色下面：整行一块，缩进后再排卡片。 */
+.element-card-group__variants { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-left: 20px; padding-left: 14px; border-left: 2px solid rgba(var(--accent-rgb), 0.24); }
+.element-card-group__label { grid-column: 1 / -1; margin: 0; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; opacity: 0.72; }
+@media (max-width: 900px) { .element-card-group__variants { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .element-card-group__variants { grid-template-columns: 1fr; margin-left: 8px; } }

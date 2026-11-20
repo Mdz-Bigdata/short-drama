@@ -19,26 +19,39 @@ from PIL import Image, ImageStat
 
 from app.core.actor_hd_views import VIEW_MARGIN
 from app.core.actor_sheet_cutter import _runs, _SeparatorMap
+from app.core import prompt_data
+
+
+_WORDING_FILE = "actor_detail_fill"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/actor_detail_fill.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 #: 每个可补画格子的画面要求；顺序即拼板里的先后。右侧 45° 侧脸由高清身份视图负责，不在这里画。
 DETAIL_FILL_SUBJECTS: dict[str, str] = {
-    "element_shoe": "鞋履特写：一双鞋完整入画，鞋面纹样、鞋口与鞋底材质清晰",
-    "element_waist": "腰部配饰特写：腰带、带扣、玉佩或系结",
-    "element_wrist": "手腕配饰特写：袖口收口与腕部饰物，带一截手腕",
-    "element_collar": "领口肩部刺绣特写：交领层次与肩部纹样",
-    "element_fabric": "主服装面料微距：织纹、刺绣针脚与光泽铺满整格",
-    "element_hair": "发饰头饰特写：发冠、发簪、步摇等头饰",
-    "element_hand": "手部姿态特写：一只手连着袖口自然摆放或持物，五根手指，比例正确",
-    "element_hem": "衣摆下摆特写：下摆边缘纹样与垂坠",
-    "face_back_hair": "后脑发型特写：从背后看发髻与发饰",
-    "detail_collar": "领口肩颈特写",
-    "detail_chest": "前襟胸部纹样特写",
-    "detail_waist_knot": "腰部束结特写",
-    "detail_cuff": "袖口末端特写",
-    "detail_texture": "服装材质纹理微距：铺满整格",
-    "detail_shoe": "鞋履足部特写：只画脚踝以下的双脚与鞋，不画腿和衣摆以上",
-    "detail_eye": "眼部特写：双眼与眉毛、眼妆，眼神清晰",
-    "detail_accessory": "随身小配件特写：佩饰、香囊、扇子或手持道具",
+    "element_shoe": _text_of("module.detail_fill_subjects.element_shoe"),
+    "element_waist": _text_of("module.detail_fill_subjects.element_waist"),
+    "element_wrist": _text_of("module.detail_fill_subjects.element_wrist"),
+    "element_collar": _text_of("module.detail_fill_subjects.element_collar"),
+    "element_fabric": _text_of("module.detail_fill_subjects.element_fabric"),
+    "element_hair": _text_of("module.detail_fill_subjects.element_hair"),
+    "element_hand": _text_of("module.detail_fill_subjects.element_hand"),
+    "element_hem": _text_of("module.detail_fill_subjects.element_hem"),
+    "face_back_hair": _text_of("module.detail_fill_subjects.face_back_hair"),
+    "detail_collar": _text_of("module.detail_fill_subjects.detail_collar"),
+    "detail_chest": _text_of("module.detail_fill_subjects.detail_chest"),
+    "detail_waist_knot": _text_of("module.detail_fill_subjects.detail_waist_knot"),
+    "detail_cuff": _text_of("module.detail_fill_subjects.detail_cuff"),
+    "detail_texture": _text_of("module.detail_fill_subjects.detail_texture"),
+    "detail_shoe": _text_of("module.detail_fill_subjects.detail_shoe"),
+    "detail_eye": _text_of("module.detail_fill_subjects.detail_eye"),
+    "detail_accessory": _text_of("module.detail_fill_subjects.detail_accessory"),
 }
 
 #: 一张拼板最多画几格：3×3 留一格空位(见 ``padded``)。再多每格就太小，细节会糊。
@@ -101,19 +114,10 @@ def padded(cells: list[str]) -> list[str]:
 def detail_fill_prompt(cells: list[str], *, columns: int, rows: int, name: str, desc: str, style: str) -> str:
     """``cells`` 是补好空位的完整版面(``padded``)，``columns × rows`` 是它的格网。"""
     panels = "；".join(
-        f"第{index}格：{DETAIL_FILL_SUBJECTS[cell]}" for index, cell in enumerate(cells, start=1)
+        _text_of("detail_fill_prompt.panels").format(index, DETAIL_FILL_SUBJECTS[cell]) for index, cell in enumerate(cells, start=1)
     )
     return (
-        f"为角色{name}制作服装与造型细节特写拼板。画面横向 {rows} 行、每行 {columns} 格，"
-        f"共 {columns * rows} 格，不多不少，不要增加任何额外的格子或人物。"
-        "每格 1:1 正方形、大小相同，格与格之间一条纯白细缝，从左到右、从上到下依次为："
-        f"{panels}。"
-        "每格只画一个局部特写，主体填满格子的大部分面积并且居中，不能留出大片空白背景，背景为干净的浅灰到纯白。"
-        "任何一格都不要画完整的人物全身像或半身像，只画指定的局部。"
-        "严格参考所给设定集里的同一个人与同一套造型：服装颜色、面料、纹样、刺绣、配饰、发饰、鞋履与肤色完全一致，"
-        "不得换装、不得新增设定集里没有的配饰。"
-        f"角色设定：{desc}。视觉风格：{style}，写实高清，材质纹理锐利。"
-        "禁止出现文字、标签、编号、水印、logo，禁止整张人脸以外的第二个人物，禁止多余手指与畸形肢体。"
+        _text_of("detail_fill_prompt.text").format(name, rows, columns, columns * rows, panels, desc, style)
     )
 
 

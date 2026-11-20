@@ -15,10 +15,13 @@ non_diegetic_music；画面描述用英文，台词与画面文字保留原文�
 from __future__ import annotations
 
 import logging
+import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
+from app.core import prompt_data
+from app.core.clip_skeleton import NOT_FOR_REWRITE
 from app.core.prompt_distiller import is_no_line
 from app.core.spoken_lines import plain as _plain, spoken_lines
 
@@ -30,6 +33,9 @@ SECTIONS: tuple[str, ...] = (
 #: H3 官方提示词上限(字符)。改写结果留出标记展开的余量。
 MAX_CHARS = 7000
 MAX_DRAFT_CHARS = 6400
+#: 改写结果多长还收：超过 MAX_DRAFT_CHARS 不再整篇作废(声音段写全以后常超一点)，发送前 :func:`fit` 只删画面细节句，
+#: 声音段、镜头时间码和音频参考句不动；比这还长才算失控，退回中文原文。
+MAX_ACCEPT_CHARS = 9000
 _MENTION = re.compile(r"@\[([^\]]+)\]")
 _FRAME = re.compile(r"<Frame (\d+)>")
 _REF = re.compile(r"<Ref (\d+)>")
@@ -38,34 +44,12 @@ _DIALOGUE = re.compile(r"[{｛]([^{}｛｝]+)[}｝]")
 _NO_DIALOGUE = frozenset({"无", "无台词", "-", "—", "（无）", "(无)"})
 #: 目标长度：英文比中文占字符，官方上限 7000，正文尽量控制在这里。
 TARGET_CHARS = 4500
-#: 不交给改写的中文分节：铁律与负面词按官方契约改成 retention_analysis 里的正面约束，收尾句是中文画面要求。
-SKIP_SECTIONS = frozenset({"rules", "negatives", "closing"})
+#: 不交给改写的中文分节：铁律与负面词按官方契约改成 retention_analysis 里的正面约束，收尾句是中文画面要求；
+#: 骨架的段名(Pa1 / Pa2 / Pa3)与结尾的禁令同样不带——锚型定义、对白语言、表演锁、回合锁是正面要求，照带。
+SKIP_SECTIONS = frozenset({"rules", "negatives", "closing"}) | NOT_FOR_REWRITE
 
-SYSTEM_PROMPT = (
-    "你是 MiniMax H3 视频提示词导演。把用户给的「分镜片段中文提示词」改写成 H3 官方 Ref2VA 六段式英文提示词，"
-    "只输出提示词本身。\n"
-    "格式(六段，顺序固定，每段以字段名加冒号开头，段与段之间空一行)：\n"
-    "subject_definitions: …\nsummary: …\nretention_analysis: …\ndetailed_description: …\noverall_soundscape: …\nnon_diegetic_music: …\n"
-    "硬规则：\n"
-    "1. 画面、动作、运镜、光线、表演用英文写；台词逐字保留中文原文，写成 (S1) says: <d>[Chinese] 原文</d>，"
-    "同一说话人全片同一个 (S编号)；画外音写 says in an off-screen voiceover，并写明画面人物嘴唇闭合；画面里真实可见的文字用英文双引号逐字保留。\n"
-    "2. 原文里的 @[名字] 标记原样保留(不翻译、不加空格)；原文的「参考图k」一律写成 <Ref k>，每个 <Ref k> 都在 subject_definitions 里"
-    "写清它锁定什么(人物身份、服装、场地的哪个视角、道具)；分镜画面用 <Frame k> 指代，每个 <Frame k> 都要在 subject_definitions 里写一句"
-    "「<Frame k> is the storyboard reference for [Shot k], defining viewpoint, subject placement and composition.」。\n"
-    "3. subject_definitions：每个人物、场地、关键道具一条 <Subject N> 定义，写明它来自哪个 @[名字]，例如 "
-    "<Subject 1> is @[沈无咎], a young swordsman whose face, hair and wardrobe come from his reference picture.\n"
-    "4. summary 以 [reference generation] 开头，一两句说明这段视频讲什么、参考图各管什么。\n"
-    "5. retention_analysis：逐个 <Subject N> 与 <Frame k> 写 fully_preserved / partially_preserved / weak_reference，"
-    "并把一致性要求写成正面约束(同一张脸、同一服装、同一空间方向与主光方向、道具不换手不消失)，不要单列负面词。\n"
-    "6. detailed_description：按镜头顺序写 [Shot 1] …，从第二个镜头起必须逐字使用给定的时间码开头，如 "
-    "[Shot 2] At 00:05.000, the shot transitions to …；不要写硬切(hard cut)，镜头之间写清动作或视线如何顺接。"
-    "每个镜头写清主体与站位、动作因果(准备→发力→受力→收势)、表情与视线目标、一个主运镜(类型+幅度+速度+目的)、"
-    "光线(主光方向、光源、色温、光比)。\n"
-    "7. overall_soundscape：1–4 句英文写环境声、动作声与非语言人声，不重复台词；non_diegetic_music：1–3 句英文写配乐，没有就写 N/A。\n"
-    "8. 不丢任何事实(人物、动作先后、站位朝向、景别机位焦段、光线色温、道具状态、起幅落幅、台词)；"
-    "删掉重复、套话和形容词堆砌；不写「8K」「超清」之类空洞画质词；全文尽量控制在 {target} 个字符以内，绝不超过 {limit} 个字符。\n"
-    "9. 只输出六段正文，不要标题、解释、Markdown 或代码块。"
-)
+# 系统提示词的措辞在 app/data/prompt/h3_native.json(逐段拼接；{target} / {limit} 由 system_prompt() 填)。
+SYSTEM_PROMPT = "".join(str(part) for part in prompt_data.value("h3_native", "system_prompt"))
 
 
 @dataclass
@@ -74,7 +58,8 @@ class Request:
 
     board_text: str                       # 中文提示词(带 @[名字] 标记)
     shot_starts: list[str]                # 每个镜头的起始时间码，第 1 镜为空串
-    seconds: int
+    seconds: int                          # 向接口请求的秒数
+    actual: float = 0.0                   # 这次真正出片的秒数(见 actual_seconds)；时间码按它算
     frames: int = 0                       # 分镜画面张数(<Frame 1> … <Frame n>)
     mentions: set[str] = field(default_factory=set)
     dialogue: list[str] = field(default_factory=list)
@@ -91,15 +76,39 @@ def timecode(seconds: float) -> str:
     return f"{int(minutes):02d}:{rest:06.3f}"
 
 
-def shot_starts(beat_seconds: Sequence[float], total: float) -> list[str]:
-    """每个镜头的起始时间码：按计划秒数等比缩放到片段时长，第 1 镜不写时间码。"""
+def actual_seconds(requested: float) -> float:
+    """H3 按 ``requested`` 秒请求时真正出片的秒数。
+
+    出片的帧数只取 17k+5(24 帧/秒)，不够就往上取：要 13 秒出 328 帧 = 13.667 秒，要 5 秒出 124 帧 = 5.167 秒，
+    只有 8 秒正好。本项目存下的成片逐档如此(6→6.583、9→9.417、10→10.125、12→12.25、13→13.667、14→14.375、
+    15→15.083，2026-11-16 用 ffprobe 核对)。时间轴按请求的秒数写，片尾那一截就没人安排，模型自己发挥。
+    """
+    grid = prompt_data.value("h3_native", "frame_grid")
+    fps, step, offset = float(grid["fps"]), int(grid["step"]), int(grid["offset"])
+    wanted = max(0.0, float(requested)) * fps
+    frames = max(0, math.ceil((wanted - offset) / step - 1e-9)) * step + offset
+    return frames / fps
+
+
+def shot_bounds(beat_seconds: Sequence[float], total: float) -> list[float]:
+    """各镜头的分界秒数 ``[0, 第2镜起点, …, 片段时长]``：按计划秒数等比缩放到片段时长。
+
+    H3 的时间码和多瞬间片段块头的时间段(slice_video)都按它算，两边对得上。
+    """
     planned = [max(0.1, float(value)) for value in beat_seconds] or [float(total or 1)]
-    scale = float(total or sum(planned)) / sum(planned)
-    starts, cursor = [""], 0.0
+    end = float(total or sum(planned))
+    scale = end / sum(planned)
+    bounds, cursor = [0.0], 0.0
     for value in planned[:-1]:
         cursor += value * scale
-        starts.append(timecode(cursor))
-    return starts
+        bounds.append(cursor)
+    bounds.append(end)
+    return bounds
+
+
+def shot_starts(beat_seconds: Sequence[float], total: float) -> list[str]:
+    """每个镜头的起始时间码：按计划秒数等比缩放到片段时长，第 1 镜不写时间码。"""
+    return [""] + [timecode(start) for start in shot_bounds(beat_seconds, total)[1:-1]]
 
 
 def request(
@@ -112,8 +121,10 @@ def request(
     lines = spoken_lines(dialogue) if dialogue else [
         line.strip() for line in _DIALOGUE.findall(text) if line.strip() and line.strip() not in _NO_DIALOGUE
     ]
+    # 时间码按真正出片的时长排(各镜按计划秒数等比铺满)，不按请求的整秒：多出来的那一截也有镜头管。
+    actual = actual_seconds(seconds)
     return Request(
-        board_text=text, shot_starts=shot_starts(beat_seconds, seconds), seconds=int(seconds), frames=int(frames),
+        board_text=text, shot_starts=shot_starts(beat_seconds, actual), seconds=int(seconds), actual=actual, frames=int(frames),
         mentions={f"@[{name}]" for name in _MENTION.findall(text)}, dialogue=list(dict.fromkeys(lines)),
         refs=sorted({int(k) for k in _SOURCE_REF.findall(text)}),
     )
@@ -138,8 +149,13 @@ def user_prompt(req: Request) -> str:
     frames = "、".join(f"<Frame {k}>" for k in range(1, req.frames + 1)) or "无"
     refs = "、".join(f"参考图{k} → <Ref {k}>" for k in req.refs) or "无"
     lines = "\n".join(f"- {line}" for line in req.dialogue) or "- 无台词"
+    actual = req.actual or float(req.seconds)
+    extra = actual - req.seconds
+    duration = prompt_data.text("h3_native", "duration_snapped" if extra >= 0.01 else "duration_exact").format(
+        actual=f"{actual:.2f}".rstrip("0").rstrip("."), requested=req.seconds, extra=f"{extra:.2f}",
+    )
     return (
-        f"片段总时长 {req.seconds} 秒，共 {req.shots} 个镜头。镜头时间码：{stamps}。\n"
+        f"{duration}，共 {req.shots} 个镜头。镜头时间码：{stamps}。\n"
         f"分镜画面：{frames}（按镜头顺序，<Frame k> 对应 [Shot k]）。\n"
         f"参考图标记：{refs}。\n"
         f"必须逐字保留的台词：\n{lines}\n\n"
@@ -150,12 +166,53 @@ def user_prompt(req: Request) -> str:
 _SENTENCE_END = re.compile(r"[。！？.!?\n]")
 
 
+_SECTION_HEAD = re.compile(r"(?m)^(" + "|".join(SECTIONS) + r"):")
+#: 超长时先删这些段落里的句子，从段尾往前删：画面细节先让，声音段(overall_soundscape、non_diegetic_music)不动。
+_SHORTEN_ORDER: tuple[str, ...] = ("detailed_description", "retention_analysis", "summary")
+#: 各段删不得的句子：镜头时间码、音频参考(删了模型就不知道哪段音频是谁的声音)；保留分析与概要里还有图和主体的定义。
+_KEEP_SENTENCE: dict[str, re.Pattern[str]] = {
+    "detailed_description": re.compile(r"\[Shot \d+\]|<Audio \d+>"),
+    "retention_analysis": re.compile(r"<Audio \d+>|<Picture \d+>|<Subject \d+>"),
+    "summary": re.compile(r"<Audio \d+>|\[reference generation\]"),
+}
+_EN_SENTENCE = re.compile(r"(?<=[.!?。！？])\s+")
+
+
+def _shorten_keeping_sound(text: str) -> str:
+    """六段式超长时逐句删画面细节，声音两段和带编号的定义句整句保留；不是六段式就原样返回。"""
+    heads = list(_SECTION_HEAD.finditer(text))
+    if [match.group(1) for match in heads] != list(SECTIONS):
+        return text
+    bodies = {
+        match.group(1): text[match.end(): heads[index + 1].start() if index + 1 < len(heads) else len(text)].strip()
+        for index, match in enumerate(heads)
+    }
+
+    def render() -> str:
+        return "\n\n".join(f"{name}: {bodies[name]}" for name in SECTIONS)
+
+    for name in _SHORTEN_ORDER:
+        sentences = _EN_SENTENCE.split(bodies[name])
+        index = len(sentences) - 1
+        while len(render()) > MAX_CHARS and index >= 0:
+            if not _KEEP_SENTENCE[name].search(sentences[index]):
+                sentences.pop(index)
+                bodies[name] = " ".join(sentences)
+            index -= 1
+        if len(render()) <= MAX_CHARS:
+            break
+    return render()
+
+
 def fit(prompt: str, *, plain: str = "") -> str:
     """发给 H3 的正文不超过官方 7000 字符：先去掉追加的增强词与负面词(``plain`` 是追加前的原文)，
-    还是太长就在最后一个句末截断。宁可少一句，不能整段被 400 拒单。"""
+    还是太长就从画面细节里逐句删，声音段和图、音频参考的定义句不删(H3 自己出声，声音是成片的一半)；
+    仍然太长才在最后一个句末截断。宁可少一句，不能整段被 400 拒单。"""
     if len(prompt) <= MAX_CHARS:
         return prompt
     text = plain if plain and len(plain) < len(prompt) else prompt
+    if len(text) > MAX_CHARS:
+        text = _shorten_keeping_sound(text)
     if len(text) > MAX_CHARS:
         head = text[:MAX_CHARS]
         ends = [match.end() for match in _SENTENCE_END.finditer(head)]
@@ -176,8 +233,8 @@ def check(req: Request, output: str) -> str:
         return "没有输出"
     if "```" in text:
         return "输出带了代码块"
-    if len(text) > MAX_DRAFT_CHARS:
-        return f"超出长度上限({len(text)}/{MAX_DRAFT_CHARS})"
+    if len(text) > MAX_ACCEPT_CHARS:
+        return f"超出长度上限({len(text)}/{MAX_ACCEPT_CHARS})"
     positions = []
     for name in SECTIONS:
         found = re.search(rf"(?m)^{name}:", text)
@@ -230,11 +287,13 @@ def _drop_sentences(text: str, token: re.Pattern[str]) -> str:
 
 def resolve(
     text: str, *, sent: Sequence[str], identity_images: Sequence[str], numbers: Mapping[str, int],
-    frames: Sequence[str], handoff: str | None = None,
+    frames: Sequence[str], handoff: str | None = None, audios: Mapping[str, int] | None = None,
 ) -> str:
     """发送前把标记换成这次请求里真实的图片编号：``@[名字]`` → ``名字 (<Picture N>)``，``<Frame k>`` → ``<Picture N>``。
 
     没发出去的图(内容审核后去掉的分镜画面)对应的句子删掉；以上一段尾帧开场时补一句说明。
+    ``audios`` 是随请求发出去的说话角色定角音色样本 ``{名字: N}``：按官方契约写成 ``<Audio N>``
+    (与图片各自编号)，subject_definitions 与 retention_analysis 各补一句，summary 加 audio reference 类型。
     """
     position = {url: index for index, url in enumerate(sent, start=1)}
 
@@ -267,11 +326,24 @@ def resolve(
             f"subject_definitions: <Picture {index}> is the last frame of the previous part and the opening frame of [Shot 1]. ",
             out, count=1,
         )
-    return out.strip()
+    return _with_voice_audios(out, audios or {}).strip()
+
+
+def _with_voice_audios(text: str, audios: Mapping[str, int]) -> str:
+    """定角音色样本写进六段式：每段音频一句 subject 定义、一句 retention 关系(reference)。"""
+    if not audios:
+        return text
+    ordered = sorted(audios.items(), key=lambda item: item[1])
+    subjects = " ".join(prompt_data.text("voice_reference", "h3_subject").format(n=n, name=name) for name, n in ordered)
+    retention = " ".join(prompt_data.text("voice_reference", "h3_retention").format(n=n, name=name) for name, n in ordered)
+    text = re.sub(r"(?m)^(subject_definitions:[^\n]*)", lambda match: f"{match.group(1).rstrip()} {subjects}", text, count=1)
+    text = re.sub(r"(?m)^(retention_analysis:[^\n]*)", lambda match: f"{match.group(1).rstrip()} {retention}", text, count=1)
+    plain, with_audio = prompt_data.words("voice_reference", "h3_summary_types")
+    return re.sub(rf"(?m)^(summary:\s*){re.escape(plain)}", lambda match: f"{match.group(1)}{with_audio}", text, count=1)
 
 
 __all__ = [
-    "MAX_CHARS", "MAX_DRAFT_CHARS", "fit", "SECTIONS", "SKIP_SECTIONS", "SYSTEM_PROMPT", "TARGET_CHARS", "Request", "board_text", "check",
+    "MAX_ACCEPT_CHARS", "MAX_CHARS", "MAX_DRAFT_CHARS", "fit", "SECTIONS", "SKIP_SECTIONS", "SYSTEM_PROMPT", "TARGET_CHARS", "Request", "board_text", "check",
     "is_native", "request", "resolve", "spoken_lines",
-    "shot_starts", "system_prompt", "timecode", "user_prompt",
+    "shot_bounds", "shot_starts", "system_prompt", "timecode", "user_prompt",
 ]

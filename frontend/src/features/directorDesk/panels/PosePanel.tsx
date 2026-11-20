@@ -12,6 +12,7 @@ import {
 } from '../lib/poses';
 import { crowdOf } from '../lib/stageMath';
 import { BODY_TYPES, FIGURE_LABELS, actorColor } from '../three/stageLook';
+import { DraftInput } from './fields';
 
 interface Props {
   plan: StagePlan;
@@ -38,32 +39,36 @@ function JointField({ control, value, range, disabled, onPreview, onCommit }: {
   onPreview: (value: number) => void; onCommit: (value: number) => void;
 }) {
   const pending = useRef<number | null>(null);
-  const armed = useRef(false);
+  // The window listener waiting for the thumb to be let go; a key or blur release takes it down too.
+  const armed = useRef<(() => void) | null>(null);
+  const disarm = useCallback(() => {
+    const listener = armed.current;
+    if (!listener) return;
+    armed.current = null;
+    window.removeEventListener('pointerup', listener);
+    window.removeEventListener('mouseup', listener);
+  }, []);
   const release = useCallback(() => {
-    armed.current = false;
+    disarm();
     if (pending.current === null) return;
     const next = pending.current;
     pending.current = null;
     onCommit(next);
-  }, [onCommit]);
+  }, [disarm, onCommit]);
   // The thumb is let go wherever the pointer is by then, not necessarily over the slider.
   const arm = () => {
     if (armed.current) return;
-    armed.current = true;
-    const once = () => {
-      window.removeEventListener('pointerup', once);
-      window.removeEventListener('mouseup', once);
-      release();
-    };
-    window.addEventListener('pointerup', once);
-    window.addEventListener('mouseup', once);
+    const listener = () => release();
+    armed.current = listener;
+    window.addEventListener('pointerup', listener);
+    window.addEventListener('mouseup', listener);
   };
-  useEffect(() => () => { armed.current = false; }, []);
-  const typed = (text: string) => {
+  useEffect(() => disarm, [disarm]);
+  const typed = (text: string, input: HTMLInputElement) => {
     const next = Number(text);
-    if (text.trim() === '' || !Number.isFinite(next)) return;
     const clamped = Math.min(range[1], Math.max(range[0], next));
-    if (clamped !== value) onCommit(clamped);
+    input.value = String(text.trim() === '' || !Number.isFinite(next) ? value : clamped);
+    if (text.trim() !== '' && Number.isFinite(next) && clamped !== value) onCommit(clamped);
   };
   return (
     <div className="desk-pose__joint">
@@ -73,11 +78,9 @@ function JointField({ control, value, range, disabled, onPreview, onCommit }: {
         onChange={event => { pending.current = Number(event.target.value); onPreview(pending.current); arm(); }}
         onKeyUp={release} onBlur={release}
       />
-      <input
-        key={value} type="number" aria-label={`${control.label} 数值`} inputMode="decimal" min={range[0]} max={range[1]} step={control.step}
-        defaultValue={value} disabled={disabled}
-        onBlur={event => typed(event.target.value)}
-        onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }}
+      <DraftInput
+        type="number" aria-label={`${control.label} 数值`} inputMode="decimal" min={range[0]} max={range[1]} step={control.step}
+        value={value} disabled={disabled} onDone={typed}
       />
     </div>
   );
@@ -302,7 +305,7 @@ export function PosePanel({ plan, shot, selection, editable, shotOnly, footLock,
               <li key={item.id}>
                 <span>{item.name}</span>
                 <button type="button" className="desk-button" aria-label={`应用 ${item.name}`} disabled={disabled} onClick={() => commit(`应用「${item.name}」`, { preset: item.pose.preset || '', joints: item.pose.joints || {}, clip: '', clip_phase: 0 })}>应用</button>
-                <button type="button" className="desk-icon" aria-label={`删除 ${item.name}`} disabled={busy} onClick={() => { if (window.confirm(`删除自定义姿势「${item.name}」？`)) void library(() => deleteSavedPose(item.id), '已删除。'); }}><Trash2 aria-hidden="true" /></button>
+                <button type="button" className="desk-icon" aria-label={`删除 ${item.name}`} title="删除这个自定义姿势" disabled={busy} onClick={() => { if (window.confirm(`删除自定义姿势「${item.name}」？`)) void library(() => deleteSavedPose(item.id), '已删除。'); }}><Trash2 aria-hidden="true" /></button>
               </li>
             ))}
           </ul>

@@ -1,0 +1,10 @@
+{
+  "_doc": "app/core/providers/declarative_video.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "VideoEndpointSpec.description": "空表示提交即返回片段地址",
+  "VideoEndpointSpec.description.2": "提交响应里直接给出片段地址时的路径",
+  "https_only.text": "声明式视频端点的基础 URL 必须使用 HTTPS",
+  "clean_models.text": "至少声明一个模型 ID",
+  "check.text": "提交步骤必须给出 job_id_path 或 video_url_path 之一",
+  "check.text.2": "给出 job_id_path 时必须声明 poll 步骤",
+  "check.text.3": "提交请求体里至少要有一个 {{prompt}} 之类的占位符"
+}

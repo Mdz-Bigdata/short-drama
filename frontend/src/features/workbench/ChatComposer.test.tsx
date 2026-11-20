@@ -17,7 +17,7 @@ describe('slash command composer', () => {
     const user = userEvent.setup();
     render(<Harness onSend={onSend} />);
     await user.type(screen.getByRole('textbox'), '/');
-    expect(screen.getAllByRole('option')).toHaveLength(11);
+    expect(screen.getAllByRole('option')).toHaveLength(12);
     expect(screen.getByRole('combobox').getAttribute('aria-expanded')).toBe('true');
     await user.keyboard('{Enter}');
     expect(onSend).not.toHaveBeenCalled();
@@ -91,5 +91,50 @@ describe('slash command composer', () => {
     render(<Harness onSend={onSend} />);
     await user.type(screen.getByRole('textbox'), '现在做到哪一步了？{Enter}');
     expect(onSend).toHaveBeenCalledExactlyOnceWith('现在做到哪一步了？');
+  });
+});
+
+describe('@ mentions in the composer', () => {
+  function MentionHarness({ onSend }: { onSend: (message: string) => void }) {
+    const [value, setValue] = useState('');
+    return <ChatComposer taskId="task-m" value={value} busy={false} onChange={setValue} onSend={message => { onSend(message); setValue(''); }} />;
+  }
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    (await import('./useMentionCandidates')).clearMentionCandidatesCache();
+  });
+
+  it('lists project assets after @, inserts on Enter instead of sending, and still sends on a plain Enter', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [
+      { name: '林夏', kind: 'actor', element_id: 'e1', aliases: [], description: '', thumb_url: '' },
+      { name: '林家祠堂', kind: 'scene', element_id: 'e2', aliases: [], description: '', thumb_url: '' },
+    ] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onSend = vi.fn();
+    const user = userEvent.setup();
+    render(<MentionHarness onSend={onSend} />);
+    const input = screen.getByLabelText(/的消息$/) as HTMLInputElement;
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/drama/task-m/mentionable');
+
+    await user.type(input, '让@');
+    await screen.findByRole('listbox', { name: /引用/ });
+    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual(['林夏数字演员', '林家祠堂拍摄场地']);
+    await user.keyboard('{Enter}');
+    expect(onSend).not.toHaveBeenCalled();
+    expect(input.value).toBe('让@[林夏] ');
+
+    await user.type(input, '回头{Enter}');
+    expect(onSend).toHaveBeenCalledExactlyOnceWith('让@[林夏] 回头');
+  });
+
+  it('keeps the slash menu to itself when the text starts with /', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [{ name: '林夏', kind: 'actor' }] }), { status: 200 })));
+    const user = userEvent.setup();
+    render(<MentionHarness onSend={vi.fn()} />);
+    await user.type(screen.getByLabelText(/的消息$/), '/@');
+    expect(screen.queryByRole('listbox', { name: /引用/ })).toBeNull();
+    expect(screen.getByRole('listbox', { name: '快捷命令' })).toBeTruthy();
   });
 });

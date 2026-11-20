@@ -1,0 +1,6 @@
+{
+  "_about": "画布节点一次运行出几个结果(app/core/canvas_versions.py)。kinds 是可以一次出多个的节点种类；max 是一次最多几个(节点参数 count 超过它就按它算)；label 是队列里每个结果的名字：节点自己的名字加上第几个、共几个。",
+  "kinds": ["image_gen", "video_gen"],
+  "max": 4,
+  "label": "{label}（{index}/{total}）"
+}

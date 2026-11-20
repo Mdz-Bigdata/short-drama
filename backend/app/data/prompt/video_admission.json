@@ -1,0 +1,16 @@
+{
+  "_doc": "app/core/video_admission.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "summary.label": "{0} 镜头 {1}",
+  "summary.label.2": "镜头 {0}",
+  "summary.text": "批量视频准入受阻，未提交任何镜头：",
+  "summary.text.2": "有镜头的剧本时长不在模型支持的档位内，需先确认请求档位：{0}",
+  "summary.text.3": "批量视频准入通过",
+  "scripted_seconds.stated": "s秒",
+  "assess_video_batch.model_problem": "项目未选择视频模型，无法决定提交给谁",
+  "assess_video_batch.model_problem.2": "视频模型族 {0} 没有可用的运行时凭据",
+  "assess_video_batch.text": "第 5 阶段正在运行，等它结束再提交",
+  "assess_video_batch.text.2": "分镜 {0} 的台词装不进任何时长档位，需先在分镜规划里重拆",
+  "assess_video_batch.text.3": "出场角色尚无身份视图：",
+  "assess_video_batch.text.4": "剧本时长 {0} 秒不在模型档位内，将按 {1} 秒请求（不裁剪）",
+  "assess_video_batch.text.5": "本镜本可生成，但同批有镜头受阻，整批未提交"
+}

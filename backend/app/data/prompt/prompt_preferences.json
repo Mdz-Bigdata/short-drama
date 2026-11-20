@@ -1,0 +1,85 @@
+{
+  "_doc": "app/core/prompt_preferences.py 的措辞与界限：哪几个环节可以带上创作者自己的偏好、每个环节开放哪几种方式、拼进提示词时的标题和收尾的一句、报错。source 是 agent_prompts.json 里的键(平台默认的创作方法，改写时被替换的就是它)；protected 是改写后仍然保留的一句。",
+  "limits": {
+    "text_chars": 1500
+  },
+  "modes": {
+    "follow": {
+      "label": "跟随平台",
+      "hint": "用平台默认的创作方法，平台改进时跟着更新。"
+    },
+    "append": {
+      "label": "追加",
+      "hint": "平台的方法照用，再加上你写的这几条。"
+    },
+    "rewrite": {
+      "label": "改写",
+      "hint": "用你写的方法代替平台默认的方法；资料、本片事实和输出格式仍由平台给。"
+    }
+  },
+  "operations": [
+    {
+      "id": "director_plan",
+      "stage": 1,
+      "label": "总导演定调",
+      "description": "第 1 阶段写导演方案和三幕大纲时用的创作方法。",
+      "modes": ["follow", "append", "rewrite"],
+      "source": "executive_director",
+      "protected": "",
+      "why_no_rewrite": ""
+    },
+    {
+      "id": "writer",
+      "stage": 2,
+      "label": "编剧",
+      "description": "第 2 阶段写分集计划、正文和画面层时用的创作方法。",
+      "modes": ["follow", "append"],
+      "source": "",
+      "protected": "",
+      "why_no_rewrite": "平台的这一段里写着固定的情绪点名称和两段式写法，后面的程序按它们读剧本，所以只能追加。"
+    },
+    {
+      "id": "character_design",
+      "stage": 3,
+      "label": "角色设计",
+      "description": "第 3 阶段写角色造型锁定时用的创作方法。",
+      "modes": ["follow", "append"],
+      "source": "",
+      "protected": "",
+      "why_no_rewrite": "平台的这一段规定了角色卡的栏目和设定集的格子，后面的程序按它们取数，所以只能追加。"
+    },
+    {
+      "id": "storyboard",
+      "stage": 4,
+      "label": "分镜",
+      "description": "第 4 阶段把每一场拆成分镜表时用的创作方法。",
+      "modes": ["follow", "append"],
+      "source": "",
+      "protected": "",
+      "why_no_rewrite": "分镜表的列和各条硬要求由程序逐项检查，所以只能追加。"
+    },
+    {
+      "id": "promo",
+      "stage": 8,
+      "label": "宣发文案",
+      "description": "第 8 阶段写封面标题和引流文案时用的创作方法。",
+      "modes": ["follow", "append", "rewrite"],
+      "source": "pr_agent",
+      "protected": "所有宣传主张必须来自正片或已批准剧本的真实高光，不得制造不存在的剧情。",
+      "why_no_rewrite": ""
+    }
+  ],
+  "headings": {
+    "append": "【创作者的个人偏好（上面的方法照用，另外照这几条做）】",
+    "rewrite": "【创作者自己的创作方法（代替平台默认的方法）】"
+  },
+  "guard": "以上是创作者的个人偏好，只管风格、取舍和侧重。下文给出的资料、本片事实、篇幅和输出格式照原样执行；两处说法不一时，以下文为准。",
+  "errors": {
+    "unknown_operation": "没有这个环节：{operation}",
+    "unknown_mode": "没有这种方式：{mode}",
+    "mode_not_offered": "「{label}」不能{mode}：{why}",
+    "text_required": "选了「{mode}」就要写上内容",
+    "text_too_long": "内容最多 {limit} 个字，现在是 {length} 个",
+    "no_account": "不知道是哪个账号，记不下来"
+  }
+}

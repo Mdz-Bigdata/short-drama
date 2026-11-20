@@ -1,0 +1,31 @@
+{
+  "_doc": "app/core/production_asset_extractor.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.section_labels.prop": [
+    "关键道具",
+    "道具"
+  ],
+  "module.section_labels.costume": [
+    "服装",
+    "服饰",
+    "造型",
+    "着装"
+  ],
+  "module.section_labels.effect": [
+    "特效",
+    "视效",
+    "效果"
+  ],
+  "module.scene_heading": "【\\s*(?:场景|SCENE)\\s*[0-9零一二三四五六七八九十]*\\s*[:：]?\\s*([^】]{2,80})\\s*】",
+  "module.scene_bible_heading": "^#{0,6}\\s*场景圣经\\s*[:：]\\s*(.+)$",
+  "module.plain_scene_heading": "^\\s*#{0,6}\\s*(?:\\*\\*)?(?:场景|SCENE)\\s*[0-9零一二三四五六七八九十]*\\s*[:：]\\s*(.{2,100}?)(?:\\*\\*)?\\s*$",
+  "module.scene_context_suffix": "(?:\\s+|[/／|｜·]+)(?:凌晨|清晨|早晨|晨|上午|中午|午后|下午|黄昏|傍晚|深夜|夜晚|夜|白天|日|昼|内景|外景|内|外)\\s*$",
+  "module.clause_start": "^(?:插在|挂在|放在|位于|系在|藏在|摆在|由|从|被|用于|用来|随|以|在|其|该|它|他|她)",
+  "module.action_tail": "(?:割下|拿起|放下|折断|形成对比|对比|甩出|扔出|递给|举起|穿上|脱下|生锈|反光明显|飞溅)。?$",
+  "record.name": "^(?:场景|SCENE)\\s*[0-9零一二三四五六七八九十]*\\s*[:：]?\\s*",
+  "_extract_actors.description": "剧情角色",
+  "_extract_actors.description.2": "剧情角色",
+  "_scene_images.text": "继承",
+  "extract_production_assets.text": "仅支持提取 actor、scene、prop、costume、effect、product 和拆解补充类别的资产",
+  "extract_production_assets.description": "面向{0}",
+  "extract_production_assets.description.2": "广告主推商品"
+}

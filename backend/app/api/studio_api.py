@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile
+from pydantic import BaseModel, Field
 
 from app.api.auth_api import get_current_user
 from app.platform.access_audit import record_access_from_thread
@@ -25,6 +26,9 @@ from app.schema.studio import (
     CanvasBoardPatch,
     CanvasCommitPreviewRequest,
     CanvasCommitRequest,
+    CanvasStoryboardRequest,
+    CanvasSaveElementRequest,
+    CanvasTakeElementsRequest,
     CanvasId,
     CanvasPromoteRequest,
     CanvasDuplicateRequest,
@@ -38,9 +42,30 @@ from app.schema.studio import (
 )
 from app.service.project_archive import ProjectArchiveService
 from app.service.studio_service import MAX_CANVAS_VIDEO_BYTES, StudioService
+from app.platform.dependencies import get_platform_store
+from app.service import canvas_elements
+from app.service import canvas_project_sync
+from app.service import canvas_film, canvas_models
+from app.schema.studio import CanvasCropRequest, CanvasGridSplitRequest
+from app.service import canvas_image_ops
+from app.service import canvas_bundle
+from urllib.parse import quote
+from app.core import prompt_data
 
 
-router = APIRouter(prefix="/api/studio", tags=["可追溯短剧工作室"])
+_WORDING_FILE = "api_studio_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_studio_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+
+router = APIRouter(prefix="/api/studio", tags=list(_words_of("module.tags")))
 
 
 @lru_cache(maxsize=1)
@@ -66,12 +91,12 @@ def _canvas_id(canvas_id: CanvasId = Query(CANVAS_MAIN_ID)) -> str:
 
 def _safe_error(exc: Exception) -> HTTPException:
     if isinstance(exc, PermissionError):
-        return HTTPException(status_code=404, detail="资源不存在")
+        return HTTPException(status_code=404, detail=_text_of("_safe_error.detail"))
     if isinstance(exc, ConcurrencyError):
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, (ValueError, SourceIngestError)):
         return HTTPException(status_code=422, detail=str(exc))
-    return HTTPException(status_code=500, detail="工作室服务暂不可用")
+    return HTTPException(status_code=500, detail=_text_of("_safe_error.detail.2"))
 
 
 @router.post("/projects")
@@ -279,12 +304,52 @@ def open_task_canvas_project(
     owner_id = str((task or {}).get("owner_user_id") or "")
     decision = authorize(current_user, owner_id=owner_id, write=True) if task else None
     if not decision or not decision.allowed:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("open_task_canvas_project.detail"))
     if decision.cross_account:
         record_access_from_thread(current_user, resource_id=task_id, owner_id=owner_id, write=True, via="studio.task_canvas")
-    title = str((task.get("config") or {}).get("title_suggestion") or "画布")
+    title = str((task.get("config") or {}).get("title_suggestion") or _text_of("open_task_canvas_project.title"))
     try:
         return service.task_canvas_project(task_id, user_id, title)
+    except Exception as exc:
+        raise _safe_error(exc) from exc
+
+
+class TaskCanvasCharacterRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+@router.post("/tasks/{task_id}/canvas/character")
+def add_task_character_to_canvas(
+    task_id: str,
+    request: TaskCanvasCharacterRequest,
+    canvas_client: str | None = Header(None, alias="X-Canvas-Client"),
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+    drama=Depends(get_drama_service),
+):
+    """Put a character's look sheet on this task's main canvas (app/core/canvas_cast.py); once only, nothing is paid."""
+    from app.core import canvas_cast
+
+    task = drama.repo.get_task(task_id)
+    user_id = _owner(current_user)
+    owner_id = str((task or {}).get("owner_user_id") or "")
+    decision = authorize(current_user, owner_id=owner_id, write=True) if task else None
+    if not decision or not decision.allowed:
+        raise HTTPException(status_code=404, detail=_text_of("open_task_canvas_project.detail"))
+    if decision.cross_account:
+        record_access_from_thread(current_user, resource_id=task_id, owner_id=owner_id, write=True, via="studio.task_canvas")
+    title = str((task.get("config") or {}).get("title_suggestion") or _text_of("open_task_canvas_project.title"))
+    try:
+        project_id = service.task_canvas_project(task_id, user_id, title)["project_id"]
+        canvas = service.repository.get_canvas(project_id, user_id)
+        document = canvas.model_dump(mode="json") if canvas else {"nodes": [], "edges": []}
+        planned = canvas_cast.plan(task, document, request.name.strip())
+        if not planned["operations"]:
+            return {"project_id": project_id, "added": False, "node_id": planned["existing"]}
+        done = service.edit_canvas(project_id, user_id, planned["operations"], client_id=canvas_client)
+        return {"project_id": project_id, "added": True, "node_id": done["created"].get("cast", ""), "version": done["version"]}
+    except canvas_cast.CastPictureMissing as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise _safe_error(exc) from exc
 
@@ -359,11 +424,13 @@ def put_canvas(
     project_id: str,
     request: CanvasPutRequest,
     canvas_id: str = Depends(_canvas_id),
+    canvas_client: str | None = Header(None, alias="X-Canvas-Client"),
     current_user: dict = Depends(get_current_user),
     service: StudioService = Depends(get_studio_service),
 ):
+    # Which window saved (a malformed id is announced as null, never refused): its own `saved` confirms, the others reload.
     try:
-        return service.put_canvas(project_id, _owner(current_user), request, canvas_id=canvas_id)
+        return service.put_canvas(project_id, _owner(current_user), request, canvas_id=canvas_id, client_id=canvas_client)
     except Exception as exc:
         raise _safe_error(exc) from exc
 
@@ -475,6 +542,272 @@ def canvas_shots(
 ):
     try:
         return service.canvas_shots(project_id, _owner(current_user), drama, current_user)
+    except Exception as exc:
+        raise _safe_error(exc) from exc
+
+
+@router.get("/projects/{project_id}/canvas/storyboard")
+def canvas_storyboard_scenes(
+    project_id: str,
+    canvas_id: str = Depends(_canvas_id),
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+    drama=Depends(get_drama_service),
+):
+    try:
+        return service.storyboard_scenes(project_id, _owner(current_user), canvas_id=canvas_id, drama=drama, user=current_user)
+    except Exception as exc:
+        raise _safe_error(exc) from exc
+
+
+@router.post("/projects/{project_id}/canvas/storyboard")
+def canvas_storyboard_layout(
+    project_id: str,
+    request: CanvasStoryboardRequest,
+    canvas_id: str = Depends(_canvas_id),
+    canvas_client: str | None = Header(None, alias="X-Canvas-Client"),
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+    drama=Depends(get_drama_service),
+):
+    try:
+        return service.storyboard_to_canvas(
+            project_id, _owner(current_user), canvas_id=canvas_id, scene_ids=request.scene_ids or None, preview=request.preview,
+            base_version=request.expected_version, drama=drama, user=current_user, client_id=canvas_client,
+        )
+    except Exception as exc:
+        raise _safe_error(exc) from exc
+
+
+@router.get("/projects/{project_id}/canvas/project-sync")
+def canvas_project_sync_review(
+    project_id: str,
+    canvas_id: str = Depends(_canvas_id),
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+    drama=Depends(get_drama_service),
+):
+    """What syncing this canvas with the project's storyboard would change (app/core/canvas_project_sync.py); writes nothing."""
+    try:
+        return canvas_project_sync.review(service, project_id, _owner(current_user), canvas_id=canvas_id, drama=drama, user=current_user)
+    except Exception as exc:
+        raise _safe_error(exc) from exc
+
+
+@router.post("/projects/{project_id}/canvas/project-sync")
+def canvas_project_sync_apply(
+    project_id: str,
+    request: canvas_project_sync.CanvasProjectSyncRequest,
+    canvas_id: str = Depends(_canvas_id),
+    canvas_client: str | None = Header(None, alias="X-Canvas-Client"),
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+    drama=Depends(get_drama_service),
+):
+    try:
+        return canvas_project_sync.apply(
+            service, project_id, _owner(current_user), request, canvas_id=canvas_id, drama=drama, user=current_user, client_id=canvas_client,
+        )
+    except Exception as exc:
+        raise _safe_error(exc) from exc
+
+
+@router.get("/projects/{project_id}/canvas/models")
+def canvas_models_view(
+    project_id: str,
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+    drama=Depends(get_drama_service),
+):
+    """The project's text, image, video and audio models, with what the model centre enables (app/service/canvas_models.py)."""
+    try:
+        return canvas_models.view(service, project_id, _owner(current_user), drama=drama, user=current_user)
+    except Exception as exc:
+        raise _safe_error(exc) from exc
+
+
+@router.put("/projects/{project_id}/canvas/models")
+def canvas_models_update(
+    project_id: str,
+    request: canvas_models.CanvasModelsRequest,
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+    drama=Depends(get_drama_service),
+):
+    try:
+        return canvas_models.update(service, project_id, _owner(current_user), request, drama=drama, user=current_user)
+    except Exception as exc:
+        raise _safe_error(exc) from exc
+
+
+@router.post("/projects/{project_id}/canvas/film/preview")
+def canvas_film_preview(
+    project_id: str,
+    request: canvas_film.CanvasFilmRequest,
+    canvas_id: str = Depends(_canvas_id),
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+    drama=Depends(get_drama_service),
+):
+    """What a one-click film would be made of and what is still missing (app/core/canvas_film.py); writes nothing."""
+    try:
+        return canvas_film.preview(service, project_id, _owner(current_user), request, canvas_id=canvas_id, drama=drama, user=current_user)
+    except Exception as exc:
+        raise _safe_error(exc) from exc
+
+
+@router.post("/projects/{project_id}/canvas/film")
+def canvas_film_build(
+    project_id: str,
+    request: canvas_film.CanvasFilmRequest,
+    canvas_id: str = Depends(_canvas_id),
+    canvas_client: str | None = Header(None, alias="X-Canvas-Client"),
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+    drama=Depends(get_drama_service),
+):
+    """Put the film's nodes in place as one canvas version; running them is the canvas's usual quoted run."""
+    try:
+        return canvas_film.build(
+            service, project_id, _owner(current_user), request, canvas_id=canvas_id, drama=drama, user=current_user, client_id=canvas_client,
+        )
+    except Exception as exc:
+        raise _safe_error(exc) from exc
+
+
+def _element_error(exc: Exception) -> HTTPException:
+    """The library's own refusals keep their status; an element that is not this person's is a 404 that says so."""
+    if isinstance(exc, HTTPException):
+        return exc
+    if isinstance(exc, canvas_elements.ElementNotFound):
+        return HTTPException(status_code=404, detail=str(exc))
+    return _safe_error(exc)
+
+
+@router.get("/projects/{project_id}/canvas/elements")
+async def canvas_element_library(
+    project_id: str,
+    kind: str | None = Query(None, max_length=24),
+    q: str = Query("", max_length=120),
+    page: int = Query(1, ge=1),
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+    store=Depends(get_platform_store),
+):
+    """The person's own library elements that have a picture, for the canvas's picker (see ``canvas_elements``)."""
+    try:
+        return await canvas_elements.listing(service, store, project_id=project_id, owner_id=_owner(current_user), kind=kind or None, query=q, page=page)
+    except Exception as exc:
+        raise _element_error(exc) from exc
+
+
+@router.post("/projects/{project_id}/canvas/elements")
+async def take_canvas_elements(
+    project_id: str,
+    request: CanvasTakeElementsRequest,
+    canvas_id: str = Depends(_canvas_id),
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+    store=Depends(get_platform_store),
+):
+    """Library pictures onto the canvas as media nodes holding copies: one canvas version for the whole request."""
+    picks = [(item, None) for item in request.element_ids] + [(item.element_id, item.file_id) for item in request.picks]
+    try:
+        return await canvas_elements.take(
+            service, store, project_id=project_id, owner_id=_owner(current_user), canvas_id=canvas_id, picks=picks, base_version=request.expected_version,
+        )
+    except Exception as exc:
+        raise _element_error(exc) from exc
+
+
+@router.post("/projects/{project_id}/canvas/nodes/{node_id}/element")
+async def save_canvas_node_element(
+    project_id: str,
+    node_id: str,
+    request: CanvasSaveElementRequest,
+    canvas_id: str = Depends(_canvas_id),
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+    store=Depends(get_platform_store),
+):
+    """A node's picture kept as a new element of the person's library."""
+    try:
+        return await canvas_elements.save_node(
+            service, store, project_id=project_id, owner_id=_owner(current_user), canvas_id=canvas_id, node_id=node_id, name=request.name, kind=request.kind,
+        )
+    except Exception as exc:
+        raise _element_error(exc) from exc
+
+
+@router.post("/projects/{project_id}/canvas/nodes/{node_id}/crop")
+def crop_canvas_node(
+    project_id: str,
+    node_id: str,
+    request: CanvasCropRequest,
+    canvas_id: str = Depends(_canvas_id),
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+):
+    """A rectangle of a node's picture as a new media node beside it: one canvas version (see ``canvas_image_ops``)."""
+    try:
+        return canvas_image_ops.crop(
+            service, project_id=project_id, owner_id=_owner(current_user), canvas_id=canvas_id, node_id=node_id,
+            rect={"x": request.x, "y": request.y, "w": request.w, "h": request.h}, base_version=request.expected_version,
+        )
+    except Exception as exc:
+        raise _element_error(exc) from exc
+
+
+@router.post("/projects/{project_id}/canvas/nodes/{node_id}/grid-split")
+def split_canvas_node(
+    project_id: str,
+    node_id: str,
+    request: CanvasGridSplitRequest,
+    canvas_id: str = Depends(_canvas_id),
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+):
+    """A node's picture cut into rows × columns media nodes beside it: one canvas version."""
+    try:
+        return canvas_image_ops.split(
+            service, project_id=project_id, owner_id=_owner(current_user), canvas_id=canvas_id, node_id=node_id,
+            rows=request.rows, columns=request.columns, base_version=request.expected_version,
+        )
+    except Exception as exc:
+        raise _element_error(exc) from exc
+
+
+@router.get("/projects/{project_id}/canvas/bundle")
+def export_canvas_bundle(
+    project_id: str,
+    canvas_id: str = Depends(_canvas_id),
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+):
+    """The board with its media as one zip (see ``canvas_bundle``)."""
+    try:
+        file_name, data, _counts = canvas_bundle.export_for(service, project_id, _owner(current_user), canvas_id)
+    except Exception as exc:
+        raise _safe_error(exc) from exc
+    ascii_name = "canvas.novara-canvas.zip"
+    return Response(
+        content=data, media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(file_name)}"},
+    )
+
+
+@router.post("/projects/{project_id}/canvas/bundle")
+async def import_canvas_bundle(
+    project_id: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+    service: StudioService = Depends(get_studio_service),
+):
+    """A bundle's files stored again as this project's canvas uploads; the canvas comes back to be merged in the browser."""
+    try:
+        limit = int(prompt_data.value("canvas_bundle", "limits")["max_upload_bytes"])
+        data = await file.read(limit + 1)
+        return canvas_bundle.import_for(service, project_id, _owner(current_user), data)
     except Exception as exc:
         raise _safe_error(exc) from exc
 

@@ -11,12 +11,25 @@ from app.api import drama_api
 from app.service import director_desk_service as desk
 from app.service import panorama_service
 from app.service.spatial_stage_service import scene_record
+from app.core import prompt_data
+
+
+_WORDING_FILE = "api_panorama_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_panorama_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 logger = logging.getLogger("app.api.panorama_api")
 
 router = APIRouter(
     prefix="/api/drama",
-    tags=["360 全景"],
+    tags=list(_words_of("module.tags")),
     dependencies=[Depends(drama_api.require_owned_drama_task)],
 )
 
@@ -26,9 +39,9 @@ _REFERENCE_TYPES = {"image/png", "image/jpeg", "image/webp"}
 def _scene_task(task_id: str, scene_id: str) -> dict:
     task = drama_api.service.repo.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("_scene_task.detail"))
     if scene_record(task, scene_id) is None:
-        raise HTTPException(status_code=404, detail=f"场景 {scene_id} 不在剧本大纲里")
+        raise HTTPException(status_code=404, detail=_text_of("_scene_task.detail.2").format(scene_id))
     return task
 
 
@@ -41,7 +54,7 @@ def list_panoramas(task_id: str, scene_id: str):
 def generate_panorama(
     task_id: str, scene_id: str,
     description: str = Form("", max_length=1500),
-    reference: UploadFile | None = File(None, description="可选的参考图：按它的地点与色调扩展成全景"),
+    reference: UploadFile | None = File(None, description=_text_of("generate_panorama.description")),
 ):
     """Generate a 2:1 panorama from text and/or a picture; this is one paid image call."""
     _scene_task(task_id, scene_id)
@@ -49,10 +62,10 @@ def generate_panorama(
     if reference is not None:
         content = reference.file.read(desk.MAX_STILL_BYTES + 1)
         if len(content) > desk.MAX_STILL_BYTES:
-            raise HTTPException(status_code=422, detail="参考图不能超过 10 MB")
+            raise HTTPException(status_code=422, detail=_text_of("generate_panorama.detail"))
         media_type = desk.sniff_media(content[:4096]) or ""
         if media_type not in _REFERENCE_TYPES:
-            raise HTTPException(status_code=422, detail="参考图只支持 PNG、JPEG、WebP；文件内容不是其中任何一种")
+            raise HTTPException(status_code=422, detail=_text_of("generate_panorama.detail.2"))
     try:
         result = panorama_service.generate(
             drama_api.service, task_id, scene_id, description=description, reference=content, reference_type=media_type,
@@ -65,7 +78,7 @@ def generate_panorama(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - provider errors can carry keys and URLs; the person gets a plain line
         logger.warning("全景生成失败: %s", type(exc).__name__)
-        raise HTTPException(status_code=502, detail="图像模型未能生成全景，请稍后重试") from exc
+        raise HTTPException(status_code=502, detail=_text_of("generate_panorama.detail.3")) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_text_of("generate_panorama.detail.4"))
     return result

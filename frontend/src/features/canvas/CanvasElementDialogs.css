@@ -1,0 +1,64 @@
+/* The element-library picker and the "save to library" form. Colours only from the app's tokens (see CanvasWorkspace.css). */
+.cn-dialog.ced-picker { width: min(46rem, calc(100% - 2rem)); max-height: 86%; }
+
+.ced-filters { display: flex; align-items: center; gap: 0.4rem; }
+.ced-filters .cn-search { flex: 1; min-width: 0; }
+.ced-filters .cn-search svg { width: 0.95rem; height: 0.95rem; flex: none; }
+
+.ced-grid {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: 0.5rem;
+  overflow-y: auto;
+  min-height: 6rem;
+}
+.ced-grid li { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+
+.ced-card {
+  position: relative;
+  padding: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--cn-field);
+  cursor: pointer;
+}
+.ced-card:hover { border-color: var(--accent); }
+.ced-card[aria-pressed='true'] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.ced-card img { display: block; width: 100%; height: 6.5rem; object-fit: cover; border-radius: 4px; background: var(--surface-2); }
+.ced-card strong { overflow: hidden; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
+.ced-card small { color: var(--text-muted); font-size: 0.68rem; }
+.ced-check {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  width: 1.2rem;
+  height: 1.2rem;
+  display: grid;
+  place-items: center;
+  color: var(--on-accent);
+  border-radius: 50%;
+  background: var(--accent);
+}
+.ced-check svg { width: 0.8rem; height: 0.8rem; }
+
+.ced-more { justify-content: flex-start; font-size: 0.68rem; }
+.ced-views { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.2rem; }
+.ced-views button { padding: 0; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-2); cursor: pointer; overflow: hidden; }
+.ced-views button[aria-pressed='true'] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.ced-views img { display: block; width: 100%; height: 2.6rem; object-fit: cover; }
+
+.ced-save__body { display: flex; gap: 0.6rem; align-items: flex-start; }
+.ced-save__preview { width: 6.5rem; height: 6.5rem; flex: none; object-fit: cover; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); }
+.ced-save__fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+
+/* The inspector's actions gained a third button (存入元素库): let the row wrap in the narrow side panel. */
+.cn-row.cn-actions { flex-wrap: wrap; }

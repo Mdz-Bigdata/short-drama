@@ -26,12 +26,14 @@ function messageOf(error: unknown, fallback: string) {
 }
 
 export function ChecksPanel({ taskId, sceneId, plan, shotId, editable, saving, onCommit, onSelectShot }: Props) {
-  const [open, setOpen] = useState(true);
+  // Until the user folds or unfolds it by hand, the list is open only while it has something to say.
+  const [chosen, setChosen] = useState<boolean | null>(null);
   const [repairs, setRepairs] = useState<SpatialRepairsResponse | null>(null);
   const [notice, setNotice] = useState('');
   const [attempt, setAttempt] = useState(0);
   const failing = plan.checks.filter(check => !check.passed);
   const anyFailing = failing.length > 0;
+  const open = chosen ?? (anyFailing || plan.checks.length === 0);
   const revision = plan.revision;
 
   useEffect(() => {
@@ -61,7 +63,7 @@ export function ChecksPanel({ taskId, sceneId, plan, shotId, editable, saving, o
   return (
     <section className="desk-checks-panel" aria-label="检查与修正">
       <h2>
-        <button type="button" className="desk-checks-panel__toggle" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+        <button type="button" className="desk-checks-panel__toggle" aria-expanded={open} onClick={() => setChosen(!open)}>
           {open ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
           <ShieldCheck aria-hidden="true" /> 检查与修正
           {anyFailing

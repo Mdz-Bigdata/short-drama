@@ -2,13 +2,17 @@ import { lazy, Suspense, useMemo, useState, type CSSProperties } from 'react';
 import { ArrowRight, Axis3d, Clapperboard, CheckCircle2, ChevronDown, ClipboardList, Download, FileText, Globe, Images, RefreshCw, Sparkles } from 'lucide-react';
 
 import { ExportDialog } from './ExportDialog';
+import { DeskLoading } from '../directorDesk/DeskLoading';
 import { SpatialStageDialog } from '../spatial/SpatialStageDialog';
+import { StoryboardMoreMenu } from './StoryboardMoreMenu';
 import { StoryboardPromptDialog } from './StoryboardPromptDialog';
 import { STORYBOARD_VISUAL_THEME } from './storyboardTheme';
 import { downloadStoryboardGrid, downloadStoryboardScene, downloadStoryboardShot } from './storyboardDownload';
 import type { StoryboardPromptDetail } from './storyboardPromptTypes';
 import type { StoryboardViewAction } from './storyboardActions';
 import './StoryboardWorkspace.css';
+import { ShotAssetChips, type ShotAssetRef } from '../workbench/ShotAssetChips';
+import { useAssetsChanged } from '../elements/assetEvents';
 import { t } from '../../i18n';
 
 
@@ -41,8 +45,25 @@ export interface StoryboardShot {
   scene_id?: string;
   sceneId?: string;
   cut_in?: StoryboardCutIn | null;
+  /** 本镜用到的人物、道具、特效名(backend 分镜 shot)；scene 见上，可能是场景描述。 */
+  characters?: string[];
+  props?: string[];
+  effects?: string[];
+  /** 本格画图时带上的资产及其版本。 */
+  asset_bindings?: ShotAssetRef[];
+  /** 用到的资产在别处改过，本格需重画。 */
+  asset_stale?: boolean;
   /** 真人演员像不像本人：看图模型对本人照片和这一格打的分(10 分制)，不像会重画一次。 */
   likeness?: Array<{ name?: string; score?: number; same_person?: boolean; differences?: string[]; redrawn?: boolean }>;
+}
+
+// shot.scene 常是整段场景描述；只有像个地名那样短才当场景资产显示。
+const SCENE_CHIP_MAX_CHARS = 16;
+
+function sceneChipName(shot: StoryboardShot): string | undefined {
+  if ((shot.asset_bindings || []).some(binding => binding.kind === 'scene')) return undefined;
+  const scene = shot.scene?.trim();
+  return scene && scene.length <= SCENE_CHIP_MAX_CHARS && !/[\n，。；！？]/.test(scene) ? scene : undefined;
 }
 
 // 与后端 data/prompt/real_person.json 的 likeness_min_score 一致。
@@ -57,6 +78,8 @@ export interface SceneBoardStatus {
   error?: string;
   prompt_detail?: StoryboardPromptDetail;
   grid_prompt?: string;
+  /** 分镜表改过一版后仍没过的打戏与占位复核(镜N 规则：说明)。 */
+  craft_issues?: string[];
 }
 
 // 后端 assets["4_progress"] 中单集的契约进度：total 来自剧本明细，不是已生成数。
@@ -249,6 +272,8 @@ export function StoryboardWorkspace({
   externalAction,
 }: StoryboardWorkspaceProps) {
   const normalizedShots = useMemo(() => (Array.isArray(shots) ? shots : []), [shots]);
+  // 资产在元素库改了(改名、换图、恢复版本)：重读一遍，分镜格上的资产和「资产已改」跟着变。
+  useAssetsChanged(() => onRefresh());
   const scenes = useMemo(
     () => buildScenes(normalizedShots, sceneBoards, breakdownScenes),
     [normalizedShots, sceneBoards, breakdownScenes],
@@ -278,7 +303,11 @@ export function StoryboardWorkspace({
   const [appliedAction, setAppliedAction] = useState(0);
   if (externalAction && externalAction.nonce !== appliedAction) {
     setAppliedAction(externalAction.nonce);
-    if (scenes.some(scene => scene.id === externalAction.sceneId)) setSelectedSceneId(externalAction.sceneId);
+    const asked = scenes.find(scene => scene.id === externalAction.sceneId);
+    if (asked) {
+      setSelectedSceneId(asked.id);
+      if (externalAction.shotId != null) setSelectedFrameIndex(Math.max(0, asked.shots.findIndex(shot => shot.shot_id === externalAction.shotId)));
+    }
     setShowPrompt(externalAction.view === 'prompt');
     setShowSpatial(externalAction.view === 'spatial');
     setExportKind(externalAction.view === 'packages' ? 'packages' : externalAction.view === 'sheets' ? 'sheets' : null);
@@ -492,13 +521,38 @@ export function StoryboardWorkspace({
 
         <main className="storyboard-main">
           <div className="storyboard-main-toolbar">
-            <div>
+            <div className="storyboard-main-title">
               <h2>{selectedScene.id} 时序分镜</h2>
               <p><strong>{panelCountLabel(selectedScene.shots.length)}</strong><span aria-hidden="true">·</span>{selectedScene.shots.length} 个连续瞬间</p>
-              {/* 侧栏卡片受宽度所限只能单行截断，这里给出剧本大纲的完整场景描述。 */}
-              {selectedScene.title && selectedScene.title !== '连续场景' && (
-                <p className="storyboard-scene-summary">{selectedScene.title}</p>
-              )}
+            </div>
+            {/* 两个调度入口是同一份空间舞台的两种看法，常驻并各带一行说明；其余工具收进「更多」。 */}
+            <div className="storyboard-stage-tools" role="group" aria-label={t('场景调度')}>
+              {/* 站位、轴线与逐镜机位：分镜图生成前后都能看，改完可只重画这一场。 */}
+              <button
+                type="button"
+                className="storyboard-action storyboard-stage-tool"
+                onClick={() => setShowSpatial(true)}
+                disabled={!taskId}
+                aria-haspopup="dialog"
+                aria-label={t('空间调度')}
+                title={t('2D 俯视图：核对本场的站位、轴线和逐镜机位，可拖动微调')}
+              >
+                <Axis3d aria-hidden="true" />
+                <span><strong>{t('空间调度')}</strong><small>{t('俯视图看站位')}</small></span>
+              </button>
+              {/* 同一份空间舞台的可编辑 3D 视图：摆人、摆道具、架机位、截图交给第 5 阶段。 */}
+              <button
+                type="button"
+                className="storyboard-action storyboard-stage-tool storyboard-action--primary"
+                onClick={() => setShowDesk(true)}
+                disabled={!taskId}
+                aria-haspopup="dialog"
+                aria-label={t('3D 导演台')}
+                title={t('可编辑的 3D 场景：摆人物姿势、放道具、架机位，截图交给视频阶段')}
+              >
+                <Clapperboard aria-hidden="true" />
+                <span><strong>{t('3D 导演台')}</strong><small>{t('摆人架机截图')}</small></span>
+              </button>
             </div>
             <div className="storyboard-main-actions">
               <DownloadAction
@@ -516,56 +570,38 @@ export function StoryboardWorkspace({
               >
                 <FileText aria-hidden="true" /> {t('查看提示词')}
               </button>
-              {/* 站位、轴线与逐镜机位：分镜图生成前后都能看，改完可只重画这一场。 */}
               <button
                 type="button"
                 className="storyboard-action"
-                onClick={() => setShowSpatial(true)}
-                disabled={!taskId}
-                aria-haspopup="dialog"
+                onClick={onRegenerate}
+                title={t('运行整部剧的分镜阶段：只补画未完成或已退回的场次，已完成的分镜页会保留；第 5 阶段及之后已生成的视频、音频与成片会被清除（逐集制作时只清当前集）')}
               >
-                <Axis3d aria-hidden="true" /> {t('空间调度')}
-              </button>
-              {/* 同一份空间舞台的可编辑 3D 视图：摆人、摆道具、架机位、截图交给第 5 阶段。 */}
-              <button
-                type="button"
-                className="storyboard-action"
-                onClick={() => setShowDesk(true)}
-                disabled={!taskId}
-                aria-haspopup="dialog"
-              >
-                <Clapperboard aria-hidden="true" /> {t('3D 导演台')}
-              </button>
-              <button type="button" className="storyboard-action" onClick={() => setShowPanorama(true)} disabled={!taskId} aria-haspopup="dialog">
-                <Globe aria-hidden="true" /> {t('360° 全景')}
-              </button>
-              <button type="button" className="storyboard-action" onClick={() => setShowPool(true)} disabled={!taskId} aria-haspopup="dialog">
-                <Images aria-hidden="true" /> {t('图片池')}
-              </button>
-              {/* 定稿的分镜重新切成可直接粘贴的提示词分包；资产设定图是开拍前要先锁死的参考图。 */}
-              <button
-                type="button"
-                className="storyboard-action"
-                onClick={() => setExportKind('packages')}
-                disabled={!taskId}
-                aria-haspopup="dialog"
-              >
-                <ClipboardList aria-hidden="true" /> {t('提示词分包')}
-              </button>
-              <button
-                type="button"
-                className="storyboard-action"
-                onClick={() => setExportKind('sheets')}
-                disabled={!taskId}
-                aria-haspopup="dialog"
-              >
-                <Images aria-hidden="true" /> {t('资产设定图')}
-              </button>
-              <button type="button" className="storyboard-action" onClick={onRegenerate}>
                 <RefreshCw aria-hidden="true" /> {t('重跑分镜阶段')}
               </button>
+              {/* 提示词分包把定稿的分镜重新切成可直接粘贴的提示词；资产设定图是开拍前要先锁死的参考图。 */}
+              <StoryboardMoreMenu
+                label={t('更多')}
+                items={[
+                  { key: 'panorama', label: t('360° 全景'), icon: Globe, disabled: !taskId, onSelect: () => setShowPanorama(true) },
+                  { key: 'pool', label: t('图片池'), icon: Images, disabled: !taskId, onSelect: () => setShowPool(true) },
+                  { key: 'packages', label: t('提示词分包'), icon: ClipboardList, disabled: !taskId, onSelect: () => setExportKind('packages') },
+                  { key: 'sheets', label: t('资产设定图'), icon: Images, disabled: !taskId, onSelect: () => setExportKind('sheets') },
+                ]}
+              />
             </div>
+            {/* 侧栏卡片受宽度所限只能单行截断，这里给出剧本大纲的完整场景描述。 */}
+            {selectedScene.title && selectedScene.title !== '连续场景' && (
+              <p className="storyboard-scene-summary">{selectedScene.title}</p>
+            )}
           </div>
+
+          {selectedBoard?.craft_issues && selectedBoard.craft_issues.length > 0 && (
+            <details className="storyboard-craft-issues">
+              <summary>{t('分镜复核还有 {0} 条没过（已自动改过一版）', [selectedBoard.craft_issues.length])}</summary>
+              <ul>{selectedBoard.craft_issues.map(issue => <li key={issue}>{issue}</li>)}</ul>
+              <p>{t('可以在右侧对话里说「重画这一场」，或直接改这一格的画面内容。')}</p>
+            </details>
+          )}
 
           {selectedScene.shots.length === 0 ? (
             <div className="storyboard-grid-empty" role="status">
@@ -639,6 +675,7 @@ export function StoryboardWorkspace({
                     })}
                     <span className="storyboard-frame__number">{number}</span>
                     <span className="storyboard-frame__meta">{shot.size || '景别待定'} · {shot.motion || '运镜待定'}</span>
+                    <ShotAssetChips compact overlay assets={shot.asset_bindings} characters={shot.characters} props={shot.props} effects={shot.effects} scene={sceneChipName(shot)} stale={shot.asset_stale} />
                   </span>
                   {downloadable && (
                     <span className="storyboard-frame__download" aria-hidden="true">
@@ -683,10 +720,11 @@ export function StoryboardWorkspace({
           sceneId={selectedScene.id}
           onClose={() => setShowSpatial(false)}
           onRedrawRequested={onRefresh}
+          onOpenDesk={() => { setShowSpatial(false); setShowDesk(true); }}
         />
       )}
       {showDesk && taskId && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<DeskLoading />}>
           <DirectorDesk
             key={`desk-${selectedScene.id}`}
             taskId={taskId}

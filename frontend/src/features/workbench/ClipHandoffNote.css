@@ -1,0 +1,10 @@
+.clip-handoff { margin-top: 0.5rem; font-size: 0.8125rem; }
+.clip-handoff > ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.clip-handoff__cut { padding: 0.35rem 0.5rem; border-left: 3px solid var(--line, #d9c6cd); border-radius: 4px; background: var(--surface-muted, rgba(0, 0, 0, 0.02)); }
+.clip-handoff__cut.is-good { border-left-color: var(--success, #4f9a6a); }
+.clip-handoff__cut.is-suspect { border-left-color: var(--warning, #d08a2a); }
+.clip-handoff__cut.is-unknown { border-left-color: var(--text-muted, #999); }
+.clip-handoff__cut small { display: block; color: var(--text-muted, #777); margin-top: 0.15rem; }
+.clip-handoff__cut ul { margin: 0.2rem 0 0; padding-left: 1rem; }
+.clip-handoff__note { margin: 0.35rem 0 0; font-size: 0.75rem; color: var(--text-muted, #777); }
+.clip-handoff__ask { margin-top: 0.5rem; }

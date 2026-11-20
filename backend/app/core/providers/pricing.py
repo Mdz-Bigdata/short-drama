@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Mapping
@@ -97,8 +98,10 @@ class PricingTable:
             return None
         if key in self._entries:
             return self._entries[key]
-        # "doubao-seedance-2-5-pro-250428" is priced by its "seedance-2-5" entry.
-        matches = [entry for name, entry in self._entries.items() if name in key]
+        # "doubao-seedance-2-5-pro-250428" is priced by its "seedance-2-5" entry, and so is the project alias
+        # "seedance2.5": separators are ignored on both sides, so "seedance-2-5" and "seedance2.5" are one name.
+        folded = _fold(key)
+        matches = [entry for name, entry in self._entries.items() if name in key or (_fold(name) and _fold(name) in folded)]
         return max(matches, key=lambda entry: len(entry.model)) if matches else None
 
     def cost(self, model: str | None, *, units: Mapping[str, Any]) -> tuple[float, str] | None:
@@ -119,11 +122,20 @@ class PricingTable:
             return float(units.get("characters") or 0) / 1000 * entry.unit_price(resolution), entry.currency
         return None
 
+    def entries(self) -> list[PriceEntry]:
+        """Every priced model, in the order of its id."""
+        return [self._entries[key] for key in sorted(self._entries)]
+
     def __len__(self) -> int:
         return len(self._entries)
 
 
 _table: PricingTable | None = None
+
+
+def _fold(name: str) -> str:
+    """A model name without case or separators: ``Seedance-2.5`` and ``seedance2_5`` read the same."""
+    return re.sub(r"[\s._\-]+", "", str(name or "").lower())
 
 
 def pricing_table() -> PricingTable:

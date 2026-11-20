@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 
+from app.core import prompt_data
 from app.core.spatial_stage import axis as axis_rules
 from app.core.spatial_stage import geometry as geo
 from app.core.spatial_stage.coverage import keep_side
@@ -37,10 +38,22 @@ _DEFAULT_ANGLE = {"whip-pan": 60.0}
 _ARRIVALS = frozenset({"whip-pan"})
 
 Pose = tuple[geo.Vec3, geo.Vec3, float]
+# What a refused move says: the "errors" of app/data/prompt/stage_camera_moves.json.
+_WORDING = "stage_camera_moves"
 
 
 class CameraMoveError(ValueError):
     """The preset cannot be laid out for this camera."""
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A refusal of the move table, filled in (``key`` is positional: a template may name a ``{key}``)."""
+    return str(prompt_data.load(_WORDING)["errors"][key]).format(**values)
+
+
+def _one_of(label: str, options: Sequence[str]) -> str:
+    separator = str(prompt_data.load(_WORDING)["errors"]["option_separator"])
+    return _says("one_of", label=label, options=separator.join(options))
 
 
 def _smooth(t: float) -> float:
@@ -152,7 +165,7 @@ def _path(
             centre, height = stage_center, target[1]
         aim = _blend(target, (centre[0], height, centre[1]), min(1.0, amplitude))
         return _line(here, (position, aim, lens), samples)
-    raise CameraMoveError(f"未知的运镜预设 {preset!r}")
+    raise CameraMoveError(_says("unknown_preset", preset=preset))
 
 
 def _holds(poses: Sequence[Pose], camera: StageCamera, subjects: Sequence[StageActor]) -> bool:
@@ -174,12 +187,12 @@ def build_keys(
 ) -> list[CameraKey]:
     """The keys of ``preset`` for ``camera`` over ``duration_s`` seconds."""
     if preset not in PRESETS:
-        raise CameraMoveError(f"preset 只能是 {' / '.join(PRESETS)}")
+        raise CameraMoveError(_one_of("preset", PRESETS))
     easing = easing or default_easing(preset)
     if easing not in MOVE_EASINGS:
-        raise CameraMoveError(f"easing 只能是 {' / '.join(MOVE_EASINGS)}")
+        raise CameraMoveError(_one_of("easing", MOVE_EASINGS))
     if side not in SIDES:
-        raise CameraMoveError(f"side 只能是 {' / '.join(SIDES)}")
+        raise CameraMoveError(_one_of("side", SIDES))
     angle = default_angle(preset) if angle is None else angle
     overhead = axis_rules.is_overhead(camera)
     guarded = axis_rules.has_axis(axis) and axis.camera_side != 0 and not overhead
@@ -214,7 +227,7 @@ def build_keys(
             chosen = min(holding, key=bent)
             break
     if chosen is None and fallback is None:
-        raise CameraMoveError("这个方向的运镜会越过轴线，请换一侧或先调整轴线")
+        raise CameraMoveError(_says("crosses_axis"))
     # Nothing holds the subjects when the frame it starts from already loses them: that is the
     # camera's problem, not the move's, so the move is written as asked.
     poses = settled(chosen or fallback or [])

@@ -32,6 +32,19 @@ from functools import lru_cache
 from typing import Iterable, Sequence
 
 from app.core import knowledge_registry
+from app.core import prompt_data
+
+
+_WORDING_FILE = "exchange_units"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/exchange_units.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 CODE_TABLE = "exchange-unit-code-table"
 SPEC = "exchange-unit-spec"
@@ -49,15 +62,15 @@ ONE_SIDED_GAP = 3            # MX2: three tiers apart, the stronger side sets th
 PREVIEW_SECONDS = (8, 10, 12, 15)
 
 # Words that hold a weapon's character without being a weapon (「剑眉星目」 is a face).
-_NOT_WEAPONS = ("剑眉", "刀疤", "刀子嘴", "刀削", "眉如刀", "剑拔弩张")
+_NOT_WEAPONS = _words_of("module.not_weapons")
 # State adjustments of the code table (力量状态修正) that we can read off a character's own text.
-_STATE_DROPS = (("重伤", 2), ("烂醉", 2), ("负伤", 1), ("受伤", 1), ("力竭", 1), ("醉酒", 1), ("醉醺醺", 1))
-_SIGHS = ("叹气", "叹息", "长叹", "沉默", "无言", "对视", "怔怔", "愣住")
-_U_LABEL = re.compile(r"U\s*(\d+)(?:\s*[–\-~～至]\s*U?\s*(\d+))?")
+_STATE_DROPS = ((_text_of("module.state_drops"), 2), (_text_of("module.state_drops.2"), 2), (_text_of("module.state_drops.3"), 1), (_text_of("module.state_drops.4"), 1), (_text_of("module.state_drops.5"), 1), (_text_of("module.state_drops.6"), 1), (_text_of("module.state_drops.7"), 1))
+_SIGHS = _words_of("module.sighs")
+_U_LABEL = re.compile(_text_of("module.u_label"))
 _BRACED = re.compile(r"[{｛]([^{}｛｝]+)[}｝]")
 _NOTE = re.compile(r"[（(][^）)]*(?:[）)]|$)")
 _QUOTES = re.compile(r"[「」『』“”\"'‘’\s]")
-_STROKES = re.compile(r"[一-鿿A-Za-z0-9]")
+_STROKES = re.compile(_text_of("module.strokes"))
 
 
 @dataclass(frozen=True)
@@ -156,10 +169,10 @@ def tables() -> Tables | None:
         )
     powers: dict[str, PowerTier] = {}
     for row in code[1:]:
-        if len(row) < 6 or row[0] != "交互力量档":
+        if len(row) < 6 or row[0] != _text_of("tables.text"):
             continue
-        judged, _, craft = row[5].partition("；写法：")
-        words = _words(judged.split("判定词：", 1)[1]) if "判定词：" in judged else ()
+        judged, _, craft = row[5].partition(_text_of("tables.text.2"))
+        words = _words(judged.split(_text_of("tables.words"), 1)[1]) if _text_of("tables.words.2") in judged else ()
         calm = re.search(r"T2\s*(\d+(?:\.\d+)?)", row[3])
         powers[row[1]] = PowerTier(
             code=row[1], name=row[2], who=row[4], words=words, craft=craft.strip(),
@@ -177,10 +190,10 @@ def tables() -> Tables | None:
         text = spec.path.read_text(encoding="utf-8")
     except OSError:
         return None
-    line = next((item for item in text.splitlines() if item.startswith("力量档倍率")), "")
+    line = next((item for item in text.splitlines() if item.startswith(_text_of("tables.line"))), "")
     multipliers = {f"IP{tier}": float(value) for tier, value in re.findall(r"IP(\d)\s*×\s*(\d+(?:\.\d+)?)", line)}
-    crowd = re.search(r"多人戏\s*×\s*(\d+(?:\.\d+)?)", line)
-    floor = re.search(r"不短于\s*(\d+(?:\.\d+)?)\s*秒", line)
+    crowd = re.search(_text_of("tables.crowd"), line)
+    floor = re.search(_text_of("tables.floor"), line)
     if not (styles and powers and tempos and multipliers):
         return None
     return Tables(
@@ -234,7 +247,7 @@ def judge_power(text: str) -> str:
     if skilled:
         drop = max(
             (steps for word, steps in _STATE_DROPS
-             if word in content and not (word.startswith("醉") and "醉拳" in content)),
+             if word in content and not (word.startswith(_text_of("judge_power.drop")) and _text_of("judge_power.drop.2") in content)),
             default=0,
         )
         return f"IP{max(3, int(skilled[2:]) - drop)}"
@@ -284,13 +297,13 @@ class ScenePlan:
         data = tables()
         if data is None:
             return ""
-        lines = ["【单元环扣（本场节奏：武是接化发，文是听思答，一个 U 推进一个半单元）】"]
+        lines = list(_words_of("brief.lines"))
         if self.powers:
             described = "、".join(
                 f"{name} {code} {data.powers[code].name}" for name, code in self.powers.items() if code in data.powers
             )
             if described:
-                lines.append(f"- 交互力量档：{described}（判档：健康压过技能，技能压过年龄；负伤、力竭、醉酒降一档，醉拳不算醉）。")
+                lines.append(_text_of("brief.text").format(described))
         if self.fight is not None:
             lines.extend(self._fight_lines(data))
         elif self.calm_unit is not None:
@@ -299,7 +312,7 @@ class ScenePlan:
                 for code in dict.fromkeys(self.powers.values()) if code in data.powers and data.powers[code].craft
             )
             lines.append(
-                f"- 动作单元：本场常态节奏一个动作单元约 {self.calm_unit:g} 秒（快慢不同的两人跟着慢的那个走）"
+                _text_of("brief.text.2").format(self.calm_unit)
                 + (f"；{crafts}" if crafts else "") + "。"
             )
         if self.dialogue is not None:
@@ -311,39 +324,30 @@ class ScenePlan:
         fight = self.fight
         assert fight is not None
         tempo = fight.tempo
-        style = f"{tempo.code} {tempo.name}" + ("" if fight.style_named else "（剧本没写流派，按散打）")
+        style = f"{tempo.code} {tempo.name}" + ("" if fight.style_named else _text_of("_fight_lines.style"))
         counts = "、".join(
-            f"{seconds} 秒约 {fight.halves_for(seconds)} 个半单元" for seconds in PREVIEW_SECONDS
+            _text_of("_fight_lines.counts").format(seconds, fight.halves_for(seconds)) for seconds in PREVIEW_SECONDS
         )
-        crowd = f"，三人以上 ×{data.crowd:g}" if fight.crowd else ""
+        crowd = _text_of("_fight_lines.crowd").format(data.crowd) if fight.crowd else ""
         pause = (
-            f"段间停 {tempo.pause:g} 秒" if tempo.pause
-            else "连绵不停，两段之间不写停"
+            _text_of("_fight_lines.pause").format(tempo.pause) if tempo.pause
+            else _text_of("_fight_lines.pause.2")
         )
         return [
-            f"- 打斗节奏：{style}，{fight.rule}，力量倍率 ×{fight.multiplier:g}{crowd} → 一个半单元约 {fight.half:.2g} 秒"
-            f"（{fight.low:.2g}–{fight.high:.2g}）；起势 {tempo.opening:g} 秒，一段连招 {tempo.phrase[0]}–{tempo.phrase[1]} 个半单元，{pause}。"
-            f"{tempo.traits}。",
-            f"- 一格装几个：{counts}；U 数＝半单元数 − 1（U1 装两个半单元）。宁可多不可少：两个高手 9 秒只过两招就是太慢。",
-            "- 打斗格的画面内容按 U 行写，每个 U 标起止秒：「U1（0.8–3.9秒）甲…；乙…」「U2（3.9–5.5秒）甲…」。"
-            "U1＝起手＋对方第一次接化发；之后每个 U 只写新的那一个人：接（用什么迎住哪一招）→ 化（让线、转腰、后坐、带开）→ 发（发出什么、打向哪），"
-            "上一 U 的发就是本 U 的来招，同一招不重播；同一人连续发起不超过两次；两段连招之间写「停（a–b秒）两人拉开对峙喘息」，停不放在格尾；"
-            "倒地后先写起身再接站立的招；异兵器各用各的兵器接招；多人交锋一个 U 只写一个主交锋，其余人一句背景；最后一个 U 落点距格尾不超过 1.5 秒。",
+            _text_of("_fight_lines.text").format(style, fight.rule, fight.multiplier, crowd, fight.half, fight.low, fight.high, tempo.opening, tempo.phrase[0], tempo.phrase[1], pause, tempo.traits),
+            _text_of("_fight_lines.text.2").format(counts),
+            _text_of("_fight_lines.text.3"),
         ]
 
     def _dialogue_lines(self) -> list[str]:
         tempo = self.dialogue
         assert tempo is not None
-        named = "" if self.dialogue_named else "（剧本没写明对话性质，按日常交谈）"
-        fight = f"打斗中的一句不超过 {FIGHT_LINE_CHARS} 字，落在化或发上（格开时一声喝、出手前一句狠话）；" if self.fight else ""
+        named = "" if self.dialogue_named else _text_of("_dialogue_lines.named")
+        fight = _text_of("_dialogue_lines.fight").format(FIGHT_LINE_CHARS) if self.fight else ""
         return [
-            f"- 台词节奏：{tempo.code} {tempo.name}{named} → 一轮约 {tempo.turn:g} 秒（{tempo.low:g}–{tempo.high:g}），"
-            f"开口前停 {tempo.think:g} 秒，语速每秒约 {tempo.rate:g} 字，每轮约 {tempo.budget()} 字。",
-            f"- 两人以上的对话一格至少两个话轮（一个完整来回）：台词栏按「说话人：台词」逐轮写，把对方的回应拉进同一格，不要一格只放一个人的一句；"
-            f"每轮先写听的人的反应（眉、眼、呼吸），停半拍再开口，说话时身上有动作；同一时刻只有一人开口，其余人闭口给反应；"
-            f"最后一句距格尾不超过 {tempo.tail:g} 秒，剩下的只给有内容的收尾动作（递出、起身、转身），不空叹；"
-            f"三轮以上走起承转合（起立题、承推进、转翻转、合落定）；{fight}独白一人铺满，不造对话者。",
-            "- 台词镜头：说者为主、听者为证——长句缓推说者、对方的肩留在画边；话尾插一拍听者的反应；换人开口越肩反打，不硬切。",
+            _text_of("_dialogue_lines.text").format(tempo.code, tempo.name, named, tempo.turn, tempo.low, tempo.high, tempo.think, tempo.rate, tempo.budget()),
+            _text_of("_dialogue_lines.text.2").format(tempo.tail, fight),
+            _text_of("_dialogue_lines.text.3"),
         ]
 
 
@@ -351,16 +355,16 @@ def _combine(data: Tables, powers: dict[str, str]) -> tuple[float, str]:
     """The pair's multiplier: one-sided → the stronger side's; otherwise the average (MX1/MX2)."""
     fighters = [code for code in powers.values() if code != "IP1" and code in data.multipliers]
     if not fighters:
-        return data.multipliers.get(DEFAULT_POWER, 1.5), "力量档未判，按常人"
+        return data.multipliers.get(DEFAULT_POWER, 1.5), _text_of("_combine.text")
     ranks = sorted({int(code[2:]) for code in fighters})
     if len(ranks) == 1:
         code = f"IP{ranks[0]}"
-        return data.multipliers[code], f"双方 {code} {data.powers[code].name}"
+        return data.multipliers[code], _text_of("_combine.text.2").format(code, data.powers[code].name)
     strongest = f"IP{ranks[-1]}"
     if ranks[-1] - ranks[0] >= ONE_SIDED_GAP:
-        return data.multipliers[strongest], f"相差三档以上一边倒，按强者 {strongest}（强者可连续发起三次，弱者只接不还）"
+        return data.multipliers[strongest], _text_of("_combine.text.3").format(strongest)
     average = sum(data.multipliers[code] for code in fighters) / len(fighters)
-    return round(average, 3), "对抗取平均"
+    return round(average, 3), _text_of("_combine.text.4")
 
 
 _QUOTED = re.compile(r"[「“\"][^」”\"]{2,}[」”\"]")
@@ -371,7 +375,7 @@ def has_lines(text: str, cast: Sequence[str] = ()) -> bool:
     content = str(text or "")
     if _QUOTED.search(content) or re.search(r"(?m)^\s*【[^】]{1,12}】", content):
         return True
-    return bool(_labels(content, cast)) if cast else bool(re.search(r"(?m)^\s*[一-鿿·]{1,8}(?:[（(][^）)]*[）)])?\s*[：:]", content))
+    return bool(_labels(content, cast)) if cast else bool(re.search(_text_of("has_lines.text"), content))
 
 
 def scene_plan(
@@ -396,13 +400,13 @@ def scene_plan(
     if not people:
         scene_power = judge_power(content)
         if scene_power:
-            powers = {"本场人物": scene_power}
+            powers = {_text_of("scene_plan.powers"): scene_power}
     plan = ScenePlan(powers=powers)
 
     if fight:
         frail = [name for name, code in powers.items() if code == "IP1"]
         if frail:
-            plan.notes.append(f"{'、'.join(frail)} 是 IP1 衰竭：不进武打交锋，动作小而慢，每个动作前先有一口气。")
+            plan.notes.append(_text_of("scene_plan.text").format('、'.join(frail)))
         style = judge_style(content)
         tempo = data.styles.get(style or DEFAULT_STYLE) or next(iter(data.styles.values()))
         multiplier, rule = _combine(data, powers)
@@ -514,46 +518,45 @@ def audit_shot(
         if not written:
             if expected >= 2:
                 issues.append(UnitIssue(
-                    "打斗未按单元环扣写",
-                    f"这格 {seconds:g} 秒按本场节奏约 {expected} 个 U，画面内容没有写 U 行；按「U1（a–b秒）…」逐个写出谁接谁、怎么化、发出什么",
+                    _text_of("audit_shot.text"),
+                    _text_of("audit_shot.text.2").format(seconds, expected),
                 ))
         elif written < math.floor(expected * 0.6):
             issues.append(UnitIssue(
-                "打斗单元过少",
-                f"写了 {written} 个 U，本场节奏（一个半单元约 {plan.fight.half:.2g} 秒）{seconds:g} 秒约 {expected} 个；过招太慢，补上接化发",
+                _text_of("audit_shot.text.3"),
+                _text_of("audit_shot.text.4").format(written, plan.fight.half, seconds, expected),
             ))
         elif written > math.ceil(expected * 1.5) + 1:
             issues.append(UnitIssue(
-                "打斗单元过密",
-                f"写了 {written} 个 U，本场节奏 {seconds:g} 秒约 {expected} 个；匀速塞满不真实，两段连招之间要停",
+                _text_of("audit_shot.text.5"),
+                _text_of("audit_shot.text.6").format(written, seconds, expected),
             ))
         long_lines = [turn for turn in turns if turn.chars > FIGHT_LINE_CHARS]
         if long_lines:
             issues.append(UnitIssue(
-                "打斗台词过长",
-                f"{long_lines[0].speaker} 一句 {long_lines[0].chars} 字；打斗里的一句不超过 {FIGHT_LINE_CHARS} 字，长对白放到开打前后",
+                _text_of("audit_shot.text.7"),
+                _text_of("audit_shot.text.8").format(long_lines[0].speaker, long_lines[0].chars, FIGHT_LINE_CHARS),
             ))
 
     if tempo is not None and turns:
         cast = [name for name in characters if str(name).strip()]
         if len(cast) >= 2 and len(turns) == 1 and not fight_shot and seconds >= 2 * tempo.low:
             issues.append(UnitIssue(
-                "对话少于一个来回",
-                f"{len(cast)} 人在场、{seconds:g} 秒只有 {turns[0].speaker} 一轮；按 {tempo.name} 一轮约 {tempo.turn:g} 秒，"
-                "把对方的回应拉进这一格，或把这一格缩短",
+                _text_of("audit_shot.text.9"),
+                _text_of("audit_shot.text.10").format(len(cast), seconds, turns[0].speaker, tempo.name, tempo.turn),
             ))
         run = 1
         for previous, current in zip(labels, labels[1:]):
             run = run + 1 if current == previous else 1
             if run >= 3:
-                issues.append(UnitIssue("一人连说三句", f"{current} 连着说了三句，另一个人一直站着；中间给对方一轮"))
+                issues.append(UnitIssue(_text_of("audit_shot.text.11"), _text_of("audit_shot.text.12").format(current)))
                 break
         cap = tempo.budget() * LINE_BUDGET_SLACK
         heavy = next((turn for turn in turns if turn.chars > cap), None)
         if heavy is not None:
             issues.append(UnitIssue(
-                "话轮台词超字数",
-                f"{heavy.speaker} 一轮 {heavy.chars} 字，{tempo.name} 一轮约 {tempo.budget()} 字（上限 {cap:.0f}）；删字或给这一轮加秒",
+                _text_of("audit_shot.text.13"),
+                _text_of("audit_shot.text.14").format(heavy.speaker, heavy.chars, tempo.name, tempo.budget(), cap),
             ))
         if not fight_shot and seconds:
             needed = sum(tempo.think + turn.chars / tempo.rate for turn in turns)
@@ -561,9 +564,8 @@ def audit_shot(
             sighs = any(word in str(desc or "") for word in _SIGHS)
             if empty > tempo.tail and (sighs or empty > max(3.0, 2 * tempo.tail)):
                 issues.append(UnitIssue(
-                    "格尾空叹",
-                    f"台词约 {needed:.1f} 秒说完，格尾空 {empty:.1f} 秒（{tempo.name} 余量 {tempo.tail:g} 秒）；"
-                    "加一轮、写足台词，或给一个有内容的收尾动作，不要只叹气对视",
+                    _text_of("audit_shot.text.15"),
+                    _text_of("audit_shot.text.16").format(needed, empty, tempo.name, tempo.tail),
                 ))
     return issues
 

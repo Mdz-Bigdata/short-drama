@@ -1,0 +1,11 @@
+{
+  "_doc": "app/api/canvas_presence_api.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "module.tags": [
+    "画布在线状态"
+  ],
+  "_owned_board.detail": "资源不存在",
+  "presence_stream.content.detail": "请求来源不受信任",
+  "presence_message.content.detail": "消息过大",
+  "presence_message.detail": "资源不存在",
+  "presence_message.content.detail.2": "消息过于频繁"
+}

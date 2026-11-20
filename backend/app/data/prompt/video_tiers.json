@@ -1,0 +1,13 @@
+{
+  "_note": "视频模型的分辨率档位（app/core/video_tiers.py 读取）。order 是从低到高的全部档位；models 写每个型号出得了哪几档，按型号名里包含的最长一项匹配（分隔符和大小写不计）。没列出的型号不做限制。项目里可选的「成片清晰度」是：这个型号出得了、比样片高、并且价目表(runtime/model_pricing.json)里有官方价的档位——没有官方价的档位不提供，免得出片后算不出钱。",
+  "order": ["480p", "720p", "1080p", "4k"],
+  "models": {
+    "seedance-2-5-flash": ["480p", "720p"],
+    "seedance-2-5": ["480p", "720p", "1080p", "4k"]
+  },
+  "errors": {
+    "not_offered": "当前视频模型 {model} 不提供「{tier}」这一档成片清晰度；可选：{choices}",
+    "none_offered": "当前视频模型 {model} 没有可选的成片清晰度，按默认档位出片"
+  },
+  "default_label": "默认"
+}

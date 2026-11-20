@@ -16,24 +16,37 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from app.core import prompt_data
 from app.core.episode_cycle import covered_uids
 from app.core.storyboard_scene_context import EMPTY_ACTOR
+
+
+_WORDING_FILE = "pilot_shot"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/pilot_shot.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 ASSET_KEY = "5_pilot"
 REQUESTED, RUNNING, READY, FAILED = "requested", "running", "ready", "failed"
 #: 人工判废看的五项；选中的写进生成反馈，同一模型反复栽在同一处时后面的提示词会绕开。
-CHECKS = ("脸", "服装", "人数", "动作", "口型")
+CHECKS = _words_of("module.checks")
 _CHECK_WORDS = {
-    "脸": "脸和定妆照不一样，变脸了", "服装": "服装和设定不一致", "人数": "画面里的人数不对，多了或少了人",
-    "动作": "动作没按描述演", "口型": "口型和台词对不上",
+    _text_of("module.check_words"): _text_of("module.check_words.2"), _text_of("module.check_words.3"): _text_of("module.check_words.4"), _text_of("module.check_words.5"): _text_of("module.check_words.6"),
+    _text_of("module.check_words.7"): _text_of("module.check_words.8"), _text_of("module.check_words.9"): _text_of("module.check_words.10"),
 }
-_NOBODY = {EMPTY_ACTOR, "无", "无人", "无人物", "空镜"}
-_INTERRUPTED = "试拍没有跑完，可以再试一次"
+_NOBODY = {EMPTY_ACTOR, _text_of("module.nobody"), _text_of("module.nobody.2"), _text_of("module.nobody.3"), _text_of("module.nobody.4")}
+_INTERRUPTED = _text_of("module.interrupted")
 
 
 def problem_text(problems: Iterable[str]) -> str:
     """把勾选的判废项写成生成反馈能归类的话；不认识的项不写。"""
-    return "首镜试拍不通过：" + "；".join(_CHECK_WORDS[item] for item in problems if item in _CHECK_WORDS)
+    return _text_of("problem_text.text") + "；".join(_CHECK_WORDS[item] for item in problems if item in _CHECK_WORDS)
 
 
 def requested(shot_uid: int | None = None, reason: str = "") -> dict[str, Any]:
@@ -65,7 +78,9 @@ def _cast(req: Mapping[str, Any]) -> list[str]:
 def _actions(req: Mapping[str, Any]) -> int:
     beats = (req.get("slice") or {}).get("beats") or []
     descriptions = [str(beat.get("desc") or "") for beat in beats] or [str(req.get("desc") or "")]
-    return sum(1 + text.count("；随后") for text in descriptions)
+    # Each merged beat's description is joined with the storyboard merge joiner (storyboard_panels.json): one action per piece.
+    joiner = prompt_data.value("storyboard_panels", "joiners")["desc"]
+    return sum(1 + text.count(joiner) for text in descriptions)
 
 
 def _rank(number: int, req: Mapping[str, Any]) -> tuple[int, int, int]:
@@ -74,9 +89,18 @@ def _rank(number: int, req: Mapping[str, Any]) -> tuple[int, int, int]:
     return (3 if people == 0 else min(people - 1, 2), _actions(req), number)
 
 
+# 同场接上一镜(clip_route 的 tailframe / tailref)是软接力：没有上一镜的尾帧时本镜照样独立出，能单独试拍。
+_SOFT_CHAINS = frozenset({"tailframe", "tailref"})
+
+
+def _hard_chain(req: Mapping[str, Any]) -> bool:
+    """必须先有前一段末帧才能开拍的接力：长镜头段的后几段。"""
+    return bool(req.get("chain_from")) and (req.get("clip_route") or {}).get("kind") not in _SOFT_CHAINS
+
+
 def _root(requests: Mapping[int, Mapping[str, Any]], number: int) -> int:
     """接力段要先有前一段的末帧才能开拍，试拍就从这串的第一段开始。"""
-    while requests[number].get("chain_from") in requests:
+    while _hard_chain(requests[number]) and requests[number].get("chain_from") in requests:
         number = requests[number]["chain_from"]
     return number
 
@@ -86,19 +110,19 @@ def pick(requests: Mapping[int, Mapping[str, Any]], wanted_uid: int | None = Non
     if wanted_uid:
         chosen = next((number for number, req in requests.items() if int(wanted_uid) in _uids(req)), None)
         if chosen is not None:
-            return _root(requests, chosen), "你选的这一镜"
-    unchained = {number: req for number, req in requests.items() if not req.get("chain_from")} or dict(requests)
+            return _root(requests, chosen), _text_of("pick.text")
+    unchained = {number: req for number, req in requests.items() if not _hard_chain(req)} or dict(requests)
     chosen = min(unchained, key=lambda number: _rank(number, unchained[number]))
     req = unchained[chosen]
     people, actions = len(_cast(req)), _actions(req)
-    return chosen, f"这段{f'{people} 个人' if people else '没有人物'}、{actions} 个动作，变量最少，走样时最容易看出问题"
+    return chosen, _text_of("pick.text.2").format(f'{people} 个人' if people else '没有人物', actions)
 
 
 def running(req: Mapping[str, Any], reason: str) -> dict[str, Any]:
     return {
         "state": RUNNING, "shot_id": req["shot_id"], "shot_uid": int(req["shot_uid"]), "shot_uids": _uids(req),
         "scene_id": str((req.get("slice") or {}).get("scene_id") or (req.get("shot") or {}).get("scene_id") or ""),
-        "label": str((req.get("slice") or {}).get("label") or f"镜头 {req['shot_id']}"), "reason": reason,
+        "label": str((req.get("slice") or {}).get("label") or _text_of("running.label").format(req['shot_id'])), "reason": reason,
     }
 
 

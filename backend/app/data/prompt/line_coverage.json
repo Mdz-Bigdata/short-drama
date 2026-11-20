@@ -1,0 +1,8 @@
+{
+  "_doc": "app/core/line_coverage.py 的措辞与范围：哪几种剧本台词要逐句进分镜表的台词栏，三种对不上的说法(交给写表的作者照着改，也记在场景板上给人看)。",
+  "kinds": ["dialogue", "voiceover", "narration"],
+  "missing": "剧本里{speaker}的台词「{line}」没有写进任何一镜的台词栏：补进说这句话的那一镜，原文一字不改",
+  "out_of_order": "台词「{line}」排在了「{before}」前面，和剧本的先后反了：按剧本顺序排",
+  "extra": "台词「{line}」在台词栏里出现了 {count} 次，剧本只说了 {expected} 次：删掉多出来的",
+  "unnamed_speaker": "旁白"
+}

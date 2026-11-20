@@ -11,12 +11,16 @@ import {
   Sparkles,
   TriangleAlert,
   UserRound,
+  UsersRound,
   WandSparkles,
   XCircle,
+  SlidersHorizontal,
 } from 'lucide-react';
-import { useState, type CSSProperties } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 
+import type { ElementItem } from '../elements/elementTypes';
 import { MarkdownDocument } from '../writer/MarkdownDocument';
+import { extraThumbnail } from './characterExtras';
 import { CharacterDetailDialog } from './CharacterDetailDialog';
 import { confirmDetailFill, fillableDetailCount } from './detailFill';
 import {
@@ -46,20 +50,31 @@ export function CharacterStatusBadge({ status }: { status: CharacterAssetState }
   );
 }
 
+/** 角色库：主演一组，群演一组(传了 ``extras`` 才有)；选中群演时主演都不算选中。 */
 export function CharacterLibrary({
   characters,
   selectedId,
   onSelect,
+  extras,
+  selectedExtraId = '',
+  onSelectExtra,
+  extrasTools,
 }: {
   characters: CharacterDashboardCharacter[];
   selectedId: string;
   onSelect: (id: string) => void;
+  extras?: ElementItem[];
+  selectedExtraId?: string;
+  onSelectExtra?: (id: string) => void;
+  /** 群演一组标题下的工具(添加、补图)。 */
+  extrasTools?: ReactNode;
 }) {
   const [query, setQuery] = useState('');
   const normalizedQuery = query.trim().toLocaleLowerCase('zh-CN');
-  const filtered = normalizedQuery
-    ? characters.filter(character => `${character.name} ${character.role} ${character.identity}`.toLocaleLowerCase('zh-CN').includes(normalizedQuery))
-    : characters;
+  const matches = (text: string) => !normalizedQuery || text.toLocaleLowerCase('zh-CN').includes(normalizedQuery);
+  const filtered = characters.filter(character => matches(`${character.name} ${character.role} ${character.identity}`));
+  const filteredExtras = (extras ?? []).filter(extra => matches(`${extra.name} ${extra.description}`));
+  const total = characters.length + (extras?.length ?? 0);
 
   return (
     <aside className="character-library" aria-labelledby="character-library-title">
@@ -68,7 +83,7 @@ export function CharacterLibrary({
           <span className="character-section-kicker">CAST LIBRARY</span>
           <h2 id="character-library-title">{t('角色库')}</h2>
         </div>
-        <span className="character-library__total">{characters.length}</span>
+        <span className="character-library__total">{total}</span>
       </header>
       <label className="character-library__search">
         <Search size={16} aria-hidden="true" />
@@ -77,7 +92,7 @@ export function CharacterLibrary({
           type="search"
           value={query}
           onChange={event => setQuery(event.target.value)}
-          placeholder={t('搜索角色、身份、职能')}
+          placeholder={t('搜索角色、群演、身份、职能')}
         />
       </label>
       <div
@@ -88,7 +103,7 @@ export function CharacterLibrary({
         tabIndex={0}
       >
         {filtered.map((character, index) => {
-          const selected = character.characterId === selectedId;
+          const selected = !selectedExtraId && character.characterId === selectedId;
           const thumbnail = character.views.find(view => view.key === 'front' && view.imageUrl)?.imageUrl || character.sheetUrl;
           return (
             <button
@@ -112,7 +127,41 @@ export function CharacterLibrary({
             </button>
           );
         })}
-        {filtered.length === 0 && (
+        {extras && (
+          <div className="character-library__group" role="group" aria-labelledby="character-library-extras-title">
+            <div className="character-library__group-head">
+              <h3 id="character-library-extras-title">{t('群演')}</h3>
+              <span className="character-library__group-count">{extras.length}</span>
+            </div>
+            {extrasTools}
+            {filteredExtras.map((extra, index) => {
+              const selected = extra.id === selectedExtraId;
+              const thumbnail = extraThumbnail(extra);
+              return (
+                <button
+                  type="button"
+                  key={extra.id}
+                  className={`character-library__item character-library__item--extra ${selected ? 'is-selected' : ''}`}
+                  aria-pressed={selected}
+                  onClick={() => onSelectExtra?.(extra.id)}
+                >
+                  <span className="character-library__index">{String(filtered.length + index + 1).padStart(2, '0')}</span>
+                  <span className="character-library__avatar">
+                    {thumbnail ? <img src={thumbnail} alt="" loading="lazy" decoding="async" /> : <UsersRound size={21} aria-hidden="true" />}
+                  </span>
+                  <span className="character-library__copy">
+                    <span className="character-library__name">{extra.name}</span>
+                    <span className="character-library__role">{t('群演')}</span>
+                    <span className={`character-library__state is-${thumbnail ? 'ready' : 'missing'}`}>
+                      {thumbnail ? t('有参考图') : t('缺参考图')}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {filtered.length === 0 && filteredExtras.length === 0 && (
           <div className="character-library__empty" role="status">
             <Search size={24} aria-hidden="true" />
             <strong>{t('没有匹配角色')}</strong>
@@ -134,10 +183,12 @@ function DefinitionRow({ label, value }: { label: string; value?: string }) {
   );
 }
 
-export function CharacterInspector({ character, onRegenerate }: {
+export function CharacterInspector({ character, onRegenerate, onSculpt }: {
   character: CharacterDashboardCharacter;
   /** 只为这一名角色重新出设定集(mode=sheet)或只补高清身份视图(mode=hd)，都付费；不传则不显示按钮。 */
   onRegenerate?: (name: string, mode: CharacterRegenerateMode) => void;
+  /** 打开捏脸 / 捏表情；只改文字资产、不花钱。不传则不显示按钮。 */
+  onSculpt?: (name: string) => void;
 }) {
   const [stateId, setStateId] = useState('');
   const [themeSelection, setThemeSelection] = useState({ characterId: character.characterId, index: 0 });
@@ -172,6 +223,17 @@ export function CharacterInspector({ character, onRegenerate }: {
         >
           <Maximize2 size={14} aria-hidden="true" /> {t('完整档案')}
         </button>
+        {onSculpt && (
+          <button
+            type="button"
+            className="character-detail-trigger"
+            aria-haspopup="dialog"
+            aria-label={`为${character.name}捏脸和捏表情`}
+            onClick={() => onSculpt(character.name)}
+          >
+            <SlidersHorizontal size={14} aria-hidden="true" /> {t('捏脸 · 捏表情')}
+          </button>
+        )}
       </section>
 
       {onRegenerate && (

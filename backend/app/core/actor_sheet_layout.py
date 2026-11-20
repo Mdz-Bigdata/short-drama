@@ -25,6 +25,19 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from app.core import prompt_data
+
+
+_WORDING_FILE = "actor_sheet_layout"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/actor_sheet_layout.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 @dataclass(frozen=True)
@@ -47,7 +60,7 @@ class ActorSheetRegion:
 
     def __post_init__(self) -> None:
         if len(self.cells) != self.rows * self.columns:
-            raise ValueError(f"区域 {self.key} 的格子数与 {self.rows}×{self.columns} 网格不符")
+            raise ValueError(_text_of("__post_init__.text").format(self.key, self.rows, self.columns))
 
 
 @dataclass(frozen=True)
@@ -104,14 +117,14 @@ def _build_regions(layout: ActorSheetLayout) -> tuple[ActorSheetRegion, ...]:
     return (
         ActorSheetRegion(
             key="main_portrait",
-            title="主肖像",
+            title=_text_of("_build_regions.title"),
             x0=0.0, x1=left_end, y0=top, y1=1.0,
             rows=1, columns=1,
             cells=("portrait",),
         ),
         ActorSheetRegion(
             key="full_body",
-            title="全身与元素",
+            title=_text_of("_build_regions.title.2"),
             x0=left_end, x1=mid_split, y0=top, y1=1.0,
             rows=1, columns=1,
             cells=("full_body",),
@@ -137,7 +150,7 @@ def _build_regions(layout: ActorSheetLayout) -> tuple[ActorSheetRegion, ...]:
         ),
         ActorSheetRegion(
             key="detail_matrix",
-            title="细节矩阵",
+            title=_text_of("_build_regions.title.3"),
             x0=middle_end, x1=1.0, y0=top, y1=1.0,
             rows=layout.detail_matrix_grid[0], columns=layout.detail_matrix_grid[1],
             cells=(
@@ -168,9 +181,7 @@ FULL_BODY_CELLS: tuple[str, ...] = ("front", "profile", "back")
 # 全身图的人体比例：参考图多是大脸近景，模型会把那张脸原尺寸搬进全身格，画成大头小身。
 # 头高只算下巴到头顶，发髻与头饰另算，否则高髻古装会被"合法地"画得头重脚轻。
 FULL_BODY_PROPORTION_RULE = (
-    "人体比例按真实成年演员：约7.5到8头身，下巴到头顶的头高约占身高的八分之一(发髻与头饰不计入)，"
-    "肩宽约两个头宽，腿长约占身高一半；参考图只用来锁定五官与发型，不照搬参考图里的头部大小。"
-    "禁止大头小身、Q版、娃娃比例、头饰夸张放大和短腿。"
+    _text_of("module.full_body_proportion_rule")
 )
 
 # 前端「细节」页签的两个分组：元素拆解 8 格 + 细节矩阵 12 格(按模型真实画出的格子数落库)。
@@ -254,7 +265,7 @@ def actor_sheet_cell_boxes(
     相邻格子共用边界值——因此标题带以下的 25 个框严格铺满、互不重叠、不留缝。
     """
     if width <= 0 or height <= 0:
-        raise ValueError("画布尺寸必须为正")
+        raise ValueError(_text_of("actor_sheet_cell_boxes.text"))
     boxes: list[tuple[str, tuple[int, int, int, int]]] = []
     for region in layout.regions:
         left = round(width * region.x0)

@@ -93,6 +93,23 @@ describe('RelationshipEditor', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
+  it('asks for a named relation instead of saving one the star map would not draw', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<RelationshipEditor roles={roles} relationships={relationships} onSave={onSave} />);
+
+    const form = screen.getByRole('form', { name: '新增人物关系' });
+    await user.selectOptions(within(form).getByLabelText('起始角色'), '王衍');
+    await user.selectOptions(within(form).getByLabelText('目标角色'), '管家');
+    await user.click(within(form).getByRole('button', { name: '添加' }));
+    expect(screen.getByRole('alert').textContent).toBe('请写出两人的具体关系，例如：夫妻、宿敌。');
+
+    await user.type(within(form).getByPlaceholderText('例如: 夫妻, 宿敌'), '剧情关联');
+    await user.click(within(form).getByRole('button', { name: '添加' }));
+    expect(screen.getByRole('alert').textContent).toBe('请写出两人的具体关系，例如：夫妻、宿敌。');
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
   it('edits an existing relationship in the same form', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn().mockResolvedValue(undefined);
@@ -111,6 +128,27 @@ describe('RelationshipEditor', () => {
     expect(saved[0]).toEqual({ from: '萧遥', to: '王衍', relation: '亦敌亦友', bidirectional: false });
     expect(saved[1]).toEqual(relationships[1]);
     await waitFor(() => expect(screen.getByRole('form', { name: '新增人物关系' })).toBeTruthy());
+  });
+
+  it('rewrites the relation being edited after the list was refreshed underneath, instead of adding a copy', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(<RelationshipEditor roles={roles} relationships={relationships} onSave={onSave} />);
+
+    await user.click(screen.getByRole('button', { name: '编辑 萧遥 与 王衍 的关系' }));
+    // The dashboard was fetched again: the same relations, as new objects.
+    rerender(<RelationshipEditor roles={roles} relationships={relationships.map(edge => ({ ...edge }))} onSave={onSave} />);
+    const form = screen.getByRole('form', { name: '编辑人物关系' });
+    const relation = within(form).getByPlaceholderText('例如: 夫妻, 宿敌');
+    await user.clear(relation);
+    await user.type(relation, '亦敌亦友');
+    await user.click(within(form).getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0][0]).toEqual([
+      { from: '萧遥', to: '王衍', relation: '亦敌亦友', bidirectional: false },
+      relationships[1],
+    ]);
   });
 
   it('deletes a relationship and surfaces save failures', async () => {

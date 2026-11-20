@@ -10,13 +10,16 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { apiRequest } from '../../api/client';
 import { ElementLibraryPage } from '../elements/ElementLibraryPage';
-import type { ElementKind } from '../elements/elementTypes';
+import { TAB_MEMBERS, tabOfKind, type ElementKind } from '../elements/elementTypes';
 import { assetGateReason, type AssetReadiness } from './assetReadiness';
 import { CharacterAssetTabs } from './CharacterAssetTabs';
 import { CharacterLooks } from './CharacterLooks';
+import { CharacterStudio } from './CharacterStudio';
 import { characterAssetTabLabels } from './assetTabLabels';
 import { CharacterFiveViewViewer } from './CharacterFiveViewViewer';
 import { CharacterDetailDialog } from './CharacterDetailDialog';
+import { CharacterExtraStage, ExtrasLibraryTools } from './CharacterExtraStage';
+import { useProjectExtras } from './characterExtras';
 import { CharacterOverview, type CharacterOverviewDetail } from './CharacterOverview';
 import { identityDisplayViews } from './identityDisplay';
 import {
@@ -28,7 +31,21 @@ import type { CharacterDashboardResponse, CharacterRegenerateMode } from './type
 import './CharacterDesignerPage.css';
 import { t } from '../../i18n';
 
-const nonActorAssetKinds = ['scene', 'prop', 'effect'] as const satisfies readonly ElementKind[];
+// 与 CharacterAssetTabs 的页签一一对应(演员的数目来自角色看板)。
+const nonActorAssetKinds = ['scene', 'prop', 'effect', 'product', 'extra', 'vehicle', 'set_dressing', 'stunt'] as const satisfies readonly ElementKind[];
+
+/** 群演和数字演员在同一页：选群演就落到数字演员页；并进别的页签的类型(车辆、商品 → 拍摄道具)落到那一页。 */
+function actorPageKind(kind: ElementKind): ElementKind {
+  return kind === 'extra' ? 'actor' : tabOfKind(kind);
+}
+
+/** 外面(如侧栏助手)要求打开某个角色的捏脸窗；nonce 变一次只开一次。 */
+export interface CharacterSculptRequest {
+  name: string;
+  nonce: number;
+}
+
+const looseName = (name: string) => name.replace(/\s+/g, '').toLowerCase();
 
 interface ElementCountResponse {
   items: unknown[];
@@ -63,6 +80,8 @@ export function CharacterDesignerPage({
   onRegenerateCharacters,
   onExport,
   onContinue,
+  sculptRequest,
+  onFocusCharacter,
 }: {
   dashboard: CharacterDashboardResponse;
   syncMessage?: string;
@@ -78,9 +97,15 @@ export function CharacterDesignerPage({
   onRegenerateCharacters?: (names: string[]) => void;
   onExport: () => void;
   onContinue: () => void;
+  /** 打开这个角色的捏脸窗：名字先精确匹配，再忽略大小写和空格匹配；同一个 nonce 只生效一次。 */
+  sculptRequest?: CharacterSculptRequest | null;
+  /** 屏幕上正在看的角色：捏脸窗开着时是它，否则是选中的角色，都没有时为 null。 */
+  onFocusCharacter?: (name: string | null) => void;
 }) {
   const [selectedId, setSelectedId] = useState('');
-  const [activeAssetKind, setActiveAssetKind] = useState<ElementKind>(initialAssetKind);
+  const [activeAssetKind, setActiveAssetKind] = useState<ElementKind>(actorPageKind(initialAssetKind));
+  // 角色库里选中的群演；为空时选中的是主演。
+  const [selectedExtraId, setSelectedExtraId] = useState('');
   const [assetCounts, setAssetCounts] = useState<Partial<Record<ElementKind, number>>>({});
   const assetCountGenerations = useRef<Partial<Record<ElementKind, number>>>({});
   const [projectDetail, setProjectDetail] = useState<[string, string] | null>(null);
@@ -93,8 +118,54 @@ export function CharacterDesignerPage({
   const [assetGenerationBusy, setAssetGenerationBusy] = useState(false);
   const [assetReadiness, setAssetReadiness] = useState<AssetReadiness | null>(null);
   const [looksToken, setLooksToken] = useState(0);
+  // 正在捏脸的角色名；为空时不显示捏脸窗口。
+  const [sculpting, setSculpting] = useState('');
+  const sculptDirty = useRef(false);
+  const reportSculptDirty = useCallback((dirty: boolean) => { sculptDirty.current = dirty; }, []);
+  const closeSculpt = () => {
+    if (sculptDirty.current && !window.confirm(t('捏脸改动还没保存，确定关闭吗？'))) return;
+    sculptDirty.current = false;
+    setSculpting('');
+  };
   const synchronizedTaskId = useRef('');
   const character = dashboard.characters.find(item => item.characterId === selectedId) || dashboard.characters[0];
+  const { extras, reload: reloadExtras } = useProjectExtras(taskId);
+  // 还没有主演时默认看第一位群演，角色库照样能用。
+  const selectedExtra = extras.find(item => item.id === selectedExtraId) || (character ? undefined : extras[0]);
+  const appliedSculptNonce = useRef<number | null>(null);
+  useEffect(() => {
+    if (!sculptRequest || !taskId || appliedSculptNonce.current === sculptRequest.nonce) return;
+    const wanted = sculptRequest.name.trim();
+    const match = dashboard.characters.find(item => item.name === wanted)
+      || dashboard.characters.find(item => looseName(item.name) === looseName(wanted));
+    // 名字还没出现在看板上(看板还在读)时先不记账，等它出现再开。
+    if (!match) return;
+    appliedSculptNonce.current = sculptRequest.nonce;
+    if (sculpting === match.name) return;
+    if (sculpting && sculptDirty.current && !window.confirm(t('捏脸改动还没保存，确定关闭吗？'))) return;
+    sculptDirty.current = false;
+    setActiveAssetKind('actor');
+    setSelectedId(match.characterId);
+    setSelectedExtraId('');
+    setSculpting(match.name);
+  }, [dashboard.characters, sculptRequest, sculpting, taskId]);
+
+  const focusName = sculpting || (selectedExtra ? null : character?.name) || null;
+  // 造型编辑器中间的大图：脸部近景(正脸锚点，没有就设定集主像)与全身(正面锚点，没有就设定集全身格)。
+  const sculptedCharacter = sculpting ? dashboard.characters.find(item => item.name === sculpting) : undefined;
+  const studioPictures = (() => {
+    if (!sculptedCharacter) return { face: null, body: null };
+    const views = identityDisplayViews(sculptedCharacter, dashboard.viewContract);
+    const view = (key: string) => views.find(item => item.key === key)?.imageUrl || null;
+    const cell = (key: string) => sculptedCharacter.sheetCells.find(item => item.key === key && item.available)?.imageUrl || null;
+    return {
+      face: view('face_front') || cell('portrait') || view('face_three_quarter'),
+      body: view('front') || cell('full_body') || sculptedCharacter.sheetUrl,
+    };
+  })();
+  const reportFocus = useRef(onFocusCharacter);
+  useEffect(() => { reportFocus.current = onFocusCharacter; }, [onFocusCharacter]);
+  useEffect(() => { reportFocus.current?.(focusName); }, [focusName]);
   // 数字演员、定妆图、场地、道具、特效没出齐就离开第 3 步，下游分镜拿不到锁人物的
   // 身份视图，只能自己编一个人出来。看板契约 READY 之前不放行，成片一致性才守得住。
   // The library gate covers costume looks, scenes, props and effects; while it is
@@ -130,7 +201,8 @@ export function CharacterDesignerPage({
       kind,
       generation,
       response: await apiRequest<ElementCountResponse>(
-        `/api/elements?kind=${kind}&page=1&page_size=1${taskId ? `&task_id=${encodeURIComponent(taskId)}` : ''}`,
+        // 页签里并进来的类型(拍摄道具也列车辆、商品)一起数，和页里列出来的一致。
+        `/api/elements?kind=${kind}&page=1&page_size=1${TAB_MEMBERS[kind] ? `&include=${TAB_MEMBERS[kind]!.join(',')}` : ''}${taskId ? `&task_id=${encodeURIComponent(taskId)}` : ''}`,
       ),
     })));
 
@@ -239,10 +311,22 @@ export function CharacterDesignerPage({
     }
   };
   const selectAssetKind = (kind: ElementKind) => {
-    setActiveAssetKind(kind);
+    setActiveAssetKind(actorPageKind(kind));
     setAssetGenerationBusy(false);
     setProjectDetail(null);
     setOverviewDetail(null);
+  };
+
+  const rememberAssetCount = (kind: ElementKind, total: number) => {
+    assetCountGenerations.current[kind] = (assetCountGenerations.current[kind] || 0) + 1;
+    setAssetCounts(current => current[kind] === total ? current : { ...current, [kind]: total });
+  };
+
+  /** 群演增删、换图之后：重读清单，页签上的数目和资产门禁跟着更新。 */
+  const refreshExtras = async () => {
+    const list = await reloadExtras();
+    if (list) rememberAssetCount('extra', list.length);
+    void refreshAssetReadiness();
   };
 
   const replaceAllActors = () => {
@@ -285,13 +369,40 @@ export function CharacterDesignerPage({
   };
 
   // 角色库 · 主视图 · 档案三栏；选了一套表演妆造时，主视图换成这套定妆图。
+  const renderLibrary = () => (
+    <CharacterLibrary
+      characters={dashboard.characters}
+      selectedId={character?.characterId ?? ''}
+      onSelect={id => { setSelectedId(id); setSelectedExtraId(''); }}
+      extras={extras}
+      selectedExtraId={selectedExtra?.id ?? ''}
+      onSelectExtra={setSelectedExtraId}
+      extrasTools={(
+        <ExtrasLibraryTools
+          taskId={taskId}
+          onCreated={created => { setSelectedExtraId(created.id); void refreshExtras(); }}
+          onFilled={() => { void refreshExtras(); }}
+        />
+      )}
+    />
+  );
+
+  // 选中群演时：角色库 + 群演的参考图与操作(占中间和右边两栏)。
+  const renderExtraWorkspace = () => selectedExtra && (
+    <div className="character-designer__workspace character-designer__workspace--extra">
+      {renderLibrary()}
+      <CharacterExtraStage
+        key={selectedExtra.id}
+        extra={selectedExtra}
+        onChanged={() => { void refreshExtras(); }}
+        onDeleted={() => { setSelectedExtraId(''); void refreshExtras(); }}
+      />
+    </div>
+  );
+
   const renderWorkspace = (lookStage: ReactNode | null) => character && (
     <div className="character-designer__workspace">
-      <CharacterLibrary
-        characters={dashboard.characters}
-        selectedId={character.characterId}
-        onSelect={setSelectedId}
-      />
+      {renderLibrary()}
       {lookStage ?? (
         <CharacterFiveViewViewer
           key={character.characterId}
@@ -300,7 +411,12 @@ export function CharacterDesignerPage({
           onFillDetails={onRegenerateCharacter ? () => onRegenerateCharacter(character.name, 'details') : undefined}
         />
       )}
-      <CharacterInspector key={`inspector-${character.characterId}`} character={character} onRegenerate={onRegenerateCharacter} />
+      <CharacterInspector
+        key={`inspector-${character.characterId}`}
+        character={character}
+        onRegenerate={onRegenerateCharacter}
+        onSculpt={taskId ? setSculpting : undefined}
+      />
     </div>
   );
 
@@ -313,7 +429,7 @@ export function CharacterDesignerPage({
     >
       <CharacterAssetTabs
         activeKind={activeAssetKind}
-        counts={{ ...assetCounts, actor: dashboard.characters.length }}
+        counts={{ ...assetCounts, actor: dashboard.characters.length + (assetCounts.extra ?? 0) }}
         onSelect={selectAssetKind}
       />
 
@@ -446,7 +562,15 @@ export function CharacterDesignerPage({
             </CharacterDetailDialog>
           )}
 
-          {character ? (
+          {!character && (
+            <section className="character-designer__empty" role="status">
+              <UserRoundPlus size={42} aria-hidden="true" />
+              <h2>{t('等待角色设计资产')}</h2>
+              <p>{t('编剧阶段识别角色后，这里会生成角色库、设定集视图槽位与身份 DNA 档案。')}</p>
+              <button type="button" onClick={onRegenerate}><WandSparkles size={16} aria-hidden="true" /> {t('启动角色设计')}</button>
+            </section>
+          )}
+          {selectedExtra ? renderExtraWorkspace() : character && (
             <>
               {taskId ? (
                 // 表演妆造签在工作区上方：选一套，中间一栏就换成这套的定妆图。
@@ -461,14 +585,26 @@ export function CharacterDesignerPage({
                 </CharacterLooks>
               ) : renderWorkspace(null)}
               <CharacterEvidencePanels dashboard={dashboard} character={character} />
+              {taskId && sculpting && (
+                <CharacterDetailDialog
+                  title={`${t('角色造型')} · ${sculpting}`}
+                  className="character-dialog--studio"
+                  onClose={closeSculpt}
+                >
+                  <CharacterStudio
+                    key={sculpting}
+                    taskId={taskId}
+                    characterName={sculpting}
+                    role={sculptedCharacter?.role || ''}
+                    faceImage={studioPictures.face}
+                    bodyImage={studioPictures.body}
+                    onSaved={onRefresh}
+                    onDirtyChange={reportSculptDirty}
+                    onGenerate={onRegenerateCharacter ? name => onRegenerateCharacter(name, 'sheet') : undefined}
+                  />
+                </CharacterDetailDialog>
+              )}
             </>
-          ) : (
-            <section className="character-designer__empty" role="status">
-              <UserRoundPlus size={42} aria-hidden="true" />
-              <h2>{t('等待角色设计资产')}</h2>
-              <p>{t('编剧阶段识别角色后，这里会生成角色库、设定集视图槽位与身份 DNA 档案。')}</p>
-              <button type="button" onClick={onRegenerate}><WandSparkles size={16} aria-hidden="true" /> {t('启动角色设计')}</button>
-            </section>
           )}
         </section>
       ) : (
@@ -482,6 +618,7 @@ export function CharacterDesignerPage({
             key={activeAssetKind}
             initialKind={activeAssetKind}
             embedded
+            showFolders
             taskId={taskId}
             regenerateAllToken={assetGenerationToken}
             replaceAllToken={assetReplaceToken}
@@ -489,10 +626,7 @@ export function CharacterDesignerPage({
               setAssetGenerationBusy(busy);
               if (!busy) void refreshAssetReadiness();
             }}
-            onCountChange={(kind, total) => {
-              assetCountGenerations.current[kind] = (assetCountGenerations.current[kind] || 0) + 1;
-              setAssetCounts(current => current[kind] === total ? current : { ...current, [kind]: total });
-            }}
+            onCountChange={rememberAssetCount}
           />
         </section>
       )}

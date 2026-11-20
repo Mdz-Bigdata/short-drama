@@ -1,0 +1,140 @@
+{
+  "_about": "分镜表硬规则审查(app/core/shot_table_rules.py)用的词表、上限和报出的话。*_terms 是词表：shot_size_terms 与 skills/shot-design-master/references/shot-grammar.md 的景别主表对应(英文缩写不区分大小写)；abstract_emotion_terms 单独出现说明只写了情绪结论，同句有 physical_cue_terms 里的身体线索就算落地；inner_monologue_terms 是摄影机拍不到的心理描写；burst_terms 认爆发镜；close_up_terms 认特写(计配额)；frozen_frame_terms 是视频模型做不到的定格写法。心理描写、抽象情绪、定格三张表按顺序比对，报出的是先命中的那个词。数字是上限：min_desc_chars 画面内容最少字数；max_same_size_run 同景别连续多少次后报堆叠(第 3 镜起报)；max_moving_shot_ratio 一场里带运动的镜头最多占多少(声明了运镜的镜头满 4 个才算)；min_buildup_seconds 爆发镜前一镜至少静置多久；max_burst_seconds 爆发镜最长多久；max_close_ups_per_scene / max_close_ups_per_fight_scene 文戏、武戏的特写配额；max_ambient_layers / max_action_sounds 一镜的环境音层数、动作音个数。patterns 是正则：speaker_line 认「角色名：台词」的说话人标签(名字很短，正文里「他说：…」不算第二个说话人)；parenthetical 认台词里括注的语气说明；line_noise 是比对点题金句时去掉的空白与标点；sound_cells 拆声音栏的分段，sound_split 拆一段里的各个声音；character_split 拆写成一串的人物栏。声音栏每段按 sound_label_separators 的顺序找「标签：内容」；标签含 ambience_labels 的词是环境音，含 action_labels 的词是动作音，含 effect_labels 的词只在还没认出环境音时算动作音；silent_sound 是表示没有声音的写法，不计层数。no_character 是人物栏里表示没人的写法。turn_words 写了其中之一，视线翻转就算有交代(越轴、转身、中性过渡)。name_separator 连接列举的人名。unnamed_model 是没选视频模型时报出的模型名，fight_quota 是武戏特写配额前面的定语。says 是摘要句模板，part_separator 连接摘要里各条规则的计数。issues 每条有规则名 rule 和说明模板 detail：规则名显示在摘要和日志里，测试也按它认问题。模板里花括号是代码填进去的值({spoken:.1f} 这类带格式)，{{ }} 是字面的花括号。log_issue 是逐条写进日志的格式，三个 %s 依次是镜号、规则名、说明(按 logging 的 % 写法，不是花括号模板)。",
+  "shot_size_terms": [
+    "大远景", "远景", "全景", "中远景", "中全景", "中景", "中近景", "近景",
+    "特写", "大特写", "极特写", "侧脸特写", "眼部特写", "嘴部特写", "手部特写",
+    "局部特写", "道具特写", "背影", "过肩", "双人", "主观", "空镜",
+    "EWS", "WS", "LS", "FS", "MLS", "MS", "MCU", "CU", "BCU", "ECU", "OTS", "POV"
+  ],
+  "abstract_emotion_terms": [
+    "悲伤", "愤怒", "害怕", "感动", "开心", "难过", "生气", "恐惧",
+    "紧张", "兴奋", "失望", "绝望", "震惊", "尴尬", "焦虑", "痛苦"
+  ],
+  "physical_cue_terms": [
+    "眉", "眼", "唇", "嘴", "下颌", "牙关", "鼻翼", "呼吸", "肩", "手", "指",
+    "背", "喉", "脸颊", "泪", "颤", "攥", "握", "咬", "抿", "垂", "瞳"
+  ],
+  "inner_monologue_terms": [
+    "心想", "内心", "心里", "暗想", "回忆起", "想起", "觉得", "认为", "希望"
+  ],
+  "burst_terms": [
+    "爆发", "挥剑", "挥刀", "砍", "劈", "冲上", "冲向", "撞", "摔", "怒吼", "开枪", "爆炸", "扑向", "出拳", "踢"
+  ],
+  "close_up_terms": ["大特写", "极特写", "特写", "ECU", "BCU", "CU"],
+  "frozen_frame_terms": [
+    "定格", "停格", "顿帧", "凝滞", "静滞", "子弹时间", "时间静止", "时停", "画面冻结", "绝对静默", "hit-stop"
+  ],
+
+  "min_desc_chars": 50,
+  "max_same_size_run": 2,
+  "max_moving_shot_ratio": 0.7,
+  "min_buildup_seconds": 3,
+  "max_burst_seconds": 4,
+  "max_close_ups_per_scene": 3,
+  "max_close_ups_per_fight_scene": 2,
+  "max_ambient_layers": 2,
+  "max_action_sounds": 2,
+
+  "patterns": {
+    "speaker_line": "([\\u4e00-\\u9fffA-Za-z][\\u4e00-\\u9fffA-Za-z·]{0,5})\\s*[：:]",
+    "parenthetical": "[（(]([^（）()]{1,16})[）)]",
+    "line_noise": "[\\s，。！？、…“”「」]",
+    "sound_cells": "[；;]",
+    "sound_split": "[·、，,+＋]|以及|还有",
+    "character_split": "[、，,/]"
+  },
+  "sound_label_separators": ["：", ":"],
+  "ambience_labels": ["环境", "底噪"],
+  "action_labels": ["动作"],
+  "effect_labels": ["音效"],
+  "silent_sound": ["无", "none"],
+  "no_character": ["无", "空镜"],
+  "turn_words": ["越轴", "转身", "回身", "中性镜头", "换位"],
+  "name_separator": "、",
+  "unnamed_model": "未指定模型",
+  "fight_quota": "武戏",
+
+  "says": {
+    "passed": "分镜表通过全部硬性规则检查",
+    "found": "分镜表检查发现 {count} 项问题：{parts}{repaired}",
+    "part": "{rule} × {count}",
+    "repaired": "，已自动修复 {repaired} 处超长镜头"
+  },
+  "part_separator": "；",
+
+  "issues": {
+    "too_long": {
+      "rule": "时长超模型上限",
+      "detail": "{seconds}s 超过 {model} 的单镜上限 {cap}s"
+    },
+    "too_short": {
+      "rule": "时长低于下限",
+      "detail": "{seconds}s 低于可提交下限 {floor}s"
+    },
+    "unknown_size": {
+      "rule": "景别不在词典内",
+      "detail": "「{size}」不是标准景别术语"
+    },
+    "same_size_run": {
+      "rule": "同景别连续堆叠",
+      "detail": "连续 {count} 镜都是「{size}」，需远近交替"
+    },
+    "short_desc": {
+      "rule": "画面内容过短",
+      "detail": "{chars} 字，规范要求不少于 {minimum} 字"
+    },
+    "inner_monologue": {
+      "rule": "出现心理描写",
+      "detail": "「{hit}」是摄影机拍不到的内容"
+    },
+    "abstract_emotion": {
+      "rule": "情绪未具象化",
+      "detail": "只写了「{hit}」，没有可观察的面部或肢体细节"
+    },
+    "no_frame_grammar": {
+      "rule": "构图未用镜头坐标",
+      "detail": "人物站位请写成画面区域 + 深度层 + 屏幕朝向（如：画面左侧三分之一的中景，朝向画面右侧）"
+    },
+    "eyeline_flip": {
+      "rule": "视线左右翻转",
+      "detail": "{names} 的屏幕朝向与上一镜相反，疑似越轴；要么保持上一镜站位，要么写明转身或中性过渡镜"
+    },
+    "dialogue_overrun": {
+      "rule": "台词超出本镜时长",
+      "detail": "台词按情绪语速连同句首句尾留白约需 {spoken:.1f}s，本镜 {seconds}s；请加长本镜或按语气停顿拆句"
+    },
+    "sound_layers": {
+      "rule": "声音层数超标",
+      "detail": "环境音 {ambience} 层、动作音 {action} 个；一镜最多 {max_ambience} 层环境音与 {max_action} 个动作音，多了会混成一团"
+    },
+    "frozen_frame": {
+      "rule": "写了模型做不到的定格",
+      "detail": "「{hit}」会让画面真的停住；冲击点改用白闪一两帧 + 镜头猛震 + 命中点径向模糊 + 速度线"
+    },
+    "long_burst": {
+      "rule": "爆发镜过长",
+      "detail": "爆发镜 {seconds}s，超过 {maximum}s 就散了；把余韵拆到下一镜去"
+    },
+    "no_buildup": {
+      "rule": "爆发前缺少静置蓄力",
+      "detail": "爆发镜前一镜应至少静止 {minimum}s 蓄力，再用短促急推或骤停放大冲击"
+    },
+    "repeated_move": {
+      "rule": "相邻镜运镜撞款",
+      "detail": "与上一镜同为「{signature}」，请换掉运动、角度或节奏中的一项"
+    },
+    "too_much_motion": {
+      "rule": "运镜过密",
+      "detail": "{moving}/{declared} 镜带镜头运动，超过 {percent}%；以固定镜头为主，运动只留给开头、呼吸式微动和爆发瞬间"
+    },
+    "close_up_quota": {
+      "rule": "特写超配额",
+      "detail": "本场 {count} 个特写，超过{kind}配额 {cap} 个；特写是标点，只留给冲击峰值与转折帧"
+    },
+    "single_shot": {
+      "rule": "整集仅一个镜头",
+      "detail": "一集必须拆成多个镜头"
+    }
+  },
+  "log_issue": "[Stage4] 镜%s %s：%s"
+}

@@ -35,7 +35,7 @@ class ModeRulesTests(unittest.TestCase):
         self.assertEqual(creation_modes.mode_of({"creation_mode": "musical"}), "drama")
         self.assertEqual(creation_modes.mode_of(AD), "ad")
         self.assertEqual(creation_modes.writer_guidance({}), "")
-        self.assertEqual([o["id"] for o in creation_modes.options()], ["drama", "narration", "ad"])
+        self.assertEqual([o["id"] for o in creation_modes.options()], ["drama", "narration", "ad", "film"])
 
     def test_an_ad_has_its_own_short_frame_and_a_drama_keeps_the_deployments(self):
         shape = creation_modes.episode_shape_for(AD)
@@ -61,6 +61,12 @@ class ModeRulesTests(unittest.TestCase):
         self.assertIn("广告短片", guidance)
         self.assertIn("产品：静音吹风机", guidance)
         self.assertIn("行动号召：立即下单", guidance)
+        self.assertNotIn("剧情带货", guidance)
+        story = creation_modes.writer_guidance({**AD, "ad_brief": {**AD["ad_brief"], "format": "story"}})
+        self.assertTrue(story.startswith(guidance.split("\n产品简报")[0]))
+        for words in ("剧情带货", "产品在人物解决麻烦的那一步", "看得出时间过去了", "最后一个分镜落成产品近景", "全片只出现这一个品牌", "产品：静音吹风机"):
+            self.assertIn(words, story)
+        self.assertEqual(creation_modes.ad_brief({"ad_brief": {"format": "anything"}})["format"], "")
         self.assertIn("角色在画面里只做动作", creation_modes.writer_guidance({"creation_mode": "narration"}))
         self.assertIn("立即下单", creation_modes.promotion_guidance(AD))
         self.assertIn("旁白解说", creation_modes.promotion_guidance({"creation_mode": "narration"}))

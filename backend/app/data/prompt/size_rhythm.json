@@ -1,0 +1,31 @@
+{
+  "_about": "全集景别节奏（app/core/size_rhythm.py 读取）。编剧的视觉层给每个分镜排一档景别(image_prompt.composition.shot_type)，第 4 步每场分镜表照它起幅：一集的景别连成一条线，并行写表的各场也不会都落在中景。同一档最多连用几场、一集至少几档，读成片验收单 delivery_check.json 的 max_same_size_run / min_sizes_in_cut——排的人和验的人用同一套数。编剧排的连用超了，就让那一场换一档、远近由表格作者按戏选；一集里排的没有远 / 全，第一场起幅用全景或远景交代空间；没有近 / 特，最后一场落幅推到近景或特写。景别不变的连续动作只出一格、一张分镜图。",
+  "shot_type_bands": {
+    "Extreme Long Shot": "远",
+    "Long Shot": "远",
+    "Medium Long Shot": "全",
+    "Medium Shot": "中",
+    "Medium Close-up": "近",
+    "Close-up": "特",
+    "Extreme Close-up": "特"
+  },
+  "band_labels": {
+    "远": "远景",
+    "全": "全景",
+    "中": "中景",
+    "近": "近景",
+    "特": "特写"
+  },
+  "wide_bands": ["远", "全"],
+  "close_bands": ["近", "特"],
+  "establish_band": "全",
+  "note": {
+    "heading": "【开场景别（全集景别节奏）】",
+    "planned": "编剧给本场排的是「{label}」：第一格从这一档起幅，落幅按戏推近或拉远。",
+    "change": "前面已经连着 {count} 场从「{label}」起幅：本场第一格换一档——要交代空间、有人进出就远一点（全景 / 远景），要看反应、情绪就近一点（近景 / 特写），按这场的戏选。",
+    "establish": "本集排的景别里还没有远景或全景：本场第一格用全景或远景把空间交代清楚。",
+    "land_close": "本集排的景别里还没有近景或特写：本场落幅推到近景或特写。",
+    "one_picture": "格内景别不变的连续动作写进同一格，只出一张分镜图；要另起一格，就换一档景别。"
+  },
+  "writer_rule": "相邻分镜的景别要有远近变化：同一档景别（远：Extreme Long Shot / Long Shot；全：Medium Long Shot；中：Medium Shot；近：Medium Close-up；特：Close-up / Extreme Close-up）最多连用 {run} 个分镜，第 {next} 个换一档；一集里至少用到 {kinds} 档，远或全、中、近或特都要有；换到新地点的第一个分镜一般用远景或全景交代空间。"
+}

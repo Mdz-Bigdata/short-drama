@@ -18,6 +18,19 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .spec import BlockingSpec
+from app.core import prompt_data
+
+
+_WORDING_FILE = "blender_previz_runner"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/blender_previz_runner.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 ADDON_DIR = Path(__file__).resolve().parents[3] / "blender" / "short_drama_previz"
 SCENE_SCRIPT = ADDON_DIR / "previz_scene.py"
@@ -81,7 +94,7 @@ def render(spec: BlockingSpec, out_dir: Path) -> RenderResult:
     """无界面渲染：整段 MP4 + 每个切点的首帧 PNG + .blend 工程。"""
     binary = find_blender()
     if not binary:
-        raise BlenderUnavailable("本机没有找到 Blender；请安装 Blender 4.2 以上，或在 .env 里设置 BLENDER_BIN 指向可执行文件")
+        raise BlenderUnavailable(_text_of("render.text"))
     out_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
         handle.write(spec.model_dump_json())
@@ -93,13 +106,13 @@ def render(spec: BlockingSpec, out_dir: Path) -> RenderResult:
                 capture_output=True, text=True, timeout=RENDER_TIMEOUT_S,
             )
     except subprocess.TimeoutExpired as exc:
-        raise RenderFailed(f"Blender 渲染超过 {RENDER_TIMEOUT_S} 秒，已中止") from exc
+        raise RenderFailed(_text_of("render.text.2").format(RENDER_TIMEOUT_S)) from exc
     finally:
         os.unlink(spec_path)
     manifest_line = next((line for line in completed.stdout.splitlines() if line.startswith("PREVIZ_MANIFEST ")), None)
     if completed.returncode != 0 or manifest_line is None:
         tail = "\n".join((completed.stdout + completed.stderr).strip().splitlines()[-12:])
-        raise RenderFailed(f"Blender 渲染失败(退出码 {completed.returncode})：{tail[-1500:]}")
+        raise RenderFailed(_text_of("render.text.3").format(completed.returncode, tail[-1500:]))
     manifest = json.loads(manifest_line[len("PREVIZ_MANIFEST "):])
     return RenderResult(
         out_dir=out_dir,
@@ -114,7 +127,7 @@ def cut_clip(video: Path, start_frame: int, end_frame: int, fps: int, destinatio
     """从整段预演里切出一个镜头的片段(按帧号精确切，重新编码保证首帧就是切点帧)。"""
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
-        raise RenderFailed("没有找到 ffmpeg，无法按镜头切片")
+        raise RenderFailed(_text_of("cut_clip.text"))
     start = (start_frame - 1) / fps
     frames = end_frame - start_frame + 1
     completed = subprocess.run(
@@ -123,7 +136,7 @@ def cut_clip(video: Path, start_frame: int, end_frame: int, fps: int, destinatio
         capture_output=True, text=True, timeout=120,
     )
     if completed.returncode != 0 or not destination.is_file():
-        raise RenderFailed(f"切镜头片段失败：{completed.stderr.strip()[-400:]}")
+        raise RenderFailed(_text_of("cut_clip.text.2").format(completed.stderr.strip()[-400:]))
     return destination
 
 

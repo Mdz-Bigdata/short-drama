@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ArrowLeft, Landmark, LoaderCircle, Play, RefreshCw } from 'lucide-react';
 
 import { apiRequest } from '../../api/client';
@@ -6,8 +6,11 @@ import { t } from '../../i18n';
 import { hasPermission } from '../account/permissions';
 import { channelLabel } from '../billing/paymentChannels';
 import {
-  adjustmentStatusLabel, itemStatusLabel, kindLabel, orderStatusLabel, refundStatusLabel, ruleLabel, severityLabel, when, yuan,
+  adjustmentStatusLabel, itemStatusLabel, kindLabel, money, orderStatusLabel, refundStatusLabel, ruleLabel, severityLabel, when, yuan,
 } from './financeFormat';
+import { Problem, Stat, Waiting } from './financeParts';
+import { QuoteTab } from './QuoteTab';
+import { UsageLiveTab } from './UsageLiveTab';
 
 
 interface Viewer { user_id?: string; permissions?: string[] }
@@ -39,6 +42,8 @@ interface Summary {
 }
 
 const errorText = (err: unknown, fallback: string) => (err instanceof Error ? err.message : t(fallback));
+// A rule the table does not name yet is shown by its code alone, not as "R11 R11".
+const ruleName = (rule: string) => (ruleLabel(rule) === rule ? rule : `${rule} ${ruleLabel(rule)}`);
 
 
 /** Loads one list, and reloads it after anything that changed it. */
@@ -60,16 +65,19 @@ function useList<T>(path: string) {
   return { data, error, reload };
 }
 
-function Problem({ text }: { text: string }) {
-  return text ? <div className="inline-error" role="alert">{text}</div> : null;
-}
-
-function Waiting() {
-  return <div className="empty-library"><LoaderCircle className="spin" /> {t('正在加载…')}</div>;
-}
-
-function Stat({ name, value, hint }: { name: string; value: ReactNode; hint?: string }) {
-  return <div className="finance-stat"><span>{name}</span><strong>{value}</strong>{hint && <small>{hint}</small>}</div>;
+/**
+ * The cards that have a request out. One flag per card, not one per tab: when a second card's
+ * request ends it must not free the buttons of a first card whose request is still out.
+ */
+function usePending() {
+  const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
+  const start = useCallback((id: string) => setPending(current => new Set(current).add(id)), []);
+  const end = useCallback((id: string) => setPending(current => {
+    const next = new Set(current);
+    next.delete(id);
+    return next;
+  }), []);
+  return { pending, start, end };
 }
 
 
@@ -128,7 +136,7 @@ function OverviewTab({ canRun }: { canRun: boolean }) {
             <tr key={item.id}>
               <td>{item.period.startsWith('manual:') ? t('手动') : item.period}</td>
               <td>{item.status === 'done' ? t('完成') : item.status === 'failed' ? t('失败') : t('运行中')}</td>
-              <td>{item.summary.error ?? (Object.entries(item.summary.found ?? {}).map(([rule, count]) => `${rule}: ${count}`).join('，') || t('无差异'))}</td>
+              <td>{item.summary.error ?? (Object.entries(item.summary.found ?? {}).map(([rule, count]) => `${ruleName(rule)}：${t('{0} 条', [count])}`).join('，') || t('无差异'))}</td>
               <td>{when(item.started_at)}</td>
             </tr>
           ))}</tbody>
@@ -245,7 +253,7 @@ function OrdersTab({ canRefund }: { canRefund: boolean }) {
             <button type="button" className="finance-row" aria-expanded={openId === order.id} onClick={() => setOpenId(openId === order.id ? '' : order.id)}>
               <span><strong>{order.email || order.user_id}</strong><small>{order.plan_id} · {when(order.created_at)}</small></span>
               <span>{channelLabel(order.provider)}</span>
-              <span>¥{Number(order.amount).toFixed(2)}</span>
+              <span>{money(order.amount)}</span>
               <span className={`order-status ${order.status}`}>{orderStatusLabel(order.status)}</span>
             </button>
             {openId === order.id && <OrderPanel orderId={order.id} canRefund={canRefund} onChanged={() => void reload()} />}
@@ -262,10 +270,10 @@ function RefundsTab({ viewer, canDecide }: { viewer: Viewer; canDecide: boolean 
   const { data, error, reload } = useList<Paged<RefundRow>>(`/api/admin/refunds?page_size=50${status ? `&status=${status}` : ''}`);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [amounts, setAmounts] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState('');
+  const { pending, start, end } = usePending();
   const [problem, setProblem] = useState('');
   const decide = async (refund: RefundRow, action: 'approve' | 'reject') => {
-    setBusy(refund.id);
+    start(refund.id);
     setProblem('');
     const typed = amounts[refund.id];
     try {
@@ -277,7 +285,7 @@ function RefundsTab({ viewer, canDecide }: { viewer: Viewer; canDecide: boolean 
     } catch (err) {
       setProblem(errorText(err, '操作失败'));
     } finally {
-      setBusy('');
+      end(refund.id);
     }
   };
   return (
@@ -309,8 +317,8 @@ function RefundsTab({ viewer, canDecide }: { viewer: Viewer; canDecide: boolean 
                     <label>{t('金额（元），留空按申请金额')}<input type="number" min="0.01" step="0.01" value={amounts[refund.id] ?? ''} placeholder={(refund.amount_minor / 100).toFixed(2)} onChange={event => setAmounts({ ...amounts, [refund.id]: event.target.value })} /></label>
                     <label>{t('备注')}<input value={notes[refund.id] ?? ''} maxLength={500} onChange={event => setNotes({ ...notes, [refund.id]: event.target.value })} /></label>
                     <div>
-                      <button type="button" className="primary-action" disabled={busy === refund.id} onClick={() => void decide(refund, 'approve')}>{t('批准并退款')}</button>
-                      <button type="button" className="secondary-action" disabled={busy === refund.id} onClick={() => void decide(refund, 'reject')}>{t('驳回')}</button>
+                      <button type="button" className="primary-action" disabled={pending.has(refund.id)} onClick={() => void decide(refund, 'approve')}>{t('批准并退款')}</button>
+                      <button type="button" className="secondary-action" disabled={pending.has(refund.id)} onClick={() => void decide(refund, 'reject')}>{t('驳回')}</button>
                     </div>
                   </div>
                 ))}
@@ -329,8 +337,14 @@ function AdjustmentsTab({ viewer, canDecide }: { viewer: Viewer; canDecide: bool
   const [points, setPoints] = useState('');
   const [reason, setReason] = useState('');
   const [problem, setProblem] = useState('');
+  // Filing and deciding keep separate flags: a decision that ends while a filing is still out must
+  // not free the filing button for a second request.
+  const [filing, setFiling] = useState(false);
+  const { pending: deciding, start, end } = usePending();
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (filing) return;
+    setFiling(true);
     setProblem('');
     try {
       await apiRequest('/api/admin/wallet-adjustments', { method: 'POST', body: JSON.stringify({ user_id: userId.trim(), points: Number(points), reason }) });
@@ -338,15 +352,20 @@ function AdjustmentsTab({ viewer, canDecide }: { viewer: Viewer; canDecide: bool
       await reload();
     } catch (err) {
       setProblem(errorText(err, '发起调整失败'));
+    } finally {
+      setFiling(false);
     }
   };
   const decide = async (id: string, action: 'approve' | 'reject') => {
+    start(id);
     setProblem('');
     try {
       await apiRequest(`/api/admin/wallet-adjustments/${id}/${action}`, { method: 'POST', body: JSON.stringify({}) });
       await reload();
     } catch (err) {
       setProblem(errorText(err, '操作失败'));
+    } finally {
+      end(id);
     }
   };
   return (
@@ -357,9 +376,10 @@ function AdjustmentsTab({ viewer, canDecide }: { viewer: Viewer; canDecide: bool
         <label>{t('用户 ID')}<input value={userId} onChange={event => setUserId(event.target.value)} required /></label>
         <label>{t('积分')}<input type="number" step="any" value={points} onChange={event => setPoints(event.target.value)} required /></label>
         <label>{t('原因')}<input value={reason} maxLength={500} onChange={event => setReason(event.target.value)} required /></label>
-        <button type="submit" className="primary-action">{t('提交审批')}</button>
+        <button type="submit" className="primary-action" disabled={filing}>{t('提交审批')}</button>
       </form>
       <Problem text={problem || error} />
+      {!data && !error && <Waiting />}
       {data && data.items.length === 0 && <p className="finance-empty">{t('还没有积分调整')}</p>}
       <div className="finance-list">{data?.items.map(item => (
         <div key={item.id} className="finance-card">
@@ -374,8 +394,8 @@ function AdjustmentsTab({ viewer, canDecide }: { viewer: Viewer; canDecide: bool
             ? <p className="finance-empty">{t('这笔调整是你发起的，需要另一个人审批。')}</p>
             : (
               <div className="finance-decision"><div>
-                <button type="button" className="primary-action" onClick={() => void decide(item.id, 'approve')}>{t('批准')}</button>
-                <button type="button" className="secondary-action" onClick={() => void decide(item.id, 'reject')}>{t('驳回')}</button>
+                <button type="button" className="primary-action" disabled={deciding.has(item.id)} onClick={() => void decide(item.id, 'approve')}>{t('批准')}</button>
+                <button type="button" className="secondary-action" disabled={deciding.has(item.id)} onClick={() => void decide(item.id, 'reject')}>{t('驳回')}</button>
               </div></div>
             ))}
         </div>
@@ -390,13 +410,17 @@ function DifferencesTab({ canResolve }: { canResolve: boolean }) {
   const { data, error, reload } = useList<Paged<ReconItem>>(`/api/admin/recon/items?page_size=100${status ? `&status=${status}` : ''}`);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [problem, setProblem] = useState('');
+  const { pending, start, end } = usePending();
   const resolve = async (id: string, result: 'resolved' | 'ignored') => {
+    start(id);
     setProblem('');
     try {
       await apiRequest(`/api/admin/recon/items/${id}/resolve`, { method: 'POST', body: JSON.stringify({ status: result, resolution: notes[id] ?? '' }) });
       await reload();
     } catch (err) {
       setProblem(errorText(err, '操作失败'));
+    } finally {
+      end(id);
     }
   };
   return (
@@ -422,8 +446,8 @@ function DifferencesTab({ canResolve }: { canResolve: boolean }) {
               <div className="finance-decision">
                 <label>{t('处理原因（必填）。这里只记录说明，账目修正要另走积分调整。')}<input value={notes[item.id] ?? ''} maxLength={500} onChange={event => setNotes({ ...notes, [item.id]: event.target.value })} /></label>
                 <div>
-                  <button type="button" className="primary-action" disabled={!(notes[item.id] ?? '').trim()} onClick={() => void resolve(item.id, 'resolved')}>{t('已解决')}</button>
-                  <button type="button" className="secondary-action" disabled={!(notes[item.id] ?? '').trim()} onClick={() => void resolve(item.id, 'ignored')}>{t('忽略')}</button>
+                  <button type="button" className="primary-action" disabled={pending.has(item.id) || !(notes[item.id] ?? '').trim()} onClick={() => void resolve(item.id, 'resolved')}>{t('已解决')}</button>
+                  <button type="button" className="secondary-action" disabled={pending.has(item.id) || !(notes[item.id] ?? '').trim()} onClick={() => void resolve(item.id, 'ignored')}>{t('忽略')}</button>
                 </div>
               </div>
             )}
@@ -455,6 +479,8 @@ export function FinanceConsolePage({ user, onBack }: { user: Viewer; onBack: () 
     hasPermission(user, 'order:read_any') && { id: 'orders', name: t('订单') },
     hasPermission(user, 'order:read_any') && { id: 'refunds', name: t('退款审批') },
     hasPermission(user, 'wallet:adjust_request') && { id: 'adjustments', name: t('积分调整') },
+    hasPermission(user, 'recon:read') && { id: 'usage', name: t('实时用量') },
+    hasPermission(user, 'recon:read') && { id: 'quote', name: t('对外报价') },
     hasPermission(user, 'recon:read') && { id: 'differences', name: t('对账差异') },
     hasPermission(user, 'audit:read') && { id: 'audit', name: t('审计记录') },
   ].filter((tab): tab is { id: string; name: string } => Boolean(tab));
@@ -474,6 +500,8 @@ export function FinanceConsolePage({ user, onBack }: { user: Viewer; onBack: () 
         {active === 'orders' && <OrdersTab canRefund={hasPermission(user, 'refund:request')} />}
         {active === 'refunds' && <RefundsTab viewer={user} canDecide={hasPermission(user, 'refund:approve')} />}
         {active === 'adjustments' && <AdjustmentsTab viewer={user} canDecide={hasPermission(user, 'wallet:adjust_approve')} />}
+        {active === 'usage' && <UsageLiveTab />}
+        {active === 'quote' && <QuoteTab />}
         {active === 'differences' && <DifferencesTab canResolve={hasPermission(user, 'recon:resolve')} />}
         {active === 'audit' && <AuditTab />}
       </section>

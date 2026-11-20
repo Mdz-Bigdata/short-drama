@@ -195,6 +195,28 @@ class ElementFile(Base):
     element: Mapped[ElementAsset] = relationship(back_populates="files")
 
 
+class ElementRevision(Base):
+    """资产改动前的一版：名称、描述、元数据，和当时每个槽位指向的文件。恢复旧版本就是把这些指回去。
+
+    ``files_json``: [{slot, storage_path, sha256, mime_type, size_bytes, position}]；被引用的文件不删。
+    """
+
+    __tablename__ = "element_revisions"
+    __table_args__ = (UniqueConstraint("element_id", "revision", name="uq_element_revision_number"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    element_id: Mapped[str] = mapped_column(ForeignKey("element_assets.id", ondelete="CASCADE"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("platform_users.id", ondelete="CASCADE"), index=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    version: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    files_json: Mapped[list] = mapped_column(JSON, default=list)
+    reason: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class ElementFolder(Base):
     """A folder someone made in their element library; elements outside any folder are simply unfiled."""
 
@@ -615,6 +637,18 @@ class PlatformSetting(Base):
     key: Mapped[str] = mapped_column(String(80), primary_key=True)
     value: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_by: Mapped[str | None] = mapped_column(String(36))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class UserPromptPreference(Base):
+    """An account's own way of working for one stage agent: appended to the platform's method, or in place of it."""
+
+    __tablename__ = "user_prompt_preferences"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("platform_users.id", ondelete="CASCADE"), primary_key=True)
+    operation: Mapped[str] = mapped_column(String(40), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(16))
+    text: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 

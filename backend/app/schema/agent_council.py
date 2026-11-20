@@ -8,6 +8,19 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schema.drama import DEFAULT_EPISODE_COUNT, EPISODE_COUNT_MAX, EPISODE_COUNT_MIN
+from app.core import prompt_data
+
+
+_WORDING_FILE = "schema_agent_council"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/schema_agent_council.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
 
 
 class AgentRole(str, Enum):
@@ -39,7 +52,7 @@ class CouncilCompileRequest(BaseModel):
     title: Annotated[str, Field(min_length=1, max_length=300)]
     premise: Annotated[str, Field(min_length=1, max_length=20_000)]
     genre: Annotated[str, Field(min_length=1, max_length=120)] = "auto"
-    audience: Annotated[str, Field(min_length=1, max_length=500)] = "18-35 岁短剧观众"
+    audience: Annotated[str, Field(min_length=1, max_length=500)] = _text_of("CouncilCompileRequest.audience")
     platform: Literal[
         "douyin", "kuaishou", "wechat_channels", "bilibili", "tiktok", "reelshort", "other"
     ] = "douyin"
@@ -47,7 +60,7 @@ class CouncilCompileRequest(BaseModel):
     episode_count: Annotated[int, Field(ge=EPISODE_COUNT_MIN, le=EPISODE_COUNT_MAX)] = DEFAULT_EPISODE_COUNT
     episode_duration_seconds: Annotated[int, Field(ge=15, le=900)] = 90
     output_language: Annotated[str, Field(min_length=2, max_length=40)] = "zh-CN"
-    visual_style: Annotated[str, Field(min_length=1, max_length=2000)] = "写实电影感"
+    visual_style: Annotated[str, Field(min_length=1, max_length=2000)] = _text_of("CouncilCompileRequest.visual_style")
     action_intensity: Literal["low", "medium", "high"] = "medium"
     content_rating: Literal["general", "teen", "mature"] = "teen"
     commercial_use: bool = True
@@ -102,7 +115,7 @@ class ProductionConstitution(BaseModel):
     release_threshold: int = 85
     core_dimension_minimum: float = 4.0
     unresolved_b_limit: int = 3
-    severity_policy: str = "S=0、A=0、B<=3；任一结构性硬门禁失败即禁止发布"
+    severity_policy: str = _text_of("ProductionConstitution.severity_policy")
 
 
 class AgentBlueprint(BaseModel):

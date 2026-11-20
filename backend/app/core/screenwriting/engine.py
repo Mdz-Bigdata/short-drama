@@ -40,18 +40,23 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 
-from app.core import breakdown_kinds, emotion_points, literary
+from app.core import breakdown_kinds, emotion_points, light_setups, literary, prompt_data
 from app.core.episode_shape import EpisodeShape
 from app.core import creation_modes
-from app.core.screenwriting import fact_check, ledger_ops, review
+from app.core import paywall_plan, script_structure, serial_brief, story_direction, target_audience
+from app.core import series_rhythm
+from app.core.screenwriting import self_check
+from app.core.screenwriting import fact_check, filmability, ledger_ops, review, story_state
 from app.core.screenwriting.anchors import AnchorRejected, normalize_source_text, resolve_boundaries
 from app.core.screenwriting.durations import (
     DEFAULT_EPISODE_TARGET_SECONDS,
     resolve_episode_target_volume,
+    shot_duration_aim,
     supported_shot_durations,
 )
 from app.core.screenwriting.entries import ENTRY_REVISION_FIELD, entry_revision, evaluate_entry_currency, revision_of
 from app.core.screenwriting.models import (
+    AdaptationBrief,
     AnchoredPlanDraft,
     AssetInventory,
     DEFAULT_SCENE_SECONDS,
@@ -65,7 +70,9 @@ from app.core.screenwriting.models import (
 )
 from app.core.screenwriting.prompts import (
     language_scope,
+    adaptation_limit,
     append_user_instructions,
+    build_adaptation_prompt,
     build_anchored_plan_prompt,
     build_asset_inventory_prompt,
     build_outline_plan_prompt,
@@ -83,6 +90,8 @@ from app.core.screenwriting.violations import (
     NO_EMOTION_POINT,
     NO_KEY_LINE,
     TOO_FEW_SPOKEN_SHOTS,
+    TOO_MANY_NARRATED_SHOTS,
+    narrated_shots,
     spoken_shot_problem,
     DraftViolation,
     PlanCheckContext,
@@ -91,6 +100,35 @@ from app.core.screenwriting.violations import (
 )
 
 logger = logging.getLogger("app.core.screenwriting.engine")
+
+# What the engine itself says (progress steps, refusals, warnings, retry reasons, the repair ask,
+# log lines); the stage prompts are screenwriting_prompts.json: app/data/prompt/screenwriting_engine.json.
+_WORDING = "screenwriting_engine"
+
+
+def _entry(key: str) -> Any:
+    """The entry at the dotted ``key`` ("section.name") of the wording table."""
+    node: Any = prompt_data.load(_WORDING)
+    for part in key.split("."):
+        node = node[part]
+    return node
+
+
+def _says(key: str, /, **values: object) -> str:
+    """A template of the wording table, filled in (an array of lines is joined with newlines first)."""
+    entry = _entry(key)
+    template = "\n".join(str(line) for line in entry) if isinstance(entry, list) else str(entry)
+    return template.format(**values)
+
+
+def _word(key: str) -> str:
+    """A word of the wording table, used as it stands."""
+    return str(_entry(key))
+
+
+def _log(key: str) -> str:
+    """A log line of the wording table: a %-template that ``logging`` fills."""
+    return str(_entry(f"log.{key}"))
 
 ENGINE_NAME = "screenwriting-master"
 STATE_VERSION = 1
@@ -117,7 +155,8 @@ def _in_context(fn, *args):
     return lambda: context.run(fn, *args)
 # Violations the model is asked to fix on retry, but which a human edit may keep
 # (the shot is flagged ``needs_replan`` instead of the whole draft being refused).
-_SOFT_ON_HUMAN_EDIT = frozenset({"speech_exceeds_max", "utterance_not_verbatim", "mixed_speech", creation_modes.NARRATION_DIALOGUE})
+# 可拍性问题对人只提示：人改的剧本由人拍板。
+_SOFT_ON_HUMAN_EDIT = frozenset({"speech_exceeds_max", "utterance_not_verbatim", "mixed_speech", creation_modes.NARRATION_DIALOGUE}) | filmability.codes()
 
 ProgressFn = Callable[[int, str], None]
 
@@ -139,7 +178,7 @@ class RepairNotImproved(RuntimeError):
     """The model's repair left as many violations as before; the earlier draft is kept."""
 
     def __init__(self, episode: int, reasons: list[str]):
-        super().__init__(f"第 {episode} 集修复后违约没有减少，保留原草稿：{'; '.join(reasons)}")
+        super().__init__(_says("errors.repair_not_improved", episode=episode, reasons="; ".join(reasons)))
         self.episode = episode
         self.reasons = list(reasons)
 
@@ -160,11 +199,11 @@ def detect_source_kind(source_text: str | None) -> str:
     """``screenplay`` when the text already reads as a script, ``novel`` for prose, ``outline`` for none."""
     if not source_text or not source_text.strip():
         return "outline"
-    from app.core.writer_dashboard import EPISODE_HEADING, SCENE_HEADING, SPEAKER_LINE  # local import: avoid a cycle at module load
+    from app.core.writer_dashboard import EPISODE_HEADING, SPEAKER_LINE, scene_heading  # local import: avoid a cycle at module load
 
     sample = source_text[:20000]
     speaker_lines = len(SPEAKER_LINE.findall(sample))
-    scene_lines = sum(1 for line in sample.splitlines() if SCENE_HEADING.match(line))
+    scene_lines = sum(1 for line in sample.splitlines() if scene_heading(line) is not None)
     episode_lines = len(EPISODE_HEADING.findall(sample))
     total_lines = max(1, sample.count("\n") + 1)
     if scene_lines >= 2 or episode_lines >= 2 or speaker_lines / total_lines >= 0.2:
@@ -187,7 +226,7 @@ def _own_episode_inputs(own_episodes: Sequence[Mapping[str, Any]] | None) -> lis
             continue
         kind = str(item.get("source_kind") or "") or detect_source_kind(text)
         if kind not in ("novel", "screenplay"):
-            raise ValueError(f"逐集原文的体裁必须是 novel 或 screenplay，不是 {kind!r}")
+            raise ValueError(_says("errors.own_episode_kind", kind=kind))
         result.append({"text": text, "source_kind": kind, "name": str(item.get("name") or "")})
     return result
 
@@ -273,6 +312,8 @@ class ScreenwritingEngine:
         self.planning_max_episodes = max(1, planning_max_episodes)
         self.director_plan_excerpt_chars = max(500, director_plan_excerpt_chars)
         self.supported_durations = sorted({int(value) for value in supported_durations}) if supported_durations else supported_shot_durations(video_model)
+        # Seedance 2.5 一镜尽量拍满 30 秒；档位是外面给的也照样靠，只要它在档位里（prompts 里检查）。
+        self.aim_duration = shot_duration_aim(video_model)
 
     def _system(self, stage: str) -> str:
         return self.system_prompts.get(stage) or self.system_prompt
@@ -293,6 +334,7 @@ class ScreenwritingEngine:
         source_kind: str | None = None,
         own_episodes: Sequence[Mapping[str, Any]] | None = None,
         outline_only: bool = False,
+        on_cast: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Run the whole pipeline and return the persisted state dict.
 
@@ -304,6 +346,10 @@ class ScreenwritingEngine:
 
         ``outline_only`` stops once the overview, the asset inventory and the whole ledger
         are in: no episode is written, and ``write_planned`` writes them later.
+
+        Order: the overview and the asset inventory (cast, positions, relationships) come first and
+        ``on_cast(state)`` is told at once, so the writer board and the relationship graph show while
+        the rest is planned; the ledger and every episode are then planned from that cast.
         """
         own = _own_episode_inputs(own_episodes)
         kind = source_kind or detect_source_kind(source_text)
@@ -313,7 +359,7 @@ class ScreenwritingEngine:
         if kind not in SOURCE_KINDS:
             raise ValueError(f"unknown source_kind: {kind!r}")
         if kind != "outline" and not (source_text or "").strip() and not own:
-            raise ValueError("novel / screenplay 模式需要提供源文")
+            raise ValueError(_says("errors.source_required"))
         episode_count = max(1, int(episode_count))
         normalized_source = normalize_source_text(source_text) if source_text else ""
         own_text = "\n\n".join(entry["text"] for entry in own)
@@ -321,7 +367,7 @@ class ScreenwritingEngine:
 
         analysis_source = sample_source(analysis_source, self.analysis_chars)
 
-        self.progress(6, "编剧 · 提炼项目概述")
+        self.progress(6, _says("progress.overview"))
         overview = self._overview(analysis_source, kind, title)
 
         state: dict[str, Any] = {
@@ -354,7 +400,7 @@ class ScreenwritingEngine:
         planned_count = max(0, episode_count - len(own)) if own else episode_count
 
         def plan_ledger() -> list[LedgerEntry]:
-            self.progress(14, "编剧 · 规划分集账本（标题 / 钩子 / 故事节点）")
+            self.progress(14, _says("progress.ledger"))
             if normalized_source:
                 return self._plan_anchored(state, planned_count or None)
             if not planned_count:
@@ -364,30 +410,32 @@ class ScreenwritingEngine:
                 entry.source_origin = "none"
             return entries
 
-        # The asset inventory and the ledger both read only the overview and the source, so
-        # they are extracted side by side; the serial setting keeps the one-call-at-a-time order.
-        self.progress(10, "编剧 · 提取角色 / 场景 / 道具资产")
+        # 创作看板与人物关系先出：角色、戏剧位置和人物关系定下来，分集账本和逐集剧本都照它写。
+        self.progress(10, _says("progress.inventory"))
+        state["inventory"] = self._inventory(analysis_source, kind, overview)
+        if on_cast is not None:
+            try:
+                on_cast(state)
+            except Exception as error:  # noqa: BLE001 - showing the board early must not cost the screenplay
+                logger.warning(_log("board_early_failed"), type(error).__name__)
+        if kind == "novel":
+            # 小说先定改编方案（卖点、主视角、开场戏、不能删的信息），分集账本和逐集分镜都照它排戏。
+            self.progress(12, _says("progress.adaptation"))
+            state["adaptation"] = self._adaptation(analysis_source, overview, state["inventory"])
         if not outline_only and self.episode_concurrency > 1 and not normalized_source and planned_count > self.plan_batch_size:
             # A long series planned from the outline: each ledger batch's episodes are written
             # while the next batch is still being planned (a source is cut in one pass instead).
-            self._write_pipelined(state, planned_count, own, episode_count, analysis_source=analysis_source, kind=kind, overview=overview)
+            self._write_pipelined(state, planned_count, own, episode_count)
             state["updated_at"] = _now()
             return state
-        if self.episode_concurrency > 1:
-            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="screenwriting-inventory") as pool:
-                inventory_future = pool.submit(_in_context(self._inventory, analysis_source, kind, overview))
-                planned = plan_ledger()
-                state["inventory"] = inventory_future.result()
-        else:
-            state["inventory"] = self._inventory(analysis_source, kind, overview)
-            planned = plan_ledger()
+        planned = plan_ledger()
         state["ledger"] = [entry.model_dump(mode="json") for entry in planned]
         state["ledger"].extend(
             self._own_ledger_entry(len(planned) + offset + 1, entry).model_dump(mode="json")
             for offset, entry in enumerate(own)
         )
         if not state["ledger"]:
-            raise ScreenwritingError("没有可写的集：既无源文可切分，也无逐集原文")
+            raise ScreenwritingError(_says("errors.nothing_to_write"))
         state["episode_count"] = max(episode_count, len(state["ledger"]))
         if outline_only:
             state["updated_at"] = _now()
@@ -414,7 +462,6 @@ class ScreenwritingEngine:
 
     def _write_pipelined(
         self, state: dict[str, Any], planned_count: int, own: Sequence[Mapping[str, Any]], episode_count: int,
-        *, analysis_source: str, kind: str, overview: Mapping[str, Any],
     ) -> None:
         """``write`` for a long outline-mode series: batch k is written while batch k+1 is planned.
 
@@ -437,12 +484,10 @@ class ScreenwritingEngine:
         written = 0
         pending: list[int] = []
         ahead = None
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="screenwriting-plan-ahead") as pool:
-            inventory_future = pool.submit(_in_context(self._inventory, analysis_source, kind, overview))
-            self.progress(14, "编剧 · 规划分集账本（标题 / 钩子 / 故事节点）")
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="screenwriting-plan-ahead") as pool:
+            self.progress(14, _says("progress.ledger"))
             ahead = pool.submit(_in_context(functools.partial(self._plan_outline_batch, plan_view, *batches[0], total=total_planned, earlier=[])))
             try:
-                state["inventory"] = inventory_future.result()
                 for index, (first, last) in enumerate(batches):
                     entries = ahead.result()
                     for entry in entries:
@@ -471,9 +516,8 @@ class ScreenwritingEngine:
                         written += len(numbers)
             except BaseException:
                 # A batch that has not started is dropped; one in flight is waited for on the way out.
-                for future in (inventory_future, ahead):
-                    if future is not None:
-                        future.cancel()
+                if ahead is not None:
+                    ahead.cancel()
                 raise
 
     @_in_output_language
@@ -481,7 +525,7 @@ class ScreenwritingEngine:
         """Tell the project's overview again from ``source`` (a plan or a sampled source text)."""
         if kind not in SOURCE_KINDS:
             kind = "outline"
-        self.progress(6, "编剧 · 重新提炼项目概述")
+        self.progress(6, _says("progress.overview_again"))
         return self._overview(sample_source(source, self.analysis_chars), kind, title_hint)
 
     @_in_output_language
@@ -489,7 +533,7 @@ class ScreenwritingEngine:
         """Plan the source again from ``from_episode``'s start; the ledger is not touched."""
         start = ledger_ops.replan_start(state, from_episode)
         working = deepcopy(dict(state))
-        self.progress(14, f"编剧 · 从第 {from_episode} 集起重新规划分集")
+        self.progress(14, _says("progress.replan_from", episode=from_episode))
         entries = self._plan_anchored(working, None, start=start)
         return [entry.model_dump(mode="json") for entry in entries]
 
@@ -504,7 +548,7 @@ class ScreenwritingEngine:
         unplanned = [number for number in wanted if number not in known]
         if unplanned:
             if state.get("source_kind") != "outline":
-                raise ScreenwritingError(f"分集账本缺少第 {', '.join(str(n) for n in unplanned)} 集，源文模式下无法凭空补写")
+                raise ScreenwritingError(_says("errors.ledger_gap_in_source_mode", episodes=", ".join(str(n) for n in unplanned)))
             state["episode_count"] = max(int(state.get("episode_count") or 0), max(unplanned))
             for first, last in _contiguous_runs(unplanned):
                 entries = self._plan_outline(state, first, last)
@@ -524,7 +568,7 @@ class ScreenwritingEngine:
         key = _episode_key(episode)
         entry = state.setdefault("episodes", {}).get(key)
         if not isinstance(entry, Mapping):
-            raise ScreenwritingError(f"第 {episode} 集尚未写出，无法编辑其分镜规划")
+            raise ScreenwritingError(_says("errors.not_written", episode=episode))
         ctx = self._check_context(state, episode)
         working = deepcopy(scenes)
         check = check_script_plan(working, ctx, repair=True)
@@ -581,7 +625,8 @@ class ScreenwritingEngine:
             plan = entry.get("plan") if isinstance(entry, Mapping) else None
             scenes = list((plan or {}).get("scenes") or [])
             if not scenes:
-                raise ScreenwritingError(f"第 {episode} 集尚无分镜规划，无法预览{'小说体正文' if stage == 'prose' else '视觉层'}提示词")
+                stage_name = _word("preview_stages.prose") if stage == "prose" else _word("preview_stages.visual")
+                raise ScreenwritingError(_says("errors.no_plan_to_preview", episode=episode, stage=stage_name))
             build = self._prose_prompt if stage == "prose" else self._visual_prompt
             return append_user_instructions(build(state, episode, scenes), self.instructions)
         raise ValueError(f"unknown stage: {stage!r}")
@@ -596,7 +641,7 @@ class ScreenwritingEngine:
                 memo=self.memo, max_tokens=min(self.max_tokens, 3000), attempts=self.attempts, label="overview", temperature=self._temperature("extract"),
             )
         except StructuredOutputError as error:
-            logger.warning("[Screenwriting] 概述提炼失败，使用空概述: %s", error)
+            logger.warning(_log("overview_failed"), error)
             return Overview(title=title_hint[:60]).model_dump(mode="json")
         data = result.data
         if not data.get("title"):
@@ -611,9 +656,28 @@ class ScreenwritingEngine:
                 memo=self.memo, max_tokens=self.max_tokens, attempts=self.attempts, label="asset_inventory", temperature=self._temperature("extract"),
             )
         except StructuredOutputError as error:
-            logger.warning("[Screenwriting] 资产提取失败，使用空资产表: %s", error)
+            logger.warning(_log("inventory_failed"), error)
             return AssetInventory().model_dump(mode="json")
         return result.data
+
+    def _adaptation(self, source: str, overview: Mapping[str, Any], inventory: Mapping[str, Any]) -> dict[str, Any]:
+        """The novel's adaptation brief; an empty one when the model cannot give it (the novel is then cut without one)."""
+        characters = inventory.get("characters") if isinstance(inventory.get("characters"), Mapping) else {}
+        prompt = append_user_instructions(build_adaptation_prompt(source, overview=overview, characters=characters), self.instructions)
+        try:
+            result = call_structured(
+                self.caller, system_prompt=self._system("extract"), user_prompt=prompt, schema=AdaptationBrief,
+                # The whole budget, as the inventory gets: a reasoning model thinks first, and a tight cap left the answer empty.
+                memo=self.memo, max_tokens=self.max_tokens, attempts=self.attempts, label="adaptation_brief", temperature=self._temperature("extract"),
+            )
+        except StructuredOutputError as error:
+            logger.warning(_log("adaptation_failed"), error)
+            return AdaptationBrief().model_dump(mode="json")
+        data = result.data
+        # The lists are as long as the brief was told they may be: what is stored is what the prompts show.
+        for name in ("keep", "compress"):
+            data[name] = [str(item).strip() for item in data.get(name) or [] if str(item or "").strip()][: adaptation_limit(name)]
+        return data
 
     # ------------------------------------------------------------------ ledger
 
@@ -650,16 +714,35 @@ class ScreenwritingEngine:
             title=title, director_plan=director_plan, overview=state.get("overview"),
             first=first, last=last, total=total, context_entries=context,
             target_seconds=self.episode_target_seconds, instructions=self.instructions,
-            creation_mode=str(self.creation.get("creation_mode") or "drama"),
+            cast=state.get("inventory"), creation_mode=str(self.creation.get("creation_mode") or "drama"),
+            # 目标用户的写法，加上选定的剧本结构在这几集该做的事(script_structure.json)。
+            audience_rules=[
+                *target_audience.outline_rules(self.creation, first=first, total=total),
+                *script_structure.outline_rules(self.creation, first=first, last=last, total=total),
+                # 创作者写的创作禁区(story_direction.json)；没写是空。
+                *story_direction.outline_rules(self.creation),
+                # 连载立项(题材、基调、结局、出海)一行，和这一批里的付费卡点集(serial_brief.json / paywall_plan.json)；没选是空。
+                *serial_brief.outline_rules(self.creation, last=last, total=total),
+                *paywall_plan.outline_rules(self.creation, first=first, last=last, total=total),
+            ],
+            # 跨集场记里比「前情」那几集更早、现在仍然有效的事。
+            earlier_state=story_state.earlier_lasting(
+                [*(state.get("ledger") or []), *[entry.model_dump() for entry in earlier]],
+                int(context[0].get("episode") or first) if context else first,
+            ),
         )
 
         def _count_validator(data: dict[str, Any]) -> list[str]:
             got = len(data.get("episodes") or [])
             if got != expected:
-                return [f"episodes 数组长度必须等于 {expected}（对应第 {first} 集到第 {last} 集），当前为 {got}"]
+                return [_says("retry.episode_count", expected=expected, first=first, last=last, got=got)]
             return [
                 problem for offset, draft in enumerate(data.get("episodes") or [])
-                for problem in emotion_points.beat_problems((draft or {}).get("story_beats") or [], label=f"第 {first + offset} 集")
+                for problem in [
+                    *emotion_points.beat_problems((draft or {}).get("story_beats") or [], label=_says("labels.episode", episode=first + offset)),
+                    # 剧本之初就质检可拍性：大纲的故事节点里就不写画面文字、瞬移、形态突变。
+                    *filmability.beat_problems((draft or {}).get("story_beats") or [], label=_says("labels.episode", episode=first + offset)),
+                ]
             ]
 
         def _ask(user_prompt: str) -> list[LedgerEntry]:
@@ -670,22 +753,36 @@ class ScreenwritingEngine:
             )
             return [LedgerEntry(episode=first + offset, **draft) for offset, draft in enumerate(result.data["episodes"])]
 
-        self.progress(14, f"编剧 · 规划第 {first}-{last} 集分集大纲")
+        self.progress(14, _says("progress.outline_batch", first=first, last=last))
         entries = _ask(prompt)
         # 账本不得推翻概述和策划方案里已定的事实：模型校对一遍，有矛盾退回重规划一次，仍有就记警告给人看。
         if fact_check.enabled() and director_plan.strip():
             facts = fact_check.facts_text(state.get("overview"), director_plan, self.analysis_chars)
             temperature = self._temperature("ledger")
-            found = fact_check.check(self.caller, facts=facts, entries=[entry.model_dump() for entry in entries], temperature=temperature)
+            found = fact_check.check(self.caller, facts=facts, entries=[entry.model_dump() for entry in entries], temperature=temperature, max_tokens=self.max_tokens)
             if found:
-                self.progress(15, f"编剧 · 第 {first}-{last} 集大纲推翻了已定事实，重规划")
+                self.progress(15, _says("progress.outline_overturned_facts", first=first, last=last))
                 entries = _ask(f"{prompt}\n\n{fact_check.retry_block(found)}")
-                found = fact_check.check(self.caller, facts=facts, entries=[entry.model_dump() for entry in entries], temperature=temperature)
+                found = fact_check.check(self.caller, facts=facts, entries=[entry.model_dump() for entry in entries], temperature=temperature, max_tokens=self.max_tokens)
                 if found:
                     warning = fact_check.warning_text(first, last, found)
                     logger.warning("[Screenwriting] %s", warning)
                     if isinstance(state, dict):
                         state.setdefault("warnings", []).append(warning)
+        # 连续剧的节奏与起名(series_rhythm.json)：集尾连着同一种卡点、爽点只写到反应、名字用烂了或主要角色同姓。
+        # 只记提示给人看：不退回模型，也不为它多调一次。
+        if isinstance(state, dict):
+            state.setdefault("warnings", []).extend(series_rhythm.outline_warnings(
+                # 按窗口看的几条(十集里有没有强情绪点、有没有变化)要整本账本，不只是喂给提示词的那几集前情。
+                [entry.model_dump() for entry in entries], cast=state.get("inventory"),
+                earlier=[*self._context_entries(state, first, limit=10_000), *[entry.model_dump() for entry in earlier]],
+            ))
+            # 付费卡点集的钩子是空的、相邻两个卡点停法相同(paywall_plan.json)：同样只记提示。
+            state["warnings"].extend(paywall_plan.warnings(
+                [*self._context_entries(state, first, limit=10_000), *[entry.model_dump() for entry in earlier],
+                 *[entry.model_dump() for entry in entries]],
+                self.creation, total=total, fresh=[entry.episode for entry in entries],
+            ))
         return entries
 
     def _plan_anchored(self, state: dict[str, Any], episode_count: int | None = None, *, start: int = 0) -> list[LedgerEntry]:
@@ -706,13 +803,14 @@ class ScreenwritingEngine:
         )
         entries: list[LedgerEntry] = []
         cursor = 0
+        adaptation = state.get("adaptation") if kind == "novel" else None
         while cursor < len(text) and text[cursor:].strip():
             remaining_episodes = (episode_count - len(entries)) if episode_count else None
             if remaining_episodes is not None and remaining_episodes <= 0:
                 # The requested count is exhausted: fold the tail into the last episode.
                 entries[-1].source_range["end"] = start + len(text)
                 state.setdefault("warnings", []).append(
-                    f"源文在第 {len(entries)} 集之后仍有剩余内容，已并入末集（请求集数 {episode_count} 已用尽）"
+                    _says("warnings.source_left_over", episodes=len(entries), requested=episode_count)
                 )
                 break
             remaining_chars = len(text) - cursor
@@ -720,17 +818,22 @@ class ScreenwritingEngine:
             window = text[cursor:window_end]
             final = window_end >= len(text)
             max_episodes = self.planning_max_episodes if remaining_episodes is None else min(self.planning_max_episodes, remaining_episodes)
+            # The window that holds episode 1 of a novel: its first beat is the opening scene.
+            opens_series = kind == "novel" and start == 0 and cursor == 0
             prompt = build_anchored_plan_prompt(
                 window=window, window_is_final=final, overview=state.get("overview"), source_kind=kind,
                 context_entries=[entry.model_dump() for entry in entries[-5:]], target_volume=target_volume,
                 max_episodes=max_episodes, remaining_episodes=remaining_episodes, instructions=self.instructions,
+                cast=state.get("inventory"), adaptation=adaptation, opens_series=opens_series,
+                audience_rules=target_audience.adaptation_rules(self.creation, opens_series=opens_series) if kind == "novel" else (),
+                earlier_state=story_state.earlier_lasting([entry.model_dump() for entry in entries], entries[-5].episode if len(entries) >= 5 else 1),
             )
             resolved: dict[str, list[int]] = {}
 
             def _anchor_validator(data: dict[str, Any], window: str = window, final: bool = final, cap: int = max_episodes) -> list[str]:
                 drafts = data.get("episodes") or []
                 if len(drafts) > cap:
-                    logger.warning("[Screenwriting] 规划输出 %d 集超过每批上限 %d，截断", len(drafts), cap)
+                    logger.warning(_log("plan_truncated"), len(drafts), cap)
                     del drafts[cap:]
                 try:
                     resolved["ends"] = resolve_boundaries(window, [draft["end_anchor"] for draft in drafts], snap_whitespace_tail=final)
@@ -738,15 +841,34 @@ class ScreenwritingEngine:
                     return error.reasons
                 return [
                     problem for offset, draft in enumerate(drafts)
-                    for problem in emotion_points.beat_problems(draft.get("story_beats") or [], label=f"本批第 {offset + 1} 集")
+                    for problem in emotion_points.beat_problems(draft.get("story_beats") or [], label=_says("labels.batch_episode", number=offset + 1))
                 ]
 
-            self.progress(14, f"编剧 · 按原文规划分集（已规划 {len(entries)} 集）")
-            result = call_structured(
-                self.caller, system_prompt=self._system("ledger"), user_prompt=prompt, schema=AnchoredPlanDraft,
-                max_tokens=self.max_tokens, attempts=self.attempts, validators=[_anchor_validator], label="episode_plan",
-                temperature=self._temperature("ledger"),
-            )
+            def _ask(user_prompt: str):
+                return call_structured(
+                    self.caller, system_prompt=self._system("ledger"), user_prompt=user_prompt, schema=AnchoredPlanDraft,
+                    max_tokens=self.max_tokens, attempts=self.attempts, validators=[_anchor_validator], label="episode_plan",
+                    temperature=self._temperature("ledger"),
+                )
+
+            def _opens_on_exposition(data: Mapping[str, Any]) -> bool:
+                drafts = data.get("episodes") or []
+                return bool(drafts) and emotion_points.opens_on_exposition(drafts[0].get("story_beats") or [])
+
+            self.progress(14, _says("progress.anchored", planned=len(entries)))
+            result = _ask(prompt)
+            if opens_series and _opens_on_exposition(result.data):
+                # 小说改编的第 1 集不能从交代开场：带着理由重排一次；重排不成或还是这样，留着原来的，记一条提醒给人看。
+                kept_ends = list(resolved.get("ends") or [])
+                try:
+                    again = _ask(f"{prompt}\n\n{_says('retry.opens_on_exposition')}")
+                except StructuredOutputError:
+                    again = None
+                if again is not None and not _opens_on_exposition(again.data):
+                    result = again
+                else:
+                    resolved["ends"] = kept_ends
+                    state.setdefault("warnings", []).append(_says("warnings.opens_on_exposition"))
             ends = resolved.get("ends") or []
             previous = cursor
             for offset, draft in enumerate(result.data["episodes"][: len(ends)]):
@@ -754,16 +876,20 @@ class ScreenwritingEngine:
                 entries.append(LedgerEntry(
                     episode=len(entries) + 1, title=draft["title"], hook=draft["hook"],
                     story_beats=list(draft.get("story_beats") or []), next_episode_teaser=draft.get("next_episode_teaser"),
+                    state_changes=list(draft.get("state_changes") or []),
                     source_range={"start": start + previous, "end": start + absolute_end},
                 ))
                 previous = absolute_end
             if not ends:
-                raise ScreenwritingError("分集规划未产出任何可定位的集")
+                raise ScreenwritingError(_says("errors.no_located_episode"))
             cursor = previous
             if final and not text[cursor:].strip():
                 break
         if not entries:
-            raise ScreenwritingError("源文为空或无法规划分集")
+            raise ScreenwritingError(_says("errors.unplannable_source"))
+        # 小说改编：集尾连着同一种卡点、爽点只写到反应，记提示给人看(人名是作者的，不查起名)。成品剧本照作者的，不提示。
+        if kind == "novel":
+            state.setdefault("warnings", []).extend(series_rhythm.outline_warnings([entry.model_dump() for entry in entries]))
         return entries
 
     # ------------------------------------------------------------------ per-episode writing
@@ -776,7 +902,7 @@ class ScreenwritingEngine:
         if self.episode_concurrency <= 1 or len(numbers) <= 1:
             for position, number in enumerate(numbers):
                 percent = base_percent + round(span_percent * position / total)
-                self.progress(percent, f"编剧 · 第 {number} 集分镜内容规划（共 {len(numbers)} 集）")
+                self.progress(percent, _says("progress.plan", episode=number, count=len(numbers)))
                 self._write_one(state, number, percent=percent, step=step, ceiling=ceiling)
             return
         self._write_episodes_concurrently(state, numbers, base_percent=base_percent, span_percent=span_percent)
@@ -811,8 +937,8 @@ class ScreenwritingEngine:
 
         def plan_one(number: int) -> dict[str, Any]:
             snapshot = deepcopy(state)
-            plan, warnings, flagged, draft = self._script_plan(snapshot, number, self._ledger_entry(snapshot, number))
-            tick(f"编剧 · 第 {number} 集分镜内容规划完成")
+            plan, warnings, flagged, draft = self._script_plan_checked(snapshot, number, self._ledger_entry(snapshot, number))
+            tick(_says("progress.plan_done", episode=number))
             return {"plan": plan, "warnings": warnings, "flagged": flagged, "draft": draft, "inventory": snapshot.get("inventory") or {}}
 
         views: dict[int, dict[str, Any]] = {}
@@ -828,22 +954,22 @@ class ScreenwritingEngine:
                 previous = str((written[number - 1] or {}).get("text") or "") if number - 1 in written else None
                 result = planned[number]
                 written[number] = self._author_prose(views[number], number, result["plan"]["scenes"], result["warnings"], previous_prose=previous)
-                tick(f"编剧 · 第 {number} 集小说体正文")
+                tick(_says("progress.prose", episode=number))
             return written
 
         def prose_one(number: int) -> dict[str, Any] | None:
             previous = planned[number - 1]["plan"]["scenes"] if number - 1 in planned else None
             result = planned[number]
             prose = self._author_prose(views[number], number, result["plan"]["scenes"], result["warnings"], previous_plan=previous)
-            tick(f"编剧 · 第 {number} 集小说体正文")
+            tick(_says("progress.prose", episode=number))
             return prose
 
         def visual_one(number: int) -> list[dict[str, Any]]:
             scenes = self._visual_layer(views[number], number, deepcopy(planned[number]["plan"]["scenes"]), planned[number]["warnings"])
-            tick(f"编剧 · 第 {number} 集视觉层（画面 / 动作 / 运镜）")
+            tick(_says("progress.visual", episode=number))
             return scenes
 
-        self.progress(base_percent, f"编剧 · 并行编写 {total} 集（{width} 路）")
+        self.progress(base_percent, _says("progress.parallel", count=total, width=width))
         planned: dict[int, dict[str, Any]] = {}
         cumulative = deepcopy(state.get("inventory") or _empty_inventory())
         # Plans have their own pool; prose and visual layers share a second one with room for
@@ -889,11 +1015,14 @@ class ScreenwritingEngine:
     def _write_one(self, state: dict[str, Any], number: int, *, percent: int, step: int, ceiling: int, repair: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
         """Plan, tell and visualise one episode; returns the quarantine note when the plan still violates a rule."""
         ledger = self._ledger_entry(state, number)
-        plan, warnings, flagged, draft = self._script_plan(state, number, ledger, repair=repair)
+        if repair:
+            plan, warnings, flagged, draft = self._script_plan(state, number, ledger, repair=repair)
+        else:
+            plan, warnings, flagged, draft = self._script_plan_checked(state, number, ledger)
         if self.entry_kind(state, ledger) == "outline":
-            self.progress(min(ceiling, percent + step), f"编剧 · 第 {number} 集小说体正文")
+            self.progress(min(ceiling, percent + step), _says("progress.prose", episode=number))
         prose = self._author_prose(state, number, plan["scenes"], warnings)
-        self.progress(min(ceiling, percent + 2 * step), f"编剧 · 第 {number} 集视觉层（画面 / 动作 / 运镜）")
+        self.progress(min(ceiling, percent + 2 * step), _says("progress.visual", episode=number))
         scenes = self._visual_layer(state, number, plan["scenes"], warnings)
         for scene in scenes:
             scene[ENTRY_REVISION_FIELD] = entry_revision(scene)
@@ -908,9 +1037,9 @@ class ScreenwritingEngine:
         entry = (state.get("episodes") or {}).get(_episode_key(episode))
         draft = review.draft_of(entry if isinstance(entry, Mapping) else None)
         if not draft:
-            raise ScreenwritingError(f"第 {episode} 集不是带违约的草稿，无需修复")
+            raise ScreenwritingError(_says("errors.not_a_draft", episode=episode))
         previous = entry.get("plan") if isinstance(entry.get("plan"), Mapping) else {}
-        self.progress(14, f"编剧 · 修复第 {episode} 集草稿")
+        self.progress(14, _says("progress.repair", episode=episode))
         remaining = self._write_one(
             state, episode, percent=14, step=20, ceiling=90,
             repair={"reasons": list(draft["reasons"]), "plan": previous, "error_count": len(draft["reasons"])},
@@ -924,7 +1053,7 @@ class ScreenwritingEngine:
         """A ledger row for an episode that arrived with its own text; its outline is read from that text later."""
         return LedgerEntry(
             episode=number,
-            title=str(source.get("name") or f"第{number}集"),
+            title=str(source.get("name") or _says("labels.episode_title", episode=number)),
             source_origin="own",
             source_text=str(source["text"]),
             source_kind=str(source["source_kind"]),
@@ -944,13 +1073,74 @@ class ScreenwritingEngine:
         for entry in state.get("ledger") or []:
             if isinstance(entry, dict) and int(entry.get("episode") or 0) == int(episode):
                 return entry
-        raise ScreenwritingError(f"分集账本中没有第 {episode} 集")
+        raise ScreenwritingError(_says("errors.not_in_ledger", episode=episode))
 
     def _next_ledger_entry(self, state: Mapping[str, Any], episode: int) -> dict[str, Any] | None:
         for entry in state.get("ledger") or []:
             if isinstance(entry, dict) and int(entry.get("episode") or 0) == int(episode) + 1:
                 return entry
         return None
+
+    def _previous_ledger_entry(self, state: Mapping[str, Any], episode: int) -> dict[str, Any] | None:
+        for entry in state.get("ledger") or []:
+            if isinstance(entry, dict) and int(entry.get("episode") or 0) == int(episode) - 1:
+                return entry
+        return None
+
+    def _story_so_far(self, state: Mapping[str, Any], episode: int, ledger: Mapping[str, Any]) -> dict[str, Any]:
+        """The cross-episode sheet for ``episode``: what was settled before it, how the last one ended, what it must leave.
+
+        Empty for an author's finished screenplay (extracted as it stands) and for a film of one episode.
+        """
+        rows = state.get("ledger") or []
+        if self.entry_kind(state, ledger) == "screenplay" or len(rows) < 2:
+            return {"sheet": [], "previous": None, "landing": []}
+        return {
+            "sheet": story_state.table_before(rows, episode),
+            "previous": self._outline_of(self._previous_ledger_entry(state, episode)),
+            "landing": story_state.changes_of(ledger),
+        }
+
+    def _script_plan_checked(
+        self, state: dict[str, Any], episode: int, ledger: Mapping[str, Any],
+    ) -> tuple[dict[str, Any], list[DraftViolation], list[str], dict[str, Any] | None]:
+        """``_script_plan``, then the script supervisor's look at it against the cross-episode sheet.
+
+        A plan that contradicts what earlier episodes settled, replays them, or does not play what
+        its own episode must leave behind is sent back once with the findings; what is still wrong
+        after that is kept as notes for the editor. Nothing is checked when there is no sheet yet
+        (the first episode, a one-episode film, a ledger planned before the sheet existed), for an
+        author's screenplay, or for a draft already quarantined for other reasons.
+        """
+        result = self._script_plan(state, episode, ledger)
+        told = self._story_so_far(state, episode, ledger)
+        if not told["sheet"] or result[3] is not None or not story_state.enabled():
+            # 只有一集的短片没有前面的集可对：拿它自己的前后、已定事实和本集大纲对一遍(self_check)；别的情况原样返回。
+            return self_check.checked(
+                result, caller=self.caller, creation=self.creation, source_kind=str(state.get("source_kind") or ""),
+                episode=episode, overview=state.get("overview"), ledger=ledger, temperature=self._temperature("extract"),
+                max_tokens=self.max_tokens,
+                replan=lambda repair: self._script_plan(state, episode, ledger, repair=repair),
+                label=_says("labels.episode", episode=episode),
+            )
+        plan, warnings, flagged, draft = result
+        temperature = self._temperature("extract")
+        found = story_state.check(self.caller, episode=episode, sheet=told["sheet"], landing=told["landing"], scenes=plan["scenes"], temperature=temperature, max_tokens=self.max_tokens)
+        if not found:
+            return result
+        try:
+            again = self._script_plan(state, episode, ledger, repair={"reasons": [item.reason() for item in found], "plan": plan, "error_count": 0})
+        except RuntimeError as error:  # ScreenwritingError / RepairNotImproved: the first plan stands
+            logger.warning(_log("state_repair_failed"), episode, error)
+            again = None
+        if again is not None and again[3] is None:
+            plan, warnings, flagged, draft = again
+            found = story_state.check(self.caller, episode=episode, sheet=told["sheet"], landing=told["landing"], scenes=plan["scenes"], temperature=temperature, max_tokens=self.max_tokens)
+        notes = [
+            DraftViolation(story_state.CONFLICT, item.reason(), _says("labels.episode", episode=episode), "warning", item.scene_id.strip() or None)
+            for item in found
+        ]
+        return plan, [*warnings, *notes], flagged, draft
 
     def _episode_source(self, state: Mapping[str, Any], ledger: Mapping[str, Any]) -> str:
         if ledger.get("source_origin") == "own":
@@ -981,8 +1171,15 @@ class ScreenwritingEngine:
             "next_episode_teaser": entry.get("next_episode_teaser"),
         }
 
+    @staticmethod
+    def _relationships(state: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+        """创作看板上已定的人物关系(资产表里的 relationships)，逐集撰写都照它写。"""
+        inventory = state.get("inventory") if isinstance(state.get("inventory"), Mapping) else {}
+        return [item for item in inventory.get("relationships") or [] if isinstance(item, Mapping)]
+
     def _script_plan_prompt(self, state: Mapping[str, Any], episode: int, ledger: Mapping[str, Any]) -> str:
         characters, scenes, props = self._inventory_maps(state)
+        told = self._story_so_far(state, episode, ledger)
         return build_script_plan_prompt(
             source_text=self._episode_source(state, ledger), source_kind=self.entry_kind(state, ledger),
             episode=episode, overview=state.get("overview"), style=self.style or self.style_description,
@@ -992,6 +1189,10 @@ class ScreenwritingEngine:
             episode_outline=self._outline_of(ledger), next_episode_outline=self._outline_of(self._next_ledger_entry(state, episode)),
             language=self.language, speech_rate_override=self.speech_rate_override,
             spoken_shot_ratio=self.spoken_shot_ratio, creation_mode=str(self.creation.get("creation_mode") or "drama"),
+            relationships=self._relationships(state),
+            adaptation=state.get("adaptation") if isinstance(state.get("adaptation"), Mapping) else None,
+            previous_episode_outline=told["previous"], sheet=told["sheet"], landing=told["landing"],
+            aim_duration=self.aim_duration,
         )
 
     def _check_context(self, state: Mapping[str, Any], episode: int) -> PlanCheckContext:
@@ -1009,17 +1210,19 @@ class ScreenwritingEngine:
     def _apply_mode_rules(self, scenes: list[dict[str, Any]], check, episode: int) -> None:
         """What the project's kind of film asks of an episode, added to the plan check."""
         for code, message, scene_id, severity in creation_modes.plan_problems(scenes, self.creation):
-            violation = DraftViolation(code, message, f"分镜 {scene_id}" if scene_id else f"第 {episode} 集", severity, scene_id or None)
+            violation = DraftViolation(code, message, _says("labels.shot", scene_id=scene_id) if scene_id else _says("labels.episode", episode=episode), severity, scene_id or None)
             (check.errors if severity == "error" else check.warnings).append(violation)
 
     def _register_unknown_assets(self, state: dict[str, Any], check) -> None:
         inventory = state.setdefault("inventory", _empty_inventory())
         for name in check.unknown_characters:
-            inventory.setdefault("characters", {}).setdefault(name, {"description": "需补充外貌与服装细节", "voice_style": "", "position": "其它角色"})
+            inventory.setdefault("characters", {}).setdefault(name, {
+                "description": _word("new_assets.character_description"), "voice_style": "", "position": _word("new_assets.character_position"),
+            })
         for name in check.unknown_scenes:
-            inventory.setdefault("scenes", {}).setdefault(name, {"description": "需补充空间与光线描述"})
+            inventory.setdefault("scenes", {}).setdefault(name, {"description": _word("new_assets.scene_description")})
         for name in check.unknown_props:
-            inventory.setdefault("props", {}).setdefault(name, {"description": "需补充外观描述"})
+            inventory.setdefault("props", {}).setdefault(name, {"description": _word("new_assets.prop_description")})
 
     def _script_plan(
         self, state: dict[str, Any], episode: int, ledger: Mapping[str, Any], *, repair: Mapping[str, Any] | None = None,
@@ -1042,29 +1245,43 @@ class ScreenwritingEngine:
             last["data"], last["check"] = data, check
             reasons = [str(violation) for violation in check.errors]
             # 情绪点类型不在表里：退回去改，和其它违约一起说。
-            reasons.extend(emotion_points.plan_problems(scenes, label=f"第 {episode} 集"))
+            reasons.extend(emotion_points.plan_problems(scenes, label=_says("labels.episode", episode=episode)))
             # 题眼台词写错了地方（不是那格的口播、一集多句、压错情绪点；创作时还查长度和抽象名词）：退回去改。
-            reasons.extend(literary.plan_problems(scenes, label=f"第 {episode} 集", authored=ctx.source_kind == "outline"))
+            reasons.extend(literary.plan_problems(scenes, label=_says("labels.episode", episode=episode), authored=ctx.source_kind == "outline"))
             rounds["count"] += 1
             # 整集没有一格命中情绪点 / 没有题眼台词：留一条给人看的提醒，不为它多花一次调用。
             flat = emotion_points.episode_without_point(scenes)
             if flat and rounds["count"] >= self.attempts:
-                check.warnings.append(DraftViolation(NO_EMOTION_POINT, flat, f"第 {episode} 集", "warning"))
-            unsaid = literary.episode_without_key_line(scenes) if ctx.source_kind == "outline" else None
+                check.warnings.append(DraftViolation(NO_EMOTION_POINT, flat, _says("labels.episode", episode=episode), "warning"))
+            # 上传的成品剧本是作者的，不替它挑台词的毛病；创作和小说改编都查。
+            staged = ctx.source_kind in ("outline", "novel")
+            unsaid = literary.episode_without_key_line(scenes) if staged else None
             if unsaid and rounds["count"] >= self.attempts:
-                check.warnings.append(DraftViolation(NO_KEY_LINE, unsaid, f"第 {episode} 集", "warning"))
-            # 创作的台词：问答式对白、一句长话，记给编辑看，不为它们多花一次调用。
-            if ctx.source_kind == "outline":
+                check.warnings.append(DraftViolation(NO_KEY_LINE, unsaid, _says("labels.episode", episode=episode), "warning"))
+            # 创作与改编的台词：问答式对白、一句长话，记给编辑看，不为它们多花一次调用。
+            if staged:
                 check.warnings.extend(
-                    DraftViolation(code, message, f"分镜 {scene_id}", "warning", scene_id) for code, message, scene_id in literary.dialogue_warnings(scenes)
+                    DraftViolation(code, message, _says("labels.shot", scene_id=scene_id), "warning", scene_id) for code, message, scene_id in literary.dialogue_warnings(scenes)
                 )
+            # 小说改编成对白剧：还靠旁白讲故事的分镜太多，退回去改成画面和对白一次；仍是这样就留着，记一条提醒。
+            if ctx.source_kind == "novel" and creation_modes.mode_of(self.creation) == "drama":
+                told = narrated_shots(scenes)
+                limit = adaptation_limit("narrated_shots")
+                if len(told) > limit:
+                    narrated = _says("retry.narrated_shots", count=len(told), limit=limit, ids=", ".join(told[:12]))
+                    # Sent back once; a plan that still narrates is kept and flagged.
+                    if not rounds.get("narrated") and rounds["count"] < self.attempts:
+                        rounds["narrated"] = 1
+                        reasons.append(narrated)
+                    else:
+                        check.warnings.append(DraftViolation(TOO_MANY_NARRATED_SHOTS, narrated, _says("labels.episode", episode=episode), "warning"))
             quiet = spoken_shot_problem(scenes, self.spoken_shot_ratio) if ctx.source_kind == "outline" else None
             if quiet:
                 # Every round but the last sends the plan back for more dialogue; the last keeps it, flagged.
                 if rounds["count"] < self.attempts:
                     reasons.append(quiet)
                 else:
-                    check.warnings.append(DraftViolation(TOO_FEW_SPOKEN_SHOTS, quiet, f"第 {episode} 集", "warning"))
+                    check.warnings.append(DraftViolation(TOO_FEW_SPOKEN_SHOTS, quiet, _says("labels.episode", episode=episode), "warning"))
             return reasons
 
         try:
@@ -1080,19 +1297,19 @@ class ScreenwritingEngine:
             # and flagged; an episode the model wrote itself has no such excuse.
             keepable = _SOFT_ON_HUMAN_EDIT if ctx.source_kind == "outline" else _SOFT_ON_HUMAN_EDIT | EPISODE_SHAPE_CODES
             if not last.get("data") or check is None or any(v.code not in keepable for v in check.errors):
-                raise ScreenwritingError(f"第 {episode} 集分镜内容规划失败：{error}") from error
+                raise ScreenwritingError(_says("errors.plan_failed", episode=episode, error=error)) from error
             if repair and len(check.errors) >= int(repair.get("error_count") or 0):
                 raise RepairNotImproved(episode, [str(v) for v in check.errors])
             # Only "cannot fit" / verbatim problems remain: keep the draft, flag the shots,
             # and quarantine it so it cannot be confirmed until someone repairs it.
             data = last["data"]
-            logger.warning("[Screenwriting] 第 %d 集内容规划保留带违约草稿: %s", episode, error.reasons)
+            logger.warning(_log("plan_kept_draft"), episode, error.reasons)
             draft = review.quarantine([str(v) for v in check.errors], origin="repair" if repair else "model", attempts=self.attempts)
             check.warnings.extend(DraftViolation(v.code, v.message, v.label, "warning", v.scene_id) for v in check.errors)
         scenes = data.get("scenes") or []
         self._register_unknown_assets(state, check)
         flagged = mark_replan_flags(scenes, ctx)
-        plan = {"title": str(data.get("title") or ledger.get("title") or f"第{episode}集"), "scenes": scenes}
+        plan = {"title": str(data.get("title") or ledger.get("title") or _says("labels.episode_title", episode=episode)), "scenes": scenes}
         return plan, list(check.warnings), flagged, draft
 
     # ------------------------------------------------------------------ prose body
@@ -1139,6 +1356,7 @@ class ScreenwritingEngine:
             characters=present or characters, content_scenes=content_scenes,
             episode_outline=self._outline_of(self._ledger_entry(state, episode)),
             previous_ending=previous_ending, previous_is_plan=previous_is_plan, language=self.language,
+            relationships=self._relationships(state),
         )
 
     def _author_prose(
@@ -1150,7 +1368,7 @@ class ScreenwritingEngine:
             return None
         prompt = append_user_instructions(self._prose_prompt(state, episode, content_scenes, previous_prose, previous_plan), self.instructions)
         names = list(self._inventory_maps(state)[0])
-        label = f"第 {episode} 集"
+        label = _says("labels.episode", episode=episode)
         last: dict[str, Any] = {}
 
         def _prose_validator(text: str) -> list[str]:
@@ -1171,12 +1389,13 @@ class ScreenwritingEngine:
         except TextOutputError as error:
             check = last.get("check")
             if check is None or check.errors or not last.get("text"):
-                logger.warning("[Screenwriting] 第 %d 集小说体正文未通过校验，按分镜内容合成兜底: %s", episode, error.reasons)
-                warnings.append(DraftViolation("prose_fallback", "小说体正文由分镜内容机械合成，建议重写", label, "warning"))
+                logger.warning(_log("prose_fallback"), episode, error.reasons)
+                warnings.append(DraftViolation("prose_fallback", _says("warnings.prose_fallback"), label, "warning"))
                 return {"text": prose_from_scenes(content_scenes), "origin": "synthesized", "revision": revision_of(prose_revision_source(content_scenes))}
             text = last["text"]
         if check is not None and check.warnings:
-            warnings.append(DraftViolation("prose_unverified", "小说体正文保留了待核对的内容：" + "；".join(check.warnings)[:600], label, "warning"))
+            findings = _word("separators.findings").join(check.warnings)[:600]
+            warnings.append(DraftViolation("prose_unverified", _says("warnings.prose_unverified", findings=findings), label, "warning"))
         return {"text": text, "origin": "model", "revision": revision_of(prose_revision_source(content_scenes))}
 
     def _prose_after_edit(
@@ -1196,6 +1415,7 @@ class ScreenwritingEngine:
         return build_visual_prompt(
             episode=episode, overview=state.get("overview"), style=self.style, style_description=self.style_description,
             characters=characters, scenes=scenes, props=props, content_scenes=content_scenes, aspect_ratio=self.aspect_ratio,
+            creation_mode=str(self.creation.get("creation_mode") or "drama"),
         )
 
     def _visual_layer(self, state: Mapping[str, Any], episode: int, content_scenes: list[dict[str, Any]], warnings: list[DraftViolation]) -> list[dict[str, Any]]:
@@ -1221,9 +1441,9 @@ class ScreenwritingEngine:
                 if not missing:
                     data["scenes"] = [covered[sid] for sid in expected]
                     return []
-                reasons = [f"缺少这些分镜的视觉层：{', '.join(missing)}（只需补齐这些分镜；已输出的分镜不必重复）"]
+                reasons = [_says("retry.visual_missing", ids=", ".join(missing))]
                 if orphans:
-                    reasons.append(f"出现了分镜内容中不存在的 scene_id：{', '.join(sorted(set(orphans)))}，scene_id 必须照抄分镜内容里的编号")
+                    reasons.append(_says("retry.visual_orphans", ids=", ".join(sorted(set(orphans)))))
                 return reasons
 
             try:
@@ -1235,7 +1455,7 @@ class ScreenwritingEngine:
                 visuals = result.data.get("scenes") or []
             except StructuredOutputError as error:
                 # Keep whatever the rounds did cover; only the gaps get a synthesized fallback.
-                logger.warning("[Screenwriting] 第 %d 集视觉层生成未完整覆盖，缺失分镜按内容合成兜底: %s", episode, error)
+                logger.warning(_log("visual_fallback"), episode, error)
                 visuals = list(covered.values())
             by_id = {str(item.get("scene_id")): item for item in visuals if isinstance(item, Mapping)}
             complete: list[dict[str, Any]] = []
@@ -1244,12 +1464,17 @@ class ScreenwritingEngine:
                 visual = by_id.get(sid)
                 if visual is None or "image_prompt" not in visual or "video_prompt" not in visual:
                     visual = _fallback_visual(scene)
-                    warnings.append(DraftViolation("visual_fallback", "视觉层由分镜内容机械合成，建议重写", f"分镜 {sid}", "warning", sid))
+                    warnings.append(DraftViolation("visual_fallback", _says("warnings.visual_fallback"), _says("labels.shot", scene_id=sid), "warning", sid))
                 complete.append(visual)
+                # 一个分镜里写了两套互相抵消的光(light_setups.json)：记一条提示给人看，不退回模型。
+                image = visual.get("image_prompt") if isinstance(visual.get("image_prompt"), Mapping) else {}
+                composition = image.get("composition") if isinstance(image.get("composition"), Mapping) else {}
+                for hint in light_setups.clashes(str(composition.get("lighting") or "")):
+                    warnings.append(DraftViolation(light_setups.CLASH, hint, _says("labels.shot", scene_id=sid), "warning", sid))
             try:
                 merged.extend(merge_visual_into_scenes(batch, complete))
             except VisualMergeError as error:  # pragma: no cover - coverage validator makes this unreachable
-                raise ScreenwritingError(f"第 {episode} 集视觉层合并失败：{error}") from error
+                raise ScreenwritingError(_says("errors.visual_merge_failed", episode=episode, error=error)) from error
         return merged
 
     def _store_episode(
@@ -1266,7 +1491,7 @@ class ScreenwritingEngine:
         ledger = self._ledger_entry(state, episode)
         script = {
             "episode": episode,
-            "title": plan.get("title") or ledger.get("title") or f"第{episode}集",
+            "title": plan.get("title") or ledger.get("title") or _says("labels.episode_title", episode=episode),
             "hook": ledger.get("hook") or None,
             "next_episode_teaser": ledger.get("next_episode_teaser"),
             "scenes": scenes,
@@ -1302,16 +1527,11 @@ def _repair_section(repair: Mapping[str, Any]) -> str:
     """The extra ask when a draft is being repaired: the reasons it failed and the draft itself."""
     reasons = "\n".join(f"- {reason}" for reason in repair.get("reasons") or [])
     previous = json.dumps(repair.get("plan") or {}, ensure_ascii=False)
-    return (
-        "## 修复上一版草稿\n"
-        "上一版分镜规划没有通过校验，问题如下；请针对这些问题修改，情节走向、出场人物与台词内容尽量保持不变：\n"
-        f"{reasons}\n"
-        f"上一版草稿（JSON，仅供对照；本次仍须输出完整规划）：\n{previous}"
-    )
+    return _says("repair_section", reasons=reasons, previous=previous)
 
 
 def _fallback_visual(scene: Mapping[str, Any]) -> dict[str, Any]:
-    description = str(scene.get("scene_description") or scene.get("setting") or "画面").strip() or "画面"
+    description = str(scene.get("scene_description") or scene.get("setting") or _word("fallback_scene")).strip() or _word("fallback_scene")
     return {
         "scene_id": str(scene.get("scene_id")),
         "image_prompt": {"scene": description, "composition": {"shot_type": "Medium Shot", "lighting": "", "ambiance": ""}},

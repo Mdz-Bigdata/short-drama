@@ -1,0 +1,11 @@
+{
+  "_doc": "app/core/character_variants.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。",
+  "clean_variant.text": "衍生形象必须指明来源角色",
+  "clean_variant.text.2": "衍生形象不能以自己为来源角色",
+  "clean_variant.text.3": "集数范围必须是整数",
+  "clean_variant.text.4": "集数范围无效：起始集要 ≥ 1 且不大于结束集",
+  "clean_variant.text.5": "至少给一个触发词或一个集数范围，否则这个形象永远不会被用上",
+  "apply.worn": "妆效：",
+  "apply.worn.2": "服装：{0}",
+  "apply.off_separator": "、"
+}

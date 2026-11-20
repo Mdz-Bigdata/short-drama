@@ -244,12 +244,13 @@ describe('CharacterDesignerPage', () => {
   });
 
   it('synchronizes every non-actor asset count on the initial actor page load', async () => {
-    const totals = { scene: 6, prop: 8, effect: 4 } as const;
+    const totals = { scene: 6, prop: 8, effect: 4, product: 0, extra: 0, vehicle: 0, set_dressing: 0, stunt: 0 } as const;
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
       const url = new URL(String(input));
       const kind = url.searchParams.get('kind') as keyof typeof totals;
       expect(url.searchParams.get('page')).toBe('1');
-      expect(url.searchParams.get('page_size')).toBe('1');
+      // 群演库就在数字演员页里，自己拉一页清单；其余都是只数个数。
+      if (!(kind === 'extra' && url.searchParams.get('page_size') !== '1')) expect(url.searchParams.get('page_size')).toBe('1');
       return {
         ok: true,
         json: async () => ({ items: [], page: 1, page_size: 1, total: totals[kind] }),
@@ -264,7 +265,12 @@ describe('CharacterDesignerPage', () => {
     expect(within(assetTabs).getByRole('tab', { name: /拍摄道具.*8 个资产/ })).toBeTruthy();
     expect(within(assetTabs).queryByRole('tab', { name: /服装/ })).toBeNull();
     expect(within(assetTabs).getByRole('tab', { name: /特效.*4 个资产/ })).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    // 车辆、商品并在拍摄道具页里，没有自己的页签。
+    expect(within(assetTabs).queryByRole('tab', { name: /商品/ })).toBeNull();
+    expect(within(assetTabs).queryByRole('tab', { name: /车辆/ })).toBeNull();
+    // 八类拍摄资产各数一次：场地、道具、特效 + 商品、群演、车辆、置景、特技(数字演员页里的群演清单和文件夹另算)。
+    const countCalls = fetchMock.mock.calls.filter(call => new URL(String(call[0])).searchParams.get('page_size') === '1');
+    expect(countCalls).toHaveLength(8);
   });
 
   it('syncs every screenplay production asset category before refreshing their counts', async () => {
@@ -325,9 +331,12 @@ describe('CharacterDesignerPage', () => {
     const user = userEvent.setup();
     const callCounts = new Map<string, number>();
     vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
-      const kind = new URL(String(input)).searchParams.get('kind') || '';
-      const callCount = (callCounts.get(kind) || 0) + 1;
-      callCounts.set(kind, callCount);
+      const url = new URL(String(input));
+      const kind = url.searchParams.get('kind') || '';
+      // 只数「数个数」的请求；数字演员页里的群演清单另算。
+      const counting = url.searchParams.get('page_size') === '1';
+      const callCount = (callCounts.get(kind) || 0) + (counting ? 1 : 0);
+      if (counting) callCounts.set(kind, callCount);
       const base = { scene: 1, prop: 2, effect: 4 }[kind] || 0;
       return {
         ok: true,
@@ -347,7 +356,8 @@ describe('CharacterDesignerPage', () => {
     expect(await within(assetTabs).findByRole('tab', { name: /拍摄场地.*11 个资产/ })).toBeTruthy();
     expect(within(assetTabs).getByRole('tab', { name: /拍摄道具.*12 个资产/ })).toBeTruthy();
     expect(within(assetTabs).getByRole('tab', { name: /特效.*14 个资产/ })).toBeTruthy();
-    await waitFor(() => expect([...callCounts.values()]).toEqual([2, 2, 2]));
+    // 八类拍摄资产各重数一次。
+    await waitFor(() => expect([...callCounts.values()]).toEqual([2, 2, 2, 2, 2, 2, 2, 2]));
   });
 
   it('does not let a late initial count overwrite a newer embedded-library count', async () => {
@@ -595,6 +605,7 @@ describe('CharacterDesignerPage', () => {
     render(<CharacterDesignerPage dashboard={interactiveDashboard} {...actions()} />);
 
     const assetTabs = screen.getByRole('tablist', { name: '角色资产类型' });
+    // 数字演员(含群演)、拍摄场地(含置景)、拍摄道具(含车辆、商品)、特效(含特技)。
     expect(within(assetTabs).getAllByRole('tab')).toHaveLength(4);
     expect(within(assetTabs).getByRole('tab', { name: /数字演员.*2/ }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('heading', { level: 2, name: '数字演员设定集' })).toBeTruthy();
@@ -619,12 +630,72 @@ describe('CharacterDesignerPage', () => {
     expect(screen.getByRole('heading', { level: 1, name: '沈知微' })).toBeTruthy();
   });
 
+  it('lists vehicles and products inside the prop page, set dressing inside scenes, stunts inside effects, extras inside the actor page', async () => {
+    const user = userEvent.setup();
+    const totals: Record<string, number> = { scene: 1, prop: 2, effect: 3, product: 4, extra: 5, vehicle: 6, set_dressing: 7, stunt: 8 };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/api/elements/folders')) {
+        return { ok: true, json: async () => ({ folders: [{ id: 'f1', name: '追车组', count: 1, cover_element_id: null, cover_url: null }], total: 1, unfiled: 0 }) } as Response;
+      }
+      const kind = url.searchParams.get('kind') || '';
+      // 拍摄道具页一起列车辆和商品(include=vehicle,product)。
+      const item = kind === 'prop' && (url.searchParams.get('include') || '').includes('vehicle') ? {
+        id: 'car-1', kind: 'vehicle', name: '黑色轿车', description: '旧款', status: 'draft', version: 1, metadata: {}, files: [], model3d: null,
+      } : kind === 'extra' ? {
+        id: 'extra-1', kind: 'extra', name: '茶馆伙计', description: '两人，粗布短打，端茶穿行', status: 'draft', version: 1, metadata: {}, files: [], model3d: null,
+      } : null;
+      return {
+        ok: true,
+        json: async () => ({ items: item && url.searchParams.get('page_size') !== '1' ? [item] : [], total: totals[kind] ?? 0 }),
+      } as Response;
+    });
+
+    render(<CharacterDesignerPage dashboard={interactiveDashboard} {...actions()} />);
+
+    const assetTabs = screen.getByRole('tablist', { name: '角色资产类型' });
+    expect(await within(assetTabs).findByRole('tab', { name: /拍摄道具.*2 个资产/ })).toBeTruthy();
+    expect(within(assetTabs).queryByRole('tab', { name: /商品/ })).toBeNull();
+    // 群演不单独一页：数量并进数字演员，群演和主演同在角色库里，页面下方不再另开一个群演资产库。
+    expect(within(assetTabs).queryByRole('tab', { name: /群演/ })).toBeNull();
+    expect(within(assetTabs).getByRole('tab', { name: new RegExp(`数字演员.*${interactiveDashboard.characters.length + 5} 个资产`) })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: '群演资产工作区' })).toBeNull();
+    const extras = await screen.findByRole('group', { name: '群演' });
+    const waiter = await within(extras).findByRole('button', { name: /茶馆伙计/ });
+    await user.click(waiter);
+    // 选中群演：中间一栏换成它的参考图与操作，主演都不算选中。
+    expect(screen.getByRole('heading', { level: 2, name: '茶馆伙计' })).toBeTruthy();
+    expect(screen.getByText('两人，粗布短打，端茶穿行')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^生成参考图$/ })).toBeTruthy();
+    expect(within(screen.getByRole('group', { name: '群演' })).getByRole('button', { name: /茶馆伙计/ }).getAttribute('aria-pressed')).toBe('true');
+    const lead = within(screen.getByRole('region', { name: '角色列表，可上下滚动' })).getByRole('button', { name: new RegExp(interactiveDashboard.characters[0].name) });
+    expect(lead.getAttribute('aria-pressed')).toBe('false');
+    await user.click(lead);
+    // 换回主演时工作区重排，按钮要重新取。
+    const library = screen.getByRole('region', { name: '角色列表，可上下滚动' });
+    expect(within(library).getByRole('button', { name: new RegExp(interactiveDashboard.characters[0].name) }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByRole('heading', { level: 2, name: '茶馆伙计' })).toBeNull();
+    expect(within(assetTabs).queryByRole('tab', { name: /车辆/ })).toBeNull();
+    // 置景并在拍摄场地里，特技并在特效里。
+    expect(within(assetTabs).queryByRole('tab', { name: /置景/ })).toBeNull();
+    expect(within(assetTabs).queryByRole('tab', { name: /特技/ })).toBeNull();
+
+    await user.click(within(assetTabs).getByRole('tab', { name: /拍摄道具/ }));
+    expect(await screen.findByRole('region', { name: '道具资产工作区' })).toBeTruthy();
+    // 车辆在拍摄道具页的清单里，标着它本来是车辆。
+    const car = await screen.findByRole('button', { name: '查看车辆资产“黑色轿车”' });
+    expect(within(car).getByText('车辆')).toBeTruthy();
+    // 项目里的资产页也分文件夹。
+    expect(await screen.findByRole('button', { name: /追车组/ })).toBeTruthy();
+  });
+
   it('uses the top action to fill missing images for the active non-actor category', async () => {
     const actionHandlers = actions();
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
       const url = String(input);
       if (url.endsWith('/api/elements/generation-jobs') && options?.method === 'POST') {
-        expect(JSON.parse(String(options.body))).toEqual({ kind: 'scene', task_id: null });
+        // 拍摄场地页把并进来的置景也一起补。
+        expect([{ kind: 'scene', task_id: null }, { kind: 'set_dressing', task_id: null }]).toContainEqual(JSON.parse(String(options.body)));
         return {
           ok: true,
           json: async () => ({
@@ -663,7 +734,7 @@ describe('CharacterDesignerPage', () => {
         return {
           ok: true,
           json: async () => ({
-            id: 'prop-job', kind: 'prop', status: 'completed', total: 2,
+            id: 'job', kind: 'prop', status: 'completed', total: 2,
             processed: 2, succeeded: 2, failed: 0, remaining: 0, errors: [],
           }),
         } as Response;
@@ -683,10 +754,13 @@ describe('CharacterDesignerPage', () => {
     expect(bodies).toEqual([]);
     await user.click(screen.getByRole('button', { name: /全部重新生成/ }));
 
-    await waitFor(() => expect(bodies).toEqual([{ kind: 'prop', task_id: null, replace_existing: true }]));
+    // 拍摄道具页把并进来的车辆也一起重出；商品要实物照片，不拿模型画。
+    await waitFor(() => expect(bodies).toEqual([
+      { kind: 'prop', task_id: null, replace_existing: true }, { kind: 'vehicle', task_id: null, replace_existing: true },
+    ]));
     expect(confirm).toHaveBeenCalledTimes(2);
     expect(actionHandlers.onRegenerate).not.toHaveBeenCalled();
-    expect(await screen.findByText('2 项道具参考图已生成完整。')).toBeTruthy();
+    expect(await screen.findByText('4 项道具参考图已生成完整。')).toBeTruthy();
     confirm.mockRestore();
   });
 
@@ -736,9 +810,69 @@ describe('CharacterDesignerPage', () => {
     await user.click(projectTrigger);
     const backdrop = document.querySelector('.character-dialog-backdrop');
     expect(backdrop).toBeTruthy();
+    // 在窗口里按下、到空白处才松手，不关窗。
+    fireEvent.mouseDown(screen.getByRole('dialog', { name: '项目角色设计基准 · 约束' }));
     fireEvent.click(backdrop as HTMLElement);
+    expect(screen.getByRole('dialog', { name: '项目角色设计基准 · 约束' })).toBeTruthy();
+    await user.click(backdrop as HTMLElement);
     expect(screen.queryByRole('dialog', { name: '项目角色设计基准 · 约束' })).toBeNull();
     expect(document.activeElement).toBe(projectTrigger);
+  });
+
+  it('asks before closing the face sculpt dialog while it holds unsaved changes', async () => {
+    const user = userEvent.setup();
+    const sculptCatalog = {
+      layers: [{ key: 'bone', label: '骨相' }],
+      controls: [{ key: 'face_shape', layer: 'bone', label: '脸型', type: 'choice', options: [{ value: 'melon', label: '瓜子脸' }] }],
+      presets: [{ key: 'heroine_cool', label: '古装女主·清冷', values: { face_shape: 'melon' } }],
+      expression_controls: [],
+      expressions: [{ key: 'smile', label: '笑', words: ['笑'] }],
+      limits: { note_chars: 60, tell_chars: 40, habit_chars: 40 },
+    };
+    const sculptPreview = { description: '', face_text: '', layers: {}, issues: [], expressions: {}, sheet_stale: false, stale_note: '' };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => data }) as Response;
+      if (url.endsWith('/api/face-sculpt/catalog')) return reply(sculptCatalog);
+      if (url.endsWith('/face-sculpt/preview')) return reply(sculptPreview);
+      if (url.endsWith('/face-sculpt')) {
+        return reply({ name: '沈知微', sculpt: { face: {}, notes: {}, expressions: {}, preset: '' }, revision: 0, preview: sculptPreview });
+      }
+      return reply({ items: [], page: 1, page_size: 1, total: 0 });
+    });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<CharacterDesignerPage dashboard={interactiveDashboard} taskId="task-sculpt" {...actions()} />);
+    const open = () => user.click(screen.getByRole('button', { name: '为沈知微捏脸和捏表情' }));
+    const dialog = () => screen.queryByRole('dialog', { name: /角色造型 · 沈知微/ });
+
+    // 没动过：Esc 直接关，不问。
+    await open();
+    await screen.findByRole('group', { name: '从预设开始' });
+    await user.keyboard('{Escape}');
+    expect(dialog()).toBeNull();
+    expect(confirm).not.toHaveBeenCalled();
+
+    await open();
+    await user.click(await screen.findByRole('button', { name: '古装女主·清冷' }));
+    await user.keyboard('{Escape}');
+    expect(confirm).toHaveBeenCalledWith('捏脸改动还没保存，确定关闭吗？');
+    expect(dialog()).toBeTruthy();
+    expect(screen.getByRole('button', { name: '古装女主·清冷' }).getAttribute('aria-pressed')).toBe('true');
+
+    await user.click(document.querySelector('.character-dialog-backdrop') as HTMLElement);
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(dialog()).toBeTruthy();
+
+    confirm.mockReturnValue(true);
+    await user.click(screen.getByRole('button', { name: '关闭详情' }));
+    expect(dialog()).toBeNull();
+
+    // 放弃改动后重开是干净的，再关不该还问。
+    await open();
+    await screen.findByRole('group', { name: '从预设开始' });
+    await user.keyboard('{Escape}');
+    expect(dialog()).toBeNull();
+    expect(confirm).toHaveBeenCalledTimes(3);
   });
 
   it('renders pipe-delimited character source data as an accessible multidimensional table', async () => {
@@ -836,5 +970,89 @@ describe('CharacterDesignerPage', () => {
     expect(normalized.characters[0].sheetUrl).toBeNull();
     expect(normalized.characters[0].views.every(view => view.imageUrl === null && !view.available)).toBe(true);
     expect(normalized.characters[0].assetState).toBe('MISSING');
+  });
+});
+
+describe('CharacterDesignerPage sculpt requests and focus', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  function mockSculptApi() {
+    const sculptPreview = { description: '', face_text: '', layers: {}, issues: [], expressions: {}, sheet_stale: false, stale_note: '' };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => data }) as Response;
+      if (url.endsWith('/api/face-sculpt/catalog')) {
+        return reply({
+          layers: [{ key: 'bone', label: '骨相' }],
+          controls: [{ key: 'face_shape', layer: 'bone', label: '脸型', type: 'choice', options: [{ value: 'melon', label: '瓜子脸' }] }],
+          presets: [],
+          expression_controls: [],
+          expressions: [{ key: 'smile', label: '笑', words: ['笑'] }],
+          limits: { note_chars: 60, tell_chars: 40, habit_chars: 40 },
+        });
+      }
+      if (url.endsWith('/face-sculpt/preview')) return reply(sculptPreview);
+      if (url.endsWith('/face-sculpt')) {
+        return reply({ name: '陆行远', sculpt: { face: {}, notes: {}, expressions: {}, preset: '' }, revision: 0, preview: sculptPreview, history: [] });
+      }
+      return reply({ items: [], page: 1, page_size: 1, total: 0 });
+    });
+  }
+
+  it('opens the sculpt dialog for the requested character once per nonce and reports the focused character', async () => {
+    mockSculptApi();
+    const user = userEvent.setup();
+    const onFocusCharacter = vi.fn();
+    const props = { dashboard: interactiveDashboard, taskId: 'task-sculpt', onFocusCharacter, ...actions() };
+    const dialog = () => screen.queryByRole('dialog', { name: /角色造型 · 陆行远/ });
+    const { rerender } = render(<CharacterDesignerPage {...props} />);
+
+    expect(onFocusCharacter).toHaveBeenLastCalledWith('沈知微');
+    expect(dialog()).toBeNull();
+
+    // 名字带空格也认得出来；选中这个人，并打开他的捏脸窗。
+    rerender(<CharacterDesignerPage {...props} sculptRequest={{ name: ' 陆 行远 ', nonce: 1 }} />);
+    await screen.findByRole('group', { name: '脸型' });
+    expect(dialog()).toBeTruthy();
+    expect(screen.getByRole('button', { name: /02.*陆行远.*巡警/ }).getAttribute('aria-pressed')).toBe('true');
+    expect(onFocusCharacter).toHaveBeenLastCalledWith('陆行远');
+
+    await user.keyboard('{Escape}');
+    expect(dialog()).toBeNull();
+
+    // 同一个 nonce 不再打开。
+    rerender(<CharacterDesignerPage {...props} sculptRequest={{ name: ' 陆 行远 ', nonce: 1 }} />);
+    expect(dialog()).toBeNull();
+
+    rerender(<CharacterDesignerPage {...props} sculptRequest={{ name: '陆行远', nonce: 2 }} />);
+    await screen.findByRole('group', { name: '脸型' });
+    expect(dialog()).toBeTruthy();
+  });
+
+  it('ignores a sculpt request for a name that is not on the page', async () => {
+    mockSculptApi();
+    const onFocusCharacter = vi.fn();
+    render(
+      <CharacterDesignerPage
+        dashboard={interactiveDashboard}
+        taskId="task-sculpt"
+        sculptRequest={{ name: '不存在的人', nonce: 1 }}
+        onFocusCharacter={onFocusCharacter}
+        {...actions()}
+      />,
+    );
+    expect(screen.queryByRole('dialog', { name: /角色造型/ })).toBeNull();
+    expect(onFocusCharacter).toHaveBeenLastCalledWith('沈知微');
+  });
+
+  it('reports the newly selected character', async () => {
+    const user = userEvent.setup();
+    const onFocusCharacter = vi.fn();
+    render(<CharacterDesignerPage dashboard={interactiveDashboard} onFocusCharacter={onFocusCharacter} {...actions()} />);
+    await user.click(screen.getByRole('button', { name: /02.*陆行远.*巡警/ }));
+    expect(onFocusCharacter).toHaveBeenLastCalledWith('陆行远');
   });
 });

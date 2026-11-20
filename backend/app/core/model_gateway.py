@@ -2,6 +2,7 @@
 import logging
 import base64
 import binascii
+import json
 import os
 import random
 import re
@@ -9,7 +10,9 @@ import threading
 from typing import Any, Dict, Mapping, Optional
 
 from app.core import llm_profile
-from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
+from app.core import fight_safety
+from app.core import prompt_data
+from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS, caps_of
 from app import settings
 from app.core import production_knowledge, reference_fit, style_packs, usage_ledger, video_jobs
 from app.core.providers.defaults import (
@@ -28,12 +31,52 @@ from app.core.video_references import max_shot_seconds
 from app.core.credential_pool import CREDENTIAL_REJECTED, credential_pool
 from app.core.providers import comfyui
 from app.platform.runtime_models import runtime_model_registry
-from app.core import prompt_compact
+from app.core import prompt_budget, prompt_compact
 from app.platform.runtime_skills import runtime_skill_registry
 
 logger = logging.getLogger("app.core.model_gateway")
+# 网关的措辞与词表都在 app/data/prompt/model_gateway.json：提示词片段(prompts)、给人看的失败原因(errors)、
+# 日志(logs)、词表与正则(tables)。改一句话是改数据，不改代码。
+_WORDING = "model_gateway"
+
+
+def _section(name: str) -> dict:
+    return prompt_data.load(_WORDING)[name]
+
+
+def _prompt(key: str, /, **values: object) -> str:
+    """A prompt fragment, filled in; a body kept as a list of lines is joined with newlines (``key`` is positional: a template may name a ``{key}``)."""
+    body = _section("prompts")[key]
+    return ("\n".join(body) if isinstance(body, list) else str(body)).format(**values)
+
+
+def _says(key: str, /, **values: object) -> str:
+    """What a failed call tells the person (``last_video_failure``, a refused request), filled in."""
+    return str(_section("errors")[key]).format(**values)
+
+
+def _log(key: str) -> str:
+    """A log line whose ``%s`` slots the logger fills from its own arguments."""
+    return str(_section("logs")[key])
+
+
+def _logf(key: str, /, **values: object) -> str:
+    """A log line written out before it is logged (its ``{name}`` slots are filled here, as the old f-string did)."""
+    return _log(key).format(**values)
+
+
+def _table(key: str) -> Any:
+    """A word table, pattern or limit."""
+    return _section("tables")[key]
+
 # 每个出片线程最近一次 Ark 视频请求被拒的原因：图生视频失败时要说清为什么，而不是只说「暂不可用」。
 _ark_notes = threading.local()
+# 这一次视频请求要的分辨率(样片 480p)：generate_video 在调用期间设好，各家读分辨率的地方先看它，没有才读环境变量。
+_video_resolution = threading.local()
+
+
+def _wanted_video_resolution(env_name: str, default: str) -> str:
+    return getattr(_video_resolution, "value", None) or os.getenv(env_name) or default
 
 # 单张图的请求上限：Seedream 5.0 pro 画九宫格分镜(大尺寸 + 多张参考图)常要两三分钟。
 IMAGE_REQUEST_TIMEOUT_SECONDS = 300
@@ -63,7 +106,7 @@ def _centre_runtime(model: str, category: str, *, keep=None, quiet: bool = False
     if fallback is None:
         return None, model
     if (model or "").strip() and not quiet:
-        logger.warning("[ModelGateway] %s 模型 %s 未在模型配置中心启用，改用配置中心的 %s", category, model, fallback.model_ids[0])
+        logger.warning(_log("centre_fallback"), category, model, fallback.model_ids[0])
     return fallback, fallback.model_ids[0]
 
 
@@ -119,8 +162,7 @@ MAX_TOKENS_SHRINKS = 4
 # before the caller falls through to the next one; other refusals are not retried.
 RATE_LIMIT_RETRIES = 3
 RATE_LIMIT_WAIT_MAX = 30.0
-_MAX_TOKENS_WORDS = ("max_tokens", "max_completion_tokens", "max_output_tokens", "max_new_tokens", "completion tokens",
-                     "output tokens", "maximum", "too large", "exceed", "context length", "最大", "上限", "超出")
+_MAX_TOKENS_WORDS = tuple(_table("max_tokens_words"))
 _MAX_TOKENS_LADDER = (524_288, 262_144, 131_072, 65_536, 32_768, 16_384, 8_192, 4_096)
 
 
@@ -226,78 +268,16 @@ class ModelGateway:
     """
     
     # 8种站位法
-    BLOCKING_STANDS = [
-        "核心镜头站位 (主角居中心，配角四周对称平衡)",
-        "对话切换站位 (正反打OTS过肩站位)",
-        "三角关系站位 (主角居中景，配角居前景与背景形成三角形)",
-        "空间象征站位 (利用物理高度差仰俯拍表现权力阶级)",
-        "运动固定站位 (角色沿中轴线同向移动，追踪镜头)",
-        "对称仪式站位 (沿画面中轴线完美对称排列)",
-        "冲突对峙站位 (两方对立左右，留白大面积张力空间)",
-        "前后中景层次站位 (前景虚化，中景主角，背景环境)"
-    ]
-    
+    BLOCKING_STANDS = list(_table("blocking_stands"))
+
     # 16种环境构图
-    COMPOSITIONS = [
-        "长廊尽头镜头 (纵深线条制造压迫感)",
-        "空旷广场镜头 (角色在大空间极度缩小展现孤立)",
-        "窗边停顿镜头 (窗框为界，思考与思念场景)",
-        "桥面远景镜头 (延伸空间体现分别或离开宿命感)",
-        "街口等待镜头 (都市复杂十字街头等待霓虹闪烁)",
-        "过道跟拍镜头 (狭长跟拍，急迫行走与临场感)",
-        "楼顶俯视镜头 (俯瞰繁华城市夜景表现虚无与孤单)",
-        "电梯开门镜头 (电梯开关动作制造揭示与出场感)",
-        "室内角落镜头 (角色置于狭窄边角展现被困局促感)",
-        "门口压迫镜头 (用门框封锁角色形成对峙张力)",
-        "巷道纵深镜头 (狭窄通道暗示跟踪或跟踪追捕)",
-        "雾中小路镜头 (低能见度营造梦幻或朦胧宿命)",
-        "雨巷倒影镜头 (地面大量积水反光折射霓虹增加层次)",
-        "森林穿行镜头 (树木斑驳光影及遮挡营造探索)",
-        "地下通道镜头 (封闭昏暗地下走廊营造黑暗追逐)",
-        "海边留白镜头 (海面天空大面积空白人物极小，诗意收尾)"
-    ]
-    
+    COMPOSITIONS = list(_table("compositions"))
+
     # 36种运镜系统
-    CAMERA_MOVEMENTS = [
-        "Slow Dolly In (慢推近景)", "Slow Dolly Out (慢拉远)", "Crane Up (低升俯视)", 
-        "Steadicam Side Follow (贴身跟移)", "360-degree Orbit (环绕凝视)", "Dutch Angle & Spin (斜角旋转)",
-        "Rear Chase Shot (背后追拍)", "Frontal Tracking Retreat (正面退拍)", "Lateral Tracking (侧面平行跟拍)", 
-        "Over-the-shoulder Chase (过肩跟拍)", "POV Traverse (第一人称穿行)", "Handheld Shake (手持晃动)",
-        "Zoom / Snap Push (快速突进)", "Zolly / Fast Pull Back (冲击拉远)", "Drone Dive (俯冲下降)", 
-        "Low-angle Push (低机位仰拍推进)", "High-angle Follow (高机位压迫跟拍)", "Extreme Close-up Dolly (极近特写推进)",
-        "Pan Reveal (慢摇揭示)", "Whip Pan (甩镜转场)", "Foreground Occlusion (前景遮挡转场)", 
-        "Empty Track Transition (空镜推轨转场)", "Match Cut (匹配转场)", "Out-of-focus Bokeh (变焦散景转场)",
-        "Rack Focus (焦点转移)", "Macro Sweeping (微距扫过)", "Depth of Field Drift (景深漂移)", 
-        "Detail Tracking (细节追踪)", "Light Sweep (光影扫描)", "Reverse Rack Focus (反向焦点折返)",
-        "Establishing Shot (远景建立)", "Static Stare (静止凝视)", "Floating (漂浮移动)", 
-        "Bullet Time Dolly (时间凝固推进)", "Enclosing Push (环境压迫推进)", "Dolly Zoom (希区柯克变焦)"
-    ]
+    CAMERA_MOVEMENTS = list(_table("camera_movements"))
 
     # 22种题材的短链与特征字典映射，保证服务层短链与题材属性装填完全兼容
-    GENRE_TEMPLATES = {
-        "romance": {"short_link": "romance_contract_love", "genre_desc": "豪门言情甜宠剧，适合微信视频号/抖音快手"},
-        "rebirth_revenge": {"short_link": "rebirth_queen_revenge", "genre_desc": "重生打脸复仇剧"},
-        "campus": {"short_link": "campus_secret_love", "genre_desc": "青春校园暗恋剧"},
-        "family": {"short_link": "family_mother_awake", "genre_desc": "都市家庭主妇觉醒剧"},
-        "retro_romance": {"short_link": "retro_army_love", "genre_desc": "年代怀旧情感剧"},
-        "male_counterattack": {"short_link": "male_dragon_king", "genre_desc": "男频赘婿战神归来逆袭剧"},
-        "mystery": {"short_link": "mystery_abyss_stare", "genre_desc": "悬疑推理犯罪剧"},
-        "time_travel": {"short_link": "time_travel_sign", "genre_desc": "穿越架空系统流爽剧"},
-        "palace_intrigue": {"short_link": "palace_queen_revenge", "genre_desc": "古装宫斗权谋剧"},
-        "xianxia": {"short_link": "xianxia_demon_rise", "genre_desc": "仙侠修真热血短剧"},
-        "urban_realism": {"short_link": "urban_lawyer_win", "genre_desc": "都市商战律政悬疑剧"},
-        "sci_fi": {"short_link": "scifi_cyborg_awake", "genre_desc": "赛博朋克科幻爽剧"},
-        "horror": {"short_link": "horror_paper_coffin", "genre_desc": "民俗灵异恐怖剧"},
-        "military": {"short_link": "military_lone_wolf", "genre_desc": "特种兵硬汉反恐短剧"},
-        "sports": {"short_link": "sports_iron_punch", "genre_desc": "格斗竞技热血爽剧"},
-        "food": {"short_link": "food_healing_face", "genre_desc": "都市治愈美食生活剧"},
-        "overseas_us": {"short_link": "overseas_wolf_love", "genre_desc": "出海欧美狼人爱情剧"},
-        "overseas_other": {"short_link": "overseas_east_love", "genre_desc": "出海中东异域爱情剧"},
-        "interactive": {"short_link": "interactive_choice", "genre_desc": "互动多结局创新短剧"},
-        "comedy": {"short_link": "comedy_funny_boy", "genre_desc": "反转沙雕爆笑喜剧"},
-        "car": {"short_link": "car_ark_accessory", "genre_desc": "科技车载方舟极客剧"},
-        "general": {"short_link": "general_revenge_king", "genre_desc": "都市情感逆袭短剧"}
-    }
+    GENRE_TEMPLATES = {genre: dict(entry) for genre, entry in _table("genre_templates").items()}
 
     def __init__(self):
         self._host_state_lock = threading.RLock()
@@ -312,7 +292,7 @@ class ModelGateway:
             root_dotenv = os.path.abspath(os.path.join(gateway_dir, "..", "..", "..", ".env"))
             if os.path.exists(root_dotenv):
                 load_dotenv(root_dotenv)
-                logger.info(f"[ModelGateway] 成功从根目录载入 .env 配置文件: {root_dotenv}")
+                logger.info(_logf("dotenv_loaded", root_dotenv=root_dotenv))
         except ImportError:
             pass
 
@@ -350,10 +330,10 @@ class ModelGateway:
                 try:
                     with open(path, "r", encoding="utf-8") as f:
                         json_config = json.load(f)
-                        logger.info(f"[ModelGateway] 成功从 {path} 载入模型补充配置")
+                        logger.info(_logf("config_loaded", path=path))
                         break
                 except Exception as e:
-                    logger.error(f"[ModelGateway] 读取配置文件 {path} 失败: {str(e)}")
+                    logger.error(_logf("config_failed", path=path, error=str(e)))
 
         # 4. 非敏感配置可由 config.json 补充；所有 API key 只允许来自服务端环境变量。
         def get_valid_value(env_val, json_section, json_key, default_val):
@@ -479,7 +459,7 @@ class ModelGateway:
             if time.time() >= expiry:
                 # Keep the existing cooldown semantics, atomically with updates.
                 self._broken_hosts.pop(host, None)
-                logger.info(f"[ModelGateway] {host} 冷却到期，恢复试探调用。")
+                logger.info(_logf("host_cooled", host=host))
                 return False
             return True
 
@@ -503,7 +483,7 @@ class ModelGateway:
             if n >= self._broken_threshold:
                 cooldown = min(self._broken_cooldown * (n - self._broken_threshold + 1), self._broken_cooldown_max)
                 self._broken_hosts[host] = time.time() + cooldown
-                logger.info(f"[ModelGateway] {host} 连续 {n} 次 SSL 不可达，熔断短路 {cooldown:.0f}s (到期自动半开重试，其它厂商不受影响)。")
+                logger.info(_logf("host_broken", host=host, n=n, cooldown=cooldown))
 
     def _proxies_for(self, base_url: str):
         """代理选择：
@@ -548,7 +528,7 @@ class ModelGateway:
             return m[name]
         if role and role in m:
             return m[role]
-        alias = {"主角": "protagonist", "反派": "antagonist"}.get(role)
+        alias = _table("face_role_aliases").get(role)
         if alias and alias in m:
             return m[alias]
         return None
@@ -603,7 +583,7 @@ class ModelGateway:
         candidates = credential_pool.candidates(runtime.configuration_id, runtime.credentials_for(bucket), bucket)
         if not candidates:
             candidates = credential_pool.candidates(runtime.configuration_id, runtime.credentials_for(""), bucket) or [
-                type("_Primary", (), {"id": "primary", "api_key": runtime.api_key, "label": "主凭据"})()
+                type("_Primary", (), {"id": "primary", "api_key": runtime.api_key, "label": _table("primary_credential_label")})()
             ]
         for credential in candidates:
             self._thread_state.last_status = None
@@ -614,8 +594,23 @@ class ModelGateway:
             status = getattr(self._thread_state, "last_status", None)
             if not credential_pool.note_rejected(runtime.configuration_id, credential.id, status):
                 return None  # not a credential problem: another key would not help
-            logger.warning("[ModelGateway] %s 的凭据 %s 被供应商拒绝（HTTP %s），改用下一把", runtime.provider, credential.label or credential.id, status)
+            logger.warning(_log("credential_refused"), runtime.provider, credential.label or credential.id, status)
         return None
+
+    def _remember_reasoning(self, message: object) -> None:
+        """The readable thinking a reasoning model returned beside its answer (``reasoning_content`` / ``reasoning``)."""
+        found = message if isinstance(message, dict) else {}
+        text = found.get("reasoning_content") or found.get("reasoning") or ""
+        self._thread_state.last_reasoning = text.strip() if isinstance(text, str) else ""
+
+    def take_reasoning(self) -> str:
+        """What the last ``call_llm`` on this thread returned as readable thinking, once; empty when it returned none.
+
+        It is the model's own text, shown to a person as reference only: never parsed, never an instruction.
+        """
+        text = str(getattr(self._thread_state, "last_reasoning", "") or "")
+        self._thread_state.last_reasoning = ""
+        return text
 
     def _take_chat_usage(self) -> dict:
         state = getattr(self._thread_state, "last_chat", None)
@@ -625,6 +620,7 @@ class ModelGateway:
     def call_llm(self, model: str, system_prompt: str, user_prompt: str, creative_title: str, director_style: str = "cyberpunk", shot_style: str = "cinematic", user_instruction: str = "", max_tokens: Optional[int] = None) -> str:
         """Text generation, recorded as one provider call (see ``app.core.usage_ledger``)."""
         self._thread_state.last_chat = None
+        self._thread_state.last_reasoning = ""
         self._thread_state.offline_answer = False
         self._thread_state.system_chars_saved = 0
         runtime, called = _centre_runtime(model, "text", quiet=True)
@@ -672,22 +668,37 @@ class ModelGateway:
     def generate_video(self, model: str, image_url: str, prompt: str, prefer_provider: str = None,
                        last_frame: str = None, ref_images: list = None,
                        ref_videos: list = None, ref_audios: list = None, duration: int = 5,
-                       seed: int | None = None, style_pack: str | None = None) -> str:
-        """Video generation, recorded as one provider call priced by requested seconds."""
+                       seed: int | None = None, style_pack: str | None = None, resolution: str | None = None) -> str:
+        """Video generation, recorded as one provider call priced by requested seconds.
+
+        ``resolution`` (如样片的 480p) 只管这一次请求；不给时各家照环境变量的档位出片。
+        """
         runtime, called = _centre_runtime(model, "video", keep=ModelGateway._keeps_own_video_config, quiet=True)
         provider = runtime.provider if runtime else self._detect_provider(model, prefer_provider or "seedance")
         video_units: dict[str, Any] = {"seconds": int(duration or 0)}
+        _video_resolution.value = resolution or None
         if "h3" in (called or "").lower():
             from app.core.providers.minimax_h3 import h3_resolution
-            video_units["resolution"] = h3_resolution(os.getenv("MINIMAX_H3_RESOLUTION") or "768p")
-        with usage_ledger.timed_call("video", provider=provider, model=called or "", units=video_units) as outcome:
-            url = self._generate_video_unmetered(
-                model, image_url, prompt, prefer_provider, last_frame, ref_images, ref_videos, ref_audios, duration, seed, style_pack,
-            )
-            if not url:
-                outcome["failed"] = True
-                outcome["error"] = "no provider returned a video"
-            return url
+            video_units["resolution"] = h3_resolution(_wanted_video_resolution("MINIMAX_H3_RESOLUTION", "768p"))
+        else:
+            from app.core.video_references import billed_resolution
+
+            tier = billed_resolution(called or model, resolution)
+            if tier:
+                video_units["resolution"] = tier
+                # What goes out is what is billed.
+                _video_resolution.value = tier
+        try:
+            with usage_ledger.timed_call("video", provider=provider, model=called or "", units=video_units) as outcome:
+                url = self._generate_video_unmetered(
+                    model, image_url, prompt, prefer_provider, last_frame, ref_images, ref_videos, ref_audios, duration, seed, style_pack,
+                )
+                if not url:
+                    outcome["failed"] = True
+                    outcome["error"] = "no provider returned a video"
+                return url
+        finally:
+            _video_resolution.value = None
 
     def describe_image(self, model: str, system_prompt: str, prompt: str, image: str, *, max_tokens: int = 2000) -> tuple[Optional[str], str]:
         """Ask a text model that can see about one image; returns (answer, model used).
@@ -800,10 +811,7 @@ class ModelGateway:
                         # 优先，否则 2 秒 × 次数），最多 RATE_LIMIT_RETRIES 次；不计入熔断，其它状态码照旧。
                         rate_limited += 1
                         wait = rate_limit_wait(r.headers.get("Retry-After") if getattr(r, "headers", None) else None, rate_limited)
-                        logger.warning(
-                            "[ModelGateway] chat(%s) 被限流 (429)，%.1f 秒后第 %d/%d 次重试",
-                            api_model, wait, rate_limited, RATE_LIMIT_RETRIES,
-                        )
+                        logger.warning(_log("chat_rate_limited"), api_model, wait, rate_limited, RATE_LIMIT_RETRIES)
                         try:
                             r.close()
                         except Exception:
@@ -817,20 +825,17 @@ class ModelGateway:
                         except LLMCallDeadlineExceeded:
                             # A slow model is not a broken host: no retry, no circuit breaker — the
                             # caller moves on to the next credential or provider.
-                            logger.warning(
-                                "[ModelGateway] chat(%s) 超过 %.0f 秒仍未返回完整结果，放弃本次调用并降级",
-                                api_model, deadline_seconds,
-                            )
+                            logger.warning(_log("chat_deadline"), api_model, deadline_seconds)
                             return None
                         self._remember_chat_usage(api_model, base_url, body.get("usage"))
                         choice = body["choices"][0]
+                        self._remember_reasoning(choice.get("message"))
                         self._thread_state.last_finish = choice.get("finish_reason")
                         if choice.get("finish_reason") == "length":
                             usage = body.get("usage") or {}
                             reasoning = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
                             logger.warning(
-                                "[ModelGateway] chat(%s) 输出达到 max_tokens=%s 被截断（completion_tokens=%s，其中推理 %s）",
-                                api_model, payload["max_tokens"], usage.get("completion_tokens"), reasoning,
+                                _log("chat_truncated"), api_model, payload["max_tokens"], usage.get("completion_tokens"), reasoning,
                             )
                         return choice["message"]["content"] or ""
                     error_text = r.text or ""
@@ -839,24 +844,21 @@ class ModelGateway:
                         # The provider refused the output limit itself: remember what it takes and ask again.
                         shrinks += 1
                         self._remember_max_tokens(base_url, api_model, allowed)
-                        logger.warning(
-                            "[ModelGateway] chat(%s) 不接受 max_tokens=%s，按其上限 %s 重试",
-                            api_model, payload["max_tokens"], allowed,
-                        )
+                        logger.warning(_log("chat_shrink"), api_model, payload["max_tokens"], allowed)
                         payload["max_tokens"] = allowed
                         continue
-                    logger.error(f"[ModelGateway] chat({api_model}) 响应错误 {r.status_code}: {error_text[:200]}")
+                    logger.error(_logf("chat_error", api_model=api_model, status=r.status_code, error_text=error_text[:200]))
                     return None
                 except (requests.exceptions.SSLError, requests.exceptions.ConnectionError,
                         requests.exceptions.Timeout, requests.exceptions.ChunkedEncodingError) as e:
                     if attempt < attempts - 1:
-                        logger.debug(f"[ModelGateway] chat({api_model}) 瞬时网络抖动第{attempt+1}次重试: {str(e)[:90]}")
+                        logger.debug(_logf("chat_retry", api_model=api_model, attempt=attempt + 1, error=str(e)[:90]))
                         time.sleep(min(2 * (attempt + 1), 4))
                         attempt += 1
                         continue
                     raise
         except Exception as e:
-            logger.debug(f"[ModelGateway] chat({api_model}) 不可达(重试耗尽，将自动降级): {str(e)[:160]}")
+            logger.debug(_logf("chat_unreachable", api_model=api_model, error=str(e)[:160]))
             self._mark_host_broken(base_url)
         return None
 
@@ -889,7 +891,7 @@ class ModelGateway:
         各模型对单张图的像素面积有上限（如 Seedream 5.0 pro 约 462 万像素），而调用方按用途要的尺寸
         可能更大：被拒时按报错里的上限等比缩小重试一次，并记住该模型的上限，之后的请求直接按它出图。"""
         if self._is_host_broken(base_url):
-            logger.warning("[ModelGateway] image(%s) 跳过：%s 刚刚连接失败，暂不重试", api_model, base_url)
+            logger.warning(_log("image_skipped"), api_model, base_url)
             return None
         timeout = timeout or settings.env_float("IMAGE_REQUEST_TIMEOUT_SECONDS", IMAGE_REQUEST_TIMEOUT_SECONDS, minimum=30)
         try:
@@ -908,6 +910,7 @@ class ModelGateway:
             attempts = 2
             attempt = 0
             resized = False
+            redrawn = False
             rate_limited = 0
             while True:
                 try:
@@ -917,10 +920,7 @@ class ModelGateway:
                         # 分镜并行时会同时压上好几路：限流不算失败，等一会儿再问，免得整场分镜因一格被判失败。
                         rate_limited += 1
                         wait = rate_limit_wait(r.headers.get("Retry-After") if getattr(r, "headers", None) else None, rate_limited)
-                        logger.warning(
-                            "[ModelGateway] image(%s) 被限流 (429)，%.1f 秒后第 %d/%d 次重试",
-                            api_model, wait, rate_limited, RATE_LIMIT_RETRIES,
-                        )
+                        logger.warning(_log("image_rate_limited"), api_model, wait, rate_limited, RATE_LIMIT_RETRIES)
                         time.sleep(wait)
                         continue
                     if r.status_code == 200:
@@ -936,32 +936,33 @@ class ModelGateway:
                     if fitted and not resized:
                         resized = True
                         self._image_area_ceilings()[area_key] = ceiling
-                        logger.warning(
-                            "[ModelGateway] image(%s) 不接受尺寸 %s（上限 %s 像素），等比缩小为 %s 重试",
-                            api_model, payload.get("size"), ceiling, fitted,
-                        )
+                        logger.warning(_log("image_resized"), api_model, payload.get("size"), ceiling, fitted)
                         payload["size"] = fitted
                         continue
-                    logger.error(f"[ModelGateway] image({api_model}) 响应错误 {r.status_code}: {error_text[:200]}")
+                    refusal = next((code for code in _table("image_output_refusals") if code in error_text), "") if r.status_code == 400 else ""
+                    if refusal and not redrawn:
+                        # Moderation stopped the picture the model drew, not the request: the same request draws another
+                        # picture and often passes. Once only; a request refused for what it sent is not asked again.
+                        redrawn = True
+                        logger.warning(_log("image_output_refused"), api_model, refusal)
+                        continue
+                    logger.error(_logf("image_error", api_model=api_model, status=r.status_code, error_text=error_text[:200]))
                     return None
                 except requests.exceptions.ReadTimeout:
                     # 服务端已经在画：再发一次只会再等一轮、可能再扣一次费，也不说明主机不可达。
-                    logger.warning(
-                        "[ModelGateway] image(%s) 超过 %s 秒未返回，本次放弃(可调 IMAGE_REQUEST_TIMEOUT_SECONDS)",
-                        api_model, int(timeout),
-                    )
+                    logger.warning(_log("image_timeout"), api_model, int(timeout))
                     return None
                 except (requests.exceptions.SSLError, requests.exceptions.ConnectionError,
                         requests.exceptions.ConnectTimeout, requests.exceptions.ChunkedEncodingError) as e:
                     # 瞬时 TLS/连接抖动：退避重试一次即认输并熔断
                     if attempt < attempts - 1:
-                        logger.debug(f"[ModelGateway] image({api_model}) 瞬时网络抖动第{attempt+1}次重试: {str(e)[:90]}")
+                        logger.debug(_logf("image_retry", api_model=api_model, attempt=attempt + 1, error=str(e)[:90]))
                         time.sleep(min(2 * (attempt + 1), 4))
                         attempt += 1
                         continue
                     raise
         except Exception as e:
-            logger.warning(f"[ModelGateway] image({api_model}) 不可达: {type(e).__name__}: {str(e)[:160]}")
+            logger.warning(_logf("image_unreachable", api_model=api_model, error_type=type(e).__name__, error=str(e)[:160]))
             self._mark_host_broken(base_url)
         return None
 
@@ -1009,19 +1010,19 @@ class ModelGateway:
                     except (requests.exceptions.SSLError, requests.exceptions.ConnectionError,
                             requests.exceptions.Timeout, requests.exceptions.ChunkedEncodingError) as ce:
                         if attempt < 1:
-                            logger.debug(f"[ModelGateway] Agnes 视频创建瞬时抖动重试: {str(ce)[:90]}")
+                            logger.debug(_logf("agnes_create_retry", error=str(ce)[:90]))
                             time.sleep(2)
                             continue
                         raise
                 if r.status_code != 200:
-                    logger.debug(f"[ModelGateway] Agnes 视频创建未通过 {r.status_code}: {r.text[:200]}")
+                    logger.debug(_logf("agnes_create_refused", status=r.status_code, text=r.text[:200]))
                     return None
                 j = r.json()
                 task_id = j.get("task_id") or j.get("id")
                 if not task_id:
                     return None
                 self._note_host_ok(base_url)  # 创建成功=该域名可达，清零失败计数
-                logger.info(f"[ModelGateway] Agnes 视频任务已创建: {task_id}，开始轮询...")
+                logger.info(_logf("agnes_task_created", task_id=task_id))
                 waited = 0
                 interval = 6
                 while waited < max_wait:
@@ -1031,7 +1032,7 @@ class ModelGateway:
                         poll = requests.get(base + f"/video/generations/{task_id}", headers=headers, timeout=30, proxies=self._proxies_for(base_url), verify=self.tls_verify)
                         d = poll.json().get("data", {})
                     except Exception as pe:
-                        logger.debug(f"[ModelGateway] Agnes 视频轮询抖动(任务仍在生成中)，重试: {str(pe)[:120]}")
+                        logger.debug(_logf("agnes_poll_retry", error=str(pe)[:120]))
                         continue
                     inner = d.get("data", {}) if isinstance(d.get("data"), dict) else {}
                     top = str(d.get("status", "")).upper()
@@ -1040,24 +1041,24 @@ class ModelGateway:
                         url = self._extract_mp4(inner) or self._extract_mp4(d)
                         if url:
                             self._note_host_ok(base_url)
-                            logger.info(f"[ModelGateway] Agnes 视频生成成功: {url[:70]}...")
+                            logger.info(_logf("agnes_video_ok", url=url[:70]))
                             return url
-                        logger.error("[ModelGateway] Agnes 视频已完成但未找到 mp4 直链")
+                        logger.error(_log("agnes_no_mp4"))
                         return None
                     if top in ("FAILURE", "FAIL", "FAILED", "ERROR") or ist in ("failed", "error"):
                         reason = str(d.get('fail_reason') or inner.get('error') or "")
                         if gen_attempt < gen_attempts - 1:
                             # Agnes 偶发「Internal generation failed」等瞬时终态：整次重试，不放弃
-                            logger.info(f"[ModelGateway] Agnes 视频生成失败({reason[:50]})，整次重试 {gen_attempt + 2}/{gen_attempts}…")
+                            logger.info(_logf("agnes_retry_whole", reason=reason[:50], attempt=gen_attempt + 2, gen_attempts=gen_attempts))
                             break
-                        logger.error(f"[ModelGateway] Agnes 视频生成失败: {reason}")
+                        logger.error(_logf("agnes_failed", reason=reason))
                         return None
                 else:
                     # while 正常结束(未 break)=超时
-                    logger.debug(f"[ModelGateway] Agnes 视频生成超时 ({max_wait}s)")
+                    logger.debug(_logf("agnes_timeout", max_wait=max_wait))
                     return None
             except Exception as e:
-                logger.debug(f"[ModelGateway] Agnes 视频接口异常(将自动降级): {str(e)[:160]}")
+                logger.debug(_logf("agnes_unreachable", error=str(e)[:160]))
                 if isinstance(e, requests.exceptions.ConnectionError):  # SSL/连接失败=主机不可达；读超时(ReadTimeout)不算
                     # 仅熔断当前域名，避免连累其它可达厂商
                     self._mark_host_broken(base_url)
@@ -1072,7 +1073,7 @@ class ModelGateway:
 
         self._sd2_opt_prompt_cache = load_sd25_skill_bundle()
         if self._sd2_opt_prompt_cache:
-            logger.info("[ModelGateway] 已载入 sd25-pe + sd-2-5-prompt 集成规则")
+            logger.info(_log("sd25_loaded"))
         return self._sd2_opt_prompt_cache
 
     def optimize_video_prompt(self, raw_prompt: str, mode: str = "first_frame", asset_hint: str = "",
@@ -1094,12 +1095,7 @@ class ModelGateway:
             candidates.append((self.deepseek_key, self.deepseek_base_url, self.deepseek_model_name))
         if self._is_valid_key(self.agnes_key):
             candidates.append((self.agnes_key, self.agnes_base_url, self.agnes_model_name))
-        mode_hint = {
-            "first_frame": "图生视频-首帧 (已提供首帧图 @图片1)",
-            "first_last_frame": "图生视频-首尾帧 (已提供 @图片1 首帧、@图片2 尾帧)",
-            "text_to_video": "文生视频 (无参考素材)",
-            "multi_ref": "多模态参考生视频 (已提供多张参考图/视频/音频)",
-        }.get(mode, "图生视频-首帧")
+        mode_hint = _table("optimizer_mode_hints").get(mode, _table("optimizer_mode_hint_default"))
         from app.core.seedance_video_director import build_director_layer
 
         director = build_director_layer(
@@ -1110,51 +1106,77 @@ class ModelGateway:
         from app.core.slice_video import beat_count
 
         beats = beat_count(raw_prompt)
-        director_hint = (
-            f"- 目标模型为 Seedance 2.5，主模式已选定为「{director.primary_mode}」；按导演层该模式的蓝图组织正文，"
-            "导演层里的提问、导演方案与诊断输出模式一律不适用。\n"
-            if director.applied else ""
-        )
+        director_hint = _prompt("optimizer_director_hint", primary_mode=director.primary_mode) if director.applied else ""
         if director.applied:
-            logger.debug("[ModelGateway] Seedance 2.5 导演层已装载 (mode=%s, sections=%d, chars=%d)",
-                         director.primary_mode, len(director.sections), len(director.text))
+            logger.debug(_log("director_loaded"), director.primary_mode, len(director.sections), len(director.text))
         sys_prompt = (
-            sd2 + director_block + "\n\n## 当前调用约定\n"
-            f"- 任务模式：{mode_hint}。{asset_hint}\n"
-            + director_hint +
-            (
-                f"- 这是同一场戏连续 {beats} 个镜头的一段多镜头视频：逐个保留「【镜头k/{beats}｜…】」镜头块、顺序与衔接方式，"
-                "不得合并、删减或改写成单镜头；保持素材逐份职责、主体映射、每个镜头的起止状态与对白账本。\n"
-                if beats > 1 else
-                "- 这是单镜头、单一连续动作的简单视频；保持素材逐份职责、主体映射、事件开始/结束状态与对白账本。\n"
-            ) +
-            "- 画幅、总时长、分辨率、帧率和声音开关属于接口参数，不写入 Prompt。\n"
-            "- 直接只输出优化后提示词那一段工程化中文提示词正文本身，"
-            "不要输出优化问题/相关原则/任何标题/解释/Markdown，不要加引号或代码块。"
+            sd2 + director_block + _prompt("optimizer_task_mode", mode_hint=mode_hint, asset_hint=asset_hint)
+            + director_hint
+            + (_prompt("optimizer_multi_beat", beats=beats) if beats > 1 else _prompt("optimizer_single_beat"))
+            + _prompt("optimizer_closing")
         )
-        user_prompt = f"请按已加载的 Seedance 2.5 Prompt Optimizer 规则编译下面的视频提示词：\n{raw_prompt}"
+        user_prompt = _prompt("optimizer_user", raw_prompt=raw_prompt)
         for key, b_url, model_id in candidates:
             txt = self._http_chat(key, b_url, model_id, sys_prompt, user_prompt, timeout=40, deadline=80)
             if txt and txt.strip():
                 out = txt.strip().strip('`').strip()
-                out = re.sub(r'^(优化后提示词[:：]?|【优化后提示词】)\s*', '', out).strip()
+                out = re.sub(_table("optimizer_preamble"), '', out).strip()
                 if len(out) >= 8:
-                    logger.info(f"[ModelGateway] Seedance2 提示词已优化 ({len(raw_prompt)}->{len(out)}字)")
+                    logger.info(_logf("prompt_optimized", before=len(raw_prompt), after=len(out)))
                     return out
         return raw_prompt
 
     # Seedance 2.0 风格锚定：所有镜头强制写实电影质感，显式排除动画/卡通/插画/草图，
     # 既满足 Ark 对 text 内容必含 'style_caption' 的协议要求，又从风格层面杜绝"动画视频"。
-    DEFAULT_STYLE_CAPTION = (
-        "真实电影质感，实拍写真，photorealistic live-action cinematic film still, "
-        "real human skin texture, natural lighting, 35mm film grain, shallow depth of field; "
-        "绝非动画、绝非卡通、绝非3D渲染、绝非插画、绝非草图 (not anime, not cartoon, not 3d render, "
-        "not illustration, not sketch, not concept art)"
-    )
+    DEFAULT_STYLE_CAPTION = _prompt("default_style_caption")
 
     def last_video_failure(self) -> str:
         """本线程最近一次 generate_video 没出片的原因(供应商的拒单信息)；出片了就是空串。"""
         return str(getattr(_ark_notes, "last", "") or "")
+
+    def video_reference_model(self, model: str) -> str:
+        """The model whose reference limits a shot must keep to: the one that really renders it.
+
+        The configuration centre's model when it has one; without one a Seedance project is rendered by the
+        gateway's own Seedance (``seedance_model_name``), whatever version the project names. Mirrors
+        :meth:`video_clip_ceiling`.
+        """
+        from app.core.video_references import normalize_video_provider
+
+        effective = ModelGateway.effective_video_model(model)
+        own = str(getattr(self, "seedance_model_name", "") or "")
+        # The gateway's own name only counts when it is a Seedance video model (a configuration can put a
+        # Seedream image model there; its "limits" would be one picture).
+        if (runtime_model_registry.resolve(effective, "video") is None and normalize_video_provider(effective).family == "seedance"
+                and own and normalize_video_provider(own).family == "seedance"):
+            return own
+        return effective
+
+    @staticmethod
+    def _fit_ark_body(body: dict) -> dict:
+        """Keep an Ark request under its size limit (64 MB): first re-encode the inline reference pictures
+        smaller, then drop pictures from the end of the list (the lowest priority) until it fits."""
+        budget = int(_table("ark_body_budget_bytes"))
+
+        def size() -> int:
+            return len(json.dumps(body, ensure_ascii=False))
+
+        if size() <= budget:
+            return body
+        side, quality = int(_table("ark_shrink_side")), int(_table("ark_shrink_quality"))
+        for item in body["content"]:
+            if item.get("role") == "reference_image":
+                item["image_url"]["url"] = reference_fit.compact_image_reference(item["image_url"]["url"], max_side=side, quality=quality, force=True)
+        dropped = 0
+        while size() > budget:
+            last = max((index for index, item in enumerate(body["content"]) if item.get("role") == "reference_image"), default=None)
+            if last is None:
+                break
+            body["content"].pop(last)
+            dropped += 1
+        if dropped:
+            logger.warning(_log("ark_body_trimmed"), dropped, size(), budget)
+        return body
 
     def video_clip_ceiling(self, model: str) -> int:
         """一次视频请求实际能拿到的最长秒数，按真正出片的型号算。
@@ -1210,22 +1232,28 @@ class ModelGateway:
                 content.append({"type": "image_url", "image_url": {"url": first_frame}, "role": "first_frame"})
             if last_frame:
                 content.append({"type": "image_url", "image_url": {"url": last_frame}, "role": "last_frame"})
-            # 多模态参考素材 (参考图 0-9 / 参考视频 0-3 / 参考音频 0-3)
-            for u in (ref_images or [])[:MAX_REFERENCE_IMAGES]:
+            # 多模态参考素材：每个型号收的数量不同(2.0 图9/视频3/音频3，2.5 图30/视频10/音频10，2.5 flash 10/5/5)
+            caps = caps_of(model_name or self.seedance_model_name)
+            for u in (ref_images or [])[:caps.images]:
                 content.append({"type": "image_url", "image_url": {"url": u}, "role": "reference_image"})
-            for u in (ref_videos or [])[:MAX_REFERENCE_VIDEOS]:
+            for u in (ref_videos or [])[:caps.videos]:
                 content.append({"type": "video_url", "video_url": {"url": u}, "role": "reference_video"})
-            for u in (ref_audios or [])[:MAX_REFERENCE_AUDIOS]:
+            for u in (ref_audios or [])[:caps.audios]:
                 content.append({"type": "audio_url", "audio_url": {"url": u}, "role": "reference_audio"})
             # Seedance 2.0 顶层参数：分辨率/时长/比例为独立字段；成片不打可见水印
             body = {
                 "model": model_name or self.seedance_model_name,
                 "content": content,
-                "resolution": resolution or os.getenv("SEEDANCE_VIDEO_RESOLUTION") or SEEDANCE_DEFAULT_RESOLUTION,
+                "resolution": resolution or _wanted_video_resolution("SEEDANCE_VIDEO_RESOLUTION", SEEDANCE_DEFAULT_RESOLUTION),
                 "duration": self.ark_clip_seconds(model_name, duration),
                 "ratio": ratio or os.getenv("VIDEO_ASPECT_RATIO") or DEFAULT_ASPECT_RATIO,
                 "watermark": False,
             }
+            # 首帧 / 首尾帧生成时画幅跟首帧图走：Seedance 2.5 见到 ratio 字段直接 400
+            # (InvalidParameter.TaskTypeConstraint)，不收费也不出片，所以这两种请求不带 ratio。
+            if first_frame or last_frame:
+                body.pop("ratio")
+            body = self._fit_ark_body(body)
             proxies = self._proxies_for(base_url)
             # 创建任务对瞬时 TLS/连接抖动退避重试(本机到 Ark 的 TLS 会间歇性被重置)，耗尽才上抛熔断
             r = None
@@ -1236,8 +1264,13 @@ class ModelGateway:
                     break
                 except (requests.exceptions.SSLError, requests.exceptions.ConnectionError,
                         requests.exceptions.Timeout, requests.exceptions.ChunkedEncodingError) as ce:
+                    # 请求可能已经被方舟收下(读超时、回包读到一半断了)：再发一次就是同一镜付两次钱。只有确定没发出去的才重试。
+                    if video_jobs.maybe_accepted(ce):
+                        _ark_notes.last = _says("ark_maybe_accepted")
+                        logger.warning(_log("ark_maybe_accepted"), type(ce).__name__)
+                        return None
                     if attempt < create_attempts - 1:
-                        logger.debug(f"[ModelGateway] Ark 视频创建瞬时抖动第{attempt+1}次重试: {str(ce)[:90]}")
+                        logger.debug(_logf("ark_create_retry", attempt=attempt + 1, error=str(ce)[:90]))
                         time.sleep(min(2 * (attempt + 1), 4))
                         continue
                     raise
@@ -1245,25 +1278,29 @@ class ModelGateway:
                 # 任何创建失败(含内容风控 400)返回 None，由上层降级；但原因必须看得见：
                 # 之前只记 debug，图生视频整批被拒(参考图比例越界)时日志里只剩一句「暂不可用」。
                 _ark_notes.last = _ark_rejection(r)
-                logger.warning("[ModelGateway] Ark 视频创建被拒(%s 张图): %s", sum(1 for item in content if item["type"] == "image_url"), _ark_notes.last)
+                logger.warning(_log("ark_create_refused"), sum(1 for item in content if item["type"] == "image_url"), _ark_notes.last)
                 return None
             task_id = r.json().get("id")
             if not task_id:
                 return None
-            logger.info(f"[ModelGateway] Ark 视频任务已创建: {task_id} (ratio={ratio}, {resolution}, {duration}s)，开始轮询...")
+            logger.info(_logf("ark_task_created", task_id=task_id, ratio=ratio, resolution=resolution, duration=duration))
             # The job exists and is being paid for from here on: remember it before polling.
             video_jobs.note_submitted("seedance", str(task_id), model=str(body["model"]), endpoint=base_url)
+            _ark_notes.wait_timed_out = False
             url = self._ark_wait(api_key, base_url, str(task_id), max_wait)
             if url:
                 video_jobs.note_finished(str(task_id), url)
+            elif getattr(_ark_notes, "wait_timed_out", False):
+                # 等不到不等于没出片：任务还在方舟上跑、照样计费。留着「已提交」，下次按任务号去取，不重新提交。
+                _ark_notes.last = _says("ark_wait_timed_out", task_id=task_id)
             else:
                 video_jobs.note_failed(str(task_id), "ark task did not yield a video")
                 if not getattr(_ark_notes, "last", ""):
-                    _ark_notes.last = f"Ark 任务 {task_id} 未出片(超时或轮询失败)"
+                    _ark_notes.last = _says("ark_no_video", task_id=task_id)
             return url
         except Exception as e:
-            _ark_notes.last = f"Ark 视频接口不可达: {type(e).__name__}: {str(e)[:160]}"
-            logger.debug(f"[ModelGateway] Ark 视频接口不可达(将自动降级): {str(e)[:160]}")
+            _ark_notes.last = _says("ark_unreachable", error_type=type(e).__name__, error=str(e)[:160])
+            logger.debug(_logf("ark_unreachable", error=str(e)[:160]))
             if isinstance(e, requests.exceptions.ConnectionError):  # SSL/连接失败=主机不可达；读超时(ReadTimeout)不算
                 # 仅熔断 Ark 这一个域名，不影响其它厂商
                 self._mark_host_broken(base_url)
@@ -1287,9 +1324,9 @@ class ModelGateway:
             except Exception as pe:
                 # 轮询抖动：任务正在服务端生成，稍后重试；连续多次才认输，且不调用 _mark_host_broken (创建已证明可达)
                 poll_errs += 1
-                logger.debug(f"[ModelGateway] Ark 轮询抖动第 {poll_errs} 次(任务 {task_id} 仍在生成中)，重试: {str(pe)[:90]}")
+                logger.debug(_logf("ark_poll_retry", poll_errs=poll_errs, task_id=task_id, error=str(pe)[:90]))
                 if poll_errs >= 15:
-                    logger.error(f"[ModelGateway] Ark 轮询连续 {poll_errs} 次失败，放弃任务 {task_id}")
+                    logger.error(_logf("ark_poll_gave_up", poll_errs=poll_errs, task_id=task_id))
                     return None
                 continue
             poll_errs = 0
@@ -1298,17 +1335,18 @@ class ModelGateway:
                 url = (poll.get("content", {}) or {}).get("video_url") or self._extract_mp4(poll)
                 if url:
                     self._note_host_ok(base_url)
-                    logger.info(f"[ModelGateway] Ark 视频生成成功: {url[:70]}...")
+                    logger.info(_logf("ark_video_ok", url=url[:70]))
                     return url
-                logger.error(f"[ModelGateway] Ark 视频成功但无 video_url: {str(poll)[:200]}")
+                logger.error(_logf("ark_no_video_url", poll=str(poll)[:200]))
                 return None
             if status in ("failed", "canceled", "cancelled", "error"):
                 err_msg = str(poll.get("error") or poll.get("message") or "")
                 # 失败返回 None，由上层降级；原因记成 warning，便于看出是审核、超时还是参数问题。
-                _ark_notes.last = f"任务 {task_id} {status}: {err_msg[:200]}"
-                logger.warning(f"[ModelGateway] Ark 视频生成未通过: {_ark_notes.last}")
+                _ark_notes.last = _says("ark_task_ended", task_id=task_id, status=status, error=err_msg[:200])
+                logger.warning(_logf("ark_task_refused", note=_ark_notes.last))
                 return None
-        logger.debug(f"[ModelGateway] Ark 视频生成超时 ({max_wait}s)")
+        logger.debug(_logf("ark_timeout", max_wait=max_wait))
+        _ark_notes.wait_timed_out = True
         return None
 
     def resume_video_job(self, job: Mapping[str, object]) -> str | None:
@@ -1359,12 +1397,12 @@ class ModelGateway:
         import hashlib
         h = int(hashlib.md5(title.encode('utf-8')).hexdigest(), 16)
         
-        surnames = ["叶", "林", "顾", "苏", "萧", "沈", "陆", "周", "云", "楚", "姜", "秦", "白", "慕容", "上官", "司徒"]
-        names = ["凡", "野", "溪", "舒", "渊", "雨", "尘", "风", "逸", "羽", "寒", "月", "澜", "天", "歌", "痕"]
-        
-        v_surnames = ["王", "赵", "李", "张", "高", "年", "金", "钱", "孙", "郑", "何", "黄"]
-        v_names = ["天华", "霸天", "建国", "大少", "梅", "贵妃", "无赖", "强", "成", "雄", "彪", "龙"]
-        
+        surnames = _table("hero_surnames")
+        names = _table("hero_names")
+
+        v_surnames = _table("villain_surnames")
+        v_names = _table("villain_names")
+
         if is_villain:
             s = v_surnames[h % len(v_surnames)]
             n = v_names[(h // len(v_surnames)) % len(v_names)]
@@ -1378,67 +1416,54 @@ class ModelGateway:
         核心辅助方法：从用户的选题和对话指引中完全动态提取主角、对手与环境要素，杜绝硬编码角色库
         """
         # 1. 动态生成初始原创名字与场景，彻底避免硬编码
+        defaults = _table("story_defaults")
         char1 = self.generate_random_name(title, is_villain=False)
-        char1_role = "核心主角"
+        char1_role = defaults["char1_role"]
         char2 = self.generate_random_name(title, is_villain=True)
-        char2_role = "反派对手"
-        location = "签字大厅"
-        action = "绝地反击"
-        
+        char2_role = defaults["char2_role"]
+        location = defaults["location"]
+        action = defaults["action"]
+
         # 根据大类题材对场景和动作进行大方向自适应，但名字全部保留为原创哈希名
         genre = self.get_genre(title)
-        if genre == "romance":
-            location = "千亿签字大厅"
-        elif genre == "rebirth_revenge":
-            location = "豪门签约会展"
-        elif genre == "campus":
-            location = "雨后学校操场"
-        elif genre == "xianxia":
-            location = "仙宗锁仙台"
-        elif genre == "palace_intrigue":
-            location = "雪落冷宫庭院"
-        elif genre == "horror":
-            location = "昏暗扎纸铺"
-        elif genre == "sci_fi":
-            location = "赛博回收工厂"
-        elif genre == "overseas_us":
-            location = "月圆之夜的古堡"
+        location = _table("story_locations").get(genre, location)
 
         # 2. 从标题中提取真实人名或名词
         # 匹配双引号、书名号或者标题中的词
-        title_cleaned = re.sub(r'请帮我生成一个|请生成一个|短剧|，走完流程。|走完整个流程。', '', title)
-        
+        title_cleaned = re.sub(_table("story_title_noise"), '', title)
+
         # 提取第一个实体作为主角，第二个作为对手，地点等
         # 比如：“老王在火星修脚” -> char1="老王", location="火星修脚铺"
-        if "在" in title_cleaned:
-            parts = title_cleaned.split("在")
+        split = _table("story_split")
+        if split["at"] in title_cleaned:
+            parts = title_cleaned.split(split["at"])
             if len(parts[0]) >= 2:
                 char1 = parts[0][:5].strip()
-            if len(parts) > 1 and "做" in parts[1]:
-                subparts = parts[1].split("做")
+            if len(parts) > 1 and split["doing"] in parts[1]:
+                subparts = parts[1].split(split["doing"])
                 location = subparts[0].strip()
                 action = subparts[1].strip()
             elif len(parts) > 1:
                 location = parts[1][:10].strip()
-        elif "之" in title_cleaned:
-            parts = title_cleaned.split("之")
+        elif split["of"] in title_cleaned:
+            parts = title_cleaned.split(split["of"])
             if len(parts) > 1:
-                char1_match = re.search(r'我(?:是|在)([\u4e00-\u9fa5\w]+)', parts[0])
+                char1_match = re.search(_table("story_protagonist_after_of"), parts[0])
                 if char1_match:
                     char1 = char1_match.group(1)[:5]
                 action = parts[1][:10].strip()
 
         # 3. 对话指引微调重命名或修改指令解析 (例如“把主角改名叫阿星”、“反派改成王梅”)
         if instruction:
-            rename_match1 = re.search(r'(?:把主角|将主角|主角)(?:改名(?:叫|为)|改为|换成|叫做|是)\s*([\u4e00-\u9fa5\w]+)', instruction)
+            rename_match1 = re.search(_table("story_rename_protagonist"), instruction)
             if rename_match1:
                 char1 = rename_match1.group(1).strip()
-            
-            rename_match2 = re.search(r'(?:把反派|将反派|把对手|对手|反派)(?:改名(?:叫|为)|改为|换成|叫做|是)\s*([\u4e00-\u9fa5\w]+)', instruction)
+
+            rename_match2 = re.search(_table("story_rename_antagonist"), instruction)
             if rename_match2:
                 char2 = rename_match2.group(1).strip()
 
-            location_match = re.search(r'(?:把场景|将场景|场景|把环境|环境)(?:改(?:为|成)|换成|设定为)\s*([\u4e00-\u9fa5\w]+)', instruction)
+            location_match = re.search(_table("story_rename_location"), instruction)
             if location_match:
                 location = location_match.group(1).strip()
 
@@ -1461,15 +1486,12 @@ class ModelGateway:
             return text
         t = text.lstrip()
         # 1) 先剥掉开头的问候/客套词 (你好/好的/当然…)
-        t = re.sub(r'^\s*(?:你好|您好|嗨|哈喽|hi|hello|hey|好的|当然|没问题|收到|明白|很高兴)'
-                   r'[!！,，.。、\s]*', '', t, flags=re.I).lstrip()
+        t = re.sub(_table("preamble_greeting"), '', t, flags=re.I).lstrip()
         # 2) 逐句剥离开头的"自我介绍/寒暄"句：句中含模型身份或"为您…"客套标记才删，
         #    遇到真正正文(markdown 标题/无寒暄标记的句子)立即停止，绝不误删正文。
-        CHATTER = ('我是', '我叫', 'agnes', 'sapiens', '智能体', '大模型', '语言模型',
-                   '我将为', '我会为', '我来为', '我将基于', '为您拆解', '为您打造', '为您创作',
-                   '为您生成', '为您呈现', '为您带来', '很荣幸', 'developed by', 'created by', 'i am ')
+        CHATTER = tuple(_table("preamble_chatter"))
         for _ in range(6):
-            m = re.match(r'\s*([^。！？\n#]{0,200}?[。！？!?])\s*', t)
+            m = re.match(_table("preamble_sentence"), t)
             if not m:
                 break
             sent = m.group(1).lower()
@@ -1497,10 +1519,7 @@ class ModelGateway:
         # 组装用户内容 (含对话微调指引)
         full_user_content = user_prompt
         if user_instruction:
-            full_user_content += (
-                f"\n\n【用户最新对话修改/微调指引】：\n{user_instruction}\n"
-                f"请严格根据上文已生成的资产和这一最新指引对后续内容进行修改或重构，并确保符合所有编剧导演法则（无心理描写红线、双轨节奏等）。"
-            )
+            full_user_content += _prompt("user_instruction", user_instruction=user_instruction)
 
         # 数据库里启用的动态模型优先。模型 ID、Base URL 和解密密钥均来自
         # 运行时注册表，生产代码不维护供应商的远端模型清单。
@@ -1516,10 +1535,7 @@ class ModelGateway:
             # on a stale key for minutes and then wrote the offline template into the project.
             selected = runtime_model_registry.first_for_category("text")
             if selected is not None:
-                logger.warning(
-                    "[ModelGateway] 文本模型 %s 未在模型配置中心启用，改用全局选择的 %s (provider=%s)",
-                    model, selected.model_ids[0], selected.provider,
-                )
+                logger.warning(_log("text_model_switched"), model, selected.model_ids[0], selected.provider)
                 runtime, model = selected, selected.model_ids[0]
         if runtime:
             self._thread_state.last_finish = None
@@ -1527,11 +1543,7 @@ class ModelGateway:
                 key, runtime.base_url, model, system_prompt, full_user_content, max_tokens=max_tokens,
             ))
             if text:
-                logger.info(
-                    "[ModelGateway] 动态文本模型生成成功 (provider=%s, model=%s)",
-                    runtime.provider,
-                    model,
-                )
+                logger.info(_log("runtime_text_ok"), runtime.provider, model)
                 return self._strip_model_preamble(text)
             if getattr(self._thread_state, "last_finish", None) == "length":
                 # The configured model answered but spent the whole budget thinking. Another provider
@@ -1557,10 +1569,10 @@ class ModelGateway:
             text = self._http_chat(key, b_url, api_model, system_prompt, full_user_content, max_tokens=max_tokens)
             if text:
                 text = self._strip_model_preamble(text)
-                logger.info(f"[ModelGateway] 文本生成成功 (provider={name}, model={api_model})")
+                logger.info(_logf("text_ok", name=name, api_model=api_model))
                 return text
 
-        logger.warning("[ModelGateway] 所有在线文本 provider 均不可用，平滑退回离线引擎")
+        logger.warning(_log("text_offline"))
         self._thread_state.offline_answer = True
 
         # 2. 离线模式：全动态、不需要预先设置模板的智能故事生成算法
@@ -1571,163 +1583,81 @@ class ModelGateway:
         location = ctx["location"]
         
         # 确定导演风格光影修饰词
-        if director_style == "cyberpunk":
-            lighting = "霓虹冷色频闪，高对比度明暗 Chiaroscuro 对峙，冷蓝色温与猩红色温对撞"
-            visual_term = "赛博朋克深冷调 (Deep Cyan & Neon Red)"
-        elif director_style == "retro":
-            lighting = "伦勃朗光 (Rembrandt Lighting) 脸颊亮区，黄金时刻逆光 (Golden hour backlight)，暖黄色调"
-            visual_term = "怀旧胶片风格 (Golden Warm Film Style)"
-        elif director_style == "sci_fi_future":
-            lighting = "冷金属硬质反光，幽蓝色全息投影微光，超高色温冷白强背光"
-            visual_term = "科幻未来极冷调 (Sci-Fi Holographic Style)"
-        elif director_style == "palace":
-            lighting = "红墙黛瓦古典自然散射光，金色屋脊漫反射，深红与暗金暖色调"
-            visual_term = "古风宫廷优雅调 (Traditional Palace Style)"
-        elif director_style == "mystery_dark":
-            lighting = "极端弱光与大面积黑影，局部蜡烛微弱暖光，剪影明暗对峙"
-            visual_term = "悬疑黑色电影调 (Dark Film Noir Style)"
-        elif director_style == "anime":
-            lighting = "明亮动漫自然天光，高饱和色彩漫反射，梦幻丁达尔边缘光"
-            visual_term = "动漫二次元色彩调 (Niji Anime Style)"
-        elif director_style == "horror_folk":
-            lighting = "民俗高饱和红绿高对比冷光频闪，香烛惨白冷光，诡异阴沉黑调"
-            visual_term = "民俗惊悚诡秘调 (Folk Horror Tone)"
-        else:
-            lighting = "丁达尔效应/体积光 (Tyndall Effect)，金属玻璃硬质反光，自然光照"
-            visual_term = "大片级写实硬核调 (Cinematic Reality Style)"
-
+        style = _table("offline_styles").get(director_style, _table("offline_style_default"))
+        lighting = style["lighting"]
+        visual_term = style["visual_term"]
 
         # 随机挑选运镜、站位、构图
         blocking = self.BLOCKING_STANDS[0] if shot_style != "cinematic" else random.choice(self.BLOCKING_STANDS)
         comp_1 = random.choice(self.COMPOSITIONS)
         comp_2 = random.choice(self.COMPOSITIONS)
-        
-        shot_1_mov = "Extreme Close-up Dolly" if shot_style == "cinematic" else "Slow Dolly In"
-        shot_3_mov = "Dolly Zoom" if shot_style == "cinematic" else "Lateral Tracking"
+
+        moves = _table("offline_shot_moves")
+        shot_1_mov = moves["first"]["cinematic"] if shot_style == "cinematic" else moves["first"]["other"]
+        shot_3_mov = moves["third"]["cinematic"] if shot_style == "cinematic" else moves["third"]["other"]
 
         genre = self.get_genre(creative_title)
-        genre_desc = f"{genre}类型热播短剧，主要面向抖音快手及视频号受众，强调高对比冲突与反差"
-        
-        # 动态对白配音文本，包含模式打破 (Pattern Interrupt) 元素
-        speech_char2 = "你不过是个无权无势的底层小人物，也配站在这里？！"
-        speech_char1 = "睁大眼看清楚，这才是我的底牌！今日，属于我的一切我都会拿回来！"
-        
-        # 根据题材匹配特定台词与语调
-        if genre == "xianxia":
-            speech_char2 = "萧凡，你已全身筋脉尽碎，交出魔骨，仙门容不得你！"
-            speech_char1 = "清虚老儿！你们道貌岸然剥我仙骨，今日我便一剑踏平你这仙山！"
-        elif genre == "romance":
-            speech_char2 = "顾安然，你只是个被扫地出门的养女，这设计稿你不配署名！"
-            speech_char1 = "陆霆骁是我的底气，但没有他，我也能让你们身败名裂！"
-        elif genre == "horror":
-            speech_char2 = "林九，半夜扎纸铺不迎活客？今天我就砸了你这纸人店！"
-            speech_char1 = "人有归路，鬼有黄泉。赵虎，这副大木黑漆棺，是留给你的！"
+        genre_desc = _prompt("offline_genre_desc", genre=genre)
+
+        # 动态对白配音文本，包含模式打破 (Pattern Interrupt) 元素；按题材匹配特定台词与语调
+        speech = _table("offline_speech").get(genre, _table("offline_speech_default"))
+        speech_char2 = speech["char2"]
+        speech_char1 = speech["char1"]
 
         # 针对不同智能体阶段，返回纯动态的生成结果
-        if "编剧" in system_prompt or "writer-agent" in system_prompt:
-            return f"""【场景1：{location}入口 / 日 / 高对比度 {lighting}】
-情节节奏：紧 ；情感节奏：重 ；预估时长：35秒
+        markers = _table("offline_markers")
 
-描述：{char1}独自站立在{location}门口，细雨落在他肩膀的深色风衣上。
-{char2}带着手下在一旁高调拦路，手里抓着撕成两半的公文，随手甩在{char1}脚边。
-{char2}斜眼冷笑，满面不屑。
-{char1}一言不发，神色平静，右指捏紧了风衣衣角，毫无退意。
-对白：
-{char2}：{speech_char2}
-环境空间 Blocking 调度：采用了 **{blocking}** 与 **{comp_1}**。
+        def asks(role: str) -> bool:
+            return any(marker in system_prompt for marker in markers[role])
 
-【场景2：{location}会场内 / 日 / {visual_term}】
-情节节奏：松 ；情感节奏：轻 ；预估时长：45秒
+        if asks("writer"):
+            return _prompt(
+                "offline_writer", location=location, lighting=lighting, char1=char1, char2=char2,
+                speech_char2=speech_char2, blocking=blocking, comp_1=comp_1, visual_term=visual_term,
+                speech_char1=speech_char1, comp_2=comp_2,
+            )
 
-描述：{char1}在大厅内慢步前行，环视四周。
-台下突然发生骚动，背景大屏幕开始闪烁红色的安全警报，显示出关键反转数据。
-{char2}脸色突然由狂妄转为浮肿的惨白，穿着高跟鞋连连倒退两步，撞翻了身后的水晶酒杯。
-{char1}淡淡看着对方，嘴角勾起一丝冷峻的弧度。
+        elif asks("executive"):
+            return _prompt("offline_executive", genre_desc=genre_desc, char1=char1, char2=char2, location=location)
 
-【场景3：{location}台前 / 日 / 聚光灯汇聚】
-情节节奏：紧 ；情感节奏：重 ；预估时长：40秒
-
-描述：{char1}拿出一枚金色质感的修罗令（或核心文件），用力按在演讲台上。
-大理石台面瞬间震落了杯盏，全场保全人员齐刷刷向{char1}低头行礼。
-{char2}软瘫在碎玻璃渣中，手指止不住地颤抖。
-{char1}站在高高的石阶上，俯视着瘫倒的对手，神色如铁石一般坚冷。
-对白：
-{char1}：{speech_char1}
-环境空间 Blocking 调度：采用了 **{comp_2}**。"""
-
-        elif "总导演" in system_prompt or "executive-director" in system_prompt:
-            return f"""### 核心卖点
-- 题材与目标平台：{genre_desc}
-- 核心爽点/虐点/笑点：底层绝地逆袭，揭穿对手虚伪面具，实力悬殊下的翻盘
-- 前 2 秒 Hook 定位：【Pattern Interrupt 模式打破】民政局/发布会门口，十辆黑金劳斯莱斯车队死死围住大门，雨水在半空中发生倒流
-
-### 结构大纲
-- 核心冲突：{char1}被{char2}强行剥夺地位与资产，{char1}在关键签字会场逆天打脸，唤醒沉眠背景夺回主控权
-- 三幕结构：
-  - 开端：{location}入口冲突爆发，{char1}被肆意羞辱，前2秒流量钩子触发
-  - 发展：{location}大厅博弈，警报红灯大作，底牌线索悄然铺垫
-  - 高潮：{char1}扔出终极物证（修罗令/遗诏/加密数据），全场保全倒戈，{char2}瘫软倒地
-  - 结局：{char1}功成身退，背影融入黑伞与大雨，留给江州一个无声的传说"""
-
-        elif "角色设计师" in system_prompt or "character-designer" in system_prompt:
+        elif asks("character"):
             # 响应“看板展示大厅 无需预先设置任何 角色构建”
             # 直接返回全动态的 Markdown 角色设计文本，无需任何硬编码的“主角”和“反派”区分框
-            return f"""### 角色造型与五维 DNA 锁定方案
+            return _prompt("offline_character", char1=char1, char2=char2)
 
-#### 👨‍🎤 核心角色：{char1} (执行逆袭的主体)
-- **面部**：剑眉星目，左眼下方有一颗不易察觉的泪痣，`consistent facial structure`，`locked face identity`。
-- **发型**：干练利落的黑色碎发，略带一点凌乱，保持跨镜头发型一致。
-- **体型**：九头身，体型偏瘦，身高180cm，在风雨中身姿依然坚挺拔。
-- **服饰**：身穿经典款黑色长风衣，里面搭配一件净白 T 恤，左手食指戴单枚素银戒指。
-- **表情眼神**：眼神冷峻深邃，嘴角常挂着一抹看似克制而冷漠的微笑。
-
-#### 🦹 对手角色：{char2} (阻碍力量的化身)
-- **面部**：颧骨突出，双眼狭长，眼神中闪烁着傲慢与隐约的癫狂。
-- **发型**：打理得一丝不苟的油光背头，发丝紧贴，泛着冰冷的胶水质感。
-- **体型**：身材发福，神色傲慢，走起路来带有习惯性的居高临下感。
-- **服饰**：配戴奢华大金链与名贵腕表，身穿一套灰色奢华条纹西装，歪系着领带。
-- **表情眼神**：表情浮肿，经常斜视主角，咬牙切齿时两颊肌肉明显抽搐。"""
-
-        elif "分镜师" in system_prompt or "storyboard-artist" in system_prompt:
+        elif asks("storyboard"):
             # 返回标准的 9 列 Markdown 分镜表，完全动态且符合 shooting-guide 15s 节奏
-            return f"""镜号 | 景别 | 机位角度 | 运镜 | 画面内容 | 台词对白 | 声音 | 时长 | 叙事目的
-1 | 全景 | 平视 | Establishing Shot | {char1}撑伞站在{location}入口，大雨滂沱打湿衣角。 | | 风雨声与凄凉古风琴声 | 3秒 | 交代场景与整体氛围，建立开端
-2 | 中景 | 仰视 | {shot_1_mov} | {char2}指着{char1}的鼻子肆意嘲讽，保镖在身侧列队合围。 | “{speech_char2}” | 嘈杂雨声与反派狂笑 | 6秒 | 引入冲突，展示角色站位与阻碍力量
-3 | 近景 | 俯视 | {shot_3_mov} | {char1}猛地一扬手扔出金色令徽，{char2}惊恐倒退撞翻酒架。 | “{speech_char1}” | 震撼雷鸣声，摇滚重低音BGM瞬间起燃 | 6秒 | 动作高潮与正义翻盘，动作收尾留悬念"""
+            return _prompt(
+                "offline_storyboard", char1=char1, char2=char2, location=location, shot_1_mov=shot_1_mov,
+                shot_3_mov=shot_3_mov, speech_char1=speech_char1, speech_char2=speech_char2,
+            )
 
-        elif "宣发" in system_prompt or "pr-agent" in system_prompt:
+        elif asks("pr"):
             # 宣发引流文本
-            pr_title = f"{creative_title}：隐藏大佬的暴爽翻盘！"
-            pr_body = "太爽了！前妻/恶毒总监当众撕毁签字合同，逼迫主角净身出户！殊不知主角就是身家千亿的龙王/总裁，一通电话全省财阀大雨中跪迎！逆袭风暴点爆全场，点击免费看全集！💥"
-            
-            if genre == "xianxia":
-                pr_title = "《仙骨已碎，剑开天门！》"
-                pr_body = "虚伪仙尊强挖去我的魔骨给义子？他没想到我竟然唤醒了体内的九幽魔皇元神，当着全天下宗门弟子的面一剑震碎仙山！热血仙侠狂暴反扑！点击免费看大结局！"
-            elif genre == "horror":
-                pr_title = "《深夜纸人抬棺：民俗禁忌起！》"
-                pr_body = "深夜恶霸强行抢夺扎纸铺的玉佛，少掌柜默默摇动三清铜铃，满屋纸扎童男童女瞬间走下货架列队抬棺！惊悚重重，点击免费看爆爽灵异大戏！💥"
-                
-            return f"""【封面大字PR标题】
-🔥 《{pr_title}》
+            pr_title = _prompt("offline_pr_title", creative_title=creative_title)
+            pr_body = _prompt("offline_pr_body")
+            by_genre = _table("offline_pr_by_genre").get(genre)
+            if by_genre:
+                pr_title = by_genre["title"]
+                pr_body = by_genre["body"]
 
-【黄金引流文案】
-📌 ‘{pr_body}’"""
+            return _prompt("offline_pr", pr_title=pr_title, pr_body=pr_body)
 
-        return "*(AI 智能内容生成完成)*"
+        return _prompt("offline_done")
 
     # 全局强制负面词(负面提示词指南「终极统一负面提示词」一节)在提示词里的标签：
     # 追加一次、可识别、可剥离——Agnes 清洗会截断长提示词，先剥掉再清洗再补回，词表不会被截半。
-    GLOBAL_NEGATIVE_LABEL = "【全局负面】"
+    GLOBAL_NEGATIVE_LABEL = _prompt("global_negative_label")
 
     @classmethod
-    def _with_global_negatives(cls, prompt: str, medium: str) -> str:
+    def _with_global_negatives(cls, prompt: str, medium: str, skip: tuple[str, ...] = ()) -> str:
         """给一条生成提示词追加全局负面词(``medium``: ``"video"`` 全量 / ``"image"`` 单帧子集)。
 
-        幂等：已经带了标签就原样返回。指南缺失时词表为空，提示词不变。
+        幂等：已经带了标签就原样返回。指南缺失时词表为空，提示词不变。``skip``：含这些词的几条不带。
         """
         if not prompt or cls.GLOBAL_NEGATIVE_LABEL in prompt:
             return prompt
-        terms = production_knowledge.global_negative_text(medium)
+        terms = production_knowledge.global_negative_text(medium, skip)
         if not terms:
             return prompt
         return f"{prompt.rstrip()}\n{cls.GLOBAL_NEGATIVE_LABEL}{terms}"
@@ -1741,9 +1671,11 @@ class ModelGateway:
 
     @classmethod
     def _agnes_prompt(cls, prompt: str, medium: str) -> str:
-        """Agnes/Gemini 用的提示词：先剥离全局负面词再清洗截断，最后把完整词表补回末尾。"""
+        """Agnes/Gemini 用的提示词：先剥离全局负面词再清洗截断，最后把词表补回末尾——含 Agnes 审核触发词的那几条
+        (「面部漂移换脸」这类)不补，补回去的这一行不再经过清洗。"""
         return cls._with_global_negatives(
-            cls._sanitize_prompt_for_agnes(cls._strip_global_negatives(prompt)), medium
+            cls._sanitize_prompt_for_agnes(cls._strip_global_negatives(prompt)), medium,
+            tuple(_table("agnes_trigger_words")),
         )
 
     @staticmethod
@@ -1753,23 +1685,24 @@ class ModelGateway:
         括号负面约束块与触发词，只保留正向写实描述，确保 Agnes 文生图/图生视频不被拒。"""
         p = prompt or ""
         # 每格分镜的开头都是参考图说明：这条线路下面只留 600 字，不先去掉就轮不到本格的动作。
-        if "【落笔】" in p and "不是概念图。" in p:
-            p = p.split("不是概念图。", 1)[1].split("【收边】", 1)[0]
+        panel = _table("agnes_panel_markers")
+        if panel["opening"] in p and panel["after"] in p:
+            p = p.split(panel["after"], 1)[1].split(panel["closing"], 1)[0]
         # 去掉成对括号(中/英)内的负面约束/DEID 说明，最多三层嵌套
         for _ in range(3):
-            p = re.sub(r'[（(][^（()）]*[)）]', '', p)
+            p = re.sub(_table("agnes_brackets"), '', p)
         # 删除以 避免/严禁/不要 等引导、直到句末的负面从句
-        p = re.sub(r'(避免|严禁|不要|不得|杜绝)[^。.;；\n]*[。.;；\n]?', '', p)
-        # 删除已知触发内容审核的词 (DEID 身份词 / 身体畸变词 / 戏剧暴力与冲突词)
-        for kw in ["换脸", "脸部变形", "手部畸形", "多余手指", "passport photo", "headshot",
-                   "not a real person", "not a real celebrity", "真实名人", "可识别的个人身份",
-                   "血泊", "血", "尸体", "暴力", "gore", "blood", "打脸", "渣男", "复仇", "报仇",
-                   "癫狂", "羞辱", "厮杀", "杀", "死", "尸", "拳", "踹", "扇", "撕"]:
+        p = re.sub(_table("agnes_negative_clause"), '', p)
+        # 血、杀、伤口、尸体先换成拍得出的说法(打戏不因此断句)；拳、踹、扇、撕这类打击词不是违规词，不删。
+        p = fight_safety.soften(p)
+        # 删除已知触发内容审核的词 (DEID 身份词 / 身体畸变词 / 戏剧冲突词)，以及换完还剩下的死、尸
+        for kw in _table("agnes_trigger_words"):
             p = p.replace(kw, "")
-        p = re.sub(r'\s+', ' ', p).strip(" ，,。.；;")
+        p = re.sub(r'\s+', ' ', p).strip(_table("agnes_strip_chars"))
         # Agnes 对超长提示词(如嵌 3000 字设定集模板)易判违规，截断到稳妥长度，保留前部核心描述
-        if len(p) > 600:
-            p = p[:600]
+        limit = int(_table("agnes_prompt_limit"))
+        if len(p) > limit:
+            p = p[:limit]
         return p
 
     def _enhancePromptWithRules(self, prompt: str) -> str:
@@ -1784,30 +1717,8 @@ class ModelGateway:
 
         # 1. 角色微表情情绪控制引擎 (面部肌肉微反应增强)
         # NOTE: 规避 AI "面瘫呆滞恐怖谷"，将抽象情绪词翻译为具体的眼眶、嘴唇、下巴肌肉协同微动作描述。
-        expressionMap = {
-            "sad_crying": (
-                ["哭", "泪", "悲伤", "伤心", "痛苦", "哀伤", "cry", "sad", "pain", "grief", "weeping"],
-                "lower eyelids slightly swollen and red, tears welling in the bottom of eyes, under-lip tensed and gently bitten by teeth, subtle chin muscles trembling"
-            ),
-            "angry_fierce": (
-                ["怒", "愤怒", "咆哮", "狰狞", "杀气", "生气的", "angry", "fierce", "rage", "furious", "teeth gritted"],
-                "eyebrows knitted together tightly forming deep vertical wrinkles, nostrils flaring slightly, corners of the mouth pulled downward and tensed, teeth gritted, intense fierce glare"
-            ),
-            "shocked_scared": (
-                ["惊", "震惊", "恐惧", "害怕", "颤抖", "惊恐", "shocked", "scared", "fear", "terrified", "shivering"],
-                "pupils dilated, eyelids wide open, mouth slightly agape, Adam's apple slowly bobbing, subtle body shivering under light"
-            ),
-            "joyful_smirking": (
-                ["笑", "喜悦", "奸笑", "狂妄", "邪魅", "自信的", "smirk", "smile", "joy", "laugh", "arrogant", "confident grin"],
-                "one eyebrow slightly arched, single corner of the mouth curved upward in a smirking grin, gaze full of contempt, confident expression"
-            ),
-            "contemplative_silent": (
-                ["忍", "克制", "沉思", "沉默", "忧郁", "refrain", "contemplative", "silent", "brooding", "suppressed"],
-                "gaze downward and wandering, lips pressed tightly in a thin line, facial muscles slightly rigid and tense"
-            )
-        }
-
-        for expKey, (keywords, facialDesc) in expressionMap.items():
+        # 2~5 的词表与描述同在 app/data/prompt/model_gateway.json 的 tables.enhance_*：每张表按顺序取第一条命中的。
+        for expKey, keywords, facialDesc in _table("enhance_expressions"):
             if any(kw in lowerPrompt for kw in keywords):
                 if facialDesc not in enhanced:
                     enhanced += f", {facialDesc}"
@@ -1815,31 +1726,8 @@ class ModelGateway:
 
         # 2. 电影级色彩与调色矩阵 (色彩基调智能判断)
         # NOTE: 拒绝用空洞的 "cinematic"，依据情节冲突性质与环境词自动推荐经典影调风格。
-        colorMap = {
-            "teal_orange": (
-                ["打斗", "格斗", "武打", "对决", "交锋", "出拳", "踢", "剑", "刀", "兵器", "fight", "clash", "punch", "kick", "sword", "blade", "combat", "action scene"],
-                "Teal and Orange color grading, high contrast cinema grading, warm highlights and cool cyan shadows, cinematic blockbuster look"
-            ),
-            "muted_greens": (
-                ["雨", "雪", "阴天", "冷", "杀", "死", "悲", "克制", "rain", "snow", "cold", "kill", "sad", "refrain", "bleach bypass"],
-                "bleach bypass film style, desaturated colors, muted mossy greens and cold blue tones, raw film texture"
-            ),
-            "golden_hour": (
-                ["阳光", "温暖", "温馨", "黄昏", "傍晚", "回忆", "sunlight", "warm", "golden hour", "sunset", "evening", "memory"],
-                "Golden Hour lighting, warm sunset glowing hues, soft orange light rays, Kodak Portra 400 film tones"
-            ),
-            "neon_magenta": (
-                ["都市", "繁华", "赛博", "霓虹", "酒吧", "街头", "city", "neon", "cyber", "bar", "street", "midnight"],
-                "neon color scheme, vibrant teal and magenta reflected glow on wet ground, cross-processed colors, cyber atmosphere"
-            ),
-            "sodium_vapor": (
-                ["废墟", "荒凉", "废土", "历史", "古老", "ruin", "wasteland", "desert", "ancient", "historical"],
-                "sodium vapor monochromatic tones, deep high-contrast dark-yellow lighting, gritty rusty textures"
-            )
-        }
-
         hasColor = False
-        for colKey, (keywords, colorDesc) in colorMap.items():
+        for colKey, keywords, colorDesc in _table("enhance_colors"):
             if any(kw in lowerPrompt for kw in keywords):
                 if colorDesc not in enhanced:
                     enhanced += f", {colorDesc}"
@@ -1847,50 +1735,32 @@ class ModelGateway:
                     break
 
         if not hasColor:
-            defaultColor = "film color graded, natural volumetric movie lighting"
+            defaultColor = _table("enhance_default_color")
             if defaultColor not in enhanced:
                 enhanced += f", {defaultColor}"
 
         # 3. 道具与光影特效增强
         # NOTE: 对飞剑、魔印、法宝等玄幻男频道具及常规武器做材质与能量光效的视觉扩音器。
-        propMap = {
-            "flying_sword": (
-                ["飞剑", "flying sword"],
-                "metallic flying sword floating in mid-air, ancient runes glowing on the blade, surrounded by crackling electric sparks, kinetic wind distortion trails"
-            ),
-            "demon_seal": (
-                ["魔印", "上古魔印", "demon seal", "magic stamp"],
-                "rough black basalt seal with flowing magma-red molten runes, emitting dark volumetric smoke, micro space fissures warping the background"
-            ),
-            "magic_circle": (
-                ["法宝", "法阵", "阵法", "magic circle", "astrolabe", "talisman"],
-                "rotating miniature gold astrolabe, galaxy-like stardust swirling inside, projection of transparent colored magic circles"
-            ),
-            "common_blade": (
-                ["剑", "刀", "兵器", "金属", "sword", "blade", "weapon", "metal parry"],
-                "sharp metallic gleam, volumetric light reflection on steel, parry sparks suspended, kinetic wind distortion"
-            )
-        }
-
-        for propKey, (keywords, propDesc) in propMap.items():
+        blade = _table("enhance_blade_yields")
+        for propKey, keywords, propDesc in _table("enhance_props"):
             if any(kw in lowerPrompt for kw in keywords):
                 if propDesc not in enhanced:
-                    if propKey == "common_blade" and ("flying_sword" in enhanced or "飞剑" in lowerPrompt):
+                    if propKey == blade["row"] and (blade["marker"] in enhanced or blade["word"] in lowerPrompt):
                         continue
                     enhanced += f", {propDesc}"
                     break
 
         # 4. 高级光影雕刻注入 (轮廓光/体积光)
         # NOTE: 针对打斗或暗色场景，自动增加背光、轮廓边缘光与体积光增强立体度。
-        if any(kw in lowerPrompt for kw in ["clash", "fight", "strike", "dark", "night", "shadow", "格斗", "打斗", "黑夜", "暗"]):
-            rimLight = "sharp intense rim light outlining the figure's silhouette, strong contrast, dark shadow depth"
+        if any(kw in lowerPrompt for kw in _table("enhance_rim_words")):
+            rimLight = _table("enhance_rim_light")
             if rimLight not in enhanced:
                 enhanced += f", {rimLight}"
 
         # 5. 背景自愈与防止拉胯 (Depth of Field & Film Grain)
         # NOTE: 强制使用电影景深和细微噪点，虚化粗糙背景，消除 AI 平滑油腻的塑料质感。
-        backgroundSanitizer = "cinematic depth of field, blurred bokeh background, 85mm f/1.8 lens effect, subtle organic 35mm film grain, realistic surface textures, raw photo quality"
-        if "depth of field" not in lowerPrompt and "bokeh" not in lowerPrompt:
+        backgroundSanitizer = _table("enhance_background")
+        if all(word not in lowerPrompt for word in _table("enhance_background_skip")):
             enhanced += f", {backgroundSanitizer}"
 
         return enhanced
@@ -1906,7 +1776,7 @@ class ModelGateway:
             and runtime.provider not in {"volcengine", "seedance"}
             and any(_image_reference(url) for url in (ref_images or []))
         ):
-            raise ValueError("当前图像模型未接入参考图生图，请选择支持参考图的 Seedream 模型")
+            raise ValueError(_says("reference_unsupported"))
 
     def _generate_image_unmetered(self, model: str, prompt: str, ref_images: list = None, size: str = None, *, enhance_prompt: bool = True, require_reference_support: bool = False):
         """
@@ -1932,7 +1802,7 @@ class ModelGateway:
                 if _image_reference(url)
             ][:MAX_REFERENCE_IMAGES]
             if require_reference_support and reference_urls and runtime.provider not in {"volcengine", "seedance"}:
-                raise ValueError("当前图像模型未接入参考图生图，请选择支持参考图的 Seedream 模型")
+                raise ValueError(_says("reference_unsupported"))
             extra: dict[str, object] = {"n": 1, "size": size or "1024x1024"}
             if runtime.provider in {"volcengine", "seedance"}:
                 extra = {
@@ -1946,15 +1816,11 @@ class ModelGateway:
                 key, runtime.base_url, model, prompt, extra=extra,
             ))
             if url:
-                logger.info(
-                    "[ModelGateway] 动态图像模型生成成功 (provider=%s, model=%s)",
-                    runtime.provider,
-                    model,
-                )
+                logger.info(_log("runtime_image_ok"), runtime.provider, model)
                 return url, runtime.provider
             # 模型配置中心选定的图像模型：要么它出图，要么本格失败。绝不悄悄换成 .env 里的另一个型号
             # (比如账号根本没开通的 doubao-seedream-4-0)，画风和参考图支持都会变。
-            logger.error("[ModelGateway] 图像模型 %s 未出图，本格失败(不改用其它图像模型)", model)
+            logger.error(_log("runtime_image_failed"), model)
             return None, None
         if (model or "").strip().lower() == comfyui.FAMILY:
             # A self-hosted workflow was chosen on purpose: it answers or the shot has no image, never another vendor.
@@ -1997,38 +1863,21 @@ class ModelGateway:
             use_prompt = prompt if name == "seedance" else self._agnes_prompt(prompt, "image")
             url = self._http_image(key, b_url, image_model[name], use_prompt, extra=extra)
             if url:
-                logger.info(f"[ModelGateway] 文生图成功 (provider={name}, model={image_model[name]}, 参考图={len(ref)}): {url[:60]}...")
+                logger.info(_logf("image_ok", name=name, model=image_model[name], refs=len(ref), url=url[:60]))
                 return url, name
 
         # 所有在线文生图 provider 均不可用：不返回任何占位图(会被下游当成真实首帧)，也不降级为文生视频。
-        logger.error("[ModelGateway] 所有在线文生图 provider 均不可用，本格没有图(不使用占位图，也不改走文生视频)")
+        logger.error(_log("image_all_failed"))
         return None, None
 
 
     # 题材 -> 时代服饰硬约束：确保五视图人物造型契合剧情时代背景
     # (如修仙/武侠/宫斗必须古装，绝不能出现现代服饰)，从 get_genre 的题材分类推导。
-    GENRE_ERA_COSTUME = {
-        "xianxia": "古代仙侠时代背景，角色必须身着古装（道袍/汉服/广袖仙袍/云纹长袍），古典发髻发饰，"
-                   "严禁出现西装、夹克、衬衫、牛仔裤、卫衣、手表、眼镜、手机等任何现代服饰与现代元素",
-        "wuxia": "古代江湖武侠时代背景，角色必须身着古代侠客装束（劲装/长衫/披风/束发），古典发型，"
-                 "严禁出现任何现代服饰、现代配饰与现代元素",
-        "palace_intrigue": "古代宫廷时代背景，角色必须身着华美古装宫廷服饰（朝服/官袍/凤冠华服锦袍），古典发髻头饰，"
-                           "严禁出现任何现代服饰与现代元素",
-        "retro_romance": "上世纪七八九十年代怀旧时代背景，角色身着该年代感服饰发型，严禁出现当代潮流元素",
-        "overseas_us": "欧美时代背景，角色为欧美人物造型与对应服饰",
-    }
+    GENRE_ERA_COSTUME = dict(_table("era_costume"))
 
     # 设定集五大常见问题对照负面约束：
     # 五官漂移 / 服装走样 / 背景不一 / 手部崩塌 / 配色不稳。在设定集生成时强力规避。
-    SHEET_PROBLEM_NEGATIVE = (
-        "(严格规避多视图设定集五大常见问题——"
-        "①五官漂移：多视角间五官形状/比例不一；②服装走样：褶皱、配件位置在各视角紊乱不符；"
-        "③背景不一：各视角背景不统一；④手部崩塌：手指数量/姿态错误、多指畸形；⑤配色不稳：颜色偏差、风格不统一。"
-        "no face drift, inconsistent facial features across views, changing outfit details between views, "
-        "inconsistent background, deformed hands, extra or missing fingers, color inconsistency, "
-        "oversized head, big head small body, chibi, bobblehead, child-like proportions, short legs, "
-        "multiple different persons, watermark, text, logo)"
-    )
+    SHEET_PROBLEM_NEGATIVE = _prompt("sheet_problem_negative")
 
     def generate_character_sheet(self, model: str, name: str, char_desc: str,
                                  dir_style: str = "cyberpunk", genre: str = "general",
@@ -2060,30 +1909,26 @@ class ModelGateway:
         对照规避"五官漂移/服装走样/背景不一/手部崩塌/配色不稳"五大问题。
         genre：剧情题材(来自 get_genre)，锁定符合时代背景的服饰造型(如修仙/武侠须古装)。
         """
-        # 时代服饰约束优先：题材若属古装/年代/欧美类，强制对应时代造型；否则按导演视听风格取风格词
+        # 时代服饰约束优先：题材若属古装/年代/欧美类，强制对应时代造型，画质风格词也不再用"现代都市"基调；
+        # 否则按导演视听风格取风格词。词表与时代服饰句在 app/data/prompt/actor_sheet.json(core/actor_sheet_style)，
+        # 捏脸页不花钱看一眼的 sheet-prompt 读的是同一份。
+        from app.core import actor_sheet_style
         era_costume = self.GENRE_ERA_COSTUME.get(genre, "")
-        style_word = {
-            "cyberpunk": "赛博朋克写实电影感", "retro": "年代怀旧胶片质感", "palace": "古装东方美学写实影视感",
-            "mystery_dark": "悬疑低饱和写实电影感", "anime": "2D日漫风格", "horror_folk": "民俗惊悚写实质感",
-            "sci_fi_future": "硬核科幻写实质感",
-        }.get(dir_style, "现代都市短剧写实电影感")
-        # 古装/年代/欧美题材下，画质风格词不再使用"现代都市"基调，避免与时代服饰冲突
-        if era_costume:
-            style_word = "符合时代背景的写实影视质感"
+        style_word = actor_sheet_style.style_word(dir_style, era_costume)
 
         # 干净的描述式设定集提示词：直接描述要画的画面本身。
         # 关键修复：绝不把 markdown 文档模板 / README 引用 / 中文元指令塞进文生图模型——
         # 那会被 Agnes 内容审核判 content_policy_violation 拒(Ark SSL 不可达时设定图会全失败、
         # 退化为纯文本，前端只剩文字看不到图)。人物一致性"方法论"只喂给上游 LLM(阶段3 sys_prompt)，
         # 此处只给图像模型干净可执行的画面描述。
-        era_clause = f" The character must wear period-accurate costume — {era_costume}." if era_costume else ""
+        era_clause = actor_sheet_style.era_clause(era_costume)
         from app.core.actor_sheet_layout import ACTOR_SHEET_LAYOUT
         from app.core.storyboard_quality import build_actor_sheet_prompt
         # extra_negative：角色设计师配药单编译出的模块化负面词(agent_council.compile_negative_prompt)，
         # 拼在设定集问题负面串之后；空串零成本。
         prompt = (
             build_actor_sheet_prompt(name, char_desc, style_word, era_note=era_clause)
-            + " photorealistic, live-action, 35mm film. "
+            + _prompt("actor_sheet_tail")
             + self.SHEET_PROBLEM_NEGATIVE
             + (extra_negative or "")
         )
@@ -2094,100 +1939,48 @@ class ModelGateway:
         fallback_size = f"{ACTOR_SHEET_LAYOUT.fallback_width}x{ACTOR_SHEET_LAYOUT.fallback_height}"
         if not url and size != fallback_size:
             # 有的图像模型不收大尺寸：退回 3360x1440 再出一次，宁可格子小一点也要有图。
-            logger.warning("[ModelGateway] 设定集 %s 出图失败，按 %s 重试", size, fallback_size)
+            logger.warning(_log("sheet_retry"), size, fallback_size)
             url, _ = self._generate_image_unmetered(model, prompt, ref_images=ref_images, size=fallback_size)
-        logger.info(f"[ModelGateway] 数字演员设定集生成 ({name}, genre={genre}): {(url or '无')[:60]}...")
+        logger.info(_logf("sheet_done", name=name, genre=genre, url=(url or _table("sheet_no_url"))[:60]))
         return url
 
 
     # 镜头一致性强化：正向锁定词 + 负面约束词 (供分镜底片生成时拼接)
-    SHEET_LOCK_POSITIVE = (
-        "严格参考数字演员设定集和角色状态卡，保持同一个人物身份、同一张脸、同一个发型、同一个发色、"
-        "同一套服装、同一个体型、同一个年龄感和同样的标志性配饰"
-    )
-    SHEET_LOCK_NEGATIVE = (
-        "(避免：不同人物、换脸、五官变化、发型变化、发色变化、服装变化、服装颜色变化、"
-        "体型变化、年龄变化、随机配饰、多余人物、角色混淆、脸部变形、手部畸形、多余手指、文字、水印、logo)"
-    )
+    SHEET_LOCK_POSITIVE = _prompt("sheet_lock_positive")
+    SHEET_LOCK_NEGATIVE = _prompt("sheet_lock_negative")
 
     # 规避火山 Ark 图生视频风控 (InputImageSensitiveContentDetected「疑似真人」)。
     # 实测结论：Ark 对"清晰可识别的正面写实人脸"会判「疑似真人」拒；但"不展示清晰正面人脸"的
     # 写实电影构图(背影/逆光剪影/过肩/侧脸/面部被遮挡/环境远中景)即便保持照片级真实也放行。
     # 关键：绝不能为了过审把画面降成 3D渲染/CG/卡通(那正是用户禁止的"动画卡通")。
     # 正确做法是【保持照片级写实，只用构图把"清晰正面真人脸"从首帧里移除】—— 既写实、又过审。
-    DEID_POSITIVE = (
-        "，保持照片级写实实拍电影质感(photorealistic, live-action, cinematic film still, 35mm film grain, "
-        "real human skin, natural lighting)，但采用不展示清晰可识别正面人脸的电影化构图："
-        "优先人物背影、强逆光剪影、过肩后方视角、侧脸、面部转离镜头或被发丝/前景道具/阴影自然遮挡、"
-        "或人物在环境中占比偏小的写实远中景；角色为虚构人物(fictional character, not a real celebrity)，"
-        "画面无任何文字、无水印、无logo"
-    )
-    DEID_NEGATIVE = (
-        "(避免：清晰可识别的正面真人脸、正脸特写、直视镜头的高锐度清晰五官、证件照/写真式人脸、"
-        "护照照片、headshot、passport photo、真实名人、真实可识别的个人身份；"
-        "并严禁任何非写实风格：动画、卡通、二次元、3D渲染、游戏CG、Unreal Engine、插画、漫画、概念草图 "
-        "anime, cartoon, 2d/3d cartoon, 3d render, cgi, game cg, unreal engine, illustration, comic, concept art, sketch)"
-    )
+    DEID_POSITIVE = _prompt("deid_positive")
+    DEID_NEGATIVE = _prompt("deid_negative")
 
     # 每格分镜图用这一条，不用上面的去身份化：分镜要看得清表情和口型，所以不再要求避开正脸。
     # 代价是 Ark 图生视频可能判「疑似真人」拒单，video_failures 会记到镜头上；已授权素材不受影响。
-    PANEL_IDENTITY_NEGATIVE = (
-        "(避免：证件照/写真式人脸、护照照片、headshot、passport photo、真实名人、真实可识别的个人身份；"
-        "并严禁任何非写实风格：动画、卡通、二次元、3D渲染、游戏CG、Unreal Engine、插画、漫画、概念草图 "
-        "anime, cartoon, 2d/3d cartoon, 3d render, cgi, game cg, unreal engine, illustration, comic, concept art, sketch)"
-    )
+    PANEL_IDENTITY_NEGATIVE = _prompt("panel_identity_negative")
 
     # ============== 三篇提示词文档工程化落地 (可复用片段，拼进 Stage4/5 图生与视频提示词) ==============
     # 来源：shot-design-master 的 scene-design / plot-shot-coherence / emotion-expression 三节
     # 作用：把"给人看的方法论"变成"每一镜可执行的正/负向约束"，直接作用于成片画面。
 
     # 场景设计：场景服务剧情 + 空间层次稳定 (scene-design §最小模板/§5/§12)
-    SCENE_STABILITY_POSITIVE = (
-        "，场景服务剧情且空间关系固定：前景-中景-背景三层电影感纵深，主光方向与色温统一，"
-        "关键道具位置固定并参与叙事，人物左右站位与画面方向稳定 "
-        "(layered foreground-middle-background depth, consistent location, same room layout, "
-        "same furniture and prop placement, same lighting direction and color temperature, stable composition)"
-    )
-    SCENE_STABILITY_NEGATIVE = (
-        "(规避场景失稳：random background, cluttered composition, inconsistent room layout, "
-        "changing furniture, changing props, changing lighting direction, inconsistent color tone, "
-        "messy objects, empty meaningless background, no spatial depth, background flickering)"
-    )
+    SCENE_STABILITY_POSITIVE = _prompt("scene_stability_positive")
+    SCENE_STABILITY_NEGATIVE = _prompt("scene_stability_negative")
 
     # 镜头连贯性：六锚点 + 承接上一镜 (plot-shot-coherence §1/§7/§8)
-    CONTINUITY_POSITIVE = (
-        "，严守跨镜连贯六锚点：同一人物同一张脸同一发型同一服装、同一场景与左右画面方向、"
-        "动作从上一镜自然延续、情绪逐级递进不突变、道具始终在同一只手同一位置、光影色温时间一致，"
-        "正反打遵守180度轴线 (same character, same outfit, same hairstyle, same location, "
-        "same screen direction, prop continuity, gradual emotional continuity, obey 180-degree rule)"
-    )
-    CONTINUITY_NEGATIVE = (
-        "(规避跨镜断裂：jump cut, time skip, sudden pose change, teleporting, changing background, "
-        "changing outfit, changing hairstyle, changing face, inconsistent lighting, axis flip, "
-        "broken eyeline, disappearing prop, duplicated prop, mismatched action, abrupt emotion change, "
-        "random camera angle, spatial discontinuity, flickering, scene reset)"
-    )
+    CONTINUITY_POSITIVE = _prompt("continuity_positive")
+    CONTINUITY_NEGATIVE = _prompt("continuity_negative")
     # 承接上一镜的引导句 (用于第2镜起及分段视频后半段，实现动作匹配剪辑)
-    CONTINUITY_CARRY = (
-        "directly continues from the final frame of the previous shot, matching action and screen direction, "
-        "承接上一镜最后一帧、动作与站位无缝衔接"
-    )
+    CONTINUITY_CARRY = _prompt("continuity_carry")
 
     # 复制人防治：多角色同框时模型常把主角复刻成外形一致的"分身"站在旁边。
     # 该约束来自分镜提示词技能 (skills/shot-design-master) 的收尾串。
-    CLONE_NEGATIVE = (
-        "，视频全程禁止出现外形、着装、配饰完全一致的人物，禁止生成同款分身、双胞胎效果，"
-        "同一画面中仅保留单个对应人物，不出现人物重复复刻 "
-        "(no duplicated character, no twin, no clone, no repeated identical person, "
-        "single instance per character)"
-    )
+    CLONE_NEGATIVE = _prompt("clone_negative")
 
     # 情绪与面部表情：正向微表情已由分镜文本承载，此处补防崩坏负面 (emotion-expression §1/§8)
-    EMOTION_FACE_NEGATIVE = (
-        "(规避表情/面部崩坏：bad anatomy, distorted face, asymmetrical eyes, crossed eyes, extra teeth, "
-        "deformed mouth, frozen face, plastic skin, uncanny smile, exaggerated expression, "
-        "changing face, blurred facial features, extra fingers, extra hands, flickering)"
-    )
+    EMOTION_FACE_NEGATIVE = _prompt("emotion_face_negative")
 
     def _generate_video_unmetered(self, model: str, image_url: str, prompt: str, prefer_provider: str = None,
                        last_frame: str = None, ref_images: list = None,
@@ -2222,10 +2015,16 @@ class ModelGateway:
         # 全局强制负面词(全量)：H3、各家适配器、ComfyUI、Seedance 与 Agnes 都从这里取提示词。
         if not native:
             prompt = self._with_global_negatives(prompt, "video")
+            # 供应商的整条硬上限(含负面词，Seedance 2.0 为 2000 字)：超了先删通用套话，镜头内容留到最后。
+            fitted, removed = prompt_budget.fit_hard_limit(prompt, model, plain=self._with_global_negatives(plain_prompt, "video"))
+            if removed:
+                logger.warning(_log("prompt_over_limit"),
+                               model, len(prompt), prompt_budget.hard_limit(model), _table("list_joiner").join(removed), len(fitted))
+                prompt = fitted
         # 禁止文生视频：没有首帧、参考图或参考视频的请求一律不提交，任何供应商都一样。
         if not (image_url or ref_images or ref_videos):
-            _ark_notes.last = "本镜没有首帧/参考图/参考视频，不提交(禁止文生视频)"
-            logger.error("[ModelGateway] %s", _ark_notes.last)
+            _ark_notes.last = _says("no_frame")
+            logger.error(_log("video_note"), _ark_notes.last)
             return None
         # 本地媒体里的分镜帧、设定集格子供应商取不到(localhost)：发之前读成内嵌图。
         from app.core.media_compositor import inline_local_image
@@ -2274,7 +2073,7 @@ class ModelGateway:
                     reference_audios=list(dict.fromkeys(ref_audios or []))[:MAX_REFERENCE_AUDIOS],
                     duration_seconds=max(4, min(15, int(duration or 6))),
                     # H3 只接受 480P / 768P / 2K：通用默认的 1080p 会被整批拒单。
-                    resolution=h3_resolution(os.getenv("MINIMAX_H3_RESOLUTION") or "768p"),
+                    resolution=h3_resolution(_wanted_video_resolution("MINIMAX_H3_RESOLUTION", "768p")),
                     aspect_ratio=os.getenv("MINIMAX_H3_ASPECT_RATIO", DEFAULT_ASPECT_RATIO),
                     native_audio=os.getenv("MINIMAX_H3_NATIVE_AUDIO", "1") not in {"0", "false", "False"},
                     seed=seed,
@@ -2304,7 +2103,9 @@ class ModelGateway:
                                 poll_interval_seconds=settings.env_float("MINIMAX_H3_POLL_SECONDS", DEFAULT_VIDEO_POLL_SECONDS, minimum=0),
                             )
                         except Exception as wait_error:
-                            video_jobs.note_failed(job_id, f"{type(wait_error).__name__}: {wait_error}")
+                            # 轮询等超时，任务还在 H3 上跑、照样计费：留着「已提交」，下次按任务号去取，不重新提交。
+                            if not isinstance(wait_error, TimeoutError):
+                                video_jobs.note_failed(job_id, f"{type(wait_error).__name__}: {wait_error}")
                             raise
                         if result.video_url:
                             video_jobs.note_finished(job_id, result.video_url)
@@ -2312,11 +2113,12 @@ class ModelGateway:
                         video_jobs.note_failed(job_id, "h3 task finished without a video url")
                 finally:
                     client.close()
-                _ark_notes.last = "MiniMax H3 未返回视频" + (f"：{_h3_failure(result.provider_payload)}" if _h3_failure(result.provider_payload) else "")
-                logger.warning("[ModelGateway] %s", _ark_notes.last)
+                failure = _h3_failure(result.provider_payload)
+                _ark_notes.last = _says("h3_no_video") + (_says("h3_failure_detail", failure=failure) if failure else "")
+                logger.warning(_log("video_note"), _ark_notes.last)
             except Exception as exc:
-                _ark_notes.last = f"MiniMax H3 请求失败: {type(exc).__name__}: {str(exc)[:300]}"
-                logger.warning("[ModelGateway] %s", _ark_notes.last)
+                _ark_notes.last = _says("h3_failed", error_type=type(exc).__name__, error=str(exc)[:300])
+                logger.warning(_log("video_note"), _ark_notes.last)
             # 项目选的是 MiniMax H3：本镜要么由 H3 出片，要么不出片，绝不悄悄改投 .env 里的 Seedance。
             return None
         # Kling / xAI Grok Imagine / HappyHorse (fal.ai) / LTX 走各自的文档化任务协议。
@@ -2366,10 +2168,7 @@ class ModelGateway:
             if not self._is_valid_key(key):
                 continue
             if name == "seedance" and video_model != model and (model or "").lower().startswith("doubao-seedance"):
-                logger.warning(
-                    "[ModelGateway] 项目视频模型 %s 未在模型配置中心启用，改用 .env 的 Seedance 凭据与型号 %s",
-                    model, video_model,
-                )
+                logger.warning(_log("seedance_env_model"), model, video_model)
 
             if name == "seedance":
                 if opt_prompt is None:
@@ -2377,6 +2176,11 @@ class ModelGateway:
                     opt_prompt = self._with_global_negatives(
                         self.optimize_video_prompt(prompt, mode=mode, video_model=model, duration=duration), "video"
                     )
+                    # 改写不受硬上限约束：改写后超了就用改写前已按上限收过的那条，不截断改写结果。
+                    limit = prompt_budget.hard_limit(model)
+                    if limit and len(opt_prompt) > limit:
+                        logger.warning(_log("rewrite_over_limit"), model, len(opt_prompt), limit, len(prompt))
+                        opt_prompt = prompt
                 # 火山 Ark 首帧/尾帧/多模态参考 图生视频：原样上传，不做任何疑似真人预处理
                 url = self._ark_video(key, b_url, opt_prompt,
                                       first_frame=image_url, last_frame=last_frame,
@@ -2384,7 +2188,7 @@ class ModelGateway:
                                       duration=duration, model_name=video_model,
                                       style_caption=style_caption)
                 if url:
-                    logger.info(f"[ModelGateway] Seedance 图生视频成功 (mode={mode}): {url[:60]}...")
+                    logger.info(_logf("seedance_video_ok", mode=mode, url=url[:60]))
                     return url
 
             elif name == "agnes":
@@ -2394,28 +2198,25 @@ class ModelGateway:
                 # Agnes 接收任意写实人脸首帧，无真人风控；发送清洗后的干净写实提示词。
                 url = self._agnes_video(key, b_url, image_url, self._agnes_prompt(opt_prompt or prompt, "video"))
                 if url:
-                    logger.info(f"[ModelGateway] Agnes 图生视频成功 (mode={mode}): {url[:60]}...")
+                    logger.info(_logf("agnes_image_video_ok", mode=mode, url=url[:60]))
                     return url
 
         # 图生视频全部未通过：本镜失败并说明原因。禁止降级为文生视频——不带首帧和参考图的片
         # 人物、场景都对不上分镜，只会浪费额度。
         reason = getattr(_ark_notes, "last", "")
-        logger.error(
-            "[ModelGateway] 图生视频未通过%s，本镜失败(禁止降级为文生视频)",
-            f"({reason})" if reason else "",
-        )
+        logger.error(_log("video_all_failed"), f"({reason})" if reason else "")
         return None
 
     def _comfyui_generate(self, prompt: str, *, image: str | None, want: str, seed: int | None = None) -> Optional[str]:
         """One run of the person's ComfyUI workflow; nothing is sent while it is not ready."""
         if not comfyui.ready():
-            logger.error("[ModelGateway] ComfyUI 未就绪：%s", "；".join(comfyui.status()["problems"]))
+            logger.error(_log("comfy_not_ready"), _table("problem_joiner").join(comfyui.status()["problems"]))
             return None
         client = comfyui.ComfyUIClient.from_environment()
         try:
             return client.generate(prompt=prompt, image=image, seed=seed, want=want)
         except Exception as exc:  # noqa: BLE001 - the workflow's failure is the shot's failure, reported not hidden
-            logger.error("[ModelGateway] ComfyUI 工作流失败: %s", str(exc)[:200])
+            logger.error(_log("comfy_failed"), str(exc)[:200])
             return None
         finally:
             client.close()
@@ -2431,25 +2232,25 @@ class ModelGateway:
             return self._comfyui_generate(prompt, image=image_url or None, want="video", seed=seed)
         credentials = video_adapters.resolve_family_credentials(family, model)
         if credentials is None:
-            _ark_notes.last = f"{family} 未配置运行时凭据，本镜不提交（禁止改投其他供应商）"
-            logger.error("[ModelGateway] %s", _ark_notes.last)
+            _ark_notes.last = _says("adapter_no_credentials", family=family)
+            logger.error(_log("video_note"), _ark_notes.last)
             return None
         request = video_adapters.VideoJobRequest(
             model=model or "",
             prompt=prompt,
             first_frame=image_url or None,
             last_frame=last_frame or None,
-            reference_images=list(dict.fromkeys(ref_images or []))[:MAX_REFERENCE_IMAGES],
-            reference_videos=list(dict.fromkeys(ref_videos or []))[:MAX_REFERENCE_VIDEOS],
-            reference_audios=list(dict.fromkeys(ref_audios or []))[:MAX_REFERENCE_AUDIOS],
+            reference_images=list(dict.fromkeys(ref_images or []))[:caps_of(model).images],
+            reference_videos=list(dict.fromkeys(ref_videos or []))[:caps_of(model).videos],
+            reference_audios=list(dict.fromkeys(ref_audios or []))[:caps_of(model).audios],
             duration_seconds=max(1, min(30, int(duration or 5))),
             aspect_ratio=os.getenv("VIDEO_ASPECT_RATIO", DEFAULT_ASPECT_RATIO),
-            resolution=os.getenv("VIDEO_RESOLUTION", DEFAULT_VIDEO_RESOLUTION),
+            resolution=_wanted_video_resolution("VIDEO_RESOLUTION", DEFAULT_VIDEO_RESOLUTION),
             seed=seed,
         )
         provider = video_adapters.RUNTIME_PROVIDER_FOR_FAMILY.get(family)
         runtime = runtime_model_registry.first(provider, "video") if provider else None
-        keys = [(c.id, c.api_key, c.label) for c in (runtime.credentials_for("video") if runtime else ())] or [("primary", credentials[0], "主凭据")]
+        keys = [(c.id, c.api_key, c.label) for c in (runtime.credentials_for("video") if runtime else ())] or [("primary", credentials[0], _table("primary_credential_label"))]
         if runtime:
             ordered = credential_pool.candidates(runtime.configuration_id, runtime.credentials_for("video"), "video")
             keys = [(c.id, c.api_key, c.label) for c in ordered] or keys
@@ -2458,8 +2259,8 @@ class ModelGateway:
             try:
                 adapter = video_adapters.build_video_adapter(family, api_key=api_key, base_url=credentials[1])
             except RuntimeError as exc:
-                _ark_notes.last = f"{family} 适配器初始化失败: {exc}"
-                logger.error("[ModelGateway] %s", _ark_notes.last)
+                _ark_notes.last = _says("adapter_init_failed", family=family, error=exc)
+                logger.error(_log("video_note"), _ark_notes.last)
                 return None
             try:
                 url = self._adapter_video_once(adapter, family, model, request, credentials[1])
@@ -2470,11 +2271,14 @@ class ModelGateway:
                 last_error = exc
                 status = _http_status_in(str(exc))
                 if runtime and credential_pool.note_rejected(runtime.configuration_id, credential_id, status):
-                    logger.warning("[ModelGateway] %s 的凭据 %s 被拒绝（HTTP %s），改用下一把", family, label, status)
+                    logger.warning(_log("adapter_credential_refused"), family, label, status)
                     continue
                 break
-        _ark_notes.last = f"{family} 视频生成失败: " + (str(last_error)[:300] if last_error else "no credential accepted")
-        logger.error("[ModelGateway] %s", _ark_notes.last)
+        _ark_notes.last = _says(
+            "adapter_failed", family=family,
+            detail=str(last_error)[:300] if last_error else _says("adapter_no_credential_accepted"),
+        )
+        logger.error(_log("video_note"), _ark_notes.last)
         return None
 
     def _adapter_video_once(self, adapter, family: str, model: str, request, endpoint: str) -> Optional[str]:
@@ -2497,14 +2301,14 @@ class ModelGateway:
                     raise
                 if result.video_url:
                     video_jobs.note_finished(job_id, result.video_url)
-                    logger.info(f"[ModelGateway] {family} 生成成功: {result.video_url[:60]}...")
+                    logger.info(_logf("adapter_ok", family=family, url=result.video_url[:60]))
                     return result.video_url
                 video_jobs.note_failed(job_id, "adapter task finished without a video url")
-            logger.error("[ModelGateway] %s 任务结束但没有可下载的视频 URL", family)
+            logger.error(_log("adapter_no_url"), family)
         except Exception as exc:
             if _http_status_in(str(exc)) in CREDENTIAL_REJECTED:
                 raise RuntimeError(str(exc)) from exc  # the caller tries the next credential
-            logger.error("[ModelGateway] %s 生成失败: %s: %s", family, type(exc).__name__, exc)
+            logger.error(_log("adapter_failed"), family, type(exc).__name__, exc)
         finally:
             adapter.close()
         return None
@@ -2551,7 +2355,7 @@ class ModelGateway:
         if ModelGateway.effective_video_model(model) != model:
             return ""
         if not ModelGateway.video_family_ready(family, model):
-            return f"视频模型族 {family} 没有可用的运行时凭据"
+            return _says("video_family_unready", family=family)
         return ""
 
     @staticmethod
@@ -2572,31 +2376,8 @@ class ModelGateway:
         基于短剧题材类型总结文档规则，匹配选题题材
         """
         t = title.lower()
-        rules = {
-            "overseas_us": ["狼人", "吸血鬼", "mafia", "黑帮", "alpha", "omega", "亿万富翁", "欧美", "wolf", "vampire", "lucas", "elena"],
-            "overseas_other": ["东南亚", "中东", "拉美", "酋长", "沙漠", "异域", "王子", "物理", "楚云溪", "哈曼"],
-            "interactive": ["互动", "投票", "多结局", "沉浸式", "选项", "刺客", "抉择"],
-            "military": ["军事", "特种兵", "谍战", "卧底", "特工", "维和", "战火", "毒枭", "战风", "卡洛斯"],
-            "sports": ["体育", "竞技", "电竞", "格斗", "赛车", "篮球", "足球", "铁拳", "八角笼", "毁灭者"],
-            "food": ["美食", "深夜食堂", "治愈", "厨师", "小店", "菜肴", "长寿面", "面条", "食客"],
-            "horror": ["恐怖", "灵异", "怪谈", "鬼", "诡异", "老宅", "禁忌", "邪祟", "纸人", "扎纸", "林九"],
-            "xianxia": ["修真", "仙侠", "飞升", "魔尊", "仙女", "废材修仙", "洞府", "渡劫", "萧凡", "仙门", "清虚"],
-            "wuxia": ["武侠", "江湖", "剑侠", "剑客", "剑意", "决战", "门派", "武林", "退隐", "剑", "侠", "夜归人"],
-            "palace_intrigue": ["宫斗", "权谋", "帝王", "夺嫡", "冷宫", "妃子", "权臣", "太子", "古装", "甄姬", "贵妃"],
-            "time_travel": ["穿越", "穿书", "快穿", "系统", "签到", "系统流", "觉醒", "攻略", "皇后", "女配", "云舒"],
-            "mystery": ["悬疑", "推理", "密室", "连环杀人", "心理", "人格", "催眠", "反转", "凶手", "绑架", "失踪", "冤案", "侦探", "法医", "张警官"],
-            "male_counterattack": ["赘婿", "战神", "神医", "龙王", "兵王", "下山", "归来", "回城", "大佬", "扮猪吃虎", "首富", "叶凡"],
-            "family": ["婆媳", "出轨", "全职妈妈", "离婚", "育儿", "家暴", "家庭", "小三", "沈秋月"],
-            "campus": ["校园", "暗恋", "学霸", "学渣", "校花", "校草", "青梅竹马", "同桌", "毕业", "陆星野", "林溪"],
-            "rebirth_revenge": ["重生", "复仇", "逆袭", "打脸", "渣男", "渣女", "改命", "前世", "当年", "代价", "报仇", "顾渊", "林雪"],
-            "romance": ["霸总", "总裁", "千金", "契约", "闪婚", "豪门", "甜宠", "虐恋", "替身", "白月光", "金主", "恋爱", "追妻", "追爱", "顾安然", "陆霆骁"],
-            "car": ["车", "车载", "配件", "极客", "座舱", "车王", "方舟"],
-            "sci_fi": ["科幻", "末日", "废土", "荒岛", "太空", "全息", "AI", "智能", "平行时空", "外星人", "超能力", "仿生人", "零号"],
-            "comedy": ["喜剧", "搞笑", "幽默", "沙雕", "无厘头", "整蛊", "爆笑", "反差", "互换"],
-            "retro_romance": ["年代", "知青", "怀旧", "军婚", "90年代", "风口", "创业", "九零", "周向东", "苏曼"],
-            "urban_realism": ["律师", "庭审", "辩护", "法庭", "律政", "被告", "高公子", "陆律师", "商战", "大少"]
-        }
-        for g_name, keywords in rules.items():
+        # 题材 -> 关键词，按表里的顺序取第一个命中的题材
+        for g_name, keywords in _table("genre_rules"):
             if any(kw in t for kw in keywords):
                 return g_name
         return "general"

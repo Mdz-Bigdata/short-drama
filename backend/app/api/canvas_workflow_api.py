@@ -13,8 +13,21 @@ from app.api.auth_api import get_current_user
 from app.api.studio_api import _canvas_id, _owner, _safe_error, get_drama_service, get_studio_service
 from app.service.canvas_workflow_service import MAX_BRIEF_CHARS, CanvasWorkflowService
 from app.service.studio_service import StudioService
+from app.core import prompt_data
 
-router = APIRouter(prefix="/api/studio/projects/{project_id}/canvas/workflows", tags=["画布工作流"])
+
+_WORDING_FILE = "api_canvas_workflow_api"
+
+
+def _text_of(key: str) -> str:
+    """Wording kept in app/data/prompt/api_canvas_workflow_api.json."""
+    return prompt_data.text(_WORDING_FILE, key)
+
+
+def _words_of(key: str) -> tuple[str, ...]:
+    return prompt_data.words(_WORDING_FILE, key)
+
+router = APIRouter(prefix="/api/studio/projects/{project_id}/canvas/workflows", tags=list(_words_of("module.tags")))
 
 
 class WorkflowPlanRequest(BaseModel):

@@ -31,23 +31,26 @@ def _script_prompt(**overrides):
     arguments = dict(
         source_text="大纲", source_kind="outline", episode=1, overview={}, style="", characters={}, scenes={}, props={},
         supported_durations=[5, 10], default_duration=None, episode_target_seconds=None,
-        episode_outline={"story_beats": ["【悬念】小满站在收铺子的人里"], "hook": "笔尖悬在契上"},
+        episode_outline={"story_beats": ["【悬念】小满站在收铺子的人里"], "hook": "【两难选择】笔尖悬在契上"},
         next_episode_outline={"title": "买主", "story_beats": ["【揭秘】买主一栏写的是周记"]},
     )
     return prompts.build_script_plan_prompt(**{**arguments, **overrides})
 
 
-def _split_prompt(source_kind):
+def _split_prompt(source_kind, max_episodes=3):
     return prompts.build_anchored_plan_prompt(
         window="他把笔递了过来。", window_is_final=True, overview={}, source_kind=source_kind, context_entries=[],
-        target_volume=None, max_episodes=3, remaining_episodes=None, instructions=None,
+        target_volume=None, max_episodes=max_episodes, remaining_episodes=None, instructions=None,
     )
 
 
 class EmotionalHookTests(unittest.TestCase):
-    """情绪钩子六步：知识源给写的人讲透，三条规则各落在它管得着的那一步。"""
+    """情绪钩子六步：知识源给写的人讲透，三条规则各落在它管得着的那一步，只给有集尾卡点的连续剧。"""
 
     STEPS = ("共情基点", "反常裂痕", "抬高代价", "封死退路", "误导拉扯", "卡点")
+    OUTLINE_RULE = prompt_data.text("emotional_hook", "outline_rule")
+    LANDING_RULE = prompt_data.text("emotional_hook", "landing_rule")
+    CUT_RULE = prompt_data.text("emotional_hook", "cut_rule")
 
     def test_the_writer_reads_the_six_steps_and_the_red_lines_whole(self):
         prompt = screenwriting.writer_system_prompt("你是编剧。", stage="write")
@@ -64,39 +67,47 @@ class EmotionalHookTests(unittest.TestCase):
             self.assertNotIn("反常裂痕", screenwriting.writer_system_prompt("你是编剧。", stage=stage))
 
     def test_the_outline_orders_the_beats_before_the_cliffhanger(self):
-        prompt = _outline_prompt()
-        positions = [prompt.index(step) for step in self.STEPS]
+        # 规则开头就说「卡点先绑住人」，所以最后一步按它的括注「（卡点）」找。
+        positions = [self.OUTLINE_RULE.index(step) for step in (*self.STEPS[:-1], "（卡点）")]
         self.assertEqual(positions, sorted(positions), "六步在规则里按顺序出现")
-        self.assertIn("不写「天下大乱」这类宏大空话", prompt)
-        self.assertIn("钩子是把话留一半", prompt, "信息位的规则还在，两条同时生效")
+        self.assertIn("不写「天下大乱」这类宏大空话", self.OUTLINE_RULE)
+        prompt = _outline_prompt()
+        self.assertIn(self.OUTLINE_RULE, prompt)
+        # 卡点类型表与信息位的规则还在：情绪钩子排在它们之后，三条同时生效。
+        self.assertIn("钩子是把话留一半", prompt)
+        self.assertLess(prompt.index("集尾卡点换着用"), prompt.index(self.OUTLINE_RULE))
 
-    def test_an_advertisement_ends_on_its_call_to_action_instead(self):
-        self.assertNotIn("反常裂痕", _outline_prompt(creation_mode="ad"))
-        self.assertNotIn("集尾钩子怎么落", _script_prompt(creation_mode="ad"))
+    def test_films_that_close_their_own_story_are_not_asked_for_a_cliffhanger(self):
+        # 广告落在行动号召上，电影短片只有一集、结尾收住，只有一集的剧没有下一集可卡。
+        for mode in ("ad", "film"):
+            self.assertNotIn(self.OUTLINE_RULE, _outline_prompt(creation_mode=mode))
+            self.assertNotIn(self.LANDING_RULE, _script_prompt(creation_mode=mode))
+        self.assertNotIn(self.OUTLINE_RULE, _outline_prompt(total=1))
 
     def test_an_authored_ending_stops_at_the_peak(self):
         for mode in ("drama", "narration"):
             prompt = _script_prompt(creation_mode=mode)
             self.assertIn("最后一格停在情绪最高的那一下", prompt)
             self.assertIn("读得出两种意思的动作或半句台词", prompt)
-        self.assertNotIn("集尾钩子怎么落", _script_prompt(episode_outline={"story_beats": ["【冲突】a"]}), "没有钩子的集不附")
+        self.assertNotIn(self.LANDING_RULE, _script_prompt(episode_outline={"story_beats": ["【冲突】a"]}), "没有钩子的集不附")
 
     def test_the_last_episode_is_left_to_close_the_story(self):
-        self.assertNotIn("集尾钩子怎么落", _script_prompt(next_episode_outline=None))
-        self.assertIn("全剧最后一集不卡点", _outline_prompt())
+        self.assertNotIn(self.LANDING_RULE, _script_prompt(next_episode_outline=None))
 
     def test_an_adapted_ending_keeps_the_source(self):
         # 改编的集结尾在哪、说了什么都是原文的：不附落法。
         for kind in ("novel", "screenplay"):
-            self.assertNotIn("集尾钩子怎么落", _script_prompt(source_kind=kind, source_text="他把笔递了过来。"))
+            self.assertNotIn(self.LANDING_RULE, _script_prompt(source_kind=kind, source_text="他把笔递了过来。"))
 
     def test_a_novel_is_cut_at_the_peak_and_a_screenplay_keeps_its_own_episodes(self):
-        self.assertIn("切点挑在情绪最高处", _split_prompt("novel"))
-        self.assertNotIn("切点挑在情绪最高处", _split_prompt("screenplay"))
+        self.assertIn(self.CUT_RULE, _split_prompt("novel"))
+        self.assertIn("用一句对白或一件看得见的东西带回来，不另编", self.CUT_RULE)
+        self.assertNotIn(self.CUT_RULE, _split_prompt("screenplay"))
+        self.assertNotIn(self.CUT_RULE, _split_prompt("novel", max_episodes=1), "只切成一集就没有卡点")
 
     def test_the_landing_rule_stays_out_of_the_fight_detection_text(self):
         # 打戏规则按本集大纲的字面判断要不要装；落法里的词不能把文戏集判成打戏集。
-        self.assertNotIn("集尾钩子怎么落", prompts._outline_block({"hook": "笔尖悬在契上"}, {"title": "买主"}))
+        self.assertNotIn(self.LANDING_RULE, prompts._outline_block({"hook": "笔尖悬在契上"}, {"title": "买主"}))
 
 
 class SceneTensionTests(unittest.TestCase):

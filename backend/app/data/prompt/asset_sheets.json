@@ -1,0 +1,195 @@
+{
+  "_about": "资产设定图(app/core/asset_sheets.py)：人物、场景、道具、色板四种设定图给图像模型的提示词与版式，以及资产设定文档的写法。says 是句子模板，花括号里是代码填进去的值；写成数组的是一段长句，按顺序直接相连(不加分隔)。empty_scene_prefix / empty_scene_suffix 是每张场景图开头和结尾那句「无人」(场地四视角图 scene_turnaround 也用)。appearance_hints 是说外形的字词，feeling_words 是只说性格情绪的字词：一段描述里只有情绪词、没有外形词就不写进人物设定图。prop_signals 是剧情倚重一件道具的动作词(同一句里出现就算关键道具)。scene_trait_words 是给过短的场景名补特征的三组词(光线、材质、时间)，每组按顺序取第一个出现的。piece_split 是把描述切成一段段的标点(正则)，sentence_split 是把剧本切成句子的标点(正则)，piece_separator 是重新连起来的逗号；dropped_separator 连接没写进提示词的性格描述，palette_colour_separator 连接色卡里的色值，palette_no_second 是只有一个颜色时辅色那格的写法，markdown_list_separator 连接设定文档里的锚点与色值。markdown_sections 是设定文档里三类资产的顺序和小节名。limits：description 描述最多保留的字数，name 名字最多保留的字数，character_anchors / scene_anchors / prop_anchors 识别锚点最多几条，scene_traits 补进场景名的特征最多几个字，min_scene_name 场景名至少几个字。",
+  "empty_scene_prefix": "不能出现其他人, 无人, 纯场景,",
+  "empty_scene_suffix": "no humans, empty, landscape only",
+  "appearance_hints": [
+    "岁",
+    "身高",
+    "体型",
+    "发",
+    "眼",
+    "眉",
+    "脸",
+    "肤",
+    "痣",
+    "疤",
+    "胡",
+    "妆",
+    "穿",
+    "衣",
+    "袍",
+    "裙",
+    "裤",
+    "鞋",
+    "帽",
+    "镜",
+    "链",
+    "戒",
+    "表",
+    "包",
+    "制服",
+    "西装",
+    "大衣",
+    "围巾"
+  ],
+  "feeling_words": [
+    "性格",
+    "内心",
+    "情绪",
+    "善良",
+    "冷漠",
+    "温柔",
+    "狠",
+    "爱",
+    "恨",
+    "悲",
+    "喜",
+    "野心",
+    "自卑"
+  ],
+  "prop_signals": [
+    "特写",
+    "递",
+    "接",
+    "抢",
+    "藏",
+    "打开",
+    "关上",
+    "掏出",
+    "握",
+    "摔",
+    "碎",
+    "签",
+    "证据",
+    "信",
+    "钥匙",
+    "照片"
+  ],
+  "scene_trait_words": [
+    [
+      "暖光",
+      "冷光",
+      "顶灯",
+      "烛光",
+      "霓虹",
+      "阳光",
+      "月光",
+      "灯火"
+    ],
+    [
+      "木",
+      "玻璃",
+      "水泥",
+      "砖",
+      "铁皮",
+      "石",
+      "地毯",
+      "瓷砖",
+      "纸"
+    ],
+    [
+      "清晨",
+      "正午",
+      "黄昏",
+      "深夜",
+      "雨夜",
+      "雪天",
+      "阴天"
+    ]
+  ],
+  "piece_split": "[，,；;。]",
+  "sentence_split": "[。！？!?\n]",
+  "piece_separator": "，",
+  "dropped_separator": "、",
+  "palette_colour_separator": "；",
+  "palette_no_second": "—",
+  "markdown_list_separator": "；",
+  "markdown_sections": [
+    [
+      "characters",
+      "人物资产"
+    ],
+    [
+      "scenes",
+      "场景资产"
+    ],
+    [
+      "props",
+      "道具资产"
+    ]
+  ],
+  "limits": {
+    "description": 400,
+    "name": 40,
+    "character_anchors": 8,
+    "scene_anchors": 8,
+    "prop_anchors": 6,
+    "scene_traits": 4,
+    "min_scene_name": 4
+  },
+  "says": {
+    "character_layout": [
+      "版式：画面左侧三分之一为超大高清正面面部特写；右侧三分之二并排三张全身三视图，依次为正面(FRONT)、",
+      "侧面(PROFILE)、背面(BACK)；人物下方另排服装细节与配饰展示图。纯白背景，构图工整。",
+      "所有视角的身高、五官位置、服装褶皱严格一致。",
+      "{proportion_rule}画面内不得出现任何文字。"
+    ],
+    "scene_layout": [
+      "版式：同一张图四宫格输出四个视角——高角度航拍俯瞰、低角度仰视、侧面视角、反面视角；",
+      "每格画面内标注该视角名称。"
+    ],
+    "style": "{caption}；",
+    "character_prompt": [
+      "{style}角色设定板：{name}。{visual}。",
+      "同一人物、同一服装、同一发型、同一体型；五官位置、痣与疤痕位置固定。",
+      "{layout}"
+    ],
+    "character_visual_fallback": "按题材、身份与场合保守补全常驻造型",
+    "character_dropped_note": "未写进提示词的性格描述（只用于反推造型）：{dropped}",
+    "character_no_looks_note": "剧本没有给出外形信息：请补一句外形描述，否则每集都会换脸",
+    "character_function": "剧本具名角色",
+    "scene_name_fallback": "场景",
+    "scene_name_traitless": "无人{base}",
+    "scene_body_fallback": "按题材与时代补全空间类型、时间、光线结构与主要材质",
+    "scene_prompt": [
+      "{prefix} {style}{name}：{body}。",
+      "写清空间类型、确切时间、光线结构（方向、色温、光比）、前中后景的标志性材质与物件。",
+      "{layout} {suffix}"
+    ],
+    "scene_short_name_note": "场景名过短，建议用「光线 / 材质 / 时间 + 地点」组合命名",
+    "scene_function": "剧情实际发生的空间",
+    "prop_body_fallback": "按题材与用途保守补全材质、颜色、新旧与使用方式",
+    "prop_prompt": "{style}道具设定图：{name}。{body}。{layout}",
+    "palette_structure": [
+      "色板结构：主色 {main}；辅色 {second}；",
+      "高光与阴影按本片光比；承前 {carried} 色，新增 {added} 色；",
+      "对比与色温按{pack}的影调设定。"
+    ],
+    "palette_prompt": [
+      "色卡参考图：{title}。白底平色块，横向排列 {count} 个色块，",
+      "每块下方留出物件名位置（生成时不要写文字）。色值：{colours}。",
+      "不是场景图、不是渲染图，只做色值参考。"
+    ],
+    "palette_function": "整段色彩母板",
+    "palette_layout": "版式：白底 16:9 平色块色卡，色块等宽排列。",
+    "project_fallback": "本片",
+    "subject_fallback": "全片",
+    "no_characters": "还没有角色卡：先跑完第3阶段，再出设定图",
+    "markdown_title": "# {title}",
+    "markdown_title_fallback": "资产设定图",
+    "markdown_section": "## 【{heading}】",
+    "markdown_sheet": "### {order}. {name}",
+    "markdown_function": "- 功能定位：{function}",
+    "markdown_anchors": "- 稳定识别锚点：{anchors}",
+    "markdown_no_anchors": "（剧本未给出，需补充）",
+    "markdown_prompt": "- 描述提示词：{prompt}",
+    "markdown_layout": "- 固定格式输出：{layout}",
+    "markdown_note": "- 备注：{note}",
+    "markdown_palette_section": "## 【色板资产】",
+    "markdown_palette_name": "### {name}",
+    "markdown_palette_colours": "- 色值：{colours}",
+    "markdown_palette_note": "- 色板结构说明：{note}",
+    "markdown_warning_section": "## 【提示】",
+    "markdown_warning": "- {warning}"
+  }
+}

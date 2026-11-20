@@ -12,19 +12,29 @@ live in the breakdown and the structured state, never as label lines in the text
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
-from app.core import breakdown_kinds
+from app.core import acting, breakdown_kinds, prompt_data
 from app.core.screenwriting.prose import has_episode_heading, prose_from_scenes
 
 _PHASES = ("故事开始", "进展纠葛", "危机", "高潮", "结局")
 _PHASE_CUTS = (0.15, 0.55, 0.75, 0.9)
 _MAX_CONTENT_CHARS = 6000
+# The labels the video prompt reads as "heard, not seen speaking" (「男主乙（OS）：」); one list for both sides.
+_OFF_SCREEN_LABELS = {str(word).upper(): str(word) for word in prompt_data.words("video_prompt_engine", "off_screen_labels")}
+_DELIVERY_PARTS = re.compile(r"[\s/／,，、;；]+")
 
 
 def _text(value: object, limit: int = 4000) -> str:
     return " ".join(str(value or "").replace("\x00", "").split())[:limit]
+
+
+def _off_screen_tag(delivery: object) -> str:
+    """「OS」 or 「画外」 when a line's delivery opens with it (「OS / 呼吸急促」), else empty."""
+    first = _DELIVERY_PARTS.split(_text(delivery, 200), maxsplit=1)[0]
+    return _OFF_SCREEN_LABELS.get(first.upper(), "")
 
 
 def _scene_heading(scene: Mapping[str, Any]) -> str:
@@ -125,7 +135,9 @@ def scene_breakdown_entry(scene: Mapping[str, Any]) -> dict[str, Any]:
         if not text:
             continue
         speaker = _text(utterance.get("speaker"), 80) if utterance.get("kind") == "dialogue" else "旁白"
-        spoken.append(f"{speaker}：{text}")
+        tag = _off_screen_tag(utterance.get("delivery")) if utterance.get("kind") == "dialogue" else ""
+        # A thought or an off-screen line keeps its mark, so the table and the clip keep that mouth shut.
+        spoken.append(f"{speaker}（{tag}）：{text}" if tag else f"{speaker}：{text}")
     if spoken:
         parts.append("台词：" + " / ".join(spoken))
     # Lines cut from a source (novel / screenplay) are the source's own words; the
@@ -138,7 +150,7 @@ def scene_breakdown_entry(scene: Mapping[str, Any]) -> dict[str, Any]:
             "text": _text(utterance.get("text"), 500),
             "verbatim": verbatim,
             # How the line is played (emotion / pace / stress / body): read by the video prompt and the voice.
-            "delivery": _text(utterance.get("delivery"), 120),
+            "delivery": _text(utterance.get("delivery"), acting.DELIVERY_MAX_CHARS),
         }
         for utterance in (scene.get("utterances") or [])
         if isinstance(utterance, Mapping) and _text(utterance.get("text"), 500)
@@ -153,6 +165,8 @@ def scene_breakdown_entry(scene: Mapping[str, Any]) -> dict[str, Any]:
         "emotion_point": _text(scene.get("emotion_point"), 20),
         # 本集的题眼台词落在这一格时那一句：分镜师给它留停留，导演台上能一眼看到。
         "key_line": _text(scene.get("key_line"), 120),
+        # 每个入镜人物此刻为什么这样演(知道什么、不知道什么)：视频提示词把它当演员的动机，不进画面。
+        "subtext": acting.subtext_of(scene),
         "dialogue": dialogue[:30],
         "characters": [name for name in (scene.get("characters_in_scene") or []) if isinstance(name, str) and name.strip()],
     }
