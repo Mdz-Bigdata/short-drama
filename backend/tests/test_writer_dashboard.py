@@ -1299,10 +1299,16 @@ class TaskListingCostTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_listing_issues_no_per_task_fetches(self):
+        field_calls = []
         list_calls = []
         get_calls = []
+        original_fields = TaskRepository.list_task_fields
         original_list = TaskRepository.list_all_tasks
         original_get = TaskRepository.get_task
+
+        def counting_fields(repo_self, fields):
+            field_calls.append(tuple(fields))
+            return original_fields(repo_self, fields)
 
         def counting_list(repo_self):
             list_calls.append(1)
@@ -1313,14 +1319,17 @@ class TaskListingCostTests(unittest.TestCase):
             return original_get(repo_self, task_id)
 
         with patch.object(drama_api, "service", self.service), \
+             patch.object(TaskRepository, "list_task_fields", counting_fields), \
              patch.object(TaskRepository, "list_all_tasks", counting_list), \
              patch.object(TaskRepository, "get_task", counting_get):
             response = self.client.get("/api/drama/list")
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(len(response.json()), 6)
-        # One bulk listing; hydration must not go back to the store per task.
-        self.assertEqual(len(list_calls), 1)
+        # One bulk listing of the summary fields; hydration must not go back to the store per task,
+        # and the poll must not parse every project in full.
+        self.assertEqual(len(field_calls), 1)
+        self.assertEqual(list_calls, [])
         self.assertEqual(get_calls, [], f"unexpected per-task fetches: {get_calls}")
 
     def test_listing_returns_summaries_and_leaves_assets_to_the_status_route(self):

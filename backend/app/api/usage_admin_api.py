@@ -49,10 +49,11 @@ def read_usage_records(task_ids: set[str]) -> dict[str, list]:
 
 
 def _task_titles(task_ids: set[str]) -> dict[str, str]:
-    """The name each project goes by. Blocking: it reads the projects."""
+    """The name each project goes by. Blocking: it reads the projects' configs, once per stored version."""
     found: dict[str, str] = {}
     for task_id in task_ids:
-        task = _tasks.get_task(task_id)
+        # An empty task has no title either way; only the config is needed, not the whole project.
+        task = _tasks.get_task_fields(task_id, ("config",))
         if isinstance(task, dict):
             config = task.get("config") if isinstance(task.get("config"), dict) else {}
             found[task_id] = str(config.get("title_suggestion") or config.get("titleSuggestion") or "")

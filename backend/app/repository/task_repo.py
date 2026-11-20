@@ -23,7 +23,7 @@ import time
 from collections import Counter
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Sequence, TypeVar
 
 import sqlalchemy as sa
 from sqlalchemy import event
@@ -55,6 +55,71 @@ _ResultT = TypeVar("_ResultT")
 _ENGINE_LOCK = threading.Lock()
 _ENGINES: Dict[str, Engine] = {}
 _READY_URLS: set[str] = set()
+
+# A few fields of a stored task, parsed once per stored version (see ``TaskRepository.get_task_fields``):
+# (updated_ns, the fields the task has as JSON text or None for an unreadable row, whether the task is non-empty).
+# Text, because every caller must get a copy of its own and parsing a few fields is the cheapest way to make
+# one; the values came out of JSON, so they go back in and out unchanged.
+_FieldsEntry = tuple[int, Optional[str], bool]
+# What is worth holding on to, in characters of that text. A project's summary is a kilobyte or two, but its
+# config may carry a whole uploaded script: an answer past the first limit is not kept, and nothing more is kept
+# once the total reaches the second. A task that is not kept is read from the store each time, as all were before.
+_FIELDS_ENTRY_LIMIT = 256 * 1024
+_FIELDS_TOTAL_LIMIT = 32 * 1024 * 1024
+# How many rows one statement asks for when a listing has to re-read changed tasks.
+_FIELDS_READ_BATCH = 200
+
+
+class _KeptFields:
+    """What one process remembers of one database's tasks: {fields: {task_id: entry}}, under one lock."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._kept: Dict[tuple[str, ...], Dict[str, _FieldsEntry]] = {}
+        self._held = 0
+
+    @staticmethod
+    def _size(entry: _FieldsEntry) -> int:
+        return len(entry[1] or "")
+
+    def get(self, fields: tuple[str, ...], task_id: str) -> Optional[_FieldsEntry]:
+        with self._lock:
+            return self._kept.get(fields, {}).get(task_id)
+
+    def get_many(self, fields: tuple[str, ...], task_ids: Sequence[str]) -> Dict[str, Optional[_FieldsEntry]]:
+        with self._lock:
+            kept = self._kept.get(fields, {})
+            return {task_id: kept.get(task_id) for task_id in task_ids}
+
+    def keep(self, fields: tuple[str, ...], task_id: str, entry: _FieldsEntry) -> None:
+        """Replace what is held for the task, if the new answer is within the limits; otherwise hold nothing for it."""
+        size = self._size(entry)
+        with self._lock:
+            kept = self._kept.setdefault(fields, {})
+            previous = kept.pop(task_id, None)
+            if previous is not None:
+                self._held -= self._size(previous)
+            if size <= _FIELDS_ENTRY_LIMIT and self._held + size <= _FIELDS_TOTAL_LIMIT:
+                kept[task_id] = entry
+                self._held += size
+
+    def forget(self, task_id: str) -> None:
+        with self._lock:
+            for kept in self._kept.values():
+                previous = kept.pop(task_id, None)
+                if previous is not None:
+                    self._held -= self._size(previous)
+
+    def keep_only(self, fields: tuple[str, ...], task_ids: set[str]) -> None:
+        """Let go of the tasks of this listing that are no longer stored."""
+        with self._lock:
+            kept = self._kept.get(fields, {})
+            for task_id in [task_id for task_id in kept if task_id not in task_ids]:
+                self._held -= self._size(kept.pop(task_id))
+
+
+# Shared by every repository on one database, like the engines.
+_FIELDS: Dict[str, _KeptFields] = {}
 
 _METADATA = sa.MetaData()
 _TASKS = sa.Table(
@@ -363,6 +428,103 @@ class TaskRepository:
         raw = self._retry_once(read, _text_of("get_task.raw"))
         return self._load_payload(raw) if raw is not None else None
 
+    # ------------------------------------------------ a few fields of a task
+
+    def _fields_entry(self, fields: tuple[str, ...], version: int, raw: object) -> _FieldsEntry:
+        task = self._load_payload(raw)
+        if task is None:
+            return (int(version), None, False)
+        return (int(version), json.dumps({name: task[name] for name in fields if name in task}, ensure_ascii=False), bool(task))
+
+    def _kept_fields(self) -> _KeptFields:
+        with _ENGINE_LOCK:
+            return _FIELDS.setdefault(self._database_url, _KeptFields())
+
+    def get_task_fields(self, task_id: str, fields: Sequence[str]) -> Optional[Dict[str, Any]]:
+        """The ``fields`` a stored task has, or ``None`` where :meth:`get_task` gives nothing to act on
+        (no such task, an unreadable row, an empty task).
+
+        For callers that need a field or two of a task that may weigh megabytes (who owns it). The task is
+        read through :meth:`get_task` once per stored version: every write stamps a new ``updated_ns``, so a
+        kept answer is used only while the row still carries the version it was read at. Only a task that
+        was actually read is kept; a miss is asked again next time. The caller gets its own copy.
+        """
+        self._ensure_ready()
+        wanted = tuple(fields)
+        kept = self._kept_fields()
+
+        def read_version() -> object:
+            with self.engine.connect() as connection:
+                return connection.execute(
+                    sa.select(_TASKS.c.updated_ns).where(_TASKS.c.task_id == task_id)
+                ).scalar()
+
+        version = self._retry_once(read_version, _text_of("get_task.raw"))
+        if version is None:
+            kept.forget(task_id)
+        else:
+            entry = kept.get(wanted, task_id)
+            if entry is not None and entry[0] == int(version):
+                return json.loads(entry[1]) if entry[2] and entry[1] is not None else None
+        # Not stored, or stored at a version not seen yet: get_task has the answer. It reads the row after
+        # the version above was read, so what it returns is that version or a newer one; kept under the
+        # older number it can only be used while the row has not moved on.
+        task = self.get_task(task_id)
+        if not task:
+            return None
+        # get_task parsed this task for this call alone, so its fields can be handed over as they are.
+        found = {name: task[name] for name in wanted if name in task}
+        if version is not None:
+            try:
+                kept.keep(wanted, task_id, (int(version), json.dumps(found, ensure_ascii=False), True))
+            except (TypeError, ValueError):
+                # Not something that came out of the store's JSON (a stand-in for get_task): answer, keep nothing.
+                pass
+        return found
+
+    def list_task_fields(self, fields: Sequence[str]) -> List[Dict[str, Any]]:
+        """Every stored task reduced to the ``fields`` it has, in :meth:`list_all_tasks` order.
+
+        For listings that are polled and show a line per project: :meth:`list_all_tasks` parses every
+        project in full on every call. Here a row is read and parsed only when its stored version is new
+        (see :meth:`get_task_fields`); an unreadable row is left out, as it is there.
+        """
+        self._ensure_ready()
+        wanted = tuple(fields)
+        kept = self._kept_fields()
+        fresh: Dict[str, _FieldsEntry] = {}
+        try:
+            with self.engine.connect() as connection:
+                rows = connection.execute(
+                    sa.select(_TASKS.c.task_id, _TASKS.c.updated_ns).order_by(_TASKS.c.created_ns, _TASKS.c.task_id)
+                ).all()
+                known = kept.get_many(wanted, [task_id for task_id, _ in rows])
+                changed = [
+                    task_id for task_id, version in rows
+                    if known[task_id] is None or known[task_id][0] != int(version)
+                ]
+                for start in range(0, len(changed), _FIELDS_READ_BATCH):
+                    batch = changed[start:start + _FIELDS_READ_BATCH]
+                    # The version and the payload come from one read of the row, so they always belong together.
+                    for row in connection.execute(
+                        sa.select(_TASKS.c.task_id, _TASKS.c.updated_ns, _TASKS.c.payload).where(_TASKS.c.task_id.in_(batch))
+                    ):
+                        fresh[row.task_id] = self._fields_entry(wanted, row.updated_ns, row.payload)
+        except (DBAPIError, SQLAlchemyError) as exc:
+            raise self._translate(exc) from exc
+        for task_id, entry in fresh.items():
+            kept.keep(wanted, task_id, entry)
+        # Tasks deleted since the last listing (by this process or another) are let go of.
+        kept.keep_only(wanted, {task_id for task_id, _ in rows})
+        reread = set(changed)
+        tasks: List[Dict[str, Any]] = []
+        for task_id, _ in rows:
+            # A changed row that was deleted between the two reads has no entry: it is gone, leave it out.
+            entry = fresh.get(task_id) if task_id in reread else known[task_id]
+            if entry is not None and entry[1] is not None:
+                tasks.append(json.loads(entry[1]))
+        return tasks
+
     def list_all_tasks(self) -> List[Dict[str, Any]]:
         self._ensure_ready()
         try:
@@ -503,6 +665,8 @@ class TaskRepository:
                     outcome = connection.execute(
                         _TASKS.delete().where(_TASKS.c.task_id == task_id)
                     )
-                    return bool(outcome.rowcount)
+                    deleted = bool(outcome.rowcount)
+                self._kept_fields().forget(task_id)
+                return deleted
             except (DBAPIError, SQLAlchemyError) as exc:
                 raise self._translate(exc) from exc

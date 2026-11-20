@@ -135,6 +135,15 @@ service = DramaService()
 service.character_regenerated_hook = sync_project_actor_to_library
 repo = TaskRepository()
 
+# What the ownership check reads of a task, and what one line of the project list is made of (every field of
+# the summary under both of its spellings, plus the owner the list is filtered by). The store keeps these few
+# fields per stored version, so neither a request to a project nor a poll of the list parses whole projects.
+_OWNER_FIELDS = ("owner_user_id",)
+_SUMMARY_FIELDS = tuple(dict.fromkeys((
+    *_OWNER_FIELDS,
+    *(key for name, field in DramaTaskSummary.model_fields.items() for key in (name, field.alias or name)),
+)))
+
 
 async def require_owned_drama_task(
     request: Request,
@@ -146,8 +155,9 @@ async def require_owned_drama_task(
     if not task_id:
         return current_user
 
-    task = await run_in_threadpool(service.repo.get_task, str(task_id))
-    if not task:
+    # Only the owner is needed here; the handler reads the project itself.
+    task = await run_in_threadpool(service.repo.get_task_fields, str(task_id), _OWNER_FIELDS)
+    if task is None:
         # Fail closed: a transient repository read failure must never let the
         # handler perform a second, unauthorised read that happens to succeed.
         raise HTTPException(status_code=404, detail=_text_of("require_owned_drama_task.detail"))
@@ -183,7 +193,7 @@ def create_new_task(req: DramaCreateRequest, current_user: dict = Depends(get_cu
         book = active_book()
         if book is not None:
             owner_id = str(current_user.get("user_id") or "")
-            owned = sum(1 for task in service.repo.list_all_tasks() if isinstance(task, dict) and task.get("owner_user_id") == owner_id)
+            owned = sum(1 for task in service.repo.list_task_fields(_OWNER_FIELDS) if task.get("owner_user_id") == owner_id)
             book.require_feature(owner_id, "project.max", current=owned)
         task_data = service.create_task(req, owner_user_id=current_user.get("user_id"))
         return task_data
@@ -197,7 +207,7 @@ def get_all_tasks(current_user: dict = Depends(get_current_user)):
     Returns summaries only: the generated assets are the bulk of a task and the
     list is polled, so they are fetched per project through /{task_id}/status.
     """
-    tasks = service.repo.list_all_tasks()
+    tasks = service.repo.list_task_fields(_SUMMARY_FIELDS)
     if not has_permission(current_user, PROJECT_READ_ANY):
         user_id = str(current_user.get("user_id") or "")
         tasks = (
