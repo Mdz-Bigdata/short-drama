@@ -44,6 +44,23 @@ def opening_size(size: Any) -> str:
     return max((word for position, word in found if position == first), key=len)
 
 
+def size_path(size: Any) -> list[str]:
+    """一镜里依次出现的景别：「远中景起幅→经中景、中近景，落幅近特写」读作 远中景、中景、中近景、特写；相邻重复的只记一次。"""
+    text = str(size or "")
+    words = sorted(prompt_data.words(_DATA, "sizes"), key=len, reverse=True)
+    path: list[str] = []
+    index = 0
+    while index < len(text):
+        word = next((word for word in words if text.startswith(word, index)), "")
+        if word:
+            if not path or path[-1] != word:
+                path.append(word)
+            index += len(word)
+        else:
+            index += 1
+    return path
+
+
 def light_side(*texts: Any) -> str:
     """主光从画面哪一侧来(左 / 右)；文字里没写就是空串。"""
     pattern = re.compile(prompt_data.text(_DATA, "light_side"))
@@ -110,6 +127,8 @@ def _shot_facts(task: Mapping[str, Any]) -> dict[int, dict[str, Any]]:
             "tone": tone(*light_text),
             "light_change": bool(re.search(prompt_data.text(_DATA, "light_change"), str(board.get("desc") or ""))),
             "size": opening_size(clip.get("size") or board.get("size")),
+            # 一格长镜常在格内推拉(中景起幅→近景落幅)：景别变没变要看整条路径，不只看起幅。
+            "sizes": size_path(clip.get("size") or board.get("size")),
             "expression": str(board.get("expression") or ""),
             # 原始台词按说话人分行、带括注(「（哽咽）」)，逐句按情绪算；没有时用字幕。
             "dialogue": str(clip.get("dialogue") or board.get("dialogue") or ""),
@@ -154,14 +173,17 @@ def check(task: Mapping[str, Any], timeline: Mapping[str, Any], *, plans: Any = 
         need = dialogue_seconds(spoken, fact.get("expression") or "") if clip.get("subtitle") else 0.0
         if need and seconds and need > seconds + slack:
             flag(clip, "dialogue", _say("dialogue", need=round(need, 1), seconds=seconds))
-        size = fact.get("size") or ""
-        if size:
-            sizes_used.append(size)
-            group = groups.get(size, size)
-            run_count = run_count + 1 if group == run_size else 1
-            run_size = group
+        path = fact.get("sizes") or ([fact["size"]] if fact.get("size") else [])
+        bands = list(dict.fromkeys(groups.get(word, word) for word in path))
+        sizes_used.extend(path)
+        if len(bands) == 1:
+            run_count = run_count + 1 if bands[0] == run_size else 1
+            run_size = bands[0]
             if run_count == run_limit + 1:
-                flag(clip, "same_size", _say("same_size", count=run_count, size=size))
+                flag(clip, "same_size", _say("same_size", count=run_count, size=path[0]))
+        elif bands:
+            # 格内换了景别(推近 / 拉远)：这一镜本身就有变化，连续不变的那一串到这里断开。
+            run_size, run_count = "", 0
         side, scene = fact.get("light") or "", str(clip.get("scene_id") or "")
         if side:
             before = last_light.get(scene)
@@ -201,6 +223,27 @@ def _grade(rule: str) -> dict[str, str]:
     return {"layer": layer, "tier": tier, "tier_label": prompt_data.value(_DATA, "tiers")[tier]}
 
 
+def _missing_lines(task: Mapping[str, Any], timeline: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """剧本里的每句台词都要在成片字幕里：漏掉的逐句列出(字幕关掉时听不出来，不查)。"""
+    from app.core import episode_cycle, line_coverage
+
+    settings = timeline.get("settings") if isinstance(timeline.get("settings"), Mapping) else {}
+    if settings.get("subtitles") is False:
+        return []
+    assets = task.get("assets") if isinstance(task.get("assets"), Mapping) else {}
+    breakdown = assets.get("2_breakdown") if isinstance(assets.get("2_breakdown"), Mapping) else {}
+    episode = timeline.get("episode")
+    scenes = [
+        scene for scene in breakdown.get("scenes") or []
+        if isinstance(scene, Mapping) and (episode is None or episode_cycle.episode_of_scene(scene.get("scene_id")) == int(episode))
+    ]
+    subtitles = [str(clip.get("subtitle") or "") for clip in timeline.get("clips") or [] if isinstance(clip, Mapping)]
+    return [
+        {"shot_uid": None, "scene_id": "", "shot_id": None, "rule": "script_line", "detail": _say("script_line", speaker=speaker, line=line), **_grade("script_line")}
+        for speaker, line in line_coverage.film_missing(scenes, subtitles)
+    ]
+
+
 def report(task: Mapping[str, Any], timeline: Mapping[str, Any], *, plans: Any = None) -> list[dict[str, Any]]:
     """验收单：逐镜的问题(按层的顺序、同层里必须修复在前)，再加机器没查的层(「未验证」，需人工确认)，
     最后一行是可用镜头单价(:mod:`app.core.unit_cost`)。"""
@@ -217,7 +260,7 @@ def report(task: Mapping[str, Any], timeline: Mapping[str, Any], *, plans: Any =
         {"shot_uid": None, "scene_id": "", "shot_id": None, "rule": "rights", "detail": item["detail"], "rights_key": item["key"], **_grade("rights")}
         for item in rights_ledger.items(task, timeline) if item["status"] == "confirm"
     ]
-    issues = [*issues, *rights]
+    issues = [*issues, *rights, *_missing_lines(task, timeline)]
     unverified = [
         {"shot_uid": None, "scene_id": "", "shot_id": None, "rule": "unverified", "detail": detail,
          "layer": layer, "tier": "manual", "tier_label": prompt_data.value(_DATA, "tiers")["manual"]}
@@ -236,4 +279,4 @@ def counts(issues: Sequence[Mapping[str, Any]]) -> dict[str, int]:
     return {rule: sum(1 for issue in issues if issue.get("rule") == rule) for rule in dict.fromkeys(issue.get("rule") for issue in issues)}
 
 
-__all__ = ["check", "counts", "gaze_side", "light_side", "opening_size", "report", "tone"]
+__all__ = ["check", "counts", "gaze_side", "light_side", "opening_size", "report", "size_path", "tone"]

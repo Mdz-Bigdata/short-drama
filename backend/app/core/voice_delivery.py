@@ -157,6 +157,17 @@ def clean_readings(readings: Any) -> list[dict[str, str]]:
     return [{"word": word, "say": say} for word, say in list(rows.items())[: prompt_data.number(_DATA, "max_readings")]]
 
 
+def reading_notes(dialogue: str, readings: Any) -> list[str]:
+    """项目读音表里、这句台词用到的词各写一句念法，给自己出声的视频模型看(品牌名、多音字、生僻的人名)。
+
+    配音走 :func:`spoken_form` 直接换字；视频模型出的原声换不了字，只能在提示词里说这个词念什么音。
+    """
+    line = str(dialogue or "")
+    wording = prompt_data.text(_DATA, "native_reading")
+    found = [wording.format(word=row["word"], say=row["say"]) for row in clean_readings(readings) if row["word"] in line]
+    return found[: prompt_data.number(_DATA, "native_reading_max")]
+
+
 def age_bucket(description: str) -> str:
     """声音设计里的年龄(「38岁男声」「老年」)落在音色库的哪个年龄段：young / middle_aged / old；看不出是空串。"""
     ages = prompt_data.value(_DATA, "voice_ages")
@@ -175,4 +186,4 @@ def age_distance(wanted: str, offered: str) -> int:
     return abs(order.index(wanted) - order.index(offered))
 
 
-__all__ = ["age_bucket", "age_distance", "clean_readings", "delivery_tags", "performed_text", "spoken_form"]
+__all__ = ["age_bucket", "age_distance", "clean_readings", "delivery_tags", "performed_text", "reading_notes", "spoken_form"]

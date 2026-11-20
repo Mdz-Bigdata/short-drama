@@ -3,7 +3,8 @@
 The idea follows open-ai-canvas same-account multi-window presence (MIT): every window of a board
 opens a Server-Sent Events stream and posts its cursor, drag rectangles and selection; the others
 draw them. Whenever a new canvas version is written, every window of that board hears ``saved``
-at once instead of finding out on its next poll.
+at once instead of finding out on its next poll. Whenever one of the board's node runs changes state
+it hears ``run`` (ids and a status, nothing else) and reads the outputs again; the poll stays the fallback.
 
 Rooms are keyed by (owner_user_id, project_id, canvas_id): only the owner's own windows ever meet,
 so nothing here crosses accounts.
@@ -64,6 +65,10 @@ _DROPPABLE = frozenset({"cursor", "drag"})
 # kind is superseded by the newer one of the same kind.
 _KEPT = frozenset({"saved", "peers"})
 _RELAYED = frozenset({"cursor", "drag", "selection"})
+# ``run`` is only ever said by the server (a window cannot post it): the states a node run goes through,
+# plus ``finished`` for a whole batch that has stopped.
+RUN_STATUSES = frozenset({"queued", "running", "done", "failed", "cancelled", "skipped", "finished"})
+RUN_ID_MAX_CHARS = 120
 
 RoomKey = tuple[str, str, str]
 
@@ -123,6 +128,10 @@ def clean_label(label: str | None) -> str:
 
 def valid_client_id(value: str | None) -> bool:
     return bool(value) and bool(_CLIENT_ID.match(str(value)))
+
+
+def _run_id(value: Any) -> str | None:
+    return value if isinstance(value, str) and 0 < len(value) <= RUN_ID_MAX_CHARS else None
 
 
 def _enqueue(queue: asyncio.Queue, event: PresenceEvent) -> None:
@@ -338,6 +347,26 @@ class PresenceHub:
         except Exception:  # noqa: BLE001 - presence is a nicety; a save must never fail because of it
             logger.exception("[Presence] saved broadcast failed")
 
+    def run_changed(
+        self, owner_id: str, project_id: str, canvas_id: str, *, batch_id: str, status: str, run_id: str | None = None, node_id: str | None = None,
+    ) -> None:
+        """A node run of that board changed state (or, with no run_id, its batch stopped): tell the owner's windows.
+
+        Ids and a status only: what the run made is read from the outputs, as the poll reads it. Never raises
+        into the run and never waits: the lock is held for a dictionary lookup and each delivery is handed to its loop.
+        """
+        try:
+            if status not in RUN_STATUSES or _run_id(batch_id) is None:
+                logger.warning("[Presence] run event not sent: unknown status or batch id")
+                return
+            event = PresenceEvent("run", {"batch_id": batch_id, "run_id": _run_id(run_id), "node_id": _run_id(node_id), "status": status})
+            with self._lock:
+                room = self._rooms.get((str(owner_id), str(project_id), str(canvas_id)))
+                if room:
+                    self._broadcast(room, event)
+        except Exception:  # noqa: BLE001 - presence is a nicety; a run must never fail because of it
+            logger.exception("[Presence] run broadcast failed")
+
     # ------------------------------------------------------------------ housekeeping
 
     def sweep(self) -> None:
@@ -400,8 +429,12 @@ class PresenceHub:
                 continue
             if client.open:
                 self._schedule(client.loop, client.queue, event)
-            elif client.recycling and event.name not in _DROPPABLE and len(client.backlog) < BACKLOG_LIMIT:
-                client.backlog.append(event)
+            elif client.recycling and event.name not in _DROPPABLE:
+                if event.name == "run":
+                    # One is enough to make the window read the outputs again; a batch must not crowd out saved / peers.
+                    client.backlog = [missed for missed in client.backlog if missed.name != "run"]
+                if len(client.backlog) < BACKLOG_LIMIT:
+                    client.backlog.append(event)
 
     @staticmethod
     def _schedule(loop: asyncio.AbstractEventLoop | None, queue: asyncio.Queue | None, event: PresenceEvent) -> None:

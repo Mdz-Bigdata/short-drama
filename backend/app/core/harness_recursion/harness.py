@@ -10,7 +10,7 @@ naming anything else is off the surface and is sent back, as upstream sends back
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from app.core.harness_recursion import checks, prompts
 
@@ -92,8 +92,36 @@ def grader_word(text: str) -> str | None:
     return next((word for word in prompts.table("grader_words") if str(word).lower() in low), None)
 
 
-def validate(harness: Mapping[str, str]) -> None:
-    """Raise ``ProposalError`` listing every problem, in words its author can act on."""
+# Verified on one project only; never carried to another.
+PROJECT_ONLY: tuple[str, ...] = ("memory",)
+
+
+def project_terms_in(text: str, terms: Sequence[str]) -> list[str]:
+    """This project's own names (cast, title) that ``text`` mentions."""
+    return [term for term in dict.fromkeys(str(term).strip() for term in terms) if len(term) >= 2 and term in str(text or "")]
+
+
+def carried(harness: Mapping[str, str], terms: Sequence[str] = ()) -> Harness:
+    """The overlay as another project of the kind gets it: without the project-only component, and without
+    any line that still names this project's cast. Validation keeps such lines out of a new overlay; this is
+    for one that was stored before the rule, or whose project named someone only later."""
+    kept: Harness = {}
+    for name, text in normalise(harness).items():
+        if name in PROJECT_ONLY:
+            continue
+        lines = [line for line in text.splitlines() if not project_terms_in(line, terms)]
+        if "\n".join(lines).strip():
+            kept[name] = "\n".join(lines).strip()
+    return kept
+
+
+def validate(harness: Mapping[str, str], project_terms: Sequence[str] = ()) -> None:
+    """Raise ``ProposalError`` listing every problem, in words its author can act on.
+
+    ``project_terms`` are this project's own names: outside ``memory`` they are refused, because every
+    other component is what the next project of the kind runs with (seen in a real run, 2026-11-16: a
+    character-design overlay whose checks required another film's cast by name).
+    """
     problems: list[str] = []
     component_limit, total_limit = prompts.limit("component_chars"), prompts.limit("total_chars")
     for name, text in harness.items():
@@ -105,6 +133,8 @@ def validate(harness: Mapping[str, str]) -> None:
         word = grader_word(text)
         if word:
             problems.append(prompts.says("errors", "grader_word", name=name, word=word))
+        if name not in PROJECT_ONLY:
+            problems.extend(prompts.says("errors", "project_term", name=name, term=term) for term in project_terms_in(text, project_terms)[:3])
         if name == "scripts":
             try:
                 checks.parse(text)
@@ -157,4 +187,4 @@ def describe(harness: Mapping[str, str]) -> str:
     return "\n".join(f"<{name}>{harness.get(name) or prompts.label('empty')}</{name}>" for name in COMPONENTS)
 
 
-__all__ = ["COMPONENTS", "Harness", "ProposalError", "changed", "describe", "grader_word", "normalise", "notes_of", "parse_reply", "render", "same", "validate"]
+__all__ = ["COMPONENTS", "Harness", "PROJECT_ONLY", "ProposalError", "carried", "changed", "describe", "grader_word", "normalise", "notes_of", "parse_reply", "project_terms_in", "render", "same", "validate"]

@@ -73,6 +73,19 @@ class ShotLinesTests(unittest.TestCase):
         self.assertEqual(clip_brief.pose_text(StagePose(clip="human-walk-v1", preset="sit")), "行走")
         self.assertEqual(clip_brief.pose_text(None), "")
 
+    def test_every_motion_the_desk_offers_has_the_same_name_in_the_prompt(self):
+        """导演台动作库(前端 humanoidClips.ts)里的每个动作，片段提示词都叫得出同一个名字，打斗动作也一样。"""
+        import re
+        from pathlib import Path
+
+        from app.core import prompt_data
+
+        source = (Path(__file__).resolve().parents[2] / "frontend/src/features/directorDesk/lib/humanoidClips.ts").read_text(encoding="utf-8")
+        offered = dict(re.findall(r"\{ id: '(human-[a-z0-9-]+)', name: '([^']+)'", source))
+        self.assertEqual(len(offered), 34)
+        self.assertEqual(dict(prompt_data.value("stage_brief", "clip_names")), offered)
+        self.assertEqual(clip_brief.pose_text(StagePose(clip="human-sword-combo-v1", preset="fight")), "三连斩")
+
 
 class PromptTests(unittest.TestCase):
     LINES = ["人物：林夏：站立；姿势抱臂", "空间：林夏画左、周教授画右，相距2.6米面对面", "机位：机高1.5米，50mm"]

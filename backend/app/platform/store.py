@@ -67,6 +67,7 @@ from app.platform.models import (
     ModelConfigurationCredential,
     PlatformSetting,
     McpToken,
+    UserPromptPreference,
 )
 from app.repository.user_repo import hash_password, verify_password
 from app.core import real_person
@@ -1363,6 +1364,43 @@ class PlatformStore:
                     orphans.setdefault(record.storage_path, record)
             await session.delete(old)
         return tuple(orphans.values())
+
+    async def list_prompt_preferences(self, user_id: str) -> list[UserPromptPreference]:
+        """The stage agents this account does not simply follow the platform on."""
+        async with self.sessions() as session:
+            return list((await session.scalars(
+                select(UserPromptPreference).where(UserPromptPreference.user_id == user_id)
+            )).all())
+
+    async def set_prompt_preference(self, user_id: str, operation: str, mode: str, text: str) -> None:
+        """Keep the account's choice for one stage agent. ``follow`` keeps nothing: it is the absence of a row."""
+        async with self.sessions() as session:
+            row = await session.get(UserPromptPreference, (user_id, operation))
+            if mode == "follow":
+                if row is not None:
+                    await session.delete(row)
+            elif row is None:
+                session.add(UserPromptPreference(user_id=user_id, operation=operation, mode=mode, text=text))
+            else:
+                row.mode, row.text = mode, text
+            await session.commit()
+
+    async def count_users(self) -> int:
+        """How many accounts exist. Cheap, and the diagnostics' proof that the store answers."""
+        async with self.sessions() as session:
+            return int(await session.scalar(select(func.count()).select_from(PlatformUser)) or 0)
+
+    async def element_storage_report(self, owner_id: str) -> dict[str, int]:
+        """What the owner's library holds against its limits: bytes (every kept version's files, each counted once) and assets."""
+        async with self.sessions() as session:
+            used = await self._element_storage_usage(session, owner_id)
+            count = int(await session.scalar(
+                select(func.count()).select_from(ElementAsset).where(ElementAsset.owner_id == owner_id)
+            ) or 0)
+        return {
+            "used_bytes": int(used), "quota_bytes": MAX_ELEMENT_STORAGE_BYTES,
+            "asset_count": count, "asset_quota": MAX_ELEMENT_ASSETS_PER_OWNER,
+        }
 
     async def _element_storage_usage(self, session, owner_id: str | None = None) -> int:
         """现行文件和历史版本文件按 (资产, 路径) 去重后的总字节数：同一个文件被几版引用只算一次。"""

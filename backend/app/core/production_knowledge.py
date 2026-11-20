@@ -16,7 +16,7 @@ production_knowledge → knowledge_evolution; the evolution engine never imports
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -219,9 +219,13 @@ def global_negatives(medium: str) -> tuple[str, ...]:
     return ()
 
 
-def global_negative_text(medium: str) -> str:
-    """全局强制负面词拼成一串(顿号分隔)，可直接追加进提示词的负面约束。"""
-    return "、".join(global_negatives(medium))
+def global_negative_text(medium: str, skip: Iterable[str] = ()) -> str:
+    """全局强制负面词拼成一串(顿号分隔)，可直接追加进提示词的负面约束。
+
+    ``skip``：含其中任一词的那几条不带(某条线路的审核一见这些词就拒单，见 model_gateway 的 Agnes 线路)。
+    """
+    words = [word for word in skip if word]
+    return "、".join(term for term in global_negatives(medium) if not any(word in term for word in words))
 
 
 def reset_knowledge_cache() -> None:

@@ -24,7 +24,7 @@ import os
 import re
 import tempfile
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -85,7 +85,7 @@ def entries(stage: int, domain: str) -> list[dict[str, Any]]:
 
 def add(
     *, stage: int, domain: str, task_id: str, adopted_label: str, harness: Mapping[str, str], why: str,
-    experience: Mapping[str, str] | None, adopted_edit: bool, mode: str, k: int,
+    experience: Mapping[str, str] | None, adopted_edit: bool, mode: str, k: int, project_terms: Sequence[str] = (),
 ) -> dict[str, Any] | None:
     """Store one adopted overlay with why it was adopted; nothing without a lesson that has its evidence.
 
@@ -94,12 +94,14 @@ def add(
     if not has_experience(experience):
         return None
     kept = surface.normalise(harness)
-    surface.validate(kept)
+    surface.validate(kept, project_terms)
     if surface.grader_word(f"{why} {' '.join(str(value) for value in experience.values())}"):
         return None
     entry = {
         "task_id": task_id, "stage": int(stage), "domain": domain, "adopted": adopted_label, "harness": kept,
         "why": str(why or "")[:1200], "mode": mode, "k": int(k), "created_at": _now(),
+        # The project's own names at the time: a line that mentions one is not carried to another project.
+        "project_terms": [str(term) for term in project_terms][:60],
         "experience": {key: str(experience[key])[:1200] for key in ("cue", "lesson", "evidence", "confidence", "edits") if experience.get(key)},
         # Becomes the kind's current overlay when an edited overlay's output won the blind comparison. The
         # reflection has already had its say: without a concrete execution contrast it writes no entry at
@@ -151,16 +153,15 @@ def verified_lessons(stage: int, domain: str, *, limit: int = 4) -> list[dict[st
     return lessons
 
 
-# Verified on one project only; never carried to another.
-PROJECT_ONLY = ("memory",)
+PROJECT_ONLY = surface.PROJECT_ONLY
 
 
 def current_overlay(stage: int, domain: str) -> surface.Harness:
-    """This kind's overlay as later projects run it: the newest one that won, without its project facts."""
+    """This kind's overlay as later projects run it: the newest one that won, without its project facts
+    (the ``memory`` component, and any line elsewhere that names the cast of the project it came from)."""
     for entry in entries(stage, domain):
         if entry.get("applied") and not entry.get("retired"):
-            kept = surface.normalise(entry.get("harness") or {})
-            return {name: text for name, text in kept.items() if name not in PROJECT_ONLY}
+            return surface.carried(entry.get("harness") or {}, entry.get("project_terms") or ())
     return {}
 
 

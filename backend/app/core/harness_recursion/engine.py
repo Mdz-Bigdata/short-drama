@@ -44,6 +44,8 @@ class Work:
     lens: str = ""
     yardstick: str = ""
     checks: str = ""
+    # This project's own names (cast, title): they may appear in the overlay's ``memory`` and nowhere else.
+    project_terms: Sequence[str] = ()
 
 
 @dataclass
@@ -105,6 +107,7 @@ def step(work: Work, *, base_outputs: Sequence[str] = (), k: int = 1, mode: str 
         work=work.work, domain=work.domain, request=work.request, outline=work.outline,
         library=library.context_block(work.stage, work.domain) if remember else "",
         lens=work.lens, yardstick=work.yardstick, checks=work.checks,
+        project_terms=tuple(dict.fromkeys(str(term).strip() for term in work.project_terms if len(str(term).strip()) >= 2)),
     )
     base = [_rollout(work, f"base{index + 1}", base_harness, text=output) for index, output in enumerate(list(base_outputs)[:k])]
     base += [_rollout(work, f"base{index + 1}", base_harness) for index in range(len(base), k)]
@@ -137,6 +140,7 @@ def step(work: Work, *, base_outputs: Sequence[str] = (), k: int = 1, mode: str 
         entry = library.add(
             stage=work.stage, domain=work.domain, task_id=work.task_id, adopted_label=selection.chosen, harness=adopted_harness,
             why=selection.why, experience=experience, adopted_edit=selection.adopted_edit, mode=mode, k=k,
+            project_terms=evidence.project_terms,
         )
     return StepRecord(
         task_id=work.task_id, stage=work.stage, domain=work.domain, result=result, selection=selection, experience=experience,

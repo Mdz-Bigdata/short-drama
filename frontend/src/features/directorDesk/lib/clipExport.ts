@@ -46,7 +46,17 @@ export interface ClipRequest {
   depth?: boolean;
   signal?: AbortSignal;
   onProgress?: (fraction: number) => void;
+  /** How long and how big the result may be. Left out: what a shot's clip may be to go into the capture library. */
+  limits?: ClipLimits;
 }
+
+export interface ClipLimits {
+  seconds: number;
+  bytes: number;
+}
+
+/** A whole scene saved to disk is not uploaded anywhere, so it only has to stay inside what a browser encodes in memory. */
+export const SCENE_CLIP_LIMITS: ClipLimits = { seconds: 600, bytes: 400 * 1024 * 1024 };
 
 export interface ClipResult {
   blob: Blob;
@@ -78,9 +88,10 @@ function aborted(): DOMException {
   return new DOMException('已取消导出', 'AbortError');
 }
 
-export async function exportClip({ stage, aspect, durationS, fps, monochrome, labels, depth = false, signal, onProgress }: ClipRequest): Promise<ClipResult> {
+export async function exportClip({ stage, aspect, durationS, fps, monochrome, labels, depth = false, signal, onProgress, limits }: ClipRequest): Promise<ClipResult> {
+  const cap = limits ?? { seconds: CAPTURE_LIMITS.clipSeconds, bytes: CAPTURE_LIMITS.clipBytes };
   if (!CAPTURE_LIMITS.clipFrameRates.includes(fps)) throw new Error('帧率只能是 24 / 25 / 30');
-  if (!(durationS > 0) || durationS > CAPTURE_LIMITS.clipSeconds) throw new Error(`白模视频时长必须在 0 到 ${CAPTURE_LIMITS.clipSeconds} 秒之间`);
+  if (!(durationS > 0) || durationS > cap.seconds) throw new Error(`白模视频时长必须在 0 到 ${cap.seconds} 秒之间`);
   const { width, height } = clipSize(aspect);
   if (signal?.aborted) throw aborted();
 
@@ -133,7 +144,7 @@ export async function exportClip({ stage, aspect, durationS, fps, monochrome, la
     await output.finalize();
     if (!target.buffer) throw new Error('视频编码没有产生数据，请重试。');
     const blob = new Blob([target.buffer], { type: format === 'mp4' ? 'video/mp4' : 'video/webm' });
-    if (blob.size > CAPTURE_LIMITS.clipBytes) throw new Error(`导出的视频有 ${(blob.size / 1024 / 1024).toFixed(1)} MB，超过 60 MB 的上传上限；请缩短时长后重试。`);
+    if (blob.size > cap.bytes) throw new Error(`导出的视频有 ${(blob.size / 1024 / 1024).toFixed(1)} MB，超过 ${Math.round(cap.bytes / 1024 / 1024)} MB 的上限；请缩短时长后重试。`);
     return { blob, format, width, height, durationS: total / fps, fps, frames: total, showsLimbs };
   } catch (error) {
     try {

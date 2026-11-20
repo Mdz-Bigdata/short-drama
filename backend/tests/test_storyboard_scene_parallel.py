@@ -253,8 +253,11 @@ class PanelBudgetTests(ParallelStageFourTests):
 
     def test_a_thirty_second_seedance_scene_can_be_one_long_panel_on_the_board(self):
         payload, _, prompts = self._board("30s", rows=2, video_model="seedance2.5")
-        self.assertIn("最多3格", prompts[0])
-        self.assertIn("每格是一段10–30秒的连续视频", prompts[0])
+        self.assertIn("最多2格", prompts[0])
+        self.assertIn("每格是一段15–30秒的连续视频", prompts[0])
+        # Every table is told the episode's size rhythm and that one size is one picture.
+        self.assertIn("【开场景别（全集景别节奏）】", prompts[0])
+        self.assertIn("只出一张分镜图", prompts[0])
         self.assertNotIn("每格是一段5", prompts[0])
         for panel in payload["storyboard"]["panels"]:
             self.assertLessEqual(panel["duration_seconds"], 30)

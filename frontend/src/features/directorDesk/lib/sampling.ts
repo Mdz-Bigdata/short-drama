@@ -471,39 +471,3 @@ function sampledPlanAt(plan: StagePlan, shotId: number | null | undefined, t: nu
     })),
   };
 }
-
-export interface CameraPath {
-  /** The lens position along the shot, evenly spaced in time. */
-  points: SpacePoint[];
-  keys: Array<{ time: number; position: SpacePoint }>;
-}
-
-/** Where the filming lens travels during the shot; `null` when it does not move at all. */
-export function cameraPathOf(plan: StagePlan, shot: StageShot | undefined, steps = 48): CameraPath | null {
-  const camera = plan.cameras.find(item => item.id === shot?.camera_id);
-  if (!shot || !camera) return null;
-  const timeline = timelineOf(plan, shot.shot_id);
-  const keys = cameraKeysOf(timeline, camera);
-  if (keys.length < 2 && !timeline.follow?.length) return null;
-  // The whole lens, not just its keys: a follow clip moves it without having any.
-  const points = Array.from({ length: steps + 1 }, (_, index) => sampleShot(plan, shot, (timeline.duration_s * index) / steps).camera?.position ?? camera.position);
-  return { points, keys: keys.map(key => ({ time: key.time, position: key.position })) };
-}
-
-export interface ActorPath {
-  name: string;
-  /** On the ground (y = 0), one point per placed key: between two keys a figure walks a straight line. */
-  points: SpacePoint[];
-  keys: Array<{ time: number; position: SpacePoint }>;
-}
-
-/** Every actor track of the shot that goes somewhere; easing changes the timing of a leg, never its line. */
-export function actorPathsOf(plan: StagePlan, shot: StageShot | undefined): ActorPath[] {
-  if (!shot) return [];
-  const timeline = timelineOf(plan, shot.shot_id);
-  return Object.entries(timeline.actors).flatMap(([name, keys]) => {
-    const placed = keys.flatMap(key => (key.position ? [{ time: key.time, position: [key.position[0], 0, key.position[1]] as SpacePoint }] : []));
-    if (placed.length < 2) return [];
-    return [{ name, points: placed.map(key => key.position), keys: placed }];
-  });
-}

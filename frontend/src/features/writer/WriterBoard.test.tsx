@@ -139,6 +139,41 @@ describe('ScriptVersionMenu', () => {
     await waitFor(() => expect(onRestore).toHaveBeenCalledWith('v2'));
   });
 
+  it('compares a saved version with the current screenplay before bringing it back', async () => {
+    const compared = {
+      version_id: 'v2', label: '第二稿', identical: false,
+      summary: { same: 1, changed: 1, added: 0, removed: 1, lines_added: 2, lines_removed: 1 },
+      episodes: [
+        { episode: 2, status: 'changed', label: '改了', title: '第2集 回声', lines_added: 2, lines_removed: 1, more_changes: 3,
+          changes: [{ old: ['周教授站在走廊尽头。'], new: ['周教授站在走廊尽头，手里拿着录音笔。'] }] },
+        { episode: 3, status: 'removed', label: '删掉', title: '第3集 旧稿', lines_added: 0, lines_removed: 4, more_changes: 0, changes: [] },
+      ],
+    };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true, status: 200, json: async () => compared } as Response);
+    const user = userEvent.setup();
+    const versions = [{ versionId: 'v2', label: '第二稿', createdAt: '2026-10-15T08:00:00+00:00', sourceHash: 'b'.repeat(64), episodeCount: 6, sceneCount: 120 }];
+    render(<ScriptVersionMenu versions={versions} taskId="t 1" />);
+    await user.click(screen.getByRole('button', { name: /版本 \(1\)/ }));
+    await user.click(screen.getByRole('button', { name: '对比' }));
+    const shown = await screen.findByRole('region', { name: '版本对比' });
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/drama/t%201/script/versions/v2/compare');
+    expect(shown.textContent).toContain('改了 1 集 · 新增 0 集 · 删掉 1 集 · 多了 2 行 · 少了 1 行');
+    expect(shown.textContent).toContain('第2集 回声 · 改了 (+2 / -1)');
+    expect(shown.querySelector('del')?.textContent).toBe('周教授站在走廊尽头。');
+    expect(shown.querySelector('ins')?.textContent).toBe('周教授站在走廊尽头，手里拿着录音笔。');
+    expect(shown.textContent).toContain('还有 3 处改动没有列出');
+    await user.click(screen.getByRole('button', { name: '收起对比' }));
+    expect(screen.queryByRole('region', { name: '版本对比' })).toBeNull();
+    fetchMock.mockRestore();
+  });
+
+  it('offers no comparison without a project', async () => {
+    const user = userEvent.setup();
+    render(<ScriptVersionMenu versions={[{ versionId: 'v2', label: '第二稿', createdAt: '', sourceHash: '', episodeCount: 1, sceneCount: 1 }]} />);
+    await user.click(screen.getByRole('button', { name: /版本 \(1\)/ }));
+    expect(screen.queryByRole('button', { name: '对比' })).toBeNull();
+  });
+
   it('keeps the typed name when saving the version fails', async () => {
     const onSave = vi.fn().mockRejectedValue(new Error('版本保存失败，请稍后重试。'));
     const user = userEvent.setup();

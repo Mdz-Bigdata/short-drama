@@ -919,6 +919,34 @@ describe('WriterAgentPage breakdown download', () => {
     expect(onExportBreakdown.mock.calls).toEqual([['csv'], ['md']]);
   });
 
+  it('offers the script review on a saved project only, and opens it without asking the model', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ title: '雨夜来信', report: null, stale: false, facts: [{ key: 'episodes', label: '集数', value: '1' }], calls_needed: 1, attempts: 3, model: 'm', advice: '' }),
+    } as Response);
+    const { rerender } = render(<WriterAgentPage title="雨夜来信" script="第1集\n内景：书房 - 日\n沈砚抬头。" />);
+    expect(screen.queryByRole('button', { name: '剧本审核' })).toBeNull();
+    rerender(<WriterAgentPage title="雨夜来信" taskId="t1" script="第1集\n内景：书房 - 日\n沈砚抬头。" />);
+    fireEvent.click(screen.getByRole('button', { name: '剧本审核' }));
+    expect(await screen.findByRole('dialog', { name: '剧本审核报告' })).toBeTruthy();
+    const reads = fetchMock.mock.calls.filter(call => String(call[0]).includes('/script-review'));
+    expect(reads).toHaveLength(1);
+    expect((reads[0][1] as RequestInit | undefined)?.method).toBeUndefined();
+    fetchMock.mockRestore();
+  });
+
+  it('offers the platform submission pack and holds the button while it is being prepared', async () => {
+    const onExportSubmission = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(<WriterAgentPage title="雨夜来信" script="第1集\n内景：书房 - 日\n沈砚抬头。" onExportSubmission={onExportSubmission} />);
+
+    await user.click(screen.getByRole('button', { name: '投稿材料' }));
+    expect(onExportSubmission).toHaveBeenCalledTimes(1);
+
+    rerender(<WriterAgentPage title="雨夜来信" script="第1集\n内景：书房 - 日\n沈砚抬头。" onExportSubmission={onExportSubmission} submissionBusy />);
+    expect((screen.getByRole('button', { name: '投稿材料生成中…' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('has nothing to offer when nothing can handle it', () => {
     render(<WriterAgentPage title="雨夜来信" script="第1集" />);
 

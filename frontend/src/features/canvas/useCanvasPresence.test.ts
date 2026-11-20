@@ -181,6 +181,43 @@ describe('useCanvasPresence', () => {
     unmount();
   });
 
+  it('tells about runs changing state, whoever started them, until unsubscribed', () => {
+    const { result, unmount } = renderHook(() => useCanvasPresence(PROPS));
+    const heard = vi.fn();
+    const broken = vi.fn(() => { throw new Error('listener failed'); });
+    result.current.onRun(broken);
+    const off = result.current.onRun(heard);
+    const source = FakeEventSource.last();
+    act(() => {
+      source.emit('run', { batch_id: 'b1', run_id: 'r1', node_id: 'n1', status: 'running' });
+      source.emit('run', { batch_id: 'b1', run_id: 'r1', node_id: 'n1', status: 'done' });
+      source.emit('run', { batch_id: 'b1', run_id: null, node_id: null, status: 'finished' });
+      // Not a run event at all: ignored rather than passed on.
+      source.emit('run', { version: 3 });
+      source.emit('run');
+    });
+    expect(heard.mock.calls.map(([run]) => [run.node_id, run.status])).toEqual([['n1', 'running'], ['n1', 'done'], [null, 'finished']]);
+    expect(broken).toHaveBeenCalledTimes(3);
+    // Hearing about a run posts nothing and changes nothing that is drawn.
+    expect(posts()).toEqual([]);
+    off();
+    act(() => { source.emit('run', { batch_id: 'b2', run_id: 'r2', node_id: 'n2', status: 'queued' }); });
+    expect(heard).toHaveBeenCalledTimes(3);
+    unmount();
+  });
+
+  it('keeps hearing about runs on the stream opened after an error', () => {
+    const { result, unmount } = renderHook(() => useCanvasPresence(PROPS));
+    const heard = vi.fn();
+    result.current.onRun(heard);
+    act(() => { FakeEventSource.last().emit('error'); });
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(FakeEventSource.instances).toHaveLength(2);
+    act(() => { FakeEventSource.last().emit('run', { batch_id: 'b1', run_id: 'r1', node_id: 'n1', status: 'done' }); });
+    expect(heard).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
   it('starts the stream again after an error, backing off to 30 s, and from the start once it opens', () => {
     const { unmount } = renderHook(() => useCanvasPresence(PROPS));
     const delays: number[] = [];

@@ -10,7 +10,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core import clip_skeleton, prompt_data
-from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS, MAX_SEQUENCE_IMAGES
+from app.core.reference_limits import MAX_SEQUENCE_IMAGES, WIDEST_REFERENCE_AUDIOS, WIDEST_REFERENCE_IMAGES, WIDEST_REFERENCE_VIDEOS
 
 
 # "first_frame" 不是出品人能选的项目设置(见 _USER_VIDEO_REFERENCE_MODES)：只由第 5 阶段的接法规则(clip_route)
@@ -78,9 +78,39 @@ VIDEO_PROVIDER_PROFILES: tuple[VideoProviderProfile, ...] = (
         notes=["frame anchoring and mixed Ref2VA references are separate request modes"],
         native_audio=True,
     ),
+    # Seedance 2.5 and 2.5 flash take more references than 2.0 (Ark video generation guide: images 30 / 10 / 9,
+    # videos 10 / 5 / 3, audio 10 / 5 / 3). Same family, so everything that asks for "seedance" still matches;
+    # listed before the 2.0 entry so the longer names are found first.
     VideoProviderProfile(
         family="seedance",
-        aliases=["seedance2.5", "seedance-2.5", "seedance2.0", "seedance-2.0", "seedance2", "seedance"],
+        aliases=["seedance2.5-flash", "seedance-2.5-flash", "seedance 2.5 flash", "seedance-2-5-flash"],
+        modes=["text", "first_frame", "first_last_frame", "multi_reference", "multimodal"],
+        max_reference_images=10,
+        max_reference_videos=5,
+        max_reference_audios=5,
+        verification_status="integrated",
+        capability_source="Ark video generation guide (Seedance 2.5 flash reference limits); project Ark-compatible adapter",
+        notes=["the configured endpoint remains authoritative for each Seedance version"],
+        native_audio=True,
+    ),
+    VideoProviderProfile(
+        family="seedance",
+        aliases=["seedance2.5", "seedance-2.5", "seedance 2.5", "seedance-2-5"],
+        modes=["text", "first_frame", "first_last_frame", "multi_reference", "multimodal"],
+        max_reference_images=30,
+        max_reference_videos=10,
+        max_reference_audios=10,
+        verification_status="integrated",
+        capability_source="Ark video generation guide (Seedance 2.5 reference limits); project Ark-compatible adapter",
+        notes=[
+            "the configured endpoint remains authoritative for each Seedance version",
+            "a request body may not exceed 64 MB: the gateway shrinks or drops inline references past its budget",
+        ],
+        native_audio=True,
+    ),
+    VideoProviderProfile(
+        family="seedance",
+        aliases=["seedance2.0", "seedance-2.0", "seedance2", "seedance"],
         modes=["text", "first_frame", "first_last_frame", "multi_reference", "multimodal"],
         max_reference_images=9,
         max_reference_videos=3,
@@ -181,9 +211,9 @@ class VideoRouteRequest(BaseModel):
     first_frame: str | None = None
     last_frame: str | None = None
     sequence_images: list[str] = Field(default_factory=list, max_length=MAX_SEQUENCE_IMAGES)
-    reference_images: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_IMAGES)
-    reference_videos: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_VIDEOS)
-    reference_audios: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_AUDIOS)
+    reference_images: list[str] = Field(default_factory=list, max_length=WIDEST_REFERENCE_IMAGES)
+    reference_videos: list[str] = Field(default_factory=list, max_length=WIDEST_REFERENCE_VIDEOS)
+    reference_audios: list[str] = Field(default_factory=list, max_length=WIDEST_REFERENCE_AUDIOS)
     intent: VideoGenerationIntent = Field(default_factory=VideoGenerationIntent)
 
 
@@ -226,11 +256,11 @@ VIDEO_MODEL_MAX_SHOT_SECONDS: tuple[tuple[str, int], ...] = (
 
 
 # 单个分镜时长的「宜用区间」：模型能生成的范围之内，按创作习惯取的一段。Seedance 2.5 一次能出 30 秒，
-# 用它拍 4 秒碎镜既浪费调用也丢掉长镜头的连贯；2.0 与 H3 的 5–15 秒是它们画面最稳的一段。
+# 用它拍碎镜既浪费调用也丢掉长镜头的连贯，所以只取 15–30 秒；2.0 与 H3 的 5–15 秒是它们画面最稳的一段。
 # 编剧阶段把分镜时长限定在这里（模型从剧本规划时只能取区间内的整数秒），估算也落在这里。
 VIDEO_MODEL_PREFERRED_SHOT_SECONDS: tuple[tuple[str, int, int], ...] = (
-    ("seedance2.5", 10, 30),
-    ("seedance-2.5", 10, 30),
+    ("seedance2.5", 15, 30),
+    ("seedance-2.5", 15, 30),
     ("seedance2.0", 5, 15),
     ("seedance-2.0", 5, 15),
     ("seedance2", 5, 15),
@@ -239,6 +269,14 @@ VIDEO_MODEL_PREFERRED_SHOT_SECONDS: tuple[tuple[str, int, int], ...] = (
     ("minimax h3", 5, 15),
     ("hailuo", 5, 15),
     ("h3", 5, 15),
+)
+
+
+# 宜用区间里往哪头靠：Seedance 2.5 一镜尽量拍满 30 秒，取多少仍由这一镜的剧情决定（编剧提示词照此写）。
+# 没登记的模型不偏向哪头，按内容取。
+VIDEO_MODEL_AIM_SHOT_SECONDS: tuple[tuple[str, int], ...] = (
+    ("seedance2.5", 30),
+    ("seedance-2.5", 30),
 )
 
 
@@ -305,6 +343,19 @@ def preferred_shot_seconds(model: str) -> tuple[int, int]:
                 high = min(high, hard_max)
                 return max(MIN_SHOT_SECONDS, min(low, high)), high
     return MIN_SHOT_SECONDS, max(MIN_SHOT_SECONDS, hard_max)
+
+
+def aim_shot_seconds(model: str) -> int | None:
+    """The shot length to lean toward for ``model`` (Seedance 2.5: 30 s), inside its preferred range; None leans nowhere."""
+    normalized = _normalize_model_token(model)
+    if not normalized:
+        return None
+    ranked = sorted(VIDEO_MODEL_AIM_SHOT_SECONDS, key=lambda item: len(_normalize_model_token(item[0])), reverse=True)
+    for alias, seconds in ranked:
+        if _normalize_model_token(alias) in normalized:
+            low, high = preferred_shot_seconds(model)
+            return max(low, min(seconds, high))
+    return None
 
 
 def split_shot_seconds(duration_seconds: int, model: str) -> list[int]:
@@ -377,6 +428,25 @@ def uses_native_soundtrack(config: Mapping[str, Any]) -> bool:
     if normalize_video_provider(model).family == "minimax_h3" and os.getenv("MINIMAX_H3_NATIVE_AUDIO", "1") in {"0", "false", "False"}:
         return False  # the H3 clips come back silent
     return True
+
+
+def billed_resolution(model: str, requested: str | None = None) -> str | None:
+    """The tier a video request really goes out at, so quotes and the usage ledger price it.
+
+    A per-request tier wins. Without one, Seedance renders at ``SEEDANCE_VIDEO_RESOLUTION``
+    (720p by default); pricing it at the flat rate overstated a 480p clip by more than double.
+    Other families have no tier to report here, so they keep their flat price.
+    """
+    from app.core import video_tiers
+
+    # A tier the model does not have never goes out: it is brought down to one it has (Flash stops at 720p).
+    if requested:
+        return video_tiers.fit(model, requested)
+    if normalize_video_provider(model).family == "seedance":
+        from app.core.providers.defaults import SEEDANCE_DEFAULT_RESOLUTION
+
+        return video_tiers.fit(model, os.getenv("SEEDANCE_VIDEO_RESOLUTION") or SEEDANCE_DEFAULT_RESOLUTION)
+    return None
 
 
 def normalize_video_provider(model: str) -> VideoProviderProfile:
@@ -542,15 +612,30 @@ def plan_video_references(
     reference_audios: list[str] | None = None,
     model: str = "MiniMax-H3",
     intent: VideoGenerationIntent | None = None,
+    caps_model: str | None = None,
 ) -> VideoReferencePlan:
-    """Choose a mode from shot intent first, then negotiate provider limits."""
+    """Choose a mode from shot intent first, then negotiate provider limits.
+
+    ``caps_model`` is the model that will really render the clip (the configuration centre's, or the gateway's
+    own Seedance when the centre has none). Of the same family as ``model``, its reference limits are the ones
+    that count: a project set to Seedance 2.5 that renders on 2.0 must not be handed thirty pictures.
+    """
 
     intent = intent or VideoGenerationIntent()
     profile = normalize_video_provider(model)
-    sequences = _unique(sequence_images, 9)
-    identities = _unique(reference_images, 9)
-    videos = _unique(reference_videos, 3)
-    audios = _unique(reference_audios, 3)
+    if caps_model:
+        renders = normalize_video_provider(caps_model)
+        if renders.family == profile.family:
+            profile = profile.model_copy(update={
+                "max_reference_images": renders.max_reference_images,
+                "max_reference_videos": renders.max_reference_videos,
+                "max_reference_audios": renders.max_reference_audios,
+            })
+    # Taken in at the widest any model accepts; the profile cuts them below, where what it cannot take is reported.
+    sequences = _unique(sequence_images, MAX_SEQUENCE_IMAGES)
+    identities = _unique(reference_images, WIDEST_REFERENCE_IMAGES)
+    videos = _unique(reference_videos, WIDEST_REFERENCE_VIDEOS)
+    audios = _unique(reference_audios, WIDEST_REFERENCE_AUDIOS)
     visual_refs = _unique(
         [value for value in [first_frame, *sequences, last_frame, *identities] if value],
         profile.max_reference_images,

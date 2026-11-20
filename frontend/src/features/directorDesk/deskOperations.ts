@@ -5,6 +5,7 @@ import {
   type StageCamera, type StageContact, type StageCrowd, type StageLandmark, type StageOperation, type StagePlan, type StagePose, type StageShot,
 } from '../spatial/spatialTypes';
 import { bakeContacts, contactOperation } from './lib/contacts';
+import { effectOperation, effectsOf, removeEffect, setEffect } from './lib/effects';
 import { crowdMembersOf, nextCrowdId } from './lib/crowdLayout';
 import { timelineOf } from './lib/sampling';
 import { crowdOf, normalizeYaw, rotateAbout, round2, verticalFov } from './lib/stageMath';
@@ -244,6 +245,10 @@ export function applyLocal(plan: StagePlan, op: StageOperation): StagePlan {
       return setContact(plan, op);
     case 'remove_contact':
       return removeContact(plan, op);
+    case 'set_effect':
+      return setEffect(plan, op);
+    case 'remove_effect':
+      return removeEffect(plan, op);
     case 'add_crowd': {
       // Drawn at once from the same generator the server uses; its answer replaces this either way.
       const crowds = plan.crowds || [];
@@ -402,6 +407,15 @@ function inverseOfOne(plan: StagePlan, op: StageOperation): StageOperation[] | n
         addLandmarkOperation(landmark), ...(landmark.element_id ? [{ op: 'bind_landmark_model', name: landmark.name, element_id: landmark.element_id }] : []),
         ...contacts.map(contactOperation),
       ];
+    }
+    case 'set_effect':
+    case 'remove_effect': {
+      // A marker that was there comes back as it was; one this edit made is taken away again.
+      const before = effectsOf(plan).find(item => item.id === op.id);
+      if (before) return [effectOperation(before)];
+      if (op.op === 'remove_effect') return [];
+      const made = effectsOf(applyLocal(plan, op)).find(item => !effectsOf(plan).some(old => old.id === item.id));
+      return made ? [{ op: 'remove_effect', id: made.id }] : [];
     }
     case 'set_contact':
     case 'remove_contact': {

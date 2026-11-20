@@ -5,6 +5,7 @@ import { apiRequest } from '../../api/client';
 import { t } from '../../i18n';
 import { money, when } from '../finance/financeFormat';
 import { PaymentDialog } from './PaymentDialog';
+import { PriceListSection } from './PriceListSection';
 import { channelLabel, type PaymentChannelName } from './paymentChannels';
 
 
@@ -190,6 +191,8 @@ export function BillingCenterPage({ onBack, inProject = false }: { onBack: () =>
               ))}
             </div>
           </section>
+
+          <PriceListSection />
         </>
       )}
       {paying && (

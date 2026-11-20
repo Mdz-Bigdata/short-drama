@@ -11,14 +11,17 @@ import { dragRefusal, heldTargets } from '../lib/contacts';
 import { anchorOf, dragOperations, gizmoMode, type AnchorTransform } from '../lib/dragOperations';
 import { appendStrokePoint, strokeFull, strokeIsRoute, type PathTarget } from '../lib/pathTool';
 import { useReducedMotion } from '../lib/useReducedMotion';
-import type { ActorPath, CameraPath } from '../lib/sampling';
+import { effectsOn } from '../lib/effects';
+import type { Trail } from '../lib/trails';
 import { lightReach, round2, stageReach } from '../lib/stageMath';
 import { focusOf, type ViewFocus } from '../lib/viewFocus';
 import { focusPose, gridCells, lensLabel, wholeSetPose } from '../lib/viewHelpers';
 import { CameraRig, type PointerHandlers } from './CameraRig';
+import { MotionTrail, PulseDriver } from './MotionTrail';
 import { ActorFigure } from './figures/ActorFigure';
 import { PoseHandles } from './PoseHandles';
 import { StageProp } from './props/StageProp';
+import { EffectMarks, type EffectDrag } from './EffectMarks';
 import { StageLabel, StageLabelLayer } from './StageLabel';
 import { actorColor, DESK_FLOOR_COLOR, SELECTION_COLOR, webglAvailable } from './stageLook';
 import { ContextLossGuard, StageLights, ViewportBoundary, ViewportUnavailable } from './ViewportShell';
@@ -40,10 +43,10 @@ export interface DeskViewportProps {
   /** Pose edits go to this shot's override rather than to the actor's mark. */
   poseShotOnly: boolean;
   footLock: boolean;
-  /** The filming lens's travel through the shot, drawn as a line with a marker per key. */
-  cameraPath?: CameraPath | null;
-  /** Every actor track of the shot that goes somewhere, drawn the same way in the actor's colour. */
-  actorPaths?: ActorPath[];
+  /** Every route of the shot (the filming lens, each actor that goes somewhere), drawn as a moving trail. */
+  trails?: Trail[];
+  /** The playhead in seconds: a trail is solid up to here and dashed past it. */
+  time?: number;
   /** Who a stroke drawn with the path tool belongs to; `null` keeps the tool from drawing. */
   pathTarget?: PathTarget | null;
   /** Why the path tool cannot draw right now, shown in the hint. */
@@ -64,7 +67,18 @@ export interface DeskViewportProps {
 
 // A click that ends a gizmo drag also reaches whatever is under the pointer; ignore it briefly.
 const CLICK_AFTER_DRAG_MS = 250;
-const NO_PATHS: ActorPath[] = [];
+const NO_TRAILS: Trail[] = [];
+const CAMERA_TRAIL_COLOR = '#e6a000';
+const PULSE_KEY = 'directorDesk.trailPulse';
+
+/** The pulse runs unless this browser was told otherwise. */
+function pulseRemembered(): boolean {
+  try {
+    return window.localStorage.getItem(PULSE_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
 // While the path tool draws with the left button, the orbit keeps only pan (right button, two fingers) and zoom.
 const ORBIT_BUTTONS = { LEFT: MOUSE.ROTATE, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN };
 const DRAWING_BUTTONS = { LEFT: undefined, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN };
@@ -277,30 +291,9 @@ function Ruler({ from, to, color, pinned = false }: { from: SpacePoint; to: Spac
   );
 }
 
-function onFloor(point: SpacePoint): SpacePoint {
-  return [point[0], Math.max(point[1], FLOOR_LIFT), point[2]];
-}
-
-/** A track through the shot: the line it travels and a marker on each key, in one colour. */
-function TrackPath({ points, keys, color, markerSize }: { points: SpacePoint[]; keys: Array<{ time: number; position: SpacePoint }>; color: string; markerSize: number }) {
-  // The track holds still while the shot plays through it; only a new track rebuilds the line.
-  const line = useMemo(() => points.map(onFloor), [points]);
-  return (
-    <group userData={{ [HELPER_FLAG]: true }}>
-      {points.length >= 2 && <Line points={line} color={color} lineWidth={1.6} />}
-      {keys.map((key, index) => (
-        <mesh key={index} position={onFloor(key.position)}>
-          <octahedronGeometry args={[markerSize]} />
-          <meshBasicMaterial color={color} />
-        </mesh>
-      ))}
-    </group>
-  );
-}
-
 export default function DeskViewport({
-  plan, basePlan, shot, selection, tool, snap, hidden, locked, readOnly, measure, lensCameraId, poseShotOnly, footLock, cameraPath,
-  actorPaths = NO_PATHS, pathTarget = null, pathRefusal = '', playing = false,
+  plan, basePlan, shot, selection, tool, snap, hidden, locked, readOnly, measure, lensCameraId, poseShotOnly, footLock,
+  trails = NO_TRAILS, time = 0, pathTarget = null, pathRefusal = '', playing = false,
   onSelect, onClearSelection, onPreview, onCommit, onRefuse, onMeasure, onPath, onReady,
 }: DeskViewportProps) {
   const [canRender] = useState(webglAvailable);
@@ -308,6 +301,15 @@ export default function DeskViewport({
   const [dragging, setDragging] = useState(false);
   const [stroke, setStroke] = useState<GroundPoint[] | null>(null);
   const reducedMotion = useReducedMotion();
+  const [pulseOn, setPulseOn] = useState(pulseRemembered);
+  const togglePulse = useCallback(() => setPulseOn(current => {
+    try {
+      window.localStorage.setItem(PULSE_KEY, current ? '0' : '1');
+    } catch {
+      // Not remembered this time; it still holds for this visit.
+    }
+    return !current;
+  }), []);
   const drag = useRef<{ start: AnchorTransform; operations: StageOperation[]; endedAt: number; refused?: boolean }>({ start: { position: [0, 0, 0], yawDeg: 0, scale: [1, 1, 1] }, operations: [], endedAt: 0 });
   const strokeRef = useRef<GroundPoint[]>([]);
   // The pointer-up after a route (or a cancelled stroke) lands as a click on whatever is under it.
@@ -475,12 +477,21 @@ export default function DeskViewport({
   if (contextLost) return <ViewportUnavailable message="图形上下文已中断。" onRetry={() => setContextLost(false)} />;
 
   const subjectNames = shot?.subjects || [];
+  // A hidden traveller hides its route; a figure that left the shot has none to show.
+  const shownTrails = trails.filter(trail => !hidden.includes(trail.key) && (trail.kind === 'camera' || actors.some(actor => actor.name === trail.owner)));
+  // The pulse is for a stage standing still: playback moves the travellers themselves, and a drag needs the frames.
+  const pulsing = pulseOn && !reducedMotion && !playing && !dragging && shownTrails.length > 0;
   const posed = tool === 'pose' && !readOnly && !playing && primary?.kind === 'actor' && !locked.includes(refKey(primary))
     ? actors.find(actor => actor.name === primary.name && actor.figure === 'mannequin') : undefined;
   const posedBase = posed && actorsInShot(basePlan, basePlan.shots.find(item => item.shot_id === shot?.shot_id)).find(actor => actor.name === posed.name);
   const focus = primary?.kind === 'actor' ? actors.find(actor => actor.name === primary.name) : undefined;
   const crowdSelected = (crowdId: string | undefined) => Boolean(crowdId) && selectedKeys.has(`crowd:${crowdId}`);
   const pointerFor = (ref: SelectionRef) => (locked.includes(refKey(ref)) ? lockedPointer : pointerOn(ref));
+  // An effect marker is dragged by its centre puck, with the tools that move things; a drag swallows the click it ends in.
+  const effectDrag: EffectDrag | undefined = !readOnly && !playing && (tool === 'select' || tool === 'move') ? {
+    snap, pointer: handlePointer, onPreview, onCommit,
+    onDragState: held => { setDragging(held); if (!held) drag.current.endedAt = performance.now(); },
+  } : undefined;
   const set = stageReach({ actors: [], landmarks: plan.landmarks });
   // The light covers the cast and where the shot's keys take them, as well as the set: figures away from every
   // set piece keep their shadows, and the shadows hold still while the shot plays.
@@ -509,6 +520,7 @@ export default function DeskViewport({
           <ViewBridge onReady={onReady} onFrameSelection={frameSelection} />
           <FitView plan={plan} request={fit} />
           <StrokeListener armed={drawing} onStart={startStroke} onPoint={extendStroke} onEnd={endStroke} onRelease={releaseStroke} />
+          <PulseDriver active={pulsing} />
           <ContextLossGuard onLost={() => setContextLost(true)} />
           {/* Names of things standing close together stack above one another, or give way to a dot, rather than print over each other. */}
           <StageLabelLayer>
@@ -578,11 +590,14 @@ export default function DeskViewport({
                 />
               ))}
             </group>
-            {cameraPath && <TrackPath points={cameraPath.points} keys={cameraPath.keys} color="#e6a000" markerSize={0.07} />}
-            {actorPaths.filter(path => !hidden.includes(`actor:${path.name}`)).map(path => {
-              const actor = actors.find(item => item.name === path.name);
-              return actor && <TrackPath key={path.name} points={path.points} keys={path.keys} color={actorColor(actor)} markerSize={0.06} />;
-            })}
+            <EffectMarks effects={effectsOn(plan, shot?.shot_id)} drag={effectDrag} />
+            {shownTrails.map(trail => (
+              <MotionTrail
+                key={trail.key} trail={trail} time={time} pulse={pulsing}
+                color={trail.kind === 'camera' ? CAMERA_TRAIL_COLOR : actorColor(actors.find(item => item.name === trail.owner)!)}
+                selected={selectedKeys.has(trail.key) || (trail.kind === 'camera' && selectedKeys.has(`camera-target:${trail.owner}`))}
+              />
+            ))}
             {stroke && (
               <group userData={{ [HELPER_FLAG]: true }}>
                 {stroke.length >= 2 && <Line points={stroke.map(point => [point[0], FLOOR_LIFT, point[1]] as SpacePoint)} color={SELECTION_COLOR} lineWidth={2} />}
@@ -618,6 +633,12 @@ export default function DeskViewport({
       <div className="desk-viewport__fit">
         <button type="button" className="desk-button" title="把视角对准选中的对象；双击对象也可以" disabled={!selection.length} onClick={frameSelection}>聚焦所选</button>
         <button type="button" className="desk-button" title="把视角退到能看到整个场景" onClick={frameWholeSet}>框选全场</button>
+        {shownTrails.length > 0 && (
+          <button
+            type="button" className="desk-button" aria-pressed={pulseOn} disabled={reducedMotion}
+            title={reducedMotion ? '系统设置了「减少动态效果」，轨迹光点不播放' : '轨迹上的光点按本镜的节奏重放走位和运镜；播放时自动停下'} onClick={togglePulse}
+          >轨迹动效</button>
+        )}
       </div>
       <div className="desk-viewport__hint">
         {tool === 'measure' ? '依次点击两个点或物体，读出它们之间的距离'

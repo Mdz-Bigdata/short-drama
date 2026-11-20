@@ -125,5 +125,7 @@
     "spell_out_from": 5,
     "two_before": "千万亿"
   },
-  "max_readings": 200
+  "max_readings": 200,
+  "native_reading": "「{word}」念「{say}」的音",
+  "native_reading_max": 3
 }

@@ -133,12 +133,15 @@ def same_instance(
     return str(data["with_parts"]).format(parts=str(data["joiner"]).join(parts), tail=data["tail"])
 
 
-def dialogue_language(family_: str, on_screen: Sequence[str], off_screen: Sequence[str] = ()) -> str:
-    """对白语言：谁说哪种话；画面里有人开口时口型按这种语言对。只有音画同生的两类模型写。"""
+def dialogue_language(family_: str, on_screen: Sequence[str], off_screen: Sequence[str] = (), *, language: str = "") -> str:
+    """对白语言：谁说哪种话；画面里有人开口时口型按这种语言对。只有音画同生的两类模型写。
+
+    ``language`` 是项目另选的对白语言(方言、外语，见 spoken_language.phrase)；不给就是这类模型默认的普通话。
+    """
     data = _data("dialogue_language")
-    language = data["language"].get(family_)
-    if not language:
+    if not data["language"].get(family_):
         return ""
+    language = str(language or "").strip() or data["language"][family_]
     seen = _unique(on_screen)
     speakers = [mention(name) for name in seen] + [name for name in _unique(off_screen) if name not in seen]
     return str(data["line"]).format(
@@ -365,11 +368,14 @@ def merge(
     on_screen: list[str] = []
     off_screen: list[str] = []
     languages = 0
+    # 几个瞬间说的是同一种话：项目另选的方言或外语照第一句的写法带下来。
+    spoken = ""
     for beat in beats:
         matched = _LANGUAGE_LINE.match(str(beat.get("dialogue_language") or "").strip())
         if not matched:
             continue
         languages += 1
+        spoken = spoken or matched.group("language")
         for speaker in matched.group("speakers").split("、"):
             name = MENTION.fullmatch(speaker.strip())
             (on_screen if name else off_screen).append(name.group(1) if name else speaker.strip())
@@ -399,7 +405,7 @@ def merge(
         **{key: _first(beats, key) for key in ("pa1", "pa2", "pa3", "sequence_head", "space_axis", "impact_sound", "voice_ban")},
         "anchor_types": anchor_types(cast, scenes, props, costumes, costume_images),
         "same_instance": same_instance(cast, costumes, costume_images, references=references),
-        "dialogue_language": dialogue_language(family_, on_screen, off_screen) if languages else "",
+        "dialogue_language": dialogue_language(family_, on_screen, off_screen, language=spoken) if languages else "",
         "lens": lens(fight=fight, camera_movement="" if not motions or not all(fixed_camera(motion) for motion in motions) else motions[0]),
         "performance_lock": performance,
         "chain_lock": chain_lock(

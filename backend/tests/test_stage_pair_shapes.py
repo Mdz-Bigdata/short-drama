@@ -76,6 +76,20 @@ class PairShapeTests(unittest.TestCase):
                 self.assertTrue(plan.formation.startswith(RELATIONS["side_by_side"]))
                 self.assertEqual(_failed(plan), [])
 
+    def test_side_by_side_words_about_the_company_leave_the_pair_where_it_was(self):
+        kneel = next(rule for rule in DATA["separation_rules"] if "跪" in rule["words"])
+        cast = [*PAIR, "卫长老", "何管事"]
+        plan = _plan("沈砚跪在阶前，不抬头；卫长老和何管事并肩站在旗杆下。柳烟环视四周。", cast)
+        self.assertAlmostEqual(_gap(plan.actor("沈砚"), plan.actor("柳烟")), kneel["metres"])
+        self.assertFalse(plan.formation.startswith(RELATIONS["side_by_side"]))
+        self.assertIn(kneel["label"], plan.formation)
+        # The same words about the pair, or about nobody named, still put the two shoulder to shoulder.
+        for text in ("卫长老站在旗杆下，沈砚与柳烟并肩走过。", "卫长老站在旗杆下。两人并肩走过长街。"):
+            with self.subTest(text=text):
+                side = _plan(text, cast)
+                self.assertAlmostEqual(_gap(side.actor("沈砚"), side.actor("柳烟")), DATA["side_by_side_metres"])
+                self.assertTrue(side.formation.startswith(RELATIONS["side_by_side"]))
+
     def test_a_follower_stands_a_step_behind_and_to_the_side_going_the_same_way(self):
         shape = SHAPES["跟随"]
         for text, front in (

@@ -84,11 +84,17 @@ def mode_of(config: Mapping[str, Any] | None) -> CreationMode:
     return value if value in MODES else DEFAULT_MODE  # type: ignore[return-value]
 
 
+AD_STORY_LED = "story"
+
+
 def ad_brief(config: Mapping[str, Any] | None) -> dict[str, str]:
     """The advertisement's brief: product, selling points, audience, call to action (all optional text)."""
     raw = (config or {}).get("ad_brief")
     brief = raw if isinstance(raw, Mapping) else {}
-    return {key: str(brief.get(key) or "").strip()[:500] for key in ("product", "selling_points", "audience", "call_to_action")}
+    found = {key: str(brief.get(key) or "").strip()[:500] for key in ("product", "selling_points", "audience", "call_to_action")}
+    # 「剧情带货」：先讲一场小戏，产品在戏里自然出场；其余值都按普通广告短片。
+    found["format"] = AD_STORY_LED if str(brief.get("format") or "").strip() == AD_STORY_LED else ""
+    return found
 
 
 def episode_shape_for(config: Mapping[str, Any] | None) -> EpisodeShape:
@@ -134,6 +140,22 @@ def spoken_shot_ratio_for(config: Mapping[str, Any] | None, configured: float) -
     return min(configured, settings.env_float("CREATION_FILM_SPOKEN_SHOT_RATIO", FILM_SPOKEN_SHOT_RATIO, minimum=0.0, maximum=1.0))
 
 
+def director_frame(config: Mapping[str, Any] | None) -> str:
+    """How many episodes a serial has and how long each one is, for the stage-1 director's request.
+
+    Without it the director assumes a long series (60 episodes) and places its motif, tag line and paywall
+    on episodes the project does not have. A short film is told its length by ``director_guidance``; an
+    advert has its own brief; both get an empty string here."""
+    if mode_of(config) not in ("drama", "narration"):
+        return ""
+    from app.core.screenwriting.durations import resolve_episode_target_seconds
+
+    count = max(1, int((config or {}).get("episode_count") or 1))
+    seconds = episode_target_for(config, resolve_episode_target_seconds(config))
+    key = "director_frame.serial" if seconds else "director_frame.serial_no_length"
+    return _text_of(key).format(count=count, seconds=seconds)
+
+
 def director_guidance(config: Mapping[str, Any] | None) -> str:
     """What the stage-1 director is told about the kind of film; empty unless the kind changes what a plan is.
 
@@ -162,6 +184,8 @@ def writer_guidance(config: Mapping[str, Any] | None) -> str:
     if mode == "ad":
         brief = ad_brief(config)
         lines = list(_words_of("writer_guidance.lines"))
+        if brief["format"] == AD_STORY_LED:
+            lines += list(_words_of("writer_guidance.story_led"))
         labelled = (_words_of("writer_guidance.labelled"), _words_of("writer_guidance.labelled.2"), _words_of("writer_guidance.labelled.3"), _words_of("writer_guidance.labelled.4"))
         facts = [f"{label}：{brief[key]}" for key, label in labelled if brief[key]]
         if facts:

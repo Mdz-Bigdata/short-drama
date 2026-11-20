@@ -942,6 +942,14 @@
 .writer-version-menu li small { color: var(--text-muted); font-size: 0.66rem; }
 .writer-version-menu__empty, .writer-version-menu__error { margin: 4px 0; color: var(--text-muted); font-size: 0.72rem; }
 .writer-version-menu__error { color: var(--danger); }
+.writer-version-menu__compare { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--writer-line); font-size: 0.74rem; color: var(--text-main); }
+.writer-version-menu__compare > small { color: var(--text-muted); font-size: 0.68rem; }
+.writer-version-menu__compare ol { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; }
+.writer-version-menu__compare ol li { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+.writer-version-menu__change { display: flex; flex-direction: column; gap: 2px; padding-left: 8px; border-left: 2px solid var(--writer-line); overflow-wrap: anywhere; }
+.writer-version-menu__change del { color: var(--danger); text-decoration: line-through; }
+.writer-version-menu__change ins { color: var(--text-main); text-decoration: none; background: rgba(var(--accent-rgb), 0.12); }
+.writer-version-menu__compare > button { align-self: flex-start; min-height: 28px; padding: 0 10px; color: var(--text-muted); background: transparent; border: 1px solid var(--writer-line); border-radius: 6px; font: inherit; font-size: 0.72rem; cursor: pointer; }
 .writer-overview__tools { display: inline-flex; gap: 8px; }
 .writer-overview__tools button, .writer-overview__form-actions button, .writer-events__form-actions button, .writer-events__toolbar button { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 11px; color: var(--text-muted); background: transparent; border: 1px solid var(--writer-line); border-radius: 6px; font: inherit; font-size: 0.74rem; cursor: pointer; }
 .writer-overview__tools button:hover, .writer-overview__form-actions button:hover, .writer-events__form-actions button:hover { color: var(--ink); border-color: rgba(var(--accent-rgb), 0.45); }

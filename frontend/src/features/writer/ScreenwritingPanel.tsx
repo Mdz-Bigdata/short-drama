@@ -4,6 +4,7 @@ import { AlertTriangle, BookOpenText, CheckCircle2, ChevronDown, ChevronRight, C
 import { ApiError, isUnauthorized } from '../../api/client';
 import { EpisodeLedgerTools } from './EpisodeLedgerTools';
 import { DialoguePolishReview } from './DialoguePolishReview';
+import { PassageRewriteReview } from './PassageRewriteReview';
 import { PronunciationTable } from './PronunciationTable';
 import { draftOfScene, planOperations, type PlanDraft } from './planOperations';
 import {
@@ -323,6 +324,17 @@ export function ScreenwritingPanel({ taskId, onOpenEpisodeText }: {
                         </button>
                       </div>
                       <DialoguePolishReview
+                        taskId={taskId}
+                        episode={episode}
+                        disabled={saving || operations.length > 0}
+                        onApplied={updated => {
+                          setEpisode(updated);
+                          setDrafts(Object.fromEntries(updated.plan.scenes.map(scene => [scene.scene_id, draftOfScene(scene)])));
+                          void fetchScreenwritingState(taskId).then(setState).catch(() => undefined);
+                        }}
+                      />
+                      <PassageRewriteReview
+                        key={episode.episode}
                         taskId={taskId}
                         episode={episode}
                         disabled={saving || operations.length > 0}

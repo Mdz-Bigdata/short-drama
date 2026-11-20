@@ -65,6 +65,8 @@ class Evidence:
     lens: str = ""
     yardstick: str = ""
     checks: str = ""
+    # This project's own names (cast, title): allowed in the ``memory`` component only.
+    project_terms: tuple[str, ...] = ()
 
 
 @dataclass
@@ -189,6 +191,7 @@ def evidence_text(
 
 def run_stage(
     *, label: str, dim: str, mission: str, material: str, fallback: Mapping[str, str], improver: Improver,
+    project_terms: Sequence[str] = (),
 ) -> Stage:
     """Ask for an overlay; an answer that cannot be taken goes back once with the reason."""
     fallback = surface.normalise(fallback)
@@ -200,7 +203,7 @@ def run_stage(
             return Stage(label, dim, dict(fallback), fell_back=True, attempts=attempt, error=f"{type(exc).__name__}: {exc}"[:400])
         try:
             proposed = surface.parse_reply(str(reply or ""), fallback)
-            surface.validate(proposed)
+            surface.validate(proposed, project_terms)
         except ProposalError as problem:
             error = str(problem)
             continue
@@ -250,7 +253,7 @@ def run_parallel(
 
     specs = [(f"{dim.lower()}{index}", dim, index) for index in range(1, k + 1) for dim in ("INV", "DOM")]
     stages = _map(lambda spec: run_stage(
-        label=spec[0], dim=spec[1], fallback=base_harness, improver=improver, material=material,
+        label=spec[0], dim=spec[1], fallback=base_harness, improver=improver, project_terms=evidence.project_terms, material=material,
         mission=prompts.propose(spec[1], work=evidence.work, domain=evidence.domain, k=k, index=spec[2], lens=evidence.lens),
     ), specs)
     ledger.sessions.extend(stage.label for stage in stages)
@@ -259,7 +262,7 @@ def run_parallel(
 
     pooled = evidence_text(evidence, current=base_harness, base=base, pool=[(stage, result.rollouts.get(stage.label)) for stage in stages])
     finals = _map(lambda index: run_stage(
-        label=f"agg{index}", dim="AGG", fallback=base_harness, improver=improver, material=pooled,
+        label=f"agg{index}", dim="AGG", fallback=base_harness, improver=improver, project_terms=evidence.project_terms, material=pooled,
         mission=prompts.compose(
             work=evidence.work, domain=evidence.domain, k=k, base_count=len(base), index=index, lens=evidence.lens, yardstick=evidence.yardstick,
         ),
@@ -286,7 +289,7 @@ def run_sequential(
     for round_t in range(1, k + 1):
         material = evidence_text(evidence, current=current, base=base, pool=history)
         stages = _map(lambda spec: run_stage(
-            label=spec[0], dim=spec[1], fallback=current, improver=improver, material=material,
+            label=spec[0], dim=spec[1], fallback=current, improver=improver, project_terms=evidence.project_terms, material=material,
             mission=prompts.propose(
                 spec[1], work=evidence.work, domain=evidence.domain, k=k, index=round_t, round_t=round_t if k > 1 else None, lens=evidence.lens,
             ),
@@ -297,7 +300,7 @@ def run_sequential(
 
         round_pool = history + [(stage, result.rollouts.get(stage.label)) for stage in stages]
         composed = run_stage(
-            label=f"c{round_t}", dim="COMPOSE", fallback=current, improver=improver,
+            label=f"c{round_t}", dim="COMPOSE", fallback=current, improver=improver, project_terms=evidence.project_terms,
             material=evidence_text(evidence, current=current, base=base, pool=round_pool),
             mission=prompts.compose(
                 work=evidence.work, domain=evidence.domain, k=k, base_count=len(base), round_t=round_t if k > 1 else None,

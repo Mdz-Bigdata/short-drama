@@ -82,6 +82,25 @@ def outline_of(system_prompt: str) -> str:
     return prompts.says("context", "outline_line", chars=len(system_prompt), headings="；".join(headings))
 
 
+def project_terms(task: Mapping[str, Any] | None, extra: Sequence[object] = ()) -> list[str]:
+    """This project's own names: its cast as far as the project knows it by now, plus ``extra``.
+
+    Names only. A place or a prop is often an ordinary word (油灯, 门槛), and a rule that mentions one is
+    not thereby about this project.
+    """
+    assets = (task or {}).get("assets") if isinstance((task or {}).get("assets"), Mapping) else {}
+    found: list[str] = [str(name or "").strip() for name in extra]
+    for key, inner in (("3_characters", None), ("3_dna", "characters"), ("2_breakdown", "roles")):
+        rows = assets.get(key)
+        rows = rows.get(inner) if inner and isinstance(rows, Mapping) else rows
+        for row in rows if isinstance(rows, list) else []:
+            if isinstance(row, Mapping):
+                found.append(str(row.get("name") or "").strip())
+    # 「主角」「反派」是取不到名字时的占位，也是配置里正当要用的词：不算本片的名字。
+    generic = set(prompts.table("generic_roles"))
+    return [name for name in dict.fromkeys(found) if 2 <= len(name) <= 12 and name not in generic]
+
+
 def observations(problems: Sequence[str]) -> str:
     """A stage's machine check as the improvers read it; "nothing found" is said, not left blank."""
     found = [str(problem).strip() for problem in problems if str(problem).strip()]
@@ -157,8 +176,10 @@ def study_stage(
     guidance: str = "",
     reasoning: Sequence[str | None] | None = None,
     overlay_block: str = "",
+    project_terms: Sequence[str] = (),
     observe: Callable[[str], Sequence[str]] | None = None,
     delivered: Callable[[str], bool] | None = None,
+    personal: bool = False,
     wait: bool = False,
 ) -> bool:
     """Start one study of this stage call beside the pipeline; whether one was started.
@@ -172,9 +193,15 @@ def study_stage(
     ``overlay_block`` is what ``overlay_for`` gave this stage for its prompt: the study edits that overlay
     in place. ``observe`` is the stage's own machine check of an output (the problems it finds, as
     sentences), shown to the improvers beside each execution; ``delivered`` says whether an output is
-    usable at all. Neither survives a restart: a resumed study goes on without them. ``wait`` is for tests.
+    usable at all. Neither survives a restart: a resumed study goes on without them. ``project_terms`` are
+    this project's own names (see ``project_terms``): an overlay may hold them in its ``memory`` only, since
+    everything else is what the next project of the kind runs with. ``personal`` says the call's prompt
+    carried the project owner's own prompt preference: such a call is not studied, because what it
+    taught would reach other accounts' projects of the kind. ``wait`` is for tests.
     """
     try:
+        if personal:
+            return False
         if not wants(stage) or not task_id or not str(output or "").strip():
             return False
         if gateway.last_answer_was_offline() or not gateway.has_text_model():
@@ -193,6 +220,7 @@ def study_stage(
             "director_style": director_style, "shot_style": shot_style, "guidance": guidance,
             "reasoning": list(reasoning)[:1] if reasoning is not None else None,
             "overlay_block": overlay_block, "current": current, "k": k, "mode": recursion, "attempts": 0, "memo": {},
+            "project_terms": [str(term) for term in project_terms][:60],
         }
         with _IN_FLIGHT_LOCK:
             if mark in _IN_FLIGHT or library.seen(mark) or _job_path(mark).is_file():
@@ -291,6 +319,7 @@ def _start(
                     harness_recursion.Work(
                         task_id=task_id, stage=stage, domain=domain, work=described["work"], downstream=described["downstream"],
                         lens=described["lens"], yardstick=described["yardstick"], checks=described["checks"],
+                        project_terms=tuple(job.get("project_terms") or ()),
                         request=str(job["request"]), outline=outline_of(under("")), base_harness=dict(job.get("current") or {}),
                         observe=(lambda text: observations(observe(text))) if observe is not None else None, delivered=delivered,
                         execute=lambda overlay: answered("stage", under(overlay), str(job["request"]), lambda: stage_call(under(overlay))),
@@ -344,4 +373,4 @@ def report() -> dict[str, Any]:
     return {"mode": mode(), "stages": sorted(stages()), "k": k, "recursion": recursion, "pending": waiting, **library.report()}
 
 
-__all__ = ["PURPOSE", "budget", "fingerprint", "mode", "observations", "outline_of", "overlay_for", "pending_jobs", "report", "resume_pending", "retire", "stages", "study_stage", "wants"]
+__all__ = ["PURPOSE", "budget", "fingerprint", "mode", "observations", "outline_of", "overlay_for", "pending_jobs", "project_terms", "report", "resume_pending", "retire", "stages", "study_stage", "wants"]

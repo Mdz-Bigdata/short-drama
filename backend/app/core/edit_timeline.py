@@ -22,9 +22,10 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 
-from app.core import episode_cycle
+from app.core import character_intro, episode_cycle, spoken_cues
 from app.core.spoken_lines import spoken_lines
 from app.core import prompt_data
+from app.core import film_finishing
 
 
 _WORDING_FILE = "edit_timeline"
@@ -50,7 +51,7 @@ SOUND_JOINS = ("j_cut", "l_cut")
 #: 这一镜成片里的人声从哪来：片段自己的声音(视频模型的原声)、配音，或者不要。
 AUDIO_SOURCES = ("native", "tts", "none")
 #: 剪辑合成师的基础设定：转场、对白音轨、嵌入字幕、片名卡与首尾淡入淡出。默认全开。
-SETTINGS = ("transitions", "dialogue", "subtitles", "title_card")
+SETTINGS = ("transitions", "dialogue", "subtitles", "title_card", "name_cards")
 
 
 class TimelineError(ValueError):
@@ -82,6 +83,8 @@ def build(task: Mapping[str, Any], *, transitions: Sequence[Mapping[str, Any]] |
     audio = assets.get("6") if isinstance(assets.get("6"), Mapping) else {}
     voices = list(audio.get("shot_voices") or [])
     native = list(audio.get("native_audio_shots") or [])
+    # 第 6 阶段按原声排好的字幕(说到哪句出哪句)；与 native_audio_shots 一样按第 5 阶段的镜头顺序。
+    spoken = list(audio.get("native_cues") or [])
     all_shots = [s for s in (assets.get("5") or []) if isinstance(s, Mapping)]
     specs = list(transitions or [])
     clips: list[dict[str, Any]] = []
@@ -101,6 +104,7 @@ def build(task: Mapping[str, Any], *, transitions: Sequence[Mapping[str, Any]] |
             "out": None,
             "muted": False,
             "subtitle": _subtitle_of(shot),
+            "spoken_cues": deepcopy(spoken[index_in_stage]) if index_in_stage < len(spoken) and isinstance(spoken[index_in_stage], Mapping) else None,
             "voice_path": voices[index_in_stage] if index_in_stage < len(voices) else None,
             # 第 6 阶段记了哪几镜用原声就照它；没记的(没跑第 6 阶段、或记录丢了)看片段自己有没有声音。
             "native_audio": bool(native[index_in_stage]) if index_in_stage < len(native) else shot.get("native_audio") is True,
@@ -154,9 +158,12 @@ def refresh(timeline: Mapping[str, Any], task: Mapping[str, Any], **build_kwargs
     for clip in fresh["clips"]:
         old = kept.get(str(clip["fingerprint"]))
         if old:
-            for key in ("in", "out", "muted", "subtitle", "transition_in", "review"):
+            for key in ("in", "out", "muted", "subtitle", "subtitle_edited", "transition_in", "review"):
                 if key in old:
                     clip[key] = deepcopy(old[key])
+            # 人改过的出场字幕留着；没改过的每次按现在的剪辑重新排(见 character_intro.with_cards)。
+            if old.get(character_intro.EDITED):
+                clip[character_intro.KEY], clip[character_intro.EDITED] = deepcopy(old.get(character_intro.KEY) or []), True
             # 人改过的声画错开留着；没改过的跟着新的切点规划走。
             if (old.get("sound_in") or {}).get("edited"):
                 clip["sound_in"] = deepcopy(old["sound_in"])
@@ -181,8 +188,8 @@ def with_new_sound(timeline: Mapping[str, Any], task: Mapping[str, Any]) -> dict
         source = made.get(str(clip.get("fingerprint")))
         if not isinstance(clip, dict) or source is None:
             continue
-        for key in ("voice_path", "native_audio", "native_available"):
-            clip[key] = source[key]
+        for key in ("voice_path", "native_audio", "native_available", "spoken_cues"):
+            clip[key] = source.get(key)
         kept = clip.get("audio_source_edited") and (clip.get("audio_source") != "native" or clip.get("native_available"))
         if not kept:
             clip["audio_source"], clip["audio_source_edited"] = source["audio_source"], False
@@ -332,19 +339,95 @@ def settings_of(timeline: Mapping[str, Any]) -> dict[str, bool]:
     return {key: bool(saved.get(key, True)) for key in SETTINGS}
 
 
+def finishing_of(timeline: Mapping[str, Any]) -> dict[str, Any]:
+    """成片精修(片名卡底图与动效、字幕样式、调色、片尾卡)，和四个开关存在同一个 settings 里；没设过的读出来就是默认值。"""
+    return film_finishing.of(timeline)
+
+
+def _finishing_after(timeline: Mapping[str, Any], changes: Mapping[str, Any]) -> dict[str, Any]:
+    """The ``finishing`` entry to keep in the saved settings after an edit: changed when the edit names it, else as it was."""
+    saved = timeline.get("settings") if isinstance(timeline.get("settings"), Mapping) else {}
+    if film_finishing.KEY not in changes:
+        return {film_finishing.KEY: deepcopy(saved[film_finishing.KEY])} if film_finishing.KEY in saved else {}
+    try:
+        return {film_finishing.KEY: film_finishing.changed(timeline, changes[film_finishing.KEY])}
+    except film_finishing.FinishingError as error:
+        raise TimelineError(str(error)) from error
+
+
 def set_settings(timeline: Mapping[str, Any], changes: Mapping[str, Any]) -> dict[str, Any]:
-    unknown = [key for key in changes if key not in SETTINGS]
+    unknown = [key for key in changes if key not in SETTINGS and key != film_finishing.KEY]
     if unknown:
         raise TimelineError(_text_of("set_settings.text").format(', '.join(map(str, unknown)), ', '.join(SETTINGS)))
     new = deepcopy(dict(timeline))
-    new["settings"] = {**settings_of(new), **{key: bool(value) for key, value in changes.items()}}
+    new["settings"] = {**settings_of(new), **{key: bool(value) for key, value in changes.items() if key in SETTINGS},
+                       **_finishing_after(new, changes)}
     _touch(new)
     return new
 
 
 def set_subtitle(timeline: Mapping[str, Any], shot_id: int | None, text: str, *, shot_uid: int | None = None) -> dict[str, Any]:
     new = deepcopy(dict(timeline))
-    _clip(new, shot_id, shot_uid)["subtitle"] = re.sub(r"\s+", " ", str(text or "")).strip()[:200]
+    clip = _clip(new, shot_id, shot_uid)
+    clip["subtitle"] = re.sub(r"\s+", " ", str(text or "")).strip()[:200]
+    # 人写的字幕：重读台词栏时不覆盖。
+    clip["subtitle_edited"] = True
+    _touch(new)
+    return new
+
+
+_CELL_MARKS = re.compile(r"[\s「」『』“”\"'{}｛｝]")
+_CELL_NOTES = re.compile(r"[（(][^）)]*[）)]")
+
+
+def _came_from_cell(subtitle: str, cell: str) -> bool:
+    """Every piece of the subtitle is copied out of the shot's dialogue cell: an automatic one, not a person's wording."""
+    pieces = [_CELL_MARKS.sub("", piece) for piece in str(subtitle or "").split(" ") if piece.strip()]
+    plain_cell = _CELL_MARKS.sub("", str(cell or ""))
+    without_notes = _CELL_MARKS.sub("", _CELL_NOTES.sub("", str(cell or "")))
+    return bool(pieces) and all(piece in plain_cell or piece in without_notes for piece in pieces)
+
+
+def with_spoken_subtitles(timeline: Mapping[str, Any], task: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Automatic subtitles read again with today's rules; the same timeline back when nothing changed.
+
+    A subtitle is copied onto the timeline once and kept through every rebuild, so one taken out of the
+    dialogue cell by an older reading (a voice note, 「无台词，嘴唇未动…」, an edit cue) stayed in the film.
+    A subtitle a person typed is left alone: marked ``subtitle_edited``, or (for timelines older than the mark)
+    holding words that are not in the dialogue cell.
+    """
+    assets = task.get("assets") if isinstance(task.get("assets"), Mapping) else {}
+    shots = {_clip_fingerprint(shot): shot for shot in assets.get("5") or [] if isinstance(shot, Mapping) and shot.get("video_url")}
+    changes: dict[int, str] = {}
+    for index, clip in enumerate(timeline.get("clips") or []):
+        shot = shots.get(str(clip.get("fingerprint"))) if isinstance(clip, Mapping) else None
+        if shot is None or clip.get("subtitle_edited"):
+            continue
+        spoken = _subtitle_of(shot)
+        current = str(clip.get("subtitle") or "")
+        if current != spoken and (not current or _came_from_cell(current, str(shot.get("dialogue") or ""))):
+            changes[index] = spoken
+    if not changes:
+        return timeline
+    new = deepcopy(dict(timeline))
+    for index, spoken in changes.items():
+        new["clips"][index]["subtitle"] = spoken
+    return new
+
+
+def set_name_cards(timeline: Mapping[str, Any], shot_id: int | None, cards: Any, *, shot_uid: int | None = None) -> dict[str, Any]:
+    """The editor's own name cards for one clip; ``cards=None`` hands the clip back to the automatic ones."""
+    new = deepcopy(dict(timeline))
+    clip = _clip(new, shot_id, shot_uid)
+    if cards is None:
+        clip.pop(character_intro.EDITED, None)
+        clip[character_intro.KEY] = []
+    else:
+        try:
+            clip[character_intro.KEY] = character_intro.cleaned(cards)
+        except character_intro.NameCardError as error:
+            raise TimelineError(str(error)) from error
+        clip[character_intro.EDITED] = True
     _touch(new)
     return new
 
@@ -414,6 +497,8 @@ def summary(timeline: Mapping[str, Any]) -> dict[str, Any]:
     total = float((timeline.get("title") or {}).get("seconds") or 0)
     for clip in included:
         total += clip_seconds(clip)
+    # 片尾卡(成片精修里打开且写了字才有)也算进片长。
+    total += film_finishing.ending_seconds(timeline)
     return {
         "clips": len(clips), "included": len(included), "review": decisions,
         "seconds": round(total, 2), "bgm": (timeline.get("bgm") or {}).get("source", "none"),
@@ -447,11 +532,18 @@ def render_plan(timeline: Mapping[str, Any]) -> dict[str, Any]:
         "shot_video_urls": [str(c["video_url"]) for c in clips],
         "shot_ids": [c.get("shot_id") for c in clips],
         "subtitles": [str(c.get("subtitle") or "") if settings["subtitles"] else "" for c in clips],
+        # 用原声的镜头：字幕按片段里真说出口的时间(和话)出；改过字幕的、用配音的，照旧按念白时长排。
+        "subtitle_timings": [
+            spoken_cues.for_timeline_clip(c.get("spoken_cues"), c) if settings["subtitles"] and source == "native" else None
+            for c, source in zip(clips, sources)
+        ],
         # 原声优先：选了原声的镜头用片段自己的声音，选了配音的才挂配音。
         "shot_voices": [c.get("voice_path") if source == "tts" else None for c, source in zip(clips, sources)],
         "native_audio": [source == "native" for source in sources],
         "trims": [(float(c.get("in") or 0), (float(c["out"]) if c.get("out") is not None else None)) for c in clips],
         "blackouts": [dict(c["blackout"]) if isinstance(c.get("blackout"), Mapping) else None for c in clips],
+        # 人物出场字幕：第一次出场的人在这一镜里竖排显示姓名和身份(开关关掉就一条都不出)。
+        "name_cards": [character_intro.for_plan(c) if settings["name_cards"] else [] for c in clips],
         "transition_plans": [dict(c.get("transition_in") or {"type": "crossfade", "duration": 0.22}) if settings["transitions"]
                              else {"type": "hard_cut", "duration": 0.04} for c in clips[1:]],
         "sound_joins": [{key: value for key, value in (c.get("sound_in") or {}).items() if key in {"join", "seconds"}} or None for c in clips[1:]],
@@ -463,12 +555,14 @@ def render_plan(timeline: Mapping[str, Any]) -> dict[str, Any]:
         "bgm_start": float(bgm.get("start") or 0.0),
         "sfx_path": ambience.get("path"),
         "audio_path": timeline.get("voice_track") if dialogue and not any(source == "native" for source in sources) else None,
+        # 成片精修：都是默认值时是 None，合成和以前完全一样。
+        "finishing": film_finishing.render_spec(timeline, title_card=settings["title_card"], subtitles=settings["subtitles"]),
     }
 
 
 __all__ = [
     "AUDIO_SOURCES", "BGM_SOURCES", "REVIEW_DECISIONS", "SETTINGS", "TIMELINE_KEY", "TRANSITIONS", "TimelineError",
-    "audio_source", "build", "choose_candidate", "clip_seconds", "is_current", "needs_voice", "refresh", "render_plan", "review",
-    "record_sound_results", "set_audio_source", "set_bgm", "set_muted", "set_settings", "set_sound_join", "set_subtitle", "set_title",
+    "audio_source", "build", "choose_candidate", "clip_seconds", "finishing_of", "is_current", "needs_voice", "refresh", "render_plan", "review",
+    "record_sound_results", "set_audio_source", "set_bgm", "set_muted", "set_name_cards", "set_settings", "set_sound_join", "set_subtitle", "set_title",
     "set_transition", "set_voice", "settings_of", "summary", "trim", "with_new_sound", "with_shot_uids",
 ]

@@ -35,7 +35,7 @@ from app.schema.character_dashboard import (
     CharacterViewContract,
 )
 from app.schema.production import resolve_identity_views
-from app.core import prompt_data
+from app.core import cast_distinct, prompt_data
 
 
 _WORDING_FILE = "character_dashboard"
@@ -560,11 +560,17 @@ def compile_character_dashboard(task: dict[str, Any]) -> CharacterDashboardRespo
             record["raw_description"] = description
 
     characters: list[CharacterDashboardCharacter] = []
+    # 每个角色写下来的脸(第一个造型)，用来提示「两个角色写成了同一张脸」(cast_distinct)。
+    written_faces: list[tuple[str, str]] = []
     for record in records.values():
         character = record.get("character") if isinstance(record.get("character"), dict) else {}
         dna_character = record.get("dna") if isinstance(record.get("dna"), dict) else {}
         name = record["name"]
         states = _normalize_states(name, dna_character.get("states"))
+        raw_states = dna_character.get("states") if isinstance(dna_character.get("states"), list) else []
+        first_state = next((state for state in raw_states if isinstance(state, dict)), None)
+        if first_state is not None:
+            written_faces.append((name, "；".join(state_face_fragments(first_state))))
         description = (
             _text(character.get("desc", character.get("description")), 4000, multiline=True)
             or (states[0].dna if states else "")
@@ -641,7 +647,11 @@ def compile_character_dashboard(task: dict[str, Any]) -> CharacterDashboardRespo
         stats=stats,
         project=_normalize_project(dna.get("project")),
         assumptions=assumptions,
-        risks=_normalize_risks(dna.get("risks")),
+        risks=[
+            *_normalize_risks(dna.get("risks")),
+            *[CharacterRisk(item=_text(hit.item, 300), status="PENDING", note=_text(hit.note, 2000))
+              for hit in cast_distinct.too_alike(written_faces)],
+        ][:100],
         characters=characters,
         raw_text=raw_text,
     )

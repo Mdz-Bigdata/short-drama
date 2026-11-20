@@ -1,0 +1,15 @@
+{
+  "_about": "在节点画布里和助手说话时，画布带给助手的界面状态(app/core/canvas_chat_context.py)，接在 [界面] 那一行里。line.open 是打开的是哪张画布；line.none 是没有选中节点；line.selected 是选中了几个、各是谁，每个节点按 line.node 写(没有名字的按 line.node_untitled)，之间用 line.joiner 隔开；选中的比列出来的多时加 line.more；line.hint 提醒助手这些 id 可以直接用在画布工具里。max_nodes 是最多列几个选中的节点，max_title 是节点名字最多留几个字。",
+  "max_nodes": 12,
+  "max_title": 40,
+  "line": {
+    "open": "节点画布 {canvas_id}",
+    "none": "，没有选中节点",
+    "selected": "，选中 {count} 个节点：{nodes}",
+    "node": "{id}「{title}」（{kind}）",
+    "node_untitled": "{id}（{kind}）",
+    "joiner": "、",
+    "more": " 等（另有 {rest} 个没列出）",
+    "hint": "。说「这个节点」「这几个」指的是它们；改画布或运行节点时把 canvas_id 和这些节点 id 交给画布工具"
+  }
+}

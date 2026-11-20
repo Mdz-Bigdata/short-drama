@@ -1,0 +1,121 @@
+.prompt-preferences {
+  max-width: 1240px;
+  margin: 0 auto 20px;
+  padding: 20px;
+  border: 1px solid rgba(var(--accent-rgb), 0.198);
+  border-radius: 14px;
+  background: rgba(var(--surface-tint-rgb), 0.78);
+}
+
+.prompt-preferences__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.prompt-preferences__item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(var(--accent-rgb), 0.154);
+  border-radius: 10px;
+}
+
+.prompt-preferences__item header {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.prompt-preferences__item header strong {
+  font-size: 0.86rem;
+}
+
+.prompt-preferences__item header span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.prompt-preferences__modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.prompt-preferences__modes label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid rgba(var(--accent-rgb), 0.22);
+  border-radius: 999px;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.prompt-preferences__modes label.is-chosen {
+  border-color: var(--accent);
+  color: var(--neon-cyan);
+}
+
+.prompt-preferences__item textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 84px;
+  padding: 9px;
+  border: 1px solid rgba(var(--accent-rgb), 0.22);
+  border-radius: 8px;
+  background: rgba(var(--shadow-rgb), 0.132);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.prompt-preferences__item small {
+  align-self: flex-end;
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.prompt-preferences__item small.is-over {
+  color: var(--danger, #d64545);
+}
+
+.prompt-preferences__item details summary {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.prompt-preferences__item pre {
+  margin: 8px 0 0;
+  padding: 10px;
+  max-height: 180px;
+  overflow: auto;
+  border-radius: 8px;
+  background: rgba(var(--shadow-rgb), 0.132);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.prompt-preferences__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: auto;
+}
+
+.prompt-preferences__actions span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}

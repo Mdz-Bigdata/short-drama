@@ -137,7 +137,7 @@ class PlatformApiTests(unittest.TestCase):
         user_cookie = self._cookie(self.user.id)
         listed = self.client.get("/api/platform/capabilities", cookies=user_cookie)
         self.assertEqual(listed.status_code, 200)
-        self.assertEqual(listed.json()["total"], 25)  # + harness2 (2026-11-15)
+        self.assertEqual(listed.json()["total"], 29)  # + harness2 (2026-11-15), + novanova-studio (2026-11-16), + aid-studio (2026-11-16), + beeftv (2026-11-16), + sline-short-drama (2026-11-19)
         ability = listed.json()["items"][0]["abilities"][0]
         source_id = listed.json()["items"][0]["source_id"]
 

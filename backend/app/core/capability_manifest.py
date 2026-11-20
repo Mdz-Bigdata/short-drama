@@ -252,6 +252,28 @@ UPSTREAM_CAPABILITIES: list[CapabilitySource] = [
         ],
     },
     {
+        "id": "novanova-studio",
+        "source": "https://github.com/Swayingleaves/novanova-studio",
+        "capabilities": [
+            "storyboard to canvas: every shot laid out as connected, shot-bound nodes",
+            "asset library on the canvas: take a library element as a node, save a node's result to the library",
+            "run progress pushed to the open canvas over a server-sent stream",
+        ],
+    },
+    {
+        "id": "aid-studio",
+        "source": "https://github.com/shijue-aid/aid-studio",
+        "capabilities": [
+            "connection arrowheads, with the selected node's connections lifted and the rest dimmed",
+            "media preview: a picture opens large on a click, a clip in a player on a double click",
+            "double click a shot-bound node to open that shot in the project",
+            "panning pauses and shields media, and an uploaded media node takes its file's aspect ratio",
+            "several results from one run of a picture or clip node",
+            "composer dock under the selected node: prompt, model, parameters, quote and run",
+            "assistant panel inside the canvas with the selected nodes as context",
+        ],
+    },
+    {
         "id": "harness2",
         "source": "https://github.com/google-research/harness2",
         "capabilities": [
@@ -263,6 +285,41 @@ UPSTREAM_CAPABILITIES: list[CapabilitySource] = [
             "scripts component as machine-run checks of every execution",
             "baseline control in the blind comparison with automatic rollback",
             "resumable studies that replay the answers already paid for",
+        ],
+    },
+    {
+        "id": "beeftv",
+        "source": "https://github.com/glanderness/BeefTV",
+        "capabilities": [
+            "account storage meter against the asset library's byte and asset limits",
+            "start-up self-check of disk, stores, ffmpeg, key cipher, models and skills",
+            "masked diagnostics bundle: report, which settings are set, recent log",
+            "per-account prompt preferences: follow, append or rewrite a stage agent's creative method, output contracts protected",
+            "a reasoning model's readable thinking folded above the assistant's reply",
+            "public brand appearance read before the interface first renders",
+            "chapter-by-chapter extraction of characters, scenes and props into a list confirmed into the asset library",
+            "batch creation table: rows become picture and clip nodes, run after one confirmation with the total",
+            "enlarged prompt editor for picture and clip nodes, resizable from its corner",
+            "prompt optimizer: expand, refine, style, fit the model, use references; structured result adopted only on request",
+            "smart reference: first and last frame picked from connected pictures, reference counts checked",
+            "hand and select tool toggle on the canvas",
+            "read-only preview of an older canvas version with what restoring would change",
+            "overwrite the newer canvas version with mine after saying what it replaces",
+            "per-board canvas appearance: follow, light, dark or custom colours, saved as the default for new boards",
+            "browser-playable H.264 copy of uploaded H.265, 10-bit or ProRes clips",
+            "video erase with privacy blur, mosaic and full-width subtitle band presets",
+        ],
+    },
+    {
+        "id": "sline-short-drama",
+        "source": "https://github.com/0xsline/short-drama",
+        "capabilities": [
+            "stackable genres (up to three, the first leads) with each genre's audience, opening, payoffs, hooks and opposition",
+            "story tone and kind of ending told to the director and to every batch of the episode planner",
+            "overseas switch: conflicts and symbols a viewer abroad can follow",
+            "paywall cliffhanger episodes worked out from the serial's length",
+            "paywall cliff rules per planner batch, and a rule check of the planned hooks",
+            "new-project form section for genre, tone, ending, overseas and the paywall plan",
         ],
     },
 ]
@@ -445,6 +502,20 @@ _IMPLEMENTATION_ENTRYPOINTS: dict[str, list[str]] = {
         "frontend/src/features/canvas/canvasSearch.ts",
         "frontend/src/features/canvas/canvasExport.ts",
     ],
+    "novanova-studio": [
+        "app.core.canvas_storyboard.plan",
+        "app.service.canvas_elements.take",
+        "app.service.canvas_presence.PresenceHub.run_changed",
+    ],
+    "aid-studio": [
+        "frontend/src/features/canvas/canvasEdgeEmphasis.ts",
+        "frontend/src/features/canvas/CanvasLightbox.tsx",
+        "frontend/src/features/canvas/useCanvasOpen.tsx",
+        "frontend/src/features/canvas/canvasMedia.ts",
+        "app.core.canvas_versions.versions_of",
+        "frontend/src/features/canvas/CanvasComposerDock.tsx",
+        "app.core.canvas_chat_context.line",
+    ],
     "harness2": [
         "app.core.harness_recursion.recursion.run_mode",
         "app.core.harness_recursion.recursion.Ledger",
@@ -454,6 +525,33 @@ _IMPLEMENTATION_ENTRYPOINTS: dict[str, list[str]] = {
         "app.core.harness_recursion.checks.report",
         "app.core.harness_recursion.library.retire_all",
         "app.service.harness_evolution.resume_pending",
+    ],
+    "beeftv": [
+        "/api/elements/storage-usage",
+        "app.core.system_diagnostics.startup_self_check",
+        "/api/platform/diagnostics/bundle",
+        "app.core.prompt_preferences.creative_layer",
+        "app.core.model_gateway.ModelGateway.take_reasoning",
+        "/api/public/appearance",
+        "app.core.chapter_assets.parse",
+        "frontend/src/features/canvas/CanvasBatchTable.tsx",
+        "frontend/src/features/canvas/CanvasBeefPromptEditor.tsx",
+        "app.core.canvas_beef_prompt_optimizer.parse",
+        "frontend/src/features/canvas/canvasBeefReferences.ts",
+        "frontend/src/features/canvas/canvasBeefTool.ts",
+        "/api/studio/projects/{project_id}/canvas/versions/{version}",
+        "frontend/src/features/canvas/canvasBeefSave.ts",
+        "frontend/src/features/canvas/canvasBeefAppearance.ts",
+        "app.core.video_preview.preview_if_needed",
+        "app.service.canvas_tool_ops.erase_region",
+    ],
+    "sline-short-drama": [
+        "app.core.serial_brief.director_rule",
+        "app.core.serial_brief.outline_rules",
+        "app.core.serial_brief.director_rule",
+        "/api/serial-brief/paywall",
+        "app.core.paywall_plan.warnings",
+        "frontend/src/features/writer/SerialBriefPicker.tsx",
     ],
     "costage": [
         "app.core.spatial_stage.operations.apply_operations",
@@ -490,7 +588,11 @@ _EVIDENCE_BY_SOURCE = {
     "monoform-previs-studio": "backend/tests/test_stage_director.py",
     "reveric": "backend/tests/test_stage_director.py",
     "open-ai-canvas": "backend/tests/test_canvas_infinite.py",
+    "novanova-studio": "backend/tests/test_canvas_storyboard.py",
+    "aid-studio": "backend/tests/test_canvas_versions.py",
     "harness2": "backend/tests/test_harness_recursion.py",
+    "beeftv": "backend/tests/test_prompt_preferences.py",
+    "sline-short-drama": "backend/tests/test_serial_brief.py",
     "costage": "backend/tests/test_spatial_stage.py",
 }
 
@@ -504,6 +606,9 @@ def _implementation_status(source_id: str, capability: str, entrypoint: str) -> 
         return "implemented"
     if source_id == "seedance-2-5-video-director" and "optimizer" in capability:
         # 导演层本身是本地装载，但它生效的那一步要经过 Seedance/DeepSeek 文本模型改写。
+        return "provider-dependent"
+    if source_id == "beeftv" and capability.startswith(("chapter-by-chapter", "a reasoning model's", "prompt optimizer")):
+        # 按章节提取每一章是一次文本模型调用；思考过程只有推理模型返回时才有。
         return "provider-dependent"
     if source_id == "harness2":
         # 提议、探测、组合、盲选、反思每一步都是文本模型调用；经验库只有跑过才有内容。

@@ -843,21 +843,21 @@ describe('CharacterDesignerPage', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<CharacterDesignerPage dashboard={interactiveDashboard} taskId="task-sculpt" {...actions()} />);
     const open = () => user.click(screen.getByRole('button', { name: '为沈知微捏脸和捏表情' }));
-    const dialog = () => screen.queryByRole('dialog', { name: /捏脸 · 捏表情 · 沈知微/ });
+    const dialog = () => screen.queryByRole('dialog', { name: /角色造型 · 沈知微/ });
 
     // 没动过：Esc 直接关，不问。
     await open();
-    await screen.findByRole('combobox', { name: /从预设开始/ });
+    await screen.findByRole('group', { name: '从预设开始' });
     await user.keyboard('{Escape}');
     expect(dialog()).toBeNull();
     expect(confirm).not.toHaveBeenCalled();
 
     await open();
-    await user.selectOptions(await screen.findByRole('combobox', { name: /从预设开始/ }), 'heroine_cool');
+    await user.click(await screen.findByRole('button', { name: '古装女主·清冷' }));
     await user.keyboard('{Escape}');
     expect(confirm).toHaveBeenCalledWith('捏脸改动还没保存，确定关闭吗？');
     expect(dialog()).toBeTruthy();
-    expect((screen.getByRole('combobox', { name: /从预设开始/ }) as HTMLSelectElement).value).toBe('heroine_cool');
+    expect(screen.getByRole('button', { name: '古装女主·清冷' }).getAttribute('aria-pressed')).toBe('true');
 
     await user.click(document.querySelector('.character-dialog-backdrop') as HTMLElement);
     expect(confirm).toHaveBeenCalledTimes(2);
@@ -869,7 +869,7 @@ describe('CharacterDesignerPage', () => {
 
     // 放弃改动后重开是干净的，再关不该还问。
     await open();
-    await screen.findByRole('combobox', { name: /从预设开始/ });
+    await screen.findByRole('group', { name: '从预设开始' });
     await user.keyboard('{Escape}');
     expect(dialog()).toBeNull();
     expect(confirm).toHaveBeenCalledTimes(3);
@@ -1007,7 +1007,7 @@ describe('CharacterDesignerPage sculpt requests and focus', () => {
     const user = userEvent.setup();
     const onFocusCharacter = vi.fn();
     const props = { dashboard: interactiveDashboard, taskId: 'task-sculpt', onFocusCharacter, ...actions() };
-    const dialog = () => screen.queryByRole('dialog', { name: /捏脸 · 捏表情 · 陆行远/ });
+    const dialog = () => screen.queryByRole('dialog', { name: /角色造型 · 陆行远/ });
     const { rerender } = render(<CharacterDesignerPage {...props} />);
 
     expect(onFocusCharacter).toHaveBeenLastCalledWith('沈知微');
@@ -1015,7 +1015,7 @@ describe('CharacterDesignerPage sculpt requests and focus', () => {
 
     // 名字带空格也认得出来；选中这个人，并打开他的捏脸窗。
     rerender(<CharacterDesignerPage {...props} sculptRequest={{ name: ' 陆 行远 ', nonce: 1 }} />);
-    await screen.findByRole('combobox', { name: /^脸型/ });
+    await screen.findByRole('group', { name: '脸型' });
     expect(dialog()).toBeTruthy();
     expect(screen.getByRole('button', { name: /02.*陆行远.*巡警/ }).getAttribute('aria-pressed')).toBe('true');
     expect(onFocusCharacter).toHaveBeenLastCalledWith('陆行远');
@@ -1028,7 +1028,7 @@ describe('CharacterDesignerPage sculpt requests and focus', () => {
     expect(dialog()).toBeNull();
 
     rerender(<CharacterDesignerPage {...props} sculptRequest={{ name: '陆行远', nonce: 2 }} />);
-    await screen.findByRole('combobox', { name: /^脸型/ });
+    await screen.findByRole('group', { name: '脸型' });
     expect(dialog()).toBeTruthy();
   });
 
@@ -1044,7 +1044,7 @@ describe('CharacterDesignerPage sculpt requests and focus', () => {
         {...actions()}
       />,
     );
-    expect(screen.queryByRole('dialog', { name: /捏脸 · 捏表情/ })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: /角色造型/ })).toBeNull();
     expect(onFocusCharacter).toHaveBeenLastCalledWith('沈知微');
   });
 

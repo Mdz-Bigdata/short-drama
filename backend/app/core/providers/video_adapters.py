@@ -31,7 +31,7 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import BaseModel, Field
 
-from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
+from app.core.reference_limits import WIDEST_REFERENCE_AUDIOS, WIDEST_REFERENCE_IMAGES, WIDEST_REFERENCE_VIDEOS
 from app import settings
 from app.core.providers.defaults import PROVIDER_DEFAULT_BASE_URLS
 from app.core.video_references import kling_native_sound, max_shot_seconds
@@ -46,9 +46,9 @@ class VideoJobRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=20000)
     first_frame: str | None = None
     last_frame: str | None = None
-    reference_images: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_IMAGES)
-    reference_videos: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_VIDEOS)
-    reference_audios: list[str] = Field(default_factory=list, max_length=MAX_REFERENCE_AUDIOS)
+    reference_images: list[str] = Field(default_factory=list, max_length=WIDEST_REFERENCE_IMAGES)
+    reference_videos: list[str] = Field(default_factory=list, max_length=WIDEST_REFERENCE_VIDEOS)
+    reference_audios: list[str] = Field(default_factory=list, max_length=WIDEST_REFERENCE_AUDIOS)
     duration_seconds: int = Field(default=5, ge=1, le=30)
     aspect_ratio: str = "9:16"
     resolution: str = "1080p"

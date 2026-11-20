@@ -30,6 +30,8 @@ interface Spec {
 
 const SPECS: Spec[] = [
   { id: 'pan', group: 'view', keys: () => [t('空格 + 拖动'), t('中键拖动')], what: () => t('平移画布') },
+  { id: 'hand-tool', group: 'view', keys: ['H'], what: () => t('抓手：左键拖动也平移画布') },
+  { id: 'select-tool', group: 'view', keys: ['V'], what: () => t('选择：左键拖动框选') },
   { id: 'wheel-zoom', group: 'view', keys: () => [t('滚轮')], what: () => t('以光标为中心缩放') },
   { id: 'zoom-in', group: 'view', keys: ['Mod + +'], what: () => t('放大') },
   { id: 'zoom-out', group: 'view', keys: ['Mod + -'], what: () => t('缩小') },
@@ -40,6 +42,9 @@ const SPECS: Spec[] = [
   { id: 'bookmark-jump', group: 'view', keys: ['1 … 9'], what: () => t('跳到视图书签') },
   { id: 'bookmark-save', group: 'view', keys: ['Shift + 1 … 9'], what: () => t('保存视图书签') },
   { id: 'search', group: 'view', keys: ['Mod + F'], what: () => t('搜索节点并跳过去') },
+  { id: 'enlarge', group: 'view', keys: () => [t('点击图片')], what: () => t('放大查看') },
+  { id: 'play-large', group: 'view', keys: () => [t('双击视频')], what: () => t('在大窗口里播放') },
+  { id: 'open-shot', group: 'view', keys: () => [t('双击绑定了镜头的节点')], what: () => t('回到项目里的那一镜') },
   { id: 'help', group: 'view', keys: ['?'], what: () => t('打开或关闭快捷键说明') },
 
   { id: 'select-add', group: 'select', keys: () => [t('Shift + 点击或框选')], what: () => t('追加到所选') },

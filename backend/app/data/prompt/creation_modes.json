@@ -1,5 +1,5 @@
 {
-  "_doc": "app/core/creation_modes.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。 电影短片(film)：writer_guidance.film 是给编剧各步的写法，director_guidance.film 给第 1 步总导演；film_open_ending_kinds 是结尾分镜不该标的情绪点类型、film_reversal_kind 是算反转的类型（名字都与 emotion_points.json 一致），film_max_reversals 是提示「反转太多」之前最多几次；这几条都只是提示。 director_guidance.film_length 把短片的时长框架告诉总导演（target 是目标秒数，low / high 是框架的下限和上限）。",
+  "_doc": "app/core/creation_modes.py 的措辞，从代码里移来：报错、说明、标签与模板。代码用 _text_of(键) / _words_of(键) 读取；键是「函数名.字段」，带 {0}{1} 的按位置填。 电影短片(film)：writer_guidance.film 是给编剧各步的写法，director_guidance.film 给第 1 步总导演；film_open_ending_kinds 是结尾分镜不该标的情绪点类型、film_reversal_kind 是算反转的类型（名字都与 emotion_points.json 一致），film_max_reversals 是提示「反转太多」之前最多几次；这几条都只是提示。 director_guidance.film_length 把短片的时长框架告诉总导演（target 是目标秒数，low / high 是框架的下限和上限）。 director_frame.serial 把连续剧（drama / narration）的集数和单集时长写进第 1 步总导演的请求（count 是集数，seconds 是单集目标秒数；没有时长时用 serial_no_length）：不说的话总导演会自己假设 60 集，把母题和卡点排到项目没有的集上。",
   "module.mode_info.drama": "剧情短剧",
   "module.mode_info.drama.2": "角色在画面里说话，按集推进剧情",
   "module.mode_info.narration": "旁白解说",
@@ -16,6 +16,7 @@
     "3. 最后一个分镜给出行动号召，画面与口播都要落在它上面；",
     "4. 口播短而有力，一个分镜一句话；不得编造产品没有的功效或数据。"
   ],
+  "writer_guidance.story_led": ["5. 这一支按「剧情带货」来写：先是一场有人物、有麻烦的小戏，观众先看戏；产品在人物解决麻烦的那一步由戏里的人自然拿出来，不在开场就举着产品说话。", "6. 表演当真、处境可以荒诞：记忆点来自人物一本正经地做这件事，不靠反复夸产品。", "7. 用过产品之后要演出变化：之前做不到的事现在做到了；两段之间要有一个看得出时间过去了的交代。", "8. 最后一个分镜落成产品近景：包装正面和品牌名对着镜头、清楚可读，人物退到虚化的背景里；全片只出现这一个品牌，产品的样子前后一致。"],
   "writer_guidance.labelled": [
     "product",
     "产品"
@@ -60,5 +61,7 @@
   "promotion_guidance.tail": "行动号召必须是「{0}」。",
   "promotion_guidance.text.2": "这是一支广告短片：文案围绕产品{0}的真实卖点，结尾给出行动号召，不得夸大功效。{1}",
   "promotion_guidance.film": "这是一部一集讲完的短片：文案写人物的处境和那个放不下的问题，不剧透结尾，不写「下一集」「追更」这类连续剧的话。",
+  "director_frame.serial": "【集数】全剧共 {count} 集，每集约 {seconds} 秒。三幕大纲、钩子阶梯、付费卡点、母题物件和标签句出现在第几集，都按这 {count} 集排，不按更长的剧写，也不假设会扩到更多集。",
+  "director_frame.serial_no_length": "【集数】全剧共 {count} 集。三幕大纲、钩子阶梯、付费卡点、母题物件和标签句出现在第几集，都按这 {count} 集排，不按更长的剧写，也不假设会扩到更多集。",
   "director_guidance.film_length": "片长按 {target} 秒左右规划，不少于 {low} 秒、不超过 {high} 秒；场次和每场戏的篇幅照这个长度排，不按更长的片子写。"
 }

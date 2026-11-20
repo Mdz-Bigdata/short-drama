@@ -25,6 +25,8 @@ os.environ.setdefault("MEDIA_DOWNLOAD_RETRY_SECONDS", "0")
 # 阶段 Agent 的自进化会在后台线程里把同一次调用再跑几遍并写经验库：测试默认关掉(后台线程会活过替身的作用域，
 # 还会写进真实的 learned/harness_library)，专门测它的用例自己打开并把经验库指到临时目录。
 os.environ.setdefault("HARNESS_EVOLUTION", "off")
+# 账号里的提示词偏好要读平台库：测试默认不读(每个阶段都按平台默认)，专门测它的用例自己替换读取。
+os.environ.setdefault("PROMPT_PREFERENCES", "off")
 
 # 兜底：上面的开关只管已知的几处，新加的一步忘了替换网关时，测试也不能真连供应商(花钱，还可能一直卡着)。
 # 真实网络请求一律当断网处理，抛各库自己的连接错误；本机和 TestClient 不受影响。真要连网的手动测试设 TESTS_ALLOW_NETWORK=1。

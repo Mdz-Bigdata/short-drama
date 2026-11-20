@@ -61,6 +61,8 @@ export function PostProductionStudio({
   const [busy, setBusy] = useState('');
   const [version, setVersion] = useState('');
   const [selected, setSelected] = useState<number | null>(null);
+  /** 切过去看的那一集(已经出了成片的旧集)；null 是默认的那一集。 */
+  const [shown, setShown] = useState<number | null>(null);
   const [playhead, setPlayhead] = useState(0);
   const [editRoom, setEditRoom] = useState(false);
   const [prompts, setPrompts] = useState(false);
@@ -68,14 +70,20 @@ export function PostProductionStudio({
 
   const load = useCallback(async () => {
     try {
-      const result = await apiRequest<StudioResponse>(`/api/drama/${encodeURIComponent(taskId)}/timeline`);
+      const result = await apiRequest<StudioResponse>(`/api/drama/${encodeURIComponent(taskId)}/timeline${shown ? `?episode=${shown}` : ''}`);
       if (!result?.timeline?.clips) throw new Error(t('时间线读取失败'));
       setData(result);
       setError('');
     } catch (caught) {
+      // 切过去的那一集读不出来(比如它的片段被重做了)：回到默认的那一集，不让整页只剩一句报错。
+      if (shown) {
+        setShown(null);
+        setNotice(caught instanceof Error ? caught.message : t('时间线读取失败'));
+        return;
+      }
       setError(caught instanceof Error ? caught.message : t('时间线读取失败'));
     }
-  }, [taskId]);
+  }, [taskId, shown]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => { void load(); }, 0);
@@ -86,7 +94,9 @@ export function PostProductionStudio({
     setBusy(label);
     setNotice('');
     try {
-      setData(await apiRequest<StudioResponse>(`/api/drama/${encodeURIComponent(taskId)}/timeline/ops`, { method: 'POST', body: JSON.stringify(body) }));
+      setData(await apiRequest<StudioResponse>(`/api/drama/${encodeURIComponent(taskId)}/timeline/ops`, {
+        method: 'POST', body: JSON.stringify(shown ? { ...body, episode: shown } : body),
+      }));
       setNotice(t('{0}已更新，重新合成后生效。', [label]));
       return true;
     } catch (caught) {
@@ -95,7 +105,7 @@ export function PostProductionStudio({
     } finally {
       setBusy('');
     }
-  }, [taskId]);
+  }, [taskId, shown]);
 
   const render = useCallback(async (target?: number) => {
     setBusy(target ? `render:${target}` : 'render');
@@ -164,14 +174,25 @@ export function PostProductionStudio({
   const settings = post?.settings ?? DEFAULT_SETTINGS;
   const tension = post?.tension ?? [];
   const versions = post?.film_versions ?? [];
-  const playing = version || filmUrl || '';
+  const episodes = data.episodes ?? [];
+  // 切到别的集时放那一集自己的成片；默认的那一集放项目当前的成片。
+  const currentFilm = shown ? episodes.find(item => item.number === shown)?.film_url ?? '' : filmUrl || '';
+  const playing = version || currentFilm;
+  const shownTitle = t('只对正在制作的那一集（第 {0} 集）可用，先切回去。', [data.live_episode ?? '']);
+  const openEpisode = (number: number) => {
+    setShown(number === data.live_episode ? null : number);
+    setVersion('');
+    setSelected(null);
+    setPlayhead(0);
+    setNotice('');
+  };
   const current = rowAt(tension, playhead);
   const currentClip = current ? clips.find(clip => clipKey(clip) === (current.shot_uid ?? current.shot_id)) : undefined;
   const chosen = clips.find(clip => clipKey(clip) === selected) ?? null;
   const sources = summary.audio_sources;
   const sizeBytes = versions.find(item => item.url === playing)?.bytes ?? post?.estimated_bytes ?? 0;
   const sizeIsEstimate = !versions.find(item => item.url === playing)?.bytes;
-  const episodeLabel = episode ?? timeline.episode;
+  const episodeLabel = shown ?? episode ?? timeline.episode;
 
   const seek = (clip: StudioClip) => {
     setSelected(clipKey(clip));
@@ -196,6 +217,19 @@ export function PostProductionStudio({
         <div className="pp-head__title">
           <Clapperboard aria-hidden="true" />
           <h3>{t('后期制作')}{episodeLabel ? ` · ${t('第 {0} 集', [episodeLabel])}` : ''}</h3>
+          {episodes.length > 1 && (
+            <label className="pp-episode">
+              <span>{t('剪辑哪一集')}</span>
+              <select value={shown ?? data.live_episode ?? ''} aria-label={t('剪辑哪一集')} disabled={busy !== ''}
+                onChange={event => openEpisode(Number(event.target.value))}>
+                {episodes.map(item => (
+                  <option key={item.number} value={item.number}>
+                    {t('第 {0} 集', [item.number])} · {item.film_url ? t('已出成片') : t('制作中')}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <span className="pp-chip">{t('{0} 个镜头', [summary.included])}</span>
           {sources && (
             <span className="pp-chip pp-chip--sound" title={t('视频模型出了声的镜头直接用原声，没出声的才配音')}>
@@ -204,11 +238,12 @@ export function PostProductionStudio({
           )}
         </div>
         <div className="pp-head__actions">
-          <button type="button" className={editRoom ? 'is-on' : ''} aria-pressed={editRoom} onClick={() => setEditRoom(open => !open)}>
+          <button type="button" className={editRoom ? 'is-on' : ''} aria-pressed={editRoom && !shown} disabled={Boolean(shown)}
+            title={shown ? shownTitle : undefined} onClick={() => setEditRoom(isOpen => !isOpen)}>
             <Scissors aria-hidden="true" /> {t('剪辑室')}
           </button>
           <button type="button" onClick={() => setPrompts(true)}><FileText aria-hidden="true" /> {t('查看提示词')}</button>
-          <button type="button" className="is-primary" disabled={running || busy !== ''} onClick={regenerate}>
+          <button type="button" className="is-primary" disabled={running || busy !== '' || Boolean(shown)} title={shown ? shownTitle : undefined} onClick={regenerate}>
             <Wand2 aria-hidden="true" /> {t('一键重新生成音效配乐')}
           </button>
         </div>
@@ -235,11 +270,11 @@ export function PostProductionStudio({
           <div className="pp-toolbar">
             <label className="pp-version">
               <span>{t('版本')}</span>
-              <select value={playing} aria-label={t('成片版本')} onChange={event => setVersion(event.target.value === filmUrl ? '' : event.target.value)} disabled={!versions.length && !filmUrl}>
-                {filmUrl && !versions.some(item => item.url === filmUrl) && <option value={filmUrl}>{t('当前成片')}</option>}
+              <select value={playing} aria-label={t('成片版本')} onChange={event => setVersion(event.target.value === currentFilm ? '' : event.target.value)} disabled={!versions.length && !currentFilm}>
+                {currentFilm && !versions.some(item => item.url === currentFilm) && <option value={currentFilm}>{t('当前成片')}</option>}
                 {versions.map((item, index) => (
                   <option key={item.url} value={item.url}>
-                    {`V${versions.length - index}`}{item.url === filmUrl ? ` · ${t('当前')}` : ''}{item.rendered_at ? ` · ${renderedAt(item.rendered_at)}` : ''}{item.seconds ? ` · ${formatDuration(item.seconds)}` : ''}
+                    {`V${versions.length - index}`}{item.url === currentFilm ? ` · ${t('当前')}` : ''}{item.rendered_at ? ` · ${renderedAt(item.rendered_at)}` : ''}{item.seconds ? ` · ${formatDuration(item.seconds)}` : ''}
                   </option>
                 ))}
               </select>
@@ -263,7 +298,7 @@ export function PostProductionStudio({
             ) : (
               <div className="pp-stage__empty">
                 <p>{running ? t('剪辑合成师正在合成，完成后在这里播放。') : t('声音已经做好，成片还没合成。')}</p>
-                {!running && <button type="button" className="is-primary" onClick={onCompose}><Clapperboard aria-hidden="true" /> {t('合成成片')}</button>}
+                {!running && !shown && <button type="button" className="is-primary" onClick={onCompose}><Clapperboard aria-hidden="true" /> {t('合成成片')}</button>}
               </div>
             )}
           </div>
@@ -318,7 +353,8 @@ export function PostProductionStudio({
             </div>
           )}
 
-          <DeliveryChecklist<StudioResponse> issues={data.acceptance ?? []} taskId={taskId} onTimeline={setData} />
+          {/* 授权说明记在项目上，接口回的是默认那一集的时间线：切到别的集时改成重新读这一集。 */}
+          <DeliveryChecklist<StudioResponse> issues={data.acceptance ?? []} taskId={taskId} onTimeline={shown ? () => { void load(); } : setData} />
         </div>
 
         <StudioSidebar
@@ -330,18 +366,22 @@ export function PostProductionStudio({
           onSetting={(key: SettingKey, value: boolean) => { void operate({ operation: 'settings', settings: { [key]: value } }, t('基础设定')); }}
           onBgm={(body, label) => { void operate(body, label); }}
           onUpload={file => { void uploadBgm(file); }}
+          finishing={post?.finishing}
+          onFinishing={(changes, label) => { void operate({ operation: 'settings', settings: { finishing: changes } }, label); }}
+          currentClip={currentClip}
+          onNameCards={(clip, cards) => { void operate({ operation: 'name_cards', ...clipRef(clip), ...(cards ? { cards } : {}) }, t('人物出场字幕')); }}
         />
       </div>
 
       <footer className="pp-foot">
         <span>{t('时长')} <b>{formatDuration(summary.seconds)}</b></span>
         <span>{sizeIsEstimate ? t('大小（预估）') : t('大小')} <b>{formatBytes(sizeBytes)}</b></span>
-        <button type="button" className="is-primary" disabled={busy !== '' || running || !summary.included} onClick={() => { void render(); }}>
-          <RefreshCcw aria-hidden="true" /> {busy === 'render' ? t('合成中…') : t('重新合成')}
+        <button type="button" className="is-primary" disabled={busy !== '' || running || !summary.included} onClick={() => { void render(shown ?? undefined); }}>
+          <RefreshCcw aria-hidden="true" /> {busy === 'render' || (shown && busy === `render:${shown}`) ? t('合成中…') : shown ? t('重新合成第 {0} 集', [shown]) : t('重新合成')}
         </button>
       </footer>
 
-      {editRoom && (
+      {editRoom && !shown && (
         <section className="pp-room" aria-label={t('剪辑室')}>
           <Suspense fallback={<p className="pp-empty">{t('正在打开剪辑室…')}</p>}>
             <TimelinePanel taskId={taskId} onRendered={() => { onRendered(); void load(); }} />

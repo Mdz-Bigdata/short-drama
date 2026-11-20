@@ -80,6 +80,16 @@ class CompositionTest(unittest.TestCase):
         film = self._film([media_compositor.public_url("a.mp4")], native_audio=[True])
         self.assertAlmostEqual(_audio_seconds(film), 4, delta=0.3)
 
+    def test_clips_of_any_shape_fit_the_frame_480p_included(self):
+        """Seedance's 480p 9:16 clips are 480x854: scaled to 1080 wide they were 1922 tall, over the 1920 frame, and no film came out."""
+        for name, size in (("tall.mp4", "480x854"), ("wide.mp4", "1280x720"), ("square.mp4", "720x720")):
+            subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c=red:s={size}:d=1", "-f", "lavfi", "-i", "sine=duration=1",
+                            "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(self.media / name)], check=True)
+        film = self._film([media_compositor.public_url(name) for name in ("tall.mp4", "wide.mp4", "square.mp4")], native_audio=[True] * 3)
+        probe = subprocess.run([shutil.which("ffprobe") or "ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "stream=width,height",
+                                "-of", "csv=p=0", str(film)], capture_output=True, text=True).stdout.strip()
+        self.assertEqual(probe, f"{media_compositor.OUT_W},{media_compositor.OUT_H}")
+
     def test_without_the_flag_the_clips_sound_is_dropped_as_before(self):
         _clip(self.media / "a.mp4")
         film = self._film([media_compositor.public_url("a.mp4")])

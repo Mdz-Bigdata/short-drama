@@ -18,7 +18,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.core import canvas_layout, canvas_tools
-from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
+from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS, ReferenceCaps
 from app.schema.studio import CANVAS_COORD_LIMIT, CANVAS_SIZE_LIMIT, canvas_group_problem
 from app.core import prompt_data
 
@@ -244,8 +244,13 @@ def resolve_inputs(
     captures_of: Callable[[str], Sequence[Mapping[str, Any]]],
     *,
     in_batch: Iterable[str] = (),
+    caps: ReferenceCaps | None = None,
 ) -> Inputs:
-    """Everything connected to ``node``, by what the connection means."""
+    """Everything connected to ``node``, by what the connection means.
+
+    ``caps`` is how many references the model that will run the node takes (a video node on Seedance 2.5 takes
+    thirty pictures); without it the common cap applies.
+    """
     resolved = Inputs()
     batch = set(in_batch)
     node_id = str(node.get("id"))
@@ -303,12 +308,13 @@ def resolve_inputs(
         _add_url(resolved, role, output.get("url"), source_id)
         if role == "continue_from":
             resolved.continue_from_prompt = str(payload_of(source).get("prompt") or "")
-    if len(resolved.ref_images) > MAX_REFERENCE_IMAGES:
-        resolved.problems.append(_text_of("resolve_inputs.text.4").format(MAX_REFERENCE_IMAGES, len(resolved.ref_images)))
-    if len(resolved.ref_videos) > MAX_REFERENCE_VIDEOS:
-        resolved.problems.append(_text_of("resolve_inputs.text.5").format(MAX_REFERENCE_VIDEOS, len(resolved.ref_videos)))
-    if len(resolved.ref_audios) > MAX_REFERENCE_AUDIOS:
-        resolved.problems.append(_text_of("resolve_inputs.text.6").format(MAX_REFERENCE_AUDIOS, len(resolved.ref_audios)))
+    limit = caps or ReferenceCaps(MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS, MAX_REFERENCE_AUDIOS)
+    if len(resolved.ref_images) > limit.images:
+        resolved.problems.append(_text_of("resolve_inputs.text.4").format(limit.images, len(resolved.ref_images)))
+    if len(resolved.ref_videos) > limit.videos:
+        resolved.problems.append(_text_of("resolve_inputs.text.5").format(limit.videos, len(resolved.ref_videos)))
+    if len(resolved.ref_audios) > limit.audios:
+        resolved.problems.append(_text_of("resolve_inputs.text.6").format(limit.audios, len(resolved.ref_audios)))
     return resolved
 
 
@@ -566,6 +572,61 @@ def _set_group(node: dict[str, Any], group_id: str | None) -> None:
     node["payload"] = payload
 
 
+#: The kinds that hold a file somebody put there (an upload, a library element, a storyboard picture).
+HOLDS_MEDIA = frozenset({"media", "style_ref"})
+_HELD_MEDIA = frozenset({"image", "video", "audio"})
+
+
+def _binding_of(value: Any) -> dict[str, Any]:
+    """Which shot a node's result is written back to: ``{sceneId, shotId?}``; a shot of 0 or none means the whole scene."""
+    if not isinstance(value, Mapping) or not str(value.get("sceneId") or "").strip():
+        raise CanvasOperationError(_text_of("_binding_of.text"))
+    binding: dict[str, Any] = {"sceneId": str(value["sceneId"]).strip()}
+    raw = value.get("shotId")
+    if raw not in (None, "", 0):
+        try:
+            binding["shotId"] = int(raw)
+        except (TypeError, ValueError) as error:
+            raise CanvasOperationError(_text_of("_binding_of.text.2")) from error
+    return binding
+
+
+def _held_output(kind: str, value: Any) -> dict[str, Any]:
+    """The file a media node holds: ``{medium, url, name?}``. Only the kinds that hold a file take one."""
+    if kind not in HOLDS_MEDIA:
+        raise CanvasOperationError(_text_of("_held_output.text").format(kind))
+    url = str((value or {}).get("url") or "").strip() if isinstance(value, Mapping) else ""
+    medium = str(value.get("medium") or "") if isinstance(value, Mapping) else ""
+    if medium not in _HELD_MEDIA or not url.startswith(("http://", "https://", "/media/")):
+        raise CanvasOperationError(_text_of("_held_output.text.2"))
+    held = {"medium": medium, "url": url}
+    if str(value.get("name") or "").strip():
+        held["name"] = str(value["name"]).strip()[:120]
+    element = value.get("element")
+    if isinstance(element, Mapping) and str(element.get("id") or "").strip():
+        # Which library element this file is a copy of (app/service/canvas_elements.py): a note of where it came from, never an address.
+        held["element"] = {key: str(element[key]).strip()[:160] for key in ("id", "name", "kind", "file_id", "slot", "sha256") if str(element.get(key) or "").strip()}
+    source = value.get("source")
+    if isinstance(source, Mapping) and str(source.get("node_id") or "").strip():
+        # Which node's picture this file was cut from (app/service/canvas_image_ops.py): a note of where it came from, never an address.
+        held["source"] = _cut_source(source)
+    return held
+
+
+def _cut_source(source: Mapping[str, Any]) -> dict[str, Any]:
+    """``{node_id, run_id?, crop?: {x, y, w, h}, grid?: {rows, columns, row, column}}``: ids as text, numbers finite, nothing else kept."""
+    note: dict[str, Any] = {key: str(source[key]).strip()[:160] for key in ("node_id", "run_id") if str(source.get(key) or "").strip()}
+    for name, fields, number in (("crop", ("x", "y", "w", "h"), float), ("grid", ("rows", "columns", "row", "column"), int)):
+        part = source.get(name)
+        try:
+            values = {field: float(part[field]) for field in fields} if isinstance(part, Mapping) else None
+        except (KeyError, TypeError, ValueError):
+            values = None
+        if values and all(math.isfinite(item) for item in values.values()):
+            note[name] = {field: number(item) if number is int else round(item, 6) for field, item in values.items()}
+    return note
+
+
 def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], dict[str, str]]:
     """Apply every operation or none: returns the new document and ``ref -> node id`` for what was added."""
     if not operations:
@@ -597,6 +658,10 @@ def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[s
                 payload: dict[str, Any] = {key: operation[key] for key in _TEXT_FIELDS if operation.get(key) not in (None, "")}
                 if isinstance(operation.get("params"), Mapping):
                     payload["params"] = dict(operation["params"])
+                if "binding" in operation:
+                    payload["binding"] = _binding_of(operation["binding"])
+                if "output" in operation:
+                    payload["output"] = _held_output(kind, operation["output"])
                 node = {
                     "id": _new_id(), "kind": kind, "track": "freezone",
                     "x": _geometry("x", operation.get("x", x)), "y": _geometry("y", operation.get("y", y)),
@@ -614,6 +679,10 @@ def apply_operations(document: Mapping[str, Any], operations: Sequence[Mapping[s
                         payload[key] = operation[key]
                 if isinstance(operation.get("params"), Mapping):
                     payload["params"] = {**(payload.get("params") or {}), **operation["params"]}
+                if "binding" in operation:
+                    payload["binding"] = _binding_of(operation["binding"])
+                if "output" in operation:
+                    payload["output"] = _held_output(str(node.get("kind") or ""), operation["output"])
                 if "collapsed" in operation or "expandedSize" in operation:
                     if node.get("kind") != "group":
                         raise CanvasOperationError(_text_of("apply_operations.text.3"))

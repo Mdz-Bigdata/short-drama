@@ -302,3 +302,26 @@
 @media (prefers-reduced-motion: reduce) {
   .pp .pp-switch i { transition: none; }
 }
+
+/* 人物出场字幕 */
+.pp-names-hint, .pp-names-empty { margin: 0; color: var(--pp-dim); font-size: 0.72rem; line-height: 1.5; }
+.pp-names-list { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.pp-names-list li { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; border: 1px solid var(--pp-line, rgba(255, 255, 255, 0.08)); }
+.pp-names-list li.is-unsure { border-color: rgba(240, 173, 78, 0.55); }
+.pp-names-where { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 0.75rem; color: var(--pp-text); }
+.pp-names-flag { display: inline-flex; align-items: center; gap: 3px; color: #f0ad4e; }
+.pp-names-flag svg { width: 13px; height: 13px; }
+.pp-names-edited { color: var(--pp-dim); }
+.pp-names-fields { display: grid; grid-template-columns: 1fr 1.4fr; gap: 6px; }
+.pp-names-fields input, .pp-names-place input { min-width: 0; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--pp-line, rgba(255, 255, 255, 0.12)); background: transparent; color: var(--pp-text); font: inherit; font-size: 0.78rem; }
+.pp-names-place { display: flex; align-items: center; gap: 8px; font-size: 0.74rem; color: var(--pp-muted); }
+.pp-names-place label { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+.pp-names-place input { width: 56px; }
+.pp-names-place > button:first-child, .pp-names-actions button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 9px; border-radius: 8px; border: 1px solid var(--pp-line, rgba(255, 255, 255, 0.12)); background: transparent; color: var(--pp-text); font: inherit; font-size: 0.74rem; cursor: pointer; }
+.pp-names-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.pp-names-actions button svg { width: 13px; height: 13px; }
+.pp-names-actions button:disabled, .pp-names-place button:disabled { opacity: 0.5; cursor: default; }
+
+/* 切集：分集项目里打开哪一集的剪辑 */
+.pp-episode { display: inline-flex; align-items: center; gap: 6px; color: var(--pp-muted); font-size: 0.78rem; }
+.pp-episode select { padding: 4px 8px; border-radius: 8px; border: 1px solid var(--pp-line-strong); background: transparent; color: var(--pp-text); font: inherit; font-size: 0.78rem; }

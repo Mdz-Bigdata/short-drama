@@ -14,7 +14,7 @@ import { TAB_MEMBERS, tabOfKind, type ElementKind } from '../elements/elementTyp
 import { assetGateReason, type AssetReadiness } from './assetReadiness';
 import { CharacterAssetTabs } from './CharacterAssetTabs';
 import { CharacterLooks } from './CharacterLooks';
-import { CharacterFaceSculpt } from './CharacterFaceSculpt';
+import { CharacterStudio } from './CharacterStudio';
 import { characterAssetTabLabels } from './assetTabLabels';
 import { CharacterFiveViewViewer } from './CharacterFiveViewViewer';
 import { CharacterDetailDialog } from './CharacterDetailDialog';
@@ -151,6 +151,18 @@ export function CharacterDesignerPage({
   }, [dashboard.characters, sculptRequest, sculpting, taskId]);
 
   const focusName = sculpting || (selectedExtra ? null : character?.name) || null;
+  // 造型编辑器中间的大图：脸部近景(正脸锚点，没有就设定集主像)与全身(正面锚点，没有就设定集全身格)。
+  const sculptedCharacter = sculpting ? dashboard.characters.find(item => item.name === sculpting) : undefined;
+  const studioPictures = (() => {
+    if (!sculptedCharacter) return { face: null, body: null };
+    const views = identityDisplayViews(sculptedCharacter, dashboard.viewContract);
+    const view = (key: string) => views.find(item => item.key === key)?.imageUrl || null;
+    const cell = (key: string) => sculptedCharacter.sheetCells.find(item => item.key === key && item.available)?.imageUrl || null;
+    return {
+      face: view('face_front') || cell('portrait') || view('face_three_quarter'),
+      body: view('front') || cell('full_body') || sculptedCharacter.sheetUrl,
+    };
+  })();
   const reportFocus = useRef(onFocusCharacter);
   useEffect(() => { reportFocus.current = onFocusCharacter; }, [onFocusCharacter]);
   useEffect(() => { reportFocus.current?.(focusName); }, [focusName]);
@@ -575,16 +587,20 @@ export function CharacterDesignerPage({
               <CharacterEvidencePanels dashboard={dashboard} character={character} />
               {taskId && sculpting && (
                 <CharacterDetailDialog
-                  title={`${t('捏脸 · 捏表情')} · ${sculpting}`}
-                  className="character-dialog--sculpt"
+                  title={`${t('角色造型')} · ${sculpting}`}
+                  className="character-dialog--studio"
                   onClose={closeSculpt}
                 >
-                  <CharacterFaceSculpt
+                  <CharacterStudio
                     key={sculpting}
                     taskId={taskId}
                     characterName={sculpting}
+                    role={sculptedCharacter?.role || ''}
+                    faceImage={studioPictures.face}
+                    bodyImage={studioPictures.body}
                     onSaved={onRefresh}
                     onDirtyChange={reportSculptDirty}
+                    onGenerate={onRegenerateCharacter ? name => onRegenerateCharacter(name, 'sheet') : undefined}
                   />
                 </CharacterDetailDialog>
               )}

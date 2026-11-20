@@ -21,6 +21,11 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 
+from app.core import system_diagnostics
+
+# The last lines logged stay in memory for the diagnostics bundle; they are masked when exported.
+system_diagnostics.install_log_buffer()
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -61,6 +66,15 @@ from app.api.canvas_workflow_api import router as canvas_workflow_router
 from app.api.canvas_share_api import public_router as canvas_share_public_router, router as canvas_share_router
 from app.api.canvas_presence_api import router as canvas_presence_router
 from app.api.face_sculpt_api import catalog_router as face_sculpt_catalog_router, router as face_sculpt_router
+from app.api.appearance_api import public_router as appearance_public_router, router as appearance_router
+from app.api.chapter_assets_api import router as chapter_assets_router
+from app.api.canvas_beef_api import drama_router as canvas_beef_drama_router, studio_router as canvas_beef_studio_router
+from app.api.passage_rewrite_api import router as passage_rewrite_router
+from app.api.submission_pack_api import router as submission_pack_router
+from app.api.script_review_api import router as script_review_router
+from app.api.clip_handoff_api import router as clip_handoff_router
+from app.api.story_direction_api import router as story_direction_router
+from app.api.serial_brief_api import router as serial_brief_router
 from app.core.media_compositor import MEDIA_DIR
 from app.repository.task_repo import TaskStoreUnavailableError
 from app.platform.bootstrap import initialize_platform
@@ -180,6 +194,17 @@ app.include_router(canvas_share_public_router)
 app.include_router(canvas_presence_router)
 app.include_router(face_sculpt_catalog_router)
 app.include_router(face_sculpt_router)
+app.include_router(story_direction_router)
+app.include_router(serial_brief_router)
+app.include_router(appearance_public_router)
+app.include_router(appearance_router)
+app.include_router(chapter_assets_router)
+app.include_router(canvas_beef_drama_router)
+app.include_router(canvas_beef_studio_router)
+app.include_router(passage_rewrite_router)
+app.include_router(submission_pack_router)
+app.include_router(script_review_router)
+app.include_router(clip_handoff_router)
 
 
 @app.on_event("startup")
@@ -193,6 +218,12 @@ async def _initialize_postgresql_platform():
         )
     await hydrate_runtime_model_registry(get_platform_store(), get_model_secret_cipher())
     await hydrate_runtime_skill_registry(get_platform_store())
+
+@app.on_event("startup")
+async def _startup_self_check():
+    """Say at start-up what is not well (disk, stores, ffmpeg, keys, models); the platform page shows it later."""
+    await system_diagnostics.startup_self_check(get_platform_store().count_users, usage_task_repository.count_tasks)
+
 
 def _recover_orphan_task_state(task: dict) -> bool:
     """Normalize a persisted running task after a process restart."""

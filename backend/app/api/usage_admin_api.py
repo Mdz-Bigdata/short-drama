@@ -15,9 +15,10 @@ from app.platform.dependencies import get_platform_store
 from app.platform.permissions import PRICING_MANAGE, RECON_READ
 from app.platform.store import PlatformStore
 from app.platform.usage_billing import RATE_KINDS, UsageSpool, usage_differences
+from app.platform.usage_stats import usage_stats
 from app.repository.task_repo import TaskRepository
 from app.schema.platform import PointRateCreateRequest
-from app.core import prompt_data
+from app.core import prompt_data, quote
 
 
 _WORDING_FILE = "api_usage_admin_api"
@@ -44,6 +45,17 @@ def read_usage_records(task_ids: set[str]) -> dict[str, list]:
         task = _tasks.get_task(task_id)
         if isinstance(task, dict):
             found[task_id] = list(task.get("usage_records") or [])
+    return found
+
+
+def _task_titles(task_ids: set[str]) -> dict[str, str]:
+    """The name each project goes by. Blocking: it reads the projects."""
+    found: dict[str, str] = {}
+    for task_id in task_ids:
+        task = _tasks.get_task(task_id)
+        if isinstance(task, dict):
+            config = task.get("config") if isinstance(task.get("config"), dict) else {}
+            found[task_id] = str(config.get("title_suggestion") or config.get("titleSuggestion") or "")
     return found
 
 
@@ -120,6 +132,41 @@ async def usage_summary(
             for key, group in sorted(groups.items())
         ],
     }
+
+
+@router.get("/finance/usage/live")
+async def usage_live(
+    minutes: int = Query(60, ge=5, le=60 * 24 * 31),
+    _: dict = Depends(require_permission(RECON_READ)),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """The last ``minutes``: calls, tokens, official cost and the quote, in total, by model, by user, by project and over time.
+
+    Calls reach the table a few seconds after they finish (the usage spool drains every five seconds),
+    so a page that asks again every few seconds shows them as they happen.
+    """
+    now = datetime.now(timezone.utc)
+    window = timedelta(minutes=minutes)
+    stats = usage_stats(await store.list_usage_charges(since=now - window), now=now, window=window)
+    # Who a row is: the account's own name where it still resolves.
+    names: dict[str, str] = {}
+    for row in stats["by_user"]:
+        user = await store.get_user(row["user_id"]) if row["user_id"] else None
+        names[row["user_id"]] = (user.display_name or user.username or user.email or "") if user else ""
+        row["user_name"] = names[row["user_id"]]
+    for row in stats["recent"]:
+        row["user_name"] = names.get(row["user_id"], "")
+    titles = await run_in_threadpool(_task_titles, {row["task_id"] for row in stats["by_task"]})
+    for row in stats["by_task"]:
+        row["title"] = titles.get(row["task_id"], "")
+        row["user_name"] = names.get(row["user_id"], "")
+    return stats
+
+
+@router.get("/pricing/quote")
+async def quote_list(_: dict = Depends(require_permission(RECON_READ))):
+    """The price list as it is quoted outward, beside the official prices it is worked out from."""
+    return {"markup": float(quote.markup()), "usd_cny": float(quote.usd_cny()), "items": quote.price_list(with_official=True)}
 
 
 @router.get("/recon/usage")

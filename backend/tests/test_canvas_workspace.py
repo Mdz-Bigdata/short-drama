@@ -535,6 +535,31 @@ class CommitTests(CanvasCase):
         self.assertEqual(again["results"][0]["state"], "already")
         self.assertEqual(again["version"], outcome["version"])
 
+    def test_a_committed_clip_becomes_a_version_the_shot_can_pick_when_it_has_its_own_clip(self):
+        version = self._setup_results()
+
+        def seed(task):
+            task["assets"]["5"] = [
+                {"scene_id": "E1S01", "shot_id": 1, "shot_uid": 101, "video_url": "/media/own101.mp4", "candidates": ["/media/own101.mp4"]},
+                # A segment clip spans two shots: a one-shot canvas clip must not stand in for it.
+                {"scene_id": "E1S01", "shot_id": 2, "shot_uids": [102, 104], "video_url": "/media/segment.mp4", "candidates": ["/media/segment.mp4"]},
+            ]
+            return task
+
+        self.drama.repo.mutate_task("t-1", seed)
+        self.client.post(f"{self.base}/canvas/commit", json={"node_ids": ["scene"], "expected_version": version})
+        clips = self.drama.repo.get_task("t-1")["assets"]["5"]
+        self.assertEqual(clips[0]["candidates"], ["/media/own101.mp4", "/media/video_1.mp4"])
+        self.assertEqual(clips[0]["video_url"], "/media/own101.mp4", "offered, not switched")
+        # Picking it in the shot workspace makes it the shot's clip, the way any other version is picked.
+        with patch.object(self.drama, "get_shot_visual_workspace", return_value={}):
+            self.drama.select_shot_candidate("t-1", 1, "/media/video_1.mp4", scene_id="E1S01")
+        picked = self.drama.repo.get_task("t-1")["assets"]["5"][0]
+        self.assertEqual((picked["video_url"], picked["selected_candidate"]), ("/media/video_1.mp4", "/media/video_1.mp4"))
+        self.assertEqual(clips[1]["candidates"], ["/media/segment.mp4"])
+        # The shot with no stage-5 clip only gets the reference, as before.
+        self.assertEqual(self.drama.repo.get_task("t-1")["assets"]["4"][1]["reference_videos"][0], "/media/video_1.mp4")
+
     def test_failures_are_reported_and_can_be_retried_alone(self):
         version = self._setup_results()
         real = self.studio.canvas_runs._apply_to_shots

@@ -40,6 +40,8 @@ class FaceSculptBody(BaseModel):
     preset: str = Field("", max_length=40)
     # 这张脸的突出点(一个骨相或五官控件键)，空串表示没定。
     focus: str = Field("", max_length=40)
+    # 痣、疤、雀斑、纹身：[{kind, region, text}]，种类和部位见 face_sculpt.json 的 marks。
+    marks: list[dict[str, Any]] = Field(default_factory=list, max_length=16)
     # 这一步怎么来的，进撤销历史；不填按「手动调整」。
     label: str = Field("", max_length=60)
 

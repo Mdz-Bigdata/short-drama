@@ -2,7 +2,7 @@
 """一场戏写了多长：拆解的 duration，没有就取正文里的「时长：6秒」。
 
 第 4 步拿它定格数和每格秒数。拆解常把 duration 留空、时长只写在正文里；读不到时长，分镜就按模型宜用的
-下限(Seedance 2.5 是 10 秒)一格格往上堆，2 分钟的剧本被拉成 9 分钟。写法在 app/data/prompt/scene_seconds.json。
+下限(Seedance 2.5 是 15 秒)一格格往上堆，2 分钟的剧本被拉成 9 分钟。写法在 app/data/prompt/scene_seconds.json。
 """
 
 from __future__ import annotations

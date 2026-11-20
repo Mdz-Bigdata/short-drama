@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.core.reference_limits import MAX_REFERENCE_VIDEOS, MAX_SEQUENCE_IMAGES
-from app.core import media_compositor
+from app.core import media_compositor, prompt_data
 from app.core.spatial_stage.models import StagePlan, StagePose
 from app.core.spatial_stage.prompting import without_camera_pose
 
@@ -61,10 +61,9 @@ _SHOT_DERIVED = frozenset({"screen", "text", "axis_side", "crossing"})
 # Blockout rule 2: a video model copies a white model's limbs, so limbs on screen need their motion spelled out.
 LIMBS_WARNING = "白模带四肢：请在动作描述里写清分段肢体动作，否则四肢容易僵化"
 DEPTH_WARNING = "深度画面：近亮远暗的灰度图，只约束空间层次、走位与运镜，不约束颜色与材质"
-DEPTH_REQUIREMENT = (
-    "参考视频是导演台导出的灰度深度画面（近处亮、远处暗）：只按它复现人物的前后层次、走位路线和镜头运动，"
-    "画面的颜色、材质和光线按文字描述生成，不要复制灰度"
-)
+DEPTH_REQUIREMENT = prompt_data.text("clip_prompt", "desk_depth")
+# A white model's mannequins are stand-ins: their height and build are not the cast's.
+PROPORTION_REQUIREMENT = prompt_data.text("clip_prompt", "desk_proportion")
 LIMBS_REQUIREMENT = (
     "白模参考里的替身带四肢，动作描述须按时间顺序逐段写出肢体动作（前倾角度、步幅、重心、手臂与布料动态），"
     "不得只给结果状态，四肢不照搬白模的僵直姿态"
@@ -507,6 +506,8 @@ def motion_inputs(
     if not blockout.owns_camera:
         return MotionInputs(kept, blocking, motion_prompt, refused, blockout)
     motion = without_camera_pose(motion_prompt)
+    if PROPORTION_REQUIREMENT not in motion:
+        motion = f"{motion.rstrip('。；; ')}。{PROPORTION_REQUIREMENT}。" if motion.strip() else f"{PROPORTION_REQUIREMENT}。"
     if blockout.shows_limbs and LIMBS_REQUIREMENT not in motion:
         # Stage 5 has no Sd25CompileRequest to set ``blockout_standin_limbs`` on; the requirement rides
         # with the motion prompt instead, and only while the limbed clip is the one being followed.
@@ -553,7 +554,7 @@ def delete_pose(task: dict[str, Any], pose_id: str) -> None:
 
 
 __all__ = [
-    "ASSET_KEY", "CLIP_FRAME_RATES", "LIMBS_REQUIREMENT", "LIMBS_WARNING", "MAX_BACKDROPS_PER_SCENE", "MAX_CAPTURES_PER_SCENE", "MAX_CLIP_BYTES", "MAX_CLIP_SECONDS", "MAX_SAVED_POSES", "MAX_STILL_BYTES",
+    "ASSET_KEY", "CLIP_FRAME_RATES", "DEPTH_REQUIREMENT", "LIMBS_REQUIREMENT", "PROPORTION_REQUIREMENT", "LIMBS_WARNING", "MAX_BACKDROPS_PER_SCENE", "MAX_CAPTURES_PER_SCENE", "MAX_CLIP_BYTES", "MAX_CLIP_SECONDS", "MAX_SAVED_POSES", "MAX_STILL_BYTES",
     "CaptureError", "CaptureUpload", "MotionInputs", "ShotBlockout", "add_capture", "apply_capture", "delete_capture", "delete_pose",
     "discard_media", "ensure_room", "list_poses", "mark_captures_stale", "media_path", "motion_inputs", "mp4_duration", "save_pose",
     "scene_view", "shot_blockout", "sniff_media", "store_media", "store_of", "unapply_capture", "validate_upload",

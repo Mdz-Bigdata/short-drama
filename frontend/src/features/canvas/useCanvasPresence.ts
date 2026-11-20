@@ -28,6 +28,14 @@ export interface PresenceSaved {
   client_id: string | null;
 }
 
+/** A node run of this board changed state; with no run_id, its whole batch stopped (`finished`). Ids and status only. */
+export interface PresenceRun {
+  batch_id: string;
+  run_id: string | null;
+  node_id: string | null;
+  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled' | 'skipped' | 'finished';
+}
+
 export interface CanvasPresence {
   clientId: string;
   /** The other windows on this canvas (this one left out). */
@@ -43,6 +51,8 @@ export interface CanvasPresence {
   sendSelection: (ids: readonly string[]) => void;
   /** Saves made somewhere other than this window; returns the unsubscribe. */
   onSaved: (listener: (saved: PresenceSaved) => void) => () => void;
+  /** Runs changing state on this canvas, whichever window started them (this one included); returns the unsubscribe. */
+  onRun: (listener: (run: PresenceRun) => void) => () => void;
 }
 
 type SendType = 'cursor' | 'drag' | 'selection';
@@ -139,6 +149,7 @@ export function useCanvasPresence({ projectId, canvasId, enabled }: { projectId:
   const expiry = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const cancelFrame = useRef<(() => void) | null>(null);
   const savedListeners = useRef(new Set<(saved: PresenceSaved) => void>());
+  const runListeners = useRef(new Set<(run: PresenceRun) => void>());
   const slots = useRef(new Map<SendType, Slot>());
   const liveRef = useRef(live);
 
@@ -211,6 +222,11 @@ export function useCanvasPresence({ projectId, canvasId, enabled }: { projectId:
   const onSaved = useCallback((listener: (saved: PresenceSaved) => void) => {
     savedListeners.current.add(listener);
     return () => { savedListeners.current.delete(listener); };
+  }, []);
+
+  const onRun = useCallback((listener: (run: PresenceRun) => void) => {
+    runListeners.current.add(listener);
+    return () => { runListeners.current.delete(listener); };
   }, []);
 
   useEffect(() => {
@@ -289,6 +305,17 @@ export function useCanvasPresence({ projectId, canvasId, enabled }: { projectId:
             listener(data);
           } catch {
             // One listener failing must not keep the save from the others.
+          }
+        }
+      },
+      run: event => {
+        const data = parse<PresenceRun>(event);
+        if (!data || typeof data.status !== 'string' || typeof data.batch_id !== 'string') return;
+        for (const listener of [...runListeners.current]) {
+          try {
+            listener(data);
+          } catch {
+            // One listener failing must not keep the news from the others.
           }
         }
       },
@@ -404,6 +431,6 @@ export function useCanvasPresence({ projectId, canvasId, enabled }: { projectId:
 
   return useMemo(() => ({
     clientId, peers: snapshot.peers, cursors: snapshot.cursors, drags: snapshot.drags, selections: snapshot.selections,
-    sendCursor, sendDrag, sendSelection, onSaved,
-  }), [clientId, onSaved, sendCursor, sendDrag, sendSelection, snapshot]);
+    sendCursor, sendDrag, sendSelection, onSaved, onRun,
+  }), [clientId, onRun, onSaved, sendCursor, sendDrag, sendSelection, snapshot]);
 }

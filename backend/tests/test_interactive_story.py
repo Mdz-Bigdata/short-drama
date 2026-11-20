@@ -1159,7 +1159,9 @@ class CanvasHandoffTests(EndpointTests):
         body = self.client.post(f"{self.base}/segments/{segment['id']}/canvas").json()
         self.assertTrue(body["bound"])
         video = next(node for node in self.canvas().nodes if node.kind == "video_gen")
-        self.assertEqual(video.payload["params"]["binding"], {"sceneId": "E1S01", "shotId": 1})
+        # Where a commit reads it (studio_canvas._binding): on the payload itself, not inside params.
+        self.assertEqual(video.payload["binding"], {"sceneId": "E1S01", "shotId": 1})
+        self.assertNotIn("binding", video.payload.get("params") or {})
 
     def test_an_empty_segment_and_a_missing_one_are_refused_in_words(self):
         graph = _sample()

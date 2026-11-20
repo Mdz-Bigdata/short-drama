@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""逐集制作：一集做完「分镜 → 视觉 → 音频 → 合成」才开始下一集，全部集成片后才宣发。"""
+"""分集制作：产物按集归档，步骤按整部剧往下走——所有集的分镜、所有集的视频、所有集的音频、所有集的成片，然后宣发；不回到前面的步骤。"""
 
 import asyncio
 import tempfile
@@ -46,6 +46,37 @@ class HelperTests(unittest.TestCase):
         cycle.writable_record(task, 2)["film"] = {"final_video_url": "e2.mp4"}
         self.assertIsNone(cycle.current_episode(task))
         self.assertEqual([film["episode"] for film in cycle.films(task)], [1, 2])
+
+    def test_each_stage_works_on_the_first_open_episode_that_lacks_it(self):
+        task = {"config": {}, "assets": {**_boards(1), "5": [{"scene_id": "E1S01", "shot_id": k, "video_url": "c"} for k in (1, 2)]}}
+        self.assertEqual(cycle.episode_for(task, 4), 2)        # 第 1 集分镜有了，分镜这一步做第 2 集
+        self.assertEqual(cycle.episode_for(task, 5), 2)        # 第 1 集视频有了；第 2 集还没镜头，也算缺
+        self.assertEqual(cycle.episode_for(task, 6), 1)
+        self.assertEqual(cycle.signature(task), ((1, (True, True, False, False)), (2, (False, False, False, False))))
+        cycle.writable_record(task, 1)["audio"] = {"audio_url": "v1"}
+        self.assertEqual(cycle.episode_for(task, 6), 2)
+        self.assertEqual(cycle.episode_for(task, 7), 1)
+        cycle.writable_record(task, 1)["film"] = {"final_video_url": "e1.mp4"}
+        self.assertEqual(cycle.open_episodes(task), [2])       # 出了成片的集不再被任何一步打开
+        self.assertEqual([cycle.episode_for(task, stage) for stage in (4, 5, 6, 7)], [2, 2, 2, 2])
+
+    def test_a_stage_is_missing_until_every_open_episode_has_it(self):
+        task = {"config": {}, "assets": {**_boards(1)}}
+        self.assertEqual(cycle.missing(task, 4), ["第2集分镜尚未完成"])
+        self.assertEqual(cycle.missing(task, 5), ["第1,2集视觉(运镜视频)尚未完成"])
+        task["assets"].update(_boards(1, 2))
+        self.assertEqual(cycle.missing(task, 4), [])
+        self.assertEqual(cycle.missing(task, 6), ["第1,2集音频尚未完成"])
+        self.assertEqual(cycle.missing(task, 8), ["第1集尚未做完成片(全部集完成后才宣发)"])
+        self.assertIsNone(cycle.missing(task, 3))              # 前三步不分集
+
+    def test_a_stage_asked_again_takes_the_first_open_episode(self):
+        task = {"config": {}, "assets": {**_boards(1, 2)}}
+        self.assertEqual(cycle.episode_for(task, 4), 1)        # 各集分镜都有了：重做就从第一个没出成片的集起
+        cycle.writable_record(task, 1)["film"] = {"final_video_url": "e1.mp4"}
+        self.assertEqual(cycle.episode_for(task, 4), 2)
+        cycle.writable_record(task, 2)["film"] = {"final_video_url": "e2.mp4"}
+        self.assertIsNone(cycle.episode_for(task, 4))
 
     def test_only_multi_episode_projects_without_legacy_output_switch(self):
         single = {"config": {}, "assets": {"4_progress": {"episodes": [{"number": 1, "complete": True}]}}}
@@ -94,23 +125,28 @@ class WorkflowTests(_ServiceCase):
     def _snapshot(self, task):
         return self.service.workflow_snapshot(task)
 
-    def test_episode_one_goes_to_video_before_episode_two_is_storyboarded(self):
+    def test_every_episode_finishes_a_step_before_the_next_step(self):
         task = _cycle_task([{"scene_id": "E1S01", "content": "第一集"}, {"scene_id": "E2S01", "content": "第二集"}])
         task["assets"].update(_boards(1))
         snap = self._snapshot(task)
-        self.assertEqual(snap["next_stage"], 5)
-        self.assertIn("正在做第 1 集", snap["hint"])
+        self.assertEqual(snap["next_stage"], 4)            # 第 2 集的分镜没做完，不进视频
+        self.assertIn("共 2 集，已出成片 0 集", snap["hint"])
+        self.assertIn("不会回到前面的步骤", snap["hint"])
 
-        task["assets"][cycle.CYCLE_KEY] = {"version": 1, "episodes": {}}   # 第 5 阶段开工即登记逐集制作
-        task["assets"]["5"] = [{"scene_id": "E1S01", "shot_id": k, "video_url": f"c{k}"} for k in (1, 2)]
-        self.assertEqual(self._snapshot(task)["next_stage"], 6)
-        cycle.writable_record(task, 1)["audio"] = {"audio_url": "v1"}
-        self.assertEqual(self._snapshot(task)["next_stage"], 7)
-        cycle.writable_record(task, 1)["film"] = {"final_video_url": "e1.mp4"}
-        snap = self._snapshot(task)
-        self.assertEqual(snap["next_stage"], 4)            # 第 1 集成片后才回到第 2 集分镜
-        self.assertIn("正在做第 2 集", snap["hint"])
-        self.assertIn("已完成成片 1 集", snap["hint"])
+        seen = []
+        def step(change):
+            change()
+            seen.append(self._snapshot(task)["next_stage"])
+        clip = lambda n: [{"scene_id": f"E{n}S01", "shot_id": k, "video_url": f"e{n}c{k}"} for k in (1, 2)]
+        step(lambda: task["assets"].update(_boards(1, 2)))
+        step(lambda: task["assets"].update({cycle.CYCLE_KEY: {"version": 1, "episodes": {}}, "5": clip(1)}))
+        step(lambda: task["assets"].update({"5": clip(1) + clip(2)}))
+        step(lambda: cycle.writable_record(task, 1).update(audio={"audio_url": "v1"}))
+        step(lambda: cycle.writable_record(task, 2).update(audio={"audio_url": "v2"}))
+        step(lambda: cycle.writable_record(task, 1).update(film={"final_video_url": "e1.mp4"}))
+        step(lambda: cycle.writable_record(task, 2).update(film={"final_video_url": "e2.mp4"}))
+        self.assertEqual(seen, [5, 5, 6, 6, 7, 7, 8])
+        self.assertEqual(seen, sorted(seen))               # 一路只往后走
 
     def test_publicity_waits_for_every_episode(self):
         task = _cycle_task([{"scene_id": "E1S01", "content": "一"}, {"scene_id": "E2S01", "content": "二"}])
@@ -139,11 +175,11 @@ class WorkflowTests(_ServiceCase):
         self.assertEqual(cycle.record(claimed, 1)["audio"], {"audio_url": "v1"})
         self.assertEqual(claimed["video_url"], "e1.mp4")
 
-    def test_video_is_refused_until_the_current_episode_is_storyboarded(self):
+    def test_video_is_refused_until_every_episode_is_storyboarded(self):
         task = _cycle_task([{"scene_id": "E1S01", "content": "一"}, {"scene_id": "E2S01", "content": "二"}])
-        task["assets"].update(_boards())
+        task["assets"].update(_boards(1))                  # 第 1 集分镜做完也不行：不跳着走
         self.repo.save_task(task["task_id"], task)
-        with self.assertRaisesRegex(StagePrerequisiteError, "第1集分镜尚未完成"):
+        with self.assertRaisesRegex(StagePrerequisiteError, "第2集分镜尚未完成"):
             self.service._claim_stage_task(task["task_id"], 5)
 
 
@@ -156,28 +192,25 @@ class StageFourGuardTests(_ServiceCase):
             self.service._execute_stage_blocking(task["task_id"], 4, _claimed_task=task)
         return self.repo.get_task(task["task_id"])
 
-    def test_a_rerun_does_not_storyboard_ahead_of_the_episode_in_production(self):
+    def test_storyboards_go_on_to_the_next_episode_without_waiting_for_a_film(self):
         task = self._run_stage4(_cycle_task([{"scene_id": "E1S01", "content": "一"}, {"scene_id": "E2S01", "content": "二"}]))
-        self.assertEqual(DramaService._missing_stage_outputs(task, 4), [])   # 第1集分镜够了就放行
-        task = self._run_stage4(task)                                        # 再跑一次第 4 阶段
-        boards = task["assets"]["4_scene_boards"]
-        self.assertEqual(boards["E2S01"]["status"], "pending")               # 第1集还没成片，第2集不提前做
-
-        cycle.writable_record(task, 1)["film"] = {"final_video_url": "e1.mp4"}
-        task = self._run_stage4(task)
+        self.assertEqual(task["assets"]["4_scene_boards"]["E2S01"]["status"], "pending")   # 一轮只做一集
+        self.assertIn("第2集分镜尚未完成", DramaService._missing_stage_outputs(task, 4))     # 分镜这一步还没完
+        task = self._run_stage4(task)                                        # 接着做第 2 集，不等第 1 集出成片
         self.assertEqual(task["assets"]["4_scene_boards"]["E2S01"]["status"], "done")
+        self.assertEqual(DramaService._missing_stage_outputs(task, 4), [])
 
 
 class OneClickTests(_ServiceCase):
 
-    def test_one_click_makes_each_episode_a_film_before_the_next(self):
-        task = _cycle_task([{"scene_id": "E1S01", "content": "第一集"}, {"scene_id": "E2S01", "content": "第二集"}])
+    def _run(self, task, spoil=None):
+        """假阶段各做成一集；``spoil(stage, assets)`` 可以在某一步弄坏点东西。记下每次调用的(阶段, 集)。"""
         self.repo.save_task(task["task_id"], task)
         calls, repo = [], self.repo
 
         async def fake_execute_stage(service_self, task_id, stage, **kwargs):
             current = repo.get_task(task_id)
-            episode = cycle.current_episode(current) if cycle.active(current) else 1
+            episode = cycle.episode_for(current, stage) if cycle.active(current) else 1
             calls.append((stage, episode))
             assets = current["assets"]
             if stage == 4:
@@ -199,6 +232,8 @@ class OneClickTests(_ServiceCase):
                 cycle.writable_record(current, episode)["film"] = {"final_video_url": f"e{episode}.mp4"}
             elif stage == 8:
                 assets["8"] = {"pr_content": "文案", "short_link": "link"}
+            if spoil:
+                spoil(stage, assets, episode)
             current["stage_progress"]["status"] = "success"
             repo.save_task(task_id, current)
             return current
@@ -209,11 +244,37 @@ class OneClickTests(_ServiceCase):
         with patch.object(DramaService, "execute_stage", fake_execute_stage), \
              patch("app.service.drama_service.asyncio.sleep", new=instant):
             asyncio.run(self.service.execute_all_stages(task["task_id"]))
+        return calls, repo.get_task(task["task_id"])
 
-        self.assertEqual(calls, [(4, 1), (5, 1), (6, 1), (7, 1), (4, 2), (5, 2), (6, 2), (7, 2), (8, None)])
-        final = repo.get_task(task["task_id"])
+    def _two_episodes(self):
+        return _cycle_task([{"scene_id": "E1S01", "content": "第一集"}, {"scene_id": "E2S01", "content": "第二集"}])
+
+    def test_one_click_finishes_each_step_for_every_episode_then_moves_on(self):
+        calls, final = self._run(self._two_episodes())
+        self.assertEqual(calls, [(4, 1), (4, 2), (5, 1), (5, 2), (6, 1), (6, 2), (7, 1), (7, 2), (8, None)])
+        stages = [stage for stage, _ in calls]
+        self.assertEqual(stages, sorted(stages))           # 从分镜起只往后走，不回退、不跳步
         self.assertEqual([film["final_video_url"] for film in cycle.films(final)], ["e1.mp4", "e2.mp4"])
         self.assertEqual(len(final["assets"]["5"]), 4)
+
+    def test_the_run_stops_instead_of_going_back_to_an_earlier_step(self):
+        def spoil(stage, assets, episode):
+            if stage == 6 and episode == 1:
+                assets["4_quality"] = {"passed": False}   # 做到音频时，分镜质检被推翻了
+        calls, final = self._run(self._two_episodes(), spoil)
+        self.assertEqual(calls, [(4, 1), (4, 2), (5, 1), (5, 2), (6, 1)])   # 没有自动跳回第 4 步
+        self.assertEqual(final["status"], "failed")
+        self.assertIn("不会跳回前面的步骤", final["fail_reason"])
+        self.assertIn("第 4/7 步", final["fail_reason"])
+
+    def test_the_run_stops_when_a_step_makes_no_episode(self):
+        def spoil(stage, assets, episode):
+            if stage == 5 and episode == 2:
+                assets["5"] = [clip for clip in assets["5"] if clip["scene_id"] != "E2S01"]   # 第 2 集一条也没拍出来
+        calls, final = self._run(self._two_episodes(), spoil)
+        self.assertEqual(calls, [(4, 1), (4, 2), (5, 1), (5, 2)])            # 不原地打转
+        self.assertEqual(final["status"], "failed")
+        self.assertIn("产物仍不完整", final["fail_reason"])
 
 
 if __name__ == "__main__":

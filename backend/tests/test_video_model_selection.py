@@ -69,6 +69,34 @@ class ReferenceFitTests(unittest.TestCase):
         self.assertIsNone(reference_fit.fit_image(None))
         self.assertEqual(reference_fit.fit_image("data:image/png;base64,not-an-image"), "data:image/png;base64,not-an-image")
 
+    def test_a_small_narrow_prop_is_enlarged_and_padded_without_slipping_out_of_the_range(self):
+        # 229×740 was padded to 296×740, then enlarged to 300×751: ratio 0.3995, and the provider refused the whole request.
+        width, height = _size(reference_fit.fit_image(_data_uri(229, 740)))
+        self.assertGreaterEqual(width / height, reference_fit.PAD_MIN_RATIO)
+        self.assertGreaterEqual(min(width, height), reference_fit.MIN_SIDE)
+        self.assertTrue(reference_fit.within_limits(width, height))
+
+    def test_every_size_that_needs_fitting_lands_inside_the_range_with_room_to_spare(self):
+        sizes = [(w, h) for w in (1, 7, 60, 119, 229, 299, 300, 301, 333, 504, 569, 640, 799, 800, 804, 1023, 2048, 6001, 9000)
+                 for h in (1, 9, 100, 299, 300, 301, 740, 751, 1139, 1600, 1744, 2000, 2048, 5999, 6000, 7001)]
+        for width, height in sizes:
+            if reference_fit.within_limits(width, height):
+                continue
+            (image_w, image_h), (canvas_w, canvas_h) = reference_fit._target_size(width, height)
+            with self.subTest(size=(width, height), canvas=(canvas_w, canvas_h)):
+                self.assertTrue(reference_fit.within_limits(canvas_w, canvas_h))
+                self.assertLessEqual(image_w, canvas_w)
+                self.assertLessEqual(image_h, canvas_h)
+                # A picture that was outside the ratio range is padded past the edge, not onto it.
+                if width / height < reference_fit.MIN_RATIO:
+                    self.assertGreaterEqual(canvas_w / canvas_h, reference_fit.PAD_MIN_RATIO)
+                if width / height > reference_fit.MAX_RATIO:
+                    self.assertLessEqual(canvas_w / canvas_h, reference_fit.PAD_MAX_RATIO)
+                # Padding only: one scale factor puts both sides of the picture within a pixel of where they are.
+                low = max((image_w - 1) / width, (image_h - 1) / height)
+                high = min((image_w + 1) / width, (image_h + 1) / height)
+                self.assertLessEqual(low, high)
+
     def test_wide_and_tiny_images_are_brought_inside_the_limits(self):
         for width, height in ((2600, 800), (120, 200), (486, 1744)):
             with self.subTest(size=(width, height)):
@@ -158,6 +186,23 @@ class GatewayVideoRoutingTests(RegistryIsolation):
 
         self.assertIsNone(url)
         self.assertIn("InvalidParameter image aspect ratio out of range", logs.output[0])
+
+    def test_a_first_frame_request_leaves_the_ratio_to_the_image(self):
+        gateway = self._gateway()
+        response = Mock(status_code=400, text="{}")
+        response.json.return_value = {"error": {"code": "InvalidParameter", "message": "stop here"}}
+        sent = []
+        for frames in ({"first_frame": "https://cdn/f.jpeg"},
+                       {"first_frame": "https://cdn/f.jpeg", "last_frame": "https://cdn/l.jpeg"},
+                       {"ref_images": ["https://cdn/a.jpeg"]}):
+            with patch("requests.post", return_value=response) as post, \
+                    self.assertLogs("app.core.model_gateway", level="WARNING"):
+                gateway._ark_video("ark-key", "https://ark.example/api/v3", "p", duration=5, ratio="9:16", **frames)
+            sent.append(post.call_args.kwargs["json"])
+
+        self.assertNotIn("ratio", sent[0])
+        self.assertNotIn("ratio", sent[1])
+        self.assertEqual(sent[2]["ratio"], "9:16")
 
 
 class VideoModelAvailabilityTests(RegistryIsolation):

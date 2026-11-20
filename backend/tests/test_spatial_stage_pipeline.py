@@ -18,6 +18,7 @@ from app.api import drama_api
 from app.api.auth_api import auth_service, get_current_user
 from app.core.continuity_audit import audit_prompt_detail
 from app.core.frame_position import facing_side
+from app.core.spatial_stage.models import StageLandmark
 from app.repository.task_repo import TaskRepository
 from app.service import spatial_stage_service as spatial_stage
 from app.service.drama_service import DramaService
@@ -282,6 +283,46 @@ class StageFourIntegrationTests(unittest.TestCase):
         ids = [item.id for item in second.landmarks]
         self.assertEqual(len(ids), len(set(ids)))
         self.assertIn("屏风", [item.name for item in second.landmarks])
+
+    def test_a_prop_stays_with_the_scene_that_names_it_and_the_furniture_with_the_place(self):
+        _generate(self.service, self.task, "E1S01")
+        first = spatial_stage.load_plan(self.task, "E1S01")
+        recorder = first.landmark("录音笔").position
+        fixtures = {item.name: item.position for item in first.landmarks if item.kind != "prop"}
+        self.assertTrue(fixtures)
+
+        # E1S02 does not name the recorder, and nobody put it on the set by hand.
+        second = spatial_stage.ensure_plan(self.task, "E1S02")
+        self.assertNotIn("录音笔", [item.name for item in second.landmarks])
+        for name, position in fixtures.items():
+            self.assertEqual(second.landmark(name).position, position)
+
+        # Named again, it is where the earlier scene left it.
+        self.task["assets"][spatial_stage.ASSET_KEY]["scenes"].pop("E1S02")
+        self.task["assets"]["2_breakdown"]["scenes"][1]["content"] += "，录音笔还在桌上"
+        self.assertEqual(spatial_stage.ensure_plan(self.task, "E1S02").landmark("录音笔").position, recorder)
+
+    def test_a_replan_drops_a_prop_the_scene_does_not_name_unless_a_person_put_it_there(self):
+        _generate(self.service, self.task, "E1S01")
+        plan = spatial_stage.load_plan(self.task, "E1S01")
+        # A ring worn by someone in an earlier scene here, left in this scene's stored plan by the old memory.
+        ring = StageLandmark(id="mark-77", name="玉扳指", kind="prop", position=[0.4, -1.0], size=[0.04, 0.04, 0.03])
+        spatial_stage.save_plan(self.task, plan.model_copy(update={"landmarks": [*plan.landmarks, ring]}))
+        scene = spatial_stage.breakdown_scene(self.task, "E1S01")
+
+        replanned = spatial_stage.plan_scene(self.task, scene, [])
+
+        self.assertNotIn("玉扳指", [item.name for item in replanned.landmarks])
+        self.assertIn("录音笔", [item.name for item in replanned.landmarks])
+        self.assertEqual(replanned.actor("林夏").position, plan.actor("林夏").position)
+        self.assertNotIn("玉扳指", [item.name for item in spatial_stage.ensure_plan(self.task, "E1S02").landmarks])
+
+        edited = spatial_stage.edit_plan(self.task, "E1S01", base_revision=replanned.revision, operations=[
+            {"op": "add_landmark", "name": "玉扳指", "position": [0.4, -1.0]},
+        ])
+        self.assertEqual(spatial_stage.plan_scene(self.task, scene, []).landmark("玉扳指").position, edited.landmark("玉扳指").position)
+        self.task["assets"][spatial_stage.ASSET_KEY]["scenes"].pop("E1S02")
+        self.assertIn("玉扳指", [item.name for item in spatial_stage.ensure_plan(self.task, "E1S02").landmarks])
 
     def test_a_legacy_clip_without_a_plan_still_infers_direction_from_its_wording(self):
         self.assertEqual(spatial_stage.screen_direction(spatial_stage.ensure_plan(self.task, "E1S01"), 99), "neutral")

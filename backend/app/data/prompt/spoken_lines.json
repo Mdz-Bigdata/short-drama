@@ -5,5 +5,7 @@
   "module.no_dialogue.3": "（无）",
   "module.no_dialogue.4": "(无)",
   "module.stage_direction": "[，,]?\\s*(?:停顿一拍|停顿片刻|停了一拍|顿了顿|停顿|沉默片刻|沉默)\\s*[，,]?",
-  "spoken_lines.text": "无+"
+  "spoken_lines.text": "无+",
+  "module.no_line_opening": "^(?:无台词|无对白|没有台词|没有对白|不出声|不开口|不说话|沉默不语|一言不发)(?:[，,。；;：:、—\\-\\s].*)?$",
+  "module.timecode": "(?:约)?第\\s*\\d+(?:\\.\\d+)?\\s*(?:-|—|到|至)?\\s*(?:\\d+(?:\\.\\d+)?)?\\s*秒(?:起|开始|时|处|后)?\\s*[，,：:]?\\s*"
 }

@@ -640,6 +640,18 @@ class PlatformSetting(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
+class UserPromptPreference(Base):
+    """An account's own way of working for one stage agent: appended to the platform's method, or in place of it."""
+
+    __tablename__ = "user_prompt_preferences"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("platform_users.id", ondelete="CASCADE"), primary_key=True)
+    operation: Mapped[str] = mapped_column(String(40), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(16))
+    text: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
 class McpToken(Base):
     """A bearer token an external agent uses to reach this user's projects over MCP; only its hash is kept."""
 

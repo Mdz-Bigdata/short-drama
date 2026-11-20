@@ -143,7 +143,7 @@
     "video": 4500,
     "audio": 128
   },
-  "music_prompt": "{style} {genre} short drama cinematic score, {palette}, emotion arc with restrained opening, rising tension, clear climax and gentle resolution, instrumental only, leave space for dialogue",
+  "music_prompt": "{style} {genre} short drama cinematic score, {palette}, emotion arc with restrained opening, rising tension, clear climax and gentle resolution, instrumental only with no vocals and no lyrics, a complete piece with intro, body and a natural ending that resolves instead of cutting off abruptly, clear steady melody and rhythm with distinct instrument layers, clean balanced mix without distortion or background hiss, moderate volume and arrangement density that leaves space for dialogue and never competes with voices",
   "music_language_note": "配乐统一风格：题材定了配乐基调就定了，全剧一套音乐语言。music_palettes 按题材(model_gateway.get_genre 的 id)给配器，填进 music_prompt 的 {palette}；题材只认出 general 时按全剧的类型聚类(frame_handoff.show_cluster，A–G)查 music_cluster_palettes；第一次出配乐时整句提示词锁进项目(6_music_language)，以后各集都用这一句，不再随集变。",
   "music_series_suffix": "the same musical language for every episode of this series: same instrumentation, same key centre and tempo family, same recurring main motif",
   "music_palettes": {

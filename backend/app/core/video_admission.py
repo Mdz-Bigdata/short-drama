@@ -236,9 +236,12 @@ def assess_video_batch(
         if isinstance(item, Mapping)
     }
     scenes = _screenwriting_scenes(assets)
+    # 这一步刚做完一轮(status=success)不算在跑：分集项目的第 5 步一集一集连着做，同一次制作里会接着准入下一集。
+    progress = task.get("stage_progress") if isinstance(task.get("stage_progress"), Mapping) else {}
     stage_running = (
         task.get("status") == "running"
-        and _int((task.get("stage_progress") or {}).get("stage")) == 5
+        and _int(progress.get("stage")) == 5
+        and progress.get("status") != "success"
     )
     model_problem: ShotProblem | None = None
     if not model:

@@ -31,6 +31,8 @@ class ScreenwritingLedgerEntry(DramaBaseSchema):
     source_kind: Optional[Literal["novel", "screenplay"]] = None
     source_name: Optional[str] = Field(None, max_length=255)
     ledger_status: str = Field("planned", max_length=40)
+    # The cross-episode sheet: what this episode leaves changed (see app/core/screenwriting/story_state.py).
+    state_changes: list[str] = Field(default_factory=list, max_length=100)
 
 
 class ScreenwritingOverview(DramaBaseSchema):

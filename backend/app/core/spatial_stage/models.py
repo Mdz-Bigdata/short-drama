@@ -75,6 +75,8 @@ MAX_LANDMARK_PARTS = 64
 MAX_STAGE_PARTS = 2400
 # Contacts of one scene; a bound on the stored list, not on how many any one shot has.
 MAX_CONTACTS = 400
+# Effect markers a person places on one scene's floor.
+MAX_EFFECTS = 40
 
 
 class StageModel(BaseModel):
@@ -466,6 +468,33 @@ class StageContact(StageModel):
         return not self.shot_ids or not other.shot_ids or bool(set(self.shot_ids) & set(other.shot_ids))
 
 
+class StageEffect(StageModel):
+    """An effect a person marked on the floor for previs: where it is centred, how far it reaches, who sends it.
+
+    A placeholder, not a simulation: the blocking diagram draws it as numbered rings. ``kind`` is one of the
+    kinds of ``action_marks.json``; ``shot_ids`` empty means the whole scene.
+    """
+
+    id: Identifier
+    kind: Annotated[str, Field(pattern=r"^[a-z][a-z_]{1,29}$")]
+    position: GroundPoint
+    radius_m: Annotated[float, Field(ge=0.2, le=30)] = 2.0
+    # The character who sends it; empty when it has no sender (a collapse, a lightning strike).
+    source: Annotated[str, Field(max_length=120)] = ""
+    note: Annotated[str, Field(max_length=40)] = ""
+    shot_ids: Annotated[list[Annotated[int, Field(ge=1, le=10_000)]], Field(max_length=200)] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def shots_are_distinct(self) -> "StageEffect":
+        if len(self.shot_ids) != len(set(self.shot_ids)):
+            raise ValueError("an effect's shot ids must be distinct")
+        return self
+
+    def applies_to(self, shot_id: int | None) -> bool:
+        """Whether the effect is on in shot ``shot_id``; ``None`` asks about the scene as a whole."""
+        return not self.shot_ids if shot_id is None else (not self.shot_ids or int(shot_id) in self.shot_ids)
+
+
 class StageCheck(StageModel):
     code: Annotated[str, Field(pattern=r"^[a-z0-9_]{3,80}$")]
     passed: bool
@@ -498,6 +527,8 @@ class StagePlan(StageModel):
     timelines: Annotated[dict[str, ShotTimeline], Field(max_length=200)] = Field(default_factory=dict)
     # Plans saved before contacts existed have none and load unchanged.
     contacts: Annotated[list[StageContact], Field(max_length=MAX_CONTACTS)] = Field(default_factory=list)
+    # Plans saved before effect markers existed have none and load unchanged.
+    effects: Annotated[list[StageEffect], Field(max_length=MAX_EFFECTS)] = Field(default_factory=list)
     scene_bible: Annotated[str, Field(max_length=4000)] = ""
     source: PlanSource = "auto"
     planner: PlanPlanner = "rules"
@@ -551,6 +582,11 @@ class StagePlan(StageModel):
         for index, contact in enumerate(self.contacts):
             if any(other.target == contact.target and contact.overlaps(other) for other in self.contacts[index + 1:]):
                 raise ValueError("two contacts cannot hold the same target in the same shot")
+        effect_ids = [effect.id for effect in self.effects]
+        if len(effect_ids) != len(set(effect_ids)):
+            raise ValueError("spatial stage effect ids must be unique")
+        if any(effect.source and effect.source not in names for effect in self.effects):
+            raise ValueError("every effect's sender must be a character on the stage")
         return self
 
     def actor(self, name: str) -> StageActor | None:
@@ -608,6 +644,7 @@ __all__ = [
     "MAX_TRACK_CLIPS",
     "MAX_LANDMARKS",
     "MAX_CONTACTS",
+    "MAX_EFFECTS",
     "ActionClip",
     "ActorKey",
     "CameraCut",
@@ -625,6 +662,7 @@ __all__ = [
     "StageCamera",
     "StageCheck",
     "StageContact",
+    "StageEffect",
     "StageCrowd",
     "StageLandmark",
     "StagePlan",

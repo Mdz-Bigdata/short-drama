@@ -79,7 +79,7 @@ CM_TREE = _tree(cm)
 SAYS_FIELDS = {
     "cut_label": {"device", "technique"}, "edit_line": {"label", "body", "join"}, "opening_in": {"join"},
     "opening_in_fade": {"join"}, "summary_cut": {"from_shot", "to_shot", "label"}, "summary_carries": {"carries"},
-    "shot_pair": {"a", "b"}, "size_step_item": {"a", "a_size", "b", "b_size"}, "thirty_degree_tail": {"min_angle"},
+    "shot_pair": {"a", "b"}, "exit_entry_pair": {"a", "b", "side"}, "size_step_item": {"a", "a_size", "b", "b_size"}, "thirty_degree_tail": {"min_angle"},
     "thirty_degree_passed": {"min_angle"}, "pov_orphan": {"shot"}, "look_unanswered": {"shot", "looker", "seen"},
     "move_pair": {"a", "a_move", "b", "b_move"}, "state_jump": {"name", "a", "b", "gap"},
     "cause_inverted": {"a", "effect", "b", "cause"}, "light_hours": {"a", "b"}, "light_tones": {"a", "a_tone", "b", "b_tone"},

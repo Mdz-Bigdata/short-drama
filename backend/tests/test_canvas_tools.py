@@ -44,10 +44,10 @@ class CatalogTests(unittest.TestCase):
         expected = {tool.id: (tool.group, tool.engine, tool.output, tool.inputs) for tool in canvas_tools.TOOLS}
         self.assertEqual(seen, expected)
 
-    def test_the_style_wall_has_forty_five_distinct_looks_in_three_languages(self):
+    def test_the_style_wall_has_forty_six_distinct_looks_in_three_languages(self):
         looks = canvas_tools.style_wall()
-        self.assertEqual(len(looks), 45)
-        self.assertEqual(len({look.id for look in looks}), 45)
+        self.assertEqual(len(looks), 46)
+        self.assertEqual(len({look.id for look in looks}), 46)
         for look in looks:
             self.assertEqual(set(look.names), {"zh", "en", "vi"})
             for colour in look.swatch:
@@ -284,6 +284,41 @@ class PaidToolRunTests(CanvasToolRunCase):
         self.assertEqual(output["beats"], [{"title": "开门", "prompt": "林夏推门"}])
         self.assertIn("1. 开门：林夏推门", output["text"])
 
+    def test_character_extract_reads_the_picture_in_the_preset_order(self):
+        self.gateway.vision_answer = "女，二十出头，鹅蛋脸，左眼角一颗小痣，黑色及腰直发，身形纤细，靛青粗布短打，木簪，写实电影质感。"
+        nodes = [_media("img", "image", self.picture()), _tool("tool", "character_extract", prompt="左边穿靛青的，叫阿禾"), _node("next", "image_gen")]
+        edges = [_edge("a", "img", "tool", role="ref_image"), _edge("b", "tool", "next", kind="dependency", role="prompt")]
+        answer, output = self.run_tool(nodes, edges)
+        self.assertEqual(answer["status"], "started")
+        self.assertEqual((output["medium"], output["text"]), ("text", self.gateway.vision_answer))
+        asked = self.gateway.vision_calls[0]["prompt"]
+        order = ["性别与年龄感", "脸型与五官", "面部标记", "发型与发色", "体型与身高比例", "服装", "配饰", "画风"]
+        self.assertEqual(sorted(order, key=asked.index), order)
+        for rule in ("不用「好看」「帅气」", "不要猜", "不描述姿势、表情、背景和光线", "一段连续的文字"):
+            self.assertIn(rule, asked)
+        self.assertIn("补充说明：左边穿靛青的，叫阿禾", asked)
+        self.assertEqual(self.gateway.llm_calls, [])
+        saved = self.client.get(f"{self.base}/canvas").json()
+        self.run_nodes(["next"], saved["version"], op="downstream")
+        self.assertIn("左眼角一颗小痣", self.gateway.image_calls[0]["prompt"])
+
+    def test_character_extract_rewrites_words_with_the_text_model_when_there_is_no_picture(self):
+        self.gateway.llm_answer = "男，三十岁上下，方脸浓眉，短寸头，肩宽，灰蓝短袄。"
+        answer, output = self.run_tool([_tool("tool", "character_extract", prompt="守炉的汉子，很壮，穿灰蓝短袄", params={"model": "text-1"})], [])
+        self.assertEqual(answer["status"], "started")
+        self.assertEqual(output["text"], "男，三十岁上下，方脸浓眉，短寸头，肩宽，灰蓝短袄。")
+        self.assertEqual(self.gateway.vision_calls, [])
+        self.assertTrue(self.gateway.llm_calls[0].startswith("角色描述：守炉的汉子，很壮，穿灰蓝短袄"))
+        self.assertIn("性别与年龄感", self.gateway.llm_calls[0])
+
+    def test_character_extract_with_nothing_connected_is_blocked_before_anyone_pays(self):
+        saved = self.put([_tool("tool", "character_extract", params={"model": "text-1"})])
+        answer = self.run_nodes(["tool"], saved["version"])
+        self.assertEqual(answer["status"], "blocked")
+        problems = " ".join(item["message"] for item in answer["assessment"]["nodes"][0]["problems"])
+        self.assertIn("角色图", problems)
+        self.assertEqual((self.gateway.vision_calls, self.gateway.llm_calls), ([], []))
+
     def test_no_vision_model_is_said_before_the_run(self):
         with patch("app.platform.runtime_models.runtime_model_registry.vision_model", return_value=None):
             saved = self.put([_media("img", "image", self.picture()), _tool("tool", "mark_detect")], [_edge("a", "img", "tool", role="ref_image")])
@@ -426,7 +461,7 @@ class AgentTests(CanvasToolRunCase):
         answer = catalog.call("list_canvas_tools", {}, service=self.drama, user=self.user)
         listed = answer.get("result", answer)
         self.assertEqual(len(listed["tools"]), len(canvas_tools.TOOLS))
-        self.assertEqual(len(listed["styles"]), 45)
+        self.assertEqual(len(listed["styles"]), 46)
         document, _ = studio_canvas.apply_operations({"nodes": [], "edges": []}, [
             {"op": "add_node", "ref": "a", "kind": "media"},
             {"op": "add_node", "ref": "b", "kind": "tool", "params": {"tool": "upscale_image"}},
@@ -726,7 +761,7 @@ class CameraTemplateTests(CanvasToolRunCase):
 class OptionsTests(CanvasToolRunCase):
     def test_options_offer_the_style_wall_and_say_what_is_available(self):
         options = self.client.get(f"{self.base}/canvas/run-options").json()
-        self.assertEqual(len(options["tools"]["styles"]), 45)
+        self.assertEqual(len(options["tools"]["styles"]), 46)
         self.assertEqual(set(options["tools"]["engines"]), {"image", "vision", "text", "local", "voice"})
 
 

@@ -51,6 +51,9 @@ LOOK_SIDE_RULE = _say("side_rule")
 LOOK_BOARD_CLOSING = _say("board_closing")
 _NUMBER = _text_of("module.number")
 _RANGE = re.compile(_text_of("module.range").format(_NUMBER, _NUMBER))
+# 「第1、2集」「第三、五集起」：一串单集，各算一集。
+_LIST = re.compile(_text_of("module.list").format(_NUMBER, _NUMBER))
+_LIST_SPLIT = re.compile(_text_of("module.list_split"))
 _SCENE_REF = re.compile(
     _text_of("module.scene_ref").format(_NUMBER, _NUMBER)
 )
@@ -98,6 +101,12 @@ def episode_spans(text: str) -> list[list[int]]:
         last = _episode_number(match.group(2)) if match.group(2) else (_OPEN_END if match.group(3) else first)
         if first >= 1 and last >= first:
             spans.append([first, last])
+    for match in _LIST.finditer(str(text or "")):
+        numbers = [_episode_number(part) for part in _LIST_SPLIT.split(match.group(1)) if part]
+        if not numbers or min(numbers) < 1:
+            continue
+        spans += [[number, number] for number in numbers[:-1]]
+        spans.append([numbers[-1], _OPEN_END if match.group(2) else numbers[-1]])
     return _merged(spans)
 
 
@@ -110,11 +119,17 @@ def wardrobe_text(description: str, wearer: str = "") -> str:
     clauses = []
     for clause in re.split(r"[。；;]", text):
         kept = "，".join(
-            fragment.strip() for fragment in re.split(r"[，,]", clause) if fragment.strip() and not _RANGE.search(fragment) and not _SCENE_REF.search(fragment)
+            fragment.strip() for fragment in re.split(r"[，,]", clause)
+            if fragment.strip() and not _RANGE.search(fragment) and not _LIST.search(fragment) and not _SCENE_REF.search(fragment)
         )
         if kept:
             clauses.append(kept)
     return "；".join(clauses)
+
+
+def same_wardrobe(drawn: str, now: str, wearer: str = "") -> bool:
+    """定妆图是照 ``drawn`` 这段文字画的：按现在的规则再去一遍讲剧情、讲集数的话，和 ``now`` 一样，图就还对，不用重画。"""
+    return wardrobe_text(drawn, wearer) == str(now or "").strip()
 
 
 def _wearer(entry: Mapping[str, Any], cast: Sequence[str], aliases: Mapping[str, str]) -> str:
@@ -306,6 +321,54 @@ def _drop_unworn_shorter(looks: list[dict[str, Any]], episodes: set[int]) -> lis
     ]
 
 
+def _fold_contained(looks: list[dict[str, Any]], makeup_labels: Mapping[str, str]) -> list[dict[str, Any]]:
+    """同一个人的一张定妆图，戏服和妆效都在另一张里(「靛青短打」之于「靛青短打·吐血唇血·炉灰脸」)，不单独出图、不单列：
+    并进妆效最少的那张(一样少就取先穿的)，那张记下这几集怎么穿(``without``)——分镜和视频照用它的图，文字写这一身、
+    图上多出来的妆效写明不画。没写戏服的那张(只有妆效)也并进带着这些妆效的那身。并进去的那几集不是重画，不多花钱。
+    """
+    def outfit(look: Mapping[str, Any]) -> str:
+        return str(look["facts"].get("outfit") or "")
+
+    def makeups(look: Mapping[str, Any]) -> set[str]:
+        return set(look["facts"].get("makeups") or [])
+
+    def pieces(look: Mapping[str, Any]) -> set[str]:
+        return makeups(look) | ({outfit(look)} if outfit(look) else set())
+
+    def first_episode(look: Mapping[str, Any]) -> int:
+        return min((span[0] for span in look["facts"].get("spans") or []), default=_OPEN_END)
+
+    folded = [{**look, "facts": dict(look["facts"])} for look in looks]
+    gone: set[int] = set()
+    for index in sorted(range(len(folded)), key=lambda at: len(pieces(folded[at]))):
+        small = folded[index]
+        hosts = [at for at, other in enumerate(folded) if at != index and at not in gone and pieces(small) < pieces(other)]
+        if not hosts:
+            continue
+        host = folded[min(hosts, key=lambda at: (outfit(folded[at]) != outfit(small), len(pieces(folded[at])), first_episode(folded[at])))]
+        entry: dict[str, Any] = {
+            "label": small["label"], "description": small["description"], "spans": small["facts"].get("spans") or [],
+            "makeups": sorted(makeups(small)),
+        }
+        if small["facts"].get("starts"):
+            entry["starts"] = small["facts"]["starts"]
+        host["facts"]["without"] = [*(host["facts"].get("without") or []), entry, *(small["facts"].get("without") or [])]
+        gone.add(index)
+    kept = [look for at, look in enumerate(folded) if at not in gone]
+    for look in kept:
+        for entry in look["facts"].get("without") or []:
+            entry["off"] = [makeup_labels.get(name, name) for name in look["facts"].get("makeups") or [] if name not in entry["makeups"]]
+    return kept
+
+
+def _worn_spans(look: Mapping[str, Any]) -> tuple[list[list[int]], bool]:
+    """(这张定妆图穿的所有集，含并进来的那几身, 有没有一身是不限集数的)。"""
+    facts = look["facts"]
+    entries = facts.get("without") or []
+    spans = [*(facts.get("spans") or []), *(span for entry in entries for span in entry.get("spans") or [])]
+    return spans, not facts.get("spans") or any(not entry.get("spans") for entry in entries)
+
+
 def _appearances(cast: Sequence[str], aliases: Mapping[str, str], scenes: Sequence[Mapping[str, Any]]) -> dict[str, set[int]]:
     """每个人实际出场的集。"""
     seen: dict[str, set[int]] = {name: set() for name in cast}
@@ -373,11 +436,12 @@ def plan_looks(
         planned = _wearer_looks(wearer, worn["costumes"], worn["makeup"])
         if seen is not None:
             planned = _drop_unworn_shorter(planned, seen[wearer])
+        planned = _fold_contained(planned, {piece["name"]: piece["label"] for piece in worn["makeup"]})
         for look in planned:
-            spans = look["facts"].get("spans") or []
-            if seen is None or (seen[wearer] and not spans) or any(first <= episode <= last for first, last in spans for episode in seen[wearer]):
+            spans, untimed = _worn_spans(look)
+            if seen is None or (seen[wearer] and untimed) or any(first <= episode <= last for first, last in spans for episode in seen[wearer]):
                 looks.append(look)
-            elif include_later and (not spans or any(episode not in written for first, last in spans for episode in range(first, last + 1))):
+            elif include_later and (untimed or any(episode not in written for first, last in spans for episode in range(first, last + 1))):
                 # 剧本还没写到的集里会穿；写好的集里他都没穿这身的，才真用不上。
                 looks.append({**look, "facts": {**look["facts"], "later": True}})
     return looks
@@ -513,5 +577,5 @@ def look_prompt(name: str, wardrobe: str, project_style: str = "", extra_prompt:
 __all__ = [
     "LOOK_BOARD_CLOSING", "LOOK_BOARD_INSTRUCTION", "LOOK_BOARD_INSTRUCTION_MAKEUP", "LOOK_BOARD_SIZE", "LOOK_CHECK_SYSTEM", "LOOK_MAKEUP_RULE",
     "LOOK_SIDE_RULE", "crowd_wardrobe", "episode_spans", "look_check_prompt", "look_fix_prompt", "look_prompt", "names_a_side",
-    "parse_look_check", "plan_looks", "timing_is_readable", "undated", "untimed_makeup", "wardrobe_text", "wears_makeup",
+    "parse_look_check", "plan_looks", "same_wardrobe", "timing_is_readable", "undated", "untimed_makeup", "wardrobe_text", "wears_makeup",
 ]

@@ -1,0 +1,17 @@
+.brand-logo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.brand-logo--rounded { border-radius: 22%; object-fit: cover; }
+.brand-logo--square { border-radius: 0; object-fit: cover; }
+.brand-logo--circle { border-radius: 50%; object-fit: cover; }
+.brand-logo--none { border-radius: 0; }
+
+.login-brand-logo {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 12px;
+}

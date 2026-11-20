@@ -1,0 +1,32 @@
+.thinking-disclosure {
+  margin: 0 0 8px;
+  border-left: 2px solid rgba(var(--accent-rgb), 0.25);
+  padding-left: 8px;
+  font-size: 0.74rem;
+}
+
+.thinking-disclosure summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.thinking-disclosure__body {
+  margin-top: 6px;
+  max-height: 260px;
+  overflow: auto;
+  color: var(--text-muted);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.thinking-disclosure__note {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  opacity: 0.8;
+}

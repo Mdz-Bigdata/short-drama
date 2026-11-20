@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The screenwriting engine, the script breakdown, the interactive story and the writer board say
+"""The screenwriting engine, the script breakdown, the interactive story, the writer board and the submission pack say
 what their wording tables say.
 
 No model, no network. Each module is checked against its table in ``app/data/prompt`` in both
@@ -18,7 +18,7 @@ import string
 import unittest
 from typing import Any
 
-from app.core import interactive_story, prompt_data, script_breakdown, writer_dashboard
+from app.core import interactive_story, prompt_data, script_breakdown, submission_pack, writer_dashboard
 from app.core.screenwriting import engine
 
 # module → its wording table.
@@ -27,6 +27,7 @@ TABLES = {
     "script_breakdown": script_breakdown,
     "interactive_story": interactive_story,
     "writer_dashboard": writer_dashboard,
+    "submission_pack": submission_pack,
 }
 # The helpers that read a table: the first argument is the dotted key (``_log`` reads under ``log.``).
 _READERS = {"_says", "_word", "_table", "_pattern", "_entry", "_log"}

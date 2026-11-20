@@ -40,8 +40,9 @@ import {
 import { DeskLoading } from '../directorDesk/DeskLoading';
 import { useAssetsChanged } from '../elements/assetEvents';
 import { ShotAssetChips } from './ShotAssetChips';
-import { DraftModeToggle, ShotFixPanel, SpendLimits } from './ShotFixPanel';
+import { DraftModeToggle, FinalResolutionSelect, ShotFixPanel, SpendLimits, SpokenLanguageSelect } from './ShotFixPanel';
 import { ShotControlTable, type ControlRow } from './ShotControlTable';
+import { ClipHandoffNote } from './ClipHandoffNote';
 import { t } from '../../i18n';
 
 const INTENSITIES: Array<[CameraRecipe['intensity'], string]> = [['strong', '强'], ['medium', '中'], ['soft', '弱']];
@@ -616,6 +617,16 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
           taskId={taskId} enabled={Boolean((workspace as { draft_mode?: boolean }).draft_mode)} locked={locked}
           onWorkspace={setWorkspace} onError={setError}
         />
+        <SpokenLanguageSelect<Workspace>
+          taskId={taskId} locked={locked} onWorkspace={setWorkspace} onError={setError}
+          value={(workspace as { spoken_language?: string }).spoken_language ?? ''}
+          options={(workspace as { spoken_language_options?: Array<{ key: string; label: string }> }).spoken_language_options ?? []}
+        />
+        <FinalResolutionSelect<Workspace>
+          taskId={taskId} locked={locked} onWorkspace={setWorkspace} onError={setError}
+          value={(workspace as { video_resolution?: string }).video_resolution ?? ''}
+          choices={(workspace as { video_resolution_choices?: string[] }).video_resolution_choices ?? []}
+        />
         <SpendLimits<Workspace>
           taskId={taskId} locked={locked} onWorkspace={setWorkspace} onError={setError}
           budgetCap={(workspace as { video_budget_cap?: number | null }).video_budget_cap ?? null}
@@ -958,6 +969,7 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
                         ))}
                       </ul>
                     )}
+                    <ClipHandoffNote taskId={taskId} sceneId={selected.scene_id} shotId={selected.shot_id} videoUrl={selected.video_url ?? ''} />
                   </figure>
                   <ShotDeskPanel
                     taskId={taskId} sceneId={selected.scene_id} shotId={selected.shot_id} reloadToken={deskToken}

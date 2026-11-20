@@ -19,6 +19,7 @@ from typing import Any
 from PIL import Image, ImageOps
 
 from app.core import action_grammar, canvas_tools, media_compositor, panorama, studio_canvas, usage_ledger
+from app.core import move_sheets, sprite_frames
 from app.core.canvas_tools import CanvasTool, CanvasToolError
 from app.core import prompt_data
 
@@ -144,6 +145,153 @@ def cut_cell(path: str, rows: int, columns: int, index: int, out: str) -> None:
     image.crop(canvas_tools.grid_box(image.width, image.height, rows, columns, index)).save(out, "PNG")
 
 
+CARD_SIZE = (1600, 400)
+#: Two colours closer than this are one block of the card. A still with little colour in it is asked again with
+#: a finer eye, so the card still has its six blocks.
+CARD_SAME_COLOUR = (18.0, 10.0, 5.0, 0.0)
+CARD_MIN_BLOCKS = 6
+#: A still is first broken into this many colours; the card picks among them.
+CARD_CLUSTERS = 24
+#: An accent or a highlight has to cover at least this share of the picture to earn a block.
+CARD_VISIBLE_SHARE = 0.004
+#: How far against the picture's own lean a pixel has to sit (0–255 scale) to count as accent.
+CARD_ACCENT_LEAN = 12.0
+#: A thumbnail this small is enough to tell flat blocks from a photograph.
+_CARD_PROBE = (96, 12)
+
+
+def _small(path: str, side: int) -> Image.Image:
+    with Image.open(path) as source:
+        image = ImageOps.exif_transpose(source).convert("RGB")
+    image.thumbnail((side, side))
+    return image
+
+
+def _palette(path: str, count: int) -> list[tuple[int, int, int]]:
+    """The ``count`` colours that cover most of a picture, the most used first."""
+    reduced = _small(path, 256).quantize(colors=count, method=Image.Quantize.MEDIANCUT)
+    palette = reduced.getpalette() or []
+    used = sorted(reduced.getcolors() or [], reverse=True)
+    return [(palette[index * 3], palette[index * 3 + 1], palette[index * 3 + 2]) for _, index in used if index * 3 + 2 < len(palette)]
+
+
+def _luminance(colour: tuple[float, float, float]) -> float:
+    return 0.2126 * colour[0] + 0.7152 * colour[1] + 0.0722 * colour[2]
+
+
+def _chroma(colour: tuple[float, float, float]) -> tuple[float, float, float]:
+    """A colour with its grey taken out: which way it leans, and how far."""
+    grey = sum(colour) / 3
+    return (colour[0] - grey, colour[1] - grey, colour[2] - grey)
+
+
+def _mean(pixels: list[tuple[int, int, int]]) -> tuple[int, int, int]:
+    return (round(sum(p[0] for p in pixels) / len(pixels)), round(sum(p[1] for p in pixels) / len(pixels)), round(sum(p[2] for p in pixels) / len(pixels)))
+
+
+def _accent_and_highlight(path: str) -> list[tuple[int, int, int]]:
+    """What a count by area misses, read off the pixels themselves: the accent, then the highlight.
+
+    The accent is the patch that leans against the picture as a whole (a warm lantern in a cold street);
+    the highlight is its brightest patch. Each has to cover a visible share of the frame, and a picture with
+    no lean of its own has no accent.
+    """
+    pixels = list(_small(path, 128).getdata())
+    if not pixels:
+        return []
+    enough = max(1, round(len(pixels) * CARD_VISIBLE_SHARE))
+    found: list[tuple[int, int, int]] = []
+    overall = _chroma(tuple(sum(pixel[channel] for pixel in pixels) / len(pixels) for channel in range(3)))
+    lean = sum(value ** 2 for value in overall) ** 0.5
+    if lean >= 3:
+        against = sorted(((-sum(a * b for a, b in zip(_chroma(pixel), overall)) / lean, pixel) for pixel in pixels), reverse=True)
+        # Judged at the edge of a visible patch, not at the single strongest pixel: one stray spark is not an accent.
+        edge = against[enough - 1][0]
+        if edge >= CARD_ACCENT_LEAN:
+            found.append(_mean([pixel for score, pixel in against if score >= edge * 0.8][:max(enough, len(pixels) // 20)]))
+    brightest = sorted(pixels, key=_luminance, reverse=True)[:enough]
+    found.append(_mean(brightest))
+    return found
+
+
+def _apart(colour: tuple[int, int, int], others: list[tuple[int, int, int]], distance: float) -> bool:
+    return colour not in others and all(sum((a - b) ** 2 for a, b in zip(colour, other)) ** 0.5 >= distance for other in others)
+
+
+def card_colours(paths: list[str], count: int) -> list[tuple[int, int, int]]:
+    """A still's palette as the card shows it: shadow to highlight, near-twins folded into one.
+
+    Most blocks go to what covers the most of the picture. Two are kept for what a count by area would
+    miss: the accent (a warm lantern in a cold street) and the brightest highlight. A second picture is a
+    palette strip somebody brought along: its colours go in first, so the card stays ``count`` blocks at most.
+    """
+    brought = _palette(paths[1], 4) if len(paths) > 1 else []
+    special = _accent_and_highlight(paths[0])
+    found = _palette(paths[0], CARD_CLUSTERS)
+    picked: list[tuple[int, int, int]] = []
+    for apart in CARD_SAME_COLOUR:
+        picked = []
+        # Brought colours, the accent and the highlight first, so the big areas cannot crowd them off the card.
+        for colour in [*brought, *special, *found]:
+            if len(picked) >= count:
+                break
+            if _apart(colour, picked, apart):
+                picked.append(colour)
+        if len(picked) >= min(CARD_MIN_BLOCKS, count):
+            break
+    return sorted(picked[:count], key=_luminance)
+
+
+def color_card(paths: list[str], count: int, out: str) -> None:
+    """Equal, flat blocks of the still's own colours, darkest on the left: no words, no gradients, nothing else."""
+    colours = card_colours(paths, count)
+    if not colours:
+        raise CanvasToolError(_text_of("color_card.text"))
+    width, height = CARD_SIZE
+    card = Image.new("RGB", CARD_SIZE)
+    step = width // len(colours)
+    for index, colour in enumerate(colours):
+        right = width if index == len(colours) - 1 else (index + 1) * step
+        card.paste(colour, (index * step, 0, right, height))
+    card.save(out, format="PNG")
+
+
+def is_color_card(path: str) -> bool:
+    """Whether a picture is a strip of flat colour blocks (a card), told by what it is and not by where it was wired."""
+    try:
+        with Image.open(path) as source:
+            # Nearest, so the edge between two blocks stays one step and a photograph keeps its noise.
+            probe = ImageOps.exif_transpose(source).convert("RGB").resize(_CARD_PROBE, Image.Resampling.NEAREST)
+    except OSError:
+        return False
+    width, height = probe.size
+    pixels = probe.load()
+    flat = 0
+    for x in range(width):
+        column = [pixels[x, y] for y in range(height)]
+        if all(max(pixel[channel] for pixel in column) - min(pixel[channel] for pixel in column) <= 6 for channel in range(3)):
+            flat += 1
+    if flat < width * 0.95:
+        return False
+    # Blocks, not a sideways gradient and not one flat frame: along the strip the colour holds and then steps, and
+    # nearly all of the change is in those steps.
+    middle = [pixels[x, height // 2] for x in range(width)]
+    steps = [max(abs(middle[x][channel] - middle[x - 1][channel]) for channel in range(3)) for x in range(1, width)]
+    jumps = [step for step in steps if step >= 8]
+    return bool(jumps) and sum(jumps) >= 0.8 * sum(steps)
+
+
+def mood_references(pictures: list[str], scratch: str) -> list[str]:
+    """The three pictures of a mood frame in the order its prompt names them: space base, original still, colour card.
+
+    The card is recognised wherever it was connected and goes last; the other two keep the order they came in.
+    """
+    cards = [picture for picture in pictures if is_color_card(_materialize(picture, ".png", scratch))]
+    if len(cards) != 1:
+        return pictures
+    return [*(picture for picture in pictures if picture != cards[0]), cards[0]]
+
+
 def composite(paths: list[str], out: str) -> None:
     """The cast of the desk still pasted onto a generated picture, through the mask: a control frame put back together.
 
@@ -192,7 +340,23 @@ def upscale_video(path: str, factor: float, out: str) -> None:
 def erase_region(path: str, params: Mapping[str, Any], out: str) -> None:
     facts = _probe(path)
     x, y, width, height = canvas_tools.erase_box(params, facts["width"], facts["height"])
-    _run_ffmpeg(["-i", path, "-vf", f"delogo=x={x}:y={y}:w={width}:h={height}", "-c:v", "libx264", "-crf", "18", "-preset", "medium",
+    mode = canvas_tools.erase_mode(params)
+    if mode == "delogo":
+        graph = ["-vf", f"delogo=x={x}:y={y}:w={width}:h={height}"]
+    else:
+        # Privacy: the box alone is blurred or pixelated and laid back over the frame at the same place.
+        rules = prompt_data.value("canvas_tools", "erase_modes")
+        if mode == "blur":
+            # The colour planes are half the size, so their radius has to be half as large to fit the box.
+            radius = max(1, min(int(rules["blur_radius"]), min(width, height) // 2 - 1))
+            chroma = max(1, min(radius // 2, min(width, height) // 4 - 1))
+            covered = f"boxblur=lr={radius}:lp=3:cr={chroma}:cp=3"
+        else:
+            cells = int(rules["mosaic_cells"])
+            covered = (f"scale=max(1\\,trunc(iw/{cells})):max(1\\,trunc(ih/{cells})):flags=neighbor,"
+                       f"scale={width}:{height}:flags=neighbor")
+        graph = ["-filter_complex", f"[0:v]crop={width}:{height}:{x}:{y},{covered}[box];[0:v][box]overlay={x}:{y}[out]", "-map", "[out]", "-map", "0:a?"]
+    _run_ffmpeg(["-i", path, *graph, "-c:v", "libx264", "-crf", "18", "-preset", "medium",
                  "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", out])
 
 
@@ -225,6 +389,22 @@ def to_gif(path: str, params: Mapping[str, Any], out: str) -> None:
     _run_ffmpeg(["-t", f"{seconds:.2f}", "-i", path, "-filter_complex", graph, "-loop", "0", out])
 
 
+def cut_out_frames(path: str, params: Mapping[str, Any], tag: str, tool: CanvasTool) -> dict[str, Any]:
+    """抠像序列帧: the clip keyed out into a ZIP of same-sized transparent PNGs; the picture shown is its sprite sheet."""
+    preview, url = _output_path(tag, tool, "png")
+    archive, archive_url = _output_path(tag, tool, "zip")
+    try:
+        with tempfile.TemporaryDirectory(prefix="canvas_sprite_") as frames:
+            manifest = sprite_frames.cut_out(path, params, facts=_probe(path), run_ffmpeg=_run_ffmpeg, scratch=frames, zip_out=archive, preview_out=preview)
+    except BaseException:
+        # A refused or failed run leaves nothing half-written under /media.
+        for leftover in (preview, archive):
+            if os.path.exists(leftover):
+                os.remove(leftover)
+        raise
+    return {"url": url, "zip": archive_url, "sprite": manifest}
+
+
 def detect_cuts(path: str, duration: float, sensitivity: float = 0.35) -> list[float]:
     done = _run_ffmpeg(["-i", path, "-vf", f"select='gt(scene,{sensitivity})',showinfo", "-an", "-f", "null", "-"])
     return canvas_tools.scene_cuts(done.stderr.splitlines(), duration)
@@ -249,6 +429,9 @@ def run_tool(
     tool: CanvasTool, *, inputs: studio_canvas.Inputs, params: Mapping[str, Any], prompt: str, model: str, tag: str, task: Mapping[str, Any], drama: Any,
 ) -> dict[str, Any]:
     """Run ``tool`` and answer with what its output holds: ``{"url": …}`` or, for a text result, ``{"text": …}``."""
+    if tool.id == "reference_remake":
+        # A fixed wording put together here: no model, no file.
+        return {"text": canvas_tools.remake_prompt(params, prompt)}
     with tempfile.TemporaryDirectory(prefix="canvas_tool_") as scratch:
         if tool.engine == "image":
             return _run_image(tool, inputs, params, prompt, model, tag, task, drama, scratch)
@@ -272,6 +455,11 @@ def _run_image(
         size = panorama.PANORAMA_SIZE
     else:
         scene_prompt = canvas_tools.image_prompt(tool, params, prompt)
+    if tool.id == "move_sheet":
+        # 招式分解图按 3:4 出：画格才装得下横着的长兵器(move_sheets.json 的 size)。
+        size = move_sheets.sheet_size()
+    if tool.id == "mood_frame":
+        references = mood_references(references[:3], scratch)
     if tool.id == "outpaint":
         padded, url = _output_path(tag, tool, "png")
         pad_for_outpaint(_materialize(references[0], ".png", scratch), canvas_tools.OUTPAINT_RATIOS[canvas_tools.outpaint_ratio(params)], padded)
@@ -308,11 +496,13 @@ def _run_model(
         beats = canvas_tools.parse_beats(answer)
         return {"text": canvas_tools.beats_text(beats), "beats": beats}
     if tool.id in _WRITERS:
-        return _write(tool, prompt, model, tag, task_id, drama)
+        return _write(tool, prompt, model, tag, task_id, drama, params=params)
     if tool.id == "voice_isolate":
         return _isolate_voice(tool, inputs, tag, scratch)
     if tool.id == "shot_analysis":
         return _analyze_shots(tool, inputs, model, task_id, drama, scratch)
+    if tool.id == "character_extract":
+        return _extract_character(inputs, prompt, model, task_id, drama, scratch)
     picture = _image_bytes_uri(_materialize(_pictures(inputs)[0], ".png", scratch), drama)
     system, question = {
         "reverse_prompt": (canvas_tools.REVERSE_SYSTEM, canvas_tools.REVERSE_PROMPT),
@@ -321,6 +511,21 @@ def _run_model(
     }[tool.id]
     answer, used = _ask_vision(drama, model, system, question, picture, task_id)
     return {"text": answer, "model": used}
+
+
+def _extract_character(inputs: studio_canvas.Inputs, prompt: str, model: str, task_id: str, drama: Any, scratch: str) -> dict[str, Any]:
+    """角色设定提取：连了图就让看图模型照图写(``prompt`` 是补充说明)；只有文字就让文本模型把描述改写成同样格式的一段。"""
+    pictures = _pictures(inputs)
+    question = canvas_tools.character_question(prompt, picture=bool(pictures))
+    if pictures:
+        picture = _image_bytes_uri(_materialize(pictures[0], ".png", scratch), drama)
+        answer, used = _ask_vision(drama, model, canvas_tools.CHARACTER_SYSTEM, question, picture, task_id)
+        return {"text": answer, "model": used}
+    with usage_ledger.bind_task(task_id, "canvas_tool"):
+        answer = drama.gateway.call_llm(model, canvas_tools.CHARACTER_SYSTEM, question, "", max_tokens=_WRITER_TOKENS)
+    if not answer:
+        raise RuntimeError(_text_of("_write.text.2"))
+    return {"text": str(answer).strip(), "model": model}
 
 
 _WRITERS = {
@@ -334,12 +539,19 @@ _WRITERS = {
 }
 
 
-def _write(tool: CanvasTool, prompt: str, model: str, tag: str, task_id: str, drama: Any) -> dict[str, Any]:
+def _write(tool: CanvasTool, prompt: str, model: str, tag: str, task_id: str, drama: Any, *, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
     story = " ".join(str(prompt or "").split()) if tool.id != "shot_table" else str(prompt or "").strip()
     if not story:
         raise CanvasToolError(_text_of("_write.text"))
     system, template = _WRITERS[tool.id]
-    question = action_grammar.breakdown_prompt(story) if tool.id == "action_breakdown" else template.format(story=story)
+    # A shot table is asked for as many shots as the node or its text says (「镜头数：3」「三个镜头」), else as the story needs.
+    asked = canvas_tools.asked_shots(params or {}, story) if tool.id == "shot_table" else 0
+    if tool.id == "action_breakdown":
+        question = action_grammar.breakdown_prompt(story)
+    elif tool.id == "shot_table":
+        question = canvas_tools.shot_table_question(story, asked)
+    else:
+        question = template.format(story=story)
     with usage_ledger.bind_task(task_id, "canvas_tool"):
         answer = drama.gateway.call_llm(model, system, question, "", max_tokens=_WRITER_TOKENS)
     if not answer:
@@ -353,7 +565,15 @@ def _write(tool: CanvasTool, prompt: str, model: str, tag: str, task_id: str, dr
         return {"text": str(answer).strip()}
     if tool.id == "shot_table":
         shots = canvas_tools.parse_shots(answer)
-        return {"text": canvas_tools.shots_text(shots), "beats": canvas_tools.shots_as_beats(shots)}
+        # Each character seen in more than one shot gets the words for a look sheet of their own (sheet_prompt).
+        cast = canvas_tools.with_sheets(canvas_tools.parse_cast(answer), shots)
+        # ``shots`` keeps each row whole (length, who is in it, lines) and ``cast`` each character's look, for 铺成镜头:
+        # a first frame feeding a video node per shot, one face per character. ``asked`` lets the node say when the
+        # model gave a different number of shots than it was asked for.
+        # ``line_order``: lines the model moved against the script's order, so the node can say so (a rerun usually fixes it).
+        moved = canvas_tools.lines_out_of_order(story, shots)
+        return {"text": canvas_tools.shots_text(shots), "beats": canvas_tools.shots_as_beats(shots, cast), "shots": shots, "cast": cast,
+                **({"asked": asked} if asked else {}), **({"line_order": moved} if moved else {})}
     if tool.id == "html_page":
         return {"text": canvas_tools.clean_html(answer), "html": True}
     out, url = _output_path(tag, tool, "svg")
@@ -402,6 +622,9 @@ def _run_local(tool: CanvasTool, inputs: studio_canvas.Inputs, params: Mapping[s
     elif tool.id == "composite":
         out, url = _output_path(tag, tool, "png")
         composite([_materialize(picture, ".png", scratch) for picture in _pictures(inputs)[:3]], out)
+    elif tool.id == "color_card":
+        out, url = _output_path(tag, tool, "png")
+        color_card([_materialize(picture, ".png", scratch) for picture in _pictures(inputs)[:2]], int(canvas_tools.number(params, "colors", 8, 6, 10)), out)
     elif tool.id == "video_upscale":
         out, url = _output_path(tag, tool, "mp4")
         upscale_video(_materialize(inputs.ref_videos[0], ".mp4", scratch), canvas_tools.number(params, "factor", 2, 1.1, 4), out)
@@ -417,6 +640,8 @@ def _run_local(tool: CanvasTool, inputs: studio_canvas.Inputs, params: Mapping[s
     elif tool.id == "to_gif":
         out, url = _output_path(tag, tool, "gif")
         to_gif(_materialize(inputs.ref_videos[0], ".mp4", scratch), params, out)
+    elif tool.id == "sprite_frames":
+        return cut_out_frames(_materialize(inputs.ref_videos[0], ".mp4", scratch), params, tag, tool)
     else:
         raise CanvasToolError(_text_of("_run_local.text").format(tool.label))
     return {"url": url}

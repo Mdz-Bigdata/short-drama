@@ -149,6 +149,7 @@
     "ref_first_frame": "图{number} 本格首帧",
     "ref_face_real": "图{number} 「{name}」本人正脸照",
     "ref_face": "图{number} 「{name}」正面大头照（只看相貌）",
+    "ref_face_side": "图{number} 「{name}」侧脸照（只看转头和侧脸时的侧面轮廓）",
     "ref_picture": "图{number} 「{name}」{noun}",
     "references": "参考图：{names}。",
     "no_references": "参考图：无，按下面的文字设定生成。",

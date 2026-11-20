@@ -134,13 +134,15 @@ class CoverageTests(unittest.TestCase):
     def test_one_board_video_covers_every_moment_on_the_board(self):
         clip = {"scene_id": "E1S01", "shot_id": 1, "shot_uids": [100101, 100102], "video_url": "s.mp4", "slice": {"beats": []}}
         task = self._task([clip])
-        self.assertEqual(cycle.missing(task, 5), [])
+        self.assertEqual(cycle.missing(task, 5), ["第2集视觉(运镜视频)尚未完成"])   # 第 1 集盖全了，只差第 2 集
+        self.assertTrue(cycle.stage_done(task, 1, 5))
         self.assertIs(cycle.clip_for(_beat(2), task["assets"]["5"]), clip)
         self.assertIsNone(cycle.clip_for(_beat(2, "E1S02"), task["assets"]["5"]))
 
     def test_a_moment_without_its_board_video_keeps_the_episode_in_video(self):
         task = self._task([{"scene_id": "E1S01", "shot_id": 1, "video_url": "a.mp4"}])
-        self.assertEqual(cycle.missing(task, 5), ["第1集视觉(运镜视频)尚未完成"])
+        self.assertEqual(cycle.missing(task, 5), ["第1,2集视觉(运镜视频)尚未完成"])
+        self.assertFalse(cycle.stage_done(task, 1, 5))
 
 
 class AdmissionTests(unittest.TestCase):

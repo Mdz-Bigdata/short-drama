@@ -124,6 +124,10 @@
     "contact_none": "「{name}」上没有接触约束",
     "contact_none_in_shot": "第{shot}镜里「{name}」上没有接触约束",
     "contacts_full": "接触约束已满（{limit} 条）",
+    "effect_kind": "特效种类只能是 {options}",
+    "effect_no_position": "新的特效标记要给出位置 position",
+    "effect_none": "没有编号为「{id}」的特效标记",
+    "effects_full": "特效标记已满（{limit} 个）",
     "held_prop": "「{target}」在{actor}{hand}里：先解除接触再单独移动"
   },
   "timeline_errors": [

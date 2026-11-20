@@ -1,10 +1,13 @@
 {
-  "_about": "Writer Agent 创作看板(app/core/writer_dashboard.py)读剧本时认的写法和看板上的默认文字。patterns 是正则(大小写、多行这些开关在代码里)：episode_heading 是全流程唯一的「第N集」标题解析，scene_heading / int_ext_heading 认场景标题，speaker 认「名字：台词」，metadata_line 认剧本开头的元信息行，synopsis_heading 认梗概标签，instruction_title 认「请帮我写个短剧」这类请求式标题，script_title_label / book_title 从剧本里读剧名，minutes / seconds 读时长里的分和秒，spoken / cues / quoted 从分镜文字里取口播、去掉[情绪]（提示）、取引号里的话。episode_digits 和 ten 读中文集号；non_speakers 是不当角色的标签名，label_morphemes 是含了就不是人名的制作用语，not_speakers 是取口播时跳过的标签；title_marks / episode_title_marks / quote_marks 是要从标题、集名、台词两端去掉的符号，reference_word 出现在《》里就是参考文档不是剧名。phases 是没有剧情节点时按位置分的五个阶段。says 是看板上的默认文字和句子模板，花括号里是代码填进去的值。",
+  "_about": "Writer Agent 创作看板(app/core/writer_dashboard.py)读剧本时认的写法和看板上的默认文字。patterns 是正则(大小写、多行这些开关在代码里)：episode_heading 是全流程唯一的「第N集」标题解析，scene_heading / int_ext_heading / numbered_scene_heading 认场景标题(最后一个认「1-1 乱葬岗 夜 外」这种「集号-场号 地点 时间 内外景」，行里要有单独的内 / 外 / 内景 / 外景，三个分组是集号、场号、标题)，cast_line 认场次标题下的「出场人物：女主甲，男主乙」、cast_split 把它拆成人名，speaker 认「名字：台词」和「名字（语气）：台词」，metadata_line 认剧本开头的元信息行，synopsis_heading 认梗概标签，instruction_title 认「请帮我写个短剧」这类请求式标题，script_title_label / book_title 从剧本里读剧名，minutes / seconds 读时长里的分和秒，spoken / cues / quoted 从分镜文字里取口播、去掉[情绪]（提示）、取引号里的话。episode_digits 和 ten 读中文集号；non_speakers 是不当角色的标签名，label_morphemes 是含了就不是人名的制作用语，not_speakers 是取口播时跳过的标签；title_marks / episode_title_marks / quote_marks 是要从标题、集名、台词两端去掉的符号，reference_word 出现在《》里就是参考文档不是剧名。phases 是没有剧情节点时按位置分的五个阶段。says 是看板上的默认文字和句子模板，花括号里是代码填进去的值。",
   "patterns": {
     "episode_heading": "^[ \\t]*(?:#{1,6}[ \\t]*)?(?:\\*{1,3}[ \\t]*)?(?:【[ \\t]*)?第[ \\t]*([0-9]{1,3}|[一二三四五六七八九十]{1,4})[ \\t]*集(?:[ \\t]*】)?[ \\t]*[:：\\-—]?[ \\t]*(.*)$",
     "scene_heading": "^\\s*(?:#{1,6}\\s*)?(?:【\\s*)?(?:场景|SCENE)\\s*([0-9]{0,4})(?:\\s*】)?\\s*[:：\\-—]?\\s*(.*)$",
     "int_ext_heading": "^\\s*(?:INT\\.|EXT\\.|内景|外景)[：:\\s-]",
-    "speaker": "(?:^|\\n)[ \\t]*(?:【)?([一-龥A-Za-z][一-龥A-Za-z· \\t]{0,15})(?:】)?[ \\t]*[：:]",
+    "numbered_scene_heading": "^\\s*(?:#{1,6}\\s*)?(?:【\\s*)?([0-9]{1,3})\\s*[-－–—]\\s*([0-9]{1,3})(?:\\s*】\\s*|\\s+)(?=[^\\n]{0,60}(?<!\\S)(?:内|外|内景|外景|内外|内外景|内/外)(?!\\S))(\\S[^\\n]{0,59}?)\\s*$",
+    "cast_line": "^\\s*(?:出场人物|出场角色|登场人物)\\s*[：:]\\s*(.+?)\\s*$",
+    "cast_split": "[，,、/\\s]+",
+    "speaker": "(?:^|\\n)[ \\t]*(?:【)?([一-龥A-Za-z][一-龥A-Za-z· \\t]{0,15})(?:】)?[ \\t]*(?:[（(][^（()）\\n]{0,30}[)）][ \\t]*)?[：:]",
     "metadata_line": "^\\s*(?:[-*+#>]|\\d+[.、)]|[【\\[(（])|^\\s*(?:输入来源|关键假设|假设|未解决风险|风险|交付物|输出|规范|要求|备注|说明|场景复用|核心角色|辅助角色|付费墙|平台|受众|题材|时长|集数|版本|作者)\\s*[：:]",
     "synopsis_heading": "(?:故事梗概|剧情梗概|核心梗概|核心剧情|故事大纲|一句话梗概|logline)\\s*[：:]\\s*(.+)",
     "instruction_title": "(?:^|[\\s，。、])(?:请|帮我|帮忙|给我|替我|麻烦你?|我想|我要|需要你?|来一个|来一部)|(?:生成|创作|编写|写|做|来)(?:一)?(?:个|部|篇|集|下)|(?:剧本|短剧|故事)(?:大纲|梗概)?\\s*$",
@@ -40,7 +43,10 @@
     "旁白",
     "镜头",
     "时长",
-    "节奏"
+    "节奏",
+    "出场人物",
+    "出场角色",
+    "登场人物"
   ],
   "label_morphemes": [
     "节奏",

@@ -58,8 +58,10 @@ export function OutlinePanel({ nodes, selection, onJump }: { nodes: readonly Can
 
 // ---------------------------------------------------------------- canvas versions
 
-export function VersionsPanel({ projectId, canvasId, version, onRestore }: {
+export function VersionsPanel({ projectId, canvasId, version, onRestore, onPreview }: {
   projectId: string; canvasId: string; version: number; onRestore: (version: number) => Promise<void>;
+  /** Look at an older version before restoring it (CanvasBeefVersionPreview). */
+  onPreview?: (version: number) => void;
 }) {
   const [versions, setVersions] = useState<CanvasVersion[] | null>(null);
   const [armed, setArmed] = useState<number | null>(null);
@@ -87,6 +89,9 @@ export function VersionsPanel({ projectId, canvasId, version, onRestore }: {
               <strong>{t('第 {0} 版', [item.version])}{item.version === version ? ` · ${t('当前')}` : ''}</strong>
               <small>{when(item.created_at)} · {t('{0} 节点 / {1} 连线', [item.node_count, item.edge_count])}</small>
             </div>
+            {onPreview && item.version !== version && (
+              <button type="button" className="cn-button" onClick={() => onPreview(item.version)}>{t('预览')}</button>
+            )}
             {item.version !== version && (armed === item.version ? (
               <button
                 type="button" className="cn-button is-primary" disabled={busy}
@@ -247,10 +252,11 @@ const MEDIUM_OF: Partial<Record<CanvasNode['kind'], Medium>> = { image_gen: 'ima
 
 function ModelField({ node, options, onPatch }: { node: CanvasNode; options: RunOptions | null; onPatch: (payload: Partial<NodePayload>) => void }) {
   // A tool only has a model to choose when an image model does its work; the others use the project's.
-  const medium = node.kind === 'tool' ? (toolOf(node)?.engine === 'image' ? 'image' : undefined) : MEDIUM_OF[node.kind];
+  const engine = node.kind === 'tool' ? toolOf(node)?.engine : undefined;
+  const medium = node.kind === 'tool' ? (engine === 'image' || engine === 'text' ? engine : undefined) : MEDIUM_OF[node.kind];
   if (!medium || !options) return null;
   const fallback = options.models[medium];
-  const models = [...new Set([...options.enabled[medium], ...(fallback ? [fallback] : [])])];
+  const models = [...new Set([...(options.enabled[medium] ?? []), ...(fallback ? [fallback] : [])])];
   return (
     <label className="cn-field">
       <span>{t('模型')}</span>
@@ -294,7 +300,7 @@ function BindingField({ node, shots, onPatch }: { node: CanvasNode; shots: Proje
   );
 }
 
-export function InspectorPanel({ node, doc, options, shots, projectId, canvasId, latest, onPatch, onSetRole, onRemoveEdge, onHistoryChanged, onRun, onCommit }: {
+export function InspectorPanel({ node, doc, options, shots, projectId, canvasId, latest, onPatch, onSetRole, onRemoveEdge, onHistoryChanged, onRun, onCommit, onSaveElement, extraActions }: {
   node: CanvasNode;
   doc: CanvasDoc;
   options: RunOptions | null;
@@ -308,6 +314,10 @@ export function InspectorPanel({ node, doc, options, shots, projectId, canvasId,
   onHistoryChanged: () => void;
   onRun: () => void;
   onCommit: () => void;
+  /** Present when the node shows a picture that can be kept in the element library. */
+  onSaveElement?: () => void;
+  /** More buttons for the action row (crop, grid split, download, copy the prompt: see useCanvasNodeActions). */
+  extraActions?: import('react').ReactNode;
 }) {
   const incoming = doc.edges.filter(edge => edge.target === node.id);
   const sourceOf = (edge: CanvasEdge) => doc.nodes.find(item => item.id === edge.source);
@@ -395,6 +405,8 @@ export function InspectorPanel({ node, doc, options, shots, projectId, canvasId,
       <div className="cn-row cn-actions">
         {RUNNABLE_KINDS.has(node.kind) && <button type="button" className="cn-button is-primary" onClick={onRun}>{t('运行')}</button>}
         {node.kind !== 'group' && node.kind !== 'note' && <button type="button" className="cn-button" onClick={onCommit}>{t('提交到项目')}</button>}
+        {onSaveElement && <button type="button" className="cn-button" onClick={onSaveElement}>{t('存入元素库')}</button>}
+        {extraActions}
       </div>
       {node.payload.committed?.artifact_id && (
         <p className="cn-hint">{t('已提交，影响 {0} 个镜头', [node.payload.committed.shots ?? 0])}</p>

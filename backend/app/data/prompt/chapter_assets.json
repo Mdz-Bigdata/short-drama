@@ -1,0 +1,43 @@
+{
+  "_doc": "app/core/chapter_assets.py 的措辞与界限：按章节提取角色、场景、道具的提示词(方法在前，输出格式放在最后且不可省)、章节怎么认、每类的上限、报错与说明。",
+  "system": "你是影视制片的资产登记员。只读给你的这一章，登记这一章里出现的角色、场景和道具，供制片确认后放进资产库。\n规则：\n1. 只登记原文写到的：有名字或固定称呼、在这一章出场或被明确在场的人物算角色；故事发生的具体地点算场景；人物拿起、使用、交接或推动情节的具体物件算道具。\n2. 同一个东西有几种叫法，合成一条，正式名字写在 name，其余写进 aliases。\n3. 已登记的名字照原样沿用，不另起新名。\n4. 不登记情绪、主题、动作、天气、镜头术语；群众、路人不算角色。\n5. description 写外观和在这一章里的用途或处境，一两句，只写看得见的。\n6. 这一章没有人物出场时 characters 写空数组；没有某一类时那一类写空数组，三类都要写出来。",
+  "contract": "只输出一个合法 JSON 对象，不要解释、不要 markdown，结构必须是：\n{\n  \"characters\": [{\"name\": \"角色名\", \"aliases\": [\"别的叫法\"], \"description\": \"外观、身份与这一章的处境\"}],\n  \"scenes\": [{\"name\": \"地点名\", \"aliases\": [], \"description\": \"时段、内外景、空间与这一章的用途\"}],\n  \"props\": [{\"name\": \"道具名\", \"aliases\": [], \"description\": \"外观、谁在用、在这一章做什么\"}]\n}\n三个数组都必须出现，没有内容写 []。",
+  "user": "【作品】{title}\n【章节】{chapter}\n{known}【章节原文】\n{text}",
+  "known_heading": "【已登记的名字（沿用原样）】\n",
+  "known_line": "{label}：{names}\n",
+  "cut_note": "\n……（本章过长，后面省略）",
+  "limits": {
+    "chapter_chars": 24000,
+    "items_per_list": 40,
+    "name_chars": 40,
+    "description_chars": 600,
+    "aliases": 6,
+    "known_names": 80
+  },
+  "lists": {
+    "characters": {"label": "角色", "element_kind": "actor"},
+    "scenes": {"label": "场景", "element_kind": "scene"},
+    "props": {"label": "道具", "element_kind": "prop"}
+  },
+  "list_joiner": "、",
+  "episode_heading": "^[ \\t#*]*第\\s*([0-9０-９一二三四五六七八九十百零两]+)\\s*[集章回]",
+  "whole_title": "全文",
+  "episode_title": "第 {number} 段",
+  "errors": {
+    "no_chapters": "这个项目还没有可以提取的章节：先在剧本文库放入原文，或先写出剧本",
+    "unknown_chapter": "没有这一章：{chapter}",
+    "no_answer": "模型没有给出回答，这一章没有提取，可以再试一次",
+    "not_object": "模型的回答不是 JSON 对象，这一章没算提取成功",
+    "missing_lists": "模型的回答缺了「{lists}」清单，这一章没算提取成功",
+    "not_list": "「{label}」应当是数组，这一章没算提取成功",
+    "unknown_item": "没有这一条待确认资产",
+    "unknown_action": "没有这种操作：{action}",
+    "not_pending": "这一条已经{state}了",
+    "no_owner": "这个项目没有主人账号，确认不了"
+  },
+  "states": {
+    "pending": "待确认",
+    "confirmed": "确认",
+    "dismissed": "忽略"
+  }
+}

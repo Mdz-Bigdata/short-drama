@@ -26,7 +26,7 @@ describe('shortcutGroups', () => {
     const byId = new Map(items.map(item => [item.id, item]));
     expect(new Set(items.map(item => item.id)).size).toBe(items.length);
     for (const id of ['undo', 'redo', 'copy', 'cut', 'paste', 'duplicate', 'select-all', 'group', 'ungroup', 'delete', 'select-add', 'pan', 'wheel-zoom', 'no-snap',
-      'fit', 'bookmark-jump', 'bookmark-save', 'nudge', 'save', 'deselect', 'help']) {
+      'fit', 'bookmark-jump', 'bookmark-save', 'nudge', 'save', 'deselect', 'help', 'enlarge', 'play-large', 'open-shot']) {
       expect(byId.has(id), id).toBe(true);
     }
     expect(byId.get('zoom-in')!.keys).toEqual(['Ctrl + +']);

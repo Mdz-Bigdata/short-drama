@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app.api.auth_api import get_current_user, require_permission
 from app.platform.permissions import CAPABILITY_MANAGE
@@ -10,6 +10,8 @@ from app.platform.store import PlatformStore
 from app.schema.platform import CapabilityToggleRequest, CommandRequest
 from app.core.provenance import upstream_source_by_id
 from app.core import prompt_data
+from app.core import system_diagnostics
+from app.repository.task_repo import TaskRepository
 
 
 _WORDING_FILE = "api_platform_api"
@@ -25,6 +27,7 @@ def _words_of(key: str) -> tuple[str, ...]:
 
 
 router = APIRouter(prefix="/api/platform", tags=list(_words_of("module.tags")))
+_tasks = TaskRepository()
 _CAPABILITY_EVIDENCE = {
     (record["source_id"], record["capability_id"]): record
     for record in capability_command_catalog()
@@ -129,3 +132,32 @@ async def invoke_command(
     result["status"] = "accepted"
     result["message"] = _text_of("invoke_command.text")
     return result
+
+
+async def _diagnose(store: PlatformStore) -> dict:
+    return await system_diagnostics.run(store.count_users, _tasks.count_tasks)
+
+
+@router.get("/diagnostics")
+async def diagnostics(
+    _: dict = Depends(require_permission(CAPABILITY_MANAGE)),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """The self-check, run now, beside what it found when the server started."""
+    return {**await _diagnose(store), "startup": system_diagnostics.startup_report()}
+
+
+@router.get("/diagnostics/bundle")
+async def diagnostics_bundle(
+    _: dict = Depends(require_permission(CAPABILITY_MANAGE)),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """The masked bundle to hand to whoever helps: report, which settings are set, recent log."""
+    packed = system_diagnostics.bundle(await _diagnose(store))
+    return Response(
+        content=packed, media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{system_diagnostics.bundle_name()}"',
+            "Cache-Control": "no-store",
+        },
+    )

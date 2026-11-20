@@ -10,6 +10,8 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from typing import List, Dict, Any, Optional
 from app.schema.shot_visual import (
     DraftModeUpdate,
+    SpokenLanguageUpdate,
+    VideoResolutionUpdate,
     SpendLimitsUpdate,
     ShotHdRequest,
     ShotRepairRequest,
@@ -51,7 +53,7 @@ from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore
 from app import settings
 from app.core import breakdown_kinds, character_variants, script_breakdown, asset_identity
-from app.core.character_looks import crowd_wardrobe, plan_looks, timing_is_readable, untimed_makeup
+from app.core.character_looks import crowd_wardrobe, plan_looks, same_wardrobe, timing_is_readable, untimed_makeup
 from app.core import creation_modes, edit_timeline, generation_queue, style_analysis
 from app.core.spatial_stage import blockout as stage_blockout
 from app.core.screenwriting import ledger_ops
@@ -524,18 +526,20 @@ async def _file_character_looks(*, task: Dict[str, Any], task_id: str, owner_id:
             skipped += 1
             continue
         same_words = str(mine.description or "") == look["description"]
+        # 只是去掉了讲集数、讲剧情的话(「第1、2集穿着」)：图上没画这些，图还对。
+        same_picture = same_words or same_wardrobe(str(mine.description or ""), look["description"], look["of"])
         if current == look["facts"] and same_words:
             skipped += 1
         elif len(element_task_ids(mine.metadata_json)) > 1:
             # 别的项目也在用它：这个项目另起一条，别的项目不受影响。
             await store.unlink_element_from_task(mine.id, owner_id, task_id)
-            await create(look, mine if same_words else None)
+            await create(look, mine if same_picture else None)
         else:
             await store.set_element_variant(mine.id, owner_id, look["facts"])
             if not same_words:
                 await store.update_element(mine.id, owner_id, name=None, description=look["description"])
                 # 图是按旧写法画的：不自动花钱重画，提示一下。
-                if _has_image(mine):
+                if _has_image(mine) and not same_picture:
                     await store.merge_element_metadata(mine.id, owner_id, {NEEDS_REDRAW: True})
             skipped += 1
     # 剧本不再需要的定妆图：只有这个项目用就留着图但不再穿，否则它和新的那张抢同一段集数；别的项目也在用就只退出这个项目。
@@ -1333,6 +1337,18 @@ def set_draft_mode(task_id: str, req: DraftModeUpdate):
     return _shot_fix(lambda: service.set_draft_mode(task_id, req.enabled))
 
 
+@router.put("/{task_id}/shots/spoken-language", response_model=ShotVisualWorkspaceResponse)
+def set_spoken_language(task_id: str, req: SpokenLanguageUpdate):
+    """对白语言：视频模型自己出声的片段里人物说哪种话；只管之后生成的镜头，留空回到默认。"""
+    return _shot_fix(lambda: service.set_spoken_language(task_id, req.language))
+
+
+@router.put("/{task_id}/shots/resolution", response_model=ShotVisualWorkspaceResponse)
+def set_video_resolution(task_id: str, req: VideoResolutionUpdate):
+    """成片清晰度：成片(不是样片)按这一档出；只收当前视频模型出得了、有官方价的档位，留空回到默认。"""
+    return _shot_fix(lambda: service.set_video_resolution(task_id, req.resolution))
+
+
 @router.post("/{task_id}/shots/{shot_id}/hd", response_model=ShotVisualWorkspaceResponse)
 def shot_to_hd(task_id: str, shot_id: int, req: ShotHdRequest, scene_id: str = _SCENE_QUERY, shot_uid: int | None = _UID_QUERY):
     """样片转高清：upscale 当场本地放大；regenerate 标记这一镜，重跑第 5 阶段时按全分辨率、同提示词同种子重出。"""
@@ -1449,6 +1465,18 @@ def save_writer_script_version(task_id: str, req: WriterVersionCreateRequest):
     if not dashboard:
         raise HTTPException(status_code=404, detail=_text_of("save_writer_script_version.detail"))
     return dashboard
+
+
+@router.get("/{task_id}/script/versions/{version_id}/compare")
+def compare_writer_script_version(task_id: str, version_id: str):
+    """What changed from a saved version to the current screenplay, episode by episode; no model, nothing written."""
+    try:
+        compared = service.compare_script_version(task_id, version_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    if compared is None:
+        raise HTTPException(status_code=404, detail=_text_of("list_writer_script_versions.detail"))
+    return compared
 
 
 @router.post("/{task_id}/script/versions/{version_id}/restore", response_model=WriterDashboardResponse)
@@ -1649,9 +1677,12 @@ def note_rights(task_id: str, req: RightsNoteRequest, current_user: dict = Depen
 
 
 @router.get("/{task_id}/timeline")
-def get_timeline(task_id: str):
-    """The edit timeline the final cut is rendered from, plus the music library to pick from."""
-    result = service.get_timeline(task_id)
+def get_timeline(task_id: str, episode: Optional[int] = Query(None, ge=1)):
+    """The edit timeline the final cut is rendered from, plus the music library to pick from; ``episode`` opens that episode's cut."""
+    try:
+        result = service.get_timeline(task_id, episode=episode)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if result is None:
         raise HTTPException(status_code=404, detail=_text_of("get_timeline.detail"))
     return result
@@ -1661,7 +1692,7 @@ def get_timeline(task_id: str):
 def edit_timeline_route(task_id: str, req: TimelineOperationRequest, current_user: dict = Depends(require_owned_drama_task)):
     """Trim, re-subtitle, mute, change a transition, pick a candidate, review a clip, set the title or the music."""
     try:
-        result = service.edit_timeline(task_id, req.operation, req.model_dump(exclude={"operation"}, exclude_none=True))
+        result = service.edit_timeline(task_id, req.operation, req.model_dump(exclude={"operation", "episode"}, exclude_none=True), episode=req.episode)
     except edit_timeline.TimelineError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if result is None:
@@ -2091,6 +2122,20 @@ def export_spatial_plan(task_id: str, scene_id: str, format: str = "director-des
     if format not in {"director-desk", "costage"}:
         raise HTTPException(status_code=422, detail=_text_of("export_spatial_plan.detail"))
     return _spatial_call(task_id, scene_id, lambda: service.export_spatial_plan(task_id, scene_id, format))
+
+
+@router.get("/{task_id}/spatial/scenes/{scene_id}/blocking-diagrams")
+def get_blocking_diagrams(task_id: str, scene_id: str, view: str = ""):
+    """The scene's staging beats as white-model blocking diagrams, each with the prompt for an image model."""
+    from app.core.spatial_stage.blocking_diagram import BlockingDiagramError
+
+    def call():
+        try:
+            return service.get_blocking_diagrams(task_id, scene_id, view)
+        except BlockingDiagramError as error:
+            raise StageEditError(str(error)) from error
+
+    return _spatial_call(task_id, scene_id, call)
 
 
 @router.post("/{task_id}/spatial/scenes/{scene_id}/import", response_model=SpatialPlanResponse)
@@ -2634,6 +2679,12 @@ async def assistant_chat(task_id: str, payload: Dict[str, Any], current_user: di
         key: value for key, value in (raw_context.items() if isinstance(raw_context, dict) else ())
         if key in ("scene_id", "shot_id", "character", "view", "stage") and isinstance(value, (str, int)) and not isinstance(value, bool)
     } or None
+    # 在节点画布里说的话带着画布和选中的节点(context.canvas)：清洗后一并交给助手。
+    from app.core import canvas_chat_context
+
+    canvas_context = canvas_chat_context.clean(raw_context.get("canvas")) if isinstance(raw_context, dict) else None
+    if canvas_context:
+        context = {**(context or {}), "canvas": canvas_context}
     try:
         result = await service.assistant_message(task_id, message, user=current_user, context=context)
         return {

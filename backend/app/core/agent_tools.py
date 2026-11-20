@@ -523,6 +523,7 @@ def review_episode(*, service, user, task_id: str, episode: int, action: str):
       effect="write",
       properties={
           "operation": {"type": "string", "enum": ["trim", "transition", "sound_join", "subtitle", "mute", "candidate", "review", "title", "bgm", "audio_source", "settings"]},
+          "episode": {"type": "integer", "minimum": 1, "description": prompt_data.text("schema_production", "TimelineOperationRequest.description.episode")},
           "shot_id": {"type": "integer"},
           "shot_uid": {"type": "integer", "description": _text_of("edit_timeline.properties.shot_uid.description")},
           "start": {"type": "number"}, "end": {"type": ["number", "null"]}, "kind": {"type": "string"},
@@ -532,14 +533,14 @@ def review_episode(*, service, user, task_id: str, episode: int, action: str):
           "duck": {"type": "boolean"}, "bgm_start": {"type": "number", "minimum": 0}, "music_version": {"type": "string"},
           "join": {"type": "string", "enum": ["", "j_cut", "l_cut"]}, "seconds": {"type": "number"},
           "audio_source": {"type": "string", "enum": ["native", "tts", "none"]},
-          "settings": {"type": "object", "properties": {key: {"type": "boolean"} for key in ("transitions", "dialogue", "subtitles", "title_card")},
+          "settings": {"type": "object", "properties": {key: {"type": "boolean"} for key in ("transitions", "dialogue", "subtitles", "title_card", "name_cards")},
                        "additionalProperties": False},
       }, required=["operation"])
-def edit_timeline(*, service, user, task_id: str, operation: str, **payload):
+def edit_timeline(*, service, user, task_id: str, operation: str, episode: int | None = None, **payload):
     from app.core.edit_timeline import TimelineError
 
     try:
-        result = service.edit_timeline(task_id, operation, payload)
+        result = service.edit_timeline(task_id, operation, payload, episode=episode)
     except TimelineError as exc:
         raise ValueError(str(exc)) from exc
     timeline = result["timeline"]
@@ -935,6 +936,44 @@ def forget_in_project(*, service, user, task_id: str, memory_id: str):
         raise ValueError(str(exc)) from exc
 
 
+_RENAME = {
+    "kind": {"type": "string", "enum": ["character", "scene", "prop"], "description": _text_of("module.kinds.description")},
+    "name": {"type": "string"}, "new_name": {"type": "string"},
+}
+
+
+def _rename(service, task_id: str, kind: str, name: str, new_name: str, *, dry_run: bool):
+    try:
+        result = service.change_asset_identity(task_id, operation="rename", kind=str(kind), name=str(name), new_name=str(new_name), dry_run=dry_run)
+    except RuntimeError as exc:  # a generation is running: the name cannot change under it
+        raise ValueError(str(exc)) from exc
+    if result is None:
+        raise ToolError(_text_of("call.text.2").format(task_id))
+    return result
+
+
+@tool("preview_asset_rename", title=_text_of("preview_asset_rename.title"), description=_text_of("preview_asset_rename.description"), effect="read",
+      properties=_RENAME, required=["kind", "name", "new_name"])
+def preview_asset_rename(*, service, user, task_id: str, kind: str, name: str, new_name: str):
+    return _rename(service, task_id, kind, name, new_name, dry_run=True)
+
+
+@tool("rename_project_asset", title=_text_of("rename_project_asset.title"), description=_text_of("rename_project_asset.description"), effect="write",
+      properties=_RENAME, required=["kind", "name", "new_name"])
+def rename_project_asset(*, service, user, task_id: str, kind: str, name: str, new_name: str):
+    return _rename(service, task_id, kind, name, new_name, dry_run=False)
+
+
+@tool("remember_my_style", title=_text_of("remember_my_style.title"), description=_text_of("remember_my_style.description"), effect="write", needs_task=False,
+      properties={"agent": {"type": "string", "enum": ["writer", "director_plan", "character_design", "storyboard", "promo"]}, "text": {"type": "string"}},
+      required=["text"])
+def remember_my_style(*, service, user, text: str, agent: str = "writer"):
+    from app.core import prompt_preferences
+
+    choice = prompt_preferences.add_line(str((user or {}).get("user_id") or ""), str(agent or "writer"), text)
+    return {"agent": agent, "label": prompt_preferences.operation(agent).label, "mode": choice.mode, "text": choice.text}
+
+
 @tool("blender_status", title=_text_of("blender_status.title"), description=_text_of("blender_status.description"), effect="read", needs_task=False)
 def blender_status(*, service, user):
     return _previz().status()
@@ -1016,7 +1055,13 @@ def _face_catalog() -> dict[str, Any]:
 
     return {
         "scale_range": [low, high],
-        "controls": {c.key: line(c.label, c.options) if c.kind == "choice" else _text_of("_face_catalog.controls").format(c.label, low, high) for c in cat.controls},
+        "controls": {
+            c.key: line(c.label, c.options) if c.kind == "choice"
+            # 档位(磨皮、祛斑祛痘)从 0 数起，0 是不加；刻度是 -2..2，0 是沿用原描述。
+            else _text_of("_face_catalog.levels").format(c.label, len(c.steps) - 1) if c.kind == "level"
+            else _text_of("_face_catalog.controls").format(c.label, low, high)
+            for c in cat.controls
+        },
         "presets": {key: label for key, label in cat.preset_labels.items()},
         "expression_controls": {key: line(cat.expression_control_labels[key], options) for key, options in cat.expression_controls.items()},
         "expressions": {key: label for key, label, _words in cat.expressions},

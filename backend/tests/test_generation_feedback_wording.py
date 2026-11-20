@@ -24,6 +24,7 @@ _ALLOWED_LITERALS: dict[str, str] = {}
 # The order reports are matched in, and the class each failure changes first: decided by code.
 _ORDER = (
     "face_collapse", "hand_failure", "occlusion", "action_blur", "colour_drift", "spatial_break", "style_drift",
+    "face_flip", "dead_eyes", "floating",
     "expression_failure", "lip_sync", "audio_muddy", "wrong_speaker", "sfx_timing", "action_dwindle",
     "contact_unclear", "fight_disconnected", "jump_cut", "body_merge", "weapon_failure", "weightless_hit",
     "damage_reset", "endframe_warp", "vfx_unsourced",

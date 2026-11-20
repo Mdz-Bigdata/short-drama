@@ -357,6 +357,83 @@ class SceneFrameTests(unittest.TestCase):
         self.assertIn("参考图1仅锁定数字演员设定集「断水」的脸型", notes)
         self.assertIn("参考图2仅锁定数字演员设定集「断水」正面大头照", notes)
 
+    def _profile_context(self, cast=("沈砚",), **extra):
+        task = {"assets": {"3_characters": [{"name": name, "desc": "墨青长袍"} for name in cast], "3_sheets": {}}}
+        scene = {"scene_id": "E1S02", "characters": list(cast), "content": "磨刀铺内。"}
+        elements = [
+            {"kind": "actor", "id": f"a{index}", "name": name, "description": "", "image_url": f"data:body{index}",
+             "face_url": f"data:face{index}", "side_face_url": f"data:side{index}", **extra}
+            for index, name in enumerate(cast)
+        ]
+        return compile_scene_context(task, scene, elements)
+
+    def test_a_shot_with_a_head_turn_brings_the_side_face_after_the_front_pair(self):
+        from app.core.storyboard_scene_context import reference_note, side_view
+        self.assertTrue(side_view("沈砚回头看向门口"))
+        self.assertFalse(side_view("沈砚抬刀"))
+        context = self._profile_context()
+        turned = panel_context(context, {"desc": "沈砚回头看向门口，侧脸被炉火照亮"})["references"]
+        self.assertEqual([(item["image_url"], item.get("view"), item.get("angle")) for item in turned if item["kind"] == "actor"],
+                         [("data:body0", None, None), ("data:face0", "face", None), ("data:side0", "face", "side")])
+        note = reference_note(3, turned[2], label="数字演员")
+        self.assertIn("参考图3仅锁定数字演员「沈砚」转头和侧脸时的侧面轮廓", note)
+        self.assertIn("正面相貌仍以这个人的正面大头照为准", note)
+        self.assertNotIn("；", note)
+        self.assertNotIn("。", note)
+        # 没有转头和侧脸的镜头照旧只发两张。
+        plain = panel_context(context, {"desc": "沈砚抬刀"})["references"]
+        self.assertEqual([item["image_url"] for item in plain if item["kind"] == "actor"], ["data:body0", "data:face0"])
+
+    def test_the_side_face_is_left_out_of_crowded_shots_and_for_real_people(self):
+        crowded = self._profile_context(cast=("沈砚", "贺兰霆", "断水"))
+        references = panel_context(crowded, {"desc": "沈砚、贺兰霆、断水同时回头"})["references"]
+        self.assertFalse([item for item in references if item.get("angle") == "side"])
+        real = self._profile_context(real_person=True)
+        references = panel_context(real, {"desc": "沈砚回头"})["references"]
+        self.assertFalse([item for item in references if item.get("angle") == "side"])
+
+    def test_a_look_without_its_own_side_face_takes_the_one_cut_from_the_stage_three_sheet(self):
+        from unittest.mock import patch
+        from app.core import media_compositor
+        from app.core.storyboard_scene_context import side_view
+        # The side of a thing is not a face turned away.
+        self.assertFalse(side_view("他走到丹炉侧面的进气口前蹲下"))
+        task = {"assets": {"3_sheets": {}, "3_characters": [{
+            "name": "沈砚", "desc": "墨青长袍",
+            "views": [{"view": "face_three_quarter", "image_url": "/media/character_views/a/15_face_three_quarter.png"}],
+        }, {"name": "贺兰霆", "desc": "玄黑官袍", "sheet_cells": [{"cell": "face_three_quarter", "image_url": "/media/gone.png"}]}]}}
+        scene = {"scene_id": "E1S02", "characters": ["沈砚", "贺兰霆"], "content": "磨刀铺内。"}
+        elements = [
+            {"kind": "actor", "id": "a", "name": "沈砚", "description": "", "image_url": "data:body", "face_url": "data:face"},
+            {"kind": "actor", "id": "b", "name": "贺兰霆", "description": "", "image_url": "data:body2", "face_url": "data:face2"},
+        ]
+        with patch.object(media_compositor, "local_media_path", lambda url: "/x" if "character_views" in url else None):
+            context = compile_scene_context(task, scene, elements)
+        references = panel_context(context, {"desc": "沈砚回头看向贺兰霆"})["references"]
+        self.assertEqual([(item["name"], item["image_url"]) for item in references if item.get("angle") == "side"],
+                         [("沈砚", "/media/character_views/a/15_face_three_quarter.png")])
+        # A character wearing a look never borrows the sheet's side face (its hair is the base sheet's, not the look's):
+        # a board drawn before the side-face panel sends none, a board with one sends its own.
+        look = {"kind": "actor", "id": "look", "name": "沈砚·染血残衣", "description": "染血残衣", "image_url": "data:look", "face_url": "data:bust",
+                "metadata": {"variant": {"of": "沈砚", "source": "costume", "label": "染血残衣"}}}
+        for own_side, expected in (("", []), ("data:look-side", [("沈砚", "data:look-side")])):
+            dressed_look = {**look, **({"side_face_url": own_side} if own_side else {})}
+            with patch.object(media_compositor, "local_media_path", lambda url: "/x" if "character_views" in url else None):
+                dressed = compile_scene_context(task, scene, [*elements, dressed_look])
+            worn = next(actor for actor in dressed["actors"] if actor["name"] == "沈砚")
+            self.assertEqual(worn.get("variant"), "染血残衣")
+            references = panel_context(dressed, {"desc": "沈砚回头看向贺兰霆"})["references"]
+            self.assertEqual([(item["name"], item["image_url"]) for item in references if item.get("angle") == "side"], expected)
+
+    def test_the_still_prompt_names_the_side_face_for_what_it_is(self):
+        from app.core.panel_still_prompt import _reference_line
+        line = _reference_line([
+            {"kind": "actor", "name": "沈砚", "image_url": "b"}, {"kind": "actor", "name": "沈砚", "image_url": "f", "view": "face"},
+            {"kind": "actor", "name": "沈砚", "image_url": "s", "view": "face", "angle": "side"},
+        ])
+        self.assertIn("图2 「沈砚」正面大头照", line)
+        self.assertIn("图3 「沈砚」侧脸照", line)
+
     def test_a_look_brings_its_own_bust_but_a_real_person_keeps_the_photo(self):
         from app.core import character_variants
         look = {"id": "look", "image_url": "look-body", "face_url": "look-bust", "variant": {"label": "残衣"}}
@@ -364,6 +441,11 @@ class SceneFrameTests(unittest.TestCase):
         real = {"name": "沈砚", "image_url": "b", "face_url": "photo", "real_person": True}
         self.assertEqual(character_variants.apply(real, look)["face_url"], "photo")
         self.assertEqual(character_variants.apply({"name": "断水", "face_url": "f"}, {"id": "old", "image_url": "board"})["face_url"], "f")
+        # The side face is the look's own or none: the character's own (another hairstyle) is not carried into the look.
+        self.assertEqual(character_variants.apply({"name": "断水", "side_face_url": "sheet"}, look)["side_face_url"], "")
+        self.assertEqual(character_variants.apply({"name": "断水", "side_face_url": "sheet"}, {**look, "side_face_url": "look-side"})["side_face_url"], "look-side")
+        self.assertEqual(character_variants.apply({**real, "side_face_url": "x"}, {**look, "side_face_url": "look-side"})["side_face_url"], "")
+        self.assertEqual(character_variants.apply({"name": "断水", "side_face_url": "sheet"}, None)["side_face_url"], "sheet")
 
     def test_single_scene_image_gets_no_frame(self):
         references = [{"kind": "scene", "name": "大殿", "image_url": "main"}]

@@ -1,0 +1,277 @@
+/* ---- 监视器, 画中画 and 成片预演: the desk's monitor column, the floating camera window and the scene player ---- */
+
+/* The monitor column sits between the outliner and the stage. */
+.desk-body.has-monitors {
+  grid-template-columns: minmax(12rem, 16rem) minmax(9rem, 12rem) minmax(0, 1fr) minmax(16rem, 21rem);
+}
+@media (max-width: 1366px) {
+  .desk-body.has-monitors {
+    grid-template-columns: minmax(11rem, 13.5rem) minmax(8.5rem, 10.5rem) minmax(0, 1fr) minmax(16rem, 21rem);
+  }
+}
+@media (max-width: 1100px) {
+  .desk-body.has-monitors {
+    grid-template-columns: minmax(10rem, 13rem) minmax(8rem, 9.5rem) minmax(0, 1fr) minmax(14rem, 17rem);
+  }
+}
+/* 成片预演 has no outliner and no property column: the frame takes the room. */
+.desk-body.is-preview,
+.desk-body.is-preview.has-monitors {
+  grid-template-columns: minmax(0, 1fr);
+}
+.desk-body.is-preview.has-monitors {
+  grid-template-columns: minmax(9rem, 13rem) minmax(0, 1fr);
+}
+
+.desk-monitors {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--desk-panel);
+  border-right: 1px solid var(--desk-line);
+}
+.desk-monitors__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 0.55rem 0.5rem 0.35rem 0.75rem;
+}
+.desk-monitors__head h2 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--desk-text);
+}
+.desk-monitors__head h2 svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+.desk-monitors__notice,
+.desk-monitors__empty {
+  margin: 0 0.75rem 0.4rem;
+  font-size: 0.72rem;
+  color: var(--desk-dim);
+}
+.desk-monitors__list {
+  min-height: 0;
+  flex: 1;
+  margin: 0;
+  padding: 0 0.5rem 0.75rem;
+  list-style: none;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.desk-monitors__item.is-lens {
+  margin-left: 0.7rem;
+}
+.desk-monitors__item button {
+  width: 100%;
+  padding: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: var(--desk-text);
+  font: inherit;
+  text-align: left;
+  border: 1px solid var(--desk-line);
+  border-radius: 0.45rem;
+  background: rgba(var(--ink-rgb), 0.04);
+  cursor: pointer;
+}
+.desk-monitors__item button:hover {
+  border-color: rgba(var(--ink-rgb), 0.32);
+}
+.desk-monitors__item button.is-active {
+  border-color: var(--desk-cyan);
+  box-shadow: 0 0 0 1px var(--desk-cyan);
+}
+.desk-monitors__item button:focus-visible {
+  outline: 2px solid var(--desk-cyan);
+  outline-offset: 1px;
+}
+.desk-monitors__thumb {
+  width: 100%;
+  max-height: 11rem;
+  aspect-ratio: var(--desk-aspect, 9 / 16);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 0.3rem;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  background: var(--desk-matte);
+}
+.desk-monitors__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.desk-monitors__caption {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0 0.15rem 0.1rem;
+}
+.desk-monitors__caption strong {
+  overflow: hidden;
+  font-size: 0.74rem;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.desk-monitors__caption small {
+  overflow: hidden;
+  font-size: 0.68rem;
+  color: var(--desk-dim);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.desk-monitors__caption em {
+  margin-right: 0.3rem;
+  padding: 0 0.25rem;
+  font-style: normal;
+  border: 1px solid var(--desk-line);
+  border-radius: 0.25rem;
+}
+.desk-monitors__renderer {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  pointer-events: none;
+}
+
+/* ---- 画中画: the current camera over the director view ---- */
+.desk-pip {
+  position: absolute;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  z-index: 3;
+  width: clamp(11rem, 24%, 20rem);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--desk-line);
+  border-radius: 0.6rem;
+  background: var(--desk-panel);
+  box-shadow: 0 0.6rem 1.4rem rgba(var(--shadow-rgb), 0.28);
+}
+/* A tall delivery frame would cover the room: the window keeps to half the stage's height. */
+.desk-pip__frame {
+  max-height: min(50vh, 26rem);
+  aspect-ratio: var(--desk-aspect, 9 / 16);
+  display: grid;
+  min-height: 0;
+}
+.desk-pip__frame .desk-viewport {
+  min-height: 0;
+  height: 100%;
+}
+.desk-pip__frame .desk-viewport__hint {
+  display: none;
+}
+.desk-pip__head {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.2rem 0.25rem 0.2rem 0.55rem;
+  border-bottom: 1px solid var(--desk-line);
+}
+.desk-pip__title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 0.74rem;
+  color: var(--desk-text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.desk-pip__head .desk-icon {
+  width: 1.6rem;
+  height: 1.6rem;
+}
+
+/* ---- top bar toggles ---- */
+.desk-topbar__toggle[aria-pressed='true'] {
+  color: var(--on-accent);
+  border-color: var(--desk-cyan);
+  background: var(--desk-cyan);
+}
+.desk-topbar__mode button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---- 成片预演 player ---- */
+.desk-scene-player {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: 'controls strip' 'controls scrub';
+  align-items: center;
+  column-gap: 0.9rem;
+  row-gap: 0.2rem;
+  padding: 0.5rem 0.9rem 0.6rem;
+  border-top: 1px solid var(--desk-line);
+  background: var(--desk-panel);
+}
+.desk-scene-player__controls {
+  grid-area: controls;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.desk-scene-player__clock {
+  font-variant-numeric: tabular-nums;
+  color: var(--desk-text);
+  white-space: nowrap;
+}
+.desk-scene-player__shot {
+  max-width: 16rem;
+  overflow: hidden;
+  font-size: 0.74rem;
+  color: var(--desk-dim);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.desk-scene-player__strip {
+  grid-area: strip;
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+}
+.desk-scene-player__strip button {
+  flex-basis: 0;
+  min-width: 1.4rem;
+  padding: 0.15rem 0;
+  font: inherit;
+  font-size: 0.68rem;
+  color: var(--desk-dim);
+  border: 1px solid var(--desk-line);
+  border-radius: 0.25rem;
+  background: rgba(var(--ink-rgb), 0.05);
+  cursor: pointer;
+}
+.desk-scene-player__strip button.is-current {
+  color: var(--on-accent);
+  border-color: var(--desk-cyan);
+  background: var(--desk-cyan);
+}
+.desk-scene-player__scrub {
+  grid-area: scrub;
+  width: 100%;
+  margin: 0;
+  accent-color: var(--desk-cyan);
+}
+
+@media (max-width: 760px) {
+  .desk-scene-player {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'controls' 'strip' 'scrub';
+  }
+}

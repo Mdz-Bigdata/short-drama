@@ -162,6 +162,32 @@ class StoryboardElementContextTests(unittest.TestCase):
         self.assertEqual((digest(by_id["look-one"]["image_url"]), digest(by_id["look-one"]["face_url"])), (look_body.sha256, bust.sha256))
         self.assertNotIn("face_url", by_id["actor-two"])
 
+    def test_an_actor_carries_the_three_quarter_face_and_a_look_does_not(self):
+        def digest(uri):
+            return hashlib.sha256(base64.b64decode(uri.split(",", 1)[1])).hexdigest()
+
+        actor = self.element("actor-one")
+        self.reference(actor, slot="front", content=_image_bytes("navy"))
+        self.reference(actor, slot="face_front", content=_image_bytes("olive"))
+        _, side = self.reference(actor, slot="face_three_quarter", content=_image_bytes("purple"))
+        # A look drawn before the board had a side-face panel: its third close-up is a belt or a cuff, not a face.
+        look = self.element("look-one")
+        look.metadata_json = {"task_id": "task-one", "look_layout": "plain", "variant": {"of": actor.name, "source": "costume", "label": "染血残衣"}}
+        self.reference(look, slot="look_front", content=_image_bytes("maroon"))
+        self.reference(look, slot="face_three_quarter", content=_image_bytes("teal"))
+        self.reference(look, slot="look_closeup_3", content=_image_bytes("gray"))
+        # A look drawn since: the third close-up is its own three-quarter face.
+        fresh = self.element("look-two")
+        fresh.metadata_json = {"task_id": "task-one", "look_layout": "makeup_side", "variant": {"of": actor.name, "source": "costume", "label": "麻衣带伤"}}
+        self.reference(fresh, slot="look_front", content=_image_bytes("brown"))
+        self.reference(fresh, slot="look_closeup_1", content=_image_bytes("pink"))
+        _, own_side = self.reference(fresh, slot="look_closeup_3", content=_image_bytes("orange"))
+        result, _ = self.load([actor, look, fresh])
+        by_id = {entry["id"]: entry for entry in result}
+        self.assertEqual(digest(by_id["actor-one"]["side_face_url"]), side.sha256)
+        self.assertNotIn("side_face_url", by_id["look-one"])
+        self.assertEqual(digest(by_id["look-two"]["side_face_url"]), own_side.sha256)
+
     def test_a_scene_carries_its_extra_views_beside_the_main_reference(self):
         item = self.element("scene-one", kind="scene")
         _, main = self.reference(item, slot="reference", content=_image_bytes("navy"))

@@ -1298,6 +1298,16 @@ class StageFiveGateTests(unittest.TestCase):
         desk.mark_captures_stale(self.task, "E1S01")
         self.assertEqual(self._inputs().motion_prompt, self.PROMPT)
 
+    def test_an_applied_clip_says_the_mannequins_are_not_the_cast_s_build(self):
+        self.assertNotIn(desk.PROPORTION_REQUIREMENT, self._inputs().motion_prompt)
+        desk.apply_capture(self.task, "E1S01", self.clip["id"])
+        prompt = self._inputs().motion_prompt
+        self.assertEqual(prompt.count(desk.PROPORTION_REQUIREMENT), 1)
+        self.assertLess(prompt.index(desk.PROPORTION_REQUIREMENT), prompt.index(desk.LIMBS_REQUIREMENT))
+        self.assertIn("身体比例", desk.PROPORTION_REQUIREMENT)
+        again = desk.motion_inputs(self.task, self.shot, [self.clip["url"]], self.BLOCKING, prompt)
+        self.assertEqual(again.motion_prompt.count(desk.PROPORTION_REQUIREMENT), 1)
+
     def test_stage_five_calls_the_gate(self):
         source = Path(drama_api.__file__).parents[1].joinpath("service", "drama_service.py").read_text(encoding="utf-8")
         self.assertIn("director_desk.motion_inputs(task, shot, motion_refs, contract.blocking, compiled_motion.prompt)", source)

@@ -27,7 +27,7 @@ import re
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
 
@@ -79,15 +79,58 @@ class Control:
     key: str
     layer: str
     label: str
-    kind: str                       # "choice" | "scale"
+    kind: str                       # "choice" | "scale" | "level"
     options: tuple[tuple[str, str, str], ...]   # (value, label, phrase) for choice
-    steps: tuple[str, ...]          # 5 phrases for scale, index = offset + 2
+    steps: tuple[str, ...]          # scale: 5 phrases, index = offset + 2；level: 第 0 档为空，值就是档位
     replaces: tuple[str, ...]
+    # 选项的界面附注：分组(发型按年代、妆容按风格)与色块；不进提示词。
+    option_extras: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
 
     def phrase(self, value: Any) -> str:
         if self.kind == "scale":
             return self.steps[int(value) - SCALE_RANGE[0]]
+        if self.kind == "level":
+            return self.steps[int(value)]
         return next(phrase for option, _label, phrase in self.options if option == value)
+
+    def number_ok(self, value: Any) -> bool:
+        """刻度 -2..2，档位 0..档数-1；布尔值不算数。"""
+        if isinstance(value, bool) or not isinstance(value, int):
+            return False
+        if self.kind == "level":
+            return 0 <= value < len(self.steps)
+        return SCALE_RANGE[0] <= value <= SCALE_RANGE[1]
+
+
+@dataclass(frozen=True)
+class MarkKind:
+    key: str
+    label: str
+    phrase: str                     # {where} 部位，{text} 自己写的图案或说明
+    region: bool = True
+    text: bool = False
+    layer: str = ""
+    swatch: str = ""
+
+
+@dataclass(frozen=True)
+class Region:
+    key: str
+    label: str
+    area: str                       # face | body
+    x: float = 0.5
+    y: float = 0.5
+
+
+@dataclass(frozen=True)
+class Mark:
+    """脸上或身上的一处特征：一颗痣、一道疤、一处纹身。"""
+    kind: str
+    region: str = ""
+    text: str = ""
+
+    def dump(self) -> dict[str, str]:
+        return {"kind": self.kind, "region": self.region, "text": self.text}
 
 
 @dataclass(frozen=True)
@@ -104,6 +147,9 @@ class Catalog:
     limits: Mapping[str, int]
     wording: Mapping[str, Any]
     harmony: Mapping[str, Any]
+    mark_kinds: Mapping[str, MarkKind] = field(default_factory=dict)
+    regions: Mapping[str, Region] = field(default_factory=dict)
+    mark_limits: Mapping[str, int] = field(default_factory=dict)
 
     def control(self, key: str) -> Control:
         for control in self.controls:
@@ -132,11 +178,32 @@ def catalog() -> Catalog:
         steps = tuple(raw.get("steps") or ())
         if raw["type"] == "scale" and len(steps) != SCALE_RANGE[1] - SCALE_RANGE[0] + 1:
             raise SculptError(f"刻度控件 {raw['key']} 必须有 5 档")
+        if raw["type"] == "level" and (len(steps) < 2 or steps[0]):
+            raise SculptError(f"档位控件 {raw['key']} 至少两档，第 0 档为空")
         controls.append(Control(
             key=raw["key"], layer=raw["layer"], label=raw["label"], kind=raw["type"],
             options=tuple((item["value"], item["label"], item["phrase"]) for item in raw.get("options") or ()),
             steps=steps, replaces=tuple(raw.get("replaces") or ()),
+            option_extras={
+                item["value"]: {key: str(item[key]) for key in ("group", "swatch") if item.get(key)}
+                for item in raw.get("options") or () if item.get("group") or item.get("swatch")
+            },
         ))
+    marks = data.get("marks") or {}
+    mark_kinds = {
+        item["key"]: MarkKind(
+            key=item["key"], label=item["label"], phrase=item["phrase"], region=bool(item.get("region", True)),
+            text=bool(item.get("text")), layer=str(item.get("layer") or ""), swatch=str(item.get("swatch") or ""),
+        )
+        for item in marks.get("kinds") or ()
+    }
+    for kind in mark_kinds.values():
+        if kind.layer and kind.layer not in layers:
+            raise SculptError(f"特征 {kind.key} 的层 {kind.layer} 不存在")
+    regions = {
+        item["key"]: Region(key=item["key"], label=item["label"], area=item["area"], x=float(item.get("x", 0.5)), y=float(item.get("y", 0.5)))
+        for item in marks.get("regions") or ()
+    }
     expression_controls = {
         item["key"]: tuple((option["value"], option["label"], option["phrase"]) for option in item["options"])
         for item in data["expression_controls"]
@@ -156,6 +223,9 @@ def catalog() -> Catalog:
         limits=data["limits"],
         wording=data["wording"],
         harmony=data["harmony"],
+        mark_kinds=mark_kinds,
+        regions=regions,
+        mark_limits={"limit": int(marks.get("limit") or 8), "text_chars": int(marks.get("text_chars") or 20)},
     )
 
 
@@ -168,11 +238,20 @@ def describe_catalog() -> dict[str, Any]:
         "controls": [
             {
                 "key": control.key, "layer": control.layer, "label": control.label, "type": control.kind,
-                **({"options": [{"value": value, "label": label} for value, label, _phrase in control.options]}
+                **({"options": [{"value": value, "label": label, **control.option_extras.get(value, {})}
+                                for value, label, _phrase in control.options]}
                    if control.kind == "choice" else {"steps": list(control.steps)}),
             }
             for control in cat.controls
         ],
+        "marks": {
+            "kinds": [{"key": kind.key, "label": kind.label, "region": kind.region, "text": kind.text,
+                       **({"swatch": kind.swatch} if kind.swatch else {})} for kind in cat.mark_kinds.values()],
+            "regions": [{"key": region.key, "label": region.label, "area": region.area, "x": region.x, "y": region.y}
+                        for region in cat.regions.values()],
+            **cat.mark_limits,
+        },
+        "studio": data.get("studio") or {},
         "presets": [
             {"key": key, "label": cat.preset_labels[key], "values": dict(values),
              **({"scope": list(cat.preset_scopes[key])} if key in cat.preset_scopes else {}),
@@ -212,10 +291,12 @@ class Sculpt:
     preset: str = ""
     # 这张脸的突出点(一个骨相或五官控件键)：其余控件围着它做配合，对话改脸不换它的值；只有突出点不算捏过。
     focus: str = ""
+    # 脸上身上的痣、疤、雀斑、纹身，按加上的先后。
+    marks: tuple[Mark, ...] = ()
 
     @property
     def empty(self) -> bool:
-        return not self.face and not any(self.notes.values()) and not self.expressions
+        return not self.face and not any(self.notes.values()) and not self.expressions and not self.marks
 
     def dump(self) -> dict[str, Any]:
         return {
@@ -227,6 +308,7 @@ class Sculpt:
             },
             "preset": self.preset,
             "focus": self.focus,
+            "marks": [mark.dump() for mark in self.marks],
         }
 
 
@@ -254,12 +336,15 @@ def validate(raw: Mapping[str, Any] | None) -> Sculpt:
     cat = catalog()
     face: dict[str, Any] = {}
     for key, value in (raw.get("face") or {}).items():
-        if value in (None, "", 0) and cat.control(key).kind == "scale":
+        if value in (None, "", 0) and cat.control(key).kind in ("scale", "level"):
             continue
         if value in (None, ""):
             continue
         control = cat.control(key)
-        if control.kind == "scale":
+        if control.kind == "level":
+            if not control.number_ok(value):
+                raise SculptError(f"「{control.label}」的档位只能是 0 到 {len(control.steps) - 1}")
+        elif control.kind == "scale":
             if isinstance(value, bool) or not isinstance(value, int) or not SCALE_RANGE[0] <= value <= SCALE_RANGE[1]:
                 raise SculptError(f"「{control.label}」的刻度只能是 -2 到 2")
         elif value not in {option for option, _label, _phrase in control.options}:
@@ -306,7 +391,43 @@ def validate(raw: Mapping[str, Any] | None) -> Sculpt:
         if control is None:
             raise SculptError(f"没有这个捏脸控件，不能做突出点：{focus}")
         focus = control.key
-    return Sculpt(face=face, notes=notes, expressions=expressions, preset=preset, focus=focus)
+    return Sculpt(face=face, notes=notes, expressions=expressions, preset=preset, focus=focus, marks=_valid_marks(raw.get("marks")))
+
+
+def _valid_marks(raw: Any) -> tuple[Mark, ...]:
+    """痣、疤、纹身：种类和部位都要认得；要写图案的必须写；同一种在同一处只留一个。"""
+    cat = catalog()
+    if raw in (None, ""):
+        return ()
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+        raise SculptError("特征要是一个列表")
+    marks: list[Mark] = []
+    for item in raw:
+        item = item if isinstance(item, Mapping) else {}
+        kind = cat.mark_kinds.get(str(item.get("kind") or ""))
+        if kind is None:
+            raise SculptError(f"没有这种特征：{item.get('kind')}")
+        region = str(item.get("region") or "") if kind.region else ""
+        if kind.region and region not in cat.regions:
+            raise SculptError(f"「{kind.label}」要点在一个认得的部位上")
+        text = _clean_text(item.get("text"), cat.mark_limits["text_chars"], f"「{kind.label}」的说明") if kind.text else ""
+        if kind.text and not text:
+            raise SculptError(f"「{kind.label}」要写上是什么")
+        mark = Mark(kind=kind.key, region=region, text=text)
+        if mark not in marks:
+            marks.append(mark)
+    if len(marks) > cat.mark_limits["limit"]:
+        raise SculptError(f"特征最多 {cat.mark_limits['limit']} 处")
+    return tuple(marks)
+
+
+def mark_phrase(mark: Mark) -> tuple[str, str]:
+    """(层, 写进描述的短语)：「左颊一颗小痣」。脸上的进五官层，身上的进体态层，种类自带层的照它。"""
+    cat = catalog()
+    kind = cat.mark_kinds[mark.kind]
+    region = cat.regions.get(mark.region)
+    layer = kind.layer or ("physique" if region and region.area == "body" else "features")
+    return layer, _fill(kind.phrase, where=region.label if region else "", text=mark.text)
 
 
 def preset_sculpt(key: str) -> Sculpt:
@@ -341,6 +462,9 @@ def layer_fragments(sculpt: Sculpt) -> dict[str, list[str]]:
             phrase = control.phrase(sculpt.face[control.key])
             if phrase:
                 layers.setdefault(control.layer, []).extend(part for part in _FRAGMENT.split(phrase)[::2] if part.strip())
+    for mark in sculpt.marks:
+        layer, phrase = mark_phrase(mark)
+        layers.setdefault(layer, []).append(phrase)
     for key, note in sculpt.notes.items():
         for fragment in _FRAGMENT.split(note)[::2]:
             fragment = fragment.strip()
@@ -703,6 +827,11 @@ def harmony_issues(sculpt: Sculpt) -> list[dict[str, str]]:
     for rule in rules["rules"]:
         if all(_group_hit(face, group) for group in rule["when"]) and not any(_group_hit(face, group) for group in rule.get("unless") or ()):
             issues.append({"code": f"face_harmony_{rule['key']}", "message": rule["message"]})
+    # 特征与控件说反了(开着祛斑祛痘又点了雀斑)：两句同进提示词，模型会随机听一句。
+    kinds = {mark.kind for mark in sculpt.marks}
+    for conflict in (prompt_data.load(_DATA).get("marks") or {}).get("conflicts") or ():
+        if sculpt.face.get(conflict["control"]) and kinds & set(conflict["kinds"]):
+            issues.append({"code": f"face_mark_conflict_{conflict['control']}", "message": conflict["message"]})
     return issues
 
 
@@ -876,6 +1005,8 @@ def compact_catalog() -> str:
                 "key": control.key, "layer": control.layer, "label": control.label, "kind": control.kind,
                 **({"options": [{"value": value, "label": label} for value, label, _phrase in control.options]}
                    if control.kind == "choice" else
+                   {"level": {str(index): step for index, step in enumerate(control.steps) if step}}
+                   if control.kind == "level" else
                    {"scale": {str(offset): step for offset, step in zip(range(SCALE_RANGE[0], SCALE_RANGE[1] + 1), control.steps) if step}}),
             }
             for control in cat.controls
@@ -916,6 +1047,18 @@ def _scale_value(value: Any) -> int | None:
     return value
 
 
+def _level_value(control: Control, value: Any) -> int | None:
+    """档位值：0..档数-1，写成字符串或整数值的小数也认。"""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    if isinstance(value, str):
+        try:
+            value = int(value.strip())
+        except ValueError:
+            return None
+    return value if control.number_ok(value) else None
+
+
 def _by_label(pairs: Iterable[tuple[str, str]], key: Any) -> str | None:
     text = str(key or "").strip()
     return next((item for item, label in pairs if text in (item, label)), None)
@@ -945,8 +1088,8 @@ class _Filter:
                 continue
             if value in (None, ""):
                 self.patch["face"][control.key] = None
-            elif control.kind == "scale":
-                number = _scale_value(value)
+            elif control.kind in ("scale", "level"):
+                number = _scale_value(value) if control.kind == "scale" else _level_value(control, value)
                 if number is None:
                     self._reject("bad_scale", label=control.label, value=value)
                     continue
@@ -1107,6 +1250,8 @@ def _describe_patch(patch: Mapping[str, Any]) -> str:
             parts.append(f"{control.label}×")
         elif control.kind == "scale":
             parts.append(f"{control.label}{value:+d}")
+        elif control.kind == "level":
+            parts.append(f"{control.label}{value}")
         else:
             parts.append(f"{control.label}→{next(label for option, label, _phrase in control.options if option == value)}")
     for key, value in (patch.get("notes") or {}).items():

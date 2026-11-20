@@ -1,0 +1,20 @@
+humanoid-v2.glb: the DirectorDesk built-in humanoid (see NOTICE.txt) with twenty-four more motions
+
+Added motions: Quaternius Universal Animation Library and Universal Animation Library 2,
+Standard (free) collections.
+License: CC0-1.0 (public-domain dedication).
+Source: https://quaternius.com/packs/universalanimationlibrary.html
+        https://quaternius.com/packs/universalanimationlibrary2.html
+License: https://creativecommons.org/publicdomain/zero/1.0/
+
+From UAL1_Standard.glb (sha256 69591853d817488e...): Sword_Idle, Sword_Attack, Punch_Jab,
+Punch_Cross, Hit_Chest, Hit_Head, Death01, Roll, Jump_Start, Jump_Loop, Jump_Land, Sprint_Loop.
+From UAL2_Standard.glb (sha256 8cee20ab1bc55130...): Sword_Block, Sword_Dash, Sword_Regular_C,
+Sword_Regular_Combo, Sword_Heavy_Combo, Melee_Hook, Hit_Knockback, NinjaJump_Start,
+NinjaJump_Idle_Loop, NinjaJump_Land, LayToIdle, Idle_FoldArms_Loop.
+
+What changed: the motions were copied onto the v1 skeleton (the library's skeleton without its
+fingertip and toe-tip bones), renamed, and stripped of channels that never leave the rest pose.
+The mesh, the skin and the first ten motions are those of humanoid-v1.glb, byte for byte in
+their data. Built by frontend/scripts/build-humanoid-motions.py; the library files themselves
+are not included.

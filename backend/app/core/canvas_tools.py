@@ -25,7 +25,7 @@ from typing import Any
 from xml.etree import ElementTree
 
 from pydantic import BaseModel, ConfigDict, Field
-from app.core import prompt_data
+from app.core import move_sheets, prompt_data
 
 
 _WORDING_FILE = "canvas_tools"
@@ -85,6 +85,8 @@ TOOLS: tuple[CanvasTool, ...] = (
     CanvasTool("voice_isolate", _text_of("module.tools.16"), "video", "audio", "audio", inputs=VIDEO_INPUT, videos=1),
     CanvasTool("frame_extract", _text_of("module.tools.17"), "video", "local", "image", inputs=VIDEO_INPUT, videos=1),
     CanvasTool("to_gif", _text_of("module.tools.18"), "video", "local", "image", inputs=VIDEO_INPUT, videos=1),
+    # The picture it hands on is the sprite sheet; the frames themselves are in the ZIP beside it (see sprite_frames.py).
+    CanvasTool("sprite_frames", _text_of("module.tools.34"), "video", "local", "image", inputs=VIDEO_INPUT, videos=1),
     CanvasTool("shot_analysis", _text_of("module.tools.19"), "video", "vision", "text", inputs=VIDEO_INPUT, videos=1),
     CanvasTool("sketch", _text_of("module.tools.20"), "skill", "image", "image", images=1),
     CanvasTool("action_breakdown", _text_of("module.tools.21"), "skill", "text", "text", inputs=TEXT_INPUT, needs_prompt=True),
@@ -99,6 +101,20 @@ TOOLS: tuple[CanvasTool, ...] = (
     CanvasTool("scene_360", _text_of("module.tools.30"), "skill", "image", "image", needs_prompt=True),
     CanvasTool("frame_review", _text_of("module.tools.31"), "skill", "vision", "text", images=1),
     CanvasTool("beat_plan", _text_of("module.tools.32"), "skill", "text", "text", inputs=TEXT_INPUT, needs_prompt=True),
+    # A picture is read by the vision model; with only words, the text model rewrites them (see canvas_tool_ops).
+    CanvasTool("character_extract", _text_of("module.tools.33"), "skill", "vision", "text", inputs=TEXT_INPUT),
+    # 逆向拆解一张剧照：没有叙事元素的空间基底、从原图取的配色卡，和在基底上重建原图光影的氛围帧。
+    CanvasTool("space_base", _text_of("module.tools.35"), "skill", "image", "image", images=1),
+    CanvasTool("color_card", _text_of("module.tools.36"), "skill", "local", "image", images=1),
+    # 三张图按「空间基底、原始剧照、配色卡」的顺序连；配色卡连在哪一位都认得出来。
+    CanvasTool("mood_frame", _text_of("module.tools.37"), "skill", "image", "image", images=3),
+    # 换装的两步：先把一套衣服从照片里取成白底平铺图，再让人物只换这套衣服（先连人物，再连服装）。
+    CanvasTool("outfit_extract", _text_of("module.tools.38"), "skill", "image", "image", images=1),
+    CanvasTool("outfit_swap", _text_of("module.tools.39"), "skill", "image", "image", images=2),
+    # 给视频节点用的固定写法（换人、只学运镜、换装过场）：本机拼出来，不调用模型。
+    CanvasTool("reference_remake", _text_of("module.tools.40"), "skill", "local", "text", inputs=TEXT_INPUT),
+    # 招式分解图：连一张人物图，同一个人逐格摆出选中的一组招式(move_sheets.json)，当后面的动作参考。
+    CanvasTool("move_sheet", _text_of("module.tools.41"), "skill", "image", "image", images=1),
 )
 _BY_ID = {tool.id: tool for tool in TOOLS}
 DEFAULT_TOOL = "redraw"
@@ -121,8 +137,15 @@ _TEMPLATES = {
     "change_weather": _text_of("module.templates.change_weather"),
     "add_prop": _text_of("module.templates.add_prop"),
     "remove_text": _text_of("module.templates.remove_text"),
+    "empty_room": _text_of("module.templates.empty_room"),
+    "recolor_outfit": _text_of("module.templates.recolor_outfit"),
+    "add_text": _text_of("module.templates.add_text"),
 }
-_TEMPLATES_NEED_TEXT = frozenset({"change_outfit", "change_expression", "change_weather", "add_prop"})
+_TEMPLATES_NEED_TEXT = frozenset({"change_outfit", "change_expression", "change_weather", "add_prop", "recolor_outfit", "add_text"})
+# 模板本身就是要往画面里写字的：结尾不能再说「不要出现文字」。
+_TEMPLATES_WITH_TEXT = frozenset({"add_text"})
+REMAKE_MODES = ("swap", "camera", "outfit")
+_REMAKE_NEED_TEXT = frozenset({"camera"})
 _KEEP = _text_of("module.keep")
 _NO_TEXT = _text_of("module.no_text")
 
@@ -136,6 +159,20 @@ REVERSE_SYSTEM = _text_of("module.reverse_system")
 REVERSE_PROMPT = (
     _text_of("module.reverse_prompt")
 )
+CHARACTER_SYSTEM = _text_of("module.character_system")
+CHARACTER_PROMPT = _text_of("module.character_prompt")
+
+
+def character_question(note: str, *, picture: bool) -> str:
+    """角色设定提取的问题：有图时按图写，``note`` 是补充(图里有几个人时写哪一个、名字)；只有文字时 ``note`` 就是要改写的描述。"""
+    note = str(note or "").strip()
+    if not picture:
+        if not note:
+            raise CanvasToolError(prompt_data.text("studio_canvas_runs", "_assess_tool.no_character"))
+        return _text_of("module.character_text").format(note, CHARACTER_PROMPT)
+    return _text_of("module.character_note").format(CHARACTER_PROMPT, note) if note else CHARACTER_PROMPT
+
+
 MARK_SYSTEM = _text_of("module.mark_system")
 MARK_PROMPT = (
     _text_of("module.mark_prompt")
@@ -241,7 +278,8 @@ def image_prompt(tool: CanvasTool, params: Mapping[str, Any], text: str) -> str:
             raise CanvasToolError(_text_of("image_prompt.text.8").format(key))
         if key in _TEMPLATES_NEED_TEXT and not extra:
             raise CanvasToolError(_text_of("image_prompt.text.9"))
-        return template.format(extra=extra) + (f"。{extra}" if extra and "{extra}" not in template else "。") + _NO_TEXT
+        ending = _text_of("module.no_other_text") if key in _TEMPLATES_WITH_TEXT else _NO_TEXT
+        return template.format(extra=extra) + (f"。{extra}" if extra and "{extra}" not in template else "。") + ending
     if tool.id == "enhance":
         return _text_of("image_prompt.text.10").format(extra, _NO_TEXT)
     if tool.id == "sketch":
@@ -252,7 +290,28 @@ def image_prompt(tool: CanvasTool, params: Mapping[str, Any], text: str) -> str:
         return _text_of("image_prompt.text.13").format(extra, _NO_TEXT)
     if tool.id == "set_background":
         return _text_of("image_prompt.text.14").format(extra, _NO_TEXT)
+    if tool.id in {"space_base", "mood_frame", "outfit_extract", "outfit_swap"}:
+        return _text_of(f"image_prompt.{tool.id}").format(extra, _NO_TEXT)
+    if tool.id == "move_sheet":
+        try:
+            return move_sheets.prompt(params, extra, _NO_TEXT)
+        except move_sheets.UnknownSet as error:
+            raise CanvasToolError(str(error)) from error
     raise CanvasToolError(_text_of("image_prompt.text.15").format(tool.label))
+
+
+def remake_prompt(params: Mapping[str, Any], text: str) -> str:
+    """参考复刻词：换人、只学运镜、换装过场三种固定写法，``text`` 是补充（只学运镜时是新画面的内容，必填）。"""
+    mode = str(params.get("mode") or REMAKE_MODES[0])
+    if mode not in REMAKE_MODES:
+        raise CanvasToolError(_text_of("remake.unknown").format(mode))
+    extra = " ".join(str(text or "").split())
+    if mode in _REMAKE_NEED_TEXT and not extra:
+        raise CanvasToolError(_text_of("remake.need_text"))
+    template = _text_of(f"remake.{mode}")
+    if "{extra}" in template:
+        return template.format(extra=extra)
+    return f"{template}{extra}" if extra else template
 
 
 def outpaint_ratio(params: Mapping[str, Any]) -> str:
@@ -296,10 +355,15 @@ def parse_shots(answer: str) -> list[dict[str, Any]]:
     for row in rows[:60]:
         if not isinstance(row, Mapping) or not str(row.get("desc") or "").strip():
             continue
+        names = row.get("characters") if isinstance(row.get("characters"), Sequence) and not isinstance(row.get("characters"), str) else []
         shots.append({
             "size": str(row.get("size") or "").strip()[:20], "motion": str(row.get("motion") or "").strip()[:20],
             "seconds": int(number(row, "seconds", 5, 2, 15)), "desc": str(row.get("desc")).strip()[:600],
+            # Who is in the shot: what keeps one face per character across first frames (canvasShotLayout.ts).
+            "characters": list(dict.fromkeys(str(name).strip()[:30] for name in names if str(name or "").strip()))[:6],
             "dialogue": str(row.get("dialogue") or "").strip()[:300],
+            # Day or night, from the scene heading: a shot's own words often leave it out, and its picture then guesses.
+            "time": str(row.get("time") or "").strip()[:10],
         })
     if not shots:
         raise CanvasToolError(_text_of("parse_shots.text.2"))
@@ -315,12 +379,121 @@ def shots_text(shots: Sequence[Mapping[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def shots_as_beats(shots: Sequence[Mapping[str, Any]]) -> list[dict[str, str]]:
-    """A shot table in the shape 铺成节点 takes: one first frame to draw per shot."""
+def parse_cast(answer: str) -> list[dict[str, str]]:
+    """The characters a shot table describes: ``[{name, look}]``. A table with none is still a table."""
+    from app.core.screenwriting.structured_llm import extract_json_object
+
+    data = extract_json_object(str(answer or ""))
+    rows = data.get("cast") if isinstance(data, Mapping) else None
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+        return []
+    cast: dict[str, str] = {}
+    for row in rows[:12]:
+        if isinstance(row, Mapping) and str(row.get("name") or "").strip():
+            cast.setdefault(str(row["name"]).strip()[:30], str(row.get("look") or "").strip()[:200])
+    return [{"name": name, "look": look} for name, look in cast.items()]
+
+
+def _small_number(text: str) -> int:
+    """「三」「十二」「两」「7」 as a number; 0 when it is none."""
+    if text.isdigit():
+        return int(text)
+    digits = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+    if "十" in text:
+        tens, _, ones = text.partition("十")
+        return (digits.get(tens, 1) if tens else 1) * 10 + (digits.get(ones, 0) if ones else 0)
+    return digits.get(text, 0)
+
+
+def asked_shots(params: Mapping[str, Any], text: str) -> int:
+    """How many shots the table is asked for: the node's own setting, else what the text says (「镜头数：3」「三个镜头」); 0 = free."""
+    ceiling = prompt_data.number(_WORDING_FILE, "shot_table.count_max")
+    try:
+        set_here = int(float(params.get("shots") or 0))
+    except (TypeError, ValueError):
+        set_here = 0
+    if set_here > 0:
+        return min(set_here, ceiling)
+    match = re.search(_text_of("shot_table.count_words"), str(text or ""))
+    if not match:
+        return 0
+    found = _small_number(next(group for group in match.groups() if group))
+    return found if 0 < found <= ceiling else 0
+
+
+def shot_table_question(story: str, count: int) -> str:
+    rule = _text_of("shot_table.count_exact").format(count=count) if count > 0 else _text_of("shot_table.count_free")
+    return SHOT_TABLE_PROMPT.format(story=story, count_rule=rule)
+
+
+def cast_line(names: Sequence[str], cast: Sequence[Mapping[str, str]]) -> str:
+    """「人物：女孩（二十出头，黑色长发…）；店主（…）」 for the characters in a shot whose look the table gives."""
+    looks = {item["name"]: item.get("look") or "" for item in cast}
+    items = [_text_of("shots_as_beats.cast_item").format(name=name, look=looks[name]) for name in names if looks.get(name)]
+    return _text_of("shots_as_beats.cast").format(_text_of("shots_as_beats.cast_joiner").join(items)) if items else ""
+
+
+def lines_out_of_order(story: str, shots: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Lines the table placed out of the script's order: each one said before a line that comes earlier in the script.
+
+    The words said are read the way every other part of the project reads a lines cell (``spoken_lines``: speaker,
+    quotes, notes, timecodes and 「无台词」 parts taken off). A line not found in the script (reworded by the model)
+    is left out of the comparison.
+    """
+    from app.core.spoken_lines import spoken_lines
+
+    late: list[str] = []
+    furthest = -1
+    for shot in shots:
+        for said in spoken_lines([str(shot.get("dialogue") or "")]):
+            core = said.rstrip("。！？!?…，, ")
+            where = story.find(core) if len(core) >= 2 else -1
+            if where < 0:
+                continue
+            if where < furthest:
+                late.append(said)
+            furthest = max(furthest, where)
+    return late
+
+
+def recurring(shots: Sequence[Mapping[str, Any]]) -> set[str]:
+    """The characters in enough shots to get a look sheet of their own: one face for them across the shots."""
+    counts: dict[str, int] = {}
+    for shot in shots:
+        for name in dict.fromkeys(shot.get("characters") or []):
+            counts[name] = counts.get(name, 0) + 1
+    least = prompt_data.number(_WORDING_FILE, "cast.sheet_min_shots")
+    return {name for name, count in counts.items() if count >= least}
+
+
+def with_sheets(cast: Sequence[Mapping[str, str]], shots: Sequence[Mapping[str, Any]]) -> list[dict[str, str]]:
+    """The cast, each recurring character with the words for a look sheet of them alone (``sheet_prompt``).
+
+    铺成镜头 draws that sheet once and feeds it to every first frame the character is in: the frames share the face
+    and the clothes, not the framing, which a whole earlier frame used as the reference would also hand on.
+    """
+    again = recurring(shots)
+    return [
+        {**item, **({"sheet_prompt": _text_of("cast.sheet_prompt").format(name=item["name"], look=item["look"])} if item["name"] in again and item.get("look") else {})}
+        for item in cast
+    ]
+
+
+def shots_as_beats(shots: Sequence[Mapping[str, Any]], cast: Sequence[Mapping[str, str]] = ()) -> list[dict[str, str]]:
+    """A shot table in the shape 铺成节点 takes: one first frame to draw per shot, who is in it described.
+
+    A shot with a character who has a look sheet also says the reference picture is for the face and clothes only.
+    """
     beats = []
+    sheeted = {item["name"] for item in cast if item.get("sheet_prompt")}
     for index, shot in enumerate(shots, 1):
         camera = "，".join(part for part in (shot["size"], shot["motion"]) if part)
-        beats.append({"title": _text_of("shots_as_beats.title").format(index), "prompt": f"{shot['desc']}{'，' + camera if camera else ''}"[:800]})
+        people = cast_line(shot.get("characters") or [], cast)
+        note = _text_of("shots_as_beats.reference_note") if sheeted & set(shot.get("characters") or []) else ""
+        time = str(shot.get("time") or "")
+        when = _text_of("shots_as_beats.time").format(time=time) if time and time not in shot["desc"] else ""
+        prompt = f"{shot['desc']}{'，' + camera if camera else ''}{'。' + when if when else ''}{'。' + people if people else ''}{'。' + note if note else ''}"
+        beats.append({"title": _text_of("shots_as_beats.title").format(index), "prompt": prompt[:800]})
     return beats
 
 
@@ -398,10 +571,23 @@ def grid_box(width: int, height: int, rows: int, columns: int, index: int) -> tu
     return (width * column // columns, height * row // rows, width * (column + 1) // columns, height * (row + 1) // rows)
 
 
+def erase_mode(params: Mapping[str, Any]) -> str:
+    """How the box is covered: filled from its surroundings (delogo), blurred, or turned into a mosaic."""
+    modes = prompt_data.value(_WORDING_FILE, "erase_modes")["modes"]
+    chosen = str(params.get("mode") or modes[0])
+    return chosen if chosen in modes else modes[0]
+
+
 def erase_box(params: Mapping[str, Any], width: int, height: int) -> tuple[int, int, int, int]:
-    """The box to erase, in pixels, kept a pixel inside the frame: ffmpeg's delogo refuses anything touching the edge."""
+    """The box to erase, in pixels, kept a pixel inside the frame: ffmpeg's delogo refuses anything touching the edge.
+
+    A ``preset`` (a full-width subtitle band at the bottom or top) stands in for the four numbers.
+    """
     if width < 8 or height < 8:
         raise CanvasToolError(_text_of("erase_box.text"))
+    preset = prompt_data.value(_WORDING_FILE, "erase_presets").get(str(params.get("preset") or ""))
+    if isinstance(preset, Mapping):
+        params = {**params, **preset}
     box_w = max(2, round(width * number(params, "w", 20, 0.5, 100) / 100))
     box_h = max(2, round(height * number(params, "h", 10, 0.5, 100) / 100))
     x = max(1, round(width * number(params, "x", 0, 0, 100) / 100))
@@ -433,8 +619,8 @@ def describe_catalog() -> list[dict[str, Any]]:
 
 
 __all__ = [
-    "BEAT_SYSTEM", "CanvasTool", "CanvasToolError", "DEFAULT_TOOL", "ENGINES", "MARK_PROMPT", "MARK_SYSTEM", "OUTPAINT_RATIOS",
+    "BEAT_SYSTEM", "CHARACTER_PROMPT", "CHARACTER_SYSTEM", "CanvasTool", "CanvasToolError", "DEFAULT_TOOL", "ENGINES", "MARK_PROMPT", "MARK_SYSTEM", "OUTPAINT_RATIOS",
     "REVERSE_PROMPT", "REVERSE_SYSTEM", "REVIEW_PROMPT", "REVIEW_SYSTEM", "SHOT_PROMPT", "SHOT_SYSTEM", "TOOLS", "StyleLook",
-    "beat_prompt", "beats_text", "describe_catalog", "erase_box", "get_tool", "grid_box", "image_prompt", "number",
+    "beat_prompt", "beats_text", "character_question", "describe_catalog", "erase_box", "get_tool", "grid_box", "image_prompt", "number",
     "outpaint_ratio", "parse_beats", "scene_cuts", "style_look", "style_wall", "tool_of",
 ]

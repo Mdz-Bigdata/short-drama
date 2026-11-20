@@ -1,19 +1,18 @@
 // The skinned figure: the CC0 Quaternius humanoid (see public/models/director-desk/NOTICE.txt)
-// showing one frame of one of its ten clips. The clip is scrubbed by `clip_phase`, never played
+// showing one frame of one of its clips. The clip is scrubbed by `clip_phase`, never played
 // against the wall clock: a still and a frame of an exported blockout must be reproducible.
 
 import { useEffect, useMemo, useState } from 'react';
 import { useThree, type ThreeEvent } from '@react-three/fiber';
-import { AnimationMixer, Box3, LoopOnce, LoopRepeat, type AnimationClip, type Mesh, type MeshStandardMaterial, type Object3D } from 'three';
-// three-stdlib's loaders do not embed `new URL` decoder fallbacks (see ElementModelViewport).
-import { GLTFLoader, SkeletonUtils } from 'three-stdlib';
+import { AnimationMixer, LoopOnce, LoopRepeat, type Mesh, type MeshStandardMaterial } from 'three';
+import { SkeletonUtils } from 'three-stdlib';
 
 import type { StageActor } from '../../../spatial/spatialTypes';
-import { disposeModelResources } from '../../../elements/three/disposeModelResources';
 import { HELPER_FLAG } from '../../lib/capture';
-import { HUMANOID_MODEL_URL, clipForPosture, humanoidClip } from '../../lib/humanoidClips';
+import { clipForPosture, humanoidClip } from '../../lib/humanoidClips';
 import { SELECTION_COLOR, actorColor, standingHeight } from '../stageLook';
 import { FigureMarks } from './FigureMarks';
+import { acquire, release, type Source } from './humanoidSource';
 import { StandIn } from './StandIn';
 
 interface Props {
@@ -22,41 +21,6 @@ interface Props {
   selected: boolean;
   labelled: boolean;
   onPick?: (event: ThreeEvent<MouseEvent>) => void;
-}
-
-interface Source { scene: Object3D; clips: AnimationClip[]; height: number; floor: number }
-
-// One download and one parse for every figure on stage; freed when the last of them leaves.
-let pending: Promise<Source> | null = null;
-let loaded: Source | null = null;
-let users = 0;
-
-function free(source: Source) {
-  disposeModelResources(source.scene);
-  pending = null;
-  loaded = null;
-}
-
-function acquire(): Promise<Source> {
-  users += 1;
-  pending ??= new GLTFLoader().loadAsync(HUMANOID_MODEL_URL).then(gltf => {
-    const box = new Box3().setFromObject(gltf.scene);
-    const source = { scene: gltf.scene, clips: gltf.animations, height: Math.max(0.1, box.max.y - box.min.y), floor: box.min.y };
-    // Everyone who asked may have left while it was downloading.
-    if (users > 0) loaded = source;
-    else free(source);
-    return source;
-  }).catch(error => {
-    // A failed download is not remembered: the next figure tries again.
-    pending = null;
-    throw error;
-  });
-  return pending;
-}
-
-function release() {
-  users -= 1;
-  if (users <= 0 && loaded) free(loaded);
 }
 
 const WHITE = '#eeece8';

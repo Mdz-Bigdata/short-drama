@@ -163,6 +163,25 @@ describe('CharacterLooks', () => {
     expect(found).toBeTruthy();
   });
 
+  it('says on the one chip when the same outfit is worn without its makeup', async () => {
+    mockApi();
+    items.push(look('w', '石砚', '靛青杂役短打·吐血唇血·炉灰脸', {
+      episodes: [1, 2], spans: [[1, 2]], makeups: ['石砚·吐血唇血', '石砚·炉灰脸'],
+      without: [{ label: '靛青杂役短打', spans: [[3, 3]], makeups: [], off: ['吐血唇血', '炉灰脸'] }],
+    }));
+    items.push(look('v', '阿禾', '灰蓝守炉短袄·烧伤痕', {
+      episodes: [2, 2], spans: [[2, 2]], without: [{ label: '灰蓝守炉短袄', spans: [], makeups: [], off: ['烧伤痕'] }],
+    }));
+    render(<CharacterLooks taskId="t1" characterName="石砚" />);
+    const tab = await screen.findByRole('tab', { name: '靛青杂役短打·吐血唇血·炉灰脸' });
+    expect(tab.getAttribute('title')).toBe('第 1–2 集；第 3 集不带吐血唇血、炉灰脸');
+    cleanup();
+    render(<CharacterLooks taskId="t1" characterName="阿禾" />);
+    const other = await screen.findByRole('tab', { name: '灰蓝守炉短袄·烧伤痕' });
+    items.splice(-2, 2);
+    expect(other.getAttribute('title')).toBe('第 2 集；其余各集不带烧伤痕');
+  });
+
   it('flags a look whose description changed after it was drawn', async () => {
     mockApi();
     const stale = look('t', '路人甲', '旧写法');
@@ -172,6 +191,27 @@ describe('CharacterLooks', () => {
     const flag = await screen.findByText('设定改过，这张图还是旧写法，建议重新生成');
     items.pop();
     expect(flag).toBeTruthy();
+  });
+
+  it('says when a drawn board has no side-face panel, and names that panel on a board that has one', async () => {
+    mockApi();
+    const views = ['look_front', 'look_left', 'look_back', 'look_three_quarter', 'look_closeup_1', 'look_closeup_2', 'look_closeup_3'];
+    const old = look('o', '路人乙', '旧板');
+    const fresh = look('n', '路人乙', '新板');
+    const withViews = (entry: typeof old, layout: string) => ({
+      ...entry,
+      metadata: { ...entry.metadata, look_layout: layout } as typeof entry.metadata,
+      files: [...entry.files, ...views.map(slot => ({ ...entry.files[0], id: `${entry.id}-${slot}`, slot, url: `/media/${entry.id}-${slot}.png` }))],
+    });
+    items.push(withViews(old, 'plain'), withViews(fresh, 'makeup_side'));
+    render(<CharacterLooks taskId="t1" characterName="路人乙" />);
+    await userEvent.click(await screen.findByRole('tab', { name: '旧板' }));
+    expect(await screen.findByText(/这张定妆图没有侧脸格/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('tab', { name: '新板' }));
+    const tabs = within(screen.getByRole('tablist', { name: '“新板”的单张' })).getAllByRole('tab').map(tab => tab.textContent);
+    items.splice(items.length - 2, 2);
+    expect(tabs.slice(-3)).toEqual(['正脸胸像', '妆效部位', '四分之三侧脸']);
+    expect(screen.queryByText(/这张定妆图没有侧脸格/)).toBeNull();
   });
 
   it('shows what the makeup check still found wrong, and nothing for a look that passed', async () => {

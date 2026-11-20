@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import re
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Any, Literal, Optional, Union
 from urllib.parse import urlsplit
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
@@ -639,7 +639,7 @@ class RightsNoteRequest(BaseModel):
 
 class TimelineOperationRequest(BaseModel):
     """One edit on the stage-7 timeline; which fields matter depends on ``operation``."""
-    operation: Literal["trim", "transition", "sound_join", "subtitle", "mute", "candidate", "review", "title", "bgm", "audio_source", "settings"]
+    operation: Literal["trim", "transition", "sound_join", "subtitle", "mute", "candidate", "review", "title", "bgm", "audio_source", "settings", "name_cards"]
     shot_id: Optional[int] = Field(None, ge=1)
     shot_uid: Optional[int] = Field(None, ge=1, description=_text_of("TimelineOperationRequest.description"))
     start: Optional[float] = Field(None, ge=0)
@@ -660,4 +660,6 @@ class TimelineOperationRequest(BaseModel):
     bgm_start: Optional[float] = Field(None, ge=0, le=3600, description=_text_of("TimelineOperationRequest.description.2"))
     music_version: Optional[str] = Field(None, max_length=2000, description=_text_of("TimelineOperationRequest.description.3"))
     audio_source: Optional[Literal["native", "tts", "none"]] = Field(None, description=_text_of("TimelineOperationRequest.description.4"))
-    settings: Optional[dict[str, bool]] = Field(None, description=_text_of("TimelineOperationRequest.description.5"))
+    settings: Optional[dict[str, Union[bool, dict[str, Any]]]] = Field(None, description=_text_of("TimelineOperationRequest.description.5"))
+    cards: Optional[list[dict[str, Any]]] = Field(None, max_length=8, description=_text_of("TimelineOperationRequest.description.cards"))
+    episode: Optional[int] = Field(None, ge=1, description=_text_of("TimelineOperationRequest.description.episode"))

@@ -1,6 +1,6 @@
 """Live presence between one account's windows of a canvas, over Server-Sent Events.
 
-GET  .../canvases/{canvas_id}/presence/stream  the window's event stream (peers, cursor, drag, selection, left, saved)
+GET  .../canvases/{canvas_id}/presence/stream  the window's event stream (peers, cursor, drag, selection, left, saved, run)
 POST .../canvases/{canvas_id}/presence         one cursor / drag / selection / leave message from a window
 """
 

@@ -44,6 +44,20 @@ describe('useDeskPlayback', () => {
     expect([result.current.frame, result.current.playing]).toEqual([0, true]);
   });
 
+  it('runs the playhead at the chosen speed, and takes only the speeds it offers', () => {
+    const { result } = renderHook(() => useDeskPlayback(4, 24, 'shot-1'));
+    expect(result.current.speed).toBe(1);
+    act(() => { result.current.setSpeed(2); result.current.play(); });
+    tick(0);
+    tick(100);                                         // 0.1 s of wall clock is 0.2 s of the shot
+    expect(result.current.time).toBeCloseTo(4 / 24);
+    act(() => result.current.setSpeed(0.5));
+    tick(100);                                         // and now 0.05 s: 0.25 s in all, which is frame 6
+    expect(result.current.frame).toBe(6);
+    act(() => result.current.setSpeed(7));
+    expect(result.current.speed).toBe(1);
+  });
+
   it('loops, steps, seeks and stops', () => {
     const { result } = renderHook(() => useDeskPlayback(1, 25, 'shot-1'));
     act(() => { result.current.setLoop(true); result.current.play(); });

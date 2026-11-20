@@ -186,6 +186,13 @@ class ProfileUpdateRequest(BaseModel):
     phone: str | None = Field(default=None, max_length=32)
 
 
+class PromptPreferenceRequest(BaseModel):
+    """An account's choice for one stage agent; the limits are checked against the stage in ``prompt_preferences``."""
+
+    mode: str = Field(min_length=1, max_length=16)
+    text: str = Field(default="", max_length=20_000)
+
+
 class PasswordChangeRequest(BaseModel):
     current_password: str = Field(min_length=1, max_length=256)
     new_password: str = Field(min_length=settings.PASSWORD_MIN_LENGTH, max_length=settings.PASSWORD_MAX_LENGTH)

@@ -17,7 +17,7 @@ const { frameSelection } = vi.hoisted(() => ({ frameSelection: vi.fn() }));
 // The viewports are the three.js boundary. The stand-ins expose what the desk hands them and let
 // a test play the part of the gizmo: preview while "dragging", one commit on release.
 vi.mock('./three/DeskViewport', () => ({
-  default: function MockDeskViewport({ plan, tool, readOnly, actorPaths, pathTarget, pathRefusal, onPreview, onCommit, onSelect, onPath, onReady }: DeskViewportProps) {
+  default: function MockDeskViewport({ plan, tool, readOnly, trails, pathTarget, pathRefusal, onPreview, onCommit, onSelect, onPath, onReady }: DeskViewportProps) {
     useEffect(() => {
       onReady?.({ viewPose: () => ({ position: [4, 3, 6], target: [0.6, 1, -0.4] }), frameSelection });
       return () => onReady?.(null);
@@ -26,7 +26,7 @@ vi.mock('./three/DeskViewport', () => ({
     return (
       <div data-testid="desk-viewport" data-tool={tool} data-readonly={String(readOnly)} data-path-target={pathTarget ? JSON.stringify(pathTarget) : ''} data-path-refusal={pathRefusal}>
         {plan.actors.map(actor => <span key={actor.id} data-testid={`actor-${actor.name}`}>{actor.position.join(',')}</span>)}
-        {actorPaths?.map(path => <span key={path.name} data-testid={`track-${path.name}`}>{path.points.map(point => point.join(',')).join(';')}</span>)}
+        {trails?.filter(trail => trail.kind === 'actor').map(trail => <span key={trail.owner} data-testid={`track-${trail.owner}`}>{trail.keys.map(key => key.position.join(',')).join(';')}</span>)}
         <button type="button" onClick={() => onSelect({ kind: 'actor', name: '林夏' }, false)}>pick 林夏</button>
         <button type="button" onClick={() => onSelect({ kind: 'camera', id: 'cam-01' }, false)}>pick cam-01</button>
         <button type="button" onClick={() => onSelect({ kind: 'camera', id: 'cam-02' }, false)}>pick cam-02</button>
@@ -114,7 +114,10 @@ describe('DirectorDesk', () => {
     await userEvent.click(screen.getByRole('radio', { name: /^机位$/ }));
     expect(screen.queryByTestId('desk-viewport')).toBeNull();
     await userEvent.click(screen.getByRole('radio', { name: /导演/ }));
-    expect(screen.queryByTestId('lens-viewport')).toBeNull();
+    // The director layout has no lens pane; the camera's frame floats over it in the picture-in-picture instead.
+    const pip = screen.getByRole('region', { name: '当前机位画中画' });
+    expect(await within(pip).findByTestId('lens-viewport')).toBeTruthy();
+    expect(screen.getAllByTestId('lens-viewport')).toHaveLength(1);
   });
 
   it('shows a drag in the lens view while it happens and sends one operation on release, without re-solving', async () => {
@@ -700,7 +703,7 @@ describe('DirectorDesk', () => {
     const card = screen.getByRole('dialog', { name: '快捷键' });
     expect(within(card).getAllByRole('term').map(item => item.textContent)).toEqual([
       'V', 'W', 'E', 'R', 'M', 'J', 'P', '1 / 2 / 3', '4', 'F', '空格', 'Delete', '← / →',
-      'Ctrl / ⌘ + Z', 'Ctrl / ⌘ + Shift + Z', 'Ctrl / ⌘ + Y', '?', 'Esc',
+      'Ctrl / ⌘ + Z', 'Ctrl / ⌘ + Shift + Z', 'Ctrl / ⌘ + Y', '?', 'Esc', '空格（成片预演）', 'Esc（成片预演）',
     ]);
     // Icon-only buttons say what they do, and their key, on hover.
     expect(screen.getByRole('button', { name: '关闭 3D 导演台' }).getAttribute('title')).toBe('关闭 3D 导演台（Esc）');
@@ -944,5 +947,110 @@ describe('DirectorDesk', () => {
       expect(patches()[0].solve).toBe(false);
     });
   });
-});
 
+  describe('monitors, picture-in-picture and 成片预演', () => {
+    it('docks a monitor per shot, switches shot from it, and remembers whether it was open', async () => {
+      await open();
+      // A 1024-px window starts with the wall folded; the button opens it.
+      expect(screen.queryByRole('region', { name: '监视器' })).toBeNull();
+      await userEvent.click(screen.getByRole('button', { name: '监视器' }));
+      const wall = screen.getByRole('region', { name: '监视器' });
+      const items = within(wall).getAllByRole('button', { name: /^第 \d 镜/ });
+      expect(items.map(item => item.querySelector('strong')?.textContent)).toEqual(['第 1 镜｜建立 · 林夏、周教授', '第 2 镜｜单人 · 林夏']);
+      expect(items[0].getAttribute('aria-pressed')).toBe('true');
+
+      await userEvent.click(items[1]);
+      expect((screen.getByRole('combobox', { name: '镜头' }) as HTMLSelectElement).value).toBe('2');
+      expect(screen.getByTestId('lens-camera').textContent).toBe('cam-02:65');
+      expect(window.localStorage.getItem('directorDesk.monitorsOpen')).toBe('1');
+
+      await userEvent.click(within(wall).getByRole('button', { name: '收起监视器' }));
+      expect(screen.queryByRole('region', { name: '监视器' })).toBeNull();
+      expect(window.localStorage.getItem('directorDesk.monitorsOpen')).toBe('0');
+    });
+
+    it('lists the current shot’s other lenses under it and looks through one when picked', async () => {
+      const base = planResponse().plan;
+      stage = {
+        ...base,
+        cameras: [...base.cameras, { ...base.cameras[0], id: 'alt-01-01', label: '01 建立 · 候选1', lens_mm: 50 }],
+        shots: [{ ...base.shots[0], alt_camera_ids: ['alt-01-01'] }, base.shots[1]],
+      };
+      window.localStorage.setItem('directorDesk.monitorsOpen', '1');
+      await open();
+      const wall = screen.getByRole('region', { name: '监视器' });
+      const lens = within(wall).getByRole('button', { name: /01 建立 · 候选1/ });
+      expect(lens.textContent).toContain('候选');
+      await userEvent.click(lens);
+      expect(screen.getByTestId('lens-camera').textContent).toBe('alt-01-01:50');
+      expect(lens.getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('floats the current camera over the director view, expands it, closes it and brings it back', async () => {
+      await open();
+      await userEvent.click(screen.getByRole('radio', { name: /导演/ }));
+      const pip = screen.getByRole('region', { name: '当前机位画中画' });
+      expect(await within(pip).findByTestId('lens-camera')).toBeTruthy();
+      expect(within(pip).getByTestId('lens-camera').textContent).toBe('cam-01:28');
+      expect(within(pip).getByText('第 1 镜 · 01 建立')).toBeTruthy();
+
+      await userEvent.click(within(pip).getByRole('button', { name: '放大到机位视图' }));
+      expect(screen.getByRole('radio', { name: /^机位$/ }).getAttribute('aria-checked')).toBe('true');
+      expect(screen.queryByRole('region', { name: '当前机位画中画' })).toBeNull();
+
+      await userEvent.click(screen.getByRole('radio', { name: /导演/ }));
+      await userEvent.click(within(screen.getByRole('region', { name: '当前机位画中画' })).getByRole('button', { name: '关闭画中画' }));
+      expect(screen.queryByRole('region', { name: '当前机位画中画' })).toBeNull();
+      expect(window.localStorage.getItem('directorDesk.pipOpen')).toBe('0');
+
+      // From another layout the button brings the director view back with the window on it.
+      await userEvent.click(screen.getByRole('radio', { name: /并排/ }));
+      await userEvent.click(screen.getByRole('button', { name: '画中画' }));
+      expect(screen.getByRole('radio', { name: /导演/ }).getAttribute('aria-checked')).toBe('true');
+      expect(screen.getByRole('region', { name: '当前机位画中画' })).toBeTruthy();
+    });
+
+    it('plays the scene through its lenses in 成片预演, shot after shot, and edits nothing', async () => {
+      // A short first shot, so playing on into the second takes a moment.
+      stage = { ...stage, timelines: { 1: { duration_s: 0.2, fps: 24, camera: [], actors: {} }, 2: { duration_s: 3, fps: 24, camera: [], actors: {} } } };
+      await open();
+      // A lens picked for a look does not hold in the preview: it shows the cut.
+      await userEvent.click(screen.getByRole('button', { name: 'pick cam-02' }));
+      await userEvent.click(screen.getByRole('radio', { name: /成片预演/ }));
+      expect(screen.getByRole('radio', { name: /成片预演/ }).getAttribute('aria-checked')).toBe('true');
+      expect(screen.queryByTestId('desk-viewport')).toBeNull();
+      expect(screen.queryByRole('complementary', { name: '场景大纲' })).toBeNull();
+      expect(screen.queryByRole('radiogroup', { name: '工具' })).toBeNull();
+      expect(screen.queryByLabelText('时间线')).toBeNull();
+      expect(await screen.findByTestId('lens-camera')).toBeTruthy();
+      expect(screen.getByTestId('lens-camera').textContent).toBe('cam-01:28');
+      const player = screen.getByRole('region', { name: '成片预演播放' });
+      expect(within(player).getByLabelText('成片时间').textContent).toBe('00:00 / 00:03');
+
+      // Delete and the tool keys do nothing here; nothing is sent.
+      fireEvent.keyDown(window, { key: 'Delete' });
+      fireEvent.keyDown(window, { key: 'w' });
+      expect(patches()).toHaveLength(0);
+
+      fireEvent.keyDown(window, { key: ' ' });
+      await waitFor(() => expect((screen.getByRole('combobox', { name: '镜头' }) as HTMLSelectElement).value).toBe('2'), { timeout: 3000 });
+      expect(screen.getByTestId('lens-camera').textContent).toBe('cam-02:65');
+      // The next shot rolls on by itself.
+      await userEvent.click(await within(player).findByRole('button', { name: '暂停' }, { timeout: 500 }));
+
+      // The strip jumps to a shot's start; the scrubber finds the shot a time falls in.
+      await userEvent.click(within(player).getByRole('button', { name: /跳到第 1 镜/ }));
+      expect((screen.getByRole('combobox', { name: '镜头' }) as HTMLSelectElement).value).toBe('1');
+      fireEvent.change(within(player).getByRole('slider', { name: '成片进度' }), { target: { value: '1.2' } });
+      expect((screen.getByRole('combobox', { name: '镜头' }) as HTMLSelectElement).value).toBe('2');
+      expect(within(player).getByLabelText('成片时间').textContent).toBe('00:01 / 00:03');
+
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(screen.getByRole('radio', { name: /场景调度/ }).getAttribute('aria-checked')).toBe('true');
+      expect(await screen.findByTestId('desk-viewport')).toBeTruthy();
+      expect(screen.getByLabelText('时间线')).toBeTruthy();
+      // Escape left the preview only; the desk is still open.
+      expect(screen.getByRole('dialog', { name: 'E1S01 · 办公室' })).toBeTruthy();
+    });
+  });
+});

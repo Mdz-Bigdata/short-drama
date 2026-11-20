@@ -280,12 +280,12 @@ def _looks_in_scene(
         worn: dict[str, None] = {}
         for shot in group:
             scene_id = str(shot.get("scene_id") or "")
-            chosen = character_variants.pick(
-                looks.get(name) or [], text=str(shot.get("_text") or ""),
-                episode=character_variants.episode_of(scene_id), scene=character_variants.scene_of(scene_id),
-            )
+            episode, scene = character_variants.episode_of(scene_id), character_variants.scene_of(scene_id)
+            chosen = character_variants.pick(looks.get(name) or [], text=str(shot.get("_text") or ""), episode=episode, scene=scene)
             if chosen:
-                worn[str(chosen["label"])] = None
+                # 并进了带妆效那张的素的那身：这一场写素的那身。
+                bare = character_variants.bare_look(chosen, episode, scene)
+                worn[str((bare or chosen)["label"])] = None
         added = [item["label"] for item in loose_makeup if item["of"] == name and mentioned({"name": item["name"]}, text)]
         joiner = _word("separators.look")
         parts = [joiner.join([label, *added]) for label in worn] or ([joiner.join(added)] if added else [])

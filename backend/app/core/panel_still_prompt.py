@@ -23,7 +23,7 @@ from app.core.action_grammar import concrete_ending, has_structure
 from app.core.face_card import parse_face_card
 from app.core.scene_turnaround import SCENE_REVERSE_SLOT, SCENE_VIEW_LABELS, SCENE_VIEW_PURPOSES
 from app.core.shot_motion_contract import CompiledShotPrompt, ShotMotionContract
-from app.core.storyboard_scene_context import OBJECT_KINDS, EMPTY_ACTOR, costume_owner, is_uncast, look_makeup_note, looks_only, real_size_note
+from app.core.storyboard_scene_context import OBJECT_KINDS, EMPTY_ACTOR, costume_owner, is_uncast, look_makeup_note, look_off_note, looks_only, real_size_note
 
 # 每格提示词的全部固定句、栏名、词表和正则都在 app/data/prompt/panel_still.json：这里只拼接。
 _DATA = "panel_still"
@@ -139,9 +139,12 @@ def _reference_line(references: Sequence[Mapping[str, Any]]) -> str:
             names.append(_says("ref_first_frame", number=number))
             continue
         if kind == "actor" and view == "face":
-            names.append(
-                _says("ref_face_real", number=number, name=name) if item.get("real_person") else _says("ref_face", number=number, name=name)
-            )
+            if item.get("real_person"):
+                names.append(_says("ref_face_real", number=number, name=name))
+            elif item.get("angle") == "side":
+                names.append(_says("ref_face_side", number=number, name=name))
+            else:
+                names.append(_says("ref_face", number=number, name=name))
             continue
         # 还没画的造型：这张图还是设定集，不在图名上写造型。
         variant = "" if item.get("look_undrawn") else str(item.get("variant") or "")
@@ -193,6 +196,11 @@ def _costume_notes(people: Sequence[str], references: Sequence[Mapping[str, Any]
         str(item.get("name")): look_makeup_note(_clip(item.get("look_makeup"), 120), panel=True)
         for item in references if item.get("kind") == "actor" and item.get("look_makeup")
     }
+    # 图上画着、这一格还没有(或已经没了)的妆效：写明不画。
+    off = {
+        str(item.get("name")): look_off_note(_clip(item.get("look_off"), 80), panel=True)
+        for item in references if item.get("kind") == "actor" and item.get("look_off")
+    }
     notes: dict[str, str] = {}
 
     def dressed(person: str) -> str:
@@ -211,7 +219,10 @@ def _costume_notes(people: Sequence[str], references: Sequence[Mapping[str, Any]
             for item in references
         )
         if person in looks and person in pictured and not old_costume:
-            notes[person] = dressed(person) + drawn.get(person, "") + (_says("added_makeup", makeup=added[person]) if person in added else "")
+            notes[person] = (
+                dressed(person) + drawn.get(person, "") + off.get(person, "")
+                + (_says("added_makeup", makeup=added[person]) if person in added else "")
+            )
             continue
         if person in added and person in pictured and not old_costume:
             notes[person] = (

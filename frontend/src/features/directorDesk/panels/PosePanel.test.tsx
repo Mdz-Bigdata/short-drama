@@ -160,12 +160,15 @@ describe('PosePanel', () => {
     expect(committed()[1]).toEqual({ op: 'set_pose', name: '林夏', shot_id: 1, preset: '', joints: {}, clip: '', clip_phase: 0 });
   });
 
-  it('gives a skinned figure ten clips and a scrubbed phase', async () => {
+  it('gives a skinned figure its clips, fighting ones among them, and a scrubbed phase', async () => {
     render(panel(withActor({ figure: 'humanoid' })));
     const select = screen.getByLabelText('动作片段') as HTMLSelectElement;
-    expect([...select.options].map(option => option.textContent)).toEqual([
+    const offered = [...select.options].map(option => option.textContent);
+    expect(offered.slice(0, 10)).toEqual([
       '站立 · 站立待机', '站立 · 交谈手势', '移动 · 行走', '移动 · 慢跑', '蹲姿 · 蹲姿待机', '移动 · 蹲着前进', '坐姿 · 坐下', '坐姿 · 坐姿待机', '坐姿 · 坐姿交谈', '坐姿 · 站起',
     ]);
+    expect(offered).toHaveLength(34);
+    expect(offered).toEqual(expect.arrayContaining(['持剑 · 持剑戒备', '持剑 · 三连斩', '拳脚 · 直拳', '受击 · 中招倒地', '腾跃 · 轻功腾空']));
     expect(screen.queryByRole('group', { name: '预设姿势' })).toBeNull();
 
     await userEvent.selectOptions(select, 'human-sit-idle-v1');

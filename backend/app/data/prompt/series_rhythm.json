@@ -1,12 +1,13 @@
 {
-  "_note": "连续短剧的节奏与起名(app/core/series_rhythm.py)。参考了一篇讲短剧分集、卡点和审稿的文章，措辞是本项目自己的。cliffhangers 是集尾卡点的几种停法(名字、怎么停)；分集规划的 hook 以 hook_tag 那样的「【类型】」开头，min_episodes_for_cliffhangers 集及以上的剧才要求。连着 same_kind_run 集同一种就出一条 repeat_warning——只是提示，不退回模型、不多调一次模型；没标类型的 hook 不算。cadence_rule 是升级与大反转多久来一次，escalate / reversal 是它用的集数范围，全剧不少于 escalate 下限才写进规划。payoff_kinds 是情绪点里算爽点的类型(名字与 emotion_points.json 一致)：爽点节点里出现 hollow_words(只是反应)而没有 result_words(已经发生的结果)任何一个，出 hollow_warning。naming_rule 给第 1 步的总导演，起名时用；overused_names 是整名，overused_surnames 与 overused_characters 是烂大街的姓和名里的字——姓在表里、名里又有表里的字才算(只有文章点名的四个名字是出处里的，其余是照这一类补的，可以增删)；main_cast 是角色表里从前往后算主要角色的人数，主要角色之间同姓出 same_surname_warning。起名的提示只对平台自己起名的创作剧出，小说和成品剧本的人名是作者的。news_rule 和 window_rule 是按窗口看的两条(参考了平台公开的长篇剧本要求，措辞是本项目自己的)：news_every 是「每几集到几集至少一个新信息」，news_kinds 是算新信息的情绪点类型；window 是窗口的集数，strong_kinds 是算强情绪点的类型(名字都与 emotion_points.json 一致)。全剧不少于 news_every 上限才写 news_rule，不少于 window 才写 window_rule；改编也写这两条。对应三条提示：连着 news_every 上限那么多集没有新信息出 news_warning，连着 window 集没有强情绪点出 strong_warning，连着 window 集的场记(分集规划里的 state_changes)全空出 still_warning——账本里从没写过场记时不出这一条；没给节点标类型的集不算数，遇到它就断开。knowledge_rule 进剧本分镜内容的写法：人物知道的事要有来源。episode_label 是提示里指某一集的叫法。",
+  "_note": "连续短剧的节奏与起名(app/core/series_rhythm.py)。参考了一篇讲短剧分集、卡点和审稿的文章，措辞是本项目自己的。cliffhangers 是集尾卡点的几种停法(名字、怎么停；关系误判一种参考了平台的 AI 剧投稿模板)；分集规划的 hook 以 hook_tag 那样的「【类型】」开头，min_episodes_for_cliffhangers 集及以上的剧才要求。连着 same_kind_run 集同一种就出一条 repeat_warning——只是提示，不退回模型、不多调一次模型；没标类型的 hook 不算。cadence_rule 是升级与大反转多久来一次，escalate / reversal 是它用的集数范围，全剧不少于 escalate 下限才写进规划。payoff_kinds 是情绪点里算爽点的类型(名字与 emotion_points.json 一致)：爽点节点里出现 hollow_words(只是反应)而没有 result_words(已经发生的结果)任何一个，出 hollow_warning。naming_rule 给第 1 步的总导演，起名时用；overused_names 是整名，overused_surnames 与 overused_characters 是烂大街的姓和名里的字——姓在表里、名里又有表里的字才算(只有文章点名的四个名字是出处里的，其余是照这一类补的，可以增删)；main_cast 是角色表里从前往后算主要角色的人数，主要角色之间同姓出 same_surname_warning。起名的提示只对平台自己起名的创作剧出，小说和成品剧本的人名是作者的。news_rule 和 window_rule 是按窗口看的两条(参考了平台公开的长篇剧本要求，措辞是本项目自己的)：news_every 是「每几集到几集至少一个新信息」，news_kinds 是算新信息的情绪点类型；window 是窗口的集数，strong_kinds 是算强情绪点的类型(名字都与 emotion_points.json 一致)。全剧不少于 news_every 上限才写 news_rule，不少于 window 才写 window_rule；改编也写这两条。对应三条提示：连着 news_every 上限那么多集没有新信息出 news_warning，连着 window 集没有强情绪点出 strong_warning，连着 window 集的场记(分集规划里的 state_changes)全空出 still_warning——账本里从没写过场记时不出这一条；没给节点标类型的集不算数，遇到它就断开。knowledge_rule 进剧本分镜内容的写法：人物知道的事要有来源。episode_label 是提示里指某一集的叫法。",
   "cliffhangers": [
     ["生死悬念", "危险碰到主角的前一瞬间切断"],
     ["信息揭一半", "只让观众看到半张照片，或一句话说到一半"],
     ["反击第一下", "主角亮底牌的第一个动作刚出现就切"],
     ["更大危机", "刚解决的事引出一个更大的麻烦"],
     ["身份逼近", "离秘密被揭穿只差一步"],
-    ["两难选择", "两样都不想失去的东西，只能留一样"]
+    ["两难选择", "两样都不想失去的东西，只能留一样"],
+    ["关系误判", "一方正好撞见关键一幕，看错了意思，下一集就要为这个误会付代价"]
   ],
   "hook_tag": "【{kind}】",
   "menu_item": "{kind}：{how}",

@@ -6,5 +6,6 @@
   "clean_variant.text.4": "集数范围无效：起始集要 ≥ 1 且不大于结束集",
   "clean_variant.text.5": "至少给一个触发词或一个集数范围，否则这个形象永远不会被用上",
   "apply.worn": "妆效：",
-  "apply.worn.2": "服装：{0}"
+  "apply.worn.2": "服装：{0}",
+  "apply.off_separator": "、"
 }

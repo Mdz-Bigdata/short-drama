@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { GitMerge, Loader2, Plus, RefreshCw, Scissors, Trash2 } from 'lucide-react';
 
-import { ApiError } from '../../api/client';
+import { ApiError, apiRequest } from '../../api/client';
 import {
   adoptReplan,
   applyLedgerOperation,
@@ -59,6 +59,27 @@ export function EpisodeLedgerTools({ taskId, onChanged, onBeforeChange, onOpenEp
   const [createText, setCreateText] = useState('');
   const [createKind, setCreateKind] = useState<'novel' | 'screenplay'>('novel');
   const [createAfter, setCreateAfter] = useState('');
+  // 上传一份文本解析成这一集的原文：正在读哪个文件、读不出来时的原因。
+  const [uploading, setUploading] = useState('');
+  const [uploadError, setUploadError] = useState('');
+
+  const readSourceFile = async (file: File | undefined) => {
+    if (!file) return;
+    setUploading(file.name);
+    setUploadError('');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const parsed = await apiRequest<{ content?: string }>('/api/drama/parse_script', { method: 'POST', body: form });
+      const content = String(parsed.content ?? '').trim();
+      if (!content) throw new Error(t('这个文件里没有读出文字。'));
+      setCreateText(content);
+    } catch (reason) {
+      setUploadError(reason instanceof Error && reason.message ? reason.message : t('文件没有读出来，请确认格式后重试。'));
+    } finally {
+      setUploading('');
+    }
+  };
 
   const load = useCallback((signal?: AbortSignal) => fetchLedger(taskId, signal)
     .then(data => { setView(data); setError(''); })
@@ -247,8 +268,16 @@ export function EpisodeLedgerTools({ taskId, onChanged, onBeforeChange, onOpenEp
           <label className="writer-ledger__wide">{t('这一集自己的原文（可留空，留空则按大纲创作）')}
             <textarea rows={4} value={createText} onChange={event => setCreateText(event.target.value)} />
           </label>
+          <label className="writer-ledger__wide">{t('或上传文本，解析成这一集的原文（txt、md、docx、pdf、fdx、fountain）')}
+            <input
+              type="file" accept=".txt,.md,.markdown,.docx,.pdf,.fdx,.fountain,.spmd" disabled={busy || Boolean(uploading)}
+              onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void readSourceFile(file); }}
+            />
+          </label>
+          {uploading && <p className="writer-screenwriting__notice" role="status">{t('正在读取 {0}…', [uploading])}</p>}
+          {uploadError && <p className="inline-error" role="alert">{uploadError}</p>}
           <div className="writer-screenwriting__actions">
-            <button type="submit" className="is-primary" disabled={busy}>{t('创建并写出')}</button>
+            <button type="submit" className="is-primary" disabled={busy || Boolean(uploading)}>{t('创建并写出')}</button>
             <button type="button" onClick={() => setCreating(false)}>{t('取消')}</button>
           </div>
         </form>

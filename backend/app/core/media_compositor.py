@@ -548,8 +548,14 @@ def subtitle_cues(text: str, seconds: float) -> List[Tuple[str, float, float]]:
     return cues
 
 
-def _render_subtitle_png(text: str, out_path: str) -> bool:
-    """用 PIL 把中文字幕渲染为 1080x1920 透明 PNG，并避开平台底部 UI。"""
+def _render_subtitle_png(text: str, out_path: str, style: Optional[Mapping[str, Any]] = None) -> bool:
+    """用 PIL 把中文字幕渲染为 1080x1920 透明 PNG，并避开平台底部 UI。
+
+    ``style``：成片精修里选的字幕样式(字号、颜色、位置、描边)；不给就是下面这套一直在用的默认样式。
+    """
+    if style:
+        from app.core import film_finishing_render
+        return film_finishing_render.render_subtitle_png(text, out_path, style)
     font_path = _font_path()
     if not font_path:
         return False
@@ -1043,7 +1049,9 @@ def _append_master_mix_filters(
                 filters.append(f"{labels[0]}anull[{name}bus]")
             else:
                 filters.append(f"{''.join(labels)}amix=inputs={len(labels)}:duration=longest:normalize=0[{name}bus]")
-            filters.append(f"[{name}bus]asplit=2[{name}mix][{name}key]")
+            filters.append(f"[{name}bus]asplit=2[{name}mix][{name}keyraw]")
+            # sidechaincompress stops at its shorter input: a key that ends with the last line would cut the music there.
+            filters.append(f"[{name}keyraw]apad[{name}key]")
         filters.append("[dubmix][natmix]amix=inputs=2:duration=longest:normalize=0[dialogue]")
         filters.append(f"{bgm_label}[dubkey]sidechaincompress=threshold=0.04:ratio=8:attack=20:release=350:makeup=1[bgmdub]")
         filters.append("[bgmdub][natkey]sidechaincompress=threshold=0.25:ratio=3:attack=20:release=350:makeup=1[bgmduck]")
@@ -1059,7 +1067,10 @@ def _append_master_mix_filters(
         dialogue_base = "[dialoguebase]"
 
     if bgm_label and dialogue_base:
-        filters.append(f"{dialogue_base}asplit=2[dialogue][duckkey]")
+        filters.append(f"{dialogue_base}asplit=2[dialogue][duckkeyraw]")
+        # sidechaincompress stops at its shorter input: a key that ends with the last line would cut the music there,
+        # so the key goes on in silence and the music plays to the end of the film.
+        filters.append("[duckkeyraw]apad[duckkey]")
         filters.append(
             f"{bgm_label}[duckkey]sidechaincompress=threshold={0.25 if voices_carry_ambience else 0.04}"
             f":ratio={3 if voices_carry_ambience else 8}:attack=20:release=350:makeup=1[bgmduck]"
@@ -1191,7 +1202,10 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
                  native_audio: Optional[List[bool]] = None,
                  bgm_start: float = 0.0,
                  fade_edges: bool = False,
-                 blackouts: Optional[List[Optional[dict]]] = None) -> Optional[str]:
+                 blackouts: Optional[List[Optional[dict]]] = None,
+                 subtitle_timings: Optional[List[Optional[List[dict]]]] = None,
+                 finishing: Optional[Mapping[str, Any]] = None,
+                 name_cards: Optional[List[Optional[List[dict]]]] = None) -> Optional[str]:
     """
     将多镜头视频合成为一条带片头标题卡、字幕、配音与 BGM 的竖屏成片/单集。
     - shot_video_urls: 各镜头视频直链 (http mp4)
@@ -1208,6 +1222,12 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
     - bgm_start: 配乐从成片第几秒进(淡入)；配乐在片尾淡出
     - fade_edges: 成片开头淡入、结尾淡出(画面和声音一起)
     - blackouts: 与镜头一一对应；分镜要的「一帧黑」({at, frames}，at 是原片第几秒)，按修剪后的时间盖几帧黑，声音不动
+    - subtitle_timings: 与镜头一一对应；用原声的镜头从片段声音里排好的字幕 [{text, start, end}](原片秒数)，
+      有就照它出(说到哪句出哪句)，没有就按念白时长在这一镜里排
+    - finishing: 成片精修(edit_timeline.render_plan 给的)：片名卡的底图与动效 title、字幕样式 subtitle、全片调色 grade、
+      片尾卡 ending；只带改过的那几项，None 就是和以前一模一样
+    - name_cards: 与镜头一一对应；人物出场字幕 [{name, identity, side, slot, at}](at 是原片第几秒，见 character_intro)，
+      竖排叠在人物那一侧，淡入淡出；没有就不画
     返回成片对外 URL；任一关键环节失败返回 None。
     """
     ff = _ffmpeg()
@@ -1216,11 +1236,24 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
         logger.warning("[Compositor] 成片合成不可用 (缺 ffmpeg 或无有效视频片段)")
         return None
     _ensure_dir()
-    h = hashlib.md5(("|".join(clips) + "|" + "|".join(subtitles or []) + f"|{native_audio}|{title}|{bgm}|{bool(shot_voices)}|{bgm_path}|{sfx_path}|{trims}|{bgm_volume}|{sound_joins}|{bgm_start}|{fade_edges}|{blackouts}").encode("utf-8")).hexdigest()[:16]
+    h = hashlib.md5(("|".join(clips) + "|" + "|".join(subtitles or []) + f"|{subtitle_timings}|{native_audio}|{title}|{bgm}|{bool(shot_voices)}|{bgm_path}|{sfx_path}|{trims}|{bgm_volume}|{sound_joins}|{bgm_start}|{fade_edges}|{blackouts}").encode("utf-8")).hexdigest()[:16]
+    if name_cards and any(name_cards):
+        # 出场字幕改了成片的样子：算进文件名；没有出场字幕时文件名和以前一样。
+        h = hashlib.md5(f"{h}|{name_cards}".encode("utf-8")).hexdigest()[:16]
+    finishing = dict(finishing) if finishing else {}
+    grade_vf = ""
+    if finishing:
+        # 成片精修改了成片的样子：算进文件名；没有精修时文件名和以前一样。
+        from app.core import film_finishing, film_finishing_render
+        h = hashlib.md5(f"{h}|{film_finishing.fingerprint(finishing)}".encode("utf-8")).hexdigest()[:16]
+        # 全片调色只加在各镜头自己的画面上(在缩放补边之前)：片名卡、片尾卡、字幕和黑边都不调。
+        grade_vf = film_finishing_render.grade_prefix(ff, finishing.get("grade"))
     work = os.path.join(MEDIA_DIR, f"_work_{tag}_{h}")
     os.makedirs(work, exist_ok=True)
     try:
-        scale_pad = f"scale={OUT_W}:-2,pad={OUT_W}:{OUT_H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
+        # Fit inside the frame, then pad: scaling to the width alone made a 480x854 clip (Seedance's 480p 9:16)
+        # 1922 tall, taller than the 1920 pad, and ffmpeg refused the whole film.
+        scale_pad = f"scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=decrease,pad={OUT_W}:{OUT_H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
         seg_files = []
         # 时间轴：[(段落时长, 该段配音路径或None)]，用于把逐镜配音对齐到时间轴
         timeline = []
@@ -1229,7 +1262,13 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
         title_dur = 0.0
         if title:
             tpng = os.path.join(work, "title.png")
-            if _render_title_png(title, tpng):
+            # 片名卡选了底图或动效的走精修；做不出来就退回下面的默认深色卡。
+            styled_title = film_finishing_render.title_segment(ff, work, title, finishing["title"]) if finishing.get("title") else None
+            if styled_title:
+                seg_files.append(styled_title)
+                title_dur = TITLE_DUR
+                timeline.append((TITLE_DUR, None, 0.0))
+            elif _render_title_png(title, tpng):
                 tseg = os.path.join(work, "seg_title.mp4")
                 try:
                     subprocess.run([ff, "-y", "-loop", "1", "-i", tpng, "-t", f"{TITLE_DUR}",
@@ -1291,10 +1330,17 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
             trim = effective_trims[i] if i < len(effective_trims) else None
             # 一句一条字幕，按念白时长排在这一镜里(每条至少 2 秒)，不再整镜挂一整块。
             cue_pngs: List[Tuple[str, float, float]] = []
-            if sub_text:
-                for cue_index, (cue, cue_start, cue_end) in enumerate(subtitle_cues(sub_text, _kept_seconds(trim, _probe_duration(raw) or 0.0))):
+            heard = subtitle_timings[i] if subtitle_timings and i < len(subtitle_timings) else None
+            if heard:
+                # 原声镜头：字幕跟着片段里真说出口的那几秒走(修剪掉的部分不出)。
+                from app.core.spoken_cues import trimmed as _cues_trimmed
+                placed = _cues_trimmed(heard, float(trim[0] or 0.0) if trim else 0.0, (float(trim[1]) if trim and trim[1] is not None else None))
+            else:
+                placed = subtitle_cues(sub_text, _kept_seconds(trim, _probe_duration(raw) or 0.0)) if sub_text else []
+            if placed:
+                for cue_index, (cue, cue_start, cue_end) in enumerate(placed):
                     png = os.path.join(work, f"sub_{i}_{cue_index}.png")
-                    if _render_subtitle_png(cue, png):
+                    if _render_subtitle_png(cue, png, finishing.get("subtitle")):
                         cue_pngs.append((png, cue_start, cue_end))
             has_sub = bool(cue_pngs)
             # The timeline's trim: decode from the in point and stop at the out point.
@@ -1310,17 +1356,39 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
                 blackouts[i] if blackouts and i < len(blackouts) else None,
                 trim_start=float(trim[0] or 0.0) if trim else 0.0, fps=float(OUT_FPS),
             )
-            shot_vf = scale_pad + (
+            shot_vf = grade_vf + scale_pad + (
                 f",drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='between(t,{flash[0]:.3f},{flash[1]:.3f})'" if flash else ""
             )
+            # 人物出场字幕：竖排叠在人物那一侧，按修剪后的时间出现，淡入淡出。
+            card_layers: List[Tuple[str, float, float, float]] = []
+            if name_cards and i < len(name_cards) and name_cards[i]:
+                from app.core import name_card_render
+                card_layers = name_card_render.layers(
+                    name_cards[i], work, i, trim_start=float(trim[0] or 0.0) if trim else 0.0,
+                    kept=_kept_seconds(trim, _probe_duration(raw) or 0.0), width=OUT_W, height=OUT_H, font_path=_font_path(),
+                )
             try:
-                if has_sub:
+                if has_sub or card_layers:
                     overlays, last = [f"[0:v]{shot_vf}[s0]"], "s0"
-                    for cue_index, (_png, cue_start, cue_end) in enumerate(cue_pngs, start=1):
-                        window = "" if len(cue_pngs) == 1 else f":enable='between(t,{cue_start:.3f},{cue_end:.3f})'"
+                    layer_inputs: List[str] = []
+                    for cue_index, (png, cue_start, cue_end) in enumerate(cue_pngs, start=1):
+                        # 原声镜头的一句字幕也只在说的那几秒出现；估算排的单句照旧挂满整镜。
+                        window = "" if len(cue_pngs) == 1 and not heard else f":enable='between(t,{cue_start:.3f},{cue_end:.3f})'"
+                        layer_inputs += ["-i", png]
                         overlays.append(f"[{last}][{cue_index}:v]overlay=0:0{window}[s{cue_index}]")
                         last = f"s{cue_index}"
-                    cmd = [ff, "-y", *trim_args, "-i", raw, *[arg for png, _a, _b in cue_pngs for arg in ("-i", png)],
+                    for card_index, (png, card_start, card_end, fade) in enumerate(card_layers, start=len(cue_pngs) + 1):
+                        # 一张图循环成一段和它出现时间一样长的画面，才能做透明度的淡入淡出；画面放完就让位(eof_action=pass)，片段长度不变。
+                        layer_inputs += ["-loop", "1", "-framerate", str(OUT_FPS), "-t", f"{card_end:.3f}", "-i", png]
+                        overlays.append(
+                            f"[{card_index}:v]format=rgba,fade=t=in:st={card_start:.3f}:d={fade:.3f}:alpha=1,"
+                            f"fade=t=out:st={card_end - fade:.3f}:d={fade:.3f}:alpha=1[c{card_index}]"
+                        )
+                        overlays.append(
+                            f"[{last}][c{card_index}]overlay=0:0:eof_action=pass:enable='between(t,{card_start:.3f},{card_end:.3f})'[s{card_index}]"
+                        )
+                        last = f"s{card_index}"
+                    cmd = [ff, "-y", *trim_args, "-i", raw, *layer_inputs,
                            "-filter_complex", ";".join(overlays), "-map", f"[{last}]",
                            "-r", str(OUT_FPS), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", seg]
                 else:
@@ -1342,6 +1410,13 @@ def compose_film(shot_video_urls: List[str], subtitles: List[str], audio_path: O
         specs = list(transition_plans or [])
         if title_dur:
             specs.insert(0, {"type": "crossfade", "duration": 0.35})
+        ending_seg = film_finishing_render.ending_segment(ff, work, finishing["ending"]) if finishing.get("ending") else None
+        if ending_seg:
+            # 片尾卡接在最后一镜后面：前面各刀的转场先补齐，再加进片尾卡的这一刀。
+            specs = (specs + [{"type": "crossfade", "duration": 0.22}] * len(seg_files))[: len(seg_files) - 1]
+            specs.append(film_finishing.ending_transition())
+            seg_files.append(ending_seg)
+            timeline.append((_probe_duration(ending_seg) or float(finishing["ending"].get("seconds") or 0.0), None, 0.0))
         concat = os.path.join(work, "concat.mp4")
         transition_overlaps = _join_video_segments(seg_files, concat, transition_specs=specs)
 

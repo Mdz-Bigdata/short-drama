@@ -160,6 +160,8 @@ class ShotPromptInput:
     extra_negatives: Sequence[str] = ()
     continuity_constants: Sequence[str] = ()
     aspect_ratio: str = "9:16"
+    # 项目另选的对白语言(方言、外语)在「对白语言」那一行里的写法；空着就是模型默认的普通话。
+    spoken_language: str = ""
     # 本镜锁定的资产名字(按参考图顺序)：写进锚点行，并在正文里标成 @[名字]。
     cast_refs: Sequence[str] = ()
     scene_refs: Sequence[str] = ()
@@ -599,7 +601,7 @@ def _skeleton_sections(shot: ShotPromptInput, family: str, *, fight: bool, back:
         "same_instance": clip_skeleton.same_instance(
             shot.cast_refs, shot.costume_refs, shot.costume_images, references=references,
         ),
-        "dialogue_language": clip_skeleton.dialogue_language(family, on_screen, off_screen) if shot.native_audio and turns else "",
+        "dialogue_language": clip_skeleton.dialogue_language(family, on_screen, off_screen, language=shot.spoken_language) if shot.native_audio and turns else "",
         "space_axis": clip_skeleton.space_axis(shot.action_axis, fight_pair=fight and len(shot.characters) >= 2),
         "lens": clip_skeleton.lens(fight=fight, camera_movement=shot.camera_movement),
         "impact_sound": clip_skeleton.impact_sound(family) if fight and shot.native_audio else "",
@@ -914,7 +916,8 @@ def format_dialogue(
     spoken: list[str] = []
     others: list[str] = []  # 开口的人不在本镜人物名单里：也算在说话，只是没有参考图可标
     for line in dialogue_segments(dialogue):
-        if is_no_line(line):
+        # 「沈磨：无台词，嘴唇未动，只把下颌抬起半寸」一个字也不念：不能写成 {…} 让模型照着说出来。
+        if is_no_line(line) or not spoken_lines([line]):
             continue
         for name in known:
             # 「姜照：……」或「姜照（平静）：……」——语气写在说话人后面、台词的花括号外面。

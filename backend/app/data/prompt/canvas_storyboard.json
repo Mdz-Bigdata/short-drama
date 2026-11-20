@@ -1,0 +1,30 @@
+{
+  "_note": "把项目的分镜一键铺到画布(app/core/canvas_storyboard.py)。每个镜头变成一对节点：首帧(已有分镜图就是素材节点，没有就是图片生成节点) → 视频节点(绑定到这一镜，提交时写回它)；出场角色的定妆图是素材节点，连到要生成的首帧上当参考图；一场戏一个分组；一次铺两个镜头以上时，再加一个「成片」视频合成节点，按镜头顺序接上每个视频节点——全部运行后它就是这几场连起来的片子。已经铺过的镜头(画布上有绑定同一镜的视频节点)不再铺第二遍。max_shots 是一次最多铺的镜头数；cell / gap 是排版的格宽、格高与间距。能力参考 NovaNova Studio 的「分镜 → 画布节点」，实现与措辞是本项目自己的。",
+  "max_shots": 120,
+  "layout": {
+    "column": 360,
+    "frame_height": 320,
+    "clip_height": 340,
+    "row_gap": 140,
+    "pair_gap": 40,
+    "cast_width": 260,
+    "cast_height": 320,
+    "cast_gap": 40,
+    "cast_margin": 120,
+    "film_width": 360,
+    "film_height": 260
+  },
+  "frame_label": "{scene} 镜{shot} 首帧",
+  "board_label": "{scene} 镜{shot} 分镜图",
+  "clip_label": "{scene} 镜{shot} 视频",
+  "cast_label": "{name}·定妆",
+  "cast_missing": "「{name}」还没有定妆设定集，先生成角色资产再添加到画布",
+  "scene_label": "{scene}",
+  "line": "{speaker}：{text}",
+  "dialogue_lead": "台词：",
+  "no_storyboard": "项目还没有分镜：先完成第 4 阶段的分镜，再铺到画布",
+  "no_scene": "没有找到要铺的场次：{scenes}",
+  "nothing_new": "选中的镜头都已经在画布上了",
+  "too_many": "一次最多铺 {limit} 个镜头，选中了 {count} 个：按场次分几次铺",
+  "film_label": "成片（{count} 个镜头）"
+}

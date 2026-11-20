@@ -109,6 +109,10 @@ _CATALOGUE: tuple[tuple[str, Variable, tuple[Variable, ...]], ...] = (
     ("colour_drift", "reference", ("reference", "camera")),
     ("spatial_break", "camera", ("camera", "action")),
     ("style_drift", "reference", ("reference",)),
+    # Before expression_failure: 「表情突变」 and 「眼神呆滞」 name these, not a stiff face.
+    ("face_flip", "action", ("action", "camera")),
+    ("dead_eyes", "action", ("action", "camera")),
+    ("floating", "action", ("action", "camera")),
     ("expression_failure", "action", ("action", "camera")),
     ("lip_sync", "sound", ("sound",)),
     ("audio_muddy", "sound", ("sound",)),

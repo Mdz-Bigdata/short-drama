@@ -112,6 +112,13 @@ class FitSampleTest(unittest.TestCase):
         cut = Path(self.temp.name) / sent.rsplit("/", 1)[1]
         self.assertAlmostEqual(self.mc._probe_duration(str(cut)), 7.5, delta=0.15)
 
+    def test_only_a_version_proven_to_take_inline_audio_sends_it_that_way(self):
+        for model in ("seedance2.5", "doubao-seedance-2-5-260628"):
+            self.assertTrue(voice_reference.audio_limits(model)["inline"], model)
+        for model in ("seedance2.0", "doubao-seedance-2-0-pro", "MiniMax-H3", ""):
+            self.assertFalse(voice_reference.audio_limits(model)["inline"], model)
+        self.assertNotIn("inline_for", voice_reference.audio_limits("seedance2.5"))
+
     def test_with_no_public_link_it_goes_inline_only_where_allowed(self):
         with patch.object(self.mc, "local_media_path", self._local), patch.object(voice_reference, "reachable", lambda url: False):
             self.assertEqual(voice_reference.fit_sample("https://media.test/take.mp3", 5, self.limits), "")

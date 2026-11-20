@@ -122,7 +122,7 @@ class WorkflowGuideTests(unittest.TestCase):
                     )
                 self.assertEqual(response["stage"], 5)
 
-    def test_slash_resume_remembers_automatic_mode(self):
+    def test_slash_resume_always_carries_on_automatically(self):
         for automatic in (False, True):
             task = task_at(3)
             task.update(
@@ -142,9 +142,8 @@ class WorkflowGuideTests(unittest.TestCase):
                 response = asyncio.run(
                     self.service.assistant_message("workflow", "/resume")
                 )
-            self.assertEqual(
-                response["action"], "run_all" if automatic else "run_stage"
-            )
+            # Whether the run that stopped was automatic or not, resuming goes on to the film by itself.
+            self.assertEqual(response["action"], "run_all")
             self.assertEqual(response["stage"], 4)
 
     def test_all_eight_steps_are_driven_by_actual_outputs(self):
@@ -335,21 +334,103 @@ class WorkflowGuideTests(unittest.TestCase):
         self.assertNotIn("请先审核本步产物", said, "an automatic run never stops to ask")
         self.assertIn("当前是自动制作模式", said)
 
-    def test_continue_after_an_automatic_run_stopped_carries_on_automatically(self):
-        for automatic, action in ((True, "run_all"), (False, "run_stage")):
+    def test_continue_always_runs_on_and_only_step_stops_after_one_stage(self):
+        for automatic, message, action in ((True, "继续", "run_all"), (False, "继续", "run_all"), (False, "接着做吧", "run_all"), (True, "逐步", "run_stage")):
             task = task_at(3)
             # Its own task each time: the first claim's reservation would refuse a second run on one task.
-            task.update(task_id=f"workflow-{action}", status="failed", workflow_control={"automatic": automatic, "active": False})
+            task.update(task_id=f"workflow-{automatic}-{message}", status="failed", workflow_control={"automatic": automatic, "active": False})
             self.save(task)
             expected = self.service.workflow_snapshot(task)["next_stage"]  # a failed stage is retried first
             with patch.object(self.service, "execute_stage"), patch.object(self.service, "execute_all_stages"):
-                response = asyncio.run(self.service.assistant_message(task["task_id"], "继续"))
-            self.assertEqual(response["action"], action)
+                response = asyncio.run(self.service.assistant_message(task["task_id"], message))
+            self.assertEqual(response["action"], action, message)
             self.assertEqual(response["stage"], expected)
+            claimed = self.service.repo.get_task(task["task_id"])["workflow_control"]
+            self.assertEqual(claimed["automatic"], action == "run_all")
 
-    def test_the_manual_hint_offers_the_one_sentence_way(self):
+    def test_the_hint_says_continue_runs_on_and_how_to_stop(self):
         hint = self.service.workflow_snapshot(task_at(3))["hint"]
-        self.assertIn("说「一键成片」则从这一步自动做到成片", hint)
+        self.assertIn("回复「继续」从这一步一直做到成片，中间不再停下来等确认", hint)
+        self.assertIn("随时说「暂停」可以打断", hint)
+        actions = {action["kind"]: action for action in self.service.workflow_snapshot(task_at(3))["actions"]}
+        self.assertEqual(actions["continue"]["message"], "继续")
+        self.assertEqual(actions["step"]["message"], "逐步")
+
+    def test_natural_language_pauses_resumes_and_steps(self):
+        cases = {
+            "先停一下": "pause", "暂停一下吧": "pause", "先别往下做了": "pause", "等一下，我先看看分镜": "pause",
+            "打断一下": "pause", "不做了": "pause", "结束任务": "stop",
+            "接着做吧": "resume", "好的，接着做": "resume", "从停下的地方继续": "resume", "帮我从断点继续": "resume",
+            "恢复制作": "resume", "往下做": "resume",
+            "逐步": "step", "只做下一步": "step", "每一步都停下来等我确认": "step", "/step": "step",
+            # Not commands: a question, a refusal, and a change request that starts with 继续.
+            "怎么暂停？": "question", "请不要暂停": "read", "继续把林夏改瘦一点": "read",
+        }
+        for message, intent in cases.items():
+            self.assertEqual(assistant_intent(message)[0], intent, message)
+
+    def test_continue_runs_every_remaining_stage_without_asking(self):
+        calls = []
+        self.save(task_at(2))
+
+        def fake_worker(task_id, stage, *, _claimed_task):
+            calls.append(stage)
+            task = deepcopy(_claimed_task)
+            task["assets"].update(outputs(stage))
+            task["stage_progress"]["status"] = "success"
+            self.save(task)
+            return task
+
+        async def talk():
+            response = await self.service.assistant_message("workflow", "继续")
+            pending = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+            await asyncio.gather(*pending)
+            return response
+
+        with patch.object(self.service, "_execute_stage_blocking", side_effect=fake_worker):
+            response = asyncio.run(talk())
+        self.assertEqual(response["action"], "run_all")
+        self.assertEqual(calls, list(range(3, 9)))
+        said = "\n".join(str(item.get("content") or "") for item in self.service.repo.get_task("workflow").get("chat_history") or [])
+        self.assertNotIn("请先审核本步产物", said)
+
+    def test_a_pause_stops_the_running_stage_at_its_next_step_and_continue_picks_it_up(self):
+        self.save(task_at(3))
+        reached = []
+
+        def stage_four(task_id, stage, *, _claimed_task):
+            task = deepcopy(_claimed_task)
+            self.service._progress_begin(task, stage)
+            task["assets"]["4_scene_boards"] = {"E1S01": {"status": "complete"}}
+            # Someone says 「先停一下」 while the first scene is drawn.
+            self.service.pause_task("workflow")
+            self.service._progress_step(task, 40, "第 2 场")
+            reached.append("after the pause point")
+            return task
+
+        async def talk():
+            response = await self.service.assistant_message("workflow", "继续")
+            pending = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+            await asyncio.gather(*pending)
+            return response
+
+        with patch.object(self.service, "_execute_stage_blocking", side_effect=stage_four):
+            asyncio.run(talk())
+        self.assertEqual(reached, [], "the stage stopped at the progress step after the pause")
+        task = self.service.repo.get_task("workflow")
+        self.assertEqual(task["status"], "paused")
+        self.assertEqual(task["stage_progress"]["status"], "paused")
+        self.assertFalse(task["workflow_control"]["active"])
+        # What the stage finished before the pause was saved by that step.
+        self.assertEqual(task["assets"]["4_scene_boards"], {"E1S01": {"status": "complete"}})
+        said = "\n".join(str(item.get("content") or "") for item in task.get("chat_history") or [])
+        self.assertNotIn("本轮未完成，已停止推进", said, "a pause is not reported as a failure")
+        self.assertEqual(self.service.workflow_snapshot(task)["next_stage"], 4)
+
+        with patch.object(self.service, "execute_all_stages"):
+            response = asyncio.run(self.service.assistant_message("workflow", "从停下的地方继续"))
+        self.assertEqual((response["action"], response["stage"]), ("run_all", 4))
+        self.assertEqual(self.service.repo.get_task("workflow")["stage_resume"], 4, "the paused stage reuses what it finished")
 
     def test_chat_history_is_persisted_and_exposed_by_schema(self):
         self.save(task_at(1))

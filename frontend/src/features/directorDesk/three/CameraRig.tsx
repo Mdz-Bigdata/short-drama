@@ -5,6 +5,7 @@ import type { ThreeEvent } from '@react-three/fiber';
 import { parseAspect } from '../../spatial/floorPlanGeometry';
 import type { StageCamera } from '../../spatial/spatialTypes';
 import { frustumReach } from '../lib/viewHelpers';
+import { CAMERA_BODY_SIZE_M, CameraBody } from './CameraBody';
 import { ScreenLifted, ScreenSized } from './ScreenSized';
 import { StageLabel } from './StageLabel';
 import { SELECTION_COLOR } from './stageLook';
@@ -34,9 +35,7 @@ export interface PointerHandlers {
 /** The body and the look-at handle keep at least this many pixels across, so a lens across a street can still be picked. */
 const BODY_PIXELS = 16;
 const TARGET_PIXELS = 14;
-/** The body's box, and the longest side of it. */
-const BODY_BOX: Point = [0.22, 0.16, 0.28];
-const BODY_SIZE_M = 0.28;
+const BODY_SIZE_M = CAMERA_BODY_SIZE_M;
 /** How far over the lens its label sits while the body is its real size. */
 const LABEL_LIFT_M = 0.24;
 const AT_ANCHOR: Point = [0, 0, 0];
@@ -85,10 +84,8 @@ export function CameraRig({ camera, label, active, selected, targetSelected, onP
         return <Line key={index} points={points} color={color} lineWidth={rayWidth} transparent opacity={opacity} />;
       })}
       <ScreenSized position={camera.position} size={BODY_SIZE_M} minPixels={BODY_PIXELS}>
-        <mesh onClick={onPick} {...bodyPointer}>
-          <boxGeometry args={BODY_BOX} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={selected ? 0.5 : 0.1} />
-        </mesh>
+        {/* Shaped like a camera and turned the way it films, so its aim reads without following the sight line. */}
+        <CameraBody position={camera.position} target={camera.target} color={color} glow={selected ? 0.5 : 0.1} onClick={onPick} {...bodyPointer} />
       </ScreenSized>
       {/* The label rises with the body: from across a street the enlarged box would otherwise cover the foot of the number. */}
       <ScreenLifted position={camera.position} lift={LABEL_LIFT_M} size={BODY_SIZE_M} minPixels={BODY_PIXELS}>

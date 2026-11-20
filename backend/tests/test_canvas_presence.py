@@ -273,6 +273,62 @@ class HubCase(unittest.IsolatedAsyncioTestCase):
         got = await asyncio.wait_for(a.queue.get(), 1)
         self.assertEqual((got.name, got.data), ("saved", {"version": 5, "client_id": None}))
 
+    async def test_run_reaches_the_owners_windows_of_that_board_from_another_thread(self):
+        a, b = self.open(A), self.open(B)
+        elsewhere, stranger = self.open(C, canvas="other"), self.open(C, owner="u2")
+        await _settle()
+        for sub in (a, b, elsewhere, stranger):
+            _drain(sub)
+        said = dict(batch_id="batch_1", status="running", run_id="run_1", node_id="n1")
+        thread = threading.Thread(target=self.hub.run_changed, args=("u1", "p1", "main"), kwargs=said)
+        thread.start()
+        thread.join()
+        self.hub.run_changed("u1", "p1", "main", batch_id="batch_1", status="finished")
+        await _settle()
+        expected = [
+            ("run", {"batch_id": "batch_1", "run_id": "run_1", "node_id": "n1", "status": "running"}),
+            ("run", {"batch_id": "batch_1", "run_id": None, "node_id": None, "status": "finished"}),
+        ]
+        for sub in (a, b):
+            self.assertEqual([(event.name, dict(event.data)) for event in _drain(sub)], expected)
+        self.assertEqual((_drain(elsewhere), _drain(stranger)), ([], []))
+
+    async def test_run_says_only_known_statuses_and_short_ids_and_never_raises(self):
+        a = self.open(A)
+        await _settle()
+        _drain(a)
+        with self.assertLogs("app.service.canvas_presence", level="WARNING"):
+            self.hub.run_changed("u1", "p1", "main", batch_id="batch_1", status="<script>", run_id="run_1")
+            self.hub.run_changed("u1", "p1", "main", batch_id="", status="done", run_id="run_1")
+        self.hub.run_changed("u1", "p1", "main", batch_id="batch_1", status="done", run_id="r" * 121, node_id={"not": "an id"})
+        # Nobody on that board, and a board nobody opened: nothing happens, no room appears.
+        self.hub.run_changed("u1", "p1", "nowhere", batch_id="batch_1", status="done", run_id="run_1")
+        await _settle()
+        self.assertEqual([dict(event.data) for event in _drain(a)], [{"batch_id": "batch_1", "run_id": None, "node_id": None, "status": "done"}])
+        self.assertEqual(self.hub.room_count(), 1)
+        with mock.patch.object(self.hub, "_broadcast", side_effect=RuntimeError("boom")), self.assertLogs("app.service.canvas_presence", level="ERROR"):
+            self.hub.run_changed("u1", "p1", "main", batch_id="batch_1", status="done", run_id="run_1")
+
+    async def test_a_window_cannot_post_a_run_event(self):
+        self.open(A)
+        self.open(B)
+        with self.assertRaises(ValueError):
+            self.hub.publish("u1", "p1", "main", A, {"type": "run", "batch_id": "batch_1", "status": "done"})
+
+    async def test_while_a_stream_is_being_replaced_one_run_is_kept_and_saved_is_not_crowded_out(self):
+        hub = PresenceHub(clock=self.clock, max_stream_seconds=0.02, ping_seconds=60, reconnect_grace=5)
+        a = hub.open_stream("u1", "p1", "main", A, "")
+        async for _ in hub.stream(a):
+            pass
+        hub.saved("p1", "main", 7, None, owner_id="u1")
+        for index in range(40):
+            hub.run_changed("u1", "p1", "main", batch_id="batch_1", status="running", run_id=f"run_{index}", node_id=f"n{index}")
+        hub.saved("p1", "main", 8, None, owner_id="u1")
+        again = hub.open_stream("u1", "p1", "main", A, "")
+        await _settle()
+        got = [(event.name, event.data.get("version") or event.data.get("run_id")) for event in _drain(again) if event.name != "peers"]
+        self.assertEqual(got, [("saved", 7), ("run", "run_39"), ("saved", 8)])
+
 
 class RouteCase(unittest.TestCase):
     def setUp(self):

@@ -16,7 +16,7 @@ class SceneSecondsTests(unittest.TestCase):
 
     def test_a_short_scene_is_not_stretched_to_the_models_preferred_floor(self):
         floor, _cap = preferred_shot_seconds("doubao-seedance-2-5-260628")
-        self.assertEqual(floor, 10)
+        self.assertEqual(floor, 15)
         self.assertEqual(scene_seconds.clip_floor(floor, 6, MIN_SHOT_SECONDS), 6)
         self.assertEqual(scene_seconds.clip_floor(floor, 2, MIN_SHOT_SECONDS), MIN_SHOT_SECONDS, "不低于模型能出的最短")
         self.assertEqual(scene_seconds.clip_floor(floor, 25, MIN_SHOT_SECONDS), floor, "长场照旧")

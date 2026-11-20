@@ -1,6 +1,6 @@
 import { forwardRef, lazy, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type RefObject } from 'react';
 import {
-  AudioLines, Boxes, Clapperboard, Copy, Download, FileUp, Film, Globe2, HelpCircle, ImageIcon, ListTree, Moon, Palette, Pencil, Play, Plus, Redo2, Search, Send, Share2, SlidersHorizontal,
+  AudioLines, Bot, Boxes, Clapperboard, Copy, Download, FileUp, Film, Globe2, HelpCircle, ImageIcon, Library, ListTree, Moon, Palette, Pencil, Play, Plus, Redo2, RefreshCw, Search, Cpu, Clapperboard as FilmIcon, Send, Share2, SlidersHorizontal,
   StickyNote, Sun, Trash2, Undo2, Upload, Waypoints, X, History, type LucideIcon, Workflow, Wrench,
 } from 'lucide-react';
 
@@ -12,7 +12,7 @@ import {
 } from './canvasApi';
 import { BACKGROUND_MODES, type CanvasBackgroundMode } from './canvasBackground';
 import { pasteIdMap, pastePlan, readStoredClip, reconnectInbound, writeClip } from './canvasClipboard';
-import { createConnectedNode } from './canvasConnectedPlacement';
+import { createConnectedNode, findFreeSpot } from './canvasConnectedPlacement';
 import { CanvasContext, type CanvasActions } from './canvasContext';
 import { exportCanvas, exportFileName, importOffset, mergeImport, parseCanvasImport } from './canvasExport';
 import { changedNodeIds, flashDurationMs } from './canvasFocus';
@@ -36,6 +36,17 @@ import { CanvasPresenceLayer, CanvasPresencePeers } from './CanvasPresenceLayer'
 import { BookmarkBar, InspectorPanel, OutlinePanel, VersionsPanel } from './CanvasPanels';
 import { CanvasSearchDialog } from './CanvasSearchDialog';
 import { CanvasShareDialog } from './CanvasShareDialog';
+import { CanvasStoryboardDialog } from './CanvasStoryboardDialog';
+import { CanvasExportDialog } from './CanvasExportDialog';
+import { importBundle, isBundleFile } from './canvasBundleApi';
+import { CanvasProjectSyncDialog } from './CanvasProjectSyncDialog';
+import { useSyncCount } from './canvasProjectSync';
+import { CanvasFilmDialog } from './CanvasFilmDialog';
+import { CanvasModelsDialog } from './CanvasModelsDialog';
+import type { FilmBuild } from './canvasFilmApi';
+import { layOutShotTable } from './canvasShotLayout';
+import { CanvasElementPickerDialog, CanvasSaveElementDialog } from './CanvasElementDialogs';
+import { savablePicture, type SavedElement, type TakenElements } from './canvasElementsApi';
 import { CanvasSelectionToolbar, TOOLBAR_CLEARANCE } from './CanvasSelectionToolbar';
 import { CanvasSurface, type NodeRenderProps, type SurfaceHandle, type SurfaceMenuRequest } from './CanvasSurface';
 import { CanvasZoomControls } from './CanvasZoomControls';
@@ -43,8 +54,23 @@ import type {
   Bookmark, CanvasBoard, CanvasDoc, CanvasNode, LatestRun, NodeKind, NodeOutput, NodePayload, ProjectShot, RunAssessment, RunOptions, TierConfirmation, Viewport,
 } from './canvasTypes';
 import { useCanvasDocument, type SaveStatus } from './useCanvasDocument';
+import { fitMediaNode, measureMedia, type MediaSize } from './canvasMedia';
+import { useCanvasOpen, type BoundShot } from './useCanvasOpen';
+import { CanvasComposerHost } from './CanvasComposerHost';
+import { CanvasChatPanel } from './CanvasChatPanel';
 import { useCanvasPresence } from './useCanvasPresence';
 import { useCanvasRuns } from './useCanvasRuns';
+import { useCanvasNodeActions } from './useCanvasNodeActions';
+import { CanvasBatchTable } from './CanvasBatchTable';
+import { CanvasBeefConflictActions } from './CanvasBeefConflictActions';
+import { CanvasBeefReferencePanel } from './CanvasBeefReferencePanel';
+import { CanvasBeefToolbarExtras } from './CanvasBeefToolbarExtras';
+import { CanvasBeefVersionPreview } from './CanvasBeefVersionPreview';
+import { appearanceStyle, boardAppearance, resolveAppearance, type CanvasAppearance } from './canvasBeefAppearance';
+import { fetchReferenceLimits, type ReferenceLimits } from './canvasBeefApi';
+import { applySuggestions } from './canvasBeefReferences';
+import { useCanvasTool } from './canvasBeefTool';
+import { CanvasBeefDocContext } from './canvasBeefDocContext';
 import './CanvasWorkspace.css';
 
 const DirectorDesk = lazy(() => import('../directorDesk/DirectorDesk').then(module => ({ default: module.DirectorDesk })));
@@ -222,6 +248,8 @@ interface SelectionToolbarHostProps {
   onUngroup: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  /** Present when the selection holds two or more pictures or clips: wire them to one video node. */
+  onConnectVideo?: () => void;
 }
 
 function SelectionToolbarHost({ surface, nodes, selection, onUngroup, ...actions }: SelectionToolbarHostProps) {
@@ -259,6 +287,8 @@ interface EditorProps {
   onBookmarks: (bookmarks: Bookmark[]) => void;
   onForked: (board: CanvasBoard) => void;
   onVersion: (version: number) => void;
+  /** Leave the canvas for the storyboard, at the shot a card is tied to. */
+  onOpenShot?: (shot: BoundShot) => void;
 }
 
 /** What a menu item acts on: fixed when the menu opens, so a later click does not read a changed selection. */
@@ -272,7 +302,7 @@ interface MenuContext {
 }
 
 /** One canvas. Remounted per board, so nothing of one canvas's undo stack or selection can reach another. */
-const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor({ taskId, projectId, board, options, shots, onBookmarks, onForked, onVersion }, handle) {
+const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor({ taskId, projectId, board, options, shots, onBookmarks, onForked, onVersion, onOpenShot }, handle) {
   const canvasId = board.id;
   // The other windows this person has on this canvas (never on the public share page, which has no editor).
   const presence = useCanvasPresence({ projectId, canvasId, enabled: true });
@@ -283,11 +313,23 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
   const [selection, setSelection] = useState<ReadonlySet<string>>(() => new Set());
   const [edgeSelection, setEdgeSelection] = useState<ReadonlySet<string>>(() => new Set());
   const [notice, setNotice] = useState('');
-  const [panel, setPanel] = useState<'inspector' | 'outline' | 'versions' | 'workflow' | null>('inspector');
+  const [panel, setPanel] = useState<'inspector' | 'outline' | 'versions' | 'workflow' | 'assistant' | null>('inspector');
   const [help, setHelp] = useState(false);
   const [assessment, setAssessment] = useState<{ value: RunAssessment; nodeIds: string[]; operationId: string } | null>(null);
   const [commit, setCommit] = useState<string[] | null>(null);
   const [desk, setDesk] = useState<{ sceneId: string; shotId?: number; reference?: { url: string } } | null>(null);
+  // BeefTV-described additions: the hand tool, the batch creation table, version preview, board appearance, smart reference.
+  const [tool, setTool] = useCanvasTool();
+  const [batching, setBatching] = useState(false);
+  const [previewing, setPreviewing] = useState<number | null>(null);
+  const [appearance, setAppearance] = useState<CanvasAppearance>(() => boardAppearance(canvasId, ''));
+  const [referenceLimits, setReferenceLimits] = useState<ReferenceLimits | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchReferenceLimits(taskId, controller.signal).then(setReferenceLimits).catch(() => undefined);
+    return () => controller.abort();
+  }, [taskId]);
+  const boardTheme = appearance.theme === 'follow' ? null : resolveAppearance(appearance, 'light');
   const [deskToken, setDeskToken] = useState(0);
   const [fitted, setFitted] = useState(false);
   const [background, setBackground] = useState<CanvasBackgroundMode>(() => storedBackground(canvasId));
@@ -340,6 +382,10 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
   // Another window saved: catch up now rather than on the next poll. With edits of our own pending,
   // onRemoteVersion leaves it alone and the next save meets the usual 409.
   useEffect(() => onSaved(saved => onRemoteVersion(saved.version)), [onRemoteVersion, onSaved]);
+  // A run changed state (here or in another window): read the outputs now; the poll stays as the fallback.
+  const { onRun } = presence;
+  const { refreshSoon } = runs;
+  useEffect(() => onRun(() => refreshSoon()), [onRun, refreshSoon]);
   useEffect(() => { sendSelection([...selection]); }, [selection, sendSelection]);
   const outputsRef = useRef<Readonly<Record<string, NodeOutput>>>(runs.data.outputs);
   useEffect(() => { outputsRef.current = runs.data.outputs; }, [runs.data.outputs]);
@@ -371,12 +417,12 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
     let x = clampCoord(Math.round(point.x));
     let y = clampCoord(Math.round(point.y));
     if (!at) {
-      // 从工具栏连着加几个：每个往右下错开一格，不全叠在画面中心同一个点上。
-      const taken = currentDoc().nodes;
-      for (let step = 0; step < 50 && taken.some(other => Math.abs(other.x - x) < PASTE_OFFSET / 2 && Math.abs(other.y - y) < PASTE_OFFSET / 2); step += 1) {
-        x += PASTE_OFFSET;
-        y += PASTE_OFFSET;
-      }
+      // 从工具栏加的节点：以画面中心为准，找最近一块不压住任何节点的空地（往下或往右，挑挪得少的那边）。
+      // 原来只是往右下错开一格，连着加几个就一张压一张、把下面的节点盖住。
+      const [width, height] = DEFAULT_SIZES[kind];
+      const spot = findFreeSpot(currentDoc().nodes, { x: x - width / 2, y: y - height / 2 }, { width, height });
+      x = clampCoord(Math.round(spot.x));
+      y = clampCoord(Math.round(spot.y));
     }
     const node = newNode(kind, x, y, payload);
     edit(current => ({ ...current, nodes: kind === 'group' ? [node, ...current.nodes] : [...current.nodes, node] }));
@@ -440,6 +486,9 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
       uploads.current = { total: 0, settled: 0, problem: '' };
     };
     report();
+    // Read locally while the file travels: ready by the time the upload answers, or the card keeps its size.
+    let measured: MediaSize | null = null;
+    void measureMedia(file).then(size => { measured = size; });
     uploadMedia(projectId, file).then(result => {
       const node = currentDoc().nodes.find(item => item.id === nodeId);
       if (!node) {
@@ -450,8 +499,11 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
         settle(t('这个节点只接受图片。'));
         return;
       }
-      const output: NodeOutput = { medium: result.medium, url: result.url, filename: result.filename, provenance: result.provenance };
-      edit(current => patchNode(current, nodeId, {}, { output, ...(node.kind === 'media' ? { label: node.payload.label || result.filename } : {}) }));
+      const output: NodeOutput = {
+        medium: result.medium, url: result.url, filename: result.filename, provenance: result.provenance,
+        ...(result.preview_url ? { preview_url: result.preview_url } : {}),
+      };
+      edit(current => patchNode(current, nodeId, fitMediaNode(node, measured) ?? {}, { output, ...(node.kind === 'media' ? { label: node.payload.label || result.filename } : {}) }));
       settle();
     }).catch(error => settle(messageOf(error, t('上传失败'))));
   }, [currentDoc, edit, projectId, say]);
@@ -467,6 +519,14 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
       cancelRun(projectId, latest.batch_id, latest.run_id).then(() => runs.kick()).catch(error => say(messageOf(error, t('取消失败'))));
     },
     upload,
+    layOutShots: (sourceId, shots, framePrompts, cast) => {
+      // A frame and a clip per shot, all at once or none: past the canvas's node limit nothing is laid out.
+      if (currentDoc().nodes.length + shots.length * 2 + (cast?.length ?? 0) > CANVAS_MAX_NODES) {
+        say(t('一张画布最多 {0} 个节点、{1} 条连线。', [CANVAS_MAX_NODES, CANVAS_MAX_EDGES]));
+        return;
+      }
+      edit(current => layOutShotTable(current, sourceId, shots, framePrompts, cast) ?? current);
+    },
     layOutBeats: (sourceId, beats) => {
       // 一整排节拍要么全部铺上，要么一个也不铺：铺上去会超出单张画布的节点上限时直接说明。
       if (currentDoc().nodes.length + beats.length > CANVAS_MAX_NODES) {
@@ -696,11 +756,40 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
     if (selection.size) surface.current?.fit([...selection]);
   }, [selection]);
 
+  // ------------------------------------------------------------ the element library: take pictures from it, keep a node's picture in it
+
+  const [picking, setPicking] = useState(false);
+  const closePicking = useCallback(() => setPicking(false), []);
+  const [savingElement, setSavingElement] = useState<{ nodeId: string; name: string; url: string } | null>(null);
+  const closeSavingElement = useCallback(() => setSavingElement(null), []);
+  const onElementsTaken = useCallback(async (result: TakenElements) => {
+    await reloadAndShow();
+    setSelection(new Set(result.node_ids));
+    setEdgeSelection(new Set());
+    say(t('已从元素库取用 {0} 张图片。', [result.node_ids.length]));
+  }, [reloadAndShow, say]);
+  const onElementSaved = useCallback((element: SavedElement) => say(t('已存入元素库：{0}', [element.name])), [say]);
+  const openSaveElement = useCallback((nodeId: string) => {
+    const current = currentDoc();
+    const node = current.nodes.find(item => item.id === nodeId);
+    const picture = savablePicture(node, current, outputsRef.current);
+    if (!node || !picture) {
+      say(t('这个节点还没有图片结果，存不进元素库。'));
+      return;
+    }
+    setSavingElement({ nodeId, name: node.payload.label ?? '', url: picture.url });
+  }, [currentDoc, say]);
+
+  // 裁剪、宫格拆分、下载、复制提示词、首尾帧模板、批量连到视频节点：逻辑都在 useCanvasNodeActions 里。
+  const nodeActions = useCanvasNodeActions({ projectId, canvasId, currentDoc, outputs: outputsRef, edit, flush, currentVersion, reloadAndShow, say, select, surface });
+  const { run: runNodeAction, nodeMenu: nodeActionMenu, paneMenu: paneActionMenu } = nodeActions;
+
   // ------------------------------------------------------------ menus
 
   const runMenu = useCallback((id: string, context: MenuContext) => {
     const ids = context.ids;
     const current = currentDoc();
+    if (runNodeAction(id, context)) return;
     if (id.startsWith('add:')) {
       const kind = id.slice(4) as NodeKind;
       if (context.source) connectNew(context.source, kind, context.world);
@@ -726,6 +815,7 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
       case 'ungroup': ungroupIds(ids); break;
       case 'copy': writeCopy(ids); break;
       case 'duplicate': duplicateIds(ids); break;
+      case 'save-element': if (context.nodeId) openSaveElement(context.nodeId); break;
       case 'delete': removeIds(ids); break;
       case 'select-source': if (edge) select(new Set([edge.source]), new Set()); break;
       case 'select-target': if (edge) select(new Set([edge.target]), new Set()); break;
@@ -734,7 +824,7 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
     }
   }, [
     addNode, applyLayout, connectNew, currentDoc, document_, duplicateIds, edit, groupIds, pasteStored, removeIds, runNodes, select, selectAll, startRename, toggleCollapse,
-    ungroupIds, writeCopy,
+    ungroupIds, writeCopy, openSaveElement, runNodeAction,
   ]);
 
   const runMenuRef = useRef(runMenu);
@@ -755,7 +845,8 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
         select(ids, new Set());
       }
       const canRun = [...ids].some(id => RUNNABLE_KINDS.has(current.nodes.find(item => item.id === id)?.kind as NodeKind));
-      openMenu(request.clientX, request.clientY, nodeMenu({ node, selectionCount: ids.size, canRun }), { world: request.world, ids, nodeId: node.id });
+      const canSaveElement = Boolean(savablePicture(node, current, outputsRef.current));
+      openMenu(request.clientX, request.clientY, nodeActionMenu(nodeMenu({ node, selectionCount: ids.size, canRun, canSaveElement }), node, ids), { world: request.world, ids, nodeId: node.id });
     } else if (request.target === 'edge' && request.id) {
       const edge = current.edges.find(item => item.id === request.id);
       if (!edge) return;
@@ -763,9 +854,9 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
       openMenu(request.clientX, request.clientY, edgeMenu({ edge }), { world: request.world, ids: NO_IDS, edgeId: edge.id });
     } else {
       const spec = canvasMenu({ canPaste: Boolean(readStoredClip() ?? clipboard), addKinds: PALETTE.map(item => item.kind), canUndo: document_.canUndo, canRedo: document_.canRedo });
-      openMenu(request.clientX, request.clientY, spec, { world: request.world, ids: selection });
+      openMenu(request.clientX, request.clientY, paneActionMenu(spec), { world: request.world, ids: selection });
     }
-  }, [currentDoc, document_.canRedo, document_.canUndo, openMenu, select, selection]);
+  }, [currentDoc, document_.canRedo, document_.canUndo, nodeActionMenu, openMenu, paneActionMenu, select, selection]);
 
   // A connection dropped on empty canvas: offer the kinds that take what it carries, and make one there.
   const onConnectEmpty = useCallback((source: string, world: { x: number; y: number }, client: { x: number; y: number }) => {
@@ -805,7 +896,10 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
 
   const importFile = useCallback(async (file: File) => {
     try {
-      const parsed = parseCanvasImport(await readText(file));
+      // 素材包（.zip）：服务端逐个查验、另存素材，再交回一份普通的画布文件，下面照常合并。
+      const bundled = isBundleFile(file) ? await importBundle(projectId, canvasId, file) : null;
+      const parsed = parseCanvasImport(bundled ? JSON.stringify(bundled.manifest) : await readText(file));
+      const dropped = bundled ? bundled.report.failed.length + bundled.report.missing : 0;
       if (!parsed.doc.nodes.length) {
         say(t('导入的文件里没有节点。'));
         return;
@@ -823,11 +917,11 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
       const ids = new Set(merged.ids);
       surface.current?.fitRects(merged.doc.nodes.filter(node => ids.has(node.id)));
       flashNodes(merged.ids);
-      say(t('已导入 {0} 个节点。', [merged.ids.length]));
+      say(dropped ? t('已导入 {0} 个节点；{1} 个素材没通过检查，相应节点会显示为空。', [merged.ids.length, dropped]) : t('已导入 {0} 个节点。', [merged.ids.length]));
     } catch (error) {
       say(messageOf(error, t('导入失败')));
     }
-  }, [currentDoc, edit, flashNodes, say, select]);
+  }, [canvasId, currentDoc, edit, flashNodes, projectId, say, select]);
 
   const changeBackground = useCallback((mode: CanvasBackgroundMode) => {
     setBackground(mode);
@@ -836,8 +930,36 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
 
   const [sharing, setSharing] = useState(false);
   const closeShare = useCallback(() => setSharing(false), []);
+  // 把项目分镜铺成节点：先把没存的改动存掉，再在那个版本上铺。
+  const [storyboarding, setStoryboarding] = useState(false);
+  const closeStoryboard = useCallback(() => setStoryboarding(false), []);
+  const prepareStoryboard = useCallback(async () => {
+    if (!await flush()) throw new Error(t('画布还没保存成功，先解决保存问题。'));
+    return currentVersion();
+  }, [currentVersion, flush]);
+  // 导出：只导出画布（.json），或连同素材打包（.zip，见 canvas_bundle.py）。
+  const [exportingBoard, setExportingBoard] = useState(false);
+  const closeExport = useCallback(() => setExportingBoard(false), []);
 
-  const modal = Boolean(assessment || commit || desk || search || menu || sharing);
+  // Sync from the project: the button's count is asked again whenever a dialog that may have changed things closes.
+  const [syncing, setSyncing] = useState(false);
+  const [syncKey, setSyncKey] = useState(0);
+  const closeSync = useCallback(() => {
+    setSyncing(false);
+    setSyncKey(value => value + 1);
+  }, []);
+  const syncCount = useSyncCount(projectId, canvasId, `${syncKey}:${storyboarding}`);
+
+  // One-click film: the dialog puts the film's nodes in place, then they run through the usual quote and confirmation.
+  const [filming, setFilming] = useState(false);
+  const closeFilm = useCallback(() => setFilming(false), []);
+  const filmBuilt = useCallback(async (built: FilmBuild) => {
+    setFilming(false);
+    await reloadAndShow();
+    await runNodes(built.run);
+  }, [reloadAndShow, runNodes]);
+
+  const modal = Boolean(assessment || commit || desk || search || menu || sharing || storyboarding || syncing || filming || picking || savingElement || nodeActions.modal || exportingBoard);
 
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
@@ -962,6 +1084,8 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
   }, [addNode, modal, placeClip, placeFiles]);
 
   const onlySelected = selection.size === 1 ? doc.nodes.find(node => selection.has(node.id)) : undefined;
+  // What "this node" means to the assistant in the side panel.
+  const selectedNodes = useMemo(() => doc.nodes.filter(node => selection.has(node.id)), [doc.nodes, selection]);
 
   const restore = useCallback(async (older: number) => {
     if (!await flush()) throw new Error(t('画布还没保存成功，先解决保存问题。'));
@@ -1004,6 +1128,8 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
     setDeskToken(value => value + 1);
   }, []);
 
+  const opening = useCanvasOpen({ nodes: doc.nodes, onOpenShot });
+
   const selectedRunnable = [...selection].filter(id => RUNNABLE_KINDS.has(doc.nodes.find(node => node.id === id)?.kind as NodeKind));
 
   return (
@@ -1023,6 +1149,10 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
             <button type="button" className="cn-icon" onClick={document_.undo} disabled={!document_.canUndo} aria-label={t('撤销')} title={t('撤销')}><Undo2 aria-hidden="true" /></button>
             <button type="button" className="cn-icon" onClick={document_.redo} disabled={!document_.canRedo} aria-label={t('重做')} title={t('重做')}><Redo2 aria-hidden="true" /></button>
             <button type="button" className="cn-icon" onClick={() => setSearch(true)} aria-label={t('搜索节点')} title={t('搜索节点')}><Search aria-hidden="true" /></button>
+            <CanvasBeefToolbarExtras
+              tool={tool} onTool={setTool} onBatch={() => setBatching(true)}
+              canvasId={canvasId} accountId="" appearance={appearance} onAppearance={setAppearance}
+            />
             <select className="cn-bg-select" aria-label={t('画布背景')} title={t('画布背景')} value={background} onChange={event => changeBackground(event.target.value as CanvasBackgroundMode)}>
               {BACKGROUND_MODES.map(mode => <option key={mode} value={mode}>{backgroundLabel(mode)}</option>)}
             </select>
@@ -1038,11 +1168,24 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
               <Send aria-hidden="true" /> {t('提交所选')}{selection.size ? ` (${selection.size})` : ''}
             </button>
             <span className="cn-sep" />
-            <button type="button" className="cn-icon" onClick={exportBoard} aria-label={t('导出画布')} title={t('导出画布')}><Download aria-hidden="true" /></button>
+            <button type="button" className="cn-icon" onClick={() => setStoryboarding(true)} aria-label={t('把分镜铺到画布')} title={t('把分镜铺到画布')}><Clapperboard aria-hidden="true" /></button>
+            <button
+              type="button" className={`cn-icon cn-sync-button${syncCount ? ' has-news' : ''}`} onClick={() => setSyncing(true)}
+              aria-label={syncCount ? t('从项目同步（{0} 处变化）', [syncCount]) : t('从项目同步')} title={syncCount ? t('从项目同步（{0} 处变化）', [syncCount]) : t('从项目同步')}
+            >
+              <RefreshCw aria-hidden="true" />
+              {syncCount > 0 && <span className="cn-badge" aria-hidden="true">{syncCount > 99 ? '99+' : syncCount}</span>}
+            </button>
+            <button type="button" className="cn-button cn-film-button" onClick={() => setFilming(true)} title={t('一键成片')}>
+              <FilmIcon aria-hidden="true" /> {t('一键成片')}
+            </button>
+            <button type="button" className="cn-icon" onClick={() => setPicking(true)} aria-label={t('从元素库取用')} title={t('从元素库取用')}><Library aria-hidden="true" /></button>
+            {nodeActions.toolbar}
+            <button type="button" className="cn-icon" onClick={() => setExportingBoard(true)} aria-label={t('导出画布')} title={t('导出画布')}><Download aria-hidden="true" /></button>
             <button type="button" className="cn-icon" onClick={() => importInput.current?.click()} aria-label={t('导入画布')} title={t('导入画布')}><FileUp aria-hidden="true" /></button>
             <button type="button" className="cn-icon" onClick={() => setSharing(true)} aria-label={t('分享')} title={t('分享')}><Share2 aria-hidden="true" /></button>
             <input
-              ref={importInput} type="file" hidden accept="application/json,.json" aria-label={t('选择要导入的画布文件')}
+              ref={importInput} type="file" hidden accept="application/json,.json,application/zip,.zip" aria-label={t('选择要导入的画布文件')}
               onChange={event => {
                 const file = event.target.files?.[0];
                 event.target.value = '';
@@ -1064,6 +1207,10 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
               <span>{t('你最近的修改还没保存，也没有覆盖任何内容。')}</span>
               <button type="button" className="cn-button" onClick={() => { void reload(); }}>{t('载入最新版本（放弃我的修改）')}</button>
               <button type="button" className="cn-button is-primary" onClick={() => { void forkConflict(); }}>{t('把我的版本另存为新画布')}</button>
+              <CanvasBeefConflictActions
+                projectId={projectId} canvasId={canvasId} mine={currentDoc()} clientId={presence.clientId}
+                onOverwritten={record => { adopt(record); say(t('已用我的版本覆盖（第 {0} 版）', [record.version])); }}
+              />
             </div>
           )}
           {document_.loadError && (
@@ -1073,7 +1220,10 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
             </div>
           )}
 
-          <div className="cn-viewport">
+          <div
+            className="cn-viewport" {...opening.gestures}
+            data-board-theme={boardTheme ? appearance.theme : undefined} style={boardTheme ? appearanceStyle(boardTheme) : undefined}
+          >
             <CanvasSurface
               ref={surface}
               nodes={doc.nodes}
@@ -1095,6 +1245,7 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
               onDropFiles={placeFiles}
               onLivePointer={sendCursor}
               onLiveDrag={sendDrag}
+              tool={tool}
             />
             {presence.peers.length > 0 && (
               <CanvasPresenceLayer
@@ -1110,8 +1261,45 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
               onUngroup={() => ungroupIds(selection)}
               onDuplicate={() => duplicateIds(selection)}
               onDelete={() => removeIds(selection, edgeSelection)}
+              onConnectVideo={nodeActions.connectAction(selection)}
             />
+            <CanvasBeefDocContext.Provider value={doc}>
+              <CanvasComposerHost
+                surface={surface} node={onlySelected ?? null} latest={onlySelected ? latest[onlySelected.id] : undefined}
+                projectId={projectId} canvasId={canvasId} version={version} settled={status === 'saved' || status === 'idle'} refreshKey={String(runs.data.running)}
+              />
+            </CanvasBeefDocContext.Provider>
             <ZoomControlsHost surface={surface} hasSelection={selection.size > 0} onFitSelection={fitSelected} />
+            {batching && (
+              <CanvasBatchTable
+                models={{ image: options?.enabled.image ?? [], video: options?.enabled.video ?? [] }}
+                defaults={{ image: options?.models.image ?? '', video: options?.models.video ?? '' }}
+                durations={options?.video_durations ?? []} maxCount={options?.versions?.max ?? 1}
+                originOf={() => surface.current?.centre() ?? { x: 0, y: 0 }} makeId={() => makeId('n')}
+                onCreate={async nodes => {
+                  if (currentDoc().nodes.length + nodes.length > CANVAS_MAX_NODES) {
+                    throw new Error(t('一张画布最多 {0} 个节点、{1} 条连线。', [CANVAS_MAX_NODES, CANVAS_MAX_EDGES]));
+                  }
+                  edit(current => ({ ...current, nodes: [...current.nodes, ...nodes] }));
+                  setSelection(new Set(nodes.map(node => node.id)));
+                  if (!await flush()) throw new Error(t('画布还没保存成功，先解决保存问题再运行。'));
+                }}
+                assess={ids => assessRun(projectId, canvasId, ids)}
+                start={async (ids, confirmed) => {
+                  const outcome = await startRun(projectId, canvasId, { nodeIds: ids, expectedVersion: currentVersion(), operationId: makeId('op'), confirm: true, confirmed });
+                  if (outcome.status === 'started') runs.kick();
+                  return outcome;
+                }}
+                onClose={() => setBatching(false)}
+              />
+            )}
+            {previewing !== null && (
+              <CanvasBeefVersionPreview
+                projectId={projectId} canvasId={canvasId} version={previewing} current={doc}
+                onRestore={older => { setPreviewing(null); void restore(older).catch(error => say(messageOf(error, t('恢复失败')))); }}
+                onClose={() => setPreviewing(null)}
+              />
+            )}
           </div>
 
           <div className="cn-overlay-bottom">
@@ -1125,6 +1313,39 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
           </div>
 
           {sharing && <CanvasShareDialog projectId={projectId} canvasId={canvasId} canvasTitle={boardTitle} onClose={closeShare} />}
+          {storyboarding && (
+            <CanvasStoryboardDialog projectId={projectId} canvasId={canvasId} clientId={presence.clientId} prepare={prepareStoryboard} onApplied={reloadAndShow} onClose={closeStoryboard} />
+          )}
+          {exportingBoard && (
+            <CanvasExportDialog projectId={projectId} canvasId={canvasId} title={boardTitle} prepare={prepareStoryboard} onExportJson={exportBoard} onClose={closeExport} />
+          )}
+          {syncing && (
+            <CanvasProjectSyncDialog
+              projectId={projectId} canvasId={canvasId} clientId={presence.clientId} prepare={prepareStoryboard} onApplied={reloadAndShow} onClose={closeSync}
+              onJump={id => {
+                closeSync();
+                surface.current?.focusNode(id);
+                setSelection(new Set([id]));
+                setEdgeSelection(new Set());
+              }}
+            />
+          )}
+          {filming && (
+            <CanvasFilmDialog
+              projectId={projectId} canvasId={canvasId} clientId={presence.clientId} prepare={prepareStoryboard} onBuilt={filmBuilt} onClose={closeFilm}
+              selectedClips={[...selection].filter(id => doc.nodes.find(node => node.id === id)?.kind === 'video_gen')}
+            />
+          )}
+          {picking && (
+            <CanvasElementPickerDialog projectId={projectId} canvasId={canvasId} prepare={prepareStoryboard} onApplied={onElementsTaken} onClose={closePicking} />
+          )}
+          {savingElement && (
+            <CanvasSaveElementDialog
+              projectId={projectId} canvasId={canvasId} nodeId={savingElement.nodeId} defaultName={savingElement.name} previewUrl={savingElement.url}
+              prepare={prepareStoryboard} onSaved={onElementSaved} onClose={closeSavingElement}
+            />
+          )}
+          {nodeActions.dialogs}
           {notice && (
             <div className="cn-notice" role="status">
               {notice}
@@ -1146,7 +1367,7 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
 
         <aside className={`cn-side${panel ? '' : ' is-collapsed'}`}>
           <div className="cn-tabs" role="tablist" aria-label={t('侧栏')}>
-            {([['inspector', t('属性'), SlidersHorizontal], ['outline', t('大纲'), ListTree], ['versions', t('版本'), History], ['workflow', t('工作流'), Workflow]] as const).map(([id, label, Icon]) => (
+            {([['inspector', t('属性'), SlidersHorizontal], ['outline', t('大纲'), ListTree], ['versions', t('版本'), History], ['workflow', t('工作流'), Workflow], ['assistant', t('助手'), Bot]] as const).map(([id, label, Icon]) => (
               <button key={id} type="button" role="tab" aria-selected={panel === id} aria-label={label} title={label} className={panel === id ? 'is-active' : ''} onClick={() => setPanel(value => (value === id ? null : id))}>
                 <Icon aria-hidden="true" />{panel ? <span>{label}</span> : null}
               </button>
@@ -1162,6 +1383,16 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
               onHistoryChanged={() => { void runs.refresh(); }}
               onRun={() => { void runNodes([onlySelected.id]); }}
               onCommit={() => { void openCommit([onlySelected.id]); }}
+              onSaveElement={savablePicture(onlySelected, doc, outputs) ? () => openSaveElement(onlySelected.id) : undefined}
+              extraActions={<>
+                {nodeActions.inspectorActions(onlySelected, doc, outputs)}
+                {referenceLimits && onlySelected.kind === 'video_gen' && (
+                  <CanvasBeefReferencePanel
+                    target={onlySelected} nodes={doc.nodes} edges={doc.edges} limits={referenceLimits}
+                    onApply={suggestions => edit(current => ({ ...current, edges: applySuggestions(current.edges, suggestions) }))}
+                  />
+                )}
+              </>}
             />
           ) : (
             <section className="cn-panel"><p className="cn-hint">{selection.size ? t('已选中 {0} 个节点', [selection.size]) : t('选中一个节点查看属性和生成记录。')}</p></section>
@@ -1169,7 +1400,7 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
           {panel === 'outline' && (
             <OutlinePanel nodes={doc.nodes} selection={selection} onJump={id => { surface.current?.focusNode(id); setSelection(new Set([id])); setEdgeSelection(new Set()); }} />
           )}
-          {panel === 'versions' && <VersionsPanel projectId={projectId} canvasId={canvasId} version={version} onRestore={restore} />}
+          {panel === 'versions' && <VersionsPanel projectId={projectId} canvasId={canvasId} version={version} onRestore={restore} onPreview={setPreviewing} />}
           {panel === 'workflow' && (
             <WorkflowPanel
               projectId={projectId} canvasId={canvasId} refreshKey={`${version}:${JSON.stringify(latest)}`} flush={flush} currentVersion={currentVersion}
@@ -1177,9 +1408,16 @@ const CanvasEditor = forwardRef<EditorHandle, EditorProps>(function CanvasEditor
               onJump={id => { surface.current?.focusNode(id); setSelection(new Set([id])); setEdgeSelection(new Set()); }}
             />
           )}
+          {/* Kept mounted so the conversation survives a look at another tab. */}
+          <CanvasChatPanel
+            taskId={taskId} canvasId={canvasId} selected={selectedNodes} hidden={panel !== 'assistant'} flush={flush}
+            onCanvasChanged={remote => onRemoteVersion(remote)}
+            onJump={id => { surface.current?.focusNode(id); setSelection(new Set([id])); setEdgeSelection(new Set()); }}
+          />
         </aside>
 
         {menu && <CanvasContextMenu x={menu.x} y={menu.y} items={menu.items} label={menu.label} onClose={closeMenu} />}
+        {opening.dialog}
         <CanvasSearchDialog open={search} nodes={doc.nodes} onJump={jumpToHit} onClose={() => setSearch(false)} />
         {assessment && <RunDialog assessment={assessment.value} onClose={closeAssessment} onConfirm={confirmRun} />}
         {commit && <CommitDialog projectId={projectId} canvasId={canvasId} nodeIds={commit} onClose={closeCommit} onCommit={sendCommit} />}
@@ -1207,7 +1445,7 @@ function initialTheme(): 'light' | 'dark' {
 }
 
 /** The infinite node canvas of one project, as a full-window layer over the workbench. */
-export function CanvasWorkspace({ taskId, onClose }: { taskId: string; onClose: () => void }) {
+export function CanvasWorkspace({ taskId, onClose, onOpenShot }: { taskId: string; onClose: () => void; onOpenShot?: (shot: BoundShot) => void }) {
   const [projectId, setProjectId] = useState('');
   const [boards, setBoards] = useState<CanvasBoard[]>([]);
   const [boardId, setBoardId] = useState('main');
@@ -1218,6 +1456,12 @@ export function CanvasWorkspace({ taskId, onClose }: { taskId: string; onClose: 
   const [renaming, setRenaming] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [closeBlocked, setCloseBlocked] = useState(false);
+  const [modelsOpen, setModelsOpen] = useState(false);
+  const closeModels = useCallback(() => setModelsOpen(false), []);
+  // The models changed: what each node offers (and its 项目默认) is read again.
+  const modelsSaved = useCallback(() => {
+    if (projectId) fetchRunOptions(projectId).then(setOptions).catch(() => undefined);
+  }, [projectId]);
   const editor = useRef<EditorHandle | null>(null);
 
   useEffect(() => {
@@ -1308,6 +1552,13 @@ export function CanvasWorkspace({ taskId, onClose }: { taskId: string; onClose: 
     else setCloseBlocked(true);
   };
 
+  // A card's shot opens in the project behind this window: save first, as closing does.
+  const openShot = useCallback(async (shot: BoundShot) => {
+    if (!onOpenShot) return;
+    if (await (editor.current?.flush() ?? Promise.resolve(true))) onOpenShot(shot);
+    else setCloseBlocked(true);
+  }, [onOpenShot]);
+
   return (
     <div className="canvas-workspace" data-theme={theme} role="dialog" aria-modal="true" aria-label={t('节点画布')}>
       <header className="cn-topbar">
@@ -1346,6 +1597,11 @@ export function CanvasWorkspace({ taskId, onClose }: { taskId: string; onClose: 
             <button type="button" className="cn-button" onClick={() => setCloseBlocked(false)}>{t('留下')}</button>
           </div>
         )}
+        {projectId && (
+          <button type="button" className="cn-button" onClick={() => setModelsOpen(true)} title={t('项目模型')}>
+            <Cpu aria-hidden="true" /> {t('模型')}
+          </button>
+        )}
         <button type="button" className="cn-icon" onClick={toggleTheme} aria-label={theme === 'dark' ? t('切换到浅色') : t('切换到深色')} title={theme === 'dark' ? t('切换到浅色') : t('切换到深色')}>
           {theme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
         </button>
@@ -1354,11 +1610,12 @@ export function CanvasWorkspace({ taskId, onClose }: { taskId: string; onClose: 
       {projectId && board ? (
         <CanvasEditor
           key={board.id} ref={editor} taskId={taskId} projectId={projectId} board={board} options={options} shots={shots}
-          onBookmarks={onBookmarks} onForked={onForked} onVersion={onVersion}
+          onBookmarks={onBookmarks} onForked={onForked} onVersion={onVersion} onOpenShot={onOpenShot ? openShot : undefined}
         />
       ) : (
         !problem && <p className="cn-loading">{t('读取中…')}</p>
       )}
+      {modelsOpen && projectId && <CanvasModelsDialog projectId={projectId} onSaved={modelsSaved} onClose={closeModels} />}
     </div>
   );
 }

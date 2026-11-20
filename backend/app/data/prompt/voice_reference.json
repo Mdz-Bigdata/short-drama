@@ -11,7 +11,7 @@
     "[reference generation + audio reference]"
   ],
   "audio_limits": {
-    "_about": "参考音频的时长限制，按视频模型家族：每段 min–max 秒，同一请求里所有参考音频合计不超过 total 秒；inline 为 true 的家族在样本没有公网地址时把它内嵌进请求(data:audio)。MiniMax H3 实测：audio duration expected [2000, 15000] ms(2026-11-11 试跑)。没列的家族用 default。",
+    "_about": "参考音频的时长限制，按视频模型家族：每段 min–max 秒，同一请求里所有参考音频合计不超过 total 秒；inline 为 true 的家族在样本没有公网地址时把它内嵌进请求(data:audio)。MiniMax H3 实测：audio duration expected [2000, 15000] ms(2026-11-11 试跑)。没列的家族用 default。inline_for 是同一家族里已经实测能收内嵌音频的版本(模型名里含其中一段就算)：Seedance 2.5 在方舟上实测能收 data:audio 的参考音频(2026-11-16，两条 480p 片段都出了声)，2.0 没测过所以不开。",
     "default": {
       "min": 2,
       "max": 15,
@@ -28,7 +28,8 @@
       "min": 2,
       "max": 15,
       "total": 15,
-      "inline": false
+      "inline": false,
+      "inline_for": ["seedance2-5", "seedance-2-5"]
     }
   },
   "sample_cap_seconds": 10

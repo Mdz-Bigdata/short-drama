@@ -279,13 +279,14 @@ class InteractiveStoryService:
         if media.get("source") == "shot" and media.get("shot_uid"):
             shot = next((item for item in project_media(task)["shots"] if item["shot_uid"] == media["shot_uid"]), None)
             if shot:
-                binding = {"binding": {"sceneId": shot["scene_id"], "shotId": shot["shot_id"]}}
+                binding = {"sceneId": shot["scene_id"], "shotId": shot["shot_id"]}
         title = str(segment.get("title") or segment_id)[:60]
         config = task.get("config") if isinstance(task.get("config"), Mapping) else {}
         project_id = studio.repository.project_for_task(task_id, owner_id, str(config.get("title_suggestion") or _text_of("canvas_handoff.project_id"))).id
         done = studio.edit_canvas(project_id, owner_id, [
             {"op": "add_node", "ref": "frame", "kind": "image_gen", "label": _text_of("canvas_handoff.done.label").format(title), "prompt": prompt},
-            {"op": "add_node", "ref": "clip", "kind": "video_gen", "label": _text_of("canvas_handoff.done.label.2").format(title), "prompt": prompt, "params": binding},
+            {"op": "add_node", "ref": "clip", "kind": "video_gen", "label": _text_of("canvas_handoff.done.label.2").format(title), "prompt": prompt,
+             **({"binding": binding} if binding else {})},
             {"op": "connect", "source": "frame", "target": "clip", "role": "first_frame"},
         ])
         return {"project_id": project_id, "canvas_id": "main", "nodes": done["created"], "bound": bool(binding), "version": done["version"]}

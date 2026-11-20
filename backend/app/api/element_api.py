@@ -36,7 +36,7 @@ from app.core.prop_turnaround import (
 )
 from app.core import prompt_data, real_person, scene_scale, xianxia_props
 from app.core.asset_sheets import EMPTY_SCENE_PREFIX, EMPTY_SCENE_SUFFIX
-from app.core.look_board import LAYOUT_MAKEUP, LAYOUT_PLAIN, LOOK_VIEW_SLOTS, split_look_board
+from app.core.look_board import LAYOUT_MAKEUP_SIDE, LAYOUT_PLAIN, LAYOUT_PLAIN_SIDE, LOOK_VIEW_SLOTS, split_look_board
 from app.core.scene_turnaround import (
     SCENE_TURNAROUND_CLOSING,
     SCENE_TURNAROUND_INSTRUCTION,
@@ -456,6 +456,33 @@ async def list_element_folders(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
+# How full the library is before the meter turns to a warning, then to danger (share of the tighter of the two limits).
+STORAGE_WARNING_SHARE = 0.7
+STORAGE_DANGER_SHARE = 0.9
+
+
+def storage_usage_view(report: dict[str, int]) -> dict:
+    """The owner's library against its limits, as the meter shows it: bytes and asset count, the fuller one sets the level."""
+    used, quota = int(report["used_bytes"]), max(1, int(report["quota_bytes"]))
+    count, limit = int(report["asset_count"]), max(1, int(report["asset_quota"]))
+    share = max(used / quota, count / limit)
+    return {
+        "used_bytes": used, "quota_bytes": quota, "remaining_bytes": max(0, quota - used),
+        "asset_count": count, "asset_quota": limit, "remaining_assets": max(0, limit - count),
+        "share": round(min(share, 1.0), 4),
+        "level": "danger" if share >= STORAGE_DANGER_SHARE else "warning" if share >= STORAGE_WARNING_SHARE else "ok",
+    }
+
+
+@router.get("/storage-usage")
+async def element_storage_usage(
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """How much of the account's asset library is used: what an upload will be checked against, shown before it fails."""
+    return storage_usage_view(await store.element_storage_report(user["user_id"]))
+
+
 @router.post("/folders", status_code=201)
 async def create_element_folder(
     request: ElementFolderCreateRequest,
@@ -544,7 +571,7 @@ async def set_element_variant(
         facts = character_variants.clean_variant(
             {
                 **request.model_dump(),
-                **{key: current.get(key) for key in ("source", "spans", "outfit", "makeups", "starts")},
+                **{key: current.get(key) for key in ("source", "spans", "outfit", "makeups", "starts", "without")},
                 "edited": current.get("source") == character_variants.LOOK_SOURCE,
             },
             element_name=item.name,
@@ -1406,7 +1433,8 @@ async def _generate_look_image(*, item, owner_id: str, store: PlatformStore, ext
         element_id=item.id, owner_id=owner_id, slot="front", suffix=suffix, mime=mime, content=content, store=store,
     )
     await _persist_look_views(item.id, owner_id, store, content)
-    layout = LAYOUT_MAKEUP if wears_makeup(wardrobe) else LAYOUT_PLAIN
+    # 现在的板第三格特写是四分之三侧脸；版式记下来，分镜才知道这一格能当侧脸参考。
+    layout = LAYOUT_MAKEUP_SIDE if wears_makeup(wardrobe) else LAYOUT_PLAIN_SIDE
     return _element(await store.merge_element_metadata(item.id, owner_id, {NEEDS_REDRAW: False, LOOK_CHECK: check, LOOK_LAYOUT: layout}))
 
 

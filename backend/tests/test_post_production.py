@@ -73,7 +73,7 @@ class AudioSourceTest(unittest.TestCase):
 class SettingsTest(unittest.TestCase):
     def test_all_on_by_default(self):
         self.assertEqual(edit_timeline.settings_of(edit_timeline.build(_task(), title="雪夜")),
-                         {"transitions": True, "dialogue": True, "subtitles": True, "title_card": True})
+                         {"transitions": True, "dialogue": True, "subtitles": True, "title_card": True, "name_cards": True})
 
     def test_each_switch_reaches_the_render(self):
         timeline = edit_timeline.build(_task(), title="雪夜")
@@ -452,3 +452,51 @@ class EpisodeTimelineTest(unittest.TestCase):
     def test_an_episode_that_does_not_exist_is_refused(self):
         with self.assertRaises(ValueError):
             self.service.render_timeline("ep-1", episode=9)
+
+    def test_the_editor_lists_the_episodes_it_can_open(self):
+        result = self.service.get_timeline("ep-1")
+        self.assertEqual(result["live_episode"], 2)
+        self.assertEqual(result["episodes"], [
+            {"number": 1, "clips": 1, "film_url": "/media/e1_old.mp4"}, {"number": 2, "clips": 1, "film_url": None}])
+        self.service.repo.save_task("post-1", _task())
+        whole = self.service.get_timeline("post-1")                       # 不分集的项目没有可切的集
+        self.assertEqual((whole["episodes"], whole["live_episode"]), ([], None))
+
+    def test_a_finished_episode_can_be_opened_and_edited_without_touching_the_cut_in_progress(self):
+        live = self.service.get_timeline("ep-1")["timeline"]
+        first = self.service.get_timeline("ep-1", episode=1)
+        self.assertEqual(first["timeline"]["episode"], 1)
+        self.assertEqual([clip["scene_id"] for clip in first["timeline"]["clips"]], ["E1S01"])
+        uid = first["timeline"]["clips"][0]["shot_uid"]
+
+        result = self.service.edit_timeline("ep-1", "subtitle", {"shot_uid": uid, "text": "第一集改的字幕"}, episode=1)
+        self.assertEqual(result["timeline"]["episode"], 1)
+        self.assertEqual(result["timeline"]["clips"][0]["subtitle"], "第一集改的字幕")
+
+        task = self.service.repo.get_task("ep-1")
+        self.assertEqual(task["assets"]["episode_cycle"]["episodes"]["1"]["timeline"]["clips"][0]["subtitle"], "第一集改的字幕")
+        self.assertEqual(task["assets"]["7_timeline"]["episode"], 2, "the cut in progress is still episode 2's")
+        self.assertEqual(task["assets"]["7_timeline"]["clips"], live["clips"])
+        self.assertEqual(self.service.get_timeline("ep-1", episode=1)["timeline"]["clips"][0]["subtitle"], "第一集改的字幕")
+        self.assertEqual(self.service.get_timeline("ep-1")["timeline"]["clips"][0]["subtitle"], live["clips"][0]["subtitle"])
+
+        with patch("app.service.drama_service.media_compositor.compose_film", return_value="/media/e1_new.mp4") as compose:
+            self.service.render_timeline("ep-1", episode=1)
+        self.assertEqual(compose.call_args.args[1], ["第一集改的字幕"], "the film is composed from the edited cut")
+
+    def test_reading_an_episode_twice_writes_nothing_the_second_time(self):
+        self.service.get_timeline("ep-1", episode=1)
+        self.service.get_timeline("ep-1")
+        with patch.object(self.service.repo, "mutate_task", wraps=self.service.repo.mutate_task) as write:
+            self.service.get_timeline("ep-1", episode=1)
+            self.service.get_timeline("ep-1")
+        self.assertEqual(write.call_count, 0)
+
+    def test_an_episode_that_is_not_there_cannot_be_opened_or_edited(self):
+        with self.assertRaises(ValueError):
+            self.service.get_timeline("ep-1", episode=9)
+        with self.assertRaises(edit_timeline.TimelineError):
+            self.service.edit_timeline("ep-1", "settings", {"settings": {"subtitles": False}}, episode=9)
+        self.service.repo.save_task("post-1", _task())
+        with self.assertRaises(ValueError):
+            self.service.get_timeline("post-1", episode=1)                  # 不分集的项目没有「第 1 集」

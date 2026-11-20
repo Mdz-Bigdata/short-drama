@@ -28,8 +28,31 @@ export const SEAT_TOP_M: [number, number] = [0.3, 0.7];
 
 export type Hand = Exclude<ContactHand, ''>;
 
-/** A point on the stage (x, height, z) for one hand of `actor`, or `null` to fall back on the formula. */
-export type HandLocator = (actor: StageActor, hand: Hand) => SpacePoint | null;
+/**
+ * Where a hand holds something, and — when the figure's own hand can be read — which way the fist
+ * points what it holds (`along`: in at the little finger, out past the thumb) and which way its
+ * knuckles face (`forward`). Both are unit vectors on the stage.
+ */
+export interface HandGrip {
+  point: SpacePoint;
+  along?: SpacePoint;
+  forward?: SpacePoint;
+}
+
+/** A point on the stage (x, height, z) for one hand of `actor`, or a whole grip, or `null` to fall back on the formula. */
+export type HandLocator = (actor: StageActor, hand: Hand) => SpacePoint | HandGrip | null;
+
+/** A held thing this tall and this slender is a sword, a staff, a torch: it lies along the fist rather than standing in the palm. */
+export const LONG_PROP_MIN_M = 0.4;
+export const LONG_PROP_SLENDER = 3;
+/** The fist closes this far up from the end of a long thing, or this share of its length if that is less. */
+export const HILT_M = 0.12;
+export const HILT_SHARE = 0.15;
+
+/** Whether a held `prop` is carried along the fist (tilted with the hand) rather than upright in it. */
+export function carriedAlongFist(prop: Pick<StageLandmark, 'size'>): boolean {
+  return prop.size[2] >= LONG_PROP_MIN_M && prop.size[2] >= LONG_PROP_SLENDER * Math.max(prop.size[0], prop.size[1]);
+}
 
 export interface ResolveOptions {
   hand?: HandLocator;
@@ -225,7 +248,19 @@ export function resolveContacts(plan: StagePlan, shotId: number | null | undefin
     const actor = people.find(item => item.name === contact.actor);
     if (!prop || !actor) return;
     const hand = handOf(contact);
-    const point = options.hand?.(actor, hand) ?? formulaHandPoint(actor, hand);
+    const found = options.hand?.(actor, hand) ?? formulaHandPoint(actor, hand);
+    const grip: HandGrip = Array.isArray(found) ? { point: found } : found;
+    const point = grip.point;
+    if (grip.along && carriedAlongFist(prop)) {
+      // Gripped near its end and pointing where the fist points it: the piece's foot goes a hilt's length behind the hand.
+      const hilt = Math.min(HILT_M, prop.size[2] * HILT_SHARE);
+      const foot: SpacePoint = [point[0] - grip.along[0] * hilt, point[1] - grip.along[1] * hilt, point[2] - grip.along[2] * hilt];
+      setLandmark(prop.name, {
+        position: [round3(foot[0]), round3(foot[2])], elevation_m: round3(foot[1]), yaw_deg: actor.yaw_deg,
+        tilt: { up: grip.along, forward: grip.forward ?? [Math.sin((actor.yaw_deg * Math.PI) / 180), 0, Math.cos((actor.yaw_deg * Math.PI) / 180)] },
+      });
+      return;
+    }
     const position: GroundPoint = [round3(point[0]), round3(point[2])];
     const elevation = round3(Math.max(0, point[1] - prop.size[2] / 2));
     const yaw = actor.yaw_deg;

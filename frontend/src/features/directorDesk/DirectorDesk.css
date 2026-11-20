@@ -2093,3 +2093,48 @@ button.desk-timeline__name {
 .desk-director__front rect { fill: var(--desk-dim); fill-opacity: 0.55; }
 .desk-director__front rect.is-dark { fill: var(--desk-text); fill-opacity: 0.6; }
 .desk-director__front rect.is-light { fill-opacity: 0.3; }
+
+/* 特效占位：属性页底部，一场的特效标记一项一块。 */
+.desk-effects {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.9rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--desk-line);
+}
+
+.desk-effects h3 {
+  margin: 0;
+}
+
+.desk-effects__item {
+  min-width: 0;
+  margin: 0;
+  padding: 0.5rem 0.6rem 0.6rem;
+  border: 1px solid var(--desk-line);
+  border-radius: 0.45rem;
+}
+
+.desk-effects__item legend {
+  padding: 0 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--desk-text);
+}
+
+.desk-effects__item.is-off {
+  opacity: 0.6;
+}
+
+.desk-effects__actions,
+.desk-effects__add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.desk-effects__add .desk-field {
+  flex: 1 1 9rem;
+}

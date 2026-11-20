@@ -33,5 +33,7 @@
   "TimelineOperationRequest.description.2": "音乐定位：配乐从成片第几秒进",
   "TimelineOperationRequest.description.3": "source=generated 时选之前生成过的哪一版配乐(它的 url)",
   "TimelineOperationRequest.description.4": "这一镜的人声：原声 / 配音 / 不要",
-  "TimelineOperationRequest.description.5": "基础设定：transitions / dialogue / subtitles / title_card"
+  "TimelineOperationRequest.description.5": "基础设定：transitions / dialogue / subtitles / title_card / name_cards(人物出场字幕)；finishing 是成片精修(title / subtitle / color / ending 四组，只写要改的项)",
+  "TimelineOperationRequest.description.episode": "分集项目里改哪一集的剪辑(已经出了成片的旧集也可以)；不给就是剪辑台默认的那一集",
+  "TimelineOperationRequest.description.cards": "operation=name_cards 时这一镜的人物出场字幕：[{name, identity, side: left|right, at: 片段第几秒}]；给空列表是这一镜不出，不带这个字段是交还给自动排的"
 }

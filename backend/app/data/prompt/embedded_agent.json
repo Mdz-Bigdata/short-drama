@@ -16,5 +16,11 @@
   "run_turn.result.note": "这个工具刚用同样的参数读过，结果不变，直接用上面的结果。",
   "run_turn.reply.2": "{0}。回复 /confirm 执行，或 /cancel 放弃。",
   "run_turn.reply.3": "这一轮已经调用了多个工具，先停在这里；告诉我接下来要做什么。",
-  "run_turn.reply.4": "已完成。"
+  "run_turn.reply.4": "已完成。",
+  "reasoning": {
+    "_doc": "助手一轮里模型返回的可读思考：多次调用之间的分隔、整轮最多存多少字、截掉时的标记。",
+    "separator": "\n\n———\n\n",
+    "max_chars": 8000,
+    "cut": "\n……（后面省略）"
+  }
 }

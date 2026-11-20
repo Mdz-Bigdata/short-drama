@@ -11,6 +11,8 @@ export interface ScreenwritingLedgerEntry {
   sourceOrigin?: 'cut' | 'own' | 'none';
   sourceKind?: 'novel' | 'screenplay' | null;
   sourceName?: string | null;
+  /** 跨集场记：这一集演完之后变了的事，每条以「【类型】」开头。 */
+  stateChanges?: string[];
 }
 
 export function ledgerOriginLabel(entry: ScreenwritingLedgerEntry): string {
@@ -213,6 +215,57 @@ export function polishOperations(result: DialoguePolishResult, accepted: Readonl
     byScene.set(item.scene_id, utterances);
   }
   return [...byScene].map(([id, utterances]) => ({ op: 'update', id, fields: { utterances } }));
+}
+
+/** 改写一段时改动的字段（时长和 scene_id 不变）。 */
+export interface PassageShotFields {
+  setting: string;
+  characters_in_scene: string[];
+  scene_description: string;
+  utterances: ScreenwritingUtterance[];
+}
+
+export interface PassageImpactFinding {
+  /** 受影响的集数；本集的就是这一集。 */
+  episode: number;
+  fact: string;
+  quote: string;
+  fix: string;
+}
+
+export interface PassageRewriteResult {
+  task_id: string;
+  episode: number;
+  plan_revision: string;
+  instruction: string;
+  scenes: Array<{ scene_id: string; before: Partial<PassageShotFields>; after: PassageShotFields }>;
+  impact: {
+    /** false：核对后果的那次调用没给出可用的回答，后果没核对过。 */
+    checked: boolean;
+    findings: PassageImpactFinding[];
+    lost_key_lines: string[];
+    state_changes: { before: string[]; after: string[] };
+  };
+}
+
+/** 改写连着的几个分镜：一次改写、一次核对后果，不保存；采纳用 passageOperations + patchScreenwritingPlan 写回。 */
+export function rewritePassage(taskId: string, episode: number, body: { sceneIds: string[]; instruction: string; keep?: string[] }) {
+  return apiRequest<PassageRewriteResult>(`${base(taskId)}/episodes/${episode}/rewrite-passage`, {
+    method: 'POST',
+    body: JSON.stringify({ scene_ids: body.sceneIds, instruction: body.instruction, keep: body.keep ?? [] }),
+  });
+}
+
+export function passageOperations(result: PassageRewriteResult): PlanOperation[] {
+  return result.scenes.map(row => ({ op: 'update', id: row.scene_id, fields: { ...row.after } }));
+}
+
+/** 换掉一集的场记；只影响之后的规划与核对，不让已经做出来的东西失效。 */
+export function putEpisodeStateChanges(taskId: string, episode: number, stateChanges: string[]) {
+  return apiRequest<{ episode: number; state_changes: string[] }>(`${base(taskId)}/ledger/${episode}/state-changes`, {
+    method: 'PUT',
+    body: JSON.stringify({ state_changes: stateChanges }),
+  });
 }
 
 export function reviewScreenwritingEpisode(taskId: string, episode: number, action: 'confirm' | 'reopen') {

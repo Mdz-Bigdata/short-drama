@@ -425,6 +425,57 @@ class CanvasCommitPreviewRequest(BaseModel):
     node_ids: Annotated[list[str], Field(min_length=1, max_length=200)]
 
 
+class CanvasStoryboardRequest(BaseModel):
+    """Lay storyboard scenes out on the canvas; no scene named means every scene."""
+
+    scene_ids: Annotated[list[Annotated[str, Field(min_length=1, max_length=80)]], Field(max_length=400)] = []
+    preview: bool = False
+    expected_version: Annotated[int, Field(ge=0)] | None = None
+
+
+class CanvasElementPick(BaseModel):
+    """One picture of a library element; no file means the element's main picture."""
+
+    element_id: Annotated[str, Field(min_length=1, max_length=64)]
+    file_id: Annotated[str, Field(min_length=1, max_length=64)] | None = None
+
+
+class CanvasTakeElementsRequest(BaseModel):
+    """Library elements to put on the canvas as media nodes: ``element_ids`` take each one's main picture, ``picks`` name pictures."""
+
+    element_ids: Annotated[list[Annotated[str, Field(min_length=1, max_length=64)]], Field(max_length=200)] = []
+    picks: Annotated[list[CanvasElementPick], Field(max_length=200)] = []
+    expected_version: Annotated[int, Field(ge=0)] | None = None
+
+
+class CanvasSaveElementRequest(BaseModel):
+    """Keep a node's picture in the element library under this name and kind (the library says which kinds exist)."""
+
+    name: Annotated[str, Field(min_length=1, max_length=160)]
+    kind: Annotated[str, Field(min_length=1, max_length=24)]
+
+
+class CanvasCropRequest(BaseModel):
+    """Cut a rectangle out of a node's picture into a new media node; the rectangle is in 0–1 units of the picture.
+
+    What the numbers may be is ``app/service/canvas_image_ops.py``'s to say, in its own words.
+    """
+
+    x: float
+    y: float
+    w: float
+    h: float
+    expected_version: Annotated[int, Field(ge=0)] | None = None
+
+
+class CanvasGridSplitRequest(BaseModel):
+    """Cut a node's picture into rows × columns cells, one new media node each."""
+
+    rows: int = 2
+    columns: int = 2
+    expected_version: Annotated[int, Field(ge=0)] | None = None
+
+
 class CanvasCommitRequest(BaseModel):
     node_ids: Annotated[list[str], Field(min_length=1, max_length=200)]
     expected_version: Annotated[int, Field(ge=1)]

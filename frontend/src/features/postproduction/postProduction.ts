@@ -5,14 +5,21 @@
  */
 import type { AcceptanceIssue } from '../workbench/DeliveryChecklist';
 import type { BgmTrack, Timeline, TimelineClip } from '../workbench/TimelinePanel';
+import type { FinishingView } from './finishingSettings';
 
 export type AudioSource = 'native' | 'tts' | 'none';
-export type SettingKey = 'transitions' | 'dialogue' | 'subtitles' | 'title_card';
+export type SettingKey = 'transitions' | 'dialogue' | 'subtitles' | 'title_card' | 'name_cards';
 export type PostSettings = Record<SettingKey, boolean>;
+
+/** 人物出场字幕的一条：姓名、身份、在画面哪一侧、片段第几秒出现；unsure 是自动排的时候拿不准位置。 */
+export interface NameCard { name: string; identity: string; side: 'left' | 'right'; at: number; slot?: number; unsure?: boolean }
 
 export interface StudioClip extends TimelineClip {
   audio_source?: AudioSource;
   native_available?: boolean;
+  name_cards?: NameCard[];
+  /** 人改过这一镜的出场字幕：不再被自动排的覆盖。 */
+  name_cards_edited?: boolean;
 }
 
 export interface StudioTimeline extends Omit<Timeline, 'clips' | 'bgm'> {
@@ -29,6 +36,8 @@ export interface PostShot { shot_uid: number | null; image_url: string | null; d
 
 export interface PostView {
   settings: PostSettings;
+  /** 成片精修(片名卡底图与动效、字幕样式、调色、片尾卡)；旧后端不带这一项。 */
+  finishing?: FinishingView;
   tension: TensionRow[];
   scene_markers: SceneMarker[];
   estimated_bytes: number;
@@ -39,9 +48,16 @@ export interface PostView {
 
 export interface StudioTrack extends BgmTrack { match?: number; tags?: string[] }
 
+/** 分集项目里剪辑台可以打开的一集：有几个片段、出了成片没有。 */
+export interface StudioEpisode { number: number; clips: number; film_url: string | null }
+
 export interface StudioResponse {
   task_id: string;
   timeline: StudioTimeline;
+  /** 分集项目里有片段的各集；不分集的项目是空的(旧后端不带这一项)。 */
+  episodes?: StudioEpisode[];
+  /** 剪辑台默认剪的那一集(正在做的，或最近做完的)。 */
+  live_episode?: number | null;
   summary: { clips: number; included: number; seconds: number; revision: number; audio_sources?: Record<AudioSource, number> };
   bgm_library: StudioTrack[];
   acceptance?: AcceptanceIssue[];
@@ -57,8 +73,8 @@ export interface SoundRecord {
   dialogue_directions?: Array<{ shot_id: number; speaker: string; verbatim_text?: string; emotion?: string }>;
 }
 
-export const SETTING_KEYS: SettingKey[] = ['transitions', 'dialogue', 'subtitles', 'title_card'];
-export const DEFAULT_SETTINGS: PostSettings = { transitions: true, dialogue: true, subtitles: true, title_card: true };
+export const SETTING_KEYS: SettingKey[] = ['transitions', 'dialogue', 'subtitles', 'title_card', 'name_cards'];
+export const DEFAULT_SETTINGS: PostSettings = { transitions: true, dialogue: true, subtitles: true, title_card: true, name_cards: true };
 
 export const clipKey = (clip: { shot_uid?: number | null; shot_id: number }) => clip.shot_uid ?? clip.shot_id;
 export const clipRef = (clip: StudioClip) => (clip.shot_uid ? { shot_id: clip.shot_id, shot_uid: clip.shot_uid } : { shot_id: clip.shot_id });

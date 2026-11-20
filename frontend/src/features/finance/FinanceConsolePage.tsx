@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ArrowLeft, Landmark, LoaderCircle, Play, RefreshCw } from 'lucide-react';
 
 import { apiRequest } from '../../api/client';
@@ -8,6 +8,9 @@ import { channelLabel } from '../billing/paymentChannels';
 import {
   adjustmentStatusLabel, itemStatusLabel, kindLabel, money, orderStatusLabel, refundStatusLabel, ruleLabel, severityLabel, when, yuan,
 } from './financeFormat';
+import { Problem, Stat, Waiting } from './financeParts';
+import { QuoteTab } from './QuoteTab';
+import { UsageLiveTab } from './UsageLiveTab';
 
 
 interface Viewer { user_id?: string; permissions?: string[] }
@@ -75,18 +78,6 @@ function usePending() {
     return next;
   }), []);
   return { pending, start, end };
-}
-
-function Problem({ text }: { text: string }) {
-  return text ? <div className="inline-error" role="alert">{text}</div> : null;
-}
-
-function Waiting() {
-  return <div className="empty-library"><LoaderCircle className="spin" /> {t('正在加载…')}</div>;
-}
-
-function Stat({ name, value, hint }: { name: string; value: ReactNode; hint?: string }) {
-  return <div className="finance-stat"><span>{name}</span><strong>{value}</strong>{hint && <small>{hint}</small>}</div>;
 }
 
 
@@ -488,6 +479,8 @@ export function FinanceConsolePage({ user, onBack }: { user: Viewer; onBack: () 
     hasPermission(user, 'order:read_any') && { id: 'orders', name: t('订单') },
     hasPermission(user, 'order:read_any') && { id: 'refunds', name: t('退款审批') },
     hasPermission(user, 'wallet:adjust_request') && { id: 'adjustments', name: t('积分调整') },
+    hasPermission(user, 'recon:read') && { id: 'usage', name: t('实时用量') },
+    hasPermission(user, 'recon:read') && { id: 'quote', name: t('对外报价') },
     hasPermission(user, 'recon:read') && { id: 'differences', name: t('对账差异') },
     hasPermission(user, 'audit:read') && { id: 'audit', name: t('审计记录') },
   ].filter((tab): tab is { id: string; name: string } => Boolean(tab));
@@ -507,6 +500,8 @@ export function FinanceConsolePage({ user, onBack }: { user: Viewer; onBack: () 
         {active === 'orders' && <OrdersTab canRefund={hasPermission(user, 'refund:request')} />}
         {active === 'refunds' && <RefundsTab viewer={user} canDecide={hasPermission(user, 'refund:approve')} />}
         {active === 'adjustments' && <AdjustmentsTab viewer={user} canDecide={hasPermission(user, 'wallet:adjust_approve')} />}
+        {active === 'usage' && <UsageLiveTab />}
+        {active === 'quote' && <QuoteTab />}
         {active === 'differences' && <DifferencesTab canResolve={hasPermission(user, 'recon:resolve')} />}
         {active === 'audit' && <AuditTab />}
       </section>

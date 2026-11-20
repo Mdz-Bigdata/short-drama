@@ -64,7 +64,11 @@
       "绝对禁止面部特征互换",
       "绝对禁止换装",
       "no character face-swap",
-      "no identity confusion"
+      "no identity confusion",
+      "禁止撞脸",
+      "禁止多人融合成一人",
+      "禁止复制出多余的人",
+      "禁止互动的发出者与接受者颠倒"
     ],
     "extension": [
       "禁止生硬切镜",
@@ -100,6 +104,9 @@
     "NOT anime",
     "NOT illustration",
     "NOT 强磨皮美颜",
+    "NOT 大面积油光高光",
+    "NOT 五官过度完美对称",
+    "NOT 色彩过饱和",
     "无字幕",
     "无水印"
   ],

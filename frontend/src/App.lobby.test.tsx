@@ -251,6 +251,33 @@ describe('App create-project dialog', () => {
     expect(JSON.parse(String(createCalls(fetchMock)[1][1]?.body)).titleSuggestion).toBe('雨夜追凶');
   });
 
+  it('sends the chosen audience for a serial and hides the choice for a short film', async () => {
+    const created = task({ taskId: 'task-new', config: { ...task().config, titleSuggestion: '回家' } });
+    let tasks: TaskResponse[] = [];
+    const fetchMock = mockFetch(() => tasks, url => {
+      if (url.endsWith('/api/drama/create')) {
+        tasks = [created];
+        return response(created);
+      }
+      if (url.endsWith('/api/drama/task-new/assistant')) return response({ reply: '已开始', task: created });
+      return undefined;
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    const { dialog, title } = await openDialog(user);
+    await user.selectOptions(within(dialog).getByLabelText('创作类型'), 'film');
+    expect(within(dialog).queryByLabelText('目标用户')).toBeNull();
+    await user.selectOptions(within(dialog).getByLabelText('创作类型'), 'drama');
+    await user.selectOptions(within(dialog).getByLabelText('目标用户'), 'female');
+    await user.selectOptions(within(dialog).getByLabelText('年龄段'), 'senior');
+    await user.type(title, '回家');
+    await user.click(within(dialog).getByRole('button', { name: '立即创建项目' }));
+    await chatBox();
+
+    expect(JSON.parse(String(createCalls(fetchMock)[0][1]?.body)).targetAudience).toEqual({ lean: 'female', age: 'senior' });
+  });
+
   it('reopens with the reason when the server cannot be reached', async () => {
     mockFetch(() => [], url => {
       if (url.endsWith('/api/drama/create')) throw new TypeError('Failed to fetch');

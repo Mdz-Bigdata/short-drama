@@ -66,5 +66,25 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(service.get_pronunciations("t1"), {"readings": [{"word": "行长", "say": "航长"}]})
 
 
+class NativeReadingTests(unittest.TestCase):
+    """A model that makes its own sound cannot have the word swapped: the prompt says how it is read."""
+
+    def test_only_the_words_this_line_uses_get_a_note(self):
+        from app.core import voice_delivery
+
+        readings = [{"word": "御炼", "say": "玉炼"}, {"word": "长乐", "say": "常乐"}, {"word": "", "say": "x"}]
+        self.assertEqual(voice_delivery.reading_notes("皇上，御炼蛋白粉。", readings), ["「御炼」念「玉炼」的音"])
+        self.assertEqual(voice_delivery.reading_notes("这铁，怎么越练越沉？", readings), [])
+        self.assertEqual(voice_delivery.reading_notes("", readings), [])
+        self.assertEqual(voice_delivery.reading_notes("御炼", None), [])
+
+    def test_a_line_full_of_listed_words_keeps_the_first_few(self):
+        from app.core import prompt_data, voice_delivery
+
+        readings = [{"word": f"词{index}", "say": f"读{index}"} for index in range(8)]
+        line = "".join(row["word"] for row in readings)
+        self.assertEqual(len(voice_delivery.reading_notes(line, readings)), prompt_data.number("voice_delivery", "native_reading_max"))
+
+
 if __name__ == "__main__":
     unittest.main()

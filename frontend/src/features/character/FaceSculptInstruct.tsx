@@ -2,7 +2,7 @@ import { Send, Wand2 } from 'lucide-react';
 import { useState, type KeyboardEvent } from 'react';
 import { apiRequest } from '../../api/client';
 import { t } from '../../i18n';
-import type { FaceSculptValue } from './CharacterFaceSculpt';
+import type { FaceSculptValue } from './faceSculptModel';
 import './FaceSculptInstruct.css';
 
 /**
@@ -13,7 +13,7 @@ import './FaceSculptInstruct.css';
  * 用户自己补控件。
  */
 
-/** 服务端预览的最小形状；CharacterFaceSculpt 没导出它的 Preview，这里只声明用得到的字段。 */
+/** 服务端预览的最小形状，这里只声明用得到的字段。 */
 export interface FaceInstructPreview {
   description: string;
   face_text: string;

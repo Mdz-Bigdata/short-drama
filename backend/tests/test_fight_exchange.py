@@ -65,7 +65,7 @@ class ClipCheckTest(unittest.TestCase):
         from app.core import prompt_data
 
         prompt = prompt_data.text("fight_scene", "clip_check_prompt")
-        for words in ("全身发力", "木偶互推", "整段站着看", "排着队", "落点"):
+        for words in ("全身发力", "木偶互推", "整段站着看", "排着队", "落点", "左右位置前后对得上", "脱手或折断的兵器"):
             self.assertIn(words, prompt)
         self.assertIn("在场的人都在打", prompt_data.text("fight_scene", "clip_fix_lead"))
 

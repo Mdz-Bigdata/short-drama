@@ -43,6 +43,7 @@ from typing import Any
 from app.core import breakdown_kinds, emotion_points, light_setups, literary, prompt_data
 from app.core.episode_shape import EpisodeShape
 from app.core import creation_modes
+from app.core import paywall_plan, script_structure, serial_brief, story_direction, target_audience
 from app.core import series_rhythm
 from app.core.screenwriting import self_check
 from app.core.screenwriting import fact_check, filmability, ledger_ops, review, story_state
@@ -50,6 +51,7 @@ from app.core.screenwriting.anchors import AnchorRejected, normalize_source_text
 from app.core.screenwriting.durations import (
     DEFAULT_EPISODE_TARGET_SECONDS,
     resolve_episode_target_volume,
+    shot_duration_aim,
     supported_shot_durations,
 )
 from app.core.screenwriting.entries import ENTRY_REVISION_FIELD, entry_revision, evaluate_entry_currency, revision_of
@@ -197,11 +199,11 @@ def detect_source_kind(source_text: str | None) -> str:
     """``screenplay`` when the text already reads as a script, ``novel`` for prose, ``outline`` for none."""
     if not source_text or not source_text.strip():
         return "outline"
-    from app.core.writer_dashboard import EPISODE_HEADING, SCENE_HEADING, SPEAKER_LINE  # local import: avoid a cycle at module load
+    from app.core.writer_dashboard import EPISODE_HEADING, SPEAKER_LINE, scene_heading  # local import: avoid a cycle at module load
 
     sample = source_text[:20000]
     speaker_lines = len(SPEAKER_LINE.findall(sample))
-    scene_lines = sum(1 for line in sample.splitlines() if SCENE_HEADING.match(line))
+    scene_lines = sum(1 for line in sample.splitlines() if scene_heading(line) is not None)
     episode_lines = len(EPISODE_HEADING.findall(sample))
     total_lines = max(1, sample.count("\n") + 1)
     if scene_lines >= 2 or episode_lines >= 2 or speaker_lines / total_lines >= 0.2:
@@ -310,6 +312,8 @@ class ScreenwritingEngine:
         self.planning_max_episodes = max(1, planning_max_episodes)
         self.director_plan_excerpt_chars = max(500, director_plan_excerpt_chars)
         self.supported_durations = sorted({int(value) for value in supported_durations}) if supported_durations else supported_shot_durations(video_model)
+        # Seedance 2.5 一镜尽量拍满 30 秒；档位是外面给的也照样靠，只要它在档位里（prompts 里检查）。
+        self.aim_duration = shot_duration_aim(video_model)
 
     def _system(self, stage: str) -> str:
         return self.system_prompts.get(stage) or self.system_prompt
@@ -711,6 +715,16 @@ class ScreenwritingEngine:
             first=first, last=last, total=total, context_entries=context,
             target_seconds=self.episode_target_seconds, instructions=self.instructions,
             cast=state.get("inventory"), creation_mode=str(self.creation.get("creation_mode") or "drama"),
+            # 目标用户的写法，加上选定的剧本结构在这几集该做的事(script_structure.json)。
+            audience_rules=[
+                *target_audience.outline_rules(self.creation, first=first, total=total),
+                *script_structure.outline_rules(self.creation, first=first, last=last, total=total),
+                # 创作者写的创作禁区(story_direction.json)；没写是空。
+                *story_direction.outline_rules(self.creation),
+                # 连载立项(题材、基调、结局、出海)一行，和这一批里的付费卡点集(serial_brief.json / paywall_plan.json)；没选是空。
+                *serial_brief.outline_rules(self.creation, last=last, total=total),
+                *paywall_plan.outline_rules(self.creation, first=first, last=last, total=total),
+            ],
             # 跨集场记里比「前情」那几集更早、现在仍然有效的事。
             earlier_state=story_state.earlier_lasting(
                 [*(state.get("ledger") or []), *[entry.model_dump() for entry in earlier]],
@@ -763,6 +777,12 @@ class ScreenwritingEngine:
                 [entry.model_dump() for entry in entries], cast=state.get("inventory"),
                 earlier=[*self._context_entries(state, first, limit=10_000), *[entry.model_dump() for entry in earlier]],
             ))
+            # 付费卡点集的钩子是空的、相邻两个卡点停法相同(paywall_plan.json)：同样只记提示。
+            state["warnings"].extend(paywall_plan.warnings(
+                [*self._context_entries(state, first, limit=10_000), *[entry.model_dump() for entry in earlier],
+                 *[entry.model_dump() for entry in entries]],
+                self.creation, total=total, fresh=[entry.episode for entry in entries],
+            ))
         return entries
 
     def _plan_anchored(self, state: dict[str, Any], episode_count: int | None = None, *, start: int = 0) -> list[LedgerEntry]:
@@ -805,6 +825,7 @@ class ScreenwritingEngine:
                 context_entries=[entry.model_dump() for entry in entries[-5:]], target_volume=target_volume,
                 max_episodes=max_episodes, remaining_episodes=remaining_episodes, instructions=self.instructions,
                 cast=state.get("inventory"), adaptation=adaptation, opens_series=opens_series,
+                audience_rules=target_audience.adaptation_rules(self.creation, opens_series=opens_series) if kind == "novel" else (),
                 earlier_state=story_state.earlier_lasting([entry.model_dump() for entry in entries], entries[-5].episode if len(entries) >= 5 else 1),
             )
             resolved: dict[str, list[int]] = {}
@@ -1171,6 +1192,7 @@ class ScreenwritingEngine:
             relationships=self._relationships(state),
             adaptation=state.get("adaptation") if isinstance(state.get("adaptation"), Mapping) else None,
             previous_episode_outline=told["previous"], sheet=told["sheet"], landing=told["landing"],
+            aim_duration=self.aim_duration,
         )
 
     def _check_context(self, state: Mapping[str, Any], episode: int) -> PlanCheckContext:

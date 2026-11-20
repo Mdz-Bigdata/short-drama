@@ -3,7 +3,7 @@ import { Mesh, PerspectiveCamera, Scene, Vector2, type ShaderMaterial, type WebG
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HELPER_FLAG } from './capture';
-import { ClipUnsupportedError, clipSize, exportClip, type ClipStage } from './clipExport';
+import { ClipUnsupportedError, clipSize, exportClip, type ClipStage, SCENE_CLIP_LIMITS } from './clipExport';
 import { BACKDROP_FLAG, DEPTH_FALLBACK_RANGE } from './depthPass';
 
 // The encoder is the boundary: what matters here is what it is asked to do, frame by frame.
@@ -193,6 +193,13 @@ describe('exportClip', () => {
     const { stage } = fakeStage();
     await expect(exportClip({ stage, aspect: 1, durationS: 31, fps: 24, monochrome: false, labels: false })).rejects.toThrow('30 秒');
     await expect(exportClip({ stage, aspect: 1, durationS: 5, fps: 60, monochrome: false, labels: false })).rejects.toThrow('24 / 25 / 30');
+  });
+
+  it('lets a whole scene run longer than a shot’s clip may, up to its own limit', async () => {
+    const { stage } = fakeStage();
+    const clip = await exportClip({ stage, aspect: 1, durationS: 31, fps: 24, monochrome: false, labels: false, limits: SCENE_CLIP_LIMITS });
+    expect(clip.frames).toBe(744);
+    await expect(exportClip({ stage: fakeStage().stage, aspect: 1, durationS: 601, fps: 24, monochrome: false, labels: false, limits: SCENE_CLIP_LIMITS })).rejects.toThrow('600 秒');
   });
 });
 

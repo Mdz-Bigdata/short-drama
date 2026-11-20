@@ -40,6 +40,13 @@ def draft_resolution(config: Mapping[str, Any], clip: Optional[Mapping[str, Any]
     return prompt_data.text(_DATA, "draft_resolution")
 
 
+def render_resolution(config: Mapping[str, Any], clip: Optional[Mapping[str, Any]] = None, *, model: str = "") -> Optional[str]:
+    """这一镜发给视频模型的分辨率：样片按样片档位；成片按项目选的「成片清晰度」，没选就是 None(各家默认档位)。"""
+    from app.core import video_tiers
+
+    return draft_resolution(config, clip) or video_tiers.final_resolution(config, model or str(config.get("video_model") or ""))
+
+
 def _source(video_url: str) -> Optional[str]:
     path = media_compositor.local_media_path(video_url)
     return path if path and os.path.exists(path) else None

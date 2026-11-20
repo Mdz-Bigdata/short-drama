@@ -1,0 +1,114 @@
+{
+  "_doc": "成片精修(app/core/film_finishing.py 读设定，app/core/film_finishing_render.py 出图出片段)的选项表、数值与报错措辞：片名卡的底图与动效、全片字幕样式、全片调色、片尾卡。各表的第一项或 defaults 里写的就是「和以前一模一样」的那一档——没动过精修的时间线不带任何精修参数，合成出来的滤镜图和以前逐字相同。选项在界面上叫什么由前端按 id 取，这里只放 id 和数值。报错里的 {0}{1} 按位置填。",
+  "errors": {
+    "not_an_object": "成片精修的设定要是一个对象",
+    "unknown_section": "未知的成片精修项 {0}；可用：{1}",
+    "unknown_key": "「{0}」里没有 {1} 这一项；可用：{2}",
+    "title_animation": "未知的片名卡动效 {0}；可用：{1}",
+    "title_background": "片名卡底图要指明哪一镜和第几秒，或者留空用默认的深色底",
+    "title_shot": "时间线上没有这一镜，或这一镜还没有片段，不能拿来做片名卡底图",
+    "subtitle_option": "未知的字幕{0} {1}；可用：{2}",
+    "color_preset": "未知的调色预设 {0}；可用：{1}",
+    "color_value": "调色的 {0} 要是 -{1} 到 {1} 之间的数",
+    "ending_enabled": "片尾卡的开关只能是开或关",
+    "ending_text": "片尾卡的文字要是一段文字"
+  },
+  "subtitle_option_names": {
+    "size": "字号",
+    "color": "颜色",
+    "position": "位置",
+    "outline": "描边"
+  },
+  "card": {
+    "_doc": "片名卡与片尾卡共用的底色、字色(和 media_compositor._render_title_png 的默认片名卡一致)。",
+    "background": [8, 8, 12],
+    "text": [245, 230, 200],
+    "shadow": [0, 0, 0],
+    "rule": [220, 180, 90],
+    "tagline": [150, 150, 160],
+    "title_font_px": 64,
+    "title_line_height": 84,
+    "title_side_margin": 100,
+    "title_max_lines": 3,
+    "tagline_font_px": 34,
+    "tagline_gap": 30,
+    "block_lift": 40,
+    "rule_half_width": 60,
+    "rule_above": 50,
+    "rule_thickness": 4,
+    "shadow_px": 2
+  },
+  "title": {
+    "animations": ["fade", "zoom", "reveal"],
+    "default_animation": "fade",
+    "background": {
+      "_doc": "底图：从选中的那一镜里抽一帧，铺满竖屏，略微模糊并压暗，字才读得清。dim 是压向黑色的比例(0 不压，1 全黑)。",
+      "dim": 0.45,
+      "blur_radius": 6,
+      "end_margin_seconds": 0.1
+    },
+    "zoom": {
+      "_doc": "缓慢推近：整张卡时长内放大 amount(0.08 = 8%)；先放大 oversample 倍再推，避免逐帧取整的抖动。",
+      "amount": 0.08,
+      "oversample": 2
+    },
+    "reveal": {
+      "_doc": "逐字出现：前 seconds 秒内把片名一个字一个字放出来；字多时并成最多 max_steps 步。",
+      "seconds": 1.2,
+      "max_steps": 12
+    }
+  },
+  "subtitle": {
+    "_doc": "字幕样式。metrics 是 46 px(中号)在 1920 高的画面上的排版数值，其它字号按比例缩放；positions 里是字幕块底边离画面底边的距离(取画面高度的比例与最小像素里较大的)。",
+    "defaults": {"size": "medium", "color": "white", "position": "bottom", "outline": "normal"},
+    "sizes": {"small": 38, "medium": 46, "large": 56},
+    "colors": {"white": [255, 255, 255], "pale_yellow": [255, 236, 150], "pale_cyan": [190, 236, 255]},
+    "positions": {
+      "bottom": {"fraction": 0.13, "min_px": 250},
+      "raised": {"fraction": 0.24, "min_px": 460}
+    },
+    "outlines": {"none": 0, "normal": 2, "bold": 3},
+    "metrics": {
+      "font_px": 46,
+      "line_height": 60,
+      "box_pad_x": 16,
+      "box_top": 6,
+      "box_bottom": 52,
+      "text_mid": 23,
+      "box_alpha": 150,
+      "max_chars": 16,
+      "side_margin": 120
+    }
+  },
+  "color": {
+    "_doc": "全片调色。滑杆存 -limit..limit 的整数，0 是不动；eq 里 base + 滑杆/limit × span 是传给 ffmpeg eq 滤镜的值；冷暖换算成色温(开尔文)，正数偏暖(色温更低)。四项都是 0 时不加任何滤镜。presets 的第一项是原片。",
+    "limit": 100,
+    "sliders": ["brightness", "contrast", "saturation", "warmth"],
+    "eq": {
+      "brightness": {"base": 0.0, "span": 0.2},
+      "contrast": {"base": 1.0, "span": 0.4},
+      "saturation": {"base": 1.0, "span": 1.0}
+    },
+    "temperature": {"neutral": 6500, "kelvin_per_step": -20, "min": 3000, "max": 10000},
+    "neutral_preset": "none",
+    "presets": [
+      {"id": "none", "brightness": 0, "contrast": 0, "saturation": 0, "warmth": 0},
+      {"id": "bright", "brightness": 8, "contrast": 4, "saturation": 6, "warmth": 0},
+      {"id": "film", "brightness": -4, "contrast": 14, "saturation": -12, "warmth": 8},
+      {"id": "warm", "brightness": 2, "contrast": 2, "saturation": 6, "warmth": 30},
+      {"id": "cool", "brightness": 0, "contrast": 4, "saturation": -4, "warmth": -30},
+      {"id": "vintage", "brightness": 2, "contrast": -6, "saturation": -28, "warmth": 22},
+      {"id": "mono", "brightness": 0, "contrast": 8, "saturation": -100, "warmth": 0}
+    ]
+  },
+  "ending": {
+    "_doc": "片尾卡：默认关。打开且写了字才出一张深色卡，只有使用者自己写的那一行字，不带任何默认标语。",
+    "seconds": 3.0,
+    "max_chars": 80,
+    "font_px": 48,
+    "line_height": 70,
+    "side_margin": 100,
+    "max_lines": 4,
+    "transition": {"type": "crossfade", "duration": 0.35}
+  }
+}

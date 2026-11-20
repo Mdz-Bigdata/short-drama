@@ -176,14 +176,16 @@ export interface NodeMenuOptions {
   /** How many nodes are selected; two or more (with this one among them) gives the selection menu. */
   selectionCount: number;
   canRun?: boolean;
+  /** The node shows a picture: offer 存入元素库 (id `save-element`). */
+  canSaveElement?: boolean;
   mac?: boolean;
 }
 
 /**
- * Right-click on a node. Ids: run, rename, toggle-collapse, fit-group, ungroup, copy, duplicate, delete;
+ * Right-click on a node. Ids: run, rename, toggle-collapse, fit-group, ungroup, copy, duplicate, save-element, delete;
  * with a multi-selection, those of selectionMenu.
  */
-export function nodeMenu({ node, selectionCount, canRun, mac }: NodeMenuOptions): MenuSpec[] {
+export function nodeMenu({ node, selectionCount, canRun, canSaveElement, mac }: NodeMenuOptions): MenuSpec[] {
   if (selectionCount >= 2) return selectionMenu({ count: selectionCount, canRun, hasGroup: node.kind === 'group', mac });
   const group = node.kind === 'group';
   return tidy<MenuSpec>([
@@ -197,6 +199,7 @@ export function nodeMenu({ node, selectionCount, canRun, mac }: NodeMenuOptions)
     'separator',
     { id: 'copy', label: t('复制'), shortcut: shortcutLabel('mod+c', mac) },
     { id: 'duplicate', label: t('就地复制'), shortcut: shortcutLabel('mod+d', mac) },
+    ...(canSaveElement ? ['separator' as const, { id: 'save-element', label: t('存入元素库') }] : []),
     'separator',
     { id: 'delete', label: t('删除'), shortcut: 'Delete', danger: true },
   ]);

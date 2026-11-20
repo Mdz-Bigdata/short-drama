@@ -4,6 +4,7 @@ import { t } from '../../i18n';
 import { backgroundStyle, type CanvasBackgroundMode } from './canvasBackground';
 import { focusPlan } from './canvasFocus';
 import { carriedIds, edgeEnds, groupDepth, hiddenMemberIds, snapTargets } from './canvasFrames';
+import { EDGE_MARKERS, edgeEmphasis, edgeMarker, type EdgeEmphasis } from './canvasEdgeEmphasis';
 import {
   SHELL_ZOOM, SNAP_DISTANCE, boundsOf, centerOn, contains, edgePath, inflate, intersects, nodeAt, normalizeRect, screenToWorld, snapMove, visibleRect, type SnapGuide,
 } from './canvasGeometry';
@@ -12,6 +13,7 @@ import { lodFor, overviewMode, OVERVIEW_ENTER_ZOOM, OVERVIEW_LEAVE_ZOOM, type No
 import { applySelection, marqueeHits, marqueeMode, selectionStrategy, type MarqueeMode, type SelectionModifiers } from './canvasSelectionModes';
 import { buildNodeIndex } from './canvasSpatialIndex';
 import type { CanvasEdge, CanvasNode, Rect, Viewport } from './canvasTypes';
+import { pauseMedia } from './canvasMedia';
 import { cancelVideoPreview } from './canvasVideoPreview';
 import { animateView, fitAll, fitSelection, focusRect, VIEW_TRANSITION_MS, zoomStep, zoomTo } from './canvasViewportAnimation';
 import { edgesToDraw, visibilityRanges, visibleNodeIds } from './canvasVisibility';
@@ -86,6 +88,8 @@ interface Props {
   onLivePointer?: (world: { x: number; y: number }) => void;
   /** Where the nodes being dragged or resized are right now; `null` once the gesture ends. */
   onLiveDrag?: (rects: Array<Rect & { id: string }> | null) => void;
+  /** With 'hand', a left drag pans the view; controls on the cards still take their clicks (canvasBeefTool.ts). */
+  tool?: 'select' | 'hand';
 }
 
 type Gesture =
@@ -135,12 +139,12 @@ function zoomBand(zoom: number) {
   return ZOOM_BANDS.filter(level => zoom >= level).length;
 }
 
-const EdgeLine = memo(function EdgeLine({ edge, d, selected, labelled, midX, midY }: { edge: CanvasEdge; d: string; selected: boolean; labelled: boolean; midX: number; midY: number }) {
+const EdgeLine = memo(function EdgeLine({ edge, d, selected, emphasis, labelled, midX, midY }: { edge: CanvasEdge; d: string; selected: boolean; emphasis: EdgeEmphasis; labelled: boolean; midX: number; midY: number }) {
   const label = roleLabel(edge.payload.role);
   return (
-    <g className={`cn-edge cn-edge--${edge.kind}${selected ? ' is-selected' : ''}`} data-edge-id={edge.id}>
+    <g className={`cn-edge cn-edge--${edge.kind}${selected ? ' is-selected' : ''}${emphasis === 'plain' ? '' : ` is-${emphasis}`}`} data-edge-id={edge.id}>
       <path d={d} className="cn-edge__hit" />
-      <path d={d} className="cn-edge__line" />
+      <path d={d} className="cn-edge__line" markerEnd={`url(#${edgeMarker(edge.kind, selected)})`} />
       {labelled && label && <text x={midX} y={midY - 6} className="cn-edge__label" textAnchor="middle">{label}</text>}
     </g>
   );
@@ -155,7 +159,7 @@ const EdgeLine = memo(function EdgeLine({ edge, d, selected, labelled, midX, mid
 export const CanvasSurface = forwardRef<SurfaceHandle, Props>(function CanvasSurface(
   {
     nodes, edges, selection, edgeSelection, initialView, background = 'dots', flash, renderNode, onSelect, onMove, onResize, onConnect, canConnect,
-    onConnectEmpty, onMenu, onViewSettled, onDropFiles, onLivePointer, onLiveDrag,
+    onConnectEmpty, onMenu, onViewSettled, onDropFiles, onLivePointer, onLiveDrag, tool = 'select',
   },
   handle,
 ) {
@@ -412,6 +416,9 @@ export const CanvasSurface = forwardRef<SurfaceHandle, Props>(function CanvasSur
     };
   }, []);
 
+  // Panning is not a moment to watch: whatever plays on a card stops (the cards also stop taking clicks, in CSS).
+  useEffect(() => { if (panning) pauseMedia(root.current); }, [panning]);
+
   const capture = (event: React.PointerEvent) => {
     try {
       root.current?.setPointerCapture?.(event.pointerId);
@@ -497,7 +504,7 @@ export const CanvasSurface = forwardRef<SurfaceHandle, Props>(function CanvasSur
     if (!target.closest(INTERACTIVE)) root.current?.focus({ preventScroll: true });
     stopAnimation();
     if (gesture.current) return;
-    if (event.button === 1 || (event.button === 0 && spaceHeld.current)) {
+    if (event.button === 1 || (event.button === 0 && (spaceHeld.current || (tool === 'hand' && !target.closest(INTERACTIVE))))) {
       event.preventDefault();
       capture(event);
       gesture.current = { mode: 'pan', startX: event.clientX, startY: event.clientY, view: view.current };
@@ -729,7 +736,7 @@ export const CanvasSurface = forwardRef<SurfaceHandle, Props>(function CanvasSur
   return (
     <div
       ref={root}
-      className={`cn-surface${panning ? ' is-panning' : ''}`}
+      className={`cn-surface${panning ? ' is-panning' : ''}${tool === 'hand' ? ' is-hand' : ''}`}
       tabIndex={0}
       role="application"
       aria-label={t('节点画布')}
@@ -781,8 +788,20 @@ export const CanvasSurface = forwardRef<SurfaceHandle, Props>(function CanvasSur
       <div ref={backdrop} className="cn-backdrop" aria-hidden="true" />
       <div ref={world} className="cn-world">
         <svg className="cn-edges" aria-hidden="true">
+          <defs>
+            {/* Arrowheads, in world units so they grow and shrink with the cards they point at. The tip stops short of
+                the line's end (refX past the tip): the end lies under the target's input port, and the head must not. */}
+            {EDGE_MARKERS.map(id => (
+              <marker key={id} id={id} className={`cn-arrow ${id}`} viewBox="0 0 10 10" refX="17" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
+                <path d="M 0 1 L 10 5 L 0 9 z" />
+              </marker>
+            ))}
+          </defs>
           {edgeLines.map(line => (
-            <EdgeLine key={line.edge.id} edge={line.edge} d={line.d} midX={line.midX} midY={line.midY} selected={edgeSelection.has(line.edge.id)} labelled={zoom >= SHELL_ZOOM} />
+            <EdgeLine
+              key={line.edge.id} edge={line.edge} d={line.d} midX={line.midX} midY={line.midY} selected={edgeSelection.has(line.edge.id)}
+              emphasis={edgeEmphasis(line.edge, selection, edgeSelection)} labelled={zoom >= SHELL_ZOOM}
+            />
           ))}
           {draftLine && <path d={draftLine} className={`cn-edge__draft${draft?.hover ? (draft.ok ? ' is-ok' : ' is-no') : ''}`} />}
         </svg>

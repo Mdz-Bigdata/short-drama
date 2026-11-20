@@ -32,7 +32,8 @@ function messageOf(error: unknown, fallback: string) {
 export function MediaPreview({ output }: { output: NodeOutput }) {
   const url = apiUrl(output.url);
   if (output.medium === 'image') return <img className="cn-media" src={url} alt="" loading="lazy" draggable={false} />;
-  if (output.medium === 'video') return <video className="cn-media" src={url} controls preload="metadata" playsInline />;
+  // An upload in an encoding browsers may not play is watched through its H.264 copy (video_preview.py).
+  if (output.medium === 'video') return <video className="cn-media" src={output.preview_url ? apiUrl(output.preview_url) : url} controls preload="metadata" playsInline />;
   return <audio className="cn-audio" src={url} controls preload="none" />;
 }
 
@@ -63,7 +64,7 @@ function RunBar({ node, latest }: { node: CanvasNode; latest?: LatestRun }) {
       <button type="button" className="cn-button is-primary" disabled={busy || kind?.runnable === false} onClick={() => run([node.id])}>
         {busy ? <Loader2 className="cn-spin" aria-hidden="true" /> : <Play aria-hidden="true" />} {t('运行')}
       </button>
-      {latest && <span className={`cn-status is-${latest.status}`} title={latest.error ?? undefined}>{statusLabel(latest.status)}</span>}
+      {latest && <span className={`cn-status is-${latest.status}`} title={latest.error ?? undefined}>{statusLabel(latest.status)}{latest.versions ? ` ${latest.versions.done}/${latest.versions.total}` : ''}</span>}
       {latest?.status === 'queued' && (
         <button type="button" className="cn-button is-quiet" onClick={() => cancel(latest)} aria-label={t('取消排队')}><X aria-hidden="true" /></button>
       )}

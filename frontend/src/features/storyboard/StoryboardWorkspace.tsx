@@ -303,7 +303,11 @@ export function StoryboardWorkspace({
   const [appliedAction, setAppliedAction] = useState(0);
   if (externalAction && externalAction.nonce !== appliedAction) {
     setAppliedAction(externalAction.nonce);
-    if (scenes.some(scene => scene.id === externalAction.sceneId)) setSelectedSceneId(externalAction.sceneId);
+    const asked = scenes.find(scene => scene.id === externalAction.sceneId);
+    if (asked) {
+      setSelectedSceneId(asked.id);
+      if (externalAction.shotId != null) setSelectedFrameIndex(Math.max(0, asked.shots.findIndex(shot => shot.shot_id === externalAction.shotId)));
+    }
     setShowPrompt(externalAction.view === 'prompt');
     setShowSpatial(externalAction.view === 'spatial');
     setExportKind(externalAction.view === 'packages' ? 'packages' : externalAction.view === 'sheets' ? 'sheets' : null);

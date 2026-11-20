@@ -1,0 +1,23 @@
+{
+  "_about": "app/core/cast_distinct.py 的措辞与界限：同一部剧里两个角色的脸写成了同一张（脸型、眼型、眉、鼻、唇用的是同一组词，只剩发型和衣服不同），就在角色看板的风险里提一句。只比文字，不看图，不调用模型，不拦流程。比的是 face_sculpt.json 里骨相与五官的选项词，所以用同一个预设捏了两个角色时最容易提示。",
+  "slots": ["face_shape", "jaw", "chin", "eye_shape", "eyelid", "eye_tail", "brow_shape", "nose_tip", "lips", "mouth_corner"],
+  "slot_labels": {
+    "face_shape": "脸型", "jaw": "下颌线", "chin": "下巴", "eye_shape": "眼型", "eyelid": "眼皮", "eye_tail": "眼尾",
+    "brow_shape": "眉形", "nose_tip": "鼻头", "lips": "唇形", "mouth_corner": "嘴角"
+  },
+  "mark_words": ["痣", "疤", "梨涡", "酒窝", "胎记", "雀斑", "断眉", "刺青", "纹身"],
+  "limits": {
+    "characters": 16,
+    "min_same_slots": 3,
+    "min_agreement": 0.75,
+    "min_fragments": 4,
+    "fragment_overlap": 0.8,
+    "risks": 6
+  },
+  "item": "{first} 和 {second} 的脸写得太像",
+  "note_slots": "两人的{slots}写的是同一组词（{words}），{differs}。遮住发型和衣服，观众分不清谁是谁。给其中一位换一处骨相或五官（脸型、眉眼、鼻、唇挑一处），或者加一处面部记号（痣、疤、断眉）。",
+  "note_fragments": "两人的骨相与五官有 {share}% 是同一批词（{words}）。遮住发型和衣服，观众分不清谁是谁。给其中一位换一处骨相或五官，或者加一处面部记号。",
+  "differs_none": "别的五官词都没写出区别",
+  "differs_some": "只有{slots}不同",
+  "joiner": "、"
+}

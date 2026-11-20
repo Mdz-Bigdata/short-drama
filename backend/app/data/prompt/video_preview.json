@@ -1,0 +1,17 @@
+{
+  "_doc": "app/core/video_preview.py 的界限：哪些编码浏览器能直接播放、预览的尺寸和画质、转码最多等多久，以及日志里的说法。",
+  "browser_codecs": ["h264", "vp8", "vp9", "av1"],
+  "browser_pixel_formats": ["yuv420p", "yuvj420p"],
+  "browser_containers": [".mp4", ".m4v", ".webm"],
+  "long_side": 1280,
+  "crf": 26,
+  "preset": "veryfast",
+  "audio_bitrate": "128k",
+  "timeout_seconds": 300,
+  "errors": {
+    "no_ffmpeg": "没有找到 ffmpeg / ffprobe，做不了预览转码",
+    "unreadable": "读不出这个视频的编码信息",
+    "failed": "预览转码失败：{detail}",
+    "timeout": "预览转码超过 {seconds} 秒，已停止"
+  }
+}

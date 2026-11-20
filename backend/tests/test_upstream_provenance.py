@@ -15,7 +15,7 @@ class UpstreamProvenanceTests(unittest.TestCase):
         records = load_upstream_sources()
         by_id = {record.id: record for record in records}
 
-        self.assertEqual(len(records), 25)  # + harness2 (2026-11-15)
+        self.assertEqual(len(records), 29)  # + harness2 (2026-11-15), + novanova-studio (2026-11-16), + aid-studio (2026-11-16), + beeftv (2026-11-16), + sline-short-drama (2026-11-19)
         self.assertEqual(set(by_id), {source["id"] for source in UPSTREAM_CAPABILITIES})
         self.assertTrue(all(re.fullmatch(r"[a-f0-9]{40}", record.reviewed_commit) for record in records))
         self.assertTrue(all(record.license_observation and record.code_treatment for record in records))

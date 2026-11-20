@@ -22,14 +22,22 @@ from typing import Callable, Dict, Any, Optional, List, Tuple
 from app import settings
 from app.repository.task_repo import StaleTaskWriteError, TaskRepository
 from app.core.face_card import state_face_fragments
-from app.core import acting, character_block, face_sculpt
+from app.core import acting, art_direction, character_block, face_sculpt
 from app.core import blackout, clip_fixes, clip_route, delivery_check, dialogue_polish
+from app.core import spoken_language, video_tiers
 from app.service.control_table import _desk_still as applied_desk_still, control_table
 from app.core import light_setups, rights_ledger, shot_ledger, spend_limits, technique_look, voice_delivery, wuxia_vfx
-from app.core import fight_exchange, fight_safety, fight_state, weapon_moves
+from app.core import fight_exchange, fight_safety, fight_state, sabre_techniques, style_moves, sword_techniques, weapon_forms, weapon_moves
 from app.core import film_review
 from app.core import series_rhythm
+from app.core import stage_pause
+from app.core import spoken_cues
+from app.core import target_audience
+from app.core import script_structure
+from app.core import story_direction
+from app.core import paywall_plan, serial_brief
 from app.core import scene_seconds
+from app.core import size_rhythm
 from app.core import tight_prompt
 from app.core import group_blocking, post_production
 from app.core import xianxia_lore
@@ -100,7 +108,7 @@ from app.core.workflow_guide import (
 )
 from app.core.storyboard_prompt_detail import compile_storyboard_prompt_detail, storable_prompt_detail
 from app.core.asset_mentions import resolve_mentions
-from app.core.reference_limits import MAX_REFERENCE_IMAGES
+from app.core.reference_limits import MAX_REFERENCE_IMAGES, caps_of
 from app.core.storyboard_scene_context import (
     OBJECT_KINDS,
     cast_aliases,
@@ -164,7 +172,7 @@ from app.core.writer_dashboard import (
     split_script_by_episode,
 )
 from app.core.element_scope import normalized_asset_name
-from app.core import episode_cycle, frame_handoff, prompt_budget, prompt_distiller, seam_check, slice_video
+from app.core import character_intro, episode_cycle, frame_handoff, prompt_budget, prompt_distiller, seam_check, slice_video
 from app.core import h3_native as h3_ref2va
 from app.core import llm_profile, promo_facts, storyboard_revision
 from app.core.spoken_lines import labelled_lines, spoken_lines
@@ -214,6 +222,9 @@ from app.schema.screenwriting import (
 from app.core.screenwriting.editing import apply_plan_operations
 from app.core import bgm_library, creation_modes, edit_timeline, embedded_agent, generation_queue, style_analysis
 from app.service import harness_evolution
+from app.core import prompt_preferences
+from app.core import line_coverage
+from app.core import episode_runtime
 from app.core.spatial_stage import blockout as stage_blockout
 from app.export import jianying
 from app.core.screenwriting import ledger_ops, review
@@ -1426,11 +1437,14 @@ class DramaService:
             if episode is not None and episode not in episode_cycle.episode_numbers(task):
                 raise ValueError(_post_text_of("_current_timeline.text.2").format(episode))
             episode = episode if episode is not None else episode_cycle.timeline_episode(task)
-            if episode is not None:
-                task = episode_cycle.episode_view(task, episode)
+        whole = task
+        if episode_cycle.active(task) and episode is not None:
+            task = episode_cycle.episode_view(task, episode)
         timeline, reports = self._current_timeline_of(task, title)
         if episode is not None and isinstance(timeline, dict):
             timeline["episode"] = episode
+        # 人物出场字幕：谁是第一次出场要看整部剧(前面的集里出过场的不再出)，所以用没按集切开的任务来排。
+        timeline = character_intro.with_cards(timeline, whole)
         return timeline, reports
 
     def _current_timeline_of(self, task: Dict[str, Any], title: str) -> tuple[Dict[str, Any], list]:
@@ -1438,27 +1452,43 @@ class DramaService:
         specs, reports = final_cut_transitions(shots)
         existing = task.get("assets", {}).get(edit_timeline.TIMELINE_KEY)
         if isinstance(existing, dict) and edit_timeline.is_current(existing, task):
-            return edit_timeline.with_shot_uids(existing, task), reports
+            return edit_timeline.with_spoken_subtitles(edit_timeline.with_shot_uids(existing, task), task), reports
         if isinstance(existing, dict):
-            return edit_timeline.refresh(existing, task, transitions=specs, title=self._drama_title(task, title)), reports
+            refreshed = edit_timeline.refresh(existing, task, transitions=specs, title=self._drama_title(task, title))
+            return edit_timeline.with_spoken_subtitles(refreshed, task), reports
         return edit_timeline.build(task, transitions=specs, title=self._drama_title(task, title)), reports
 
     @staticmethod
     def _store_timeline(task: Dict[str, Any], timeline: Dict[str, Any]) -> None:
         """Save the edit timeline where it is read back from: the live copy, and in per-episode work the episode's record
-        (the episode view reads the record, so an edit kept only in the live copy looked undone on the next read)."""
-        task.setdefault("assets", {})[edit_timeline.TIMELINE_KEY] = timeline
+        (the episode view reads the record, so an edit kept only in the live copy looked undone on the next read).
+
+        The live copy belongs to the episode the cut shows by default. Another episode opened in the editor (a finished
+        one being touched up) is saved on its own record only, so the cut in progress is not replaced by it.
+        """
         episode = timeline.get("episode") if isinstance(timeline, dict) else None
-        if episode is not None and episode_cycle.active(task):
+        cycle = episode is not None and episode_cycle.active(task)
+        if not cycle or int(episode) == episode_cycle.timeline_episode(task):
+            task.setdefault("assets", {})[edit_timeline.TIMELINE_KEY] = timeline
+        if cycle:
             episode_cycle.writable_record(task, int(episode))["timeline"] = timeline
 
-    def get_timeline(self, task_id: str) -> Optional[Dict[str, Any]]:
+    @staticmethod
+    def _saved_timeline(task: Dict[str, Any], timeline: Dict[str, Any]) -> Any:
+        """What is on record for the episode this timeline is of (see ``_store_timeline``)."""
+        episode = timeline.get("episode") if isinstance(timeline, dict) else None
+        if episode is not None and episode_cycle.active(task) and int(episode) != episode_cycle.timeline_episode(task):
+            return episode_cycle.record(task, int(episode)).get("timeline")
+        return task.get("assets", {}).get(edit_timeline.TIMELINE_KEY)
+
+    def get_timeline(self, task_id: str, *, episode: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """The cut the editor works on. ``episode``：分集项目里要看的那一集(比如已经出了成片的旧集)；不给就是默认的那一集。"""
         task = self.repo.get_task(task_id)
         if not task:
             return None
         config = task.get("config") if isinstance(task.get("config"), dict) else {}
-        timeline, _ = self._current_timeline(task, str(config.get("title_suggestion") or ""))
-        if timeline is not task.get("assets", {}).get(edit_timeline.TIMELINE_KEY):
+        timeline, _ = self._current_timeline(task, str(config.get("title_suggestion") or ""), episode=episode)
+        if timeline != self._saved_timeline(task, timeline):
             self.repo.mutate_task(task_id, lambda current: self._store_timeline(current, timeline) or current)
         return self._timeline_response(task_id, timeline, task)
 
@@ -1466,8 +1496,16 @@ class DramaService:
     def _timeline_response(task_id: str, timeline: Dict[str, Any], task: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         # 剪辑合成师页：张力曲线、场景标记、配乐匹配度、大小预估、成片版本。配乐库按匹配度排好。
         post = post_production.view(task or {}, timeline, bgm_library.list_tracks())
+        cycle = bool(task) and episode_cycle.active(task)
         return {
             "task_id": task_id, "timeline": timeline, "summary": edit_timeline.summary(timeline),
+            # 分集项目：有片段的各集(剪辑台可以切过去改)、哪一集已出成片、默认剪的是哪一集。
+            "episodes": [
+                {"number": number, "clips": len(clips), "film_url": episode_cycle.film_of(task, number) or None}
+                for number in episode_cycle.episode_numbers(task)
+                if (clips := [clip for clip in episode_cycle.episode_clips(task, number) if clip.get("video_url")])
+            ] if cycle else [],
+            "live_episode": episode_cycle.timeline_episode(task) if cycle else None,
             # 成片交付前验收：按剪辑台上现在的修剪逐镜过一遍，不拦合成。
             "acceptance": delivery_check.report(task, timeline, plans=lambda scene: spatial_stage.load_plan(task, scene)) if task else [],
             "transitions": list(edit_timeline.TRANSITIONS), "bgm_library": post.pop("bgm_library"),
@@ -1502,11 +1540,19 @@ class DramaService:
                 timeline = edit_timeline.set_voice(timeline, clip.get("shot_id"), path, shot_uid=clip.get("shot_uid"))
         return timeline
 
-    def edit_timeline(self, task_id: str, operation: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """One edit on the timeline; the film is not re-rendered until asked."""
+    def edit_timeline(self, task_id: str, operation: str, payload: Dict[str, Any], *, episode: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """One edit on the timeline; the film is not re-rendered until asked.
+
+        ``episode``：分集项目里改哪一集的剪辑(已经出了成片的旧集也可以)；不给就是默认的那一集。
+        """
+        edited: Dict[str, Any] = {}
+
         def mutation(task: Dict[str, Any]) -> Dict[str, Any]:
             config = task.get("config") if isinstance(task.get("config"), dict) else {}
-            timeline, _ = self._current_timeline(task, str(config.get("title_suggestion") or ""))
+            try:
+                timeline, _ = self._current_timeline(task, str(config.get("title_suggestion") or ""), episode=episode)
+            except ValueError as error:
+                raise edit_timeline.TimelineError(str(error)) from error
             shot_id, shot_uid = payload.get("shot_id"), payload.get("shot_uid")
             if operation == "trim":
                 timeline = edit_timeline.trim(timeline, shot_id, start=float(payload.get("start") or 0), end=payload.get("end"), shot_uid=shot_uid)
@@ -1516,6 +1562,10 @@ class DramaService:
                 timeline = edit_timeline.set_sound_join(timeline, shot_id, join=str(payload.get("join") or ""), seconds=payload.get("seconds"), shot_uid=shot_uid)
             elif operation == "subtitle":
                 timeline = edit_timeline.set_subtitle(timeline, shot_id, str(payload.get("text") or ""), shot_uid=shot_uid)
+            elif operation == "name_cards":
+                # 给了 cards 就是人写的(空列表 = 这一镜不出)；没给就交还给自动排的。
+                timeline = edit_timeline.set_name_cards(timeline, shot_id, payload.get("cards"), shot_uid=shot_uid)
+                timeline = character_intro.with_cards(timeline, task)
             elif operation == "mute":
                 timeline = edit_timeline.set_muted(timeline, shot_id, bool(payload.get("muted")), shot_uid=shot_uid)
             elif operation == "candidate":
@@ -1543,7 +1593,10 @@ class DramaService:
                     track = bgm_library.get_track(str(payload.get("library_id") or ""))
                     if not track:
                         raise edit_timeline.TimelineError(_post_text_of("mutation.text"))
-                audio = task.get("assets", {}).get("6") if isinstance(task.get("assets", {}).get("6"), dict) else {}
+                # 这一集自己的声音：分集项目里各集的音频在各自的记录里。
+                shown = timeline.get("episode")
+                sound_of = episode_cycle.episode_view(task, int(shown)) if shown is not None and episode_cycle.active(task) else task
+                audio = sound_of.get("assets", {}).get("6") if isinstance(sound_of.get("assets", {}).get("6"), dict) else {}
                 if source == "generated" and payload.get("music_version"):
                     # 之前生成过的某一版配乐。
                     chosen = post_production.music_version(task.get("assets", {}), str(payload["music_version"]))
@@ -1560,12 +1613,13 @@ class DramaService:
             else:
                 raise edit_timeline.TimelineError(_post_text_of("mutation.text.3").format(operation))
             self._store_timeline(task, timeline)
+            edited["timeline"] = timeline
             return task
 
         updated = self.repo.mutate_task(task_id, mutation)
         if updated is None:
             return None
-        return self._timeline_response(task_id, updated["assets"][edit_timeline.TIMELINE_KEY], updated)
+        return self._timeline_response(task_id, edited["timeline"], updated)
 
     def render_timeline(self, task_id: str, *, episode: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Re-render the film from the timeline as it is now; stage 7's record is updated in place.
@@ -1596,7 +1650,8 @@ class DramaService:
             transition_plans=plan["transition_plans"], trims=plan["trims"], bgm_volume=plan["bgm_volume"],
             sound_joins=plan["sound_joins"], sound_report=sound_report,
             bgm_start=plan.get("bgm_start", 0.0), fade_edges=plan.get("fade_edges", False),
-            blackouts=plan.get("blackouts"),
+            blackouts=plan.get("blackouts"), subtitle_timings=plan.get("subtitle_timings"),
+            finishing=plan.get("finishing"), name_cards=plan.get("name_cards"),
         )
         if not composed:
             raise ValueError(_post_text_of("render_timeline.text.3"))
@@ -1843,7 +1898,7 @@ class DramaService:
         config = dict(task.get("config") or {})
         config["video_model"] = ModelGateway.effective_video_model(str(config.get("video_model") or ""))
         task = {**task, "config": config}
-        cycle_episode = episode_cycle.current_episode(task) if episode_cycle.active(task) else None
+        cycle_episode = episode_cycle.episode_for(task, 5) if episode_cycle.active(task) else None
         admission = assess_video_batch(
             episode_cycle.episode_view(task, cycle_episode) if cycle_episode is not None else task,
             provider_ready=ModelGateway.video_family_ready,
@@ -1867,7 +1922,8 @@ class DramaService:
             title=title[:300],
             premise=str(config.get("script_content") or title)[:20_000],
             genre=self.gateway.get_genre(title),
-            audience="18-35 岁移动端短剧观众",
+            # 新建时选了目标用户就照它写，没选仍是这句默认。
+            audience=target_audience.who(config) or "18-35 岁移动端短剧观众",
             platform="douyin",
             format="live_action",
             episode_count=_bounded_episode_count(config.get("episode_count")),
@@ -2255,6 +2311,19 @@ class DramaService:
                 "content_language": req.content_language,
                 "source_language": req.content_language,
                 "ad_brief": req.ad_brief.model_dump() if req.ad_brief else {},
+                # 男频 / 女频与年龄段；没选是空值，由总导演在方案里定。
+                target_audience.CONFIG_KEY: target_audience.normalize(req.target_audience.model_dump() if req.target_audience else None),
+                # 剧本结构(三幕式、英雄旅程…)；没选是空值，由总导演定。
+                script_structure.CONFIG_KEY: script_structure.normalize(getattr(req, "script_structure", "")),
+                # 立项前挑中的故事方向与创作禁区；没挑、没写是空值。
+                story_direction.DIRECTION_KEY: story_direction.normalize_direction(getattr(req, "story_direction", None)),
+                story_direction.NO_GO_KEY: story_direction.normalize_no_go(getattr(req, "story_no_go", None)),
+                # 连载立项：题材(可叠加)、基调、结局、出海、是否规划付费卡点；没选是空值。
+                serial_brief.GENRES_KEY: serial_brief.normalize_genres(getattr(req, "story_genres", None)),
+                serial_brief.TONE_KEY: serial_brief.normalize_tone(getattr(req, "story_tone", "")),
+                serial_brief.ENDING_KEY: serial_brief.normalize_ending(getattr(req, "ending_type", "")),
+                serial_brief.OVERSEAS_KEY: bool(getattr(req, "overseas", False)),
+                paywall_plan.CONFIG_KEY: bool(getattr(req, "paywall_plan", False)),
                 poetry_library.CONFIG_KEY: list(req.poetry_sources or []),
                 "one_click": req.one_click,
                 # 电影短片只有一集，不管表单里填了几集。
@@ -2381,6 +2450,15 @@ class DramaService:
         except (TypeError, ValueError):
             ceiling = 0
         return ceiling if ceiling > 0 else max_shot_seconds(model)
+
+    def _video_reference_model(self, model: str) -> str:
+        """参考素材数量按真正出片的型号算(网关给)：项目写 Seedance 2.5、实际由 2.0 出片时只能给 2.0 的数量。拿不到时按所选型号。"""
+        probe = getattr(getattr(self, "gateway", None), "video_reference_model", None)
+        try:
+            renders = probe(model) if callable(probe) else ""
+        except (TypeError, ValueError):
+            renders = ""
+        return renders if isinstance(renders, str) and renders.strip() else model
 
     @staticmethod
     def _shot_failure(entry: Optional[Dict[str, Any]], frames_by_uid: Dict[int, str]) -> Optional[Dict[str, Any]]:
@@ -2509,6 +2587,10 @@ class DramaService:
             recipe_categories=recipe_catalog(),
             shots=records,
             draft_mode=bool(config.get("video_draft")),
+            spoken_language=spoken_language.of(config),
+            spoken_language_options=spoken_language.options() if video_native_audio(video_model) else [],
+            video_resolution=video_tiers.final_resolution(config, video_model) or "",
+            video_resolution_choices=video_tiers.final_choices(video_model),
             repair_supported=self._repair_supported(video_model),
             video_budget_cap=spend_limits.budget_cap(config),
             video_max_attempts=spend_limits.max_attempts(config),
@@ -2645,7 +2727,7 @@ class DramaService:
             return None
         record = assets[pilot_shot.ASSET_KEY]
         tried = set(record.get("shot_uids") or [])
-        current = episode_cycle.current_episode(task) if episode_cycle.active(task) else None
+        current = episode_cycle.episode_for(task, 5) if episode_cycle.active(task) else None
         shots = episode_cycle.episode_shots(task, current) if current is not None else [s for s in assets.get("4") or [] if isinstance(s, dict)]
         return pilot_shot.view(
             assets, running_now=self._has_running_generation(task),
@@ -2760,6 +2842,42 @@ class DramaService:
             return None
         return self.get_shot_visual_workspace(task_id)
 
+    def set_spoken_language(self, task_id: str, language: str | None) -> Optional[Dict[str, Any]]:
+        """对白语言：视频模型自己出声的片段里人物说哪种话(方言、外语)；留空回到默认。已出的片不动。"""
+        chosen = spoken_language.checked(language)
+
+        def mutate(current: Dict[str, Any]) -> Dict[str, Any]:
+            settings_ = current.setdefault("config", {})
+            if chosen:
+                settings_[spoken_language.CONFIG_KEY] = chosen
+            else:
+                settings_.pop(spoken_language.CONFIG_KEY, None)
+            return current
+
+        if not self.repo.mutate_task(task_id, mutate):
+            return None
+        return self.get_shot_visual_workspace(task_id)
+
+    def set_video_resolution(self, task_id: str, resolution: str | None) -> Optional[Dict[str, Any]]:
+        """成片清晰度：只收当前视频模型出得了、价目表里有官方价的档位；留空回到默认档位。已出的片不动。"""
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        config = task.get("config") if isinstance(task.get("config"), dict) else {}
+        chosen = video_tiers.checked_choice(ModelGateway.effective_video_model(str(config.get("video_model") or "")), resolution)
+
+        def mutate(current: Dict[str, Any]) -> Dict[str, Any]:
+            settings_ = current.setdefault("config", {})
+            if chosen:
+                settings_["video_resolution"] = chosen
+            else:
+                settings_.pop("video_resolution", None)
+            return current
+
+        if not self.repo.mutate_task(task_id, mutate):
+            return None
+        return self.get_shot_visual_workspace(task_id)
+
     def upscale_shot(self, task_id: str, shot_id: int, *, scene_id: str = "", shot_uid: int | None = None) -> Optional[Dict[str, Any]]:
         """样片本地放大到成片尺寸：不花钱、内容一帧不变；原样片留在 draft_url，随时换回或改成重出高清。"""
         task = self.repo.get_task(task_id)
@@ -2812,7 +2930,8 @@ class DramaService:
         prompt = clip_fixes.repair_prompt(note, box, start, end)
         seconds = max(MIN_SHOT_SECONDS, round(clip_fixes.clip_seconds(source) or float(clip.get("duration") or MIN_SHOT_SECONDS)))
         uid = episode_cycle.shot_uid(clip)
-        resolution = clip_fixes.draft_resolution(config, clip) if clip.get("draft_resolution") else None
+        # 样片修出来还是样片；成片按项目选的成片清晰度修。
+        resolution = clip_fixes.draft_resolution(config, clip) if clip.get("draft_resolution") else video_tiers.final_resolution(config, video_model)
 
         def record(state: Dict[str, Any], **update: Any) -> None:
             def mutate(current: Dict[str, Any]) -> Dict[str, Any]:
@@ -3386,6 +3505,17 @@ class DramaService:
             "document": document, "note": note,
         }
 
+    def get_blocking_diagrams(self, task_id: str, scene_id: str, view: str = "") -> Optional[Dict[str, Any]]:
+        """The scene's staging beats as white-model blocking diagrams; read-only, no model is called."""
+        response = self.get_spatial_plan(task_id, scene_id)
+        if response is None:
+            return None
+        from app.core.spatial_stage import blocking_diagram
+        from app.core.spatial_stage.models import StagePlan
+
+        series = blocking_diagram.build(StagePlan.model_validate(response["plan"]), view)
+        return {"task_id": task_id, "persisted": bool(response.get("persisted")), **series}
+
     # ---------------- 3D 导演台：截取的静帧 / 白模视频，以及保存的姿态 ----------------
 
     def get_desk_captures(self, task_id: str, scene_id: str) -> Optional[Dict[str, Any]]:
@@ -3536,6 +3666,8 @@ class DramaService:
             + ",\n  ".join(shapes[key] for key in kinds)
             + prompt_data.text("agent_prompts", "asset_breakdown_body")
             + "".join(rules[key] + "\n" for key in kinds if key in rules)
+            # 美术指导：场景写出地方和人家，道具写出主人和来历。
+            + art_direction.catalog_rules(kinds)
             + prompt_data.text("agent_prompts", "asset_breakdown_tail")
         )
         cast_block = ""
@@ -3557,7 +3689,7 @@ class DramaService:
         result = self.gateway.call_llm(
             str(config.get("llm_model") or ""),
             sys_prompt,
-            f"【短剧标题】：{title}\n\n{cast_block}【剧本原文】：\n{script}",
+            f"【短剧标题】：{title}\n\n{cast_block}{art_direction.catalog_world(((screenwriting.state_of(task) or {}).get('overview') or {}).get('world_setting'), kinds)}【剧本原文】：\n{script}",
             title,
             str(config.get("director_style") or ""),
             str(config.get("shot_style") or ""),
@@ -3936,6 +4068,8 @@ class DramaService:
             self._agent_role_prompt(task, AgentRole.WRITER),
             self.get_shanyin_screenplay_skill(),
             config=config,
+            # 项目主人自己的写法(账号里的提示词偏好)：接在编剧方法之后，只进写作的几步。
+            preference=prompt_preferences.for_task(task).get("writer"),
             # What the story is about picks which of the named poems are shown first.
             keywords=" ".join(str(part) for part in (title, guidance, config.get("director_style") or "") if part),
         )
@@ -4897,6 +5031,23 @@ class DramaService:
         task = self.repo.mutate_task(task_id, mutation)
         return compile_writer_dashboard(task) if task else None
 
+    def compare_script_version(self, task_id: str, version_id: str) -> Optional[Dict[str, Any]]:
+        """What changed between a saved version and the screenplay as it is now, by episode; nothing is written."""
+        from app.core import script_compare
+
+        task = self.repo.get_task(task_id)
+        if not task:
+            return None
+        assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
+        version = next((item for item in (assets.get("2_versions") or []) if isinstance(item, dict) and item.get("version_id") == version_id), None)
+        if version is None:
+            raise ValueError(script_compare.no_version_text())
+        payload = version.get("payload") if isinstance(version.get("payload"), dict) else {}
+        return {
+            "version_id": version_id, "label": str(version.get("label") or ""), "created_at": str(version.get("created_at") or ""),
+            **script_compare.compare(str(payload.get("2") or ""), str(assets.get("2") or "")),
+        }
+
     def restore_script_version(
         self, task_id: str, version_id: str, *, expected_source_hash: str, confirm_invalidate: bool,
         owner_user_id: Optional[str], is_admin: bool,
@@ -5715,6 +5866,10 @@ class DramaService:
                     raise StaleTaskWriteError(
                         "任务剧本已更新，忽略旧版本阶段结果"
                     )
+                if isinstance(execution_error.cause, stage_pause.StagePaused) or stage_pause.requested(task, str(run_id or "")):
+                    # Stopped on request: paused, not failed; 「继续」 picks the stage up again.
+                    self._progress_pause(task)
+                    return True
                 self._progress_fail(task, safe_error)
                 task["status"] = "failed"
                 task["fail_reason"] = f"阶段{stage}失败: {safe_error[:200]}"
@@ -5791,7 +5946,7 @@ class DramaService:
             # 上一轮这一步失败或被打断、这次接着做：已经付过钱、问题原样不变的创作结果(如角色 DNA)可以接着用。
             # 这一步做完过、再要求重做，就是要新的，不复用。
             task["stage_resume"] = stage if progress.get("stage") == stage and (
-                progress.get("status") == "error" or task.get("status") in {"failed", "interrupted"}
+                progress.get("status") in {"error", "paused"} or task.get("status") in {"failed", "interrupted"}
             ) else None
             task["workflow_control"] = {"run_id": run_id or uuid.uuid4().hex, "active": True,
                                         "automatic": automatic, "pause_requested": False}
@@ -5835,13 +5990,13 @@ class DramaService:
     def _discard_later_stage_outputs(task: Dict[str, Any], stage: int) -> None:
         """Remove orphaned downstream results before an earlier stage is run again.
 
-        逐集制作时只清掉当前集在这一阶段之后的产物：已完成各集的片段、音频、时间线与成片都保留。
+        分集制作时只清掉这一步要做的那一集在它之后的产物：别的集的片段、音频、时间线与成片都保留。
         """
         assets = task.get("assets") if isinstance(task.get("assets"), dict) else {}
         cycle = episode_cycle.active(task)
         if cycle:
-            # 重做声音不丢剪辑(逐集也一样)：本集记录里的时间线留着，第 6 阶段做完换上新的声音。
-            current_ep = episode_cycle.current_episode(task)
+            # 重做声音不丢剪辑(分集也一样)：这一步要做的那一集记录里的时间线留着，第 6 阶段做完换上新的声音。
+            current_ep = episode_cycle.episode_for(task, stage)
             kept_cut = episode_cycle.record(task, current_ep).get("timeline") if stage == 6 and current_ep is not None else None
             episode_cycle.discard_for_rerun(task, stage)
             if isinstance(kept_cut, dict) and kept_cut:
@@ -5890,13 +6045,13 @@ class DramaService:
             8: ("8",),
         }.get(stage, ())
         missing = [key for key in required if not assets.get(key)]
-        # 逐集制作：第 4–8 阶段按「当前集」判断是否完成(第 4 阶段只要求当前集及之前的分镜)。
+        # 分集制作：第 4–7 阶段各要所有还没出成片的集都做完才算完成，所以下一步只会停在原地或往后走(见 episode_cycle)。
         cycle_missing = episode_cycle.missing(task, stage)
         if cycle_missing is not None and stage in (5, 6, 7):
             missing = list(cycle_missing)
         progress = task.get("stage_progress") or {}
         unsuccessful = (task.get("status") in {"failed", "interrupted"}
-                        or (progress.get("stage") == stage and progress.get("status") in {"running", "error"})
+                        or (progress.get("stage") == stage and progress.get("status") in {"running", "error", "paused"})
                         or (task.get("workflow_control") or {}).get("retry_stage") == stage)
         # A stage that already reported success for this script revision stays
         # done even when the task later failed, was interrupted by a restart, or
@@ -6017,7 +6172,7 @@ class DramaService:
                 config["video_model"] = effective
                 config["video_model_replaced"] = {"from": chosen, "to": effective}
             # Video is where the money goes: every shot is admitted together, or none is submitted.
-            cycle_episode = episode_cycle.current_episode(task) if episode_cycle.active(task) else None
+            cycle_episode = episode_cycle.episode_for(task, 5) if episode_cycle.active(task) else None
             admission = assess_video_batch(
                 episode_cycle.episode_view(task, cycle_episode) if cycle_episode is not None else task,
                 provider_ready=ModelGateway.video_family_ready,
@@ -6096,9 +6251,12 @@ class DramaService:
                 self._cast_missing_voices(claimed_task)
             if stage == 5:
                 self._collect_pending_video_jobs(claimed_task)
+            # Every progress step of this stage is a pause point for the run that claimed it (see stage_pause).
             with usage_ledger.bind_task(task_id, f"stage_{stage}"), media_compositor.bind_speaker_voices(
                 voice_casting.speaker_voice_map(claimed_task.get("assets") or {})
-            ), media_compositor.bind_readings((claimed_task.get("config") or {}).get("pronunciations")):
+            ), media_compositor.bind_readings((claimed_task.get("config") or {}).get("pronunciations")), stage_pause.bound(
+                task_id, (claimed_task.get("workflow_control") or {}).get("run_id")
+            ):
                 return self._execute_stage_blocking(
                     task_id,
                     stage,
@@ -6202,6 +6360,8 @@ class DramaService:
         sp["elapsed_ms"] = max(0, round((epoch - float(sp.get("started_epoch") or epoch)) * 1000))
         self._progress_save(task)
         self._emit_task_progress(task, "task_stage_progress", step_index=len(sp["calls"]))
+        # Saved first, so a pause asked for meanwhile stops here with everything finished so far kept.
+        stage_pause.check(str(task.get("task_id") or ""), lambda task_id: self.repo.get_task(task_id))
 
     def _progress_done(self, task: Dict[str, Any]):
         sp = task.get("stage_progress")
@@ -6227,6 +6387,22 @@ class DramaService:
             finished["status"] = "idle"
         append_stage_guidance(task, "done", self.STAGE_LABELS, self.workflow_snapshot(finished))
         self._emit_task_progress(task, "task_stage_completed", step_count=len(sp.get("calls", [])))
+
+    def _progress_pause(self, task: Dict[str, Any]):
+        """The stage stopped part-way because a pause or stop was asked for; what it finished is kept."""
+        control = task.get("workflow_control") or {}
+        task["status"] = "stopped" if control.get("stop_requested") else "paused"
+        sp = task.get("stage_progress")
+        if not isinstance(sp, dict):
+            return
+        timestamp, epoch = self._progress_timestamp()
+        self._close_running_progress_calls(sp, timestamp, epoch, "paused")
+        sp["status"] = "paused"
+        sp["label"] = "已暂停，已完成的部分已保存"
+        sp["error"] = None
+        sp["updated_at"] = timestamp
+        sp["elapsed_ms"] = max(0, round((epoch - float(sp.get("started_epoch") or epoch)) * 1000))
+        self._emit_task_progress(task, "task_stage_paused")
 
     def _progress_fail(self, task: Dict[str, Any], error: str):
         sp = task.get("stage_progress")
@@ -7137,7 +7313,7 @@ class DramaService:
         video_model = str(config.get("video_model") or "")
         limit = panel_limit(scene_duration, video_model=video_model)
         clip_floor, clip_cap = preferred_shot_seconds(video_model)
-        # 场比模型宜用的下限还短(4 秒的场，Seedance 2.5 宜用 10–30 秒)：每格按这场的长度出，不把片子拉长。
+        # 场比模型宜用的下限还短(4 秒的场，Seedance 2.5 宜用 15–30 秒)：每格按这场的长度出，不把片子拉长。
         clip_floor = scene_seconds.clip_floor(clip_floor, parse_duration_seconds(scene_duration), MIN_SHOT_SECONDS)
         user_prompt = (
             f"请基于以下剧本场景设计分镜表：用尽量少的格子覆盖该场景完整剧情，不要断开，本场最多{limit}格：\n\n"
@@ -7165,6 +7341,8 @@ class DramaService:
             user_prompt += "\n" + blocking_brief
         # 镜头怎么接到下一镜，和镜头本身一样是分镜表作者的事：先把衔接规则讲清，再按同一套规则复核。
         user_prompt += "\n" + shot_transitions.TABLE_BRIEF
+        # 全集景别节奏：各场并行写表，看不到前后场的景别；照编剧排的起幅，连用超了换一档，景别不变只出一格。
+        user_prompt += "\n" + size_rhythm.scene_note(task, scene_id)
         exchange_brief = exchange.brief() if exchange is not None else ""
         if exchange_brief:
             user_prompt += "\n" + exchange_brief
@@ -7183,6 +7361,24 @@ class DramaService:
         weapons_brief = weapon_moves.weapon_brief(scene_content) if scene_kind == "fight" else ""
         if weapons_brief:
             user_prompt += "\n" + weapons_brief
+        # 点了名的拳种各有各的身法和看家动作(拳种谱)：只在剧本没有自己把招写出来的打戏里发，写了招的照剧本拍。
+        styles_brief = style_moves.style_brief(
+            scene_content, str((task.get("assets") or {}).get("1") or ""), scene_characters,
+        ) if scene_kind == "fight" else ""
+        if styles_brief:
+            user_prompt += "\n" + styles_brief
+        # 棍、剑、刀、枪、弓箭从起势到收势的顺序(兵器套路)：同样只在剧本没有把招写出来的打戏里发。
+        forms_brief = weapon_forms.forms_brief(scene_content) if scene_kind == "fight" else ""
+        if forms_brief:
+            user_prompt += "\n" + forms_brief
+        # 剧本点到的剑法(刺、劈、点、撩、崩、绞、挂、扫、带、截……)各自怎么走、对手怎么应(剑法谱)：只发点到的那几种。
+        sword_brief = sword_techniques.technique_brief(scene_content) if scene_kind == "fight" else ""
+        if sword_brief:
+            user_prompt += "\n" + sword_brief
+        # 剧本点到的刀法(缠头、裹脑、劈、砍、截、撩、挂、扎、抹、斩、扫、云、崩、藏、拖……)各自怎么走、对手怎么应(刀法谱)：只发点到的那几种。
+        sabre_brief = sabre_techniques.technique_brief(scene_content) if scene_kind == "fight" else ""
+        if sabre_brief:
+            user_prompt += "\n" + sabre_brief
         # 点了名的术法(大荒囚天指、吞天魔功……)按名字定形、定色、定作用，同一门术法全剧长一个样。
         techniques_brief = technique_look.technique_brief(scene_content)
         if techniques_brief:
@@ -7282,6 +7478,8 @@ class DramaService:
             )
             # 多人排排站(同一深度、同样高低)退回改一版。
             issues = [*issues, *group_blocking.table_issues(drafted)]
+            # 剧本台词逐句进台词栏：漏了、重了、先后反了，都退回改一版(第 5 阶段只从台词栏读台词)。
+            issues = [*issues, *line_coverage.table_issues(drafted, scene)]
             if scene_kind == "fight":
                 # 招招写实与回合：哪一招没写清从哪发力、怎么走、打在谁身上哪里、结果与力，多人站着、排队，没分回合，都退回改一版。
                 issues = [*issues, *fight_exchange.table_issues(drafted)]
@@ -7306,6 +7504,7 @@ class DramaService:
                         checked, scene_id=scene_id, fight=scene_kind == "fight", props=[item["name"] for item in context["props"]],
                     ),
                     *group_blocking.table_issues(checked),
+                    *line_coverage.table_issues(checked, scene),
                     *(fight_exchange.table_issues(checked) if scene_kind == "fight" else []),
                 ]
 
@@ -7316,6 +7515,7 @@ class DramaService:
                 director_style=dir_style, shot_style=shot_style, guidance=guidance,
                 # 表是在这个推理档位里写的：研究时再写一遍也用同一档。
                 reasoning=[llm_profile.reasoning_from_env("STORYBOARD_TABLE_REASONING")],
+                project_terms=harness_evolution.project_terms(task),
                 observe=_table_problems,
                 delivered=lambda text: bool(parse_storyboard_table(text, [])),
             )
@@ -7604,7 +7804,10 @@ class DramaService:
         timings["finish_s"] = _lap()
         logger.info("[Stage4] 场景 %s 耗时 %s", scene_id, json.dumps(timings, ensure_ascii=False))
         # 改过一版后仍没过的打戏与占位复核：记在场景板上给人看，不再悄悄放过。
-        craft_issues = [*group_blocking.table_issues(shots), *(fight_exchange.table_issues(shots) if scene_kind == "fight" else [])]
+        craft_issues = [
+            *group_blocking.table_issues(shots), *line_coverage.table_issues(shots, scene),
+            *(fight_exchange.table_issues(shots) if scene_kind == "fight" else []),
+        ]
         return {
             "scene_id": scene_id,
             "timings": timings,
@@ -7656,6 +7859,9 @@ class DramaService:
         char1_name, char1_desc, char2_name, char2_desc = project_leads(task["assets"])
         cast_roster = project_roster(task["assets"])
         speech = extract_speech(task["assets"].get("2", ""))
+        # 项目主人在账号里留的提示词偏好(跟随 / 追加 / 改写)：只动每个阶段开头的创作方法，
+        # 后面的资料、本片事实和输出格式照旧；没有留、读不到或关掉时是空表，提示词与原来逐字相同。
+        preferences = prompt_preferences.for_task(task) if stage in (1, 2, 3, 4, 8) else {}
 
         if stage == 1:
             # 阶段 1：总导演 (Executive Director)
@@ -7669,12 +7875,30 @@ class DramaService:
             character_craft = load_section("character-relationship-craft", budget=0)
             causal_chain = load_section("causal-chain-craft", budget=0)
             tension = load_section("tension-craft", budget=0)
+            fight_card = fight_design.director_card(
+                genre, f"{title} {config.get('guidance_instruction') or ''} {str(config.get('script_content') or '')[:3000]}",
+            )
             sys_prompt = (
                 self._agent_role_prompt(task, AgentRole.EXECUTIVE_DIRECTOR)
                 + "\n\n"
-                + prompt_data.text("agent_prompts", "executive_director")
+                + prompt_preferences.creative_layer(
+                    "director_plan", prompt_data.text("agent_prompts", "executive_director"), preferences.get("director_plan"),
+                )
                 + literary.thesis_card() + "\n\n"
+                # 美术指导：画面由故事背景决定，策划里就把时代地域、物产、习惯、民俗、阶层和小物件定下来。
+                + art_direction.world_card() + "\n\n"
+                # 武术指导：有打戏的题材，每个会动手的主要角色一张打法卡，全剧照它打；别的题材是空串。
+                + (fight_card + "\n\n" if fight_card else "")
                 + series_rhythm.naming_rule() + "\n\n"
+                # 目标用户(男频 / 女频与年龄段)：选了就照它写，没选让总导演先定；电影短片和广告是空串。
+                + (target_audience.director_rule(config) + "\n\n" if target_audience.director_rule(config) else "")
+                # 剧本结构：选了就按它搭整部大纲；没选、广告或上传了剧本是空串。
+                + (script_structure.director_rule(config) + "\n\n" if script_structure.director_rule(config) else "")
+                # 立项前挑中的故事方向与创作禁区：有就照它写；没有、广告或上传了剧本是空串。
+                + (story_direction.director_rule(config) + "\n\n" if story_direction.director_rule(config) else "")
+                # 连载立项(题材打法、基调、结局、出海)与付费卡点排在哪几集：选了才有，没选是空串。
+                + (serial_brief.director_rule(config) + "\n\n" if serial_brief.director_rule(config) else "")
+                + (paywall_plan.director_rule(config) + "\n\n" if paywall_plan.director_rule(config) else "")
                 # 创作类型改变「策划方案是什么」时(电影短片：只有一集、结尾收住)先说在前面；别的类型是空串。
                 + (creation_modes.director_guidance(config) + "\n\n" if creation_modes.director_guidance(config) else "")
                 + f"【黄金叙事结构(单集与整部结构/情绪峰值/钩子公式)如下】：\n{narrative_structure}\n\n"
@@ -7719,6 +7943,9 @@ class DramaService:
                 )
             else:
                 user_prompt = f"请为短剧《{title}》做导演方案定调与三幕大纲规划。"
+                # 连续剧的集数与单集时长：不说的话总导演自己假设 60 集，把母题、标签句和卡点排到项目没有的集上。
+                if creation_modes.director_frame(config):
+                    user_prompt += "\n" + creation_modes.director_frame(config)
             # 定调方案下游只做摘录（编剧引擎取前 6000 字）与查证；不限篇幅时模型写到 1.3 万字、耗时一分多钟，
             # 输出速度固定，时间随字数走，所以明确给出篇幅目标（STAGE1_PLAN_CHARS），章节一个不少、每节写紧。
             user_prompt += "\n\n" + self._stage1_length_target()
@@ -7730,6 +7957,9 @@ class DramaService:
                 self.gateway, task_id=task_id, stage=1, domain=show_cluster.name, model=str(config["llm_model"]), title=title,
                 system_prompt=sys_prompt, request=user_prompt, output=res, overlay_block=verified_block,
                 director_style=dir_style, shot_style=shot_style, guidance=guidance,
+                # 本片的人名只许留在这一轮配置的「本项目事实」里：方案刚写出来，主角和对手的名字从方案里取。
+                project_terms=harness_evolution.project_terms(task, extract_character_info(res or "")[::2]),
+                personal=prompt_preferences.personal(preferences.get("director_plan")),
             )
             self._progress_step(task, 85, "剧本一致性质检自检")
             task["assets"]["1"] = res
@@ -7786,7 +8016,7 @@ class DramaService:
                 sys_prompt = (
                     self._agent_role_prompt(task, AgentRole.WRITER)
                     + "\n\n"
-                    + prompt_data.text("agent_prompts", "writer")
+                    + prompt_preferences.creative_layer("writer", prompt_data.text("agent_prompts", "writer"), preferences.get("writer"))
                     + f"【写作红线与 S 级三冲击(情绪/视觉/场景顶点、人物语言指纹、四张追踪表)如下】：\n{craft_redlines}\n\n"
                     f"【黄金叙事结构(单集黄金结构/每集三件事/短剧公式/一集模板)如下】：\n{narrative_structure}\n\n"
                     f"【前三集钩子阶梯(E1 引爆/E2 升级/E3 反转)、集尾悬念五型、付费墙前三步如下】：\n{hook_ladder}\n\n"
@@ -7882,6 +8112,10 @@ class DramaService:
                 + "\n\n"
                 + prompt_data.text("agent_prompts", "character_designer")
                 + character_block.designer_rules()
+                # 美术指导：服装同时交代身份、处境、性格，都落在看得见的细节上。
+                + art_direction.costume_rule()
+                # 项目主人的追加偏好接在角色块写法之后(这一环节只开放追加)；跟随平台时是空串。
+                + prompt_preferences.creative_layer("character_design", "", preferences.get("character_design"))
                 + f"【数字演员设定集一致性角色卡规则与示例】：\n{sheet_template}\n\n"
                 f"【角色表情细节与身体微动作描述规范】：\n{performance_guide}\n"
             )
@@ -7950,6 +8184,8 @@ class DramaService:
                     self.gateway, task_id=task_id, stage=3, domain=show_cluster.name, model=str(config["llm_model"]), title=title,
                     system_prompt=sys_prompt, request=user_prompt, output=res, overlay_block=verified_block,
                     director_style=dir_style, shot_style=shot_style, guidance=guidance,
+                    project_terms=harness_evolution.project_terms(task),
+                    personal=prompt_preferences.personal(preferences.get("character_design")),
                 )
             
             # 直接将生成的全动态角色 DNA 设定文本存入 assets，消除预设角色构建框架
@@ -8270,7 +8506,10 @@ class DramaService:
             tension_guide = load_section("high-tension-shots", budget=guide_budget("high-tension-shots"))
             # 技能前缀按本场戏的类型(打戏/文戏)另装章节，所以提示词按场次类型各编译一份：
             # 头尾两段与场次无关，中间夹的技能前缀才是变量。
-            sys_prompt_head = self._agent_role_prompt(task, AgentRole.STORYBOARD_ARTIST) + "\n\n"
+            sys_prompt_head = (
+                self._agent_role_prompt(task, AgentRole.STORYBOARD_ARTIST) + "\n\n"
+                + prompt_preferences.creative_layer("storyboard", "", preferences.get("storyboard"))
+            )
             sys_prompt_tail = (
                 STORYBOARD_SCRIPT_PROMPT
                 + "\n\n"
@@ -8364,14 +8603,9 @@ class DramaService:
             target_episode = next(
                 (item["number"] for item in progress["episodes"] if not item["complete"]), None
             )
-            # 逐集制作：当前集还没出成片，就不提前做下一集的分镜。
-            cycle_current = episode_cycle.current_episode(task) if episode_cycle.active(task) else None
-            ahead = target_episode is not None and cycle_current is not None and target_episode > cycle_current
-            if target_episode is None or ahead:
-                self._progress_step(task, 90, (
-                    f"逐集制作：第{cycle_current}集还没做完成片，先完成本集的视觉、音频与合成，再做第{target_episode}集的分镜"
-                    if ahead else "全部集的分镜九宫格均已完成，无需重跑"
-                ))
+            # 步骤优先：第 4 步把所有集的分镜做完才进第 5 步，不等前一集出成片(见 episode_cycle)。
+            if target_episode is None:
+                self._progress_step(task, 90, "全部集的分镜九宫格均已完成，无需重跑")
             else:
                 pending_ids = [
                     scene_id for scene_id, entry in boards.items()
@@ -8429,7 +8663,11 @@ class DramaService:
                         turns=turns,
                         reuse_table=retry_scenes.get(scene_id, False),
                         # 自进化每轮只研究一场(本轮剧情上最靠前的那一场)：一集几十场都研究，文本调用会翻几倍。
-                        evolution=(board_domain, board_overlay) if scene_id == pending_ids[0] else None,
+                        # 带着项目主人个人偏好的分镜不拿去研究：学到的东西会进到别人同类题材的项目里。
+                        evolution=(
+                            (board_domain, board_overlay)
+                            if scene_id == pending_ids[0] and not prompt_preferences.personal(preferences.get("storyboard")) else None
+                        ),
                     )
 
                 def _scene_finished(scene_id: str, payload: Optional[Dict[str, Any]], scene_error: Optional[Exception]) -> None:
@@ -8505,6 +8743,12 @@ class DramaService:
 
             self._progress_step(task, 95, "分镜一致性质检自检")
             task["logs"]["4"] = self.run_real_consistency_check(4, "分镜师分镜拆解", task["assets"], config, title, task_id=task_id, task=task)
+            # 本集分镜的计划总时长对剧本目标时长(±15%)：只报告，不改表。
+            runtime_line = episode_runtime.report_line(
+                task["assets"].get("4") if isinstance(task["assets"].get("4"), list) else [], config, target_episode,
+            ) if target_episode is not None else ""
+            if runtime_line:
+                task["logs"]["4"] = f"{task['logs']['4']}\n\n{runtime_line}"
 
         elif stage == 5:
             # 阶段 5：视觉总监 (Visual Director)
@@ -8554,8 +8798,8 @@ class DramaService:
                 # 没有分镜就没有可拍的内容：不替项目编三镜“挑衅—反扑”的套路戏去付费生成
                 raise ValueError("第 5 阶段需要第 4 阶段的分镜表，请先完成分镜设计")
                 
-            # 逐集制作：只拍当前集；别的集已经出好的片段原样保留，结果按集合并回 assets["5"]。
-            cycle_episode = episode_cycle.current_episode(task) if episode_cycle.active(task) else None
+            # 分集制作：这一轮只拍还缺视频的第一集；别的集已经出好的片段原样保留，结果按集合并回 assets["5"]。
+            cycle_episode = episode_cycle.episode_for(task, 5) if episode_cycle.active(task) else None
             cycle_others: list = []
             if cycle_episode is not None:
                 task["assets"].setdefault(episode_cycle.CYCLE_KEY, {"version": 1, "episodes": {}})
@@ -8563,7 +8807,7 @@ class DramaService:
                 shots = [shot for shot in shots if isinstance(shot, dict) and episode_cycle.episode_of(shot) == cycle_episode]
                 if not shots:
                     raise ValueError(f"第{cycle_episode}集还没有分镜，请先完成本集分镜")
-                self._progress_step(task, 9, f"逐集制作 · 第{cycle_episode}集：{len(shots)} 镜")
+                self._progress_step(task, 9, f"分集制作 · 第{cycle_episode}集：{len(shots)} 镜")
 
             # 试拍只出一段，其余已有的片段原样留着。
             pilot_kept: list = []
@@ -8761,6 +9005,7 @@ class DramaService:
                 plan = plan_video_references(
                     mode or requested_reference_mode,
                     model=config["video_model"],
+                    caps_model=self._video_reference_model(config["video_model"]),
                     first_frame=first_frame,
                     last_frame=last_frame,
                     sequence_images=sequence_images,
@@ -9090,7 +9335,9 @@ class DramaService:
                 if real_frameless:
                     sheet_pairs = [(person, url) for person, url in sheet_pairs if person not in real_names]
                 library_references = with_sheet_faces(sheet_pairs, library_references, actor_face_urls(task))
-                identity_images, reference_notes = merge_video_references(sheet_pairs, library_references)
+                identity_images, reference_notes = merge_video_references(
+                    sheet_pairs, library_references, limit=caps_of(self._video_reference_model(config["video_model"])).images,
+                )
                 # 提示词里的 @[名字]：本镜每个参考图对应的资产，第 N 项就是参考图 N。
                 reference_entries = video_reference_entries(sheet_pairs, library_references)
                 reference_numbers = {name: number for number, (_, name, _) in enumerate(reference_entries, start=1) if name}
@@ -9215,9 +9462,13 @@ class DramaService:
                                 *delivery_notes,
                                 *(f"声音：{'、'.join(emotion_reading.voice_notes)}" for _ in [0] if emotion_reading.voice_notes and audio_native),
                                 *([key_note] if key_note else []),
+                                # 项目读音表里的词(品牌名、多音字)：模型自己出声时写明念什么音；配音那条路是直接换字。
+                                *(voice_delivery.reading_notes(str(dialogue or ""), config.get("pronunciations")) if audio_native else []),
                             ]
                         ),
                         native_audio=audio_native,
+                        # 项目另选的对白语言(四川话、英语……)：只在模型自己出声时写进「对白语言」那一行。
+                        spoken_language=spoken_language.phrase(config),
                         narration_planned=narration_planned,
                         composition=contract.composition,
                         cast_refs=[name for kind, name, _ in reference_entries if kind == "actor" and name],
@@ -9377,7 +9628,7 @@ class DramaService:
                     if item.get("kind") == "scene" and not item.get("view") and item.get("image_url")
                 ), None)
                 refs = color_stand_ins.references(
-                    painted, faces, scene_main, limit=normalize_video_provider(config["video_model"]).max_reference_images,
+                    painted, faces, scene_main, limit=caps_of(self._video_reference_model(config["video_model"])).images,
                 )
                 prompt = color_stand_ins.clip_prompt(
                     shot_figures, refs, action=str(req.get("desc") or ""), dialogue=str(req.get("dialogue") or ""), crowd=crowd,
@@ -9502,7 +9753,9 @@ class DramaService:
                 # 样片模式按 480p 出；人要了「重出高清」的那一镜按全分辨率。
                 draft_res = clip_fixes.draft_resolution(config, earlier)
                 req["draft_resolution"] = draft_res
-                retaken = self._retake_tail(req, earlier, _generate_motion_video, intent, draft_res) if not candidate_urls else None
+                # 不是样片的镜头按项目选的「成片清晰度」出；没选就是 None，各家按默认档位。
+                render_res = draft_res or video_tiers.final_resolution(config, str(config.get("video_model") or ""))
+                retaken = self._retake_tail(req, earlier, _generate_motion_video, intent, render_res) if not candidate_urls else None
                 if retaken:
                     candidate_urls, route_decision = [retaken[0]], retaken[1]
                 for candidate_index in range(len(candidate_urls) if retaken else candidate_count):
@@ -9520,7 +9773,7 @@ class DramaService:
                     def _render(first_frame, frames, seed, identities=None, prompt=None, mode=None, last=None, bare=False):
                         spend_guard.admit(
                             int(req["shot_uid"]), earlier_attempts=int((earlier or {}).get("attempts") or 0),
-                            seconds=duration, resolution=draft_res, label=label,
+                            seconds=duration, resolution=render_res, label=label,
                         )
                         with video_jobs.bind_shot(
                             task_id, int(req["shot_uid"]), candidate=candidate_index,
@@ -9542,7 +9795,7 @@ class DramaService:
                                     "prompt": req.get("native_prompt"), "frames": req.get("native_frames") or [],
                                     "numbers": req.get("reference_numbers") or {}, "handoff": chained_frame if first_frame else None,
                                 } if req.get("native_prompt") and prompt is None else None,
-                                resolution=draft_res,
+                                resolution=render_res,
                                 voices=req.get("voice_refs") or [],
                                 edited=bool(req.get("prompt_edited")),
                                 # 导演台白模静帧：发出去时写明它只管空间结构、站位与家具位置。
@@ -10319,10 +10572,12 @@ class DramaService:
                 )
 
             try:
-                generation_queue.run(
-                    queue, _work, persist=_persist, withdrawn=_withdrawn, pause_requested=_pause_requested, on_done=_on_done,
-                    run_id=str((task.get("workflow_control") or {}).get("run_id") or ""),
-                )
+                # The queue stops on a pause itself and keeps the clips in flight; no pause point may cut it short.
+                with stage_pause.suspended():
+                    generation_queue.run(
+                        queue, _work, persist=_persist, withdrawn=_withdrawn, pause_requested=_pause_requested, on_done=_on_done,
+                        run_id=str((task.get("workflow_control") or {}).get("run_id") or ""),
+                    )
             except generation_queue.RunCancelled as cancelled:
                 task["assets"]["5"] = _clips_now()
                 if pilot_run:
@@ -10347,8 +10602,8 @@ class DramaService:
             # 阶段 6：音频总监 (Audio Director) —— 按角色性别分配男女声逐句配音
             task["stage_name"] = self.STAGE_LABELS[6]
             self._progress_step(task, 12, _post_text_of("_execute_stage_blocking.text"))
-            cycle_episode6 = episode_cycle.current_episode(task) if episode_cycle.active(task) else None
-            # 逐集制作：只给当前集配音、配乐；各集的音频分别归档。
+            cycle_episode6 = episode_cycle.episode_for(task, 6) if episode_cycle.active(task) else None
+            # 分集制作：这一轮只给还缺音频的第一集配音、配乐；各集的音频分别归档。
             shots6 = episode_cycle.episode_clips(task, cycle_episode6) if cycle_episode6 is not None else (task["assets"].get("5") or [])
             char1_gender, char2_gender, carded_genders = dialogue_genders(
                 task["assets"].get("3_characters"), char1_name, char2_name, task["assets"].get("3_dna"),
@@ -10416,6 +10671,8 @@ class DramaService:
                 audio_url = self.gateway.generate_tts(config["tts_model"], "young-man", speech)
                 audio_path = None
 
+            # 原声镜头的字幕跟着片段自己说的话走：说到哪句才出哪句，没说出口的不出，多说的照说的出(见 spoken_cues)。
+            native_cues = spoken_cues.cues_for_shots(shots6 if isinstance(shots6, list) else [], native_shots) if any(native_shots) else []
             self._progress_step(task, 70, _post_text_of("_execute_stage_blocking.text.2"))
             # 看板上展示的是说出口的话：去掉说话人标签、括注的音色说明和花括号。
             voiced = "、".join(
@@ -10452,6 +10709,7 @@ class DramaService:
                 "audio_path": audio_path,
                 "shot_voices": shot_voices,
                 "native_audio_shots": native_shots,
+                "native_cues": native_cues,
                 "bgm_url": bgm_url,
                 "bgm_path": bgm_path,
                 "sfx_url": sfx_url,
@@ -10508,7 +10766,7 @@ class DramaService:
             self._progress_step(task, 15, _post_text_of("_execute_stage_blocking.text.3"))
             # The cut is whatever the edit timeline says: built from stage 5 / 6 the first time,
             # refreshed when footage changed, otherwise the reviewer's trims and decisions stand.
-            cycle_episode7 = episode_cycle.current_episode(task) if episode_cycle.active(task) else None
+            cycle_episode7 = episode_cycle.episode_for(task, 7) if episode_cycle.active(task) else None
             compose_task = episode_cycle.episode_view(task, cycle_episode7) if cycle_episode7 is not None else task
             timeline, transition_reports = self._current_timeline(compose_task, title)
             timeline = self._dub_missing_voices(compose_task, timeline, f"voice_{task_id[:8]}_e{cycle_episode7 or 0}_cut")
@@ -10531,7 +10789,8 @@ class DramaService:
                 transition_plans=plan["transition_plans"], trims=plan["trims"], bgm_volume=plan["bgm_volume"],
                 sound_joins=plan["sound_joins"], sound_report=sound_report,
                 bgm_start=plan.get("bgm_start", 0.0), fade_edges=plan.get("fade_edges", False),
-                blackouts=plan.get("blackouts"),
+                blackouts=plan.get("blackouts"), subtitle_timings=plan.get("subtitle_timings"),
+                finishing=plan.get("finishing"), name_cards=plan.get("name_cards"),
             )
             timeline = edit_timeline.record_sound_results(timeline, plan["shot_ids"], sound_report)
             self._store_timeline(task, timeline)
@@ -10579,7 +10838,7 @@ class DramaService:
                 post_production.remember_film(task["assets"], film)
             
             if cycle_episode7 is not None and final_vid:
-                # 本集成片落库：当前集随之变成下一集，工作流的下一步回到下一集的分镜 / 视觉。
+                # 本集成片落库：还有别的集没合成时，下一轮第 7 步接着做下一集；全部合成完才进宣发。
                 entry = episode_cycle.writable_record(task, cycle_episode7)
                 entry["timeline"] = timeline
                 entry["film"] = {"final_video_url": final_vid, "compose_mode": compose_mode,
@@ -10598,7 +10857,7 @@ class DramaService:
             sys_prompt = (
                 self._agent_role_prompt(task, AgentRole.PR_AGENT)
                 + "\n\n"
-                + prompt_data.text("agent_prompts", "pr_agent")
+                + prompt_preferences.creative_layer("promo", prompt_data.text("agent_prompts", "pr_agent"), preferences.get("promo"))
                 + f"【高光识别、强度和观众行为标签规范】：\n{highlight_guide}\n\n"
                 + prompt_data.text("agent_prompts", "pr_no_ai_statement")
                 + f"【平台、版权、投放与指标规范】：\n{platform_guide}\n"
@@ -10638,6 +10897,8 @@ class DramaService:
                 self.gateway, task_id=task_id, stage=8, domain=show_cluster.name, model=str(config["llm_model"]), title=title,
                 system_prompt=sys_prompt, request=user_prompt, output=res, overlay_block=verified_block,
                 director_style=dir_style, shot_style=shot_style, guidance=guidance,
+                project_terms=harness_evolution.project_terms(task),
+                personal=prompt_preferences.personal(preferences.get("promo")),
             )
             pr_title, pr_body = parse_pr_info(res, title, f"《{title}》{tpl['genre_desc']}")
             picked_title, picked_body = promo_facts.labelled_pick(res)
@@ -10957,6 +11218,7 @@ class DramaService:
             while claimed:
                 stage = claimed["current_stage"]
                 before = json.dumps((claimed.get("assets") or {}).get("4_progress"), sort_keys=True)
+                episodes_before = episode_cycle.signature(claimed)
                 await self.execute_stage(task_id, stage, _claimed_task=claimed, _automatic=True)
                 current = self.repo.get_task(task_id)
                 if not current or _task_script_revision(current) != revision:
@@ -10973,14 +11235,25 @@ class DramaService:
                     if current is None or _task_script_revision(current) != revision:
                         return
                 if next_stage == stage:
+                    # 同一步连着做：第 4 步一集一集出分镜，分集项目的第 5–7 步一集一集做；上一轮没做成一集就停。
                     after = json.dumps((current.get("assets") or {}).get("4_progress"), sort_keys=True)
-                    if stage != 4 or before == after:
+                    moved = before != after if stage == 4 else stage in (5, 6, 7) and episodes_before != episode_cycle.signature(current)
+                    if not moved:
                         raise StagePrerequisiteError(
                             f"第{stage}阶段执行后产物仍不完整，已停止自动推进，请检查本阶段结果后再继续。"
                         )
+                if next_stage < stage:
+                    # 步骤只往后走：前面的步骤缺了东西，停下来说清楚，由人决定要不要回去补，不自动跳回去。
+                    gaps = "；".join(self._missing_stage_outputs(current, next_stage)[:3])
+                    raise StagePrerequisiteError(
+                        f"{step_text(next_stage)}「{self.STAGE_LABELS[next_stage]}」还有内容没做完（{gaps}），"
+                        "自动制作不会跳回前面的步骤，已停在这里；回复「继续」会先把它补上，再接着往后做。"
+                    )
                 claimed = self._claim_stage_task(task_id, next_stage, run_id=run_id, automatic=True)
         except StaleTaskWriteError:
             logger.info("[Task %s] 剧本版本已变更，停止旧自动流程", task_id)
+        except stage_pause.StagePaused:
+            logger.info("[Task %s] 第 %s 阶段按要求暂停", task_id, stage)
         except Exception as exc:
             safe_error = self._safe_error_text(str(exc))
             def fail(current: Dict[str, Any]) -> None:
@@ -11336,6 +11609,9 @@ class DramaService:
                 current.pop(embedded_agent.PENDING_KEY, None)
             # 侧栏的卡片(打开了什么、舞台改了什么、待确认的提议)跟着这条回复一起存，刷新后还在。
             shown = {"id": uuid.uuid4().hex, "role": "assistant", "content": turn["reply"]}
+            # 模型自己给出的可读思考：只存在给人看的这条消息上，不进助手的上下文；没有就不存。
+            if turn.get("reasoning"):
+                shown["reasoning"] = turn["reasoning"]
             ui_actions = [
                 call["result"]["result"]["ui_action"] for call in turn.get("tool_calls") or []
                 if isinstance(call, dict) and isinstance(call.get("result"), dict) and call["result"].get("ok")
@@ -11426,9 +11702,14 @@ class DramaService:
             key: str(context[key]).strip() for key in self._INTERFACE_KEYS
             if isinstance(context.get(key), (str, int)) and not isinstance(context.get(key), bool) and str(context[key]).strip()
         }
-        if not picked:
-            return ""
         wording = prompt_data.value("assistant_intents", "context_line")
+        # 从节点画布里发来的话：哪张画布、选中了哪些节点(app/core/canvas_chat_context.py)，接在这一行末尾。
+        from app.core import canvas_chat_context
+
+        canvas_part = canvas_chat_context.line(context.get("canvas"))
+        if not picked:
+            return str(wording["prefix"]) + canvas_part if canvas_part else ""
+        canvas_tail = str(wording["join"]) + canvas_part if canvas_part else ""
         head = ""
         if "scene_id" in picked:
             head = str(wording["scene"]).format(scene_id=picked["scene_id"])
@@ -11440,8 +11721,8 @@ class DramaService:
         if head and rest:
             # 全角括号后面不留空格：「场景 E1S03（第 2 镜）· 角色 林夏」。
             between = str(wording["join_after_shot"]) if "scene_id" in picked and "shot_id" in picked else str(wording["join"])
-            return str(wording["prefix"]) + head + between + rest
-        return str(wording["prefix"]) + (head or rest)
+            return str(wording["prefix"]) + head + between + rest + canvas_tail
+        return str(wording["prefix"]) + (head or rest) + canvas_tail
 
     @staticmethod
     def _mentions(msg: str) -> bool:
@@ -11556,9 +11837,13 @@ class DramaService:
             if intent == "edit":
                 # 交给助手的修改失败了也不能悄悄重跑阶段(那是要花钱的)：退回提示，让用户再说一次。
                 intent = "read"
+        # 「继续」「恢复」「开始」都是自动做到成片：每一步做完接着下一步，不再停下来等确认；随时可以说「暂停」。
+        # 想一步一步看的人说「逐步」(/step)，只做下一步。
+        automatic_run = intent in {"resume", "continue", "run_all", "rerun", "edit", "compose"}
         if intent in {"resume", "continue"}:
-            # 自动做完的那一轮停下了(暂停、失败、服务重启)：「继续」「恢复」都接着自动做，不退回逐步确认。
-            intent = "run_all" if (task.get("workflow_control") or {}).get("automatic") else "continue"
+            intent = "run_all"
+        elif intent == "step":
+            intent = "continue"
         action, stage_target = "none", None
         reply = workflow["hint"]
         # A durable stage event is already in the transcript; only free-form
@@ -11597,20 +11882,23 @@ class DramaService:
                 if target is not None:
                     try:
                         claimed = self._claim_stage_task(
-                            task_id, target, automatic=intent == "run_all",
+                            task_id, target, automatic=automatic_run,
                             guidance=msg if intent == "edit" else None,
                         )
                     except StagePrerequisiteError as exc:
                         reply = str(exc) + "\n\n" + self._next_step_hint(self.repo.get_task(task_id) or task)
                     else:
                         stage_target = target
-                        action = "run_all" if intent == "run_all" else "run_stage"
+                        action = "run_all" if automatic_run else "run_stage"
                         async def run_background():
                             try:
-                                if intent == "run_all":
+                                if automatic_run:
+                                    # 重跑、修改、合成也一样：这一步做完接着往下做，直到成片或被暂停。
                                     await self.execute_all_stages(task_id, _first_claimed=claimed)
                                 else:
                                     await self.execute_stage(task_id, target, _claimed_task=claimed)
+                            except stage_pause.StagePaused:
+                                logger.info("[Assistant] 第 %s 阶段按要求暂停", target)
                             except Exception as exc:
                                 logger.error("[Assistant] 后台阶段失败: %s", self._safe_error_text(str(exc))[:200])
                         asyncio.create_task(run_background())
@@ -11625,10 +11913,10 @@ class DramaService:
         elif intent == "help":
             reply = (
                 "输入 / 可选择常用命令：\n"
-                "/start 开启或继续当前项目\n/pause 暂停后续制作\n/resume 从未完成处恢复\n"
-                "/stop 结束任务并保留已有产物\n/compose 合成视频（需先完成前 5 步；声音没做会先做声音再合成）\n"
-                "/auto 自动完成剩余制作，无需逐步确认\n/status 查看进度。\n"
-                "暂停或结束会在当前阶段完成后生效，不会删除历史记录。"
+                "/start 开启或继续当前项目，每一步做完自动进入下一步，直到成片\n/pause 暂停（正在做的这一步停在下一个节点，已完成的部分保留）\n"
+                "/resume 从停下的地方接着自动做\n/stop 结束任务并保留已有产物\n"
+                "/compose 合成视频（需先完成前 5 步；声音没做会先做声音再合成）\n/step 只做下一步，做完停下等您确认\n/status 查看进度。\n"
+                "也可以直接说「先停一下」「接着做」「从停下的地方继续」。暂停和结束不会删除历史记录。"
             )
         elif intent == "question":
             # Workflow questions can be answered from verified state without a model call.

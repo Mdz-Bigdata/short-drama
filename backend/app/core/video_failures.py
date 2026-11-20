@@ -174,4 +174,7 @@ def hint(entry: dict) -> str:
         return (
             _text_of("hint.text.3").format(scene)
         )
+    # 判成版权问题的(Seedance 的 OutputVideoCopyright 一类)：改的是提示词里像现成作品的说法，不是参考图。
+    if any(marker.lower() in str(entry.get("message") or "").lower() for marker in _words_of("copyright_markers")):
+        return _text_of("hint.copyright")
     return _text_of("hint.text.4")

@@ -25,6 +25,7 @@ import base64
 import hashlib
 import logging
 import os
+import re
 import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
@@ -82,7 +83,13 @@ def audio_limits(model: str) -> dict[str, Any]:
     """Seconds per reference audio (min, max), their total, and whether a sample may travel inline, for ``model``."""
     table = prompt_data.value(_DATA, "audio_limits")
     family = normalize_video_provider(model).family if model else ""
-    return dict(table.get(family) or table["default"])
+    limits = dict(table.get(family) or table["default"])
+    # A version of the family proven to take an inline sample (``inline_for``): with no public media
+    # address the sample then travels in the request instead of being dropped.
+    name = re.sub(r"[\s_.]+", "-", str(model or "").strip().lower())
+    if any(str(version) in name for version in limits.pop("inline_for", None) or ()):
+        limits["inline"] = True
+    return limits
 
 
 def _source_file(url: str) -> str | None:

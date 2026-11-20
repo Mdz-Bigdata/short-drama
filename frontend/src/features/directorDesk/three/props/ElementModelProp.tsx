@@ -20,6 +20,7 @@ import { HELPER_FLAG } from '../../lib/capture';
 import { StageLabel } from '../StageLabel';
 import { SELECTION_COLOR } from '../stageLook';
 import { PrimitiveProp } from './PrimitiveProp';
+import { usePropTurn } from './usePropTurn';
 
 interface Props {
   landmark: StageLandmark;
@@ -129,6 +130,7 @@ export function ElementModelProp({ landmark, selected, labelled, onPick }: Props
     source ? Math.min(width / source.size[0], height / source.size[1], depth / source.size[2]) : 1
   ), [depth, height, source, width]);
   const model = useMemo(() => (source ? instanceOf(source) : null), [source]);
+  const turn = usePropTurn(landmark);
 
   if (!source || !model) {
     return (
@@ -144,7 +146,7 @@ export function ElementModelProp({ landmark, selected, labelled, onPick }: Props
   }
 
   return (
-    <group position={[landmark.position[0], landmark.elevation_m ?? 0, landmark.position[1]]} rotation={[0, ((landmark.yaw_deg ?? 0) * Math.PI) / 180, 0]} onClick={onPick}>
+    <group position={[landmark.position[0], landmark.elevation_m ?? 0, landmark.position[1]]} quaternion={turn} onClick={onPick}>
       {/* The model's own centre goes over the mark and its lowest point onto the floor. */}
       <primitive object={model} scale={scale} position={[-source.center[0] * scale, -source.center[1] * scale, -source.center[2] * scale]} />
       {/* Picking and the selection glow go through this box. It is the operator's, not the set's: a capture that paints every mesh one colour would otherwise film a solid block. */}

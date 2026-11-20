@@ -6,6 +6,7 @@ import { DEFAULT_CLIENT_CONFIG } from '../../api/clientConfig';
 import { t } from '../../i18n';
 import { when } from '../finance/financeFormat';
 import { hasPermission } from './permissions';
+import { PromptPreferencesPane } from './PromptPreferencesPane';
 
 
 interface UserRecord {
@@ -335,6 +336,8 @@ export function UserCenterPage({
           <button type="button" className="primary-action" onClick={() => void issueMcpToken()} disabled={busy === 'mcp'}>{t('签发 MCP 令牌')}</button>
         </section>
       </div>
+
+      <PromptPreferencesPane />
 
       {hasPermission(center.user, 'user:read') && (
         <section className="user-management">

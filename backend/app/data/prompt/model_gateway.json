@@ -137,6 +137,7 @@
     "image_skipped": "[ModelGateway] image(%s) 跳过：%s 刚刚连接失败，暂不重试",
     "image_rate_limited": "[ModelGateway] image(%s) 被限流 (429)，%.1f 秒后第 %d/%d 次重试",
     "image_resized": "[ModelGateway] image(%s) 不接受尺寸 %s（上限 %s 像素），等比缩小为 %s 重试",
+    "image_output_refused": "[ModelGateway] image(%s) 画出来的图被内容审核拦下（%s），同一请求再画一次",
     "image_timeout": "[ModelGateway] image(%s) 超过 %s 秒未返回，本次放弃(可调 IMAGE_REQUEST_TIMEOUT_SECONDS)",
     "agnes_no_mp4": "[ModelGateway] Agnes 视频已完成但未找到 mp4 直链",
     "sd25_loaded": "[ModelGateway] 已载入 sd25-pe + sd-2-5-prompt 集成规则",
@@ -195,9 +196,13 @@
     "seedance_video_ok": "[ModelGateway] Seedance 图生视频成功 (mode={mode}): {url}...",
     "agnes_image_video_ok": "[ModelGateway] Agnes 图生视频成功 (mode={mode}): {url}...",
     "adapter_ok": "[ModelGateway] {family} 生成成功: {url}...",
-    "rewrite_over_limit": "[ModelGateway] %s 改写后的提示词 %d 字，超过上限 %d 字：改用改写前的 %d 字版本"
+    "rewrite_over_limit": "[ModelGateway] %s 改写后的提示词 %d 字，超过上限 %d 字：改用改写前的 %d 字版本",
+    "ark_body_trimmed": "[ModelGateway] Ark 请求体超出上限：参考图已压小，仍丢掉了末尾 %s 张参考图 (%s / %s 字节)"
   },
   "tables": {
+    "image_output_refusals": [
+      "OutputImageSensitiveContentDetected"
+    ],
     "max_tokens_words": [
       "max_tokens",
       "max_completion_tokens",
@@ -602,12 +607,14 @@
       "换脸",
       "脸部变形",
       "手部畸形",
+      "畸形",
       "多余手指",
       "passport photo",
       "headshot",
       "not a real person",
       "not a real celebrity",
       "真实名人",
+      "明星肖像",
       "可识别的个人身份",
       "暴力",
       "gore",
@@ -1239,6 +1246,9 @@
           "大少"
         ]
       ]
-    ]
+    ],
+    "ark_body_budget_bytes": 60000000,
+    "ark_shrink_side": 1280,
+    "ark_shrink_quality": 82
   }
 }

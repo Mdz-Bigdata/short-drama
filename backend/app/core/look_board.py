@@ -41,9 +41,17 @@ LOOK_VIEW_SLOTS: tuple[str, ...] = tuple(slot for slot, _ in LOOK_VIEWS)
 #: 版式：有妆效的展示板第二格特写拍妆效所在的部位；较早的、没有妆效的拍腰带和袖口。
 LAYOUT_MAKEUP = "makeup"
 LAYOUT_PLAIN = "plain"
+#: 现在出的展示板：第三格特写是右前方四分之三侧脸(转头、侧脸的镜头拿它当这身造型的侧脸参考)。
+#: 上面两种是这之前画的板，第三格是腰带或袖口，没有侧脸。
+LAYOUT_MAKEUP_SIDE = "makeup_side"
+LAYOUT_PLAIN_SIDE = "plain_side"
+SIDE_FACE_LAYOUTS = frozenset({LAYOUT_MAKEUP_SIDE, LAYOUT_PLAIN_SIDE})
+SIDE_FACE_SLOT = "look_closeup_3"
 CLOSEUP_LABELS = {
     LAYOUT_MAKEUP: _words_of("module.closeup_labels"),
     LAYOUT_PLAIN: _words_of("module.closeup_labels.2"),
+    LAYOUT_MAKEUP_SIDE: _words_of("module.closeup_labels.3"),
+    LAYOUT_PLAIN_SIDE: _words_of("module.closeup_labels.4"),
 }
 
 # 一列(行)里至少这么多像素是白的才算白缝；白的门槛是灰度值。
@@ -64,6 +72,11 @@ HEAD_BAND = (0.01, 0.04)
 
 def closeup_labels(layout: str) -> tuple[str, str, str]:
     return CLOSEUP_LABELS.get(layout, CLOSEUP_LABELS[LAYOUT_PLAIN])
+
+
+def side_face_slot(layout: object) -> str:
+    """这种版式的展示板上哪一格是四分之三侧脸；没有侧脸格的旧版式是空串。"""
+    return SIDE_FACE_SLOT if str(layout or "") in SIDE_FACE_LAYOUTS else ""
 
 
 def _white_lines(gray: Image.Image, box: tuple[int, int, int, int], axis: str) -> list[bool]:
@@ -178,5 +191,6 @@ def split_look_board(content: bytes) -> dict[str, bytes]:
 
 
 __all__ = [
-    "CLOSEUP_LABELS", "LAYOUT_MAKEUP", "LAYOUT_PLAIN", "LOOK_VIEWS", "LOOK_VIEW_SLOTS", "closeup_labels", "split_look_board",
+    "CLOSEUP_LABELS", "LAYOUT_MAKEUP", "LAYOUT_MAKEUP_SIDE", "LAYOUT_PLAIN", "LAYOUT_PLAIN_SIDE", "LOOK_VIEWS", "LOOK_VIEW_SLOTS",
+    "SIDE_FACE_LAYOUTS", "SIDE_FACE_SLOT", "closeup_labels", "side_face_slot", "split_look_board",
 ]

@@ -126,6 +126,11 @@ def split_script_by_episode(script: str) -> dict[int, str]:
     return episodes
 _SCENE_HEADING = _pattern("patterns.scene_heading", re.IGNORECASE)
 _INT_EXT_HEADING = _pattern("patterns.int_ext_heading", re.IGNORECASE)
+# 「1-1 乱葬岗 夜 外」: episode-scene number, place, time, inside / outside.
+_NUMBERED_SCENE_HEADING = _pattern("patterns.numbered_scene_heading")
+# 「出场人物：女主甲，男主乙，胖子」 under a scene heading.
+_CAST_LINE = _pattern("patterns.cast_line")
+_CAST_SPLIT = _pattern("patterns.cast_split")
 _SPEAKER = _pattern("patterns.speaker")
 _NON_SPEAKERS = {str(word) for word in _table("non_speakers")}
 # Screenplays carry structural labels in the same "标签：内容" shape as dialogue
@@ -139,6 +144,17 @@ _MAX_CHARACTER_NAME_CHARS = 8
 # use the very parser that later slices it, or the two answers can disagree.
 SCENE_HEADING = _SCENE_HEADING
 SPEAKER_LINE = _SPEAKER
+
+
+def scene_heading(line: str) -> str | None:
+    """The heading text when ``line`` opens a scene (「场景3：书房」, 「内景 书房 夜」, 「1-1 乱葬岗 夜 外」), else None."""
+    if match := _SCENE_HEADING.match(line):
+        return match.group(2)
+    if match := _NUMBERED_SCENE_HEADING.match(line):
+        return match.group(3)
+    if _INT_EXT_HEADING.match(line):
+        return line
+    return None
 
 
 def is_character_name(value: Any) -> bool:
@@ -247,7 +263,7 @@ def _script_synopsis(script: str, limit: int = 320) -> str:
         # Prose runs on; a metadata row is short, bulleted or "label: value".
         if not candidate or len(candidate) < 12 or _METADATA_LINE.match(candidate):
             continue
-        if EPISODE_HEADING.match(candidate) or _SCENE_HEADING.match(candidate):
+        if EPISODE_HEADING.match(candidate) or scene_heading(candidate) is not None:
             continue
         prose.append(candidate)
         if sum(len(part) for part in prose) >= limit:
@@ -348,11 +364,13 @@ def fallback_scenes_from_script(script: str) -> list[dict[str, Any]]:
             "scene_id": f"E{episode}S{scene_counts[episode]:02d}",
             "duration": "",
             "content": content,
-            "characters": _characters(body),
+            "characters": list(dict.fromkeys([*current_cast, *_characters(body)]))[:_MAX_INFERRED_CHARACTERS_PER_SCENE],
         })
         current_lines = []
         current_heading = ""
+        current_cast.clear()
 
+    current_cast: list[str] = []
     for raw_line in script.splitlines():
         line = raw_line.strip()
         episode_match = EPISODE_HEADING.match(line)
@@ -360,10 +378,18 @@ def fallback_scenes_from_script(script: str) -> list[dict[str, Any]]:
             flush()
             episode = _episode_number(episode_match.group(1))
             continue
-        scene_match = _SCENE_HEADING.match(line)
-        if scene_match or _INT_EXT_HEADING.match(line):
+        heading = scene_heading(line)
+        if heading is not None:
             flush()
-            current_heading = _text(scene_match.group(2) if scene_match else line, 500)
+            numbered = _NUMBERED_SCENE_HEADING.match(line)
+            if numbered and int(numbered.group(1)) > 0:
+                # 「2-1 乱葬岗 夜 外」: the first number is the episode, even where no 第二集 line was written.
+                episode = int(numbered.group(1))
+            current_heading = _text(heading, 500)
+            continue
+        cast = _CAST_LINE.match(line)
+        if cast:
+            current_cast.extend(name for name in _CAST_SPLIT.split(cast.group(1)) if is_character_name(name))
             continue
         if line and not line.startswith("|"):
             current_lines.append(line)

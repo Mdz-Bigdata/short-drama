@@ -10,6 +10,8 @@ export interface WorkflowChatMessage {
   isSystem?: boolean;
   /** 贴在这条回复下面的卡片：来自服务端存下的界面事件与等确认的提议。 */
   cards?: ChatCard[];
+  /** 模型随这条回复给出的可读思考，折叠显示在回复上方。 */
+  reasoning?: string;
 }
 
 /**
@@ -34,6 +36,7 @@ export function restoreWorkflowHistory(task: TaskResponse): WorkflowChatMessage[
       sender: entry.role === 'user' ? 'user' : 'ai',
       text: entry.content,
       ...(cards.length ? { cards } : {}),
+      ...(entry.role === 'assistant' && entry.reasoning ? { reasoning: entry.reasoning } : {}),
     };
   };
   const shown = new Set<string>();

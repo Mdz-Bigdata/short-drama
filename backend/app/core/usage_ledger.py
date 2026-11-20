@@ -296,6 +296,12 @@ def summarize(records: list[Mapping[str, Any]] | None) -> dict[str, Any]:
 
 def estimate(model: str, media_type: str, units: Mapping[str, Any]) -> dict[str, Any]:
     """What one call would cost under the declared prices; ``priced`` is false when unknown."""
+    if media_type == "video" and not units.get("resolution"):
+        from app.core.video_references import billed_resolution
+
+        tier = billed_resolution(model)
+        if tier:
+            units = {**units, "resolution": tier}
     priced = pricing_table().cost(model, units=units)
     if not priced or not priced[1]:
         return {"priced": False, "cost": None, "currency": None}

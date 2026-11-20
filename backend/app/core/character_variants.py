@@ -99,7 +99,31 @@ def clean_variant(payload: Mapping[str, Any], *, element_name: str = "") -> dict
     for key in ("outfit", "makeups", "starts", "edited", "later"):
         if payload.get(key):
             facts[key] = payload[key]
+    without = _clean_without(payload.get("without"))
+    if without:
+        facts["without"] = without
     return facts
+
+
+def _clean_without(raw: Any) -> list[dict[str, Any]]:
+    """A look that took over a smaller look of the same person (the same outfit before the wound): when it is
+    worn that way — ``label``, ``description``, ``spans`` (none: whenever nothing else is worn), ``starts``,
+    ``makeups`` it does have then, ``off`` the labels of the makeup its picture shows but that is not on yet."""
+    entries: list[dict[str, Any]] = []
+    for item in raw if isinstance(raw, (list, tuple)) else ():
+        if not isinstance(item, Mapping) or not str(item.get("label") or "").strip():
+            continue
+        entry: dict[str, Any] = {
+            "label": str(item["label"]).strip()[:40], "description": str(item.get("description") or "").strip(),
+            "spans": _clean_spans(item.get("spans")),
+            "makeups": [str(name) for name in item.get("makeups") or [] if str(name).strip()],
+            "off": [str(name) for name in item.get("off") or [] if str(name).strip()],
+        }
+        starts = item.get("starts")
+        if isinstance(starts, (list, tuple)) and len(starts) == 2:
+            entry["starts"] = [int(starts[0]), int(starts[1])]
+        entries.append(entry)
+    return entries
 
 
 def variant_of(element: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -160,15 +184,45 @@ def _span_width(variant: Mapping[str, Any], episode: int, scene: int | None = No
     ``starts`` is [episode, scene] for a look that begins partway through an episode: earlier scenes don't wear it.
     """
     facts = variant.get(VARIANT_KEY) or {}
+    widths = [
+        width for width in (_own_width(facts, episode, scene), *(_width(entry, episode, scene) for entry in facts.get("without") or []))
+        if width is not None
+    ]
+    return min(widths) if widths else None
+
+
+def _width(facts: Mapping[str, Any], episode: int, scene: int | None) -> int | None:
+    """Width of the narrowest of these ranges holding the moment; ``starts`` keeps out the scenes before it."""
     starts = facts.get("starts")
     if starts and scene is not None and int(starts[0]) == episode and scene < int(starts[1]):
         return None
-    spans = facts.get("spans") or ([facts["episodes"]] if facts.get("episodes") else [])
     widths = [
-        int(span[1]) - int(span[0]) for span in spans
+        int(span[1]) - int(span[0]) for span in facts.get("spans") or []
         if isinstance(span, (list, tuple)) and len(span) == 2 and int(span[0]) <= episode <= int(span[1])
     ]
     return min(widths) if widths else None
+
+
+def _own_width(facts: Mapping[str, Any], episode: int, scene: int | None) -> int | None:
+    """The look as drawn (with all its makeup): its own ranges, or the one range the form edits."""
+    spans = facts.get("spans") or ([facts["episodes"]] if facts.get("episodes") else [])
+    return _width({"spans": spans, "starts": facts.get("starts")}, episode, scene)
+
+
+def bare_look(variant: Mapping[str, Any] | None, episode: int | None = None, scene: int | None = None) -> dict[str, Any] | None:
+    """How the look is worn at this moment when its picture shows makeup that is not on yet (or any more):
+    the entry of ``without`` holding it, the one with no ranges where nothing else holds; None while it is worn as drawn."""
+    facts = (variant or {}).get(VARIANT_KEY) or variant_of(variant or {}) or {}
+    entries = facts.get("without") or []
+    if not entries:
+        return None
+    fallback = next((dict(entry) for entry in entries if not entry.get("spans")), None)
+    if episode is None:
+        return fallback
+    if _own_width(facts, episode, scene) is not None:
+        return None
+    held = [(entry, width) for entry in entries if (width := _width(entry, episode, scene)) is not None]
+    return dict(min(held, key=lambda pair: pair[1])[0]) if held else fallback
 
 
 def _narrowest(variants: Iterable[Mapping[str, Any]], episode: int, scene: int | None) -> dict[str, Any] | None:
@@ -216,7 +270,8 @@ def pick(variants: list[Mapping[str, Any]], *, text: str = "", episode: int | No
             return held
     outfits = [
         variant for variant in variants
-        if (facts := variant.get(VARIANT_KEY) or {}).get("source") == LOOK_SOURCE and not facts.get("episodes") and not facts.get("makeups")
+        if (facts := variant.get(VARIANT_KEY) or {}).get("source") == LOOK_SOURCE
+        and ((not facts.get("episodes") and not facts.get("makeups")) or any(not entry.get("spans") for entry in facts.get("without") or []))
     ]
     return dict(outfits[0]) if len(outfits) == 1 else None
 
@@ -226,12 +281,17 @@ def triggered(variants: list[Mapping[str, Any]], text: str, episode: int | None 
     return _by_trigger(variants, text, episode, scene)
 
 
-def apply(actor: Mapping[str, Any], variant: Mapping[str, Any] | None) -> dict[str, Any]:
-    """The actor entry wearing the variant's look; name, cast and voice stay the character's."""
+def apply(actor: Mapping[str, Any], variant: Mapping[str, Any] | None, *, episode: int | None = None, scene: int | None = None) -> dict[str, Any]:
+    """The actor entry wearing the variant's look; name, cast and voice stay the character's.
+
+    A look that also stands for the same outfit without some of its makeup (see :func:`bare_look`) is worn that
+    way at that moment: its words and name are the bare ones, and ``look_off`` names the makeup its picture shows
+    that is not on yet."""
     if variant is None:
         return dict(actor)
     facts = variant.get(VARIANT_KEY) or {}
-    description = str(variant.get("description") or "").strip()
+    bare = bare_look(variant, episode, scene) if facts.get("source") == LOOK_SOURCE else None
+    description = str((bare or variant).get("description") or "").strip()
     if description and facts.get("source") == LOOK_SOURCE:
         # 妆造只换衣服和妆效：脸还是这个人的，设定里原来那身衣服不再写。
         face = render_face_card(parse_face_card(str(actor.get("description") or "")), include_other=False)
@@ -244,14 +304,19 @@ def apply(actor: Mapping[str, Any], variant: Mapping[str, Any] | None) -> dict[s
         # 定妆图有自己的正脸胸像就用它；没有就还用这个人的正面大头照(大头照只锁相貌，发型衣服看全身照)。
         # 真人演员的相貌只认本人照片，画出来的胸像不顶替它。
         "face_url": (actor.get("face_url") if actor.get("real_person") else variant.get("face_url") or actor.get("face_url")) or "",
-        "variant": facts.get("label") or str(variant.get("name") or ""),
+        # 侧脸只认这身造型自己展示板上的那一格：设定集的侧脸是另一个发型，真跑时会把那个发髻带进画面；没有就不带。
+        "side_face_url": "" if actor.get("real_person") else str(variant.get("side_face_url") or ""),
+        "variant": (bare or {}).get("label") or facts.get("label") or str(variant.get("name") or ""),
         "variant_element_id": variant.get("id"),
         # 这套造型还没画：图还是设定集上那身，衣服只能按文字。
         "variant_drawn": bool(variant.get("image_url")),
+        # 图上画着、这一场还没有(或已经没了)的妆效：提示词写明不画。
+        **({"look_off": _text_of("apply.off_separator").join(bare["off"])} if bare and bare.get("off") else {}),
     }
 
 
 __all__ = [
-    "LOOK_SOURCE", "MAX_TRIGGERS", "VARIANT_KEY", "VariantError", "apply", "clean_variant", "episode_of", "is_current_look", "is_look", "pick", "scene_of", "split",
+    "LOOK_SOURCE", "MAX_TRIGGERS", "VARIANT_KEY", "VariantError", "apply", "bare_look", "clean_variant", "episode_of", "is_current_look", "is_look", "pick",
+    "scene_of", "split",
     "triggered", "variant_of", "worn_names",
 ]

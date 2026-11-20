@@ -56,6 +56,14 @@ class AdBrief(DramaBaseSchema):
     selling_points: str = Field("", max_length=500)
     audience: str = Field("", max_length=200)
     call_to_action: str = Field("", max_length=100)
+    # "story"：剧情带货——先讲一场小戏，产品在戏里自然出场，结尾落在产品近景上；空着是普通广告短片。
+    format: Literal["", "story"] = ""
+
+
+class TargetAudience(DramaBaseSchema):
+    """Who a serial is written for (app/core/target_audience.py); an empty value means not chosen."""
+    lean: Literal["", "male", "female"] = ""
+    age: Literal["", "youth", "adult", "senior"] = ""
 
 
 class DramaCreateRequest(DramaBaseSchema):
@@ -86,6 +94,19 @@ class DramaCreateRequest(DramaBaseSchema):
         "drama", description=_text_of("DramaCreateRequest.description.11")
     )
     ad_brief: Optional[AdBrief] = Field(None, description=_text_of("DramaCreateRequest.description.12"))
+    target_audience: Optional[TargetAudience] = Field(None, description=_text_of("DramaCreateRequest.target_audience"))
+    script_structure: str = Field("", max_length=40, description=_text_of("DramaCreateRequest.script_structure"))
+    story_direction: Optional[dict] = Field(None, description=_text_of("DramaCreateRequest.story_direction"))
+    story_no_go: List[Annotated[str, Field(max_length=200)]] = Field(
+        default_factory=list, max_length=16, description=_text_of("DramaCreateRequest.story_no_go"),
+    )
+    story_genres: List[Annotated[str, Field(max_length=40)]] = Field(
+        default_factory=list, max_length=8, description=_text_of("DramaCreateRequest.story_genres"),
+    )
+    story_tone: str = Field("", max_length=40, description=_text_of("DramaCreateRequest.story_tone"))
+    ending_type: str = Field("", max_length=40, description=_text_of("DramaCreateRequest.ending_type"))
+    overseas: bool = Field(False, description=_text_of("DramaCreateRequest.overseas"))
+    paywall_plan: bool = Field(False, description=_text_of("DramaCreateRequest.paywall_plan"))
     poetry_sources: Optional[List[Annotated[str, Field(min_length=1, max_length=40)]]] = Field(
         None, max_length=40,
         description=_text_of("DramaCreateRequest.description.13"),
@@ -175,6 +196,15 @@ class DramaConfigSchema(DramaBaseSchema):
     narration_delivery: Literal["use_tts", "post_production"] = Field("use_tts", description=_text_of("DramaConfigSchema.description.10"))
     creation_mode: Literal["drama", "narration", "ad", "film"] = Field("drama", description=_text_of("DramaConfigSchema.description.11"))
     ad_brief: Optional[dict] = Field(None, description=_text_of("DramaConfigSchema.description.12"))
+    target_audience: Optional[dict] = Field(None, description=_text_of("DramaConfigSchema.target_audience"))
+    script_structure: str = Field("", description=_text_of("DramaConfigSchema.script_structure"))
+    story_direction: Optional[dict] = Field(None, description=_text_of("DramaConfigSchema.story_direction"))
+    story_no_go: List[str] = Field(default_factory=list, description=_text_of("DramaConfigSchema.story_no_go"))
+    story_genres: List[str] = Field(default_factory=list, description=_text_of("DramaConfigSchema.story_genres"))
+    story_tone: str = Field("", description=_text_of("DramaConfigSchema.story_tone"))
+    ending_type: str = Field("", description=_text_of("DramaConfigSchema.ending_type"))
+    overseas: bool = Field(False, description=_text_of("DramaConfigSchema.overseas"))
+    paywall_plan: bool = Field(False, description=_text_of("DramaConfigSchema.paywall_plan"))
     poetry_sources: List[str] = Field(default_factory=list, description=_text_of("DramaConfigSchema.description.13"))
     content_language: Literal["zh", "en", "vi"] = Field("zh", description=_text_of("DramaConfigSchema.description.14"))
     one_click: bool = Field(False, description=_text_of("DramaConfigSchema.description.15"))

@@ -80,6 +80,17 @@ def fight_score(text: str, genre: str = "") -> int:
     return 2 * min(strong, 3) + min(weak, 2) + min(contact, 2) + genre_point
 
 
+def director_card(genre: str, text: str = "") -> str:
+    """The 打法卡 section the director plan carries when the story has fighting in it, otherwise empty.
+
+    A plan is written from a title and a few lines, so one strong signal or the genre is enough here.
+    """
+    content = text or ""
+    if str(genre or "").strip().lower() in FIGHT_GENRES or any(word in content for word in STRONG_SIGNALS):
+        return prompt_data.text("fight_scene", "director_card")
+    return ""
+
+
 def looks_like_fight(text: str, genre: str = "") -> bool:
     """Three points: one strong signal plus a weak one or the genre, or two strong signals."""
     return fight_score(text, genre) >= FIGHT_THRESHOLD

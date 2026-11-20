@@ -4,9 +4,12 @@ import { Music, Pause, Play, Trash2, Upload } from 'lucide-react';
 import { apiUrl } from '../../api/client';
 import { t } from '../../i18n';
 import { mediaUrlOf } from '../workbench/stageSix';
+import { FilmFinishing } from './FilmFinishing';
+import { NameCards } from './NameCards';
+import type { FinishingChanges, FinishingView } from './finishingSettings';
 import {
   curvePoints, formatDuration, percentOf, SETTING_KEYS,
-  type MusicVersion, type PostSettings, type SceneMarker, type SettingKey, type StudioTimeline, type StudioTrack, type TensionRow,
+  type MusicVersion, type NameCard, type PostSettings, type SceneMarker, type SettingKey, type StudioClip, type StudioTimeline, type StudioTrack, type TensionRow,
 } from './postProduction';
 
 const SETTING_LABELS: Record<SettingKey, [string, string]> = {
@@ -14,6 +17,7 @@ const SETTING_LABELS: Record<SettingKey, [string, string]> = {
   dialogue: ['对白音轨', '关掉后成片里没有人声，只留配乐'],
   subtitles: ['嵌入字幕', '台词烧进画面'],
   title_card: ['片名卡与首尾淡入淡出', '片头标题卡，开头淡入、结尾淡出'],
+  name_cards: ['人物出场字幕', '人物第一次出场时竖排显示姓名和身份，之后不再出现'],
 };
 
 const CURVE_W = 300;
@@ -34,12 +38,18 @@ interface Props {
   onSetting: (key: SettingKey, value: boolean) => void;
   onBgm: (body: Record<string, unknown>, label: string) => void;
   onUpload: (file: File) => void;
+  /** 成片精修：后端给了才显示；改动和基础设定走同一个 settings 操作。 */
+  finishing?: FinishingView;
+  onFinishing?: (changes: FinishingChanges, label: string) => void;
+  /** 人物出场字幕：播放头所在的片段，和改一镜的字幕(不给 cards = 恢复自动)。 */
+  currentClip?: StudioClip;
+  onNameCards?: (clip: StudioClip, cards: NameCard[] | undefined) => void;
 }
 
 /** The right column: the four basic switches, the music bed and where it comes in, and the tension curve. */
 export function StudioSidebar({
   timeline, settings, library, tension, markers, seconds, playhead, busy, musicModel, generatedMusic, musicVersions,
-  onSetting, onBgm, onUpload,
+  onSetting, onBgm, onUpload, finishing, onFinishing, currentClip, onNameCards,
 }: Props) {
   const versions = musicVersions.filter(item => item.url);
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -101,6 +111,15 @@ export function StudioSidebar({
           ))}
         </ul>
       </section>
+
+      {onNameCards && (
+        <NameCards clips={timeline.clips} current={currentClip} enabled={settings.name_cards} busy={busy !== ''} onChange={onNameCards} />
+      )}
+
+      {finishing && onFinishing && (
+        <FilmFinishing view={finishing} clips={timeline.clips} titleCard={settings.title_card} subtitles={settings.subtitles}
+          busy={busy !== ''} onChange={onFinishing} />
+      )}
 
       <section className="pp-card" aria-labelledby="pp-bgm">
         <h4 id="pp-bgm"><Music aria-hidden="true" /> {t('氛围音乐（BGM）')}</h4>

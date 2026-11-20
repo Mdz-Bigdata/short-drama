@@ -29,6 +29,51 @@ describe('BillingCenterPage', () => {
     expect(screen.getByText('订单记录')).toBeTruthy();
   });
 
+  it('lists what each model is priced at, and never what it costs us', async () => {
+    const urls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      urls.push(url);
+      const payload = url.includes('/price-list')
+        ? { items: [
+          { model: 'deepseek-flash', kind: 'per_million_tokens', currency: 'CNY', quote: { input: 2.4, output: 9.6 } },
+          { model: 'seedance-2-5', kind: 'per_second', currency: 'CNY', quote: { price: 1.812, by_resolution: { '480p': 0.804 } } },
+          { model: 'music_v2', kind: 'per_second', currency: 'CNY', quote: { price: 0.0216 } },
+        ] }
+        : url.includes('/plans') ? { sandbox_enabled: true, items: [] }
+          : url.includes('/wallet') ? { points: '5', money: {}, entries: [] } : { items: [], page: 1, page_size: 20, total: 0 };
+      return { ok: true, json: async () => payload } as Response;
+    });
+    render(<BillingCenterPage onBack={() => undefined} />);
+
+    const table = (await screen.findByText('deepseek-flash')).closest('table') as HTMLElement;
+    expect(screen.getByText('模型价目')).toBeTruthy();
+    expect(within(table).getByText('输入 ¥2.4 · 输出 ¥9.6')).toBeTruthy();
+    expect(within(table).getByText('480p ¥0.804')).toBeTruthy();
+    expect(within(table).getByText('¥0.0216')).toBeTruthy();
+    expect(table.textContent).not.toContain('USD');
+    expect(within(table).queryByText(/官方/)).toBeNull();
+    // The customer's page asks for the outward list, not the finance one.
+    expect(urls.some(url => url.includes('/api/billing/price-list'))).toBe(true);
+    expect(urls.some(url => url.includes('/api/admin/'))).toBe(false);
+  });
+
+  it('shows the wallet and the orders even when the price list cannot be loaded', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/price-list')) throw new Error('offline');
+      const payload = url.includes('/plans') ? { sandbox_enabled: true, items: [] }
+        : url.includes('/wallet') ? { points: '77', money: {}, entries: [] } : { items: [], page: 1, page_size: 20, total: 0 };
+      return { ok: true, json: async () => payload } as Response;
+    });
+    render(<BillingCenterPage onBack={() => undefined} />);
+
+    expect(await screen.findByText('77')).toBeTruthy();
+    expect(screen.getByText('订单记录')).toBeTruthy();
+    expect(screen.queryByText('模型价目')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('says buying is not open and offers no purchase while the sandbox is off', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
       const url = String(input);

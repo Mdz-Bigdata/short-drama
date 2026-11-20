@@ -66,5 +66,28 @@ class DeliveryCheckTests(unittest.TestCase):
         self.assertEqual([issue["rule"] for issue in issues], ["few_sizes"])
 
 
+    def test_a_long_clip_reads_every_size_it_passes_through(self):
+        self.assertEqual(delivery_check.size_path("远中景起幅→经中景、中近景，落幅近特写"), ["远中景", "中景", "中近景", "特写"])
+        self.assertEqual(delivery_check.size_path("远中景起幅，推近后落于近景"), ["远中景", "近景"])
+        self.assertEqual(delivery_check.size_path("中景开始拍摄→收为近景→回到中景结束"), ["中景", "近景", "中景"])
+        self.assertEqual(delivery_check.size_path("大远景"), ["大远景"])
+        self.assertEqual(delivery_check.size_path("中景 → 中景"), ["中景"])
+        self.assertEqual(delivery_check.size_path("过肩"), [])
+
+    def test_a_clip_that_pushes_in_breaks_a_run_and_counts_every_size(self):
+        # The four clips of a real episode: each opens at 中景 or 远中景 and lands closer. 远中景 used to read as 中景.
+        clips = [
+            _clip("E1S01", 1, "中景起幅 → 近景落幅（格内递进）"), _clip("E1S02", 2, "中景起幅→中近景落幅"),
+            _clip("E1S03", 3, "远中景起幅，推近后落于近景"), _clip("E1S04", 4, "远中景起幅→经中景、中近景，落幅近特写"),
+        ]
+        self.assertEqual(delivery_check.check(_task(clips, []), _timeline(clips)), [])
+        # Four clips that hold 中景 the whole way are still a run, whatever is written after it.
+        held = [_clip("E1S01", uid, "中景，固定机位") for uid in range(1, 5)]
+        self.assertEqual([(issue["shot_uid"], issue["rule"]) for issue in delivery_check.check(_task(held, []), _timeline(held))][:1], [(4, "same_size")])
+        # A push-in in the middle restarts the count.
+        broken = [_clip("E1S01", 1), _clip("E1S01", 2), _clip("E1S01", 3, "中景推至近景"), _clip("E1S01", 4), _clip("E1S01", 5), _clip("E1S01", 6, "全景")]
+        self.assertNotIn("same_size", [issue["rule"] for issue in delivery_check.check(_task(broken, []), _timeline(broken))])
+
+
 if __name__ == "__main__":
     unittest.main()

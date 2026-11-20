@@ -283,8 +283,9 @@ def build_workflow_snapshot(
                     "stage": next_stage,
                 },
                 {
-                    "kind": "run_all",
-                    "label": _text_of("build_workflow_snapshot.label.9"),
+                    # 「继续」已经自动做到成片；只想做这一步、做完停下看的人用这一个。
+                    "kind": "step",
+                    "label": _text_of("build_workflow_snapshot.label.9").format(labels[next_stage]),
                     "message": _text_of("build_workflow_snapshot.message.9"),
                     "stage": next_stage,
                 },
@@ -336,6 +337,11 @@ def build_workflow_snapshot(
     }
 
 
+def _said(name: str) -> str:
+    """One pattern string from assistant_intents.json."""
+    return str(prompt_data.value("assistant_intents", name) or "")
+
+
 def _says(name: str, text: str) -> bool:
     """这句话里有没有 assistant_intents.json 里 ``name`` 那组说法。"""
     return any(re.search(pattern, text) for pattern in prompt_data.words("assistant_intents", name))
@@ -361,6 +367,8 @@ def assistant_intent(message: str) -> tuple[str, int | None]:
         _text_of("assistant_intent.slash_commands.7"): ("status", None),
         "/help": ("help", None),
         _text_of("assistant_intent.slash_commands.8"): ("help", None),
+        "/step": ("step", None),
+        _text_of("assistant_intent.slash_commands.9"): ("step", None),
     }
     if msg.startswith("/"):
         return slash_commands.get(msg.lower(), ("help", None))
@@ -372,6 +380,18 @@ def assistant_intent(message: str) -> tuple[str, int | None]:
     # 「不用确认，直接做完」「别停」说的就是自动做完：它们带否定词，但否定的是逐步确认，不是生成。
     if _says("no_confirm", msg) and not re.search(_text_of("assistant_intent.text.2"), msg):
         return "run_all", None
+    # 恢复与逐步会花钱：只认整句，「继续把林夏改瘦」不算。逐步先看：「每一步都停下来等我确认」不是暂停。
+    bare = re.sub(_said("resume_suffix"), "", re.sub(_said("resume_prefix"), "", msg)).strip()
+    if any(re.fullmatch(pattern, bare) for pattern in prompt_data.words("assistant_intents", "step")):
+        return "step", None
+    # 「先停一下」「先别往下做了」是要暂停：带否定词，但否定的是往下做，所以在否定判断之前看；「不要暂停」不算。
+    resumes = any(re.fullmatch(pattern, bare) for pattern in prompt_data.words("assistant_intents", "resume"))
+    # 「从停下的地方继续」里也有「停下」：整句是恢复就不当暂停。
+    if not resumes and not _says("pause_negated", msg):
+        if _says("stop", msg):
+            return "stop", None
+        if _says("pause", msg):
+            return "pause", None
     if re.search(
         _text_of("assistant_intent.text.3"), msg
     ):
@@ -411,6 +431,8 @@ def assistant_intent(message: str) -> tuple[str, int | None]:
         _text_of("assistant_intent.text.29"),
     }:
         return "run_all", None
+    if resumes:
+        return "resume", None
     rerun = re.fullmatch(
         _text_of("assistant_intent.rerun"),
         command,

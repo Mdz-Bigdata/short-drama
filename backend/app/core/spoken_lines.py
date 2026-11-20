@@ -31,7 +31,28 @@ _NOTE = re.compile(r"[（(][^）)]*[）)]")
 _NEXT_SPEAKER = re.compile(r"([。！？!?…」”])\s*([\u4e00-\u9fff]{1,6}[：:])")
 #: 台词里夹的舞台说明(没有用括号括起来)：不是说出口的话，按它拆开。
 _STAGE_DIRECTION = re.compile(_text_of("module.stage_direction"))
+#: 「沈磨：无台词，嘴唇未动，只把下颌抬起半寸」：以「无台词」开头的一段整段是舞台说明，没有一个字要念。
+_NO_LINE_OPENING = re.compile(_text_of("module.no_line_opening"))
+#: 「第 3.5 秒起，沈磨：…」：写给剪辑的时间点，不是台词。
+_TIMECODE = re.compile(_text_of("module.timecode"))
+#: 说话人后面直接用引号括起来的那句才是台词，引号外面跟着的(「——说完停 1.5 秒」)是说明。
+_QUOTED = re.compile(r"[「“]([^「」“”]+)[」”]")
 _QUOTES = re.compile(r"[「」『』“”\"'‘’{}｛｝\s]")
+#: 「雷九斤{低沉沙哑，开口前停半拍}：磨刀的，跪下。」：花括号紧跟说话人、在冒号之前，是语气说明，不是台词。
+_BRACED_SPEAKER_NOTE = re.compile(r"([\u4e00-\u9fffA-Za-z·]{1,8})\s*[{｛]([^{}｛｝]{1,300})[}｝]\s*([：:])")
+
+
+def speaker_notes_in_parentheses(text: object) -> str:
+    """把写在说话人后面的花括号说明改成括注，让它和「名字（说明）：」一样只当说明读。
+
+    花括号在这个项目里多数时候包的是说出口的话(``{谁？}停顿一拍{谁动的剑？}``)；只有紧跟说话人、
+    冒号之前的那一组是说明。说明里自带的圆括号换成方括号，免得括注套括注读不全。
+    """
+    def to_note(match: re.Match[str]) -> str:
+        note = match.group(2).replace("（", "［").replace("）", "］").replace("(", "［").replace(")", "］")
+        return f"{match.group(1)}（{note}）{match.group(3)}"
+
+    return _BRACED_SPEAKER_NOTE.sub(to_note, str(text or ""))
 
 
 def spoken_lines(dialogue: Sequence[str]) -> list[str]:
@@ -40,13 +61,18 @@ def spoken_lines(dialogue: Sequence[str]) -> list[str]:
     for block in dialogue:
         # 括注的音色说明常用分号断句(「沙哑；起音猛、尾音发颤」)：先整段去掉括注，再按分号拆句，
         # 不然说明的后半截会被当成一句台词。
-        text = re.sub(r"[（(][^）)]*$", "", _NOTE.sub("", str(block or "")))
+        text = re.sub(r"[（(][^）)]*$", "", _NOTE.sub("", speaker_notes_in_parentheses(block)))
+        text = _TIMECODE.sub("", text)
         # 同一行里接着写下一个人的台词(「握着。沈无咎：握了。」)：在说话人标签前断开；
         # 括注去掉之后再断，说话人后面带语气说明的也认得出来。
         text = _NEXT_SPEAKER.sub(lambda match: match.group(1) + "\n" + match.group(2), text)
         for raw in re.split(r"[\n／/；;]", text):
+            if _NO_LINE_OPENING.match(_QUOTES.sub("", _SPEAKER.sub("", raw.strip(), count=1))):
+                continue
             # 有花括号时只有括号里的是说出口的话，括号之间是舞台说明(「{谁？}停顿一拍{谁动的剑？}」)。
-            parts = _DIALOGUE.findall(raw) or _STAGE_DIRECTION.split(_SPEAKER.sub("", raw.strip(), count=1))
+            body = _SPEAKER.sub("", raw.strip(), count=1)
+            quoted = _QUOTED.findall(body) if body.lstrip()[:1] in ("「", "“") else []
+            parts = _DIALOGUE.findall(raw) or quoted or _STAGE_DIRECTION.split(body)
             for part in parts:
                 line = _NOTE.sub("", part)
                 line = re.sub(r"[（(][^）)]*$", "", line)          # 被截断、没有收口的语气说明
@@ -70,7 +96,7 @@ def dialogue_segments(dialogue: object) -> list[str]:
 
     括号、花括号和引号里面的不算：语气说明常带分号，台词里也可能有斜杠。
     """
-    text = str(dialogue or "")
+    text = speaker_notes_in_parentheses(dialogue)
     segments: list[str] = []
     current: list[str] = []
     depth = 0
@@ -106,7 +132,7 @@ def labelled_lines(dialogue: object) -> list[tuple[str, str, str]]:
 
     标签可以带括注(「裴仲玄（语速缓）：落。」)；括号、引号里面的冒号不是标签。
     """
-    text = str(dialogue or "")
+    text = speaker_notes_in_parentheses(dialogue)
     closed = [match.span() for match in _CLOSED.finditer(text)]
     labels = [match for match in _LABEL.finditer(text) if not any(start <= match.start() < end for start, end in closed)]
     found: list[tuple[str, str, str]] = []
@@ -151,4 +177,4 @@ def plain(text: str) -> str:
     return _QUOTES.sub("", str(text or ""))
 
 
-__all__ = ["NO_DIALOGUE", "dialogue_segments", "labelled_lines", "plain", "split_speech", "spoken_lines"]
+__all__ = ["NO_DIALOGUE", "dialogue_segments", "labelled_lines", "plain", "speaker_notes_in_parentheses", "split_speech", "spoken_lines"]

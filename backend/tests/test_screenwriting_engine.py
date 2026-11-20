@@ -198,6 +198,20 @@ class OutlineModeTests(unittest.TestCase):
         self.assertIn("开篇", plan_prompt)  # pacing rules injected
         self.assertIn('"enum":[5,6,7,8,9,10,11,12,13,14,15]', plan_prompt)
         self.assertTrue(all(call["system"] == "SYS" for call in model.calls))
+        self.assertNotIn("尽量往", plan_prompt, "seedance2.0 leans nowhere")
+
+    def test_a_seedance_two_point_five_plan_leans_toward_thirty_second_shots(self):
+        model = FakeModel()
+        model.plan_overrides[1] = lambda _attempt, _prompt: json.dumps(
+            {"title": "第1集标题", "scenes": [_scene(1, 1, duration=28), _scene(1, 2, duration=24, speaker="周教授", text="现在回头还来得及。")]},
+            ensure_ascii=False,
+        )
+        state = _engine(model, video_model="doubao-seedance-2-5-pro").write(title="暗室回声", director_plan="三幕大纲……", episode_count=1)
+        self.assertEqual([scene["duration_seconds"] for scene in state["episodes"]["1"]["script"]["scenes"]], [28, 24])
+
+        plan_prompt = next(call["prompt"] for call in model.calls if "当前正在生成第 1 集" in call["prompt"] and "scene_description" in call["prompt"])
+        self.assertIn('"enum":[15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30]', plan_prompt)
+        self.assertIn("尽量往 30 秒靠", plan_prompt)
 
     def test_rendered_screenplay_is_prose_under_episode_headings(self):
         model = FakeModel()
@@ -309,6 +323,33 @@ class SourceModeTests(unittest.TestCase):
         self.assertEqual(detect_source_kind(None), "outline")
         self.assertEqual(detect_source_kind(self.NOVEL), "novel")
         self.assertEqual(detect_source_kind("第1集 对峙\n场景1：实验室\n林夏：你瞒了什么？\n周教授：回头。\n场景2：走廊\n林夏：录音就是证据。"), "screenplay")
+
+    # One episode laid out the way the platform's submission template asks: numbered headings, a cast line,
+    # △ action lines and lines with a delivery note before the colon. No 「第N集」, so the headings decide.
+    TEMPLATE_EPISODE = (
+        "1-1 乱葬岗 夜 外\n出场人物：女主甲，胖子，瘦子\n【字幕：乱葬岗】\n【VO】乌鸦叫声伴随着铁锹铲土声。\n"
+        "△墓碑后面，胖子和瘦子拿着铁锹铲着土。\n△一旁摆着一口崭新棺木。\n胖子（打哈欠，揉眼）：这都三更天了。\n"
+        "瘦子（冷笑）：谁让她命贱。\n△胖子丢下铁锹，凑到棺材边。\n△棺材里传来一声闷响。\n"
+        "1-2 棺材内 夜 内\n出场人物：女主甲\n△棺材内漆黑。\n△女主甲的眼皮颤动，缓缓睁开。\n女主甲（困惑，声音沙哑）：这是……哪里？\n"
+        "女主甲（呼吸急促OS）：氧气不多了，得出去。\n（本集完）"
+    )
+
+    def test_an_episode_in_the_platform_template_reads_as_a_screenplay(self):
+        self.assertEqual(detect_source_kind(self.TEMPLATE_EPISODE), "screenplay")
+        # Prose that merely starts a line with numbers is still prose.
+        self.assertEqual(detect_source_kind(self.NOVEL + "\n1-2 天后，他们在外面见面。\n" + self.NOVEL), "novel")
+
+    def test_an_off_screen_or_inner_line_keeps_its_mark_in_the_scene_text(self):
+        from app.core.screenwriting.renderer import scene_breakdown_entry
+
+        entry = scene_breakdown_entry({"scene_id": "E1S02", "utterances": [
+            {"kind": "dialogue", "speaker": "女主甲", "text": "这是……哪里？", "delivery": "困惑 / 声音沙哑"},
+            {"kind": "dialogue", "speaker": "女主甲", "text": "氧气不多了，得出去。", "delivery": "OS / 呼吸急促"},
+            {"kind": "dialogue", "speaker": "南宫璃", "text": "住手！", "delivery": "画外，冰冷"},
+        ]})
+
+        self.assertIn("女主甲：这是……哪里？ / 女主甲（OS）：氧气不多了，得出去。 / 南宫璃（画外）：住手！", entry["content"])
+        self.assertEqual([line["speaker"] for line in entry["dialogue"]], ["女主甲", "女主甲", "南宫璃"])
 
     def test_novel_is_sliced_on_anchors_and_each_slice_feeds_its_episode(self):
         model = FakeModel()

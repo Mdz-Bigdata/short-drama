@@ -402,7 +402,9 @@ class AssistantStageAndFaceTests(unittest.TestCase):
         self.assertIn("nose_bridge", seen["catalog"]["controls"])
         self.assertIn("phoenix=丹凤眼", seen["catalog"]["controls"]["eye_shape"])
         self.assertEqual(list(seen)[0], "catalog", "the control table comes first so a truncated transcript keeps it")
-        self.assertLess(len(json.dumps(seen["catalog"], ensure_ascii=False, separators=(",", ":"))), 3500)
+        # 发型按年代、妆容按风格各有一组选项之后表变长了；仍远低于这个读工具自己的结果上限(下面断言没被截断)。
+        self.assertLess(len(json.dumps(seen["catalog"], ensure_ascii=False, separators=(",", ":"))), 5000)
+        self.assertIn("档位 0..3", seen["catalog"]["controls"]["skin_smooth"])
         self.assertNotIn("words", json.dumps(seen["catalog"]["expressions"]))
         # The transcript shows the model the whole table: this read tool raises its own result limit.
         shown = embedded_agent._history_text([{"role": "tool", "tool": "get_face_sculpt", "result": seen}])

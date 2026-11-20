@@ -14,6 +14,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from app.core import edit_timeline, episode_cycle, prompt_data
+from app.core import film_finishing
 from app.core.scene_tension import tension_hits
 
 _DATA = "post_production"
@@ -212,6 +213,8 @@ def view(task: Mapping[str, Any], timeline: Mapping[str, Any], tracks: Sequence[
     seconds = edit_timeline.summary(timeline)["seconds"]
     return {
         "settings": edit_timeline.settings_of(timeline),
+        # 成片精修：现在的设定、可选项(按 id)、这一集账本里的下集预告(给片尾卡预填)。
+        "finishing": film_finishing.view(timeline, task),
         "tension": order,
         "scene_markers": scene_markers(order),
         "bgm_library": ranked_library(tracks, film_mood(task, order)),

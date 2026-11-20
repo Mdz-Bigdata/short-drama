@@ -14,7 +14,7 @@ from app.platform.payments import get_payment_channels
 from app.platform.payments.base import PAID, ChannelError, NotificationRejected
 from app.platform.store import PaymentInFlight, PlatformStore
 from app.schema.platform import OrderCreateRequest, OrderPayRequest
-from app.core import prompt_data
+from app.core import prompt_data, quote
 
 
 _WORDING_FILE = "api_billing_api"
@@ -47,6 +47,12 @@ def _order(item) -> dict:
         "created_at": item.created_at,
         "paid_at": item.paid_at,
     }
+
+
+@router.get("/price-list")
+async def price_list(_: dict = Depends(get_current_user)):
+    """What each model is quoted at, for anyone signed in. The official prices behind it stay inside."""
+    return {"items": quote.price_list(with_official=False)}
 
 
 @router.get("/plans")

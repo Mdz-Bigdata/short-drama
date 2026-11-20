@@ -36,12 +36,12 @@ _CLAUSE = re.compile(r"[^；;。\n]+")
 
 
 def brief(people: int) -> str:
-    """The blocking formulas a scene with ``people`` named characters can use (one to four and more)."""
+    """The blocking formulas a scene with ``people`` named characters can use (one to four, and five or more)."""
     if people < 1:
         return ""
     formulas = prompt_data.value(_DATA, "formulas")
     lines = [prompt_data.text(_DATA, "heading")]
-    lines += [formulas[str(count)] for count in range(1, min(people, 4) + 1)]
+    lines += [formulas[str(count)] for count in range(1, min(people, len(formulas)) + 1)]
     if people >= 2:
         lines.append(prompt_data.text(_DATA, "offscreen"))
     return "\n".join(lines)

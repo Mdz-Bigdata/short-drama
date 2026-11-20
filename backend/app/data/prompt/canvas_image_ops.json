@@ -1,0 +1,20 @@
+{
+  "_note": "画布上对一张图片直接动手的两个操作(app/service/canvas_image_ops.py)：「裁剪」把节点当前这张图裁出一块，「宫格拆分」把它按 行×列 切成若干张。两者都在服务器上用 PIL 做，结果写进画布自己的媒体目录，每张变成一个新的素材节点，摆在原节点右侧不压住别的节点，一次请求只产生一个画布版本。素材节点没有输入口，所以新节点不和原节点连线，而是在 payload.output.source 里记下它是从哪个节点、哪一块裁出来的。min_edge 是裁剪框每条边至少占原图的比例；max_grid 是行、列各自的上限(一张画布的节点上限用 app/schema/studio.py 的 CANVAS_MAX_NODES)；layout 是新节点的排版：gap 是离原节点和别的节点的距离，cell_gap 是宫格之间的间距，long_side / short_side_min / chrome_* 与前端 canvasMedia.ts 给素材卡片定尺寸的规则一致。能力参考 NovaNova Studio 画布的裁剪与宫格拆分，实现与措辞是本项目自己的。",
+  "min_edge": 0.06,
+  "max_grid": 12,
+  "crop_prefix": "canvas_crop_",
+  "cell_prefix": "canvas_cell_",
+  "layout": {"gap": 40, "cell_gap": 16, "long_side": 320, "short_side_min": 140, "chrome_width": 18, "chrome_height": 104},
+  "crop_label": "{label} · 裁剪",
+  "cell_label": "{label} · {row}-{column}",
+  "node_missing": "画布上没有这个节点：先保存画布再试",
+  "node_no_image": "这个节点还没有图片，先上传或生成一张",
+  "result_unreadable": "这个节点的图片读不到了，换一张再试",
+  "result_private": "这张图片不能在画布上裁剪或拆分",
+  "bad_rect": "裁剪范围要落在图片之内",
+  "rect_too_small": "裁剪范围太小：每条边至少是原图的 {percent}%",
+  "bad_grid": "行数和列数都要在 1 到 {max} 之间",
+  "single_cell": "1 × 1 就是原图本身，不用拆分",
+  "cell_too_small": "图片只有 {width} × {height} 像素，拆不成 {rows} × {columns}",
+  "too_many_nodes": "一张画布最多 {limit} 个节点，再加 {count} 个就超了"
+}

@@ -34,19 +34,31 @@ function laterText(item: ElementItem): string {
   return first ? t('第 {0} 集起才穿，剧本还没写到', [first]) : t('剧本还没写到这名角色出场');
 }
 
-function episodesText(item: ElementItem): string {
-  const variant = variantOf(item);
-  const spans = variant?.spans?.length ? variant.spans : variant?.episodes ? [variant.episodes] : [];
-  if (!spans.length) return '';
+function spansText(spans: Array<[number, number]>): string {
   // 「第 11 集起」一直穿到剧终（后端的开放区间写成 500）。
   const open = spans.find(([, last]) => last >= 500);
   const closed = spans.filter(([, last]) => last < 500);
   const text = closed.map(([first, last]) => (first === last ? `${first}` : `${first}–${last}`)).join('、');
-  const when = [text && `第 ${text} 集`, open && `第 ${open[0]} 集起`].filter(Boolean).join('、');
+  return [text && `第 ${text} 集`, open && `第 ${open[0]} 集起`].filter(Boolean).join('、');
+}
+
+function ownEpisodesText(item: ElementItem): string {
+  const variant = variantOf(item);
+  const spans = variant?.spans?.length ? variant.spans : variant?.episodes ? [variant.episodes] : [];
+  if (!spans.length) return '';
+  const when = spansText(spans);
   if (!variant?.starts) return when;
   return when === `第 ${variant.starts[0]} 集`
     ? `${when}（从第 ${variant.starts[1]} 场起）`
     : `${when}（第 ${variant.starts[0]} 集从第 ${variant.starts[1]} 场起）`;
+}
+
+/** 穿戴时间；并进来的素的那身（同一身戏服、妆效少几样）也写上：那几集图上的哪些妆效不画。 */
+function episodesText(item: ElementItem): string {
+  const bare = (variantOf(item)?.without ?? []).filter(entry => entry.off.length).map(entry => (entry.spans.length
+    ? t('{0}不带{1}', [spansText(entry.spans), entry.off.join('、')])
+    : t('其余各集不带{0}', [entry.off.join('、')])));
+  return [ownEpisodesText(item), ...bare].filter(Boolean).join('；');
 }
 
 // 定妆图展示板切出来的单张(后端 core/look_board)：四格全身，再三格特写；特写叫什么看出图时的版式。
@@ -60,7 +72,17 @@ const LOOK_CLOSEUP_SLOTS = ['look_closeup_1', 'look_closeup_2', 'look_closeup_3'
 const LOOK_CLOSEUP_LABELS: Record<string, readonly string[]> = {
   makeup: ['正脸胸像', '妆效部位', '腰带与配饰'],
   plain: ['正脸胸像', '腰带与配饰', '袖口或下摆'],
+  // 现在出的板：第三格是这身造型自己的四分之三侧脸，转头和侧脸的镜头拿它当参考。
+  makeup_side: ['正脸胸像', '妆效部位', '四分之三侧脸'],
+  plain_side: ['正脸胸像', '腰带与配饰', '四分之三侧脸'],
 };
+const SIDE_FACE_LAYOUTS = new Set(['makeup_side', 'plain_side']);
+
+/** 画好了、但展示板上还没有侧脸格的定妆图(这一格加上之前画的)。 */
+function lacksSideFace(look: ElementItem): boolean {
+  return look.files.some(file => file.slot === LOOK_BOARD && file.media_kind === 'image')
+    && !SIDE_FACE_LAYOUTS.has(String(look.metadata?.look_layout || 'plain'));
+}
 const LOOK_BOARD = 'front';
 
 /** 这套定妆图能看的每一张：整板在前，切出来的单张跟在后面。 */
@@ -130,6 +152,9 @@ function PerformanceLookStage({
       </header>
       {later && <p className="character-looks__later">{later}</p>}
       {Boolean(look.metadata?.needs_redraw) && <p className="character-looks__stale">{t('设定改过，这张图还是旧写法，建议重新生成')}</p>}
+      {lacksSideFace(look) && (
+        <p className="character-looks__later">{t('这张定妆图没有侧脸格：转头和侧脸的镜头不带这身造型的侧脸参考。重新生成后会多出一格四分之三侧脸（重新生成要调用一次图像模型）。')}</p>
+      )}
       {problems.length > 0 && (
         <details className="character-look-viewer__problems">
           <summary>{t('妆效核对没过 {0} 处，重新生成时会照这些问题改', [problems.length])}</summary>

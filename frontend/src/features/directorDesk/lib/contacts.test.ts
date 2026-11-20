@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { contactPlan } from '../../spatial/spatialFixtures';
 import { actorsInShot, type StageActor, type StageContact, type StagePlan, type StagePosture } from '../../spatial/spatialTypes';
 import {
-  clampToFootprint, contactPhrase, contactsAt, dragRefusal, formulaHandPoint, heldTargets, isSeat, resolveContacts,
+  carriedAlongFist, clampToFootprint, contactPhrase, contactsAt, dragRefusal, formulaHandPoint, heldTargets, isSeat, resolveContacts, type HandLocator,
 } from './contacts';
 import { mannequinHandPoint } from './handBones';
 import { boneLocals, groundLift, proportionsOf } from './mannequinRig';
@@ -61,6 +61,39 @@ describe('resolveContacts', () => {
     // '' is the right hand.
     const unnamed = resolveContacts(contactPlan({ contacts: [contact({ actor: '林夏', target: '录音笔', hand: '' })] }), 1);
     expect(landmarkOf(unnamed, '录音笔').position).toEqual([-1.12, 0.22]);
+  });
+
+  it('leans a long held thing the way the fist points it, gripped near its end', () => {
+    const base = contactPlan();
+    const sword = { id: 'mark-09', name: '长剑', kind: 'prop' as const, position: [3, 3] as [number, number], size: [0.05, 0.05, 0.9] as [number, number, number] };
+    const plan = { ...base, landmarks: [...base.landmarks, sword], contacts: [contact({ actor: '林夏', target: '长剑', hand: 'right' })] };
+    // The fist is at (1, 1.2, 2) and points what it holds straight ahead along +X, knuckles down.
+    const hand: HandLocator = () => ({ point: [1, 1.2, 2], along: [1, 0, 0], forward: [0, -1, 0] });
+    const held = landmarkOf(resolveContacts(plan, 1, { hand }), '长剑');
+    // The hilt is 0.12 m of a 0.9 m sword: its foot sits that far behind the hand, and the blade runs on from there.
+    expect(held.position).toEqual([0.88, 2]);
+    expect(held.elevation_m).toBe(1.2);
+    expect(held.tilt).toEqual({ up: [1, 0, 0], forward: [0, -1, 0] });
+
+    // A short blade is gripped at a share of its length; a facing nobody gave is the holder's own.
+    const dagger = landmarkOf(resolveContacts({ ...plan, landmarks: plan.landmarks.map(item => (item.name === '长剑' ? { ...item, size: [0.04, 0.04, 0.4] as [number, number, number] } : item)) }, 1, { hand: () => ({ point: [1, 1.2, 2], along: [0, 1, 0] }) }), '长剑');
+    expect(dagger.elevation_m).toBeCloseTo(1.14, 6);
+    expect(dagger.tilt!.up).toEqual([0, 1, 0]);
+    close(dagger.tilt!.forward, [1, 0, 0]);
+  });
+
+  it('keeps a small or squat thing upright in the palm whatever the fist does, and a plain point as it always was', () => {
+    const hand: HandLocator = () => ({ point: [1, 1.2, 2], along: [1, 0, 0], forward: [0, -1, 0] });
+    const pen = landmarkOf(resolveContacts(contactPlan(), 1, { hand }), '录音笔');
+    expect(pen.tilt).toBeUndefined();
+    expect(pen.position).toEqual([1, 2]);
+    expect(pen.elevation_m).toBeCloseTo(1.18, 6);
+    expect(pen.yaw_deg).toBe(90);
+    expect(landmarkOf(resolveContacts(contactPlan(), 1, { hand: () => [1, 1.2, 2] }), '录音笔').position).toEqual([1, 2]);
+
+    expect(carriedAlongFist({ size: [0.05, 0.05, 0.9] })).toBe(true);
+    expect(carriedAlongFist({ size: [0.03, 0.03, 0.2] })).toBe(false);   // a pen: slender, but it stands in the hand
+    expect(carriedAlongFist({ size: [0.4, 0.4, 0.9] })).toBe(false);     // a crate: tall, not slender
   });
 
   it('never sinks a big held thing under the floor', () => {

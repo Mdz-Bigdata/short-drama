@@ -22,8 +22,9 @@ function node(tool: string, params: Record<string, unknown> = {}): CanvasNode {
 function renderBody(target: CanvasNode, { output = null, engines }: { output?: NodeOutput | null; engines?: Partial<NonNullable<RunOptions['tools']>['engines']> } = {}) {
   const patch = vi.fn();
   const layOutBeats = vi.fn();
+  const layOutShots = vi.fn();
   const actions = {
-    taskId: 't', shots: [], deskToken: 0, patch, run: vi.fn(), cancel: vi.fn(), upload: vi.fn(), openDesk: vi.fn(), layOutBeats,
+    taskId: 't', shots: [], deskToken: 0, patch, run: vi.fn(), cancel: vi.fn(), upload: vi.fn(), openDesk: vi.fn(), layOutBeats, layOutShots,
     options: { tools: { styles: STYLES, engines: { image: true, vision: true, text: true, local: true, voice: true, ...engines } } },
   } as unknown as CanvasActions;
   render(
@@ -31,7 +32,7 @@ function renderBody(target: CanvasNode, { output = null, engines }: { output?: N
       <ToolBody node={target} output={output} media={<div>MEDIA</div>} prompt={label => <textarea aria-label={label} />} runBar={<button type="button">RUN</button>} />
     </CanvasContext.Provider>,
   );
-  return { patch, layOutBeats };
+  return { patch, layOutBeats, layOutShots };
 }
 
 describe('the tool node', () => {
@@ -76,6 +77,21 @@ describe('the tool node', () => {
     expect(screen.getByText('没有配置多模态模型')).toBeTruthy();
   });
 
+  it('character extraction says what to connect and what it writes', () => {
+    renderBody(node('character_extract'));
+    expect(screen.getByText('多模态模型 · 计费')).toBeTruthy();
+    expect(screen.getByText(/性别年龄、五官、面部标记、发型、体型、服装、配饰、画风/)).toBeTruthy();
+    expect(screen.getByLabelText('连了图：写图里哪个人、叫什么（可选）；没连图：写角色描述')).toBeTruthy();
+  });
+
+  it('character extraction still runs on words when only the text model is set up', () => {
+    renderBody(node('character_extract'), { engines: { vision: false } });
+    expect(screen.queryByText('没有配置多模态模型')).toBeNull();
+    cleanup();
+    renderBody(node('character_extract'), { engines: { vision: false, text: false } });
+    expect(screen.getByText('没有配置多模态模型')).toBeTruthy();
+  });
+
   it('a tool that takes no words has no text box', () => {
     renderBody(node('audio_extract'));
     expect(screen.queryByRole('textbox')).toBeNull();
@@ -92,6 +108,29 @@ describe('the tool node', () => {
     const { layOutBeats } = renderBody(node('beat_plan'), { output: { medium: 'text', url: '', text: '1. 开门', beats } });
     fireEvent.click(screen.getByRole('button', { name: '铺成 2 个节点' }));
     expect(layOutBeats).toHaveBeenCalledWith('t1', beats);
+  });
+
+  it('a shot table lays out as shots with the server\'s frame words, and says when the count is off', () => {
+    const shots = [
+      { size: '中景', motion: '', seconds: 4, desc: '女孩进门', characters: ['女孩'], dialogue: '女孩：还营业吗？' },
+      { size: '近景', motion: '', seconds: 4, desc: '店主抬头', characters: ['店主'], dialogue: '店主：一直在等你。' },
+    ];
+    const beats = [{ title: '第 1 镜', prompt: '女孩进门，中景。人物：女孩（二十出头）' }, { title: '第 2 镜', prompt: '店主抬头，近景。人物：店主（白发）' }];
+    const { layOutShots } = renderBody(node('shot_table'), { output: { medium: 'text', url: '', text: '1. …', beats, shots, asked: 3 } });
+    expect(screen.getByText('要的是 3 个镜头，模型给了 2 个：可以重新运行，或铺上去后删掉多的')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '铺成 2 个镜头' }));
+    expect(layOutShots).toHaveBeenCalledWith('t1', shots, beats.map(beat => beat.prompt), []);
+  });
+
+  it('a shot table says which lines it moved out of the script\'s order', () => {
+    renderBody(node('shot_table'), { output: { medium: 'text', url: '', text: '1. …', beats: [], shots: [], line_order: ['还开着吗？'] } });
+    expect(screen.getByText('这几句台词的顺序和剧本不一致：「还开着吗？」。可以重新运行，或铺上去后改一下视频节点里的台词')).toBeTruthy();
+  });
+
+  it('a shot table that got the count it asked for says nothing about it, and offers a shot count setting', () => {
+    renderBody(node('shot_table', { shots: 2 }), { output: { medium: 'text', url: '', text: '1. …', beats: [], shots: [{ size: '', motion: '', seconds: 4, desc: '甲', dialogue: '' }, { size: '', motion: '', seconds: 4, desc: '乙', dialogue: '' }], asked: 2 } });
+    expect(screen.queryByText(/要的是/)).toBeNull();
+    expect((screen.getByLabelText('镜头数（0 = 按剧本）') as HTMLInputElement).value).toBe('2');
   });
 });
 

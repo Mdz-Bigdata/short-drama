@@ -691,6 +691,8 @@ describe('CanvasWorkspace', () => {
       expect(await within(dialog).findByText('影响 2 个镜头', { selector: 'p' })).toBeTruthy();
       expect(within(dialog).getByText('没有来源记录，跳过')).toBeTruthy();
       expect(within(dialog).getByText('将跳过 1 个：没有来源 1，没有结果 0，已提交 0')).toBeTruthy();
+      // Only a video bound to shots gets the note about becoming a version of the shot.
+      expect(within(dialog).queryByText(/可「选用此版」的版本/)).toBeNull();
 
       fireEvent.click(within(dialog).getByRole('button', { name: '提交 1 个节点' }));
       expect(await within(dialog).findByText('存储暂不可用')).toBeTruthy();
@@ -700,6 +702,20 @@ describe('CanvasWorkspace', () => {
       fireEvent.click(within(dialog).getByRole('button', { name: '重试失败的 1 个' }));
       await waitFor(() => expect(commits[1]).toEqual(['gen']));
       expect(await within(dialog).findByText(/已提交 1 个/)).toBeTruthy();
+    });
+
+    it('says a committed video also becomes a version the shot can pick', async () => {
+      installServer({ version: 1, nodes: [node('clip', 'video_gen', { payload: { label: '视频' } })] });
+      const video = { ...PREVIEW.nodes[0], node_id: 'clip', label: '视频', kind: 'video_gen', medium: 'video', url: '/media/v.mp4', target_kind: 'clip' };
+      server.handlers.push((_method, path) => (path.endsWith('/canvas/commit/preview')
+        ? ok({ ...PREVIEW, nodes: [video], counts: { ready: 1, no_provenance: 0, already: 0, no_result: 0 } })
+        : undefined));
+      await openCanvas();
+      await screen.findByTestId('node-clip');
+      press('a', { ctrlKey: true });
+      fireEvent.click(await screen.findByRole('button', { name: /提交所选/ }));
+      const dialog = await screen.findByRole('dialog', { name: '提交到项目' });
+      expect(await within(dialog).findByText(/已经出过片的镜头，还会在镜头工作台里多一个可「选用此版」的版本/)).toBeTruthy();
     });
   });
 
@@ -913,6 +929,8 @@ describe('CanvasWorkspace', () => {
         await openCanvas();
         await screen.findByTestId('node-gen');
         fireEvent.click(screen.getByRole('button', { name: '导出画布' }));
+        // The export button now offers the plain file or a bundle with media; the plain one is the old export.
+        fireEvent.click(await screen.findByRole('button', { name: '导出 .json' }));
         expect(names).toEqual(['主画布.novara-canvas.json']);
         const text = await new Promise<string>(resolve => {
           const reader = new FileReader();

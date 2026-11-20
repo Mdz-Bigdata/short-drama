@@ -20,7 +20,7 @@ const TIMED: StagePlan = { ...PLAN, timelines: { 1: { duration_s: 4, fps: 24, ca
 function playbackAt(time: number, fps = 24, playing = false): DeskPlayback {
   return {
     time, frame: Math.round(time * fps), playing, loop: false,
-    play: vi.fn(), pause: vi.fn(), stop: vi.fn(), seek: vi.fn(), step: vi.fn(), setLoop: vi.fn(),
+    play: vi.fn(), pause: vi.fn(), stop: vi.fn(), seek: vi.fn(), step: vi.fn(), setLoop: vi.fn(), speed: 1, setSpeed: vi.fn(),
   };
 }
 

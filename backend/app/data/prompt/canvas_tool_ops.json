@@ -21,5 +21,6 @@
   "_write.text": "连一段文本或写一下要做什么",
   "_write.text.2": "文本模型没有返回结果",
   "_analyze_shots.note": "（共 {0} 个镜头，这里只看了前 {1} 个）\n",
-  "_run_local.text": "{0} 不是本地工具"
+  "_run_local.text": "{0} 不是本地工具",
+  "color_card.text": "这张图里取不出颜色，换一张剧照再试"
 }

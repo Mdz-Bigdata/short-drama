@@ -6,6 +6,7 @@ import type { LandmarkPart, StageLandmark } from '../../../spatial/spatialTypes'
 import { HELPER_FLAG } from '../../lib/capture';
 import { StageLabel } from '../StageLabel';
 import { SELECTION_COLOR, landmarkColor } from '../stageLook';
+import { usePropTurn } from './usePropTurn';
 
 interface Props {
   landmark: StageLandmark;
@@ -94,8 +95,9 @@ export function PrimitiveProp({ landmark, selected, labelled, onPick }: Props) {
   // A plane is an upright panel (a backdrop, a screen, a window): width by height, no depth.
   const scale: [number, number, number] = shape === 'plane' ? [width, height, 1] : [width, height, depth];
   const hardToPick = Boolean(onPick) && Math.max(width, depth, height) < HARD_TO_PICK_M;
+  const turn = usePropTurn(landmark);
   return (
-    <group position={[landmark.position[0], landmark.elevation_m ?? 0, landmark.position[1]]} rotation={[0, ((landmark.yaw_deg ?? 0) * Math.PI) / 180, 0]} onClick={onPick}>
+    <group position={[landmark.position[0], landmark.elevation_m ?? 0, landmark.position[1]]} quaternion={turn} onClick={onPick}>
       {landmark.parts?.length ? <PartsProp landmark={landmark} selected={selected} /> : (
         <mesh position={[0, height / 2, 0]} scale={scale} castShadow receiveShadow>
           <ShapeGeometry shape={shape} />

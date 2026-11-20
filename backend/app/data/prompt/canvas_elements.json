@@ -1,0 +1,20 @@
+{
+  "_note": "画布与元素库互通(app/service/canvas_elements.py)。「从元素库取用」：把选中的元素图片复制一份到画布自己的媒体目录，每张图变成一个素材节点(名字 = 元素名)，一次请求只产生一个画布版本；节点拿的是副本，不是元素库的私有地址，所以能当参考图喂给图片/视频生成。「存入元素库」：把节点的图片结果(素材节点的图，或生成/工具节点当前这次生成的图)存成元素库里一个新元素，走元素库自己的建条目 + 存文件流程。max_take 是一次最多取用的图片数；page_size 是选择器一页列多少个元素；layout 是新节点排版的列数、间距和离已有内容的距离；slots 是存入时图片放在哪个槽位(演员放正面全身位，其余类型是主参考图)。能力参考 NovaNova Studio 画布的「我的资产」取用与「保存资产」，实现与措辞是本项目自己的。",
+  "max_take": 24,
+  "page_size": 60,
+  "layout": {"columns": 4, "gap": 40, "margin": 80},
+  "slots": {"actor": "front", "default": "reference"},
+  "copy_prefix": "canvas_el_",
+  "nothing_chosen": "没有选中要取用的元素",
+  "too_many": "一次最多取用 {limit} 张图片，选中了 {count} 张：分几次取",
+  "not_found": "元素不存在，或不在你的元素库里",
+  "no_image": "「{name}」还没有图片，取不到画布上",
+  "no_such_image": "「{name}」里没有这张图片",
+  "image_missing": "「{name}」的图片文件读不到了，先到元素库里重新上传或生成",
+  "bad_kind": "元素库没有这个类型：{kind}",
+  "name_required": "给元素起个名字",
+  "node_missing": "画布上没有这个节点：先保存画布再试",
+  "node_no_image": "这个节点还没有图片结果，存不进元素库",
+  "result_unreadable": "这个节点的图片读不到了，存不进元素库",
+  "result_private": "这张图片不能从画布存入元素库"
+}

@@ -1,0 +1,165 @@
+/* The stage batch of 2026-11-18: playback speed, the routes listed in the outliner, the prompt bar
+   over the stage and the scene export in 成片预演. Kept apart from DirectorDesk.css, which other
+   sessions edit. */
+
+.desk-timeline__speed {
+  height: 1.7rem;
+  padding: 0 0.3rem;
+  color: var(--desk-text);
+  font: inherit;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--desk-line);
+  border-radius: 0.35rem;
+  background: transparent;
+}
+
+/* A route has no eye and no lock of its own: it shares its traveller's. */
+.desk-outliner__row.is-trail .desk-outliner__name strong {
+  font-weight: 500;
+}
+
+/* ---- the prompt bar: one line to the AI director, floating over the stage ---- */
+.desk-prompt {
+  position: absolute;
+  left: 50%;
+  bottom: 2.6rem;
+  z-index: 3;
+  width: min(34rem, calc(100% - 2rem));
+  display: grid;
+  gap: 0.35rem;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.desk-prompt > * {
+  pointer-events: auto;
+}
+.desk-prompt__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.35rem 0.3rem 0.6rem;
+  border: 1px solid var(--desk-line);
+  border-radius: 999px;
+  background: var(--desk-panel);
+  box-shadow: 0 0.6rem 1.4rem rgba(var(--shadow-rgb), 0.28);
+}
+.desk-prompt__bar:focus-within {
+  border-color: var(--desk-cyan);
+}
+.desk-prompt__bar input {
+  min-width: 6rem;
+  flex: 1;
+  height: 1.9rem;
+  color: var(--desk-text);
+  font: inherit;
+  font-size: 0.82rem;
+  border: 0;
+  outline: 0;
+  background: transparent;
+}
+.desk-prompt__chip {
+  max-width: 9rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.15rem 0.2rem 0.15rem 0.5rem;
+  font-size: 0.74rem;
+  color: var(--desk-text);
+  white-space: nowrap;
+  border: 1px solid var(--desk-line);
+  border-radius: 0.4rem;
+  background: rgba(var(--ink-rgb), 0.07);
+}
+.desk-prompt__chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.desk-prompt__chip.is-more {
+  padding-right: 0.5rem;
+  color: var(--desk-dim);
+}
+.desk-prompt__chip button {
+  width: 1.1rem;
+  height: 1.1rem;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--desk-dim);
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+.desk-prompt__chip button svg {
+  width: 0.7rem;
+  height: 0.7rem;
+}
+.desk-prompt__send {
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--on-accent);
+  border: 0;
+  border-radius: 50%;
+  background: var(--desk-cyan);
+  cursor: pointer;
+}
+.desk-prompt__send:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.desk-prompt__send svg {
+  width: 1rem;
+  height: 1rem;
+}
+.desk-prompt__answer {
+  margin: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding: 0.45rem 0.5rem 0.45rem 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--desk-text);
+  border: 1px solid var(--desk-line);
+  border-radius: 0.6rem;
+  background: var(--desk-panel);
+  box-shadow: 0 0.6rem 1.4rem rgba(var(--shadow-rgb), 0.28);
+}
+.desk-prompt__answer > span {
+  min-width: 0;
+  flex: 1;
+  max-height: 6.5rem;
+  overflow: auto;
+}
+.desk-prompt__answer.is-failed {
+  border-color: rgba(var(--danger-rgb), 0.5);
+}
+/* Beside the picture-in-picture when there is room; above it when there is not. */
+@media (max-width: 1180px) {
+  .desk-prompt {
+    width: min(26rem, calc(100% - 2rem));
+  }
+}
+
+/* ---- 成片预演: the whole scene written out as one video ---- */
+.desk-scene-player__export {
+  margin-left: 0.4rem;
+  white-space: nowrap;
+}
+.desk-scene-player__exporting {
+  margin-left: 0.4rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--desk-dim);
+}
+.desk-scene-player__exporting progress {
+  width: 7rem;
+  accent-color: var(--desk-cyan);
+}

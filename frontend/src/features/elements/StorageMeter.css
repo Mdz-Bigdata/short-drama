@@ -1,0 +1,37 @@
+.storage-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.storage-meter__bar {
+  width: 140px;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  overflow: hidden;
+}
+
+.storage-meter__bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: currentColor;
+}
+
+.storage-meter__text em {
+  margin-left: 10px;
+  font-style: normal;
+  opacity: 0.75;
+}
+
+.storage-meter--warning { color: #c98a1b; }
+.storage-meter--danger { color: #d1483f; }
+
+@media (max-width: 640px) {
+  .storage-meter { flex-wrap: wrap; }
+  .storage-meter__bar { width: 100%; }
+}

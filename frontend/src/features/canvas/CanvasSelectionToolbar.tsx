@@ -2,7 +2,7 @@
 import {
   AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignHorizontalJustifyStart, AlignHorizontalSpaceBetween,
   AlignVerticalJustifyCenter, AlignVerticalJustifyEnd, AlignVerticalJustifyStart, AlignVerticalSpaceBetween,
-  Columns3, Copy, Expand, Grid3x3, Group, Rows3, Trash2, Ungroup, Workflow, type LucideIcon,
+  Columns3, Copy, Expand, Film, Grid3x3, Group, Rows3, Trash2, Ungroup, Workflow, type LucideIcon,
 } from 'lucide-react';
 import type { CSSProperties } from 'react';
 
@@ -23,6 +23,8 @@ export interface CanvasSelectionToolbarProps {
   onUngroup?: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  /** Shown only when given: the selection holds two or more pictures or clips to wire to one video node. */
+  onConnectVideo?: () => void;
 }
 
 /** Room the toolbar needs above the selection; with less it sits below instead. */
@@ -56,7 +58,7 @@ function ToolButton({ tool }: { tool: Tool }) {
 }
 
 /** Floating actions over a multi-selection: align, distribute, arrange, group, duplicate, delete. */
-export function CanvasSelectionToolbar({ rect, count, onAlign, onDistribute, onArrange, onGroup, onUngroup, onDuplicate, onDelete }: CanvasSelectionToolbarProps) {
+export function CanvasSelectionToolbar({ rect, count, onAlign, onDistribute, onArrange, onGroup, onUngroup, onDuplicate, onDelete, onConnectVideo }: CanvasSelectionToolbarProps) {
   const below = rect.y < TOOLBAR_CLEARANCE;
   const style: CSSProperties = {
     left: rect.x + rect.width / 2,
@@ -86,6 +88,7 @@ export function CanvasSelectionToolbar({ rect, count, onAlign, onDistribute, onA
     [
       { id: 'group', label: t('成组'), icon: Group, run: onGroup, disabled: few },
       ...(onUngroup ? [{ id: 'ungroup', label: t('解组'), icon: Ungroup, run: onUngroup }] : []),
+      ...(onConnectVideo ? [{ id: 'connect-video', label: t('连到视频节点…'), icon: Film, run: onConnectVideo }] : []),
       { id: 'duplicate', label: t('就地复制'), icon: Copy, run: onDuplicate },
       { id: 'delete', label: t('删除所选'), icon: Trash2, run: onDelete, danger: true },
     ],

@@ -100,7 +100,7 @@ describe('PostProductionStudio', () => {
     expect(within(page).getByText('原声 2 · 配音 1 · 无人声 0')).toBeTruthy();
     expect(page.querySelectorAll('video')).toHaveLength(1);
     expect(page.querySelector('video')?.getAttribute('src')).toBe('/media/film_b.mp4');
-    expect(within(page).getAllByRole('switch')).toHaveLength(4);
+    expect(within(page).getAllByRole('switch')).toHaveLength(5);   // 转场、对白、字幕、片名卡、人物出场字幕
     expect(within(page).getByRole('list', { name: '镜头胶片条' }).querySelectorAll('li')).toHaveLength(3);
     expect(within(page).getByText('匹配度 86%')).toBeTruthy();
     expect(within(page).getByText('配乐模型').parentElement?.textContent).toBe('配乐模型ElevenLabs Music');
@@ -216,6 +216,90 @@ describe('PostProductionStudio', () => {
     await waitFor(() => {
       const bodies = fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/timeline/render')).map(([, init]) => JSON.parse(String(init?.body)));
       expect(bodies[1]).toEqual({});
+    });
+  });
+
+  describe('episode switch', () => {
+    const episodes = [{ number: 1, clips: 2, film_url: '/media/film_e1.mp4' }, { number: 2, clips: 3, film_url: null }];
+    const second = () => studio({ episodes, live_episode: 2 });
+    const first = () => studio({
+      episodes, live_episode: 2,
+      timeline: { ...studio().timeline, episode: 1, clips: [studio().timeline.clips[0]] },
+      post: { ...studio().post!, film_versions: [{ url: '/media/film_e1.mp4', revision: 1, rendered_at: '2026-11-09T08:00:00+00:00', compose_mode: 'm', seconds: 9, bytes: 1_000_000 }] },
+    });
+    /** Answers with episode 1's cut when asked for it, by query on reads and by body on edits. */
+    function mockEpisodes() {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith('/timeline/render')) return ok({ final_video_url: '/media/film_e1_new.mp4' });
+        if (url.endsWith('/timeline/ops')) return ok(JSON.parse(String(init?.body)).episode === 1 ? first() : second());
+        return ok(url.endsWith('?episode=1') ? first() : second());
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const bodies = (suffix: string) => fetchMock.mock.calls.filter(([url]) => String(url).endsWith(suffix)).map(([, init]) => JSON.parse(String(init?.body)));
+      return { fetchMock, bodies };
+    }
+
+    it('is not shown for a project made in one run', async () => {
+      mockApi();
+      show();
+      await screen.findByRole('list', { name: '镜头胶片条' });
+      expect(screen.queryByRole('combobox', { name: '剪辑哪一集' })).toBeNull();
+    });
+
+    it('opens a finished episode: its clips, its film, its edits and its render', async () => {
+      const { fetchMock, bodies } = mockEpisodes();
+      const { onRegenerateSound } = show({ filmUrl: null, episode: 2 });
+      const picker = await screen.findByRole('combobox', { name: '剪辑哪一集' }) as HTMLSelectElement;
+      expect(picker.value).toBe('2');
+      expect(within(picker).getByRole('option', { name: '第 1 集 · 已出成片' })).toBeTruthy();
+      expect(within(picker).getByRole('option', { name: '第 2 集 · 制作中' })).toBeTruthy();
+
+      await userEvent.selectOptions(picker, '1');
+      await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/timeline?episode=1'))).toBe(true));
+      await waitFor(() => expect(screen.getByRole('list', { name: '镜头胶片条' }).querySelectorAll('li')).toHaveLength(1));
+      expect(screen.getByRole('heading', { name: /后期制作 · 第 1 集/ })).toBeTruthy();
+      expect(document.querySelector('.pp video')?.getAttribute('src')).toBe('/media/film_e1.mp4');
+
+      // An edit and a render both name the episode on screen.
+      await userEvent.click(screen.getByRole('switch', { name: '嵌入字幕' }));
+      await waitFor(() => expect(bodies('/timeline/ops')).toEqual([{ operation: 'settings', settings: { subtitles: false }, episode: 1 }]));
+      await userEvent.click(screen.getByRole('button', { name: '重新合成第 1 集' }));
+      await waitFor(() => expect(bodies('/timeline/render')).toEqual([{ episode: 1 }]));
+
+      // What belongs to the episode in production waits until the editor is back on it.
+      const regenerate = screen.getByRole('button', { name: '一键重新生成音效配乐' }) as HTMLButtonElement;
+      expect(regenerate.disabled).toBe(true);
+      expect((screen.getByRole('button', { name: '剪辑室' }) as HTMLButtonElement).disabled).toBe(true);
+      expect(onRegenerateSound).not.toHaveBeenCalled();
+    });
+
+    it('goes back to the episode in production without naming it', async () => {
+      const { fetchMock, bodies } = mockEpisodes();
+      show({ filmUrl: null, episode: 2 });
+      const picker = await screen.findByRole('combobox', { name: '剪辑哪一集' });
+      await userEvent.selectOptions(picker, '1');
+      await waitFor(() => expect(screen.getByRole('list', { name: '镜头胶片条' }).querySelectorAll('li')).toHaveLength(1));
+      await userEvent.selectOptions(picker, '2');
+      await waitFor(() => expect(screen.getByRole('list', { name: '镜头胶片条' }).querySelectorAll('li')).toHaveLength(3));
+      expect(String(fetchMock.mock.calls.at(-1)?.[0]).endsWith('/timeline')).toBe(true);
+
+      await userEvent.click(screen.getByRole('switch', { name: '嵌入字幕' }));
+      await waitFor(() => expect(bodies('/timeline/ops')).toEqual([{ operation: 'settings', settings: { subtitles: false } }]));
+      expect((screen.getByRole('button', { name: '剪辑室' }) as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it('falls back to the episode in production when the chosen one cannot be read', async () => {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => (String(input).endsWith('?episode=1')
+        ? ({ ok: false, status: 422, json: async () => ({ detail: '第 1 集没有片段' }) }) as Response
+        : ok(second())));
+      vi.stubGlobal('fetch', fetchMock);
+      show({ filmUrl: null, episode: 2 });
+      const picker = await screen.findByRole('combobox', { name: '剪辑哪一集' }) as HTMLSelectElement;
+      await userEvent.selectOptions(picker, '1');
+      await waitFor(() => expect(picker.value).toBe('2'));
+      expect(screen.getByRole('list', { name: '镜头胶片条' }).querySelectorAll('li')).toHaveLength(3);
+      expect(document.querySelector('.pp-notice')?.textContent).toContain('第 1 集没有片段');
     });
   });
 

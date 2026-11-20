@@ -17,8 +17,10 @@ from app.platform.billing_book import account_status_changed
 from app.platform.dependencies import get_platform_store
 from app.platform.bootstrap import bootstrap_admin_login, remove_bootstrap_credential_file
 from app.platform.store import PlatformStore
-from app.schema.platform import AdminUserUpdateRequest, PasswordChangeRequest, ProfileUpdateRequest, UserRolesRequest
-from app.core import prompt_data
+from app.schema.platform import (
+    AdminUserUpdateRequest, PasswordChangeRequest, ProfileUpdateRequest, PromptPreferenceRequest, UserRolesRequest,
+)
+from app.core import prompt_data, prompt_preferences
 
 
 _WORDING_FILE = "api_user_api"
@@ -68,6 +70,33 @@ async def update_user_center(
         return {"user": _public_user(record)}
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/api/users/me/prompt-preferences")
+async def prompt_preference_catalogue(
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """Every stage agent, the choices it offers, and what this account chose."""
+    saved = prompt_preferences.from_rows(await store.list_prompt_preferences(user["user_id"]))
+    return prompt_preferences.catalogue(saved)
+
+
+@router.put("/api/users/me/prompt-preferences/{operation}")
+async def set_prompt_preference(
+    operation: str,
+    request: PromptPreferenceRequest,
+    user: dict = Depends(get_current_user),
+    store: PlatformStore = Depends(get_platform_store),
+):
+    """Follow the platform's method for a stage agent, add to it, or (where offered) write one's own."""
+    try:
+        choice = prompt_preferences.normalise(operation, request.mode, request.text)
+    except prompt_preferences.PreferenceError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    await store.set_prompt_preference(user["user_id"], operation, choice.mode, choice.text)
+    saved = prompt_preferences.from_rows(await store.list_prompt_preferences(user["user_id"]))
+    return prompt_preferences.catalogue(saved)
 
 
 @router.post("/api/users/me/password")

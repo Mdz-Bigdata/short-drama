@@ -13,6 +13,29 @@ export const money = (amount: number | string | null | undefined, currency = 'CN
   return `${currency} ${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
+/** A whole number with thousands separators (calls, tokens). */
+export const count = (value: number | null | undefined): string => Math.round(Number(value ?? 0)).toLocaleString('zh-CN');
+
+/**
+ * A model cost. One text call is often a fraction of a fen, so an amount under 1 keeps four
+ * decimals where `money` would round it to 0.00.
+ */
+export const fine = (amount: number | null | undefined, currency = 'CNY'): string => {
+  const value = Number(amount ?? 0);
+  const digits = value !== 0 && Math.abs(value) < 1 ? 4 : 2;
+  const text = value.toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return currency === 'CNY' ? `¥${text}` : `${currency} ${text}`;
+};
+
+/** Amounts kept per currency, never added across currencies: "¥12.40 · USD 0.03". */
+export const amounts = (byCurrency: Record<string, number> | null | undefined): string => {
+  const entries = Object.entries(byCurrency ?? {});
+  return entries.length === 0 ? '—' : entries.map(([currency, amount]) => fine(amount, currency)).join(' · ');
+};
+
+/** A unit price as the price list writes it: as many decimals as it has, up to six. */
+export const unitPrice = (value: number): string => Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 6 });
+
 export const when = (moment: string | null | undefined): string => {
   if (!moment) return '—';
   // The server sends UTC; SQLite in development drops the offset.
@@ -84,6 +107,11 @@ const KINDS: Record<string, string> = {
   role_grant_not_audited: '授予角色没有审计记录',
 };
 
+const PRICE_KINDS: Record<string, string> = {
+  per_million_tokens: '每百万 token', per_image: '每张图', per_second: '每秒', per_thousand_characters: '每千字符',
+};
+const MEDIA: Record<string, string> = { text: '文本', image: '图片', video: '视频', audio: '音频' };
+
 const label = (table: Record<string, string>, key: string) => (table[key] ? t(table[key]) : key);
 export const orderStatusLabel = (key: string) => label(ORDER_STATUS, key);
 export const refundStatusLabel = (key: string) => label(REFUND_STATUS, key);
@@ -92,4 +120,6 @@ export const itemStatusLabel = (key: string) => label(ITEM_STATUS, key);
 export const severityLabel = (key: string) => label(SEVERITY, key);
 export const ruleLabel = (key: string) => label(RULES, key);
 export const kindLabel = (key: string) => label(KINDS, key);
+export const priceKindLabel = (key: string) => label(PRICE_KINDS, key);
+export const mediaLabel = (key: string) => label(MEDIA, key);
 export const FINANCE_PERMISSIONS = ['order:read_any', 'recon:read', 'wallet:adjust_request', 'audit:read'];

@@ -332,4 +332,36 @@ describe('EpisodeLedgerTools', () => {
     await waitFor(() => expect(screen.getByText(/重新编号：1→2，2→3/)).toBeTruthy());
     expect(posted[0]).toMatchObject({ operation: 'create', title: '序章', text: '多年以前。', source_kind: 'screenplay', after: 0 });
   });
+
+  it('reads an uploaded file into the new episode and says when a file cannot be read', async () => {
+    const posted: unknown[] = [];
+    let readable = true;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/drama/parse_script')) {
+        expect((init as RequestInit).body instanceof FormData).toBe(true);
+        return readable ? jsonResponse({ filename: 'ep.docx', content: '第七集的原文。\n林夏回到实验室。' })
+          : ({ ok: false, status: 422, json: async () => ({ detail: '不支持的文件类型' }) }) as Response;
+      }
+      if (url.endsWith('/ledger/ops')) {
+        posted.push(bodyOf(init));
+        return jsonResponse({ ...LEDGER, created: [3] });
+      }
+      if (url.endsWith('/screenwriting/ledger')) return jsonResponse(LEDGER);
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    render(<EpisodeLedgerTools taskId="t1" onChanged={vi.fn()} />);
+    await userEvent.click(await screen.findByText('新建一集'));
+    const picker = screen.getByLabelText(/或上传文本，解析成这一集的原文/) as HTMLInputElement;
+    await userEvent.upload(picker, new File(['x'], 'ep.docx'));
+    await waitFor(() => expect((screen.getByLabelText(/这一集自己的原文/) as HTMLTextAreaElement).value).toContain('林夏回到实验室。'));
+    await userEvent.click(screen.getByText('创建并写出'));
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0]).toMatchObject({ operation: 'create', text: '第七集的原文。\n林夏回到实验室。', source_kind: 'novel' });
+
+    readable = false;
+    await userEvent.click(await screen.findByText('新建一集'));
+    await userEvent.upload(screen.getByLabelText(/或上传文本，解析成这一集的原文/) as HTMLInputElement, new File(['x'], 'ep.xyz'), { applyAccept: false });
+    expect((await screen.findByRole('alert')).textContent).toContain('不支持的文件类型');
+  });
 });

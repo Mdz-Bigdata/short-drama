@@ -45,8 +45,8 @@ MAX_PANELS = 9
 SECONDS_PER_PANEL = 5
 # 一格视频里最多推进几个动作：再多模型就会漏拍或糊成一团。
 MAX_BEATS_PER_PANEL = 4
-# 单段视频超过这个时长容易漂脸、漂场景，模型上限更长也按这个自动合并；
-# 只有超出本场格数上限时(fit_panels)才并到模型上限，如 Seedance 2.5 的 30 秒。
+# 单段视频超过这个时长容易漂脸、漂场景，换景别的自动合并按这个封顶；景别不变的连续几拍并到模型上限
+# (Seedance 2.5 的 30 秒)，一张分镜图出一段长镜。超出本场格数上限时(fit_panels)也并到模型上限。
 STEADY_CLIP_SECONDS = 15
 # 没写时长的行按这个估。
 DEFAULT_BEAT_SECONDS = 3
@@ -233,15 +233,21 @@ def _join_lines(text: Any, extra: Any) -> str:
 
 
 def consolidate_panels(shots: Sequence[Mapping[str, Any]], *, video_model: str = "") -> list[dict[str, Any]]:
-    """把同一机位组、同一组人物里连续的动作并成一格视频；合并后的动作、台词与声音全部保留。"""
-    cap = min(max_shot_seconds(video_model), STEADY_CLIP_SECONDS)
+    """把同一机位组、同一组人物里连续的动作并成一格视频；合并后的动作、台词与声音全部保留。
+
+    景别不变的下一拍并到模型一段视频的上限(只出一张分镜图)；要换景别的只并到 ``STEADY_CLIP_SECONDS``。
+    """
+    longest = max_shot_seconds(video_model)
+    steady = min(longest, STEADY_CLIP_SECONDS)
     panels: list[dict[str, Any]] = []
     for raw in shots:
         if is_vacant(raw):
             continue
         shot = dict(raw)
         seconds = _seconds(shot)
-        if panels and _can_join(panels[-1], shot, seconds=seconds, cap=cap):
+        rank = _size_rank(shot.get("size"))
+        same_size = bool(panels) and rank is not None and rank == panels[-1]["_last_rank"]
+        if panels and _can_join(panels[-1], shot, seconds=seconds, cap=longest if same_size else steady):
             panel = panels[-1]
             panel["desc"] = _join(str(panel.get("desc") or ""), str(shot.get("desc") or ""), _joiner("desc"))
             panel["dialogue"] = _join_lines(panel.get("dialogue"), shot.get("dialogue"))
@@ -274,7 +280,7 @@ def consolidate_panels(shots: Sequence[Mapping[str, Any]], *, video_model: str =
 def panel_limit(scene_duration: Any, *, video_model: str = "") -> int:
     """这场戏最多几格：时长除以每格秒数，1–9 格。
 
-    每格秒数默认取 5 秒与所选模型宜用下限中较大的(Seedance 2.5 是 10 秒，30 秒的场 3 格)；
+    每格秒数默认取 5 秒与所选模型宜用下限中较大的(Seedance 2.5 是 15 秒，30 秒的场 2 格)；
     STORYBOARD_SECONDS_PER_PANEL 设了就按它，调大格数更少。
 
     没写时长的场次(旧任务)估不出，只受每页九格的限制。

@@ -35,11 +35,19 @@ export function useCanvasRuns(projectId: string, canvasId: string, onRemoteVersi
   const loop = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const controller = useRef<AbortController | null>(null);
+  // Reads are numbered as they are asked: one that comes back after a later one has already been shown is old news.
+  const asked = useRef(0);
+  const shown = useRef(0);
+  const pushed = useRef({ busy: false, again: false });
 
   useEffect(() => { notify.current = onRemoteVersion; }, [onRemoteVersion]);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
+    asked.current += 1;
+    const mine = asked.current;
     const next = await fetchOutputs(projectId, canvasId, signal);
+    if (mine < shown.current) return next;
+    shown.current = mine;
     setData(previous => ({
       ...next,
       outputs: stable(previous.outputs, next.outputs),
@@ -67,8 +75,33 @@ export function useCanvasRuns(projectId: string, canvasId: string, onRemoteVersi
     void tick();
   }, [refresh]);
 
+  /**
+   * A run changed state (heard over the presence stream): read now instead of on the next poll. A burst of
+   * events costs one request in flight and one more after it. The poll goes on at its own pace regardless.
+   */
+  const refreshSoon = useCallback(() => {
+    const state = pushed.current;
+    if (state.busy) {
+      state.again = true;
+      return;
+    }
+    state.busy = true;
+    const signal = controller.current?.signal;
+    const read = () => {
+      state.again = false;
+      refresh(signal).catch(() => undefined).then(() => {
+        // A missed read is not news; the poll will tell.
+        if (state.again && !signal?.aborted) read();
+        else state.busy = false;
+      });
+    };
+    read();
+  }, [refresh]);
+
   useEffect(() => {
     controller.current = new AbortController();
+    // Whatever the canvas shown before had in flight ends with its own controller.
+    pushed.current = { busy: false, again: false };
     start();
     return () => {
       controller.current?.abort();
@@ -78,5 +111,5 @@ export function useCanvasRuns(projectId: string, canvasId: string, onRemoteVersi
   }, [start]);
 
   /** Read right after a run begins, without waiting out the idle delay. */
-  return { data, refresh, kick: start };
+  return { data, refresh, refreshSoon, kick: start };
 }

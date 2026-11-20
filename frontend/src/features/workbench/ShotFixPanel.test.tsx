@@ -3,7 +3,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { DraftModeToggle, ShotFixPanel, SpendLimits } from './ShotFixPanel';
+import { DraftModeToggle, FinalResolutionSelect, ShotFixPanel, SpendLimits, SpokenLanguageSelect } from './ShotFixPanel';
 import type { ShotVisualRecord } from './shotVisual';
 
 const shot = (extra: Record<string, unknown> = {}) => ({
@@ -108,5 +108,34 @@ describe('ShotFixPanel', () => {
     render(<DraftModeToggle taskId="t1" enabled={false} locked={false} onWorkspace={vi.fn()} onError={vi.fn()} />);
     await user.click(screen.getByLabelText('样片模式（480P）'));
     expect([calls[0].url, calls[0].method, calls[0].body]).toEqual([expect.stringContaining('/api/drama/t1/shots/draft-mode'), 'PUT', { enabled: true }]);
+  });
+
+  it('saves the final resolution the project picks and clears it with the default', async () => {
+    const calls = stubFetch();
+    const user = userEvent.setup();
+    render(<FinalResolutionSelect taskId="t1" value="" choices={['720p', '1080p']} locked={false} onWorkspace={vi.fn()} onError={vi.fn()} />);
+    await user.selectOptions(screen.getByLabelText('成片清晰度'), '1080P');
+    expect([calls[0].url, calls[0].method, calls[0].body]).toEqual([expect.stringContaining('/api/drama/t1/shots/resolution'), 'PUT', { resolution: '1080p' }]);
+    await user.selectOptions(screen.getByLabelText('成片清晰度'), '默认');
+    expect(calls[1].body).toEqual({ resolution: null });
+  });
+
+  it('saves the spoken language the project picks, and hides the choice for a model with no sound of its own', async () => {
+    const calls = stubFetch();
+    const user = userEvent.setup();
+    const options = [{ key: '', label: '普通话' }, { key: 'sichuan', label: '四川话' }, { key: 'english', label: '英语' }];
+    const { unmount } = render(<SpokenLanguageSelect taskId="t1" value="" options={options} locked={false} onWorkspace={vi.fn()} onError={vi.fn()} />);
+    await user.selectOptions(screen.getByLabelText('对白语言'), '四川话');
+    expect([calls[0].url, calls[0].method, calls[0].body]).toEqual([expect.stringContaining('/api/drama/t1/shots/spoken-language'), 'PUT', { language: 'sichuan' }]);
+    await user.selectOptions(screen.getByLabelText('对白语言'), '普通话');
+    expect(calls[1].body).toEqual({ language: null });
+    unmount();
+    render(<SpokenLanguageSelect taskId="t1" value="" options={[]} locked={false} onWorkspace={vi.fn()} onError={vi.fn()} />);
+    expect(screen.queryByLabelText('对白语言')).toBeNull();
+  });
+
+  it('offers no resolution choice when the model has none to offer', () => {
+    render(<FinalResolutionSelect taskId="t1" value="" choices={[]} locked={false} onWorkspace={vi.fn()} onError={vi.fn()} />);
+    expect(screen.queryByLabelText('成片清晰度')).toBeNull();
   });
 });

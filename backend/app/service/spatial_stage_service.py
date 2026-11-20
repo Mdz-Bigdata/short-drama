@@ -13,7 +13,8 @@ scenes rather than inside one:
 - ``side_memory``   — which side of the frame a character was first promised;
   the next scene that pairs them keeps it.
 - ``locations``     — the set pieces of each location; every later scene shot in
-  the same place inherits them at the same coordinates.
+  the same place inherits its furniture, architecture and lights at the same
+  coordinates, and a prop only when that scene names it or a person put it there.
 """
 
 from __future__ import annotations
@@ -67,6 +68,8 @@ STORE_VERSION = 1
 # Screen states are measurements of the plan; they are recomputed on load, not stored.
 _DERIVED = {"shots": {"__all__": {"screen"}}}
 _ASPECTS = {"9:16", "16:9", "1:1", "4:3", "3:4", "21:9", "2.39:1"}
+# A location record taught by a person's edit carries this key next to the landmark's own fields.
+_BY_PERSON = "placed_by_person"
 
 
 class StageConflict(ValueError):
@@ -122,19 +125,55 @@ def save_plan(task: dict[str, Any], plan: StagePlan) -> None:
         known = {item.get("name"): item for item in store["locations"].get(plan.location_key, []) if isinstance(item, dict)}
         for landmark in plan.landmarks:
             if plan.source == "edited" or landmark.name not in known:
-                known[landmark.name] = landmark.model_dump(mode="json")
+                record = landmark.model_dump(mode="json")
+                if plan.source == "edited":
+                    record[_BY_PERSON] = True
+                known[landmark.name] = record
         store["locations"][plan.location_key] = list(known.values())[:80]
 
 
-def _location_landmarks(task: Mapping[str, Any], location: str) -> list[StageLandmark]:
+def _remembered(task: Mapping[str, Any], location: str) -> list[tuple[StageLandmark, bool]]:
+    """The set pieces the location holds from earlier scenes, each with whether a person's edit put it there."""
     items = (_peek_store(task).get("locations") or {}).get(location_key(location)) or []
-    landmarks: list[StageLandmark] = []
+    remembered: list[tuple[StageLandmark, bool]] = []
     for item in items:
+        if not isinstance(item, Mapping):
+            continue
         try:
-            landmarks.append(StageLandmark.model_validate(item))
+            landmark = StageLandmark.model_validate({key: value for key, value in item.items() if key != _BY_PERSON})
         except ValueError:
             continue
-    return landmarks
+        remembered.append((landmark, item.get(_BY_PERSON) is True))
+    return remembered
+
+
+def _named_in(brief: SceneBrief, name: str) -> bool:
+    """Whether the scene names ``name``: among its props, in its location or script, or in one of its shots."""
+    return bool(name) and (
+        name in brief.props or name in brief.location or name in brief.text or any(name in spec.desc for spec in brief.shots)
+    )
+
+
+def _stays_on_set(landmark: StageLandmark, brief: SceneBrief, by_person: bool) -> bool:
+    """Furniture, architecture and lights belong to the place. A prop belongs to the scene that names it: a ring on a
+    thumb or keys at a waist leave with whoever wore them. A later scene in the same place gets a prop when it names it
+    again (where it was left), or when a person put it there."""
+    return landmark.kind != "prop" or by_person or _named_in(brief, landmark.name)
+
+
+def _location_landmarks(task: Mapping[str, Any], brief: SceneBrief) -> list[StageLandmark]:
+    return [landmark for landmark, by_person in _remembered(task, brief.location) if _stays_on_set(landmark, brief, by_person)]
+
+
+def _without_stray_props(plan: StagePlan, task: Mapping[str, Any], brief: SceneBrief) -> StagePlan:
+    """An automatic plan re-planned keeps its marks but not a prop the scene does not name. One it inherited before the
+    rule above (or kept from a storyboard table since rewritten) is dropped; what the axis looks at stays."""
+    placed = {landmark.name for landmark, by_person in _remembered(task, brief.location) if by_person}
+    landmarks = [
+        item for item in plan.landmarks
+        if item.name == plan.axis.to_name or _stays_on_set(item, brief, item.name in placed)
+    ]
+    return plan if len(landmarks) == len(plan.landmarks) else plan.model_copy(update={"landmarks": landmarks})
 
 
 def breakdown_scene(task: Mapping[str, Any], scene_id: str) -> dict[str, Any] | None:
@@ -247,10 +286,12 @@ def plan_scene(
     prior = load_plan(task, brief.scene_id) if keep_edits else None
     fingerprint = cast_fingerprint(brief.characters, brief.location)
     keep = prior if prior is not None and prior.cast_fingerprint == fingerprint else None
+    if keep is not None and keep.source != "edited":
+        keep = _without_stray_props(keep, task, brief)
     plan = build_plan(
         brief,
         side_memory=(_peek_store(task).get("side_memory") or {}),
-        location_landmarks=_location_landmarks(task, brief.location),
+        location_landmarks=_location_landmarks(task, brief),
         blocking_from=keep,
     )
     save_plan(task, plan)

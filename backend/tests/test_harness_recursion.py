@@ -350,6 +350,30 @@ class RecursionTests(unittest.TestCase):
         self.assertIn("请求点名的部分齐全", seen["SELECT"])
         self.assertNotIn("请求点名的部分齐全", seen["INV"], "what counts as correct is the selector's to apply, not a target to write toward")
 
+    def test_a_project_s_own_names_stay_in_its_memory_and_never_reach_another_project(self):
+        names = ["沈磨", "雷九斤"]
+        with self.assertRaises(surface.ProposalError) as refused:
+            surface.validate({"guardrails": "不得对调沈磨画左、雷九斤画右的站位", "scripts": "include: 沈磨"}, names)
+        self.assertIn("沈磨", str(refused.exception))
+        surface.validate({"memory": "本项目里沈磨恒在画左、雷九斤恒在画右", "guardrails": "不得对调两人已定的左右站位"}, names)
+
+        # A proposal that names the cast outside memory is sent back with the reason; the rewrite is taken.
+        named = "<harness><guardrails>不得对调沈磨画左的站位</guardrails></harness>"
+        moved = "<harness><guardrails>不得对调已定的左右站位</guardrails><memory>本项目里沈磨恒在画左</memory></harness>"
+        script = Script(inv=[named, moved], dom=KEEP, compose=moved)
+        record = harness_recursion.step(self.work(script, project_terms=names), base_outputs=[OUTPUT])
+        self.assertEqual(record.result.stage("inv1").attempts, 2)
+        retry = [mission for kind, mission, _material in script.missions if kind == "INV"][1]
+        self.assertIn("本项目的专有名词「沈磨」", retry)
+        self.assertTrue(record.applied)
+        self.assertIn("沈磨", record.adopted_harness["memory"])
+        self.assertEqual(library.current_overlay(1, "古装武侠"), {"guardrails": "不得对调已定的左右站位"})
+
+        # An overlay stored before the rule, or whose project named someone only later: the line stays behind.
+        old = {"guardrails": "- 不写旁白\n- 不得让雷九斤换手", "scripts": "include: 沈磨\nmax_chars: 8000", "memory": "本项目里……", "skills": "当沈磨入画时：先写左眉断疤"}
+        self.assertEqual(surface.carried(old, names), {"guardrails": "- 不写旁白", "scripts": "max_chars: 8000"})
+        self.assertEqual(surface.carried(old), {key: value for key, value in old.items() if key != "memory"})
+
     def test_every_mission_says_what_the_improver_does_not_have(self):
         missions = [
             prompts.propose("INV", work="w", domain="d", k=1, index=1), prompts.propose("DOM", work="w", domain="d", k=2, index=2, round_t=2),

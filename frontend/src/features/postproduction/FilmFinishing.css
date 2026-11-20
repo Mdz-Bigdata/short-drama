@@ -1,0 +1,71 @@
+/* 成片精修：坐在剪辑合成师右栏的一张卡里，颜色、圆角都用 PostProductionStudio.css 里的那一套(--pp-*)。 */
+.ff-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 0 0;
+  border: 0;
+  border-top: 1px solid var(--pp-line);
+}
+.ff-group legend {
+  padding: 0 8px 0 0;
+  color: var(--pp-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.ff-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.ff-field > span { flex: none; color: var(--pp-muted); font-size: 0.78rem; }
+.ff-field select { min-width: 0; max-width: 100%; }
+.ff-field--stack { flex-direction: column; align-items: stretch; gap: 4px; }
+.ff-field .pp-segment { flex-wrap: wrap; }
+.ff-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ff-grid .ff-field { flex-direction: column; align-items: stretch; gap: 4px; }
+
+.ff input[type='text'] {
+  min-height: 32px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--pp-line-strong);
+  border-radius: 9px;
+  background: var(--pp-panel-2);
+  color: var(--pp-text);
+  font: inherit;
+}
+
+/* 底图预览压在画面上，和播放器一样保持深色；压暗一点，接近合成出来的样子。 */
+.ff-frame {
+  display: block;
+  width: 96px;
+  aspect-ratio: 9 / 16;
+  border-radius: 8px;
+  background: #000;
+  object-fit: cover;
+  filter: brightness(0.6);
+}
+
+.ff-sample {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  min-height: 64px;
+  margin: 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: #000;
+}
+.ff-sample.is-raised { padding-bottom: 24px; }
+.ff-sample span { padding: 1px 8px; border-radius: 3px; background: rgba(0, 0, 0, 0.6); font-weight: 500; line-height: 1.4; }
+
+.ff-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.pp .ff-presets button { min-height: 28px; padding: 0 10px; }
+.pp .ff-presets button[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.ff-reset { align-items: center; justify-content: space-between; }
+.ff-reset .pp-muted { flex: 1; min-width: 0; }
+
+.ff-switch { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ff-switch strong { display: block; font-weight: 600; }
+.ff-switch small { display: block; color: var(--pp-dim); font-size: 0.72rem; }
+.pp .ff-teaser { align-self: flex-start; }

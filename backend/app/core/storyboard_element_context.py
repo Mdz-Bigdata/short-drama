@@ -18,12 +18,14 @@ from app.core.prop_turnaround import PROP_DISPLAY_ONLY_SLOTS
 from app.core.scene_scale import SCENE_SCALE_SLOT
 from app.core.element_scope import element_in_task
 from app.core.media_compositor import MEDIA_DIR
-from app.core import breakdown_kinds
+from app.core import breakdown_kinds, look_board
 from app.core.scene_turnaround import SCENE_VIEW_SLOTS
 
 #: 定妆图切出来的正面全身和正脸胸像(两种版式的第一格特写都是正脸胸像，见 core/look_board)。
 LOOK_BODY_SLOT = "look_front"
 LOOK_FACE_SLOT = "look_closeup_1"
+#: 设定集里的 3/4 侧脸格。
+SIDE_FACE_SLOT = "face_three_quarter"
 from app.core.storyboard_scene_context import compile_scene_context
 from app.platform.store import PlatformStore
 
@@ -216,6 +218,14 @@ async def _load_project_elements(
                 item["face_url"] = face_url
                 if real_person.usable(item.get("metadata")):
                     item["real_person"] = True
+            # 3/4 侧脸：只在转头、侧脸的镜头里随角色发出去(见 storyboard_scene_context.panel_context)。
+            # 数字演员是设定集的那一格；定妆图是展示板的侧脸格，旧版式的板没有这一格。
+            side_slot = look_board.side_face_slot((item.get("metadata") or {}).get("look_layout")) if look else SIDE_FACE_SLOT
+            if side_slot:
+                side = next((entry for entry in files_by_id[item["id"]] if getattr(entry, "slot", "") == side_slot), None)
+                side_url = _image_data_uri(side, owner_id, item["id"], roots) if side is not None else ""
+                if side_url and side_url not in {item.get("image_url"), item.get("face_url")}:
+                    item["side_face_url"] = side_url
         if item["kind"] == "scene":
             # 场地四视角里除主全景(即主参考图)之外的三张，按用途另行绑定。
             views: dict[str, str] = {}

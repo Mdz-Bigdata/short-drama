@@ -2,6 +2,7 @@
 import logging
 import base64
 import binascii
+import json
 import os
 import random
 import re
@@ -11,7 +12,7 @@ from typing import Any, Dict, Mapping, Optional
 from app.core import llm_profile
 from app.core import fight_safety
 from app.core import prompt_data
-from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS
+from app.core.reference_limits import MAX_REFERENCE_AUDIOS, MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS, caps_of
 from app import settings
 from app.core import production_knowledge, reference_fit, style_packs, usage_ledger, video_jobs
 from app.core.providers.defaults import (
@@ -596,6 +597,21 @@ class ModelGateway:
             logger.warning(_log("credential_refused"), runtime.provider, credential.label or credential.id, status)
         return None
 
+    def _remember_reasoning(self, message: object) -> None:
+        """The readable thinking a reasoning model returned beside its answer (``reasoning_content`` / ``reasoning``)."""
+        found = message if isinstance(message, dict) else {}
+        text = found.get("reasoning_content") or found.get("reasoning") or ""
+        self._thread_state.last_reasoning = text.strip() if isinstance(text, str) else ""
+
+    def take_reasoning(self) -> str:
+        """What the last ``call_llm`` on this thread returned as readable thinking, once; empty when it returned none.
+
+        It is the model's own text, shown to a person as reference only: never parsed, never an instruction.
+        """
+        text = str(getattr(self._thread_state, "last_reasoning", "") or "")
+        self._thread_state.last_reasoning = ""
+        return text
+
     def _take_chat_usage(self) -> dict:
         state = getattr(self._thread_state, "last_chat", None)
         self._thread_state.last_chat = None
@@ -604,6 +620,7 @@ class ModelGateway:
     def call_llm(self, model: str, system_prompt: str, user_prompt: str, creative_title: str, director_style: str = "cyberpunk", shot_style: str = "cinematic", user_instruction: str = "", max_tokens: Optional[int] = None) -> str:
         """Text generation, recorded as one provider call (see ``app.core.usage_ledger``)."""
         self._thread_state.last_chat = None
+        self._thread_state.last_reasoning = ""
         self._thread_state.offline_answer = False
         self._thread_state.system_chars_saved = 0
         runtime, called = _centre_runtime(model, "text", quiet=True)
@@ -663,8 +680,14 @@ class ModelGateway:
         if "h3" in (called or "").lower():
             from app.core.providers.minimax_h3 import h3_resolution
             video_units["resolution"] = h3_resolution(_wanted_video_resolution("MINIMAX_H3_RESOLUTION", "768p"))
-        elif resolution:
-            video_units["resolution"] = resolution
+        else:
+            from app.core.video_references import billed_resolution
+
+            tier = billed_resolution(called or model, resolution)
+            if tier:
+                video_units["resolution"] = tier
+                # What goes out is what is billed.
+                _video_resolution.value = tier
         try:
             with usage_ledger.timed_call("video", provider=provider, model=called or "", units=video_units) as outcome:
                 url = self._generate_video_unmetered(
@@ -806,6 +829,7 @@ class ModelGateway:
                             return None
                         self._remember_chat_usage(api_model, base_url, body.get("usage"))
                         choice = body["choices"][0]
+                        self._remember_reasoning(choice.get("message"))
                         self._thread_state.last_finish = choice.get("finish_reason")
                         if choice.get("finish_reason") == "length":
                             usage = body.get("usage") or {}
@@ -886,6 +910,7 @@ class ModelGateway:
             attempts = 2
             attempt = 0
             resized = False
+            redrawn = False
             rate_limited = 0
             while True:
                 try:
@@ -913,6 +938,13 @@ class ModelGateway:
                         self._image_area_ceilings()[area_key] = ceiling
                         logger.warning(_log("image_resized"), api_model, payload.get("size"), ceiling, fitted)
                         payload["size"] = fitted
+                        continue
+                    refusal = next((code for code in _table("image_output_refusals") if code in error_text), "") if r.status_code == 400 else ""
+                    if refusal and not redrawn:
+                        # Moderation stopped the picture the model drew, not the request: the same request draws another
+                        # picture and often passes. Once only; a request refused for what it sent is not asked again.
+                        redrawn = True
+                        logger.warning(_log("image_output_refused"), api_model, refusal)
                         continue
                     logger.error(_logf("image_error", api_model=api_model, status=r.status_code, error_text=error_text[:200]))
                     return None
@@ -1102,6 +1134,50 @@ class ModelGateway:
         """本线程最近一次 generate_video 没出片的原因(供应商的拒单信息)；出片了就是空串。"""
         return str(getattr(_ark_notes, "last", "") or "")
 
+    def video_reference_model(self, model: str) -> str:
+        """The model whose reference limits a shot must keep to: the one that really renders it.
+
+        The configuration centre's model when it has one; without one a Seedance project is rendered by the
+        gateway's own Seedance (``seedance_model_name``), whatever version the project names. Mirrors
+        :meth:`video_clip_ceiling`.
+        """
+        from app.core.video_references import normalize_video_provider
+
+        effective = ModelGateway.effective_video_model(model)
+        own = str(getattr(self, "seedance_model_name", "") or "")
+        # The gateway's own name only counts when it is a Seedance video model (a configuration can put a
+        # Seedream image model there; its "limits" would be one picture).
+        if (runtime_model_registry.resolve(effective, "video") is None and normalize_video_provider(effective).family == "seedance"
+                and own and normalize_video_provider(own).family == "seedance"):
+            return own
+        return effective
+
+    @staticmethod
+    def _fit_ark_body(body: dict) -> dict:
+        """Keep an Ark request under its size limit (64 MB): first re-encode the inline reference pictures
+        smaller, then drop pictures from the end of the list (the lowest priority) until it fits."""
+        budget = int(_table("ark_body_budget_bytes"))
+
+        def size() -> int:
+            return len(json.dumps(body, ensure_ascii=False))
+
+        if size() <= budget:
+            return body
+        side, quality = int(_table("ark_shrink_side")), int(_table("ark_shrink_quality"))
+        for item in body["content"]:
+            if item.get("role") == "reference_image":
+                item["image_url"]["url"] = reference_fit.compact_image_reference(item["image_url"]["url"], max_side=side, quality=quality, force=True)
+        dropped = 0
+        while size() > budget:
+            last = max((index for index, item in enumerate(body["content"]) if item.get("role") == "reference_image"), default=None)
+            if last is None:
+                break
+            body["content"].pop(last)
+            dropped += 1
+        if dropped:
+            logger.warning(_log("ark_body_trimmed"), dropped, size(), budget)
+        return body
+
     def video_clip_ceiling(self, model: str) -> int:
         """一次视频请求实际能拿到的最长秒数，按真正出片的型号算。
 
@@ -1156,12 +1232,13 @@ class ModelGateway:
                 content.append({"type": "image_url", "image_url": {"url": first_frame}, "role": "first_frame"})
             if last_frame:
                 content.append({"type": "image_url", "image_url": {"url": last_frame}, "role": "last_frame"})
-            # 多模态参考素材 (参考图 0-9 / 参考视频 0-3 / 参考音频 0-3)
-            for u in (ref_images or [])[:MAX_REFERENCE_IMAGES]:
+            # 多模态参考素材：每个型号收的数量不同(2.0 图9/视频3/音频3，2.5 图30/视频10/音频10，2.5 flash 10/5/5)
+            caps = caps_of(model_name or self.seedance_model_name)
+            for u in (ref_images or [])[:caps.images]:
                 content.append({"type": "image_url", "image_url": {"url": u}, "role": "reference_image"})
-            for u in (ref_videos or [])[:MAX_REFERENCE_VIDEOS]:
+            for u in (ref_videos or [])[:caps.videos]:
                 content.append({"type": "video_url", "video_url": {"url": u}, "role": "reference_video"})
-            for u in (ref_audios or [])[:MAX_REFERENCE_AUDIOS]:
+            for u in (ref_audios or [])[:caps.audios]:
                 content.append({"type": "audio_url", "audio_url": {"url": u}, "role": "reference_audio"})
             # Seedance 2.0 顶层参数：分辨率/时长/比例为独立字段；成片不打可见水印
             body = {
@@ -1172,6 +1249,11 @@ class ModelGateway:
                 "ratio": ratio or os.getenv("VIDEO_ASPECT_RATIO") or DEFAULT_ASPECT_RATIO,
                 "watermark": False,
             }
+            # 首帧 / 首尾帧生成时画幅跟首帧图走：Seedance 2.5 见到 ratio 字段直接 400
+            # (InvalidParameter.TaskTypeConstraint)，不收费也不出片，所以这两种请求不带 ratio。
+            if first_frame or last_frame:
+                body.pop("ratio")
+            body = self._fit_ark_body(body)
             proxies = self._proxies_for(base_url)
             # 创建任务对瞬时 TLS/连接抖动退避重试(本机到 Ark 的 TLS 会间歇性被重置)，耗尽才上抛熔断
             r = None
@@ -1568,14 +1650,14 @@ class ModelGateway:
     GLOBAL_NEGATIVE_LABEL = _prompt("global_negative_label")
 
     @classmethod
-    def _with_global_negatives(cls, prompt: str, medium: str) -> str:
+    def _with_global_negatives(cls, prompt: str, medium: str, skip: tuple[str, ...] = ()) -> str:
         """给一条生成提示词追加全局负面词(``medium``: ``"video"`` 全量 / ``"image"`` 单帧子集)。
 
-        幂等：已经带了标签就原样返回。指南缺失时词表为空，提示词不变。
+        幂等：已经带了标签就原样返回。指南缺失时词表为空，提示词不变。``skip``：含这些词的几条不带。
         """
         if not prompt or cls.GLOBAL_NEGATIVE_LABEL in prompt:
             return prompt
-        terms = production_knowledge.global_negative_text(medium)
+        terms = production_knowledge.global_negative_text(medium, skip)
         if not terms:
             return prompt
         return f"{prompt.rstrip()}\n{cls.GLOBAL_NEGATIVE_LABEL}{terms}"
@@ -1589,9 +1671,11 @@ class ModelGateway:
 
     @classmethod
     def _agnes_prompt(cls, prompt: str, medium: str) -> str:
-        """Agnes/Gemini 用的提示词：先剥离全局负面词再清洗截断，最后把完整词表补回末尾。"""
+        """Agnes/Gemini 用的提示词：先剥离全局负面词再清洗截断，最后把词表补回末尾——含 Agnes 审核触发词的那几条
+        (「面部漂移换脸」这类)不补，补回去的这一行不再经过清洗。"""
         return cls._with_global_negatives(
-            cls._sanitize_prompt_for_agnes(cls._strip_global_negatives(prompt)), medium
+            cls._sanitize_prompt_for_agnes(cls._strip_global_negatives(prompt)), medium,
+            tuple(_table("agnes_trigger_words")),
         )
 
     @staticmethod
@@ -2156,9 +2240,9 @@ class ModelGateway:
             prompt=prompt,
             first_frame=image_url or None,
             last_frame=last_frame or None,
-            reference_images=list(dict.fromkeys(ref_images or []))[:MAX_REFERENCE_IMAGES],
-            reference_videos=list(dict.fromkeys(ref_videos or []))[:MAX_REFERENCE_VIDEOS],
-            reference_audios=list(dict.fromkeys(ref_audios or []))[:MAX_REFERENCE_AUDIOS],
+            reference_images=list(dict.fromkeys(ref_images or []))[:caps_of(model).images],
+            reference_videos=list(dict.fromkeys(ref_videos or []))[:caps_of(model).videos],
+            reference_audios=list(dict.fromkeys(ref_audios or []))[:caps_of(model).audios],
             duration_seconds=max(1, min(30, int(duration or 5))),
             aspect_ratio=os.getenv("VIDEO_ASPECT_RATIO", DEFAULT_ASPECT_RATIO),
             resolution=_wanted_video_resolution("VIDEO_RESOLUTION", DEFAULT_VIDEO_RESOLUTION),

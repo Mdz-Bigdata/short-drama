@@ -3,6 +3,8 @@ import { Check, ChevronDown, ChevronRight, Command, ExternalLink, LoaderCircle, 
 
 import { apiRequest } from '../../api/client';
 import { t } from '../../i18n';
+import { SystemDiagnostics } from './SystemDiagnostics';
+import { AppearanceSettings } from './AppearanceSettings';
 
 
 interface Ability {
@@ -139,6 +141,8 @@ export function CapabilityCenter({ canManage = false }: CapabilityCenterProps) {
       </div>
       {commandResult && <div className="command-result"><Check size={15} /> {commandResult}</div>}
       {error && <div className="inline-error" role="alert">{error}</div>}
+      {canManage && <SystemDiagnostics />}
+      {canManage && <AppearanceSettings />}
 
       {loading ? (
         <div className="capability-loading"><LoaderCircle className="spin" /> {t('正在同步全局能力注册表…')}</div>

@@ -122,7 +122,8 @@ describe('ScreenwritingPanel', () => {
     render(<ScreenwritingPanel taskId="t1" />);
     await userEvent.click(await screen.findByRole('button', { name: /第 1 集/ }));
 
-    expect(await screen.findByText('E1S01')).toBeTruthy();
+    // The id also names an option of the passage rewrite's shot pickers; the table shows it as code.
+    expect(await screen.findByText('E1S01', { selector: 'code' })).toBeTruthy();
     expect(screen.getByLabelText('E1S01 时长（秒）')).toHaveProperty('value', '6');
     expect(screen.getByText('口播约 24.0 秒超过最长档 15 秒')).toBeTruthy();
     expect(screen.getAllByText('你到底瞒了什么？')).toHaveLength(2);

@@ -3,6 +3,7 @@ import {
   BookOpen,
   BookOpenText,
   Check,
+  ClipboardCheck,
   Download,
   Film,
   LayoutDashboard,
@@ -28,6 +29,7 @@ import { ScriptVersionMenu } from './ScriptVersionMenu';
 import { StoryEventTimeline } from './StoryEventTimeline';
 import { EpisodeScenesDialog } from './EpisodeScenesDialog';
 import { EpisodeTextDialog } from './EpisodeTextDialog';
+import { ScriptReviewDialog } from './ScriptReviewDialog';
 import { ScreenplayReader } from './ScreenplayReader';
 import { ScreenwritingPanel } from './ScreenwritingPanel';
 import { ScriptLibrary } from './ScriptLibrary';
@@ -36,6 +38,7 @@ import { LedgerOutline, ScriptDetailBanner } from './ScriptDetailStatus';
 import { scriptDetailPhase, type ScriptDetailRecord } from './scriptDetail';
 import { groupEpisodeGaps, normalizeMissingEpisodes } from './episodeGaps';
 import { WriterTimeline } from './WriterTimeline';
+import { ChapterAssets } from './ChapterAssets';
 import { summarizeEpisodeTitle } from './textSummary';
 import {
   CREATION_MODE_LABELS,
@@ -185,6 +188,8 @@ export function WriterAgentPage({
   serverStats,
   onExport,
   onExportBreakdown,
+  onExportSubmission,
+  submissionBusy = false,
   onPlanEpisodes,
   onProduceEpisode,
   onSaveScript,
@@ -219,6 +224,9 @@ export function WriterAgentPage({
   onExport?: () => void | Promise<void>;
   /** 每场一张的拆解单：表格给制片排期，Markdown 给人看。 */
   onExportBreakdown?: (format: 'csv' | 'md') => void | Promise<void>;
+  /** 按平台投稿模板整理的剧本附件(Word)：正文由剧本直接排版，简介、大纲、人设这几项由文字模型写一次。 */
+  onExportSubmission?: () => void | Promise<void>;
+  submissionBusy?: boolean;
   onPlanEpisodes?: () => void;
   onProduceEpisode?: (index: number) => void;
   onSaveScript?: (
@@ -258,6 +266,7 @@ export function WriterAgentPage({
   const [overviewError, setOverviewError] = useState('');
   const [readerOpen, setReaderOpen] = useState(false);
   const [view, setView] = useState<WriterView>(defaultView);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [episodeTextTarget, setEpisodeTextTarget] = useState<{ episode?: number } | null>(null);
   const [sceneDialogEpisode, setSceneDialogEpisode] = useState<number | null>(null);
   const [episodePage, setEpisodePage] = useState(0);
@@ -467,13 +476,21 @@ export function WriterAgentPage({
         </div>
         <div className="writer-board__actions">
           <span className={`writer-board__state ${source ? 'is-ready' : ''}`}><Check aria-hidden="true" /> {source ? t('剧本已载入') : t('等待生成')}</span>
-          {(onSaveVersion || versions.length > 0) && <ScriptVersionMenu versions={versions} onSave={onSaveVersion} onRestore={onRestoreVersion} />}
+          {(onSaveVersion || versions.length > 0) && <ScriptVersionMenu versions={versions} onSave={onSaveVersion} onRestore={onRestoreVersion} taskId={taskId} />}
           {taskId && <button type="button" className="is-primary" onClick={() => setView('library')}><Upload aria-hidden="true" /> {t('上传映视界文件')}</button>}
           {onExportBreakdown && (
             <>
               <button type="button" onClick={() => { void onExportBreakdown('csv'); }} disabled={!source && scenes.length === 0} title={t('每场一张：场号、内外、日夜、页长、演员和元素。页长按一页约一分钟估算。')}><Download aria-hidden="true" /> {t('拆解单表格')}</button>
               <button type="button" onClick={() => { void onExportBreakdown('md'); }} disabled={!source && scenes.length === 0}><Download aria-hidden="true" /> {t('拆解单文档')}</button>
             </>
+          )}
+          {taskId && (
+            <button type="button" onClick={() => setReviewOpen(true)} disabled={!source && scenes.length === 0} title={t('把写完的剧本按七个方面审读一遍，出一份带场次和改法的报告。打开不花钱，点了生成才调用文本模型。')}>
+              <ClipboardCheck aria-hidden="true" /> {t('剧本审核')}
+            </button>
+          )}
+          {onExportSubmission && (
+            <button type="button" onClick={() => { void onExportSubmission(); }} disabled={submissionBusy || (!source && scenes.length === 0)} aria-busy={submissionBusy} title={t('按平台「AI剧自制编剧投稿模板」整理的 Word 文档。剧本正文直接按项目剧本排版；男女频、一卡、简介、大纲和人设由文字模型写一次，剧本没改就不再调用。')}><Download aria-hidden="true" /> {submissionBusy ? t('投稿材料生成中…') : t('投稿材料')}</button>
           )}
           <button type="button" onClick={() => { void (onExport || handleExport)(); }} disabled={!source && scenes.length === 0}><Download aria-hidden="true" /> {t('导出 JSON')}</button>
         </div>
@@ -571,6 +588,7 @@ export function WriterAgentPage({
             <div><span>01</span><div><small>SCRIPT LIBRARY</small><h2 id="writer-library-title">{t('剧本文库')}</h2></div></div>
           </div>
           <ScriptLibrary taskId={taskId} />
+          <ChapterAssets taskId={taskId} />
         </section>
       ) : view === 'characters' ? (
         characterSection
@@ -832,6 +850,7 @@ export function WriterAgentPage({
           onSave={onSaveScript}
         />
       )}
+      {reviewOpen && taskId && <ScriptReviewDialog taskId={taskId} onClose={() => setReviewOpen(false)} />}
     </main>
   );
 }

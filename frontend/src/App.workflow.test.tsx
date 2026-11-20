@@ -530,6 +530,18 @@ describe('App storyboard rerun', () => {
     expect(sentMessages(fetchMock)).toEqual([]);
   });
 
+  it('looks at the episode the storyboard step will work on, not the first one without a film', async () => {
+    // Steps run for every episode before the next step: episode 1 is boarded and filmed-in-part, episode 2 is the one
+    // still to board, so a rerun touches episode 2 (nothing to lose) and leaves episode 1's clips alone.
+    const { fetchMock, confirm } = await pressRerun(perEpisode({
+      '4_progress': { episodes: [{ number: 1, complete: true }, { number: 2, complete: false }, { number: 3, complete: false }] },
+      episode_cycle: { version: 1, episodes: {} },
+    }));
+
+    await waitFor(() => expect(sentMessages(fetchMock)).toEqual(['重跑第 4 阶段']));
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
   it('asks about the promotion copy once every episode has its film', async () => {
     const { fetchMock, confirm } = await pressRerun(perEpisode({
       episode_cycle: { version: 1, episodes: {

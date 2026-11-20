@@ -162,6 +162,7 @@ def run_turn(service, *, user: Mapping[str, Any], task_id: str, message: str, hi
     proposal: dict[str, Any] | None = None
     reply = ""
     remembered: list[Any] = []
+    thoughts: list[str] = []
     model = str(config.get("llm_model") or "")
     system = system_prompt()
     title = str(config.get("title_suggestion") or "")
@@ -171,6 +172,9 @@ def run_turn(service, *, user: Mapping[str, Any], task_id: str, message: str, hi
         context = "\n\n".join(part for part in (memory, details) if part)
         prompt = f"{context}\n\n" if context else ""
         answer = service.gateway.call_llm(model, system, _text_of("run_turn.answer").format(prompt, _history_text(transcript)), title)
+        thought = _reasoning_of(service.gateway)
+        if thought:
+            thoughts.append(thought)
         parsed = _envelope(answer or "")
         if parsed and isinstance(parsed.get("remember"), list):
             remembered.extend(parsed["remember"])
@@ -214,7 +218,25 @@ def run_turn(service, *, user: Mapping[str, Any], task_id: str, message: str, hi
         reply = reply or _text_of("run_turn.reply.3")
     if not reply:
         reply = _text_of("run_turn.reply.4")
-    return {"reply": reply, "tool_calls": calls, "proposal": proposal, "remember": remembered}
+    return {"reply": reply, "tool_calls": calls, "proposal": proposal, "remember": remembered, "reasoning": _joined_reasoning(thoughts)}
+
+
+def _reasoning_of(gateway: Any) -> str:
+    """The thinking the model returned with its last answer; a gateway that keeps none gives nothing."""
+    take = getattr(gateway, "take_reasoning", None)
+    try:
+        text = take() if callable(take) else ""
+    except Exception:  # noqa: BLE001 - thinking is shown for reference; its absence changes nothing
+        return ""
+    return text.strip() if isinstance(text, str) else ""
+
+
+def _joined_reasoning(thoughts: Sequence[str]) -> str:
+    """Every model call's thinking in this turn, in order, cut to the stored limit."""
+    rules = prompt_data.value(_WORDING_FILE, "reasoning")
+    text = str(rules["separator"]).join(thoughts)
+    limit = int(rules["max_chars"])
+    return text if len(text) <= limit else text[:limit].rstrip() + str(rules["cut"])
 
 
 def _schema_hint(name: str) -> dict[str, Any]:

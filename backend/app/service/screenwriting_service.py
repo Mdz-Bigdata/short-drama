@@ -19,7 +19,9 @@ from typing import Any
 
 from app import settings
 from app.core.production_knowledge import load_section, stage_lessons_block
-from app.core import creation_modes, emotion_points, literary, llm_profile, poetry_library, prompt_data, technique_look
+from app.core import creation_modes, emotion_points, literary, llm_profile, poetry_library, prompt_data, prompt_preferences, script_structure, target_audience, technique_look
+from app.core import story_direction
+from app.core import paywall_plan, serial_brief
 from app.core.screenwriting import review
 from app.core.screenwriting.durations import resolve_episode_target_seconds
 from app.core.screenwriting.engine import ENGINE_NAME, ScreenwritingEngine, detect_source_kind
@@ -99,10 +101,18 @@ def poetry_materials(config: Mapping[str, Any] | None, *, keywords: str = "", bu
 
 def writer_system_prompt(
     role_prompt: str, shanyin_core: str = "", *, stage: str = "write", config: Mapping[str, Any] | None = None, keywords: str = "",
+    preference: prompt_preferences.Preference | None = None,
 ) -> str:
-    """The Writer persona plus the budgeted creative guidance a ``stage`` of the structured pipeline uses."""
+    """The Writer persona plus the budgeted creative guidance a ``stage`` of the structured pipeline uses.
+
+    ``preference`` is the project owner's own way of writing (``prompt_preferences``); it follows the method in the
+    stages that write, and is left out of ``extract``, which only reads what was written.
+    """
     budget = _int_env("SCREENWRITING_KNOWLEDGE_BUDGET", 2500, 0)
-    parts = [role_prompt.strip(), WRITER_METHODOLOGY]
+    methodology = WRITER_METHODOLOGY
+    if stage != "extract" and prompt_preferences.personal(preference):
+        methodology = prompt_preferences.creative_layer("writer", WRITER_METHODOLOGY, preference).rstrip("\n")
+    parts = [role_prompt.strip(), methodology]
     labels = {
         "cinema-craft-redlines": "写作红线与 S 级三冲击（情绪 / 视觉 / 场景顶点）",
         "golden-narrative": "黄金叙事结构（单集模型 / 每集三件事 / 钩子公式）",
@@ -149,13 +159,15 @@ def writer_system_prompt(
 
 def writer_system_prompts(
     role_prompt: str, shanyin_core: str = "", *, config: Mapping[str, Any] | None = None, keywords: str = "",
+    preference: prompt_preferences.Preference | None = None,
 ) -> dict[str, str]:
     """One system prompt per engine stage (``ledger`` / ``plan`` / ``prose`` / ``visual`` / ``extract``).
 
     ``config`` brings the project's poetry sources into the writing stages; the rest of the guidance does not depend on it.
     """
     by_kind = {
-        kind: writer_system_prompt(role_prompt, shanyin_core, stage=kind, config=config, keywords=keywords) for kind in STAGE_KNOWLEDGE
+        kind: writer_system_prompt(role_prompt, shanyin_core, stage=kind, config=config, keywords=keywords, preference=preference)
+        for kind in STAGE_KNOWLEDGE
     }
     return {stage: by_kind[kind] for stage, kind in ENGINE_STAGES_BY_KNOWLEDGE.items()}
 
@@ -217,7 +229,11 @@ def build_engine(
             config, settings.env_float("SCREENWRITING_MIN_SPOKEN_SHOT_RATIO", 0.7, minimum=0.0, maximum=1.0),
         ),
         episode_shape=creation_modes.episode_shape_for(config),
-        creation={"creation_mode": creation_modes.mode_of(config), "ad_brief": creation_modes.ad_brief(config)},
+        creation={"creation_mode": creation_modes.mode_of(config), "ad_brief": creation_modes.ad_brief(config),
+                  target_audience.CONFIG_KEY: target_audience.of(config),
+                  script_structure.CONFIG_KEY: script_structure.of(config), "script_content": bool(config.get("script_content")),
+                  story_direction.NO_GO_KEY: story_direction.no_go_of(config),
+                  **serial_brief.of(config), paywall_plan.CONFIG_KEY: paywall_plan.applies(config)},
         progress=progress,
     )
 

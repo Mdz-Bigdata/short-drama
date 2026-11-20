@@ -1,8 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Camera, Columns2, Download, Eye, Grid2x2, Keyboard, Magnet, Maximize, MousePointer2, Move3d, PersonStanding, Redo2, RefreshCw,
-  Rotate3d, Route, Ruler, Undo2, Upload, X,
+  Camera, Clapperboard, Columns2, Download, Eye, Grid2x2, Keyboard, Magnet, Map as MapIcon, Maximize, MonitorPlay, MousePointer2, Move3d, PersonStanding,
+  PictureInPicture2, Redo2, RefreshCw, Rotate3d, Route, Ruler, Undo2, Upload, X,
 } from 'lucide-react';
 
 import { ApiError } from '../../api/client';
@@ -15,30 +15,40 @@ import { anglePresetCamera, type AnglePresetId } from './lib/anglePresets';
 import { detachOperations, type HandLocator } from './lib/contacts';
 import type { ClipStage } from './lib/clipExport';
 import { pathEdit, pathRefusal, pathTargetOf } from './lib/pathTool';
-import { actorPathsOf, cameraPathOf, cutCameraAt, stagePlanAt, timelineOf } from './lib/sampling';
+import { cutCameraAt, stagePlanAt, timelineOf } from './lib/sampling';
+import { shotTrails } from './lib/trails';
 import { snapToGrid } from './lib/snapping';
 import { crowdOf } from './lib/stageMath';
 import { figureForAction } from './lib/timelineClips';
 import { keyIndexAtFrame, retargetToKeys } from './lib/timelineEdits';
+import { locateInScene, nextShotId, sceneDuration, sceneSegments } from './lib/monitors';
 import { CompositionGuides } from './overlays/CompositionGuides';
 import { BackdropSection } from './panels/BackdropSection';
 import { CameraComparePanel } from './panels/CameraComparePanel';
 import { CameraPanel } from './panels/CameraPanel';
+import { CameraPip } from './panels/CameraPip';
 import { BlenderPanel } from './panels/BlenderPanel';
 import { BlockoutPanel } from './panels/BlockoutPanel';
 import { CapturesPanel } from './panels/CapturesPanel';
 import { ChecksPanel } from './panels/ChecksPanel';
 import { DirectorPanel } from './panels/DirectorPanel';
 import { CrowdDialog, type CrowdRequest } from './panels/CrowdDialog';
+import { BlockingDiagramDialog } from './panels/BlockingDiagramDialog';
+import { EffectsSection } from './panels/EffectsSection';
 import { Inspector } from './panels/Inspector';
+import { MonitorWall } from './panels/MonitorWall';
 import { Outliner } from './panels/Outliner';
 import { PosePanel } from './panels/PosePanel';
+import { ScenePlayer } from './panels/ScenePlayer';
+import { StagePrompt } from './panels/StagePrompt';
 import { TimelinePanel } from './panels/TimelinePanel';
 import { pressable, typing } from './panels/typing';
 import { SHAPE_LABELS } from './three/stageLook';
 import { useDeskPlayback } from './useDeskPlayback';
 import { useDeskSession } from './useDeskSession';
 import './DirectorDesk.css';
+import './DeskMonitors.css';
+import './DeskStage.css';
 
 // three.js only loads once a stage is actually on screen.
 const DeskViewport = lazy(() => import('./three/DeskViewport'));
@@ -63,6 +73,7 @@ const SHORTCUTS: Array<[string, string]> = [
   ['Delete', '删除所选道具或候选机位；焦点在关键帧、片段或它们的设置条上时，删除该关键帧或片段'], ['← / →', '焦点在关键帧上时前后移一帧，在播放头上时逐帧走'],
   ['Ctrl / ⌘ + Z', '撤销'], ['Ctrl / ⌘ + Shift + Z', '重做'], ['Ctrl / ⌘ + Y', '重做'], ['?', '打开或关闭本卡片'],
   ['Esc', '依次关闭本卡片、机位对比，退出测量、选择，再关闭导演台'],
+  ['空格（成片预演）', '从当前镜头往下播完整场'], ['Esc（成片预演）', '回到场景调度'],
 ];
 /** A project file bigger than this is not one of ours; the same limit the spatial dialog uses. */
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
@@ -73,6 +84,12 @@ const SIDE_TABS: Array<{ id: SideTab; label: string }> = [{ id: 'inspector', lab
 const FRAME_TIMEOUT_MS = 8000;
 const SAVE_LABELS = { idle: '', saving: '保存中…', saved: '已保存', error: '保存失败' } as const;
 const TIMELINE_FOLD_KEY = 'directorDesk.timelineCollapsed';
+const MONITORS_KEY = 'directorDesk.monitorsOpen';
+const PIP_KEY = 'directorDesk.pipOpen';
+/** Under this window width the monitor wall starts folded: the stage needs the room more. */
+const NARROW_WINDOW_PX = 1280;
+/** 场景调度 is the editing desk; 成片预演 plays the scene through its lenses, shot after shot. */
+type DeskMode = 'stage' | 'preview';
 /** Under this window height an open timeline leaves the stage too little room. */
 const SHORT_WINDOW_PX = 800;
 const DEFAULT_SIZES: Record<LandmarkShape, [number, number, number]> = {
@@ -101,6 +118,25 @@ function timelineStartsCollapsed() {
   return window.innerHeight < SHORT_WINDOW_PX;
 }
 
+/** A panel opens the way this browser last left it, or `fallback` the first time. */
+function remembered(key: string, fallback: () => boolean) {
+  try {
+    const stored = window.localStorage.getItem(key);
+    if (stored !== null) return stored === '1';
+  } catch {
+    // Storage can be unavailable (private mode).
+  }
+  return fallback();
+}
+
+function remember(key: string, open: boolean) {
+  try {
+    window.localStorage.setItem(key, open ? '1' : '0');
+  } catch {
+    // Not remembered this time; it still holds for this visit.
+  }
+}
+
 /** The name the outliner shows: a lens or a crowd is known by its label, not by its id. */
 function selectionLabel(plan: StagePlan | null | undefined, ref: SelectionRef) {
   if (ref.kind === 'camera' || ref.kind === 'camera-target') return plan?.cameras.find(camera => camera.id === ref.id)?.label || ref.id;
@@ -123,6 +159,7 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
   const [preview, setPreview] = useState<StageOperation[] | null>(null);
   const [sideTab, setSideTab] = useState<SideTab>(initialSideTab ?? 'inspector');
   const [crowdOpen, setCrowdOpen] = useState(false);
+  const [diagramOpen, setDiagramOpen] = useState(false);
   const [poseShotOnly, setPoseShotOnly] = useState(false);
   const [footLock, setFootLock] = useState(true);
   const [viewReady, setViewReady] = useState(false);
@@ -136,6 +173,12 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
   const [transferBusy, setTransferBusy] = useState(false);
   // How fast a drawn route is walked; 0 stretches it over the whole shot instead.
   const [pathSpeed, setPathSpeed] = useState(1.4);
+  const [mode, setModeState] = useState<DeskMode>('stage');
+  const previewing = mode === 'preview';
+  const [monitorsOpen, setMonitorsOpen] = useState(() => remembered(MONITORS_KEY, () => window.innerWidth >= NARROW_WINDOW_PX));
+  const [pipOpen, setPipOpen] = useState(() => remembered(PIP_KEY, () => true));
+  const showMonitors = useCallback((open: boolean) => { setMonitorsOpen(open); remember(MONITORS_KEY, open); }, []);
+  const showPip = useCallback((open: boolean) => { setPipOpen(open); remember(PIP_KEY, open); }, []);
   const deskHandle = useRef<DeskViewHandle | null>(null);
   const lensHandle = useRef<LensHandle | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -177,7 +220,35 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
     void import('./lib/handBones').then(module => { if (live) setHandLocator({ locate: module.mannequinHandPoint }); });
     return () => { live = false; };
   }, [handLocator, keepsContacts]);
-  const contactOptions = useMemo(() => (handLocator ? { hand: handLocator.locate } : undefined), [handLocator]);
+  // A skinned figure's hand is wherever its motion has it, which only the model itself can say: the model is
+  // held while such a figure holds something, and the formula hand stands in until it has arrived.
+  const holdsSkinned = useMemo(() => Boolean(basePlan?.contacts?.some(contact => (
+    contact.kind === 'hold' && basePlan.actors.find(actor => actor.name === contact.actor)?.figure === 'humanoid'
+  ))), [basePlan]);
+  const [skinnedHands, setSkinnedHands] = useState<{ locate: HandLocator } | null>(null);
+  useEffect(() => {
+    if (!holdsSkinned) return undefined;
+    let live = true;
+    let free: (() => void) | null = null;
+    void Promise.all([import('./lib/humanoidHands'), import('./three/figures/humanoidSource')]).then(([hands, model]) => {
+      // Asking counts as a user of the model whether or not it arrives, so every path gives it back.
+      model.acquire().then(source => {
+        if (!live) { model.release(); return; }
+        free = model.release;
+        setSkinnedHands({ locate: hands.humanoidHandLocator(source) });
+      }, () => model.release());
+    });
+    return () => {
+      live = false;
+      free?.();
+    };
+  }, [holdsSkinned]);
+  const contactOptions = useMemo(() => {
+    const skinned = holdsSkinned ? skinnedHands : null;
+    if (!handLocator && !skinned) return undefined;
+    const locate: HandLocator = (actor, hand) => skinned?.locate(actor, hand) ?? handLocator?.locate(actor, hand) ?? null;
+    return { hand: locate };
+  }, [handLocator, holdsSkinned, skinnedHands]);
   // Three plans: `basePlan` is what is stored (unconfirmed edits included), `storedPlan` adds the
   // drag in progress, and `plan` is `storedPlan` as it looks at the playhead — what gets drawn.
   const storedPlan = useMemo(() => (basePlan && preview ? applyAll(basePlan, preview) : basePlan), [basePlan, preview]);
@@ -190,9 +261,10 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
   const shot = useMemo(() => plan?.shots.find(item => item.shot_id === shotId), [plan, shotId]);
   const storedShot = useMemo(() => storedPlan?.shots.find(item => item.shot_id === shotId), [shotId, storedPlan]);
   // Nothing picked by hand: the lens view follows the cuts, so playback and a clip export show the cut.
-  const lens = plan?.cameras.find(item => item.id === (state.lensCameraId || cutCameraAt(timeline, now) || shot?.camera_id));
-  const cameraPath = useMemo(() => (storedPlan ? cameraPathOf(storedPlan, storedShot) : null), [storedPlan, storedShot]);
-  const actorPaths = useMemo(() => (storedPlan ? actorPathsOf(storedPlan, storedShot) : []), [storedPlan, storedShot]);
+  // 成片预演 always shows the cut, whatever lens was picked for a look.
+  const lens = plan?.cameras.find(item => item.id === ((previewing ? '' : state.lensCameraId) || cutCameraAt(timeline, now) || shot?.camera_id));
+  // Where the filming lens and each moving actor go during the shot: drawn on the stage, listed in the outliner.
+  const trails = useMemo(() => (storedPlan ? shotTrails(storedPlan, storedShot) : []), [storedPlan, storedShot]);
   const primary = selection[selection.length - 1];
   // The path tool draws for the selected actor or the shot's filming camera; `pathNote` says why it cannot.
   const pathTarget = useMemo(() => pathTargetOf(storedPlan ?? undefined, storedShot, primary), [primary, storedPlan, storedShot]);
@@ -229,6 +301,63 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
     commit({ ...request, operations: retarget(request.operations) });
   }, [commit, retarget]);
 
+  // 成片预演: the scene's shots end to end, and a playhead that walks from one into the next.
+  const segments = useMemo(() => (storedPlan ? sceneSegments(storedPlan) : []), [storedPlan]);
+  const { seek: seekShot, play: playShot, pause: pauseShot, setLoop: setShotLoop } = playback;
+  // Another shot resets the playhead when it arrives; where to start in it, and whether to roll, waits here until then.
+  const pendingStart = useRef<{ shotId: number; time: number; play: boolean } | null>(null);
+  const goTo = useCallback((targetShot: number, time: number, play: boolean) => {
+    if (targetShot === shotId) {
+      seekShot(time);
+      if (play) playShot();
+      return;
+    }
+    pendingStart.current = { shotId: targetShot, time, play };
+    dispatch({ type: 'setShot', shotId: targetShot });
+  }, [dispatch, playShot, seekShot, shotId]);
+  useEffect(() => {
+    const wanted = pendingStart.current;
+    if (!wanted || wanted.shotId !== shotId) return;
+    pendingStart.current = null;
+    if (wanted.time > 0) seekShot(wanted.time);
+    if (wanted.play) playShot();
+  }, [playShot, seekShot, shotId]);
+  // A shot that plays to its end in 成片预演 hands over to the next one, the way the cut runs on.
+  const wasPlaying = useRef(false);
+  useEffect(() => {
+    const was = wasPlaying.current;
+    wasPlaying.current = playback.playing;
+    if (!previewing || !was || playback.playing || playback.time < timeline.duration_s - 1e-6) return;
+    const next = nextShotId(segments, shotId);
+    if (next !== undefined) goTo(next, 0, true);
+  }, [goTo, playback.playing, playback.time, previewing, segments, shotId, timeline.duration_s]);
+  const playScene = useCallback(() => {
+    // At the end of a shot, play on into the next; at the end of the scene, from the top.
+    if (playback.time >= timeline.duration_s - 1e-6 && segments.length) {
+      goTo(nextShotId(segments, shotId) ?? segments[0].shotId, 0, true);
+      return;
+    }
+    playShot();
+  }, [goTo, playShot, playback.time, segments, shotId, timeline.duration_s]);
+  const seekScene = useCallback((sceneTime: number) => {
+    const spot = locateInScene(segments, sceneTime);
+    if (spot) goTo(spot.shotId, spot.time, playback.playing);
+  }, [goTo, playback.playing, segments]);
+  // A looping shot would never hand over, so 成片预演 lifts the timeline's loop and gives it back on the way out.
+  const loopBefore = useRef(false);
+  const setMode = useCallback((next: DeskMode) => {
+    if (next === mode) return;
+    pauseShot();
+    if (next === 'preview') {
+      loopBefore.current = playback.loop;
+      if (playback.loop) setShotLoop(false);
+    } else if (loopBefore.current) {
+      setShotLoop(true);
+      loopBefore.current = false;
+    }
+    setModeState(next);
+  }, [mode, pauseShot, playback.loop, setShotLoop]);
+
   const onFrameShown = useCallback((stamp: number, info: LensFrameInfo) => {
     const waiter = frameWaiters.current.get(stamp);
     frameWaiters.current.delete(stamp);
@@ -262,6 +391,84 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
       },
     };
   }, [pausePlayback]);
+
+  // 成片预演 as one file: every shot through its own lenses, end to end, written frame by frame the way a
+  // shot's clip is. Nothing is uploaded; the file goes to the browser's downloads.
+  const [sceneExport, setSceneExport] = useState<number | null>(null);
+  const sceneExportAbort = useRef<AbortController | null>(null);
+  const shotNow = useRef(shotId);
+  useEffect(() => { shotNow.current = shotId; }, [shotId]);
+  const sceneExportRefusal = useMemo(() => {
+    if (!storedPlan || !segments.length) return '本场还没有镜头';
+    const lensless = storedPlan.shots.find(item => !storedPlan.cameras.some(camera => camera.id === item.camera_id));
+    if (lensless) return `第 ${lensless.shot_id} 镜还没有机位，补上后才能导出整场`;
+    return sceneDuration(segments) > 0 ? '' : '本场的镜头都没有时长';
+  }, [segments, storedPlan]);
+  const exportScene = useCallback(async () => {
+    const handle = lensHandle.current;
+    if (!storedPlan || sceneExportRefusal || sceneExportAbort.current) return;
+    if (!handle) { dispatch({ type: 'notice', message: '机位画面还没有准备好，请稍后再导出。' }); return; }
+    pausePlayback();
+    const back = { shotId: shotNow.current, time: playback.time };
+    const controller = new AbortController();
+    sceneExportAbort.current = controller;
+    setSceneExport(0);
+    const stage: ClipStage = {
+      ...handle.renderer(),
+      showFrame: sceneTime => new Promise((resolve, reject) => {
+        const spot = locateInScene(segments, sceneTime);
+        if (!spot) { reject(new Error('本场没有可导出的镜头。')); return; }
+        frameStamp.current += 1;
+        const stamp = frameStamp.current;
+        const timer = window.setTimeout(() => {
+          frameWaiters.current.delete(stamp);
+          reject(new Error(`第 ${spot.shotId} 镜的机位画面没有响应，导出已中止。`));
+        }, FRAME_TIMEOUT_MS);
+        frameWaiters.current.set(stamp, info => { window.clearTimeout(timer); resolve(info); });
+        // One commit: the stage changes shot and instant together, and reports once it holds both.
+        setExportFrame({ stamp, time: spot.time });
+        if (spot.shotId !== shotNow.current) {
+          shotNow.current = spot.shotId;
+          dispatch({ type: 'setShot', shotId: spot.shotId });
+        }
+      }),
+      release: () => {
+        frameWaiters.current.clear();
+        setExportFrame(null);
+      },
+    };
+    try {
+      // three.js and the encoder stay out of the desk's first load.
+      const { exportClip, SCENE_CLIP_LIMITS } = await import('./lib/clipExport');
+      const clip = await exportClip({
+        stage, aspect: parseAspect(storedPlan.aspect_ratio), durationS: sceneDuration(segments), fps: timelineOf(storedPlan, segments[0].shotId).fps,
+        monochrome: false, labels: false, signal: controller.signal, onProgress: setSceneExport, limits: SCENE_CLIP_LIMITS,
+      });
+      const url = URL.createObjectURL(clip.blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${sceneId}-成片预演.${clip.format}`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      announce(`已导出本场成片预演（${clip.durationS.toFixed(1)} 秒 · ${clip.width}×${clip.height} · ${clip.format.toUpperCase()}），文件在浏览器的下载里。`);
+    } catch (error) {
+      const cancelled = error instanceof DOMException && error.name === 'AbortError';
+      dispatch({ type: 'notice', message: cancelled ? '已取消导出，没有保存任何文件。' : error instanceof Error && error.message ? error.message : '导出失败，请稍后重试。' });
+    } finally {
+      sceneExportAbort.current = null;
+      setSceneExport(null);
+      // Back to where the director was watching before the export walked the scene.
+      if (back.shotId !== null) {
+        if (shotNow.current === back.shotId) seekShot(back.time);
+        else {
+          pendingStart.current = { shotId: back.shotId, time: back.time, play: false };
+          dispatch({ type: 'setShot', shotId: back.shotId });
+        }
+      }
+    }
+  }, [announce, dispatch, pausePlayback, playback.time, sceneExportRefusal, sceneId, seekShot, segments, storedPlan]);
+  // Closing the desk mid-export stops the encoder rather than leaving it writing for nobody.
+  useEffect(() => () => sceneExportAbort.current?.abort(), []);
 
   // Delete takes away what one key may take away: props, and this shot's candidate lenses. People, crowds and
   // the filming lens are removed where the consequences are spelled out, so here they are named instead.
@@ -322,6 +529,14 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
       // A dialog open over the desk (群演, a capture at full size) owns the keys: they are not about the stage behind it.
       if (typing(event.target) || exporting || rootRef.current?.querySelector('[aria-modal="true"]')) return;
       const key = event.key.toLowerCase();
+      // 成片预演 only watches: Space plays the scene, Escape goes back to 场景调度, ? still lists the keys.
+      if (previewing) {
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
+        if (key === 'escape') { if (shortcutsOpen) setShortcutsOpen(false); else setMode('stage'); return; }
+        if (key === ' ') { if (pressable(event.target)) return; event.preventDefault(); if (playback.playing) pauseShot(); else playScene(); return; }
+        if (key === '?' || (key === '/' && event.shiftKey)) setShortcutsOpen(value => !value);
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && key === 'z') {
         event.preventDefault();
         if (event.shiftKey) redo(); else undo();
@@ -351,7 +566,7 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [compareOpen, dispatch, exporting, onClose, pickTool, redo, removeSelected, selection.length, shortcutsOpen, state.measure.length, togglePlay, undo]);
+  }, [compareOpen, dispatch, exporting, onClose, pauseShot, pickTool, playScene, playback.playing, previewing, redo, removeSelected, selection.length, setMode, shortcutsOpen, state.measure.length, togglePlay, undo]);
 
   const downloadProject = (format: SpatialExportFormat) => {
     if (transferBusy) return;
@@ -453,7 +668,7 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
     ? Math.hypot(...state.measure[0].point.map((value, index) => value - state.measure[1].point[index]))
     : null;
 
-  const canEdit = editable && !exporting;
+  const canEdit = editable && !exporting && !previewing;
   const isNews = state.notice !== '' && state.notice === news;
 
   const body = () => {
@@ -467,26 +682,49 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
     }
     if (!plan || !basePlan || !storedPlan || !stagedBase || !panelPlan) return <p className="desk-empty" role="status">正在读取空间舞台…</p>;
     const loading = <p className="desk-empty" role="status">正在加载 3D 视图…</p>;
+    const monitors = monitorsOpen && (
+      <MonitorWall
+        plan={storedPlan} shotId={shotId} now={now} playing={playback.playing} hidden={state.hidden} contactOptions={contactOptions}
+        activeLensId={lens?.id || ''} previewing={previewing}
+        // An export is walking the scene shot by shot: a pick would pull the stage out from under it.
+        onPickShot={id => { if (sceneExport !== null) return; if (previewing) goTo(id, 0, playback.playing); else dispatch({ type: 'setShot', shotId: id }); }}
+        onPickLens={id => dispatch({ type: 'setLensCamera', cameraId: id })}
+        onClose={() => showMonitors(false)}
+      />
+    );
+    if (previewing) {
+      return (
+        <div className={`desk-body is-preview ${monitorsOpen ? 'has-monitors' : ''}`}>
+          {monitors}
+          <main className="desk-stage is-lens is-preview">
+            <Suspense fallback={loading}>
+              <LensViewport plan={plan} shot={shot} camera={lens} hidden={state.hidden} onReady={onLensReady} frameStamp={exportFrame?.stamp} onFrameShown={onFrameShown} />
+            </Suspense>
+          </main>
+        </div>
+      );
+    }
     return (
-      <div className="desk-body">
+      <div className={`desk-body ${monitorsOpen ? 'has-monitors' : ''}`}>
         <Outliner
-          plan={storedPlan} shot={storedShot} selection={selection} hidden={state.hidden} locked={state.locked} editable={canEdit}
+          plan={storedPlan} shot={storedShot} selection={selection} hidden={state.hidden} locked={state.locked} editable={canEdit} trails={trails}
           onSelect={select}
           onToggleHidden={key => dispatch({ type: 'toggleHidden', key })}
           onToggleLocked={key => dispatch({ type: 'toggleLocked', key })}
           onAddProp={addProp} onAddCrowd={openCrowd}
         />
+        {monitors}
         <main className={`desk-stage is-${layout}`}>
           {layout !== 'lens' && (
             <Suspense fallback={loading}>
               <DeskViewport
                 plan={plan} basePlan={stagedBase} shot={shot} selection={selection} tool={tool} snap={state.snap}
                 hidden={state.hidden} locked={state.locked} readOnly={!canEdit} measure={state.measure} lensCameraId={lens?.id || ''}
-                poseShotOnly={poseShotOnly} footLock={footLock} cameraPath={cameraPath} playing={playback.playing}
-                actorPaths={actorPaths} pathTarget={pathTarget} pathRefusal={pathNote}
+                poseShotOnly={poseShotOnly} footLock={footLock} trails={trails} time={now} playing={playback.playing}
+                pathTarget={pathTarget} pathRefusal={pathNote}
                 onSelect={select} onClearSelection={() => dispatch({ type: 'clearSelection' })}
                 onPreview={previewEdit} onRefuse={message => dispatch({ type: 'notice', message })}
-                onCommit={operations => commitEdit({ label: tool === 'pose' ? '摆姿势' : tool === 'rotate' ? '旋转' : tool === 'scale' ? '缩放' : '移动', operations })}
+                onCommit={operations => commitEdit({ label: operations.every(op => op.op === 'set_effect') ? '移动特效占位' : tool === 'pose' ? '摆姿势' : tool === 'rotate' ? '旋转' : tool === 'scale' ? '缩放' : '移动', operations })}
                 onPath={points => {
                   if (!pathTarget || !storedShot) return;
                   const edit = pathEdit(storedShot.shot_id, pathTarget, points, pathSpeed);
@@ -514,6 +752,18 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
               <OrthoViewport plan={plan} framing={basePlan} shot={shot} hidden={state.hidden} selection={selection} side="front" />
             </Suspense>
           )}
+          {layout === 'director' && pipOpen && !compareOpen && (
+            <CameraPip
+              plan={plan} shot={shot} camera={lens} hidden={state.hidden} playing={playback.playing} onTogglePlay={togglePlay}
+              onExpand={() => dispatch({ type: 'setLayout', layout: 'lens' })} onClose={() => showPip(false)}
+            />
+          )}
+          {layout !== 'lens' && !compareOpen && (
+            <StagePrompt
+              taskId={taskId} sceneId={sceneId} revision={basePlan.revision} selection={selection} locked={!canEdit || state.pending.length > 0}
+              onPlanChanged={() => { void reload(); }} onDeselect={ref => dispatch({ type: 'select', ref, additive: true })} onOpenLog={() => setSideTab('director')}
+            />
+          )}
           {compareOpen && (
             <CameraComparePanel
               plan={plan} shot={shot} hidden={state.hidden} revision={basePlan.revision} selection={selection} editable={canEdit}
@@ -530,6 +780,7 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
           <div className="desk-side__panel">
             {keyNote && sideTab !== 'captures' && sideTab !== 'blender' && sideTab !== 'director' && <p className={`desk-keynote ${onKey ? 'is-key' : ''}`} role="note">{keyNote}</p>}
             {sideTab === 'inspector' && <Inspector plan={panelPlan} shot={panelShot} selection={selection} editable={canEdit} error={state.inspectorError} taskId={taskId} onCommit={commitEdit} onSelect={select} />}
+            {sideTab === 'inspector' && <EffectsSection plan={panelPlan} shot={panelShot} selection={selection} editable={canEdit} onCommit={commitEdit} />}
             {sideTab === 'director' && (
               <DirectorPanel
                 taskId={taskId} sceneId={sceneId} plan={basePlan} shotId={shotId} selection={state.selection} editable={canEdit} saving={state.pending.length > 0}
@@ -594,51 +845,80 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
           <span>DIRECTOR DESK / 3D 导演台</span>
           <h1 id="director-desk-title">{sceneId} · {basePlan?.location || '3D 导演台'}</h1>
         </div>
+        <div className="desk-segment desk-topbar__mode" role="radiogroup" aria-label="导演台模式">
+          <button type="button" role="radio" aria-checked={!previewing} className={previewing ? '' : 'is-active'} title="摆站位、机位和动作" disabled={sceneExport !== null} onClick={() => setMode('stage')}>
+            <Move3d aria-hidden="true" /> 场景调度
+          </button>
+          <button
+            type="button" role="radio" aria-checked={previewing} className={previewing ? 'is-active' : ''} disabled={!basePlan?.shots.length || exporting}
+            title="按镜头顺序、透过各镜机位连续播放本场，只看不改（Esc 返回）" onClick={() => setMode('preview')}
+          >
+            <Clapperboard aria-hidden="true" /> 成片预演
+          </button>
+        </div>
         {basePlan && (
           <label className="desk-topbar__shot">
             <span>镜头</span>
-            <select aria-label="镜头" value={shotId ?? ''} onChange={event => dispatch({ type: 'setShot', shotId: Number(event.target.value) })}>
+            <select aria-label="镜头" value={shotId ?? ''} disabled={sceneExport !== null} onChange={event => (previewing ? goTo(Number(event.target.value), 0, playback.playing) : dispatch({ type: 'setShot', shotId: Number(event.target.value) }))}>
               {basePlan.shots.map(item => <option key={item.shot_id} value={item.shot_id}>第 {item.shot_id} 镜 · {FUNCTION_LABELS[item.function]} · {item.subjects.join('、') || '空镜'}</option>)}
             </select>
           </label>
         )}
-        <div className="desk-segment" role="radiogroup" aria-label="视图布局">
-          {/* Only the first three layouts have a number key; 4 is 机位对比. */}
-          {LAYOUTS.map((item, index) => (
+        <button type="button" className="desk-button desk-topbar__toggle" aria-pressed={monitorsOpen} title="监视器：本场每一镜的机位画面" onClick={() => showMonitors(!monitorsOpen)}>
+          <MonitorPlay aria-hidden="true" /> 监视器
+        </button>
+        {!previewing && (
+          <>
+            <div className="desk-segment" role="radiogroup" aria-label="视图布局">
+              {/* Only the first three layouts have a number key; 4 is 机位对比. */}
+              {LAYOUTS.map((item, index) => (
+                <button
+                  key={item.id} type="button" role="radio" aria-checked={layout === item.id} className={layout === item.id ? 'is-active' : ''}
+                  title={index < 3 ? `${item.label}视图（${index + 1}）` : item.label} onClick={() => dispatch({ type: 'setLayout', layout: item.id })}
+                >
+                  <item.icon aria-hidden="true" /> {item.label}
+                </button>
+              ))}
+            </div>
             <button
-              key={item.id} type="button" role="radio" aria-checked={layout === item.id} className={layout === item.id ? 'is-active' : ''}
-              title={index < 3 ? `${item.label}视图（${index + 1}）` : item.label} onClick={() => dispatch({ type: 'setLayout', layout: item.id })}
+              type="button" className="desk-button desk-topbar__toggle" aria-pressed={layout === 'director' && pipOpen} title="在导演视图上浮一个当前机位的小画面"
+              onClick={() => {
+                const open = !(layout === 'director' && pipOpen);
+                showPip(open);
+                if (open && layout !== 'director') dispatch({ type: 'setLayout', layout: 'director' });
+              }}
             >
-              <item.icon aria-hidden="true" /> {item.label}
+              <PictureInPicture2 aria-hidden="true" /> 画中画
             </button>
-          ))}
-        </div>
-        <button type="button" className="desk-button desk-topbar__compare" aria-pressed={compareOpen} title="机位对比（4）" onClick={() => setCompareOpen(value => !value)}>机位对比</button>
-        <div className="desk-segment" role="radiogroup" aria-label="工具">
-          {TOOLS.map(item => (
-            <button
-              key={item.id} type="button" role="radio" aria-checked={tool === item.id} className={tool === item.id ? 'is-active' : ''} onClick={() => pickTool(item.id)}
-              disabled={item.id === 'path' && Boolean(pathNote)} title={item.id === 'path' && pathNote ? `${item.label}（${item.key.toUpperCase()}）：${pathNote}` : `${item.label}（${item.key.toUpperCase()}）`}
-            >
-              <item.icon aria-hidden="true" /> {item.label}
-            </button>
-          ))}
-        </div>
-        <div className="desk-topbar__snap" role="group" aria-label="吸附">
-          <Magnet aria-hidden="true" />
-          <label><input type="checkbox" checked={state.snap.grid} onChange={event => dispatch({ type: 'setSnap', snap: { grid: event.target.checked } })} /> 网格</label>
-          <select aria-label="网格间距" value={state.snap.gridSize} onChange={event => dispatch({ type: 'setSnap', snap: { gridSize: Number(event.target.value) } })}>
-            {[0.1, 0.25, 0.5, 1].map(value => <option key={value} value={value}>{value} m</option>)}
-          </select>
-          <label><input type="checkbox" checked={state.snap.faces} onChange={event => dispatch({ type: 'setSnap', snap: { faces: event.target.checked } })} /> 贴面</label>
-          <label><input type="checkbox" checked={state.snap.angle} onChange={event => dispatch({ type: 'setSnap', snap: { angle: event.target.checked } })} /> 15°</label>
-        </div>
+            <button type="button" className="desk-button desk-topbar__compare" aria-pressed={compareOpen} title="机位对比（4）" onClick={() => setCompareOpen(value => !value)}>机位对比</button>
+            <div className="desk-segment" role="radiogroup" aria-label="工具">
+              {TOOLS.map(item => (
+                <button
+                  key={item.id} type="button" role="radio" aria-checked={tool === item.id} className={tool === item.id ? 'is-active' : ''} onClick={() => pickTool(item.id)}
+                  disabled={item.id === 'path' && Boolean(pathNote)} title={item.id === 'path' && pathNote ? `${item.label}（${item.key.toUpperCase()}）：${pathNote}` : `${item.label}（${item.key.toUpperCase()}）`}
+                >
+                  <item.icon aria-hidden="true" /> {item.label}
+                </button>
+              ))}
+            </div>
+            <div className="desk-topbar__snap" role="group" aria-label="吸附">
+              <Magnet aria-hidden="true" />
+              <label><input type="checkbox" checked={state.snap.grid} onChange={event => dispatch({ type: 'setSnap', snap: { grid: event.target.checked } })} /> 网格</label>
+              <select aria-label="网格间距" value={state.snap.gridSize} onChange={event => dispatch({ type: 'setSnap', snap: { gridSize: Number(event.target.value) } })}>
+                {[0.1, 0.25, 0.5, 1].map(value => <option key={value} value={value}>{value} m</option>)}
+              </select>
+              <label><input type="checkbox" checked={state.snap.faces} onChange={event => dispatch({ type: 'setSnap', snap: { faces: event.target.checked } })} /> 贴面</label>
+              <label><input type="checkbox" checked={state.snap.angle} onChange={event => dispatch({ type: 'setSnap', snap: { angle: event.target.checked } })} /> 15°</label>
+            </div>
+          </>
+        )}
         <div className="desk-topbar__actions">
-          <button type="button" className="desk-icon" aria-label="撤销" title={state.undo.length ? `撤销：${state.undo[state.undo.length - 1].label}（Ctrl / ⌘ + Z）` : '撤销（Ctrl / ⌘ + Z）'} disabled={!canUndo} onClick={undo}><Undo2 aria-hidden="true" /></button>
-          <button type="button" className="desk-icon" aria-label="重做" title={state.redo.length ? `重做：${state.redo[state.redo.length - 1].label}（Ctrl / ⌘ + Shift + Z）` : '重做（Ctrl / ⌘ + Shift + Z）'} disabled={!canRedo} onClick={redo}><Redo2 aria-hidden="true" /></button>
+          <button type="button" className="desk-icon" aria-label="撤销" title={state.undo.length ? `撤销：${state.undo[state.undo.length - 1].label}（Ctrl / ⌘ + Z）` : '撤销（Ctrl / ⌘ + Z）'} disabled={!canUndo || previewing} onClick={undo}><Undo2 aria-hidden="true" /></button>
+          <button type="button" className="desk-icon" aria-label="重做" title={state.redo.length ? `重做：${state.redo[state.redo.length - 1].label}（Ctrl / ⌘ + Shift + Z）` : '重做（Ctrl / ⌘ + Shift + Z）'} disabled={!canRedo || previewing} onClick={redo}><Redo2 aria-hidden="true" /></button>
           <span className={`desk-topbar__save is-${state.saveState}`} role="status" aria-label="保存状态">
             {SAVE_LABELS[state.saveState]}{basePlan ? `${SAVE_LABELS[state.saveState] ? ' · ' : ''}第 ${basePlan.revision} 版` : ''}
           </span>
+          <button type="button" className="desk-icon" aria-label="白模站位图" title="白模站位图：把这一场的站位、走位和机位画成一组图" disabled={!basePlan} onClick={() => setDiagramOpen(true)}><MapIcon aria-hidden="true" /></button>
           <div className="desk-topbar__transfer" role="group" aria-label="工程文件">
             <button type="button" className="desk-icon" aria-label="导出 3D 导演台工程" title="导出 3D 导演台工程（JSON）" disabled={!basePlan || transferBusy} onClick={() => downloadProject('director-desk')}><Download aria-hidden="true" /></button>
             <button type="button" className="desk-icon" aria-label="导出 CoStage 工程" title="导出 CoStage 工程（JSON）" disabled={!basePlan || transferBusy} onClick={() => downloadProject('costage')}><Download aria-hidden="true" /><span aria-hidden="true">C</span></button>
@@ -674,7 +954,14 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
       )}
       {exporting && <p className="desk-banner is-warning" role="status">正在逐帧导出白模视频，舞台暂时不能编辑。</p>}
       {body()}
-      {storedPlan && (
+      {storedPlan && previewing && (
+        <ScenePlayer
+          segments={segments} shotId={shotId} time={playback.time} playing={playback.playing} speed={playback.speed} onSpeed={playback.setSpeed}
+          exportProgress={sceneExport} exportRefusal={sceneExportRefusal} onExport={() => { void exportScene(); }} onCancelExport={() => sceneExportAbort.current?.abort()}
+          onPlay={playScene} onPause={pauseShot} onSeek={seekScene}
+        />
+      )}
+      {storedPlan && !previewing && (
         <TimelinePanel
           plan={storedPlan} shot={storedShot} playback={playback} selection={selection} editable={canEdit}
           collapsed={timelineCollapsed} onCollapsed={foldTimeline} onCommit={commitEdit} onSelect={select}
@@ -682,7 +969,8 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
       )}
       <footer className="desk-statusbar">
         <span>
-          {selection.length === 0 ? '未选择' : selection.length === 1 ? `已选：${selectionLabel(storedPlan, primary)}` : `已选 ${selection.length} 项`}
+          {previewing ? '成片预演：按镜头顺序透过各镜机位连续播放，只看不改；Esc 回到场景调度'
+            : selection.length === 0 ? '未选择' : selection.length === 1 ? `已选：${selectionLabel(storedPlan, primary)}` : `已选 ${selection.length} 项`}
         </span>
         {/* Tool readouts live here, not in the top bar: showing one must not re-wrap the bar and move the stage. */}
         {tool === 'path' && (
@@ -698,6 +986,9 @@ export function DirectorDesk({ taskId, sceneId, initialShotId, initialSideTab, i
           </span>
         )}
       </footer>
+      {diagramOpen && basePlan && (
+        <BlockingDiagramDialog taskId={taskId} sceneId={sceneId} saving={state.saveState === 'saving'} onClose={() => setDiagramOpen(false)} />
+      )}
       {crowdOpen && basePlan && (
         <CrowdDialog
           defaultLabel={freeName('群演', new Set((basePlan.crowds || []).map(crowd => crowd.label)))}

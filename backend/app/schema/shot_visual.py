@@ -151,6 +151,20 @@ class SpendLimitsUpdate(BaseModel):
     max_attempts: int | None = Field(None, ge=0, le=50)
 
 
+class SpokenLanguageUpdate(BaseModel):
+    """对白语言：四川话、粤语、英语……里的一种；留空回到默认的普通话。"""
+    model_config = ConfigDict(extra="forbid")
+
+    language: str | None = Field(None, max_length=24)
+
+
+class VideoResolutionUpdate(BaseModel):
+    """成片清晰度：720p / 1080p / 4k 里当前视频模型提供的一档；留空回到默认档位。"""
+    model_config = ConfigDict(extra="forbid")
+
+    resolution: str | None = Field(None, max_length=12)
+
+
 class DraftModeUpdate(BaseModel):
     """样片模式：第 5 阶段按 480p 出片，看过再逐镜出高清。"""
     model_config = ConfigDict(extra="forbid")
@@ -217,6 +231,12 @@ class ShotVisualWorkspaceResponse(BaseModel):
     shots: list[ShotVisualRecord] = Field(default_factory=list)
     # 样片模式是否开着；当前视频模型能不能做区域修补(要能收参考视频)。
     draft_mode: bool = False
+    # 对白语言：项目选的方言或外语(空串是默认的普通话)，和可选的列表(视频模型不自己出声时为空)。
+    spoken_language: str = ""
+    spoken_language_options: list[dict[str, str]] = Field(default_factory=list)
+    # 成片清晰度：项目选的档位(空串是默认档位)，和当前视频模型可选的档位。
+    video_resolution: str = ""
+    video_resolution_choices: list[str] = Field(default_factory=list)
     repair_supported: bool = False
     # 本轮视频预算上限(元)、每镜最多尝试次数；None 是不限。
     video_budget_cap: float | None = None

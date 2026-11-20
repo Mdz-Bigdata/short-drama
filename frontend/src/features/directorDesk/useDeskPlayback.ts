@@ -6,6 +6,8 @@ import { lastPlayheadFrame, playheadFrame, snapToFrame } from './lib/sampling';
 // Anything shorter is a slow frame, and is played in full: previs is watched for its timing, so
 // a busy stage drops frames rather than running in slow motion.
 const MAX_STEP_S = 0.25;
+/** How fast the playhead runs against the wall clock. Slow shows a move frame by frame; fast skims a long shot. */
+export const PLAYBACK_SPEEDS = [0.25, 0.5, 1, 2] as const;
 
 export interface DeskPlayback {
   /** Seconds, always on a whole frame of the shot, or on its very end. */
@@ -20,6 +22,9 @@ export interface DeskPlayback {
   seek: (time: number) => void;
   step: (frames: number) => void;
   setLoop: (loop: boolean) => void;
+  /** 1 is real time. Only how fast the shot is watched: nothing about the shot itself changes. */
+  speed: number;
+  setSpeed: (speed: number) => void;
 }
 
 /**
@@ -30,9 +35,11 @@ export function useDeskPlayback(durationS: number, fps: number, shotKey: string)
   const [clock, setClock] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [loop, setLoop] = useState(false);
+  const [speed, setSpeedState] = useState(1);
+  const setSpeed = useCallback((next: number) => setSpeedState(PLAYBACK_SPEEDS.find(item => item === next) ?? 1), []);
   // Layout effects throughout: the clock must not tick between a commit and what follows from it.
-  const limits = useRef({ durationS, fps, loop });
-  useLayoutEffect(() => { limits.current = { durationS, fps, loop }; }, [durationS, fps, loop]);
+  const limits = useRef({ durationS, fps, loop, speed });
+  useLayoutEffect(() => { limits.current = { durationS, fps, loop, speed }; }, [durationS, fps, loop, speed]);
   // The clock as it runs. `clock` only takes it when the frame on screen changes: a display
   // refreshes two to five times per frame of a shot, and each commit redraws the whole desk.
   const exact = useRef(0);
@@ -57,9 +64,9 @@ export function useDeskPlayback(durationS: number, fps: number, shotKey: string)
     let handle = 0;
     let last: number | null = null;
     const tick = (now: number) => {
-      const delta = last === null ? 0 : Math.min(MAX_STEP_S, Math.max(0, (now - last) / 1000));
+      const { durationS: end, fps: rate, loop: around, speed: pace } = limits.current;
+      const delta = last === null ? 0 : Math.min(MAX_STEP_S, Math.max(0, (now - last) / 1000)) * pace;
       last = now;
-      const { durationS: end, fps: rate, loop: around } = limits.current;
       const before = exact.current;
       const reached = before + delta >= end - 1e-6;
       const next = !reached ? before + delta : around ? (before + delta) % end : end;
@@ -91,6 +98,6 @@ export function useDeskPlayback(durationS: number, fps: number, shotKey: string)
     setTime(target === last ? durationS : target / fps);
   }, [durationS, fps, setTime]);
 
-  return useMemo(() => ({ time, frame, playing: running, loop, play, pause, stop, seek, step, setLoop }),
-    [frame, loop, pause, play, running, seek, step, stop, time]);
+  return useMemo(() => ({ time, frame, playing: running, loop, play, pause, stop, seek, step, setLoop, speed, setSpeed }),
+    [frame, loop, pause, play, running, seek, setSpeed, speed, step, stop, time]);
 }

@@ -379,6 +379,15 @@ class TaskRepository:
                 tasks.append(task)
         return tasks
 
+    def count_tasks(self) -> int:
+        """How many projects are stored (counted in the database, nothing parsed)."""
+        self._ensure_ready()
+        try:
+            with self.engine.connect() as connection:
+                return int(connection.execute(sa.select(sa.func.count()).select_from(_TASKS)).scalar() or 0)
+        except (DBAPIError, SQLAlchemyError) as exc:
+            raise self._translate(exc) from exc
+
     def task_ids_containing(self, marker: str) -> List[str]:
         """Ids of tasks whose stored payload contains ``marker`` (matched in the database, nothing parsed)."""
         self._ensure_ready()

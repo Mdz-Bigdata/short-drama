@@ -32,6 +32,8 @@ export interface ElementVariant {
   retired?: boolean;
   /** 剧本还没写到这套穿的那几集：照样登记、能出图，现在的镜头用不上。 */
   later?: boolean;
+  /** 并进这张的素的那身（同一身戏服，妆效少几样）：哪几集这样穿（空的是其余各集），图上哪几样妆效那时没有。 */
+  without?: Array<{ label: string; spans: Array<[number, number]>; off: string[] }>;
 }
 
 export function variantOf(item: { metadata?: Record<string, unknown> }): ElementVariant | null {
@@ -47,6 +49,13 @@ export function variantOf(item: { metadata?: Record<string, unknown> }): Element
       ...(raw.retired ? { retired: true } : {}),
       ...(raw.later ? { later: true } : {}),
       ...(Array.isArray(raw.starts) && raw.starts.length === 2 ? { starts: [Number(raw.starts[0]), Number(raw.starts[1])] as [number, number] } : {}),
+      ...(Array.isArray(raw.without) && raw.without.length ? {
+        without: raw.without.map(entry => ({
+          label: String(entry?.label ?? ''),
+          spans: Array.isArray(entry?.spans) ? entry.spans.map(span => [Number(span[0]), Number(span[1])] as [number, number]) : [],
+          off: Array.isArray(entry?.off) ? entry.off.map(String) : [],
+        })),
+      } : {}),
     }
     : null;
 }

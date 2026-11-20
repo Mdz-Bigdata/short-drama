@@ -14,6 +14,7 @@ import { EMPTY_FILTERS, filterElements, groupByBase, type ElementFilters } from 
 import { ElementVersionHistory } from './ElementVersionHistory';
 import { affectedShots, syncCounts } from './elementVersions';
 import { RenameAssetDialog } from './RenameAssetDialog';
+import { StorageMeter } from './StorageMeter';
 import { realPersonOf, type RealPersonPayload } from './realPerson';
 import './ElementLibraryPage.css';
 import { t } from '../../i18n';
@@ -1198,6 +1199,7 @@ export function ElementLibraryPage({
             <span className="eyebrow">ELEMENT LIBRARY</span>
             <h1>{kindMeta[kind].label}元素库</h1>
             <p>{kindMeta[kind].hint}</p>
+            <StorageMeter />
           </div>
           <Boxes size={34} className="portal-mark" />
         </header>

@@ -110,6 +110,8 @@ _OCCLUSION = _pattern("occlusion")
 _TOKENS = prompt_data.words(_WORDING, "tokens")
 _DIRECTION = _pattern("direction")
 _TURNED = _pattern("turned")
+_EXIT_SIDE = _pattern("exit_side")
+_ENTRY_SIDE = _pattern("entry_side")
 _DONE = _pattern("done")
 _PICKUP = _pattern("pickup")
 _FAST_MOVE = _pattern("fast_move")
@@ -691,20 +693,29 @@ def _diagnosis_checks(pairs: Sequence[tuple[_Shot, _Shot]], views: Sequence[_Sho
         shot_ids=_ids([b.shot_id for _, b, _ in replays]),
     ))
 
-    # ---- direction: someone walking right does not walk left without showing why
+    # ---- direction: someone walking right does not walk left without showing why,
+    # and who leaves on one side of the frame comes back in on the other
     flips = [
         (a, b) for a, b in pairs
         if a.scene_id == b.scene_id and set(a.subjects) & set(b.subjects) and _heading(a.desc) and _heading(b.desc)
         and _heading(a.desc) != _heading(b.desc) and not _TURNED.search(f"{a.desc} {b.desc}")
     ]
+    crossings = [
+        (a, b) for a, b in pairs
+        if a.scene_id == b.scene_id and set(a.subjects) & set(b.subjects) and not _TURNED.search(f"{a.desc} {b.desc}")
+        and _side_of(_EXIT_SIDE, a.desc) and _side_of(_EXIT_SIDE, a.desc) == _side_of(_ENTRY_SIDE, b.desc)
+    ]
+    direction_parts = []
+    if flips:
+        direction_parts.append(_JOINER.join(_says("shot_pair", a=a.shot_id, b=b.shot_id) for a, b in flips) + _says("screen_direction_tail"))
+    if crossings:
+        direction_parts.append(
+            _JOINER.join(_says("exit_entry_pair", a=a.shot_id, b=b.shot_id, side=_side_of(_EXIT_SIDE, a.desc)) for a, b in crossings) + _says("exit_entry_tail")
+        )
     checks.append(TransitionCheck(
-        code="transition_screen_direction", passed=not flips,
-        detail=(
-            _JOINER.join(_says("shot_pair", a=a.shot_id, b=b.shot_id) for a, b in flips)[:1800]
-            + _says("screen_direction_tail")
-            if flips else _says("screen_direction_passed")
-        ),
-        shot_ids=_ids([b.shot_id for _, b in flips]),
+        code="transition_screen_direction", passed=not flips and not crossings,
+        detail=_JOINER.join(direction_parts)[:1800] if direction_parts else _says("screen_direction_passed"),
+        shot_ids=_ids([b.shot_id for _, b in [*flips, *crossings]]),
     ))
 
     # ---- energy: two moves of the same size, and a burst has a reason
@@ -768,6 +779,12 @@ def _diagnosis_checks(pairs: Sequence[tuple[_Shot, _Shot]], views: Sequence[_Sho
             shot_ids=_ids(jump_ids),
         ))
     return checks
+
+
+def _side_of(pattern: re.Pattern[str], text: str) -> str:
+    """The side of the frame a shot says someone leaves or enters by (左 / 右), or ``""``."""
+    found = pattern.search(text)
+    return found.group(1) if found else ""
 
 
 def _heading(text: str) -> str:

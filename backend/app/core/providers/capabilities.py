@@ -29,23 +29,28 @@ class CapabilityDecision(BaseModel):
 
 class ProviderCapabilityRegistry:
     def __init__(self) -> None:
+        # One entry per family. A family with several versions (Seedance 2.0 / 2.5 / 2.5 flash) lists every
+        # version's names and the widest limits any of them takes; one request is cut to its own version.
+        families: dict[str, list] = {}
+        for profile in VIDEO_PROVIDER_PROFILES:
+            families.setdefault(profile.family, []).append(profile)
         video_profiles = {
-            profile.family: ProviderCapabilities(
-                provider=profile.family,
+            family: ProviderCapabilities(
+                provider=family,
                 operations=["video_generation", "task_polling"],
-                modes=profile.modes,
+                modes=list(dict.fromkeys(mode for profile in profiles for mode in profile.modes)),
                 limits={
-                    "images": profile.max_reference_images,
-                    "videos": profile.max_reference_videos,
-                    "audios": profile.max_reference_audios,
-                    "native_audio": profile.native_audio,
+                    "images": max(profile.max_reference_images for profile in profiles),
+                    "videos": max(profile.max_reference_videos for profile in profiles),
+                    "audios": max(profile.max_reference_audios for profile in profiles),
+                    "native_audio": any(profile.native_audio for profile in profiles),
                 },
-                aliases=profile.aliases,
-                verification_status=profile.verification_status,
-                capability_source=profile.capability_source,
-                notes=profile.notes,
+                aliases=list(dict.fromkeys(alias for profile in profiles for alias in profile.aliases)),
+                verification_status=profiles[-1].verification_status,
+                capability_source="; ".join(dict.fromkeys(profile.capability_source for profile in profiles)),
+                notes=list(dict.fromkeys(note for profile in profiles for note in profile.notes)),
             )
-            for profile in VIDEO_PROVIDER_PROFILES
+            for family, profiles in families.items()
         }
         self._providers = {
             **video_profiles,

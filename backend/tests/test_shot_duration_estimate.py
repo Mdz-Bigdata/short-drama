@@ -37,7 +37,7 @@ class PreferredRangeTests(unittest.TestCase):
         from app.core.screenwriting.durations import renderable_shot_durations
 
         for model, low, high in (
-            ("seedance2.5", 10, 30), ("doubao-seedance-2-5-pro", 10, 30),
+            ("seedance2.5", 15, 30), ("doubao-seedance-2-5-pro", 15, 30),
             ("seedance2.0", 5, 15), ("MiniMax-H3", 5, 15), ("hailuo-02", 5, 15),
         ):
             with self.subTest(model=model):
@@ -52,13 +52,75 @@ class PreferredRangeTests(unittest.TestCase):
         quiet = "镜头：特写 静 箱内静静躺着一顶傀儡戏帽。没有人头。"
         self.assertEqual(estimated_shot_seconds(quiet, "MiniMax-H3", "zh"), 5)
         self.assertEqual(estimated_shot_seconds(quiet, "seedance2.0", "zh"), 5)
-        self.assertEqual(estimated_shot_seconds(quiet, "seedance2.5", "zh"), 10)
+        self.assertEqual(estimated_shot_seconds(quiet, "seedance2.5", "zh"), 15)
 
     def test_a_shot_the_model_can_render_is_still_admitted_below_the_preferred_floor(self):
         from app.core.video_admission import request_tier
         from app.core.screenwriting.durations import renderable_shot_durations
 
         self.assertEqual(request_tier(4, renderable_shot_durations("seedance2.0")), (4, "exact"))
+
+
+class LeanTests(unittest.TestCase):
+    """Seedance 2.5 shots run 15–30 s and lean toward 30; how long each one runs is still the story's call."""
+
+    PLAN = dict(
+        episode=1, overview=None, style="", characters={}, scenes={}, props={}, default_duration=None,
+        episode_target_seconds=None, episode_outline={"story_beats": ["【钩子】a"]}, next_episode_outline=None,
+    )
+
+    @staticmethod
+    def _duration_field(prompt: str) -> str:
+        return next(line for line in prompt.splitlines() if line.startswith("- **duration_seconds**："))
+
+    def test_only_seedance_two_point_five_leans_toward_thirty_seconds(self):
+        from app.core.screenwriting.durations import shot_duration_aim
+
+        for model in ("seedance2.5", "doubao-seedance-2-5-pro", "doubao-seedance-2-5-260628", "seedance-2.5-flash"):
+            self.assertEqual(shot_duration_aim(model), 30, model)
+        for model in ("seedance2.0", "doubao-seedance-2-0-260128", "MiniMax-H3", "kling-v3", "some-new-model", ""):
+            self.assertIsNone(shot_duration_aim(model), model)
+
+    def test_the_plan_asks_for_long_shots_and_speech_only_sets_the_floor(self):
+        from app.core.screenwriting.prompts import build_script_plan_prompt
+
+        durations = supported_shot_durations("seedance2.5")
+        for kind in ("outline", "novel", "screenplay"):
+            with self.subTest(kind=kind):
+                field = self._duration_field(build_script_plan_prompt(
+                    source_text="原文", source_kind=kind, supported_durations=durations, aim_duration=30, **self.PLAN,
+                ))
+                self.assertIn("15, 16, 17", field)
+                self.assertIn("尽量往 30 秒靠", field)
+                self.assertIn("由这一镜的剧情决定", field)
+                self.assertIn("最短 15 秒", field)
+                self.assertIn("不是取值的依据", field)
+                self.assertNotIn("最接近档位", field, "speech no longer picks the shortest tier that fits")
+
+    def test_other_models_keep_the_closest_tier_rule(self):
+        from app.core.screenwriting.prompts import build_script_plan_prompt
+
+        plain = self._duration_field(build_script_plan_prompt(
+            source_text="原文", source_kind="outline", supported_durations=supported_shot_durations("seedance2.0"), **self.PLAN,
+        ))
+        self.assertIn("最接近档位", plain)
+        self.assertNotIn("尽量往", plain)
+        # A lean the legal set cannot reach is dropped rather than asking for a length the schema refuses.
+        outside = self._duration_field(build_script_plan_prompt(
+            source_text="原文", source_kind="outline", supported_durations=[5, 10, 15], aim_duration=30, **self.PLAN,
+        ))
+        self.assertNotIn("尽量往", outside)
+        # A set default wins over the lean.
+        fixed = self._duration_field(build_script_plan_prompt(
+            source_text="原文", source_kind="outline", supported_durations=durations_of(15, 30), aim_duration=30,
+            **{**self.PLAN, "default_duration": 20},
+        ))
+        self.assertIn("默认 20 秒", fixed)
+        self.assertNotIn("尽量往", fixed)
+
+
+def durations_of(low: int, high: int) -> list[int]:
+    return list(range(low, high + 1))
 
 
 class DashboardTests(unittest.TestCase):

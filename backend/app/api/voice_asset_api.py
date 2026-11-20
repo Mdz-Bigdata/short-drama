@@ -92,3 +92,21 @@ def choose_narrator(task_id: str, req: NarratorChooseRequest):
 @router.delete("/{task_id}/voices/narrator")
 def clear_narrator(task_id: str):
     return _guarded(lambda: voice_asset_service.clear_narrator(drama_api.service, task_id))
+
+
+class CharacterVoiceChooseRequest(BaseModel):
+    voice_id: str = Field(min_length=1, max_length=200)
+    # 音色库给的公开试听录音：原声视频模型拿它当这个声音的参考音频。
+    sample_url: str = Field("", max_length=1000)
+
+
+@router.put("/{task_id}/voices/characters/{name}")
+def choose_character_voice(task_id: str, name: str, req: CharacterVoiceChooseRequest):
+    """Use one of the account's library voices for a character (nothing is paid); re-dubs what they said when needed."""
+    from app.service import character_voice_choice
+
+    def work():
+        dashboard = character_voice_choice.choose(drama_api.service, task_id, name, req.voice_id, sample_url=req.sample_url)
+        return dashboard.model_dump(mode="json", by_alias=True) if dashboard is not None else None
+
+    return _guarded(work)

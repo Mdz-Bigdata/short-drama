@@ -1,0 +1,31 @@
+/* 实时用量 and 对外报价 in the finance console. */
+.usage-live__bar { align-items: center; }
+.usage-live__bar .secondary-action { display: inline-flex; align-items: center; gap: 6px; }
+.usage-live__state { display: inline-flex; align-items: center; gap: 7px; color: var(--text-muted); font-size: 0.72rem; }
+.usage-live__state i { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+.usage-live__state.is-live i { background: var(--success); animation: usage-live-beat 2s ease-in-out infinite; }
+@keyframes usage-live-beat { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .usage-live__state.is-live i { animation: none; } }
+
+.usage-chart { margin: 4px 0 6px; }
+.usage-chart .finance-heading { margin-top: 10px; }
+.usage-chart__measures { display: inline-flex; gap: 4px; }
+.usage-chart__measures button { padding: 5px 10px; border: 1px solid rgba(var(--accent-rgb), 0.22); border-radius: 999px; background: none; color: var(--text-dim); font-size: 0.7rem; cursor: pointer; }
+.usage-chart__measures button.is-active { border-color: var(--accent); color: var(--accent-ink, var(--accent)); font-weight: 700; }
+.usage-chart__readout { margin: 0 0 8px; min-height: 1.3em; color: var(--text-dim); font-size: 0.72rem; }
+/* One column per step. The slot is the whole height so a short bar is as easy to point at as a tall one. */
+.usage-chart__plot { display: flex; align-items: stretch; gap: 2px; height: 132px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.18); }
+.usage-chart__slot { flex: 1 1 0; min-width: 0; display: flex; align-items: flex-end; justify-content: center; outline: none; }
+.usage-chart__slot i { display: block; width: 100%; max-width: 24px; border-radius: 4px 4px 0 0; background: var(--accent); opacity: 0.82; }
+.usage-chart__slot.is-pointed { background: rgba(var(--accent-rgb), 0.08); }
+.usage-chart__slot.is-pointed i, .usage-chart__slot:focus-visible i { opacity: 1; }
+.usage-chart__slot:focus-visible { background: rgba(var(--accent-rgb), 0.12); }
+.usage-chart__axis { display: flex; justify-content: space-between; margin-top: 4px; color: var(--text-muted); font-size: 0.66rem; }
+
+.quote-list__note { margin: 0 0 12px; color: var(--text-dim); font-size: 0.76rem; }
+.quote-list__official { color: var(--text-muted); }
+.quote-list__sizes { display: block; color: var(--text-muted); font-size: 0.68rem; }
+
+/* Figures and model ids stay on one line; a narrow window scrolls the table sideways instead of breaking them up. */
+.usage-table th, .usage-table td { white-space: nowrap; }
+.usage-table .finance-mono { overflow-wrap: normal; }

@@ -17,7 +17,7 @@ describe('slash command composer', () => {
     const user = userEvent.setup();
     render(<Harness onSend={onSend} />);
     await user.type(screen.getByRole('textbox'), '/');
-    expect(screen.getAllByRole('option')).toHaveLength(11);
+    expect(screen.getAllByRole('option')).toHaveLength(12);
     expect(screen.getByRole('combobox').getAttribute('aria-expanded')).toBe('true');
     await user.keyboard('{Enter}');
     expect(onSend).not.toHaveBeenCalled();

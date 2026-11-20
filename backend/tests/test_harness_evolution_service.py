@@ -218,6 +218,30 @@ class StudyStageTests(unittest.TestCase):
         self.assertEqual((run["adopted"], run["applied"]), ("base1", False))
         self.assertEqual(run["delivered"], {"base1": True, "inv1": False, "dom1": False, "agg1": False})
 
+    def test_the_project_s_names_are_its_cast_and_not_the_placeholders(self):
+        task = {"assets": {
+            "3_characters": [{"name": "沈磨"}, {"name": "雷九斤"}],
+            "3_dna": {"characters": [{"name": "沈磨"}, {"name": "老账"}]},
+            "2_breakdown": {"roles": [{"name": "镖局伙计"}, {"name": ""}, "不是字典"]},
+        }}
+        self.assertEqual(harness_evolution.project_terms(task, ["主角", "邢无咎", "反派", "沈磨"]), ["邢无咎", "沈磨", "雷九斤", "老账", "镖局伙计"])
+        self.assertEqual(harness_evolution.project_terms(None), [])
+        self.assertEqual(harness_evolution.project_terms({"assets": {"3_characters": "坏数据"}}, ["主角", "反派"]), [])
+
+    def test_a_study_keeps_the_cast_out_of_what_other_projects_will_run_with(self):
+        named = "<harness><guardrails>不得让沈磨开口抢话</guardrails></harness>"
+        general = "<harness><guardrails>不得让听的人抢话</guardrails><memory>本项目里沈磨话少</memory></harness>"
+        self.script = Script(inv=[named, general], dom="<harness>KEEP_BASE</harness>", compose=general)
+        gateway = Gateway(self.script)
+        self.assertTrue(self.study(gateway, project_terms=["沈磨", "雷九斤"]))
+        run = library.runs()[-1]
+        self.assertEqual(run["stages"][0]["attempts"], 2, "the overlay that named the cast outside memory was sent back once")
+        block = harness_evolution.overlay_for(1, "古装武侠")
+        self.assertIn("不得让听的人抢话", block)
+        self.assertNotIn("沈磨", block)
+        # The names travel with a job, so a study resumed after a restart keeps the rule.
+        self.assertEqual(library.entries(1, "古装武侠")[0]["project_terms"], ["沈磨", "雷九斤"])
+
     def test_the_outline_names_what_the_fixed_prompt_already_covers(self):
         outline = harness_evolution.outline_of(SYSTEM)
         self.assertIn("黄金叙事结构", outline)
@@ -382,6 +406,7 @@ class StageFourEndToEndTests(unittest.TestCase):
 class WiringTests(unittest.TestCase):
     def test_the_text_stages_are_studied_and_run_with_their_kind_s_overlay(self):
         source = inspect.getsource(drama_service.DramaService._execute_stage_blocking)
+        self.assertEqual(source.count("project_terms=harness_evolution.project_terms(task"), 3)
         for stage in (1, 3, 8):
             self.assertIn(f"harness_evolution.overlay_for({stage}, show_cluster.name)", source)
             self.assertIn(f"task_id=task_id, stage={stage}, domain=show_cluster.name", source)
@@ -389,12 +414,16 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(source.count("harness_evolution.study_stage("), 3)
         # The storyboard table: the overlay is read once before the boards are drawn, and one scene a run is studied.
         self.assertIn("board_overlay = harness_evolution.overlay_for(4, board_domain)", source)
-        self.assertIn("evolution=(board_domain, board_overlay) if scene_id == pending_ids[0] else None", source)
+        self.assertIn("(board_domain, board_overlay)\n", source)
+        self.assertIn(
+            'if scene_id == pending_ids[0] and not prompt_preferences.personal(preferences.get("storyboard")) else None', source,
+        )
         board = inspect.getsource(drama_service.DramaService._generate_scene_board)
         self.assertEqual(board.count("harness_evolution.study_stage("), 1)
         self.assertIn("stage=4, domain=evolution[0]", board)
         self.assertIn("output=first_draft, overlay_block=evolution[1]", board)
         self.assertIn("observe=_table_problems", board)
+        self.assertIn("project_terms=harness_evolution.project_terms(task)", board)
 
     def test_every_studied_stage_has_its_work_described(self):
         for stage in sorted(harness_evolution.stages()):

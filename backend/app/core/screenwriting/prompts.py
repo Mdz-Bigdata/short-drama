@@ -26,9 +26,9 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from app.core import light_setups
-from app.core import acting, breakdown_kinds, character_block, emotion_points, literary, prompt_data, visual_wording, xianxia_lore
+from app.core import acting, art_direction, breakdown_kinds, character_block, emotion_points, literary, prompt_data, visual_wording, xianxia_lore
 from app.core.episode_shape import EpisodeShape
-from app.core import series_rhythm
+from app.core import series_rhythm, size_rhythm
 from app.core.fight_design import plan_rules_for, visual_rules_for
 from app.core.wuxia_vfx import plan_rules_for as spectacle_plan_rules
 from app.core.screenwriting import filmability, story_state
@@ -212,7 +212,7 @@ def build_overview_prompt(source_content: str, *, source_kind: SourceKind, title
     hint = _says("overview.title_hint", hint=neutralize_tags(title_hint)) if title_hint else ""
     return _says(
         "overview.body",
-        task=task, ask=literary.overview_ask(), hint=hint, language=output_language_name(),
+        task=task, ask=literary.overview_ask() + art_direction.overview_ask(), hint=hint, language=output_language_name(),
         heading=heading, tag=tag, source=neutralize_tags(source_content),
     )
 
@@ -222,7 +222,9 @@ def build_overview_prompt(source_content: str, *, source_kind: SourceKind, title
 
 _ASSET_RULES_NOVEL = _says(
     "asset_inventory.rules_novel",
-    voice_print=literary.voice_print_rule(), character_block=character_block.rules_line(), writer_rules=breakdown_kinds.WRITER_RULES,
+    voice_print=literary.voice_print_rule(), character_block=character_block.rules_line(),
+    # 美术指导：场景写出地方和人家，道具写出主人和来历(作者的成品剧本照作者写的，不加)。
+    writer_rules=f"{breakdown_kinds.WRITER_RULES}\n{art_direction.asset_rules()}",
 )
 _ASSET_RULES_SCREENPLAY = _says(
     "asset_inventory.rules_screenplay",
@@ -444,6 +446,7 @@ def build_anchored_plan_prompt(
     adaptation: Mapping[str, Any] | None = None,
     opens_series: bool = False,
     earlier_state: Sequence[str] = (),
+    audience_rules: Sequence[str] = (),
 ) -> str:
     """Split a source window into episodes anchored on verbatim ``end_anchor`` snippets.
 
@@ -496,6 +499,8 @@ def build_anchored_plan_prompt(
             literary.hook_rule(),
             # 改编成多集时集尾卡点也换着用；升级与反转的节奏不加——事件照原文，不按日程另编。
             *series_rhythm.outline_rules(max_episodes, cadence=False),
+            # 选了男频 / 女频时的写法(target_audience.json)；没选或成品剧本是空表。
+            *audience_rules,
         ]
         if opens_series:
             opening = _brief_text(adaptation, "opening")
@@ -531,6 +536,7 @@ def build_outline_plan_prompt(
     cast: Mapping[str, Any] | None = None,
     earlier_state: Sequence[str] = (),
     creation_mode: str = "drama",
+    audience_rules: Sequence[str] = (),
 ) -> str:
     """Plan a contiguous run of episodes (title / hook / beats / teaser) from the director plan.
 
@@ -575,6 +581,8 @@ def build_outline_plan_prompt(
         literary.hook_rule(),
         # 连续剧的节奏(series_rhythm.json)：集尾卡点换着用、多久升级一次、多久一次大反转。
         *series_rhythm.outline_rules(total),
+        # 目标用户与前 3 集的主线、世界观(target_audience.json)；电影短片和广告是空表。
+        *audience_rules,
         _says("outline_plan.finale", total=total),
         _says("outline_plan.no_inner_life"),
         # 剧本之初就讲清可拍性：故事节点里就不写画面文字、瞬移、形态突变(大纲质检会按这几条退回)。
@@ -712,6 +720,7 @@ def build_script_plan_prompt(
     previous_episode_outline: Mapping[str, Any] | None = None,
     sheet: Sequence[str] = (),
     landing: Sequence[str] = (),
+    aim_duration: int | None = None,
 ) -> str:
     """Stage A prompt: source (or outline) → structured shot content.
 
@@ -723,6 +732,9 @@ def build_script_plan_prompt(
     ``sheet`` is what the earlier episodes settled (``story_state.table_before``),
     ``previous_episode_outline`` how the last one ended and ``landing`` what this episode must
     leave behind; an author's finished screenplay is extracted as it stands and is told none of it.
+    ``aim_duration`` (``durations.shot_duration_aim``, Seedance 2.5: 30) has each shot lean toward
+    that length when no default is set; how long a shot runs is still the story's call, and speech
+    only sets its floor.
     """
     durations = sorted({int(value) for value in supported_durations})
     if not durations:
@@ -731,13 +743,19 @@ def build_script_plan_prompt(
         raise ValueError(_says("script_plan.default_not_supported", default=default_duration, durations=durations))
     durations_str = ", ".join(str(value) for value in durations)
     max_dur = durations[-1]
-    if default_duration is not None:
-        base_rule = _says("script_plan.duration_default", durations=durations_str, default=default_duration, max_seconds=max_dur)
-    else:
-        base_rule = _says("script_plan.duration_free", durations=durations_str, max_seconds=max_dur)
+    aim = aim_duration if default_duration is None and aim_duration in durations else None
     rate = speech_rate_units_per_second(language, speech_rate_override)
     unit = reading_unit_noun(language)
-    lower_bound_rule = _says("script_plan.duration_lower_bound", rate=rate, unit=unit, max_seconds=max_dur)
+    if default_duration is not None:
+        base_rule = _says("script_plan.duration_default", durations=durations_str, default=default_duration, max_seconds=max_dur)
+    elif aim is not None:
+        base_rule = _says("script_plan.duration_aim", durations=durations_str, aim=aim, min_seconds=durations[0])
+    else:
+        base_rule = _says("script_plan.duration_free", durations=durations_str, max_seconds=max_dur)
+    if aim is not None:
+        lower_bound_rule = _says("script_plan.duration_lower_bound_aim", rate=rate, unit=unit, max_seconds=max_dur)
+    else:
+        lower_bound_rule = _says("script_plan.duration_lower_bound", rate=rate, unit=unit, max_seconds=max_dur)
     duration_rule = _says("script_plan.sentences", first=base_rule, second=lower_bound_rule)
     target_rule = render_episode_target_rule(episode_target_seconds, episode_shape)
     if target_rule:
@@ -915,6 +933,8 @@ def build_visual_prompt(
         camera_guide=_CAMERA_GUIDE,
         audio_guide=_AMBIANCE_AUDIO_GUIDE,
         fight_block=_fight_visual_block(content_scenes),
+        # 一集的景别连成一条线(size_rhythm.json)：第 4 步各场照它起幅，连用几镜、至少几档与成片验收单同一份数。
+        size_rule=size_rhythm.writer_rule(),
     )
 
 

@@ -1,0 +1,232 @@
+{
+  "_about": "app/core/spatial_stage/blocking_diagram.py 的措辞与数值：把 3D 导演台的一场调度画成「白模站位图」时用的角色配色、镜头编号、路径序号，以及交给出图模型的站位图提示词。这里的句子是本项目自己写的；图里的数（米、度、毫米）都从调度方案算出来，不靠模型猜。 动作与特效的标注(攻击线、受力、特效占位圈、关键距离)由 app/core/spatial_stage/action_marks.py 读出，词表在 action_marks.json；legend 是图外的标注表。",
+  "palette": [
+    {
+      "hex": "#E0453A",
+      "name": "红"
+    },
+    {
+      "hex": "#3A78D6",
+      "name": "蓝"
+    },
+    {
+      "hex": "#3AA657",
+      "name": "绿"
+    },
+    {
+      "hex": "#F09A36",
+      "name": "橙"
+    },
+    {
+      "hex": "#9A5BB8",
+      "name": "紫"
+    },
+    {
+      "hex": "#20B5A0",
+      "name": "青"
+    },
+    {
+      "hex": "#E63A7A",
+      "name": "玫红"
+    },
+    {
+      "hex": "#C9B02C",
+      "name": "芥黄"
+    }
+  ],
+  "extra_color": {
+    "hex": "#B0B0B0",
+    "name": "灰"
+  },
+  "min_hue_gap_deg": 40,
+  "hue_names": [
+    [
+      20,
+      "红"
+    ],
+    [
+      45,
+      "橙"
+    ],
+    [
+      70,
+      "黄"
+    ],
+    [
+      165,
+      "绿"
+    ],
+    [
+      200,
+      "青"
+    ],
+    [
+      255,
+      "蓝"
+    ],
+    [
+      295,
+      "紫"
+    ],
+    [
+      340,
+      "玫红"
+    ],
+    [
+      361,
+      "红"
+    ]
+  ],
+  "limits": {
+    "prompt_chars": 3000,
+    "piece_lines": 8,
+    "figure_lines": 10,
+    "path_points": 12,
+    "camera_reach_m": 9.0,
+    "same_place_m": 0.08,
+    "same_yaw_deg": 4,
+    "facing_tolerance_deg": 25,
+    "near_pair_m": 8.0
+  },
+  "views": {
+    "oblique": {
+      "label": "45° 俯视",
+      "tilt_deg": 45,
+      "line": "16:9 横幅，一张完整的三维站位参考图：从斜上方约 45 度俯看整个场地，既看得清地面上的站位关系，也看得见每个人的姿态。"
+    },
+    "top": {
+      "label": "顶视",
+      "tilt_deg": 90,
+      "line": "16:9 横幅，一张完整的站位平面图：镜头在场地正上方垂直向下看，人物只见头肩，地面关系最清楚。"
+    },
+    "eye": {
+      "label": "平视",
+      "tilt_deg": 18,
+      "line": "16:9 横幅，一张完整的三维站位参考图：镜头接近人眼高度略微俯看，看得清每个人的视线高低与前后遮挡。"
+    }
+  },
+  "default_view": "oblique",
+  "camera_label": "CAM {0}",
+  "titles": {
+    "series": "站位图 {index}/{total}",
+    "one_shot": "第 {shot} 镜",
+    "shot_span": "第 {first}–{last} 镜",
+    "shot_list": "第 {shots} 镜",
+    "opening": "开场站位",
+    "closing": "收尾站位",
+    "move": "走位"
+  },
+  "facing": {
+    "toward": "面向{name}",
+    "away": "背对{name}",
+    "near": "面向画面近处（朝镜头一侧）",
+    "far": "面向画面深处",
+    "left": "面向画面左侧",
+    "right": "面向画面右侧",
+    "near_left": "面向画面左前方",
+    "near_right": "面向画面右前方",
+    "far_left": "面向画面左后方",
+    "far_right": "面向画面右后方"
+  },
+  "place": {
+    "center": "场地正中",
+    "x_left": "偏左 {m} 米",
+    "x_right": "偏右 {m} 米",
+    "z_near": "靠近处 {m} 米",
+    "z_far": "靠深处 {m} 米",
+    "joined": "{x}、{z}",
+    "origin_note": "位置都从场地中心量起：左右按画面左右，「近处」是画面下方、「深处」是画面上方。"
+  },
+  "sections": {
+    "head": "【3D 站位白模图】{title}",
+    "view": "■ 画面视角",
+    "space": "■ 场景空间",
+    "figures": "■ 人物站位与姿态",
+    "paths": "■ 走位路径",
+    "actions": "■ 动作轨迹与受力",
+    "effects": "■ 特效占位",
+    "cameras": "■ 摄影机标记",
+    "tags": "■ 角色名牌",
+    "render": "■ 光影与质感",
+    "avoid": "■ 不要出现"
+  },
+  "lines": {
+    "space": "地面是暖灰白色的平整地面，上面铺 1 米 × 1 米的浅灰网格，每 5 米一条更深的主线；场地范围约 {width} 米 × {depth} 米，对应「{location}」。只画会影响调度的东西，都用浅灰白的简单几何块占位，不画材质和装饰。",
+    "space_bare": "地面是暖灰白色的平整地面，上面铺 1 米 × 1 米的浅灰网格，每 5 米一条更深的主线；场地范围约 {width} 米 × {depth} 米。只画会影响调度的东西，都用浅灰白的简单几何块占位，不画材质和装饰。",
+    "piece": "{name}：{place}，约 {w} × {d} × {h} 米的{shape}。",
+    "piece_more": "另有 {count} 件较小的陈设，同样用浅灰几何块占位。",
+    "figure": "{name}【{color_name} {hex}】：{place}，{posture}，{facing}{relation}。",
+    "figure_start": "{name}【{color_name} {hex}】：本镜开始时在{start}，结束时在{place}，{posture}，{facing}{relation}。",
+    "relation": "；与{other}相距约 {m} 米",
+    "figure_more": "另有 {count} 位配角按方案里的位置站位，各用一种不同的纯色。",
+    "extras": "群演 {count} 人，统一中性灰 {hex}，不挂名牌，集中在{place}一带。",
+    "path": "{order}. {name}（{color_name}色虚线）：从{start}走到{end}，约 {m} 米{bends}；起点画空心圆，终点画实心圆，线上带箭头并标序号 {order}。",
+    "path_bends": "，途中拐 {count} 次",
+    "camera": "{label} 在{place}，离地约 {height} 米，对着{aim}，等效 {lens} 毫米镜头、水平视角约 {fov} 度；地面上画一台小摄影机和一个朝拍摄方向张开的半透明扇形（{cone}），{shots}。",
+    "camera_move": "{label} 这一镜做「{move}」，落幅在{place}，用一条细箭头从起幅画到落幅。",
+    "camera_far": "（实际离人物约 {m} 米，图上画在场地边缘）",
+    "aim_names": "{names}",
+    "aim_point": "场地{place}",
+    "cone_focus": "用{name}的颜色",
+    "cone_plain": "用中性灰",
+    "camera_shots": "拍第 {shots} 镜",
+    "tags": "每个有名字的角色头顶上方悬着一块白底圆角名牌，边框和文字用该角色的颜色，一根同色细线连到头顶；名牌始终正对观看者，互不重叠、不挡人物、不出画。图里只用名字、CAM、VFX 编号和米数这类短标签。{names}",
+    "tag_names": "名牌文字：{names}。",
+    "render": "人物都是圆润的几何概括体（球形头、胶囊躯干与四肢、手脚用小球和小块概括），全身一种纯色，哑光粘土质感，没有五官、头发和服装细节。中性的技术预演光：左上方一盏柔和主光加均匀补光，地面有方向统一的柔和投影。整体像专业预演软件的截图：干净、准确、信息清楚。",
+    "avoid": "写实人物、五官与表情、头发、服装纹理与饰品、卡通或 Q 版角色、戏剧化的明暗与雾气、粒子与镜头光晕、繁复的建筑与装饰、水印与签名、与方案无关的多余人物、同一个人的多个分身、大段文字、手机截图外框与上下黑边、页码。",
+    "note_saved": "按已保存的调度方案（修订 {revision}）绘制。",
+    "note_no_camera": "这一镜还没有机位，图上只画人物。",
+    "moment": "这张图只表现一个明确的时刻：每个人只出现一次，已经发生的移动用轨迹线表示，不画同一个人的多个分身。左下角放一段 1 米比例尺。",
+    "path_kind": "这条线是「{label}」。",
+    "strike": "{label}：从{attacker}出手的一侧指向{target}，{color_name}色粗点线加箭头，落点画一个小十字星作接触点；两人相距约 {m} 米{force}。",
+    "strike_force": "；{target}{reaction}，从接触点再画一根短的实线箭头指出受力方向",
+    "strike_open": "{label}：{attacker}朝自己面对的方向出手，{color_name}色粗点线加箭头画出约 {m} 米的攻击方向。",
+    "acts": "动作状态用脚边的短标签标出：{items}。",
+    "act_item": "{name}「{acts}」",
+    "distance": "{a}与{b}之间拉一条细的标尺线，线上标「约 {m} 米」。",
+    "effect": "{id} {name}：中心在{place}，用 {rings} 圈细线同心圆标出占位范围，最外圈半径约 {r} 米{flow}{inside}；圆心旁标 {id}。这是技术标记，不画真实的光效、火焰或爆炸。",
+    "effect_flow": "，由{source}发出，用一条带箭头的细线从{source}指到圆心",
+    "effect_inside": "，{names}在范围内",
+    "render_action": "人物是动作预演用的白模假人：接近真人的七头半到八头身，肩、肘、腕、髋、膝、踝的关节看得清，体块简化，全身一种纯色，哑光，没有五官、头发和服装细节；姿势要有清楚的动作线、重心和受力方向，支撑脚踩实，没有多出来的肢体、反折的关节，人与人不粘连。中性的技术预演光：左上方一盏柔和主光加均匀补光，地面有方向统一的柔和投影。整体像专业预演软件的截图：干净、准确、信息清楚。",
+    "note_text_marks": "攻击线、受击和特效占位里，有一部分是按这一镜的分镜文字读出来的，可能读偏；下面的标注表写明了每一条的来源。特效圈的半径是占位用的约数。"
+  },
+  "shapes": {
+    "box": "方块",
+    "cylinder": "圆柱",
+    "sphere": "球体",
+    "cone": "锥体",
+    "wedge": "楔形块",
+    "plane": "薄板"
+  },
+  "errors": {
+    "no_shots": "这一场还没有镜头，画不出站位图；先在导演台里排出至少一镜。",
+    "unknown_view": "没有「{view}」这种视角，可选：{views}。"
+  },
+  "legend": {
+    "figure": "角色{acts}，{posture}",
+    "acts": "（{acts}）",
+    "extras_mark": "群演",
+    "extras": "群演 {count} 人，不挂名牌",
+    "camera": "机位，等效 {lens} 毫米、水平视角约 {fov} 度，拍第 {shots} 镜",
+    "route_mark": "路径 {order}",
+    "route": "{name}的{label}，约 {m} 米",
+    "walk": "走位",
+    "span": "{start} → {end}",
+    "strike": "{attacker}打向{target}，两人相距约 {m} 米",
+    "strike_open": "{attacker}朝面对的方向出手",
+    "strike_reaction": "；{target}{reaction}",
+    "source": "（{source}）",
+    "effect": "{name}占位，半径约 {r} 米",
+    "effect_source": "，由{source}发出",
+    "effect_inside": "；{names}在范围内",
+    "distance_mark": "标尺",
+    "distance": "{a}与{b}相距约 {m} 米",
+    "ink": "深灰",
+    "columns": [
+      "标记",
+      "含义",
+      "颜色",
+      "指向位置"
+    ]
+  }
+}

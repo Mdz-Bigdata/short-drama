@@ -1,0 +1,108 @@
+.direction-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.direction-picker__head,
+.direction-picker__ask {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.direction-picker__head {
+  justify-content: space-between;
+}
+
+.direction-picker__ask {
+  align-items: center;
+}
+
+.direction-picker__ask .capsule-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+}
+
+.direction-picker__title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.direction-picker__note {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.direction-picker__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 10px;
+}
+
+.direction-picker__card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  text-align: left;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.direction-picker__card strong {
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.direction-picker__card em {
+  margin-right: 6px;
+  font-style: normal;
+  color: var(--ink);
+}
+
+.direction-picker__card:hover {
+  background: var(--surface);
+}
+
+.direction-picker__card.is-active {
+  border-color: var(--accent, #4fc3f7);
+  background: color-mix(in srgb, var(--accent, #4fc3f7) 16%, transparent);
+}
+
+.direction-picker__card:focus-visible,
+.direction-picker__nogo input:focus-visible,
+.direction-picker__nogo textarea:focus-visible {
+  outline: 2px solid var(--accent, #4fc3f7);
+  outline-offset: 2px;
+}
+
+.direction-picker__nogo {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.direction-picker__nogo input,
+.direction-picker__nogo textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  resize: vertical;
+}

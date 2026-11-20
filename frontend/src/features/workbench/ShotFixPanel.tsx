@@ -57,6 +57,81 @@ export function DraftModeToggle<W>({ taskId, enabled, locked, onWorkspace, onErr
   );
 }
 
+interface ResolutionProps<W> {
+  taskId: string;
+  /** 项目选的成片清晰度；空串是默认档位。 */
+  value: string;
+  /** 当前视频模型提供、价目表里有官方价的档位；空的就不显示这个选择。 */
+  choices: string[];
+  locked: boolean;
+  onWorkspace: (workspace: W) => void;
+  onError: (message: string) => void;
+}
+
+/** 成片清晰度：不是样片的镜头按这一档出；样片模式下「重出高清」也按这一档。 */
+export function FinalResolutionSelect<W>({ taskId, value, choices, locked, onWorkspace, onError }: ResolutionProps<W>) {
+  const [busy, setBusy] = useState(false);
+  if (!choices.length) return null;
+  const pick = async (next: string) => {
+    setBusy(true);
+    try {
+      onWorkspace(await apiRequest<W>(`/api/drama/${encodeURIComponent(taskId)}/shots/resolution`, {
+        method: 'PUT', body: JSON.stringify({ resolution: next || null }),
+      }));
+    } catch (err) {
+      onError(err instanceof Error ? err.message : t('成片清晰度保存失败'));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <label className="shot-fix__draft-toggle" title={t('成片按这一档清晰度出；清晰度越高单价越高。样片仍按 480P 出，满意后「重出高清」按这一档。已出的片不变。')}>
+      {t('成片清晰度')}
+      <select aria-label={t('成片清晰度')} value={value} disabled={locked || busy} onChange={event => { void pick(event.target.value); }}>
+        <option value="">{t('默认')}</option>
+        {choices.map(choice => <option key={choice} value={choice}>{choice.toUpperCase()}</option>)}
+      </select>
+    </label>
+  );
+}
+
+interface SpokenProps<W> {
+  taskId: string;
+  /** 项目选的对白语言；空串是默认的普通话。 */
+  value: string;
+  /** 可选的语言；视频模型不自己出声时为空，这个选择就不显示。 */
+  options: Array<{ key: string; label: string }>;
+  locked: boolean;
+  onWorkspace: (workspace: W) => void;
+  onError: (message: string) => void;
+}
+
+/** 对白语言：视频模型自己出声的片段里人物说哪种话（方言、外语）。只管之后生成的镜头。 */
+export function SpokenLanguageSelect<W>({ taskId, value, options, locked, onWorkspace, onError }: SpokenProps<W>) {
+  const [busy, setBusy] = useState(false);
+  if (options.length < 2) return null;
+  const pick = async (next: string) => {
+    setBusy(true);
+    try {
+      onWorkspace(await apiRequest<W>(`/api/drama/${encodeURIComponent(taskId)}/shots/spoken-language`, {
+        method: 'PUT', body: JSON.stringify({ language: next || null }),
+      }));
+    } catch (err) {
+      onError(err instanceof Error ? err.message : t('对白语言保存失败'));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <label className="shot-fix__draft-toggle" title={t('视频模型自己出声的片段里，人物说哪种话。方言会要求口音地道、方言词按当地读音。只管之后生成的镜头；后期配音补的台词不受它影响。')}>
+      {t('对白语言')}
+      <select aria-label={t('对白语言')} value={value} disabled={locked || busy} onChange={event => { void pick(event.target.value); }}>
+        {options.map(option => <option key={option.key || 'default'} value={option.key}>{option.label}</option>)}
+      </select>
+    </label>
+  );
+}
+
 interface LimitsProps<W> {
   taskId: string;
   budgetCap: number | null;

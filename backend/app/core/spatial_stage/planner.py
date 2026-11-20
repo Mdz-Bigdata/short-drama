@@ -38,6 +38,7 @@ from app.core.spatial_stage.models import (
     StageBackdrop,
     StageCamera,
     StageContact,
+    StageEffect,
     StageCrowd,
     StageLandmark,
     StagePlan,
@@ -243,6 +244,21 @@ def _clause_subject(pair: Sequence[str], words: Sequence[str], text: str, others
         return min(before, key=before.__getitem__)
     after = [name for name in pair if re.search(pattern + gap + re.escape(name), text)]
     return next(name for name in pair if name != after[0]) if len(after) == 1 else None
+
+
+def _side_by_side(pair: Sequence[str], others: Sequence[str], text: str) -> bool:
+    """Whether the scene's words put the two principals shoulder to shoulder.
+
+    A clause with a side-by-side word counts when it names one of the ``pair`` ("沈砚与柳烟并肩走在长街上") or
+    nobody of the cast ("两人并肩而行"). One that names only ``others`` is about them: "卫长老和何管事并肩站在
+    旗杆下" leaves the pair where the rest of the scene puts it (a kneeling one stays a kneeling one's distance away).
+    """
+    for clause in re.split("[" + _CLAUSE_STOPS + "]", text):
+        if not any(word in clause for word in _SIDE_BY_SIDE):
+            continue
+        if any(name in clause for name in pair) or not any(name and name in clause for name in others):
+            return True
+    return False
 
 
 def _pair_shape(first: str, second: str, others: Sequence[str], text: str) -> tuple[_PairShape, str] | None:
@@ -660,6 +676,20 @@ def _kept_contacts(plan: StagePlan | None, specs: Sequence[ShotSpec]) -> list[St
     return kept
 
 
+def _kept_effects(plan: StagePlan | None, specs: Sequence[ShotSpec], names: Collection[str]) -> list[StageEffect]:
+    """A person's effect markers of an earlier plan, in the shots this one still has; a sender no longer cast is dropped from it."""
+    if plan is None:
+        return []
+    known = {spec.shot_id for spec in specs}
+    kept: list[StageEffect] = []
+    for effect in plan.effects:
+        shots = [shot_id for shot_id in effect.shot_ids if shot_id in known]
+        if effect.shot_ids and not shots:
+            continue
+        kept.append(effect.model_copy(update={"shot_ids": shots, "source": effect.source if effect.source in names else ""}))
+    return kept
+
+
 def _clear_the_lenses(
     plan: StagePlan, movable: Collection[str], normal: geo.Vec2 = (0.0, 1.0),
     reshoot: Callable[[StagePlan, Collection[str]], StagePlan] | None = None,
@@ -752,7 +782,6 @@ def _stage_actors(
 ) -> tuple[list[StageActor], StageAxis, str, list[StageCrowd]]:
     cast = [name for name in dict.fromkeys(name.strip() for name in brief.characters) if name not in EMPTY_CAST]
     separation, mood = _separation(brief.text)
-    side_by_side = any(word in brief.text for word in _SIDE_BY_SIDE)
     normal: geo.Vec2 = (0.0, 1.0)
     actors: list[StageActor] = []
     axis = StageAxis()
@@ -774,7 +803,8 @@ def _stage_actors(
         # A promise made in an earlier scene outranks the default "first named stands screen left".
         if side_memory.get(first) == "right" or (side_memory.get(second) == "left" and side_memory.get(first) != "left"):
             first, second = second, first
-        shaped = None if group else _pair_shape(first, second, [name for name in cast if name not in (first, second)], brief.text)
+        company = [name for name in cast if name not in (first, second)]
+        shaped = None if group else _pair_shape(first, second, company, brief.text)
         heading: float | None = None   # the yaw both share; None when each is turned by where the other stands
         if group == "ring":
             # Neighbours on the half circle stand ``spacing`` apart; the pair closes its two ends.
@@ -784,7 +814,7 @@ def _stage_actors(
         elif shaped is not None:
             mood = shaped[0].label
             separation = shaped[0].apart_m if shaped[0].apart_m is not None else math.hypot(shaped[0].back_m, shaped[0].side_m)
-        elif side_by_side:
+        elif _side_by_side((first, second), company, brief.text):
             separation, heading = _SIDE_BY_SIDE_M, 0.0
         left_mark, right_mark = geo.pair_positions((0.0, 0.0), (1.0, 0.0), separation)
         marks = {first: left_mark, second: right_mark}
@@ -1162,6 +1192,7 @@ def build_plan(
         # A crowd array is carried with its members: an actor that names a crowd the plan does not
         # hold is not a valid stage, so dropping the record would refuse the re-plan outright.
         actors=actors, crowds=kept_crowds, landmarks=landmarks, axis=axis, backdrop=backdrop, contacts=contacts,
+        effects=_kept_effects(blocking_from, specs, known),
         planner=blocking_from.planner if blocking_from is not None else "rules",
         planner_note=blocking_from.planner_note if blocking_from is not None else "",
         cameras=cameras, shots=shots,

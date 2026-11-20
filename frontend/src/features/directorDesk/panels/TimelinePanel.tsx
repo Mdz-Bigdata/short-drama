@@ -8,7 +8,7 @@ import type { EditRequest, SelectionRef } from '../deskTypes';
 import {
   AMPLITUDE_RANGE, ANGLE_RANGE, CAMERA_MOVES, DEFAULT_MOVE_ANGLE, MOVE_EASINGS, SIDE_LABELS, cameraMove, type MoveSide,
 } from '../lib/cameraMoves';
-import { HUMANOID_CLIPS, humanoidClip } from '../lib/humanoidClips';
+import { HUMANOID_CLIP_GROUPS, humanoidClip } from '../lib/humanoidClips';
 import { FRAME_RATES, cameraKeysOf, frameCount, frameOf, lastPlayheadFrame, sampleActor, sampleShot, timeOfFrame, timelineOf } from '../lib/sampling';
 import {
   FOLLOW_PRESETS, actionClipsOf, addAction, addCut, addFollow, bakeFollow, clipsOperation, cutsOperation, figureForAction, followOperation,
@@ -17,7 +17,7 @@ import {
   DURATION_RANGE, EASING_LABELS, MAX_TRACK_KEYS, actorKeyAt, cameraKeyAt, durationRefusal, keyIndexAtFrame, keysOf, removeKey, retimeKey,
   trackKey, trackLabel, trackOperation, upsertKey, type TimelineKey, type TrackRef,
 } from '../lib/timelineEdits';
-import type { DeskPlayback } from '../useDeskPlayback';
+import { PLAYBACK_SPEEDS, type DeskPlayback } from '../useDeskPlayback';
 import { ClipLane } from './ClipLane';
 import { DraftInput } from './fields';
 import { typing } from './typing';
@@ -375,6 +375,9 @@ export function TimelinePanel({ plan, shot, playback, selection, editable, colla
           </button>
           <button type="button" className="desk-icon" aria-label="下一帧" title="下一帧" onClick={() => playback.step(1)}><SkipForward aria-hidden="true" /></button>
           <button type="button" className={`desk-icon ${playback.loop ? 'is-active' : ''}`} aria-label="循环播放" title="循环播放" aria-pressed={playback.loop} onClick={() => playback.setLoop(!playback.loop)}><Repeat aria-hidden="true" /></button>
+          <select className="desk-timeline__speed" aria-label="播放速度" title="播放速度：只改看的快慢，不改镜头本身" value={playback.speed} onChange={event => playback.setSpeed(Number(event.target.value))}>
+            {PLAYBACK_SPEEDS.map(speed => <option key={speed} value={speed}>{speed}×</option>)}
+          </select>
           <output className="desk-timeline__timecode" aria-label="时间码">{timecode(playback.frame, fps)}</output>
           <small>第 {Math.min(playback.frame + 1, frames)} / {frames} 帧</small>
         </div>
@@ -523,7 +526,9 @@ export function TimelinePanel({ plan, shot, playback, selection, editable, colla
                         onChange={event => { if (event.target.value) dropAction(track.name, event.target.value); }}
                       >
                         <option value="">+ 动作</option>
-                        {HUMANOID_CLIPS.map(clip => <option key={clip.id} value={clip.id}>{clip.name}</option>)}
+                        {HUMANOID_CLIP_GROUPS.map(({ group, clips }) => (
+                          <optgroup key={group} label={group}>{clips.map(clip => <option key={clip.id} value={clip.id}>{clip.name}</option>)}</optgroup>
+                        ))}
                       </select>
                     </span>
                     <ClipLane
@@ -559,7 +564,9 @@ export function TimelinePanel({ plan, shot, playback, selection, editable, colla
             <span>{pickedAction.start.toFixed(2)}–{pickedAction.end.toFixed(2)} 秒</span>
             <label className="desk-timeline__field"><span>动作</span>
               <select aria-label="片段动作" value={pickedAction.clip} disabled={busy} onChange={event => writeClips('更换动作', pickedBlock.name, actionClipsOf(timeline, pickedBlock.name).map(clip => (clip.id === pickedAction.id ? { ...clip, clip: event.target.value } : clip)))}>
-                {HUMANOID_CLIPS.map(clip => <option key={clip.id} value={clip.id}>{clip.name}</option>)}
+                {HUMANOID_CLIP_GROUPS.map(({ group, clips }) => (
+                          <optgroup key={group} label={group}>{clips.map(clip => <option key={clip.id} value={clip.id}>{clip.name}</option>)}</optgroup>
+                        ))}
               </select>
             </label>
             <label className="desk-timeline__field"><span>速度</span>

@@ -5,9 +5,15 @@ import {
   X, ArrowUp, Folder, ArrowRight, User,
   Upload, Bot, BookOpen, Plus, Zap, Clapperboard
 } from 'lucide-react';
-import { CONTENT_LANGUAGE_OPTIONS, CREATION_MODE_OPTIONS, EMPTY_AD_BRIEF, NARRATION_DELIVERY_OPTIONS, normalizeVideoReferenceMode, type AdBrief, type ContentLanguage, type CreationMode, type NarrationDelivery, type TaskConfig, type TaskResponse, type TaskSummary, type StageProgress } from './types';
+import { CONTENT_LANGUAGE_OPTIONS, CREATION_MODE_OPTIONS, EMPTY_AD_BRIEF, EMPTY_TARGET_AUDIENCE, NARRATION_DELIVERY_OPTIONS, normalizeVideoReferenceMode, type AdBrief, type ContentLanguage, type CreationMode, type NarrationDelivery, type TargetAudience, type TaskConfig, type TaskResponse, type TaskSummary, type StageProgress } from './types';
 import { CapabilityCenter } from './features/platform/CapabilityCenter';
 import { PoetrySourcePicker } from './features/writer/PoetrySourcePicker';
+import { TargetAudiencePicker } from './features/writer/TargetAudiencePicker';
+import { EpisodeCountSlider, ScriptStructurePicker } from './features/writer/ScriptStructurePicker';
+import { StoryDirectionPicker, type StoryDirection } from './features/writer/StoryDirectionPicker';
+import { SerialBriefPicker } from './features/writer/SerialBriefPicker';
+import { EMPTY_SERIAL_BRIEF, serialBriefPayload, type SerialBrief } from './features/writer/serialBrief';
+import { noGoLines } from './features/writer/storyNoGo';
 import { tabOfKind, type ElementKind } from './features/elements/elementTypes';
 import { NotificationBell } from './features/account/NotificationBell';
 import { hasPermission } from './features/account/permissions';
@@ -17,11 +23,14 @@ import type { BreakdownSceneRef, SceneBoardStatus, StoryboardProgress, Storyboar
 import { storyboardActionFrom, type StoryboardViewAction } from './features/storyboard/storyboardActions';
 import { chatCardsFrom, type ChatCard } from './features/workbench/chatCards';
 import { ChatCardView } from './features/workbench/ChatCardView';
+import { ThinkingDisclosure } from './features/workbench/ThinkingDisclosure';
 import { downloadStoryboardScene } from './features/storyboard/storyboardDownload';
 import { AgentStageTabs } from './features/workbench/AgentStageTabs';
 import { getScriptDisplayName } from './features/workbench/scriptTitle';
 import { VideoReferenceModeSelect } from './features/workbench/VideoReferenceModeSelect';
 import { NOVARA_AGENT_NAME, PRODUCT_TITLE } from './features/workbench/agentBrand';
+import { brandText } from './appearance/appearance';
+import { BrandLogo } from './appearance/BrandLogo';
 import {
   DEFAULT_DIRECTOR_STYLE, DEFAULT_SHOT_STYLE, DIRECTOR_STYLES, FALLBACK_STYLE_PACK, FALLBACK_STYLE_PACKS,
   SHOT_STYLES, parseStylePacks, type StylePackOption,
@@ -110,10 +119,6 @@ const LOBBY_IDLE_POLL_MS = 15000;
 const EPISODE_LIST_POLL_MS = 8000;
 const EPISODE_PRODUCE_RECHECK_MS = 5000;
 
-// 下拉常用档位：小体量逐集递增，长剧按 10 集一档；实际可选范围由服务端下发的集数上下限裁剪
-const EPISODE_COUNT_PRESETS = [
-  1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 24, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150,
-];
 // 工作流内部共 8 个阶段(重跑命令按它校验)；给人看的是 7 步，第 6、7 阶段合成「剪辑合成师」一步。
 const WORKFLOW_STAGE_COUNT = 8;
 
@@ -284,12 +289,13 @@ function episodeOfClip(clip: { episode?: unknown; scene_id?: unknown }): number 
 
 /**
  * 重跑分镜前要不要先问一句、问什么；没有会丢的东西就返回 null。
- * 服务端会清掉后面阶段的产物，逐集制作时只清当前集的片段、音频与剪辑，别的集和各集成片都留着。
+ * 服务端会清掉后面阶段的产物，分集制作时只清这一步要做的那一集的片段、音频与剪辑，别的集和各集成片都留着。
  */
 function storyboardRerunWarning(assets: Record<string, unknown>): string | null {
   const holds = (pattern: RegExp) => Object.entries(assets).some(([key, value]) => Boolean(value) && pattern.test(key));
   const records = (assets['episode_cycle'] as { episodes?: Record<string, { audio?: unknown; timeline?: unknown; film?: { final_video_url?: string | null } }> } | undefined)?.episodes;
-  const listed = ((assets['4_progress'] as StoryboardProgress | undefined)?.episodes ?? [])
+  const progressEpisodes = (assets['4_progress'] as StoryboardProgress | undefined)?.episodes ?? [];
+  const listed = progressEpisodes
     .map(episode => episode.number)
     .filter((number): number is number => Number.isInteger(number));
   const numbers = [...new Set(listed.length
@@ -301,8 +307,10 @@ function storyboardRerunWarning(assets: Record<string, unknown>): string | null 
       ? tr('重跑分镜阶段只补画未完成或已退回的场次，已完成的分镜页会保留；但第 5 阶段及之后已生成的视频、音频与成片会被清除。继续吗？')
       : null;
   }
-  // 当前集：第一个还没有成片的集。
-  const current = numbers.find(number => !records?.[String(number)]?.film?.final_video_url);
+  // 分镜这一步要做的那一集(与服务端 episode_cycle.episode_for 同一规则)：还没出成片的集里第一个分镜没做完的，都做完了就是其中第一集。
+  const open = numbers.filter(number => !records?.[String(number)]?.film?.final_video_url);
+  const boarded = new Set(progressEpisodes.filter(episode => episode.complete).map(episode => episode.number));
+  const current = open.find(number => !boarded.has(number)) ?? open[0];
   if (current !== undefined) {
     const clips = Array.isArray(assets['5']) ? assets['5'] as Array<{ episode?: unknown; scene_id?: unknown } | null> : [];
     const record = records?.[String(current)];
@@ -675,9 +683,13 @@ export default function App() {
   const [newProjectCreationMode, setNewProjectCreationMode] = useState<CreationMode>('drama');
   const [newProjectAdBrief, setNewProjectAdBrief] = useState<AdBrief>(EMPTY_AD_BRIEF);
   const [newProjectContentLanguage, setNewProjectContentLanguage] = useState<ContentLanguage>('zh');
+  const [newProjectAudience, setNewProjectAudience] = useState<TargetAudience>(EMPTY_TARGET_AUDIENCE); // 男频 / 女频与年龄段，只对连续剧生效
   const [newProjectOneClick, setNewProjectOneClick] = useState<boolean>(true); // 成片方式：true=一键成片 / false=分步引导
   const [newProjectEpisodes, setNewProjectEpisodes] = useState<number>(DEFAULT_CLIENT_CONFIG.episodeCount.default); // 一次性生成的剧本集数
-  const [newProjectEpisodesCustom, setNewProjectEpisodesCustom] = useState<boolean>(false); // 集数改为手动填写
+  const [newProjectStructure, setNewProjectStructure] = useState<string>(''); // 剧本结构，空值由总导演定
+  const [newProjectDirection, setNewProjectDirection] = useState<StoryDirection | null>(null); // 立项前挑中的故事方向，空值由总导演定
+  const [newProjectNoGo, setNewProjectNoGo] = useState<string>(''); // 创作禁区，一行一条
+  const [newProjectBrief, setNewProjectBrief] = useState<SerialBrief>(EMPTY_SERIAL_BRIEF); // 连载立项：题材、基调、结局、出海、付费卡点
   const [episodeState, setEpisodeState] = useState<EpisodeCollectionState>({
     taskId: '',
     sourceHash: '',
@@ -1583,6 +1595,14 @@ export default function App() {
       creationMode: newProjectCreationMode,
       contentLanguage: newProjectContentLanguage,
       ...(newProjectCreationMode === 'ad' ? { adBrief: newProjectAdBrief } : {}),
+      ...(newProjectCreationMode === 'drama' || newProjectCreationMode === 'narration' ? { targetAudience: newProjectAudience } : {}),
+      // 剧本结构：广告不用。
+      ...(newProjectCreationMode !== 'ad' && newProjectStructure ? { scriptStructure: newProjectStructure } : {}),
+      // 故事方向与创作禁区：广告不用。
+      ...(newProjectCreationMode !== 'ad' && newProjectDirection ? { storyDirection: newProjectDirection } : {}),
+      ...(newProjectCreationMode !== 'ad' && noGoLines(newProjectNoGo).length ? { storyNoGo: noGoLines(newProjectNoGo) } : {}),
+      // 连载立项：只有连续剧(短剧 / 解说)带。
+      ...(newProjectCreationMode === 'drama' || newProjectCreationMode === 'narration' ? serialBriefPayload(newProjectBrief) : {}),
       poetrySources: config.poetrySources ?? [],
       // 一次性生成的剧本集数 (视频按集逐集制作)；电影短片只有一集。
       episodeCount: newProjectCreationMode === 'film' ? 1 : clampEpisodeCount(newProjectEpisodes, clientConfig.episodeCount),
@@ -1604,6 +1624,9 @@ export default function App() {
         await startCreatedWorkflow(data, newProjectOneClick);
         fetchHistoryTasks();
         setNewProjectName(''); // 清空输入
+        setNewProjectDirection(null);
+        setNewProjectNoGo('');
+        setNewProjectBrief(EMPTY_SERIAL_BRIEF);
       } else {
         const err = await res.json().catch(() => null);
         reopenCreateModal(typeof err?.detail === 'string' && err.detail ? err.detail : tr('创建项目失败'));
@@ -1685,10 +1708,11 @@ export default function App() {
         }}>
           {/* 系统头部 Logo 与名称 */}
           <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+            <BrandLogo className="login-brand-logo" />
             <h2 style={{ fontSize: '1.8rem', fontWeight: 700, letterSpacing: '2px', background: 'linear-gradient(135deg, var(--accent), var(--accent-2))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: '8px' }}>
               {PRODUCT_TITLE}
             </h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{tr('工业级 AI 短剧多智能体协同成片平台')}</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{brandText('login_tagline', tr('工业级 AI 短剧多智能体协同成片平台'))}</p>
             <div style={{ marginTop: '10px' }}><LanguageSwitcher /></div>
           </div>
 
@@ -1910,9 +1934,9 @@ export default function App() {
           {/* 顶栏：左侧品牌，右侧通知、积分与账号 */}
           <header className="lobby-header">
             <div className="lobby-brand">
-              <span className="lobby-brand__mark"><Clapperboard size={16} aria-hidden="true" /></span>
+              <span className="lobby-brand__mark"><BrandLogo fallback={<Clapperboard size={16} aria-hidden="true" />} /></span>
               <span className="lobby-brand__name">{PRODUCT_TITLE}</span>
-              <span className="lobby-brand__tag">{tr('AI 短剧协同成片')}</span>
+              <span className="lobby-brand__tag">{brandText('lobby_tagline', tr('AI 短剧协同成片'))}</span>
             </div>
             <div className="lobby-header__actions">
             <NotificationBell onOpenBilling={() => setActivePortal('billing')} onOpenFinance={() => setActivePortal('finance')} />
@@ -2496,6 +2520,16 @@ export default function App() {
                             />
                           </label>
                         ))}
+                        <label
+                          style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-muted)' }}
+                          title={tr('先讲一场有人物、有麻烦的小戏，产品在戏里自然出场，结尾落在产品近景上。不勾就是开场抓人、产品演示、行动号召的普通广告短片。')}
+                        >
+                          <input
+                            type="checkbox" checked={newProjectAdBrief.format === 'story'}
+                            onChange={e => setNewProjectAdBrief(current => ({ ...current, format: e.target.checked ? 'story' : '' }))}
+                          />
+                          {tr('剧情带货（先讲一场小戏，产品在戏里自然出场）')}
+                        </label>
                       </div>
                     )}
                     <div>
@@ -2518,7 +2552,14 @@ export default function App() {
                   />
                 </div>
 
-                {/* 成片方式 + 集数 (item 3 两种成片方式 / item 6 选择指定集数) */}
+                {/* 目标用户：只对连续剧（短剧 / 解说）生效，电影短片和广告不显示 */}
+                {(newProjectCreationMode === 'drama' || newProjectCreationMode === 'narration') && (
+                  <div style={{ marginTop: '14px' }}>
+                    <TargetAudiencePicker value={newProjectAudience} onChange={setNewProjectAudience} />
+                  </div>
+                )}
+
+                {/* 成片方式 (item 3 两种成片方式) */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginTop: '14px' }}>
                   <div>
                     <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>{tr('成片方式')}</label>
@@ -2531,42 +2572,40 @@ export default function App() {
                       <option value="guided">{tr('🧭 一步一步引导 (逐步生成，可对话微调)')}</option>
                     </select>
                   </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>{tr('剧本集数 (一次生成，视频逐集制作)')}</label>
-                    <select
-                      // 电影短片只有一集（后端也固定为 1）：集数不让选。
-                      disabled={newProjectCreationMode === 'film'}
-                      value={newProjectCreationMode === 'film' ? 'film' : newProjectEpisodesCustom ? 'custom' : String(newProjectEpisodes)}
-                      onChange={e => {
-                        if (e.target.value === 'custom') {
-                          setNewProjectEpisodesCustom(true); // 切到手动填写，保留当前集数作为初始值
-                          return;
-                        }
-                        setNewProjectEpisodesCustom(false);
-                        setNewProjectEpisodes(parseInt(e.target.value, 10));
+                </div>
+
+                {/* 集数(滑块 + 精确值)与剧本结构：一次生成剧本，视频逐集制作；电影短片只有 1 集。 */}
+                <div style={{ display: 'grid', gap: '16px', marginTop: '18px' }}>
+                  <EpisodeCountSlider
+                    value={newProjectEpisodes}
+                    min={clientConfig.episodeCount.min}
+                    max={clientConfig.episodeCount.max}
+                    disabled={newProjectCreationMode === 'film'}
+                    onChange={setNewProjectEpisodes}
+                  />
+                  {newProjectCreationMode !== 'ad' && (
+                    <ScriptStructurePicker value={newProjectStructure} onChange={setNewProjectStructure} />
+                  )}
+                  {(newProjectCreationMode === 'drama' || newProjectCreationMode === 'narration') && (
+                    <SerialBriefPicker
+                      value={newProjectBrief} onChange={setNewProjectBrief}
+                      episodeCount={clampEpisodeCount(newProjectEpisodes, clientConfig.episodeCount)}
+                    />
+                  )}
+                  {newProjectCreationMode !== 'ad' && (
+                    <StoryDirectionPicker
+                      request={{
+                        idea: newProjectName,
+                        creationMode: newProjectCreationMode,
+                        episodeCount: newProjectCreationMode === 'film' ? 1 : clampEpisodeCount(newProjectEpisodes, clientConfig.episodeCount),
+                        ...(newProjectCreationMode === 'drama' || newProjectCreationMode === 'narration' ? { targetAudience: newProjectAudience } : {}),
+                        ...(newProjectStructure ? { scriptStructure: newProjectStructure } : {}),
+                        llmModel: config.llmModel,
                       }}
-                      style={{ width: '100%', padding: '10px', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem' }}
-                    >
-                      {EPISODE_COUNT_PRESETS
-                        .filter(n => n >= clientConfig.episodeCount.min && n <= clientConfig.episodeCount.max)
-                        .map(n => (
-                          <option key={n} value={n}>{tr('{0} 集', [n])}</option>
-                        ))}
-                      <option value="custom">{tr('✏️ 手动填写集数…')}</option>
-                      {newProjectCreationMode === 'film' && <option value="film">{tr('电影短片只有 1 集')}</option>}
-                    </select>
-                    {newProjectEpisodesCustom && newProjectCreationMode !== 'film' && (
-                      <input
-                        type="number"
-                        min={clientConfig.episodeCount.min}
-                        max={clientConfig.episodeCount.max}
-                        value={newProjectEpisodes}
-                        onChange={e => setNewProjectEpisodes(clampEpisodeCount(e.target.value, clientConfig.episodeCount))}
-                        placeholder={tr('{0}-{1} 集', [clientConfig.episodeCount.min, clientConfig.episodeCount.max])}
-                        style={{ width: '100%', marginTop: '8px', padding: '10px', background: 'var(--surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--ink)', fontSize: '0.85rem' }}
-                      />
-                    )}
-                  </div>
+                      value={newProjectDirection} onChange={setNewProjectDirection}
+                      noGo={newProjectNoGo} onNoGoChange={setNewProjectNoGo} onIdea={setNewProjectName}
+                    />
+                  )}
                 </div>
 
                 {createError && <div className="error-banner" role="alert" style={{ margin: '18px 0 0' }}>{createError}</div>}
@@ -2898,6 +2937,7 @@ export default function App() {
                         <span className="chat-agent-badge">{NOVARA_AGENT_NAME}</span>
                       </div>
                       
+                      <ThinkingDisclosure text={msg.reasoning} />
                       <div style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</div>
                       {msg.cards?.map((card: ChatCard, index: number) => (
                         <ChatCardView
@@ -3047,7 +3087,17 @@ export default function App() {
 
       {taskId && projectOverlay && (
         <Suspense fallback={null}>
-          {projectOverlay === 'canvas' && <CanvasWorkspace taskId={taskId} onClose={() => setProjectOverlay(null)} />}
+          {projectOverlay === 'canvas' && (
+            <CanvasWorkspace
+              taskId={taskId} onClose={() => setProjectOverlay(null)}
+              onOpenShot={shot => {
+                // 画布上双击绑定了镜头的节点：收起画布，回到分镜那一场、那一镜。
+                setProjectOverlay(null);
+                setActiveTabStage(4);
+                setStoryboardViewAction({ sceneId: shot.sceneId, shotId: shot.shotId, view: 'board', nonce: Date.now() });
+              }}
+            />
+          )}
           {projectOverlay === 'interactive' && <InteractiveStoryWorkspace taskId={taskId} onClose={() => setProjectOverlay(null)} onOpenCanvas={() => setProjectOverlay('canvas')} />}
           {projectOverlay === 'tasks' && <TaskCenter taskId={taskId} onClose={() => setProjectOverlay(null)} />}
           {projectOverlay === 'memory' && <ProjectMemory taskId={taskId} onClose={() => setProjectOverlay(null)} />}

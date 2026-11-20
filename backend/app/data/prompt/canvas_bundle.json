@@ -1,0 +1,22 @@
+{
+  "_note": "画布连同素材打包导出、导入(app/service/canvas_bundle.py)。导出：画布 JSON(各节点当前的结果写进节点里)加上它用到的本服务媒体文件，打成一个 zip；元素库的私有图片(/media/elements)不打包，外站链接原样留着。导入：zip 里的每个媒体文件都按画布上传的规矩重新查验、另存一份，画布 JSON 里的引用换成新地址，再交给画布像普通导入一样放到现有内容右边。limits：max_files 打包的媒体文件数上限；max_total_bytes 打包总大小上限；max_manifest_bytes 画布 JSON 的大小上限；max_entry_bytes 导入时单个媒体文件的上限(与画布上传视频的上限一致)；max_upload_bytes 导入时接收的 zip 大小上限。能力参考 NovaNova Studio 的「画布 ZIP 导出导入(清单 + 媒体)」，实现与措辞是本项目自己的。",
+  "limits": {
+    "max_files": 400,
+    "max_total_bytes": 1073741824,
+    "max_manifest_bytes": 20971520,
+    "max_upload_bytes": 1073741824,
+    "max_entry_bytes": 209715200
+  },
+  "manifest_name": "canvas.json",
+  "file_name": "{title}.novara-canvas.zip",
+  "default_title": "画布",
+  "no_canvas": "这块画布还没有内容，没有可导出的",
+  "too_many": "这块画布用到的媒体文件超过 {limit} 个，打包不了：先只导出画布（素材保留为链接）",
+  "too_big": "这块画布的媒体文件合计超过 {limit} MB，打包不了：先只导出画布（素材保留为链接）",
+  "not_zip": "导入失败：这不是画布素材包（zip）",
+  "upload_too_big": "导入失败：素材包超过 {limit} MB",
+  "no_manifest": "导入失败：素材包里没有画布文件 canvas.json",
+  "bad_manifest": "导入失败：素材包里的画布文件读不出来",
+  "bad_entry": "导入失败：素材包里有不认识的文件「{name}」",
+  "entry_too_big": "导入失败：素材包里的「{name}」超过 {limit} MB"
+}

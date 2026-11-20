@@ -99,6 +99,22 @@ class WriterDashboardCompilerTests(unittest.TestCase):
         self.assertIn("林夏", [role.name for role in dashboard.roles])
         self.assertTrue(dashboard.timeline)
 
+    def test_reads_the_platform_template_scene_headings_and_cast_lines(self):
+        from app.core.writer_dashboard import fallback_scenes_from_script
+
+        scenes = fallback_scenes_from_script(
+            "第一集\n1-1 乱葬岗 夜 外\n出场人物：女主甲，男主乙，胖子\n【字幕：乱葬岗】\n△胖子铲着土。\n胖子（打哈欠）：三更天了。\n"
+            "1-2 棺材内 夜 内\n出场人物：女主甲\n女主甲（困惑）：这是哪里？\n（本集完）\n"
+            "2-1 乱葬岗 夜 外\n出场人物：女主甲，胖子\n△棺盖被一脚踹开。\n胖子（惊叫）：诈尸了！\n"
+        )
+
+        self.assertEqual([scene["scene_id"] for scene in scenes], ["E1S01", "E1S02", "E2S01"])
+        self.assertTrue(scenes[0]["content"].startswith("乱葬岗 夜 外"))
+        self.assertNotIn("出场人物", scenes[0]["content"])
+        # The cast line names who is on screen, speaking or not; labels never become people.
+        self.assertEqual(scenes[0]["characters"], ["女主甲", "男主乙", "胖子"])
+        self.assertEqual(scenes[2]["characters"], ["女主甲", "胖子"])
+
     def test_infers_labeled_character_relationships_from_scene_cooccurrence(self):
         task = _task()
         task["assets"].pop("2_breakdown")
@@ -305,11 +321,13 @@ class WriterDashboardApiTests(unittest.TestCase):
         task["assets"].pop("4_storyboard", None)
         self.repo.save_task("writer-task-1", task)
 
-        with patch.object(self.service, "execute_stage", new_callable=AsyncMock):
+        with patch.object(self.service, "execute_stage", new_callable=AsyncMock), \
+                patch.object(self.service, "execute_all_stages", new_callable=AsyncMock):
             response = asyncio.run(self.service.assistant_message("writer-task-1", "继续"))
 
         self.assertEqual(response["stage"], 4)
-        self.assertEqual(response["action"], "run_stage")
+        # 「继续」从第一个未完成的步骤自动往下做，不再只做一步。
+        self.assertEqual(response["action"], "run_all")
 
         stored = self.repo.get_task("writer-task-1")
         self.assertEqual(stored["current_stage"], 4)

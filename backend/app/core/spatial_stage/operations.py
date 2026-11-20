@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from app.core import prompt_data
+from app.core.spatial_stage import action_marks
 from app.core.spatial_stage import axis as axis_rules
 from app.core.spatial_stage import camera_moves, crowds
 from app.core.spatial_stage import contacts as contact_rules
@@ -23,6 +24,7 @@ from app.core.spatial_stage.coverage import ShotSpec, fit_move, named_size, solv
 from app.core.spatial_stage.models import (
     MAX_ACTORS,
     MAX_CONTACTS,
+    MAX_EFFECTS,
     MAX_LANDMARKS,
     MAX_POSE_JOINTS,
     MAX_STAGE_PARTS,
@@ -35,6 +37,7 @@ from app.core.spatial_stage.models import (
     StageBackdrop,
     StageCamera,
     StageContact,
+    StageEffect,
     StageCrowd,
     StageLandmark,
     StagePlan,
@@ -185,6 +188,7 @@ class _Editor:
         self.backdrop: StageBackdrop = plan.backdrop
         self.formation = plan.formation
         self.contacts: list[StageContact] = list(plan.contacts)
+        self.effects: list[StageEffect] = list(plan.effects)
         self.plan = plan
 
     # ---- lookups
@@ -266,8 +270,20 @@ class _Editor:
         return refresh(self.plan.model_copy(update={
             "actors": self.actors, "landmarks": self.landmarks, "cameras": self.cameras, "shots": self.shots,
             "crowds": self.crowds, "timelines": self.timelines, "axis": self.axis, "backdrop": self.backdrop,
-            "contacts": self.live_contacts(),
+            "contacts": self.live_contacts(), "effects": self.live_effects(),
         }))
+
+    def live_effects(self) -> list[StageEffect]:
+        """The effect markers that still have a shot to be on; one whose sender left the stage keeps its place without a sender."""
+        names = {actor.name for actor in self.actors}
+        shots = {shot.shot_id for shot in self.shots}
+        kept: list[StageEffect] = []
+        for effect in self.effects:
+            on = [shot_id for shot_id in effect.shot_ids if shot_id in shots]
+            if effect.shot_ids and not on:
+                continue
+            kept.append(effect.model_copy(update={"shot_ids": on, "source": effect.source if effect.source in names else ""}))
+        return kept
 
     def live_contacts(self) -> list[StageContact]:
         """The contacts whose people and pieces are still on the stage: removing either ends the contact."""
@@ -1260,6 +1276,46 @@ class _Editor:
             raise StageEditError(_says("contact_none", name=target))
         self.contacts = kept
 
+    # ---- effect markers: where an effect is centred, how far it reaches, who sends it
+    def set_effect(self, op: Mapping[str, Any]) -> None:
+        """Place an effect marker, or change the one with this id; what the operation leaves out is kept."""
+        kinds = action_marks.effect_kinds()
+        effect_id = str(op.get("id") or "")
+        index = next((i for i, item in enumerate(self.effects) if item.id == effect_id), None)
+        held = self.effects[index] if index is not None else None
+        kind = str(op.get("kind") or (held.kind if held else ""))
+        if kind not in kinds:
+            raise StageEditError(_says("effect_kind", options=" / ".join(kinds)))
+        if held is None and op.get("position") is None:
+            raise StageEditError(_says("effect_no_position"))
+        position = _ground(op["position"], "position") if op.get("position") is not None else list(held.position)
+        radius_range = prompt_data.load("action_marks")["effect_radius"]
+        if op.get("radius_m") is not None:
+            radius = _number(op["radius_m"], "radius_m", float(radius_range["low"]), float(radius_range["high"]))
+        else:
+            radius = held.radius_m if held and "kind" not in op else kinds[kind]["radius_m"]
+        source = held.source if held and "source" not in op else str(op.get("source") or "")
+        if source:
+            source = self.actors[self.actor_index(source)].name
+        shot_ids = self._contact_shots(op.get("shot_ids")) if "shot_ids" in op else (list(held.shot_ids) if held else [])
+        note = _text(op.get("note"), "note", 40, required=False) if "note" in op else (held.note if held else "")
+        if held is None:
+            if len(self.effects) >= MAX_EFFECTS:
+                raise StageEditError(_says("effects_full", limit=MAX_EFFECTS))
+            numbers = [int(item.id.rsplit("-", 1)[-1]) for item in self.effects if item.id.startswith("effect-") and item.id.rsplit("-", 1)[-1].isdigit()]
+            effect_id = effect_id or f"effect-{max([0, *numbers]) + 1:02d}"
+        effect = StageEffect(id=effect_id, kind=kind, position=position, radius_m=round(radius, 2), source=source, note=note, shot_ids=shot_ids)
+        if held is None:
+            self.effects = [*self.effects, effect]
+        else:
+            self.effects = [effect if i == index else item for i, item in enumerate(self.effects)]
+
+    def remove_effect(self, op: Mapping[str, Any]) -> None:
+        effect_id = str(op.get("id") or "")
+        if not any(item.id == effect_id for item in self.effects):
+            raise StageEditError(_says("effect_none", id=effect_id))
+        self.effects = [item for item in self.effects if item.id != effect_id]
+
     def set_shot_override(self, op: Mapping[str, Any]) -> None:
         shot_index = self.shot_index(op.get("shot_id"))
         name = self.actors[self.actor_index(op.get("name"))].name
@@ -1331,7 +1387,7 @@ _HANDLERS = (
     "add_extra", "remove_extra", "set_figure", "set_pose", "add_camera", "remove_camera", "use_camera",
     "frame_shot", "set_timeline", "clear_timeline", "apply_camera_move",
     "set_path", "array_landmark", "align_landmarks", "repair_checks", "apply_blockout", "clear_blockout",
-    "auto_route", "best_camera", "set_contact", "remove_contact",
+    "auto_route", "best_camera", "set_contact", "remove_contact", "set_effect", "remove_effect",
 )
 OPERATIONS: tuple[str, ...] = _HANDLERS
 
@@ -1376,7 +1432,7 @@ def apply_operations(
     try:
         edited = plan.model_copy(update={
             "actors": [StageActor.model_validate(actor.model_dump()) for actor in actors],
-            "landmarks": landmarks, "contacts": contacts, "cameras": editor.cameras, "shots": editor.shots,
+            "landmarks": landmarks, "contacts": contacts, "effects": editor.live_effects(), "cameras": editor.cameras, "shots": editor.shots,
             "crowds": editor.crowds, "timelines": editor.timelines, "axis": editor.axis, "backdrop": editor.backdrop,
             "source": "edited", "revision": plan.revision + 1,
         })

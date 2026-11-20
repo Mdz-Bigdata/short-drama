@@ -42,7 +42,7 @@
         "色卡反偷懒铁律：色卡图仅作色值参考 + 绝对禁止白色背景 + 绝对禁止色块/色板构图 + 绝对禁止HEX文字",
         "设定图反偷懒铁律：设定图仅作造型参考 + 绝对禁止多格拼版 + 绝对禁止摄影棚白底 + 绝对禁止视图标注文字 + 角色必须处于剧情动作中",
         "故事板反偷懒铁律：故事板仅作构图机位参考 + 绝对禁止铅笔素描质感 + 绝对禁止纸张底色 + 绝对禁止手绘linework",
-        "白模反偷懒铁律：白模仅作调度与机位参考 + 绝对禁止白模材质残留 + 绝对禁止轨迹线、坐标线与相机cone入画"
+        "白模反偷懒铁律：白模仅作调度与机位参考 + 绝对禁止白模材质残留 + 绝对禁止沿用白模人偶的身体比例 + 绝对禁止轨迹线、坐标线与相机cone入画"
       ],
       "extension_restatement": "全片保持35mm胶片质感、胶片颗粒与色卡色彩不变。",
       "signature_sfx": [],
@@ -108,7 +108,7 @@
       "anti_leak": [
         "色卡反偷懒铁律：色卡图仅作色值参考 + 绝对禁止白色背景 + 绝对禁止色块/色板构图 + 绝对禁止HEX文字",
         "设定图反偷懒铁律：设定图仅作造型参考 + 绝对禁止多格拼版 + 绝对禁止摄影棚白底 + 绝对禁止视图标注文字",
-        "白模反偷懒铁律：白模仅作调度与机位参考 + 绝对禁止白模材质残留 + 绝对禁止轨迹线、坐标线与相机cone入画",
+        "白模反偷懒铁律：白模仅作调度与机位参考 + 绝对禁止白模材质残留 + 绝对禁止沿用白模人偶的身体比例 + 绝对禁止轨迹线、坐标线与相机cone入画",
         "像素面板铁律：像素观感只出现在面板上，身体、服装与世界保持实拍质感"
       ],
       "extension_restatement": "全片保持原子朋克实拍工业质感、Vision3 500T 颗粒与色卡色彩不变；磨损与油污延续并可累积。",
@@ -218,7 +218,7 @@
         "extension": ["禁止生硬切镜", "禁止角色凭空出现或消失"],
         "fight": ["no limb clipping", "no extra limbs", "no VFX hiding the contact point"]
       },
-      "anti_leak": ["设定图反偷懒铁律：三视图仅作建模参考 + 绝对禁止拼版与白底设定板构图 + 绝对禁止视图标注文字", "白模反偷懒铁律：白模仅作调度与机位参考 + 绝对禁止白模材质残留 + 绝对禁止轨迹线、坐标线与相机cone入画"],
+      "anti_leak": ["设定图反偷懒铁律：三视图仅作建模参考 + 绝对禁止拼版与白底设定板构图 + 绝对禁止视图标注文字", "白模反偷懒铁律：白模仅作调度与机位参考 + 绝对禁止白模材质残留 + 绝对禁止沿用白模人偶的身体比例 + 绝对禁止轨迹线、坐标线与相机cone入画"],
       "extension_restatement": "全片保持同一套 3D 材质、光照方案与色卡色彩不变，角色模型与脸部绑定不变。",
       "signature_sfx": [],
       "style_caption": "3D 国漫 CG 动画，stylised 3D CG animation, UE5-class PBR rendering, volumetric light, consistent character models; not live action, not real human, not 2d flat illustration",
@@ -252,7 +252,8 @@
       "positives": [],
       "negatives": [],
       "situational_negatives": {},
-      "anti_leak": ["设定图反偷懒铁律：设定集仅作造型参考 + 绝对禁止多格拼版 + 绝对禁止摄影棚白底 + 绝对禁止视图标注文字", "故事板反偷懒铁律：分镜图仅作构图机位参考 + 绝对禁止九宫格拼版、线稿质感与文字标注进入画面"],
+      "anti_leak": ["设定图反偷懒铁律：设定集仅作造型参考 + 绝对禁止多格拼版 + 绝对禁止摄影棚白底 + 绝对禁止视图标注文字", "故事板反偷懒铁律：分镜图仅作构图机位参考 + 绝对禁止九宫格拼版、线稿质感与文字标注进入画面",
+        "白模反偷懒铁律：白模仅作调度与机位参考 + 绝对禁止白模材质残留 + 绝对禁止沿用白模人偶的身体比例 + 绝对禁止轨迹线、坐标线与相机cone入画"],
       "extension_restatement": "全片保持真人实拍电影质感与色彩基调不变。",
       "signature_sfx": [],
       "style_caption": "真实电影质感，实拍写真，photorealistic live-action cinematic film still, real human skin texture, natural lighting, 35mm film grain, shallow depth of field; 绝非动画、绝非卡通、绝非3D渲染、绝非插画、绝非草图 (not anime, not cartoon, not 3d render, not illustration, not sketch, not concept art)",

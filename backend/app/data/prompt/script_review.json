@@ -1,0 +1,155 @@
+{
+  "_about": "剧本审核报告(app/core/script_review.py)：写完的剧本交给项目的文本模型按七个方面读一遍，出一份报告——每个方面一个结论，每条问题落到具体的场次并引一句原文、给出改法。只是给创作者看的建议，不改剧本、不拦流程。创作者点了「生成审核报告」才调用模型：剧本按 limits.block_chars 分段，一段一次调用，段数就是这次要调用的次数；分了段时每段另带全剧梗概(投稿材料的 digest)，好判断跨集的因果和时间线。模型给的场次号必须是这一段里真有的(不是就退回重答)，引的原文在剧本里找不到就删掉引文并记一笔。facts 是不调模型、从剧本直接数出来的制作概况。剧本正文借投稿材料的排版，strip_marks 把其中的人物 / 地点字幕标记去掉(那是投稿模板的格式，不是剧本内容)。dimensions 的顺序就是报告的顺序；verdicts / severities 是由轻到重排的，合并多段结论时取最重的。verdict_floor：某个方面有「硬伤」级的问题，它的结论至少是「有硬伤」，有「该改」级的至少是「建议修改」——结论和它自己的问题不许对不上。2026-11-19 在 d2c30ae2 上真跑过一次(deepseek-flash，1 次调用，0.148 元，104 秒)：12 条问题里核对过的都对得上剧本，只有一条把排版顺序当成了剧本的毛病，model.layout 就是为它加的；limits 里的字数是截断的上限，那次只有一条优点被 80 字截断，所以放宽了。同一天按新提示词又跑了一次(1 次调用，0.117 元，82 秒，10 条)：排版那条没有再出现，但两句没署名的画外音被判成「没人在说话」的硬伤——剧本其实在说话方式里写了「画外，年长男声」，是送审的文本没带上，unnamed_voice 就是把这句说明带上；这一处改完没有再跑。两次的结论有出入(冲突、台词各差一档)，问题只重合一半：一次报告是一次抽查，不是全部。",
+  "limits": {
+    "block_chars": 24000,
+    "max_blocks": 20,
+    "max_findings": 12,
+    "digest_beats": 3,
+    "quote_chars": 40,
+    "note_chars": 200,
+    "issue_chars": 300,
+    "fix_chars": 300,
+    "summary_chars": 300,
+    "strength_chars": 200,
+    "max_strengths": 3
+  },
+  "dimensions": [
+    {"key": "logic", "label": "故事逻辑", "asks": "因果是否接得上、时间线有没有打架、世界里的规则前后是否一致，有没有只靠巧合推进的地方"},
+    {"key": "character", "label": "人物逻辑", "asks": "人物想要什么是否清楚、做的事合不合他的处境和性格、变化有没有事情推着，有没有为了剧情突然变了个人"},
+    {"key": "opening", "label": "开场", "asks": "头一两场能不能把人留住：是不是一上来就出事，主角的处境和悬念有没有立住"},
+    {"key": "conflict", "label": "冲突", "asks": "对手和阻力够不够硬、是否一场比一场难、主角有没有付出代价，有没有说几句话就过去的冲突"},
+    {"key": "reversal", "label": "反转", "asks": "反转前面有没有埋线、回头看是否成立，有没有凭空冒出来的真相或没回收的伏笔"},
+    {"key": "emotion", "label": "情绪", "asks": "该爽、该痛、该暖的地方有没有落在看得见的事上，一集里情绪有没有起伏，集尾有没有让人想看下一集的东西"},
+    {"key": "dialogue", "label": "台词", "asks": "不同人物说话是否分得出、有没有替作者解释剧情的台词、有没有不像人说的话"}
+  ],
+  "verdicts": [
+    {"key": "pass", "label": "通过"},
+    {"key": "revise", "label": "建议修改"},
+    {"key": "problem", "label": "有硬伤"}
+  ],
+  "severities": [
+    {"key": "low", "label": "小问题"},
+    {"key": "medium", "label": "该改"},
+    {"key": "high", "label": "硬伤"}
+  ],
+  "strip_marks": "【字幕：[^】\\n]*】",
+  "unnamed_voice": {"line": "【VO】旁白（{note}）：{text}", "split": "[：；。/]", "note_chars": 30},
+  "verdict_floor": {"high": "problem", "medium": "revise"},
+  "whole_script": "全剧",
+  "model": {
+    "system": "你是有多年经验的剧本医生。请按要求审读一部短剧剧本，只指出剧本里真实存在的问题。\n要求：\n1. 只看剧本写了什么，不替剧本补没写的东西，也不评价题材好不好卖。\n2. 每条问题都落到具体的场次，用场次标题开头的场号(如 1-3)；确实是整部剧的问题，场号留空。\n3. 每条问题引一句剧本里的原话(台词或动作描写，照抄，{quote_chars} 字以内)，让人一眼找到位置；引不出原话就把引文留空，不要编。\n4. 改法要具体到「在哪一场、让谁、做什么」，不写「加强冲突」「丰富人物」这类空话。\n5. 没有问题的方面就写通过，不要为了凑数挑毛病；最多 {max_findings} 条问题，先写最要紧的。\n6. 另写最多 {max_strengths} 条这部剧本做得好的地方，同样要具体。\n\n只输出一个合法 JSON 对象，不要解释、不要 markdown。",
+    "task": "【审读范围】{scope}\n【{count}个方面】\n{dimensions}\n\n【结论只能是】{verdicts}\n【问题的轻重只能是】{severities}\n【这一段里的场号】{scenes}\n【排版说明】{layout}\n{digest}\n【输出结构】\n{{\n  \"summary\": \"一两句话的总体判断\",\n  \"dimensions\": [{{\"key\": \"方面的代码\", \"verdict\": \"结论的代码\", \"note\": \"一句话说明\"}}],\n  \"findings\": [{{\"dimension\": \"方面的代码\", \"severity\": \"轻重的代码\", \"scene\": \"场号或留空\", \"quote\": \"原话或留空\", \"issue\": \"问题是什么\", \"fix\": \"怎么改\"}}],\n  \"strengths\": [\"做得好的地方\"]\n}}\ndimensions 里{count}个方面各写一条，不多不少。\n\n【剧本】\n{script}",
+    "layout": "下面的剧本每一场先列这一场的全部动作描写（△开头的行），再列这一场的全部台词；这只是排版顺序，不代表动作和台词发生的先后，不要把「台词排在动作后面」当成问题。「【VO】旁白」是没有写出说话人名字的画外音，后面括号里是剧本对这个声音的说明（谁的声音、从哪里传来）；有说明就算剧本交代了是谁在说。",
+    "dimension_line": "- {key}（{label}）：{asks}",
+    "option": "{key}（{label}）",
+    "option_joiner": "、",
+    "scope_whole": "整部剧本，共 {episodes} 集",
+    "scope_block": "第 {first}–{last} 集（全剧共 {episodes} 集，其余各集见下面的梗概）",
+    "scope_one": "第 {first} 集（全剧共 {episodes} 集，其余各集见下面的梗概）",
+    "digest": "【全剧梗概（只用来判断这一段和前后是否接得上，不用审它）】\n{digest}\n",
+    "offline": "文本模型没有给出回答，审核报告没有生成；检查模型设置后可以再试一次。"
+  },
+  "problems": {
+    "dimensions": "dimensions 要{count}个方面各一条，代码只能是：{keys}",
+    "verdict": "「{key}」的结论只能是 {options}",
+    "finding_dimension": "第 {index} 条问题的 dimension 只能是：{keys}",
+    "finding_severity": "第 {index} 条问题的 severity 只能是 {options}",
+    "finding_scene": "第 {index} 条问题的场号「{scene}」不在这一段里；只能用 {scenes}，或留空表示整部剧",
+    "finding_empty": "第 {index} 条问题缺了 issue 或 fix"
+  },
+  "errors": {
+    "no_script": "这个项目还没有剧本，写完剧本再来审核。",
+    "not_found": "还没有生成过审核报告。",
+    "too_long": "剧本太长，要分 {blocks} 段审读，超过了一次最多 {limit} 段；可以先按集拆开项目再审。"
+  },
+  "block_summary": "第 {first}–{last} 集：{text}",
+  "facts": {
+    "labels": {
+      "episodes": "集数", "scenes": "场次", "places": "地点", "speakers": "有台词的角色", "lines": "台词句数", "dialogue_share": "台词占比", "chars": "剧本字数"
+    },
+    "percent": "{value}%"
+  },
+  "document": {
+    "title": "《{title}》剧本审核报告",
+    "built": "生成时间：{time}　模型：{model}　文本模型调用：{calls} 次",
+    "stale": "注意：剧本在这份报告生成之后改过，下面的结论可能已经对不上。",
+    "summary": "## 总体判断",
+    "dimensions": "## 各方面结论",
+    "dimension_row": "- **{label}**：{verdict}。{note}",
+    "findings": "## 问题与改法",
+    "no_findings": "没有指出需要修改的问题。",
+    "finding": "### {index}. 【{dimension}·{severity}】{where}",
+    "quote": "> {quote}",
+    "issue": "- 问题：{issue}",
+    "fix": "- 改法：{fix}",
+    "strengths": "## 做得好的地方",
+    "strength": "- {text}",
+    "facts": "## 制作概况（从剧本直接数出，未经模型）",
+    "fact": "- {label}：{value}",
+    "dropped": "有 {count} 条引文在剧本里找不到原话，已经删掉引文、只留问题本身。",
+    "where_scene": "第 {scene} 场",
+    "advice": "这份报告是给创作者参考的建议，不会改动剧本。"
+  },
+  "count_words": {
+    "1": "一",
+    "2": "两",
+    "3": "三",
+    "4": "四",
+    "5": "五",
+    "6": "六",
+    "7": "七"
+  },
+  "full": {
+    "label": "全面审核",
+    "about": "按故事逻辑、人物逻辑、开场、冲突、反转、情绪、台词七个方面读一遍剧本，每条问题落到具体的场次并给出改法。只是建议，不会改动剧本。"
+  },
+  "focuses": [
+    {
+      "key": "opening",
+      "label": "前三集主线体检",
+      "episodes": 3,
+      "bios": false,
+      "about": "只读前三集，看三件事有没有交代清楚：主角是谁、核心冲突是什么、观众等着看什么。每条问题落到具体的场次并给出改法。只是建议，不会改动剧本。",
+      "dimensions": [
+        {
+          "key": "identity",
+          "label": "主角身份",
+          "asks": "看完这几集，观众能不能说清主角是谁、原来是什么处境、现在落到了什么地步；这些是演出来的，还是只靠旁白、字幕或一句台词带过"
+        },
+        {
+          "key": "core_conflict",
+          "label": "核心冲突",
+          "asks": "主角要什么、谁挡着他、挡不住会失去什么，有没有落成一件看得见的事；对手是否已经出手，还是只在嘴上提到"
+        },
+        {
+          "key": "expectation",
+          "label": "观众期待",
+          "asks": "看完这几集，观众等着看的那件事（翻身、真相、复仇、在一起……）有没有立住；每集结尾有没有把这个期待往前推一步，有没有哪一集看完不知道接下来要看什么"
+        }
+      ]
+    },
+    {
+      "key": "voice",
+      "label": "台词对照人物小传",
+      "episodes": 0,
+      "bios": true,
+      "about": "把每个人物的台词对照他的人物小传读一遍，只指出不像这个人会说的话，给出改后的这一句和理由；对得上人设的台词不提。只是建议，不会改动剧本。",
+      "dimensions": [
+        {
+          "key": "voice",
+          "label": "台词与人设",
+          "asks": "对照人物小传里的身份、性格、出身、和对方的关系与此刻的处境：这句话像不像这个人说的。只指出对不上人设的台词，对得上的不要提；每条问题引的原话就是这句台词，问题写它哪里不像这个人，改法直接给出改后的这一句，剧情和这句话要传达的意思不变"
+        }
+      ]
+    }
+  ],
+  "focus_words": {
+    "bios": "【人物小传（只用来对照台词像不像这个人说的，小传本身不用审）】\n{bios}\n",
+    "bio_line": "- {name}：{text}",
+    "bio_chars": 400,
+    "scope_first": "前 {count} 集（全剧共 {episodes} 集，这次只审这几集）",
+    "title": "《{title}》{label}",
+    "no_bios": "这个项目还没有人物小传，没法对照台词；先写好人物设定再来。",
+    "unknown": "没有「{focus}」这种体检。"
+  }
+}

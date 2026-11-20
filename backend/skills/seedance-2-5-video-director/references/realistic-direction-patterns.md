@@ -125,6 +125,10 @@ For obstacles, falls, collisions, water, props, clothing, and other consequentia
 - Preserve gravity, inertia, surface traction, object rotation, pendulum phase, water displacement, and contact shadows at the level visible in the shot.
 - Keep wardrobe, hair, wetness, fatigue, damage, held props, and location changes cumulative.
 - Reduce event count if the full causal chain cannot fit the interval.
+- One physical system for the whole frame: hair, cloth, smoke, dust and water answer the same wind and the same gravity; a light that moves changes highlights, shadow direction and reflections together; a camera that really travels shows parallax and things passing in the foreground.
+- One main physical event per beat, with at most two side effects that follow from it (a truck hits a pillar: the metal folds; sparks and dust are the side effects). Do not stack unrelated effects.
+- Write what the viewer sees, not a label. Not "realistic cloth physics" but "the splash lands on the cotton shirt, the wet patch darkens and sags".
+- A material behaves like itself: cloth that soaks darkens, gets heavy and stays wet, while a surface that does not soak beads and runs; brittle things crack out from the point of impact, then the pieces fall and stay where they land; metal dents along the push and stays bent, and never stretches or melts without heat; dry sand slides and piles, it does not pour like water; fog and smoke are pushed aside by a body and close behind it, and a light shaft needs dust or mist to show.
 
 ## Contradiction audit
 
