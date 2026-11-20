@@ -45,7 +45,10 @@ _WRITE_LOCK = threading.Lock()
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # To the microsecond: entries are ordered by this text ("newest first"), and two written within one
+    # second would otherwise tie and fall back on the order the folder happens to list them in. An older
+    # entry stamped to the second still sorts before a newer one of the same second ("+" sorts before ".").
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def slug(value: object) -> str:
