@@ -4141,4 +4141,7 @@ export const vi: Record<string, string> = {
   '剑术基本功（上）八式': 'Kiếm cơ bản I, 8 chiêu',
   '剑术基本功（下）五式': 'Kiếm cơ bản II, 5 chiêu',
   '对剑五式': 'Đấu kiếm, 5 chiêu',
+  '刀术基本功（上）八式': 'Đao cơ bản I, 8 chiêu',
+  '刀术基本功（下）八式': 'Đao cơ bản II, 8 chiêu',
+  '对刀五式': 'Đấu đao, 5 chiêu',
 };

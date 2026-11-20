@@ -20,12 +20,12 @@ def _sheet(text="", **params):
 
 
 class MoveSheetTableTests(unittest.TestCase):
-    def test_fifteen_sets_of_eight_or_five_moves_each_with_a_layout_and_known_rules(self):
+    def test_eighteen_sets_of_eight_or_five_moves_each_with_a_layout_and_known_rules(self):
         data = prompt_data.load("move_sheets")
         sets = move_sheets.sets()
-        self.assertEqual(len(sets), 15)
-        self.assertEqual(len({item["id"] for item in sets}), 15)
-        self.assertEqual(sum(len(item["moves"]) for item in sets), 96)
+        self.assertEqual(len(sets), 18)
+        self.assertEqual(len({item["id"] for item in sets}), 18)
+        self.assertEqual(sum(len(item["moves"]) for item in sets), 117)
         for item in sets:
             with self.subTest(item["id"]):
                 self.assertIn(len(item["moves"]), (5, 8))

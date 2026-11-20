@@ -4141,4 +4141,7 @@ export const en: Record<string, string> = {
   '剑术基本功（上）八式': 'Sword basics I, 8 moves',
   '剑术基本功（下）五式': 'Sword basics II, 5 moves',
   '对剑五式': 'Sword duel, 5 moves',
+  '刀术基本功（上）八式': 'Sabre basics I, 8 moves',
+  '刀术基本功（下）八式': 'Sabre basics II, 8 moves',
+  '对刀五式': 'Sabre duel, 5 moves',
 };
