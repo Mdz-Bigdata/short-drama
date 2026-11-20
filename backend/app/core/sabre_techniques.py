@@ -3,7 +3,7 @@
 
 剧本写「缠头裹脑」「反手一撩」「藏刀诱敌」时，分镜师要知道它们在画面上是什么样：刀刃和刀背朝哪、刀尖走哪条线、
 力落在刀的哪一段、空着的那只手在做什么，以及对手通常怎么应。这里只发剧本本场点到的那几种(握、抱、缠头、裹脑、
-劈、砍、截、撩、挂、扎、抹、斩、扫、云、崩、藏、推、腕花、架、拖、收)，后面跟几条激烈对刀的通则。
+劈、砍、截、撩、挂、扎、抹、斩、扫、云、崩、藏、推、腕花、架、拖、点、格、按、挑、穿、反刺、背花、换手、收)，后面跟几条激烈对刀的通则。
 
 三件事都成立才发：这一场是打戏(调用方判断)、本场有刀、剧本点了至少一种刀法。它解释的是剧本自己用的词，不替剧本
 另编招；一种都没点到、只写了「两人挥刀相斗」的戏走兵器套路(``weapon_forms``)。做法与剑法谱(``sword_techniques``)
@@ -38,6 +38,9 @@ def techniques_in(scene_text: str) -> list[str]:
     text = str(scene_text or "")
     if not sabre_in(text):
         return []
+    # 流派名里带着刀法的字(「通背刀」里的「背刀」)不算点了那种刀法：认之前先拿掉。
+    for school in prompt_data.load(_WORDING).get("school_names") or []:
+        text = text.replace(str(school), "")
     return [str(item["name"]) for item in _techniques() if any(str(alias) and str(alias) in text for alias in item.get("aliases") or [])]
 
 
