@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { Profiler } from 'react';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -794,6 +795,49 @@ describe('ShotVisualWorkspace', () => {
       expect(await screen.findByRole('button', { name: /生成队列/ })).toBeTruthy();
       expect(screen.getByText(/任务正在执行阶段，暂不能修改运镜/)).toBeTruthy();
       expect((screen.getByLabelText('镜头运动') as HTMLSelectElement).disabled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves the screen alone while the run reports nothing new, and shows the next change', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let clip: string | null = null;
+      let queued = 'queued';
+      const gets: string[] = [];
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (!init?.method) gets.push(url.split('/api/drama/visual-task')[1]);
+        if (url.endsWith('/queue')) return { ok: true, json: async () => ({
+          task_id: 'visual-task', running: true, run_id: 'r1', counts: { queued: 1, running: 0, done: 0 }, buckets: {}, withdraw: [],
+          items: [{ key: 'video:2', label: '镜头 2 · 视频 ×1', family: 'minimax', medium: 'video', bucket: 'minimax/video', depends_on: [], status: queued, meta: {} }],
+        }) } as Response;
+        if (url.endsWith('/shots/admission')) return { ok: true, json: async () => ({}) } as Response;
+        if (url.includes('/usage')) return { ok: true, json: async () => ({ summary: null }) } as Response;
+        // Every read gets a body of its own, as a real response does: equal, never the same object.
+        const body = workspace({ running: true });
+        body.shots[1] = { ...body.shots[1], video_url: clip, stale: clip === null };
+        return { ok: true, json: async () => body } as Response;
+      });
+      const commits = vi.fn();
+
+      render(<Profiler id="workspace" onRender={commits}><ShotVisualWorkspace taskId="visual-task" videoModel="MiniMax-H3" imageModel="seedream" /></Profiler>);
+      await screen.findByRole('list', { name: '分镜' });
+      await act(async () => { await vi.advanceTimersByTimeAsync(4100); });
+
+      const settled = commits.mock.calls.length;
+      const read = gets.filter(path => path === '/shots/visual').length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(12_300); });
+      expect(gets.filter(path => path === '/shots/visual').length).toBeGreaterThanOrEqual(read + 3);
+      // Three rounds came back word for word the same, workspace and queue: nothing was rendered again.
+      expect(commits.mock.calls.length).toBe(settled);
+
+      // The second shot's clip arrives: the very next round shows it.
+      clip = '/media/c2.mp4';
+      queued = 'done';
+      await act(async () => { await vi.advanceTimersByTimeAsync(4100); });
+      expect(commits.mock.calls.length).toBeGreaterThan(settled);
     } finally {
       vi.useRealTimers();
     }

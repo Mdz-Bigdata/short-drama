@@ -160,6 +160,12 @@ const PILOT_POLL_MS = 4000;
 
 export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, onVideoModelChange, refreshKey, episodes: episodeMeta = [] }: Props) {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  // 生成期间每 4 秒重读一次工作区，绝大多数回包和上一次一字不差。记下上一次回包和它放上界面的对象：
+  // 回包没变、界面上也还是那个对象时原样保留，几百个镜头不跟着重渲染；别处（保存、重跑、选片）
+  // 换过界面上的对象之后，回包照常覆盖。
+  const lastLoadRef = useRef<{ body: string; data: Workspace } | null>(null);
+  const shownWorkspaceRef = useRef<Workspace | null>(null);
+  useEffect(() => { shownWorkspaceRef.current = workspace; }, [workspace]);
   const [savingPrompt, setSavingPrompt] = useState(false);
   const [error, setError] = useState('');
   // Notices belong to the shot they were produced for; switching shots hides them.
@@ -207,7 +213,9 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
   const loadQueue = useCallback(async () => {
     try {
       const data = await apiRequest<unknown>(`/api/drama/${encodeURIComponent(taskId)}/queue`);
-      setQueue(isGenerationQueue(data) && data.items.length > 0 ? data : null);
+      const next = isGenerationQueue(data) && data.items.length > 0 ? data : null;
+      // 队列没动时留着原来的对象：生成期间每 4 秒读一次，不为一字不差的回包重渲染。
+      setQueue(current => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
     } catch {
       setQueue(null);
     }
@@ -314,7 +322,12 @@ export function ShotVisualWorkspace({ taskId, videoModel, imageModel, onRerun, o
   const load = useCallback(async () => {
     try {
       const data = await apiRequest<Workspace>(`/api/drama/${encodeURIComponent(taskId)}/shots/visual`);
-      setWorkspace(data);
+      const body = JSON.stringify(data);
+      const last = lastLoadRef.current;
+      if (!(last && last.body === body && shownWorkspaceRef.current === last.data)) {
+        lastLoadRef.current = { body, data };
+        setWorkspace(data);
+      }
       setSelectedKey(current => (current !== null && data.shots.some(shot => shotKey(shot) === current)) ? current : (data.shots[0] ? shotKey(data.shots[0]) : null));
       setError('');
     } catch (err) {

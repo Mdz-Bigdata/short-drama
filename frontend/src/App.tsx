@@ -564,6 +564,7 @@ export default function App() {
         setTaskId('');
         setTaskData(null);
         // 同一个标签页换人登录时，不让上一个账号的项目、对话和积分先闪出来。
+        lastHistoryBodyRef.current = null;
         setHistoryTasks([]);
         setHistoryLoaded(false);
         setChatMessages([]);
@@ -643,6 +644,8 @@ export default function App() {
   const statusPollFailuresRef = useRef(0);
   // 上一次轮询应用到界面上的状态正文与对象：内容没变就不换对象，整个工作台不重渲染。
   const lastStatusRef = useRef<{ body: string; data: TaskResponse } | null>(null);
+  // 大厅列表上一次轮询的回包；本地改过列表（删除项目、退出登录）时清空，下一次回包照常覆盖。
+  const lastHistoryBodyRef = useRef<string | null>(null);
   const restoreChatRef = useRef<string | null>(null);
   const chatRequestRef = useRef<{ taskId: string } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -913,6 +916,7 @@ export default function App() {
       });
       if (res.ok) {
         // 卡片从大厅消失就是反馈，不再弹框拦一下。
+        lastHistoryBodyRef.current = null;
         setHistoryTasks(prev => prev.filter(task => task.taskId !== targetTaskId));
         fetchHistoryTasks();
         // 如果删除的是当前选中的项目，重置工作区状态
@@ -1043,7 +1047,14 @@ export default function App() {
         const data = await res.json();
         // A non-array body (error envelope, proxy page) must not crash the
         // whole workbench when the history list is rendered.
-        setHistoryTasks(Array.isArray(data) ? data : []);
+        const list: TaskSummary[] = Array.isArray(data) ? data : [];
+        // 有项目在跑时大厅每 1.5 秒拉一次列表，绝大多数回包和上一次一字不差：这时界面上的数组原样保留，
+        // 整个大厅不跟着重渲染。本地改过列表之后的第一次回包照常覆盖（见 lastHistoryBodyRef）。
+        const body = JSON.stringify(list);
+        if (lastHistoryBodyRef.current !== body) {
+          lastHistoryBodyRef.current = body;
+          setHistoryTasks(list);
+        }
         setHistoryLoaded(true);
       }
     } catch (e) {

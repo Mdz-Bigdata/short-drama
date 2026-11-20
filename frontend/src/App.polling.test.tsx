@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { Profiler } from 'react';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -128,5 +129,75 @@ describe('opening a project from the lobby summary', () => {
       expect(fetchMock.mock.calls.some(call =>
         String(call[0]).includes('/api/drama/task-42/status'))).toBe(true);
     });
+  });
+});
+
+describe('an unchanged lobby poll', () => {
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps the list it has, and takes the next one that differs', async () => {
+    // A running project makes the lobby poll every 1.5s.
+    const row = (status: string, stageName: string) => ({
+      taskId: 'task-7',
+      currentStage: 2,
+      stageName,
+      status,
+      config: { titleSuggestion: '周记', directorStyle: 'realistic', shotStyle: 'cinematic' },
+    });
+    let listed = [row('running', '专业编剧剧本创作')];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/session')) return {
+        ok: true, status: 200,
+        json: async () => ({
+          authenticated: true,
+          user: { user_id: 'a1', username: 'admin', role: 'admin', must_change_password: false },
+        }),
+      } as Response;
+      if (url.endsWith('/api/model-configurations')) return {
+        ok: true, status: 200, json: async () => ({ items: [], globalDefaults: {} }),
+      } as Response;
+      // Every poll gets a body of its own, as a real response does: equal, never the same object.
+      if (url.includes('/api/drama/list')) return {
+        ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(listed)),
+      } as Response;
+      return { ok: true, status: 200, json: async () => ({ items: [], total: 0 }) } as Response;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const listCalls = () => fetchMock.mock.calls
+      .filter(call => String(call[0]).includes('/api/drama/list')).length;
+
+    const commits = vi.fn();
+    render(<Profiler id="app" onRender={commits}><App /></Profiler>);
+    await screen.findByText('周记');
+    // Let the first load settle (session, model configuration, the first list).
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+
+    const settled = commits.mock.calls.length;
+    const polled = listCalls();
+    await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
+    expect(listCalls()).toBeGreaterThanOrEqual(polled + 3);
+    // Four polls came back word for word the same: nothing was rendered again.
+    expect(commits.mock.calls.length).toBe(settled);
+
+    // The project finishes: the very next poll shows it.
+    listed = [row('completed', '宣发与发行')];
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_600); });
+    expect(commits.mock.calls.length).toBeGreaterThan(settled);
+    expect(listCalls()).toBeGreaterThan(polled + 3);
   });
 });
