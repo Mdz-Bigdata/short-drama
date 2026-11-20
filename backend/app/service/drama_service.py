@@ -6913,6 +6913,7 @@ class DramaService:
             genre_summary = load_section("genre-summary", budget=0)
             narrative_structure = load_section("golden-narrative", budget=0)
             hook_ladder = load_section("episode-hook-ladder", budget=0)
+            emotional_hook = load_section("emotional-hook-craft", budget=0)
             payoff_arc = load_section("payoff-arc-craft", budget=0)
             character_craft = load_section("character-relationship-craft", budget=0)
             sys_prompt = (
@@ -6922,6 +6923,7 @@ class DramaService:
                 + literary.thesis_card() + "\n\n"
                 + f"【黄金叙事结构(单集与整部结构/情绪峰值/钩子公式)如下】：\n{narrative_structure}\n\n"
                 f"【前三集钩子阶梯与付费墙卡点(E1 引爆/E2 升级/E3 反转，E8–E10 虚假胜利→崩塌→黑屏钩子)如下】：\n{hook_ladder}\n\n"
+                f"【情绪钩子六步法(共情基点→反常裂痕→抬高代价→封死退路→误导拉扯→卡点或反向爆击，代价要私人、揭秘不抢跑)如下】：\n{emotional_hook}\n\n"
                 f"【爽点底线与主角强弱两段弧(杀伐果断横推/不按套路/弱时智谋苟道、强时杀伐/爽点谱系)如下】：\n{payoff_arc}\n\n"
                 f"【主角拷问与人物关系架法(一句话梗概/拷问主角/关系六性/一条主线)如下】：\n{character_craft}\n\n"
                 f"【全局短剧制作注意事项与关键元素规范如下】：\n{guide_elements}\n\n"
@@ -6996,6 +6998,7 @@ class DramaService:
                 dialogue_pacing_guide = load_section("dialogue-pacing", budget=0)
                 craft_redlines = load_section("cinema-craft-redlines", budget=0)
                 hook_ladder = load_section("episode-hook-ladder", budget=0)
+                emotional_hook = load_section("emotional-hook-craft", budget=0)
                 scene_craft = load_section("scene-craft-dialogue", budget=0)
                 payoff_arc = load_section("payoff-arc-craft", budget=0)
                 sys_prompt = (
@@ -7005,6 +7008,7 @@ class DramaService:
                     + f"【写作红线与 S 级三冲击(情绪/视觉/场景顶点、人物语言指纹、四张追踪表)如下】：\n{craft_redlines}\n\n"
                     f"【黄金叙事结构(单集黄金结构/每集三件事/短剧公式/一集模板)如下】：\n{narrative_structure}\n\n"
                     f"【前三集钩子阶梯(E1 引爆/E2 升级/E3 反转)、集尾悬念五型、付费墙前三步如下】：\n{hook_ladder}\n\n"
+                    f"【情绪钩子六步法(共情基点→反常裂痕→抬高代价→封死退路→误导拉扯→卡点或反向爆击，代价要私人、揭秘不抢跑)如下】：\n{emotional_hook}\n\n"
                     f"【场次工艺与对白技法(每集一件新东西/爽点三段落台词/对手转向物证/一场戏六行/台词四型与含蓄四法)如下】：\n{scene_craft}\n\n"
                     f"【爽点底线与主角强弱两段弧(杀伐果断横推/不按套路/弱时智谋苟道、强时杀伐/爽点谱系)如下】：\n{payoff_arc}\n\n"
                     f"【短剧表演细节与具象物理动作指导如下】：\n{performance_guide}\n\n"

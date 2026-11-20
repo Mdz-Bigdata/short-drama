@@ -101,6 +101,16 @@
         1,
         2
       ]
+    },
+    {
+      "key": "emotional-hook-craft",
+      "title": "情绪钩子六步法",
+      "file": "references/emotional-hook-craft.md",
+      "budget": 2500,
+      "stages": [
+        1,
+        2
+      ]
     }
   ]
 }

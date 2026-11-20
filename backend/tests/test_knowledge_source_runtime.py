@@ -43,6 +43,7 @@ class EveryKnowledgeSourceReachesRuntimeTests(unittest.TestCase):
         "genre-summary",           # 短剧题材类型总结.md · 阶段1
         "cinema-craft-redlines",   # 星云AI编剧大师(山音二创)红线与S级三冲击 · 阶段2
         "episode-hook-ladder",     # 前三集钩子阶梯与付费墙卡点 · 阶段1/2
+        "emotional-hook-craft",    # 情绪钩子六步法 · 阶段1/2
         "scene-craft-dialogue",    # 场次工艺与对白技法 · 阶段2
         "payoff-arc-craft",        # 爽点谱系与主角强弱两段弧 · 阶段1/2
         "character-relationship-craft",  # 主角拷问与人物关系架法 · 阶段1/2

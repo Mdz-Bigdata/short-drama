@@ -650,6 +650,7 @@ class ScreenwritingEngine:
             title=title, director_plan=director_plan, overview=state.get("overview"),
             first=first, last=last, total=total, context_entries=context,
             target_seconds=self.episode_target_seconds, instructions=self.instructions,
+            creation_mode=str(self.creation.get("creation_mode") or "drama"),
         )
 
         def _count_validator(data: dict[str, Any]) -> list[str]:

@@ -337,6 +337,9 @@ def build_anchored_plan_prompt(
     ]
     if is_screenplay:
         lines.append("- 优先照用作者的分集：剧本已划定每集边界时，end_anchor 取作者每集结尾处的原文片段。")
+    else:
+        # 小说由我们下刀：刀口挑在情绪最高处。成品剧本的分集是作者定的，不动。
+        lines.append(_EMOTIONAL_HOOK_CUT)
     lines.append("- 各集按顺序排列，end_anchor 位置必须严格递增（范围连续、不重叠、不留空洞）。")
     if window_is_final:
         lines.append("- 这段原文已包含全文结尾：请规划到结尾，最后一集的 end_anchor 取全文结尾处的片段，不要留尾巴。")
@@ -357,8 +360,13 @@ def build_outline_plan_prompt(
     context_entries: Sequence[Mapping[str, Any]],
     target_seconds: int | None,
     instructions: str | None,
+    creation_mode: str = "drama",
 ) -> str:
-    """Plan a contiguous run of episodes (title / hook / beats / teaser) from the director plan."""
+    """Plan a contiguous run of episodes (title / hook / beats / teaser) from the director plan.
+
+    An advertisement (``creation_mode="ad"``) ends on its call to action, so it is not asked to
+    build an emotional cliffhanger.
+    """
     overview = overview or {}
     span = f"第 {first} 集" if first == last else f"第 {first} 集到第 {last} 集"
     lines = [
@@ -393,6 +401,7 @@ def build_outline_plan_prompt(
         "一集至少一条不是信息交代，钩子 / 悬念通常落在集尾。",
         literary.outline_rule(),
         literary.hook_rule(),
+        *([] if creation_mode == "ad" else [_EMOTIONAL_HOOK_OUTLINE]),
         f"- 最后一集（第 {total} 集）须完成全剧收束；其余每集结尾都要接得上下一集。",
         "- 不写心理描写，节点只描述镜头拍得到的动作、事件与对话结果。",
         "",
@@ -480,9 +489,18 @@ _HOOK_LANDING = (
     "末场（最后一个或几个分镜）的画面与对白须实际呈现集尾钩子的戏剧内容，让悬念定格在画面上；"
     "有下集预告语时，用结尾画面或对白自然引出，不要生硬插入「下集预告」字样的旁白。"
 )
+# 情绪钩子六步（``app/data/prompt/emotional_hook.json``，讲法见知识源 emotional-hook-craft）：
+# 按大纲创作的集排节点、落集尾；小说切集挑刀口。改编的台词和成品剧本的分集是原作者的，不套。
+_EMOTIONAL_HOOK_OUTLINE = prompt_data.text("emotional_hook", "outline_rule")
+_EMOTIONAL_HOOK_LANDING = prompt_data.text("emotional_hook", "landing_rule")
+_EMOTIONAL_HOOK_CUT = prompt_data.text("emotional_hook", "cut_rule")
 
 
-def _outline_block(episode_outline: Mapping[str, Any] | None, next_outline: Mapping[str, Any] | None) -> str:
+def _outline_block(
+    episode_outline: Mapping[str, Any] | None, next_outline: Mapping[str, Any] | None, *, authored: bool = False,
+) -> str:
+    """本集与下集大纲。``authored`` 是按大纲创作的剧情 / 旁白集：集尾怎么落由我们写，才附情绪钩子的落法
+    （广告片落在行动号召上，不附；后面没有下一集的那一集要收束，也不附）。"""
     parts: list[str] = []
     if episode_outline:
         lines = []
@@ -499,6 +517,8 @@ def _outline_block(episode_outline: Mapping[str, Any] | None, next_outline: Mapp
         parts.append("<episode_outline>\n本集大纲（分集规划设计，剧本内容应覆盖全部故事节点）：\n" + "\n".join(lines) + "\n</episode_outline>")
         if episode_outline.get("hook") or episode_outline.get("next_episode_teaser"):
             parts.append(_HOOK_LANDING)
+        if authored and next_outline and episode_outline.get("hook"):
+            parts.append(_EMOTIONAL_HOOK_LANDING)
     if next_outline:
         lines = []
         if next_outline.get("title"):
@@ -649,7 +669,7 @@ def build_script_plan_prompt(
 {neutralize_tags(source_text)}
 </{tag}>
 
-{_outline_block(episode_outline, next_episode_outline)}# 字段写作指引
+{_outline_block(episode_outline, next_episode_outline, authored=source_kind == "outline" and creation_mode != "ad")}# 字段写作指引
 
 把内容拆为有序分镜，逐条产出结构化分镜内容。当前正在生成第 {episode} 集。
 

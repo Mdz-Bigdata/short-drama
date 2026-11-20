@@ -47,8 +47,8 @@ LEGACY_ENGINE = "legacy"
 # pipeline. The pipeline makes several calls per episode, so each section is
 # budgeted instead of injected in full like the single-shot legacy prompt.
 WRITER_KNOWLEDGE_SECTIONS: tuple[str, ...] = (
-    "cinema-craft-redlines", "golden-narrative", "episode-hook-ladder", "scene-craft-dialogue", "payoff-arc-craft",
-    "character-relationship-craft", "dialogue-pacing", "performance-details",
+    "cinema-craft-redlines", "golden-narrative", "episode-hook-ladder", "emotional-hook-craft", "scene-craft-dialogue",
+    "payoff-arc-craft", "character-relationship-craft", "dialogue-pacing", "performance-details",
 )
 
 WRITER_METHODOLOGY = (
@@ -107,6 +107,7 @@ def writer_system_prompt(
         "cinema-craft-redlines": "写作红线与 S 级三冲击（情绪 / 视觉 / 场景顶点）",
         "golden-narrative": "黄金叙事结构（单集模型 / 每集三件事 / 钩子公式）",
         "episode-hook-ladder": "前三集钩子阶梯（E1 引爆 / E2 升级 / E3 反转）、集尾悬念五型与付费墙前三步",
+        "emotional-hook-craft": "情绪钩子六步法（共情基点 / 反常裂痕 / 抬高代价 / 封死退路 / 误导拉扯 / 卡点或反向爆击）与三条红线",
         "scene-craft-dialogue": "场次工艺与对白技法（每集一件新东西 / 爽点三段落台词 / 对手物证 / 一场戏六行 / 台词四型与含蓄四法）",
         "payoff-arc-craft": "爽点底线与主角强弱两段弧（杀伐果断横推 / 不按套路 / 弱时智谋苟道、强时杀伐 / 爽点谱系）",
         "character-relationship-craft": "主角拷问与人物关系架法（一句话梗概 / 拷问主角 / 关系六性 / 一条主线 / 小事折射大事）",
