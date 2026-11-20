@@ -31,7 +31,7 @@ function studio(patch: Partial<StudioResponse> = {}): StudioResponse {
     ],
     acceptance: [],
     post: {
-      settings: { transitions: true, dialogue: true, subtitles: true, title_card: true },
+      settings: { transitions: true, dialogue: true, subtitles: true, title_card: true, name_cards: true },
       tension: [
         { shot_uid: 1, shot_id: 1, scene_id: 'S1', t: 2.6, seconds: 4, tension: 0.8 },
         { shot_uid: 2, shot_id: 2, scene_id: 'S1', t: 6.6, seconds: 4, tension: 0.5 },

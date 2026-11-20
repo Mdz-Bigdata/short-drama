@@ -119,7 +119,7 @@ describe('the composer dock', () => {
 
 describe('the dock under the selected node', () => {
   const view = { view: { x: 0, y: 0, zoom: 1 }, size: { width: 1200, height: 800 } };
-  const surface = { current: { subscribe: (listener: (view: typeof view.view, size: typeof view.size) => void) => { listener(view.view, view.size); return () => undefined; } } as unknown as SurfaceHandle };
+  const surface = { current: { subscribe: (listener: (at: typeof view.view, size: typeof view.size) => void) => { listener(view.view, view.size); return () => undefined; } } as unknown as SurfaceHandle };
 
   function host(target: CanvasNode | null, props: Partial<Parameters<typeof CanvasComposerHost>[0]> = {}) {
     return (

@@ -43,7 +43,7 @@ export function readTurn(data: unknown): AssistantTurn {
   const cards = chatCardsFrom(body.tool_calls, body.proposal);
   const proposal = cards.find((card): card is Extract<ChatCard, { kind: 'proposal' }> => card.kind === 'proposal') ?? null;
   const calls = cards.find((card): card is Extract<ChatCard, { kind: 'tool_calls' }> => card.kind === 'tool_calls')?.calls ?? [];
-  let canvas: AssistantTurn['canvas'] = null;
+  let canvas = null as AssistantTurn['canvas'];
   for (const call of Array.isArray(body.tool_calls) ? body.tool_calls : []) {
     const result = isDict(call) && isDict(call.result) ? call.result : null;
     const action = result && result.ok !== false && isDict(result.result) ? result.result.ui_action : null;

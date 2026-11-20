@@ -16,7 +16,7 @@ const MODES = [
   { id: 'rewrite', label: '改写', hint: '用你写的方法代替平台默认的方法。' },
 ];
 
-const catalogue = (over: Record<string, { mode: string; text: string }> = {}) => ({
+const catalogue = (over: Partial<Record<string, { mode: string; text: string }>> = {}) => ({
   text_limit: 20,
   modes: MODES,
   operations: [

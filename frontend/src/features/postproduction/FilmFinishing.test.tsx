@@ -209,7 +209,7 @@ describe('FilmFinishing in the studio', () => {
       bgm_library: [],
       acceptance: [],
       post: {
-        settings: { transitions: true, dialogue: true, subtitles: true, title_card: true },
+        settings: { transitions: true, dialogue: true, subtitles: true, title_card: true, name_cards: true },
         tension: [], scene_markers: [], estimated_bytes: 1000, film_versions: [], shots: [], ...post,
       },
     };

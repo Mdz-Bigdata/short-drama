@@ -40,7 +40,7 @@ export function normaliseAppearance(value: unknown): CanvasAppearance {
   const found = (value && typeof value === 'object' ? value : {}) as Partial<CanvasAppearance> & { custom?: Partial<CustomCanvasTheme> };
   const theme = (['follow', 'light', 'dark', 'custom'] as const).includes(found.theme as CanvasThemeChoice) ? found.theme as CanvasThemeChoice : 'follow';
   const grid = (['dots', 'lines', 'blank'] as const).includes(found.grid as CanvasGrid) ? found.grid as CanvasGrid : 'dots';
-  const custom = found.custom ?? {};
+  const custom: Partial<CustomCanvasTheme> = found.custom ?? {};
   return {
     theme, grid,
     custom: {

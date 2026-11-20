@@ -10,7 +10,7 @@ import type { CanvasDoc, CanvasNode, NodeKind, NodeOutput, NodePayload } from '.
 const node = (kind: NodeKind, payload: NodePayload = {}, id = 'n'): CanvasNode => ({
   id, kind, track: 'freezone', x: 0, y: 0, width: 100, height: 100, artifact_id: null, payload,
 });
-const image = (url: string): NodeOutput => ({ medium: 'image', url });
+const image = (url: string) => ({ medium: 'image' as const, url }) satisfies NodeOutput;
 
 afterEach(() => {
   vi.restoreAllMocks();

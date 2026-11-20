@@ -19,7 +19,7 @@ function palmOf(points: ReturnType<typeof contactsOf>, side: 'left' | 'right') {
  * The palm of a posed mannequin: the middle of the two palms for both hands. Any other figure, or
  * a mannequin nobody has posed, gets `null` and the contract's formula instead.
  */
-export const mannequinHandPoint: HandLocator = (actor: StageActor, hand: Hand): SpacePoint | null => {
+export const mannequinHandPoint = ((actor: StageActor, hand: Hand): SpacePoint | null => {
   if (actor.figure !== 'mannequin' || !actor.pose) return null;
   const joints = jointsOf(actor);
   const points = contactsOf(solveBones(joints, actor.body_type), actor.body_type);
@@ -32,4 +32,4 @@ export const mannequinHandPoint: HandLocator = (actor: StageActor, hand: Hand): 
   else scratch.copy(hand === 'left' ? left : right);
   scratch.applyMatrix4(figureMatrix(actor, lift, joints['body.offsetY'] ?? 0));
   return [scratch.x, scratch.y, scratch.z];
-};
+}) satisfies HandLocator;
