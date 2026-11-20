@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 from app.core import prompt_data
 
 
@@ -87,6 +87,35 @@ def clip_for(shot: Mapping[str, Any], clips: Sequence[Any]) -> dict[str, Any] | 
         if isinstance(clip, dict) and not (clip.get("scene_id") or clip.get("shot_uids")) and str(clip.get("shot_id")) == str(shot.get("shot_id")):
             return clip
     return None
+
+
+def clip_finder(clips: Sequence[Any]) -> Callable[[Mapping[str, Any]], dict[str, Any] | None]:
+    """给同一批片段找很多个镜头时用：返回的函数对每个镜头给出与 ``clip_for(shot, clips)`` 相同的那一段。
+
+    ``clip_for`` 每找一个镜头就把所有片段扫一遍，逐镜找完整部剧是「镜头数 × 片段数」；这里把片段按
+    它覆盖的镜头编号(没有场号的旧片段按镜号)先排成表，每个编号留最先出现的那一段，之后每个镜头查一次表。
+    表只认建表那一刻的片段：之后往 ``clips`` 里增删片段、或改片段的场号 / 镜号，要重新建。
+    """
+    by_uid: dict[int, dict[str, Any]] = {}
+    by_number: dict[str, dict[str, Any]] = {}
+    try:
+        for clip in clips:
+            if not isinstance(clip, dict):
+                continue
+            if clip.get("scene_id") or clip.get("shot_uids"):
+                for uid in covered_uids(clip):
+                    by_uid.setdefault(uid, clip)
+            else:
+                by_number.setdefault(str(clip.get("shot_id")), clip)
+    except Exception:
+        # 有片段的编号读不出来：逐镜照原样扫，读到它时该报的错照报，排在它前面的片段照样找得到。
+        return lambda shot: clip_for(shot, clips)
+
+    def find(shot: Mapping[str, Any]) -> dict[str, Any] | None:
+        clip = by_uid.get(shot_uid(shot))
+        return clip if clip is not None else by_number.get(str(shot.get("shot_id")))
+
+    return find
 
 
 def episode_numbers(task: Mapping[str, Any]) -> list[int]:

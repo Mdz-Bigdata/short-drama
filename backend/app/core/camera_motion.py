@@ -12,6 +12,7 @@ that default is a follow move, because a locked-off camera is what makes a fight
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Any
 
 from app.core import prompt_data
@@ -98,7 +99,17 @@ def normalize_camera_motion(value: Any, *, fight: bool = False) -> tuple[str, bo
     # A phrase such as "缓慢推近主体" still names exactly one move: the longest
     # alias it contains wins ("推近" over "推"); a tie between different moves is
     # ambiguous and degrades.
-    return _longest_alias(key, _MOTION_BY_KEY, default)
+    return _longest_alias_in("motion", key, default)
+
+
+@lru_cache(maxsize=4096)
+def _longest_alias_in(kind: str, key: str, default: str) -> tuple[str, bool]:
+    """``_longest_alias`` over one of the two tables, remembered per phrase.
+
+    The tables are fixed once this module is imported and a project writes the same few phrases on
+    hundreds of shots; the search walks every alias, so each phrase is searched once.
+    """
+    return _longest_alias(key, _MOTION_BY_KEY if kind == "motion" else _SHOT_TYPE_BY_KEY, default)
 
 
 def _longest_alias(key: str, table: dict[str, str], default: str) -> tuple[str, bool]:
@@ -124,7 +135,7 @@ def normalize_shot_type(value: Any) -> tuple[str, bool]:
     hit = _SHOT_TYPE_BY_KEY.get(key)
     if hit:
         return hit, True
-    return _longest_alias(key, _SHOT_TYPE_BY_KEY, DEFAULT_SHOT_TYPE)
+    return _longest_alias_in("shot_type", key, DEFAULT_SHOT_TYPE)
 
 
 # MiniMax Hailuo documents fifteen bracketed camera commands; Orbit is the one

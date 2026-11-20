@@ -119,11 +119,12 @@ def project_media(task: Mapping[str, Any]) -> dict[str, Any]:
     assets = task.get("assets") if isinstance(task.get("assets"), Mapping) else {}
     clips = [clip for clip in assets.get("5") or [] if isinstance(clip, dict)]
     shots = []
+    clip_of = episode_cycle.clip_finder(clips)
     for number, shot in enumerate(assets.get("4") or [], start=1):
         if not isinstance(shot, dict):
             continue
         keyed = {**shot, "shot_id": int(shot.get("shot_id") or number)}
-        clip = episode_cycle.clip_for(keyed, clips) or {}
+        clip = clip_of(keyed) or {}
         video = _usable(clip.get("video_url"))
         candidates = [_usable(item) for item in clip.get("candidates") or clip.get("candidate_urls") or []]
         shots.append({

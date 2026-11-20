@@ -2504,12 +2504,14 @@ class DramaService:
             for index, shot in enumerate(assets.get("4") or [], start=1) if isinstance(shot, dict)
         }
         records = []
+        # 逐镜找片段：片段先排成一张表，每镜查一次(结果与逐镜 clip_for 相同)，不再每镜把所有片段扫一遍。
+        clip_of = episode_cycle.clip_finder(all_clips)
         for index, shot in enumerate(assets.get("4") or [], start=1):
             if not isinstance(shot, dict):
                 continue
             shot_id = int(shot.get("shot_id") or index)
             # 各场镜号都从 1 起：按全剧唯一编号找它所在的那段视频(分镜片段视频覆盖它的每个瞬间)。
-            clip = episode_cycle.clip_for({**shot, "shot_id": shot_id}, all_clips) or {}
+            clip = clip_of({**shot, "shot_id": shot_id}) or {}
             prompt_override = str(shot.get("video_prompt_override") or "").strip()
             edited = shot.get("visual") if isinstance(shot.get("visual"), dict) else None
             notes: list[str] = []
@@ -2521,7 +2523,8 @@ class DramaService:
             if not edited:
                 derived, notes = self._derive_shot_visual(shot, clip, options)
                 settings = ShotVisualSettings.model_validate(derived)
-            shot_assets = asset_dependents.shot_assets(task, {**shot, "shot_id": shot_id})
+            # 这一镜的片段上面已经找到，直接交给它(它自己找也是同一段)。
+            shot_assets = asset_dependents.shot_assets(task, {**shot, "shot_id": shot_id}, clip=clip)
             records.append(ShotVisualRecord(
                 shot_id=shot_id,
                 scene_id=str(shot.get("scene_id") or ""),

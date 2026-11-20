@@ -22,8 +22,9 @@ def _clip_sequence(task: Mapping[str, Any], episode: int) -> list[tuple[dict[str
     assets = task.get("assets") if isinstance(task.get("assets"), Mapping) else {}
     clips = [clip for clip in assets.get("5") or [] if isinstance(clip, dict)]
     sequence: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = []
+    clip_of = episode_cycle.clip_finder(clips)
     for shot in episode_cycle.episode_shots(task, episode):
-        clip = episode_cycle.clip_for(shot, clips)
+        clip = clip_of(shot)
         if not clip or not clip.get("video_url"):
             continue
         if sequence and sequence[-1][0] is clip:

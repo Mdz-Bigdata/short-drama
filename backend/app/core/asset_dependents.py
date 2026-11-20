@@ -173,12 +173,17 @@ def _board(task: Mapping[str, Any], scene_id: str) -> Any:
     return boards.get(scene_id) if isinstance(boards, Mapping) else None
 
 
-def shot_assets(task: Mapping[str, Any], shot: Mapping[str, Any]) -> list[dict[str, Any]]:
+def shot_assets(
+    task: Mapping[str, Any], shot: Mapping[str, Any], *, clip: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """这一镜用到的每个资产：{kind, name, element_id, element_version, image_number, in_storyboard, in_video, stale}。
 
     分镜绑定、分镜表点名和片段参考三处合并，按(类型, 规范化名字)去重。
+    ``clip`` 是调用方已经为这一镜找好的那段视频(没有片段时传空字典)；不传就在这里按 ``clip_for`` 找。
+    逐镜列整部剧的调用方传进来，免得每一镜再把所有片段扫一遍。
     """
-    clip = episode_cycle.clip_for(shot, _clips(task)) or {}
+    if clip is None:
+        clip = episode_cycle.clip_for(shot, _clips(task)) or {}
     stale = bool(clip.get("stale")) or bool(shot.get("asset_stale")) or board_asset_stale(_board(task, _text(shot.get("scene_id"))))
     entries: list[dict[str, Any]] = []
     index: dict[tuple[str, str], dict[str, Any]] = {}

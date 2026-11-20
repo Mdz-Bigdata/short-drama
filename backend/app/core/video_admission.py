@@ -23,7 +23,7 @@ from typing import Any, Literal
 
 from app.core import usage_ledger
 from app.core import slice_video
-from app.core.episode_cycle import clip_for, shot_uid
+from app.core.episode_cycle import clip_finder, shot_uid
 from app.core.media_compositor import media_available
 from app.core.storyboard_scene_context import cast_aliases, is_uncast
 from app.core.screenwriting.durations import renderable_shot_durations
@@ -252,6 +252,8 @@ def assess_video_batch(
         model_problem = ShotProblem(PROVIDER_NOT_READY, _text_of("assess_video_batch.model_problem.2").format(profile.family))
 
     assessments: list[ShotAssessment] = []
+    # 分镜片段出片时逐镜找它所在的那一段：片段先排成表，每镜查一次(结果与逐镜 clip_for 相同)。
+    clip_of = clip_finder(all_clips) if slicing else None
     for index, shot in enumerate(shots, start=1):
         piece = slice_of.get(index - 1)
         shot_id = _int(shot.get("shot_id"), index)
@@ -284,7 +286,7 @@ def assess_video_batch(
         clip = clips.get(shot_uid({**shot, "shot_id": shot_id})) or legacy_clips.get(str(shot_id))
         if slicing:
             # 只有分镜片段视频能复用；按单个瞬间出的旧片不是同一个请求。
-            clip = clip_for({**shot, "shot_id": shot_id}, all_clips)
+            clip = clip_of({**shot, "shot_id": shot_id})
             clip = clip if clip and clip.get("slice") else None
         if any(problem.blocking for problem in problems):
             quote: Quote = "blocked"
