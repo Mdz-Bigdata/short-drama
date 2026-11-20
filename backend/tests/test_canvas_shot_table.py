@@ -12,6 +12,7 @@ import unittest
 from unittest import mock
 
 from app.core import canvas_tools, prompt_data, usage_ledger
+from app.core.providers import pricing
 from tests.test_canvas_workspace import CanvasCase, _node
 
 TABLE = {
@@ -142,6 +143,15 @@ class ShotTableRunTests(CanvasCase):
 
 
 class SoundQuoteTests(CanvasCase):
+    def setUp(self):
+        super().setUp()
+        # The prices these tests read back: their own table, not whatever price file this machine has (or lacks).
+        pricing.set_pricing_table(pricing.PricingTable.from_mapping({
+            "music_v2": {"kind": "per_second", "currency": "USD", "price": 0.0025},
+            "eleven_sound_effects": {"kind": "per_second", "currency": "USD", "price": 0.002},
+        }))
+        self.addCleanup(pricing.set_pricing_table, None)
+
     def quote(self, mode, **params):
         saved = self.put([_node("sound", "audio_gen", prompt="安静的钢琴", params={"mode": mode, **params})])
         with mock.patch("app.core.media_compositor._elevenlabs_available", return_value=True):

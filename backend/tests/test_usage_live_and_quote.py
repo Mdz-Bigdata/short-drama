@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from app.api.auth_api import _public_user, get_current_user
 from app.core import quote
+from app.core.providers import pricing
 from app.core.providers.pricing import PricingTable
 from app.platform.dependencies import get_platform_store
 from app.platform.store import PlatformStore
@@ -199,6 +200,9 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client.get("/api/admin/finance/usage/live?minutes=1").status_code, 422)
 
     async def test_the_inside_list_shows_official_beside_quote_and_the_outward_one_only_the_quote(self):
+        # The list is of the installed prices: this test's own, not whatever price file this machine has (or lacks).
+        pricing.set_pricing_table(TABLE)
+        self.addCleanup(pricing.set_pricing_table, None)
         await self._login(self.boss)
         inside = self.client.get("/api/admin/pricing/quote").json()
         self.assertEqual((inside["markup"], inside["usd_cny"]), (0.2, 7.2))
